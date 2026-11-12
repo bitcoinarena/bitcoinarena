@@ -863,7 +863,7 @@ createServer((req, res) => {
       // A REPORT HOLDS ITS PLACE BEFORE ITS FIRST WAIT (kanban #1808): it was counted only after the chat post came back, so a burst from one address
       // all passed feedbackDecide with none counted yet and FEEDBACK_PER_IP_PER_DAY / FEEDBACK_PER_DAY never tripped. Now its slot is pushed as soon as
       // it passes, and given back if it is not posted after all; earlier days' entries go first, so REPORTS stays one day long
-      let slot = null, posted = false;
+      let slot = null, posted = false, own = null;
       const giveBack = () => { const i = slot ? REPORTS.indexOf(slot) : -1; if (i >= 0) REPORTS.splice(i, 1); slot = null; };
       { const day = Math.floor(Date.now() / DAY_MS); while (REPORTS.length && Math.floor(REPORTS[0].atMs / DAY_MS) !== day) REPORTS.shift(); }
       try {
@@ -871,35 +871,42 @@ createServer((req, res) => {
         // every address check below goes through the caller's budget (kanban #1511): this name stands for addressCheckFor(ip, ...) here
         const lnAddressWorks = (a) => addressCheckFor(ip, a);
         // A SIGNED REPORT (kanban #1342): its own words go to the chat, and it is kept for review - only if it stands
-        let b = b0, kept = null, counted = false;
+        let b = b0, kept = null, words = {}, counted = false;
         if (b0.event) {
           if (!FEEDBACK) return send(503, { ok: false, why: 'signed reports are not kept here' });
           const e = b0.event;
           const tagOf = (k) => { const t = Array.isArray(e.tags) ? e.tags.find((x) => Array.isArray(x) && x[0] === k) : null; return t ? String(t[1] ?? '') : ''; };
-          let words = {}; try { words = JSON.parse(e.content); } catch { words = {}; }
+          try { words = JSON.parse(e.content); } catch { words = {}; }
           // and where a bounty for it is paid, if the reporter named it (kanban #1363): the signed content's lnAddress
           b = { ...b0, text: `${String(words.happened || '')}${words.expected ? `\nExpected: ${String(words.expected)}` : ''}${words.lnAddress ? `\nBounty address: ${String(words.lnAddress).slice(0, 200)}` : ''}`, build: tagOf('build'), game: tagOf('game'), round: tagOf('round') };
-          const pre = feedbackDecide({ ...b, ip }, REPORTS);
+          const pre = feedbackDecide({ ...b, ip, signed: true }, REPORTS);
           if (!pre.ok) return send(200, pre);
+          // DECIDED AND COUNTED AT ONCE (kanban #2158, #2226): a signed report's slot is taken here, before its first await (the address checks),
+          // so a burst sent together no longer decides against the same count; given back when the report is not taken after all
+          own = { ip, atMs: Date.now(), signed: true }; REPORTS.push(own); slot = own;
           // THE BOUNTY ADDRESS MUST WORK (Daniel 2026-11-10, #1342): asked before the report is kept, so a reward is never made for an address nothing pays to
           // THE ADDRESS PAID IS THE ADDRESS CHECKED (kanban #2468, #1489 audit44 refute of #1677): an lnAddress that is not a string is refused (it was
           // checked as String() of it while the payout took the unchecked lud16 tag), and the address a reward would go to (reportAddress, what
           // FEEDBACK.addressOf answers) is checked too when it is not the one just checked - a lud16 tag alone, with no content address, included
-          if (words && typeof words === 'object' && words.lnAddress !== undefined && words.lnAddress !== null && words.lnAddress !== '' && typeof words.lnAddress !== 'string') return send(200, { ok: false, why: 'That Lightning address is not text. Check it, or leave it empty.' });
-          if (words.lnAddress) { const w = await lnAddressWorks(words.lnAddress); if (!w.ok) return send(200, { ok: false, why: `That Lightning address does not work: ${w.why}. Check it, or leave it empty.` }); }
-          { const pays = reportAddress(e); if (pays && pays !== String(words.lnAddress || '')) { const w = await lnAddressWorks(pays); if (!w.ok) return send(200, { ok: false, why: `That Lightning address does not work: ${w.why}. Check it, or leave it empty.` }); } }
+          if (words && typeof words === 'object' && words.lnAddress !== undefined && words.lnAddress !== null && words.lnAddress !== '' && typeof words.lnAddress !== 'string') { giveBack(); return send(200, { ok: false, why: 'That Lightning address is not text. Check it, or leave it empty.' }); }
+          if (words.lnAddress) { const w = await lnAddressWorks(words.lnAddress); if (!w.ok) { giveBack(); return send(200, { ok: false, why: `That Lightning address does not work: ${w.why}. Check it, or leave it empty.` }); } }
+          { const pays = reportAddress(e); if (pays && pays !== String(words.lnAddress || '')) { const w = await lnAddressWorks(pays); if (!w.ok) { giveBack(); return send(200, { ok: false, why: `That Lightning address does not work: ${w.why}. Check it, or leave it empty.` }); } } }
           kept = FEEDBACK.take(e, { hasShot: (h) => !!shotFile(h) });
-          if (!kept.ok) return send(200, kept);
+          if (!kept.ok) { giveBack(); return send(200, kept); }
           // COUNTED WHEN KEPT (audit 6, kanban #1424): it was counted only after the chat post went out - with the chat down every signed report was
-          // kept and none counted, so the limits never tripped
-          if (kept.kept) { REPORTS.push({ ip, atMs: Date.now() }); counted = true; }
+          // kept and none counted, so the limits never tripped. A kept one stays counted whatever comes after (its slot is no longer given back);
+          // a replayed one (kept: false) holds its slot as #1808 says, given back if it is not posted
+          counted = true;
+          if (kept.kept) slot = null;
         }
-        // counted once (audit 6 re-check N9, kanban #1426): a signed report kept above is in REPORTS already, so the address's 50th report was
-        // kept and numbered here and then refused as its own 51st
-        const d = feedbackDecide({ ...b, ip }, counted ? REPORTS.slice(0, -1) : REPORTS);
+        // DECIDED AND COUNTED AT ONCE (kanban #2158, #2226): the report was put into REPORTS only after the address check and the chat post came back,
+        // so a burst of requests sent together all decided against the same count - one /64 got 1522 reports (and chat posts) past its 50, and the
+        // day was closed. The slot is taken here, before any await, and given back when the report is not taken after all. Counted once (#1426).
+        const d = feedbackDecide({ ...b, ip, signed: !!b0.event }, own ? REPORTS.filter((x) => x !== own) : REPORTS);   // its own slot is not counted twice
+        if (!d.ok) giveBack();
         if (!d.ok) return send(200, d);
         // held from here (kanban #1808) - a replayed signed event (kept:false) too, so a burst of one event is counted as well
-        if (!counted) { slot = { ip, atMs: Date.now() }; REPORTS.push(slot); }
+        if (!counted) { slot = { ip, atMs: Date.now(), signed: !!b0.event }; REPORTS.push(slot); }
         // AN UNSIGNED REPORT'S BOUNTY ADDRESS TOO (#1342, measured on testnet-stage: a report from a tab with no identity named an address nothing pays to and
         // was taken): its "Bounty address:" line must work as well
         if (!b0.event) { const m = /\nBounty address: (\S+)/.exec(String(b0.text || '')); if (m) { const w = await lnAddressWorks(m[1]); if (!w.ok) { giveBack(); return send(200, { ok: false, why: `That Lightning address does not work: ${w.why}. Check it, or leave it empty.` }); } } }
