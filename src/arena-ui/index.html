@@ -5218,7 +5218,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       for (const a of ARENACLIENT.liquidationDoors({ events, network: NETWORK, verify })) {
         let listed;
         try { const r = await fetch(a + '/liquidation-payouts', { cache: 'no-store' }); if (!r.ok) continue; listed = await r.json(); } catch { continue; }
-        const got = await ARENACLIENT.collectLiquidationPayouts({ listed, seed, curve: window.ARENA_CURVE, clientFor: walletFor, storage: vault() });
+        const got = await ARENACLIENT.collectLiquidationPayouts({ listed, seed, curve: window.ARENA_CURVE, clientFor: walletFor, storage: vault(), federations: [...held, ...liq.map((x) => x.federation)] });   // kanban #2252/#2264: only the federations held or liquidated
         for (const g of got.filter((x) => !x.kept)) console.log('[arena] liquidation payout ' + g.msat + ' msat: ' + (g.ok ? 'collected' : g.why));
         if (got.some((g) => g.ok && !g.kept) && window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE();
       }
