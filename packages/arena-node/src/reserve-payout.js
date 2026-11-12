@@ -32,6 +32,7 @@ import { sendableInvoiceMsat, lowestLiveGateway, sendPlanStands, proposedExpirat
 import { lnv2FeeMsat, largestPayoutMsat } from '../../arena-protocol/src/lock-settlement.js';
 import { taggedHash, toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { lightningAddressEndpoint, payRequestStands, callbackFor, invoiceAnswersPayRequest } from '../../arena-protocol/src/lnurl-pay.js';
+import { lnurlPublicFetch } from './public-fetch.js';
 import { urlOfLnurl } from '../../arena-protocol/src/bech32.js';
 import { decodeBolt11 } from '../../arena-protocol/src/bolt11.js';
 import { moveSeedOf, moveSeedFor } from './reserve-move.js';
@@ -53,7 +54,8 @@ export function leaderboardAmounts({ inputs, winners, fees }) {
  * THE PROPOSAL'S LNURL, ASKED AS THE WINNINGS SENDER ASKS AN ADDRESS (winnings-send.js): a Lightning address (LUD-16) or an LNURL
  * (LUD-01); the pay request (LUD-06), then the invoice for exactly `msat`, taken only when its amount and description hash stand.
  */
-export function lnurlClient({ fetch: get = (u, o) => fetch(u, o), network = 'testnet4', timeoutMs = 15000 } = {}) {
+// the default fetch asks the PUBLIC internet only (kanban #1919, public-fetch.js): a proposal's LNURL naming 127.0.0.1 / a LAN host is never fetched
+export function lnurlClient({ fetch: get = lnurlPublicFetch, network = 'testnet4', timeoutMs = 15000 } = {}) {
   const fetchJson = async (u) => (await get(u, { signal: AbortSignal.timeout(timeoutMs) })).json();
   async function payRequest(address, msat) {
     let url;

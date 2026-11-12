@@ -25,6 +25,7 @@
 // recipient, and once it answers, the held contract is spent (the re-send's refund) into the send to its invoice.
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { lightningAddressEndpoint, payRequestStands, callbackFor, invoiceAnswersPayRequest } from '../../arena-protocol/src/lnurl-pay.js';
+import { lnurlPublicFetch } from './public-fetch.js';
 import { sendableInvoiceMsat, lowestLiveGateway, sendPlanStands, proposedExpiration } from '../../arena-protocol/src/winnings-send.js';
 import { signShare340, aggregate340, nonceGenerate340, verifyShare340 } from '../../arena-protocol/src/frost-bip340.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
@@ -66,10 +67,11 @@ export class WinningsSend {
   /**
    * @param round      the signer node's Round (payoutAddress, putSendPlan, sendPlansOf, markSend, putWinnings)
    * @param port       its stake-lock port (gateways, send)
-   * @param lnurlFetch how an address's LNURL endpoint is fetched (a test hands its own)
+   * @param lnurlFetch how an address's LNURL endpoint is fetched (a test hands its own). The default asks the PUBLIC internet only (kanban #1919):
+   *   https on a public name and address, redirects checked hop by hop, .onion over http - a payout address naming 127.0.0.1 is never fetched
    * @param peersFor   (roundIdBytes) => [base URL] - the round's other settlement signer nodes
    */
-  constructor({ round, port, curve, random, peersFor, fetcher, lnurlFetch = fetch, network = 'regtest', scopeParam = '', dkg = null,
+  constructor({ round, port, curve, random, peersFor, fetcher, lnurlFetch = lnurlPublicFetch, network = 'regtest', scopeParam = '', dkg = null,
     peerAskMs = PEER_ASK_MS, peerGraceMs = PEER_GRACE_MS, lnurlMs = LNURL_ASK_MS }) {
     // `scopeParam`: A LATE SETTLEMENT'S SENDS (slice C3b-2a) - `&late=<entry>` on every signing and paid call to a peer,
     // so the peer answers from that late settlement's rows; empty for the round's own sends.
