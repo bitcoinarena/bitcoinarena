@@ -12,6 +12,7 @@
 // stops when the queue empties. Nothing here polls, nothing ticks, and nothing
 // here reaches the core: `replay.js` remains the only file in this daemon that
 // does, and this file only decides which runs are handed to it.
+import { peerBody as sharedPeerBody } from './peer-body.js';
 import { sandboxFor } from './core-sandbox.js';
 import { windowsOf } from '../../arena-protocol/src/window.js';
 import { dissentsOn, dissentsFirstOn, postsLateOn, LATE_POSTING_AFTER_MS } from './test-dissent.js';
@@ -201,21 +202,8 @@ const PEER_MARK_BODY_MAX_BYTES = 64 * 1024;
 async function peerFetch(url) {
   return fetch(url, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
 }
-/** The body of a peer's answer, at most `cap` bytes, read under the fetch's own deadline; throws past the cap. */
-async function peerBody(answer, cap = PEER_BODY_MAX_BYTES) {
-  const declared = Number(answer.headers.get('content-length'));
-  if (Number.isFinite(declared) && declared > cap) { try { await answer.body?.cancel(); } catch { /* gone */ } throw new Error(`answer of ${declared} bytes is past ${cap}`); }
-  if (!answer.body) return new Uint8Array(0);
-  const parts = []; let n = 0;
-  for await (const chunk of answer.body) {
-    n += chunk.length;
-    if (n > cap) { try { await answer.body.cancel(); } catch { /* gone */ } throw new Error(`answer past ${cap} bytes`); }
-    parts.push(chunk);
-  }
-  const out = new Uint8Array(n); let at = 0;
-  for (const c of parts) { out.set(c, at); at += c.length; }
-  return out;
-}
+/** The body of a peer's answer, at most `cap` bytes, read under the fetch's own deadline; throws past the cap (peer-body.js, shared since #1870/#1901). */
+const peerBody = (answer, cap = PEER_BODY_MAX_BYTES) => sharedPeerBody(answer, cap);
 async function peerJson(answer) { return JSON.parse(Buffer.from(await peerBody(answer)).toString('utf8')); }
 /** GET /checkpoints of every peer AT ONCE (#1550: in parallel, not one after another), each its bytes or null when down. */
 async function peersCheckpoints(peers, roundIdBytes, entryId, cap) {

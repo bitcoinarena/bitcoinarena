@@ -204,7 +204,8 @@ import { readReserve } from './federation-reserve.js';
 import { thresholdOf as thresholdOfFederation } from '../../arena-protocol/src/federation-record.js';
 import { Roster, endpointsOf, NO_CHAIN_VIEW_WHY, findSeriesPublication as findSeriesPublicationIndexed } from './roster.js';
 import { createSeriesPull, PULL_EVERY_MS } from './series-pull.js';
-import { createEntryRelay, RELAY_HEADER, lookAtMembers, seatView } from './entry-relay.js';
+import { createEntryRelay, RELAY_HEADER, lookAtMembers, seatView, LOCKS_MAX_BYTES } from './entry-relay.js';
+import { peerBody, peerJsonUpTo } from './peer-body.js';
 import { seatingAgent, MAX_PRESENTS_PER_BATCH, PRESENT_BYTES } from './seating-agent.js';
 import { decodeSeatingCertificate, encodeSeatingCertificate } from '../../arena-protocol/src/seating.js';
 import { receiptsNeeded as roundThreshold, donationKeysForNetworkId } from '../../arena-protocol/src/genesis.js';
@@ -4408,34 +4409,50 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   });
   // AN ENTRY THE ROUND ACCEPTED, FROM A PEER AND PAST THIS SEAT'S DOOR (kanban #1071, entry-relay.js, §17): the threshold's signed results named it, so none of the door's
   // refusals apply. Everything about the entry itself is still checked. Answers { ok } or { ok: false, why }: not yet.
-  const peerGet = (url) => fetch(url, { signal: AbortSignal.timeout(4000) });
+  const peerGet = (url) => fetch(url, { signal: AbortSignal.timeout(4000) });   // the deadline bounds the body read too
+  // EVERY BODY UP TO A CAP (kanban #1870, #1901; #1550's rule): an entry or a handout no larger than this seat's own door takes (BODY_MOST), a lock or an
+  // address answer a few KiB. A bare arrayBuffer() / json() buffered whatever one peer sent inside the deadline.
+  const PEER_PART_BYTES = 64 * 1024;
+  let takeTurn = 0;
   const takeAcceptedEntry = async (rid, entryHex, from) => {
     const eid = fromHex(entryHex), needed = roundThreshold(decodeRoundContract(new Uint8Array(round.get(rid).contract)).settlementSlots);
-    for (const base of from) {
+    // A BAD PEER IS SKIPPED AND THE NEXT ONE ASKED (kanban #1870, #1901; #1507's rule): a peer that hands over the true entry bytes and then fails its handout
+    // (an error status, a timeout, too many bytes, bytes that do not decode, a handout that is not the entry's or that takeHandout refuses) ended the take at
+    // once, and membersKnown asked again in the same peer order: one seat listed first kept a short seat from signing anything for the round. Now its failure
+    // is noted and the next holder is asked; { ok: false } only once every one of them was. The order is turned a step each pass too, so no fixed order pins
+    // the same seat first.
+    const k = from.length ? (takeTurn = (takeTurn + 1) % 1048576) % from.length : 0, order = [...from.slice(k), ...from.slice(0, k)];
+    const failed = [];
+    for (const base of order) {
       let entry;
       try {
         const r = await peerGet(`${base}/entry?id=${entryHex}`);
-        if (!r.ok) continue;
-        entry = decodeEntryContract(new Uint8Array(await r.arrayBuffer()));
+        if (!r.ok) { try { await r.body?.cancel(); } catch { /* gone */ } continue; }
+        entry = decodeEntryContract(await peerBody(r, BODY_MOST));
       } catch { continue; }
       if (toHex(idOfEntry(entry)) !== entryHex || toHex(entry.roundId) !== toHex(rid)) continue;   // the bytes hash to the id, of this round
       const signers = await verifier.signersNaming(rid, eid, entry.playerPubkey);
       if (signers.size < needed) return { ok: false, why: `${signers.size} of ${needed} seats signed a result naming it` };
       const ref = entry.vssSharesRef;
       if (ref && !ref.every((b) => b === 0) && !round.handout(ref)) {
-        const h = await peerGet(`${base}/handout?id=${toHex(ref)}`);
-        if (!h.ok) return { ok: false, why: `${base} answered ${h.status} for its handout` };
-        const bytes = new Uint8Array(await h.arrayBuffer());
-        const same = stakePointIsTheHandouts(entry, decodeHandout(bytes));
-        if (!same.ok) return { ok: false, why: `its handout: ${same.why}` };
-        const took = await takeHandout(bytes, { accepted: true });
-        if (!took.ok) return { ok: false, why: `its handout: ${took.why}` };
+        let why = null;
+        try {
+          const h = await peerGet(`${base}/handout?id=${toHex(ref)}`);
+          if (!h.ok) { try { await h.body?.cancel(); } catch { /* gone */ } why = `answered ${h.status} for its handout`; }
+          else {
+            const bytes = await peerBody(h, BODY_MOST);
+            const same = stakePointIsTheHandouts(entry, decodeHandout(bytes));
+            if (!same.ok) why = `its handout: ${same.why}`;
+            else { const took = await takeHandout(bytes, { accepted: true }); if (!took.ok) why = `its handout: ${took.why}`; }
+          }
+        } catch (e) { why = `its handout: ${e.message}`; }
+        if (why) { failed.push(`${base} ${why}`); continue; }
       }
       try { round.enter(entry, { accepted: true }); } catch (e) { return { ok: false, why: e.message }; }
       console.log(`[entry] ${entryHex.slice(0, 16)} taken from ${base} past the door: ${signers.size} seats signed results naming it (§17)`);
       return { ok: true };
     }
-    return { ok: false, why: 'no peer that holds it handed the entry over' };
+    return { ok: false, why: failed.length ? failed.join('; ').slice(0, 300) : 'no peer that holds it handed the entry over' };
   };
   // AND WHAT GOES WITH AN ENTRY OF A PAYING ROUND: its locks, checked with the federation, and the winner's address under the entry's own session key. Every seat's plan
   // reads its own rows, so a seat without them would rebuild another plan and refuse the one the others sign. Answers why it must wait, or null.
@@ -4443,11 +4460,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const eid = fromHex(entryHex), entry = decodeEntryContract(round.entry(eid));
     if (entry.stakeMsat === 0n) return null;
     const ofPeers = async (path, read) => (await Promise.all(from.map(async (base) => {
-      try { const r = await peerGet(`${base}${path}`); return r.ok ? await read(r) : null; } catch { return null; }
+      try { const r = await peerGet(`${base}${path}`); if (!r.ok) { try { await r.body?.cancel(); } catch { /* gone */ } return null; } return await read(r); } catch { return null; }
     }))).filter(Boolean);
     let why = null;
     if (!round.stakeLock(eid) || (round.feeLock && !round.feeLock(eid))) {
-      for (const locks of await ofPeers(`/order-locks?entry=${entryHex}`, (r) => r.json())) {
+      for (const locks of await ofPeers(`/order-locks?entry=${entryHex}`, (r) => peerJsonUpTo(r, LOCKS_MAX_BYTES))) {   // capped (#1870, #1901)
         why = null;
         try {
           if (locks.stake && !round.stakeLock(eid)) { const g = await takeStakeLock(eid, lockFieldsFromJson(locks.stake)); if (!g.ok) why = `its stake lock: ${g.why}`; }
@@ -4457,7 +4474,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
     }
     if (!round.payoutAddress(eid)) {
-      for (const named of await ofPeers(`/payout-address?entry=${entryHex}`, (r) => r.json())) {
+      for (const named of await ofPeers(`/payout-address?entry=${entryHex}`, (r) => peerJsonUpTo(r, PEER_PART_BYTES))) {   // capped (#1870, #1901)
         try {
           const signed = new TextEncoder().encode(String(named.signed)), sig = fromHex(String(named.signature));
           if (!ed25519.verify(sig, signed, entry.sessionPubkey)) continue;
