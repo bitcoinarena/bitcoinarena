@@ -84,6 +84,9 @@ test('#1842: a repeal posted to a seat before the proposal it repeals is resched
   assert.equal(r3.repeal, false);
   const p3 = await s3.add(P); assert.equal(p3.status, 201, p3.why);
   assert.equal(s3.decide(p3.id, { passed: true, decidedAt: 207, anchor: null }), true);
+  // merged in #1489 onto #1631: the schedule is read again by the tally's next pass (proposals.reschedule, asked before anything of R is counted),
+  // not at decide() - that pass is the one asked here
+  assert.equal(s3.reschedule(r1.id, { at: 300 }), 'moved');
   const now = s3.list().find((p) => p.id === r1.id);
   assert.deepEqual({ repeal: now.repeal, votingFrom: now.votingFrom, votingUntil: now.votingUntil },
     { repeal: r1.repeal, votingFrom: r1.votingFrom, votingUntil: r1.votingUntil }, 'rescheduled as the repeal it is');
