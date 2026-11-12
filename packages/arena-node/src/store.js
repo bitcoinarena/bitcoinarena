@@ -1267,6 +1267,21 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (round_id, entry_id, signer_pubkey, bytes)
     );
   `);
+  // A RELAYED COPY NAMES ITS ROUND AND ENTRY (kanban #1725, #1795, refute of #1532): the relay door bounds what one entry and one round
+  // may park there, and keeps a reserve for transcripts a held result names and for slash proofs, so it needs them without reading
+  // every blob. `named` is 1 when a held result or posting of that entry names the transcript's hash. A row from before gets them
+  // read from its bytes once, here (a transcript: type 0x09, version, round id, entry id; a reveal record: entry id first).
+  if (!db.prepare('PRAGMA table_info(relayed)').all().some((c) => c.name === 'entry_id')) {
+    db.exec('ALTER TABLE relayed ADD COLUMN entry_id BLOB');
+    db.exec('ALTER TABLE relayed ADD COLUMN round_id BLOB');
+    db.exec('ALTER TABLE relayed ADD COLUMN named INTEGER NOT NULL DEFAULT 0');
+    db.exec(`UPDATE relayed SET round_id = SUBSTR(bytes, 4, 32), entry_id = SUBSTR(bytes, 36, 32)
+      WHERE LENGTH(bytes) >= 67 AND SUBSTR(bytes, 1, 1) = x'09'`);
+    db.exec(`UPDATE relayed SET entry_id = SUBSTR(bytes, 1, 32), round_id = (SELECT round_id FROM entries WHERE entry_id = SUBSTR(relayed.bytes, 1, 32))
+      WHERE entry_id IS NULL AND LENGTH(bytes) IN (33, 65) AND EXISTS (SELECT 1 FROM entries WHERE entry_id = SUBSTR(relayed.bytes, 1, 32))`);
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS relayed_entry ON relayed (entry_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS relayed_round ON relayed (round_id)');
   // A STORE MADE BEFORE A NONCE ROW CARRIED ITS SIGNING ATTEMPT gets the column:
   // every row it already holds was attempt 0.
   if (!db.prepare('PRAGMA table_info(pool_nonces)').all().some((c) => c.name === 'attempt'))
