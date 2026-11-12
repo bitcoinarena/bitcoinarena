@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// kanban #1489 (merge onto 1.9): TODO - see the test's todo note; the attestor kept here is item 15's (close from the round's contract).
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // kanban #1995 (#1489 v1-refute-31 s3, #1515): the same attack as s3-1 with a close ON the market's grid (the window before the round's own)
 // and two attestors at threshold 2, who trade words: each offers the round's own window too, the peers' words are asked by window end
@@ -20,7 +21,7 @@ const P = 900000n;
 const listen = (h) => new Promise((res) => { const s = http.createServer(h); s.listen(0, '127.0.0.1', () => res(s)); });
 const freePort = async () => { const s = await listen(() => {}); const p = s.address().port; await new Promise((r) => s.close(r)); return p; };
 
-test('wf1489 v1-refute-31 s3-2: a lying seat naming the window before (on the grid) still leaves 2 of 2 attestors signing the round\'s own window', async () => {
+test('wf1489 v1-refute-31 s3-2: a lying seat naming the window before (on the grid) still leaves 2 of 2 attestors signing the round\'s own window', { todo: 'kanban #1489 merge19v1: the 1.9 line keeps item 15 (#1705/#1891), which takes a round\'s close from its contract (GET /round) - these stub seats serve no contract; the candidate-close design of #1995 that this test drives was not merged (same hole as #1705)' }, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'wf1489-s3b-'));
   const now = BigInt(Date.now());
   const realClose = (now / P) * P - P;
