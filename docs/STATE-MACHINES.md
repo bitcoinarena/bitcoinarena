@@ -1958,3 +1958,7 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 - A seated node past its fifth with no code out (no saved code of this founding either) that holds the code of the alternate that would take its position steps aside: it is a no-show in its own view too, never posts, and starts no DKG of its own.
 - A no-show's code that arrives before this seat's DKG started, while none of the alternates its return would unseat holds a code, seats it again (`backIn`): the alternate's own seat kept it and never posted. Once a replacing alternate holds a code, the no-show's code is refused (409) as before.
 - Test: `test/wf1489-sm10-federation-3.test.js` (late code at the fifth's block, the alternate before and after it in the advance order).
+#### SM-15.1 (change) Owner leave vs. FINAL (kanban #2338)
+- A leaving seat owes a round it sits on until the round's `finalAfterMs` (end + W + `FINAL_TOLERANCE_MS`, window.js), not until end + W: it signs FINAL only then, and a head-to-head seat still learning the members (`membersKnown`) may sign its results as late as that. `GET /owner/leave` never answers `freeNow` before every held round's `finalAfterMs`; a paying round with entries stays owed until its settlement is ACCEPTED, as before.
+
+Files: `owner-leave.js` leaveStatus.
