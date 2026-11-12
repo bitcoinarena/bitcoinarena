@@ -16,7 +16,7 @@ import { sandboxFor } from './core-sandbox.js';
 import { windowsOf } from '../../arena-protocol/src/window.js';
 import { dissentsOn, dissentsFirstOn, postsLateOn, LATE_POSTING_AFTER_MS } from './test-dissent.js';
 import { ReplayPool } from './pool.js';
-import { checkObjectionBundle } from './objection-check.js';
+import { checkObjectionBundle, replayKeyOf } from './objection-check.js';
 import { sha256 } from '../../arena-protocol/src/hash.js';
 import { stateOf } from './settlement-state.js';
 import { verifyKept } from './verify-kept.js';
@@ -1530,17 +1530,19 @@ export class Verifier {
         bundle, roundId: roundIdBytes, entryId: entryIdBytes, entry: found.entry, contract,
         committee: this.round.signerNodes(roundIdBytes), signedResultId, core, roundRandomness: beacon.hash,
         verify: (sig, msg, key) => verifyKept(sig, msg, key),
+        // THIS SEAT'S OWN RUN OF THE ENTRY (kanban #1706): a live run's inputs that differ from it are checked against its
+        // replay, one key per entry, instead of each costing a replay of its own (objection-check.js 7a)
+        ownInputs: () => this.round.transcript(roundIdBytes, entryIdBytes),
         replayRun: (form, entry, options) => {
           // KEYED BY WHAT IS REPLAYED, NOT BY THE BYTES POSTED (kanban #1517): the raw transcript + inputs bytes let a
           // stranger make every copy of one run a fresh key (whitespace or an unknown key in a live run's inputs, or an
           // inputs part beside a batch transcript, never read) - each a full replay, the entry held SUSPENDED behind
           // them. The parsed replay form (replayFormOf / inputsFormOf: fixed fields, integers only) and the marks it
           // must reproduce are the replay's whole input for this entry, so any bytes giving the same input share one job.
+          // And rows no replay applies are dropped before the key (inputsFormOf, kanban #1706), so they make no new key.
           let content = '';
           try {
-            content = hex(sha256(new TextEncoder().encode(JSON.stringify([
-              [form.ticks.map((x) => [x.tick, x.words]), form.liquidations, form.loads, form.samples, form.tapes],
-              (options.marks || []).map((m) => [m.tick, hex(m.stateHash)])]))));
+            content = hex(sha256(new TextEncoder().encode(replayKeyOf(form, options.marks))));
           } catch { content = ''; }
           const key = `${hex(roundIdBytes)}:${hex(entryIdBytes)}:${content}`;
           const had = content && this.objectionReplays.get(key);
