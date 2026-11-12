@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs';
 import { posix } from 'node:path';
 import { workerData } from 'node:worker_threads';
 
-const { files: fileList, entry, name, port, ctrl: ctrlBuffer, arrayBudget } = workerData;
+const { files: fileList, entry, name, port, ctrl: ctrlBuffer, arrayBudget, liveCap } = workerData;
 const files = new Map(fileList);
 const ctrl = new Int32Array(ctrlBuffer);
 const DRIVER = readFileSync(new URL('./core-driver.js', import.meta.url), 'utf8');
@@ -31,7 +31,9 @@ const REMOVED = ['Date', 'Intl', 'WebAssembly', 'SharedArrayBuffer', 'Atomics', 
 // changes nothing. What stays alive across calls is still bounded - by LIVE_CAP, read only by this thread between calls,
 // which ends the core and never hands the core a value.
 const BUDGET = Number.isInteger(arrayBudget) && arrayBudget > 0 ? arrayBudget : 64 * 1024 * 1024;
-const LIVE_CAP = 4 * BUDGET;
+// (kanban #1489 merge of #1538 + #1539) a caller may set a tighter cap: the plugin trial uses the budget itself, so a decide
+// adapter that keeps its arrays across calls is refused at the array budget, as #1538 promises; 0 or absent keeps 4x the budget
+const LIVE_CAP = Number.isInteger(liveCap) && liveCap > 0 ? liveCap : 4 * BUDGET;
 const LOCKDOWN = `'use strict';
 (() => {
   const budget = ${BUDGET};
