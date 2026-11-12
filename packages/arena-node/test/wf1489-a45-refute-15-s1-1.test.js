@@ -20,7 +20,7 @@ import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH, NEXTBLOCK_GAME_ID } from '../../
 import { BLOCK_TICKS } from '../../nextblock/src/rules/gate.js';
 import { TEST_DONATION_SET_REGTEST } from '../../arena-protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../arena-protocol/src/donation.js';
-import { encodeSlashProof, slashProofId, joinSlashEvidence, encodeFraudProof, fraudProofHash } from '../../arena-protocol/src/slash.js';
+import { encodeSlashProof, joinSlashEvidence, encodeFraudProof, fraudProofHash } from '../../arena-protocol/src/slash.js';
 import { encodePlayerResult, resultId, joinSignedResult } from '../../arena-protocol/src/result.js';
 import { transcriptBytesHash } from '../../arena-protocol/src/posting.js';
 import { toHex } from '../../arena-protocol/src/hash.js';

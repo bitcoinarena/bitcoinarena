@@ -61,7 +61,8 @@ function seven({ misbehave = () => undefined, seed = 0x70 } = {}) {
         if (!r.ok) refusals.push(`${k}->${to} ${url.pathname}: ${await r.clone().text()}`);
         return r;
       } });
-    const bytes = { ok: true, txid: TXID, message: MSG, claimPk: DEAL.groupPublicKey, needed: 5, claims: [],
+    // 2.0 (kanban #1489 port): the built settlement carries its contract, and the committee is its contract.nodes (7 seats)
+    const bytes = { ok: true, txid: TXID, message: MSG, claimPk: DEAL.groupPublicKey, needed: 5, claims: [], contract: { nodes: [1, 2, 3, 4, 5, 6, 7].map((i) => `node${i}`) },
       plan: { payouts: [], claims: [], nonce: new Uint8Array(32), stakeShares: [] }, signerNode: { id: DEAL.shares[k].id, share: DEAL.shares[k].share } };
     s.message = async () => bytes;
     s.lateMessage = async () => bytes;
