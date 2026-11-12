@@ -34,6 +34,12 @@ const MAX_EVENT_BYTES = 64 * 1024, MAX_SUBS = 20, MAX_FILTERS = 10, MAX_LIMIT = 
 //   - a REQ reads only the rows its ids/authors/kinds/since/until select (SQL on indexed columns), not the whole table.
 const AUTHOR_EVENTS = 500, AUTHOR_BYTES = 4 * 1024 * 1024, TOTAL_EVENTS = 200000, TOTAL_BYTES = 512 * 1024 * 1024;
 const SLOW_BYTES = 4 * 1024 * 1024;   // kanban #1542: the most one client may leave unread before it is dropped
+const HARD_SLOW_BYTES = 2 * SLOW_BYTES;   // kanban #1717: past this backlog no message at all is queued; the client is dropped
+// kanban #1871, #1904 (bypasses of #1542/#1717): the bound was per socket only, so N unread sockets of one stranger held N x ~4.7 MB.
+// TOTAL_SLOW_BYTES bounds the unsent backlog of all clients together; past it the client with the largest backlog is dropped
+// (an unread socket, never one that reads), so no per-address limit is needed (behind the tunnel every peer has one address).
+const TOTAL_SLOW_BYTES = 2 * SLOW_BYTES;   // 8 MB: a socket that reads keeps almost nothing unsent (ws writes straight to the kernel)
+const PINGS = 30;   // kanban #1871: pongs answered per socket per 10 s (a ping is no 'message', so it is outside the message budget)
 const hex = (n) => new RegExp(`^[0-9a-f]{${n}}$`);
 const HEX64 = hex(64), HEX128 = hex(128);
 const isReplaceable = (k) => k === 0 || k === 3 || (k >= 10000 && k < 20000);
@@ -161,7 +167,7 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   const has = db.prepare('SELECT 1 AS x FROM events WHERE id = ?');
   const heaviest = db.prepare('SELECT pubkey FROM events GROUP BY pubkey ORDER BY COUNT(*) DESC, pubkey ASC LIMIT 1');   // kanban #1620
   const totalUse = db.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(LENGTH(json)), 0) AS b FROM events');
-  const lim = { authorEvents: AUTHOR_EVENTS, authorBytes: AUTHOR_BYTES, totalEvents: TOTAL_EVENTS, totalBytes: TOTAL_BYTES, ...limits };
+  const lim = { authorEvents: AUTHOR_EVENTS, authorBytes: AUTHOR_BYTES, totalEvents: TOTAL_EVENTS, totalBytes: TOTAL_BYTES, totalSlowBytes: TOTAL_SLOW_BYTES, ...limits };
   const total = { ...totalUse.get() };
   const clients = new Set();
   const info = { name, description, supported_nips: [1, 11, 42, 46, 47, 57, 58, 65, 78], software: 'arena-node/nostr-relay', version: '1',
@@ -172,7 +178,8 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
       'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'GET' });
     res.end(/nostr\+json/.test(req.headers.accept || '') ? JSON.stringify(info) : `${name}: a Nostr relay (wss). ${description}\n`);
   });
-  const wss = new WebSocketServer({ server, maxPayload: MAX_EVENT_BYTES * 2 });
+  // kanban #1871: no automatic pong - the ws library queued one per ping outside every backlog check; the relay answers pings itself below
+  const wss = new WebSocketServer({ server, maxPayload: MAX_EVENT_BYTES * 2, autoPong: false });
   // A FILTER IS ANSWERED BY SQL, NOT BY A SCAN (kanban #1543): stored() used to walk every row of the store and JSON.parse each one, once per filter,
   // until `limit` matched - a filter matching nothing (an unknown author) parsed the whole store, ten times a REQ, sixty REQs per 10 s per socket, and the
   // relay's one event loop (NIP-46 signing, NWC payments, logins) stalled for everyone. Now ids, authors, kinds, since, until and #<letter> tags are a
@@ -237,17 +244,65 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   // A SUBSCRIBER THAT DOES NOT READ IS DROPPED (kanban #1542): every matching subscription of every client gets its own copy of each
   // event, and ws.send queues it in this process when the peer stops reading - ephemeral events too, which are never stored. A
   // client whose unsent backlog has passed SLOW_BYTES is told so and cut off, so one stalled socket holds at most a few MB here.
+  // EVERY OUTGOING MESSAGE IS BOUNDED (kanban #1717, a bypass of #1542): the REQ answer and the small replies (OK, NOTICE, CLOSED)
+  // went through a send() that never looked at bufferedAmount, so a socket that stopped reading and sent REQs for stored events
+  // had every stored match queued again for each REQ (measured 132.8 MB for one socket). Now each message goes through dropSlow:
+  // the EVENT fan-out drops a client past SLOW_BYTES as before; a REQ answer stops at SLOW_BYTES with CLOSED (a reading client may
+  // ask again with a smaller limit or `until`); anything else past HARD_SLOW_BYTES drops the client. One socket holds at most ~8 MB.
+  const dropSlow = (o) => {
+    clients.delete(o);
+    try { o.ws.send(JSON.stringify(['NOTICE', 'error: too slow, the relay stopped sending'])); } catch { /* gone */ }
+    o.ws.terminate();
+  };
+  // ALL CLIENTS TOGETHER ARE BOUNDED (kanban #1871, #1904): `queued` is an upper estimate of the unsent bytes of all clients - each
+  // message queued adds its length, a 1 s timer (and every time the estimate passes the bound) sets it to the real sum of bufferedAmount.
+  // Past lim.totalSlowBytes the clients with the largest backlogs are dropped until the sum is under it again.
+  const backlog = () => { let n = 0; for (const o of clients) n += o.ws.bufferedAmount; return n; };
+  let queued = 0;
+  const recount = setInterval(() => { queued = backlog(); }, 1000);
+  recount.unref?.();
+  const shed = () => {
+    queued = backlog();
+    while (queued > lim.totalSlowBytes) {
+      let big = null;
+      for (const o of clients) if (!big || o.ws.bufferedAmount > big.ws.bufferedAmount) big = o;
+      if (!big || !big.ws.bufferedAmount) break;
+      queued -= big.ws.bufferedAmount;
+      clients.delete(big);
+      // a reset, not a close: what the kernel still holds for that socket (it never read it) is thrown away too, not sent after
+      try { big.ws._socket?.resetAndDestroy?.(); } catch { /* gone */ }
+      big.ws.terminate();
+    }
+  };
+  const queue = (o, msg) => {   // every message the relay sends goes through here
+    o.ws.send(msg);
+    queued += msg.length;
+    if (queued > lim.totalSlowBytes) shed();
+  };
   const fanOut = (o, sid, e) => {
     if (o.ws.readyState !== 1) return;
-    if (o.ws.bufferedAmount > SLOW_BYTES) { clients.delete(o); try { o.ws.send(JSON.stringify(['NOTICE', 'error: too slow, the relay stopped sending'])); } catch { /* gone */ } o.ws.terminate(); return; }
-    o.ws.send(JSON.stringify(['EVENT', sid, e]));
+    if (o.ws.bufferedAmount > SLOW_BYTES) return dropSlow(o);
+    queue(o, JSON.stringify(['EVENT', sid, e]));
   };
   wss.on('connection', (ws) => {
     const subs = new Map();
     const c = { ws, subs };
     clients.add(c);
-    let budget = 60, refill = setInterval(() => { budget = Math.min(60, budget + 20); }, 10000);
-    const send = (m) => { if (ws.readyState === 1) ws.send(JSON.stringify(m)); };
+    let budget = 60, pings = PINGS, refill = setInterval(() => { budget = Math.min(60, budget + 20); pings = PINGS; }, 10000);
+    const send = (m) => {   // kanban #1717: no message is queued for a client already HARD_SLOW_BYTES behind
+      if (ws.readyState !== 1) return;
+      if (ws.bufferedAmount > HARD_SLOW_BYTES) return dropSlow(c);
+      queue(c, JSON.stringify(m));
+    };
+    // kanban #1871: a ping is answered like any other message - not past HARD_SLOW_BYTES (the client is dropped), and at most PINGS per
+    // 10 s (more get no pong); the pong counts toward the relay-wide backlog
+    ws.on('ping', (d) => {
+      if (ws.readyState !== 1 || --pings < 0) return;
+      if (ws.bufferedAmount > HARD_SLOW_BYTES) return dropSlow(c);
+      ws.pong(d);
+      queued += d.length + 2;
+      if (queued > lim.totalSlowBytes) shed();
+    });
     ws.on('close', () => { clients.delete(c); clearInterval(refill); });
     ws.on('message', (raw) => { try { onMessage(raw); } catch (err) { try { send(['NOTICE', 'error: that message could not be handled']); } catch { /* the socket is gone */ } } });   // kanban #1470: no message takes the relay down
     const onMessage = (raw) => {
@@ -322,7 +377,12 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
         { const bad = filters.map(filterRefusal).find(Boolean); if (bad) return send(['CLOSED', sid, `invalid: ${bad}`]); }   // kanban #1470
         if (!subs.has(sid) && subs.size >= MAX_SUBS) return send(['CLOSED', sid, `blocked: at most ${MAX_SUBS} subscriptions`]);
         subs.set(sid, filters.map(compileFilter));   // kanban #1752: Sets, built once
-        for (const e of stored(filters)) send(['EVENT', sid, e]);
+        for (const e of stored(filters)) {
+          if (ws.readyState !== 1) return undefined;
+          // kanban #1717: the stored answer stops once this socket's unsent backlog passes SLOW_BYTES; the subscription ends
+          if (ws.bufferedAmount > SLOW_BYTES) { subs.delete(sid); return send(['CLOSED', sid, 'error: too slow, the answer was cut; ask again with a smaller limit']); }
+          queue(c, JSON.stringify(['EVENT', sid, e]));   // kanban #1904: counted toward the relay-wide backlog (may drop this client)
+        }
         return send(['EOSE', sid]);
       }
       if (m[0] === 'CLOSE') { subs.delete(String(m[1] || '')); return undefined; }
@@ -333,6 +393,6 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   return {
     port: server.address().port,
     events: () => all.all().map((r) => JSON.parse(r.json)),
-    close: () => new Promise((r) => { for (const c of clients) c.ws.terminate(); wss.close(); server.close(() => { db.close(); r(); }); }),
+    close: () => new Promise((r) => { clearInterval(recount); for (const c of clients) c.ws.terminate(); wss.close(); server.close(() => { db.close(); r(); }); }),
   };
 }
