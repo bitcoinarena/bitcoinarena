@@ -37,6 +37,7 @@ import { attestedClaimKey } from '../../arena-client/src/join.js';
 import { lockFromClient } from '../../arena-client/src/lock-result.js';
 import { pageCurve } from '../../arena-client/src/page-curve.js';
 import { decodeRoundContract, roundId, encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
+import { markBot, entryKeys } from './mark-bot.mjs';   // kanban #2035: every live entry marked bot in the explorer
 import { seatingCloseMs } from '../../arena-protocol/src/seating.js';
 import { clientSettlementSignerNodes } from '../../arena-client/src/committee.js';
 import { dealHandout, encodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
@@ -333,6 +334,8 @@ try {
     entry.worldSecret = rand(32);
   }
   const eid = entryId(entry);
+  // MARKED BOT IN THE EXPLORER AS IT GOES OUT (kanban #2035): by the admin code, so the real-player count stays true
+  const marking = markBot(entryKeys(eid, entry));
   if (env.KEYS_FILE) appendFileSync(env.KEYS_FILE, `${JSON.stringify({ at: new Date().toISOString(), round: toHex(rid), entry: toHex(eid),
     secret: toHex(me.secret), stake: `${toHex(locks.stake.outpoint.txid)}:${locks.stake.outpoint.outIdx}`,
     fee: locks.fee ? `${toHex(locks.fee.outpoint.txid)}:${locks.fee.outpoint.outIdx}` : null })}\n`);
@@ -386,6 +389,7 @@ try {
       lock: l.status, lockSaid: (await l.text()).trim().slice(0, 160), ...(early.length ? { early } : {}) });
   }
   log({ step: 'handed over', entry: toHex(eid).slice(0, 16), signerNodes });
+  log({ step: 'marked bot', entry: toHex(eid).slice(0, 16), ...await marking });
   if (signerNodes.filter((x) => x.lock >= 200 && x.lock < 300).length < needed) throw new Error('fewer seats than needed took the lock');
 
 
