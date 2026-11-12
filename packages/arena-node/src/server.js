@@ -1199,6 +1199,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const NETWORK_APPS_MS = Number(process.env.ARENA_NETWORK_APPS_MS || 300000);
   const networkApps = { atMs: 0, seats: [], games: [], reading: null };
   const baseOf = (u) => String(u).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
+  // AT MOST NETWORK_SEATS_MAX SEATS, AND THE ADDRESS BOOK ONLY FOR NODES OF A CENSUS READ (kanban #1874, refute of #1540, #1489): before a
+  // census is read POST /address-announcement takes any self-signed key (up to ADDRESS_BOOK_MAX), so a stranger could fill the book with
+  // keys pointing at its own server and one public GET /network-games?fresh=1 read every one of them at 4 MB each (measured: 64 entries,
+  // the reading seat grew 120 MB). Peers, the owner's sources and the census come first; a book entry is a seat only when a census names its key.
+  const NETWORK_SEATS_MAX = 64;
   const networkSeats = () => {
     const found = new Set((peers || []).map(baseOf));
     let rows = [];
@@ -1213,9 +1218,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // seat at all - the chain's newest census and the address announcements it holds name them
     if (!found.size) {
       try { for (const e of peerEndpointsOf(fedRecords && fedRecords.censusNewest ? fedRecords.censusNewest() : [], round.pubkey)) found.add(baseOf(e)); } catch { /* none read yet */ }
-      try { const me = toHex(round.pubkey); for (const a of (addressBook && addressBook.list ? addressBook.list() : [])) if (a && a.endpoint && a.node !== me) found.add(baseOf(a.endpoint)); } catch { /* none held */ }
+      try {
+        const me = toHex(round.pubkey);
+        const named = new Set(addressCensus || []);
+        try { for (const e of (fedRecords && fedRecords.censusNewest ? fedRecords.censusNewest() : [])) named.add(Buffer.from(e.pubkey).toString('hex')); } catch { /* none read yet */ }
+        for (const a of (addressBook && addressBook.list ? addressBook.list() : [])) if (a && a.endpoint && a.node !== me && named.has(String(a.node).toLowerCase())) found.add(baseOf(a.endpoint));
+      } catch { /* none held */ }
     }
-    return [...found].filter((u) => /^https?:\/\//.test(u));
+    return [...found].filter((u) => /^https?:\/\//.test(u)).slice(0, NETWORK_SEATS_MAX);
   };
   // EVERY SEAT THIS ONE CAN NAME: networkSeats() and every endpoint of the chain's newest census - the census observers and spent
   // sets are judged by (kanban #326, rehearsal 17, measured 2026-10-23 00:5xZ: a T-tree seat holds no round, so networkSeats() was
@@ -1225,13 +1235,27 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     try { for (const e of peerEndpointsOf(fedRecords && fedRecords.censusNewest ? fedRecords.censusNewest() : [], round.pubkey)) to.add(baseOf(e)); } catch { /* the seats known */ }
     return [...to].filter((u) => /^https?:\/\//.test(u));
   };
+  // kanban #1874: the seats are read NETWORK_APPS_LANES at a time, not all at once - at most that many 4 MB listings held together (each about four copies while it is read and parsed) - and
+  // one pass reads at most NETWORK_APPS_BYTES in all (measured: 64 seats of 4 MB read 4 at a time still grew the seat 83 MB, 24 MB in all read 4 at a time 69 MB); a seat
+  // past the budget is listed as not answered. A seat's listing is a few KB a game, so the network's seats fit many times over.
+  const NETWORK_APPS_LANES = 2, NETWORK_APPS_BYTES = 12 * 1048576;
   const readNetworkApps = async () => {
     const seats = networkSeats();
     const byId = new Map();
     const asked = [];
-    await Promise.all(seats.map(async (from) => {
+    let nextSeat = 0, budget = NETWORK_APPS_BYTES;
+    const readOne = async (from) => {
       let got = null;
-      try { const r = await fetch(`${from}/games`, { signal: AbortSignal.timeout(8000) }); got = r.ok ? await jsonUpTo(r, PEER_LISTING_BYTES) : null; } catch { got = null; }
+      const take = Math.min(PEER_LISTING_BYTES, budget);
+      budget -= take;
+      let used = 0;
+      if (take > 0) {
+        try {
+          const r = await fetch(`${from}/games`, { signal: AbortSignal.timeout(8000) });
+          if (r.ok) { const text = await textUpTo(r, take); used = Buffer.byteLength(text); got = JSON.parse(text); } else await r.body?.cancel();
+        } catch (e) { got = null; used = /passed|more than/.test(String(e && e.message)) ? take : 0; }   // a read cut off at its bound spent all of it
+      }
+      budget += take - used;
       const listed = listedGames(got);
       asked.push({ seat: from, answered: !!got, games: listed.length });
       for (const g of listed) {
@@ -1245,7 +1269,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         row.seats.push(from);
         byId.set(id, row);
       }
-    }));
+    };
+    const lane = async () => { while (nextSeat < seats.length) await readOne(seats[nextSeat++]); };
+    await Promise.all(Array.from({ length: Math.min(NETWORK_APPS_LANES, seats.length) }, lane));
     const games = [...byId.values()].map((g) => ({ ...g, hostedHere: hosted.has(g.id),
       updateOf: hosted.has(g.parent) && !hosted.has(g.id) ? g.parent : null })).sort((a, b) => a.title.localeCompare(b.title) || a.version - b.version);
     Object.assign(networkApps, { atMs: Date.now(), seats: asked.sort((a, b) => a.seat.localeCompare(b.seat)), games });
