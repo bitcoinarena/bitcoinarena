@@ -7653,7 +7653,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       // THE SEASON BOARD'S WAY IN beside the gear and on the wallet bar: there is a game to show the board of now
       document.body.classList.add('arena-game-chosen');
       // THE SHOP BUTTON, only for a game that sells items
-      document.body.classList.toggle('arena-game-shop', !!(ARENACLIENT.shopOf && ARENACLIENT.shopOf(got.games, game.name)));
+      // the shop of THIS tile - its developer key, not every manifest of the name (kanban #2243)
+      document.body.classList.toggle('arena-game-shop', !!(ARENACLIENT.shopOf && ARENACLIENT.shopOf(got.games, game)));
       // THE CHOSEN GAME'S NAME WHERE THE PAGE NAMED NEXT BLOCK (2026-10-12 16:44: "Settings shows tick tock
       // Next block even though I am in RPS"): the Settings head and its mark, and the bare root's splash while the game loads
       if (game.name !== 'nextblock') {
@@ -10326,7 +10327,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     // sells items - today Tick Tock v4, on the reserves' terms - so the choice there is the one a purchase uses
     const itemsManifest = () => {
       const games = window.ARENA_GAMES_FULL || []; const c = window.ARENA_GAME_CHOSEN;
-      const s = c && ARENACLIENT.shopOf ? ARENACLIENT.shopOf(games, c.name) : null; if (s) return s.game.manifest;
+      // the chosen tile's own versions (kanban #2243): a stranger's same-name manifest under his own key names no terms here
+      const s = c && ARENACLIENT.shopOf ? ARENACLIENT.shopOf(games, c) : null; if (s) return s.game.manifest;
       const selling = games.filter((g) => g && g.manifest && (g.manifest.items || []).length).sort((a, b) => Number(b.manifest.requiredProtocolVersion || 0) - Number(a.manifest.requiredProtocolVersion || 0) || Number(b.manifest.version) - Number(a.manifest.version));
       return selling.length ? selling[0].manifest : null;
     };
@@ -10341,7 +10343,9 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       : ARENACLIENT.itemPriceFor ? ARENACLIENT.itemPriceFor(BigInt(priceSat), window.ARENA_ITEMS_SHARE()) : BigInt(priceSat));
     async function openShop() {
       const sheet = document.getElementById('arena-shop'); if (!sheet) return;
-      const chosen = window.ARENA_GAME_CHOSEN; const shop = chosen && ARENACLIENT.shopOf(window.ARENA_GAMES_FULL || [], chosen.name);
+      // THE SHOP OF THE CHOSEN TILE (kanban #2243, #1810 variant): its developer key's newest selling version - one seat's same-name
+      // manifest under a key of its own, version + 1, no longer sells its items at its price from its seats on the honest tile
+      const chosen = window.ARENA_GAME_CHOSEN; const shop = chosen && ARENACLIENT.shopOf(window.ARENA_GAMES_FULL || [], chosen);
       const list = sheet.querySelector('.items'); const state = sheet.querySelector('.state');
       const say = (t, bad) => { window.ArenaText.say(state, t || ''); state.classList.toggle('bad', !!bad); };
       // "SHOP" ONCE (2026-10-19: "shop is shown twice. one amber title is enough"): the amber line says Shop, the
@@ -10425,9 +10429,19 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       }
       return null;
     }
+    // THE DEVELOPER KEY OF A GAME NAME (kanban #2243, #1810 variant): the chosen tile's when it is that game, else the name's first game's
+    // (fetchGames' order, the tile the page would choose) - any stranger signs a same-name manifest under a key of his own, so a name
+    // alone never picks a game's versions, its donation game key or its seats
+    const gameDevKeyOf = (gameName) => {
+      const c = window.ARENA_GAME_CHOSEN; if (c && c.devKey && (c.name === gameName || (c.manifest && c.manifest.gameName === gameName))) return c.devKey;
+      const f = (window.ARENA_GAMES_FULL || []).find((g) => g && g.devKey && (g.name === gameName || (g.manifest && g.manifest.gameName === gameName)));
+      return f ? f.devKey : null;
+    };
+    const isGameOf = (g, gameName, devKey) => !!g && (g.name === gameName || (g.manifest && g.manifest.gameName === gameName)) && g.devKey === devKey;
     async function donateSets(gameName) {
       const games = window.ARENA_GAMES_FULL || [];
-      const ids = new Set(games.filter((g) => !gameName || g.name === gameName || (g.manifest && g.manifest.gameName === gameName)).map((g) => g.id));
+      const devKey = gameName ? gameDevKeyOf(gameName) : null;
+      const ids = new Set(games.filter((g) => !gameName || isGameOf(g, gameName, devKey)).map((g) => g.id));
       // every round the lobby lists, not only its current pick: the sets are the same in every paid round of the game
       const listed = [...(window.ARENA_LOBBY_ROWS || []), ...(window.ARENA_LOBBY || []).map((x) => x.raw)];
       const rows = listed.filter((r) => r && !r.free && r.contract && (!gameName || ids.has(r.game)));
@@ -10449,7 +10463,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         if (ds.ok && ds.target) break;
       }
       if (!ds.ok || !ds.target) return { ok: false, why: ds.why || 'the round names no donation sets' };
-      const g = games.filter((x) => x.manifest && (x.name === gameName || x.manifest.gameName === gameName)).sort((a, b) => Number(b.manifest.version) - Number(a.manifest.version))[0];
+      const g = games.filter((x) => x.manifest && isGameOf(x, gameName, devKey)).sort((a, b) => Number(b.manifest.version) - Number(a.manifest.version))[0];
       // INSIDE AN APP, HALF TO EACH (kanban #672): the app's set, and the protocol developers' set beside it
       return { ok: true, set: gameName ? ds.target.game : ds.target.network, networkSet: gameName ? ds.target.network : null,
         game: gameName && g ? { gameDevPubkey: g.manifest.gameDevPubkey, gameName: g.manifest.gameName } : null,
@@ -10613,7 +10627,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     window.ARENA_DONATE_OPEN = (gameName = null) => {
       let el = document.getElementById('arena-donate');
       if (!el) { el = document.createElement('div'); el.id = 'arena-donate'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true'); document.body.appendChild(el); }
-      const game = gameName ? ((window.ARENA_GAMES_FULL || []).find((g) => g.name === gameName || (g.manifest && g.manifest.gameName === gameName)) || null) : null;
+      const game = gameName ? ((window.ARENA_GAMES_FULL || []).find((g) => isGameOf(g, gameName, gameDevKeyOf(gameName))) || null) : null;
       // ON THE SITE ALL TO THE PROTOCOL DEVELOPERS, IN AN APP HALF TO ITS DEVELOPERS (kanban #672), tagged with where it was given
       const appTitle = gameName ? ((game && (game.title || game.manifest && game.manifest.title)) || gameName) : null;
       const who = gameName ? 'the developers of ' + appTitle + ' and of Bitcoin Arena' : 'the Bitcoin Arena protocol developers';
