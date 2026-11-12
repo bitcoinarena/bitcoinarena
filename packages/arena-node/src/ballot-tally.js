@@ -308,6 +308,24 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
         // Every height this pass added (and the block it went on from) is asked once more: one that differs, or is above the
         // tip now, means the count is not this chain's - it is dropped with the vote cache and its phase is read again next pass
         if (typeof blockHashAt === 'function' && o.readTo > fromTo) {
+          // THE FIRST BLOCKS OF A PHASE ARE HELD TO ITS PUBLICATION BLOCK TOO (kanban #2414): the reorg check asks a proposal's
+          // publication block only while nothing of its phase is read ('published'); from its first read block on it holds the
+          // count to readHash alone. A reorg landing after that check and before this pass's first reads (its census is read
+          // in between - minutes when cold) put the census and the phase on a branch without the deposit, readHash named that
+          // branch, and every later check answered 'same': counted, PASSED and live here, orphaned at a seat that first looked
+          // after the reorg. So when this pass read the phase's first blocks (no block to go on from), the publication block is
+          // asked once more: another block there orphans it, as the reorg check would; above the tip, the count is dropped
+          if (!fromHash && p.blockHash) {
+            const pub = await blockHashAt(p.publishedAt);      // throws on an RPC error: the pass stops, nothing written
+            if (!pub || String(pub).toLowerCase() !== String(p.blockHash).toLowerCase()) {
+              open.delete(p.id); votesByHeight.clear(); hashByHeight.clear(); reorged++;
+              const what = pub && proposals.orphan(p.id, { at: tip }) ? 'its publication block left this chain before its phase was read: orphaned, kept with its bytes'
+                : 'the chain changed while its phase was read: its votes are read again';
+              reorgs.push({ id: p.id, at: tip, what }); if (reorgs.length > 16) reorgs.shift();
+              log(`[ballot] reorg: proposal ${p.id.slice(0, 16)}: ${what}`);
+              continue;
+            }
+          }
           let broken = false;
           for (let h = fromHash ? fromTo : fromTo + 1; h <= o.readTo && !broken; h++) {
             const want = h === fromTo ? fromHash : hashByHeight.get(h);
