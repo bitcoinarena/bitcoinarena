@@ -2,7 +2,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE BALLOT READ OFF THE CHAIN, AND ACTIVATION (spec §27A.7.3, §27A.7.5), the second slice.
 //
-//   VOTES      every OP_RETURN output of a block whose push is a 77-byte "ARN" 'V' vote (ballot.js decodeVote), with the height and
+//   VOTES      every OP_RETURN output of a block whose push is a 77-byte "ARN" 'V' vote or an 80-byte bound one (ballot.js decodeVote), with the height and
 //              txid the tally needs - the tally then decides which bond, which phase, which one is last
 //   ACTIVATION the config live at a height: from genesis, each PASSED proposal at its activation_height, in order of height (ties:
 //              lower proposal id). "parent serialises competing proposals. Both may pass; the first to activate becomes the
@@ -17,7 +17,7 @@
 // What is live is a pure function of the passed proposals and a height; which proposals passed is the tally's.
 import { splitBlock } from './block.js';
 import { parseTransaction, commitmentsOf } from './tx.js';
-import { decodeVote } from './ballot.js';
+import { decodeVote, proposalCommitment } from './ballot.js';
 import { toHex, fromHex } from './hash.js';
 import { splitDonation, donationSetPaysKeys } from './donation.js';
 
@@ -134,15 +134,43 @@ export function depositOutputsExpected(depositSats, recipients) {
 }
 
 /**
+ * THE DEPOSIT'S COMMITMENT (ruled 2026-11-12, kanban #2125 / #2012; closes #1491 / #1678 / #1739): a bound deposit carries ONE
+ * OP_RETURN "ARN" 'D' || proposer x-only key (32) || proposalCommitment (32) - 68 bytes. A proposal naming a deposit committed to
+ * another key or another hash is refused, so one deposit carries exactly one proposal, nobody can squat another's deposit, and the
+ * proposal's bytes are fixed on chain at the deposit's height: any seat may take it at any time (the #1608 tip check becomes this).
+ */
+export const DEPOSIT_MARKER = Uint8Array.from([0x41, 0x52, 0x4e, 0x44]);     // "ARN" 'D'
+export const DEPOSIT_COMMIT_BYTES = 4 + 32 + 32;
+/** The payload for a proposal `p` (its proposer and body; deposit_txid not needed), and the OP_RETURN script that pushes it. */
+export function encodeDepositCommitment(p) {
+  if (!(p.proposer instanceof Uint8Array) || p.proposer.length !== 32) throw new Error('a deposit commits to a 32-byte x-only proposer key');
+  const out = new Uint8Array(DEPOSIT_COMMIT_BYTES);
+  out.set(DEPOSIT_MARKER, 0); out.set(p.proposer, 4); out.set(proposalCommitment(p), 36);
+  return out;
+}
+export const depositCommitmentScript = (p) => Uint8Array.from([0x6a, DEPOSIT_COMMIT_BYTES, ...encodeDepositCommitment(p)]);
+const isDepositPush = (b) => b.length >= 4 && DEPOSIT_MARKER.every((m, i) => b[i] === m);
+
+/**
  * A PROPOSAL'S DEPOSIT, READ OFF ITS TRANSACTION. `raw`: the deposit transaction; `height`: the block it confirmed in. The deposit
  * is everything it pays to the set's keys, and each key must be paid at least its share of that sum - so the split is exact.
  * Answers { ok, publishedAt, depositSats } - what proposalStands takes - or { ok: false, why }.
  */
-export function depositOf({ raw, height, proposal, recipients }) {
+export function depositOf({ raw, height, proposal, recipients, bound = false }) {
   let tx; try { tx = parseTransaction(raw); } catch (e) { return { ok: false, why: `that is no transaction: ${e.message}` }; }
   if (!proposal || !(proposal.depositTxid instanceof Uint8Array) || toHex(Uint8Array.from(tx.txid)) !== toHex(proposal.depositTxid))
     return { ok: false, why: 'that transaction is not the deposit the proposal names (deposit_txid)' };
   if (!Number.isInteger(height) || height < 0) return { ok: false, why: 'a deposit counts once it is confirmed at a height' };
+  // BOUND (at or above BALLOT_BIND_HEIGHT): exactly one "ARN" 'D' push, committed to this proposer and these bytes
+  if (bound) {
+    const pushes = commitmentsOf(tx).filter(isDepositPush);
+    if (pushes.length !== 1) return { ok: false, why: `a deposit carries exactly one "ARN" 'D' commitment, and this one carries ${pushes.length}` };
+    const c = pushes[0];
+    if (c.length !== DEPOSIT_COMMIT_BYTES) return { ok: false, why: `a deposit commitment is ${DEPOSIT_COMMIT_BYTES} bytes, not ${c.length}` };
+    if (toHex(c.subarray(4, 36)) !== toHex(proposal.proposer)) return { ok: false, why: 'that deposit is committed to another proposer key: it is not this proposer\'s' };
+    let want; try { want = proposalCommitment(proposal); } catch (e) { return { ok: false, why: e.message }; }
+    if (toHex(c.subarray(36)) !== toHex(want)) return { ok: false, why: 'that deposit is committed to another proposal (its hash is not this proposal\'s): one deposit carries exactly one proposal' };
+  }
   if (!Array.isArray(recipients) || !donationSetPaysKeys(recipients)) return depositOutputsExpected(0, recipients);
   const paid = new Map(recipients.map((r) => [toHex(depositScriptOf(r.recipientPk)), 0n]));
   for (const o of tx.outputs) {

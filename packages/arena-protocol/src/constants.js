@@ -609,6 +609,8 @@ export const TAG = {
   configProposalBody: 'ARENA/v1/ConfigProposalBody',
   configProposal: 'ARENA/v1/ConfigProposal',
   vote: 'ARENA/v1/Vote',
+  // the proposal a deposit commits to (§27A.7.2, ruled 2026-11-12 #2125/#2012): its body without the deposit txid
+  configProposalCommit: 'ARENA/v1/ConfigProposalCommit',
   // ABSENCE AND DEPARTURE (§23A.4-5): what a guardian signs, and an abandonment proof's id
   absenceAttestation: 'ARENA/v1/AbsenceAttestation',
   departureNotice: 'ARENA/v1/DepartureNotice',
