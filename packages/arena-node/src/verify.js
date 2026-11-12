@@ -446,6 +446,10 @@ export class Verifier {
   }
 
   async #kept({ roundIdBytes, entryId, entry, contract, answer, options }) {
+    // A HEAD-TO-HEAD ENTRY IS NEVER KEPT AS A RUN (kanban #1586): it has no marks, so every rule below - above all #neverStarted's
+    // FORFEIT over the empty transcript - would sign a player who revealed in time as one who never played. Only
+    // #headToHeadClose signs it.
+    if (this.#headToHead(contract)) return { entryId, stored: false, why: 'a head-to-head entry is signed from the round\'s reveals, not kept as a run' };
     let canonical = null;
     let noCanonical = null;
     try { canonical = this.round.canonicalTranscript(roundIdBytes, entryId); }
@@ -732,7 +736,7 @@ export class Verifier {
    * FORFEIT for no reveal), then one signed result per entry through #sign - its transcript hash the digest of the entry's
    * reveal (32 zero bytes for none), its core the round's decide adapter. One promise per entry, as a replayed close.
    */
-  #headToHeadClose(roundIdBytes, contract, found) {
+  #headToHeadClose(roundIdBytes, contract, found, only = null) {
     // AN ENTRY BELOW THE ROUND'S THRESHOLD IS NO MEMBER (§17, kanban #1071): it is not decided, played against or signed for
     const entries = this.round.entriesOf(roundIdBytes).filter(({ entryId }) => !this.round.entryVoid(entryId));
     // AND IN A PAYING ROUND ONLY THE ENTRIES BACKED BY A LOCK ARE PLAYED (kanban #1437, audit 8 R3): one with no lock took no seat, is played against
@@ -740,8 +744,17 @@ export class Verifier {
     // fee lock (kanban #1544): the settlement counts only a seen stake, so an unseen one played was a stake never at risk
     const seated = new Set((typeof this.round.seatedEntriesOf === 'function' ? this.round.seatedEntriesOf(roundIdBytes, contract.stakeMsat, { played: true }) : entries).map(({ entryId }) => hex(entryId)));
     const decided = (async () => {
-      await this.carryReveals(roundIdBytes, entries, found.plugin.manifest.moveCount);
+      const carried = await this.carryReveals(roundIdBytes, entries, found.plugin.manifest.moveCount);
       const held = new Map(this.round.revealsOf(roundIdBytes).map((r) => [hex(r.entryId), r]));
+      // NO VERDICT WHILE THE REVEAL SET IS OPEN (kanban #1589, audit 2026-11-12 sm1-h2h-2): a reveal may stand at one seat only (the page
+      // counts it sent at one 201, SM-P3), so a seat whose peer did not answer its /reveals pull decided without it - the honest
+      // revealer FORFEIT, his opponent the lone revealer the WINNER - signed, and kept it for good (one result per seat), while the seat
+      // holding the reveal signed the opposite: neither verdict reached the threshold, the round never settled. Now a seated entry
+      // with no reveal held here, while a peer of the round did not answer, signs nothing yet: the finality watch closes again
+      // (retryClose) until every peer answered - then every reveal that stood at any seat is held - or the result window has passed.
+      const missing = entries.some(({ entryId }) => seated.has(hex(entryId)) && !held.has(hex(entryId)));
+      if (missing && carried && carried.down.length && !resultWindow(this.round, roundIdBytes, contract).ok)
+        return { waiting: `reveals not settled: ${carried.down.length} peer(s) of the round did not answer (${carried.down.join('; ').slice(0, 140)})` };
       const list = entries.filter(({ entryId }) => seated.has(hex(entryId)))
         .map(({ entryId }) => { const r = held.get(hex(entryId)); return { key: hex(entryId), move: r ? r.move : null }; });
       // DECIDED IN THE CORE'S SANDBOX (§0A.6): the moves in as JSON, the verdicts out as JSON
@@ -750,7 +763,9 @@ export class Verifier {
       if (!box || !box.meta.decide) throw new Error(`game "${found.plugin.manifest.gameName}"'s decide adapter is not installed on this node`);
       return { held, results: headToHeadResults(list, (moves, config) => box.call('decide', { moves, config }), found.config, { players: found.plugin.manifest.players }) };
     })();
-    return entries.map(({ entryId, entry }) => decided.then(({ held, results }) => {
+    // A RETRY SIGNS ONLY THE ENTRY IT WAS ASKED FOR (kanban #1586), decided over all of the round's reveals as the close is
+    return entries.filter(({ entryId }) => !only || hex(entryId) === hex(only)).map(({ entryId, entry }) => decided.then(({ held, results, waiting }) => {
+      if (waiting) return { entryId, stored: false, waiting: true, why: waiting };   // kanban #1589: no verdict while a peer may hold a reveal
       const r = results[hex(entryId)] || { outcome: VOID, score: 0 };
       const rv = held.get(hex(entryId));
       this.queued.push({ entryId, objected: false });
@@ -801,9 +816,11 @@ export class Verifier {
   /**
    * EVERY PEER'S REVEALS FOR A HEAD-TO-HEAD ROUND, each taken only if it hashes to the commitment its entry
    * named and is a move the game offers. Not held to the reveal window: a peer's door already was, and a reveal that came
-   * late can change no one's choice - the moves were committed before entry close. A peer that is down is skipped.
+   * late can change no one's choice - the moves were committed before entry close. A peer that is down is skipped,
+   * and named in what it returns ({ down }): a close that misses a reveal while one is down waits (kanban #1589).
    */
   async carryReveals(roundIdBytes, entries, moveCount) {
+    const down = [];
     const byId = new Map(entries.map((e) => [hex(e.entryId), e.entry]));
     // NO MORE PEERS ONCE EVERY ENTRY'S REVEAL IS HELD (kanban #576, measured 2026-10-23 02:39Z: /reveals was the largest fetch left on
     // test host seat 1, 216 a minute): a reveal is bound to its entry's commitment, so another peer can add nothing
@@ -818,9 +835,10 @@ export class Verifier {
         // and the body is read up to about 1 KiB per entry plus 64 KiB of slack (a reveal with its identity is ~350 bytes; the
         // array is not cut to the entry count, since a peer also sends reveals of entries this seat holds void).
         const answer = await peerFetch(`${peer}/reveals?round=${hex(roundIdBytes)}`);   // kanban #1550: the same deadline
-        if (!answer.ok) continue;
+        // a peer that holds no such round (404) holds no reveal of it: it answered (kanban #1589)
+        if (!answer.ok) { if (answer.status !== 404) down.push(`${peer}: ${answer.status}`); continue; }
         body = JSON.parse((await capped(answer, 65536 + byId.size * 1024)).toString('utf8'));
-      } catch { continue; }
+      } catch (e) { down.push(`${peer}: ${String(e && e.message || e).slice(0, 60)}`); continue; }
       for (const r of (body && Array.isArray(body.reveals) ? body.reveals : [])) {
         const entry = byId.get(String(r.entry));
         if (!entry || !(entry.commit instanceof Uint8Array) || !Number.isInteger(r.move) || r.move < 0 || r.move >= moveCount) continue;
@@ -843,6 +861,7 @@ export class Verifier {
         }
       }
     }
+    return { down };
   }
 
   #attested(contract) {
@@ -1348,6 +1367,15 @@ export class Verifier {
     const row = this.round.get(roundIdBytes);
     if (!row) return { entryId: entryIdBytes, stored: false, why: 'no such round' };
     const contract = decodeRoundContract(new Uint8Array(row.contract));
+    // A HEAD-TO-HEAD ROUND'S ENTRY IS RETRIED AS ITS CLOSE IS, NEVER AS A RUN (kanban #1586): the reveals carried, the decide
+    // asked again, the entry signed from the reveals (WIN / DRAW / LOSS, FORFEIT only for no reveal) - or nothing, and the watch
+    // asks again (kanban #1589: a close waiting on a peer that may hold a reveal answers `waiting` for this entry too). Before, a close whose decide failed once (a sandbox call past ASK_MS, a load past LOAD_MS) came here, found no
+    // first mark and every peer up, and #kept signed every revealed entry - the winner too - FORFEIT 0 as a run that never started.
+    { const h2h = this.#headToHead(contract);
+      if (h2h) {
+        const [work] = this.#headToHeadClose(roundIdBytes, contract, h2h, entryIdBytes);
+        return work ? await work : { entryId: entryIdBytes, stored: false, why: 'no such member entry in that head-to-head round' };
+      } }
     const found = this.round.entriesOf(roundIdBytes).find((e) => hex(e.entryId) === hex(entryIdBytes));
     if (!found) return { entryId: entryIdBytes, stored: false, why: 'no such entry in that round' };
     const beacon = beaconFor(this.randomnessFor, contract, roundIdBytes, found.entry, entryIdBytes, this.chainFor);
@@ -2225,6 +2253,14 @@ export class Verifier {
     const row = this.round.get(roundIdBytes);
     if (!row) return null;
     const contract = decodeRoundContract(new Uint8Array(row.contract));
+    // A HEAD-TO-HEAD ENTRY IS RETRIED AS ITS CLOSE, never replayed as a run (kanban #1586; as #retryClose)
+    { const h2h = this.#headToHead(contract);
+      if (h2h) {
+        const [work] = this.#headToHeadClose(roundIdBytes, contract, h2h, entryIdBytes);
+        if (!work) return null;
+        this.done = [...this.done, work];
+        return work;
+      } }
     const found = this.round.entriesOf(roundIdBytes)
       .find((e) => hex(e.entryId) === hex(entryIdBytes));
     if (!found) return null;

@@ -175,6 +175,30 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   const history = new Map();                 // fid -> Map(height -> record)
   const remember = (fid, rec) => { if (!history.has(fid)) history.set(fid, new Map()); history.get(fid).set(Number(rec.height), rec);
     if (store && store.saveAt) { try { store.saveAt(fid, Number(rec.height), rec.__hex); } catch { /* in memory */ } } };
+  // the history of `fid` with the store's rows read in once (they were each verified when saved), those in memory kept as they are
+  const historyRead = new Set();
+  const historyOf = (fid) => {
+    if (!historyRead.has(fid) && store && store.loadAt) {
+      historyRead.add(fid);
+      try { for (const r of store.loadAt(fid) || []) { try { if (history.has(fid) && history.get(fid).has(Number(r.height))) continue; const rec = decodeFederationRecord(splitSignedRecord(fromHex(r.record)).body); remember(fid, Object.assign(Object.create(null), rec, { __hex: r.record })); } catch { /* skip */ } } } catch { /* none */ }
+    }
+    return history.get(fid) || null;
+  };
+  // THE HALT START OUTLIVES A RESTART (kanban #1578, state audit 2026-11-12): the store keeps only the newest record per federation, and
+  // restore() keep()s that one, so a restarted seat counted the halt - and every liquidation clock (liquidatesAt, claim window, late-claim
+  // tail, remainder split) - from the NEWEST HALTED record, while a seat that did not restart counted from the first: two seats, two clocks
+  // for one halt. The run's start is read back from the record history (saveAt/loadAt): from the kept HALTED record down, height by
+  // height, while the record is HALTED - the lowest of that run
+  const haltStartOf = (fid, height, bytes) => {
+    let start = { height, bytes };
+    const m = historyOf(fid);
+    if (m) for (const h of [...m.keys()].filter((x) => x < height).sort((a, b) => b - a)) {
+      const rec = m.get(h);
+      if (Number(rec.status) !== FEDERATION_STATUS.HALTED || !rec.__hex) break;
+      start = { height: h, bytes: fromHex(rec.__hex) };
+    }
+    return start;
+  };
   function keep(fid, bytes, v, from = 'gather') {
     // A CLOSED RECORD IS FINAL (kanban #577, measured 2026-10-22 on federation 89ce310e: n495-1 held it CLOSED with 7 of 10 signatures, set its
     // guardian aside, and every other seat kept the OPEN record of the same height - one guardian fewer, they could never sign the closed
@@ -189,7 +213,8 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     if (store) { try { store.save(fid, toHex(bytes)); } catch { /* kept in memory */ } }
     if (['DRAINING', 'CRITICAL', 'CLOSED', 'HALTED'].includes(v.status)) draining.set(fid, v.status); else draining.delete(fid);
     if (v.status !== 'HALTED') halted.delete(fid);
-    else if (!halted.has(fid) || halted.get(fid).height > v.record.height) halted.set(fid, { height: v.record.height, bytes });
+    else if (!halted.has(fid)) halted.set(fid, haltStartOf(fid, v.record.height, bytes));
+    else if (halted.get(fid).height > v.record.height) halted.set(fid, { height: v.record.height, bytes });
     return true;
   }
 
@@ -328,12 +353,12 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   }
 
   // THE RECORD IN FORCE AT A HEIGHT: the newest this seat verified at or below it (null when it holds none)
-  const historyRead = new Set();             // federations whose stored history is in memory
+  // (historyRead, historyOf above: the federations whose stored history is in memory, shared with the halt start, kanban #1578)
   function recordAt(fid, height) {
     const f = String(fid).toLowerCase(); let m = history.get(f);
     // THE STORED HISTORY ONCE PER FEDERATION, NOT ONLY WHEN NONE IS IN MEMORY (kanban #993): after a restart restore() remembers the newest
     // record alone, and every older height then answered null - a round's census height, or a founding's trigger_height - 12
-    if (!historyRead.has(f) && store && store.loadAt) { historyRead.add(f); try { for (const r of store.loadAt(f) || []) { try { const bytes = fromHex(r.record); const rec = decodeFederationRecord(splitSignedRecord(bytes).body); remember(f, Object.assign(Object.create(null), rec, { __hex: r.record })); } catch { /* skip */ } } } catch { /* none */ } m = history.get(f); }
+    if (!historyRead.has(f)) m = historyOf(f);
     if (!m) return null;
     let best = null; for (const [h, rec] of m) if (h <= Number(height) && (!best || h > best.height)) best = rec;
     return best;

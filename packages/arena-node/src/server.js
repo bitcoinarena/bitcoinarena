@@ -3936,7 +3936,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // ARENA_EXCHANGE_HOUR_SAT set its limits (1,000 sat an exchange, 20,000 sat an hour)
   const ecashExchange = stakeLocks && process.env.ARENA_EXCHANGE !== '0' ? createEcashExchange({ db: round.db,
     // a federation this seat lists as liquidating is exchanged neither out of nor into (kanban #1244)
-    halted: (f) => { try { return liquidations ? liquidations.haltOf(String(f).toLowerCase()) : null; } catch { return null; } },
+    // no catch here (kanban #1577): a halt check that throws refuses the exchange (ecash-exchange.js), it never lets it through
+    halted: (f) => (liquidations ? liquidations.haltOf(String(f).toLowerCase()) : null),
     portOf: (f) => portOfFederation(fromHex(f)), maxMsat: BigInt(process.env.ARENA_EXCHANGE_MAX_SAT || 1000) * 1000n,
     perHourMsat: BigInt(process.env.ARENA_EXCHANGE_HOUR_SAT || 20000) * 1000n, log: (m) => console.log(m) }) : null;
   async function portOfFederation(fid) {
@@ -4438,11 +4439,28 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
    * (M3.3-33) are the same work and must not become two paths.
    */
   // WHICH ROUND IS HEAD-TO-HEAD (kanban #1068, #1071): declared here, filled in below. A close sweep can fire while the server is still being set up
-  // (measured 2026-11-03 on a restarted seat: "Cannot access 'headToHeadRound' before initialization" from afterClose, and the seat exited); until then a round is
-  // closed as before #1071, without first learning who is in it.
+  // (measured 2026-11-03 on a restarted seat: "Cannot access 'headToHeadRound' before initialization" from afterClose, and the seat exited); until then a close
+  // waits (kanban #1587, below) - it is no longer closed as before #1071.
   let headToHeadRound = () => null, headToHeadReady = false, relayedRound = () => null;
+  // NO CLOSE LOGIC RUNS BEFORE THE SEAT CAN LEARN WHO IS IN A ROUND (kanban #1587): the start's own close sweep runs inside serve(), before
+  // `headToHeadReady`, and a seat restarted past a head-to-head round's end signed VOID 0 over the one entry it held while the threshold signed
+  // FAILED / DELIVERED - final, one result per entry. A close asked for before then waits for it; and one round's close logic runs once at a time
+  // (the start's sweep and resumingCloses each closed the same round, in parallel): a second ask while one runs is answered by the one running.
+  let headToHeadReadyGo = () => {};
+  const headToHeadReadyAt = new Promise((go) => { headToHeadReadyGo = go; });
+  const closingNow = new Map();
   const H2H_HANDOUT_LEAD_MS = h2hHandoutLeadMs;   // kanban #1485: a head-to-head handout this close to the entry close is refused (takeHandout); a lock alone takes 2.2-2.7 s
   function afterClose(roundIdBytes) {
+    const key = toHex(roundIdBytes);
+    const running = closingNow.get(key);
+    if (running) return running;
+    const p = (headToHeadReady ? closeLogic(roundIdBytes) : headToHeadReadyAt.then(() => closeLogic(roundIdBytes)))
+      .finally(() => { if (closingNow.get(key) === p) closingNow.delete(key); });
+    closingNow.set(key, p);
+    stakes = p;
+    return p;
+  }
+  function closeLogic(roundIdBytes) {
     // §16 AT THE CLOSE: an entry whose on-time first mark is still short of the
     // threshold, the signer nodes it is short of offered it and silent, is ENTRY_VOID
     // with "closed" as the evidence - and the other signer nodes are shown it.
@@ -4455,7 +4473,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     })().catch((e) => console.error(`[entry-void] ${e.message}`));
     // A HEAD-TO-HEAD SEAT FIRST LEARNS WHO IS IN THE ROUND (kanban #1071), and with a wait that ran out it signs nothing
     const h2h = headToHeadReady ? headToHeadRound(roundIdBytes) : null;
-    stakes = (h2h ? membersKnown(roundIdBytes, h2h).catch((e) => { console.error(`[entry] ${e.message}`); return true; }) : Promise.resolve(true))
+    return (h2h ? membersKnown(roundIdBytes, h2h).catch((e) => { console.error(`[entry] ${e.message}`); return true; }) : Promise.resolve(true))
       .then((known) => (known ? timed(`close ${toHex(roundIdBytes).slice(0, 8)} settleRound`, () => verifier.settleRound(roundIdBytes)) : null))
       .then(async (closed) => {
         if (!closed) return { ok: false, why: 'this seat could not learn who is in the round: it signs nothing for it' };
@@ -4467,7 +4485,6 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return money;
       })
       .catch((e) => { console.error(`[verify] ${e.message}`); return { ok: false, why: e.message }; });
-    return stakes;
   }
 
   async function settleTheStakes(roundIdBytes, closed) {
@@ -5843,9 +5860,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
   };
   headToHeadReady = true;   // both headToHeadRound and membersKnown stand from here (kanban #1068)
+  headToHeadReadyGo();       // and a close asked for before now runs (kanban #1587)
   // A STAKE'S HANDOUT, CHECKED AND KEPT: what POST /handout does, and what a seat does for the handout of an order a certified batch names
   // that never reached it (replayOrder). The round's threshold, not the player's (M3.3-26); one polynomial; this seat's own share opens.
   // Answers { ok, id, signerNode } or { ok: false, status, why }.
+  // WHETHER ONE OF THE ROUND'S OTHER SEATS ALREADY HOLDS THIS VERY HANDOUT (kanban #1595, #1485): its GET /handout answers the same bytes
+  const aPeerHoldsHandout = async (rid, handout) => {
+    const want = encodeHandout(handout), id = toHex(handoutId(handout));
+    let peers;
+    try { peers = verifier.peersOf(rid).map((p) => String(p).replace(/\/+$/, '')); } catch { return false; }
+    const said = await Promise.all(peers.map(async (base) => {
+      try {
+        const r = await fetch(`${base}/handout?id=${id}`, { signal: AbortSignal.timeout(1500) });
+        return r.ok && Buffer.from(await r.arrayBuffer()).equals(Buffer.from(want));
+      } catch { return false; }
+    }));
+    return said.some(Boolean);
+  };
   const takeHandout = async (bytes, { accepted = false } = {}) => {
     let handout;
     try { handout = decodeHandout(bytes); } catch (e) { return { ok: false, status: 400, why: 'that is not a handout: ' + e.message }; }
@@ -5858,7 +5889,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // die order nicht angenommen wird"; feedback #010, round 77bd9609: this door took a handout 1.8 s after the close, the player's page locked the stake, and
     // every seat refused the entry - the developers' and reserves' parts of that lock stayed spent). A head-to-head round takes no entry from its close, and a
     // lock takes 2.2-2.7 s at the seats: a handout with less than H2H_HANDOUT_LEAD_MS left is refused, so the page locks nothing
-    if (!accepted && headToHeadReady && headToHeadRound(handout.roundId) && BigInt(round.now()) > roundContract.entryCloseMs - BigInt(H2H_HANDOUT_LEAD_MS))
+    // BUT ONLY A HANDOUT NO SEAT OF THE ROUND HAS TAKEN YET (kanban #1595, the #1489 audit of #1485): the seat-to-seat relay (entry-relay.js) hands an
+    // entry's handout on 0.7-1.2 s after the first seat took it, through this same door, and the lead refused it there - the entry a client sent in
+    // time then never reached the seat its post missed, too few seats held it, and the lock already made was spent for nothing: the very loss #1485
+    // stops. A handout one of the round's own seats already holds was dealt before that seat's lead - the page's lock is made or on its way - so it is
+    // taken here until the close itself. The proof is the peer's copy, read here (GET /handout, as replayOrder reads it), byte for byte this one;
+    // never a header a client could send. A handout no peer holds is a client's first one and still refused inside the lead.
+    const nowMs = BigInt(round.now());
+    if (!accepted && headToHeadReady && headToHeadRound(handout.roundId) && nowMs > roundContract.entryCloseMs - BigInt(H2H_HANDOUT_LEAD_MS)
+      && (nowMs >= roundContract.entryCloseMs || !(await aPeerHoldsHandout(handout.roundId, handout))))
       return { ok: false, status: 409, why: `handout refused: that round's entries close at ${new Date(Number(roundContract.entryCloseMs)).toISOString()}, and a head-to-head order needs ${H2H_HANDOUT_LEAD_MS / 1000} s before it to lock and enter - nothing is locked, tap the next round` };
     let threshold;
     try { threshold = roundThreshold(roundContract.settlementSlots); } catch (e) { return { ok: false, status: 409, why: e.message }; }
@@ -11440,7 +11479,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (toHex(refundKeyOf(held.handout.playerPubkey)) !== toHex(fields.refundPk))
           return text(res, 409, 'that lock\'s refund key is not the handout player\'s: it returns to nobody this round dealt');
         const player = toHex(held.handout.playerPubkey);
-        if (round.entriesOf(rid).some(({ entry }) => toHex(entry.playerPubkey) === player))
+        // ENTERED = AN ENTRY THIS SEAT HOLDS A STAKE FOR (kanban #1582, state audit 2026-11-12): the /entry door takes an entry before
+        // any lock (kanban #1437), so a player whose lock /lock refused (the last head-to-head seat taken, another entry of his key
+        // staked, a lock after close) has an entry here that the round never counts or settles - a bare held entry kept his lock to
+        // its expiry. Only an entry of his whose stake this seat saw or whose stake lock it holds (round.js seatedEntriesOf's rule)
+        // settles a stake with the round.
+        if (round.entriesOf(rid).some(({ entryId, entry }) => toHex(entry.playerPubkey) === player && (!!round.stakeSeen(entryId) || !!round.stakeLock(entryId))))
           return text(res, 409, 'that player entered the round at this signer node: the stake is settled with the round');
         const lport = (lockFed ? await portOfFederation(lockFed) : await portOfRid(rid)) || stakeLocks;
         const [st, id] = await Promise.all([lport.status(outpoint), lport.contractId(fields)]);
