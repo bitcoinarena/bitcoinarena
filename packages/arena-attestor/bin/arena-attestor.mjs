@@ -94,13 +94,14 @@ const readMarkets = async () => {
   if (Date.now() - marketsReadMs < MARKETS_EVERY_MS) return;
   const games = [];
   let read = 0;
-  for (const seat of SEATS) {
+  // every seat at once (kanban #1891): one seat that never answers costs one timeout, not one per seat after it
+  await Promise.all(SEATS.map(async (seat) => {
     try {
       const r = await fetch(`${seat}/games`, { signal: AbortSignal.timeout(8000) });
-      if (!r.ok) continue;
+      if (!r.ok) return;
       games.push(...((await r.json()).games || [])); read++;
-    } catch { /* the next seat */ }
-  }
+    } catch { /* the other seats */ }
+  }));
   if (!read) return;
   marketsReadMs = Date.now();
   const key = toHex(attestor.pubkey);
@@ -159,138 +160,200 @@ const roundsOfGame = async () => {
   }));
   return [...byId].map(([id, v]) => ({ id, ...v }));
 };
+// NO SEAT CAN STALL ANOTHER ROUND'S WORD (kanban #1891, #1489, refute of 3285179cc): the contracts were asked for one round after
+// another, one seat after another, inside the single tick (8 s each, `now` taken once at its start) - one seat listing N fake rounds
+// of the market it never serves pushed every tick to 8*N s, the real round's word past `window.endMs + 1 h` (never signed: VOID),
+// a refund that seat could turn on just before the close, after watching the price. Now:
+//  - a round's contract is asked of every seat AT ONCE, the first verified answer wins (firstOf) - its template likewise;
+//  - each round is handled on its own (handleRound, one at a time per round, never awaited by the tick): a slow seat, contract
+//    or POST /outcome holds back only the round it is about, and each round takes its own `now`;
+//  - a round with no verified contract is asked about only while one of its listed closes is on the market's grid and inside the
+//    signing hour, and each seat's listing gets at most UNVERIFIED_PER_SEAT such rounds at a time (the latest closes first): a
+//    seat that lists hundreds of fakes spends only its own share, a round an honest seat lists is taken on that seat's share.
+const UNVERIFIED_PER_SEAT = Number(arg('unverified-per-seat', '32'));
+const HOUR = 3600000n;
+// the first non-null answer of fn over items, all asked at once; null once every one answered null (or failed)
+const firstOf = (items, fn) => new Promise((resolve) => {
+  let left = items.length, done = false;
+  if (!left) return resolve(null);
+  for (const it of items) {
+    Promise.resolve().then(() => fn(it)).catch(() => null).then((v) => {
+      left--;
+      if (done) return;
+      if (v) { done = true; resolve(v); } else if (!left) { done = true; resolve(null); }
+    });
+  }
+});
+// one seat's contract for the round, verified (attestor.js roundCloseOf), or null
+const contractFrom = async (seat, r) => {
+  const x = await fetch(`${seat}/round?id=${r.id}`, { signal: AbortSignal.timeout(8000) });
+  if (!x.ok) return null;
+  const bytes = new Uint8Array(await x.arrayBuffer());
+  let got = roundCloseOf({ id: r.id, contract: bytes, marketIds });
+  if (!got.ok && got.seriesId) {
+    const t = await firstOf([seat, ...SEATS.filter((s) => s !== seat)], async (s2) => {
+      const y = await fetch(`${s2}/series-template?id=${got.seriesId}`, { signal: AbortSignal.timeout(8000) });
+      if (!y.ok) return null;
+      const k = roundCloseOf({ id: r.id, contract: bytes, seriesLine: await y.text(), marketIds });
+      return k.ok ? k : null;
+    });
+    if (t) got = t;
+  }
+  if (!got.ok) { log({ step: 'contract not believed', round: r.id, seat, why: got.why }); return null; }
+  const p = periods.get(got.gameId) || 0n;
+  if (p > 0n && got.closeMs % p !== 0n) { log({ step: 'contract off the grid', round: r.id, seat, closeMs: got.closeMs, periodMs: p }); return null; }
+  return got;
+};
 // the round's close: its contract's, else the one close every seat listing it agrees on, else none (signs nothing yet)
-const closeOfRound = async (r, nowMs) => {
+const closeOfRound = async (r) => {
   const known = closes.get(r.id);
   if (known) return { closeMs: known.closeMs, gameId: known.gameId, from: 'contract' };
   const listedCloses = [...new Set([...r.listedBy.values()].map(String))];
   // only a round whose window may have ended is worth asking about: its listed closes are all this attestor has before
+  const nowMs = BigInt(Date.now());
   const due = [...r.listedBy.values()].some((c) => nowMs >= c + BigInt(SAMPLE_MS));
   if (due && Date.now() - (closeTried.get(r.id) || 0) >= CONTRACT_RETRY_MS) {
     closeTried.set(r.id, Date.now());
-    const order = [...r.listedBy.keys(), ...SEATS.filter((s) => !r.listedBy.has(s))];
-    for (const seat of order) {
-      try {
-        const x = await fetch(`${seat}/round?id=${r.id}`, { signal: AbortSignal.timeout(8000) });
-        if (!x.ok) continue;
-        const bytes = new Uint8Array(await x.arrayBuffer());
-        let got = roundCloseOf({ id: r.id, contract: bytes, marketIds });
-        if (!got.ok && got.seriesId) {
-          let line = null;
-          for (const s2 of [seat, ...SEATS.filter((s) => s !== seat)]) {
-            try { const y = await fetch(`${s2}/series-template?id=${got.seriesId}`, { signal: AbortSignal.timeout(8000) }); if (y.ok) { line = await y.text(); break; } } catch { /* the next seat */ }
-          }
-          if (line !== null) got = roundCloseOf({ id: r.id, contract: bytes, seriesLine: line, marketIds });
-        }
-        if (got.ok) {
-          const p = periods.get(got.gameId) || 0n;
-          if (p > 0n && got.closeMs % p !== 0n) { log({ step: 'contract off the grid', round: r.id, seat, closeMs: got.closeMs, periodMs: p }); continue; }
-          closes.set(r.id, { closeMs: got.closeMs, gameId: got.gameId }); closeTried.delete(r.id);
-          const liars = [...r.listedBy].filter(([, c]) => c !== got.closeMs).map(([s]) => s);
-          if (liars.length) log({ step: 'listed close is not the contract\'s', round: r.id, contract: got.closeMs, seats: liars });
-          return { closeMs: got.closeMs, gameId: got.gameId, from: 'contract' };
-        }
-        log({ step: 'contract not believed', round: r.id, seat, why: got.why });
-      } catch { /* the next seat */ }
+    const got = await firstOf([...r.listedBy.keys(), ...SEATS.filter((s) => !r.listedBy.has(s))], (seat) => contractFrom(seat, r));
+    if (got) {
+      closes.set(r.id, { closeMs: got.closeMs, gameId: got.gameId }); closeTried.delete(r.id);
+      const liars = [...r.listedBy].filter(([, c]) => c !== got.closeMs).map(([s]) => s);
+      if (liars.length) log({ step: 'listed close is not the contract\'s', round: r.id, contract: got.closeMs, seats: liars });
+      return { closeMs: got.closeMs, gameId: got.gameId, from: 'contract' };
     }
   }
   if (listedCloses.length !== 1) return { closeMs: null, why: `the seats list ${listedCloses.length} closes for it and none serves its contract` };
   return { closeMs: BigInt(listedCloses[0]), gameId: r.gameId, from: 'listing' };
 };
 
+// THE ROUNDS WORTH WORK THIS TICK: every round whose close is known from its contract or that holds a word; of the others, only
+// a round that is due, inside the signing hour and on the market's grid by some seat's listing - at most UNVERIFIED_PER_SEAT of
+// them per listing seat, the latest closes first (a round is taken on the first of its seats with room left)
+const capped = new Set();              // seats logged once as listing more unverified rounds than their share
+const roundsToWork = (rounds) => {
+  const nowMs = BigInt(Date.now());
+  const out = [];
+  const open = [];
+  for (const r of rounds) {
+    if (closes.has(r.id) || words.has(r.id)) { out.push(r); continue; }
+    const gp = periods.get(r.gameId);
+    const ok = [...r.listedBy.values()].filter((c) => nowMs >= c + BigInt(SAMPLE_MS) && nowMs < c + HOUR && !(typeof gp === 'bigint' && gp > 0n && c % gp !== 0n));
+    if (!ok.length) continue;
+    open.push({ r, latest: ok.reduce((a, b) => (b > a ? b : a)) });
+  }
+  open.sort((a, b) => (a.latest > b.latest ? -1 : a.latest < b.latest ? 1 : 0));
+  const used = new Map();
+  for (const { r } of open) {
+    const seat = [...r.listedBy.keys()].find((s) => (used.get(s) || 0) < UNVERIFIED_PER_SEAT);
+    if (seat === undefined) {
+      for (const s of r.listedBy.keys()) if (!capped.has(s)) { capped.add(s); log({ step: 'seat lists too many unverified rounds', seat: s, share: UNVERIFIED_PER_SEAT }); }
+      continue;
+    }
+    used.set(seat, (used.get(seat) || 0) + 1);
+    out.push(r);
+  }
+  return out;
+};
+
 // round hex -> { closeMs, by: the seat whose budget it spent } (kanban #1613): the words, posted, noRound and closes maps keep a round
 // for KEEP_ROUND_MS after its window's end and no longer (no word is signed past the hour; the rest is for late peer pulls)
 const roundMeta = new Map();
-const KEEP_ROUND_MS = 2n * 3600000n;
+const KEEP_ROUND_MS = 2n * HOUR;
 const prune = (now) => {
   for (const [id, m] of roundMeta) {
     if (now < m.closeMs + KEEP_ROUND_MS) continue;
     roundMeta.delete(id); words.delete(id); posted.delete(id); noRound.delete(id); closes.delete(id); closeTried.delete(id);
   }
 };
+const busy = new Set();                // round hex: being handled (one handleRound per round at a time)
 let ticking = false;
 const tick = async () => {
-  // ONE TICK AT A TIME (kanban #1613): a slow tick (many rounds, slow peers) no longer has the next ones pile up on it
   if (ticking) return;
   ticking = true;
-  try { await tickOnce(); } finally { ticking = false; }
+  let rounds;
+  prune(BigInt(Date.now()));
+  try { rounds = roundsToWork(await roundsOfGame()); } finally { ticking = false; }
+  for (const r of rounds) {
+    if (busy.has(r.id)) continue;
+    busy.add(r.id);
+    handleRound(r).catch((e) => log({ step: 'round failed', round: r.id, why: e.message })).finally(() => busy.delete(r.id));
+  }
   if (closes.size > 5000) closes.clear();
   if (closeTried.size > 5000) closeTried.clear();
   if (noClose.size > 5000) noClose.clear();
 };
-const tickOnce = async () => {
-  const now = BigInt(Date.now());
-  prune(now);
-  const spent = new Map();
-  for (const m of roundMeta.values()) spent.set(m.by, (spent.get(m.by) || 0) + 1);
-  for (const r of await roundsOfGame()) {
-    const c = await closeOfRound(r, now);
-    if (c.closeMs === null) {
-      if (!noClose.has(r.id)) { noClose.add(r.id); log({ step: 'no close', round: r.id, why: c.why }); }
-      // a word signed for a close the seats no longer agree on is not served on as this round's
-      if (words.has(r.id) && words.get(r.id).from !== 'contract') { words.delete(r.id); posted.delete(r.id); }
-      continue;
-    }
-    noClose.delete(r.id);
-    // THE MARKET'S OWN GRID, when its manifest names one; else --period-ms as before
-    const gp = periods.get(c.gameId);
-    const period = typeof gp === 'bigint' && gp > 0n ? gp : PERIOD_MS;
-    if (c.from === 'listing' && typeof gp === 'bigint' && gp > 0n && c.closeMs % gp !== 0n) {
-      if (!noClose.has(r.id)) { noClose.add(r.id); log({ step: 'listed close off the grid', round: r.id, closeMs: c.closeMs, periodMs: gp }); }
-      continue;
-    }
-    const window = { startMs: c.closeMs - period, endMs: c.closeMs };
-    // a word signed for ANOTHER close (one seat's listing, since corrected or since read from the contract) is signed again
-    const had = words.get(r.id);
-    if (had && had.closeMs !== c.closeMs) {
-      log({ step: 'signs again', round: r.id, was: had.closeMs, close: c.closeMs, from: c.from });
-      words.delete(r.id); posted.delete(r.id);
-    }
-    // ONE WORD PER ROUND AND CLOSE, once its window ended and the reading at its end is in (one sample period after it)
-    if (!words.has(r.id) && now >= window.endMs + BigInt(SAMPLE_MS) && now < window.endMs + 3600000n) {
-      // kanban #1613: the word is charged to one seat that listed the round and has budget left; none left -> no word
-      const by = [...r.listedBy.keys()].find((seat) => (spent.get(seat) || 0) < SEAT_WORDS_PER_HOUR);
-      if (by === undefined) continue;
-      spent.set(by, (spent.get(by) || 0) + 1);
-      roundMeta.set(r.id, { closeMs: c.closeMs, by });
-      const w = (MODE === 'value' ? attestValue : attestWindow)({ samples, roundId: fromHex(r.id), window, attestor });
-      words.set(r.id, w.ok ? { ...w, closeMs: c.closeMs, from: c.from } : { none: w.why, closeMs: c.closeMs, from: c.from });
-      log(w.ok ? { step: 'signed', round: r.id, from: c.from, window: { start: new Date(Number(window.startMs)).toISOString(), end: new Date(Number(window.endMs)).toISOString() },
-        ...(MODE === 'value' ? { value: w.value } : { priceToBeat: w.priceToBeat, endPrice: w.endPrice, outcome: w.label }),
-        samples: samples.filter((s) => s.atMs >= window.startMs - 60000n && s.atMs < window.endMs).length }
-        : { step: 'signs nothing', round: r.id, why: w.why });
-    }
-    const mine = words.get(r.id);
-    if (!mine || mine.none) continue;
-    const held = posted.get(r.id) || new Set();
-    const absent = noRound.get(r.id) || new Map();
-    if (SEATS.every((seat) => held.has(seat) || (absent.get(seat) || 0) > Date.now())) continue;
-    // THE OTHER ATTESTORS' WORDS, and the attestation once the threshold of them sign one body
-    const theirs = await Promise.all(PEERS.map(async (p) => {
-      try { const x = await fetch(`${p}/attestation?round=${r.id}`, { signal: AbortSignal.timeout(5000) }); return x.ok ? wordFromJson(await x.json()) : null; } catch { return null; }
-    }));
-    const all = [mine, ...theirs.filter(Boolean)];
-    const att = combine(all, { attestors: ATTESTORS, threshold: THRESHOLD });
-    if (!att) continue;
-    for (const seat of SEATS) {
-      if (held.has(seat) || (absent.get(seat) || 0) > Date.now()) continue;
-      try {
-        const x = await fetch(`${seat}/outcome?round=${r.id}`, { method: 'POST', body: att.bytes, signal: AbortSignal.timeout(8000) });
-        const text = (await x.text()).trim();
-        if (x.status === 201 || x.status === 200) { held.add(seat); log({ step: 'posted', round: r.id, seat, status: x.status, signers: att.signers, ...(MODE === 'value' ? { value: att.body.value } : { outcome: att.body.outcome }),
-          words: all.map((w) => ({ key: w.key.slice(0, 8), ...(MODE === 'value' ? { value: w.body.value } : { outcome: w.body.outcome }) })) }); }
-        else if (x.status === 404) {
-          if (!absent.has(seat)) log({ step: 'seat holds no such round', round: r.id, seat, again: `in ${NO_ROUND_RETRY_MS / 1000} s` });
-          absent.set(seat, Date.now() + NO_ROUND_RETRY_MS); noRound.set(r.id, absent);
-        } else {
-          log({ step: 'post refused', round: r.id, seat, status: x.status, why: text.slice(0, 200) });
-          // a seat that says the word is of another window: its contract is asked for again at once (never a reason to stop)
-          if (/another window/.test(text) && !closes.has(r.id)) closeTried.delete(r.id);
-        }
-      } catch (e) { log({ step: 'post failed', round: r.id, seat, why: e.message }); }
-    }
-    posted.set(r.id, held);
+const handleRound = async (r) => {
+  const c = await closeOfRound(r);
+  if (c.closeMs === null) {
+    if (!noClose.has(r.id)) { noClose.add(r.id); log({ step: 'no close', round: r.id, why: c.why }); }
+    // a word signed for a close the seats no longer agree on is not served on as this round's
+    if (words.has(r.id) && words.get(r.id).from !== 'contract') { words.delete(r.id); posted.delete(r.id); }
+    return;
   }
+  noClose.delete(r.id);
+  // THE MARKET'S OWN GRID, when its manifest names one; else --period-ms as before
+  const gp = periods.get(c.gameId);
+  const period = typeof gp === 'bigint' && gp > 0n ? gp : PERIOD_MS;
+  if (c.from === 'listing' && typeof gp === 'bigint' && gp > 0n && c.closeMs % gp !== 0n) {
+    if (!noClose.has(r.id)) { noClose.add(r.id); log({ step: 'listed close off the grid', round: r.id, closeMs: c.closeMs, periodMs: gp }); }
+    return;
+  }
+  const window = { startMs: c.closeMs - period, endMs: c.closeMs };
+  // a word signed for ANOTHER close (one seat's listing, since corrected or since read from the contract) is signed again
+  const had = words.get(r.id);
+  if (had && had.closeMs !== c.closeMs) {
+    log({ step: 'signs again', round: r.id, was: had.closeMs, close: c.closeMs, from: c.from });
+    words.delete(r.id); posted.delete(r.id);
+  }
+  // ONE WORD PER ROUND AND CLOSE, once its window ended and the reading at its end is in (one sample period after it) - `now`
+  // is this round's own, taken once its close is known (kanban #1891)
+  const now = BigInt(Date.now());
+  if (!words.has(r.id) && now >= window.endMs + BigInt(SAMPLE_MS) && now < window.endMs + HOUR) {
+    // kanban #1613: the word is charged to one seat that listed the round and has budget left; none left -> no word
+    const spent = new Map();
+    for (const m of roundMeta.values()) spent.set(m.by, (spent.get(m.by) || 0) + 1);
+    const by = [...r.listedBy.keys()].find((seat) => (spent.get(seat) || 0) < SEAT_WORDS_PER_HOUR);
+    if (by === undefined) return;
+    roundMeta.set(r.id, { closeMs: c.closeMs, by });
+    const w = (MODE === 'value' ? attestValue : attestWindow)({ samples, roundId: fromHex(r.id), window, attestor });
+    words.set(r.id, w.ok ? { ...w, closeMs: c.closeMs, from: c.from } : { none: w.why, closeMs: c.closeMs, from: c.from });
+    log(w.ok ? { step: 'signed', round: r.id, from: c.from, window: { start: new Date(Number(window.startMs)).toISOString(), end: new Date(Number(window.endMs)).toISOString() },
+      ...(MODE === 'value' ? { value: w.value } : { priceToBeat: w.priceToBeat, endPrice: w.endPrice, outcome: w.label }),
+      samples: samples.filter((s) => s.atMs >= window.startMs - 60000n && s.atMs < window.endMs).length }
+      : { step: 'signs nothing', round: r.id, why: w.why });
+  }
+  const mine = words.get(r.id);
+  if (!mine || mine.none) return;
+  const held = posted.get(r.id) || new Set();
+  const absent = noRound.get(r.id) || new Map();
+  if (SEATS.every((seat) => held.has(seat) || (absent.get(seat) || 0) > Date.now())) return;
+  // THE OTHER ATTESTORS' WORDS, and the attestation once the threshold of them sign one body
+  const theirs = await Promise.all(PEERS.map(async (p) => {
+    try { const x = await fetch(`${p}/attestation?round=${r.id}`, { signal: AbortSignal.timeout(5000) }); return x.ok ? wordFromJson(await x.json()) : null; } catch { return null; }
+  }));
+  const all = [mine, ...theirs.filter(Boolean)];
+  const att = combine(all, { attestors: ATTESTORS, threshold: THRESHOLD });
+  if (!att) return;
+  // every seat at once (kanban #1891): a seat that holds a POST open delays no other seat
+  await Promise.all(SEATS.map(async (seat) => {
+    if (held.has(seat) || (absent.get(seat) || 0) > Date.now()) return;
+    try {
+      const x = await fetch(`${seat}/outcome?round=${r.id}`, { method: 'POST', body: att.bytes, signal: AbortSignal.timeout(8000) });
+      const text = (await x.text()).trim();
+      if (x.status === 201 || x.status === 200) { held.add(seat); log({ step: 'posted', round: r.id, seat, status: x.status, signers: att.signers, ...(MODE === 'value' ? { value: att.body.value } : { outcome: att.body.outcome }),
+        words: all.map((w) => ({ key: w.key.slice(0, 8), ...(MODE === 'value' ? { value: w.body.value } : { outcome: w.body.outcome }) })) }); }
+      else if (x.status === 404) {
+        if (!absent.has(seat)) log({ step: 'seat holds no such round', round: r.id, seat, again: `in ${NO_ROUND_RETRY_MS / 1000} s` });
+        absent.set(seat, Date.now() + NO_ROUND_RETRY_MS); noRound.set(r.id, absent);
+      } else {
+        log({ step: 'post refused', round: r.id, seat, status: x.status, why: text.slice(0, 200) });
+        // a seat that says the word is of another window: its contract is asked for again at once (never a reason to stop)
+        if (/another window/.test(text) && !closes.has(r.id)) closeTried.delete(r.id);
+      }
+    } catch (e) { log({ step: 'post failed', round: r.id, seat, why: e.message }); }
+  }));
+  // a word signed again meanwhile keeps its own (fresh) set
+  if (words.get(r.id) === mine) posted.set(r.id, held);
 };
 
 http.createServer((req, res) => {
