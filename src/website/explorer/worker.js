@@ -102,6 +102,7 @@ async function keep(env, tx, had) {
   const h = await sha(JSON.stringify(stable));
   if (had === h) return null;
   const e = tx.entry || {};
+  // a payment's write never turns a stored order into another kind (kanban #1696, #1761); an agreed order still replaces a payment row
   return env.DB.prepare(`INSERT INTO txs (id, round, app, federation, stored_ms, settled, hash, json, updated_ms, kind, fed_txid, txids) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET round = excluded.round, app = excluded.app, federation = excluded.federation, stored_ms = excluded.stored_ms,
     settled = excluded.settled, hash = excluded.hash, json = excluded.json, updated_ms = excluded.updated_ms, kind = excluded.kind, fed_txid = excluded.fed_txid,
@@ -121,22 +122,23 @@ async function keep(env, tx, had) {
 const PAYMENT_KINDS = ['item', 'donation', 'zap'];
 // a seat's list row is read only when it is a plain object (kanban #1600: one seat's null element stopped the read of all fourteen)
 const isRow = (x) => !!x && typeof x === 'object' && !Array.isArray(x);
-// NO ONE SEAT SAYS WHAT A PAYMENT IS (kanban #1601): the row (without keptMs, each seat's own time) is the one at least AGREE seats send
-// byte for byte, as #1510 holds the orders - not the first seat's: one seat of fourteen listed a made-up 21M BTC gift that the explorer
-// showed, and guardian-1 alone set a real payment's amount, donor and federation. An id fewer than AGREE seats agree on is not stored;
-// its kept time is the AGREE-th earliest of the agreeing seats, so no one seat backdates it.
-const paymentOf = (row) => { const { keptMs, ...payment } = row; void keptMs; return payment; };
+// NO ONE SEAT SAYS WHAT A PAYMENT IS EITHER (kanban #1696, #1761; the second copy of #1510's first-seat merge): the row is the one at
+// least AGREE seats list byte for byte (keptMs aside, each seat's own time) and more of them than any other; only the seats that list
+// that row are known, and its time is the AGREE-th earliest of theirs. A payment fewer than AGREE seats agree on is not found and not
+// stored - one seat of fourteen could list a made-up 21 BTC item purchase as a real transaction, or a "gift" under a real order's id.
+const withoutKept = (r) => { const { keptMs, ...rest } = r; void keptMs; return rest; };
 function paymentTx(id, answers) {
-  const payment = agreed(answers.filter((a) => a.row).map((a) => paymentOf(a.row)));
-  if (!payment) return null;
-  const same = (a) => !!a.row && JSON.stringify(paymentOf(a.row)) === JSON.stringify(payment);
-  const r = payment;
-  const kept = answers.filter(same).map((a) => Number(a.row.keptMs)).filter(Number.isFinite).sort((a, b) => a - b);
+  const r = agreed(answers.filter((a) => a.row).map((a) => withoutKept(a.row)));
+  const same = (a) => !!(r && a.row && JSON.stringify(withoutKept(a.row)) === JSON.stringify(r));
+  const held = answers.filter(same);
+  if (!r || !held.length) return { id, found: false };
+  const payment = r;
+  const kept = held.map((a) => Number(a.row.keptMs)).filter(Number.isFinite).sort((a, b) => a - b);
   return { id, kind: PAYMENT_KINDS.includes(r.kind) ? r.kind : 'donation', found: true, readAt: new Date().toISOString(), readMs: null,
     entry: { app: r.gameName || null, federation: r.federation, player: r.kind === 'item' ? r.player : r.donor }, amountMsat: r.totalMsat, payment,
     settlement: null, client: null, processed: null, result: null, storedFirst: kept.length ? new Date(kept[Math.min(AGREE, kept.length) - 1]).toISOString() : null,
     seats: answers.map((a) => ({ seat: seatName(a.seat), key: a.key || null, status: a.status, known: same(a),
-      storedAt: a.row && Number.isFinite(Number(a.row.keptMs)) ? new Date(Number(a.row.keptMs)).toISOString() : null, why: a.why || null })) };
+      storedAt: same(a) && Number.isFinite(Number(a.row.keptMs)) ? new Date(Number(a.row.keptMs)).toISOString() : null, why: a.why || null })) };
 }
 
 /** Every seat's gifts and items kept after `since` (at most `limit` of each), merged into D1; and where a further read goes on from. */
@@ -168,17 +170,20 @@ async function readPayments(env, since, limit) {
   const hashes = new Map();
   for (let i = 0; i < ids.length; i += 90) {
     const part = ids.slice(i, i + 90);
-    const r = await env.DB.prepare(`SELECT id, hash FROM txs WHERE id IN (${part.map(() => '?').join(',')})`).bind(...part).all();
-    for (const x of r.results || []) hashes.set(x.id, x.hash);
+    const r = await env.DB.prepare(`SELECT id, hash, kind FROM txs WHERE id IN (${part.map(() => '?').join(',')})`).bind(...part).all();
+    for (const x of r.results || []) hashes.set(x.id, x);
   }
   const writes = [];
   for (const id of ids) {
     const per = byId.get(id);
     const answers = SEATS.map((seat) => (per.has(seat) ? { seat, status: 200, ...per.get(seat) }
       : answered.get(seat) ? { seat, status: 404 } : { seat, status: got.find((g) => g.seat === seat).status, why: 'did not list its payments' }));
+    // an order D1 holds is never turned into a payment (kanban #1696, #1761): its id is an entry the seats agreed on
+    const had = hashes.get(id);
+    if (had && (had.kind || 'order') === 'order') continue;
     const tx = paymentTx(id, answers);
-    if (!tx) continue;   // fewer than AGREE seats list the same row: not stored (kanban #1601)
-    const w = await keep(env, tx, hashes.get(id));
+    if (!tx.found) continue;
+    const w = await keep(env, tx, had ? had.hash : undefined);
     if (w) writes.push(w);
   }
   for (let i = 0; i < writes.length; i += 50) await env.DB.batch(writes.slice(i, i + 50));
@@ -609,8 +614,8 @@ async function readWindow(env, since, limit, before) {
   const hashes = new Map();
   for (let i = 0; i < ids.length; i += 90) {
     const part = ids.slice(i, i + 90);
-    const r = await env.DB.prepare(`SELECT id, hash FROM txs WHERE id IN (${part.map(() => '?').join(',')})`).bind(...part).all();
-    for (const x of r.results || []) hashes.set(x.id, x.hash);
+    const r = await env.DB.prepare(`SELECT id, hash, kind FROM txs WHERE id IN (${part.map(() => '?').join(',')})`).bind(...part).all();
+    for (const x of r.results || []) hashes.set(x.id, x);
   }
   const writes = [];
   for (const id of ids) {
@@ -619,7 +624,8 @@ async function readWindow(env, since, limit, before) {
       : answered.get(seat) ? { seat, status: 404, body: { known: false } } : { seat, status: 0, body: null, why: 'did not answer the read' }));
     const tx = merge(id, answers, null);
     if (!tx.found) continue;   // fewer than AGREE seats hold its entry: not stored, so not counted (kanban #1510)
-    const w = await keep(env, tx, hashes.get(id));
+    const had = hashes.get(id);   // a row { id, hash, kind } since kanban #1696: keep() compares the hash alone
+    const w = await keep(env, tx, had ? had.hash : undefined);
     if (w) writes.push(w);
   }
   for (let i = 0; i < writes.length; i += 50) await env.DB.batch(writes.slice(i, i + 50));
