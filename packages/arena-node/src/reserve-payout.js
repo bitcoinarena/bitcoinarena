@@ -27,7 +27,7 @@
 //
 // The transport is injected: `peers` are objects with commit / share (the seat's HTTP doors; direct calls in a test).
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { signShare340, aggregate340, nonceGenerate340 } from '../../arena-protocol/src/frost-bip340.js';
+import { signShare340, aggregate340, nonceGenerate340, verifyShare340 } from '../../arena-protocol/src/frost-bip340.js';
 import { sendableInvoiceMsat, lowestLiveGateway, sendPlanStands, proposedExpiration } from '../../arena-protocol/src/winnings-send.js';
 import { lnv2FeeMsat, largestPayoutMsat } from '../../arena-protocol/src/lock-settlement.js';
 import { taggedHash, toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
@@ -699,32 +699,56 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     if (pair.share === null) { pair.share = signShare340({ id: g.signer.id, share: g.signer.share, groupPublicKey: g.key, nonces: { hiding: pair.hiding, binding: pair.binding }, message: pair.message, commitments, curve }); pair.list = list; }
     return { ok: true, share: pair.share };
   }
-  // THE COORDINATOR'S SIGNATURE of `kind`: its own commitment and the peers', then their shares, aggregated and checked under the key
+  // THE COORDINATOR'S SIGNATURE of `kind`: its own commitment and the peers', then their shares, aggregated and checked under the key.
+  // ONE BAD GUARDIAN SEAT DOES NOT HOLD IT (kanban #1527, as settlement.js #withheld/#leaveOut): a peer that refuses its share, or gives
+  // one its public share (g.publicShares, when this seat can make them) says it cannot be, is left off, and a new list over fresh nonces is
+  // asked of the next peers in order until the threshold commits. A signature that does not verify with no public share to name the bad one
+  // leaves each peer of that list off in turn. Bounded: at most one more list per peer.
   async function sign(plan, kind, extra = {}) {
     const g = guardians().get(fedOf(kind, plan));
-    const own = await commitHere({ plan, kind, txid: extra.txid || null }, me);
-    if (!own.ok) return own;
-    const signers = [{ peer: null, commitment: own.commitment }];
-    const ask = askOf({ ask: 'commit', kind, planId: planIdOf(plan), txid: extra.txid || null });
-    for (const peer of g.peers || []) {
-      try { const r = await peer.commit({ plan, kind, ...extra, ...ask }); if (r && r.ok) signers.push({ peer, commitment: r.commitment }); } catch { /* a peer down: the threshold decides */ }
-      if (signers.length >= g.needed) break;
-    }
-    if (signers.length < g.needed) return refuse(`${signers.length} of ${g.needed} guardian seats committed to the ${kind}`, 503);
-    const commitments = signers.map((x) => x.commitment).sort((a, b) => a.id - b.id);
-    const shares = [];
+    const peers = g.peers || [];
     const planId = planIdOf(plan);
-    for (const x of signers) {
-      const r = x.peer === null ? await shareHere({ planId, kind, commitments })
-        : await Promise.resolve(x.peer.share({ planId, kind, commitments, ...askOf({ ask: 'share', kind, planId, list: commitmentListOf(commitments) }) })).catch((e) => refuse(e.message));
-      if (!r || !r.ok) return refuse(`a ${kind} share was refused: ${r ? r.why : '?'}`);
-      shares.push(r.share);
+    let pub = null;
+    try { pub = typeof g.publicShares === 'function' ? g.publicShares() : (g.publicShares || null); } catch { pub = null; }
+    const left = new Set();   // peers left off this signature: a refused share, or one that does not stand
+    let suspects = null, why = null;
+    for (let turn = 0; turn <= peers.length + 1; turn++) {
+      const tryOut = suspects && suspects.length ? suspects.shift() : null;
+      const own = await commitHere({ plan, kind, txid: extra.txid || null }, me);
+      if (!own.ok) return own;
+      const ask = askOf({ ask: 'commit', kind, planId, txid: extra.txid || null });
+      const signers = [{ peer: null, commitment: own.commitment }];
+      for (const peer of peers) {
+        if (signers.length >= g.needed) break;
+        if (left.has(peer) || peer === tryOut) continue;
+        try { const r = await peer.commit({ plan, kind, ...extra, ...ask }); if (r && r.ok) signers.push({ peer, commitment: r.commitment }); } catch { /* a peer down: the threshold decides */ }
+      }
+      if (signers.length < g.needed) return refuse(`${signers.length} of ${g.needed} guardian seats committed to the ${kind}${why ? ` (${why})` : ''}`, 503);
+      const commitments = signers.map((x) => x.commitment).sort((a, b) => a.id - b.id);
+      const shares = [];
+      let spoilt = false;
+      for (const x of signers) {
+        const r = x.peer === null ? await shareHere({ planId, kind, commitments })
+          : await Promise.resolve(x.peer.share({ planId, kind, commitments, ...askOf({ ask: 'share', kind, planId, list: commitmentListOf(commitments) }) })).catch((e) => refuse(e.message));
+        if (x.peer === null && (!r || !r.ok)) return refuse(`a ${kind} share was refused: ${r ? r.why : '?'}`);
+        const P = x.peer !== null && pub ? (pub instanceof Map ? pub.get(String(x.commitment.id)) : pub[x.commitment.id]) : null;
+        const stands = r && r.ok && typeof r.share === 'bigint' && (x.peer === null || !pub || (P && verifyShare340({ id: x.commitment.id, share: r.share,
+          publicShare: typeof P === 'string' ? fromHex(P) : P, groupPublicKey: g.key, message: pairMessage(planId, kind, own.commitment), commitments, curve })));
+        if (!stands) { left.add(x.peer); spoilt = true; why = `a ${kind} share was refused or does not stand: ${r && !r.ok ? r.why : 'a bad share'}`; continue; }
+        shares.push(r.share);
+      }
+      if (spoilt) continue;
+      const message = pairMessage(planId, kind, own.commitment);
+      const { signature } = aggregate340({ commitments, message, groupPublicKey: g.key, shares, curve });
+      if (schnorr.verify(signature, message, g.key.subarray(1))) return { ok: true, signature };
+      why = `the ${kind} signature does not verify under the reserve key`;
+      if (pub) return refuse(why);   // every share stood: nothing to leave off
+      if (!suspects) suspects = signers.filter((x) => x.peer !== null).map((x) => x.peer);
+      if (!suspects.length) return refuse(why);
     }
-    const message = (pairs.get(`${planId}:${kind}`) || []).find((p) => p.commitment === own.commitment).message;
-    const { signature } = aggregate340({ commitments, message, groupPublicKey: g.key, shares, curve });
-    if (!schnorr.verify(signature, message, g.key.subarray(1))) return refuse(`the ${kind} signature does not verify under the reserve key`);
-    return { ok: true, signature };
+    return refuse(why || `the ${kind} was not signed`);
   }
+  const pairMessage = (planId, kind, commitment) => (pairs.get(`${planId}:${kind}`) || []).find((p) => p.commitment === commitment).message;
 
   /**
    * WHO SAID A RECORD (kanban #1156): its `from` signed every field of it with its node key, and `from` is a guardian seat of the

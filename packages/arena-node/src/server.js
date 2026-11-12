@@ -2132,7 +2132,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const nodes = sortedKeys(g.members); const needed = reserveNeeded(nodes.length);
       const held = needed === null ? { ok: false } : reserveDkgOf(fed).signerNodeFor(nodes);
       const key = held.ok ? held.pool.groupPublicKey : (reserveKeys.get(fed) || null);
-      return [fed, { members: nodes.map(toHex), key, needed, signer: held.ok ? { id: held.signerNode.id, share: held.signerNode.share } : null, peers: (g.peers || []).map(payoutPeer) }];
+      // each guardian's public share, made only when a share must be named (kanban #1527) and kept per epoch and key as GET /reserves keeps them
+      const publicShares = () => { if (!held.ok) return null; const tag = `${toHex(reserveEpochId(fromHex(fed), nodes))}:${toHex(held.pool.groupPublicKey)}`;
+        const was = reservePubKept.get(fed); if (was && was.tag === tag) return was.pub.shares;
+        const pub = reserveDkgOf(fed).publicSharesFor(nodes); if (!pub || !pub.ok) return null; reservePubKept.set(fed, { tag, pub }); return pub.shares; };
+      return [fed, { members: nodes.map(toHex), key, needed, signer: held.ok ? { id: held.signerNode.id, share: held.signerNode.share } : null, peers: (g.peers || []).map(payoutPeer), publicShares }];
     })),
     reserveRows: (fed) => { const k = reserveKeys.get(fed) || (() => { const g = reserveGuardians()[fed]; if (!g) return null; const h = reserveDkgOf(fed).signerNodeFor(sortedKeys(g.members)); return h.ok ? h.pool.groupPublicKey : null; })();
       // only the rows paid under this seat's network, whose census ratifies its funding votes (kanban #1336, §27A.8.5)
