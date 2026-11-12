@@ -2803,7 +2803,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     (function () {
       var P = window.ARENA_PRICES = { round: null, nodes: [], samples: new Map(), tape: null, tapeDone: false, active: false, applied: [], timer: null,
         heard: true, feed: false, held: {}, misses: 0 };
-      function hex2u8(h) { return Uint8Array.from(String(h).match(/../g).map(function (x) { return parseInt(x, 16); })); }
+      function hex2u8(h) { return Uint8Array.from((String(h).match(/../g) || []).map(function (x) { return parseInt(x, 16); })); }
       function sigsOf(list) { return (list || []).map(function (s) { return [hex2u8(s.key), hex2u8(s.signature)]; }); }
       // PROTOCOL 5: a sample is the median of the seats' own signed readings - each [key, its cents (or its 64
       // prices), signature] goes into the transcript beside the median, and every seat recomputes it
