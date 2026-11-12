@@ -3638,12 +3638,15 @@ export class Round {
    * `playerPubkey`, only entries of that player key count: a lock's refund key is its entry's player key, so an entry of another key can never be
    * staked by it and does not take it from the player. Market-cancelled entries are skipped. Answers { entryId, joinedMs, bytes } or null.
    */
-  firstNamingOfLock(roundIdBytes, kind, outpoint, playerPubkey = null) {
+  // `fits(bytes)` (kanban #2069, #2088): when given, only entries it answers true for count - the signer drops namers that provably
+  // cannot be the lock's own (another stake point than the lock commits to)
+  firstNamingOfLock(roundIdBytes, kind, outpoint, playerPubkey = null, fits = null) {
     const field = kind === 'fee' ? 'feeLockOutpoint' : 'stakeLockOutpoint';
     const key = `${Buffer.from(outpoint.txid).toString('hex')}:${outpoint.outIdx}`;
     const ofKey = (pk) => !playerPubkey || Buffer.from(pk || new Uint8Array(0)).equals(Buffer.from(playerPubkey));
     let best = null;
     const consider = (entryIdBytes, joinedMs, rowid, bytes) => {
+      if (typeof fits === 'function' && !fits(bytes)) return;
       if (best && (best.joinedMs < joinedMs || (best.joinedMs === joinedMs && best.rowid <= rowid))) return;
       best = { entryId: new Uint8Array(entryIdBytes), joinedMs, rowid, bytes };
     };
