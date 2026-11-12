@@ -5576,11 +5576,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (e.limitPrice !== undefined) return null;
     const c = relayedRound(e.roundId);
     if (!c || typeof c.entryCloseMs !== 'bigint') return null;
+    // NO GRACE ON A HEAD-TO-HEAD ROUND (kanban #1551, #1489 r3 h2h-1): its moves are revealed from the entry close on (GET /reveals), so a lock new to
+    // this seat inside the grace was handed with the opponent's move known - a player locked only when its committed move won, and when it lost
+    // handed nothing and the round, one seated player short, went VOID. The entry relay carries an honest join's locks before the close.
+    const h2h = headToHeadRound(e.roundId) !== null;
+    const allowed = h2h ? 0 : grace;
     const now = BigInt(Math.floor(Number(round.now())));
-    if (now <= c.entryCloseMs + BigInt(grace)) return null;
+    if (h2h ? now < c.entryCloseMs : now <= c.entryCloseMs + BigInt(grace)) return null;
     const held = kind === 'fee' ? (round.feeLock ? round.feeLock(eid) : null) : round.stakeLock(eid);
     if (held) return null;
-    return `that round's entry closed at ${c.entryCloseMs} (and ${grace} ms for a join on its way) and it is ${now}: a ${kind === 'fee' ? 'fee' : 'stake'} lock new to this seat is not taken (kanban #1260)`;
+    return `that round's entry closed at ${c.entryCloseMs} (and ${allowed} ms for a join on its way) and it is ${now}: a ${kind === 'fee' ? 'fee' : 'stake'} lock new to this seat is not taken (kanban #1260)`;
   };
   relayedRound = (rid) => {
     const row = round.get(rid);
