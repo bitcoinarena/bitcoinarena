@@ -7490,6 +7490,19 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           return true;
         });
       };
+      // A HEAD-TO-HEAD ROUND IS HANDED TO ITS CLIENT WITH THE LAST MOMENT A TAP STILL GOES IN, NOT ITS ENTRY CLOSE (kanban #2563, feedback #017
+      // 2026-11-12: "the page repeatedly shows exactly: Your order came too late for this round"; measured in Beelink Chrome on UI 639: taps at 0:04
+      // and 0:02 refused, no handout sent, taps at 0:08 taken). The client shows a round, its countdown and its buttons down to 1.5 s before the close
+      // it is given (its CLOSING_MS), but a paid tap needs ARENA_H2H_LEAD_MS() + 1.5 s (#1485) and any tap 3 s (#1394): every tap in the second half
+      // of the countdown was refused. The close it is given is moved earlier by what the tap needs beyond those 1.5 s, plus 1 s for the client's own
+      // seat read before it hides the move: its countdown ends when a tap stops counting, and it offers the next round from there. The seats, the
+      // hidden move's record and the reveal keep the real close.
+      const H2H_CLIENT_CLOSING_MS = 1500, H2H_TAP_MARGIN_MS = 1000;
+      const pickCloseMs = (r, closeMs) => {
+        if (game.manifest.resultType !== 3 || !Number.isFinite(closeMs)) return closeMs;
+        const need = !r.free && typeof window.ARENA_H2H_LEAD_MS === 'function' ? window.ARENA_H2H_LEAD_MS() + 1500 : Number(window.ARENA_ORDER_CUTOFF_MS || 3000);
+        return closeMs - Math.max(0, need + H2H_TAP_MARGIN_MS - H2H_CLIENT_CLOSING_MS);
+      };
       window.ARENA_GAME = {
         game: { id: game.id, name: game.name, title: game.title, known: game.known, devKey: game.devKey, attested: game.attested,
           outcomes: game.manifest.outcomes || [], attestThreshold: game.manifest.attestThreshold || 0, attestors: (game.manifest.attestors || []).length,
@@ -7498,7 +7511,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             reserve: game.manifest.marketTerms.reserveBps || 0 } : null },
         clientHash: file.hash,
         rows: () => moneyFirst(window.ARENA_LOBBY || []).map((r) => ({ id: r.id, line: r.line, free: r.free, joinable: !!r.joinable,
-          stakeSats: r.stakeSats, entryCloseMs: r.raw ? Number(r.raw.entryCloseMs) : null, startTimeMs: r.raw ? Number(r.raw.startTimeMs) : null })),
+          stakeSats: r.stakeSats, entryCloseMs: r.raw ? pickCloseMs(r, Number(r.raw.entryCloseMs)) : null, startTimeMs: r.raw ? Number(r.raw.startTimeMs) : null })),
         // EVERY LISTED ROUND OF THIS GAME: rows() is the lobby's one per kind (the free one with the most entry
         // left); a game of short rounds - Rock Paper Scissors' 15 s - picks its own among all of them, e.g. the soonest to close
         // ONE VERSION PER SLOT (kanban #1361, the owner 2026-11-08: "Damit resetted sich der score gegen den bot und faengt wieder bei 0:0 an"):
@@ -7506,7 +7519,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         // from the previous round of the same game id - a v6 round, then a v5 one, started the score at 0:0. A slot that holds rounds of the
         // tile's own version offers only those; a slot with none of them offers what it has.
         allRows: () => (holdForReveal() ? [] : fullRounds(sameVersionPerSlot(moneyFirst(window.ARENA_LOBBY_ROWS || [], true), game.id))).map((r) => ({ id: r.id, line: r.line, free: r.free, joinable: !!r.joinable,
-          stakeSats: r.stakeSats, entryCloseMs: r.entryCloseMs !== undefined && r.entryCloseMs !== null ? Number(r.entryCloseMs) : null,
+          stakeSats: r.stakeSats, entryCloseMs: r.entryCloseMs !== undefined && r.entryCloseMs !== null ? pickCloseMs(r, Number(r.entryCloseMs)) : null,
           startTimeMs: r.contract ? Number(r.contract.startTimeMs) : null })),
         identity: () => window.ARENA_IDENTITY || null,
         // THE PLAYER WALLET, THE PAGE'S OWN: a client never makes a deposit or a withdraw of its own - it reads
