@@ -45,7 +45,7 @@ import { scalarFrom32, FIELD } from '../../arena-protocol/src/shares.js';
 import { FINAL, SUSPENDED, PROVISIONALLY_FINAL } from '../../arena-protocol/src/objection.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { resultFinality } from './finality.js';
-import { encodeCommitments, decodeCommitments, encodeShare, decodeShare } from './pool-wire.js';
+import { encodeCommitments, decodeCommitments, encodeShare, decodeShare, commitmentListRefusal } from './pool-wire.js';
 import { sendPlanToJson, planKey } from './winnings-send.js';
 import { askerOrder, eligibleAsker } from './payout.js';
 import { REFUSAL } from './settle-backoff.js';
@@ -1303,6 +1303,8 @@ export class LockSettlement {
     const held = (this.pairs.get(federation ? `${toHex(roundIdBytes)}:fed:${String(federation).toLowerCase()}` : entry ? `${toHex(roundIdBytes)}:${toHex(entry)}` : toHex(roundIdBytes)) || [])
       .filter((p) => toHex(p.message) === toHex(m.message));
     if (!held.length) return refuse('this signer node committed to no settlement of that round');
+    // NO LIST LONGER THAN A COMMITTEE (kanban #1672): a stranger's 85 598-commitment list held the loop ~49 s; refused before any curve work
+    { const why = commitmentListRefusal(commitments, { needed: m.needed, nodes: m.contract && m.contract.nodes }); if (why) return refuse(why); }
     // THE PAIR THE LIST NAMES (kanban #1489): the one whose commitment the list carries, of those this seat handed out.
     const own = commitments.find((c) => String(c.id) === String(held[0].commitment.id));
     const pair = own && held.find((p) => toHex(own.hiding) === toHex(p.commitment.hiding) && toHex(own.binding) === toHex(p.commitment.binding));
