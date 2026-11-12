@@ -14,19 +14,22 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateKeyPairSync, sign } from 'node:crypto';
 import { attestorKey, marketsToAttest, marketVersions } from '../src/attestor.js';
-import { encodeManifest, manifestBodyId, gameIdOf, RESULT_TYPE, PAYOUT_RULE, NO_PARENT } from '../../arena-protocol/src/manifest.js';
+import { encodeManifest, decodeManifest, manifestBodyId, gameIdOf, RESULT_TYPE, PAYOUT_RULE, NO_PARENT } from '../../arena-protocol/src/manifest.js';
 import { decodeAttestation } from '../../arena-protocol/src/attested.js';
-import { toHex } from '../../arena-protocol/src/hash.js';
+import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
-const DEV = generateKeyPairSync('ed25519').privateKey;
+const DEV_PAIR = generateKeyPairSync('ed25519');
+const DEV = DEV_PAIR.privateKey;
+// the developer key the manifests name is DEV's own: an unsigned or mis-signed manifest is no version of the market (kanban #2080)
+const DEV_PUB = new Uint8Array(DEV_PAIR.publicKey.export({ format: 'der', type: 'spki' }).subarray(12));
 const SEED = b32(0x41);
 const ME = attestorKey(SEED);
 const OTHER = attestorKey(b32(0x42));
 const keysOf = (...ks) => ks.map((k) => k.pubkey).sort((x, y) => Buffer.compare(Buffer.from(x), Buffer.from(y)));
 const market = ({ name = 'btc-updown-15m', version = 1, attestors = keysOf(ME), threshold = 1 } = {}) => {
   const body = {
-    gameName: name, gameDevPubkey: b32(0xde), version, parentManifestId: NO_PARENT, resultType: RESULT_TYPE.ATTESTED,
+    gameName: name, gameDevPubkey: DEV_PUB, version, parentManifestId: NO_PARENT, resultType: RESULT_TYPE.ATTESTED,
     cores: [], runTicksMax: 0, roundPeriodMs: 0n, payoutRule: PAYOUT_RULE.PARI_MUTUEL, rankNumerator: 0, rankDenominator: 0, minScore: 0,
     clients: [], gameDonationSetId: b32(0xd0), outcomes: ['Up', 'Down'], attestors, attestThreshold: threshold,
   };
@@ -191,4 +194,24 @@ test('a seat that holds no such round is asked once, not every 5 s; the seat tha
     a.close(); b.close();
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// kanban #2080, #1489 (refute 4 of fix:attest:3): a seat's /games rows are unsigned - a manifest of the game's name that names this
+// key is a version of the market only when its developer key signed it, and, when the operator named a market, only of that
+// market's developer key; the named id itself is always kept
+test('a manifest whose signature is not its developer key\'s, or of another developer than the named market\'s, is no version of the market', () => {
+  const v1 = market({ version: 1 }), v2 = market({ version: 2 });
+  const body = { ...decodeManifest(fromHex(v2.manifest)), version: 3, roundPeriodMs: 86400000n };
+  const forged = { ...body, signature: new Uint8Array(64).fill(7) };
+  const garbage = { id: toHex(gameIdOf(forged)), name: 'btc-updown-15m', manifest: toHex(encodeManifest(forged)) };
+  const OTHER_DEV = generateKeyPairSync('ed25519');
+  const ob = { ...body, version: 1, gameDevPubkey: new Uint8Array(OTHER_DEV.publicKey.export({ format: 'der', type: 'spki' }).subarray(12)) };
+  const om = { ...ob, signature: new Uint8Array(sign(null, Buffer.from(manifestBodyId(ob)), OTHER_DEV.privateKey)) };
+  const selfSigned = { id: toHex(gameIdOf(om)), name: 'btc-updown-15m', manifest: toHex(encodeManifest(om)) };
+  const key = toHex(ME.pubkey);
+  // the garbage signature never counts; a stranger's own signed manifest does not count beside the named market
+  assert.deepEqual([...marketsToAttest({ games: [v1, v2, garbage, selfSigned], name: 'btc-updown-15m', key, ids: [v1.id] })].sort(), [v1.id, v2.id].sort());
+  assert.deepEqual(marketVersions({ games: [v1, v2, garbage, selfSigned], name: 'btc-updown-15m', key, ids: [v1.id] }).map((v) => v.id), [v1.id, v2.id]);
+  // with no market named, the garbage one is still refused
+  assert.ok(!marketVersions({ games: [v1, garbage], name: 'btc-updown-15m', key }).some((v) => v.id === garbage.id));
 });
