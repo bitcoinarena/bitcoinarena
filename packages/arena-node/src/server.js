@@ -8228,7 +8228,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
         if (eid.length !== 32) return text(res, 400, 'an entry is asked for by its id');
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
-        return res.end(JSON.stringify({ marks: round.evidenceBlocks(new Uint8Array(eid)).map((x) => ({ mark: toHex(x.markId), block: toHex(x.block), seenMs: x.seenMs })) }));
+        return res.end(JSON.stringify({ marks: round.evidenceBlocks(new Uint8Array(eid), { served: true }).map((x) => ({ mark: toHex(x.markId), block: toHex(x.block), seenMs: x.seenMs })) }));
       }
 
       if (req.method === 'GET' && url.pathname === '/start-forfeit') {
