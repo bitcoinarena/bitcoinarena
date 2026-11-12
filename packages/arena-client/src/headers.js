@@ -231,6 +231,7 @@ export async function agreedChain(providers, { least = 2, timeoutMs = 10000, ask
   // now set aside by name, and the chain stands only while at least `least` sources (and never fewer than two, the most-work one
   // among them) still agree on it; with fewer the fork is refused as before: two sources that fork are two of whom one is lying.
   const forked = [];
+  const splits = [];
   let firstFork = null;
   for (const a of good) {
     // ANSWERS ABOUT DIFFERENT PARTS OF THE CHAIN used to be told apart from a
@@ -243,16 +244,32 @@ export async function agreedChain(providers, { least = 2, timeoutMs = 10000, ask
     if (i < 0) continue;
     const stray = a.hashes[i];
     const shared = i > 0 ? bestAt.get(a.hashes[i - 1]) : undefined;
-    if (a.hashes.length - i > TIP_SPLIT_BLOCKS || shared === undefined) {
+    // A TIP SPLIT SITS AT THE TIP OF BOTH CHAINS (kanban #1713, #1777, refute of #1529): it was taken from the forking source's
+    // side alone, so one seat answering the honest chain up to block 10 plus 12 headers of its own was a "tip split" wherever it
+    // sat, and cut the chain three honest seats agree on to 11 headers - below the census and the bonds. The split must also leave
+    // at most TIP_SPLIT_BLOCKS blocks of the most-work chain out; deeper, the source is set aside as a fork.
+    if (a.hashes.length - i > TIP_SPLIT_BLOCKS || shared === undefined
+      || best.hashes.length - (shared + 1) > TIP_SPLIT_BLOCKS) {
       const why = `providers ${best.at} and ${a.at} do not agree on the chain: `
         + `${stray} is not in the one with the most work`;
       if (!firstFork) firstFork = why;
       forked.push({ at: a.at, why });
       continue;
     }
-    cut = Math.min(cut, shared + 1);
+    splits.push(shared + 1);
   }
-  if (forked.length && good.length - forked.length < Math.max(least, 2)) return { ok: false, why: firstFork };
+  const need = Math.max(least, 2);
+  const agree = good.length - forked.length;
+  if (forked.length && agree < need) return { ok: false, why: firstFork };
+  // ONE SOURCE NEVER SHORTENS THE CHAIN THE OTHERS SHARE (kanban #1713, #1777): the chain is cut only as far as it takes for
+  // `need` sources to agree on every block it holds - the longest length at which at most agree - need of the tip splits leave
+  // it. Two sources split at the tip still stop at the last block both hold; one splitting source among three that agree on
+  // the whole chain cuts nothing.
+  // (a split source holds the most-work chain's first `s` blocks; at a length L it disagrees when s < L)
+  for (const at of [best.hashes.length, ...splits.sort((x, y) => y - x)]) {
+    cut = at;
+    if (agree - splits.filter((s) => s < at).length >= need) break;
+  }
 
   return {
     ok: true,
