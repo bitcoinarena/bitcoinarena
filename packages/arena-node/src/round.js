@@ -3781,6 +3781,11 @@ export class Round {
       .run(hashBytes, bytes, this.now()).changes;
   }
 
+  /** The bytes this node keeps as a relay, all doors together (kanban #1532: the doors refuse past a cap). */
+  relayedBytes() {
+    return Number(this.db.prepare('SELECT COALESCE(SUM(LENGTH(bytes)), 0) AS n FROM relayed').get().n);
+  }
+
   relayGet(hashBytes) {
     const row = this.db.prepare('SELECT bytes FROM relayed WHERE hash = ?').get(hashBytes);
     return row ? new Uint8Array(row.bytes) : null;
