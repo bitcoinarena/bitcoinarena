@@ -180,6 +180,9 @@ export async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, f
  * are merged by purchase id - no longer the first seat's answer as it is, where one seat answering [] hid a purchase every other seat
  * keeps, or named a made-up one. A purchase is kept when two seats name it (one, when only one seat answered); the record kept is the
  * first seat's in list order.
+ * Kanban #2421: agreement is on the record that matters (id, itemId, gameName), not the id alone - one seat naming the player's real
+ * purchase id with another itemId was counted with the honest seats and its record kept, so the entry named an item never bought and
+ * every seat refused it. A purchase of another game than the one asked is skipped; an id two variants both reach `need` for is not kept.
  */
 export async function ownedItems({ seats, player, gameName = null, fetch }) {
   const answers = await Promise.all((seats || []).map(async (s) => {
@@ -192,17 +195,22 @@ export async function ownedItems({ seats, player, gameName = null, fetch }) {
   }));
   const answered = answers.filter((a) => a);
   const need = answered.length >= 2 ? 2 : 1;
-  const byId = new Map();
+  const byRecord = new Map();
   for (const items of answered) {
     const seen = new Set();
     for (const it of items) {
       if (!it || typeof it.id !== 'string' || seen.has(it.id)) continue;
+      if (gameName && it.gameName !== gameName) continue;     // kanban #2421: only the game asked
       seen.add(it.id);
-      const e = byId.get(it.id);
-      if (e) e.n++; else byId.set(it.id, { it, n: 1 });
+      const k = JSON.stringify([it.id, String(it.itemId), String(it.gameName)]);
+      const e = byRecord.get(k);
+      if (e) e.n++; else byRecord.set(k, { it, n: 1 });
     }
   }
-  return [...byId.values()].filter((e) => e.n >= need).map((e) => e.it);
+  // kanban #2421: one variant per purchase id reaches `need`, else the seats disagree on what was bought and none is kept
+  const byId = new Map();
+  for (const e of byRecord.values()) if (e.n >= need) byId.set(e.it.id, byId.has(e.it.id) ? null : e.it);
+  return [...byId.values()].filter(Boolean);
 }
 
 /**
