@@ -94,6 +94,25 @@ async function reachable(pool, relays, ms) {
 }
 
 /**
+ * Ask each relay of `up` (connected) for `filter` on its own: { events, unanswered: [relays that did not send EOSE within
+ * `ms`, or closed the query] } (kanban #1574: querySync cannot tell "EOSE with nothing" from "no answer in time").
+ */
+async function askEach(pool, up, filter, ms) {
+  const events = [], unanswered = [];
+  await Promise.all(up.map(async (u) => {
+    let relay; try { relay = await pool.ensureRelay(u, { connectionTimeout: ms }); } catch { unanswered.push(u); return; }
+    await new Promise((resolve) => {
+      let done = false, sub = null;
+      const end = (ok) => { if (done) return; done = true; clearTimeout(t); if (!ok) unanswered.push(u); try { sub?.close(); } catch {} resolve(); };
+      const t = setTimeout(() => end(false), ms);
+      // the library's own EOSE timeout would call oneose; set it past ours so only a real EOSE counts
+      try { sub = relay.subscribe([filter], { onevent: (e) => events.push(e), oneose: () => end(true), onclose: () => end(false), eoseTimeout: ms * 4 + 1000 }); } catch { end(false); }
+    });
+  }));
+  return { events, unanswered };
+}
+
+/**
  * THE GAME SEED OF THIS NOSTR ACCOUNT: its seed event's, decrypted; else a new one - derived from an nsec, random for a
  * signer - encrypted to the account's own key, signed and published. Answers { seed (32 bytes), created, from ('relays' |
  * 'derived' | 'random'), relays: [those that took it] }.
@@ -103,8 +122,16 @@ async function reachable(pool, relays, ms) {
 export async function seedFor(signer, { pool = new SimplePool(), relays = NOSTR_RELAYS, random = (n) => crypto.getRandomValues(new Uint8Array(n)), maxWait = 5000, fresh = false } = {}) {
   const up = await reachable(pool, relays, maxWait);
   if (!up.length) throw new Error('no Nostr relay answered: try again in a moment (your wallet is not made offline, so it cannot become a second one)');
-  const found = fresh ? null : (await pool.querySync(up, { kinds: [SEED_KIND], authors: [signer.pubkey], '#d': [SEED_D] }, { maxWait }))
-    .filter((e) => verifyEvent(e)).sort((a, b) => b.created_at - a.created_at)[0];
+  let found = null;
+  if (!fresh) {
+    const asked = await askEach(pool, up, { kinds: [SEED_KIND], authors: [signer.pubkey], '#d': [SEED_D] }, maxWait);
+    found = asked.events.filter((e) => verifyEvent(e) && e.pubkey === signer.pubkey).sort((a, b) => b.created_at - a.created_at)[0];
+    // kanban #1574: no seed event found is "a new account" only when EVERY relay reached finished its answer (EOSE) - one that
+    // timed out or closed the query may hold the seed, and a new event would replace it (newest per author and d); and when
+    // our relay is in the list it must be one of them (public relays prune NIP-78 app data, ours keeps it)
+    if (!found && (asked.unanswered.length || (relays.includes(NOSTR_RELAYS[0]) && !up.includes(NOSTR_RELAYS[0]))))
+      throw new Error(`your Nostr relays did not answer in time (${(asked.unanswered.length ? asked.unanswered : [NOSTR_RELAYS[0]]).join(', ')}): try again in a moment (no new wallet is made, so it cannot replace yours)`);
+  }
   if (found) {
     let plain;
     try { plain = await signer.decrypt(signer.pubkey, found.content); } catch (e) { throw new Error(`your game seed is on the relays but did not decrypt (${e.message}) - it is left as it is`); }
