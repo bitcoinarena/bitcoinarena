@@ -1684,3 +1684,13 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 #### SM-B16 (change) Ballot tally: the served history is the store's from construction (kanban #1751)
 - `createBallotTally` builds `spansAll` (the history configServesRound reads at POST /round and offerRefusal) from the kept outcomes at once, before any pass: it needs no tip. Invariant: after a restart, a PASSED proposal in `ballot_proposals` is in the history a seat serves by from its first request, whether or not bitcoind answers yet.
 - `live(net)` needs the tip: until a pass has read one, a network that keeps a proposal answers null and GET /config answers 503, never genesis alone.
+#### Seat e-cash exchange (ecash-exchange.js, `ecash_exchanges.state`; kanban #1637)
+- Invariant: the seat reissues a player's notes only when it can pay them and the payout fits its hour. Both checks run before EVERY reissue ask: on a new row and on every retry of a row in RECEIVING, not only when the row is made.
+- "Can pay": the seat's balance in `to` less what it owes there already (`pay_msat` of every SENDING row, the taken amount up to `want_msat` of every TAKEN row) is at least the row's `want_msat`.
+- A check that fails on a row that never asked (`receive_asked` 0) answers 409/429 and leaves the row in RECEIVING, nothing taken. On a row whose earlier ask may have reached the federation (`receive_asked` 1, or NULL from before #1204) it answers 503 and holds the row in RECEIVING (`why` names the reason); the same notes asked again later go on once the seat can pay.
+- The hour counts a payout by `pay_ms`, the time TAKEN -> SENDING named it (a row from before: `made_ms`), so a late retry counts in the hour it pays.
+
+#### SM3 Federation record halt start (federation-records.js `halted`, liquidations.js haltOf/list; kanban #1763)
+- Invariant: the halt a liquidation counts from is the lowest-height signed HALTED record of the current run of HALTED records, the same at every seat, before and after a restart.
+- The same hole as #1578 (above), found again: merged in #1489 onto #1578's code (keep() reads the run's start through `haltStartOf` / `historyOf` from `federation_record_history`), #1763's own restore-time reader was not taken; its test wf1489-sm2-federation-1763 holds #1578's code to this invariant.
+- So a restart during a halt never moves haltHeight, liquidatesAt or the claim window forward.
