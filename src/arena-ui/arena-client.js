@@ -19096,6 +19096,15 @@ async function keptLockStake(ask) {
         console.warn(`[arena] #1162 an earlier stake lock for this round did not finish (${r.txid ? `transaction ${String(r.txid).slice(0, 16)}… submitted` : 'nothing answered'}): kept as arena.lock.orphan.${tag}.*`);
       }
     }
+    // A REFUSED RECORD IS KEPT ASIDE BEFORE THE NEW LOCK WRITES OVER IT (kanban #1584): 'refused' is read from a few "not stored" answers on a
+    // reload (reconcileKeptLock), not from the guardians' word - their consensus may still accept that transaction later, and its stake then
+    // sits under this player's refund key. Its outpoint, fields and stake stay named in arena.lock.orphan.*; with no room for that copy this
+    // PLAY is refused here, before anything is spent.
+    if (now.state === 'refused') {
+      const r = now.record;
+      putRoomy(storage, `arena.lock.orphan.${tag}.${Number(r.refusedMs || r.stateMs || Date.now())}`, JSON.stringify(r));
+      console.warn(`[arena] #1584 an earlier stake lock for this round was read "not stored" (transaction ${String((r.outpoint && r.outpoint.txid) || '').slice(0, 16)}…): kept as arena.lock.orphan.${tag}.*`);
+    }
     lockRecordStep(now.state, 'intent');
     // ROOM FIRST: the intent holds the record's room (`room`, given back when the record takes its place), so the record written after it
     // fits where it was; refused here, nothing is spent
@@ -31166,8 +31175,8 @@ async function collectLiquidationPayouts({ listed, seed, curve, clientFor, stora
 //   MERGE (the counterparty is this browser's own wallet):  kept --(received: Success/AlreadyReceived, credited >= agreed)--> none
 //   EXCHANGE (exactly one seat):  kept --(the seat named, written)--> handed --(POST to that seat only)--> answered --(received)--> none
 //     handed --(the seat refused / never answered for 10 min)--> reclaiming --(the notes received back into the wallet they left)--> none
-//     reclaiming --(Rejected after a silence: the seat took them)--> handed (asked again, same seat, same notes)
-//   credited < agreed --> short (kept: the evidence);  Rejected (spent by someone else) --> refused (kept: the evidence)
+//     reclaiming --(Rejected after a silence or a refusal: the seat took them)--> handed (asked again, same seat, same notes; kanban #1583)
+//   credited < agreed --> short (kept: the evidence);  Rejected of notes never handed (spent by someone else) --> refused (kept: the evidence)
 // A record is removed only on Success/AlreadyReceived with the credited amount at least what was agreed.
 //
 // THE LOCK CLIENT KEEPS THE STRING TOO: the stock mintv2 send writes it into the wallet's operation log in the same commit that marks
@@ -31401,20 +31410,25 @@ async function advanceEcashExchange({ storage, key, rec, walletFrom, walletTo, f
         if (!r.ok || r.nothing) return { ok: false, pending: !!r.unknown, why: r.nothing ? 'the wallet never sent it' : r.why };
         rec = r.rec; continue;
       }
-      if (rec.state === 'kept') { mv('reclaiming', { refusedBySeat: true, seatSaid: 'never handed to a seat' }); continue; }
+      if (rec.state === 'kept') { mv('reclaiming', { refusedBySeat: true, seatSaid: 'never handed to a seat', neverHanded: true }); continue; }
       if (rec.state === 'handed') {
         // EXACTLY ONE COUNTERPARTY: the seat named before the hand-over; only a record of an older page (no seat named) asks its seats in turn
         let a = { silent: 'no seat named' };
         for (const seat of rec.seat ? [rec.seat] : seats) { a = await askSeat({ seat, rec, fetcher, timeoutMs }); if (a.answer) break; }
         if (a.answer) { mv('answered', { answer: a.answer.ecash, answerMsat: String(a.answer.msat || ''), answeredAtMs: nowMs }); continue; }
-        if (a.refused && rec.seat) { mv('reclaiming', { refusedBySeat: true, seatSaid: a.refused }); continue; }
+        // a seat known to hold the notes (seatTook: a take-back was Rejected) is only asked again, never taken back from twice (kanban #1583)
+        if (a.refused && rec.seat && !rec.seatTook) { mv('reclaiming', { refusedBySeat: true, seatSaid: a.refused }); continue; }
         if (nowMs - Number(rec.handedAtMs || 0) >= ECASH_HANDED_RECLAIM_MS && !rec.seatTook) { mv('reclaiming', { refusedBySeat: false, seatSaid: a.silent || a.refused }); continue; }
         mv('handed', { lastAskMs: nowMs, seatSaid: a.silent || a.refused });
         return { ok: false, pending: true, why: `the seat has not answered yet (${a.silent || a.refused}); asked again with the same notes` };
       }
       if (rec.state === 'reclaiming') {
+        // NOTES HANDED TO A SEAT AND NOT TAKEN BACK ARE THE SEAT'S TO ANSWER (kanban #1583, audit #1489 sm1-page-2): a seat's 4xx is not proof
+        // it took nothing (a restarted seat without its federation client answered 409 for a row it had taken and owed the payout of), so a
+        // Rejected take-back after any refusal goes back to asking that one seat (handed, seatTook) - never the terminal `refused` that is
+        // never asked again. `refused` is left for notes never handed to a seat (kept -> reclaiming), spent elsewhere
         const r = await receiveKeptEcash({ storage, key, rec, receive: (e) => walletFrom.receiveEcash(e), field: 'ecash', federation: rec.from,
-          onRejected: rec.refusedBySeat && rec.seat ? 'refused' : 'handed', put });
+          onRejected: rec.neverHanded && rec.refusedBySeat && rec.seat ? 'refused' : 'handed', put });
         if (r.ok) return { ok: false, reclaimed: true, short: !!r.short, why: rec.seatSaid || 'taken back' };
         if (r.state === 'Rejected') return r.refused ? { ok: false, lost: true, why: `the seat ${rec.seat} refused and the notes were spent: kept as evidence` }
           : { ok: false, pending: true, why: 'the seat took the notes: it is asked again for its answer' };
