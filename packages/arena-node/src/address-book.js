@@ -7,16 +7,26 @@
 // every census node's seat once in a while (announceOwn), so a node whose census endpoint went stale is found again at once.
 import { checkAddressAnnouncement, newerAnnouncement, signAddressAnnouncement, endpointOf } from '../../arena-protocol/src/address-announcement.js';
 
-export function createAddressBook({ db, verify, nowMs = () => Date.now() }) {
+// BOUNDED, AND ONLY CENSUS NODES (kanban #1533, wf1489 round 2: one peer's GET /address-announcements listing 2000 self-signed keys
+// with 4 KB endpoints added 2000 rows, 8.5 MB, to every seat that pulled it, and each served them all again). An endpoint longer than
+// ADDRESS_ENDPOINT_MAX is refused; the book holds at most ADDRESS_BOOK_MAX nodes (a node already held still updates); `isCensusNode`
+// (hex key -> true / false / null for "no census read yet") refuses a key the seat's census does not name, with status 409.
+export const ADDRESS_ENDPOINT_MAX = 256;
+export const ADDRESS_BOOK_MAX = 4096;
+
+export function createAddressBook({ db, verify, nowMs = () => Date.now(), isCensusNode = () => null }) {
   db.exec('CREATE TABLE IF NOT EXISTS address_announcements (node TEXT PRIMARY KEY, body TEXT NOT NULL)');
   const map = new Map();
   for (const r of db.prepare('SELECT body FROM address_announcements').all()) {
     try { const a = JSON.parse(r.body); if (checkAddressAnnouncement(a, { verify, nowMs: nowMs() }).ok) map.set(a.node, a); } catch { /* a row that does not read */ }
   }
   /** Take one in: checked, kept when it is the node's newest. Answers { ok, kept, why }. */
-  function take(a) {
+  function take(a, { self = false } = {}) {
     const c = checkAddressAnnouncement(a, { verify, nowMs: nowMs() });
     if (!c.ok) return { ok: false, why: c.why };
+    if (String(a.endpoint).length > ADDRESS_ENDPOINT_MAX) return { ok: false, status: 400, why: `an endpoint of at most ${ADDRESS_ENDPOINT_MAX} characters` };
+    if (!self && isCensusNode(a.node) === false) return { ok: false, status: 409, why: 'not a node of this seat\'s census' };
+    if (!map.has(a.node) && map.size >= ADDRESS_BOOK_MAX) return { ok: false, status: 409, why: 'the address book is full' };
     const clean = { node: a.node, endpoint: a.endpoint, atMs: a.atMs, sig: a.sig };
     const have = map.get(clean.node);
     if (newerAnnouncement(have, clean) === have) return { ok: true, kept: false };
@@ -29,7 +39,7 @@ export function createAddressBook({ db, verify, nowMs = () => Date.now() }) {
     const have = map.get(String(node).toLowerCase());
     if (have && have.endpoint === endpoint) return have;
     const a = signAddressAnnouncement({ node, endpoint, atMs: nowMs() }, sign);
-    take(a);
+    take(a, { self: true });   // this node's own, kept before its bond is in the census (kanban #1533)
     return a;
   }
   return { take, own, map: () => map, list: () => [...map.values()], endpointOf: (entry) => endpointOf(entry, map) };
@@ -65,6 +75,8 @@ export async function pullAnnouncements({ entries, book, ownKey, get, count = 8,
     const at = book.endpointOf(e);
     if (at) roots.push(String(at).replace(/^ws(s?):/i, 'http$1:').replace(/\/+$/, ''));
   }
+  // kanban #1533: only announcements of nodes this census names are taken, at most as many per answer as the census has nodes
+  const census = new Set((entries || []).map((e) => Buffer.from(e.pubkey).toString('hex')));
   const picked = [...new Set(roots)].map((r) => [random(), r]).sort((a, b) => a[0] - b[0]).slice(0, count).map(([, r]) => r);
   let answered = 0, kept = 0;
   await Promise.all(picked.map(async (root) => {
@@ -72,7 +84,7 @@ export async function pullAnnouncements({ entries, book, ownKey, get, count = 8,
       const body = await get(`${root}/address-announcements`);
       const list = body && Array.isArray(body.announcements) ? body.announcements : [];
       answered++;
-      for (const a of list) { try { if (book.take(a).kept) kept++; } catch { /* the next one */ } }
+      for (const a of list.filter((x) => x && census.has(String(x.node))).slice(0, census.size)) { try { if (book.take(a).kept) kept++; } catch { /* the next one */ } }
     } catch { /* the next round */ }
   }));
   return { asked: picked.length, answered, kept };

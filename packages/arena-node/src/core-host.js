@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs';
 import { posix } from 'node:path';
 import { workerData } from 'node:worker_threads';
 
-const { files: fileList, entry, name, port, ctrl: ctrlBuffer, arrayBudget } = workerData;
+const { files: fileList, entry, name, port, ctrl: ctrlBuffer, arrayBudget, liveCap } = workerData;
 const files = new Map(fileList);
 const ctrl = new Int32Array(ctrlBuffer);
 const DRIVER = readFileSync(new URL('./core-driver.js', import.meta.url), 'utf8');
@@ -22,17 +22,27 @@ const REMOVED = ['Date', 'Intl', 'WebAssembly', 'SharedArrayBuffer', 'Atomics', 
 // wrapped before the core loads - as the global and as each prototype's \`constructor\`, so \`slice\`, \`map\`, \`filter\`, \`from\`
 // (the species path) are counted too - and the allocation that would take the bytes alive past the budget throws. The
 // copies made without a constructor (toReversed, toSorted, with) are counted the same way; transfer, transferToFixedLength
-// and resize, which grow a buffer without one, are taken out. Bytes come back when an array is collected, between calls.
+// and resize, which grow a buffer without one, are taken out.
+// THE BUDGET IS PER CALL (kanban #1539): it counts the bytes allocated since the call began (the load, for the top level),
+// never the bytes still alive - those come back only after a GC, whenever one runs, so a core that tried an allocation near
+// the budget and caught the RangeError read what earlier calls on its thread left uncollected: the same call on the same
+// input answered 10 on a fresh thread and 9 after one call (measured), and committee seats with different histories would
+// split on one round. Crossing the budget is sticky: the call fails whatever the core does with the error, so catching it
+// changes nothing. What stays alive across calls is still bounded - by LIVE_CAP, read only by this thread between calls,
+// which ends the core and never hands the core a value.
 const BUDGET = Number.isInteger(arrayBudget) && arrayBudget > 0 ? arrayBudget : 64 * 1024 * 1024;
+// (kanban #1489 merge of #1538 + #1539) a caller may set a tighter cap: the plugin trial uses the budget itself, so a decide
+// adapter that keeps its arrays across calls is refused at the array budget, as #1538 promises; 0 or absent keeps 4x the budget
+const LIVE_CAP = Number.isInteger(liveCap) && liveCap > 0 ? liveCap : 4 * BUDGET;
 const LOCKDOWN = `'use strict';
 (() => {
   const budget = ${BUDGET};
   const FR = FinalizationRegistry, P = Proxy, R = Reflect, RangeErr = RangeError;
   const said = 'the core asked for more than ' + Math.round(budget / 1048576) + ' MB of arrays';
-  let live = 0;
+  let used = 0, live = 0, over = null;
   const back = new FR((n) => { live -= n; });
-  const take = (n) => { if (!(n >= 0) || live + n > budget) throw new RangeErr(said); };
-  const keep = (o) => { const n = o.byteLength; live += n; back.register(o, n); return o; };
+  const take = (n) => { if (over !== null || !(n >= 0) || used + n > budget) { over = said; throw new RangeErr(said); } };
+  const keep = (o) => { const n = o.byteLength; used += n; live += n; back.register(o, n); return o; };
   const KINDS = ['ArrayBuffer', 'Int8Array', 'Uint8Array', 'Uint8ClampedArray', 'Int16Array', 'Uint16Array', 'Int32Array', 'Uint32Array',
     'Float32Array', 'Float64Array', 'BigInt64Array', 'BigUint64Array'];
   const sizeOf = { ArrayBuffer: 1, Int8Array: 1, Uint8Array: 1, Uint8ClampedArray: 1, Int16Array: 2, Uint16Array: 2, Int32Array: 4, Uint32Array: 4,
@@ -58,11 +68,12 @@ const LOCKDOWN = `'use strict';
     const f = TA[m];
     Object.defineProperty(TA, m, { value: function (...a) { take(this.byteLength); return keep(R.apply(f, this, a)); }, writable: false, configurable: false });
   }
-})();
-for (const k of ${JSON.stringify(REMOVED)}) delete globalThis[k];
-delete Math.random;
-Object.defineProperty(Error, 'prepareStackTrace', { value: undefined, writable: false, configurable: false });
-void 0;`;
+  for (const k of ${JSON.stringify(REMOVED)}) delete globalThis[k];
+  delete Math.random;
+  Object.defineProperty(Error, 'prepareStackTrace', { value: undefined, writable: false, configurable: false });
+  // the script's value, handed only to this thread and kept on no global: the core never reaches it
+  return Object.freeze({ begin() { used = 0; }, over: () => over, live: () => live });
+})();`;
 
 /** Answer the node: the message first, then the flag it waits on. */
 function answer(m) {
@@ -72,6 +83,7 @@ function answer(m) {
 }
 const said = (e) => (e && typeof e.message === 'string' ? e.message : String(e));
 
+let liveOf = () => 0;
 function load() {
   if (typeof vm.SourceTextModule !== 'function') throw new Error('the core thread was started without --experimental-vm-modules');
   // DONT_CONTEXTIFY: the context's global is its own ordinary object, not one of this thread's behind interceptors -
@@ -79,7 +91,7 @@ function load() {
   const context = vm.createContext(vm.constants.DONT_CONTEXTIFY, {
     name: `core ${name}`, codeGeneration: { strings: false, wasm: false }, microtaskMode: 'afterEvaluate',
   });
-  new vm.Script(LOCKDOWN, { filename: 'arena:lockdown' }).runInContext(context);
+  const budget = new vm.Script(LOCKDOWN, { filename: 'arena:lockdown' }).runInContext(context);
   const modules = new Map();
   const moduleOf = (rel) => {
     if (!modules.has(rel)) modules.set(rel, new vm.SourceTextModule(files.get(rel), { context, identifier: `core:/${rel}` }));
@@ -108,13 +120,21 @@ function load() {
   driver.instantiate();
   const evaluated = driver.evaluate();
   if (evaluated && typeof evaluated.catch === 'function') evaluated.catch(() => { /* said below, by status */ });
+  if (budget.over() !== null) throw new Error(`the core failed while loading: ${budget.over()}`);
   if (driver.status === 'errored') throw new Error(`the core failed while loading: ${said(driver.error)}`);
   if (driver.status !== 'evaluated') throw new Error('the core did not finish loading (a core may not wait on anything)');
   // EVERY CALL IS A SCRIPT RUN IN THE CONTEXT, so its microtasks run after it, inside the node's deadline (microtaskMode
   // afterEvaluate) - the driver's door and the two strings it is handed sit on the context's own global
   Object.defineProperty(context, '__arenaCall', { value: driver.namespace.call, writable: false, configurable: false, enumerable: false });
   const script = new vm.Script('__arenaCall(__arenaOp, __arenaIn)', { filename: 'arena:call' });
-  return (op, json) => { context.__arenaOp = op; context.__arenaIn = json; return script.runInContext(context); };
+  liveOf = budget.live;
+  return (op, json) => {
+    budget.begin();
+    context.__arenaOp = op; context.__arenaIn = json;
+    const out = script.runInContext(context);
+    if (budget.over() !== null) throw new Error(budget.over());
+    return out;
+  };
 }
 
 let call = null;
@@ -124,6 +144,12 @@ port.on('message', ({ op, json }) => {
   if (!call) return answer({ ok: false, why: 'the core did not load' });
   let out;
   try { out = call(String(op), String(json)); } catch (e) { return answer({ ok: false, why: `the core failed in ${op}: ${said(e)}` }); }
+  // kanban #1539: the arrays a core keeps alive across calls, read here between calls and never by the core: past LIVE_CAP
+  // the core is ended (its context dropped, its arrays with it) - an end, not a value the core can branch on
+  if (liveOf() > LIVE_CAP) {
+    call = null; liveOf = () => 0;
+    return answer({ ok: false, why: `the core failed in ${op}: it kept more than ${Math.round(LIVE_CAP / 1048576)} MB of arrays alive` });
+  }
   if (typeof out !== 'string') return answer({ ok: false, why: `the core answered ${op} with something other than JSON` });
   answer({ ok: true, json: out });
 });

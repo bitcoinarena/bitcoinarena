@@ -50,11 +50,14 @@ import {
 import { init, step, submitLoad } from '../../nextblock/src/sim.js';
 
 // THE SCRIPTED PLAYERS' BED (C is the bed fill since 2026-10-04: an undeclared load is an empty bed, and an empty bed
-// scores 0): declared at tick 0 as a load of no fee and no BTC - heat 0, where these tapes were recorded - and 0.7 of the
-// 6 m bed, so C is the 45875 they were measured at. In the batch, so the signer nodes' replay sets the same C.
-export const FIXTURE_ROOM = 275250;
-export const loaded = (st) => { submitLoad(st, 0, 0, FIXTURE_ROOM); return st; };
-export const bedFrom = (from) => (from === 0 ? [[0, 0, 0, FIXTURE_ROOM]] : []);
+// scores 0): declared at tick 0, before the first tick drives. In the batch, so the signer nodes' replay sets the same C.
+// A BED A PAGE COULD DECLARE (kanban #1488: the seat refuses any other): four parcels of the 1.05 m class (4 x 68812 =
+// 275248, C 45874 - it was 275250, 0.7 of the bed, which no parcels make), each paying the least a transaction pays,
+// 1 sat (heat 13 of 65536), and no BTC.
+export const FIXTURE_ROOM = 275248;
+export const FIXTURE_FEE = 4;
+export const loaded = (st) => { submitLoad(st, FIXTURE_FEE, 0, FIXTURE_ROOM); return st; };
+export const bedFrom = (from) => (from === 0 ? [[0, FIXTURE_FEE, 0, FIXTURE_ROOM]] : []);
 import { hash as stateHash } from '../../nextblock/src/state.js';
 import { seedWordForEntry } from '../../arena-protocol/src/seed.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';

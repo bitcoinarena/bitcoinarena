@@ -18,7 +18,6 @@ import { noQuorumGoesToRerun } from '../../arena-protocol/src/constants.js';
 import { dissentsOn, dissentsFirstOn, dissentsFailOn, postsLateOn, LATE_POSTING_AFTER_MS } from './test-dissent.js';
 import { ReplayPool } from './pool.js';
 import { checkObjectionBundle } from './objection-check.js';
-import { decodeObjectionBundle } from '../../arena-protocol/src/objection.js';
 import { sha256 } from '../../arena-protocol/src/hash.js';
 import { stateOf } from './settlement-state.js';
 import { verifyKept } from './verify-kept.js';
@@ -196,6 +195,46 @@ async function capped(answer, maxBytes) {
   return Buffer.concat(parts);
 }
 
+/**
+ * EVERY PEER PULL HAS A DEADLINE AND A SIZE CAP (kanban #1550): a bare fetch() and arrayBuffer() let one peer that
+ * answered 200 and then sent a byte every few seconds hold the close for ever - before a played run is signed,
+ * #forkFromPeers awaited each peer's /checkpoints in turn, so one bad seat kept every honest seat from signing any
+ * run of the round. The signal bounds the connect and the whole body read (PEER_WAIT_MS); a body past `cap` bytes is
+ * dropped. A peer that does not answer in time, or answers too much, proves nothing and is treated as down.
+ */
+const PEER_BODY_MAX_BYTES = 16 * 1024 * 1024;
+/** Marks a peer may hold past this seat's own chain in one /checkpoints answer (#1550's cap). */
+const PEER_MARKS_AHEAD = 1024;
+async function peerFetch(url, waitMs = PEER_WAIT_MS) {
+  return fetch(url, { signal: AbortSignal.timeout(waitMs) });
+}
+/** The body of a peer's answer, at most `cap` bytes, read under the fetch's own deadline; throws past the cap. */
+async function peerBody(answer, cap = PEER_BODY_MAX_BYTES) {
+  const declared = Number(answer.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > cap) { try { await answer.body?.cancel(); } catch { /* gone */ } throw new Error(`answer of ${declared} bytes is past ${cap}`); }
+  if (!answer.body) return new Uint8Array(0);
+  const parts = []; let n = 0;
+  for await (const chunk of answer.body) {
+    n += chunk.length;
+    if (n > cap) { try { await answer.body.cancel(); } catch { /* gone */ } throw new Error(`answer past ${cap} bytes`); }
+    parts.push(chunk);
+  }
+  const out = new Uint8Array(n); let at = 0;
+  for (const c of parts) { out.set(c, at); at += c.length; }
+  return out;
+}
+async function peerJson(answer) { return JSON.parse(Buffer.from(await peerBody(answer)).toString('utf8')); }
+/** GET /checkpoints of every peer AT ONCE (#1550: in parallel, not one after another), each its bytes or null when down. */
+async function peersCheckpoints(peers, roundIdBytes, entryId, cap, waitMs = PEER_WAIT_MS) {
+  return Promise.all(peers.map(async (peer) => {
+    try {
+      const r = await peerFetch(`${peer}/checkpoints?round=${hex(roundIdBytes)}&entry=${hex(entryId)}`, waitMs);
+      if (!r.ok) { try { await r.body?.cancel(); } catch { /* gone */ } return { peer, body: null }; }
+      return { peer, body: await peerBody(r, cap) };
+    } catch { return { peer, body: null }; }   // a peer that is down, slow or too long proves nothing
+  }));
+}
+
 export class Verifier {
   constructor(round, {
     randomnessFor = NO_RANDOMNESS_SOURCE, chainFor = null, pool = new ReplayPool(), peers = [],
@@ -339,9 +378,9 @@ export class Verifier {
     for (const peer of this.peersOf(roundIdBytes)) {
       let body;
       try {
-        const answer = await fetch(`${peer}/receipts?round=${hex(roundIdBytes)}&entry=${hex(entryIdBytes)}`, { signal: AbortSignal.timeout(PEER_DATA_WAIT_MS) });
+        const answer = await peerFetch(`${peer}/receipts?round=${hex(roundIdBytes)}&entry=${hex(entryIdBytes)}`, PEER_DATA_WAIT_MS);
         if (!answer.ok) { report.down.push(`${peer}: answered ${answer.status}`); continue; }
-        body = new Uint8Array(await answer.arrayBuffer());
+        body = await peerBody(answer);
         report.answered++;
       } catch (e) { report.down.push(`${peer}: ${e.message}`); continue; }
       // THE RECEIPTS A PEER SENT, TAKEN INTO THE STORE - the continuation after that peer answered, and the last
@@ -363,9 +402,9 @@ export class Verifier {
     report.refusedMarks = [];
     for (const peer of this.peersOf(roundIdBytes)) {
       try {
-        const r = await fetch(`${peer}/refused-first-mark?entry=${hex(entryIdBytes)}`, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
+        const r = await peerFetch(`${peer}/refused-first-mark?entry=${hex(entryIdBytes)}`);
         if (r.status !== 200) continue;
-        const got = await r.json();
+        const got = await peerJson(r);
         const c = this.round.onTimeFirstMark(Uint8Array.from(Buffer.from(String(got.mark || ''), 'hex')));
         if (c && hex(c.entryId) === hex(entryIdBytes)) report.refusedMarks.push({ peer, why: String(got.why || '').slice(0, 120), markId: markIdOf(c) });
       } catch { /* a signer node that cannot answer shows nothing */ }
@@ -522,13 +561,9 @@ export class Verifier {
     }
     if (!mine.length) return false;
     const verify = (sig, msg, pub) => { try { return sessionCurve.verify(sig, msg, pub); } catch { return false; } };
-    for (const peer of this.peersOf(roundIdBytes)) {
-      let body;
-      try {
-        const r = await fetch(`${peer}/checkpoints?round=${hex(roundIdBytes)}&entry=${hex(entryId)}`, { signal: AbortSignal.timeout(PEER_DATA_WAIT_MS) });
-        if (!r.ok) continue;
-        body = new Uint8Array(await r.arrayBuffer());
-      } catch { continue; }                  // a peer that is down proves nothing
+    const cap = (mine.length + PEER_MARKS_AHEAD) * SIGNED_MARK_BYTES;
+    for (const { peer, body } of await peersCheckpoints(this.peersOf(roundIdBytes), roundIdBytes, entryId, cap, PEER_DATA_WAIT_MS)) {
+      if (!body) continue;                   // a peer that is down proves nothing
       for (let at = 0; at + SIGNED_MARK_BYTES <= body.length; at += SIGNED_MARK_BYTES) {
         const theirs = body.slice(at, at + SIGNED_MARK_BYTES);
         let tc; try { tc = decodeCheckpoint(splitSignedMark(theirs).body); } catch { continue; }
@@ -598,13 +633,10 @@ export class Verifier {
 
   /** The mark a peer holds past this node's chain - checked, never believed. */
   async #peerFinalMark(roundIdBytes, entryId, entry) {
-    for (const peer of this.peersOf(roundIdBytes)) {
-      let body;
-      try {
-        const r = await fetch(`${peer}/checkpoints?round=${hex(roundIdBytes)}&entry=${hex(entryId)}`, { signal: AbortSignal.timeout(PEER_DATA_WAIT_MS) });
-        if (!r.ok) continue;
-        body = new Uint8Array(await r.arrayBuffer());
-      } catch { continue; }
+    const held = Math.floor(this.round.checkpoints(roundIdBytes, entryId).bytes.length / SIGNED_CHECKPOINT_BYTES);
+    const cap = (held + PEER_MARKS_AHEAD) * SIGNED_CHECKPOINT_BYTES;
+    for (const { body } of await peersCheckpoints(this.peersOf(roundIdBytes), roundIdBytes, entryId, cap, PEER_DATA_WAIT_MS)) {
+      if (!body) continue;
       for (let at = 0; at + SIGNED_CHECKPOINT_BYTES <= body.length; at += SIGNED_CHECKPOINT_BYTES) {
         const bytes = body.slice(at, at + SIGNED_CHECKPOINT_BYTES);
         let c; let sig;
@@ -695,8 +727,9 @@ export class Verifier {
     // AN ENTRY BELOW THE ROUND'S THRESHOLD IS NO MEMBER (§17, kanban #1071): it is not decided, played against or signed for
     const entries = this.round.entriesOf(roundIdBytes).filter(({ entryId }) => !this.round.entryVoid(entryId));
     // AND IN A PAYING ROUND ONLY THE ENTRIES BACKED BY A LOCK ARE PLAYED (kanban #1437, audit 8 R3): one with no lock took no seat, is played against
-    // nobody and is signed VOID - its reveal cannot change the seated players' verdicts
-    const seated = new Set((typeof this.round.seatedEntriesOf === 'function' ? this.round.seatedEntriesOf(roundIdBytes, contract.stakeMsat) : entries).map(({ entryId }) => hex(entryId)));
+    // nobody and is signed VOID - its reveal cannot change the seated players' verdicts. Its stake SEEN, not only its stake lock waiting for its
+    // fee lock (kanban #1544): the settlement counts only a seen stake, so an unseen one played was a stake never at risk
+    const seated = new Set((typeof this.round.seatedEntriesOf === 'function' ? this.round.seatedEntriesOf(roundIdBytes, contract.stakeMsat, { played: true }) : entries).map(({ entryId }) => hex(entryId)));
     const decided = (async () => {
       await this.carryReveals(roundIdBytes, entries, found.plugin.manifest.moveCount);
       const held = new Map(this.round.revealsOf(roundIdBytes).map((r) => [hex(r.entryId), r]));
@@ -775,7 +808,7 @@ export class Verifier {
         // the peers after it, which may hold the missing reveal, were never asked. Now PEER_WAIT_MS covers the body too,
         // and the body is read up to about 1 KiB per entry plus 64 KiB of slack (a reveal with its identity is ~350 bytes; the
         // array is not cut to the entry count, since a peer also sends reveals of entries this seat holds void).
-        const answer = await fetch(`${peer}/reveals?round=${hex(roundIdBytes)}`, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
+        const answer = await peerFetch(`${peer}/reveals?round=${hex(roundIdBytes)}`);   // kanban #1550: the same deadline
         if (!answer.ok) continue;
         body = JSON.parse((await capped(answer, 65536 + byId.size * 1024)).toString('utf8'));
       } catch { continue; }
@@ -1012,9 +1045,9 @@ export class Verifier {
   async #pullEvidenceBlocks(roundIdBytes, entryId) {
     for (const peer of this.peersOf(roundIdBytes)) {
       try {
-        const r = await fetch(`${peer}/evidence-blocks?entry=${hex(entryId)}`, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
+        const r = await peerFetch(`${peer}/evidence-blocks?entry=${hex(entryId)}`);
         if (r.status !== 200) continue;
-        const got = await r.json();
+        const got = await peerJson(r);
         for (const x of (got && got.marks) || []) {
           if (!/^[0-9a-f]{64}$/.test(String(x.mark)) || !/^[0-9a-f]{64}$/.test(String(x.block))) continue;
           this.round.noteEvidenceBlock(roundIdBytes, entryId, Uint8Array.from(Buffer.from(x.mark, 'hex')), Uint8Array.from(Buffer.from(x.block, 'hex')),
@@ -1028,9 +1061,9 @@ export class Verifier {
   async #peerVoidBefore(roundIdBytes, entryId, counts) {
     for (const peer of this.peersOf(roundIdBytes)) {
       try {
-        const r = await fetch(`${peer}/entry-void?entry=${hex(entryId)}`, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
+        const r = await peerFetch(`${peer}/entry-void?entry=${hex(entryId)}`);
         if (r.status !== 200) continue;
-        const got = await r.json();
+        const got = await peerJson(r);
         const mark = Uint8Array.from(Buffer.from(String(got.firstMark || ''), 'hex'));
         const c = this.round.onTimeFirstMark(mark);
         if (c && hex(c.entryId) === hex(entryId) && counts(mark)) return peer;
@@ -1358,8 +1391,10 @@ export class Verifier {
     // AND EACH SIGNER NODE'S OWN WORD THAT IT DECIDED THE ENTRY BY §13C (x-no-quorum): not taken as the entry's
     // outcome here - it only says that signer node will sign nothing, which `shortPastWindow` counts.
     const noQuorumPeers = [];
-    // THE ROUND'S COMMITTEE, read once: a peer result counts only under one of its keys (kanban #1489).
-    const committee = this.round.signerNodes(roundIdBytes);
+    // THE ROUND'S COMMITTEE, read once: a peer result counts only under one of its keys (kanban #1489, #1502, #1512) - the
+    // contract's nodes where this node holds no signer list
+    const signers = this.round.signerNodes(roundIdBytes);
+    const committee = signers.length ? signers : contract.nodes || [];
     for (const peer of this.peersOf(roundIdBytes)) {
       let body;
       try {
@@ -1489,9 +1524,9 @@ export class Verifier {
     for (const peer of this.peersOf(roundIdBytes)) {
       let body;
       try {
-        const answer = await fetch(`${peer}/postings?round=${hex(roundIdBytes)}&entry=${hex(entryIdBytes)}`, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
+        const answer = await peerFetch(`${peer}/postings?round=${hex(roundIdBytes)}&entry=${hex(entryIdBytes)}`);
         if (!answer.ok) continue;
-        body = new Uint8Array(await answer.arrayBuffer());
+        body = await peerBody(answer);
       } catch { continue; }                  // a peer that is down is not a fault
       for (let at = 0; at + SIGNED_POSTING_BYTES <= body.length; at += SIGNED_POSTING_BYTES)
         this.#keepPeerPosting(roundIdBytes, entryIdBytes, body.slice(at, at + SIGNED_POSTING_BYTES), playerPubkey, signerNodes);
@@ -1527,8 +1562,8 @@ export class Verifier {
     // full replay, ~1.4 s measured live, first in the pool - a flood of copies would have starved the closes):
     //   - ONE CHECK IN FLIGHT PER ENTRY: the next bundle for that entry waits its turn (its arrival is already stamped at
     //     the door, so waiting never makes an objection late);
-    //   - THE SAME RUN IS REPLAYED ONCE: a replay is keyed by the bytes it replays (transcript and inputs) and the length
-    //     replayed, kept in flight and after, so copies of one bundle share one answer;
+    //   - THE SAME RUN IS REPLAYED ONCE: a replay is keyed by the input it replays (the parsed form and marks, kanban
+    //     #1517), kept in flight and after, so copies of one bundle share one answer;
     //   - AND IN THE ORDINARY CLASS: a check is not yet an objection, so it does not go ahead of a close. The re-run a held
     //     objection starts is still first (rerun, objected: true).
     // A CHECK QUEUED OR RUNNING HERE HOLDS ITS ENTRY (kanban #1225, audit 2 #1204 SETTLEMENT-3): a pending objection held the entry SUSPENDED
@@ -1545,15 +1580,24 @@ export class Verifier {
     this.objectionTurns.set(hex(entryIdBytes), mine);
     await tail;
     try {
-      let content = '';
-      try { const p = decodeObjectionBundle(bundle); content = hex(sha256(new Uint8Array([...p.transcript, ...(p.inputs || [])]))); } catch { content = ''; }
       return await checkObjectionBundle({
         bundle, roundId: roundIdBytes, entryId: entryIdBytes, entry: found.entry, contract,
         committee: given.committee || this.round.signerNodes(roundIdBytes), signedResultId, core, roundRandomness: beacon.hash,
         verify: (sig, msg, key) => verifyKept(sig, msg, key), hashTicks: given.hashTicks || [],
         replayRun: (form, entry, options) => {
+          // KEYED BY WHAT IS REPLAYED, NOT BY THE BYTES POSTED (kanban #1517): the raw transcript + inputs bytes let a
+          // stranger make every copy of one run a fresh key (whitespace or an unknown key in a live run's inputs, or an
+          // inputs part beside a batch transcript, never read) - each a full replay, the entry held SUSPENDED behind
+          // them. The parsed replay form (replayFormOf / inputsFormOf: fixed fields, integers only) and the marks it
+          // must reproduce are the replay's whole input for this entry, so any bytes giving the same input share one job.
+          let content = '';
+          try {
+            content = hex(sha256(new TextEncoder().encode(JSON.stringify([
+              [form.ticks.map((x) => [x.tick, x.words]), form.liquidations, form.loads, form.samples, form.tapes],
+              (options.marks || []).map((m) => [m.tick, hex(m.stateHash)])]))));
+          } catch { content = ''; }
           const ticksAsked = (options.hashTicks || []).join('.');
-          const key = `${hex(roundIdBytes)}:${hex(entryIdBytes)}:${content}:${form.ticks.length}${ticksAsked ? `:h${ticksAsked}` : ''}`;
+          const key = `${hex(roundIdBytes)}:${hex(entryIdBytes)}:${content}${ticksAsked ? `:h${ticksAsked}` : ''}`;
           const had = content && this.objectionReplays.get(key);
           if (had) return had;
           this.objectionReplayCount++;
@@ -1683,9 +1727,9 @@ export class Verifier {
     for (const peer of this.peersOf(roundIdBytes)) {
       let body;
       try {
-        const answer = await fetch(`${peer}/reruns?round=${hex(roundIdBytes)}&entry=${hex(entryIdBytes)}`, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
+        const answer = await peerFetch(`${peer}/reruns?round=${hex(roundIdBytes)}&entry=${hex(entryIdBytes)}`);
         if (!answer.ok) continue;
-        body = new Uint8Array(await answer.arrayBuffer());
+        body = await peerBody(answer);
       } catch { continue; }
       for (const rec of cutSignedReruns(body))
         this.#keepPeerRerun(roundIdBytes, rec.slice(), found.entry.playerPubkey, signerNodes, entryIdBytes);
@@ -2001,9 +2045,9 @@ export class Verifier {
     if (hex(hashOfTranscript(empty)) === hex(transcriptHash)) return encodeTranscript(empty);
     for (const peer of this.peersOf(roundIdBytes)) {
       try {
-        const answer = await fetch(`${peer}/canonical?round=${hex(roundIdBytes)}&entry=${hex(entryIdBytes)}`, { signal: AbortSignal.timeout(PEER_DATA_WAIT_MS) });
+        const answer = await peerFetch(`${peer}/canonical?round=${hex(roundIdBytes)}&entry=${hex(entryIdBytes)}`, PEER_DATA_WAIT_MS);
         if (!answer.ok) continue;
-        const bytes = new Uint8Array(await answer.arrayBuffer());
+        const bytes = await peerBody(answer);
         if (hex(transcriptBytesHash(bytes)) === hex(transcriptHash)) return bytes;
         report.refused.push(`${peer}: served a transcript that is not the one the agreed result names`);
       } catch { /* the next peer may have it */ }
