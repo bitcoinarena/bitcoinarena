@@ -23,7 +23,7 @@
 // Each payment's txid is appended to FAUCET_PENDING, which the the test host's miner-C feeder (ops/pending-to-minerc.sh) lists for mining.
 //   FAUCET_PORT  FAUCET_RPC_URL (with /wallet/<name>)  FAUCET_COOKIE  FAUCET_BOOK  FAUCET_PENDING  [FAUCET_FEE_RATE sat/vB, 2]
 import { createServer } from 'node:http';
-import { timingSafeEqual, createHash } from 'node:crypto';
+import { timingSafeEqual, createHash, randomBytes } from 'node:crypto';
 import { readFileSync, writeFileSync, appendFileSync, renameSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { nodeBountyCheck } from '../src/node-bounty-check.js';
@@ -478,18 +478,28 @@ async function sweepPayments(nowMs = Date.now()) {
     if (states.includes('SUCCEEDED')) keep.add(r.hash);
     else if (notPaid(states)) drop.add(r.hash);
   }
+  // A REFILL STILL UNSURE (kanban #2130): read the same way; NONE/FAILED at every payer asked takes it out of the day's count
+  const keepRefill = new Set(), dropRefill = new Set();
+  for (const r of (seen.refills || []).filter((x) => x.pending && !GRANTING.has(x.hash))) {
+    const states = await Promise.all((r.payers || []).map((i) => paymentFinal(PAYERS[i], r.hash).catch(() => null)));
+    if (states.includes('SUCCEEDED')) keepRefill.add(r.hash);
+    else if (notPaid(states)) dropRefill.add(r.hash);
+  }
   for (const u of seen.unsure || []) {
     const states = await Promise.all(askedOf(u).map((p) => paymentFinal(p, u.hash).catch(() => null)));
     if (states.includes('SUCCEEDED')) rebook.set(u.hash, u);
     else if (notPaid(states) || (!states.includes('IN_FLIGHT') && nowMs - Number(u.removedMs || 0) > UNSURE_KEEP_MS)) forget.add(u.hash);
   }
-  if (!keep.size && !drop.size && !rebook.size && !forget.size) return false;
+  if (!keep.size && !drop.size && !rebook.size && !forget.size && !keepRefill.size && !dropRefill.size) return false;
   const book = readBook();
   book.players = book.players || []; book.unsure = book.unsure || [];
   for (const r of book.players) if (r.pending && keep.has(r.hash)) { delete r.pending; delete r.payers; delete r.payerIds; console.log(`${new Date().toISOString()} player ${r.kind} ${r.hash.slice(0, 16)}: SUCCEEDED, kept`); }
   book.players = book.players.filter((r) => { const gone = r.pending && drop.has(r.hash); if (gone) console.log(`${new Date().toISOString()} player ${r.kind} ${r.hash.slice(0, 16)}: not paid by any payer, the row removed (the welcome can be asked again)`); return !gone; });
   for (const [h, u] of rebook) { const { payers, payerIds, removedMs, ...row } = u; if (!book.players.some((x) => x.hash === h)) { book.players.push(row); console.log(`${new Date().toISOString()} player ${row.kind} ${h.slice(0, 16)}: paid after all - booked again`); } }
   book.unsure = book.unsure.filter((u) => !rebook.has(u.hash) && !forget.has(u.hash));
+  book.refills = book.refills || [];
+  for (const r of book.refills) if (r.pending && keepRefill.has(r.hash)) { delete r.pending; delete r.payers; console.log(`${new Date().toISOString()} refill ${r.hash.slice(0, 16)}: SUCCEEDED, kept`); }
+  book.refills = book.refills.filter((r) => { const gone = r.pending && dropRefill.has(r.hash); if (gone) console.log(`${new Date().toISOString()} refill ${r.hash.slice(0, 16)}: not paid by any payer - not counted`); return !gone; });
   saveBook(book);
   return true;
 }
@@ -727,26 +737,42 @@ createServer((req, res) => {
         if (wholeSatsOf(inv) === null) return send(200, { ok: false, why: 'the invoice must be for whole sats' });   // kanban #2857
         const book = readBook(), d = refillDecide({ invoiceSats: wholeSatsOf(inv) }, book);
         if (!d.ok) return send(200, d);
-        book.refills = book.refills || []; book.refills.push({ sats: d.sats, atMs: Date.now(), hash: inv.payment_hash }); saveBook(book);
-        // the status line, never a node's alias (kanban #2416, #2482)
-        for (const payer of PAYERS) {
-          const paid = await lncli(payer, ['payinvoice', '--force', '--timeout=60s', '--fee_limit=20', b.invoice], 15000);
-          const paidSays = lnStatus(paid.out);
-          if (paidSays === 'SUCCEEDED' || (paid.timedOut && paidSays !== 'FAILED')) {   // kanban #2206: an IN_FLIGHT update before FAILED, or an exit without SUCCEEDED, is no top-up
-            // A PAYMENT THAT FAILED AFTER ITS ANSWER IS NOT A TOP-UP (kanban #1391, measured 2026-11-09: 13 refills of the test opponent, 39,000 sat, were
-            // counted when lncli ran past 15 s - every one then FAILED, INCORRECT_PAYMENT_DETAILS or NO_ROUTE, no sat moved - and the day's cap said "the
-            // top-ups of today are used up" while the bot's wallet held 0, so it entered no round): once lnd knows, a failed one leaves the day's count
-            if (lnStatus(paid.out) !== 'SUCCEEDED') setTimeout(async () => {
-              const t = await lncli(payer, ['trackpayment', inv.payment_hash], 20000);
-              if (lnStatus(t.out) === 'FAILED') {
-                // a book that cannot be read now is not written over (kanban #2205): the refill stays counted
-                try { const later = readBook(); later.refills = (later.refills || []).filter((r) => r.hash !== inv.payment_hash); saveBook(later); } catch (e) { console.log(`${new Date().toISOString()} refill ${inv.payment_hash.slice(0, 16)}: not taken out: ${e.message}`); return; }
-                console.log(`${new Date().toISOString()} refill ${d.sats} sat: ${inv.payment_hash.slice(0, 16)} failed after its answer - not counted`);
-              }
-            }, 120000);
-            console.log(`${new Date().toISOString()} refill ${d.sats} sat: ${inv.payment_hash.slice(0, 16)}`); return send(200, { ok: true, sats: d.sats }); }
-        }
-        const after = readBook(); after.refills = (after.refills || []).filter((r) => r.hash !== inv.payment_hash); saveBook(after);
+        // BOOKED PENDING BEFORE ANY PAYINVOICE (kanban #2130, a44 refute of #1627 at the second door): the refill's row was booked plain and only an
+        // in-memory 120 s timer took a failed one out - a faucet killed inside payinvoice (or before that timer ran) kept a refill that never moved a
+        // sat counted toward REFILL_DAY_CAP_SATS all day (#1391). The row is now pending with every payer that may be asked, as a player's grant
+        // (#1627): SUCCEEDED clears it, IN_FLIGHT or a timeout narrows it to the payers asked, and the payment sweep removes it once every one of them
+        // answers NONE/FAILED (after a restart too). refillDecide still counts pending rows, so the cap never pays one twice
+        const hash = inv.payment_hash;
+        // THE SAME INVOICE AGAIN (kanban #2375, a44 refute 6 s2 of #2130): a refill whose invoice was already asked - paid, pending or still paying
+        // here - is refused before any row or payinvoice. A retry of a paid invoice failed at every payer and the failure path removed EVERY row with
+        // that hash, the SUCCEEDED one too, so "refill, re-post the invoice" drained past REFILL_DAY_CAP_SATS; a concurrent retry also took the first
+        // request's pending row and cleared its GRANTING mark. The check and the push below run in one synchronous step after the last await
+        book.refills = book.refills || [];
+        if (GRANTING.has(hash) || book.refills.some((r) => r.hash === hash)) return send(200, { ok: false, why: 'that invoice was already asked' });
+        // ONLY ITS OWN ROW (kanban #2375): each row carries its own id; every later change finds the row by that id, never by the hash alone
+        const id = randomBytes(8).toString('hex'), mineOf = (bk) => (bk.refills || []).find((r) => r.id === id && r.pending);
+        book.refills.push({ id, sats: d.sats, atMs: Date.now(), hash, pending: true, payers: PAYERS.map((_, i) => i) }); saveBook(book);
+        GRANTING.add(hash);
+        try {
+          const askedPayers = [];
+          let unclear = false;
+          for (const payer of PAYERS) {
+            const paid = await lncli(payer, ['payinvoice', '--force', '--timeout=60s', '--fee_limit=20', b.invoice], 15000);
+            askedPayers.push(PAYERS.indexOf(payer));
+            const paidSays = lnStatus(paid.out);   // kanban #2416: the status line, never a node's alias
+            if (paidSays === 'SUCCEEDED' || (paid.timedOut && paidSays !== 'FAILED')) {   // kanban #2206: an IN_FLIGHT update before FAILED, or an exit without SUCCEEDED, is no top-up
+              const b2 = readBook(), mine = mineOf(b2);
+              if (mine && paidSays === 'SUCCEEDED') { delete mine.pending; delete mine.payers; saveBook(b2); }
+              else if (mine) { mine.payers = [...askedPayers]; saveBook(b2); }
+              console.log(`${new Date().toISOString()} refill ${d.sats} sat: ${hash.slice(0, 16)}`); return send(200, { ok: true, sats: d.sats });
+            }
+            // "already paid" / "in transition" is no proof that nothing moved (kanban #2375): the row stays for the sweep to decide
+            if (/already paid|in transition|already exists/i.test(`${paid.err} ${paid.out}`)) unclear = true;
+          }
+          const after = readBook();
+          if (unclear) { const mine = mineOf(after); if (mine) { mine.payers = [...askedPayers]; saveBook(after); } }
+          else { after.refills = (after.refills || []).filter((r) => !(r.id === id && r.pending)); saveBook(after); }
+        } finally { GRANTING.delete(hash); }
         send(200, { ok: false, why: 'could not pay just now' });
       } catch { send(400, { ok: false, why: 'not JSON' }); }
     });
