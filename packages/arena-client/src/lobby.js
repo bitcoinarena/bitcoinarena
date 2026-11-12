@@ -723,7 +723,13 @@ export function lobbyRowNotOffered(r) {
   // ONE GRID PLAYED PER WINDOW (§5A.5 the backup rule, kanban #702, 2026-10-26: "Yes make it part of the design, in the spec"): a seat names
   // a round it does not play in its window - a backup under a drawn primary, a primary whose backup took entries there - played: false;
   // a round most of the seats that say so do not play is not offered
-  const plays = (r.said || []).filter((c) => c && typeof c.played === 'boolean');
+  // ONLY THE ROUND'S OWN SIGNER NODES VOTE, EACH ONCE (kanban #2555, audit #1489 r13): a row fetchLobby built marks each listing `counts`
+  // (fresh, from a signer node of the round, open and assigned there, signed); only those are read, one per node key - before, every
+  // listing was, so one seat outside the committee naming the id six times with `played: false` hid a round its signer nodes play
+  const fromLobby = (r.said || []).some((c) => c && typeof c.counts === 'boolean');
+  const keys = new Set();
+  const plays = (r.said || []).filter((c) => c && typeof c.played === 'boolean'
+    && (!fromLobby || (c.counts === true && !keys.has(c.key) && keys.add(c.key))));
   if (plays.length && plays.filter((c) => !c.played).length * 2 > plays.length) return 'not played';
   const said = (r.said || []).map((c) => c && c.committee).filter(Boolean);
   // a seat names a drawn committee by its members ({ drawn: { game: [...], settlement: [...] } }), an undrawn one drawn: false and why
