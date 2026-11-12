@@ -62,17 +62,25 @@ export function priceAttestationStands({ id, sigs, committee, threshold, verify 
   if (typeof verify !== 'function') return { ok: false, signed: [], why: 'checking a signature needs a verifier, and none was injected' };
   const members = new Set((committee || []).map((k) => (typeof k === 'string' ? k.toLowerCase() : toHex(k))));
   const signed = new Set();
+  // kanban #1730: A KEY IS TRIED AT MOST ONCE PER COMMITTEE MEMBER - counted before its signature is verified, so the whole list
+  // costs at most n x n BIP-340 checks (49 for 7), however long it is. Before, a key skipped only once a signature of it had
+  // VERIFIED: a list repeating one committee key with junk signatures cost one verify per entry, and one POST /price-attested of
+  // 3,000 copies held a seat's thread 2.7 s (8 MiB about 30 s). Not once per key: a list merged from the seats' own answers
+  // (game-market collect, one entry a seat) may carry a liar's junk under an honest key BEFORE that key's real signature, and
+  // the real one must still count - at most n entries come from n seats, so the budget never drops it.
+  const tried = new Map();
   for (const s of sigs || []) {
     // kanban #1489: a signature that is not 64 bytes (as 128 hex or bytes) counts nothing - it never throws. `"".match(/../g)`
     // is null, and one seat answering GET /round-result with signature "" threw here, so no market on its game ever resolved.
     let key, sig;
     try { key = typeof s.key === 'string' ? s.key.toLowerCase() : toHex(s.key); } catch { continue; }
-    if (!members.has(key) || signed.has(key)) continue;
+    if (!members.has(key) || signed.has(key) || (tried.get(key) || 0) >= members.size) continue;
     // kanban #1530: the signature and key are decoded inside the checks below - a peer's odd-length or 1-char hex ('a')
     // made match() return null and threw out of the whole check, so one bad seat hid the result the others signed.
     if (typeof s.signature === 'string') { if (!/^[0-9a-f]{128}$/i.test(s.signature)) continue; sig = fromHex(s.signature.toLowerCase()); }
     else if (s.signature instanceof Uint8Array && s.signature.length === 64) sig = s.signature;
     else continue;
+    tried.set(key, (tried.get(key) || 0) + 1);
     let good = false;
     try { good = !!verify(sig, id, fromHex(key)); } catch { good = false; }
     if (good) signed.add(key);
