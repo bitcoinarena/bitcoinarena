@@ -4224,8 +4224,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   function takeFinalSig(rid, eid, bytes, f = resultFinality(round, rid, eid)) {
     let x;
     try { x = decodeFinalSig(splitSignedFinalSig(bytes).body); } catch (e) { return { kept: 'refused', why: e.message }; }
+    // ONLY AN ENTRY OF THE ROUND, ONLY THE RUN THIS SEAT HOLDS, ONE ROW PER SEAT (kanban #1817): final_sigs is keyed
+    // (round, entry, run, signer), and nothing here asked whether the entry was the round's or which run it named - one
+    // committee seat signed FINAL over 400 invented (entry, run) pairs and every honest seat kept 400 rows, each re-verified
+    // on every GET /served, item purchase and funding signal (444 ms measured), and each counted the seat as having served.
+    // Now an entry the round does not hold is refused, a run other than the one this seat may sign is refused (finalSigFault
+    // "about another run"), and while this seat holds no run yet only a seat's first FINAL on the entry is kept.
+    const owner = round.db.prepare('SELECT round_id FROM entries WHERE entry_id = ?').get(eid);
+    if (!owner || toHex(owner.round_id) !== toHex(rid)) return { kept: 'refused', why: 'not an entry of that round' };
+    const holdRun = (f && f.signable && f.signable.runId) || null;
+    if (!holdRun) {
+      const had = round.db.prepare('SELECT run_id FROM final_sigs WHERE round_id = ? AND entry_id = ? AND signer_pubkey = ?').all(rid, eid, x.signerPubkey);
+      if (had.some((r) => toHex(r.run_id) !== toHex(x.runId))) return { kept: 'refused', why: 'this seat already holds that signer\'s FINAL on another run of the entry' };
+    }
     const seenMs = round.now();
-    const fault = finalSigFault({ bytes, seenMs }, { roundId: rid, entryId: eid, runId: null,
+    const fault = finalSigFault({ bytes, seenMs }, { roundId: rid, entryId: eid, runId: holdRun,
       committee: round.signerNodes(rid), finalAfterMs: f.finalAfterMs ?? 0n, verify: (sg, m, k) => schnorr.verify(sg, m, k) });
     const kept = round.putFinalSig(rid, eid, x, bytes, fault, seenMs);
     if (kept === 'evidence') console.log(`[final] ${toHex(eid).slice(0, 16)} a FINAL signature of ${toHex(x.signerPubkey).slice(0, 16)} does not count: ${fault.why}`);
