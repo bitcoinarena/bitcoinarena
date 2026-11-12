@@ -13429,10 +13429,29 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // ONLY A TRANSCRIPT OF AN ENTRY THIS SEAT HOLDS (kanban #1532): the bytes decode as a transcript (decodeTranscript) whose entry is
         // in this seat's store under the round it names, or are a head-to-head reveal record (entry id || move || 32-byte salt, or
         // entry id || 0xff, verify.js #revealRecord) of an entry it holds. Random bytes, and transcripts of runs nobody entered here, are refused.
+        // AND A REVEAL RECORD ONLY IF IT IS THAT ENTRY'S OWN (kanban #1824, bypass of #1532): any 65 bytes naming a held entry were kept, so a stranger
+        // who knew one public entry id minted 2^256 "reveal records" (entry id || any move || random salt), each under its own hash, until the relay store
+        // was full and every honest transcript, reveal record and slash proof was refused (507). Now the entry's round must be a head-to-head game this
+        // seat hosts, and a 65-byte record must open the commitment the entry named (headToHeadCommit) with a move the game offers; the 33-byte
+        // no-reveal record (entry id || 0xff) has one hash per entry, so it is kept once.
+        const revealRecordOpens = (rec) => {
+          try {
+            const raw = round.entry(rec.subarray(0, 32));
+            if (!raw) return false;
+            const entry = decodeEntryContract(raw), row = round.get(entry.roundId);
+            if (!row) return false;
+            const found = pluginForRound(decodeRoundContract(new Uint8Array(row.contract)), hosted);
+            if (!found.ok || !found.headToHead) return false;
+            if (rec.length === 33) return true;
+            const move = rec[32];
+            if (!(move < found.plugin.manifest.moveCount)) return false;
+            return toHex(headToHeadCommit({ roundId: entry.roundId, entryKey: entry.sessionPubkey, move, salt: rec.slice(33, 65) })) === toHex(entry.commit);
+          } catch { return false; }
+        };
         const u8 = new Uint8Array(bytes), roundOfEntry = (eid) => { const r = round.db.prepare('SELECT round_id FROM entries WHERE entry_id = ?').get(eid); return r ? toHex(new Uint8Array(r.round_id)) : null; };
         let ours = false;
         try { const t = decodeTranscript(u8); ours = roundOfEntry(t.entryId) === toHex(t.roundId); }
-        catch { ours = (u8.length === 65 || (u8.length === 33 && u8[32] === 0xff)) && roundOfEntry(u8.subarray(0, 32)) !== null; }
+        catch { ours = (u8.length === 65 || (u8.length === 33 && u8[32] === 0xff)) && roundOfEntry(u8.subarray(0, 32)) !== null && revealRecordOpens(u8); }
         if (!ours) return text(res, 422, 'this relay keeps only the transcript of an entry it holds');
         if (round.relayedBytes() + bytes.length > RELAY_MOST) return text(res, 507, 'this relay keeps no more: its store for relayed bytes is full');
         round.relayPut(Buffer.from(relayed[1], 'hex'), bytes);
