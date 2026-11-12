@@ -3,7 +3,7 @@
 // NO SEED PHRASE IN A REPORT, IN ANY SPELLING (kanban #1472, feedback #005 by Hexbox Tools 2026-11-11)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { scrubKeys } from '../src/faucet.js';
+import { scrubKeys } from '../src/feedback-store.js';
 
 const W = 'abandon ability able about above absent absorb abstract absurd abuse access accident'.split(' ');
 test('#1472 a 12-word seed is removed in lowercase, capitalised with commas, numbered on lines, in capitals; a sentence and 11 words stay', () => {
