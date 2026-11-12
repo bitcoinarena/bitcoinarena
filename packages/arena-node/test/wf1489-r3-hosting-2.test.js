@@ -47,7 +47,9 @@ test('#1489 r3 hosting-2: a seat\'s oversized GET /plugin answer is not read who
   const bad = http.createServer((req, res) => {
     if (req.url.startsWith('/games')) {
       res.writeHead(200, { 'content-type': 'application/json' });
-      return res.end(JSON.stringify({ games: [{ id: sha(Buffer.from('fake')), manifest: toHex(encodeManifest(v2.manifest)) }] }));
+      // listed under its own id: a made-up id beside a real manifest is never fetched at all since #1552 (r3 hosting-1), so the
+      // bounded read is reached through the real one
+      return res.end(JSON.stringify({ games: [{ id: toHex(v2.gameId), manifest: toHex(encodeManifest(v2.manifest)) }] }));
     }
     if (req.url.startsWith('/plugin')) {
       if (asked++) { res.writeHead(404); return res.end(); }
