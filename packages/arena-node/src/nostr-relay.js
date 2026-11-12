@@ -48,7 +48,9 @@ export function eventRefusal(e, { kinds = RELAY_KINDS, nowS = Math.floor(Date.no
   if (!HEX64.test(e.id || '') || !HEX64.test(e.pubkey || '') || !HEX128.test(e.sig || '')) return 'invalid: id, pubkey or sig';
   if (!Number.isInteger(e.kind) || e.kind < 0 || e.kind > 65535) return 'invalid: kind';
   if (!Number.isInteger(e.created_at) || e.created_at < 0) return 'invalid: created_at';
-  if (!Array.isArray(e.tags) || !e.tags.every((t) => Array.isArray(t) && t.every((x) => typeof x === 'string'))) return 'invalid: tags';
+  // kanban #1960, #1994, #2009: every tag is a NON-EMPTY list of strings - an empty tag ([[]]) has no name, and it used to be stored and then
+  // throw in the tag index, half handled (no quota, no replaceable drop, no fan-out) and fatal to the next start.
+  if (!Array.isArray(e.tags) || !e.tags.every((t) => Array.isArray(t) && t.length >= 1 && t.every((x) => typeof x === 'string'))) return 'invalid: tags';
   if (typeof e.content !== 'string') return 'invalid: content';
   if (kinds && !kinds.includes(e.kind)) return `blocked: this relay keeps only kinds ${kinds.join(', ')} (the game's)`;
   if (e.created_at > nowS + FUTURE_S) return 'invalid: created_at is too far in the future';
@@ -105,8 +107,10 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   // kanban #1543: each event's single-letter tags (#p, #e, #d, ...) are kept in their own indexed table so a #<letter> filter is answered from the
   // index; a store written before has them filled in once here.
   const putTag = db.prepare('INSERT INTO tags (id, name, value) VALUES (?, ?, ?)');
-  const tagRows = (e) => { for (const t of e.tags) if (t[0].length === 1 && t.length > 1) putTag.run(e.id, t[0], t[1]); };
-  if (!db.prepare('SELECT 1 FROM tags LIMIT 1').get()) for (const r of db.prepare('SELECT json FROM events').all()) tagRows(JSON.parse(r.json));
+  // kanban #1960, #1994, #2009: defensive - a tag that is not a list with a one-letter string name is simply not indexed; and the start-up
+  // re-index skips a row it cannot read instead of throwing, so one bad stored row never keeps the relay from starting.
+  const tagRows = (e) => { for (const t of (Array.isArray(e && e.tags) ? e.tags : [])) if (Array.isArray(t) && typeof t[0] === 'string' && t[0].length === 1 && t.length > 1 && typeof t[1] === 'string') putTag.run(e.id, t[0], t[1]); };
+  if (!db.prepare('SELECT 1 FROM tags LIMIT 1').get()) for (const r of db.prepare('SELECT json FROM events').all()) { try { tagRows(JSON.parse(r.json)); } catch { /* unreadable row: not indexed */ } }
   const put = db.prepare('INSERT OR IGNORE INTO events (id, pubkey, kind, created_at, d, json) VALUES (?, ?, ?, ?, ?, ?)');
   const newest = db.prepare('SELECT id, created_at FROM events WHERE pubkey = ? AND kind = ? AND d = ? ORDER BY created_at DESC, id ASC LIMIT 1');
   const drop = db.prepare('DELETE FROM events WHERE pubkey = ? AND kind = ? AND d = ? AND id != ?');
@@ -209,14 +213,24 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
             // kanban #1513: the relay's total first (refused when full), then the author's own quota (their oldest goes)
             if (total.n + 1 > lim.totalEvents || total.b + json.length > lim.totalBytes) return send(['OK', e.id, false, 'blocked: the relay is full']);
             const before = authorUse.get(e.pubkey);
-            if (put.run(e.id, e.pubkey, e.kind, e.created_at, d, json).changes) tagRows(e);   // kanban #1543: its tags indexed with it
-            if (isReplaceable(e.kind) || isParam(e.kind)) drop.run(e.pubkey, e.kind, d, e.id);
-            let use = authorUse.get(e.pubkey);
-            while (use.n > 1 && (use.n > lim.authorEvents || use.b > lim.authorBytes)) {
-              const old = authorOldest.get(e.pubkey);
-              if (!old) break;
-              dropId.run(old.id);
+            // kanban #1960, #1994, #2009: the store step (row, tag index, replaceable drop, quota) is one transaction - a throw anywhere in
+            // it rolls all of it back, so an event is either fully kept and counted or not kept at all, never half handled.
+            let use;
+            db.exec('BEGIN');
+            try {
+              if (put.run(e.id, e.pubkey, e.kind, e.created_at, d, json).changes) tagRows(e);   // kanban #1543: its tags indexed with it
+              if (isReplaceable(e.kind) || isParam(e.kind)) drop.run(e.pubkey, e.kind, d, e.id);
               use = authorUse.get(e.pubkey);
+              while (use.n > 1 && (use.n > lim.authorEvents || use.b > lim.authorBytes)) {
+                const old = authorOldest.get(e.pubkey);
+                if (!old) break;
+                dropId.run(old.id);
+                use = authorUse.get(e.pubkey);
+              }
+              db.exec('COMMIT');
+            } catch (err) {
+              try { db.exec('ROLLBACK'); } catch { /* nothing open */ }
+              return send(['OK', e.id, false, 'error: the event could not be stored']);
             }
             total.n += use.n - before.n; total.b += use.b - before.b;   // only this author's rows changed
             if (!has.get(e.id)) return send(['OK', e.id, false, 'blocked: older than all this author already has, over the quota']);
