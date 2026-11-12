@@ -1336,7 +1336,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         try {
           const r = await seasonFetch(`${seats[i]}/season-rounds?game=${ids.join(',')}&days=${days}`, { signal: AbortSignal.timeout(SEASON_PEER_TIMEOUT_MS) });
           if (!r.ok) continue;
-          const j = await r.json();
+          // READ UP TO A BOUND (kanban #1856): a bare `await r.json()` held a peer's whole answer - one seat answering with
+          // hundreds of MB exhausted this seat's memory, and on the badge path each padded round was then schnorr-verified in
+          // this thread. Read like every other peer listing (#1540): past PEER_LISTING_BYTES the seat counts as not answered.
+          const j = await jsonUpTo(r, PEER_LISTING_BYTES);
           if (!j || !Array.isArray(j.rounds) || (keyed && j.roundKeys !== true)) continue;
           const node = typeof j.node === 'string' && /^[0-9a-f]{64}$/i.test(j.node) ? j.node.toLowerCase() : null;
           answers[i] = { seat: seats[i], node, rounds: seasonRoundsFromJson(j.rounds) };
