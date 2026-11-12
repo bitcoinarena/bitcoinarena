@@ -12101,7 +12101,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // `lock=fee`: a cancelled order's or a refunded market's fee lock, else the stake lock as always
         const kind = url.searchParams.get('lock') === 'fee' ? 'fee' : 'stake';
         if (url.pathname === '/forfeit-commit') {
-          const got = await forfeits.commit(r8, e8, kind);
+          // SIGNED BY A SEAT OF THE ROUND (kanban #2386, #2389): the pair is drawn into that seat's own bucket and spent only on a list it signs
+          const got = await forfeits.commit(r8, e8, kind, { header: req.headers[SEND_PLAN_ASK_HEADER] || null, ask: url.searchParams.get('ask'), at: url.searchParams.get('at') });
           if (!got.ok) return text(res, got.status || 409, got.why);
           // from protocol 26 the commit comes with the seat's signed word (§5A.3, kanban #1052); a round below it answers the same bytes and headers as before
           res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS, ...(got.word ? { 'x-settlement-commit': toHex(got.word) } : {}) });
@@ -12110,7 +12111,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (url.pathname === '/forfeit-share') {
           let list;
           try { list = decodeCommitments(new Uint8Array(await read(req, MOST_COMMITMENTS * COMMITMENT_BYTES))); } catch (e) { return text(res, e && e.tooLarge ? 413 : 400, e.message); }   // a committee's list at most (kanban #1672)
-          const got = await forfeits.share(r8, e8, list, kind);
+          const got = await forfeits.share(r8, e8, list, kind, { header: req.headers[SEND_PLAN_ASK_HEADER] || null });   // kanban #2386, #2389
           if (!got.ok) return text(res, got.status || 409, got.why);
           res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
           return res.end(Buffer.from(encodeShare(got.share)));
