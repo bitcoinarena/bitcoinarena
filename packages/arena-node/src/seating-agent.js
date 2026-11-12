@@ -582,7 +582,10 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     let mark = Date.now(); const lap = (k) => { const n = Date.now(); took[k] += n - mark; mark = n; };
     try {
       index();
-      try { checkReseats(); } catch (e) { log(`[seating] check-in check: ${e.message}`); }   // kanban #2564
+      // OFF UNTIL THE CHECK-INS ARE DRAWN RIGHT (kanban #2564, measured 2026-11-12 on fed2-1: 46,626 of 46,728 held check-in seatings fail verifySeating
+      // against the table's draw - check-ins are signed out of draw order on every table; skipping them all moved every table back to its first seating,
+      // replaced nodes and all). ARENA_CHECKIN_DRAW_CHECK=1 turns it on for a measurement
+      if (process.env.ARENA_CHECKIN_DRAW_CHECK === '1') { try { checkReseats(); } catch (e) { log(`[seating] check-in check: ${e.message}`); } }   // kanban #2564
       if (!asking) asking = askUnwritten().catch((e) => log(`[seating] ${e.message}`)).finally(() => { asking = null; });
       if (!confirming && pending.size) confirming = confirmHeld().catch((e) => log(`[seating] ${e.message}`)).finally(() => { confirming = null; });
       lap('unwritten');
