@@ -121,7 +121,13 @@ export async function firstBond({ state, post = false, chainKit = { coinsOf, bro
   // panel asks every 30 s, so a bond broadcast before a crash is recorded within the minute - and never built a second time
   if (openActionOf(state.read())) await resumeOpen(state, { chainKit });
   let s = state.read();
-  if (bondsOf(s).length) return { ok: true, done: true, bond: s.bond || bondsOf(s)[0] };
+  // A BONDED CUSTODY OR LIQUIDITY NODE WITHOUT ITS AGENT (kanban #2464, #1489 sm1-node-4): the bond is recorded by its on-chain action
+  // before the agent is installed, so a seat that died between the two (or an install that failed once) answered "done" here for good and
+  // the agent was never installed (no guardian_of, no peg-in, no deposit). Every ask on a recorded bond now installs a missing agent first.
+  if (bondsOf(s).length) {
+    const agent = await agentIfMissing({ state, startAgent, nowMs });
+    return { ok: true, done: true, bond: s.bond || bondsOf(s)[0], ...(agent ? { agent } : {}) };
+  }
   if (!(s.done || {}).service) return { ok: false, why: 'this node is not installed yet: its bond is signed with its own key' };
   const seedHex = state.readSecret('seed.hex');
   if (!seedHex) return { ok: false, why: 'the wallet seed is not in this node\'s home' };
@@ -176,15 +182,27 @@ export async function firstBond({ state, post = false, chainKit = { coinsOf, bro
   if (r.alreadyBond) return { ok: true, done: true, bond: r.alreadyBond };
   if (!r.ok) return r.plan || !planned ? r : { ...r, plan: planned };
   const plan = r.result.plan, bond = r.result.bond;
-  s = state.read();
-  const custody = (s.roles || []).includes('custody');
   // A CUSTODY OR LIQUIDITY NODE'S AGENT, as the wizard's bond step starts it (custody-agent.js: guardian_of, the peg-in, the deposit)
-  let agent = null;
-  if ((custody || (s.roles || []).includes('liquidity')) && startAgent && !((state.read().custodyAgent || {}).installedMs)) {
-    try { agent = await startAgent(); } catch (e) { agent = { ok: false, why: e.message }; }
-    state.save({ custodyAgent: agent && agent.ok ? { installedMs: nowMs } : { why: (agent && agent.why) || 'not started' } });
-  }
+  const agent = await agentIfMissing({ state, startAgent, nowMs });
   return { ok: true, plan, bond, agent };
+}
+
+/**
+ * The custody agent of a bonded custody or liquidity node, installed when it is not recorded installed (kanban #2464): idempotent (the
+ * install is a service unit written again), a failed install kept as { why } with no installedMs - tried again at the next ask. Not on a
+ * node whose custody is still to be added to its bond's advertisement (the wizard's custody-advert step installs it then). Null when
+ * nothing was to do.
+ */
+async function agentIfMissing({ state, startAgent, nowMs }) {
+  const s = state.read();
+  if (!startAgent || !bondsOf(s).length || ((s.custodyAgent || {}).installedMs)) return null;
+  const custody = (s.roles || []).includes('custody');
+  if (!custody && !(s.roles || []).includes('liquidity')) return null;
+  if (custody && s.custodyLater && !(s.bond || {}).custodyAdvert) return null;
+  let agent;
+  try { agent = await startAgent(); } catch (e) { agent = { ok: false, why: e.message }; }
+  state.save({ custodyAgent: agent && agent.ok ? { installedMs: nowMs } : { why: (agent && agent.why) || 'not started' } });
+  return agent;
 }
 
 /** THE FIRST BOND ON AN INSTALLED NODE (kanban #728): POST /owner/first-bond - the release's software hash and guardian endpoint, as addBondOnNode. */
