@@ -58,12 +58,23 @@ async function signerNodes({ endIn = 9000, lagB = 0 } = {}) {
   // running daemons, so the claim key is their own live DKG; the round's beacon is that chain's, and the player seeds from it.
   const slot = bondedChainSlot(lockPort());
   const port = slot.port;
+  // B'S FEDERATION VIEW, BLIND TO THE LOCKS NAMED IN `hiddenFromB` (kanban #2527): "B has not seen the stake" is the operator
+  // side's fault only when B cannot verify the lock. Since #1598 (918e302c0) the entry relay hands an entry's locks on with the
+  // entry, so a B merely not sent the lock by the client sees the stake about a second later - and this file's B-refuses
+  // cases raced that relay (measured on de60f5b01: B refused the batch, then took the stake and refused the mark as
+  // 'names inputs', or took the whole run). B now answers "no such contract" for a hidden lock, through every door - its
+  // own and the relay's - until the test hands the lock (`lockOn(w.b)` unhides it).
+  const hiddenFromB = new Set();
+  const portB = new Proxy(port, { get(t, k, r) {
+    if (k !== 'status') return Reflect.get(t, k, r);
+    return async (o) => { const st = await t.status(o); return hiddenFromB.has(`${toHex(o.txid)}:${o.outIdx}`) ? { ...st, stored: null } : st; };
+  } });
   const mk = (db, p = 0) => serve(db, { plugins: HOSTED, port: p, ...opts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 }, chainFor: slot.chainFor, randomnessFor: slot.randomnessFor });
   const dbA = openStore(':memory:');
   const dbB = openStore(':memory:');
   let a = await mk(dbA);
   // `lagB`: B's chain view runs this many ms behind the clock - a node that has not got the latest blocks yet.
-  const mkB = (db, p = 0) => serve(db, { plugins: HOSTED, port: p, ...opts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 }, chainFor: slot.chainFor, randomnessFor: slot.randomnessFor,
+  const mkB = (db, p = 0) => serve(db, { plugins: HOSTED, port: p, ...opts, stakeLocks: portB, poolCurve: curve, finality: { everyMs: 100 }, chainFor: slot.chainFor, randomnessFor: slot.randomnessFor,
     ...(lagB ? { windowChain: function lagging() { return CLOCK.viewAt(this.now() - lagB); } } : {}) });
   let b = await mkB(dbB);
   const bPort = b.port;
@@ -88,7 +99,7 @@ async function signerNodes({ endIn = 9000, lagB = 0 } = {}) {
   }
   for (let pass = 0; pass < 2; pass++) for (const d of [a, b]) await d.dkg.run(c.nodes);
   return {
-    get a() { return a; }, get b() { return b; }, c, rid, port, randomness, claimPk: a.dkg.signerNodeFor(c.nodes).pool.groupPublicKey,
+    get a() { return a; }, get b() { return b; }, c, rid, port, hiddenFromB, randomness, claimPk: a.dkg.signerNodeFor(c.nodes).pool.groupPublicKey,
     async downB() { await b.close(); },
     async upB() { b = await mkB(dbB, bPort); wire(); },
     async close() { try { await a.close(); } catch { /* down */ } try { await b.close(); } catch { /* down */ } },
@@ -130,6 +141,9 @@ async function joinAndBuild(w, { lockAt = ['a', 'b'] } = {}) {
   const feeFields = { paymentImage: { kind: 'hash', bytes: sha256(feeSecret) }, amountMsat: entry.feeMsat,
     claimPk: w.claimPk, refundPk: refundKeyOf(WINNER.key), expiration: w.port.height + 200 };
   await w.port.put(feeOutpoint, feeFields);
+  // A SIGNER NODE NOT IN `lockAt` CANNOT VERIFY THE LOCKS (kanban #2527): not even when the relay hands them on
+  if (!lockAt.includes('b')) for (const o of [outpoint, feeOutpoint]) w.hiddenFromB.add(`${toHex(o.txid)}:${o.outIdx}`);
+  const unhide = (d) => { if (d === w.b) for (const o of [outpoint, feeOutpoint]) w.hiddenFromB.delete(`${toHex(o.txid)}:${o.outIdx}`); };
   const lockOn = async (d) => assert.equal((await fetch(`http://127.0.0.1:${d.port}/lock?entry=${toHex(eid)}`,
     { method: 'POST', body: JSON.stringify(lockFieldsToJson(fields)) })).status, 201);
   const feeOn = async (d) => assert.equal((await fetch(`http://127.0.0.1:${d.port}/fee-lock?entry=${toHex(eid)}`,
@@ -165,7 +179,7 @@ async function joinAndBuild(w, { lockAt = ['a', 'b'] } = {}) {
   // a stake is only seen when its stake lock AND its fee lock are in - so handing one alone left B with one
   // receipt where the test asks for two. The suite's own choreography is unchanged.
   return { eid, outpoint, feeOutpoint, messages: run.messages, firstId: run.firstId, alt: alt.messages, altFirstId: alt.firstId,
-    lockOn: async (d) => { await lockOn(d); await feeOn(d); } };
+    lockOn: async (d) => { unhide(d); await lockOn(d); await feeOn(d); }, unhide };
 }
 
 async function at(d, w, run) {
@@ -378,6 +392,84 @@ test('one signer node refused (9) #2411: a first mark handed to every seat witho
   } finally { await w.close(); }
 });
 
+// THE STAKE-NOT-SEEN VARIANT OF #2411 (kanban #2527): the player leaves out POST /lock at B and sends the first mark (with its
+// batch) only there, before B has the lock - B refuses it "stake not seen" and kept that as an up seat's refusal. B then sees the
+// stake in time (the relay hands the lock on, #1598; here the test hands it), so an honest client's next send of the mark would
+// have been taken - but this player never sends again. Kept and served, that refusal turned the walk-away (FORFEIT, stake
+// claimed) into VOID (stake and fee lock back) at every seat: a refund the player chose by where it posted its lock.
+test('one signer node refused (10) #2527: a stake-not-seen refusal the seat made good in time is no refusal - the player who never sent again walked away, FORFEIT, never VOID', async () => {
+  const w = await signerNodes({ endIn: 20000 });
+  try {
+    const run = await joinAndBuild(w, { lockAt: ['a'] });
+    const saidB = [];
+    for (const m of run.messages.slice(0, 2)) saidB.push(String(await say(w.b.port, m)).slice(0, 40));   // to B only, before it has the lock
+    const keptBefore = !!w.b.round.refusedFirstMark(run.eid);
+    await run.lockOn(w.b);                                  // B sees the stake now - in time; the player sends nothing more
+    const seenB = w.b.round.stakeSeen(run.eid);
+    const keptAfter = !!w.b.round.refusedFirstMark(run.eid);
+    await Promise.all([say(w.a.port, `close ${toHex(w.rid)}`), say(w.b.port, `close ${toHex(w.rid)}`)]);
+    await until(() => [w.a, w.b].every((d) => d.round.results(w.rid, run.eid).length >= 2 && d.round.postings(w.rid, run.eid).length >= 2), 15000);
+    skipTo(Number(roundEndMs(w.c)) + 605000 + 100);                        // past the result window (WINDOW-10-SPEC)
+    await until(() => [w.a, w.b].every((d) => d.round.noQuorum(run.eid) || ['FINAL', 'FORFEIT'].includes(resultFinality(d.round, w.rid, run.eid).state)));
+    await wait(300);
+    const after = { a: await at(w.a, w, run), b: await at(w.b, w, run) };
+    const whys = { a: (w.a.round.noQuorum(run.eid) || {}).why || null, b: (w.b.round.noQuorum(run.eid) || {}).why || null };
+    console.log('  FACTS (refused, 10 - stake not seen, made good in time):', JSON.stringify({ saidB, keptBefore, keptAfter,
+      seenBeforeEnd: !!seenB && BigInt(seenB.seenMs) < roundEndMs(w.c), whys, after: { a: brief(after.a), b: brief(after.b) } }));
+    assert.match(saidB[1], /stake not seen/);
+    assert.equal(keptBefore, true, 'B kept no refusal while it had not seen the stake');
+    assert.ok(seenB && BigInt(seenB.seenMs) < roundEndMs(w.c), 'B saw the stake only after the round\'s end');
+    for (const s of ['a', 'b']) {
+      assert.notEqual(after[s].noQuorum, 'VOID', `${s} wrote VOID for a player who could have sent the mark again`);
+      assert.deepEqual(after[s].results, ['FORFEIT/0'], s);
+      assert.equal(after[s].finality, 'FINAL', s);
+      assert.equal(after[s].publicResults.noQuorum, null, s);
+    }
+    assert.equal(keptAfter, false, 'B still shows a stake-not-seen refusal after it saw the stake in time');
+  } finally { await w.close(); }
+});
+
+// AND THE SAME THROUGH A'S FORWARD (kanban #2527): the mark and its batch go to A alone, A takes it and hands it on at once, B -
+// not yet holding the lock the player left out there - refuses it "stake not seen", and A keeps B's answer 'refused'. B then
+// sees the stake in time; the player sends nothing more. Measured before: VOID at both (A: 1 of 2 receipts, B refused).
+// A offers the mark again to a seat that refused it "stake not seen" (a few tries, seconds apart), as an honest client's next
+// mark would: B takes it once it holds the lock, and the run ends as it was played.
+test('one signer node refused (11) #2527: a forward refused "stake not seen" is offered again and taken once that seat sees the stake - the run\'s own outcome, never VOID', async () => {
+  const w = await signerNodes({ endIn: 20000 });
+  try {
+    const run = await joinAndBuild(w, { lockAt: ['a'] });
+    const saidA = [];
+    for (const m of run.messages.slice(0, 2)) saidA.push(String(await say(w.a.port, m)).slice(0, 40));   // to A only
+    await until(() => Object.values(w.a.round.firstMarkOffers(run.eid)).includes('refused'));
+    const offersBefore = w.a.round.firstMarkOffers(run.eid);
+    const keptAtB = !!w.b.round.refusedFirstMark(run.eid);
+    await run.lockOn(w.b);                                  // B sees the stake now - in time; the player sends nothing more
+    const seenB = w.b.round.stakeSeen(run.eid);
+    const reoffered = await until(() => Object.values(w.a.round.firstMarkOffers(run.eid)).includes('receipted'), 15000);
+    await Promise.all([say(w.a.port, `close ${toHex(w.rid)}`), say(w.b.port, `close ${toHex(w.rid)}`)]);
+    // SIGNED AND POSTED IN THE WINDOW before the clock moves past it (§13A: a transcript not posted by the threshold in time is VOID)
+    await until(() => [w.a, w.b].every((d) => d.round.results(w.rid, run.eid).length >= 2 && d.round.postings(w.rid, run.eid).length >= 2), 15000);
+    skipTo(Number(roundEndMs(w.c)) + 605000 + 100);                        // past the result window (WINDOW-10-SPEC)
+    await until(() => [w.a, w.b].every((d) => d.round.noQuorum(run.eid) || ['FINAL', 'FORFEIT'].includes(resultFinality(d.round, w.rid, run.eid).state)), 30000);
+    await wait(300);
+    const after = { a: await at(w.a, w, run), b: await at(w.b, w, run), lockHeld: lockHeld(w, run) };
+    const whys = { a: (w.a.round.noQuorum(run.eid) || {}).why || null, b: (w.b.round.noQuorum(run.eid) || {}).why || null };
+    console.log('  FACTS (refused, 11 - A\'s forward refused, stake seen in time):', JSON.stringify({ saidA, offersBefore, keptAtB, reoffered,
+      seenBeforeEnd: !!seenB && BigInt(seenB.seenMs) < roundEndMs(w.c), whys, after: { a: brief(after.a), b: brief(after.b) } }));
+    assert.deepEqual(Object.values(offersBefore), ['refused']);
+    assert.ok(seenB && BigInt(seenB.seenMs) < roundEndMs(w.c), 'B saw the stake only after the round\'s end');
+    assert.equal(reoffered, true, 'A never offered the first mark again to B once B held the lock');
+    for (const s of ['a', 'b']) {
+      assert.notEqual(after[s].noQuorum, 'VOID', `${s} wrote VOID for a player who walked away after its first mark`);
+      assert.equal(after[s].receipts, 2, s);
+      assert.equal(after[s].noQuorum, null, s);
+      assert.equal(after[s].finality, 'FINAL', s);
+      assert.equal(after[s].results.length, 1, s);
+      assert.equal(after[s].publicResults.signed, 2, s);
+    }
+  } finally { await w.close(); }
+});
+
 test('one signer node refused (5, 6): B refuses, then sees the stake and takes the mark in time - 2 of 2, the run\'s own outcome, FINAL, never voided', async () => {
   const w = await signerNodes();
   try {
@@ -390,7 +482,9 @@ test('one signer node refused (5, 6): B refuses, then sees the stake and takes t
     for (const m of run.messages.slice(0, 2)) saidB.push(String(await say(w.b.port, m)).slice(0, 30));
     for (const m of run.messages.slice(2)) for (const d of [w.a, w.b]) await say(d.port, m);
     await Promise.all([say(w.a.port, `close ${toHex(w.rid)}`), say(w.b.port, `close ${toHex(w.rid)}`)]);
-    await until(() => [w.a, w.b].every((d) => resultFinality(d.round, w.rid, run.eid).state === 'PROVISIONALLY_FINAL'));
+    // AND POSTED (kanban #2527): a skip past the window before both postings are held is §13A's VOID, not this case
+    await until(() => [w.a, w.b].every((d) => resultFinality(d.round, w.rid, run.eid).state === 'PROVISIONALLY_FINAL'
+      && d.round.postings(w.rid, run.eid).length >= 2));
     skipTo(Number(roundEndMs(w.c)) + 605000 + 100);                        // past the result window (WINDOW-10-SPEC)
     await until(() => [w.a, w.b].every((d) => resultFinality(d.round, w.rid, run.eid).state === 'FINAL'));
     await wait(WINDOW_MS + 1500);                           // long past the result window
