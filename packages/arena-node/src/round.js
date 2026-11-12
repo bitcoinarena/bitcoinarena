@@ -41,6 +41,7 @@ import { entryFeeBpsForRound, entryPaysReserves, roundSplit, RESERVES_NODE_FEE_B
 import { itemOf } from '../../arena-protocol/src/items.js';
 import { itemPurchaseKept } from './item-purchase-seat.js';
 import { readTranscript } from './transcript-read.js';
+import { loadsRefusal } from './load-checks.js';
 // 27A.7's node fee. The rate lives in one place and `genesis.js` writes it into
 // the genesis parameters, so a round naming a config has committed to it.
 import { feeMatchesEntry, feeBpsOf, entryFeeBpsOf, donationInFee, donationBpsOf, NODE_FEE_BPS } from '../../arena-protocol/src/fee.js';
@@ -954,6 +955,16 @@ export class Round {
       const next = this.nextTick(b.roundId, b.entryId);
       if (at[0] !== next)
         throw new Error(`expected tick ${next}, got ${at[0]}`);
+    }
+
+    // AND THE LOAD IS ONE AN HONEST BED COULD HAVE DECLARED (kanban #1488): a room the parcels make, a fee for each of
+    // them, no more than 20 BTC, at a tick this batch carries and before the truck was ever driven (load-checks.js).
+    // A repeat of the head was checked when it first came.
+    if (!seen && b.loads && b.loads.length) {
+      const why = loadsRefusal(b, at, () => !!this.db.prepare(
+        'SELECT 1 FROM ticks WHERE round_id = ? AND entry_id = ? AND substr(words, 1, 16) != zeroblob(16) LIMIT 1')
+        .get(b.roundId, b.entryId));
+      if (why) throw new Error(why);
     }
 
     // ONE COMMIT FOR THE WHOLE BATCH, not one per row (2026-09-17 19:15, the ghost lag). Every `run` outside a
