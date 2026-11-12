@@ -8,6 +8,8 @@
 // ONE READER FOR EVERY SERVER (kanban #1592, a bypass of #1469): the cap first lived only in server.js, and the arbiter's own http server
 // (serveArbiter) kept reading /musig/nonce, /musig/partial and /liquidation-claims with an uncapped `s += d` before any check - an 8 MiB
 // body was read whole. Every request body in arena-node is read here now, so no server can bring its own unbounded reader back.
+import { bodyBudget } from './body-budget.js';
+
 export const BODY_MOST = Number(process.env.ARENA_BODY_MOST) > 0 ? Number(process.env.ARENA_BODY_MOST) : 8 * 1024 * 1024;
 // ALL BODIES IN FLIGHT SHARE ONE BUDGET (kanban #1724, #1794, refute of #1469): the limit above is per request, so a stranger who
 // opened many connections and sent just under it on each, never ending the body, kept every partial body (measured: 48 bodies
@@ -15,31 +17,15 @@ export const BODY_MOST = Number(process.env.ARENA_BODY_MOST) > 0 ? Number(proces
 // what all unfinished bodies of this process may hold together; a chunk past it ends that request (503 where it can still be said)
 // and frees what it held. A door's message is a few kilobytes, so honest traffic never comes near it.
 export const BODY_BUDGET = Math.max(BODY_MOST, Number(process.env.ARENA_BODY_BUDGET) > 0 ? Number(process.env.ARENA_BODY_BUDGET) : 4 * BODY_MOST);
-let bodiesInFlight = 0;
-/** What all unfinished bodies of this process hold now (kanban #1724). */
-export const bodiesHeld = () => bodiesInFlight;
-export const readBody = (req, max = BODY_MOST) => new Promise((resolve, reject) => {
-  const parts = []; let size = 0; let held = 0; let done = false;
-  const finish = () => { if (done) return false; done = true; bodiesInFlight -= held; parts.length = 0; return true; };
-  const refuse = (e) => { if (!finish()) return; reject(e); try { req.destroy(); } catch { /* gone */ } };
-  const tooLarge = () => { const e = new Error(`a body of more than ${max} bytes`); e.tooLarge = true; return e; };
-  const busy = () => { const e = new Error('this node holds as many unfinished bodies as it takes; try again'); e.busy = true; return e; };
-  // a declared length is taken from the budget before a byte is read, so a refused body costs nothing (kanban #1724, #1794)
-  const declared = Number(req.headers && req.headers['content-length']);
-  if (Number.isSafeInteger(declared) && declared > 0) {
-    if (declared > max) return refuse(tooLarge());
-    if (bodiesInFlight + declared > BODY_BUDGET) return refuse(busy());
-    held = declared; bodiesInFlight += declared;
-  }
-  // A DOOR'S OWN LIMIT (kanban #1271): past `max` bytes the body is not kept, the request ends, and the door answers 413
-  req.on('data', (c) => {
-    if (done) return;
-    if (size + c.length > max) return refuse(tooLarge());
-    const grow = Math.max(0, size + c.length - held);
-    if (grow && bodiesInFlight + grow > BODY_BUDGET) return refuse(busy());
-    size += c.length; held += grow; bodiesInFlight += grow; parts.push(c);
-  });
-  req.on('end', () => { if (done) return; const body = new Uint8Array(Buffer.concat(parts)); finish(); resolve(body); });
-  req.on('error', (e) => { if (finish()) reject(e); });
-  req.on('close', () => { if (finish()) reject(new Error('the request ended before its body')); });
-});
+// COUNTED ON BYTES RECEIVED, NEVER ON A DECLARED LENGTH (kanban #1911, #1953, refute of #1724, #1794): taking the share from Content-Length let
+// four idle connections declaring 8 MiB each hold the whole budget for free and cut every honest POST off. Now an idle socket holds nothing,
+// one address takes at most half the budget, a small body always finds room in a reserve, a body silent for 10 s (ARENA_BODY_IDLE_MS) is
+// dropped, and a refused body is answered (413 / 503) before its socket ends - see body-budget.js. The arbiter has a budget of its own.
+const BODY_IDLE_MS = Number(process.env.ARENA_BODY_IDLE_MS) > 0 ? Number(process.env.ARENA_BODY_IDLE_MS) : 10000;
+const bodies = bodyBudget({ total: BODY_BUDGET, perAddress: Math.max(BODY_MOST, Math.floor(BODY_BUDGET / 2)), idleMs: BODY_IDLE_MS, defaultMax: BODY_MOST });
+/** What all unfinished bodies of this process hold now (kanban #1724; bytes received, kanban #1911). */
+export const bodiesHeld = () => { const h = bodies.held(); return h.main + h.reserve; };
+/** Name a request's answer, so a refused body's socket ends only after its 413 / 503 was written (kanban #1911). */
+export const attachBody = (req, res) => bodies.attach(req, res);
+// A DOOR'S OWN LIMIT (kanban #1271): past `max` bytes the body is not kept, the request ends, and the door answers 413
+export const readBody = async (req, max = BODY_MOST) => new Uint8Array(await bodies.read(req, max));

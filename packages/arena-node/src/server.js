@@ -331,7 +331,7 @@ import { decodeCommitments, encodeCommitments, encodeShare, COMMITMENT_BYTES, MO
 import { setTagNetwork } from '../../arena-protocol/src/tag-switch.js';
 import { keptRead } from './kept-read.js';
 import { guardianAnswers } from './guardian-probe.js';
-import { readBody as readRequestBody, BODY_MOST } from './body-read.js';   // named apart: stake-lock-port.js's readBody is another thing
+import { readBody as readRequestBody, attachBody, BODY_MOST } from './body-read.js';   // named apart: stake-lock-port.js's readBody is another thing
 
 // ANOTHER SEAT'S ANSWER TO A SEAT-TO-SEAT GET, READ UP TO A CAP (kanban #1900, #1942, bypass of #1550 / #1744): verify.js
 // capped every peer pull before a signature, but server.js still read a peer's /entry-void (lateByPeers, run for any first
@@ -8330,6 +8330,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
   const http = (tls ? (h) => createHttpsServer({ cert: tls.cert, key: tls.key }, h) : createServer)(async (req, res) => {
     try {
+      attachBody(req, res);   // a refused body's socket ends after its answer (kanban #1911, #1953)
       const url = new URL(req.url, 'http://node');
       // THE NODE'S GATEWAY AT ITS PUBLIC ADDRESS (spec §23A.9): /gateway/... carried byte for byte to the gateway on
       // this machine (ARENA_GATEWAY_PORT, written by the installer), as /guardian is to the guardian - clients of its federation reach the
