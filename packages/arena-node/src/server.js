@@ -94,6 +94,8 @@ import { isBackupPublication, playedOfWindow, dayMarkersOf, itemTag } from '../.
 import { nextToAsk } from './dup-ask.js';
 import { decodeRoundContract, encodeRoundContract, contractWarnings, decodeEntryContract, publicationRelaysAreValid, custodyFieldsAreValid, roundId as roundIdOf, entryFederation } from '../../arena-protocol/src/contracts.js';
 import { revealStands, headToHeadCommit } from '../../arena-protocol/src/head-to-head.js';
+import { certifiesLockSet, LOCK_SET_WINDOW_MS } from '../../arena-protocol/src/lock-set.js';   // kanban #2561
+import { LockSetBook } from './lock-set-book.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { advertInTransaction, nodeBondOf } from '../../arena-protocol/src/census.js';
 
@@ -3231,6 +3233,49 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       return peerEndpointsOf(picked.committee, round.pubkey);
     },
   });
+  // THE CERTIFIED LOCK SET (protocol 28, kanban #2561, ruling #2116 (b)): a paying head-to-head round of protocol 28 plays only the entries a
+  // threshold of its seats certified at the entry close - no reveal is taken or served here before that certificate (POST /reveal, GET /reveals),
+  // and the decide plays its entries only (verify.js #headToHeadClose); none by the close + LOCK_SET_WINDOW_MS and the round is VOID. Every
+  // round below 28, and every free round, keeps the rules of #1598 / #1551 below byte for byte. `lockSetRound(rid)`: its contract when it plays
+  // under the set, else null (kept per round: a contract never changes).
+  const lockSetRounds = new Map();
+  const lockSetRound = (rid) => {
+    if (!headToHeadReady) return null;
+    const k = toHex(rid);
+    if (lockSetRounds.has(k)) return lockSetRounds.get(k);
+    let c = null;
+    try { c = headToHeadRound(rid); } catch { c = null; }
+    if (!round.get(rid)) return null;   // not held yet: asked again later
+    const got = c && certifiesLockSet(c, true) ? c : null;
+    lockSetRounds.set(k, got);
+    if (lockSetRounds.size > 4096) lockSetRounds.delete(lockSetRounds.keys().next().value);
+    return got;
+  };
+  // ITS VIEW: the entries whose stake this seat SAW before the close (the set the settlement counts, seatedEntriesOf played) - a lock written
+  // here at or after the close, by whatever door, is in no view
+  const lockSetView = (rid, c) => round.seatedEntriesOf(rid, c.stakeMsat, { played: true })
+    .filter(({ entryId }) => { const seen = round.stakeSeen(entryId); return !!seen && BigInt(Math.floor(Number(seen.seenMs))) < c.entryCloseMs; })
+    .map(({ entryId }) => toHex(entryId));
+  const lockSets = new LockSetBook({ round, peersOf: (rid) => verifier.peersOf(rid), roundOf: lockSetRound, viewOf: lockSetView, log: (l) => console.log(l) });
+  verifier.lockSets = lockSets;
+  verifier.lockSetRound = lockSetRound;
+  // DRIVEN FROM THE CLOSE: every open round of protocol 28 between its close and the close + the window, each 100 ms (step is cheap when idle)
+  // (headToHeadReady is declared further down this function: read before then it throws, and a timer's throw would end the daemon - kanban #1068)
+  const lockSetTimer = setInterval(() => { try { lockSetPass(); } catch { /* not ready yet */ } }, 100);
+  const lockSetPass = () => {
+    if (shuttingDown || !headToHeadReady) return;
+    const now = Number(round.now());
+    let ids = [];
+    try { ids = round.openRoundIds(); } catch { ids = []; }
+    for (const rid of ids) {
+      const c = lockSetRound(rid);
+      if (!c) continue;
+      const close = Number(c.entryCloseMs);
+      if (now < close || now > close + LOCK_SET_WINDOW_MS + 2000) continue;
+      lockSets.step(rid).catch((e) => console.error(`[lock-set] ${toHex(rid).slice(0, 16)}: ${e.message}`));
+    }
+  };
+  if (lockSetTimer.unref) lockSetTimer.unref();
   // MARKETS ON GAMES (feature 6, §0A.7d): a market round's outcome is its source round's signed RoundResult, checked
   // against the settlement committee THIS seat's roster draws for the source, held where an attestation is held (game_outcomes),
   // and settled by the attested sweep below as any market. A source round this seat does not hold is fetched from the market
@@ -10273,6 +10318,28 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return res.end(JSON.stringify({ round: ridHex, here: [...t].map(([key, at]) => ({ key, name: displayNameFromKey(fromHex(key)), agoMs: now - at })) }));
       }
 
+      // THE CERTIFIED LOCK SET OF A ROUND (protocol 28, kanban #2561): GET answers what this seat holds - its view, its one set signature, the
+      // certificate once it stands, `void` past the window without one; POST takes a peer's view, signature or a certificate, each checked
+      // against the round's committee (lock-set-book.js). A page reads it to know when to reveal.
+      if (url.pathname === '/lock-set' && (req.method === 'GET' || req.method === 'POST')) {
+        const id = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (id.length !== 32) return text(res, 400, `${req.method} /lock-set?round=<id>`);
+        const rid = new Uint8Array(id);
+        if (!round.get(rid)) return text(res, 404, 'this node holds no such round');
+        if (lockSets.silent) { req.socket.destroy(); return; }                                                  // test hook: a seat that is down
+        if (lockSets.answerDelayMs > 0) await new Promise((ok) => setTimeout(ok, lockSets.answerDelayMs));     // test hook: a slow seat
+        if (req.method === 'POST') {
+          let body;
+          try { body = JSON.parse(Buffer.from(await read(req, 262144)).toString('utf8')); } catch { return text(res, 400, 'a lock set message is JSON: { views, signatures, certificate }'); }
+          const got = lockSets.take(rid, body);
+          if (!got.ok) return text(res, got.status || 409, got.why);
+          res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+          return res.end(JSON.stringify(got));
+        }
+        if (lockSetRound(rid)) lockSets.step(rid).catch(() => {});
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+        return res.end(JSON.stringify(lockSets.state(rid)));
+      }
       // A HEAD-TO-HEAD PLAYER'S REVEAL: POST /reveal?entry=<entry id> with { move, salt } (JSON, salt in hex),
       // after the round's entry close and before its end (its reveal deadline). Taken only if it hashes to the commitment
       // that entry named (head-to-head.js revealStands); kept once. The round's results are decided from the reveals at its
@@ -10288,6 +10355,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const c = decodeRoundContract(new Uint8Array(row.contract));
         const found = pluginForRound(c, hosted);
         if (!found.ok || !found.headToHead) return text(res, 409, 'that entry\'s round is not a head-to-head game this node hosts: it has nothing to reveal');
+        // PROTOCOL 28: NO REVEAL BEFORE THE CERTIFIED LOCK SET, AND ONLY OF ITS ENTRIES (kanban #2561, ruling #2116 (b))
+        const certifiedSet = lockSetRound(entry.roundId) ? (lockSets.certified(entry.roundId) || await lockSets.step(entry.roundId)) : undefined;
+        if (certifiedSet === null) return text(res, 409, lockSets.voidNow(entry.roundId)
+          ? 'that round has no certified lock set and its window has closed: it is VOID, every stake comes back (kanban #2561)'
+          : 'that round\'s lock set is not certified yet: no reveal is taken before it (kanban #2561) - ask again shortly');
+        if (certifiedSet && !certifiedSet.entries.includes(toHex(eid))) return text(res, 409, 'that entry is not in the round\'s certified lock set: it is not played, its stake comes back (kanban #2561)');
         let body;
         try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a reveal is JSON: { "move": <integer>, "salt": "<64 hex>" }'); }
         const salt = /^[0-9a-f]{64}$/i.test(String(body && body.salt)) ? new Uint8Array(Buffer.from(body.salt, 'hex')) : null;
@@ -10329,7 +10402,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // now, not at that deadline. A round short of a reveal still waits for its end (that entry's FORFEIT).
         if (closeAtEnd && fresh) {
           // a paying round's seated players only - those backed by a lock (kanban #1437, audit 8 R3): a lockless entry neither holds the close nor counts toward it
-          const all = round.seatedEntriesOf(entry.roundId, c.stakeMsat, { played: true });   // stakes seen: the set the close plays (kanban #1544)
+          const all = certifiedSet ? certifiedSet.entries.map((h) => ({ entryId: fromHex(h) }))   // protocol 28: the certified set (kanban #2561)
+            : round.seatedEntriesOf(entry.roundId, c.stakeMsat, { played: true });   // stakes seen: the set the close plays (kanban #1544)
           const revealed = new Set(round.revealsOf(entry.roundId).map((r) => toHex(r.entryId)));
           if (all.length >= found.plugin.manifest.players && all.every(({ entryId }) => revealed.has(toHex(entryId))) && round.close(entry.roundId)) {
             console.log(`[close] ${toHex(entry.roundId).slice(0, 16)}: every move revealed - closed by this signer node before its end`);
@@ -10488,7 +10562,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // NO MOVE PUBLIC BEFORE THE CLOSE + H2H_REVEAL_HOLD_MS IN A PAYING ROUND (kanban #1822, #1551 refute 0 s3): until then a lock handed at the
         // door before the close may still be answered by the federation and keep its door time; a move read here first let a player submit his
         // held-back lock only when his own move won. The reveals are kept, and served from then on; `heldUntilMs` says when.
-        { let c = null; try { c = decodeRoundContract(new Uint8Array(round.get(id).contract)); } catch { c = null; }
+        // PROTOCOL 28 (kanban #2561): no move public before this seat holds the certified lock set, and only its entries' moves
+        let certifiedOnly = null;
+        if (lockSetRound(new Uint8Array(id))) {
+          const cert = lockSets.certified(new Uint8Array(id)) || await lockSets.step(new Uint8Array(id));
+          if (!cert) {
+            res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+            return res.end(JSON.stringify({ round: toHex(id), reveals: [], lockSet: lockSets.voidNow(new Uint8Array(id)) ? 'void' : 'pending' }));
+          }
+          certifiedOnly = new Set(cert.entries);
+        }
+        if (!certifiedOnly) { let c = null; try { c = decodeRoundContract(new Uint8Array(round.get(id).contract)); } catch { c = null; }
           if (c && c.stakeMsat > 0n && typeof c.entryCloseMs === 'bigint' && headToHeadRound(new Uint8Array(id)) !== null) {
             const until = Number(c.entryCloseMs) + H2H_REVEAL_HOLD_MS;
             if (Math.floor(Number(round.now())) < until) {
@@ -10498,6 +10582,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           } }
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ round: toHex(id), reveals: round.revealsOf(new Uint8Array(id))
+          .filter((r) => !certifiedOnly || certifiedOnly.has(toHex(r.entryId)))
           .map((r) => { const who = round.identityOf(r.entryId); return { entry: toHex(r.entryId), move: r.move, salt: toHex(r.salt),
             ...(who ? { identity: { key: toHex(who.identity), sig: toHex(who.sig) } } : {}) }; }) }));
       }
@@ -12905,7 +12990,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   http.requestTimeout = REQUEST_MS; http.headersTimeout = Math.min(http.headersTimeout || 60000, REQUEST_MS);
   return new Promise((resolve) => {
     http.listen(port, host, () => { dutyAttach(); resolve({
-      http, wss, round, host, verifier, ghosts, roster, stakeSecrets,
+      http, wss, round, host, verifier, ghosts, roster, stakeSecrets, lockSets,
       dkg, settlements, winnings, orderBook,
       // the protocol reserves' keys: make one with given members and peers, and the DKG of a federation
       reserves: { make: makeReserveKey, dkgOf: reserveDkgOf, round: reserveRound, peerRound: reservePeerRound },
@@ -12937,6 +13022,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (orderBatchTimeout) { clearTimeout(orderBatchTimeout); orderBatchTimeout = null; }
         if (priceTimeout) { clearTimeout(priceTimeout); priceTimeout = null; }
         clearInterval(priceTidy);
+        clearInterval(lockSetTimer);
         clearTimeout(attestedBoot);
         signer.close().catch(() => {});
         clearInterval(autoUpdateTimer);
