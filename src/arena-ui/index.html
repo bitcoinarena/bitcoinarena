@@ -3824,19 +3824,12 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           // lock messages, that may work or not. Make it more efficient and clear that we're in process of joining the round"): while the stake is locked the line
           // says when the round starts, counted down each second, and what is happening in words a player reads ("preparing your sats", "locking your stake") -
           // not "stake lock: exchanging at tn4.bitcoin-arena.io/guardian-1", and never a frozen line while an exchange takes its time. The steps stay in the console.
-          const startAtMs = Number(named && named.round && named.round.startTimeMs) || 0;
-          const plainStep = (st) => (/exchang|reissu|split|change/i.test(st) ? 'preparing your sats' : /lock|commit|submit|accept/i.test(st) ? 'locking your stake' : 'securing your stake');
-          let stepNow = 'securing your stake';
-          const joinLine = () => { const s = Math.max(0, Math.ceil((startAtMs - Date.now()) / 1000));
-            return (startAtMs ? 'round starts in ' + Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0') + ' \u00b7 ' : '') + stepNow; };
-          const lockTicker = setInterval(() => { const j = window.ARENA_JOIN;
-            if (!j || j.loaded || j.state !== 'joining' || !/securing|preparing|locking/.test(String(j.stage || ''))) { clearInterval(lockTicker); return; }
-            j.stage = joinLine(); }, 1000);
+          // The line itself is the lobby join's (joinWaitLine, sayJoining): this sets the raw step, the join's stage reads it as the line, counted each second.
           const onStep = (step) => {
-            stepNow = plainStep(String(step));
-            if (stageEl) window.ArenaText.say(stageEl, joinLine());
+            const j = window.ARENA_JOIN;
             // A ROUND ALREADY SHOWN LOADED keeps its countdown on the line; the lock's steps go to the console
-            if (window.ARENA_JOIN && !window.ARENA_JOIN.loaded) window.ARENA_JOIN.stage = joinLine();
+            if (j && !j.loaded) j.stage = String(step);
+            if (stageEl) window.ArenaText.say(stageEl, j && j.state === 'joining' && !j.loaded ? j.stage : window.ARENA_JOIN_WAIT_LINE ? window.ARENA_JOIN_WAIT_LINE({ raw: String(step) }) : String(step));
             console.log('[arena] stake lock: ' + step);
           };
           const wallet = {
@@ -4224,7 +4217,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
                 + (a && a.walletAfterMsat !== undefined ? '; the player wallet holds ' + String(a.walletAfterMsat) + ' msat' : '')))
                 .catch((e) => {
                   console.error('[arena] the stake lock was not accepted: ' + e.message);
-                  window.ARENA_JOIN_REFUSED = 'the stake lock was not accepted by the guardians: ' + String(e.message).slice(0, 160);
+                  window.ARENA_JOIN_REFUSED = 'the stake lock was not accepted by the guardians: ' + String(e.message).slice(0, 140) + '. Tap PLAY again.';
                   if (window.ARENA_JOIN) Object.assign(window.ARENA_JOIN, { state: 'refused', why: window.ARENA_JOIN_REFUSED });
                 });
             }
@@ -4237,7 +4230,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             console.error('[arena] the stake lock was not made: ' + e.message);
             window.ARENA_JOIN_REFUSED = unreached.length
               ? 'the stake lock was not made: guardian' + (unreached.length > 1 ? 's ' : ' ') + unreached.join(', ') + ' could not be reached. Try PLAY again.'
-              : 'this round\'s stake goes into a federation lock, and it was not made: ' + e.message;
+              // AND WHAT TO DO (kanban #1483: "a lock that may work or not"): the failed lock says it failed and to tap again, its reason short; the whole of it is the console's
+              : 'this round\'s stake goes into a federation lock, and it was not made: ' + String(e.message).slice(0, 140) + '. Tap PLAY again.';
             console.error('[arena] join refused: ' + window.ARENA_JOIN_REFUSED);
             return;
           }
@@ -5380,10 +5374,13 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       const openW = async (fid, invite) => (window.ARENA_WALLETS && window.ARENA_WALLETS.get(fid))
         || ARENACLIENT.openPlayerWallet({ federationId: ARENACLIENT.fromHex(fid), invite, seed, LockClient, storage: vault() });
       const inviteOf = (fid) => (fid === to ? toInvite : (ARENACLIENT.rememberedInvite ? ARENACLIENT.rememberedInvite(vault(), fid) : null));
-      // AN EXCHANGE LEFT BEFORE (a seat that took the notes and did not answer, a tab closed on the way): moved on first
+      // AN EXCHANGE LEFT BEFORE (a seat that took the notes and did not answer, a tab closed on the way): moved on first - THIS TAB'S PHRASE'S
+      // ONLY (kanban #1641): another tab may be another player; a record of an older page (no phrase named) only in a browser of one phrase
+      const phrase16 = String((window.sessionStorage && sessionStorage.getItem('arena.player.seed')) || '').slice(0, 16) || null;
+      const keptSeeds = (() => { try { return JSON.parse(vault().getItem('arena.seeds') || '[]').length; } catch { return 2; } })();
       const keptKeys = Object.keys(vault()).filter((x) => x.startsWith(ARENACLIENT.ECASH_EXCHANGE_PREFIX));
       if (keptKeys.length) {
-        const said = await ARENACLIENT.resumeEcashExchanges({ storage: vault(), keys: keptKeys, seats: nodes, fetcher: (u, o) => fetch(u, o),
+        const said = await ARENACLIENT.resumeEcashExchanges({ storage: vault(), keys: keptKeys, seats: nodes, fetcher: (u, o) => fetch(u, o), phrase16, takeUnnamed: keptSeeds <= 1,
           walletFor: async (fid) => { const w = await openW(fid, inviteOf(fid)); if (fid !== to || !window.ARENA_NOTE_ARRIVING) return w; window.ARENA_NOTE_ARRIVING(fid, 'exchanged in', 30000); return w; } });
         for (const r of said) console.log(`[arena] exchange kept since ${r.key.slice(21)}: ${r.ok ? `${r.msat} msat received` : r.why}`);
       }
@@ -5401,7 +5398,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         if (window.ARENA_NOTE_ARRIVING) window.ARENA_NOTE_ARRIVING(to, 'exchanged in from federation ' + String(from).slice(0, 8), 30000);
         return tw;
       };
-      const r = await ARENACLIENT.exchangeEcashInto({ storage: vault(), from, to, needMsat, seats: nodes, walletFrom: w, walletTo, onStep, fetcher: (u, o) => fetch(u, o) });
+      const r = await ARENACLIENT.exchangeEcashInto({ storage: vault(), from, to, needMsat, seats: nodes, walletFrom: w, walletTo, onStep, fetcher: (u, o) => fetch(u, o), phrase16 });
       if (window.ARENA_SUM_BALANCES) window.ARENA_SUM_BALANCES();
       return { ...r, ms: Date.now() - t0 };
     };
@@ -9384,6 +9381,50 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         if (window.ARENA_WALLET_STOPPED) el.dataset.stopped = '1'; else delete el.dataset.stopped;
         if (el.firstChild.textContent !== line.text) el.firstChild.textContent = line.text;
       }, 2000);
+      // JOINING IS SAID FROM THE TAP, WITH THE COUNTDOWN (kanban #1483, Daniel 2026-11-11: "When clicking Join sometimes the countdown does not appear,
+      // only lock messages ('joining the round - stake lock: exchanging at tn4.bitcoin-arena.io/guardian-1') ... Make it more efficient and clear that we
+      // are in process of joining the round"). Measured on the live page (UI 634) in the Beelink Chrome: from the tap the join's stage was EMPTY for
+      // 16-22 s (the donation set, the fees, the claim key - Unity said only "joining the round ...", no countdown, no step), and the countdown came only
+      // once the stake was locked; the lock's own steps showed raw ("exchanging at <seat>"). Now, while a join is being made and its round not yet shown
+      // loaded, the join's stage is ALWAYS this line: the time to the round's start, counted each second, and the step in a player's words with how long
+      // it has taken - from the first millisecond. The raw step stays in the console and in `join.step`.
+      function joinWaitLine({ raw = '', openStep = '', startMs = 0, nowMs = Date.now(), stepSinceMs = 0, next = false } = {}) {
+        const r = String(raw || openStep || '');
+        const words = /deposit|invoice|lightning/i.test(r) ? 'waiting for your deposit'
+          : /test sats|welcome/i.test(r) ? 'your test sats are arriving'
+          : /finding the round/i.test(r) ? 'finding the round'
+          : /exchang|moving|reissu|split|merg|swap|succession|change/i.test(r) ? 'preparing your sats'
+          : /lock|commit|submit|accept|fee lock|refund/i.test(r) ? 'locking your stake'
+          : /wallet|federation|guardian|notes/i.test(r) ? 'opening your wallet'
+          : /entry|handout|session|post/i.test(r) ? 'sending your entry'
+          : 'checking the round with the game servers';
+        const took = stepSinceMs > 0 ? Math.floor((nowMs - stepSinceMs) / 1000) : 0;
+        const step = words + (took >= 3 ? ' (' + took + ' s)' : '');
+        if (!(startMs > 0)) return step;
+        const s = Math.ceil((startMs - nowMs) / 1000);
+        if (s <= 0) return 'the round is running · ' + step;
+        return (next ? 'next round starts in ' : 'round starts in ') + Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0') + ' · ' + step;
+      }
+      window.ARENA_JOIN_WAIT_LINE = joinWaitLine;
+      // THE JOIN'S STAGE AS THAT LINE (kanban #1483): every writer of `join.stage` (the lock's steps, the welcome wait, the claim key) sets the raw step;
+      // read while the join is being made and not yet shown loaded, it is the line; otherwise (loaded and counting, refused, picked) the raw stage as before
+      function sayJoining(join, startMs) {
+        let raw = String(join.stage || ''), at = Date.now();
+        const openStep = () => { const xs = (join === window.ARENA_JOIN && window.ARENA_TX_STEPS) || [];
+          const done = new Set(xs.filter((x) => /^<- /.test(x.step)).map((x) => x.step.slice(3)));
+          const o = xs.filter((x) => /^-> /.test(x.step) && !done.has(x.step.slice(3))).pop(); return o ? o.step.slice(3) : ''; };
+        let lastOpen = '';
+        Object.defineProperty(join, 'step', { enumerable: false, configurable: true, get: () => raw });
+        Object.defineProperty(join, 'stage', { enumerable: true, configurable: true,
+          set: (v) => { const nv = String(v == null ? '' : v); if (nv !== raw) { raw = nv; at = Date.now(); } },
+          get: () => {
+            if (join.state !== 'joining' || join.loaded || join.cancelled || join.finding) return raw;
+            const o = raw ? '' : openStep();
+            if (o !== lastOpen) { lastOpen = o; if (!raw) at = Date.now(); }
+            return joinWaitLine({ raw, openStep: o, startMs, nowMs: Date.now(), stepSinceMs: at, next: !!join.next });
+          } });
+        return join;
+      }
       window.ARENA_LOBBY_ACT = {
         // PLAY: the round's own link, so the round is joined by exactly the path a
         // shared round link takes - IN THIS PAGE (2026-09-13 07:11: "after
@@ -9493,6 +9534,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           window.ARENA_JOIN_REFUSED = null;
           const join = window.ARENA_JOIN = { state: 'joining', why: '', stage: '', round: id, kindKnown: true, free: !!r.free, endMs: Date.parse(r.endTime) || 0,
             stakeSats: Number(r.stakeSats) || 0, next: !!next };
+          sayJoining(join, holdUntilMs || Number((r.raw && r.raw.startTimeMs) || 0));
           const refuse = (why) => {
             // THE COUNTDOWN GOES WITH THE JOIN (V2, measured 0.0.2481: a lock refused after the round was shown loaded left
             // 'next round starts in 4:45' on the line beside the refusal)
@@ -9521,7 +9563,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           const hosts = (list) => list.map((n) => String(n).replace(/^[a-z]+:\/\//, '').replace(/\/+$/, '')).join(' and ');
           const clock = setInterval(() => {
             if (join.state !== 'joining') { clearInterval(clock); return; }
-            if (join.stage) return;
+            if (join.step) return;   // a named step (the line in `stage` is never empty while joining, kanban #1483)
             if (Date.now() - since < JOIN_ANSWER_S * 1000) return;
             clearInterval(clock);
             join.cancelled = true;
@@ -10076,7 +10118,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         let line, cls;
         if (j.state === 'refused') { line = refusedWords(j.why) + (j.round ? ' (round ' + String(j.round).slice(0, 8) + ')' : ''); cls = 'bad'; }
         else if (j.state === 'joined' || j.state === 'entered' || j.state === 'playing' || j.state === 'picked') { line = '✓ Order placed' + (j.stakeSats ? ' · ' + Number(j.stakeSats).toLocaleString('en-US') + ' sat' : ''); cls = 'ok'; }
-        else if (j.state === 'joining' && /round starts in ([0-9:]+)/.test(String(j.stage || ''))) {
+        // only a join shown loaded is locked: the line of a join still being made counts down too (kanban #1483)
+        else if (j.state === 'joining' && (j.loaded || j.held) && /round starts in ([0-9:]+)/.test(String(j.stage || ''))) {
           line = '✓ Order locked · the window starts in ' + /round starts in ([0-9:]+)/.exec(j.stage)[1]; cls = 'held'; }
         else if (j.state === 'joining') { const sub = plain(j.stage); line = 'Placing your order …' + (sub ? ' ' + sub : ''); cls = ''; }
         else { box.classList.remove('on'); return; }

@@ -57,6 +57,7 @@ export async function federationStatus({ federationIdHex, nodes, census, verify,
 }
 const STATUS_KEPT = new Map();
 const STATUS_ASK_MS = 6000;
+const FEDERATION_ROWS_PER_SEAT = 2, FEDERATIONS_PER_SEAT = 16;   // kanban #1684: what one seat's GET /federations may cost
 
 /**
  * EVERY FEDERATION THE SEATS LIST, EACH AS federationStatus ANSWERS IT (§23A.3,: Move is offered against the
@@ -64,7 +65,7 @@ const STATUS_ASK_MS = 6000;
  * id hex -> status with `federation`; `only` keeps one. `.why` says why none stood when the map is empty.
  */
 export async function federationStatuses({ nodes, census, verify, fetcher = fetch, only = null }) {
-  const verified = new Map(), refused = new Map(), failed = [], alarms = new Map(), firsts = new Map();
+  const verified = new Map(), refused = new Map(), failed = [], alarms = new Map(), firsts = new Map(), checked = new Map();
   const add = (m, k, v) => { if (!m.has(k)) m.set(k, []); m.get(k).push(v); };
   // NOT HELD FOR THE SLOWEST SEAT, NOR FOR A HUNG ONE (kanban #625: asked with no limit, a restarting seat held an order 26 s a read): each
   // seat within STATUS_ASK_MS, and once more than half answered the rest get COMPARE_GRACE_MS - the records are signed, the newest that stands is taken
@@ -75,14 +76,25 @@ export async function federationStatuses({ nodes, census, verify, fetcher = fetc
       if (closed) return;
       if (!r.ok) { failed.push(`${u}: ${r.status}`); return; }
       const j = await r.json();
-      for (const f of j.federations || []) {
-        const fid = String(f.federation).toLowerCase();
+      // ONE SEAT'S ANSWER IS BOUNDED (kanban #1684): a seat that listed one federation's record thousands of times, each copy with 32
+      // made-up signatures under the bonded guardians' public keys, cost the page 64,000 schnorr verifies a read on its main thread (minutes
+      // frozen, every order with it). From each seat at most FEDERATION_ROWS_PER_SEAT rows of one federation and FEDERATIONS_PER_SEAT
+      // federations are checked, and a record (its exact bytes) already checked in this read is not checked again
+      const rows = new Map();
+      for (const f of Array.isArray(j.federations) ? j.federations : []) {
+        const fid = String(f && f.federation).toLowerCase();
         if (only && fid !== only) continue;
         // A RESERVE ALARM (kanban #1093 part 5): a seat that saw a mark of theft in the federation's signed history names it; one seat is
         // enough to stop deposits - stopping is the safe side, and the mark carries its own proof for anyone who acts on it
+        if (!f) continue;
         if (f.alarm && typeof f.alarm === 'object' && !alarms.has(fid)) alarms.set(fid, { ...f.alarm, from: u });
+        const n = rows.get(fid) || 0;
+        if (n >= FEDERATION_ROWS_PER_SEAT || (!n && rows.size >= FEDERATIONS_PER_SEAT)) continue;
+        rows.set(fid, n + 1);
         if (Number.isInteger(f.firstHeight)) add(firsts, fid, f.firstHeight);
-        const v = verifyFederationRecord(hexToBytes(f.record), { census, verify, inviteFederationId });
+        const hex = String(f.record);
+        let v = checked.get(hex);
+        if (!v) { v = verifyFederationRecord(hexToBytes(hex), { census, verify, inviteFederationId }); checked.set(hex, v); }
         // ITS GUARDIANS, for a join one guardian cannot serve (guardian-invites.js) - ONLY ONCE THE RECORD VERIFIES (kanban #1556: one seat
         // answering first with an unsigned record naming the player's federation took every peer slot, so the join fallback named only its hosts)
         if (v.ok) { noteRecordInvite(f.record); add(verified, fid, { ...v, from: u }); } else add(refused, fid, `${u}: ${v.why}`);
