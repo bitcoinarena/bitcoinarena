@@ -40,8 +40,24 @@ export const ZAP_TIPS_MINTING_MAX = 16;
 // publish before it looked at the next zap - one 1-sat zap naming 8 silent relays held every later receipt (and the expiry sweep)
 // for 8 x 10 s. A paid zap's receipt is signed and kept at once; its publish runs beside the watcher, a few at a time, from a
 // bounded queue (the oldest waiting one is dropped when it is full; the receipt itself stays in `receipts`).
-export const ZAP_PUBLISH_PARALLEL = 4;
+// ONE LANE PER RELAY HOST, AND NO RECEIPT DROPPED UNSENT (kanban #2249, #2261, #1489 a45-refute-17): that queue was one FIFO with 4
+// shared slots, each held as long as the payer's relays took, so 4 one-sat zaps naming a silent relay held every later receipt for
+// 10 s (K zaps: ceil(K/4) x 10 s), and 1000 more pushed a waiting honest receipt out of the queue, never to be sent. Now each
+// (receipt, relay) is its own send, queued in the lane of the relay's host (URL host, port included): at most
+// ZAP_PUBLISH_PER_HOST sends to one host at once, ZAP_PUBLISH_PARALLEL in all, lanes taken in turn. A host whose last send took
+// ZAP_PUBLISH_SLOW_MS or more (or failed) is not proven, and hosts not proven share all but ZAP_PUBLISH_RESERVED of the slots, so a
+// payer's silent hosts cannot hold the sends to relays that answer. Receipts still owed a send are kept in the state file
+// (`owed`) and published again after a restart; a send whose publish throws is tried again on a backoff, up to
+// ZAP_PUBLISH_TRIES. When more than ZAP_PUBLISH_QUEUED sends wait, the newest one of the LONGEST lane is shed (logged), never
+// the oldest overall: a flood sheds its own sends.
+export const ZAP_PUBLISH_PARALLEL = 32;
+export const ZAP_PUBLISH_PER_HOST = 2;
+export const ZAP_PUBLISH_RESERVED = 8;
+export const ZAP_PUBLISH_SLOW_MS = 3000;
 export const ZAP_PUBLISH_QUEUED = 1000;
+export const ZAP_PUBLISH_TRIES = 6;
+export const ZAP_PUBLISH_RETRY_MS = 30000;
+const HOSTS_KEPT = 4096;
 
 /** What a plain (not zap) tip's invoice is hashed over (LUD-06: raw JSON, text/plain first, the address as text/identifier). */
 export const addressMetadata = (name, host) => JSON.stringify([['text/plain', `Zap ${name}@${host}`], ['text/identifier', `${name}@${host}`]]);
@@ -69,32 +85,97 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
   let tipsMinting = 0;                // plain tip invoices being made right now (kanban #1754)
   const pruneTips = (nowS) => { for (const [h, until] of tips) if (until < nowS) tips.delete(h); };
   const requestOf = (p) => { try { return JSON.parse(p.description); } catch { return {}; } };
+  const owed = new Map();             // receipt id -> { receipt, relays: [relay still owed a send] } (kanban #2249)
+  let loadedOwed = [];
   if (statePath && existsSync(statePath)) {
-    try { for (const p of JSON.parse(readFileSync(statePath, 'utf8')).pending || []) pending.set(p.paymentHash, p); } catch { /* a bad file starts empty */ }
+    try {
+      const st = JSON.parse(readFileSync(statePath, 'utf8'));
+      for (const p of st.pending || []) pending.set(p.paymentHash, p);
+      loadedOwed = Array.isArray(st.owed) ? st.owed : [];
+    } catch { /* a bad file starts empty */ }
   }
+  let saveTimer = null;
   const save = () => {
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
     if (!statePath) return;
-    writeFileSync(`${statePath}.tmp`, JSON.stringify({ pending: [...pending.values()] }));
+    writeFileSync(`${statePath}.tmp`, JSON.stringify({ pending: [...pending.values()], owed: [...owed.values()] }));
     renameSync(`${statePath}.tmp`, statePath);
   };
+  // the owed list changes once per send: written at most once a second, not on every answer
+  const saveSoon = () => { if (!statePath || saveTimer) return; saveTimer = setTimeout(() => { saveTimer = null; save(); }, 1000); saveTimer.unref(); };
 
-  const publishQueue = [];
-  let publishing = 0;
+  // PUBLISH LANES (kanban #2249, #2261): host -> { queue: [{ receipt, relay, tries }], flying }
+  const lanes = new Map();
+  const proven = new Map();           // host -> true when its last send answered within ZAP_PUBLISH_SLOW_MS (a bounded ring)
+  const retries = new Set();
+  let flying = 0, flyingUnproven = 0, queued = 0, closed = false;
+  const hostOf = (relay) => { try { return new URL(relay).host.toLowerCase() || String(relay); } catch { return String(relay); } };
+  const lane = (host) => { let l = lanes.get(host); if (!l) { l = { queue: [], flying: 0 }; lanes.set(host, l); } return l; };
+  const settle = (job) => {           // this relay is no longer owed a send for this receipt
+    const o = owed.get(job.receipt.id);
+    if (!o) return;
+    o.relays = o.relays.filter((r) => r !== job.relay);
+    if (!o.relays.length) owed.delete(job.receipt.id);
+    saveSoon();
+  };
+  const markHost = (host, ok) => { proven.delete(host); proven.set(host, ok); if (proven.size > HOSTS_KEPT) proven.delete(proven.keys().next().value); };
   const pump = () => {
-    while (publishing < ZAP_PUBLISH_PARALLEL && publishQueue.length) {
-      const [receipt, relays] = publishQueue.shift();
-      publishing++;
-      Promise.resolve().then(() => publish(receipt, relays))
-        .catch((e) => log(`publish ${receipt.id.slice(0, 16)} failed: ${e.message}`))
-        .finally(() => { publishing--; pump(); });
+    if (closed) return;
+    let moved = true;
+    while (moved && flying < ZAP_PUBLISH_PARALLEL && queued) {
+      moved = false;
+      for (const [host, l] of [...lanes]) {          // each lane in turn, one send each pass
+        if (flying >= ZAP_PUBLISH_PARALLEL) break;
+        if (!l.queue.length) { if (!l.flying) lanes.delete(host); continue; }
+        if (l.flying >= ZAP_PUBLISH_PER_HOST) continue;
+        const good = proven.get(host) === true;
+        if (!good && flyingUnproven >= ZAP_PUBLISH_PARALLEL - ZAP_PUBLISH_RESERVED) continue;
+        const job = l.queue.shift(); queued--;
+        lanes.delete(host); lanes.set(host, l);   // to the back of the turn
+        start(host, l, job, good);
+        moved = true;
+      }
+    }
+  };
+  const start = (host, l, job, good) => {
+    flying++; l.flying++; if (!good) flyingUnproven++;
+    const t0 = Date.now();
+    Promise.resolve().then(() => publish(job.receipt, [job.relay]))
+      .then(() => { markHost(host, Date.now() - t0 < ZAP_PUBLISH_SLOW_MS); settle(job); },
+        (e) => {
+          markHost(host, false);
+          job.tries++;
+          if (job.tries >= ZAP_PUBLISH_TRIES) { log(`publish ${job.receipt.id.slice(0, 16)} -> ${job.relay} given up after ${job.tries} tries: ${e && e.message}`); settle(job); return; }
+          log(`publish ${job.receipt.id.slice(0, 16)} -> ${job.relay} failed (${e && e.message}); again later`);
+          const t = setTimeout(() => { retries.delete(t); push(job); pump(); }, ZAP_PUBLISH_RETRY_MS * 2 ** (job.tries - 1));
+          t.unref(); retries.add(t);
+        })
+      .finally(() => { flying--; l.flying--; if (!good) flyingUnproven--; pump(); });
+  };
+  const push = (job) => {
+    lane(hostOf(job.relay)).queue.push(job); queued++;
+    while (queued > ZAP_PUBLISH_QUEUED) {     // shed the longest lane's newest send, never the oldest overall
+      let worst = null;
+      for (const l of lanes.values()) if (l.queue.length && (!worst || l.queue.length > worst.queue.length)) worst = l;
+      const shed = worst.queue.pop(); queued--;
+      log(`publish ${shed.receipt.id.slice(0, 16)} -> ${shed.relay} shed: ${worst.queue.length + 1} sends wait for that relay host`);
+      settle(shed);
     }
   };
   const enqueuePublish = (receipt, relays) => {
     if (typeof publish !== 'function') return;
-    publishQueue.push([receipt, relays]);
-    if (publishQueue.length > ZAP_PUBLISH_QUEUED) { const [old] = publishQueue.shift(); log(`publish ${old.id.slice(0, 16)} dropped: the queue is full`); }
+    const named = [...new Set(relays.map(String))];
+    owed.set(receipt.id, { receipt, relays: named });
+    for (const relay of named) push({ receipt, relay, tries: 0 });
+    saveSoon();
     pump();
   };
+  for (const o of loadedOwed) {       // a restart sends what it still owed
+    if (o && o.receipt && typeof o.receipt.id === 'string' && Array.isArray(o.relays) && o.relays.length) {
+      receipts.push(o.receipt);
+      enqueuePublish(o.receipt, o.relays);
+    }
+  }
 
   async function watch() {
     const nowS = Math.floor(Date.now() / 1000);
@@ -108,10 +189,10 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
   async function paid(hash, p, got, nowS) {
     const receipt = signNostr(zapReceiptTemplate({ request: JSON.parse(p.description), description: p.description, invoice: p.invoice,
       preimage: got.preimage || null, paidAtS: got.settledAtS || nowS }), { secret, curve });
-    pending.delete(hash); save();
     receipts.push(receipt);
+    enqueuePublish(receipt, p.relays);   // not awaited: no receipt waits on another zap's relays (kanban #1828, #2249)
+    pending.delete(hash); save();        // one write: the zap leaves pending as its receipt enters owed (kanban #2249)
     log(`zap paid ${p.name} ${hash.slice(0, 16)} -> receipt ${receipt.id.slice(0, 16)}`);
-    enqueuePublish(receipt, p.relays);   // not awaited: no receipt waits on another zap's relays (kanban #1828)
   }
   // THE CAP EVICTS, IT DOES NOT REFUSE (kanban #1619): the per-payer bound counts by the zap request's pubkey, and Nostr keys are
   // free - 100 fresh keys x 10 unpaid requests filled ZAP_PENDING_MAX and refused every honest zap for expiryS (an hour), for
@@ -196,6 +277,6 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
     });
     server.on('error', reject);
     server.listen(port, host, () => resolve({ port: server.address().port, nostrPubkey, pending, receipts, refused, watch,
-      close: () => new Promise((r) => { clearInterval(timer); server.close(r); }) }));
+      close: () => new Promise((r) => { closed = true; clearInterval(timer); for (const t of retries) clearTimeout(t); if (saveTimer) save(); server.close(r); }) }));
   });
 }
