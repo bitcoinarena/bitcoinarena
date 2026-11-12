@@ -35,7 +35,7 @@ import {
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
-import { namesNoDraw, mediansPrices, FRONTEND_FEE_VERSION, ITEMS_VERSION, objectionWindowFits } from '../../arena-protocol/src/constants.js';
+import { namesNoDraw, mediansPrices, FRONTEND_FEE_VERSION, ITEMS_VERSION, objectionWindowFits, STAKE_NOT_SEEN } from '../../arena-protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
 import { entryFeeBpsForRound, entryPaysReserves, roundSplit, RESERVES_NODE_FEE_BPS, entryGiftsInFee, giftsEntryExpected, giftsFeeBps, ROUND_SPLIT_BPS } from '../../arena-protocol/src/reserves.js';
 import { roundSplitBps } from '../../arena-protocol/src/fee-proposal.js';
@@ -167,6 +167,20 @@ export function decodedEntryRows(rows) {
   }
   return out;
 }
+
+// kanban #2256: the most final_sig_evidence rows one seat's FINALs leave per (round, entry) - see putFinalSig.
+export const FINAL_SIG_EVIDENCE_PER_SIGNER = 4;
+
+/**
+ * A FIRST-MARK REFUSAL THE PLAYER CAUSED (kanban #2411, feedback #015 by Hexbox Tools): the mark's inputs never reached
+ * this seat ("send the batches first", "names inputs this node has not seen") or it does not fit the chain the player
+ * already started ("does not follow the chain head", "expected a tick after"). §13C's VOID is for a fault on the operator
+ * side; a refusal the player brings about by sending a signed first mark without its batches is not one - kept, it turned
+ * a walk-away (FORFEIT, stake claimed) into a refund the player chose (VOID), which §13C forbids. Such a refusal is never
+ * kept (Round#putRefusedFirstMark) and never counted (verify.js #noQuorum), here or shown by a peer.
+ */
+export const PLAYER_CAUSED_REFUSAL = /send the batches first|names inputs this node has not seen|does not follow the chain head|expected a tick after/;
+export const playerCausedRefusal = (why) => PLAYER_CAUSED_REFUSAL.test(String(why || ''));
 
 export class Round {
   /** How long openHeld trusts its last count of the open rows when this store wrote none (kanban #786). */
@@ -2529,7 +2543,13 @@ export class Round {
   /**
    * A SEAT'S FINAL SIGNATURE, AS IT ARRIVED (§13A, WINDOW-10-SPEC): `fault` is protocol finalSigFault's answer at this
    * seat's clock now. One that counts is kept (the latest per seat and run); one refused for its time is kept as
-   * evidence against its signer; anything else is dropped. Returns 'kept', 'evidence' or 'refused'.
+   * evidence against its signer; anything else is dropped. Returns 'kept', 'evidence', 'evidence-held' or 'refused'.
+   * ONE EVIDENCE ROW PER SEAT AND ENTRY (kanban #2256, refute of #1817): final_sig_evidence is keyed by the bytes, so one
+   * committee seat with no kept FINAL on a real entry signed any number of back-dated FINALs (invented runs, or one run
+   * 1 ms apart) and every honest seat stored each as a new row and logged it - 400 of 400 measured, nothing reads or prunes
+   * them. One row is already proof against the signer: at most FINAL_SIG_EVIDENCE_PER_SIGNER (4 - room for an early and a
+   * time-off one, as window-10 measures) are stored per (round, entry, signer); a later one is not ('evidence-held',
+   * answered as before and not logged again).
    */
   putFinalSig(roundIdBytes, entryIdBytes, x, bytes, fault, seenMs = this.now()) {
     if (!fault) {
@@ -2538,9 +2558,12 @@ export class Round {
       return 'kept';
     }
     if (fault.evidence && fault.x) {
-      this.db.prepare('INSERT OR IGNORE INTO final_sig_evidence (round_id, entry_id, signer_pubkey, bytes, seen_ms, why) VALUES (?, ?, ?, ?, ?, ?)')
-        .run(roundIdBytes, entryIdBytes, fault.x.signerPubkey, bytes, seenMs, fault.why);
-      return 'evidence';
+      const put = this.db.prepare(
+        `INSERT OR IGNORE INTO final_sig_evidence (round_id, entry_id, signer_pubkey, bytes, seen_ms, why) SELECT ?, ?, ?, ?, ?, ?
+          WHERE (SELECT COUNT(*) FROM final_sig_evidence WHERE round_id = ? AND entry_id = ? AND signer_pubkey = ?) < ?`)
+        .run(roundIdBytes, entryIdBytes, fault.x.signerPubkey, bytes, seenMs, fault.why, roundIdBytes, entryIdBytes, fault.x.signerPubkey,
+          FINAL_SIG_EVIDENCE_PER_SIGNER);
+      return put.changes ? 'evidence' : 'evidence-held';
     }
     return 'refused';
   }
@@ -3308,6 +3331,7 @@ export class Round {
    * refusal. Answers whether it was kept.
    */
   putRefusedFirstMark({ bytes, why }) {
+    if (playerCausedRefusal(why)) return false;   // kanban #2411: the player's own doing is no refusal by an up seat
     const c = this.onTimeFirstMark(bytes);
     if (!c || this.firstMarkHeld(c.roundId, c.entryId)) return false;
     const kept = this.db.prepare('INSERT OR IGNORE INTO refused_first_marks (entry_id, round_id, mark, why, at_ms) VALUES (?, ?, ?, ?, ?)')
@@ -3357,9 +3381,28 @@ export class Round {
     return decided.outcome ? null : c;
   }
 
+  /** Whether a kept refusal is a stake-not-seen one and this seat saw that stake before the round's end (kanban #2527). */
+  #stakeRefusalMadeGood(entryIdBytes, row) {
+    if (!String(row.why || '').startsWith(STAKE_NOT_SEEN)) return false;
+    const seen = this.stakeSeen(entryIdBytes);
+    if (!seen || seen.seenMs === null || seen.seenMs === undefined) return false;
+    try {
+      const held = this.get(new Uint8Array(row.round_id));
+      return !!held && BigInt(seen.seenMs) < BigInt(roundEndMs(decodeRoundContract(new Uint8Array(held.contract))));
+    } catch { return false; }
+  }
+
   /** The on-time first mark this signer node, up, refused - or null. */
   refusedFirstMark(entryIdBytes) {
     const r = this.db.prepare('SELECT * FROM refused_first_marks WHERE entry_id = ?').get(entryIdBytes);
+    // A ROW AN EARLIER BUILD KEPT FOR A REFUSAL THE PLAYER CAUSED (kanban #2411) is not served, nor read, as one
+    if (r && playerCausedRefusal(r.why)) return null;
+    // A STAKE-NOT-SEEN REFUSAL THIS SEAT MADE GOOD IN TIME (kanban #2527, the stake-not-seen variant of #2411): it saw the
+    // stake before the round's end - from the client or the relay, which hands an entry's locks on (#1598) - so the mark sent
+    // again would have been taken, as an honest client sends it ("a wait, said as one"). A player who leaves out POST /lock
+    // here and sends the mark only here first must not turn its walk-away into VOID that way. A stake still unseen at the
+    // round's end stays the operator side's refusal (§13C, M3.3-34).
+    if (r && this.#stakeRefusalMadeGood(entryIdBytes, r)) return null;
     return r ? { roundId: new Uint8Array(r.round_id), mark: new Uint8Array(r.mark), why: r.why, atMs: r.at_ms } : null;
   }
 
@@ -4356,10 +4399,13 @@ export class Round {
   /** A transcript kept as a relay, under the hash its bytes have (checked by the door). */
   // `of`: { entryId, roundId, named } of a transcript (kanban #1725, #1795): the door's caps per entry and per round count by them;
   // a copy taken again once a held result names it is marked named (it no longer counts against the unnamed caps)
+  // `of.capped` (kanban #2388): a transcript the committee does not agree on, counted in the RELAY_CAPPED_MOST pool (relayedCappedBytes);
+  // `of` given as a bare boolean is `capped` alone (the a45 #2388 call)
   relayPut(hashBytes, bytes, of = {}) {
+    if (typeof of === 'boolean') of = { capped: of };
     // `of.accused` (kanban #1917): a slash proof's accused node - set on slash rows only, which then count in the slash share alone
-    const ch = this.db.prepare('INSERT OR IGNORE INTO relayed (hash, bytes, seen_ms, entry_id, round_id, named, accused) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .run(hashBytes, bytes, this.now(), of.entryId || null, of.roundId || null, of.named ? 1 : 0, of.accused || null).changes;
+    const ch = this.db.prepare('INSERT OR IGNORE INTO relayed (hash, bytes, seen_ms, entry_id, round_id, named, accused, capped) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(hashBytes, bytes, this.now(), of.entryId || null, of.roundId || null, of.named ? 1 : 0, of.accused || null, of.capped ? 1 : 0).changes;
     if (!ch && of.named) this.db.prepare('UPDATE relayed SET named = 1 WHERE hash = ?').run(hashBytes);
     return ch;
   }
@@ -4400,6 +4446,50 @@ export class Round {
   /** The relayed bytes that are not slash proofs: transcripts and reveal records (kanban #1917). */
   relayedTranscriptBytes() {
     return this.#relayTally('transcript');   // kanban #2055, #2073
+  }
+
+  /** The bytes kept in the capped pool: transcripts the committee does not agree on (kanban #2388). */
+  relayedCappedBytes() {
+    return Number(this.db.prepare('SELECT COALESCE(SUM(LENGTH(bytes)), 0) AS n FROM relayed WHERE capped = 1').get().n);
+  }
+
+  /**
+   * A SLASH PROOF KEPT AS A RELAY, AT MOST ONE PER SLOT (kanban #2248, a45 refute of #1816; #2344). `accused` is
+   * round id || accused node || entry id || door (3 result, 4 re-run), or || player || door (1, 2) for a proof about no held entry (#2381). Returns 'kept', 'same' (this proof is already the one kept)
+   * or 'other' (another proof about the same signed result is kept; nothing stored).
+   */
+  relaySlashPut(accused, proofId, bytes, of = {}) {
+    const was = this.relaySlashOf(accused);
+    if (was) return Buffer.from(was).equals(Buffer.from(proofId)) ? 'same' : 'other';
+    const own = !this.db.isTransaction;
+    if (own) this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.prepare('INSERT INTO relayed_slash (accused, proof_id) VALUES (?, ?)').run(accused, proofId);
+      this.relayPut(proofId, bytes, of);
+      if (own) this.db.exec('COMMIT');
+    } catch (e) { if (own) this.db.exec('ROLLBACK'); throw e; }
+    return 'kept';
+  }
+
+  /**
+   * A BETTER-HOLDING PROOF TAKES THE SLOT (kanban #2344): the slot named `accused` points at `proofId` instead of `wasId`, and its bytes are
+   * kept beside the old ones (nothing is removed). Returns 'kept', or 'other' when the slot no longer names `wasId` (a racing PUT took it).
+   */
+  relaySlashReplace(accused, wasId, proofId, bytes, of = {}) {
+    const own = !this.db.isTransaction;
+    if (own) this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const n = this.db.prepare('UPDATE relayed_slash SET proof_id = ? WHERE accused = ? AND proof_id = ?').run(proofId, accused, wasId).changes;
+      if (n) this.relayPut(proofId, bytes, of);
+      if (own) this.db.exec('COMMIT');
+      return n ? 'kept' : 'other';
+    } catch (e) { if (own) this.db.exec('ROLLBACK'); throw e; }
+  }
+
+  /** The id of the slash proof kept as a relay in this slot (relaySlashPut's key: round || accused node || player || door), or null. */
+  relaySlashOf(accused) {
+    const r = this.db.prepare('SELECT proof_id FROM relayed_slash WHERE accused = ?').get(accused);
+    return r ? new Uint8Array(r.proof_id) : null;
   }
 
   /** The bytes this node keeps as a relay, all doors together (kanban #1532: the doors refuse past a cap). */

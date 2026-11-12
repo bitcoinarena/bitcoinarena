@@ -77,6 +77,12 @@ export const TABLE_LATE_MS = BigInt(process.env.ARENA_TABLE_LATE_MS || 24 * 3600
 export const TABLE_CHECK_IN_MS = 900000n;
 /** How often a seat asks the seats of its tables for a newer seating it missed (kanban #1020). */
 const TABLE_RESEAT_ASK_MS = 300000;
+/** How often a seat reads the drawn seats' certificates of a round it holds one of, until most of them name the same seating (kanban #2245). */
+const CONFIRM_ASK_MS = Number(process.env.ARENA_SEATING_CONFIRM_ASK_MS || 10000);
+/** The confirm pass for rounds out of the tick's index (kanban #2360, #2363): at most this many certificates read in one pass, and one not yet confirmed
+ * is read again after CONFIRM_ASK_MS, doubled on each read that saw no majority, up to CONFIRM_REST_MAX_MS - until it is confirmed or the round is pruned. */
+const CONFIRM_PASS_ROUNDS = 256;
+const CONFIRM_REST_MAX_MS = 600000;
 const joinBytes = (list) => { const out = new Uint8Array(list.reduce((n, x) => n + x.length, 0)); let at = 0; for (const x of list) { out.set(x, at); at += x.length; } return out; };
 
 export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, nowMs = () => Date.now(), log = () => {}, windowOf = () => null,
@@ -114,6 +120,10 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
   }
   // AND THE SEATED LIST OF EACH SIGNATURE HELD (kanban #746): a signature this node holds is presented to the judge with its seating
   if (!db.prepare('PRAGMA table_info(seat_sigs)').all().some((c) => c.name === 'seated')) db.exec('ALTER TABLE seat_sigs ADD COLUMN seated TEXT');
+  // WHETHER A HELD CERTIFICATE WAS CONFIRMED BY MOST OF THE DRAWN SEATS (kanban #2360, #2363): 0 from its first keep until a confirm read sees more than half
+  // of the drawn hold its seating, then 1. A column of seat_certs, so it goes with the certificate when the round is pruned (transcript-prune.js) and is no
+  // round-marking table of its own. Certificates kept before this column existed read NULL and count as confirmed: they were read while their round was indexed.
+  try { db.exec('ALTER TABLE seat_certs ADD COLUMN confirmed INTEGER'); } catch { /* there already */ }
   const me = toHex(round.pubkey);
   // THE SEATED LISTS OF THE SEATINGS SIGNED (kanban #738): `${rid}:${role}:${seating id}` -> node keys hex, for every seating a
   // signature over it was kept of - a seating this node did not sign is known by its id only in seat_sigs. Lost at a restart: the
@@ -154,7 +164,9 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
   const listReseat = (anchorHex, role, index, rid, seated) => {
     const key = `${anchorHex}:${role}`;
     const list = reseats.get(key) || reseats.set(key, []).get(key);
-    if (list.some((x) => x.index === index)) return;
+    // a seating this seat took instead of the one it held (kanban #2245, keepCert `supersede`) replaces it at its index
+    const at = list.find((x) => x.index === index);
+    if (at) { at.rid = rid; at.seated = seated; return; }
     list.push({ index, rid, seated });
     list.sort((x, y) => x.index - y.index);
   };
@@ -184,6 +196,40 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     const period = (c.startTimeMs - t0) / BigInt(c.roundIndex);
     return period > 0n && c.startTimeMs / TABLE_CHECK_IN_MS !== (c.startTimeMs - period) / TABLE_CHECK_IN_MS;
   };
+
+  /** Do seatings `xs` and `ys` (keys hex) differ only by members one left out and reserves ranked below all of its members (kanban #1707)? */
+  const leftOutPair = (drawn, xs, ys) => {
+    const rank = new Map(drawn.map((k, i) => [toHex(k), i]));
+    const leftOut = (p, q) => { const inQ = new Set(q), inP = new Set(p);
+      const gone = p.filter((k) => !inQ.has(k)), added = q.filter((k) => !inP.has(k));
+      const low = Math.max(...p.map((k) => (rank.has(k) ? rank.get(k) : Infinity)));
+      return gone.length > 0 && added.every((k) => rank.has(k) && rank.get(k) > low); };
+    return leftOut(xs, ys) || leftOut(ys, xs);
+  };
+  // A CERTIFICATE HELD HERE THAT MOST DRAWN SEATS HAVE NOT SHOWN YET (kanban #2245): `${rid}:${role}` -> last read (ms); confirmed ones are read no more
+  const confirmAsked = new Map();
+  const confirmed = new Set();
+  // EVERY HELD CERTIFICATE NOT CONFIRMED YET, WHATEVER ITS ROUND'S AGE (kanban #2360, #2363, wf1489 a45 refute 5 s3): the tick's confirm read (#2245, #2321)
+  // runs only while the round is in its index - 10 min after the start - so a seat that took its first certificate after that (down for longer, newly joined,
+  // a drawn seat back late; a long round is played and settled long after) kept whatever POST /seating handed it first (a stranger can relay M's superseded
+  // S), refused the honest T by #1707 and seated S for good; and askUnwritten's table round 0 and #1020 check-in keeps took the first valid answer of any
+  // drawn seat and were never confirmed at all. Each first keep is listed here (and kept 0 in seat_certs.confirmed, so a restart lists it again), and the
+  // confirm pass beside the tick (confirmHeld) reads the drawn seats for it until more than half hold its seating or another one replaces it (`supersede`).
+  // `${rid}:${role}` -> { rid, ridHex, role, index, askedMs, tries }
+  const pending = new Map();
+  const confirm = (key) => {
+    confirmed.add(key); confirmAsked.delete(key); if (confirmed.size > 20000) confirmed.delete(confirmed.values().next().value);
+    const p = pending.get(key);
+    if (p) { pending.delete(key); try { db.prepare('UPDATE seat_certs SET confirmed = 1 WHERE round_id = ? AND role = ?').run(p.rid, p.role); } catch { /* read again after a restart */ } }
+  };
+  const listPending = (rid, role, index = null) => {
+    const key = `${toHex(rid)}:${role}`;
+    if (confirmed.has(key) || pending.has(key)) return;
+    pending.set(key, { rid: new Uint8Array(rid), ridHex: toHex(rid), role, index, askedMs: -Infinity, tries: 0 });
+  };
+  for (const r of db.prepare('SELECT c.round_id, c.role, s.idx FROM seat_certs c LEFT JOIN seat_reseats s ON s.round_id = c.round_id AND s.role = c.role WHERE c.confirmed = 0').all()) {
+    listPending(new Uint8Array(r.round_id), r.role, r.idx === null || r.idx === undefined ? null : Number(r.idx));
+  }
 
   // THE CHECK OF A CERTIFICATE, against this node's own draw for the round
   const checkFor = (rid, role, index = null) => {
@@ -235,7 +281,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
   };
   // REPLACEMENTS REFUSED FOR GOOD (kanban #2083): entries never leave a round, so a replacement refused for them is refused again without its signatures checked
   const refusedLate = new Set();
-  const keepCert = (rid, role, bytes, { index = null } = {}) => {
+  const keepCert = (rid, role, bytes, { index = null, supersede = false } = {}) => {
     // ONE HELD ALREADY, byte for byte, is not checked again (2026-10-12 "figure out why CPU usage so high and
     // optimise it": every batch answer repeats a round's certificate, and each was verified - all its signatures - before the
     // seat looked whether it held exactly these bytes)
@@ -289,6 +335,23 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     if (had) {
       const old = new Uint8Array(had.cert);
       if (toHex(old) === toHex(bytes)) return { ok: true, kept: false };
+      // THE SEATING MOST OF THE DRAWN SEATS HOLD REPLACES AN ORDERED ONE HELD HERE (kanban #2245, wf1489 a45 refute 5 of #1812 and #1707): the two
+      // seatings of an honest move - forward in #738's order (#1812) or a withholder left out for the next reserve (#1509, #1707) - carry the same
+      // members' signatures, so their certificates alone never say which one the honest seats moved to: a seat that held none (not drawn, or drawn and
+      // down at the close) kept whichever came first, and one member that posted the seating left behind split the network's committee for good. The
+      // drawn seats' own certificates say it (tick's confirm read): `supersede` is set only when more than half of them hold this seating, and it then
+      // replaces the held one - no equivocation, since an ordered pair proves none. A pair that is not ordered still is (below).
+      if (supersede && certs.get(key) !== null) {
+        const xs = decodeSeated(old), ys = v.seating.seated.map(toHex), w = { drawnKeys: check.drawn };
+        if (seatingBefore(w, xs, ys) || seatingBefore(w, ys, xs) || leftOutPair(check.drawn, xs, ys)) {
+          db.prepare('UPDATE seat_certs SET cert = ? WHERE round_id = ? AND role = ?').run(bytes, rid, role);
+          certs.set(key, ys);
+          noteReseat(rid, role, ys, check.contract);
+          log(`[seating] ${toHex(rid).slice(0, 16)} ${role}: the seating most drawn seats hold replaces the one held here (kanban #2245)`);
+          try { onSeated(rid, role, v.seating.seated, check.contract, { replaced: true }); } catch (e) { log(`[seating] ${toHex(rid).slice(0, 16)} ${role}: ${e.message}`); }
+          return { ok: true, kept: true, replaced: true };
+        }
+      }
       const e = seatingEquivocation(old, bytes, check, presentedOf(rid, role));
       if (!e.ok) return { ok: false, why: e.why };
       // A SEATING THAT LEFT OUT A WITHHOLDING MEMBER IS NO EQUIVOCATION WITH THE ONE IT REPLACED (kanban #1681, #1741, wf1489 v1 refute-17): the honest seats
@@ -333,13 +396,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       // TWO SEATINGS AN HONEST #1509 MOVE MAKES (kanban #1707): one leaves members of the other out and takes in only nodes that rank below every member of
       // it (the next reserves). The honest seats sign exactly that pair when they leave a withholder, which can still sign the first seating late and complete
       // it with the signatures it read - so the pair is no proof against anyone. The certificate held stands and the other is refused; the round goes on.
-      const rank = new Map(check.drawn.map((k, i) => [toHex(k), i]));
-      const xs = decodeSeated(old), ys = v.seating.seated.map(toHex);
-      const leftOut = (p, q) => { const inQ = new Set(q), inP = new Set(p);
-        const gone = p.filter((k) => !inQ.has(k)), added = q.filter((k) => !inP.has(k));
-        const low = Math.max(...p.map((k) => (rank.has(k) ? rank.get(k) : Infinity)));
-        return gone.length > 0 && added.every((k) => rank.has(k) && rank.get(k) > low); };
-      if (leftOut(xs, ys) || leftOut(ys, xs)) return { ok: false, why: 'that seating differs from the one held only by members left out for withholding and the reserves after them (kanban #1509): the seating held stands' };
+      if (leftOutPair(check.drawn, decodeSeated(old), v.seating.seated.map(toHex))) return { ok: false, why: 'that seating differs from the one held only by members left out for withholding and the reserves after them (kanban #1509): the seating held stands' };
       db.prepare('INSERT OR IGNORE INTO seat_equivocations (round_id, role, a, b) VALUES (?, ?, ?, ?)').run(rid, role, old, bytes);
       certs.set(key, null);
       // A PROOF THAT NAMES NOBODY (kanban #744): every signer of both presents its chain - the round is void all the same, and the
@@ -348,9 +405,11 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       log(`[seating] ${toHex(rid).slice(0, 16)} ${role}: two seatings - ${e.unnamed ? 'a fault that names nobody' : `equivocation by ${e.signers.map((k) => toHex(k).slice(0, 8)).join(', ')}`}${excusedTxt}; the round takes no entries`);
       return { ok: true, equivocation: true, signers: e.signers.map(toHex), unnamed: e.unnamed };
     }
-    db.prepare('INSERT OR IGNORE INTO seat_certs (round_id, role, cert) VALUES (?, ?, ?)').run(rid, role, bytes);
+    db.prepare('INSERT OR IGNORE INTO seat_certs (round_id, role, cert, confirmed) VALUES (?, ?, ?, 0)').run(rid, role, bytes);
     if (!certs.has(key) || certs.get(key) !== null) certs.set(key, v.seating.seated.map(toHex));
     keepPeers(rid, role, v.seating.seated);
+    // read against the drawn seats until most of them are seen holding it, whenever and however it came (kanban #2360, #2363)
+    if (certs.get(key) !== null) listPending(rid, role, index);
     noteReseat(rid, role, v.seating.seated.map(toHex), check.contract);
     // the seats a v2 round counts are these (2026.0.2): the server writes them into the stored contract
     try { onSeated(rid, role, v.seating.seated, check.contract); } catch (e) { log(`[seating] ${toHex(rid).slice(0, 16)} ${role}: ${e.message}`); }
@@ -681,6 +740,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     }
     if (pass.drawn || pass.noDraw || pass.checked) log(`[seating] check-in pass (kanban #2564): ${pass.tables} table role(s), ${pass.drawn} drawn, ${pass.noDraw} not drawable${pass.why ? ` (${pass.why})` : ''}, ${pass.checked} seating(s) checked, ${pass.stale} stale, ${staleReseats.size} stale held`);
   };
+  let confirming = null;     // the confirm pass for rounds out of the index (kanban #2360, #2363), beside the tick as askUnwritten
   async function tick() {
     if (busy) return;
     busy = true;
@@ -695,6 +755,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       // replaced nodes and all). ARENA_CHECKIN_DRAW_CHECK=1 turns it on for a measurement
       if (process.env.ARENA_CHECKIN_DRAW_CHECK === '1') { try { checkReseats(); } catch (e) { log(`[seating] check-in check: ${e.message}`); } }   // kanban #2564
       if (!asking) asking = askUnwritten().catch((e) => log(`[seating] ${e.message}`)).finally(() => { asking = null; });
+      if (!confirming && pending.size) confirming = confirmHeld().catch((e) => log(`[seating] ${e.message}`)).finally(() => { confirming = null; });
       lap('unwritten');
       const now = BigInt(nowMs());
       const work = [];
@@ -719,10 +780,25 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
         // joined late: this node signs, once, a seating another seated member signed (joinLate below), and the certificate is built
         const joins = late && t.tableFirst;
         for (const role of SEATING_ROLES) {
-          // a certificate stands here: a second one reaches this node by POST /seating, and is then the proof of equivocation
-          if (certs.has(`${ridHex}:${role}`) && db.prepare('SELECT 1 FROM seat_certs WHERE round_id = ? AND role = ?').get(t.rid, role)) continue;
+          // a certificate stands here: a second one reaches this node by POST /seating, and is then the proof of equivocation - but until most of the
+          // drawn seats are seen holding the same seating, it is read again every CONFIRM_ASK_MS (kanban #2245, keepCert `supersede`)
+          // AFTER THE START TOO (kanban #2321, wf1489 a45 refute 5 s2): a seat that held no certificate at the start - restarted, newly joined, drawn and down
+          // across the close, or S posted in the last tick gap before the start - took the first one POST /seating handed it after the start (a stranger can
+          // relay M's superseded S), and with `late` in this skip it was never read again: it seated S for good while every honest seat seated T. A held
+          // certificate stays unconfirmed until a confirm read sees more than half of the drawn hold it, whenever it was taken (the `confirmed` set is lost
+          // at a restart, which is fine: the read runs again). It ends with the round's index, 10 min after the start (a long round once a minute, above).
+          const key = `${ridHex}:${role}`;
+          const certified = certs.has(key) && !!db.prepare('SELECT 1 FROM seat_certs WHERE round_id = ? AND role = ?').get(t.rid, role);
+          if (certified && (certs.get(key) === null || confirmed.has(key) || nowMs() - (confirmAsked.has(key) ? confirmAsked.get(key) : -Infinity) < CONFIRM_ASK_MS)) continue;
           const c = roster.committeeFor(t.rid, role);
           if (!c.ok) continue;
+          if (certified) {
+            confirmAsked.set(key, nowMs());
+            if (confirmAsked.size > 20000) confirmAsked.delete(confirmAsked.keys().next().value);
+            work.push({ t, ridHex, role, c, drawnKeys: c.drawn.map((e) => e.pubkey), amDrawn: c.drawn.some((e) => toHex(e.pubkey) === me),
+              others: endpointsOf(c.drawn, round.pubkey, endpointOf), slots: slotsForRole(t.contract, role), closed: true, late: false, joins: false, confirm: true });
+            continue;
+          }
           const drawnKeys = c.drawn.map((e) => e.pubkey);
           const w = { t, ridHex, role, c, drawnKeys, amDrawn: drawnKeys.some((k) => toHex(k) === me), others: endpointsOf(c.drawn, round.pubkey, endpointOf),
             slots: slotsForRole(t.contract, role), closed: now >= t.close, late, joins };
@@ -748,7 +824,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       }));
       lap('presents');
       // 2. THIS NODE'S SEATING SIGNATURE for each closed round it is seated in, before the reads
-      for (const w of work) if (w.closed && !w.late) signMine(w);
+      for (const w of work) if (w.closed && !w.late && !w.confirm) signMine(w);
       // 3. ONE READ PER NODE, for every round of this tick it is drawn for
       // ONLY WHAT THIS NODE STILL LACKS (measured 2026-10-12 21:3x local on seat 3: GET /seating-batch 88 times in 30 s,
       // 14.3 MB of JSON out - every round of the window asked of every node each tick, its PRESENTs sent back though held - the
@@ -775,10 +851,11 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       // 4. WHAT EACH SAID: their PRESENTs, certificates and seating signatures; then this node's certificate where it can
       // a node that answered no batch is asked the old way - every round of it at once, not one after another
       const single = new Map();
-      await Promise.all(work.flatMap((w) => (holds(w) ? [] : w.others.filter((b) => answers.get(b) === null && !rests(b)))
+      await Promise.all(work.flatMap((w) => (holds(w) || w.confirm ? [] : w.others.filter((b) => answers.get(b) === null && !rests(b)))
         .map(async (b) => { single.set(`${b}|${w.ridHex}|${w.role}`, await askOne(b, w)); })));
       lap('single');
       for (const w of work) {
+        if (w.confirm) { confirmRead(w, answers); continue; }
         const said = []; const sigs = [];
         for (const b of w.others) {
           const batch = answers.get(b);
@@ -801,6 +878,14 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
           if (canNeverStand(w)) for (const a of said) { const once = new Set(); for (const x of a.presents || []) if (x.role === w.role) takePresent(fromHex(x.present), { afterClose: true, once }); }
           signMine(w); resign(w); await certify(w);
         }
+        // THE SAME READ CONFIRMS WHAT IT LEFT HELD (kanban #2321, wf1489 a45 refute 5 s2): the drawn seats' certificates are in these answers already, so
+        // the one more than half of them hold is kept now - confirmed, or put in place of the one taken first (keepCert `supersede`) - and the round is not
+        // read again for it; short of a majority, the confirm read above asks again in CONFIRM_ASK_MS
+        const key = `${w.ridHex}:${w.role}`;
+        if (certs.get(key) && !confirmed.has(key) && db.prepare('SELECT 1 FROM seat_certs WHERE round_id = ? AND role = ?').get(w.t.rid, w.role)) {
+          confirmRead(w, answers);
+          if (!confirmed.has(key)) confirmAsked.set(key, nowMs());
+        }
       }
       lap('take+certify');
     } catch (e) { log(`[seating] ${e.message}`); }
@@ -809,6 +894,76 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       const all = Date.now() - t0;
       if (all > 5000) log(`[seating] a tick of ${rounds} round(s) took ${all} ms; ${fellBack} of ${peers} node(s) answered no batch; ${Object.entries(took).map(([k, v]) => `${k} ${v}`).join(', ')} ms`);
     }
+  }
+
+  /** A held certificate against the drawn seats' (kanban #2245): confirmed when more than half of the drawn hold its seating (this seat counted when drawn);
+   * another seating more than half of them hold replaces it when the two are ordered (keepCert `supersede`). */
+  function confirmRead(w, answers) {
+    const key = `${w.ridHex}:${w.role}`, mine = (certs.get(key) || []).join(',');
+    const by = new Map();   // seated list -> { n, cert }
+    for (const b of w.others) {
+      const a = answers.get(b); const cert = a && a[w.ridHex] && a[w.ridHex].cert && a[w.ridHex].cert[w.role];
+      if (!cert) continue;
+      let s; try { s = decodeSeated(fromHex(cert)).join(','); } catch { continue; }
+      const e = by.get(s) || by.set(s, { n: 0, cert }).get(s); e.n++;
+    }
+    const half = w.drawnKeys.length / 2;
+    if (((by.get(mine) || { n: 0 }).n + (w.amDrawn ? 1 : 0)) > half) { confirm(key); return; }
+    for (const [s, e] of by) {
+      if (s === mine || e.n <= half) continue;
+      const k = keepCert(w.t.rid, w.role, fromHex(e.cert), { supersede: true, index: w.index ?? null });
+      if (k.replaced) confirm(key);
+      else if (!k.ok) log(`[seating] ${w.ridHex.slice(0, 16)} ${w.role}: the seating most drawn seats hold refused here: ${k.why}`);
+      return;
+    }
+  }
+
+  /**
+   * THE CONFIRM PASS FOR EVERY HELD CERTIFICATE THE TICK NO LONGER READS (kanban #2360, #2363, wf1489 a45 refute 5 s3): a round out of the index (10 min
+   * after its start), a table's round 0 or check-in taken by askUnwritten. One GET /seating-batch per drawn seat for at most CONFIRM_PASS_ROUNDS of them,
+   * each read again after CONFIRM_ASK_MS doubled per read short of a majority (up to CONFIRM_REST_MAX_MS), until confirmed or replaced (confirmRead), or
+   * until the round is pruned (its seat_certs row gone, `forget`). A seat without the batch door is not asked here, as in the tick's confirm read.
+   */
+  async function confirmHeld() {
+    const t = nowMs();
+    const due = [];
+    for (const [key, p] of pending) {
+      if (starts.has(p.ridHex)) continue;          // the tick reads it (#2245, #2321)
+      if (certs.get(key) === null || confirmed.has(key)) { pending.delete(key); continue; }
+      if (!db.prepare('SELECT 1 FROM seat_certs WHERE round_id = ? AND role = ?').get(p.rid, p.role)) { pending.delete(key); continue; }
+      if (t - p.askedMs < Math.min(CONFIRM_ASK_MS * 2 ** Math.min(p.tries, 16), CONFIRM_REST_MAX_MS)) continue;
+      due.push(p);
+      if (due.length >= CONFIRM_PASS_ROUNDS) break;
+    }
+    const ws = [];
+    for (const p of due) {
+      p.askedMs = t; p.tries++;
+      let c;
+      try {
+        const row = round.get(p.rid);
+        const posted = row ? null : contractOf(p.rid, p.index);
+        if (!row && !posted) continue;
+        c = roster.committeeFor(p.rid, p.role, posted ? { posted } : {});
+      } catch { continue; }
+      if (!c || !c.ok) continue;
+      const drawnKeys = c.drawn.map((e) => e.pubkey);
+      ws.push({ t: { rid: p.rid }, ridHex: p.ridHex, role: p.role, index: p.index, drawnKeys, amDrawn: drawnKeys.some((k) => toHex(k) === me),
+        others: endpointsOf(c.drawn, round.pubkey, endpointOf) });
+    }
+    if (!ws.length) return;
+    const asks = new Map();
+    for (const w of ws) for (const b of w.others) if (!rests(b)) (asks.get(b) || asks.set(b, new Set()).get(b)).add(w.ridHex);
+    const answers = new Map();
+    await Promise.all([...asks].map(async ([b, set]) => {
+      const ids = [...set]; const got = {};
+      for (let i = 0; i < ids.length; i += BATCH_ROUNDS) {
+        const j = await getJson(b, `/seating-batch?rounds=${ids.slice(i, i + BATCH_ROUNDS).join(',')}`);
+        if (!j || !j.rounds) { answers.set(b, null); return; }
+        Object.assign(got, j.rounds);
+      }
+      answers.set(b, got);
+    }));
+    for (const w of ws) { try { confirmRead(w, answers); } catch (e) { log(`[seating] ${w.ridHex.slice(0, 16)} ${w.role}: ${e.message}`); } }
   }
 
   /** The old doors, one round at a time: for a node that has no GET /seating-batch. */
@@ -1347,7 +1502,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     /** WHO THIS SEAT COUNTS AS NOT ANSWERING (kanban #984): each address, its failed requests in a row and since when, so another node can compare and ask it itself. */
     unanswered: () => [...failing].filter(([, n]) => n >= UNANSWERED_TRIES).map(([base, tries]) => ({ base, tries, sinceMs: failingSince.get(base) ?? null })),
     /** The certificate pass running beside the tick, if one is (kanban #803): for a caller that needs it finished. */
-    settled: () => asking || Promise.resolve(),
+    settled: () => Promise.all([asking, confirming]).then(() => {}),
     /** For the roster: who the certificate seats (node keys hex), or null while none stands or after equivocation. */
     seatedFor: (rid, role, at = rid) => (toHex(seatOf(at)) === toHex(seatOf(rid)) ? seatedAt(at, role) : seatedAt(rid, role)),
     /** A round's seating, for the doors, the lobby and the entry gate. */
@@ -1378,6 +1533,6 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     /** The table round a door's certificate is on, and its index (kanban #1020): 0 for the table's first. */
     certRoundOf: (at, role) => { const r = toHex(seatRoundOf(at, role)); const e = (reseats.get(`${toHex(seatOf(at))}:${role}`) || []).find((x) => toHex(x.rid) === r); return e ? e.index : 0; },
     /** A round deleted from the store (transcript-prune.js, unused and past its windows): its certificates leave memory too. */
-    forget: (ridHex) => { for (const role of SEATING_ROLES) certs.delete(`${ridHex}:${role}`); },
+    forget: (ridHex) => { for (const role of SEATING_ROLES) { certs.delete(`${ridHex}:${role}`); pending.delete(`${ridHex}:${role}`); } },
   };
 }

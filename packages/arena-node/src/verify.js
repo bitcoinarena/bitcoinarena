@@ -41,7 +41,7 @@ import { holdsRun } from './finality.js';
 let retryJobs = 0;                     // each re-tried close is its own pool job
 let objectionJobs = 0;                 // each objection's replay is its own pool job (§13A)
 import { encodeTranscript, decodeTranscript, transcriptHash as hashOfTranscript } from '../../arena-protocol/src/transcript.js';
-import { TRANSCRIPT_BATCH_MAX_BYTES } from './round.js';
+import { TRANSCRIPT_BATCH_MAX_BYTES, playerCausedRefusal } from './round.js';
 import {
   encodeTranscriptPosting, transcriptPostingId, joinSignedPosting, splitSignedPosting, decodeTranscriptPosting,
   transcriptBytesHash, relayPath, transcriptIsPublished, SIGNED_POSTING_BYTES,
@@ -485,6 +485,9 @@ export class Verifier {
         const r = await peerFetch(`${peer}/refused-first-mark?entry=${hex(entryIdBytes)}`);
         if (r.status !== 200) continue;
         const got = await peerJson(r);
+        // A PEER'S REFUSAL THE PLAYER CAUSED (kanban #2411: a first mark sent without its batches) shows no up seat refusing
+        // - a peer on an earlier build still keeps and serves one, and it is not counted here
+        if (playerCausedRefusal(got.why)) continue;
         const c = this.round.onTimeFirstMark(Uint8Array.from(Buffer.from(String(got.mark || ''), 'hex')));
         if (c && hex(c.entryId) === hex(entryIdBytes)) report.refusedMarks.push({ peer, why: String(got.why || '').slice(0, 120), markId: markIdOf(c) });
       } catch { /* a signer node that cannot answer shows nothing */ }
