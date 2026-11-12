@@ -212,6 +212,7 @@ import { splitSigned, decodeCheckpoint, checkpointId } from '../../arena-protoco
 import { MAX_SIGNED_INPUT_BATCH_BYTES, decodeInputBatch, splitSignedBatch, batchId } from '../../arena-protocol/src/batch.js';
 import { SIGNED_CHECKPOINT_BYTES } from '../../arena-protocol/src/checkpoint.js';
 import { TAG, TYPE_CHECKPOINT_RECEIPT, PRESENCE_VERSION, noQuorumGoesToRerun } from '../../arena-protocol/src/constants.js';
+import { TYPE_TRANSCRIPT as TYPE_TRANSCRIPT_BYTE } from '../../arena-protocol/src/constants.js';   // kanban #2242
 import { bearsAuthority } from '../../arena-protocol/src/frames.js';
 import {
   decodeHandout, encodeHandout, handoutId, acceptHandout, openMyShare,
@@ -274,7 +275,7 @@ import { outageOutcome } from '../../arena-protocol/src/entry-void.js';
 import { ENTRY_VOID, netStakeMsat, withGoneStakes } from '../../arena-protocol/src/payout.js';
 import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../arena-protocol/src/objection.js';
 import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../arena-protocol/src/posting.js';
-import { decodeTranscript } from '../../arena-protocol/src/transcript.js';   // the relay door's check (kanban #1532)
+import { decodeTranscript, checkTranscript, transcriptHash as hashOfTranscriptObj } from '../../arena-protocol/src/transcript.js';   // the relay door's check (kanban #1532, #2242)
 import { federationIsBonded } from '../../arena-protocol/src/federation.js';
 import { hostedPlugins, pluginForRound, advertisedAppsCheck, payoutRuleOfRound } from './plugins.js';
 import { gameMarkets, gameMarketSweep, heldOutcomes, gameVoidOf, gameEvidenceOf, attestedTable, marketFinalityOf, marketStateOf, VALUE_HELD_OUTCOME } from './game-market.js';
@@ -345,6 +346,8 @@ const read = readRequestBody;
 // in 2.0 it also carries the SEEN groups (present and left-out lists), the justifications of second signatures and the bonds' presigs, so the
 // bound is 1 MiB - far above any committee's, and an eighth of the 8 MiB body a padded certificate came in under
 const SEATING_CERT_MOST = 1024 * 1024;
+// kanban #2242: relayed transcripts of one entry kept beyond the ones this seat knows by name (a signed result's, its own canonical one, the empty one)
+const RELAY_UNNAMED_PER_ENTRY = 2;
 
 // A BROWSER IS THE CLIENT, and a browser will never be on this origin.
 //
@@ -13327,9 +13330,42 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // ONLY A TRANSCRIPT OF AN ENTRY THIS SEAT HOLDS (kanban #1532): the bytes decode as a transcript (decodeTranscript) whose entry is
         // in this seat's store under the round it names, or are a head-to-head reveal record (entry id || move || 32-byte salt, or
         // entry id || 0xff, verify.js #revealRecord) of an entry it holds. Random bytes, and transcripts of runs nobody entered here, are refused.
+        const relayTranscriptIsTheEntrys = (t, hashHex) => {   // kanban #2242
+          try {
+            const rid = t.roundId, eid = t.entryId;
+            for (const r of round.results(rid, eid)) {
+              try {
+                const sp = splitSignedResult(r.bytes), body = decodePlayerResult(sp.body);
+                if (toHex(body.transcriptHash) === hashHex && round.signerNodes(rid).some((k) => toHex(k) === toHex(body.nodePubkey))
+                  && schnorr.verify(sp.signature, resultId(body), body.nodePubkey)) return true;
+              } catch { /* a record that does not decode names nothing */ }
+            }
+            try { if (toHex(round.canonicalTranscript(rid, eid).hash) === hashHex) return true; } catch { /* none held here */ }
+            if (toHex(hashOfTranscriptObj({ roundId: rid, entryId: eid, batches: [], marks: [] })) === hashHex) return true;
+            if (!t.marks.length || !checkTranscript(t).ok) return false;
+            const raw = round.entry(eid);
+            if (!raw) return false;
+            const key = decodeEntryContract(raw).sessionPubkey;
+            for (const m of t.marks) {
+              const sp = splitSigned(m);
+              if (!ed25519.verify(sp.signature, checkpointId(decodeCheckpoint(sp.body)), key)) return false;
+            }
+            // the entry's own key can still sign forks: a bounded number per entry, so one entry cannot take the shared cap
+            // (a transcript's bytes: type, version u16, round id, entry id - so the entry id is bytes 36..67)
+            const n = round.db.prepare('SELECT COUNT(*) AS n FROM relayed WHERE substr(bytes, 1, 1) = ? AND substr(bytes, 4, 32) = ? AND substr(bytes, 36, 32) = ?')
+              .get(Buffer.of(TYPE_TRANSCRIPT_BYTE), Buffer.from(rid), Buffer.from(eid)).n;
+            return Number(n) < RELAY_UNNAMED_PER_ENTRY;
+          } catch { return false; }
+        };
         const u8 = new Uint8Array(bytes), roundOfEntry = (eid) => { const r = round.db.prepare('SELECT round_id FROM entries WHERE entry_id = ?').get(eid); return r ? toHex(new Uint8Array(r.round_id)) : null; };
         let ours = false;
-        try { const t = decodeTranscript(u8); ours = roundOfEntry(t.entryId) === toHex(t.roundId); }
+        // AND A TRANSCRIPT ONLY IF IT IS THAT ENTRY'S OWN RUN (kanban #2242, a45-refute-13; the transcript branch of the #1532/#1824 door): a
+        // "transcript" naming a held (round, entry) with no batches and one mark of random bytes decoded and was kept, 2^768 distinct ones per
+        // entry, until the relay store was full and every honest transcript, reveal record and slash proof was refused (507). Now one is kept
+        // when its hash is one this seat itself knows for that entry (named by a committee seat's signed result held here, this seat's own
+        // canonical transcript, or the empty transcript of an entry that never started), or else when it checks (checkTranscript), carries
+        // marks and every mark is signed by the entry's session key - and of those last, at most RELAY_UNNAMED_PER_ENTRY per entry.
+        try { const t = decodeTranscript(u8); ours = roundOfEntry(t.entryId) === toHex(t.roundId) && relayTranscriptIsTheEntrys(t, relayed[1]); }
         catch { ours = (u8.length === 65 || (u8.length === 33 && u8[32] === 0xff)) && roundOfEntry(u8.subarray(0, 32)) !== null; }
         if (!ours) return text(res, 422, 'this relay keeps only the transcript of an entry it holds');
         if (round.relayedBytes() + bytes.length > RELAY_MOST) return text(res, 507, 'this relay keeps no more: its store for relayed bytes is full');
