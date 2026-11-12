@@ -7434,8 +7434,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!ballotTally) return text(res, 404, 'this seat counts no ballot: it reads no chain for it');
         const net = String(url.searchParams.get('network') || chainNetworkId() || '').toLowerCase();
         if (!/^[0-9a-f]{64}$/.test(net)) return text(res, 400, 'name the network: GET /config?network=<64 hex>');
+        // kanban #1751: a restarted seat whose tally has not read its tip yet does not hand out genesis - an opener asks again
+        const live = ballotTally.live(net);
+        if (!live) return text(res, 503, 'this seat has not read its chain\'s tip yet: the live config is not known - ask again shortly');
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
-        return res.end(JSON.stringify(ballotTally.live(net)));
+        return res.end(JSON.stringify(live));
       }
       if (proposals && url.pathname === '/proposal' && req.method === 'POST') {
         let body; try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8') || '{}'); } catch { return text(res, 400, 'that is not JSON'); }

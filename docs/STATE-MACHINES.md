@@ -1549,3 +1549,7 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 - A reorg below a decided proposal's anchor moves it PASSED | FAILED -> COUNTING (`undecide`) as before, but the outcome it had stays in force for the live config (`live`, `spans`, `historyAt`, so configServesRound and configForNewRound) until the recount decides it again: the new outcome then rules (the same one when no vote moved). Invariant: an undecide alone never changes the config live at the tip.
 - The replaced outcome is kept in memory and in the record (`undecided.outcome`, proposals.js), so a restart mid-recount still holds it.
 - ORPHANED holds nothing: its publication block left, so `undecided.outcome` is dropped at the orphan move and the replaced config is live again at once.
+
+#### SM-B16 (change) Ballot tally: the served history is the store's from construction (kanban #1751)
+- `createBallotTally` builds `spansAll` (the history configServesRound reads at POST /round and offerRefusal) from the kept outcomes at once, before any pass: it needs no tip. Invariant: after a restart, a PASSED proposal in `ballot_proposals` is in the history a seat serves by from its first request, whether or not bitcoind answers yet.
+- `live(net)` needs the tip: until a pass has read one, a network that keeps a proposal answers null and GET /config answers 503, never genesis alone.
