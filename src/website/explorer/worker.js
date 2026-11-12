@@ -42,20 +42,35 @@ async function ask(url, ms = ASK_MS) {
   } catch (e) { return { status: 0, body: null, why: String(e && e.message ? e.message : e).slice(0, 120) }; }
 }
 
+// NO ONE SEAT SAYS WHAT A TRANSACTION IS (kanban #1510): its entry, locks, settlement and result are the value at least AGREE seats send
+// byte for byte (and more of them than any other value), never the first seat's - one seat of fourteen could list a made-up order that
+// /api/played and Umami counted as a real player's round, turn an order the others hold as lost into won, swap an entry's player key past
+// the bot and owner marks, or backdate it to another day. An id fewer than AGREE seats hold the same entry of is not found and not stored.
+const AGREE = 2;
+function agreed(values) {
+  const n = new Map();
+  for (const v of values) { if (v === null || v === undefined) continue; const k = JSON.stringify(v); n.set(k, (n.get(k) || 0) + 1); }
+  const top = [...n].sort((a, b) => b[1] - a[1]);
+  if (!top.length || top[0][1] < AGREE || (top[1] && top[1][1] === top[0][1])) return null;
+  return JSON.parse(top[0][0]);
+}
+
 /** One transaction from every seat's answer ([{ seat, status, body, why }]), merged. */
 function merge(id, answers, readMs = null) {
-  const known = answers.filter((a) => a.body && a.body.known);
-  const first = known[0] ? known[0].body : null;
+  const held = answers.filter((a) => a.body && a.body.known);
+  const entry = agreed(held.map((a) => a.body.entry));
+  // the seats that hold that entry (kanban #1510): only they speak for the rest of it
+  const known = entry ? held.filter((a) => JSON.stringify(a.body.entry) === JSON.stringify(entry)) : [];
   const seats = answers.map((a) => ({ seat: seatName(a.seat), key: a.body && a.body.seat ? a.body.seat : null,
     status: a.status, known: !!(a.body && a.body.known), storedAt: a.body && a.body.storedAt ? a.body.storedAt : null,
     steps: a.body && Array.isArray(a.body.steps) ? a.body.steps : [], book: a.body ? a.body.book || null : null, why: a.why || null,
     did: a.body && a.body.processed && Array.isArray(a.body.processed.mine) ? a.body.processed.mine : [],
     locks: a.body && a.body.locks ? a.body.locks : null }));
-  const settlement = known.map((a) => a.body.settlement).find((x) => x && x.txid) || null;
+  const settlement = agreed(known.map((a) => a.body.settlement).filter((x) => x && x.txid));
   const client = known.map((a) => a.body.client).find(Boolean) || null;
-  // its result (won, lost, refunded, pending): a seat that holds the settlement says it; any seat says pending
+  // its result (won, lost, refunded, pending): what the seats that hold the settlement agree on; else what they agree it is (pending)
   const results = known.map((a) => a.body.result).filter(Boolean);
-  const result = results.find((r) => r.state !== 'pending') || results[0] || null;
+  const result = agreed(results.filter((r) => r.state !== 'pending')) || agreed(results);
   // WHO PROCESSED ITS ROUND (2026-10-24: "Also show who processed the round, e.g for settlement and verify"): the committees, the
   // asker and the outcome's attestors as the seats name them (the first that names each), each seat key named by the seat that has it
   const proc = known.map((a) => a.body.processed).filter(Boolean);
@@ -63,9 +78,11 @@ function merge(id, answers, readMs = null) {
   const names = Object.fromEntries(seats.filter((x) => x.key).map((x) => [x.key, x.seat]));
   const processed = proc.length ? { game: pick('game'), settlement: pick('settlement'), asker: pick('asker'), outcomes: pick('outcomes') || [],
     settledAt: pick('settledAt'), settlementWhy: pick('settlementWhy'), names } : null;
+  // stored first: the AGREE-th earliest time of the seats that hold the entry - no one seat moves it to another day (kanban #1510)
+  const stored = known.map((a) => a.body.storedAt).filter(Boolean).sort();
   return { id, found: known.length > 0, readAt: new Date().toISOString(), readMs,
-    entry: first ? first.entry : null, locks: first ? first.locks : null, settlement, client, processed, result,
-    storedFirst: seats.map((s) => s.storedAt).filter(Boolean).sort()[0] || null, seats };
+    entry, locks: agreed(known.map((a) => a.body.locks)), settlement, client, processed, result,
+    storedFirst: stored[Math.min(AGREE, stored.length) - 1] || null, seats };
 }
 
 /** Every seat's view of one transaction, asked now - only for one the minute's read has not stored yet. */
@@ -233,24 +250,35 @@ async function backfill(env) {
 
 // THE METRICS (kanban #676, 2026-10-25: "Explorer also shows volume in Sats / btc per day, current protocol reserve in sats / btc, and total
 // referrer fees accumulated in sats / btc", "This is On a metrics page"): each minute every seat's GET /reserves and GET /referral-fees, kept in
-// KV - per federation the reserve the most up-to-date seat holds (the largest), per website the most any seat indexed; the volume per day
+// KV - per federation the reserve the seats agree on (the median), per website the median fee the seats indexed; the volume per day
 // is read from D1's transactions when asked
+// ONE SEAT DOES NOT SET THE RESERVE (kanban #1534): the largest any seat said was kept, so one seat of 14 could show 21M BTC or hide a
+// drain behind an old, higher reserve, and BigInt() of one malformed amount threw for the whole read (the metrics went stale for everyone).
+// Each amount is now checked (heldMsatOf: 1-20 digits, else that seat's row is skipped) and each figure is the median of the seats that report it.
+const heldMsatOf = (v) => ((typeof v === 'string' || (typeof v === 'number' && Number.isSafeInteger(v))) && /^\d{1,20}$/.test(String(v)) ? BigInt(v) : null);
+const median = (list) => { const s = [...list].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)); return s[Math.floor((s.length - 1) / 2)]; };
 async function readMetrics(env) {
   const [res, ref] = await Promise.all([
     Promise.all(SEATS.map((seat) => ask(`${seat}/reserves`, READ_MS))),
     Promise.all(SEATS.map((seat) => ask(`${seat}/referral-fees`, READ_MS)))]);
   const feds = new Map(), sites = new Map();
+  const heldBy = new Map();
   for (const a of res) for (const f of (a.body && Array.isArray(a.body.federations) ? a.body.federations : [])) {
-    const m = BigInt(f.heldMsat || 0); if (!feds.has(f.federationId) || m > feds.get(f.federationId)) feds.set(f.federationId, m);
+    const m = f && typeof f.federationId === 'string' ? heldMsatOf(f.heldMsat) : null; if (m === null) continue;
+    if (!heldBy.has(f.federationId)) heldBy.set(f.federationId, []); heldBy.get(f.federationId).push(m);
   }
+  for (const [id, list] of heldBy) feds.set(id, median(list));
   // and each program's name, as its key said it (kanban #675): the newest any seat holds
   const names = new Map();
   for (const a of ref) for (const p of (a.body && Array.isArray(a.body.programs) ? a.body.programs : [])) {
     if (!names.has(p.site) || Number(p.atMs) > names.get(p.site).atMs) names.set(p.site, { name: p.name, atMs: Number(p.atMs) });
   }
+  const feesBy = new Map();
   for (const a of ref) for (const x of (a.body && Array.isArray(a.body.sites) ? a.body.sites : [])) {
-    const m = BigInt(x.msat || 0); if (!sites.has(x.site) || m > sites.get(x.site).msat) sites.set(x.site, { msat: m, payouts: x.payouts });
+    const m = x && typeof x.site === 'string' ? heldMsatOf(x.msat) : null; if (m === null) continue;
+    if (!feesBy.has(x.site)) feesBy.set(x.site, []); feesBy.get(x.site).push({ msat: m, payouts: Number.isSafeInteger(x.payouts) ? x.payouts : 0 });
   }
+  for (const [site, list] of feesBy) { const mid = median(list.map((r) => r.msat)); sites.set(site, list.find((r) => r.msat === mid)); }
   for (const [site] of names) if (!sites.has(site)) sites.set(site, { msat: 0n, payouts: 0 });
   const sum = (it) => [...it].reduce((t, m) => t + m, 0n);
   const m = { readAt: new Date().toISOString(), seats: { reserves: res.filter((a) => a.body).length, referral: ref.filter((a) => a.body).length, of: SEATS.length },
@@ -286,22 +314,30 @@ async function readContributions() {
 const DAY_MS = 86400000, VOLUME_DAYS = 30;
 // THE RESERVE OVER TIME (kanban #1095, the owner 2026-11-03: "Gespielte Runden auf Explorer auch grafisch darstellen, auch Volume, und Reserven"):
 // every payment into a federation's reserve carries its time (GET /reserves?all=1, paidIn[].at), so the history is rebuilt from the start, not
-// only recorded from now. Read once an hour from three seats; per federation the longest list (the most up-to-date seat); per UTC day the
-// reserve held at its end, summed over the federations. Payouts out of the reserve (none yet) are taken off on their day.
+// only recorded from now. Read once an hour from three seats; per federation and UTC day the median of what the seats say came in that day
+// (kanban #1534: not the longest list, which one seat could pad; an amount that does not parse skips that payment, never the read); the
+// reserve held at each day's end, summed over the federations. Payouts out of the reserve (none yet) are taken off on their day.
 const HISTORY_SEATS = [0, 1, 7];
 async function readReserveHistory(env) {
   const answers = await Promise.all(HISTORY_SEATS.map((i) => ask(`${SEATS[i]}/reserves?all=1`, 45000)));
-  const best = new Map();
-  for (const a of answers) for (const f of (a.body && Array.isArray(a.body.federations) ? a.body.federations : [])) {
-    const paid = Array.isArray(f.paidIn) ? f.paidIn : [];
-    if (!best.has(f.federationId) || paid.length > best.get(f.federationId).length) best.set(f.federationId, paid);
+  const best = new Map();   // federation -> one per-day map per seat that reports it
+  for (const a of answers) {
+    const seen = new Set();
+    for (const f of (a.body && Array.isArray(a.body.federations) ? a.body.federations : [])) {
+      if (!f || typeof f.federationId !== 'string' || seen.has(f.federationId)) continue; seen.add(f.federationId);
+      const day = new Map();
+      for (const x of (Array.isArray(f.paidIn) ? f.paidIn : [])) {
+        const t = x ? Date.parse(x.at) : NaN, m = x ? heldMsatOf(x.amountMsat) : null; if (!Number.isFinite(t) || m === null) continue;
+        const d = new Date(Math.floor(t / DAY_MS) * DAY_MS).toISOString().slice(0, 10);
+        day.set(d, (day.get(d) || 0n) + m);
+      }
+      if (!best.has(f.federationId)) best.set(f.federationId, []); best.get(f.federationId).push(day);
+    }
   }
   if (!best.size) return null;
   const perDay = new Map();
-  for (const paid of best.values()) for (const x of paid) {
-    const t = Date.parse(x.at); if (!Number.isFinite(t)) continue;
-    const d = new Date(Math.floor(t / DAY_MS) * DAY_MS).toISOString().slice(0, 10);
-    perDay.set(d, (perDay.get(d) || 0n) + BigInt(x.amountMsat || 0));
+  for (const views of best.values()) {
+    for (const d of new Set(views.flatMap((v) => [...v.keys()]))) perDay.set(d, (perDay.get(d) || 0n) + median(views.map((v) => v.get(d) || 0n)));
   }
   const days = [...perDay.keys()].sort();
   const out = []; let held = 0n;
@@ -544,7 +580,9 @@ async function readWindow(env, since, limit, before) {
     const per = byId.get(id);
     const answers = SEATS.map((seat) => (per.has(seat) ? { seat, ...per.get(seat) }
       : answered.get(seat) ? { seat, status: 404, body: { known: false } } : { seat, status: 0, body: null, why: 'did not answer the read' }));
-    const w = await keep(env, merge(id, answers, null), hashes.get(id));
+    const tx = merge(id, answers, null);
+    if (!tx.found) continue;   // fewer than AGREE seats hold its entry: not stored, so not counted (kanban #1510)
+    const w = await keep(env, tx, hashes.get(id));
     if (w) writes.push(w);
   }
   for (let i = 0; i < writes.length; i += 50) await env.DB.batch(writes.slice(i, i + 50));
