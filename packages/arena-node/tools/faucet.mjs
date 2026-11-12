@@ -111,7 +111,14 @@ const freeBytes = (dir) => { try { const s = statfsSync(dir); return Number(s.ba
 if (SHOTS && FEEDBACK) setInterval(() => { try { const used = FEEDBACK.shotsInUse(); for (const f of readdirSync(SHOTS)) { const h = f.split('.')[0];
   if (!used.has(h) && Date.now() - statSync(pathJoin(SHOTS, f)).mtimeMs > SHOT_UNCLAIMED_MS) unlinkSync(pathJoin(SHOTS, f)); } } catch { /* next hour */ } }, 3600000).unref();
 const MINE_URLS = String(env.FAUCET_FEEDBACK_MINE_URLS || 'https://bitcoinarena.io/api/faucet/feedback/mine').split(',').map((x) => x.trim()).filter(Boolean);
-const readBook = () => { try { return JSON.parse(readFileSync(env.FAUCET_BOOK, 'utf8')); } catch { return { paid: [] }; } };
+// ONLY A BOOK THAT IS NOT THERE YET IS EMPTY (kanban #2205): any error reading the book was taken as { paid: [] } - one read that failed for a moment
+// (EMFILE, EIO, a permission slip) paid an account its welcome again and saveBook() wrote that empty book plus one row over the real one. Now only
+// ENOENT is an empty book; any other read or parse error throws, the request is refused ('try again') and nothing is saved
+const readBook = () => {
+  let raw;
+  try { raw = readFileSync(env.FAUCET_BOOK, 'utf8'); } catch (e) { if (e && e.code === 'ENOENT') return { paid: [] }; throw new Error(`the book cannot be read just now (${(e && e.code) || 'error'}): try again`); }
+  return JSON.parse(raw);
+};
 const saveBook = (b) => { writeFileSync(`${env.FAUCET_BOOK}.new`, JSON.stringify(b, null, 1)); renameSync(`${env.FAUCET_BOOK}.new`, env.FAUCET_BOOK); };
 const balanceSats = async () => Math.round(Number((await rpc('getbalances')).mine.trusted) * 1e8);
 // THE CALLER'S ADDRESS: the site's Worker names it (behind it x-forwarded-for is Cloudflare's), else the tunnel's header; no header, no limit by address
@@ -528,9 +535,12 @@ async function grantPay(ask, inv, d, book, row) {
     askedPayers.push(PAYERS.indexOf(payer)); askedIds.push(payerId(payer));   // kanban #1926: by its own entry too
     // NOT FINAL YET (kanban #1421): booked as pending with the payers asked; the sweep reads their final word
     if (state === 'sent') {
-      const b2 = readBook(); const mine = (b2.players || []).find((x) => ownRow(x, row));
-      if (mine && final) { delete mine.pending; delete mine.payers; delete mine.payerIds; saveBook(b2); }
-      else if (mine) { mine.pending = true; mine.payers = [...askedPayers]; mine.payerIds = [...askedIds]; saveBook(b2); }
+      // the row stays as booked (pending, kanban #1627) when the book cannot be read again here: the welcome is never paid twice (kanban #2205)
+      try {
+        const b2 = readBook(); const mine = (b2.players || []).find((x) => ownRow(x, row));
+        if (mine && final) { delete mine.pending; delete mine.payers; delete mine.payerIds; saveBook(b2); }
+        else if (mine) { mine.pending = true; mine.payers = [...askedPayers]; mine.payerIds = [...askedIds]; saveBook(b2); }
+      } catch (e) { console.log(`${new Date().toISOString()} player ${row.hash.slice(0, 16)}: not marked: ${e.message}`); }
     }
     if (state === 'sent') {
       console.log(`${new Date().toISOString()} player ${ask.kind} ${d.grant.invoiceSats} sat (${ask.ip || 'no ip'}): ${inv.payment_hash.slice(0, 16)}${final ? '' : ' (in flight, pending)'}`);
@@ -1010,7 +1020,8 @@ createServer((req, res) => {
   if (path === '/player' || path === '/faucet/player') {
     if (req.method === 'OPTIONS') { res.writeHead(204, { ...cors, 'access-control-allow-methods': 'GET, POST', 'access-control-allow-headers': 'content-type', 'access-control-max-age': '86400' }); return res.end(); }
     // THE TOTALS ARE PUBLIC (no account, no address): any node's dashboard reads them, from its own address
-    if (req.method === 'GET') { res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'access-control-allow-origin': '*' }); return res.end(JSON.stringify({ ok: true, ...playerGrantTotals(readBook()) })); }
+    if (req.method === 'GET') { let totals; try { totals = playerGrantTotals(readBook()); } catch { return send(503, { ok: false, why: 'try again' }); }   // kanban #2205
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'access-control-allow-origin': '*' }); return res.end(JSON.stringify({ ok: true, ...totals })); }
     if (req.method !== 'POST') return send(405, { ok: false, why: 'POST' });
     if (!PAYERS.length) return send(503, { ok: false, why: 'the players\' faucet is off' });
     let raw = '';
