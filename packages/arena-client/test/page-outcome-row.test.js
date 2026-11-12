@@ -23,7 +23,8 @@ const SEATS = {
 function run(picks, outcomes = new Map()) {
   const asked = [];
   const fetch = async (url) => { const base = url.split('/outcome')[0]; asked.push(base); const a = SEATS[base]; return { ok: !!a, json: async () => JSON.parse(JSON.stringify(a)) }; };
-  const ARENACLIENT = { checkMarketOutcome: async () => ({ verified: true, why: 'signed by 2 of 3' }), checkAttestation: async () => ({ verified: true }) };
+  // `window: 'checked'`: the client checked the attestation was observed at the round's own window end (kanban #1852)
+  const ARENACLIENT = { checkMarketOutcome: async () => ({ verified: true, why: 'signed by 2 of 3', window: 'checked' }), checkAttestation: async () => ({ verified: true, window: 'checked' }) };
   // OUTCOMES_READ: the rounds whose outcome the page has asked for once
   const fn = pageFunction(PAGE, ['readPicks', 'MARKET_OUTCOMES', 'marketOfPick', 'ARENACLIENT', 'window', 'fetch', 'AbortSignal', 'OUTCOMES_READ'], [SRC], 'return readMarketOutcomes;');
   const read = fn(() => picks, outcomes, () => ({ name: 'btc-updown-15m' }), ARENACLIENT, { ARENA_CURVE: {} }, fetch, { timeout: () => undefined }, new Set());

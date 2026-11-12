@@ -18,8 +18,8 @@ import { gameMarketResolution } from '../../arena-protocol/src/game-market.js';
 import { seriesId, seriesRoundCheck } from '../../arena-protocol/src/series.js';
 import { parseSeriesLine } from '../../arena-protocol/src/series-line.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
-import { decodeAttestation, attestationStands, attestationBodyId } from '../../arena-protocol/src/attested.js';
-import { marketOf, feeOfKnownGame } from '../../arena-protocol/src/known-game.js';
+import { decodeAttestation, attestationStands, attestationBodyId, marketWindowOf } from '../../arena-protocol/src/attested.js';
+import { marketOf, feeOfKnownGame, periodOfKnownGame } from '../../arena-protocol/src/known-game.js';
 import { entryFeeMsat, feeBpsOf, donationBpsOf } from '../../arena-protocol/src/fee.js';
 import { termsOfKnownGame } from '../../arena-protocol/src/known-game.js';
 import { encodeEntryContract, entryId, decodeEntryContract } from '../../arena-protocol/src/contracts.js';
@@ -39,7 +39,10 @@ export function marketForRound(round, { manifestBytes = null } = {}) {
   const pinned = marketOf(round.gameId);
   // ITS FEE: a market's own, from its manifest, or the market default 0.5 % + 0.5 %
   // AND ITS TERMS: resolution delay and void deadline - what its rounds' lock span is checked by (lock-expiry.js)
-  if (pinned) return marketAsRoundAsks({ ...pinned, needsConfirm: false, fee: feeOfKnownGame(round.gameId), terms: termsOfKnownGame(round.gameId) }, round);
+  // AND ITS GRID (kanban #1852, #1515): its round period and the round's own entry close, so its outcome is believed only when observed
+  // at that round's window end (marketWindowOf) - as the seats hold it
+  const grid = { periodMs: pinned ? periodOfKnownGame(round.gameId) : 0n, ...(typeof round.entryCloseMs === 'bigint' ? { roundCloseMs: round.entryCloseMs } : {}) };
+  if (pinned) return marketAsRoundAsks({ ...pinned, needsConfirm: false, fee: feeOfKnownGame(round.gameId), terms: termsOfKnownGame(round.gameId), ...grid }, round);
   if (!manifestBytes) return null;
   let m;
   try { m = decodeManifest(manifestBytes instanceof Uint8Array ? manifestBytes : fromHex(String(manifestBytes))); } catch { return null; }
@@ -52,8 +55,28 @@ export function marketForRound(round, { manifestBytes = null } = {}) {
     // what its outcome is checked by - the decoded manifest kept beside them for that check
     ...(isScalar(m) ? { scalar: { low: m.scalar.low, high: m.scalar.high, unit: m.scalar.unit } } : {}),
     ...(isGameMarket(m) ? { gameSource: { sourceGameId: toHex(m.gameSource.sourceGameId), mapping: [...m.gameSource.mapping] } } : {}),
-    manifest: m }, round);
+    manifest: m, ...grid, periodMs: m.roundPeriodMs }, round);
 }
+
+/**
+ * OBSERVED AT THIS ROUND'S WINDOW END? (kanban #1852, the page's half of #1515): a market on a period is attested at the end of the
+ * round's own window (observed_at = the window's end, its terms; attestor.js and drawn-attestor.js sign window.endMs), and the seats
+ * hold no other (server.js holdOutcome). One seat that listed the round with a shifted close made the fixed attestors sign ANOTHER
+ * window's outcome; a seat that lies hands it to the page as ATTESTED and final - believed only at the round's own window end.
+ * `entryCloseMs`: the round's, from its contract the page read (never the seats' word). null when it stands, else why not.
+ */
+function windowRefusal(observedAtMs, market, entryCloseMs) {
+  const period = market && typeof market.periodMs === 'bigint' ? market.periodMs : 0n;
+  if (period <= 0n) return null;
+  const close = entryCloseMs ?? market.roundCloseMs;
+  if (close === undefined || close === null) return 'this market runs on a grid, and this page has no entry close of this round to check its window against: the outcome is shown unverified';
+  const w = marketWindowOf({ entryCloseMs: BigInt(close) }, { roundPeriodMs: period, gameName: market.name });
+  if (!w.ok) return w.why;
+  if (BigInt(observedAtMs) !== w.window.endMs)
+    return `observed at another moment than this round's window end: that attestation says ${new Date(Number(observedAtMs)).toISOString()}, and this round's window ends at ${new Date(Number(w.window.endMs)).toISOString()} - it is the outcome of another window`;
+  return null;
+}
+const windowOf = (market) => (market && typeof market.periodMs === 'bigint' && market.periodMs > 0n ? 'checked' : 'none');
 
 /**
  * A ROUND OF A MARKET TEMPLATE ASKS ITS OWN QUESTION (feature 5): its labels, its question and its resolution time
@@ -302,9 +325,12 @@ async function checkSignaturesOnce(signatures, attestors, digest, verifyFn, said
  * pinned (or confirmed): its round, an outcome in range, the threshold of distinct named attestors, every signature good.
  * `verify(signature, digest, key)` may be async (WebCrypto); a verifier that cannot answer leaves it `unverifiable`.
  */
-export async function checkAttestation({ attestationHex, market, roundIdHex, verify = webCryptoEd25519, drawn = null, verifySchnorr = null }) {
+export async function checkAttestation({ attestationHex, market, roundIdHex, verify = webCryptoEd25519, drawn = null, verifySchnorr = null, entryCloseMs = null }) {
   let a;
   try { a = decodeAttestation(fromHex(String(attestationHex))); } catch (e) { return { verified: false, why: `not an attestation: ${e.message}` }; }
+  // OF THIS ROUND'S WINDOW (kanban #1852): a market on a period, only at its round's own window end
+  const off = windowRefusal(a.observedAtMs, market, entryCloseMs);
+  if (off) return { verified: false, why: off };
   // A MARKET WHOSE ATTESTORS ARE DRAWN PER ROUND (kanban #630): checked against the round's 7 drawn node keys this page derived from the
   // census (client-committee.js attestors), BIP-340 - with none derived, it is shown unverified, never believed on a seat's word
   const draws = !!(market && market.attestDraw);
@@ -318,7 +344,7 @@ export async function checkAttestation({ attestationHex, market, roundIdHex, ver
     attestors: draws ? [] : market.attestors.map((k) => fromHex(k)), attestThreshold: draws ? 0 : market.threshold, ...(draws ? { attestDraw: market.attestDraw } : {}) };
   const stands = attestationStands(a, { manifest, roundIdBytes: fromHex(roundIdHex), ...(draws ? { drawn } : {}),
     verify: (sig, _d, key) => said.get(`${toHex(key)}:${toHex(sig)}`) === true });
-  return stands.ok ? { verified: true, outcome: stands.outcome, label: stands.label, why: stands.why } : { verified: false, why: stands.why };
+  return stands.ok ? { verified: true, outcome: stands.outcome, label: stands.label, why: stands.why, window: windowOf(market) } : { verified: false, why: stands.why };
 }
 
 /**
@@ -364,6 +390,9 @@ export async function checkMarketOutcome({ outcome: o, market, roundIdHex, sourc
     if (o && o.attestation && market && market.scalar && isValueAttestationBytes(fromHex(String(o.attestation)))) {
       let a;
       try { a = decodeValueAttestation(fromHex(String(o.attestation))); } catch (e) { return { verified: false, why: `not a value attestation: ${e.message}` }; }
+      // A VALUE OF THIS ROUND'S WINDOW (kanban #1852), as an outcome's
+      const off = windowRefusal(a.observedAtMs, market, entryCloseMs);
+      if (off) return { verified: false, why: off };
       const digest = valueAttestationBodyId(a);
       const said = new Map();
       const r = await checkSignaturesOnce(a.signatures, (market.manifest && market.manifest.attestors) || market.attestors || [], digest, verify, said);
@@ -371,11 +400,11 @@ export async function checkMarketOutcome({ outcome: o, market, roundIdHex, sourc
       // clamped to the bounds THIS round is paid between - a scalar template's round names its own (2026.0.8)
       const st = valueAttestationStands(a, { manifest: { ...market.manifest, scalar: market.scalar }, roundIdBytes: fromHex(roundIdHex),
         verify: (sig, _d, key) => said.get(`${toHex(key)}:${toHex(sig)}`) === true });
-      return st.ok ? { verified: true, value: st.value, clamped: st.clamped, why: st.why } : { verified: false, why: st.why };
+      return st.ok ? { verified: true, value: st.value, clamped: st.clamped, why: st.why, window: windowOf(market) } : { verified: false, why: st.why };
     }
     // a market whose attestors are drawn: the round's 7 as this page derives them (committee.js roundAttestors)
     const drawn = market && market.attestDraw && typeof roundAttestors === 'function' ? await roundAttestors(roundIdHex) : null;
-    if (o && o.attestation) return await checkAttestation({ attestationHex: o.attestation, market, roundIdHex, verify, drawn, verifySchnorr });
+    if (o && o.attestation) return await checkAttestation({ attestationHex: o.attestation, market, roundIdHex, verify, drawn, verifySchnorr, entryCloseMs });
     return { verified: false, why: 'the seats handed no evidence for it' };
   } catch (e) { return { verified: false, why: e.message }; }
 }
