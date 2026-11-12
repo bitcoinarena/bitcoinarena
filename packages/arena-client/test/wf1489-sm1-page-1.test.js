@@ -62,11 +62,11 @@ test('wf1489-sm1-page-2: an exchange the seat took is not given up as refused wh
   seat = createEcashExchange({ db, portOf });
   bPortUp = false; bAnswers = true;
   // 3. THE PAGE IS RELOADED and resumes the exchange it keeps
-  const resumed = await resumeEcashExchanges({ storage, keys: [...store.keys()], walletFor: async (f) => wallets[f], fetcher, seats: [SEAT], nowMs: T0 + 60000 });
+  const resumed = await resumeEcashExchanges({ storage, keys: [...store.keys()], walletFor: async (f) => wallets[f], takeUnnamed: true, fetcher, seats: [SEAT], nowMs: T0 + 60000 });
   const afterRestart = JSON.parse(store.get(key) || 'null');
   // 4. THE SEAT'S CLIENT OF B IS UP; the page's next passes resume what it keeps
   bPortUp = true;
-  for (const dt of [120000, 900000]) await resumeEcashExchanges({ storage, keys: [...store.keys()], walletFor: async (f) => wallets[f], fetcher, seats: [SEAT], nowMs: T0 + dt });
+  for (const dt of [120000, 900000]) await resumeEcashExchanges({ storage, keys: [...store.keys()], walletFor: async (f) => wallets[f], takeUnnamed: true, fetcher, seats: [SEAT], nowMs: T0 + dt });
   const row = db.prepare('SELECT state FROM ecash_exchanges').get();
   const facts = { firstPass: { ok: first.ok, pending: !!first.pending, record: afterFirst }, retryAnswer: resumed[0] && resumed[0].why, recordAfterRetry: afterRestart && afterRestart.state,
     seatRow: row && row.state, seatHoldsPlayersNotesMsat: String(seatA), playerA: String(bal[A]), playerB: String(bal[B]), recordNow: (JSON.parse(store.get(key) || 'null') || {}).state || 'gone' };
