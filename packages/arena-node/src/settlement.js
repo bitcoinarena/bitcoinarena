@@ -50,7 +50,7 @@ import { sendPlanToJson, planKey } from './winnings-send.js';
 import { askerOrder, eligibleAsker } from './payout.js';
 import { REFUSAL } from './settle-backoff.js';
 import { RETRY, retryStep, retryBlocks, locksExpired, isFinalRetry } from './settle-retry.js';
-import { LOCK_FATE, lockFateStep, lockFateOf, markLockFate } from './forfeit.js';
+import { LOCK_FATE, lockFateStep, lockFateOf, markLockFate, misnamedSigners } from './forfeit.js';
 import { planTakenId, signPlanTaken, countPlanTaken, joinCertificate, splitCertificate } from './plan-taken.js';
 import { PLAN_ASK, SEND_PLAN_ASK_HEADER, sendPlanAskHeaders, checkSendPlanAsk } from './send-plan-ask.js';
 import { askPeers, PEER_ASK_MS, PEER_READ_MS, PEER_GRACE_MS } from './peer-ask.js';
@@ -1172,6 +1172,14 @@ export class LockSettlement {
    * that gave none, or by their public shares (dkg.publicSharesFor) those whose share does not stand. `own` the settlement's scope.
    */
   async #gatherShares(roundIdBytes, m, q, signers, own) {
+    // EACH PEER UNDER ITS OWN ID (kanban #1807, forfeit.js misnamedSigners), checked before any share is asked; a list that still throws is a refusal, never an abort
+    const misnamed = misnamedSigners(signers, m.contract && m.contract.nodes);
+    if (misnamed.length) return { ...refuse(`${misnamed[0]} committed under an id that is not its own on this list`), withheld: misnamed };
+    try { return await this.#gatherChecked(roundIdBytes, m, q, signers, own); }
+    catch (e) { return { ...refuse(`the settlement list could not be signed: ${e.message}`, 500), withheld: [] }; }
+  }
+
+  async #gatherChecked(roundIdBytes, m, q, signers, own) {
     const commitments = signers.map((s) => s.commitment).sort((a, b) => a.id - b.id);
     const mine = await this.share(roundIdBytes, commitments, own);
     if (!mine.ok) return mine;
