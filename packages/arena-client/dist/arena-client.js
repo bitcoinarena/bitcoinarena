@@ -31694,16 +31694,18 @@ async function advanceEcashExchange({ storage, key, rec, walletFrom, walletTo, f
 async function exchangeEcashInto({ storage, from, to, needMsat, seats, walletFrom, walletTo, fetcher = fetch, put = putRoomy,
   nowMs = Date.now(), onStep = () => {}, timeoutMs = 60000, offerTimeoutMs = 8000, maxSeats = 3, phrase16 = null }) {
   const need = BigInt(needMsat);
-  const offering = [];
-  for (const seat of seats || []) {
+  // THE OFFERS READ SIDE BY SIDE (kanban #1483, Daniel 2026-11-11: "stake lock: exchanging at tn4.bitcoin-arena.io/guardian-1 ... make it more
+  // efficient"): one after another, every seat that did not answer put its 8 s timeout in front of the lock. All are asked at once; the first
+  // offering seats in the seats' order are used, as before. A GET /exchange hands nothing over.
+  const said = await Promise.all((seats || []).map(async (seat) => {
     try {
       const r = await fetcher(String(seat).replace(/\/+$/, '') + '/exchange?federations=' + to, { signal: AbortSignal.timeout(offerTimeoutMs) });
-      if (!r.ok) continue;
+      if (!r.ok) return false;
       const o = await r.json();
-      if (BigInt((o && o.holds && o.holds[to]) || 0) >= need && BigInt((o && o.maxMsat) || 0) >= need) offering.push(seat);
-    } catch { /* not this seat */ }
-    if (offering.length >= maxSeats) break;
-  }
+      return BigInt((o && o.holds && o.holds[to]) || 0) >= need && BigInt((o && o.maxMsat) || 0) >= need;
+    } catch { return false; /* not this seat */ }
+  }));
+  const offering = (seats || []).filter((s, i) => said[i]).slice(0, maxSeats);
   if (!offering.length) return { ok: false, from, why: `no seat offers ${Math.ceil(Number(need) / 1000)} sat in federation ${String(to).slice(0, 8)}` };
   let why = '';
   for (let i = 0; i < offering.length; i++) {

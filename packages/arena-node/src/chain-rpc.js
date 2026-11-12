@@ -47,29 +47,54 @@ export function bitcoindRpc({ url, cookiePath, fetcher = fetch, readCookie } = {
   // the file on every call was 2.7 % of the main thread's first minute). bitcoind writes a new cookie at its restart, so a 401 -
   // or no cookie kept yet - reads the file again and asks once more; a cookie that is gone is said as before.
   let kept = null;
-  return async function call(method, params = []) {
+  const post = async (payload, what) => {
     const ask = async () => {
       if (kept === null) kept = cookie();
       try {
         return await fetcher(url, {
           method: 'POST',
           headers: { 'content-type': 'application/json', authorization: `Basic ${Buffer.from(kept).toString('base64')}` },
-          body: JSON.stringify({ jsonrpc: '1.0', id: 'arena', method, params }),
+          body: JSON.stringify(payload),
         });
       } catch (e) {
-        throw new Error(`bitcoind at ${url} did not answer ${method}: ${e.message}`);
+        throw new Error(`bitcoind at ${url} did not answer ${what}: ${e.message}`);
       }
     };
     let r = await ask();
     if (r.status === 401) { kept = null; r = await ask(); }
     const text = await r.text();
     if (!r.ok) throw new Error(`bitcoind answered ${r.status}: ${text.slice(0, 200)}`);
-    let body;
-    try { body = JSON.parse(text); }
+    try { return JSON.parse(text); }
     catch { throw new Error(`bitcoind answered something that is not json: ${text.slice(0, 200)}`); }
+  };
+  const call = async function call(method, params = []) {
+    const body = await post({ jsonrpc: '1.0', id: 'arena', method, params }, method);
     if (body.error) throw new Error(`bitcoind refused ${method}: ${body.error.message || body.error}`);
     return body.result;
   };
+  // MANY CALLS IN ONE REQUEST (kanban #1968, measured 2026-11-12 on the testnet4 seats: a restarted seat named no committee for
+  // 30-45 min. Its views of 105 view keys - census windows from 153,616 to the tip, ~7,100 blocks - and their beacons' header reads were
+  // ~35,500 calls, each its own HTTP request through the seat's two bitcoind lanes (ARENA_FETCH_MAX_PER_ORIGIN=2), and on a busy seat a
+  // request held its lane ~100 ms: ~20 calls a second, while bitcoind itself sat idle - 0.09 commands active on average). JSON-RPC's
+  // batch: `requests` [[method, params], ...] in one request, the results in the same order; any refused call refuses the whole batch,
+  // as the first refused call of a walk did.
+  call.batch = async (requests) => {
+    if (!requests.length) return [];
+    const what = `${requests.length} calls (${requests[0][0]}...)`;
+    const body = await post(requests.map(([method, params = []], id) => ({ jsonrpc: '1.0', id, method, params })), what);
+    if (!Array.isArray(body)) throw new Error(`bitcoind answered ${what} with no batch: ${JSON.stringify(body).slice(0, 200)}`);
+    const out = new Array(requests.length);
+    const seen = new Set();
+    for (const one of body) {
+      const i = one && Number.isInteger(one.id) ? one.id : -1;
+      if (i < 0 || i >= requests.length) throw new Error(`bitcoind answered a batch with an id it was not asked: ${JSON.stringify(one && one.id)}`);
+      if (one.error) throw new Error(`bitcoind refused ${requests[i][0]}: ${one.error.message || one.error}`);
+      out[i] = one.result; seen.add(i);
+    }
+    if (seen.size !== requests.length) throw new Error(`bitcoind answered ${seen.size} of the ${requests.length} calls of a batch`);
+    return out;
+  };
+  return call;
 }
 
 /**
@@ -99,9 +124,76 @@ function bestOf(call, cache) {
   return cache.bestInFlight;
 }
 
+// THE DEEP PART OF A VIEW, READ IN BATCHES BEFORE IT IS WALKED (kanban #1968): its heights' hashes HASH_BATCH to a request, then the
+// blocks the cache does not hold, BLOCK_BATCH to a request (fewer once the blocks run large: about BLOCK_BATCH_BYTES of hex a request).
+// A chunk of HASH_BATCH heights at a time, and a chunk another view is already reading is waited for, not asked again - views read at
+// once walk the window together, one batch out at a time, as they shared one call per height before. The walk below then finds every
+// deep height and block kept and asks bitcoind only for the top DEEP_BLOCKS heights, as before; the blocks and hashes are the same ones.
+export const HASH_BATCH = 500;
+export const BLOCK_BATCH = 32;
+export const BLOCK_BATCH_BYTES = 16 * 1024 * 1024;
+async function readDeepInBatches(call, from, to, cache) {
+  const deepTo = to - DEEP_BLOCKS;
+  let per = BLOCK_BATCH;
+  for (let lo = from; lo <= deepTo; lo += HASH_BATCH) {
+    const hi = Math.min(deepTo, lo + HASH_BATCH - 1);
+    const need = [], waits = [];
+    for (let h = lo; h <= hi; h++) {
+      if (cache.hashes.get(h) !== undefined) continue;
+      const fly = cache.hashInFlight.get(`d${h}`);
+      if (fly) waits.push(fly); else need.push(h);
+    }
+    if (need.length) {
+      const ask = Promise.resolve(call.batch(need.map((h) => ['getblockhash', [h]])));
+      need.forEach((h, i) => {
+        const p = ask.then((r) => { cache.putHash(h, r[i]); return r[i]; });
+        cache.hashInFlight.set(`d${h}`, p);
+        p.then(() => cache.hashInFlight.delete(`d${h}`), () => cache.hashInFlight.delete(`d${h}`));
+        waits.push(p);
+      });
+    }
+    await Promise.all(waits);
+    const want = [], held = [];
+    for (let h = lo; h <= hi; h++) {
+      const hash = cache.hashes.get(h);
+      if (hash === undefined || cache.get(hash)) continue;
+      const fly = cache.inFlight.get(hash);
+      if (fly) held.push(fly); else if (!want.includes(hash)) want.push(hash);
+    }
+    for (let i = 0; i < want.length;) {
+      // another view may have taken some of these meanwhile: those are waited for, not read again
+      const part = [];
+      while (i < want.length && part.length < per) {
+        const x = want[i++];
+        if (cache.get(x)) continue;
+        const fly = cache.inFlight.get(x);
+        if (fly) held.push(fly); else part.push(x);
+      }
+      if (!part.length) continue;
+      const ask = Promise.resolve(call.batch(part.map((x) => ['getblock', [x, 0]])));
+      const each = part.map((x, k) => {
+        const p = ask.then((r) => {
+          const block = timed('chain block read', () => splitBlock(fromHex(r[k])), { over: 20 });
+          cache.put(x, block);
+          return block;
+        });
+        cache.inFlight.set(x, p);
+        p.then(() => cache.inFlight.delete(x), () => cache.inFlight.delete(x));
+        return p;
+      });
+      const answers = await ask;
+      await Promise.all(each);
+      const bytes = answers.reduce((n, a) => n + String(a).length, 0);
+      per = Math.max(1, Math.min(BLOCK_BATCH, Math.floor(BLOCK_BATCH_BYTES / Math.max(1, bytes / part.length))));
+    }
+    await Promise.all(held);
+  }
+}
+
 export async function blocksOver(call, from, to, { cache = null } = {}) {
   const blocks = [];
   let best = null;
+  if (cache && cache.hashes && cache.hashInFlight && cache.inFlight && call && typeof call.batch === 'function') await readDeepInBatches(call, from, to, cache);
   for (let h = from; h <= to; h++) {
     const deep = cache && cache.hashes && h <= to - DEEP_BLOCKS;
     let top = !deep && cache && cache.topHashes;
@@ -206,13 +298,30 @@ export async function headersFrom(call, { from, count } = {}) {
   if (!Number.isInteger(tip) || tip < 0) throw new Error('bitcoind gave no block count');
   if (from > tip) throw new Error(`a range from ${from} starts past the tip ${tip}`);
   const to = Math.min(tip, from + count - 1);
+  return { headers: await headersOver(call, from, to), firstHeight: from, tipHeight: to };
+}
+
+// THE HEADERS OF HEIGHTS from..to: height by height, or HASH_BATCH heights to a request where the call batches (kanban #1968: a beacon
+// behind the tip window read its 2,016 headers as 4,032 calls, once per committee_time - 59 % of a restarted seat's calls)
+async function headersOver(call, from, to) {
   const headers = [];
-  for (let h = from; h <= to; h++) {
-    const bytes = fromHex(await call('getblockheader', [await call('getblockhash', [h]), false]));
+  const take = (h, hex) => {
+    const bytes = fromHex(hex);
     if (bytes.length !== HEADER_BYTES) throw new Error(`block ${h} came back as ${bytes.length} bytes, not a header`);
     headers.push(bytes);
+  };
+  if (call && typeof call.batch === 'function') {
+    for (let lo = from; lo <= to; lo += HASH_BATCH) {
+      const hi = Math.min(to, lo + HASH_BATCH - 1);
+      const heights = Array.from({ length: hi - lo + 1 }, (_, i) => lo + i);
+      const hashes = await call.batch(heights.map((h) => ['getblockhash', [h]]));
+      const hexes = await call.batch(hashes.map((x) => ['getblockheader', [x, false]]));
+      heights.forEach((h, i) => take(h, hexes[i]));
+    }
+    return headers;
   }
-  return { headers, firstHeight: from, tipHeight: to };
+  for (let h = from; h <= to; h++) take(h, await call('getblockheader', [await call('getblockhash', [h]), false]));
+  return headers;
 }
 
 export async function headersToTip(call, { count } = {}) {
@@ -224,17 +333,7 @@ export async function headersToTip(call, { count } = {}) {
   const tip = Number(await call('getblockcount'));
   if (!Number.isInteger(tip) || tip < 0) throw new Error('bitcoind gave no block count');
   const firstHeight = Math.max(0, tip - count + 1);
-
-  const headers = [];
-  for (let h = firstHeight; h <= tip; h++) {
-    const hash = await call('getblockhash', [h]);
-    const hex = await call('getblockheader', [hash, false]);
-    const bytes = fromHex(hex);
-    if (bytes.length !== HEADER_BYTES)
-      throw new Error(`block ${h} came back as ${bytes.length} bytes, not a header`);
-    headers.push(bytes);
-  }
-  return { headers, firstHeight, tipHeight: tip };
+  return { headers: await headersOver(call, firstHeight, tip), firstHeight, tipHeight: tip };
 }
 
 /**
