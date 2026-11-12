@@ -2063,3 +2063,5 @@ Files: `owner-leave.js` leaveStatus.
   names the same owner key: the owner's signed Leave and store settings change only through /owner/leave, /owner/stay and /owner/settings,
   so a rerun (#734) never makes a node that left take new rounds after its next restart. Only a new owner key writes a new file, and then
   atomically (temp file + rename).
+#### SM-L2 (invariant) Collect record per order and the 24 h scan (kanban #2106)
+- Every order of a round that pays a kept phrase ends with a collect record (`arena.collect.<round>.<seed16>[.oN]`), whether the join wrote it or the 24 h scan found it. The scan is told which records are kept by round AND order (`knownBySeed` entries `<round>:<order>`; a plain round id is its order 0), and `findOwedRounds` skips only a kept (round, order) pair - a kept order 0 no longer hides a lost order 2 of the same round. A `saveCollect` the browser refuses at the join is logged.
