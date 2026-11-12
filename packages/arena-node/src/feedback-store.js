@@ -573,7 +573,10 @@ export function openFeedbackStore(path = ':memory:') {
       weekPaidSats: sum(`SELECT COALESCE(SUM(amount_sats), 0) AS s FROM rewards WHERE state = 'paid' AND paid_ms >= ?`, nowMs - WEEK_MS),
       weeklyBudgetSats: R.weeklyBudgetSats, allApprovedSats: sum(`SELECT COALESCE(SUM(amount_sats), 0) AS s FROM reports WHERE state IN ('accepted', 'paid')`),
       paidSats: sum(`SELECT COALESCE(SUM(amount_sats), 0) AS s FROM rewards WHERE state = 'paid'`),
-      openRewards: db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(amount_sats), 0) AS s FROM rewards WHERE state <> 'paid'`).get(),
+      // ONLY LINKS THAT CAN STILL PAY ARE OWED (kanban #2287, state audit 2026-11-12, SM-22): a link voided by its report's rejection (open -> void) never
+      // pays, so it is no unclaimed reward; a link whose payment is in flight (paying) is named on its own line, not mixed into the unclaimed ones
+      openRewards: db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(amount_sats), 0) AS s FROM rewards WHERE state = 'open'`).get(),
+      payingRewards: db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(amount_sats), 0) AS s FROM rewards WHERE state = 'paying'`).get(),
       counts: Object.fromEntries(db.prepare('SELECT state, COUNT(*) AS n FROM reports GROUP BY state').all().map((x) => [x.state, x.n])) };
   }
   /** THE CSV (the Monday scoreboard, #922): one line per report, with its reward if any. Text cells quoted; a leading =, +, - or @ neutralised. */
