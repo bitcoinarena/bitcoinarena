@@ -45,6 +45,7 @@ import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 import { TRUCK_68E2_HASH } from '../../nextblock/plugin/truck-cores.js';   // the truck versions 1-4 name (kanban #523: the tree now builds a5c5766a)
 
 const b32 = (n) => new Uint8Array(32).fill(n);
+import { pointKey } from '../../arena-protocol/test/point-key-fixture.js';  // kanban #1675: fixture keys are curve points
 // The shape of a real invite (bech32m, prefix `fed1`, separator `1`): the first
 // rehearsal's page threw on its own invite because this constant had no separator.
 const INVITE = 'fed11qgqpw9thwvaz7te3xgmjuvpwxqhrzw' + 'q'.repeat(20);
@@ -1862,7 +1863,7 @@ test('a committed lock is reused before the start, and resumed until the close, 
 // DONATIONS IN THE FEDERATION (2026-10-03): a round whose set pays keys locks the stake, the fee and one payout
 // contract per share in ONE transaction; each output is checked against its share; the outpoints are kept across a reload.
 test('a set of keys: one lockWithDonations call, the shares in the set\'s order, each output checked, kept for a reload', async () => {
-  const DEVS = [{ recipientPk: Uint8Array.of(2, ...b32(0xa1)), shareBps: 6667, label: 'dev a' }, { recipientPk: Uint8Array.of(3, ...b32(0xb2)), shareBps: 3333, label: 'dev b' }];
+  const DEVS = [{ recipientPk: pointKey(2, 0xa1), shareBps: 6667, label: 'dev a' }, { recipientPk: pointKey(3, 0xb2), shareBps: 3333, label: 'dev b' }];
   const round100 = { ...round, stakeMsat: 100000n };
   const rid100 = roundId(round100);
   for (const [feeRule, badDonation] of [[RULE, null], [null, null], [RULE, 'key'], [RULE, 'amount']]) {
@@ -1877,7 +1878,7 @@ test('a set of keys: one lockWithDonations call, the shares in the set\'s order,
     const calls = log.filter((l) => l.lock || l.lockHash || l.lockBoth || l.lockWithDonations);
     assert.deepEqual(calls.map((c) => Object.keys(c)[0]), ['lockWithDonations'], 'stake, fee and donation were not one transaction');
     // EACH DONATION CARRIES THE SENDER (2026-10-05): the player's x-only key as its payment image
-    assert.deepEqual(calls[0].lockWithDonations.donations, [{ pk: '02' + 'a1'.repeat(32), msat: '1334', image: toHex(player) }, { pk: '03' + 'b2'.repeat(32), msat: '666', image: toHex(player) }]);
+    assert.deepEqual(calls[0].lockWithDonations.donations, [{ pk: toHex(DEVS[0].recipientPk), msat: '1334', image: toHex(player) }, { pk: toHex(DEVS[1].recipientPk), msat: '666', image: toHex(player) }]);
     assert.equal(calls[0].lockWithDonations.hash === '', !feeRule, 'a fee hash only when the fee lock is due');
     assert.equal(!!got.feeLock, !!feeRule);
     assert.deepEqual(got.donations.map((d) => [d.outIdx, d.amountMsat]), feeRule ? [[2n, 1334n], [3n, 666n]] : [[1n, 1334n], [2n, 666n]]);
@@ -1896,7 +1897,7 @@ test('a set of keys: one lockWithDonations call, the shares in the set\'s order,
 // THE LOCK ANSWERED ON SUBMISSION (2026-10-03, OPEN-LIST-2140 item 3): the entry's outpoints come back before the
 // guardians accept the lock; acceptance is checked after, and a lock held elsewhere or refused rejects `accepted`.
 test('a submitted lock answers its outpoints before acceptance; acceptance is checked after, and a moved or refused lock rejects', async () => {
-  const DEVS = [{ recipientPk: Uint8Array.of(2, ...b32(0xa1)), shareBps: 6667, label: 'dev a' }, { recipientPk: Uint8Array.of(3, ...b32(0xb2)), shareBps: 3333, label: 'dev b' }];
+  const DEVS = [{ recipientPk: pointKey(2, 0xa1), shareBps: 6667, label: 'dev a' }, { recipientPk: pointKey(3, 0xb2), shareBps: 3333, label: 'dev b' }];
   const round100 = { ...round, stakeMsat: 100000n };
   const rid100 = roundId(round100);
   for (const acceptAs of ['same', 'moved', 'refused']) {

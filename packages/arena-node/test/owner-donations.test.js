@@ -11,6 +11,7 @@ import { serve } from '../src/server.js';
 import { donationTotals, donationReport } from '../src/owner-donations.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { HOSTED } from './plugins/hosted.js';
+import { pointKey } from '../../arena-protocol/test/point-key-fixture.js';  // kanban #1675: fixture keys are curve points
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const DAY1 = Date.parse('2026-10-09T23:59:00Z'), DAY2 = Date.parse('2026-10-10T00:01:00Z');
@@ -29,7 +30,7 @@ test('a recipient\'s rows add up to the msat: in all, per round, per UTC day', (
 });
 
 test('the report names the protocol set and every hosted game\'s set, each recipient with its own totals', () => {
-  const keyA = '02' + 'a1'.repeat(32), keyB = '03' + 'b2'.repeat(32), keyG = '02' + 'c3'.repeat(32);
+  const keyA = toHex(pointKey(2, 0xa1)), keyB = toHex(pointKey(3, 0xb2)), keyG = toHex(pointKey(2, 0xc3));
   const protocol = { networkId: b32(4), serial: 3, recipients: [{ recipientPk: Buffer.from(keyA, 'hex'), shareBps: 5000, label: 'dev a' }, { recipientPk: Buffer.from(keyB, 'hex'), shareBps: 5000, label: 'dev b' }] };
   const game = { name: 'rock-paper-scissors', title: 'Rock Paper Scissors', gameId: b32(7), donationSet: [{ recipientPk: Buffer.from(keyG, 'hex'), shareBps: 10000, label: 'rps dev' }] };
   const rows = { [keyA]: [{ roundId: 'aa', amountMsat: 500, verifiedMs: DAY2 }], [keyG]: [{ roundId: 'aa', amountMsat: 500, verifiedMs: DAY2 }, { roundId: 'bb', amountMsat: 250, verifiedMs: DAY2 }] };
