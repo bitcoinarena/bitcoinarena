@@ -30,11 +30,12 @@ import { decodeEntryContract, decodeRoundContract, entryFederation } from '../..
 import { lockMatchesEntry, lockFieldsFromJson, lockFieldsToJson } from '../../arena-protocol/src/stake-lock.js';
 import { feeLockPays } from '../../arena-protocol/src/lock-settlement.js';
 import { donationOutputsExpected } from '../../arena-protocol/src/donation.js';
-import { reservesEntryExpected, paysReserves } from '../../arena-protocol/src/reserves.js';
+import { reservesEntryExpected, paysReserves, giftsInFeeLock, entryGiftsInFee, giftsFeeBps, ROUND_SPLIT_BPS } from '../../arena-protocol/src/reserves.js';
 import { namedClaims, namedClaimKeys, arenaLockContractId, arenaLockMatchesEntry, lockStallBlocks } from '../../arena-protocol/src/arena-lock.js';
 import { networkOf } from '../../arena-protocol/src/constants.js';
 import { toHex as hexOf } from '../../arena-protocol/src/hash.js';
 import { claimReadInput } from '../../arena-protocol/src/named-claim-proof.js';
+import { roundSplitBps } from '../../arena-protocol/src/fee-proposal.js';
 import { pluginForRound } from './plugins.js';
 
 /**
@@ -45,9 +46,10 @@ import { pluginForRound } from './plugins.js';
  * fee lock made the round's one settlement refuse everybody: "an entry's fee lock was
  * never verified, so the fee cannot be claimed").
  */
-export async function roundMintsFees({ contract, port, feeBps = undefined }) {
+// `split`: a protocol-27 round's split in force at its census height (kanban #1486)
+export async function roundMintsFees({ contract, port, feeBps = undefined, split = undefined }) {
   if (!port || typeof port.fees !== 'function') return { mints: false, why: 'this signer node reads no federation fee rule' };
-  const gate = feeLockPays({ contract, fees: await port.fees(), feeBps });
+  const gate = feeLockPays({ contract, fees: await port.fees(), feeBps, split });
   return { mints: gate.pays, why: gate.why };
 }
 
@@ -270,19 +272,10 @@ export function keepLockSessionFloor({ round, port, roundId, federationId, outpo
   return run;
 }
 
-/**
- * A HEAD-TO-HEAD ROUND ALREADY SEATING ITS GAME'S PLAYERS ON LOCKS (kanban #1437, audit 8 R3): the door counts only lock-backed entries
- * (round.js seatedEntriesOf), so several entries may stand while their locks are on the way - the lock that would seat one player more is refused.
- */
-function headToHeadFull(round, contract, roundIdBytes, entryIdBytes) {
-  if (typeof round.seatedEntriesOf !== 'function' || !round.plugins) return null;
-  const g = pluginForRound(contract, round.plugins);
-  if (!g.ok || !g.headToHead) return null;
-  const me = Buffer.from(entryIdBytes);
-  const others = round.seatedEntriesOf(roundIdBytes, contract.stakeMsat).filter((x) => !Buffer.from(x.entryId).equals(me)).length;
-  const m = g.plugin.manifest;
-  return others >= m.players ? `that round already seats game "${m.gameName}"'s ${m.players} players: this lock seats no one` : null;
-}
+// (NO "HEAD-TO-HEAD FULL" REFUSAL AT /lock, kanban #1588: it refused the lock that would seat one player more HERE, and two seats that saw two
+// locks in different orders seated different players and then waited forever for the lock each refused. A valid lock is kept; who is seated is
+// round.js seatedEntriesOf's rule - the game's players among the lock-backed entries, in the order the entries were taken, not their locks - so
+// crossing locks seat the same players at every seat. The /entry door still refuses a new entry once the round seats its players, kanban #1437.)
 
 /** Another entry of the same player key in this round holding a verified lock of `kind` ('stake' | 'fee') here (kanban #1215). */
 function otherStakedUnderKey(round, entry, entryIdBytes, kind) {
@@ -372,14 +365,16 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
     if (now && !Buffer.from(now.entryId).equals(Buffer.from(entryIdBytes)))
       return { ok: false, why: 'that stake lock already stakes another entry in this round: one lock is one entry' };
     if (otherStakedUnderKey(round, entry, entryIdBytes, 'stake'))
-      return { ok: false, why: 'another entry of that player key is already staked in this round: one player key stakes one entry' };
-    const full = headToHeadFull(round, contract, entry.roundId, entryIdBytes);
-    if (full) return { ok: false, why: full }; }
+      return { ok: false, why: 'another entry of that player key is already staked in this round: one player key stakes one entry' }; }
   round.putStakeLock({ entryId: entryIdBytes, roundId: entry.roundId, outpoint, fields: lockFieldsToJson(fields), contractId: String(id) });
   // IN A ROUND WHOSE GATE MINTS, THE STAKE COUNTS ONLY WITH ITS FEE LOCK (pick a): kept,
   // verified, and not seen - no play, no place in the settlement - until the fee lock is.
   t = Date.now();
-  const gate = await roundMintsFees({ contract, port });
+  // A PROTOCOL-27 GAME ROUND'S FEE LOCK HOLDS THE WHOLE 10 % (kanban #1486): the gate is sized on it, as the door's and the page's are
+  const gifted = giftsInFeeLock(contract) && entryGiftsInFee(contract, (() => { const g = round.plugins ? pluginForRound(contract, round.plugins) : null; return g && g.ok ? g.plugin.manifest : null; })());
+  // at the split in force at its census height (round.feesFor, the fee set GET /fees?height= serves), as the door and the settlement read it
+  const giftSplit = gifted ? (typeof round.feesFor === 'function' && round.feesFor(contract) ? roundSplitBps(round.feesFor(contract)) : ROUND_SPLIT_BPS) : undefined;
+  const gate = await roundMintsFees({ contract, port, ...(gifted ? { feeBps: giftsFeeBps(giftSplit), split: giftSplit } : {}) });
   timing.gateMs = Date.now() - t;
   if (gate.mints && !(round.feeLock && round.feeLock(entryIdBytes)))
     return { ok: true, contractId: String(id), paidMsat: fields.amountMsat, height: st.blockCount, waitsForFeeLock: true };

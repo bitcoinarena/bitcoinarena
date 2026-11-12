@@ -131,6 +131,15 @@ export const HEARTBEAT_SPACING_MS = 300000n;
 export const HEARTBEAT_DRAWN = 9;
 export const HEARTBEAT_THRESHOLD = 5;
 /**
+ * 2026.0.27 - NO DEVELOPER OR RESERVE MONEY FOR AN ENTRY THAT IS NOT ACCEPTED (kanban #1486, ruled 2026-11-11: "Er sollte keine fees
+ * entgegen nehmen wenn die order nicht angenommen wird"; FEDERATION.md "Amended 2026-11-11"). A paid game round of this version takes the
+ * developers' 4 % and the reserves' 2 % in the entry's FEE LOCK, beside the nodes' 4 % (fee 10 %, donation 0, no donation or reserve
+ * output), and pays them at settlement for counted entries only - a refused, void or refunded entry gets them back with its stake. 21 is the
+ * drawn attestors' label (#630) and 22-26 are taken on the 2.0 branches, so this is 27; versions are cumulative, keep them in step.
+ * On 2.0 the same 27 also makes a round's locks Arena locks (arena-lock.js NAMED_CLAIM_VERSION): a 27 round of a game does both.
+ */
+export const GIFTS_IN_FEE_LOCK_VERSION = 27;
+/**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (RULED 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
  * and the beacon ... Thresholds count the 7 seated nodes"). Measured 2026-10-13 00:28Z: with federation B's 7 bonds the

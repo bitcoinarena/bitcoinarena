@@ -602,6 +602,77 @@ the Entry Contract (donation outpoints), the signer nodes' entry check and index
 recipient client. Rounds already published keep the LNURL set they name (and the 10-03/10-04 forwarder). Brought into
 multiplayer_p2p.md §22A "The donation set", §24A and its payment table (2026-10-04).
 
+### Amended 2026-11-11 (kanban #1486): no developer or reserve money for an entry that is not accepted - protocol 27
+
+Ruled by the owner, feedback #010 (100 sat staked, 94 came back, the 6 sat donation outputs were lost although no seat took the
+entry): "Er sollte keine fees entgegen nehmen wenn die order nicht angenommen wird", and "1 ja" to "should the 6 sat (developers +
+reserves) come back when the seats refuse an entry?". This replaces **Not returned** above for rounds of protocol 27 and later.
+
+**Where the money moves.** On a paid game round of protocol 27 or later (not a market: a market already does this, §0A.7a), the
+entry's developers' 4 % and reserves' 2 % ride in its **fee lock**, beside the nodes' 4 %. Markets have done this since
+2026-10-09. The lock transaction has **no donation outputs and no reserve output**:
+
+| | protocol 11-20 (today) | protocol 27 |
+|---|---|---|
+| entry `fee_msat` | nodes 4 % | nodes 4 % + developers 4 % + reserves 2 % = 10 % |
+| entry `donation_msat` | developers 4 % + reserves 2 % | 0 |
+| `donation_outpoints`, `reserve_outpoint` | named, paid at lock time | none (an entry naming them is refused) |
+| net stake in the stake lock | 90 % | 90 % (unchanged) |
+| developers and reserves paid | at lock time, whatever happens | in the round's settlement, for counted entries only |
+
+**How the seats check it.**
+- Entry door (round.js): fee = the whole 10 % of the stake, donation 0, no reserve or donation outpoint.
+- Fee-lock gate (`feeLockPays`), page and seat: sized on the whole 10 %, the rate the lock really holds.
+- `/stake-lock` gate: sized on the same 10 %.
+- `/fee-lock` (`verifyFeeLock`): unchanged. The lock must hold exactly the entry's `fee_msat`, under the round's claim key, H(F).
+- Settlement (`feeSettlement` with `gifts`): every counted entry's fee lock is claimed as before.
+  - The nodes' table is still 4 % of the gross (the fees in force at the census height).
+  - Each counted entry's reserves part is its own 2 %, summed, and paid as one `reserve` payout to its federation's reserve key.
+    On a round that takes any federation, each federation pays its own key (`splitByFederation`).
+  - The rest of the fee locks above the nodes' table goes to the round's two donation sets (`splitDonation`), as `donation key` payouts.
+    Each one lists the entries that paid into it (`parts`).
+  - Both are scaled to what the claimed locks pay after the guardians' fees, as the nodes' shares are.
+  - Both are indexed as rows, so `GET /donations` and `GET /reserves` list them, as a market's are.
+  - A late loser's second settlement (`lateLockSettlement`) does the same with its one fee lock.
+
+**How a refused or void entry gets them back.** They are in the fee lock, so they come back exactly when the stake does:
+- **Round refused** (§23.2 REFUSED, `/refused-lock`): the fee lock is kept under H(handout id || "fee") and forfeited at once,
+  beside the stake. This is unchanged code.
+- **ENTRY_VOID** (an outage refund): the stake is forfeited at once. On protocol 27 the fee lock is now forfeited with it
+  (`GET /forfeit?lock=fee`), under the same conditions as the stake: this seat's own record, no two first marks, the proof pull.
+  The page already asks for the fee lock's forfeit whenever it redeems a stake.
+- **VOID, a refunded outcome, an entry refused at the door after its lock, a seat that never verified the lock:** the fee lock is never
+  claimed (`feeSettlement` counts no refund), and it expires back to the player's key with the stake lock (`stake_expiry_blocks`).
+- **Late:** a late VOID or refund is not claimed. A late FAILED or FORFEIT is an accepted entry and pays like the others.
+
+Nothing is lost except the guardians' own fee on the lock and its return. An **accepted** entry (DELIVERED, FAILED, FORFEIT,
+a walk-away) pays the developers and the reserves exactly as before: the same 4 % + 2 % of its stake, now at settlement.
+
+**One caveat** (Pick b, unchanged): where the fee-lock gate does not mint, because a lock that small cannot pay a sitting seat
+after the guardians' fees, there is no fee lock. Then the nodes, the developers and the reserves all get nothing from that entry.
+The 10 % stays in the player's wallet. At 10 % the gate mints for smaller stakes than at 4 %.
+
+**Old entries keep working.** The rule is the round's version, never the entry's or the seat's word:
+- A round below 27 is checked and settled exactly as before: donation and reserve outputs at lock time, a 4 % fee lock. No byte,
+  check or settlement of it changes.
+- A protocol-27 round is a new version (constants.js `GIFTS_IN_FEE_LOCK_VERSION`, in `SUPPORTED_PROTOCOL_VERSIONS`).
+- **A mixed network does not split:** the census seats a round only on nodes whose advert lists its version (census.js). A node on an
+  older release does not list 27, so it is never drawn for such a round. It keeps serving rounds of the versions it speaks.
+- An older page or seat cannot decode a protocol-27 round at all ("protocol version 27, this build speaks ..."), so it neither enters
+  nor settles one by the old rule.
+- Posters choose the version (`max(template, game's required)`), so protocol 27 starts when the posters' templates name it, after the
+  seats and the page that speak it are deployed.
+- **Why 27:** 21 is the drawn attestors' label (#630). 22-26 are taken on the 2.0 branches (auditor, source hosts, founding pressure,
+  census key, stall). Versions are cumulative (`>=`), so the 2.0 line must keep 27 for this rule or renumber both together.
+
+**Ruled 2026-11-12 ("Ja" to all three):**
+- 27 stays, and the 2.0 line keeps 27 for this rule.
+- The small-stake caveat above is accepted.
+- **Every check reads the same split:** on a protocol-27 round the door (round.js `feesFor`), both fee-lock gates (the seats' and the
+  page's `split`) and the settlement (`giftsFor`) all use the split in force at the round's census height. That is the fee set `GET /fees?height=`
+  serves and the page already reads. They never use the default. A fee proposal that changes the split therefore changes the entry's fee,
+  its lock and its payouts alike at every seat. Rounds below 27 are unchanged.
+
 ## Rulings (2026-09-21)
 
 - **The player wallet** (§24A.1): the round wallet is one wallet

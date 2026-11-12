@@ -22,6 +22,9 @@
 //   6. THE ESCROW SPENT (payOutSlash): one peg-in per federation, each loss a payout contract to its player, the rest a payout
 //      contract to that federation's reserve key (§27A.9.2); what does not fit stays in the escrow until a federation has room.
 import * as nodeFs from 'node:fs';
+import { readBody, BODY_MOST } from './body-read.js';
+// kanban #1592: the arbiter's MuSig doors take a few hundred bytes; 64 KiB is ample
+const ARBITER_DOOR_MOST = 64 * 1024;
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { genesisFor } from '../../arena-protocol/src/genesis.js';
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
@@ -690,6 +693,8 @@ export async function serveArbiter({ set, allow, port = 0, host = '127.0.0.1', p
   const party = musigParty({ set, allow });
   const server = createServer(async (req, res) => {
     const answer = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'access-control-allow-origin': '*' }); res.end(JSON.stringify(body)); };
+    // kanban #1592 / #1469: a body past its limit was dropped and the request ended - answer 413 while the socket still takes it
+    const tooBig = (e) => { if (!(e && e.tooLarge)) return false; try { res.setHeader('connection', 'close'); answer(413, { ok: false, why: e.message }); } catch { /* gone */ } return true; };
     const url = new URL(req.url, 'http://x');
     if (req.method === 'GET' && url.pathname === '/status')
       return answer(200, { network: set.network, k: set.k, members: set.members.map((m) => toHex(m.key)), posted });
@@ -710,14 +715,15 @@ export async function serveArbiter({ set, allow, port = 0, host = '127.0.0.1', p
     if (url.pathname === '/liquidation-claims' && claims) {
       if (req.method === 'GET') { const p = await claims.plan(url.searchParams.get('federation')); return answer(p.ok ? 200 : (p.status || 409), p); }
       if (req.method === 'POST') {
-        let body; try { body = JSON.parse(await new Promise((r) => { let s = ''; req.on('data', (d) => { s += d; }); req.on('end', () => r(s)); })); } catch { return answer(400, { ok: false, why: 'a JSON body' }); }
+        let body; try { body = JSON.parse(Buffer.from(await readBody(req)).toString('utf8')); } catch (e) { return tooBig(e) || answer(400, { ok: false, why: 'a JSON body' }); }
         // a pending-output claim (§23A.5 "Notes still in issuance at the halt") names `pending`; a note claim `ecash`
         const got = Array.isArray(body && body.pending) ? await claims.offerPending(body) : await claims.offer(body);
         return answer(got.ok ? 200 : (got.status || 409), got);
       }
     }
     if (req.method !== 'POST' || !['/musig/nonce', '/musig/partial'].includes(url.pathname)) return answer(404, { ok: false, why: 'no such door' });
-    let body; try { body = JSON.parse(await new Promise((r) => { let s = ''; req.on('data', (d) => { s += d; }); req.on('end', () => r(s)); })); } catch { return answer(400, { ok: false, why: 'a JSON body' }); }
+    // kanban #1592 (bypass of #1469): a MuSig door's message is a few hundred bytes - 64 KiB at most, read before any check
+    let body; try { body = JSON.parse(Buffer.from(await readBody(req, Math.min(BODY_MOST, ARBITER_DOOR_MOST))).toString('utf8')); } catch (e) { return tooBig(e) || answer(400, { ok: false, why: 'a JSON body' }); }
     if (url.pathname === '/musig/nonce') {
       const ok32 = (h) => /^[0-9a-f]{64}$/.test(String(h));
       if (!body.sessionId || !ok32(body.nodeKey) || !ok32(body.tweak) || !ok32(body.msg)) return answer(400, { ok: false, why: 'a session id, a node key, a tweak and a message (32 bytes each, hex)' });
