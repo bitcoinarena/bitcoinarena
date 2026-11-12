@@ -67,8 +67,10 @@ test('#1681, #2083: once the round has entries the held certificate is not repla
 
 test('#1681: two seatings of any other shape are still equivocation', () => {
   const { agent } = agentOf();
-  agent.keepCert(rid, 'settlement', certOf([0, 1, 2, 3, 4, 5, 7]));
-  const r = agent.keepCert(rid, 'settlement', certOf([0, 2, 3, 4, 5, 6, 7]));   // leaves out 1 but takes in 6, which ranks before 7
+  // a pair #738's order ranks (one seating before the other) is refused as superseded since kanban #1812 - no equivocation; this pair it does not
+  // order: 2 and 7 out, 1 (ranking before 2) and 8 in
+  agent.keepCert(rid, 'settlement', certOf([0, 2, 3, 4, 5, 6, 7]));
+  const r = agent.keepCert(rid, 'settlement', certOf([0, 1, 3, 4, 5, 6, 8]));
   assert.equal(r.equivocation, true);
   assert.equal(agent.stateOf(rid).settlement.equivocated, true);
 });

@@ -228,14 +228,6 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     if (had) {
       const old = new Uint8Array(had.cert);
       if (toHex(old) === toHex(bytes)) return { ok: true, kept: false };
-      // A SEATING ITS SIGNERS LEFT IS NO EQUIVOCATION (kanban #1812, wf1489 r6 census-1): honest seats re-sign only forward in #738's order
-      // (seatingBefore), so a certificate for a seating that comes before the one held is made of signatures they gave up - one member that
-      // read them (GET /seating-batch), drove the others on and then signed the old seating as well would otherwise void the round and name
-      // the honest seats as equivocators. It is refused as superseded; only seatings that are not ordered prove equivocation.
-      if (seatingBefore({ drawnKeys: check.drawn }, v.seating.seated.map(toHex), decodeSeated(old))) {
-        log(`[seating] ${toHex(rid).slice(0, 16)} ${role}: a certificate for a seating before the one held refused (superseded)`);
-        return { ok: false, why: 'superseded: that seating comes before the one certified here' };
-      }
       const e = seatingEquivocation(old, bytes, check);
       if (!e.ok) return { ok: false, why: e.why };
       // A SEATING THAT LEFT OUT A WITHHOLDING MEMBER IS NO EQUIVOCATION WITH THE ONE IT REPLACED (kanban #1681, #1741, wf1489 v1 refute-17): the honest seats
@@ -265,6 +257,15 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
           log(`[seating] ${toHex(rid).slice(0, 16)} ${role}: the certificate of ${newSeated.length} replaced the one held - it leaves out ${heldSeated.filter((k) => !newSeated.includes(k)).map((k) => k.slice(0, 8)).join(', ')}`);
           return { ok: true, kept: true, replaced: true };
         }
+      }
+      // A SEATING ITS SIGNERS LEFT IS NO EQUIVOCATION - asked after the #1509 replacement above, which comes before the held seating in #738's
+      // order and still takes its place (kanban #1681) (kanban #1812, wf1489 r6 census-1): honest seats re-sign only forward in #738's order
+      // (seatingBefore), so a certificate for a seating that comes before the one held is made of signatures they gave up - one member that
+      // read them (GET /seating-batch), drove the others on and then signed the old seating as well would otherwise void the round and name
+      // the honest seats as equivocators. It is refused as superseded; only seatings that are not ordered prove equivocation.
+      if (seatingBefore({ drawnKeys: check.drawn }, v.seating.seated.map(toHex), decodeSeated(old))) {
+        log(`[seating] ${toHex(rid).slice(0, 16)} ${role}: a certificate for a seating before the one held refused (superseded)`);
+        return { ok: false, why: 'superseded: that seating comes before the one certified here' };
       }
       // AND ANY OTHER PAIR AN HONEST #1509 MOVE MAKES (kanban #1707): one leaves members of the other out and takes in only nodes that rank below every member of
       // it (the next reserves). The honest seats sign exactly that pair when they leave a withholder, which can still sign the first seating late and complete
