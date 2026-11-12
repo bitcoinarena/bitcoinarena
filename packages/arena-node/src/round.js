@@ -25,7 +25,7 @@ import { ticksForMs } from '../../arena-protocol/src/tick.js';
 import { worldSecretFits } from '../../arena-protocol/src/seed.js';
 import { encodeTranscript, transcriptHash, checkTranscript, GENESIS } from '../../arena-protocol/src/transcript.js';
 import {
-  decodeCheckpoint, checkpointId, NO_PREVIOUS, splitSigned,
+  decodeCheckpoint, checkpointId, NO_PREVIOUS, splitSigned, encodeCheckpoint, joinSigned,
 } from '../../arena-protocol/src/checkpoint.js';
 import {
   encodeCheckpointReceipt, decodeCheckpointReceipt, receiptId,
@@ -1308,12 +1308,23 @@ export class Round {
     // that means "no signature", so it cannot be omitted by accident.
     const { body, signature } = splitSigned(bytes);
     const c = decodeCheckpoint(body);
+    // ONE MARK, ONE BYTE STRING (kanban #2446). decodeCheckpoint speaks every supported version, but checkpointId
+    // re-encodes at PROTOCOL_VERSION - so a mark with only its version byte changed is the same mark by id and
+    // signature, yet other bytes. Stored as received, two seats handed the two copies would put different bytes into
+    // the transcript and sign different transcript hashes for one run (no result at the threshold: a §13C VOID the
+    // player chose). From here on this node keeps, serves and compares only the canonical record: the encoding the
+    // id is taken over, then the signature.
+    bytes = joinSigned(encodeCheckpoint(c), signature);
     const round = this.get(c.roundId);
     if (!round) throw new Error('no such round');
     // AFTER THE CLOSE ONLY THE HELD-BACK FINAL MARK ITSELF, byte for byte (ruled 2026-09-23) - never another mark.
+    // Byte for byte in the canonical encoding (kanban #2446): the held copy is put in that form too before comparing.
     if (round.state !== OPEN) {
       const held = this.heldFinalAsk(c.entryId);
-      if (!held || !same(new Uint8Array(held.mark), bytes)) throw new Error('the round is closed');
+      let heldBytes = null;
+      try { const h = splitSigned(new Uint8Array(held.mark)); heldBytes = joinSigned(encodeCheckpoint(decodeCheckpoint(h.body)), h.signature); }
+      catch { heldBytes = null; }
+      if (!heldBytes || !same(heldBytes, bytes)) throw new Error('the round is closed');
     }
     const entry = this.db.prepare('SELECT round_id, contract FROM entries WHERE entry_id = ?')
       .get(c.entryId);
