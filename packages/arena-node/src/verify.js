@@ -1030,8 +1030,9 @@ export class Verifier {
         const got = await peerJson(r);
         for (const x of (got && got.marks) || []) {
           if (!/^[0-9a-f]{64}$/.test(String(x.mark)) || !/^[0-9a-f]{64}$/.test(String(x.block))) continue;
-          this.round.noteEvidenceBlock(roundIdBytes, entryId, Uint8Array.from(Buffer.from(x.mark, 'hex')), Uint8Array.from(Buffer.from(x.block, 'hex')),
-            Number.isSafeInteger(x.seenMs) ? x.seenMs : undefined);
+          // BOUNDED PER PEER (kanban #1883, #1914, #1489): an unsigned answer cannot grow this seat's records without bound.
+          this.round.notePulledEvidenceBlock(entryId, Uint8Array.from(Buffer.from(x.mark, 'hex')), Uint8Array.from(Buffer.from(x.block, 'hex')),
+            Number.isSafeInteger(x.seenMs) ? x.seenMs : undefined, peer);
         }
       } catch { /* a signer node that cannot answer shows nothing */ }
     }
