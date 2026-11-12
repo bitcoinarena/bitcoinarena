@@ -304,8 +304,9 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
    */
   const COLS = ['plan_id', 'federation', 'plan', 'txid', 'preimage', 'refund_txid', 'why', 'claim_txid', 'claim_msat', 'planned_at', 'attempt', 'submit_sig', 'refund_sig'];
   // `release`: the inputs this proposal held are freed first (kanban #1159: an expired plan, or the plan that replaces it)
-  function transition(pid, from, to, fields = {}, { plan = null, rows = [], release = false } = {}) {
-    if (!canMove(from, to)) return refuse(`a payout does not go from ${from || 'no record'} to ${to}`, 409);
+  // `overShort` (kanban #2543): a SHORT that was only said, replaced by the payment record the federation confirms (learn)
+  function transition(pid, from, to, fields = {}, { plan = null, rows = [], release = false, overShort = false } = {}) {
+    if (!canMove(from, to) && !(overShort && from === PAYOUT.SHORT && SHORT_OVERRIDDEN_BY.has(to))) return refuse(`a payout does not go from ${from || 'no record'} to ${to}`, 409);
     const set = Object.fromEntries(Object.entries(fields).filter(([k, v]) => COLS.includes(k) && v !== undefined));
     db.exec('SAVEPOINT reserve_payout_step');
     try {
@@ -342,6 +343,8 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
   const say = (rec) => broadcast(signed(rec));
   // THE STATES A PASS LEAVES ALONE, and the fields a new attempt starts from (kanban #1159)
   const DONE = new Set([PAYOUT.PAID, PAYOUT.SHORT, PAYOUT.REFUNDED, PAYOUT.CLAIMED]);
+  // THE PAYMENT RECORDS A SAID SHORTFALL GIVES WAY TO (kanban #2543): a transaction the federation took is what happened
+  const SHORT_OVERRIDDEN_BY = new Set([PAYOUT.SENT, PAYOUT.PAID, PAYOUT.REFUNDED]);
   const FRESH = { txid: null, preimage: null, refund_txid: null, submit_sig: null, refund_sig: null, why: null, claim_txid: null, claim_msat: null };
   // THIS SEAT'S CHAIN HEIGHT (kanban #1159): what `heightNow` says, else the height its last pass ran at
   let lastHeight = null;
@@ -864,8 +867,13 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
    */
   async function shortStands(rec) {
     const feds = guardians();
-    if (![...feds.values()].some((g) => g && g.signer)) return { ok: true };
     const lb = (leaderboards() || []).find((x) => x.id === rec.proposal);
+    // A SEAT THAT PAYS NOTHING (kanban #2543): it keeps a shortfall only of a payout it knows - a passed vote, or a leaderboard payout of the
+    // federation named. One guardian signed a SHORT for any id (one still in its vote too) and every non-signer seat kept it for good.
+    if (![...feds.values()].some((g) => g && g.signer)) {
+      if (lb) return rec.federation === lb.federation ? { ok: true } : refuse('that shortfall names another federation than the leaderboard payout');
+      return (passed() || []).some((p) => p.id === rec.proposal) ? { ok: true } : refuse('this seat has no passed vote for that proposal: it keeps no shortfall of it', 409);
+    }
     if (lb) {
       if (rec.federation !== lb.federation) return refuse('that shortfall names another federation than the leaderboard payout');
       const have = unspent(lb.federation);
@@ -960,6 +968,9 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
         }
       } }
     let from = had ? had.state : null, release = false;
+    // A SHORT THAT WAS ONLY SAID (kanban #2543): a guardian's signed shortfall is not the last word against the payment record the federation
+    // confirms (federationSays below) - the coordinator's SENT/PAID/REFUNDED replaces it, its inputs are marked spent and its rows written
+    const overShort = !!(had && had.state === PAYOUT.SHORT && !had.plan_id && SHORT_OVERRIDDEN_BY.has(rec.state));
     if (had && had.plan_id && had.plan_id !== rec.planId) {
       // ANOTHER PLAN OF THE PROPOSAL (kanban #1159): a later attempt over one that expired (here, or - a seat that pays nothing - on the
       // guardian's word), or the landed transaction of another attempt over one that went nowhere; never over a plan that went on
@@ -967,7 +978,7 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
       if (!r.ok) return r;
       from = r.from; release = true;
     }
-    if (from && !canMove(from, rec.state)) return { ok: true, kept: from };
+    if (from && !canMove(from, rec.state) && !overShort) return { ok: true, kept: from };
     if (rec.state === PAYOUT.PLANNED && !(had && had.plan_id === rec.planId)) {
       // a PLANNED record opens the plan here: from the turn's guardian, where this seat can tell the turn (kanban #1159)
       const known = Number.isInteger(startOf(rec.plan)) && Number.isInteger(tipNow());
@@ -1002,7 +1013,7 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     const t = transition(rec.proposal, from, rec.state, { plan_id: rec.planId, federation: rec.plan.federation, plan: JSON.stringify(rec.plan), txid: rec.txid || (same && had.txid) || null,
       preimage: rec.preimage || (same && had.preimage) || null, refund_txid: rec.refundTxid || null, why: typeof rec.why === 'string' ? rec.why.slice(0, 500) : null,
       claim_txid: rec.claimTxid || null, claim_msat: rec.claimMsat ? String(rec.claimMsat) : null, attempt: attemptOf(rec.plan),
-      ...(same ? {} : { planned_at: tipNow() }) }, { plan: rec.plan, rows, release });
+      ...(same ? {} : { planned_at: tipNow() }) }, { plan: rec.plan, rows, release, overShort });
     return t.ok ? { ok: true, kept: rec.state } : t;
   }
   async function mayReplace(had, rec) {
