@@ -2343,6 +2343,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // and this signer node's own receipt. Each other signer node applies the same rule to the
   // same signed tick. What each answered is kept by entry, for whoever asks.
   const firstMarkForwards = new Map();
+  const FIRST_MARK_REOFFERS = 5, FIRST_MARK_STAKE_REOFFER_MS = 2500;   // kanban #2527: the relay hands a lock on within ~2 s (named apart from #2387's re-offer clock)
   const firstMarkOf = (data, isBinary) => {
     if (!isBinary) return null;
     const bytes = new Uint8Array(data);
@@ -2387,6 +2388,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   }
   // A RE-OFFER GOES ONLY WHERE NO ANSWER IS KEPT (kanban #2353, #2357, refute of #2267/#1862): `only` names the peers this
   // call may reach; the record then keeps every other peer's earlier answer instead of being overwritten.
+  const reoffers = new Map();               // entry hex -> re-offers left (kanban #2527)
+  function reofferSoon(f) {
+    const key = toHex(f.c.entryId);
+    const left = reoffers.has(key) ? reoffers.get(key) : FIRST_MARK_REOFFERS;
+    if (left <= 0) return;
+    reoffers.set(key, left - 1);
+    if (reoffers.size > 4096) reoffers.delete(reoffers.keys().next().value);
+    const t = setTimeout(() => {
+      const r = round.get(f.c.roundId);
+      if (!r || r.state === CLOSED) return;   // a closed round takes no mark
+      forwardFirstMark(f).catch((e) => console.error(`[first-mark] ${e.message}`));
+    }, FIRST_MARK_STAKE_REOFFER_MS);
+    if (t.unref) t.unref();
+  }
+
   async function forwardFirstMark({ bytes, c }, { ask = null, only = null, tick = null } = {}) {
     const id = checkpointId(c);
     const eh = toHex(c.entryId);
@@ -2442,6 +2458,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const kept = Array.isArray(before) ? before.filter((x) => !asked.has(x.peer)) : [];
       firstMarkForwards.set(toHex(c.entryId), kept.concat(said));
     } else firstMarkForwards.set(toHex(c.entryId), said);
+    // A PEER THAT REFUSED IT "STAKE NOT SEEN" IS OFFERED IT AGAIN (kanban #2527, the stake-not-seen variant of #2411): the lock
+    // reaches it a moment later - the client's own post, or the relay, which hands an entry's locks on (#1598) - and then it
+    // takes the mark. An honest client sends its marks again and re-offers the first this way (afterMarkTaken); a player who
+    // left out POST /lock there and walked away after its first mark sends nothing more, and that one refusal, kept, made
+    // the walk-away VOID (stake and fee lock back) instead of FORFEIT. A few tries, a few seconds apart, while the round is open.
+    if (held && !voided && said.some((s) => s.answer === 'refused' && String(s.why || '').startsWith(STAKE_NOT_SEEN))) reofferSoon({ bytes, c });
     // A PEER REFUSED THIS FIRST MARK AS A CONFLICT (409): it may hold another one
     // - pull its proof, and on two first marks gather the shares while the signer nodes
     // are up. Not on a 404 (a signer node that has not taken the entry yet holds no

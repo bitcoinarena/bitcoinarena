@@ -35,7 +35,7 @@ import {
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
-import { namesNoDraw, mediansPrices, FRONTEND_FEE_VERSION, ITEMS_VERSION, objectionWindowFits } from '../../arena-protocol/src/constants.js';
+import { namesNoDraw, mediansPrices, FRONTEND_FEE_VERSION, ITEMS_VERSION, objectionWindowFits, STAKE_NOT_SEEN } from '../../arena-protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
 import { entryFeeBpsForRound, entryPaysReserves, roundSplit, RESERVES_NODE_FEE_BPS, entryGiftsInFee, giftsEntryExpected, giftsFeeBps, ROUND_SPLIT_BPS } from '../../arena-protocol/src/reserves.js';
 import { roundSplitBps } from '../../arena-protocol/src/fee-proposal.js';
@@ -3152,11 +3152,28 @@ export class Round {
     return decided.outcome ? null : c;
   }
 
+  /** Whether a kept refusal is a stake-not-seen one and this seat saw that stake before the round's end (kanban #2527). */
+  #stakeRefusalMadeGood(entryIdBytes, row) {
+    if (!String(row.why || '').startsWith(STAKE_NOT_SEEN)) return false;
+    const seen = this.stakeSeen(entryIdBytes);
+    if (!seen || seen.seenMs === null || seen.seenMs === undefined) return false;
+    try {
+      const held = this.get(new Uint8Array(row.round_id));
+      return !!held && BigInt(seen.seenMs) < BigInt(roundEndMs(decodeRoundContract(new Uint8Array(held.contract))));
+    } catch { return false; }
+  }
+
   /** The on-time first mark this signer node, up, refused - or null. */
   refusedFirstMark(entryIdBytes) {
     const r = this.db.prepare('SELECT * FROM refused_first_marks WHERE entry_id = ?').get(entryIdBytes);
     // A ROW AN EARLIER BUILD KEPT FOR A REFUSAL THE PLAYER CAUSED (kanban #2411) is not served, nor read, as one
     if (r && playerCausedRefusal(r.why)) return null;
+    // A STAKE-NOT-SEEN REFUSAL THIS SEAT MADE GOOD IN TIME (kanban #2527, the stake-not-seen variant of #2411): it saw the
+    // stake before the round's end - from the client or the relay, which hands an entry's locks on (#1598) - so the mark sent
+    // again would have been taken, as an honest client sends it ("a wait, said as one"). A player who leaves out POST /lock
+    // here and sends the mark only here first must not turn its walk-away into VOID that way. A stake still unseen at the
+    // round's end stays the operator side's refusal (§13C, M3.3-34).
+    if (r && this.#stakeRefusalMadeGood(entryIdBytes, r)) return null;
     return r ? { roundId: new Uint8Array(r.round_id), mark: new Uint8Array(r.mark), why: r.why, atMs: r.at_ms } : null;
   }
 
