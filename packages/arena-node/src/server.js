@@ -281,12 +281,37 @@ const BODY_MOST = Number(process.env.ARENA_BODY_MOST) > 0 ? Number(process.env.A
 // for ever - a stranger filled the disk with random blobs under their own hash). At most RELAY_MOST bytes in `relayed` over both doors
 // (256 MiB, ARENA_RELAY_MOST); past it a door answers 507 and keeps nothing.
 const RELAY_MOST = Number(process.env.ARENA_RELAY_MOST) > 0 ? Number(process.env.ARENA_RELAY_MOST) : 256 * 1024 * 1024;
+// ALL BODIES IN FLIGHT SHARE ONE BUDGET (kanban #1724, #1794, refute of #1469): the limit above is per request, so a stranger who
+// opened many connections and sent just under it on each, never ending the body, kept every partial body (measured: 48 bodies
+// of ~3.9 MiB pinned +190 MiB). BODY_BUDGET (four bodies at the limit, 32 MiB by default; ARENA_BODY_BUDGET, never below BODY_MOST) is
+// what all unfinished bodies of this process may hold together; a chunk past it ends that request (503 where it can still be said)
+// and frees what it held. A door's message is a few kilobytes, so honest traffic never comes near it.
+const BODY_BUDGET = Math.max(BODY_MOST, Number(process.env.ARENA_BODY_BUDGET) > 0 ? Number(process.env.ARENA_BODY_BUDGET) : 4 * BODY_MOST);
+let bodiesInFlight = 0;
 const read = (req, max = BODY_MOST) => new Promise((resolve, reject) => {
-  const parts = []; let size = 0;
+  const parts = []; let size = 0; let held = 0; let done = false;
+  const finish = () => { if (done) return false; done = true; bodiesInFlight -= held; parts.length = 0; return true; };
+  const refuse = (e) => { if (!finish()) return; reject(e); try { req.destroy(); } catch { /* gone */ } };
+  const tooLarge = () => { const e = new Error(`a body of more than ${max} bytes`); e.tooLarge = true; return e; };
+  const busy = () => { const e = new Error('this node holds as many unfinished bodies as it takes; try again'); e.busy = true; return e; };
+  // a declared length is taken from the budget before a byte is read, so a refused body costs nothing (kanban #1724, #1794)
+  const declared = Number(req.headers && req.headers['content-length']);
+  if (Number.isSafeInteger(declared) && declared > 0) {
+    if (declared > max) return refuse(tooLarge());
+    if (bodiesInFlight + declared > BODY_BUDGET) return refuse(busy());
+    held = declared; bodiesInFlight += declared;
+  }
   // A DOOR'S OWN LIMIT (kanban #1271): past `max` bytes the body is not kept, the request ends, and the door answers 413
-  req.on('data', (c) => { size += c.length; if (size > max) { parts.length = 0; const e = new Error(`a body of more than ${max} bytes`); e.tooLarge = true; reject(e); try { req.destroy(); } catch { /* gone */ } return; } parts.push(c); });
-  req.on('end', () => resolve(new Uint8Array(Buffer.concat(parts))));
-  req.on('error', reject);
+  req.on('data', (c) => {
+    if (done) return;
+    if (size + c.length > max) return refuse(tooLarge());
+    const grow = Math.max(0, size + c.length - held);
+    if (grow && bodiesInFlight + grow > BODY_BUDGET) return refuse(busy());
+    size += c.length; held += grow; bodiesInFlight += grow; parts.push(c);
+  });
+  req.on('end', () => { if (done) return; const body = new Uint8Array(Buffer.concat(parts)); finish(); resolve(body); });
+  req.on('error', (e) => { if (finish()) reject(e); });
+  req.on('close', () => { if (finish()) reject(new Error('the request ended before its body')); });
 });
 
 // A BROWSER IS THE CLIENT, and a browser will never be on this origin.
@@ -6297,6 +6322,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // The message is the reason - "the round is closed", "no such entry" -
       // because a node that answers "400" to everything makes a client guess.
       if (e && e.tooLarge) { try { return text(res, 413, e.message); } catch { return undefined; } }   // kanban #1469
+      if (e && e.busy) { try { return text(res, 503, e.message); } catch { return undefined; } }   // kanban #1724, #1794
       return text(res, 400, e.message);
     }
   });
@@ -11543,6 +11569,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // and the whole announced grid: its game and first close, so a marker counts only for its own app's day (kanban #1204 FED-C1)
       announcedOf: (idHex) => announced.get(String(idHex)) || null });
   };
+  // A SLOW BODY IS DROPPED (kanban #1724, #1794): a request not received whole within REQUEST_MS (120 s, ARENA_REQUEST_TIMEOUT_MS;
+  // Node's default is 300 s) ends, and the budget share its body held is freed
+  const REQUEST_MS = Number(process.env.ARENA_REQUEST_TIMEOUT_MS) > 0 ? Number(process.env.ARENA_REQUEST_TIMEOUT_MS) : 120000;
+  http.requestTimeout = REQUEST_MS; http.headersTimeout = Math.min(http.headersTimeout || 60000, REQUEST_MS);
   return new Promise((resolve) => {
     http.listen(port, host, () => { dutyAttach(); resolve({
       http, wss, round, host, verifier, ghosts, roster, stakeSecrets,

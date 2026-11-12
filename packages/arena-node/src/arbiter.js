@@ -39,6 +39,10 @@ import { keyedPay, runPayouts } from './keyed-payout.js';
 import { nonceGen, bondSigningContext, bondPartialSign, MusigError } from './musig2.js';
 import { pluginForRound, hostedPlugins, itemUnlocksOf } from './plugins.js';
 
+// the arbiter's body limits (kanban #1724, #1794; see serveArbiter)
+const ARBITER_MUSIG_MOST = 64 * 1024;
+const ARBITER_CLAIM_MOST = 1024 * 1024;
+
 /** THE ROUND'S CORE, as a seat's verifier resolves it (verify.js #coreOf): its plugin's, with the round's world rule. */
 export function coreForRound(contract, roundIdBytes, plugins) {
   const found = pluginForRound(contract, hostedPlugins(plugins));
@@ -392,6 +396,26 @@ export { REPLAY_CONTRADICTS };
 export async function serveArbiter({ set, allow, port = 0, host = '127.0.0.1', posted = [], payouts = () => [], claims = null, liquidationPayouts = () => [] }) {
   const { createServer } = await import('node:http');
   const party = musigParty({ set, allow });
+  // EVERY ARBITER BODY HAS A LIMIT (kanban #1724, #1794, refute of #1469: these doors buffered a body of any size as a string before
+  // JSON.parse, so one large POST filled the memory of the service that signs slash and liquidation payouts). A nonce or partial
+  // request is a few hundred bytes (ARBITER_MUSIG_MOST, 64 KiB); a claim carries notes (ARBITER_CLAIM_MOST, 1 MiB). Past it the body
+  // is dropped, the request ended, and the door answers 413 where it still can.
+  const readBody = (req, max) => new Promise((resolve, reject) => {
+    const parts = []; let size = 0; let done = false;
+    req.on('data', (c) => {
+      if (done) return;
+      size += c.length;
+      if (size > max) { done = true; parts.length = 0; const e = new Error(`a body of more than ${max} bytes`); e.tooLarge = true; reject(e); try { req.destroy(); } catch { /* gone */ } return; }
+      parts.push(c);
+    });
+    req.on('end', () => { if (!done) { done = true; resolve(Buffer.concat(parts).toString('utf8')); } });
+    req.on('error', (e) => { if (!done) { done = true; parts.length = 0; reject(e); } });
+    req.on('close', () => { if (!done) { done = true; parts.length = 0; reject(new Error('the request ended before its body')); } });
+  });
+  const jsonBody = async (req, res, max, answer) => {
+    let raw; try { raw = await readBody(req, max); } catch (e) { if (e && e.tooLarge) { try { answer(413, { ok: false, why: e.message }); } catch { /* gone */ } } return null; }
+    try { return { body: JSON.parse(raw) }; } catch { answer(400, { ok: false, why: 'a JSON body' }); return null; }
+  };
   const server = createServer(async (req, res) => {
     const answer = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'access-control-allow-origin': '*' }); res.end(JSON.stringify(body)); };
     const url = new URL(req.url, 'http://x');
@@ -414,14 +438,17 @@ export async function serveArbiter({ set, allow, port = 0, host = '127.0.0.1', p
     if (url.pathname === '/liquidation-claims' && claims) {
       if (req.method === 'GET') { const p = await claims.plan(url.searchParams.get('federation')); return answer(p.ok ? 200 : (p.status || 409), p); }
       if (req.method === 'POST') {
-        let body; try { body = JSON.parse(await new Promise((r) => { let s = ''; req.on('data', (d) => { s += d; }); req.on('end', () => r(s)); })); } catch { return answer(400, { ok: false, why: 'a JSON body' }); }
+        const got0 = await jsonBody(req, res, ARBITER_CLAIM_MOST, answer); if (!got0) return undefined;
+        const { body } = got0;
         // a pending-output claim (§23A.5 "Notes still in issuance at the halt") names `pending`; a note claim `ecash`
         const got = Array.isArray(body && body.pending) ? await claims.offerPending(body) : await claims.offer(body);
         return answer(got.ok ? 200 : (got.status || 409), got);
       }
     }
     if (req.method !== 'POST' || !['/musig/nonce', '/musig/partial'].includes(url.pathname)) return answer(404, { ok: false, why: 'no such door' });
-    let body; try { body = JSON.parse(await new Promise((r) => { let s = ''; req.on('data', (d) => { s += d; }); req.on('end', () => r(s)); })); } catch { return answer(400, { ok: false, why: 'a JSON body' }); }
+    const got1 = await jsonBody(req, res, ARBITER_MUSIG_MOST, answer); if (!got1) return undefined;
+    const { body } = got1;
+    if (!body || typeof body !== 'object') return answer(400, { ok: false, why: 'a JSON object' });
     if (url.pathname === '/musig/nonce') {
       const ok32 = (h) => /^[0-9a-f]{64}$/.test(String(h));
       if (!body.sessionId || !ok32(body.nodeKey) || !ok32(body.tweak) || !ok32(body.msg)) return answer(400, { ok: false, why: 'a session id, a node key, a tweak and a message (32 bytes each, hex)' });
