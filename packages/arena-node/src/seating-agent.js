@@ -166,6 +166,14 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     if (had) {
       const old = new Uint8Array(had.cert);
       if (toHex(old) === toHex(bytes)) return { ok: true, kept: false };
+      // A SEATING ITS SIGNERS LEFT IS NO EQUIVOCATION (kanban #1812, wf1489 r6 census-1): honest seats re-sign only forward in #738's order
+      // (seatingBefore), so a certificate for a seating that comes before the one held is made of signatures they gave up - one member that
+      // read them (GET /seating-batch), drove the others on and then signed the old seating as well would otherwise void the round and name
+      // the honest seats as equivocators. It is refused as superseded; only seatings that are not ordered prove equivocation.
+      if (seatingBefore({ drawnKeys: check.drawn }, v.seating.seated.map(toHex), decodeSeated(old))) {
+        log(`[seating] ${toHex(rid).slice(0, 16)} ${role}: a certificate for a seating before the one held refused (superseded)`);
+        return { ok: false, why: 'superseded: that seating comes before the one certified here' };
+      }
       const e = seatingEquivocation(old, bytes, check);
       if (!e.ok) return { ok: false, why: e.why };
       db.prepare('INSERT OR IGNORE INTO seat_equivocations (round_id, role, a, b) VALUES (?, ?, ?, ?)').run(rid, role, old, bytes);
