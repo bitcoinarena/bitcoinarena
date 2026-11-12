@@ -4,13 +4,15 @@
 // ONCE at intake from the history THIS seat has decided at that moment (proposals.js add -> historyFor -> ballot-tally historyAt).
 // A seat that has not yet heard of an earlier proposal (posted to one seat; the peer pull runs every 10 min) reads a repeal as an
 // ordinary proposal, keeps another voting window, never checks the record again - and the two seats count different votes.
+// RULED 2026-11-12 (kanban #2012 (c), built #2562): the deposit commits H(proposal), so a seat takes it at any time - X's late pull
+// is as good as Y's early POST, and both seats hold P and R on one schedule.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { createProposals } from '../src/proposals.js';
 import { createBallotTally } from '../src/ballot-tally.js';
 import { encodeConfigProposalBody, proposalBodyId, proposalId, encodeVote, voteMessage, CLASS, CHOICE, SCHEDULES, REPEAL_SCHEDULES, configHashOf } from '../../arena-protocol/src/ballot.js';
-import { depositOutputsExpected, BALLOT_GENESIS } from '../../arena-protocol/src/ballot-chain.js';
+import { depositOutputsExpected, depositCommitmentScript, BALLOT_GENESIS } from '../../arena-protocol/src/ballot-chain.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 
@@ -27,14 +29,15 @@ const CENSUS = [{ pubkey: proposer, outpoint: 'aa:0', bondSats: 50000000n }];
 /** A proposal with its deposit transaction, published in block `block` at `height`. */
 function proposal({ parent, config, activationHeight, sats, height, block }) {
   const want = depositOutputsExpected(sats, SET);
-  const raw = tx(want.outputs.map((o) => ({ sats: o.sats, script: o.script })));
-  const p = { networkId: NET, parent, configHash: configHashOf(config), config, class: CLASS.DESIGN, activationHeight, proposer,
-    depositTxid: Uint8Array.from(parseTransaction(raw).txid) };
+  // BOUND (kanban #2562): the deposit commits to its proposer and the proposal's bytes
+  const body = { networkId: NET, parent, configHash: configHashOf(config), config, class: CLASS.DESIGN, activationHeight, proposer };
+  const raw = tx([...want.outputs.map((o) => ({ sats: o.sats, script: o.script })), { sats: 0, script: depositCommitmentScript(body) }]);
+  const p = { ...body, depositTxid: Uint8Array.from(parseTransaction(raw).txid) };
   const signature = schnorr.sign(proposalBodyId(p), secret);
   return { p, idBytes: proposalId({ ...p, signature }), raw, height, block, hex: toHex(Uint8Array.from([...encodeConfigProposalBody(p), ...signature])),
     txidDisplay: toHex(Uint8Array.from(p.depositTxid).reverse()) };
 }
-const voteFor = (idBytes, choice, height, txid) => ({ payload: encodeVote({ proposalId: idBytes, choice, signature: schnorr.sign(voteMessage(idBytes, choice), secret) }), height, txid });
+const voteFor = (idBytes, choice, height, txid, seq = 1) => ({ payload: encodeVote({ proposalId: idBytes, choice, seq, signature: schnorr.sign(voteMessage(idBytes, choice, seq), secret) }), height, txid });
 
 /** One seat: proposals.js + ballot-tally.js over one shared fake chain, wired as server.js wires them (regtest schedules). */
 function seat(chain) {
@@ -44,13 +47,13 @@ function seat(chain) {
     recipientsFor: () => SET, lowestBondMinSatsFor: () => 100000n, verify,
     scheduleFor: () => SCHEDULES.regtest, repealScheduleFor: () => REPEAL_SCHEDULES.regtest,
     historyFor: (net, height) => (tallyRef ? tallyRef.historyAt(net, height) : null),
-    censusAt: async () => CENSUS, store: { read: () => [], write: () => {} } });
+    censusAt: async () => CENSUS, store: { read: () => [], write: () => {} }, bindHeightFor: () => 0 });   // regtest's gate (kanban #2562)
   tallyRef = createBallotTally({ proposals, tipHeight: async () => chain.tip, votesAt: async (h) => chain.votes.get(h) || [], censusAt: async () => CENSUS, verify,
     decideDepthFor: () => 1, minDecideDepthFor: () => 1 });
   return { proposals, tally: tallyRef };
 }
 
-test('wf1489-sm2-census-1: a repeal taken by a seat that has not yet heard of the proposal it repeals gets another voting window there, for good', { todo: 'kanban #2012 (spec question): #1608 refuses a proposal pulled after its voting began, so this seat never takes it - waiting for the ruling' }, async () => {
+test('wf1489-sm2-census-1: a repeal taken by a seat that has not yet heard of the proposal it repeals gets another voting window there, for good', async () => {
   const chain = { tip: 200, deposits: new Map(), votes: new Map() };
   // P: genesis -> C1, published at 200, activates at 208; the bond votes YES at 201
   const P = proposal({ parent: BALLOT_GENESIS.configHash, config: Uint8Array.of(1, 2, 3), activationHeight: 208, sats: 1000, height: 200, block: 'b2'.repeat(32) });
