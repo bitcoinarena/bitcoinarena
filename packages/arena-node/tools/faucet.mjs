@@ -331,6 +331,7 @@ async function paymentFinal(payer, hash) {
   return r.timedOut || last ? 'IN_FLIGHT' : null;
 }
 const UNSURE_KEEP_MS = 24 * 3600 * 1000;
+const UNSURE_CAP = 500;   // kanban #2132: grant() refuses while `unsure` holds this many; grantPay never cuts the list
 // OUT OF THE PLAYERS' QUEUE, AND ONLY ITS OWN CHANGES (audit 6 re-check N3/N4, kanban #1426): in the queue its lncli reads held welcomes past the page's
 // 45 s again, and saving the book it had read before its awaits dropped refill rows written meanwhile. The reads run first; the book is read again
 // and only this sweep's decisions, by payment hash, are applied to it in one synchronous step
@@ -385,6 +386,9 @@ async function grant(ask) {
   book.players = book.players || [];
   const onWay = unsureWelcome(book, ask);   // kanban #1834
   if (onWay) return onWay;
+  // FAIL CLOSED WHEN `unsure` IS FULL (kanban #2132): an invoice grant may end in `unsure`, and no unsure row is ever dropped for room - so while it
+  // holds UNSURE_CAP rows no new invoice grant is paid (the sweep empties it as payers give their final word); a pool note adds no unsure row
+  if ((book.unsure || []).length >= UNSURE_CAP) return { ok: false, why: 'the faucet is checking earlier payments: try again in a few minutes' };
   const d = playerGrantDecide({ kind: ask.kind, account: ask.account, ip: ask.ip, invoiceSats: Number(inv.num_satoshis) }, withUnsure(book));
   if (!d.ok) return d;
   const row = { account: ask.account, kind: ask.kind, ip: ask.ip, sats: d.grant.invoiceSats, atMs: Date.now(), hash: inv.payment_hash };
@@ -423,7 +427,10 @@ async function grantPay(ask, inv, d, book, row) {
   const after = readBook();
   after.players = (after.players || []).filter((p) => p.hash !== row.hash);
   // a payer that timed out may still pay it (kanban #1421): kept in `unsure` for the sweep, booked again if any payer says SUCCEEDED
-  after.unsure = [...(after.unsure || []), { ...row, payers: askedPayers, removedMs: Date.now() }].slice(-500);
+  // NEVER CUT FOR ROOM (kanban #2132, re-check of #1628/#1834): `.slice(-500)` dropped the oldest unsure rows, so 500 more unsure grants of fresh
+  // accounts pushed a welcome still in flight out, and its account was paid a second welcome. A row leaves `unsure` only through the sweep (rebooked or
+  // forgotten); the cap is held in grant(), which pays nothing while `unsure` is full
+  after.unsure = [...(after.unsure || []), { ...row, payers: askedPayers, removedMs: Date.now() }];
   saveBook(after);
   console.log(`${new Date().toISOString()} player ${ask.kind} not paid: ${tried.join(' | ')}`);
   return { ok: false, why: 'the faucet could not pay just now: try again in a minute' };
