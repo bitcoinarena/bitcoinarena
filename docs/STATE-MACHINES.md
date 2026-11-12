@@ -1594,3 +1594,7 @@ Audit 5 (#1399, base 1502786b) and audit 6 (#1415, base eb7fd30fc) for release 2
 
 #### SM-E (change) Stake lock / fee lock per entry (one player key, one entry: kanban #1215, #1640)
 - A player key's stake lock and fee lock stand on ONE entry of the round at a seat. A lock of either kind is refused while another entry of the same player key holds a verified lock of either kind there (`otherStakedUnderKey`, stake-lock-signer-node.js), at the door and again at the write. The entry whose lock stood first owns the key; a reload's second entry under the same key (join.js playerFor) gets no lock, so an entry waiting for its fee lock (`waitsForFeeLock`) is never left beside another entry holding the key's fee lock, where neither could ever be seen.
+
+#### SM-H2H-MATCH (change) Match record waits for the round before (kanban #1748)
+- match.js `matchOf` keeps a round's match record (INSERT OR IGNORE, never revisited) only once the round before it in the match (the last earlier round of this game either identity played, within MATCH_CONTINUE_MS) is decided here or is not a match. While that round is held with its two entries named and a result still missing, and it is open or closed less than an hour ago (`UNDECIDED_GRACE_MS`: its close waiting on its members, a slow peer's /reveals, a restart resuming closes), nothing is kept and the round answers no match yet; the same holds down the chain.
+- Invariant: a round's kept match record does not depend on the order in which this seat decided its rounds - every seat keeps and signs the same score.
