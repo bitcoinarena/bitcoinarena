@@ -25,6 +25,7 @@ import { attestedClaimKey } from '../../arena-client/src/join.js';
 import { pageCurve } from '../../arena-client/src/page-curve.js';
 import { hiddenMove, moveCommitment, revealMove } from '../../arena-client/src/head-to-head.js';
 import { decodeRoundContract, roundId, encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
+import { markBot, entryKeys } from './mark-bot.mjs';   // kanban #2035: every live entry marked bot in the explorer
 import { dealHandout, encodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
 import { entrySplit, lockEntry } from './entry-locks.mjs';
@@ -157,6 +158,8 @@ async function enter(c, rid, ready) {
   const hidden = hiddenMove(randomInt(3), rand);      // evenly: rock, paper, scissors
   entry.commit = moveCommitment({ roundId: rid, sessionPubkey: entry.sessionPubkey, move: hidden.move, salt: hidden.salt });
   const eid = entryId(entry);
+  // MARKED BOT IN THE EXPLORER AS IT GOES OUT (kanban #2035): by the admin code, so the real-player count stays true
+  markBot(entryKeys(eid, entry)).then((m) => { if (!m.ok) log({ step: 'not marked bot', entry: toHex(eid).slice(0, 8), why: m.why }); });
   appendFileSync(join(DIR, 'keys.jsonl'), `${JSON.stringify({ at: new Date().toISOString(), round: roundHex, entry: toHex(eid), player: 'bot', secret: toHex(me.secret),
     stake: `${toHex(locks.stake.outpoint.txid)}:${locks.stake.outpoint.outIdx}`, fee: locks.fee ? `${toHex(locks.fee.outpoint.txid)}:${locks.fee.outpoint.outIdx}` : null })}\n`);
   const hand = locks.fee ? locks.fee.fields : null;

@@ -81,6 +81,17 @@
     // no money - preferences, caches, connections - goes through this one door; a tab's player and money are vault()'s and the seed
     // keeper's (join.test.js names the three)
     window.ARENA_BROWSER_STORE = function () { try { return window.localStorage; } catch (e) { return null; } };
+    // EVERY ENTRY THIS BROWSER MAKES, KEPT AS IT GOES OUT (kanban #2035, measured 2026-11-12: three RPS entries of a test browser on the admin's address
+    // were never marked - the marker read only the paid lock's notes, written once a lock was committed, and those rounds' locks never were; a free entry
+    // writes none): a run's join and a pick's or a hidden move's entry - whatever game client asked for it - name their entry id here before the seats
+    // are asked, and an admin browser tells the explorer at once (ARENA_ADMIN_REPORT, by the code or by address)
+    window.ARENA_MADE_ENTRY = function (idHex) {
+      var id = String(idHex || '').toLowerCase(); if (!/^[0-9a-f]{64}$/.test(id)) return;
+      try { var S = window.ARENA_BROWSER_STORE(), k = 'arena.made.entries', a = JSON.parse(S.getItem(k) || '[]'); if (!Array.isArray(a)) a = [];
+        if (a.indexOf(id) < 0) { a.push(id); S.setItem(k, JSON.stringify(a.slice(-500))); } } catch (e) { /* no store: the report below still has it */ }
+      (window.ARENA_MADE_NOW = window.ARENA_MADE_NOW || []).push(id);
+      if (window.ARENA_ADMIN_REPORT) { try { window.ARENA_ADMIN_REPORT(); } catch (e) { /* the timer asks again */ } }
+    };
     // THE OLD NAMES, READ ONLY BY WHAT IS ALREADY OUT (kanban #522): the page keeps every value under ARENA_*. Rock Paper Scissors 1-3's
     // pinned clients read window.parent.BLWP_JOIN, BLWP_JOIN_ANSWER and BLWP_ROW_NODES, and Unity build 524 calls BLWPCLIENT and BLWP_CURVE
     // (the next Unity build calls ARENACLIENT / ARENA_CURVE): each old name reads and writes its ARENA_ value, nothing is kept under it
@@ -2155,16 +2166,19 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             if (k.startsWith('arena.ledger.') && !k.startsWith('arena.ledger.read.')) { for (const r of JSON.parse(S.getItem(k) || '[]')) if (r) add(r.entry); }
             else if (k.startsWith('arena.lock.saved.')) add((JSON.parse(S.getItem(k) || 'null') || {}).committedTo);
             else if (k.startsWith('arena.pending.') && k !== 'arena.pending.mine') add(k.split('.').pop());
+            else if (k === 'arena.made.entries') { for (const x of JSON.parse(S.getItem(k) || '[]')) add(x); }   // kanban #2035: every entry made, free or paid
           } catch { /* not ours */ }
         }
+        for (const x of (window.ARENA_MADE_NOW || [])) add(x);   // and those of a browser that keeps nothing
         let sent = []; try { sent = JSON.parse(store.getItem('arena.admin.marked') || '[]'); } catch { sent = []; }
         const fresh = [...ids].filter((x) => !sent.includes(x)).slice(0, 500);
         // the admin's address is told once a page load, entries or not (kanban #1414): a fresh admin browser registers it too
         if (!fresh.length && (byAddress || addressTold)) return;
         if (!byAddress) addressTold = true;
         try {
-          const r = await fetch('https://explorer.bitcoinarena.io/api/' + (byAddress ? 'mark-ip' : 'mark'), { method: 'POST', headers: { 'content-type': 'application/json' },
-            body: JSON.stringify(byAddress ? { keys: fresh, kind: navigator.webdriver ? 'bot' : 'owner' } : { kind: 'owner', keys: fresh, code: adminCode }) });   // kanban #1466: a browser under automation is a bot
+          // KEEPALIVE (kanban #2035): a test script closes its browser seconds after the tap; the mark still goes out
+          const r = await fetch('https://explorer.bitcoinarena.io/api/' + (byAddress ? 'mark-ip' : 'mark'), { method: 'POST', keepalive: true, headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(byAddress ? { keys: fresh, kind: navigator.webdriver ? 'bot' : 'owner' } : { kind: navigator.webdriver ? 'bot' : 'owner', keys: fresh, code: adminCode }) });   // kanban #1466, #2035: a browser under automation is a bot, by address or by code
           // by address the explorer takes only the entries it holds (kanban #1420): those count as sent, the rest are asked again next minute
           if (r.ok) { let took = fresh; if (byAddress) { try { const j = await r.json(); took = Array.isArray(j.took) ? j.took : []; } catch { took = []; } }
             store.setItem('arena.admin.marked', JSON.stringify(sent.concat(took).slice(-5000))); }
@@ -2195,7 +2209,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         // the admin code; again each minute for the rounds joined since
         const report = () => markOwn(false);
         window.ARENA_ADMIN_REPORT = report;
-        setTimeout(report, 5000); setInterval(report, 60000);
+        report(); setTimeout(report, 5000); setInterval(report, 60000);
       } else {
         // ADMIN BY ADDRESS (kanban #1414, Daniel 2026-11-10: "Wenn ich einen anonymen browser aufmache von einer IP die davor einen admin key hatte müssen
         // wir das auch erkennen und ihn als admin flaggen obwohl die session neu ist"): a browser with no code asks the explorer whether its address sent
@@ -2209,7 +2223,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             const byIp = () => markOwn(true);
             window.ARENA_ADMIN_REPORT = byIp;
             // A TEST BROWSER LIVES SECONDS (kanban #1466): under automation the entries are told every 5 s, before the script closes it
-            setTimeout(byIp, 5000); setInterval(byIp, navigator.webdriver ? 5000 : 60000);
+            byIp(); setTimeout(byIp, 5000); setInterval(byIp, navigator.webdriver ? 5000 : 60000);   // kanban #2035: the entries made before this answer, at once
           }
         } catch { /* not known: a player */ }
       }
@@ -3467,6 +3481,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
               client.__txWrapped = true;
               const join = client.join.bind(client);
               client.join = async function (entry) {
+                try { if (window.ARENA_MADE_ENTRY) window.ARENA_MADE_ENTRY(ARENACLIENT.toHex(ARENACLIENT.entryId(entry))); } catch { /* the join still goes */ }   // kanban #2035
                 const out = await join(entry);
                 try {
                   const id = ARENACLIENT.toHex(ARENACLIENT.entryId(entry));
@@ -4636,6 +4651,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         // then the tap waited on all 14 seats' answers - seven not in the round, one silent until its 20 s timeout - 7.7 s and 22 s): as many seats as the round
         // seats (its settlement slots) took the entry, the move is the tab's; the rest answer in the background
         const seatsThatCount = Number(named.round.settlementSlots || named.round.gameVerifySlots || 0);
+        try { if (window.ARENA_MADE_ENTRY) window.ARENA_MADE_ENTRY(ARENACLIENT.toHex(ARENACLIENT.entryId(entry))); } catch { /* the move still goes */ }   // kanban #2035
         const all = ARENACLIENT.submitPick({ entry, stakeLock, nodes: named.nodes, onEntries: (x) => entriesIn(x),
           onEntry: (p) => { if (seatsThatCount > 0 && p.entries.filter((x) => x.status === 201).length >= seatsThatCount) entriesIn({ entryId: p.entryId, entries: p.entries }); } });
         all.then((x) => entriesIn(x), (e) => entriesIn({ entries: [], why: e.message }));
@@ -4745,6 +4761,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         };
         const secs = (ms) => (ms / 1000).toFixed(2).replace(/\.?0+$/, (m) => (m.startsWith('.') ? '' : m)) + ' s';
         let submittedAt = null;
+        try { if (window.ARENA_MADE_ENTRY) window.ARENA_MADE_ENTRY(ARENACLIENT.toHex(ARENACLIENT.entryId(entry))); } catch { /* the pick still goes */ }   // kanban #2035
         const sent = await ARENACLIENT.submitPick({ entry, stakeLock, nodes: named.nodes, handedOut: window.ARENA_HANDED_OUT, onSubmitted: (x) => {
           early = x.entryId;
           // AN ORDER STILL PLACING AFTER 10 s KEEPS ITS LOG TOO (playtest 2026-10-24 21:26Z: "It's stuck at placing" - 0f975760's entry at six
@@ -6331,7 +6348,10 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           // darstellen"): the round's stake row says what went in; what is missing is the round's fee, kept for a round that was played
           : r.kind === 'refund' ? (() => { const st = (typeof rows !== 'undefined' ? rows : []).find((x) => x.kind === 'stake' && x.round === r.round);
               const inMsat = st ? (BigInt(st.msat || 0) < 0n ? -BigInt(st.msat || 0) : BigInt(st.msat || 0)) : 0n, back = BigInt(r.msat || 0), fee = inMsat > back ? inMsat - back : 0n;
-              return `Refund \u00b7 round ${String(r.round || '').slice(0, 8)} \u00b7 stake back${inMsat > 0n ? ` (${sat(inMsat)} staked${fee > 0n ? `, ${sat(fee)} fee kept` : ''})` : ''}`; })()
+              // WHAT CAME BACK FIRST (measured 2026-11-12 on a 412 px phone: the row is cut at "stake back (100 sat stak..." - the numbers never showed), and a
+              // shortfall is called a fee only when it is one (the round's fees are 10 % at most); a larger one is what came back so far
+              if (!(inMsat > 0n)) return `Refund \u00b7 stake back \u00b7 round ${String(r.round || '').slice(0, 8)}`;
+              return `Refund \u00b7 ${Math.floor(Number(back) / 1000).toLocaleString('en-US')} of ${sat(inMsat)} back${fee > 0n ? (fee * 10n <= inMsat ? ` (${sat(fee)} fee)` : ' so far') : ''} \u00b7 round ${String(r.round || '').slice(0, 8)}`; })()
           : r.kind === 'slash-payout' ? `Slash payout \u00b7 round ${String(r.round || '').slice(0, 8)}`
           : r.kind === 'withdrawal' ? `Withdrawal${r.state && r.state !== 'Success' ? ' (' + r.state + ')' : ''}`
           // A MOVE BETWEEN FEDERATIONS IS NO STAKE (18:4xZ: the 1,000 sat moved out of the CRITICAL b18947f0 showed "Stake · round undefine · not
@@ -7851,7 +7871,10 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         // match only from the previous round of the same game id - a v6 round, then a v5 one, started the score at 0:0. Each slot offers its
         // newest version's rounds alone.
         allRows: () => (holdForReveal() ? [] : fullRounds(sameVersionPerSlot(moneyFirst(window.ARENA_LOBBY_ROWS || [], true), game.id))).map((r) => ({ id: r.id, line: r.line, free: r.free, joinable: !!r.joinable,
-          stakeSats: r.stakeSats, entryCloseMs: r.entryCloseMs !== undefined && r.entryCloseMs !== null ? Number(r.entryCloseMs) : null,
+          // A ROUND'S STAKE FOR EVERY ROW (kanban #1481, Daniel 2026-11-11: "it must be clear that a round is 100 sats"): the lobby's rows name it in
+          // millisatoshi only, so allRows handed the game no stake and its client could not say what a paid round costs
+          stakeSats: r.stakeSats ?? (r.stakeMsat !== undefined && r.stakeMsat !== null ? Number(r.stakeMsat) / 1000 : undefined),
+          entryCloseMs: r.entryCloseMs !== undefined && r.entryCloseMs !== null ? Number(r.entryCloseMs) : null,
           startTimeMs: r.contract ? Number(r.contract.startTimeMs) : null })),
         identity: () => window.ARENA_IDENTITY || null,
         // THE PLAYER WALLET, THE PAGE'S OWN: a client never makes a deposit or a withdraw of its own - it reads

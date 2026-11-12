@@ -12183,6 +12183,19 @@ const KNOWN_GOOD_GAMES = Object.freeze({
     sharedWorld: Object.freeze([]),
     gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
   }),
+  '62899c8a8ae6f72f56d2994bb53b07e7cb0d6a6c32d0211c963cfeae0a7a2333': Object.freeze({
+    name: 'rock-paper-scissors',
+    //: manifest version 10, parent 769a4754 - version 9 in every term but its client: the hands drawn as SVG, nothing cut off above the title, a paid round's stake and fees said (kanban #1481)
+    requiredProtocolVersion: 2,
+    // ONE COMMITTEE AND ONE KEY PER TABLE (2026-10-13 ~21:10Z, pick (c)): a table's rounds - one grid series -
+    // are drawn and seated once, by the table's first round, and every 8 s round after plays on that committee's claim key
+    seatsPerTable: true,
+    cores: Object.freeze({
+      'f86afd62734989cca3004021d00879af5d57008958908ca28973100625d7f031': Object.freeze(['0d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172']),
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+  }),
   'b8b88e233baac6671c8ac6da8193f816d7f552423a3888b184018b7b49839651': Object.freeze({
     name: 'nextblock',
     // 2026.0.3: manifest version 3, parent c693585b, sells the larger truck (core f0cc7b7b), protocol 10 - added by hand
@@ -20134,10 +20147,11 @@ const slashPayoutKept = (storage, roundId, order = 0, who = null) => { try {
  */
 async function collectSlashPayout({ round, roundId, invite, seed, curve, LockClient, storage, arbiter, listed = null, fetcher, order = 0 } = {}) {
   const client = await playerWallet({ round, invite, seed, LockClient, storage });
-  const before = BigInt(await client.balanceMsat());
   const got = await redeemSlashPayout({ round, roundId, invite, seed, curve, LockClient, storage, arbiter, listed, client, order, ...(fetcher ? { fetcher } : {}) });
-  const after = BigInt(await client.balanceMsat());
-  const creditedMsat = after > before ? after - before : 0n;
+  // WHAT THE REFUND BROUGHT, NOT WHAT THE WALLET GREW WHILE IT RAN (kanban #2350, as collectIntoPlayerWallet): the page can lock the next
+  // stake from this same wallet, or an earlier lock's change finish issuing, while the arbitration service and the federation are asked.
+  // The refund's own two reads count; one another spend or issue cut counts the payout's amount; a payout read off its kept note came before.
+  const creditedMsat = got.ok && !got.kept ? broughtOf(got.amountMsat, got.balance_before, got.balance_after) : 0n;
   if (creditedMsat > 0n) ledgerAppend(storage, round.federationId, { kind: 'slash-payout', msat: String(creditedMsat), round: toHex(roundId) });
   return { ...got, creditedMsat };
 }
@@ -20188,12 +20202,14 @@ async function returnStake({ round, roundId, invite, seed, curve, LockClient, st
   // found for given ContractId", asked again every 5 s.
   const spent = !ok && rs.length > 0 && rs.every((r) => r.accepted !== true && (r.stored_before === null || r.stored_before === undefined));
   const res = { ok, final: ok || spent, spent, amountMsat: BigInt(rs.reduce((t, r) => t + Number(r.amount_msat || 0), 0)),
+    // what each accepted redeem brought, by its own balance reads (kanban #2350)
+    broughtMsat: rs.filter((r) => r.accepted === true).reduce((t, r) => t + broughtOf(r.amount_msat, r.balance_before, r.balance_after), 0n),
     balance_before: rs.length ? rs[0].balance_before : undefined, balance_after: rs.length ? rs[rs.length - 1].balance_after : undefined,
     txid: rs.length ? rs[0].txid : undefined, forfeitFrom: rs.length ? rs[0].forfeitFrom : undefined,
     why: ok ? undefined : spent ? 'the stake lock is already spent - back to this seed\'s key, the only key that can after the signer nodes\' forfeit'
       : (rs.find((r) => r.error) || {}).error || 'the federation did not accept the redeem' };
   if (ok && storage) {
-    try { storage.setItem(noted, JSON.stringify({ ...res, amountMsat: String(res.amountMsat) })); } catch { /* unkept: a reload asks again */ }
+    try { storage.setItem(noted, JSON.stringify({ ...res, amountMsat: String(res.amountMsat), broughtMsat: String(res.broughtMsat) })); } catch { /* unkept: a reload asks again */ }
   }
   return { ...res, client: got.client };
 }
@@ -21085,13 +21101,38 @@ async function collectOwed({ look, client, ...ask } = {}) {
  * no press. Into the player's own federation wallet (one per seed and federation) and NOTHING out of it: no Lightning,
  * no withdraw. What arrived is written in the history as a "winnings" row, by what the wallet's balance actually grew.
  */
+/**
+ * WHAT ONE ACCEPTED REDEEM BROUGHT INTO THE WALLET (kanban #2350, live 2026-11-12 05:39Z, round 4e1c1615 never entered: the seats forfeited
+ * its 94,000 msat, the federation accepted both redeems, and the history said "Refund +25 of 100 sat"). The row was what the wallet grew by
+ * over the whole collect - 24 s of asking seats - and the page's next join locked 100,000 msat out of the same wallet meanwhile, while
+ * 31,072 msat of an earlier lock's change finished issuing: 94,000 - 100,000 + 31,072 = 25,072. Each redeem's own two reads (the lock
+ * client's, right before its transaction and once it is accepted) are what it brought - the lock's amount less the federation's fee; a
+ * read another spend or issue cut (no growth, or more than the lock, or under 90 % of it) is counted at the lock's amount.
+ */
+function broughtOf(amountMsat, before, after) {
+  const amount = BigInt(amountMsat || 0);
+  if (before === undefined || before === null || after === undefined || after === null) return amount;
+  const grew = BigInt(after) - BigInt(before);
+  return grew > 0n && grew <= amount && grew * 10n >= amount * 9n ? grew : amount;
+}
+/** What a collect brought (kanban #2350): the parts the federation accepted in this call, each by broughtOf; a part read off its kept note came before. */
+function collectBrought(got) {
+  let t = 0n;
+  const p = got && got.payout;
+  if (p && p.ok && !p.kept) t += broughtOf(p.amountMsat, p.balance_before, p.balance_after);
+  const s = got && got.stake;
+  if (s && s.ok && !s.kept) t += s.fee ? broughtOf(s.amountMsat, s.balance_before, s.balance_after) : (s.broughtMsat !== undefined ? BigInt(s.broughtMsat) : BigInt(s.amountMsat || 0));
+  const r = got && got.refund;
+  if (r && Array.isArray(r.locks)) for (const e of r.locks) if (e.state === 'refunded') t += broughtOf(e.amountMsat, e.balance_before, e.balance_after);
+  return t;
+}
+
 async function collectIntoPlayerWallet({ look, round, roundId, invite, seed, curve, LockClient, storage, nodes, fetcher, order = 0 } = {}) {
   if (!look || !(look.payoutMsat > 0n || look.stakeMsat > 0n || look.refundMsat > 0n)) return { collected: false, creditedMsat: 0n };
   const client = await playerWallet({ round, invite, seed, LockClient, storage });
-  const before = BigInt(await client.balanceMsat());
   const got = await collectOwed({ look, client, round, roundId, invite, seed, curve, LockClient, storage, nodes, order, ...(fetcher ? { fetcher } : {}) });
-  const after = BigInt(await client.balanceMsat());
-  const creditedMsat = after > before ? after - before : 0n;
+  // WHAT THE REDEEMS BROUGHT, NOT WHAT THE WALLET GREW WHILE THEY RAN (kanban #2350): the page locks the next stake from this same wallet meanwhile
+  const creditedMsat = collectBrought(got);
   // A STAKE THAT ONLY CAME BACK IS A REFUND ROW, NOT WINNINGS (2026-10-03: "the money that comes back must be
   // visible in the TX history"): nobody won, or the round was refunded - no payout, the stake (or its expiry refund) back
   const kind = look.payoutMsat > 0n ? 'winnings' : 'refund';
@@ -38107,8 +38148,10 @@ function oneTilePerGame(games) {
     // `older`: the other versions, each with its own info - a description its developer signed for that version's id, which
     // the tile shows while the shown version carries none that stands (checkedGameInfoOfTile)
     // WHAT THE LOBBY LISTS, THE TILE COUNTS (2026-10-31: "keine Runden fuer next block", while the seats held v6's rounds and hosted v7
-    // with none): Next Block's lobby shows every version's rounds (ARENA_GAME_IDS), so its tile adds them up
-    const live = shown.name === 'nextblock' && shown.live ? { live: versions.reduce((n, g) => ({ rounds: n.rounds + (Number(g.live && g.live.rounds) || 0), players: n.players + (Number(g.live && g.live.players) || 0) }), { rounds: 0, players: 0 }) } : {};
+    // with none): Next Block's lobby shows every version's rounds (ARENA_GAME_IDS), so its tile adds them up.
+    // ROCK PAPER SCISSORS THE SAME (Daniel 2026-11-12 ~06:50Z "Es wird keine rps runde angezeigt": RPS v10 was hosted before any v10 table
+    // was posted, its lobby read every version - index.html everyVersion - but the tile counted v10 alone: "14 | 0 | 0" beside 44 open v9 rounds)
+    const live = (shown.name === 'nextblock' || shown.name === 'rock-paper-scissors') && shown.live ? { live: versions.reduce((n, g) => ({ rounds: n.rounds + (Number(g.live && g.live.rounds) || 0), players: n.players + (Number(g.live && g.live.players) || 0) }), { rounds: 0, players: 0 }) } : {};
     out.push(Object.assign({}, shown, live, { versions: versions.map((g) => g.id), older: versions.filter((g) => g !== shown) }));
   }
   return out;
