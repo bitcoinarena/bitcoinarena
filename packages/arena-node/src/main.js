@@ -348,8 +348,22 @@ if (url) {
     if (hold && Date.now() - blocksFailedAtMs < 60000) return { ok: false, why: 'a block read failed less than a minute ago: read again after it' };
     const p = (async () => {
       // a kept hash from a branch the chain left is dropped and the view read once more (censusWithFreshHashes, kanban #495)
-      const read = async () => { try { return await blocksOver(call, censusFirstBlock(height, networkOf(contract.networkId)), height, { cache: blocksKept }); } catch (e) { blocksFailedAtMs = Date.now(); throw e; } };
+      let viewRead = null;               // the view the census was derived from (the last read; kanban #1841 below)
+      const read = async () => { try { viewRead = await blocksOver(call, censusFirstBlock(height, networkOf(contract.networkId)), height, { cache: blocksKept }); return viewRead; } catch (e) { blocksFailedAtMs = Date.now(); throw e; } };
       const census = await censusWithFreshHashes({ read, derive: (view) => censusOfView(view, contract), cache: blocksKept });
+      // A REORG DURING THE READ IS NOT KEPT UNDER THE KEY'S HASH (kanban #1841): the key's hash is read first, the walk takes minutes
+      // and reads the top heights last - a chain that moved to another branch meanwhile derived that branch's census, and kept under
+      // the old block's hash it was answered for three days once the chain went back to it. The census height is read again, and the
+      // view's own block there must be the key's block (the one the cache holds under that hash); otherwise nothing is kept: read again
+      if (census.ok) {
+        let same = false;
+        try {
+          const atHeight = viewRead && viewRead.blocks ? viewRead.blocks[height - viewRead.firstHeight] : undefined;
+          const keptBlock = blocksKept.get(hash);
+          same = String(await call('getblockhash', [height])) === hash && atHeight !== undefined && (keptBlock === undefined || keptBlock === atHeight);
+        } catch { same = false; }
+        if (!same) return { ok: false, why: 'the chain reorganised during this census read: read again' };
+      }
       if (census.ok) {
         try {
           db.prepare('INSERT OR REPLACE INTO census_kept (key, body, kept_ms) VALUES (?, ?, ?)').run(key, JSON.stringify(census, censusReplacer), Date.now());
