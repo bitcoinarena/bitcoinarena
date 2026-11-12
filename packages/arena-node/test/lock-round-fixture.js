@@ -311,8 +311,10 @@ export async function lockAndPlay(w, who, { session: fixedSession = null, feeLoc
       assert.equal(fee.status, 201, await fee.text());
     };
     if (feeLock && feeFirst) {
+      // a seat the entry relay already handed the stake lock (kanban #1598: an entry's locks go with it) counts the stake on the fee lock, rightly
+      const relayed = !!d.round.stakeLock(eid);
       await handFee();
-      assert.equal(d.round.stakeSeen(eid), null, 'a stake counted on its fee lock alone, before its stake lock');
+      if (!relayed) assert.equal(d.round.stakeSeen(eid), null, 'a stake counted on its fee lock alone, before its stake lock');
     }
     // `only`: the seats (by index) handed the locks - the others hold the entry and never verify a lock of it
     if (only && !only.includes((w.nodes || [w.a, w.b]).indexOf(d))) continue;

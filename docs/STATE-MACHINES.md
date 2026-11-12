@@ -1512,3 +1512,6 @@ Audit 5 (#1399, base 1502786b) and audit 6 (#1415, base eb7fd30fc) for release 2
 
 #### SM-M (change) Stake-share release in a scalar pool (kanban #1594)
 - Invariant: the share door counts exactly the entries the settlement counts. In a scalar market round that ended a pool (no certified batch holds an order, §0A.7b), `mayRelease` tables only the plain picks whose stake this seat saw - the set `#attestedPlan` and forfeit `#marketRefund` table (#1436) - so a lock is released exactly when the settlement claims it. An order in a pool is no entry of the round: its share stays sealed and its lock comes back whole. A scalar round that is a book goes to the book's rule (filled orders released, `FILLED_ORDER`). Book or pool is read from `isBook` (order-batch.js), wired in server.js as for the forfeit door.
+
+#### SM-E (change) A held head-to-head lock outside the seats (forfeit.js `#outsideTheSeats`, kanban #1582 with #1588)
+- With #1588 (merged in #1489): /lock no longer refuses a head-to-head lock as "full", so the lock of a player left outside the seats (seats = the game's players by entry order) is HELD and verified, never refused. Its return is GET /forfeit (forfeit.js `#outsideTheSeats`): a held stake lock of a paying head-to-head entry not in `seatedEntriesOf` comes back once this seat's settlement is ACCEPTED and did not claim it.
