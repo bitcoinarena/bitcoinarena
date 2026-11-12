@@ -1542,3 +1542,8 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-H2H (change) Head-to-head entry seat on a paying round: entered (no lock) -> seated (kanban #1850)
+- Invariant: no head-to-head entry takes a seat once a move of its round can be known. Moves are revealed from the entry close on and served by GET /reveals, so the /lock and /fee-lock doors (`lockAfterCloseRefusal`) take a lock new to the seat only before the entry close - no `ENTRY_CLOSE_GRACE_MS` in a head-to-head round; a lock the seat holds already is answered as before. A peer's lock pulled by `takeEntryParts` can only be one a seat verified before its own close, as every seat's door refuses it after. A late honest lock goes back through POST /refused-lock, never a seat.
