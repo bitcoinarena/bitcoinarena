@@ -27,6 +27,7 @@ import { timingSafeEqual, createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, appendFileSync, renameSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { nodeBountyCheck } from '../src/node-bounty-check.js';
+import { seatPublicFetch, walletUrlRefusal } from '../src/public-fetch.js';
 import { openFeedbackStore, networkPlayers, imageKind, SHOT_MOST, SHOT_UNCLAIMED_MS, REWARD_LEVELS, NODE_BOUNTY_BASE_SATS, lnAddressWorks, lnAddressInvoice } from '../src/feedback-store.js';
 const LN_ASKS = new Map();   // ip /64 -> times it asked GET /feedback/lnaddress (kanban #1342, #1537)
 const LN_ASKS_ALL = [], LN_ASKS_MINUTE = 120;   // every check of the last minute, all callers (kanban #1537)
@@ -164,16 +165,30 @@ const ourKeys = () => { try { return new Set(readFileSync(env.FAUCET_FEEDBACK_EX
 // THE SEATS A NODE CHECK ASKS (kanban #1342): every seat the season seats list (GET /network-games - a seat does not list itself, so they are merged, and each is one too)
 const NODE_CHECKS = new Map();
 const NODE_CHECK_ASKS = new Map(); const NODE_CHECKS_PER_HOUR = 10; let NODE_CHECK_BUSY = false;   // audit 5 #1402
-const fetchJson1342 = async (u) => { const r = await fetch(u, { signal: AbortSignal.timeout(15000) }); if (!r.ok) throw new Error(`${r.status}`); return r.json(); };
+// AN ANNOUNCED SEAT ENDPOINT IS ASKED ON THE PUBLIC INTERNET ONLY (kanban #1884, re-check of #1511): GET /network-games lists the census nodes'
+// endpoints, which any bonded node sets by a free signed address announcement - http://127.0.0.1:8080, 169.254.169.254, a LAN host - and a stranger's
+// node check made this faucet GET /owner, /roles and /served there. Only the operator's own are taken as given: the FAUCET_SEASON_SEATS bases, and a
+// listed seat on one of FAUCET_SEAT_TRUSTED_HOSTS (default: the team hosts that are public names, never an IP literal or localhost - the team's own
+// Tailscale / DNS names, whose seats the team-node test must still read). Every other listed seat goes through seatPublicFetch: a public name or a
+// public IP literal, a public resolved address, no redirect. A trusted one is never redirected either.
+const SEASON_BASES = String(env.FAUCET_SEASON_SEATS || '').split(',').map((u) => u.trim().replace(/\/+$/, '')).filter(Boolean);
+const TEAM_HOSTS = String(env.FAUCET_TEAM_HOSTS || 'beelink.tail1723e2.ts.net,127.0.0.1,localhost,192.168.1.18,100.85.86.106,100.99.158.103,192.168.1.68,tn4.bitcoin-arena.io').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+const SEAT_TRUSTED_HOSTS = env.FAUCET_SEAT_TRUSTED_HOSTS !== undefined ? String(env.FAUCET_SEAT_TRUSTED_HOSTS).split(',').map((x) => x.trim().toLowerCase()).filter(Boolean)
+  : TEAM_HOSTS.filter((h) => !walletUrlRefusal(`https://${h}/`));
+const seatTrusted = (u) => { const s = String(u); if (SEASON_BASES.some((b) => s === b || s.startsWith(`${b}/`) || s.startsWith(`${b}?`))) return true;
+  try { const x = new URL(s); return (x.protocol === 'https:' || x.protocol === 'http:') && SEAT_TRUSTED_HOSTS.includes(x.hostname.toLowerCase()); } catch { return false; } };
+const fetchJson1342 = async (u) => { const signal = AbortSignal.timeout(15000);
+  const r = seatTrusted(u) ? await fetch(u, { signal, redirect: 'error' }) : await seatPublicFetch(u, { signal });
+  if (!r.ok) throw new Error(`${r.status}`); return r.json(); };
 async function nodeCheckNow(node, npub) {
-  const bases = String(env.FAUCET_SEASON_SEATS || '').split(',').filter(Boolean).map((u) => u.replace(/\/+$/, ''));
+  const bases = SEASON_BASES;
   const lists = await Promise.all(bases.map((b) => fetchJson1342(`${b}/network-games`).then((j) => (j.seats || []).map((x) => x.seat), () => [])));
   const seats = [...new Set([...bases, ...lists.flat()])];
   let excluded = new Set(); try { excluded = ourKeys(); } catch { excluded = new Set(); }
   // the hosts the team's own nodes answer at (kanban #1342: team nodes are never paid)
   // THE TEAM'S OWN SEATS BY THEIR NODE KEYS (audit 7, kanban #1428: our-keys.txt held none of them, and the Mac seats' addresses were no team host):
   // every seat this faucet is configured with, and every listed seat at a team host, is the team's - its /roles node key is excluded
-  const teamHosts = String(env.FAUCET_TEAM_HOSTS || 'beelink.tail1723e2.ts.net,127.0.0.1,localhost,192.168.1.18,100.85.86.106,100.99.158.103,192.168.1.68,tn4.bitcoin-arena.io').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+  const teamHosts = TEAM_HOSTS;
   const hostOf = (u) => { try { return new URL(u).hostname.toLowerCase(); } catch { return ''; } };
   const ours = [...new Set([...bases, ...seats.filter((u) => teamHosts.includes(hostOf(u)))])];
   const keys = await Promise.all(ours.map((u) => fetchJson1342(`${u}/roles`).then((j) => String((j && j.node) || '').toLowerCase(), () => '')));
