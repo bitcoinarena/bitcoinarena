@@ -7871,7 +7871,10 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         // from the previous round of the same game id - a v6 round, then a v5 one, started the score at 0:0. A slot that holds rounds of the
         // tile's own version offers only those; a slot with none of them offers what it has.
         allRows: () => (holdForReveal() ? [] : fullRounds(sameVersionPerSlot(moneyFirst(window.ARENA_LOBBY_ROWS || [], true), game.id))).map((r) => ({ id: r.id, line: r.line, free: r.free, joinable: !!r.joinable,
-          stakeSats: r.stakeSats, entryCloseMs: r.entryCloseMs !== undefined && r.entryCloseMs !== null ? pickCloseMs(r, Number(r.entryCloseMs)) : null,
+          // A ROUND'S STAKE FOR EVERY ROW (kanban #1481, Daniel 2026-11-11: "it must be clear that a round is 100 sats"): the lobby's rows name it in
+          // millisatoshi only, so allRows handed the game no stake and its client could not say what a paid round costs
+          stakeSats: r.stakeSats ?? (r.stakeMsat !== undefined && r.stakeMsat !== null ? Number(r.stakeMsat) / 1000 : undefined),
+          entryCloseMs: r.entryCloseMs !== undefined && r.entryCloseMs !== null ? pickCloseMs(r, Number(r.entryCloseMs)) : null,
           startTimeMs: r.contract ? Number(r.contract.startTimeMs) : null })),
         identity: () => window.ARENA_IDENTITY || null,
         // THE PLAYER WALLET, THE PAGE'S OWN: a client never makes a deposit or a withdraw of its own - it reads
