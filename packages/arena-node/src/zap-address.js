@@ -47,6 +47,36 @@ export const ZAP_TIPS_KEPT = 256;
 export const ZAP_MINTS_PER_ASKER = 30;
 export const ZAP_ASKER_WINDOW_S = 600;
 export const ZAP_ASKERS_KEPT = 4096;
+// FOR GOOD, AGAIN (kanban #1922, #1964, #1999; #1489 v1-refute-19-s2):
+// - A zap let go from a full book could still be paid at LND, and was never looked up again: an honest zap paid after strangers filled
+//   the book got no receipt. A let-go zap is now WATCHED UNTIL ITS INVOICE EXPIRES (`letGo`, saved with the book, looked up by watch()
+//   like every open zap); nothing open is dropped before expiry. When the book and the let-go list are both full, a new zap is refused.
+// - The asker is an IPv4 address or an IPv6 /64 (one /64 holds 2^64 addresses, each its own asker before), and on top of the
+//   per-asker bound all callers that are not this host together mint at most ZAP_MINTS_ALL fresh invoices per window, so rotating
+//   askers cannot exceed it: strangers alone keep at most ZAP_MINTS_ALL * (expiry / window + 1) zaps open, under the let-go room.
+// - The asker table never drops a live window: when it is full of them, a new asker is refused.
+// - A plain tip invoice is handed again only to the asker that got it (asker|name|amount): two tippers of the same amount are never
+//   handed one bolt11 that only the first could pay.
+export const ZAP_LET_GO_MAX = 4000;
+export const ZAP_MINTS_ALL = 300;
+
+/** The asker a mint is counted against: an IPv4 address as it is, an IPv6 address by its /64 (kanban #1964). */
+export function askerKey(a) {
+  const s = String(a || '').split('%')[0].toLowerCase();
+  if (!s.includes(':')) return s;
+  let t = s;
+  const v4 = t.match(/^(.*:)(\d{1,3}(?:\.\d{1,3}){3})$/);
+  if (v4) { const o = v4[2].split('.').map(Number); t = `${v4[1]}${((o[0] << 8) | o[1]).toString(16)}:${((o[2] << 8) | o[3]).toString(16)}`; }
+  const halves = t.split('::');
+  if (halves.length > 2) return s;
+  const head = halves[0] ? halves[0].split(':') : [];
+  const tail = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
+  const fill = halves.length === 2 ? 8 - head.length - tail.length : 0;
+  if (fill < 0 || (halves.length === 1 && head.length !== 8)) return s;
+  const groups = [...head, ...Array(fill).fill('0'), ...tail];
+  if (groups.some((g) => !/^[0-9a-f]{1,4}$/.test(g))) return s;
+  return `${groups.slice(0, 4).map((g) => parseInt(g, 16).toString(16)).join(':')}::/64`;
+}
 
 /** What a plain (not zap) tip's invoice is hashed over (LUD-06: raw JSON, text/plain first, the address as text/identifier). */
 export const addressMetadata = (name, host) => JSON.stringify([['text/plain', `Zap ${name}@${host}`], ['text/identifier', `${name}@${host}`]]);
@@ -70,32 +100,43 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
   const receipts = [];
   const refused = [];
   const minting = new Map();          // zap request id -> payer pubkey, whose invoice is being made right now (kanban #1514, #1683)
-  const tips = new Map();             // `${name}|${amountMsat}` -> { request, paymentHash, until }: open plain-tip invoices (kanban #1801)
+  const tips = new Map();             // `${asker}|${name}|${amountMsat}` -> { request, paymentHash, until }: open plain-tip invoices (kanban #1801, #1999)
   const tipMinting = new Map();       // the same key -> the mint in flight, which asks at the same moment share
-  const askers = new Map();           // asker address -> { since, n }: fresh invoices minted for it in this window (kanban #1743, #1801)
+  const askers = new Map();           // asker key (IPv4, IPv6 /64) -> { since, n }: fresh invoices minted for it in this window (kanban #1743, #1801, #1964)
+  const letGo = new Map();            // paymentHash -> the zap let go from a full book, watched until its invoice expires (kanban #1922)
+  let mintsAll = [];                  // when each fresh invoice for a caller not on this host was minted, the last window's (kanban #1964)
   const nowSec = () => Math.floor(Date.now() / 1000);
   const local = (a) => a === '127.0.0.1' || a === '::1';
+  // '' when it may mint (and is counted), else why not
   const mayMint = (asker) => {
-    if (local(asker)) return true;
+    if (local(asker)) return '';
     const now = nowSec();
-    let a = askers.get(asker);
-    if (a && now - a.since >= ZAP_ASKER_WINDOW_S) { askers.delete(asker); a = null; }
+    const who = askerKey(asker);
+    let a = askers.get(who);
+    if (a && now - a.since >= ZAP_ASKER_WINDOW_S) { askers.delete(who); a = null; }
+    if (a && a.n >= ZAP_MINTS_PER_ASKER) return `at most ${ZAP_MINTS_PER_ASKER} invoices per ${ZAP_ASKER_WINDOW_S / 60} minutes from one address`;
+    mintsAll = mintsAll.filter((t) => now - t < ZAP_ASKER_WINDOW_S);
+    if (mintsAll.length >= ZAP_MINTS_ALL) return `this Lightning address mints at most ${ZAP_MINTS_ALL} invoices per ${ZAP_ASKER_WINDOW_S / 60} minutes; try again later`;
     if (!a) {
       if (askers.size >= ZAP_ASKERS_KEPT) for (const [k, v] of askers) if (now - v.since >= ZAP_ASKER_WINDOW_S) askers.delete(k);
-      while (askers.size >= ZAP_ASKERS_KEPT) askers.delete(askers.keys().next().value);
-      a = { since: now, n: 0 }; askers.set(asker, a);
+      if (askers.size >= ZAP_ASKERS_KEPT) return 'too many addresses are asking here; try again later';   // a live window is never dropped
+      a = { since: now, n: 0 }; askers.set(who, a);
     }
-    if (a.n >= ZAP_MINTS_PER_ASKER) return false;
     a.n++;
-    return true;
+    mintsAll.push(now);
+    return '';
   };
   const requestOf = (p) => { try { return JSON.parse(p.description); } catch { return {}; } };
   if (statePath && existsSync(statePath)) {
-    try { for (const p of JSON.parse(readFileSync(statePath, 'utf8')).pending || []) pending.set(p.paymentHash, p); } catch { /* a bad file starts empty */ }
+    try {
+      const st = JSON.parse(readFileSync(statePath, 'utf8'));
+      for (const p of st.pending || []) pending.set(p.paymentHash, p);
+      for (const p of st.letGo || []) letGo.set(p.paymentHash, p);
+    } catch { /* a bad file starts empty */ }
   }
   const save = () => {
     if (!statePath) return;
-    writeFileSync(`${statePath}.tmp`, JSON.stringify({ pending: [...pending.values()] }));
+    writeFileSync(`${statePath}.tmp`, JSON.stringify({ pending: [...pending.values()], letGo: [...letGo.values()] }));
     renameSync(`${statePath}.tmp`, statePath);
   };
 
@@ -108,24 +149,30 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
   }
   async function watch() {
     const nowS = nowSec();
-    for (const [hash, p] of pending) {
+    for (const [hash, p] of [...pending, ...letGo]) {
       let got;
       try { got = await lookup({ name: p.name, paymentHash: hash }); } catch (e) { log(`lookup ${hash.slice(0, 16)} failed: ${e.message}`); continue; }
-      if (pending.get(hash) !== p) continue;                  // let go meanwhile (kanban #1743): its last look is its own
-      if (got && got.settled) { pending.delete(hash); save(); await paid(hash, p, got, nowS); }
-      else if (p.until < nowS) { pending.delete(hash); save(); log(`zap ${hash.slice(0, 16)} expired unpaid`); }
+      // where it is now: it may have been let go, or receipted by another look, meanwhile (kanban #1743, #1922)
+      const book = pending.get(hash) === p ? pending : letGo.get(hash) === p ? letGo : null;
+      if (!book) continue;
+      if (got && got.settled) { book.delete(hash); save(); await paid(hash, p, got, nowS); }
+      else if (p.until < nowS) { book.delete(hash); save(); log(`zap ${hash.slice(0, 16)} expired unpaid`); }
     }
   }
-  // A FULL BOOK GIVES WAY (kanban #1743): the oldest open zap is let go, with one last look so a payment landing now is receipted.
+  // A FULL BOOK GIVES WAY (kanban #1743) - BUT NOTHING OPEN IS DROPPED (kanban #1922): the oldest open zap moves to `letGo`, which
+  // watch() keeps looking up until its invoice expires; it also gets one look at once, so a payment landing now is receipted now.
   function letGoOldest() {
     const first = pending.entries().next();
     if (first.done) return false;
     const [hash, p] = first.value;
     pending.delete(hash);
-    log(`zap ${hash.slice(0, 16)} let go unpaid: the book of open zaps is full`);
+    letGo.set(hash, p);
+    log(`zap ${hash.slice(0, 16)} let go from the full book: watched until it expires`);
     (async () => {
-      try { const got = await lookup({ name: p.name, paymentHash: hash }); if (got && got.settled) await paid(hash, p, got, nowSec()); }
-      catch (e) { log(`last lookup ${hash.slice(0, 16)} failed: ${e.message}`); }
+      try {
+        const got = await lookup({ name: p.name, paymentHash: hash });
+        if (got && got.settled && letGo.get(hash) === p) { letGo.delete(hash); save(); await paid(hash, p, got, nowSec()); }
+      } catch (e) { log(`last lookup ${hash.slice(0, 16)} failed: ${e.message}`); }
     })();
     return true;
   }
@@ -168,7 +215,7 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
         zap = { request, relays: stands.relays };
         // ONE SIGNED ZAP REQUEST, ONE OPEN INVOICE (kanban #1514): a request already invoiced and still open gets that invoice again
         // (the same name and amount) and is refused otherwise; a new one waits for room under the caps.
-        const open = [...pending.values()].map((p) => [p, requestOf(p)]);
+        const open = [...pending.values(), ...letGo.values()].map((p) => [p, requestOf(p)]);
         const same = open.find(([, r]) => r.id === request.id);
         if (same) {
           if (same[0].name === name && same[0].amountMsat === String(amountMsat) && same[0].until >= nowSec()) return json(200, { pr: same[0].invoice, routes: [] });
@@ -179,7 +226,10 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
         const fromPayer = open.filter(([, r]) => r.pubkey === request.pubkey).length + [...minting.values()].filter((k) => k === request.pubkey).length;
         if (fromPayer >= ZAP_PENDING_PER_PAYER) return refuse('too many open zaps from that key');
         if (minting.size >= ZAP_PENDING_MAX) return refuse('too many zaps are being invoiced here; try again later');
-        if (!mayMint(asker)) return refuse(`at most ${ZAP_MINTS_PER_ASKER} invoices per ${ZAP_ASKER_WINDOW_S / 60} minutes from one address`);
+        // every open zap is watched until it expires (kanban #1922): with the book and the let-go room both full, a new one waits
+        if (pending.size + letGo.size + minting.size >= ZAP_PENDING_MAX + ZAP_LET_GO_MAX) return refuse('the book of open zaps is full; try again later');
+        const no = mayMint(asker);
+        if (no) return refuse(no);
         minting.set(request.id, request.pubkey);
         let made;
         try { made = await invoice({ name, amountMsat, descriptionHash: hex(sha256hex(description)), expiryS }); }
@@ -196,7 +246,7 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
       if (comment && comment.length > ZAP_COMMENT_MAX) return refuse(`a comment is at most ${ZAP_COMMENT_MAX} characters`);
       // A PLAIN TIP (kanban #1801): its invoice is hashed over the address's metadata only, so one of the same name and amount, still
       // open and unpaid, serves the next tipper as well as a new one would.
-      const key = `${name}|${amountMsat}`;
+      const key = `${local(asker) ? asker : askerKey(asker)}|${name}|${amountMsat}`;   // one asker's own invoice only (kanban #1999)
       const kept = tips.get(key);
       if (kept && kept.until - nowSec() >= expiryS / 2) {
         let got = null;
@@ -206,7 +256,8 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
       if (tips.get(key) === kept) tips.delete(key);
       let mint = tipMinting.get(key);
       if (!mint) {
-        if (!mayMint(asker)) return refuse(`at most ${ZAP_MINTS_PER_ASKER} invoices per ${ZAP_ASKER_WINDOW_S / 60} minutes from one address`);
+        const no = mayMint(asker);
+        if (no) return refuse(no);
         mint = invoice({ name, amountMsat, descriptionHash: hex(sha256hex(metadata)), expiryS }).then((made) => {
           tips.delete(key);
           tips.set(key, { request: made.request, paymentHash: made.paymentHash, until: nowSec() + expiryS });
@@ -221,7 +272,7 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
       return json(200, { pr: made.request, routes: [] });
     });
     server.on('error', reject);
-    server.listen(port, host, () => resolve({ port: server.address().port, nostrPubkey, pending, receipts, refused, watch,
+    server.listen(port, host, () => resolve({ port: server.address().port, nostrPubkey, pending, letGo, receipts, refused, watch,
       close: () => new Promise((r) => { clearInterval(timer); server.close(r); }) }));
   });
 }
