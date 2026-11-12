@@ -3076,6 +3076,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const l = await fetch(`${base}/order-locks?entry=${entryHex}`, { signal: AbortSignal.timeout(10000) });
     if (!l.ok) { await dropSeatBody(l); return { ok: false, why: `${base} answered ${l.status} for the order's locks` }; }
     const locks = await seatJson(l, SEAT_RECORD_BYTES);
+    // one seat's word is no proof a head-to-head lock was held before the moves could be known (kanban #2225): such a lock is not replayed
+    for (const kind of ['stake', 'fee']) { let h = null; try { h = locks && locks[kind] ? h2hLockRefusal(entry, eid, kind) : null; } catch { h = null; } if (h) return { ok: false, why: h }; }
     if (locks.stake && !round.stakeLock(eid)) { const g = await takeStakeLock(eid, lockFieldsFromJson(locks.stake)); if (!g.ok) return { ok: false, why: `its stake lock: ${g.why}` }; }
     if (locks.fee && round.feeLock && !round.feeLock(eid)) { const g = await takeFeeLock(eid, lockFieldsFromJson(locks.fee)); if (!g.ok) return { ok: false, why: `its fee lock: ${g.why}` }; }
     console.log(`[orders] replayed order ${entryHex.slice(0, 16)} from ${base}: its entry and locks are held here now`);
