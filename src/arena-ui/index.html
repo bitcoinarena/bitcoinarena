@@ -3703,27 +3703,51 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     // A HEAD-TO-HEAD MOVE: the move a head-to-head game's client chose, read by the join it starts: { round, move }
     window.ARENA_HIDDEN_CHOSEN = null;
     function hiddenFor(roundIdHex) { const c = window.ARENA_HIDDEN_CHOSEN; return c && c.round === roundIdHex ? c : null; }
-    // THE TAB'S HIDDEN MOVES, kept with the tab's seed (sessionStorage): the move and its salt until they are revealed - a
-    // reload between entry and reveal must not lose the salt, or the move could never be shown and the entry forfeits
+    // THE PHRASE'S HIDDEN MOVES: the move and its salt until they are revealed - a reload between entry and reveal must not lose the salt, or the
+    // move could never be shown and the entry forfeits. KEPT WITH THE PHRASE, NOT THE TAB (kanban #2037, state audit 2026-11-12): the salt was in
+    // sessionStorage while the phrase that staked it (arena.seeds), its stake lock and its collect are kept in the browser - a tab closed between the
+    // move and the close left a committed entry no later tab of the same phrase could reveal, and its stake forfeited. Now each move is kept in
+    // localStorage under the phrase's first 16 hex (phrase16, as arena.wallet.last.<phrase16>), read only by a tab holding that phrase, and dropped an
+    // hour after its result stands (endMs). A tab with no phrase, or a browser refusing localStorage, keeps it in the tab as before; moves a tab kept
+    // there before this fix are still read
     const HIDDEN_KEY = 'arena.h2h.moves';
-    // AND IN THE PAGE'S MEMORY TOO (kanban #2024): a write sessionStorage refuses (a full origin quota, a storage the browser
-    // refuses) used to keep the move nowhere - the reveal answered "this tab hid no move" and the entry, its stake locked, was
-    // forfeit in the same tab. The page's own copy is read with the stored list, so a failed write still reveals in this page.
+    const HIDDEN_KEEP_MS = 3600000;
+    // AND IN THE PAGE'S MEMORY TOO (kanban #2024): a write the storage refuses (a full origin quota, a storage the browser refuses) used to keep the
+    // move nowhere - the reveal answered "this tab hid no move" and the entry, its stake locked, was forfeit in the same tab. The page's own copy is
+    // read with the stored lists, so a failed write still reveals in this page.
     const hiddenInPage = new Map();
-    function readStoredHidden() { try { const v = JSON.parse(window.sessionStorage.getItem(HIDDEN_KEY) || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } }
+    const hiddenPhrase = () => { try { const p = String(window.sessionStorage.getItem('arena.player.seed') || '').slice(0, 16).toLowerCase(); return /^[0-9a-f]{16}$/.test(p) ? p : null; } catch { return null; } };
+    const hiddenList = (st) => { try { const a = JSON.parse(st.getItem(HIDDEN_KEY) || '[]'); return Array.isArray(a) ? a : []; } catch { return []; } };
     function readHidden() {
-      const stored = readStoredHidden(), have = new Set(stored.map((x) => x && x.roundIdHex));
-      return stored.concat([...hiddenInPage.values()].filter((x) => !have.has(x.roundIdHex)));
+      const ph = hiddenPhrase(), out = [];
+      if (ph) { try { for (const x of hiddenList(window.localStorage)) if (x && x.phrase16 === ph) out.push(x); } catch { /* none kept in the browser */ } }
+      try { for (const x of hiddenList(window.sessionStorage)) if (x && !out.some((y) => y.roundIdHex === x.roundIdHex)) out.push(x); } catch { /* none in the tab */ }
+      for (const x of hiddenInPage.values()) if (!out.some((y) => y.roundIdHex === x.roundIdHex)) out.push(x);
+      return out;
     }
     function rememberHidden(h) {
       hiddenInPage.delete(h.roundIdHex); hiddenInPage.set(h.roundIdHex, h);
       while (hiddenInPage.size > 50) hiddenInPage.delete(hiddenInPage.keys().next().value);
-      try { const all = readStoredHidden().filter((x) => x.roundIdHex !== h.roundIdHex); all.push(h); window.sessionStorage.setItem(HIDDEN_KEY, JSON.stringify(all.slice(-50))); }
+      const ph = hiddenPhrase();
+      if (ph) {
+        try {
+          const now = Date.now();
+          const all = hiddenList(window.localStorage).filter((x) => x && !(x.phrase16 === ph && x.roundIdHex === h.roundIdHex)
+            && !(Number(x.endMs) > 0 && Number(x.endMs) + HIDDEN_KEEP_MS < now));
+          all.push(Object.assign({}, h, { phrase16: ph }));
+          window.localStorage.setItem(HIDDEN_KEY, JSON.stringify(all.slice(-200)));
+          return;
+        } catch { /* the browser keeps nothing: kept in the tab below */ }
+      }
+      try { const all = hiddenList(window.sessionStorage).filter((x) => x.roundIdHex !== h.roundIdHex); all.push(h); window.sessionStorage.setItem(HIDDEN_KEY, JSON.stringify(all.slice(-50))); }
       catch (e) { console.warn('[arena] the hidden move of round ' + String(h.roundIdHex).slice(0, 16) + ' is kept for this page only (' + ((e && e.name) || e) + '): do not reload before its reveal'); }
     }
     // A MOVE NO SEAT TOOK (kanban #2025): its record, written before the entry went out, goes again - the round is not this tab's
     function forgetHidden(roundIdHex) {
-      try { window.sessionStorage.setItem(HIDDEN_KEY, JSON.stringify(readHidden().filter((x) => x.roundIdHex !== roundIdHex))); }
+      hiddenInPage.delete(roundIdHex);
+      const ph = hiddenPhrase();
+      if (ph) { try { window.localStorage.setItem(HIDDEN_KEY, JSON.stringify(hiddenList(window.localStorage).filter((x) => !(x && x.phrase16 === ph && x.roundIdHex === roundIdHex)))); } catch { /* none kept in the browser */ } }
+      try { window.sessionStorage.setItem(HIDDEN_KEY, JSON.stringify(hiddenList(window.sessionStorage).filter((x) => x.roundIdHex !== roundIdHex))); }
       catch { /* kept for this page only */ }
     }
     window.ARENA_HIDDEN_MOVES = readHidden;
