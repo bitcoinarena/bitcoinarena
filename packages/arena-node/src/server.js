@@ -253,7 +253,7 @@ import { readReserve } from './federation-reserve.js';
 import { thresholdOf as thresholdOfFederation, recordStatusName } from '../../arena-protocol/src/federation-record.js';
 import { Roster, endpointsOf, NO_CHAIN_VIEW_WHY, findSeriesPublication as findSeriesPublicationIndexed } from './roster.js';
 import { createSeriesPull, PULL_EVERY_MS } from './series-pull.js';
-import { createEntryRelay, RELAY_HEADER, lookAtMembers, seatView } from './entry-relay.js';
+import { createEntryRelay, RELAY_HEADER, lookAtMembers, seatView, LOCKS_MAX_BYTES } from './entry-relay.js';
 import { bytesUpTo } from './peer-read.js';
 import { seatingAgent, MAX_PRESENTS_PER_BATCH, PRESENT_BYTES } from './seating-agent.js';
 import { heartbeatAgent } from './heartbeat-agent.js';
@@ -1236,6 +1236,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // 120 MB /games listing grew the reading seat's heap 218 MB and held its event loop 3.6 s). The body is read chunk by chunk
   // and refused, the connection dropped, as soon as it passes `maxBytes`.
   const PEER_LISTING_BYTES = LISTING_ANSWER_MAX_BYTES, PEER_LISTING_GAMES = 64, PEER_PACKAGE_BYTES = PACKAGE_ANSWER_MAX_BYTES;
+  // A PEER'S ENTRY, HANDOUT AND PAYOUT ADDRESS, READ UP TO A CAP (kanban #2368, refute of #1829 / #2244 / #2327): takeEntryParts, takeAcceptedEntry
+  // and replayOrder read them with r.json() / r.arrayBuffer(), so one committee seat answering tens of MB was buffered whole by every honest seat on
+  // every pass. An EntryContract is a few hundred bytes; a handout is never larger than a body POST /handout takes (BODY_MOST).
+  const ENTRY_MAX_BYTES = 64 * 1024, PAYOUT_ADDRESS_MAX_BYTES = 64 * 1024, HANDOUT_MAX_BYTES = BODY_MOST;
   const textUpTo = async (r, maxBytes) => {
     const said = Number(r.headers.get('content-length'));
     if (said > maxBytes) { try { await r.body?.cancel(); } catch { /* dropped */ } throw new Error(`its answer is ${said} bytes, more than ${maxBytes}`); }
@@ -2760,7 +2764,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (!round.entry(eid)) {
       const r = await fetch(`${base}/entry?id=${entryHex}`, { signal: AbortSignal.timeout(10000) });
       if (!r.ok) return { ok: false, why: `${base} holds no entry ${entryHex.slice(0, 16)}` };
-      round.importEntry(new Uint8Array(await r.arrayBuffer()), entryHex);
+      // kanban #2368 (refute of #1829 / #2244 / #2327): a peer's answer is read only up to a cap - an EntryContract is a few hundred bytes
+      round.importEntry(await bytesUpTo(r, ENTRY_MAX_BYTES), entryHex);
     }
     // AND ITS HANDOUT (measured 2026-10-24 16:51Z on fed2-3 after the entry and locks were replayed: "a loser's P could not be opened: this node
     // accepted no handout for that entry"): the stake's shares, this seat's own among them, checked as POST /handout checks them, and then
@@ -2770,7 +2775,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (ref && !ref.every((b) => b === 0) && !round.handout(ref)) {
       const h = await fetch(`${base}/handout?id=${toHex(ref)}`, { signal: AbortSignal.timeout(10000) });
       if (!h.ok) return { ok: false, why: `${base} answered ${h.status} for the order's handout` };
-      const bytes = new Uint8Array(await h.arrayBuffer());
+      const bytes = await bytesUpTo(h, HANDOUT_MAX_BYTES);   // kanban #2368: no larger than any handout POST /handout takes
       const same = stakePointIsTheHandouts(entry, decodeHandout(bytes));
       if (!same.ok) return { ok: false, why: `its handout: ${same.why}` };
       const took = await takeHandout(bytes);
@@ -2778,7 +2783,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
     const l = await fetch(`${base}/order-locks?entry=${entryHex}`, { signal: AbortSignal.timeout(10000) });
     if (!l.ok) return { ok: false, why: `${base} answered ${l.status} for the order's locks` };
-    const locks = await l.json();
+    const locks = await jsonUpTo(l, LOCKS_MAX_BYTES);   // kanban #2368: two lock rows, a few hundred bytes
     if (locks.stake && !round.stakeLock(eid)) { const g = await takeStakeLock(eid, lockFieldsFromJson(locks.stake)); if (!g.ok) return { ok: false, why: `its stake lock: ${g.why}` }; }
     if (locks.fee && round.feeLock && !round.feeLock(eid)) { const g = await takeFeeLock(eid, lockFieldsFromJson(locks.fee)); if (!g.ok) return { ok: false, why: `its fee lock: ${g.why}` }; }
     console.log(`[orders] replayed order ${entryHex.slice(0, 16)} from ${base}: its entry and locks are held here now`);
@@ -6028,7 +6033,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       try {
         const r = await peerGet(`${base}/entry?id=${entryHex}`);
         if (!r.ok) continue;
-        entry = decodeEntryContract(new Uint8Array(await r.arrayBuffer()));
+        entry = decodeEntryContract(await bytesUpTo(r, ENTRY_MAX_BYTES));   // kanban #2368: capped, as learnRoundApps reads it (#2327)
       } catch { continue; }
       if (toHex(idOfEntry(entry)) !== entryHex || toHex(entry.roundId) !== toHex(rid)) continue;   // the bytes hash to the id, of this round
       const signers = await verifier.signersNaming(rid, eid, entry.playerPubkey);
@@ -6040,7 +6045,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         try {
           const h = await peerGet(`${base}/handout?id=${toHex(ref)}`);
           if (!h.ok) { why = `${base} answered ${h.status} for its handout`; continue; }
-          const bytes = new Uint8Array(await h.arrayBuffer());
+          const bytes = await bytesUpTo(h, HANDOUT_MAX_BYTES);   // kanban #2368: capped; past the cap it is this peer's junk, the next holder is asked
           const same = stakePointIsTheHandouts(entry, decodeHandout(bytes));
           if (!same.ok) { why = `${base}'s handout: ${same.why}`; continue; }
           const took = await takeHandout(bytes, { accepted: true });
@@ -6070,7 +6075,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }))).filter(Boolean);
     let why = null;
     if (!round.stakeLock(eid) || (round.feeLock && !round.feeLock(eid))) {
-      const answers = await ofPeers(`/order-locks?entry=${entryHex}`, (r) => r.json());
+      // kanban #2368 (refute of #2327, which capped handLocks' read of the same door): read up to LOCKS_MAX_BYTES; past it the peer gave no answer
+      const answers = await ofPeers(`/order-locks?entry=${entryHex}`, (r) => jsonUpTo(r, LOCKS_MAX_BYTES));
       // kanban #2255 (a45 refute of #1823): a check that failed HERE - the federation could not be asked, or the check threw - is this seat's
       // own trouble, not a word on the peer's lock; it is kept apart from a lock the peer's fields or the federation refuted
       // AND ONLY WHEN THE PEER'S FIELDS CANNOT HAVE CAUSED IT (kanban #2335, a45 refute of #2255): takeStakeLock/takeFeeLock write that same reason for any
@@ -6109,7 +6115,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
     }
     if (!round.payoutAddress(eid)) {
-      for (const named of await ofPeers(`/payout-address?entry=${entryHex}`, (r) => r.json())) {
+      // kanban #2368: a signed address and its signature, well under 64 kB - capped like the lock read above
+      for (const named of await ofPeers(`/payout-address?entry=${entryHex}`, (r) => jsonUpTo(r, PAYOUT_ADDRESS_MAX_BYTES))) {
         try {
           const signed = new TextEncoder().encode(String(named.signed)), sig = fromHex(String(named.signature));
           if (!ed25519.verify(sig, signed, entry.sessionPubkey)) continue;
@@ -6185,7 +6192,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const said = await Promise.all(peers.map(async (base) => {
       try {
         const r = await fetch(`${base}/handout?id=${id}`, { signal: AbortSignal.timeout(1500) });
-        return r.ok && Buffer.from(await r.arrayBuffer()).equals(Buffer.from(want));
+        return r.ok && Buffer.from(await bytesUpTo(r, want.length)).equals(Buffer.from(want));   // kanban #2368: no more than the bytes compared
       } catch { return false; }
     }));
     return said.some(Boolean);
