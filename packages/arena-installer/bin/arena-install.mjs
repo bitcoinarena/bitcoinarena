@@ -366,6 +366,7 @@ server.listen(port, '127.0.0.1', async () => {
     tunnel = await openQuickTunnel({ port, bin: cloudflared });
     if (!tunnel.ok) { console.error(`No tunnel: ${tunnel.why}`); process.exit(1); }
     wizard.allowHost(new URL(tunnel.url).host);
+    tunnel.onEdgeTrouble?.((hint) => console.error(`\nThe tunnel link may not answer: ${hint}\n`));   // kanban #2570
     console.log(`\nOpen this link in your browser (it works once and for 30 minutes):\n\n  ${tunnel.url}/?t=${wizard.token}\n`);
   } else {
     console.log(`\nOpen this link in your browser (it works once and for 30 minutes):\n\n  ${local}\n`);
