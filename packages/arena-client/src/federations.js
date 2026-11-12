@@ -433,9 +433,11 @@ export function withdrawFederation({ lobbyInvite, parts = [], statuses = [] }) {
  * to move it to a safe federation"): `from` is a federation's checked status ({ federation, status, successorId }). DRAINING or
  * CRITICAL only. Its named successor when that one is OPEN with an invite; else the lowest-load OPEN, known federation other
  * than itself (pickFederation). Null when there is nowhere safe - the notes stay and the next status read tries again.
+ * AND CLOSED (kanban #1982): the drain ends by a clock (the seats' DRAIN_MS and no open round naming it), never by every player's
+ * notes being out - a player away for the whole drain comes back to a CLOSED record with his notes still there, and nothing moved them.
  */
 export function safeFederation(from, statuses = [], { known = () => true } = {}) {
-  if (!from || !['DRAINING', 'CRITICAL'].includes(from.status)) return null;
+  if (!from || !['DRAINING', 'CRITICAL', 'CLOSED'].includes(from.status)) return null;
   const me = String(from.federation || '').toLowerCase();
   const usable = (statuses || []).filter((f) => f && f.invite && String(f.federation).toLowerCase() !== me);
   const succ = from.successorId && !/^0+$/.test(String(from.successorId))

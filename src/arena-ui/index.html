@@ -9538,7 +9538,9 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         const statuses = [...all.values()];
         for (const fid of ARENACLIENT.ledgerFederations(vault())) {
           const st = all.get(fid);
-          if (!st || !['DRAINING', 'CRITICAL'].includes(st.status) || evacuating.has(fid) || evacuatedEmpty.has(fid)) continue;
+          // AND CLOSED (kanban #1982): a drain is closed by its clock, not by this player's notes being out - a player away for the whole
+          // drain comes back to a CLOSED record with notes still there, moved now to its successor first (safeFederation)
+          if (!st || !['DRAINING', 'CRITICAL', 'CLOSED'].includes(st.status) || evacuating.has(fid) || evacuatedEmpty.has(fid)) continue;
           const target = ARENACLIENT.safeFederation({ ...st, federation: fid }, statuses,
             { known: (f) => ARENACLIENT.federationIsKnown(f) || ARENACLIENT.federationConfirmed(window.ARENA_BROWSER_STORE(), f) });
           if (!target) { console.warn('[arena] federation ' + fid.slice(0, 16) + ' is ' + st.status + ' and no safe federation is OPEN: the notes stay, tried again at the next status read'); continue; }
