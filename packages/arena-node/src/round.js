@@ -4095,8 +4095,8 @@ export class Round {
   }
 
   /**
-   * A SLASH PROOF KEPT AS A RELAY, AT MOST ONE PER ACCUSED SIGNED RESULT (kanban #2248, a45 refute of #1816). `accused` is
-   * round id || accused node || player || signed result id. Returns 'kept', 'same' (this proof is already the one kept)
+   * A SLASH PROOF KEPT AS A RELAY, AT MOST ONE PER SLOT (kanban #2248, a45 refute of #1816; #2344). `accused` is
+   * round id || accused node || player || door (1 result, 2 re-run). Returns 'kept', 'same' (this proof is already the one kept)
    * or 'other' (another proof about the same signed result is kept; nothing stored).
    */
   relaySlashPut(accused, proofId, bytes) {
@@ -4112,7 +4112,22 @@ export class Round {
     return 'kept';
   }
 
-  /** The id of the slash proof kept as a relay about this accused signed result (relaySlashPut's key), or null. */
+  /**
+   * A BETTER-HOLDING PROOF TAKES THE SLOT (kanban #2344): the slot named `accused` points at `proofId` instead of `wasId`, and its bytes are
+   * kept beside the old ones (nothing is removed). Returns 'kept', or 'other' when the slot no longer names `wasId` (a racing PUT took it).
+   */
+  relaySlashReplace(accused, wasId, proofId, bytes) {
+    const own = !this.db.isTransaction;
+    if (own) this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const n = this.db.prepare('UPDATE relayed_slash SET proof_id = ? WHERE accused = ? AND proof_id = ?').run(proofId, accused, wasId).changes;
+      if (n) this.relayPut(proofId, bytes);
+      if (own) this.db.exec('COMMIT');
+      return n ? 'kept' : 'other';
+    } catch (e) { if (own) this.db.exec('ROLLBACK'); throw e; }
+  }
+
+  /** The id of the slash proof kept as a relay in this slot (relaySlashPut's key: round || accused node || player || door), or null. */
   relaySlashOf(accused) {
     const r = this.db.prepare('SELECT proof_id FROM relayed_slash WHERE accused = ?').get(accused);
     return r ? new Uint8Array(r.proof_id) : null;
