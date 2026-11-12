@@ -11,6 +11,17 @@ import { homedir } from 'node:os';
 import { execFile } from 'node:child_process';
 
 // a second node on the machine names its services apart (instance.js)
+
+// A failed systemctl --user, said so a person can act on it (feedback #021, kanban #2570): no systemd at all, or no user
+// session bus (a container, WSL without systemd, a su/sudo shell without a login session) gets the fix, not only the raw error.
+export function systemctlWhy(args, r) {
+  const raw = String((r && (r.err || r.out)) || '').trim();
+  const head = `systemctl ${args.join(' ')} failed: ${raw.slice(0, 300)}`;
+  if (/ENOENT|systemctl: (command )?not found|command not found|System has not been booted with systemd/i.test(raw)) return `${head} - this machine has no systemd. The node needs systemd user services (Linux with systemd; on WSL set systemd=true in /etc/wsl.conf and restart WSL).`;
+  if (/Failed to connect to (the )?bus|DBUS_SESSION_BUS_ADDRESS|XDG_RUNTIME_DIR|No medium found|Failed to connect to user scope bus/i.test(raw)) return `${head} - this shell has no systemd user session. Log in as this user directly (ssh or the desktop, not su/sudo), and run "loginctl enable-linger $USER" once so the node keeps running after you log out.`;
+  return head;
+}
+
 export const unitName = (id) => `${named(`arena-${id}`)}.service`;
 export const UNIT = unitName('node');
 export const BRIDGE_UNIT = unitName('chain-bridge');
@@ -104,7 +115,7 @@ export async function installService({ node = process.execPath, release, home, p
   const t0 = Date.now();
   for (const args of [['--user', 'daemon-reload'], ['--user', boot ? 'enable' : 'disable', ...units], ['--user', 'restart', ...units]]) {
     const r = await sh('systemctl', args);
-    if (!r.ok) return { ok: false, why: `systemctl ${args.join(' ')} failed: ${(r.err || r.out).trim().slice(0, 300)}` };
+    if (!r.ok) return { ok: false, why: systemctlWhy(args, r) };
   }
   onStage('start');                                               // the services are in: the wizard's progress shows the wait
   const health = await waitHealthy({ port, fetcher, waitMs });
@@ -381,7 +392,7 @@ WantedBy=default.target
 `);
   for (const a of [['--user', 'daemon-reload'], ['--user', boot ? 'enable' : 'disable', unit], ['--user', 'restart', unit]]) {
     const r = await sh('systemctl', a);
-    if (!r.ok) return { ok: false, why: `systemctl ${a.join(' ')} failed: ${(r.err || r.out).trim().slice(0, 300)}` };
+    if (!r.ok) return { ok: false, why: systemctlWhy(a, r) };
   }
   return { ok: true };
 }
