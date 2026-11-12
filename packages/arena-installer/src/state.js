@@ -145,6 +145,23 @@ export function bondsOf(s) {
   return s && s.bond && s.bond.txid ? [s.bond] : [];
 }
 
+/**
+ * THE BOND OUTPUTS A WITHDRAWAL SPENT, TAKEN OUT OF THE RECORD (kanban #2098, state audit 2026-11-12: POST /owner/bond-withdraw spent the
+ * outputs and state.json kept naming them, so first-bond answered "posted already" with the spent bond for good and add-bond counted the
+ * spent sat in its total): the patch of state `n` without the outpoints `spent` ([{ txid, vout }]) - `bonds` the ones left, `bond` the
+ * first left or null - and each spent one kept in `withdrawn` with the spending `txid`. null when the record names none of them.
+ */
+export function withoutSpentBonds(n, spent, { txid = null, atMs = Date.now() } = {}) {
+  const key = (o) => `${o.txid}:${Number(o.vout || 0)}`;
+  const gone = new Set((spent || []).map(key));
+  const all = bondsOf(n);
+  const out = all.filter((b) => gone.has(key(b)));
+  if (!out.length) return null;
+  const left = all.filter((b) => !gone.has(key(b)));
+  return { bonds: left, bond: left[0] || null,
+    withdrawn: [...(Array.isArray(n.withdrawn) ? n.withdrawn : []), ...out.map((b) => ({ ...b, withdrawTxid: txid, withdrawnMs: atMs }))] };
+}
+
 /** The node's guardian endpoint: its public address as a websocket, /guardian (the seat carries it to its fedimintd). */
 export const guardianUrlOf = (url) => (url ? `${url.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:').replace(/\/+$/, '')}/guardian` : null);
 

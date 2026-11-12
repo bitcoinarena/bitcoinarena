@@ -10486,6 +10486,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           // the census's, and the ones no census counts any more - that is unlocked goes in one spend, signed by the node's key; one still
           // locked stays findable here (kept, or a census's excluded) and is withdrawn once its own lock is over. Not held back by the latest
           // maturity: anyone can pay to this node's bond script, so a stranger's far-locked output must not lock the owner's bond
+          // kanban #2098: the outputs a withdrawal spent leave the installer's bond record (ARENA_HOME's state.json), kept in `withdrawn`
+          const recordWithdrawn = async (gone, txid) => {
+            if (!process.env.ARENA_HOME) return;
+            try {
+              const { nodeState, withoutSpentBonds } = await import('../../arena-installer/src/state.js');
+              nodeState(process.env.ARENA_HOME).update((n) => withoutSpentBonds(n, gone, { txid }));
+            } catch (e) { console.log(`[bond] the withdrawal ${txid} is not in state.json: ${(e && e.message) || e}`); }
+          };
           if (!(body.args || {}).txid && (!found || (!found.bond.hold && found.bond.template !== BOND_TEMPLATE_V3))) {
             if (typeof chainTip !== 'function' || typeof chainSend !== 'function') {
               if (!found) return answer(409, { ok: false, why: 'no census this seat holds names a bond of this node' });
@@ -10515,6 +10523,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             try { spend = withdrawSpend({ bonds: open, nodeSecret: round.identity.secret, network: own.network, script, feeRate: Number((body.args || {}).feeRate) || 2 }); }
             catch (e) { return answer(400, { ok: false, why: e.message }); }
             try { const txid = await chainSend(spend.hex); console.log(`[bond] withdrawn to ${(body.args || {}).address}: ${txid} (${spend.value} sat from ${spend.spent.length} output(s), fee ${spend.fee})`);
+              // THE WITHDRAWAL RECORDED (kanban #2098, state audit 2026-11-12): an installed node's state.json kept naming the spent outputs, so its
+              // first-bond door answered "posted already" with them for good and add-bond counted them; now they leave bond / bonds (kept in
+              // `withdrawn` with this txid). A record missed here (a crash right after the send) is caught by first-bond / add-bond asking the chain
+              await recordWithdrawn(open.map((o) => ({ txid: o.txid, vout: Number(o.vout || 0) })), txid);
               return answer(200, { ok: true, txid, value: spend.value, fee: spend.fee, spent: spend.spent, stillLocked, ...(others.length ? { others } : {}) }); }
             catch (e) { return answer(400, { ok: false, why: e.message }); }
           }
@@ -10570,7 +10582,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           let spend;
           try { spend = withdrawSpend({ bond: found.bond, nodeSecret: round.identity.secret, network: found.network, script, feeRate: Number((body.args || {}).feeRate) || 2 }); }
           catch (e) { return answer(400, { ok: false, why: e.message }); }
-          try { const txid = await chainSend(spend.hex); console.log(`[bond] withdrawn to ${(body.args || {}).address}: ${txid} (${spend.value} sat, fee ${spend.fee})`); return answer(200, { ok: true, txid, value: spend.value, fee: spend.fee }); }
+          try { const txid = await chainSend(spend.hex); console.log(`[bond] withdrawn to ${(body.args || {}).address}: ${txid} (${spend.value} sat, fee ${spend.fee})`);
+            // THE WITHDRAWAL RECORDED (kanban #2098, state audit 2026-11-12): an installed node's state.json kept naming the spent outputs, so its
+            // first-bond door answered "posted already" with them for good and add-bond counted them; now they leave bond / bonds (kept in
+            // `withdrawn` with this txid). A record missed here (a crash right after the send) is caught by first-bond / add-bond asking the chain
+            await recordWithdrawn([{ txid: String(found.bond.txid), vout: Number(found.bond.vout || 0) }], txid);
+            return answer(200, { ok: true, txid, value: spend.value, fee: spend.fee }); }
           catch (e) { return answer(400, { ok: false, why: e.message }); }
         }
         // AN OLD BOND TAKEN BACK (kanban #650): signed by the owner like the bond's own withdrawal, spent with the old key at its maturity
