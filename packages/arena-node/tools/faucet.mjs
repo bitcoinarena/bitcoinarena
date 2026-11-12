@@ -321,7 +321,9 @@ function unsureWelcome(book, ask) {
   return ask.kind === 'welcome' && (book.unsure || []).some((u) => u.account === ask.account && u.kind === 'welcome')
     ? { ok: false, why: 'your welcome is still on its way: try again in a few minutes' } : null;
 }
-const withUnsure = (book) => ({ ...book, players: [...(book.players || []), ...(book.unsure || []).map(({ payers, removedMs, ...row }) => row)] });
+// counted ONCE (merged in #1489 beside #1628): the unsure rows go into `players` here, so the decide's own unsure count (#1628, faucet.js) is handed
+// none - an unsure top-up counted twice toward PLAYER_TOPUPS_PER_DAY refused an account's last top-up of the day
+const withUnsure = (book) => ({ ...book, players: [...(book.players || []), ...(book.unsure || []).map(({ payers, removedMs, ...row }) => row)], unsure: [] });
 
 async function grant(ask) {
   if (!/^lntb[0-9a-z]{20,1500}$/.test(String(ask.invoice || ''))) return { ok: false, why: 'that is not a testnet invoice' };
