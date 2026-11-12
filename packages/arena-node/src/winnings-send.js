@@ -29,7 +29,7 @@ import { sendableInvoiceMsat, lowestLiveGateway, sendPlanStands, proposedExpirat
 import { signShare340, aggregate340, nonceGenerate340, verifyShare340 } from '../../arena-protocol/src/frost-bip340.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
-import { encodeCommitments, decodeCommitments, decodeShare, commitmentListRefusal } from './pool-wire.js';
+import { encodeCommitments, decodeCommitments, decodePeerCommitment, decodeShare, commitmentListRefusal } from './pool-wire.js';
 import { largestPayoutMsat, lnv2FeeMsat } from '../../arena-protocol/src/lock-settlement.js';
 import { urlOfLnurl } from '../../arena-protocol/src/bech32.js';
 import { stateOf } from './settlement-state.js';
@@ -602,7 +602,7 @@ export class WinningsSend {
       const message = this.pairs.get(`${kind}:${toHex(roundIdBytes)}:${entryHex}:${row.attempt}`).message;
       const asked = await askPeers(this.peersFor(roundIdBytes), async (base, signal) => {
         const r = await this.fetcher(`${base}/send-commit?${q}`, { method: 'POST', signal });
-        return r.ok ? { commitment: decodeCommitments(new Uint8Array(await r.arrayBuffer()))[0] } : null;
+        return r.ok ? { commitment: decodePeerCommitment(new Uint8Array(await r.arrayBuffer())) } : null;   // its nonces are points, or it is refused (kanban #2331, #2345)
       }, { boundMs: this.peerAskMs, graceMs: this.peerGraceMs, enough: built.needed - 1, counts: (x) => !!(x && x.commitment) });
       const signers = [{ base: null, commitment: own.commitment }];
       for (const { peer: base, value } of asked) if (value && value.commitment) signers.push({ base, commitment: value.commitment });
