@@ -146,6 +146,11 @@ export function openFeedbackStore(path = ':memory:') {
     for (const r of all) { let e = null; try { e = JSON.parse(r.event); } catch { e = null; }
       const kept = JSON.stringify(e ? keptEvent(e) : { content: '' }); if (kept !== r.event) { set.run(kept, r.id); changed++; } }
     if (changed && path !== ':memory:') { db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); db.exec('VACUUM'); db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } }
+  // A PAID REPORT FROM BEFORE GETS ITS APPROVAL TIME BACK (kanban #1786): paidNow used to move changed_ms to the payment time; the approval's move
+  // (report_moves, to 'accepted') still holds when it was approved
+  db.exec(`UPDATE reports SET changed_ms = (SELECT MAX(m.at_ms) FROM report_moves m WHERE m.id = reports.id AND m.to_state = 'accepted')
+    WHERE state = 'paid' AND EXISTS (SELECT 1 FROM report_moves m WHERE m.id = reports.id AND m.to_state = 'accepted')
+      AND changed_ms IS NOT (SELECT MAX(m.at_ms) FROM report_moves m WHERE m.id = reports.id AND m.to_state = 'accepted')`);
   const get = db.prepare('SELECT * FROM reports WHERE id = ?');
   const row = (r) => (r ? { id: r.id, pubkey: r.pubkey, type: r.type, signedAt: r.signed_at, receivedMs: r.received_ms, happened: r.happened, expected: r.expected,
     game: r.game || null, round: r.round || null, build: r.build || null, state: r.state, reason: r.reason || null, duplicateOf: r.duplicate_of || null,
@@ -300,9 +305,10 @@ export function openFeedbackStore(path = ':memory:') {
   }
 
   /** LUD-03's first answer, at `<base>/lnurlw/<k1>`: the request a wallet reads; an ERROR for a paid or unknown link. */
-  function withdrawRequest(k1, { base }) {
+  function withdrawRequest(k1, { base, network = null }) {
     const w = rewardOf.get(String(k1));
     if (!w) return { status: 'ERROR', reason: 'no such reward' };
+    if (!onNetwork(w, network)) return { status: 'ERROR', reason: otherNetwork(w) };   // kanban #1784
     if (w.state === 'paid') return { status: 'ERROR', reason: 'this reward was claimed' };
     if (w.state === 'paying') return { status: 'ERROR', reason: 'this reward is being paid: try again in a minute' };
     if (w.state === 'void' || !reportPays(w)) return { status: 'ERROR', reason: 'this reward was withdrawn: its report is not approved' };
@@ -310,6 +316,11 @@ export function openFeedbackStore(path = ':memory:') {
     return { tag: 'withdrawRequest', callback: `${base}/lnurlw/${w.k1}/callback`, k1: w.k1, minWithdrawable: msat, maxWithdrawable: msat,
       defaultDescription: `Bitcoin Arena feedback reward, ${w.amount_sats} sat${w.network === 'mainnet' ? '' : ' (testnet sats, no value)'}${w.comment ? `: ${w.comment}` : ''}`.slice(0, 300) };
   }
+  // A LINK PAYS ONLY ON THE NETWORK IT WAS MADE FOR (state audit 2026-11-12 SM-22, kanban #1784): after the payout network switch (testnet4 -> mainnet,
+  // 2026-11-11) a testnet4 link was still claimable - and paid in mainnet sats, while its request said "testnet sats, no value". `network` is the
+  // faucet's payout network now (null: not checked, as before); a link of another network is refused by withdrawRequest, claim and payToAddress.
+  const onNetwork = (w, network) => network == null || String(w.network) === String(network);
+  const otherNetwork = (w) => `this reward was made on ${w.network}, and rewards are paid on another network now`;
   /** A reward pays only while its report is approved (audit 5 #1402). */
   const reportPays = (w) => { const r = get.get(w.report); return !!r && (r.state === STATES.ACCEPTED || r.state === STATES.PAID); };
   /** The link a wallet scans: LUD-01 bech32 of `<base>/lnurlw/<k1>`. */
@@ -326,9 +337,10 @@ export function openFeedbackStore(path = ':memory:') {
   // named an address that got nothing. Now the address goes into the same UPDATE that takes the row to paying, for that invoice only: a claim through the
   // withdraw link (the LNURL callback) writes NULL, and a payment that surely failed clears it as it opens the link again.
   const claim = (k1, invoice, opts = {}) => claimFor(k1, invoice, opts, null);
-  async function claimFor(k1, invoice, { decode, pay, nowMs = Date.now() } = {}, address = null) {
+  async function claimFor(k1, invoice, { decode, pay, network = null, nowMs = Date.now() } = {}, address = null) {
     const w = rewardOf.get(String(k1));
     if (!w) return { status: 'ERROR', reason: 'no such reward' };
+    if (!onNetwork(w, network)) return { status: 'ERROR', reason: otherNetwork(w) };   // kanban #1784
     if (w.state !== 'open') return { status: 'ERROR', reason: w.state === 'paid' ? 'this reward was claimed' : w.state === 'void' ? 'this reward was withdrawn: its report is not approved' : 'this reward is being paid' };
     if (!reportPays(w)) return { status: 'ERROR', reason: 'this reward was withdrawn: its report is not approved' };   // audit 5 #1402
     let d;
@@ -351,7 +363,9 @@ export function openFeedbackStore(path = ':memory:') {
     } else db.prepare("UPDATE rewards SET state = 'paid', payment_hash = COALESCE(?, payment_hash), paid_ms = ?, why = NULL WHERE k1 = ?").run(paymentHash || null, nowMs, w.k1);
     const r = get.get(w.report);
     if (r && r.state === STATES.ACCEPTED) {
-      db.prepare('UPDATE reports SET state = ?, changed_ms = ? WHERE id = ?').run(STATES.PAID, nowMs, r.id);
+      // PAID KEEPS THE APPROVAL TIME (kanban #1786): changed_ms of an accepted or paid report is when it was approved - the per-key limit and the week's
+      // budget count by it. The payment time is the reward's paid_ms; moving changed_ms to it counted a reward approved last week and claimed today again
+      db.prepare('UPDATE reports SET state = ? WHERE id = ? AND state = ?').run(STATES.PAID, r.id, STATES.ACCEPTED);
       db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, STATES.PAID, nowMs, 'lnurlw', paymentHash || null);
     }
     return true;
@@ -362,7 +376,9 @@ export function openFeedbackStore(path = ':memory:') {
    */
   // A PAYMENT STILL GOING IS LEFT ALONE (audit 5 #1402): the payer's own record may not know it yet, and "not found" read as failed reopened the link while
   // claim()'s payinvoice still ran (75 s) - with a hold invoice the holder claimed again and was paid twice. Read only after `freshMs`.
-  async function settle({ status, nowMs = Date.now(), freshMs = 180000 } = {}) {
+  // ONLY THE PAYER THAT MADE A PAYMENT IS ASKED ABOUT IT (kanban #1784): `status` is the payer of `network`; a paying row of another network was paid by
+  // another wallet, which this one never saw ("not listed" read as failed reopened it and the holder was paid twice, once per network) - it stays paying.
+  async function settle({ status, network = null, nowMs = Date.now(), freshMs = 180000 } = {}) {
     const out = [];
     // A DECISION HOLDS ONLY FOR THE PAYMENT IT READ (kanban #1571): status() may wait 20 s a row and two passes may overlap, so a row read at the
     // start of a pass can be opened, claimed again and paying under a NEW hash by the time it is decided. Each row is read again before its
@@ -370,6 +386,7 @@ export function openFeedbackStore(path = ':memory:') {
     for (const { k1 } of db.prepare("SELECT k1 FROM rewards WHERE state = 'paying'").all()) {
       const w = rewardOf.get(k1);
       if (!w || w.state !== 'paying') continue;
+      if (!onNetwork(w, network)) { out.push({ k1: w.k1, status: 'unknown', otherNetwork: w.network }); continue; }   // kanban #1784
       if (Number(w.tried_ms || 0) > nowMs - freshMs) { out.push({ k1: w.k1, status: 'unknown', fresh: true }); continue; }
       let st = 'unknown';
       try { st = w.payment_hash ? await status(w.payment_hash) : 'unknown'; } catch { st = 'unknown'; }
@@ -397,15 +414,16 @@ export function openFeedbackStore(path = ':memory:') {
    * takes), and that invoice goes through claim() - the same compare-and-set, the same payer, the same "an unknown outcome stays paying". `invoiceFor(address,
    * sats, comment)` -> { ok, invoice } | { ok: false, why }. Answers { ok, status } or { ok: false, why }.
    */
-  async function payToAddress(k1, { invoiceFor, decode, pay, nowMs = Date.now() } = {}) {
+  async function payToAddress(k1, { invoiceFor, decode, pay, network = null, nowMs = Date.now() } = {}) {
     const w = rewardOf.get(String(k1));
     if (!w) return { ok: false, why: 'no such reward' };
+    if (!onNetwork(w, network)) return { ok: false, why: otherNetwork(w) };   // kanban #1784
     if (w.state !== 'open') return { ok: false, why: w.state === 'paid' ? 'this reward is paid' : w.state === 'void' ? 'this reward was withdrawn' : 'this reward is being paid' };
     const address = addressOf(w.report);
     if (!address) return { ok: false, why: 'the report names no Lightning address: send its withdraw link instead' };
     let inv; try { inv = await invoiceFor(address, w.amount_sats, w.comment || ''); } catch (e) { inv = { ok: false, why: e.message }; }
     if (!inv || !inv.ok) return { ok: false, why: `the address gave no invoice: ${(inv && inv.why) || 'no answer'}` };
-    const r = await claimFor(w.k1, inv.invoice, { decode, pay, nowMs }, address);   // the address is written with its invoice's paying CAS (kanban #1575)
+    const r = await claimFor(w.k1, inv.invoice, { decode, pay, network, nowMs }, address);   // the address is written with its invoice's paying CAS (kanban #1575)
     return r.status === 'OK' ? { ok: true, status: 'paid', address, reward: rewardRow(rewardOf.get(w.k1)) } : { ok: false, why: r.reason, address, reward: rewardRow(rewardOf.get(w.k1)) };
   }
   const rewards = ({ pubkey = null } = {}) => (pubkey ? db.prepare('SELECT * FROM rewards WHERE pubkey = ? ORDER BY created_ms DESC').all(String(pubkey))

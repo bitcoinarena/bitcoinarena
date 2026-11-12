@@ -2652,6 +2652,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const drawnAttestor = drawnHosted ? new DrawnAttestor({
     readPrice: () => prices.readPrice(), selfKey: toHex(round.pubkey), sign: (d) => schnorr.sign(d, round.identity.secret),
     verify: (sg, m, k) => { try { return schnorr.verify(sg, m, k); } catch { return false; } },   // kanban #1487: every peer's word checked before it counts
+    db: round.db,   // kanban #1844: its readings and signed words kept in the seat's store across a restart
     attestorsFor: (rid) => { const got = roster.attestorsFor(rid); return got.ok ? got.attestors.map((e) => toHex(e.pubkey)) : null; },
     peersFor: (rid) => { const got = roster.attestorsFor(rid); return got.ok ? peerEndpointsOf(got.attestors, round.pubkey) : []; },
     due: () => {
@@ -3559,7 +3560,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // WHICH ROUND IS HEAD-TO-HEAD (kanban #1068, #1071): declared here, filled in below. A close sweep can fire while the server is still being set up
   // (measured 2026-11-03 on a restarted seat: "Cannot access 'headToHeadRound' before initialization" from afterClose, and the seat exited); until then a close
   // waits (kanban #1587, below) - it is no longer closed as before #1071.
-  let headToHeadRound = () => null, headToHeadReady = false, relayedRound = () => null;
+  let headToHeadRound = () => null, headToHeadReady = false, relayedRound = () => null, pullPickLocks = async () => {};
   // NO CLOSE LOGIC RUNS BEFORE THE SEAT CAN LEARN WHO IS IN A ROUND (kanban #1587): the start's own close sweep runs inside serve(), before
   // `headToHeadReady`, and a seat restarted past a head-to-head round's end signed VOID 0 over the one entry it held while the threshold signed
   // FAILED / DELIVERED - final, one result per entry. A close asked for before then waits for it; and one round's close logic runs once at a time
@@ -3589,6 +3590,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (decideOutage(roundIdBytes, entryId, { evidenceKind: 'closed' })) await forwardFirstMark(f);
       }
     })().catch((e) => console.error(`[entry-void] ${e.message}`));
+    // A POOL'S PLAIN PICKS WHOSE LOCKS NEVER REACHED THIS SEAT ARE FETCHED FROM ITS PEERS (kanban #1790): the hand-on at the lock door lives in
+    // memory, so a seat that restarted before it ran never handed them; this runs at every close, a resumed one too
+    pullPickLocks(roundIdBytes).catch((e) => console.error(`[entry] ${e.message}`));
     // A HEAD-TO-HEAD SEAT FIRST LEARNS WHO IS IN THE ROUND (kanban #1071), and with a wait that ran out it signs nothing
     // - and with a throw too (kanban #1755): members not known is never 'known', so this seat never decides the round alone
     const h2h = headToHeadReady ? headToHeadRound(roundIdBytes) : null;
@@ -4349,8 +4353,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
     return reserveMissing.has(fed) ? `paused: this market pays the protocol reserve, and its federation ${fed.slice(0, 8)} has no reserve key yet - an order could not settle; orders open again once the key stands` : null;
   };
-  const offerRefusal = (contract) => seriesRefusal(contract) || droppedRefusal(contract) || donationInForceRefusal(contract) || reserveRefusal(contract)
-    || drainingRefusal(contract) || fileRefusal(contract) || (typeof refusedFor === 'function' ? refusedFor(contract) : null)
+  const offerRefusal = (contract, { held = false } = {}) => seriesRefusal(contract) || droppedRefusal(contract) || donationInForceRefusal(contract) || reserveRefusal(contract)
+    || (held ? null : drainingRefusal(contract)) || fileRefusal(contract) || (typeof refusedFor === 'function' ? refusedFor(contract) : null)
     // AND A CONFIG THE BALLOT DID NOT MAKE LIVE FOR IT (27A.7.5): not listed, entered or locked here - "it serves nothing"
     || configRefusal(contract);
   const seriesRefusalOfRound = (rid) => {
@@ -4372,13 +4376,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return checkSendPlanAsk(req.headers[SEND_PLAN_ASK_HEADER], { kind, roundId: rid, lateEntryId: lateHex ? new Uint8Array(Buffer.from(lateHex, 'hex')) : null,
       body: raw, seats: c.nodes });
   };
-  const offerRefusalOfRound = (rid) => {
+  // AN ENTRY THIS SEAT ALREADY HOLDS KEEPS ITS LOCKS THROUGH A DRAIN (kanban #1848): the page hands the stake and fee locks in the background
+  // after POST /entry (#handLocksUntilTaken), and a seat that took the federation as DRAINING in that window (a signed record, markDraining)
+  // refused them here - "no new round or deposit names it" - while the return door refused them too ("that player entered the round at this
+  // signer node"), so the stake sat in the federation until its lock's expiry. The drain blocks new rounds, entries and deposits; a lock of an
+  // entry taken before it is a stake the round already holds, and it settles there (§23A.6 step 2). `held`: the lock doors' ask.
+  const offerRefusalOfRound = (rid, { held = false } = {}) => {
     const row = round.get(rid);
     if (!row) return null;
     let c;
     try { c = decodeRoundContract(new Uint8Array(row.contract)); } catch { return null; }
     { const p = playedHere(rid, c); if (!p.played) return p.why; }
-    return offerRefusal(c);
+    return offerRefusal(c, { held });
   };
   // AN ORDER'S LOCK THAT CAME AFTER ITS MARKET CLOSED (kanban #1150: POST /lock had no entry-close check, and a late lock filled against
   // the resting orders): kept and verified - so it can come back by the return door - but the order never trades (order-batch.js refuses
@@ -4455,8 +4464,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const held = () => (kind === 'fee' ? (round.feeLock ? round.feeLock(eid) : null) : round.stakeLock(eid));
     const what = kind === 'fee' ? 'fee' : 'stake';
     const ac = attestedRoundOf(e.roundId);
-    if (ac && round.outcomeAttestations && round.outcomeAttestations(e.roundId).length && !held())
-      return `that market's outcome is attested here: a ${what} lock new to this seat is not taken (kanban #1554)`;
+    // any outcome this seat holds of it: an attestation, or a game market's held game outcome (heldOutcomes, kanban #1793 - the same hole as #1554)
+    if (ac && !held()) { let known = []; try { known = heldOutcomes(round, e.roundId); } catch { known = round.outcomeAttestations ? round.outcomeAttestations(e.roundId) : []; }
+      if (known.length) return `that market's outcome is attested here: a ${what} lock new to this seat is not taken (kanban #1554, #1793)`; }
     if (grace === null || grace === undefined) return null;
     const c = relayedRound(e.roundId) || ac;
     if (!c || typeof c.entryCloseMs !== 'bigint') return null;
@@ -4484,6 +4494,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     let c; try { c = decodeRoundContract(new Uint8Array(row.contract)); } catch { return null; }
     const g = pluginForRound(c, hosted);
     return g.ok && (g.headToHead || !g.attested) ? c : null;   // an attested round's (a market's) orders are replayed by the order book
+  };
+  // A POOL'S PLAIN PICK HANDS ITS LOCKS ON TOO (kanban #1790, state audit 2026-11-12, #1489 sm2-entry-4): the order book replays orders only, and
+  // relayedRound leaves every attested round out, so a pick whose locks reached one seat (the page says "placed" after one, a tab closed seconds later)
+  // stayed stake-unseen at the others for good - each seat rebuilt another pari-mutuel table and no threshold signed one. A plain pick (no limit
+  // price) of a round this seat hosts as attested goes through the entry relay's lock pass as a relayed round's does; each seat checks the lock
+  // with the federation at its own door. Answers the round id to hand on for, or null.
+  const plainPickRound = (storedEntry) => {
+    let e; try { e = decodeEntryContract(new Uint8Array(storedEntry)); } catch { return null; }
+    if (relayedRound(e.roundId)) return e.roundId;
+    if (e.limitPrice !== undefined || e.stakeMsat === 0n) return null;
+    const row = round.get(e.roundId);
+    if (!row) return null;
+    let c; try { c = decodeRoundContract(new Uint8Array(row.contract)); } catch { return null; }
+    const g = pluginForRound(c, hosted);
+    return g.ok && g.attested && !g.headToHead ? e.roundId : null;
   };
   // WHAT A SEAT HANDS ON OF A HEAD-TO-HEAD ENTRY (kanban #1068, entry-relay.js)
   headToHeadRound = (rid) => {
@@ -4600,6 +4625,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
     }
     return why;
+  };
+  // A POOL'S PLAIN PICK HELD HERE WITHOUT ITS STAKE SEEN (kanban #1790): its locks and address asked of the round's peers, as a head-to-head
+  // member's parts are (takeEntryParts: each lock checked with the federation here). A few passes, while the outcome is not yet final.
+  pullPickLocks = async (rid) => {
+    const peers = verifier.peersOf(rid).map((p) => String(p).replace(/\/+$/, ''));
+    if (!peers.length) return;
+    for (let pass = 0; pass < 4 && !shuttingDown; pass++) {
+      if (pass) await new Promise((go) => { const t = setTimeout(go, 2000 * pass); if (t.unref) t.unref(); });
+      let short = 0;
+      for (const { entryId: e } of round.entriesOf(rid)) {
+        const stored = round.entry(e);
+        if (!stored || round.entryVoid(e) || round.stakeSeen(e)) continue;
+        if (!plainPickRound(stored) || relayedRound(rid)) return;   // a relayed round's members have their own way (membersKnown)
+        const why = await takeEntryParts(rid, toHex(e), peers);
+        if (why || !round.stakeSeen(e)) short++;
+      }
+      if (!short) return;
+    }
   };
   // A SEAT SIGNS FOR A HEAD-TO-HEAD ROUND ONLY ONCE IT KNOWS WHO IS IN IT (kanban #1071): false when the wait ran out at the result window, and this seat stays silent
   const asksPeers = seatView((...a) => globalThis.fetch(...a));
@@ -5212,6 +5255,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   round.db.exec('CREATE TABLE IF NOT EXISTS federation_record_history (federation TEXT NOT NULL, height INTEGER NOT NULL, record TEXT NOT NULL, PRIMARY KEY (federation, height))');
   const recordStore = {
     load: async () => round.db.prepare('SELECT federation, record FROM federation_records').all(),
+    // the same rows synchronously, for the restore before the doors open (kanban #1765)
+    loadNow: () => round.db.prepare('SELECT federation, record FROM federation_records').all(),
     save: (fid, hex) => { round.db.prepare('INSERT INTO federation_records (federation, record) VALUES (?, ?) ON CONFLICT(federation) DO UPDATE SET record = excluded.record').run(String(fid), hex); },
     // and every one by its height (the record in force at a round's census height, §23A.3a)
     saveAt: (fid, height, hex) => { round.db.prepare('INSERT OR IGNORE INTO federation_record_history (federation, height, record) VALUES (?, ?, ?)').run(String(fid), Number(height), hex); },
@@ -5894,6 +5939,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // 10 min - the timer's first run - so its gateway probes read no seated guardian and every health page said "0 of 2")
   // the founding waits for this (fedRecordsSettled, above): restored, failed, or at the latest 2 min after start
   const settle = () => { if (!fedRecordsSettled) { fedRecordsSettled = true; if (foundingSeat) setTimeout(() => foundingPassNow(), 0); } };
+  // THE SAVED RECORDS BEFORE THE FIRST ANSWER (kanban #1765, state audit 2026-11-12): for the 20 s before restoreSoon a restarted seat held
+  // no record of a federation it held HALTED, CRITICAL or DRAINING - drainingRefusal, the #1244 exchange guard (liquidations.haltOf) and
+  // GET /federations + /liquidations all read "no record" as OPEN. Each saved record is read back now against its own guardian list
+  // (signatures and threshold, the fallback restore uses too); restoreSoon checks it against the census again
+  try { const r = fedRecords.restoreNow(inviteFedId); if (r.restored) console.log(`[federations] ${r.restored} of ${r.of} records read back before the first answer`); }
+  catch (e) { console.log(`[federations] early restore: ${e.message}`); }
   const restoreSoon = setTimeout(() => { fedRecords.restore(inviteFedId).then((r) => { if (r.restored) console.log(`[federations] ${r.restored} of ${r.of} records restored`); settle(); }, settle); }, 20000);
   const settleAtLatest = setTimeout(settle, 120000);
   if (settleAtLatest.unref) settleAtLatest.unref();
@@ -7697,8 +7748,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!ballotTally) return text(res, 404, 'this seat counts no ballot: it reads no chain for it');
         const net = String(url.searchParams.get('network') || chainNetworkId() || '').toLowerCase();
         if (!/^[0-9a-f]{64}$/.test(net)) return text(res, 400, 'name the network: GET /config?network=<64 hex>');
+        // kanban #1751: a restarted seat whose tally has not read its tip yet does not hand out genesis - an opener asks again
+        const live = ballotTally.live(net);
+        if (!live) return text(res, 503, 'this seat has not read its chain\'s tip yet: the live config is not known - ask again shortly');
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
-        return res.end(JSON.stringify(ballotTally.live(net)));
+        return res.end(JSON.stringify(live));
       }
       if (proposals && url.pathname === '/proposal' && req.method === 'POST') {
         let body; try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8') || '{}'); } catch { return text(res, 400, 'that is not JSON'); }
@@ -9414,6 +9468,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         } catch (e) { return text(res, 400, `that is not ${valued ? 'a value' : 'an outcome'} attestation: ${e.message}`); }
         const got = holdOutcome(new Uint8Array(target), raw, a, valued);
         if (!got.held) return text(res, got.status, got.why);
+        // A FRESH ONE IS HANDED ON AT ONCE (kanban #1787): an attestor daemon posts the seats one after another (8 s timeout each), so one
+        // seat took it a second before the market's deadline and the next one a second after it - FINAL at one, VOID at the other, both
+        // terminal, and neither the settlement nor the return door reached its threshold. A seat that takes one fresh and timely now posts
+        // it to the round's other settlement seats before it answers (as a drawn seat's own combined one, kanban #630), so their arrival
+        // times differ by milliseconds, not by the daemon's timeouts. `handed=1` marks such a post: it is not handed on again.
+        if (got.fresh && !(got.now && got.now.evidenceOnly) && url.searchParams.get('handed') !== '1') {
+          const to = winningsPeers(new Uint8Array(target));   // the settlement committee, as the return and book doors read it
+          await Promise.all(to.map((base) => fetch(`${String(base).replace(/\/+$/, '')}/outcome?round=${toHex(new Uint8Array(target))}&handed=1`,
+            { method: 'POST', body: raw, signal: AbortSignal.timeout(3000) }).catch(() => null)));
+        }
         res.writeHead(got.fresh ? 201 : 200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ held: true, fresh: got.fresh, why: got.why, ...got.now }));
       }
@@ -9804,7 +9868,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         timing.bodyMs = Date.now() - lt0;
         const stored = round.entry(eid);
         if (!stored) return text(res, 404, 'this node holds no such entry');
-        { const why = offerRefusalOfRound(decodeEntryContract(stored).roundId); if (why) return text(res, 409, `lock refused: ${why}`); }
+        { const why = offerRefusalOfRound(decodeEntryContract(stored).roundId, { held: true }); if (why) return text(res, 409, `lock refused: ${why}`); }   // kanban #1848
         { const why = lockAfterCloseRefusal(stored, eid, 'stake'); if (why) return text(res, 409, `lock refused: ${why}`); }
         // WHERE A SLOW LOCK'S TIME WENT (kanban #605: POST /lock took up to 107 s on the test host seats, 0 ms on the loop)
         // AND EVERY LOCK'S STEPS, NOT ONLY A SLOW ONE'S (kanban #618, step-log.js): the federation's own steps (verifyStakeLock's timing) with them
@@ -9813,8 +9877,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const got = await takeStakeLock(eid, fields, timing);
         lockTimed(got.ok ? 'verified' : got.why.slice(0, 60));
         if (!got.ok) return text(res, 409, got.why);
-        { const rid = decodeEntryContract(stored).roundId, rc = relayedRound(rid);   // every round's (kanban #1216)
-          if (rc) entryRelay.lockTaken(rid, toHex(eid), headToHeadRound(rid) ? rc.entryCloseMs : null); }   // a head-to-head lock before its close (kanban #1598)
+        { const rid = plainPickRound(stored), rc = rid ? relayedRound(rid) : null;   // every round's (kanban #1216), a pool's plain pick's too (kanban #1790)
+          if (rid) entryRelay.lockTaken(rid, toHex(eid), rc && headToHeadRound(rid) ? rc.entryCloseMs : null); }   // a head-to-head lock before its close (kanban #1598)
         // AN ORDER (comment 1127): tradable here once both its locks are verified - and only before its market's entry close
         const lateOrder = orderLockAfterClose(stored);
         if (decodeEntryContract(stored).limitPrice !== undefined && !lateOrder) orderBook.noteTradable(decodeEntryContract(stored).roundId);
@@ -9835,11 +9899,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!stored) return text(res, 404, 'this node holds no such entry');
         // NAMED ONLY ONCE THE ENTRY IS HELD HERE (kanban #1688): a stranger's fee lock for a made-up id kept a tx_steps row under that id
         const steps = stepLog('fee-lock', toHex(eid), { keep: txRecord.keep }).on(res); steps.at('body');   // (kanban #618, step-log.js)
-        { const why = offerRefusalOfRound(decodeEntryContract(stored).roundId); if (why) return text(res, 409, `lock refused: ${why}`); }
+        { const why = offerRefusalOfRound(decodeEntryContract(stored).roundId, { held: true }); if (why) return text(res, 409, `lock refused: ${why}`); }   // kanban #1848
         { const why = lockAfterCloseRefusal(stored, eid, 'fee'); if (why) return text(res, 409, `lock refused: ${why}`); }
         const got = await takeFeeLock(eid, fields);
         steps.at(got.ok ? 'verified' : 'refused');
         if (!got.ok) return text(res, 409, got.why);
+        { const rid = plainPickRound(stored), rc = rid ? relayedRound(rid) : null;   // a fee lock that came after its stake lock's pass (kanban #1790)
+          if (rid) entryRelay.lockTaken(rid, toHex(eid), rc && headToHeadRound(rid) ? rc.entryCloseMs : null); }
         const lateOrder = orderLockAfterClose(stored);
         if (decodeEntryContract(stored).limitPrice !== undefined && !lateOrder) orderBook.noteTradable(decodeEntryContract(stored).roundId);
         return text(res, 201, `fee lock verified: contract ${got.contractId} holds ${got.feeMsat} msat` + (lateOrder ? ` - ${lateOrder}` : ''));

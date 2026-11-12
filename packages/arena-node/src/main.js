@@ -67,6 +67,7 @@ import { readSeriesLines } from './series-line.js';
 import { TEST_DONATION_SET_REGTEST, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS } from '../../arena-protocol/src/test-donation-sets.js';
 import { TEST_DONATION_SET_KEYS_REGTEST } from '../../arena-protocol/src/test-donation-set-keys-regtest.js';
 import { installFetchRoutes } from './fetch-routes.js';
+import { readDurableJson, writeDurableJson } from './durable-json.js';
 import { serviceLog } from './log-level.js';
 // THE SEAT'S OWN FETCHES ROUTED AND CAPPED, before anything is asked of a peer (fetch-routes.js)
 { const f = installFetchRoutes(process.env); console.log(`[fetch] ${f.routes} route(s), at most ${f.maxPerOrigin} request(s) in flight per origin, ${f.timeoutMs} ms timeout, idle connections kept ${f.keepAliveMs} ms`); }
@@ -140,9 +141,11 @@ console.log(`[games] hosting ${apps.length ? apps.map((g) => g.name).join(', ') 
 // WHAT THIS DAEMON FUNDS (M3.3-31): the paying rounds its operator names, and
 // entries into them - off by default, so an unnamed round is still 402.
 // THE OWNER'S KEY AND CLAIM CODE (owner.js): two files beside the database, the code readable by the operator only
+// A crash in a write never unclaims the node (kanban #1630): written atomically with a .bak (durable-json.js); an owner.json that
+// does not parse is read from its .bak, and with none the node refuses to start - it never mints a new claim code over an owner.
 const ownerFiles = { store: {
-  read: () => { try { return JSON.parse(readFileSync(`${path}.owner.json`, 'utf8')); } catch { return null; } },
-  write: (o) => writeFileSync(`${path}.owner.json`, JSON.stringify(o) + '\n', { mode: 0o600 }),
+  read: () => readDurableJson(`${path}.owner.json`, null),
+  write: (o) => writeDurableJson(`${path}.owner.json`, o),
   writeCode: (code) => { if (code) writeFileSync(`${path}.owner-claim`, code + '\n', { mode: 0o600 }); else rmSync(`${path}.owner-claim`, { force: true }); },
 
   // the claim file's full path, said on the owner page while the node has no owner (kanban #550, 2026-10-20: "show the complete path")
@@ -152,8 +155,9 @@ const ownerFiles = { store: {
 // beside it too, readable by the operator only, as the claim code is. The endpoint is the node's public one (ARENA_WSS_<port>)
 const operatorFiles = {
   store: {
-    read: () => { try { return JSON.parse(readFileSync(`${path}.operator-tokens.json`, 'utf8')); } catch { return []; } },
-    write: (l) => writeFileSync(`${path}.operator-tokens.json`, JSON.stringify(l) + '\n', { mode: 0o600 }),
+    // the same for the tokens (kanban #1630): a torn file never drops every paired operator UI
+    read: () => readDurableJson(`${path}.operator-tokens.json`, []),
+    write: (l) => writeDurableJson(`${path}.operator-tokens.json`, l),
   },
   writePairing: (uri) => writeFileSync(`${path}.operator-pairing`, uri + '\n', { mode: 0o600 }),
   endpoint: (process.env[`ARENA_WSS_${port}`] || `http://${host}:${port}`).replace(/^ws(s?):/, 'http$1:'),
@@ -344,8 +348,22 @@ if (url) {
     if (hold && Date.now() - blocksFailedAtMs < 60000) return { ok: false, why: 'a block read failed less than a minute ago: read again after it' };
     const p = (async () => {
       // a kept hash from a branch the chain left is dropped and the view read once more (censusWithFreshHashes, kanban #495)
-      const read = async () => { try { return await blocksOver(call, censusFirstBlock(height, networkOf(contract.networkId)), height, { cache: blocksKept }); } catch (e) { blocksFailedAtMs = Date.now(); throw e; } };
+      let viewRead = null;               // the view the census was derived from (the last read; kanban #1841 below)
+      const read = async () => { try { viewRead = await blocksOver(call, censusFirstBlock(height, networkOf(contract.networkId)), height, { cache: blocksKept }); return viewRead; } catch (e) { blocksFailedAtMs = Date.now(); throw e; } };
       const census = await censusWithFreshHashes({ read, derive: (view) => censusOfView(view, contract), cache: blocksKept });
+      // A REORG DURING THE READ IS NOT KEPT UNDER THE KEY'S HASH (kanban #1841): the key's hash is read first, the walk takes minutes
+      // and reads the top heights last - a chain that moved to another branch meanwhile derived that branch's census, and kept under
+      // the old block's hash it was answered for three days once the chain went back to it. The census height is read again, and the
+      // view's own block there must be the key's block (the one the cache holds under that hash); otherwise nothing is kept: read again
+      if (census.ok) {
+        let same = false;
+        try {
+          const atHeight = viewRead && viewRead.blocks ? viewRead.blocks[height - viewRead.firstHeight] : undefined;
+          const keptBlock = blocksKept.get(hash);
+          same = String(await call('getblockhash', [height])) === hash && atHeight !== undefined && (keptBlock === undefined || keptBlock === atHeight);
+        } catch { same = false; }
+        if (!same) return { ok: false, why: 'the chain reorganised during this census read: read again' };
+      }
       if (census.ok) {
         try {
           db.prepare('INSERT OR REPLACE INTO census_kept (key, body, kept_ms) VALUES (?, ?, ?)').run(key, JSON.stringify(census, censusReplacer), Date.now());
