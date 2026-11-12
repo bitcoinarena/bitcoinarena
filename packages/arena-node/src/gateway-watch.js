@@ -57,21 +57,34 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
   // AND THE REST OUTLIVES IT TOO (kanban #559, 2026-10-20: "Fix all of it"): the seats this guardian ranked per epoch (the next
   // epoch's holders step back), the epoch's routed volume and the contract stream's index - `keep.state` { load(fid), save(fid, state) }
   let loaded = false;
+  // ONE FEDERATION'S STATE AT A TIME (kanban #2290, state audit 2026-11-12): the watch reads its federation at every probe and view
+  // (server.js watchFor: the guardian dir's), and a retirement starts a new guardian in the same directory and process - the next
+  // founding makes it guard another federation. The epochs, volumes, contract-stream index and seatings were the old federation's, and
+  // the new one's view ranked them: its gateway seats were gateways that claim and serve only the old one. A new id starts empty and
+  // loads that federation's own kept rows
+  let current = null;
+  const enter = (fid) => {
+    if (fid === current) return;
+    current = fid; epochs.clear(); volumes.clear(); seatedBy.clear(); owners.clear(); cursor = null; loaded = false; lastProbe = null;
+  };
   const stateOut = () => ({ cursor, owners: Object.fromEntries(owners), seatedBy: Object.fromEntries(seatedBy), volumes: Object.fromEntries([...volumes].map(([e, m]) => [e, Object.fromEntries([...m].map(([k, v]) => [k, String(v)]))])) });
-  const saveState = async (fid) => { if (keep && keep.state) { try { await keep.state.save(fid, stateOut()); } catch { /* the next probe */ } } };
+  const saveState = async (fid) => { if (keep && keep.state && fid === current) { try { await keep.state.save(fid, stateOut()); } catch { /* the next probe */ } } };
   const rowsOut = (rows) => Object.fromEntries([...rows].map(([k, r]) => [k, { probes: r.probes, up: r.up, claim: r.claim, modulePk: r.modulePk || null }]));
   async function loadKept(fid) {
+    enter(fid);
     if (loaded || !keep) return; loaded = true;
     try {
       const got = (await keep.load(fid)) || {};
+      if (current !== fid) return;          // the federation changed while this was read (kanban #2290)
       for (const [e, rows] of Object.entries(got)) {
         const m = new Map();
-        for (const [node, r] of Object.entries(rows || {})) if (r && r.claim && checkGatewayClaim(r.claim, verify).ok && r.claim.node === node) m.set(node, { probes: Number(r.probes) || 0, up: Number(r.up) || 0, claim: r.claim, ...(r.modulePk ? { modulePk: r.modulePk } : {}) });
+        for (const [node, r] of Object.entries(rows || {})) if (r && r.claim && checkGatewayClaim(r.claim, verify).ok && r.claim.node === node && r.claim.federationId === fid) m.set(node, { probes: Number(r.probes) || 0, up: Number(r.up) || 0, claim: r.claim, ...(r.modulePk ? { modulePk: r.modulePk } : {}) });
         if (m.size && !epochs.has(Number(e))) epochs.set(Number(e), m);
       }
     } catch { /* none kept */ }
     try {
       const st = keep.state ? (await keep.state.load(fid)) || {} : {};
+      if (current !== fid) return;
       if (Number.isInteger(st.cursor)) cursor = st.cursor;
       for (const [k, n] of Object.entries(st.owners || {})) if (/^[0-9a-f]{64}$/.test(String(n))) owners.set(k, String(n));
       for (const [e, list] of Object.entries(st.seatedBy || {})) if (Array.isArray(list)) seatedBy.set(Number(e), list.map(String));
@@ -91,6 +104,7 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
     if (fid) await loadKept(fid);
     if (!fid) return { ok: false, why: 'this node guards no federation' };
     const h = await tip();
+    if (fid !== current) return { ok: false, why: 'the federation changed during this probe' };   // kanban #2290
     const epoch = Math.floor(h / epochBlocks);
     if (!epochs.has(epoch)) { epochs.set(epoch, new Map()); for (const e of [...epochs.keys()]) if (e < epoch - 1) epochs.delete(e); }
     for (const e of [...volumes.keys()]) if (e < epoch - 1) volumes.delete(e);
@@ -133,7 +147,7 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
     if (incoming) {
       try {
         const got = await incoming(cursor === null ? 0 : cursor);
-        if (got && got.ok) {
+        if (got && got.ok && current === fid) {   // another federation's stream index is never this one's (kanban #2290)
           if (cursor !== null) {
             const v = volumes.get(epoch) || new Map();
             for (const c of got.contracts) { v.set(c.refundPk, (v.get(c.refundPk) || 0n) + BigInt(c.amountMsat)); credited++; }
@@ -169,7 +183,8 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
     const newestUrlOf = (node, url) => { const r = (epochs.get(epoch) || new Map()).get(node); return (r && r.claim && r.claim.gatewayUrl) || url; };
     // ONE EPOCH RANKED: its probes' candidates, by gateway-seats.js, the epoch before's holders (`inc`) stepping back
     const rank = async (e, inc) => {
-      const rows = epochs.get(e) || new Map();
+      // only claims for the federation ranked (kanban #2290)
+      const rows = new Map([...(epochs.get(e) || new Map())].filter(([, r]) => r && r.claim && r.claim.federationId === fid));
       const candidates = [...rows].map(([node, r]) => {
         const x = all.find((y) => toHex(y.pubkey) === node);
         return { node: Uint8Array.from(Buffer.from(node, 'hex')), operatorId: (x && x.advert && x.advert.operatorId) || node, seatedGuardian: seatedNow.has(node),
