@@ -271,7 +271,7 @@ export class Forfeit {
       // VOID (§13C, §23.2 "do nothing"): nothing is forfeited - nobody acts, and
       // the lock returns to the player at its expiry. Not ENTRY_VOID's forfeit.
       // A LOCK OUTSIDE THE SEATS COMES BACK AT SETTLEMENT (kanban #1582 with #1588): /lock keeps every valid lock of a paying head-to-head
-      // round, and the seats are the game's players in the order their entries came (round.js seatedEntriesOf) - a player whose lock is
+      // round, and the seats are the game's players with the lowest entry ids (round.js seatedEntriesOf, #2538) - a player whose lock is
       // held but who got no seat is signed VOID and never claimed. Before, that stake waited for the lock's expiry (144 blocks live);
       // now it comes back as soon as THIS signer node's settlement of the round is ACCEPTED without claiming it, as nobodyWonReturn does
       const out = this.#outsideTheSeats(roundIdBytes, entryIdBytes, contract, lock);
