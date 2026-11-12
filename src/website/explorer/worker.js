@@ -66,14 +66,18 @@ function merge(id, answers, readMs = null) {
     did: a.body && a.body.processed && Array.isArray(a.body.processed.mine) ? a.body.processed.mine : [],
     locks: a.body && a.body.locks ? a.body.locks : null }));
   const settlement = agreed(known.map((a) => a.body.settlement).filter((x) => x && x.txid));
-  const client = known.map((a) => a.body.client).find(Boolean) || null;
+  // the page's timing is what AGREE of those seats send too, never the first seat's (kanban #1885, #1920, #1963)
+  const client = agreed(known.map((a) => a.body.client));
   // its result (won, lost, refunded, pending): what the seats that hold the settlement agree on; else what they agree it is (pending)
   const results = known.map((a) => a.body.result).filter(Boolean);
   const result = agreed(results.filter((r) => r.state !== 'pending')) || agreed(results);
   // WHO PROCESSED ITS ROUND (2026-10-24: "Also show who processed the round, e.g for settlement and verify"): the committees, the
-  // asker and the outcome's attestors as the seats name them (the first that names each), each seat key named by the seat that has it
+  // asker and the outcome's attestors, each seat key named by the seat that has it
+  // EACH FIELD IS WHAT AGREE SEATS NAME, NEVER THE FIRST SEAT'S (kanban #1885, #1920, #1963): guardian-1 (SEATS[0]) copied the honest entry
+  // and result, named itself the asker and only attestor and set a made-up settledAt, and the explorer stored that over 13 seats; a field
+  // fewer than AGREE seats send the same of is left null
   const proc = known.map((a) => a.body.processed).filter(Boolean);
-  const pick = (k) => (proc.find((p) => p[k] && (!Array.isArray(p[k]) || p[k].length)) || {})[k] || null;
+  const pick = (k) => agreed(proc.map((p) => p[k]).filter((v) => v && (!Array.isArray(v) || v.length)));
   const names = Object.fromEntries(seats.filter((x) => x.key).map((x) => [x.key, x.seat]));
   const processed = proc.length ? { game: pick('game'), settlement: pick('settlement'), asker: pick('asker'), outcomes: pick('outcomes') || [],
     settledAt: pick('settledAt'), settlementWhy: pick('settlementWhy'), names } : null;
@@ -138,19 +142,30 @@ async function readPayments(env, since, limit) {
   const t0 = Date.now();
   const got = await Promise.all(SEATS.map(async (seat) => ({ seat, ...(await ask(`${seat}/payments?since=${since}&limit=${limit}`, READ_MS)) })));
   const byId = new Map();
-  // GOES ON FROM: the earliest last row of a list a seat filled to its limit (the rest of it after that), else nothing is left
-  let next = null;
+  // GOES ON FROM (kanban #1885, #1920, #1963; was the earliest last row of ANY full list, before any check - guardian-1 alone answered
+  // `limit` junk rows whose last keptMs was 0 and held the walk at its first page for good): each seat's list is cut to the `limit` asked
+  // for; a list is full only when `limit` of its rows pass the id checks with a keptMs after `since`, and its last is the latest of those.
+  // The walk goes on from the AGREE-th earliest last of the full lists (one seat's alone neither holds it back nor sends it on), always
+  // after `since`; fewer than AGREE full lists: nothing is left
+  const lasts = [];
+  const rowOk = (r) => !!r && hex64.test(String(r.id)) && hex64.test(String(r.txid));
   for (const g of got) {
     if (!g.body || !Array.isArray(g.body.gifts) || !Array.isArray(g.body.items)) continue;
-    for (const list of [g.body.gifts, g.body.items]) {
-      if (list.length >= limit) { const last = Number(list[list.length - 1].keptMs); if (Number.isFinite(last) && (next === null || last < next)) next = last; }
+    for (const whole of [g.body.gifts, g.body.items]) {
+      const list = whole.slice(0, limit);
+      const after = list.filter((r) => rowOk(r) && Number.isFinite(Number(r.keptMs)) && Number(r.keptMs) > since).map((r) => Number(r.keptMs));
+      if (after.length >= limit) lasts.push(Math.max(...after));
       for (const r of list) {
-        if (!hex64.test(String(r.id)) || !hex64.test(String(r.txid))) continue;
+        if (!rowOk(r)) continue;
         if (!byId.has(r.id)) byId.set(r.id, new Map());
         byId.get(r.id).set(g.seat, { row: r, key: g.body.seat || null });
       }
     }
   }
+  lasts.sort((a, b) => a - b);
+  const next = lasts.length >= AGREE ? lasts[AGREE - 1] : null;
+  // ONLY AN ID AGREE SEATS LIST IS LOOKED UP OR WRITTEN (kanban #1885, #1920, #1963): one seat's made-up rows cost no D1 query
+  for (const [id, per] of byId) if (per.size < AGREE) byId.delete(id);
   // a seat that answered and did not list it does not keep it; a seat before GET /payments (404) or that did not answer is said so
   const answered = new Map(got.map((g) => [g.seat, !!(g.body && Array.isArray(g.body.gifts))]));
   const ids = [...byId.keys()];
@@ -190,7 +205,8 @@ async function paymentsWalk(env) {
   if (at === 'done') return;
   const n = await readPayments(env, Number(at) || 0, BACKFILL_ROWS);
   if (!n.seats) return;   // no seat lists payments yet (before their roll): asked again next minute
-  await statePut(env, 'payments-walk', n.next === null ? 'done' : String(n.next));
+  // never backwards and never where it was (kanban #1885, #1920, #1963)
+  await statePut(env, 'payments-walk', n.next === null || !(n.next > (Number(at) || 0)) ? 'done' : String(n.next));
   console.log(JSON.stringify({ paymentsWalk: { from: Number(at) || 0, ...n } }));
 }
 
@@ -474,7 +490,8 @@ async function played(env) {
 }
 
 async function poll(env) {
-  const n = await readWindow(env, Date.now() - READ_BACK_MS, 500, null);
+  // a failed read of the orders does not stop the payments' (kanban #1885, #1920, #1963)
+  const n = await readWindow(env, Date.now() - READ_BACK_MS, 500, null).catch((e) => ({ error: String(e && e.message ? e.message : e) }));
   const pay = await readPayments(env, Date.now() - READ_BACK_MS, 500).catch((e) => ({ error: String(e && e.message ? e.message : e) }));
   console.log(JSON.stringify({ poll: n, payments: pay }));
   await paymentsWalk(env).catch((e) => console.log(JSON.stringify({ paymentsWalkError: String(e && e.message ? e.message : e) })));
@@ -495,14 +512,18 @@ async function readWindow(env, since, limit, before) {
   const t0 = Date.now();
   const got = await Promise.all(SEATS.map(async (seat) => ({ seat, ...(await ask(`${seat}/txs?since=${since}&limit=${limit}&full=1`, READ_MS)) })));
   const byId = new Map();
+  // ONE SEAT'S LIST DOES NOT SPEND THE MINUTE'S D1 QUERIES (kanban #1885, #1920, #1963): guardian-1 alone listed 95,000 made-up ids, each
+  // 90 of them a D1 lookup before any agreement, past D1's 1000 queries per invocation - readWindow threw before its writes and no order or
+  // payment was stored that minute. Each seat's list is cut to the `limit` asked for, and only an id AGREE seats list is looked up
   for (const g of got) {
     if (!g.body || !Array.isArray(g.body.txs)) continue;
-    for (const t of g.body.txs) {
-      if (!hex64.test(String(t.id)) || !t.detail || (before && Number(t.storedMs) >= before)) continue;
+    for (const t of g.body.txs.slice(0, limit)) {
+      if (!t || !hex64.test(String(t.id)) || !t.detail || (before && Number(t.storedMs) >= before)) continue;
       if (!byId.has(t.id)) byId.set(t.id, new Map());
       byId.get(t.id).set(g.seat, { status: 200, body: t.detail });
     }
   }
+  for (const [id, per] of byId) if (per.size < AGREE) byId.delete(id);
   // a seat that answered the read and did not list a transaction does not hold it; one that did not answer is said so
   const answered = new Map(got.map((g) => [g.seat, !!(g.body && Array.isArray(g.body.txs))]));
   const ids = [...byId.keys()];
