@@ -29,6 +29,10 @@ import { Round } from '../src/round.js';
 import { HOSTED } from './plugins/hosted.js';
 
 process.env.ARENA_RELAY_MOST = String(64 * 1024);
+// the 1.9.17 merge brought the slash share's per-node caps (kanban #1917, #2055: RELAY_SLASH_RESERVE / 16 per accused and round, / 32 per
+// accused) - at this test's small pool under one proof's bytes; the slots under test are what bound a node here
+process.env.ARENA_RELAY_SLASH_ACCUSED_MOST = String(8 * 1024);
+process.env.ARENA_RELAY_SLASH_NODE_MOST = String(8 * 1024);
 const { serve } = await import('../src/server.js');
 
 const b32 = (n) => new Uint8Array(32).fill(n);
