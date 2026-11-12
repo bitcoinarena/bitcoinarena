@@ -82,6 +82,12 @@ export function checkPackage(pkg, { verify, want = null, parentOf = () => null }
   let setOk = false;
   try { setOk = !!set && toHex(donationSetId(set)) === toHex(manifest.gameDonationSetId); } catch { setOk = false; }
   if (!add('its donation set is the one its manifest names', setOk)) return out('its donation set is not the one its manifest names', who);
+  // ITS FILES ARE ENTRIES, NOT ANYTHING (kanban #2307, refute of #1814): cores and clients are lists of objects with a string
+  // hash and a string source/body, checked before either loop reads one - a relaying seat's `clients: [null]`, `cores: [null]`
+  // or `clients: {}` (signed by nobody) is refused here, never a TypeError thrown out of adoptPackage and the autoUpdate sweep
+  const entries = (list, field) => Array.isArray(list) && list.every((e) => !!e && typeof e === 'object' && typeof e.hash === 'string' && typeof e[field] === 'string');
+  if (!add('its cores are files', entries(pkg.cores == null ? [] : pkg.cores, 'source'))) return out('its cores are not a list of files (hash and source each)', who);
+  if (!add('its clients are files', entries(pkg.clients == null ? [] : pkg.clients, 'body'))) return out('its clients are not a list of files (hash and body each)', who);
   const named = new Set(manifest.cores.map((c) => toHex(c.hash)));
   if (!add('it carries every core its manifest names', (pkg.cores || []).length === named.size, `${(pkg.cores || []).length} of ${named.size}`))
     return out(`its manifest names ${named.size} core(s) and the package carries ${(pkg.cores || []).length}`, who);
