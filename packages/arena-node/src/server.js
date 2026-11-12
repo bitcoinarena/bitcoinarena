@@ -281,6 +281,9 @@ const BODY_MOST = Number(process.env.ARENA_BODY_MOST) > 0 ? Number(process.env.A
 // for ever - a stranger filled the disk with random blobs under their own hash). At most RELAY_MOST bytes in `relayed` over both doors
 // (256 MiB, ARENA_RELAY_MOST); past it a door answers 507 and keeps nothing.
 const RELAY_MOST = Number(process.env.ARENA_RELAY_MOST) > 0 ? Number(process.env.ARENA_RELAY_MOST) : 256 * 1024 * 1024;
+// LOCKS KEPT FOR ONE HANDOUT OF A REFUSED ROUND (kanban #1669, #1735): each at least as large as the largest kept, so a flood costs its
+// maker that much per lock, all of it refunding to the handout's player
+const REFUSED_LOCKS_PER_HANDOUT = 8;
 const read = (req, max = BODY_MOST) => new Promise((resolve, reject) => {
   const parts = []; let size = 0;
   // A DOOR'S OWN LIMIT (kanban #1271): past `max` bytes the body is not kept, the request ends, and the door answers 413
@@ -9666,15 +9669,39 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!st || !st.stored) return text(res, 409, 'the federation holds no lock at that outpoint: spent, or never made');
         if (String(id) !== String(st.stored.contractId)) return text(res, 409, 'the lock at that outpoint is not the contract handed over: its id is another');
         if (fields.expiration !== st.blockCount + st.stored.blocksLeft) return text(res, 409, 'that contract\'s expiration is not the one the federation holds');
-        // ONE LOCK PER HANDOUT, THE FIRST KEPT (kanban #1489): a second, other lock with the same public image, refund key and
-        // claim key - anyone's, 1 sat - is refused here and never replaces the kept one; the same lock handed again is kept as it was.
+        // EVERY LOCK OF A HANDOUT KEPT ON ITS OWN, NEVER IN ANOTHER'S PLACE (kanban #1489, #1669, #1735). The image (A0), the
+        // player's refund key and the round's claim key are public - and a fee lock is matched by its refund key alone, any hash -
+        // so anyone can lock 1 sat with them. "The first kept lock stands" let such a lock, handed BEFORE the player's, take the
+        // handout's slot: the player's real stake got 409 and waited for its expiry. Now arrival order decides nothing:
+        // - the handout's own id (the one the page and GET /forfeit know) names its LARGEST lock, ties to the lower outpoint -
+        //   the same at every seat whatever order the locks came in; a lock it displaces moves to an id of its own,
+        //   H(handout id || "lock:" || outpoint), and is still listed (GET /stake-lock) and returned (GET /forfeit) by that id;
+        // - a lock not larger than the one the handout's id names is still kept beside it when it is as large (an attacker
+        //   matching the player's amount takes no slot from the player); a SMALLER one is refused - every lock here refunds
+        //   to this handout player's key, so a larger stranger's lock returned at once already gives the player more back;
+        // - at most REFUSED_LOCKS_PER_HANDOUT per handout, each at least as large as the largest: flooding costs the
+        //   flooder that much per lock, all of it owed to the player.
+        // The same lock handed again is kept as it was.
         const opHex = `${toHex(outpoint.txid)}:${outpoint.outIdx}`;
-        const before = round.refusedLock(held.id);
-        if (before && before.outpoint !== opHex)
-          return text(res, 409, `this signer node already keeps another lock for that handout (${before.outpoint}): the first kept lock stands`);
-        round.putRefusedLock({ handoutId: held.id, roundId: rid, outpoint, fields: lockFieldsToJson(fields), contractId: String(id) });
+        const keptLocks = round.refusedLocksOfHandout(held.id);
+        if (keptLocks.some((l) => l.outpoint === opHex))
+          return text(res, 201, `kept for its return: forfeit it at /forfeit?round=${toHex(rid)}&entry=${toHex(keptLocks.find((l) => l.outpoint === opHex).lockId)}`);
+        const amountOf = (l) => { try { return BigInt(l.fields.amountMsat); } catch { return 0n; } };
+        const first = (x, y) => (x.amount !== y.amount ? x.amount > y.amount : x.outpoint < y.outpoint);
+        const top = keptLocks.map((l) => ({ ...l, amount: amountOf(l) })).reduce((m, l) => (!m || first(l, m) ? l : m), null);
+        const mine = { outpoint: opHex, amount: BigInt(fields.amountMsat) };
+        if (top && mine.amount < top.amount)
+          return text(res, 409, `this signer node already keeps a larger lock for that handout (${top.outpoint}, ${top.amount} msat), refunding to the same player: a smaller one is not kept`);
+        if (keptLocks.length >= REFUSED_LOCKS_PER_HANDOUT)
+          return text(res, 409, `this signer node already keeps ${keptLocks.length} locks for that handout: no more are kept`);
+        const ownId = (op) => sha256(new Uint8Array([...held.id, ...new TextEncoder().encode(`lock:${op}`)]));
+        const topIsHandouts = top && toHex(top.lockId) === toHex(held.id);
+        const takesSlot = !top || !topIsHandouts || first(mine, top);
+        const lockId = takesSlot ? held.id : ownId(opHex);
+        const move = takesSlot && topIsHandouts ? [held.id, ownId(top.outpoint)] : null;
+        round.putRefusedLock({ lockId, handoutId: held.id, roundId: rid, outpoint, fields: lockFieldsToJson(fields), contractId: String(id), move });
         console.log(`[refused-lock] ${toHex(rid).slice(0, 16)}: ${String(fields.amountMsat)} msat kept for its return (${String(refusedWhy).slice(0, 80)})`);
-        return text(res, 201, `kept for its return: forfeit it at /forfeit?round=${toHex(rid)}&entry=${toHex(held.id)}`);
+        return text(res, 201, `kept for its return: forfeit it at /forfeit?round=${toHex(rid)}&entry=${toHex(lockId)}`);
       }
 
       if (req.method === 'GET' && url.pathname === '/stake-lock') {
