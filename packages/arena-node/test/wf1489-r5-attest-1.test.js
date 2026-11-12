@@ -71,5 +71,7 @@ test('one committee seat padding its GET /price-samples answer does not cost an 
   console.log(`honest seat 0: result ok=${r.ok}, ${checks} readings checked (each one BIP-340 verify) in ${Math.round(ms)} ms; seat 6 answered ${COPIES} copies of its readings`);
   assert.equal(r.ok, true, r.why);
   // six peers, two ends, seven keys each read at most twice: anything beyond that is one peer buying the seat's CPU
-  assert.ok(checks <= 6 * 2 * 7 * 2, `one peer's padded answer cost ${checks} signature checks (bound ${6 * 2 * 7 * 2})`);
+  // per exchange at most 6 peers x 2 samples x 7 keys x 2 readings; since kanban #2077 a seat asks the committee a second time when an end
+  // reading came in during its exchange (wf1489-fix-v1-refute-23), so two exchanges - bounded, never one check per copy
+  assert.ok(checks <= 2 * 6 * 2 * 7 * 2, `one peer's padded answer cost ${checks} signature checks (bound ${2 * 6 * 2 * 7 * 2})`);
 });
