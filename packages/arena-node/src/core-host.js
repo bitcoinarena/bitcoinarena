@@ -10,6 +10,7 @@ import vm from 'node:vm';
 import { readFileSync } from 'node:fs';
 import { posix } from 'node:path';
 import { workerData } from 'node:worker_threads';
+import { getHeapStatistics } from 'node:v8';
 
 const { files: fileList, entry, name, port, ctrl: ctrlBuffer, arrayBudget, liveCap, answerMax } = workerData;
 const files = new Map(fileList);
@@ -132,6 +133,12 @@ function answer(m) {
 }
 const said = (e) => (e && typeof e.message === 'string' ? e.message : String(e));
 
+// kanban #1813: THIS THREAD'S OWN MEMORY in MB (its isolate: heap, external - the arrays - and malloced), written to the
+// control slot FROM_MB (4) as the load and each call begin; the supervisor charges the core only for growth past it
+const FROM_MB = 4;
+const markFrom = () => { const h = getHeapStatistics(); Atomics.store(ctrl, FROM_MB, Math.round((h.total_heap_size + (h.external_memory || 0) + (h.malloced_memory || 0)) / 1048576)); };
+markFrom();
+
 let liveOf = () => 0;
 function load() {
   if (typeof vm.SourceTextModule !== 'function') throw new Error('the core thread was started without --experimental-vm-modules');
@@ -190,6 +197,7 @@ let call = null;
 try { call = load(); answer({ ok: true }); } catch (e) { answer({ ok: false, why: said(e) }); }
 
 port.on('message', ({ op, json }) => {
+  markFrom();
   if (!call) return answer({ ok: false, why: 'the core did not load' });
   let out;
   try { out = call(String(op), String(json)); } catch (e) { return answer({ ok: false, why: `the core failed in ${op}: ${said(e)}` }); }
