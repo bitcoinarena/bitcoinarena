@@ -28,8 +28,9 @@ export function trialRun(source, manifest, { ms = TRIAL_MS, name = 'plugin trial
   const left = () => until - Date.now();
   let box;
   // kanban #1694: the same entry name and core name the seat loads it under (core-sandbox.js coreFiles), so the core cannot
-  // tell the trial from the seat by its module's identifier; #1719: `until` - load and meta share the trial's one deadline
-  try { box = loadCore({ files: new Map([[SINGLE_ENTRY, String(source)]]), entry: SINGLE_ENTRY }, { name, lingerAs: TRIAL_NAME, loadMs: ms, askMs: ms, until, liveCap: ARRAY_BUDGET }); }   // kanban #1538: kept arrays refused at the budget
+  // tell the trial from the seat by its module's identifier; #1719: `until` - load and meta share the trial's one deadline; #1792: every call
+  // on ONE thread, so what the adapter keeps across calls is seen (counted exactly, after a GC)
+  try { box = loadCore({ files: new Map([[SINGLE_ENTRY, String(source)]]), entry: SINGLE_ENTRY }, { name, lingerAs: TRIAL_NAME, loadMs: ms, askMs: ms, until, liveCap: ARRAY_BUDGET, oneThread: true }); }   // kanban #1538: kept arrays refused at the budget
   catch (e) { return { ok: false, cases: 0, why: `it does not load in the sandbox: ${e.message}` }; }
   try { return trialCases(box, manifest, left); } finally { box.end(); }
 }
