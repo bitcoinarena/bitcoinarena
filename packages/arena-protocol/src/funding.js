@@ -20,7 +20,7 @@ import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
 import { PROTOCOL_VERSION, speaksVersion, TYPE_FUNDING_PROPOSAL, TYPE_FUNDING_COMMENT, TYPE_FUNDING_SIGNAL, TAG } from './constants.js';
 import { servedNodes } from './served-nodes.js';
-import { decodeVote, voteMessage, CHOICE } from './ballot.js';
+import { lastVotes, CHOICE } from './ballot.js';
 import { decodePlayerName, playerNameId } from './player-name.js';
 import { decodeFeeProposal, feeProposalId, decodeFeeApproval, feeApprovalId } from './fee-proposal.js';
 import { decodeLeaderboardPayout, leaderboardPayoutId } from './leaderboard-payout.js';
@@ -199,21 +199,9 @@ export function votePeriodOf({ proposal, signal, schedule = FUNDING_SCHEDULES.sp
  * YES + NO. Answers the weights in sat, the percentages, the bonds voted and `passed`.
  */
 export function fundingTally({ proposalId, census = [], votes = [], from, until, verify }) {
-  const prefix = toHex(proposalId.subarray(0, 8));
-  const latest = new Map();
-  for (const v of votes) {
-    const d = decodeVote(v.payload instanceof Uint8Array ? v.payload : null);
-    if (!d || toHex(d.idPrefix) !== prefix) continue;
-    if (!(v.height >= from && v.height < until)) continue;
-    const msg = voteMessage(proposalId, d.choice);
-    for (const b of census) {
-      let good = false; try { good = verify(d.signature, msg, b.pubkey) === true; } catch { good = false; }
-      if (!good) continue;
-      const had = latest.get(b.outpoint);
-      const later = !had || v.height > had.height || (v.height === had.height && String(v.txid) < String(had.txid));
-      if (later) latest.set(b.outpoint, { choice: d.choice, height: v.height, txid: v.txid, weight: BigInt(b.weight ?? b.bondSats) });
-    }
-  }
+  // the last-vote rule and its replay guard are ballot.js lastVotes, shared with the ballot's tally (kanban #1668, #1734: this
+  // count kept the replayed-vote hole after #1489 fixed it in tally() only - a copy of a bond's old YES undid its final NO here)
+  const latest = lastVotes({ proposalId, census, votes, from, until, verify, weightOf: (b) => BigInt(b.weight ?? b.bondSats) });
   const total = census.reduce((a, b) => a + BigInt(b.weight ?? b.bondSats), 0n);
   let yes = 0n, no = 0n, abstain = 0n;
   for (const x of latest.values()) { if (x.choice === CHOICE.YES) yes += x.weight; else if (x.choice === CHOICE.NO) no += x.weight; else abstain += x.weight; }
