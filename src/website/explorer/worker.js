@@ -180,6 +180,14 @@ async function readPayments(env, since, limit) {
     const r = await env.DB.prepare(`SELECT id, hash, kind FROM txs WHERE id IN (${part.map(() => '?').join(',')})`).bind(...part).all();
     for (const x of r.results || []) hashes.set(x.id, x);
   }
+  // the federation txids the rows name that are an order's id in D1 (kanban #2201): no honest gift's txid is an order's entry id
+  const txids = [...new Set(ids.flatMap((id) => [...byId.get(id).values()].map((v) => String(v.row.txid))))];
+  const orderIds = new Set();
+  for (let i = 0; i < txids.length; i += 90) {
+    const part = txids.slice(i, i + 90);
+    const r = await env.DB.prepare(`SELECT id FROM txs WHERE kind = 'order' AND id IN (${part.map(() => '?').join(',')})`).bind(...part).all();
+    for (const x of r.results || []) orderIds.add(x.id);
+  }
   const writes = [];
   for (const id of ids) {
     const per = byId.get(id);
@@ -190,6 +198,7 @@ async function readPayments(env, since, limit) {
     if (had && (had.kind || 'order') === 'order') continue;
     const tx = paymentTx(id, answers);
     if (!tx.found) continue;
+    if (orderIds.has(String(tx.payment.txid))) continue;   // its federation txid is an order's id D1 holds: made up, not stored (kanban #2201)
     const w = await keep(env, tx, had ? had.hash : undefined);
     if (w) writes.push(w);
   }
@@ -732,10 +741,18 @@ async function recentTotal(env, q, where, binds, now = Date.now()) {
 
 async function txOf(env, ctx, id) {
   // by its id, or a gift's or purchase's by its federation transaction - what the wallet history names (kanban #682)
-  const row = await env.DB.prepare('SELECT json FROM txs WHERE id = ? OR fed_txid = ? LIMIT 1').bind(id, id).first();
-  if (row) return { ...JSON.parse(row.json), cached: true };
+  // AN ORDER'S ID SHOWS THE ORDER (kanban #2201, #1599, #1489 a44): two agreeing seats could list a gift with a fresh id whose federation
+  // txid is a real order's entry id (or a gift row holding the order's id itself, until the minute reads the order), and until D1 held
+  // that order, /api/tx/<order> and /tx/<order> served the seats' made-up 21M BTC gift as cached without asking the seats. Only an order
+  // row with this id is served from D1 straight away; a payment row (by its id, or another row's by fed_txid) is served only after the
+  // seats were asked and agree on no order with this id - an order they do agree on is kept (it takes the id back, #1599) and shown.
+  const own = await env.DB.prepare('SELECT json, kind FROM txs WHERE id = ?').bind(id).first();
+  if (own && own.kind === 'order') return { ...JSON.parse(own.json), cached: true };
+  const alias = own ? null : await env.DB.prepare("SELECT json FROM txs WHERE fed_txid = ? AND id <> ? AND kind <> 'order' LIMIT 1").bind(id, id).first();
   const tx = await readTx(id);
-  if (tx.found) { const w = await keep(env, tx, null); if (w) ctx.waitUntil(w.run()); }
+  if (tx.found) { const w = await keep(env, tx, null); if (w) ctx.waitUntil(w.run()); return tx; }
+  const row = own || alias;
+  if (row) return { ...JSON.parse(row.json), cached: true };
   return tx;
 }
 
