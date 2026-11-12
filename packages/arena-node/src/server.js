@@ -196,7 +196,7 @@ import { SIGNED_RESULT_BYTES, resultId, decodePlayerResult, splitSignedResult } 
 export const MAX_FRAME_BYTES = Math.max(
   MAX_SIGNED_INPUT_BATCH_BYTES, SIGNED_CHECKPOINT_BYTES, SIGNED_RECEIPT_BYTES);
 import { CLOSED } from './store.js';
-import { Round } from './round.js';
+import { Round, refusedLockOwnId } from './round.js';
 import { Verifier } from './verify.js';
 import { Ghosts } from './ghosts.js';
 import { gameLive } from './game-live.js';
@@ -283,6 +283,10 @@ const RELAY_MOST = Number(process.env.ARENA_RELAY_MOST) > 0 ? Number(process.env
 // the largest seating certificate POST /seating takes (kanban #1711): 36 bytes of head + 2 + 32 per seated + 2 + 96 per signature,
 // for up to 128 seated - far above any committee (9)
 const SEATING_CERT_MOST = 36 + 2 + 128 * 32 + 2 + 128 * 96;
+// LOCKS KEPT FOR ONE HANDOUT OF A REFUSED ROUND (kanban #1669, #1735, #1881): a lock is refused only when this many kept for it are at
+// least as large, so keeping the player's lock out costs a stranger this many times its amount, all of it refunding to the handout's
+// player. 4, so a player's stake and fee handouts (rank by rank in GET /stake-lock) fit the 8 a page reads of one seat
+const REFUSED_LOCKS_PER_HANDOUT = 4;
 
 // A BROWSER IS THE CLIENT, and a browser will never be on this origin.
 //
@@ -10016,21 +10020,34 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!st || !st.stored) return text(res, 409, 'the federation holds no lock at that outpoint: spent, or never made');
         if (String(id) !== String(st.stored.contractId)) return text(res, 409, 'the lock at that outpoint is not the contract handed over: its id is another');
         if (fields.expiration !== st.blockCount + st.stored.blocksLeft) return text(res, 409, 'that contract\'s expiration is not the one the federation holds');
-        // EVERY VERIFIED LOCK OF THE HANDOUT IS KEPT, EACH UNDER ITS OWN ID (kanban #1489, #1604): the handout's A0, the player's refund
-        // key and the round's claim key are public, so anyone can lock 1 sat with them. Replacing the kept lock (#1498) let the last one
-        // hand over win; keeping only the first let an attacker who hands its 1 sat lock first shut the player's real stake out of its
-        // return (#1604). Every such lock refunds to the handout player's key, so returning each is safe: each is kept under
-        // H(handout id || outpoint) - the same id at every seat, whatever order the locks came in - and the first one also under the
-        // handout's own id, as before, which never changes once kept. The same lock handed again is kept as it was.
+        // EVERY LOCK OF A HANDOUT KEPT ON ITS OWN, NEVER IN ANOTHER'S PLACE (kanban #1489, #1669, #1735, #1881). The image (A0), the
+        // player's refund key and the round's claim key are public - and a fee lock is matched by its refund key alone, any hash -
+        // so anyone can lock 1 sat with them. "The first kept lock stands" let such a lock, handed BEFORE the player's, take the
+        // handout's slot (#1669/#1735). Then "the handout's id names its largest lock" (7de31ce89) made a lock's id depend on which
+        // other locks a seat holds (#1881): a stranger's lock as large as the player's handed to ONE seat moved the player's lock to
+        // another id there only, no id named it at enough seats, and its forfeit never combined - the stake waited for its expiry.
+        // So now:
+        // - EVERY lock is kept under H(handout id || "lock:" || outpoint), an id of the lock alone: every seat that keeps it keeps
+        //   it under the same id whatever else it holds, and GET /stake-lock lists it by that id. The bare handout id is only an
+        //   alias (round.js refusedLock), never what a seat needs to agree on;
+        // - whether a lock is kept never depends on the order or set of others but for one bound: it is refused only when this seat
+        //   already keeps REFUSED_LOCKS_PER_HANDOUT locks for the handout at least as large as it. To keep the player's lock out at a
+        //   seat a stranger locks that many times the player's amount, every sat of it refunding to the player's key;
+        // - the same lock handed again is kept as it was.
         const opHex = `${toHex(outpoint.txid)}:${outpoint.outIdx}`;
-        const keepId = sha256(new Uint8Array([...held.id, ...new TextEncoder().encode(`lock ${opHex}`)]));
-        const keptLock = { roundId: rid, outpoint, fields: lockFieldsToJson(fields), contractId: String(id) };
-        round.putRefusedLock({ ...keptLock, handoutId: held.id });
-        round.putRefusedLock({ ...keptLock, handoutId: keepId });
+        const keptLocks = round.refusedLocksOfHandout(held.id);
+        const again = keptLocks.find((l) => l.outpoint === opHex);
+        // the lock's own id, also for a row kept before #1881 under the bare handout id (kanban #2029: round.js finds it by that id too)
+        if (again) return text(res, 201, `kept for its return: forfeit it at /forfeit?round=${toHex(rid)}&entry=${toHex(refusedLockOwnId(held.id, opHex))}`);
+        const amountOf = (l) => { try { return BigInt(l.fields.amountMsat); } catch { return 0n; } };
+        const amount = BigInt(fields.amountMsat);
+        const asLarge = keptLocks.filter((l) => amountOf(l) >= amount).length;
+        if (asLarge >= REFUSED_LOCKS_PER_HANDOUT)
+          return text(res, 409, `this signer node already keeps ${asLarge} locks for that handout at least as large (${amount} msat), all refunding to the same player: no more are kept`);
+        const lockId = refusedLockOwnId(held.id, opHex);
+        round.putRefusedLock({ lockId, handoutId: held.id, roundId: rid, outpoint, fields: lockFieldsToJson(fields), contractId: String(id) });
         console.log(`[refused-lock] ${toHex(rid).slice(0, 16)}: ${String(fields.amountMsat)} msat kept for its return (${String(refusedWhy).slice(0, 80)})`);
-        const first = round.refusedLock(held.id);
-        const named = first && first.outpoint === opHex ? held.id : keepId;
-        return text(res, 201, `kept for its return: forfeit it at /forfeit?round=${toHex(rid)}&entry=${toHex(named)}`);
+        return text(res, 201, `kept for its return: forfeit it at /forfeit?round=${toHex(rid)}&entry=${toHex(lockId)}`);
       }
 
       if (req.method === 'GET' && url.pathname === '/stake-lock') {
@@ -10039,8 +10056,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (rid.length !== 32 || !/^0[23][0-9a-f]{64}$/.test(refund))
           return text(res, 400, 'a stake lock is asked for by a round id and a 33-byte refund key');
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
-        // AND THE LOCKS KEPT FOR A REFUSED ROUND (§23.2 REFUSED), under their handout's id
-        return res.end(JSON.stringify([...round.stakeLocksFor(new Uint8Array(rid), refund), ...round.refusedLocksFor(new Uint8Array(rid), refund)]));
+        // AND THE LOCKS KEPT FOR A REFUSED ROUND (§23.2 REFUSED), each under its own id (kanban #1881): each handout's largest
+        // REFUSED_LOCKS_PER_HANDOUT, rank by rank, so a stranger's flood never pushes the player's own lock out of the answer a page reads
+        return res.end(JSON.stringify([...round.stakeLocksFor(new Uint8Array(rid), refund),
+          ...round.refusedLocksFor(new Uint8Array(rid), refund, { perHandout: REFUSED_LOCKS_PER_HANDOUT })]));
       }
 
       // THE COMMITTEE'S FORFEIT OF A QUALIFIER'S STAKE LOCK (§23.2 row 1, W5b).
