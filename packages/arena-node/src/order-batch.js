@@ -606,17 +606,48 @@ export class OrderBook {
     return { ok: true, seat, batchId: held.batch_id, certificate: JSON.parse(held.certificate), record: JSON.parse(held.record) };
   }
 
-  /** POST /batch-void: enough seats declined batch k that the threshold can no longer be reached - its orders wait again. */
+  /**
+   * POST /batch-void: enough seats can never sign batch k that the threshold can no longer be reached - its orders wait again.
+   * A SEAT THAT SIGNED ANOTHER SET OF k CAN NEVER SIGN THIS ONE (kanban #2026, #1489; refute of #1519/#1697/#1886): k's leader signed two
+   * sets and split the honest seats between them 3/3 - neither set reached the threshold, nobody declined (every honest seat had signed
+   * one), k stayed PENDING at every leader and #signGuard kept every seat from signing a later batch: the book froze for good. A void now
+   * also carries `sets`: [{ batchId, ids, sigs: [{ seat, signature }] }], each set's ids hashing under (round, k) to its batchId and each
+   * signature that seat's over that id. For EVERY set (the ones named and any other), the seats that cannot sign it - its decliners, and
+   * the seats that signed a set of k other than it (never a seat that signed it) - must be at least n - needed + 1: no set of k can then
+   * be certified (an honest seat signs one set per batch and never declines one it signed, #voidAsk). Declines alone are the same rule as before.
+   */
   applyVoid(roundIdBytes, body) {
     const m = this.market(roundIdBytes);
     if (!m.ok) return m;
-    if (!body || !/^[0-9]{1,15}$/.test(String(body.k))) return refuse('a void is { k, declines }', 400);
+    if (!body || !/^[0-9]{1,15}$/.test(String(body.k))) return refuse('a void is { k, declines, sets }', 400);
     const k = BigInt(body.k);
     const msg = batchDeclineId({ roundId: roundIdBytes, k });
     const ok = new Set();
-    for (const d of body.declines || []) if (d && isHex(d.seat, 32) && isHex(d.signature, 64) && m.seats.includes(d.seat) && verifySchnorr(fromHex(d.signature), msg, fromHex(d.seat))) ok.add(d.seat);
+    for (const d of Array.isArray(body.declines) ? body.declines : []) if (d && isHex(d.seat, 32) && isHex(d.signature, 64) && m.seats.includes(d.seat) && verifySchnorr(fromHex(d.signature), msg, fromHex(d.seat))) ok.add(d.seat);
     const enough = m.contract.nodes.length - m.needed + 1;
-    if (ok.size < enough) return refuse(`${ok.size} seats declined batch ${k} and it is void only once ${enough} have: ${m.needed} could still sign it`, 403);
+    // the seats that signed each set of k, from `sets` (anything that does not read or verify is ignored)
+    const signedBy = new Map();
+    for (const x of (Array.isArray(body.sets) ? body.sets : []).slice(0, m.seats.length + 1)) {
+      if (!x || !isHex(x.batchId, 32) || !Array.isArray(x.ids) || x.ids.length > 100000 || !x.ids.every((i) => isHex(i, 32)) || !Array.isArray(x.sigs)) continue;
+      let id;
+      try { id = toHex(bookBatchId({ roundId: roundIdBytes, k, orderIds: x.ids })); } catch { continue; }
+      if (id !== x.batchId) continue;
+      const seats = signedBy.get(id) || new Set();
+      for (const s of this.#counted(m, id, x.sigs)) seats.add(s.seat);
+      if (seats.size) signedBy.set(id, seats);
+    }
+    if (signedBy.size) {
+      // the seats that cannot sign set `id` (null: a set nobody here signed)
+      const blockers = (id) => {
+        const no = new Set(ok);
+        for (const [other, seats] of signedBy) if (other !== id) for (const s of seats) no.add(s);
+        if (id !== null) for (const s of signedBy.get(id)) no.delete(s);
+        return no.size;
+      };
+      const worst = [...signedBy.keys()].map((id) => [id, blockers(id)]).sort((a, b) => a[1] - b[1])[0];
+      if (worst[1] < enough)
+        return refuse(`${worst[1]} seats can never sign set ${worst[0].slice(0, 16)} of batch ${k} (${ok.size} declined, the others signed another set of it) and it is void only once ${enough} cannot: ${m.needed} could still sign it`, 403);
+    } else if (ok.size < enough) return refuse(`${ok.size} seats declined batch ${k} and it is void only once ${enough} have: ${m.needed} could still sign it`, 403);
     const rid = Buffer.from(roundIdBytes), kn = Number(k);
     // ABSENT, DECLINED or SIGNED -> VOID, for good
     const moved = this.#move(rid, kn, BATCH.VOID, {
@@ -660,7 +691,7 @@ export class OrderBook {
   async #proposalOf(base, rid, k) { const a = await this.#ask(`${base}/batch-proposal?round=${rid}&k=${k}`); return a.ok ? a.body : null; }
 
   /** A pending batch decided, from the proposals and if need be the seats' answers: certified, void, or still pending. */
-  async #decide(roundIdBytes, m, k, record, id, sigs, peers) {
+  async #decide(roundIdBytes, m, k, record, id, sigs, peers, known = { sigs: [], records: new Map() }) {
     const rid = toHex(roundIdBytes);
     let counted = this.#counted(m, id, sigs);
     if (counted.length < m.needed) {
@@ -689,10 +720,28 @@ export class OrderBook {
       }
       if (counted.length < m.needed) {
         const declines = all.filter((a) => a.declined).map((a) => ({ seat: a.seat, signature: a.declined }));
-        const voided = this.applyVoid(roundIdBytes, { k: String(k), declines });
+        // EVERY SET OF k A SEAT SIGNED, with its ids (kanban #2026): this set's signatures, and each other set k's leader signed that a
+        // seat holds signed - from the proposals' pending items and the void-ask answers. A seat holding another set never signs this one.
+        const sets = new Map();
+        const add = (bid, seat, signature) => {
+          if (!sets.has(bid)) {
+            const rec = bid === id ? record : known.records.get(bid);
+            const ids = rec && Array.isArray(rec.orders) ? this.#idsOf(roundIdBytes, rec) : null;
+            if (!ids) return;
+            sets.set(bid, { batchId: bid, ids, sigs: [] });
+          }
+          sets.get(bid).sigs.push({ seat, signature });
+        };
+        for (const s of counted) add(id, s.seat, s.signature);
+        for (const s of known.sigs) if (s && s.batchId !== id) add(s.batchId, s.seat, s.signature);
+        for (const a of all) if (a.signed && isHex(String(a.batchId), 32)) add(a.batchId, a.seat, a.signed);
+        const signedSets = [...sets.values()].map((x) => ({ ...x, sigs: this.#counted(m, x.batchId, x.sigs) })).filter((x) => x.sigs.length);
+        // two sets or more are the leader's equivocation proof; one set alone adds nothing to its declines (the void it always was)
+        const body = signedSets.length >= 2 ? { k: String(k), declines, sets: signedSets } : { k: String(k), declines };
+        const voided = this.applyVoid(roundIdBytes, body);
         if (!voided.ok) return { state: 'PENDING', why: voided.why };
-        await Promise.all(peers.map((b) => this.#post(b, `/batch-void?round=${rid}`, { k: String(k), declines })));
-        return { state: 'VOID', declined: declines.length };
+        await Promise.all(peers.map((b) => this.#post(b, `/batch-void?round=${rid}`, body)));
+        return { state: 'VOID', declined: declines.length, sets: body.sets ? body.sets.length : 0 };
       }
     }
     const cert = { record, sigs: counted };
@@ -782,7 +831,7 @@ export class OrderBook {
       // the set most seats signed (an honest seat signs one set per batch)
       const tally = (bid) => q.sigs.filter((s) => s.batchId === bid).length;
       const [id, record] = [...q.ids].sort((a, b) => tally(b[0]) - tally(a[0]))[0];
-      const d = await this.#decide(roundIdBytes, m, pk, record, id, q.sigs.filter((s) => s.batchId === id), peers);
+      const d = await this.#decide(roundIdBytes, m, pk, record, id, q.sigs.filter((s) => s.batchId === id), peers, { sigs: q.sigs, records: q.ids });
       decided.push({ k: pk, ...d });
       if (d.state === 'PENDING') return refuse(`batch ${pk} is still undecided (${d.why}): the book does not move on before it is`);
     }
