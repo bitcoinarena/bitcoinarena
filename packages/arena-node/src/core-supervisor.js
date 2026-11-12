@@ -6,8 +6,9 @@
 // grow the node to 857-933 MB past a 512 MB backstop. This thread is never blocked. It starts each core thread for its
 // node thread (core-sandbox.js), and for each one:
 //   - hears its exit at once - a heap death, a terminate, anything - and wakes the waiting node (ctrl[0] = EXITED);
-//   - reads this process's memory every SAMPLE_MS while a call runs, and ends the core the moment it has grown the
-//     process past the trigger, keeping the call's high-water for the node to read;
+//   - reads the core thread's OWN memory (its isolate's heap, external and malloced bytes) every SAMPLE_MS while a call
+//     runs, and ends the core the moment it has grown past the trigger since its call began, keeping the call's
+//     high-water for the node to read;
 //   - ends it when the node asks (a deadline, the array budget), so the node can wait for the thread to be gone.
 // One per node thread that loads cores, started on the first core.
 import { Worker, parentPort, workerData } from 'node:worker_threads';
@@ -32,7 +33,7 @@ if (parentPort && workerData && workerData.arenaCoreSupervisor) {
         workerData: { files: m.files, entry: m.entry, name: m.name, port: m.port, ctrl: m.ctrl, arrayBudget: m.arrayBudget, liveCap: m.liveCap },
         transferList: [m.port],
       });
-      const c = { worker, ctrl, triggerMb: m.triggerMb, error: null };
+      const c = { worker, ctrl, triggerMb: m.triggerMb, error: null, asking: false };
       cores.set(m.id, c);
       worker.on('error', (e) => { c.error = (e && (e.code || e.message)) || String(e); });
       worker.on('exit', (code) => {
@@ -46,19 +47,30 @@ if (parentPort && workerData && workerData.arenaCoreSupervisor) {
     }
     if (m.type === 'end') { const c = cores.get(m.id); if (c) c.worker.terminate().catch(() => {}); }
   });
-  // THE BACKSTOP, read every SAMPLE_MS from a thread that is never blocked: past the trigger the core is ended at once
+  // THE BACKSTOP, read every SAMPLE_MS from a thread that is never blocked: past the trigger the core is ended at once.
+  // kanban #1813: EACH CORE IS CHARGED ONLY FOR ITS OWN MEMORY. This read process.memoryUsage.rss() - the whole process,
+  // every thread - so a hostile game's cores in other threads (replay workers, each well inside its own budget and live cap)
+  // grew the process past the trigger while an honest core's call ran, and the honest core was ended and refused for good.
+  // Now the figure is the core thread's own isolate (worker.getHeapStatistics(): heap + external + malloced - its arrays
+  // live outside its heap and are external), against the same figure its thread wrote when the call began (C.FROM_MB, -1
+  // until then). Another thread's memory is never charged to it.
+  const ownMb = (h) => Math.round(((h.total_heap_size || 0) + (h.external_memory || 0) + (h.malloced_memory || 0)) / MB);
   setInterval(() => {
     if (!cores.size) return;
-    let now = null;
     for (const [, c] of cores) {
-      if (Atomics.load(c.ctrl, C.CALL) !== 1) continue;
-      now = now === null ? rssMb() : now;
-      const grew = now - Atomics.load(c.ctrl, C.FROM_MB);
-      if (grew > Atomics.load(c.ctrl, C.HIGH_MB)) Atomics.store(c.ctrl, C.HIGH_MB, grew);
-      if (grew > c.triggerMb && Atomics.load(c.ctrl, C.CAUGHT) === 0) {
-        Atomics.store(c.ctrl, C.CAUGHT, grew);
-        c.worker.terminate().catch(() => {});
-      }
+      if (Atomics.load(c.ctrl, C.CALL) !== 1 || c.asking) continue;
+      c.asking = true;
+      c.worker.getHeapStatistics().then((h) => {
+        c.asking = false;
+        const from = Atomics.load(c.ctrl, C.FROM_MB);
+        if (Atomics.load(c.ctrl, C.CALL) !== 1 || from < 0) return;
+        const grew = ownMb(h) - from;
+        if (grew > Atomics.load(c.ctrl, C.HIGH_MB)) Atomics.store(c.ctrl, C.HIGH_MB, grew);
+        if (grew > c.triggerMb && Atomics.load(c.ctrl, C.CAUGHT) === 0) {
+          Atomics.store(c.ctrl, C.CAUGHT, grew);
+          c.worker.terminate().catch(() => {});
+        }
+      }, () => { c.asking = false; });
     }
   }, SAMPLE_MS);
 }
