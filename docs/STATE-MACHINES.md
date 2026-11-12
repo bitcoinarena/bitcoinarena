@@ -1627,3 +1627,7 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 - /lock no longer refuses a valid stake lock because the round already seats its players ("this lock seats no one" is gone): a seat that saw B's lock first and one that saw C's first both keep both, and the close (`membersKnown` -> `takeEntryParts`) fetches any lock still missing, so no seat waits for a lock its own door refuses.
 - A locked entry outside the seats is played against nobody and signed VOID; its stake and fee locks are never claimed and expire back to the player (EXPIRE).
 - The /entry door still refuses a new entry once `players` lock-backed entries stand (#1437); an entry relayed as accepted is taken as before.
+
+#### SM-I4 (change) Auto-update record vs the update journal's resume (kanban #1581, audit #1489 sm1-node-2)
+- Invariant: every rollback of a release on this node is in auto-update.json (`rolledBack: true`, `to` = its VERSION, `commit` = its COMMIT) before the next check reads it - the updater's own (updateOnce), one that threw (#1440), and one the journal's resume made after its updater died (`resumeUpdate`, `resumed: true`; at the service's start through `resumeUnderLock`, or inside `updateNode`). So the #1369 day's wait applies to all of them.
+- `updateNode` with `retryRolledBack: false` (the auto updater, unless `bitcoinarena update` forces it) does not move to the release its own resume rolled back in the same call; it answers rolled back.
