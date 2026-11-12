@@ -7955,6 +7955,15 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           const asked = needs === 2 ? await Promise.all((h ? h.nodes : []).map(async (n) => {
             try { const r = await fetch(String(n).replace(/\/+$/, '') + '/api/round-result?round=' + id, { cache: 'no-store', signal: AbortSignal.timeout(5000) }); return r.ok ? await r.json() : null; } catch { return null; }
           })) : null;
+          // AN ANSWER THAT IS NOT A HEAD-TO-HEAD RESULT IS NO ANSWER (kanban #2241, #2254, audit #1489 a45-refute-12): one seat listing a third (junk) entry
+          // escaped the vote below, which counted only answers of two, and was then taken whole and signed as the fullest; one seat answering `players`
+          // that is not an array of objects ("xx", {length:2}, [null, null]) threw verdictOf outside any try, so no result was shown at all. A round of
+          // two holds at most two entries, each an object: any other answer is dropped like a seat that did not answer
+          if (asked) for (const [i, j] of asked.entries()) {
+            if (!j || typeof j !== 'object') { asked[i] = null; continue; }
+            if (!j.players) { asked[i] = { ...j, players: [] }; continue; }
+            if (!Array.isArray(j.players) || j.players.length > 2 || !j.players.every((p) => p && typeof p === 'object')) asked[i] = null;
+          }
           const verdictOf = (j) => JSON.stringify((j.players || []).map((p) => [String(p.entry), String(p.outcome), Number(p.score)]).sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)));
           const agreed = new Map();   // verdict -> how many seats name it
           if (asked) for (const j of asked) if (j && (j.players || []).length === 2) agreed.set(verdictOf(j), (agreed.get(verdictOf(j)) || 0) + 1);
@@ -7972,8 +7981,9 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
               // A SEAT THAT WAS NOT DRAWN ANSWERS 200 WITH NO PLAYERS (2026-10-30: "beide orders werden abgesendet aber es gibt kein Ergebnis": round
               // 1b995103 settled, 5 signed, and seven seats ahead of the signers in the list said nothing): the next seat is asked
               if (!(j.players || []).length) { none = none || { entries: [], match: null }; continue; }
-              // AND THE SCORE ACROSS ROUNDS: the seat's signed match record, with whose identity is whose
-              const got = { entries: (j.players || []).map((p) => ({ entry: p.entry, outcome: p.outcome, score: p.score, signedBy: (asked && (j.players || []).length === 2 && standing === null) ? 0 : p.signedBy })),
+              // AND THE SCORE ACROSS ROUNDS: the seat's signed match record, with whose identity is whose. Signed only as the verdict that stands: an answer
+              // naming one entry, or one the seats do not agree on, counts as unsigned whatever its length (kanban #2241, #2254)
+              const got = { entries: (j.players || []).map((p) => ({ entry: p.entry, outcome: p.outcome, score: p.score, signedBy: (asked && (standing === null || verdictOf(j) !== standing)) ? 0 : p.signedBy })),
                 match: j.match ? { identities: j.match.identities, names: j.match.names || [], score: j.match.score, played: j.match.played,
                   continued: !!j.match.previousRound, byEntry: j.match.players || {}, seat: j.match.seat, signature: j.match.signature } : null };
               // A SEAT THAT HOLDS ONLY ONE OF TWO IS NOT THE ROUND (kanban #947, 2026-11-01: "das Ergebnis nicht konsistent"): an entry reaches the seats one by one, so the fullest answer counts
