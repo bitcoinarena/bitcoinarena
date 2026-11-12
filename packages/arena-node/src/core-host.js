@@ -299,7 +299,15 @@ function answer(m) {
   Atomics.store(ctrl, 0, 1);
   Atomics.notify(ctrl, 0);
 }
-const said = (e) => (e && typeof e.message === 'string' ? e.message : String(e));
+// kanban #2165, #2232, #2304 (refute of #1691): A CORE'S FAILURE IS BOUNDED LIKE ITS ANSWER. said(e) is the core's own text
+// (its thrown message, any length - measured 64 MB), posted as `why` and copied into the node's thread, where no limit of this
+// thread applies. It is cut here to WHY_MAX characters in this realm, before it is ever posted; core-sandbox.js refuses a
+// longer one again. Reading it may throw (a getter, a toString): then a fixed text.
+const WHY_MAX = 1024;
+const cut = (s) => (s.length > WHY_MAX ? s.slice(0, WHY_MAX) + ' [cut]' : s);
+const said = (e) => {
+  try { return cut(e && typeof e.message === 'string' ? e.message : String(e)); } catch { return 'the core failed with something that could not be read'; }
+};
 
 // kanban #1813: THIS THREAD'S OWN MEMORY in MB (its isolate: heap, external - the arrays - and malloced), written to the
 // control slot FROM_MB (4) as the load and each call begin; the supervisor charges the core only for growth past it
