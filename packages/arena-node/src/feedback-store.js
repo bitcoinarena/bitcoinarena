@@ -16,6 +16,9 @@ import { seedRunSpans } from './seed-phrase.js';
 
 /** The report's kind: ephemeral (20000-29999), so no relay keeps it - it goes to the faucet only. */
 export const FEEDBACK_KIND = 27842;
+// THE PAYOUT WALLET IS NOT READY (kanban #2412, feedback #016): what a claim or an address payout answers while the bounty lnd is locked or down - the
+// reward is not touched (it stays open) and the invoice is not blamed
+export const PAYOUTS_PAUSED = 'payouts are paused (the payout wallet is not ready): your reward stays open - try again later';
 /** NIP-98 HTTP auth. */
 export const HTTP_AUTH_KIND = 27235;
 // THE CATEGORIES (Daniel 2026-11-07: "eine Kategorie bug / improvement"), and where a report came from: the game page or a node's owner page
@@ -338,6 +341,7 @@ export function openFeedbackStore(path = ':memory:') {
     if (!reportPays(w)) return { status: 'ERROR', reason: 'this reward was withdrawn: its report is not approved' };   // audit 5 #1402
     let d;
     try { d = await decode(String(invoice || '')); } catch { d = { ok: false }; }
+    if (d && d.paused) return { status: 'ERROR', reason: PAYOUTS_PAUSED };   // kanban #2412: the wallet's state, not the invoice's
     if (!d || !d.ok) return { status: 'ERROR', reason: 'that invoice could not be read' };
     if (Number(d.amountSats) !== w.amount_sats) return { status: 'ERROR', reason: `the invoice must be for exactly ${w.amount_sats} sat` };
     const took = db.prepare("UPDATE rewards SET state = 'paying', invoice = ?, payment_hash = ?, tried_ms = ?, address = ? WHERE k1 = ? AND state = 'open'").run(String(invoice), d.paymentHash || null, nowMs, address, w.k1);
