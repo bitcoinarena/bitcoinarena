@@ -232,6 +232,12 @@ async function peersCheckpoints(peers, roundIdBytes, entryId, cap) {
  */
 const EVIDENCE_PULL_MAX = 65536;
 const EVIDENCE_RECORDS_PER_MARK = 64;
+/**
+ * A MARK THIS SEAT HOLDS NO RECORD OF, BUT HAS CHECKED ITSELF (kanban #1803): an on-time first mark of the entry a peer showed
+ * (its refusal, its Void), verified here under the entry's own session key (round.onTimeFirstMark). Its peers' records are
+ * kept like a held mark's - at most this many such marks an entry on one pull.
+ */
+const EVIDENCE_PROVEN_MARKS = 16;
 
 export class Verifier {
   constructor(round, {
@@ -1031,7 +1037,17 @@ export class Verifier {
    * the peer named them (`/evidence-blocks`), so a mark is placed at the earliest block among the records this node holds.
    * A peer that cannot answer shows nothing - an earlier record it alone holds is the ruled residual.
    */
-  async #pullEvidenceBlocks(roundIdBytes, entryId) {
+  async #pullEvidenceBlocks(roundIdBytes, entryId, proven = []) {
+    // AND THE MARKS THIS SEAT CHECKED ITSELF (kanban #1803): #1561 kept records only of marks held here, so a seat the first mark
+    // never reached (it went only to the signer node that refused it) dropped that node's record of it, its counts() never
+    // held, and it stayed HOLDING while the refusing node decided VOID. A mark id is taken as well when this seat verified the
+    // signed mark under the entry's session key: a peer's refused first mark from the close's gather (carried.refusedMarks,
+    // each checked by round.onTimeFirstMark) or one a caller checked (`proven`, hex ids) - a made-up id is still not one.
+    const checked = [];
+    const carried = this.carried.get(`${hex(roundIdBytes)}:${hex(entryId)}`);
+    for (const x of (carried && carried.refusedMarks) || []) if (x && x.markId) checked.push(hex(x.markId));
+    for (const id of proven) checked.push(String(id));
+    const provenIds = [...new Set(checked.filter((id) => /^[0-9a-f]{64}$/.test(id)))].slice(0, EVIDENCE_PROVEN_MARKS);
     for (const peer of this.peersOf(roundIdBytes)) {
       try {
         // ONLY RECORDS OF MARKS THIS SEAT HOLDS, BOUNDED, ON A TIMED ASK (kanban #1561): a peer's list of made-up mark ids wrote a row
@@ -1044,6 +1060,7 @@ export class Verifier {
         const got = await peerJson(r);
         const held = new Map();
         for (const e of this.round.evidenceBlocks(entryId)) { const k = hex(e.markId); held.set(k, (held.get(k) || 0) + 1); }
+        for (const k of provenIds) if (!held.has(k)) held.set(k, 0);
         const listed = got && Array.isArray(got.marks) ? got.marks.slice(0, EVIDENCE_PULL_MAX) : [];
         for (const x of listed) {
           if (!x || !/^[0-9a-f]{64}$/.test(String(x.mark)) || !/^[0-9a-f]{64}$/.test(String(x.block))) continue;
@@ -1066,7 +1083,11 @@ export class Verifier {
         const got = await peerJson(r);
         const mark = Uint8Array.from(Buffer.from(String(got.firstMark || ''), 'hex'));
         const c = this.round.onTimeFirstMark(mark);
-        if (c && hex(c.entryId) === hex(entryId) && counts(mark)) return peer;
+        if (!c || hex(c.entryId) !== hex(entryId)) continue;
+        // A VOID'S FIRST MARK THIS SEAT NEVER HELD (kanban #1803): checked just now under the entry's session key, so the peers'
+        // records of it are pulled once before it is placed (a pull keeps records only of marks this seat holds or checked).
+        if (!counts(mark)) await this.#pullEvidenceBlocks(roundIdBytes, entryId, [hex(markIdOf(c))]);
+        if (counts(mark)) return peer;
       } catch { /* a signer node that cannot answer shows nothing */ }
     }
     return null;

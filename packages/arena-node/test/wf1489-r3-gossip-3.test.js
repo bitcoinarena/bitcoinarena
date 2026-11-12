@@ -44,3 +44,21 @@ test('a peer\'s record of a mark this seat holds is kept, at most a bounded numb
   assert.ok(rows.some((r) => hex(r.block) === hex(b(9))), 'the peer\'s record of a held mark is kept');
   assert.ok(rows.length <= 64, `one held mark carries ${rows.length} block records from one peer`);
 });
+
+// kanban #1803: a mark this seat holds no record of but CHECKED ITSELF - a peer's refused first mark the close's gather verified
+// under the entry's session key (carried.refusedMarks) - takes the peers' records too (one-signer-node-refused (8) stayed HOLDING
+// at the seat the mark never reached), still bounded per mark; the made-up ids listed beside it still write nothing.
+test('a peer\'s record of a mark this seat checked itself is kept, bounded; made-up ids beside it are not', async () => {
+  const round = new Round(openStore(':memory:'), () => 1000);
+  const v = new Verifier(round, { peers: ['http://peer'], pool: {} });
+  const rid = b(1), eid = b(2), mark = b(4);
+  v.carried.set(`${hex(rid)}:${hex(eid)}`, { refusedMarks: [{ peer: 'http://peer', why: 'refused', markId: mark }] });
+  const marks = [{ mark: hex(mark), block: hex(b(9)), seenMs: 5 }];
+  for (let i = 0; i < 5000; i++) { const blk = Buffer.alloc(32, 0x11); blk.writeUInt32BE(i + 1); marks.push({ mark: hex(mark), block: blk.toString('hex') }); }
+  for (let i = 0; i < 20000; i++) { const m = Buffer.alloc(32, 0x22); m.writeUInt32BE(i + 1); marks.push({ mark: m.toString('hex'), block: hex(b(9)) }); }
+  await withPeer({ marks }, () => v.pullEvidence(rid, eid));
+  const rows = round.evidenceBlocks(eid);
+  assert.ok(rows.some((r) => hex(r.markId) === hex(mark) && hex(r.block) === hex(b(9))), 'the peer\'s record of the checked mark is kept');
+  assert.ok(rows.every((r) => hex(r.markId) === hex(mark)), 'a made-up id beside it wrote a row');
+  assert.ok(rows.length <= 64, `one checked mark carries ${rows.length} block records from one peer`);
+});
