@@ -2029,6 +2029,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE FEES IN FORCE: at a round's census height - what its entries pay and its settlement splits - or at a height
   const feesAtHeight = (h) => (fundingBook && Number.isInteger(h) ? fundingBook.feesAt(h) : FEES_TODAY);
   const feesFor = (contract) => feesAtHeight(Number(contract && contract.censusHeight));
+  // THE DOOR AND THE /stake-lock GATE READ A PROTOCOL-27 ROUND'S SPLIT HERE (kanban #1486): the same fee set the settlement splits it by
+  round.feesFor = feesFor;
   if (fundingBook) { const t = setInterval(() => { fundingBook.decide().then(() => fundingBook.voteRound()).then(() => fundingBook.decideFees())
     .then(async () => { if (reservePayouts && typeof chainTip === 'function') { fundingTipSeen = Number(await chainTip()); const got = await reservePayouts.round({ height: fundingTipSeen });
       // WHAT A PAYOUT OR MOVE STOPPED ON, said once per reason (kanban #326: the round's answers were dropped, so a move that never
@@ -8720,7 +8722,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
                 if (!bonded.ok) return text(res, 409, bonded.why);
               }
             }
-            try { const g = pluginForRound(rc, hosted); gate = await roundMintsFees({ contract: rc, port: fport, feeBps: g.ok ? entryFeeBpsForRound(rc, g.plugin.manifest) : undefined }); }
+            try { const g = pluginForRound(rc, hosted); const sp = roundSplitBps(feesFor(rc)); gate = await roundMintsFees({ contract: rc, port: fport, feeBps: g.ok ? entryFeeBpsForRound(rc, g.plugin.manifest, sp) : undefined, split: sp }); }
             catch (e) { return text(res, 503, `this node could not read the federation's fee rule, so it takes no entry in a round that may mint fee locks: ${e.message}`); }
             // AND THE FEDERATION MUST CHARGE NO BASE FEE (FEDERATION.md item 4; §22A: "Fedimint's own base
             // fees are 0: the federation runs with disable_base_fees"). A base fee comes out of every input
