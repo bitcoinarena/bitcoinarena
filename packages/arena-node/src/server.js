@@ -362,6 +362,13 @@ const RELAY_ENTRY_MOST = relayPart('ARENA_RELAY_ENTRY_MOST', 32);
 const RELAY_ROUND_MOST = relayPart('ARENA_RELAY_ROUND_MOST', 8);
 const RELAY_UNNAMED_MOST = relayPart('ARENA_RELAY_UNNAMED_MOST', 2);
 const RELAY_SLASH_RESERVE = relayPart('ARENA_RELAY_SLASH_RESERVE', 8);
+// THE SLASH PROOFS' SHARE IS THEIRS AND BOUNDED (kanban #1917, refute 2 of #1532: the slash door checked no signature and no held round,
+// so a stranger filled the whole pool with unsigned junk proofs, and the prune never removed them). RELAY_SLASH_RESERVE is now both:
+// transcripts count only among themselves against RELAY_MOST - RELAY_SLASH_RESERVE, and slash proofs only among themselves against
+// RELAY_SLASH_RESERVE. A proof is kept only when the round it names is held here, the accused is on that round's committee, and the
+// signed result (or re-run) beside it carries the accused's own signature - so only a committee member's own signatures can fill
+// it, and one accused node in one round takes at most RELAY_SLASH_ACCUSED_MOST (RELAY_SLASH_RESERVE/16: 2 MiB live, ~4,800 proofs).
+const RELAY_SLASH_ACCUSED_MOST = Number(process.env.ARENA_RELAY_SLASH_ACCUSED_MOST) > 0 ? Number(process.env.ARENA_RELAY_SLASH_ACCUSED_MOST) : Math.floor(RELAY_SLASH_RESERVE / 16);
 
 // A BROWSER IS THE CLIENT, and a browser will never be on this origin.
 //
@@ -13622,8 +13629,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           } catch (e) { why = `the evidence does not read: ${e.message}`; }
           if (why) return text(res, 422, why);   // kanban #1816
         }
-        if (round.relayedBytes() + bytes.length > RELAY_MOST) return text(res, 507, 'this relay keeps no more: its store for relayed bytes is full');   // kanban #1532
-        round.relayPut(Buffer.from(slashed[1], 'hex'), bytes);
+        // THE SLASH PROOFS' OWN SHARE (kanban #1917, 2.0 port): slash rows count only among themselves against RELAY_SLASH_RESERVE,
+        // at most RELAY_SLASH_ACCUSED_MOST per accused node in one round; transcripts count without them (relayedTranscriptBytes)
+        const slashId = Buffer.from(slashed[1], 'hex');
+        const accused = got.proof && got.proof.nodePubkey instanceof Uint8Array ? got.proof.nodePubkey : new Uint8Array(32);
+        const accRound = got.proof && got.proof.roundId instanceof Uint8Array ? got.proof.roundId : null;
+        if (!round.relayHas(slashId)) {
+          if (accRound && round.relayedSlashBytes({ roundId: accRound, accused }) + bytes.length > RELAY_SLASH_ACCUSED_MOST)
+            return text(res, 507, 'this relay keeps no more slash proofs against that node in that round: its share is full');
+          if (round.relayedSlashBytes() + bytes.length > RELAY_SLASH_RESERVE) return text(res, 507, 'this relay keeps no more slash proofs: their share of its store is full');
+          round.relayPut(slashId, bytes, { roundId: accRound, accused });
+        }
         // ANYONE PUBLISHES A FRAUD PROOF (5A.3B step 1): a pair that holds here, on this seat's own check, is a proof this seat holds, kept as if it had seen both results itself
         if (slashStarter && got.kind === 'double') {
           const none = new Uint8Array(32);
@@ -13692,7 +13708,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           if (round.relayedUnnamedBytes({ roundId: rid }) + bytes.length > RELAY_ROUND_MOST) return text(res, 507, 'this relay keeps no more for that round: no held result names this transcript, and its share for the round is full');
           if (round.relayedUnnamedBytes() + bytes.length > RELAY_UNNAMED_MOST) return text(res, 507, 'this relay keeps no more transcripts no held result names: that share is full');
         }
-        if (round.relayedBytes() + bytes.length > RELAY_MOST - RELAY_SLASH_RESERVE) return text(res, 507, 'this relay keeps no more: its store for relayed bytes is full');
+        // kanban #1917: transcripts count among themselves; slash proofs have RELAY_SLASH_RESERVE of their own
+        if (round.relayedTranscriptBytes() + bytes.length > RELAY_MOST - RELAY_SLASH_RESERVE) return text(res, 507, 'this relay keeps no more: its store for relayed bytes is full');
         round.relayPut(hashBytes, bytes, { entryId: eid, roundId: rid, named });
         return text(res, 201, 'kept');
       }
