@@ -60,7 +60,7 @@ test('wf1489-1: one committee seat answering the honest result with an empty sig
   const fetcher = async (url) => {
     const u = new URL(url);
     const r = results[`${u.protocol}//${u.host}`];
-    return u.pathname === '/round-result' && r ? { ok: true, status: 200, json: async () => r } : { ok: false, status: 404, json: async () => ({}) };
+    return u.pathname === '/round-result' && r ? new Response(JSON.stringify(r), { status: 200 }) /* read as a capped stream, kanban #1829 */ : { ok: false, status: 404, json: async () => ({}) };
   };
   const markets = gameMarkets({ round, plugins: round.plugins, committeeFor, verify, now: () => clock.ms, fetcher });
   let got;

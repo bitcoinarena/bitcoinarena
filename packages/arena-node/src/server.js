@@ -92,7 +92,7 @@ import { createOperatorTokens, operatorUri } from './operator-tokens.js';
 import { isBackupPublication, playedOfWindow, dayMarkersOf, itemTag } from '../../arena-protocol/src/duty.js';
 import { nextToAsk } from './dup-ask.js';
 import { decodeRoundContract, encodeRoundContract, contractWarnings, decodeEntryContract, publicationRelaysAreValid, custodyFieldsAreValid, roundId as roundIdOf, entryFederation } from '../../arena-protocol/src/contracts.js';
-import { revealStands } from '../../arena-protocol/src/head-to-head.js';
+import { revealStands, headToHeadCommit } from '../../arena-protocol/src/head-to-head.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { advertInTransaction, nodeBondOf } from '../../arena-protocol/src/census.js';
 
@@ -1130,11 +1130,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
     // NAMED BY ITS SIGNED MANIFEST, TITLED AS THE VERSION IT REPLACES (kanban #1541): never by what the serving seat wrote
     const named = decodeManifest(fromHex(String(pkg.manifest))).gameName;
-    pkg = { ...pkg, name: named, title: replaces !== null ? (hosted.get(replaces).title || named) : named };
+    // and each core's configs the manifest's (kanban #1814), so the package.json kept on disk loads the same at the next start
+    const signedCores = decodeManifest(fromHex(String(pkg.manifest))).cores;
+    pkg = { ...pkg, name: named, title: replaces !== null ? (hosted.get(replaces).title || named) : named,
+      cores: pkg.cores.map((c) => { const m = signedCores.find((s) => toHex(s.hash) === c.hash); return { ...c, configs: m ? m.configs.map(toHex) : [] }; }) };
     const at = installPackage(pluginsDir, pkg, game);
     let reg;
     try { reg = await registrationFromPackage(at, pkg, { title: pkg.title }); } catch (e) { return { ok: false, status: 500, why: `kept, but it does not load: ${e.message}` }; }
-    const entry = hostedPlugins([reg]).get(game);
+    // a package this seat cannot host is refused, never thrown out of an autoUpdate sweep (kanban #1814)
+    let entry;
+    try { entry = hostedPlugins([reg]).get(game); } catch (e) { return { ok: false, status: 422, why: `kept, but it cannot be hosted: ${e.message}` }; }
     hosted.set(game, entry);
     if (replaces !== null) superseded.set(replaces, game);
     console.log(`[plugins] ${replaces ? `updated ${replaces.slice(0, 16)} to` : 'installed'} ${v.name} v${v.version} (${game.slice(0, 16)}) from ${from}: running now`);
@@ -1375,7 +1380,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         try {
           const r = await seasonFetch(`${seats[i]}/season-rounds?game=${ids.join(',')}&days=${days}`, { signal: AbortSignal.timeout(SEASON_PEER_TIMEOUT_MS) });
           if (!r.ok) continue;
-          const j = await r.json();
+          // READ UP TO A BOUND (kanban #1856): a bare `await r.json()` held a peer's whole answer - one seat answering with
+          // hundreds of MB exhausted this seat's memory, and on the badge path each padded round was then schnorr-verified in
+          // this thread. Read like every other peer listing (#1540): past PEER_LISTING_BYTES the seat counts as not answered.
+          const j = await jsonUpTo(r, PEER_LISTING_BYTES);
           if (!j || !Array.isArray(j.rounds) || (keyed && j.roundKeys !== true)) continue;
           const node = typeof j.node === 'string' && /^[0-9a-f]{64}$/i.test(j.node) ? j.node.toLowerCase() : null;
           answers[i] = { seat: seats[i], node, rounds: seasonRoundsFromJson(j.rounds) };
@@ -3258,8 +3266,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   function takeFinalSig(rid, eid, bytes, f = resultFinality(round, rid, eid)) {
     let x;
     try { x = decodeFinalSig(splitSignedFinalSig(bytes).body); } catch (e) { return { kept: 'refused', why: e.message }; }
+    // ONLY AN ENTRY OF THE ROUND, ONLY THE RUN THIS SEAT HOLDS, ONE ROW PER SEAT (kanban #1817): final_sigs is keyed
+    // (round, entry, run, signer), and nothing here asked whether the entry was the round's or which run it named - one
+    // committee seat signed FINAL over 400 invented (entry, run) pairs and every honest seat kept 400 rows, each re-verified
+    // on every GET /served, item purchase and funding signal (444 ms measured), and each counted the seat as having served.
+    // Now an entry the round does not hold is refused, a run other than the one this seat may sign is refused (finalSigFault
+    // "about another run"), and while this seat holds no run yet only a seat's first FINAL on the entry is kept.
+    const owner = round.db.prepare('SELECT round_id FROM entries WHERE entry_id = ?').get(eid);
+    if (!owner || toHex(owner.round_id) !== toHex(rid)) return { kept: 'refused', why: 'not an entry of that round' };
+    const holdRun = (f && f.signable && f.signable.runId) || null;
+    if (!holdRun) {
+      const had = round.db.prepare('SELECT run_id FROM final_sigs WHERE round_id = ? AND entry_id = ? AND signer_pubkey = ?').all(rid, eid, x.signerPubkey);
+      if (had.some((r) => toHex(r.run_id) !== toHex(x.runId))) return { kept: 'refused', why: 'this seat already holds that signer\'s FINAL on another run of the entry' };
+    }
     const seenMs = round.now();
-    const fault = finalSigFault({ bytes, seenMs }, { roundId: rid, entryId: eid, runId: null,
+    const fault = finalSigFault({ bytes, seenMs }, { roundId: rid, entryId: eid, runId: holdRun,
       committee: round.signerNodes(rid), finalAfterMs: f.finalAfterMs ?? 0n, verify: (sg, m, k) => schnorr.verify(sg, m, k) });
     const kept = round.putFinalSig(rid, eid, x, bytes, fault, seenMs);
     if (kept === 'evidence') console.log(`[final] ${toHex(eid).slice(0, 16)} a FINAL signature of ${toHex(x.signerPubkey).slice(0, 16)} does not count: ${fault.why}`);
@@ -4598,18 +4619,28 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const takeEntryParts = async (rid, entryHex, from) => {
     const eid = fromHex(entryHex), entry = decodeEntryContract(round.entry(eid));
     if (entry.stakeMsat === 0n) return null;
-    const ofPeers = async (path, read) => (await Promise.all(from.map(async (base) => {
+    const ofPeers = async (path, read) => (await Promise.all([...new Set(from)].map(async (base) => {   // each peer once (kanban #1823: its answers are counted)
       try { const r = await peerGet(`${base}${path}`); return r.ok ? await read(r) : null; } catch { return null; }
     }))).filter(Boolean);
     let why = null;
     if (!round.stakeLock(eid) || (round.feeLock && !round.feeLock(eid))) {
-      for (const locks of await ofPeers(`/order-locks?entry=${entryHex}`, (r) => r.json())) {
+      const answers = await ofPeers(`/order-locks?entry=${entryHex}`, (r) => r.json());
+      for (const locks of answers) {
         why = null;
         try {
           if (locks.stake && !round.stakeLock(eid)) { const g = await takeStakeLock(eid, lockFieldsFromJson(locks.stake)); if (!g.ok) why = `its stake lock: ${g.why}`; }
           if (locks.fee && round.feeLock && !round.feeLock(eid)) { const g = await takeFeeLock(eid, lockFieldsFromJson(locks.fee)); if (!g.ok) why = `its fee lock: ${g.why}`; }
         } catch (e) { why = e.message; }
         if (!why) break;
+      }
+      // A LOCK NO THRESHOLD OF SEATS CLAIMS IS NO REASON TO WAIT (kanban #1823, audit #1489 r6-h2h-3): the last failing answer was the wait, so for an entry
+      // nobody locked (an abandoned join, a stranger's lockless entry) ONE peer answering 200 with junk lock fields kept this seat waiting on every pass until
+      // the result window ran out, and it signed nothing for the round's real players. A lock that fails here is the answering peer's fault; this seat waits
+      // for one only while at least the round's threshold of peers say they verified a lock of it - only then can the entry be seated without this seat.
+      if (why) {
+        let needed = Infinity;
+        try { needed = roundThreshold(decodeRoundContract(new Uint8Array(round.get(rid).contract)).settlementSlots); } catch { /* no threshold read: no wait */ }
+        if (answers.length < needed) why = null;
       }
     }
     if (!round.payoutAddress(eid)) {
@@ -11060,6 +11091,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // the signed result it names beside it - so it serves no proof under
       // another's name and no proof without its evidence.
       const slashed = /^\/slash\/([0-9a-f]{64})$/.exec(url.pathname);
+      // ONLY A PROOF ABOUT A ROUND THIS SEAT HOLDS (kanban #1816, audit #1489 round 6 gossip: a bypass of #1532 - the door checked only
+      // that the proof hashed to its id and named the result beside it, so a stranger PUT made-up proofs with zero signatures about
+      // random rounds until the relay cap #1532 shares with PUT /transcript was full, and every held entry's transcript was refused 507).
+      // Kept now only when the round is in this seat's store, the accused node is on its committee (the signer nodes the census
+      // assigned), the evidence names that round, node and player, and the evidence's signature is the accused node's.
+      // Returns why not, or null.
+      const slashOursWhy = (proof, body, sigOk) => {
+        if (!round.get(proof.roundId)) return 'this relay keeps only a slash proof about a round it holds';
+        if (!round.signerNodes(proof.roundId).some((k) => toHex(k) === toHex(proof.nodePubkey))) return 'the accused node is not on that round\'s committee';
+        if (toHex(body.roundId) !== toHex(proof.roundId) || toHex(body.nodePubkey) !== toHex(proof.nodePubkey) || toHex(body.playerPubkey) !== toHex(proof.playerPubkey))
+          return 'the evidence is not the accused node\'s result for that round and player';
+        let ok = false; try { ok = sigOk() === true; } catch { ok = false; }
+        return ok ? null : 'the signature on the evidence is not the accused node\'s';
+      };
       if (slashed && req.method === 'PUT') {
         const bytes = await read(req);
         // A PROOF AGAINST A RE-RUN SIGNER (slice C2c) travels with the signed re-run it names, at its own size.
@@ -11071,6 +11116,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           try { rerunNamed = toHex(rerunResultId(decodeRerunResult(splitSignedRerun(rr.signedRerun).body))); }
           catch (e) { return text(res, 409, `the evidence is not a signed re-run result: ${e.message}`); }
           if (rerunNamed !== toHex(rr.proof.signedResultId)) return text(res, 409, 'the evidence is not the re-run the proof names');
+          let rx, rsig;
+          try { const sp = splitSignedRerun(rr.signedRerun); rsig = sp.signature; rx = decodeRerunResult(sp.body); } catch { rx = null; }
+          const rwhy = rx ? slashOursWhy(rr.proof, rx.result, () => schnorr.verify(rsig, rerunResultId(rx), rx.result.nodePubkey)) : 'the evidence is not a signed re-run result';
+          if (rwhy) return text(res, 422, rwhy);   // kanban #1816
           if (round.relayedBytes() + bytes.length > RELAY_MOST) return text(res, 507, 'this relay keeps no more: its store for relayed bytes is full');   // kanban #1532
           round.relayPut(Buffer.from(slashed[1], 'hex'), bytes);
           return text(res, 201, 'kept');
@@ -11082,6 +11131,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         try { named = toHex(resultId(decodePlayerResult(splitSignedResult(got.signedResult).body))); }
         catch (e) { return text(res, 409, `the evidence is not a signed result: ${e.message}`); }
         if (named !== toHex(got.proof.signedResultId)) return text(res, 409, 'the evidence is not the result the proof names');
+        {
+          const sp = splitSignedResult(got.signedResult), body = decodePlayerResult(sp.body);
+          const why = slashOursWhy(got.proof, body, () => schnorr.verify(sp.signature, resultId(body), body.nodePubkey));
+          if (why) return text(res, 422, why);   // kanban #1816
+        }
         if (round.relayedBytes() + bytes.length > RELAY_MOST) return text(res, 507, 'this relay keeps no more: its store for relayed bytes is full');   // kanban #1532
         round.relayPut(Buffer.from(slashed[1], 'hex'), bytes);
         return text(res, 201, 'kept');
@@ -11104,10 +11158,29 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // ONLY A TRANSCRIPT OF AN ENTRY THIS SEAT HOLDS (kanban #1532): the bytes decode as a transcript (decodeTranscript) whose entry is
         // in this seat's store under the round it names, or are a head-to-head reveal record (entry id || move || 32-byte salt, or
         // entry id || 0xff, verify.js #revealRecord) of an entry it holds. Random bytes, and transcripts of runs nobody entered here, are refused.
+        // AND A REVEAL RECORD ONLY IF IT IS THAT ENTRY'S OWN (kanban #1824, bypass of #1532): any 65 bytes naming a held entry were kept, so a stranger
+        // who knew one public entry id minted 2^256 "reveal records" (entry id || any move || random salt), each under its own hash, until the relay store
+        // was full and every honest transcript, reveal record and slash proof was refused (507). Now the entry's round must be a head-to-head game this
+        // seat hosts, and a 65-byte record must open the commitment the entry named (headToHeadCommit) with a move the game offers; the 33-byte
+        // no-reveal record (entry id || 0xff) has one hash per entry, so it is kept once.
+        const revealRecordOpens = (rec) => {
+          try {
+            const raw = round.entry(rec.subarray(0, 32));
+            if (!raw) return false;
+            const entry = decodeEntryContract(raw), row = round.get(entry.roundId);
+            if (!row) return false;
+            const found = pluginForRound(decodeRoundContract(new Uint8Array(row.contract)), hosted);
+            if (!found.ok || !found.headToHead) return false;
+            if (rec.length === 33) return true;
+            const move = rec[32];
+            if (!(move < found.plugin.manifest.moveCount)) return false;
+            return toHex(headToHeadCommit({ roundId: entry.roundId, entryKey: entry.sessionPubkey, move, salt: rec.slice(33, 65) })) === toHex(entry.commit);
+          } catch { return false; }
+        };
         const u8 = new Uint8Array(bytes), roundOfEntry = (eid) => { const r = round.db.prepare('SELECT round_id FROM entries WHERE entry_id = ?').get(eid); return r ? toHex(new Uint8Array(r.round_id)) : null; };
         let ours = false;
         try { const t = decodeTranscript(u8); ours = roundOfEntry(t.entryId) === toHex(t.roundId); }
-        catch { ours = (u8.length === 65 || (u8.length === 33 && u8[32] === 0xff)) && roundOfEntry(u8.subarray(0, 32)) !== null; }
+        catch { ours = (u8.length === 65 || (u8.length === 33 && u8[32] === 0xff)) && roundOfEntry(u8.subarray(0, 32)) !== null && revealRecordOpens(u8); }
         if (!ours) return text(res, 422, 'this relay keeps only the transcript of an entry it holds');
         if (round.relayedBytes() + bytes.length > RELAY_MOST) return text(res, 507, 'this relay keeps no more: its store for relayed bytes is full');
         round.relayPut(Buffer.from(relayed[1], 'hex'), bytes);
@@ -11829,7 +11902,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           gatherOnProof(firstMark.c.roundId, firstMark.c.entryId);
           return sock.send('error FORFEIT: ' + TWO_FIRST_MARKS);
         }
-        if (firstMark && !round.holdsMark(checkpointId(firstMark.c))) {
+        // THE MARK'S SIGNATURE BEFORE ANY PEER IS ASKED (kanban #1862): firstMarkOf only decodes, so a stranger's
+        // first mark with a garbage signature for a public entry id made this seat fetch /entry-void from every peer
+        // (each awaited in this socket's queue) before handle() refused it - one free frame, one request per peer. A
+        // first mark that does not verify under its entry's session key goes straight on to handle(), which refuses it.
+        let markVerifies = false;
+        if (firstMark) { try { round.playerSigned(firstMark.bytes); markVerifies = true; } catch { markVerifies = false; } }
+        if (firstMark && markVerifies && !round.holdsMark(checkpointId(firstMark.c))) {
           const own = lateEvidenceHere(firstMark.c, null);
           const found = own ? { late: own, receipts: [] } : await lateByPeers(firstMark.c, firstMark.bytes);
           if (found && found.twoFirst) {
