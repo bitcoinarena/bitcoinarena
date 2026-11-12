@@ -418,7 +418,7 @@ export function liquidationKeyFor(seed, federationHex, curve) {
 // cannot put its refusals ahead of a real payout of any size above theirs.
 export const MAX_LIQUIDATION_FEDERATIONS = 32;
 export const MAX_LIQUIDATION_PAYOUTS_PER_FEDERATION = 16;
-export async function collectLiquidationPayouts({ listed, seed, curve, clientFor, storage, federations }) {
+export async function collectLiquidationPayouts({ listed, seed, curve, clientFor, storage, federations, put = putRoomy }) {
   const out = [];
   const keys = new Map();
   const claimed = new Map();
@@ -458,9 +458,18 @@ export async function collectLiquidationPayouts({ listed, seed, curve, clientFor
     try {
       const client = await clientFor(p.into);
       const said = JSON.parse(await client.refund(p.txid, Number(p.outIdx), JSON.stringify(fields), toHex(key.secret)));
-      if (said.accepted === true) storage.setItem(note, JSON.stringify({ msat: p.msat, at: Date.now() }));
-      else failed();
-      out.push({ ...p, ok: said.accepted === true, why: said.accepted === true ? null : (said.error || 'the federation did not accept the refund') });
+      // COLLECTED ONCE IS FINAL (kanban #2320, state audit 2026-11-12 sm10 page-2): the note was a raw setItem after the refund, so a full
+      // browser (or a tab closed between the guardians' acceptance and the write) left a payout in the wallet with no note, and every later
+      // pass refunded it again, was told "no contract at that outpoint" and answered ok:false for good. Now the note goes through putRoomy
+      // (the storage-full handler makes room), a note that still cannot be written does not turn an accepted refund into a failure, and a
+      // contract the guardians no longer hold (accepted false, stored_before null) is spent by this seed's key - the only key that can - so
+      // it is final: noted and answered ok, as redeemPayout / redeemSlashPayout treat `spent`.
+      const spent = said.accepted !== true && (said.stored_before === null || said.stored_before === undefined);
+      let noted = false;
+      if (said.accepted === true || spent) { try { put(storage, note, JSON.stringify({ msat: p.msat, at: Date.now(), ...(spent ? { spent: true } : {}) })); noted = true; } catch { /* unkept: the next pass finds it spent */ } }
+      out.push({ ...p, ok: said.accepted === true || spent, ...(spent ? { kept: true, spent: true } : {}), ...(said.accepted === true && !noted ? { unnoted: true } : {}),
+        why: said.accepted === true ? null : spent ? 'the payout contract is already spent - by this seed\'s key, the only key that can' : (said.error || 'the federation did not accept the refund') });
+      if (!(said.accepted === true || spent)) failed();   // a failed claim costs a slot (#2328)
     } catch (e) { failed(); out.push({ ...p, ok: false, why: e.message }); }
   }
   return out;
