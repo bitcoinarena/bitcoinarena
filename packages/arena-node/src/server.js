@@ -2168,10 +2168,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // BEFORE A FEE DECISION, EVERY SEAT'S APPROVALS AND SIGNALS (ruled on #1245, kanban #1231): GET /funding-items of each network seat this seat reaches
     pull: async (pid) => {
       let seats = []; try { seats = networkSeats(); } catch { seats = []; }
-      const got = await Promise.all(seats.map(async (base) => { try { const r = await fetch(`${base}/funding-items?proposal=${pid}`, { signal: AbortSignal.timeout(8000) }); return r.ok ? ((await r.json()).items || []).map((x) => (x && typeof x === 'object' ? { ...x, seat: String(base) } : x)) : []; } catch { return []; } }));
+      // kanban #2488: a seat that did not answer is named in `missing` - the signal's decide asks again before it writes its outcome once
+      const missing = [];
+      const got = await Promise.all(seats.map(async (base) => { try { const r = await fetch(`${base}/funding-items?proposal=${pid}`, { signal: AbortSignal.timeout(8000) }); if (!r.ok) { missing.push(String(base)); return []; } return ((await r.json()).items || []).map((x) => (x && typeof x === 'object' ? { ...x, seat: String(base) } : x)); } catch { missing.push(String(base)); return []; } }));
       // with when each seat first held it (kanban #1279) and WHICH seat says so (kanban #1607): one seat's claim alone never backdates a signal
-      return got.flat().filter((x) => x && (x.kind === 'signal' || x.kind === 'fee-approval') && /^[0-9a-f]+$/i.test(String(x.hex || '')))
+      const items = got.flat().filter((x) => x && (x.kind === 'signal' || x.kind === 'fee-approval') && /^[0-9a-f]+$/i.test(String(x.hex || '')))
         .map((x) => ({ kind: x.kind, hex: x.hex, seat: x.seat, ...(/^[0-9]{1,16}$/.test(String(x.atMs || '')) ? { atMs: Number(x.atMs) } : {}) })).slice(0, 4096);
+      items.missing = missing;
+      return items;
     },
     // THE PROTOCOL DEVELOPERS OF A NETWORK: the keys of the network's donation set in force at this seat's tip - their
     // majority answers a fee proposal that changes a donation; a set of LNURLs names no key, and none can approve
@@ -11719,7 +11723,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!fundingBook) return ans(501, { ok: false, why: 'this node keeps no funding proposals' });
         let b; try { b = JSON.parse(Buffer.from(await read(req)).toString('utf8') || '{}'); } catch { return ans(400, { ok: false, why: 'a JSON body: { kind, hex }' }); }
         const r = await fundingBook.add(b.kind, b.hex);
-        if (r.ok && r.fresh && !req.headers['x-arena-forwarded']) forwardFunding(b.kind, b.hex);
+        // kanban #2431: x-arena-forwarded is anyone's to send - a signer posting a signal "forwarded" to two seats only kept it off the others until the
+        // cutoff. A fresh signal or fee approval is handed on whatever the header says (fresh only once per seat, so no loop)
+        if (r.ok && r.fresh && (!req.headers['x-arena-forwarded'] || b.kind === 'signal' || b.kind === 'fee-approval')) forwardFunding(b.kind, b.hex);
         return ans(r.ok ? 200 : (r.status || 400), r);
       }
       if (req.method === 'POST' && url.pathname === '/donation-ballot') {
