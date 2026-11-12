@@ -34,6 +34,7 @@ import { takesNewRounds } from '../../arena-protocol/src/known-federations.js';
 import { createGridBase, createDayDuty, DUTY_APPS } from './duty-day.js';
 import { buildGrid, publishGridTx, announceGrid, postSeriesLine } from './grid-build.js';
 import * as guard from './duty-guard.js';
+import { jsonUpTo, PEER_LISTING_BYTES, PEER_PACKAGE_BYTES } from './peer-read.js';   // kanban #1723
 
 export const DUTY_EVERY_MS = 60000;
 export const DUTY_VIEW_BLOCKS = 400;
@@ -165,7 +166,10 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
   let lastSeats = [];
   const self = () => (seat ? `http://${seat.host === '0.0.0.0' ? '127.0.0.1' : seat.host}:${seat.port}` : null);
   const reach = (u) => String(u || '').replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
-  const seatJson = async (url, ms = 15000) => { const r = await fetchFn(url, { signal: AbortSignal.timeout(ms) }); if (!r.ok) throw new Error(`${url}: ${r.status}`); return r.json(); };
+  // read up to a bound (kanban #1723): /games at PEER_LISTING_BYTES, anything else at PEER_PACKAGE_BYTES
+  const seatJson = async (url, ms = 15000, maxBytes = /\/games(\?|$)/.test(url) ? PEER_LISTING_BYTES : PEER_PACKAGE_BYTES) => {
+    const r = await fetchFn(url, { signal: AbortSignal.timeout(ms) }); if (!r.ok) { r.body?.cancel().catch(() => {}); throw new Error(`${url}: ${r.status}`); }
+    return jsonUpTo(r, maxBytes); };
 
   // THE WALLET'S WORD, read every look: listwallets, then the named (or only) wallet's confirmed coins
   const readWallet = async () => {

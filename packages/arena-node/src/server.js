@@ -28,6 +28,7 @@ import { blockRandom, blockRandomReady } from '../../arena-protocol/src/block-ra
 import { servedNodes, mergeServedRounds, SERVED_WINDOW_MS, SERVED_HELD_MAX } from '../../arena-protocol/src/served-nodes.js';
 import { decodePurchase } from '../../arena-protocol/src/purchase.js';
 import { itemOf } from '../../arena-protocol/src/items.js';
+import { textUpTo, jsonUpTo, listedGames, PEER_LISTING_BYTES, PEER_PACKAGE_BYTES } from './peer-read.js';   // kanban #1540, #1723
 import { keepItemPurchase, itemsOwned, purchasesSince } from './item-purchase-seat.js';
 import { keepDonationGift, giftsOf, giftsSince } from './donation-gift-seat.js';
 import { decodeDonationGift, GIFT_TO_GAME, GIFT_TO_PLAYER, GIFT_TO_BOTH, playerGiftRecipients } from '../../arena-protocol/src/donation-gift.js';
@@ -1062,29 +1063,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   const hostedParent = (id) => { const g = hosted.get(toHex(id)); return g ? g.manifest : null; };
   const installedInfo = (id) => { const g = hosted.get(id); return g ? { gameId: id, devKey: toHex(g.manifest.gameDevPubkey), version: g.manifest.version, parent: toHex(g.manifest.parentManifestId) } : null; };
-  // ANOTHER SEAT'S ANSWER, READ UP TO A BOUND (kanban #1540): a seat in the census or the peers list could answer GET /games,
-  // /plugin or /network with hundreds of MB, and `await r.json()` held all of it and its parsed objects at once (measured: one
-  // 120 MB /games listing grew the reading seat's heap 218 MB and held its event loop 3.6 s). The body is read chunk by chunk
-  // and refused, the connection dropped, as soon as it passes `maxBytes`.
-  const PEER_LISTING_BYTES = 4 * 1048576, PEER_LISTING_GAMES = 64, PEER_PACKAGE_BYTES = 32 * 1048576;
-  const textUpTo = async (r, maxBytes) => {
-    const said = Number(r.headers.get('content-length'));
-    if (said > maxBytes) { try { await r.body?.cancel(); } catch { /* dropped */ } throw new Error(`its answer is ${said} bytes, more than ${maxBytes}`); }
-    if (!r.body) return '';
-    const reader = r.body.getReader();
-    const chunks = []; let n = 0;
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      n += value.length;
-      if (n > maxBytes) { reader.cancel().catch(() => {}); throw new Error(`its answer passed ${maxBytes} bytes`); }
-      chunks.push(value);
-    }
-    return Buffer.concat(chunks.map((x) => Buffer.from(x.buffer, x.byteOffset, x.byteLength))).toString('utf8');
-  };
-  const jsonUpTo = async (r, maxBytes) => JSON.parse(await textUpTo(r, maxBytes));
-  // a seat's games, at most PEER_LISTING_GAMES of them: the rest of a longer list is not read (kanban #1540)
-  const listedGames = (got) => (got && Array.isArray(got.games) ? got.games.slice(0, PEER_LISTING_GAMES) : []);
+  // ANOTHER SEAT'S ANSWER, READ UP TO A BOUND (kanban #1540): textUpTo / jsonUpTo / listedGames live in peer-read.js since #1723,
+  // shared with the duty poster's own read of the census seats' GET /games
   async function takeGame({ game, from, replaces = null }) {
     if (!pluginsDir) return { ok: false, status: 409, why: 'this seat keeps no installed games (no plugins directory)' };
     from = String(from || '').replace(/\/+$/, '');
