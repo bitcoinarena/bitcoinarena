@@ -335,8 +335,11 @@ export async function postHandout(stake, nodes, { fetcher = fetch, needed: asked
   const posts = nodes.map(async (node, i) => {
     const at = node.replace(/\/+$/, '') + '/handout';
     try {
+      const sentAt = Date.now();   // kanban #1892: the seat read its clock after this, so its close is no earlier than sentAt + what it said was left
       const r = await fetcher(at, { method: 'POST', body: stake.body, signal: AbortSignal.timeout(waitMs) });
-      answers[i] = r.ok ? { node, ok: true } : { node, why: `${node}: ${(await r.text()).trim()}` };
+      const said = r.ok && r.headers && typeof r.headers.get === 'function' ? r.headers.get('x-entry-close-in-ms') : null;
+      const left = said === null || said === '' ? NaN : Number(said);
+      answers[i] = r.ok ? { node, ok: true, ...(Number.isFinite(left) ? { closeAtMs: sentAt + left } : {}) } : { node, why: `${node}: ${(await r.text()).trim()}` };
     } catch (e) {
       answers[i] = { node, why: `${node}: ${e.message}` };
     }
@@ -354,13 +357,46 @@ export async function postHandout(stake, nodes, { fetcher = fetch, needed: asked
   });
   const accepted = answers.filter((a) => a.ok).map((a) => a.node);
   const refused = answers.filter((a) => !a.ok).map((a) => a.why);
+  // THE CLOSE ON THE SEATS' CLOCK (kanban #1892): the earliest any seat that took the handout puts it, in this page's Date.now() terms; null from seats
+  // that do not say (older builds)
+  const closes = answers.filter((a) => a.ok && Number.isFinite(a.closeAtMs)).map((a) => a.closeAtMs);
+  const seatCloseAtMs = closes.length ? Math.min(...closes) : null;
   if (accepted.length < needed)
     return {
-      ok: false, accepted: accepted.length, needed, refused, rest, posted,
+      ok: false, accepted: accepted.length, needed, refused, rest, posted, seatCloseAtMs,
       why: `${accepted.length} of the ${needed} signer nodes needed to open this stake took the `
         + 'handout, so it could never be settled',
     };
-  return { ok: true, accepted: accepted.length, needed, refused, rest, posted };
+  return { ok: true, accepted: accepted.length, needed, refused, rest, posted, seatCloseAtMs };
+}
+
+/**
+ * HOW LONG THE SEATS STILL TAKE THIS ROUND'S ENTRIES, ON THEIR CLOCK (kanban #1892, #1489 refute 2 of #1485/#1742, feedback #010). `put` is
+ * postHandout's answer: each seat that took the handout said in its 201 how many ms it had left (x-entry-close-in-ms). Null when no seat said.
+ */
+export function seatCloseLeftMs(put, now = Date.now()) {
+  return put && Number.isFinite(put.seatCloseAtMs) ? put.seatCloseAtMs - now : null;
+}
+
+/**
+ * HOW FAR THE SEATS' CLOCK RUNS AHEAD OF THIS PAGE'S (kanban #1892), in ms, from a handout's answer and the round's entryCloseMs (seat time);
+ * never under 0 (a page guard only ever gets stricter with it). The page keeps it for its next tap's and handout's guards, which run before any seat answered.
+ */
+export function seatClockAheadMs(put, entryCloseMs) {
+  return put && Number.isFinite(put.seatCloseAtMs) ? Math.max(0, Number(entryCloseMs) - put.seatCloseAtMs) : 0;
+}
+
+/**
+ * MAY A HEAD-TO-HEAD ORDER LOCK NOW? (kanban #1892) The page runs the handout beside the funding and locks only after both, so the funding's time
+ * (the wallet, an exchange, a deposit invoice) falls between the seats' check of the handout and the lock, and nothing bounds it. This is asked right
+ * before the lock: the time left is the smaller of the player's clock's and the seats' (seatCloseLeftMs), so a player whose clock runs slow cannot
+ * make a lock the seats will not enter. Answers null (lock) or why not (nothing is locked).
+ */
+export function h2hLockRefusal({ put = null, entryCloseMs, leadMs, now = Date.now() } = {}) {
+  const own = Number(entryCloseMs) - now, seats = seatCloseLeftMs(put, now);
+  const left = seats === null ? own : Math.min(own, seats);
+  if (!(left >= Number(leadMs))) return `the entry closes in ${(left / 1000).toFixed(1)} s on the ${seats !== null && seats < own ? "seats'" : "player's"} clock, and a head-to-head lock and entry need ${(Number(leadMs) / 1000).toFixed(1)} s - nothing was locked`;
+  return null;
 }
 
 /**
