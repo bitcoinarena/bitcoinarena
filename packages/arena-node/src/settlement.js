@@ -619,7 +619,8 @@ export class LockSettlement {
       const entryId = fromHex(r.entry);
       const raw = this.round.entry(entryId);
       if (!raw) return refuse(`no lock is claimed: this seat holds no entry ${r.entry.slice(0, 16)}`);
-      const e = decodeEntryContract(raw);
+      // the ledger leaves out an order that no longer decodes (kanban #2036), so none is claimed; should one be, it is refused by name, not thrown
+      let e; try { e = decodeEntryContract(raw); } catch (x) { return refuse(`no lock is claimed: entry ${r.entry.slice(0, 16)} no longer decodes: ${x.message}`); }
       // the website that brought this order (comment 2295): bookLockSettlement pays it 20% of the nodes' part of its fee
       entries.push({ entryId: r.entry, pubkey: e.playerPubkey, ...(e.frontendPk ? { frontendPk: e.frontendPk } : {}) });
       const lock = this.round.stakeLock(entryId);

@@ -243,7 +243,12 @@ export class OrderBook {
     if (!isHex(entryHex, 32)) return refuse('an entry id is 32 hex bytes', 400);
     const raw = this.round.entry(fromHex(entryHex));
     if (!raw) return refuse(`this seat holds no entry ${entryHex.slice(0, 16)}`);
-    const entry = decodeEntryContract(raw);
+    // A STORED ORDER THAT NO LONGER DECODES (kanban #2036, #1889, #1489 v1-refute-3 s3): taken by the build before settle-2 with an
+    // off-curve website key. Refused by name, never thrown - thrown, it stopped ledger() for every caller (each new batch's #check,
+    // every sell, GET /book, the settlement's #bookPlan), so the market neither traded on nor settled. `undecodable` lets the ledger
+    // tell it from an order this seat lacks.
+    let entry;
+    try { entry = decodeEntryContract(raw); } catch (e) { return { ...refuse(`that order no longer decodes: ${e.message}`), undecodable: true }; }
     if (toHex(entry.roundId) !== toHex(roundIdBytes)) return refuse('that entry is in another round');
     if (!isOrder(entry)) return refuse('that entry is not an order (it names no limit price)');
     return { ok: true, entry };
@@ -377,6 +382,11 @@ export class OrderBook {
       const orders = [];
       for (const id of rec.orders) {
         const o = this.#orderEntry(roundIdBytes, id);
+        // AN ORDER OF A BATCH THAT NO LONGER DECODES (kanban #2036) is left out of that batch, as round.js entriesOf leaves it out of
+        // its round: every seat holds the same bytes and the same decoder, so every seat leaves out the same orders and the certified
+        // fills stay the same at all of them. Left out, it fills nothing and no settlement claims it; its locks expire back by their
+        // own timelock. An order this seat does not hold still refuses the ledger (it is replayed, kanban #620).
+        if (!o.ok && o.undecodable) continue;
         if (!o.ok) return refuse(`a batch names an order this seat cannot read: ${o.why}`);
         orders.push({ id, outcome: o.entry.pick, price: BigInt(o.entry.limitPrice), stakeMsat: o.entry.stakeMsat - o.entry.donationMsat, feeMsat: o.entry.feeMsat, expiryMs: o.entry.orderExpiryMs || 0n });
       }
@@ -410,7 +420,8 @@ export class OrderBook {
         if (Number(row.received_ms) >= cutoff) return refuse(`order ${id.slice(0, 16)} was tradable here only ${Number(row.received_ms) - cutoff} ms after batch ${k}'s cutoff: it is in a later batch`);
         if (Number(row.received_ms) >= close) return refuse(`order ${id.slice(0, 16)} was tradable here only after the market closed: it never trades`);
       }
-    } else for (const id of record.orders) { const o = this.#orderEntry(roundIdBytes, id); if (!o.ok) return o; }
+    // a certified batch is taken with an order that no longer decodes (kanban #2036): the ledger leaves that order out at every seat
+    } else for (const id of record.orders) { const o = this.#orderEntry(roundIdBytes, id); if (!o.ok && !o.undecodable) return o; }
     const rec = this.#recordId(roundIdBytes, record);
     if (!rec.ok) return rec;
     if (!isHex(String(record.leaderSig), 64) || !verifySchnorr(fromHex(String(record.leaderSig)), fromHex(rec.id), fromHex(leader))) return refuse('that batch is not signed by its leader', 403);
@@ -812,7 +823,8 @@ export class OrderBook {
     const id = fromHex(entryHex);
     const raw = this.round.entry(id);
     if (!raw || !this.round.stakeLock(id)) return false;
-    const ref = decodeEntryContract(raw).vssSharesRef;
+    // an order that no longer decodes (kanban #2036) has nothing to replay: the ledger leaves it out, so it is whole as it is
+    let ref; try { ref = decodeEntryContract(raw).vssSharesRef; } catch { return true; }
     return !ref || ref.every((b) => b === 0) || typeof this.round.handout !== 'function' || !!this.round.handout(ref);
   }
 
