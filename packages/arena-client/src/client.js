@@ -1884,6 +1884,43 @@ export class Client {
     for (let i = ids.length - 1; i >= floor; i--) {
       if (this.live(ids[i])) { adopted = ids[i]; break; }
     }
+    // AND AFTER A RELOAD TOO (feedback #020, kanban #1732): a reloaded tab has no head of its own, so the floor above is
+    // not there, and a home seat that left its newest carried mark out of the list made the fresh client adopt an older
+    // live mark and sign a second child of it - FORFEIT. The receipts just recovered (home and peers, each verified) name
+    // every mark the committee carries; one of them missing from the home list means that list is not the chain. Each
+    // peer's own list is read then, and the newest live mark any list holds (by its tick) is the head. A live mark no
+    // list holds cannot be placed: the run ends as the home seat's fault (VOID), never a mark signed on a guess.
+    if (!headLive) {
+      const listed = new Set(ids.map(toHex));
+      const missing = [...this.witnesses.keys()].filter((id) => !listed.has(id) && this.live(fromHex(id)));
+      if (missing.length) {
+        const ticks = new Map();
+        const readList = async (base) => {
+          const r = await readWithOneRetry(fetch, `${base}/checkpoints?round=${toHex(roundId)}&entry=${toHex(entryId)}`);
+          const b = new Uint8Array(await r.arrayBuffer());
+          if (!r.ok || b.length % SIGNED_CHECKPOINT_BYTES !== 0) return;
+          for (let at = 0; at < b.length; at += SIGNED_CHECKPOINT_BYTES) {
+            const m = decodeCheckpoint(splitSigned(b.subarray(at, at + SIGNED_CHECKPOINT_BYTES)).body);
+            ticks.set(toHex(checkpointId(m)), m.tick);
+          }
+        };
+        await readList(this.base).catch(() => {});
+        await Promise.all((this.peers || []).map((base) => readList(base).catch(() => {})));
+        const unplaced = missing.filter((id) => !ticks.has(id));
+        if (unplaced.length) {
+          const why = `the node at ${this.base} leaves the live mark ${unplaced[0].slice(0, 16)} out of its checkpoints and no `
+            + 'committee node serves it - this client does not sign a mark on a head it cannot place';
+          this.nodeFault = { base: this.base, firstTick: null, batch: null, why };
+          this.endRun(`node fault: ${why}`);
+          throw Object.assign(new Error(why), { nodeFault: true });
+        }
+        let best = adopted ? toHex(adopted) : null;
+        for (const [id, tick] of ticks) {
+          if (this.live(fromHex(id)) && (best === null || tick > (ticks.get(best) ?? -1))) best = id;
+        }
+        if (best !== null && best !== (adopted && toHex(adopted))) adopted = fromHex(best);
+      }
+    }
     return { adopted, receipts: marks.length };
   }
 
