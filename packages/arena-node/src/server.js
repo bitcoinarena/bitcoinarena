@@ -4625,22 +4625,35 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     let why = null;
     if (!round.stakeLock(eid) || (round.feeLock && !round.feeLock(eid))) {
       const answers = await ofPeers(`/order-locks?entry=${entryHex}`, (r) => r.json());
+      // kanban #2255 (a45 refute of #1823): a check that failed HERE - the federation could not be asked, or the check threw - is this seat's
+      // own trouble, not a word on the peer's lock; it is kept apart from a lock the peer's fields or the federation refuted
+      const ownFault = (g) => !g.ok && /^the federation could not be asked/.test(String(g.why || ''));
+      let mine = null;
       for (const locks of answers) {
         why = null;
+        let stakeF = null, feeF = null;
+        try { if (locks.stake) stakeF = lockFieldsFromJson(locks.stake); if (locks.fee) feeF = lockFieldsFromJson(locks.fee); }
+        catch (e) { why = `its lock fields: ${e.message}`; continue; }   // junk fields: that peer's fault
         try {
-          if (locks.stake && !round.stakeLock(eid)) { const g = await takeStakeLock(eid, lockFieldsFromJson(locks.stake)); if (!g.ok) why = `its stake lock: ${g.why}`; }
-          if (locks.fee && round.feeLock && !round.feeLock(eid)) { const g = await takeFeeLock(eid, lockFieldsFromJson(locks.fee)); if (!g.ok) why = `its fee lock: ${g.why}`; }
-        } catch (e) { why = e.message; }
+          if (stakeF && !round.stakeLock(eid)) { const g = await takeStakeLock(eid, stakeF); if (!g.ok) { why = `its stake lock: ${g.why}`; if (ownFault(g)) mine = why; } }
+          if (feeF && round.feeLock && !round.feeLock(eid)) { const g = await takeFeeLock(eid, feeF); if (!g.ok) { why = `its fee lock: ${g.why}`; if (ownFault(g)) mine = why; } }
+        } catch (e) { why = e.message; mine = why; }
         if (!why) break;
       }
       // A LOCK NO THRESHOLD OF SEATS CLAIMS IS NO REASON TO WAIT (kanban #1823, audit #1489 r6-h2h-3): the last failing answer was the wait, so for an entry
       // nobody locked (an abandoned join, a stranger's lockless entry) ONE peer answering 200 with junk lock fields kept this seat waiting on every pass until
-      // the result window ran out, and it signed nothing for the round's real players. A lock that fails here is the answering peer's fault; this seat waits
-      // for one only while at least the round's threshold of peers say they verified a lock of it - only then can the entry be seated without this seat.
+      // the result window ran out, and it signed nothing for the round's real players. A lock the federation refuted is the answering peer's fault; this seat
+      // waits for one only while at least the round's threshold of peers say they verified a lock of it - only then can the entry be seated without this seat.
+      // BUT A LOCK THIS SEAT COULD NOT CHECK FOR A MOMENT IS WAITED FOR (kanban #2255, a45 refute of #1823): the answers come from the OTHER seats only, so in a
+      // 2-of-2 round (threshold 2, one peer) the #1823 gate was never met and a real lock whose check failed on this seat's own federation call was dropped -
+      // the seats split their verdicts (VOID here, DELIVERED there) and the paid round never settled. This seat counts as a holder: when the peers that answered
+      // plus this seat reach the threshold, the entry can be seated only with this seat's copy, so it waits and pulls the lock on the next pass. One peer's
+      // junk still waits for nothing in a 7-seat round (one peer plus this seat stays under 5), and junk fields never wait at all.
       if (why) {
         let needed = Infinity;
         try { needed = roundThreshold(decodeRoundContract(new Uint8Array(round.get(rid).contract)).settlementSlots); } catch { /* no threshold read: no wait */ }
-        if (answers.length < needed) why = null;
+        if (mine && answers.length + 1 >= needed) why = mine;
+        else if (answers.length < needed) why = null;
       }
     }
     if (!round.payoutAddress(eid)) {
