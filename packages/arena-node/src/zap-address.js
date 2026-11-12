@@ -21,6 +21,7 @@ import { zapRequestStands, zapReceiptTemplate, ZAP_COMMENT_MAX } from '../../are
 import { lnurlFor } from '../../arena-protocol/src/bech32.js';
 import { eventId } from './nostr-relay.js';
 import { askerAddress } from './reach-check.js';
+import { publicHttpsUrl } from './feedback-store.js';
 
 const OPEN = { 'access-control-allow-origin': '*' };
 const sha256hex = (s) => createHash('sha256').update(s).digest('hex');
@@ -100,6 +101,22 @@ export function askerKey(a) {
   return `${groups.slice(0, 4).map((g) => parseInt(g, 16).toString(16)).join(':')}::/64`;
 }
 
+// ONLY PUBLIC RELAYS (kanban #2454): a zap request's `relays` tag is the payer's own word, and once the zap is paid the receipt is sent
+// (tools/zap-address.mjs -> sendToRelay -> a WebSocket upgrade) to every URL it names - ws://127.0.0.1:8080/..., ws://169.254.169.254/...,
+// a LAN host: a blind SSRF from the zap server, one 1-sat zap at a time. The callback keeps only wss:// relays on a public name (no IP
+// literal, localhost, .local/.internal/..., *.ts.net) on the default port, and refuses the zap when none is left; the tool's dial also
+// resolves the name and connects only to a global address (feedback-store globalLookup), so DNS rebinding cannot get past it.
+export function publicRelayUrl(u) {
+  const s = String(u || '');
+  if (!/^wss:\/\//i.test(s)) return false;
+  let url; try { url = new URL(s); } catch { return false; }
+  if (url.port && url.port !== '443') return false;
+  if (url.username || url.password) return false;
+  const host = url.hostname.toLowerCase().replace(/\.$/, '');
+  if (/(^|\.)ts\.net$/.test(host)) return false;
+  return publicHttpsUrl(`https://${url.host}/`);
+}
+
 /** What a plain (not zap) tip's invoice is hashed over (LUD-06: raw JSON, text/plain first, the address as text/identifier). */
 export const addressMetadata = (name, host) => JSON.stringify([['text/plain', `Zap ${name}@${host}`], ['text/identifier', `${name}@${host}`]]);
 
@@ -112,7 +129,7 @@ export function signNostr(template, { secret, curve, nowS = Math.floor(Date.now(
 }
 
 export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, publicBase = null, names, secret, curve, invoice, lookup, publish,
-  statePath = null, minSendable = 1000, maxSendable = 100000000, watchMs = 2000, expiryS = 3600, log = () => {} } = {}) {
+  statePath = null, allowPrivateRelays = false, minSendable = 1000, maxSendable = 100000000, watchMs = 2000, expiryS = 3600, log = () => {} } = {}) {
   if (!publicHost) throw new Error('a Lightning address names its public host');
   if (!secret || !curve) throw new Error('a zap address signs its receipts, and was handed no key');
   const nostrPubkey = toHexB(curve.pointX(secret));
@@ -387,13 +404,16 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
         try { request = JSON.parse(description); } catch { return refuse('the nostr parameter is not a JSON event'); }
         const stands = zapRequestStands(request, { amountMsat, verify });
         if (!stands.ok) return refuse(stands.why);
+        // only public wss:// relays get the receipt (kanban #2454); `allowPrivateRelays` is for tests on a local relay
+        const relays = allowPrivateRelays ? stands.relays : stands.relays.filter(publicRelayUrl);
+        if (!relays.length) return refuse('the zap request names no public wss:// relay');
         // THE ADDRESS'S OWN URL (LUD-16: https://host/.well-known/lnurlp/name), or the pay request's under the public base -
         // measured live: with the callback under a path (/zap) the request's lnurl names the host's well-known URL, not the base's
         const lnurl = u.searchParams.get('lnurl');
         const ours = [`https://${publicHost}/.well-known/lnurlp/${name}`, `${base}/.well-known/lnurlp/${name}`, `${base}/lnurlp/${name}`]
           .map((x) => lnurlFor(x).toLowerCase());
         if (lnurl && !ours.includes(lnurl.toLowerCase())) return refuse('that lnurl is not this address');
-        zap = { request, relays: stands.relays };
+        zap = { request, relays };
         // ONE SIGNED ZAP REQUEST, ONE OPEN INVOICE (kanban #1514): a request already invoiced and still open gets that invoice again
         // (the same name and amount) and is refused otherwise; a new one waits for room under the caps.
         const open = [...pending.values(), ...letGo.values()].map((p) => [p, requestOf(p)]);
