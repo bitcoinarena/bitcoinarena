@@ -45,7 +45,9 @@ test('#1489-2 a 1 sat lock handed to /refused-lock after the player\'s does not 
     const rows = w.nodes.map((d) => d.round.refusedLock(fromHex(hid)));
     console.log('  FACTS #1489-2:', JSON.stringify({ kept, attacker: replaced, keptOutpoints: rows.map((r) => r && r.outpoint.slice(0, 16)), player: `${toHex(outpoint.txid).slice(0, 16)}` }));
     for (const [s, why] of kept) assert.equal(s, 201, why);
-    for (const [s, why] of replaced) assert.equal(s, 409, `the attacker's other lock for the same handout was kept: ${why}`);
+    // kanban #1604: the attacker's other lock is kept beside the player's, under an id of its own (it refunds to the player too)
+    for (const [s, why] of replaced) assert.equal(s, 201, why);
+    for (const [, why] of replaced) assert.doesNotMatch(why, new RegExp(`entry=${hid}$`), 'the attacker\'s lock was kept under the handout\'s own id');
     for (const r of rows) assert.equal(r && r.outpoint, `${toHex(outpoint.txid)}:0`, 'the player\'s kept stake lock was replaced by the attacker\'s 1 sat lock: the forfeit now returns that one');
   } finally { await w.close(); }
 });

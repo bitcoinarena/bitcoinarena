@@ -140,7 +140,8 @@ test('a market on a game is believed only from its source round\'s result, signe
   assert.deepEqual([won.state, won.gainMsat, won.final, won.finalAtMs], ['won', '49500', true, null]);
   //: every attested line says whether its result is final, and when - a lost one too, so the client counts it down
   const lostTable = { ...table, rows: [{ ...table.rows[0], won: false, payoutMsat: '0' }] };
-  const [lost] = marketLines({ picks: [pick], outcomes: new Map([[rid, { state: 'ATTESTED', label: 'BULLS', final: false, finalAtMs: '1788200600000', table: lostTable, check: ok }]]), nowMs: Number(S) });
+  // the other pick loses: a lost row beside the pick the verified outcome names is refused as unverified (kanban #1615)
+  const [lost] = marketLines({ picks: [{ ...pick, pick: 1 }], outcomes: new Map([[rid, { state: 'ATTESTED', label: 'BULLS', final: false, finalAtMs: '1788200600000', table: lostTable, check: ok }]]), nowMs: Number(S) });
   assert.deepEqual([lost.state, lost.lostMsat, lost.final, lost.finalAtMs], ['lost', '98500', false, 1788200600000]);
   //: a pick with no row in the table stays unknown - unless the page read its position from the book (0 shares, 0 cost)
   const noRow = { ...table, rows: [] };

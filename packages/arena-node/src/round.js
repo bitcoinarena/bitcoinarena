@@ -65,6 +65,9 @@ import { statesBefore } from './send-state.js';
 export const RECEIPTS_FOR_CANONICAL = receiptsNeeded(7);
 // A LATE ENTRY'S JOIN TICK MAY TRAIL THE ROUND'S CLOCK BY THIS MUCH: the device's clock and the post.
 export const LATE_ENTRY_TICK_SLACK_MS = 10000n;
+// THE LOCKLESS ENTRIES A PAYING HEAD-TO-HEAD ROUND TAKES (kanban #1745): per player of its game, joined within the last minute
+export const LOCKLESS_PER_SEAT = 3;
+export const LOCKLESS_HOLD_MS = 60000;
 
 /**
  * A STORED ROUND THIS NETWORK CANNOT PARSE IS ABSENT (RULED 2026-09-22 22:59, §23.6): "a record
@@ -728,6 +731,18 @@ export class Round {
         const me = entryId(contract);   // seats counted by entry id (kanban #1479)
         const seated = this.seatedEntriesOf(contract.roundId, asks.stakeMsat).filter((x) => !same(x.entryId, me)).length;
         if (seated >= m.players && !accepted) throw new Error(`that round already seats game "${m.gameName}"'s ${m.players} players`);
+        // AND A PAYING ROUND HOLDS ONLY A FEW ENTRIES NOBODY LOCKED A STAKE FOR (kanban #1745, audit #1489 r5 h2h-1): the door takes an entry before its
+        // lock and the seats above count only locked ones, so a stranger with fresh keys and no sats filled a paid RPS round with 24 lockless entries -
+        // each stored, relayed to every seat and signed VOID at the close. At most LOCKLESS_PER_SEAT x players of them joined in the last
+        // LOCKLESS_HOLD_MS are taken; an older lockless entry no longer counts, so an honest player who is slow to lock never keeps the next one out.
+        // The same entry posted again and an entry the round accepted (entry-relay) are still taken.
+        if (asks.stakeMsat > 0n && !accepted && !this.db.prepare('SELECT 1 FROM entries WHERE entry_id = ?').get(Buffer.from(me))) {
+          const since = this.now() - LOCKLESS_HOLD_MS;
+          const lockless = this.db.prepare('SELECT entry_id FROM entries WHERE round_id = ? AND joined_ms > ?').all(contract.roundId, since)
+            .filter((r) => !this.stakeSeen(new Uint8Array(r.entry_id)) && !this.stakeLock(new Uint8Array(r.entry_id))).length;
+          if (lockless >= LOCKLESS_PER_SEAT * m.players)
+            throw new Error(`that round already holds ${lockless} entries with no stake lock: try again in a minute`);
+        }
       } else if (hidden) throw new Error('that entry hides a move, and its round is not a head-to-head game\'s');
     }
 
@@ -2492,6 +2507,11 @@ export class Round {
         bytes: new Uint8Array(r.bytes), seenMs: Number(r.seen_ms) }));
   }
 
+  /** How many handouts this signer node keeps for one round (kanban #1605: the door bounds the ones no entry names). */
+  handoutCount(roundIdBytes) {
+    return this.db.prepare('SELECT COUNT(*) AS n FROM handouts WHERE round_id = ?').get(Buffer.from(roundIdBytes)).n;
+  }
+
   /** Every handout this signer node accepted for one round: its id and bytes. */
   handoutsOf(roundIdBytes) {
     return this.db.prepare('SELECT handout_id, bytes FROM handouts WHERE round_id = ?').all(Buffer.from(roundIdBytes))
@@ -2519,9 +2539,14 @@ export class Round {
   }
 
   /** The refused-round locks of one round that refund to `refundHex`, shaped as stakeLocksFor's (entryId = the handout id). */
+  // ONE ROW PER LOCK (kanban #1604): a lock is kept under H(handout id || outpoint), and the first one of a handout also under the
+  // handout's id; listed once, under its first row - the handout's id for the first lock (as before), H(handout id || outpoint)
+  // for every later one.
   refusedLocksFor(roundIdBytes, refundHex) {
-    return this.db.prepare('SELECT handout_id, outpoint, fields, contract_id FROM refused_locks WHERE round_id = ?')
-      .all(Buffer.from(roundIdBytes))
+    const byOutpoint = new Map();
+    for (const r of this.db.prepare('SELECT handout_id, outpoint, fields, contract_id FROM refused_locks WHERE round_id = ? ORDER BY rowid')
+      .all(Buffer.from(roundIdBytes))) if (!byOutpoint.has(r.outpoint)) byOutpoint.set(r.outpoint, r);
+    return [...byOutpoint.values()]
       .map((r) => ({ entryId: Buffer.from(r.handout_id).toString('hex'), outpoint: r.outpoint, fields: JSON.parse(r.fields), contractId: r.contract_id, refused: true }))
       .filter((l) => String(l.fields.refundPk).toLowerCase() === String(refundHex).toLowerCase());
   }
@@ -3630,6 +3655,16 @@ export class Round {
       if (Buffer.from(e.playerPubkey).toString('hex') === want && (at === null || Number(r.joined_ms) < at)) at = Number(r.joined_ms);
     }
     return at;
+  }
+
+  /** Every identity a name record of that round names (hex), for who sits at its table first (kanban #1645). */
+  namedIdentitiesOfRound(roundIdBytes) {
+    const out = new Set();
+    for (const r of this.db.prepare('SELECT record FROM lobby_names WHERE round_id = ?').iterate(Buffer.from(roundIdBytes))) {
+      const b = new Uint8Array(r.record);
+      if (b.length >= 96) out.add(Buffer.from(b.subarray(64, 96)).toString('hex'));
+    }
+    return out;
   }
 
   namedIdentityOf(roundIdBytes, playerPubkeyBytes) {
