@@ -245,3 +245,32 @@ test('client 7587b604: the quick reveal swaps are applied only all together and 
     "return window.parent.ARENA_ORDER_WORDS(rec.why);", "return window.parent.ARENA_ORDER_WORDS(j.why);"]) assert.ok(block.includes(x), x);   // #1393: the tap notes in plain words
   assert.match(block, /if \(swaps\.every\(\(\[x\]\) => html\.split\(x\)\.length === 2\)\)/, 'all or none, each found exactly once');
 });
+
+// kanban #2563 (feedback #017, 2026-11-12: "the page repeatedly shows exactly: Your order came too late for this round"): the head-to-head client
+// offered a round and counted it down to 1.5 s before the close it was given, while a paid tap needs ARENA_H2H_LEAD_MS() + 1.5 s; the close it is
+// given is now the last moment a tap still goes in, so its countdown and its offer end there. Run in a page-like scope with the real expressions.
+test('a head-to-head client is given the last moment a tap goes in as the close, never more than the page then takes', () => {
+  const src = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
+  const def = src.slice(src.indexOf('const H2H_CLIENT_CLOSING_MS = 1500'), src.indexOf('window.ARENA_GAME = {'));
+  assert.ok(def.length > 100 && /const pickCloseMs = \(r, closeMs\) => \{/.test(def), 'the helper is found');
+  assert.equal((src.match(/entryCloseMs: r\.raw \? pickCloseMs\(r, Number\(r\.raw\.entryCloseMs\)\) : null/g) || []).length, 1, 'rows() hands the pick close');
+  assert.equal((src.match(/\? pickCloseMs\(r, Number\(r\.entryCloseMs\)\) : null/g) || []).length, 1, 'allRows() hands the pick close');
+  const run = (resultType, lockSeen, free) => {
+    const window = { ARENA_ORDER_CUTOFF_MS: 3000, ARENA_LOCK_MS_SEEN: lockSeen };
+    window.ARENA_H2H_LEAD_MS = () => Math.max(4000, Math.max(0, ...(window.ARENA_LOCK_MS_SEEN || [])) + 1500);   // the page's own (#1485)
+    const game = { manifest: { resultType } };
+    const pickCloseMs = new Function('window', 'game', def + '; return pickCloseMs;')(window, game);
+    const close = 1_000_000;
+    const given = pickCloseMs({ free }, close);
+    // the client offers a round while it has more than its CLOSING_MS (1.5 s) left of what it is given: its last tap lands at given - 1.5 s
+    const lastTapLeft = close - (given - 1500);
+    const need = free ? 3000 : window.ARENA_H2H_LEAD_MS() + 1500;
+    return { given, lastTapLeft, need };
+  };
+  for (const [lockSeen, free] of [[[], false], [[900, 2700], false], [[7000], false], [[], true]]) {
+    const { lastTapLeft, need } = run(3, lockSeen, free);
+    assert.ok(lastTapLeft >= need + 1000, `the last offered tap has ${lastTapLeft} ms left, the page takes it from ${need} ms (+1 s margin)`);
+    assert.ok(lastTapLeft <= need + 1000, 'and the round is not cut shorter than that');
+  }
+  assert.equal(run(1, [], false).given, 1_000_000, 'a game that is not head-to-head keeps its close');
+});
