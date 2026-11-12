@@ -422,6 +422,30 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   }
 
   /** MIRROR: the newest signed record of `federationId` its guardians' nodes hold, checked against this seat's census `b`. */
+  // THE RECORDS BEFORE THE FIRST ANSWER (kanban #1765, state audit 2026-11-12): restore() runs 20 s after start, and until then a seat
+  // that held a federation HALTED, CRITICAL or DRAINING answered as if it held no record of it - no draining gate, no liquidation
+  // guard on POST /exchange (#1244), GET /federations and /liquidations empty. restoreNow() reads the saved records synchronously,
+  // each against its own guardian list (every signature and the threshold, as the restore below falls back to), before the doors
+  // open; such a record is provisional, and restore() checks it against the census again at 20 s
+  const provisional = new Set();             // federation id hex restored by restoreNow, not yet checked against a census
+  function restoreNow(inviteFederationId) {
+    if (!store || typeof store.loadNow !== 'function') return { restored: 0 };
+    let rows = []; try { rows = store.loadNow() || []; } catch { rows = []; }
+    const verify = (s2, m, k) => { try { return schnorr.verify(s2, m, k); } catch { return false; } };
+    let restored = 0;
+    for (const row of rows) {
+      const fid = String(row.federation).toLowerCase();
+      if (kept.has(fid)) continue;
+      try {
+        const bytes = fromHex(String(row.record));
+        const r = decodeFederationRecord(splitSignedRecord(bytes).body);
+        const own = r.guardians.map((g) => ({ pubkey: g.nodePubkey, advert: { guardianOf: [{ federationId: r.federationId, guardianKey: g.peerKey }] } }));
+        const v = verifyFederationRecord(bytes, { census: own, verify, inviteFederationId });
+        if (v.ok && keep(fid, bytes, v, 'restore')) { provisional.add(fid); restored++; }
+      } catch { /* restored at 20 s, or gathered again */ }
+    }
+    return { restored, of: rows.length };
+  }
   async function restore(inviteFederationId) {
     if (!store) return { restored: 0 };
     let rows = []; try { rows = (await store.load()) || []; } catch { rows = []; }
@@ -429,7 +453,10 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     let restored = 0;
     for (const r of rows) {
       const fid = String(r.federation).toLowerCase();
-      if (kept.has(fid)) continue;
+      // a record restoreNow read back from its own guardian list is checked against the census here (kanban #1765)
+      const recheck = provisional.has(fid) && kept.has(fid) && toHex(kept.get(fid).bytes) === String(r.record).toLowerCase();
+      provisional.delete(fid);
+      if (kept.has(fid) && !recheck) continue;
       try {
         const bytes = fromHex(String(r.record));
         const h = decodeFederationRecord(splitSignedRecord(bytes).body).height;
@@ -589,7 +616,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   }
 
   return {
-    mySignature, mySignatureWithGone, gather, restore,
+    mySignature, mySignatureWithGone, gather, restore, restoreNow,
     async gatherAll(inviteFederationId) {
       await chainAhead();
       const b = basis();
