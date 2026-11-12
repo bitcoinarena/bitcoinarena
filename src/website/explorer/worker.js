@@ -416,6 +416,7 @@ async function putMarks(env, keys, kind) {
   const at = Date.now();
   for (let i = 0; i < keys.length; i += 50)
     await env.DB.batch(keys.slice(i, i + 50).map((k) => env.DB.prepare('INSERT INTO marked (key, kind, at_ms) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET kind = excluded.kind, at_ms = excluded.at_ms').bind(k, kind, at)));
+  await dropPlayed(env);   // kanban #1680: the counts after a mark are read fresh
 }
 const keysOf = (b) => [...new Set((Array.isArray(b && b.keys) ? b.keys : []).map((k) => String(k).toLowerCase()).filter((k) => hex64.test(k)))].slice(0, 500);
 // POST /api/mark-ip { keys }: the entries of a browser on an admin address, marked as the owner's - no code; any other address is refused.
@@ -449,6 +450,7 @@ async function markByIp(env, request) {
     if (later.length) { await pendingTable(env); await env.DB.batch(later.map((k) => env.DB.prepare('INSERT INTO mark_pending (key, kind, at_ms, by_ip) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO NOTHING').bind(k, kind, at, ip))); }
     took.push(...fresh, ...later);   // marked now, or kept until the entry is here: the page need not send them again
   }
+  if (took.length) await dropPlayed(env);   // kanban #1680: the counts after a mark are read fresh
   return json({ ok: true, marked: took.length, took, kind, by: 'address' });
 }
 async function mark(env, request) {
@@ -517,7 +519,21 @@ async function totals(env) {
   return { since: first === null ? null : new Date(first).toISOString(), readAt: new Date().toISOString(), all, games };
 }
 
+// ONE READING A MINUTE, WHOEVER ASKS (kanban #1680, audit #1489 r5): every GET /api/played and /metrics read every order since 2026-11-01 with
+// json_extract over its stored json (the read that ran D1 out of memory in #1459) and every marked key - the max-age was only a header, and each
+// query string a new URL, so a stranger asking ?x=1, ?x=2, ... ran the whole-table scan each time. Now the answer is kept in state ('played') with
+// its time and served from there for PLAYED_KEEP_MS, whatever the query; a new mark (code or admin address) drops the copy, so the counts after
+// marking are read fresh.
+const PLAYED_KEEP_MS = 60000;
 async function played(env) {
+  const kept = await stateGet(env, 'played').then((v) => (v ? JSON.parse(v) : null)).catch(() => null);
+  if (kept && Number.isFinite(kept.at) && Date.now() - kept.at >= 0 && Date.now() - kept.at < PLAYED_KEEP_MS) return kept.v;
+  const v = await readPlayed(env);
+  await statePut(env, 'played', JSON.stringify({ at: Date.now(), v })).catch(() => {});
+  return v;
+}
+const dropPlayed = (env) => statePut(env, 'played', '').catch(() => {});
+async function readPlayed(env) {
   const [rows, marks] = await Promise.all([
     env.DB.prepare(`SELECT id, round, app, stored_ms AS ms, settled, json_extract(json, '$.entry.player') AS p FROM txs WHERE kind = 'order' AND stored_ms >= ? AND round IS NOT NULL`).bind(PLAYED_FROM_MS).all(),
     env.DB.prepare('SELECT key, kind FROM marked').all()]);
