@@ -256,7 +256,12 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   // EVERY RECORD BY ITS HEIGHT TOO (kanban #559/#543, §23A.3a: the pressure weights read "the federation record in force at" the round's
   // census height, which may be older than the newest): each verified record kept per federation and height, in memory and the store
   const history = new Map();                 // fid -> Map(height -> record)
-  const remember = (fid, rec) => { if (!history.has(fid)) history.set(fid, new Map()); history.get(fid).set(Number(rec.height), rec);
+  // ONE RESERVE IN FORCE AT ONE HEIGHT (kanban #2314): the first record kept at a height keeps its place in the history against a later
+  // one naming another reserve - a same-height record with the same reserve (a status move, CLOSED) still replaces it
+  const remember = (fid, rec) => { if (!history.has(fid)) history.set(fid, new Map());
+    const was = history.get(fid).get(Number(rec.height));
+    if (was && String(was.reserveSats) !== String(rec.reserveSats)) return;
+    history.get(fid).set(Number(rec.height), rec);
     if (store && store.saveAt) { try { store.saveAt(fid, Number(rec.height), rec.__hex); } catch { /* in memory */ } } };
   // the history of `fid` with the store's rows read in once (they were each verified when saved), those in memory kept as they are
   const historyRead = new Set();
@@ -281,6 +286,26 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       start = { height: h, bytes: fromHex(rec.__hex) };
     }
     return start;
+  };
+  // THE RESERVE IS FIXED PER RECORD HEIGHT (kanban #2314, state audit 2026-11-12: seat A gathered census height H with the guardians'
+  // reserve at 150000 sat, a peg-in landed, seat B's own timer gathered the same H at 300000 - both signed by all 7 - and recordAt(H), the
+  // pressure weights of every round at census H, differed between the signer seats, so their fee tables and settlements did too): the
+  // first reserve this seat signs or keeps at a (federation, height) is the one it names and signs there again; a body naming another
+  // is refused. A fresh reading goes into the next height's record.
+  const fixedReserve = new Map();            // `${fid}:${height}` -> reserve sat (bigint)
+  const reserveFixedAt = (fid, height) => {
+    if (!Number.isInteger(height)) return null;
+    const f = String(fid).toLowerCase();
+    if (fixedReserve.has(`${f}:${height}`)) return fixedReserve.get(`${f}:${height}`);
+    const m = historyOf(f); const rec = m && m.get(height);
+    return rec && rec.reserveSats !== undefined ? BigInt(rec.reserveSats) : null;
+  };
+  const fixReserve = (fid, height, sats) => {
+    if (!Number.isInteger(height)) return;
+    const k = `${String(fid).toLowerCase()}:${height}`;
+    if (fixedReserve.has(k)) return;
+    fixedReserve.set(k, BigInt(sats));
+    while (fixedReserve.size > 512) fixedReserve.delete(fixedReserve.keys().next().value);
   };
   function keep(fid, bytes, v, from = 'gather') {
     // A CLOSED RECORD IS FINAL (kanban #577, measured 2026-10-22 on federation 89ce310e: n495-1 held it CLOSED with 7 of 10 signatures, set its
@@ -517,7 +542,13 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   /** THIS SEAT'S SIGNATURE (GET /federation-record): only a guardian of the federation signs, over the body it builds. */
   // THE RESERVE IN THE BODY (§23A.3): the gatherer reads it from the guardians (`reserveOf`, a threshold of them
   // naming one sum) and names it; a seat signs a body naming a reserve only when its own reading is the same
-  async function reserveFor(federationIdHex, guardians, named = null) {
+  async function reserveFor(federationIdHex, guardians, named = null, height = null) {
+    // kanban #2314: a height whose reserve this seat already signed or kept names that one, and signs no other
+    const fixed = reserveFixedAt(federationIdHex, height);
+    if (fixed !== null) {
+      if (named !== null && BigInt(named) !== fixed) return { ok: false, why: `this seat signed a reserve of ${fixed} sat at height ${height}, not ${named}` };
+      return { ok: true, reserveSats: fixed };
+    }
     if (!reserveOf) return named === null || BigInt(named) === 0n ? { ok: true, reserveSats: 0n } : { ok: false, why: 'this seat reads no reserve, so it signs none' };
     const r = await reserveOf(federationIdHex, guardians);
     if (!r.ok) return { ok: false, why: `the reserve: ${r.why}` };
@@ -532,10 +563,11 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     const keys = await keysFor(federationIdHex);
     const first = bodyFor(b, fromHex(federationIdHex), [], 0n, eps, keys);
     if (!first.ok) return first;
-    const res = await reserveFor(federationIdHex, first.guardians, reserveNamed);
+    const res = await reserveFor(federationIdHex, first.guardians, reserveNamed, b.height);
     if (!res.ok) return res;
     const built = bodyFor(b, fromHex(federationIdHex), [], res.reserveSats, eps, keys);
     if (!built.guardians.some((g) => toHex(g.nodePubkey) === toHex(round.pubkey))) return { ok: false, why: 'this node does not guard that federation' };
+    fixReserve(federationIdHex, b.height, res.reserveSats);
     const leaving = leavingAtMs() !== null;
     const id = federationRecordId(built.record);
     // kanban #1665: a seat whose owner consented to retire signs the plain body too (`alt`), and its leave statement is over the plain
@@ -556,7 +588,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     const first = bodyFor(b, federationId, [], 0n, eps, keys);
     if (!first.ok) return first;
     // THE RESERVE, read once here and named to every guardian seat, each of which signs only on its own same reading
-    const res = await reserveFor(toHex(federationId), first.guardians);
+    const res = await reserveFor(toHex(federationId), first.guardians, null, b.height);
     if (!res.ok) return res;
     const reserveSats = res.reserveSats;
     // the plain body is never the CLOSED one (kanban #1665): the leave statements are over its id at every guardian seat
@@ -846,11 +878,12 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     const keys = await keysFor(federationIdHex);
     const first = bodyFor(b, fromHex(federationIdHex), [], 0n, eps, keys);
     if (!first.ok) return first;
-    const res = await reserveFor(federationIdHex, first.guardians, reserveNamed);
+    const res = await reserveFor(federationIdHex, first.guardians, reserveNamed, b.height);
     if (!res.ok) return res;
     // the plain body, never the CLOSED one: the leave statements are over its id (kanban #1665)
     const plain = bodyFor(b, fromHex(federationIdHex), [], res.reserveSats, eps, keys, false);
     if (!plain.guardians.some((g) => toHex(g.nodePubkey) === toHex(round.pubkey))) return { ok: false, why: 'this node does not guard that federation' };
+    fixReserve(federationIdHex, b.height, res.reserveSats);   // kanban #2314
     const listedKeys = new Set(plain.guardians.map((g) => toHex(g.peerKey)));
     if (!goneHex.every((k) => listedKeys.has(k))) return { ok: false, why: 'that names a guardian this federation does not have' };
     const plainId = federationRecordId(plain.record);
