@@ -26,7 +26,7 @@
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { lightningAddressEndpoint, payRequestStands, callbackFor, invoiceAnswersPayRequest } from '../../arena-protocol/src/lnurl-pay.js';
 import { sendableInvoiceMsat, lowestLiveGateway, sendPlanStands, proposedExpiration } from '../../arena-protocol/src/winnings-send.js';
-import { signShare340, aggregate340, nonceGenerate340, verifyShare340 } from '../../arena-protocol/src/frost-bip340.js';
+import { signShare340, aggregate340, nonceGenerate340 } from '../../arena-protocol/src/frost-bip340.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { encodeCommitments, decodeCommitments, decodePeerCommitment, decodeShare, commitmentListRefusal } from './pool-wire.js';
@@ -38,6 +38,7 @@ import { invoicePayee } from '../../arena-protocol/src/bolt11.js';
 import { SEND } from './send-state.js';
 import { PLAN_ASK, sendPlanAskHeaders } from './send-plan-ask.js';
 import { readJsonBounded } from './lnurl-read.js';
+import { misnamedSigners, spoiltShares } from './signer-guard.js';
 
 /** WHO AN INVOICE PAYS (kanban #1154): the node key its BOLT11 signature recovers to, hex; throws if none. */
 export const payeeOf = (invoice) => invoicePayee(invoice, (sig64, bit, digest) =>
@@ -612,8 +613,26 @@ export class WinningsSend {
     return true;
   }
 
-  /** ROUND TWO: every seat on the list gives its share, all at once within the bound; a refusal names in `withheld` the seats that gave none or whose share does not stand. */
+  /**
+   * ROUND TWO, BEHIND THE #1807 GUARD (kanban #2369, #2372; settlement.js #gatherShares): each peer under its own id, checked before any share is asked.
+   * A peer that answered /send-commit under this seat's id, or under one outside the committee, is withheld at once; of two naming one id only the first
+   * stays on this list and the others are set aside for this pass. A list that still fails with no seat named names the kept claimants, and a list
+   * that throws (signShare340, aggregate340) is a refusal, never an abort - before, one seat under another's id made this seat's own share refuse
+   * ('names a participant twice') with nobody withheld, and every pass of the winner's auth stopped the same way.
+   */
   async #gatherShares(roundIdBytes, entryHex, built, kind, attempt, q, message, signers) {
+    const misnamed = misnamedSigners(signers, built.contract && built.contract.nodes);
+    if (misnamed.out.length) return { ...refuse(`${misnamed.out[0]} committed under an id that is not its own on this ${kind} list`), withheld: misnamed.out };
+    const list = misnamed.aside.length ? signers.filter((s) => !misnamed.aside.includes(s.base)) : signers;
+    let got;
+    try { got = await this.#gatherChecked(roundIdBytes, entryHex, built, kind, attempt, q, message, list); }
+    catch (e) { got = { ...refuse(`the ${kind} list could not be signed: ${e.message}`, 500), withheld: [] }; }
+    if (!got.ok && misnamed.kept.length && !(got.withheld && got.withheld.length)) got = { ...got, withheld: misnamed.kept };
+    return got;
+  }
+
+  /** ROUND TWO: every seat on the list gives its share, all at once within the bound; a refusal names in `withheld` the seats that gave none or whose share does not stand. */
+  async #gatherChecked(roundIdBytes, entryHex, built, kind, attempt, q, message, signers) {
     const commitments = signers.map((x) => x.commitment).sort((x, y) => x.id - y.id);
     const mine = await this.share(roundIdBytes, entryHex, built, commitments, kind, attempt);
     if (!mine.ok) return mine;
@@ -630,8 +649,8 @@ export class WinningsSend {
     const { signature } = aggregate340({ commitments, message, groupPublicKey: built.claimPk, shares, curve: this.curve });
     if (schnorr.verify(signature, message, built.claimPk.subarray(1))) return { ok: true, signature };
     const held = this.dkg && this.dkg.publicSharesFor && built.contract ? this.dkg.publicSharesFor(built.contract.nodes) : null;
-    const spoilt = held && held.ok ? peers.filter((x, i) => !verifyShare340({ id: x.commitment.id, share: asked[i].value.share,
-      publicShare: held.shares.get(String(x.commitment.id)), groupPublicKey: built.claimPk, message, commitments, curve: this.curve })) : [];
+    // an id with no public share, or a check that throws, does not stand (signer-guard.js spoiltShares, kanban #2369)
+    const spoilt = spoiltShares({ signers: peers, shares: asked.map((x) => x.value.share), held, m: { claimPk: built.claimPk, message }, commitments, curve: this.curve });
     return { ...refuse(`the ${kind} signature does not verify under the claim key`), withheld: spoilt.map((x) => x.base) };
   }
 
