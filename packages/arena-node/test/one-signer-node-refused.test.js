@@ -340,6 +340,44 @@ test('one signer node refused (8): the first mark reached only the signer node t
   } finally { await w.close(); }
 });
 
+// KANBAN #2411 (feedback #015 by Hexbox Tools): a first mark POSTed to /first-mark WITHOUT ITS BATCHES was refused by the
+// seat ("names inputs this node has not seen" / "send the batches first") and kept as "an up seat refused the on-time
+// first mark" - so at the result window #noQuorum read it as the operator side's fault and wrote VOID: stake and fee lock
+// back to the player, chosen by the player alone with one signed message per seat (a refund 13C forbids). A refusal for
+// inputs the player never delivered is the player's own: it is not kept, and the entry ends as a walk-away does.
+test('one signer node refused (9) #2411: a first mark handed to every seat without its batches is the player\'s own refusal - FORFEIT as a walk-away, never VOID', async () => {
+  const w = await signerNodes();
+  try {
+    const run = await joinAndBuild(w);                                     // both seats see the stake
+    const mark = run.messages[1];                                          // the on-time first mark at 60 - its batch never sent
+    const said = {};
+    for (const [s, d] of [['a', w.a], ['b', w.b]]) {
+      const r = await fetch(`http://127.0.0.1:${d.port}/first-mark`, { method: 'POST', body: JSON.stringify({ mark: toHex(mark) }) });
+      said[s] = `${r.status} ${(await r.text()).slice(0, 80)}`;
+    }
+    const keptAt = { a: !!w.a.round.refusedFirstMark(run.eid), b: !!w.b.round.refusedFirstMark(run.eid) };
+    await Promise.all([say(w.a.port, `close ${toHex(w.rid)}`), say(w.b.port, `close ${toHex(w.rid)}`)]);
+    // A WALK-AWAY IS SIGNED AT THE CLOSE AND POSTED IN THE WINDOW: waited on before the clock moves past it (a seat that
+    // kept the refusal HOLDs instead, and this wait runs out)
+    await until(() => [w.a, w.b].every((d) => d.round.results(w.rid, run.eid).length >= 2 && d.round.postings(w.rid, run.eid).length >= 2), 15000);
+    skipTo(Number(roundEndMs(w.c)) + 605000 + 100);                        // past the result window (WINDOW-10-SPEC)
+    await until(() => [w.a, w.b].every((d) => d.round.noQuorum(run.eid) || ['FINAL', 'FORFEIT'].includes(resultFinality(d.round, w.rid, run.eid).state)));
+    await wait(300);
+    const after = { a: await at(w.a, w, run), b: await at(w.b, w, run) };
+    const whys = { a: (w.a.round.noQuorum(run.eid) || {}).why || null, b: (w.b.round.noQuorum(run.eid) || {}).why || null };
+    console.log('  FACTS (refused, 9 - a first mark without its batches):', JSON.stringify({ said, keptAt, whys, after: { a: brief(after.a), b: brief(after.b) } }));
+    for (const s of ['a', 'b']) {
+      assert.match(said[s], /^409/, `${s} took a first mark whose inputs it never saw`);
+      assert.equal(keptAt[s], false, `${s} kept a refusal the player caused by sending no batches`);
+      assert.notEqual(after[s].noQuorum, 'VOID', `${s} wrote VOID for a player who sent no inputs`);
+      // AS A WALK-AWAY ENDS (measured on this fixture with no first mark sent at all: FORFEIT/0 signed by both, FINAL)
+      assert.deepEqual(after[s].results, ['FORFEIT/0'], s);
+      assert.equal(after[s].finality, 'FINAL', s);
+      assert.equal(after[s].publicResults.noQuorum, null, s);
+    }
+  } finally { await w.close(); }
+});
+
 test('one signer node refused (5, 6): B refuses, then sees the stake and takes the mark in time - 2 of 2, the run\'s own outcome, FINAL, never voided', async () => {
   const w = await signerNodes();
   try {

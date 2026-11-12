@@ -130,6 +130,17 @@ export const FOREIGN_RECEIPTS_MAX_AGE_MS = 24 * 3600000;
 // kanban #2256: the most final_sig_evidence rows one seat's FINALs leave per (round, entry) - see putFinalSig.
 export const FINAL_SIG_EVIDENCE_PER_SIGNER = 4;
 
+/**
+ * A FIRST-MARK REFUSAL THE PLAYER CAUSED (kanban #2411, feedback #015 by Hexbox Tools): the mark's inputs never reached
+ * this seat ("send the batches first", "names inputs this node has not seen") or it does not fit the chain the player
+ * already started ("does not follow the chain head", "expected a tick after"). §13C's VOID is for a fault on the operator
+ * side; a refusal the player brings about by sending a signed first mark without its batches is not one - kept, it turned
+ * a walk-away (FORFEIT, stake claimed) into a refund the player chose (VOID), which §13C forbids. Such a refusal is never
+ * kept (Round#putRefusedFirstMark) and never counted (verify.js #noQuorum), here or shown by a peer.
+ */
+export const PLAYER_CAUSED_REFUSAL = /send the batches first|names inputs this node has not seen|does not follow the chain head|expected a tick after/;
+export const playerCausedRefusal = (why) => PLAYER_CAUSED_REFUSAL.test(String(why || ''));
+
 export class Round {
   /** How long openHeld trusts its last count of the open rows when this store wrote none (kanban #786). */
   static OPEN_HELD_MS = 250;
@@ -3102,6 +3113,7 @@ export class Round {
    * refusal. Answers whether it was kept.
    */
   putRefusedFirstMark({ bytes, why }) {
+    if (playerCausedRefusal(why)) return false;   // kanban #2411: the player's own doing is no refusal by an up seat
     const c = this.onTimeFirstMark(bytes);
     if (!c || this.firstMarkHeld(c.roundId, c.entryId)) return false;
     const kept = this.db.prepare('INSERT OR IGNORE INTO refused_first_marks (entry_id, round_id, mark, why, at_ms) VALUES (?, ?, ?, ?, ?)')
@@ -3143,6 +3155,8 @@ export class Round {
   /** The on-time first mark this signer node, up, refused - or null. */
   refusedFirstMark(entryIdBytes) {
     const r = this.db.prepare('SELECT * FROM refused_first_marks WHERE entry_id = ?').get(entryIdBytes);
+    // A ROW AN EARLIER BUILD KEPT FOR A REFUSAL THE PLAYER CAUSED (kanban #2411) is not served, nor read, as one
+    if (r && playerCausedRefusal(r.why)) return null;
     return r ? { roundId: new Uint8Array(r.round_id), mark: new Uint8Array(r.mark), why: r.why, atMs: r.at_ms } : null;
   }
 
