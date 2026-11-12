@@ -5750,7 +5750,18 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       const keptKeys = Object.keys(vault()).filter((x) => x.startsWith(ARENACLIENT.ECASH_EXCHANGE_PREFIX));
       if (keptKeys.length) {
         const said = await ARENACLIENT.resumeEcashExchanges({ storage: vault(), keys: keptKeys, seats: nodes, fetcher: (u, o) => fetch(u, o), phrase16, takeUnnamed: keptSeeds <= 1,
-          walletFor: async (fid) => { const w = await openW(fid, inviteOf(fid)); if (fid !== to || !window.ARENA_NOTE_ARRIVING) return w; window.ARENA_NOTE_ARRIVING(fid, 'exchanged in', 30000); return w; } });
+          walletFor: async (fid) => { const w = await openW(fid, inviteOf(fid)); if (fid !== to || !window.ARENA_NOTE_ARRIVING) return w; window.ARENA_NOTE_ARRIVING(fid, 'exchanged in', 30000); return w; },
+          // A FREE KEPT PHRASE'S RECORD (kanban #2148): resumeEcashExchanges takes it under that phrase's lock (no live tab holds it) and it is
+          // finished with that phrase's own wallets, opened as the combine opens them - the combine then moves what it holds into this tab's
+          walletForPhrase: async (h16, fid) => {
+            let kept = [];
+            try { kept = JSON.parse(vault().getItem('arena.seeds') || '[]'); } catch { /* none kept */ }
+            const hex = (kept.map((x) => String((x && x.hex) || '').toLowerCase()).find((x) => /^[0-9a-f]{64}$/.test(x) && x.slice(0, 16) === h16)) || null;
+            if (!hex) throw new Error('phrase ' + h16.slice(0, 8) + ' is not kept in this browser: its exchange is left for its own tab');
+            return ARENACLIENT.openPlayerWallet({ federationId: ARENACLIENT.fromHex(fid), invite: inviteOf(fid), seed: ARENACLIENT.fromHex(hex), LockClient, storage: vault() });
+          },
+          // its wallet clients leave this tab's cache before the lock goes (kanban #1387, CLIENT-15, as mergeOne's hold)
+          leavePhrase: (h16) => { if (ARENACLIENT.forgetPhraseWallets) ARENACLIENT.forgetPhraseWallets(h16); } });
         for (const r of said) console.log(`[arena] exchange kept since ${r.key.slice(21)}: ${r.ok ? `${r.msat} msat received` : r.why}`);
       }
       const spendable = (p) => BigInt(Math.max(0, Number(p.sats) - Number(p.merging || 0) - Number(p.arriving || 0))) * 1000n;

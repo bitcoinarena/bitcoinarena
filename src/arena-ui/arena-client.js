@@ -33259,19 +33259,42 @@ async function exchangeEcashInto({ storage, from, to, needMsat, seats, walletFro
  * exchangeEcashInto writes the sending phrase (fromKey, as the merge records do) and a record of another phrase is left alone: its own
  * tab, or the next tab opened on it, moves it on. A record of an older page names no phrase and is moved only when the caller says the
  * browser keeps one phrase (`takeUnnamed`, as scanLostDeposits' dropUnnamed).
+ * A FREE PHRASE'S RECORD IS MOVED ON, NOT STRANDED (kanban #2148, #1489 a44 refute 27): "the next tab opened on it" never comes when the
+ * player uses one tab - the seed keeper gives it the kept phrase with the most entries, and the combine drains the other phrase's wallets
+ * into it as the same player's. A record of another phrase is now treated as the combine treats that phrase's wallets: taken only under
+ * that phrase's Web Lock (arena.phrase.<16>, `locks.request(..., { ifAvailable: true })`, the lock its own tab and the merge hold), and
+ * finished with that phrase's own wallets (`walletForPhrase(fromKey, federationHex)`; the caller's `walletFor` when none is given), which
+ * `leavePhrase(fromKey)` closes while the lock is still held. A
+ * phrase a live tab holds is still left alone (the #1641 case), and so is every other phrase when no lock list exists (`locks` null).
  */
 async function resumeEcashExchanges({ storage, keys, walletFor, fetcher = fetch, seats = [], nowMs = Date.now(), put = putRoomy, timeoutMs = 30000,
-  phrase16 = null, takeUnnamed = false }) {
+  phrase16 = null, takeUnnamed = false, walletForPhrase = null, leavePhrase = () => {},
+  locks = (typeof navigator !== 'undefined' && navigator && navigator.locks && typeof navigator.locks.request === 'function') ? navigator.locks : null }) {
   const mine = phrase16 ? String(phrase16).slice(0, 16) : null;
   const out = [];
+  const advance = async (key, rec, open) => {
+    try {
+      const walletFrom = await open(rec.from);
+      const r = await advanceEcashExchange({ storage, key, rec, walletFrom, walletTo: () => open(rec.to), fetcher, seats, nowMs, put, timeoutMs });
+      out.push({ key, ...r });
+    } catch (e) { out.push({ key, ok: false, why: e && e.message ? e.message : String(e) }); }
+  };
   for (const key of (keys || []).filter((k) => String(k).startsWith(ECASH_EXCHANGE_PREFIX))) {
     const rec = readEcashTransfer(storage, key);
     if (!rec || ['short', 'refused', 'unreadable'].includes(rec.state)) continue;
-    if (rec.fromKey ? rec.fromKey !== mine : !takeUnnamed) continue;   // another phrase's (kanban #1641), or unnamed in a browser of many phrases
+    if (!rec.fromKey) { if (takeUnnamed) await advance(key, rec, walletFor); continue; }   // unnamed: only in a browser of one phrase
+    if (rec.fromKey === mine) { await advance(key, rec, walletFor); continue; }
+    // ANOTHER PHRASE'S (kanban #1641, #2148): only while no live tab holds it, under its lock, into its own wallets
+    if (!locks || !/^[0-9a-f]{16}$/i.test(rec.fromKey)) continue;
+    const other = String(rec.fromKey).toLowerCase();
+    const open = walletForPhrase ? (fid) => walletForPhrase(other, fid) : walletFor;
     try {
-      const walletFrom = await walletFor(rec.from);
-      const r = await advanceEcashExchange({ storage, key, rec, walletFrom, walletTo: () => walletFor(rec.to), fetcher, seats, nowMs, put, timeoutMs });
-      out.push({ key, ...r });
+      await locks.request('arena.phrase.' + other, { ifAvailable: true }, async (lock) => {
+        if (!lock) return;   // a live tab plays that phrase: its own tab moves it on
+        const again = readEcashTransfer(storage, key);   // read again under the lock: its tab may have finished it in between
+        if (!again || ['short', 'refused', 'unreadable'].includes(again.state) || again.fromKey !== rec.fromKey) return;
+        try { await advance(key, again, open); } finally { try { await leavePhrase(other); } catch { /* the next open reads the store */ } }   // its wallets closed before the lock goes
+      });
     } catch (e) { out.push({ key, ok: false, why: e && e.message ? e.message : String(e) }); }
   }
   return out;
