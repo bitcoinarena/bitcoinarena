@@ -10215,7 +10215,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'GET' && url.pathname === '/equivocation') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
-        const found = round.equivocation(rid, eid);
+        // THE PROVING PAIRS FIRST (kanban #2439, #1632, #1489 a44 refute 38): a reader takes only the head of this
+        // answer (EQUIVOCATION_PAIRS_PER_PEER pairs). Sorted by tick alone, a player that first sent 40 refused stale-head
+        // marks - each an unreceipted "two chains from one parent" pair that proves nothing (RULED 2026-10-05 (b)) - pushed
+        // its real fork past that head, and no other seat ever kept it. Now same-tick pairs, first-mark pairs and receipted
+        // parent forks come before unreceipted parent forks, each group by tick (a stable sort of the tick-sorted list).
+        // A player cannot fill the head with same-tick pairs without proving its own fork.
+        const weak = (f) => (f.how === 'two chains from one parent' && f.receipted !== true ? 1 : 0);
+        const found = round.equivocation(rid, eid).sort((x, y) => weak(x) - weak(y));
         if (!found.length) return text(res, 204, 'no equivocation held for that entry');
         const body = Buffer.concat(found.flatMap(
           (f) => [Buffer.from(f.stored), Buffer.from(f.offered)]));
