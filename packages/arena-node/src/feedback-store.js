@@ -12,6 +12,7 @@ import { lnurlFor, urlOfLnurl } from '../../arena-protocol/src/bech32.js';
 import { eventId, eventRefusal } from './nostr-relay.js';
 import { BIP39_ENGLISH } from '../../arena-client/src/bip39-wordlist.js';
 import { readJsonBounded } from './lnurl-read.js';
+import { seedRunSpans } from './seed-phrase.js';
 
 /** The report's kind: ephemeral (20000-29999), so no relay keeps it - it goes to the faucet only. */
 export const FEEDBACK_KIND = 27842;
@@ -56,72 +57,54 @@ export const AUTH_AGE_MOST_S = 60;
 // spaces only - "Abandon, Ability, ..." or "1. abandon 2. ability ..." went through): a run of 12 to 24 BIP39 words in any case, each may carry its number
 // ("1.", "2)", "3:"), split by spaces, new lines, commas, semicolons, slashes or dashes, is removed. Only BIP39 words count, so an ordinary sentence of 12
 // words stays. nsec/ncryptsec keys and 64-hex secrets are removed as before.
-// NO SEED IN ANY COPY FORMAT EITHER (kanban #1591, a bypass of #1472): the run above took only [\s,;/|-] between words and a number only before
-// ". ) :", so a seed copied as a JSON array ["abandon","ability",...], from a wallet's numbered grid ("1\nabandon\n2\nability"), as "1 abandon 2 ability"
-// or as "abandon. ability. ..." was kept, shown to the admin and posted to #feedback. Now the text is cut into runs of letters only; two BIP39 words are
-// joined by any short gap holding no letter (spaces, quotes, brackets, periods, digits, #, parentheses ...; a colon only right after a number, so
-// "my seed: abandon ..." keeps "seed"), and invisible format characters (zero-width spaces, soft hyphens) are dropped first so they split nothing. A
-// 4-letter BIP39 prefix ("aban abil able abou", the form many wallets accept) counts as a word. Still 12 such words in a row, so a sentence stays.
-const BIP39_SET = new Set(BIP39_ENGLISH);
-const BIP39_PREFIX4 = new Set(BIP39_ENGLISH.map((w) => w.slice(0, 4)));
-const SEED_RUN_LEAST = 12;
-const SEED_GAP_MOST = 12;
-const SEED_GAP = /^(?:[^\p{L}\d:]|\d+\s*:?)*$/u;
-const seedWord = (w) => BIP39_SET.has(w) || (w.length === 4 && BIP39_PREFIX4.has(w));
+// ONE SEED RULE FOR THE STORE, THE FAUCET AND THE LOGS (kanban #1737, #1799, #1843, #1858, refute of #1472): the run is found by seed-phrase.js
+// seedRunSpans, the same function log-level.js redact masks with - any non-letter between the words (list numbers in any layout, a tab table, a JSON
+// array, quotes, dots, underscores, "+", zero-width spaces), 4-letter BIP39 prefixes counted as their words. A list number just before the first word
+// ("1.", "(1)", "#1", "1-") goes with the run.
 export const scrubKeys = (t) => {
-  let s = String(t).replace(/\p{Cf}/gu, '');
-  s = s.replace(/\b(nsec|ncryptsec)1[0-9a-z]{20,}\b/gi, '[removed]').replace(/\b[0-9a-f]{64}\b/gi, '[removed]');
-  const runs = []; let run = []; let lastEnd = -1;
-  const close = () => { if (run.length >= SEED_RUN_LEAST) runs.push([run[0], run[run.length - 1]]); run = []; };
-  for (const m of s.matchAll(/\p{L}+/gu)) {
-    const gap = lastEnd < 0 ? null : s.slice(lastEnd, m.index);
-    const word = seedWord(m[0].toLowerCase());
-    if (!word) close();
-    else {
-      if (run.length && !(gap.length <= SEED_GAP_MOST && SEED_GAP.test(gap))) close();
-      run.push([m.index, m.index + m[0].length]);
-    }
-    lastEnd = m.index + m[0].length;
-  }
-  close();
-  // the first word's own number ("1. ", "#1 (") goes with the run, as #1472 did
-  for (const [first, last] of runs.reverse()) {
-    const lead = /(?<!\d)#?\d{1,2}\s*[.):]?\s*["'(\[]?$/.exec(s.slice(0, first[0]));
-    s = s.slice(0, lead ? lead.index : first[0]) + '[removed]' + s.slice(last[1]);
+  let s = String(t).replace(/\b(nsec|ncryptsec)1[0-9a-z]{20,}\b/gi, '[removed]').replace(/\b[0-9a-f]{64}\b/gi, '[removed]');
+  for (const [a, b] of seedRunSpans(s).reverse()) {
+    const lead = /[#(]?\d{1,2}[ \t]*[.):-]?[ \t]*$/.exec(s.slice(0, a));
+    s = s.slice(0, lead ? lead.index : a) + '[removed]' + s.slice(b);
   }
   return s;
 };
+// WHAT IS KEPT OF THE SIGNED EVENT (kanban #1737, #1799, #1843, #1858): the event as kept had its raw content - the seed the columns had lost stayed on
+// disk in `event`, and `debug` was scrubbed only when read. The kept copy now holds every string of the content scrubbed (happened, expected, debug,
+// anything else) and every tag value scrubbed but the hex ones the store reads (node, screenshot, round, p, e). Its id and sig stay for reference: the
+// signature was checked when the report came in, and the kept copy is not checked again.
+const HEX_TAGS = new Set(['node', 'screenshot', 'round', 'p', 'e']);
+// ONLY THE SIGNED FIELDS, ONLY THE KNOWN TAGS (kanban #2003, #2016, #2050; refute of #1472): a field beside the NIP-01 ones ({ ...e } kept it, the id
+// covers none of it) and a tag of another name (its name was kept raw) are dropped; every object key is scrubbed as its value is, and a value nested
+// deeper than the walk goes is kept as its scrubbed JSON text, never raw. Last, the kept bytes are searched once more as a whole (a seed spread over
+// several strings or tags): one still found there keeps the event without its content and with only the tag values the store reads.
+// and lud16, the address a report may ask to be paid at (paidAddress reads it; kanban #1590 kept it, checked by its shape below)
+const KEPT_TAGS = new Set(['t', 'game', 'round', 'build', 'source', 'node', 'screenshot', 'p', 'e', 'lud16']);
+const DEEP_MOST = 32;
+const scrubDeep = (v, depth = 0) => (typeof v === 'string' ? scrubKeys(v) : v === null || typeof v !== 'object' ? v
+  : depth > DEEP_MOST ? scrubKeys(JSON.stringify(v))
+  : Array.isArray(v) ? v.map((x) => scrubDeep(x, depth + 1)) : Object.fromEntries(Object.entries(v).map(([k, x]) => [scrubKeys(k), scrubDeep(x, depth + 1)])));
+const hexTagValue = (t, x, i) => i === 1 && HEX_TAGS.has(t[0]) && typeof x === 'string' && /^[0-9a-f]{8,64}$/.test(x);
+const STRICT_TAG = { t: /^(bug|improvement)$/, source: /^(frontend|node)$/, game: /^[a-z0-9-]{1,48}$/, build: /^[0-9a-zA-Z. -]{1,24}$/,
+  lud16: /^(?:[a-z0-9._+-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+|lnurl1[02-9ac-hj-np-z]+)$/i };
+export function keptEvent(e) {
+  let content;
+  try { content = JSON.stringify(scrubDeep(JSON.parse(e.content))); } catch { content = scrubKeys(String(e.content ?? '')); }
+  const tags = (Array.isArray(e.tags) ? e.tags : []).filter((t) => Array.isArray(t) && KEPT_TAGS.has(t[0]))
+    .map((t) => t.map((x, i) => (i === 0 || typeof x !== 'string' || hexTagValue(t, x, i) ? x : scrubKeys(x))));
+  const kept = { id: e.id, pubkey: e.pubkey, created_at: e.created_at, kind: e.kind, tags, content, sig: e.sig };
+  if (!seedRunSpans(JSON.stringify([kept.tags, kept.content])).length) return kept;
+  const plain = tags.filter((t) => hexTagValue(t, t[1], 1) || (STRICT_TAG[t[0]] && typeof t[1] === 'string' && STRICT_TAG[t[0]].test(t[1]))).map((t) => [t[0], t[1]]);
+  return { ...kept, tags: plain, content: JSON.stringify({ removed: 'a seed phrase was found in this report: its content is not kept' }) };
+}
 const tag = (e, k) => { const t = e.tags.find((x) => x[0] === k); return t ? String(t[1] ?? '') : ''; };
 const said = (x, re) => (re.test(String(x || '')) ? String(x) : '');
-// THE REPORT AS KEPT, NEVER AS RECEIVED (kanban #1590, a bypass of #1472): take() scrubbed 'happened' and 'expected' but wrote the whole signed event into
-// reports.event, so the seed phrase or nsec it removed from the words stayed in the SQLite file (its backups, its exports). The one place a report's event is
-// written now keeps only this: id, pubkey, kind, created_at and sig as received (the signature was checked when it came in; the kept copy is not re-verified),
-// the tags this store reads with their checked values (any other tag scrubbed), and a content rebuilt from the parsed body with every string scrubbed - the
-// debug, the lnAddress and any field nobody reads included. Files written before are rewritten once when opened (keptRewrite below).
-const KEPT_TAG = Object.freeze({ t: /^[a-z]{1,24}$/, source: /^[a-z]{1,24}$/, node: /^[0-9a-f]{64}$/, screenshot: /^[0-9a-f]{64}$/, round: /^[0-9a-f]{8,64}$/,
-  game: /^[a-z0-9-]{1,48}$/, build: /^[0-9a-zA-Z. -]{1,24}$/, lud16: /^(?:[a-z0-9._+-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+|lnurl1[02-9ac-hj-np-z]+)$/i });
-const scrubDeep = (v, depth = 0) => (typeof v === 'string' ? scrubKeys(v)
-  : Array.isArray(v) ? (depth > 8 ? [] : v.map((x) => scrubDeep(x, depth + 1)))
-  : v && typeof v === 'object' ? (depth > 8 ? {} : Object.fromEntries(Object.entries(v).map(([k, x]) => [scrubKeys(k), scrubDeep(x, depth + 1)])))
-  : v);
-export function keptEvent(e) {
-  let body; try { body = JSON.parse(e && e.content); } catch { body = null; }
-  const tags = (Array.isArray(e && e.tags) ? e.tags : []).filter(Array.isArray).map((t) => {
-    const name = String(t[0] ?? '');
-    const re = Object.prototype.hasOwnProperty.call(KEPT_TAG, name) ? KEPT_TAG[name] : null;
-    // a known tag keeps its value only when it is of its shape and nothing in it is scrubbed (the hex ones are keys and hashes by shape: never scrubbed)
-    const v = String(t[1] ?? '');
-    if (re) return re.test(v) && (/^[0-9a-f]+$/.test(v) || scrubKeys(v) === v) ? [name, v] : null;
-    return t.map((x) => scrubKeys(String(x ?? '')));
-  }).filter(Boolean);
-  return { id: e && e.id, pubkey: e && e.pubkey, created_at: e && e.created_at, kind: e && e.kind, tags,
-    content: body && typeof body === 'object' ? JSON.stringify(scrubDeep(body)) : scrubKeys(String((e && e.content) ?? '')), sig: e && e.sig };
-}
+// (kanban #1590, a bypass of #1472: the report as kept, never as received - keptEvent above, since #2003 / #2016 / #2050 the one rule)
 
 export function openFeedbackStore(path = ':memory:') {
   const db = new DatabaseSync(path);
-  // secure_delete (kanban #1590): the bytes of a rewritten event are zeroed, not left in a free page of the file
-  db.exec(`PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA secure_delete = ON;
+  // FREED BYTES ARE ZEROED (kanban #2003, #2016, #2050): a row rewritten without a seed must not leave the seed in the file's free space
+  db.exec(`PRAGMA secure_delete = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;
     CREATE TABLE IF NOT EXISTS reports (id TEXT PRIMARY KEY, pubkey TEXT NOT NULL, type TEXT NOT NULL, signed_at INTEGER NOT NULL, received_ms INTEGER NOT NULL,
       happened TEXT NOT NULL, expected TEXT NOT NULL, game TEXT, round TEXT, build TEXT, event TEXT NOT NULL,
       state TEXT NOT NULL DEFAULT 'new', reason TEXT, duplicate_of TEXT, severity TEXT, amount_sats INTEGER, ticket TEXT, changed_ms INTEGER);
@@ -141,12 +124,21 @@ export function openFeedbackStore(path = ':memory:') {
     if (unnumbered.length) { let n = Number(db.prepare('SELECT COALESCE(MAX(number), 0) AS n FROM reports').get().n);
       const set = db.prepare('UPDATE reports SET number = ? WHERE id = ?'); for (const r of unnumbered) set.run(++n, r.id); } }
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS reports_by_number ON reports (number)');
-  // A FILE FROM BEFORE #1590 (keptRewrite): every report's event rewritten to its kept form once; then the WAL is folded in and the file vacuumed, so the raw
-  // copies are gone from the file, not only from the rows
-  { const all = db.prepare('SELECT id, event FROM reports').all(); const set = db.prepare('UPDATE reports SET event = ? WHERE id = ?'); let changed = 0;
-    for (const r of all) { let e = null; try { e = JSON.parse(r.event); } catch { e = null; }
-      const kept = JSON.stringify(e ? keptEvent(e) : { content: '' }); if (kept !== r.event) { set.run(kept, r.id); changed++; } }
-    if (changed && path !== ':memory:') { db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); db.exec('VACUUM'); db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } }
+  // A FILE FROM BEFORE (kanban #1737, #1799, #1843, #1858): its kept events held the raw content - each is scrubbed in place once, as take() keeps one now
+  // (kanban #2003, #2016, #2050) and so are its words: happened, expected and a rejection's reason under the rule of today, not the one they were
+  // kept under. A pass that changed a row then checkpoints the WAL away and VACUUMs, so no old page or frame keeps the raw text on disk.
+  { let changed = 0;
+    const fix = db.prepare('UPDATE reports SET event = ?, happened = ?, expected = ?, reason = ? WHERE id = ?');
+    for (const r of db.prepare('SELECT id, event, happened, expected, reason FROM reports').all()) {
+      let kept = r.event; try { kept = JSON.stringify(keptEvent(JSON.parse(r.event))); } catch { kept = JSON.stringify(keptEvent({ content: scrubKeys(String(r.event)) })); }
+      const happened = scrubKeys(r.happened); const expected = scrubKeys(r.expected); const reason = r.reason === null ? null : scrubKeys(r.reason);
+      if (kept !== r.event || happened !== r.happened || expected !== r.expected || reason !== r.reason) { fix.run(kept, happened, expected, reason, r.id); changed++; }
+    }
+    const fixMove = db.prepare('UPDATE report_moves SET note = ? WHERE rowid = ?');
+    for (const m of db.prepare('SELECT rowid AS k, note FROM report_moves WHERE note IS NOT NULL').all()) {
+      const note = scrubKeys(m.note); if (note !== m.note) { fixMove.run(note, m.k); changed++; }
+    }
+    if (changed && path !== ':memory:') db.exec('PRAGMA wal_checkpoint(TRUNCATE); VACUUM; PRAGMA wal_checkpoint(TRUNCATE);'); }
   // A PAID REPORT FROM BEFORE GETS ITS APPROVAL TIME BACK (kanban #1786): paidNow used to move changed_ms to the payment time; the approval's move
   // (report_moves, to 'accepted') still holds when it was approved
   db.exec(`UPDATE reports SET changed_ms = (SELECT MAX(m.at_ms) FROM report_moves m WHERE m.id = reports.id AND m.to_state = 'accepted')
