@@ -4640,7 +4640,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // players. A real lock is a contract the federation took: its keys are compressed secp256k1 points, its image a point or a 32-byte hash, its amount
       // a u64. So a failed status read (the entry's own outpoint, which the peer does not choose) is this seat's trouble; a failed contract id
       // (ofFields: the stock client hashing the peer's fields) is too only for fields a real lock could have - else it is the peer's (the #1823 rule).
-      const ownFault = (g, f) => !g.ok && /^the federation could not be asked/.test(String(g.why || '')) && (!g.ofFields || lockFieldsCouldBeReal(f));
+      // AND A STATUS READ THAT STRADDLED A BLOCK (kanban #2377, a45 refute 14 of #1823): verifyStakeLock/verifyFeeLock mark an expiration mismatch
+      // `readStraddle` only after the contract id the peer's fields hash to equalled the id the federation holds at the entry's own outpoint - a real
+      // lock there, which no peer can fake (the id hashes the expiration too) - and a second read still did not add up. That is this seat's read, not
+      // the peer's lock: before this, a 2-of-2 seat dropped the player's real lock for good (VOID here, DELIVERED at the other seat), and the paid
+      // round never settled. The federation vouched for these fields, so lockFieldsCouldBeReal is not asked of them.
+      const ownFault = (g, f) => !g.ok && (g.readStraddle === true
+        || (/^the federation could not be asked/.test(String(g.why || '')) && (!g.ofFields || lockFieldsCouldBeReal(f))));
       let mine = null;
       for (const locks of answers) {
         why = null;
