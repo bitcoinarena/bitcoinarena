@@ -2040,6 +2040,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const id = checkpointId(c);
     const held = round.holdsMark(id);
     if (!held && !round.startForfeit(c.entryId)) return null;      // refused for another reason: nothing to hand on
+    // THE MARK THAT GOES ON IS THE ONE THIS SEAT STORED (kanban #1736): "held" is decided by the mark's body, so the
+    // caller's bytes may carry a signature nobody checked - a stranger's copy with a zeroed one. The stored first mark
+    // is the one this seat verified and took; a mark the player did not sign goes nowhere.
+    if (held) bytes = round.firstMarkHeld(c.roundId, c.entryId) || bytes;
+    try { round.playerSigned(bytes); } catch { return null; }
     const batches = held ? round.batchesThrough(c.roundId, c.entryId, c.inputChainHash) : [];
     const own = held ? round.ownReceipt(id) : null;
     // AND ONCE THIS SIGNER NODE HOLDS THE ENTRY ENTRY_VOID (§16), THE EVIDENCE GOES WITH
@@ -2192,6 +2197,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     let c;
     try { c = decodeCheckpoint(splitSigned(bytes).body); } catch { return; }
     if (!round.holdsMark(checkpointId(c))) return;
+    // kanban #1736: "held" is decided by the body - a later mark whose signature does not verify (a stranger's copy) re-offers and decides nothing
+    try { round.playerSigned(bytes); } catch { return; }
     const f = firstMarkMessage(c.roundId, c.entryId);
     const line = round.startLine(c.roundId, c.entryId);
     if (!f || !line || toHex(checkpointId(f.c)) === toHex(checkpointId(c))) return;
@@ -11516,7 +11523,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // and a peer that is down is named in the forward's record. A LATER mark
         // re-offers the first to a signer node that has not taken it, or - past the
         // start line - decides §16's outage (afterMarkTaken).
-        if (firstMark) forwardFirstMark(firstMark).catch((e) => console.error(`[first-mark] ${e.message}`));
+        // kanban #1736: ONLY A FIRST MARK THE PLAYER SIGNED goes on - a forged copy (zeroed signature) refused here would
+        // otherwise be POSTed to every peer, and their 409s would overwrite the 'unanswered' §16's outage refund reads.
+        let signedFirst = false;
+        if (firstMark) { try { round.playerSigned(firstMark.bytes); signedFirst = true; } catch { signedFirst = false; } }
+        if (firstMark && signedFirst) forwardFirstMark(firstMark).catch((e) => console.error(`[first-mark] ${e.message}`));
         else if (isBinary && new Uint8Array(data)[0] === TYPE_CHECKPOINT)
           afterMarkTaken(new Uint8Array(data)).catch((e) => console.error(`[first-mark] ${e.message}`));
         return handled;
