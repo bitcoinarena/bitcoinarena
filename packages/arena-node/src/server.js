@@ -10510,10 +10510,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // seat took it a second before the market's deadline and the next one a second after it - FINAL at one, VOID at the other, both
         // terminal, and neither the settlement nor the return door reached its threshold. A seat that takes one fresh and timely now posts
         // it to the round's other settlement seats before it answers (as a drawn seat's own combined one, kanban #630), so their arrival
-        // times differ by milliseconds, not by the daemon's timeouts. `handed=1` marks such a post: it is not handed on again.
-        if (got.fresh && !(got.now && got.now.evidenceOnly) && url.searchParams.get('handed') !== '1') {
+        // times differ by milliseconds, not by the daemon's timeouts.
+        // NO CLIENT-SET FLAG SKIPS IT (kanban #2179, #1489 refute of #1787): a `handed=1` query once marked a seat's hand-on post and was
+        // not handed on again - but anybody holding the bytes (the attestors' public words, combined) could post them to one seat with it
+        // a second before the deadline: that seat went FINAL and handed nothing on, the daemon's own post was then held already, and the
+        // next seat, reached after the deadline, went VOID. Every fresh one is handed on now, however it came; the loop is bounded by
+        // freshness alone - a seat hands one on only the first time it takes it, so a post back to a seat that holds it answers 200 there.
+        if (got.fresh && !(got.now && got.now.evidenceOnly)) {
           const to = winningsPeers(new Uint8Array(target));   // the settlement committee, as the return and book doors read it
-          await Promise.all(to.map((base) => fetch(`${String(base).replace(/\/+$/, '')}/outcome?round=${toHex(new Uint8Array(target))}&handed=1`,
+          await Promise.all(to.map((base) => fetch(`${String(base).replace(/\/+$/, '')}/outcome?round=${toHex(new Uint8Array(target))}`,
             { method: 'POST', body: raw, signal: AbortSignal.timeout(3000) }).catch(() => null)));
         }
         res.writeHead(got.fresh ? 201 : 200, { 'content-type': 'application/json', ...CORS });
