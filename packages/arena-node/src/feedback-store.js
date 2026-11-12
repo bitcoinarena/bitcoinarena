@@ -183,6 +183,19 @@ export function openFeedbackStore(path = ':memory:') {
   // ONE PAYMENT, ONE REWARD (kanban #1925, state audit 2026-11-12): a payment hash is held by at most one paying or paid reward. A file that already holds
   // two keeps opening (the index is then not made); claim() and settle() hold the rule by themselves.
   try { db.exec("CREATE UNIQUE INDEX IF NOT EXISTS rewards_by_payment ON rewards (payment_hash) WHERE payment_hash IS NOT NULL AND state IN ('paying', 'paid')"); } catch { /* an older file with a shared hash */ }
+  // COUPLED WRITES IN ONE TRANSACTION (kanban #1984, state audit 2026-11-12): a reward paid and its report paid, a link voided and its report rejected,
+  // commit together or not at all - a faucet killed between two autocommit statements left the sats paid and the report accepted for good
+  const inTx = (fn) => { db.exec('BEGIN IMMEDIATE'); try { const v = fn(); db.exec('COMMIT'); return v; } catch (err) { try { db.exec('ROLLBACK'); } catch {} throw err; } };
+  // AND THE REPAIR (kanban #1984): a file written before this fix may hold an accepted report whose reward is paid; it is paid, as paidNow would have
+  // left it (its approval time kept, #1786; logged by 'repair'). Run at open and before each settle pass.
+  const repairPaid = () => inTx(() => {
+    for (const x of db.prepare("SELECT r.id, w.paid_ms, w.payment_hash, w.created_ms FROM reports r JOIN rewards w ON w.report = r.id WHERE r.state = 'accepted' AND w.state = 'paid'").all()) {
+      const at = Number(x.paid_ms ?? x.created_ms ?? Date.now());
+      db.prepare("UPDATE reports SET state = 'paid' WHERE id = ? AND state = 'accepted'").run(x.id);   // the approval time stays (kanban #1786)
+      db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(x.id, 'accepted', 'paid', at, 'repair', x.payment_hash || null);
+    }
+  });
+  repairPaid();
   const get = db.prepare('SELECT * FROM reports WHERE id = ?');
   const row = (r) => (r ? { id: r.id, pubkey: r.pubkey, type: r.type, signedAt: r.signed_at, receivedMs: r.received_ms, happened: r.happened, expected: r.expected,
     game: r.game || null, round: r.round || null, build: r.build || null, state: r.state, reason: r.reason || null, duplicateOf: r.duplicate_of || null,
@@ -262,15 +275,20 @@ export function openFeedbackStore(path = ':memory:') {
     }
     // A REJECTION TAKES ITS REWARD LINK BACK (audit 5 #1402, reproduced: approve, make the link, reject - the link still paid, outside the week's budget):
     // an open link is voided (compare-and-set from open); one being paid or paid keeps the report as it is
-    if (to === STATES.REJECTED) {
-      const w = db.prepare('SELECT * FROM rewards WHERE report = ?').get(r.id);
-      if (w && w.state !== 'open' && w.state !== 'void') return { ok: false, why: `its reward is ${w.state === 'paid' ? 'paid' : 'being paid'}: a paid report stays as it is` };
-      if (w && w.state === 'open' && db.prepare("UPDATE rewards SET state = 'void', why = 'the report was rejected' WHERE k1 = ? AND state = 'open'").run(w.k1).changes !== 1)
-        return { ok: false, why: 'its reward is being paid: try again in a minute' };
-    }
-    db.prepare('UPDATE reports SET state = ?, reason = ?, duplicate_of = ?, changed_ms = ? WHERE id = ? AND state = ?')
-      .run(to, to === STATES.REJECTED ? String(reason).trim().slice(0, 500) : r.reason, to === STATES.DUPLICATE ? dupId : r.duplicate_of, nowMs, r.id, r.state);
-    db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, to, nowMs, by, reason || duplicateOf || null);
+    // the void, the report's move and its log line in one transaction (kanban #1984): never a void link beside a report still accepted
+    const refused = inTx(() => {
+      if (to === STATES.REJECTED) {
+        const w = db.prepare('SELECT * FROM rewards WHERE report = ?').get(r.id);
+        if (w && w.state !== 'open' && w.state !== 'void') return `its reward is ${w.state === 'paid' ? 'paid' : 'being paid'}: a paid report stays as it is`;
+        if (w && w.state === 'open' && db.prepare("UPDATE rewards SET state = 'void', why = 'the report was rejected' WHERE k1 = ? AND state = 'open'").run(w.k1).changes !== 1)
+          return 'its reward is being paid: try again in a minute';
+      }
+      db.prepare('UPDATE reports SET state = ?, reason = ?, duplicate_of = ?, changed_ms = ? WHERE id = ? AND state = ?')
+        .run(to, to === STATES.REJECTED ? String(reason).trim().slice(0, 500) : r.reason, to === STATES.DUPLICATE ? dupId : r.duplicate_of, nowMs, r.id, r.state);
+      db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, to, nowMs, by, reason || duplicateOf || null);
+      return null;
+    });
+    if (refused) return { ok: false, why: refused };
     return { ok: true, report: row(get.get(r.id)) };
   }
 
@@ -399,18 +417,21 @@ export function openFeedbackStore(path = ':memory:') {
     return { status: 'ERROR', reason: 'the payment is not settled yet: it is checked again, do not claim twice' };
   }
   // `onHash` (kanban #1571): settle() marks paid only the payment it asked about - the row must still be paying under that hash
+  // ... and the reward's paid, the report's paid and its log line commit together (kanban #1984)
   function paidNow(w, paymentHash, nowMs, { onHash = undefined } = {}) {
-    if (onHash !== undefined) {
-      if (db.prepare("UPDATE rewards SET state = 'paid', paid_ms = ?, why = NULL WHERE k1 = ? AND state = 'paying' AND payment_hash = ?").run(nowMs, w.k1, onHash).changes !== 1) return false;
-    } else db.prepare("UPDATE rewards SET state = 'paid', payment_hash = COALESCE(?, payment_hash), paid_ms = ?, why = NULL WHERE k1 = ?").run(paymentHash || null, nowMs, w.k1);
-    const r = get.get(w.report);
-    if (r && r.state === STATES.ACCEPTED) {
-      // PAID KEEPS THE APPROVAL TIME (kanban #1786): changed_ms of an accepted or paid report is when it was approved - the per-key limit and the week's
-      // budget count by it. The payment time is the reward's paid_ms; moving changed_ms to it counted a reward approved last week and claimed today again
-      db.prepare('UPDATE reports SET state = ? WHERE id = ? AND state = ?').run(STATES.PAID, r.id, STATES.ACCEPTED);
-      db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, STATES.PAID, nowMs, 'lnurlw', paymentHash || null);
-    }
-    return true;
+    return inTx(() => {
+      if (onHash !== undefined) {
+        if (db.prepare("UPDATE rewards SET state = 'paid', paid_ms = ?, why = NULL WHERE k1 = ? AND state = 'paying' AND payment_hash = ?").run(nowMs, w.k1, onHash).changes !== 1) return false;
+      } else db.prepare("UPDATE rewards SET state = 'paid', payment_hash = COALESCE(?, payment_hash), paid_ms = ?, why = NULL WHERE k1 = ?").run(paymentHash || null, nowMs, w.k1);
+      const r = get.get(w.report);
+      if (r && r.state === STATES.ACCEPTED) {
+        // PAID KEEPS THE APPROVAL TIME (kanban #1786): changed_ms of an accepted or paid report is when it was approved - the per-key limit and the week's
+        // budget count by it. The payment time is the reward's paid_ms; moving changed_ms to it counted a reward approved last week and claimed today again
+        db.prepare('UPDATE reports SET state = ? WHERE id = ? AND state = ?').run(STATES.PAID, r.id, STATES.ACCEPTED);
+        db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, STATES.PAID, nowMs, 'lnurlw', paymentHash || null);
+      }
+      return true;
+    });
   }
   /**
    * A PAYMENT WHOSE OUTCOME WAS NOT KNOWN (a restart mid-pay, a timeout): `status(paymentHash)` -> 'paid' | 'failed' | 'unknown', the payer's own
@@ -425,6 +446,7 @@ export function openFeedbackStore(path = ':memory:') {
     // A DECISION HOLDS ONLY FOR THE PAYMENT IT READ (kanban #1571): status() may wait 20 s a row and two passes may overlap, so a row read at the
     // start of a pass can be opened, claimed again and paying under a NEW hash by the time it is decided. Each row is read again before its
     // decision, and the move is a compare-and-set on the hash that was asked about - an answer about an old payment never touches a new one.
+    repairPaid();   // kanban #1984
     for (const { k1 } of db.prepare("SELECT k1 FROM rewards WHERE state = 'paying'").all()) {
       const w = rewardOf.get(k1);
       if (!w || w.state !== 'paying') continue;
