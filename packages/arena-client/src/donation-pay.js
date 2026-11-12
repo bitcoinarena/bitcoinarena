@@ -208,8 +208,13 @@ const GAME_SETS_FETCHED = new Map();   // a game's donation set by its id: it pr
 /** Forgets the game sets read (a test that serves a stray one). */
 export const forgetGameSets = () => GAME_SETS_FETCHED.clear();
 export const QUORUM_GRACE_MS = 250;
-/** Every node's answer, or - once more than half served the same bytes and none refused - those in by QUORUM_GRACE_MS later, the rest
- *  as late ({ node, why, late: true }). An answer that refuses (not late) still waits for all, so the refusal is said as before. */
+/** Every node's answer, or - once more than half of the nodes served the same bytes - those in by QUORUM_GRACE_MS later, the rest
+ *  as late ({ node, why, late: true }).
+ *  A DISSENT DOES NOT HOLD THE READ (kanban #1903, #1524, #625, wf1489 v1 refute-30 s2): a refusal (a 4xx) or other bytes used to stop
+ *  the grace timer, so one seat answering at once beside one stalled seat held every paid join the full DONATION_ANSWER_MS (6 s instead
+ *  of 250 ms) - since #1524 such a seat is reported as `dissent`, not obeyed, so it must not cost more time than its silence either. The
+ *  timer starts once one group of identical bytes is served by more than half of the nodes, whatever the other answers say; the
+ *  caller's quorum and checks decide what is taken. */
 export function firstMajority(promises, names, { graceMs = QUORUM_GRACE_MS } = {}) {
   return new Promise((resolve) => {
     const got = new Array(promises.length).fill(null);
@@ -217,11 +222,10 @@ export function firstMajority(promises, names, { graceMs = QUORUM_GRACE_MS } = {
     const finish = () => { if (done) return; done = true; clearTimeout(timer); resolve(got.map((a, i) => a || { node: names[i], why: `no answer within ${graceMs} ms of the others`, late: true })); };
     const check = () => {
       if (left === 0) return finish();
-      const served = got.filter((a) => a && a.bytes);
-      if (timer || got.some((a) => a && !a.bytes && !a.late) || served.length * 2 <= promises.length) return;
-      const first = served[0].bytes;
-      const same = (x) => x.length === first.length && x.every((v, i) => v === first[i]);
-      if (served.every((a) => same(a.bytes))) timer = setTimeout(finish, graceMs);
+      if (timer) return;
+      const counts = new Map();
+      for (const a of got) if (a && a.bytes) { const k = toHex(a.bytes); counts.set(k, (counts.get(k) || 0) + 1); }
+      for (const c of counts.values()) if (c * 2 > promises.length) { timer = setTimeout(finish, graceMs); return; }
     };
     promises.forEach((p, i) => p.then((a) => { got[i] = a; left--; check(); }, (e) => { got[i] = { node: names[i], why: String(e && e.message ? e.message : e) }; left--; check(); }));
   });
