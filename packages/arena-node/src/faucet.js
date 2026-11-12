@@ -150,9 +150,12 @@ export function feedbackDecide({ text, ip = null, build = '', game = '', round =
   const day = Math.floor(nowMs / DAY_MS), all = log.filter((x) => Math.floor(x.atMs / DAY_MS) === day);
   // THE DAY'S COUNT OF ITS OWN KIND (kanban #2158, #2226): unsigned junk from anywhere no longer closes the door to signed bounty reports
   const today = all.filter((x) => !!x.signed === !!signed);
-  if (signed && today.length >= FEEDBACK_SIGNED_PER_DAY) return { ok: false, why: 'too many reports today: try again tomorrow' };
   // an IPv6 caller by its /64 (audit 6, kanban #1424; ipKey as #1405 counts grants and screenshots)
   const key = ipKey(ip), mine = key ? all.filter((x) => ipKey(x.ip) === key).length : 0;
+  // SIGNED REPORTS KEEP THE FIRST-REPORT RESERVE TOO (kanban #2456, #2498, refute of #1679): a signed report costs a stranger nothing (a fresh key),
+  // and twenty addresses in ten /24s filled FEEDBACK_SIGNED_PER_DAY and refused every honest first bounty report of the day. The signed count now
+  // closes as the unsigned one does: at FEEDBACK_SIGNED_PER_DAY only to an address that reported today already, at the reserve past it for any
+  if (signed && (today.length >= FEEDBACK_SIGNED_PER_DAY + FEEDBACK_FIRST_RESERVE || (today.length >= FEEDBACK_SIGNED_PER_DAY && mine > 0))) return { ok: false, why: 'too many reports today: try again tomorrow' };
   // ONE STRANGER DOES NOT CLOSE THE DOOR FOR THE DAY (kanban #1679): twenty /64s of one /48 filled FEEDBACK_PER_DAY with junk and every later report
   // was refused, signed bounty reports too. The day's count now closes only to addresses that reported today already: an address's first report of
   // the day passes up to FEEDBACK_FIRST_RESERVE more, and a whole IPv6 /48 (65,536 /64s) counts at most FEEDBACK_PER_48_PER_DAY
