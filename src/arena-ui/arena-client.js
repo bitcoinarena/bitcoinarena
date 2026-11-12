@@ -13169,22 +13169,40 @@ function servedNodes({ rounds, fromMs, toMs, verify }) {
   if (!(to > from)) throw new Error('a served window ends after it starts');
   const served = new Map();                                  // key hex -> Set of round hex
   const refused = [];
+  // kanban #2312/#2325 (#1489 a45 refute 9 skeptic 2 of #2239): mergeServedRounds names, per FINAL, the answers that hold it
+  // (`sources`). Each answer may hand over at most SERVED_FAILED_MAX FINALs that do not verify; once every answer holding a FINAL has
+  // spent that, the FINAL is not checked. An honest answer holds FINALs that verify and is never cut, however many rounds it holds
+  // and whoever else answers; padding with junk signatures costs the reader at most SERVED_FAILED_MAX checks per answer.
+  const failed = new Map(), spent = new Set();               // answer index -> FINALs of it that did not verify
   let counted = 0;
   for (const round of rounds || []) {
     if (!round || !snIs32(round.roundId) || !Array.isArray(round.committee)) { refused.push({ round: null, why: 'a round is named by its id and committee' }); continue; }
     const rid = toHex(round.roundId);
     const committee = new Set(round.committee.map(toHex));
+    const sources = Array.isArray(round.sources) ? round.sources : null;
     let any = false;
-    for (const bytes of round.finals || []) {
+    const finals = round.finals || [];
+    for (let j = 0; j < finals.length; j++) {
+      const bytes = finals[j];
       let x, signature;
       try { ({ signature } = splitSignedFinalSig(bytes)); x = decodeFinalSig(bytes.subarray(0, bytes.length - signature.length)); }
       catch (e) { refused.push({ round: rid, why: `not a FINAL signature: ${e.message}` }); continue; }
       const key = toHex(x.signerPubkey);
       if (toHex(x.roundId) !== rid) { refused.push({ round: rid, why: `a FINAL about another round (${toHex(x.roundId).slice(0, 16)})` }); continue; }
       if (!committee.has(key)) { refused.push({ round: rid, why: `${key.slice(0, 16)} is not of this round's committee` }); continue; }
+      if (served.get(key)?.has(rid)) continue;                 // a round counts once per node: no second check for it
+      const src = sources && Array.isArray(sources[j]) && sources[j].length ? sources[j] : null;
+      if (src && src.every((s) => (failed.get(s) || 0) >= SERVED_FAILED_MAX)) continue;   // its answers spent their bad-signature budget
       let good = false;
       try { good = !!verify(signature, finalSigId(x), x.signerPubkey); } catch { good = false; }
-      if (!good) { refused.push({ round: rid, why: `${key.slice(0, 16)}'s FINAL does not verify` }); continue; }
+      if (!good) {
+        refused.push({ round: rid, why: `${key.slice(0, 16)}'s FINAL does not verify` });
+        if (src) for (const s of src) {
+          const n = (failed.get(s) || 0) + 1; failed.set(s, n);
+          if (n >= SERVED_FAILED_MAX && !spent.has(s)) { spent.add(s); refused.push({ round: null, why: `answer ${s} handed over ${n} FINALs that do not verify: no more of its FINALs are checked` }); }
+        }
+        continue;
+      }
       if (x.signedAtMs < from || x.signedAtMs >= to) continue;  // outside the window: not refused, just not these 24 h
       if (!served.has(key)) served.set(key, new Set());
       served.get(key).add(rid); any = true;
@@ -13235,34 +13253,29 @@ const SERVED_HELD_MAX = 20000;
 // kanban #2239 (#1489 a45 refute 9 of #1815): what one seat's answer makes the reader verify is bounded IN ALL, not per round entry.
 //   - a round is read once per answer: the first entry naming it stands, a repeat adds no FINAL and no vote for its committee
 //     (measured before: the same real round listed 2,000 times in one answer cost 12,003 BIP-340 checks, 7.6 s on the M1 Max);
-//   - a round that only one answer names (no other seat, and not the reader's own record, holds it) is read from that answer up to
-//     SERVED_LONE_FINALS_MAX new FINALs in all; past that its FINALs are not kept (measured before: 1,200 made-up rounds with a
-//     made-up committee each cost 21,603 checks). A real round is held by every seat of its committee, so it is named by more than one;
 //   - a reader reads one seat's answer up to SERVED_ANSWER_BYTES_MAX bytes (server.js, item-buy.js).
-const SERVED_LONE_FINALS_MAX = 360;
+// kanban #2312/#2325 (#1489 a45 refute 9 skeptic 2 of #2239): #2239 also kept, per answer, only SERVED_LONE_FINALS_MAX (360) new FINALs
+// of the rounds no other answer named. That was both too weak and too strong: two seats naming the same made-up rounds made them
+// "named by two" and escaped it (2,000 rounds: 72,000 junk checks), and an honest seat whose committee-mates do not answer - the
+// reader's own record included - had its rounds past 120 cut. The bound is now on what costs the reader: each merged FINAL carries
+// the answers that hold it (`sources`, by index in `held`), and servedNodes stops checking an answer's FINALs once SERVED_FAILED_MAX
+// of them did not verify. FINALs that verify are never cut; how many answers name a round no longer matters.
+const SERVED_LONE_FINALS_MAX = 360;   // kept exported for older imports; no longer read (kanban #2312)
+const SERVED_FAILED_MAX = 64;
 const SERVED_ANSWER_BYTES_MAX = 32 * 1024 * 1024;
 function mergeServedRounds(held) {
   const hx = (b) => toHex(b);
   const rounds = new Map(), conflicts = new Set();
-  // each answer's rounds, each round once (the first entry naming it), and how many answers name each round
-  const answers = [], namedBy = new Map();
-  for (const seat of held || []) {
-    if (!Array.isArray(seat)) continue;
-    const seen = new Set(), list = [];
+  (held || []).forEach((seat, at) => {
+    if (!Array.isArray(seat)) return;
+    const seen = new Set();
     for (const r of seat.slice(0, SERVED_HELD_MAX)) {
       if (!r || !snIs32(r.roundId) || !Array.isArray(r.committee) || !r.committee.length || r.committee.length > SERVED_COMMITTEE_MAX || !r.committee.every(snIs32)) continue;
       const k = hx(r.roundId);
-      if (seen.has(k)) continue;
-      seen.add(k); list.push([k, r]);
-      namedBy.set(k, (namedBy.get(k) || 0) + 1);
-    }
-    answers.push(list);
-  }
-  for (const list of answers) {
-    let lone = 0;
-    for (const [k, r] of list) {
+      if (seen.has(k)) continue;                              // kanban #2239: one answer names a round once
+      seen.add(k);
       const committee = [...new Set(r.committee.map(hx))].sort().join();
-      if (!rounds.has(k)) rounds.set(k, { roundId: r.roundId, copies: new Map(), finals: new Map() });
+      if (!rounds.has(k)) rounds.set(k, { roundId: r.roundId, copies: new Map(), finals: new Map(), sources: new Map() });
       const into = rounds.get(k);
       if (!into.copies.has(committee)) into.copies.set(committee, { committee: r.committee, seats: 0 });
       into.copies.get(committee).seats++;
@@ -13273,7 +13286,6 @@ function mergeServedRounds(held) {
       // seat keeps FINALs only from the round's committee). What is no FINAL at all is not kept; servedNodes still checks the rest.
       // Measured before: one padded answer of 20,000 made-up FINALs under a real committee's keys, junk signatures, cost 20,003
       // BIP-340 checks (28 s on a seat's main thread) on every item purchase and funding decision.
-      if (namedBy.get(k) < 2 && lone >= SERVED_LONE_FINALS_MAX) continue;   // kanban #2239: the budget is spent, nothing more is read
       const bySigner = new Map();
       for (const f of Array.isArray(r.finals) ? r.finals : []) {
         if (!(f instanceof Uint8Array)) continue;
@@ -13283,15 +13295,16 @@ function mergeServedRounds(held) {
         if (x.signedAtMs < b.first[0]) b.first = [x.signedAtMs, f];
         if (x.signedAtMs > b.last[0]) b.last = [x.signedAtMs, f];
       }
-      const add = new Map();
-      for (const b of bySigner.values()) for (const [, f] of [b.first, b.last]) { const h = hx(f); if (!into.finals.has(h)) add.set(h, f); }
-      // kanban #2239: a round no other answer names spends this answer's budget of new FINALs; past it they are not kept
-      if (namedBy.get(k) < 2) { if (lone + add.size > SERVED_LONE_FINALS_MAX) continue; lone += add.size; }
-      for (const [h, f] of add) into.finals.set(h, f);
+      // kanban #2312: every FINAL kept names the answers holding it, so servedNodes can stop at an answer's bad-signature budget
+      for (const b of bySigner.values()) for (const [, f] of [b.first, b.last]) {
+        const h = hx(f);
+        if (!into.finals.has(h)) { into.finals.set(h, f); into.sources.set(h, [at]); }
+        else if (!into.sources.get(h).includes(at)) into.sources.get(h).push(at);
+      }
     }
-  }
+  });
   const pick = (copies) => { let best = null; for (const c of copies.values()) if (!best || c.seats > best.seats) best = c; return best.committee; };
-  return { rounds: [...rounds.values()].map((r) => ({ roundId: r.roundId, committee: pick(r.copies), finals: [...r.finals.values()] })),
+  return { rounds: [...rounds.values()].map((r) => ({ roundId: r.roundId, committee: pick(r.copies), finals: [...r.finals.values()], sources: [...r.sources.values()] })),
     conflicts: [...conflicts] };
 }
 
