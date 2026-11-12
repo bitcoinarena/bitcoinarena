@@ -458,6 +458,7 @@ async function paymentFinal(payer, hash) {
 // IN_FLIGHT line read as sent, the welcome was answered paid and the next payer never asked. The last "Payment status:" line printed decides
 const lastPayStatus = (out) => { const said = [...String(out || '').matchAll(/Payment status:\s*([A-Z_]+)/g)].map((m) => m[1]); return said[said.length - 1] || null; };
 const UNSURE_KEEP_MS = 24 * 3600 * 1000;
+const UNSURE_CAP = 500;   // kanban #2132: grant() refuses while `unsure` holds this many; grantPay never cuts the list
 // OUT OF THE PLAYERS' QUEUE, AND ONLY ITS OWN CHANGES (audit 6 re-check N3/N4, kanban #1426): in the queue its lncli reads held welcomes past the page's
 // 45 s again, and saving the book it had read before its awaits dropped refill rows written meanwhile. The reads run first; the book is read again
 // and only this sweep's decisions, by payment hash, are applied to it in one synchronous step
@@ -525,6 +526,9 @@ async function grant(ask) {
   book.players = book.players || [];
   const onWay = unsureWelcome(book, ask);   // kanban #1834
   if (onWay) return onWay;
+  // FAIL CLOSED WHEN `unsure` IS FULL (kanban #2132): an invoice grant may end in `unsure`, and no unsure row is ever dropped for room - so while it
+  // holds UNSURE_CAP rows no new invoice grant is paid (the sweep empties it as payers give their final word); a pool note adds no unsure row
+  if ((book.unsure || []).length >= UNSURE_CAP) return { ok: false, why: 'the faucet is checking earlier payments: try again in a few minutes' };
   if (wholeSatsOf(inv) === null) return { ok: false, why: 'the invoice must be for whole sats' };   // kanban #2857
   const d = playerGrantDecide({ kind: ask.kind, account: ask.account, ip: ask.ip, invoiceSats: wholeSatsOf(inv) }, withUnsure(book));
   if (!d.ok) return d;
