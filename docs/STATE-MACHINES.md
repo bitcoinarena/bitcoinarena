@@ -1542,3 +1542,10 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-FV1 (change) Funding / fee / leaderboard vote census is held to its block (kanban #1749)
+- `funding_vote_census` stores the hash of block `period.from` it was read at (`hash`; read before and after `censusAt`, a census whose hash moved in between is not stored).
+- Every `voteRound` pass, decided or not, compares it with `blockHashAt(period.from)`: a different hash drops the census, every vote block, the vote outcome and a fee proposal's `fee_outcomes` in one transaction, and all are read again on the current chain. A missing hash (RPC error, tip below) changes nothing; a census without a hash (older store) takes the first hash it finds.
+- Invariant: two seats on one chain count a vote with the census of the same block `period.from`; no seat keeps a census of a block the chain left.
