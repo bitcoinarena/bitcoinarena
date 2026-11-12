@@ -14,23 +14,52 @@ async function chainNodes(env, ctx) {
 }
 
 // THE LAST BOARD, KEPT (kanban #941): a seat takes 5-13 s to merge a season from every seat, so the page shows this at once and asks the seats behind it. The board is the
-// seats' own answer, read every 30 min by the cron for the 7-day boards and when someone looks at another, at most once in 30 min; KV keeps the writes few.
+// seats' own answer, read every 30 min by the cron for the 7-day boards and when someone looks at another, at most once in 30 min.
+// ONLY THE CRON WRITES A BOARD TO KV (kanban #1703, #1768): KV puts are the whole account's daily allowance, and a request wrote one each time it saw a
+// stale or missing board - 200 concurrent GETs made 200 puts, with no sign-in. A request's read now goes to this isolate's memory and the colo's
+// edge cache (neither spends a KV put), one read per board at a time (SEASON_READS) and at most one every SEASON_RETRY_MS after a failed one.
 const SEASON_SEATS = ['https://tn4.bitcoin-arena.io/guardian-1', 'https://tn4.bitcoin-arena.io/guardian-2', 'https://tn4.bitcoin-arena.io/guardian-3'];
 const SEASON_GAMES = ['nextblock', 'rock-paper-scissors', 'btc-updown-15m'], SEASON_DAYS = [7, 30, 90], SEASON_FRESH_MS = 1800000;
 const seasonKey = (game, days) => `season:${game}:${days}`;
-const readSeason = async (env, game, days) => {
-  const body = await Promise.any(SEASON_SEATS.map(async (s) => { const r = await fetch(`${s}/season?game=${game}&days=${days}&scope=network`, { signal: AbortSignal.timeout(25000) }); if (!r.ok) throw new Error(String(r.status)); const t = await r.text(); JSON.parse(t); return t; }));
-  const kept = `{"at":${Date.now()},"season":${body}}`;
-  await env.CHAIN.put(seasonKey(game, days), kept);
-  return kept;
+const SEASON_RETRY_MS = 60000;
+const seasonMem = new Map(), SEASON_READS = new Map(), seasonFailed = new Map();
+const keptAt = (kept) => Number(/^\{"at":(\d+)/.exec(kept || '')?.[1] || 0);
+const edgeCache = () => { try { return typeof caches !== 'undefined' && caches.default ? caches.default : null; } catch { return null; } };
+const edgeUrl = (key) => `https://bitcoinarena.io/__season-cache/${encodeURIComponent(key)}`;
+// one read of a board from the seats per isolate at a time; the answer goes to memory and the edge cache, never to KV
+const fetchSeason = (game, days) => {
+  const key = seasonKey(game, days);
+  if (SEASON_READS.has(key)) return SEASON_READS.get(key);
+  const p = (async () => {
+    try {
+      const body = await Promise.any(SEASON_SEATS.map(async (s) => { const r = await fetch(`${s}/season?game=${game}&days=${days}&scope=network`, { signal: AbortSignal.timeout(25000) }); if (!r.ok) throw new Error(String(r.status)); const t = await r.text(); JSON.parse(t); return t; }));
+      const kept = `{"at":${Date.now()},"season":${body}}`;
+      seasonMem.set(key, kept); seasonFailed.delete(key);
+      const edge = edgeCache();
+      if (edge) await edge.put(edgeUrl(key), new Response(kept, { headers: { 'content-type': 'application/json', 'cache-control': `public, max-age=${SEASON_FRESH_MS / 1000}` } })).catch(() => {});
+      return kept;
+    } catch (e) { seasonFailed.set(key, Date.now()); throw e; }
+  })().finally(() => SEASON_READS.delete(key));
+  SEASON_READS.set(key, p);
+  return p;
 };
+// THE CRON'S READ (the 7-day boards every 30 min): the only path that writes a board to KV
+const readSeason = async (env, game, days) => { const kept = await fetchSeason(game, days); await env.CHAIN.put(seasonKey(game, days), kept); return kept; };
 async function seasonSnapshot(url, env, ctx) {
   const game = url.searchParams.get('game') || '', days = Number(url.searchParams.get('days'));
   const headers = { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'public, max-age=30' };
   if (!SEASON_GAMES.includes(game) || !SEASON_DAYS.includes(days)) return new Response('{"ok":false,"why":"no such board"}', { status: 404, headers });
-  const kept = await env.CHAIN.get(seasonKey(game, days));
-  if (kept) { if (Date.now() - Number(/^\{"at":(\d+)/.exec(kept)?.[1] || 0) > SEASON_FRESH_MS) ctx.waitUntil(readSeason(env, game, days).catch(() => {})); return new Response(kept, { headers }); }
-  try { return new Response(await readSeason(env, game, days), { headers }); } catch { return new Response('{"ok":false,"why":"no seat answered"}', { status: 503, headers }); }
+  const key = seasonKey(game, days);
+  // the newest of the cron's KV copy, this isolate's copy and the colo's edge copy
+  let kept = seasonMem.get(key) || null;
+  for (const read of [() => env.CHAIN.get(key), async () => { const edge = edgeCache(); const r = edge && await edge.match(edgeUrl(key)); return r ? r.text() : null; }]) {
+    if (Date.now() - keptAt(kept) <= SEASON_FRESH_MS) break;
+    try { const other = await read(); if (other && keptAt(other) > keptAt(kept)) kept = other; } catch { /* the next copy */ }
+  }
+  const mayRead = Date.now() - (seasonFailed.get(key) || 0) > SEASON_RETRY_MS || SEASON_READS.has(key);
+  if (kept) { if (Date.now() - keptAt(kept) > SEASON_FRESH_MS && mayRead) ctx.waitUntil(fetchSeason(game, days).catch(() => {})); return new Response(kept, { headers }); }
+  if (!mayRead) return new Response('{"ok":false,"why":"no seat answered"}', { status: 503, headers });
+  try { return new Response(await fetchSeason(game, days), { headers }); } catch { return new Response('{"ok":false,"why":"no seat answered"}', { status: 503, headers }); }
 }
 const CHANNEL_LINKS = {
   '/x': 'utm_source=x&utm_medium=social&utm_content=profile',
@@ -79,7 +108,17 @@ const OLD_DOMAIN = /(^|\.)bitcoin-arena\.io$/;
 const moved = (url) => { if (!OLD_DOMAIN.test(url.hostname)) return null; const to = new URL(url); to.hostname = url.hostname.replace(/bitcoin-arena\.io$/, 'bitcoinarena.io'); return Response.redirect(to.toString(), 308); };
 // A FEW BENCH WRITES A DAY (kanban #1536): KV puts are the whole account's daily allowance (the explorer hit the 1,000 on 2026-10-26), so
 // POST /__bench stores at most BENCH_PER_CALLER runs a day per caller (cf-connecting-ip, an IPv6 address by its /64) and BENCH_PER_DAY in all
-// per isolate; past that a run is still logged for wrangler tail, only not kept
+// per isolate; past that a run is still logged for wrangler tail, only not kept.
+// ONLY A RUN THAT CARRIES THE BENCH KEY IS STORED (kanban #1703, #1768): those caps live in one isolate's memory, and Cloudflare runs many
+// isolates, each starting at zero - a stranger with an IPv6 /48 reaching ~20 of them still spent the 1,000 puts. A run is kept in KV only when
+// its address carries ?key=<the Worker secret BENCH_KEY> (a no-cors post cannot send its own header); every other run is logged (Workers Logs,
+// wrangler.toml [observability], keeps it when no one is watching wrangler tail). No BENCH_KEY set: nothing is stored.
+function benchKeyOk(url, env) {
+  const want = typeof env.BENCH_KEY === 'string' ? env.BENCH_KEY : '', got = url.searchParams.get('key') || '';
+  if (want.length < 16 || got.length !== want.length) return false;
+  let d = 0; for (let i = 0; i < want.length; i++) d |= want.charCodeAt(i) ^ got.charCodeAt(i);
+  return d === 0;
+}
 const BENCH_PER_CALLER = 5, BENCH_PER_DAY = 50;
 let benchDay = '', benchTotal = 0, benchByCaller = new Map();
 function benchMayStore(request) {
@@ -146,12 +185,12 @@ async fetch(request, env, ctx) {
     return fetch(`${env.FAUCET_ORIGIN}${url.pathname.slice('/api/faucet'.length)}${url.search}`, { method: request.method, headers,
       body: request.method === 'POST' ? (url.pathname === '/api/faucet/feedback/screenshot' ? await request.arrayBuffer() : await request.text()) : undefined });
   }
-  // A PHONE'S BENCHMARK LINES (the page's ?bench=1): logged for wrangler tail, nothing stored, nothing served back
+  // A PHONE'S BENCHMARK LINES (the page's ?bench=1): logged for wrangler tail and Workers Logs, stored only with the bench key, nothing served back
   if (url.pathname === '/__bench' && request.method === 'POST') {
     const body = (await request.text()).slice(0, 20000);
     console.log('[bench] ' + body);
     // KEPT, so a phone's run is not lost when no one is watching the log (the 01:45 gate found none)
-    if (env.BENCH && benchMayStore(request)) {
+    if (env.BENCH && benchKeyOk(url, env) && benchMayStore(request)) {
       const country = (request.cf && request.cf.country) || '';
       await env.BENCH.put(`bench:${new Date().toISOString()}:${crypto.randomUUID().slice(0, 8)}`, body,
         { expirationTtl: 30 * 24 * 3600, metadata: { country, ua: (request.headers.get('User-Agent') || '').slice(0, 120) } });
