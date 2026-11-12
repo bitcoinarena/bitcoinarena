@@ -119,21 +119,39 @@ export const FEEDBACK_MOST = 4000, FEEDBACK_PER_IP_PER_DAY = 50, FEEDBACK_PER_DA
 // spaces only - "Abandon, Ability, ..." or "1. abandon 2. ability ..." went through): a run of 12 to 24 BIP39 words in any case, each may carry its number
 // ("1.", "2)", "3:"), split by spaces, new lines, commas, semicolons, slashes or dashes, is removed. Only BIP39 words count, so an ordinary sentence of 12
 // words stays. nsec/ncryptsec keys and 64-hex secrets are removed as before.
+// NO SEED IN ANY COPY FORMAT EITHER (kanban #1591, a bypass of #1472): the run above took only [\s,;/|-] between words and a number only before
+// ". ) :", so a seed copied as a JSON array ["abandon","ability",...], from a wallet's numbered grid ("1\nabandon\n2\nability"), as "1 abandon 2 ability"
+// or as "abandon. ability. ..." was kept and posted to #feedback. Now the text is cut into runs of letters only; two BIP39 words are
+// joined by any short gap holding no letter (spaces, quotes, brackets, periods, digits, #, parentheses ...; a colon only right after a number, so
+// "my seed: abandon ..." keeps "seed"), and invisible format characters (zero-width spaces, soft hyphens) are dropped first so they split nothing. A
+// 4-letter BIP39 prefix ("aban abil able abou", the form many wallets accept) counts as a word. Still 12 such words in a row, so a sentence stays.
 const BIP39_SET = new Set(BIP39_ENGLISH);
+const BIP39_PREFIX4 = new Set(BIP39_ENGLISH.map((w) => w.slice(0, 4)));
+const SEED_RUN_LEAST = 12;
+const SEED_GAP_MOST = 12;
+const SEED_GAP = /^(?:[^\p{L}\d:]|\d+\s*:?)*$/u;
+const seedWord = (w) => BIP39_SET.has(w) || (w.length === 4 && BIP39_PREFIX4.has(w));
 export const scrubKeys = (t) => {
-  let s = String(t).replace(/\b(nsec|ncryptsec)1[0-9a-z]{20,}\b/gi, '[removed]').replace(/\b[0-9a-f]{64}\b/gi, '[removed]');
-  const tok = /(?:\d{1,2}\s*[.):]\s*)?([a-z]{3,8})/gi;
+  let s = String(t).replace(/\p{Cf}/gu, '');
+  s = s.replace(/\b(nsec|ncryptsec)1[0-9a-z]{20,}\b/gi, '[removed]').replace(/\b[0-9a-f]{64}\b/gi, '[removed]');
   const runs = []; let run = []; let lastEnd = -1;
-  for (const m of s.matchAll(tok)) {
-    const gap = lastEnd < 0 ? '' : s.slice(lastEnd, m.index);
-    const joins = lastEnd >= 0 && /^[\s,;/|-]*$/.test(gap);
-    const word = BIP39_SET.has(m[1].toLowerCase());
-    if (word && (joins || run.length === 0)) run.push([m.index, m.index + m[0].length]);
-    else { if (run.length >= 12) runs.push(run); run = word ? [[m.index, m.index + m[0].length]] : []; }
+  const close = () => { if (run.length >= SEED_RUN_LEAST) runs.push([run[0], run[run.length - 1]]); run = []; };
+  for (const m of s.matchAll(/\p{L}+/gu)) {
+    const gap = lastEnd < 0 ? null : s.slice(lastEnd, m.index);
+    const word = seedWord(m[0].toLowerCase());
+    if (!word) close();
+    else {
+      if (run.length && !(gap.length <= SEED_GAP_MOST && SEED_GAP.test(gap))) close();
+      run.push([m.index, m.index + m[0].length]);
+    }
     lastEnd = m.index + m[0].length;
   }
-  if (run.length >= 12) runs.push(run);
-  for (const r of runs.reverse()) s = s.slice(0, r[0][0]) + '[removed]' + s.slice(r[r.length - 1][1]);
+  close();
+  // the first word's own number ("1. ", "#1 (") goes with the run, as #1472 did
+  for (const [first, last] of runs.reverse()) {
+    const lead = /(?<!\d)#?\d{1,2}\s*[.):]?\s*["'(\[]?$/.exec(s.slice(0, first[0]));
+    s = s.slice(0, lead ? lead.index : first[0]) + '[removed]' + s.slice(last[1]);
+  }
   return s;
 };
 export function feedbackDecide({ text, ip = null, build = '', game = '', round = '', player = null, nowMs = Date.now() }, log) {
