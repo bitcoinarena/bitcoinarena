@@ -8467,6 +8467,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       mine: () => [guardian, guardianNext].filter((g) => g && g.dataDir).map((g) => entryOf(g.dataDir)).filter(Boolean),
       hostedGames: () => [...new Set([...hosted.values()].filter((h) => h && h.gameId).map((h) => toHex(h.gameId)))],
       selfFile,
+      ownerRoles: () => ownerJournal.last('roles'),   // kanban #2182: the owner's roles change still unconfirmed is built on
       // one UTXO scan per bitcoind on this machine: the lock beside the seats' stores (their stores' parent), or where named
       lockDir: process.env.ARENA_SCAN_LOCK_DIR || (db && db.arenaPath ? joinPath(db.arenaPath, '..', '..') : null),
       network: process.env.ARENA_DONATION_NETWORK || 'testnet4', dry: process.env.ARENA_ADVERT_SELF === 'dry',
@@ -10205,7 +10206,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const args = body.args || {};
           try {
             const net = chainNetworkId() ? (toHex(fromHex(chainNetworkId())) === toHex(NETWORK_ID_TESTNET4) ? 'testnet4' : 'regtest') : 'testnet4';
-            const r = await changeRolesFromWallet({ ...w, network: net, secret: round.identity.secret, pubkey: round.pubkey, roles: args.roles, custody: args.custody, post: args.post === true, key: actionKeyOf(args), journal: ownerJournal });
+            const r = await changeRolesFromWallet({ ...w, network: net, secret: round.identity.secret, pubkey: round.pubkey, roles: args.roles, custody: args.custody, post: args.post === true, key: actionKeyOf(args), journal: ownerJournal,
+              // kanban #2182: refused while the seat's own advertisement update (.advert-self.json) is unconfirmed
+              waitFor: (() => { try { return db && db.arenaPath ? JSON.parse(readFileSync(`${db.arenaPath}.advert-self.json`, 'utf8')).txid || null : null; } catch { return null; } })() });
             if (!r.ok) return answer(400, r);
             if (r.update) console.log(`[roles] advertisement update ${r.update.txid}: ${r.plan.before.roles.join(',')}${r.plan.before.custody ? '+custody' : ''} -> ${r.plan.after.roles.join(',')}${r.plan.after.custody ? '+custody' : ''}`);
             return answer(200, { ok: true, plan: r.plan, update: r.update || null });
