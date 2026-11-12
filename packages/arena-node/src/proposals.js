@@ -56,17 +56,37 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
     const outcome = decided || (orphaned && orphaned.outcome) || null;
     return { ...rest, state: S.ORPHANED, orphaned: { at: orphaned ? orphaned.at : null, why, was, ...(outcome ? { outcome } : {}), ...extra } };
   };
+  // A DECIDED OUTCOME STAYS LIVE UNTIL THE CENSUS SHOWS ITS PROPOSER UNBONDED (kanban #1865, after #1670): a PASSED / FAILED record
+  // is NOT hidden while its census is unreadable - a bitcoind warming up, main.js's 60 s hold after a failed block read, an old
+  // height whose census takes minutes to derive. Hiding it rolled an activated config back to genesis on an ordinary restart:
+  // GET /config named the old hash, rounds were created and served under the superseded config. Such a record is held as
+  // stored and waits in `decidedUnchecked`; recheck orphans it (unbonded) only when the census it reads positively leaves its
+  // proposer out. An open (COUNTING) or ORPHANED record is not live anyway, so it waits hidden as before - nothing is counted
+  // for it until its proposer is checked.
+  const decidedUnchecked = new Set();       // ids of PASSED / FAILED records held as stored while their proposer is not checked yet
+  const uncheckedWhy = 'kept before this start: its proposer is checked against the census first (kanban #1670)';
   if (typeof censusAt === 'function') {
     for (const [id, r] of held) {
+      if (stateOf(r) === S.PASSED || stateOf(r) === S.FAILED) { decidedUnchecked.add(id); continue; }
       unchecked.set(id, r);
-      held.set(id, asOrphan(r, 'kept before this start: its proposer is checked against the census first (kanban #1670)', { unchecked: true }));
+      held.set(id, asOrphan(r, uncheckedWhy, { unchecked: true }));
     }
   }
-  /** WRITTEN FIRST: the store takes `next` (or throws), and only then this seat's memory. A record not checked yet is written as it was stored. */
+  /**
+   * WRITTEN FIRST: the store takes `next` (or throws), and only then this seat's memory. A record not checked yet is written as it was stored.
+   * A decided record not checked yet that leaves its outcome (a reorg: undecided or orphaned, kanban #1865) is written as it
+   * moves but waits for its proposer check hidden, like a record loaded open: nothing is counted or restored for it unchecked.
+   */
   const commit = (next) => {
     if (store && store.write) store.write([...held.values()].filter((x) => x.id !== next.id).map((x) => unchecked.get(x.id) || x).concat([next]));
-    held.set(next.id, next);
     unchecked.delete(next.id);
+    if (decidedUnchecked.has(next.id) && stateOf(next) !== S.PASSED && stateOf(next) !== S.FAILED) {
+      decidedUnchecked.delete(next.id);
+      unchecked.set(next.id, next);
+      held.set(next.id, asOrphan(next, uncheckedWhy, { unchecked: true }));
+      return;
+    }
+    held.set(next.id, next);
   };
   /**
    * THE ONE TRANSITION: `id` from state `from` to state `to` - false when it is not in `from` (compare-and-set), the move is not
@@ -162,7 +182,15 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
     },
     list: () => [...held.values()].sort((a, b) => b.publishedAt - a.publishedAt),
     /** How many kept records of `net` (any network: none given) wait for their proposer check (kanban #1670). */
-    unchecked: (net = null) => [...unchecked.values()].filter((r) => net === null || r.networkId === net).length,
+    unchecked: (net = null) => [...unchecked.values()].filter((r) => net === null || r.networkId === net).length
+      + [...decidedUnchecked].filter((id) => net === null || (held.get(id) && held.get(id).networkId === net)).length,
+    /**
+     * How many hidden unchecked records of `net` were stored OPEN (COUNTING) and activate by `height` (kanban #1865): only these
+     * leave the history at `height` unknown (ballot-tally historyAt). A decided one is held with its outcome; an orphaned one is
+     * live for nothing either way - neither blocks a new proposal's repeal reading for good when its census never comes back.
+     */
+    openUnchecked: (net, height) => [...unchecked.values()].filter((r) => r.networkId === net && stateOf(r) === S.COUNTING
+      && !(Number(r.activationHeight) > height)).length,
     /**
      * THE PROPOSER CHECK OF THE RECORDS KEPT BEFORE THIS START (kanban #1670): the census at each one's publication height,
      * the one add() asks. Bonded: the record is back as stored. Not bonded: written ORPHANED with `unbonded`. Census not
@@ -178,7 +206,19 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
         const next = asOrphan(r, `the proposer holds no active bond in the census at height ${r.publishedAt} (27A.7.2, kanban #1670)`, { unbonded: true });
         try { commit(next); unbonded++; } catch { /* the store did not take it: still unchecked, asked again */ }
       }
-      return { restored, unbonded, waiting: unchecked.size };
+      // THE DECIDED ONES, HELD AS STORED (kanban #1865): orphaned only on a census that positively leaves the proposer out
+      for (const id of [...decidedUnchecked]) {
+        const r = held.get(id);
+        if (!r) { decidedUnchecked.delete(id); continue; }
+        let census = null;
+        try { census = await censusAt(r.networkId, r.publishedAt); } catch { census = null; }
+        if (!Array.isArray(census) || !decidedUnchecked.has(id) || held.get(id) !== r) continue;   // not readable yet, or it moved meanwhile
+        if (census.some((e) => e && xOnly(e.pubkey) === xOnly(r.proposer))) { decidedUnchecked.delete(id); restored++; continue; }
+        const next = asOrphan(r, `the proposer holds no active bond in the census at height ${r.publishedAt} (27A.7.2, kanban #1670)`, { unbonded: true });
+        decidedUnchecked.delete(id);
+        try { commit(next); unbonded++; } catch { decidedUnchecked.add(id); /* the store did not take it: still unchecked, asked again */ }
+      }
+      return { restored, unbonded, waiting: unchecked.size + decidedUnchecked.size };
     },
     transition,
     /** THE OUTCOME, WRITTEN ONCE (ballot-tally.js): COUNTING -> PASSED | FAILED - not tallied again, across restarts too. */
@@ -212,6 +252,6 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
     },
   };
   // the first check runs at once; the tally asks again before each pass for any census that was not readable yet
-  if (unchecked.size) api.recheck().catch(() => {});
+  if (unchecked.size || decidedUnchecked.size) api.recheck().catch(() => {});
   return api;
 }
