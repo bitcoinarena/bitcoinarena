@@ -10,6 +10,7 @@
 // `pool-signing.js` refuses to do.
 import { Writer, Reader } from '../../arena-protocol/src/encode.js';
 import { scalarFrom32, scalarTo32 } from '../../arena-protocol/src/shares.js';
+import { secp256k1 } from '@noble/curves/secp256k1.js';
 
 /** txid, vout, value, and the script the output pays to. */
 export const UTXO_BYTES = 32 + 4 + 8 + 34;
@@ -60,6 +61,23 @@ export function decodeCommitments(bytes) {
   }
   r.end();
   return out;
+}
+
+/**
+ * A PEER'S ANSWER AT A COMMIT DOOR (/forfeit-commit, /settle-commit, /send-commit), taken onto a signer list only when its two nonces are points
+ * (kanban #2331, #2345, after #1807): decodeCommitments checks the id and the length, never the curve. One seat that answered under its own id with
+ * 33 bytes no secp256k1 point has (x >= p, x off the curve, a bad prefix) went on the list, the asker's own share threw in groupCommitment, and with no
+ * duplicate id to blame #leaveOut had nobody to drop - the seat stopped every forfeit and every settlement until expiry. It now throws here, inside
+ * the ask, so the peer counts as refused and the list is made of the others. The wire and its bytes are unchanged.
+ */
+export function decodePeerCommitment(bytes) {
+  const c = decodeCommitments(bytes)[0];
+  for (const which of ['hiding', 'binding']) {
+    let P;
+    try { P = secp256k1.Point.fromBytes(c[which]); } catch { throw new Error(`that commitment's ${which} nonce is not a point of secp256k1`); }
+    if (P.equals(secp256k1.Point.ZERO)) throw new Error(`that commitment's ${which} nonce is the identity`);
+  }
+  return c;
 }
 
 /**
