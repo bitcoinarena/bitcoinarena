@@ -100,7 +100,9 @@ export async function startNode({ db, path }, options = {}, chain = {}) {
   let node, control = null;
   try {
     node = await serve(db, {
-      h2hHandoutLeadMs: 2000,   // kanban #1485: a live node refuses a head-to-head handout under 2 s before the close (serve() defaults to 0 for the fixtures' 1.5 s windows)
+      // kanban #1485 + #1742: the slowest lock measured at the seats (2.7 s); the door keeps 1.5x of it, so a live node refuses a head-to-head handout under
+      // 4.05 s before the close - above the page's own 4 s floor, so it stands alone for a page whose clock runs slow (serve() defaults to 0 for the fixtures' 1.5 s windows)
+      h2hHandoutLeadMs: 2700,
       ...options,
       ...(guardian.running ? { guardian: as(guardian, plan.own === 'setup') } : plan.own ? { guardian: { ...as({ apiPort: guardianPorts(options.port).api, p2pPort: guardianPorts(options.port).p2p }, plan.own === 'setup'), stopped: true } } : {}),
       ...(next.running ? { guardianNext: as(next, plan.next === 'setup') } : {}),
