@@ -1542,3 +1542,11 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-B2 (change) Config proposal intake: one schedule at every seat (proposals.js add/pull/decide, ballot-tally.js, kanban #1842)
+- Invariant: a kept proposal's `repeal`, `votingFrom` and `votingUntil` are the ones the history at its publication height gives once every proposal of its network activating by then is decided at this seat - the same at every seat, whatever order the seat learned the proposals in.
+- The peer pull checks a peer's records oldest publication first (the peer lists newest first): the proposal a repeal repeals is held when the repeal is checked, and the repeal is refused (503) until that one is decided here.
+- A proposal kept before an earlier one reached the seat (read on a history without it) is read again from its own bytes when that earlier one is decided (`decide` -> `rescheduleAfter`): each still-COUNTING proposal of the network published at or after its activation gets its repeal flag and voting window rewritten (written first, state unchanged, `rescheduled` names the cause). A decided proposal is never rescheduled.
+- The tally does not count a proposal while `historyAt` at its publication height is unknown (a proposal activating by then is undecided), and counts a proposal whose window moved afresh from its new first block.
