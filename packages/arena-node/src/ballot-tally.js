@@ -88,7 +88,10 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
     }
     return b;
   };
-  const passedOf = (net) => proposals.list().filter((p) => p.networkId === net && stateOf(p) === S.PASSED)
+  // A DEPOSIT THAT BACKS TWO KEPT PROPOSALS BACKS NONE (kanban #1840, proposals.js counts): such a proposal is not tallied,
+  // not live, and its phase is 'void' - the same answer at every seat that holds both
+  const counted = (p) => (typeof proposals.counts === 'function' ? proposals.counts(p.id) : true);
+  const passedOf = (net) => proposals.list().filter((p) => p.networkId === net && stateOf(p) === S.PASSED && counted(p))
     .map((p) => { const b = bodyOf(p); return { id: fromHex(p.id), parent: b.parent, configHash: b.configHash, config: b.config, activationHeight: p.activationHeight }; });
   const networks = () => new Set(proposals.list().map((p) => p.networkId));
   /** Recomputed when something was decided or the tip moved: a few proposals, so a few comparisons. */
@@ -172,7 +175,7 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
       }
       if (reorged) refreshLive();
       for (const p of proposals.list().slice().sort((a, b) => a.votingFrom - b.votingFrom)) {
-        if (stateOf(p) !== S.COUNTING) { open.delete(p.id); continue; }       // decided, or orphaned: not counted
+        if (stateOf(p) !== S.COUNTING || !counted(p)) { open.delete(p.id); continue; }       // decided, orphaned, or void (#1840): not counted
         if (tip < p.votingFrom) continue;                       // review: votes are not counted yet (27A.7.4)
         let o = open.get(p.id);
         if (!o) { o = { readTo: p.votingFrom - 1, readHash: null, census: null, votes: [], result: null, dirty: true }; open.set(p.id, o); }
@@ -232,6 +235,7 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
   /** The phase of a kept proposal at the tip (27A.7.4): review, voting, cooldown, activated, failed - or void (27A.7.2). */
   const phaseOf = (p) => {
     if (stateOf(p) === S.ORPHANED) return 'orphaned';
+    if (!counted(p)) return 'void';
     if (!p.decided) return tip !== null && tip >= p.votingFrom ? 'voting' : 'review';
     if (!p.decided.passed) return 'failed';
     if (tip === null || tip < p.activationHeight) return 'cooldown';
@@ -265,7 +269,7 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
      * activate by then is still undecided here (its outcome is not known yet, so neither is the history).
      */
     historyAt(net, height) {
-      const pending = proposals.list().some((p) => p.networkId === net && stateOf(p) === S.COUNTING && p.activationHeight <= height);
+      const pending = proposals.list().some((p) => p.networkId === net && stateOf(p) === S.COUNTING && counted(p) && p.activationHeight <= height);
       if (pending) return null;
       return liveConfig({ genesis: genesisFor(net), passed: passedOf(net), height }).history;
     },
