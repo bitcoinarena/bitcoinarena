@@ -83,7 +83,14 @@ export async function startNode({ db, path }, options = {}, chain = {}) {
   if (plan.next && guardian.running && settings.atBoot('guardian-next')) {
     try { next = await start('next'); } catch (e) { await guardian.stop(); throw e; }
   }
-  const stopBoth = async () => { try { await next.stop(); } finally { await guardian.stop(); } };
+  // ONE GUARDIAN ACTION AT A TIME PER SLOT (kanban #1779, state audit 2026-11-12): the owner page's start, stop, restart, retire and fresh
+  // setup and the cookie and exit watches' restarts each read `guardian` (or `next`), await the chain, the ports and Tailscale, and only then
+  // set it - two owner starts in flight together (two tabs, a double click on Restart, a page retry) both saw no guardian and spawned two
+  // fedimintd on one data dir, and the first one's handle was lost: neither the owner's Stop nor node.close could end it. Each slot's actions
+  // now run one after another on one promise chain, so a Stop sent while a start is in flight waits for it and then stops what it started.
+  const queue = { guardian: Promise.resolve(), next: Promise.resolve() };
+  const inTurn = (slot, fn) => { const r = queue[slot].then(fn, fn); queue[slot] = r.then(() => {}, () => {}); return r; };
+  const stopBoth = async () => { try { await inTurn('next', () => next.stop()); } finally { await inTurn('guardian', () => guardian.stop()); } };
   const as = (g, setup) => ({ apiPort: g.apiPort, p2pPort: g.p2pPort, endpoint: g.endpoint, dataDir: g.dataDir, ...(setup ? { setup: true } : {}) });
   let node, control = null;
   try {
@@ -97,18 +104,18 @@ export async function startNode({ db, path }, options = {}, chain = {}) {
       guardianControl: control = {
         has: () => !!plan.own,
         running: () => !!guardian.running,
-        stop: async () => { if (!guardian.running) return { ok: true }; await (guardian.halt || guardian.stop)(); guardian = none; return { ok: true }; },
-        start: async () => {
+        stop: () => inTurn('guardian', async () => { if (!guardian.running) return { ok: true }; await (guardian.halt || guardian.stop)(); guardian = none; return { ok: true }; }),
+        start: () => inTurn('guardian', async () => {
           if (!plan.own) return { ok: false, why: 'this node holds no guardian key and waits in no setup: it runs no guardian' };
           if (guardian.running) return { ok: true };
           guardian = await start('guardian');
           return guardian.running ? { ok: true } : { ok: false, why: guardian.why || 'the guardian did not start' };
-        },
+        }),
         // A SETUP FROM A FOUNDING THAT WENT VOID, STARTED AGAIN (kanban #495, measured 2026-10-21: node 6's guardian had taken its local
         // params in the voided founding e8741283 and refused the next founding's - "Local parameters have already been set" - so its
         // code never came): only a guardian in setup mode (no federation key yet: nothing is lost), stopped, its setup database set
         // aside beside it (database.void-<time>, kept), and started again in a fresh setup. The founding asks it once (founding.js).
-        retire: async () => {
+        retire: () => inTurn('guardian', async () => {
           const dir = guardian.dataDir || `${path}.guardian`;
           if (!existsSync(dir)) return { ok: false, why: 'this node holds no guardian directory' };
           if (guardian.running) await (guardian.halt || guardian.stop)();
@@ -119,7 +126,7 @@ export async function startNode({ db, path }, options = {}, chain = {}) {
           if (plan.own !== 'setup') return { ok: true, kept, setup: false, why: 'the guardian was set aside; this node waits in no setup (ARENA_FOUNDING is not 1)' };
           guardian = await start('guardian');
           return guardian.running ? { ok: true, kept, setup: true } : { ok: false, kept, why: guardian.why || 'the guardian in setup did not start' };
-        },
+        }),
         // WHAT THE NODE ITSELF KNOWS OF ITS GUARDIAN (kanban #1177, founding-seat.js GUARDIAN): its ceremony files held, and whether its process runs
         local: async () => {
           const dir = guardian.dataDir || `${path}.guardian`;
@@ -127,7 +134,7 @@ export async function startNode({ db, path }, options = {}, chain = {}) {
           if (guardian.running) { try { alive = typeof guardian.alive === 'function' ? !!(await guardian.alive()) : null; } catch { alive = null; } }
           return { keyed: holdsGuardianKey(path) || holdsCeremonyFiles(dir), alive };
         },
-        freshSetup: async () => {
+        freshSetup: () => inTurn('guardian', async () => {
           // READ AGAIN AT THE MOMENT IT WOULD MOVE ANYTHING (kanban #1177): a node that started in setup and finished its DKG in this process still
           // had plan.own === 'setup' from its start; its guardian's database was set aside on a founding's misreading. The key files decide, now.
           const dir = guardian.dataDir || `${path}.guardian`;
@@ -142,7 +149,7 @@ export async function startNode({ db, path }, options = {}, chain = {}) {
           if (existsSync(db)) { kept = `${db}.void-${new Date().toISOString().replace(/[:.]/g, '-')}`; renameSync(db, kept); }
           guardian = await start('guardian');
           return guardian.running ? { ok: true, kept } : { ok: false, why: guardian.why || 'the guardian did not start again', kept };
-        },
+        }),
       },
       serviceSettings: settings });
   } catch (e) { await stopBoth(); throw e; }
@@ -155,16 +162,16 @@ export async function startNode({ db, path }, options = {}, chain = {}) {
   const cookieWatch = chain.cookiePath ? setInterval(async () => {
     const now = cookieFingerprint(chain.cookiePath);
     if (!now) return;
-    for (const slot of ['guardian', 'next']) {
+    for (const slot of ['guardian', 'next']) await inTurn(slot, async () => {
       const g = slot === 'guardian' ? guardian : next;
-      if (!g.running || !g.cookieSha || g.cookieSha === now) continue;
+      if (!g.running || !g.cookieSha || g.cookieSha === now) return;
       try {
         await (g.halt || g.stop)();
         const fresh = await start(slot);
         if (slot === 'guardian') guardian = fresh.running ? fresh : none; else next = fresh.running ? fresh : none;
         (chain.log || console.log)(`[guardian] bitcoind wrote a new cookie: the ${slot === 'guardian' ? 'guardian' : 'guardian-next'} was started again with it${fresh.running ? '' : ` - and did not start: ${fresh.why}`}`);
       } catch (e) { (chain.log || console.log)(`[guardian] the ${slot} could not be started again on the new cookie: ${e.message}`); }
-    }
+    });
   }, Number((chain.env || process.env).ARENA_COOKIE_WATCH_MS || 30000)) : null;
   if (cookieWatch && cookieWatch.unref) cookieWatch.unref();
   // A GUARDIAN THAT EXITED IS STARTED AGAIN (kanban #577, measured 10-29 on the seven installed inst577 nodes, 2026.1.9.11): fedimintd exits
@@ -173,19 +180,19 @@ export async function startNode({ db, path }, options = {}, chain = {}) {
   // again, at most once a minute per slot.
   const startedAgainAt = { guardian: 0, next: 0 };
   const exitWatch = setInterval(async () => {
-    for (const slot of ['guardian', 'next']) {
+    for (const slot of ['guardian', 'next']) await inTurn(slot, async () => {
       const g = slot === 'guardian' ? guardian : next;
-      if (!g.running || typeof g.alive !== 'function' || Date.now() - startedAgainAt[slot] < 60000) continue;
+      if (!g.running || typeof g.alive !== 'function' || Date.now() - startedAgainAt[slot] < 60000) return;
       let up = true; try { up = await g.alive(); } catch { up = true; }
-      if (up) continue;
+      if (up) return;
       startedAgainAt[slot] = Date.now();
       try {
         const fresh = await start(slot);
-        if ((slot === 'guardian' ? guardian : next) !== g) { if (fresh.running) await (fresh.halt || fresh.stop)(); continue; }   // stopped or replaced meanwhile
+        if ((slot === 'guardian' ? guardian : next) !== g) { if (fresh.running) await (fresh.halt || fresh.stop)(); return; }   // stopped or replaced meanwhile
         if (slot === 'guardian') guardian = fresh.running ? fresh : none; else next = fresh.running ? fresh : none;
         (chain.log || console.log)(`[guardian] the ${slot === 'guardian' ? 'guardian' : 'guardian-next'} had exited: started again${fresh.running ? '' : ` - and did not start: ${fresh.why}`}`);
       } catch (e) { (chain.log || console.log)(`[guardian] the ${slot} could not be started again after it exited: ${e.message}`); }
-    }
+    });
   }, Number((chain.env || process.env).ARENA_GUARDIAN_EXIT_WATCH_MS || 30000));
   if (exitWatch.unref) exitWatch.unref();
   // ITS GUARDIAN'S CONTROLS, for a launcher or a test to call as the node does (kanban #1177)

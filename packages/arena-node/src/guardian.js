@@ -326,7 +326,9 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
   if (storePath !== ':memory:') {
     const kept = (adopted, pid, sha) => { const follow = ramFollow(() => pids.pid(dataDir));
       return { running: true, kept: true, adopted, pid, endpoint, network, chain, dataDir, apiPort: ports.api, p2pPort: ports.p2p, slot,
-        cookieSha: sha, ram: !!follow, stop: async () => { if (follow) follow.stop(); }, halt: () => pids.stop(dataDir), alive: () => pids.active(dataDir) }; };
+        cookieSha: sha, ram: !!follow, stop: async () => { if (follow) follow.stop(); },
+        // halt ends its RAM follow loop too (kanban #1779): it was left running, and every restart from the owner page added a second snapshot loop
+        halt: async () => { if (follow) follow.stop(); return pids.stop(dataDir); }, alive: () => pids.active(dataDir) }; };
     if (await pids.active(dataDir)) {
       const had = keptFingerprint(dataDir);
       // a guardian adopted only while it reads bitcoind with the cookie bitcoind has now (one started before the fingerprint was kept: as before)
