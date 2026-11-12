@@ -14,7 +14,7 @@ import { Writer, Reader } from './encode.js';
 import { taggedHash } from './hash.js';
 import { stakeExpiryFits } from './lock-expiry.js';
 import { utf8Encode } from './utf8.js';
-import { onCurveX } from './guardian-payout.js';
+import { isCompressedPoint } from './point.js';
 // THE RUN LENGTH IS THE CORE'S. `genesis.js` already reads it from the same
 // place and writes it into the config hash a contract's network_id commits to;
 // restating the number here would be the second clock letter 21 forbade.
@@ -598,7 +598,6 @@ const is32 = (v) => v instanceof Uint8Array && v.length === 32;
 // settlement transaction (fee.js frontendShares), and the settlement tool parses every payout key as a secp256k1 point: an x
 // above the field prime, or one with no y, made that whole transaction unbuildable - every winner's payout and every fee claim
 // with it. Such an entry is refused at encode and at decode; no honest client can name such a key.
-const isCompressedPoint = (k) => (k[0] === 2 || k[0] === 3) && onCurveX(k.subarray(1));
 
 export function encodeEntryContract(e) {
   const w = new Writer();
