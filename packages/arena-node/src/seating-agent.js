@@ -293,11 +293,6 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     if (!check || check.refused) return { ok: false, why: `this node cannot draw that round yet${check ? `: ${check.refused}` : ''}` };
     const v = verifySeating(bytes, check);
     if (!v.ok) return v;
-    // A SEATING THIS NODE LEFT FOR A WITHHOLDER (kanban #1707, wf1489 r5 census-2): the honest members' signatures over the first seating were handed out
-    // before they re-signed without the withholder (#1509), so the withholder can sign that seating late and complete it with them. A certificate that
-    // seats a member this node named a withholder is never kept nor counted as equivocation: this node left that seating, and the one it moved to stands.
-    const named = v.seating.seated.map(toHex).find((k) => db.prepare('SELECT 1 FROM seat_withheld WHERE round_id = ? AND role = ? AND node = ?').get(rid, role, k));
-    if (named) return { ok: false, superseded: true, why: `that seating seats ${named.slice(0, 8)}, which withheld its seating signature here (kanban #1509): this node left it` };
     // KEPT ONLY IN ITS CANONICAL FORM (kanban #1711): verifySeating checks the seated members' signatures and nothing else, so a
     // stranger who read them off GET /seating-batch could pad a standing certificate with 65,000 junk (nodePubkey, signature)
     // pairs (6.2 MB), post it first, and every seat kept and served those bytes - the honest certificate after it then differed
@@ -334,6 +329,15 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
           return { ok: true, kept: true, replaced: true };
         }
       }
+      // A SEATING THIS NODE LEFT FOR A WITHHOLDER (kanban #1707, wf1489 r5 census-2): the honest members' signatures over the first seating were handed
+      // out before they re-signed without the withholder (#1509), so the withholder can sign that seating late and complete it with them. With a
+      // certificate held, a second one that seats a member this node named a withholder is refused and not counted as equivocation.
+      // ONLY THEN (kanban #2168, #2234, #2305, a44-refute-50): with no certificate held, any valid one is kept, the withholder's late first seating too -
+      // that is only the withholder signing at last, and the round stands. Refusing it by name left the members that re-signed (and, timed by the
+      // withholder, the reserve that kept it instead of joining) with no certificate at all, the #1509 effect again, and cut an honest seat out of a
+      // round a merely slow member completed.
+      const named = v.seating.seated.map(toHex).find((k) => db.prepare('SELECT 1 FROM seat_withheld WHERE round_id = ? AND role = ? AND node = ?').get(rid, role, k));
+      if (named) return { ok: false, superseded: true, why: `that seating seats ${named.slice(0, 8)}, which withheld its seating signature here (kanban #1509): this node left it, and the certificate held stands` };
       const e = seatingEquivocation(old, bytes, check);
       if (!e.ok) return { ok: false, why: e.why };
       // A SEATING THAT LEFT OUT A WITHHOLDING MEMBER IS NO EQUIVOCATION WITH THE ONE IT REPLACED (kanban #1681, #1741, wf1489 v1 refute-17): the honest seats
