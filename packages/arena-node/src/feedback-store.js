@@ -146,6 +146,11 @@ export function openFeedbackStore(path = ':memory:') {
     for (const r of all) { let e = null; try { e = JSON.parse(r.event); } catch { e = null; }
       const kept = JSON.stringify(e ? keptEvent(e) : { content: '' }); if (kept !== r.event) { set.run(kept, r.id); changed++; } }
     if (changed && path !== ':memory:') { db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); db.exec('VACUUM'); db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } }
+  // A PAID REPORT FROM BEFORE GETS ITS APPROVAL TIME BACK (kanban #1786): paidNow used to move changed_ms to the payment time; the approval's move
+  // (report_moves, to 'accepted') still holds when it was approved
+  db.exec(`UPDATE reports SET changed_ms = (SELECT MAX(m.at_ms) FROM report_moves m WHERE m.id = reports.id AND m.to_state = 'accepted')
+    WHERE state = 'paid' AND EXISTS (SELECT 1 FROM report_moves m WHERE m.id = reports.id AND m.to_state = 'accepted')
+      AND changed_ms IS NOT (SELECT MAX(m.at_ms) FROM report_moves m WHERE m.id = reports.id AND m.to_state = 'accepted')`);
   const get = db.prepare('SELECT * FROM reports WHERE id = ?');
   const row = (r) => (r ? { id: r.id, pubkey: r.pubkey, type: r.type, signedAt: r.signed_at, receivedMs: r.received_ms, happened: r.happened, expected: r.expected,
     game: r.game || null, round: r.round || null, build: r.build || null, state: r.state, reason: r.reason || null, duplicateOf: r.duplicate_of || null,
@@ -358,7 +363,9 @@ export function openFeedbackStore(path = ':memory:') {
     } else db.prepare("UPDATE rewards SET state = 'paid', payment_hash = COALESCE(?, payment_hash), paid_ms = ?, why = NULL WHERE k1 = ?").run(paymentHash || null, nowMs, w.k1);
     const r = get.get(w.report);
     if (r && r.state === STATES.ACCEPTED) {
-      db.prepare('UPDATE reports SET state = ?, changed_ms = ? WHERE id = ?').run(STATES.PAID, nowMs, r.id);
+      // PAID KEEPS THE APPROVAL TIME (kanban #1786): changed_ms of an accepted or paid report is when it was approved - the per-key limit and the week's
+      // budget count by it. The payment time is the reward's paid_ms; moving changed_ms to it counted a reward approved last week and claimed today again
+      db.prepare('UPDATE reports SET state = ? WHERE id = ? AND state = ?').run(STATES.PAID, r.id, STATES.ACCEPTED);
       db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, STATES.PAID, nowMs, 'lnurlw', paymentHash || null);
     }
     return true;
