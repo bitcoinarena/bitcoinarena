@@ -399,7 +399,7 @@ export function federationSays(status) {
 }
 
 // ---- the known-good list and the player's own confirmation (spec §23.6) ----
-import { federationIsKnown, knownFederation, takesDeposits } from '../../arena-protocol/src/known-federations.js';
+import { federationIsKnown, knownFederation, takesDeposits, takesNewRounds } from '../../arena-protocol/src/known-federations.js';
 export { federationIsKnown, knownFederation };
 
 /** Every guardian of `federationIdHex` in a census this client checked: operator, node key, guardian endpoint, bond. */
@@ -456,5 +456,8 @@ export function safeFederation(from, statuses = [], { known = () => true } = {})
   const usable = (statuses || []).filter((f) => f && f.invite && String(f.federation).toLowerCase() !== me);
   const succ = from.successorId && !/^0+$/.test(String(from.successorId))
     ? usable.find((f) => String(f.federation).toLowerCase() === String(from.successorId).toLowerCase() && f.status === 'OPEN' && known(f.federation) && !(f.allows && f.allows.deposit === false)) : null;
-  return succ || pickFederation(usable, { known });
+  // THE FALLBACK TAKES NEW MONEY (kanban #2433, state audit 2026-11-12): moving the notes makes an invoice in the target (migrateFromDraining's
+  // to.receive), so only a federation that takes deposits and opens rounds (kanban #807) and whose load does not refuse a deposit (allows.deposit);
+  // the guardians' named successor stays the one exception. None -> null: the notes wait for the next status read
+  return succ || pickFederation(usable.filter((f) => takesDeposits(f.federation) && takesNewRounds(f.federation) && !(f.allows && f.allows.deposit === false)), { known });
 }
