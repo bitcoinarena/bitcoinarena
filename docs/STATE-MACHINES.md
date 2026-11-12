@@ -1632,3 +1632,7 @@ Audit 5 (#1399, base 1502786b) and audit 6 (#1415, base eb7fd30fc) for release 2
 
 #### Entry finality / objection intake (kanban #1845)
 - Each objection check holds its own count on its `pending_objections` row (round, entry, arrived_ms); the row goes only when the last check holding it answered. Two objections that reach a seat in the same millisecond (a junk one refused first, a valid one still queued) keep the entry SUSPENDED until both answered: while any check of an objection that arrived before final_after is queued or running here, no FINAL is kept, signed, or acted on. A restart clears the rows and the counts together.
+
+#### SM-F (add) Seat drain state x a held entry's locks (kanban #1848)
+- The drain (`drainingRefusal`: a package naming a successor via `markDraining`, ARENA_DRAINING, or the guardians' DRAINING/CRITICAL/CLOSED/HALTED record) refuses new rounds, series rounds, entries, handouts and deposits only.
+- Invariant: a stake or fee lock handed for an entry this seat already holds is never refused for the drain: POST /lock and POST /fee-lock ask `offerRefusalOfRound(rid, { held: true })`, which leaves `drainingRefusal` out. The entry was taken while the federation was OPEN (POST /entry still asks the drain), so its lock is a stake the round already holds and settles there (§23A.6 step 2). Before: both lock doors answered "draining ... no new round or deposit names it" and POST /refused-lock answered "that player entered the round at this signer node", so the stake waited in the federation for its lock's expiry.

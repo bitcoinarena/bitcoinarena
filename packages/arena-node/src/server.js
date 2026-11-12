@@ -5615,11 +5615,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // round that takes any federation is gated per entry, at its lock.
   const namedClaimGate = new NamedClaimGate({ versionOf: async (fid) => { const port = await portOfFederation(fromHex(fid)); return port && port.moduleVersion ? port.moduleVersion() : null; } });
   const namedClaimRefusalOf = (contract) => (takesAnyFederation(contract) || !(contract.federationId instanceof Uint8Array) ? null : namedClaimGate.refusal(contract, toHex(contract.federationId)));
-  const offerRefusal = (contract) => seriesRefusal(contract) || droppedRefusal(contract) || donationInForceRefusal(contract) || reserveRefusal(contract)
+  const offerRefusal = (contract, { held = false } = {}) => seriesRefusal(contract) || droppedRefusal(contract) || donationInForceRefusal(contract) || reserveRefusal(contract)
     || namedClaimRefusalOf(contract)
     // A FEDERATION THIS SEAT HOLDS A RESERVE ALARM FOR (kanban #1108): no stake goes into it here, whatever the client picked
     || alarmRefusal(reserveAlarms, contract)
-    || drainingRefusal(contract) || fileRefusal(contract) || (typeof refusedFor === 'function' ? refusedFor(contract) : null)
+    || (held ? null : drainingRefusal(contract)) || fileRefusal(contract)   // a held entry's locks pass a drain (kanban #1848)
+    || (typeof refusedFor === 'function' ? refusedFor(contract) : null)
     // AND A CONFIG THE BALLOT DID NOT MAKE LIVE FOR IT (27A.7.5): not listed, entered or locked here - "it serves nothing"
     || configRefusal(contract);
   const seriesRefusalOfRound = (rid) => {
@@ -5641,13 +5642,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return checkSendPlanAsk(req.headers[SEND_PLAN_ASK_HEADER], { kind, roundId: rid, lateEntryId: lateHex ? new Uint8Array(Buffer.from(lateHex, 'hex')) : null,
       body: raw, seats: c.nodes });
   };
-  const offerRefusalOfRound = (rid) => {
+  // AN ENTRY THIS SEAT ALREADY HOLDS KEEPS ITS LOCKS THROUGH A DRAIN (kanban #1848): the page hands the stake and fee locks in the background
+  // after POST /entry (#handLocksUntilTaken), and a seat that took the federation as DRAINING in that window (a signed record, markDraining)
+  // refused them here - "no new round or deposit names it" - while the return door refused them too ("that player entered the round at this
+  // signer node"), so the stake sat in the federation until its lock's expiry. The drain blocks new rounds, entries and deposits; a lock of an
+  // entry taken before it is a stake the round already holds, and it settles there (§23A.6 step 2). `held`: the lock doors' ask.
+  const offerRefusalOfRound = (rid, { held = false } = {}) => {
     const row = round.get(rid);
     if (!row) return null;
     let c;
     try { c = decodeRoundContract(new Uint8Array(row.contract)); } catch { return null; }
     { const p = playedHere(rid, c); if (!p.played) return p.why; }
-    return offerRefusal(c);
+    return offerRefusal(c, { held });
   };
   // AN ORDER'S LOCK THAT CAME AFTER ITS MARKET CLOSED (kanban #1150: POST /lock had no entry-close check, and a late lock filled against
   // the resting orders): kept and verified - so it can come back by the return door - but the order never trades (order-batch.js refuses
@@ -11536,7 +11542,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         timing.bodyMs = Date.now() - lt0;
         const stored = round.entry(eid);
         if (!stored) return text(res, 404, 'this node holds no such entry');
-        { const why = offerRefusalOfRound(decodeEntryContract(stored).roundId); if (why) return text(res, 409, `lock refused: ${why}`); }
+        { const why = offerRefusalOfRound(decodeEntryContract(stored).roundId, { held: true }); if (why) return text(res, 409, `lock refused: ${why}`); }   // kanban #1848
         { const why = lockAfterCloseRefusal(stored, eid, 'stake'); if (why) return text(res, 409, `lock refused: ${why}`); }
         // WHERE A SLOW LOCK'S TIME WENT (kanban #605: POST /lock took up to 107 s on the test host seats, 0 ms on the loop)
         // AND EVERY LOCK'S STEPS, NOT ONLY A SLOW ONE'S (kanban #618, step-log.js): the federation's own steps (verifyStakeLock's timing) with them
@@ -11565,7 +11571,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const steps = stepLog('fee-lock', toHex(eid), { keep: txRecord.keep }).on(res); steps.at('body');   // (kanban #618, step-log.js)
         const stored = round.entry(eid);
         if (!stored) return text(res, 404, 'this node holds no such entry');
-        { const why = offerRefusalOfRound(decodeEntryContract(stored).roundId); if (why) return text(res, 409, `lock refused: ${why}`); }
+        { const why = offerRefusalOfRound(decodeEntryContract(stored).roundId, { held: true }); if (why) return text(res, 409, `lock refused: ${why}`); }   // kanban #1848
         { const why = lockAfterCloseRefusal(stored, eid, 'fee'); if (why) return text(res, 409, `lock refused: ${why}`); }
         const got = await takeFeeLock(eid, fields);
         steps.at(got.ok ? 'verified' : 'refused');
