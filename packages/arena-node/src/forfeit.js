@@ -251,7 +251,7 @@ export class Forfeit {
     // this node's own record that it still refuses the round and that the lock stakes no entry here. No result, no window.
     let refused = null;
     if (!lock && this.round.refusedLock) {
-      const kept = this.round.refusedLock(entryIdBytes);
+      const kept = this.round.refusedLock(entryIdBytes, roundIdBytes);   // kanban #2029: the round's rows from before #1881 by their own id too
       if (kept && toHex(kept.roundId) === toHex(roundIdBytes)) {
         const why = this.refusedNow ? this.refusedNow(roundIdBytes) : null;
         if (!why) return refuse('this signer node offers that round: a lock kept for it as refused is not returned');
