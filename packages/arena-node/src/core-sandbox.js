@@ -156,11 +156,16 @@ function deathOf(sup, id) {
  * from then on.
  */
 export function loadCore({ files, entry }, { callMs = CALL_MS, stepMs = STEP_MS, askMs = ASK_MS, loadMs = LOAD_MS, name = entry,
-  arrayBudget = ARRAY_BUDGET, liveCap = 0, heap = HEAP_LIMITS, rssBackstop = RSS_BACKSTOP, until = null } = {}) {
+  arrayBudget = ARRAY_BUDGET, liveCap = 0, heap = HEAP_LIMITS, rssBackstop = RSS_BACKSTOP, until = null, loadUntil = null } = {}) {
   // `until` (kanban #1719, #1538): ONE ABSOLUTE DEADLINE (a Date.now() time) for the load AND the meta ask loadCore makes
   // itself - the plugin trial gives load, meta and every decide call one TRIAL_MS in total; meta reads DECIDE's fields, which
   // may be getters, so without it load + meta held the seat's thread up to loadMs + askMs
-  const leftOf = (ms) => (Number.isFinite(until) ? Math.max(1, Math.min(ms, until - Date.now())) : ms);
+  // `loadUntil` (kanban #2058, #2078): the same one deadline for the load and its meta ask ONLY - the first load of a core a seat
+  // has just adopted (plugin-package.js registrationFromPackage) is bounded like the trial, and the box it gives is kept with
+  // the installed core's own deadlines from then on
+  let loading = true;
+  const by = () => Math.min(Number.isFinite(until) ? until : Infinity, loading && Number.isFinite(loadUntil) ? loadUntil : Infinity);
+  const leftOf = (ms) => (Number.isFinite(by()) ? Math.max(1, Math.min(ms, by() - Date.now())) : ms);
   const sup = supervisorOf();
   const id = sup.next++;
   const ctrl = new Int32Array(new SharedArrayBuffer(8 * 4));
@@ -184,7 +189,7 @@ export function loadCore({ files, entry }, { callMs = CALL_MS, stepMs = STEP_MS,
     if (ended) return;
     ended = why;
     const t0 = Date.now();
-    const waitMs = Number.isFinite(until) ? Math.max(0, Math.min(EXIT_WAIT_MS, until + UNTIL_EXIT_GRACE_MS - t0)) : EXIT_WAIT_MS;
+    const waitMs = Number.isFinite(by()) ? Math.max(0, Math.min(EXIT_WAIT_MS, by() + UNTIL_EXIT_GRACE_MS - t0)) : EXIT_WAIT_MS;
     if (!gone()) sup.worker.postMessage({ type: 'end', id });
     while (!gone() && Date.now() - t0 < waitMs) Atomics.wait(ctrl, C.STATE, Atomics.load(ctrl, C.STATE), Math.max(1, Math.min(10, waitMs - (Date.now() - t0))));
     if (!gone()) lingering.add({ ctrl, name });
@@ -238,7 +243,8 @@ export function loadCore({ files, entry }, { callMs = CALL_MS, stepMs = STEP_MS,
     if (!a.ok) throw new Error(a.why);
     return revive(a.json);
   };
-  const meta = call('meta', {}, Number.isFinite(until) ? leftOf(askMs) : null);
+  const meta = call('meta', {}, Number.isFinite(by()) ? leftOf(askMs) : null);
+  loading = false;
   return Object.freeze({ call, meta, end: () => end('ended by the node'), lastEnd: () => lastEnd, highWaterMb: () => Atomics.load(ctrl, C.HIGH_MB) });
 }
 

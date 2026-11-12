@@ -18,7 +18,9 @@ export const TRIAL_MS = ASK_MS - 500;
 const MAX_CASES = 2000;
 const TRIAL_NAME = 'plugin trial';
 
-export function trialRun(source, manifest, { ms = TRIAL_MS } = {}) {
+// `entry` (kanban #2058, #2078): the file name the core's one module has - the one an install gives it (core-<hash>.mjs, see
+// plugin-package.js), so the trial and the install load show the core the same module (a plain `new Error().stack` names it)
+export function trialRun(source, manifest, { ms = TRIAL_MS, entry = 'core.mjs' } = {}) {
   if (manifest.resultType !== RESULT_TYPE.HEAD_TO_HEAD) return { ok: true, cases: 0, why: 'no decide adapter to run (not a head-to-head game)' };
   // ONE TRIAL THREAD AT A TIME (kanban #1880, #1913): the trial never waits for a thread held in a long builtin past its deadline
   // (core-sandbox.js `lingering`); while one still lingers no other is started - refused for now, `retry`: not the version's verdict
@@ -26,7 +28,7 @@ export function trialRun(source, manifest, { ms = TRIAL_MS } = {}) {
   const until = Date.now() + ms;
   const left = () => until - Date.now();
   let box;
-  try { box = loadCore({ files: new Map([['core.mjs', String(source)]]), entry: 'core.mjs' }, { name: TRIAL_NAME, loadMs: ms, askMs: ms, until, liveCap: ARRAY_BUDGET }); }   // kanban #1538: kept arrays refused at the budget; #1719: `until` - load and meta share the trial's one deadline
+  try { box = loadCore({ files: new Map([[String(entry), String(source)]]), entry: String(entry) }, { name: TRIAL_NAME, loadMs: ms, askMs: ms, until, liveCap: ARRAY_BUDGET }); }   // kanban #1538: kept arrays refused at the budget; #1719: `until` - load and meta share the trial's one deadline
   catch (e) { return { ok: false, cases: 0, why: `it does not load in the sandbox: ${e.message}` }; }
   try { return trialCases(box, manifest, left); } finally { box.end(); }
 }
