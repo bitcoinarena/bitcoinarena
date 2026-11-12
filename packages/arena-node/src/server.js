@@ -164,6 +164,7 @@ import { splitSigned, decodeCheckpoint, checkpointId } from '../../arena-protoco
 import { MAX_SIGNED_INPUT_BATCH_BYTES, decodeInputBatch, splitSignedBatch, batchId } from '../../arena-protocol/src/batch.js';
 import { SIGNED_CHECKPOINT_BYTES } from '../../arena-protocol/src/checkpoint.js';
 import { TYPE_CHECKPOINT_RECEIPT } from '../../arena-protocol/src/constants.js';
+import { TYPE_TRANSCRIPT as TYPE_TRANSCRIPT_BYTE } from '../../arena-protocol/src/constants.js';   // kanban #2242
 import { bearsAuthority } from '../../arena-protocol/src/frames.js';
 import {
   decodeHandout, encodeHandout, handoutId, acceptHandout, openMyShare,
@@ -219,7 +220,7 @@ import { outageOutcome } from '../../arena-protocol/src/entry-void.js';
 import { ENTRY_VOID, netStakeMsat } from '../../arena-protocol/src/payout.js';
 import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../arena-protocol/src/objection.js';
 import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../arena-protocol/src/posting.js';
-import { decodeTranscript } from '../../arena-protocol/src/transcript.js';   // the relay door's check (kanban #1532)
+import { decodeTranscript, checkTranscript, transcriptHash as hashOfTranscriptObj } from '../../arena-protocol/src/transcript.js';   // the relay door's check (kanban #1532, #2242)
 import { federationIsBonded } from '../../arena-protocol/src/federation.js';
 import { hostedPlugins, pluginForRound, advertisedAppsCheck } from './plugins.js';
 import { gameMarkets, gameMarketSweep, heldOutcomes, gameVoidOf, gameEvidenceOf, attestedTable, marketFinalityOf, marketStateOf, VALUE_HELD_OUTCOME } from './game-market.js';
@@ -280,6 +281,22 @@ const read = readBody;
 // for ever - a stranger filled the disk with random blobs under their own hash). At most RELAY_MOST bytes in `relayed` over both doors
 // (256 MiB, ARENA_RELAY_MOST); past it a door answers 507 and keeps nothing.
 const RELAY_MOST = Number(process.env.ARENA_RELAY_MOST) > 0 ? Number(process.env.ARENA_RELAY_MOST) : 256 * 1024 * 1024;
+// kanban #2242: relayed transcripts of one entry kept beyond the ones this seat knows by name (a signed result's, its own canonical one, the empty one)
+const RELAY_UNNAMED_PER_ENTRY = 2;
+// kanban #2324, #2341, #2347 (a45-refute-13-s2): what one entry's relayed transcripts may hold IN BYTES, all of them together (named by one
+// seat's result or not), unless the committee agrees on one (a majority of the round's signer nodes names it) or it is this seat's own
+// canonical run. An honest run stays below RELAY_TRANSCRIPT_TICK_BYTES a tick (a batch of ~6 ticks - 1500 batches in a 9000-tick round,
+// ghosts.js - is ~40 bytes a tick, and the price samples and tapes come with the price, not every tick); three such runs per entry fit,
+// so the agreed run, a fork and one seat's word all have room. Live (4920 ticks): about 3.9 MB per entry.
+const RELAY_TRANSCRIPT_TICK_BYTES = 256;
+const relayEntryMost = (blockTicks) => 3 * (64 * 1024 + blockTicks * RELAY_TRANSCRIPT_TICK_BYTES);
+// THE PER-ENTRY BOUND DOES NOT BOUND THE STORE (kanban #2388, a45-refute-13-s3, after #2341): a free round takes any number of entries
+// (one per session key, no stake, no fee lock), so one attacker entered ~66 times and PUT two session-signed forks per entry, each inside
+// relayEntryMost, until RELAY_MOST was full and every honest transcript, reveal record and slash proof was refused 507. Now transcripts the
+// committee does not agree on - session-signed forks and transcripts only a minority of signer nodes name - share a pool of their own,
+// RELAY_CAPPED_MOST (a quarter of RELAY_MOST, ARENA_RELAY_CAPPED_MOST), and are refused 507 against that pool; the rest of the store is
+// always left for this seat's canonical run, the agreed run, the empty transcript, reveal records and slash proofs.
+const RELAY_CAPPED_MOST = Number(process.env.ARENA_RELAY_CAPPED_MOST) > 0 ? Math.min(Number(process.env.ARENA_RELAY_CAPPED_MOST), RELAY_MOST) : Math.floor(RELAY_MOST / 4);
 // the largest seating certificate POST /seating takes (kanban #1711): 36 bytes of head + 2 + 32 per seated + 2 + 96 per signature,
 // for up to 128 seated - far above any committee (9)
 const SEATING_CERT_MOST = 36 + 2 + 128 * 32 + 2 + 128 * 96;
@@ -11267,6 +11284,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const bytes = await read(req);
         if (toHex(transcriptBytesHash(new Uint8Array(bytes))) !== relayed[1])
           return text(res, 409, 'those bytes are not the transcript that hash names');
+        // THE SAME BYTES AGAIN ARE KEPT ALREADY (kanban #2347): a retry (a lost 201, a publish() rerun after a failed tip or read-back) was
+        // counted against its own stored copy and refused 422; before #2242 it was 201 (relayPut is INSERT OR IGNORE). The hash is checked above.
+        if (round.relayGet(Buffer.from(relayed[1], 'hex'))) return text(res, 201, 'kept');
         // ONLY A TRANSCRIPT OF AN ENTRY THIS SEAT HOLDS (kanban #1532): the bytes decode as a transcript (decodeTranscript) whose entry is
         // in this seat's store under the round it names, or are a head-to-head reveal record (entry id || move || 32-byte salt, or
         // entry id || 0xff, verify.js #revealRecord) of an entry it holds. Random bytes, and transcripts of runs nobody entered here, are refused.
@@ -11289,13 +11309,83 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             return toHex(headToHeadCommit({ roundId: entry.roundId, entryKey: entry.sessionPubkey, move, salt: rec.slice(33, 65) })) === toHex(entry.commit);
           } catch { return false; }
         };
+        // returns false (refused), 'free' (kept in the main store) or 'capped' (kept in the RELAY_CAPPED_MOST pool, kanban #2388)
+        const relayTranscriptIsTheEntrys = (t, hashHex, size) => {   // kanban #2242; #2324, #2341, #2347, #2388
+          try {
+            const rid = t.roundId, eid = t.entryId;
+            // this seat's own canonical run is kept as it is (the seat built it from the marks its committee carried)
+            try { if (toHex(round.canonicalTranscript(rid, eid).hash) === hashHex) return 'free'; } catch { /* none held here */ }
+            // EVERY OTHER ONE CHECKS (kanban #2324): a hash one signer node's result names was kept with no check at all - one dishonest
+            // committee seat signed a result naming 8 MiB of junk (broken chain, no marks) per entry and stored it
+            if (!checkTranscript(t).ok) return false;
+            // the empty transcript (no batches, no marks) has one hash per entry and a few dozen bytes: kept once, it takes no budget
+            const emptyHex = toHex(hashOfTranscriptObj({ roundId: rid, entryId: eid, batches: [], marks: [] }));
+            if (hashHex === emptyHex) return 'free';
+            // and the round's run length sets what one entry may hold (relayEntryMost below) - kanban #2341: two session-signed forks of
+            // 1.5 MB each, in a 600-tick round, took the store
+            const row = round.get(rid);
+            if (!row) return false;
+            const blockTicks = decodeRoundContract(new Uint8Array(row.contract)).blockTicks;
+            if (!Number.isInteger(blockTicks) || blockTicks < 1) return false;
+            // which hashes this seat knows for the entry by name: each signer node's signed result held here (signature checked), and the
+            // empty transcript of an entry with no run
+            const signers = round.signerNodes(rid).map((k) => toHex(k));
+            const namedBy = new Map();   // transcript hash -> distinct signer nodes naming it
+            for (const r of round.results(rid, eid)) {
+              try {
+                const sp = splitSignedResult(r.bytes), body = decodePlayerResult(sp.body), who = toHex(body.nodePubkey);
+                if (!signers.includes(who) || !schnorr.verify(sp.signature, resultId(body), body.nodePubkey)) continue;
+                const h = toHex(body.transcriptHash);
+                if (!namedBy.has(h)) namedBy.set(h, new Set());
+                namedBy.get(h).add(who);
+              } catch { /* a record that does not decode names nothing */ }
+            }
+            // the run the committee agrees on (a majority of its signer nodes names it) is kept whatever its size: no one seat can name one
+            if ((namedBy.get(hashHex)?.size || 0) > Math.floor(signers.length / 2)) return 'free';
+            const known = (h) => namedBy.has(h) || h === emptyHex;
+            if (!known(hashHex)) {
+              if (!t.marks.length) return false;
+              const raw = round.entry(eid);
+              if (!raw) return false;
+              const key = decodeEntryContract(raw).sessionPubkey;
+              for (const m of t.marks) {
+                const sp = splitSigned(m);
+                if (!ed25519.verify(sp.signature, checkpointId(decodeCheckpoint(sp.body)), key)) return false;
+              }
+            }
+            // what this entry already has here, named or not (a transcript's bytes: type, version u16, round id, entry id - so the round
+            // id is bytes 4..35 and the entry id bytes 36..67)
+            const held = round.db.prepare('SELECT hash, LENGTH(bytes) AS n FROM relayed WHERE substr(bytes, 1, 1) = ? AND substr(bytes, 4, 32) = ? AND substr(bytes, 36, 32) = ?')
+              .all(Buffer.of(TYPE_TRANSCRIPT_BYTE), Buffer.from(rid), Buffer.from(eid));
+            // IN BYTES, ALL TOGETHER (kanban #2341): the count of two let two 8 MiB forks per entry in, and a named one was never counted
+            const sum = held.reduce((a, h) => a + Number(h.n), 0);
+            if (sum + size > relayEntryMost(blockTicks)) return false;
+            // the entry's own key can still sign forks: a bounded number per entry it knows by no name (kanban #2242). A named one - the
+            // empty transcript a stranger PUT, one seat's result's - takes no fork's place (kanban #2347)
+            // what is left - one seat's word, a session-signed fork - is not what the committee agrees on: the capped pool (kanban #2388)
+            if (known(hashHex)) return 'capped';
+            return held.filter((h) => !known(toHex(new Uint8Array(h.hash)))).length < RELAY_UNNAMED_PER_ENTRY ? 'capped' : false;
+          } catch { return false; }
+        };
         const u8 = new Uint8Array(bytes), roundOfEntry = (eid) => { const r = round.db.prepare('SELECT round_id FROM entries WHERE entry_id = ?').get(eid); return r ? toHex(new Uint8Array(r.round_id)) : null; };
-        let ours = false;
-        try { const t = decodeTranscript(u8); ours = roundOfEntry(t.entryId) === toHex(t.roundId); }
+        let ours = false, capped = false;
+        // AND A TRANSCRIPT ONLY IF IT IS THAT ENTRY'S OWN RUN (kanban #2242, a45-refute-13; the transcript branch of the #1532/#1824 door): a
+        // "transcript" naming a held (round, entry) with no batches and one mark of random bytes decoded and was kept, 2^768 distinct ones per
+        // entry, until the relay store was full and every honest transcript, reveal record and slash proof was refused (507). Now one is kept
+        // when its hash is one this seat itself knows for that entry (named by a committee seat's signed result held here, this seat's own
+        // canonical transcript, or the empty transcript of an entry that never started), or else when it checks (checkTranscript), carries
+        // marks and every mark is signed by the entry's session key - and of those last, at most RELAY_UNNAMED_PER_ENTRY per entry.
+        try {
+          const t = decodeTranscript(u8), how = roundOfEntry(t.entryId) === toHex(t.roundId) && relayTranscriptIsTheEntrys(t, relayed[1], u8.length);
+          ours = how === 'free' || how === 'capped'; capped = how === 'capped';
+        }
         catch { ours = (u8.length === 65 || (u8.length === 33 && u8[32] === 0xff)) && roundOfEntry(u8.subarray(0, 32)) !== null && revealRecordOpens(u8); }
         if (!ours) return text(res, 422, 'this relay keeps only the transcript of an entry it holds');
+        // kanban #2388: a transcript the committee does not agree on is checked against its own pool, so those can never fill the store
+        if (capped && round.relayedCappedBytes() + bytes.length > RELAY_CAPPED_MOST)
+          return text(res, 507, 'this relay keeps no more: its store for transcripts the committee does not agree on is full');
         if (round.relayedBytes() + bytes.length > RELAY_MOST) return text(res, 507, 'this relay keeps no more: its store for relayed bytes is full');
-        round.relayPut(Buffer.from(relayed[1], 'hex'), bytes);
+        round.relayPut(Buffer.from(relayed[1], 'hex'), bytes, capped);
         return text(res, 201, 'kept');
       }
       if (relayed && req.method === 'GET') {
