@@ -3089,6 +3089,10 @@ export async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fe
   const base = (n) => String(n).replace(/\/+$/, '');
   const skipOf = (s) => new Set(((knownBySeed && knownBySeed.get(toHex(s))) || (list.length === 1 ? known : [])).map((h) => String(h).toLowerCase()));
   const skips = list.map(skipOf);
+  // KNOWN BY ROUND AND ORDER (kanban #2106): an entry is '<round>:<order>' (a plain round id is its order 0, as older callers pass it). Skipping
+  // the whole round while one order's record was kept left another order of it whose record was lost (a full browser, a tab that died between
+  // the lock and the record) found by nothing and collected by nothing; now only the kept (round, order) pairs are skipped.
+  const isKnown = (i, id, order) => skips[i].has(id + ':' + order) || (order === 0 && skips[i].has(id));
   // ONE SEAT'S WORD COSTS THE PAGE NO UNBOUNDED WORK (kanban #1489): every listed id costs ORDER_SCAN + 1 key derivations per kept
   // phrase on the page's thread - one seat answering /settled with 3000 made-up ids froze the page 16.7 s at every load (99,033
   // derivations). Now a seat's list is taken newest first up to OWED_SETTLED_MAX ids (a seat answers at most 500, round.js settledSince),
@@ -3161,9 +3165,9 @@ export async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fe
   const matches = [];
   for (const [id, l] of listed) {
     for (let i = 0; i < list.length; i++) {
-      if (skips[i].has(id)) continue;
       // EVERY ORDER'S KEY TOO: a tab's orders in a market round are keyed 0, 1, 2 ... - read up to ORDER_SCAN (32: a bot places 12 a window)
       for (let order = 0; order <= ORDER_SCAN; order++) {
+        if (isKnown(i, id, order)) continue;   // kanban #2106: this order's record is kept, not the round's
         const mine = owedKeyOf(list[i], id, order, curve);
         const payout = l.payouts.has(mine); const lock = l.refunds.has(mine);
         if (payout || lock) matches.push({ id, payout, lock, seed: list[i], order });
