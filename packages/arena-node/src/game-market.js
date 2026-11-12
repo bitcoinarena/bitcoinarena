@@ -34,6 +34,7 @@ import { encodeRoundResult, roundResultId, decodeRoundResult, frontOf, frontName
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { pluginForRound } from './plugins.js';
 import { endpointsOf } from './roster.js';
+import { bytesUpTo as peerBytesUpTo } from './peer-read.js';
 
 const refuse = (why, status = 409) => ({ ok: false, status, why });
 /** The outcome column of a held VALUE attestation (feature 8): no index - its value is in its bytes (heldOutcomes). */
@@ -46,23 +47,7 @@ const SOURCES_KEPT = 4096;
 // could make every honest seat that settles markets on games buffer - and JSON-parse - tens of MB on every sweep pass. The body is
 // read chunk by chunk and refused, the stream cancelled, once it passes the cap (a Content-Length over it is refused unread).
 const PEER_ANSWER_BYTES = 64 * 1024;
-async function bytesUpTo(r, maxBytes = PEER_ANSWER_BYTES) {
-  const said = Number(r.headers.get('content-length'));
-  if (said > maxBytes) { try { await r.body?.cancel(); } catch { /* dropped */ } throw new Error(`its answer is ${said} bytes, more than ${maxBytes}`); }
-  if (!r.body) return new Uint8Array(0);
-  const reader = r.body.getReader();
-  const parts = []; let n = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    n += value.length;
-    if (n > maxBytes) { reader.cancel().catch(() => {}); throw new Error(`its answer passed ${maxBytes} bytes`); }
-    parts.push(value);
-  }
-  const out = new Uint8Array(n); let at = 0;
-  for (const p of parts) { out.set(p, at); at += p.length; }
-  return out;
-}
+const bytesUpTo = (r, maxBytes = PEER_ANSWER_BYTES) => peerBytesUpTo(r, maxBytes); // the shared reader (peer-read.js, kanban #2244)
 
 /**
  * EVERY STANDING OUTCOME A SEAT HOLDS FOR A ROUND, in an attestation's shape, oldest first: the attestations (decoded, with

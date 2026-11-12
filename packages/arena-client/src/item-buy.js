@@ -11,7 +11,7 @@
 //   4. THE RECORD: the game, the item, the price, the buyer, the federation, the transaction, every output and the served list,
 //      signed with the player's key, handed to a seat (POST /item-purchase), which hands it on to every other.
 // No float touches an amount; every step that fails says which, and nothing is paid before the list and the split stand.
-import { servedNodes, mergeServedRounds, SERVED_WINDOW_MS, SERVED_HELD_MAX } from '../../arena-protocol/src/served-nodes.js';
+import { servedNodes, mergeServedRounds, SERVED_WINDOW_MS, SERVED_HELD_MAX, SERVED_ANSWER_BYTES_MAX } from '../../arena-protocol/src/served-nodes.js';
 import { purchaseOutputs, purchaseOutputsReserves, purchaseId, encodePurchase, purchaseImage } from '../../arena-protocol/src/purchase.js';
 import { itemOf, itemPriceFor, ITEM_DEV_SHARES, ITEM_DEV_SHARE_DEFAULT } from '../../arena-protocol/src/items.js';
 import { itemSplitReserves, ITEM_DEV_SHARES_RESERVES, ITEM_DEV_SHARE_RESERVES_DEFAULT } from '../../arena-protocol/src/reserves.js';
@@ -43,6 +43,32 @@ export function itemPriceOn(manifest, priceSat, devsPct) {
   return t.reserves ? itemSplitReserves({ listMsat: BigInt(priceSat) * 1000n, devsPct: Number(devsPct) }).priceMsat / 1000n : itemPriceFor(BigInt(priceSat), Number(devsPct));
 }
 
+/**
+ * ONE SEAT'S ANSWER, READ UP TO `maxBytes` (kanban #2365, #1489 a45 refute 9 skeptic 3 of #2239): the bound the seat's own reader keeps
+ * (server.js readJsonCapped). A stated length over it is refused unread; a body is read as a stream and dropped once past it. Measured
+ * before: a 33.6 MB answer was parsed whole and taken by the page.
+ */
+export async function readJsonUpTo(r, maxBytes) {
+  const len = Number(r.headers && typeof r.headers.get === 'function' ? r.headers.get('content-length') : NaN);
+  if (Number.isFinite(len) && len > maxBytes) { try { await r.body?.cancel(); } catch { /* gone already */ } throw new Error(`its answer of ${len} bytes is over ${maxBytes}`); }
+  if (!r.body || typeof r.body.getReader !== 'function') {
+    if (typeof r.text === 'function') { const t = await r.text(); if (t.length > maxBytes) throw new Error(`its answer is over ${maxBytes} bytes`); return JSON.parse(t); }
+    return r.json();                                          // a stand-in fetch with no body stream (tests)
+  }
+  const reader = r.body.getReader(), parts = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) { try { await reader.cancel(); } catch { /* gone already */ } throw new Error(`its answer is over ${maxBytes} bytes`); }
+    parts.push(value);
+  }
+  const all = new Uint8Array(total); let at = 0;
+  for (const p of parts) { all.set(p, at); at += p.byteLength; }
+  return JSON.parse(new TextDecoder().decode(all));
+}
+
 /** The served list of the 24 h before `toMs`, from every seat that answers. Answers { ok, served, seats } or { ok: false, why }. */
 export async function servedFromSeats({ seats, toMs, fetch, verify, timeoutMs = 15000 }) {
   const fromMs = BigInt(toMs) - BigInt(SERVED_WINDOW_MS);
@@ -56,13 +82,14 @@ export async function servedFromSeats({ seats, toMs, fetch, verify, timeoutMs = 
     try {
       const r = await fetch(`${String(s).replace(/\/$/, '')}/served?to=${toMs}&finals=1`, { signal: AbortSignal.timeout(timeoutMs) });
       if (!r.ok) return;
-      const a = await r.json();
+      const a = await readJsonUpTo(r, SERVED_ANSWER_BYTES_MAX);   // kanban #2365: one seat's answer is read up to a bound, as on the seat
       held[i] = (a.held || []).slice(0, SERVED_HELD_MAX).map((x) => ({ roundId: fromHex(x.roundId), committee: x.committee.map(fromHex), finals: x.finals.map(fromHex) }));
     } catch { /* a seat that does not answer adds nothing */ }
   }));
   const answered = held.filter(Boolean).length;
   if (!answered) return { ok: false, why: 'no seat answered who served a round in the last 24 hours' };
-  const served = servedNodes({ rounds: mergeServedRounds(held.filter(Boolean)).rounds, fromMs, toMs: BigInt(toMs), verify });
+  // kanban #2361: the page holds no record of its own - no answer's rounds are taken as the reader's, every answer's checks are charged
+  const served = servedNodes({ rounds: mergeServedRounds(held.filter(Boolean), { own: false }).rounds, fromMs, toMs: BigInt(toMs), verify });
   if (!served.nodes.length) return { ok: false, why: 'no node served a round in the last 24 hours: the nodes\' half has nobody to go to' };
   return { ok: true, served, seats: answered };
 }
@@ -178,14 +205,29 @@ export function itemUnlocksOf(manifest) {
 
 /**
  * THE SHOP OF A GAME: the items its newest manifest that sells any names, from the lobby's games (games.js fetchGames, one entry per
- * version) of that game name. Answers { game, items: [{ id, name, priceSat }] } or null when no version sells anything.
+ * version) of that game. Answers { game, items: [{ id, name, priceSat }] } or null when no version sells anything.
+ * `game` is the chosen tile ({ name, devKey }) or a game name.
+ * ONE DEVELOPER KEY, NOT ONE NAME (kanban #2243, #1810 variant): #1810 keeps only manifests their own key signed, and any stranger
+ * signs with a key of his own - one seat listing a same-name manifest under its own key, version + 1, took the shop of the honest
+ * tile (its items, its price, its seats). A version of a game is a new manifest under the same developer key and name (§5,
+ * oneTilePerGame's group), so the shop is the newest selling version of the tile's own key; for a bare name, the key of the
+ * name's first game that names one (fetchGames' order, the tile the page chooses).
  */
-export function shopOf(games, gameName) {
-  const selling = (games || []).filter((g) => g && g.manifest && g.manifest.gameName === gameName && (g.manifest.items || []).length)
+export const devKeyOfGame = (g) => (g && (g.devKey || (g.manifest && g.manifest.gameDevPubkey && toHex(g.manifest.gameDevPubkey)))) || null;
+export function gameDevKeyFor(games, game) {
+  if (game && typeof game === 'object') return devKeyOfGame(game);
+  const first = (games || []).find((g) => g && g.manifest && (g.name === game || g.manifest.gameName === game) && devKeyOfGame(g));
+  return devKeyOfGame(first);
+}
+export function shopOf(games, game) {
+  const gameName = game && typeof game === 'object' ? game.name : game;
+  const devKey = gameDevKeyFor(games, game);
+  const selling = (games || []).filter((g) => g && g.manifest && g.manifest.gameName === gameName && devKeyOfGame(g) === devKey
+    && (g.manifest.items || []).length)
     .sort((a, b) => Number(b.manifest.version) - Number(a.manifest.version));
   if (!selling.length) return null;
-  const game = selling[0];
-  return { game, items: game.manifest.items.map((it) => ({ id: it.id, name: it.name, priceSat: it.priceSat })) };
+  const chosen = selling[0];
+  return { game: chosen, items: chosen.manifest.items.map((it) => ({ id: it.id, name: it.name, priceSat: it.priceSat })) };
 }
 
 /**

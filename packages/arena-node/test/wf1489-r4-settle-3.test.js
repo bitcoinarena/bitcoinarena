@@ -114,7 +114,8 @@ test('a stranger flooding /forfeit-commit between the asker\'s commit and share 
   let flooded = 0;
   for (const f of w.seats) {
     const share = f.share.bind(f);
-    f.share = async (rid, eid, list, kind) => { for (let i = 0; i < 256; i++) { await f.commit(rid, eid, kind); flooded++; } return share(rid, eid, list, kind); };
+    // the seat's own options (since #2237/#2308: { own: true } on its own pass) are handed on; the 256 commits stay a stranger's (kanban #1489 merge)
+    f.share = async (rid, eid, list, kind, opts) => { for (let i = 0; i < 256; i++) { await f.commit(rid, eid, kind); flooded++; } return share(rid, eid, list, kind, opts); };
   }
   let got = null;
   const asks = [];

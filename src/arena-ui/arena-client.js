@@ -12948,17 +12948,45 @@ function vestedShares(recipients, height) {
   const othersBase = recipients.reduce((t, r) => t + (r.vesting ? 0 : r.shareBps), 0);
   const rest = DONATION_BPS_TOTAL - vested;
   const out = recipients.map((r, i) => ({ recipientPk: r.recipientPk, label: r.label,
-    shareBps: r.vesting ? now[i] : (othersBase > 0 ? Math.floor((r.shareBps * rest) / othersBase) : 0) }));
-  const short = DONATION_BPS_TOTAL - out.reduce((t, x) => t + x.shareBps, 0);
+    shareBps: r.vesting ? now[i] : (othersBase > 0 ? Math.max(0, Math.floor((r.shareBps * rest) / othersBase)) : 0) }));
+  // A shrinking vesting entry's trunc rounds it UP, so in a mixed set the vesting entries can
+  // sum past 10000 (rest < 0) on intermediate days; the plain recipients then got a negative
+  // share and splitDonation / splitTwoSets refused the set network-wide (kanban #2250, a
+  // variant of #1863). A plain share is never below 0, and the excess comes back out of the
+  // shrinking entries (each was rounded up by less than one basis point, never below its
+  // target). With rest >= 0 nothing here changes.
+  // The same give-back runs for an ALL-vesting set too, and goes round the shrinking entries
+  // as often as needed (never below an entry's target): there the excess can be up to one
+  // basis point per shrinking entry, and with many small entries no single share could absorb
+  // it, so it was dropped and the set summed to 10100 (kanban #2310, variant of #1863 / #2250).
+  if (rest < 0) {
+    let excess = -rest;
+    for (let moved = true; excess > 0 && moved;) {
+      moved = false;
+      for (const [i, r] of recipients.entries()) {
+        if (excess <= 0) break;
+        if (!r.vesting || out[i].shareBps <= Math.max(0, r.vesting.targetBps)) continue;
+        out[i].shareBps -= 1; excess -= 1; moved = true;
+      }
+    }
+  }
+  let short = DONATION_BPS_TOTAL - out.reduce((t, x) => t + x.shareBps, 0);
+  // Should anything still sum past 10000, it comes out of the shares as published, one basis
+  // point at a time, never below 0, so the answer always sums to 10000 (kanban #2310).
+  for (let moved = true; short < 0 && moved;) {
+    moved = false;
+    for (const x of out) {
+      if (short >= 0) break;
+      if (x.shareBps > 0) { x.shareBps -= 1; short += 1; moved = true; }
+    }
+  }
   // The remainder goes to the first plain recipient; when every recipient vests (allowed
   // when the targets sum to 10000) there is none, and the set summed to 9999 at
   // intermediate heights, which splitDonation / splitTwoSets refuse (kanban #1863). Then it
-  // goes to the first recipient as published, as splitDonation does - or, should that share
-  // not absorb a negative remainder, the first one that can.
+  // goes to the first recipient as published, as splitDonation does.
   const first = recipients.findIndex((r) => !r.vesting);
-  let to = first >= 0 ? first : 0;
-  if (out[to].shareBps + short < 0) to = out.findIndex((x) => x.shareBps + short >= 0);
-  if (short && to >= 0) out[to].shareBps += short;
+  const to = first >= 0 ? first : 0;
+  if (short > 0) out[to].shareBps += short;
   return out;
 }
 
@@ -13282,22 +13310,53 @@ function servedNodes({ rounds, fromMs, toMs, verify }) {
   if (!(to > from)) throw new Error('a served window ends after it starts');
   const served = new Map();                                  // key hex -> Set of round hex
   const refused = [];
+  // kanban #2312/#2325 (#1489 a45 refute 9 skeptic 2 of #2239): mergeServedRounds names, per FINAL, the answers that hold it
+  // (`sources`). Each answer may hand over at most SERVED_FAILED_MAX FINALs that do not verify; once every answer holding a FINAL has
+  // spent that, the FINAL is not checked. An honest answer holds FINALs that verify and is never cut, however many rounds it holds
+  // and whoever else answers; padding with junk signatures costs the reader at most SERVED_FAILED_MAX checks per answer.
+  const failed = new Map(), spent = new Set();               // answer index -> FINALs of it that did not verify
+  // kanban #2361/#2365 (#1489 a45 refute 9 skeptic 3 of #2312): a FINAL that VERIFIES costs the same check, and one seat can sign
+  // valid FINALs on made-up rounds under keys it made up (18,000 checks for 2,000 such rounds). So every check of a round the reader's
+  // own record does not hold is charged to an answer holding the FINAL - the one with the most budget left - and an answer is checked
+  // for at most SERVED_CHECKS_MAX of them, valid or not. A round the reader's own record holds (`own`, mergeServedRounds) is real: it
+  // costs at most 18 checks per answer and is never cut. A FINAL named by no answer (the caller's own rounds) is not charged.
+  const checked = new Map(), exhausted = new Set();          // answer index -> checks charged to it
   let counted = 0;
   for (const round of rounds || []) {
     if (!round || !snIs32(round.roundId) || !Array.isArray(round.committee)) { refused.push({ round: null, why: 'a round is named by its id and committee' }); continue; }
     const rid = toHex(round.roundId);
     const committee = new Set(round.committee.map(toHex));
+    const sources = Array.isArray(round.sources) ? round.sources : null;
     let any = false;
-    for (const bytes of round.finals || []) {
+    const finals = round.finals || [];
+    for (let j = 0; j < finals.length; j++) {
+      const bytes = finals[j];
       let x, signature;
       try { ({ signature } = splitSignedFinalSig(bytes)); x = decodeFinalSig(bytes.subarray(0, bytes.length - signature.length)); }
       catch (e) { refused.push({ round: rid, why: `not a FINAL signature: ${e.message}` }); continue; }
       const key = toHex(x.signerPubkey);
       if (toHex(x.roundId) !== rid) { refused.push({ round: rid, why: `a FINAL about another round (${toHex(x.roundId).slice(0, 16)})` }); continue; }
       if (!committee.has(key)) { refused.push({ round: rid, why: `${key.slice(0, 16)} is not of this round's committee` }); continue; }
+      if (served.get(key)?.has(rid)) continue;                 // a round counts once per node: no second check for it
+      const src = sources && Array.isArray(sources[j]) && sources[j].length ? sources[j] : null;
+      if (src && src.every((s) => (failed.get(s) || 0) >= SERVED_FAILED_MAX)) continue;   // its answers spent their bad-signature budget
+      if (src && !round.own) {                                 // kanban #2361: a check of a round the reader did not sit on costs an answer
+        let payer = null;
+        for (const s of src) if ((checked.get(s) || 0) < SERVED_CHECKS_MAX && (payer === null || (checked.get(s) || 0) < (checked.get(payer) || 0))) payer = s;
+        if (payer === null) continue;
+        const n = (checked.get(payer) || 0) + 1; checked.set(payer, n);
+        if (n >= SERVED_CHECKS_MAX && !exhausted.has(payer)) { exhausted.add(payer); refused.push({ round: null, why: `answer ${payer} made this reader check ${n} FINALs of rounds it did not sit on: no more of its FINALs are checked` }); }
+      }
       let good = false;
       try { good = !!verify(signature, finalSigId(x), x.signerPubkey); } catch { good = false; }
-      if (!good) { refused.push({ round: rid, why: `${key.slice(0, 16)}'s FINAL does not verify` }); continue; }
+      if (!good) {
+        refused.push({ round: rid, why: `${key.slice(0, 16)}'s FINAL does not verify` });
+        if (src) for (const s of src) {
+          const n = (failed.get(s) || 0) + 1; failed.set(s, n);
+          if (n >= SERVED_FAILED_MAX && !spent.has(s)) { spent.add(s); refused.push({ round: null, why: `answer ${s} handed over ${n} FINALs that do not verify: no more of its FINALs are checked` }); }
+        }
+        continue;
+      }
       if (x.signedAtMs < from || x.signedAtMs >= to) continue;  // outside the window: not refused, just not these 24 h
       if (!served.has(key)) served.set(key, new Set());
       served.get(key).add(rid); any = true;
@@ -13348,19 +13407,42 @@ function servedNodesDiffer(claimed, mine) {
  */
 const SERVED_COMMITTEE_MAX = 9;
 const SERVED_HELD_MAX = 20000;
-function mergeServedRounds(held) {
+// kanban #2239 (#1489 a45 refute 9 of #1815): what one seat's answer makes the reader verify is bounded IN ALL, not per round entry.
+//   - a round is read once per answer: the first entry naming it stands, a repeat adds no FINAL and no vote for its committee
+//     (measured before: the same real round listed 2,000 times in one answer cost 12,003 BIP-340 checks, 7.6 s on the M1 Max);
+//   - a reader reads one seat's answer up to SERVED_ANSWER_BYTES_MAX bytes (server.js, item-buy.js).
+// kanban #2312/#2325 (#1489 a45 refute 9 skeptic 2 of #2239): #2239 also kept, per answer, only SERVED_LONE_FINALS_MAX (360) new FINALs
+// of the rounds no other answer named. That was both too weak and too strong: two seats naming the same made-up rounds made them
+// "named by two" and escaped it (2,000 rounds: 72,000 junk checks), and an honest seat whose committee-mates do not answer - the
+// reader's own record included - had its rounds past 120 cut. The bound is now on what costs the reader: each merged FINAL carries
+// the answers that hold it (`sources`, by index in `held`), and servedNodes stops checking an answer's FINALs once SERVED_FAILED_MAX
+// of them did not verify. FINALs that verify are never cut; how many answers name a round no longer matters.
+const SERVED_LONE_FINALS_MAX = 360;   // kept exported for older imports; no longer read (kanban #2312)
+const SERVED_FAILED_MAX = 64;
+// kanban #2361/#2365 (#1489 a45 refute 9 skeptic 3 of #2312): and at most SERVED_CHECKS_MAX checks in all - valid signatures or not -
+// per answer for rounds the reader's own record does not hold. #2312 bounded only FINALs that fail; one seat signing valid FINALs
+// under keys it made up on 2,000 made-up rounds cost 18,000 checks (300 rounds, real signatures: 3.4 s on the M1 Max). A round the
+// reader sat on is not charged; a FINAL several answers hold is charged to the one with the most budget left, so honest rounds held
+// by their committee's seats spread over them.
+const SERVED_CHECKS_MAX = 1024;
+const SERVED_ANSWER_BYTES_MAX = 32 * 1024 * 1024;
+// `own` (default true): held[0] is the reader's own record (server.js), and the rounds it names are marked `own` - servedNodes does
+// not charge their checks to the answers (kanban #2361). A reader with no record of its own (the page, item-buy.js) passes false.
+function mergeServedRounds(held, { own = true } = {}) {
   const hx = (b) => toHex(b);
   const rounds = new Map(), conflicts = new Set();
-  for (const seat of held || []) {
-    if (!Array.isArray(seat)) continue;
-    const seen = new Set();                                  // kanban #1698 #1766: this seat's rounds, each counted once
+  (held || []).forEach((seat, at) => {
+    if (!Array.isArray(seat)) return;
+    const seen = new Set();
     for (const r of seat.slice(0, SERVED_HELD_MAX)) {
       if (!r || !snIs32(r.roundId) || !Array.isArray(r.committee) || !r.committee.length || r.committee.length > SERVED_COMMITTEE_MAX || !r.committee.every(snIs32)) continue;
-      const k = hx(r.roundId), committee = [...new Set(r.committee.map(hx))].sort().join();
-      if (seen.has(k)) continue;
+      const k = hx(r.roundId);
+      if (seen.has(k)) continue;                              // kanban #2239: one answer names a round once
       seen.add(k);
-      if (!rounds.has(k)) rounds.set(k, { roundId: r.roundId, copies: new Map(), finals: new Map() });
+      const committee = [...new Set(r.committee.map(hx))].sort().join();
+      if (!rounds.has(k)) rounds.set(k, { roundId: r.roundId, copies: new Map(), finals: new Map(), sources: new Map(), own: false });
       const into = rounds.get(k);
+      if (own && at === 0) into.own = true;
       if (!into.copies.has(committee)) into.copies.set(committee, { committee: r.committee, seats: 0 });
       into.copies.get(committee).seats++;
       if (into.copies.size > 1) conflicts.add(k);
@@ -13379,11 +13461,16 @@ function mergeServedRounds(held) {
         if (x.signedAtMs < b.first[0]) b.first = [x.signedAtMs, f];
         if (x.signedAtMs > b.last[0]) b.last = [x.signedAtMs, f];
       }
-      for (const b of bySigner.values()) for (const [, f] of [b.first, b.last]) into.finals.set(hx(f), f);
+      // kanban #2312: every FINAL kept names the answers holding it, so servedNodes can stop at an answer's bad-signature budget
+      for (const b of bySigner.values()) for (const [, f] of [b.first, b.last]) {
+        const h = hx(f);
+        if (!into.finals.has(h)) { into.finals.set(h, f); into.sources.set(h, [at]); }
+        else if (!into.sources.get(h).includes(at)) into.sources.get(h).push(at);
+      }
     }
-  }
+  });
   const pick = (copies) => { let best = null; for (const c of copies.values()) if (!best || c.seats > best.seats) best = c; return best.committee; };
-  return { rounds: [...rounds.values()].map((r) => ({ roundId: r.roundId, committee: pick(r.copies), finals: [...r.finals.values()] })),
+  return { rounds: [...rounds.values()].map((r) => ({ roundId: r.roundId, committee: pick(r.copies), finals: [...r.finals.values()], sources: [...r.sources.values()], own: r.own })),
     conflicts: [...conflicts] };
 }
 
@@ -31980,13 +32067,46 @@ function liquidationKeyFor(seed, federationHex, curve) {
 // A door's list is that door's word (kanban #1853): the claim key is derived once per distinct federation the list names, and
 // for at most MAX_LIQUIDATION_FEDERATIONS of them - an honest list names the few liquidated federations, many payouts each; a
 // padded one naming thousands of federations no longer costs the tab one EC multiply per row.
+//
+// Kanban #2252 / #2264 (audit45 refute of #1853): (1) the cap counted every federation the list named, other players' too, and
+// an honest set's list holds every liquidation it ever paid, oldest first - after 32 of them the newest one's payout was never
+// collected. The rows are now read newest first, and `federations` (the federations this page holds, then those the signed
+// liquidation events name) puts those rows first and leaves every other federation underived; the cap bounds only what is left.
+// (2) every row naming this seed's payout key cost a wallet open and a refund round trip, and the door learns that key from the
+// player's own POST: matching rows are deduplicated by txid:outIdx and at most MAX_LIQUIDATION_PAYOUTS_PER_FEDERATION are
+// claimed per federation (an honest list holds a player's few: notes, pending, remainder).
+//
+// Kanban #2328 (audit45 refute of #2252/#2264, skeptic 2): a count cap on matching rows let anyone starve a player on an HONEST
+// door - a payout key is public (GET /liquidation-claims), so a stranger holding a few dust notes presented them late, one per
+// pass, naming the victim's key, and the 16 newer dust rows took every slot; the victim's real (older, large) payout was never
+// claimed. Likewise a row already collected (kept) took a slot on every reload, so a payout whose Refund once failed was never
+// retried. Now only a FAILED claim (refused, unknown outpoint, wallet error) costs one of the per-federation slots: a kept row
+// and an accepted refund cost none (an accepted one is a real note the federation paid this key, so the work is bounded by
+// real money). Within a federation the rows are claimed largest msat first (newest first among equals), so a padded list
+// cannot put its refusals ahead of a real payout of any size above theirs.
 const MAX_LIQUIDATION_FEDERATIONS = 32;
-async function collectLiquidationPayouts({ listed, seed, curve, clientFor, storage }) {
+const MAX_LIQUIDATION_PAYOUTS_PER_FEDERATION = 16;
+async function collectLiquidationPayouts({ listed, seed, curve, clientFor, storage, federations }) {
   const out = [];
   const keys = new Map();
-  const rows = Array.isArray(listed && listed.payouts) ? listed.payouts : [];
+  const claimed = new Map();
+  const seen = new Set();
+  const all = Array.isArray(listed && listed.payouts) ? listed.payouts : [];
+  const fidOf = (p) => String((p && p.federation) || '').toLowerCase();
+  let rows = all.slice().reverse();
+  if (Array.isArray(federations)) {
+    const rank = new Map();
+    for (const f of federations) { const k = String(f || '').toLowerCase(); if (/^[0-9a-f]{64}$/.test(k) && !rank.has(k)) rank.set(k, rank.size); }
+    rows = rows.filter((p) => rank.has(fidOf(p))).sort((a, b) => rank.get(fidOf(a)) - rank.get(fidOf(b)));   // stable: newest first within one
+  }
+  // kanban #2328: within one federation, the largest payout first (stable: newest first among equals); federations keep their order
+  const fedAt = new Map();
+  for (const p of rows) { const f = fidOf(p); if (!fedAt.has(f)) fedAt.set(f, fedAt.size); }
+  const msatOf = (p) => { try { const v = BigInt(String(p && p.msat)); return v > 0n ? v : 0n; } catch { return 0n; } };
+  rows = rows.map((p, i) => ({ p, i, f: fedAt.get(fidOf(p)), m: msatOf(p) }))
+    .sort((a, b) => (a.f - b.f) || (a.m > b.m ? -1 : a.m < b.m ? 1 : a.i - b.i)).map((x) => x.p);
   for (const p of rows) {
-    const fid = String((p && p.federation) || '').toLowerCase();
+    const fid = fidOf(p);
     if (!/^[0-9a-f]{64}$/.test(fid)) continue;
     let key = keys.get(fid);
     if (!key) {
@@ -31995,15 +32115,21 @@ async function collectLiquidationPayouts({ listed, seed, curve, clientFor, stora
       keys.set(fid, key);
     }
     if (String(p.payoutPk).toLowerCase() !== key.payoutPk) continue;
+    const at = `${String(p.txid).toLowerCase()}:${Number(p.outIdx)}`;
+    if (seen.has(at)) continue;
+    seen.add(at);
     const note = movedKey(storage, `arena-liquidation-paid-${p.txid}:${p.outIdx}`);
-    if (storage.getItem(note)) { out.push({ ...p, ok: true, kept: true }); continue; }
+    if (storage.getItem(note)) { out.push({ ...p, ok: true, kept: true }); continue; }   // kanban #2328: a kept row costs no slot
+    if ((claimed.get(fid) || 0) >= MAX_LIQUIDATION_PAYOUTS_PER_FEDERATION) continue;   // only failed claims fill the cap
+    const failed = () => claimed.set(fid, (claimed.get(fid) || 0) + 1);
     const fields = { paymentImage: { kind: 'hash', bytes: '00'.repeat(32) }, amountMsat: String(p.msat), claimPk: key.payoutPk, refundPk: key.payoutPk, expiration: 0 };
     try {
       const client = await clientFor(p.into);
       const said = JSON.parse(await client.refund(p.txid, Number(p.outIdx), JSON.stringify(fields), toHex(key.secret)));
       if (said.accepted === true) storage.setItem(note, JSON.stringify({ msat: p.msat, at: Date.now() }));
+      else failed();
       out.push({ ...p, ok: said.accepted === true, why: said.accepted === true ? null : (said.error || 'the federation did not accept the refund') });
-    } catch (e) { out.push({ ...p, ok: false, why: e.message }); }
+    } catch (e) { failed(); out.push({ ...p, ok: false, why: e.message }); }
   }
   return out;
 }
@@ -32905,7 +33031,10 @@ const shownNameOf = (record) => record.name || generatedName(record.identityPubk
 const NAMES_PER_SEAT = 128;
 const NAME_CHECKS_MAX = 512;
 
-function checkedNames(items, roundIdHex, verify) {
+// A READ'S SHARE (kanban #2259, #2276): `budget`, when given, is { left } shared by every round of one lobby read - each check
+// spends one, and none is run once it is spent - so the rounds one seat makes up cannot add NAME_CHECKS_MAX each per paint;
+// with { perSeat: Map, share } too, each seat (an item's `by`) runs at most `share` of them (kanban #2342)
+function checkedNames(items, roundIdHex, verify, budget = null) {
   const newest = new Map();
   const seen = new Set();
   let checks = 0;
@@ -32914,13 +33043,21 @@ function checkedNames(items, roundIdHex, verify) {
     try {
       const same = `${String(x && x.record)}|${String(x && x.sig)}`;
       if (seen.has(same)) continue;
-      seen.add(same);
       record = decodeLobbyName(fromHex(String(x && x.record)));
-      if (toHex(record.roundId) !== String(roundIdHex).toLowerCase()) continue;
+      if (toHex(record.roundId) !== String(roundIdHex).toLowerCase()) { seen.add(same); continue; }
       const had = newest.get(toHex(record.playerPubkey));
-      if (had && record.atMs <= had.atMs) continue;
+      if (had && record.atMs <= had.atMs) { seen.add(same); continue; }
       if (checks >= NAME_CHECKS_MAX) break;
+      if (budget && !(budget.left > 0)) break;
+      // A SEAT'S SHARE (kanban #2342): with `budget.perSeat` and `budget.share`, a name is charged to the seat that supplied it (`x.by`);
+      // once that seat's share is spent its names are passed over unchecked - and not marked seen, so the same record from another seat
+      // is still checked on that seat's share
+      const by = budget && budget.perSeat && x && x.by !== undefined ? String(x.by) : null;
+      if (by !== null && (budget.perSeat.get(by) || 0) >= budget.share) continue;
+      seen.add(same);
       checks++;
+      if (budget) budget.left--;
+      if (by !== null) budget.perSeat.set(by, (budget.perSeat.get(by) || 0) + 1);
       if (!verify(fromHex(String(x.sig)), lobbyNameId(record), record.playerPubkey)) continue;
     } catch { continue; }
     newest.set(toHex(record.playerPubkey), record);
@@ -33453,6 +33590,29 @@ const CLOSED_KEPT_MS = 2n * 3600n * 1000n;
 // batches of 16; the next reads bring the rest, a second apart)
 const LOBBY_CONTRACTS_PER_READ = 32;
 const LOBBY_OTHER_CONTRACTS_PER_READ = 16;
+// THE NAME CHECKS ONE LOBBY READ MAY RUN, ALL ROUNDS TOGETHER (kanban #2259, #2276; refute of #1864): NAME_CHECKS_MAX bounded one round,
+// but a seat makes up any number of rounds (a contract hashes to its id and the seat serves it) - 32 of them with 128 forged names each
+// were 4,096 BIP-340 checks on the main thread in one read, more on every later read. Rows that could be joined spend it first.
+const LOBBY_NAME_CHECKS_PER_READ = 2 * NAME_CHECKS_MAX;
+
+// ONE ROUND'S NAMES TO CHECK, FAIR ACROSS SEATS (kanban #2259, #2276): only a signer node of the round, by its own fresh signed listing (the
+// key is then its own, not a claim), adds names; ONE seat adds at most NAMES_PER_SEAT for the round however often it lists the round (a seat
+// listing the same round five times spent all NAME_CHECKS_MAX on its forgeries before an honest seat's real record was reached); and the
+// seats' names are taken in turn, one from each, so no seat's forgeries starve another seat's names out of the round's checks
+function namesToCheck(counts, signerNodes) {
+  const bySeat = new Map();
+  for (const c of counts) {
+    if (!c || !Array.isArray(c.names) || !c.names.length || !c.fresh || !signerNodes.has(c.key)) continue;
+    const have = bySeat.get(c.key) || [];
+    if (have.length >= NAMES_PER_SEAT || !c.signed) continue;
+    bySeat.set(c.key, have);
+    // each name carries the seat that supplied it: the read's checks are charged to that seat (kanban #2342, checkedNames `budget.perSeat`)
+    for (const n of c.names) { if (have.length >= NAMES_PER_SEAT) break; have.push({ record: n && n.record, sig: n && n.sig, by: c.key }); }
+  }
+  const lists = [...bySeat.values()], out = [];
+  for (let i = 0; i < NAMES_PER_SEAT; i++) { let any = false; for (const l of lists) if (i < l.length) { out.push(l[i]); any = true; } if (!any) break; }
+  return out;
+}
 
 // A NODE WHOSE READ FAILED IS NOT ASKED AGAIN FOR FAILED_NODE_SKIP_MS (kanban #1133: every lobby read on the owner's iPhone asked the 7 stopped
 // T3 seats and the dead quick tunnels its kept list holds, 11 nodes, and paid for them each second). Failed means the read failed outright -
@@ -33537,9 +33697,15 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
       const body = await r.json();
       const nodeKey = String(body && body.node).toLowerCase();
       const at = Number(body && body.nowMs);
+      // ONE ENTRY PER ROUND FROM ONE SEAT (kanban #2349; refute of #1864 / #2259): each repeat of a round in one seat's answer was its own
+      // listing with its own signature check - one seat repeating its round 5,000 times cost 5,000 BIP-340 checks (and 5,000 items in the
+      // page's verifyMany batch) on every read. The first entry for a round is kept; a later one from the same answer is dropped unread.
+      const listedHere = new Set();
       for (const x of (body && Array.isArray(body.rounds)) ? body.rounds : []) {
         const id = String(x && x.id).toLowerCase();
         if (!/^[0-9a-f]{64}$/.test(id)) { refused.push(`${node}: listed something that is not a round id`); continue; }
+        if (listedHere.has(id)) continue;
+        listedHere.add(id);
         if (!said.has(id)) said.set(id, []);
         if (Number(x.entryCloseMs) > 0) soonest.set(id, Number(x.entryCloseMs));
         if (x && x.game && x.game.id) gameOf.set(id, String(x.game.id).toLowerCase());
@@ -33565,6 +33731,7 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
     } catch (e) { refused.push(`${node}: ${e.message}`); failed.push(String(node)); if (e && e.silent) unanswered.push(String(node)); }
   }
   const rows = [], closed = [];
+  const namesFrom = new Map();                              // id -> the names its row checks (namesToCheck)
   // WHY NO ROW (kanban #1133): listings read, rounds named, contracts known, listings stale or with a false signature, rounds short of agreement
   const why = { listings: 0, rounds: said.size, contracts: 0, stale: 0, sigFalse: 0, notEnough: 0 };
   for (const counts of said.values()) why.listings += counts.length;
@@ -33647,6 +33814,7 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
     const seating = !seatingSaid.length ? null : seatedBy
       ? { state: 'named', game: seatedBy.game, settlement: seatedBy.settlement, drawn: seatedBy.drawnCount || null }
       : { state: seatingSaid.some((x) => x.equivocated) ? 'equivocated' : 'pending' };
+    namesFrom.set(id, namesToCheck(counts, signerNodes));
     rows.push({
       id, phase,
       seating,
@@ -33663,7 +33831,7 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
       // A NODE THAT CALLED A PAYING ROUND FREE, OR THE REVERSE, IS NAMED: the row
       // says what the contract says, and the disagreement is shown beside it.
       disagrees: counts.filter((c) => c.free !== !pays).map((c) => c.node),
-      names: checkedNames(counts.flatMap((c) => c.names), id, verify),
+      names: [],                                            // checked below, within the read's budget (kanban #2259, #2276)
       // WHAT THE PLAYER IS WARNED OF BEFORE ENTRY (§18A.7 / §22A): a paying round's only
       warnings: pays ? entryWarnings(contract, counts.flatMap((c) => c.warnings || [])) : [],
       contract,
@@ -33681,6 +33849,21 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
     });
   }
   rows.sort((x, y) => (x.phase === y.phase ? x.entryCloseMs - y.entryCloseMs : (x.phase === 'open' ? -1 : 1)));
+  // THE NAMES, CHECKED WITHIN ONE BUDGET FOR THE WHOLE READ (kanban #2259, #2276): a joinable row first (its signer nodes agree), then the
+  // opened game's, then in the rows' order; a row the budget does not reach shows no names this read
+  // AND FAIR ACROSS THE SEATS THAT SUPPLY THEM (kanban #2342; refute of #2259): the read's budget was one pool, so two colluding seats' made-up
+  // joinable rounds that close sooner (8 x 128 forged names) spent all of it before an honest round was reached - its real names [] on every
+  // read. Each check is now charged to the seat that supplied the name, and each seat gets an equal share of the read's budget: a seat
+  // is one of the nodes the page asks (one key per answer), so no seat's forgeries can take another seat's share
+  const supplying = new Set();
+  for (const from of namesFrom.values()) for (const n of from) supplying.add(n.by);
+  const nameBudget = { left: LOBBY_NAME_CHECKS_PER_READ, perSeat: new Map(), share: Math.floor(LOBBY_NAME_CHECKS_PER_READ / Math.max(1, supplying.size)) };
+  const preferRow = Array.isArray(preferGames) && preferGames.length ? new Set(preferGames.map((g) => String(g).toLowerCase())) : null;
+  const rank = (r) => (r.joinable ? 0 : 2) + (preferRow && preferRow.has(r.game) ? 0 : 1);
+  for (const r of rows.map((r, i) => [r, i]).sort(([a, i], [b, j]) => rank(a) - rank(b) || i - j).map(([r]) => r)) {
+    const from = namesFrom.get(r.id) || [];
+    r.names = from.length ? checkedNames(from, r.id, verify, nameBudget) : [];
+  }
   // FAILED NOW: skipped from here on for FAILED_NODE_SKIP_MS; ANSWERED NOW: out of the list (kanban #1133)
   if (skipFailed) { const silentNow = new Set(unanswered.map(String)), failedNow = new Set(failed.map(String));
     for (const n of unique) { const k = String(n); if (failedNow.has(k) && !silentNow.has(k)) { const times = (FAILS.get(k) || 0) + 1; FAILS.set(k, times); down.set(k, nowMs + Math.min(FAILED_NODE_SKIP_MS, FAILED_NODE_FIRST_SKIP_MS * 2 ** (times - 1))); } else if (!failedNow.has(k)) { down.delete(k); FAILS.delete(k); } }
@@ -35482,6 +35665,32 @@ function itemPriceOn(manifest, priceSat, devsPct) {
   return t.reserves ? itemSplitReserves({ listMsat: BigInt(priceSat) * 1000n, devsPct: Number(devsPct) }).priceMsat / 1000n : itemPriceFor(BigInt(priceSat), Number(devsPct));
 }
 
+/**
+ * ONE SEAT'S ANSWER, READ UP TO `maxBytes` (kanban #2365, #1489 a45 refute 9 skeptic 3 of #2239): the bound the seat's own reader keeps
+ * (server.js readJsonCapped). A stated length over it is refused unread; a body is read as a stream and dropped once past it. Measured
+ * before: a 33.6 MB answer was parsed whole and taken by the page.
+ */
+async function readJsonUpTo(r, maxBytes) {
+  const len = Number(r.headers && typeof r.headers.get === 'function' ? r.headers.get('content-length') : NaN);
+  if (Number.isFinite(len) && len > maxBytes) { try { await r.body?.cancel(); } catch { /* gone already */ } throw new Error(`its answer of ${len} bytes is over ${maxBytes}`); }
+  if (!r.body || typeof r.body.getReader !== 'function') {
+    if (typeof r.text === 'function') { const t = await r.text(); if (t.length > maxBytes) throw new Error(`its answer is over ${maxBytes} bytes`); return JSON.parse(t); }
+    return r.json();                                          // a stand-in fetch with no body stream (tests)
+  }
+  const reader = r.body.getReader(), parts = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) { try { await reader.cancel(); } catch { /* gone already */ } throw new Error(`its answer is over ${maxBytes} bytes`); }
+    parts.push(value);
+  }
+  const all = new Uint8Array(total); let at = 0;
+  for (const p of parts) { all.set(p, at); at += p.byteLength; }
+  return JSON.parse(new TextDecoder().decode(all));
+}
+
 /** The served list of the 24 h before `toMs`, from every seat that answers. Answers { ok, served, seats } or { ok: false, why }. */
 async function servedFromSeats({ seats, toMs, fetch, verify, timeoutMs = 15000 }) {
   const fromMs = BigInt(toMs) - BigInt(SERVED_WINDOW_MS);
@@ -35495,13 +35704,14 @@ async function servedFromSeats({ seats, toMs, fetch, verify, timeoutMs = 15000 }
     try {
       const r = await fetch(`${String(s).replace(/\/$/, '')}/served?to=${toMs}&finals=1`, { signal: AbortSignal.timeout(timeoutMs) });
       if (!r.ok) return;
-      const a = await r.json();
+      const a = await readJsonUpTo(r, SERVED_ANSWER_BYTES_MAX);   // kanban #2365: one seat's answer is read up to a bound, as on the seat
       held[i] = (a.held || []).slice(0, SERVED_HELD_MAX).map((x) => ({ roundId: fromHex(x.roundId), committee: x.committee.map(fromHex), finals: x.finals.map(fromHex) }));
     } catch { /* a seat that does not answer adds nothing */ }
   }));
   const answered = held.filter(Boolean).length;
   if (!answered) return { ok: false, why: 'no seat answered who served a round in the last 24 hours' };
-  const served = servedNodes({ rounds: mergeServedRounds(held.filter(Boolean)).rounds, fromMs, toMs: BigInt(toMs), verify });
+  // kanban #2361: the page holds no record of its own - no answer's rounds are taken as the reader's, every answer's checks are charged
+  const served = servedNodes({ rounds: mergeServedRounds(held.filter(Boolean), { own: false }).rounds, fromMs, toMs: BigInt(toMs), verify });
   if (!served.nodes.length) return { ok: false, why: 'no node served a round in the last 24 hours: the nodes\' half has nobody to go to' };
   return { ok: true, served, seats: answered };
 }
@@ -35617,14 +35827,29 @@ function itemUnlocksOf(manifest) {
 
 /**
  * THE SHOP OF A GAME: the items its newest manifest that sells any names, from the lobby's games (games.js fetchGames, one entry per
- * version) of that game name. Answers { game, items: [{ id, name, priceSat }] } or null when no version sells anything.
+ * version) of that game. Answers { game, items: [{ id, name, priceSat }] } or null when no version sells anything.
+ * `game` is the chosen tile ({ name, devKey }) or a game name.
+ * ONE DEVELOPER KEY, NOT ONE NAME (kanban #2243, #1810 variant): #1810 keeps only manifests their own key signed, and any stranger
+ * signs with a key of his own - one seat listing a same-name manifest under its own key, version + 1, took the shop of the honest
+ * tile (its items, its price, its seats). A version of a game is a new manifest under the same developer key and name (§5,
+ * oneTilePerGame's group), so the shop is the newest selling version of the tile's own key; for a bare name, the key of the
+ * name's first game that names one (fetchGames' order, the tile the page chooses).
  */
-function shopOf(games, gameName) {
-  const selling = (games || []).filter((g) => g && g.manifest && g.manifest.gameName === gameName && (g.manifest.items || []).length)
+const devKeyOfGame = (g) => (g && (g.devKey || (g.manifest && g.manifest.gameDevPubkey && toHex(g.manifest.gameDevPubkey)))) || null;
+function gameDevKeyFor(games, game) {
+  if (game && typeof game === 'object') return devKeyOfGame(game);
+  const first = (games || []).find((g) => g && g.manifest && (g.name === game || g.manifest.gameName === game) && devKeyOfGame(g));
+  return devKeyOfGame(first);
+}
+function shopOf(games, game) {
+  const gameName = game && typeof game === 'object' ? game.name : game;
+  const devKey = gameDevKeyFor(games, game);
+  const selling = (games || []).filter((g) => g && g.manifest && g.manifest.gameName === gameName && devKeyOfGame(g) === devKey
+    && (g.manifest.items || []).length)
     .sort((a, b) => Number(b.manifest.version) - Number(a.manifest.version));
   if (!selling.length) return null;
-  const game = selling[0];
-  return { game, items: game.manifest.items.map((it) => ({ id: it.id, name: it.name, priceSat: it.priceSat })) };
+  const chosen = selling[0];
+  return { game: chosen, items: chosen.manifest.items.map((it) => ({ id: it.id, name: it.name, priceSat: it.priceSat })) };
 }
 
 /**
@@ -39126,6 +39351,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          tabIdentity: tabIdentity, setPlayerName: setPlayerName, generatedName: generatedName, identityProofFor: identityProofFor, presenceProofFor: presenceProofFor, orderCancelId: orderCancelId, orderSellId: orderSellId, ORDER_PRICE_SCALE: ORDER_PRICE_SCALE,
          nameRecordFor: nameRecordFor, postName: postName, namesOf: namesOf, checkedNames: checkedNames, shownNameOf: shownNameOf,
          boardNames: boardNames,
+         NAMES_PER_SEAT: NAMES_PER_SEAT, LOBBY_NAME_CHECKS_PER_READ: LOBBY_NAME_CHECKS_PER_READ,
          tabWallet: tabWallet, spendLog: spendLog, spentLine: spentLine,
          parseConnection: parseConnection,
          walletBudget: walletBudget, budgetLine: budgetLine,
