@@ -67,6 +67,8 @@ function treeOf(root) {
  * the one file `url` names, hashed alone. `sourceHash` when the core's name is not its files' hash (the truck before the
  * 82/90 fork runs 2069b4c2's files), else `hash`. Answers the files by path and the entry's path among them.
  */
+/** The entry name of every single-file core, in the plugin trial and at the seat alike (kanban #1694). */
+export const SINGLE_ENTRY = 'core.mjs';
 export function coreFiles(core) {
   if (!core || typeof core.url !== 'string') throw new Error('that core names no file to load');
   const entryPath = fileURLToPath(core.url);
@@ -82,8 +84,10 @@ export function coreFiles(core) {
   const bytes = readFileSync(entryPath);
   const hash = coreBytesHashHex(bytes);
   if (hash !== want) throw new Error(`core ${String(core.hash).slice(0, 16)}: its file hashes to ${hash.slice(0, 16)}, not ${want.slice(0, 16)}`);
-  const entry = entryPath.split(/[\\/]/).pop();
-  return { files: new Map([[entry, bytes.toString('utf8')]]), entry };
+  // ONE NAME FOR EVERY SINGLE-FILE CORE (kanban #1694): the module's identifier was its file name ('core-<hash>.mjs' as
+  // installed, 'core.mjs' in the plugin trial), and V8's stack text names it - so an adapter could read where it ran and
+  // pass the trial, then spin at load in the seat's thread. Now the trial and every seat load it as SINGLE_ENTRY.
+  return { files: new Map([[SINGLE_ENTRY, bytes.toString('utf8')]]), entry: SINGLE_ENTRY };
 }
 
 /** Reads back a driver answer: tagged bigints and bytes restored. */
