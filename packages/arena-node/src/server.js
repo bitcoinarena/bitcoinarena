@@ -2691,8 +2691,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     verify: verifySchnorrKept,   // kept per (sig, msg, key): a PRESENT refused once is not checked again (kanban #587)
     log: (m) => console.log(m), windowOf: marketWindowFor,
     // A V2 ROUND'S SEATS (2026.0.2): the settlement seating's certified seated set is the round's 7 signer nodes
-    onSeated: (rid, role, seated, contract = null) => {
+    onSeated: (rid, role, seated, contract = null, { replaced = false } = {}) => {
       if (role !== 'settlement') return;
+      // a certificate that replaced the one held (kanban #1681, #1741: a withholding member left out) seats the table's rounds again
+      if (replaced) tablesSeated.delete(toHex(rid));
       // A TABLE'S LATER SEATING (kanban #1020): it seats that check-in and the rounds after it
       let later = null; try { const t = tableAnchorOf(contract || decodeRoundContract(new Uint8Array(round.get(rid).contract))); later = t && !t.first ? t : null; } catch { later = null; }
       if (later) { reseatTable(later.anchorId, contract ? contract.roundIndex : decodeRoundContract(new Uint8Array(round.get(rid).contract)).roundIndex); return; }
