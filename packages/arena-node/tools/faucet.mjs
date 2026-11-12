@@ -419,7 +419,7 @@ async function grant(ask) {
 async function grantPay(ask, inv, d, book, row) {
   book.players.push({ ...row, pending: true, payers: PAYERS.map((_, i) => i) });
   saveBook(book);
-  const tried = [], askedPayers = [];
+  const tried = [], askedPayers = [], failedFor = [];
   // A PAYER IS NOT ASKED TO PAY ITS OWN NODE'S INVOICE (kanban #1381): payer a is gateway a's lnd - "self-payments not allowed" cost a call before payer b
   for (const payer of await payersFor(inv.destination)) {
     // A TIMEOUT IS NOT A REFUSAL, AND NOT A PAYMENT EITHER (kanban #1381, Daniel 2026-11-09 "scheitere daran die test sats zu bekommen": payer b's
@@ -439,12 +439,19 @@ async function grantPay(ask, inv, d, book, row) {
       console.log(`${new Date().toISOString()} player ${ask.kind} ${d.grant.invoiceSats} sat (${ask.ip || 'no ip'}): ${inv.payment_hash.slice(0, 16)}`);
       return { ok: true, sats: d.grant.sats };
     }
+    // FAILED, AND SAID SO IN TIME (kanban #2187): lnd's FAILED is the payment's last state - this payer will never pay it
+    failedFor.push(!paid.timedOut && /Payment status: FAILED/.test(paid.out));
     tried.push((paid.err || paid.out).trim().slice(-160));
   }
   const after = readBook();
   after.players = (after.players || []).filter((p) => p.hash !== row.hash);
   // a payer that timed out may still pay it (kanban #1421): kept in `unsure` for the sweep, booked again if any payer says SUCCEEDED
-  after.unsure = [...(after.unsure || []), { ...row, payers: askedPayers, removedMs: Date.now() }].slice(-500);
+  // NEVER CUT FOR ROOM (kanban #2132, re-check of #1628/#1834): `.slice(-500)` dropped the oldest unsure rows, so 500 more unsure grants of fresh
+  // accounts pushed a welcome still in flight out, and its account was paid a second welcome. A row leaves `unsure` only through the sweep (rebooked or
+  // forgotten); the cap is held in grant(), which pays nothing while `unsure` is full
+  // AND A GRANT EVERY ASKED PAYER ANSWERED FAILED AT ONCE IS NOT PARKED AT ALL (kanban #2187): lnd's FAILED is final, nothing can still pay it
+  const definitelyFailed = askedPayers.length > 0 && failedFor.length === askedPayers.length && failedFor.every(Boolean);
+  if (!definitelyFailed) after.unsure = [...(after.unsure || []), { ...row, payers: askedPayers, removedMs: Date.now() }];
   saveBook(after);
   console.log(`${new Date().toISOString()} player ${ask.kind} not paid: ${tried.join(' | ')}`);
   return { ok: false, why: 'the faucet could not pay just now: try again in a minute' };
