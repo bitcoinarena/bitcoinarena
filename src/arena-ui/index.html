@@ -4622,7 +4622,9 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           }
           // AND WHAT THE COLLECT NEEDS AFTER THE WINDOW, KEPT IN THE TAB (6d): a reload -
           // onto the round link or anywhere - collects from this, not from the join.
-          ARENACLIENT.saveCollect(vault(), Object.assign({}, window.ARENA_LOCK_JOIN, { round: named.round, stakeLock }));
+          // A RECORD THE BROWSER REFUSED IS SAID (kanban #2106): the 24 h scan brings it back (it now looks per order), and the log says why it must
+          if (ARENACLIENT.saveCollect(vault(), Object.assign({}, window.ARENA_LOCK_JOIN, { round: named.round, stakeLock })) === false)
+            console.error('[arena] the collect record of this order was not kept (the browser refused it) - the 24 h scan looks for it at the next load');
         }
         window.ARENA_STAKE = {
           dealt: true, signerNodes: signerNodes.signerNodes.length, agreed: signerNodes.agreed,
@@ -5106,7 +5108,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         if (window.ARENA_NEW_WALLET && seeds.length === 1 && seeds[0] === tabHex) { console.log('[arena] collect scan: a wallet made in this page - no round before it to find'); return; }
         // ONE READ OF EACH SIGNER NODE PER SCAN (2026-10-07): its /settled list is matched against every
         // phrase's keys - 7 asks on 7 signer nodes however many phrases are kept (was 7 per phrase: 49 for seven)
-        const knownBySeed = new Map(seeds.map((hex) => [hex, ARENACLIENT.savedCollects(vault(), { seed: ARENACLIENT.fromHex(hex) }).map((r) => r.roundIdHex)]));
+        // KNOWN BY ROUND AND ORDER (kanban #2106): a kept order 0 no longer hides a lost record of order 2 of the same round from the scan
+        const knownBySeed = new Map(seeds.map((hex) => [hex, ARENACLIENT.savedCollects(vault(), { seed: ARENACLIENT.fromHex(hex) }).map((r) => r.roundIdHex + ':' + (Number(r.order) || 0))]));
         const found = await ARENACLIENT.findOwedRounds({ seeds: seeds.map((hex) => ARENACLIENT.fromHex(hex)), knownBySeed, curve: window.ARENA_CURVE, nodes: named.nodes,
           sinceMs: Date.now() - OWED_LOOKBACK_MS });
         for (const hex of seeds) {
