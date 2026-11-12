@@ -167,11 +167,16 @@ function deathOf(sup, id) {
  */
 export function loadCore({ files, entry }, options = {}) {
   const { callMs = CALL_MS, stepMs = STEP_MS, askMs = ASK_MS, loadMs = LOAD_MS, name = entry,
-    arrayBudget = ARRAY_BUDGET, liveCap = 0, heap = HEAP_LIMITS, rssBackstop = RSS_BACKSTOP, oneReplay = false, answerMax = ANSWER_MAX, until = null } = options;
+    arrayBudget = ARRAY_BUDGET, liveCap = 0, heap = HEAP_LIMITS, rssBackstop = RSS_BACKSTOP, oneReplay = false, answerMax = ANSWER_MAX, until = null, loadUntil = null } = options;
   // `until` (kanban #1719, #1538): ONE ABSOLUTE DEADLINE (a Date.now() time) for the load AND the meta ask loadCore makes
   // itself - the plugin trial gives load, meta and every decide call one TRIAL_MS in total; meta reads DECIDE's fields, which
   // may be getters, so without it load + meta held the seat's thread up to loadMs + askMs
-  const leftOf = (ms) => (Number.isFinite(until) ? Math.max(1, Math.min(ms, until - Date.now())) : ms);
+  // `loadUntil` (kanban #2058, #2078): the same one deadline for the load and its meta ask ONLY - the first load of a core a seat
+  // has just adopted (plugin-package.js registrationFromPackage) is bounded like the trial, and the box it gives is kept with
+  // the installed core's own deadlines from then on
+  let loading = true;
+  const by = () => Math.min(Number.isFinite(until) ? until : Infinity, loading && Number.isFinite(loadUntil) ? loadUntil : Infinity);
+  const leftOf = (ms) => (Number.isFinite(by()) ? Math.max(1, Math.min(ms, by() - Date.now())) : ms);
   const sup = supervisorOf();
   const id = sup.next++;
   const ctrl = new Int32Array(new SharedArrayBuffer(8 * 4));
@@ -196,7 +201,7 @@ export function loadCore({ files, entry }, options = {}) {
     if (ended) return;
     ended = why;
     const t0 = Date.now();
-    const waitMs = Number.isFinite(until) ? Math.max(0, Math.min(EXIT_WAIT_MS, until + UNTIL_EXIT_GRACE_MS - t0)) : EXIT_WAIT_MS;
+    const waitMs = Number.isFinite(by()) ? Math.max(0, Math.min(EXIT_WAIT_MS, by() + UNTIL_EXIT_GRACE_MS - t0)) : EXIT_WAIT_MS;
     if (!gone()) sup.worker.postMessage({ type: 'end', id });
     while (!gone() && Date.now() - t0 < waitMs) Atomics.wait(ctrl, C.STATE, Atomics.load(ctrl, C.STATE), Math.max(1, Math.min(10, waitMs - (Date.now() - t0))));
     if (!gone()) lingering.add({ ctrl, name });
@@ -270,7 +275,7 @@ export function loadCore({ files, entry }, options = {}) {
   let lastOne = null;
   const replayFresh = (input, within) => {
     if (ended) throw new Error(ended);
-    const one = loadCore({ files, entry }, { ...options, oneReplay: true });
+    const one = loadCore({ files, entry }, { ...options, loadUntil: null, oneReplay: true });   // kanban #2058: a replay's thread has its own deadlines
     lastOne = one;
     try { return one.call('replay', input, within); } catch (e) {
       if (one.endedWhy()) lastEnd = one.lastEnd();   // kanban #2008: that call fails, the core is not ended
@@ -278,7 +283,8 @@ export function loadCore({ files, entry }, options = {}) {
     } finally { if (!one.endedWhy()) one.end(); }
   };
   const call = (op, input = {}, within = null) => (String(op) === 'replay' && !oneReplay ? replayFresh(input, within) : callHere(op, input, within));
-  const meta = callHere('meta', {}, Number.isFinite(until) ? leftOf(askMs) : null);   // kanban #1719
+  const meta = callHere('meta', {}, Number.isFinite(by()) ? leftOf(askMs) : null);   // kanban #1719, #2058
+  loading = false;
   return Object.freeze({ call, meta, end: () => end('ended by the node'), lastEnd: () => lastEnd, endedWhy: () => ended,
     highWaterMb: () => (lastOne ? lastOne.highWaterMb() : Atomics.load(ctrl, C.HIGH_MB)) });
 }
