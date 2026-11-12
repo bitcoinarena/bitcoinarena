@@ -306,7 +306,7 @@ const CORS = {
   'access-control-expose-headers':
     'x-state, x-ticks, x-transcript-hash, x-checkpoints, x-receipts, '
     + 'x-marks, x-dropped, x-through-tick, x-equivocations, x-ticks-at, x-no-quorum, '
-    + 'x-foreign-receipts, x-nostr-published, x-question, x-outcomes, x-resolve-at-ms',
+    + 'x-foreign-receipts, x-nostr-published, x-question, x-outcomes, x-resolve-at-ms, x-entry-close-in-ms',
 };
 
 const bytes = (res, code, body) => {
@@ -4536,7 +4536,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (!mine.ok) return { ok: false, status: 409, why: mine.why };
     const id = handoutId(handout);
     round.rememberHandout({ id, roundId: handout.roundId, bytes: encodeHandout(handout) });
-    return { ok: true, id, signerNode: mine.signerNode };
+    // THE TIME LEFT TO THE CLOSE ON THIS SEAT'S CLOCK (kanban #1892, #1489 refute 2 of #1485/#1742, feedback #010): the page runs this handout beside the
+    // funding (wallet, exchange, a deposit invoice) and locks only after both, so the time between this answer and the lock is the funding's, which no
+    // lead here can bound. The page's own guard before the lock read the player's Date.now() - wrong for exactly the slow clock this door stands for.
+    // The 201 now says how many ms this seat had left at its answer (x-entry-close-in-ms); the page (arena-client seatCloseLeftMs) reads the close on the
+    // seats' clock from it and makes no lock with less than the lead left, however long the funding took after the handout
+    return { ok: true, id, signerNode: mine.signerNode, closeInMs: Number(roundContract.entryCloseMs) - Number(round.now()) };
   };
   // A LOCK THAT ENTERED NOTHING, ITS ROUND'S ENTRIES CLOSED (kanban #593, playtest 2026-10-23: a page's 100 sat stake for
   // round 9412cdf9, locked while the seats restarted, entered at no seat - back only at its expiry, 1834 blocks on): returned as
@@ -8461,7 +8466,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         steps.at(got.ok ? 'share opened' : 'refused');
         if (!got.ok) return text(res, got.status || 409, got.why);
         steps.named(toHex(got.id));
-        res.writeHead(201, { 'content-type': 'application/octet-stream', 'x-signer-node': String(got.signerNode), ...CORS });
+        res.writeHead(201, { 'content-type': 'application/octet-stream', 'x-signer-node': String(got.signerNode), 'x-entry-close-in-ms': String(got.closeInMs), ...CORS });   // kanban #1892
         return res.end(Buffer.from(got.id));
       }
 
