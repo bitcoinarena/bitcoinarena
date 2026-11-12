@@ -1525,3 +1525,8 @@ Audit 5 (#1399, base 1502786b) and audit 6 (#1415, base eb7fd30fc) for release 2
 - Before: only memory held the run's start. The store keeps the newest record per federation, and `restore()` keep()s that one, so a restarted seat counted the halt from the newest HALTED record, later than a seat that did not restart.
 - Now: when `keep()` takes a HALTED record and no halt is held, the start is read from the record history (`historyOf`, which reads `store.loadAt` once): from the kept height down, height by height, while the record is HALTED. Any non-HALTED take still clears it.
 - Limit: a seat that first sees the federation by mirror after the run began holds no older records, so it counts from the first record it verified until those records reach its history.
+
+#### SM-E (change) Refused-lock return of a lock /lock refused (server.js POST /refused-lock, kanban #1582)
+- "The player entered the round here" now means an entry of that player whose stake this seat saw or whose stake lock it holds (round.js `seatedEntriesOf`'s rule), not any entry it holds: the /entry door takes an entry before any lock (#1437), and a lock /lock refused for it (head-to-head full, another entry of the key staked, a lock after close) is never counted or settled by the round.
+- Invariant: a stake lock every seat refused at /lock for an entry they hold is kept at /refused-lock once the entries closed and `unenteredGraceMs` passed, and its forfeit by handout id returns it before its expiry. A lock a seat verified (`stakeLockAt`) is still never kept as refused there, so the seats that settle it and the seats that return it stay disjoint.
+- Not covered: a fee lock verified before its stake lock was refused stays a verified fee lock (`feeLockAt`) and only expires.
