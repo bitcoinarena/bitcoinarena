@@ -21,7 +21,9 @@ export const SEND_PLAN_ASK_HEADER = 'x-send-plan-ask';
  * What the signature is for: a proposed first plan, a re-send, a seat's kept plan as it hands it out - and (kanban #1185) a paid send's preimage
  * handed to the round's other seats (POST /winnings-paid; the body is the 32-byte preimage).
  */
-export const PLAN_ASK = Object.freeze({ PROPOSE: 1, RESEND: 2, KEPT: 3, PAID: 4, COMMIT: 5, SHARE: 6 });
+export const PLAN_ASK = Object.freeze({ PROPOSE: 1, RESEND: 2, KEPT: 3, PAID: 4, COMMIT: 5, SHARE: 6,
+  // THE SETTLEMENT'S AND THE FORFEIT'S NONCE PAIRS, as the send's (kanban #2386, #2389): a commit ask and a share ask, each signed by its seat
+  SETTLE_COMMIT: 7, SETTLE_SHARE: 8, FORFEIT_COMMIT: 9, FORFEIT_SHARE: 10 });
 
 /**
  * A SEND'S NONCE PAIR IS DRAWN AND SPENT BY ONE ASKER (kanban #2308, #2322): POST /send-commit is signed (kind 5) over these bytes - the
@@ -32,12 +34,26 @@ export function sendCommitAskBody({ kind, entry, attempt, hash, ask, at }) {
   return `send-commit|${kind}|${String(entry).toLowerCase()}|${attempt === null || attempt === undefined ? '' : Number(attempt)}|${String(hash || '').toLowerCase()}|${String(ask).toLowerCase()}|${Number(at)}`;
 }
 
+/**
+ * A SETTLEMENT'S NONCE PAIR IS DRAWN AND SPENT BY ONE ASKER (kanban #2386, #2389; the send's #2308, #2322): POST /settle-commit is signed (kind 7,
+ * a late loser's entry as the ask's late entry) over the txid the asker built, the federation of a one-federation settlement, the pass's ask
+ * id and the asker's clock; POST /settle-share (kind 8) over the commitment list it carries.
+ */
+export function settleCommitAskBody({ txid, federation = null, ask, at }) {
+  return `settle-commit|${String(txid || '').toLowerCase()}|${federation ? String(federation).toLowerCase() : ''}|${String(ask).toLowerCase()}|${Number(at)}`;
+}
+
+/** A FORFEIT'S, the same (kanban #2386, #2389): POST /forfeit-commit signed (kind 9, the entry as the late entry) over the lock kind, ask id and clock; /forfeit-share (kind 10) over its list. */
+export function forfeitCommitAskBody({ kind, ask, at }) {
+  return `forfeit-commit|${kind === 'fee' ? 'fee' : 'stake'}|${String(ask).toLowerCase()}|${Number(at)}`;
+}
+
 const TAG_HASH = sha256(new TextEncoder().encode('ARENA/v1/SendPlanAsk'));
 const bytesOf = (body) => (body instanceof Uint8Array ? body : new TextEncoder().encode(String(body ?? '')));
 
 /** The digest a seat signs: the kind, the round, the late entry (or zeros), and the body's hash. */
 export function sendPlanAskDigest({ kind, roundId, lateEntryId = null, body }) {
-  if (!Object.values(PLAN_ASK).includes(kind)) throw new Error('a send plan ask is a proposal, a re-send, a kept plan, a paid preimage, or a send\'s commit or share');
+  if (!Object.values(PLAN_ASK).includes(kind)) throw new Error('a send plan ask is a proposal, a re-send, a kept plan, a paid preimage, or a send\'s, settlement\'s or forfeit\'s commit or share');
   if (!(roundId instanceof Uint8Array) || roundId.length !== 32) throw new Error('a send plan ask names a 32-byte round');
   if (lateEntryId && (!(lateEntryId instanceof Uint8Array) || lateEntryId.length !== 32)) throw new Error('a late entry is 32 bytes');
   const msg = new Uint8Array(64 + 1 + 32 + 32 + 32);
