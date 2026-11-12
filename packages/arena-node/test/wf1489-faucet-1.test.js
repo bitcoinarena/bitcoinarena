@@ -34,9 +34,11 @@ test('#1489 a FINAL counts only with a valid signature, a round only held by thr
   const goodFinal = toHex(signFinalSig({ roundId: fromHex(RID), entryId: new Uint8Array(32).fill(2), runId: new Uint8Array(32).fill(3), signerPubkey: fromHex(NODE), signedAtMs: BigInt(NOW - 1000) }, (d) => schnorr.sign(d, SECRET)));
   const zeroFinal = toHex(joinSignedFinalSig(encodeFinalSig({ roundId: fromHex(RID), entryId: new Uint8Array(32).fill(2), runId: new Uint8Array(32).fill(3), signerPubkey: fromHex(NODE), signedAtMs: NOW - 1000 }), new Uint8Array(64)));
   const holding = (holders, finals) => async (url) => (url.endsWith('/owner') ? { node: 'dd'.repeat(32), claimed: false }
-    : holders.some((h) => url.startsWith(h)) ? { held: [{ roundId: RID, committee: [NODE, 'cc'.repeat(32)], finals }] } : { held: [] });
+    : holders.some((h) => url.startsWith(h)) ? { held: [{ roundId: RID, committee: [NODE, 'cc'.repeat(32), 'c3'.repeat(32)], finals }] } : { held: [] });
   const S = ['https://s1.example', 'https://s2.example', 'https://s3.example'];
-  const check = (holders, finals) => nodeBountyCheck({ node: NODE, seats: S, fetchJson: holding(holders, finals), nowMs: NOW });
+  // kanban #1682: the three seats are the committee's three census nodes, each at its own advertised endpoint
+  const census = [NODE, 'cc'.repeat(32), 'c3'.repeat(32)].map((node, i) => ({ node, endpoint: S[i], bondSats: '1000000' }));
+  const check = (holders, finals) => nodeBountyCheck({ node: NODE, seats: S, fetchJson: holding(holders, finals), nowMs: NOW, census });
   const junk = await check(S, [zeroFinal, NODE]), alone = await check([S[0]], [goodFinal]), good = await check(S, [goodFinal]);
   const says = (r) => r.checks.find((c) => c.key === 'committees').says;
   console.log('  MEASURED #1489 halves:', JSON.stringify({ junk: [junk.passes, says(junk)], alone: [alone.passes, says(alone)], good: [good.passes, says(good)] }));
