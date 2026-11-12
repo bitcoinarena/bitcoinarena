@@ -96,6 +96,12 @@ const factsOf = (contract) => {
   return f;
 };
 const parses = (contract) => factsOf(contract) !== null;
+// a settlement's winners' shares as kept (lock_settlement_shares, lock_settlement_txids.shares); 'null' is a round's shares marked unknown (kanban #2277)
+const sharesToJson = (shares) => JSON.stringify(shares.map((x) => ({ pubkey: Buffer.from(x.pubkey).toString('hex'), msat: String(x.msat) })));
+const sharesFromJson = (json) => {
+  const v = JSON.parse(json);
+  return Array.isArray(v) ? v.map((x) => ({ pubkey: new Uint8Array(Buffer.from(x.pubkey, 'hex')), msat: BigInt(x.msat) })) : null;
+};
 
 function neededForRound(db, roundIdBytes) {
   const row = db.prepare('SELECT contract FROM rounds WHERE round_id = ?').get(roundIdBytes);
@@ -3655,7 +3661,7 @@ export class Round {
       const m = this.lockSettlementMoves(roundId);
       if (!m || m.txid !== String(txid)) {
         const h = typeof this.settlementTxidsOf === 'function' ? this.settlementTxidsOf(roundId).find((x) => x.txid === String(txid)) : null;
-        if (h && Array.isArray(h.claims)) this.putLockSettlementMoves({ roundId, txid: String(txid), claims: h.claims, payouts: h.payouts });
+        if (h && Array.isArray(h.claims)) this.#movesFromHistory(roundId, h);
       }
     }
     return done;
@@ -3760,6 +3766,20 @@ export class Round {
       .all(CLOSED, fromMs, toMs).map((r) => new Uint8Array(r.round_id));
   }
 
+  /**
+   * THE LANDED TXID'S MOVES AND ITS WINNERS' SHARES TOGETHER (kanban #2277, state audit 2026-11-12 sm9-settle-1): #1249 put back only the moves, so a row
+   * made ACCEPTED on another txid of the history (the other asker's T0, after this seat's own rebuild T1 was kept while the row was SUBMITTING) kept T1's
+   * stakeShares, and every late loser's stake was split by a transaction that never landed - another late settlement than the seats that kept T0's.
+   * The history keeps each txid's shares now; a txid kept before it has none, and the round's shares are then marked unknown, to be derived from this
+   * seat's own plan when the payout count matches (lateMessage, as #1240 does), never read from the other txid.
+   */
+  #movesFromHistory(roundId, h) {
+    this.putLockSettlementMoves({ roundId, txid: h.txid, claims: h.claims, payouts: h.payouts });
+    if (Array.isArray(h.shares)) this.putLockSettlementShares(roundId, h.shares);
+    else if (this.db.prepare('SELECT 1 FROM lock_settlement_shares WHERE round_id = ?').get(Buffer.from(roundId)))
+      this.db.prepare("UPDATE lock_settlement_shares SET shares = 'null' WHERE round_id = ?").run(Buffer.from(roundId));
+  }
+
   /** What the signed settlement moves (W6): its claimed outpoints ("txid:idx") and its payout count. */
   putLockSettlementMoves({ roundId, txid, claims, payouts }) {
     this.db.prepare('INSERT OR REPLACE INTO lock_settlement_moves (round_id, txid, claims, payouts) VALUES (?, ?, ?, ?)')
@@ -3767,14 +3787,19 @@ export class Round {
   }
 
   /** A settlement txid of the round (kanban #1171): kept once with what it moves; its signature filled in when it is known. */
-  putSettlementTxid({ roundId, txid, message, signature = null, claims = null, payouts = null }) {
+  putSettlementTxid({ roundId, txid, message, signature = null, claims = null, payouts = null, shares = null }) {
     const had = this.db.prepare('SELECT 1 FROM lock_settlement_txids WHERE round_id = ? AND txid = ?').get(Buffer.from(roundId), String(txid));
+    // AND THE WINNERS' SHARES IT PAYS (kanban #2277): what a row made ACCEPTED on this txid splits a late stake by
+    const sharesJson = Array.isArray(shares) ? sharesToJson(shares) : null;
     if (!had) {
       if (claims === null || payouts === null) return;
-      this.db.prepare('INSERT INTO lock_settlement_txids (round_id, txid, message, signature, claims, payouts, made_ms) VALUES (?, ?, ?, ?, ?, ?, ?)')
-        .run(Buffer.from(roundId), String(txid), Buffer.from(message || new Uint8Array(0)), Buffer.from(signature || new Uint8Array(0)), JSON.stringify(claims), Number(payouts), this.now());
-    } else if (signature && signature.length) {
-      this.db.prepare('UPDATE lock_settlement_txids SET signature = ? WHERE round_id = ? AND txid = ? AND length(signature) = 0').run(Buffer.from(signature), Buffer.from(roundId), String(txid));
+      this.db.prepare('INSERT INTO lock_settlement_txids (round_id, txid, message, signature, claims, payouts, made_ms, shares) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(Buffer.from(roundId), String(txid), Buffer.from(message || new Uint8Array(0)), Buffer.from(signature || new Uint8Array(0)), JSON.stringify(claims), Number(payouts), this.now(), sharesJson);
+    } else {
+      if (signature && signature.length)
+        this.db.prepare('UPDATE lock_settlement_txids SET signature = ? WHERE round_id = ? AND txid = ? AND length(signature) = 0').run(Buffer.from(signature), Buffer.from(roundId), String(txid));
+      if (sharesJson !== null)
+        this.db.prepare('UPDATE lock_settlement_txids SET shares = ? WHERE round_id = ? AND txid = ? AND shares IS NULL').run(sharesJson, Buffer.from(roundId), String(txid));
     }
   }
 
@@ -3791,7 +3816,7 @@ export class Round {
     } catch { return 0; }
     for (const r of rows) {
       const h = this.settlementTxidsOf(r.round_id).find((x) => x.txid === String(r.txid));
-      if (h && Array.isArray(h.claims)) { this.putLockSettlementMoves({ roundId: new Uint8Array(r.round_id), txid: String(r.txid), claims: h.claims, payouts: h.payouts }); n++; }
+      if (h && Array.isArray(h.claims)) { this.#movesFromHistory(new Uint8Array(r.round_id), h); n++; }
     }
     return n;
   }
@@ -3808,8 +3833,9 @@ export class Round {
   }
 
   settlementTxidsOf(roundIdBytes) {
-    return this.db.prepare('SELECT txid, message, signature, claims, payouts FROM lock_settlement_txids WHERE round_id = ? ORDER BY made_ms').all(Buffer.from(roundIdBytes))
-      .map((r) => ({ txid: r.txid, message: new Uint8Array(r.message), signature: new Uint8Array(r.signature), claims: JSON.parse(r.claims), payouts: Number(r.payouts) }));
+    return this.db.prepare('SELECT txid, message, signature, claims, payouts, shares FROM lock_settlement_txids WHERE round_id = ? ORDER BY made_ms').all(Buffer.from(roundIdBytes))
+      .map((r) => ({ txid: r.txid, message: new Uint8Array(r.message), signature: new Uint8Array(r.signature), claims: JSON.parse(r.claims), payouts: Number(r.payouts),
+        shares: r.shares == null ? null : sharesFromJson(r.shares) }));
   }
 
   lockSettlementMoves(roundIdBytes) {
@@ -3820,12 +3846,18 @@ export class Round {
   /** What the round's settlement paid each winner, in the table's order (slice C3b-1): [{ pubkey, msat }] or null. */
   putLockSettlementShares(roundIdBytes, shares) {
     this.db.prepare('INSERT OR REPLACE INTO lock_settlement_shares (round_id, shares) VALUES (?, ?)')
-      .run(Buffer.from(roundIdBytes), JSON.stringify(shares.map((x) => ({ pubkey: Buffer.from(x.pubkey).toString('hex'), msat: String(x.msat) }))));
+      .run(Buffer.from(roundIdBytes), sharesToJson(shares));
   }
 
   lockSettlementShares(roundIdBytes) {
     const r = this.db.prepare('SELECT shares FROM lock_settlement_shares WHERE round_id = ?').get(Buffer.from(roundIdBytes));
-    return r ? JSON.parse(r.shares).map((x) => ({ pubkey: new Uint8Array(Buffer.from(x.pubkey, 'hex')), msat: BigInt(x.msat) })) : null;
+    return r ? sharesFromJson(r.shares) : null;
+  }
+
+  /** The round's kept shares were another txid's than the landed one, and the history held none of it (kanban #2277): derive, never read. */
+  lockSettlementSharesUnknown(roundIdBytes) {
+    const r = this.db.prepare('SELECT shares FROM lock_settlement_shares WHERE round_id = ?').get(Buffer.from(roundIdBytes));
+    return !!r && r.shares === 'null';
   }
 
   /** A txid of a federation's or a late entry's settlement (kanban #1172), `scope` 'fed:<hex>' | 'late:<hex>': kept once with what it moves; its signature filled in. */

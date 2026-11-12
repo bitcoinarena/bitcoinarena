@@ -1444,6 +1444,10 @@ export function openStore(path = ':memory:') {
       db.exec(`ALTER TABLE ${t} ADD COLUMN bundle BLOB`);
   // A FORK PAIR SAYS WHETHER BOTH ITS MARKS WERE RECEIPTED BY A SEAT (§13BRULED 2026-10-05 (b)): a
   // same-parent pair forfeits only then. A row from before counts as not receipted.
+  // A SETTLEMENT TXID OF THE HISTORY KEEPS THE WINNERS' SHARES IT PAYS (kanban #2277): a row made ACCEPTED on it splits a late stake by them. A row
+  // from before carries none (NULL), and the round's shares are then derived from this seat's own plan instead of kept from another txid
+  if (!db.prepare('PRAGMA table_info(lock_settlement_txids)').all().some((c) => c.name === 'shares'))
+    db.exec('ALTER TABLE lock_settlement_txids ADD COLUMN shares TEXT');
   if (!db.prepare('PRAGMA table_info(fork_pairs)').all().some((c) => c.name === 'receipted'))
     db.exec('ALTER TABLE fork_pairs ADD COLUMN receipted INTEGER NOT NULL DEFAULT 0');
   // A DONATION OUTPUT SAYS WHETHER THE SENDER'S KEY IS ON ITS CONTRACT (2026-10-05): 1 when its payment
