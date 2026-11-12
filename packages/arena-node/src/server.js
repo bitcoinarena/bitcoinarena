@@ -25,7 +25,7 @@ import { isOldTestnet4Id, isOldTestnet4Series, OLD_TESTNET4_SERIES_BOND_HEIGHT }
 import { seriesRoundCheck, seriesId, seriesRound, ROUNDS_PER_SERIES, roundsPerSeries, isGridSeries, seriesLeadIsValid, findSeriesPublication, seriesPublicationOutput } from '../../arena-protocol/src/series.js';
 import { parseSeriesLine, readSeriesLines, seriesLineOf } from './series-line.js';
 import { blockRandom, blockRandomReady } from '../../arena-protocol/src/block-random.js';
-import { servedNodes, mergeServedRounds, SERVED_WINDOW_MS, SERVED_HELD_MAX } from '../../arena-protocol/src/served-nodes.js';
+import { servedNodes, mergeServedRounds, SERVED_WINDOW_MS, SERVED_HELD_MAX, SERVED_ANSWER_BYTES_MAX } from '../../arena-protocol/src/served-nodes.js';
 import { decodePurchase } from '../../arena-protocol/src/purchase.js';
 import { itemOf } from '../../arena-protocol/src/items.js';
 import { keepItemPurchase, itemsOwned, purchasesSince } from './item-purchase-seat.js';
@@ -1860,7 +1860,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       try {
         const r = await seasonFetch(`${s}/served?to=${to}&from=${from}&finals=1`, { signal: AbortSignal.timeout(SEASON_PEER_TIMEOUT_MS) });
         if (!r.ok) return;
-        const a = await r.json();
+        const a = await readJsonCapped(r, SERVED_ANSWER_BYTES_MAX);   // kanban #2239: one seat's answer is read up to a bound
         held[i + 1] = (a.held || []).slice(0, SERVED_HELD_MAX).map((x) => ({ roundId: fromHex(x.roundId), committee: x.committee.map(fromHex), finals: x.finals.map(fromHex) }));
       } catch { /* a seat that does not answer adds nothing */ }
     }));
@@ -8567,7 +8567,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           try {
             const r = await seasonFetch(`${s}/served?to=${to}&from=${from}&finals=1`, { signal: AbortSignal.timeout(SEASON_PEER_TIMEOUT_MS) });
             if (!r.ok) return;
-            const a = await r.json();
+            const a = await readJsonCapped(r, SERVED_ANSWER_BYTES_MAX);   // kanban #2239: one seat's answer is read up to a bound
             held[i + 1] = (a.held || []).slice(0, SERVED_HELD_MAX).map((x) => ({ roundId: fromHex(x.roundId), committee: x.committee.map(fromHex), finals: x.finals.map(fromHex) }));
           } catch { /* a seat that does not answer adds nothing */ }
         }));
