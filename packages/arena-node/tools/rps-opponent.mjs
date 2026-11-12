@@ -253,9 +253,11 @@ const pass = async () => {
     // ONE BAD ROUND IS NOT THE WHOLE PASS (kanban #1535): a made-up round anyone posted throws here; skip it and read the next table
     const k = await contractOf(w.round).catch(() => null);
     if (!k) continue;
-    real++;
     const left = Number(k.c.entryCloseMs) - Date.now();
+    // ONLY AN OPEN TABLE COUNTS (kanban #1912, #1954, #1991): a real round that is over is still served by the seats, so four re-posted past
+    // rounds were counted as the 4 tables and the real player's table was never read; one that is over or already entered is skipped uncounted
     if (left <= 0 || k.entered) continue;
+    real++;
     tables.set(tableOf(k.c), Date.now() + 40000);
     sayHere(w.round, k);
     if (busy || left < MIN_LEFT_MS) continue;
