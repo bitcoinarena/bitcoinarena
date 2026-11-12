@@ -177,27 +177,50 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   // until `limit` matched - a filter matching nothing (an unknown author) parsed the whole store, ten times a REQ, sixty REQs per 10 s per socket, and the
   // relay's one event loop (NIP-46 signing, NWC payments, logins) stalled for everyone. Now ids, authors, kinds, since, until and #<letter> tags are a
   // WHERE on indexed columns with LIMIT, so a filter parses at most `limit` rows (MAX_LIMIT), all of which match; matches() still checks each one.
+  // A FILTER'S WORK IS BOUNDED, NOT ONLY ITS ROWS (kanban #1826, #1489 r6-nostr-1): with #1543 a filter pairing a common condition with one
+  // nothing meets ({"#a":["x"],"#p":["nobody"]}, {kinds:[8],"#p":["nobody"]}) still let SQLite walk every row of the store in created_at order,
+  // checking the other condition on each - one REQ of ten such filters held the event loop for seconds. Now each condition (ids, authors,
+  // kinds, each #<letter>) is counted from its own index, at most DRIVE_ROWS+1 rows, and the smallest set drives the query (joined to events by
+  // primary key, every other condition checked on that row); when every condition is bigger than DRIVE_ROWS, a filter of one condition reads its
+  // index as before (every row it reads matches), and a filter of several examines only the newest SCAN_ROWS events.
+  const DRIVE_ROWS = 2000, SCAN_ROWS = 20000;
   const sqlFor = (f) => {
-    const where = [], args = [];
+    const conds = [], time = [], timeArgs = [];
     const hexIn = (col, list) => {   // full 64-hex values by equality, NIP-01 prefixes as an index range [prefix, prefix + 'g')
-      const full = list.filter((x) => x.length === 64), pre = list.filter((x) => x.length < 64), or = [];
+      const full = list.filter((x) => x.length === 64), pre = list.filter((x) => x.length < 64), or = [], args = [];
       if (full.length) { or.push(`${col} IN (${full.map(() => '?').join(',')})`); args.push(...full); }
       for (const x of pre) { or.push(`(${col} >= ? AND ${col} < ?)`); args.push(x, `${x}g`); }
-      where.push(`(${or.join(' OR ')})`);
+      return { where: `(${or.join(' OR ')})`, args };
     };
     for (const k of ['ids', 'authors', 'kinds']) if (Array.isArray(f[k]) && !f[k].length) return null;   // an empty list matches nothing
-    if (f.ids) hexIn('id', f.ids);
-    if (f.authors) hexIn('pubkey', f.authors);
-    if (f.kinds) { where.push(`kind IN (${f.kinds.map(() => '?').join(',')})`); args.push(...f.kinds); }
-    if (f.since !== undefined) { where.push('created_at >= ?'); args.push(f.since); }
-    if (f.until !== undefined) { where.push('created_at <= ?'); args.push(f.until); }
+    const onEvents = (c) => ({ ...c, drive: `SELECT e.id AS id FROM events e WHERE ${c.where}`, driveArgs: c.args });
+    if (f.ids) conds.push(onEvents(hexIn('e.id', f.ids)));
+    if (f.authors) conds.push(onEvents(hexIn('e.pubkey', f.authors)));
+    if (f.kinds) conds.push(onEvents({ where: `e.kind IN (${f.kinds.map(() => '?').join(',')})`, args: [...f.kinds] }));
+    if (f.since !== undefined) { time.push('e.created_at >= ?'); timeArgs.push(f.since); }
+    if (f.until !== undefined) { time.push('e.created_at <= ?'); timeArgs.push(f.until); }
     for (const [k, vals] of Object.entries(f)) {
       if (k[0] !== '#' || k.length !== 2) continue;
       if (!vals.length) return null;
-      where.push(`id IN (SELECT id FROM tags WHERE name = ? AND value IN (${vals.map(() => '?').join(',')}))`); args.push(k[1], ...vals);
+      const inV = `value IN (${vals.map(() => '?').join(',')})`, args = [k[1], ...vals];
+      conds.push({ where: `EXISTS (SELECT 1 FROM tags t WHERE t.id = e.id AND t.name = ? AND t.${inV})`, args,
+        drive: `SELECT DISTINCT id FROM tags WHERE name = ? AND ${inV}`, driveArgs: args });
     }
-    args.push(Math.min(Number.isInteger(f.limit) ? f.limit : MAX_LIMIT, MAX_LIMIT));
-    return { sql: `SELECT json FROM events${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY created_at DESC LIMIT ?`, args };
+    const limit = Math.min(Number.isInteger(f.limit) ? f.limit : MAX_LIMIT, MAX_LIMIT);
+    const whereOf = (cs) => { const w = [...cs.map((c) => c.where), ...time]; return { sql: w.length ? ` WHERE ${w.join(' AND ')}` : '', args: [...cs.flatMap((c) => c.args), ...timeArgs] }; };
+    let best = null;
+    for (const c of conds) {
+      const n = db.prepare(`SELECT COUNT(*) AS n FROM (${c.drive} LIMIT ${DRIVE_ROWS + 1})`).get(...c.driveArgs).n;
+      if (n <= DRIVE_ROWS && (!best || n < best.n)) best = { c, n };
+    }
+    if (best) {   // the smallest set drives: at most DRIVE_ROWS rows are read and sorted
+      const w = whereOf(conds);
+      return { sql: `SELECT e.json AS json FROM (${best.c.drive}) d CROSS JOIN events e ON e.id = d.id${w.sql} ORDER BY e.created_at DESC LIMIT ?`, args: [...best.c.driveArgs, ...w.args, limit] };
+    }
+    if (conds.length <= 1) { const w = whereOf(conds); return { sql: `SELECT e.json AS json FROM events e${w.sql} ORDER BY e.created_at DESC LIMIT ?`, args: [...w.args, limit] }; }
+    const tw = time.length ? ` WHERE ${time.join(' AND ')}` : '', w = whereOf(conds);
+    return { sql: `SELECT e.json AS json FROM (SELECT id FROM events e${tw} ORDER BY e.created_at DESC LIMIT ${SCAN_ROWS}) d CROSS JOIN events e ON e.id = d.id${w.sql} ORDER BY e.created_at DESC LIMIT ?`,
+      args: [...timeArgs, ...w.args, limit] };
   };
   const stored = (filters) => {
     const out = new Map();
