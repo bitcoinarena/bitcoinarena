@@ -533,16 +533,21 @@ async function readReserveHistory(env) {
 }
 async function metrics(env) {
   const kept = JSON.parse((await stateGet(env, 'metrics')) || 'null');
+  // the volume is a kept reading too (kanban #2231, #2303, audit a44 #49): the json_extract scan below ran on every GET /api/metrics and /metrics
+  const volume = await keptRead(env, 'volume', VOLUME_KEEP_MS, readVolume);
+  const history = JSON.parse((await stateGet(env, 'reserve-history')) || 'null');
+  return { volume, reserve: kept ? kept.reserve : null, referral: kept ? kept.referral : null, readAt: kept ? kept.readAt : null, seats: kept ? kept.seats : null,
+    reserveHistory: history };
+}
+const VOLUME_KEEP_MS = 60000;
+async function readVolume(env) {
   const since = Math.floor(Date.now() / DAY_MS) * DAY_MS - (VOLUME_DAYS - 1) * DAY_MS;
   // the stakes of the orders (kanban #683: the gifts and items bought are rows too, not stakes)
   // THE STAKE IS READ BEFORE THE GROUPING (kanban #1459, the owner 2026-11-11: "metrics is offline" - D1_ERROR: out of memory: SQLITE_NOMEM): grouped
   // directly, SQLite sorted each order's whole json (14.5 KB on average, 238 MB in all) by its day; now only the day and the stake are sorted
   const r = await env.DB.prepare(`WITH x AS MATERIALIZED (SELECT stored_ms / ${DAY_MS} AS d, CAST(json_extract(json, '$.entry.stakeMsat') AS INTEGER) AS s
     FROM txs WHERE stored_ms >= ? AND kind = 'order') SELECT d, COUNT(*) AS n, SUM(s) AS msat FROM x GROUP BY d ORDER BY d DESC`).bind(since).all();
-  const volume = (r.results || []).map((x) => ({ day: new Date(Number(x.d) * DAY_MS).toISOString().slice(0, 10), txs: Number(x.n), msat: String(x.msat || 0) }));
-  const history = JSON.parse((await stateGet(env, 'reserve-history')) || 'null');
-  return { volume, reserve: kept ? kept.reserve : null, referral: kept ? kept.referral : null, readAt: kept ? kept.readAt : null, seats: kept ? kept.seats : null,
-    reserveHistory: history };
+  return (r.results || []).map((x) => ({ day: new Date(Number(x.d) * DAY_MS).toISOString().slice(0, 10), txs: Number(x.n), msat: String(x.msat || 0) }));
 }
 
 // PLAYED ROUNDS (kanban #1090, the owner 2026-11-03: "Played rounds mit Tages / Wochen / Monats Anzeige", "Auch rueckwirkend seit 1.11",
@@ -669,7 +674,10 @@ async function sendPlayed(env, now = Date.now(), post = fetch) {
 }
 
 /** EVERY ROUND SINCE THE FIRST ONE HELD HERE, PER GAME (kanban #1197, the homepage's numbers): rounds, settled rounds and entries - nothing that shrinks when nobody plays. */
-async function totals(env) {
+// kept for TOTALS_KEEP_MS (its max-age) whatever the query (kanban #2231, #2303, audit a44 #49): it grouped every order ever held on each request
+const TOTALS_KEEP_MS = 300000;
+const totals = (env) => keptRead(env, 'totals', TOTALS_KEEP_MS, readTotals);
+async function readTotals(env) {
   const r = await env.DB.prepare(`SELECT app, COUNT(DISTINCT round) AS rounds, COUNT(DISTINCT CASE WHEN settled = 'ACCEPTED' THEN round END) AS settled, COUNT(*) AS entries,
     MIN(stored_ms) AS first FROM txs WHERE kind = 'order' AND round IS NOT NULL GROUP BY app`).all();
   const games = {}; let first = null;
@@ -687,15 +695,58 @@ async function totals(env) {
 // its time and served from there for PLAYED_KEEP_MS, whatever the query; a new mark (code or admin address) drops the copy, so the counts after
 // marking are read fresh.
 const PLAYED_KEEP_MS = 60000;
-async function played(env) {
-  const kept = await stateGet(env, 'played').then((v) => (v ? JSON.parse(v) : null)).catch(() => null);
-  if (kept && Number.isFinite(kept.at) && Date.now() - kept.at >= 0 && Date.now() - kept.at < PLAYED_KEEP_MS) return kept.v;
-  const v = await readPlayed(env);
-  await statePut(env, 'played', JSON.stringify({ at: Date.now(), v })).catch(() => {});
-  return v;
-}
+const played = (env) => keptRead(env, 'played', PLAYED_KEEP_MS, readPlayed);
 // the list's kept totals too (kanban #2540): a mark changes what the default filter hides
-const dropPlayed = (env) => Promise.all([statePut(env, 'played', '').catch(() => {}), statePut(env, 'recent-totals', '').catch(() => {})]);
+const dropPlayed = (env) => Promise.all([dropKept(env, 'played'), statePut(env, 'recent-totals', '').catch(() => {})]);
+
+// ONE READING AT A TIME, NOT ONE PER REQUEST (kanban #2164, #2231, #2303, audit a44 #49 on #1680): the kept copy was checked and written with
+// nothing claimed in between, so every request that came while the first reading was still running found no copy and ran its own whole-table
+// scan - a stranger's parallel traffic got (rate x scan time) scans at each expiry. Now, per isolate, the callers of one key share one
+// promise (the check of the copy and the reading both); across isolates the reading is claimed in state ('<key>-claim', its time, taken by a
+// conditional upsert, held at most KEEP_CLAIM_MS): an isolate that finds the claim taken serves the last copy, even an old one, and reads
+// itself only when there is no copy at all. A copy dated in the future is never served. A drop (a new mark) clears the copy and makes a
+// reading already running not write its now-old answer.
+const KEEP_CLAIM_MS = 30000;
+const keptByDb = new WeakMap();   // env.DB -> Map(key -> { gen, flight })
+function keptSlot(env, k) {
+  let m = keptByDb.get(env.DB); if (!m) keptByDb.set(env.DB, (m = new Map()));
+  if (!m.has(k)) m.set(k, { gen: 0, flight: null });
+  return m.get(k);
+}
+async function claimRead(env, k, now) {
+  const r = await env.DB.prepare('INSERT INTO state (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v WHERE CAST(state.v AS INTEGER) <= ?')
+    .bind(k + '-claim', String(now), now - KEEP_CLAIM_MS).run();
+  const changes = r && r.meta && r.meta.changes !== undefined ? r.meta.changes : r && r.changes !== undefined ? r.changes : 1;
+  return Number(changes) > 0;
+}
+function keptRead(env, k, keepMs, read) {
+  const slot = keptSlot(env, k);
+  if (slot.flight) return slot.flight;
+  const gen = slot.gen;
+  const p = (async () => {
+    const kept = await stateGet(env, k).then((v) => (v ? JSON.parse(v) : null)).catch(() => null);
+    const age = kept && Number.isFinite(kept.at) ? Date.now() - kept.at : NaN;
+    const usable = age >= 0;
+    if (usable && age < keepMs) return kept.v;
+    const mine = await claimRead(env, k, Date.now()).catch(() => true);
+    if (!mine && usable) return kept.v;   // another isolate is reading it now: the last copy meanwhile
+    try {
+      const v = await read(env);
+      if (slot.gen === gen) await statePut(env, k, JSON.stringify({ at: Date.now(), v })).catch(() => {});
+      return v;
+    } finally {
+      if (mine) await statePut(env, k + '-claim', '0').catch(() => {});
+    }
+  })();
+  slot.flight = p;
+  const clear = () => { if (slot.flight === p) slot.flight = null; };
+  p.then(clear, clear);
+  return p;
+}
+async function dropKept(env, k) {
+  const slot = keptSlot(env, k); slot.gen += 1; slot.flight = null;
+  await statePut(env, k, '').catch(() => {});
+}
 async function readPlayed(env) {
   const [rows, marks] = await Promise.all([
     env.DB.prepare(`SELECT id, round, app, stored_ms AS ms, settled, json_extract(json, '$.entry.player') AS p FROM txs WHERE kind = 'order' AND stored_ms >= ? AND round IS NOT NULL`).bind(PLAYED_FROM_MS).all(),
