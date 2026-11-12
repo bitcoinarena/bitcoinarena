@@ -70,6 +70,23 @@ const LOCKDOWN = `'use strict';
   }
   for (const k of ${JSON.stringify(REMOVED)}) delete globalThis[k];
   delete Math.random;
+  // THE SEAT'S LOCALE (kanban #1623): Intl is gone, but the locale-aware methods of the language still answer by the
+  // thread's ICU default locale - the seat's LANG/LC_ALL (measured: '1,234.5|äz' under en_US, '1 234,5|zä' under sv_SE),
+  // so one run hashed differently on seats with different locales. Each is replaced by its locale-free twin: toLocaleString
+  // is toString (Array, TypedArray and Object's call the elements' own, so they follow), the case methods are the
+  // locale-free ones, localeCompare compares code units. The same answer on every seat, whatever its locale.
+  const lockLocale = (o, m, f) => Object.defineProperty(o, m, { value: f, writable: false, configurable: false, enumerable: false });
+  const nToS = Number.prototype.toString, bToS = BigInt.prototype.toString;
+  const up = String.prototype.toUpperCase, low = String.prototype.toLowerCase;
+  lockLocale(Number.prototype, 'toLocaleString', { toLocaleString() { return R.apply(nToS, this, []); } }.toLocaleString);
+  lockLocale(BigInt.prototype, 'toLocaleString', { toLocaleString() { return R.apply(bToS, this, []); } }.toLocaleString);
+  const strOf = (s) => { if (s === null || s === undefined) throw new TypeError('String.prototype method called on null or undefined'); return String(s); };
+  lockLocale(String.prototype, 'toLocaleUpperCase', { toLocaleUpperCase() { return R.apply(up, strOf(this), []); } }.toLocaleUpperCase);
+  lockLocale(String.prototype, 'toLocaleLowerCase', { toLocaleLowerCase() { return R.apply(low, strOf(this), []); } }.toLocaleLowerCase);
+  lockLocale(String.prototype, 'localeCompare', { localeCompare(that) {
+    const a = strOf(this), b = String(that);
+    return a < b ? -1 : a > b ? 1 : 0;
+  } }.localeCompare);
   Object.defineProperty(Error, 'prepareStackTrace', { value: undefined, writable: false, configurable: false });
   // the script's value, handed only to this thread and kept on no global: the core never reaches it
   return Object.freeze({ begin() { used = 0; }, over: () => over, live: () => live });
