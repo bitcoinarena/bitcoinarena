@@ -113,31 +113,71 @@ const readMarkets = async () => {
 };
 const ofThisMarket = (x) => (marketIds.size ? marketIds.has(String(x.game.id).toLowerCase()) : x.game.name === GAME);
 
+// EVERY SEAT'S LIST, NOT THE FIRST ANSWER (kanban #1613): the first seat that answered said alone which rounds exist - an empty
+// list hid every round the other seats hold (no attestation, the market VOID at its deadline), and its rows were taken whole (thousands
+// of made-up ids each got a word kept for good). Now every seat is read, its rows of this market cut to SEAT_ROWS, and the lists
+// joined by round id; an id two seats list with different entry closes is dropped. Each seat answers for at most
+// SEAT_WORDS_PER_HOUR new words (budget kept below): a lying seat spends only its own, never the honest seats'.
+const SEAT_ROWS = 64;
+const SEAT_WORDS_PER_HOUR = 256;
 const roundsOfGame = async () => {
   await readMarkets();
-  for (const seat of SEATS) {
+  const lists = await Promise.all(SEATS.map(async (seat) => {
     try {
       // THE NEXT 16 OF EACH SERIES, NOT EVERY ROUND (2026-10-12 "Bring down test-host CPU usage back to 12"):
       // the full listing every 5 s made a seat sign all its ~2,400 rows each 45 s window - 4,800 signatures a window, its
       // listing-sign worker at ~42 % (measured 16:02Z on seat 3). A market's rounds whose window ended within the hour are a
       // handful, kept in the listing's closed tally.
       const r = await fetch(`${seat}/rounds?next=16`, { signal: AbortSignal.timeout(8000) });
-      if (!r.ok) continue;
+      if (!r.ok) return [];
       const j = await r.json();
       const rows = Array.isArray(j) ? j : j.rounds || [];
       // entryCloseMs is decimal ms (a string on the wire)
-      return rows.filter((x) => x.game && ofThisMarket(x) && /^[0-9]{1,16}$/.test(String(x.entryCloseMs))).map((x) => ({ id: x.id, closeMs: BigInt(x.entryCloseMs) }));
-    } catch { /* the next seat */ }
+      return rows.filter((x) => x && x.game && typeof x.id === 'string' && /^[0-9a-f]{64}$/.test(x.id) && ofThisMarket(x) && /^[0-9]{1,16}$/.test(String(x.entryCloseMs)))
+        .slice(0, SEAT_ROWS).map((x) => ({ id: x.id, closeMs: BigInt(x.entryCloseMs), seat }));
+    } catch { return []; }
+  }));
+  const byId = new Map();
+  for (const row of lists.flat()) {
+    const had = byId.get(row.id);
+    if (!had) byId.set(row.id, { id: row.id, closeMs: row.closeMs, seats: [row.seat] });
+    else if (had.closeMs !== row.closeMs) had.split = true;
+    else if (!had.seats.includes(row.seat)) had.seats.push(row.seat);
   }
-  return [];
+  return [...byId.values()].filter((x) => !x.split);
 };
 
+// round hex -> { closeMs, by: the seat whose budget it spent } (kanban #1613): the words, posted and noRound maps keep a round
+// for KEEP_ROUND_MS after its window's end and no longer (no word is signed past the hour; the rest is for late peer pulls)
+const roundMeta = new Map();
+const KEEP_ROUND_MS = 2n * 3600000n;
+const prune = (now) => {
+  for (const [id, m] of roundMeta) {
+    if (now < m.closeMs + KEEP_ROUND_MS) continue;
+    roundMeta.delete(id); words.delete(id); posted.delete(id); noRound.delete(id);
+  }
+};
+let ticking = false;
 const tick = async () => {
+  // ONE TICK AT A TIME (kanban #1613): a slow tick (many rounds, slow peers) no longer has the next ones pile up on it
+  if (ticking) return;
+  ticking = true;
+  try { await tickOnce(); } finally { ticking = false; }
+};
+const tickOnce = async () => {
   const now = BigInt(Date.now());
+  prune(now);
+  const spent = new Map();
+  for (const m of roundMeta.values()) spent.set(m.by, (spent.get(m.by) || 0) + 1);
   for (const r of await roundsOfGame()) {
     const window = { startMs: r.closeMs - PERIOD_MS, endMs: r.closeMs };
     // ONE WORD PER ROUND, once its window ended and the reading at its end is in (one sample period after it)
     if (!words.has(r.id) && now >= window.endMs + BigInt(SAMPLE_MS) && now < window.endMs + 3600000n) {
+      // kanban #1613: the word is charged to one seat that listed the round and has budget left; none left -> no word
+      const by = r.seats.find((seat) => (spent.get(seat) || 0) < SEAT_WORDS_PER_HOUR);
+      if (by === undefined) continue;
+      spent.set(by, (spent.get(by) || 0) + 1);
+      roundMeta.set(r.id, { closeMs: r.closeMs, by });
       const w = (MODE === 'value' ? attestValue : attestWindow)({ samples, roundId: fromHex(r.id), window, attestor });
       words.set(r.id, w.ok ? w : { none: w.why });
       log(w.ok ? { step: 'signed', round: r.id, window: { start: new Date(Number(window.startMs)).toISOString(), end: new Date(Number(window.endMs)).toISOString() },

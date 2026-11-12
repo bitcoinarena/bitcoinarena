@@ -490,9 +490,14 @@ export class OrderBook {
 
   /** Signatures over a batch id that count: distinct seats of the round, each verifying. */
   #counted(m, id, sigs) {
-    const ok = new Map();
+    // A SIGNATURE IS TRIED ONCE (kanban #1686): a failed (seat, signature) pair is never verified again in the same list, so repeats of
+    // one junk signature cost nothing; the doors bound the list itself to the round's seats (certify, applyVoid).
+    const ok = new Map(), tried = new Set();
     for (const s of sigs) {
       if (!s || !isHex(s.seat, 32) || !isHex(s.signature, 64) || !m.seats.includes(s.seat) || ok.has(s.seat)) continue;
+      const pair = `${s.seat}:${s.signature}`;
+      if (tried.has(pair)) continue;
+      tried.add(pair);
       if (verifySchnorr(fromHex(s.signature), fromHex(id), fromHex(s.seat))) ok.set(s.seat, s.signature);
     }
     return [...ok].map(([seat, signature]) => ({ seat, signature }));
@@ -513,6 +518,9 @@ export class OrderBook {
       const held = this.db.prepare('SELECT batch_id, certificate FROM market_batches WHERE round_id = ? AND k = ?').get(Buffer.from(roundIdBytes), Number(cert.record.k));
       if (held && held.certificate) { const rec = this.#recordId(roundIdBytes, cert.record); if (rec.ok && rec.id === held.batch_id) return { ok: true, fresh: false }; }
     }
+    // AT MOST ONE SIGNATURE PER SEAT (kanban #1686): a certificate carrying more signatures than the round has seats is refused before
+    // any verify - a stranger's padded list held the seat's event loop for seconds, one BIP-340 verify per junk element.
+    if (cert && Array.isArray(cert.sigs) && cert.sigs.length > m.seats.length) return refuse(`that certificate carries ${cert.sigs.length} signatures and the round has ${m.seats.length} seats`, 400);
     const c = this.#check(roundIdBytes, m, cert && cert.record, { importing: true });
     if (!c.ok) return c;
     const sigs = this.#counted(m, c.id, (cert && cert.sigs) || []);
@@ -612,8 +620,20 @@ export class OrderBook {
     if (!body || !/^[0-9]{1,15}$/.test(String(body.k))) return refuse('a void is { k, declines }', 400);
     const k = BigInt(body.k);
     const msg = batchDeclineId({ roundId: roundIdBytes, k });
-    const ok = new Set();
-    for (const d of body.declines || []) if (d && isHex(d.seat, 32) && isHex(d.signature, 64) && m.seats.includes(d.seat) && verifySchnorr(fromHex(d.signature), msg, fromHex(d.seat))) ok.add(d.seat);
+    // A VOID'S DECLINES ARE BOUNDED BY THE ROUND'S SEATS (kanban #1686): one stranger's POST /batch-void of ~20,000 junk declines held
+    // the seat's event loop ~15 s, one BIP-340 verify each. A list longer than the round's seats is refused before any verify, a seat
+    // already counted is not verified again, and one (seat, signature) pair is tried once.
+    if (body.declines != null && !Array.isArray(body.declines)) return refuse('a void is { k, declines }', 400);
+    const declines = body.declines || [];
+    if (declines.length > m.seats.length) return refuse(`that void carries ${declines.length} declines and the round has ${m.seats.length} seats`, 400);
+    const ok = new Set(), tried = new Set();
+    for (const d of declines) {
+      if (!d || !isHex(d.seat, 32) || !isHex(d.signature, 64) || !m.seats.includes(d.seat) || ok.has(d.seat)) continue;
+      const pair = `${d.seat}:${d.signature}`;
+      if (tried.has(pair)) continue;
+      tried.add(pair);
+      if (verifySchnorr(fromHex(d.signature), msg, fromHex(d.seat))) ok.add(d.seat);
+    }
     const enough = m.contract.nodes.length - m.needed + 1;
     if (ok.size < enough) return refuse(`${ok.size} seats declined batch ${k} and it is void only once ${enough} have: ${m.needed} could still sign it`, 403);
     const rid = Buffer.from(roundIdBytes), kn = Number(k);

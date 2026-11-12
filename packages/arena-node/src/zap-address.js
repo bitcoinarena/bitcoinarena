@@ -31,6 +31,11 @@ const toHexB = (b) => Buffer.from(b).toString('hex');
 export const ZAP_PENDING_MAX = 1000;
 export const ZAP_PENDING_PER_PAYER = 10;
 export const ZAP_REFUSED_KEPT = 200;
+// PLAIN TIPS TOO (kanban #1754): the callback without `nostr` needs no key and no signature, and each call was one more LND invoice
+// (one `lncli addinvoice` child in tools/zap-address.mjs) with no bound at all. Open tip invoices (until their expiry) are capped
+// like open zaps, and so are the tip invoices being made at once.
+export const ZAP_TIPS_OPEN_MAX = ZAP_PENDING_MAX;
+export const ZAP_TIPS_MINTING_MAX = 16;
 
 /** What a plain (not zap) tip's invoice is hashed over (LUD-06: raw JSON, text/plain first, the address as text/identifier). */
 export const addressMetadata = (name, host) => JSON.stringify([['text/plain', `Zap ${name}@${host}`], ['text/identifier', `${name}@${host}`]]);
@@ -54,6 +59,9 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
   const receipts = [];
   const refused = [];
   const minting = new Set();          // zap request ids whose invoice is being made right now (kanban #1514)
+  const tips = new Map();             // paymentHash -> until, each plain tip invoice still open (kanban #1754)
+  let tipsMinting = 0;                // plain tip invoices being made right now (kanban #1754)
+  const pruneTips = (nowS) => { for (const [h, until] of tips) if (until < nowS) tips.delete(h); };
   const requestOf = (p) => { try { return JSON.parse(p.description); } catch { return {}; } };
   if (statePath && existsSync(statePath)) {
     try { for (const p of JSON.parse(readFileSync(statePath, 'utf8')).pending || []) pending.set(p.paymentHash, p); } catch { /* a bad file starts empty */ }
@@ -69,15 +77,29 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
     for (const [hash, p] of pending) {
       let got;
       try { got = await lookup({ name: p.name, paymentHash: hash }); } catch (e) { log(`lookup ${hash.slice(0, 16)} failed: ${e.message}`); continue; }
-      if (got && got.settled) {
-        const receipt = signNostr(zapReceiptTemplate({ request: JSON.parse(p.description), description: p.description, invoice: p.invoice,
-          preimage: got.preimage || null, paidAtS: got.settledAtS || nowS }), { secret, curve });
-        pending.delete(hash); save();
-        receipts.push(receipt);
-        log(`zap paid ${p.name} ${hash.slice(0, 16)} -> receipt ${receipt.id.slice(0, 16)}`);
-        try { await publish(receipt, p.relays); } catch (e) { log(`publish ${receipt.id.slice(0, 16)} failed: ${e.message}`); }
-      } else if (p.until < nowS) { pending.delete(hash); save(); log(`zap ${hash.slice(0, 16)} expired unpaid`); }
+      if (got && got.settled) await paid(hash, p, got, nowS);
+      else if (p.until < nowS) { pending.delete(hash); save(); log(`zap ${hash.slice(0, 16)} expired unpaid`); }
     }
+  }
+  async function paid(hash, p, got, nowS) {
+    const receipt = signNostr(zapReceiptTemplate({ request: JSON.parse(p.description), description: p.description, invoice: p.invoice,
+      preimage: got.preimage || null, paidAtS: got.settledAtS || nowS }), { secret, curve });
+    pending.delete(hash); save();
+    receipts.push(receipt);
+    log(`zap paid ${p.name} ${hash.slice(0, 16)} -> receipt ${receipt.id.slice(0, 16)}`);
+    try { await publish(receipt, p.relays); } catch (e) { log(`publish ${receipt.id.slice(0, 16)} failed: ${e.message}`); }
+  }
+  // THE CAP EVICTS, IT DOES NOT REFUSE (kanban #1619): the per-payer bound counts by the zap request's pubkey, and Nostr keys are
+  // free - 100 fresh keys x 10 unpaid requests filled ZAP_PENDING_MAX and refused every honest zap for expiryS (an hour), for
+  // nothing. At the cap the OLDEST open zap is dropped instead (an unpaid invoice just expires at LND), after one last lookup so a
+  // zap that was paid meanwhile still gets its receipt.
+  function evictOldest() {
+    const [hash, p] = pending.entries().next().value;
+    pending.delete(hash); save();
+    log(`zap ${hash.slice(0, 16)} dropped at the open-zap cap`);
+    lookup({ name: p.name, paymentHash: hash })
+      .then((got) => (got && got.settled ? paid(hash, p, got, Math.floor(Date.now() / 1000)) : null))
+      .catch((e) => log(`lookup ${hash.slice(0, 16)} failed: ${e.message}`));
   }
   let busy = false;
   const timer = setInterval(() => { if (busy) return; busy = true; watch().finally(() => { busy = false; }); }, watchMs);
@@ -124,17 +146,22 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
           return refuse('that zap request is already invoiced');
         }
         if (minting.has(request.id)) return refuse('that zap request is being invoiced; ask again');
-        if (pending.size + minting.size >= ZAP_PENDING_MAX) return refuse('too many zaps are open here; try again later');
         if (open.filter(([, r]) => r.pubkey === request.pubkey).length >= ZAP_PENDING_PER_PAYER) return refuse('too many open zaps from that key');
+        while (pending.size > 0 && pending.size + minting.size >= ZAP_PENDING_MAX) evictOldest();
+        if (pending.size + minting.size >= ZAP_PENDING_MAX) return refuse('too many zaps are open here; try again later');
       } else {
         const comment = u.searchParams.get('comment');
         if (comment && comment.length > ZAP_COMMENT_MAX) return refuse(`a comment is at most ${ZAP_COMMENT_MAX} characters`);
+        pruneTips(Math.floor(Date.now() / 1000));
+        if (tipsMinting >= ZAP_TIPS_MINTING_MAX) return refuse('too many tips are being invoiced right now; ask again');
+        if (tips.size + tipsMinting >= ZAP_TIPS_OPEN_MAX) return refuse('too many tips are open here; try again later');
       }
       let made;
-      if (zap) minting.add(zap.request.id);
+      if (zap) minting.add(zap.request.id); else tipsMinting++;
       try { made = await invoice({ name, amountMsat, descriptionHash: hex(sha256hex(zap ? description : metadata)), expiryS }); }
       catch (e) { return refuse(`no invoice was made: ${String(e.message).slice(0, 160)}`); }
-      finally { if (zap) minting.delete(zap.request.id); }
+      finally { if (zap) minting.delete(zap.request.id); else tipsMinting--; }
+      if (!zap) tips.set(String(made.paymentHash), Math.floor(Date.now() / 1000) + expiryS);
       if (zap) {
         pending.set(made.paymentHash, { paymentHash: made.paymentHash, name, description, relays: zap.relays, invoice: made.request,
           amountMsat: String(amountMsat), until: Math.floor(Date.now() / 1000) + expiryS });
