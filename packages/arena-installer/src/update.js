@@ -330,6 +330,10 @@ async function rollBack({ svc, home, moving, oldTexts, migrating, confFile, back
   // started whatever the restore says (measured in the Windows VM: copying the backup back threw while the stopped seat still held its
   // database, and the node was left with nothing running)
   try { await svc.stop(moving, to); } catch { /* the start below is what matters */ }
+  // THE DATABASE'S PRINT READ AFTER THE STOP (kanban #2097, state audit 2026-11-12 SM7 NODE-1): the callers read dbChangedSince while the new
+  // release still ran - one that reached serve() as the wait ran out could use a nonce, take a lock or an entry between that read and this stop,
+  // and the backup went back over it. Read again here, the new release stopped: a database written at any time before the restore is kept
+  keepDb = !!keepDb || dbChangedSince(home, backup);
   // and nothing here throws before that start (kanban #1440): a service file or arena.conf that cannot be written is named, not fatal
   const notPut = [];
   for (const [f, t] of Object.entries(oldTexts)) { try { writeFileSync(f, t); } catch (e) { notPut.push(`${String(f).split(/[\\/]/).pop()}: ${e.code || e.message}`); } }
