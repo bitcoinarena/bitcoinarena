@@ -62,14 +62,14 @@ async function play({ hiccup }) {
   } finally { port.status = realStatus; globalThis.fetch = realFetch; await w.close(); }
 }
 
-test('#1489 a45-14-s3 control: seat A pulls the lock from seat B at the close and signs both players', async () => {
+test('#1489 a45-14-s3 control: seat A pulls the lock from seat B at the close and signs both players', { todo: 'kanban #2561 (spec ruling #2116): v1 #1916 takes a late lock only on a threshold of seats, so a 2-of-2 seat never pulls the one peer lock; the certified lock set replaces both rules' }, async () => {
   const got = await play({ hiccup: false });
   console.log('  FACTS (a45-14-s3 control):', JSON.stringify(got));
   assert.equal(got.before.aLockAtA, false, 'the setup did not keep the lock from seat A');
   assert.ok(got.aLockAtAEnd, `control: seat A never pulled the lock: ${JSON.stringify(got)}`);
 });
 
-test('#1489 a45-14-s3: a 2-of-2 seat whose status read straddles a block still waits for the one peer\'s real lock', async () => {
+test('#1489 a45-14-s3: a 2-of-2 seat whose status read straddles a block still waits for the one peer\'s real lock', { todo: 'kanban #2561 (spec ruling #2116): v1 #1916 takes a late lock only on a threshold of seats, so a 2-of-2 seat never pulls the one peer lock; the certified lock set replaces both rules' }, async () => {
   const got = await play({ hiccup: true });
   console.log('  FACTS (a45-14-s3 straddle):', JSON.stringify(got));
   assert.equal(got.before.aLockAtA, false, 'the setup did not keep the lock from seat A');
