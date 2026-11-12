@@ -11123,12 +11123,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // THE STAKE: its image is A0 of the handout. ITS NODE-FEE LOCK (image H(F), the same transaction, the same refund key -
         // measured live 07:26Z: 49a50535's stake came back and its 2000 msat fee lock stayed for its expiry): the handout
         // whose player's refund key it names. Kept under an id of its own, H(handout id || "fee").
+        // A FEE LOCK IS THE TRY'S IT WAS LOCKED WITH (kanban #1945): every join deals a fresh handout under the same player key, so
+        // two tries of one player hold two handouts whose refund key the fee lock names. It is kept beside the handout whose kept stake
+        // lock is an output of its own lock transaction (the same txid); only with no such stake, the first handout as before.
         let held = null;
+        const feeId = (h) => sha256(new Uint8Array([...h.id, ...new TextEncoder().encode('fee')]));
+        const txHex = toHex(outpoint.txid);
         for (const h of round.handoutsOf(rid)) {
           let d; try { d = decodeHandout(h.bytes); } catch { continue; }
           if (image.kind === 'point' && d.commitments[0] && toHex(d.commitments[0]) === hex) { held = { id: h.id, handout: d }; break; }
           if (image.kind === 'hash' && toHex(refundKeyOf(d.playerPubkey)) === toHex(fields.refundPk)) {
-            held = { id: sha256(new Uint8Array([...h.id, ...new TextEncoder().encode('fee')])), handout: d }; break; }
+            const stakeKept = round.refusedLock(h.id);
+            if (stakeKept && String(stakeKept.outpoint).split(':')[0] === txHex) { held = { id: feeId(h), handout: d }; break; }
+            if (!held) held = { id: feeId(h), handout: d };
+          }
         }
         if (!held) return text(res, 409, image.kind === 'hash'
           ? 'this signer node holds no handout for that round whose player that fee lock refunds to: no fee of that round'
