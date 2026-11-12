@@ -20,6 +20,10 @@ import { createHash } from 'node:crypto';
 export const KEEP_MS = 14 * 24 * 3600 * 1000;
 export const TIMING_TAG = 'arena/tx-timing/v1';
 const MAX_TIMING_BYTES = 8000;
+// A TRANSACTION'S REFUSED STEPS ARE BOUNDED (kanban #1688): anyone can post a junk lock for a real entry id (public in GET /txs) and each
+// refusal kept a row for 14 days, so one transaction's record grew without end and showed a stranger's attempts. The first refused rows
+// of an id are kept; after MAX_REFUSED_ROWS a refusal stays only in the log line. Answered (2xx) steps are kept as before.
+export const MAX_REFUSED_ROWS = 8;
 
 /** The bytes a page signs over its timing: the tag, the transaction id and the timing's JSON, hashed. */
 export function timingMessage(idHex, timingJson) {
@@ -50,6 +54,7 @@ export function createTxRecord({ db, now = () => Date.now() }) {
   );`);
   const put = db.prepare('INSERT OR REPLACE INTO tx_steps (id, kind, at_ms, steps, status, ms) VALUES (?, ?, ?, ?, ?, ?)');
   const of = db.prepare('SELECT id, kind, at_ms, steps, status, ms FROM tx_steps WHERE id = ? ORDER BY at_ms');
+  const refusedOf = db.prepare('SELECT COUNT(*) AS n FROM tx_steps WHERE id = ? AND status >= 400');
   const putTiming = db.prepare('INSERT OR REPLACE INTO tx_client_timing (id, timing, kept_ms) VALUES (?, ?, ?)');
   const timingOf = db.prepare('SELECT timing, kept_ms FROM tx_client_timing WHERE id = ?');
   const putRound = db.prepare('INSERT OR IGNORE INTO tx_round_events (round, at_ms, what, detail) VALUES (?, ?, ?, ?)');
@@ -67,7 +72,9 @@ export function createTxRecord({ db, now = () => Date.now() }) {
     /** step-log.js's `keep`: one door's line, as a row - only a request that named its transaction. */
     keep({ kind, id, t0, steps, status, ms }) {
       if (!/^[0-9a-f]{64}$/.test(String(id))) return;
-      try { put.run(String(id), String(kind), Number(t0), JSON.stringify(steps), Number(status) || null, Number(ms) || null); prune(); } catch { /* the log line stands */ }
+      try {
+        if (Number(status) >= 400 && Number(refusedOf.get(String(id)).n) >= MAX_REFUSED_ROWS) return;   // (kanban #1688)
+        put.run(String(id), String(kind), Number(t0), JSON.stringify(steps), Number(status) || null, Number(ms) || null); prune(); } catch { /* the log line stands */ }
     },
     /** Every door a transaction passed here, oldest first: [{ door, atMs, at, steps, status, ms }]. */
     steps(ids) {
