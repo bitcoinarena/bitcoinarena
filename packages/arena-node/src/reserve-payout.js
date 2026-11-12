@@ -669,9 +669,13 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
   async function commitHere({ plan, kind, txid = null }, asker) {
     if (kind === 'claim') return commitClaim({ plan }, asker);
     const done = rowOf(plan.proposal);
-    if (done && (done.state === PAYOUT.PAID || done.state === PAYOUT.REFUNDED || done.state === PAYOUT.SHORT || done.state === PAYOUT.CLAIMED)) return refuse(`that payout is ${done.state} here: nothing more is signed`, 409);
+    // THE REFUSAL CARRIES THIS SEAT'S SIGNED RECORD (kanban #2330, state audit 2026-11-12): records are pushed once (broadcast, fire-and-forget);
+    // a guardian that missed the SENT / PAID / REFUNDED one held its plan PLANNED (or SENT) for good and asked for a dead plan every turn. The
+    // asker learns the record from the co-signer that refuses - checked as every record is (learn: signed by a guardian, the federation's word)
+    const withRecord = (x) => (done && PAYOUT_SAID.includes(done.state) ? { ...x, record: signed(recordOf(done)) } : x);
+    if (done && (done.state === PAYOUT.PAID || done.state === PAYOUT.REFUNDED || done.state === PAYOUT.SHORT || done.state === PAYOUT.CLAIMED)) return withRecord(refuse(`that payout is ${done.state} here: nothing more is signed`, 409));
     const held = !!(done && done.plan_id === planIdOf(plan) && done.state !== PAYOUT.EXPIRED);
-    if (kind === 'tx' && held && done.state !== PAYOUT.PLANNED) return refuse('that payout\'s transaction is accepted already: it is signed once', 409);
+    if (kind === 'tx' && held && done.state !== PAYOUT.PLANNED) return withRecord(refuse('that payout\'s transaction is accepted already: it is signed once', 409));
     if (held && done.state === PAYOUT.PLANNED && (await expireIfDue(done)).expired) return refuse(`that plan expired here (no transaction in ${PLAN_EXPIRY_BLOCKS} blocks): nothing more is signed for it`, 409);
     let st;
     if (held) {
@@ -762,6 +766,7 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
   async function sign(plan, kind, extra = {}) {
     const g = guardians().get(fedOf(kind, plan));
     const peers = g.peers || [];
+    const was = rowOf(plan.proposal);   // kanban #2330: a co-signer's record that moves this row ends the signing
     const planId = planIdOf(plan);
     let pub = null;
     try { pub = typeof g.publicShares === 'function' ? g.publicShares() : (g.publicShares || null); } catch { pub = null; }
@@ -784,7 +789,11 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
         if (left.has(peer) || peer === tryOut) continue;
         let r = null;
         try { r = await peer.commit({ plan, kind, ...extra, ...ask }); } catch { /* a peer down: the threshold decides */ }
-        if (!r || !r.ok) continue;
+        if (!r || !r.ok) {
+          // a co-signer further along hands back its signed record (kanban #2330): kept here only as learn keeps any record
+          if (r && r.record && typeof r.record === 'object' && r.record.proposal === plan.proposal) await learn(r.record).catch(() => null);
+          continue;
+        }
         // kanban #1715 (refute of #1527): a commitment is checked before it joins the list - a member id no other signer of this list holds,
         // two valid points - or that peer is left off like a bad share; it can never make this seat's own share throw
         const c = r.commitment, bad = commitmentFault(c, signers, g);
@@ -794,6 +803,8 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
         if (bad) { left.add(peer); why = `a guardian seat's ${kind} commitment does not stand: ${bad}`; continue; }
         signers.push({ peer, commitment: { id: c.id, hiding: c.hiding, binding: c.binding } });
       }
+      { const now = rowOf(plan.proposal);
+        if (now && was && now.state !== was.state) return { ...refuse(`that payout is ${now.state} here now, as a co-signer's record says: the ${kind} is not signed`, 409), learned: true, state: now.state }; }
       if (signers.length < g.needed) return refuse(`${signers.length} of ${g.needed} guardian seats committed to the ${kind}${why ? ` (${why})` : ''}`, 503);
       const commitments = signers.map((x) => x.commitment).sort((a, b) => a.id - b.id);
       const shares = [];
@@ -1279,7 +1290,7 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     let r = rowOf(pid);
     if (r.state === PAYOUT.PLANNED) {
       const s = await sign(plan, 'tx');
-      if (!s.ok) return s;
+      if (!s.ok) return s.learned ? { ok: true, state: s.state } : s;   // a co-signer's record moved it on (kanban #2330)
       let txid; try { txid = await txidOfPlan(port, plan); } catch (e) { return refuse(`this seat cannot rebuild the transaction it signed: ${e.message}`, 503); }
       if (!txid) return refuse('this seat cannot rebuild the transaction it signed', 503);
       const t = transition(pid, PAYOUT.PLANNED, PAYOUT.SUBMITTING, { txid, submit_sig: toHex(s.signature), why: 'signed by the reserve key; handed to the federation' });
@@ -1339,7 +1350,7 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     const at = { txid: fromHex(r.txid), outIdx: 0n };
     if (r.state === PAYOUT.SENT) {
       const s = await sign(plan, 'refund', { txid: r.txid });
-      if (!s.ok) return s;
+      if (!s.ok) return s.learned ? { ok: true, state: s.state } : s;   // kanban #2330
       let back; try { back = await txidOfPlan(port, plan, 'refund', { txid: r.txid }); } catch (e) { return refuse(`this seat cannot rebuild the refund it signed: ${e.message}`, 503); }
       if (!back) return refuse('this seat cannot rebuild the refund it signed', 503);
       const t = transition(pid, PAYOUT.SENT, PAYOUT.REFUNDING, { refund_txid: back, refund_sig: toHex(s.signature), why: 'the contract expired unpaid; its refund is handed to the federation' });
@@ -1382,7 +1393,7 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     // the gateway did not pay before the contract expired: spent back to the reserve key, recorded REFUNDED (no re-try here)
     if (st && st.stored && st.stored.blocksLeft <= 0) return refund(pid, plan, port);
     const a = await sign(plan, 'auth', { txid: r.txid });
-    if (!a.ok) return a;
+    if (!a.ok) return a.learned ? { ok: true, state: a.state } : a;   // kanban #2330: PAID or REFUNDED as a co-signer's record says
     const said = await port.send({ gateway: plan.gatewayUrl, outpoint: at, paymentHash: plan.paymentHash, amountMsat: BigInt(plan.contractMsat), expiration: BigInt(plan.expiration),
       claimPk: plan.gatewayPk, refundPk: fromHex(plan.reserveKey), invoice: plan.invoice, auth: a.signature });
     if (said && said.sent && said.preimage && toHex(sha256(said.preimage)) === plan.paymentHash) {
