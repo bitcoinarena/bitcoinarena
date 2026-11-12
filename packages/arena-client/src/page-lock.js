@@ -2128,6 +2128,9 @@ export function markLockCommitted(storage, { roundId, playerPubkey, entryId }) {
  * verified; the lock client then refuses one the guardians do not hold as
  * rebuilt, so a lying signer node can point at nothing this key can spend.
  */
+// (kanban #1531) a player has one stake lock in a round, a few versions of it at most (kanban #1273): what one seat's answer and all of them may name
+export const LOCKS_PER_SEAT = 8;
+export const LOCKS_FOUND_MAX = 64;
 export async function findLock({ roundId, playerPubkey, nodes, fetcher = fetch } = {}) {
   const refund = toHex(refundKeyOf(playerPubkey));
   const found = new Map();
@@ -2158,14 +2161,20 @@ export async function findLock({ roundId, playerPubkey, nodes, fetcher = fetch }
     } catch (e) { return { said: `${name} ${String(e && e.message || e).slice(0, 40)}`, got: [] }; }
   }));
   const said = answers.map((a) => a.said);
-  for (const { got } of answers) {
-    for (const { l, lock } of got) {
-      // EVERY SEAT'S VERSION OF AN OUTPOINT, NOT ONLY THE FIRST (kanban #1273, audit 4 #1257 seats-5): one seat listed first answered the real
-      // outpoint with a field changed (or a made-up entry id), and the honest copies were dropped - the stake read "gone" for good, or waited for
-      // its expiry. Each distinct version is kept; the federation's stored contract (heldByGuardians) and the forfeit check pick the real one
-      const key = `${l.outpoint}|${JSON.stringify(l.fields)}|${String(l.entryId || '').toLowerCase()}`;
-      if (!found.has(key)) found.set(key, lock);
-    }
+  // WHAT ONE SEAT CAN ADD IS BOUNDED (kanban #1531, audit #1489 r2 client-3): one seat answered thousands of made-up locks under the
+  // player's refund key, every one was kept, and the collect asked each a forfeit of every seat in turn (redeemStake) or a lockStatus of
+  // the federation (heldByGuardians) - hours of requests. A seat's first LOCKS_PER_SEAT entries count, taken round-robin over the seats
+  // (each seat's first lock before any seat's second), and the whole list stops at LOCKS_FOUND_MAX
+  const lists = answers.map(({ got }) => (Array.isArray(got) ? got.slice(0, LOCKS_PER_SEAT) : []));
+  const picked = [];
+  for (let i = 0; i < LOCKS_PER_SEAT; i++) for (const got of lists) if (i < got.length) picked.push(got[i]);
+  for (const { l, lock } of picked) {
+    if (found.size >= LOCKS_FOUND_MAX) break;
+    // EVERY SEAT'S VERSION OF AN OUTPOINT, NOT ONLY THE FIRST (kanban #1273, audit 4 #1257 seats-5): one seat listed first answered the real
+    // outpoint with a field changed (or a made-up entry id), and the honest copies were dropped - the stake read "gone" for good, or waited for
+    // its expiry. Each distinct version is kept; the federation's stored contract (heldByGuardians) and the forfeit check pick the real one
+    const key = `${l.outpoint}|${JSON.stringify(l.fields)}|${String(l.entryId || '').toLowerCase()}`;
+    if (!found.has(key)) found.set(key, lock);
   }
   const out = [...found.values()];
   out.asked = asked.length;
