@@ -1257,11 +1257,13 @@ export class Verifier {
     if (window) await this.#pullEvidenceBlocks(roundIdBytes, entryId);
     const counts = (m) => !window || this.round.markCounts(entryId, m, window.chain, window.end);
     const verify = (sig, msg, pub) => { try { return sessionCurve.verify(sig, msg, pub); } catch { return false; } };
-    const pairs = this.round.equivocation(roundIdBytes, entryId).map((f) => [f.stored, f.offered]);
+    // Each pair carries where it came from: null for this seat's own records, the peer's address for a pulled one - kept
+    // within that peer's bound, its marks' records as pulled (kanban #2060, round.js putForkPair).
+    const pairs = this.round.equivocation(roundIdBytes, entryId).map((f) => [f.stored, f.offered, null]);
     // The on-time first mark this signer node voided and the late one it kept: one parent, two chains.
     const voided = this.round.entryVoid(entryId);
     const late = this.round.startForfeit(entryId);
-    if (voided && late) pairs.push([voided.firstMark, late.mark]);
+    if (voided && late) pairs.push([voided.firstMark, late.mark, null]);
     // THE PLAYER'S OTHER FIRST MARK, PULLED (M3.3-34, path 2): a peer's late first
     // mark, or the first mark a peer voided - paired with this signer node's own first
     // mark, so a lost forward still leaves the pair to be pulled at the close.
@@ -1275,14 +1277,14 @@ export class Verifier {
       if (mine.length) {
         try {
           const r = await peerFetch(`${peer}/late-first-mark?round=${hex(roundIdBytes)}&entry=${hex(entryId)}`);
-          if (r.status === 200) { const theirs = await peerBody(r, SIGNED_MARK_BYTES); for (const m of mine) got.pairs.push([m, theirs]); }
+          if (r.status === 200) { const theirs = await peerBody(r, SIGNED_MARK_BYTES); for (const m of mine) got.pairs.push([m, theirs, peer]); }
           else { try { await r.body?.cancel(); } catch { /* gone */ } }   // kanban #1685: a refused body is not left open
         } catch { /* a signer node that cannot answer proves nothing */ }
         try {
           const r = await peerFetch(`${peer}/entry-void?entry=${hex(entryId)}`);
           if (r.status === 200) {
             const v = JSON.parse(Buffer.from(await peerBody(r, ENTRY_VOID_MAX_BYTES)).toString('utf8'));
-            if (v.firstMark) { const theirs = Uint8Array.from(Buffer.from(String(v.firstMark), 'hex')); for (const m of mine) got.pairs.push([m, theirs]); }
+            if (v.firstMark) { const theirs = Uint8Array.from(Buffer.from(String(v.firstMark), 'hex')); for (const m of mine) got.pairs.push([m, theirs, peer]); }
           }
         } catch { /* a signer node that cannot answer proves nothing */ }
       }
@@ -1292,7 +1294,7 @@ export class Verifier {
         if (r.status === 200) {
           const body = await peerHead(r, EQUIVOCATION_PAIRS_PER_PEER * 2 * SIGNED_MARK_BYTES);
           for (let at = 0; at + 2 * SIGNED_MARK_BYTES <= body.length; at += 2 * SIGNED_MARK_BYTES)
-            got.pairs.push([body.slice(at, at + SIGNED_MARK_BYTES), body.slice(at + SIGNED_MARK_BYTES, at + 2 * SIGNED_MARK_BYTES)]);
+            got.pairs.push([body.slice(at, at + SIGNED_MARK_BYTES), body.slice(at + SIGNED_MARK_BYTES, at + 2 * SIGNED_MARK_BYTES), peer]);   // its peer: kept within that peer's bound (kanban #2060)
         } else { try { await r.body?.cancel(); } catch { /* gone */ } }   // kanban #1685
       } catch { /* a signer node that cannot answer proves nothing */ }
       return got;
@@ -1309,7 +1311,7 @@ export class Verifier {
     const seen = new Set();
     let laterParent = false;
     let repulled = false;
-    for (const [a, b] of pairs) {
+    for (const [a, b, from] of pairs) {
       try {
         const key = Buffer.compare(Buffer.from(a), Buffer.from(b)) < 0 ? hex(a) + hex(b) : hex(b) + hex(a);
         if (seen.has(key)) continue;
@@ -1324,7 +1326,8 @@ export class Verifier {
           // record (its forfeit door, its close) says two first marks from now on.
           // AND A FORK AT ANY LATER TICK, kept as a pair (§13B): this node's close and its /equivocation
           // say it from now on, as the seat that held it does
-          if (!kept && !this.round.putFirstMarkPair({ a, b })) this.round.putForkPair({ a, b });
+          // A PULLED PAIR (`from`, its peer) IS KEPT WITHIN THAT PEER'S BOUND, its marks' records as pulled (kanban #2060)
+          if (!kept && !this.round.putFirstMarkPair({ a, b, peer: from })) this.round.putForkPair({ a, b, peer: from });
           // A PAIR FIRST HELD HERE NOW (kanban #1561): the peers' records of its marks were passed over above (a pull keeps records
           // only of marks this seat holds), so they are pulled once more before the pair is placed in the window.
           if (!kept && window && !repulled) { repulled = true; await this.#pullEvidenceBlocks(roundIdBytes, entryId); }
