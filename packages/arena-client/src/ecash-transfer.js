@@ -30,13 +30,14 @@ export const ECASH_TRANSFER_STATES = Object.freeze({ NONE: 'none', INTENT: 'inte
 const TRANSFER_EDGES = Object.freeze({
   none: ['intent'],
   intent: ['kept', 'none'],
-  kept: ['handed', 'reclaiming', 'none', 'short', 'refused'],
+  kept: ['handed', 'reclaiming', 'none', 'short', 'refused', 'kept'],
   handed: ['answered', 'reclaiming', 'handed'],
   reclaiming: ['none', 'short', 'handed', 'refused', 'reclaiming'],
-  answered: ['none', 'short', 'refused'],
+  answered: ['none', 'short', 'refused', 'answered'],
   short: [], refused: [], unreadable: [],
 });
-export const ECASH_HANDED_RECLAIM_MS = 600000;   // a seat silent this long after the hand-over: the notes are taken back (if it did not take them)
+export const ECASH_HANDED_RECLAIM_MS = 600000;
+export const ECASH_RECEIVE_CLAIM_MS = 300000;    // a receive's claim on its record (kanban #2212): older than this, its tab is taken as gone   // a seat silent this long after the hand-over: the notes are taken back (if it did not take them)
 const SEAT_NOT_TAKEN = new Set([400, 404, 409, 429]);   // the seat's own refusal: it says it took nothing (ecash-exchange.js answers these before or instead of a receive)
 
 /** THE ONE TRANSITION: `rec` (or null) to state `to` with `patch`; null for none. Throws for a step a transfer does not take. */
@@ -186,20 +187,35 @@ export async function recoverEcashIntent({ storage, key, rec, wallet, put = putR
  * A KEPT STRING RECEIVED (`field` of `rec`: 'ecash', or 'answer' for a seat's), by `receive(ecash)` (a wallet's receiveEcash). The record
  * is removed only on Success/AlreadyReceived with the credited amount (the receive's msat, else the string's face value) at least
  * `agreedMsat`; less is `short`; a Rejected is `onRejected` ('refused', or 'handed' for notes a silent seat took). `settle(got)` runs
- * between a Success and the removal (the page waits for the balance to show it). Answers { ok, state, credited, short, refused, retry, why }.
+ * between a Success and the removal (the page waits for the balance to show it). The record is claimed for the receive (kanban #2212): one
+ * another tab is receiving answers `busy` and receives nothing. Answers { ok, state, credited, short, refused, retry, busy, why }.
  */
 export async function receiveKeptEcash({ storage, key, rec, receive, field = 'ecash', agreedMsat = null, federation = null, onRejected = 'refused',
-  settle = null, put = putRoomy }) {
+  settle = null, put = putRoomy, nowMs = () => Date.now() }) {
   const ecash = rec && rec[field];
   if (!ecash) return { ok: false, why: 'the record keeps no e-cash to receive' };
   const agreed = BigInt(agreedMsat === null ? rec.msat || 0 : agreedMsat);
   const face = ecashFaceValue(ecash);
-  const write = (to, patch) => { if (rec.memoryOnly) return null; try { return moveEcashTransfer(storage, key, rec, to, patch, put); } catch (e) { if (moved(e)) return null; throw e; } };
+  // every move out of the receive drops its claim (kanban #2212): a record kept as short/refused/handed carries none into its next step
+  const write = (to, patch) => { if (rec.memoryOnly) return null; try { return moveEcashTransfer(storage, key, rec, to, { ...patch, receivingAtMs: undefined }, put); } catch (e) { if (moved(e)) return null; throw e; } };
   if (federation && face && face.federation && face.federation !== String(federation).toLowerCase())
     return { ok: false, why: `that e-cash is of federation ${face.federation.slice(0, 8)}, not ${String(federation).slice(0, 8)}: not received` };
+  // ONE RECEIVE OF ONE RECORD AT A TIME (kanban #2212, the 2026-11-12 state audit): two tabs restored together both received the same kept
+  // merge string; the one that lost the race got Rejected (the notes spent - by the other tab) and wrote the record 'refused' ("spent
+  // elsewhere") while the winner waited in `settle`, whose removal then found the record moved. The receive now first CLAIMS the record
+  // (a self-step stamping receivingAtMs, a compare-and-set like every move): a tab whose claim finds the record moved, or claimed by
+  // another receive in the last ECASH_RECEIVE_CLAIM_MS, receives nothing and writes nothing (`busy`). A receive that ends without a final
+  // answer gives the claim back; a claim of a closed tab is taken over once it is that old.
+  if (!rec.memoryOnly) {
+    if (rec.receivingAtMs && nowMs() - Number(rec.receivingAtMs) < ECASH_RECEIVE_CLAIM_MS)
+      return { ok: false, retry: true, busy: true, why: 'another receive of this record is running (another tab)' };
+    try { rec = moveEcashTransfer(storage, key, rec, rec.state, { receivingAtMs: nowMs() }, put); }
+    catch (e) { if (moved(e)) return { ok: false, retry: true, busy: true, why: 'the record moved under this receive (another tab is receiving it)' }; /* not written: received unclaimed, as before */ }
+  }
+  const unclaim = () => { if (rec.receivingAtMs) write(rec.state, {}); };
   let got;
   try { got = JSON.parse(await receive(ecash)); }
-  catch (e) { return { ok: false, retry: true, why: e && e.message ? e.message : String(e) }; }
+  catch (e) { unclaim(); return { ok: false, retry: true, why: e && e.message ? e.message : String(e) }; }
   const state = got && got.state;
   if (state === 'Success' || state === 'AlreadyReceived') {
     const credited = creditedOf(got, ecash);
@@ -216,6 +232,7 @@ export async function receiveKeptEcash({ storage, key, rec, receive, field = 'ec
     write(onRejected, onRejected === 'handed' ? { seatTook: true } : { why: `the federation said Rejected: the ${field === 'answer' ? 'seat\'s' : 'kept'} notes were spent elsewhere` });
     return { ok: false, state, refused: onRejected === 'refused', why: 'the federation said Rejected' };
   }
+  unclaim();
   return { ok: false, state, retry: true, why: `the federation said ${state}` };
 }
 
