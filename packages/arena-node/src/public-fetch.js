@@ -189,7 +189,13 @@ export function walletFetch(url, { signal, headers } = {}) {
     const req = httpsRequest(url, { method: 'GET', headers, lookup: globalLookup, signal }, (res) => {
       const parts = []; let n = 0;
       res.on('data', (c) => { n += c.length; if (n > WALLET_ANSWER_MOST) { req.destroy(new Error('its answer is too large')); return; } parts.push(c); });
-      res.on('end', () => resolve(new Response(Buffer.concat(parts), { status: res.statusCode >= 200 && res.statusCode <= 599 ? res.statusCode : 502 })));
+      // NEVER A NULL-BODY STATUS INTO new Response (kanban #2516): a wallet answering 204/205/304 made the constructor throw inside this
+      // listener - an uncaught exception that killed the whole faucet. Such an answer, and any status outside 200-599, is a bodiless 502,
+      // and whatever still throws rejects the fetch instead of escaping the listener.
+      res.on('end', () => {
+        const st = res.statusCode, bad = !(st >= 200 && st <= 599) || st === 204 || st === 205 || st === 304;
+        try { resolve(bad ? new Response(null, { status: 502 }) : new Response(Buffer.concat(parts), { status: st })); } catch (e) { reject(e); }
+      });
       res.on('error', reject);
     });
     req.on('error', reject);
