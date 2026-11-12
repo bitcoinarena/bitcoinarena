@@ -54,6 +54,14 @@ function agreed(values) {
   return JSON.parse(top[0][0]);
 }
 
+// HOW MANY SEATS BACK A ROW (kanban #2440, #2491, #2525, #1489 a44 refute 0 s3): the seats its merge counts as holding it (an order:
+// the seats that know it; a payment: the seats that list it byte for byte). No honest order's entry id is a payment's id or federation
+// txid, so where they meet one of the two is made up - and two agreeing seats (AGREE=2) can make up either. The one MORE seats back wins;
+// on a tie the row D1 holds stays. Without this, two seats' made-up order took a real gift's id for good (the mirror of #1599), hid a gift
+// all 14 seats list by naming its federation txid (#2201's check), and /api/tx/<that txid> showed their order instead of the gift.
+const support = (tx) => (tx && Array.isArray(tx.seats) ? tx.seats.filter((x) => x && x.known).length : 0);
+const supportOf = (json) => { try { return support(JSON.parse(json)); } catch { return 0; } };
+
 /** One transaction from every seat's answer ([{ seat, status, body, why }]), merged. */
 function merge(id, answers, readMs = null) {
   const held = answers.filter((a) => a.body && a.body.known);
@@ -100,7 +108,7 @@ async function sha(text) {
 }
 
 /** A merged transaction's write into D1, or null when it is what D1 holds already (its hash leaves out when it was read). */
-async function keep(env, tx, had) {
+async function keep(env, tx, had, over = false) {
   const { readAt, readMs, ...stable } = tx; void readAt; void readMs;
   const h = await sha(JSON.stringify(stable));
   if (had === h) return null;
@@ -109,12 +117,13 @@ async function keep(env, tx, had) {
   return env.DB.prepare(`INSERT INTO txs (id, round, app, federation, stored_ms, settled, hash, json, updated_ms, kind, fed_txid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET round = excluded.round, app = excluded.app, federation = excluded.federation, stored_ms = excluded.stored_ms,
     settled = excluded.settled, hash = excluded.hash, json = excluded.json, updated_ms = excluded.updated_ms, kind = excluded.kind, fed_txid = excluded.fed_txid
-    WHERE txs.kind = excluded.kind OR excluded.kind = 'order'`)
+    WHERE txs.kind = excluded.kind OR excluded.kind = 'order' OR ? = 1`)
     // a write replaces only a row of its own kind (kanban #1599): one seat's GET /payments row named with an order's entry id (public on
     // the explorer) no longer turns that order into its made-up gift - the round left /api/played, /api/totals and the volume. An order
-    // (merged across the seats, #1510) still takes back an id a payment row held first.
+    // (merged across the seats, #1510) still takes back an id a payment row held first - the readers let it only when more seats back it
+    // than back that payment (kanban #2440); `over` lets a payment more seats back take back an id an order held first (kanban #2440).
     .bind(tx.id, e.round || null, e.app || null, e.federation || null, tx.storedFirst ? Date.parse(tx.storedFirst) : Date.now(),
-      tx.settlement ? tx.settlement.state : null, h, JSON.stringify(tx), Date.now(), tx.kind || 'order', tx.payment ? tx.payment.txid : null);
+      tx.settlement ? tx.settlement.state : null, h, JSON.stringify(tx), Date.now(), tx.kind || 'order', tx.payment ? tx.payment.txid : null, over ? 1 : 0);
 }
 
 // THE GIFTS, ZAPS AND ITEMS BOUGHT (kanban #683, 2026-10-26: "I don't see item purchases in the explorer"; #682: a gift "doesn't show in
@@ -175,31 +184,36 @@ async function readPayments(env, since, limit) {
   const answered = new Map(got.map((g) => [g.seat, !!(g.body && Array.isArray(g.body.gifts))]));
   const ids = [...byId.keys()];
   const hashes = new Map();
+  // the orders D1 holds at these ids: how many seats back each (kanban #2440)
+  const orderAt = new Map();
   for (let i = 0; i < ids.length; i += 90) {
     const part = ids.slice(i, i + 90);
-    const r = await env.DB.prepare(`SELECT id, hash, kind FROM txs WHERE id IN (${part.map(() => '?').join(',')})`).bind(...part).all();
-    for (const x of r.results || []) hashes.set(x.id, x);
+    const r = await env.DB.prepare(`SELECT id, hash, kind, CASE WHEN kind IS NULL OR kind = 'order' THEN json ELSE NULL END AS oj FROM txs WHERE id IN (${part.map(() => '?').join(',')})`).bind(...part).all();
+    for (const x of r.results || []) { hashes.set(x.id, x); if ((x.kind || 'order') === 'order') orderAt.set(x.id, supportOf(x.oj)); }
   }
-  // the federation txids the rows name that are an order's id in D1 (kanban #2201): no honest gift's txid is an order's entry id
+  // the federation txids the rows name that are an order's id in D1 (kanban #2201): no honest gift's txid is an order's entry id, so one
+  // of the two is made up - the one fewer seats back (kanban #2440: two seats' made-up order at a real gift's txid hid the gift for good)
   const txids = [...new Set(ids.flatMap((id) => [...byId.get(id).values()].map((v) => String(v.row.txid))))];
-  const orderIds = new Set();
+  const orderIds = new Map();
   for (let i = 0; i < txids.length; i += 90) {
     const part = txids.slice(i, i + 90);
-    const r = await env.DB.prepare(`SELECT id FROM txs WHERE kind = 'order' AND id IN (${part.map(() => '?').join(',')})`).bind(...part).all();
-    for (const x of r.results || []) orderIds.add(x.id);
+    const r = await env.DB.prepare(`SELECT id, json FROM txs WHERE kind = 'order' AND id IN (${part.map(() => '?').join(',')})`).bind(...part).all();
+    for (const x of r.results || []) orderIds.set(x.id, supportOf(x.json));
   }
   const writes = [];
   for (const id of ids) {
     const per = byId.get(id);
     const answers = SEATS.map((seat) => (per.has(seat) ? { seat, status: 200, ...per.get(seat) }
       : answered.get(seat) ? { seat, status: 404 } : { seat, status: got.find((g) => g.seat === seat).status, why: 'did not list its payments' }));
-    // an order D1 holds is never turned into a payment (kanban #1696, #1761): its id is an entry the seats agreed on
     const had = hashes.get(id);
-    if (had && (had.kind || 'order') === 'order') continue;
     const tx = paymentTx(id, answers);
     if (!tx.found) continue;
-    if (orderIds.has(String(tx.payment.txid))) continue;   // its federation txid is an order's id D1 holds: made up, not stored (kanban #2201)
-    const w = await keep(env, tx, had ? had.hash : undefined);
+    // its federation txid is an order's id D1 holds that as many seats back or more: made up, not stored (kanban #2201, #2440)
+    if (orderIds.has(String(tx.payment.txid)) && support(tx) <= orderIds.get(String(tx.payment.txid))) continue;
+    // an order D1 holds at its id is never turned into a payment (#1696, #1761, #1599) unless more seats back this payment - then the
+    // payment takes its id back (kanban #2440)
+    if (orderAt.has(id) && support(tx) <= orderAt.get(id)) continue;
+    const w = await keep(env, tx, had ? had.hash : undefined, orderAt.has(id));
     if (w) writes.push(w);
   }
   for (let i = 0; i < writes.length; i += 50) await env.DB.batch(writes.slice(i, i + 50));
@@ -627,6 +641,14 @@ async function readWindow(env, since, limit, before) {
     const r = await env.DB.prepare(`SELECT id, hash, kind FROM txs WHERE id IN (${part.map(() => '?').join(',')})`).bind(...part).all();
     for (const x of r.results || []) hashes.set(x.id, x);
   }
+  // the payment rows D1 holds at these ids, or whose federation txid is one of them: how many seats back each (kanban #2440)
+  const payBack = new Map();
+  const more = (id, n) => payBack.set(id, Math.max(payBack.get(id) || 0, n));
+  for (let i = 0; i < ids.length; i += 90) {
+    const part = ids.slice(i, i + 90), qs = part.map(() => '?').join(',');
+    const r = await env.DB.prepare(`SELECT id, fed_txid, json FROM txs WHERE kind <> 'order' AND (id IN (${qs}) OR fed_txid IN (${qs}))`).bind(...part, ...part).all();
+    for (const x of r.results || []) { const n = supportOf(x.json); if (byId.has(x.id)) more(x.id, n); if (x.fed_txid && byId.has(x.fed_txid)) more(x.fed_txid, n); }
+  }
   const writes = [];
   for (const id of ids) {
     const per = byId.get(id);
@@ -634,6 +656,8 @@ async function readWindow(env, since, limit, before) {
       : answered.get(seat) ? { seat, status: 404, body: { known: false } } : { seat, status: 0, body: null, why: 'did not answer the read' }));
     const tx = merge(id, answers, null);
     if (!tx.found) continue;   // fewer than AGREE seats hold its entry: not stored, so not counted (kanban #1510)
+    // a payment at its id or with it as federation txid that as many seats back or more: this order is made up, not stored (kanban #2440)
+    if (payBack.has(id) && support(tx) <= payBack.get(id)) continue;
     const had = hashes.get(id);   // a row { id, hash, kind } since kanban #1696: keep() compares the hash alone
     const w = await keep(env, tx, had ? had.hash : undefined);
     if (w) writes.push(w);
@@ -746,12 +770,18 @@ async function txOf(env, ctx, id) {
   // that order, /api/tx/<order> and /tx/<order> served the seats' made-up 21M BTC gift as cached without asking the seats. Only an order
   // row with this id is served from D1 straight away; a payment row (by its id, or another row's by fed_txid) is served only after the
   // seats were asked and agree on no order with this id - an order they do agree on is kept (it takes the id back, #1599) and shown.
+  // WHERE AN ORDER AND A PAYMENT MEET, THE ONE MORE SEATS BACK (kanban #2440, #2525): an order row with this id is served at once unless
+  // a payment whose federation txid is this id has more seats behind it; a found order takes the id from a payment (by its id or its
+  // txid) only when more seats back the order - two seats' made-up order at a stored gift's txid no longer shows instead of the gift.
   const own = await env.DB.prepare('SELECT json, kind FROM txs WHERE id = ?').bind(id).first();
-  if (own && own.kind === 'order') return { ...JSON.parse(own.json), cached: true };
-  const alias = own ? null : await env.DB.prepare("SELECT json FROM txs WHERE fed_txid = ? AND id <> ? AND kind <> 'order' LIMIT 1").bind(id, id).first();
-  const tx = await readTx(id);
-  if (tx.found) { const w = await keep(env, tx, null); if (w) ctx.waitUntil(w.run()); return tx; }
+  const alias = own && own.kind !== 'order' ? null : await env.DB.prepare("SELECT json FROM txs WHERE fed_txid = ? AND id <> ? AND kind <> 'order' LIMIT 1").bind(id, id).first();
+  if (own && own.kind === 'order') {
+    const row = alias && supportOf(alias.json) > supportOf(own.json) ? alias : own;
+    return { ...JSON.parse(row.json), cached: true };
+  }
   const row = own || alias;
+  const tx = await readTx(id);
+  if (tx.found && !(row && support(tx) <= supportOf(row.json))) { const w = await keep(env, tx, null); if (w) ctx.waitUntil(w.run()); return tx; }
   if (row) return { ...JSON.parse(row.json), cached: true };
   return tx;
 }
