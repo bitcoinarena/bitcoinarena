@@ -3835,6 +3835,23 @@ export class Round {
       .run(Buffer.from(entryId), Buffer.from(roundId), Buffer.from(signature), receivedMs).changes === 1;
   }
 
+  /** A cancel this seat's player door took, to hand on to the round's other seats before `closeMs` (kanban #1875, #1950). Kept once. */
+  putCancelHandOn({ roundId, entryId, closeMs }) {
+    return this.db.prepare('INSERT OR IGNORE INTO market_cancel_handons (entry_id, round_id, close_ms, done) VALUES (?, ?, ?, 0)')
+      .run(Buffer.from(entryId), Buffer.from(roundId), Number(closeMs)).changes === 1;
+  }
+
+  /** Every hand-on not yet done, with its cancel's signature: [{ roundId, entryId, closeMs, signature }]. */
+  cancelHandOnsDue() {
+    return this.db.prepare('SELECT h.entry_id, h.round_id, h.close_ms, c.signature FROM market_cancel_handons h JOIN market_cancels c ON c.entry_id = h.entry_id WHERE h.done = 0 ORDER BY h.close_ms, h.entry_id')
+      .all().map((r) => ({ entryId: new Uint8Array(r.entry_id), roundId: new Uint8Array(r.round_id), closeMs: Number(r.close_ms), signature: new Uint8Array(r.signature) }));
+  }
+
+  /** That hand-on is over: every peer holds the cancel, or the round's entry close came. */
+  cancelHandOnDone(entryIdBytes) {
+    this.db.prepare('UPDATE market_cancel_handons SET done = 1 WHERE entry_id = ?').run(Buffer.from(entryIdBytes));
+  }
+
   cancelled(entryIdBytes) {
     return !!this.db.prepare('SELECT 1 FROM market_cancels WHERE entry_id = ?').get(Buffer.from(entryIdBytes));
   }
