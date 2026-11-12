@@ -62,6 +62,36 @@ export const winnersIdOf = (proposal, winners, pairs) => toHex(taggedHash('ARENA
 const pairKey = ([r, a]) => `${r}:${a}`;
 
 /**
+ * ONE PEER'S EVIDENCE IN THE HONEST SHAPE (kanban #2382, #2383, #1489 a45-refute-22-s3: #1856's second copy). A seat's evidence is
+ * mergeSignedSeasonAccounts' own output: each (round, account) once, each signer once, and a round with at most two accounts (both of
+ * a contradiction - two already leave the round out, a third changes nothing). A guardian peer that repeats one account 3,000 times
+ * cost one schnorr verify per copy; here a peer hands in each account once (its first copy), each signer once, and at most
+ * EVIDENCE_ACCOUNTS_PER_ROUND accounts of a round - so one peer costs at most one verify per (account, seat of its draw), and only a
+ * real round's draw names a seat. What an honest seat sends is kept whole.
+ */
+export const EVIDENCE_ACCOUNTS_PER_ROUND = 2;
+export function peerEvidence(evidence) {
+  const out = [], pairs = new Set(), perRound = new Map();
+  for (const e of Array.isArray(evidence) ? evidence : []) {
+    if (!e || typeof e !== 'object') continue;
+    const rid = String(e.roundId || '').toLowerCase(), aid = String(e.accountId || '').toLowerCase();
+    const k = `${rid}:${aid}`;
+    if (pairs.has(k)) continue;
+    const n = perRound.get(rid) || 0;
+    if (n >= EVIDENCE_ACCOUNTS_PER_ROUND) continue;
+    pairs.add(k); perRound.set(rid, n + 1);
+    const nodes = new Set();
+    const sigs = (Array.isArray(e.sigs) ? e.sigs : []).filter((x) => {
+      const node = String((x && x.node) || '').toLowerCase();
+      if (nodes.has(node)) return false;
+      nodes.add(node); return true;
+    });
+    out.push({ ...e, sigs });
+  }
+  return out;
+}
+
+/**
  * `db`; `paramsOf(id)` async -> { ok, games, fromMs, toMs, top, amountMsat, splitBps } the payout's season or why not;
  * `collect(id, params)` async -> every seat's signed answers (a Map label -> rounds, this seat's own included); `seatsOf` and `verify`
  * as mergeSignedSeasonAccounts takes them.
@@ -128,7 +158,7 @@ export function createWinnersBook({ db, paramsOf, collect, seatsOf, verify, now 
     if (r.state === WINNERS.PLANNED) return { ok: true, ...r.bound };
     const p = await paramsOf(id);
     if (!p || !p.ok) return { ok: false, why: p ? p.why : 'no such payout' };
-    const m = merged([...evidenceAnswers(r.own.evidence), ...others.flatMap((e) => evidenceAnswers(e))]);
+    const m = merged([...evidenceAnswers(r.own.evidence), ...others.flatMap((e) => evidenceAnswers(peerEvidence(e)))]);
     if (!m.ok) return m;
     const w = winnersFrom(p, m.rounds);
     if (!w.ok) return w;
@@ -151,9 +181,10 @@ export function createWinnersBook({ db, paramsOf, collect, seatsOf, verify, now 
     const want = new Set((plan.rounds || []).map(pairKey));
     const left = (r.own.pairs || []).filter((x) => !want.has(pairKey(x)));
     if (left.length) return { ok: false, status: 422, why: `the plan leaves out round ${String(left[0][0]).slice(0, 16)}, which this seat counts (${left.length} in all)` };
-    let pool = [...(r.own.evidence || []), ...(evidence || [])];
+    // each source in the honest shape (peerEvidence, kanban #2382): the plan's evidence and each fetched peer's, one at a time
+    let pool = [...(r.own.evidence || []), ...peerEvidence(evidence)];
     const have = () => new Set(pool.map((e) => `${e.roundId}:${e.accountId}`));
-    if ([...want].some((k) => !have().has(k))) { let more = []; try { more = await fetch(); } catch { more = []; } for (const e of more || []) pool = pool.concat(Array.isArray(e) ? e : []); }
+    if ([...want].some((k) => !have().has(k))) { let more = []; try { more = await fetch(); } catch { more = []; } for (const e of more || []) pool = pool.concat(peerEvidence(e)); }
     const m = merged(evidenceAnswers(pool.filter((e) => e && want.has(`${e.roundId}:${e.accountId}`))));
     if (!m.ok) return { ok: false, status: 422, why: m.why };
     const got = new Set(m.pairs.map(pairKey));
