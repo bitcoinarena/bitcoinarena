@@ -1495,6 +1495,19 @@ export function openStore(path = ':memory:') {
     db.exec(`UPDATE relayed SET entry_id = SUBSTR(bytes, 1, 32), round_id = (SELECT round_id FROM entries WHERE entry_id = SUBSTR(relayed.bytes, 1, 32))
       WHERE entry_id IS NULL AND LENGTH(bytes) IN (33, 65) AND EXISTS (SELECT 1 FROM entries WHERE entry_id = SUBSTR(relayed.bytes, 1, 32))`);
   }
+  // A RELAYED SLASH PROOF NAMES ITS ROUND AND ITS ACCUSED (kanban #1917, refute 2 of #1532): the slash door keeps proofs in their own
+  // share of the pool (RELAY_SLASH_RESERVE), per accused node per round, and the prune lets them go with their round's claim window;
+  // `accused` is set on slash rows only. A row from before gets both read from its bytes once, here (a slash proof: type 0x0c,
+  // version, round id at 3, player key at 35, accused node key at 67).
+  if (!db.prepare('PRAGMA table_info(relayed)').all().some((c) => c.name === 'accused')) {
+    db.exec('ALTER TABLE relayed ADD COLUMN accused BLOB');
+    db.exec(`UPDATE relayed SET round_id = SUBSTR(bytes, 4, 32), accused = SUBSTR(bytes, 68, 32)
+      WHERE entry_id IS NULL AND LENGTH(bytes) > 199 AND SUBSTR(bytes, 1, 1) = x'0c'`);
+    // 2.0 (kanban #1489 port of #1917): the slash door keeps a complete fraud proof (type 0x43, version, the evidence's u32 length,
+    // then the evidence - a slash proof: round id at 11, accused node key at 75 of the whole)
+    db.exec(`UPDATE relayed SET round_id = SUBSTR(bytes, 11, 32), accused = SUBSTR(bytes, 75, 32)
+      WHERE entry_id IS NULL AND LENGTH(bytes) > 206 AND SUBSTR(bytes, 1, 1) = x'43' AND SUBSTR(bytes, 8, 1) = x'0c'`);
+  }
   db.exec('CREATE INDEX IF NOT EXISTS relayed_entry ON relayed (entry_id)');
   db.exec('CREATE INDEX IF NOT EXISTS relayed_round ON relayed (round_id)');
   // A STORE MADE BEFORE A NONCE ROW CARRIED ITS SIGNING ATTEMPT gets the column:
