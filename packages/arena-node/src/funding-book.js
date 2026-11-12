@@ -25,7 +25,18 @@ export const FUNDING_SQL = `CREATE TABLE IF NOT EXISTS funding_items (id TEXT PR
   CREATE TABLE IF NOT EXISTS funding_vote_blocks (proposal TEXT NOT NULL, height INTEGER NOT NULL, hash TEXT, votes TEXT NOT NULL, PRIMARY KEY (proposal, height));
   CREATE TABLE IF NOT EXISTS funding_vote_outcomes (proposal TEXT PRIMARY KEY, outcome TEXT NOT NULL, last_hash TEXT, decided_ms INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS funding_payments (proposal TEXT PRIMARY KEY, tranches INTEGER NOT NULL, cancelled TEXT, cancelled_k INTEGER);
-  CREATE TABLE IF NOT EXISTS fee_outcomes (proposal TEXT PRIMARY KEY, outcome TEXT NOT NULL, activation INTEGER NOT NULL, decided_ms INTEGER NOT NULL)`;
+  CREATE TABLE IF NOT EXISTS fee_outcomes (proposal TEXT PRIMARY KEY, outcome TEXT NOT NULL, activation INTEGER NOT NULL, decided_ms INTEGER NOT NULL);
+  CREATE TABLE IF NOT EXISTS funding_held_claims (id TEXT NOT NULL, seat TEXT NOT NULL, at_ms INTEGER NOT NULL, PRIMARY KEY (id, seat))`;
+
+/**
+ * A PEER'S "I HELD IT AT ..." IS A CLAIM, NOT A FACT (kanban #1607, audit #1489 r4 census-2): with the end block's time as the cutoff (#1410, every live
+ * seat), a pulled signal took the earliest atMs ONE peer stated, and an UPDATE moved a held one earlier on that word - so one seat answering `atMs: 0` for
+ * a signal signed after the end, to chosen seats only, flipped the outcome there: two outcomes for one period, two fee sets in force. Now this seat keeps
+ * its own receipt time, keeps each peer's claim apart (by the seat it pulled it from), and counts a signal held before the cutoff here, or claimed held
+ * before it by at least PEER_CLAIM_SEATS distinct named seats. GET /funding-items answers this seat's own receipt time only, so a claim is never relayed
+ * as a fact. Without `endTimeAt` (the cutoff is this seat's own first sight, the #1279 interim, no live seat) the claims count as before.
+ */
+export const PEER_CLAIM_SEATS = 2;
 
 /** A payment's id: the proposal's own for a single payment (rule 5), else one per tranche. */
 export const trancheIdOf = (pid, k, of) => (of === 1 ? pid : createHash('sha256').update(`ARENA/v1/FundingTranche:${pid}:${k}`).digest('hex'));
@@ -96,8 +107,11 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
   const read = (kind, hex) => readSignedFunding(kind, fromHex(hex), verify);
   const outcomeOf = (pid) => { const r = db.prepare('SELECT outcome FROM funding_outcomes WHERE proposal = ?').get(pid); return r ? JSON.parse(r.outcome) : null; };
   // `beforeMs` (kanban #1279, RULED #1277 A): only the signals some seat held before the signal period ended (at_ms is the earliest time a seat held it)
-  const signalsOf = (pid, beforeMs = null) => db.prepare("SELECT hex, at_ms FROM funding_items WHERE kind = 'signal' AND proposal = ?").all(pid)
-    .filter((r) => beforeMs === null || Number(r.at_ms) <= Number(beforeMs))
+  // kanban #1607: with the end block's time as the cutoff, a peer's earlier time counts only when PEER_CLAIM_SEATS distinct named seats claim it
+  const claimsOnly = typeof endTimeAt === 'function';
+  const claimedBefore = (id, beforeMs) => db.prepare("SELECT COUNT(DISTINCT seat) AS n FROM funding_held_claims WHERE id = ? AND seat != '' AND at_ms <= ?").get(id, Number(beforeMs)).n >= PEER_CLAIM_SEATS;
+  const signalsOf = (pid, beforeMs = null) => db.prepare("SELECT id, hex, at_ms FROM funding_items WHERE kind = 'signal' AND proposal = ?").all(pid)
+    .filter((r) => beforeMs === null || Number(r.at_ms) <= Number(beforeMs) || (claimsOnly && claimedBefore(r.id, beforeMs)))
     .map((r) => read('signal', r.hex)).filter((x) => x.ok).map((x) => ({ node: toHex(x.obj.node), atHeight: x.obj.atHeight }));
   // THE VOTE (§27A.9.3 stage 2): opened only by a signal this seat decided passed; the census taken ONCE at the
   // vote's start (signalEnd); each voting block read once for this proposal's votes, held to by its hash; the outcome written once
@@ -324,7 +338,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       // every one that verifies is taken, so seats decide from the same set; what arrives after the decision is kept and not read
       if (typeof pull === 'function') {
         let got = []; try { got = await pull(pid); } catch { got = []; }
-        let took = 0; for (const it of Array.isArray(got) ? got : []) { try { const r = await book.add(it.kind, it.hex, { heldAtMs: it.atMs === undefined ? null : Number(it.atMs) }); if (r && r.ok && r.fresh) took++; } catch { /* the next */ } }
+        let took = 0; for (const it of Array.isArray(got) ? got : []) { try { const r = await book.add(it.kind, it.hex, { heldAtMs: it.atMs === undefined ? null : Number(it.atMs), from: it.seat ?? null }); if (r && r.ok && r.fresh) took++; } catch { /* the next */ } }
         if (took) log(`[fees] ${pid.slice(0, 16)}: ${took} approval(s) or signal(s) pulled from the peers before deciding`);
       }
       const out = feeProposalOutcome({ proposal: o, current: feesAt(o.activationHeight - 1), signal, tally: vote, approvals: approvalsOf(pid), devKeys, verify, schedule });
@@ -377,13 +391,22 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
     cancelledOf,
     // `heldAtMs` (kanban #1279): when a peer says it first held the object (GET /funding-items' atMs) - a signal or an approval is kept as of the
     // earliest time any seat held it, never later than now
-    async add(kind, hex, { heldAtMs = null } = {}) {
+    // `from` the seat a pulled object came from (kanban #1607: a claim is kept per seat, and with `endTimeAt` never moves this seat's own time)
+    async add(kind, hex, { heldAtMs = null, from = null } = {}) {
       const r = (() => { try { return read(kind, String(hex || '').toLowerCase()); } catch (e) { return { ok: false, why: e.message }; } })();
       if (!r.ok) return { ok: false, status: 400, why: r.why };
       const id = toHex(r.id);
-      const atMs = Number.isFinite(Number(heldAtMs)) && heldAtMs !== null ? Math.min(now(), Number(heldAtMs)) : now();
+      const claimed = Number.isFinite(Number(heldAtMs)) && heldAtMs !== null ? Math.min(now(), Number(heldAtMs)) : now();
+      const atMs = claimsOnly ? now() : claimed;
+      const claim = () => { if (claimsOnly && heldAtMs !== null && (kind === 'signal' || kind === 'fee-approval')) {
+        const seat = String(from || '').slice(0, 512);
+        db.prepare('INSERT INTO funding_held_claims (id, seat, at_ms) VALUES (?, ?, ?) ON CONFLICT (id, seat) DO UPDATE SET at_ms = MIN(at_ms, excluded.at_ms)').run(id, seat, claimed);
+      } };
       if (db.prepare('SELECT 1 FROM funding_items WHERE id = ?').get(id)) {
-        if ((kind === 'signal' || kind === 'fee-approval') && heldAtMs !== null) db.prepare('UPDATE funding_items SET at_ms = ? WHERE id = ? AND at_ms > ?').run(atMs, id, atMs);
+        if ((kind === 'signal' || kind === 'fee-approval') && heldAtMs !== null) {
+          if (claimsOnly) claim();
+          else db.prepare('UPDATE funding_items SET at_ms = ? WHERE id = ? AND at_ms > ?').run(atMs, id, atMs);
+        }
         return { ok: true, fresh: false, id };
       }
       const height = await Promise.resolve(tip()).catch(() => null);
@@ -425,6 +448,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         proposal = toHex(r.obj.proposalId);
         if (!db.prepare("SELECT 1 FROM funding_items WHERE kind = 'fee' AND id = ?").get(proposal)) return { ok: false, status: 404, why: 'this seat holds no such fee proposal: send the proposal first' };
         db.prepare('INSERT OR IGNORE INTO funding_items (id, kind, proposal, hex, at_ms) VALUES (?, ?, ?, ?, ?)').run(id, kind, proposal, String(hex).toLowerCase(), atMs);
+        claim();
         return { ok: true, fresh: true, id, proposal };
       }
       if (kind === 'proposal') {
@@ -442,6 +466,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         }
       }
       db.prepare('INSERT OR IGNORE INTO funding_items (id, kind, proposal, hex, at_ms) VALUES (?, ?, ?, ?, ?)').run(id, kind, proposal, String(hex).toLowerCase(), kind === 'signal' ? atMs : now());
+      claim();
       return { ok: true, fresh: true, id, proposal };
     },
     list(height = null) {
@@ -483,7 +508,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         if (height < end + Math.max(1, Number(schedule.decideDepth) || 1) - 1) continue;
         if (typeof pull === 'function') {
           let got = []; try { got = await pull(row.id); } catch { got = []; }
-          let took = 0; for (const it of Array.isArray(got) ? got : []) { try { const x = await book.add(it.kind, it.hex, { heldAtMs: it.atMs === undefined ? null : Number(it.atMs) }); if (x && x.ok && x.fresh) took++; } catch { /* the next */ } }
+          let took = 0; for (const it of Array.isArray(got) ? got : []) { try { const x = await book.add(it.kind, it.hex, { heldAtMs: it.atMs === undefined ? null : Number(it.atMs), from: it.seat ?? null }); if (x && x.ok && x.fresh) took++; } catch { /* the next */ } }
           if (took) log(`[funding] ${row.id.slice(0, 16)}: ${took} signal(s) or approval(s) pulled from the peers before deciding the signal`);
         }
         // ONE CUTOFF FOR EVERY SEAT (audit 5, kanban #1410): the end was "when this seat first saw it" - a seat restarting or catching up hours later counted

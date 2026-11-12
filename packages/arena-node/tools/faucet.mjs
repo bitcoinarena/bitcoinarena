@@ -583,17 +583,24 @@ createServer((req, res) => {
     if (ip && SHOT_UPLOADS.filter((x) => x.ip === ip).length >= SHOTS_PER_IP_PER_DAY) return send(429, { ok: false, why: 'this address sent all the screenshots it can today' });
     if (SHOT_UPLOADS.reduce((n, x) => n + (x.bytes || 0), 0) >= SHOT_DAY_BYTES) return send(429, { ok: false, why: 'the faucet took all the screenshots it keeps today: send the report without one, or try tomorrow' });
     { const free = freeBytes(SHOTS); if (free !== null && free < SHOT_FREE_FLOOR_BYTES) return send(507, { ok: false, why: 'the faucet has no room for screenshots just now: send the report without one' }); }
+    // THE SLOT IS TAKEN BEFORE THE BODY IS READ (kanban #1676): an upload still open counts against its address and the day's bytes at the most it can
+    // write (SHOT_MOST), so uploads opened all at once cannot each pass the checks above; at its end the real size is kept, or the slot given back
+    const slot = { ip, atMs: Date.now(), bytes: SHOT_MOST };
+    SHOT_UPLOADS.push(slot);
+    let settled = false;
+    const release = () => { if (settled) return; settled = true; const i = SHOT_UPLOADS.indexOf(slot); if (i >= 0) SHOT_UPLOADS.splice(i, 1); };
+    req.on('error', release); req.on('close', () => { if (!req.complete) release(); });
     const parts = []; let size = 0, over = false;
     // TOO BIG: read on and keep nothing, answered 413 at its end; cut only past four times the cap
-    req.on('data', (c) => { size += c.length; if (size > SHOT_MOST) { over = true; parts.length = 0; if (size > 4 * SHOT_MOST) req.destroy(); return; } parts.push(c); });
+    req.on('data', (c) => { size += c.length; if (size > SHOT_MOST) { over = true; parts.length = 0; if (size > 4 * SHOT_MOST) { release(); req.destroy(); } return; } parts.push(c); });
     req.on('end', () => {
-      if (over) return send(413, { ok: false, why: `a screenshot is at most ${SHOT_MOST / 1e6} MB` });
+      if (over) { release(); return send(413, { ok: false, why: `a screenshot is at most ${SHOT_MOST / 1e6} MB` }); }
       const bytes = Buffer.concat(parts), kind = imageKind(bytes);
-      if (!kind) return send(415, { ok: false, why: 'a screenshot is a PNG, JPEG or WebP image' });
+      if (!kind) { release(); return send(415, { ok: false, why: 'a screenshot is a PNG, JPEG or WebP image' }); }
       const h = createHash('sha256').update(bytes).digest('hex');
       const fresh = !shotFile(h);
-      if (fresh) writeFileSync(pathJoin(SHOTS, `${h}.${kind}`), bytes);
-      SHOT_UPLOADS.push({ ip, atMs: Date.now(), bytes: fresh ? bytes.length : 0 });
+      try { if (fresh) writeFileSync(pathJoin(SHOTS, `${h}.${kind}`), bytes); } catch { release(); return send(507, { ok: false, why: 'the faucet has no room for screenshots just now: send the report without one' }); }
+      settled = true; slot.bytes = fresh ? bytes.length : 0;
       return send(200, { ok: true, sha256: h });
     });
     return undefined;

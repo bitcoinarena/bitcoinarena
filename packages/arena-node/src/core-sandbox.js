@@ -49,6 +49,10 @@ export const ARRAY_BUDGET = 64 * 1024 * 1024;
 export const HEAP_LIMITS = Object.freeze({ maxOldGenerationSizeMb: 128, maxYoungGenerationSizeMb: 16 });
 /** THE BACKSTOP: how far this process may grow while one call into a core runs - read every 2 ms by the core supervisor. */
 export const RSS_BACKSTOP = 512 * 1024 * 1024;
+/** THE LONGEST ANSWER a core may give one call, in characters (kanban #1691): the node copies it into its own thread and
+ *  parses it there, where no limit of the core's thread applies. A replay's answer is a few kB (three truck words a picture);
+ *  4 MB parses in well under ASK_MS. core-host.js refuses a longer one before it is posted, and the node again before it is read. */
+export const ANSWER_MAX = 4 * 1024 * 1024;
 /** The supervisor ends a core this far below the backstop: it reads the process every 2 ms, and a core allocating at full
  *  speed keeps going for the moments its isolate takes to stop (measured on the card). */
 const BACKSTOP_MARGIN_MB = 96;
@@ -67,6 +71,8 @@ function treeOf(root) {
  * the one file `url` names, hashed alone. `sourceHash` when the core's name is not its files' hash (the truck before the
  * 82/90 fork runs 2069b4c2's files), else `hash`. Answers the files by path and the entry's path among them.
  */
+/** The entry name of every single-file core, in the plugin trial and at the seat alike (kanban #1694). */
+export const SINGLE_ENTRY = 'core.mjs';
 export function coreFiles(core) {
   if (!core || typeof core.url !== 'string') throw new Error('that core names no file to load');
   const entryPath = fileURLToPath(core.url);
@@ -82,8 +88,10 @@ export function coreFiles(core) {
   const bytes = readFileSync(entryPath);
   const hash = coreBytesHashHex(bytes);
   if (hash !== want) throw new Error(`core ${String(core.hash).slice(0, 16)}: its file hashes to ${hash.slice(0, 16)}, not ${want.slice(0, 16)}`);
-  const entry = entryPath.split(/[\\/]/).pop();
-  return { files: new Map([[entry, bytes.toString('utf8')]]), entry };
+  // ONE NAME FOR EVERY SINGLE-FILE CORE (kanban #1694): the module's identifier was its file name ('core-<hash>.mjs' as
+  // installed, 'core.mjs' in the plugin trial), and V8's stack text names it - so an adapter could read where it ran and
+  // pass the trial, then spin at load in the seat's thread. Now the trial and every seat load it as SINGLE_ENTRY.
+  return { files: new Map([[SINGLE_ENTRY, bytes.toString('utf8')]]), entry: SINGLE_ENTRY };
 }
 
 /** Reads back a driver answer: tagged bigints and bytes restored. */
@@ -137,8 +145,9 @@ function deathOf(sup, id) {
  * array budget or grows this process past the backstop is ended - the node waits for its thread to be gone - and refused
  * from then on.
  */
-export function loadCore({ files, entry }, { callMs = CALL_MS, stepMs = STEP_MS, askMs = ASK_MS, loadMs = LOAD_MS, name = entry,
-  arrayBudget = ARRAY_BUDGET, liveCap = 0, heap = HEAP_LIMITS, rssBackstop = RSS_BACKSTOP } = {}) {
+export function loadCore({ files, entry }, options = {}) {
+  const { callMs = CALL_MS, stepMs = STEP_MS, askMs = ASK_MS, loadMs = LOAD_MS, name = entry,
+    arrayBudget = ARRAY_BUDGET, liveCap = 0, heap = HEAP_LIMITS, rssBackstop = RSS_BACKSTOP, answerMax = ANSWER_MAX, oneReplay = false } = options;
   const sup = supervisorOf();
   const id = sup.next++;
   const ctrl = new Int32Array(new SharedArrayBuffer(8 * 4));
@@ -148,7 +157,7 @@ export function loadCore({ files, entry }, { callMs = CALL_MS, stepMs = STEP_MS,
   // stops, so the line it must never cross is the backstop itself, not the trigger
   const triggerMb = Math.max(1, Math.round(rssBackstop / 1048576) - BACKSTOP_MARGIN_MB);
   sup.worker.postMessage({ type: 'spawn', id, files: [...files], entry, name, port: port2, ctrl: ctrl.buffer, arrayBudget, liveCap,
-    heap: { ...heap }, triggerMb }, [port2]);
+    answerMax, heap: { ...heap }, triggerMb }, [port2]);
   let ended = null;
   let lastEnd = null;
   const rssMb = () => Math.round(process.memoryUsage.rss() / 1048576);
@@ -200,7 +209,7 @@ export function loadCore({ files, entry }, { callMs = CALL_MS, stepMs = STEP_MS,
   if (!loaded.ok) { end(loaded.why); throw new Error(loaded.why); }
 
   // `within`: a shorter deadline for this one call (kanban #1538: the plugin trial run gives all its calls one deadline in total)
-  const call = (op, input = {}, within = null) => {
+  const callHere = (op, input = {}, within = null) => {
     if (ended) throw new Error(ended);
     port1.postMessage({ op: String(op), json: plain(input) });
     const ms = Number.isFinite(within) ? Math.max(1, Math.min(within, { callMs, stepMs, askMs }[DEADLINE[op] || 'askMs'])) : { callMs, stepMs, askMs }[DEADLINE[op] || 'askMs'];
@@ -208,11 +217,37 @@ export function loadCore({ files, entry }, { callMs = CALL_MS, stepMs = STEP_MS,
     // A CORE AT ITS ARRAY BUDGET IS ENDED, not asked again: it could catch the refusal and keep going, and what it holds goes
     // with its thread
     if (!a.ok && /asked for more than \d+ MB of arrays/.test(a.why)) { end(`${a.why}: its thread was ended, and it is not run again`); throw new Error(ended); }
+    // kanban #1691: past its answer size the core is ended, as core-host.js does - and an answer that is not a string of at most
+    // ANSWER_MAX characters is never parsed in this thread
+    if (!a.ok && /its answer was longer than/.test(a.why)) { end(`${a.why}: its thread was ended, and it is not run again`); throw new Error(ended); }
     if (!a.ok) throw new Error(a.why);
+    if (typeof a.json !== 'string' || a.json.length > answerMax) { end(`the core answered ${op} with more than ${answerMax} characters: its thread was ended, and it is not run again`); throw new Error(ended); }
     return revive(a.json);
   };
-  const meta = call('meta');
-  return Object.freeze({ call, meta, end: () => end('ended by the node'), lastEnd: () => lastEnd, highWaterMb: () => Atomics.load(ctrl, C.HIGH_MB) });
+  // A REPLAY RUNS ON A FRESH CORE THREAD OF ITS OWN (kanban #1624): a core that recursed until V8's "Maximum call stack size
+  // exceeded", caught the RangeError and counted its frames read its thread's JIT history - a frame's size depends on the tier
+  // its function runs in, and the tiers on a thread depend on what it ran before (measured: 400 replays of one input on one
+  // thread answered depths 41205, 41206 and 41209; 60 replays each on a fresh thread answered 41205 every time). The stack
+  // overflow cannot be made sticky like the array budget: V8 builds and throws it without running any code a sandbox could
+  // hook (not even the debugger hears it). So the replay - the call whose answer a seat signs - starts from the same history
+  // every time: a thread loaded for it alone (~45 ms), ended after it. A thread that ends that way (a deadline, the array
+  // budget, its heap, the backstop) ends this core too, as before. What this does not close: two machines (another CPU,
+  // another node build) still count a different depth - that is a core's own nondeterminism, as with any engine limit.
+  let lastOne = null;
+  const replayFresh = (input, within) => {
+    if (ended) throw new Error(ended);
+    const one = loadCore({ files, entry }, { ...options, oneReplay: true });
+    lastOne = one;
+    try { return one.call('replay', input, within); } catch (e) {
+      const why = one.endedWhy();
+      if (why) { end(why); lastEnd = one.lastEnd(); }
+      throw e;
+    } finally { if (!one.endedWhy()) one.end(); }
+  };
+  const call = (op, input = {}, within = null) => (String(op) === 'replay' && !oneReplay ? replayFresh(input, within) : callHere(op, input, within));
+  const meta = callHere('meta');
+  return Object.freeze({ call, meta, end: () => end('ended by the node'), lastEnd: () => lastEnd, endedWhy: () => ended,
+    highWaterMb: () => (lastOne ? lastOne.highWaterMb() : Atomics.load(ctrl, C.HIGH_MB)) });
 }
 
 /** Does this core draw a picture (a ghost)? false only when its sandbox says it does not; null when it does not load. */

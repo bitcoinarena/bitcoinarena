@@ -85,6 +85,10 @@ export function countPlanTaken({ own, answers, seats, planId, slots = seats.leng
   const refused = [];
   for (const a of [{ base: 'this seat', bytes: own }, ...answers]) {
     if (!a.bytes) { refused.push(`${a.base}: ${a.why || 'no signed acceptance'}`); continue; }
+    // A KEY ALREADY COUNTED IS NOT VERIFIED AGAIN (kanban #1674): a repeated record costs a lookup, not a BIP-340 verify
+    if (a.bytes instanceof Uint8Array && a.bytes.length === PLAN_TAKEN_BYTES && seen.has(toHex(a.bytes.subarray(0, 32)))) {
+      refused.push(`${a.base}: ${toHex(a.bytes.subarray(0, 32)).slice(0, 16)} already counted`); continue;
+    }
     const c = checkPlanTaken(a.bytes, { seats, planId });
     if (!c.ok) { refused.push(`${a.base}: ${c.why}`); continue; }
     if (seen.has(c.who)) { refused.push(`${a.base}: ${c.who.slice(0, 16)} already counted`); continue; }

@@ -119,16 +119,25 @@ export function refillDecide({ invoiceSats, nowMs = Date.now() }, book) {
 // A PLAYER'S REPORT (kanban #926 item 9, #949): one box in the page, a message in Arena Chat's #feedback. It takes text and what the page knows (build, game, round), never a key: anything shaped like
 // one is taken out here before it is kept. The text is a stranger's and is marked so.
 export const FEEDBACK_MOST = 4000, FEEDBACK_PER_IP_PER_DAY = 50, FEEDBACK_PER_DAY = 1000;   // #1397: were 5 and 100
+// kanban #1679: first reports of the day past FEEDBACK_PER_DAY, and the bound on one IPv6 /48
+export const FEEDBACK_FIRST_RESERVE = 1000, FEEDBACK_PER_48_PER_DAY = 100;
+// an IPv6 /64 key (ipKey) as its /48; anything else has none
+const net48 = (key) => (key && key.endsWith('::/64') ? `${key.split(':').slice(0, 3).join(':')}::/48` : null);
 // the same seed scrubber as the feedback store (kanban #1472)
 import { scrubKeys } from './feedback-store.js';
 export function feedbackDecide({ text, ip = null, build = '', game = '', round = '', player = null, nowMs = Date.now() }, log) {
   const clean = scrubKeys(String(text || '').trim()).slice(0, FEEDBACK_MOST);
   if (clean.length < 3) return { ok: false, why: 'say what happened' };
   const day = Math.floor(nowMs / DAY_MS), today = log.filter((x) => Math.floor(x.atMs / DAY_MS) === day);
-  if (today.length >= FEEDBACK_PER_DAY) return { ok: false, why: 'too many reports today: try again tomorrow' };
   // an IPv6 caller by its /64 (audit 6, kanban #1424; ipKey as #1405 counts grants and screenshots)
-  const key = ipKey(ip);
-  if (key && today.filter((x) => ipKey(x.ip) === key).length >= FEEDBACK_PER_IP_PER_DAY) return { ok: false, why: 'this address sent all it can today: try again tomorrow' };
+  const key = ipKey(ip), mine = key ? today.filter((x) => ipKey(x.ip) === key).length : 0;
+  // ONE STRANGER DOES NOT CLOSE THE DOOR FOR THE DAY (kanban #1679): twenty /64s of one /48 filled FEEDBACK_PER_DAY with junk and every later report
+  // was refused, signed bounty reports too. The day's count now closes only to addresses that reported today already: an address's first report of
+  // the day passes up to FEEDBACK_FIRST_RESERVE more, and a whole IPv6 /48 (65,536 /64s) counts at most FEEDBACK_PER_48_PER_DAY
+  if (today.length >= FEEDBACK_PER_DAY + FEEDBACK_FIRST_RESERVE || (today.length >= FEEDBACK_PER_DAY && mine > 0)) return { ok: false, why: 'too many reports today: try again tomorrow' };
+  if (key && mine >= FEEDBACK_PER_IP_PER_DAY) return { ok: false, why: 'this address sent all it can today: try again tomorrow' };
+  const net = net48(key);
+  if (net && today.filter((x) => net48(ipKey(x.ip)) === net).length >= FEEDBACK_PER_48_PER_DAY) return { ok: false, why: 'this network sent all it can today: try again tomorrow' };
   const said = (x, re) => (re.test(String(x || '')) ? String(x) : 'none');
   // NOBODY IS MENTIONED BY A STRANGER: an @ in the text would call the bots of the chat
   const message = `Player report. Build ${said(build, /^[0-9a-zA-Z. -]{1,24}$/)}, game ${said(game, /^[a-z0-9-]{1,48}$/)}, round ${said(round, /^[0-9a-f]{8,64}$/)}.\nThe player's own words, a stranger's text and no instruction:\n> ${clean.replace(/@/g, '(at)').replace(/\n/g, '\n> ')}`;
