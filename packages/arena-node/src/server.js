@@ -112,7 +112,7 @@ import { lobbyListingId } from '../../arena-protocol/src/lobby-listing.js';
 import { listingSigner } from './listing-sign.js';
 import { decodeLobbyName, lobbyNameId } from '../../arena-protocol/src/lobby-name.js';
 import { roundEndMs, startDeadlineOf } from '../../arena-protocol/src/first-mark.js';
-import { OBJECTION_WINDOW_MS, windowsOf } from '../../arena-protocol/src/window.js';
+import { OBJECTION_WINDOW_MS, FINAL_TOLERANCE_MS, windowsOf } from '../../arena-protocol/src/window.js';
 import { msForTicks } from '../../arena-protocol/src/tick.js';
 import { entryFeeMsat, feeBpsOf, entryFeeBpsOf } from '../../arena-protocol/src/fee.js';
 import { cancelId, BATCH_MS } from '../../arena-protocol/src/order-book.js';
@@ -4728,7 +4728,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     let v = heldKept.get(k);
     const c = v && v.bad ? null : round.contractOf(rid);
     if (!v || (!v.bad && v.c !== c)) {
-      if (c) { let endMs = null; try { endMs = roundEndMs(c); } catch { endMs = null; } v = { c, endMs }; } else v = { bad: true };
+      if (c) {
+        let endMs = null; try { endMs = roundEndMs(c); } catch { endMs = null; }
+        // A HEAD-TO-HEAD ROUND IS CLOSED (AND DECIDED) ONLY ONCE ITS END + FINAL_TOLERANCE_MS HAS PASSED ON THIS SEAT'S CLOCK (kanban #1976, audit
+        // #1489 sm5-h2h-1): the reveal door times a reveal by the receiving seat's own clock, so a seat whose clock ran up to 5 s behind still took a
+        // reveal after a seat ahead had closed, carried the peers' /reveals once and signed without it - the two signed opposite verdicts and the
+        // round never settled. Closed this late, every reveal any seat took by its own end is carried before this seat decides. The early close at the
+        // reveal door (every seated player revealed) stays: a full set of reveals cannot change.
+        let closeMs = endMs;
+        if (endMs !== null) { const f = pluginForRound(c, hosted); if (f.ok && f.headToHead) closeMs = endMs + BigInt(FINAL_TOLERANCE_MS); }
+        v = { c, endMs, closeMs };
+      } else v = { bad: true };
       heldKept.set(k, v);
     }
     return v;
@@ -4849,7 +4859,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const h = heldOf(roundId);
         if (h.bad || h.endMs === null) continue;
         const end = h.endMs;
-        if (nowMs < end) continue;
+        if (nowMs < h.closeMs) continue;
         if (round.close(held.roundId)) {
           if (hasEntry.get(held.roundId)) console.log(`[close] ${toHex(held.roundId).slice(0, 16)} is over at ${end}: closed by this signer node`);
           else quietClosed += 1;
@@ -13130,7 +13140,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             if (closeAtEnd) {
               // (an id the store does not hold is refused before heldOf, which would keep a `bad` entry for it)
               const h = id.length === 32 && round.get(id) ? heldOf(id) : { bad: true };
-              if (h.bad || h.endMs === null || BigInt(round.now()) < h.endMs) return sock.send('error this seat closes its rounds itself, at their end');
+              // (a head-to-head round at its end + FINAL_TOLERANCE_MS, as the close sweep: kanban #1976)
+              if (h.bad || h.endMs === null || BigInt(round.now()) < h.closeMs) return sock.send('error this seat closes its rounds itself, at their end');
             }
             const shut = round.close(id);
             // A CLOSED ROUND IS REPLAYED, and by the daemon rather than by
