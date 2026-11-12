@@ -121,6 +121,12 @@ export function publicRelayUrl(u) {
   if (/(^|\.)ts\.net$/.test(host)) return false;
   return publicHttpsUrl(`https://${url.host}/`);
 }
+// FRESH AND FOR THIS ADDRESS (kanban #2455): every paid zap's receipt carries its signed request on public relays, and the callback
+// took a request of any age, made for any address - a stranger replayed ten of a player's old requests (no payment) and filled that
+// key's ZAP_PENDING_PER_PAYER, so each fresh zap of the player was refused for the invoices' hour. A NIP-57 client signs the request
+// right before it calls the callback: one more than ZAP_REQUEST_FRESH_S from now is refused, and so is one whose own `lnurl` tag
+// names another address (with or without the optional `lnurl` query parameter).
+export const ZAP_REQUEST_FRESH_S = 600;
 
 /** What a plain (not zap) tip's invoice is hashed over (LUD-06: raw JSON, text/plain first, the address as text/identifier). */
 export const addressMetadata = (name, host) => JSON.stringify([['text/plain', `Zap ${name}@${host}`], ['text/identifier', `${name}@${host}`]]);
@@ -421,6 +427,9 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
         const ours = [`https://${publicHost}/.well-known/lnurlp/${name}`, `${base}/.well-known/lnurlp/${name}`, `${base}/lnurlp/${name}`]
           .map((x) => lnurlFor(x).toLowerCase());
         if (lnurl && !ours.includes(lnurl.toLowerCase())) return refuse('that lnurl is not this address');
+        const tagged = (request.tags || []).find((t) => Array.isArray(t) && t[0] === 'lnurl');
+        if (tagged && !ours.includes(String(tagged[1]).toLowerCase())) return refuse('that zap request is for another address');
+        if (Math.abs(request.created_at - Math.floor(Date.now() / 1000)) > ZAP_REQUEST_FRESH_S) return refuse('that zap request is not fresh; sign it again');
         zap = { request, relays };
         // ONE SIGNED ZAP REQUEST, ONE OPEN INVOICE (kanban #1514): a request already invoiced and still open gets that invoice again
         // (the same name and amount) and is refused otherwise; a new one waits for room under the caps.
