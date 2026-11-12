@@ -33,6 +33,14 @@ export function createDonationBallots({ db, knownSets, verifySecp256k1, log = ()
   const keyIn = (set, keyHex) => !!(set && Array.isArray(set.recipients) && set.recipients.some((r) => r && r.recipientPk instanceof Uint8Array && toHex(r.recipientPk) === keyHex));
   const setIdHex = (s) => { try { return toHex(donationSetId(s.recipients)); } catch { return null; } };
   const findSet = (sets, idHex) => sets.find((s) => setIdHex(s) === idHex) || null;
+  // kanban #2062, #2081: a proposal's parent is a held set OF ITS OWN NETWORK (approvedDonationSets reads it so) - found by
+  // recipients alone, a proposal naming any made-up network under a held set's recipients was kept and tallied 'approved'
+  // on the majority key's own accept, yet never a set anywhere
+  const netHex = (s) => { try { return toHex(s.networkId); } catch { return null; } };
+  const parentOf = (sets, p) => findSet(sets.filter((s) => netHex(s) !== null && netHex(s) === toHex(p.networkId)), toHex(p.parentSetId));
+  // kanban #2062, #2081: and its serial is above the parent's, as approvedDonationSets requires - one at or below it is
+  // never a set in force, whatever its tally
+  const aboveParent = (p, parent) => { try { return p.serial > parent.serial; } catch { return false; } };
   // Every stored row, decoded - and, given `parents` (the sets this seat holds), only the rows whose signer may sign them:
   // a proposal whose parent set is held and whose proposer is a key recipient of it, an approval of such a proposal whose
   // signer is a key recipient of the same parent. kanban #1710, #1775: the same check add() makes, applied on every read, so a
@@ -61,8 +69,9 @@ export function createDonationBallots({ db, knownSets, verifySecp256k1, log = ()
     const out = new Map();
     for (const [id, b] of byId) {
       if (!b.proposal) continue;
-      const parent = findSet(parents, toHex(b.proposal.parentSetId));
-      if (!parent || !keyIn(parent, toHex(b.proposal.proposer))) continue;
+      // kanban #2062, #2081: rows kept before these checks (another network, a serial not above the parent's) are read as if not there
+      const parent = parentOf(parents, b.proposal);
+      if (!parent || !aboveParent(b.proposal, parent) || !keyIn(parent, toHex(b.proposal.proposer))) continue;
       out.set(id, { ...b, all: b.approvals, approvals: firstVotes(b.approvals.filter((a) => keyIn(parent, toHex(a.signer)))) });
     }
     return out;
@@ -91,7 +100,7 @@ export function createDonationBallots({ db, knownSets, verifySecp256k1, log = ()
     const t = new Map();
     for (const b of withProposal) {
       const all = [...known, ...sets];
-      const parent = findSet(all, toHex(b.proposal.parentSetId));
+      const parent = parentOf(all, b.proposal);   // kanban #2062, #2081: of the proposal's own network
       t.set(toHex(donationProposalId(b.proposal)), parent ? await tallyDonationProposal({ proposal: b.proposal, approvals: b.approvals, parent: parent.recipients, verifySecp256k1 })
         : { state: 'refused', why: 'its parent set is not one this seat holds', acceptBps: 0, denyBps: 0, counted: [] });
     }
@@ -114,9 +123,12 @@ export function createDonationBallots({ db, knownSets, verifySecp256k1, log = ()
       // kanban #1528: kept only when signed by a recipient of a parent set this seat holds (the admin key's, or one approved
       // before) - before, any self-signed object from a key minted at will was kept for good, answered fresh and so forwarded
       // to every seat, and re-tallied on every add
-      const parentId = toHex(kind === 'proposal' ? obj.parentSetId : held.proposal.parentSetId);
-      const parent = findSet(heldSets(), parentId);
-      if (!parent) return { ok: false, status: 403, why: 'its parent set is not one this seat holds' };
+      const prop = kind === 'proposal' ? obj : held.proposal;
+      const parentId = toHex(prop.parentSetId);
+      // kanban #2062, #2081: the parent among the held sets of the proposal's own network, and the serial above the parent's
+      const parent = parentOf(heldSets(), prop);
+      if (!parent) return { ok: false, status: 403, why: 'its parent set is not one this seat holds on its network' };
+      if (!aboveParent(prop, parent)) return { ok: false, status: 403, why: `its serial is not above its parent set's (${parent.serial})` };
       const signerHex = toHex(kind === 'proposal' ? obj.proposer : obj.signer);
       // kanban #1710, #1775: an LNURL entry has no key - compared as no match, never toHex(undefined) and a 500
       if (!keyIn(parent, signerHex)) return { ok: false, status: 403, why: 'its signer is no recipient of the parent set' };
@@ -139,8 +151,12 @@ export function createDonationBallots({ db, knownSets, verifySecp256k1, log = ()
         // (never reached: read approvals are one per signer, and the signer is a recipient of the parent)
         if (!counted && held.approvals.length >= parent.recipients.length) return { ok: false, status: 429, why: 'this proposal holds an approval by every recipient' };
       } else {
-        const mine = [...ballots(heldSets()).entries()].filter(([, b]) => b.proposal && toHex(b.proposal.proposer) === signerHex && toHex(b.proposal.parentSetId) === parentId)
-          .map(([pid]) => (tallies.get(pid) || { state: 'open' }).state).filter((st) => st !== 'approved');
+        // kanban #2062, #2081: left out of the caps only a proposal that IS an approved set in force - a tally of 'approved'
+        // alone is no set (another network, a serial not above the parent's) and still counts against its proposer
+        const isSet = (pid) => approvedSets.some((s) => s.approvedBy && toHex(s.approvedBy) === pid);
+        const mine = [...ballots(heldSets()).entries()].filter(([pid, b]) => b.proposal && toHex(b.proposal.proposer) === signerHex && toHex(b.proposal.parentSetId) === parentId
+            && toHex(b.proposal.networkId) === toHex(obj.networkId) && !isSet(pid))
+          .map(([pid]) => (tallies.get(pid) || { state: 'open' }).state);
         if (mine.filter((st) => st === 'open').length >= MAX_OPEN_PER_PROPOSER) return { ok: false, status: 429, why: 'this signer has as many open proposals on this parent set as a seat keeps: withdraw one first' };
         if (mine.length >= MAX_KEPT_PER_PROPOSER) return { ok: false, status: 429, why: 'this seat keeps no more proposals by this signer on this parent set' };
       }
