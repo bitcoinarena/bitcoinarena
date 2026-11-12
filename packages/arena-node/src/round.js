@@ -127,6 +127,8 @@ const lockDoorMs = (atMs, now) => {
   const n = Math.floor(Number(now)), a = Math.floor(Number(atMs));
   return atMs === null || atMs === undefined || !Number.isFinite(a) || a > n ? n : a;
 };
+// kanban #2256: the most final_sig_evidence rows one seat's FINALs leave per (round, entry) - see putFinalSig.
+export const FINAL_SIG_EVIDENCE_PER_SIGNER = 4;
 
 export class Round {
   /** How long openHeld trusts its last count of the open rows when this store wrote none (kanban #786). */
@@ -2450,7 +2452,13 @@ export class Round {
   /**
    * A SEAT'S FINAL SIGNATURE, AS IT ARRIVED (§13A, WINDOW-10-SPEC): `fault` is protocol finalSigFault's answer at this
    * seat's clock now. One that counts is kept (the latest per seat and run); one refused for its time is kept as
-   * evidence against its signer; anything else is dropped. Returns 'kept', 'evidence' or 'refused'.
+   * evidence against its signer; anything else is dropped. Returns 'kept', 'evidence', 'evidence-held' or 'refused'.
+   * ONE EVIDENCE ROW PER SEAT AND ENTRY (kanban #2256, refute of #1817): final_sig_evidence is keyed by the bytes, so one
+   * committee seat with no kept FINAL on a real entry signed any number of back-dated FINALs (invented runs, or one run
+   * 1 ms apart) and every honest seat stored each as a new row and logged it - 400 of 400 measured, nothing reads or prunes
+   * them. One row is already proof against the signer: at most FINAL_SIG_EVIDENCE_PER_SIGNER (4 - room for an early and a
+   * time-off one, as window-10 measures) are stored per (round, entry, signer); a later one is not ('evidence-held',
+   * answered as before and not logged again).
    */
   putFinalSig(roundIdBytes, entryIdBytes, x, bytes, fault, seenMs = this.now()) {
     if (!fault) {
@@ -2459,9 +2467,12 @@ export class Round {
       return 'kept';
     }
     if (fault.evidence && fault.x) {
-      this.db.prepare('INSERT OR IGNORE INTO final_sig_evidence (round_id, entry_id, signer_pubkey, bytes, seen_ms, why) VALUES (?, ?, ?, ?, ?, ?)')
-        .run(roundIdBytes, entryIdBytes, fault.x.signerPubkey, bytes, seenMs, fault.why);
-      return 'evidence';
+      const put = this.db.prepare(
+        `INSERT OR IGNORE INTO final_sig_evidence (round_id, entry_id, signer_pubkey, bytes, seen_ms, why) SELECT ?, ?, ?, ?, ?, ?
+          WHERE (SELECT COUNT(*) FROM final_sig_evidence WHERE round_id = ? AND entry_id = ? AND signer_pubkey = ?) < ?`)
+        .run(roundIdBytes, entryIdBytes, fault.x.signerPubkey, bytes, seenMs, fault.why, roundIdBytes, entryIdBytes, fault.x.signerPubkey,
+          FINAL_SIG_EVIDENCE_PER_SIGNER);
+      return put.changes ? 'evidence' : 'evidence-held';
     }
     return 'refused';
   }
