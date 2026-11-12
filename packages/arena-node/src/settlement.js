@@ -2957,6 +2957,8 @@ export class LockSettlement {
     // WHAT THE ROUND MOVES OVER ALL ITS FEDERATIONS, NEVER REWRITTEN ONCE ONE FEDERATION'S IS IN (kanban #1172): each federation's own moves are kept
     // with its txid (keepScopedMoves) at its first SUBMITTING
     if (!(this.round.fedLockSettlementsOf ? this.round.fedLockSettlementsOf(roundIdBytes) : []).some((r) => r.state === ACCEPTED)) this.keepFederationMoves(roundIdBytes, got);
+    // THE SPLIT'S FEDERATIONS ON DISK BEFORE ANY IS SIGNED (kanban #1576): one whose part fails before its SUBMITTING row keeps the round unsettled and retried
+    if (this.round.putFedLockSplit) this.round.putFedLockSplit(roundIdBytes, got.split.settlements.map((s) => s.federation));
     const results = [];
     for (let i = 0; i < got.split.settlements.length; i++) {
       const s = got.split.settlements[i];

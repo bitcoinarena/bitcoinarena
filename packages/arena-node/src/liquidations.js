@@ -84,5 +84,6 @@ export function createLiquidations({ records, clocks, verify, claimsUrl = null, 
     }
     return out;
   }
-  return { offer, list, haltOf, aboveBound };
+  // the halt is asked by the e-cash exchange too (server.js `halted`): it reads haltOf and the halted federations from here (kanban #1577)
+  return { offer, list, haltOf, haltedFederations, aboveBound };
 }
