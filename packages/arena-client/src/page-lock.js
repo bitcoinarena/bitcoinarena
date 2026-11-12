@@ -3957,7 +3957,9 @@ export async function migrateFromDraining({ from, to, record, toFederationId, ch
     }
   }
   onState({ state: 'moved', movedMsat: moved, chunks });
-  return { moved, chunks, state: 'moved' };
+  // FOUND EMPTY, SAID SO (kanban #2289): `empty` only when the wallet held nothing above dust and nothing was moved - a stop
+  // ('stopped', the notes still there) or a refusal before the loop answers moved 0 / chunks 0 too, and is never "empty"
+  return { moved, chunks, state: 'moved', empty: chunks === 0 && moved === 0n };
 }
 
 /**
