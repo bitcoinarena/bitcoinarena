@@ -196,6 +196,8 @@ async function capped(answer, maxBytes) {
 const PEER_BODY_MAX_BYTES = 16 * 1024 * 1024;
 /** Marks a peer may hold past this seat's own chain in one /checkpoints answer (#1550's cap). */
 const PEER_MARKS_AHEAD = 1024;
+/** GET /late-first-mark answers one signed mark; 64 KiB is far past any mark and far short of a flood (kanban #1685). */
+const PEER_MARK_BODY_MAX_BYTES = 64 * 1024;
 async function peerFetch(url) {
   return fetch(url, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
 }
@@ -763,9 +765,11 @@ export class Verifier {
     await Promise.all(this.peersOf(roundIdBytes).map(async (peer) => {
       let body;
       try {
-        const answer = await fetch(`${peer}/results?round=${hex(roundIdBytes)}&entry=${hex(entryIdBytes)}`, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
-        if (!answer.ok) return;
-        body = new Uint8Array(await answer.arrayBuffer());
+        // kanban #1685 (#1550, #1507): the same deadline AND the same size cap as every other peer pull - a bare
+        // arrayBuffer() let one committee seat push hundreds of MiB into this seat on every entry it relays.
+        const answer = await peerFetch(`${peer}/results?round=${hex(roundIdBytes)}&entry=${hex(entryIdBytes)}`);
+        if (!answer.ok) { try { await answer.body?.cancel(); } catch { /* gone */ } return; }
+        body = await peerBody(answer);
       } catch { return; }
       let records = [];
       try { records = cutSignedResults(body); } catch { return; }
@@ -1105,13 +1109,15 @@ export class Verifier {
     if (mine.length) {
       for (const peer of this.peersOf(roundIdBytes)) {
         try {
-          const r = await fetch(`${peer}/late-first-mark?round=${hex(roundIdBytes)}&entry=${hex(entryId)}`, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
-          if (r.status === 200) { const theirs = new Uint8Array(await r.arrayBuffer()); for (const m of mine) pairs.push([m, theirs]); }
+          // kanban #1685: one first mark is all this answer holds - read under the deadline and a small cap
+          const r = await peerFetch(`${peer}/late-first-mark?round=${hex(roundIdBytes)}&entry=${hex(entryId)}`);
+          if (r.status === 200) { const theirs = await peerBody(r, PEER_MARK_BODY_MAX_BYTES); for (const m of mine) pairs.push([m, theirs]); }
+          else { try { await r.body?.cancel(); } catch { /* gone */ } }
         } catch { /* a signer node that cannot answer proves nothing */ }
         try {
-          const r = await fetch(`${peer}/entry-void?entry=${hex(entryId)}`, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
+          const r = await peerFetch(`${peer}/entry-void?entry=${hex(entryId)}`);   // kanban #1685: capped like the rest
           if (r.status === 200) {
-            const got = await r.json();
+            const got = await peerJson(r);
             if (got.firstMark) { const theirs = Uint8Array.from(Buffer.from(String(got.firstMark), 'hex')); for (const m of mine) pairs.push([m, theirs]); }
           }
         } catch { /* a signer node that cannot answer proves nothing */ }
@@ -1120,10 +1126,10 @@ export class Verifier {
     for (const peer of this.peersOf(roundIdBytes)) {
       if (report) report.peers++;
       try {
-        const r = await fetch(`${peer}/equivocation?round=${hex(roundIdBytes)}&entry=${hex(entryId)}`, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
+        const r = await peerFetch(`${peer}/equivocation?round=${hex(roundIdBytes)}&entry=${hex(entryId)}`);
         if (report) report.reached++;
-        if (r.status !== 200) continue;
-        const body = new Uint8Array(await r.arrayBuffer());
+        if (r.status !== 200) { try { await r.body?.cancel(); } catch { /* gone */ } continue; }
+        const body = await peerBody(r);   // kanban #1685: the size cap every peer pull has (#1550)
         for (let at = 0; at + 2 * SIGNED_MARK_BYTES <= body.length; at += 2 * SIGNED_MARK_BYTES)
           pairs.push([body.slice(at, at + SIGNED_MARK_BYTES), body.slice(at + SIGNED_MARK_BYTES, at + 2 * SIGNED_MARK_BYTES)]);
       } catch { /* a signer node that cannot answer proves nothing */ }
@@ -1355,11 +1361,12 @@ export class Verifier {
         // gather waits on it before it may move to the next entry - measured on the Daily, gathers running 2946 to
         // 6140 ms each while a page's own calls were aborting at 8 s. "A peer that is down is not a fault" was
         // already this function's rule; without a deadline it was a rule it could not keep.
-        const answer = await fetch(url, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
-        if (!answer.ok) { refused++; continue; }
+        // kanban #1685: and a size cap (#1550) - the gather buffered a peer's whole /results, however large.
+        const answer = await peerFetch(url);
+        if (!answer.ok) { try { await answer.body?.cancel(); } catch { /* gone */ } refused++; continue; }
         const said = answer.headers.get('x-no-quorum');
         if (said) noQuorumPeers.push({ peer, outcome: said });
-        body = new Uint8Array(await answer.arrayBuffer());
+        body = await peerBody(answer);
       } catch { refused++; continue; }      // a peer that is down is not a fault
 
       // THE RECORDS A PEER SENT, CHECKED: every one split, decoded, re-encoded to its own id and checked against the
