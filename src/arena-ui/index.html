@@ -9997,7 +9997,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         Object.defineProperty(join, 'stage', { enumerable: true, configurable: true,
           set: (v) => { const nv = String(v == null ? '' : v); if (nv !== raw) { raw = nv; at = Date.now(); } },
           get: () => {
-            if (join.state !== 'joining' || join.loaded || join.cancelled || join.finding) return raw;
+            // a join HELD to its start (entered, its countdown the raw stage - a free join is never `loaded`) reads that raw countdown too, as the order strip does (kanban #2189, #1483)
+            if (join.state !== 'joining' || join.loaded || join.held || join.cancelled || join.finding) return raw;
             const o = raw ? '' : openStep();
             if (o !== lastOpen) { lastOpen = o; if (!raw) at = Date.now(); }
             return joinWaitLine({ raw, openStep: o, startMs, nowMs: Date.now(), stepSinceMs: at, next: !!join.next });
