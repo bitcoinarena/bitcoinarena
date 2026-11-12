@@ -42,7 +42,7 @@ import { resultFinality } from './finality.js';
 import { stateOf } from './settlement-state.js';
 import { pluginForRound } from './plugins.js';
 import { giftsInFeeLock } from '../../arena-protocol/src/reserves.js';
-import { encodeCommitments, decodeCommitments, encodeShare, decodeShare } from './pool-wire.js';
+import { encodeCommitments, decodeCommitments, encodeShare, decodeShare, commitmentListRefusal } from './pool-wire.js';
 import { askPeers, PEER_ASK_MS, PEER_GRACE_MS } from './peer-ask.js';
 
 // A FEE LOCK'S RETURN (2026-10-09: "orders can be cancelled at no cost"): kept under its own key beside
@@ -440,6 +440,8 @@ export class Forfeit {
     if (!m.ok) return m;
     const held = this.pairs.get(toHex(m.message));
     if (!held || !held.size) return refuse('this signer node committed to no forfeit of that lock');
+    // NO LIST LONGER THAN A COMMITTEE (kanban #1672, as at /settle-share): refused before any curve work
+    { const why = commitmentListRefusal(commitments, { needed: m.needed, nodes: m.nodes }); if (why) return refuse(why); }
     const own = commitments.find((c) => String(c.id) === String(m.signerNode.id));
     const pair = own ? held.get(commitmentKey(own)) : null;
     if (!pair) return refuse('that list does not carry this signer node\'s own commitment');

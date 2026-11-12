@@ -29,7 +29,7 @@ import { sendableInvoiceMsat, lowestLiveGateway, sendPlanStands, proposedExpirat
 import { signShare340, aggregate340, nonceGenerate340, verifyShare340 } from '../../arena-protocol/src/frost-bip340.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
-import { encodeCommitments, decodeCommitments, decodeShare } from './pool-wire.js';
+import { encodeCommitments, decodeCommitments, decodeShare, commitmentListRefusal } from './pool-wire.js';
 import { largestPayoutMsat, lnv2FeeMsat } from '../../arena-protocol/src/lock-settlement.js';
 import { urlOfLnurl } from '../../arena-protocol/src/bech32.js';
 import { stateOf } from './settlement-state.js';
@@ -532,6 +532,8 @@ export class WinningsSend {
     const message = await this.messageFor(kind, roundIdBytes, row, built);
     const pair = this.pairs.get(`${kind}:${toHex(roundIdBytes)}:${entryHex}:${row.attempt}`);
     if (!message || !pair || toHex(pair.message) !== toHex(message)) return refuse(`this signer node committed to no ${kind} of that send`);
+    // NO LIST LONGER THAN A COMMITTEE (kanban #1672, as at /settle-share): refused before any curve work
+    { const why = commitmentListRefusal(commitments, { needed: built.needed, nodes: built.contract && built.contract.nodes }); if (why) return refuse(why); }
     const own = commitments.find((c) => String(c.id) === String(pair.commitment.id));
     if (!own || toHex(own.hiding) !== toHex(pair.commitment.hiding) || toHex(own.binding) !== toHex(pair.commitment.binding))
       return refuse('that list does not carry this signer node\'s own commitment');
