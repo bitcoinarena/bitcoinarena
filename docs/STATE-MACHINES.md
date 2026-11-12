@@ -1502,3 +1502,9 @@ Audit 5 (#1399, base 1502786b) and audit 6 (#1415, base eb7fd30fc) for release 2
 - Reserve payout: rows whose round this seat cannot read are `unknown` - taken as a co-signer, never picked as coordinator, never a SHORT while they could cover it (#1409).
 - Donation sets: a network's first set is its founding serial; a set's parent is the last set in force below it (#1407).
 
+## 14. State audit 2026-11-12
+
+#### SM-C1 x SM-C2 (change) E-cash exchange: a seat's 4xx after it took the notes (kanban #1583)
+- Invariant: a page exchange record is `refused` (terminal, never asked again) only for notes that were never handed to a seat. While the seat's row is TAKEN or SENDING (or RECEIVING with `receive_asked`), the page record is `handed`, `reclaiming` or `answered`, never `refused`.
+- Seat (`ecash-exchange.js`): a row whose notes it took or may have taken (TAKEN, SENDING, RECEIVING asked before) is never answered 4xx for a passing condition: no client of a federation yet (a restart, guardians not answering at boot) or a halted federation answers 503 "ask again". The per-exchange cap is checked only for a new row. A new row, or a RECEIVING one never asked, may still be refused with 409.
+- Page (`ecash-transfer.js`): a Rejected take-back after a seat's refusal moves the record back to `handed` with `seatTook` (asked again, same seat, same notes), as after a silence. A record with `seatTook` that meets another refusal is asked again, never taken back from twice. Only `kept -> reclaiming` (`neverHanded`) goes to `refused` on Rejected.
