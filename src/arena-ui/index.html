@@ -7918,16 +7918,32 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           { const kept = resultsSeen.get(id), moves = revealsSeen.get(id); if (kept && moves && Object.keys(moves).length >= 2 && h && Date.now() < Number(h.entryCloseMs) + 6000) return saidProvisionally(id, provisional(kept, moves)); }
           let none = null, best = null;
           const needs = (game.manifest && game.manifest.resultType === 3) ? 2 : 1;
-          for (const n of (h ? h.nodes : [])) {
+          // A HEAD-TO-HEAD VERDICT IS WHAT THE SEATS AGREE ON, NOT THE FIRST SEAT'S WORD (kanban #1825, audit #1489 r6-h2h): the first seat listing both entries
+          // was taken whole - its outcome, score and its own `signedBy` count - so one committee seat listed first told every winner of its rounds "You lose" and
+          // raised the "Correction" alert against what the other seats signed. Every seat is asked at once; the two entries' outcome and score most seats name
+          // stand, and only when at least two seats (one, for a round of one seat) name them alike - otherwise no seat's answer counts as signed
+          const asked = needs === 2 ? await Promise.all((h ? h.nodes : []).map(async (n) => {
+            try { const r = await fetch(String(n).replace(/\/+$/, '') + '/api/round-result?round=' + id, { cache: 'no-store', signal: AbortSignal.timeout(5000) }); return r.ok ? await r.json() : null; } catch { return null; }
+          })) : null;
+          const verdictOf = (j) => JSON.stringify((j.players || []).map((p) => [String(p.entry), String(p.outcome), Number(p.score)]).sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)));
+          const agreed = new Map();   // verdict -> how many seats name it
+          if (asked) for (const j of asked) if (j && (j.players || []).length === 2) agreed.set(verdictOf(j), (agreed.get(verdictOf(j)) || 0) + 1);
+          const counts = [...agreed.values()].sort((a, b) => b - a), top = [...agreed.entries()].find(([, c]) => c === counts[0]);
+          const quorum = Math.min(2, h ? h.nodes.length : 2), standing = top && top[1] >= quorum && !(counts.length > 1 && counts[1] === counts[0]) ? top[0] : null;
+          for (const [i, n] of (h ? h.nodes : []).entries()) {
             try {
-              const r = await fetch(String(n).replace(/\/+$/, '') + '/api/round-result?round=' + id, { cache: 'no-store', signal: AbortSignal.timeout(best ? 2000 : 5000) });
-              if (!r.ok) continue;
-              const j = await r.json();
+              let j;
+              if (asked) { j = asked[i]; if (!j) continue; if ((j.players || []).length === 2 && standing !== null && verdictOf(j) !== standing) continue; }
+              else {
+                const r = await fetch(String(n).replace(/\/+$/, '') + '/api/round-result?round=' + id, { cache: 'no-store', signal: AbortSignal.timeout(best ? 2000 : 5000) });
+                if (!r.ok) continue;
+                j = await r.json();
+              }
               // A SEAT THAT WAS NOT DRAWN ANSWERS 200 WITH NO PLAYERS (2026-10-30: "beide orders werden abgesendet aber es gibt kein Ergebnis": round
               // 1b995103 settled, 5 signed, and seven seats ahead of the signers in the list said nothing): the next seat is asked
               if (!(j.players || []).length) { none = none || { entries: [], match: null }; continue; }
               // AND THE SCORE ACROSS ROUNDS: the seat's signed match record, with whose identity is whose
-              const got = { entries: (j.players || []).map((p) => ({ entry: p.entry, outcome: p.outcome, score: p.score, signedBy: p.signedBy })),
+              const got = { entries: (j.players || []).map((p) => ({ entry: p.entry, outcome: p.outcome, score: p.score, signedBy: (asked && (j.players || []).length === 2 && standing === null) ? 0 : p.signedBy })),
                 match: j.match ? { identities: j.match.identities, names: j.match.names || [], score: j.match.score, played: j.match.played,
                   continued: !!j.match.previousRound, byEntry: j.match.players || {}, seat: j.match.seat, signature: j.match.signature } : null };
               // A SEAT THAT HOLDS ONLY ONE OF TWO IS NOT THE ROUND (kanban #947, 2026-11-01: "das Ergebnis nicht konsistent"): an entry reaches the seats one by one, so the fullest answer counts
