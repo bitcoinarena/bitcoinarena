@@ -16,8 +16,9 @@
 import http from 'node:http';
 import { readFileSync, appendFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { readSources } from '../src/sources.js';
-import { attestorKey, attestWindow, attestValue, combine, wordToJson, wordFromJson, marketsToAttest, marketVersions } from '../src/attestor.js';
+import { attestorKey, attestWindow, attestValue, combine, wordToJson, wordFromJson, marketsToAttest, marketVersions, roundCloseOf } from '../src/attestor.js';
 import { fromHex, toHex } from '../../arena-protocol/src/hash.js';
+import { decodeManifest, gameIdOf } from '../../arena-protocol/src/manifest.js';
 
 const arg = (name, dflt = null) => { const i = process.argv.indexOf(`--${name}`); return i > 1 ? process.argv[i + 1] : dflt; };
 const NAME = arg('name', 'A');
@@ -88,6 +89,7 @@ let marketsReadMs = 0;
 const MARKETS_EVERY_MS = Number(arg('markets-every-ms', '60000'));
 let versions = [];                     // [{ id, version }] of the seats' listing, oldest first
 let listed = false;
+const periods = new Map();             // market id hex -> its manifest's roundPeriodMs (0n: no grid)
 const readMarkets = async () => {
   if (Date.now() - marketsReadMs < MARKETS_EVERY_MS) return;
   const games = [];
@@ -104,6 +106,8 @@ const readMarkets = async () => {
   const key = toHex(attestor.pubkey);
   const next = marketsToAttest({ games, name: GAME, key, mode: MODE, ids: GAME_IDS });
   versions = marketVersions({ games, name: GAME, key, mode: MODE });
+  // each version's own grid (its manifest's roundPeriodMs) - a close off it is no round of the market (kanban #1705)
+  for (const g of games) { try { const m = decodeManifest(fromHex(String(g.manifest))); const id = toHex(gameIdOf(m)); if (next.has(id)) periods.set(id, m.roundPeriodMs); } catch { /* not a manifest */ } }
   const added = [...next].filter((id) => !marketIds.has(id));
   const dropped = [...marketIds].filter((id) => !next.has(id));
   // THE WHOLE LIST at the first read and on every change, the latest version named
@@ -113,34 +117,120 @@ const readMarkets = async () => {
 };
 const ofThisMarket = (x) => (marketIds.size ? marketIds.has(String(x.game.id).toLowerCase()) : x.game.name === GAME);
 
+// THE ROUND'S CLOSE IS ITS CONTRACT'S, NEVER ONE SEAT'S WORD (kanban #1489 / #1705, refute of fix:attest:3 9a2c0df4c): every seat's
+// listing is read (not the first that answers - one seat omitting a round no longer keeps it from its word either), and a round's
+// close is taken from contract bytes some seat serves that hash to the round's id (attestor.js roundCloseOf - for a series round,
+// the template's derivation too). Before, the FIRST seat's unsigned entryCloseMs fixed the window, the word was signed ONCE per
+// round and never redone: a seat listing a shifted close made this attestor sign another window, every seat refused it (observed_at
+// is not the window's end), and the round went VOID - a refund the lying seat could choose after watching the price. Only when no
+// seat serves the round's contract is a listed close used - and then only while every seat listing the round names the same one,
+// and the word is SIGNED AGAIN whenever that close changes: a lie can no longer fix the round's word for good.
+const CONTRACT_RETRY_MS = Number(arg('contract-retry-ms', '30000'));
+const closes = new Map();              // round hex -> { closeMs } believed from its contract (never changes: the bytes are the round)
+const closeTried = new Map();          // round hex -> ms its contract was last asked for, while none verified
+const noClose = new Set();             // round hex: logged once as having no close to sign
+const getJson = async (u) => { const r = await fetch(u, { signal: AbortSignal.timeout(8000) }); if (!r.ok) return null; return r.json(); };
 const roundsOfGame = async () => {
   await readMarkets();
-  for (const seat of SEATS) {
+  const byId = new Map();              // round hex -> Map seat -> listed close
+  await Promise.all(SEATS.map(async (seat) => {
     try {
       // THE NEXT 16 OF EACH SERIES, NOT EVERY ROUND (2026-10-12 "Bring down test-host CPU usage back to 12"):
       // the full listing every 5 s made a seat sign all its ~2,400 rows each 45 s window - 4,800 signatures a window, its
       // listing-sign worker at ~42 % (measured 16:02Z on seat 3). A market's rounds whose window ended within the hour are a
       // handful, kept in the listing's closed tally.
-      const r = await fetch(`${seat}/rounds?next=16`, { signal: AbortSignal.timeout(8000) });
-      if (!r.ok) continue;
-      const j = await r.json();
+      const j = await getJson(`${seat}/rounds?next=16`);
+      if (!j) return;
       const rows = Array.isArray(j) ? j : j.rounds || [];
       // entryCloseMs is decimal ms (a string on the wire)
-      return rows.filter((x) => x.game && ofThisMarket(x) && /^[0-9]{1,16}$/.test(String(x.entryCloseMs))).map((x) => ({ id: x.id, closeMs: BigInt(x.entryCloseMs) }));
+      for (const x of rows) {
+        if (!x || !x.game || !ofThisMarket(x) || !/^[0-9a-f]{64}$/i.test(String(x.id)) || !/^[0-9]{1,16}$/.test(String(x.entryCloseMs))) continue;
+        const id = String(x.id).toLowerCase();
+        if (!byId.has(id)) byId.set(id, { listedBy: new Map(), gameId: String(x.game.id || '').toLowerCase() });
+        byId.get(id).listedBy.set(seat, BigInt(x.entryCloseMs));
+      }
     } catch { /* the next seat */ }
+  }));
+  return [...byId].map(([id, v]) => ({ id, ...v }));
+};
+// the round's close: its contract's, else the one close every seat listing it agrees on, else none (signs nothing yet)
+const closeOfRound = async (r, nowMs) => {
+  const known = closes.get(r.id);
+  if (known) return { closeMs: known.closeMs, gameId: known.gameId, from: 'contract' };
+  const listedCloses = [...new Set([...r.listedBy.values()].map(String))];
+  // only a round whose window may have ended is worth asking about: its listed closes are all this attestor has before
+  const due = [...r.listedBy.values()].some((c) => nowMs >= c + BigInt(SAMPLE_MS));
+  if (due && Date.now() - (closeTried.get(r.id) || 0) >= CONTRACT_RETRY_MS) {
+    closeTried.set(r.id, Date.now());
+    const order = [...r.listedBy.keys(), ...SEATS.filter((s) => !r.listedBy.has(s))];
+    for (const seat of order) {
+      try {
+        const x = await fetch(`${seat}/round?id=${r.id}`, { signal: AbortSignal.timeout(8000) });
+        if (!x.ok) continue;
+        const bytes = new Uint8Array(await x.arrayBuffer());
+        let got = roundCloseOf({ id: r.id, contract: bytes, marketIds });
+        if (!got.ok && got.seriesId) {
+          let line = null;
+          for (const s2 of [seat, ...SEATS.filter((s) => s !== seat)]) {
+            try { const y = await fetch(`${s2}/series-template?id=${got.seriesId}`, { signal: AbortSignal.timeout(8000) }); if (y.ok) { line = await y.text(); break; } } catch { /* the next seat */ }
+          }
+          if (line !== null) got = roundCloseOf({ id: r.id, contract: bytes, seriesLine: line, marketIds });
+        }
+        if (got.ok) {
+          const p = periods.get(got.gameId) || 0n;
+          if (p > 0n && got.closeMs % p !== 0n) { log({ step: 'contract off the grid', round: r.id, seat, closeMs: got.closeMs, periodMs: p }); continue; }
+          closes.set(r.id, { closeMs: got.closeMs, gameId: got.gameId }); closeTried.delete(r.id);
+          const liars = [...r.listedBy].filter(([, c]) => c !== got.closeMs).map(([s]) => s);
+          if (liars.length) log({ step: 'listed close is not the contract\'s', round: r.id, contract: got.closeMs, seats: liars });
+          return { closeMs: got.closeMs, gameId: got.gameId, from: 'contract' };
+        }
+        log({ step: 'contract not believed', round: r.id, seat, why: got.why });
+      } catch { /* the next seat */ }
+    }
   }
-  return [];
+  if (listedCloses.length !== 1) return { closeMs: null, why: `the seats list ${listedCloses.length} closes for it and none serves its contract` };
+  return { closeMs: BigInt(listedCloses[0]), gameId: r.gameId, from: 'listing' };
 };
 
+let ticking = false;
 const tick = async () => {
+  if (ticking) return;
+  ticking = true;
+  try { await tickOnce(); } finally { ticking = false; }
+  if (closes.size > 5000) closes.clear();
+  if (closeTried.size > 5000) closeTried.clear();
+  if (noClose.size > 5000) noClose.clear();
+};
+const tickOnce = async () => {
   const now = BigInt(Date.now());
   for (const r of await roundsOfGame()) {
-    const window = { startMs: r.closeMs - PERIOD_MS, endMs: r.closeMs };
-    // ONE WORD PER ROUND, once its window ended and the reading at its end is in (one sample period after it)
+    const c = await closeOfRound(r, now);
+    if (c.closeMs === null) {
+      if (!noClose.has(r.id)) { noClose.add(r.id); log({ step: 'no close', round: r.id, why: c.why }); }
+      // a word signed for a close the seats no longer agree on is not served on as this round's
+      if (words.has(r.id) && words.get(r.id).from !== 'contract') { words.delete(r.id); posted.delete(r.id); }
+      continue;
+    }
+    noClose.delete(r.id);
+    // THE MARKET'S OWN GRID, when its manifest names one; else --period-ms as before
+    const gp = periods.get(c.gameId);
+    const period = typeof gp === 'bigint' && gp > 0n ? gp : PERIOD_MS;
+    if (c.from === 'listing' && typeof gp === 'bigint' && gp > 0n && c.closeMs % gp !== 0n) {
+      if (!noClose.has(r.id)) { noClose.add(r.id); log({ step: 'listed close off the grid', round: r.id, closeMs: c.closeMs, periodMs: gp }); }
+      continue;
+    }
+    const window = { startMs: c.closeMs - period, endMs: c.closeMs };
+    // a word signed for ANOTHER close (one seat's listing, since corrected or since read from the contract) is signed again
+    const had = words.get(r.id);
+    if (had && had.closeMs !== c.closeMs) {
+      log({ step: 'signs again', round: r.id, was: had.closeMs, close: c.closeMs, from: c.from });
+      words.delete(r.id); posted.delete(r.id);
+    }
+    // ONE WORD PER ROUND AND CLOSE, once its window ended and the reading at its end is in (one sample period after it)
     if (!words.has(r.id) && now >= window.endMs + BigInt(SAMPLE_MS) && now < window.endMs + 3600000n) {
       const w = (MODE === 'value' ? attestValue : attestWindow)({ samples, roundId: fromHex(r.id), window, attestor });
-      words.set(r.id, w.ok ? w : { none: w.why });
-      log(w.ok ? { step: 'signed', round: r.id, window: { start: new Date(Number(window.startMs)).toISOString(), end: new Date(Number(window.endMs)).toISOString() },
+      words.set(r.id, w.ok ? { ...w, closeMs: c.closeMs, from: c.from } : { none: w.why, closeMs: c.closeMs, from: c.from });
+      log(w.ok ? { step: 'signed', round: r.id, from: c.from, window: { start: new Date(Number(window.startMs)).toISOString(), end: new Date(Number(window.endMs)).toISOString() },
         ...(MODE === 'value' ? { value: w.value } : { priceToBeat: w.priceToBeat, endPrice: w.endPrice, outcome: w.label }),
         samples: samples.filter((s) => s.atMs >= window.startMs - 60000n && s.atMs < window.endMs).length }
         : { step: 'signs nothing', round: r.id, why: w.why });
@@ -167,7 +257,11 @@ const tick = async () => {
         else if (x.status === 404) {
           if (!absent.has(seat)) log({ step: 'seat holds no such round', round: r.id, seat, again: `in ${NO_ROUND_RETRY_MS / 1000} s` });
           absent.set(seat, Date.now() + NO_ROUND_RETRY_MS); noRound.set(r.id, absent);
-        } else log({ step: 'post refused', round: r.id, seat, status: x.status, why: text.slice(0, 200) });
+        } else {
+          log({ step: 'post refused', round: r.id, seat, status: x.status, why: text.slice(0, 200) });
+          // a seat that says the word is of another window: its contract is asked for again at once (never a reason to stop)
+          if (/another window/.test(text) && !closes.has(r.id)) closeTried.delete(r.id);
+        }
       } catch (e) { log({ step: 'post failed', round: r.id, seat, why: e.message }); }
     }
     posted.set(r.id, held);
