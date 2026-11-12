@@ -86,7 +86,10 @@ test('a player report: words kept, keys out, limits per address and per day, and
   const mine = Array.from({ length: FEEDBACK_PER_IP_PER_DAY }, () => ({ ip: 'a', atMs: now }));
   assert.equal(feedbackDecide({ text: 'hello', ip: 'a', nowMs: now }, mine).ok, false);
   assert.equal(feedbackDecide({ text: 'hello', ip: 'b', nowMs: now }, mine).ok, true);
-  assert.equal(feedbackDecide({ text: 'hello', ip: 'b', nowMs: now }, Array.from({ length: FEEDBACK_PER_DAY }, () => ({ ip: 'c', atMs: now }))).ok, false);
+  // kanban #1679: a full day still refuses an address that reported today, but takes another address's first report
+  const full = Array.from({ length: FEEDBACK_PER_DAY }, (_, i) => ({ ip: i ? 'c' : 'b', atMs: now }));
+  assert.equal(feedbackDecide({ text: 'hello', ip: 'b', nowMs: now }, full).ok, false);
+  assert.equal(feedbackDecide({ text: 'hello', ip: 'd', nowMs: now }, full).ok, true);
 });
 
 test('the test opponent\'s top-up: bounded by the ask and by the day', async () => {

@@ -6,7 +6,7 @@
 // them (arena-protocol funding.js), signs it with the visitor's own key - an nsec, or a key kept in that browser - and hands it to
 // every node (POST /funding), which keep it and pass it on. The curve is the page's (arena-curve.js, globalThis.ARENA_CURVE: pointX,
 // signSchnorr), passed in as `curve` - this bundle carries no crypto of its own.
-import { encodeFundingProposal, fundingProposalId, encodeFundingComment, fundingCommentId } from '../../arena-protocol/src/funding.js';
+import { encodeFundingProposal, decodeFundingProposal, fundingProposalId, encodeFundingComment, fundingCommentId, FUNDING_SIG_BYTES } from '../../arena-protocol/src/funding.js';
 import { bech32Encode, bech32Decode, convertBits } from '../../arena-protocol/src/bech32.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { encodePlayerName, decodePlayerName, playerNameId } from '../../arena-protocol/src/player-name.js';
@@ -64,7 +64,19 @@ export async function fetchProposals({ nodes, needed = 5, fetcher = (u, o) => fe
   const proposals = [];
   for (const { views, comments } of by.values()) {
     if (views.length < needed) continue;
-    const p = views[0];
+    // WHAT IS SHOWN IS WHAT WAS SIGNED (kanban #1617): the id, purpose, amount, Lightning address, author, network and height come
+    // from the signed hex the `needed` seats agree on, decoded here - never from the JSON beside it, which is only the first seat's
+    // word (views[0]) and could dress a real signature in another proposal's text. A hex that does not decode, or (with `verify`)
+    // whose signature does not verify, is not shown.
+    let p;
+    try {
+      const bytes = fromHex(String(views[0].hex || ''));
+      if (bytes.length <= FUNDING_SIG_BYTES) continue;
+      const o = decodeFundingProposal(bytes.slice(0, -FUNDING_SIG_BYTES)), id = fundingProposalId(o);
+      if (verify && verify(bytes.slice(-FUNDING_SIG_BYTES), id, o.author) !== true) continue;
+      p = { id: toHex(id), purpose: o.purpose, amountSats: String(o.amountSats), lnurl: o.lnurl, author: toHex(o.author), network: toHex(o.networkId),
+        publishedHeight: o.publishedHeight };
+    } catch { continue; }
     const [stageKey] = fundingMost(views.map((v) => JSON.stringify([v.signal && v.signal.state, v.vote && v.vote.state, v.cancelled || null])));
     const v = views.find((x) => JSON.stringify([x.signal && x.signal.state, x.vote && x.vote.state, x.cancelled || null]) === stageKey);
     proposals.push({ id: p.id, purpose: p.purpose, amountSats: String(p.amountSats), lnurl: p.lnurl, author: p.author, network: p.network,
