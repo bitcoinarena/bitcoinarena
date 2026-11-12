@@ -17,6 +17,7 @@ import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { regtest } from './regtest-bond.mjs';
+import { inForceOf } from '../src/add-bond-wallet.js';
 import { openStore, nodeIdentity } from '../src/store.js';
 import { bondSetFor } from '../src/curve.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
@@ -74,7 +75,7 @@ if (censusAt !== null) {
 }
 
 // THE ADDED OUTPUT: the seat's newest advertisement, a template-2 bond of SATS, its carrier funded by the bond wallet (not sent yet)
-const newest = bonds[0];
+const newest = inForceOf(bonds);   // the advertisement in force, as the census reads it (kanban #1836), not bonds[0]
 let fundingHex = null;
 // the versions it speaks: the newest advertisement's and this build's (protocol 19 counts the sum only for a node that speaks 19)
 const versions = [...new Set([...(newest.advert.protocolVersions || []), ...SUPPORTED_PROTOCOL_VERSIONS])].sort((a, b) => a - b);

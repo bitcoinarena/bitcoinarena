@@ -24,6 +24,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
 import { regtest } from './regtest-bond.mjs';
+import { inForceOf } from '../src/add-bond-wallet.js';
 import { openStore, nodeIdentity } from '../src/store.js';
 import { readInvite } from '../src/invite.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
@@ -114,7 +115,10 @@ for (const n of (ONLY.length ? ONLY : [1, 2, 3, 4, 5, 6, 7])) {
   // the small added one - below protocol 19 the census reads each output's own advertisement and counts only an output above the
   // floor, so the update goes to the largest - the newest on a tie, as before (seat 1 still holds its template-1 genesis output of
   // the same 50,000 sat, which no census counts); from 19 the node's newest advertisement decides for all of them
-  const bond = [...bonds].sort((x, y) => (y.sats - x.sats) || (y.height - x.height))[0];
+  // THE BODY IN FORCE (kanban #1836): the update still goes on the largest output, but it starts from the node's newest advertisement
+  // over all its outputs (inForceOf, as the census reads it), not the largest's own - an update since on another output is kept
+  const largest = [...bonds].sort((x, y) => (y.sats - x.sats) || (y.height - x.height))[0];
+  const bond = { ...largest, advert: inForceOf(bonds).advert };
   const now = (bond.advert.guardianOf || []).map((x) => `${toHex(x.federationId)}:${toHex(x.guardianKey)}`);
   const want = entries.map((x) => `${toHex(x.federationId)}:${toHex(x.guardianKey)}`).join(',');
   say({ node: n, nodeKey: toHex(pubkey).slice(0, 16), bond: `${bond.txid}:${bond.vout}`, bondHeight: bond.height, sats: bond.sats,
