@@ -19385,13 +19385,27 @@ async function redeemStake({ round, roundId, invite, seed, curve, LockClient, st
   const cid = contractIdVia(LockClient || (client && client.constructor));
   const locks = await heldByGuardians(client, named, cid);
   if (!locks.length) throw new Error('the federation holds none of the locks the signer nodes name for this seed in this round');
+  // ONE VERIFIED FORFEIT PER OUTPOINT, FROM ANY OF ITS VERSIONS, AND EACH OUTPOINT REDEEMED ONCE (kanban #1872, refute #2 of #1489 CLIENT-1, as
+  // lookOwed reads it since #1273): a stranger seat of the lobby's list naming the real lock under a made-up entryId was a second held "version"
+  // with no forfeit, and its refused forfeit threw on every collect, for good - past the lock's expiry too, since the look still said owed by forfeit.
+  // A version without a verified forfeit is passed over; only an outpoint none of whose versions has one throws
+  const at = (l) => `${toHex(l.outpoint.txid)}:${l.outpoint.outIdx}`;
+  const byOutpoint = new Map();
+  for (const l of locks) { if (!byOutpoint.has(at(l))) byOutpoint.set(at(l), []); byOutpoint.get(at(l)).push(l); }
   const forfeits = [];
-  for (const l of locks) {
-    const a = asked.find((x) => x.lock === l);
-    if (!a.forfeit.ok) throw new Error(a.forfeit.why);
-    const check = forfeitCheck({ curve, fields: l.fields, storedId: await storedIdAt(client, l), contractIdOf: cid });
-    if (check && check(a.forfeit) === false) throw new Error('the forfeit given for this lock does not verify against the contract the federation holds at its outpoint');
-    forfeits.push({ lock: l, forfeit: a.forfeit });
+  for (const versions of byOutpoint.values()) {
+    let why = null;
+    let took = null;
+    for (const l of versions) {
+      const a = asked.find((x) => x.lock === l);
+      if (!a || !a.forfeit.ok) { why = why || (a ? a.forfeit.why : 'no forfeit asked of this lock'); continue; }
+      const check = forfeitCheck({ curve, fields: l.fields, storedId: await storedIdAt(client, l), contractIdOf: cid });
+      if (check && check(a.forfeit) === false) { why = why || 'the forfeit given for this lock does not verify against the contract the federation holds at its outpoint'; continue; }
+      took = { lock: l, forfeit: a.forfeit };
+      break;
+    }
+    if (!took) throw new Error(why || 'no signer node gave a forfeit of this lock');
+    forfeits.push(took);
   }
   // AND THE ORDER'S FEE LOCK (measured 2026-10-11 by the bots on the regtest Up/Down market: an order the book
   // never filled came back without its 1 % - 54,450 of 55,000 msat, 55,440 of 56,000 - because only stake locks were ever
@@ -19400,7 +19414,8 @@ async function redeemStake({ round, roundId, invite, seed, curve, LockClient, st
   // and left alone.
   const kept = storage ? savedLock(storage, { roundId, playerPubkey: player.pubkey }) : null;
   const fee = kept && kept.lock && kept.lock.feeLock;
-  const feeEntry = locks.find((l) => l.entryId) || null;
+  // the fee lock's forfeit asked under the entry of a stake version whose own forfeit verified (kanban #1872): never a stranger's made-up entryId
+  const feeEntry = forfeits.map((x) => x.lock).find((l) => l.entryId) || null;
   if (fee && feeEntry) {
     onStep('asking the signer nodes for the forfeit of the fee lock');
     const f = await forfeitOf({ roundId, entryId: feeEntry.entryId, nodes, fetcher, lock: 'fee',
