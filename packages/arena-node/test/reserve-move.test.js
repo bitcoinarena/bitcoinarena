@@ -133,14 +133,16 @@ function world({ statusX = 'DRAINING', gatewayFails = false, downY = [], noGatew
 }
 const MOVE = moveIdOf(X, Y);
 
-test('the rule: a draining or critical federation with reserves moves to its open successor first, else the lowest-id open one; open, halted, closed or no healthy one - no move', () => {
+test('the rule: a draining or critical federation with reserves moves to its open successor first, else the lowest-id open one; a closed one still holding reserves too (kanban #1981); open, halted, empty or no healthy one - no move', () => {
   const f = (id, status, more = {}) => ({ id, status, height: 600, successor: null, key: id.slice(0, 2).repeat(33).slice(0, 66), unspentMsat: 5000n, ...more });
   assert.deepEqual(moveTargets([f(X, 'DRAINING', { successor: Z }), f(Y, 'OPEN'), f(Z, 'OPEN')]).moves.map((m) => [m.from, m.to]), [[X, Z]], 'the successor first');
   assert.deepEqual(moveTargets([f(X, 'CRITICAL', { successor: Z }), f(Y, 'OPEN'), f(Z, 'DRAINING', { unspentMsat: 0n })]).moves.map((m) => m.to), [Y], 'a successor not open: the lowest-id open one');
   assert.deepEqual(moveTargets([f(X, 'OPEN'), f(Y, 'OPEN')]).moves, []);
   const halted = moveTargets([f(X, 'HALTED'), f(Y, 'OPEN')]);
   assert.deepEqual([halted.moves, halted.waiting[0].why], [[], 'halted: its notes are frozen until it recovers']);
-  assert.deepEqual(moveTargets([f(X, 'CLOSED'), f(Y, 'OPEN')]).moves, []);
+  // kanban #1981: a closed federation still holding reserves moves (the drain clock closed its record, the money never left)
+  assert.deepEqual(moveTargets([f(X, 'CLOSED'), f(Y, 'OPEN')]).moves.map((m) => [m.from, m.to]), [[X, Y]]);
+  assert.deepEqual(moveTargets([f(X, 'CLOSED', { unspentMsat: 0n }), f(Y, 'OPEN')]), { moves: [], waiting: [] }, 'closed and empty: nothing');
   const none = moveTargets([f(X, 'DRAINING'), f(Y, 'DRAINING')]);
   assert.match(none.waiting.map((x) => x.why).join(' '), /no healthy federation/);
   assert.deepEqual(moveTargets([f(X, 'DRAINING', { unspentMsat: 0n }), f(Y, 'OPEN')]).moves, [], 'nothing held: nothing to move');
