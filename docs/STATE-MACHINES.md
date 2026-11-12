@@ -1730,3 +1730,19 @@ Audit 5 (#1399, base 1502786b) and audit 6 (#1415, base eb7fd30fc) for release 2
 - One record per phrase: the slot is #1771's (`claimSlot`, the record names its `payoutPk`; another phrase's record is left alone and this phrase keeps its own at `<key>.<16 hex of its payout key>`). #1837's own `-<payoutPk>` key was not taken in the merge.
 - An intent is dropped as "left by a closed tab" only when it is older than `CLAIM_INTENT_LIVE_MS` (120 s); a younger one is another tab handing over now, and this pass hands nothing over.
 - Invariant: every note that left a wallet (sendAllEcash returned) is kept in exactly one record until the arbitration set takes it.
+
+#### SM-T5 (change) Welcome on the page
+- The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-19 (change) Faucet book: players + unsure (kanban #1628)
+- Invariant: an account holds at most one welcome, whatever the order of payer answers. A grant parked in `unsure` (its payer timed out, lnd may still pay it) counts as taken until the sweep rebooks it (any payer SUCCEEDED) or forgets it (all FAILED/NONE, or no IN_FLIGHT after 24 h): `playerGrantDecide` refuses a welcome while the same account has an unsure welcome ("your welcome is still being checked"), and counts the account's unsure top-ups of the day toward `PLAYER_TOPUPS_PER_DAY`.
+#### SM-19 (change) Faucet book: a grant row before its payment (#1627)
+- Invariant: a player grant row (welcome or refill) without `pending` stands only for a payment some payer reported SUCCEEDED. The row is booked `pending` with every payer that may be asked (`payers`: all indices) BEFORE the first payinvoice; SUCCEEDED clears `pending`, IN_FLIGHT narrows `payers` to those asked, no payer paying moves it to `unsure` (as before).
+- A faucet killed inside payinvoice leaves a pending row; after the restart the sweep reads it like any other: any SUCCEEDED -> booked, every payer NONE/FAILED -> removed (the welcome can be asked again). The sweep skips a row whose grant is still paying in this process (`GRANTING`), so a payer not asked yet ("not initiated") never removes a row mid-grant.
+#### SM-19 (change) Faucet book: an unsure welcome blocks another (kanban #1834)
+- Invariant: an account is paid one welcome, counting the rows in `unsure` - payments no payer has called FAILED or NONE yet, which may still arrive. `grant` and `grantEcash` decide over book.players plus book.unsure (toward the welcome, the top-ups and the day, hour and address caps); a welcome asked while one of the account's welcomes is unsure is answered "your welcome is still on its way" and nothing is paid. The sweep's rebook of a late SUCCEEDED can therefore never book a second welcome row next to one paid meanwhile.
+#### SM-19 (add) E-cash welcome: pool shelf -> taken/ -> book row (kanban #1835)
+- A note leaves the shelf only for a welcome the book holds. `grantEcash` renames the note into `taken/` and then writes the book; when the book write fails (a full disk), the note is renamed back to the shelf before the 500, so a retry takes the same note, not the next one.
+- At start the faucet puts back every note in `taken/` that no book row names as its `noteFile` (a faucet killed between the take and the book write). It does so only when the book file is there and reads: a lost or broken book puts nothing back, so a note already handed out is never offered twice.
