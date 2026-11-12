@@ -1531,6 +1531,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     repealScheduleFor: (net) => (isRegtestNet(net) ? REPEAL_SCHEDULES.regtest : toHex(fromHex(net)) === toHex(NETWORK_ID_TESTNET4) ? REPEAL_SCHEDULES.testnet4 : REPEAL_SCHEDULES.mainnet),
     ...(counts ? { historyFor: (net, height, cls) => (ballotTally ? ballotTally.historyAt(net, height, cls) : null) } : {}),
     depthHeightFor: ballotDepthHeightFor, minDecideDepthFor: ballotMinDepthFor,
+    // ONLY A BONDED NODE PROPOSES (27A.7.2, kanban #1489): the proposer is checked against the census the tally reads
+    ...(typeof ballot.censusAt === 'function' ? { censusAt: ballot.censusAt } : {}),
     verify: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } },
     exampleCheck: (e) => tryExample(e),
     store: { read: () => { try { return round.db.prepare('SELECT json FROM ballot_proposals').all().map((r) => JSON.parse(r.json)); } catch { return []; } },
