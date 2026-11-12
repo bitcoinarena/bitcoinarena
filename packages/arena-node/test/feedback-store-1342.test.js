@@ -308,6 +308,7 @@ test('#1342 a node bounty: 10,000 from its own pot for a node report; one per pe
   assert.match(again.why, /one node bounty per person/);
   assert.match(front.why, /for a node report/);
   assert.equal(bar.weekApprovedSats, 0, 'the node bounty is not in the bug budget');
+  assert.equal(bar.weekOutsideBudgetSats, 10000, 'and it is shown as approved this week outside the budget (Daniel 2026-11-12: 46,000 beside 56,000)');
 });
 
 // AUDIT 5 (kanban #1402, reproduced): approve, make the reward link, reject - the link still paid, outside the week's budget; and one node re-claimed

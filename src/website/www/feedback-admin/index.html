@@ -100,7 +100,10 @@
   function budget(b) {
     const s = $('stats'); s.replaceChildren();
     const stat = (label, v) => el('div', { cls: 'stat' }, el('b', { text: v }), el('span', { text: label }));
-    s.append(stat('approved this week', `${sats(b.weekApprovedSats)} of ${sats(b.weeklyBudgetSats)}`), stat('approved in all', sats(b.allApprovedSats)), stat('paid', sats(b.paidSats)),
+    // THE WEEKLY BUDGET, AND WHAT THIS WEEK APPROVED OUTSIDE IT (Daniel 2026-11-12: "46,000 of 100,000 approved this week" read as a mistake beside
+    // "56,000 approved in all" - a critical bug's 10,000 do not count against the budget): two figures, each named
+    s.append(stat('of the weekly budget used', `${sats(b.weekApprovedSats)} of ${sats(b.weeklyBudgetSats)}`),
+      ...(Number(b.weekOutsideBudgetSats) > 0 ? [stat('this week outside the budget (critical, node)', sats(b.weekOutsideBudgetSats))] : []), stat('approved in all', sats(b.allApprovedSats)), stat('paid', sats(b.paidSats)),
       stat('links not yet claimed', `${b.openRewards.n} · ${sats(b.openRewards.s)}`), stat('new reports', String((b.counts && b.counts.new) || 0)));
     $('weekbar').style.width = `${Math.min(100, (100 * b.weekApprovedSats) / Math.max(1, b.weeklyBudgetSats))}%`;
     // REAL SATS ON MAINNET (kanban #1450, Daniel 2026-11-11: bounties are real Lightning payments on mainnet): said by the faucet's payout network
