@@ -192,6 +192,9 @@ async function readDeepInBatches(call, from, to, cache) {
 
 export async function blocksOver(call, from, to, { cache = null } = {}) {
   const blocks = [];
+  // THE HASH EACH BLOCK WAS READ UNDER, height by height (kanban #2191, #1841): a caller that keys what it derives by a block's hash
+  // checks the view's own block at that height came under that hash - not whether its cache happens to hold that block
+  const hashes = [];
   let best = null;
   if (cache && cache.hashes && cache.hashInFlight && cache.inFlight && call && typeof call.batch === 'function') await readDeepInBatches(call, from, to, cache);
   for (let h = from; h <= to; h++) {
@@ -221,6 +224,7 @@ export async function blocksOver(call, from, to, { cache = null } = {}) {
       if (deep) cache.putHash(h, hash);
       else if (top && cache.topBest === best) cache.topHashes.set(h, hash);
     }
+    hashes.push(String(hash));
     const had = cache ? cache.get(hash) : undefined;
     if (had) { blocks.push(had); continue; }
     // THE BLOCK, TURNED FROM HEX INTO BYTES, IS THIS THREAD'S WORK (2026-09-18 02:40: name the leftover). The
@@ -244,7 +248,9 @@ export async function blocksOver(call, from, to, { cache = null } = {}) {
     } else block = await read();
     blocks.push(block);
   }
-  return { blocks, firstHeight: from };
+  const view = { blocks, firstHeight: from };
+  Object.defineProperty(view, 'hashes', { value: hashes, enumerable: false });
+  return view;
 }
 
 /**
