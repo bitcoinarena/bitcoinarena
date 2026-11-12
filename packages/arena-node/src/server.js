@@ -8225,6 +8225,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // The message is the reason - "the round is closed", "no such entry" -
       // because a node that answers "400" to everything makes a client guess.
       if (e && e.tooLarge) { try { return text(res, 413, e.message); } catch { return undefined; } }   // kanban #1469
+      if (e && e.busy) { try { return text(res, 503, e.message); } catch { return undefined; } }   // kanban #1724, #1794
       return text(res, 400, e.message);
     }
   });
@@ -14504,6 +14505,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // and the whole announced grid: its game and first close, so a marker counts only for its own app's day (kanban #1204 FED-C1)
       announcedOf: (idHex) => announced.get(String(idHex)) || null });
   };
+  // A SLOW BODY IS DROPPED (kanban #1724, #1794): a request not received whole within REQUEST_MS (120 s, ARENA_REQUEST_TIMEOUT_MS;
+  // Node's default is 300 s) ends, and the budget share its body held is freed
+  const REQUEST_MS = Number(process.env.ARENA_REQUEST_TIMEOUT_MS) > 0 ? Number(process.env.ARENA_REQUEST_TIMEOUT_MS) : 120000;
+  http.requestTimeout = REQUEST_MS; http.headersTimeout = Math.min(http.headersTimeout || 60000, REQUEST_MS);
   return new Promise((resolve) => {
     http.listen(port, host, () => { dutyAttach(); resolve({
       http, wss, round, host, verifier, ghosts, roster, stakeSecrets, lockSets,
