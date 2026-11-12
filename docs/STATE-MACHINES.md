@@ -1542,3 +1542,11 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### Liquidation claim record (`arena-liquidation-ecash-<fid>`, liquidation-claim.js `presentNotes`) (kanban #1837)
+- Every claim step is a compare-and-set on the stored record: it writes only when the stored value is still the one this pass read or wrote last; otherwise the step throws and the notes take the "cannot be written" path (back into the wallet, or presented at the signed door at once). A tab never writes over, or removes, a record another tab changed.
+- One record per phrase: the federation record names the payout key it was handed over for (`pk`). A record of another phrase is left alone; this phrase keeps its claim under `arena-liquidation-ecash-<fid>-<payoutPk>`. A record without `pk` (an older page's) is presented by whichever phrase finds it.
+- An intent is dropped as "left by a closed tab" only when it is older than `CLAIM_INTENT_LIVE_MS` (120 s); a younger one is another tab handing over now, and this pass hands nothing over.
+- Invariant: every note that left a wallet (sendAllEcash returned) is kept in exactly one record until the arbitration set takes it.
