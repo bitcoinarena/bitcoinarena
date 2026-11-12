@@ -4304,6 +4304,9 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             if (!warned.ok) throw new Error(warned.why);
           }
           signerNodes = await joinStep('clientSettlementSignerNodes', () => prepRound(named.roundIdHex, named.round, named.nodes).signer);
+          // THE ROUND'S SEATS BY KEY, for its certified lock set (protocol 28, kanban #2561): the reveal waits for a certificate they signed
+          try { const rc = window.ARENA_ROUND_COMMITTEE = window.ARENA_ROUND_COMMITTEE || {}; rc[named.roundIdHex] = signerNodes.signerNodes.map((k) => (typeof k === 'string' ? k : ARENACLIENT.toHex(k)));
+            const ks = Object.keys(rc); if (ks.length > 64) delete rc[ks[0]]; } catch { /* the reveal then asks two seats to agree */ }
         } catch (e) {
           // REFUSED BY NAME rather than joined silently. A paying round whose
           // settlement committee this page cannot learn is a round whose stake
@@ -4707,7 +4710,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           if (tookMs > (window.ARENA_SLOW_TX_MS || 2000) && window.ARENA_KEEP_SLOW_TX) setTimeout(() => window.ARENA_KEEP_SLOW_TX(sent.entryId, tookMs), 8000); }
         rememberHidden({ roundIdHex: named.roundIdHex, entryIdHex: sent.entryId, move: hidden.move, saltHex: ARENACLIENT.toHex(hidden.salt),
           nodes: named.nodes, entryCloseMs: String(named.round.entryCloseMs), gameId: ARENACLIENT.toHex(named.round.gameId),
-          endMs: String(ARENACLIENT.roundEndMs(named.round)) });   // its reveal deadline: the result stands by then at the latest
+          endMs: String(ARENACLIENT.roundEndMs(named.round)),   // its reveal deadline: the result stands by then at the latest
+          committee: (window.ARENA_ROUND_COMMITTEE || {})[named.roundIdHex] || null });   // kanban #2561: the seats whose lock set certificate it waits for
         window.ARENA_HIDDEN = { round: named.roundIdHex, entryIdHex: sent.entryId, move: hidden.move };
         return;
       }
@@ -7943,7 +7947,13 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           let identity = null;
           try { identity = ARENACLIENT.identityProofFor({ roundIdHex: id, entryIdHex: h.entryIdHex, storage: window.sessionStorage,
             random: (n) => crypto.getRandomValues(new Uint8Array(n)), curve: window.ARENA_CURVE }); } catch (e) { console.warn('[arena] no identity on the reveal: ' + e.message); }
-          const seats = await ARENACLIENT.revealMove({ entryIdHex: h.entryIdHex, move: h.move, salt: h.saltHex, nodes: h.nodes, identity });
+          // NOT BEFORE THE ROUND'S LOCK SET IS CERTIFIED (protocol 28, kanban #2561): the seats' threshold-signed set of locked entries, checked here
+          // against the seats this tab dealt its stake to; a round below 28 is revealed at once, as before. Shown as part of the wait.
+          const said = await ARENACLIENT.revealWhenCertified({ roundIdHex: id, entryIdHex: h.entryIdHex, move: h.move, salt: h.saltHex, nodes: h.nodes, identity,
+            committee: h.committee || null, verify: window.ARENA_CURVE && window.ARENA_CURVE.verify ? (sg, m, k) => window.ARENA_CURVE.verify(sg, m, k) : null,
+            entryCloseMs: h.entryCloseMs, onWait: () => { const j = window.ARENA_JOIN; if (j && j.round === id) j.stage = 'the seats are certifying the locked entries'; } });
+          if (said.void || said.notCertified) { console.log('[arena] #2561 round ' + id.slice(0, 8) + ': ' + said.why); return { ok: false, seats: [], void: !!said.void, why: said.why }; }
+          const seats = said.seats;
           return { ok: seats.some((x) => x.status === 201 || x.status === 200), seats };
         },
         // WHO SITS AT A ROUND'S TABLE (2026-10-09 playtest: both tabs at one table read "You are alone" -
