@@ -12,12 +12,13 @@ import { encodeDonationSetBody, donationSetBodyId } from '../../arena-protocol/s
 import { donationSetId, encodeDonationSet } from '../../arena-protocol/src/donation.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { NEXTBLOCK_GAME_ID, NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
+import { asPoint } from '../../arena-protocol/test/point-key-fixture.js';  // kanban #1675: fixture keys are curve points
 
 const authSk = ed25519.utils.randomSecretKey();
 const keys = { authority: ed25519.getPublicKey(authSk), recovery: ed25519.getPublicKey(ed25519.utils.randomSecretKey()) };
 const verifyEd25519 = (s, m, k) => ed25519.verify(s, m, k);
 const NET = new Uint8Array(32).fill(5);
-const rec = (n) => [{ recipientPk: new Uint8Array(33).fill(2).map((x, i) => (i === 0 ? 2 : (n * 7 + i) % 251)), shareBps: 10000, label: 'dev ' + n }];
+const rec = (n) => [{ recipientPk: asPoint(new Uint8Array(33).fill(2).map((x, i) => (i === 0 ? 2 : (n * 7 + i) % 251))), shareBps: 10000, label: 'dev ' + n }];
 const signed = (body) => { const s = { ...body }; s.signature = ed25519.sign(donationSetBodyId(s), authSk); return s; };
 const SET = signed({ networkId: NET, serial: 1n, validFrom: 10, recipients: rec(1) });
 const pins = { first: { [toHex(NET)]: 1n }, alone: {} };
