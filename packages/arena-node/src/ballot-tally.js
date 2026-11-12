@@ -116,6 +116,13 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
     }
     lives = l; spansAll = s;
   };
+  // THE HISTORY A SEAT SERVES BY IS THE STORE'S FROM ITS FIRST MOMENT (kanban #1751): `lives`/`spansAll` were built only at the end
+  // of a pass that completed, so after a restart - for the 10 s before the first tick, and for as long as bitcoind was warming up
+  // (tipHeight throws, every pass throws) - `spans` held genesis alone: a round created after an activation, naming the config it
+  // replaced, was served here and refused (409) by every seat that had counted, and GET /config handed an opener the old config.
+  // `spansAll` needs no tip (every passed proposal, no height cut): built here from the kept outcomes at once. `live` needs the
+  // tip, so until a pass names one it answers null for a network that keeps a proposal (server.js GET /config: 503).
+  refreshLive();
 
   /**
    * THE REORG CHECK, before anything is counted: per kept proposal one hash - its anchor if decided, its last block read if
@@ -268,6 +275,8 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
     }),
     /** GET /config for a network: the config live at the tip (27A.7.5), since when and by which proposal, and its history. */
     live(net) {
+      // kanban #1751: no tip yet, and a kept proposal could have moved the config - nothing is said rather than genesis
+      if (tip === null && networks().has(net)) return null;
       const l = lives.get(net) || liveConfig({ genesis: genesisFor(net), passed: [], height: tip === null ? 0 : tip });
       const now = l.history[l.history.length - 1];
       return { network: net, tip, configHash: toHex(l.configHash), since: now.since, by: now.by ? toHex(now.by) : null,
