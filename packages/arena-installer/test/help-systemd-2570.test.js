@@ -44,3 +44,28 @@ test('a tunnel whose edge port 7844 is blocked says so, before and after it has 
   c2.stderr.emit('data', 'ERR edge discovery: error looking up Cloudflare edge IPs\n'); c2.emit('exit', 1);
   assert.match((await t2).why, /port 7844/);
 });
+
+test('an Esplora API over HTTPS is a second source: it agrees on testnet4 and refuses another chain', async () => {
+  const { probeEsplora, testConnection, TESTNET4_GENESIS } = await import('../src/chain-test.js');
+  const h = (n) => n.toString(16).padStart(64, '0');
+  const chain = (genesis) => async (url) => {
+    const p = new URL(url).pathname.replace(/^\/api/, '');
+    const body = p === '/block-height/0' ? genesis : p === '/blocks/tip/height' ? '1000' : p === '/blocks/tip/hash' ? h(1000)
+      : p.startsWith('/block-height/') ? h(Number(p.split('/').pop())) : null;
+    return new Response(body ?? 'not found', { status: body ? 200 : 404 });
+  };
+  const ok = await probeEsplora({ esplora: 'https://e.example/api' }, { fetcher: chain(TESTNET4_GENESIS), at: [998] });
+  assert.equal(ok.ok, true); assert.equal(ok.height, 1000); assert.equal(ok.atHashes[998], h(998));
+  const other = await probeEsplora({ esplora: 'https://e.example/api' }, { fetcher: chain(h(7)) });
+  assert.equal(other.ok, false); assert.match(other.why, /not testnet4/);
+  // the node's own source agrees with the Esplora second source when every Electrum server is out of reach
+  const own = { ok: true, chain: 'testnet4', genesis: TESTNET4_GENESIS, height: 1000, tipHash: h(1000), atHashes: {} };
+  const r = await testConnection({ kind: 'electrum', host: 'tn4.example', port: 443 }, {
+    list: [{ host: 'unreachable.example', port: 40002 }, { esplora: 'https://e.example/api' }],
+    probe: {
+      electrum: async (c, o = {}) => (c.host === 'unreachable.example' ? { ok: false, why: 'connect ETIMEDOUT' }
+        : { ...own, atHashes: Object.fromEntries((o.at || []).map((x) => [x, h(x)])) }),
+      esplora: (c, o) => probeEsplora(c, { ...o, fetcher: chain(TESTNET4_GENESIS) }),
+    } });
+  assert.equal(r.ok, true, r.why); assert.equal(r.second.endpoint, 'https://e.example/api');
+});
