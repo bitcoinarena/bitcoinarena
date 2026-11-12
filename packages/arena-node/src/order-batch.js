@@ -30,7 +30,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { decodeRoundContract, decodeEntryContract } from '../../arena-protocol/src/contracts.js';
 import { bookBatchId, batchDeclineId, batchVoidAskId, cancelId, sellId, BATCH_MS, PRICE_SCALE, TICK } from '../../arena-protocol/src/order-book.js';
-import { bookLedger, positionFilled } from '../../arena-protocol/src/book-ledger.js';
+import { BookLedgerState, positionFilled } from '../../arena-protocol/src/book-ledger.js';
 import { entryFeeBpsOf, feeBpsOf, donationBpsOf, reserveBpsOf } from '../../arena-protocol/src/fee.js';
 import { marketBps } from '../../arena-protocol/src/fee-proposal.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
@@ -387,7 +387,7 @@ export class OrderBook {
   //    standing and settlement read that ledger without replaying; a ledger with one more batch on top (lead, a follower's #check) runs
   //    bookLedger over the parsed batches and verifies only that batch's sells.
   // The kept ledger is shared between callers: read it, never change it.
-  #parsedBook = new Map();   // round hex -> { batches: Map(k -> { batchId, batch }), key, ledger }
+  #parsedBook = new Map();   // round hex -> { batches: Map(k -> { batchId, batch }), intervalMs, state (the kept BookLedgerState, kanban #2086) }
   #parsedBatch(roundIdBytes, rec, { verified }) {
     const entries = new Map();
     const entryOf = (id) => { if (!entries.has(id)) entries.set(id, this.#orderEntry(roundIdBytes, id)); return entries.get(id); };
@@ -422,7 +422,7 @@ export class OrderBook {
     const rid = Buffer.from(roundIdBytes), hex = toHex(roundIdBytes);
     const rows = this.db.prepare('SELECT k, batch_id FROM market_batches WHERE round_id = ? AND certificate IS NOT NULL ORDER BY k').all(rid);
     let r = this.#parsedBook.get(hex);
-    if (!r || r.intervalMs !== this.intervalMs) r = { batches: new Map(), intervalMs: this.intervalMs, key: null, ledger: null };
+    if (!r || r.intervalMs !== this.intervalMs) r = { batches: new Map(), intervalMs: this.intervalMs, state: null };
     this.#parsedBook.delete(hex); this.#parsedBook.set(hex, r);   // most recently read last
     while (this.#parsedBook.size > REPLAY_ROUNDS_MAX) this.#parsedBook.delete(this.#parsedBook.keys().next().value);
     const recQ = this.db.prepare('SELECT record FROM market_batches WHERE round_id = ? AND k = ?');
@@ -439,7 +439,7 @@ export class OrderBook {
       out.push(held.batch);
     }
     if (r.batches.size > rows.length) { const ks = new Set(rows.map((x) => Number(x.k))); for (const k of [...r.batches.keys()]) if (!ks.has(k)) r.batches.delete(k); }
-    return { ok: true, batches: out, key: `${this.intervalMs}|${rows.map((x) => `${x.k}:${x.batch_id}`).join(',')}`, kept: r };
+    return { ok: true, batches: out, ids: rows.map((x) => `${x.k}:${x.batch_id}`), kept: r };
   }
 
   /** The ledger of the round's certified batches (book-ledger.js), optionally with one more batch on top. */
@@ -448,14 +448,26 @@ export class OrderBook {
     if (!m.ok) return m;
     const c = this.#certifiedBatches(roundIdBytes);
     if (!c.ok) return c;
+    // THE KEPT LEDGER GROWS, IT IS NOT REPLAYED (kanban #2086, after #1526/#1933/#1969): it was rebuilt from batch 0 after each new
+    // certificate and replayed whole again for each batch on top - 645,120 resting sells (three minutes of 16 dust orders x 16 sells
+    // per seat per batch) cost a seat 3.1 s a batch against the 500 ms interval. Now the kept state (book-ledger.js BookLedgerState)
+    // takes only the certified batches after the ones it holds, and a batch on top is applied to it and undone. It is built again
+    // from batch 0 only when what it holds is no longer the start of the certified set (a late lower k, another fee or interval).
+    const K = c.kept, ids = c.ids;
+    let st = K.state;
+    if (st && (st.feeBps !== m.feeBps || st.ids.length > ids.length || st.ids.some((x, i) => x !== ids[i]))) st = null;
+    if (!st) { st = new BookLedgerState({ feeBps: m.feeBps }); st.ids = []; K.state = st; }
+    try {
+      for (let i = st.ids.length; i < ids.length; i++) { st.apply(c.batches[i]); st.ids.push(ids[i]); }
+    } catch (e) { K.state = null; throw e; }   // a batch that throws leaves the state half applied: built again next time
     if (extra) {
       const p = this.#parsedBatch(roundIdBytes, extra, { verified: false });
       if (!p.ok) return p;
-      return { ok: true, ...bookLedger({ batches: [...c.batches, p.batch], feeBps: m.feeBps }), market: m };
+      return { ok: true, ...st.onTop(p.batch), market: m };
     }
-    const key = `${m.feeBps}|${c.key}`;
-    if (!c.kept.ledger || c.kept.key !== key) { c.kept.ledger = bookLedger({ batches: c.batches, feeBps: m.feeBps }); c.kept.key = key; }
-    return { ok: true, ...c.kept.ledger, market: m };
+    const L = st.result();
+    L.ok = true; L.market = m;
+    return L;
   }
 
   /** A record's checks at this seat: answers { ok, id, k, events } or why it does not stand. `importing`: a certified record. */
