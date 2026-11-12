@@ -7261,13 +7261,31 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // gateway where the gateway says it is (its api-addr <public>/gateway/); its admin calls still need its own password
       const gwPort = Number(process.env.ARENA_GATEWAY_PORT || 0);
       if (gwPort && (url.pathname === '/gateway' || url.pathname.startsWith('/gateway/'))) {
+        // THE BODY LIMIT AND A TIMEOUT HERE TOO (feedback #026, kanban #2569): the gateway's door was piped before served()/read(), so ARENA_BODY_MOST
+        // (#1469) did not apply and a stalled gateway held the socket for good. A declared body over the limit is refused before the gateway is asked;
+        // a streamed one is counted and cut at the limit (backpressure kept); the gateway gets GATEWAY_UPSTREAM_MS to answer.
+        const GATEWAY_UPSTREAM_MS = 30000, GATEWAY_BODY_MOST = BODY_MOST;
+        const declared = Number(req.headers['content-length']);
+        if (Number.isFinite(declared) && declared > GATEWAY_BODY_MOST) return text(res, 413, `that body is ${declared} bytes; a gateway call takes at most ${GATEWAY_BODY_MOST}`);
         const up = httpRequest({ host: '127.0.0.1', port: gwPort, method: req.method, path: (url.pathname.slice('/gateway'.length) || '/') + url.search,
           headers: { ...req.headers, host: `127.0.0.1:${gwPort}` } }, (r) => { res.writeHead(r.statusCode, r.headers); r.pipe(res); });
         up.on('error', (e) => { if (!res.headersSent) text(res, 502, `the node's gateway does not answer (${e.code || e.message})`); else res.destroy(); });
         // THE CLIENT'S SIDE IS LISTENED TO AS WELL (kanban #1261, audit 4 outsider-1): a reset mid-body, or while the answer streams back, ends that request only
         req.on('error', () => { try { up.destroy(); } catch { /* gone */ } });
         res.on('error', () => { try { up.destroy(); } catch { /* gone */ } });
-        req.pipe(up);
+        up.setTimeout(GATEWAY_UPSTREAM_MS, () => { up.destroy(new Error(`no answer in ${GATEWAY_UPSTREAM_MS / 1000} s`)); });
+        let seen = 0;
+        req.on('data', (chunk) => {
+          seen += chunk.length;
+          if (seen > GATEWAY_BODY_MOST) {
+            req.pause(); try { up.destroy(); } catch { /* gone */ }
+            if (!res.headersSent) text(res, 413, `that body is over ${GATEWAY_BODY_MOST} bytes, the most a gateway call takes`); else res.destroy();
+            return;
+          }
+          if (!up.write(chunk)) req.pause();
+        });
+        up.on('drain', () => req.resume());
+        req.on('end', () => { if (seen <= GATEWAY_BODY_MOST) up.end(); });
         return;
       }
       // EVERY DOOR IS TIMED, so a stall inside one has a name (2026-09-17 19:15, the ghost lag: 32 of the 34
