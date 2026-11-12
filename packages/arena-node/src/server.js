@@ -8986,7 +8986,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           try { spend = withdrawSpend({ bonds: open, nodeSecret: round.identity.secret, network: own.network, script, feeRate: Number((body.args || {}).feeRate) || 2 }); }
           catch (e) { return answer(400, { ok: false, why: e.message }); }
           try { const txid = await chainSend(spend.hex); console.log(`[bond] withdrawn to ${(body.args || {}).address}: ${txid} (${spend.value} sat from ${spend.spent.length} output(s), fee ${spend.fee})`);
-            return answer(200, { ok: true, txid, value: spend.value, fee: spend.fee, spent: spend.spent, stillLocked }); }
+            // THE WITHDRAWAL RECORDED (kanban #2098, state audit 2026-11-12): an installed node's state.json kept naming the spent outputs, so its
+            // first-bond door answered "posted already" with them for good and add-bond counted them; now they leave bond / bonds (kept in
+            // `withdrawn` with this txid). A record missed here (a crash right after the send) is caught by first-bond / add-bond asking the chain
+            if (process.env.ARENA_HOME) {
+              try {
+                const { nodeState, withoutSpentBonds } = await import('../../arena-installer/src/state.js');
+                const gone = open.map((o) => ({ txid: o.txid, vout: Number(o.vout || 0) }));
+                nodeState(process.env.ARENA_HOME).update((n) => withoutSpentBonds(n, gone, { txid }));
+              } catch (e) { console.log(`[bond] the withdrawal ${txid} is not in state.json: ${(e && e.message) || e}`); }
+            }
+            return answer(200,{ ok: true, txid, value: spend.value, fee: spend.fee, spent: spend.spent, stillLocked }); }
           catch (e) { return answer(400, { ok: false, why: e.message }); }
         }
         // AN OLD BOND TAKEN BACK (kanban #650): signed by the owner like the bond's own withdrawal, spent with the old key at its maturity

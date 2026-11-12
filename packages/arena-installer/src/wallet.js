@@ -111,6 +111,15 @@ export async function broadcast(chain, hex, { session = electrumSession, fetcher
 }
 
 /**
+ * IS A BOND OUTPUT STILL UNSPENT (kanban #2098): Bitcoin Core's gettxout with the mempool - an object when unspent, null when spent (or
+ * never there); an Electrum chain answers undefined (unknown: it finds outputs by script, not by outpoint). Throws when Core does not answer.
+ */
+export async function txOut(chain, txid, vout, { fetcher = fetch } = {}) {
+  if (!chain || chain.kind !== 'core') return undefined;
+  return (await coreRpc({ ...chain, fetcher, timeoutMs: 30000 })('gettxout', [txid, Number(vout || 0), true])) || null;
+}
+
+/**
  * IS A TRANSACTION THERE (kanban #1165: an open on-chain action's bytes refused when sent again - a funding whose bond spent it in a block
  * is "missing inputs" - are believed only when the chain has them): in the mempool or a block. Bitcoin Core without a txindex finds a
  * mined one only in its block, so the blocks since `sinceTip` (at most `maxBlocks`) are read; Electrum finds any. Throws when the chain
