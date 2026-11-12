@@ -2811,6 +2811,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return peerEndpointsOf(picked.committee, round.pubkey);
   }
 
+  /** POST /proof-pull's pulls running now, by round:entry (kanban #1632). */
+  const proofPullsInFlight = new Map();
   const verifier = new Verifier(round, {
     plugins: hosted,
     conflictsFor,
@@ -9126,7 +9128,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
         if (rid.length !== 32 || eid.length !== 32) return text(res, 400, 'a proof is pulled for a round and an entry');
         if (!round.entry(new Uint8Array(eid))) return text(res, 404, 'this signer node holds no such entry');
-        const proven = await verifier.pullFirstMarkProof(new Uint8Array(rid), new Uint8Array(eid));
+        // ONE PULL IN FLIGHT PER ENTRY (kanban #1632): a stranger's repeated asks for one entry join the pull already
+        // running instead of each starting its own round of peer reads and signature checks
+        const key = `${rid.toString('hex')}:${eid.toString('hex')}`;
+        let pull = proofPullsInFlight.get(key);
+        if (!pull) {
+          pull = verifier.pullFirstMarkProof(new Uint8Array(rid), new Uint8Array(eid)).finally(() => proofPullsInFlight.delete(key));
+          proofPullsInFlight.set(key, pull);
+        }
+        const proven = await pull;
         return text(res, 200, proven ? 'proven' : 'no proof');
       }
 
