@@ -538,6 +538,9 @@ export function openFeedbackStore(path = ':memory:') {
   return { take, mine, move, approve, list, shotsInUse, note, remark, moves, budget, paidLog, csv, nodeBountyFor, createReward, withdrawRequest, lnurlOf, claim, settle, rewards, payToAddress, addressOf, reward: (k1) => rewardRow(rewardOf.get(String(k1))), report: (id) => row(get.get(String(id))), close: () => db.close(), eventId };
 }
 
+/** The most of one seat's GET /season?scope=network answer the faucet reads (kanban #2517). */
+export const NETWORK_SEASON_MAX_BYTES = 16 * 1024 * 1024;
+
 /**
  * WHO FINISHED A ROUND ON THE NETWORK (kanban #1342, the reading tools/weekly-testers.mjs and founding-badges.mjs make): each game's
  * GET /season?scope=network over `days`, a key with rounds > 0 on any board. Read from the first seat that answers, kept `keepMs`.
@@ -559,7 +562,8 @@ export function networkPlayers({ seats, games, days = 90, keepMs = 10 * 60 * 100
         try {
           const r = await fetcher(`${String(seat).replace(/\/$/, '')}/season?scope=network&game=${encodeURIComponent(g)}&days=${days}`, { signal: AbortSignal.timeout(20000), redirect: 'error' });   // kanban #1884: a configured seat is asked as given, never redirected
           if (!r.ok) continue;
-          const b = await r.json();
+          // READ TO A BOUND (kanban #2517): a season seat's network board is a few hundred KB; r.json() took whatever one seat sent
+          const b = await readJsonBounded(r, NETWORK_SEASON_MAX_BYTES);
           const read = new Map();
           for (const row of b.rows || []) if (Number(row.rounds) > 0 && /^[0-9a-f]{64}$/i.test(String(row.player || ''))) {
             const k = String(row.player).toLowerCase(); read.set(k, (read.get(k) || 0) + Number(row.rounds)); }
