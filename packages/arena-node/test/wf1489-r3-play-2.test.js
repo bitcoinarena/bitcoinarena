@@ -29,7 +29,10 @@ import { rand, WINDOW_MS, WINNER, GENESIS_HASH, wordsAt, contractFor, say, opts,
 import { testNow, skipTo } from './test-clock.js';
 import { roundEndMs } from '../../arena-protocol/src/first-mark.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
-import { encodeInputBatch, signedBatchOf, batchId } from '../../arena-protocol/src/batch.js';
+import * as batchFormat from '../../arena-protocol/src/batch.js';
+// (2.0 port, kanban #1489) a batch is signed by the entry's session key once #1503 is in the tree (signedBatchOf); before it, sent bare
+const { encodeInputBatch, batchId } = batchFormat;
+const batchFrame = (b, signId) => (typeof batchFormat.signedBatchOf === 'function' ? batchFormat.signedBatchOf(b, signId) : encodeInputBatch(b));
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../arena-protocol/src/checkpoint.js';
 import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
 import { init, step } from '../../nextblock/src/sim.js';
@@ -94,7 +97,7 @@ async function signerNode(w, playerPubkey) {
   const b2 = { roundId: w.rid, entryId: eid, previousHash: batchId(b1), firstTick: 60, ticks: Array.from({ length: 60 }, (_, t) => wordsAt(60 + t)), liquidations: [] };
   const m2 = { roundId: w.rid, entryId: eid, tick: 120, stateHash: hashNow(), inputChainHash: batchId(b2), previousHash: checkpointId(m1), sessionPubkey: entry.sessionPubkey };
   // input batches are signed by the entry's session key since #1503 (round 2), as close-retry's fixture sends them
-  return { eid, start: [signedBatchOf(b1, (id) => ed25519.sign(id, session)), sign(m1)], more: [signedBatchOf(b2, (id) => ed25519.sign(id, session)), sign(m2)] };
+  return { eid, start: [batchFrame(b1, (id) => ed25519.sign(id, session)), sign(m1)], more: [batchFrame(b2, (id) => ed25519.sign(id, session)), sign(m2)] };
 }
 
 const look = (w, d, run) => ({
