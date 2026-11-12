@@ -32,8 +32,13 @@ test('a gift to a game\'s developers: one payment of the split, the donor\'s ima
   const paid = [], posted = [];
   const fetch = async (u, o) => { posted.push({ u, body: JSON.parse(o.body) }); return u.startsWith('https://s1') ? new Response('down', { status: 503 }) : new Response('{}', { status: 200 }); };
   const got = await giftDonation({ game: { gameDevPubkey: b32(0xde), gameName: 'nextblock' }, recipients: SET, sat: 500, wallet: wallet(paid),
-    federationId: 'fe'.repeat(32), donor, seats: ['https://s1.example', 'https://s2.example'], fetch, nowMs: () => 1792240000000 });
+    federationId: 'fe'.repeat(32), donor, seats: ['https://s1.example', 'https://s2.example', 'https://s3.example'], fetch, nowMs: () => 1792240000000 });
   assert.deepEqual([got.ok, got.sat, got.outputs, got.keptBy, got.txid], [true, 500, 2, 'https://s2.example', TXID]);
+  // kanban #2420: every seat gets the record, and one seat's 200 alone is not "kept" - two must keep it, else it is kept for a retry
+  assert.deepEqual(posted.map((x) => x.u.split('/donation-gift')[0]), ['https://s1.example', 'https://s2.example', 'https://s3.example']);
+  const one = await giftDonation({ game: { gameDevPubkey: b32(0xde), gameName: 'nextblock' }, recipients: SET, sat: 500, wallet: wallet(paid),
+    federationId: 'fe'.repeat(32), donor, seats: ['https://s1.example', 'https://s2.example'], fetch, nowMs: () => 1792240000000 });
+  assert.deepEqual([one.ok, one.step, typeof one.retry], [false, 'record', 'string']);
   assert.deepEqual(paid[0], [{ pk: toHex(pk33(0x11)), msat: '333350', image: toHex(donor.pubkey) }, { pk: toHex(pk33(0x12)), msat: '166650', image: toHex(donor.pubkey) }]);
   const g = { ...decodeDonationGift(fromHex(posted[1].body.gift)), signature: fromHex(posted[1].body.signature) };
   assert.deepEqual([g.target, g.gameName, g.totalMsat, toHex(g.donor)], [GIFT_TO_GAME, 'nextblock', 500000n, toHex(donor.pubkey)]);

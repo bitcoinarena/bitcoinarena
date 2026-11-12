@@ -7,6 +7,7 @@
 import { encodeDonationGift, donationGiftId, giftOutputs, GIFT_TO_GAME, GIFT_TO_NETWORK, GIFT_TO_PLAYER, GIFT_TO_BOTH, playerGiftRecipients, GIFT_MIN_SAT, GIFT_MAX_SAT } from '../../arena-protocol/src/donation-gift.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { recordDonation } from './page-lock.js';
+import { handToSeats } from './item-buy.js';
 
 /** Whether a typed amount is one the popup may pay: a whole number of sat from 1 to 10,000,000. Answers { ok, sat } or { ok: false, why }. */
 export function giftAmountOf(typed) {
@@ -54,14 +55,8 @@ export async function giftDonation({ game = null, player = null, recipients, net
     outputs: held.map((d) => ({ outIdx: Number(d.out_idx), pk: fromHex(d.recipient_pk), msat: BigInt(d.amount_msat) })), atMs: BigInt(nowMs()) };
   const id = donationGiftId(record);
   const body = JSON.stringify({ gift: toHex(encodeDonationGift(record)), signature: toHex(donor.sign(id)) });
-  let keptBy = null, last = 'no seat to hand it to';
-  for (const s of seats || []) {
-    try {
-      const r = await fetch(`${String(s).replace(/\/$/, '')}/donation-gift`, { method: 'POST', body, signal: AbortSignal.timeout(60000) });
-      if (r.ok) { keptBy = s; break; }
-      last = `${s}: ${r.status} ${(await r.text()).trim().slice(0, 200)}`;
-    } catch (e) { last = `${s}: ${e.message}`; }
-  }
+  // TO EVERY SEAT, KEPT WHEN TWO KEEP IT (kanban #2420): one seat answering 200 first no longer buries the paid gift's record
+  const { keptBy, last } = await handToSeats({ seats, door: 'donation-gift', body, fetch });
   if (!keptBy) return { ok: false, step: 'record', why: `paid (transaction ${submitted.txid}), but no seat kept the record yet: ${last}`, txid: submitted.txid, retry: body };
   return { ok: true, id: toHex(id), txid: submitted.txid, sat: amt.sat, outputs: outs.length, keptBy };
 }

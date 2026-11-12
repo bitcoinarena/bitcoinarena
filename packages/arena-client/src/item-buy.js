@@ -95,6 +95,31 @@ export async function servedFromSeats({ seats, toMs, fetch, verify, timeoutMs = 
 }
 
 /**
+ * HAND A PAID RECORD TO THE SEATS (kanban #2420): POSTed to every seat at once (60 s each), not stopping at the first 200 - a seat
+ * that answers 200 and keeps nothing must not be the only one that ever saw it. Kept when two seats answer 200 (the one seat, when
+ * only one is listed): GET /items names a purchase only when two seats do. Answers { keptBy: the first keeping seat in list order or
+ * null, kept: how many kept it, last: the last refusal }.
+ */
+export async function handToSeats({ seats, door, body, fetch, timeoutMs = 60000 }) {
+  const list = (seats || []).slice(0, 64);
+  const why = [];
+  const kept = await Promise.all(list.map(async (s, i) => {
+    try {
+      const r = await fetch(`${String(s).replace(/\/$/, '')}/${door}`, { method: 'POST', body, signal: AbortSignal.timeout(timeoutMs) });
+      if (r.ok) return true;
+      why[i] = `${s}: ${r.status} ${(await r.text()).trim().slice(0, 200)}`;
+    } catch (e) { why[i] = `${s}: ${e.message}`; }
+    return false;
+  }));
+  const n = kept.filter(Boolean).length;
+  const need = Math.min(2, list.length);
+  const refusals = why.filter(Boolean);
+  const last = !list.length ? 'no seat to hand it to' : refusals.length ? refusals[refusals.length - 1] : 'no seat to hand it to';
+  return { keptBy: list.length && n >= need ? list[kept.indexOf(true)] : null, kept: n,
+    last: n && n < need ? `only ${n} of ${list.length} seats kept it (two must): ${last}` : last };
+}
+
+/**
  * BUY ONE ITEM. `manifest` the game's (it sells `itemId`); `networkSet` / `gameSet` the donation sets (paying keys); `wallet` the
  * player's lock client in the federation `federationId` (hex); `player` { pubkey (32 bytes), sign(digest) -> 64-byte BIP340 };
  * `seats` the game's seats; `verify` BIP340; `devsPct` the developers' share the buyer chose (one of ITEM_DEV_SHARES, default
@@ -141,15 +166,9 @@ export async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, f
     ...(terms.reserves ? { gameId: gameIdOf(manifest), reserveKey } : {}) };
   const signature = player.sign(purchaseId(record));
   const body = JSON.stringify({ purchase: toHex(encodePurchase(record)), signature: toHex(signature) });
-  // HANDED TO THE FIRST SEAT THAT KEEPS IT: it checks the record and the federation, then hands it on to every other seat
-  let keptBy = null, last = 'no seat to hand it to';
-  for (const s of seats || []) {
-    try {
-      const r = await fetch(`${String(s).replace(/\/$/, '')}/item-purchase`, { method: 'POST', body, signal: AbortSignal.timeout(60000) });
-      if (r.ok) { keptBy = s; break; }
-      last = `${s}: ${r.status} ${(await r.text()).trim().slice(0, 200)}`;
-    } catch (e) { last = `${s}: ${e.message}`; }
-  }
+  // HANDED TO EVERY SEAT, KEPT ONLY WHEN TWO KEEP IT (kanban #2420): no longer the first seat that answers 200 - one lying seat listed
+  // first said 200, dropped the record and never handed it on, the page said "bought" and no honest seat held the paid item
+  const { keptBy, last } = await handToSeats({ seats, door: 'item-purchase', body, fetch });
   if (!keptBy) return { ok: false, step: 'record', why: `paid (transaction ${submitted.txid}), but no seat kept the record yet: ${last}`, purchaseId: toHex(purchaseId(record)), txid: submitted.txid,
     retry: body };
   return { ok: true, purchaseId: toHex(purchaseId(record)), txid: submitted.txid, priceSat: item.priceSat, paidSat: itemPriceOn(manifest, item.priceSat, devsPct),

@@ -45,7 +45,7 @@ test('bought: the split paid in one transaction, the signed record handed to a s
   const r = await buyItem({ manifest: MANIFEST, itemId: 'large-truck', networkSet: NET, gameSet: NET, wallet: walletPaying(), federationId: 'fe'.repeat(32),
     player, seats: ['https://s1', 'https://s2'], fetch, verify, nowMs: () => NOW });
   assert.equal(r.ok, true, r.why);
-  assert.deepEqual([r.keptBy, r.priceSat, r.outputs, posted.length], ['https://s1', 500n, 5, 1]);
+  assert.deepEqual([r.keptBy, r.priceSat, r.outputs, posted.length], ['https://s1', 500n, 5, 2]);   // kanban #2420: handed to every seat, kept by two
   const p = { ...decodePurchase(fromHex(posted[0].purchase)), signature: fromHex(posted[0].signature) };
   assert.equal(p.outputs.reduce((t, o) => t + o.msat, 0n), 500000n, 'the whole price, to the msat');
   const served = { fromMs: p.servedFromMs, toMs: p.servedToMs, nodes: NODE_KEYS.map((k) => ({ key: toHex(k), rounds: 1 })).sort((a, b) => (a.key < b.key ? -1 : 1)), root: toHex(p.servedRoot) };
