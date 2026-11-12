@@ -3791,7 +3791,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     for (const peer of verifier.peersOf(rid)) {
       try {
         const r = await fetch(`${String(peer).replace(/\/+$/, '')}/lock-settlement?round=${toHex(rid)}`, { signal: AbortSignal.timeout(3000) });
-        const j = await r.json();
+        // kanban #1744 (bypass of #1550): read up to PEER_LISTING_BYTES, not whole - a peer's settlement is a small record
+        const j = await jsonUpTo(r, PEER_LISTING_BYTES);
         if ((j.state === 'SUBMITTING' || j.state === 'ACCEPTED') && j.signature && j.message
           && schnorr.verify(fromHex(j.signature), fromHex(j.message), claimPk.subarray(1))
           && await thisRoundsMessage(rid, fromHex(j.message))) return true;
