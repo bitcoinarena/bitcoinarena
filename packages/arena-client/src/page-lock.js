@@ -3894,8 +3894,9 @@ export async function migrateFromDraining({ from, to, record, toFederationId, ch
   gateways = [], onState = () => {}, storage = null, fromFederationId = null, feeMax = null, phrase16 = null } = {}) {
   const hex = (b) => (b instanceof Uint8Array ? toHex(b) : String(b || '')).toLowerCase();
   const inRow = { kind: 'moved-in', from: hex(fromFederationId) };
-  // DRAINING, or CRITICAL with the safe federation the page chose as `successorId` (evacuatePlayerWallet, 2026-10-13)
-  if (!record || !['DRAINING', 'CRITICAL'].includes(record.status)) return { moved: 0n, chunks: 0, state: 'not draining' };
+  // DRAINING, or CRITICAL with the safe federation the page chose as `successorId` (evacuatePlayerWallet, 2026-10-13); or CLOSED
+  // (kanban #1982: a player away for the whole drain still holds notes in a federation whose record turned CLOSED)
+  if (!record || !['DRAINING', 'CRITICAL', 'CLOSED'].includes(record.status)) return { moved: 0n, chunks: 0, state: 'not draining' };
   if (!record.successorId || /^0+$/.test(hex(record.successorId))) return { moved: 0n, chunks: 0, state: 'no successor named' };
   if (hex(record.successorId) !== hex(toFederationId)) return { moved: 0n, chunks: 0, state: 'that wallet is not in the successor' };
   // ONLY THROUGH A GATEWAY AT OR UNDER THE CAP (§23A.9, kanban #1324): the paying leg from the old federation's, the receiving leg in the successor's;
@@ -3963,7 +3964,9 @@ export async function migratePlayerWallet({ round, invite, seed, LockClient, sto
  * of this seed are opened as the stake opens them; then the chunks of migrateFromDraining.
  */
 export async function evacuatePlayerWallet({ from, target, seed, LockClient, storage, onState = () => {}, chunkMsat = null, gateways = [] } = {}) {
-  if (!from || !['DRAINING', 'CRITICAL'].includes(from.status) || !from.invite) return { moved: 0n, chunks: 0, state: 'not draining' };
+  // AND OUT OF A CLOSED ONE (kanban #1982): the seats close a drain by its clock, not by the players' notes being out, so a player who
+  // did not open the page during the drain still holds notes there - they go to its successor (safeFederation) as a DRAINING one's do
+  if (!from || !['DRAINING', 'CRITICAL', 'CLOSED'].includes(from.status) || !from.invite) return { moved: 0n, chunks: 0, state: 'not draining' };
   if (!target || target.status !== 'OPEN' || !target.invite) return { moved: 0n, chunks: 0, state: 'no safe federation to move to' };
   // NO NEW MONEY WHERE NONE IS TAKEN (kanban #2433, after #807): the move invoices the target, so a target that takes no new deposits is refused
   // before a wallet is opened in it - unless the guardians named it as the draining federation's successor
