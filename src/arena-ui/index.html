@@ -7234,9 +7234,23 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         }
         // PLAYERS: every name record a round holds, checked before it is drawn; a player who posted none is counted, not named
         const verify = (sg, m, k) => { try { return !!(window.ARENA_CURVE && window.ARENA_CURVE.verify(sg, m, k)); } catch { return false; } };
+        // ONE CLICK COSTS AT MOST ONE LOBBY READ (kanban #2367; refute of #1864 / #2259 / #2349 - this is the second copy of
+        // lobby.js's job): the answer is ONE seat's (the fastest, which can be an attacker's), so its rounds and names are its
+        // choice. The lobby's bounds apply here too: a round listed again is skipped (its first listing is the one shown), a
+        // round's names are cut to NAMES_PER_SEAT before any check, and every round of the click shares one budget of
+        // LOBBY_NAME_CHECKS_PER_READ checks - a round past it is counted from r.joined, not named. The numbers are the bundle's
+        // (lobby.js / identity.js); the fallbacks only stand in for a bundle too old to export them and are held equal by
+        // test/wf1489-a45-refute-24-s3-1.test.js.
+        const PER_SEAT = Number(ARENACLIENT.NAMES_PER_SEAT) || 128;
+        const budget = { left: Number(ARENACLIENT.LOBBY_NAME_CHECKS_PER_READ) || 1024 };
+        const seenRound = new Set();
         let named = 0, unnamed = 0;
         for (const r of rounds) {
-          const names = ARENACLIENT.checkedNames ? ARENACLIENT.checkedNames(r.names || [], String(r.id), verify) : [];
+          const rid = String(r.id).toLowerCase();
+          if (seenRound.has(rid)) continue;
+          seenRound.add(rid);
+          const from = Array.isArray(r.names) ? r.names.slice(0, PER_SEAT) : [];
+          const names = ARENACLIENT.checkedNames && from.length ? ARENACLIENT.checkedNames(from, String(r.id), verify, budget) : [];
           for (const x of names) {
             named++;
             blocks.push({ row: { t: x.name, s: 'round ' + String(r.id).slice(0, 8) + ' · player ' + x.player.slice(0, 8), right: { text: x.chosen ? 'chosen name' : 'generated name' } } });
