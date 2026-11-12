@@ -1604,3 +1604,9 @@ Audit 5 (#1399, base 1502786b) and audit 6 (#1415, base eb7fd30fc) for release 2
 
 #### Ballot tally per proposal (ballot-tally.js `open`, `readHash`; kanban #1633)
 - The votes a count holds come from one chain: every height a pass read for a proposal (and the block it went on from) is asked again before the count is tallied or decided. A hash that differs, or a height above the tip now, drops the proposal's open count and the vote cache; its phase is read again from its first block on the next pass. A decided outcome never counts a vote from a block that is not below its anchor on this seat's chain.
+
+#### Seat e-cash exchange (ecash-exchange.js, `ecash_exchanges.state`; kanban #1637)
+- Invariant: the seat reissues a player's notes only when it can pay them and the payout fits its hour. Both checks run before EVERY reissue ask: on a new row and on every retry of a row in RECEIVING, not only when the row is made.
+- "Can pay": the seat's balance in `to` less what it owes there already (`pay_msat` of every SENDING row, the taken amount up to `want_msat` of every TAKEN row) is at least the row's `want_msat`.
+- A check that fails on a row that never asked (`receive_asked` 0) answers 409/429 and leaves the row in RECEIVING, nothing taken. On a row whose earlier ask may have reached the federation (`receive_asked` 1, or NULL from before #1204) it answers 503 and holds the row in RECEIVING (`why` names the reason); the same notes asked again later go on once the seat can pay.
+- The hour counts a payout by `pay_ms`, the time TAKEN -> SENDING named it (a row from before: `made_ms`), so a late retry counts in the hour it pays.
