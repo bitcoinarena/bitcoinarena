@@ -14,6 +14,9 @@ import { dealHandout, encodeHandout } from '../../arena-protocol/src/handout.js'
 import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
 
 const CAP = 256;
+// NO HANDOUT->ENTRY GRACE HERE (kanban #2415, #2481): a loose handout younger than the grace (60 s) is not pushed out and young ones are kept
+// past the cap up to its ceiling; this test is about the cap itself, the bound every handout falls under once its grace is over
+process.env.ARENA_HANDOUT_ENTRY_GRACE_MS = '0';
 
 test('#2136 junk handouts past the cap push out the oldest junk, never an entered player\'s handout', { timeout: 280000 }, async () => {
   const w = await lockRound({ endMs: testNow() + 60000 });

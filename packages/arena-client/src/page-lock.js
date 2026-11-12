@@ -3414,9 +3414,14 @@ async function refusedReturn({ roundId, playerPubkey, locks, nodes, fetcher, cli
   // and an order cut off mid-join (a seat restarting) may have reached a seat with its lock and without its handout. The tab
   // kept the handout's bytes with the lock; a seat that holds it already answers so
   const handKey = `${toHex(roundId)}:${toHex(playerPubkey)}`;
+  // WITH ITS STAKE LOCK SHOWN (kanban #2415, #2481): a stranger's junk handouts can push a never-entered handout out of a full round (#2136),
+  // and a seat refuses a new handout for a round it refuses; the lock the federation holds (x-arena-stake-lock, the header a lock-first
+  // client sends, #1596) is what lets the seat take this one back - and keeps it from being pushed out again
   if (handoutBody && !HANDOUT_HANDED.has(handKey)) {
     HANDOUT_HANDED.add(handKey);
-    await Promise.all([...new Set(nodes || [])].map((node) => fetcher(`${String(node).replace(/\/+$/, '')}/handout`, { method: 'POST', body: handoutBody }).catch(() => null)));
+    const stake = still.find((l) => l.fields && l.fields.paymentImage && l.fields.paymentImage.kind === 'point');
+    const shown = stake ? { headers: { 'x-arena-stake-lock': JSON.stringify({ outpoint: `${toHex(stake.outpoint.txid)}:${stake.outpoint.outIdx}`, fields: lockFieldsToJson(stake.fields) }) } } : {};
+    await Promise.all([...new Set(nodes || [])].map((node) => fetcher(`${String(node).replace(/\/+$/, '')}/handout`, { method: 'POST', body: handoutBody, ...shown }).catch(() => null)));
   }
   let kept = 0;
   for (const lock of still) kept += (await handRefusedLock({ roundId, lock, nodes, fetcher })).kept > 0 ? 1 : 0;
