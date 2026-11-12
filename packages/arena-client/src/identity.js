@@ -147,7 +147,10 @@ export const shownNameOf = (record) => record.name || generatedName(record.ident
 export const NAMES_PER_SEAT = 128;
 export const NAME_CHECKS_MAX = 512;
 
-export function checkedNames(items, roundIdHex, verify) {
+// A READ'S SHARE (kanban #2259, #2276): `budget`, when given, is { left } shared by every round of one lobby read - each check
+// spends one, and none is run once it is spent - so the rounds one seat makes up cannot add NAME_CHECKS_MAX each per paint;
+// with { perSeat: Map, share } too, each seat (an item's `by`) runs at most `share` of them (kanban #2342)
+export function checkedNames(items, roundIdHex, verify, budget = null) {
   const newest = new Map();
   const seen = new Set();
   let checks = 0;
@@ -156,13 +159,21 @@ export function checkedNames(items, roundIdHex, verify) {
     try {
       const same = `${String(x && x.record)}|${String(x && x.sig)}`;
       if (seen.has(same)) continue;
-      seen.add(same);
       record = decodeLobbyName(fromHex(String(x && x.record)));
-      if (toHex(record.roundId) !== String(roundIdHex).toLowerCase()) continue;
+      if (toHex(record.roundId) !== String(roundIdHex).toLowerCase()) { seen.add(same); continue; }
       const had = newest.get(toHex(record.playerPubkey));
-      if (had && record.atMs <= had.atMs) continue;
+      if (had && record.atMs <= had.atMs) { seen.add(same); continue; }
       if (checks >= NAME_CHECKS_MAX) break;
+      if (budget && !(budget.left > 0)) break;
+      // A SEAT'S SHARE (kanban #2342): with `budget.perSeat` and `budget.share`, a name is charged to the seat that supplied it (`x.by`);
+      // once that seat's share is spent its names are passed over unchecked - and not marked seen, so the same record from another seat
+      // is still checked on that seat's share
+      const by = budget && budget.perSeat && x && x.by !== undefined ? String(x.by) : null;
+      if (by !== null && (budget.perSeat.get(by) || 0) >= budget.share) continue;
+      seen.add(same);
       checks++;
+      if (budget) budget.left--;
+      if (by !== null) budget.perSeat.set(by, (budget.perSeat.get(by) || 0) + 1);
       if (!verify(fromHex(String(x.sig)), lobbyNameId(record), record.playerPubkey)) continue;
     } catch { continue; }
     newest.set(toHex(record.playerPubkey), record);
