@@ -490,7 +490,9 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   }
 
   /** The body for one federation from a basis, with `gone` - the guardians whose nodes said they are leaving. */
-  function bodyFor(b, federationId, gone = [], reserveSats = 0n, eps = null, keys = null) {
+  // A CONSENT TO RETIRE IS ONE MORE BODY, NOT THE ONLY ONE (kanban #1665, state audit 2026-11-12): `retire` false builds the plain body
+  // a seat whose owner consented also signs, so three consents of the five needed no longer leave every body short of a threshold
+  function bodyFor(b, federationId, gone = [], reserveSats = 0n, eps = null, keys = null, retire = true) {
     const fid = toHex(federationId);
     const invite = inviteFor(fid);
     if (!invite) return { ok: false, why: 'this seat names no invite for that federation' };
@@ -504,10 +506,12 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     // normal OPEN body, and the retirement goes on once the federation is empty again
     const retiring = !succ && retiringOf(fid) && BigInt(reserveSats || 0n) === 0n;
     const r = buildFederationRecord({ federationId, networkId: b.networkId || networkId, invite, nominal: guardians.length, guardians, gone, height: b.height, reserveSats,
-      ...(succ ? { successorId: fromHex(succ), closed: !!closedOf(fid) } : retiring ? { closed: true } : {}) });   // retiringOf: federation-retire.js
+      ...(succ ? { successorId: fromHex(succ), closed: !!closedOf(fid) } : retire && retiring ? { closed: true } : {}) });   // retiringOf: federation-retire.js (#1980), `retire` false: the plain body (#1665)
     return { ok: true, record: r, guardians };
   }
 
+  // whether this seat builds a federation's body CLOSED by its owner's consent to retire (no successor named: §23A.6 decides then)
+  const retiringHere = (fidHex) => !successorOf(String(fidHex).toLowerCase()) && !!retiringOf(String(fidHex).toLowerCase());
   const epsFor = async (fidHex) => { if (!endpointsOf) return null; try { return await endpointsOf(String(fidHex).toLowerCase()); } catch { return null; } };
 
   /** THIS SEAT'S SIGNATURE (GET /federation-record): only a guardian of the federation signs, over the body it builds. */
@@ -534,8 +538,13 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     if (!built.guardians.some((g) => toHex(g.nodePubkey) === toHex(round.pubkey))) return { ok: false, why: 'this node does not guard that federation' };
     const leaving = leavingAtMs() !== null;
     const id = federationRecordId(built.record);
+    // kanban #1665: a seat whose owner consented to retire signs the plain body too (`alt`), and its leave statement is over the plain
+    // body's id, the one every guardian seat builds whether its owner consented or not
+    const open = retiringHere(federationIdHex) ? bodyFor(b, fromHex(federationIdHex), [], res.reserveSats, eps, keys, false) : built;
+    const openId = federationRecordId(open.record);
     return { ok: true, height: b.height, nodePubkey: toHex(round.pubkey), body: toHex(encodeFederationRecord(built.record)),
-      signature: toHex(schnorr.sign(id, round.identity.secret)), leaving, leaveSig: toHex(schnorr.sign(leaveMessage(id, leaving), round.identity.secret)) };
+      signature: toHex(schnorr.sign(id, round.identity.secret)), leaving, leaveSig: toHex(schnorr.sign(leaveMessage(openId, leaving), round.identity.secret)),
+      ...(open !== built ? { alt: { body: toHex(encodeFederationRecord(open.record)), signature: toHex(schnorr.sign(openId, round.identity.secret)) } } : {}) };
   }
 
   /** GATHER: every guardian's signature for the federation; the gone are the ones whose own signed word says leaving. */
@@ -550,7 +559,9 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     const res = await reserveFor(toHex(federationId), first.guardians);
     if (!res.ok) return res;
     const reserveSats = res.reserveSats;
-    const plain = bodyFor(b, federationId, [], reserveSats, eps, keys);
+    // the plain body is never the CLOSED one (kanban #1665): the leave statements are over its id at every guardian seat
+    const plain = bodyFor(b, federationId, [], reserveSats, eps, keys, false);
+    const retiring = retiringHere(toHex(federationId));
     const asked = await Promise.all(plain.guardians.map(async (g) => {
       const base = String(g.advertEndpoint || '').replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
       if (toHex(g.nodePubkey) === toHex(round.pubkey)) return { g, said: await mySignature(toHex(federationId), null, reserveSats) };
@@ -588,29 +599,39 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     }
     // THE BODY WITH THEM GONE, and the signatures over exactly it: a guardian's signature counts for the body it signed,
     // so with anyone gone every seat signs again - the leave statements move the body, and the seat asks once more
-    const final = gone.length ? bodyFor(b, federationId, gone, reserveSats, eps, keys) : plain;
-    const finalBytes = encodeFederationRecord(final.record);
-    const id = federationRecordId(final.record);
+    // THE BODIES TRIED (kanban #1665): this seat's own - CLOSED while its owner consents to retire - and then, for a consenting seat, the
+    // plain one, which every guardian seat signs (a consenting one as its `alt`): a retirement short of its threshold leaves the federation
+    // recorded as it is - a guardian gone is DRAINING - instead of no body ever reaching a threshold. A seat whose owner did not consent
+    // tries the plain body only, as before
+    const finals = [bodyFor(b, federationId, gone, reserveSats, eps, keys), ...(retiring ? [bodyFor(b, federationId, gone, reserveSats, eps, keys, false)] : [])];
     let answers = asked;
     if (gone.length) {
       answers = await Promise.all(plain.guardians.map(async (g) => {
-        if (toHex(g.nodePubkey) === toHex(round.pubkey)) return { g, said: signBody(final.record) };
+        if (toHex(g.nodePubkey) === toHex(round.pubkey)) return { g, said: signBody(finals[0].record, finals[1] ? finals[1].record : null) };
         const base = String(g.advertEndpoint || '').replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
         try { const r = await fetcher(`${base}/federation-record?federation=${toHex(federationId)}&height=${b.height}&reserve=${reserveSats}&gone=${gone.map((x) => toHex(x.peerKey)).join(',')}${absent.length ? `&absent=${absent.map(absenceHex).join(',')}` : ''}${departed.length ? `&departed=${departed.map(departureHex).join(',')}` : ''}${emergent.length ? `&emergency=${emergent.map(emergencyHex).join(',')}` : ''}${left.length ? `&left=${left.join(',')}` : ''}`, { signal: AbortSignal.timeout(8000) }); return { g, said: r.ok ? await r.json() : null }; }
         catch { return { g, said: null }; }
       }));
     }
-    const signatures = [];
-    for (const { g, said } of answers) {
-      if (!said || !said.ok || said.body !== toHex(finalBytes)) continue;
-      let good = false; try { good = schnorr.verify(fromHex(said.signature), id, g.nodePubkey); } catch { good = false; }
-      if (good) signatures.push({ nodePubkey: g.nodePubkey, signature: fromHex(said.signature) });
+    let failed = null;
+    for (const final of finals) {
+      const finalBytes = encodeFederationRecord(final.record);
+      const id = federationRecordId(final.record);
+      const signatures = [];
+      for (const { g, said } of answers) {
+        if (!said || !said.ok) continue;
+        const over = said.body === toHex(finalBytes) ? said.signature : said.alt && said.alt.body === toHex(finalBytes) ? said.alt.signature : null;
+        if (!over) continue;
+        let good = false; try { good = schnorr.verify(fromHex(over), id, g.nodePubkey); } catch { good = false; }
+        if (good) signatures.push({ nodePubkey: g.nodePubkey, signature: fromHex(over) });
+      }
+      const signed = joinSignedRecord(finalBytes, signatures);
+      const [v] = judge(toHex(federationId), [{ bytes: signed, census: b.census.entries }], { inviteFederationId, keys, tip: await tipNow() });
+      if (!v.ok) { failed = failed || { ok: false, why: v.why, signatures: signatures.length, of: plain.guardians.length }; continue; }
+      keep(toHex(federationId), signed, v);
+      return { ok: true, status: v.status, signers: v.signers, height: v.record.height, gone: gone.length, of: plain.guardians.length };
     }
-    const signed = joinSignedRecord(finalBytes, signatures);
-    const [v] = judge(toHex(federationId), [{ bytes: signed, census: b.census.entries }], { inviteFederationId, keys, tip: await tipNow() });
-    if (!v.ok) return { ok: false, why: v.why, signatures: signatures.length, of: plain.guardians.length };
-    keep(toHex(federationId), signed, v);
-    return { ok: true, status: v.status, signers: v.signers, height: v.record.height, gone: gone.length, of: plain.guardians.length };
+    return failed;
   }
 
   /** MIRROR: the newest signed record of `federationId` its guardians' nodes hold, checked against this seat's census `b`. */
@@ -805,9 +826,11 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   }
 
   /** A body this seat builds anyway (with the gone it was told), signed: the second ask of `gather`. */
-  function signBody(record) {
+  // `open`: the plain body too, while this seat's owner consents to retire (kanban #1665), signed as `alt`
+  function signBody(record, open = null) {
     const id = federationRecordId(record);
-    return { ok: true, nodePubkey: toHex(round.pubkey), body: toHex(encodeFederationRecord(record)), signature: toHex(schnorr.sign(id, round.identity.secret)) };
+    const alt = open ? { alt: { body: toHex(encodeFederationRecord(open)), signature: toHex(schnorr.sign(federationRecordId(open), round.identity.secret)) } } : {};
+    return { ok: true, nodePubkey: toHex(round.pubkey), body: toHex(encodeFederationRecord(record)), signature: toHex(schnorr.sign(id, round.identity.secret)), ...alt };
   }
 
   /** GET /federation-record with `gone` named: the same body with those peer keys gone, signed - if they are its guardians. */
@@ -825,7 +848,8 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     if (!first.ok) return first;
     const res = await reserveFor(federationIdHex, first.guardians, reserveNamed);
     if (!res.ok) return res;
-    const plain = bodyFor(b, fromHex(federationIdHex), [], res.reserveSats, eps, keys);
+    // the plain body, never the CLOSED one: the leave statements are over its id (kanban #1665)
+    const plain = bodyFor(b, fromHex(federationIdHex), [], res.reserveSats, eps, keys, false);
     if (!plain.guardians.some((g) => toHex(g.nodePubkey) === toHex(round.pubkey))) return { ok: false, why: 'this node does not guard that federation' };
     const listedKeys = new Set(plain.guardians.map((g) => toHex(g.peerKey)));
     if (!goneHex.every((k) => listedKeys.has(k))) return { ok: false, why: 'that names a guardian this federation does not have' };
@@ -876,7 +900,8 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       if (!p.ok) return { ok: false, why: `that abandonment does not stand here: ${p.why}` };
       gone.push({ peerKey: g.peerKey, sinceHeight: p.sinceHeight, kind: GONE.ABANDONED, proofRef: p.id });
     }
-    return signBody(bodyFor(b, fromHex(federationIdHex), gone, res.reserveSats, eps, keys).record);
+    return signBody(bodyFor(b, fromHex(federationIdHex), gone, res.reserveSats, eps, keys).record,
+      retiringHere(federationIdHex) ? bodyFor(b, fromHex(federationIdHex), gone, res.reserveSats, eps, keys, false).record : null);
   }
 
   // one gather pass (gatherAll starts it): kanban #2370 - never two at once, and the public door's no more often than GATHER_FRESH_MS
