@@ -109,8 +109,10 @@ export function oneTilePerGame(games) {
     // `older`: the other versions, each with its own info - a description its developer signed for that version's id, which
     // the tile shows while the shown version carries none that stands (checkedGameInfoOfTile)
     // WHAT THE LOBBY LISTS, THE TILE COUNTS (2026-10-31: "keine Runden fuer next block", while the seats held v6's rounds and hosted v7
-    // with none): Next Block's lobby shows every version's rounds (ARENA_GAME_IDS), so its tile adds them up
-    const live = shown.name === 'nextblock' && shown.live ? { live: versions.reduce((n, g) => ({ rounds: n.rounds + (Number(g.live && g.live.rounds) || 0), players: n.players + (Number(g.live && g.live.players) || 0) }), { rounds: 0, players: 0 }) } : {};
+    // with none): Next Block's lobby shows every version's rounds (ARENA_GAME_IDS), so its tile adds them up.
+    // ROCK PAPER SCISSORS THE SAME (Daniel 2026-11-12 ~06:50Z "Es wird keine rps runde angezeigt": RPS v10 was hosted before any v10 table
+    // was posted, its lobby read every version - index.html everyVersion - but the tile counted v10 alone: "14 | 0 | 0" beside 44 open v9 rounds)
+    const live = (shown.name === 'nextblock' || shown.name === 'rock-paper-scissors') && shown.live ? { live: versions.reduce((n, g) => ({ rounds: n.rounds + (Number(g.live && g.live.rounds) || 0), players: n.players + (Number(g.live && g.live.players) || 0) }), { rounds: 0, players: 0 }) } : {};
     out.push(Object.assign({}, shown, live, { versions: versions.map((g) => g.id), older: versions.filter((g) => g !== shown) }));
   }
   return out;
