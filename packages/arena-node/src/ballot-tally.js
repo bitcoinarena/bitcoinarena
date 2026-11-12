@@ -97,12 +97,18 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
   // different speeds disagreeing. Now a COUNTING proposal that was undecided keeps its last outcome for liveConfig until it is
   // decided again (then the new outcome rules, the same one when no vote moved) or orphaned (its publication left: nothing held).
   // Held in memory from the undecide, and read back after a restart from the record (proposals.js keeps it as undecided.outcome).
+  // THE RECORD RULES, MEMORY NEVER OUTLIVES A MOVE (kanban #2229, #1489 audit44 refute of #1635): the memory hold was cleared
+  // only in the counting loop, so an orphan in a pass that stopped at an RPC error before the loop reached it left the hold in
+  // memory; once restored, the running seat served the old config while a seat restarted then (record: the hold stripped at the
+  // orphan, SM-B15) served genesis. Now a record that carries `undecided` (proposals.js) is the only answer, and the memory
+  // hold (for a store that keeps no undecided record) is dropped where the move happens: orphan, restore, reschedule.
   const heldOutcome = new Map();            // proposal id -> the outcome its recount replaces, while it is COUNTING again
   const outcomeOf = (p) => {
     const st = stateOf(p);
     if (st === S.PASSED) return p.decided;
     if (st !== S.COUNTING) return null;
-    return heldOutcome.get(p.id) || (p.undecided && p.undecided.outcome) || null;
+    if (p.undecided) return p.undecided.outcome || null;
+    return heldOutcome.get(p.id) || null;
   };
   // A DEPOSIT THAT BACKS TWO KEPT PROPOSALS BACKS NONE (kanban #1840, proposals.js counts): such a proposal is not tallied,
   // not live, and its phase is 'void' - the same answer at every seat that holds both
@@ -164,14 +170,14 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
       const { p, st } = c;
       let what = null;
       if (c.kind === 'back') {
-        if (c.got === 'same' && proposals.restore(p.id, { at: tip })) what = 'its publication block is on this chain again: counted again';
+        if (c.got === 'same' && proposals.restore(p.id, { at: tip })) { heldOutcome.delete(p.id); what = 'its publication block is on this chain again: counted again'; }
       } else if (c.got === 'above' && c.kind === 'read') {
         open.delete(p.id);                                  // this chain is shorter than the count: read again when it is there (memory only)
       } else if (c.got === 'other') {
         open.delete(p.id);
         const published = c.kind === 'published' ? 'other' : c.pub;
         if (published === 'other') {
-          if (proposals.orphan(p.id, { at: tip })) what = `its publication block left this chain${st === S.COUNTING ? '' : ` (it had ${st} at ${p.decided.decidedAt})`}: orphaned, kept with its bytes`;
+          if (proposals.orphan(p.id, { at: tip })) { heldOutcome.delete(p.id); what = `its publication block left this chain${st === S.COUNTING ? '' : ` (it had ${st} at ${p.decided.decidedAt})`}: orphaned, kept with its bytes`; }
         } else if (st !== S.COUNTING) {
           if (p.decided) heldOutcome.set(p.id, p.decided);    // kanban #1635: in force until the recount decides
           if (proposals.undecide(p.id, `the chain under its outcome changed at ${p.decided.anchor.height}`)) what = `the chain under its outcome (${st} at ${p.decided.decidedAt}) changed: counted again`;
@@ -247,7 +253,7 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
         const sched = typeof proposals.reschedule === 'function' ? proposals.reschedule(p.id, { at: tip }) : 'same';
         if (sched === 'pending' && stateOf(p) === S.COUNTING) continue;
         if (sched === 'moved') {
-          open.delete(p.id);
+          open.delete(p.id); heldOutcome.delete(p.id);         // kanban #2229: a rewritten schedule holds nothing (proposals.js drops undecided)
           p = proposals.list().find((x) => x.id === listed.id) || listed;
           log(`[ballot] proposal ${p.id.slice(0, 16)}: its schedule read again from the history at ${p.publishedAt}: ${p.repeal ? 'repeal' : 'ordinary'}, voting ${p.votingFrom}-${p.votingUntil}${stateOf(p) === S.FAILED ? ' (void)' : ''}`);
         }
