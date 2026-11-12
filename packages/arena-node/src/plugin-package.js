@@ -54,13 +54,24 @@ export function verifyPackage(pkg, { verify, want = null, parentOf } = {}) {
   return r;
 }
 
-/** Kept on disk, one directory per game id: the package as fetched and its files. */
-export function installPackage(dir, pkg, gameId) {
+// THE TITLE THIS SEAT GAVE A GAME IS KEPT APART FROM THE PACKAGE (kanban #1716, #1780, after #1541): package.json is the package
+// as a serving seat handed it, and a build before #1541 kept it as fetched - so its `title` (and any mark inside it) may be a
+// relaying seat's. Only SEAT_TITLE_FILE, which only this seat writes (adoptPackage through installPackage's `title`), names
+// the title; a game kept without one is shown under its manifest's signed gameName.
+export const SEAT_TITLE_FILE = 'seat-title.json';
+/** The title this seat wrote for the game kept at `at`, or null (none written, or unreadable). */
+export function seatTitleAt(at) {
+  try { const j = JSON.parse(readFileSync(join(at, SEAT_TITLE_FILE), 'utf8')); return typeof j.title === 'string' && j.title ? j.title.slice(0, 80) : null; } catch { return null; }
+}
+
+/** Kept on disk, one directory per game id: the package as fetched and its files; `title`, when given, as this seat's title. */
+export function installPackage(dir, pkg, gameId, { title = null } = {}) {
   const at = join(dir, gameId);
   mkdirSync(at, { recursive: true });
   for (const c of pkg.cores) writeFileSync(join(at, `core-${c.hash}.mjs`), Buffer.from(c.source, 'base64'));
   for (const k of pkg.clients || []) writeFileSync(join(at, `client-${k.hash}.html`), Buffer.from(k.body, 'base64'));
   writeFileSync(join(at, 'package.json'), JSON.stringify(pkg));
+  if (typeof title === 'string' && title) writeFileSync(join(at, SEAT_TITLE_FILE), JSON.stringify({ title: title.slice(0, 80) }));
   return at;
 }
 
@@ -104,8 +115,8 @@ export async function loadInstalled(dir, { verify }) {
     try { pkg = JSON.parse(readFileSync(join(at, 'package.json'), 'utf8')); } catch (e) { refused.push({ dir: at, why: e.message }); continue; }
     const v = verifyPackage(pkg, { verify, want: id });
     if (!v.ok) { refused.push({ dir: at, why: v.why }); continue; }
-    // the package.json this seat wrote itself (adoptPackage keeps the name and title it trusts, kanban #1541)
-    try { registrations.push(await registrationFromPackage(at, pkg, { title: pkg.title })); } catch (e) { refused.push({ dir: at, why: e.message }); }
+    // the title this seat wrote itself (kanban #1541, #1716, #1780): never package.json's, which an older build kept as a seat relayed it
+    try { registrations.push(await registrationFromPackage(at, pkg, { title: seatTitleAt(at) })); } catch (e) { refused.push({ dir: at, why: e.message }); }
   }
   return { registrations, refused };
 }
