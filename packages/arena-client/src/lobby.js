@@ -215,6 +215,13 @@ const downSave = (nowMs) => { try { const st = downStore(); if (!st) return; con
 export const skippedNodes = (nowMs = Date.now()) => [...downMap()].filter(([, v]) => v > nowMs).map(([node, untilMs]) => ({ node, untilMs }));
 /** Forget every skip (tests). */
 export const forgetSkippedNodes = () => { DOWN = new Map(); FAILS.clear(); try { const st = downStore(); if (st) st.removeItem(DOWN_KEY); } catch { /* nothing kept */ } };
+// THE SEATS' WARNING CODES FOR ONE ROUND (kanban #2557): from the listings that count only; a census objection needs the threshold.
+function seatWarnings(counting, needed) {
+  const by = new Map();
+  for (const c of counting) for (const k of new Set(c.warnings || [])) by.set(k, (by.get(k) || 0) + 1);
+  return [...by].filter(([k, n]) => k !== 'census_objected' || n >= needed).map(([k]) => k);
+}
+
 export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, verifyMany = null, skewMs = LOBBY_SKEW_MS, answerMs = SIGNER_ANSWER_MS, skipFailed = false, preferGames = null, rereadMs = 0 } = {}) {
   if (!Array.isArray(nodes) || !nodes.length) throw new Error('a lobby asks the nodes it was named, and it was named none');
   if (typeof verify !== 'function') throw new Error('a lobby checks each signer node\'s signed listing, and no verify was injected');
@@ -431,7 +438,11 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
       disagrees: counts.filter((c) => c.free !== !pays).map((c) => c.node),
       names: [],                                            // checked below, within the read's budget (kanban #2259, #2276)
       // WHAT THE PLAYER IS WARNED OF BEFORE ENTRY (§18A.7 / §22A): a paying round's only
-      warnings: pays ? entryWarnings(contract, counts.flatMap((c) => c.warnings || [])) : [],
+      // ONLY FROM THE LISTINGS THAT COUNT (kanban #2557): a seat outside the round's committee, or one whose listing is stale or
+      // falsely signed, named 'census_objected' on every paid round and the 'Before you stake' dialog showed it. A game warning is
+      // taken from a fresh, signed listing of a signer node; 'census_objected' (its seats take no entry) only when at least the
+      // round's threshold of those name it. The listing signature does not cover the codes, so one signer node can still name them.
+      warnings: pays ? entryWarnings(contract, seatWarnings(counts.filter((c) => c.counts), needed)) : [],
       contract,
       // THE ROUND'S GAME, FROM ITS CONTRACT (checked against the round id above, so no node's word): one row per game and
       // kind; a market (§0A.7a) - pinned, or a round naming no core, which only a market does - is joined by its pick sheet
