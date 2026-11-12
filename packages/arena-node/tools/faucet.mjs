@@ -698,7 +698,7 @@ createServer((req, res) => {
     // the amounts only toward the private page's origin (Daniel 2026-11-07: "Den bounty Funktion ausmachen bis ich es sage und nur auf einer privaten URL aktivieren")
     if (!(bountyOn() && BOUNTY_ORIGINS.includes(String(req.headers.origin || '')))) return send(200, { ok: true, on: false });
     // AND HOW FAR THIS WEEK'S BUDGET IS (Daniel 2026-11-10: "das wird im Fenster angezeigt wie weit wir schon sind"): approved this week of the weekly budget
-    let budget = null; try { const b = FEEDBACK ? FEEDBACK.budget({ rules: RULES }) : null; budget = b ? { weekApprovedSats: b.weekApprovedSats, weeklyBudgetSats: b.weeklyBudgetSats } : null; } catch { budget = null; }
+    let budget = null; try { const b = FEEDBACK ? FEEDBACK.budget({ rules: RULES }) : null; budget = b ? { weekApprovedSats: b.weekApprovedSats, weekPaidSats: b.weekPaidSats, weeklyBudgetSats: b.weeklyBudgetSats } : null; } catch { budget = null; }
     return send(200, { ok: true, on: true, network: BOUNTY_NETWORK, levels: REWARD_LEVELS, nodeBaseSats: NODE_BOUNTY_BASE_SATS, perKeyPerWeek: RULES.perKeyPerWeek, budget,
       rule: 'A person reviews every report. Only the first report of a bug is paid. Nothing is paid for game results.' });
   }

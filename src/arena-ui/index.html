@@ -1938,10 +1938,10 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           levels.append(el('div', { cls: 'fb-chips-head', text: 'Rewards in ' + unit + ':' }), chips);
           // THIS WEEK'S BUDGET (Daniel 2026-11-10: "ein Budget von 100000 sats pro Woche das wird im Fenster angezeigt wie weit wir schon sind")
           if (j.budget && Number(j.budget.weeklyBudgetSats) > 0) {
-            const used = Number(j.budget.weekApprovedSats) || 0, all = Number(j.budget.weeklyBudgetSats);
+            const used = Number(j.budget.weekPaidSats ?? j.budget.weekApprovedSats) || 0, all = Number(j.budget.weeklyBudgetSats);   // paid this week (Daniel 2026-11-12)
             const bar = el('div', { cls: 'fb-budget-bar' }, el('div', { cls: 'fb-budget-fill' }));
             bar.firstChild.style.width = Math.min(100, Math.round((used / all) * 100)) + '%';
-            levels.append(el('div', { cls: 'fb-budget' }, el('div', { cls: 'fb-budget-line', text: 'This week: ' + used.toLocaleString('en-US') + ' / ' + all.toLocaleString('en-US') + ' sats' }), bar));
+            levels.append(el('div', { cls: 'fb-budget' }, el('div', { cls: 'fb-budget-line', text: 'Paid this week: ' + used.toLocaleString('en-US') + ' / ' + all.toLocaleString('en-US') + ' sats' }), bar));
           }
         }).catch(() => {});
       }

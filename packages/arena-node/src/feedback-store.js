@@ -454,6 +454,9 @@ export function openFeedbackStore(path = ':memory:') {
       // AND WHAT THIS WEEK APPROVED OUTSIDE IT (Daniel 2026-11-12, the admin page: "46,000 of 100,000 approved this week" beside "56,000 approved in
       // all", all of it this week): a critical bug and a node bounty do not count against the weekly budget, so they are shown on their own
       weekOutsideBudgetSats: sum(`SELECT COALESCE(SUM(amount_sats), 0) AS s FROM reports WHERE state IN ('accepted', 'paid') AND changed_ms >= ? AND COALESCE(severity, '') IN ('critical', 'node')`, nowMs - WEEK_MS),
+      // PAID THIS WEEK (Daniel 2026-11-12: "Das ist was diese Woche ausgezahlt wurde" - "Ja"): the week's figure every page shows is what went out in
+      // the last 7 days, by the time each reward was paid
+      weekPaidSats: sum(`SELECT COALESCE(SUM(amount_sats), 0) AS s FROM rewards WHERE state = 'paid' AND paid_ms >= ?`, nowMs - WEEK_MS),
       weeklyBudgetSats: R.weeklyBudgetSats, allApprovedSats: sum(`SELECT COALESCE(SUM(amount_sats), 0) AS s FROM reports WHERE state IN ('accepted', 'paid')`),
       paidSats: sum(`SELECT COALESCE(SUM(amount_sats), 0) AS s FROM rewards WHERE state = 'paid'`),
       openRewards: db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(amount_sats), 0) AS s FROM rewards WHERE state <> 'paid'`).get(),
