@@ -4048,6 +4048,10 @@ export async function migratePlayerWallet({ round, invite, seed, LockClient, sto
 export async function evacuatePlayerWallet({ from, target, seed, LockClient, storage, onState = () => {}, chunkMsat = null, gateways = [] } = {}) {
   if (!from || !['DRAINING', 'CRITICAL'].includes(from.status) || !from.invite) return { moved: 0n, chunks: 0, state: 'not draining' };
   if (!target || target.status !== 'OPEN' || !target.invite) return { moved: 0n, chunks: 0, state: 'no safe federation to move to' };
+  // NO NEW MONEY WHERE NONE IS TAKEN (kanban #2433, after #807): the move invoices the target, so a target that takes no new deposits is refused
+  // before a wallet is opened in it - unless the guardians named it as the draining federation's successor
+  const named = from.successorId && String(from.successorId).toLowerCase() === String(target.federation).toLowerCase();
+  if (!named && !takesDeposits(String(target.federation))) return { moved: 0n, chunks: 0, state: 'no safe federation to move to', why: 'that federation takes no new deposits' };
   const fromId = fromHex(String(from.federation)), toId = fromHex(String(target.federation));
   const a = await openPlayerWallet({ federationId: fromId, invite: from.invite, seed, LockClient, storage });
   const b = await openPlayerWallet({ federationId: toId, invite: target.invite, seed, LockClient, storage });
