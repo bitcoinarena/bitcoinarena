@@ -1929,7 +1929,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE PAYOUT OF A PASSED PROPOSAL (§27A.9.3reserve-payout.js): the 5-of-7 of the federation that holds the
   // reserves - its guardian seats, by the reserve key's DKG shares - pay the proposal's LNURL once; every seat records it
   const payoutNet = String(chain || '').replace(/^bitcoin-/, '') || 'testnet4';
-  const lnurlAsk = lnurlClient({ network: payoutNet });
+  const lnurlAsk = lnurlClient({ network: payoutNet, localHosts: lnurlLocalHosts });   // the #1809 guard, operator's local hosts kept (kanban #2323, #2340)
   const payoutPeer = (base) => ({
     // kanban #1159: every ask carries the asking guardian seat's node key and its signature
     commit: async (b) => { const r = await fetch(`${base}/reserve-payout/commit`, { method: 'POST', headers: { 'content-type': 'application/json' },
