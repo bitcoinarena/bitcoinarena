@@ -23,7 +23,8 @@
 //    that holds none of the node's memory; the node calls it synchronously and waits for each answer against a deadline
 //    (Atomics.wait). Each core thread is started by this node thread's core supervisor (core-supervisor.js), a thread that is
 //    never blocked: it hears the core thread's exit at once - a heap death wakes the node, not its deadline - and reads the
-//    process's memory every 2 ms while a call runs, ending the core before the backstop. No vm timeout is used: one firing in
+//    core thread's own memory every 2 ms while a call runs, ending the core before the backstop (kanban #1813: never
+//    another thread's memory - one game's cores elsewhere in the process do not end another game's core). No vm timeout is used: one firing in
 //    the node's own thread was measured aborting the whole process (node 24.15, "Assertion failed: (env_->execution_async_id())
 //    == (0)").
 import { Worker, MessageChannel, receiveMessageOnPort } from 'node:worker_threads';
@@ -47,7 +48,8 @@ export const LOAD_MS = 10000;
 export const ARRAY_BUDGET = 64 * 1024 * 1024;
 /** The V8 heap of the core's thread: its arrays, objects and strings. Past it only that thread dies. */
 export const HEAP_LIMITS = Object.freeze({ maxOldGenerationSizeMb: 128, maxYoungGenerationSizeMb: 16 });
-/** THE BACKSTOP: how far this process may grow while one call into a core runs - read every 2 ms by the core supervisor. */
+/** THE BACKSTOP: how far one core's own thread may grow while one call into it runs - read every 2 ms by the core supervisor
+ *  (kanban #1813: its own isolate's memory, not the process's, which other games' cores share). */
 export const RSS_BACKSTOP = 512 * 1024 * 1024;
 /** THE LONGEST ANSWER a core may give one call, in characters (kanban #1691): the node copies it into its own thread and
  *  parses it there, where no limit of the core's thread applies. A replay's answer is a few kB (three truck words a picture);
@@ -151,6 +153,7 @@ export function loadCore({ files, entry }, options = {}) {
   const sup = supervisorOf();
   const id = sup.next++;
   const ctrl = new Int32Array(new SharedArrayBuffer(8 * 4));
+  Atomics.store(ctrl, C.FROM_MB, -1);   // kanban #1813: the core thread writes its own figure when its load or a call begins
   const { port1, port2 } = new MessageChannel();
   port1.unref();
   // THE TRIGGER sits BACKSTOP_MARGIN below the backstop: sampled every 2 ms, and the core keeps allocating until its isolate
@@ -175,7 +178,6 @@ export function loadCore({ files, entry }, options = {}) {
   };
   /** Wait for the core thread's next answer, or its end: the deadline, its supervisor's backstop, its exit. */
   const wait = (ms, what) => {
-    Atomics.store(ctrl, C.FROM_MB, rssMb());
     Atomics.store(ctrl, C.HIGH_MB, 0);
     Atomics.store(ctrl, C.CALL, 1);
     const until = Date.now() + ms;
@@ -211,6 +213,8 @@ export function loadCore({ files, entry }, options = {}) {
   // `within`: a shorter deadline for this one call (kanban #1538: the plugin trial run gives all its calls one deadline in total)
   const callHere = (op, input = {}, within = null) => {
     if (ended) throw new Error(ended);
+    // kanban #1813: unknown until the core thread writes its own memory as it takes this call (before the post: never stale)
+    Atomics.store(ctrl, C.FROM_MB, -1);
     port1.postMessage({ op: String(op), json: plain(input) });
     const ms = Number.isFinite(within) ? Math.max(1, Math.min(within, { callMs, stepMs, askMs }[DEADLINE[op] || 'askMs'])) : { callMs, stepMs, askMs }[DEADLINE[op] || 'askMs'];
     const a = wait(ms, op);
