@@ -55,6 +55,11 @@ export const RSS_BACKSTOP = 512 * 1024 * 1024;
  *  parses it there, where no limit of the core's thread applies. A replay's answer is a few kB (three truck words a picture);
  *  4 MB parses in well under ASK_MS. core-host.js refuses a longer one before it is posted, and the node again before it is read. */
 export const ANSWER_MAX = 4 * 1024 * 1024;
+/** THE LONGEST FAILURE TEXT (kanban #2165, #2232, #2304; refute of #1691): core-host.js cuts the core's own message to 1 kB
+ *  before posting it; with the host's own prefix a `why` is far below this. Anything else - not a string, or longer - is never
+ *  thrown into the node: the core is ended, and a fixed text says so. */
+export const WHY_MAX = 4096;
+const whyBounded = (why) => typeof why === 'string' && why.length <= WHY_MAX;
 /** The supervisor ends a core this far below the backstop: it reads the process every 2 ms, and a core allocating at full
  *  speed keeps going for the moments its isolate takes to stop (measured on the card). */
 const BACKSTOP_MARGIN_MB = 96;
@@ -235,7 +240,8 @@ function startThread({ files, entry }, { callMs, stepMs, askMs, loadMs, name, ar
   };
   const loaded = wait(leftOf(loadMs), 'loading');
   loading = false;   // (kanban #2058) the load's own bound ends with the load
-  if (!loaded.ok) { end(loaded.why); throw new Error(loaded.why); }
+  // kanban #2165, #2232, #2304: a failure text past WHY_MAX (or not a string) is never thrown into the node
+  if (!loaded.ok) { const why = whyBounded(loaded.why) ? loaded.why : `the core failed while loading with a message longer than ${WHY_MAX} characters`; end(why); throw new Error(why); }
 
   // `within`: a shorter deadline for this one call (kanban #1538: the plugin trial run gives all its calls one deadline in total)
   const callHere = (op, input = {}, within = null) => {
@@ -245,6 +251,8 @@ function startThread({ files, entry }, { callMs, stepMs, askMs, loadMs, name, ar
     port1.postMessage({ op: String(op), json: plain(input) });
     const ms = Number.isFinite(within) ? Math.max(1, Math.min(within, { callMs, stepMs, askMs }[DEADLINE[op] || 'askMs'])) : { callMs, stepMs, askMs }[DEADLINE[op] || 'askMs'];
     const a = wait(ms, op);
+    // kanban #2165, #2232, #2304: a failure text past WHY_MAX (or not a string) is never thrown into the node - a bounded one is
+    if (!a.ok && !whyBounded(a.why)) throw new Error(`the core failed in ${op} with a message longer than ${WHY_MAX} characters`);
     // A CALL PAST ITS ARRAY BUDGET FAILS, AND ONLY THAT CALL (kanban #1721, #1792, #1831): core-host.js drops the context it
     // ran in - the core cannot catch the refusal and keep what it held. Ending the core here made every later call on this
     // seat fail ("it is not run again") while a seat that never ran that input answered them: the seat's history again.
