@@ -250,7 +250,9 @@ const ENTRY_VOID_MAX_BYTES = 4096;
  */
 const RESULT_RECORD_MAX_BYTES = RESULT_FRONT_BYTES + RESULT_SIGNATURE_BYTES;
 const peerResultsCap = (committeeSize) => 2 * Math.max(1, committeeSize) * RESULT_RECORD_MAX_BYTES;
-async function peerJson(answer) { return JSON.parse(Buffer.from(await peerBody(answer)).toString('utf8')); }
+async function peerJson(answer, cap = PEER_BODY_MAX_BYTES) { return JSON.parse(Buffer.from(await peerBody(answer, cap)).toString('utf8')); }
+/** An answer this seat does not read (not 200): its body dropped unread, so a peer cannot make it pile up (kanban #1744). */
+async function dropBody(answer) { try { await answer.body?.cancel(); } catch { /* gone */ } }
 /** GET /checkpoints of every peer AT ONCE (#1550: in parallel, not one after another), each its bytes or null when down. */
 async function peersCheckpoints(peers, roundIdBytes, entryId, cap) {
   return Promise.all(peers.map(async (peer) => {
@@ -1203,8 +1205,8 @@ export class Verifier {
     for (const peer of this.peersOf(roundIdBytes)) {
       try {
         const r = await peerFetch(`${peer}/entry-void?entry=${hex(entryId)}`);
-        if (r.status !== 200) continue;
-        const got = await peerJson(r);
+        if (r.status !== 200) { await dropBody(r); continue; }
+        const got = await peerJson(r, ENTRY_VOID_MAX_BYTES);   // kanban #1744
         const mark = Uint8Array.from(Buffer.from(String(got.firstMark || ''), 'hex'));
         const c = this.round.onTimeFirstMark(mark);
         if (!c || hex(c.entryId) !== hex(entryId)) continue;
@@ -1549,8 +1551,9 @@ export class Verifier {
         // gather waits on it before it may move to the next entry - measured on the Daily, gathers running 2946 to
         // 6140 ms each while a page's own calls were aborting at 8 s. "A peer that is down is not a fault" was
         // already this function's rule; without a deadline it was a rule it could not keep.
-        const answer = await fetch(url, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
-        if (!answer.ok) { refused++; continue; }
+        // kanban #1744 (bypass of #1550): the size cap too - a peer's /results was read whole with arrayBuffer()
+        const answer = await peerFetch(url);
+        if (!answer.ok) { await dropBody(answer); refused++; continue; }
         const said = answer.headers.get('x-no-quorum');
         if (said) noQuorumPeers.push({ peer, outcome: said });
         body = await peerBody(answer, peerResultsCap(committee.length));   // kanban #1634: bounded, as #1550's pulls
