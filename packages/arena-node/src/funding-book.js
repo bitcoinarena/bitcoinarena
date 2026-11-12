@@ -72,6 +72,16 @@ export function heldBeforeCounts({ own, before, after, census }) {
   return B * CLAIM_QUORUM_DEN > Math.max(0, Number(census) || 0);
 }
 
+/**
+ * ONE KEY CANNOT FILL EVERY SEAT'S BOOK (kanban #2522, audit #1489 r12 gossip-3): anyone may propose, so one stranger key posted proposals that differed
+ * only in their amount - each kept for good, forwarded to every seat, served in GET /funding and walked by every decide()/voteRound() pass. A seat now
+ * keeps at most FUNDING_PER_AUTHOR_MAX proposals of each kind (funding, fee, leaderboard) by one author key, and at most FUNDING_COMMENTS_PER_AUTHOR_MAX
+ * comments by one key on one proposal; one past that is refused (429) and so never forwarded. The author is read from its fixed place in the signed bytes
+ * (after the 1-byte type and 2-byte version: network and author for a proposal, proposal and parent and author for a comment).
+ */
+export const FUNDING_PER_AUTHOR_MAX = 32;
+export const FUNDING_COMMENTS_PER_AUTHOR_MAX = 32;
+
 /** A payment's id: the proposal's own for a single payment (rule 5), else one per tranche. */
 export const trancheIdOf = (pid, k, of) => (of === 1 ? pid : createHash('sha256').update(`ARENA/v1/FundingTranche:${pid}:${k}`).digest('hex'));
 
@@ -570,6 +580,14 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
           else db.prepare('UPDATE funding_items SET at_ms = ? WHERE id = ? AND at_ms > ?').run(atMs, id, atMs);
         }
         return { ok: true, fresh: false, id };
+      }
+      // kanban #2522: bounded per author key (FUNDING_PER_AUTHOR_MAX), comments per author and proposal (FUNDING_COMMENTS_PER_AUTHOR_MAX)
+      if (kind === 'proposal' || kind === 'fee' || kind === 'leaderboard') {
+        const n = db.prepare('SELECT COUNT(*) AS n FROM funding_items WHERE kind = ? AND substr(hex, 71, 64) = ?').get(kind, toHex(r.obj.author)).n;
+        if (n >= FUNDING_PER_AUTHOR_MAX) return { ok: false, status: 429, why: `this seat keeps at most ${FUNDING_PER_AUTHOR_MAX} ${kind} proposals of one author` };
+      } else if (kind === 'comment') {
+        const n = db.prepare("SELECT COUNT(*) AS n FROM funding_items WHERE kind = 'comment' AND proposal = ? AND substr(hex, 135, 64) = ?").get(toHex(r.obj.proposalId), toHex(r.obj.author)).n;
+        if (n >= FUNDING_COMMENTS_PER_AUTHOR_MAX) return { ok: false, status: 429, why: `this seat keeps at most ${FUNDING_COMMENTS_PER_AUTHOR_MAX} comments of one author on one proposal` };
       }
       const height = await Promise.resolve(tip()).catch(() => null);
       // A PLAYER'S NAME (PIP, player-name.js): the newest per player is kept, the one it replaces dropped; one dated
