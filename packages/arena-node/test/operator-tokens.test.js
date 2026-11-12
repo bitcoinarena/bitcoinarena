@@ -101,3 +101,12 @@ test('on a running seat: the pairing token reads status and signs a vote; config
     assert.equal(listed.tokens.length, 1, 'the pairing token stays');
   } finally { await s.d.close(); }
 });
+
+test('kanban #2487 (SM-O1): a store that throws DurableJsonUnreadable is thrown on (the node refuses to start); any other read failure or a non-list starts empty', async () => {
+  const { DurableJsonUnreadable } = await import('../src/durable-json.js');
+  const torn = { read: () => { throw new DurableJsonUnreadable('/x/node.db.operator-tokens.json', 'Unexpected end of JSON input'); }, write: () => { throw new Error('never written'); } };
+  assert.throws(() => createOperatorTokens({ store: torn }), (e) => e.code === 'DURABLE_JSON_UNREADABLE');
+  const broken = { read: () => { throw new Error('EACCES'); }, write: () => {} };
+  assert.deepEqual(createOperatorTokens({ store: broken }).list(), []);
+  assert.deepEqual(createOperatorTokens({ store: { read: () => ({}), write: () => {} } }).list(), []);
+});
