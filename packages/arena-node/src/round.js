@@ -52,6 +52,7 @@ import { receiptsNeeded } from '../../arena-protocol/src/genesis.js';
 import { decodeHandout } from '../../arena-protocol/src/handout.js';
 import { stakePointIsTheHandouts } from '../../arena-protocol/src/contracts.js';
 import { encodeFraudProof, fraudProofHash } from '../../arena-protocol/src/slash.js';
+import { lockClaimDigest, lockClaimKeyOf, LOCK_CLAIM_BYTES } from '../../arena-protocol/src/lock-claim.js';
 import { firstMarkOutcome, startDeadlineOf, roundEndMs } from '../../arena-protocol/src/first-mark.js';
 import { H2H_REVEAL_MIN_MS, marketOfRound } from '../../arena-protocol/src/manifest.js';
 import { marketWindowOf } from '../../arena-protocol/src/attested.js';
@@ -126,6 +127,20 @@ const namedBatchRow = (r) => ({ bodyId: r.body_id, txid: r.txid, signers: JSON.p
 /** Foreign receipts kept (kanban #1274): at most this many, none older than a day. */
 export const FOREIGN_RECEIPTS_KEPT = 4096;
 export const FOREIGN_RECEIPTS_MAX_AGE_MS = 24 * 3600000;
+
+// A PLAYER'S CLAIM ON THE LOCKS ITS ENTRY NAMES HOLDS (kanban #1897, #1938; protocol lock-claim.js): `bytes` are the entry, `entryIdBytes` its id,
+// and `sig` the BIP-340 signature by its stake point over lockClaimDigest(id) - what only the holder of the stake preimage can make.
+export function lockClaimHolds(bytes, entryIdBytes, sig) {
+  let e;
+  try { e = decodeEntryContract(bytes); } catch (err) { return { ok: false, why: `those bytes are not an entry: ${err.message}` }; }
+  if (!(entryIdBytes instanceof Uint8Array) || entryIdBytes.length !== 32 || !same(entryId(e), entryIdBytes)) return { ok: false, why: 'those bytes are another entry than the one named' };
+  if (!(sig instanceof Uint8Array) || sig.length !== LOCK_CLAIM_BYTES) return { ok: false, why: `a lock claim is a ${LOCK_CLAIM_BYTES}-byte BIP-340 signature` };
+  const key = lockClaimKeyOf(e);
+  if (!key || key.every((b) => b === 0)) return { ok: false, why: 'that entry names no stake point, so there is nothing to claim its locks with' };
+  let ok = false;
+  try { ok = schnorr.verify(sig, lockClaimDigest(entryIdBytes), key); } catch { ok = false; }
+  return ok ? { ok: true } : { ok: false, why: 'that claim is not a signature by the entry\'s stake point over its id' };
+}
 
 export class Round {
   /** How long openHeld trusts its last count of the open rows when this store wrote none (kanban #786). */
@@ -4093,6 +4108,44 @@ export class Round {
   firstEntryNamingLock(roundIdBytes, kind, outpoint, playerPubkey = null) {
     const f = this.firstNamingOfLock(roundIdBytes, kind, outpoint, playerPubkey);
     return f ? f.entryId : null;
+  }
+
+  /**
+   * KEEPS THE PLAYER'S CLAIM ON AN ENTRY'S LOCKS (kanban #1897, #1938; protocol lock-claim.js), once it is checked: `sig` is a BIP-340 signature by
+   * the entry's stake point over lockClaimDigest(entry id). `bytes`: the entry's bytes when this seat does not hold it (a claim a peer showed).
+   * Answers { ok, why }.
+   */
+  putLockClaim(entryIdBytes, sig, bytes = null) {
+    const held = bytes || this.entry(entryIdBytes);
+    if (!held) return { ok: false, why: 'this node holds no such entry' };
+    const ok = lockClaimHolds(new Uint8Array(held), entryIdBytes, sig);
+    if (!ok.ok) return ok;
+    this.db.prepare('INSERT OR IGNORE INTO lock_claims (entry_id, sig) VALUES (?, ?)').run(Buffer.from(entryIdBytes), Buffer.from(sig));
+    return { ok: true, why: 'the claim is the stake point\'s signature over that entry' };
+  }
+
+  /** The player's claim on this entry's locks, as kept (64 bytes), or null. */
+  lockClaim(entryIdBytes) {
+    const r = this.db.prepare('SELECT sig FROM lock_claims WHERE entry_id = ?').get(Buffer.from(entryIdBytes));
+    return r ? new Uint8Array(r.sig) : null;
+  }
+
+  /**
+   * THE CLAIMED ENTRIES NAMING THIS LOCK OUTPOINT HERE (kanban #1897, #1938): every entry this seat holds, in any round, of `playerPubkey`, whose
+   * `kind` lock outpoint is `outpoint` and whose claim is kept - in the order this seat took them (joined_ms, then rowid). Market-cancelled entries
+   * are skipped. Answers [{ entryId, joinedMs, bytes, sig }].
+   */
+  claimedNamingsOfLock(kind, outpoint, playerPubkey) {
+    const key = `${Buffer.from(outpoint.txid).toString('hex')}:${outpoint.outIdx}`;
+    const out = [];
+    for (const r of this.db.prepare(
+      'SELECT n.entry_id, n.player_pk, e.joined_ms, e.contract, c.sig FROM entry_lock_names n JOIN entries e ON e.entry_id = n.entry_id '
+        + 'JOIN lock_claims c ON c.entry_id = n.entry_id WHERE n.kind = ? AND n.outpoint = ? AND n.entry_id NOT IN (SELECT entry_id FROM market_cancels) '
+        + 'ORDER BY e.joined_ms, e.rowid').iterate(kind, key)) {
+      if (playerPubkey && !Buffer.from(r.player_pk).equals(Buffer.from(playerPubkey))) continue;
+      out.push({ entryId: new Uint8Array(r.entry_id), joinedMs: Number(r.joined_ms), bytes: new Uint8Array(r.contract), sig: new Uint8Array(r.sig) });
+    }
+    return out;
   }
 
   /** The entry a verified lock at this outpoint already stakes, or null: one lock is one entry. */

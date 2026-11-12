@@ -56,7 +56,7 @@ import {
 import { parseConnection, payInvoice } from './nwc.js';
 import { STAKE_NOT_SEEN } from '../../arena-protocol/src/constants.js';
 import { stakeSeenBy, settlementBy, settlementDecided, feeBpsForRound } from './join.js';
-import { handLock } from './page-lock.js';
+import { handLock, postLockClaim } from './page-lock.js';
 import { invoiceQrSvg } from './qr.js';
 import { decodeGhost } from '../../arena-protocol/src/ghost.js';
 import { TYPE_GHOST } from '../../arena-protocol/src/constants.js';
@@ -650,6 +650,10 @@ export class Client {
     this.playerPubkey = entry.playerPubkey;
 
     const joined = agrees(mine, new Uint8Array(await r.arrayBuffer()), 'entry');
+    // THE PLAYER'S CLAIM ON THE ENTRY'S LOCKS beside it (kanban #1897, #1938): what binds the stake and fee lock to this entry and no copy
+    // (not waited on: it never throws, and the join's time is the player's - `lockClaimed` holds each seat's answer to come)
+    this.lockClaimed = [];
+    if (this.stakeLock && typeof this.stakeLock.claimFor === 'function') this.lockClaimed.push(postLockClaim({ node: this.base, entryId: mine, claimFor: this.stakeLock.claimFor }));
 
     // AND ON EVERY OTHER COMMITTEE NODE, or it refuses this entry's checkpoints
     // as "no such entry" - measured: daemon B answered 404 for every Daily signer node.
@@ -750,6 +754,9 @@ export class Client {
   async joinOn(base) {
     try {
       const p = await fetch(`${base}/entry`, { method: 'POST', body: encodeEntryContract(this.joinedEntry) });
+      // and the player's claim on its locks (kanban #1897, #1938)
+      if (p.status === 201 && this.stakeLock && typeof this.stakeLock.claimFor === 'function')
+        (this.lockClaimed = this.lockClaimed || []).push(postLockClaim({ node: base, entryId: entryId(this.joinedEntry), claimFor: this.stakeLock.claimFor }));
       return { base, ok: p.status === 201, why: p.status === 201 ? null : (await p.text()).trim() };
     } catch (e) { return { base, ok: false, why: e.message }; }
   }
