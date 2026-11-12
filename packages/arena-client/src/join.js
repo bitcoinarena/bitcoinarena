@@ -224,22 +224,35 @@ export async function fetchRound(id, nodes, { fetcher = fetch } = {}) {
 // changes, and the session asked all its nodes again after the page had - kept per round and node list, the promise
 // itself, so a second asker shares the first's reads; a refusal is not kept.
 const RANDOMNESS = new Map();
-export async function fetchRandomness(id, nodes, { fetcher = fetch } = {}) {
+export async function fetchRandomness(id, nodes, { fetcher = fetch, committee = 0 } = {}) {
   if (!Array.isArray(nodes) || !nodes.length)
     throw new Error('no node to ask for this round\'s randomness');
+  const seats = Number.isInteger(committee) && committee > 0 ? committee : 0;
   const key = id + '|' + nodes.join(',');
-  if (fetcher === fetch && RANDOMNESS.has(key)) return RANDOMNESS.get(key);
-  const asked = readRandomness(id, nodes, fetcher);
+  // THE READS ARE KEPT, THE COUNT IS MADE BY EACH ASKER (kanban #2046): the warm read at the Join click knows no committee and
+  // worldSeedFor does (contract.nodes), so the seats' answers are shared and each caller counts them against its own bar.
+  const cached = fetcher === fetch && RANDOMNESS.has(key);
+  const reads = cached ? RANDOMNESS.get(key) : readRandomness(id, nodes, fetcher);
+  if (fetcher === fetch && !cached) RANDOMNESS.set(key, reads);
+  const drop = () => { if (fetcher === fetch && RANDOMNESS.get(key) === reads) RANDOMNESS.delete(key); };
   // ONLY A WHOLE ANSWER IS KEPT (kanban #1869, #1898): the warm read at the Join click is the one worldSeedFor is answered from
   // after the stake is locked, so a read some seats refused (a seat that had not read the beacon block yet) is not kept either -
   // the next read asks every node again. A refusal is dropped as before.
-  if (fetcher === fetch) {
-    RANDOMNESS.set(key, asked);
-    asked.then((got) => { if (got.refused.length && RANDOMNESS.get(key) === asked) RANDOMNESS.delete(key); },
-      () => { if (RANDOMNESS.get(key) === asked) RANDOMNESS.delete(key); });
-  }
-  return asked;
+  let got;
+  try { got = countRandomness(nodes, await reads, seats); } catch (e) { drop(); throw e; }
+  if (got.refused.length) drop();
+  return got;
 }
+
+// ONE SEAT, ONE VOTE (kanban #2046, #1523): the seat's whole URL (origin and path, slashes collapsed, no trailing slash), not
+// sourceKey's origin + first path segment - six seats behind one host under a shared prefix (https://h/arena/seat-0..5) are
+// six voters, not one; one URL named twice is still one.
+const seatKey = (u) => {
+  try {
+    const x = new URL(u);
+    return (x.origin + x.pathname.replace(/\/{2,}/g, '/').replace(/\/+$/, '')).toLowerCase();
+  } catch { return String(u).replace(/\/+$/, ''); }
+};
 
 async function readRandomness(id, nodes, fetcher) {
   // EVERY NODE AT ONCE (measured 2026-10-03 00:03Z: asked one after another, 'session opening' to 'world seed from 7
@@ -248,6 +261,9 @@ async function readRandomness(id, nodes, fetcher) {
     const at = node.replace(/\/+$/, '') + '/randomness?round=' + id;
     try {
       const r = await readWithOneRetry(fetcher, at);
+      // A SEAT THAT HOLDS NO SUCH ROUND (404) IS NOT ONE OF ITS VOTERS (kanban #2046): the page names the network's seats
+      // (daily.json: 14), a round is held by its committee (7) only.
+      if (r.status === 404) return { node, absent: `${node}: answered 404 ${(await r.text()).trim()}` };
       if (!r.ok) return { node, refused: `${node}: answered ${r.status} ${(await r.text()).trim()}` };
       const bytes = new Uint8Array(await r.arrayBuffer());
       if (bytes.length !== 32) return { node, refused: `${node}: answered ${bytes.length} bytes` };
@@ -256,10 +272,15 @@ async function readRandomness(id, nodes, fetcher) {
       return { node, refused: `${node}: ${e.message}` };
     }
   }));
+  return reads;
+}
+
+function countRandomness(nodes, reads, committee = 0) {
   const said = reads.filter((x) => x.hash);
   const refused = reads.filter((x) => x.refused).map((x) => x.refused);
+  const absent = reads.filter((x) => x.absent);
   if (!said.length)
-    throw new Error('no node named this round\'s randomness: ' + refused.join('; '));
+    throw new Error('no node named this round\'s randomness: ' + [...refused, ...absent.map((x) => x.absent)].join('; '));
   const first = toHex(said[0].hash);
   const other = said.find((s) => toHex(s.hash) !== first);
   // ONE SEAT OF SEVEN DOES NOT CLOSE EVERY WORLD IT SITS ON (kanban #1523): a disagreement threw at once, so one seat answering 32
@@ -271,8 +292,17 @@ async function readRandomness(id, nodes, fetcher) {
   // seats answering 409 (no beacon read yet) and one seat answering its own 32 bytes, that one seat's bytes were the round's -
   // 1 of 7. Every outcome now needs more than half of the named nodes, each source counted once (sourceKey: the seats behind one
   // host differ by path; one URL named twice is one node), or it is a refusal by name and the caller asks again later.
-  const src = (node) => sourceKey(node) || node.replace(/\/+$/, '');
-  const named = new Set(nodes.map(src)).size;
+  // THE BAR IS THE ROUND'S COMMITTEE, NOT THE PAGE'S LIST (kanban #2046, #1523): the page names the network (daily.json: 14
+  // seats) and a round is held by its committee (7); counted over all 14, six honest seats of seven were 6 of 14 and one liar
+  // stopped the world seed again - and seven honest ones made no world at all. A seat that answered 404 "holds no such round"
+  // is not a voter; every other named seat is (a silent or 409 seat still does not lower the bar). When the caller knows the
+  // committee's size (worldSeedFor: contract.nodes), the bar is never below more than half of it (as many of it as are named),
+  // so seats answering 404 cannot shrink a committee round to the one seat that answered.
+  const src = seatKey;
+  const all = new Set(nodes.map(src));
+  const gone = new Set(absent.map((x) => src(x.node)));
+  const voters = [...all].filter((k) => !gone.has(k)).length;
+  const named = Math.max(voters, Math.min(committee || 0, all.size));
   const count = new Map();
   for (const s of said) { const h = toHex(s.hash); if (!count.has(h)) count.set(h, new Set()); count.get(h).add(src(s.node)); }
   const [won, by] = [...count].sort((a, b) => b[1].size - a[1].size)[0];
@@ -281,7 +311,8 @@ async function readRandomness(id, nodes, fetcher) {
     if (other)
       throw new Error(`${said[0].node} says this round's randomness is ${first} and `
         + `${other.node} says ${toHex(other.hash)}: a round whose nodes name two worlds is not one round`);
-    throw new Error(`only ${n} of ${named} named nodes name this round's randomness (more than half must): ` + refused.join('; '));
+    throw new Error(`only ${n} of ${named} named nodes name this round's randomness (more than half must): `
+      + [...refused, ...absent.map((x) => x.absent)].join('; '));
   }
   const kept = said.filter((s) => toHex(s.hash) === won);
   for (const s of said) if (toHex(s.hash) !== won) refused.push(`${s.node}: named randomness ${toHex(s.hash)}, not the ${n} of ${named} nodes' ${won}`);
@@ -746,7 +777,9 @@ export async function fetchSettlementSignerNodes(id, nodes, { fetcher = fetch } 
 export async function worldSeedFor({ entry, round, nodes, contract, fetcher = fetch } = {}) {
   if (!entry) throw new Error('there is no entry to seed a world for');
   const id = typeof round === 'string' ? round : toHex(round);
-  const beacon = await fetchRandomness(id, nodes, { fetcher });
+  // THE COMMITTEE'S SIZE SETS THE BAR (kanban #2046): contract.nodes, the seats that hold this round
+  const committee = contract && Array.isArray(contract.nodes) ? contract.nodes.length : 0;
+  const beacon = await fetchRandomness(id, nodes, { fetcher, committee });
   return {
     // THE ONE FUNCTION (seed.js worldSeedWord): the round's contract chooses the rule - one world per round, or per player
     seedWord: worldSeedWord({ entry, roundRandomness: beacon.randomness, contract, roundId: fromHex(id), sharedWorld: sharedWorldOf(contract.gameId) }),
