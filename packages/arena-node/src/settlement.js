@@ -50,7 +50,7 @@ import { sendPlanToJson, planKey } from './winnings-send.js';
 import { askerOrder, eligibleAsker } from './payout.js';
 import { REFUSAL } from './settle-backoff.js';
 import { RETRY, retryStep, retryBlocks, locksExpired, isFinalRetry } from './settle-retry.js';
-import { LOCK_FATE, lockFateStep, lockFateOf, markLockFate, misnamedSigners } from './forfeit.js';
+import { LOCK_FATE, lockFateStep, lockFateOf, markLockFate, misnamedSigners, spoiltShares } from './forfeit.js';
 import { planTakenId, signPlanTaken, countPlanTaken, joinCertificate, splitCertificate, PLAN_TAKEN_BYTES } from './plan-taken.js';
 import { PLAN_ASK, SEND_PLAN_ASK_HEADER, sendPlanAskHeaders, checkSendPlanAsk } from './send-plan-ask.js';
 import { askPeers, PEER_ASK_MS, PEER_READ_MS, PEER_GRACE_MS } from './peer-ask.js';
@@ -377,7 +377,8 @@ export class LockSettlement {
     if (!port || typeof port.settle !== 'function') return refuse(`this signer node cannot reach federation ${String(fid).slice(0, 16)}, so it builds nothing there`);
     const tx = await port.settle({ claimPk: got.claimPk, claims, payouts: s.payouts, nonce: s.nonce });
     const built = { ok: true, message: fromHex(tx.message), txid: tx.txid, settlement: s, plan: got.plan, claims, claimPk: got.claimPk,
-      signerNode: got.held.signerNode, needed: receiptsNeeded(got.contract.settlementSlots), federation: String(fid).toLowerCase() };
+      signerNode: got.held.signerNode, needed: receiptsNeeded(got.contract.settlementSlots), federation: String(fid).toLowerCase(),
+      nodes: got.contract.nodes };   // THE COMMITTEE THE LIST IS CHECKED AGAINST (kanban #2247, #2260): its size bounds the ids, its public shares judge each share
     this.built.set(key, built);
     return built;
   }
@@ -504,7 +505,7 @@ export class LockSettlement {
     }
     const tx = await port.settle({ claimPk, claims, payouts: plan.payouts, nonce: plan.nonce });
     const built = { ok: true, message: fromHex(tx.message), txid: tx.txid, plan, claims, claimPk,
-      signerNode: held.signerNode, needed: receiptsNeeded(contract.settlementSlots) };
+      signerNode: held.signerNode, needed: receiptsNeeded(contract.settlementSlots), nodes: contract.nodes };   // the committee (kanban #2247, #2260)
     this.built.set(key, built);
     return built;
   }
@@ -982,7 +983,7 @@ export class LockSettlement {
     }
     const tx = await (await this.portFor(roundIdBytes)).settle({ claimPk, claims, payouts: plan.payouts, nonce: plan.nonce });
     const built = { ok: true, message: fromHex(tx.message), txid: tx.txid, plan, claims, claimPk,
-      signerNode: held.signerNode, needed: receiptsNeeded(contract.settlementSlots) };
+      signerNode: held.signerNode, needed: receiptsNeeded(contract.settlementSlots), nodes: contract.nodes };   // the committee (kanban #2247, #2260)
     this.built.set(key, built);
     this.byPlan.set(key, { fp, built });
     if (this.byPlan.size > 4096) this.byPlan.delete(this.byPlan.keys().next().value);
@@ -1213,10 +1214,17 @@ export class LockSettlement {
    */
   async #gatherShares(roundIdBytes, m, q, signers, own) {
     // EACH PEER UNDER ITS OWN ID (kanban #1807, forfeit.js misnamedSigners), checked before any share is asked; a list that still throws is a refusal, never an abort
-    const misnamed = misnamedSigners(signers, m.contract && m.contract.nodes);
-    if (misnamed.length) return { ...refuse(`${misnamed[0]} committed under an id that is not its own on this list`), withheld: misnamed };
-    try { return await this.#gatherChecked(roundIdBytes, m, q, signers, own); }
-    catch (e) { return { ...refuse(`the settlement list could not be signed: ${e.message}`, 500), withheld: [] }; }
+    // THE COMMITTEE IS m.nodes (kanban #2247, #2260): message(), lateMessage() and fedMessage() carry no contract, so m.contract.nodes was undefined - the range
+    // check was off and the public-share check threw, and a forger under an id no peer named stopped every pass without ever being left out
+    const misnamed = misnamedSigners(signers, m.nodes);
+    if (misnamed.out.length) return { ...refuse(`${misnamed.out[0]} committed under an id that is not its own on this list`), withheld: misnamed.out };
+    // ONE DOOR PER ID ON THIS LIST (kanban #2247, #2260, forfeit.js misnamedSigners): the others naming it are set aside for this pass
+    const list = misnamed.aside.length ? signers.filter((s) => !misnamed.aside.includes(s.base)) : signers;
+    let got;
+    try { got = await this.#gatherChecked(roundIdBytes, m, q, list, own); }
+    catch (e) { got = { ...refuse(`the settlement list could not be signed: ${e.message}`, 500), withheld: [] }; }
+    if (!got.ok && misnamed.kept.length && !(got.withheld && got.withheld.length)) got = { ...got, withheld: misnamed.kept };
+    return got;
   }
 
   async #gatherChecked(roundIdBytes, m, q, signers, own) {
@@ -1236,9 +1244,8 @@ export class LockSettlement {
     const shares = [mine.share, ...asked.map((x) => x.value.share)];
     const { signature } = aggregate340({ commitments, message: m.message, groupPublicKey: m.claimPk, shares, curve: this.curve });
     if (schnorr.verify(signature, m.message, m.claimPk.subarray(1))) return { ok: true, signature };
-    const held = this.dkg && this.dkg.publicSharesFor ? this.dkg.publicSharesFor(m.contract.nodes) : null;
-    const spoilt = held && held.ok ? signers.filter((s, i) => s.base !== null && !verifyShare340({ id: s.commitment.id, share: shares[i],
-      publicShare: held.shares.get(String(s.commitment.id)), groupPublicKey: m.claimPk, message: m.message, commitments, curve: this.curve })) : [];
+    const held = this.dkg && this.dkg.publicSharesFor ? this.dkg.publicSharesFor(m.nodes) : null;
+    const spoilt = spoiltShares({ signers, shares, held, m, commitments, curve: this.curve });
     return { ...refuse('the combined settlement signature does not verify under the round\'s claim key', 500), withheld: spoilt.map((s) => s.base) };
   }
 
@@ -1315,7 +1322,7 @@ export class LockSettlement {
       .filter((p) => toHex(p.message) === toHex(m.message));
     if (!held.length) return refuse('this signer node committed to no settlement of that round');
     // NO LIST LONGER THAN A COMMITTEE (kanban #1672): a stranger's 85 598-commitment list held the loop ~49 s; refused before any curve work
-    { const why = commitmentListRefusal(commitments, { needed: m.needed, nodes: m.contract && m.contract.nodes }); if (why) return refuse(why); }
+    { const why = commitmentListRefusal(commitments, { needed: m.needed, nodes: m.nodes }); if (why) return refuse(why); }
     // THE PAIR THE LIST NAMES (kanban #1489): the one whose commitment the list carries, of those this seat handed out.
     const own = commitments.find((c) => String(c.id) === String(held[0].commitment.id));
     const pair = own && held.find((p) => toHex(own.hiding) === toHex(p.commitment.hiding) && toHex(own.binding) === toHex(p.commitment.binding));
