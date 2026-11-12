@@ -1507,3 +1507,7 @@ Audit 5 (#1399, base 1502786b) and audit 6 (#1415, base eb7fd30fc) for release 2
 
 #### Ballot tally memory (ballot-tally.js `lives` / `spansAll`) vs the kept outcome (kanban #1570)
 - Invariant: the serving rule (`spans`, configServesRound) and GET /config (`live`) always answer from every PASSED record in `ballot_proposals`, from the tally's construction on. `refreshLive()` runs when the tally is made (a restart reads the kept outcomes at once) and on every pass that read a tip, including one skipped because the chain did not answer the reorg check (#1152). A restarted seat never serves a round naming the config its own kept outcome replaced.
+
+#### Seat e-cash exchange x liquidation halt (ecash-exchange.js `step`, server.js `halted`, liquidations.js) - kanban #1577
+- Invariant: a federation this seat holds HALTED (a signed HALTED record or the seats' halt proof, `liquidations.haltOf`) takes no new exchange, out of it or into it (409), before anything is written or any note is taken.
+- `createLiquidations` exports `haltOf` and `haltedFederations`; server.js passes `halted` without a catch. A halt check that throws refuses the exchange (503, nothing taken): "cannot tell" is never read as "not halted". Before the fix `haltOf` was missing, the call threw, the catch answered null, and a halted federation's notes were exchanged here and claimed at the liquidation too (paid twice).
