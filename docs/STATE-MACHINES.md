@@ -1542,3 +1542,9 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-C3 (change) Liquidation claim: one record per federation and payout key (kanban #1771)
+- A notes record (`arena-liquidation-ecash-<fid>`) and a pending-outputs record (`arena-liquidation-pending-<fid>`) name the payout key they were written for (`payoutPk`). A phrase uses the plain key only when it is free or names its own key (a record from an older page that names no key is read as this phrase's); otherwise its record is `<key>.<16 hex of its payout key>` (`claimSlot`).
+- Invariant: every phrase's notes in a liquidated federation are handed over inside the claim window, whatever another phrase's tab of the same browser did. A record is posted, and dropped as taken, only with the payout key it names; another phrase's record is never re-posted under this phrase's key.
