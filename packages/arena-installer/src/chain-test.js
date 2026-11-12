@@ -26,6 +26,39 @@ export const TESTNET4_ELECTRUM = Object.freeze([
   { host: 'blackie.c3-soft.com', port: 57009, tls: false, note: 'c3-soft, plain TCP' },
 ]);
 
+// SECOND SOURCES OVER HTTPS (feedback #021, kanban #2570: "Egress only on 443: ... mempool.space:40002 and c3-soft 57009/57010 are
+// unreachable, and tn4 WSS can't be second to itself, so no Electrum choice passes"): public Esplora APIs, asked only to agree with the
+// node's own source - never a source the node runs on. Measured 2026-11-12: both answer the testnet4 genesis and tip 160,921.
+export const TESTNET4_ESPLORA = Object.freeze([
+  { esplora: 'https://mempool.space/testnet4/api', note: 'mempool.space (HTTPS)' },
+  { esplora: 'https://blockstream.info/testnet4/api', note: 'Blockstream (HTTPS)' },
+]);
+
+/** Probe an Esplora API the way probeElectrum probes a server: genesis, tip, and the hashes at `at`. Same answer shape. */
+export async function probeEsplora(src, { fetcher = fetch, timeoutMs = 10000, at = null } = {}) {
+  const t0 = Date.now();
+  const get = async (path) => {
+    const r = await fetcher(`${src.esplora}${path}`, { signal: AbortSignal.timeout(timeoutMs) });
+    const t = (await r.text()).trim();
+    if (!r.ok) throw new Error(`${src.esplora}${path} answered ${r.status}`);
+    return t;
+  };
+  const hash = (t) => { if (!/^[0-9a-f]{64}$/.test(t)) throw new Error(`not a block hash: ${t.slice(0, 40)}`); return t; };
+  try {
+    const genesis = hash(await get('/block-height/0'));
+    const latencyMs = Date.now() - t0;
+    if (genesis !== TESTNET4_GENESIS) return { ok: false, why: `block 0 is ${genesis.slice(0, 16)}...: not testnet4`, genesis, latencyMs };
+    const height = Number(await get('/blocks/tip/height'));
+    if (!Number.isSafeInteger(height)) throw new Error('no tip height');
+    const tipHash = hash(await get('/blocks/tip/hash'));
+    const atHashes = {};
+    for (const h of at || []) atHashes[h] = hash(await get(`/block-height/${h}`));
+    return { ok: true, chain: 'testnet4', genesis, height, tipHash, atHashes, software: 'esplora', latencyMs };
+  } catch (e) {
+    return { ok: false, why: e.message, latencyMs: Date.now() - t0 };
+  }
+}
+
 /** A block hash in Bitcoin's display order: double SHA-256 of the 80-byte header, bytes reversed. */
 export const headerHash = (hex) => {
   const b = Buffer.from(hex, 'hex');
@@ -206,8 +239,9 @@ export function tipsAgree(a, b) {
  * The full test of a chain connection, as the wizard's Test button runs it: the source itself, then a second source from the built-in
  * list (one that is not the source) for the agreement. `probe` is injectable for tests.
  */
-export async function testConnection(conn, { probe = { core: probeCore, electrum: probeElectrum }, list = TESTNET4_ELECTRUM } = {}) {
-  const ask = (c, opts) => (c.kind === 'core' ? probe.core(c, opts) : probe.electrum(c, opts));
+export async function testConnection(conn, { probe = { core: probeCore, electrum: probeElectrum, esplora: probeEsplora }, list = [...TESTNET4_ELECTRUM, ...TESTNET4_ESPLORA] } = {}) {
+  const ask = (c, opts) => (c.kind === 'core' ? probe.core(c, opts) : c.kind === 'esplora' ? (probe.esplora ? probe.esplora(c, opts) : Promise.resolve({ ok: false, why: 'no Esplora probe given' })) : probe.electrum(c, opts));
+  const kindOf = (s) => (s.esplora ? 'esplora' : 'electrum');
   let own = await ask(conn);
   if (!own.ok) return { ok: false, source: own, why: own.why };
   // A SECOND SOURCE THAT LAGS IS ASKED NO FURTHER, the next one is (kanban #684, 2026-10-26: "bitcoinarena install waiting for bitcoin core /
@@ -218,14 +252,14 @@ export async function testConnection(conn, { probe = { core: probeCore, electrum
   const behind = [], disagreed = [];
   for (const s of list) {
     if (conn.kind === 'electrum' && s.host === conn.host && Number(s.port) === Number(conn.port)) continue;
-    const first = { endpoint: `${s.host}:${s.port}`, ...(await ask({ kind: 'electrum', ...s })) };
+    const first = { endpoint: s.esplora || `${s.host}:${s.port}`, ...(await ask({ kind: kindOf(s), ...s })) };
     if (!first.ok) { second = second || first; continue; }
     // both asked again for the block at the common height (each answers its tip again too)
     const at = agreeHeights(own, first);
     const again = await ask(conn, { at });
     if (!again.ok) return { ok: false, source: again, why: again.why };
     own = again;
-    second = { endpoint: first.endpoint, ...(await ask({ kind: 'electrum', ...s }, { at })) };
+    second = { endpoint: first.endpoint, ...(await ask({ kind: kindOf(s), ...s }, { at })) };
     if (!second.ok) continue;
     agree = tipsAgree(own, second);
     if (agree.ok) break;
