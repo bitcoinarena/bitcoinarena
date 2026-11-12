@@ -6337,7 +6337,10 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           // darstellen"): the round's stake row says what went in; what is missing is the round's fee, kept for a round that was played
           : r.kind === 'refund' ? (() => { const st = (typeof rows !== 'undefined' ? rows : []).find((x) => x.kind === 'stake' && x.round === r.round);
               const inMsat = st ? (BigInt(st.msat || 0) < 0n ? -BigInt(st.msat || 0) : BigInt(st.msat || 0)) : 0n, back = BigInt(r.msat || 0), fee = inMsat > back ? inMsat - back : 0n;
-              return `Refund \u00b7 round ${String(r.round || '').slice(0, 8)} \u00b7 stake back${inMsat > 0n ? ` (${sat(inMsat)} staked${fee > 0n ? `, ${sat(fee)} fee kept` : ''})` : ''}`; })()
+              // WHAT CAME BACK FIRST (measured 2026-11-12 on a 412 px phone: the row is cut at "stake back (100 sat stak..." - the numbers never showed), and a
+              // shortfall is called a fee only when it is one (the round's fees are 10 % at most); a larger one is what came back so far
+              if (!(inMsat > 0n)) return `Refund \u00b7 stake back \u00b7 round ${String(r.round || '').slice(0, 8)}`;
+              return `Refund \u00b7 ${Math.floor(Number(back) / 1000).toLocaleString('en-US')} of ${sat(inMsat)} back${fee > 0n ? (fee * 10n <= inMsat ? ` (${sat(fee)} fee)` : ' so far') : ''} \u00b7 round ${String(r.round || '').slice(0, 8)}`; })()
           : r.kind === 'slash-payout' ? `Slash payout \u00b7 round ${String(r.round || '').slice(0, 8)}`
           : r.kind === 'withdrawal' ? `Withdrawal${r.state && r.state !== 'Success' ? ' (' + r.state + ')' : ''}`
           // A MOVE BETWEEN FEDERATIONS IS NO STAKE (18:4xZ: the 1,000 sat moved out of the CRITICAL b18947f0 showed "Stake · round undefine · not
