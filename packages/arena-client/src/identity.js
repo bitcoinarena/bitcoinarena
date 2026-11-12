@@ -282,6 +282,30 @@ export function referralNameFor({ name, storage, random, curve, nowMs = Date.now
  * collected the same way; `referral` is every one this wallet collected - { msat, payouts } - kept in `keep` (arena.zaps.referral,
  * kanban #1929): a row a seat lists is data, not money.
  */
+// kanban #2133, #2195: [outpoint, byVersion] in the order the Refund budget is spent - most distinct seats first, then round-robin
+// by the lowest-index seat that listed each outpoint (Map order is the order rows were read, so a seat's own rows keep their order).
+function fairOrder(found, seen) {
+  const tiers = new Map(); // distinct seats -> first seat -> [entries]
+  for (const e of found) {
+    if (seen.has(e[0])) continue;
+    const seatsOf = new Set();
+    for (const v of e[1].values()) for (const si of v.seats) seatsOf.add(si);
+    const n = seatsOf.size, owner = Math.min(...seatsOf);
+    if (!tiers.has(n)) tiers.set(n, new Map());
+    const byOwner = tiers.get(n);
+    if (!byOwner.has(owner)) byOwner.set(owner, []);
+    byOwner.get(owner).push(e);
+  }
+  const out = [];
+  for (const n of [...tiers.keys()].sort((a, b) => b - a)) {
+    const queues = [...tiers.get(n).keys()].sort((a, b) => a - b).map((o) => tiers.get(n).get(o));
+    for (let i = 0, more = true; more; i++) {
+      more = false;
+      for (const q of queues) if (i < q.length) { out.push(q[i]); more = true; }
+    }
+  }
+  return out;
+}
 export const ZAPS_COLLECTED_KEY = 'arena.zaps.collected';
 export const ZAPS_ROWS_PER_SEAT = 200;
 export const ZAPS_REFUNDS_PER_PASS = 50;
@@ -323,8 +347,11 @@ export async function collectZaps({ storage, keep = storage, random, curve, clie
   const collected = [], spent = [], failed = [], waiting = [];
   const accepted = new Map(); // outpoint -> the version a refund accepted
   let asked = 0;
-  for (const [outpoint, byVersion] of found) {
-    if (seen.has(outpoint)) continue;
+  // kanban #2133, #2195 (refute of #1618): the ZAPS_REFUNDS_PER_PASS budget is spent fairly, not in the order the seats' answers
+  // arrived - else one fast seat with 200 fresh made-up rows a pass took every call and a real zap every honest seat lists waited
+  // for ever. Outpoints listed by more distinct seats go first; among those listed by as many, the seats that listed them take turns
+  // (round-robin by the lowest-index seat that listed each), so one seat's rows alone never use the budget other seats' rows need.
+  for (const [outpoint, byVersion] of fairOrder(found, seen)) {
     // a version in a federation this tab holds no wallet in is looked at first (it waits, asking nothing), so a spent answer elsewhere never files
     // the outpoint ahead of it (kanban #2833)
     const noWallet = (d) => { const c = clients && clients.get ? clients.get(String(d.federationId).toLowerCase()) : null; return !c || typeof c.refund !== 'function' ? 0 : 1; };
