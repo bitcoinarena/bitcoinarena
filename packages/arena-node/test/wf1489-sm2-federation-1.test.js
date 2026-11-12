@@ -44,15 +44,19 @@ test('wf1489 sm2 federation-1: a retried exchange takes the player\'s notes alth
   const a1 = await s.x.exchange({ from: A, to: B, ecash: NOTES1, amountMsat: '100000' });
   assert.equal(a1.ok, false); assert.equal(a1.status, 503);
   assert.equal(s.received.has(NOTES1), false, 'the federation took nothing of player 1 yet');
-  // player 2: a new exchange, checked, paid - the seat holds 50 sat in B now
+  // player 2: a new exchange. Kanban #2143 (audit44 refute 21): player 1's row ASKED its reissue, and the seat cannot tell "the guardians
+  // never took it" from "they took it and the answer was lost" - so its 100 sat count as owed, and player 2 (150 - 100 = 50 free) is
+  // refused 409 before anything of his is taken; had player 2 been paid, a lost answer left player 1 with notes taken and nothing paid
   const b = await s.x.exchange({ from: A, to: B, ecash: NOTES2, amountMsat: '100000' });
-  assert.equal(b.ok, true, b.why);
-  assert.equal(s.holdsB(), 50_000n);
+  assert.equal(b.ok, false); assert.equal(b.status, 409, b.why);
+  assert.equal(s.received.has(NOTES2), false, 'nothing of player 2 was taken');
+  assert.equal(s.holdsB(), 150_000n);
   // player 1 asks again with the same notes (as the page does after a 503)
   const a2 = await s.x.exchange({ from: A, to: B, ecash: NOTES1, amountMsat: '100000' });
   const row = s.x.stateOf(ex.noteKey(NOTES1));
   // THE INVARIANT: the seat takes a player's notes only when it can pay them - either it pays, or the notes stay with the player
   const taken = s.received.has(NOTES1);
+  assert.ok(a2.ok, `player 1 is paid on his retry (${a2.status} "${a2.why}")`);
   assert.ok(a2.ok || !taken,
     `player 1's notes were reissued into the seat (row ${row && row.state}, answer ${a2.status} "${a2.why}") while the seat holds ${s.holdsB()} msat of the 100000 it owes: taken, nothing paid`);
 });
