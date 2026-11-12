@@ -30,11 +30,12 @@ import { decodeEntryContract, decodeRoundContract, entryFederation } from '../..
 import { lockMatchesEntry, lockFieldsFromJson, lockFieldsToJson } from '../../arena-protocol/src/stake-lock.js';
 import { feeLockPays } from '../../arena-protocol/src/lock-settlement.js';
 import { donationOutputsExpected } from '../../arena-protocol/src/donation.js';
-import { reservesEntryExpected, paysReserves } from '../../arena-protocol/src/reserves.js';
+import { reservesEntryExpected, paysReserves, giftsInFeeLock, entryGiftsInFee, giftsFeeBps } from '../../arena-protocol/src/reserves.js';
 import { namedClaims, namedClaimKeys, arenaLockContractId, arenaLockMatchesEntry, lockStallBlocks } from '../../arena-protocol/src/arena-lock.js';
 import { networkOf } from '../../arena-protocol/src/constants.js';
 import { toHex as hexOf } from '../../arena-protocol/src/hash.js';
 import { claimReadInput } from '../../arena-protocol/src/named-claim-proof.js';
+import { pluginForRound } from './plugins.js';
 
 /**
  * WHETHER THIS ROUND'S GATE MINTS FEE LOCKS (Pick b), by the federation's own fee rule
@@ -367,7 +368,9 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
   // IN A ROUND WHOSE GATE MINTS, THE STAKE COUNTS ONLY WITH ITS FEE LOCK (pick a): kept,
   // verified, and not seen - no play, no place in the settlement - until the fee lock is.
   t = Date.now();
-  const gate = await roundMintsFees({ contract, port });
+  // A PROTOCOL-27 GAME ROUND'S FEE LOCK HOLDS THE WHOLE 10 % (kanban #1486): the gate is sized on it, as the door's and the page's are
+  const gifted = giftsInFeeLock(contract) && entryGiftsInFee(contract, (() => { const g = round.plugins ? pluginForRound(contract, round.plugins) : null; return g && g.ok ? g.plugin.manifest : null; })());
+  const gate = await roundMintsFees({ contract, port, ...(gifted ? { feeBps: giftsFeeBps() } : {}) });
   timing.gateMs = Date.now() - t;
   if (gate.mints && !(round.feeLock && round.feeLock(entryIdBytes)))
     return { ok: true, contractId: String(id), paidMsat: fields.amountMsat, height: st.blockCount, waitsForFeeLock: true };

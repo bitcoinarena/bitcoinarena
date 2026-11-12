@@ -3729,7 +3729,11 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         console.log(`[arena] fees at census height ${named.round.censusHeight}: ${window.ARENA_JOIN_FEES.line} (${fs.agreeing} of ${fs.asked} nodes agree)`);
       }
       let reservesHere = null;
-      if (pays && donationSet && ARENACLIENT.roundPaysReserves && ARENACLIENT.roundPaysReserves(named.round)) {
+      // FROM PROTOCOL 27 (kanban #1486: "Er sollte keine fees entgegen nehmen wenn die order nicht angenommen wird") the developers' and the
+      // reserves' parts ride in the fee lock beside the nodes' - nothing leaves the wallet for them at the lock, so no reserve key is read here
+      const giftsInFee = !!(pays && ARENACLIENT.roundGiftsInFee && ARENACLIENT.roundGiftsInFee(named.round));
+      if (giftsInFee) console.log(`[arena] protocol ${named.round.protocolVersion}: the developers' and the reserves' parts are in the fee lock, paid only if the entry is counted`);
+      if (pays && donationSet && !giftsInFee && ARENACLIENT.roundPaysReserves && ARENACLIENT.roundPaysReserves(named.round)) {
         const fid = named.round.federationId;   // the entry's federation (on a round that takes any, the one the page chose)
         // A FEDERATION'S RESERVE KEY, kept 10 minutes (kanban #601): a reserve epoch lasts far longer, and every order asked the seats again
         const rkKey = Array.from(fid || [], (b) => b.toString(16).padStart(2, '0')).join('');
@@ -3746,12 +3750,14 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       }
       const donation = marketHere && marketHere.fee
         ? { bps: 0, donationMsat: 0n, inFee: marketHere.fee.donationBps }
+        : giftsInFee ? { bps: 0, donationMsat: 0n, inFee: 600, gifts: true }
         : reservesHere ? { bps: reservesHere.bps, donationMsat: reservesHere.donationMsat, mandatory: true }
         : pays && donationSet
         ? ARENACLIENT.chooseDonation({ roundIdHex: named.roundIdHex, round: named.round,
           ask: () => settingsPct, confirm: () => false, storage: window.sessionStorage, recipientsLine })
         : { bps: 0, donationMsat: 0n };
-      console.log(donation.inFee !== undefined ? `[arena] donation ${donation.inFee / 100}% in the fee lock, due when the market resolves`
+      console.log(donation.gifts ? '[arena] the developers\' and the reserves\' parts in the fee lock, due when the entry is counted'
+        : donation.inFee !== undefined ? `[arena] donation ${donation.inFee / 100}% in the fee lock, due when the market resolves`
         : `[arena] donation ${donation.bps / 100}% = ${donation.donationMsat} msat${donation.kept ? ' (kept for this round)' : ''}`);
       window.ARENA_DONATION = { bps: donation.bps, donationMsat: String(donation.donationMsat), kept: !!donation.kept };
       let stake = null;

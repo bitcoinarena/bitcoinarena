@@ -44,7 +44,7 @@ import { lockSettlement, lateLockSettlement, attestedLockSettlement, bookLockSet
 import { fallbackInputs } from './fallback-inputs.js';
 import { fallbackFiler } from '../../arena-protocol/src/fallback-claim.js';
 import { roundSplitBps } from '../../arena-protocol/src/fee-proposal.js';
-import { paysReserves } from '../../arena-protocol/src/reserves.js';
+import { paysReserves, giftsInFeeLock, ROUND_SPLIT_BPS } from '../../arena-protocol/src/reserves.js';
 import { bookSettlement } from '../../arena-protocol/src/book-ledger.js';
 import { isScalar, marketOfRound } from '../../arena-protocol/src/manifest.js';
 import { FORFEIT, VOID, ENTRY_VOID, isQualifier, computePayoutTable, withGoneStakes } from '../../arena-protocol/src/payout.js';
@@ -168,6 +168,7 @@ const LATE_SENDERS_MAX = 4096;
  */
 // `reserveKeyOf(fidHex)`: each federation's reserve key - a plan naming RESERVE_LATER_PK (the auditors' unpaid remainder, kanban #1331) pays each
 // federation's part of it to its own
+// and for a protocol-27 round's reserves line (kanban #1486), planned to RESERVE_LATER_PK the same way
 export function federationPlans(args, { federationOf, feesOf, reserveKeyOf = null }) {
   const plan = lockSettlement({ ...args, fees: NO_FEES });
   if (!plan.ok) return { ok: false, why: plan.why };
@@ -565,8 +566,11 @@ export class LockSettlement {
     if (anyFed) { try { const raw = this.round.entry(entryIdBytes); const ef = raw ? entryFederation(contract, decodeEntryContract(new Uint8Array(raw))) : null; lateFed = ef && ef.ok ? toHex(ef.federationId) : null; } catch { lateFed = null; } }
     const sn = feeLock ? await this.signerNodesWithReserve(roundIdBytes, contract, lateFed) : { ok: true, signerNodes: null };
     if (!sn.ok) return refuse(sn.why);
+    // A PROTOCOL-27 LATE LOSER'S FEE LOCK HOLDS THE DEVELOPERS' AND THE RESERVES' PARTS TOO (kanban #1486): its own federation's reserve key
+    const gf = await this.giftsFor(contract, { feeLocks: feeLock ? 1 : 0, federationHex: lateFed });
+    if (!gf.ok) return gf;
     const args = { roundId: roundIdBytes, entryId: entryIdBytes, entry, lock, feeLock, shares, fees,
-      signerNodes: sn.signerNodes, contract, ...this.roundFees(contract) };
+      signerNodes: sn.signerNodes, contract, ...this.roundFees(contract), ...(gf.gifts ? { gifts: gf.gifts } : {}) };
     // THE BASE PLAN the late sends are sized from (C3b-2a). With a winnings sender it is never signed, so a winner whose
     // lock row is missing here does not block it: its payout goes by send, refunding to the committee key.
     // WINNINGS-AUTO (RULED 2026-10-01): the late shares are paid by payout contracts to the winners' own lock keys
@@ -704,6 +708,31 @@ export class LockSettlement {
     const set = typeof this.feesFor === 'function' && contract ? this.feesFor(contract) : null;
     if (!set) return {};
     return { websitePct: set.websitePct, ...(paysReserves(contract) ? { feeBps: roundSplitBps(set).nodes } : {}) };
+  }
+
+  /**
+   * A PROTOCOL-27 GAME ROUND'S GIFTS (kanban #1486): its fee locks hold the developers' and the reserves' parts beside the nodes', paid at
+   * settlement for the counted entries only (lock-settlement.js feeSettlement `gifts`). Answers { ok, gifts } - null below 27, for a market
+   * (its donation has its own path) or with no fee lock to claim - or why no lock is claimed. `federationHex`: the federation whose
+   * reserve key is paid (a late loser's on a round that takes any); else the round's, or RESERVE_LATER_PK when it takes any, each federation's
+   * part then paid to its own key (splitByFederation).
+   */
+  async giftsFor(contract, { feeLocks = 1, federationHex = null } = {}) {
+    if (!giftsInFeeLock(contract) || !feeLocks) return { ok: true, gifts: null };
+    const ofGame = this.round.plugins ? pluginForRound(contract, this.round.plugins) : null;
+    if (ofGame && ofGame.ok && donationInFee(ofGame.plugin.manifest)) return { ok: true, gifts: null };
+    const t = this.donationTargetFor ? this.donationTargetFor(contract) : { ok: false, why: 'this signer node names no donation target' };
+    if (!t.ok) return refuse(`no lock is claimed: this round's fee locks hold the developers' part, and ${t.why}`);
+    const set = typeof this.feesFor === 'function' ? this.feesFor(contract) : null;
+    const split = set ? roundSplitBps(set) : ROUND_SPLIT_BPS;
+    let reserveKey = null;
+    if (takesAnyFederation(contract) && !federationHex) reserveKey = RESERVE_LATER_PK;
+    else {
+      const fid = federationHex || toHex(contract.federationId);
+      reserveKey = this.reserveKeyFor ? await this.reserveKeyFor(fid).catch(() => null) : null;
+      if (!reserveKey) return refuse('no lock is claimed: this round\'s fee locks hold the reserves\' part, and no reserve key is known for its federation');
+    }
+    return { ok: true, gifts: { recipients: t.target, reserveKey, split } };
   }
 
   async #bookPlan(roundIdBytes, a, claimPk, held) {
@@ -1203,6 +1232,9 @@ export class LockSettlement {
     // A ROUND THAT TAKES ANY FEDERATION: each claimed lock's federation is its entry's (entryFederation), each federation's fee
     // rule its own port's, read once; the plan decided once and split into one transaction per federation (federationPlans)
     if (anyFed && fb) return refuse('a fallback claim of a round that takes any federation is not built yet: the locks refund at their expiration');
+    // A PROTOCOL-27 ROUND'S FEE LOCKS HOLD THE DEVELOPERS' AND THE RESERVES' PARTS TOO (kanban #1486)
+    const gf = await this.giftsFor(contract, { feeLocks: feeLocks.size });
+    if (!gf.ok) return gf;
     if (anyFed) {
       const ds = on.entries.some((e) => e.atTheDoor) && this.donationSetFor ? this.donationSetFor(contract) : null;
       const fed = await this.#federationsOf(roundIdBytes, contract, on.entries.map((e) => ({ entryId: e.entryId, pubkey: e.pubkey })), locks, feeLocks);
@@ -1212,15 +1244,19 @@ export class LockSettlement {
       const audited = feeLocks.size && this.auditedRoundOf(contract);
       const sn = feeLocks.size ? this.signerNodesFor(roundIdBytes, contract) : null;
       const reserveKeys = new Map();
-      if (audited) {
+      // a protocol-27 round's reserves part (kanban #1486) the same way: each federation's to its own reserve key
+      if (audited || gf.gifts) {
         for (const fid of fed.federationIds) {
           const k = this.reserveKeyFor ? await this.reserveKeyFor(fid).catch(() => null) : null;
-          if (!(k instanceof Uint8Array) || k.length !== 33) return refuse(`no lock is claimed: an audited round pays its auditors' unpaid remainder to the protocol reserves (§13A.1), and no reserve key is known for federation ${fid.slice(0, 16)}`);
+          if (!(k instanceof Uint8Array) || k.length !== 33) return refuse(audited
+            ? `no lock is claimed: an audited round pays its auditors' unpaid remainder to the protocol reserves (§13A.1), and no reserve key is known for federation ${fid.slice(0, 16)}`
+            : `no lock is claimed: this round's fee locks hold the reserves' part, and no reserve key is known for federation ${fid.slice(0, 16)}`);
           reserveKeys.set(fid, k);
         }
       }
       const got = federationPlans({ roundId: roundIdBytes, entries: on.entries, minScore: contract.minScore, payoutShares, locks, feeLocks,
-        signerNodes: sn && audited ? { ...sn, auditReserveKey: RESERVE_LATER_PK } : sn, contract, donationSet: ds && ds.ok ? ds.set : null },
+        signerNodes: sn && audited ? { ...sn, auditReserveKey: RESERVE_LATER_PK } : sn, contract, donationSet: ds && ds.ok ? ds.set : null,
+        ...(gf.gifts ? { gifts: gf.gifts } : {}) },
         { ...fed, reserveKeyOf: (fid) => reserveKeys.get(fid) || null });
       if (!got.ok) return refuse(`no lock is claimed: ${got.why}`);
       return { ok: true, anyFed: true, plan: got.plan, split: got.split, base: { plan: got.plan, entryOf: lockEntry }, contract, claimPk, held, locks, lockEntry,
@@ -1238,7 +1274,7 @@ export class LockSettlement {
     if (!sn.ok) return refuse(sn.why);
     const args = { roundId: roundIdBytes, entries: on.entries, minScore: contract.minScore, payoutShares, locks, fees,
       feeLocks, signerNodes: sn.signerNodes, contract, addressed,
-      donationSet: ds && ds.ok ? ds.set : null, ...this.roundFees(contract), ...(fb ? { fallback: fb } : {}) };
+      donationSet: ds && ds.ok ? ds.set : null, ...this.roundFees(contract), ...(fb ? { fallback: fb } : {}), ...(gf.gifts ? { gifts: gf.gifts } : {}) };
     let plan = lockSettlement(args);
     if (!plan.ok) return refuse(`no lock is claimed: ${plan.why}`);
     if (plan.nothing) return refuse(`no lock is claimed: ${plan.why}`, 409, plan.noFill ? REFUSAL.NOTHING_CLAIMED : null);
