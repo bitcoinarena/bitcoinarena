@@ -61,15 +61,18 @@ test('a cancel a colluding seat wrote after the close is not taken by an honest 
   } finally { await w.close(); }
 });
 
-// kanban #1702: the grace is the long one only where the outcome comes at least that long after the close
-test('a market whose outcome is out at the close has only the short grace; one resolving later keeps the long one', async () => {
-  const { cancelHandOnGraceMs, CANCEL_HANDON_GRACE_MS, CANCEL_HANDON_KNOWN_GRACE_MS } = await import('../src/server.js');
-  const c = { entryCloseMs: 1_800_000n };
-  const terms = (after) => ({ marketTerms: { resolveAfterCloseMs: after, deadlineAfterResolveMs: 60000n } });
-  assert.equal(cancelHandOnGraceMs(c, { roundPeriodMs: 0n }), CANCEL_HANDON_KNOWN_GRACE_MS, 'no terms: attested at the close');
-  assert.equal(cancelHandOnGraceMs(c, { roundPeriodMs: 900_000n, ...terms(600_000n) }), CANCEL_HANDON_KNOWN_GRACE_MS, 'a grid window ends at the close');
-  assert.equal(cancelHandOnGraceMs(c, { roundPeriodMs: 0n, ...terms(4999n) }), CANCEL_HANDON_KNOWN_GRACE_MS);
-  assert.equal(cancelHandOnGraceMs(c, { roundPeriodMs: 0n, ...terms(5000n) }), CANCEL_HANDON_GRACE_MS);
-  assert.equal(cancelHandOnGraceMs(c, { roundPeriodMs: 0n, ...terms(3_600_000n) }), CANCEL_HANDON_GRACE_MS);
-  assert.ok(CANCEL_HANDON_KNOWN_GRACE_MS < 1000);
+// kanban #1702, then #1875/#1909/#1950: NO MARKET HAS ANY CANCEL WINDOW AFTER ITS CLOSE (the 5 s and 500 ms graces are gone, whatever the
+// resolution time): the player's door shuts CANCEL_PLAYER_DOOR_MARGIN_MS before the close, the peers' door at the close
+test('no cancel door is open at or after the entry close; the player door shuts a margin before it', async () => {
+  const { cancelDoorAt, CANCEL_PLAYER_DOOR_MARGIN_MS } = await import('../src/server.js');
+  const close = 1_800_000n, m = CANCEL_PLAYER_DOOR_MARGIN_MS;
+  assert.ok(m >= 500 && m < 1000);
+  for (const relayed of [false, true]) {
+    assert.equal(cancelDoorAt(Number(close) - m - 1, close, relayed), 'open');
+    for (const after of [0, 1, 200, 499, 4900, 4999, 60000]) assert.equal(cancelDoorAt(Number(close) + after, close, relayed), 'closed', `${relayed} +${after}`);
+  }
+  assert.equal(cancelDoorAt(Number(close) - m, close, false), 'closed');
+  assert.equal(cancelDoorAt(Number(close) - 1, close, false), 'closed');
+  assert.equal(cancelDoorAt(Number(close) - m, close, true), 'held');
+  assert.equal(cancelDoorAt(Number(close) - 1, close, true), 'held');
 });
