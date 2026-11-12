@@ -1948,3 +1948,7 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
   standing (standing.js). The Void stays as history; ENTRY_VOID is read only when no such record or pair is held. So a seat
   with the Void and a seat without it list the same entry the same way, and the equivocator's lock is claimed like a
   walk-away's (ruling 2026-10-04 (b)), never left to return to him at expiry.
+#### SM-19c (add) The faucet's e-cash wallet: one writer (tools/faucet-ecash.mjs, kanban #2337)
+- The wallet (ECASH_DIR/wallet.json) is read whole before the federation join and written whole at the end of a run. A run that may change it (mint, fund, keep) holds the wallet's lock from before that read until it exits: the newest of the files ECASH_DIR/wallet.lock.<n> (made with O_EXCL, never removed) names its pid; another such run waits while that pid is live (an empty lock file counts as held for 5 s), and takes <n+1> once it reads `free` or a dead pid.
+- `balance` takes no lock and never writes the wallet back.
+- Invariant: a note the wallet spent into the pool is never unspent in the wallet again; no underlying note is in two pool notes.
