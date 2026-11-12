@@ -1979,13 +1979,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const payoutPeer = (base) => ({
     // kanban #1159: every ask carries the asking guardian seat's node key and its signature
     commit: async (b) => { const r = await fetch(`${base}/reserve-payout/commit`, { method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ plan: b.plan, kind: b.kind, txid: b.txid || null, from: b.from, sig: b.sig }), signal: AbortSignal.timeout(60000) }); const j = await r.json();
+      body: JSON.stringify({ plan: b.plan, kind: b.kind, txid: b.txid || null, from: b.from, sig: b.sig }), signal: AbortSignal.timeout(60000) }); const j = await jsonUpTo(r, PEER_LISTING_BYTES);
       return j.ok ? { ok: true, commitment: { id: Number(j.commitment.id), hiding: fromHex(j.commitment.hiding), binding: fromHex(j.commitment.binding) } } : j; },
     share: async (b) => { const r = await fetch(`${base}/reserve-payout/share`, { method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ planId: b.planId, kind: b.kind, commitments: b.commitments.map((c) => ({ id: c.id, hiding: toHex(c.hiding), binding: toHex(c.binding) })), from: b.from, sig: b.sig }), signal: AbortSignal.timeout(60000) });
-      const j = await r.json(); return j.ok ? { ok: true, share: BigInt('0x' + j.share) } : j; },
-    // ITS WINNERS OF A LEADERBOARD PAYOUT (kanban #1153): the list it planned for, else its frozen read, each with its signed evidence
-    winners: async (id) => { const r = await fetch(`${base}/leaderboard-winners?proposal=${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(30000) }); return r.ok ? r.json() : null; },
+      const j = await jsonUpTo(r, PEER_LISTING_BYTES); return j.ok ? { ok: true, share: BigInt('0x' + j.share) } : j; },
+    // ITS WINNERS OF A LEADERBOARD PAYOUT (kanban #1153): the list it planned for, else its frozen read, each with its signed evidence.
+    // READ UP TO A BOUND (kanban #2382, #2383, #1489 a45-refute-22-s3: #1856's second copy): a bare `r.json()` held a guardian peer's
+    // whole answer, hundreds of MB of padded evidence. The evidence is a season's signed rounds, so it is read up to what one seat's
+    // season is read up to (SEASON_PEER_ANSWER_BYTES); past it the peer has not answered. Its copies of one account cost no second
+    // verify (leaderboard-freeze.js peerEvidence, season.js mergeSignedSeasonAccounts).
+    // commit / share: small answers, read up to PEER_LISTING_BYTES like every other peer answer.
+    winners: async (id) => { const r = await fetch(`${base}/leaderboard-winners?proposal=${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(30000) });
+      if (!r.ok) { try { await r.body?.cancel(); } catch { /* dropped */ } return null; } return jsonUpTo(r, SEASON_PEER_ANSWER_BYTES); },
   });
   const reserveSpent = () => (reservePayouts ? reservePayouts.spent() : new Set());
   // the reserves this seat holds unspent, over every federation, in sat (rule 4's base); the chain tip the funding loop saw last
