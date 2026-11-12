@@ -1542,3 +1542,9 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-L2/SM-L3 (change) The order's fee lock has its own state (kanban #1642)
+- The seats' `/stake-lock` names the stake lock only; the order's fee lock is known from the tab's saved lock alone. Once the stake reads `collected` (its note `arena.stakeback.*`) or `gone`, `lookOwed` reads the kept fee lock's `lockStatus` on every look (`keptFeeHeld`): spent - nothing more; stored past its expiry - owed by refund (`refundKept` with that lock); stored before it - owed by its forfeit when the seats give `GET /forfeit?lock=fee` (asked again on every look), else waiting. The answer stands in `stake` with `fee: true`; `collectOwed` redeems it alone (`redeemFee`), never the stake again.
+- Invariant: a lock this tab made that the federation still holds is never final - `final` is false and `collectState` is open while the kept fee lock is stored, so the record is not marked done and `tidyStorage` keeps the round's lock wallet. A fee forfeit missed on the one collect that redeemed the stake is asked again on the next look.
