@@ -255,7 +255,7 @@ import { SIGNED_RESULT_BYTES, resultId, decodePlayerResult, splitSignedResult } 
 export const MAX_FRAME_BYTES = Math.max(
   MAX_SIGNED_INPUT_BATCH_BYTES, SIGNED_CHECKPOINT_BYTES, SIGNED_RECEIPT_BYTES);
 import { CLOSED, relayRowCost } from './store.js';
-import { Round, lockClaimHolds, refusedLockOwnId } from './round.js';
+import { Round, lockClaimHolds, refusedLockOwnId, LOCKLESS_CAP, LOCKLESS_HOLD_MS } from './round.js';
 import { Verifier } from './verify.js';
 import { Ghosts } from './ghosts.js';
 import { gameLive } from './game-live.js';
@@ -306,7 +306,7 @@ import { readTranscript } from './transcript-read.js';
 import { SIGNED_RERUN_BYTES, rerunResultId, decodeRerunResult, splitSignedRerun, encodeRerunResult, joinSignedRerun } from '../../arena-protocol/src/rerun.js';
 import { decodeFinalSig, splitSignedFinalSig, finalSigFault, SIGNED_FINAL_SIG_BYTES } from '../../arena-protocol/src/final-sig.js';
 import { verifyStakeLock, verifyFeeLock, lockFieldsFromJson, roundMintsFees, federationTakesNoBaseFee } from './stake-lock-signer-node.js';
-import { refundKeyOf, lockFieldsToJson } from '../../arena-protocol/src/stake-lock.js';
+import { refundKeyOf, lockFieldsToJson, lockMatchesEntry } from '../../arena-protocol/src/stake-lock.js';
 import { encodeClaimKeyAttestation, claimKeyAttestationId } from '../../arena-protocol/src/claim-key.js';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { createDonationBallots } from './donation-ballots.js';
@@ -6286,6 +6286,80 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       return await verifyStakeLock({ round, port, entryIdBytes: new Uint8Array(eid), fields, claimPk, donationRecipients, reserveKey, split, timing, atMs, atUntilMs, namersAtPeers, namedGate: (c, fid) => namedClaimGate.refusalNow(c, fid) });
     } catch (e) { return { ok: false, why: `the federation could not be asked: ${e.message}`, ...(e && e.ofFields ? { ofFields: true } : {}) }; }
   };
+  // PAST THE LOCKLESS CAP, AN ENTRY WAITS FOR ITS STAKE LOCK INSTEAD OF BEING REFUSED (kanban #2174, a44 refute of #1745): the cap counted every
+  // lockless entry of a paying head-to-head round, whoever posted it, so a stranger's 6 free entries refused every honest player for a minute, and
+  // again each minute - the paid round seated nobody. At the door the two cannot be told apart: both bring a handout and an entry, and the lock (made
+  // or not) is handed only afterwards. So an entry new to this seat that meets the cap is answered as taken but HELD ASIDE (pendingLockless): not
+  // stored, not relayed, never signed VOID at the close - what #1745 keeps out. When its stake or fee lock is handed (POST /lock, /fee-lock) and
+  // the federation holds this entry's own stake lock (stakeLockHeldAtEntry), it is entered then, past the cap, and verified as any entry's lock. A
+  // flooder who locks nothing costs this seat a bounded map entry for a minute; the honest player who locked is seated. Held aside only with a
+  // handout this seat holds for the round and whose A0 is the entry's stake point (handouts are bounded per round, kanban #1605), at most
+  // PENDING_PER_POINT entries per stake point (the first ones: a copier of a public handout cannot push the player's own entry out) and
+  // PENDING_MAX in all.
+  const PENDING_PER_POINT = 4, PENDING_MAX = 4096;
+  const pendingLockless = new Map();   // `${rid}|${entry id}` -> { contract, point: `${rid}|${stake point}`, untilMs }
+  const pendingLive = (p, nowMs = round.now()) => p && p.untilMs > nowMs;
+  const holdLockless = (contract) => {
+    const ref = contract.vssSharesRef;
+    if (!(ref instanceof Uint8Array) || ref.every((b) => b === 0)) return 'no handout';
+    const held = round.handout(ref);
+    if (!held || toHex(held.roundId) !== toHex(contract.roundId)) return 'no handout';
+    if (toHex(decodeHandout(new Uint8Array(held.bytes)).commitments[0]) !== toHex(contract.stakePoint)) return 'not the handout\'s stake point';
+    const nowMs = round.now(), eidHex = toHex(idOfEntry(contract)), key = `${toHex(contract.roundId)}|${eidHex}`;
+    if (pendingLive(pendingLockless.get(key), nowMs)) return null;
+    if (pendingLockless.size >= PENDING_MAX) for (const [k, p] of pendingLockless) if (!pendingLive(p, nowMs)) pendingLockless.delete(k);
+    if (pendingLockless.size >= PENDING_MAX) return 'too many held aside';
+    const point = `${toHex(contract.roundId)}|${toHex(contract.stakePoint)}`;
+    let n = 0; for (const p of pendingLockless.values()) if (p.point === point && pendingLive(p, nowMs)) n++;
+    if (n >= PENDING_PER_POINT) return 'that stake point already has entries held aside';
+    pendingLockless.set(key, { contract, point, untilMs: nowMs + LOCKLESS_HOLD_MS });
+    return null;
+  };
+  // the entry held aside under this id (a 32-byte id), entered once the federation holds its stake lock; true when it is now stored here
+  const enterPendingLockless = async (eid) => {
+    const hex = toHex(new Uint8Array(eid));
+    const found = [...pendingLockless.entries()].find(([k, p]) => k.endsWith(`|${hex}`) && pendingLive(p));
+    if (!found) return false;
+    const [key, { contract }] = found;
+    if (!(await stakeLockHeldAtEntry(contract))) return false;
+    if (round.entry(eid)) return true;   // a parallel hand-over entered it meanwhile
+    try { round.enter(contract, { stakeLockHeld: true }); } catch { return false; }
+    pendingLockless.delete(key);
+    const c = relayedRound(contract.roundId);   // now it goes on to the other seats, as every entry taken here does (kanban #1068, #1216)
+    if (c) entryRelay.entryTaken(contract.roundId, hex, c.entryCloseMs);
+    return true;
+  };
+  // THE FEDERATION HOLDS THIS ENTRY'S OWN STAKE LOCK: a lock at its stake_lock_outpoint whose contract is the one the entry names (its stake point, its
+  // net stake, the round's claim key, the player's refund key, the expiration the federation holds), named first here by no other entry. A stake point
+  // is asked at most once per LOCKLESS_PROBE_MS, so a flood of hand-overs costs at most one federation read per held-aside stake point each time.
+  const LOCKLESS_PROBE_MS = 1000;
+  const locklessProbed = new Map();
+  const stakeLockHeldAtEntry = async (contract) => {
+    try {
+      const op = contract.stakeLockOutpoint;
+      if (!op || op.txid.every((b) => b === 0)) return false;
+      const first = typeof round.firstEntryNamingLock === 'function' ? round.firstEntryNamingLock(contract.roundId, 'stake', op) : null;
+      if (first && toHex(first) !== toHex(idOfEntry(contract))) return false;
+      if (round.stakeLockAt && round.stakeLockAt(op)) return false;
+      const key = `${toHex(contract.roundId)}|${toHex(contract.stakePoint)}`, nowMs = round.now();
+      if ((locklessProbed.get(key) || 0) > nowMs) return false;
+      if (locklessProbed.size > 4096) locklessProbed.clear();   // stale stake points only cost one more read each
+      locklessProbed.set(key, nowMs + LOCKLESS_PROBE_MS);
+      const row = round.get(contract.roundId);
+      if (!row) return false;
+      const rc = decodeRoundContract(new Uint8Array(row.contract));
+      const fed = entryFederation(rc, contract);
+      const port = (fed.ok ? await portOfFederation(fed.federationId) : null) || stakeLocks;
+      const claimPk = claimKeyOf(contract.roundId);
+      if (!port || !(claimPk instanceof Uint8Array)) return false;
+      const st = await port.status(op);
+      if (!st || !st.stored) return false;
+      const fields = { paymentImage: { kind: 'point', bytes: contract.stakePoint }, amountMsat: netStakeMsat(contract), claimPk,
+        refundPk: refundKeyOf(contract.playerPubkey), expiration: st.blockCount + st.stored.blocksLeft };
+      if (String(await port.contractId(fields)) !== String(st.stored.contractId)) return false;
+      return lockMatchesEntry({ lock: fields, entry: contract, kind: 'stake', claimPk, height: st.blockCount, expiryBlocks: rc.stakeExpiryBlocks }).ok;
+    } catch { return false; }
+  };
   const takeFeeLock = async (eid, fields, atMs = undefined) => {
     const stored = round.entry(eid);
     if (!stored) return { ok: false, status: 404, why: 'this node holds no such entry' };
@@ -11580,7 +11654,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           }
         }
         steps.at('checked');
-        const joined = round.enter(contract);
+        let joined;
+        try { joined = round.enter(contract); }
+        catch (e) {
+          // PAST THE LOCKLESS CAP, HELD ASIDE UNTIL ITS STAKE LOCK IS HANDED (kanban #2174, a44 refute of #1745): answered with its id as a taken
+          // entry is, entered at POST /lock or /fee-lock once the federation holds its lock (enterPendingLockless)
+          if (e.code !== LOCKLESS_CAP || holdLockless(contract) !== null) throw e;
+          steps.named(toHex(idOfEntry(contract))).at('held aside for its lock');
+          res.writeHead(201, { 'content-type': 'application/octet-stream', 'x-arena-entry': 'held-for-lock', ...CORS });
+          return res.end(Buffer.from(idOfEntry(contract)));
+        }
         steps.named(toHex(joined)).at('stored');
         // A CLIENT'S COPY GOES ON TO THE SEATS IT DID NOT REACH (kanban #1068, entry-relay.js)
         // EVERY ROUND'S ENTRY REACHES EVERY SEAT, NOT ONLY A HEAD-TO-HEAD ONE'S (kanban #1216, audit 3 CONSENSUS-1): an entry a player posted to some seats only
@@ -12703,6 +12786,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         try { fields = lockFieldsFromJson(JSON.parse(Buffer.from(await read(req)).toString('utf8'))); }
         catch (e) { return text(res, 400, `that is not a stake lock: ${e.message}`); }
         timing.bodyMs = Date.now() - lt0;
+        if (!round.entry(eid)) await enterPendingLockless(eid);   // an entry held aside past the lockless cap (kanban #2174)
         const stored = round.entry(eid);
         if (!stored) return text(res, 404, 'this node holds no such entry');
         { const why = offerRefusalOfRound(decodeEntryContract(stored).roundId, { held: true }); if (why) return text(res, 409, `lock refused: ${why}`); }   // kanban #1848
@@ -12736,6 +12820,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let fields;
         try { fields = lockFieldsFromJson(JSON.parse(Buffer.from(await read(req)).toString('utf8'))); }
         catch (e) { return text(res, 400, `that is not a fee lock: ${e.message}`); }
+        if (!round.entry(eid)) await enterPendingLockless(eid);   // an entry held aside past the lockless cap (kanban #2174)
         const stored = round.entry(eid);
         if (!stored) return text(res, 404, 'this node holds no such entry');
         // NAMED ONLY ONCE THE ENTRY IS HELD HERE (kanban #1688): a stranger's fee lock for a made-up id kept a tx_steps row under that id
