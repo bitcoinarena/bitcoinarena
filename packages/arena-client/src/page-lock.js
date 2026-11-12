@@ -94,6 +94,18 @@ function keptValue(storage, hex) {
   if (storage.getItem(BLOB_PREFIX + id) === null) putRoomy(storage, BLOB_PREFIX + id, packHex(s));
   return BLOB_MARK + id;
 }
+// A LONG VALUE WHOSE ENTRY IS BEING WRITTEN IS NOT SWEPT (kanban #1977, state audit 2026-11-12): the entry's write refused for quota runs the
+// storage-full handler (ARENA_TIDY_STORAGE -> packWallets) before the entry naming the blob exists; its sweep took the blob as named by no wallet,
+// the retried entry then fit and named a blob that was gone - the wallet database no longer opened. Held from keptValue until the entry's write ends.
+const blobsWriting = new Map();
+function putWalletValue(storage, key, hex) {
+  const val = keptValue(storage, hex);
+  const id = val[0] === BLOB_MARK ? val.slice(1) : null;
+  if (id) blobsWriting.set(id, (blobsWriting.get(id) || 0) + 1);
+  try { putRoomy(storage, key, val); } finally {
+    if (id) { const n = blobsWriting.get(id) - 1; if (n > 0) blobsWriting.set(id, n); else blobsWriting.delete(id); }
+  }
+}
 function valueOf(storage, s) {
   if (!s || s[0] !== BLOB_MARK) return unpackHex(s);
   const blob = storage.getItem(BLOB_PREFIX + s.slice(1));
@@ -118,6 +130,7 @@ export function packWallets(storage) {
   // a long value no wallet names any more
   const named = new Set();
   for (const k of storageKeys(storage)) if (WALLET_KEY.test(k)) { const v = storage.getItem(k); if (v && v[0] === BLOB_MARK) named.add(v.slice(1)); }
+  for (const id of blobsWriting.keys()) named.add(id);   // kanban #1977: an entry naming it is being written right now
   for (const k of storageKeys(storage)) if (k.startsWith(BLOB_PREFIX) && !named.has(k.slice(BLOB_PREFIX.length))) { freed += k.length + String(storage.getItem(k) || '').length; storage.removeItem(k); }
   return freed;
 }
@@ -176,7 +189,7 @@ export function lockStoreFor(storage, roundId, secret) {
     put(k, v) {
       if (!inMemory && storageChars(storage) >= LOCK_ROOM_CHARS) toMemory();
       if (!inMemory) {
-        try { putRoomy(storage, prefix + packHex(k), keptValue(storage, v)); return; } catch (e) { if (!/quota/i.test(`${e && e.name} ${e && e.message}`)) throw e; toMemory(); }
+        try { putWalletValue(storage, prefix + packHex(k), v); return; } catch (e) { if (!/quota/i.test(`${e && e.name} ${e && e.message}`)) throw e; toMemory(); }
       }
       inMemory.set(k, v);
     },
@@ -489,7 +502,7 @@ export function walletStoreFor(storage, federationId, secret) {
       }
       return JSON.stringify(out);
     },
-    put(k, v) { putRoomy(storage, prefix + packHex(k), keptValue(storage, v)); },
+    put(k, v) { putWalletValue(storage, prefix + packHex(k), v); },
     remove(k) { storage.removeItem(prefix + packHex(k)); storage.removeItem(prefix + k); },
   };
 }
