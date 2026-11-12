@@ -174,19 +174,17 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
     CREATE TABLE IF NOT EXISTS tags (id TEXT, name TEXT, value TEXT, kind INTEGER, created_at INTEGER);
     CREATE INDEX IF NOT EXISTS tag_id ON tags (id);
     CREATE TRIGGER IF NOT EXISTS ev_tags_drop AFTER DELETE ON events BEGIN DELETE FROM tags WHERE id = old.id; END;`);   // kanban #1513: REQs read by index; #1543: tags too
-  // kanban #1720 (#1489 v1 refute 48): a tag row carries its event's kind and created_at, so (name, value[, kind]) is read newest first and stops at
-  // its LIMIT. A tags table written by the build before (id, name, value only) gets the two columns and has them filled in once here.
-  if (!db.prepare('PRAGMA table_info(tags)').all().some((c) => c.name === 'created_at')) {
-    db.exec(`ALTER TABLE tags ADD COLUMN kind INTEGER; ALTER TABLE tags ADD COLUMN created_at INTEGER;
-      UPDATE tags SET kind = (SELECT kind FROM events WHERE events.id = tags.id), created_at = (SELECT created_at FROM events WHERE events.id = tags.id);`);
-  }
-  db.exec(`CREATE INDEX IF NOT EXISTS tag_value_time ON tags (name, value, created_at);
-    CREATE INDEX IF NOT EXISTS tag_value_kind_time ON tags (name, value, kind, created_at);`);
   // kanban #1543: each event's single-letter tags (#p, #e, #d, ...) are kept in their own indexed table so a #<letter> filter is answered from the
-  // index; a store written before has them filled in once here.
-  const putTag = db.prepare('INSERT INTO tags (id, name, value, kind, created_at) VALUES (?, ?, ?, ?, ?)');   // kanban #1720: with its event's kind and time
+  // index. kanban #1720 (#1489 v1 refute 48): a tag row carries its event's kind and created_at, so (name, value[, kind]) is read newest first and
+  // stops at its LIMIT.
+  // ONE ROW PER (event, name, value) (kanban #1915, #1959, #1998, #2010; #1489 v1 refute 48 s2): an event repeating ['p', R] 500 times wrote 500 rows,
+  // so a stream reading `limit` rows found two events and hid every real zap receipt for R; and the check read an event's tags by id only, so a
+  // candidate carrying 6000 tags cost 6000 row reads. Now tagRows writes each (name, value) of an event once, a UNIQUE index (id, name, value) keeps
+  // it so, and the check is one seek in that index per value it asks for, whatever many tags the event carries.
+  const PUT_TAG = 'INSERT OR IGNORE INTO tags (id, name, value, kind, created_at) VALUES (?, ?, ?, ?, ?)';   // kanban #1720: with its event's kind and time
+  let putTag = null;   // prepared once the table has all five columns (an older store gets them below)
   // kanban #1753: a tag that is not [name, value, ...] of strings is skipped (a store may hold one kept before the door refused it);
-  // kanban #1704: distinct (name, value) pairs, at most MAX_TAG_ROWS
+  // kanban #1704: distinct (name, value) pairs, at most MAX_TAG_ROWS - one row per (event, name, value) (kanban #1915)
   const tagRows = (e) => { for (const [n, v] of indexedTags(e).slice(0, MAX_TAG_ROWS)) putTag.run(e.id, n, v, e.kind, e.created_at); };
   // kanban #1704: a store written before has no `size`; it is added and filled once, each row's size as a new event's is counted
   if (!db.prepare('PRAGMA table_info(events)').all().some((c) => c.name === 'size')) db.exec('ALTER TABLE events ADD COLUMN size INTEGER');
@@ -197,8 +195,31 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
     for (const r of unsized) { let e; try { e = JSON.parse(r.json); } catch { continue; } setSize.run(eventSize(e, r.json, indexedTags(e).slice(0, MAX_TAG_ROWS)), r.id); }   // kanban #1960: an unreadable row is skipped
     db.exec('COMMIT');
   }
-  // kanban #1960, #1994, #2009: the start-up re-index skips a row it cannot read instead of throwing, so one bad stored row never keeps the relay from starting
-  if (!db.prepare('SELECT 1 FROM tags LIMIT 1').get()) { db.exec('BEGIN'); for (const r of db.prepare('SELECT json FROM events').all()) { try { tagRows(JSON.parse(r.json)); } catch { /* unreadable row: not indexed */ } } db.exec('COMMIT'); }
+  // THE TAGS TABLE IS BUILT IN ONE TRANSACTION AND MARKED DONE IN IT (kanban #1915, #1959, #1998, #2010): the build before added kind and
+  // created_at with two autocommitted ALTERs and an UPDATE and judged "done" by the column being there, and backfilled an older store one
+  // autocommitted row at a time and judged "done" by the table holding any row - a stop part way left tag rows with no time (never found again)
+  // or events with no tag rows (never found again), and a stop between the ALTERs made every later start throw. Now a store below TAGS_VERSION gets,
+  // inside one BEGIN IMMEDIATE ... COMMIT: each missing column added, every tag row rebuilt from the events themselves (one per (event, name,
+  // value), with kind and created_at), the UNIQUE index, and PRAGMA user_version set. A stop anywhere rolls all of it back, and the next start
+  // runs it again from the start.
+  const TAGS_VERSION = 2;
+  if ((db.prepare('PRAGMA user_version').get().user_version ?? 0) < TAGS_VERSION) {
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      const cols = new Set(db.prepare('PRAGMA table_info(tags)').all().map((c) => c.name));
+      if (!cols.has('kind')) db.exec('ALTER TABLE tags ADD COLUMN kind INTEGER');
+      if (!cols.has('created_at')) db.exec('ALTER TABLE tags ADD COLUMN created_at INTEGER');
+      db.exec('DELETE FROM tags; CREATE UNIQUE INDEX IF NOT EXISTS tag_key ON tags (id, name, value);');
+      putTag = db.prepare(PUT_TAG);
+      for (const r of db.prepare('SELECT json FROM events').iterate()) { let e; try { e = JSON.parse(r.json); } catch { continue; } if (e && Array.isArray(e.tags)) tagRows(e); }
+      db.exec(`PRAGMA user_version = ${TAGS_VERSION}`);
+      db.exec('COMMIT');
+    } catch (err) { try { db.exec('ROLLBACK'); } catch { /* none open */ } throw err; }
+  }
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS tag_key ON tags (id, name, value);
+    CREATE INDEX IF NOT EXISTS tag_value_time ON tags (name, value, created_at);
+    CREATE INDEX IF NOT EXISTS tag_value_kind_time ON tags (name, value, kind, created_at);`);
+  putTag = db.prepare(PUT_TAG);
   // kanban #1943, #1983: who holds what, per author and pool (see LOG_SHARE above) - temporary, so it is always rebuilt from the store itself
   db.exec(`CREATE TEMP TABLE IF NOT EXISTS holders (pubkey TEXT, pool INTEGER, n INTEGER, b INTEGER, first INTEGER, PRIMARY KEY (pubkey, pool));
     CREATE INDEX IF NOT EXISTS temp.holders_n ON holders (pool, n, first);
@@ -300,7 +321,7 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
     if (kinds) { where.push('e.kind IN (SELECT value FROM json_each(?))'); args.push(JSON.stringify(kinds)); }
     where.push('e.created_at >= ? AND e.created_at <= ?'); args.push(since, until);
     for (const [name, vals] of tags) {
-      where.push('EXISTS (SELECT 1 FROM tags t INDEXED BY tag_id WHERE t.id = e.id AND t.name = ? AND t.value IN (SELECT value FROM json_each(?)))'); args.push(name, JSON.stringify(vals));
+      where.push('EXISTS (SELECT 1 FROM tags t INDEXED BY tag_key WHERE t.id = e.id AND t.name = ? AND t.value IN (SELECT value FROM json_each(?)))'); args.push(name, JSON.stringify(vals));
     }
     // the check reads only the indexed columns (and tags by id); the json of just the `limit` survivors is read after
     const check = `SELECT e.id FROM json_each(?) c CROSS JOIN events e ON e.id = c.value WHERE ${where.join(' AND ')} ORDER BY e.created_at DESC, e.id LIMIT ?`;
@@ -309,7 +330,7 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   const candidates = (p) => {
     if (p.ids) return p.ids;
     let per = Math.max(1, Math.floor(SCAN_MOST / p.streams.length));
-    if (p.covered) per = Math.min(per, 2 * p.lim);   // 2x: one event may carry the same tag value twice
+    if (p.covered) per = Math.min(per, p.lim);   // kanban #1915 etc.: one row per (event, name, value), so `limit` rows are `limit` events
     const seen = new Set();
     for (const [sql, ...keys] of p.streams) for (const r of stmt(sql).all(...keys, p.since, p.until, per)) seen.add(r.id);
     return [...seen];
