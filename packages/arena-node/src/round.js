@@ -4101,6 +4101,16 @@ export class Round {
       .map((r) => ({ roundId: new Uint8Array(r.round_id), entryId: new Uint8Array(r.entry_id) }));
   }
 
+  /**
+   * The rounds an identity is a side of only through its consented name record (kanban #2280): the rounds whose lobby_names record, with the
+   * identity's own signature, names it (record bytes 64..96, lobby-name.js) - a forfeiter sent no reveal, so h2h_identities holds no row for him
+   * there, yet matchOf names his side by that record (#1401). [{ roundId }].
+   */
+  roundsOfConsentedIdentity(identity) {
+    return this.db.prepare('SELECT DISTINCT round_id FROM lobby_names WHERE identity_sig IS NOT NULL AND length(record) >= 96 AND substr(record, 65, 32) = ?')
+      .all(Buffer.from(identity)).map((r) => ({ roundId: new Uint8Array(r.round_id) }));
+  }
+
   /** A head-to-head entry's stood reveal, kept once: a second for the same entry changes nothing. */
   putReveal({ roundId, entryId, move, salt, receivedMs = Date.now() }) {
     return this.db.prepare('INSERT OR IGNORE INTO head_to_head_reveals (round_id, entry_id, move, salt, received_ms) VALUES (?, ?, ?, ?, ?)')

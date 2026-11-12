@@ -86,7 +86,10 @@ function matchAt(round, plugins, roundIdBytes, depth) {
   const close = c.entryCloseMs;
   let previous = null;
   for (const idHex of ids) {
-    for (const r of round.roundsOfIdentity(fromHex(idHex))) {
+    // kanban #2280: the rounds it is a side of by its consented name record count too (a forfeit against a third player ends the match), the
+    // same two ways its sides are named above - h2h_identities alone holds only the rounds it revealed in
+    const consented = typeof round.roundsOfConsentedIdentity === 'function' ? round.roundsOfConsentedIdentity(fromHex(idHex)) : [];
+    for (const r of [...round.roundsOfIdentity(fromHex(idHex)), ...consented]) {
       if (toHex(r.roundId) === toHex(roundIdBytes)) continue;
       const pr = round.get(r.roundId);
       if (!pr) continue;
