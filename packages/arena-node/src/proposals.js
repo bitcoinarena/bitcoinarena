@@ -213,7 +213,13 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
      */
     async pull(records) {
       let took = 0;
-      for (const r of (Array.isArray(records) ? records : []).slice(0, 256)) {
+      // OLDEST PUBLICATION FIRST (kanban #1842): a peer lists newest first, and a repeal taken before the proposal it repeals
+      // read a history without it (an ordinary schedule here, a repeal at every other seat); oldest first, the earlier one is
+      // held when the later one is checked (and 503s it until decided here). Bounded first, in the peer's order, as before.
+      const asked = (Array.isArray(records) ? records : []).slice(0, 256)
+        .map((r, i) => ({ r, i, at: r && Number.isFinite(Number(r.publishedAt)) ? Number(r.publishedAt) : Infinity }))
+        .sort((a, b) => a.at - b.at || a.i - b.i).map((x) => x.r);
+      for (const r of asked) {
         if (!r || typeof r.proposal !== 'string' || typeof r.blockHash !== 'string') continue;
         const mine = typeof r.id === 'string' ? held.get(r.id.toLowerCase()) : null;
         if (mine && stateOf(mine) !== S.ORPHANED) continue;             // kept and counted here: nothing to learn

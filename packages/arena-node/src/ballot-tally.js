@@ -333,7 +333,7 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
   };
   const historyJson = (h) => h.map((x) => ({ configHash: toHex(x.configHash), config: x.config ? toHex(x.config) : null, since: x.since, by: x.by ? toHex(x.by) : null }));
 
-  return {
+  const api = {
     pass,
     get tip() { return tip; },
     /** The last reorg checks that moved something (newest last), for GET /proposals. */
@@ -365,4 +365,5 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
       return liveConfig({ genesis: genesisFor(net), passed: passedOf(net), height }).history;
     },
   };
+  return api;
 }
