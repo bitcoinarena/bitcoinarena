@@ -710,8 +710,9 @@ export class Verifier {
     // AN ENTRY BELOW THE ROUND'S THRESHOLD IS NO MEMBER (§17, kanban #1071): it is not decided, played against or signed for
     const entries = this.round.entriesOf(roundIdBytes).filter(({ entryId }) => !this.round.entryVoid(entryId));
     // AND IN A PAYING ROUND ONLY THE ENTRIES BACKED BY A LOCK ARE PLAYED (kanban #1437, audit 8 R3): one with no lock took no seat, is played against
-    // nobody and is signed VOID - its reveal cannot change the seated players' verdicts
-    const seated = new Set((typeof this.round.seatedEntriesOf === 'function' ? this.round.seatedEntriesOf(roundIdBytes, contract.stakeMsat) : entries).map(({ entryId }) => hex(entryId)));
+    // nobody and is signed VOID - its reveal cannot change the seated players' verdicts. Its stake SEEN, not only its stake lock waiting for its
+    // fee lock (kanban #1544): the settlement counts only a seen stake, so an unseen one played was a stake never at risk
+    const seated = new Set((typeof this.round.seatedEntriesOf === 'function' ? this.round.seatedEntriesOf(roundIdBytes, contract.stakeMsat, { played: true }) : entries).map(({ entryId }) => hex(entryId)));
     const decided = (async () => {
       await this.carryReveals(roundIdBytes, entries, found.plugin.manifest.moveCount);
       const held = new Map(this.round.revealsOf(roundIdBytes).map((r) => [hex(r.entryId), r]));
