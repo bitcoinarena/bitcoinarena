@@ -80,6 +80,26 @@ function matchAt(round, plugins, roundIdBytes, depth) {
       if (!previous || pc.entryCloseMs > previous.closeMs) previous = { roundId: r.roundId, closeMs: pc.entryCloseMs };
     }
   }
+  // A ROUND BEFORE THAT IS NOT YET DECIDED HERE AND NAMED ONLY BY ITS CONSENTED NAME RECORDS (kanban #2167, refutes #1748): its reveals - and with them
+  // its h2h_identities rows - reach a slow seat only at its own close (a peer's /reveals), so roundsOfIdentity does not list it yet. A later
+  // round of this game within the continue time, newer than the round before found above, that is still UNDECIDED keeps nothing here either;
+  // one that is decided or not head-to-head is ignored, so the round before is chosen exactly as before.
+  if (typeof round.roundsNamingIdentity === 'function') {
+    const seen = new Set();
+    for (const idHex of ids) {
+      for (const r of round.roundsNamingIdentity(fromHex(idHex))) {
+        const h = toHex(r.roundId);
+        if (h === toHex(roundIdBytes) || seen.has(h)) continue;
+        seen.add(h);
+        const pr = round.get(r.roundId);
+        if (!pr) continue;
+        const pc = decodeRoundContract(new Uint8Array(pr.contract));
+        if (toHex(pc.gameId) !== toHex(c.gameId) || pc.entryCloseMs >= close || close - pc.entryCloseMs > MATCH_CONTINUE_MS) continue;
+        if (previous && pc.entryCloseMs <= previous.closeMs) continue;
+        if (matchAt(round, plugins, r.roundId, depth + 1) === UNDECIDED) return UNDECIDED;
+      }
+    }
+  }
   let prev = null;
   if (previous && close - previous.closeMs <= MATCH_CONTINUE_MS) {
     const pm = matchAt(round, plugins, previous.roundId, depth + 1);
