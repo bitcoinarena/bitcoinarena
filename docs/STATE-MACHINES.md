@@ -1542,3 +1542,8 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### Entry finality / objection intake (kanban #1845)
+- Each objection check holds its own count on its `pending_objections` row (round, entry, arrived_ms); the row goes only when the last check holding it answered. Two objections that reach a seat in the same millisecond (a junk one refused first, a valid one still queued) keep the entry SUSPENDED until both answered: while any check of an objection that arrived before final_after is queued or running here, no FINAL is kept, signed, or acted on. A restart clears the rows and the counts together.
