@@ -12663,6 +12663,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         } catch (e) { return text(res, 400, `that is not a lock: ${e.message}`); }
         if (round.stakeLockAt(outpoint) || (round.feeLockAt && round.feeLockAt(outpoint)))
           return text(res, 409, 'that lock stakes an entry at this signer node: it is settled with its round, never returned as refused');
+        // A HELD ENTRY'S OWN LOCK IS NOT RETURNED WHILE THE LOCK DOORS STILL TAKE IT (kanban #2547, state audit 2026-11-12): during a drain
+        // POST /lock and POST /fee-lock take the lock of an entry held here (offerRefusalOfRound with held: true, #1848), but this door read
+        // the drain as a refusal. With the page's hand-over in flight (it reached one seat, not yet this one) anyone handed that very lock
+        // here first - every field is public - and it was kept as refused: returnedHere (#1639) then refused it at /lock and at every
+        // repair, one seat staked the entry and this one never could, and the round's settlement and the lock's forfeit both stalled.
+        // So while the round is refused only for new entries (the drain), a lock an entry held here names as its stake or fee lock, and that
+        // the lock doors would still take for it (no lock close refusal), is settled with the round; once the lock doors close it is kept.
+        if (offerRefusalOfRound(rid) && !offerRefusalOfRound(rid, { held: true })) {
+          for (const kind of ['stake', 'fee']) {
+            const eid = round.firstEntryNamingLock(rid, kind, outpoint);
+            const stored = eid && round.entry(eid);
+            if (stored && !lockAfterCloseRefusal(stored, eid, kind) && !orderLockAfterClose(stored))
+              return text(res, 409, `that lock is the ${kind} lock of an entry this signer node holds, and its lock doors still take it: it is settled with the round, never returned as refused (kanban #1848, #2547)`);
+          }
+        }
         const claimPk = claimKeyOf(rid);
         if (!(claimPk instanceof Uint8Array) || toHex(claimPk) !== toHex(fields.claimPk))
           return text(res, 409, 'that lock names another claim key than this round\'s');
