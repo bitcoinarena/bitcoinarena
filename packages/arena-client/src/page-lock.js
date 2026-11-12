@@ -3802,7 +3802,7 @@ export async function collectOwed({ look, client, ...ask } = {}) {
  * WINNINGS-AUTO (RULED 2026-10-01): WHAT IS OWED GOES INTO THE PLAYER WALLET BY ITSELF - the payout contract
  * redeemed, the stake back by the signer nodes' forfeit or by the player's key after expiry - the moment it exists, with
  * no press. Into the player's own federation wallet (one per seed and federation) and NOTHING out of it: no Lightning,
- * no withdraw. What arrived is written in the history as a "winnings" row, by what the wallet's balance actually grew.
+ * no withdraw. What arrived is written in the history as a "winnings" row, by what each redeem reports it credited (kanban #2038).
  */
 /**
  * WHAT ONE ACCEPTED REDEEM BROUGHT INTO THE WALLET (kanban #2350, live 2026-11-12 05:39Z, round 4e1c1615 never entered: the seats forfeited
@@ -3834,12 +3834,21 @@ export async function collectIntoPlayerWallet({ look, round, roundId, invite, se
   if (!look || !(look.payoutMsat > 0n || look.stakeMsat > 0n || look.refundMsat > 0n)) return { collected: false, creditedMsat: 0n };
   const client = await playerWallet({ round, invite, seed, LockClient, storage });
   const got = await collectOwed({ look, client, round, roundId, invite, seed, curve, LockClient, storage, nodes, order, ...(fetcher ? { fetcher } : {}) });
-  // WHAT THE REDEEMS BROUGHT, NOT WHAT THE WALLET GREW WHILE THEY RAN (kanban #2350): the page locks the next stake from this same wallet meanwhile
+  // WHAT THE REDEEMS BROUGHT, NOT WHAT THE WALLET GREW WHILE THEY RAN (kanban #2350, #2038): the page locks the next stake from this same wallet meanwhile
   const creditedMsat = collectBrought(got);
+  // and the contracts redeemed in THIS call, the row's key (kanban #2038); an answer from the tab's note (kept) names none
+  const parts = [];
+  if (got.payout && got.payout.ok && !got.payout.kept) parts.push(`p:${got.payout.txid}:${got.payout.outIdx}`);
+  if (got.stake && got.stake.ok && !got.stake.kept) parts.push('s');
+  if (got.refund) for (const e of got.refund.locks || []) if (e.state === 'refunded') parts.push(`r:${e.kind}`);
   // A STAKE THAT ONLY CAME BACK IS A REFUND ROW, NOT WINNINGS (2026-10-03: "the money that comes back must be
   // visible in the TX history"): nobody won, or the round was refunded - no payout, the stake (or its expiry refund) back
   const kind = look.payoutMsat > 0n ? 'winnings' : 'refund';
-  if (creditedMsat > 0n) ledgerAppend(storage, round.federationId, { kind, msat: String(creditedMsat), round: toHex(roundId) });
+  // ONE ROW PER REDEEMED CONTRACT SET (kanban #2038): keyed by the round, this phrase's key, the order and the contracts redeemed (the payout's
+  // outpoint, the stake's redeem, the refunded locks), so two collects that both get an accepted answer for the same contracts write one row
+  const mine = toHex(refundKeyOf(playerFor({ ...round, id: roundId }, { seed, curve, order }).pubkey));
+  const rowId = `col-${toHex(sha256(new TextEncoder().encode(`${toHex(roundId)}|${mine}|${order}|${parts.join('|')}`))).slice(0, 40)}`;
+  if (creditedMsat > 0n) ledgerAppend(storage, round.federationId, { kind, msat: String(creditedMsat), round: toHex(roundId) }, rowId);
   // COLLECTED ONLY WHEN SOMETHING WAS (kanban #593: this said `collected: true` whatever came of the redeems - the record of round
   // 8464c5fd was marked done with its 100 sat still in the federation, the redeem never tried): a payout, stake or refund the
   // federation accepted, or money that reached the wallet
