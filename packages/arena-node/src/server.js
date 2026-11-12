@@ -1778,7 +1778,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // The peers are the same list the verifier gathers results from, because a
   // signer node that answers about a run is a signer node that can be asked about its share.
   const stakeSecrets = new StakeSecrets(round, {
-    bookStanding: (rid, eid) => orderBook.standing(rid, eid),
+    bookStanding: (rid, eid) => orderBook.standing(rid, eid), isBook: (rid) => orderBook.isBook(rid),
     curve: feldmanGroup, peers, fetcher: (u, o) => fetch(u, o), random: (n) => new Uint8Array(randomBytes(n)),
     // AND WHEN THE OPERATOR SAID NOTHING, the round's SETTLEMENT signer nodes off the
     // census - they hold the shares. Read when a stake is opened, long after
