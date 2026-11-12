@@ -208,6 +208,9 @@ const GAME_SETS_FETCHED = new Map();   // a game's donation set by its id: it pr
 /** Forgets the game sets read (a test that serves a stray one). */
 export const forgetGameSets = () => GAME_SETS_FETCHED.clear();
 export const QUORUM_GRACE_MS = 250;
+// kanban #2068: the distinct answer forms checked one by one, each bounded - a seat cannot make the page check more than this
+const DONATION_FORMS_CHECKED = 32;
+const DONATION_FORM_MAX_BYTES = 4 * 1024 * 1024;
 /** Every node's answer, or - once more than half of the nodes served the same bytes - those in by QUORUM_GRACE_MS later, the rest
  *  as late ({ node, why, late: true }).
  *  A DISSENT DOES NOT HOLD THE READ (kanban #1903, #1524, #625, wf1489 v1 refute-30 s2): a refusal (a 4xx) or other bytes used to stop
@@ -215,6 +218,20 @@ export const QUORUM_GRACE_MS = 250;
  *  of 250 ms) - since #1524 such a seat is reported as `dissent`, not obeyed, so it must not cost more time than its silence either. The
  *  timer starts once one group of identical bytes is served by more than half of the nodes, whatever the other answers say; the
  *  caller's quorum and checks decide what is taken. */
+/** WHAT AN ANSWER CLAIMS, NOT ITS BYTES (kanban #2068, #1524, wf1489 v1 refute-30 s4): an approved set is served as JSON whose
+ *  approvals each seat lists as it holds them (its own arrival order, and only those gossip has brought it so far), so honest seats
+ *  serving the same set answer in different bytes. For the grace timer an approved answer counts by the sets it names - its root,
+ *  its admin signature and its proposals - with the approvals left out; the caller checks each form's proof and takes the set. Any
+ *  other answer counts by its bytes, as before. Cheap: no signature is checked here. */
+export function donationClaimKey(bytes) {
+  if (!(bytes instanceof Uint8Array) || !bytes.length || bytes[0] !== 0x7b || bytes.length > DONATION_FORM_MAX_BYTES) return bytes instanceof Uint8Array ? toHex(bytes) : '';
+  try {
+    const j = JSON.parse(new TextDecoder().decode(bytes));
+    if (!j || j.approved !== true || typeof j.root !== 'string' || !Array.isArray(j.chain)) return toHex(bytes);
+    return 'approved:' + JSON.stringify([String(j.root).toLowerCase(), typeof j.admin === 'string' ? j.admin.toLowerCase() : null,
+      j.chain.map((c) => String(c && c.proposal).toLowerCase())]);
+  } catch { return toHex(bytes); }
+}
 export function firstMajority(promises, names, { graceMs = QUORUM_GRACE_MS } = {}) {
   return new Promise((resolve) => {
     const got = new Array(promises.length).fill(null);
@@ -224,7 +241,7 @@ export function firstMajority(promises, names, { graceMs = QUORUM_GRACE_MS } = {
       if (left === 0) return finish();
       if (timer) return;
       const counts = new Map();
-      for (const a of got) if (a && a.bytes) { const k = toHex(a.bytes); counts.set(k, (counts.get(k) || 0) + 1); }
+      for (const a of got) if (a && a.bytes) { const k = donationClaimKey(a.bytes); counts.set(k, (counts.get(k) || 0) + 1); }
       for (const c of counts.values()) if (c * 2 > promises.length) { timer = setTimeout(finish, graceMs); return; }
     };
     promises.forEach((p, i) => p.then((a) => { got[i] = a; left--; check(); }, (e) => { got[i] = { node: names[i], why: String(e && e.message ? e.message : e) }; left--; check(); }));
@@ -373,11 +390,31 @@ export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u)
   } else if (!missing.length && !groups.size) {
     return { ok: false, why: `only 0 of ${nodes.length} nodes served this round's donation set in ${DONATION_ANSWER_MS} ms` };
   } else {
-    for (const g of [...groups.values()].sort((x, y) => y.length - x.length)) {
-      if (g.length * 2 < nodes.length) break;
+    // GROUPED BY THE SET EACH ANSWER PROVES, NOT BY ITS BYTES (kanban #2068, #1524, wf1489 v1 refute-30 s4): honest seats serve one
+    // approved set with its approvals in their own order and as far as gossip reached them, so three seats in three forms (or seven
+    // split 3/2/2) left no byte group of half the nodes and every paid join was refused. Each distinct form is checked once (at most
+    // DONATION_FORMS_CHECKED of them, each at most DONATION_FORM_MAX_BYTES, largest group first), every passing one keyed by the set
+    // it proves - network, serial, in force from, recipients, and the proposal that approved it - and a set proved by at least half
+    // of ALL the round's nodes stands; the others are reported as dissent, not obeyed.
+    const bySet = new Map();   // set key -> { answers, set }
+    const forms = [...groups.entries()].sort((x, y) => y[1].length - x[1].length);
+    let unchecked = forms.reduce((n, [, g]) => n + g.length, 0), checked = 0;
+    const best = () => Math.max(0, ...[...bySet.values()].map((e) => e.answers.length));
+    for (const [, g] of forms) {
+      if ((best() + unchecked) * 2 < nodes.length) break;   // no set can reach half of the nodes any more
+      unchecked -= g.length;
+      if (checked >= DONATION_FORMS_CHECKED || g[0].bytes.length > DONATION_FORM_MAX_BYTES) continue;
+      checked++;
       const got = await checkServed(g[0].bytes);
-      if (got.ok) { chosen = g; set = got.set; break; }
+      if (!got.ok) continue;
+      const s = got.set;
+      const sk = [toHex(s.networkId), String(s.serial), String(s.validFrom), toHex(donationSetId(s.recipients)), s.approvedBy ? toHex(s.approvedBy) : ''].join(':');
+      const e = bySet.get(sk) || { answers: [], set: s };
+      e.answers.push(...g); bySet.set(sk, e);
+      if (e.answers.length * 2 >= nodes.length) break;
     }
+    const top = [...bySet.values()].sort((x, y) => y.answers.length - x.answers.length)[0];
+    if (top && top.answers.length * 2 >= nodes.length) { chosen = top.answers; set = top.set; }
     if (!chosen) {
       if (missing.length)
         return { ok: false, why: `not every signer node of this round serves its donation set: ${missing.map((a) => `${a.node}: ${a.why}`).join('; ')}` };
