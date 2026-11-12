@@ -4173,6 +4173,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   let headToHeadReadyGo = () => {};
   const headToHeadReadyAt = new Promise((go) => { headToHeadReadyGo = go; });
   const closingNow = new Map();
+  // THE ROUNDS WHOSE MEMBERS THIS SEAT'S CLOSE HAS LEARNED (kanban #2295): only these are signed by verifier.retry / retryClose for a
+  // head-to-head round - a player's checkpoint receipt over /play no longer signs a round this seat is short of (#1755, #1071)
+  const membersSettled = new Set();
+  verifier.membersSettled = (rid) => membersSettled.has(toHex(rid));
   // kanban #1485: a head-to-head handout this close to the entry close is refused (takeHandout). `h2hHandoutLeadMs` is the slowest lock the seats measured
   // (2.7 s, tx_steps of round 77bd9609); kanban #1742 (#1489 refute of #1485): a lead of only that lets a handout through that the order cannot land behind - a
   // lock as slow as the fix's own measurement, then the entry post, reaches the seats after the close, the lock is made (developers' and reserves' parts
@@ -4208,6 +4212,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // - and with a throw too (kanban #1755): members not known is never 'known', so this seat never decides the round alone
     const h2h = headToHeadReady ? headToHeadRound(roundIdBytes) : null;
     return (h2h ? membersKnown(roundIdBytes, h2h).catch((e) => { console.error(`[entry] ${e.message}`); return false; }) : Promise.resolve(true))
+      .then((known) => { if (h2h && known === true) membersSettled.add(toHex(roundIdBytes)); return known; })
       .then((known) => (known ? timed(`close ${toHex(roundIdBytes).slice(0, 8)} settleRound`, () => verifier.settleRound(roundIdBytes)) : null))
       .then(async (closed) => {
         if (!closed) return { ok: false, why: 'this seat could not learn who is in the round: it signs nothing for it' };
