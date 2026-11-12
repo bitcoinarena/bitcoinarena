@@ -113,12 +113,17 @@ const LOCKDOWN = `'use strict';
   const lenOf = (o, ab) => R.apply(ab ? abLen : taLen, o, []);
   const tracked = new M();
   let used = 0, over = null, since = 0, base = 0, nextId = 0, count = 0;
-  const take = (n) => { if (over !== null || !(n >= 0) || used + n > budget) { over = said; throw new RangeErr(said); } };
+  // (kanban #2449, #2496) take() RESERVES: the bytes count from the moment they are taken, before the allocation and before
+  // any core code that runs between it and its return (a map callback, a toSorted comparator, a nested call) - so a copy
+  // whose method never returns stays counted, and a nested take() sees every level above it. settle() moves a reservation
+  // to the real byte length once the allocation is known; keep() only marks the object alive (the live count, #1813).
+  const take = (n) => { if (over !== null || !(n >= 0) || used + n > budget) { over = said; throw new RangeErr(said); } used += n; };
+  const settle = (reserved, real) => { if (real > reserved) take(real - reserved); else used -= reserved - real; };
   // (kanban #2145, #2211) every object the count has taken, so a copy counted by a wrapped constructor is never counted twice
   const counted = new WeakSet(), wsAdd = WeakSet.prototype.add, wsHas = WeakSet.prototype.has;
   const isCounted = (o) => R.apply(wsHas, counted, [o]);
   const keep = (o, n) => {
-    used += n; since += n;
+    since += n;
     if (n > 0) { R.apply(mSet, tracked, [nextId++, { r: new WR(o), n }]); count++; }
     R.apply(wsAdd, counted, [o]);
     return o;
@@ -163,7 +168,7 @@ const LOCKDOWN = `'use strict';
       const o = construct(t, a, nt === W ? t : nt);
       if (k !== 'ArrayBuffer' && isBuffer(x) && taBuffer(o) === x) return o;   // a view on a buffer already counted
       const real = bytesOf(o);
-      take(real - asked > 0 ? real - asked : 0);
+      settle(asked, real);
       return keep(o, real);
     } });
     Object.defineProperty(K.prototype, 'constructor', { value: W, writable: false, configurable: false });
@@ -188,13 +193,32 @@ const LOCKDOWN = `'use strict';
     take(n);
     return keep(o, n);
   };
-  for (const [O, m, bytesOf] of [[TAP, 'slice', taBytes], [TAP, 'map', taBytes], [TAP, 'filter', taBytes], [ArrayBuffer.prototype, 'slice', abBytes]]) {
+  // slice and filter run no core code after their copy is allocated (filter calls its callbacks before), so counting the copy
+  // when they return is counting it before any core code can run beside it
+  for (const [O, m, bytesOf] of [[TAP, 'slice', taBytes], [TAP, 'filter', taBytes], [ArrayBuffer.prototype, 'slice', abBytes]]) {
     const f = O[m];
     Object.defineProperty(O, m, { value: { [m](...a) { return copied(apply(f, this, a), bytesOf); } }[m], writable: false, configurable: false });
   }
+  // (kanban #2449, #2496) map allocates its copy FIRST and then calls the core's callback once per element: a callback that
+  // throws (or nests another map) left the copy uncounted. So the copy is made by the raw map with a callback that runs no
+  // core code, counted at once, and only then filled by the core's callback, in the order ECMA-262 %TypedArray%.prototype.map
+  // gives (Get, Call, Set per index): the same values, the same errors, the copy counted before the first callback runs.
+  {
+    const f = TAP.map, same = (v) => v;
+    Object.defineProperty(TAP, 'map', { value: { map(cb, ...rest) {
+      const thisArg = rest[0];
+      const len = taLength(this);
+      if (typeof cb !== 'function') throw new TypeError(String(cb) + ' is not a function');
+      const A = copied(apply(f, this, [same]), taBytes);
+      for (let k = 0; k < len; k++) A[k] = apply(cb, thisArg, [this[k], k, this]);
+      return A;
+    } }.map, writable: false, configurable: false });
+  }
+  // toReversed, toSorted and with copy without a constructor; the copy's bytes are reserved before it is made (the toSorted
+  // comparator and with's value coercion are core code) and settled to its real length after
   for (const m of ['toReversed', 'toSorted', 'with']) {
     const f = TAP[m];
-    Object.defineProperty(TAP, m, { value: function (...a) { take(taBytes(this)); const o = apply(f, this, a); return keep(o, taBytes(o)); }, writable: false, configurable: false });
+    Object.defineProperty(TAP, m, { value: { [m](...a) { const r = taBytes(this); take(r); const o = apply(f, this, a); const real = taBytes(o); settle(r, real); return keep(o, real); } }[m], writable: false, configurable: false });
   }
   // a global the context cannot lose (V8's gc, made non-configurable while ANOTHER thread of this process had --expose-gc set for
   // the moment core-host.js takes to read it - the flag is the process's) is no context to run a core in: it is made again (build)
