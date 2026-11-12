@@ -21,26 +21,61 @@ export function createAddressBook({ db, verify, nowMs = () => Date.now(), isCens
   // as a seat URL for good once the census named other keys; and rows stored before #1533 (4 KB endpoints, any key, more than
   // ADDRESS_BOOK_MAX) were read back at a start with the signature check only. Now: a held node the census does not name is dropped
   // from the book (never served at GET /address-announcements, never an endpoint, not counted) as soon as the census is read; this
-  // node's own is kept. The load applies take()'s bounds. Stored rows are left as they are (skipped, never deleted) - an honest
-  // node's newer announcement overwrites its row.
+  // node's own is kept. The load applies take()'s bounds. Stored rows are never deleted (a pruned one is marked, kanban #1906) - an
+  // honest node's newer announcement overwrites its row.
   let me = ownKey ? String(ownKey).toLowerCase() : null;
   const kept = (a) => a.node === me || isCensusNode(a.node) !== false;
-  let map = new Map();
-  for (const r of db.prepare('SELECT body FROM address_announcements').all()) {
-    if (map.size >= ADDRESS_BOOK_MAX) break;
+  // A PRUNED ROW TAKES NO PLACE AT THE NEXT START (kanban #1906, #1949, wf1489 refute of #1533): rows pruned from the book stayed
+  // in the store unmarked, so the load - before any census is read - filled ADDRESS_BOOK_MAX with a stranger's rows from the first
+  // minute and an honest census node's newer row stored after them was never read back. A pruned row is now marked (`pruned`, never
+  // deleted) and skipped at load; and when the load stops at the cap, the rows it did not read are read again once the census is
+  // known (refill), census nodes first in line. take() clears the mark of the row it writes.
+  try { db.exec('ALTER TABLE address_announcements ADD COLUMN pruned INTEGER NOT NULL DEFAULT 0'); } catch { /* there already */ }
+  const censusKnown = () => isCensusNode('') !== null;
+  const readRow = (body) => {
     try {
-      const a = JSON.parse(r.body);
-      if (!checkAddressAnnouncement(a, { verify, nowMs: nowMs() }).ok) continue;
-      if (String(a.endpoint).length > ADDRESS_ENDPOINT_MAX || !kept(a)) continue;
-      map.set(a.node, { node: a.node, endpoint: a.endpoint, atMs: a.atMs, sig: a.sig });
-    } catch { /* a row that does not read */ }
+      const a = JSON.parse(body);
+      if (!checkAddressAnnouncement(a, { verify, nowMs: nowMs() }).ok) return null;
+      if (String(a.endpoint).length > ADDRESS_ENDPOINT_MAX) return null;
+      return { node: a.node, endpoint: a.endpoint, atMs: a.atMs, sig: a.sig };
+    } catch { return null; }
+  };
+  const markPruned = (nodes) => {
+    if (!nodes.length) return;
+    try { db.prepare('UPDATE address_announcements SET pruned = 1 WHERE node IN (SELECT value FROM json_each(?))').run(JSON.stringify(nodes)); } catch { /* the next prune */ }
+  };
+  let map = new Map();
+  let needRefill = false;
+  for (const r of db.prepare('SELECT body FROM address_announcements WHERE pruned = 0').all()) {
+    if (map.size >= ADDRESS_BOOK_MAX) { needRefill = true; break; }
+    const a = readRow(r.body);
+    if (a && kept(a)) map.set(a.node, a);
+  }
+  /** With the census known: the rows of census nodes the book does not hold are read in (up to the cap), the rest marked pruned. */
+  function refill() {
+    const mark = [];
+    for (const r of db.prepare('SELECT node, pruned FROM address_announcements').all()) {
+      if (map.has(r.node)) continue;
+      const named = r.node === me || isCensusNode(r.node) === true;
+      if (!named) { if (!r.pruned) mark.push(r.node); continue; }
+      if (map.size >= ADDRESS_BOOK_MAX) continue;
+      const row = db.prepare('SELECT body FROM address_announcements WHERE node = ?').get(r.node);
+      const a = row ? readRow(row.body) : null;
+      if (a && a.node === r.node) map.set(a.node, a);
+    }
+    markPruned(mark);
   }
   /** Drops every held node the census (now read) does not name, this node's own apart. Answers how many went. */
   function prune() {
-    let gone = 0;
-    for (const a of map.values()) if (!kept(a)) gone++;
-    if (gone) map = new Map([...map].filter(([, a]) => kept(a)));
-    return gone;
+    const gone = [];
+    for (const a of map.values()) if (!kept(a)) gone.push(a.node);
+    if (gone.length) {
+      if (map.size >= ADDRESS_BOOK_MAX) needRefill = true;   // a row the full book could not take may be a census node's (kanban #1949)
+      map = new Map([...map].filter(([, a]) => kept(a)));
+      markPruned(gone);   // kanban #1906: it takes no place at the next start
+    }
+    if (needRefill && censusKnown()) { needRefill = false; try { refill(); } catch { needRefill = true; } }
+    return gone.length;
   }
   /** Take one in: checked, kept when it is the node's newest. Answers { ok, kept, why }. */
   function take(a, { self = false } = {}) {
@@ -54,7 +89,7 @@ export function createAddressBook({ db, verify, nowMs = () => Date.now(), isCens
     const have = map.get(clean.node);
     if (newerAnnouncement(have, clean) === have) return { ok: true, kept: false };
     map.set(clean.node, clean);
-    db.prepare('INSERT INTO address_announcements (node, body) VALUES (?, ?) ON CONFLICT(node) DO UPDATE SET body = excluded.body').run(clean.node, JSON.stringify(clean));
+    db.prepare('INSERT INTO address_announcements (node, body, pruned) VALUES (?, ?, 0) ON CONFLICT(node) DO UPDATE SET body = excluded.body, pruned = 0').run(clean.node, JSON.stringify(clean));
     return { ok: true, kept: true };
   }
   /** This node's own, for the address it names itself: the one kept when it names it, else a new one, signed now. */
