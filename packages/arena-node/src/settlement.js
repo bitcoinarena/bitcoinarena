@@ -84,6 +84,9 @@ const feeLine = (payouts) => {
 // THE NONCE PAIRS KEPT PER SETTLEMENT (kanban #1489): each /settle-commit hands out a pair of its own; the oldest goes past this many,
 // once its asker's pass is over (kanban #1610).
 export const PAIRS_KEPT = 64;
+// WHO DREW A PAIR (kanban #2386, #2389 - the send's #2308, ported to 2.0's signed asks, #1075): this seat's own pass, a seat of the round by its signed
+// ask, or (below SETTLEMENT_ASK_HEIGHT, where the door reads no signature) every unsigned ask together
+const ASKER_OWN = 'own', ASKER_UNSIGNED = '';
 const listKey = (commitments) => commitments.map((c) => `${c.id}:${toHex(c.hiding)}:${toHex(c.binding)}`).sort().join('|');
 // `code` (settle-backoff.js REFUSAL, kanban #1186): what a sweep decides by - never the text
 const refuse = (why, status = 409, code = null, more = {}) => ({ ok: false, status, why, ...(code ? { code } : {}), ...more });
@@ -1505,6 +1508,14 @@ export class LockSettlement {
    * AN ASK AT THE DOOR (kanban #1075): null when the door answers it, else the refusal. `door` is set by server.js only: this seat's own commit and share are not asked
    * through it. At or above the height an ask must be signed by a seat of this round's seating over this settlement and the very body sent; below it, nothing is read.
    */
+  /** WHO ASKS (kanban #2386, #2389): this seat's own pass (not through the door), the seat of the round whose signed ask came (checked by #askRefusal first), or nobody named below the height. */
+  #askerOf(roundIdBytes, m, { door = false, ask = null, entry = null, federation = null, step, payload }) {
+    if (!door) return ASKER_OWN;
+    if (!asksBySeat(m.contract, this.askPointOf)) return ASKER_UNSIGNED;
+    const c = checkSettlementAsk(ask, { seats: m.contract.nodes, ask: { step, roundId: roundIdBytes, entry, federation, settlementTxid: fromHex(m.txid), payload }, verify: verifyAck });
+    return c.ok ? String(c.who).toLowerCase() : null;
+  }
+
   #askRefusal(roundIdBytes, m, { door = false, ask = null, entry = null, federation = null, step, payload }) {
     if (!door || !asksBySeat(m.contract, this.askPointOf)) return null;
     const c = checkSettlementAsk(ask, { seats: m.contract.nodes, ask: { step, roundId: roundIdBytes, entry, federation, settlementTxid: fromHex(m.txid), payload }, verify: verifyAck });
@@ -2275,13 +2286,25 @@ export class LockSettlement {
     // ask, the grace and its share ask - and past PAIRS_KEPT only a pair older than that goes; with none, the new commit is refused, not a held pair.
     const now = Number(this.now());
     const keptMs = 2 * this.peerAskMs + this.peerGraceMs;
-    while (held.length >= PAIRS_KEPT && !(now - Number(held[0].at ?? 0) < keptMs)) held.shift();
-    if (held.length >= PAIRS_KEPT) return refuse(`this signer node holds ${PAIRS_KEPT} unspent nonce pairs of that settlement handed out in the last ${keptMs} ms: ask again shortly`, 503);
-    const hiding = nonceGenerate340(this.random(32), m.signerNode.share);
-    const binding = nonceGenerate340(this.random(32), m.signerNode.share);
-    const pair = { message: m.message, hiding, binding, list: null, share: null, at: now,
-      commitment: { id: m.signerNode.id, hiding: this.curve.pointFromScalar(hiding), binding: this.curve.pointFromScalar(binding) } };
-    held.push(pair);
+    // ...AND THE CAP IS EACH ASKER'S OWN, AND A PAIR IS SPENT ONLY BY ITS ASKER (kanban #2386, #2389; WinningsSend's #2308): one shared cap let anyone
+    // at the door (below the signed-ask height) refill it every keptMs and every commit - the asker's own one too - was refused 503; and a committee
+    // seat handed the asker's list re-posted it with its own commitment swapped, the honest seats spent their pairs on it and refused the asker's.
+    // Now this seat's own pass, each seat of the round by its signed ask (#1075) and the unsigned asks each have a bucket of PAIRS_KEPT, and share()
+    // spends a pair only on a list the same asker signs. A signed ask replayed (a peer handing on the asker's header) gets the same unspent pair.
+    const asker = this.#askerOf(roundIdBytes, m, { door, ask, entry, federation, step: ASK_COMMIT, payload: acks && acks.length ? acks : null });
+    const askKey = door && ask && asker !== ASKER_UNSIGNED ? `${asker}:${toHex(ask)}` : null;
+    const again = askKey ? held.find((p) => p.askKey === askKey && !p.list) : null;
+    let pair = again;
+    if (!pair) {
+      const bucket = () => held.filter((p) => p.asker === asker);
+      for (let b = bucket(); b.length >= PAIRS_KEPT && (asker === ASKER_OWN || !(now - Number(b[0].at ?? 0) < keptMs)); b = bucket()) held.splice(held.indexOf(b[0]), 1);
+      if (bucket().length >= PAIRS_KEPT) return refuse(`this signer node holds ${PAIRS_KEPT} unspent nonce pairs of that settlement handed out to this asker in the last ${keptMs} ms: ask again shortly`, 503);
+      const hiding = nonceGenerate340(this.random(32), m.signerNode.share);
+      const binding = nonceGenerate340(this.random(32), m.signerNode.share);
+      pair = { message: m.message, hiding, binding, list: null, share: null, at: now, asker, askKey,
+        commitment: { id: m.signerNode.id, hiding: this.curve.pointFromScalar(hiding), binding: this.curve.pointFromScalar(binding) } };
+      held.push(pair);
+    }
     this.pairs.set(key, held);
     if (stallsOut(m.contract)) {
       const word = signSettlementCommit({ roundId: roundIdBytes, settlementTxid: fromHex(m.txid), hiding: pair.commitment.hiding, binding: pair.commitment.binding },
@@ -2310,6 +2333,9 @@ export class LockSettlement {
     const own = commitments.find((c) => String(c.id) === String(held[0].commitment.id));
     const pair = own && held.find((p) => toHex(own.hiding) === toHex(p.commitment.hiding) && toHex(own.binding) === toHex(p.commitment.binding));
     if (!pair) return refuse('that list does not carry this signer node\'s own commitment');
+    // ONLY THE ASKER THAT DREW THE PAIR SPENDS IT (kanban #2386, #2389): a list another asker - a peer seat included - posts spends nothing
+    { const by = this.#askerOf(roundIdBytes, m, { door, ask, entry, federation, step: ASK_SHARE, payload: encodeCommitments(commitments) });
+      if ((pair.asker ?? ASKER_UNSIGNED) !== by) return refuse('that list is not signed by the asker this signer node\'s nonce pair was drawn for: it spends nothing', 403); }
     if (commitments.length < m.needed) return refuse(`${commitments.length} commitments, and this round's key signs at ${m.needed}`);
     const key = listKey(commitments);
     if (pair.list && pair.list !== key) return refuse('this signer node signed that settlement over another list, and keeps no second pair');
