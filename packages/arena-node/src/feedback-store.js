@@ -383,7 +383,12 @@ export function openFeedbackStore(path = ':memory:') {
   // ONLY THE WALLET THAT MADE IT, NOT ONLY ITS NETWORK (kanban #2177, #1489 a44-refute-76): the bounty wallet replaced on the same network (a new lnd,
   // FAUCET_BOUNTY_PAYER pointed at another dir) answered "not initiated" for the old wallet's payment still in flight - read as failed, the link opened and the
   // holder was paid by both wallets. `payer` is this faucet's payer now: a row another payer is paying stays paying for the admin (null: not checked).
-  async function settle({ status, network = null, payer = null, nowMs = Date.now(), freshMs = 180000 } = {}) {
+  // A PAYER THAT MAY BE THIS WALLET IS ASKED ONLY TO CONFIRM (kanban #2403, #2469, #1489 a44-refute-76-s2): two rows are not known to be this wallet's -
+  // a row from before the payer column (payer NULL: every reward paying when #2177 was deployed, perhaps the old wallet's) and a row whose payer `mayBe(payer)`
+  // names as possibly this one (the faucet: claimed while getinfo gave no node key, same network, lnddir and rpcserver). Such a row is marked paid on this
+  // wallet's SUCCEEDED; 'failed' (FAILED or "not initiated") never reopens it - another wallet may still pay it - so it stays paying for the admin.
+  // `confirmOnly` reads a whole pass that way (the faucet while its own node key is still unknown: its payer id proves nothing).
+  async function settle({ status, network = null, payer = null, mayBe = null, confirmOnly: confirmAll = false, nowMs = Date.now(), freshMs = 180000 } = {}) {
     const out = [];
     // A DECISION HOLDS ONLY FOR THE PAYMENT IT READ (kanban #1571): status() may wait 20 s a row and two passes may overlap, so a row read at the
     // start of a pass can be opened, claimed again and paying under a NEW hash by the time it is decided. Each row is read again before its
@@ -392,10 +397,17 @@ export function openFeedbackStore(path = ':memory:') {
       const w = rewardOf.get(k1);
       if (!w || w.state !== 'paying') continue;
       if (!onNetwork(w, network)) { out.push({ k1: w.k1, status: 'unknown', otherNetwork: w.network }); continue; }   // kanban #1784
-      if (payer != null && w.payer != null && String(w.payer) !== String(payer)) { out.push({ k1: w.k1, status: 'unknown', otherPayer: w.payer }); continue; }   // kanban #2177
+      let confirmOnly = confirmAll === true;   // kanban #2403, #2469: a row not known to be this payer's is only ever marked paid
+      if (payer != null && w.payer == null) confirmOnly = true;
+      else if (payer != null && String(w.payer) !== String(payer)) {
+        let maybe = false; try { maybe = typeof mayBe === 'function' && mayBe(String(w.payer)) === true; } catch { maybe = false; }
+        if (!maybe) { out.push({ k1: w.k1, status: 'unknown', otherPayer: w.payer }); continue; }   // kanban #2177
+        confirmOnly = true;
+      }
       if (Number(w.tried_ms || 0) > nowMs - freshMs) { out.push({ k1: w.k1, status: 'unknown', fresh: true }); continue; }
       let st = 'unknown';
       try { st = w.payment_hash ? await status(w.payment_hash) : 'unknown'; } catch { st = 'unknown'; }
+      if (confirmOnly && st !== 'paid') { out.push({ k1: w.k1, status: 'unknown', confirmOnly: true, asked: st }); continue; }   // kanban #2403, #2469
       let moved = false;
       if (st === 'paid') moved = paidNow(w, w.payment_hash, nowMs, { onHash: w.payment_hash });
       else if (st === 'failed') moved = db.prepare("UPDATE rewards SET state = 'open', address = NULL, why = 'the payment failed' WHERE k1 = ? AND state = 'paying' AND payment_hash = ?").run(w.k1, w.payment_hash).changes === 1;   // #1571 own hash, #1575 address cleared

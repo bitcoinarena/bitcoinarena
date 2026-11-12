@@ -237,6 +237,11 @@ const bountyPayerId = async () => {
     if (typeof k === 'string' && /^[0-9a-f]{66}$/.test(k)) BOUNTY_PAYER_KEY = k; }
   return `${BOUNTY_NETWORK} ${BOUNTY_PAYER_KEY || 'no-key'} ${BOUNTY_PAYER.dir} ${BOUNTY_PAYER.rpcserver}`;
 };
+// A ROW CLAIMED WHILE GETINFO GAVE NO KEY (kanban #2403, #2469, #1489 a44-refute-76-s2): its payer reads '<net> no-key <dir> <rpc>', and once getinfo answers
+// this faucet's payer names the key - the same wallet then never matched its own row, and a reward it paid stayed paying for good. Such a row of this
+// network, lnddir and rpcserver may be this wallet's: settle asks it only to confirm (SUCCEEDED marks it paid; FAILED or "not initiated" leaves it paying).
+// A no-key row is never fully trusted, and while this faucet's own key is still unknown every row is only confirmed (an exact 'no-key' match proves nothing).
+const bountyPayerMayBe = (rowPayer) => !!BOUNTY_PAYER && rowPayer === `${BOUNTY_NETWORK} no-key ${BOUNTY_PAYER.dir} ${BOUNTY_PAYER.rpcserver}`;
 // THE ADMIN (kanban #1342 section 4): the owner's code, held to its hash as the explorer holds it (#1092); the rules, our keys, who played
 const ADMIN_SHA = String(env.FAUCET_ADMIN_SHA256 || '').trim().toLowerCase();
 const isAdmin = (req) => { const code = String(req.headers['x-arena-admin'] || '').trim(); if (!/^[0-9a-f]{64}$/.test(ADMIN_SHA) || !code) return false;
@@ -286,7 +291,7 @@ const PLAYED = networkPlayers({ seats: String(env.FAUCET_SEASON_SEATS || '').spl
 PLAYED.fresh().catch(() => 0);   // kanban #1484: the list is read at start, so the admin page never waits for it
 // ONE SETTLE PASS AT A TIME (kanban #1571): a pass waits up to 20 s a paying row on lncli, so passes overlapped and decided on stale rows
 let settling = false;
-if (FEEDBACK && BOUNTY_PAYER) setInterval(() => { if (settling) return; settling = true; bountyPayerId().then((payer) => FEEDBACK.settle({ status: bountyStatus, network: BOUNTY_NETWORK, payer })).catch(() => {}).finally(() => { settling = false; }); }, 60000).unref();
+if (FEEDBACK && BOUNTY_PAYER) setInterval(() => { if (settling) return; settling = true; bountyPayerId().then((payer) => FEEDBACK.settle({ status: bountyStatus, network: BOUNTY_NETWORK, payer, mayBe: bountyPayerMayBe, confirmOnly: !BOUNTY_PAYER_KEY })).catch(() => {}).finally(() => { settling = false; }); }, 60000).unref();
 
 /** A player's grant: read the invoice, decide, keep it in the book BEFORE paying (a crash pays nobody twice), and take it out again if no payer could pay. */
 /** Each payer's own node key, read once (lncli getinfo); a payer whose node is the invoice's destination goes last. */
