@@ -1542,3 +1542,10 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-C5 (change) Swap, Move and evacuation legs: the receive is written ahead of the payment (kanban #1774)
+- Before the paying wallet pays the receiving wallet's invoice (`swapForRound`, `migrateFromDraining`: a join's swap, the player's Move, a DRAINING/CRITICAL evacuation), the receive is a pending entry of the receiving federation (arena.deposit.pending.<fed>.<operation>, `kind: 'move'`, the row its claim writes, the moving phrase): `ledgerFederations` names that federation from then on, so a page opened after a tab closed between the payment and the claim opens its wallet and `resumeDeposits` claims the invoice.
+- The entry ends as a deposit's (`depositEnded`): Claimed writes the leg's row (moved-in / swapped-in) once per invoice, then the entry goes; Expired or Failure removes it; a payment that ended Refunded, or none made, removes it at once; any other end keeps it for the next page.
+- Invariant: once money has left one wallet for another wallet's invoice, this browser names the receiving federation until that receive ends. A resumed leg writes the receiving side's row only; the paying side's row (moved-out / swapped-out) is written only by the live leg.
