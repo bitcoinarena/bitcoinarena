@@ -1542,3 +1542,9 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12 (kanban #1489, base f64efd1bb)
+
+#### SM-E (change) Entry at one seat: a pool pick's lock doors (kanban #1793)
+- A plain pick of an attested round (a market's entry with no limit price) moves "entered, no lock" -> "staked" only through a lock this seat takes by its round's entry close plus `ENTRY_CLOSE_GRACE_MS`, as a relayed round's (#1260); after that a stake or fee lock new to this seat is refused at POST /lock and POST /fee-lock (409).
+- Once the seat holds any outcome of that round (an attestation or a held game outcome, `heldOutcomes`), a lock new to it is refused even inside the grace. A lock already held is answered as before, so a resend still works. Orders keep their own rule (#1150).
