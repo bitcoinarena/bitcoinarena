@@ -79,7 +79,12 @@ export async function startNode({ db, path }, options = {}, chain = {}) {
     ...(chain.log ? { log: chain.log } : {}) });
   // STARTED WITH THE NODE UNLESS THE OWNER TURNED IT OFF (kanban #563: the owner page's "at boot" switch, kept in the node's store)
   const settings = serviceSettings(db);
-  if (plan.own && settings.atBoot('guardian')) guardian = await start('guardian');
+  // WANTED UNLESS THE OWNER STOPPED IT (kanban #2336): a keyed guardian whose start met a bitcoind that did not answer for its minute of
+  // tries (a reboot: Core still loading its block index; a Core restart while fedimintd exited) was left `running: false`, and nothing
+  // ever asked again - the node served on without its guardian until restarted by hand. A wanted slot that does not run is started
+  // again by exitWatch below; only the owner's stop (or the "at boot" switch off) clears it.
+  const wanted = { guardian: !!plan.own && settings.atBoot('guardian'), next: !!plan.next && settings.atBoot('guardian-next') };
+  if (wanted.guardian) guardian = await start('guardian');
   if (plan.next && guardian.running && settings.atBoot('guardian-next')) {
     try { next = await start('next'); } catch (e) { await guardian.stop(); throw e; }
   }
@@ -111,10 +116,11 @@ export async function startNode({ db, path }, options = {}, chain = {}) {
       guardianControl: control = {
         has: () => !!plan.own,
         running: () => !!guardian.running,
-        stop: () => serial('guardian', async () => { if (!guardian.running) return { ok: true }; await (guardian.halt || guardian.stop)(); guardian = none; return { ok: true }; }),
+        stop: () => serial('guardian', async () => { wanted.guardian = false; if (!guardian.running) return { ok: true }; await (guardian.halt || guardian.stop)(); guardian = none; return { ok: true }; }),
         start: () => serial('guardian', async () => {
           if (!plan.own) return { ok: false, why: 'this node holds no guardian key and waits in no setup: it runs no guardian' };
           if (closed) return { ok: false, why: 'the node is closed' };
+          wanted.guardian = true;
           if (guardian.running) return { ok: true };
           guardian = await start('guardian');
           return guardian.running ? { ok: true } : { ok: false, why: guardian.why || 'the guardian did not start' };
@@ -136,6 +142,8 @@ export async function startNode({ db, path }, options = {}, chain = {}) {
           guardian = await start('guardian');
           return guardian.running ? { ok: true, kept, setup: true } : { ok: false, kept, why: guardian.why || 'the guardian in setup did not start' };
         }),
+        // ITS GUARDIAN'S DIRECTORY, also while it does not run (kanban #2336: server.js arms the retire check from it, not only from a running guardian)
+        dir: () => guardian.dataDir || `${path}.guardian`,
         // WHAT THE NODE ITSELF KNOWS OF ITS GUARDIAN (kanban #1177, founding-seat.js GUARDIAN): its ceremony files held, and whether its process runs
         local: async () => {
           const dir = guardian.dataDir || `${path}.guardian`;
@@ -188,21 +196,28 @@ export async function startNode({ db, path }, options = {}, chain = {}) {
   // A GUARDIAN THAT EXITED IS STARTED AGAIN (kanban #577, measured 10-29 on the seven installed inst577 nodes, 2026.1.9.11): fedimintd exits
   // by itself on "Consensus session timed out" (e2f42eea, session 892, 10-28 07:09Z) and nothing started it again - all ten guardians of the
   // federation stayed down for 17 h and every seat observed its halt. Every 30 s a guardian the node runs whose process is gone is started
-  // again, at most once a minute per slot.
+  // again, at most once a minute per slot. And a WANTED guardian that does not run at all (kanban #2336: its start, at boot or here, gave
+  // up on a bitcoind that did not answer) is started again the same way, until it runs or its owner stops it; the guardian-next once
+  // the own guardian runs.
   const startedAgainAt = { guardian: 0, next: 0 };
+  const starting = { guardian: false, next: false };
   const exitWatch = setInterval(async () => {
     for (const slot of ['guardian', 'next']) await serial(slot, async () => {
       const g = slot === 'guardian' ? guardian : next;
-      if (closed || !g.running || typeof g.alive !== 'function' || Date.now() - startedAgainAt[slot] < 60000) return;
-      let up = true; try { up = await g.alive(); } catch { up = true; }
-      if (up) return;
+      if (closed || starting[slot] || Date.now() - startedAgainAt[slot] < 60000) return;
+      if (g.running) {
+        if (typeof g.alive !== 'function') return;
+        let up = true; try { up = await g.alive(); } catch { up = true; }
+        if (up) return;
+      } else if (!wanted[slot] || !(slot === 'guardian' ? plan.own : plan.next && guardian.running)) return;
       startedAgainAt[slot] = Date.now();
+      starting[slot] = true;
       try {
         const fresh = await start(slot);
-        if (closed || (slot === 'guardian' ? guardian : next) !== g) { if (fresh.running) await (fresh.halt || fresh.stop)(); return; }   // stopped or replaced meanwhile
+        if (closed || (slot === 'guardian' ? guardian : next) !== g || (!g.running && (!wanted[slot] || !(slot === 'guardian' ? plan.own : plan.next)))) { if (fresh.running) await (fresh.halt || fresh.stop)(); return; }   // stopped or replaced meanwhile
         if (slot === 'guardian') guardian = fresh.running ? fresh : none; else next = fresh.running ? fresh : none;
-        (chain.log || console.log)(`[guardian] the ${slot === 'guardian' ? 'guardian' : 'guardian-next'} had exited: started again${fresh.running ? '' : ` - and did not start: ${fresh.why}`}`);
-      } catch (e) { (chain.log || console.log)(`[guardian] the ${slot} could not be started again after it exited: ${e.message}`); }
+        (chain.log || console.log)(`[guardian] the ${slot === 'guardian' ? 'guardian' : 'guardian-next'} ${g.running ? 'had exited' : 'was not running'}: started again${fresh.running ? '' : ` - and did not start: ${fresh.why}`}`);
+      } catch (e) { (chain.log || console.log)(`[guardian] the ${slot} could not be started again after it exited: ${e.message}`); } finally { starting[slot] = false; }
     });
   }, Number((chain.env || process.env).ARENA_GUARDIAN_EXIT_WATCH_MS || 30000));
   if (exitWatch.unref) exitWatch.unref();
