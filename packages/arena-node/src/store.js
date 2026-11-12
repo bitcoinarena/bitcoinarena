@@ -128,6 +128,9 @@ export function openStore(path = ':memory:') {
       seq       INTEGER NOT NULL,
       batch_id  BLOB NOT NULL,
       bytes     BLOB NOT NULL,
+      -- the player's 64-byte session-key signature over batch_id, beside the batch and never in it (kanban #1567):
+      -- NULL for a batch taken bare (a /first-mark hand-on that carried none, or a store from before)
+      signature BLOB,
       PRIMARY KEY (round_id, entry_id, seq)
     );
     CREATE UNIQUE INDEX IF NOT EXISTS batches_by_id
@@ -1462,6 +1465,11 @@ export function openStore(path = ':memory:') {
   // A store made before the ruling gets the column; a row there names none, and counts nowhere.
   // THE ROOM A LOAD FILLS (2026-10-04 08:54: the cargo factor C is the bed fill, crossing with the load): a store
   // made before it gets the column; a row there carries none, and replays at the 0.7 every run had.
+  // EACH BATCH'S SIGNATURE BESIDE IT (kanban #1567, feedback #013 by Hexbox Tools): the player's own session-key signature
+  // over the batch's id, kept so GET /batch-signatures can hand a reloaded page proof of which batches it signed. A store
+  // from before gets the column; its rows carry none.
+  if (!db.prepare('PRAGMA table_info(batches)').all().some((c) => c.name === 'signature'))
+    db.exec('ALTER TABLE batches ADD COLUMN signature BLOB');
   if (!db.prepare('PRAGMA table_info(loads)').all().some((c) => c.name === 'room'))
     db.exec('ALTER TABLE loads ADD COLUMN room INTEGER');
   // THE IDENTITY'S CONSENT BESIDE A NAME RECORD (kanban #1278, RULED #1276): the identity key over (round id, round key), checked at the door; a row from
