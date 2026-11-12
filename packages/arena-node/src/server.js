@@ -4221,12 +4221,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const claimPk = held.pool.groupPublicKey;
     for (const peer of verifier.peersOf(rid)) {
       try {
-        const r = await fetch(`${String(peer).replace(/\/+$/, '')}/lock-settlement?round=${toHex(rid)}`, { signal: AbortSignal.timeout(3000) });
-        // kanban #1744 (bypass of #1550): read up to PEER_LISTING_BYTES, not whole - a peer's settlement is a small record
+        const r = await fetch(`${String(peer).replace(/\/+$/, '')}/lock-settlement?round=${toHex(rid)}&tx=1`, { signal: AbortSignal.timeout(3000) });
+        // kanban #1744 (bypass of #1550): read up to PEER_LISTING_BYTES, not whole - a peer's settlement is a small record (its tx parts too, #2176)
         const j = await jsonUpTo(r, PEER_LISTING_BYTES);
         if ((j.state === 'SUBMITTING' || j.state === 'ACCEPTED') && j.signature && j.message
           && schnorr.verify(fromHex(j.signature), fromHex(j.message), claimPk.subarray(1))
-          && await thisRoundsMessage(rid, fromHex(j.message))) return true;
+          && (await thisRoundsMessage(rid, fromHex(j.message))
+            // THE HELD SEAT ITSELF (kanban #2176): no pair, no history, no build of its own - the peer's transaction, tied to this round
+            // by the locks it spends and rebuilt here to the very message signed
+            || (j.state === 'ACCEPTED' && settlements && typeof settlements.isRoundsTx === 'function' && await settlements.isRoundsTx(rid, j.tx, j.message)))) return true;
       } catch { /* the next peer */ }
     }
     return false;
@@ -4236,6 +4239,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // never settled read "combined" - the held final mark dropped and the stopped transcript signed. A verifying signature counts only
   // over a message this seat ties to THIS round: one it handed a nonce or a share for, one kept in its txid history for the round, or
   // the one it rebuilds from its own store. Anything else is another round's, or nothing this seat can check: not combined.
+  // AND THE SEAT combinedElsewhere IS FOR (kanban #2176, a44 refute of #1757): the one holding its close or a pending final mark has signed no
+  // result for the held entry, so after a restart all three are empty and the threshold's genuine combine read "not combined" - its close held
+  // for ever. Once the peer's row is ACCEPTED its answer carries the transaction's parts (`tx`); the round counts as combined when that
+  // transaction spends a stake or fee lock of THIS round's entries and the stock client rebuilds it here to the signed message
+  // (settlements.isRoundsTx). Lock outpoints are per round, unlike the claim key, so an earlier round's row still reads false.
+  const txRebuiltAt = new Map();   // round id hex -> when GET /lock-settlement last rebuilt its settlement for `tx` (kanban #2176)
   const thisRoundsMessage = async (rid, msg) => {
     const hx = toHex(msg);
     // 2.0: a protocol-27 seat's entry is one { named, message, nonces } object, a FROST round's a list of handed pairs
@@ -13312,10 +13321,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           return res.end(JSON.stringify({ state: all ? 'ACCEPTED' : feds.some((f) => f.state === 'REFUSED') ? 'REFUSED' : 'SUBMITTING', federations: feds }));
         }
         const kept = round.lockSettlement(new Uint8Array(rid));
+        // THE TRANSACTION'S PARTS, ASKED FOR (kanban #2176): only on an ACCEPTED row (its claims spent, every P public), only of a settlement
+        // this seat built for that txid - for a seat holding its close to rebuild the message itself (verifier.combinedElsewhere)
+        // AFTER A RESTART OF THIS SEAT (nothing built in memory) it is rebuilt from the store once, at most once a minute a round
+        let tx = null;
+        if (kept && kept.state === 'ACCEPTED' && url.searchParams.get('tx') === '1' && typeof settlements.signedTx === 'function') {
+          tx = settlements.signedTx(new Uint8Array(rid), kept.txid);
+          const k = toHex(rid);
+          if (!tx && Date.now() - (txRebuiltAt.get(k) || 0) >= 60000) {
+            txRebuiltAt.set(k, Date.now());
+            if (txRebuiltAt.size > 4096) txRebuiltAt.delete(txRebuiltAt.keys().next().value);
+            await settlements.message(new Uint8Array(rid)).catch(() => null);
+            tx = settlements.signedTx(new Uint8Array(rid), kept.txid);
+          }
+        }
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify(kept
           ? { state: kept.state, txid: kept.txid, why: kept.why, signature: toHex(kept.signature), message: toHex(kept.message),
-            madeMs: kept.madeMs, moved: await settlements.summaryOf(new Uint8Array(rid)) }
+            madeMs: kept.madeMs, moved: await settlements.summaryOf(new Uint8Array(rid)), ...(tx ? { tx } : {}) }
           : { state: 'NONE' }));
       }
 
