@@ -162,7 +162,7 @@ const notPaid = (states) => states.length > 0 && states.every((x) => x === 'FAIL
 async function sweepPayments(nowMs = Date.now()) {
   const seen = readBook();
   const keep = new Set(), drop = new Set(), rebook = new Map(), forget = new Set();
-  for (const r of (seen.players || []).filter((x) => x.pending)) {
+  for (const r of (seen.players || []).filter((x) => x.pending && !GRANTING.has(x.hash))) {
     const states = await Promise.all((r.payers || []).map((i) => paymentFinal(PAYERS[i], r.hash).catch(() => null)));
     if (states.includes('SUCCEEDED')) keep.add(r.hash);
     else if (notPaid(states)) drop.add(r.hash);
@@ -182,6 +182,9 @@ async function sweepPayments(nowMs = Date.now()) {
   saveBook(book);
   return true;
 }
+// A GRANT STILL PAYING IS NOT SWEPT (kanban #1627): its row is pending from before the first payinvoice, so a payer not asked yet answers "not
+// initiated" - the grant itself decides it; after a restart nothing is paying and every pending row is read
+const GRANTING = new Set();
 let sweeping = false;
 if (PAYERS.length) setInterval(() => { if (sweeping) return; sweeping = true; sweepPayments().catch(() => {}).finally(() => { sweeping = false; }); }, Number(env.FAUCET_SWEEP_MS || 120000)).unref();
 
@@ -195,7 +198,15 @@ async function grant(ask) {
   const d = playerGrantDecide({ kind: ask.kind, account: ask.account, ip: ask.ip, invoiceSats: Number(inv.num_satoshis) }, book);
   if (!d.ok) return d;
   const row = { account: ask.account, kind: ask.kind, ip: ask.ip, sats: d.grant.invoiceSats, atMs: Date.now(), hash: inv.payment_hash };
-  book.players.push(row);
+  // BOOKED PENDING BEFORE ANY PAYINVOICE (kanban #1627, state audit 2026-11-12 SM-19): a plain row booked here was a welcome (or a refill) paid for
+  // good when the faucet died inside payinvoice - the sweep reads only pending rows and `unsure`, so a payment never made, or one that FAILED after,
+  // refused the account its welcome forever. The row is pending with every payer that may be asked; only SUCCEEDED clears it (here or in the sweep),
+  // and after a restart the sweep removes it once every payer answers NONE/FAILED
+  GRANTING.add(row.hash);
+  try { return await grantPay(ask, inv, d, book, row); } finally { GRANTING.delete(row.hash); }
+}
+async function grantPay(ask, inv, d, book, row) {
+  book.players.push({ ...row, pending: true, payers: PAYERS.map((_, i) => i) });
   saveBook(book);
   const tried = [], askedPayers = [];
   // A PAYER IS NOT ASKED TO PAY ITS OWN NODE'S INVOICE (kanban #1381): payer a is gateway a's lnd - "self-payments not allowed" cost a call before payer b
@@ -208,9 +219,10 @@ async function grant(ask) {
     const state = /Payment status: (SUCCEEDED|IN_FLIGHT)/.test(paid.out) ? 'sent' : paid.timedOut ? await paymentSent(payer, inv.payment_hash) : 'no';
     askedPayers.push(PAYERS.indexOf(payer));
     // NOT FINAL YET (kanban #1421): booked as pending with the payers asked; the sweep reads their final word
-    if (state === 'sent' && !/Payment status: SUCCEEDED/.test(paid.out)) {
+    if (state === 'sent') {
       const b2 = readBook(); const mine = (b2.players || []).find((x) => x.hash === row.hash);
-      if (mine) { mine.pending = true; mine.payers = [...askedPayers]; saveBook(b2); }
+      if (mine && /Payment status: SUCCEEDED/.test(paid.out)) { delete mine.pending; delete mine.payers; saveBook(b2); }
+      else if (mine) { mine.pending = true; mine.payers = [...askedPayers]; saveBook(b2); }
     }
     if (state === 'sent') {
       console.log(`${new Date().toISOString()} player ${ask.kind} ${d.grant.invoiceSats} sat (${ask.ip || 'no ip'}): ${inv.payment_hash.slice(0, 16)}`);
