@@ -437,6 +437,21 @@ export class Verifier {
    */
   async carryReceipts(roundIdBytes, entryIdBytes) {
     const report = { taken: 0, refused: [], down: [], answered: 0 };
+    // WHO MAY HAVE SIGNED A RECORD WORTH A VERIFY (kanban #2151, #1489 audit44 refute of #1636): the round's assigned
+    // committee, read once per carry. #1636 bounded only the records that FAIL to verify: a peer answering records that
+    // each verify under a fresh key for a random mark passed the per-(mark, signer) dedupe every time, so every one of
+    // up to ~130,000 per answer cost a schnorr verify and four SQL statements on the foreign path, at every close and
+    // retry, and flushed every real divergence signal out of foreign_receipts (FOREIGN_RECEIPTS_KEPT). takeReceipt
+    // refuses an off-committee signer for a mark this seat holds anyway; here it is refused before any curve work, for
+    // a mark this seat does not hold too (a stranger's key is no divergence signal). A record for a mark this seat
+    // holds under another entry is not this answer's business and is skipped unverified, and at most one committee's
+    // worth of records for marks this seat has not got are filed per answer (the divergence signal needs one, not a
+    // table full). An honest peer's answer (GET /receipts: its committee receipts for THIS entry's marks) is taken whole.
+    const committee = typeof this.round.signerNodes === 'function' ? this.round.signerNodes(roundIdBytes).map((k) => hex(k)) : null;
+    const onCommittee = committee && committee.length ? new Set(committee) : null;
+    const foreignPerAnswer = onCommittee ? onCommittee.size : RECEIPTS_PER_TURN;
+    const whose = typeof this.round.markOfEntry === 'function'
+      ? (id) => this.round.markOfEntry(roundIdBytes, entryIdBytes, id) : () => 'entry';
     for (const peer of this.peersOf(roundIdBytes)) {
       let body;
       try {
@@ -458,6 +473,8 @@ export class Verifier {
       // verify is read no further (an honest seat serves only receipts it verified itself), and the loop is given back
       // between batches of RECEIPTS_PER_TURN records.
       const seen = new Set();
+      const skipped = { offCommittee: 0, otherEntry: 0, foreignOver: 0 };
+      let foreign = 0;
       let at = 0;
       while (at + SIGNED_RECEIPT_BYTES <= body.length) {
         let stop = false;
@@ -469,6 +486,10 @@ export class Verifier {
               const key = `${hex(r.checkpointId)}:${hex(r.nodePubkey)}`;
               if (seen.has(key)) continue;
               seen.add(key);
+              if (onCommittee && !onCommittee.has(hex(r.nodePubkey))) { skipped.offCommittee++; continue; }
+              const held = whose(r.checkpointId);
+              if (held === 'other') { skipped.otherEntry++; continue; }
+              if (held === null && ++foreign > foreignPerAnswer) { skipped.foreignOver++; continue; }
               this.round.takeReceipt(one);
               report.taken++;
             } catch (e) {
@@ -480,6 +501,10 @@ export class Verifier {
         if (stop || at + SIGNED_RECEIPT_BYTES > body.length) break;
         await new Promise((r) => setImmediate(r));
       }
+      // NAMED ONCE PER PEER, NOT ONCE PER RECORD: what was skipped unverified, so a close still says what it was offered
+      if (skipped.offCommittee) report.refused.push(`${peer}: ${skipped.offCommittee} receipts from signers off this round's committee, skipped unverified`);
+      if (skipped.otherEntry) report.refused.push(`${peer}: ${skipped.otherEntry} receipts for marks of another entry, skipped unverified`);
+      if (skipped.foreignOver) report.refused.push(`${peer}: ${skipped.foreignOver} more receipts for marks this node has not got than one committee's worth (${foreignPerAnswer}), skipped unverified`);
     }
     // AND ANY SIGNER NODE'S REFUSED FIRST MARK (M3.3-34): the player's own on-time first
     // mark that a signer node, up, refused - checked here (round.onTimeFirstMark). It
