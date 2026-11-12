@@ -2632,6 +2632,12 @@ export class Round {
     return r ? { roundId: new Uint8Array(r.round_id), outpoint: r.outpoint, fields: JSON.parse(r.fields), contractId: r.contract_id, keptMs: Number(r.kept_ms) } : null;
   }
 
+  /** The refused-round lock kept at an outpoint ("txid:idx"), any round (kanban #1639): such a lock stakes no entry. */
+  refusedLockAt(outpointStr) {
+    const r = this.db.prepare('SELECT handout_id, round_id FROM refused_locks WHERE outpoint = ?').get(String(outpointStr));
+    return r ? { handoutId: new Uint8Array(r.handout_id), roundId: new Uint8Array(r.round_id) } : null;
+  }
+
   /** The refused-round locks of one round that refund to `refundHex`, shaped as stakeLocksFor's (entryId = the handout id). */
   // ONE ROW PER LOCK (kanban #1604): a lock is kept under H(handout id || outpoint), and the first one of a handout also under the
   // handout's id; listed once, under its first row - the handout's id for the first lock (as before), H(handout id || outpoint)
