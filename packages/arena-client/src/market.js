@@ -24,7 +24,7 @@ import { entryFeeMsat, feeBpsOf, donationBpsOf } from '../../arena-protocol/src/
 import { termsOfKnownGame } from '../../arena-protocol/src/known-game.js';
 import { encodeEntryContract, entryId, decodeEntryContract } from '../../arena-protocol/src/contracts.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
-import { handLock } from './page-lock.js';
+import { handLock, postLockClaim } from './page-lock.js';
 import { cancelId, sellId, PRICE_SCALE } from '../../arena-protocol/src/order-book.js';
 
 const sats = (msat) => (Number(BigInt(msat)) / 1000).toLocaleString('en-US', { maximumFractionDigits: 3 });
@@ -128,6 +128,8 @@ export async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onE
       if (handedOut && handedOut.get(node)) await handedOut.get(node);
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/entry`, { method: 'POST', body: bytes, signal: AbortSignal.timeout(ENTRY_WAIT_MS) });
       x = { node, status: r.status, why: r.status === 201 ? null : (await r.text()).trim() };
+      // the player's claim on the entry's locks, beside it (kanban #1897, #1938): no copy of the entry can take them
+      if (r.status === 201 && stakeLock && typeof stakeLock.claimFor === 'function') postLockClaim({ node, entryId: eid, claimFor: stakeLock.claimFor, fetcher });   // never throws; not waited on
     } catch (e) { x = { node, status: 0, why: e.message }; }
     entriesNow[i] = x;
     if (onEntry) { try { onEntry({ entryId: toHex(eid), entries: entriesNow.slice(), x }); } catch { /* the caller's own fault */ } }
