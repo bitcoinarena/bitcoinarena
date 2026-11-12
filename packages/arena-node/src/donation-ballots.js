@@ -26,7 +26,16 @@ export function createDonationBallots({ db, knownSets, verifySecp256k1, log = ()
   let tallies = new Map();   // proposal id -> tally
   const rows = () => db.prepare('SELECT kind, proposal, hex FROM donation_ballots ORDER BY at_ms').all();
   const split = (hex) => { const b = fromHex(hex); if (b.length <= SIG_BYTES) throw new Error('no signature'); return { body: b.slice(0, -SIG_BYTES), signature: b.slice(-SIG_BYTES) }; };
-  const ballots = () => {
+  // kanban #1528, #1710, #1775: a recipient key of a set (an LNURL entry has none, so it never matches - and never throws)
+  const keyIn = (set, keyHex) => !!(set && Array.isArray(set.recipients) && set.recipients.some((r) => r && r.recipientPk instanceof Uint8Array && toHex(r.recipientPk) === keyHex));
+  const setIdHex = (s) => { try { return toHex(donationSetId(s.recipients)); } catch { return null; } };
+  const findSet = (sets, idHex) => sets.find((s) => setIdHex(s) === idHex) || null;
+  // Every stored row, decoded - and, given `parents` (the sets this seat holds), only the rows whose signer may sign them:
+  // a proposal whose parent set is held and whose proposer is a key recipient of it, an approval of such a proposal whose
+  // signer is a key recipient of the same parent. kanban #1710, #1775: the same check add() makes, applied on every read, so a
+  // stranger's row a seat kept before #1528 is never listed, re-tallied, chained or counted against MAX_ROWS (it stays in the
+  // table - nothing is deleted - but it is read as if it were not there).
+  const ballots = (parents = null) => {
     const byId = new Map();
     for (const r of rows()) {
       try {
@@ -35,23 +44,42 @@ export function createDonationBallots({ db, knownSets, verifySecp256k1, log = ()
         else { const a = { ...decodeDonationApproval(body), signature, hex: r.hex }; const b = byId.get(r.proposal) || { approvals: [] }; b.approvals.push(a); byId.set(r.proposal, b); }
       } catch { /* a row that no longer decodes is not counted */ }
     }
-    return byId;
+    if (!parents) return byId;
+    const out = new Map();
+    for (const [id, b] of byId) {
+      if (!b.proposal) continue;
+      const parent = findSet(parents, toHex(b.proposal.parentSetId));
+      if (!parent || !keyIn(parent, toHex(b.proposal.proposer))) continue;
+      out.set(id, { ...b, approvals: b.approvals.filter((a) => keyIn(parent, toHex(a.signer))) });
+    }
+    return out;
   };
+  const heldSets = () => [...(knownSets() || []), ...approvedSets];
+  const keptRows = (byId) => { let n = 0; for (const b of byId.values()) n += (b.proposal ? 1 : 0) + b.approvals.length; return n; };
   async function retally() {
-    const byId = ballots();
     const known = (knownSets() || []).map((s) => ({ ...s }));
-    const withProposal = [...byId.values()].filter((b) => b.proposal);
-    const nets = [...new Set(withProposal.map((b) => toHex(b.proposal.networkId)))];
-    const sets = [];
-    for (const net of nets) {
-      const r = await approvedDonationSets({ networkId: fromHex(net), known: known.filter((s) => toHex(s.networkId) === net),
-        ballots: withProposal.filter((b) => toHex(b.proposal.networkId) === net), verifySecp256k1 });
-      sets.push(...r.sets);
+    // kanban #1710, #1775: only the rows signed by a recipient of a set held - the admin key's, or one these very rows approve
+    // (a chain), so the read widens until the approved sets stop growing
+    let sets = [];
+    let withProposal = [];
+    for (let round = 0; round < 65; round++) {
+      withProposal = [...ballots([...known, ...sets]).values()];
+      const nets = [...new Set(withProposal.map((b) => toHex(b.proposal.networkId)))];
+      const next = [];
+      for (const net of nets) {
+        const r = await approvedDonationSets({ networkId: fromHex(net), known: known.filter((s) => toHex(s.networkId) === net),
+          ballots: withProposal.filter((b) => toHex(b.proposal.networkId) === net), verifySecp256k1 });
+        next.push(...r.sets);
+      }
+      const ids = (xs) => xs.map((s) => toHex(s.approvedBy)).sort().join(',');
+      const same = ids(next) === ids(sets);
+      sets = next;
+      if (same) break;
     }
     const t = new Map();
     for (const b of withProposal) {
       const all = [...known, ...sets];
-      const parent = all.find((s) => toHex(donationSetId(s.recipients)) === toHex(b.proposal.parentSetId));
+      const parent = findSet(all, toHex(b.proposal.parentSetId));
       t.set(toHex(donationProposalId(b.proposal)), parent ? await tallyDonationProposal({ proposal: b.proposal, approvals: b.approvals, parent: parent.recipients, verifySecp256k1 })
         : { state: 'refused', why: 'its parent set is not one this seat holds', acceptBps: 0, denyBps: 0, counted: [] });
     }
@@ -69,16 +97,17 @@ export function createDonationBallots({ db, knownSets, verifySecp256k1, log = ()
       try { const { body, signature } = split(String(hex || '').toLowerCase()); obj = kind === 'proposal' ? { ...decodeDonationProposal(body), signature } : { ...decodeDonationApproval(body), signature }; }
       catch (e) { return { ok: false, status: 400, why: `that is no donation ${kind}: ${e.message}` }; }
       const digestKey = kind === 'proposal' ? toHex(donationProposalId(obj)) : toHex(obj.proposalId);
-      const held = kind === 'approval' ? ballots().get(digestKey) : null;
+      const held = kind === 'approval' ? ballots(heldSets()).get(digestKey) : null;
       if (kind === 'approval' && !(held && held.proposal)) return { ok: false, status: 404, why: 'this seat holds no such proposal: send the proposal first' };
       // kanban #1528: kept only when signed by a recipient of a parent set this seat holds (the admin key's, or one approved
       // before) - before, any self-signed object from a key minted at will was kept for good, answered fresh and so forwarded
       // to every seat, and re-tallied on every add
       const parentId = toHex(kind === 'proposal' ? obj.parentSetId : held.proposal.parentSetId);
-      const parent = [...(knownSets() || []), ...approvedSets].find((s) => toHex(donationSetId(s.recipients)) === parentId);
+      const parent = findSet(heldSets(), parentId);
       if (!parent) return { ok: false, status: 403, why: 'its parent set is not one this seat holds' };
       const signerHex = toHex(kind === 'proposal' ? obj.proposer : obj.signer);
-      if (!parent.recipients.some((r) => toHex(r.recipientPk) === signerHex)) return { ok: false, status: 403, why: 'its signer is no recipient of the parent set' };
+      // kanban #1710, #1775: an LNURL entry has no key - compared as no match, never toHex(undefined) and a 500
+      if (!keyIn(parent, signerHex)) return { ok: false, status: 403, why: 'its signer is no recipient of the parent set' };
       if (kind === 'approval' && held.approvals.length >= MAX_APPROVALS_PER_PROPOSAL) return { ok: false, status: 429, why: 'this proposal holds as many approvals as a seat keeps' };
       // the signature now, so nothing unsigned is ever kept or forwarded
       const digest = kind === 'proposal' ? donationProposalId(obj) : donationApprovalDigest(obj);
@@ -92,14 +121,15 @@ export function createDonationBallots({ db, knownSets, verifySecp256k1, log = ()
       }
       const id = toHex(digest);
       if (db.prepare('SELECT 1 FROM donation_ballots WHERE id = ?').get(id)) return { ok: true, fresh: false, id };
-      if (db.prepare('SELECT COUNT(*) AS n FROM donation_ballots').get().n >= MAX_ROWS) return { ok: false, status: 429, why: 'this seat keeps no more ballots' };
+      // kanban #1710, #1775: the cap counts the rows that stand, not a stranger's kept before #1528
+      if (keptRows(ballots(heldSets())) >= MAX_ROWS) return { ok: false, status: 429, why: 'this seat keeps no more ballots' };
       db.prepare('INSERT INTO donation_ballots (id, kind, proposal, hex, at_ms) VALUES (?, ?, ?, ?, ?)').run(id, kind, digestKey, String(hex).toLowerCase(), Date.now());
       await retally();
       return { ok: true, fresh: true, id, proposal: digestKey };
     },
     /** Every proposal: its bytes, its approvals' bytes, its tally. */
     list() {
-      return [...ballots().entries()].filter(([, b]) => b.proposal).map(([id, b]) => {
+      return [...ballots(heldSets()).entries()].filter(([, b]) => b.proposal).map(([id, b]) => {
         const t = tallies.get(id) || { state: 'open', acceptBps: 0, denyBps: 0, counted: [] };
         const p = b.proposal;
         return { id, serial: String(p.serial), network: toHex(p.networkId), parentSetId: toHex(p.parentSetId), proposer: toHex(p.proposer),
@@ -111,7 +141,7 @@ export function createDonationBallots({ db, knownSets, verifySecp256k1, log = ()
     },
     /** The ballots behind an approved set, newest first, back to the admin key's set: [{ proposal hex, approvals hex[] }]. */
     chainOf(set) {
-      const byId = ballots();
+      const byId = ballots(heldSets());
       const out = [];
       let cur = set;
       for (let i = 0; i < 64 && cur && cur.approvedBy; i++) {
@@ -119,7 +149,7 @@ export function createDonationBallots({ db, knownSets, verifySecp256k1, log = ()
         if (!b || !b.proposal) break;
         out.push({ proposal: b.hex, approvals: b.approvals.map((a) => a.hex) });
         const parentId = toHex(b.proposal.parentSetId);
-        cur = approvedSets.find((s) => toHex(donationSetId(s.recipients)) === parentId) || null;
+        cur = findSet(approvedSets, parentId);
       }
       return out;
     },
