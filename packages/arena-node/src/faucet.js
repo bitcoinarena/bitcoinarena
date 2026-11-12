@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-import { BIP39_ENGLISH } from '../../arena-client/src/bip39-wordlist.js';
 // THE ARENA FAUCET'S RULES (kanban #635, 2026-10-25: testcoins "Automatisch oder geführt", the automatic way an Arena faucet
 // from our own testnet4 coins). A new node's installer asks for exactly what its bond step needs, sent to the node's own address. The
 // faucet pays an address once, an IP a few times a day, and no more than a daily cap in all; when it says no, the installer shows the
@@ -120,49 +119,12 @@ export function refillDecide({ invoiceSats, nowMs = Date.now() }, book) {
 // A PLAYER'S REPORT (kanban #926 item 9, #949): one box in the page, a message in Arena Chat's #feedback. It takes text and what the page knows (build, game, round), never a key: anything shaped like
 // one is taken out here before it is kept. The text is a stranger's and is marked so.
 export const FEEDBACK_MOST = 4000, FEEDBACK_PER_IP_PER_DAY = 50, FEEDBACK_PER_DAY = 1000;   // #1397: were 5 and 100
-// NO SEED PHRASE IN A REPORT, IN ANY SPELLING (kanban #1472, feedback #005 by Hexbox Tools 2026-11-11: the phrase rule took 12-24 lowercase words split by
-// spaces only - "Abandon, Ability, ..." or "1. abandon 2. ability ..." went through): a run of 12 to 24 BIP39 words in any case, each may carry its number
-// ("1.", "2)", "3:"), split by spaces, new lines, commas, semicolons, slashes or dashes, is removed. Only BIP39 words count, so an ordinary sentence of 12
-// words stays. nsec/ncryptsec keys and 64-hex secrets are removed as before.
-// NO SEED IN ANY COPY FORMAT EITHER (kanban #1591, a bypass of #1472): the run above took only [\s,;/|-] between words and a number only before
-// ". ) :", so a seed copied as a JSON array ["abandon","ability",...], from a wallet's numbered grid ("1\nabandon\n2\nability"), as "1 abandon 2 ability"
-// or as "abandon. ability. ..." was kept and posted to #feedback. Now the text is cut into runs of letters only; two BIP39 words are
-// joined by any short gap holding no letter (spaces, quotes, brackets, periods, digits, #, parentheses ...; a colon only right after a number, so
-// "my seed: abandon ..." keeps "seed"), and invisible format characters (zero-width spaces, soft hyphens) are dropped first so they split nothing. A
-// 4-letter BIP39 prefix ("aban abil able abou", the form many wallets accept) counts as a word. Still 12 such words in a row, so a sentence stays.
-const BIP39_SET = new Set(BIP39_ENGLISH);
-const BIP39_PREFIX4 = new Set(BIP39_ENGLISH.map((w) => w.slice(0, 4)));
-const SEED_RUN_LEAST = 12;
-const SEED_GAP_MOST = 12;
-const SEED_GAP = /^(?:[^\p{L}\d:]|\d+\s*:?)*$/u;
-const seedWord = (w) => BIP39_SET.has(w) || (w.length === 4 && BIP39_PREFIX4.has(w));
-export const scrubKeys = (t) => {
-  let s = String(t).replace(/\p{Cf}/gu, '');
-  s = s.replace(/\b(nsec|ncryptsec)1[0-9a-z]{20,}\b/gi, '[removed]').replace(/\b[0-9a-f]{64}\b/gi, '[removed]');
-  const runs = []; let run = []; let lastEnd = -1;
-  const close = () => { if (run.length >= SEED_RUN_LEAST) runs.push([run[0], run[run.length - 1]]); run = []; };
-  for (const m of s.matchAll(/\p{L}+/gu)) {
-    const gap = lastEnd < 0 ? null : s.slice(lastEnd, m.index);
-    const word = seedWord(m[0].toLowerCase());
-    if (!word) close();
-    else {
-      if (run.length && !(gap.length <= SEED_GAP_MOST && SEED_GAP.test(gap))) close();
-      run.push([m.index, m.index + m[0].length]);
-    }
-    lastEnd = m.index + m[0].length;
-  }
-  close();
-  // the first word's own number ("1. ", "#1 (") goes with the run, as #1472 did
-  for (const [first, last] of runs.reverse()) {
-    const lead = /(?<!\d)#?\d{1,2}\s*[.):]?\s*["'(\[]?$/.exec(s.slice(0, first[0]));
-    s = s.slice(0, lead ? lead.index : first[0]) + '[removed]' + s.slice(last[1]);
-  }
-  return s;
-};
 // kanban #1679: first reports of the day past FEEDBACK_PER_DAY, and the bound on one IPv6 /48
 export const FEEDBACK_FIRST_RESERVE = 1000, FEEDBACK_PER_48_PER_DAY = 100;
 // an IPv6 /64 key (ipKey) as its /48; anything else has none
 const net48 = (key) => (key && key.endsWith('::/64') ? `${key.split(':').slice(0, 3).join(':')}::/48` : null);
+// the same seed scrubber as the feedback store (kanban #1472)
+import { scrubKeys } from './feedback-store.js';
 export function feedbackDecide({ text, ip = null, build = '', game = '', round = '', player = null, nowMs = Date.now() }, log) {
   const clean = scrubKeys(String(text || '').trim()).slice(0, FEEDBACK_MOST);
   if (clean.length < 3) return { ok: false, why: 'say what happened' };
