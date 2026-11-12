@@ -132,9 +132,21 @@ function bestOf(call, cache) {
 export const HASH_BATCH = 500;
 export const BLOCK_BATCH = 32;
 export const BLOCK_BATCH_BYTES = 16 * 1024 * 1024;
+// HOW MANY BLOCKS GO IN ONE REQUEST IS LEARNED ONCE, ON THE CACHE, AND STARTS SMALL (kanban #2217, #1489 a44 refute of #1968): it
+// used to start at BLOCK_BATCH for every view and shrink only after a batch came back - so each view's first request on a chain of
+// large blocks was 32 blocks in one answer (64 MB of hex at 1 MB blocks, ~256 MB at 4 MB), several views at once on both lanes.
+// Now the count lives on the cache (cache.blockBatchPer), shared by every view and kept across calls; it starts at BLOCK_BATCH_FIRST,
+// at most doubles per answer, and is never more than BLOCK_BATCH_BYTES over the LARGEST block of the last answer - so no request
+// is asked for more than twice what the blocks just seen allow, and the first one is BLOCK_BATCH_FIRST blocks.
+export const BLOCK_BATCH_FIRST = 2;
+export function nextBlockBatch(per, answers) {
+  let most = 1;
+  for (const a of answers) most = Math.max(most, String(a).length);
+  return Math.max(1, Math.min(BLOCK_BATCH, per * 2, Math.floor(BLOCK_BATCH_BYTES / most)));
+}
 async function readDeepInBatches(call, from, to, cache) {
   const deepTo = to - DEEP_BLOCKS;
-  let per = BLOCK_BATCH;
+  const perNow = () => (Number.isInteger(cache.blockBatchPer) && cache.blockBatchPer >= 1 ? Math.min(BLOCK_BATCH, cache.blockBatchPer) : BLOCK_BATCH_FIRST);
   for (let lo = from; lo <= deepTo; lo += HASH_BATCH) {
     const hi = Math.min(deepTo, lo + HASH_BATCH - 1);
     const need = [], waits = [];
@@ -163,6 +175,7 @@ async function readDeepInBatches(call, from, to, cache) {
     for (let i = 0; i < want.length;) {
       // another view may have taken some of these meanwhile: those are waited for, not read again
       const part = [];
+      const per = perNow();
       while (i < want.length && part.length < per) {
         const x = want[i++];
         if (cache.get(x)) continue;
@@ -183,8 +196,8 @@ async function readDeepInBatches(call, from, to, cache) {
       });
       const answers = await ask;
       await Promise.all(each);
-      const bytes = answers.reduce((n, a) => n + String(a).length, 0);
-      per = Math.max(1, Math.min(BLOCK_BATCH, Math.floor(BLOCK_BATCH_BYTES / Math.max(1, bytes / part.length))));
+      // a smaller count another view learned meanwhile is raised at most twofold by this answer, like any other
+      cache.blockBatchPer = Math.min(nextBlockBatch(per, answers), perNow() * 2);
     }
     await Promise.all(held);
   }
@@ -274,6 +287,7 @@ export function blockCache({ max = 50000 } = {}) {
     topHashes: new Map(),                    // height -> hash near the views' tops, valid while topBest is bitcoind's best (blocksOver)
     topBest: null, bestInFlight: null,
     hashInFlight: new Map(),                 // `d<height>` / `t<best>:<height>` -> the getblockhash still out (blocksOver)
+    blockBatchPer: BLOCK_BATCH_FIRST,        // blocks to one getblock request, learned from the answers (kanban #2217)
     putHash: (height, hash) => {
       hashes.set(height, hash);
       if (hashes.size > max) hashes.delete(hashes.keys().next().value);
