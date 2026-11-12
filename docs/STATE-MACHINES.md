@@ -1879,3 +1879,6 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 #### SM6 + SM3 (change) Retirement record only over an empty federation (kanban #1980)
 - A retirement record (CLOSED, no successor) is built and signed only while the reserve its body names is 0 (`bodyFor`: `retiringOf` and `reserveSats === 0`). The owners' consents are checked once when given and kept; money paid in before the next gather leaves the record OPEN at its reserve, and the retirement goes on once the federation is empty again.
 - The retire timer sets a guardian aside only over a CLOSED record naming reserve 0.
+#### SM-D3 (change) Drained-federation reserve move: a closed federation still holding reserves (kanban #1981)
+- Invariant: a federation that takes no new money (DRAINING, CRITICAL, CLOSED) and still holds unspent reserves at this seat either has a move in `moveTargets` or is listed in `waiting` with its reason. HALTED waits (frozen notes).
+- The drain clock (server.js `closedOf`: DRAIN_MS passed, no open round names it) may turn the record CLOSED while a move still waits (the successor's reserve key not dealt yet); the move is then taken as soon as a destination with a key is known, under the same move id (`moveIdOf(from, to)`).

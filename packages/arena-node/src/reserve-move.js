@@ -33,7 +33,7 @@ export const moveSeedFor = (plan) => moveSeedOf(plan && plan.seedTag ? `${plan.p
  * THE MOVES THESE RECORDS CALL FOR. `feds` [{ id (hex), status ('OPEN' | 'DRAINING' | 'CRITICAL' | 'HALTED' | 'CLOSED'), height (of the
  * newest record), successor (hex or null), key (hex or null: its reserve key), unspentMsat (BigInt) }]. Answers { moves: [{ id, from,
  * to, toKey, fromKey, decidableAt }], waiting: [{ federation, why }] } - a federation that is draining with reserves either moves or says
- * why it waits.
+ * why it waits; so does a closed one that still holds reserves (kanban #1981).
  */
 export function moveTargets(feds) {
   const byId = new Map(feds.map((f) => [String(f.id).toLowerCase(), f]));
@@ -43,7 +43,11 @@ export function moveTargets(feds) {
     const from = String(f.id).toLowerCase();
     if (!(BigInt(f.unspentMsat || 0n) > 0n)) continue;
     if (f.status === 'HALTED') { waiting.push({ federation: from, why: 'halted: its notes are frozen until it recovers' }); continue; }
-    if (f.status !== 'DRAINING' && f.status !== 'CRITICAL') continue;
+    // A CLOSED federation that still holds reserves moves as a draining one does (kanban #1981): server.js closedOf turns the record
+    // CLOSED by the drain clock (DRAIN_MS, no open round naming it), never by the money - a move that waited the whole drain (the
+    // successor's reserve key not dealt yet) was dropped without a word, and the reserves stayed there for good. It takes no new money,
+    // so its reserves either move or say why they wait.
+    if (f.status !== 'DRAINING' && f.status !== 'CRITICAL' && f.status !== 'CLOSED') continue;
     if (!f.key) { waiting.push({ federation: from, why: 'no reserve key is known for it here' }); continue; }
     const succ = f.successor ? String(f.successor).toLowerCase() : null;
     const s = succ && byId.get(succ);
