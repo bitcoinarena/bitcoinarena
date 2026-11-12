@@ -37,7 +37,8 @@ test('#1551 refute-0-1: a late head-to-head lock one seat took is not pulled int
     const honest = await lockAndPlay(w, mk(1), { hidden: { move: ROCK, salt: sp }, noMarks: true });
     // the attacker: entry (and its commitment to PAPER) at every seat before the close, no lock anywhere yet
     const attacker = await lockAndPlay(w, mk(2), { hidden: { move: PAPER, salt: so }, noMarks: true, only: [] });
-    skipTo(Number(w.c.entryCloseMs) + 500);
+    // from the close + H2H_REVEAL_HOLD_MS (1750 ms) on a seat serves the reveals (kanban #1822): the attacker reads them then
+    skipTo(Number(w.c.entryCloseMs) + 1800);
     for (const d of w.nodes) await fetch(`http://127.0.0.1:${d.port}/reveal?entry=${toHex(honest.eid)}`, { method: 'POST', body: JSON.stringify({ move: ROCK, salt: toHex(sp) }) });
     // the attacker reads the honest move off a seat - ROCK: its PAPER wins, so now it locks
     const seen = await (await fetch(`http://127.0.0.1:${w.nodes[0].port}/reveals?round=${toHex(w.rid)}`)).json();
