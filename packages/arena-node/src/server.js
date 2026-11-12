@@ -290,7 +290,7 @@ import { transcriptBytesHash, SIGNED_POSTING_BYTES, decodeTranscriptPosting, spl
 import { decodeTranscript, checkTranscript, transcriptHash as hashOfTranscriptObj } from '../../arena-protocol/src/transcript.js';   // the relay door's check (kanban #1532, #2242)
 import { federationIsBonded } from '../../arena-protocol/src/federation.js';
 import { hostedPlugins, pluginForRound, advertisedAppsCheck, payoutRuleOfRound } from './plugins.js';
-import { gameMarkets, gameMarketSweep, heldOutcomes, gameVoidOf, gameEvidenceOf, attestedTable, marketFinalityOf, marketStateOf, VALUE_HELD_OUTCOME } from './game-market.js';
+import { gameMarkets, gameMarketSweep, heldOutcomes, gameVoidOf, gameEvidenceOf, attestedTable, marketFinalityOf, marketStateOf, marketDeadlineOf, VALUE_HELD_OUTCOME } from './game-market.js';
 import { isHeadToHead, marketOfRound, isGameMarket, isScalar, isDrawnAttest, GAME_MARKET_REFUND } from '../../arena-protocol/src/manifest.js';
 import { decodeValueAttestation, valueAttestationStands, valueAttestationBodyId, isValueAttestationBytes } from '../../arena-protocol/src/scalar.js';
 import { encodeManifest, decodeManifest, gameIdOf, manifestStands, MARKET_SOURCE_KIND, RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
@@ -506,6 +506,12 @@ const hexOf = (b) => Buffer.from(b).toString('hex');
  * thing instead of each having a taste of its own.
  */
 export const GHOST_BACKLOG_BYTES = 262144;
+// HOW LONG AFTER A MARKET'S DEADLINE A SEAT STILL TAKES AN ATTESTATION ANOTHER SETTLEMENT SEAT TOOK IN TIME (kanban #2423, #1489 refute of
+// #1787/#2179): each seat decides OPEN -> ATTESTED or OPEN -> VOID on its own arrival time, and the hand-on between seats takes time - a post
+// landing at one seat just before the deadline reaches the next one after it, and a seat restarting at that moment is reached later still.
+// Up to this long after the deadline a seat takes one that a settlement peer proves it held before it (its GET /outcome), filed at that
+// peer's time; the seat that took it keeps handing it on until then. A seat whose VOID is already persisted keeps it (#1151).
+export const ATTEST_HANDON_GRACE_MS = 30000;
 // ANOTHER SEAT'S ANSWER IS READ ONLY UP TO A BOUND (kanban #1553): a game package (GET /plugin) is its manifest, chain, cores and
 // clients - a few hundred kB to a few MB for the real apps - and a GET /games listing far less. r.json() took any length: a seat
 // streaming hundreds of MB inside the timeout was buffered and parsed whole on this seat's main thread, on every automatic-update
@@ -964,7 +970,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       return BigInt(Math.floor(round.now())) >= opens && heldOutcomes(round, new Uint8Array(roundIdOf(c))).length === 0;
     } catch { return false; }
   };
-  const holdOutcome = (target, raw, a, valued) => {
+  // `receivedAtMs` (kanban #2423): the time a settlement peer proved it took this outcome, for one handed on across the deadline
+  const holdOutcome = (target, raw, a, valued, { receivedAtMs = null } = {}) => {
     const row = round.get(target);
     if (!row) return { held: false, status: 404, why: 'this node holds no such round' };
     const c = decodeRoundContract(new Uint8Array(row.contract));
@@ -980,8 +987,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // AND NOT AFTER THE MARKET'S DEADLINE (kanban #1151): a market with no outcome by then is VOID, its stakes back at once
     // AND OBSERVED AT THE ROUND'S OWN WINDOW END, for a market on a grid (kanban #1489): not at a close some seat listed for it
     const grid = marketWindowOf(c, plugin.manifest);
-    const timely = attestationTimely(a, { entryCloseMs: c.entryCloseMs, nowMs: round.now(), terms: roundTermsOf(plugin.manifest, c), window: grid.ok ? grid.window : null });
-    if (!timely.ok) return { held: false, status: 409, why: timely.why };
+    const timelyAt = (nowMs) => attestationTimely(a, { entryCloseMs: c.entryCloseMs, nowMs, terms: roundTermsOf(plugin.manifest, c), window: grid.ok ? grid.window : null });
+    const deadlineMs = marketDeadlineOf(plugin.manifest, c);
+    const timely = timelyAt(receivedAtMs !== null ? receivedAtMs : round.now());
+    if (!timely.ok) {
+      // LATE ONLY BY THE DEADLINE, AND INSIDE THE HAND-ON GRACE (kanban #2423): the caller asks the round's settlement peers whether one
+      // of them took it in time (outcomeTakenByPeer) before it refuses it
+      const late = receivedAtMs === null && deadlineMs !== null && BigInt(round.now()) >= deadlineMs
+        && BigInt(round.now()) < deadlineMs + BigInt(ATTEST_HANDON_GRACE_MS) && timelyAt(deadlineMs - 1n).ok;
+      return { held: false, status: 409, why: timely.why, ...(late ? { late: { contract: c, deadlineMs } } : {}) };
+    }
     // AND OBSERVED AT ITS WINDOW'S END (kanban #1515): a market on a period is signed at the end of the round's own window
     // (observed_at = the window's end, its terms; attestor.js and drawn-attestor.js both sign window.endMs). One seat listing the
     // round with a later close made the fixed attestors sign another window's outcome, held here as timely - refused now
@@ -989,14 +1004,67 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (mw.ok && mw.window && BigInt(a.observedAtMs) !== mw.window.endMs)
       return { held: false, status: 409, why: `that attestation says it was observed at ${new Date(Number(a.observedAtMs)).toISOString()}, and this round's window ends at ${new Date(Number(mw.window.endMs)).toISOString()}: a market on a period is attested at its window's end` };
     // ONE HELD ONCE THE ROUND IS FINAL OR VOID (its persisted state, game-market.js marketStateOf) is kept as evidence only
-    const decided = marketTerminal(marketStateOf(round, new Uint8Array(roundIdOf(c)), { contract: c, manifest: plugin.manifest, nowMs: round.now() }).state);
+    // ONE HANDED ON ACROSS THE DEADLINE (kanban #2423) is read against the PERSISTED state alone: reading the state now, past the deadline
+    // with nothing held, would persist the very VOID the peer's proof answers. A round already VOID (or FINAL) here keeps it - evidence only.
+    const persistedTerminal = () => { try { const p = typeof round.marketState === 'function' ? round.marketState(new Uint8Array(roundIdOf(c))) : null; return !!(p && marketTerminal(p.state)); } catch { return false; } };
+    const backdate = receivedAtMs !== null && !persistedTerminal();
+    let decided = receivedAtMs !== null ? !backdate
+      : marketTerminal(marketStateOf(round, new Uint8Array(roundIdOf(c)), { contract: c, manifest: plugin.manifest, nowMs: round.now() }).state);
     // a value is kept in the same table under its own body id, its outcome column -1 (no index: the value is in its bytes)
     const fresh = round.putOutcomeAttestation({ bodyId: valued ? valueAttestationBodyId(a) : attestationBodyId(a), roundId: a.roundId,
-      outcome: valued ? VALUE_HELD_OUTCOME : a.outcome, observedAtMs: a.observedAtMs, bytes: raw, receivedMs: round.now() });
+      outcome: valued ? VALUE_HELD_OUTCOME : a.outcome, observedAtMs: a.observedAtMs, bytes: raw, receivedMs: backdate ? Number(receivedAtMs) : round.now() });
+    if (backdate) decided = marketTerminal(marketStateOf(round, new Uint8Array(roundIdOf(c)), { contract: c, manifest: plugin.manifest, nowMs: round.now() }).state);
     if (fresh) settleAttestedSoon();
     const now = outcomeOf(a.roundId, c);
-    console.log(`[outcome] ${toHex(a.roundId).slice(0, 16)}: ${stands.why}${fresh ? '' : ' (held already)'}${decided ? ' - evidence only, the round was decided' : ''} - the round is ${now.state}`);
+    console.log(`[outcome] ${toHex(a.roundId).slice(0, 16)}: ${stands.why}${fresh ? '' : ' (held already)'}${backdate && fresh ? ` (handed on across the deadline: a settlement peer took it at ${new Date(Number(receivedAtMs)).toISOString()})` : ''}${decided ? ' - evidence only, the round was decided' : ''} - the round is ${now.state}`);
     return { held: true, fresh, why: stands.why, now: decided ? { ...now, evidenceOnly: true } : now };
+  };
+  // DID A SETTLEMENT PEER TAKE THIS OUTCOME IN TIME (kanban #2423): asked only for an attestation that stands and is late by the deadline
+  // alone, inside ATTEST_HANDON_GRACE_MS. A peer answers its own GET /outcome: the round ATTESTED (or FINAL) on the same outcome - or
+  // value - first held before the deadline (its finalAtMs less the objection window). Answers that time, clamped into the grace before
+  // the deadline, or null.
+  const outcomeTakenByPeer = async (target, a, valued, { contract: c, deadlineMs }) => {
+    const W = BigInt(c.objectionWindowMs), D = BigInt(deadlineMs);
+    const said = await Promise.all(winningsPeers(target).map(async (peer) => {
+      try {
+        const r = await fetch(`${String(peer).replace(/\/+$/, '')}/outcome?round=${toHex(target)}`, { signal: AbortSignal.timeout(2000) });
+        const o = r.ok ? JSON.parse(await readTextCapped(r, LISTING_ANSWER_MAX_BYTES)) : null;
+        if (!o || o.state !== 'ATTESTED' || typeof o.finalAtMs !== 'string') return null;
+        if (valued ? o.value !== String(a.value) : o.outcome !== a.outcome) return null;
+        const first = BigInt(o.finalAtMs) - W;
+        return first < D ? first : null;
+      } catch { return null; }
+    }));
+    const took = said.filter((x) => x !== null);
+    if (!took.length) return null;
+    const first = took.reduce((m, x) => (x > m ? x : m));     // the latest proving peer's time: no one peer pulls it earlier
+    const floor = D - BigInt(ATTEST_HANDON_GRACE_MS);
+    return first < floor ? floor : first;
+  };
+  // AN ATTESTATION TAKEN IN TIME IS HANDED ON UNTIL EVERY SETTLEMENT PEER HAS IT (kanban #1787, #2179, #2423): one post per peer, at once,
+  // 3 s bounded each, marked as a hand-on (RELAY_HEADER: a peer that holds it already does not hand it back); a peer that did not answer
+  // 200/201 is posted again every 2 s up to ATTEST_HANDON_GRACE_MS past the deadline, the time a peer still takes it handed on. One duty
+  // per round and attestation body at a time.
+  const handingOn = new Set(), handedOn = new Set();   // duties running; duties done (every peer took it: a retry posts nothing more)
+  const handOutcomeOn = async (target, raw, untilMs, { fresh = true } = {}) => {
+    const key = `${toHex(target)}:${toHex(sha256(raw))}`;
+    if (handingOn.has(key) || (!fresh && handedOn.has(key))) return;
+    handingOn.add(key);
+    const done = () => { handingOn.delete(key); if (!left.length) { handedOn.add(key); if (handedOn.size > 4096) handedOn.delete(handedOn.values().next().value); } };
+    let left = winningsPeers(target).map((base) => String(base).replace(/\/+$/, ''));
+    const once = async () => {
+      const said = await Promise.all(left.map((base) => fetch(`${base}/outcome?round=${toHex(target)}`,
+        { method: 'POST', body: raw, headers: { [RELAY_HEADER]: '1' }, signal: AbortSignal.timeout(3000) }).then((r) => r.status).catch(() => 0)));
+      left = left.filter((_, i) => !(said[i] === 200 || said[i] === 201 || said[i] === 400 || said[i] === 404));
+    };
+    try { await once(); } catch { /* retried below */ }
+    if (!left.length || !(Number(round.now()) < untilMs)) { done(); return; }
+    console.log(`[outcome] ${toHex(target).slice(0, 16)}: handed on, ${left.length} settlement peer(s) not reached - posting again every 2 s`);
+    const t = setInterval(async () => {
+      if (!left.length || !(Number(round.now()) < untilMs)) { clearInterval(t); done(); return; }
+      try { await once(); } catch { /* next tick */ }
+    }, 2000);
+    if (t.unref) t.unref();
   };
   // A GAME WHOSE ATTESTORS ARE DRAWN (kanban #630, protocol 21): an attestation is checked against the round's 7 drawn node keys and their
   // BIP-340 signatures; a game naming fixed keys, against those and Ed25519, as before
@@ -1111,6 +1179,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // every 60 s before it can change (kanban #576). A round this node signed into (SUBMITTING) keeps the backoff: its ask
   // looks in the federation whether the settlement went in.
   const attestedTurnAt = new Map();   // round hex -> the height its turn can come
+  const handOnDeadline = new Map();   // round hex -> its market deadline (ms) or null (kanban #2423)
   const settleAttestedSoon = () => {
     if (attestedSweep || !settlements) return;
     let sweeping = false;
@@ -1128,6 +1197,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       let anyWaiting = false, tipNow = NaN;
       try { tipNow = typeof chainTip === 'function' ? Number(await chainTip()) : NaN; } catch { tipNow = NaN; }
       for (const { rid, k } of open) {
+        // THE HAND-ON DUTY SURVIVES A RESTART (kanban #2423): while a market is inside the grace past its deadline, each attestation it took
+        // in time is handed on again to the peers that do not hold it yet (handOutcomeOn: once done, it posts nothing more)
+        let D = handOnDeadline.get(k);
+        if (D === undefined) {
+          try { const c = decodeRoundContract(new Uint8Array(round.get(rid).contract)), p = attestedOf(c), d = p ? marketDeadlineOf(p.manifest, c) : null; D = d === null ? null : Number(d); } catch { D = null; }
+          handOnDeadline.set(k, D); if (handOnDeadline.size > 8192) handOnDeadline.delete(handOnDeadline.keys().next().value);
+        }
+        if (D !== null && Number(round.now()) < D + ATTEST_HANDON_GRACE_MS)
+          for (const r of (round.outcomeAttestations ? round.outcomeAttestations(rid) : []).filter((x) => Number(x.received_ms) < D))
+            handOutcomeOn(rid, new Uint8Array(r.bytes), D + ATTEST_HANDON_GRACE_MS, { fresh: false }).catch(() => null);
         const turnAt = attestedTurnAt.get(k);
         if (turnAt !== undefined) { if (!(tipNow >= turnAt)) { anyWaiting = true; continue; } attestedTurnAt.delete(k); }
         if (!attestedWait.due(k)) { anyWaiting = true; continue; }
@@ -12345,17 +12424,38 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           valued = isValueAttestationBytes(raw);
           a = valued ? decodeValueAttestation(raw) : decodeAttestation(raw);
         } catch (e) { return text(res, 400, `that is not ${valued ? 'a value' : 'an outcome'} attestation: ${e.message}`); }
-        const got = holdOutcome(new Uint8Array(target), raw, a, valued);
+        let got = holdOutcome(new Uint8Array(target), raw, a, valued);
+        // HANDED ON ACROSS THE DEADLINE (kanban #2423): late by the deadline alone, inside the grace, and a settlement peer took it in time -
+        // taken, filed at that peer's time. A stranger's withheld attestation finds no peer holding it and is refused, as before (#1151).
+        if (!got.held && got.late) {
+          const at = await outcomeTakenByPeer(new Uint8Array(target), a, valued, got.late);
+          if (at !== null) got = holdOutcome(new Uint8Array(target), raw, a, valued, { receivedAtMs: at });
+        }
         if (!got.held) return text(res, got.status, got.why);
         // A FRESH ONE IS HANDED ON AT ONCE (kanban #1787): an attestor daemon posts the seats one after another (8 s timeout each), so one
         // seat took it a second before the market's deadline and the next one a second after it - FINAL at one, VOID at the other, both
         // terminal, and neither the settlement nor the return door reached its threshold. A seat that takes one fresh and timely now posts
         // it to the round's other settlement seats before it answers (as a drawn seat's own combined one, kanban #630), so their arrival
-        // times differ by milliseconds, not by the daemon's timeouts. `handed=1` marks such a post: it is not handed on again.
-        if (got.fresh && !(got.now && got.now.evidenceOnly) && url.searchParams.get('handed') !== '1') {
-          const to = winningsPeers(new Uint8Array(target));   // the settlement committee, as the return and book doors read it
-          await Promise.all(to.map((base) => fetch(`${String(base).replace(/\/+$/, '')}/outcome?round=${toHex(new Uint8Array(target))}&handed=1`,
-            { method: 'POST', body: raw, signal: AbortSignal.timeout(3000) }).catch(() => null)));
+        // times differ by milliseconds, not by the daemon's timeouts.
+        // NO CLIENT-SET FLAG SKIPS IT (kanban #2179, #1489 refute of #1787): a `handed=1` query once marked a seat's hand-on post and was
+        // not handed on again - but anybody holding the bytes (the attestors' public words, combined) could post them to one seat with it
+        // a second before the deadline: that seat went FINAL and handed nothing on, the daemon's own post was then held already, and the
+        // next seat, reached after the deadline, went VOID. Every fresh one is handed on now, however it came; the loop is bounded by
+        // freshness alone - a seat hands one on only the first time it takes it, so a post back to a seat that holds it answers 200 there.
+        // A DUTY, NOT ONE POST (kanban #2423, #1489 refute of #1787/#2179): the one best-effort post at the moment of taking it never reached
+        // a peer restarting for that moment, and the daemon's retry here was "held already" and not handed on. Now the posts that did not
+        // land are made again (handOutcomeOn) until the grace past the deadline ends, and a post that is not fresh and is not itself a
+        // hand-on (the daemon's retry, a page's) starts the duty again - a hand-on that is held already does not, so two seats never
+        // ping-pong one attestation.
+        const relayed = req.headers[RELAY_HEADER] === '1';
+        if (!(got.now && got.now.evidenceOnly) && (got.fresh || !relayed)) {
+          const rid = new Uint8Array(target), row = round.get(rid);
+          let untilMs = null;
+          try { const c = decodeRoundContract(new Uint8Array(row.contract)), p = attestedOf(c), D = p ? marketDeadlineOf(p.manifest, c) : null;
+            if (D !== null) untilMs = Number(D) + ATTEST_HANDON_GRACE_MS; } catch { /* the one pass only */ }
+          // a market with no deadline has no race to lose: its fresh one is handed on once, as before, and a retry is not
+          if (got.fresh || (untilMs !== null && Number(round.now()) < untilMs))
+            await handOutcomeOn(rid, raw, untilMs !== null ? untilMs : Number(round.now()) + 1, { fresh: got.fresh });
         }
         res.writeHead(got.fresh ? 201 : 200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ held: true, fresh: got.fresh, why: got.why, ...got.now }));
