@@ -34,7 +34,7 @@ import { walletOf, payoutKeyOf, coinsOf, broadcast, txSeen } from './wallet.js';
 import { onchainAction, resumeOpen } from './onchain-action.js';
 import { buildBond, buildAdvertUpdate, buildSend, advertFor, lockOf, censusKeyOfNode, bondNetworkOf, BOND_MIN_SATS, EMERGENCY_IN_ADVERT } from './bond.js';
 import { installMinimum } from './install-minimum.js';
-import { writeLaunchers, installUpdater } from './launchers.js';
+import { writeLaunchers, installUpdater, writeCommand } from './launchers.js';
 import { setUpOwnLnd, lndReady } from './lnd-setup.js';
 import * as workersKitDefault from './workers.js';
 import { RING_RESERVE_SATS, OUTSIDE_RESERVE_SATS } from './custody-agent.js';
@@ -371,6 +371,9 @@ const serviceRun = async (b) => {
     if (!r.ok) return { ok: false, why: r.why };
     // THE RELEASE THE NODE RUNS, RECORDED AT THE INSTALL as an update records it (node-services.js nodeOf: its version, the auto update)
     s = state.save({ release: { path: release, atMs: Date.now() } });
+    // THE COMMAND NOW, NOT ONLY AT FINISH (feedback #021, kanban #2570: "`bitcoinarena` isn't on PATH before Finish" - a node whose
+    // last step waits, a tunnel or a bond, could not be looked at with the command the docs name). Finish writes it again with the rest.
+    if (launch === writeLaunchers) { try { writeCommand({ home: state.home, release, node: process.execPath }); } catch (e) { log(`[service] the bitcoinarena command: ${e.message}`); } }
     // THE CHAIN SWITCH (kanban #635): a Core still syncing behind the interim Electrum chain - its keeper moves the node to it once synced
     if (s.core && s.core.interim && s.chain.kind === 'electrum') {
       const k = await gwKit.installProgram({ id: 'chain-switch', description: 'Bitcoin Arena: moves the node to its own Bitcoin Core once it is synced', home: state.home, boot,
