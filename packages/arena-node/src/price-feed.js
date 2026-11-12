@@ -472,7 +472,8 @@ export class PriceFeed {
       try {
         const r = await this.fetcher(`${String(base).replace(/\/+$/, '')}/price-sign`, { method: 'POST', body: JSON.stringify(body), signal: AbortSignal.timeout(5000) });
         // kanban #1770: only a 64-hex key with a 128-hex signature is taken; junk is neither counted nor handed out
-        if (r.ok) { const j = await r.json(); const x = sigShape(j); if (x) sigs.push(x); }
+        // kanban #2458: the answer is one key and one signature - read up to 16 KiB, past it that seat counts nothing
+        if (r.ok) { const j = await cappedJson(r, 16 * 1024); const x = sigShape(j); if (x) sigs.push(x); }
       } catch { /* that seat counts nothing */ }
     }));
     return sigs;

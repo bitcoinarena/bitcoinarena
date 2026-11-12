@@ -29,3 +29,24 @@ export const bodiesHeld = () => { const h = bodies.held(); return h.main + h.res
 export const attachBody = (req, res) => bodies.attach(req, res);
 // A DOOR'S OWN LIMIT (kanban #1271): past `max` bytes the body is not kept, the request ends, and the door answers 413
 export const readBody = async (req, max = BODY_MOST) => new Uint8Array(await bodies.read(req, max));
+
+// A PEER'S ANSWER HAS A LIMIT TOO (kanban #2458, audit 11): drawn-attestor.js read the other drawn seats' GET /attestation-word answers
+// with res.json() - one drawn seat answered hundreds of MB and every honest drawn seat buffered and JSON-parsed it on every pass. The
+// same uncapped read was in order-batch.js (#ask, #syncOnce), settlement.js (/cancels) and price-feed.js (/price-sign). A Content-Length
+// over `max` is refused unread; a streamed body is read chunk by chunk and cancelled once it passes `max`. An answer without a body
+// stream (a test's stub) is read as it is. Past the cap it throws: the caller counts that seat's answer as none.
+export async function jsonUpTo(r, max) {
+  const said = Number(r.headers && typeof r.headers.get === 'function' ? r.headers.get('content-length') : NaN);
+  if (said > max) { try { await r.body?.cancel(); } catch { /* gone */ } throw new Error(`an answer of ${said} bytes, more than ${max}`); }
+  if (!r.body || typeof r.body.getReader !== 'function') return r.json();
+  const reader = r.body.getReader(), parts = [];
+  let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.byteLength;
+    if (n > max) { reader.cancel().catch(() => {}); throw new Error(`an answer of more than ${max} bytes`); }
+    parts.push(value);
+  }
+  return JSON.parse(Buffer.concat(parts).toString('utf8'));
+}
