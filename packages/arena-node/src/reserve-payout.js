@@ -285,6 +285,8 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
   // kanban #1159: the height this seat first held the plan at, its attempt, and the signed transaction / refund kept before it is handed in
   for (const [col, type] of [['planned_at', 'INTEGER'], ['attempt', 'INTEGER'], ['submit_sig', 'TEXT'], ['refund_sig', 'TEXT']])
     if (!db.prepare('PRAGMA table_info(reserve_payouts)').all().some((c) => c.name === col)) db.exec(`ALTER TABLE reserve_payouts ADD COLUMN ${col} ${type}`);
+  // kanban #1663: a store from before the fix may hold the inputs of a SUBMITTING attempt it expired at its cutoff - freed at open
+  db.prepare(`DELETE FROM reserve_payout_inputs WHERE proposal IN (SELECT proposal FROM reserve_payouts WHERE state = 'EXPIRED')`).run();
   // A MOVE ONCE CALLED FOR STAYS KNOWN: planned, its inputs count as spent and the drained federation's unspent reserves read 0, so the
   // records no longer list it - and its signing, sending and claiming must go on
   const knownMoves = new Map();
@@ -1297,7 +1299,9 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
           // NOT HANDED IN AGAIN, AND NOT EXPIRED, UNTIL THE FEDERATION RAN SESSIONS (kanban #1354): an earlier hand-in may sit in its queue
           const w = sessionsPassed(pid, plan);
           if (!w.ok) { note(pid, PAYOUT.SUBMITTING, `${w.why}; not handed in again`); return refuse(w.why, 503); }
-          const t = transition(pid, PAYOUT.SUBMITTING, PAYOUT.EXPIRED, { submit_sig: null, why: `signed at height ${r.planned_at}, not taken, and due to expire at ${h}: not handed in` });
+          // ITS INPUTS FREED WITH IT (kanban #1663): an EXPIRED record holds no input, as expireIfDue's PLANNED -> EXPIRED - kept, they read spent
+          // at this seat and its next attempt here found "the reserves cannot pay it now"; a later attempt locks again what it plans
+          const t = transition(pid, PAYOUT.SUBMITTING, PAYOUT.EXPIRED, { submit_sig: null, why: `signed at height ${r.planned_at}, not taken, and due to expire at ${h}: not handed in` }, { release: true });
           if (t.ok) log(`[payout] ${pid.slice(0, 16)}: EXPIRED - attempt ${attemptOf(plan)} signed but not taken before its plan was due to expire`);
           return t.ok ? { ok: true, state: PAYOUT.EXPIRED } : t;
         }
