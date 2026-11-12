@@ -29,10 +29,21 @@ const MAX_EVENT_BYTES = 64 * 1024, MAX_SUBS = 20, MAX_FILTERS = 10, MAX_LIMIT = 
 //     (nobody else's; its regular events and round results before its one-per-key events, kanban #1621), so a node's newest
 //     round results and badges, and its badge definitions, are always kept;
 //   - in total at most TOTAL_EVENTS events and TOTAL_BYTES bytes; past that a new regular event is refused ('blocked: the relay is full'),
-//     a replaceable or parameterized one pushes out the oldest event of the author holding the most (kanban #1620);
+//     a replaceable or parameterized one pushes out the oldest event of the author holding the most (kanban #1620); and one that
+//     replaces or rolls out its author's own adds nothing and is kept (kanban #1769); bytes are bytes on disk (#1704);
 //   (no cap on sockets per address: behind the tunnel every player comes from the same local address; the quotas bound the disk);
 //   - a REQ reads only the rows its ids/authors/kinds/since/until/tags select (SQL on indexed columns), at most SCAN_MOST index rows a filter (#1720).
 const AUTHOR_EVENTS = 500, AUTHOR_BYTES = 4 * 1024 * 1024, TOTAL_EVENTS = 200000, TOTAL_BYTES = 512 * 1024 * 1024;
+// WHAT AN EVENT COSTS IS WHAT IT TAKES ON DISK (kanban #1704, #1769, #1811, #1489 v1-refute-22): the quotas counted SQLite LENGTH(json) - characters,
+// not bytes, so 3-byte UTF-8 content kept ~3x the quota - and left out the `tags` table (#1543), where every single-letter tag is a row with the
+// event's id and two indexes: an event of 6000 empty one-letter tags counted 54 KB and took ~1 MB. Now each event row carries `size`: its JSON in
+// UTF-8 bytes, plus the row and index overhead, plus each indexed tag row (TAG_ROW_BYTES + its value twice: the row and the (name, value) index),
+// and every quota sums `size`. An event indexes at most MAX_TAG_ROWS distinct single-letter (name, value) pairs; one with more is refused (the
+// game's events carry a handful: d, p, a, t, g, e; a NIP-65 list a few r).
+const EVENT_ROW_BYTES = 320, TAG_ROW_BYTES = 160, MAX_TAG_ROWS = 100;
+const indexedTags = (e) => { const seen = new Map(); for (const t of (Array.isArray(e.tags) ? e.tags : [])) if (Array.isArray(t) && t.length > 1 && typeof t[0] === 'string' && t[0].length === 1 && typeof t[1] === 'string') seen.set(`${t[0]}\u0000${t[1]}`, [t[0], t[1]]); return [...seen.values()]; };
+const eventSize = (e, json, rows) => Buffer.byteLength(json) + EVENT_ROW_BYTES + 2 * Buffer.byteLength(isParam(e.kind) ? dTag(e) : '')
+  + rows.reduce((s, [, v]) => s + TAG_ROW_BYTES + 2 * Buffer.byteLength(v), 0);
 const SLOW_BYTES = 4 * 1024 * 1024;   // kanban #1542: the most one client may leave unread before it is dropped
 const HARD_SLOW_BYTES = 2 * SLOW_BYTES;   // kanban #1717: past this backlog no message at all is queued; the client is dropped
 const hex = (n) => new RegExp(`^[0-9a-f]{${n}}$`);
@@ -151,15 +162,25 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   // kanban #1543: each event's single-letter tags (#p, #e, #d, ...) are kept in their own indexed table so a #<letter> filter is answered from the
   // index; a store written before has them filled in once here.
   const putTag = db.prepare('INSERT INTO tags (id, name, value, kind, created_at) VALUES (?, ?, ?, ?, ?)');   // kanban #1720: with its event's kind and time
-  // kanban #1753: a tag that is not [name, value, ...] of strings is skipped (a store may hold one kept before the door refused it)
-  const tagRows = (e) => { for (const t of (Array.isArray(e.tags) ? e.tags : [])) if (Array.isArray(t) && t.length > 1 && typeof t[0] === 'string' && t[0].length === 1 && typeof t[1] === 'string') putTag.run(e.id, t[0], t[1], e.kind, e.created_at); };
-  if (!db.prepare('SELECT 1 FROM tags LIMIT 1').get()) for (const r of db.prepare('SELECT json FROM events').all()) tagRows(JSON.parse(r.json));
-  const put = db.prepare('INSERT OR IGNORE INTO events (id, pubkey, kind, created_at, d, json) VALUES (?, ?, ?, ?, ?, ?)');
+  // kanban #1753: a tag that is not [name, value, ...] of strings is skipped (a store may hold one kept before the door refused it);
+  // kanban #1704: distinct (name, value) pairs, at most MAX_TAG_ROWS
+  const tagRows = (e) => { for (const [n, v] of indexedTags(e).slice(0, MAX_TAG_ROWS)) putTag.run(e.id, n, v, e.kind, e.created_at); };
+  // kanban #1704: a store written before has no `size`; it is added and filled once, each row's size as a new event's is counted
+  if (!db.prepare('PRAGMA table_info(events)').all().some((c) => c.name === 'size')) db.exec('ALTER TABLE events ADD COLUMN size INTEGER');
+  const unsized = db.prepare('SELECT id, json FROM events WHERE size IS NULL').all();
+  if (unsized.length) {
+    const setSize = db.prepare('UPDATE events SET size = ? WHERE id = ?');
+    db.exec('BEGIN');
+    for (const r of unsized) { const e = JSON.parse(r.json); setSize.run(eventSize(e, r.json, indexedTags(e).slice(0, MAX_TAG_ROWS)), r.id); }
+    db.exec('COMMIT');
+  }
+  if (!db.prepare('SELECT 1 FROM tags LIMIT 1').get()) { db.exec('BEGIN'); for (const r of db.prepare('SELECT json FROM events').all()) tagRows(JSON.parse(r.json)); db.exec('COMMIT'); }
+  const put = db.prepare('INSERT OR IGNORE INTO events (id, pubkey, kind, created_at, d, json, size) VALUES (?, ?, ?, ?, ?, ?, ?)');
   const newest = db.prepare('SELECT id, created_at FROM events WHERE pubkey = ? AND kind = ? AND d = ? ORDER BY created_at DESC, id ASC LIMIT 1');
   const drop = db.prepare('DELETE FROM events WHERE pubkey = ? AND kind = ? AND d = ? AND id != ?');
   const all = db.prepare('SELECT json FROM events ORDER BY created_at DESC');
   // kanban #1513: quotas (see AUTHOR_EVENTS above)
-  const authorUse = db.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(LENGTH(json)), 0) AS b FROM events WHERE pubkey = ?');
+  const authorUse = db.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(size), 0) AS b FROM events WHERE pubkey = ?');   // kanban #1704: bytes on disk
   // kanban #1621 (#1489 r4-nostr-2): the oldest by created_at alone was always a node's badge definitions (kind 30009, dated
   // BADGES_AT_S and published once), so ~500 rounds later its awards named definitions the relay no longer held. An author's
   // one-per-key events (replaceable: 0, 3, 10000-19999; parameterized replaceable but not a round's own 30762) now go only
@@ -170,7 +191,7 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   const dropId = db.prepare('DELETE FROM events WHERE id = ?');
   const has = db.prepare('SELECT 1 AS x FROM events WHERE id = ?');
   const heaviest = db.prepare('SELECT pubkey FROM events GROUP BY pubkey ORDER BY COUNT(*) DESC, pubkey ASC LIMIT 1');   // kanban #1620
-  const totalUse = db.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(LENGTH(json)), 0) AS b FROM events');
+  const totalUse = db.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(size), 0) AS b FROM events');   // kanban #1704
   const lim = { authorEvents: AUTHOR_EVENTS, authorBytes: AUTHOR_BYTES, totalEvents: TOTAL_EVENTS, totalBytes: TOTAL_BYTES, ...limits };
   const total = { ...totalUse.get() };
   const clients = new Set();
@@ -327,7 +348,10 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
             // refused - a new player's game seed (30078, the login failed), every node's round result (30762, which publishPass never sends
             // again). Past the total a regular event is still refused; a replaceable or parameterized one (one per author, kind and `d`:
             // profile, relay list, seed, result, badge definition) makes room instead: the oldest event of the author holding the most goes.
-            const isFull = () => total.n + 1 > lim.totalEvents || total.b + json.length > lim.totalBytes;
+            const rows = indexedTags(e);
+            if (rows.length > MAX_TAG_ROWS) return send(['OK', e.id, false, `blocked: more than ${MAX_TAG_ROWS} single-letter tags`]);   // kanban #1704
+            const size = eventSize(e, json, rows);
+            const isFull = () => total.n + 1 > lim.totalEvents || total.b + size > lim.totalBytes;
             if (isFull() && (isReplaceable(e.kind) || isParam(e.kind))) {
               for (let guard = 0; isFull() && guard < 64; guard++) {
                 const h = heaviest.get();
@@ -339,26 +363,30 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
                 total.n += u1.n - u0.n; total.b += u1.b - u0.b;
               }
             }
-            if (isFull()) return send(['OK', e.id, false, 'blocked: the relay is full']);
+            // kanban #1769: the total is then checked on the NET change, after the replaceable drop and the author's own trim, so a replacement or an
+            // author rolling its own oldest out adds nothing and is kept on a full relay; only an event that grows the store past the total is refused
             // kanban #1753: the insert, its tags, the replaceable drop and the quota are one transaction - a throw part way rolls the row back,
             // so no event is ever kept without its quota and total counted
             const before = authorUse.get(e.pubkey);
-            let use;
+            let verdict = 'kept';
             db.exec('BEGIN');
             try {
-              if (put.run(e.id, e.pubkey, e.kind, e.created_at, d, json).changes) tagRows(e);   // kanban #1543: its tags indexed with it
+              if (put.run(e.id, e.pubkey, e.kind, e.created_at, d, json, size).changes) tagRows(e);   // kanban #1543: its tags indexed with it
               if (isReplaceable(e.kind) || isParam(e.kind)) drop.run(e.pubkey, e.kind, d, e.id);
-              use = authorUse.get(e.pubkey);
+              let use = authorUse.get(e.pubkey);
               while (use.n > 1 && (use.n > lim.authorEvents || use.b > lim.authorBytes)) {
                 const old = authorOldest.get(e.pubkey);
                 if (!old) break;
                 dropId.run(old.id);
                 use = authorUse.get(e.pubkey);
               }
-              db.exec('COMMIT');
+              const dn = use.n - before.n, dbytes = use.b - before.b;   // only this author's rows changed
+              if (!has.get(e.id)) verdict = 'older';
+              else if ((dn > 0 && total.n + dn > lim.totalEvents) || (dbytes > 0 && total.b + dbytes > lim.totalBytes)) verdict = 'full';
+              if (verdict === 'kept') { db.exec('COMMIT'); total.n += dn; total.b += dbytes; } else db.exec('ROLLBACK');
             } catch (err) { try { db.exec('ROLLBACK'); } catch { /* none open */ } throw err; }
-            total.n += use.n - before.n; total.b += use.b - before.b;   // only this author's rows changed (counted after the commit)
-            if (!has.get(e.id)) return send(['OK', e.id, false, 'blocked: older than all this author already has, over the quota']);
+            if (verdict === 'full') return send(['OK', e.id, false, 'blocked: the relay is full']);
+            if (verdict === 'older') return send(['OK', e.id, false, 'blocked: older than all this author already has, over the quota']);
           }
         }
         send(['OK', e.id, true, '']);
