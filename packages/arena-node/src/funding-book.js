@@ -48,13 +48,28 @@ export const FUNDING_SQL = `CREATE TABLE IF NOT EXISTS funding_items (id TEXT PR
  *     down catches up on the network's word, and no handful of bonds can buy that word - two seats of a census of 100 never backdate anything.
  * The peers' word alone never makes a late arrival count unless a third of the census says so; a seat's own early arrival counts unless the holders
  * it hears from say the signal mostly reached the network late. Shared protocol rules unchanged.
+ *
+ * ONE RULE, NO OWN BRANCH, WITH A MARGIN (kanban #2431, #2488, #2524, a44 refute 8 skeptic 2): `own && B > L` still let this seat's own copy decide alone,
+ * with a simple majority one claim could flip: a stranger signer posting unforwarded to two seats X and W just before the cutoff counted there (B 2 > L 1)
+ * and nowhere else; one peer missing from X's single decide pull did the same (B 2, L 1 at X; B 2, L 2 at W); and ONE colluding seat answering atMs 0 to
+ * a seat that held the signal itself 1 s before the cutoff made B 2 > L 1 there. Now this seat's receipt is exactly one more holder's word, under the
+ * same rule at every seat: it counts when the holders that held it by the cutoff outnumber those that first held it after by more than two to one
+ * (B > 2 L - one late holder takes three early ones, so a late hand-on, a lying seat or a missing answer moves no outcome near the cutoff), or when more
+ * than a third of the active census claims it held by the cutoff (3 B > census). A signal every holder had in time (L = 0) still counts, a lone seat's
+ * own (#1426) too. Besides, decide() waits for every network seat to answer its pull (until PULL_WAIT_MS past the end block's time, a deadline every
+ * seat reads alike), and POST /funding hands on every fresh signal and fee approval whatever its x-arena-forwarded says (server.js).
  */
 export const CLAIM_QUORUM_DEN = 3;
+/** the margin: a signal counts on the holders' word when more than CLAIM_MARGIN early holders stand for each late one */
+export const CLAIM_MARGIN = 2;
+/** decide() waits this long past the end block's time for every network seat to answer its pull (kanban #2488), then decides on what it holds */
+export const PULL_WAIT_MS = 6 * 3600_000;
 /** `own` this seat held it by the cutoff; `before` / `after` distinct named peer seats that claim they held it by / after the cutoff; `census` the active nodes. */
 export function heldBeforeCounts({ own, before, after, census }) {
   const B = before + (own ? 1 : 0), L = after + (own ? 0 : 1);
-  if (own && B > L) return true;
-  return B > 0 && B * CLAIM_QUORUM_DEN > Math.max(0, Number(census) || 0);
+  if (B <= 0) return false;
+  if (B > CLAIM_MARGIN * L) return true;
+  return B * CLAIM_QUORUM_DEN > Math.max(0, Number(census) || 0);
 }
 
 /** A payment's id: the proposal's own for a single payment (rule 5), else one per tranche. */
@@ -571,8 +586,11 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         // `decideDepth` deep, after asking the seats it reaches, and counts a signal only when some seat held it before then
         db.prepare('INSERT OR IGNORE INTO funding_signal_ends (proposal, seen_ms) VALUES (?, ?)').run(row.id, now());
         if (height < end + Math.max(1, Number(schedule.decideDepth) || 1) - 1) continue;
+        // kanban #2488: the seats that did not answer this pull (server.js pull sets `missing`; a pull that throws missed every seat)
+        let unanswered = [];
         if (typeof pull === 'function') {
-          let got = []; try { got = await pull(row.id); } catch { got = []; }
+          let got = []; try { got = await pull(row.id); } catch { got = []; unanswered = ['*']; }
+          if (got && Array.isArray(got.missing)) unanswered = got.missing.map(String);
           let took = 0; for (const it of Array.isArray(got) ? got : []) { try { const x = await book.add(it.kind, it.hex, { heldAtMs: it.atMs === undefined ? null : Number(it.atMs), from: it.seat ?? null }); if (x && x.ok && x.fresh) took++; } catch { /* the next */ } }
           if (took) log(`[funding] ${row.id.slice(0, 16)}: ${took} signal(s) or approval(s) pulled from the peers before deciding the signal`);
         }
@@ -587,6 +605,9 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
           // moment, a seat missed signals other seats still counted until it - two outcomes again. It decides once its own clock has passed it
           if (t > now()) { log(`[funding] ${row.id.slice(0, 16)}: the end block is dated ${Math.round((t - now()) / 1000)} s ahead of this seat's clock: decided after it`); continue; }
           endSeen = t;
+          // A SEAT MISSING FROM THE PULL (kanban #2488, a44 refute 8 s2-3): the outcome is written once, so one seat that did not answer (restarting, or
+          // withholding) must not decide it - the pull is asked again next pass, until every seat answered or PULL_WAIT_MS past the end block's time
+          if (unanswered.length && now() < t + PULL_WAIT_MS) { log(`[funding] ${row.id.slice(0, 16)}: ${unanswered.length} seat(s) did not answer the pull: decided once they do, or ${Math.round((t + PULL_WAIT_MS - now()) / 60000)} min from now`); continue; }
         }
         const a = await activeAt(end).catch((e) => ({ ok: false, why: e.message }));
         if (!a || !a.ok) { log(`[funding] ${row.id.slice(0, 16)}: the signal ended at ${end}, its active nodes not read yet: ${a ? a.why : '?'}`); continue; }
