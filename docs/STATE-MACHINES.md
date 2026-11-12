@@ -1621,3 +1621,8 @@ Audit 5 (#1399, base 1502786b) and audit 6 (#1415, base eb7fd30fc) for release 2
 #### SM-E1 (change) Refused lock vs stake lock of an entry (kanban #1639)
 - One outpoint is never both a lock this seat returns (kept in `refused_locks`, or fated RETURNING in `lock_fates`) and a verified stake or fee lock of an entry. `verifyStakeLock` and `verifyFeeLock` refuse such an outpoint before the federation is asked and again right before the write (`returnedHere`, `refusedLockAt`); this covers `takeEntryParts`/`membersKnown`, which call `takeStakeLock` directly. The reverse already held: POST /refused-lock and a refused lock's forfeit refuse an outpoint that stakes an entry.
 - A round that flips back from refused to offered does not take the lock the player handed back: the page locks anew; the kept lock comes back by its forfeit while the round is refused, or at its expiry.
+
+#### SM-B15 (change) Ballot tally: a recount after a reorg keeps the outcome in force (kanban #1635)
+- A reorg below a decided proposal's anchor moves it PASSED | FAILED -> COUNTING (`undecide`) as before, but the outcome it had stays in force for the live config (`live`, `spans`, `historyAt`, so configServesRound and configForNewRound) until the recount decides it again: the new outcome then rules (the same one when no vote moved). Invariant: an undecide alone never changes the config live at the tip.
+- The replaced outcome is kept in memory and in the record (`undecided.outcome`, proposals.js), so a restart mid-recount still holds it.
+- ORPHANED holds nothing: its publication block left, so `undecided.outcome` is dropped at the orphan move and the replaced config is live again at once.
