@@ -67,6 +67,24 @@ const GC = typeof globalThis.gc === 'function' ? globalThis.gc : (() => {
   }
   throw new Error('this core thread could not read V8\'s gc');
 })();
+// THE SEAT'S V8 FLAGS (kanban #2453, #1489 audit44 refute of #1623): flags are process-wide, so the core thread's realm starts
+// with what the operator's NODE_OPTIONS or node command line set - --expose-gc put a \`gc\` global into the context and
+// --stack-trace-limit=50 started Error.stackTraceLimit at 50 (a core's 30-deep stack listed 36 lines against 11), and one core on
+// one input hashed differently on seats of one committee. Every own global of the context that is not on this fixed list of the
+// language's globals is taken out (gc, and any global a flag or a later Node adds, Temporal under --harmony-temporal), and
+// Error.stackTraceLimit starts at V8's default 10 on every seat (the core may still write it). The globals V8's extension
+// flags install (gc, externalizeString, ...) are not configurable and cannot be deleted, so this thread turns those flags off
+// before it makes the core's context (V8_EXTENSIONS_OFF): flags are read when a context is made, so the node's own realm and its
+// gc stay as the operator started them. A foreign global that still cannot be taken out stops the core from loading, by name.
+const V8_EXTENSIONS_OFF = '--no-expose-gc --no-expose-externalize-string --no-expose-statistics --no-expose-trigger-failure '
+  + '--no-expose-ignition-statistics --expose-cputracemark-as=';
+const GLOBALS = ['Object', 'Function', 'Array', 'Number', 'parseFloat', 'parseInt', 'Infinity', 'NaN', 'undefined', 'Boolean', 'String',
+  'Symbol', 'Date', 'Promise', 'RegExp', 'Error', 'AggregateError', 'EvalError', 'RangeError', 'ReferenceError', 'SyntaxError',
+  'TypeError', 'URIError', 'SuppressedError', 'globalThis', 'JSON', 'Math', 'Intl', 'ArrayBuffer', 'Atomics', 'Uint8Array', 'Int8Array',
+  'Uint16Array', 'Int16Array', 'Uint32Array', 'Int32Array', 'BigUint64Array', 'BigInt64Array', 'Uint8ClampedArray', 'Float16Array',
+  'Float32Array', 'Float64Array', 'DataView', 'Map', 'BigInt', 'Set', 'Iterator', 'WeakMap', 'WeakSet', 'Proxy', 'Reflect',
+  'FinalizationRegistry', 'WeakRef', 'DisposableStack', 'AsyncDisposableStack', 'decodeURI', 'decodeURIComponent', 'encodeURI',
+  'encodeURIComponent', 'escape', 'unescape', 'eval', 'isFinite', 'isNaN', 'console', 'SharedArrayBuffer', 'WebAssembly'];
 const LOCKDOWN = `'use strict';
 (() => {
   const budget = ${BUDGET};
@@ -159,6 +177,14 @@ const LOCKDOWN = `'use strict';
   // a global the context cannot lose (V8's gc, made non-configurable while ANOTHER thread of this process had --expose-gc set for
   // the moment core-host.js takes to read it - the flag is the process's) is no context to run a core in: it is made again (build)
   for (const k of ${JSON.stringify(REMOVED)}) if (!R.deleteProperty(globalThis, k)) throw new RangeErr('arena:context-again ' + k);
+  // kanban #2453: only the language's own globals stay, whatever the seat's V8 flags added (one that cannot be taken out
+  // stops the load), and the stack trace limit starts the same on every seat
+  const language = new Set(${JSON.stringify(GLOBALS)});
+  for (const k of Reflect.ownKeys(globalThis)) {
+    if (typeof k === 'string' && language.has(k)) continue;
+    if (!Reflect.deleteProperty(globalThis, k)) throw new TypeError("the seat's node put the global " + String(k) + " into the core's realm, and it cannot be taken out");
+  }
+  Error.stackTraceLimit = 10;
   delete Math.random;
   // THE SEAT'S LOCALE (kanban #1623): Intl is gone, but the locale-aware methods of the language still answer by the
   // thread's ICU default locale - the seat's LANG/LC_ALL (measured: '1,234.5|äz' under en_US, '1 234,5|zä' under sv_SE),
@@ -236,6 +262,7 @@ function build() {
   // nothing of the node stands behind it, and a core's global reads run at full speed (measured 4x slower behind them)
   let context, budget;
   for (let tries = 0; ; tries++) {
+    v8.setFlagsFromString(V8_EXTENSIONS_OFF);   // kanban #2453: no V8 extension global in the context made next
     context = vm.createContext(vm.constants.DONT_CONTEXTIFY, {
       name: `core ${name}`, codeGeneration: { strings: false, wasm: false }, microtaskMode: 'afterEvaluate',
     });
