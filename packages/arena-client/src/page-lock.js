@@ -102,6 +102,9 @@ function valueOf(storage, s) {
   if (blob === null) throw new Error(`the wallet's long value ${s.slice(1, 9)} is gone from this browser`);
   return unpackHex(blob);
 }
+// AND A KEY WRITTEN PACKED LEAVES NO RAW ROW OF IT (kanban #1978): an older page's unpacked row of the same key would be a second, older value of it
+// in entries(), and a packing pass would move it over the newer one. Removed only after the packed write took (as remove() drops both).
+function dropRaw(storage, prefix, k) { if (packHex(k) !== String(k)) storage.removeItem(prefix + k); }
 const WALLET_KEY = /^(arena\.(?:walletdb|lockdb)\.[0-9a-f]{16}\.[0-9a-f]{16}\.)(.*)$/s;
 /** EVERY WALLET THIS BROWSER KEEPS, PACKED IN PLACE: nothing is lost, an entry already packed is left. Answers the characters freed. */
 export function packWallets(storage) {
@@ -111,6 +114,9 @@ export function packWallets(storage) {
     const m = WALLET_KEY.exec(k); if (!m) continue;
     const v = storage.getItem(k); if (v === null) continue;
     const key = m[1] + packHex(m[2]);
+    // ONE KEY, TWO ROWS (kanban #1978): a raw row an older page left beside the packed row the wallet wrote since (a pass stopped by a full browser
+    // leaves raw rows, and the wallet writes on under the packed key) - the packed row is the newer value; the raw one goes, never over it
+    if (key !== k && storage.getItem(key) !== null) { freed += k.length + v.length; storage.removeItem(k); continue; }
     const val = v[0] === BLOB_MARK || (v[0] === PACKED && unpackHex(v).length < BLOB_MIN) ? v : keptValue(storage, unpackHex(v));
     if (key === k && val === v) continue;
     // the old one first: on a full browser the shorter copy fits only then, and it goes straight back if the browser refuses
@@ -178,7 +184,7 @@ export function lockStoreFor(storage, roundId, secret) {
     put(k, v) {
       if (!inMemory && storageChars(storage) >= LOCK_ROOM_CHARS) toMemory();
       if (!inMemory) {
-        try { putRoomy(storage, prefix + packHex(k), keptValue(storage, v)); return; } catch (e) { if (!/quota/i.test(`${e && e.name} ${e && e.message}`)) throw e; toMemory(); }
+        try { putRoomy(storage, prefix + packHex(k), keptValue(storage, v)); dropRaw(storage, prefix, k); return; } catch (e) { if (!/quota/i.test(`${e && e.name} ${e && e.message}`)) throw e; toMemory(); }
       }
       inMemory.set(k, v);
     },
@@ -491,7 +497,7 @@ export function walletStoreFor(storage, federationId, secret) {
       }
       return JSON.stringify(out);
     },
-    put(k, v) { putRoomy(storage, prefix + packHex(k), keptValue(storage, v)); },
+    put(k, v) { putRoomy(storage, prefix + packHex(k), keptValue(storage, v)); dropRaw(storage, prefix, k); },   // kanban #1978: the raw row goes once the packed one is written
     remove(k) { storage.removeItem(prefix + packHex(k)); storage.removeItem(prefix + k); },
   };
 }
