@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { pathToFileURL } from 'node:url';
-import { sandboxFor, endIdleCores } from '../src/core-sandbox.js';
+import { sandboxFor, endIdleCores, loadCore, coreFiles } from '../src/core-sandbox.js';
 import { replay } from '../src/replay.js';
 
 const DIR = mkdtempSync(join(tmpdir(), 'hostile-core-'));
@@ -119,9 +119,13 @@ test('every run-time attack throws inside the sandbox: the replay is not ok, wit
 test('a dynamic import() gets no module: the core cannot even learn one exists', async () => {
   const c = core({ step: "import('node:net').then(() => { globalThis.got = 'net'; }, (e) => { globalThis.got = 'refused: ' + e.code; })", start: "st.note = String(globalThis.got)" });
   assert.equal(run(c).ok, true);
-  // the second run reads what the first one's import() came to
-  const s = sandboxFor(c);
-  const out = s.call('replay', { seedWord: 1, config: {}, runTicks: 10, start: 0, words: [[0, 0, 0, 0, 0]], events: {}, marks: [], pictures: [] });
+  // the second run reads what the first one's import() came to - on one thread: a replay through sandboxFor runs on a fresh
+  // thread of its own (kanban #1624), so this test keeps both runs on one with oneReplay
+  const s = loadCore(coreFiles(c), { oneReplay: true });
+  const R = { seedWord: 1, config: {}, runTicks: 10, start: 0, words: [[0, 0, 0, 0, 0]], events: {}, marks: [], pictures: [] };
+  s.call('replay', R);
+  const out = s.call('replay', R);
+  s.end();
   assert.match(out.stateHash, /refused: ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING/);
   rows.push(['network', 'a dynamic import()', 'rejected in the sandbox', out.stateHash.replace(/^h:\d+:\d+:/, '')]);
   await stillAnswering();
