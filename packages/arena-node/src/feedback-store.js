@@ -447,7 +447,10 @@ export function openFeedbackStore(path = ':memory:') {
   function budget({ rules = REWARD_DEFAULTS, nowMs = Date.now() } = {}) {
     const R = { ...REWARD_DEFAULTS, ...(rules || {}) };
     const sum = (sql, ...a) => db.prepare(sql).get(...a).s;
-    return { weekApprovedSats: sum(`SELECT COALESCE(SUM(amount_sats), 0) AS s FROM reports WHERE state IN ('accepted', 'paid') AND changed_ms >= ? AND COALESCE(severity, '') NOT IN ('critical', 'node')`, nowMs - WEEK_MS),
+    // EVERY APPROVAL OF THE WEEK (Daniel 2026-11-12: "Überall muss 56000 stehen"): the week's figure every page shows counts all approvals of the last
+    // 7 days, critical and node ones too, so it matches "approved in all" for a week that holds the whole history. The approval rule keeps its own
+    // sum (approve: the budget counts no critical or node approval); weekOutsideBudgetSats names that part
+    return { weekApprovedSats: sum(`SELECT COALESCE(SUM(amount_sats), 0) AS s FROM reports WHERE state IN ('accepted', 'paid') AND changed_ms >= ?`, nowMs - WEEK_MS),
       // AND WHAT THIS WEEK APPROVED OUTSIDE IT (Daniel 2026-11-12, the admin page: "46,000 of 100,000 approved this week" beside "56,000 approved in
       // all", all of it this week): a critical bug and a node bounty do not count against the weekly budget, so they are shown on their own
       weekOutsideBudgetSats: sum(`SELECT COALESCE(SUM(amount_sats), 0) AS s FROM reports WHERE state IN ('accepted', 'paid') AND changed_ms >= ? AND COALESCE(severity, '') IN ('critical', 'node')`, nowMs - WEEK_MS),
