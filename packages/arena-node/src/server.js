@@ -195,7 +195,7 @@ import { SIGNED_RESULT_BYTES, resultId, decodePlayerResult, splitSignedResult } 
  */
 export const MAX_FRAME_BYTES = Math.max(
   MAX_SIGNED_INPUT_BATCH_BYTES, SIGNED_CHECKPOINT_BYTES, SIGNED_RECEIPT_BYTES);
-import { CLOSED } from './store.js';
+import { CLOSED, relayRowCost } from './store.js';
 import { Round } from './round.js';
 import { Verifier } from './verify.js';
 import { Ghosts } from './ghosts.js';
@@ -299,6 +299,13 @@ const RELAY_SLASH_RESERVE = relayPart('ARENA_RELAY_SLASH_RESERVE', 8);
 // signed result (or re-run) beside it carries the accused's own signature - so only a committee member's own signatures can fill
 // it, and one accused node in one round takes at most RELAY_SLASH_ACCUSED_MOST (RELAY_SLASH_RESERVE/16: 2 MiB live, ~4,800 proofs).
 const RELAY_SLASH_ACCUSED_MOST = Number(process.env.ARENA_RELAY_SLASH_ACCUSED_MOST) > 0 ? Number(process.env.ARENA_RELAY_SLASH_ACCUSED_MOST) : Math.floor(RELAY_SLASH_RESERVE / 16);
+// AND ONE NODE DOES NOT FILL IT OVER MANY ROUNDS (kanban #2055, #2073, refute 3 of #1532: the cap was per accused PER ROUND only. A seat
+// is on about half of all held rounds, most with no entry, so one committee member signed throwaway results about random players and
+// filed proofs against itself in 16 rounds: the share was full and every real slash proof against any other node got 507, at no cost).
+// Over all rounds together one accused node takes at most RELAY_SLASH_NODE_MOST (RELAY_SLASH_RESERVE/32: 1 MiB live, ~1,300 proofs - one
+// is enough to slash its bond). Only a committee member's own signature fills its part, so it takes more than 32 colluding committee
+// members (a committee is 14 seats live) to fill the share. Every cap counts each row's cost (store.js relayRowCost), not its bytes.
+const RELAY_SLASH_NODE_MOST = Number(process.env.ARENA_RELAY_SLASH_NODE_MOST) > 0 ? Number(process.env.ARENA_RELAY_SLASH_NODE_MOST) : Math.floor(RELAY_SLASH_RESERVE / 32);
 const read = (req, max = BODY_MOST) => new Promise((resolve, reject) => {
   const parts = []; let size = 0;
   // A DOOR'S OWN LIMIT (kanban #1271): past `max` bytes the body is not kept, the request ends, and the door answers 413
@@ -10765,9 +10772,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const keepSlash = (res, idHex, bytes, proof) => {
         const id = Buffer.from(idHex, 'hex');
         if (round.relayHas(id)) return text(res, 201, 'kept');   // the same proof again: kept already, nothing more is counted
-        if (round.relayedSlashBytes({ roundId: proof.roundId, accused: proof.nodePubkey }) + bytes.length > RELAY_SLASH_ACCUSED_MOST)
+        const cost = relayRowCost(bytes.length);   // kanban #2055, #2073: a row's cost on disk, not its bytes alone
+        if (round.relayedSlashBytes({ roundId: proof.roundId, accused: proof.nodePubkey }) + cost > RELAY_SLASH_ACCUSED_MOST)
           return text(res, 507, 'this relay keeps no more slash proofs against that node in that round: its share is full');
-        if (round.relayedSlashBytes() + bytes.length > RELAY_SLASH_RESERVE) return text(res, 507, 'this relay keeps no more slash proofs: their share of its store is full');
+        if (round.relayedSlashBytes({ accused: proof.nodePubkey }) + cost > RELAY_SLASH_NODE_MOST)
+          return text(res, 507, 'this relay keeps no more slash proofs against that node: its share over all rounds is full');
+        if (round.relayedSlashBytes() + cost > RELAY_SLASH_RESERVE) return text(res, 507, 'this relay keeps no more slash proofs: their share of its store is full');
         round.relayPut(id, bytes, { roundId: proof.roundId, accused: proof.nodePubkey });
         return text(res, 201, 'kept');
       };
@@ -10837,13 +10847,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         }
         // the same bytes again are kept already (and become named once a held result names them): nothing more is counted
         if (round.relayHas(hashBytes)) { round.relayPut(hashBytes, bytes, { entryId: eid, roundId: rid, named }); return text(res, 201, 'kept'); }
+        const cost = relayRowCost(bytes.length);   // kanban #2055, #2073: a row's cost on disk (a 65-byte reveal record takes ~5x its bytes)
         if (!named) {
-          if (round.relayedUnnamedBytes({ entryId: eid }) + bytes.length > RELAY_ENTRY_MOST) return text(res, 507, 'this relay keeps no more for that entry: no held result names this transcript, and its share for the entry is full');
-          if (round.relayedUnnamedBytes({ roundId: rid }) + bytes.length > RELAY_ROUND_MOST) return text(res, 507, 'this relay keeps no more for that round: no held result names this transcript, and its share for the round is full');
-          if (round.relayedUnnamedBytes() + bytes.length > RELAY_UNNAMED_MOST) return text(res, 507, 'this relay keeps no more transcripts no held result names: that share is full');
+          if (round.relayedUnnamedBytes({ entryId: eid }) + cost > RELAY_ENTRY_MOST) return text(res, 507, 'this relay keeps no more for that entry: no held result names this transcript, and its share for the entry is full');
+          if (round.relayedUnnamedBytes({ roundId: rid }) + cost > RELAY_ROUND_MOST) return text(res, 507, 'this relay keeps no more for that round: no held result names this transcript, and its share for the round is full');
+          if (round.relayedUnnamedBytes() + cost > RELAY_UNNAMED_MOST) return text(res, 507, 'this relay keeps no more transcripts no held result names: that share is full');
         }
         // kanban #1917: transcripts count among themselves; slash proofs have RELAY_SLASH_RESERVE of their own
-        if (round.relayedTranscriptBytes() + bytes.length > RELAY_MOST - RELAY_SLASH_RESERVE) return text(res, 507, 'this relay keeps no more: its store for relayed bytes is full');
+        if (round.relayedTranscriptBytes() + cost > RELAY_MOST - RELAY_SLASH_RESERVE) return text(res, 507, 'this relay keeps no more: its store for relayed bytes is full');
         round.relayPut(hashBytes, bytes, { entryId: eid, roundId: rid, named });
         return text(res, 201, 'kept');
       }
