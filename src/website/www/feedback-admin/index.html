@@ -100,12 +100,14 @@
   function budget(b) {
     const s = $('stats'); s.replaceChildren();
     const stat = (label, v) => el('div', { cls: 'stat' }, el('b', { text: v }), el('span', { text: label }));
-    // THE WEEKLY BUDGET, AND WHAT THIS WEEK APPROVED OUTSIDE IT (Daniel 2026-11-12: "46,000 of 100,000 approved this week" read as a mistake beside
-    // "56,000 approved in all" - a critical bug's 10,000 do not count against the budget): two figures, each named
-    s.append(stat('of the weekly budget used', `${sats(b.weekApprovedSats)} of ${sats(b.weeklyBudgetSats)}`),
-      ...(Number(b.weekOutsideBudgetSats) > 0 ? [stat('this week outside the budget (critical, node)', sats(b.weekOutsideBudgetSats))] : []), stat('approved in all', sats(b.allApprovedSats)), stat('paid', sats(b.paidSats)),
+    // EVERYTHING THIS WEEK APPROVED, IN ONE FIGURE (Daniel 2026-11-12: "die bug bounties haben erst gestern begonnen und es war alles die selbe
+    // Woche. Es muss deckungsgleich sein"): the week's figure counts every approval of the last 7 days - with this week's whole history it equals
+    // "approved in all". The critical and node part is named under it: by the rule it never blocks another approval (outside the budget)
+    const weekAll = Number(b.weekApprovedSats || 0) + Number(b.weekOutsideBudgetSats || 0);
+    s.append(stat('approved this week' + (Number(b.weekOutsideBudgetSats) > 0 ? ` (${sats(b.weekOutsideBudgetSats)} of it critical: outside the budget)` : ''), `${sats(weekAll)} of ${sats(b.weeklyBudgetSats)}`),
+      stat('approved in all', sats(b.allApprovedSats)), stat('paid', sats(b.paidSats)),
       stat('links not yet claimed', `${b.openRewards.n} · ${sats(b.openRewards.s)}`), stat('new reports', String((b.counts && b.counts.new) || 0)));
-    $('weekbar').style.width = `${Math.min(100, (100 * b.weekApprovedSats) / Math.max(1, b.weeklyBudgetSats))}%`;
+    $('weekbar').style.width = `${Math.min(100, (100 * weekAll) / Math.max(1, b.weeklyBudgetSats))}%`;
     // REAL SATS ON MAINNET (kanban #1450, Daniel 2026-11-11: bounties are real Lightning payments on mainnet): said by the faucet's payout network
     $('weektext').textContent = (b.network === 'mainnet' ? 'Mainnet sats: real money, paid over Lightning from the bounty wallet.' : 'Testnet sats, no value.') + ' The weekly budget and the per-player limit are the faucet\'s reward rules.';
     const sub = document.querySelector('p.sub[data-payouts]'); if (sub) sub.textContent = `Player reports, the reward rules and the ${b.network === 'mainnet' ? 'mainnet Lightning' : 'testnet'} payouts. Nothing is paid without an approval here.`;
