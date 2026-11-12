@@ -638,6 +638,8 @@ export const COMMENT_MOST = 200;
 export { internalAddress, walletUrlRefusal, guardedLookup, publicFetch } from './public-fetch.js';
 // and the a45 #2236 name for the faucet's and the winnings send's one guard by where a name leads (kanban #1809, #2236)
 export { hostReach } from './public-fetch.js';
+// kanban #2454: the zap address tool dials a receipt's relay only through this lookup (global addresses, checked at connect)
+export { guardedLookup as globalLookup } from './public-fetch.js';
 // the names #1511 / #1809 gave these checks, kept for their callers: a URL on a public name, an address that is global, one pinned GET
 export const publicHttpsUrl = (u) => !walletUrlRefusal(u);
 export const addressIsGlobal = (address) => !internalAddress(address);

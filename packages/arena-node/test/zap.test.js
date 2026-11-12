@@ -155,7 +155,7 @@ test('the page zaps a player from its own wallet, and reads the receipt and the 
   const relay = await startRelay({ port: 0 });
   const relayUrl = `ws://127.0.0.1:${relay.port}`;
   const z = await serveZapAddresses({ port: 0, publicHost: 'zap.example', names: ['bob'], secret: server.secret, curve, invoice: ln.invoice,
-    lookup: ln.lookup, publish: async (e, relays) => { for (const r of relays) await sendToRelay(r, [e]); }, watchMs: 50 });
+    lookup: ln.lookup, publish: async (e, relays) => { for (const r of relays) await sendToRelay(r, [e]); }, watchMs: 50, allowPrivateRelays: true });   // a local relay (kanban #2454)
   const fetcher = (url, o) => fetch(String(url).replace('https://zap.example', `http://127.0.0.1:${z.port}`), o);
   const payer = keyPair(); const bob = keyPair();
   const WebSocketImpl = WebSocket;

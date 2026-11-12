@@ -36,7 +36,7 @@ test('#1489 r6-nostr-2: a zap naming silent relays does not hold the next paid z
     lookup: async () => ({ settled: true, preimage: null, settledAtS: Math.floor(Date.now() / 1000) }),
     // the zap tool's publish, as tools/zap-address.mjs has it: each relay in turn, sendToRelay (10 s timeout each)
     publish: async (receipt, relays) => { for (const r of relays) await sendToRelay(r, [receipt]); },
-    watchMs: 3600000 });
+    watchMs: 3600000, allowPrivateRelays: true });   // the silent relays are local (kanban #2454)
   try {
     const to = keyPair();
     const zap = async (payer, relays) => {
