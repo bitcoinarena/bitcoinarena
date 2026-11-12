@@ -1542,3 +1542,9 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-19 (add) E-cash welcome: pool shelf -> taken/ -> book row (kanban #1835)
+- A note leaves the shelf only for a welcome the book holds. `grantEcash` renames the note into `taken/` and then writes the book; when the book write fails (a full disk), the note is renamed back to the shelf before the 500, so a retry takes the same note, not the next one.
+- At start the faucet puts back every note in `taken/` that no book row names as its `noteFile` (a faucet killed between the take and the book write). It does so only when the book file is there and reads: a lost or broken book puts nothing back, so a note already handed out is never offered twice.
