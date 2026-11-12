@@ -205,6 +205,7 @@ import { thresholdOf as thresholdOfFederation } from '../../arena-protocol/src/f
 import { Roster, endpointsOf, NO_CHAIN_VIEW_WHY, findSeriesPublication as findSeriesPublicationIndexed } from './roster.js';
 import { createSeriesPull, PULL_EVERY_MS } from './series-pull.js';
 import { createEntryRelay, RELAY_HEADER, lookAtMembers, seatView } from './entry-relay.js';
+import { bytesUpTo } from './peer-read.js';
 import { seatingAgent, MAX_PRESENTS_PER_BATCH, PRESENT_BYTES } from './seating-agent.js';
 import { decodeSeatingCertificate, encodeSeatingCertificate } from '../../arena-protocol/src/seating.js';
 import { receiptsNeeded as roundThreshold, donationKeysForNetworkId } from '../../arena-protocol/src/genesis.js';
@@ -957,7 +958,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         try {
           const r = await fetch(`${b}/round?id=${rid}`, { signal: AbortSignal.timeout(2500) });
           if (!r.ok) continue;
-          const c = decodeRoundContract(new Uint8Array(await r.arrayBuffer()));
+          const c = decodeRoundContract(await bytesUpTo(r, 64 * 1024)); // kanban #2244: a round contract is under 1 kB; read up to 64 kB
           if (c.gameId instanceof Uint8Array) { roundApps.set(rid, toHex(c.gameId)); roundTimes.set(rid, timesOf(c)); break; }
         } catch { /* the next seat */ }
       }
