@@ -106,8 +106,11 @@ const readMarkets = async () => {
   marketsReadMs = Date.now();
   const key = toHex(attestor.pubkey);
   const next = marketsToAttest({ games, name: GAME, key, mode: MODE, ids: GAME_IDS });
-  versions = marketVersions({ games, name: GAME, key, mode: MODE });
-  // each version's own grid (its manifest's roundPeriodMs) - a close off it is no round of the market (kanban #1705)
+  versions = marketVersions({ games, name: GAME, key, mode: MODE, ids: GAME_IDS });
+  // each version's own grid (its manifest's roundPeriodMs) - a close off it is no round of the market (kanban #1705); only of a
+  // market believed above (kanban #2080: a forged manifest's grid is no grid of this market's) - a grid of a market no longer
+  // believed is dropped with it
+  for (const id of [...periods.keys()]) if (!next.has(id)) periods.delete(id);
   for (const g of games) { try { const m = decodeManifest(fromHex(String(g.manifest))); const id = toHex(gameIdOf(m)); if (next.has(id)) periods.set(id, m.roundPeriodMs); } catch { /* not a manifest */ } }
   const added = [...next].filter((id) => !marketIds.has(id));
   const dropped = [...marketIds].filter((id) => !next.has(id));
@@ -147,8 +150,9 @@ const roundsOfGame = async () => {
       for (const x of rows) {
         if (!x || !x.game || !ofThisMarket(x) || !/^[0-9a-f]{64}$/i.test(String(x.id)) || !/^[0-9]{1,16}$/.test(String(x.entryCloseMs))) continue;
         const id = String(x.id).toLowerCase();
-        if (!byId.has(id)) byId.set(id, { listedBy: new Map(), gameId: String(x.game.id || '').toLowerCase() });
-        byId.get(id).listedBy.set(seat, BigInt(x.entryCloseMs));
+        // EACH SEAT'S OWN (close, game) PAIR (kanban #2080): not the game label of whichever seat answered first
+        if (!byId.has(id)) byId.set(id, { listedBy: new Map() });
+        byId.get(id).listedBy.set(seat, { close: BigInt(x.entryCloseMs), gameId: String(x.game.id || '').toLowerCase() });
       }
     } catch { /* the next seat */ }
   }));
@@ -202,27 +206,34 @@ const contractFrom = async (seat, r) => {
 const closeOfRound = async (r) => {
   const known = closes.get(r.id);
   if (known) return { closeMs: known.closeMs, gameId: known.gameId, from: 'contract' };
-  const listedCloses = [...new Set([...r.listedBy.values()].map(String))];
   // only a round whose window may have ended is worth asking about: its listed closes are all this attestor has before
   const nowMs = BigInt(Date.now());
-  const due = [...r.listedBy.values()].some((c) => nowMs >= c + BigInt(SAMPLE_MS));
+  const due = [...r.listedBy.values()].some(({ close }) => nowMs >= close + BigInt(SAMPLE_MS));
   if (due && Date.now() - (closeTried.get(r.id) || 0) >= CONTRACT_RETRY_MS) {
     closeTried.set(r.id, Date.now());
     const got = await firstOf([...r.listedBy.keys(), ...SEATS.filter((s) => !r.listedBy.has(s))], (seat) => contractFrom(seat, r));
     if (got) {
       closes.set(r.id, { closeMs: got.closeMs, gameId: got.gameId }); closeTried.delete(r.id);
-      const liars = [...r.listedBy].filter(([, c]) => c !== got.closeMs).map(([s]) => s);
+      const liars = [...r.listedBy].filter(([, l]) => l.close !== got.closeMs || l.gameId !== got.gameId).map(([s]) => s);
       if (liars.length) log({ step: 'listed close is not the contract\'s', round: r.id, contract: got.closeMs, seats: liars });
       return { closeMs: got.closeMs, gameId: got.gameId, from: 'contract' };
     }
   }
-  if (listedCloses.length !== 1) return { closeMs: null, why: `the seats list ${listedCloses.length} closes for it and none serves its contract` };
-  return { closeMs: BigInt(listedCloses[0]), gameId: r.gameId, from: 'listing' };
+  // no contract: a listed close only while every seat listing the round names the same close AND the same game (kanban #2080)
+  const pairs = [...new Set([...r.listedBy.values()].map((l) => `${l.close}/${l.gameId}`))];
+  if (pairs.length !== 1) return { closeMs: null, why: `the seats list ${pairs.length} (close, game) pairs for it and none serves its contract` };
+  const only = [...r.listedBy.values()][0];
+  return { closeMs: only.close, gameId: only.gameId, from: 'listing' };
 };
 
 // THE ROUNDS WORTH WORK THIS TICK: every round whose close is known from its contract or that holds a word; of the others, only
 // a round that is due, inside the signing hour and on the market's grid by some seat's listing - at most UNVERIFIED_PER_SEAT of
 // them per listing seat, the latest closes first (a round is taken on the first of its seats with room left)
+// EACH SEAT'S PAIR ON ITS OWN (kanban #2080, #1489, refute 4 of fix:attest:3): the round's game was the label of the first seat
+// that answered, and every seat's close was checked against THAT game's grid - one seat labelling the real round with a forged
+// version of the market (a day grid) put every honest close off the grid, and the round was never asked about. Now a round is kept
+// when ANY listing seat's own (close, game) is due, in the hour and on that game's grid, and it is charged to such a seat's share:
+// a seat's label decides nothing about another seat's listing.
 const capped = new Set();              // seats logged once as listing more unverified rounds than their share
 const roundsToWork = (rounds) => {
   const nowMs = BigInt(Date.now());
@@ -230,17 +241,19 @@ const roundsToWork = (rounds) => {
   const open = [];
   for (const r of rounds) {
     if (closes.has(r.id) || words.has(r.id)) { out.push(r); continue; }
-    const gp = periods.get(r.gameId);
-    const ok = [...r.listedBy.values()].filter((c) => nowMs >= c + BigInt(SAMPLE_MS) && nowMs < c + HOUR && !(typeof gp === 'bigint' && gp > 0n && c % gp !== 0n));
+    const ok = [...r.listedBy].filter(([, { close: c, gameId }]) => {
+      const gp = periods.get(gameId);
+      return nowMs >= c + BigInt(SAMPLE_MS) && nowMs < c + HOUR && !(typeof gp === 'bigint' && gp > 0n && c % gp !== 0n);
+    });
     if (!ok.length) continue;
-    open.push({ r, latest: ok.reduce((a, b) => (b > a ? b : a)) });
+    open.push({ r, seats: ok.map(([s]) => s), latest: ok.map(([, l]) => l.close).reduce((a, b) => (b > a ? b : a)) });
   }
   open.sort((a, b) => (a.latest > b.latest ? -1 : a.latest < b.latest ? 1 : 0));
   const used = new Map();
-  for (const { r } of open) {
-    const seat = [...r.listedBy.keys()].find((s) => (used.get(s) || 0) < UNVERIFIED_PER_SEAT);
+  for (const { r, seats } of open) {
+    const seat = seats.find((s) => (used.get(s) || 0) < UNVERIFIED_PER_SEAT);
     if (seat === undefined) {
-      for (const s of r.listedBy.keys()) if (!capped.has(s)) { capped.add(s); log({ step: 'seat lists too many unverified rounds', seat: s, share: UNVERIFIED_PER_SEAT }); }
+      for (const s of seats) if (!capped.has(s)) { capped.add(s); log({ step: 'seat lists too many unverified rounds', seat: s, share: UNVERIFIED_PER_SEAT }); }
       continue;
     }
     used.set(seat, (used.get(seat) || 0) + 1);
