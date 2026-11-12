@@ -58,7 +58,9 @@ export const paymentIdsOf = (pid) => [pid, ...Array.from({ length: FUNDING_TRANC
  *   { kind: 'fix', tranches }                        null -> FIXED
  *   { kind: 'refix', tranches, payable: false }      FIXED -> FIXED with the derived count, only while no part is payable yet (no part
  *                                                    can have gone under the old ids): a row the old reserve rule fixed
- *   { kind: 'cancel', k, why }                       FIXED -> CANCELLED; a CANCELLED row never changes
+ *   { kind: 'cancel', k, why, hash }                 FIXED -> CANCELLED, held to `hash`: its due block's as this seat counted it
+ *   { kind: 'reopen', reorged: true, recorded: false } CANCELLED -> FIXED, only when the due block it was counted at is no longer
+ *                                                    this chain's and no payout of part k or a later one is recorded (kanban #2536)
  * Answers { ok: true, row } or { ok: false, why }.
  */
 export const FUNDING_PAYMENT_STATE = Object.freeze({ FIXED: 'FIXED', CANCELLED: 'CANCELLED' });
@@ -66,7 +68,7 @@ export const fundingPaymentStateOf = (row) => (!row ? null : row.cancelled !== n
 export function fundingPaymentStep(row, ev) {
   const state = fundingPaymentStateOf(row);
   const count = (n) => n === 1 || n === FUNDING_TRANCHES;
-  if (ev.kind === 'fix') return state === null && count(ev.tranches) ? { ok: true, row: { tranches: ev.tranches, cancelled: null, cancelled_k: null } }
+  if (ev.kind === 'fix') return state === null && count(ev.tranches) ? { ok: true, row: { tranches: ev.tranches, cancelled: null, cancelled_k: null, cancelled_hash: null } }
     : { ok: false, why: state ? 'its parts are fixed already' : 'no such part count' };
   if (ev.kind === 'refix') {
     if (state !== FUNDING_PAYMENT_STATE.FIXED) return { ok: false, why: state ? 'a cancelled proposal keeps its parts' : 'nothing fixed to change' };
@@ -77,7 +79,16 @@ export function fundingPaymentStep(row, ev) {
   if (ev.kind === 'cancel') {
     if (state !== FUNDING_PAYMENT_STATE.FIXED) return { ok: false, why: state ? 'cancelled already, for good' : 'nothing fixed to cancel' };
     if (!Number.isInteger(ev.k) || ev.k < 0 || ev.k >= row.tranches) return { ok: false, why: 'no such part' };
-    return { ok: true, row: { ...row, cancelled: String(ev.why || 'cancelled'), cancelled_k: ev.k } };
+    return { ok: true, row: { ...row, cancelled: String(ev.why || 'cancelled'), cancelled_k: ev.k, cancelled_hash: ev.hash ? String(ev.hash) : null } };
+  }
+  // A CANCELLATION IS HELD TO ITS CHAIN (kanban #2536, state audit 2026-11-12): it was "for good", but it is a re-count of vote blocks
+  // held by hash - a reorg that took the NO away left this seat refusing the parts a seat on the new chain pays. It reopens only when
+  // its due block moved and nothing of part k on is recorded (a payout that may have gone keeps the row as it is)
+  if (ev.kind === 'reopen') {
+    if (state !== FUNDING_PAYMENT_STATE.CANCELLED) return { ok: false, why: state ? 'not cancelled' : 'nothing fixed to reopen' };
+    if (ev.reorged !== true) return { ok: false, why: 'its due block is still this chain\'s' };
+    if (ev.recorded !== false) return { ok: false, why: 'a payout of a cancelled part may have gone' };
+    return { ok: true, row: { ...row, cancelled: null, cancelled_k: null, cancelled_hash: null } };
   }
   return { ok: false, why: 'no such step' };
 }
@@ -98,6 +109,8 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
   db.exec(FUNDING_SQL);
   // kanban #1749: the census is held to the hash of the block it was read at (a store from before has no column: added, rows without one)
   if (!db.prepare('PRAGMA table_info(funding_vote_census)').all().some((c) => c.name === 'hash')) db.exec('ALTER TABLE funding_vote_census ADD COLUMN hash TEXT');
+  // kanban #2536: a payment's cancellation is held to the hash of the due block it was counted at (older rows: none, taken at the next pass)
+  if (!db.prepare('PRAGMA table_info(funding_payments)').all().some((c) => c.name === 'cancelled_hash')) db.exec('ALTER TABLE funding_payments ADD COLUMN cancelled_hash TEXT');
   const rows = (kind) => db.prepare('SELECT id, proposal, hex, kind FROM funding_items WHERE kind = ? ORDER BY at_ms, id').all(kind);
   // the proposals the signal and the vote run over: funding proposals and fee proposals
   // ... and leaderboard payout requests: voted on as they are, but with no signal - their vote starts at publication
@@ -266,15 +279,15 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
    * proposal, k, of, lnurl, amountSats, proposalSats, dueAt, decidableAt }].
    */
   // every write of a payment row is one fundingPaymentStep, kept by compare-and-set on the row as it was read
-  const paymentRow = (pid) => db.prepare('SELECT tranches, cancelled, cancelled_k FROM funding_payments WHERE proposal = ?').get(pid) || null;
+  const paymentRow = (pid) => db.prepare('SELECT tranches, cancelled, cancelled_k, cancelled_hash FROM funding_payments WHERE proposal = ?').get(pid) || null;
   function stepPayment(pid, ev) {
     const was = paymentRow(pid);
     const s = fundingPaymentStep(was, ev); if (!s.ok) return { ...s, row: was };
     const r = s.row;
     const ch = was === null
-      ? db.prepare('INSERT OR IGNORE INTO funding_payments (proposal, tranches, cancelled, cancelled_k) VALUES (?, ?, ?, ?)').run(pid, r.tranches, r.cancelled, r.cancelled_k).changes
-      : db.prepare('UPDATE funding_payments SET tranches = ?, cancelled = ?, cancelled_k = ? WHERE proposal = ? AND tranches = ? AND cancelled IS ? AND cancelled_k IS ?')
-        .run(r.tranches, r.cancelled, r.cancelled_k, pid, was.tranches, was.cancelled, was.cancelled_k).changes;
+      ? db.prepare('INSERT OR IGNORE INTO funding_payments (proposal, tranches, cancelled, cancelled_k, cancelled_hash) VALUES (?, ?, ?, ?, ?)').run(pid, r.tranches, r.cancelled, r.cancelled_k, r.cancelled_hash ?? null).changes
+      : db.prepare('UPDATE funding_payments SET tranches = ?, cancelled = ?, cancelled_k = ?, cancelled_hash = ? WHERE proposal = ? AND tranches = ? AND cancelled IS ? AND cancelled_k IS ? AND cancelled_hash IS ?')
+        .run(r.tranches, r.cancelled, r.cancelled_k, r.cancelled_hash ?? null, pid, was.tranches, was.cancelled, was.cancelled_k, was.cancelled_hash ?? null).changes;
     return ch === 1 ? { ok: true, row: r } : { ok: false, why: 'the row moved meanwhile', row: paymentRow(pid) };
   }
   // `recorded(id)`: whether a reserve payout record exists under that payment id (any state) - a refix never moves a proposal
@@ -302,6 +315,22 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       if (!fixed) continue;
       const held = voteBlocks(row.id); const readTo = held.length ? held[held.length - 1].height : -1;
       const plan = scheduleOf(fixed.tranches);
+      // A CANCELLATION WHOSE DUE BLOCK MOVED IS COUNTED AGAIN (kanban #2536): voteRound walks the vote blocks back over a reorg and reads
+      // the new chain; the cancellation follows them. The held row at its due height names the block this seat counts now: no row yet
+      // (walked back, not read again) keeps it; a row with another hash than the one it was cancelled at reopens it - unless a payout
+      // record of part k or a later one exists. A cancellation written before this column takes the held hash first.
+      if (fundingPaymentStateOf(fixed) === FUNDING_PAYMENT_STATE.CANCELLED && plan[fixed.cancelled_k]) {
+        const dueRow = held.find((r) => r.height === plan[fixed.cancelled_k].dueAt);
+        if (dueRow && dueRow.hash && !fixed.cancelled_hash) {
+          db.prepare('UPDATE funding_payments SET cancelled_hash = ? WHERE proposal = ? AND cancelled_hash IS NULL').run(dueRow.hash, row.id);
+          fixed = paymentRow(row.id);
+        } else if (dueRow && dueRow.hash && dueRow.hash !== fixed.cancelled_hash) {
+          const rec = typeof recorded === 'function' && plan.slice(fixed.cancelled_k).some((t) => recorded(trancheIdOf(row.id, t.k, t.of)));
+          const s = stepPayment(row.id, { kind: 'reopen', reorged: true, recorded: rec });
+          if (s.ok) log(`[funding] ${row.id.slice(0, 16)}: the due block ${plan[fixed.cancelled_k].dueAt} its payment ${fixed.cancelled_k + 1} was cancelled at was reorged away - counted again`);
+          fixed = s.row;
+        }
+      }
       for (const t of plan) {
         // a cancelled proposal keeps listing the payments due before the cancelling one: they may have gone, and their records stand
         if (fixed.cancelled_k !== null && t.k >= fixed.cancelled_k) break;
@@ -309,8 +338,9 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         const again = countOf(row.id, period, p.obj, t.dueAt + 1, row.kind);
         if (!again || !again.passed) {
           const why = `payment ${t.k + 1} of ${t.of} cancelled at its due block ${t.dueAt}: YES ${again ? again.approvalPct : '?'} % of YES + NO, ${again ? again.yesOfAllPct : '?'} % of everyone who could vote`;
-          // compare-and-set from FIXED: a re-count after a reorg never moves a cancellation already kept
-          if (stepPayment(row.id, { kind: 'cancel', k: t.k, why }).ok) log(`[funding] ${row.id.slice(0, 16)}: ${why}`);
+          // compare-and-set from FIXED, held to the hash of the due block counted (kanban #2536: a reorg of it reopens the count above)
+          const dueHash = (held.find((r) => r.height === t.dueAt) || {}).hash || null;
+          if (stepPayment(row.id, { kind: 'cancel', k: t.k, why, hash: dueHash }).ok) log(`[funding] ${row.id.slice(0, 16)}: ${why}`);
           break;
         }
         out.push({ id: trancheIdOf(row.id, t.k, t.of), proposal: row.id, k: t.k, of: t.of, lnurl: p.obj.lnurl, amountSats: t.amountSats,
