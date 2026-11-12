@@ -2794,6 +2794,37 @@ export class Round {
     return this.db.prepare('SELECT COUNT(*) AS n FROM handouts WHERE round_id = ?').get(Buffer.from(roundIdBytes)).n;
   }
 
+  /**
+   * THE HANDOUTS OF ONE ROUND THAT NO ENTRY NAMES (kanban #2136, the #1489 a44 refute of #1605): `loose` counts them, `oldest` is the
+   * id of the oldest one that may make room for a new one - never one a kept refused-round lock stands on (its player's return reads it),
+   * nor one any entry here names (cancelled ones too: their settlement may still read it). null when none may go.
+   */
+  looseHandouts(roundIdBytes) {
+    const rid = Buffer.from(roundIdBytes);
+    const named = new Set();
+    for (const r of this.db.prepare('SELECT contract FROM entries WHERE round_id = ?').all(rid)) {
+      try { const ref = decodeEntryContract(new Uint8Array(r.contract)).vssSharesRef; if (ref) named.add(Buffer.from(ref).toString('hex')); } catch { /* not ours to judge here */ }
+    }
+    const locked = new Set(this.db.prepare('SELECT handout_id FROM refused_locks WHERE round_id = ?').all(rid).map((r) => Buffer.from(r.handout_id).toString('hex')));
+    let loose = 0, oldest = null;
+    for (const r of this.db.prepare('SELECT handout_id FROM handouts WHERE round_id = ? ORDER BY accepted_ms, rowid').all(rid)) {
+      const hex = Buffer.from(r.handout_id).toString('hex');
+      if (named.has(hex)) continue;
+      loose++;
+      if (oldest === null && !locked.has(hex)) oldest = new Uint8Array(r.handout_id);
+    }
+    return { loose, oldest };
+  }
+
+  /**
+   * A NEW HANDOUT TAKES THE ROW OF THE ROUND'S OLDEST LOOSE ONE (kanban #2136): the row is rewritten in place, so the round's store stays
+   * bounded and nothing is dropped beside it. Answers whether the row was taken (false when that old one is gone or now named).
+   */
+  replaceHandout(oldId, { id, roundId, bytes }) {
+    return this.db.prepare('UPDATE OR IGNORE handouts SET handout_id = ?, bytes = ?, accepted_ms = ? WHERE handout_id = ? AND round_id = ?')
+      .run(Buffer.from(id), Buffer.from(bytes), this.now(), Buffer.from(oldId), Buffer.from(roundId)).changes === 1;
+  }
+
   /** Every handout this signer node accepted for one round: its id and bytes. */
   handoutsOf(roundIdBytes) {
     return this.db.prepare('SELECT handout_id, bytes FROM handouts WHERE round_id = ?').all(Buffer.from(roundIdBytes))
