@@ -19,7 +19,7 @@ import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseConf } from './arena-conf.js';
-import { BIP39_ENGLISH } from '../../arena-client/src/bip39-wordlist.js';
+import { seedRunSpans } from './seed-phrase.js';
 
 export const LEVELS = Object.freeze(['info', 'verbose', 'debug']);
 const RANK = { info: 0, verbose: 1, debug: 2 };
@@ -78,7 +78,6 @@ export function secretName(key) {
 }
 const PATHLIKE = /^(?:\/|~\/|\.{1,2}\/|[A-Za-z]:[\\/])[^\s]*$/;
 const MASK = '***';
-const WORDS = new Set(BIP39_ENGLISH);
 const SEED_RUN = 12;
 const keepValue = (v) => PATHLIKE.test(v) || /^\*+/.test(v) || /^(null|undefined|true|false|none|missing|set|unset|yes|no|0|1)$/i.test(v);
 
@@ -97,21 +96,11 @@ export function redactObject(v, depth = 0) {
   return out;
 }
 
-/** 12 or more BIP-39 words in a row (a seed phrase, numbered or not), masked. */
+/** 12 or more BIP-39 words in a row (a seed phrase, numbered or not, in any layout or as 4-letter prefixes), masked - found by seed-phrase.js, the one
+ * rule the feedback store and the faucet scrub with too (kanban #1737, #1799, #1843, #1858). */
 function redactSeedRuns(text) {
-  const words = []; const re = /[A-Za-z]+/g; let m;
-  while ((m = re.exec(text))) words.push({ w: m[0].toLowerCase(), s: m.index, e: m.index + m[0].length });
-  const spans = [];
-  let start = null, prev = null, count = 0;
-  for (const x of words) {
-    const listed = WORDS.has(x.w);
-    if (listed && start && /^[\s\d.,;()"'[\]-]*$/.test(text.slice(prev.e, x.s))) { count++; prev = x; continue; }
-    if (start && count >= SEED_RUN) spans.push([start.s, prev.e]);
-    start = listed ? x : null; count = listed ? 1 : 0; prev = x;
-  }
-  if (start && count >= SEED_RUN) spans.push([start.s, prev.e]);
   let t = text;
-  for (const [s, e] of spans.reverse()) t = `${t.slice(0, s)}${MASK}(seed words)${t.slice(e)}`;
+  for (const [s, e] of seedRunSpans(text, SEED_RUN).reverse()) t = `${t.slice(0, s)}${MASK}(seed words)${t.slice(e)}`;
   return t;
 }
 

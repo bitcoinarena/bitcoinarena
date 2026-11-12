@@ -204,7 +204,7 @@ import { bondPresigDigest, holdClocksOf } from '../../arena-protocol/src/slash-p
 import { SOURCE_ENTRIES } from '../../arena-protocol/src/market-sources.js';
 import { CLOCKS as FEDERATION_CLOCKS, bondLapseOf } from '../../arena-protocol/src/federation-slash.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
-import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
+import { hostOf, payoutAddressRefusal, lnurlPublicFetch } from './public-fetch.js';
 import { WinningsSend, sendPlanToJson, decodeNamedResendList } from './winnings-send.js';
 import { PLAN_ASK, SEND_PLAN_ASK_HEADER, sendPlanAskHeaders, checkSendPlanAsk } from './send-plan-ask.js';
 import { objectionWindowAllowed } from '../../arena-protocol/src/constants.js';   // kanban #1398
@@ -757,8 +757,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // HOW LONG AFTER A ROUND'S ENTRY CLOSE A PLAYER'S NAME RECORD IS STILL TAKEN (kanban #1213): after it, the identity a round is booked to is fixed
   lobbyNameGraceMs = 60000,
   censusExplorers = String(process.env.ARENA_CENSUS_EXPLORERS || '').split(',').map((x) => x.trim().replace(/\/+$/, '')).filter(Boolean),
+  // THE OPERATOR'S OWN LNURL SERVERS INSIDE ITS NETWORK (kanban #2236): "host[:port]" a regtest harness serves a payee on (ARENA_LNURL_LOCAL_HOSTS).
+  // Every other Lightning address is on a public HTTPS name: refused at POST /payout-address, and never fetched otherwise.
+  lnurlLocalHosts = String(process.env.ARENA_LNURL_LOCAL_HOSTS || '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean),
   // HOW A WINNER'S LIGHTNING ADDRESS IS FETCHED (winnings-send.js), and the round network its invoices are for.
-  lnurlFetch = (u, o) => fetch(u, o),
+  // The PUBLIC internet only (kanban #1919, #2236, public-fetch.js): https goes through lnurlPublicFetch - a public name, every resolved address checked
+  // in the connection's own lookup, redirects checked hop by hop, the answer bounded - so a player's LNURL or name@host naming 127.0.0.1, a LAN host or
+  // 169.254.169.254 is never fetched. Plain fetch only for an operator's own local server (lnurlLocalHosts, the test donation set's http recipients -
+  // winnings-send.js lets no other through), and for a regtest seat (its own LNURL servers on 127.0.0.1) or ARENA_LNURL_LOCAL=1.
+  lnurlFetch = (chain === 'bitcoin-regtest' || process.env.ARENA_LNURL_LOCAL === '1') ? (u, o) => fetch(u, o)
+    : (u, o) => (String(u).startsWith('https:') && !lnurlLocalHosts.includes(hostOf(u)) ? lnurlPublicFetch(u, o) : fetch(u, o)),
   // HOW A NETWORK SEASON ASKS THE OTHER SEATS FOR THEIR ROUNDS (GET /season?scope=network): the process's fetch -
   // routed and capped per seat by fetch-routes.js - unless a test hands in its own seats.
   seasonFetch = (u, o) => fetch(u, o),
@@ -2385,9 +2393,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE PAYOUT OF A PASSED PROPOSAL (§27A.9.3reserve-payout.js): the 5-of-7 of the federation that holds the
   // reserves - its guardian seats, by the reserve key's DKG shares - pay the proposal's LNURL once; every seat records it
   const payoutNet = String(chain || '').replace(/^bitcoin-/, '') || 'testnet4';
-  // the operator's own "host[:port]" LNURL servers inside its network (ARENA_LNURL_LOCAL_HOSTS: a regtest harness's payee, the devnet's), never a proposal author's pick
-  const lnurlLocalHosts = String(process.env.ARENA_LNURL_LOCAL_HOSTS || '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
-  const lnurlAsk = lnurlClient({ network: payoutNet, localHosts: lnurlLocalHosts });   // the #1809 guard, operator's local hosts kept (kanban #2323, #2340)
+  const lnurlAsk = lnurlClient({ network: payoutNet, fetch: lnurlFetch, localHosts: lnurlLocalHosts });   // kanban #1919: the seat's guarded LNURL fetch; the #1809 guard, operator's local hosts kept (kanban #2323, #2340)
   const payoutPeer = (base) => ({
     // kanban #1159: every ask carries the asking guardian seat's node key and its signature
     commit: async (b) => { const r = await fetch(`${base}/reserve-payout/commit`, { method: 'POST', headers: { 'content-type': 'application/json' },
@@ -2961,7 +2967,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const winningsPeers = (rid) => committeePeers(rid, 'settlement', { orElse: dkg.peers || [] }).peers;
   const winnings = stakeLocks ? new WinningsSend({ round, port: stakeLocks, curve: poolCurve,
     random: (n) => new Uint8Array(randomBytes(n)), peersFor: winningsPeers, fetcher: (u, o) => fetch(u, o),
-    lnurlFetch, network: winningsNetwork, dkg }) : null;
+    lnurlFetch, network: winningsNetwork, dkg, localHosts: lnurlLocalHosts }) : null;
   // EVERY ORDER'S TRANSACTION, KEPT HERE (kanban #624, tx-record.js): each door's steps per transaction id, and the page's signed timing
   const txRecord = createTxRecord({ db: round.db });
   // THE MARKET ORDER BOOK: orders taken here, each batch's set agreed with the round's other seats
@@ -3014,13 +3020,28 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // rebuilt settlement 8f0144a1 where the others built ffabdc94): the entry from the seat that handed the batch, kept when its bytes hash
   // to the id (round.importEntry), and its stake and fee lock from the same seat (GET /order-locks), each checked with the federation as
   // POST /lock and POST /fee-lock check them. Answers whether the entry and its locks are held now.
-  orderBook.replayOrder = async (entryHex, base) => {
+  // ONLY A MARKET ORDER OF THE BATCH'S ROUND (kanban #2070, #1489 v1 refute 54 s3 of #1879 / #1733 / #1544): this was a second, ungated copy of the
+  // peer lock carry. Any id a peer's /book-certificates named went here, a head-to-head entry too, and its late stake and fee lock were taken from that
+  // one peer with no entry-close rule and no threshold: the griefer read the honest move from GET /reveals, took his locks at his own seat only when his
+  // move won, named his entry in a forged certificate, and every honest seat that had refused the same lock at its own door (409) saw his stake and
+  // signed him DELIVERED 2. A plain entry (no limit price) is never an order of a book, so it is never replayed here; nor is an entry of another round
+  // than the batch's (`ridHex`), read from its bytes before anything is kept.
+  orderBook.replayOrder = async (entryHex, base, ridHex = null) => {
     const eid = Buffer.from(entryHex, 'hex');
+    const notAnOrder = (bytes) => {
+      let e; try { e = decodeEntryContract(new Uint8Array(bytes)); } catch (err) { return `its entry does not decode: ${err.message}`; }
+      if (e.limitPrice === undefined || e.limitPrice === null) return 'that entry is not an order (it names no limit price): only a book\'s order is replayed (kanban #2070)';
+      if (ridHex !== null && toHex(e.roundId) !== String(ridHex)) return 'that entry is in another round than the batch (kanban #2070)';
+      return null;
+    };
     if (!round.entry(eid)) {
       const r = await fetch(`${base}/entry?id=${entryHex}`, { signal: AbortSignal.timeout(10000) });
       if (!r.ok) { await dropSeatBody(r); return { ok: false, why: `${base} holds no entry ${entryHex.slice(0, 16)}` }; }
-      round.importEntry(await seatBody(r, SEAT_RECORD_BYTES), entryHex);   // kanban #1900
+      const bytes = await seatBody(r, SEAT_RECORD_BYTES);   // kanban #1900
+      { const no = notAnOrder(bytes); if (no) return { ok: false, why: no }; }
+      round.importEntry(bytes, entryHex);
     }
+    { const no = notAnOrder(round.entry(eid)); if (no) return { ok: false, why: no }; }
     // AND ITS HANDOUT (measured 2026-10-24 16:51Z on fed2-3 after the entry and locks were replayed: "a loser's P could not be opened: this node
     // accepted no handout for that entry"): the stake's shares, this seat's own among them, checked as POST /handout checks them, and then
     // that they open to the entry's own stake point
@@ -4171,6 +4192,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // 2.0: a protocol-27 seat's entry is one { named, message, nonces } object, a FROST round's a list of handed pairs
     const held = settlements && settlements.pairs ? settlements.pairs.get(toHex(rid)) : null;
     if ((Array.isArray(held) ? held : held ? [held] : []).some((p) => p && p.message && toHex(p.message) === hx)) return true;
+    // the FROST pairs it handed for the round are in its nonce pool since #2044 (nonce-pool.js), each naming its message
+    const pool = settlements && settlements.noncePool && settlements.noncePool.pools ? settlements.noncePool.pools.get(toHex(rid)) : null;
+    if (pool && [...pool.values()].some((p) => p && p.message && toHex(p.message) === hx)) return true;
     if (typeof round.settlementTxidsOf === 'function' && round.settlementTxidsOf(rid).some((h) => toHex(h.message) === hx)) return true;
     if (!settlements || typeof settlements.message !== 'function') return false;
     const m = await settlements.message(rid).catch(() => null);
@@ -6537,7 +6561,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const signed = new TextEncoder().encode(String(named.signed)), sig = fromHex(String(named.signature));
           if (!ed25519.verify(sig, signed, entry.sessionPubkey)) continue;
           const address = Buffer.from(signed).toString('utf8').trim();
-          if (!lightningAddressEndpoint(address).ok) continue;
+          if (payoutAddressRefusal(address, { localHosts: lnurlLocalHosts })) continue; // a peer's copy is held to the same door (kanban #2236)
           round.putPayoutAddress({ entryId: eid, roundId: entry.roundId, address, signature: Buffer.concat([Buffer.from(signed), Buffer.from(sig)]) });
           break;
         } catch { /* the next peer's copy may stand */ }
@@ -12667,8 +12691,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!ed25519.verify(all.subarray(all.length - 64), signed, entry.sessionPubkey))
           return text(res, 403, 'that address is not signed by the session key this entry was played with');
         const address = Buffer.from(signed).toString('utf8').trim();
-        const where = lightningAddressEndpoint(address);
-        if (!where.ok) return text(res, 400, where.why);
+        // ON A PUBLIC HTTPS NAME ONLY (kanban #2236): every signer node fetches this address at settlement, so no port, IP literal, local
+        // suffix or tailnet name is kept (the operator's own lnurlLocalHosts excepted); where the name resolves is checked again at each fetch
+        const refused = payoutAddressRefusal(address, { localHosts: lnurlLocalHosts });
+        if (refused) return text(res, 400, refused);
         // THE FIRST ADDRESS STANDS (ruled 2026-09-23): the same address again is taken and changes nothing - the page
         // posts it again to a node that did not answer - and another one for this entry is refused, so no second
         // address can make the signer nodes hold different ones.
