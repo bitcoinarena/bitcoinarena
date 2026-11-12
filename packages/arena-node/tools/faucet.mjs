@@ -168,10 +168,18 @@ const BOUNTY_FEE_LIMIT_PCT = Number(env.FAUCET_BOUNTY_FEE_LIMIT_PCT || 1);
 const BOUNTY_ORIGINS = String(env.FAUCET_BOUNTY_ORIGINS || '').split(',').map((x) => x.trim()).filter(Boolean);
 const bountyOn = () => BOUNTY_ORIGINS.length > 0;
 const PUBLIC_BASE = String(env.FAUCET_PUBLIC_BASE || 'https://bitcoinarena.io/api/faucet').replace(/\/$/, '');
+// THE PAYOUT WALLET IS READY (kanban #2412, feedback #016 by Hexbox Tools): lnd answers `state` with SERVER_ACTIVE. Measured 2026-11-12: the mainnet
+// bounty lnd was LOCKED, every `decodepayreq` failed, and every valid lnbc invoice was answered "that invoice could not be read" - the wallet's fault
+// blamed on the invoice. A decode that fails while the wallet is not ready is `paused`: the reward stays open and the claimer is told to come back.
+const bountyReady = async () => {
+  const r = await lncli(BOUNTY_PAYER, ['state'], 10000);
+  if (!r.ok) return false;
+  try { return JSON.parse(r.out).state === 'SERVER_ACTIVE'; } catch { return false; }
+};
 const bountyDecode = async (invoice) => {
   if (!bountyInvoiceOk(invoice)) return { ok: false };
   const r = await lncli(BOUNTY_PAYER, ['decodepayreq', invoice]);
-  if (!r.ok) return { ok: false };
+  if (!r.ok) return (await bountyReady()) ? { ok: false } : { ok: false, paused: true };
   const j = JSON.parse(r.out);
   return { ok: true, amountSats: Number(j.num_satoshis), paymentHash: j.payment_hash };
 };
