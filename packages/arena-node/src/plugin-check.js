@@ -10,7 +10,7 @@
 //   - every core passes the scan (below);
 //   - an update is the same developer's next version of the game it replaces.
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
-import { decodeManifest, gameIdOf, manifestStands } from '../../arena-protocol/src/manifest.js';
+import { decodeManifest, gameIdOf, manifestStands, manifestBodyId } from '../../arena-protocol/src/manifest.js';
 import { donationSetId } from '../../arena-protocol/src/donation.js';
 import { gameInfoStands } from '../../arena-protocol/src/game-info.js';
 
@@ -41,6 +41,9 @@ export function scanSource(text) {
   return findings;
 }
 
+/** The most earlier versions (ancestors) of a package this check decodes and verifies: its newest ones (kanban #1854, #2251, #2262). */
+export const MAX_PACKAGE_ANCESTORS = 64;
+
 /**
  * THE REPORT ON A PACKAGE: `verify(sig, msg, key)` is Ed25519. Answers { ok, gameId, name, version, devKey, parent, checks:
  * [{ check, ok, detail }], findings, why }. Every check is listed, passed or not, so the page shows the whole report.
@@ -55,17 +58,47 @@ export function checkPackage(pkg, { verify, want = null, parentOf = () => null }
   catch (e) { add('the manifest reads', false, e.message); return out(`its manifest does not decode: ${e.message}`); }
   const gameId = toHex(gameIdOf(manifest));
   const who = { gameId, name: manifest.gameName, version: manifest.version, devKey: toHex(manifest.gameDevPubkey), parent: toHex(manifest.parentManifestId) };
+  // THE MAIN MANIFEST'S OWN SIGNATURE FIRST, one verify (kanban #2262): a package whose manifest its developer did not sign
+  // costs nothing more - not one ancestor is decoded or verified for it. Its chain is checked below (manifestStands), and this
+  // verify is not repeated there.
+  let mainSigned = false;
+  try { mainSigned = typeof verify === 'function' && verify(manifest.signature, manifestBodyId(manifest), manifest.gameDevPubkey) === true; } catch { mainSigned = false; }
+  if (!mainSigned) {
+    const s = manifestStands(manifest, { verify: typeof verify === 'function' ? () => false : verify });
+    add('signed by its developer, and stands', false, s.why);
+    return out(`its manifest does not stand: ${s.why}`, who);
+  }
+  const verifyRest = (sig, msg, key) => (sig === manifest.signature ? true : verify(sig, msg, key));
   // ITS ANCESTORS, oldest first: each must stand on the one before it (and the oldest on nothing, or on what the caller holds)
   const known = new Map();
-  const parentFrom = (id) => known.get(toHex(id)) || parentOf(id) || null;
-  for (const h of pkg.ancestors || []) {
+  // AT MOST ITS NEWEST MAX_PACKAGE_ANCESTORS ARE READ (kanban #1854): a peer's package (16 MB body) could carry tens of
+  // thousands of validly self-signed ancestors and spend this node's main thread on one ed25519 verify each. But an honest
+  // seat packs a game's WHOLE chain (server.js hostSplit, adoptPackage, GET /plugin), and every new split is a new version,
+  // so a count cap on the whole chain froze an honest game at version 65 for good (kanban #2251, #2262). So the package may
+  // carry any number; only its newest MAX_PACKAGE_ANCESTORS are decoded and checked, each on the one before it. The oldest of
+  // those stands on a version this node holds when it holds it; when the package carried more than these and this node does
+  // not hold the one before, that one is the CUT: the oldest checked version stands on a version of the same developer one
+  // lower, as its chain says - nothing below the cut is decoded. Every version this node already holds is taken as held,
+  // not verified again.
+  const all = Array.isArray(pkg.ancestors) ? pkg.ancestors : [];
+  const ancestors = all.length > MAX_PACKAGE_ANCESTORS ? all.slice(all.length - MAX_PACKAGE_ANCESTORS) : all;
+  const cutBelow = all.length > ancestors.length;
+  add('its earlier versions are read up to a bound', true, cutBelow ? `the newest ${ancestors.length} of ${all.length}` : `${all.length}`);
+  let cut = null;
+  const parentFrom = (id) => known.get(toHex(id)) || parentOf(id) || (cut && toHex(id) === cut.id ? cut.stub : null);
+  for (const [i, h] of ancestors.entries()) {
     let a;
     try { a = decodeManifest(fromHex(String(h))); } catch (e) { add('its earlier versions read', false, e.message); return out(`an earlier version in it does not decode: ${e.message}`); }
-    const s = manifestStands(a, { verify, parentOf: parentFrom });
+    const aid = toHex(gameIdOf(a));
+    const held = parentOf(gameIdOf(a));
+    if (held && toHex(gameIdOf(held)) === aid) { add(`its version ${a.version} is one this node holds`, true); known.set(aid, held); continue; }
+    if (i === 0 && cutBelow && a.version > 1 && !parentFrom(a.parentManifestId))
+      cut = { id: toHex(a.parentManifestId), stub: { gameDevPubkey: a.gameDevPubkey, version: a.version - 1 } };
+    const s = manifestStands(a, { verify: verifyRest, parentOf: parentFrom });
     if (!add(`its version ${a.version} stands`, s.ok, s.ok ? '' : s.why)) return out(`its version ${a.version} does not stand: ${s.why}`);
-    known.set(toHex(gameIdOf(a)), a);
+    known.set(aid, a);
   }
-  const stands = manifestStands(manifest, { verify, parentOf: parentFrom });
+  const stands = manifestStands(manifest, { verify: verifyRest, parentOf: parentFrom });
   if (!add('signed by its developer, and stands', stands.ok, stands.ok ? `developer ${who.devKey.slice(0, 16)}…` : stands.why)) return out(`its manifest does not stand: ${stands.why}`, who);
   if (want && !add('the game asked for', want === gameId, gameId.slice(0, 16))) return out(`that package is game ${gameId.slice(0, 16)}, not ${String(want).slice(0, 16)}`, who);
   let set = null;
