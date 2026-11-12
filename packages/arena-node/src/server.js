@@ -5808,14 +5808,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     try {
       const t = Date.now(); const port = (await portOfEntryBytes(stored)) || stakeLocks; timing.portMs = Date.now() - t;
       return await verifyStakeLock({ round, port, entryIdBytes: new Uint8Array(eid), fields, claimPk, donationRecipients, reserveKey, split, timing, namedGate: (c, fid) => namedClaimGate.refusalNow(c, fid) });
-    } catch (e) { return { ok: false, why: `the federation could not be asked: ${e.message}` }; }
+    } catch (e) { return { ok: false, why: `the federation could not be asked: ${e.message}`, ...(e && e.ofFields ? { ofFields: true } : {}) }; }
   };
   const takeFeeLock = async (eid, fields) => {
     const stored = round.entry(eid);
     if (!stored) return { ok: false, status: 404, why: 'this node holds no such entry' };
     const claimPk = claimKeyOf(decodeEntryContract(stored).roundId);
     try { return await verifyFeeLock({ round, port: (await portOfEntryBytes(stored)) || stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk, namedGate: (c, fid) => namedClaimGate.refusalNow(c, fid) }); }
-    catch (e) { return { ok: false, why: `the federation could not be asked: ${e.message}` }; }
+    catch (e) { return { ok: false, why: `the federation could not be asked: ${e.message}`, ...(e && e.ofFields ? { ofFields: true } : {}) }; }
   };
   // A ROUND WHOSE ENTRIES AND LOCKS A SEAT HANDS ON (kanban #1216): every round it holds that is a game's - head-to-head (kanban #1068) or replayed;
   // a market's orders have their own way (order-batch.js replayOrder)
@@ -5990,6 +5990,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   // AND WHAT GOES WITH AN ENTRY OF A PAYING ROUND: its locks, checked with the federation, and the winner's address under the entry's own session key. Every seat's plan
   // reads its own rows, so a seat without them would rebuild another plan and refuse the one the others sign. Answers why it must wait, or null.
+  // kanban #2335: lock fields the federation could hold at all - claim and refund keys compressed secp256k1 points, a point image a point and a hash
+  // image 32 bytes, an amount a u64. Says nothing about whether a lock is there; only whose fault a failed check of them can be.
+  const isPoint = (b) => { if (!(b instanceof Uint8Array) || b.length !== 33 || (b[0] !== 2 && b[0] !== 3)) return false; try { secp256k1.Point.fromHex(toHex(b)); return true; } catch { return false; } };
+  const lockFieldsCouldBeReal = (f) => !!f && isPoint(f.claimPk) && isPoint(f.refundPk)
+    && typeof f.amountMsat === 'bigint' && f.amountMsat >= 0n && f.amountMsat < (1n << 64n)
+    && !!f.paymentImage && (f.paymentImage.kind === 'point' ? isPoint(f.paymentImage.bytes)
+      : f.paymentImage.kind === 'hash' && f.paymentImage.bytes instanceof Uint8Array && f.paymentImage.bytes.length === 32);
   const takeEntryParts = async (rid, entryHex, from) => {
     const eid = fromHex(entryHex), entry = decodeEntryContract(round.entry(eid));
     if (entry.stakeMsat === 0n) return null;
@@ -5998,13 +6005,42 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }))).filter(Boolean);
     let why = null;
     if (!round.stakeLock(eid) || (round.feeLock && !round.feeLock(eid))) {
-      for (const locks of await ofPeers(`/order-locks?entry=${entryHex}`, (r) => r.json())) {
+      const answers = await ofPeers(`/order-locks?entry=${entryHex}`, (r) => r.json());
+      // kanban #2255 (a45 refute of #1823): a check that failed HERE - the federation could not be asked, or the check threw - is this seat's
+      // own trouble, not a word on the peer's lock; it is kept apart from a lock the peer's fields or the federation refuted
+      // AND ONLY WHEN THE PEER'S FIELDS CANNOT HAVE CAUSED IT (kanban #2335, a45 refute of #2255): takeStakeLock/takeFeeLock write that same reason for any
+      // throw of port.contractId(fields), and the fields are the peer's - claimPk "" passes lockFieldsFromJson, the stock client (PublicKey::from_str)
+      // exits non-zero on it, and one peer's empty keys for an entry nobody locked kept a 2-of-2 seat waiting on every pass, signing nothing for the real
+      // players. A real lock is a contract the federation took: its keys are compressed secp256k1 points, its image a point or a 32-byte hash, its amount
+      // a u64. So a failed status read (the entry's own outpoint, which the peer does not choose) is this seat's trouble; a failed contract id
+      // (ofFields: the stock client hashing the peer's fields) is too only for fields a real lock could have - else it is the peer's (the #1823 rule).
+      const ownFault = (g, f) => !g.ok && /^the federation could not be asked/.test(String(g.why || '')) && (!g.ofFields || lockFieldsCouldBeReal(f));
+      let mine = null;
+      for (const locks of answers) {
         why = null;
+        let stakeF = null, feeF = null;
+        try { if (locks.stake) stakeF = lockFieldsFromJson(locks.stake); if (locks.fee) feeF = lockFieldsFromJson(locks.fee); }
+        catch (e) { why = `its lock fields: ${e.message}`; continue; }   // junk fields: that peer's fault
         try {
-          if (locks.stake && !round.stakeLock(eid)) { const g = await takeStakeLock(eid, lockFieldsFromJson(locks.stake)); if (!g.ok) why = `its stake lock: ${g.why}`; }
-          if (locks.fee && round.feeLock && !round.feeLock(eid)) { const g = await takeFeeLock(eid, lockFieldsFromJson(locks.fee)); if (!g.ok) why = `its fee lock: ${g.why}`; }
-        } catch (e) { why = e.message; }
+          if (stakeF && !round.stakeLock(eid)) { const g = await takeStakeLock(eid, stakeF); if (!g.ok) { why = `its stake lock: ${g.why}`; if (ownFault(g, stakeF)) mine = why; } }
+          if (feeF && round.feeLock && !round.feeLock(eid)) { const g = await takeFeeLock(eid, feeF); if (!g.ok) { why = `its fee lock: ${g.why}`; if (ownFault(g, feeF)) mine = why; } }
+        } catch (e) { why = e.message; mine = why; }
         if (!why) break;
+      }
+      // A LOCK NO THRESHOLD OF SEATS CLAIMS IS NO REASON TO WAIT (kanban #1823, audit #1489 r6-h2h-3): the last failing answer was the wait, so for an entry
+      // nobody locked (an abandoned join, a stranger's lockless entry) ONE peer answering 200 with junk lock fields kept this seat waiting on every pass until
+      // the result window ran out, and it signed nothing for the round's real players. A lock the federation refuted is the answering peer's fault; this seat
+      // waits for one only while at least the round's threshold of peers say they verified a lock of it - only then can the entry be seated without this seat.
+      // BUT A LOCK THIS SEAT COULD NOT CHECK FOR A MOMENT IS WAITED FOR (kanban #2255, a45 refute of #1823): the answers come from the OTHER seats only, so in a
+      // 2-of-2 round (threshold 2, one peer) the #1823 gate was never met and a real lock whose check failed on this seat's own federation call was dropped -
+      // the seats split their verdicts (VOID here, DELIVERED there) and the paid round never settled. This seat counts as a holder: when the peers that answered
+      // plus this seat reach the threshold, the entry can be seated only with this seat's copy, so it waits and pulls the lock on the next pass. One peer's
+      // junk still waits for nothing in a 7-seat round (one peer plus this seat stays under 5), and junk fields never wait at all.
+      if (why) {
+        let needed = Infinity;
+        try { needed = roundThreshold(slotsForRole(decodeRoundContract(new Uint8Array(round.get(rid).contract)), 'settlement')); } catch { /* no threshold read: no wait */ }
+        if (mine && answers.length + 1 >= needed) why = mine;
+        else if (answers.length < needed) why = null;
       }
     }
     if (!round.payoutAddress(eid)) {
