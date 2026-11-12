@@ -13,6 +13,7 @@
 // ONE CLAIM, ONE RECORD, ONE TRANSITION FUNCTION (claimStep). Each state is written (putRoomy) before the step that cannot be undone:
 //   none --(the intent written)--> intent --(sendAllEcash, the notes written)--> kept --(posted at the signed door, it answered ok)--> posted
 //   intent --(the wallet held nothing / could not hand over)--> none;  kept|posted --(a signed event lists this payout key accepted)--> none
+//   kept|posted --(the door: not being liquidated any more, the notes received back into the wallet)--> none   (kanban #1849)
 // A record that cannot be written stops the claim before the wallet is touched. Notes handed over that then cannot be written are taken
 // back into the wallet (receiveEcash); a halted federation that cannot take them back has them presented at the signed door at once.
 import { standingLiquidation, acceptedFor } from '../../arena-protocol/src/arbitration-event.js';
@@ -21,6 +22,8 @@ import { BOND_TERMS } from './committee.js';
 
 const LIQUIDATION_ECASH_PREFIX = 'arena-liquidation-ecash-';   // the arena- names: was blwp- (moved once by movedKey, kanban #522)
 export const pendingClaimKey = (fid) => `${LIQUIDATION_ECASH_PREFIX}${String(fid).toLowerCase()}`;
+/** kanban #1849: the halt height a federation came back from after this page handed its notes over (they were received back). */
+export const returnedClaimKey = (fid) => `arena-liquidation-returned-${String(fid).toLowerCase()}`;
 export const CLAIM_STATES = Object.freeze({ NONE: 'none', INTENT: 'intent', KEPT: 'kept', POSTED: 'posted' });
 const CLAIM_EDGES = Object.freeze({ none: ['intent', 'kept'], intent: ['kept', 'none'], kept: ['posted', 'none'], posted: ['posted', 'none'] });
 const REPOST_MS = 3600000;
@@ -81,7 +84,14 @@ export async function presentNotes({ events, network, arbitration = arbitrationO
       else {
         // an intent left by a tab closed during the hand-over: what the wallet still holds is handed over again below
         if (rec && rec.state === 'intent') { rec = step(eKey, rec, 'none'); out.push({ federation: fid, ok: false, why: 'an earlier hand-over did not finish; the wallet hands over what it still holds' }); }
-        if (!rec && inWindow) {
+        // ONE RETURN PER HALT (kanban #1849): notes taken back because the federation came back are not handed over again for the same signed
+        // halt - the event still stands, and every pass would empty the wallet into a door that takes nothing
+        const returnedKey = returnedClaimKey(fid);
+        let returnedHalt = null;
+        try { returnedHalt = JSON.parse(storage.getItem(returnedKey) || 'null'); } catch { returnedHalt = null; }
+        const haltH = st.event && st.event.halt ? Number(st.event.halt.height) : null;
+        if (!rec && inWindow && returnedHalt && Number(returnedHalt.haltHeight) === haltH) out.push({ federation: fid, ok: true, returned: true, why: 'that federation came back from this halt: nothing is handed over again' });
+        else if (!rec && inWindow) {
           let wrote = false;
           try { rec = step(eKey, null, 'intent', { door: st.door, atMs: nowMs }); wrote = true; }
           catch (e) { out.push({ federation: fid, ok: false, why: `nothing handed over: this browser could not write the claim first (${e.message})` }); }
@@ -112,7 +122,24 @@ export async function presentNotes({ events, network, arbitration = arbitrationO
             // federation HALTED yet, the notes not validated, a reissue refused, a tunnel's 4xx - took nothing, and counting them dropped the notes once
             // another claim of the key was accepted. An answer counts when it names the notes it refused (`refused`), as "claimed before" does
             else if (!r.ok && !(Number(r.status) >= 500) && Array.isArray(j.refused) && j.refused.length > 0 && !rec.memoryOnly && !rec.answered) { rec = { ...rec, answered: true }; try { writeClaim(storage, eKey, rec, put); } catch { /* kept in memory */ } }
-            out.push({ federation: fid, ok: !!r.ok, accepted: j.accepted || [], refused: j.refused || [], inWindow: j.inWindow, why: j.why || null, kept: !rec.memoryOnly, door: st.door,
+            // THE FEDERATION CAME BACK BEFORE THE PAYOUT (kanban #1849, state audit 2026-11-12): once 2f + 1 guardians return, no seat lists it
+            // HALTED, the door answers "not being liquidated" (409, no note refused), plan() pays nothing, and the set's book keeps only nonces -
+            // no e-cash it could redeem - so a kept/posted record held the player's whole balance out of the wallet for good. Not accepted for
+            // this key, the kept notes are received back into the wallet; the record goes to none only on Success/AlreadyReceived (this
+            // wallet's own receive - a federation that is still halted cannot reissue, and the record stays). Reissued, their nonces are
+            // spent, so a later liquidation's spent set refuses the set's stale rows of them.
+            let back = null;
+            if (!r.ok && Number(r.status) === 409 && !(Array.isArray(j.refused) && j.refused.length) && /not being liquidated/.test(String(j.why || '')) && !taken) {
+              try {
+                const w = await walletFor(fid);
+                const got = w && typeof w.receiveEcash === 'function' ? JSON.parse(await w.receiveEcash(rec.ecash)) : null;
+                back = got && (got.state === 'Success' || got.state === 'AlreadyReceived') ? got.state : null;
+              } catch { back = null; }
+              if (back) { try { put(storage, returnedKey, JSON.stringify({ haltHeight: haltH, atMs: nowMs })); } catch { /* the next pass hands over and takes back again */ } }
+              if (back && !rec.memoryOnly) step(eKey, rec, 'none');
+            }
+            if (back) { out.push({ federation: fid, ok: true, returned: true, why: 'that federation is not being liquidated any more: the kept notes are back in the wallet', door: st.door }); rec = null; }
+            else out.push({ federation: fid, ok: !!r.ok, accepted: j.accepted || [], refused: j.refused || [], inWindow: j.inWindow, why: j.why || null, kept: !rec.memoryOnly, door: st.door,
               // kanban #1237: taken, and it waits for the federation's spent set
               ...(j.spentSetPublished === false ? { waitsForSpentSet: true } : {}), ...(rec.memoryOnly ? { memoryOnly: true } : {}) });
           } catch (e) { out.push({ federation: fid, ok: false, why: e.message, kept: !rec.memoryOnly, door: st.door }); }
