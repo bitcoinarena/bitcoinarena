@@ -32196,9 +32196,18 @@ class Client {
     // which every honest seat signs FORFEIT. So when this client's own head is live (its own verified witnesses), the
     // walk stops AT that head: only a mark served after it may be adopted, and a list that leaves the live head out
     // moves nothing (`headWithheld`) - the head stays where this client can prove it belongs.
-    const ids = [];
-    for (let at = 0; at < cb.length; at += SIGNED_CHECKPOINT_BYTES)
-      ids.push(checkpointId(decodeCheckpoint(splitSigned(cb.subarray(at, at + SIGNED_CHECKPOINT_BYTES)).body)));
+    // IN TICK ORDER, NOT THE LIST'S (feedback #032): the walk below picks the newest live mark and the #1732 floor is a place in
+    // this list, so a home seat that served every mark newest first ([M1, M0]) - omitting nothing, forging nothing - made the walk
+    // land on M0 and the next mark a second child of it (FORFEIT). The marks are put in order by their own ticks here, and only
+    // this round's and this entry's count; a list with two marks at one tick is not one chain, and is taken in its own order.
+    const listed = [];
+    for (let at = 0; at < cb.length; at += SIGNED_CHECKPOINT_BYTES) {
+      const m = decodeCheckpoint(splitSigned(cb.subarray(at, at + SIGNED_CHECKPOINT_BYTES)).body);
+      if (toHex(m.roundId) !== toHex(roundId) || toHex(m.entryId) !== toHex(entryId)) continue;
+      listed.push({ id: checkpointId(m), tick: m.tick, at });
+    }
+    listed.sort((x, y) => x.tick - y.tick || x.at - y.at);
+    const ids = listed.map((x) => x.id);
     const headHex = toHex(this.head);
     const headLive = headHex !== toHex(NO_PREVIOUS) && this.live(this.head);
     let floor = 0;
