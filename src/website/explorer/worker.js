@@ -610,7 +610,8 @@ async function played(env) {
   await statePut(env, 'played', JSON.stringify({ at: Date.now(), v })).catch(() => {});
   return v;
 }
-const dropPlayed = (env) => statePut(env, 'played', '').catch(() => {});
+// the list's kept totals too (kanban #2540): a mark changes what the default filter hides
+const dropPlayed = (env) => Promise.all([statePut(env, 'played', '').catch(() => {}), statePut(env, 'recent-totals', '').catch(() => {})]);
 async function readPlayed(env) {
   const [rows, marks] = await Promise.all([
     env.DB.prepare(`SELECT id, round, app, stored_ms AS ms, settled, json_extract(json, '$.entry.player') AS p FROM txs WHERE kind = 'order' AND stored_ms >= ? AND round IS NOT NULL`).bind(PLAYED_FROM_MS).all(),
@@ -777,9 +778,36 @@ async function recent(env, q = new URLSearchParams()) {
   // NEWER THAN A ROW, UP TO THE NEWEST: read upwards and turned round; at the top, the first page itself (a full page, no cursor)
   if (after && !more) return recent(env, new URLSearchParams([...q].filter(([k]) => k !== 'after')));
   if (after) rows = rows.reverse();
-  const count = await env.DB.prepare(`SELECT COUNT(*) AS n FROM txs${where.length ? ' WHERE ' + where.join(' AND ') : ''}`).bind(...binds).first();
+  const total = await recentTotal(env, q, where, binds);
   return { txs: rows.map(rowOut), older: rows.length && (after || more) ? cursorOf(rows[rows.length - 1]) : null,
-    newer: rows.length && (after || before) ? cursorOf(rows[0]) : null, total: count ? Number(count.n) : null, limit, facets: await facets(env) };
+    newer: rows.length && (after || before) ? cursorOf(rows[0]) : null, total, limit, facets: await facets(env) };
+}
+// THE LIST'S TOTAL, ONE COUNT A MINUTE PER FILTER (kanban #2540, audit #1489 r13): recent() counted every row of txs under the default marked-hidden
+// filter - per row a json_extract over its whole stored json and a sub-select over every order of its round - on each GET /api/recent and /, and every
+// query string (?x=1, ?x=2, ...) is a new URL, so one stranger ran the whole-table count per request (#1680 kept /api/played to one reading a minute;
+// the list was left out). Now each total is kept in state ('recent-totals') under its filter alone - app, kind, fed, since, q, marked as filterSql reads
+// them, every other parameter ignored - for RECENT_TOTAL_KEEP_MS; at most RECENT_TOTAL_KEYS filters are counted a minute, a further new filter is
+// answered total: null (the page shows the list without its count) until a kept one runs out. A new mark drops the copy with the played counts.
+const RECENT_TOTAL_KEEP_MS = 60000;
+const RECENT_TOTAL_KEYS = 32;
+function totalKey(q) {
+  const app = String(q.get('app') || '').slice(0, 80), kind = String(q.get('kind') || '').slice(0, 20), fed = String(q.get('fed') || '').toLowerCase();
+  const since = Number(q.get('since')), part = String(q.get('q') || '').toLowerCase();
+  return JSON.stringify([app, kind, hex64.test(fed) ? fed : '', Number.isFinite(since) && since > 0 ? since : 0,
+    /^[0-9a-f]{1,64}$/.test(part) ? part : '', q.get('marked') === '1' ? 1 : 0]);
+}
+async function recentTotal(env, q, where, binds, now = Date.now()) {
+  const key = totalKey(q);
+  const read = await stateGet(env, 'recent-totals').then((v) => (v ? JSON.parse(v) : null)).catch(() => null);
+  const live = (e) => e && Number.isFinite(e.at) && now - e.at >= 0 && now - e.at < RECENT_TOTAL_KEEP_MS;
+  const kept = Object.fromEntries(read && typeof read === 'object' && !Array.isArray(read) ? Object.entries(read).filter(([, e]) => live(e)) : []);
+  if (Object.prototype.hasOwnProperty.call(kept, key)) return kept[key].n;
+  if (Object.keys(kept).length >= RECENT_TOTAL_KEYS) return null;
+  const count = await env.DB.prepare(`SELECT COUNT(*) AS n FROM txs${where.length ? ' WHERE ' + where.join(' AND ') : ''}`).bind(...binds).first();
+  const n = count ? Number(count.n) : null;
+  kept[key] = { at: now, n };
+  await statePut(env, 'recent-totals', JSON.stringify(kept)).catch(() => {});
+  return n;
 }
 
 async function txOf(env, ctx, id) {
