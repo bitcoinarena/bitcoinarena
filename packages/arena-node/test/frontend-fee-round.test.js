@@ -15,12 +15,14 @@ import { entryFeeMsat } from '../../arena-protocol/src/fee.js';
 import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
 import { FRONTEND_FEE_VERSION } from '../../arena-protocol/src/constants.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
+import { onCurveX } from '../../arena-protocol/src/guardian-payout.js';
 
 const STAKE = 100_000_000n;
 const DONATION = STAKE * 500n / 10000n;
 const NETWORK = TEST_DONATION_SET_KEYS_REGTEST.recipients;
 const TALLY_ROUND = { donationSetId: donationSetId(NETWORK), gameId: TALLY_GAME_ID, simCoreHash: TALLY_CORE_HASH, configHash: TALLY_CONFIG_HASH, blockTicks: 600, startDeadlineTicks: 300 };
-const SITE = (() => { const k = new Uint8Array(33).fill(0x5e); k[0] = 2; return k; })();
+// a website payout key is a point (kanban #1489): x of 0x5e bytes, its last byte stepped until it is on the curve
+const SITE = (() => { const k = new Uint8Array(33).fill(0x5e); k[0] = 2; while (!onCurveX(k.subarray(1))) k[32]++; return k; })();
 const sum = (xs) => xs.reduce((a, b) => a + b, 0n);
 
 /** The settlement transaction that claims these players' locks: its lines by kind. */
