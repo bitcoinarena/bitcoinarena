@@ -4549,7 +4549,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   let headToHeadReadyGo = () => {};
   const headToHeadReadyAt = new Promise((go) => { headToHeadReadyGo = go; });
   const closingNow = new Map();
-  const H2H_HANDOUT_LEAD_MS = h2hHandoutLeadMs;   // kanban #1485: a head-to-head handout this close to the entry close is refused (takeHandout); a lock alone takes 2.2-2.7 s
+  // kanban #1485: a head-to-head handout this close to the entry close is refused (takeHandout). `h2hHandoutLeadMs` is the slowest lock the seats measured
+  // (2.7 s, tx_steps of round 77bd9609); kanban #1742 (#1489 refute of #1485): a lead of only that lets a handout through that the order cannot land behind - a
+  // lock as slow as the fix's own measurement, then the entry post, reaches the seats after the close, the lock is made (developers' and reserves' parts
+  // spent) and every seat refuses the entry, the outcome of feedback #010. The door now keeps half the lock again for the entry post and a lock slower than
+  // any measured (the measured spread: 2.7 s against a 2 s lead, 1.35x): a handout is taken only with more than H2H_HANDOUT_LEAD_MS left. This is the guard
+  // that stands for a player whose clock runs slow - every page guard reads the player's own Date.now(), this one the seat's clock.
+  const H2H_HANDOUT_LEAD_MS = Math.ceil(Number(h2hHandoutLeadMs) * 3 / 2);
   function afterClose(roundIdBytes) {
     const key = toHex(roundIdBytes);
     const running = closingNow.get(key);
@@ -6133,7 +6139,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // NO HANDOUT FOR A HEAD-TO-HEAD ROUND THAT CLOSES BEFORE ITS ORDER CAN LAND (kanban #1485, Daniel 2026-11-11: "Er sollte keine fees entgegen nehmen wenn
     // die order nicht angenommen wird"; feedback #010, round 77bd9609: this door took a handout 1.8 s after the close, the player's page locked the stake, and
     // every seat refused the entry - the developers' and reserves' parts of that lock stayed spent). A head-to-head round takes no entry from its close, and a
-    // lock takes 2.2-2.7 s at the seats: a handout with less than H2H_HANDOUT_LEAD_MS left is refused, so the page locks nothing
+    // lock takes 2.2-2.7 s at the seats: a handout with less than H2H_HANDOUT_LEAD_MS left (the lock and the entry post, kanban #1742) is refused, so the page locks nothing
     // BUT ONLY A HANDOUT NO SEAT OF THE ROUND HAS TAKEN YET (kanban #1595, the #1489 audit of #1485): the seat-to-seat relay (entry-relay.js) hands an
     // entry's handout on 0.7-1.2 s after the first seat took it, through this same door, and the lead refused it there - the entry a client sent in
     // time then never reached the seat its post missed, too few seats held it, and the lock already made was spent for nothing: the very loss #1485
