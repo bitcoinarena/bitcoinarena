@@ -354,7 +354,7 @@ async function rollBack({ svc, home, moving, oldTexts, migrating, confFile, back
  * { resumed: 'kept' | 'rolled-back', from, to, ... }.
  */
 export async function resumeUpdate({ home, env = process.env, sh = run, fetcher = fetch, platform = process.platform, node = process.execPath, waitMs = null,
-  sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), log = () => {} }) {
+  sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), log = () => {}, refreshGames = async (o) => (await import('./change-roles.js')).refreshHostedGames(o) }) {
   waitMs = waitMs ?? 300000;
   const j = readJournal(home);
   if (!openJournal(j)) return null;
@@ -379,7 +379,14 @@ export async function resumeUpdate({ home, env = process.env, sh = run, fetcher 
     if (j.migrating && existsSync(envFile)) renameSync(envFile, `${envFile}.migrated`);
     try { writeCommand({ home, release: j.to, node, platform, env, run: sh }); } catch { /* the next update writes it */ }
     journalStep(home, j.id, U.KEPT);
-    return { resumed: 'kept', from: j.from, to: j.to, why };
+    // A RELEASE THE RESUME KEPT IS ADVERTISED WITH ITS APP VERSIONS AS A KEPT MOVE IS (kanban #2463, audit #1489 sm1-node-5): moveNode posts
+    // the games update after its KEPT; this path did not, and the next check finds the node up to date ('that release is the one running'),
+    // so nothing ever posted it - the census never drew the node for the new versions. Same injection and default as moveNode; never fatal
+    // (refreshHostedGames answers `unchanged` when the advertisement already names them, and an open on-chain action is finished, not sent twice)
+    let games = null;
+    if (refreshGames) { try { games = await refreshGames({ home, release: j.to, post: true }); } catch (e) { games = { ok: false, why: e.message }; } }
+    if (games && !games.ok) log(`#2463 the advertisement's app versions of ${j.to} not posted: ${games.why}`);
+    return { resumed: 'kept', from: j.from, to: j.to, why, games };
   }
   // a database written since the backup is kept whatever `served` says (kanban #1227)
   if (!served && dbChangedSince(home, j.backup)) { served = true; why += '; node.db changed since the backup: kept'; }
