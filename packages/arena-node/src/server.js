@@ -407,7 +407,8 @@ const hexOf = (b) => Buffer.from(b).toString('hex');
  */
 export const GHOST_BACKLOG_BYTES = 262144;
 // HOW LONG AFTER THE ENTRY CLOSE A SEAT STILL TAKES A CANCEL ANOTHER SEAT TOOK IN TIME AND HANDED ON (kanban #1520): the hand-on's own
-// bound (4 s, handCancelOn) plus a margin - far shorter than any market's outcome, so no cancel is signed knowing it (kanban #1435)
+// bound (4 s, handCancelOn) plus a margin - for a market whose outcome comes at least that long after its close, so no cancel is signed
+// knowing it (kanban #1435); a market whose outcome is out sooner has CANCEL_HANDON_KNOWN_GRACE_MS (kanban #1702)
 export const CANCEL_HANDON_GRACE_MS = 5000;
 // ANOTHER SEAT'S ANSWER IS READ ONLY UP TO A BOUND (kanban #1553): a game package (GET /plugin) is its manifest, chain, cores and
 // clients - a few hundred kB to a few MB for the real apps - and a GET /games listing far less. r.json() took any length: a seat
@@ -434,6 +435,25 @@ export const readJsonCapped = async (r, maxBytes) => JSON.parse(await readTextCa
 // THE STAKE LOCK A LOCK-FIRST CLIENT SHOWS WITH ITS HANDOUT (kanban #1596, after #1485): JSON { outpoint: "txid:index", fields, federation? }.
 // Inside a head-to-head round's handout lead a handout is taken only with one the federation holds (takeHandout, stakeLockMadeFor)
 export const STAKE_LOCK_HEADER = 'x-arena-stake-lock';
+// AND ONLY HALF A SECOND WHERE THE OUTCOME IS OUT BY THEN (kanban #1702, #1489 v1-refute-33): in the grace a seat trusts any one round seat's word
+// (GET /cancels) that it took the cancel in time, so ONE colluding seat may list a loser's cancel it got after the close and every honest seat
+// takes it. A market whose outcome is fixed at the close - a grid market (its window ends at the entry close: the price at the close), or one
+// whose resolution time is less than the grace after the close, or one naming no resolution time at all (attestationTimely takes an
+// observation at the close) - would give that seat CANCEL_HANDON_GRACE_MS knowing the outcome: the #1435 attack. Such a market's grace is only
+// the hand-on's network time: an honest take in the last 300 ms before the close is handed on at once (handCancelOn), and one before that at
+// close - 300 ms, so the hand-on lands within a round trip of the close. More holders (f + 1) cannot be asked for instead: a take at one seat
+// just before the close is held by that seat alone when the others hear of it, and refusing it there splits the tables again (#1520).
+export const CANCEL_HANDON_KNOWN_GRACE_MS = 500;
+/** How long after its entry close a seat takes a handed-on cancel for this market round (kanban #1520, #1702): see the two figures above. */
+export function cancelHandOnGraceMs(contract, manifest) {
+  const grid = marketWindowOf(contract, manifest);
+  if (!grid.ok) return CANCEL_HANDON_KNOWN_GRACE_MS;
+  if (grid.window && grid.window.endMs < BigInt(contract.entryCloseMs) + BigInt(CANCEL_HANDON_GRACE_MS)) return CANCEL_HANDON_KNOWN_GRACE_MS;
+  let terms = null;
+  try { terms = roundTermsOf(manifest, contract); } catch { terms = null; }
+  const after = terms && typeof terms.resolveAfterCloseMs === 'bigint' ? terms.resolveAfterCloseMs : 0n;
+  return after < BigInt(CANCEL_HANDON_GRACE_MS) ? CANCEL_HANDON_KNOWN_GRACE_MS : CANCEL_HANDON_GRACE_MS;
+}
 
 export const NOTHING_IS_FUNDED = () => false;
 
@@ -11602,8 +11622,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // its expiry. Up to CANCEL_HANDON_GRACE_MS after the close a seat still takes a handed-on cancel, but only one a round seat already
         // holds (it asks their GET /cancels), so a seat's own door, closed at the close, is where every cancel starts: a player who posts one
         // late himself, with or without the hand-on mark, finds no seat holding it and is refused. Such a take is not handed on again.
+        // A market whose outcome is out at the close has only CANCEL_HANDON_KNOWN_GRACE_MS (kanban #1702): one colluding seat's list is no
+        // proof, so the window it opens is cut to the hand-on's own network time (cancelHandOnGraceMs).
         const closed = BigInt(round.now()) >= c.entryCloseMs;
-        if (closed && !(req.headers[RELAY_HEADER] === '1' && BigInt(round.now()) < c.entryCloseMs + BigInt(CANCEL_HANDON_GRACE_MS)
+        if (closed && !(req.headers[RELAY_HEADER] === '1' && BigInt(round.now()) < c.entryCloseMs + BigInt(cancelHandOnGraceMs(c, found.plugin.manifest))
             && await aSeatHoldsCancel(entry.roundId, new Uint8Array(eid))))
           return text(res, 409, `entries closed at ${new Date(Number(c.entryCloseMs)).toISOString()}: that order is in the round now, and its fee is due`);
         if (round.putCancel({ roundId: entry.roundId, entryId: new Uint8Array(eid), signature, receivedMs: round.now() }) && !closed)
