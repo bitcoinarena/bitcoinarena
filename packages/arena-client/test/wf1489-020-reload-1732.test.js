@@ -236,3 +236,50 @@ test('#1732 / feedback #020: after a reload the newest live mark an honest peer 
     assert.equal(fork.ok, false, 'no fork');
   } finally { globalThis.fetch = realFetch; await node.close(); }
 });
+
+// feedback #027 (Hexbox): the home seat ALSO withholds its receipts for the newest mark, so after a reload that mark is short of
+// live and the #020 check (live marks only) never ran. A peer that lists the mark (signed by this session key) is enough.
+test('#027: after a reload a home seat that withholds the newest mark AND its receipts cannot make the player fork', async () => {
+  const { node, client, rid, eid } = await rig();
+  const realFetch = globalThis.fetch;
+  const PEER = 'http://honest-peer-027.invalid';
+  const RECEIPT = 139;
+  try {
+    await inputs(client, rid, eid);
+    const first = await client.checkpoint(driven(60), { roundId: rid, entryId: eid, tick: 60 });
+    await gossipCarry(client, first); carry(client, first);
+    const second = await client.checkpoint(driven(120), { roundId: rid, entryId: eid, tick: 120 });
+    await gossipCarry(client, second); carry(client, second);
+    client.close?.();
+    const isSecond = (rec) => Buffer.from(rec.subarray(3, 35)).equals(Buffer.from(second.id));
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.startsWith(PEER)) {
+        if (/\/checkpoints\?/.test(u)) return realFetch(u.replace(PEER, `http://127.0.0.1:${node.port}`), opts);   // the peer lists both marks
+        return new Response(new Uint8Array(0), { status: 200 });                                                  // and keeps its receipts to itself
+      }
+      const r = await realFetch(url, opts);
+      const all = new Uint8Array(await r.arrayBuffer());
+      if (/\/checkpoints\?/.test(u)) return new Response(all.slice(0, SIGNED_CHECKPOINT_BYTES), { status: 200 });
+      if (/\/receipts\?/.test(u)) {
+        const kept = [];
+        for (let at = 0; at + RECEIPT <= all.length; at += RECEIPT) if (!isSecond(all.subarray(at, at + RECEIPT))) kept.push(...all.subarray(at, at + RECEIPT));
+        assert.equal(all.length % RECEIPT, 0, 'receipt size');
+        return new Response(new Uint8Array(kept), { status: 200 });
+      }
+      return new Response(all, { status: r.status, headers: r.headers });
+    };
+    const fresh = new Client({ base: `http://127.0.0.1:${node.port}`, core, sign, verify });
+    fresh.nodes = client.nodes; fresh.gameVerifySlots = client.gameVerifySlots; fresh.peers = [PEER];
+    let refused = null;
+    try { await fresh.resumeAfterReload({ roundId: rid, entryId: eid, blockTicks: BLOCK_TICKS }); } catch (e) { refused = e.message; }
+    globalThis.fetch = realFetch;
+    console.log(`  #027 reload: head ${toHex(fresh.head).slice(0, 16)} (first ${toHex(first.id).slice(0, 16)}, second ${toHex(second.id).slice(0, 16)}), witnessed(second) ${fresh.witnessed(second.id)}${refused ? `; refused: ${refused}` : ''}`);
+    assert.equal(refused, null);
+    assert.equal(toHex(fresh.head), toHex(second.id), 'the head is the newest mark this player signed, from the peer list');
+    const next = await fresh.checkpoint(driven(180), { roundId: rid, entryId: eid, tick: 180 });
+    const fork = await provesEquivocation(second.bytes, next.bytes, sessionPubkey,
+      (s, m, k) => { try { return ed25519.verify(s, m, k); } catch { return false; } });
+    assert.equal(fork.ok, false, 'no fork');
+  } finally { globalThis.fetch = realFetch; await node.close(); }
+});
