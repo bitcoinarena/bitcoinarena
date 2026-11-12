@@ -1250,10 +1250,23 @@ export function openStore(path = ':memory:') {
     -- WHAT THIS NODE KEEPS AS A RELAY: transcripts by their own hash, so any
     -- node can be one of a contract's publication_relays[] and serve nothing
     -- under a name its bytes do not have.
+    -- capped (kanban #2388): 1 for a transcript the committee does not agree on (a session-signed fork, one seat's word), which shares
+    -- the smaller RELAY_CAPPED_MOST pool; 0 for everything else (the agreed run, this seat's own, the empty one, reveal records, slash proofs).
     CREATE TABLE IF NOT EXISTS relayed (
       hash     BLOB PRIMARY KEY,
       bytes    BLOB NOT NULL,
-      seen_ms  INTEGER NOT NULL
+      seen_ms  INTEGER NOT NULL,
+      capped   INTEGER NOT NULL DEFAULT 0
+    );
+
+    -- ONE RELAYED SLASH PROOF PER SLOT (kanban #2248, a45 refute of #1816; #2344, #2381): the key is round id || accused node || entry id || door
+    -- (3 result, 4 re-run) for a proof about a held entry, else round id || accused node || player || door (1 result, 2 re-run); 97 bytes
+    -- (a 128-byte key from #2248 is never read again). The proof is the one PUT /slash keeps for it.
+    -- A proof's other fields (its bond outpoint, its transcript hash) are free to whoever re-wraps a public signed
+    -- result, so without this one signed result minted 2^32+ distinct proofs into the relay store.
+    CREATE TABLE IF NOT EXISTS relayed_slash (
+      accused  BLOB PRIMARY KEY,
+      proof_id BLOB NOT NULL
     );
 
     -- AN OBJECTION AGAINST A RUN, 13A. Only what the pool needs to know that
@@ -1386,6 +1399,9 @@ export function openStore(path = ':memory:') {
     db.exec('ALTER TABLE loads ADD COLUMN room INTEGER');
   // THE IDENTITY'S CONSENT BESIDE A NAME RECORD (kanban #1278, RULED #1276): the identity key over (round id, round key), checked at the door; a row from
   // before carries none, and books its round to nobody
+  // THE RELAY'S CAPPED POOL (kanban #2388): a store from before gets the column; what it already keeps counts as uncapped.
+  if (!db.prepare('PRAGMA table_info(relayed)').all().some((c) => c.name === 'capped'))
+    db.exec('ALTER TABLE relayed ADD COLUMN capped INTEGER NOT NULL DEFAULT 0');
   if (!db.prepare('PRAGMA table_info(lobby_names)').all().some((c) => c.name === 'identity_sig'))
     db.exec('ALTER TABLE lobby_names ADD COLUMN identity_sig BLOB');
   for (const t of ['objections', 'rerun_objections'])

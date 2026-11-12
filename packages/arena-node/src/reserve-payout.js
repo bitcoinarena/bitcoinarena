@@ -39,6 +39,8 @@ import { moveSeedOf, moveSeedFor } from './reserve-move.js';
 import { leaderboardCap } from '../../arena-protocol/src/leaderboard-winners.js';
 import { payeeOf } from './winnings-send.js';
 import { readJsonBounded } from './lnurl-read.js';
+import { hostReach, hostOf, walletFetch } from './public-fetch.js';
+import { commitmentPointsRefusal } from './pool-wire.js';
 
 
 /**
@@ -57,13 +59,28 @@ export function leaderboardAmounts({ inputs, winners, fees }) {
  * (LUD-01); the pay request (LUD-06), then the invoice for exactly `msat`, taken only when its amount and description hash stand.
  */
 // the default fetch asks the PUBLIC internet only (kanban #1919, public-fetch.js): a proposal's LNURL naming 127.0.0.1 / a LAN host is never fetched
-export function lnurlClient({ fetch: get = lnurlPublicFetch, network = 'testnet4', timeoutMs = 15000 } = {}) {
+export function lnurlClient({ fetch: get, network = 'testnet4', timeoutMs = 15000, localHosts = [] } = {}) {
+  // NEVER A HOST INSIDE THE SEAT'S NETWORK (kanban #2323, #2340, #2236, #1809, #1919): anyone may author a funding proposal (funding.js), and every
+  // guardian seat fetches its LNURL and the callback - so each URL passes hostReach first (https on 443, no internal name, every resolved address
+  // global), and the default fetcher is lnurlPublicFetch (a public name and resolved address checked in the connection's own lookup, redirects
+  // checked hop by hop). `localHosts`: the operator's own "host[:port]" LNURL servers (ARENA_LNURL_LOCAL_HOSTS, server.js lnurlLocalHosts - the
+  // devnet's http://127.0.0.1:<lnurl> payee), never a proposal author's pick, asked with the plain fetch.
+  const locals = (localHosts || []).map((h) => String(h).toLowerCase());
+  const isLocal = (u) => locals.includes(hostOf(u));
+  const fetcher = get || ((u, o) => (isLocal(u) ? fetch(u, o) : lnurlPublicFetch(u, o)));
+  const publicRefusal = async (u) => {
+    if (isLocal(u)) return null;
+    let reach; try { reach = await hostReach(u); } catch { reach = 'unresolved'; }
+    return reach === 'internal' ? `${hostOf(u) || 'that URL'} is not a public HTTPS host, and a seat asks no host inside its own network for a proposal's LNURL` : null;
+  };
   // read to at most LNURL_MAX_BYTES (kanban #1562): the proposal's LNURL is anyone's server
-  const fetchJson = async (u) => readJsonBounded(await get(u, { signal: AbortSignal.timeout(timeoutMs) }));
+  const fetchJson = async (u) => readJsonBounded(await fetcher(u, { signal: AbortSignal.timeout(timeoutMs) }));
   async function payRequest(address, msat) {
     let url;
     if (/^lnurl1/i.test(String(address || ''))) { try { url = urlOfLnurl(String(address).toLowerCase()); } catch (e) { return refuse(`that LNURL does not decode: ${e.message}`); } }
     else { const ep = lightningAddressEndpoint(address); if (!ep.ok) return refuse(ep.why); url = ep.url; }
+    const why = await publicRefusal(url);
+    if (why) return refuse(why);
     let said; try { said = await fetchJson(url); } catch (e) { return refuse(`${url} did not answer: ${e.message}`, 503); }
     const pr = payRequestStands(said, msat);
     return pr.ok ? { ok: true, ...pr } : refuse(pr.why);
@@ -71,7 +88,10 @@ export function lnurlClient({ fetch: get = lnurlPublicFetch, network = 'testnet4
   async function invoiceFor(address, msat) {
     const pr = await payRequest(address, msat);
     if (!pr.ok) return pr;
-    let said; try { said = await fetchJson(callbackFor({ callback: pr.callback, amountMsat: msat })); } catch (e) { return refuse(`the callback did not answer: ${e.message}`, 503); }
+    const cb = callbackFor({ callback: pr.callback, amountMsat: msat });
+    const why = await publicRefusal(cb);
+    if (why) return refuse(`the LNURL's callback: ${why}`);
+    let said; try { said = await fetchJson(cb); } catch (e) { return refuse(`the callback did not answer: ${e.message}`, 503); }
     const inv = invoiceAnswersPayRequest({ invoice: said && said.pr, amountMsat: msat, metadata: pr.metadata, network });
     if (!inv.ok) return refuse(inv.why);
     return { ok: true, invoice: said.pr, paymentHash: toHex(inv.paymentHash), metadata: pr.metadata };
@@ -729,6 +749,12 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
       if (!own.ok) return own;
       const ask = askOf({ ask: 'commit', kind, planId, txid: extra.txid || null });
       const signers = [{ peer: null, commitment: own.commitment }];
+      // EACH GUARDIAN SEAT UNDER ITS OWN ID (kanban #2372, the #1807 guard of forfeit.js / settlement.js / winnings-send.js, signer-guard.js): a commit
+      // answer went on the list under whatever id it named (server.js reads it as Number(j.commitment.id)), and one seat under another's id - or this
+      // seat's - made shareHere's signShare340 throw ('two commitments for participant N are one commitment') before `left` dropped anyone, so every
+      // pass asked the same peers and threw again. Now: an id that is not an integer of 1..members, this seat's own id, or nonces that are not
+      // secp256k1 points leave that peer out; a second peer naming an id already on this list is set aside for this pass only - the first one signs,
+      // and if it is the forger its share does not stand, it is left out, and the other is asked on the next pass.
       for (const peer of peers) {
         if (signers.length >= g.needed) break;
         if (left.has(peer) || peer === tryOut) continue;

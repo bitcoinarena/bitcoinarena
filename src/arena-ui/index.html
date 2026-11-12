@@ -5229,7 +5229,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       for (const a of ARENACLIENT.liquidationDoors({ events, network: NETWORK, verify })) {
         let listed;
         try { const r = await fetch(a + '/liquidation-payouts', { cache: 'no-store' }); if (!r.ok) continue; listed = await r.json(); } catch { continue; }
-        const got = await ARENACLIENT.collectLiquidationPayouts({ listed, seed, curve: window.ARENA_CURVE, clientFor: walletFor, storage: vault() });
+        const got = await ARENACLIENT.collectLiquidationPayouts({ listed, seed, curve: window.ARENA_CURVE, clientFor: walletFor, storage: vault(), federations: [...held, ...liq.map((x) => x.federation)] });   // kanban #2252/#2264: only the federations held or liquidated
         for (const g of got.filter((x) => !x.kept)) console.log('[arena] liquidation payout ' + g.msat + ' msat: ' + (g.ok ? 'collected' : g.why));
         if (got.some((g) => g.ok && !g.kept) && window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE();
       }
@@ -7230,9 +7230,23 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         }
         // PLAYERS: every name record a round holds, checked before it is drawn; a player who posted none is counted, not named
         const verify = (sg, m, k) => { try { return !!(window.ARENA_CURVE && window.ARENA_CURVE.verify(sg, m, k)); } catch { return false; } };
+        // ONE CLICK COSTS AT MOST ONE LOBBY READ (kanban #2367; refute of #1864 / #2259 / #2349 - this is the second copy of
+        // lobby.js's job): the answer is ONE seat's (the fastest, which can be an attacker's), so its rounds and names are its
+        // choice. The lobby's bounds apply here too: a round listed again is skipped (its first listing is the one shown), a
+        // round's names are cut to NAMES_PER_SEAT before any check, and every round of the click shares one budget of
+        // LOBBY_NAME_CHECKS_PER_READ checks - a round past it is counted from r.joined, not named. The numbers are the bundle's
+        // (lobby.js / identity.js); the fallbacks only stand in for a bundle too old to export them and are held equal by
+        // test/wf1489-a45-refute-24-s3-1.test.js.
+        const PER_SEAT = Number(ARENACLIENT.NAMES_PER_SEAT) || 128;
+        const budget = { left: Number(ARENACLIENT.LOBBY_NAME_CHECKS_PER_READ) || 1024 };
+        const seenRound = new Set();
         let named = 0, unnamed = 0;
         for (const r of rounds) {
-          const names = ARENACLIENT.checkedNames ? ARENACLIENT.checkedNames(r.names || [], String(r.id), verify) : [];
+          const rid = String(r.id).toLowerCase();
+          if (seenRound.has(rid)) continue;
+          seenRound.add(rid);
+          const from = Array.isArray(r.names) ? r.names.slice(0, PER_SEAT) : [];
+          const names = ARENACLIENT.checkedNames && from.length ? ARENACLIENT.checkedNames(from, String(r.id), verify, budget) : [];
           for (const x of names) {
             named++;
             blocks.push({ row: { t: x.name, s: 'round ' + String(r.id).slice(0, 8) + ' · player ' + x.player.slice(0, 8), right: { text: x.chosen ? 'chosen name' : 'generated name' } } });
@@ -7664,7 +7678,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       // THE SEASON BOARD'S WAY IN beside the gear and on the wallet bar: there is a game to show the board of now
       document.body.classList.add('arena-game-chosen');
       // THE SHOP BUTTON, only for a game that sells items
-      document.body.classList.toggle('arena-game-shop', !!(ARENACLIENT.shopOf && ARENACLIENT.shopOf(got.games, game.name)));
+      // the shop of THIS tile - its developer key, not every manifest of the name (kanban #2243)
+      document.body.classList.toggle('arena-game-shop', !!(ARENACLIENT.shopOf && ARENACLIENT.shopOf(got.games, game)));
       // THE CHOSEN GAME'S NAME WHERE THE PAGE NAMED NEXT BLOCK (2026-10-12 16:44: "Settings shows tick tock
       // Next block even though I am in RPS"): the Settings head and its mark, and the bare root's splash while the game loads
       if (game.name !== 'nextblock') {
@@ -7965,54 +7980,87 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           { const kept = resultsSeen.get(id), moves = revealsSeen.get(id); if (kept && moves && Object.keys(moves).length >= 2 && h && Date.now() < Number(h.entryCloseMs) + 6000) return saidProvisionally(id, provisional(kept, moves)); }
           let none = null, best = null;
           const needs = (game.manifest && game.manifest.resultType === 3) ? 2 : 1;
-          // NO SEAT ALONE SAYS THE SIGNED RESULT (kanban #1673, #1489 v1-refute-4, the bypass of the client-4 fix aaf288ee): the first seat that answered with
-          // both entries was the round, its outcome, score and signedBy taken as it wrote them - one seat at the head of the list could make an honest win read
-          // "a loss" (and fire the #1406 Correction against a right provisional verdict). Every listed seat is asked at once; an entry is in the round when at
-          // least 2 seats name it (every seat of a one-seat list), and its outcome and score count as signed only when that many seats give the same pair with
-          // signedBy > 0 and more seats give it than any other pair. An entry without that agreement is unsigned here: no outcome yet, and a head-to-head round
-          // keeps its provisional verdict from the agreed open moves (revealsOfRound, the same rule)
-          const listed = h ? h.nodes : [], agree = Math.min(2, listed.length);
+          // NO SEAT ALONE SAYS THE SIGNED RESULT (kanban #1673, #1825, #1489 v1-refute-4 and r6-h2h, the bypass of the client-4 fix aaf288ee): the first seat that
+          // answered with both entries was the round, its outcome, score and signedBy taken as it wrote them - one seat at the head of the list could make an honest
+          // win read "a loss" (and fire the #1406 Correction against a right provisional verdict). Every listed seat is asked at once; an entry is in the round when
+          // at least `agree` votes name it, and its outcome and score count as signed only when that many votes give the same pair with signedBy > 0 and more
+          // votes give it than any other pair. An entry without that agreement is unsigned here: no outcome yet, and a head-to-head round keeps its provisional
+          // verdict from the agreed open moves (revealsOfRound, the same rule)
+          // ONE SERVER, ONE VOTE (kanban #2329, #2364, audit #1489 a45-refute-12-s2/s3): the hidden record's node list is the join link's, so one seat named twice
+          // ('http://evil' and 'http://evil/') or under several paths and spellings of one host ('http://evil/r', 'http://evil.', 'https://evil') was several
+          // votes and outvoted the honest seat. Each address is asked once (its normalized spelling), the addresses of one host settle among themselves (the
+          // answer most of them give, none on a tie), and that host is one vote. Seats under one host (paths of one server) are one operator's: the quorum
+          // `agree` is two hosts, one for a round whose seats all sit on one host
+          const seatKey = (n) => { const t = String(n).replace(/\/+$/, ''); try { const u = new URL(t); return (u.origin + u.pathname).replace(/\/+$/, ''); } catch { return t; } };
+          const hostKey = (n) => { try { const u = new URL(String(n).trim()); if (u.hostname) return u.hostname.toLowerCase().replace(/\.+$/, ''); } catch { /* not a URL */ } return seatKey(n); };
+          const listed = []; { const seen = new Set(); for (const n of (h ? h.nodes : [])) { const k = seatKey(n); if (!seen.has(k)) { seen.add(k); listed.push(n); } } }
+          const hostOfSeat = listed.map(hostKey), hosts = [...new Set(hostOfSeat)];
+          const agree = Math.min(2, hosts.length);
+          // AN ANSWER THAT IS NOT A ROUND RESULT IS NO ANSWER (kanban #2241, #2254, #2329, audit #1489 a45-refute-12): `players` that is not an array of
+          // objects ("xx", {length:2}, [null, null]) threw outside any try, and a head-to-head round of two holds at most two entries; an entry's verdict is a
+          // string entry, a string outcome (or none) and a number score (or none) - outcome ['DELIVERED'] counted for the honest verdict as String(outcome).
+          // Any other answer is dropped like a seat that did not answer; an answer with no `players` is a seat that was not drawn
+          const validAnswer = (j) => {
+            if (!j || typeof j !== 'object') return null;
+            if (!j.players) return { ...j, players: [] };
+            if (!Array.isArray(j.players) || (needs === 2 && j.players.length > 2) || !j.players.every((p) => p && typeof p === 'object')) return null;
+            if (!j.players.every((p) => typeof p.entry === 'string' && (p.outcome === null || p.outcome === undefined || typeof p.outcome === 'string')
+              && (p.score === null || p.score === undefined || (typeof p.score === 'number' && Number.isFinite(p.score))))) return null;
+            return j;
+          };
           // THE MATCH RECORD AND signedBy BY THE SAME RULE, AND NO WAIT ON A SILENT SEAT (kanban #1867, #1890, #1928, #1489 v1-refute-4-s2, the bypass of
           // c36c05f30): the score across rounds and whose identity is whose came from the first seat that had a match record - one seat at the head of the
           // list, even one whose players the vote outvoted, set it; signedBy was the largest any agreeing seat claimed, so one seat said how many signed; and
-          // every call waited for every seat (a dead tunnel in the list: 5 s on each poll). Now each seat has one vote per entry and one for the match record
-          // (identities, score, played, previousRound and which entry is which, as one key); a value counts when at least `agree` seats give it and more than
-          // give any other. signedBy is the agree-th largest among the seats that give the counted pair: a number that many seats reach. The answers are
-          // counted as they come, and the call settles once the seats still out could not change any of it; the rest are aborted.
-          // NO LONE MATCH RECORD (kanban #2057, #1489 v1-refute-4-s3, the bypass of 8620bc1ce): a record only one seat gave was kept when that seat's signed
-          // pairs matched the counted ones - the pairs are public at every seat's /api/round-result, and a seat with no signed pair passed vacuously, so one
-          // seat could copy them and set the score across rounds and whose identity is whose while the honest seats had none (matchOf null). A match record
-          // is now shown only by the vote above (at least `agree` seats, more than any other; every seat of a one-seat list), and otherwise none.
-          const winner = (counts, out) => {   // { v: the counted value or null, fixed: the seats still out cannot change that }
+          // every call waited for every seat (a dead tunnel in the list: 5 s on each poll). Now each vote names each entry once and the match record once
+          // (identities, score, played, previousRound and which entry is which, as one key); a value counts when at least `agree` votes give it and more than
+          // give any other. signedBy is the agree-th largest among the votes that give the counted pair: a number that many reach. The answers are counted as
+          // they come, and the call settles once the hosts still out could not change any of it; the rest are aborted.
+          // NO LONE MATCH RECORD (kanban #2057, #1489 v1-refute-4-s3, the bypass of 8620bc1ce): a match record is shown only by the vote (at least `agree`
+          // votes, more than any other; every vote of a one-host list), and otherwise none. Its names by the same vote among the votes that give the counted
+          // record (kanban #2329), else none.
+          const winner = (counts, out) => {   // { v: the counted value or null, fixed: the votes still out cannot change that }
             const r = [...counts.values()].sort((x, y) => y.seats - x.seats), a = r[0] ? r[0].seats : 0, b = r[1] ? r[1].seats : 0;
             const top = a >= agree && a > b ? r[0] : null;
             return { v: top, fixed: out === 0 || (top ? a > b + out : a + out < agree) };
           };
-          const tally = (answers, out) => {
-            const named = new Map(), matches = new Map(); let empty = false, settled = out < agree;   // an entry no seat named yet cannot get in
-            for (const j of answers) {
+          const matchKey = (m) => { const by = m.players && typeof m.players === 'object' ? m.players : {}; return JSON.stringify([m.identities, m.score, m.played, m.previousRound || null, Object.keys(by).sort().map((x) => [x, by[x]])]); };
+          const answerKey = (j) => JSON.stringify([(j.players || []).map((p) => [p.entry, p.outcome ?? null, p.score ?? null, Number(p.signedBy) > 0]).sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)),
+            j.match && typeof j.match === 'object' ? [matchKey(j.match), Array.isArray(j.match.names) ? j.match.names : []] : null]);
+          // one vote per host: undefined while one of its addresses is still out, null when its addresses do not settle on one answer
+          const hostVote = (answers, hk) => {
+            const mine = listed.map((_, i) => i).filter((i) => hostOfSeat[i] === hk);
+            if (mine.some((i) => answers[i] === undefined)) return undefined;
+            const by = new Map();
+            for (const i of mine) { const j = answers[i]; if (!j) continue; const k = answerKey(j); const v = by.get(k) || { j, n: 0 }; v.n += 1; by.set(k, v); }
+            const c = [...by.values()].sort((x, y) => y.n - x.n);
+            return c.length && !(c.length > 1 && c[1].n === c[0].n) ? c[0].j : null;
+          };
+          const tally = (answers) => {
+            const votes = hosts.map((hk) => hostVote(answers, hk)), out = votes.filter((v) => v === undefined).length;
+            const named = new Map(), matches = new Map(); let empty = false, settled = out < agree;   // an entry no vote named yet cannot get in
+            for (const j of votes) {
               if (!j) continue;
               // A SEAT THAT WAS NOT DRAWN ANSWERS 200 WITH NO PLAYERS (2026-10-30: "beide orders werden abgesendet aber es gibt kein Ergebnis": round
               // 1b995103 settled, 5 signed, and seven seats ahead of the signers in the list said nothing): the other seats count
-              if (!Array.isArray(j.players) || !j.players.length) { empty = true; continue; }
-              const seen = new Set();   // one vote per seat and entry: the first it lists
+              if (!j.players.length) { empty = true; continue; }
+              const seen = new Set();   // one vote per host and entry: the first it lists
               for (const p of j.players) {
-                if (!p || typeof p.entry !== 'string' || seen.has(p.entry)) continue; seen.add(p.entry);
+                if (seen.has(p.entry)) continue; seen.add(p.entry);
                 if (!named.has(p.entry)) named.set(p.entry, { seats: 0, said: new Map() });
                 const e = named.get(p.entry); e.seats += 1;
                 if (p.outcome && Number(p.signedBy) > 0) { const k = String(p.outcome) + '|' + String(p.score); const v = e.said.get(k) || { outcome: p.outcome, score: p.score, seats: 0, signs: [] };
                   v.seats += 1; v.signs.push(Number(p.signedBy)); e.said.set(k, v); }
               }
-              // AND THE SCORE ACROSS ROUNDS: a seat's signed match record, with whose identity is whose - one vote per seat, its own fields (seat, signature) not in the key
+              // AND THE SCORE ACROSS ROUNDS: a seat's signed match record, with whose identity is whose - one vote per host, its own fields (seat, signature) not in the key
               const m = j.match;
               if (m && typeof m === 'object') {
-                const by = m.players && typeof m.players === 'object' ? m.players : {};
-                const k = JSON.stringify([m.identities, m.score, m.played, m.previousRound || null, Object.keys(by).sort().map((x) => [x, by[x]])]);
-                const v = matches.get(k) || { m, seats: 0 }; v.seats += 1; matches.set(k, v);
+                const k = matchKey(m);
+                const v = matches.get(k) || { m, seats: 0, names: new Map() }; v.seats += 1; matches.set(k, v);
+                const nk = JSON.stringify(Array.isArray(m.names) ? m.names : []); const nv = v.names.get(nk) || { names: nk, seats: 0 }; nv.seats += 1; v.names.set(nk, nv);
               }
             }
             // A SEAT THAT HOLDS ONLY ONE OF TWO IS NOT THE ROUND (kanban #947, 2026-11-01: "das Ergebnis nicht konsistent"): an entry reaches the seats one by one;
-            // it is in the round once enough seats hold it
+            // it is in the round once enough votes hold it
             const entries = [];
             for (const [entry, e] of named) {
               if (e.seats + out < agree) continue;
@@ -8022,26 +8070,31 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             }
             const mw = winner(matches, out); if (!mw.fixed) settled = false;
             const m = mw.v && mw.v.m;   // the vote's record or none (kanban #2057: no lone-record exception)
-            return { entries, empty, settled, match: m ? { identities: m.identities, names: m.names || [], score: m.score, played: m.played,
+            const nw = mw.v ? winner(mw.v.names, out) : null; if (nw && !nw.fixed) settled = false;
+            return { entries, empty, settled, match: m ? { identities: m.identities, names: nw && nw.v ? JSON.parse(nw.v.names) : [], score: m.score, played: m.played,
               continued: !!m.previousRound, byEntry: m.players || {}, seat: m.seat, signature: m.signature } : null };
           };
-          const stop = new AbortController(), answers = listed.map(() => null);
-          let out = listed.length;
+          const stop = new AbortController(), answers = listed.map(() => undefined);
+          // a page without AbortSignal.any (or a test's stand-in) still bounds each ask by its own timeout
+          const signalOf = () => { const t = AbortSignal.timeout(5000); try { return typeof AbortSignal.any === 'function' && t ? AbortSignal.any([stop.signal, t]) : t; } catch { return t; } };
           const got = await new Promise((done) => {
-            if (!out) { done(tally(answers, 0)); return; }
+            if (!listed.length) { done(tally(answers)); return; }
             listed.forEach((n, i) => (async () => {
+              let j = null;
               try {
-                const r = await fetch(String(n).replace(/\/+$/, '') + '/api/round-result?round=' + id, { cache: 'no-store', signal: AbortSignal.any([stop.signal, AbortSignal.timeout(5000)]) });
-                answers[i] = r.ok ? await r.json() : null;
-              } catch { answers[i] = null; }
-              out -= 1; const t = tally(answers, out); if (t.settled) done(t);
+                const r = await fetch(String(n).replace(/\/+$/, '') + '/api/round-result?round=' + id, { cache: 'no-store', signal: signalOf() });
+                j = r.ok ? validAnswer(await r.json()) : null;
+              } catch { j = null; }
+              answers[i] = j;
+              const t = tally(answers); if (t.settled) done(t);
             })());
           });
           stop.abort();
           if (got.empty) none = { entries: [], match: null };
           if (got.entries.length) best = { entries: got.entries, match: got.match };
           if (best && needs === 2 && best.entries.length === 2) { resultsSeen.set(id, best); if (resultsSeen.size > 32) resultsSeen.delete(resultsSeen.keys().next().value); }
-          if (best && needs === 2 && best.entries.length === 2 && !best.entries.some((e) => e.outcome && e.signedBy > 0)) return saidProvisionally(id, provisional(best, revealsSeen.get(id) || {}));
+          // no seat's answer signed (a tie between seats, kanban #2329): the verdict from both open moves, else the answer itself, every entry unsigned
+          if (best && needs === 2 && best.entries.length === 2 && !best.entries.some((e) => e.outcome && e.signedBy > 0)) return saidProvisionally(id, provisional(best, revealsSeen.get(id) || {}) || best);
           checkSigned(id, best);
           // AFTER EVERY FINISHED ROUND (the owner 2026-11-08, kanban #1363: "es muss nach jeder fertigen Runde kommen"): this tab's entry signed by the
           // seats - every game the page reads a result for, not only a paid round's collect; a few seconds on, after the game shows its result
@@ -10379,7 +10432,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     // sells items - today Tick Tock v4, on the reserves' terms - so the choice there is the one a purchase uses
     const itemsManifest = () => {
       const games = window.ARENA_GAMES_FULL || []; const c = window.ARENA_GAME_CHOSEN;
-      const s = c && ARENACLIENT.shopOf ? ARENACLIENT.shopOf(games, c.name) : null; if (s) return s.game.manifest;
+      // the chosen tile's own versions (kanban #2243): a stranger's same-name manifest under his own key names no terms here
+      const s = c && ARENACLIENT.shopOf ? ARENACLIENT.shopOf(games, c) : null; if (s) return s.game.manifest;
       const selling = games.filter((g) => g && g.manifest && (g.manifest.items || []).length).sort((a, b) => Number(b.manifest.requiredProtocolVersion || 0) - Number(a.manifest.requiredProtocolVersion || 0) || Number(b.manifest.version) - Number(a.manifest.version));
       return selling.length ? selling[0].manifest : null;
     };
@@ -10394,7 +10448,9 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       : ARENACLIENT.itemPriceFor ? ARENACLIENT.itemPriceFor(BigInt(priceSat), window.ARENA_ITEMS_SHARE()) : BigInt(priceSat));
     async function openShop() {
       const sheet = document.getElementById('arena-shop'); if (!sheet) return;
-      const chosen = window.ARENA_GAME_CHOSEN; const shop = chosen && ARENACLIENT.shopOf(window.ARENA_GAMES_FULL || [], chosen.name);
+      // THE SHOP OF THE CHOSEN TILE (kanban #2243, #1810 variant): its developer key's newest selling version - one seat's same-name
+      // manifest under a key of its own, version + 1, no longer sells its items at its price from its seats on the honest tile
+      const chosen = window.ARENA_GAME_CHOSEN; const shop = chosen && ARENACLIENT.shopOf(window.ARENA_GAMES_FULL || [], chosen);
       const list = sheet.querySelector('.items'); const state = sheet.querySelector('.state');
       const say = (t, bad) => { window.ArenaText.say(state, t || ''); state.classList.toggle('bad', !!bad); };
       // "SHOP" ONCE (2026-10-19: "shop is shown twice. one amber title is enough"): the amber line says Shop, the
@@ -10478,9 +10534,19 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       }
       return null;
     }
+    // THE DEVELOPER KEY OF A GAME NAME (kanban #2243, #1810 variant): the chosen tile's when it is that game, else the name's first game's
+    // (fetchGames' order, the tile the page would choose) - any stranger signs a same-name manifest under a key of his own, so a name
+    // alone never picks a game's versions, its donation game key or its seats
+    const gameDevKeyOf = (gameName) => {
+      const c = window.ARENA_GAME_CHOSEN; if (c && c.devKey && (c.name === gameName || (c.manifest && c.manifest.gameName === gameName))) return c.devKey;
+      const f = (window.ARENA_GAMES_FULL || []).find((g) => g && g.devKey && (g.name === gameName || (g.manifest && g.manifest.gameName === gameName)));
+      return f ? f.devKey : null;
+    };
+    const isGameOf = (g, gameName, devKey) => !!g && (g.name === gameName || (g.manifest && g.manifest.gameName === gameName)) && g.devKey === devKey;
     async function donateSets(gameName) {
       const games = window.ARENA_GAMES_FULL || [];
-      const ids = new Set(games.filter((g) => !gameName || g.name === gameName || (g.manifest && g.manifest.gameName === gameName)).map((g) => g.id));
+      const devKey = gameName ? gameDevKeyOf(gameName) : null;
+      const ids = new Set(games.filter((g) => !gameName || isGameOf(g, gameName, devKey)).map((g) => g.id));
       // every round the lobby lists, not only its current pick: the sets are the same in every paid round of the game
       const listed = [...(window.ARENA_LOBBY_ROWS || []), ...(window.ARENA_LOBBY || []).map((x) => x.raw)];
       const rows = listed.filter((r) => r && !r.free && r.contract && (!gameName || ids.has(r.game)));
@@ -10502,7 +10568,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         if (ds.ok && ds.target) break;
       }
       if (!ds.ok || !ds.target) return { ok: false, why: ds.why || 'the round names no donation sets' };
-      const g = games.filter((x) => x.manifest && (x.name === gameName || x.manifest.gameName === gameName)).sort((a, b) => Number(b.manifest.version) - Number(a.manifest.version))[0];
+      const g = games.filter((x) => x.manifest && isGameOf(x, gameName, devKey)).sort((a, b) => Number(b.manifest.version) - Number(a.manifest.version))[0];
       // INSIDE AN APP, HALF TO EACH (kanban #672): the app's set, and the protocol developers' set beside it
       return { ok: true, set: gameName ? ds.target.game : ds.target.network, networkSet: gameName ? ds.target.network : null,
         game: gameName && g ? { gameDevPubkey: g.manifest.gameDevPubkey, gameName: g.manifest.gameName } : null,
@@ -10666,7 +10732,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     window.ARENA_DONATE_OPEN = (gameName = null) => {
       let el = document.getElementById('arena-donate');
       if (!el) { el = document.createElement('div'); el.id = 'arena-donate'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true'); document.body.appendChild(el); }
-      const game = gameName ? ((window.ARENA_GAMES_FULL || []).find((g) => g.name === gameName || (g.manifest && g.manifest.gameName === gameName)) || null) : null;
+      const game = gameName ? ((window.ARENA_GAMES_FULL || []).find((g) => isGameOf(g, gameName, gameDevKeyOf(gameName))) || null) : null;
       // ON THE SITE ALL TO THE PROTOCOL DEVELOPERS, IN AN APP HALF TO ITS DEVELOPERS (kanban #672), tagged with where it was given
       const appTitle = gameName ? ((game && (game.title || game.manifest && game.manifest.title)) || gameName) : null;
       const who = gameName ? 'the developers of ' + appTitle + ' and of Bitcoin Arena' : 'the Bitcoin Arena protocol developers';

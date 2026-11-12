@@ -210,6 +210,12 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS tag_key ON tags (id, name, value);
     CREATE INDEX IF NOT EXISTS tag_value_time ON tags (name, value, created_at);
     CREATE INDEX IF NOT EXISTS tag_value_kind_time ON tags (name, value, kind, created_at);`);
+  // A TAG ROW WRITTEN WITHOUT ITS EVENT'S TIME OR KIND (kanban #2246, #2378; #1489 a45-refute-11) gets them from its event on every start, through
+  // tag_unfilled / tag_nokind, so the walk newest first from tags (name, value[, kind], created_at) finds it
+  db.exec(`CREATE INDEX IF NOT EXISTS tag_unfilled ON tags (id) WHERE created_at IS NULL;
+    UPDATE tags INDEXED BY tag_unfilled SET created_at = COALESCE((SELECT created_at FROM events WHERE events.id = tags.id), 0) WHERE created_at IS NULL;
+    CREATE INDEX IF NOT EXISTS tag_nokind ON tags (id) WHERE kind IS NULL;
+    UPDATE tags INDEXED BY tag_nokind SET kind = COALESCE((SELECT kind FROM events WHERE events.id = tags.id), -1) WHERE kind IS NULL;`);
   putTag = db.prepare(PUT_TAG);
   // kanban #1704: a store written before has no `size`; it is added and filled once, each row's size as a new event's is counted
   if (!db.prepare('PRAGMA table_info(events)').all().some((c) => c.name === 'size')) db.exec('ALTER TABLE events ADD COLUMN size INTEGER');
@@ -273,92 +279,181 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   const wss = new WebSocketServer({ server, maxPayload: MAX_EVENT_BYTES * 2, autoPong: false });
   // A FILTER IS ANSWERED BY SQL, NOT BY A SCAN (kanban #1543): stored() used to walk every row of the store and JSON.parse each one, once per filter,
   // until `limit` matched - a filter matching nothing (an unknown author) parsed the whole store, ten times a REQ, sixty REQs per 10 s per socket, and the
-  // relay's one event loop (NIP-46 signing, NWC payments, logins) stalled for everyone.
-  // NO FILTER SHAPE WALKS THE STORE (kanban #1720, #1489 v1 refute 48): one WHERE with ORDER BY created_at DESC LIMIT still read every row an index
-  // could not hand over in time order - `kinds: [8], '#p': [unknown]` walked all kind-8 rows, `'#p': [common]` sorted every row with that tag (627 and
-  // 1862 ms a REQ at 40000 events, up to seconds at the 200000 cap). Now a filter is answered in two bounded steps:
-  //   1. candidates: the filter's most selective exact list picks streams - each id itself; else one per author (x kind); else one per value of its
-  //      first #<letter> tag (x kind); else one per kind; else the whole store by time - and each stream is one index range read newest first
-  //      (events (pubkey[, kind], created_at), tags (name, value[, kind], created_at), events (kind, created_at), events (created_at)) with since/until
-  //      in the range and its own LIMIT; all streams together read at most SCAN_MOST index rows (each at least one), so no filter costs more;
-  //   2. the candidates (by id, never a table walk) are checked against the WHOLE filter in SQL - ids, authors, kinds, since, until, every tag -
-  //      newest first, `limit` of them; only those are parsed, and matches() still checks each one.
-  // A filter whose matches are older than what its streams' share of SCAN_MOST reaches gets fewer events than it asked for (NIP-01 lets a relay
-  // answer fewer); every query the game makes (one author or a few nodes, a kind or two, one #p or #d) is read in full. An id or author prefix
-  // never matched (matches() compares whole values), and still does not: a prefix entry is dropped, and a list left empty matches nothing.
-  const SCAN_MOST = 2000, MAX_STREAMS = 100;
-  const stmts = new Map();
-  const stmt = (sql) => { let s = stmts.get(sql); if (!s) { s = db.prepare(sql); stmts.set(sql, s); } return s; };   // a few dozen shapes at most
-  const TIME = 'created_at >= ? AND created_at <= ? ORDER BY created_at DESC LIMIT ?';
-  const STREAM = {
-    time: `SELECT id, created_at FROM events INDEXED BY ev_time WHERE ${TIME}`,
-    kind: `SELECT id, created_at FROM events INDEXED BY ev_kind_time WHERE kind = ? AND ${TIME}`,
-    author: `SELECT id, created_at FROM events INDEXED BY ev_author_time WHERE pubkey = ? AND ${TIME}`,
-    authorKind: `SELECT id, created_at FROM events INDEXED BY ev_author_kind_time WHERE pubkey = ? AND kind = ? AND ${TIME}`,
-    tag: `SELECT id, created_at FROM tags INDEXED BY tag_value_time WHERE name = ? AND value = ? AND ${TIME}`,
-    tagKind: `SELECT id, created_at FROM tags INDEXED BY tag_value_kind_time WHERE name = ? AND value = ? AND kind = ? AND ${TIME}`,
-  };   // INDEXED BY: the planner must not pick an index it then sorts by (tag_value_kind_time for a tag without kinds read every row of a common tag)
-  const planFor = (f) => {
-    const lim = Math.min(Number.isInteger(f.limit) ? f.limit : MAX_LIMIT, MAX_LIMIT);
-    if (!lim) return null;
-    const full = (v) => [...new Set(v.filter((x) => x.length === 64))];
-    const ids = f.ids && full(f.ids), authors = f.authors && full(f.authors), kinds = f.kinds && [...new Set(f.kinds)];
-    const tags = Object.entries(f).filter(([k]) => k[0] === '#' && k.length === 2).map(([k, v]) => [k[1], [...new Set(v)]]);
-    if ((ids && !ids.length) || (authors && !authors.length) || (kinds && !kinds.length) || tags.some(([, v]) => !v.length)) return null;
-    const since = f.since ?? 0, until = f.until ?? Number.MAX_SAFE_INTEGER;
-    if (since > until) return null;
-    let streams, covered = false;   // [sql, ...keys]; covered: the streams' keys are the whole filter (each stream needs only `limit` rows)
-    const kinded = (n) => !kinds || n * kinds.length <= MAX_STREAMS;
-    const byKind = (keys, sql, sqlK) => (kinds && kinded(keys.length)
-      ? keys.flatMap((k) => kinds.map((kd) => [sqlK, ...[k].flat(), kd])) : keys.map((k) => [sql, ...[k].flat()]));
-    if (ids) streams = null;
-    else if (authors) { streams = byKind(authors, STREAM.author, STREAM.authorKind); covered = !tags.length && kinded(authors.length); }
-    else if (tags.length) { streams = byKind(tags[0][1].map((v) => [tags[0][0], v]), STREAM.tag, STREAM.tagKind); covered = tags.length === 1 && kinded(tags[0][1].length); }
-    else if (kinds) { streams = kinds.map((k) => [STREAM.kind, k]); covered = true; }
-    else { streams = [[STREAM.time]]; covered = true; }
-    const where = [], args = [];
-    if (ids) { where.push('e.id IN (SELECT value FROM json_each(?))'); args.push(JSON.stringify(ids)); }
-    if (authors) { where.push('e.pubkey IN (SELECT value FROM json_each(?))'); args.push(JSON.stringify(authors)); }
-    if (kinds) { where.push('e.kind IN (SELECT value FROM json_each(?))'); args.push(JSON.stringify(kinds)); }
-    where.push('e.created_at >= ? AND e.created_at <= ?'); args.push(since, until);
-    for (const [name, vals] of tags) {
-      where.push('EXISTS (SELECT 1 FROM tags t INDEXED BY tag_key WHERE t.id = e.id AND t.name = ? AND t.value IN (SELECT value FROM json_each(?)))'); args.push(name, JSON.stringify(vals));
-    }
-    // the check reads only the indexed columns (and tags by id); the json of just the `limit` survivors is read after
-    const check = `SELECT e.id FROM json_each(?) c CROSS JOIN events e ON e.id = c.value WHERE ${where.join(' AND ')} ORDER BY e.created_at DESC, e.id LIMIT ?`;
-    return { ids, streams, covered, since, until, lim, check, args };
-  };
-  const candidates = (p) => {
-    if (p.ids) return p.ids;
-    let per = Math.max(1, Math.floor(SCAN_MOST / p.streams.length));
-    if (p.covered) per = Math.min(per, p.lim);   // kanban #1915 etc.: one row per (event, name, value), so `limit` rows are `limit` events
-    const seen = new Set();
-    for (const [sql, ...keys] of p.streams) for (const r of stmt(sql).all(...keys, p.since, p.until, per)) seen.add(r.id);
-    return [...seen];
-  };
-  const JSON_OF = 'SELECT e.json FROM json_each(?) c CROSS JOIN events e ON e.id = c.value';
-  const stored = (filters) => {
-    const out = new Map();
-    for (const f of filters) {
-      const p = planFor(f);
-      if (!p) continue;
-      const c = candidates(p);
-      if (!c.length) continue;
-      const keep = stmt(p.check).all(JSON.stringify(c), ...p.args, p.lim).map((r) => r.id);
-      if (!keep.length) continue;
-      for (const row of stmt(JSON_OF).all(JSON.stringify(keep))) {
-        const e = JSON.parse(row.json);
-        if (matches(f, e) && !out.has(e.id)) out.set(e.id, e);
+  // relay's one event loop (NIP-46 signing, NWC payments, logins) stalled for everyone. Now ids, authors, kinds, since, until and #<letter> tags are a
+  // WHERE on indexed columns with LIMIT, so a filter parses at most `limit` rows (MAX_LIMIT), all of which match; matches() still checks each one.
+  // A FILTER'S WORK IS BOUNDED, NOT ONLY ITS ROWS (kanban #1826, #1489 r6-nostr-1): with #1543 a filter pairing a common condition with one
+  // nothing meets ({"#a":["x"],"#p":["nobody"]}, {kinds:[8],"#p":["nobody"]}) still let SQLite walk every row of the store in created_at order,
+  // checking the other condition on each - one REQ of ten such filters held the event loop for seconds. Now each condition (ids, authors,
+  // kinds, each #<letter>) is counted from its own index, at most DRIVE_ROWS+1 rows, and the smallest set drives the query (joined to events by
+  // primary key, every other condition checked on that row); when every condition is bigger than DRIVE_ROWS, a filter of one condition reads its
+  // index as before (every row it reads matches), and a filter of several examines only the newest SCAN_ROWS events.
+  // NO WINDOW OF THE NEWEST, AND EVERY INDEX READ COUNTED (kanban #2246, #2258, #2275; #1489 a45-refute-11): the one-condition path's WHERE
+  // was the correlated EXISTS, so {"#a":["old"]} on 3000 old rows under 150,000 newer ones walked the whole store; a drive count of DISTINCT
+  // ids read every duplicate tag row; and the several-condition path looked only at the newest SCAN_ROWS events, so a recipient's zap read
+  // ({kinds:[9735],"#p":[R]}) answered nothing once 20,000 newer events existed. Now a count reads at most DRIVE_ROWS+1 index rows (not
+  // distinct ids); when nothing drives, one condition is WALKED newest first from its own created_at-ordered index (a tag value from
+  // tag_value_time, a kind from ev_kind_time, an author from ev_author_time, else the store from ev_time), the time window inside the walk,
+  // every other condition checked on each row it reads, at most SCAN_ROWS rows for one REQ (all its filters together). Every match of a filter is found unless that budget
+  // ran out first - then the client is told (NOTICE 'error: filter too broad ...') rather than given a silent EOSE.
+  // EACH CANDIDATE'S CHECK IS BOUNDED TOO, AND A {kinds, #tag} READ IS ITS OWN INDEX (kanban #2378, #2380; #1489 a45-refute-11-s2 on #1826):
+  // SCAN_ROWS bounded how many candidates a walk reads, but each was checked by a correlated EXISTS (... value IN (500 values)) - one index
+  // seek per listed value - so ten {"#a":["x"],"#p":[500 values]} held the event loop 1.8 s and one filter of 25 such conditions 59 s.
+  // Now: the condition that drives or is walked is never checked again (its index rows meet it); every other condition costs its seeks
+  // (a tag: its values; ids/authors: their prefixes, + 1 for the full ones; kinds: 1) per candidate, charged to one REQ's WORK_ROWS -
+  // a drive whose rows x cost is over it is walked newest first instead (or, without a stream, reads only what the work allows), and a
+  // walk stops there with the NOTICE. Counting a condition to choose the drive is charged (rows + seeks) to its own DRIVE budget.
+  // And a stranger flooding both indexes of {kinds:[9735],"#p":[R]} with newer non-matches (9735 to others, kind 8 to R) buried R's
+  // receipts whichever was walked: each tag row now carries its event's kind, and a tag condition beside kinds (values x kinds at most
+  // LIST_MOST) is also counted, driven and walked from tags (name, value, kind, created_at) - exactly R's own kind-9735 rows, newest first.
+  const DRIVE_ROWS = 2000, SCAN_ROWS = 20000, CHECK_BATCH = 250, WORK_ROWS = 4 * SCAN_ROWS, WALK_COUNT_ROWS = 2 * DRIVE_ROWS;
+  const plan = (f, budget) => {
+    const conds = [], pairs = [], time = [], timeArgs = [];
+    const timeOn = (col) => ({ sql: [f.since !== undefined ? `${col} >= ?` : null, f.until !== undefined ? `${col} <= ?` : null].filter(Boolean), args: [f.since, f.until].filter((x) => x !== undefined) });
+    const hexIn = (col, list) => {   // full 64-hex values by equality, NIP-01 prefixes as an index range [prefix, prefix + 'g')
+      const full = list.filter((x) => x.length === 64), pre = list.filter((x) => x.length < 64), or = [], args = [];
+      if (full.length) { or.push(`${col} IN (${full.map(() => '?').join(',')})`); args.push(...full); }
+      for (const x of pre) { or.push(`(${col} >= ? AND ${col} < ?)`); args.push(x, `${x}g`); }
+      return { where: `(${or.join(' OR ')})`, args, cost: pre.length + (full.length ? 1 : 0) };
+    };
+    for (const k of ['ids', 'authors', 'kinds']) if (Array.isArray(f[k]) && !f[k].length) return null;   // an empty list matches nothing
+    const tE = timeOn('e.created_at'), tC = timeOn('created_at');
+    const and = (ws) => (ws.length ? ` AND ${ws.join(' AND ')}` : '');
+    const qs = (l) => l.map(() => '?').join(',');
+    // a stream: (id, created_at, rowid) rows of one index, newest first, the time window applied inside the index, read in keyset pages.
+    // kanban #2418, #2419 (#1489 a45-refute-11-s3 on #1826): the keyset was 'created_at <= t AND (created_at < t OR rowid < rid)', which is
+    // no index range - each page re-read, and threw away, every row of created_at t it had already returned, so 20,000 events of ONE
+    // created_at walked in pages of 10 were ~20 million index rows (the budget counted 20,000) and one REQ held the event loop ~1.1 s.
+    // Now a page is two index ranges, each read row returned: the rest of the current second (created_at = t AND rowid < rid - rowid is
+    // the trailing key column of every index walked here) and then the older seconds (created_at < t). Same order, same rows.
+    const stream = (from, eq, args) => {
+      const head = `SELECT id, created_at AS t, rowid AS rid FROM ${from} WHERE ${eq}${and(tC.sql)} AND created_at`;
+      return { grp: `${head} = ? AND rowid < ? ORDER BY rowid DESC LIMIT ?`, older: `${head} < ? ORDER BY created_at DESC, rowid DESC LIMIT ?`, args: [...args, ...tC.args] };
+    };
+    const onEvents = (c, timed) => ({ ...c, drive: `SELECT e.id AS id FROM events e WHERE ${c.where}${timed ? and(tE.sql) : ''}`, driveArgs: [...c.args, ...(timed ? tE.args : [])] });
+    if (f.ids) conds.push({ ...onEvents(hexIn('e.id', f.ids), false), streams: null, seeks: f.ids.length });
+    if (f.authors) conds.push({ ...onEvents(hexIn('e.pubkey', f.authors), true), seeks: f.authors.length,
+      streams: f.authors.every((a) => a.length === 64) ? [...new Set(f.authors)].map((a) => stream('events INDEXED BY ev_author_time', 'pubkey = ?', [a])) : null });
+    const kinds = f.kinds ? [...new Set(f.kinds)] : null;
+    let kindsCond = null;
+    if (kinds) conds.push((kindsCond = { ...onEvents({ where: `e.kind IN (${qs(f.kinds)})`, args: [...f.kinds], cost: 1 }, true), seeks: kinds.length,
+      streams: kinds.map((k) => stream('events INDEXED BY ev_kind_time', 'kind = ?', [k])) }));
+    if (f.since !== undefined) { time.push('e.created_at >= ?'); timeArgs.push(f.since); }
+    if (f.until !== undefined) { time.push('e.created_at <= ?'); timeArgs.push(f.until); }
+    for (const [k, vals] of Object.entries(f)) {
+      if (k[0] !== '#' || k.length !== 2) continue;
+      if (!vals.length) return null;
+      const uv = [...new Set(vals)];
+      const inV = `value IN (${qs(uv)})`, args = [k[1], ...uv];
+      const tc = { where: `EXISTS (SELECT 1 FROM tags t INDEXED BY tag_key WHERE t.id = e.id AND t.name = ? AND t.${inV})`, args, cost: uv.length, seeks: uv.length,
+        count: `SELECT id FROM tags INDEXED BY tag_value_time WHERE name = ? AND ${inV}${and(tC.sql)}`,
+        drive: `SELECT DISTINCT id FROM tags INDEXED BY tag_value_time WHERE name = ? AND ${inV}${and(tC.sql)}`, driveArgs: [...args, ...tC.args],
+        streams: uv.map((v) => stream('tags INDEXED BY tag_value_time', 'name = ? AND value = ?', [k[1], v])) };
+      conds.push(tc);
+      if (kinds && uv.length * kinds.length <= LIST_MOST) {   // this tag and the kinds together, from tags (name, value, kind, created_at)
+        const inVK = `name = ? AND ${inV} AND kind IN (${qs(kinds)})${and(tC.sql)}`;
+        pairs.push({ covers: [tc, kindsCond], seeks: uv.length * kinds.length,
+          count: `SELECT id FROM tags INDEXED BY tag_value_kind_time WHERE ${inVK}`, drive: `SELECT DISTINCT id FROM tags INDEXED BY tag_value_kind_time WHERE ${inVK}`,
+          driveArgs: [...args, ...kinds, ...tC.args],
+          streams: uv.flatMap((v) => kinds.map((kk) => stream('tags INDEXED BY tag_value_kind_time', 'name = ? AND value = ? AND kind = ?', [k[1], v, kk]))) });
       }
     }
-    return [...out.values()].sort((a, b) => b.created_at - a.created_at);
+    const limit = Math.min(Number.isInteger(f.limit) ? f.limit : MAX_LIMIT, MAX_LIMIT);
+    // what is checked on each candidate of a driver: every condition it does not itself meet, and the time window; cost = their seeks
+    const checkFor = (d) => {
+      const skip = new Set(d ? (d.covers || [d]) : []), cs = conds.filter((c) => !skip.has(c));
+      return { sql: [...cs.map((c) => c.where), ...time], args: [...cs.flatMap((c) => c.args), ...timeArgs], cost: cs.reduce((a, c) => a + c.cost, 0) };
+    };
+    const drivers = [...pairs, ...conds];
+    let best = null;
+    for (const c of drivers) {   // kanban #2258: index ROWS read, at most DRIVE_ROWS+1 - a thousand copies of one tag are a thousand rows
+      if (budget.drive <= 0) break;   // kanban #2378: counting is charged too (rows + seeks)
+      const n = db.prepare(`SELECT COUNT(*) AS n FROM (${c.count || c.drive} LIMIT ${DRIVE_ROWS + 1})`).get(...c.driveArgs).n;
+      budget.drive -= n + c.seeks;
+      if (n <= DRIVE_ROWS && (!best || n < best.n)) best = { c, n };
+    }
+    if (best) {   // the smallest set drives: at most DRIVE_ROWS rows are read and sorted, and their checks fit the REQ's work
+      const chk = checkFor(best.c), can = chk.cost ? Math.floor(Math.max(0, budget.work) / chk.cost) : Infinity;
+      const sql = (drive) => `SELECT e.json AS json FROM (${drive}) d CROSS JOIN events e ON e.id = d.id WHERE ${['1', ...chk.sql].join(' AND ')} ORDER BY e.created_at DESC LIMIT ?`;
+      if (best.n <= can) { budget.work -= best.n * chk.cost; return { limit, sql: sql(best.c.drive), args: [...best.c.driveArgs, ...chk.args, limit] }; }
+      if (best.c.streams) return { limit, streams: best.c.streams, check: chk };   // walked newest first, its checks charged one by one
+      budget.work -= can * chk.cost;
+      return { limit, broad: true, sql: sql(`${best.c.drive} LIMIT ${can}`), args: [...best.c.driveArgs, ...chk.args, limit] };
+    }
+    // kanban #2246, #2275: nothing is small - walk the smallest condition newest first (each counted from its index, at most SCAN_ROWS+1
+    // rows, never more than the smallest so far), at most SCAN_ROWS index rows: a condition of SCAN_ROWS rows or fewer is walked to its end.
+    // These counts too come out of the REQ's budget (budget.count): many big conditions are not counted once it is spent.
+    // kanban #2380: a tag-and-kinds pair is counted first, so a recipient's own kind is walked when it is the smaller.
+    let walk = null;
+    for (const c of drivers) {
+      if (!c.streams) continue;
+      // counted at most WALK_COUNT_ROWS+1 rows each (kanban #1720 with #2246): what is walked is still bounded by SCAN_ROWS, but choosing it no
+      // longer reads up to SCAN_ROWS index rows per condition, so a REQ's cost does not grow with the store (a tie goes to the first: pairs lead)
+      const cap = Math.min(WALK_COUNT_ROWS, walk ? walk.n : WALK_COUNT_ROWS, budget.count);
+      if (cap <= 0) { if (!walk) walk = { c, n: Infinity }; continue; }
+      const n = db.prepare(`SELECT COUNT(*) AS n FROM (${c.count || c.drive} LIMIT ${cap + 1})`).get(...c.driveArgs).n;
+      budget.count -= n + c.seeks;
+      if (!walk || n < walk.n) walk = { c, n };
+    }
+    const streams = walk ? walk.c.streams : [stream('events INDEXED BY ev_time', '1', [])];
+    return { limit, streams, check: checkFor(walk && walk.c) };
   };
-  // kanban #1720: the query plans a filter runs (for the test that holds every shape to an index read)
-  const plans = (f) => {
-    const p = planFor(f);
-    if (!p) return [];
-    const sqls = [...new Set((p.streams || []).map(([sql]) => sql)), p.check, JSON_OF];
-    return sqls.map((sql) => ({ sql, plan: db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...Array((sql.match(/\?/g) || []).length).fill(null)).map((r) => r.detail) }));
+  // the rows of a walk: candidates newest first (several streams merged by created_at, each read in keyset pages), each batch checked
+  // against every other condition in SQL; at most SCAN_ROWS candidates for the whole REQ (budget.left), each one's check charged to
+  // budget.work (kanban #2378), and at most a quarter more rows read ahead
+  const walkRows = (q, budget) => {
+    const out = [], seen = new Set(), heap = [], stmts = new Map(), cost = q.check.cost;
+    const spent = () => budget.left <= 0 || (cost > 0 && budget.work < cost);
+    if (spent()) return { rows: out, broad: true };
+    const where = q.check.sql.length ? ` AND ${q.check.sql.join(' AND ')}` : '';
+    // CROSS JOIN: each candidate is looked up by primary key (a bare IN beside kind IN (...) let SQLite walk ev_kind_time instead)
+    const check = db.prepare(`SELECT e.json AS json FROM (SELECT value AS id FROM json_each(?)) d CROSS JOIN events e ON e.id = d.id WHERE 1${where} ORDER BY e.created_at DESC`);
+    const checkBatch = (ids) => { for (const r of check.all(JSON.stringify(ids), ...q.check.args)) if (out.length < q.limit) out.push(r.json); };
+    const page = Math.max(8, Math.min(512, Math.floor(Math.max(budget.left, 32) / 4 / q.streams.length)));
+    const prep = (sql) => { let st = stmts.get(sql); if (!st) stmts.set(sql, (st = db.prepare(sql))); return st; };
+    const fill = (s) => {   // kanban #2418: the rest of second s.t below s.rid, then older seconds - both index ranges
+      s.buf = prep(s.grp).all(...s.args, s.t, s.rid, page);
+      if (s.buf.length < page) s.buf.push(...prep(s.older).all(...s.args, s.t, page - s.buf.length));
+      s.pos = 0; s.end = s.buf.length < page;
+      if (s.buf.length) { const l = s.buf[s.buf.length - 1]; s.t = l.t; s.rid = l.rid; }
+      return s.buf.length > 0;
+    };
+    const at = (i) => heap[i].buf[heap[i].pos].t;
+    const up = (i) => { while (i > 0) { const p = (i - 1) >> 1; if (at(p) >= at(i)) break; [heap[p], heap[i]] = [heap[i], heap[p]]; i = p; } };
+    const down = (i) => { for (;;) { const l = 2 * i + 1, r = l + 1; let m = i; if (l < heap.length && at(l) > at(m)) m = l; if (r < heap.length && at(r) > at(m)) m = r; if (m === i) break; [heap[m], heap[i]] = [heap[i], heap[m]]; i = m; } };
+    for (const s0 of q.streams) { const s = { ...s0, t: Number.MAX_SAFE_INTEGER, rid: Number.MAX_SAFE_INTEGER }; if (fill(s)) { heap.push(s); up(heap.length - 1); } }
+    let broad = false, batch = [];
+    while (heap.length && out.length < q.limit) {
+      if (spent()) { broad = true; break; }
+      const s = heap[0], row = s.buf[s.pos++]; budget.left--;
+      if (!seen.has(row.id)) { seen.add(row.id); batch.push(row.id); budget.work -= cost; }
+      if (s.pos >= s.buf.length && (s.end || !fill(s))) { const last = heap.pop(); if (heap.length && last !== s) { heap[0] = last; down(0); } } else down(0);
+      if (batch.length >= CHECK_BATCH) { checkBatch(batch); batch = []; }
+    }
+    if (batch.length && out.length < q.limit) checkBatch(batch);
+    return { rows: out, broad: broad && out.length < q.limit };
+  };
+  // ONE QUERY ENGINE (merge of #1720/#1915 with #1826/#2246/#2378/#2418, kanban #1489): the walk above, over the tags table #1915 keeps -
+  // one row per (event, name, value), each with its event's kind and created_at, (id, name, value) unique (tag_key)
+  const stored = (filters) => {
+    // kanban #2246: one REQ checks at most SCAN_ROWS walked candidates and counts at most 4 x SCAN_ROWS rows to choose its walks, all its
+    // filters together; kanban #2378: and at most WORK_ROWS seeks checking candidates, 4 x SCAN_ROWS counting drives
+    const out = new Map(), budget = { left: SCAN_ROWS, count: 4 * SCAN_ROWS, drive: 4 * SCAN_ROWS, work: WORK_ROWS };
+    let broad = false;
+    for (const f of filters) {
+      const q = plan(f, budget);
+      if (!q) continue;
+      let rows;
+      if (q.sql) { rows = db.prepare(q.sql).all(...q.args).map((r) => r.json); broad = broad || !!q.broad; }
+      else { const r = walkRows(q, budget); rows = r.rows; broad = broad || r.broad; }
+      const c = compileFilter(f);   // kanban #2378: the last check by Sets (min of both sides per tag), not tags x values
+      for (const json of rows) {
+        const e = JSON.parse(json);
+        if (!out.has(e.id) && matchesCompiled(c, e, eventTagSets(e))) out.set(e.id, e);
+      }
+    }
+    const events = [...out.values()].sort((a, b) => b.created_at - a.created_at);
+    events.broad = broad;
+    return events;
   };
   // A SUBSCRIBER THAT DOES NOT READ IS DROPPED (kanban #1542): every matching subscription of every client gets its own copy of each
   // event, and ws.send queues it in this process when the peer stops reading - ephemeral events too, which are never stored. A
@@ -512,12 +607,15 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
         { const bad = filters.map(filterRefusal).find(Boolean); if (bad) return send(['CLOSED', sid, `invalid: ${bad}`]); }   // kanban #1470
         if (!subs.has(sid) && subs.size >= MAX_SUBS) return send(['CLOSED', sid, `blocked: at most ${MAX_SUBS} subscriptions`]);
         subs.set(sid, filters.map(compileFilter));   // kanban #1752: Sets, built once
-        for (const e of stored(filters)) {
+        const found = stored(filters);
+        for (const e of found) {
           if (ws.readyState !== 1) return undefined;
           // kanban #1717: the stored answer stops once this socket's unsent backlog passes SLOW_BYTES; the subscription ends
           if (ws.bufferedAmount > SLOW_BYTES) { subs.delete(sid); return send(['CLOSED', sid, 'error: too slow, the answer was cut; ask again with a smaller limit']); }
           queue(c, JSON.stringify(['EVENT', sid, e]));   // kanban #1904: counted toward the relay-wide backlog (may drop this client)
         }
+        // kanban #2275: a walk that ran out of its budget says so - the answer may miss older matches
+        if (found.broad) send(['NOTICE', `error: filter too broad, this REQ examined ${SCAN_ROWS} rows and some of its filters may miss older matches; narrow them (since/until, fewer values)`]);
         return send(['EOSE', sid]);
       }
       if (m[0] === 'CLOSE') { subs.delete(String(m[1] || '')); return undefined; }
@@ -528,7 +626,6 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   return {
     port: server.address().port,
     events: () => all.all().map((r) => JSON.parse(r.json)),
-    plans,
     close: () => new Promise((r) => { clearInterval(recount); for (const c of clients) c.ws.terminate(); wss.close(); server.close(() => { db.close(); r(); }); }),
   };
 }

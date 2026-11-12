@@ -23,6 +23,11 @@
 //   (crypto), so no asker can choose which pair goes;
 // - the pool is wide: PAIRS_PER_KEY per signing, PAIRS_ALL over all of them (memory, not a gate).
 // No wire or protocol rule changes: a pair is still a pair, and an honest signing's bytes are the same.
+//
+// AND EACH PAIR BELONGS TO THE ASKER THAT DREW IT (kanban #2308, #2322, #2386, #2389; asker-pairs.js): this seat's own pass, a seat of the round
+// that signs its commit ask, or the one bucket every unsigned ask shares. Each asker has its own pool of PAIRS_PER_KEY under the rule above, so a
+// stranger's flood lands in the unsigned pool only, and a pair is spent only on a list the same asker signs (asker-pairs.js spendRefusal). A
+// signed ask's id gives a replay the same pair (`askKey`).
 import { toHex } from '../../arena-protocol/src/hash.js';
 
 export const PAIRS_PER_KEY = 4096;
@@ -50,17 +55,43 @@ export class NoncePool {
     this.perKey = perKey;
     this.all = all;
     this.holdMs = holdMs;
-    this.pools = new Map();   // signing key -> Map(commitment key -> pair), oldest first
+    this.pools = new Map();   // signing key (and asker) -> Map(commitment key -> pair), oldest first
+    this.subs = new Map();    // signing key -> Set(its pools' keys, one per asker)
+    this.asks = new Map();    // a signed ask's key -> [pool key, commitment key] (kanban #2386: a replay gets the same pair)
     this.count = 0;           // pairs kept over every signing
+  }
+
+  /** The pool of `key` for `asker`: the unsigned asks' pool is `key` itself (kanban #2386). */
+  static poolKey(key, asker = '') { return asker ? `${key}\u0001${asker}` : key; }
+
+  #forget(pk) {
+    this.pools.delete(pk);
+    const key = pk.includes('\u0001') ? pk.slice(0, pk.indexOf('\u0001')) : pk;
+    const set = this.subs.get(key);
+    if (set) { set.delete(pk); if (!set.size) this.subs.delete(key); }
+  }
+
+  /** The pair a signed ask drew before (kanban #2386, #2389), or null. */
+  replayed(askKey) {
+    if (!askKey) return null;
+    const at = this.asks.get(askKey);
+    if (!at) return null;
+    const pair = this.pools.get(at[0])?.get(at[1]) || null;
+    if (!pair) this.asks.delete(askKey);
+    return pair;
   }
 
   /**
    * A NEW PAIR KEPT FOR ITS ASKER: `pair` carries `commitment` (and its nonces); `own` marks the seat's own pair for a signing it asks.
    * Room is made first (spent and old pairs, then one young unspent pair at random). { ok: true } or a refusal when the draw repeats.
    */
-  add(key, pair, { own = false } = {}) {
-    let held = this.pools.get(key);
-    if (!held) { held = new Map(); this.pools.set(key, held); }
+  add(key, pair, { own = false, asker = '', askKey = null } = {}) {
+    const pk = NoncePool.poolKey(key, asker);
+    let held = this.pools.get(pk);
+    if (!held) {
+      held = new Map(); this.pools.set(pk, held);
+      let set = this.subs.get(key); if (!set) { set = new Set(); this.subs.set(key, set); } set.add(pk);
+    }
     const ck = commitmentKey(pair.commitment);
     // A PAIR IS NEVER DRAWN OVER ANOTHER (kanban #1699): a repeated draw would put a spent pair's nonces back in play
     if (held.has(ck)) return { ok: false, status: 500, why: 'this signer node drew a nonce pair it already holds: its randomness repeats, and it hands out nothing' };
@@ -69,7 +100,7 @@ export class NoncePool {
       for (const [k, map] of this.pools) {
         if (this.count < this.all) break;
         this.#sweep(map);
-        if (!map.size && map !== held) this.pools.delete(k);
+        if (!map.size && map !== held) this.#forget(k);
       }
       while (this.count >= this.all) {
         // ONE YOUNG UNSPENT PAIR OF A SIGNING DRAWN BY ITS SIZE: a flood over many signings drops its own pairs most. A draw that lands on a
@@ -80,38 +111,46 @@ export class NoncePool {
           for (const [k, map] of this.pools) {
             if (at >= map.size) { at -= map.size; continue; }
             dropped = this.#dropOne(map);
-            if (dropped && !map.size && map !== held) this.pools.delete(k);
+            if (dropped && !map.size && map !== held) this.#forget(k);
             break;
           }
         }
         for (const [k, map] of this.pools) {
           if (dropped) break;
           dropped = this.#dropOne(map);
-          if (dropped && !map.size && map !== held) this.pools.delete(k);
+          if (dropped && !map.size && map !== held) this.#forget(k);
         }
         if (!dropped) break;
       }
     }
-    held.set(ck, { ...pair, at: Date.now(), own: !!own, list: pair.list || null, share: pair.share || null });
+    held.set(ck, { ...pair, at: Date.now(), own: !!own, asker, askKey: askKey || null, list: pair.list || null, share: pair.share || null });
     this.count += 1;
+    if (askKey) {
+      this.asks.set(askKey, [pk, ck]);
+      if (this.asks.size > this.all) this.asks.delete(this.asks.keys().next().value);
+    }
     return { ok: true };
   }
 
-  /** The pair `commitment` names under `key`, or null. */
-  get(key, commitment) {
-    const held = this.pools.get(key);
-    return held && commitment ? held.get(commitmentKey(commitment)) || null : null;
+  /** The pair `commitment` names under `key` - in `asker`'s pool when one is named, else in any asker's - or null. */
+  get(key, commitment, asker) {
+    if (!commitment) return null;
+    const ck = commitmentKey(commitment);
+    if (asker !== undefined) return this.pools.get(NoncePool.poolKey(key, asker))?.get(ck) || null;
+    for (const pk of this.subs.get(key) || []) { const p = this.pools.get(pk)?.get(ck); if (p) return p; }
+    return null;
   }
 
-  /** Whether `key` holds any pair. */
-  holds(key) { const held = this.pools.get(key); return !!(held && held.size); }
+  /** Whether `key` holds any pair, of any asker. */
+  holds(key) { for (const pk of this.subs.get(key) || []) { const held = this.pools.get(pk); if (held && held.size) return true; } return false; }
 
-  /** Every pair kept under `key` dropped (a plan replaced: its pairs sign nothing). */
+  /** Every pair kept under `key`, of every asker, dropped (a plan replaced: its pairs sign nothing). */
   drop(key) {
-    const held = this.pools.get(key);
-    if (!held) return;
-    this.count -= held.size;
-    this.pools.delete(key);
+    for (const pk of [...(this.subs.get(key) || [])]) {
+      const held = this.pools.get(pk);
+      if (held) this.count -= held.size;
+      this.#forget(pk);
+    }
   }
 
   /** A pair signed a list: it keeps the list and the share, never the nonces (kanban #1699). */
