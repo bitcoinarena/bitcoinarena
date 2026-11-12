@@ -2569,6 +2569,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // HOLDS is counted only before a Void (`orHeld`): at the door a different
   // one already goes to the chain's own refusal, which keeps that proof
   // (equivocation at a tick, or a parent that is not the head).
+  // kanban #2445: is this signed mark the decoded mark `c` by id (any encoding of the same fields)?
+  const sameMarkId = (m, c) => {
+    try { return toHex(checkpointId(decodeCheckpoint(splitSigned(m).body))) === toHex(checkpointId(c)); } catch { return false; }
+  };
   const secondFirstMark = (c, bytes, { orHeld = false } = {}) => {
     if (round.equivocation(c.roundId, c.entryId).length > 0) return true;
     const late = round.startForfeit(c.entryId);
@@ -2601,9 +2605,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const startLine = round.startLine(c.roundId, c.entryId);
     const retryOfRefusedLateStart = !!late && !carried(late.mark)
       && !!startLine && c.tick > startLine.lastTick && late.markTick > startLine.lastTick;
+    // THE OTHER MARK IS ANOTHER ID, NOT OTHER BYTES (kanban #2445): checkpointId re-encodes the fields, so the voided
+    // first mark with its version byte changed by a stranger (public at /checkpoints, /entry-void) is the same mark, its
+    // signature intact - compared by bytes it was kept as "two first marks" and the outage refund became a FORFEIT.
     const other = [late && !retryOfRefusedLateStart && late.mark,
       voided && voided.firstMark, orHeld && round.firstMarkHeld(c.roundId, c.entryId)]
-      .find((m) => m && toHex(m) !== toHex(bytes));
+      .find((m) => m && toHex(m) !== toHex(bytes) && !sameMarkId(m, c));
     if (!other || !round.putFirstMarkPair({ a: other, b: bytes })) return false;
     // A VOID SIGNER NODE ALSO KEEPS THE PLAYER'S LATE FIRST MARK AS A LATE START (M3.3-34,
     // ruled 2026-09-13), next to the pair: the late start's own record, through
@@ -2775,6 +2782,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const theirs = got.firstMark ? fromHex(String(got.firstMark)) : null;
         const line = round.startLine(c.roundId, c.entryId);
         if (theirs && line && c.tick <= line.lastTick && toHex(theirs) !== toHex(bytes)
+          && !sameMarkId(theirs, c)   // the same mark re-encoded is not a different first mark (kanban #2445)
           && round.putFirstMarkPair({ a: theirs, b: bytes })) return { twoFirst: true };
         const late = lateEvidenceHere(c, { kind: got.evidenceKind, evidence: got.evidence }, got.receipt ? fromHex(String(got.receipt)) : null);
         if (late) return { late, receipts: receiptsGiven(got) };
