@@ -51,7 +51,7 @@ import { askerOrder, eligibleAsker } from './payout.js';
 import { REFUSAL } from './settle-backoff.js';
 import { RETRY, retryStep, retryBlocks, locksExpired, isFinalRetry } from './settle-retry.js';
 import { LOCK_FATE, lockFateStep, lockFateOf, markLockFate } from './forfeit.js';
-import { planTakenId, signPlanTaken, countPlanTaken, joinCertificate, splitCertificate } from './plan-taken.js';
+import { planTakenId, signPlanTaken, countPlanTaken, joinCertificate, splitCertificate, PLAN_TAKEN_BYTES } from './plan-taken.js';
 import { PLAN_ASK, SEND_PLAN_ASK_HEADER, sendPlanAskHeaders, checkSendPlanAsk } from './send-plan-ask.js';
 import { askPeers, PEER_ASK_MS, PEER_READ_MS, PEER_GRACE_MS } from './peer-ask.js';
 // the payouts of an accepted settlement kept as rows (GET /donations, GET /reserves): a walk-away's donation keys and a market's reserve
@@ -2127,6 +2127,13 @@ export class LockSettlement {
     if (!kept.length) return refuse('this seat keeps no send plan for that settlement');
     const planId = planTakenId({ roundId: roundIdBytes, lateEntryId, rows: kept });
     if (toHex(planId) !== toHex(bytes.subarray(0, 32))) return refuse('that certificate is for another plan than the one this seat kept');
+    // ONE RECORD PER SEAT AT MOST, COUNTED BEFORE ANY SIGNATURE IS CHECKED (kanban #1674): this door is public, and a stranger's
+    // 8 MiB body of one real record repeated 65 535 times held the seat's loop ~61 s in BIP-340 verifies. A certificate that
+    // is not whole 128-byte records, or has more records than the round has seats, is refused here.
+    const tail = bytes.length - 32;
+    if (tail % PLAN_TAKEN_BYTES !== 0) return refuse(`a certificate's signed acceptances are ${PLAN_TAKEN_BYTES} bytes each`, 400);
+    if (tail / PLAN_TAKEN_BYTES > contract.nodes.length)
+      return refuse(`a certificate of ${tail / PLAN_TAKEN_BYTES} signed acceptances, more than the round's ${contract.nodes.length} seats`, 400);
     const records = splitCertificate(bytes.subarray(32));
     const counted = countPlanTaken({ own: records[0], answers: records.slice(1).map((b, i) => ({ base: `record ${i + 1}`, bytes: b })),
       seats: contract.nodes, planId, slots: contract.settlementSlots });
