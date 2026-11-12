@@ -23,7 +23,7 @@ import { b32, rand, STAKE, WINDOW_MS, WINNER, GENESIS_HASH, wordsAt, contractFor
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
 import { dealHandout, encodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
-import { encodeInputBatch, batchId } from '../../arena-protocol/src/batch.js';
+import { signedBatchOf, batchId } from '../../arena-protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../arena-protocol/src/checkpoint.js';
 import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
 import { init, step } from '../../nextblock/src/sim.js';
@@ -99,7 +99,7 @@ async function joinAndBuild(w) {
   const b1 = { roundId: w.rid, entryId: eid, previousHash: GENESIS_HASH, firstTick: 0, ticks: Array.from({ length: 60 }, (_, t) => wordsAt(t)), liquidations: [] };
   const m1 = { roundId: w.rid, entryId: eid, tick: 60, stateHash: Uint8Array.from(stateHash(st).match(/../g).map((x) => parseInt(x, 16))),
     inputChainHash: batchId(b1), previousHash: NO_PREVIOUS, sessionPubkey: entry.sessionPubkey };
-  return { eid, fields, joined, firstId: checkpointId(m1), start: [encodeInputBatch(b1), joinSigned(encodeCheckpoint(m1), ed25519.sign(checkpointId(m1), session))] };
+  return { eid, fields, joined, firstId: checkpointId(m1), start: [signedBatchOf(b1, (id) => ed25519.sign(id, session)), joinSigned(encodeCheckpoint(m1), ed25519.sign(checkpointId(m1), session))] };
 }
 
 async function closeAndLook(w, run) {

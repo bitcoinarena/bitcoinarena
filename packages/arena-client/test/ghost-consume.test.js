@@ -31,7 +31,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { openStore } from '../../arena-node/src/store.js';
 import { serve } from '../../arena-node/src/server.js';
 import { Client } from '../src/client.js';
-import { encodeInputBatch, decodeInputBatch } from '../../arena-protocol/src/batch.js';
+import { encodeInputBatch, decodeInputBatch, splitSignedBatch } from '../../arena-protocol/src/batch.js';
 import { GENESIS } from '../../arena-protocol/src/transcript.js';
 import { encodeEntryContract, entryId as entryIdOf } from '../../arena-protocol/src/contracts.js';
 import { seedWordForEntry } from '../../arena-protocol/src/seed.js';
@@ -388,7 +388,8 @@ test('pictures change nothing this client publishes', async () => {
       const real = client.send.bind(client);
       client.send = (m) => {
         if (typeof m !== 'string') {
-          const b = decodeInputBatch(m);
+          // a batch goes out signed by the session key now (kanban #1503): the run is the batch inside the frame
+          const b = splitSignedBatch(m).batch;
           sent.push({
             firstTick: b.firstTick, ticks: b.ticks.map((w) => w.join(',')).join('|'),
             liquidations: JSON.stringify(b.liquidations),
