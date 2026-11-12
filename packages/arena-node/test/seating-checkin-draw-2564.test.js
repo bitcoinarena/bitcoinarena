@@ -25,4 +25,5 @@ test('#2564 the agent skips a stale check-in seating where a round is seated, an
   assert.ok(src.includes('later[i].index <= index && !staleReseats.has(`${toHex(later[i].rid)}:${role}`)) return later[i].rid;'), 'seatRoundOf skips it too');
   assert.ok(src.includes('return tableSeatingAt(a, role, index, { keepStale: withEntries });'), 'a round with entries keeps its seats');
   assert.ok(src.includes('try { checkReseats(); }'), 'the tick checks the held check-ins');
+  assert.ok(/RESEAT_CHECK_MS = 60000, RESEAT_CHECKS = 32;/.test(src) && src.includes('if (reseatVerdicts.has(k)) { if (reseatVerdicts.get(k)) break; continue; }'), 'bounded: newest first, to the first that stands, verdicts kept (fed2-1 held 46,728)');
 });

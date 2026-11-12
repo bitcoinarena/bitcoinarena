@@ -533,20 +533,28 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
   // missed the next rounds' close, and that left more tables uncertified). One pass at a time, its own; the tick does not wait for it.
   let asking = null;
   let confirming = null;     // the confirm pass for rounds out of the index (kanban #2360, #2363), beside the tick as askUnwritten
-  // EACH CHECK-IN SEATING HELD, AGAINST THIS SEAT'S DRAW OF ITS ROUND NOW (kanban #2564): at most once a minute; a seating whose nodes are not that draw's in
-  // score order is marked stale (and back when it stands again), named once in the log
-  const RESEAT_CHECK_MS = 60000;
+  // THE NEWEST CHECK-IN SEATINGS OF EACH TABLE, AGAINST THIS SEAT'S DRAW OF THEIR ROUND (kanban #2564): once a minute, newest first, down to the first one that
+  // stands - the one later rounds take - at most RESEAT_CHECKS draws a pass, each verdict kept (a past round's draw does not change). Measured on fed2-1
+  // 2026-11-12: a seat holds 46,728 check-in seatings (older builds seated every round of a table); checking them all each minute held its loop past 20 s
+  const RESEAT_CHECK_MS = 60000, RESEAT_CHECKS = 32;
+  const reseatVerdicts = new Map();   // `${rid hex}:${role}` -> true (stands) / false (stale)
   const checkReseats = () => {
     if (nowMs() - reseatsCheckedMs < RESEAT_CHECK_MS) return;
     reseatsCheckedMs = nowMs();
+    let budget = RESEAT_CHECKS;
     for (const [key, list] of reseats) {
       const role = key.slice(key.lastIndexOf(':') + 1);
-      for (const x of list) {
+      for (let i = list.length - 1; i >= 0; i--) {
+        const x = list[i], k = `${toHex(x.rid)}:${role}`;
+        if (reseatVerdicts.has(k)) { if (reseatVerdicts.get(k)) break; continue; }
+        if (budget-- <= 0) return;
         let c = null; try { c = roster.committeeFor(x.rid, role); } catch { c = null; }
-        if (!c || !c.ok || !Array.isArray(c.drawn)) continue;
-        const k = `${toHex(x.rid)}:${role}`, stands = seatedInDrawOrder(x.seated, c.drawn.map((e) => e.pubkey));
-        if (!stands && !staleReseats.has(k)) { staleReseats.add(k); log(`[seating] ${toHex(x.rid).slice(0, 16)} ${role}: the check-in seating held (index ${x.index}) is not this seat's draw in score order - not used (kanban #2564)`); }
-        else if (stands && staleReseats.has(k)) { staleReseats.delete(k); log(`[seating] ${toHex(x.rid).slice(0, 16)} ${role}: the check-in seating (index ${x.index}) stands on this seat's draw again`); }
+        if (!c || !c.ok || !Array.isArray(c.drawn)) break;
+        const stands = seatedInDrawOrder(x.seated, c.drawn.map((e) => e.pubkey));
+        reseatVerdicts.set(k, stands);
+        if (reseatVerdicts.size > 50000) reseatVerdicts.delete(reseatVerdicts.keys().next().value);
+        if (stands) { staleReseats.delete(k); break; }
+        if (!staleReseats.has(k)) { staleReseats.add(k); log(`[seating] ${toHex(x.rid).slice(0, 16)} ${role}: the check-in seating held (index ${x.index}) is not this seat's draw in score order - not used (kanban #2564)`); }
       }
     }
   };
