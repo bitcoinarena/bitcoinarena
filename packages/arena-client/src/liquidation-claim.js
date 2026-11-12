@@ -252,6 +252,15 @@ export function liquidationKeyFor(seed, federationHex, curve) {
 // (2) every row naming this seed's payout key cost a wallet open and a refund round trip, and the door learns that key from the
 // player's own POST: matching rows are deduplicated by txid:outIdx and at most MAX_LIQUIDATION_PAYOUTS_PER_FEDERATION are
 // claimed per federation (an honest list holds a player's few: notes, pending, remainder).
+//
+// Kanban #2328 (audit45 refute of #2252/#2264, skeptic 2): a count cap on matching rows let anyone starve a player on an HONEST
+// door - a payout key is public (GET /liquidation-claims), so a stranger holding a few dust notes presented them late, one per
+// pass, naming the victim's key, and the 16 newer dust rows took every slot; the victim's real (older, large) payout was never
+// claimed. Likewise a row already collected (kept) took a slot on every reload, so a payout whose Refund once failed was never
+// retried. Now only a FAILED claim (refused, unknown outpoint, wallet error) costs one of the per-federation slots: a kept row
+// and an accepted refund cost none (an accepted one is a real note the federation paid this key, so the work is bounded by
+// real money). Within a federation the rows are claimed largest msat first (newest first among equals), so a padded list
+// cannot put its refusals ahead of a real payout of any size above theirs.
 export const MAX_LIQUIDATION_FEDERATIONS = 32;
 export const MAX_LIQUIDATION_PAYOUTS_PER_FEDERATION = 16;
 export async function collectLiquidationPayouts({ listed, seed, curve, clientFor, storage, federations }) {
@@ -267,6 +276,12 @@ export async function collectLiquidationPayouts({ listed, seed, curve, clientFor
     for (const f of federations) { const k = String(f || '').toLowerCase(); if (/^[0-9a-f]{64}$/.test(k) && !rank.has(k)) rank.set(k, rank.size); }
     rows = rows.filter((p) => rank.has(fidOf(p))).sort((a, b) => rank.get(fidOf(a)) - rank.get(fidOf(b)));   // stable: newest first within one
   }
+  // kanban #2328: within one federation, the largest payout first (stable: newest first among equals); federations keep their order
+  const fedAt = new Map();
+  for (const p of rows) { const f = fidOf(p); if (!fedAt.has(f)) fedAt.set(f, fedAt.size); }
+  const msatOf = (p) => { try { const v = BigInt(String(p && p.msat)); return v > 0n ? v : 0n; } catch { return 0n; } };
+  rows = rows.map((p, i) => ({ p, i, f: fedAt.get(fidOf(p)), m: msatOf(p) }))
+    .sort((a, b) => (a.f - b.f) || (a.m > b.m ? -1 : a.m < b.m ? 1 : a.i - b.i)).map((x) => x.p);
   for (const p of rows) {
     const fid = fidOf(p);
     if (!/^[0-9a-f]{64}$/.test(fid)) continue;
@@ -280,18 +295,18 @@ export async function collectLiquidationPayouts({ listed, seed, curve, clientFor
     const at = `${String(p.txid).toLowerCase()}:${Number(p.outIdx)}`;
     if (seen.has(at)) continue;
     seen.add(at);
-    const n = claimed.get(fid) || 0;
-    if (n >= MAX_LIQUIDATION_PAYOUTS_PER_FEDERATION) continue;
-    claimed.set(fid, n + 1);
     const note = movedKey(storage, `arena-liquidation-paid-${p.txid}:${p.outIdx}`);
-    if (storage.getItem(note)) { out.push({ ...p, ok: true, kept: true }); continue; }
+    if (storage.getItem(note)) { out.push({ ...p, ok: true, kept: true }); continue; }   // kanban #2328: a kept row costs no slot
+    if ((claimed.get(fid) || 0) >= MAX_LIQUIDATION_PAYOUTS_PER_FEDERATION) continue;   // only failed claims fill the cap
+    const failed = () => claimed.set(fid, (claimed.get(fid) || 0) + 1);
     const fields = { paymentImage: { kind: 'hash', bytes: '00'.repeat(32) }, amountMsat: String(p.msat), claimPk: key.payoutPk, refundPk: key.payoutPk, expiration: 0 };
     try {
       const client = await clientFor(p.into);
       const said = JSON.parse(await client.refund(p.txid, Number(p.outIdx), JSON.stringify(fields), toHex(key.secret)));
       if (said.accepted === true) storage.setItem(note, JSON.stringify({ msat: p.msat, at: Date.now() }));
+      else failed();
       out.push({ ...p, ok: said.accepted === true, why: said.accepted === true ? null : (said.error || 'the federation did not accept the refund') });
-    } catch (e) { out.push({ ...p, ok: false, why: e.message }); }
+    } catch (e) { failed(); out.push({ ...p, ok: false, why: e.message }); }
   }
   return out;
 }
