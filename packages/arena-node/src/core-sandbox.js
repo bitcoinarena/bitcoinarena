@@ -262,7 +262,10 @@ export function loadCore({ files, entry }, options = {}) {
   // overflow cannot be made sticky like the array budget: V8 builds and throws it without running any code a sandbox could
   // hook (not even the debugger hears it). So the replay - the call whose answer a seat signs - starts from the same history
   // every time: a thread loaded for it alone (~45 ms), ended after it. A thread that ends that way (a deadline, the array
-  // budget, its heap, the backstop) ends this core too, as before. What this does not close: two machines (another CPU,
+  // budget, its heap, the backstop) fails that replay ALONE (kanban #2008, #1539): what it held goes with its thread, but this
+  // core and its kept thread go on - a heap death is set by the input (every seat that runs it dies), so ending the core made
+  // every later round fail on the seats that had replayed it while seats on other committees answered the same round: the
+  // seat's history decided its answer again. What this does not close: two machines (another CPU,
   // another node build) still count a different depth - that is a core's own nondeterminism, as with any engine limit.
   let lastOne = null;
   const replayFresh = (input, within) => {
@@ -270,8 +273,7 @@ export function loadCore({ files, entry }, options = {}) {
     const one = loadCore({ files, entry }, { ...options, oneReplay: true });
     lastOne = one;
     try { return one.call('replay', input, within); } catch (e) {
-      const why = one.endedWhy();
-      if (why) { end(why); lastEnd = one.lastEnd(); }
+      if (one.endedWhy()) lastEnd = one.lastEnd();   // kanban #2008: that call fails, the core is not ended
       throw e;
     } finally { if (!one.endedWhy()) one.end(); }
   };
