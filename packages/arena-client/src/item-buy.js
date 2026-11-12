@@ -123,15 +123,34 @@ export async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, f
     devsPct: Number(devsPct), outputs: outs.length, keptBy, ...(terms.reserves ? { reserveKey: toHex(reserveKey), reserveMsat: built.reserve.msat } : {}) };
 }
 
-/** THE ITEMS A PLAYER OWNS, from the first seat that answers (GET /items): [{ id, gameName, itemId, ... }]. */
+/**
+ * THE ITEMS A PLAYER OWNS (GET /items): [{ id, gameName, itemId, ... }]. Kanban #1558: every seat is asked (15 s each) and the answers
+ * are merged by purchase id - no longer the first seat's answer as it is, where one seat answering [] hid a purchase every other seat
+ * keeps, or named a made-up one. A purchase is kept when two seats name it (one, when only one seat answered); the record kept is the
+ * first seat's in list order.
+ */
 export async function ownedItems({ seats, player, gameName = null, fetch }) {
-  for (const s of seats || []) {
+  const answers = await Promise.all((seats || []).map(async (s) => {
     try {
       const r = await fetch(`${String(s).replace(/\/$/, '')}/items?player=${toHex(player)}${gameName ? `&game=${encodeURIComponent(gameName)}` : ''}`, { signal: AbortSignal.timeout(15000) });
-      if (r.ok) return (await r.json()).items || [];
-    } catch { /* the next seat */ }
+      if (!r.ok) return null;
+      const items = (await r.json()).items;
+      return Array.isArray(items) ? items.slice(0, 1000) : [];
+    } catch { return null; }
+  }));
+  const answered = answers.filter((a) => a);
+  const need = answered.length >= 2 ? 2 : 1;
+  const byId = new Map();
+  for (const items of answered) {
+    const seen = new Set();
+    for (const it of items) {
+      if (!it || typeof it.id !== 'string' || seen.has(it.id)) continue;
+      seen.add(it.id);
+      const e = byId.get(it.id);
+      if (e) e.n++; else byId.set(it.id, { it, n: 1 });
+    }
   }
-  return [];
+  return [...byId.values()].filter((e) => e.n >= need).map((e) => e.it);
 }
 
 /**
