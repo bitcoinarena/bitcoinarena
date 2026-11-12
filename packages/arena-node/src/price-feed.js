@@ -690,7 +690,11 @@ export class PriceFeed {
   #list5(rh, c, sinceTick, ks) {
     const rid = fromHex(rh);
     if (Array.isArray(ks)) {
-      return { round: rh, samples: ks.map((k) => {
+      // ONLY THE ROUND'S OWN SAMPLES ARE ASKED OF (kanban #1545): a k past the round's last sample (closeSampleK) is no sample, and
+      // asking of it held an empty readings map until the round was finished - so a stranger's ?ks= of made-up numbers grew the map
+      // without bound and every honest read after sorted and built them all. Such a k is answered with nothing and creates nothing.
+      const kMax = closeSampleK(Number(c.contract.blockTicks));
+      return { round: rh, samples: ks.filter((k) => Number.isInteger(k) && k >= 0 && k <= kMax).map((k) => {
         const all = this.#allReadings(rh, k);
         if (!all.length) return null;
         const s = this.#sample5(rh, rid, k, c);
