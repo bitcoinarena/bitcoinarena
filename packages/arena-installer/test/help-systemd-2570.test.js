@@ -24,3 +24,23 @@ test('systemctl failures name the fix', () => {
   assert.match(systemctlWhy(a, { err: 'System has not been booted with systemd as init system (PID 1).' }), /wsl\.conf/);
   assert.equal(systemctlWhy(['--user', 'restart', 'x'], { err: 'Unit x not found.' }), 'systemctl --user restart x failed: Unit x not found.');
 });
+
+test('a tunnel whose edge port 7844 is blocked says so, before and after it has a name', async () => {
+  const { openQuickTunnel, edgeHint } = await import('../src/tunnel.js');
+  const { EventEmitter } = await import('node:events');
+  assert.equal(edgeHint('INF Requesting new quick Tunnel on trycloudflare.com...'), '');
+  assert.match(edgeHint('ERR Failed to dial a quic connection error="timeout" connIndex=0 ip=198.41.192.7:7844'), /port 7844/);
+  const child = Object.assign(new EventEmitter(), { stdout: new EventEmitter(), stderr: new EventEmitter(), kill() {} });
+  const t = openQuickTunnel({ port: 7800, spawner: () => child, waitMs: 5000 });
+  child.stderr.emit('data', 'INF |  https://brave-test-name.trycloudflare.com  |\n');
+  const r = await t;
+  assert.equal(r.ok, true);
+  const heard = new Promise((res) => r.onEdgeTrouble(res));
+  child.stderr.emit('data', 'ERR Failed to dial a quic connection error="timeout" ip=198.41.192.7:7844\n');
+  assert.match(await heard, /Allow outgoing 7844/);
+  // gives up without a name: the hint is in the refusal
+  const c2 = Object.assign(new EventEmitter(), { stdout: new EventEmitter(), stderr: new EventEmitter(), kill() {} });
+  const t2 = openQuickTunnel({ port: 7800, spawner: () => c2, waitMs: 5000 });
+  c2.stderr.emit('data', 'ERR edge discovery: error looking up Cloudflare edge IPs\n'); c2.emit('exit', 1);
+  assert.match((await t2).why, /port 7844/);
+});
