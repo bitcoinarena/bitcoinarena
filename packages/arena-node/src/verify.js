@@ -39,7 +39,7 @@ import { holdsRun } from './finality.js';
 
 let retryJobs = 0;                     // each re-tried close is its own pool job
 let objectionJobs = 0;                 // each objection's replay is its own pool job (§13A)
-import { encodeTranscript, transcriptHash as hashOfTranscript } from '../../arena-protocol/src/transcript.js';
+import { encodeTranscript, decodeTranscript, transcriptHash as hashOfTranscript } from '../../arena-protocol/src/transcript.js';
 import { TRANSCRIPT_BATCH_MAX_BYTES } from './round.js';
 import {
   encodeTranscriptPosting, transcriptPostingId, joinSignedPosting, splitSignedPosting, decodeTranscriptPosting,
@@ -209,6 +209,10 @@ async function capped(answer, maxBytes) {
 const PEER_BODY_MAX_BYTES = 16 * 1024 * 1024;
 /** Marks a peer may hold past this seat's own chain in one /checkpoints answer (#1550's cap). */
 const PEER_MARKS_AHEAD = 1024;
+/** The transcript hash (hex) a signed result names, or null for a record that does not decode (kanban #1802). */
+function namedTranscript(record) {
+  try { return hex(decodePlayerResult(splitSignedResult(record).body).transcriptHash); } catch { return null; }
+}
 async function peerFetch(url, waitMs = PEER_WAIT_MS) {
   return fetch(url, { signal: AbortSignal.timeout(waitMs) });
 }
@@ -1552,6 +1556,17 @@ export class Verifier {
     // contract's nodes where this node holds no signer list
     const signers = this.round.signerNodes(roundIdBytes);
     const committee = signers.length ? signers : contract.nodes || [];
+    // A PLAYER WITH MORE THAN ONE ENTRY IN THE ROUND (kanban #1489, #1802; a reload's second entry, #1479): a PlayerResult
+    // names its round and its player, never its entry, so a committee member's real signed result for the player's
+    // other entry passes every check above. A peer filing it under this entry would have it stored here, outvote this
+    // node's own result in every plurality read of the store (the Nostr result signed and published once, /results,
+    // a slash proof against the honest signers) and push the committee's true rows out as duplicates. For such a
+    // player a peer result is kept only when the transcript it names is this entry's: one this node holds or builds for
+    // it, or bytes a peer serves that hash to that name and name this entry inside them (#transcriptTiedTo).
+    const ambiguous = this.round.entriesOf(roundIdBytes)
+      .some((e) => hex(e.entryId) !== hex(entryIdBytes) && hex(e.entry.playerPubkey) === hex(playerPubkey));
+    const tied = ambiguous ? this.#transcriptsOfEntry(roundIdBytes, entryIdBytes, contract) : null;
+    const pending = new Map();      // transcript hash (hex) -> the records naming it, until it is tied to this entry or not
     for (const peer of this.peersOf(roundIdBytes)) {
       let body;
       try {
@@ -1585,9 +1600,25 @@ export class Verifier {
           if (tried.has(key)) continue;
           tried.add(key);
           if (this.round.hasResult(roundIdBytes, entryIdBytes, r.nodePubkey)) continue;
+          if (tied) {
+            const named = namedTranscript(record);
+            if (!named) { refused++; continue; }
+            if (!tied.has(named)) {
+              if (!pending.has(named)) pending.set(named, []);
+              pending.get(named).push(record);
+              continue;
+            }
+          }
           if (this.#keepPeerResult(roundIdBytes, entryIdBytes, record, playerPubkey, committee)) kept++;
         }
       }, { over: 20 });
+    }
+    // THE TRANSCRIPTS NOT TIED HERE YET, each asked of the peers once (#1802): a dissent about this entry still counts
+    // (and can be slashed) when its transcript is this entry's; one about the player's other entry is refused.
+    for (const [named, records] of pending) {
+      if (await this.#transcriptTiedTo(roundIdBytes, entryIdBytes, named, contract)) {
+        for (const record of records) if (this.#keepPeerResult(roundIdBytes, entryIdBytes, record, playerPubkey, committee)) kept++;
+      } else refused += records.length;
     }
 
     const { held, seen } = timed(`close gather counted ${hex(entryIdBytes).slice(0, 8)}`, () => {
@@ -2224,6 +2255,44 @@ export class Verifier {
     }
     report.refused.push('no signer node served the transcript the agreed result names');
     return null;
+  }
+
+  /**
+   * THE TRANSCRIPT HASHES THIS NODE ITSELF TIES TO AN ENTRY (kanban #1802): its own result's, its canonical transcript's,
+   * the empty transcript of an entry that never started, and a head-to-head entry's reveal record - each names the
+   * entry inside its bytes, so none of them is another entry's.
+   */
+  #transcriptsOfEntry(roundIdBytes, entryIdBytes, contract) {
+    const out = new Set();
+    for (const r of this.round.results(roundIdBytes, entryIdBytes)) {
+      if (hex(r.nodePubkey) !== hex(this.round.pubkey)) continue;
+      const named = namedTranscript(r.bytes);
+      if (named) out.add(named);
+    }
+    try { out.add(hex(this.round.canonicalTranscript(roundIdBytes, entryIdBytes).hash)); } catch { /* none held */ }
+    out.add(hex(hashOfTranscript(this.#unstarted(roundIdBytes, entryIdBytes))));
+    if (this.#headToHead(contract)) {
+      const rv = this.round.revealsOf(roundIdBytes).find((r) => hex(r.entryId) === hex(entryIdBytes));
+      out.add(hex(transcriptBytesHash(this.#revealRecord(entryIdBytes, rv))));
+    }
+    return out;
+  }
+
+  /** Does a peer serve, for this entry, bytes that hash to `named` AND name this entry inside them (kanban #1802)? */
+  async #transcriptTiedTo(roundIdBytes, entryIdBytes, named, contract) {
+    const h2h = !!this.#headToHead(contract);
+    for (const peer of this.peersOf(roundIdBytes)) {
+      try {
+        const answer = await peerFetch(`${peer}/canonical?round=${hex(roundIdBytes)}&entry=${hex(entryIdBytes)}`);
+        if (!answer.ok) continue;
+        const bytes = await peerBody(answer);
+        if (hex(transcriptBytesHash(bytes)) !== named) continue;
+        if (h2h) { if (bytes.length >= 33 && hex(bytes.slice(0, 32)) === hex(entryIdBytes)) return true; continue; }
+        const t = decodeTranscript(bytes);
+        if (hex(t.roundId) === hex(roundIdBytes) && hex(t.entryId) === hex(entryIdBytes)) return true;
+      } catch { /* the next peer may have it */ }
+    }
+    return false;
   }
 
   /** One posting from a peer: about this round and player, from a joined signer node, and signed by it. */
