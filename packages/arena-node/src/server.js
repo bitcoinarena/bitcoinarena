@@ -173,7 +173,7 @@ import { stageDecision, signReleaseAnswer, createStageBook } from './update-stag
 import { createSettleBackoff, refusedForGood, REFUSAL } from './settle-backoff.js';
 import { produceSpentSet, publishSpentSet } from './spent-set-producer.js';
 import { verifySchnorrKept, verifyEd25519Kept } from './verified.js';
-import { DrawnAttestor } from './drawn-attestor.js';
+import { DrawnAttestor, drawnStoreOf } from './drawn-attestor.js';
 import { relaySweep, createAuditDesk, agreedRunsOf, forwardDigest } from './audit-seat.js';
 import { createH2hAuditDesk, h2hAgreedResultsOf, h2hForwardDigest } from './h2h-audit-desk.js';
 import { H2hAuditor, h2hAuditorNet } from './h2h-auditor.js';
@@ -3126,21 +3126,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const sourcesOfRound = (c) => listedSources(ballotTally && c.networkId instanceof Uint8Array ? ballotTally.entriesAt(toHex(c.networkId), c.censusHeight) : SOURCE_ENTRIES);
   let drawnAfterRowid = 0;             // the rounds row read last (kanban #791)
   // THE DRAWN ATTESTOR'S WORDS AND OPENING VALUES, KEPT (kanban #1376): a restarted seat serves the word it signed - never a second one from a later read
-  const drawnStore = drawnHosted ? (() => {
-    round.db.exec('CREATE TABLE IF NOT EXISTS drawn_words (round TEXT PRIMARY KEY, word TEXT NOT NULL); CREATE TABLE IF NOT EXISTS drawn_starts (round TEXT PRIMARY KEY, value TEXT NOT NULL)');
-    const big = (k, v) => (typeof v === 'bigint' ? { $big: String(v) } : v), unbig = (k, v) => (v && typeof v === 'object' && typeof v.$big === 'string' ? BigInt(v.$big) : v);
-    const wordOf = (id) => { const r = round.db.prepare('SELECT word FROM drawn_words WHERE round = ?').get(id); return r ? JSON.parse(r.word) : null; };
-    return {
-      word: wordOf,
-      keepWord: (id, json) => { round.db.prepare('INSERT OR IGNORE INTO drawn_words (round, word) VALUES (?, ?)').run(id, JSON.stringify(json)); return wordOf(id); },
-      start: (id) => { const r = round.db.prepare('SELECT value FROM drawn_starts WHERE round = ?').get(id); return r ? JSON.parse(r.value, unbig) : undefined; },
-      keepStart: (id, v) => { round.db.prepare('INSERT OR IGNORE INTO drawn_starts (round, value) VALUES (?, ?)').run(id, JSON.stringify(v, big)); },
-    };
-  })() : null;
+  // the drawn attestor's words and starts in the seat's database (kanban #1376; drawn-attestor.js drawnStoreOf)
+  const drawnStore = drawnHosted ? drawnStoreOf(round.db) : null;
   const drawnAttestor = drawnHosted ? new DrawnAttestor({
     store: drawnStore,
     readPrice: () => prices.readPrice(), selfKey: toHex(round.pubkey), sign: (d) => schnorr.sign(d, round.identity.secret),
     verify: (sg, m, k) => { try { return schnorr.verify(sg, m, k); } catch { return false; } },   // kanban #1487: every peer's word checked before it counts
+    db: round.db,   // kanban #1844: its readings kept in the seat's store across a restart (its words through `store`)
     attestorsFor: (rid) => { const got = roster.attestorsFor(rid); return got.ok ? got.attestors.map((e) => toHex(e.pubkey)) : null; },
     peersFor: (rid) => { const got = roster.attestorsFor(rid); return got.ok ? peerEndpointsOf(got.attestors, round.pubkey) : []; },
     runSource: sourceHosted ? (source, market, listed) => runSourceOnce(source, market, listed) : null,

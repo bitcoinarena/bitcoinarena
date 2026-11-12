@@ -30,6 +30,22 @@ export const KEEP_MS = 40 * 60 * 1000;
 export const SETTLE_MS = 5000;
 export const ASK_MS = 4000;
 
+/**
+ * THE DRAWN ATTESTOR'S STORE in the seat's database (kanban #1376, server.js; kanban #1844): the words it signed and a "rises" market's
+ * start value, each kept once (INSERT OR IGNORE: the first stands), read back after a restart.
+ */
+export function drawnStoreOf(db) {
+  db.exec('CREATE TABLE IF NOT EXISTS drawn_words (round TEXT PRIMARY KEY, word TEXT NOT NULL); CREATE TABLE IF NOT EXISTS drawn_starts (round TEXT PRIMARY KEY, value TEXT NOT NULL)');
+  const big = (k, v) => (typeof v === 'bigint' ? { $big: String(v) } : v), unbig = (k, v) => (v && typeof v === 'object' && typeof v.$big === 'string' ? BigInt(v.$big) : v);
+  const wordOf = (id) => { const r = db.prepare('SELECT word FROM drawn_words WHERE round = ?').get(id); return r ? JSON.parse(r.word) : null; };
+  return {
+    word: wordOf,
+    keepWord: (id, json) => { db.prepare('INSERT OR IGNORE INTO drawn_words (round, word) VALUES (?, ?)').run(id, JSON.stringify(json)); return wordOf(id); },
+    start: (id) => { const r = db.prepare('SELECT value FROM drawn_starts WHERE round = ?').get(id); return r ? JSON.parse(r.value, unbig) : undefined; },
+    keepStart: (id, v) => { db.prepare('INSERT OR IGNORE INTO drawn_starts (round, value) VALUES (?, ?)').run(id, JSON.stringify(v, big)); },
+  };
+}
+
 export class DrawnAttestor {
   /**
    * `readPrice()` cents or null; `selfKey` this seat's node key (hex); `sign(digest)` its BIP-340 signature (bytes);
@@ -38,15 +54,29 @@ export class DrawnAttestor {
    * takes a combined attestation (this seat's intake, then every seat); `threshold` 5. A due round with `source` and `outcomes` is a market with its own source:
    * `runSource(source, market)` answers { ok, out }, and `opening()` names the source rounds whose window has just opened.
    */
-  constructor({ readPrice, selfKey, sign, verify, attestorsFor, peersFor, due, hold, threshold = 5, fetcher = (u, o) => fetch(u, o), now = () => Date.now(), runSource = null, opening = () => [], store = null }) {
+  constructor({ readPrice, selfKey, sign, verify, attestorsFor, peersFor, due, hold, threshold = 5, fetcher = (u, o) => fetch(u, o), now = () => Date.now(), runSource = null, opening = () => [], store = null, db = null }) {
     if (typeof verify !== 'function') throw new Error('a drawn attestor needs verify(signature, bodyId, key): the drawn keys\' BIP-340 check (kanban #1487)');
     // `store` (kanban #1376, audit 2 #1204 MKT-3): { word(id), keepWord(id, json) -> the json now kept, start(id), keepStart(id, value) } - the seat's
     // database, so a restart serves the word it signed and never signs another from a later read of the source
-    Object.assign(this, { readPrice, selfKey, sign, verify, attestorsFor, peersFor, due, hold, threshold, fetcher, now, runSource, opening, store });
+    // `db` the seat's store (node:sqlite), where the readings are kept across a restart (kanban #1844)
+    // (a `db` with no `store` keeps its words there too: drawnStoreOf, as server.js builds it)
+    if (!store && db) store = drawnStoreOf(db);
+    Object.assign(this, { readPrice, selfKey, sign, verify, attestorsFor, peersFor, due, hold, threshold, fetcher, now, runSource, opening, store, db });
     this.starts = new Map();    // round hex -> a "rises" market's value when its window opened
     this.samples = [];          // [{ atMs, price }] BigInt, this seat's own readings
     this.words = new Map();     // round hex -> this seat's word
     this.held = new Set();      // round hex: an attestation of it is held - nothing more to do
+    // THE READINGS AND WORDS IN THE SEAT'S STORE (kanban #1844, state audit 2026-11-12): kept in memory only, a seat restarted after
+    // its round's window ended (a host reboot, a roll of the seats) came back with no reading before the window's start and never
+    // signed it - three of seven drawn seats restarted together and the market went VOID although all seven read the window. As the
+    // fixed daemon keeps them on disk (arena-attestor.mjs SAMPLES_FILE), each reading is written as it is taken and the last KEEP_MS
+    // read back here. (2.0: the signed word is kept through `store` already, kanban #1376.)
+    if (db) {
+      db.exec('CREATE TABLE IF NOT EXISTS drawn_samples (at_ms INTEGER PRIMARY KEY, price TEXT NOT NULL)');
+      for (const r of db.prepare('SELECT at_ms AS at, price FROM drawn_samples WHERE at_ms >= ? ORDER BY at_ms').all(this.now() - KEEP_MS)) {
+        this.samples.push({ atMs: BigInt(r.at), price: BigInt(r.price) });
+      }
+    }
   }
 
   /** The word kept for a round: memory, else the store (after a restart). */
@@ -78,9 +108,15 @@ export class DrawnAttestor {
     const at = this.now();
     // a reader answers cents, or { cents, atMs } (the seat's feed: the exchange ticker's last trade)
     if (cents && typeof cents === 'object') cents = cents.cents;
-    if (Number.isFinite(Number(cents)) && Number(cents) > 0) this.samples.push({ atMs: BigInt(at), price: BigInt(Math.round(Number(cents))) });
+    if (Number.isFinite(Number(cents)) && Number(cents) > 0) {
+      const s = { atMs: BigInt(at), price: BigInt(Math.round(Number(cents))) };
+      this.samples.push(s);
+      // kanban #1844: kept in the store as it is taken, so a restart loses no window
+      if (this.db) try { this.db.prepare('INSERT OR REPLACE INTO drawn_samples (at_ms, price) VALUES (?, ?)').run(at, String(s.price)); } catch { /* memory still holds it */ }
+    }
     const keepFrom = BigInt(at - KEEP_MS);
     while (this.samples.length && this.samples[0].atMs < keepFrom) this.samples.shift();
+    if (this.db) try { this.db.prepare('DELETE FROM drawn_samples WHERE at_ms < ?').run(at - KEEP_MS); } catch { /* pruned next read */ }
     if (this.runSource) {
       for (const r of this.opening()) {
         const id = toHex(r.roundId);
