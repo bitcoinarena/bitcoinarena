@@ -1913,7 +1913,11 @@ export class Client {
       };
       await readList(this.base, true).catch(() => {});
       await Promise.all((this.peers || []).map((base) => readList(base, false).catch(() => {})));
-      const unplaced = [...this.witnesses.keys()].filter((id) => !ticks.has(id) || (ticks.get(id) === null && !listed.has(id)));
+      // ONLY A LIVE MARK (feedback #029): a receipt names a checkpoint id and nothing else - no round, no entry, no proof the
+      // mark exists - so one seat could sign one over random bytes and end every reloaded run on the home seat's name. A mark
+      // no list holds ends the run only when the committee carried it (live, five distinct members): one seat cannot make that.
+      // A withheld mark that is not live is still caught above by the peer lists (#027), which need no receipt at all.
+      const unplaced = [...this.witnesses.keys()].filter((id) => this.live(fromHex(id)) && !ticks.has(id));
       if (unplaced.length) {
         const why = `the node at ${this.base} leaves the mark ${unplaced[0].slice(0, 16)} out of its checkpoints, a committee node `
           + 'receipted it and no committee node serves it - this client does not sign a mark on a head it cannot place';
