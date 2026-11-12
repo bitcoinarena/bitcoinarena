@@ -27957,20 +27957,11 @@ class Client {
       };
       await readList(this.base, true).catch(() => {});
       await Promise.all((this.peers || []).map((base) => readList(base, false).catch(() => {})));
-      // ONLY A LIVE MARK (feedback #029): a receipt names a checkpoint id and nothing else - no round, no entry, no proof the
-      // mark exists - so one seat could sign one over random bytes and end every reloaded run on the home seat's name. A mark
-      // no list holds ends the run only when the committee carried it (live, five distinct members): one seat cannot make that.
-      // A withheld mark that is not live is still caught above by the peer lists (#027), which need no receipt at all.
-      const unplaced = [...this.witnesses.keys()].filter((id) => this.live(fromHex(id)) && !ticks.has(id));
-      if (unplaced.length) {
-        const why = `the node at ${this.base} leaves the mark ${unplaced[0].slice(0, 16)} out of its checkpoints, a committee node `
-          + 'receipted it and no committee node serves it - this client does not sign a mark on a head it cannot place';
-        this.nodeFault = { base: this.base, firstTick: null, batch: null, why };
-        this.endRun(`node fault: ${why}`);
-        throw Object.assign(new Error(why), { nodeFault: true });
-      }
-      // an honest home list moves nothing here: the walk above keeps its rule (the newest LIVE mark). Only a list that left out a
-      // mark this player signed, which a peer holds, is overruled - by the newest signed mark any list holds.
+      // NO RUN ENDS ON RECEIPTS ALONE (feedback #029, #030): a receipt names a checkpoint id and nothing else - no round, no
+      // entry, no proof the mark is this player's - and every seat serves its receipts to anyone, so one seat could add receipts
+      // over random bytes (#029) or GENUINE ones of another entry's carried mark (#030) and end every reloaded run on the honest
+      // home seat's name. A receipted id that no list holds as a mark under this entry's session key is not this player's to
+      // place: it is ignored. A withheld mark of this player is caught by the signed peer lists above (#027), which need no receipt.
       const at = (id) => ticks.get(id) ?? -1;
       let newest = null;
       if (withheld.size) for (const [id, tick] of ticks) if (tick !== null && (newest === null || tick > at(newest))) newest = id;
