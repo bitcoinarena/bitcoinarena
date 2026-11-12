@@ -1589,3 +1589,7 @@ Audit 5 (#1399, base 1502786b) and audit 6 (#1415, base eb7fd30fc) for release 2
 #### SM-I4 (change) Auto-update record vs the update journal's resume (kanban #1581, audit #1489 sm1-node-2)
 - Invariant: every rollback of a release on this node is in auto-update.json (`rolledBack: true`, `to` = its VERSION, `commit` = its COMMIT) before the next check reads it - the updater's own (updateOnce), one that threw (#1440), and one the journal's resume made after its updater died (`resumeUpdate`, `resumed: true`; at the service's start through `resumeUnderLock`, or inside `updateNode`). So the #1369 day's wait applies to all of them.
 - `updateNode` with `retryRolledBack: false` (the auto updater, unless `bitcoinarena update` forces it) does not move to the release its own resume rolled back in the same call; it answers rolled back.
+
+#### SM-C1 (change) E-cash in flight: an exchange belongs to one phrase (kanban #1641)
+- An exchange record (arena.ecash.exchange.*) names the phrase whose wallet sent the notes (`fromKey`, its first 16 hex, as merge records do). `resumeEcashExchanges` moves on only the records of the asking tab's phrase (`phrase16`); a record of another phrase is left for that phrase's tab, so the seat's answer (or the notes taken back) is received only into the wallets of the phrase that sent them, never into another player's of the same browser.
+- A record of an older page names no phrase: it is moved only when the browser keeps one phrase (`takeUnnamed`, arena.seeds holds at most one), otherwise it is left as it is.
