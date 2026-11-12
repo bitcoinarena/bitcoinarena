@@ -5,7 +5,7 @@
 //
 // THE SNAPSHOT. The non-coinbase transactions of the round's beacon block - the block its committee is drawn from
 // (beacon.js beaconFromChain) - and, while fewer than SNAPSHOT_MIN_TXS are held, of the block before it, and so on back.
-// Each is one entry, txid (32) || vsize (u32) || fee_sat (u64), sorted by txid; at most SNAPSHOT_MAX_ENTRIES of them (the
+// Each is one entry, txid (32) || vsize (u32) || fee_sat (u64) || value_sat (u64, the sum of its outputs - ruled #2578), sorted by txid; at most SNAPSHOT_MAX_ENTRIES of them (the
 // first by txid). Its id is
 //
 //     snapshot_id = tagged_hash("ARENA/v1/TickTockSnapshot", beacon block hash || count || entries)
@@ -34,6 +34,8 @@ import { Writer } from './encode.js';
 import { taggedHash, toHex, fromHex } from './hash.js';
 import { TAG } from './constants.js';
 import { hash256 } from './chain.js';
+// a bed carries 0 .. 20 BTC in hundredths (arena-node load-checks.js BTC_MOST_HUND; the core's cargo clamps the same way)
+export const BTC_MOST_HUND = 2000;
 
 /** Fewer than this many transactions in the beacon block: the blocks before it are walked back until this many are held. */
 export const SNAPSHOT_MIN_TXS = 256;
@@ -59,7 +61,7 @@ export function txidBytes(t) {
 
 /**
  * THE SNAPSHOT OF A BEACON BLOCK, from the blocks walked back from it: `blocks` the beacon first, then its parent, ...,
- * each `{ height, hash (32 bytes, the beacon's hashing order), txs: [{ txid, vsize, feeSat }] }` with only the non-coinbase
+ * each `{ height, hash (32 bytes, the beacon's hashing order), txs: [{ txid, vsize, feeSat, valueSat }] }` with only the non-coinbase
  * transactions. Takes blocks until SNAPSHOT_MIN_TXS transactions are held (or the chain's first block is reached) and refuses
  * a walk that stops short of that. Returns { beaconHash, beaconHeight, entries, count, blocksUsed }.
  */
@@ -75,7 +77,9 @@ export function snapshotOfBlocks(blocks) {
       const vsize = t.vsize, fee = typeof t.feeSat === 'bigint' ? t.feeSat : BigInt(t.feeSat);
       if (!Number.isInteger(vsize) || vsize < 1 || vsize > 0xffffffff) throw new Error(`a transaction of block ${b.height} has no vsize`);
       if (fee < 0n || fee > 0xffffffffffffffffn) throw new Error(`a transaction of block ${b.height} has no fee`);
-      held.push({ txid: txidBytes(t.txid), vsize, feeSat: fee });
+      const value = typeof t.valueSat === 'bigint' ? t.valueSat : BigInt(t.valueSat ?? -1);
+      if (value < 0n || value > 0xffffffffffffffffn) throw new Error(`a transaction of block ${b.height} has no output value`);
+      held.push({ txid: txidBytes(t.txid), vsize, feeSat: fee, valueSat: value });
     }
     if (held.length >= SNAPSHOT_MIN_TXS) break;
   }
@@ -88,7 +92,7 @@ export function snapshotOfBlocks(blocks) {
   return Object.freeze({ beaconHash: blocks[0].hash, beaconHeight: blocks[0].height, entries: Object.freeze(entries), count: entries.length, blocksUsed: used });
 }
 
-/** beacon block hash || count (u32) || entries (txid 32 || vsize u32 || fee_sat u64), the bytes snapshot_id hashes. */
+/** beacon block hash || count (u32) || entries (txid 32 || vsize u32 || fee_sat u64 || value_sat u64, 52 bytes - ruled #2578), the bytes snapshot_id hashes. */
 export function encodeSnapshot({ beaconHash, entries }) {
   if (!is32(beaconHash)) throw new Error('a snapshot names its 32-byte beacon block hash');
   if (!Array.isArray(entries) || entries.length > SNAPSHOT_MAX_ENTRIES) throw new Error(`a snapshot holds at most ${SNAPSHOT_MAX_ENTRIES} entries`);
@@ -100,7 +104,7 @@ export function encodeSnapshot({ beaconHash, entries }) {
     const txid = txidBytes(e.txid);
     if (prev && cmp(prev, txid) >= 0) throw new Error('a snapshot\'s entries are sorted by txid, each once');
     prev = txid;
-    w.bytes32(txid); w.u32(e.vsize); w.u64(typeof e.feeSat === 'bigint' ? e.feeSat : BigInt(e.feeSat));
+    w.bytes32(txid); w.u32(e.vsize); w.u64(typeof e.feeSat === 'bigint' ? e.feeSat : BigInt(e.feeSat)); w.u64(typeof e.valueSat === 'bigint' ? e.valueSat : BigInt(e.valueSat));
   }
   return w.finish();
 }
@@ -140,17 +144,17 @@ export const offersOf = (snapshot, roundId, entryId, slots = OFFER_SLOTS) =>
 export function drawnParcelsRefusal(load, { snapshot, roundId, entryId }) {
   const [tick, fee, btc, room, parcels = []] = load;
   if (!Array.isArray(parcels)) return `the load at tick ${tick} names its parcels as a list`;
-  if (btc !== 0)
-    return `the load at tick ${tick} carries ${btc} hundredths of a BTC: a drawn bed carries none - the snapshot holds each parcel's size and fee, no value`;
+  if (!Number.isInteger(btc) || btc < 0) return `the load at tick ${tick} carries ${btc} hundredths of a BTC`;
   if (!parcels.length) {
-    if (fee === 0 && room === 0) return null;
+    if (fee === 0 && room === 0 && btc === 0) return null;
     return `the load at tick ${tick} fills ${room} room units and pays ${fee} sats with no parcel named: a bed names each parcel it carries by the txid drawn for its slot`;
   }
   if (parcels.length > OFFER_SLOTS) return `the load at tick ${tick} names ${parcels.length} parcels: an entry is offered ${OFFER_SLOTS}`;
   if (!snapshot || !Array.isArray(snapshot.entries) || !snapshot.entries.length)
     return `the load at tick ${tick} names parcels, and this round's snapshot holds no transaction to draw from`;
-  const slots = new Set(), txids = new Set();
-  let feeSum = 0n, roomSum = 0;
+  // A PARCEL IS ITS SLOT (ruled #2578): two slots of one entry may draw the same transaction, and each is its own parcel
+  const slots = new Set();
+  let feeSum = 0n, roomSum = 0, valueSum = 0n;
   for (const p of parcels) {
     const [slot, t] = Array.isArray(p) ? p : [];
     if (!Number.isInteger(slot) || slot < 0 || slot >= OFFER_SLOTS) return `the load at tick ${tick} names pickup slot ${slot}: an entry's slots are 0 .. ${OFFER_SLOTS - 1}`;
@@ -159,16 +163,19 @@ export function drawnParcelsRefusal(load, { snapshot, roundId, entryId }) {
     if (slots.has(slot)) return `the load at tick ${tick} names slot ${slot} twice`;
     slots.add(slot);
     const hex = toHex(txid);
-    if (txids.has(hex)) return `the load at tick ${tick} names transaction ${hex} twice: a transaction is one parcel`;
-    txids.add(hex);
     const drawn = offeredParcel(snapshot, roundId, entryId, slot);
     if (!same(drawn.txid, txid))
       return `the load at tick ${tick} names ${hex} at slot ${slot}, and slot ${slot} of this entry offers ${toHex(drawn.txid)}: a parcel is the one drawn for its slot`;
     feeSum += drawn.feeSat;
     roomSum += roomOfVsize(drawn.vsize);
+    valueSum += drawn.valueSat;
   }
   if (BigInt(fee) !== feeSum) return `the load at tick ${tick} pays ${fee} sats, and the parcels it names pay ${feeSum}`;
   if (room !== roomSum) return `the load at tick ${tick} fills ${room} room units, and the parcels it names fill ${roomSum}`;
+  // THE BTC THE BED CARRIES (ruled #2578, the whale term kept): the parcels' outputs in hundredths of a BTC (1,000,000 sats each),
+  // rounded down and held to the bed's most (BTC_MOST_HUND, 20 BTC) - the same number every seat and the replay read from the block
+  const btcWant = Math.min(Number(valueSum / 1000000n), BTC_MOST_HUND);
+  if (btc !== btcWant) return `the load at tick ${tick} carries ${btc} hundredths of a BTC, and the parcels it names carry ${btcWant}`;
   return null;
 }
 
@@ -195,7 +202,7 @@ export function snapshotJson(snapshot, { roundId = null, blocks = [] } = {}) {
     snapshotId: toHex(snapshotIdOf(snapshot)),
     beacon: { hash: toHex(snapshot.beaconHash), height: snapshot.beaconHeight },
     count: snapshot.entries.length,
-    entries: snapshot.entries.map((e) => [toHex(e.txid), e.vsize, String(e.feeSat)]),
+    entries: snapshot.entries.map((e) => [toHex(e.txid), e.vsize, String(e.feeSat), String(e.valueSat)]),
     blocks: blocks.map((b) => ({ height: b.height, header: toHex(b.header), txids: b.txids.map((t) => toHex(txidBytes(t))) })),
   };
 }
@@ -204,9 +211,9 @@ export function snapshotJson(snapshot, { roundId = null, blocks = [] } = {}) {
 export function snapshotFromJson(j) {
   if (!j || typeof j !== 'object' || !j.beacon || !Array.isArray(j.entries)) throw new Error('that is not a snapshot');
   const entries = j.entries.map((e) => {
-    if (!Array.isArray(e) || e.length !== 3) throw new Error('a snapshot entry is [txid, vsize, fee]');
-    if (!/^\d{1,20}$/.test(String(e[2]))) throw new Error('a snapshot entry\'s fee is whole sats');
-    return { txid: txidBytes(String(e[0])), vsize: Number(e[1]), feeSat: BigInt(String(e[2])) };
+    if (!Array.isArray(e) || e.length !== 4) throw new Error('a snapshot entry is [txid, vsize, fee, value]');
+    if (!/^\d{1,20}$/.test(String(e[2])) || !/^\d{1,20}$/.test(String(e[3]))) throw new Error('a snapshot entry\'s fee and value are whole sats');
+    return { txid: txidBytes(String(e[0])), vsize: Number(e[1]), feeSat: BigInt(String(e[2])), valueSat: BigInt(String(e[3])) };
   });
   const s = { beaconHash: txidBytes(String(j.beacon.hash)), beaconHeight: Number(j.beacon.height), entries, count: entries.length };
   encodeSnapshot(s);                  // sorted, distinct, in range - or it throws
@@ -251,7 +258,8 @@ export function snapshotOfGetblocks(answers, beaconHash) {
     hash: g === answers[0] ? beaconHash : fromHex(g.hash).reverse(),
     txs: g.tx.slice(1).map((t) => {
       if (typeof t.fee !== 'number' && typeof t.fee !== 'string') throw new Error(`block ${g.height} answers no fee for ${t.txid}: the node needs its undo data (not pruned below it)`);
-      return { txid: t.txid, vsize: t.vsize, feeSat: satsOf(t.fee) };
+      // value_sat (ruled #2578): the sum of the transaction's outputs, as getblock verbosity 2 prints each vout's value
+      return { txid: t.txid, vsize: t.vsize, feeSat: satsOf(t.fee), valueSat: (t.vout || []).reduce((n, o) => n + satsOf(o.value), 0n) };
     }),
   }));
   if (!same(fromHex(answers[0].hash).reverse(), beaconHash)) throw new Error('the first block answered is not the beacon');

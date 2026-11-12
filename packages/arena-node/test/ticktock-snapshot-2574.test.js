@@ -16,7 +16,7 @@ import { entryFeeMsat } from '../../arena-protocol/src/fee.js';
 import { encodeInputBatch, batchId } from '../../arena-protocol/src/batch.js';
 import { GENESIS } from '../../arena-protocol/src/transcript.js';
 import { fromHex, toHex, sha256 } from '../../arena-protocol/src/hash.js';
-import { snapshotOfBlocks, snapshotIdOf, offeredParcel, offerIndex, roomOfVsize, OFFER_SLOTS } from '../../arena-protocol/src/ticktock-snapshot.js';
+import { snapshotOfBlocks, snapshotIdOf, offeredParcel, offerIndex, roomOfVsize, OFFER_SLOTS, drawnParcelsRefusal } from '../../arena-protocol/src/ticktock-snapshot.js';
 import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
 import { inputsFormOf, inputsLoadRefusal } from '../src/objection-check.js';
@@ -44,7 +44,7 @@ const entryFor = (rid) => ({
 });
 // a beacon block of 300 transactions of every size class, fees as a mempool pays them
 const BLOCK = { height: 500, hash: sha256(new TextEncoder().encode('beacon 500')),
-  txs: Array.from({ length: 300 }, (_, i) => ({ txid: sha256(new TextEncoder().encode(`tx ${i}`)), vsize: [140, 380, 900, 2100][i % 4] + i, feeSat: BigInt(200 + 37 * i) })) };
+  txs: Array.from({ length: 300 }, (_, i) => ({ txid: sha256(new TextEncoder().encode(`tx ${i}`)), vsize: [140, 380, 900, 2100][i % 4] + i, feeSat: BigInt(200 + 37 * i) , valueSat: BigInt(2000 + i) })) };
 const SNAPSHOT = snapshotOfBlocks([BLOCK]);
 const HELD = [0, 0, 0, 0, 0];
 
@@ -95,7 +95,7 @@ test('#2574 a txid not drawn for its slot, the right one at another slot, an inf
   assert.throws(() => send(10, [[0, a.fee, 0, a.room, [a.parcels[0], [9, a.parcels[1][1]]]]]), /at slot 9, and slot 9 of this entry offers/);
   assert.throws(() => send(10, [[0, a.fee + 1000, 0, a.room, a.parcels]]), /and the parcels it names pay/);
   assert.throws(() => send(10, [[0, a.fee, 0, a.room + 36044, a.parcels]]), /and the parcels it names fill/);
-  assert.throws(() => send(10, [[0, a.fee, 120, a.room, a.parcels]]), /a drawn bed carries none/);
+  assert.throws(() => send(10, [[0, a.fee, 120, a.room, a.parcels]]), /carries 120 hundredths of a BTC, and the parcels it names carry 0/);
   // the best-paying transaction of the block, wherever it was not drawn for this entry: not this entry's to take
   const richest = [...SNAPSHOT.entries].sort((x, y) => Number(y.feeSat - x.feeSat))[0];
   const drawnSlot = [...Array(OFFER_SLOTS).keys()].find((s) => toHex(offeredParcel(SNAPSHOT, rid, eid, s).txid) === toHex(richest.txid));
@@ -126,10 +126,10 @@ test('#2574 the core the round names draws the offer exactly as the seat checks 
 test('#2574 the seat\'s snapshot from its bitcoind: getblock verbosity 2 walked back from the beacon, the same id', async () => {
   // a node of three blocks: 100 + 100 + 100 transactions, so the walk takes all three; fees as RPC prints them (BTC)
   const blocks = [500, 499, 498].map((h) => ({ height: h, hash: sha256(new TextEncoder().encode(`b ${h}`)),
-    txs: Array.from({ length: 100 }, (_, i) => ({ txid: sha256(new TextEncoder().encode(`${h}/${i}`)), vsize: 150 + i * 13, feeSat: BigInt(141 + i * 7) })) }));
+    txs: Array.from({ length: 100 }, (_, i) => ({ txid: sha256(new TextEncoder().encode(`${h}/${i}`)), vsize: 150 + i * 13, feeSat: BigInt(141 + i * 7), valueSat: BigInt(30000 + i * 11) })) }));
   const disp = (h) => Buffer.from(h).reverse().toString('hex');
   const byHash = new Map(blocks.map((b, i) => [disp(b.hash), { height: b.height, hash: disp(b.hash), previousblockhash: blocks[i + 1] ? disp(blocks[i + 1].hash) : disp(b32(0)),
-    tx: [{ txid: toHex(b32(i + 9)), vsize: 100 }, ...b.txs.map((t) => ({ txid: toHex(t.txid), vsize: t.vsize, fee: Number(t.feeSat) / 1e8 }))] }]));
+    tx: [{ txid: toHex(b32(i + 9)), vsize: 100 }, ...b.txs.map((t) => ({ txid: toHex(t.txid), vsize: t.vsize, fee: Number(t.feeSat) / 1e8, vout: [{ value: Number(t.valueSat - 1000n) / 1e8 }, { value: 1000 / 1e8 }] }))] }]));
   const calls = [];
   const call = async (m, p) => { calls.push(m); if (m === 'getblock') return byHash.get(p[0]); if (m === 'getblockheader') return '00'.repeat(80); throw new Error(m); };
   const src = chainSnapshots({ call, log: () => {} });
@@ -160,4 +160,29 @@ test('#2574 objection: the stored drawn bed reads back with its parcels and pass
   assert.match(inputsLoadRefusal(form, null), /names parcels, and this round's core does not draw them/);
   const declared = inputsFormOf({ ticks: form.ticks, loads: [[5, 245, 0, 393214]] });
   assert.match(inputsLoadRefusal(declared, drawn), /no parcel named/, 'a self-declared bed is refused on the drawing core');
+});
+
+// RULED #2578: the snapshot entry carries value_sat (52 bytes); a drawn bed's BTC is its parcels' outputs in hundredths, rounded down,
+// at most 20 BTC; one transaction drawn at two slots is two parcels (the slot is the parcel)
+test('#2578 a drawn bed carries exactly its parcels\' BTC; one transaction at two slots is two parcels', () => {
+  const rich = { ...BLOCK, txs: BLOCK.txs.map((t, i) => ({ ...t, valueSat: BigInt(3500000 + i * 1000000) })) };
+  const SNAP = snapshotOfBlocks([rich]);
+  const { r, rid, eid, send } = seat({ snapshot: SNAP });
+  const ps = [4, 9].map((s) => offeredParcel(SNAP, rid, eid, s));
+  const fee = ps.reduce((n, p) => n + Number(p.feeSat), 0), room = ps.reduce((n, p) => n + roomOfVsize(p.vsize), 0);
+  const btc = Math.min(Number(ps.reduce((n, p) => n + p.valueSat, 0n) / 1000000n), 2000);
+  const parcels = [[4, ps[0].txid], [9, ps[1].txid]];
+  assert.ok(btc > 0, 'these parcels carry BTC');
+  assert.throws(() => send(5, [[0, fee, 0, room, parcels]]), /carries 0 hundredths of a BTC, and the parcels it names carry/, 'BTC 0 on parcels that carry some is refused');
+  assert.throws(() => send(5, [[0, fee, btc + 1, room, parcels]]), /the parcels it names carry/, 'one hundredth too many is refused');
+  assert.equal(send(5, [[0, fee, btc, room, parcels]]), 5, 'the parcels\' own BTC is taken');
+  console.log(`  MEASURED #2578 slots 4 + 9: ${fee} sats, room ${room}, ${btc} hundredths of a BTC`);
+  // two slots drawing one transaction (found by search): each is a parcel
+  let a = -1, b = -1;
+  for (let i = 0; i < 40 && a < 0; i++) for (let j = i + 1; j < 40; j++) if (offerIndex(rid, eid, i, SNAP.count) === offerIndex(rid, eid, j, SNAP.count)) { a = i; b = j; break; }
+  if (a >= 0) {
+    const p = offeredParcel(SNAP, rid, eid, a);
+    const w = Math.min(Number((p.valueSat * 2n) / 1000000n), 2000);
+    assert.equal(drawnParcelsRefusal([5, Number(p.feeSat) * 2, w, roomOfVsize(p.vsize) * 2, [[a, p.txid], [b, p.txid]]], { snapshot: SNAP, roundId: rid, entryId: eid }), null);
+  }
 });

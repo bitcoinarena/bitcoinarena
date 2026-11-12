@@ -16,7 +16,7 @@ import { blockHashOf } from '../src/chain.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 // a deterministic txid: sha256 of a label
-const tx = (label, vsize, fee) => ({ txid: sha256(new TextEncoder().encode(label)), vsize, feeSat: BigInt(fee) });
+const tx = (label, vsize, fee, value = 5000) => ({ txid: sha256(new TextEncoder().encode(label)), vsize, feeSat: BigInt(fee), valueSat: BigInt(value) });
 const block = (height, n, tag = `b${height}`) => ({ height, hash: sha256(new TextEncoder().encode(`hash ${height}`)),
   txs: Array.from({ length: n }, (_, i) => tx(`${tag}/${i}`, 100 + ((i * 37) % 2000), 150 + i * 11)) });
 const RID = b32(0x11), EID = b32(0x22);
@@ -44,7 +44,7 @@ test('#2574 the snapshot: the beacon\'s non-coinbase transactions, walked back w
 test('#2574 snapshot_id = tagged_hash("ARENA/v1/TickTockSnapshot", beacon hash || count || entries): every byte in it', () => {
   const s = snapshotOfBlocks([block(500, 300)]);
   const bytes = encodeSnapshot(s);
-  assert.equal(bytes.length, 32 + 4 + 300 * (32 + 4 + 8));
+  assert.equal(bytes.length, 32 + 4 + 300 * (32 + 4 + 8 + 8), 'entries of 52 bytes: txid, vsize, fee, value (ruled #2578)');
   assert.equal(toHex(bytes.slice(0, 32)), toHex(s.beaconHash));
   assert.deepEqual([...bytes.slice(32, 36)], [0, 0, 1, 44], 'count, big-endian');
   assert.equal(toHex(snapshotIdOf(s)), toHex(taggedHash('ARENA/v1/TickTockSnapshot', bytes)));
@@ -91,7 +91,7 @@ test('#2574 a load names the parcels drawn for its slots, at their fee and room:
   assert.match(ok([10, fee, 0, room, [[3, parcels[0][1]], [9, parcels[1][1]], [18, parcels[2][1]]]]), /at slot 18, and slot 18 of this entry offers/, 'the right txid at another slot');
   assert.match(ok([10, fee + 1, 0, room, parcels]), new RegExp(`pays ${fee + 1} sats, and the parcels it names pay ${fee}`));
   assert.match(ok([10, fee, 0, room + PARCEL_ROOMS[0], parcels]), /and the parcels it names fill/);
-  assert.match(ok([10, fee, 5, room, parcels]), /carries 5 hundredths of a BTC: a drawn bed carries none/);
+  assert.match(ok([10, fee, 5, room, parcels]), /carries 5 hundredths of a BTC, and the parcels it names carry 0/);
   assert.match(ok([10, fee, 0, room, []]), /with no parcel named/, 'a bed declared with no parcel');
   assert.match(ok([10, fee, 0, room, [...parcels, [3, parcels[0][1]]]]), /names slot 3 twice/);
   assert.match(ok([10, fee, 0, room, [[40, parcels[0][1]]]]), /pickup slot 40/);
@@ -99,7 +99,8 @@ test('#2574 a load names the parcels drawn for its slots, at their fee and room:
   // one transaction drawn at two slots is one parcel
   let a = 0, b = -1;
   for (; a < OFFER_SLOTS && b < 0; a++) for (let j = a + 1; j < OFFER_SLOTS; j++) if (toHex(at(a).txid) === toHex(at(j).txid)) { b = j; break; }
-  if (b > 0) { a--; assert.match(ok([10, 2 * Number(at(a).feeSat), 0, 2 * roomOfVsize(at(a).vsize), [[a, toHex(at(a).txid)], [b, toHex(at(b).txid)]]]), /twice: a transaction is one parcel/); }
+  // RULED #2578: two slots drawing one transaction are two parcels (the slot is the parcel), taken with both slots' fee, room and value
+  if (b > 0) { a--; assert.equal(ok([10, 2 * Number(at(a).feeSat), Math.min(Number((2n * at(a).valueSat) / 1000000n), 2000), 2 * roomOfVsize(at(a).vsize), [[a, toHex(at(a).txid)], [b, toHex(at(b).txid)]]]), null); }
   assert.match(drawnParcelsRefusal([10, fee, 0, room, parcels], { snapshot: { entries: [] }, roundId: RID, entryId: EID }), /holds no transaction/);
 });
 

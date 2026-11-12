@@ -16,7 +16,7 @@ const b32 = (n) => new Uint8Array(32).fill(n);
 const enc = (s) => new TextEncoder().encode(s);
 const RID = toHex(b32(0x31));
 // a beacon of 300 transactions behind a header that commits to them
-const txs = Array.from({ length: 300 }, (_, i) => ({ txid: sha256(enc(`t${i}`)), vsize: 120 + i * 9, feeSat: BigInt(500 + i) }));
+const txs = Array.from({ length: 300 }, (_, i) => ({ txid: sha256(enc(`t${i}`)), vsize: 120 + i * 9, feeSat: BigInt(500 + i), valueSat: BigInt(10000 + i) }));
 const txids = [toHex(sha256(enc('coinbase'))), ...txs.map((t) => toHex(t.txid))];
 const header = new Uint8Array(80); header[0] = 1; header.set(merkleRootOfTxids(txids), 36);
 const snapshot = snapshotOfBlocks([{ height: 500, hash: blockHashOf(header), txs }]);
