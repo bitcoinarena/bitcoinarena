@@ -1505,6 +1505,16 @@ export class LockSettlement {
     const paid = payoutsHeld.filter(Boolean).length;
     const seen = `${paid} of ${moves.payouts} payout contract(s) of ${kept.txid.slice(0, 12)} stored, ${locksGone} of ${moves.claims.length} claimed lock(s) gone`;
     if (paid > 0 && locksGone === moves.claims.length) return { verdict: 'in', why: seen };
+    // EVERY CLAIMED LOCK GONE AND NO PAYOUT STORED (kanban #2030): the payouts may have been made and already redeemed - the page redeems on the asker's
+    // ACCEPTED - before this seat's first look, and the guardians do not tell a spent contract from one never made. The round's seats are asked
+    // (#peersAccepted); a word short of theirs leaves the 'mixed' verdict below as it was
+    const peerWord = async (mixed) => {
+      if (!(paid === 0 && moves.claims.length > 0 && locksGone === moves.claims.length)) return mixed;
+      let message = kept.message || null;
+      if (!message && typeof this.round.settlementTxidsOf === 'function') { const h = this.round.settlementTxidsOf(roundIdBytes).find((x) => x.txid === kept.txid); message = h ? h.message : null; }
+      const w = await this.#peersAccepted(roundIdBytes, { txid: kept.txid, message }).catch(() => null);
+      return w && w.ok ? { verdict: 'in', why: `${seen}; ${w.why}` } : mixed;
+    };
     // A SENT WINNING IS NOT STORED ONCE IT IS PAID: the gateway claims its contract (measured: every look read "0 of 1
     // payout contract(s) stored" after the winner was paid). A PAID ROW IS NO PROOF THE CONTRACT WAS MADE (kanban #1185): the payee holds its
     // invoice's preimage from the start, and a settlement that never landed, whose claimed locks refunded at expiry, read "every lock gone + a paid
@@ -1516,16 +1526,45 @@ export class LockSettlement {
       if (paidSends.length) {
         const port = await this.portFor(roundIdBytes);
         if (!port || typeof port.sendClaimed !== 'function')
-          return { verdict: 'mixed', why: `${seen}; ${paidSends.length} send(s) of this round PAID here, and this seat reads no gateway claim at the federation to tell it landed` };
+          return peerWord({ verdict: 'mixed', why: `${seen}; ${paidSends.length} send(s) of this round PAID here, and this seat reads no gateway claim at the federation to tell it landed` });
         for (let i = 0; i < moves.payouts; i++) {
           const c = await port.sendClaimed({ txid: fromHex(kept.txid), outIdx: BigInt(i) }).catch(() => null);
           if (c && c.claimed) return { verdict: 'in', why: `${seen}; the gateway's claim of ${kept.txid.slice(0, 12)}:${i} is held by the federation` };
         }
-        return { verdict: 'mixed', why: `${seen}; ${paidSends.length} send(s) PAID here, and the federation holds no gateway claim of a contract of ${kept.txid.slice(0, 12)}` };
+        return peerWord({ verdict: 'mixed', why: `${seen}; ${paidSends.length} send(s) PAID here, and the federation holds no gateway claim of a contract of ${kept.txid.slice(0, 12)}` });
       }
     }
     if (paid === 0 && locksGone === 0) return { verdict: 'out', why: seen };
-    return { verdict: 'mixed', why: seen };
+    return peerWord({ verdict: 'mixed', why: seen });
+  }
+
+  /**
+   * A LANDED SETTLEMENT WHOSE PAYOUTS WERE ALREADY REDEEMED (kanban #2030): asked only when every claimed lock of `txid` is gone and none of its payouts
+   * is stored. The round's other seats are read (GET /lock-settlement, `scopeQuery` naming a late entry's or a federation's row); one counts when it
+   * holds that row ACCEPTED on this same txid with a signature that verifies under the round's claim key over the message this seat kept for it. With
+   * this seat's own signature over it, the settlement threshold: needed - 1 such seats (at least one). A seat reaches ACCEPTED only from the
+   * guardians' word or from this one, so short of a threshold of lying seats - who could sign anything - one of them read it landed. { ok, n, why }.
+   */
+  async #peersAccepted(roundIdBytes, { txid, message, scopeQuery = '' }) {
+    if (!message || !txid) return { ok: false, n: 0, why: 'this seat keeps no message of that txid to check a peer\'s signature over' };
+    const row = this.round.get(roundIdBytes);
+    if (!row || !this.dkg) return { ok: false, n: 0, why: 'no round or no claim key here' };
+    const contract = decodeRoundContract(new Uint8Array(row.contract));
+    const held = this.dkg.signerNodeFor(contract.nodes);
+    if (!held.ok) return { ok: false, n: 0, why: held.why };
+    const claimPk = held.pool.groupPublicKey;
+    const want = Math.max(1, receiptsNeeded(contract.settlementSlots) - 1);
+    const msgHex = toHex(message);
+    const asked = await askPeers([...new Set(this.peersFor(roundIdBytes) || [])], async (base, signal) => {
+      const r = await this.fetcher(`${base}/lock-settlement?round=${toHex(roundIdBytes)}${scopeQuery}`, { signal });
+      if (!r.ok) return false;
+      const j = await r.json();
+      if (!j || j.state !== ACCEPTED || String(j.txid).toLowerCase() !== String(txid).toLowerCase()) return false;
+      if (typeof j.message !== 'string' || j.message.toLowerCase() !== msgHex || typeof j.signature !== 'string' || !/^[0-9a-f]{128}$/i.test(j.signature)) return false;
+      try { return schnorr.verify(fromHex(j.signature), message, claimPk.subarray(1)); } catch { return false; }
+    }, { boundMs: this.peerReadMs, graceMs: this.peerGraceMs, enough: want, counts: (x) => x === true });
+    const n = asked.filter((a) => a.value === true).length;
+    return { ok: n >= want, n, why: `${n} of the ${want} other seat(s) needed hold ${String(txid).slice(0, 12)} ACCEPTED under the round's claim key` };
   }
 
   /** THE ONE WRITER OF THE ROUND'S SETTLEMENT ROW (kanban #1171): through settlementRowStep, the txid kept in the history. False when the step is refused. */
@@ -1641,6 +1680,12 @@ export class LockSettlement {
     const seen = `${sc.tag}: ${paid} of ${moves.payouts} payout contract(s) of ${txid.slice(0, 12)} stored, ${locksGone} of ${moves.claims.length} claimed lock(s) gone`;
     if (paid > 0 && locksGone === moves.claims.length) return { verdict: 'in', why: seen };
     if (paid === 0 && locksGone === 0) return { verdict: 'out', why: seen };
+    // THE SAME FALLBACK AS THE ROUND'S ROW (kanban #2030): every claimed lock gone, no payout stored - the scope's row as the other seats hold it
+    if (paid === 0 && moves.claims.length > 0 && locksGone === moves.claims.length) {
+      const scopeQuery = where.federation ? `&federation=${String(where.federation).toLowerCase()}` : `&late=${toHex(where.entry)}`;
+      const w = await this.#peersAccepted(roundIdBytes, { txid, message: moves.message, scopeQuery }).catch(() => null);
+      if (w && w.ok) return { verdict: 'in', why: `${seen}; ${w.why}` };
+    }
     return { verdict: 'mixed', why: seen };
   }
 
