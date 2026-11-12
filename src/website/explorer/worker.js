@@ -137,6 +137,10 @@ const isRow = (x) => !!x && typeof x === 'object' && !Array.isArray(x);
 // that row are known, and its time is the AGREE-th earliest of theirs. A payment fewer than AGREE seats agree on is not found and not
 // stored - one seat of fourteen could list a made-up 21 BTC item purchase as a real transaction, or a "gift" under a real order's id.
 const withoutKept = (r) => { const { keptMs, ...rest } = r; void keptMs; return rest; };
+// AN ID IS A STRING OF 64 HEX DIGITS, NOT ANYTHING THAT PRINTS AS ONE (kanban #2129, #2192, #2286): hex64.test(String(x)) let one seat's
+// id [<hex>] (an array) through, it reached the SELECT ... IN (?) bind and D1 threw, so the minute's read of every seat's orders (or
+// gifts) stopped. The raw value is tested, so only a real string id is read
+const isHexId = (x) => typeof x === 'string' && hex64.test(x);
 function paymentTx(id, answers) {
   const r = agreed(answers.filter((a) => a.row).map((a) => withoutKept(a.row)));
   const same = (a) => !!(r && a.row && JSON.stringify(withoutKept(a.row)) === JSON.stringify(r));
@@ -162,7 +166,7 @@ async function readPayments(env, since, limit) {
   // The walk goes on from the AGREE-th earliest last of the full lists (one seat's alone neither holds it back nor sends it on), always
   // after `since`; fewer than AGREE full lists: nothing is left
   const lasts = [];
-  const rowOk = (r) => isRow(r) && hex64.test(String(r.id)) && hex64.test(String(r.txid));   // (kanban #1600: a plain object)
+  const rowOk = (r) => isRow(r) && isHexId(r.id) && isHexId(r.txid);   // (kanban #1600: a plain object; #2129: a string id, not an array)
   for (const g of got) {
     if (!g.body || !Array.isArray(g.body.gifts) || !Array.isArray(g.body.items)) continue;
     for (const whole of [g.body.gifts, g.body.items]) {
@@ -626,7 +630,7 @@ async function readWindow(env, since, limit, before) {
     if (!g.body || !Array.isArray(g.body.txs)) continue;
     for (const t of g.body.txs.slice(0, limit)) {
       // ONE SEAT'S JUNK ELEMENT DROPS ONLY THAT ELEMENT (kanban #1600): a null one threw at t.id and no seat's orders were stored that minute
-      if (!isRow(t) || !hex64.test(String(t.id)) || !t.detail || (before && Number(t.storedMs) >= before)) continue;
+      if (!isRow(t) || !isHexId(t.id) || !t.detail || (before && Number(t.storedMs) >= before)) continue;
       if (!byId.has(t.id)) byId.set(t.id, new Map());
       byId.get(t.id).set(g.seat, { status: 200, body: t.detail });
     }
