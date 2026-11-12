@@ -275,3 +275,15 @@ test('a head-to-head client is given the last moment a tap goes in as the close,
   }
   assert.equal(run(1, [], false).given, 1_000_000, 'a game that is not head-to-head keeps its close');
 });
+
+// kanban #2561 (measured on the arena-2561 preview 2026-11-12): the page asked every round's seats for its lock set before the reveal; seats below
+// audit51 answer GET /lock-set with 404, so a protocol-27 round was never revealed ("Not revealed - you lose"). A round below 28 is revealed at
+// once on its own contract's version; only 28 and later wait for a certificate.
+test('a head-to-head round below protocol 28 is revealed at once; only 28 and later wait for the certified lock set', () => {
+  const src = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
+  assert.ok(src.includes('protocolVersion: Number(named.round.protocolVersion || 1) });'), 'the hidden move keeps its round\'s protocol');
+  const at = src.indexOf('if (h.protocolVersion !== undefined && h.protocolVersion !== null && Number(h.protocolVersion) < 28) {');
+  const wait = src.indexOf('const said = await ARENACLIENT.revealWhenCertified({');
+  assert.ok(at > 0 && wait > at, 'the version check comes before the certificate wait');
+  assert.ok(src.slice(at, wait).includes('await ARENACLIENT.revealMove({ entryIdHex: h.entryIdHex, move: h.move, salt: h.saltHex, nodes: h.nodes, identity });'), 'below 28 it reveals at once');
+});
