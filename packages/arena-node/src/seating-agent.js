@@ -612,8 +612,30 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
   // ever seated). Hex is taken only as even-length hex, PRESENTs only from an array of objects, and each peer's answer spoils only itself.
   const hexOf = (s) => (typeof s === 'string' && s.length % 2 === 0 && /^[0-9a-fA-F]*$/.test(s) ? fromHex(s) : null);
   const presentsIn = (a, role) => (a && Array.isArray(a.presents) ? a.presents : []).filter((x) => x && typeof x === 'object' && x.role === role).map((x) => hexOf(x.present)).filter(Boolean);
+  // A CERTIFICATE KEPT WHOSE WRITE-IN NEVER RAN (kanban #1940): keepCert keeps the certificate, then onSeated writes its seated into the
+  // round - two writes, and a seat killed between them (or whose onSeated threw) held a certificate the round's signer nodes did not
+  // follow, for good: every copy handed again is "held byte for byte" and never applied. Once per life, at the first tick (the server's
+  // onSeated reads what is set up after the agent), every kept settlement certificate of a held round whose signer nodes are not its
+  // seated is applied again; onSeated is idempotent (seatDrawFree writes nothing when nothing changes).
+  let replayed = false;
+  const replaySeated = () => {
+    replayed = true;
+    for (const r of db.prepare("SELECT round_id, cert FROM seat_certs WHERE role = 'settlement'").all()) {
+      try {
+        const rid = new Uint8Array(r.round_id);
+        const seated = certs.get(`${toHex(rid)}:settlement`);
+        if (!seated) continue;                                  // equivocated or unread
+        const row = round.get(rid);
+        if (!row) continue;
+        const have = (typeof round.signerNodes === 'function' ? round.signerNodes(rid) : []).map(toHex).sort().join();
+        if (have === [...seated].sort().join()) continue;
+        onSeated(rid, 'settlement', seated.map(fromHex), decodeRoundContract(new Uint8Array(row.contract)));
+      } catch (e) { log(`[seating] write-in again: ${e.message}`); }
+    }
+  };
   async function tick() {
     if (busy) return;
+    if (!replayed) replaySeated();
     busy = true;
     const t0 = Date.now(); let fellBack = 0, peers = 0, rounds = 0;
     // WHERE A LONG TICK WENT (kanban #803: test host seat 7 ran ticks of 60-99 s with every node answering): each phase's time, logged with it
