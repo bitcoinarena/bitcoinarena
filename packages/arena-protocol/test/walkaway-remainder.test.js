@@ -10,6 +10,7 @@ import { lockActions, CLAIM, EXPIRE } from '../src/lock-action.js';
 import { FORFEIT, FAILED, DELIVERED } from '../src/payout.js';
 import { TEST_DONATION_SET_REGTEST } from '../src/test-donation-sets.js';
 import { toHex } from '../src/hash.js';
+import { pointKey } from './point-key-fixture.js';  // kanban #1675: fixture keys are curve points
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const rid = b32(1);
@@ -96,8 +97,8 @@ test('lockSettlement, WINNINGS-AUTO (RULED 2026-10-01): a qualifier beside a wal
 // the signed plan needs no Lightning send for it.
 test('lockSettlement: with a set of keys the donation share is a payout contract to each key, signed with no send', () => {
   const DEVS = { recipients: [
-    { recipientPk: Uint8Array.of(2, ...new Uint8Array(32).fill(0xa1)), shareBps: 6667, label: 'dev a' },
-    { recipientPk: Uint8Array.of(3, ...new Uint8Array(32).fill(0xb2)), shareBps: 3333, label: 'dev b' }] };
+    { recipientPk: pointKey(2, 0xa1), shareBps: 6667, label: 'dev a' },
+    { recipientPk: pointKey(3, 0xb2), shareBps: 3333, label: 'dev b' }] };
   const p = lockSettlement({ roundId: rid, entries: [entry(5, FORFEIT, true), entry(6, FAILED)], minScore: 1, locks: locks(5, 6), fees, contract,
     donationSet: DEVS, requireSends: true });
   assert.equal(p.ok, true, p.why);

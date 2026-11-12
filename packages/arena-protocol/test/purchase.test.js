@@ -9,9 +9,10 @@ import { itemPriceFor, ITEM_DEV_SHARES } from '../src/items.js';
 import { ITEMS_VERSION } from '../src/constants.js';
 import { SERVED_WINDOW_MS } from '../src/served-nodes.js';
 import { toHex } from '../src/hash.js';
+import { pointKey } from './point-key-fixture.js';  // kanban #1675: fixture keys are curve points
 
 const b32 = (n) => new Uint8Array(32).fill(n);
-const pk33 = (n) => Uint8Array.from([0x02, ...new Uint8Array(32).fill(n)]);
+const pk33 = (n) => pointKey(0x02, n);
 const BUYER = b32(0x77);
 const BUYER_PUB = schnorr.getPublicKey(BUYER);
 const verify = (sig, msg, key) => schnorr.verify(sig, msg, key);
