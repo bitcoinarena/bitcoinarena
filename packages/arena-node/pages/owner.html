@@ -277,7 +277,9 @@ async function siteBase() {
     const settle = () => { if (--left <= 0) done(); };
     setTimeout(done, 15000);
     for (const seat of seats) {
-      fetch(seat.replace(/\/+$/, '') + '/address-announcements', { cache: 'no-store', signal: AbortSignal.timeout(15000) }).then((r) => r.json()).then((j) => {
+      // BY ITS KEY (kanban #2066): a node not bonded yet is in no census, and a seat answers its announcement only to a lookup by key
+      // (?node=); a seat on an older build ignores the query and answers its whole list, searched the same way
+      fetch(seat.replace(/\/+$/, '') + '/address-announcements?node=' + NODE_KEY, { cache: 'no-store', signal: AbortSignal.timeout(15000) }).then((r) => r.json()).then((j) => {
         const e = ((j && j.announcements) || []).find((x) => x && x.node === NODE_KEY && /^https?:\/\//.test(x.endpoint || ''));
         if (e) { named.push(e); if (!grace) grace = setTimeout(done, 3000); }
       }).catch(() => {}).finally(settle);

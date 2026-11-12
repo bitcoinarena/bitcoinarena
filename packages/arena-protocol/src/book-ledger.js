@@ -47,78 +47,122 @@ function buyChecked(o, seenIds) {
  * fee (entryFeeBpsOf). Answers { positions: Map(entry -> position), batches: [{ k, price, fills }], refused: [{ id, why }] }.
  */
 export function bookLedger({ batches, feeBps }) {
-  const positions = new Map();
-  const buys = new Map();               // entry -> its resting buy (the rest of its budget)
-  const sells = new Map();              // sell id -> its resting sell (the rest of its shares)
-  // EVERY SELL ONCE (kanban #1150): a signed sell carried by a later batch too was set again at its full size - one signature, two sales
-  const seenSells = new Set();
-  const offered = new Map();            // entry|outcome -> the shares its resting sells offer
-  const sellsOf = new Map();            // entry -> the ids of its resting sells
-  // each side of the clear (a sell of outcome o is a buy of 1 - o at the limit 1 - p) -> limit -> { price, total, ids }
-  const sellLevels = [new Map(), new Map()];
-  const refused = [];
-  const out = [];
-  const position = (o) => {
-    if (!positions.has(o.id)) {
-      const N = o.stakeMsat - o.feeMsat;
-      positions.set(o.id, { entry: o.id, outcome: o.outcome, N, F: o.feeMsat, cost: 0n, buyFee: 0n, shares: [0n, 0n],
-        sellDebt: 0n, sellFee: 0n, cancelled: false, filledBeforeCancel: false });
-    }
-    return positions.get(o.id);
-  };
-  const offerKey = (x) => `${x.entry}|${x.outcome}`;
-  const levelOf = (x) => sellLevels[1 - x.outcome].get(String(PRICE_SCALE - x.price));
-  const addSell = (x) => {
-    sells.set(x.id, x);
-    offered.set(offerKey(x), (offered.get(offerKey(x)) || 0n) + x.sharesMsat);
-    if (!sellsOf.has(x.entry)) sellsOf.set(x.entry, new Set());
-    sellsOf.get(x.entry).add(x.id);
-    const side = sellLevels[1 - x.outcome], key = String(PRICE_SCALE - x.price);
-    if (!side.has(key)) side.set(key, { price: PRICE_SCALE - x.price, total: 0n, ids: new Set() });
-    const l = side.get(key); l.total += x.sharesMsat; l.ids.add(x.id);
-  };
-  const dropSell = (id) => {
-    const x = sells.get(id);
-    sells.delete(id);
-    offered.set(offerKey(x), offered.get(offerKey(x)) - x.sharesMsat);
-    sellsOf.get(x.entry).delete(id);
-    const l = levelOf(x); l.total -= x.sharesMsat; l.ids.delete(id);
-    if (!l.ids.size) sellLevels[1 - x.outcome].delete(String(PRICE_SCALE - x.price));
-  };
-  const restSell = (id, rest) => {
-    const x = sells.get(id), less = x.sharesMsat - rest;
-    sells.set(id, { ...x, sharesMsat: rest });
-    offered.set(offerKey(x), offered.get(offerKey(x)) - less);
-    levelOf(x).total -= less;
-  };
-  for (const b of batches) {
+  const s = new BookLedgerState({ feeBps });
+  for (const b of batches) s.apply(b);
+  const r = s.result();
+  return { positions: r.positions, batches: r.batches, refused: r.refused, resting: r.resting, levels: r.levels };
+}
+
+/**
+ * THE LEDGER, KEPT AND GROWN ONE BATCH AT A TIME (kanban #2086, after #1526/#1722/#1791/#1933/#1969). bookLedger replayed every
+ * certified batch from batch 0, and a seat ran it once per batch with the next batch on top (lead(), each follower's #check) and once
+ * more after each certificate: sixteen dust orders posting 16 never-crossing 1-msat sells per seat per batch rest 1,792 sells every
+ * 500 ms, and three minutes in (645,120 resting) that replay took a seat 3.1 s a batch against its 500 ms interval - every seat fell
+ * behind the signing lag and the book stalled for everyone. The same rules, to the msat, now run on a state kept between batches:
+ *  - apply(batch): one more certified batch on top of the kept state - its cost is its own orders, cancels and sells, the buys, the
+ *    sell LEVELS (one per price) and the sells it fills, never the resting history;
+ *  - onTop(batch): the ledger with one more batch on top, without keeping it - every change it makes is journaled and undone after
+ *    (a resting sell or buy it drops comes back; the order a book is drawn in is kept by each one's insertion number);
+ *  - result(): the kept ledger; its resting ids and levels are built only when read, once per state.
+ * bookLedger above is this state over the batches given, so every seat - kept, grown or replayed - holds the same ledger.
+ * A position object is never changed once it is in a ledger handed out: a batch that changes one puts a new object in the map.
+ */
+export class BookLedgerState {
+  #j = null;            // the undo journal of an onTop pass, else null
+  #touched = null;      // the positions this pass already copied
+  #book = null;         // the drawn book of this state, built when read
+  constructor({ feeBps }) {
+    this.feeBps = feeBps;
+    this.positions = new Map();
+    this.buys = new Map();               // entry -> its resting buy (the rest of its budget)
+    this.sells = new Map();              // sell id -> its resting sell (the rest of its shares)
+    // EVERY SELL ONCE (kanban #1150): a signed sell carried by a later batch too was set again at its full size - one signature, two sales
+    this.seenSells = new Set();
+    this.offered = new Map();            // entry|outcome -> the shares its resting sells offer
+    this.sellsOf = new Map();            // entry -> the ids of its resting sells
+    // each side of the clear (a sell of outcome o is a buy of 1 - o at the limit 1 - p) -> limit -> { price, total, ids }
+    this.sellLevels = [new Map(), new Map()];
+    this.refused = [];
+    this.out = [];
+    this.seq = 0;                        // insertion number of each resting buy and sell: the order a replay holds them in
+    this.reordered = false;              // an undone drop put a buy or sell back at the end of its map: draw by insertion number
+  }
+  #set(m, k, v) { if (this.#j) { const had = m.has(k), old = m.get(k); this.#j.push(had ? () => m.set(k, old) : () => m.delete(k)); } m.set(k, v); }
+  #del(m, k, ordered = false) {
+    if (!m.has(k)) return;
+    if (this.#j) { const old = m.get(k); this.#j.push(() => { m.set(k, old); if (ordered) this.reordered = true; }); }
+    m.delete(k);
+  }
+  #add(s, v) { if (s.has(v)) return; if (this.#j) this.#j.push(() => s.delete(v)); s.add(v); }
+  #rm(s, v) { if (!s.has(v)) return; if (this.#j) this.#j.push(() => s.add(v)); s.delete(v); }
+  #total(l, d) { if (this.#j) { const old = l.total; this.#j.push(() => { l.total = old; }); } l.total += d; }
+  /** a position this batch may change: a copy, put in the map once per batch */
+  #mut(id) {
+    const p = this.positions.get(id);
+    if (this.#touched.has(id)) return p;
+    const c = { ...p, shares: [...p.shares] };
+    this.#touched.add(id); this.#set(this.positions, id, c);
+    return c;
+  }
+
+  /** One more certified batch, kept. A batch that throws leaves this state unusable: the caller builds it again. */
+  apply(b) {
+    this.#touched = new Set(); this.#book = null;
+    const { positions, buys, sells, seenSells, offered, sellsOf, sellLevels, refused, feeBps } = this;
+    const offerKey = (x) => `${x.entry}|${x.outcome}`;
+    const levelOf = (x) => sellLevels[1 - x.outcome].get(String(PRICE_SCALE - x.price));
+    const addSell = (x) => {
+      this.#set(sells, x.id, x);
+      this.#set(offered, offerKey(x), (offered.get(offerKey(x)) || 0n) + x.sharesMsat);
+      if (!sellsOf.has(x.entry)) this.#set(sellsOf, x.entry, new Set());
+      this.#add(sellsOf.get(x.entry), x.id);
+      const side = sellLevels[1 - x.outcome], key = String(PRICE_SCALE - x.price);
+      if (!side.has(key)) this.#set(side, key, { price: PRICE_SCALE - x.price, total: 0n, ids: new Set() });
+      const l = side.get(key); this.#total(l, x.sharesMsat); this.#add(l.ids, x.id);
+    };
+    const dropSell = (id) => {
+      const x = sells.get(id);
+      this.#del(sells, id, true);
+      this.#set(offered, offerKey(x), offered.get(offerKey(x)) - x.sharesMsat);
+      this.#rm(sellsOf.get(x.entry), id);
+      const l = levelOf(x); this.#total(l, -x.sharesMsat); this.#rm(l.ids, id);
+      if (!l.ids.size) this.#del(sellLevels[1 - x.outcome], String(PRICE_SCALE - x.price));
+    };
+    const restSell = (id, rest) => {
+      const x = sells.get(id), less = x.sharesMsat - rest;
+      this.#set(sells, id, { ...x, sharesMsat: rest });
+      this.#set(offered, offerKey(x), offered.get(offerKey(x)) - less);
+      this.#total(levelOf(x), -less);
+    };
     // 1. NEW ORDERS
     for (const o of [...(b.orders || [])].sort((x, y) => byIdOrder(x.id, y.id))) {
       if (positions.has(o.id)) { refused.push({ id: o.id, why: 'that order is in the book already' }); continue; }
-      const p = position(o);
-      buys.set(o.id, { id: o.id, outcome: o.outcome, price: o.price, stakeMsat: o.stakeMsat, net: p.N, fullNet: p.N, fullFee: p.F, expiryMs: o.expiryMs || 0n });
+      const N = o.stakeMsat - o.feeMsat;
+      this.#set(positions, o.id, { entry: o.id, outcome: o.outcome, N, F: o.feeMsat, cost: 0n, buyFee: 0n, shares: [0n, 0n],
+        sellDebt: 0n, sellFee: 0n, cancelled: false, filledBeforeCancel: false });
+      this.#touched.add(o.id);
+      this.#set(buys, o.id, { id: o.id, outcome: o.outcome, price: o.price, stakeMsat: o.stakeMsat, net: N, fullNet: N, fullFee: o.feeMsat, expiryMs: o.expiryMs || 0n, seq: this.seq++ });
     }
     // 2. CANCELS: the order's rest leaves the book - its buy's and its resting sells' (kanban #591, from the Polymarket comparison:
     // a sell stood until it filled or the window closed; Polymarket cancels any open order) - what filled stays its position
     for (const e of [...(b.cancels || [])].sort(byIdOrder)) {
-      const p = positions.get(e);
-      if (!p) { refused.push({ id: e, why: 'a cancel of an order the book does not hold' }); continue; }
-      buys.delete(e);
+      if (!positions.get(e)) { refused.push({ id: e, why: 'a cancel of an order the book does not hold' }); continue; }
+      this.#del(buys, e, true);
       for (const sid of [...(sellsOf.get(e) || [])]) dropSell(sid);
-      if (!p.cancelled) { p.cancelled = true; p.filledBeforeCancel = p.cost > 0n || p.sellDebt > 0n; }
+      if (!positions.get(e).cancelled) { const p = this.#mut(e); p.cancelled = true; p.filledBeforeCancel = p.cost > 0n || p.sellDebt > 0n; }
     }
     // 3. EXPIRY
-    for (const [id, o] of buys) if (o.expiryMs > 0n && o.expiryMs <= b.cutoffMs) buys.delete(id);
+    for (const [id, o] of [...buys]) if (o.expiryMs > 0n && o.expiryMs <= b.cutoffMs) this.#del(buys, id, true);
     // 4. SELLS: no more than its entry holds and has not already offered
     for (const s of [...(b.sells || [])].sort((x, y) => byIdOrder(x.id, y.id))) {
       const p = positions.get(s.entry);
       if (!p) { refused.push({ id: s.id, why: 'a sell of an entry the book does not hold' }); continue; }
       if (seenSells.has(s.id)) { refused.push({ id: s.id, why: 'that sell is in the book already: a signed sell is sold once' }); continue; }
-      seenSells.add(s.id);
+      this.#add(seenSells, s.id);
       const unsold = p.shares[s.outcome] - p.shares[1 - s.outcome] - (offered.get(offerKey(s)) || 0n);
       if (s.sharesMsat > unsold) { refused.push({ id: s.id, why: `that sell offers ${s.sharesMsat} of outcome ${s.outcome} and its entry holds ${unsold > 0n ? unsold : 0n} unsold` }); continue; }
       sellChecked(s, (id) => sells.has(id));   // what clearBatch asks of a sell, asked once: a resting sell only shrinks
-      addSell({ ...s, sell: true });
+      addSell({ ...s, sell: true, seq: this.seq++ });
     }
     // 5. THE CLEAR (clearBatch's, over the indexed book)
     if (!Number.isInteger(feeBps) || feeBps < 0 || feeBps >= 10000) throw new Error('a fee is 0 to 9999 bps');
@@ -194,29 +238,55 @@ export function bookLedger({ batches, feeBps }) {
     }
     rows.sort((x, y) => byIdOrder(x.id, y.id));
     // 6. THE FILLS
+    // THE FEE A BUY OWES: its fee lock's share of what its fills spent, F x cost / N - the same over one batch or many, set as it changes
     for (const f of rows) {
       if (f.sell) {
         const s = sells.get(f.id);
-        const p = positions.get(s.entry);
+        const p = this.#mut(s.entry);
         p.shares[f.outcome] += f.payoutMsat; p.sellDebt += f.costMsat; p.sellFee += f.feeMsat;
         if (f.restSharesMsat > 0n) restSell(f.id, f.restSharesMsat); else dropSell(f.id);
         continue;
       }
-      const p = positions.get(f.id);
-      if (f.payoutMsat > 0n) { p.shares[f.outcome] += f.payoutMsat; p.cost += f.costMsat; }
+      if (f.payoutMsat > 0n) { const p = this.#mut(f.id); p.shares[f.outcome] += f.payoutMsat; p.cost += f.costMsat; p.buyFee = p.N === 0n ? 0n : (p.F * p.cost) / p.N; }
       const o = buys.get(f.id);
-      if (f.restNetMsat > 0n) buys.set(f.id, { ...o, net: f.restNetMsat }); else buys.delete(f.id);
+      if (f.restNetMsat > 0n) this.#set(buys, f.id, { ...o, net: f.restNetMsat }); else this.#del(buys, f.id, true);
     }
-    out.push({ k: b.k, price: best ? best.pi : null, fills: rows.filter((f) => f.payoutMsat > 0n) });
+    this.out.push({ k: b.k, price: best ? best.pi : null, fills: rows.filter((f) => f.payoutMsat > 0n) });
   }
-  // THE FEE A BUY OWES: its fee lock's share of what its fills spent, F x cost / N - the same over one batch or many
-  for (const p of positions.values()) p.buyFee = p.N === 0n ? 0n : (p.F * p.cost) / p.N;
+
+  /** The ledger with one more batch on top, not kept: { positions, batches, refused } (no drawn book). */
+  onTop(b) {
+    const j = this.#j = [];
+    const nRefused = this.refused.length, nOut = this.out.length, seq = this.seq, book = this.#book;
+    try {
+      this.apply(b);
+      return { positions: new Map(this.positions), batches: this.out.slice(), refused: this.refused.slice() };
+    } finally {
+      this.#j = null;
+      for (let i = j.length - 1; i >= 0; i--) j[i]();
+      this.refused.length = nRefused; this.out.length = nOut; this.seq = seq; this.#book = book;
+    }
+  }
+
+  /** The kept ledger: { positions (the live map: read it, never change it), batches, refused, resting, levels (built when read, from
+   *  the state as it is then - read them before the next apply) }. */
+  result() {
+    const self = this;
+    return { positions: this.positions, batches: this.out.slice(), refused: this.refused.slice(),
+      get resting() { return self.#drawn().resting; }, get levels() { return self.#drawn().levels; } };
+  }
   // WHAT STANDS, PRICED (2026-10-17: "a real desktop view with complete order book bids ask, chart, depth"): each
   // resting buy's outcome, limit and the rest of its budget, each resting sell's outcome, price and unsold shares - the book a page
   // draws, no id and no entry named
-  const levels = { buys: [...buys.values()].map((o) => ({ outcome: o.outcome, price: o.price, netMsat: o.net, expiryMs: o.expiryMs || 0n })),
-    sells: [...sells.values()].map((x) => ({ outcome: x.outcome, price: x.price, sharesMsat: x.sharesMsat })) };
-  return { positions, batches: out, refused, resting: { buys: [...buys.keys()], sells: [...sells.keys()] }, levels };
+  #drawn() {
+    if (this.#book) return this.#book;
+    const buys = [...this.buys.values()], sells = [...this.sells.values()];
+    if (this.reordered) { buys.sort((a, b) => a.seq - b.seq); sells.sort((a, b) => a.seq - b.seq); }
+    this.#book = { resting: { buys: buys.map((o) => o.id), sells: sells.map((x) => x.id) },
+      levels: { buys: buys.map((o) => ({ outcome: o.outcome, price: o.price, netMsat: o.net, expiryMs: o.expiryMs || 0n })),
+        sells: sells.map((x) => ({ outcome: x.outcome, price: x.price, sharesMsat: x.sharesMsat })) } };
+    return this.#book;
+  }
 }
 
 /** Whether an entry's locks can come back now: no fill at all, and a certified cancel (or, at settlement, simply no fill). */
