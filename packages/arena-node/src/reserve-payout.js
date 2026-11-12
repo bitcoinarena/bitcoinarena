@@ -32,6 +32,7 @@ import { sendableInvoiceMsat, lowestLiveGateway, sendPlanStands, proposedExpirat
 import { lnv2FeeMsat, largestPayoutMsat } from '../../arena-protocol/src/lock-settlement.js';
 import { taggedHash, toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { lightningAddressEndpoint, payRequestStands, callbackFor, invoiceAnswersPayRequest } from '../../arena-protocol/src/lnurl-pay.js';
+import { lnurlPublicFetch } from './public-fetch.js';
 import { urlOfLnurl } from '../../arena-protocol/src/bech32.js';
 import { decodeBolt11 } from '../../arena-protocol/src/bolt11.js';
 import { moveSeedOf, moveSeedFor } from './reserve-move.js';
@@ -57,13 +58,14 @@ export function leaderboardAmounts({ inputs, winners, fees }) {
  * (LUD-01); the pay request (LUD-06), then the invoice for exactly `msat`, taken only when its amount and description hash stand.
  */
 export function lnurlClient({ fetch: get, network = 'testnet4', timeoutMs = 15000, localHosts = [] } = {}) {
-  // NEVER A HOST INSIDE THE SEAT'S NETWORK (kanban #2323, #2340, #2236, #1809): anyone may author a funding proposal (funding.js), and every
+  // NEVER A HOST INSIDE THE SEAT'S NETWORK (kanban #2323, #2340, #2236, #1809, #1919): anyone may author a funding proposal (funding.js), and every
   // guardian seat fetches its LNURL and the callback - so each URL passes hostReach first (https on 443, no internal name, every resolved address
-  // global), and the default fetcher is walletFetch (pinned to the checked address, no redirect). `localHosts`: the operator's own "host[:port]"
-  // LNURL servers (ARENA_LNURL_LOCAL_HOSTS, server.js lnurlLocalHosts - the devnet's http://127.0.0.1:<lnurl> payee), never a proposal author's pick.
+  // global), and the default fetcher is lnurlPublicFetch (a public name and resolved address checked in the connection's own lookup, redirects
+  // checked hop by hop). `localHosts`: the operator's own "host[:port]" LNURL servers (ARENA_LNURL_LOCAL_HOSTS, server.js lnurlLocalHosts - the
+  // devnet's http://127.0.0.1:<lnurl> payee), never a proposal author's pick, asked with the plain fetch.
   const locals = (localHosts || []).map((h) => String(h).toLowerCase());
   const isLocal = (u) => locals.includes(hostOf(u));
-  const fetcher = get || ((u, o) => (String(u).startsWith('https:') && !isLocal(u) ? walletFetch(u, o) : fetch(u, o)));
+  const fetcher = get || ((u, o) => (isLocal(u) ? fetch(u, o) : lnurlPublicFetch(u, o)));
   const publicRefusal = async (u) => {
     if (isLocal(u)) return null;
     let reach; try { reach = await hostReach(u); } catch { reach = 'unresolved'; }

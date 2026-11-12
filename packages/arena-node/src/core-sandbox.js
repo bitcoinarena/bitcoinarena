@@ -157,17 +157,11 @@ function deathOf(sup, id) {
   return d || null;
 }
 
-/**
- * LOAD ONE CORE INTO A SANDBOX OF ITS OWN, in a thread of its own, from its files (read and checked above). Answers
- * { call(op, input), meta }: `call` hands the driver a JSON copy of `input`, waits for its answer against the op's deadline
- * and answers it revived. A core that does not load (an import outside its files, a top level that throws or does not stop)
- * is refused here, before it is ever asked anything; a core that misses a deadline, dies of its heap limit, crosses its
- * array budget or grows this process past the backstop is ended - the node waits for its thread to be gone - and refused
- * from then on.
- */
-export function loadCore({ files, entry }, options = {}) {
-  const { callMs = CALL_MS, stepMs = STEP_MS, askMs = ASK_MS, loadMs = LOAD_MS, name = entry,
-    arrayBudget = ARRAY_BUDGET, liveCap = 0, heap = HEAP_LIMITS, rssBackstop = RSS_BACKSTOP, oneReplay = false, answerMax = ANSWER_MAX, until = null, loadUntil = null } = options;
+/** ONE CORE THREAD (core-host.js), started by this thread's supervisor and loaded: { call(op, input, within) answering the
+ *  driver's JSON, end(why), lastEnd, highWaterMb }. Throws when the core does not load. */
+function startThread({ files, entry }, { callMs, stepMs, askMs, loadMs, name, arrayBudget, liveCap, heap, rssBackstop, answerMax = ANSWER_MAX, until = null, lingerAs = null, loadUntil = null }) {
+  // `lingerAs`: the label an ended, not yet gone thread is kept under for lingeringCores (the plugin trial's, kanban #1880) - never
+  // the core's own name, which stays the seat's (kanban #1694)
   // `until` (kanban #1719, #1538): ONE ABSOLUTE DEADLINE (a Date.now() time) for the load AND the meta ask loadCore makes
   // itself - the plugin trial gives load, meta and every decide call one TRIAL_MS in total; meta reads DECIDE's fields, which
   // may be getters, so without it load + meta held the seat's thread up to loadMs + askMs
@@ -204,7 +198,7 @@ export function loadCore({ files, entry }, options = {}) {
     const waitMs = Number.isFinite(by()) ? Math.max(0, Math.min(EXIT_WAIT_MS, by() + UNTIL_EXIT_GRACE_MS - t0)) : EXIT_WAIT_MS;
     if (!gone()) sup.worker.postMessage({ type: 'end', id });
     while (!gone() && Date.now() - t0 < waitMs) Atomics.wait(ctrl, C.STATE, Atomics.load(ctrl, C.STATE), Math.max(1, Math.min(10, waitMs - (Date.now() - t0))));
-    if (!gone()) lingering.add({ ctrl, name });
+    if (!gone()) lingering.add({ ctrl, name: lingerAs || name });
     lastEnd = { exitMs: Date.now() - t0, exited: gone(), rssMb: rssMb(), highMb: Atomics.load(ctrl, C.HIGH_MB) };
     Atomics.store(ctrl, C.CALL, 0);
   };
@@ -240,6 +234,7 @@ export function loadCore({ files, entry }, options = {}) {
     throw new Error(ended);
   };
   const loaded = wait(leftOf(loadMs), 'loading');
+  loading = false;   // (kanban #2058) the load's own bound ends with the load
   if (!loaded.ok) { end(loaded.why); throw new Error(loaded.why); }
 
   // `within`: a shorter deadline for this one call (kanban #1538: the plugin trial run gives all its calls one deadline in total)
@@ -250,43 +245,81 @@ export function loadCore({ files, entry }, options = {}) {
     port1.postMessage({ op: String(op), json: plain(input) });
     const ms = Number.isFinite(within) ? Math.max(1, Math.min(within, { callMs, stepMs, askMs }[DEADLINE[op] || 'askMs'])) : { callMs, stepMs, askMs }[DEADLINE[op] || 'askMs'];
     const a = wait(ms, op);
-    // A CORE AT ITS ARRAY BUDGET IS ENDED, not asked again: it could catch the refusal and keep going, and what it holds goes
-    // with its thread
-    if (!a.ok && /asked for more than \d+ MB of arrays/.test(a.why)) { end(`${a.why}: its thread was ended, and it is not run again`); throw new Error(ended); }
+    // A CALL PAST ITS ARRAY BUDGET FAILS, AND ONLY THAT CALL (kanban #1721, #1792, #1831): core-host.js drops the context it
+    // ran in - the core cannot catch the refusal and keep what it held. Ending the core here made every later call on this
+    // seat fail ("it is not run again") while a seat that never ran that input answered them: the seat's history again.
     // kanban #1691: past its answer size the core is ended, as core-host.js does - and an answer that is not a string of at most
     // ANSWER_MAX characters is never parsed in this thread
     if (!a.ok && /its answer was longer than/.test(a.why)) { end(`${a.why}: its thread was ended, and it is not run again`); throw new Error(ended); }
     if (!a.ok) throw new Error(a.why);
     if (typeof a.json !== 'string' || a.json.length > answerMax) { end(`the core answered ${op} with more than ${answerMax} characters: its thread was ended, and it is not run again`); throw new Error(ended); }
-    return revive(a.json);
+    return a.json;
   };
-  // A REPLAY RUNS ON A FRESH CORE THREAD OF ITS OWN (kanban #1624): a core that recursed until V8's "Maximum call stack size
-  // exceeded", caught the RangeError and counted its frames read its thread's JIT history - a frame's size depends on the tier
-  // its function runs in, and the tiers on a thread depend on what it ran before (measured: 400 replays of one input on one
-  // thread answered depths 41205, 41206 and 41209; 60 replays each on a fresh thread answered 41205 every time). The stack
-  // overflow cannot be made sticky like the array budget: V8 builds and throws it without running any code a sandbox could
-  // hook (not even the debugger hears it). So the replay - the call whose answer a seat signs - starts from the same history
-  // every time: a thread loaded for it alone (~45 ms), ended after it. A thread that ends that way (a deadline, the array
-  // budget, its heap, the backstop) fails that replay ALONE (kanban #2008, #1539): what it held goes with its thread, but this
-  // core and its kept thread go on - a heap death is set by the input (every seat that runs it dies), so ending the core made
-  // every later round fail on the seats that had replayed it while seats on other committees answered the same round: the
-  // seat's history decided its answer again. What this does not close: two machines (another CPU,
-  // another node build) still count a different depth - that is a core's own nondeterminism, as with any engine limit.
-  let lastOne = null;
-  const replayFresh = (input, within) => {
+  return { call: callHere, end, ended: () => ended, lastEnd: () => lastEnd, highWaterMb: () => Atomics.load(ctrl, C.HIGH_MB) };
+}
+
+/** The warm ghost's operations: a run kept in the core between calls. Nobody signs what they answer. */
+const KEPT = new Set(['open', 'pose', 'stepTo', 'drop']);
+/** The small asks whose answer is kept by input: a call on a thread of its own answers from the core's files and the input alone. */
+const PURE = new Set(['meta', 'runTicks', 'runTicksFits']);
+const PURE_MAX = 4096;
+
+/**
+ * LOAD ONE CORE INTO A SANDBOX OF ITS OWN, in a thread of its own, from its files (read and checked above). Answers
+ * { call(op, input), meta }: `call` hands the driver a JSON copy of `input`, waits for its answer against the op's deadline
+ * and answers it revived. A core that does not load (an import outside its files, a top level that throws or does not stop)
+ * is refused here, before it is ever asked anything. A call on a thread of its own that misses its deadline, dies of its
+ * heap limit or grows this process past the backstop fails alone: that thread is ended - the node waits for it to be gone -
+ * and the next call gets a fresh one (kanban #2008). On the kept thread (KEPT, `oneThread`) the same ends the core, and it
+ * is refused from then on. A call past its array budget fails alone.
+ *
+ * EVERY CALL THE NODE SIGNS ON IS ANSWERED BY A THREAD STARTED FOR IT (kanban #1721, #1792, #1831): meta, runTicks,
+ * runTicksFits, replay and decide each run on a core thread loaded from the core's files for that one call and ended after
+ * it (about 16 ms for the truck's 450 KB, measured), so the answer is a function of the files and the input alone. Before,
+ * one thread served a core's whole life: a core that counted its calls in a module variable answered the same call 10 on
+ * a fresh thread and 9 after one call (measured), and the arrays an earlier call dropped decided whether a later one was
+ * ended - a seat's answer to a round depended on which rounds it had replayed before, and when. The long-lived thread
+ * loaded here serves only the warm ghost (KEPT), whose answers nobody signs - and every call with `oneThread` (the
+ * plugin trial, which wants to see what an adapter keeps across calls). The small asks (PURE) are answered once per input.
+ */
+export function loadCore({ files, entry }, { callMs = CALL_MS, stepMs = STEP_MS, askMs = ASK_MS, loadMs = LOAD_MS, name = entry,
+  arrayBudget = ARRAY_BUDGET, liveCap = 0, oneThread = false, heap = HEAP_LIMITS, rssBackstop = RSS_BACKSTOP, answerMax = ANSWER_MAX, until = null, lingerAs = null, loadUntil = null } = {}) {
+  // answerMax (kanban #1691), until (kanban #1719), lingerAs (kanban #1880) and loadUntil (kanban #2058) reach every thread this core starts
+  const opts = { callMs, stepMs, askMs, loadMs, name, arrayBudget, liveCap, heap, rssBackstop, answerMax, until, lingerAs, loadUntil };
+  const leftOf = (ms) => (Number.isFinite(until) ? Math.max(1, Math.min(ms, until - Date.now())) : ms);
+  const kept = startThread({ files, entry }, opts);
+  let ended = null;
+  let last = kept;
+  const memo = new Map();
+  const end = (why) => { ended = why; kept.end(why); };
+  const call = (op, input = {}, within = null) => {
     if (ended) throw new Error(ended);
-    const one = loadCore({ files, entry }, { ...options, loadUntil: null, oneReplay: true });   // kanban #2058: a replay's thread has its own deadlines
-    lastOne = one;
-    try { return one.call('replay', input, within); } catch (e) {
-      if (one.endedWhy()) lastEnd = one.lastEnd();   // kanban #2008: that call fails, the core is not ended
-      throw e;
-    } finally { if (!one.endedWhy()) one.end(); }
+    op = String(op);
+    if (oneThread || KEPT.has(op)) {
+      last = kept;
+      try { return revive(kept.call(op, input, within)); } finally { if (kept.ended()) ended = kept.ended(); }
+    }
+    const key = PURE.has(op) ? `${op}\0${plain(input)}` : null;
+    if (key !== null && memo.has(key)) return revive(memo.get(key));
+    // A CALL'S OWN THREAD THAT DIES FAILS THAT CALL ALONE (kanban #2008, #1539): its heap limit, its deadline, the backstop
+    // or its load. The thread is ended - what it held goes with it - but this core's `ended` and the kept thread are not
+    // touched. A heap death is set by the input (every seat that runs it dies), so ending the core here made every later
+    // round fail on the seats that had replayed it ("it is not run again") while seats on other committees answered the
+    // same round: the seat's history decided its answer again, as the array budget did before #1721.
+    const one = startThread({ files, entry }, opts);
+    last = one;
+    let json;
+    try { json = one.call(op, input, within); }
+    finally { if (!one.ended()) one.end('answered'); }
+    if (key !== null) { if (memo.size >= PURE_MAX) memo.clear(); memo.set(key, json); }
+    return revive(json);
   };
-  const call = (op, input = {}, within = null) => (String(op) === 'replay' && !oneReplay ? replayFresh(input, within) : callHere(op, input, within));
-  const meta = callHere('meta', {}, Number.isFinite(by()) ? leftOf(askMs) : null);   // kanban #1719, #2058
-  loading = false;
-  return Object.freeze({ call, meta, end: () => end('ended by the node'), lastEnd: () => lastEnd, endedWhy: () => ended,
-    highWaterMb: () => (lastOne ? lastOne.highWaterMb() : Atomics.load(ctrl, C.HIGH_MB)) });
+  // the core's meta from the thread just loaded, before it was asked anything: what a thread of its own would answer
+  let meta;
+  // the meta ask inside the trial's one deadline when one is given (kanban #1719)
+  try { meta = revive(kept.call('meta', {}, Number.isFinite(until) ? leftOf(askMs) : null)); } catch (e) { kept.end(e.message); throw e; }
+  memo.set(`meta\0${plain({})}`, JSON.stringify(meta));
+  return Object.freeze({ call, meta, end: () => end('ended by the node'), lastEnd: () => last.lastEnd(), endedWhy: () => ended, highWaterMb: () => last.highWaterMb() });
 }
 
 /** Does this core draw a picture (a ghost)? false only when its sandbox says it does not; null when it does not load. */

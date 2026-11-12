@@ -82,8 +82,9 @@ function drawFor(asked = []) {
     return { ok: true, committee: seats.map((s) => ({ pubkey: s.pk, advert: { endpoint: s.url.replace('http:', 'ws:') } })) };
   };
 }
-const json = (x) => ({ ok: true, status: 200, json: async () => x });
-const bytes = (b) => ({ ok: true, status: 200, arrayBuffer: async () => b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) });
+// real Responses: a peer's answer is read as a capped stream (kanban #1829), as in game-market-settle
+const json = (x) => new Response(JSON.stringify(x), { status: 200 });
+const bytes = (b) => new Response(b, { status: 200 });
 const missing = { ok: false, status: 404, json: async () => ({}), arrayBuffer: async () => new ArrayBuffer(0) };
 /** Fake seats: `answers` maps a seat's URL to what it answers GET /round-result with (a result signed by that seat), `contracts` to GET /round. */
 function seatsAnswering({ results = {}, contracts = {} } = {}, calls = []) {
