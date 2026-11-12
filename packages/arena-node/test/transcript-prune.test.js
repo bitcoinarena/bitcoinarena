@@ -54,7 +54,9 @@ test('unused rounds past their time go with every committee and seating row; use
     CREATE TABLE IF NOT EXISTS seat_certs (round_id BLOB, role TEXT, cert BLOB);
     CREATE TABLE IF NOT EXISTS seat_signed (round_id BLOB, role TEXT, seated TEXT, signature BLOB);
     CREATE TABLE IF NOT EXISTS seat_presigs (round_id BLOB, node TEXT, txid TEXT, vout INTEGER, signature BLOB, kept_ms INTEGER);
-    CREATE TABLE IF NOT EXISTS seat_equivocations (round_id BLOB, role TEXT, a BLOB, b BLOB);`);
+    CREATE TABLE IF NOT EXISTS seat_equivocations (round_id BLOB, role TEXT, a BLOB, b BLOB);
+    CREATE TABLE IF NOT EXISTS seat_seatings (round_id BLOB, role TEXT, seating TEXT, seated TEXT);
+    CREATE TABLE IF NOT EXISTS seat_withheld (round_id BLOB, role TEXT, node TEXT);`);
   assert.ok(!usedMarkerTables(db).some((t) => COMMITTEE_TABLES.includes(t)), 'the committee set never marks a round used');
   assert.ok(usedMarkerTables(db).includes('entries') && usedMarkerTables(db).includes('seat_equivocations'));
   const id = (n) => Buffer.alloc(32, n);
