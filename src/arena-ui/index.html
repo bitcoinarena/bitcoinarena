@@ -7959,15 +7959,59 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           // was taken whole - its outcome, score and its own `signedBy` count - so one committee seat listed first told every winner of its rounds "You lose" and
           // raised the "Correction" alert against what the other seats signed. Every seat is asked at once; the two entries' outcome and score most seats name
           // stand, and only when at least two seats (one, for a round of one seat) name them alike - otherwise no seat's answer counts as signed
-          const asked = needs === 2 ? await Promise.all((h ? h.nodes : []).map(async (n) => {
+          // ONE SEAT, ONE VOTE (kanban #2329, audit #1489 a45-refute-12-s2): the hidden record's node list is the join link's, never deduplicated, so one seat
+          // named twice ('http://evil' and 'http://evil/', the very same URL once the slash is stripped) was two votes and outvoted the honest seat.
+          // Each address is asked and counted once, by its normalized spelling (no trailing slash, scheme and host lower case)
+          const seatKey = (n) => { const t = String(n).replace(/\/+$/, ''); try { const u = new URL(t); return (u.origin + u.pathname).replace(/\/+$/, ''); } catch { return t; } };
+          const seats = []; { const seen = new Set(); for (const n of (h ? h.nodes : [])) { const k = seatKey(n); if (!seen.has(k)) { seen.add(k); seats.push(n); } } }
+          const asked = needs === 2 ? await Promise.all(seats.map(async (n) => {
             try { const r = await fetch(String(n).replace(/\/+$/, '') + '/api/round-result?round=' + id, { cache: 'no-store', signal: AbortSignal.timeout(5000) }); return r.ok ? await r.json() : null; } catch { return null; }
           })) : null;
-          const verdictOf = (j) => JSON.stringify((j.players || []).map((p) => [String(p.entry), String(p.outcome), Number(p.score)]).sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)));
-          const agreed = new Map();   // verdict -> how many seats name it
-          if (asked) for (const j of asked) if (j && (j.players || []).length === 2) agreed.set(verdictOf(j), (agreed.get(verdictOf(j)) || 0) + 1);
-          const counts = [...agreed.values()].sort((a, b) => b - a), top = [...agreed.entries()].find(([, c]) => c === counts[0]);
-          const quorum = Math.min(2, h ? h.nodes.length : 2), standing = top && top[1] >= quorum && !(counts.length > 1 && counts[1] === counts[0]) ? top[0] : null;
-          for (const [i, n] of (h ? h.nodes : []).entries()) {
+          // AN ANSWER THAT IS NOT A HEAD-TO-HEAD RESULT IS NO ANSWER (kanban #2241, #2254, audit #1489 a45-refute-12): one seat listing a third (junk) entry
+          // escaped the vote below, which counted only answers of two, and was then taken whole and signed as the fullest; one seat answering `players`
+          // that is not an array of objects ("xx", {length:2}, [null, null]) threw verdictOf outside any try, so no result was shown at all. A round of
+          // two holds at most two entries, each an object: any other answer is dropped like a seat that did not answer
+          if (asked) for (const [i, j] of asked.entries()) {
+            if (!j || typeof j !== 'object') { asked[i] = null; continue; }
+            if (!j.players) { asked[i] = { ...j, players: [] }; continue; }
+            if (!Array.isArray(j.players) || j.players.length > 2 || !j.players.every((p) => p && typeof p === 'object')) { asked[i] = null; continue; }
+            // AN ENTRY'S VERDICT IS A STRING ENTRY, A STRING OUTCOME AND A NUMBER SCORE (kanban #2329, audit #1489 a45-refute-12-s2): the vote compared
+            // String(outcome), so a seat answering outcome ['DELIVERED'] counted for the honest verdict, and listed first its raw array was shown signed -
+            // the RPS client's me.outcome === 'DELIVERED' read a winner as 'loss'. An undecided entry is outcome null, score null, as the seats send it
+            if (!j.players.every((p) => typeof p.entry === 'string' && (p.outcome === null || p.outcome === undefined || typeof p.outcome === 'string')
+              && (p.score === null || p.score === undefined || (typeof p.score === 'number' && Number.isFinite(p.score))))) asked[i] = null;
+          }
+          const verdictOf = (j) => JSON.stringify((j.players || []).map((p) => [p.entry, p.outcome ?? null, p.score ?? null]).sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)));
+          // ONE SERVER, ONE VOTE (kanban #2364, audit #1489 a45-refute-12-s3; holds #2329 and #1825): #2329 deduplicated spellings, not servers - one
+          // server answers every path and every spelling of its name, so 'http://evil' with 'http://evil/r', 'http://evil.' or 'https://evil' beside it
+          // was still two votes and outvoted the honest seat. A vote is now a host's (its name lower case, trailing dots gone; scheme, port and path
+          // ignored): each address is still asked, the addresses of one host settle among themselves (the verdict most of them name, none on a tie),
+          // and that host counts once. Seats under one host (paths of one server) are one operator's and one vote; the quorum is two hosts, one for a
+          // round whose seats all sit on one host
+          const hostKey = (n) => { try { const u = new URL(String(n).trim()); if (u.hostname) return u.hostname.toLowerCase().replace(/\.+$/, ''); } catch { /* not a URL */ } return seatKey(n); };
+          const hosts = new Set(seats.map(hostKey));
+          const quorum = Math.min(2, hosts.size || 2);
+          const hostVotes = (keyOf) => { const per = new Map();
+            for (const [i, j] of asked.entries()) { let k; try { k = keyOf(j); } catch { k = undefined; } if (k === undefined) continue; const hk = hostKey(seats[i]); const m = per.get(hk) || new Map(); m.set(k, (m.get(k) || 0) + 1); per.set(hk, m); }
+            const t = new Map(); for (const m of per.values()) { const c = [...m.entries()].sort((a, b) => b[1] - a[1]); if (c.length > 1 && c[1][1] === c[0][1]) continue; t.set(c[0][0], (t.get(c[0][0]) || 0) + 1); }
+            return t; };
+          const standsOf = (t) => { const c = [...t.values()].sort((a, b) => b - a), w = [...t.entries()].find(([, n]) => n === c[0]); return w && w[1] >= quorum && !(c.length > 1 && c[1] === c[0]) ? w[0] : null; };
+          const agreed = asked ? hostVotes((j) => (j && (j.players || []).length === 2 ? verdictOf(j) : undefined)) : new Map();   // verdict -> how many hosts name it
+          const standing = standsOf(agreed);
+          // THE SCORE ACROSS ROUNDS IS WHAT THE SEATS AGREE ON TOO (kanban #2329, audit #1489 a45-refute-12-s2): the match record (scoreboard, whose
+          // identity is whose, the opponent's name) was copied from the first agreeing answer, unchecked - one seat listed first showed a forged
+          // scoreboard and name. Among the answers naming the standing verdict, the record's signed content (identities, score, played, the round before,
+          // which entry is whose) stands when at least the quorum name it alike and no other record ties it, else no match is shown; its names the same way, else none
+          const matchKey = (m) => JSON.stringify([m.identities, m.score, m.played, m.previousRound ?? null, Object.entries(m.players && typeof m.players === 'object' ? m.players : {}).sort()]);
+          let matchStands = null, namesStand = null;
+          if (asked && standing !== null) {
+            const tallyOf = (key) => standsOf(hostVotes((j) => (j && j.players.length === 2 && verdictOf(j) === standing && j.match && typeof j.match === 'object' ? key(j.match) : undefined)));
+            matchStands = tallyOf(matchKey);
+            namesStand = matchStands === null ? null : tallyOf((m) => JSON.stringify(Array.isArray(m.names) ? m.names : []));
+          }
+          // the record shown: a seat's own signed record of the agreed content (its seat key and signature are its own), the agreed names or none
+          const agreedMatch = matchStands === null ? null : asked.find((j) => { try { return j && j.players.length === 2 && verdictOf(j) === standing && j.match && typeof j.match === 'object' && matchKey(j.match) === matchStands; } catch { return false; } }).match;
+          for (const [i, n] of seats.entries()) {
             try {
               let j;
               if (asked) { j = asked[i]; if (!j) continue; if ((j.players || []).length === 2 && standing !== null && verdictOf(j) !== standing) continue; }
@@ -7979,17 +8023,19 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
               // A SEAT THAT WAS NOT DRAWN ANSWERS 200 WITH NO PLAYERS (2026-10-30: "beide orders werden abgesendet aber es gibt kein Ergebnis": round
               // 1b995103 settled, 5 signed, and seven seats ahead of the signers in the list said nothing): the next seat is asked
               if (!(j.players || []).length) { none = none || { entries: [], match: null }; continue; }
-              // AND THE SCORE ACROSS ROUNDS: the seat's signed match record, with whose identity is whose
-              const got = { entries: (j.players || []).map((p) => ({ entry: p.entry, outcome: p.outcome, score: p.score, signedBy: (asked && (j.players || []).length === 2 && standing === null) ? 0 : p.signedBy })),
-                match: j.match ? { identities: j.match.identities, names: j.match.names || [], score: j.match.score, played: j.match.played,
-                  continued: !!j.match.previousRound, byEntry: j.match.players || {}, seat: j.match.seat, signature: j.match.signature } : null };
+              // AND THE SCORE ACROSS ROUNDS: the seat's signed match record, with whose identity is whose. Signed only as the verdict that stands: an answer
+              // naming one entry, or one the seats do not agree on, counts as unsigned whatever its length (kanban #2241, #2254)
+              const got = { entries: (j.players || []).map((p) => ({ entry: p.entry, outcome: p.outcome, score: p.score, signedBy: (asked && (standing === null || verdictOf(j) !== standing)) ? 0 : (asked ? (Number.isFinite(p.signedBy) ? p.signedBy : 0) : p.signedBy) })),
+                match: ((m) => (m ? { identities: m.identities, names: asked ? (namesStand !== null ? JSON.parse(namesStand) : []) : (m.names || []), score: m.score, played: m.played,
+                  continued: !!m.previousRound, byEntry: m.players || {}, seat: m.seat, signature: m.signature } : null))(asked ? (verdictOf(j) === standing ? agreedMatch : null) : j.match) };
               // A SEAT THAT HOLDS ONLY ONE OF TWO IS NOT THE ROUND (kanban #947, 2026-11-01: "das Ergebnis nicht konsistent"): an entry reaches the seats one by one, so the fullest answer counts
               if (!best || got.entries.length > best.entries.length) best = got;
               if (best.entries.length >= needs) break;
             } catch { /* the next seat */ }
           }
           if (best && needs === 2 && best.entries.length === 2) { resultsSeen.set(id, best); if (resultsSeen.size > 32) resultsSeen.delete(resultsSeen.keys().next().value); }
-          if (best && needs === 2 && best.entries.length === 2 && !best.entries.some((e) => e.outcome && e.signedBy > 0)) return saidProvisionally(id, provisional(best, revealsSeen.get(id) || {}));
+          // no seat's answer signed (a tie between seats, kanban #2329): the verdict from both open moves, else the answer itself, every entry unsigned
+          if (best && needs === 2 && best.entries.length === 2 && !best.entries.some((e) => e.outcome && e.signedBy > 0)) return saidProvisionally(id, provisional(best, revealsSeen.get(id) || {}) || best);
           checkSigned(id, best);
           // AFTER EVERY FINISHED ROUND (the owner 2026-11-08, kanban #1363: "es muss nach jeder fertigen Runde kommen"): this tab's entry signed by the
           // seats - every game the page reads a result for, not only a paid round's collect; a few seconds on, after the game shows its result
