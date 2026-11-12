@@ -12,6 +12,7 @@ import { donationSetId, encodeDonationSet } from '../../arena-protocol/src/donat
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { NEXTBLOCK_GAME_ID, NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
+import { asPoint } from '../../arena-protocol/test/point-key-fixture.js';  // kanban #1675: fixture keys are curve points
 
 const authSk = ed25519.utils.randomSecretKey();
 const keys = { authority: ed25519.getPublicKey(authSk), recovery: ed25519.getPublicKey(ed25519.utils.randomSecretKey()) };
@@ -27,7 +28,7 @@ const serving = (set) => async (url) => {
 const ask = (set, plainPins, censusHeight = 1000) => fetchDonationSet({ round: { networkId: set.networkId, donationSetId: donationSetId(set.recipients), censusHeight, gameId: NEXTBLOCK_GAME_ID, id: new Uint8Array(32).fill(9) },
   nodes, verifyEd25519, keys, fetcher: serving(set), ...(plainPins ? { plainPins } : {}) });
 const NET = new Uint8Array(32).fill(5), netHex = toHex(NET);
-const rec = (n) => [{ recipientPk: new Uint8Array(33).fill(2).map((x, i) => (i === 0 ? 2 : (n * 7 + i) % 251)), shareBps: 10000, label: 'dev ' + n }];
+const rec = (n) => [{ recipientPk: asPoint(new Uint8Array(33).fill(2).map((x, i) => (i === 0 ? 2 : (n * 7 + i) % 251))), shareBps: 10000, label: 'dev ' + n }];
 
 test('#1447 plain path on a pinned network: the first serial and a pinned authority-alone set stand, a later serial without approvals does not', async () => {
   const s1 = signed({ networkId: NET, serial: 1n, validFrom: 10, recipients: rec(1) });
