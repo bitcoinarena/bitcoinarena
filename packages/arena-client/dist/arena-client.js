@@ -39376,6 +39376,10 @@ const gameTypeOf = (m) => (m && m.resultType === 2 ? 'market' : m && m.resultTyp
 
 
 const GAMES_ANSWER_MS = 6000;
+// ONE SEAT'S ANSWER IS BOUNDED (kanban #2558, audit #1489 r13: one seat listing 2000 made-up manifests cost one games read 2001
+// developer-signature checks and 2002 refusals, and - signed under its own throwaway key - would have filled the lobby with tiles):
+// at most this many of a seat's games are decoded and checked, the pinned known-good ids first. An honest seat hosts a handful.
+const GAMES_PER_SEAT = 32;
 
 // ITS DEVELOPER SIGNED IT (kanban #1810): the signature over the manifest body's id (manifest.js manifestStands' first rule), by
 // the developer key the manifest names. The client carries no crypto library (the bundle is its own source, nothing from npm): the
@@ -39409,7 +39413,11 @@ async function fetchGames({ nodes, fetcher = fetch, answerMs = GAMES_ANSWER_MS, 
     if (e) { refused.push(`${node}: ${e.message}`); continue; }
     if (!r.ok) { refused.push(`${node}: answered ${r.status}`); continue; }
     answered.add(node);
-    for (const g of (body && Array.isArray(body.games)) ? body.games : []) {
+    const listed = (body && Array.isArray(body.games)) ? body.games : [];
+    const isKnown = (g) => Object.prototype.hasOwnProperty.call(KNOWN_GOOD_GAMES, String(g && g.id).toLowerCase());
+    const read = [...listed.filter(isKnown), ...listed.filter((g) => !isKnown(g))].slice(0, GAMES_PER_SEAT);
+    if (listed.length > GAMES_PER_SEAT) refused.push(`${node}: listed ${listed.length} games, only ${GAMES_PER_SEAT} are read (kanban #2558)`);
+    for (const g of read) {
       const id = String(g && g.id).toLowerCase();
       let manifest;
       try { manifest = decodeManifest(fromHex(String(g.manifest))); } catch (err) { refused.push(`${node}: game ${id.slice(0, 16)}: ${err.message}`); continue; }
