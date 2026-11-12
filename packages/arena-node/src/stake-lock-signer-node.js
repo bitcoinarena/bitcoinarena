@@ -277,13 +277,21 @@ export function keepLockSessionFloor({ round, port, roundId, federationId, outpo
 // round.js seatedEntriesOf's rule - the game's players among the lock-backed entries, in the order the entries were taken, not their locks - so
 // crossing locks seat the same players at every seat. The /entry door still refuses a new entry once the round seats its players, kanban #1437.)
 
-/** Another entry of the same player key in this round holding a verified lock of `kind` ('stake' | 'fee') here (kanban #1215). */
+/**
+ * Another entry of the same player key in this round holding a verified lock here (kanban #1215).
+ * EITHER KIND BLOCKS EITHER KIND (kanban #1640, state audit 2026-11-12 sm2-entry-3): the check was per kind, so a page that reloaded between its
+ * stake lock and its fee lock and PLAYed again under the same player key (join.js playerFor) had entry B's fee lock taken beside entry A's stake
+ * lock - then B's stake lock and A's resent fee lock were both refused, neither entry was ever seen, and all four locks waited for their expiry.
+ * The key's stake and fee locks now stand on one entry: the entry whose lock (of either kind) stood first owns the key, the other's are refused
+ * at the door. `kind` stays for the callers' wording.
+ */
 function otherStakedUnderKey(round, entry, entryIdBytes, kind) {
   if (typeof round.entriesOf !== 'function') return false;
-  const lockOf = kind === 'fee' ? round.feeLock : round.stakeLock;
-  if (typeof lockOf !== 'function') return false;
+  const lockOfs = [round.stakeLock, round.feeLock].filter((f) => typeof f === 'function');
+  if (!lockOfs.length) return false;
   const me = Buffer.from(entryIdBytes), key = Buffer.from(entry.playerPubkey);
-  return round.entriesOf(entry.roundId).some((x) => !Buffer.from(x.entryId).equals(me) && Buffer.from(x.entry.playerPubkey).equals(key) && !!lockOf.call(round, x.entryId));
+  return round.entriesOf(entry.roundId).some((x) => !Buffer.from(x.entryId).equals(me) && Buffer.from(x.entry.playerPubkey).equals(key)
+    && lockOfs.some((lockOf) => !!lockOf.call(round, x.entryId)));
 }
 
 // THE LOCK BELONGS TO THE ENTRY THAT NAMED IT FIRST (kanban #1489, attack audit): an entry carries no player signature and a lock is not bound to its

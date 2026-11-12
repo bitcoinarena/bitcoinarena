@@ -19,7 +19,7 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { decodeManifest, encodeManifest, gameIdOf } from '../../arena-protocol/src/manifest.js';
 import { gameInfoJson } from '../../arena-protocol/src/game-info.js';
 import { checkPackage } from './plugin-check.js';
-import { trialRun } from './plugin-trial.js';
+import { trialRun, TRIAL_MS } from './plugin-trial.js';
 
 const sha = (b) => createHash('sha256').update(b).digest('hex');
 const b64 = (b) => Buffer.from(b).toString('base64');
@@ -47,7 +47,7 @@ export function verifyPackage(pkg, { verify, want = null, parentOf } = {}) {
   if (!r.ok) return r;
   const manifest = decodeManifest(fromHex(String(pkg.manifest)));
   for (const c of pkg.cores) {
-    const t = trialRun(Buffer.from(c.source, 'base64').toString('utf8'), manifest);
+    const t = trialRun(Buffer.from(c.source, 'base64').toString('utf8'), manifest, { name: c.name || String(c.hash).slice(0, 16) });
     r.checks.push({ check: `core ${c.hash.slice(0, 12)}… runs in the sandbox`, ok: t.ok, detail: t.ok ? `${t.cases} move combinations, each answered the same twice` : t.why });
     if (!t.ok) return { ...r, ok: false, why: `the trial run refuses it: ${t.why}` };
   }
@@ -76,7 +76,9 @@ export async function registrationFromPackage(at, pkg, { title = null } = {}) {
     if (sha(readFileSync(file)) !== c.hash) throw new Error(`core ${c.hash.slice(0, 16)} changed on disk`);
     // NEVER IMPORTED INTO THIS THREAD (§0A.6): loaded into its sandbox from the bytes just checked
     const core = { name: c.name, hash: c.hash, url: pathToFileURL(file).href, configs: new Map((c.configs || []).map((h) => [h, {}])) };
-    if (!sandboxFor(core).meta.decide) throw new Error(`core ${c.hash.slice(0, 16)} exports no DECIDE`);
+    // THE INSTALL LOAD IS HELD TO THE TRIAL'S BOUND (kanban #1694): a core that passed the trial loaded within TRIAL_MS, so the
+    // seat waits no longer for it here (was LOAD_MS, 10 s of the node's thread per version, on install and every restart)
+    if (!sandboxFor(core, { loadMs: TRIAL_MS }).meta.decide) throw new Error(`core ${c.hash.slice(0, 16)} exports no DECIDE`);
     cores.set(c.hash, core);
   }
   return { name: manifest.gameName, title: typeof title === 'string' && title ? title.slice(0, 80) : manifest.gameName, manifest, gameId: gameIdOf(manifest), cores, info: pkg.info || null,

@@ -62,6 +62,13 @@ export function priceAttestationStands({ id, sigs, committee, threshold, verify 
   if (typeof verify !== 'function') return { ok: false, signed: [], why: 'checking a signature needs a verifier, and none was injected' };
   const members = new Set((committee || []).map((k) => (typeof k === 'string' ? k.toLowerCase() : toHex(k))));
   const signed = new Set();
+  // kanban #1730: A KEY IS TRIED AT MOST ONCE PER COMMITTEE MEMBER - counted before its signature is verified, so the whole list
+  // costs at most n x n BIP-340 checks (49 for 7), however long it is. Before, a key skipped only once a signature of it had
+  // VERIFIED: a list repeating one committee key with junk signatures cost one verify per entry, and one POST /price-attested of
+  // 3,000 copies held a seat's thread 2.7 s (8 MiB about 30 s). Not once per key: a list merged from the seats' own answers
+  // (game-market collect, one entry a seat) may carry a liar's junk under an honest key BEFORE that key's real signature, and
+  // the real one must still count - at most n entries come from n seats, so the budget never drops it.
+  const tried = new Map();
   for (const s of sigs || []) {
     // kanban #1489 / #1530: a signature that is not 64 bytes (as 128 hex or bytes), an odd-length or 1-char hex, counts nothing -
     // `"".match(/../g)` was null and threw, so one bad seat hid the result the others signed. Both checks below hold that.
@@ -70,11 +77,12 @@ export function priceAttestationStands({ id, sigs, committee, threshold, verify 
     let key, sig, pk;
     try {
       key = typeof s.key === 'string' ? s.key.toLowerCase() : toHex(s.key);
-      if (!/^[0-9a-f]{64}$/.test(key) || !members.has(key) || signed.has(key)) continue;
+      if (!/^[0-9a-f]{64}$/.test(key) || !members.has(key) || signed.has(key) || (tried.get(key) || 0) >= members.size) continue;
       sig = typeof s.signature === 'string' ? s.signature.toLowerCase() : toHex(s.signature);
       if (!/^[0-9a-f]{128}$/.test(sig)) continue;
       sig = fromHex(sig); pk = fromHex(key);
     } catch { continue; }
+    tried.set(key, (tried.get(key) || 0) + 1);
     let good = false;
     try { good = !!verify(sig, id, fromHex(key)); } catch { good = false; }
     if (good) signed.add(key);

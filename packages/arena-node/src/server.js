@@ -323,7 +323,7 @@ import { FUNDING_SCHEDULES, activeNodesBefore, activeInWeeks, capStands, encodeF
 import { RESERVES_VERSION as ITEM_RESERVES_FROM } from '../../arena-protocol/src/constants.js';
 import { Forfeit, lostForfeitAllowed } from './forfeit.js';
 import { LockSettlement, locksStake, SUBMITTING } from './settlement.js';
-import { decodeCommitments, encodeCommitments, encodeShare } from './pool-wire.js';
+import { decodeCommitments, encodeCommitments, encodeShare, COMMITMENT_BYTES, MOST_COMMITMENTS } from './pool-wire.js';
 import { setTagNetwork } from '../../arena-protocol/src/tag-switch.js';
 import { keptRead } from './kept-read.js';
 import { guardianAnswers } from './guardian-probe.js';
@@ -339,6 +339,10 @@ const presenceTables = (round) => { let t = presenceByRound.get(round); if (!t) 
 // (256 MiB, ARENA_RELAY_MOST); past it a door answers 507 and keeps nothing.
 const RELAY_MOST = Number(process.env.ARENA_RELAY_MOST) > 0 ? Number(process.env.ARENA_RELAY_MOST) : 256 * 1024 * 1024;
 const read = readRequestBody;
+// the largest seating certificate POST /seating takes (kanban #1711). In 1.9 a certificate is its body and signatures (9 seated: 1,192 bytes);
+// in 2.0 it also carries the SEEN groups (present and left-out lists), the justifications of second signatures and the bonds' presigs, so the
+// bound is 1 MiB - far above any committee's, and an eighth of the 8 MiB body a padded certificate came in under
+const SEATING_CERT_MOST = 1024 * 1024;
 
 // A BROWSER IS THE CLIENT, and a browser will never be on this origin.
 //
@@ -3319,6 +3323,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return got.peers;
   }
 
+  /** POST /proof-pull's pulls running now, by round:entry (kanban #1632). */
+  const proofPullsInFlight = new Map();
   const verifier = new Verifier(round, {
     plugins: hosted,
     conflictsFor,
@@ -4472,8 +4478,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
     })().catch((e) => console.error(`[entry-void] ${e.message}`));
     // A HEAD-TO-HEAD SEAT FIRST LEARNS WHO IS IN THE ROUND (kanban #1071), and with a wait that ran out it signs nothing
+    // - and with a throw too (kanban #1755): members not known is never 'known', so this seat never decides the round alone
     const h2h = headToHeadReady ? headToHeadRound(roundIdBytes) : null;
-    return (h2h ? membersKnown(roundIdBytes, h2h).catch((e) => { console.error(`[entry] ${e.message}`); return true; }) : Promise.resolve(true))
+    return (h2h ? membersKnown(roundIdBytes, h2h).catch((e) => { console.error(`[entry] ${e.message}`); return false; }) : Promise.resolve(true))
       .then((known) => (known ? timed(`close ${toHex(roundIdBytes).slice(0, 8)} settleRound`, () => verifier.settleRound(roundIdBytes)) : null))
       .then(async (closed) => {
         if (!closed) return { ok: false, why: 'this seat could not learn who is in the round: it signs nothing for it' };
@@ -5787,6 +5794,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const peerGet = (url) => fetch(url, { signal: AbortSignal.timeout(4000) });
   const takeAcceptedEntry = async (rid, entryHex, from) => {
     const eid = fromHex(entryHex), needed = roundThreshold(decodeRoundContract(new Uint8Array(round.get(rid).contract)).settlementSlots);
+    let why = 'no peer that holds it handed the entry over';
     for (const base of from) {
       let entry;
       try {
@@ -5799,19 +5807,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (signers.size < needed) return { ok: false, why: `${signers.size} of ${needed} seats signed a result naming it` };
       const ref = entry.vssSharesRef;
       if (ref && !ref.every((b) => b === 0) && !round.handout(ref)) {
-        const h = await peerGet(`${base}/handout?id=${toHex(ref)}`);
-        if (!h.ok) return { ok: false, why: `${base} answered ${h.status} for its handout` };
-        const bytes = new Uint8Array(await h.arrayBuffer());
-        const same = stakePointIsTheHandouts(entry, decodeHandout(bytes));
-        if (!same.ok) return { ok: false, why: `its handout: ${same.why}` };
-        const took = await takeHandout(bytes, { accepted: true });
-        if (!took.ok) return { ok: false, why: `its handout: ${took.why}` };
+        // kanban #1755: ONE PEER'S HANDOUT ANSWER IS ONE PEER'S - a non-OK status, junk bytes, a handout of another stake or one takeHandout refuses
+        // passes that peer over like a missing entry, and the next holder is asked. It never throws out of here (membersKnown would reject).
+        try {
+          const h = await peerGet(`${base}/handout?id=${toHex(ref)}`);
+          if (!h.ok) { why = `${base} answered ${h.status} for its handout`; continue; }
+          const bytes = new Uint8Array(await h.arrayBuffer());
+          const same = stakePointIsTheHandouts(entry, decodeHandout(bytes));
+          if (!same.ok) { why = `${base}'s handout: ${same.why}`; continue; }
+          const took = await takeHandout(bytes, { accepted: true });
+          if (!took.ok) { why = `${base}'s handout: ${took.why}`; continue; }
+        } catch (e) { why = `${base}'s handout: ${e.message}`; continue; }
       }
       try { round.enter(entry, { accepted: true }); } catch (e) { return { ok: false, why: e.message }; }
       console.log(`[entry] ${entryHex.slice(0, 16)} taken from ${base} past the door: ${signers.size} seats signed results naming it (§17)`);
       return { ok: true };
     }
-    return { ok: false, why: 'no peer that holds it handed the entry over' };
+    return { ok: false, why };
   };
   // AND WHAT GOES WITH AN ENTRY OF A PAYING ROUND: its locks, checked with the federation, and the winner's address under the entry's own session key. Every seat's plan
   // reads its own rows, so a seat without them would rebuild another plan and refuse the one the others sign. Answers why it must wait, or null.
@@ -9366,8 +9378,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!ballotTally) return text(res, 404, 'this seat counts no ballot: it reads no chain for it');
         const net = String(url.searchParams.get('network') || chainNetworkId() || '').toLowerCase();
         if (!/^[0-9a-f]{64}$/.test(net)) return text(res, 400, 'name the network: GET /config?network=<64 hex>');
+        // kanban #1751: a restarted seat whose tally has not read its tip yet does not hand out genesis - an opener asks again
+        const live = ballotTally.live(net);
+        if (!live) return text(res, 503, 'this seat has not read its chain\'s tip yet: the live config is not known - ask again shortly');
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
-        return res.end(JSON.stringify(ballotTally.live(net)));
+        return res.end(JSON.stringify(live));
       }
       if (proposals && url.pathname === '/proposal' && req.method === 'POST') {
         let body; try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8') || '{}'); } catch { return text(res, 400, 'that is not JSON'); }
@@ -10835,7 +10850,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
         if (rid.length !== 32 || eid.length !== 32) return text(res, 400, 'a proof is pulled for a round and an entry');
         if (!round.entry(new Uint8Array(eid))) return text(res, 404, 'this signer node holds no such entry');
-        const proven = await verifier.pullFirstMarkProof(new Uint8Array(rid), new Uint8Array(eid));
+        // ONE PULL IN FLIGHT PER ENTRY (kanban #1632): a stranger's repeated asks for one entry join the pull already
+        // running instead of each starting its own round of peer reads and signature checks
+        const key = `${rid.toString('hex')}:${eid.toString('hex')}`;
+        let pull = proofPullsInFlight.get(key);
+        if (!pull) {
+          pull = verifier.pullFirstMarkProof(new Uint8Array(rid), new Uint8Array(eid)).finally(() => proofPullsInFlight.delete(key));
+          proofPullsInFlight.set(key, pull);
+        }
+        const proven = await pull;
         return text(res, 200, proven ? 'proven' : 'no proof');
       }
 
@@ -11509,9 +11532,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let fields;
         try { fields = lockFieldsFromJson(JSON.parse(Buffer.from(await read(req)).toString('utf8'))); }
         catch (e) { return text(res, 400, `that is not a fee lock: ${e.message}`); }
-        const steps = stepLog('fee-lock', toHex(eid), { keep: txRecord.keep }).on(res); steps.at('body');   // (kanban #618, step-log.js)
         const stored = round.entry(eid);
         if (!stored) return text(res, 404, 'this node holds no such entry');
+        // NAMED ONLY ONCE THE ENTRY IS HELD HERE (kanban #1688): a stranger's fee lock for a made-up id kept a tx_steps row under that id
+        const steps = stepLog('fee-lock', toHex(eid), { keep: txRecord.keep }).on(res); steps.at('body');   // (kanban #618, step-log.js)
         { const why = offerRefusalOfRound(decodeEntryContract(stored).roundId); if (why) return text(res, 409, `lock refused: ${why}`); }
         { const why = lockAfterCloseRefusal(stored, eid, 'fee'); if (why) return text(res, 409, `lock refused: ${why}`); }
         const got = await takeFeeLock(eid, fields);
@@ -11639,7 +11663,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         }
         if (url.pathname === '/forfeit-share') {
           let list;
-          try { list = decodeCommitments(new Uint8Array(await read(req))); } catch (e) { return text(res, 400, e.message); }
+          try { list = decodeCommitments(new Uint8Array(await read(req, MOST_COMMITMENTS * COMMITMENT_BYTES))); } catch (e) { return text(res, e && e.tooLarge ? 413 : 400, e.message); }   // a committee's list at most (kanban #1672)
           const got = await forfeits.share(r8, e8, list, kind);
           if (!got.ok) return text(res, got.status || 409, got.why);
           res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
@@ -11695,7 +11719,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (url.pathname === '/settle-share') {
           let list;
           if (named) list = new Uint8Array(await read(req));
-          else try { list = decodeCommitments(new Uint8Array(await read(req))); } catch (e) { return text(res, 400, e.message); }
+          else try { list = decodeCommitments(new Uint8Array(await read(req, MOST_COMMITMENTS * COMMITMENT_BYTES))); } catch (e) { return text(res, e && e.tooLarge ? 413 : 400, e.message); }   // a committee's list at most (kanban #1672)
           const got = await settlements.share(r8, list, { entry, federation, door: true, ask, named, fallback });
           if (!got.ok) return text(res, got.status || 409, got.why);
           res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
@@ -11889,7 +11913,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           return res.end(Buffer.from(got.named ? got.wire : encodeCommitments([got.commitment])));
         }
         let list;
-        try { const raw = new Uint8Array(await read(req)); list = built.named ? decodeNamedResendList(raw) : decodeCommitments(raw); } catch (e) { return text(res, 400, e.message); }
+        try { const raw = new Uint8Array(await read(req, built.named ? undefined : MOST_COMMITMENTS * COMMITMENT_BYTES)); list = built.named ? decodeNamedResendList(raw) : decodeCommitments(raw); } catch (e) { return text(res, e && e.tooLarge ? 413 : 400, e.message); }   // a plain list: a committee's at most (kanban #1672)
         const got = await sender.share(r8, eHex, built, list, kind, attempt);
         if (!got.ok) return text(res, got.status || 409, got.why);
         res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
@@ -12745,7 +12769,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // stands against this node's draw; one that differs from the one held is the proof of equivocation
       if (seating && req.method === 'POST' && url.pathname === '/seating') {
         let rid, role, k;
-        try { const c = decodeSeatingCertificate(await read(req)); rid = c.roundId; role = c.role; k = seating.keepCert(rid, role, encodeSeatingCertificate(c)); }
+        // AT MOST A SEATING'S SIZE (kanban #1711): a certificate is a few hundred bytes per seated node (9 seated: 1,192 bytes);
+        // a padded one of megabytes is refused at the door, before it is decoded
+        let body; try { body = await read(req, SEATING_CERT_MOST); } catch (e) { return text(res, e && e.tooLarge ? 413 : 400, e && e.message || 'no body'); }
+        try { const c = decodeSeatingCertificate(body); rid = c.roundId; role = c.role; k = seating.keepCert(rid, role, encodeSeatingCertificate(c)); }
         catch (e) { return text(res, 400, `not a seating certificate: ${e.message}`); }
         if (!k.ok) return text(res, 409, k.why);
         return json(res, k.equivocation ? 200 : 201, k);
