@@ -546,9 +546,44 @@ export function vestedShares(recipients, height, shareOf = undefined) {
   const othersBase = recipients.reduce((t, r) => t + (r.vesting ? 0 : r.shareBps), 0);
   const rest = DONATION_BPS_TOTAL - vested;
   const out = recipients.map((r, i) => ({ recipientPk: r.recipientPk, label: r.label,
-    shareBps: r.vesting ? now[i] : (othersBase > 0 ? Math.floor((r.shareBps * rest) / othersBase) : 0) }));
-  const short = DONATION_BPS_TOTAL - out.reduce((t, x) => t + x.shareBps, 0);
+    shareBps: r.vesting ? now[i] : (othersBase > 0 ? Math.max(0, Math.floor((r.shareBps * rest) / othersBase)) : 0) }));
+  // A shrinking vesting entry's trunc rounds it UP, so in a mixed set the vesting entries can
+  // sum past 10000 (rest < 0) on intermediate days; the plain recipients then got a negative
+  // share and splitDonation / splitTwoSets refused the set network-wide (kanban #2250, a
+  // variant of #1863). A plain share is never below 0, and the excess comes back out of the
+  // shrinking entries (each was rounded up by less than one basis point, never below its
+  // target). With rest >= 0 nothing here changes.
+  // The same give-back runs for an ALL-vesting set too, and goes round the shrinking entries
+  // as often as needed (never below an entry's target): there the excess can be up to one
+  // basis point per shrinking entry, and with many small entries no single share could absorb
+  // it, so it was dropped and the set summed to 10100 (kanban #2310, variant of #1863 / #2250).
+  if (rest < 0) {
+    let excess = -rest;
+    for (let moved = true; excess > 0 && moved;) {
+      moved = false;
+      for (const [i, r] of recipients.entries()) {
+        if (excess <= 0) break;
+        if (!r.vesting || out[i].shareBps <= Math.max(0, r.vesting.targetBps)) continue;
+        out[i].shareBps -= 1; excess -= 1; moved = true;
+      }
+    }
+  }
+  let short = DONATION_BPS_TOTAL - out.reduce((t, x) => t + x.shareBps, 0);
+  // Should anything still sum past 10000, it comes out of the shares as published, one basis
+  // point at a time, never below 0, so the answer always sums to 10000 (kanban #2310).
+  for (let moved = true; short < 0 && moved;) {
+    moved = false;
+    for (const x of out) {
+      if (short >= 0) break;
+      if (x.shareBps > 0) { x.shareBps -= 1; short += 1; moved = true; }
+    }
+  }
+  // The remainder goes to the first plain recipient; when every recipient vests (allowed
+  // when the targets sum to 10000) there is none, and the set summed to 9999 at
+  // intermediate heights, which splitDonation / splitTwoSets refuse (kanban #1863). Then it
+  // goes to the first recipient as published, as splitDonation does.
   const first = recipients.findIndex((r) => !r.vesting);
-  if (short && first >= 0) out[first].shareBps += short;
+  const to = first >= 0 ? first : 0;
+  if (short > 0) out[to].shareBps += short;
   return out;
 }
