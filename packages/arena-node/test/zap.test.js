@@ -114,7 +114,8 @@ test('the zap address answers a zap pay request, invoices under the request\'s h
   assert.equal((await fetch(`${local}/.well-known/lnurlp/alice`)).status, 404);
 
   const payer = keyPair(); const to = keyPair();
-  const request = signedRequest(payer, { recipient: to.pubkey, amountMsat: 21000n, relays: [RELAY], payRequestUrl: 'https://zap.example/.well-known/lnurlp/bob' });
+  // signed now: the callback takes only a fresh request (kanban #2455)
+  const request = signNostr(zapRequestTemplate({ recipient: to.pubkey, amountMsat: 21000n, relays: [RELAY], payRequestUrl: 'https://zap.example/.well-known/lnurlp/bob' }), { secret: payer.secret, curve });
   const cb = (amount, nostr, extra = '') => `${local}/lnurlp/bob/cb?amount=${amount}${nostr ? `&nostr=${encodeURIComponent(nostr)}` : ''}${extra}`;
   const said = await (await fetch(cb(21000, JSON.stringify(request), `&lnurl=${lnurlFor('https://zap.example/.well-known/lnurlp/bob')}`))).json();
   assert.ok(said.pr, JSON.stringify(said));
