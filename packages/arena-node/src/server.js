@@ -1564,7 +1564,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           console.log(`[networks] automatic update of ${nid.slice(0, 16)} from ${from}: not taken - it names federation ${String(pkg.manifest.federationId).slice(0, 16)}, a succession is the owner's to take`);
           continue;
         }
-        const r = await takeNetwork({ network: nid, from, update: true });
+        const r = await takeNetwork({ network: nid, from, update: true, auto: true });
         console.log(`[networks] automatic update of ${nid.slice(0, 16)} from ${from}: ${r.ok ? `taken (package ${String(r.id).slice(0, 16)})` : r.why}`);
       }
     }
@@ -8178,7 +8178,26 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
     console.log(`[networks] federation ${oldFed.slice(0, 16)} is draining: its successor is ${successor.slice(0, 16)} - no new round or deposit names it`);
   };
-  const activateNetwork = (pkg, r) => {
+  // A PACKAGE'S SERIES PASS THE DOOR A PULLED SERIES PASSES unless the owner took that package (kanban #2545, attack audit r13): the
+  // unattended automatic update took ANY series one source seat listed in its GET /network - nobody funded or published, any stake -
+  // and wrote its 960 rounds a day, though POST /series and the series pull (#757) refuse it. A series the owner's signed install or
+  // update did not name is held only with its creator's signature, its bond_min and, paying, funded here or its publication confirmed
+  // on this seat's own chain (publishedHere, asked once in the background). The owner's series are kept beside the package
+  // (owner-series.json), so a restart gates the same ones
+  const packageSeriesGate = (t) => {
+    const id = toHex(seriesId(t));
+    try {
+      const cr = seriesCreatorStands(t, t.creatorSignature || null, { verify: (sg, m, k) => schnorr.verify(sg, m, k), seriesIdOf: seriesId });
+      if (!cr.ok) return { ok: false, why: cr.why };
+      const r0 = seriesRound(t, 0); const bm = bondMinStands(r0, roundIdOf(r0)); if (!bm.ok) return { ok: false, why: bm.why };
+    } catch (e) { return { ok: false, why: e.message }; }
+    if (!(BigInt(t.stakeMsat || 0n) > 0n)) return { ok: false, why: 'a free series is taken only where its operator runs it' };
+    if (funded({ kind: 'series', contract: { stakeMsat: t.stakeMsat, seriesIdBytes: fromHex(id) }, node: fundingView })) return { ok: true };
+    return { ok: false, later: true, why: 'nobody funded it here and its publication is not confirmed on this seat\'s chain' };
+  };
+  const ownerSeriesFile = (nid) => joinPath(networksDir, nid, 'owner-series.json');
+  const ownerSeriesOf = (nid) => { try { return new Set(JSON.parse(readFileSync(ownerSeriesFile(nid), 'utf8')).filter((x) => typeof x === 'string')); } catch { return new Set(); } };
+  const activateNetwork = (pkg, r, { ownerSeries = new Set() } = {}) => {
     const prev = networksHeld.get(r.networkId);
     const before = fedOf(inviteFor(r.networkId));
     const setIds = new Set(prev ? prev.setIds : []);
@@ -8195,17 +8214,34 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (held.has(id) || offChainSeries.has(id)) continue;
       refusedSeries.delete(id);
       if (refuseSeries(t)) continue;
-      const w = seriesWriter(round, t);
-      if (!series.some((x) => toHex(seriesId(x)) === id)) series.push(t);
-      writers.push(w); held.add(id); storeSeries.add(id); droppedSeries.delete(id); seriesVersion++;
-      console.log(`[networks] series ${id.slice(0, 16)} held from network package ${r.id.slice(0, 16)}: written from now, no restart`);
+      if (!ownerSeries.has(id)) {
+        const g = packageSeriesGate(t);
+        if (!g.ok) {
+          console.log(`[networks] series ${id.slice(0, 16)} of network package ${r.id.slice(0, 16)} not held: ${g.why} (#2545)`);
+          if (g.later) publishedHere(t).then((p) => {
+            const h = networksHeld.get(r.networkId);
+            if (!p.ok || !h || !h.seriesIds.has(id) || offChainSeries.has(id) || writers.some((x) => toHex(x.id) === id) || refuseSeries(t)) return;
+            holdPackageSeries(t, id, r);
+          }, () => {});
+          continue;
+        }
+      }
+      holdPackageSeries(t, id, r);
+      held.add(id);
     }
-    networksHeld.set(r.networkId, { pkg, report: r, seriesIds: seriesIdsHeld, setIds });
+    networksHeld.set(r.networkId, { pkg, report: r, seriesIds: seriesIdsHeld, setIds, ownerSeries });
     if (before && before !== r.federationId) markDraining(r.networkId, before, r.federationId);
     if (writers.length) startSeriesTimer();
   };
+  const holdPackageSeries = (t, id, r) => {
+    const w = seriesWriter(round, t);
+    if (!series.some((x) => toHex(seriesId(x)) === id)) series.push(t);
+    writers.push(w); storeSeries.add(id); droppedSeries.delete(id); seriesVersion++;
+    console.log(`[networks] series ${id.slice(0, 16)} held from network package ${r.id.slice(0, 16)}: written from now, no restart`);
+    startSeriesTimer();
+  };
   const topSerialOf = (nid) => { let top = -1n; for (const x of donationSets) if (toHex(x.networkId) === nid && x.serial > top) top = x.serial; return top; };
-  async function takeNetwork({ network, from, update = false }) {
+  async function takeNetwork({ network, from, update = false, auto = false }) {
     if (!networksDir) return { ok: false, status: 409, why: 'this seat keeps no installed networks (no plugins directory)' };
     from = String(from || '').replace(/\/+$/, '');
     if (!/^[0-9a-f]{64}$/.test(network) || !/^https?:\/\//.test(from)) return { ok: false, status: 400, why: 'name a network id and the seat to take it from' };
@@ -8226,7 +8262,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
     mkdirSync(joinPath(networksDir, network), { recursive: true });
     writeFileSync(joinPath(networksDir, network, 'package.json'), JSON.stringify(pkg));
-    activateNetwork(pkg, v);
+    // the owner's own install or update names its series; the automatic one keeps only what the owner named before (#2545)
+    const ownerSeries = auto ? new Set(networksHeld.get(network)?.ownerSeries || []) : new Set(v.series.map((t) => toHex(seriesId(t))));
+    writeFileSync(ownerSeriesFile(network), JSON.stringify([...ownerSeries]));
+    activateNetwork(pkg, v, { ownerSeries });
     console.log(`[networks] ${update ? 'updated' : 'installed'} network ${network.slice(0, 16)} (package ${v.id.slice(0, 16)}) from ${from}: ${v.sets.length} set(s), ${v.series.length} series, federation ${String(v.federationId).slice(0, 16)} - in force now`);
     return { ...plain(v), ok: true, network, from, running: true, update,
       held: { sets: v.sets.length, series: v.series.map((t) => toHex(seriesId(t))), federationId: v.federationId } };
@@ -8276,7 +8315,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       try { for (const [fed, d] of Object.entries(JSON.parse(readFileSync(joinPath(networksDir, id, 'draining.json'), 'utf8')))) markDraining(id, fed, d.successor, d.sinceMs, false, d.reason || null); } catch { /* none draining */ }
       const v = checkOnSeat(pkg);
       if (!v.ok || v.networkId !== id) { console.error(`[networks] installed network ${id.slice(0, 16)} refused: ${v.why || 'another network id'}`); continue; }
-      activateNetwork(pkg, v);
+      activateNetwork(pkg, v, { ownerSeries: ownerSeriesOf(id) });
     }
   }
 
