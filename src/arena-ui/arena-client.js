@@ -13174,6 +13174,12 @@ function servedNodes({ rounds, fromMs, toMs, verify }) {
   // spent that, the FINAL is not checked. An honest answer holds FINALs that verify and is never cut, however many rounds it holds
   // and whoever else answers; padding with junk signatures costs the reader at most SERVED_FAILED_MAX checks per answer.
   const failed = new Map(), spent = new Set();               // answer index -> FINALs of it that did not verify
+  // kanban #2361/#2365 (#1489 a45 refute 9 skeptic 3 of #2312): a FINAL that VERIFIES costs the same check, and one seat can sign
+  // valid FINALs on made-up rounds under keys it made up (18,000 checks for 2,000 such rounds). So every check of a round the reader's
+  // own record does not hold is charged to an answer holding the FINAL - the one with the most budget left - and an answer is checked
+  // for at most SERVED_CHECKS_MAX of them, valid or not. A round the reader's own record holds (`own`, mergeServedRounds) is real: it
+  // costs at most 18 checks per answer and is never cut. A FINAL named by no answer (the caller's own rounds) is not charged.
+  const checked = new Map(), exhausted = new Set();          // answer index -> checks charged to it
   let counted = 0;
   for (const round of rounds || []) {
     if (!round || !snIs32(round.roundId) || !Array.isArray(round.committee)) { refused.push({ round: null, why: 'a round is named by its id and committee' }); continue; }
@@ -13193,6 +13199,13 @@ function servedNodes({ rounds, fromMs, toMs, verify }) {
       if (served.get(key)?.has(rid)) continue;                 // a round counts once per node: no second check for it
       const src = sources && Array.isArray(sources[j]) && sources[j].length ? sources[j] : null;
       if (src && src.every((s) => (failed.get(s) || 0) >= SERVED_FAILED_MAX)) continue;   // its answers spent their bad-signature budget
+      if (src && !round.own) {                                 // kanban #2361: a check of a round the reader did not sit on costs an answer
+        let payer = null;
+        for (const s of src) if ((checked.get(s) || 0) < SERVED_CHECKS_MAX && (payer === null || (checked.get(s) || 0) < (checked.get(payer) || 0))) payer = s;
+        if (payer === null) continue;
+        const n = (checked.get(payer) || 0) + 1; checked.set(payer, n);
+        if (n >= SERVED_CHECKS_MAX && !exhausted.has(payer)) { exhausted.add(payer); refused.push({ round: null, why: `answer ${payer} made this reader check ${n} FINALs of rounds it did not sit on: no more of its FINALs are checked` }); }
+      }
       let good = false;
       try { good = !!verify(signature, finalSigId(x), x.signerPubkey); } catch { good = false; }
       if (!good) {
@@ -13262,8 +13275,16 @@ const SERVED_HELD_MAX = 20000;
 // of them did not verify. FINALs that verify are never cut; how many answers name a round no longer matters.
 const SERVED_LONE_FINALS_MAX = 360;   // kept exported for older imports; no longer read (kanban #2312)
 const SERVED_FAILED_MAX = 64;
+// kanban #2361/#2365 (#1489 a45 refute 9 skeptic 3 of #2312): and at most SERVED_CHECKS_MAX checks in all - valid signatures or not -
+// per answer for rounds the reader's own record does not hold. #2312 bounded only FINALs that fail; one seat signing valid FINALs
+// under keys it made up on 2,000 made-up rounds cost 18,000 checks (300 rounds, real signatures: 3.4 s on the M1 Max). A round the
+// reader sat on is not charged; a FINAL several answers hold is charged to the one with the most budget left, so honest rounds held
+// by their committee's seats spread over them.
+const SERVED_CHECKS_MAX = 1024;
 const SERVED_ANSWER_BYTES_MAX = 32 * 1024 * 1024;
-function mergeServedRounds(held) {
+// `own` (default true): held[0] is the reader's own record (server.js), and the rounds it names are marked `own` - servedNodes does
+// not charge their checks to the answers (kanban #2361). A reader with no record of its own (the page, item-buy.js) passes false.
+function mergeServedRounds(held, { own = true } = {}) {
   const hx = (b) => toHex(b);
   const rounds = new Map(), conflicts = new Set();
   (held || []).forEach((seat, at) => {
@@ -13275,8 +13296,9 @@ function mergeServedRounds(held) {
       if (seen.has(k)) continue;                              // kanban #2239: one answer names a round once
       seen.add(k);
       const committee = [...new Set(r.committee.map(hx))].sort().join();
-      if (!rounds.has(k)) rounds.set(k, { roundId: r.roundId, copies: new Map(), finals: new Map(), sources: new Map() });
+      if (!rounds.has(k)) rounds.set(k, { roundId: r.roundId, copies: new Map(), finals: new Map(), sources: new Map(), own: false });
       const into = rounds.get(k);
+      if (own && at === 0) into.own = true;
       if (!into.copies.has(committee)) into.copies.set(committee, { committee: r.committee, seats: 0 });
       into.copies.get(committee).seats++;
       if (into.copies.size > 1) conflicts.add(k);
@@ -13304,7 +13326,7 @@ function mergeServedRounds(held) {
     }
   });
   const pick = (copies) => { let best = null; for (const c of copies.values()) if (!best || c.seats > best.seats) best = c; return best.committee; };
-  return { rounds: [...rounds.values()].map((r) => ({ roundId: r.roundId, committee: pick(r.copies), finals: [...r.finals.values()], sources: [...r.sources.values()] })),
+  return { rounds: [...rounds.values()].map((r) => ({ roundId: r.roundId, committee: pick(r.copies), finals: [...r.finals.values()], sources: [...r.sources.values()], own: r.own })),
     conflicts: [...conflicts] };
 }
 
@@ -34862,6 +34884,32 @@ function itemPriceOn(manifest, priceSat, devsPct) {
   return t.reserves ? itemSplitReserves({ listMsat: BigInt(priceSat) * 1000n, devsPct: Number(devsPct) }).priceMsat / 1000n : itemPriceFor(BigInt(priceSat), Number(devsPct));
 }
 
+/**
+ * ONE SEAT'S ANSWER, READ UP TO `maxBytes` (kanban #2365, #1489 a45 refute 9 skeptic 3 of #2239): the bound the seat's own reader keeps
+ * (server.js readJsonCapped). A stated length over it is refused unread; a body is read as a stream and dropped once past it. Measured
+ * before: a 33.6 MB answer was parsed whole and taken by the page.
+ */
+async function readJsonUpTo(r, maxBytes) {
+  const len = Number(r.headers && typeof r.headers.get === 'function' ? r.headers.get('content-length') : NaN);
+  if (Number.isFinite(len) && len > maxBytes) { try { await r.body?.cancel(); } catch { /* gone already */ } throw new Error(`its answer of ${len} bytes is over ${maxBytes}`); }
+  if (!r.body || typeof r.body.getReader !== 'function') {
+    if (typeof r.text === 'function') { const t = await r.text(); if (t.length > maxBytes) throw new Error(`its answer is over ${maxBytes} bytes`); return JSON.parse(t); }
+    return r.json();                                          // a stand-in fetch with no body stream (tests)
+  }
+  const reader = r.body.getReader(), parts = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) { try { await reader.cancel(); } catch { /* gone already */ } throw new Error(`its answer is over ${maxBytes} bytes`); }
+    parts.push(value);
+  }
+  const all = new Uint8Array(total); let at = 0;
+  for (const p of parts) { all.set(p, at); at += p.byteLength; }
+  return JSON.parse(new TextDecoder().decode(all));
+}
+
 /** The served list of the 24 h before `toMs`, from every seat that answers. Answers { ok, served, seats } or { ok: false, why }. */
 async function servedFromSeats({ seats, toMs, fetch, verify, timeoutMs = 15000 }) {
   const fromMs = BigInt(toMs) - BigInt(SERVED_WINDOW_MS);
@@ -34872,13 +34920,14 @@ async function servedFromSeats({ seats, toMs, fetch, verify, timeoutMs = 15000 }
     try {
       const r = await fetch(`${String(s).replace(/\/$/, '')}/served?to=${toMs}&finals=1`, { signal: AbortSignal.timeout(timeoutMs) });
       if (!r.ok) return;
-      const a = await r.json();
+      const a = await readJsonUpTo(r, SERVED_ANSWER_BYTES_MAX);   // kanban #2365: one seat's answer is read up to a bound, as on the seat
       held[i] = (a.held || []).slice(0, SERVED_HELD_MAX).map((x) => ({ roundId: fromHex(x.roundId), committee: x.committee.map(fromHex), finals: x.finals.map(fromHex) }));
     } catch { /* a seat that does not answer adds nothing */ }
   }));
   const answered = held.filter(Boolean).length;
   if (!answered) return { ok: false, why: 'no seat answered who served a round in the last 24 hours' };
-  const served = servedNodes({ rounds: mergeServedRounds(held.filter(Boolean)).rounds, fromMs, toMs: BigInt(toMs), verify });
+  // kanban #2361: the page holds no record of its own - no answer's rounds are taken as the reader's, every answer's checks are charged
+  const served = servedNodes({ rounds: mergeServedRounds(held.filter(Boolean), { own: false }).rounds, fromMs, toMs: BigInt(toMs), verify });
   if (!served.nodes.length) return { ok: false, why: 'no node served a round in the last 24 hours: the nodes\' half has nobody to go to' };
   return { ok: true, served, seats: answered };
 }
