@@ -178,6 +178,50 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
     /** THE TIP add() reads (kanban #1608), handed by the tally when none was given here. */
     useTip(fn) { if (!tipOf && typeof fn === 'function') tipOf = fn; },
     transition,
+    /**
+     * ITS SCHEDULE READ AGAIN (kanban #1631): whether a proposal is a repeal, and so its voting window (27A.7.6), is a function of
+     * the history live at its publication height - not of what this seat had decided when the proposal reached it. A seat that
+     * took a repeal before it heard of the proposal it repeals (posted to one seat, pulled 10 min later) read it against the
+     * genesis alone and kept the ordinary schedule for good, so two seats counted different blocks and went live on different
+     * configs. The tally (ballot-tally.js) asks this for every kept proposal on every pass, before it counts: 'pending' while
+     * that history is not known here (a proposal activating by then is undecided: nothing of this one is counted or moved),
+     * 'same', or 'moved' - the record's repeal / votingFrom / votingUntil rewritten from the history now (written FIRST, a
+     * failed write moves nothing), a decided one back to COUNTING to be counted on its window, and one that no longer stands
+     * on its face under that schedule (activation before the end of its cooldown) FAILED as void, held to its publication block.
+     */
+    reschedule(id, { at = null } = {}) {
+      const had = held.get(id);
+      const st = stateOf(had);
+      if (!had || st === S.ORPHANED || !historyFor) return 'same';
+      let p; try { const b = fromHex(String(had.proposal)); p = { ...decodeConfigProposalBody(b.subarray(0, b.length - 64)), signature: b.slice(b.length - 64) }; } catch { return 'same'; }
+      const net = had.networkId;
+      const history = historyFor(net, had.publishedAt, p.class);
+      if (!history) return 'pending';
+      // 2.0 (kanban #1489 port of #1631): the schedule is read by proposalStands itself, as add() reads it - host removals, the #1196
+      // depth rule and its repeal cooldown included. Signature and deposit were checked at intake and do not move with the history:
+      // `probe` (activation at the top, so it stands) gives the window, `face` whether its own activation still stands on it.
+      const opts = { publishedAt: had.publishedAt, depositSats: 0, lowestBondMinSats: 10n ** 30n, verify: () => true, history,
+        schedule: (scheduleFor && scheduleFor(net)) || schedule, repealSchedule: (repealScheduleFor && repealScheduleFor(net)) || repealSchedule,
+        ...(depthHeightFor ? { depthHeight: depthHeightFor(net) } : {}), ...(minDecideDepthFor ? { minDecideDepth: minDecideDepthFor(net) } : {}) };
+      const probe = proposalStands({ ...p, activationHeight: 0xffffffff }, opts);
+      if (!probe.ok) return 'same';
+      const face = proposalStands(p, opts);
+      const repeal = !!probe.repeal, votingFrom = probe.votingFrom, votingUntil = probe.votingUntil, stands = face.ok;
+      const isVoid = !!(had.decided && had.decided.void);
+      if (repeal === !!had.repeal && votingFrom === had.votingFrom && votingUntil === had.votingUntil && stands === !isVoid) return 'same';
+      // a record whose window did not move and that intake took is never voided here for another reason (only the schedule is re-read)
+      if (!stands && !isVoid && repeal === !!had.repeal && votingFrom === had.votingFrom && votingUntil === had.votingUntil) return 'same';
+      const { decided, undecided, ...rest } = had;
+      const rescheduled = { at, was: { state: st, repeal: !!had.repeal, votingFrom: had.votingFrom, votingUntil: had.votingUntil } };
+      const next = stands
+        ? { ...rest, repeal, votingFrom, votingUntil, state: S.COUNTING, rescheduled }
+        : { ...rest, repeal, votingFrom, votingUntil, state: S.FAILED, rescheduled, decided: { passed: false, decidedAt: at,
+          void: `${face.why} under the history live at ${had.publishedAt}`,
+          anchor: had.blockHash ? { height: had.publishedAt, hash: had.blockHash } : null } };
+      if (held.get(id) !== had) return 'same';                          // compare-and-set: moved meanwhile, asked again next pass
+      try { commit(next); } catch { return 'same'; }
+      return 'moved';
+    },
     /** THE OUTCOME, WRITTEN ONCE (ballot-tally.js): COUNTING -> PASSED | FAILED - not tallied again, across restarts too. */
     decide: (id, outcome) => transition(id, S.COUNTING, outcome && outcome.passed ? S.PASSED : S.FAILED, { outcome }),
     /** A REORG BELOW ITS DECISION - a hash that differs (ballot-tally.js): PASSED | FAILED -> COUNTING, counted again on the chain now. */
