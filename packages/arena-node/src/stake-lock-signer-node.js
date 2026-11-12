@@ -303,21 +303,39 @@ function otherStakedUnderKey(round, entry, entryIdBytes, kind) {
 // on the same seats (same claim key) was the first in its round; and a copy posted to the seats the page had not reached yet (the page posts to
 // its own seat first, the relay waits 700-1200 ms) was the first there. Now the first is read over every round this seat holds (Round.firstNamingOfLock)
 // and, when `namersAtPeers` is given, over what the round's other seats answer for the same outpoint (GET /lock-namer, each answer checked against
-// the entry's own bytes): the entry any of them took earliest keeps the lock. Only entries of the entry's own player key count - the lock's refund key
-// is that key, so no other entry could ever be staked by it. Limit: a seat's time is its own clock, so a dishonest seat of the round can still
-// claim an earlier copy and refuse the player (the player is refused, not robbed); binding a lock to its entry for good needs a player signature.
-function firstNamer(round, entry, kind, outpoint, atPeers = []) {
-  if (typeof round.firstNamingOfLock === 'function') {
-    let best = round.firstNamingOfLock(entry.roundId, kind, outpoint, entry.playerPubkey);
-    for (const p of atPeers || []) if (p && p.entryId && Number.isFinite(p.joinedMs) && (!best || p.joinedMs < best.joinedMs)) best = p;
-    return best ? best.entryId : null;
-  }
-  if (typeof round.firstEntryNamingLock === 'function') return round.firstEntryNamingLock(entry.roundId, kind, outpoint);
-  return null;
+// the entry's own bytes). Only entries of the entry's own player key count - the lock's refund key is that key, so no other entry could ever be
+// staked by it.
+// A PEER'S TIME NEVER PICKS THE WINNER (kanban #1897, #1938, #1489 refute of 05194518e): "the entry any seat took earliest" compared each
+// seat's own clock - an honest seat 1.5 s behind made a stranger's copy the first at every seat, and one dishonest seat that answered GET
+// /lock-namer with a backdated copy turned every honest seat: the player was robbed, not only refused. Now:
+// - THE PLAYER'S CLAIM DECIDES (protocol lock-claim.js): a BIP-340 signature by the entry's stake point over its id, which only the holder of
+//   the stake preimage can make - never a copier. When this seat holds, or any seat of the round shows (each claim checked here against the
+//   entry's bytes and the signature), a claim for an entry of this player key naming this outpoint, the lock goes only to a claimed entry, and
+//   among the player's own claimed entries to the one this seat took first. A peer can show a claim, never forge one.
+// - WITHOUT ANY CLAIM (a page from before the claim): this seat's own first namer stands, and a peer's answer can only REFUSE - a peer naming
+//   another entry first is a conflict, and the entry is refused; it never makes another entry the first. A dishonest seat can refuse, not rob.
+function claimedNamers(round, entry, kind, outpoint, atPeers) {
+  const ids = new Set();
+  if (typeof round.claimedNamingsOfLock === 'function')
+    for (const c of round.claimedNamingsOfLock(kind, outpoint, entry.playerPubkey)) ids.add(Buffer.from(c.entryId).toString('hex'));
+  for (const p of atPeers || []) for (const c of (p && p.claimed) || []) if (c && c.entryId) ids.add(Buffer.from(c.entryId).toString('hex'));
+  return ids;
 }
 function namedFirstByAnother(round, entry, entryIdBytes, kind, outpoint, atPeers = []) {
-  const first = firstNamer(round, entry, kind, outpoint, atPeers);
-  return !!first && !Buffer.from(first).equals(Buffer.from(entryIdBytes));
+  const me = Buffer.from(entryIdBytes).toString('hex');
+  const claimed = claimedNamers(round, entry, kind, outpoint, atPeers);
+  if (claimed.size) {
+    if (!claimed.has(me)) return true;
+    // the player's own claimed entries (a reload's second entry): the one this seat took first
+    const here = typeof round.claimedNamingsOfLock === 'function' ? round.claimedNamingsOfLock(kind, outpoint, entry.playerPubkey) : [];
+    return here.length > 0 && Buffer.from(here[0].entryId).toString('hex') !== me;
+  }
+  let first = null;
+  if (typeof round.firstNamingOfLock === 'function') { const f = round.firstNamingOfLock(entry.roundId, kind, outpoint, entry.playerPubkey); first = f ? f.entryId : null; }
+  else if (typeof round.firstEntryNamingLock === 'function') first = round.firstEntryNamingLock(entry.roundId, kind, outpoint);
+  if (first && Buffer.from(first).toString('hex') !== me) return true;
+  for (const p of atPeers || []) if (p && p.entryId && Buffer.from(p.entryId).toString('hex') !== me) return true;
+  return false;
 }
 // what the round's other seats answer for this outpoint; never fatal - a seat that does not answer adds nothing
 async function askNamers(namersAtPeers, entry, kind, outpoint) {

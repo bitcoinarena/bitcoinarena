@@ -35,6 +35,7 @@ import { decodeBolt11 } from '../../arena-protocol/src/bolt11.js';
 import { takesDeposits } from '../../arena-protocol/src/known-federations.js';
 import { splitDonation, donationSetPaysKeys } from '../../arena-protocol/src/donation.js';
 import { namedClaims, namedClaimKeys, arenaLockFor, arenaLockContractId, arenaLockValid, arenaLockFieldsToJson, lockStallBlocks, fallbackAfterFor } from '../../arena-protocol/src/arena-lock.js';
+import { lockClaimDigest } from '../../arena-protocol/src/lock-claim.js';
 
 const namesNothing = (b) => !(b instanceof Uint8Array) || b.every((x) => x === 0);
 
@@ -3747,6 +3748,25 @@ export function payoutLine(p) {
  * THE LOCK, HANDED TO EVERY SIGNER NODE (POST /lock). A signer node that verifies it in the
  * federation answers 201 and counts the stake; `ok` is `needed` of them.
  */
+// THE PLAYER'S CLAIM ON THE LOCKS ITS ENTRY NAMES (kanban #1897, #1938; protocol lock-claim.js): a BIP-340 signature by the stake point over
+// the entry id, made with the stake preimage the page alone holds. A seat that holds it hands the entry's locks to a claimed entry only, so a
+// copy of the entry under another session key (posted by anyone who saw it) can never take the player's stake or fee lock - whatever any seat's
+// clock says. `lockClaimer(curve, stake)`: the signer the page puts on its stakeLock (`claimFor`), or null when the curve cannot sign.
+export function lockClaimer(curve, stake) {
+  if (!curve || typeof curve.signSchnorr !== 'function' || !stake || !(stake.preimage instanceof Uint8Array) || stake.preimage.length !== 32) return null;
+  const preimage = stake.preimage;
+  return (entryIdBytes) => curve.signSchnorr(lockClaimDigest(entryIdBytes), preimage);
+}
+// The claim to one seat, right after its entry (POST /lock-claim). Never fatal: a seat that missed it still learns it from the seats that took it.
+export async function postLockClaim({ node, entryId: eid, claimFor, fetcher = fetch } = {}) {
+  if (typeof claimFor !== 'function') return { node, status: 0, why: 'no claim' };
+  try {
+    const sig = claimFor(eid);
+    const r = await fetcher(`${String(node).replace(/\/+$/, '')}/lock-claim?entry=${toHex(eid)}`, { method: 'POST', body: sig });
+    return { node, status: r.status, why: r.status === 201 ? null : (await r.text()).trim() };
+  } catch (e) { return { node, status: 0, why: e.message }; }
+}
+
 export async function handLock({ entryId, fields, nodes, needed, fetcher = fetch, door = 'lock' } = {}) {
   if (!(entryId instanceof Uint8Array) || entryId.length !== 32) throw new Error('a lock is handed over for an entry, by its id');
   // `door`: 'lock' for the stake lock, 'fee-lock' for the fee lock (Pick b).

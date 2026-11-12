@@ -4448,6 +4448,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             if (thisJoin) thisJoin.locking = true;
             stakeLock = { outpoint: reuse.lock.outpoint, fields: reuse.lock.fields, feeLock: reuse.lock.feeLock || null, donations: reuse.lock.donations || [],
               needed: ARENACLIENT.sharesNeededFor(named.round), onCommitted: committedTo, onNamed: namedIn,
+              // THE PLAYER'S CLAIM ON THE ENTRY'S LOCKS (kanban #1897, #1938): signed by the stake point, so no copy of the entry can take them
+              claimFor: ARENACLIENT.lockClaimer ? ARENACLIENT.lockClaimer(window.ARENA_CURVE, stake) : null,
               handUntilMs: ARENACLIENT.marketForRound && ARENACLIENT.marketForRound(named.round) ? Number(named.round.entryCloseMs) : 0 };
             window.ARENA_STAKE_LOCK = stakeLock;
             if (stageEl) window.ArenaText.say(stageEl, ARENACLIENT.lockLine(stakeLock));
@@ -4509,6 +4511,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             // a 100 sat round makes none, so the player is charged no lock that expires unused.
             stakeLock = { outpoint: made.outpoint, fields: made.fields, feeLock: made.feeLock || null, donations: made.donations || [], accepted: made.accepted || null,
               needed: ARENACLIENT.sharesNeededFor(named.round), onCommitted: committedTo, onNamed: namedIn,
+              // THE PLAYER'S CLAIM ON THE ENTRY'S LOCKS (kanban #1897, #1938): signed by the stake point, so no copy of the entry can take them
+              claimFor: ARENACLIENT.lockClaimer ? ARENACLIENT.lockClaimer(window.ARENA_CURVE, stake) : null,
               handUntilMs: ARENACLIENT.marketForRound && ARENACLIENT.marketForRound(named.round) ? Number(named.round.entryCloseMs) : 0 };
             console.log('[arena] fee lock: ' + (made.feeLock ? 'minted, ' + String(made.feeLock.fields.amountMsat) + ' msat' : 'none - ' + made.feeGate.why));
             // KEPT BEFORE ANYTHING ELSE CAN HAPPEN TO THE TAB (lockStake, `keep`): a reload from here on uses this lock, not a second deposit
