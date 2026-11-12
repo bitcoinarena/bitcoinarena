@@ -190,7 +190,7 @@ export class Forfeit {
    * federation (it hashes a contract the way the guardians do); `peersFor(rid)`
    * names the other settlement signer nodes' bases.
    */
-  constructor(round, { dkg, port, curve, random, peersFor = () => [], fetcher = (u, o) => fetch(u, o), onVoid = null, pullProof = null, refusedNow = null, bookStanding = null, isBook = null, lockSetOut = null,
+  constructor(round, { dkg, port, curve, random, peersFor = () => [], fetcher = (u, o) => fetch(u, o), onVoid = null, pullProof = null, refusedNow = null, bookStanding = null, isBook = null, lockSetOut = null, kindPending = null,
     peerAskMs = PEER_ASK_MS, peerGraceMs = PEER_GRACE_MS } = {}) {
     this.round = round;
     // HOW LONG A SEAT IS WAITED FOR (peer-ask.js, kanban #1074 as #1061)
@@ -200,6 +200,8 @@ export class Forfeit {
     this.bookStanding = bookStanding;
     // rid -> whether the round is an order book (order-batch.js isBook: a certified batch holds an order) - its orders are its entries, else its plain picks
     this.isBook = isBook;
+    // rid -> the batches holding an order still undecided here (order-batch.js kindPending, kanban #1666): the round's kind is not decided yet
+    this.kindPending = kindPending;
     // §23.2 REFUSED: rid -> why this node refuses the round, or null while it offers it
     this.refusedNow = refusedNow;
     // THE CERTIFIED LOCK SET (protocol 28, kanban #2561, §17A): rid, eid -> why this entry's lock is not in its round (a lock outside the
@@ -498,6 +500,9 @@ export class Forfeit {
     // handed in late cannot turn the round into one that claims the locks returned here. FINAL never turns VOID either.
     const fin = marketStateOf(this.round, roundIdBytes, { contract, manifest: f.plugin.manifest, nowMs });
     if (fin.voided) return { ok: true, why: fin.why };
+    // NO "NOBODY PICKED IT" REFUND WHILE THE ROUND'S KIND IS UNDECIDED (kanban #1666): which entries count (plain picks or orders) waits for the
+    // pending batch holding orders - an order handed back as a pool's now could be filled by that batch once it is certified
+    if (typeof this.kindPending === 'function' && this.kindPending(roundIdBytes).length) return { ok: false };
     // ONLY THE ENTRIES THE SETTLEMENT COUNTS (kanban #1436, audit 8 R2; settlement.js #attestedPlan, stake-secret.js): those whose stake this seat
     // saw, and of the round's kind - a pool's plain picks, an order book's orders (§0A.7b, #1411). One lockless entry naming the outcome (or an
     // order, in a round that ended a pool) kept every real stake from coming back at once while the settlement - counting none of them - claimed
