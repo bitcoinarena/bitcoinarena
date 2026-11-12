@@ -1793,7 +1793,9 @@ export class Round {
   putForkPair({ a, b, receipted = false, peer = null }) {
     let ca, cb;
     try { ca = this.playerSigned(a); cb = this.playerSigned(b); } catch { return false; }
-    if (same(a, b) || !same(ca.entryId, cb.entryId) || !same(ca.roundId, cb.roundId)) return false;
+    // ONE MARK IS ONE ID, NOT ONE BYTE STRING (kanban #2445): a mark with only its version byte changed decodes to the
+    // same fields and the same checkpointId, and the player's signature still verifies - the same mark, never a pair.
+    if (same(a, b) || same(checkpointId(ca), checkpointId(cb)) || !same(ca.entryId, cb.entryId) || !same(ca.roundId, cb.roundId)) return false;
     if (ca.tick !== cb.tick && !same(ca.previousHash, cb.previousHash)) return false;
     const [x, y] = Buffer.compare(Buffer.from(a), Buffer.from(b)) < 0 ? [a, b] : [b, a];
     // A PAIR PULLED FROM A PEER (`peer`, its address) IS KEPT WITHIN A BOUND PER PEER, AND ITS MARKS' RECORDS AS PULLED (kanban
@@ -1845,6 +1847,7 @@ export class Round {
         // child" of that head and none receipted; verifying both signatures of every pair, on every call, held a seat's one
         // thread at 100% for minutes and five seats never signed the entry. A pair that cannot prove a fork costs a decode.
         const da = decodeCheckpoint(splitSigned(a).body), db = decodeCheckpoint(splitSigned(b).body);
+        if (same(checkpointId(da), checkpointId(db))) continue;   // one mark in two encodings (kanban #2445)
         if (!same(da.entryId, entryIdBytes) || !same(db.entryId, entryIdBytes)) continue;
         if (da.tick !== db.tick && !(same(da.previousHash, db.previousHash) && f.receipted === true)) continue;
         const ca = this.playerSigned(a), cb = this.playerSigned(b);
@@ -1875,7 +1878,8 @@ export class Round {
     let ca;
     let cb;
     try { ca = this.playerSigned(a); cb = this.playerSigned(b); } catch { return false; }
-    if (same(a, b) || !same(ca.entryId, cb.entryId) || !same(ca.roundId, cb.roundId)) return false;
+    // the same mark by id is not two first marks, whatever its bytes (kanban #2445: a stranger's version-byte copy)
+    if (same(a, b) || same(checkpointId(ca), checkpointId(cb)) || !same(ca.entryId, cb.entryId) || !same(ca.roundId, cb.roundId)) return false;
     if (!same(ca.previousHash, NO_PREVIOUS) || !same(cb.previousHash, NO_PREVIOUS)) return false;
     const [x, y] = Buffer.compare(Buffer.from(a), Buffer.from(b)) < 0 ? [a, b] : [b, a];
     // A PAIR PULLED FROM A PEER (`peer`): within that peer's bound, its marks' records as pulled (kanban #2060, as putForkPair)
@@ -1910,6 +1914,8 @@ export class Round {
         if (window && !(this.markCounts(entryIdBytes, a, window.chain, window.end) && this.markCounts(entryIdBytes, b, window.chain, window.end))) continue;
         // two first marks only: the parents read before any signature is checked (as provenFork)
         const da = decodeCheckpoint(splitSigned(a).body), db = decodeCheckpoint(splitSigned(b).body);
+        // ONE MARK IN TWO ENCODINGS IS NOT TWO FIRST MARKS (kanban #2445): compared by id, as provesEquivocation does
+        if (same(checkpointId(da), checkpointId(db))) continue;
         if (!same(da.previousHash, NO_PREVIOUS) || !same(db.previousHash, NO_PREVIOUS)) continue;
         const ca = this.playerSigned(a);
         const cb = this.playerSigned(b);
