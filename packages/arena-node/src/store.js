@@ -958,6 +958,14 @@ export function openStore(path = ':memory:') {
       made_ms       INTEGER NOT NULL,
       PRIMARY KEY (round_id, federation_id)
     );
+    -- EVERY FEDERATION OF SUCH A ROUND'S SPLIT (kanban #1838, state audit 2026-11-12): kept from the plan at the first pass that builds it, before
+    -- anything is submitted, so a federation never reached (no port, too few commitments, its shares failed) still counts as unsettled -
+    -- the rows alone said ACCEPTED once the one federation that landed was
+    CREATE TABLE IF NOT EXISTS fed_lock_settlement_plans (
+      round_id      BLOB NOT NULL,
+      federation_id TEXT NOT NULL,
+      PRIMARY KEY (round_id, federation_id)
+    );
 
     -- WHAT THE SIGNED SETTLEMENT MOVES (W6): its claimed outpoints and how many
     -- payout contracts it makes, kept with its intent - so a signer node restarted inside
