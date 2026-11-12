@@ -3476,6 +3476,16 @@ export class Round {
     return at;
   }
 
+  /** Every identity a name record of that round names (hex), for who sits at its table first (kanban #1645). */
+  namedIdentitiesOfRound(roundIdBytes) {
+    const out = new Set();
+    for (const r of this.db.prepare('SELECT record FROM lobby_names WHERE round_id = ?').iterate(Buffer.from(roundIdBytes))) {
+      const b = new Uint8Array(r.record);
+      if (b.length >= 96) out.add(Buffer.from(b.subarray(64, 96)).toString('hex'));
+    }
+    return out;
+  }
+
   namedIdentityOf(roundIdBytes, playerPubkeyBytes) {
     const r = this.db.prepare('SELECT record FROM lobby_names WHERE round_id = ? AND player_pubkey = ?').get(Buffer.from(roundIdBytes), Buffer.from(playerPubkeyBytes));
     if (!r) return null;

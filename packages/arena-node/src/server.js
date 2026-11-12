@@ -9279,9 +9279,25 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           let good = false;
           try { good = !!(key && sig) && schnorr.verify(sig, presenceId({ roundId: new Uint8Array(id), identityKey: key }), key); } catch { good = false; }
           if (!good) return text(res, 403, 'that presence is not signed by its key over this round');
-          if (!tables.has(ridHex) && tables.size >= 256) return text(res, 503, 'this node keeps no more tables just now');
+          // A FULL TABLE MAKES ROOM, IT DOES NOT REFUSE (kanban #1645, audit WF1489 R4 H2H-2): keys cost nothing, so a stranger who knew the
+          // public round id said 32 throwaway presences every 2 s and the round's real players were refused 503 "that table is full" at every
+          // seat - each tab read "You are alone in this round" again; one presence on 256 old rounds refused every new table the same way.
+          // Now a full table drops the presence said longest ago, never one whose identity a name record of the round names while an
+          // unnamed one is there (a named identity is refused only when all 32 are named), and a full map drops the table said to longest ago.
+          if (!tables.has(ridHex) && tables.size >= 256) {
+            let old = null, oldAt = Infinity;
+            for (const [rid, tt] of tables) { const last = Math.max(...tt.values()); if (last < oldAt) { oldAt = last; old = rid; } }
+            tables.delete(old);
+          }
           const t = tables.get(ridHex) || new Map();
-          if (!t.has(body.key) && t.size >= 32) return text(res, 503, 'that table is full');
+          if (!t.has(body.key) && t.size >= 32) {
+            const named = typeof round.namedIdentitiesOfRound === 'function' ? round.namedIdentitiesOfRound(new Uint8Array(id)) : new Set();
+            let drop = null, dropAt = Infinity;
+            for (const [k, at] of t) if (!named.has(k) && at < dropAt) { dropAt = at; drop = k; }
+            if (drop === null && !named.has(body.key)) return text(res, 503, 'that table is full');
+            if (drop === null) for (const [k, at] of t) if (at < dropAt) { dropAt = at; drop = k; }
+            t.delete(drop);
+          }
           t.set(body.key, now);
           tables.set(ridHex, t);
         }
