@@ -7742,10 +7742,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     retiringOf: (fidHex) => retireBook.has(fidHex) });
   // THE GUARDIAN OF A RETIRED FEDERATION SET ASIDE, once its record stands CLOSED with no successor (kanban #577, federation-retire.js):
   // the node's guardian directory kept beside the store, a guardian in setup started - the next founding can draw this node
-  if (guardianControl && guardianControl.retire && guardian && guardian.dataDir) {
+  // (kanban #2336: also for a keyed guardian that did not run when the node was served - its start met a bitcoind that did not answer
+  // and is tried again - read from its directory, and the consent is spent only once the guardian was set aside)
+  if (guardianControl && guardianControl.retire && guardian && (guardian.dataDir || (guardian.stopped && guardianControl.dir))) {
     const rt = setInterval(async () => {
       try {
-        const fid = guardedFederationOf(guardian.dataDir, readInvite);
+        const fid = guardedFederationOf(guardian.dataDir || guardianControl.dir(), readInvite);
         if (!fid || !retireBook.has(fid)) return;
         const held = fedRecords.recordOf(fid);
         if (!held || held.status !== 'CLOSED' || (held.record && held.record.successorId && held.record.successorId.some((x) => x))) return;
@@ -7754,7 +7756,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const at = await fedRecords.closedAtGuardians(fid);
         if (at.of && at.closed < thresholdOfFederation(at.of)) { console.log(`[retire] ${fid.slice(0, 16)} CLOSED here, at ${at.closed} of ${at.of} guardian seats: the guardian keeps serving until ${thresholdOfFederation(at.of)} do`); return; }
         const r = await guardianControl.retire();
-        retireBook.done(fid);
+        if (r.ok) retireBook.done(fid);
         console.log(`[retire] ${fid.slice(0, 16)} stands CLOSED: ${r.ok ? `its guardian set aside (${r.kept}), ${r.setup ? 'a guardian in setup started' : r.why}` : r.why}`);
       } catch (e) { console.log(`[retire] ${e.message}`); }
     }, Number(process.env.ARENA_RETIRE_CHECK_MS || 60000));
