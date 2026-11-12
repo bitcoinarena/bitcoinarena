@@ -3294,17 +3294,39 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // DRIVEN FROM THE CLOSE: every open round of protocol 28 between its close and the close + the window, each 100 ms (step is cheap when idle)
   // (headToHeadReady is declared further down this function: read before then it throws, and a timer's throw would end the daemon - kanban #1068)
   const lockSetTimer = setInterval(() => { try { lockSetPass(); } catch { /* not ready yet */ } }, 100);
+  // THE PASS READS A PLAN, NOT EVERY OPEN ROUND EACH 100 MS (kanban #2561, measured on the audit51 roll 2026-11-12: seat 1 did not serve /games
+  // for 15 min - the pass ran SELECT over every open round (8 series x 1,350 ahead: ~11,000) ten times a second and decoded each again past
+  // lockSetRounds' 4,096, holding the loop ~500 ms of every second). The open rounds are read every LOCK_SET_PLAN_MS; each is decoded once
+  // (lockSetPlan: its close if it plays under the set, else null) and leaves the plan when it is no longer open; a round this store opens is planned
+  // at the next pass (round.openSeq). Each 100 ms only the rounds
+  // of 28 between their close and the close + the window are stepped.
+  const LOCK_SET_PLAN_MS = 5000;
+  const lockSetPlan = new Map();   // hex -> { rid, close } for a round of the set, null for any other open round
+  let lockSetPlanAt = 0, lockSetPlanSeq = -1;
+  const lockSetReplan = () => {
+    lockSetPlanSeq = Number(round.openSeq || 0);
+    let ids = [];
+    try { ids = round.openRoundIds(); } catch { return; }
+    const open = new Set();
+    for (const rid of ids) {
+      const k = toHex(rid); open.add(k);
+      if (lockSetPlan.has(k)) continue;
+      let c = null;
+      try { c = lockSetRound(rid); } catch { c = null; }
+      if (c === null && !round.get(rid)) continue;   // not held yet: planned at the next read
+      lockSetPlan.set(k, c ? { rid, close: Number(c.entryCloseMs) } : null);
+    }
+    for (const k of [...lockSetPlan.keys()]) if (!open.has(k)) lockSetPlan.delete(k);
+    lockSetPlanAt = Date.now();
+  };
   const lockSetPass = () => {
     if (shuttingDown || !headToHeadReady) return;
+    // read again every LOCK_SET_PLAN_MS, and at once when this store opened a round since (round.openSeq): a round opened just before its close is planned
+    if (Date.now() - lockSetPlanAt >= LOCK_SET_PLAN_MS || Number(round.openSeq || 0) !== lockSetPlanSeq) lockSetReplan();
     const now = Number(round.now());
-    let ids = [];
-    try { ids = round.openRoundIds(); } catch { ids = []; }
-    for (const rid of ids) {
-      const c = lockSetRound(rid);
-      if (!c) continue;
-      const close = Number(c.entryCloseMs);
-      if (now < close || now > close + LOCK_SET_WINDOW_MS + 2000) continue;
-      lockSets.step(rid).catch((e) => console.error(`[lock-set] ${toHex(rid).slice(0, 16)}: ${e.message}`));
+    for (const x of lockSetPlan.values()) {
+      if (!x || now < x.close || now > x.close + LOCK_SET_WINDOW_MS + 2000) continue;
+      lockSets.step(x.rid).catch((e) => console.error(`[lock-set] ${toHex(x.rid).slice(0, 16)}: ${e.message}`));
     }
   };
   if (lockSetTimer.unref) lockSetTimer.unref();
