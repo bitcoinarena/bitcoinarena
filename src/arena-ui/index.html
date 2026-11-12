@@ -9599,7 +9599,9 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
                 + (m.leftMsat !== undefined ? `, ${Math.floor(Number(m.leftMsat) / 1000)} sat to go` : '') + (m.why ? ` (${m.why})` : '')) });
             // EMPTY ONLY WHEN THE RUN ENDED 'moved' WITH NOTHING TO MOVE (kanban #2427 / #2484): a stop - for storage ('unkept') or any other - left
             // the notes in the failing federation, so it is tried again at the next status read; a stop for storage also says the storage is full
-            if (r.state === 'moved' && String(r.moved) === '0' && Number(r.chunks) === 0) evacuatedEmpty.add(fid);
+            // AND ONLY A FEDERATION FOUND EMPTY (kanban #2289): a stopped move (the gateway refunded, the notes all still there) also answers 0 msat in
+            // 0 chunks - migrateFromDraining says `empty` when it found nothing above dust
+            if (r.state === 'moved' && r.empty === true) evacuatedEmpty.add(fid);
             if (r.state === 'unkept') window.ARENA_MONEY_ALERT.full();
             window.ARENA_EVACUATED = { from: fid, to: String(target.federation), state: r.state, moved: String(r.moved), chunks: r.chunks ?? r.movedChunks };
             console.log(`[arena] out of federation ${fid.slice(0, 16)}: ${r.state}, ${r.moved} msat in ${r.chunks ?? r.movedChunks} chunk(s) to ${String(target.federation).slice(0, 16)}`);
