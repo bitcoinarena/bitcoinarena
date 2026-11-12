@@ -10,7 +10,7 @@
 // It does not step the core. There is no `step` in this package and no import
 // of one; a round is a list of inputs until something verifies it, and that
 // something is the checkpoints in step 3.
-import { durably } from './store.js';
+import { durably, RELAY_ROW_COST } from './store.js';
 import { createInterner } from './intern.js';
 import {
   encodeRoundContract, roundId, encodeEntryContract, entryId, decodeEntryContract,
@@ -4147,29 +4147,38 @@ export class Round {
    * The relayed bytes no held result names (kanban #1725, #1795): of one entry, of one round, or all of them (`{}`). Slash proofs
    * (no entry) are not among them.
    */
+  // kanban #2055, #2073: every one of these counts a row's cost (LENGTH(bytes) + RELAY_ROW_COST, store.js relayRowCost), not its bytes
+  // alone; the whole-pool totals are read from relayed_tally (kept by triggers), not summed over every row
   relayedUnnamedBytes({ entryId = null, roundId = null } = {}) {
-    if (entryId) return Number(this.db.prepare('SELECT COALESCE(SUM(LENGTH(bytes)), 0) AS n FROM relayed WHERE entry_id = ? AND named = 0').get(entryId).n);
-    if (roundId) return Number(this.db.prepare('SELECT COALESCE(SUM(LENGTH(bytes)), 0) AS n FROM relayed WHERE round_id = ? AND named = 0 AND accused IS NULL').get(roundId).n);   // kanban #1917: slash rows name a round too
-    return Number(this.db.prepare('SELECT COALESCE(SUM(LENGTH(bytes)), 0) AS n FROM relayed WHERE entry_id IS NOT NULL AND named = 0').get().n);
+    if (entryId) return Number(this.db.prepare(`SELECT COALESCE(SUM(LENGTH(bytes) + ${RELAY_ROW_COST}), 0) AS n FROM relayed WHERE entry_id = ? AND named = 0`).get(entryId).n);
+    if (roundId) return Number(this.db.prepare(`SELECT COALESCE(SUM(LENGTH(bytes) + ${RELAY_ROW_COST}), 0) AS n FROM relayed WHERE round_id = ? AND named = 0 AND accused IS NULL`).get(roundId).n);   // kanban #1917: slash rows name a round too
+    return this.#relayTally('unnamed');
+  }
+
+  #relayTally(k) {
+    const row = this.db.prepare('SELECT n FROM relayed_tally WHERE k = ?').get(k);
+    return row ? Number(row.n) : 0;
   }
 
   /**
    * The relayed slash proofs' bytes (kanban #1917, refute 2 of #1532): against one accused node in one round, or all of them (`{}`).
    * They have their own share of the pool (RELAY_SLASH_RESERVE), and transcripts count without them (relayedTranscriptBytes).
    */
+  // `{ accused }` alone (kanban #2055, #2073): against that node over ALL rounds - the door's cap on what one node can park there
   relayedSlashBytes({ roundId = null, accused = null } = {}) {
-    if (roundId && accused) return Number(this.db.prepare('SELECT COALESCE(SUM(LENGTH(bytes)), 0) AS n FROM relayed WHERE round_id = ? AND accused = ?').get(roundId, accused).n);
-    return Number(this.db.prepare('SELECT COALESCE(SUM(LENGTH(bytes)), 0) AS n FROM relayed WHERE accused IS NOT NULL').get().n);
+    if (roundId && accused) return Number(this.db.prepare(`SELECT COALESCE(SUM(LENGTH(bytes) + ${RELAY_ROW_COST}), 0) AS n FROM relayed WHERE round_id = ? AND accused = ?`).get(roundId, accused).n);
+    if (accused) return Number(this.db.prepare(`SELECT COALESCE(SUM(LENGTH(bytes) + ${RELAY_ROW_COST}), 0) AS n FROM relayed WHERE accused = ?`).get(accused).n);
+    return this.#relayTally('slash');
   }
 
   /** The relayed bytes that are not slash proofs: transcripts and reveal records (kanban #1917). */
   relayedTranscriptBytes() {
-    return Number(this.db.prepare('SELECT COALESCE(SUM(LENGTH(bytes)), 0) AS n FROM relayed WHERE accused IS NULL').get().n);
+    return this.#relayTally('transcript');   // kanban #2055, #2073
   }
 
   /** The bytes this node keeps as a relay, all doors together (kanban #1532: the doors refuse past a cap). */
   relayedBytes() {
-    return Number(this.db.prepare('SELECT COALESCE(SUM(LENGTH(bytes)), 0) AS n FROM relayed').get().n);
+    return this.#relayTally('all');   // kanban #2055, #2073: rows' cost, kept by triggers
   }
 
   relayGet(hashBytes) {
