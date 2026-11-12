@@ -599,6 +599,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // step"): { cert, key } PEM - the same doors and sockets over https/wss on the same port; none, plain http as ever
   tls = null,
   randomnessFor, chainFor, peers = [], headerBytes, bondProof, proposals: givenProposals = null,
+  // TICK TOCK'S SNAPSHOTS FROM THIS SEAT'S OWN BITCOIND (kanban #2571 ruling, #2574; ticktock-snapshots.js chainSnapshots): a round
+  // on a core that draws its parcels is checked against it at the load door, served at GET /snapshot and named in the listing
+  ticktockSnapshots = null,
   // THE BALLOT'S PROPOSALS: { confirmedTx(txidHex, blockHashHex), lowestBondMinSats } - main.js reads bitcoind
   ballot = null,
   // A LIGHTNING INVOICE READER, AND NOTHING MORE (§23.6, RULED 2026-09-22 22:59). `/federation-invoice`
@@ -1883,6 +1886,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       return given || round.beaconOf(id);
     };
   }
+
+  // THE SNAPSHOT OF A ROUND'S BEACON BLOCK (kanban #2574): the beacon this seat holds for the round, and the snapshot this seat
+  // read of it - or why there is none yet. Round.batch asks it for a round whose core draws its parcels; nothing else does.
+  const snapshotOfRound = (contractBytes, roundIdBytes) => {
+    if (!ticktockSnapshots) return { why: 'this seat reads no chain for snapshots' };
+    let contract = contractBytes;
+    try { if (contract instanceof Uint8Array || Buffer.isBuffer(contract)) contract = decodeRoundContract(new Uint8Array(contract)); } catch { return { why: 'the round\'s contract does not read' }; }
+    let beacon;
+    try { beacon = typeof randomnessFor === 'function' ? randomnessFor({ contract, roundIdBytes: new Uint8Array(roundIdBytes) }) : round.beaconOf(new Uint8Array(roundIdBytes)); }
+    catch { beacon = undefined; }
+    if (!beacon || typeof beacon.then === 'function') return { why: 'its beacon is not held yet' };
+    const got = ticktockSnapshots.for(beacon);
+    return got ? { snapshot: got.snapshot, id: got.id, got } : { why: ticktockSnapshots.whyNot(beacon) || 'its blocks are being read' };
+  };
+  round.snapshotOf = snapshotOfRound;
 
   // WHAT HOLDS THE PLAYERS' MONEY. 23.1's hold invoice and 23.2's table, and
   // the port is injected for the same reason the chain and the randomness are:
@@ -7028,10 +7046,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const signer = listingSigner(round.identity.secret);
   const rowFacts = (rid, c, nowMs) => {
     const players = round.playersOf(rid);
+    // A ROUND ON A CORE THAT DRAWS ITS PARCELS NAMES THE SNAPSHOT THIS SEAT DERIVED (kanban #2574) once it holds one: a client
+    // holds the snapshot five of seven seats sign here. Every other row signs what it signed before.
+    let snapshotId = null;
+    if (round.parcelsDrawn(c)) { const s = snapshotOfRound(c, rid); snapshotId = s && s.id ? s.id : null; }
     return { phase: nowMs < c.committeeTimeMs ? 'pending' : 'open', assignedHere: round.signerNodes(rid).length > 0,
-      joined: players.joined, playing: players.playing };
+      joined: players.joined, playing: players.playing, ...(snapshotId ? { snapshotId } : {}) };
   };
-  const factsKey = (f) => `${f.phase}|${f.assignedHere ? 1 : 0}|${f.joined}|${f.playing}`;
+  const factsKey = (f) => `${f.phase}|${f.assignedHere ? 1 : 0}|${f.joined}|${f.playing}${f.snapshotId ? `|${toHex(f.snapshotId)}` : ''}`;
   // The window's signature of each row, signing together (one ask of the worker) the rows not yet signed for these facts.
   // Two listings in one window asking the same unsigned row share one signing.
   const windowSigs = async (set, rows) => {
@@ -7044,7 +7066,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
     if (ask.length) {
       const job = signer.sign(ask.map(({ r }) => lobbyListingId({ roundId: r.roundId, nodePubkey: round.pubkey, nowMs: set.atMs,
-        phase: r.facts.phase, assignedHere: r.facts.assignedHere, joined: r.facts.joined, playing: r.facts.playing })));
+        phase: r.facts.phase, assignedHere: r.facts.assignedHere, joined: r.facts.joined, playing: r.facts.playing, snapshotId: r.facts.snapshotId || null })));
       ask.forEach(({ r, k }, i) => set.signing.set(`${r.id}|${k}`, job.then((sigs) => toHex(sigs[i]))));
       job.then((sigs) => { ask.forEach(({ r, k }, i) => { set.sigs.set(r.id, { key: k, sig: toHex(sigs[i]) }); set.signing.delete(`${r.id}|${k}`); }); },
         () => { for (const { r, k } of ask) set.signing.delete(`${r.id}|${k}`); });
@@ -7244,6 +7266,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // THIS SIGNER NODE'S SIGNED WORD (lobby-listing.js): round, node, time, phase,
         // joined here, and the two counts. `watching` is not signed.
         sig,
+        // AND, FOR A ROUND WHOSE CORE DRAWS ITS PARCELS, THE SNAPSHOT THIS SEAT DERIVED (kanban #2574) - signed with the rest
+        ...(facts.snapshotId ? { snapshot: toHex(facts.snapshotId) } : {}),
       });
     }
     listed.sort((x, y) => (x.phase === y.phase
@@ -9433,6 +9457,22 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const nowMs = round.now();
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ node: toHex(round.pubkey), nowMs: String(nowMs), series: writers.map((w) => w.summary(nowMs)) }));
+      }
+
+      // TICK TOCK'S SNAPSHOT OF A ROUND'S BEACON BLOCK (kanban #2571 ruling, #2574): what this seat derived from its own bitcoind -
+      // the entries (txid, vsize, fee), its id, and each walked block's header and txids, so a client checks the txids against the
+      // headers' merkle roots and holds the snapshot whose id five of seven seats sign in their listing. Only for a round whose
+      // core draws its parcels; 503 while the beacon or its blocks are not read yet (the read is started).
+      if (req.method === 'GET' && url.pathname === '/snapshot') {
+        const idHex = String(url.searchParams.get('round') || '').toLowerCase();
+        if (!/^[0-9a-f]{64}$/.test(idHex)) return text(res, 400, 'name the round: ?round=<64 hex>');
+        const row = round.get(Buffer.from(idHex, 'hex'));
+        if (!row) return text(res, 404, 'no such round');
+        if (!round.parcelsDrawn(row.contract)) return text(res, 409, 'that round\'s core does not draw its parcels: it has no snapshot');
+        const got = snapshotOfRound(row.contract, Buffer.from(idHex, 'hex'));
+        if (!got || !got.got) { res.writeHead(503, { 'content-type': 'text/plain', 'retry-after': '5', ...CORS }); return res.end(`no snapshot yet: ${got && got.why ? got.why : 'not read'}`); }
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'max-age=60', ...CORS });
+        return res.end(JSON.stringify(ticktockSnapshots.json(got.got, Buffer.from(idHex, 'hex'))));
       }
 
       if (req.method === 'GET' && url.pathname === '/round') {

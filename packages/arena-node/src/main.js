@@ -46,6 +46,7 @@ import { isOldTestnet4Id, isOldTestnet4Series, OLD_TESTNET4_SERIES_BOND_HEIGHT }
 import { bitcoindRpc, blocksOver, blockCache, censusWithFreshHashes, viewWithFreshHashes } from './chain-rpc.js';
 import { blockHashOf } from '../../arena-protocol/src/chain.js';
 import { chainBeacon } from './beacon-source.js';
+import { chainSnapshots } from './ticktock-snapshots.js';
 import { lightningFromEnv } from './node-start.js';
 import { stakeLocksFromEnv } from './stake-lock-port.js';
 import { fundingFromEnv } from './funding.js';
@@ -320,6 +321,9 @@ if (url) {
   // A 400-header window, as the 2-of-2 tool reads one: the rule refuses a
   // window that does not reach back before a round's committee_time.
   const beacon = chainBeacon({ call, window: 400 });
+  // TICK TOCK'S SNAPSHOTS (kanban #2571 ruling, #2574): a round on a core that draws its parcels plays its beacon block's
+  // transactions, read here from this seat's own bitcoind (getblock verbosity 2) - the load door, GET /snapshot and the listing ask it
+  options.ticktockSnapshots = chainSnapshots({ call });
   // THE BEACON OF EVERY ROUND THIS STORE STILL OWES A PAYOUT ON, read before
   // the daemon starts: the start-up sweep asks it whose turn it is, and the
   // other readers of a beacon ask synchronously.

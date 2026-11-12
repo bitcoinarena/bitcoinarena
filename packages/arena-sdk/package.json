@@ -27,6 +27,7 @@
     "./ballot-chain": "./src/ballot-chain.js",
     "./batch": "./src/batch.js",
     "./host": "./src/host.js",
-    "./core-hash": "./src/core-hash.js"
+    "./core-hash": "./src/core-hash.js",
+    "./ticktock-snapshot": "./src/ticktock-snapshot.js"
   }
 }

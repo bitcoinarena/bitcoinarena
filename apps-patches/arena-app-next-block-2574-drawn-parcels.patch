@@ -1,0 +1,461 @@
+kanban #2574 (spec ruling of #2571): Tick Tock's parcels from the round's beacon block, the offer drawn - core 383aa469 (frozen/383aa469: 8cbc74b2 + rng.js offerIndex, adapter PARCELS_DRAWN/OFFER_SLOTS/offerIndex), its page and replay bundles (dist/core-383aa469.js exports offerIndex: tools/bundle.js ARENA_BUNDLE_OFFERS=1), truck-cores.js TRUCK_383A (parcelsDrawn) and NEXTBLOCK_CORES_V8, clients.json pinnedV8, tools/sign-manifest-v8.mjs (not run: needs the developer key).
+For bitcoinarena/arena-app-next-block (apps.lock.json pin b9c9aa35; written against the copy in packages/nextblock). Apply in the app repo: git apply <this file>
+
+diff --git a/dist/core-8cbc74b2.js b/dist/core-383aa469.js
+similarity index 99%
+copy from dist/core-8cbc74b2.js
+copy to dist/core-383aa469.js
+index 1fdfb5f..faf7ab2 100644
+--- a/dist/core-8cbc74b2.js
++++ b/dist/core-383aa469.js
+@@ -827,6 +827,7 @@ function atan2(y, x) {
+ // a different order produce different worlds, so every rule module takes an
+ // explicit stream handle and never reaches for a global.
+ 
++
+ const rotl = (x, k) => ((x << k) | (x >>> (32 - k))) | 0;
+ 
+ /** Advances the state and returns a uint32. `s` is an Int32Array(4). */
+@@ -926,6 +927,33 @@ function seed(s, word) {
+   return s;
+ }
+ 
++/**
++ * THE PARCEL OFFERED AT A PICKUP SLOT (the Arena's spec ruling of 2026-11-12: Tick Tock's parcels come from the round's beacon
++ * block, and the offer is drawn, not picked). A round on this core plays the non-coinbase transactions of its beacon block,
++ * sorted by txid - its snapshot, which every seat derives from its own bitcoind - and the parcel offered at an entry's pickup
++ * slot is entries[H(round_id || entry_id || slot) mod count]: H the tagged hash "ARENA/v1/TickTockOffer", slot a big-endian
++ * u32, the hash read big-endian. The seats hold every load to this draw (the Arena's arena-protocol ticktock-snapshot.js
++ * offerIndex, the same rule); it is in the core so the page and a replay draw with the core the round names.
++ */
++const OFFER_SLOTS = 40;
++const OFFER_TAG = 'ARENA/v1/TickTockOffer';
++
++function offerIndex(roundId, entryId, slot, count) {
++  if (roundId.length !== 32 || entryId.length !== 32) throw new Error('an offer is drawn for a 32-byte round id and entry id');
++  if ((slot | 0) !== slot || slot < 0 || slot >= OFFER_SLOTS) throw new Error('a pickup slot is 0 .. 39');
++  if ((count | 0) !== count || count < 1) throw new Error('nothing is drawn from an empty snapshot');
++  const tag = new Uint8Array(OFFER_TAG.length);
++  for (let i = 0; i < OFFER_TAG.length; i++) tag[i] = OFFER_TAG.charCodeAt(i);
++  const t = sha256bytes(tag);
++  const m = new Uint8Array(64 + 68);
++  m.set(t, 0); m.set(t, 32); m.set(roundId, 64); m.set(entryId, 96);
++  m[128] = (slot >>> 24) & 255; m[129] = (slot >>> 16) & 255; m[130] = (slot >>> 8) & 255; m[131] = slot & 255;
++  const h = sha256bytes(m);
++  let r = 0;
++  for (let i = 0; i < 32; i++) r = (r * 256 + h[i]) % count;
++  return r;
++}
++
+ // ---- rules/ground.js
+ // The ground under the truck.
+ //
+@@ -7974,6 +8002,7 @@ return { init: init, step: step, hash: hash, runScore: runScore,
+          chartView: chartView, chartPoint: chartPoint, CH_WORDS: CH_WORDS,
+          candleView: candleView, CV_TOTAL: CV_TOTAL, terrainAt: terrainAt,
+          submitLoad: submitLoad, heatOf: heatOf, cargoOf: cargoOf, roomFor: roomFor, bedFill: bedFill,
++         offerIndex: offerIndex, OFFER_SLOTS: OFFER_SLOTS,
+          create: create, WORDS: WORDS };
+ })();
+ if (typeof module !== "undefined") module.exports = NEXTBLOCK_CORE;
+diff --git a/dist/replay-core-8cbc74b2.js b/dist/replay-core-383aa469.js
+similarity index 99%
+copy from dist/replay-core-8cbc74b2.js
+copy to dist/replay-core-383aa469.js
+index 53a02e4..8a3f5d6 100644
+--- a/dist/replay-core-8cbc74b2.js
++++ b/dist/replay-core-383aa469.js
+@@ -827,6 +827,7 @@ function atan2(y, x) {
+ // a different order produce different worlds, so every rule module takes an
+ // explicit stream handle and never reaches for a global.
+ 
++
+ const rotl = (x, k) => ((x << k) | (x >>> (32 - k))) | 0;
+ 
+ /** Advances the state and returns a uint32. `s` is an Int32Array(4). */
+@@ -926,6 +927,33 @@ function seed(s, word) {
+   return s;
+ }
+ 
++/**
++ * THE PARCEL OFFERED AT A PICKUP SLOT (the Arena's spec ruling of 2026-11-12: Tick Tock's parcels come from the round's beacon
++ * block, and the offer is drawn, not picked). A round on this core plays the non-coinbase transactions of its beacon block,
++ * sorted by txid - its snapshot, which every seat derives from its own bitcoind - and the parcel offered at an entry's pickup
++ * slot is entries[H(round_id || entry_id || slot) mod count]: H the tagged hash "ARENA/v1/TickTockOffer", slot a big-endian
++ * u32, the hash read big-endian. The seats hold every load to this draw (the Arena's arena-protocol ticktock-snapshot.js
++ * offerIndex, the same rule); it is in the core so the page and a replay draw with the core the round names.
++ */
++const OFFER_SLOTS = 40;
++const OFFER_TAG = 'ARENA/v1/TickTockOffer';
++
++function offerIndex(roundId, entryId, slot, count) {
++  if (roundId.length !== 32 || entryId.length !== 32) throw new Error('an offer is drawn for a 32-byte round id and entry id');
++  if ((slot | 0) !== slot || slot < 0 || slot >= OFFER_SLOTS) throw new Error('a pickup slot is 0 .. 39');
++  if ((count | 0) !== count || count < 1) throw new Error('nothing is drawn from an empty snapshot');
++  const tag = new Uint8Array(OFFER_TAG.length);
++  for (let i = 0; i < OFFER_TAG.length; i++) tag[i] = OFFER_TAG.charCodeAt(i);
++  const t = sha256bytes(tag);
++  const m = new Uint8Array(64 + 68);
++  m.set(t, 0); m.set(t, 32); m.set(roundId, 64); m.set(entryId, 96);
++  m[128] = (slot >>> 24) & 255; m[129] = (slot >>> 16) & 255; m[130] = (slot >>> 8) & 255; m[131] = slot & 255;
++  const h = sha256bytes(m);
++  let r = 0;
++  for (let i = 0; i < 32; i++) r = (r * 256 + h[i]) % count;
++  return r;
++}
++
+ // ---- rules/ground.js
+ // The ground under the truck.
+ //
+@@ -7788,6 +7816,7 @@ const runScore = (st) =>
+ 
+ 
+ 
++
+ const CORE = Object.freeze({
+   name: 'btc-logistics truck',
+   /** A run's length in ticks when its round names none (0.8's mission duration), and the longest a round may name. */
+@@ -7796,6 +7825,15 @@ const CORE = Object.freeze({
+   runTicksFits: (t) => runTicksIsValid(t),
+   /** Input words per tick: throttle, steer, brake, handbrake, practice. */
+   INPUT_WORDS: 5,
++  /**
++   * THE PARCELS ARE DRAWN (the Arena's spec ruling of 2026-11-12): a round on this core plays its beacon block's transactions, and the
++   * parcel at an entry's pickup slot is the snapshot's entry at offerIndex(round_id, entry_id, slot, count). A load names its
++   * parcels by [slot, txid] beside its fee and room (the fifth element, which the run itself does not read: the seats hold it to
++   * the draw before it is stored). The page and a replay draw the offer with this.
++   */
++  PARCELS_DRAWN: true,
++  OFFER_SLOTS,
++  offerIndex,
+   /** A run from its seed word, ending after its round's run length (blockTicks; RUN_TICKS when none is named). */
+   /** ...and the unlocks of the items its entry plays with: the larger truck, else the standard one (items.js). */
+   start: (seedWord, config, { runTicks, items, slot } = {}) => init(seedWord, { ...(runTicks === undefined ? {} : { runTicks }), ...(Array.isArray(items) && items.length ? { items } : {}), ...(slot === undefined ? {} : { slot }) }),
+diff --git a/frozen/8cbc74b2/adapter.js b/frozen/383aa469/adapter.js
+similarity index 87%
+copy from frozen/8cbc74b2/adapter.js
+copy to frozen/383aa469/adapter.js
+index 6a7b3c8..aba72a5 100644
+--- a/frozen/8cbc74b2/adapter.js
++++ b/frozen/383aa469/adapter.js
+@@ -8,6 +8,7 @@
+ import { init, step, submitLiquidation, submitLoad, submitSample, submitTape, runScore } from './sim.js';
+ import { hash, O_SCORE, S_STATE, S_HEAT, O_TRUCK, T_X, T_Z, T_HEADING } from './state.js';
+ import { RUN_LIVE, RUN_DELIVERED, BLOCK_TICKS, runTicksIsValid } from './rules/gate.js';
++import { offerIndex, OFFER_SLOTS } from './rng.js';
+ 
+ export const CORE = Object.freeze({
+   name: 'btc-logistics truck',
+@@ -17,6 +18,15 @@ export const CORE = Object.freeze({
+   runTicksFits: (t) => runTicksIsValid(t),
+   /** Input words per tick: throttle, steer, brake, handbrake, practice. */
+   INPUT_WORDS: 5,
++  /**
++   * THE PARCELS ARE DRAWN (the Arena's spec ruling of 2026-11-12): a round on this core plays its beacon block's transactions, and the
++   * parcel at an entry's pickup slot is the snapshot's entry at offerIndex(round_id, entry_id, slot, count). A load names its
++   * parcels by [slot, txid] beside its fee and room (the fifth element, which the run itself does not read: the seats hold it to
++   * the draw before it is stored). The page and a replay draw the offer with this.
++   */
++  PARCELS_DRAWN: true,
++  OFFER_SLOTS,
++  offerIndex,
+   /** A run from its seed word, ending after its round's run length (blockTicks; RUN_TICKS when none is named). */
+   /** ...and the unlocks of the items its entry plays with: the larger truck, else the standard one (items.js). */
+   start: (seedWord, config, { runTicks, items, slot } = {}) => init(seedWord, { ...(runTicks === undefined ? {} : { runTicks }), ...(Array.isArray(items) && items.length ? { items } : {}), ...(slot === undefined ? {} : { slot }) }),
+diff --git a/frozen/0847c99f/chart.js b/frozen/383aa469/chart.js
+similarity index 100%
+copy from frozen/0847c99f/chart.js
+copy to frozen/383aa469/chart.js
+diff --git a/frozen/0847c99f/fixed.js b/frozen/383aa469/fixed.js
+similarity index 100%
+copy from frozen/0847c99f/fixed.js
+copy to frozen/383aa469/fixed.js
+diff --git a/frozen/0847c99f/index.js b/frozen/383aa469/index.js
+similarity index 100%
+copy from frozen/0847c99f/index.js
+copy to frozen/383aa469/index.js
+diff --git a/frozen/0847c99f/items.js b/frozen/383aa469/items.js
+similarity index 100%
+copy from frozen/0847c99f/items.js
+copy to frozen/383aa469/items.js
+diff --git a/frozen/8cbc74b2/rng.js b/frozen/383aa469/rng.js
+similarity index 69%
+copy from frozen/8cbc74b2/rng.js
+copy to frozen/383aa469/rng.js
+index 17de8be..bd45b21 100644
+--- a/frozen/8cbc74b2/rng.js
++++ b/frozen/383aa469/rng.js
+@@ -5,6 +5,8 @@
+ // a different order produce different worlds, so every rule module takes an
+ // explicit stream handle and never reaches for a global.
+ 
++import { sha256bytes } from './sha256.js';
++
+ const rotl = (x, k) => ((x << k) | (x >>> (32 - k))) | 0;
+ 
+ /** Advances the state and returns a uint32. `s` is an Int32Array(4). */
+@@ -103,3 +105,30 @@ export function seed(s, word) {
+   if ((s[0] | s[1] | s[2] | s[3]) === 0) s[0] = 1;
+   return s;
+ }
++
++/**
++ * THE PARCEL OFFERED AT A PICKUP SLOT (the Arena's spec ruling of 2026-11-12: Tick Tock's parcels come from the round's beacon
++ * block, and the offer is drawn, not picked). A round on this core plays the non-coinbase transactions of its beacon block,
++ * sorted by txid - its snapshot, which every seat derives from its own bitcoind - and the parcel offered at an entry's pickup
++ * slot is entries[H(round_id || entry_id || slot) mod count]: H the tagged hash "ARENA/v1/TickTockOffer", slot a big-endian
++ * u32, the hash read big-endian. The seats hold every load to this draw (the Arena's arena-protocol ticktock-snapshot.js
++ * offerIndex, the same rule); it is in the core so the page and a replay draw with the core the round names.
++ */
++export const OFFER_SLOTS = 40;
++const OFFER_TAG = 'ARENA/v1/TickTockOffer';
++
++export function offerIndex(roundId, entryId, slot, count) {
++  if (roundId.length !== 32 || entryId.length !== 32) throw new Error('an offer is drawn for a 32-byte round id and entry id');
++  if ((slot | 0) !== slot || slot < 0 || slot >= OFFER_SLOTS) throw new Error('a pickup slot is 0 .. 39');
++  if ((count | 0) !== count || count < 1) throw new Error('nothing is drawn from an empty snapshot');
++  const tag = new Uint8Array(OFFER_TAG.length);
++  for (let i = 0; i < OFFER_TAG.length; i++) tag[i] = OFFER_TAG.charCodeAt(i);
++  const t = sha256bytes(tag);
++  const m = new Uint8Array(64 + 68);
++  m.set(t, 0); m.set(t, 32); m.set(roundId, 64); m.set(entryId, 96);
++  m[128] = (slot >>> 24) & 255; m[129] = (slot >>> 16) & 255; m[130] = (slot >>> 8) & 255; m[131] = slot & 255;
++  const h = sha256bytes(m);
++  let r = 0;
++  for (let i = 0; i < 32; i++) r = (r * 256 + h[i]) % count;
++  return r;
++}
+diff --git a/frozen/0847c99f/rules/air.js b/frozen/383aa469/rules/air.js
+similarity index 100%
+copy from frozen/0847c99f/rules/air.js
+copy to frozen/383aa469/rules/air.js
+diff --git a/frozen/0847c99f/rules/army.js b/frozen/383aa469/rules/army.js
+similarity index 100%
+copy from frozen/0847c99f/rules/army.js
+copy to frozen/383aa469/rules/army.js
+diff --git a/frozen/0847c99f/rules/candles.js b/frozen/383aa469/rules/candles.js
+similarity index 100%
+copy from frozen/0847c99f/rules/candles.js
+copy to frozen/383aa469/rules/candles.js
+diff --git a/frozen/0847c99f/rules/cargo.js b/frozen/383aa469/rules/cargo.js
+similarity index 100%
+copy from frozen/0847c99f/rules/cargo.js
+copy to frozen/383aa469/rules/cargo.js
+diff --git a/frozen/0847c99f/rules/frontline.js b/frozen/383aa469/rules/frontline.js
+similarity index 100%
+copy from frozen/0847c99f/rules/frontline.js
+copy to frozen/383aa469/rules/frontline.js
+diff --git a/frozen/0847c99f/rules/gate.js b/frozen/383aa469/rules/gate.js
+similarity index 100%
+copy from frozen/0847c99f/rules/gate.js
+copy to frozen/383aa469/rules/gate.js
+diff --git a/frozen/0847c99f/rules/ground.js b/frozen/383aa469/rules/ground.js
+similarity index 100%
+copy from frozen/0847c99f/rules/ground.js
+copy to frozen/383aa469/rules/ground.js
+diff --git a/frozen/0847c99f/rules/map.js b/frozen/383aa469/rules/map.js
+similarity index 100%
+copy from frozen/0847c99f/rules/map.js
+copy to frozen/383aa469/rules/map.js
+diff --git a/frozen/0847c99f/rules/noise.js b/frozen/383aa469/rules/noise.js
+similarity index 100%
+copy from frozen/0847c99f/rules/noise.js
+copy to frozen/383aa469/rules/noise.js
+diff --git a/frozen/0847c99f/rules/score.js b/frozen/383aa469/rules/score.js
+similarity index 100%
+copy from frozen/0847c99f/rules/score.js
+copy to frozen/383aa469/rules/score.js
+diff --git a/frozen/0847c99f/rules/solids.js b/frozen/383aa469/rules/solids.js
+similarity index 100%
+copy from frozen/0847c99f/rules/solids.js
+copy to frozen/383aa469/rules/solids.js
+diff --git a/frozen/0847c99f/rules/tactics.js b/frozen/383aa469/rules/tactics.js
+similarity index 100%
+copy from frozen/0847c99f/rules/tactics.js
+copy to frozen/383aa469/rules/tactics.js
+diff --git a/frozen/0847c99f/rules/terrain.js b/frozen/383aa469/rules/terrain.js
+similarity index 100%
+copy from frozen/0847c99f/rules/terrain.js
+copy to frozen/383aa469/rules/terrain.js
+diff --git a/frozen/0847c99f/rules/vehicle.js b/frozen/383aa469/rules/vehicle.js
+similarity index 100%
+copy from frozen/0847c99f/rules/vehicle.js
+copy to frozen/383aa469/rules/vehicle.js
+diff --git a/frozen/0847c99f/sha256.js b/frozen/383aa469/sha256.js
+similarity index 100%
+copy from frozen/0847c99f/sha256.js
+copy to frozen/383aa469/sha256.js
+diff --git a/frozen/8cbc74b2/sim.js b/frozen/383aa469/sim.js
+similarity index 100%
+copy from frozen/8cbc74b2/sim.js
+copy to frozen/383aa469/sim.js
+diff --git a/frozen/0847c99f/state.js b/frozen/383aa469/state.js
+similarity index 100%
+copy from frozen/0847c99f/state.js
+copy to frozen/383aa469/state.js
+diff --git a/frozen/0847c99f/tables.js b/frozen/383aa469/tables.js
+similarity index 100%
+copy from frozen/0847c99f/tables.js
+copy to frozen/383aa469/tables.js
+diff --git a/frozen/0847c99f/tick.js b/frozen/383aa469/tick.js
+similarity index 100%
+copy from frozen/0847c99f/tick.js
+copy to frozen/383aa469/tick.js
+diff --git a/frozen/0847c99f/trig.js b/frozen/383aa469/trig.js
+similarity index 100%
+copy from frozen/0847c99f/trig.js
+copy to frozen/383aa469/trig.js
+diff --git a/plugin/clients.json b/plugin/clients.json
+index 9bcc0c9..03c5c81 100644
+--- a/plugin/clients.json
++++ b/plugin/clients.json
+@@ -1,5 +1,5 @@
+ {
+- "about": "The client files Next Block's manifests pin, by version: the app's own list; the Arena's packages/arena-client/known-good-clients.json carries the same (games.nextblock), checked equal by the Arena's tests. pinned: versions 1-4's bundles and versions 1-5's mark. pinnedV5: the browser bundles versions 5 and 6 name, the cleaned cores a5c5766a and 0847c99f. markV6: the game's mark version 6 names - the square icon and the wordmark with their comments cleaned, the other files as before. pinnedV7: the browser bundle version 7 names, core 8cbc74b2.",
++ "about": "The client files Next Block's manifests pin, by version: the app's own list; the Arena's packages/arena-client/known-good-clients.json carries the same (games.nextblock), checked equal by the Arena's tests. pinned: versions 1-4's bundles and versions 1-5's mark. pinnedV5: the browser bundles versions 5 and 6 name, the cleaned cores a5c5766a and 0847c99f. markV6: the game's mark version 6 names - the square icon and the wordmark with their comments cleaned, the other files as before. pinnedV7: the browser bundle version 7 names, core 8cbc74b2. pinnedV8: the browser bundle version 8 names, core 383aa469 (parcels drawn from the beacon block).",
+  "pinned": {
+   "blwp-core.js": [
+    "f4f71ab9773701f8a321fe40d98163d8b704ae22780b879165c27a846297c203",
+@@ -106,5 +106,10 @@
+   "core-8cbc74b2.js": [
+    "35889f637daf8f829118d751f65e626bfe58464d8a3903e6780e62833b8d9aec"
+   ]
++ },
++ "pinnedV8": {
++  "core-383aa469.js": [
++   "4fc4f74c021d83055c4848fdb5063e7788392cd229c9f3d77f7d74cc71569c39"
++  ]
+  }
+ }
+diff --git a/plugin/truck-cores.js b/plugin/truck-cores.js
+index 95b1443..6bd80a8 100644
+--- a/plugin/truck-cores.js
++++ b/plugin/truck-cores.js
+@@ -233,6 +233,27 @@ export const TRUCK_8CBC = withAdapter({
+   replayFile: new URL('../dist/replay-core-8cbc74b2.js', import.meta.url),
+ }, '../frozen/8cbc74b2/adapter.js');
+ 
++/**
++ * 383aa469, THE PARCELS DRAWN FROM THE ROUND'S BEACON BLOCK (the Arena's spec ruling of kanban #2571, built in #2574; feedback #011:
++ * the bed was the player's own word): 8cbc74b2, hash for hash in every run, and the draw - rng.js offerIndex, the parcel offered at
++ * an entry's pickup slot from the snapshot of the beacon block's transactions (arena-protocol ticktock-snapshot.js, the same rule).
++ * `parcelsDrawn` tells a seat to hold every load of a round on this core to the draw: each parcel the txid drawn for its slot, the
++ * load's fee and room the parcels' sums, no BTC. Rounds on every other core play exactly as before. Only manifest version 8
++ * names it (tools/sign-manifest-v8.mjs); its page bundle exports offerIndex (ARENA_BUNDLE_OFFERS=1).
++ */
++export const TRUCK_383A_HASH = '383aa4697f4c962a10327e34ab1c0e5c8df515af316eb857810741844b0606e2';
++const FROZEN_383A = fileURLToPath(new URL('../frozen/383aa469', import.meta.url));
++if (coreHashHex(FROZEN_383A) !== TRUCK_383A_HASH) throw new Error(`core/frozen/383aa469 hashes to ${coreHashHex(FROZEN_383A)}, not the core it keeps`);
++export const TRUCK_383A = withAdapter({
++  name: `${TRUCK_NAME} (383aa469, parcels drawn from the beacon block)`,
++  hash: TRUCK_383A_HASH,
++  url: new URL('../frozen/383aa469/adapter.js', import.meta.url).href,
++  root: new URL('../frozen/383aa469/', import.meta.url).href,
++  configs: new Map([[TRUCK_CURRENT_CONFIG, CURRENT_CONFIG], [TRUCK_V3_CONFIG, {}]]),
++  replayFile: new URL('../dist/replay-core-383aa469.js', import.meta.url),
++  parcelsDrawn: true,
++}, '../frozen/383aa469/adapter.js');
++
+ /** Every core nextblock's rounds are replayed by, by hash: 68e2b3d6 (the truck versions 1-4 name) and the four kept installed beside it. */
+ export const NEXTBLOCK_CORES = new Map([[TRUCK_68E2_HASH, TRUCK_68E2], [TRUCK_7E21_HASH, TRUCK_7E21], [DE2F_HASH, TRUCK_DE2F],
+   [TRUCK_2069_HASH, TRUCK_2069], [TRUCK_BEFORE_FORK_HASH, TRUCK_BEFORE_FORK]]);
+@@ -242,6 +263,8 @@ export const NEXTBLOCK_CORES_V3 = new Map([...NEXTBLOCK_CORES, [TRUCK_F0CC_HASH,
+ export const NEXTBLOCK_CORES_V5 = new Map([[TRUCK_A5C5_HASH, TRUCK_A5C5], [TRUCK_0847_HASH, TRUCK_0847]]);
+ /** THE CORE MANIFEST VERSION 7 NAMES: rounds of versions 1-6 stay on their versions' cores. */
+ export const NEXTBLOCK_CORES_V7 = new Map([[TRUCK_8CBC_HASH, TRUCK_8CBC]]);
++/** THE CORE MANIFEST VERSION 8 NAMES (kanban #2571 ruling): the parcels drawn; rounds of versions 1-7 stay on their versions' cores. */
++export const NEXTBLOCK_CORES_V8 = new Map([[TRUCK_383A_HASH, TRUCK_383A]]);
+ 
+ /**
+  * NEXTBLOCK'S MANIFEST BODY, from this registration (§0A.3): every core above with the configs it plays, a run of at
+diff --git a/tools/bundle.js b/tools/bundle.js
+index c5c2546..90a1687 100644
+--- a/tools/bundle.js
++++ b/tools/bundle.js
+@@ -48,6 +48,9 @@ out += '         restart: restart, frontAt: frontAt, submitLiquidation: submitLi
+ out += '         chartView: chartView, chartPoint: chartPoint, CH_WORDS: CH_WORDS,\n';
+ out += '         candleView: candleView, CV_TOTAL: CV_TOTAL, terrainAt: terrainAt,\n';
+ out += '         submitLoad: submitLoad, heatOf: heatOf, cargoOf: cargoOf, roomFor: roomFor, bedFill: bedFill,\n';
++// THE OFFER DRAW (the Arena's kanban #2571 ruling): a core that draws its parcels hands the page its offerIndex - ARENA_BUNDLE_OFFERS=1,
++// so every bundle built before keeps its bytes
++if (process.env.ARENA_BUNDLE_OFFERS === '1') out += '         offerIndex: offerIndex, OFFER_SLOTS: OFFER_SLOTS,\n';
+ out += '         create: create, WORDS: WORDS };\n})();\n';
+ out += 'if (typeof module !== "undefined") module.exports = ' + GLOBAL + ';\n';
+ 
+diff --git a/tools/sign-manifest-v8.mjs b/tools/sign-manifest-v8.mjs
+new file mode 100644
+index 0000000..e1d725f
+--- /dev/null
++++ b/tools/sign-manifest-v8.mjs
+@@ -0,0 +1,71 @@
++// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
++// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
++// SIGNS NEXTBLOCK'S MANIFEST VERSION 8: version 7 in every term but its core and that core's browser bundle - 383aa469,
++// 8cbc74b2 with its parcels drawn from the round's beacon block (the Arena's kanban #2571 ruling; truck-cores.js NEXTBLOCK_CORES_V8,
++// clients.json pinnedV8) - beside the game's mark. Its parent is version 7. Writes plugin/nextblock-v8.js and plugin/known-v8.js, both generated, public bytes only.
++//   node tools/sign-manifest-v8.mjs <dev dir holding game-dev.pkcs8>
++import { readFileSync, writeFileSync } from 'node:fs';
++import { join } from 'node:path';
++import { fileURLToPath } from 'node:url';
++import { MANIFEST_V7, GAME_ID_V7 } from '../plugin/nextblock-v7.js';
++import { NEXTBLOCK_CORES_V8 } from '../plugin/truck-cores.js';
++import { gameDevKey, signManifest } from 'arena-sdk/manifest-sign';
++import { encodeManifest, gameIdOf, manifestStands } from 'arena-sdk/manifest';
++import { toHex, fromHex } from 'arena-sdk/hash';
++import { verifyEd25519 } from 'arena-sdk/ed25519';
++
++const sorted = (hs) => [...hs].sort();
++
++/** Version 7's terms, unsigned: what the developer's key signs, and all a test can hold it to before it is signed. */
++export function manifestV8Body() {
++  const CLIENTS = JSON.parse(readFileSync(new URL('../plugin/clients.json', import.meta.url), 'utf8'));
++  const { signature, ...v6body } = MANIFEST_V7;
++  void signature;
++  return {
++    ...v6body,
++    version: MANIFEST_V7.version + 1,
++    parentManifestId: GAME_ID_V7,
++    cores: sorted([...NEXTBLOCK_CORES_V8.keys()]).map((h) => ({ hash: fromHex(h), configs: sorted([...NEXTBLOCK_CORES_V8.get(h).configs.keys()]).map(fromHex) })),
++    clients: sorted([...Object.values(CLIENTS.pinnedV8).flat(), ...Object.values(CLIENTS.markV6).flat()]).map(fromHex),
++  };
++}
++
++if (process.argv[1] === fileURLToPath(import.meta.url)) {
++  const [dir] = process.argv.slice(2);
++  if (!dir) { console.error('usage: node sign-manifest-v8.mjs <dev dir holding game-dev.pkcs8>'); process.exit(2); }
++  const dev = gameDevKey(readFileSync(join(dir, 'game-dev.pkcs8')));
++  if (toHex(dev.pubkey) !== toHex(MANIFEST_V7.gameDevPubkey)) throw new Error(`that key is not nextblock's developer key ${toHex(MANIFEST_V7.gameDevPubkey).slice(0, 16)}`);
++  const body = manifestV8Body();
++  const manifest = signManifest(body, dev);
++  const stands = manifestStands(manifest, { verify: verifyEd25519, parentOf: (id) => (toHex(id) === toHex(GAME_ID_V7) ? MANIFEST_V7 : null) });
++  if (!stands.ok) throw new Error(stands.why);
++  const id = toHex(gameIdOf(manifest));
++  writeFileSync(new URL('../plugin/nextblock-v8.js', import.meta.url), `// GENERATED by tools/sign-manifest-v8.mjs with the dev client's signer - do not edit by hand. PUBLIC BYTES ONLY:
++// nextblock's GameManifest version 8: version 7 (${toHex(GAME_ID_V7)}) in every term but its core and that core's bundle - 383aa469,
++// the parcels drawn from the round's beacon block. Signed by its developer key ${toHex(dev.pubkey)}; a node verifies it.
++// game_id ${id}
++import { GAME as V1 } from './nextblock.js';
++import { NEXTBLOCK_CORES_V8 } from './truck-cores.js';
++import { decodeManifest, gameIdOf } from 'arena-sdk/manifest';
++import { fromHex } from 'arena-sdk/hash';
++
++export const MANIFEST_V8_HEX = '${toHex(encodeManifest(manifest))}';
++export const MANIFEST_V8 = decodeManifest(fromHex(MANIFEST_V8_HEX));
++export const GAME_ID_V8 = gameIdOf(MANIFEST_V8);
++/** What a launcher loads from this module (ARENA_APPS): the registration. */
++export const GAME = Object.freeze({ ...V1, manifest: MANIFEST_V8, gameId: GAME_ID_V8, cores: NEXTBLOCK_CORES_V8 });
++`);
++  writeFileSync(new URL('../plugin/known-v8.js', import.meta.url), `// GENERATED by tools/sign-manifest-v8.mjs. WHAT A CLIENT LISTS OF NEXTBLOCK VERSION 8: its signed bytes and the configs it plays as one world
++// per round, as known-v4.js lists version 4.
++//
++//   node packages/arena-protocol/tools/known-games.js packages/nextblock/plugin/known-v8.js
++import { MANIFEST_V8_HEX } from './nextblock-v8.js';
++import { NEXTBLOCK_CORES_V8 } from './truck-cores.js';
++
++export const KNOWN_GAME = Object.freeze({
++  manifestHex: MANIFEST_V8_HEX,
++  sharedWorld: [...new Set([...NEXTBLOCK_CORES_V8.values()].flatMap((c) => [...c.configs].filter(([, cfg]) => cfg && cfg.worldShared).map(([h]) => h)))],
++});
++`);
++  console.log(`nextblock v${body.version}: parent ${toHex(GAME_ID_V7).slice(0, 16)}, ${body.cores.length} cores, ${body.clients.length} clients, game_id ${id}`);
++}

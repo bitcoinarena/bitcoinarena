@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { toHex } from '../src/hash.js';
-import { encodeInputBatch, decodeInputBatch, batchId, batchTicks, INPUT_WORDS, MAX_BATCH_TICKS, MAX_ATTEST_SIGS, MAX_ATTESTED_SAMPLES, MAX_INPUT_BATCH_BYTES } from '../src/batch.js';
+import { encodeInputBatch, decodeInputBatch, batchId, batchTicks, INPUT_WORDS, MAX_BATCH_TICKS, MAX_ATTEST_SIGS, MAX_ATTESTED_SAMPLES, MAX_INPUT_BATCH_BYTES, MAX_BATCH_PARCELS } from '../src/batch.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const sample = () => ({
@@ -117,7 +117,8 @@ test('the ceiling the encoder sets is the one the transport is built on', () => 
     roundId: b32(7), entryId: b32(9), previousHash: new Uint8Array(32), firstTick: 0,
     ticks: Array.from({ length: MAX_BATCH_TICKS }, () => [65536, 0, 0, 0, 0]),
     liquidations: Array.from({ length: MAX_BATCH_TICKS }, (_, i) => [i, 1]),
-    loads: Array.from({ length: MAX_BATCH_TICKS }, (_, i) => [i, 1, 0, 5]),
+    // and the parcels loads name (kanban #2574), MAX_BATCH_PARCELS of them
+    loads: Array.from({ length: MAX_BATCH_TICKS }, (_, i) => (i < MAX_BATCH_PARCELS ? [i, 1, 0, 5, [[0, b32(1)]]] : [i, 1, 0, 5])),
     samples: Array.from({ length: MAX_BATCH_TICKS }, (_, i) => [i, 1]),
     tapes: [[0, ...Array.from({ length: 64 }, () => 1)]],
     // at their largest the attested prices are protocol 5's: nine signed readings each, their own prices with them
@@ -132,7 +133,8 @@ test('the ceiling the encoder sets is the one the transport is built on', () => 
   // + 2 + 65535 x 8 for the price samples and + 2 + 260 for the one live tape a batch may carry (2026-09-17);
   // + 2 + 65535 x 8 for the rooms; + 2 + 256 x 875 + 1127 for the attested samples and tape, nine signatures each;
   // protocol 5's readings carry their own cents (+4 each) and a tape reading its 64 prices (+256 each)
-  assert.equal(MAX_INPUT_BATCH_BYTES, 2621509 + 2 + MAX_BATCH_TICKS * 8 + 2 + 260 + 2 + MAX_BATCH_TICKS * 8 + 2 + 256 * (875 + 36) + 1127 + 9 * 256);
+  // + 2 + 1024 x 38 for the parcels (tick, slot, txid; kanban #2574)
+  assert.equal(MAX_INPUT_BATCH_BYTES, 2621509 + 2 + MAX_BATCH_TICKS * 8 + 2 + 260 + 2 + MAX_BATCH_TICKS * 8 + 2 + 256 * (875 + 36) + 1127 + 9 * 256 + 2 + 1024 * 38);
 });
 
 test('the committee\'s signatures on a sample and the tape: a fourth optional tail; a batch without them keeps its bytes', () => {

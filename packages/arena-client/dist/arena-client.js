@@ -1128,6 +1128,10 @@ const TAG = {
   // ONE SIGNER NODE'S SIGNED WORD ABOUT A ROUND IN ITS LOBBY (M3.3-34): the page
   // offers Join only when the round's threshold of its own signer nodes signed it.
   lobbyListing: 'ARENA/v1/LobbyListing',
+  // TICK TOCK'S PARCELS FROM THE ROUND'S BEACON BLOCK (kanban #2571 ruling, #2574; ticktock-snapshot.js): the snapshot of the
+  // block's transactions every seat derives from its own bitcoind, and the draw of the parcel offered at an entry's pickup slot
+  ticktockSnapshot: 'ARENA/v1/TickTockSnapshot',
+  ticktockOffer: 'ARENA/v1/TickTockOffer',
   // A BOND OF THE NETWORK BEFORE THIS ONE, CARRIED BY ITS OPERATOR (§27A.8.3, spec 0A.9): what the bond's
   // node key signs to say "this bond serves network_id too". Its own tag, so a re-affirmation is never a vote or an update.
   reaffirmation: 'ARENA/v1/Reaffirmation',
@@ -3056,6 +3060,8 @@ const TAPE_PRICES = 64;
  * bytes; one sample a tick and one tape a batch count both kinds.
  */
 const MAX_ATTEST_SIGS = 9;
+/** The most parcels one batch's loads name (kanban #2574): an entry is offered 40 slots, a load is at most one a tick. */
+const MAX_BATCH_PARCELS = 1024;
 const MAX_ATTESTED_SAMPLES = 256;
 /** How many words of input a tick carries. The core's `step` arity. */
 const INPUT_WORDS = 5;
@@ -3107,13 +3113,37 @@ function encodeInputBatch(b) {
   if (new Set(sampleTicks).size !== sampleTicks.length || sampleTicks.length > MAX_ATTESTED_SAMPLES || attests.filter((a) => a[1] === 1 || a[1] === 3).length > 1
     || attests.some((a) => a[1] !== 0 && a[1] !== 1 && a[1] !== 2 && a[1] !== 3))
     throw new Error(`a batch carries one attested sample a tick (at most ${MAX_ATTESTED_SAMPLES}) and at most one attested tape`);
-  if (samples.length || tapes.length || rooms.length || attests.length) w.vec(samples, (l, ww) => { ww.u32(l[0]); ww.i32(l[1]); });
-  if (tapes.length || rooms.length || attests.length) w.vec(tapes, (l, ww) => {
+  // THE PARCELS A LOAD NAMES (kanban #2571 ruling, #2574; ticktock-snapshot.js): `[tick, slot, txid]` for each parcel of a load
+  // whose fifth element lists them ([[slot, txid], ...]), sorted by tick then slot - the drawn offer the seat checks. A fifth
+  // optional tail, written only when a load names a parcel, so every batch before it keeps its bytes and its id; the four tails
+  // before it are written (empty) when it is.
+  const parcels = [];
+  for (const l of loads) {
+    if (l.length <= 4 || l[4] === undefined || l[4] === null) continue;
+    if (!Array.isArray(l[4])) throw new Error('a load names its parcels as a list');
+    if (l[3] === undefined || l[3] === null) throw new Error('a load that names parcels carries its room');
+    for (const p of l[4]) {
+      const [slot, txid] = Array.isArray(p) ? p : [];
+      if (!Number.isInteger(slot) || slot < 0 || slot > 65535) throw new Error('a parcel names its pickup slot (u16)');
+      const t = typeof txid === 'string' && /^[0-9a-f]{64}$/i.test(txid) ? fromHex(txid.toLowerCase()) : txid;
+      if (!(t instanceof Uint8Array) || t.length !== 32) throw new Error('a parcel names its 32-byte txid');
+      parcels.push([l[0], slot, t]);
+    }
+  }
+  parcels.sort((x, y) => x[0] - y[0] || x[1] - y[1]);
+  if (parcels.length > MAX_BATCH_PARCELS) throw new Error(`a batch's loads name at most ${MAX_BATCH_PARCELS} parcels`);
+  for (let i = 1; i < parcels.length; i++)
+    if (parcels[i][0] === parcels[i - 1][0] && parcels[i][1] === parcels[i - 1][1]) throw new Error('a load names each pickup slot once');
+  if (parcels.length && new Set(loads.filter((l) => l.length > 4 && Array.isArray(l[4]) && l[4].length).map((l) => l[0])).size
+    !== loads.filter((l) => l.length > 4 && Array.isArray(l[4]) && l[4].length).length) throw new Error('a batch carries one load a tick that names parcels');
+  const anyParcels = parcels.length > 0;
+  if (samples.length || tapes.length || rooms.length || attests.length || anyParcels) w.vec(samples, (l, ww) => { ww.u32(l[0]); ww.i32(l[1]); });
+  if (tapes.length || rooms.length || attests.length || anyParcels) w.vec(tapes, (l, ww) => {
     if (l.length !== 1 + TAPE_PRICES) throw new Error(`a tape carries ${TAPE_PRICES} prices`);
     ww.u32(l[0]); for (let i = 1; i <= TAPE_PRICES; i++) ww.i32(l[i]);
   });
-  if (rooms.length || attests.length) w.vec(rooms, (l, ww) => { ww.u32(l[0]); ww.i32(l[1]); });
-  if (attests.length) w.vec(attests, (a, ww) => {
+  if (rooms.length || attests.length || anyParcels) w.vec(rooms, (l, ww) => { ww.u32(l[0]); ww.i32(l[1]); });
+  if (attests.length || anyParcels) w.vec(attests, (a, ww) => {
     const [tick, kind, cents, sigs] = a;
     const tapeOf = (ps) => { if (!Array.isArray(ps) || ps.length !== TAPE_PRICES) throw new Error(`an attested tape carries ${TAPE_PRICES} prices`); return ps; };
     ww.u32(tick); ww.u8(kind);
@@ -3124,6 +3154,7 @@ function encodeInputBatch(b) {
     // protocol 5: each reading its key, its own price(s) and its signature
     else ww.vec(sigs, (sg, w3) => { w3.bytes32(sg[0]); if (kind === 2) w3.i32(sg[1]); else for (const c of tapeOf(sg[1])) w3.i32(c); w3.bytes(sg[2], 64); });
   });
+  if (anyParcels) w.vec(parcels, (p, ww) => { ww.u32(p[0]); ww.u16(p[1]); ww.bytes32(p[2]); });
   return w.finish();
 }
 
@@ -3161,13 +3192,23 @@ function decodeInputBatch(bytes) {
       if (sigs.length > MAX_ATTEST_SIGS) throw new Error('sigs');
       return [tick, kind, cents, sigs];
     }) : [];
+    var parcels = r.at < bytes.length ? r.vec((rr) => [rr.u32(), rr.u16(), rr.bytes32()]) : [];
   } catch { throw new Error('trailing bytes after the batch'); }
+  if (parcels.length > MAX_BATCH_PARCELS) throw new Error(`a batch's loads name at most ${MAX_BATCH_PARCELS} parcels`);
   if (!b.attests.length) delete b.attests;
   // each room joins the load at its tick; a room with no load there is not a batch this encoder writes
   for (const [at, room] of rooms) {
     const l = b.loads.filter((x) => x[0] === at);
     if (l.length !== 1 || l[0].length > 3) throw new Error('a room names no single load at its tick');
     l[0].push(room);
+  }
+  // each parcel joins the load at its tick, in (tick, slot) order and each slot once: one encoding (kanban #2574)
+  for (let i = 0; i < parcels.length; i++) {
+    const [at, slot, txid] = parcels[i];
+    if (i && (parcels[i - 1][0] > at || (parcels[i - 1][0] === at && parcels[i - 1][1] >= slot))) throw new Error('a batch\'s parcels are in tick and slot order, each slot once');
+    const l = b.loads.filter((x) => x[0] === at);
+    if (l.length !== 1 || l[0].length !== 4) throw new Error('a parcel names no single load with a room at its tick');
+    if (!parcels.slice(i + 1).some((p) => p[0] === at)) l[0].push(parcels.filter((p) => p[0] === at).map((p) => [p[1], p[2]]));
   }
   if (b.tapes.length > 1) throw new Error('a batch carries at most one tape');
   // one encoding per batch: empty optional tails are written as none
@@ -3209,7 +3250,9 @@ const MAX_INPUT_BATCH_BYTES =
   // the attested sample and tape (§11): tick, kind, price(s), and up to MAX_ATTEST_SIGS (key, signature) each - at their
   // largest the protocol-5 kinds 2 and 3, whose readings also carry each seat's own price(s): 100 bytes a sample
   // reading (key, cents, signature), 352 a tape reading (key, 64 prices, signature)
-  + 2 + MAX_ATTESTED_SAMPLES * (4 + 1 + 4 + 2 + MAX_ATTEST_SIGS * 100) + (4 + 1 + 4 * TAPE_PRICES + 2 + MAX_ATTEST_SIGS * (32 + 4 * TAPE_PRICES + 64));
+  + 2 + MAX_ATTESTED_SAMPLES * (4 + 1 + 4 + 2 + MAX_ATTEST_SIGS * 100) + (4 + 1 + 4 * TAPE_PRICES + 2 + MAX_ATTEST_SIGS * (32 + 4 * TAPE_PRICES + 64))
+  // the parcels loads name (kanban #2574): tick, slot, txid - at most MAX_BATCH_PARCELS a batch
+  + 2 + MAX_BATCH_PARCELS * (4 + 2 + 32);
 
 /** The absolute tick numbers a batch covers, in order. */
 const batchTicks = (b) =>
@@ -28113,12 +28156,15 @@ class Client {
    *
    * Refused once the run has ended, like every other outbound thing here.
    */
-  submitLoad(feeSats, btcHundredths, roomUsed) {
+  submitLoad(feeSats, btcHundredths, roomUsed, parcels) {
     if (this.ended || !this.where) return false;
     // AND THE ROOM THE BED TAKES when the page has one (2026-10-04 08:54: the cargo factor C is the bed fill), so
     // the signer nodes' replay sets the same C; a load without one crosses as before
     const room = roomUsed === undefined || roomUsed === null ? [] : [roomUsed | 0];
-    this.loads.push([this.offered, feeSats | 0, btcHundredths | 0, ...room]);
+    // AND, ON A CORE THAT DRAWS ITS PARCELS (kanban #2571 ruling, #2574), THE PARCELS BY [slot, txid]: the ones drawn for this entry's
+    // slots from the round's snapshot (ticktock-hold.js) - each seat takes the load only if they are
+    const named = Array.isArray(parcels) && room.length ? [parcels.map(([slot, txid]) => [slot | 0, txid])] : [];
+    this.loads.push([this.offered, feeSats | 0, btcHundredths | 0, ...room, ...named]);
     return true;
   }
 
@@ -33359,7 +33405,10 @@ const lobbyCount = (n, what) => {
   return n;
 };
 
-function encodeLobbyListing({ roundId, nodePubkey, nowMs, phase, assignedHere, joined, playing } = {}) {
+// A TICK TOCK ROUND THAT DRAWS ITS PARCELS (kanban #2571 ruling, #2574; ticktock-snapshot.js) carries the snapshot_id this seat
+// derived from its own bitcoind: written after the counts only when given, so every other listing is byte for byte what it was
+// and keeps its signature. A client holds a snapshot when five of seven seats sign its id here.
+function encodeLobbyListing({ roundId, nodePubkey, nowMs, phase, assignedHere, joined, playing, snapshotId = null } = {}) {
   if (!lobbyIs32(roundId)) throw new Error('a listing names a 32-byte round id');
   if (!lobbyIs32(nodePubkey)) throw new Error('a listing is signed by a 32-byte node key');
   const at = BigInt(nowMs);
@@ -33374,6 +33423,10 @@ function encodeLobbyListing({ roundId, nodePubkey, nowMs, phase, assignedHere, j
   w.u8(assignedHere ? 1 : 0);
   w.u32(lobbyCount(joined, 'joined'));
   w.u32(lobbyCount(playing, 'playing'));
+  if (snapshotId !== null && snapshotId !== undefined) {
+    if (!lobbyIs32(snapshotId)) throw new Error('a listing names a 32-byte snapshot id');
+    w.bytes32(snapshotId);
+  }
   return w.finish();
 }
 
@@ -33646,7 +33699,9 @@ function lobbySigned(verify, args) {
 function lobbySignedArgs({ id, nodeKey, nowMs, x }) {
   try {
     return { sig: fromHex(String(x.sig)), msg: lobbyListingId({ roundId: fromHex(id), nodePubkey: fromHex(nodeKey), nowMs: BigInt(nowMs),
-      phase: x.phase, assignedHere: !!x.assignedHere, joined: Number(x.joined), playing: Number(x.playing) }), key: fromHex(nodeKey) };
+      phase: x.phase, assignedHere: !!x.assignedHere, joined: Number(x.joined), playing: Number(x.playing),
+      // a round whose core draws its parcels: the snapshot id the seat signed with the rest (kanban #2574)
+      snapshotId: typeof x.snapshot === 'string' && /^[0-9a-f]{64}$/.test(x.snapshot) ? fromHex(x.snapshot) : null }), key: fromHex(nodeKey) };
   } catch { return null; }
 }
 
