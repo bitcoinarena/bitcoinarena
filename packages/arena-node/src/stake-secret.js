@@ -148,6 +148,17 @@ export class StakeSecrets {
         // PERSISTED state (kanban #1151, game-market.js marketStateOf), so no share is handed out before FINAL is stored, nor after a VOID
         const f = marketStateOf(this.round, roundIdBytes, { contract, manifest: found.plugin.manifest, nowMs: this.round.now ? this.round.now() : Date.now() });
         if (!f.final) return { ok: false, why: `no share of an attested round is handed out before its outcome is final (${f.state}${f.finalAtMs ? `, final at ${new Date(f.finalAtMs).toISOString()}` : ''})` };
+        // AN ORDER (comment 1127, the owner's "(a)"): every FILLED order's lock is claimed whole at settlement, winners' too - their
+        // winnings, a seller's proceeds and every unfilled rest are paid out of it; an unfilled order's lock comes back whole.
+        // READ BEFORE THE SCALAR TABLE (kanban #1593): a scalar market's book (§0A.7e) settles by #bookPlan, which claims every filled
+        // order - the pool's scalar table below withheld a filled order it called "won" (the settlement never formed) and handed out an
+        // unfilled order it called "lost". One rule decides both the claim and the share: the table runs only for a pool.
+        const book = this.bookStanding ? this.bookStanding(roundIdBytes, entryIdBytes) : null;
+        if (book && book.book) {
+          if (book.inPending) return { ok: false, why: 'that order is in a batch not decided yet: no share of it is handed out' };
+          if (!book.filled) return { ok: false, why: 'that order never filled: its lock comes back whole, and its stake secret stays sealed' };
+          return { ok: true, outcome: 'FILLED_ORDER' };
+        }
         // A SCALAR MARKET (feature 8): a lock is claimed when its entry gets back less than its net stake - by the table
         // the settlement pays (game-market.js attestedTable over the entries whose stake this seat saw), and only then
         if (isScalar(found.plugin.manifest)) {
@@ -164,14 +175,6 @@ export class StakeSecrets {
         const stored = this.round.entry(entryIdBytes);
         if (!stored) return { ok: false, why: 'this node holds no such entry' };
         const entry = decodeEntryContract(stored);
-        // AN ORDER (comment 1127, the owner's "(a)"): every FILLED order's lock is claimed whole at settlement, winners' too - their
-        // winnings, a seller's proceeds and every unfilled rest are paid out of it; an unfilled order's lock comes back whole
-        const book = this.bookStanding ? this.bookStanding(roundIdBytes, entryIdBytes) : null;
-        if (book && book.book) {
-          if (book.inPending) return { ok: false, why: 'that order is in a batch not decided yet: no share of it is handed out' };
-          if (!book.filled) return { ok: false, why: 'that order never filled: its lock comes back whole, and its stake secret stays sealed' };
-          return { ok: true, outcome: 'FILLED_ORDER' };
-        }
         if (book && book.wrongType) return { ok: false, why: `${book.wrongType}: its stake secret stays sealed` };
         if (entry.pick === f.outcome) return { ok: false, why: 'that entry picked the outcome: its lock is its own, and its stake secret stays sealed' };
         const anyWinner = this.round.entriesOf(roundIdBytes).some(({ entryId, entry: e }) => e.pick === f.outcome && (e.limitPrice === undefined || e.limitPrice === null)
