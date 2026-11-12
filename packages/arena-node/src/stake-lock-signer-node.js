@@ -177,6 +177,19 @@ function namedFirstByAnother(round, entry, entryIdBytes, kind, outpoint) {
   return !!first && !Buffer.from(first).equals(Buffer.from(entryIdBytes));
 }
 
+// A LOCK THIS SEAT SIGNED BACK, OR KEPT TO SIGN BACK, STAKES NOTHING (kanban #1639, state audit 2026-11-12): a round this seat refused flips back to
+// offered by itself (a paused market, the refuse-rounds file, a config not live), and the page posts the same entry with the lock it handed to
+// POST /refused-lock again. That lock was kept as refused here and its forfeit may be signed (fate RETURNING, the player holding a Cancel): taken
+// as a stake it played on a lock its player could take back at any moment, and every seat that signed the forfeit refused to claim it, so the
+// round's settlement never formed. Kept as refused or fated RETURNING here: refused - it comes back by its forfeit while refused, or at its expiry.
+function returnedHere(round, outpoint) {
+  const op = `${Buffer.from(outpoint.txid).toString('hex')}:${outpoint.outIdx}`;
+  if (typeof round.refusedLockAt === 'function' && round.refusedLockAt(op)) return 'that lock was kept at this signer node as the lock of a round it refused, for its return to the player: it stakes no entry (kanban #1639)';
+  const fate = typeof round.lockFate === 'function' ? round.lockFate(op) : null;
+  if (fate && fate.state === 'RETURNING') return 'this signer node signed a forfeit of that lock back to its player: it stakes no entry (kanban #1639)';
+  return null;
+}
+
 // `timing` (kanban #605): an object the caller reads afterwards - ms spent asking the federation, checking gifts and reading the fee gate
 export async function verifyStakeLock({ round, port, entryIdBytes, fields, claimPk, donationRecipients = null, reserveKey = null, split = undefined, timing = {} }) {
   const stored = round.entry(entryIdBytes);
@@ -204,6 +217,7 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
   // void the round's settlement and take a lost stake back, or have one lock claimed twice
   if (otherStakedUnderKey(round, entry, entryIdBytes, 'stake'))
     return { ok: false, why: 'another entry of that player key is already staked in this round: one player key stakes one entry' };
+  { const back = returnedHere(round, outpoint); if (back) return { ok: false, why: back }; }
 
   // THE FEDERATION'S WORD AND THE CONTRACT'S ID ASKED TOGETHER (2026-10-02: "stake/fee verification of 5 of 7
   // confirmations must also be much faster"): two stock-client runs, one after the other before.
@@ -235,7 +249,9 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
     if (now && !Buffer.from(now.entryId).equals(Buffer.from(entryIdBytes)))
       return { ok: false, why: 'that stake lock already stakes another entry in this round: one lock is one entry' };
     if (otherStakedUnderKey(round, entry, entryIdBytes, 'stake'))
-      return { ok: false, why: 'another entry of that player key is already staked in this round: one player key stakes one entry' }; }
+      return { ok: false, why: 'another entry of that player key is already staked in this round: one player key stakes one entry' };
+    const back = returnedHere(round, outpoint);
+    if (back) return { ok: false, why: back }; }
   round.putStakeLock({ entryId: entryIdBytes, roundId: entry.roundId, outpoint, fields: lockFieldsToJson(fields), contractId: String(id) });
   // IN A ROUND WHOSE GATE MINTS, THE STAKE COUNTS ONLY WITH ITS FEE LOCK (pick a): kept,
   // verified, and not seen - no play, no place in the settlement - until the fee lock is.
@@ -281,6 +297,7 @@ export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk
     return { ok: false, why: 'that fee lock outpoint was named first by another entry in this round: a lock pays for the entry that named it first (kanban #1489)' };
   if (otherStakedUnderKey(round, entry, entryIdBytes, 'fee'))
     return { ok: false, why: 'another entry of that player key already has a fee lock in this round: one player key, one fee lock (kanban #1215)' };
+  { const back = returnedHere(round, outpoint); if (back) return { ok: false, why: back }; }
   const [st, id] = await Promise.all([port.status(outpoint), port.contractId(fields)]);
   if (!st || !st.stored) return { ok: false, why: 'the federation holds no lock at the entry\'s fee_lock_outpoint' };
 
@@ -294,6 +311,7 @@ export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk
   if (feeTaken()) return { ok: false, why: 'that fee lock already pays the fee of another entry in this round: one lock is one entry' };
   if (otherStakedUnderKey(round, entry, entryIdBytes, 'fee'))
     return { ok: false, why: 'another entry of that player key already has a fee lock in this round: one player key, one fee lock (kanban #1215)' };
+  { const back = returnedHere(round, outpoint); if (back) return { ok: false, why: back }; }
   round.putFeeLock({ entryId: entryIdBytes, roundId: entry.roundId, outpoint, fields: lockFieldsToJson(fields), contractId: String(id) });
   // AND A STAKE LOCK ALREADY VERIFIED AND WAITING FOR THIS ONE IS COUNTED NOW (pick a).
   const staked = round.stakeLock ? round.stakeLock(entryIdBytes) : null;
