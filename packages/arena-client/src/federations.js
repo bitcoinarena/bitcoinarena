@@ -182,7 +182,7 @@ export async function federationStatuses({ nodes, census, verify, fetcher = fetc
   }
   const out = new Map();
   for (const fid of new Set([...verified.keys(), ...refused.keys()])) {
-    const best = newestRecord(verified.get(fid) || []);
+    const best = pageRecord(verified.get(fid) || []);
     const why = (refused.get(fid) || failed)[0];
     const says = best ? null : restrictive.get(fid) || null;
     // a verified record read without the config keys does not lift another record's restrictive word (kanban #2605)
@@ -196,6 +196,22 @@ export async function federationStatuses({ nodes, census, verify, fetcher = fetc
   }
   if (!out.size && failed.length) out.why = `no record stands: ${failed[0]}`;
   return out;
+}
+
+// THE PAGE'S PICK DOES NOT FOLLOW THE FASTER SEAT (kanban #1937): a record's height is its census height, so the guardians sign several
+// records at one height over time (OPEN with all seated, CRITICAL once two owners left), and a seat that has not gathered since keeps the
+// OPEN one. newestRecord sorts by height only, so at a tie the first seat to answer set the page's status: the same signed facts read
+// CRITICAL in one tab and OPEN (deposit allowed) in the next. Here the newest height, and at one height CLOSED (final, as the seats keep
+// it), else the WORSE status (OPEN < DRAINING < CRITICAL < HALTED): every record compared stands at its census' threshold, and the page
+// takes the careful one; last the record id, so any order of answers gives the same pick.
+const PAGE_STATUS_RANK = Object.freeze({ OPEN: 0, DRAINING: 1, CRITICAL: 2, HALTED: 3, CLOSED: 4 });
+const idHex = (v) => (v.id instanceof Uint8Array ? bytesToHex(v.id) : String(v.id ?? ''));
+export function pageRecord(verified) {
+  const ok = (verified || []).filter((v) => v && v.ok);
+  ok.sort((a, b) => (b.record.height - a.record.height)
+    || ((PAGE_STATUS_RANK[b.status] ?? 0) - (PAGE_STATUS_RANK[a.status] ?? 0))
+    || (idHex(a) < idHex(b) ? -1 : idHex(a) > idHex(b) ? 1 : 0));
+  return ok[0] || null;
 }
 
 function statusOfRecord(best) {
