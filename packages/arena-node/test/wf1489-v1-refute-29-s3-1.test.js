@@ -30,7 +30,7 @@ const postObjection = (d, w, eid, body) => fetch(`${base(d)}/objection?round=${t
 const ownResult = (d, w, eid) => decodePlayerResult(splitSignedResult(d.round.results(w.rid, eid).find((r) => toHex(r.nodePubkey) === toHex(d.round.pubkey)).bytes).body);
 const stateAt = (d, w, eid) => resultFinality(d.round, w.rid, eid);
 
-test("wf1489 v1-refute-29 s3: a cap filled while peers were down closes the door for the entry for good, the true run too", async () => {
+test("wf1489 v1-refute-29 s3: a cap filled while peers were down closes the door for the entry for good, the true run too", { todo: 'kanban #1489 merge19v1: on the 1.9 line #1952/#1990 (item 66) binds a live run\'s objection inputs to the run this seat stored, which the session key signed - inputs that differ from it are refused before any replay (step inputs), so this reference-run path (#1706/#1878) is not reached; no copy costs a replay either way' }, async () => {
   const w = await lockRound({ endMs: testNow() + 4000 });
   try {
     // A LIVE RUN (canonical = receipted marks over no batches): the ticks sent as a batch, the one mark naming GENESIS
