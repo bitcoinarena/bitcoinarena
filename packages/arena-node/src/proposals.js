@@ -37,7 +37,7 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
  * `censusAt(networkIdHex, height)` -> [{ pubkey }] or
  * null: the bonds active at that height (the tally's census, ballot-tally.js); given, a proposer outside it is refused (kanban #1489).
  * `tipHeight()` -> this seat's tip (or set later by the tally, `useTip`); given, a proposal first posted once its voting has begun is
- * refused (kanban #1608).
+ * refused (kanban #1608) - unless it is an ORPHANED record this seat holds, posted again from a new block (kanban #2135, #2197).
  * `blockHashAt(height)` -> this seat's block hash at that height, null above the tip (throws: no answer): given (here, or to
  * recheck by the tally), a kept record's proposer is judged only on the branch its publication block is on (kanban #2032).
  * `bindHeightFor(net)` -> the network's BALLOT_BIND_HEIGHT (ballot.js; none given: never bound, the old reading): a proposal whose
@@ -246,17 +246,24 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
       // and activation - counted on his own vote, and live retroactively under rounds this seat served. Taken only while this
       // seat's tip is below its first voting block (a review-0 repeal, whose voting starts at its own block: at that block).
       // Mainnet's review is 1008 blocks, time enough for every seat to hear of it (POST or the peer pull). A tip not read is a 503.
+      // AN ORPHANED RECORD THIS SEAT HOLDS (kanban #2135, #2197) is not asked again: it was taken here through this same check, so
+      // it was seen before its voting; a reorg that moved its deposit to another block does not make it late. Refused, the honest
+      // proposal was lost for good and the votes already on chain for it counted for nothing, while a seat whose chain never left
+      // the old block kept counting it. Only the new block's deposit and the stands rules above are checked for it.
+      const seenBefore = !!was && stateOf(was) === S.ORPHANED;
+      let seenAt = was ? (Number.isFinite(Number(was.seenAt)) ? Number(was.seenAt) : null) : null;
       // BOUND (ruling #2012 (c)): the deposit commits to these bytes and confirmed at the publication height - before the first
       // voting block (votingFrom >= publishedAt: a repeal's review 0 votes from that very block) - so the chain, not this seat's
       // tip, says it was there in time: a late pull is as good as an early POST, and every seat that hears of it takes it.
       if (bound) {
         if (!(dep.publishedAt <= stands.votingFrom)) return { ok: false, status: 422, why: `its deposit confirmed at ${dep.publishedAt}, after its first voting block ${stands.votingFrom}` };
-      } else if (tipOf) {
+      } else if (tipOf && !seenBefore) {
         let tip = NaN;
         try { tip = Number(await tipOf()); } catch { tip = NaN; }
         if (!Number.isFinite(tip)) return { ok: false, status: 503, why: 'this seat could not read its tip: ask again shortly' };
         if (tip >= Math.max(stands.votingFrom, dep.publishedAt + 1))
           return { ok: false, status: 422, why: `its voting began at ${stands.votingFrom} and this seat's tip is ${tip}: a proposal must be posted before its voting phase` };
+        seenAt = tip;
       }
       // THE PROPOSER IS A BONDED NODE (27A.7.2 "node pubkey with an active bond", kanban #1489): its key is in the census at the
       // publication height - the census the tally counts with. A fresh key with a 1-sat deposit took the ballot before; now refused
@@ -280,7 +287,9 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
         proposer: toHex(p.proposer), publishedAt: dep.publishedAt, depositSats: String(dep.depositSats), votingFrom: stands.votingFrom,
         votingUntil: stands.votingUntil, activationHeight: stands.activationHeight, repeal: stands.repeal, depositTxid: depositHex,
         // THE BLOCK IT WAS PUBLISHED IN: a reorg that takes it out unpublishes the proposal (ballot-tally.js)
-        blockHash: String(blockHash).toLowerCase(), state: S.COUNTING };
+        blockHash: String(blockHash).toLowerCase(), state: S.COUNTING,
+        // THE TIP IT WAS FIRST SEEN AT here (kanban #2135, #2197): kept through an orphan and a re-post from a new block
+        ...(seenAt !== null ? { seenAt } : {}) };
       if (history && p.class === CLASS.SOURCES) {
         const adds = addedHosts(p, history);
         kept.added = decodeSourceList(p.config).filter((e) => adds.includes(e.host));
