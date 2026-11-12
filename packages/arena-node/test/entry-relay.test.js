@@ -11,7 +11,7 @@ const stub = (doors) => {
     const u = new URL(url), key = `${init.method || 'GET'} ${u.origin}${u.pathname}`;
     asked.push({ key, relayed: init.headers && init.headers[RELAY_HEADER] });
     const a = doors(key);
-    return { status: a.status ?? a, json: async () => a.body };
+    return new Response(a.body === undefined ? null : JSON.stringify(a.body), { status: a.status ?? a });   // a real body: handLocks reads it capped (kanban #2327)
   };
   return { asked, fetcher };
 };
