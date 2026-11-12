@@ -93,3 +93,21 @@ test('#2576: past the gate the highest seq counts, not the last block; below it 
     assert.deepEqual([d.passed, d.yesSats, d.noSats], [want.passed, want.yes, want.no], `gate ${gate}`);
   }
 });
+
+// feedback #031 (kanban #2580): the operator vote door asks the funding book whether a funding / fee / leaderboard proposal is
+// voted bound, so it signs the 80-byte seq vote the bound tally counts (a 77-byte one was dropped: unanimous YES read 0 / 0)
+test('#2580: boundOf says bound past the gate, not below it, and null for an id this seat does not hold', async () => {
+  const bound = world({ bindHeightFor: () => 0 }); await signalled(bound);
+  assert.equal(bound.b.boundOf(toHex(ID1)), true);
+  assert.equal(bound.b.boundOf('ab'.repeat(32)), null, 'an id the funding book does not hold');
+  const old = world({ bindHeightFor: () => 1000 }); await signalled(old);
+  assert.equal(old.b.boundOf(toHex(ID1)), false, 'published at 100, below a gate at 1000');
+  const none = world(); await signalled(none);
+  assert.equal(none.b.boundOf(toHex(ID1)), false, 'no gate given: the old reading');
+  // and the 77-byte vote the door signed before is exactly what the bound tally drops (the report's measurement)
+  const w = world({ bindHeightFor: () => 0 }); await signalled(w);
+  w.at(101).votes.push(vote(10, CHOICE.YES)); w.at(102).votes.push(vote(11, CHOICE.YES));
+  w.chain.tip = 111;
+  let d = null; for (let i = 0; i < 4 && !d; i++) [d] = await w.b.voteRound();
+  assert.deepEqual([d.passed, d.yesSats], [false, '0'], '77-byte votes on a bound proposal count nothing');
+});
