@@ -1707,3 +1707,26 @@ Audit 5 (#1399, base 1502786b) and audit 6 (#1415, base eb7fd30fc) for release 2
 
 #### SM-C15 (add) Chain census cache (main.js chainCensusKept, census_kept): a reorg during the read
 - A census_kept row's key and body come from one chain (kanban #1841): after the derivation the census height's hash is read again and the view's own block there must be the key's block; a census read across a reorg is never kept and answers `ok: false` "read again", so a census kept on a branch the chain left is never served again (#786).
+
+#### SM-C1 (change) E-cash in flight: an exchange belongs to one phrase (kanban #1641)
+- An exchange record (arena.ecash.exchange.*) names the phrase whose wallet sent the notes (`fromKey`, its first 16 hex, as merge records do). `resumeEcashExchanges` moves on only the records of the asking tab's phrase (`phrase16`); a record of another phrase is left for that phrase's tab, so the seat's answer (or the notes taken back) is received only into the wallets of the phrase that sent them, never into another player's of the same browser.
+- A record of an older page names no phrase: it is moved only when the browser keeps one phrase (`takeUnnamed`, arena.seeds holds at most one), otherwise it is left as it is.
+
+#### SM-L2/SM-L3 (change) The order's fee lock has its own state (kanban #1642)
+- The seats' `/stake-lock` names the stake lock only; the order's fee lock is known from the tab's saved lock alone. Once the stake reads `collected` (its note `arena.stakeback.*`) or `gone`, `lookOwed` reads the kept fee lock's `lockStatus` on every look (`keptFeeHeld`): spent - nothing more; stored past its expiry - owed by refund (`refundKept` with that lock); stored before it - owed by its forfeit when the seats give `GET /forfeit?lock=fee` (asked again on every look), else waiting. The answer stands in `stake` with `fee: true`; `collectOwed` redeems it alone (`redeemFee`), never the stake again.
+- Invariant: a lock this tab made that the federation still holds is never final - `final` is false and `collectState` is open while the kept fee lock is stored, so the record is not marked done and `tidyStorage` keeps the round's lock wallet. A fee forfeit missed on the one collect that redeemed the stake is asked again on the next look.
+
+#### SM-C3 (change) Liquidation claim: one record per federation and payout key (kanban #1771)
+- A notes record (`arena-liquidation-ecash-<fid>`) and a pending-outputs record (`arena-liquidation-pending-<fid>`) name the payout key they were written for (`payoutPk`). A phrase uses the plain key only when it is free or names its own key (a record from an older page that names no key is read as this phrase's); otherwise its record is `<key>.<16 hex of its payout key>` (`claimSlot`).
+- Invariant: every phrase's notes in a liquidated federation are handed over inside the claim window, whatever another phrase's tab of the same browser did. A record is posted, and dropped as taken, only with the payout key it names; another phrase's record is never re-posted under this phrase's key.
+
+#### SM-C5 (change) Swap, Move and evacuation legs: the receive is written ahead of the payment (kanban #1774)
+- Before the paying wallet pays the receiving wallet's invoice (`swapForRound`, `migrateFromDraining`: a join's swap, the player's Move, a DRAINING/CRITICAL evacuation), the receive is a pending entry of the receiving federation (arena.deposit.pending.<fed>.<operation>, `kind: 'move'`, the row its claim writes, the moving phrase): `ledgerFederations` names that federation from then on, so a page opened after a tab closed between the payment and the claim opens its wallet and `resumeDeposits` claims the invoice.
+- The entry ends as a deposit's (`depositEnded`): Claimed writes the leg's row (moved-in / swapped-in) once per invoice, then the entry goes; Expired or Failure removes it; a payment that ended Refunded, or none made, removes it at once; any other end keeps it for the next page.
+- Invariant: once money has left one wallet for another wallet's invoice, this browser names the receiving federation until that receive ends. A resumed leg writes the receiving side's row only; the paying side's row (moved-out / swapped-out) is written only by the live leg.
+
+#### Liquidation claim record (`arena-liquidation-ecash-<fid>`, liquidation-claim.js `presentNotes`) (kanban #1837)
+- Every claim step is a compare-and-set on the stored record: it writes only when the stored value is still the one this pass read or wrote last; otherwise the step throws and the notes take the "cannot be written" path (back into the wallet, or presented at the signed door at once). A tab never writes over, or removes, a record another tab changed.
+- One record per phrase: the slot is #1771's (`claimSlot`, the record names its `payoutPk`; another phrase's record is left alone and this phrase keeps its own at `<key>.<16 hex of its payout key>`). #1837's own `-<payoutPk>` key was not taken in the merge.
+- An intent is dropped as "left by a closed tab" only when it is older than `CLAIM_INTENT_LIVE_MS` (120 s); a younger one is another tab handing over now, and this pass hands nothing over.
+- Invariant: every note that left a wallet (sendAllEcash returned) is kept in exactly one record until the arbitration set takes it.

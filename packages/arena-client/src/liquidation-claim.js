@@ -21,12 +21,14 @@ import { putRoomy } from './page-lock.js';
 import { BOND_TERMS } from './committee.js';
 
 const LIQUIDATION_ECASH_PREFIX = 'arena-liquidation-ecash-';   // the arena- names: was blwp- (moved once by movedKey, kanban #522)
-export const pendingClaimKey = (fid) => `${LIQUIDATION_ECASH_PREFIX}${String(fid).toLowerCase()}`;
+export const pendingClaimKey = (fid, pk = null) => `${LIQUIDATION_ECASH_PREFIX}${String(fid).toLowerCase()}${pk ? '-' + String(pk).toLowerCase() : ''}`;
 /** kanban #1849: the halt height a federation came back from after this page handed its notes over (they were received back). */
 export const returnedClaimKey = (fid) => `arena-liquidation-returned-${String(fid).toLowerCase()}`;
 export const CLAIM_STATES = Object.freeze({ NONE: 'none', INTENT: 'intent', KEPT: 'kept', POSTED: 'posted' });
 const CLAIM_EDGES = Object.freeze({ none: ['intent', 'kept'], intent: ['kept', 'none'], kept: ['posted', 'none'], posted: ['posted', 'none'] });
 const REPOST_MS = 3600000;
+// kanban #1837: an intent younger than this is another tab's hand-over in flight, not one a closed tab left (page-lock.js LOCK_INTENT_LIVE_MS)
+export const CLAIM_INTENT_LIVE_MS = 120000;
 /** The chain's arbitration set as standingLiquidation reads it: committee.js BOND_TERMS names its fields arbitrationKeys / arbitrationK. */
 export const arbitrationOf = (network) => { const g = BOND_TERMS[network]; return g ? { keys: g.arbitrationKeys, k: g.arbitrationK } : null; };   // a posted claim not yet listed by the set is presented again at most hourly (the door answers "claimed before")
 
@@ -43,6 +45,21 @@ function readClaim(storage, key) {
   if (!raw) return null;
   if (raw.startsWith('{')) { try { const r = JSON.parse(raw); if (r && r.v === 2 && r.state) return r; } catch { /* the older form */ } }
   return { v: 2, state: 'kept', ecash: raw, legacy: true };
+}
+// ONE RECORD PER FEDERATION AND PAYOUT KEY (kanban #1771, state audit 2026-11-12 SM2 page-3): the record was one per federation and named no
+// phrase, so one browser's two phrases shared it - phrase P1's 'posted' record kept phrase P2's notes from ever being handed over (P2's tab
+// read `taken` with its own key, saw 'posted', and only re-posted P1's notes under P2's key), and P2's notes were worthless once the window
+// closed. Now every record names its payoutPk, and a phrase uses the plain key only when it is free or its own (an older record that names
+// no key is read as this phrase's, as before); a record another key wrote stays for that key, and this phrase keeps its own at
+// <key>.<16 hex of its key> - so each record is posted, and dropped as taken, only with the key it was written for.
+export function claimSlot(storage, base, pk) {
+  const own = `${base}.${String(pk).toLowerCase().slice(-64, -48)}`;
+  if (storage.getItem(movedKey(storage, own)) != null) return own;
+  const raw = storage.getItem(movedKey(storage, base));
+  if (raw == null) return base;
+  let owner = null;
+  if (String(raw).startsWith('{')) { try { const j = JSON.parse(raw); owner = j && typeof j.payoutPk === 'string' ? j.payoutPk.toLowerCase() : null; } catch { owner = null; } }
+  return !owner || owner === String(pk).toLowerCase() ? base : own;
 }
 const writeClaim = (storage, key, rec, put) => (rec === null ? storage.removeItem(key) : put(storage, key, JSON.stringify(rec)));
 
@@ -67,10 +84,21 @@ export async function presentNotes({ events, network, arbitration = arbitrationO
     if (!/^(0[23])?[0-9a-f]{64}$/.test(pk)) { out.push({ federation: fid, ok: false, why: 'no payout key to claim to' }); continue; }
     const door = st.door + '/liquidation-claims';
     const taken = acceptedFor(st.event, pk).length > 0;
-    const step = (key, rec, to, patch) => { const next = claimStep(rec, to, patch); writeClaim(storage, key, next, put); return next; };
+    // EVERY STEP A COMPARE-AND-SET ON THE STORED RECORD (kanban #1837, state audit 2026-11-12): a step wrote claimStep(the copy in memory) over
+    // whatever was stored, so a second tab's hand-over (another phrase, the same federation) was written over by the first one's late `kept`, and
+    // the notes that had left the second wallet were kept nowhere. A step now writes only when the stored record is still the one this pass read
+    // or wrote last; otherwise it throws and the notes take the path of notes that cannot be written (back into the wallet, or the door now)
+    const seen = new Map();
+    const read = (key) => { const raw = storage.getItem(movedKey(storage, key)); seen.set(key, raw ?? null); return raw; };
+    const step = (key, rec, to, patch) => {
+      const next = claimStep(rec, to, patch);
+      if (seen.has(key) && (storage.getItem(key) ?? null) !== seen.get(key)) throw new Error('another tab changed this claim record');
+      writeClaim(storage, key, next, put); seen.set(key, next === null ? null : JSON.stringify(next)); return next;
+    };
 
-    // THE NOTES
-    const eKey = pendingClaimKey(fid);
+    // THE NOTES. ONE RECORD PER PHRASE (kanban #1771; #1837 found it again - merged in #1489 onto #1771's claimSlot): this payout key's own record
+    const eKey = claimSlot(storage, pendingClaimKey(fid), pk);   // kanban #1771: this payout key's own record
+    read(eKey);   // kanban #1837: the record this pass read, for the compare-and-set of every step
     let rec = readClaim(storage, eKey);
     // TAKEN ONLY WHEN IT WAS PRESENTED (kanban #1230, audit 3 #1210 FIXES-2): `taken` is read per payout key, and a notes record whose POST had
     // failed (kept, never presented) was dropped when the set accepted another claim of that key - the pending outputs', or an earlier one -
@@ -83,30 +111,33 @@ export async function presentNotes({ events, network, arbitration = arbitrationO
       else if (!inWindow && !rec) out.push({ federation: fid, ok: false, why: height < st.window.opens ? `claims open at ${st.window.opens}` : 'the claims closed' });
       else {
         // an intent left by a tab closed during the hand-over: what the wallet still holds is handed over again below
-        if (rec && rec.state === 'intent') { rec = step(eKey, rec, 'none'); out.push({ federation: fid, ok: false, why: 'an earlier hand-over did not finish; the wallet hands over what it still holds' }); }
+        // - and only one older than CLAIM_INTENT_LIVE_MS (kanban #1837): a younger one is another tab of this phrase handing over now
+        let live = false;
+        if (rec && rec.state === 'intent' && nowMs - Number(rec.atMs || 0) < CLAIM_INTENT_LIVE_MS) { live = true; out.push({ federation: fid, ok: false, why: 'another tab is handing these notes over now' }); }
+        else if (rec && rec.state === 'intent') { rec = step(eKey, rec, 'none'); out.push({ federation: fid, ok: false, why: 'an earlier hand-over did not finish; the wallet hands over what it still holds' }); }
         // ONE RETURN PER HALT (kanban #1849): notes taken back because the federation came back are not handed over again for the same signed
         // halt - the event still stands, and every pass would empty the wallet into a door that takes nothing
         const returnedKey = returnedClaimKey(fid);
         let returnedHalt = null;
         try { returnedHalt = JSON.parse(storage.getItem(returnedKey) || 'null'); } catch { returnedHalt = null; }
         const haltH = st.event && st.event.halt ? Number(st.event.halt.height) : null;
-        if (!rec && inWindow && returnedHalt && Number(returnedHalt.haltHeight) === haltH) out.push({ federation: fid, ok: true, returned: true, why: 'that federation came back from this halt: nothing is handed over again' });
-        else if (!rec && inWindow) {
+        if (!rec && inWindow && !live && returnedHalt && Number(returnedHalt.haltHeight) === haltH) out.push({ federation: fid, ok: true, returned: true, why: 'that federation came back from this halt: nothing is handed over again' });
+        else if (!rec && inWindow && !live) {
           let wrote = false;
-          try { rec = step(eKey, null, 'intent', { door: st.door, atMs: nowMs }); wrote = true; }
+          try { rec = step(eKey, null, 'intent', { door: st.door, atMs: nowMs, payoutPk: pk }); wrote = true; }
           catch (e) { out.push({ federation: fid, ok: false, why: `nothing handed over: this browser could not write the claim first (${e.message})` }); }
           if (wrote) {
             let sent = null, w = null;
             try { w = await walletFor(fid); sent = JSON.parse(await w.sendAllEcash()); }
-            catch (e) { rec = step(eKey, rec, 'none'); out.push({ federation: fid, ok: false, why: `the wallet could not hand over its notes: ${e.message}` }); }
-            if (sent && !sent.ecash) { rec = step(eKey, rec, 'none'); out.push({ federation: fid, ok: true, nothing: true, why: 'this wallet holds no note of that federation' }); }
+            catch (e) { try { rec = step(eKey, rec, 'none'); } catch { rec = null; } out.push({ federation: fid, ok: false, why: `the wallet could not hand over its notes: ${e.message}` }); }
+            if (sent && !sent.ecash) { try { rec = step(eKey, rec, 'none'); } catch { /* another tab's record now: not ours to clear */ } rec = null; out.push({ federation: fid, ok: true, nothing: true, why: 'this wallet holds no note of that federation' }); }
             if (sent && sent.ecash) {
               try { rec = step(eKey, rec, 'kept', { ecash: sent.ecash }); }
               catch (e) {
                 // THE NOTES LEFT THE WALLET AND CANNOT BE WRITTEN: back into the wallet, or - a halted federation - at the signed door now
                 let back = false;
                 try { if (w && typeof w.receiveEcash === 'function') { await w.receiveEcash(sent.ecash); back = true; } } catch { back = false; }
-                if (back) { try { storage.removeItem(eKey); } catch { /* the intent stays: the next start finds the wallet holding them */ } out.push({ federation: fid, ok: false, why: `this browser could not keep the notes (${e.message}); they are back in the wallet` }); rec = null; }
+                if (back) { try { if ((storage.getItem(eKey) ?? null) === seen.get(eKey)) storage.removeItem(eKey); } catch { /* the intent stays: the next start finds the wallet holding them */ } out.push({ federation: fid, ok: false, why: `this browser could not keep the notes (${e.message}); they are back in the wallet` }); rec = null; }
                 else rec = { v: 2, state: 'kept', ecash: sent.ecash, memoryOnly: true };
               }
             }
@@ -121,7 +152,7 @@ export async function presentNotes({ events, network, arbitration = arbitrationO
             // (kanban #1264, audit 4 #1257 fixesA-2): the door's own "not taken" answers - the claim window not open yet at its tip, no seat holding the
             // federation HALTED yet, the notes not validated, a reissue refused, a tunnel's 4xx - took nothing, and counting them dropped the notes once
             // another claim of the key was accepted. An answer counts when it names the notes it refused (`refused`), as "claimed before" does
-            else if (!r.ok && !(Number(r.status) >= 500) && Array.isArray(j.refused) && j.refused.length > 0 && !rec.memoryOnly && !rec.answered) { rec = { ...rec, answered: true }; try { writeClaim(storage, eKey, rec, put); } catch { /* kept in memory */ } }
+            else if (!r.ok && !(Number(r.status) >= 500) && Array.isArray(j.refused) && j.refused.length > 0 && !rec.memoryOnly && !rec.answered) { rec = { ...rec, answered: true }; try { if ((storage.getItem(eKey) ?? null) === seen.get(eKey)) { writeClaim(storage, eKey, rec, put); seen.set(eKey, JSON.stringify(rec)); } } catch { /* kept in memory */ } }
             // THE FEDERATION CAME BACK BEFORE THE PAYOUT (kanban #1849, state audit 2026-11-12): once 2f + 1 guardians return, no seat lists it
             // HALTED, the door answers "not being liquidated" (409, no note refused), plan() pays nothing, and the set's book keeps only nonces -
             // no e-cash it could redeem - so a kept/posted record held the player's whole balance out of the wallet for good. Not accepted for
@@ -150,16 +181,17 @@ export async function presentNotes({ events, network, arbitration = arbitrationO
     // AND THE OUTPUTS STILL IN ISSUANCE AT THE HALT (spec §23A.5 "Notes still in issuance at the halt", RULED 2026-10-14): what was issued to this
     // seed and never signed - the lock client's pendingOutputs - presented by their issuance requests, at the same signed door, kept the same way
     try {
-      const pKey = pendingRequestsKey(fid);
+      const pKey = claimSlot(storage, pendingRequestsKey(fid), pk);   // kanban #1771: per payout key, as the notes
       let prec = null;
       const raw = storage.getItem(movedKey(storage, pKey));
+      seen.set(pKey, raw ?? null);
       if (raw) { try { const j = JSON.parse(raw); prec = Array.isArray(j) ? { v: 2, state: 'kept', reqs: j } : (j && j.v === 2 ? j : null); } catch { prec = null; } }
       if (prec && (prec.state === 'posted' || prec.answered) && taken) { step(pKey, prec, 'none'); prec = undefined; }
       if (prec !== undefined && Number.isInteger(height) && height >= st.window.opens && height <= st.window.closes) {
         if (!prec) {
           const w = await walletFor(fid);
           const reqs = w && typeof w.pendingOutputs === 'function' ? (JSON.parse(await w.pendingOutputs()) || []).map((x) => x.request).filter(Boolean) : [];
-          if (reqs.length) prec = step(pKey, null, 'kept', { reqs, door: st.door });
+          if (reqs.length) prec = step(pKey, null, 'kept', { reqs, door: st.door, payoutPk: pk });
         }
         if (prec && (prec.state === 'kept' || (prec.state === 'posted' && nowMs - Number(prec.postedAtMs || 0) >= REPOST_MS))) {
           const r = await fetcher(door, { method: 'POST', body: JSON.stringify({ federation: fid, pending: prec.reqs, payoutPk: pk }), signal: AbortSignal.timeout(60000) });
