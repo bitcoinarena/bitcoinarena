@@ -11,7 +11,7 @@ const stub = (doors) => {
     const u = new URL(url), key = `${init.method || 'GET'} ${u.origin}${u.pathname}`;
     asked.push({ key, relayed: init.headers && init.headers[RELAY_HEADER] });
     const a = doors(key);
-    return { status: a.status ?? a, json: async () => a.body };
+    return new Response(a.body === undefined ? null : JSON.stringify(a.body), { status: a.status ?? a });   // a real body: handLocks reads it capped (kanban #2327)
   };
   return { asked, fetcher };
 };
@@ -93,7 +93,7 @@ test('a seat alone with an entry signs nothing while too few seats answered to r
 });
 
 test('a peer\'s view is a list of entries; a peer that holds no such round holds none of it, and one that fails did not answer', async () => {
-  const fetcher = async (url) => (url.includes('//gone') ? { status: 404, ok: false } : url.includes('//bad') ? { status: 503, ok: false } : { status: 200, ok: true, json: async () => ({ players: [{ entry: E }] }) });
+  const fetcher = async (url) => (url.includes('//gone') ? { status: 404, ok: false } : url.includes('//bad') ? { status: 503, ok: false } : new Response(JSON.stringify({ players: [{ entry: E }] }), { status: 200 }));
   const view = seatView(fetcher);
   assert.deepEqual([...(await view('http://here', 'ab'))], [E]);
   assert.equal((await view('http://gone', 'ab')).size, 0);
