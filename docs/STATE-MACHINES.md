@@ -1542,3 +1542,10 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-L1 (change) Node process and its guardians: one guardian action at a time (kanban #1779)
+- Invariant: one fedimintd per data dir, and every fedimintd the node started is one it can stop.
+- `guardianControl` start, stop, retire and freshSetup (POST /owner/service: start, stop, restart), the cookie watch's restart and the exit watch's restart run one after another per slot (`guardian`, `next`) on one promise chain (node-start.js `inTurn`); node.close's `stopBoth` runs on the same chains. A Stop sent while a start is in flight waits for that start and stops what it started; a second start sees the first one's guardian running and starts none.
+- A kept guardian's `halt` (pidfile kept, guardian.js) also ends its RAM follow loop, so a restart from the owner page does not leave a second snapshot loop behind.
