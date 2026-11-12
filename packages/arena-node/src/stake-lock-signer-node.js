@@ -174,7 +174,9 @@ function otherStakedUnderKey(round, entry, entryIdBytes, kind) {
 }
 
 // `timing` (kanban #605): an object the caller reads afterwards - ms spent asking the federation, checking gifts and reading the fee gate
-export async function verifyStakeLock({ round, port, entryIdBytes, fields, claimPk, donationRecipients = null, reserveKey = null, split = undefined, timing = {} }) {
+// `atMs` (kanban #1805): the time the seat's door took this lock and checked its round's lock close, before any await - kept as the lock's verified_ms
+// (round.putStakeLock), so a head-to-head lock handed before the close seats its entry however long the federation takes. Omitted (a repair, a replay): now.
+export async function verifyStakeLock({ round, port, entryIdBytes, fields, claimPk, donationRecipients = null, reserveKey = null, split = undefined, timing = {}, atMs = undefined }) {
   const stored = round.entry(entryIdBytes);
   if (!stored) return { ok: false, why: 'this node holds no such entry' };
   const entry = decodeEntryContract(stored);
@@ -232,7 +234,7 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
       return { ok: false, why: 'another entry of that player key is already staked in this round: one player key stakes one entry' };
     const full = headToHeadFull(round, contract, entry.roundId, entryIdBytes);
     if (full) return { ok: false, why: full }; }
-  round.putStakeLock({ entryId: entryIdBytes, roundId: entry.roundId, outpoint, fields: lockFieldsToJson(fields), contractId: String(id) });
+  round.putStakeLock({ entryId: entryIdBytes, roundId: entry.roundId, outpoint, fields: lockFieldsToJson(fields), contractId: String(id), atMs });
   // IN A ROUND WHOSE GATE MINTS, THE STAKE COUNTS ONLY WITH ITS FEE LOCK (pick a): kept,
   // verified, and not seen - no play, no place in the settlement - until the fee lock is.
   t = Date.now();
@@ -240,7 +242,7 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
   timing.gateMs = Date.now() - t;
   if (gate.mints && !(round.feeLock && round.feeLock(entryIdBytes)))
     return { ok: true, contractId: String(id), paidMsat: fields.amountMsat, height: st.blockCount, waitsForFeeLock: true };
-  round.putStakeSeen({ entryId: entryIdBytes, paidMsat: fields.amountMsat });
+  round.putStakeSeen({ entryId: entryIdBytes, paidMsat: fields.amountMsat, atMs });
   return { ok: true, contractId: String(id), paidMsat: fields.amountMsat, height: st.blockCount };
 }
 
@@ -251,7 +253,7 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
  * by field against the entry as the stake lock is. It is claimed for the round's
  * sitting signer nodes in the one settlement, whatever the result.
  */
-export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk }) {
+export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk, atMs = undefined }) {   // `atMs`: as verifyStakeLock's (kanban #1805)
   const stored = round.entry(entryIdBytes);
   if (!stored) return { ok: false, why: 'this node holds no such entry' };
   const entry = decodeEntryContract(stored);
@@ -284,9 +286,11 @@ export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk
   if (feeTaken()) return { ok: false, why: 'that fee lock already pays the fee of another entry in this round: one lock is one entry' };
   if (otherStakedUnderKey(round, entry, entryIdBytes, 'fee'))
     return { ok: false, why: 'another entry of that player key already has a fee lock in this round: one player key, one fee lock (kanban #1215)' };
-  round.putFeeLock({ entryId: entryIdBytes, roundId: entry.roundId, outpoint, fields: lockFieldsToJson(fields), contractId: String(id) });
+  round.putFeeLock({ entryId: entryIdBytes, roundId: entry.roundId, outpoint, fields: lockFieldsToJson(fields), contractId: String(id), atMs });
   // AND A STAKE LOCK ALREADY VERIFIED AND WAITING FOR THIS ONE IS COUNTED NOW (pick a).
   const staked = round.stakeLock ? round.stakeLock(entryIdBytes) : null;
-  if (staked && !round.stakeSeen(entryIdBytes)) round.putStakeSeen({ entryId: entryIdBytes, paidMsat: lockFieldsFromJson(staked.fields).amountMsat });
+  // seen when both locks are held: the later of the two door times (kanban #1805)
+  if (staked && !round.stakeSeen(entryIdBytes)) round.putStakeSeen({ entryId: entryIdBytes, paidMsat: lockFieldsFromJson(staked.fields).amountMsat,
+    atMs: atMs === undefined || atMs === null ? undefined : Math.max(Number(atMs), Number(staked.verifiedMs) || 0) });
   return { ok: true, contractId: String(id), feeMsat: fields.amountMsat, height: st.blockCount };
 }
