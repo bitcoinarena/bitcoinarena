@@ -1542,3 +1542,10 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-E (add) Entry at one seat: a pool's plain pick reaches the stake-seen state at every seat that holds it (kanban #1790, #1489 sm2-entry-4)
+- Invariant: the seats of one attested round (a market) do not hold different sets of stake-seen plain picks once the round closes, as long as one seat verified the pick's locks and the others hold its entry. Each seat's pari-mutuel table (settlement.js `#attestedPlan`) counts stake-seen entries only, so a split set means no threshold ever signs one settlement.
+- A plain pick's stake or fee lock taken at POST /lock or POST /fee-lock is handed on to the round's other seats by the entry relay's lock pass (`plainPickRound`), as a replayed or head-to-head round's lock is; each seat checks it with the federation at its own door. An order keeps its own way (the order book's replayOrder).
+- The hand-on lives in memory. At every close of an attested round, a resumed close after a restart too, a seat asks its peers (GET /order-locks, `takeEntryParts`) for the locks and address of each plain pick it holds unseen (`pullPickLocks`, a few passes while the outcome is not yet final).
