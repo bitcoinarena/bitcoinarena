@@ -3617,6 +3617,31 @@ export class Round {
     return r ? { outpoint: r.outpoint, fields: JSON.parse(r.fields), contractId: r.contract_id, verifiedMs: Number(r.verified_ms) } : null;
   }
 
+  /**
+   * AN ENTRY'S LOCKS YIELD TO ANOTHER ENTRY OF ITS PLAYER KEY (kanban #2477, state audit 2026-11-12 sm1-entry-4): the one-key rule (#1215) kept the
+   * entry whose lock came first at each seat, so two entries of one key whose locks crossed were staked one at one seat and the other at another,
+   * and the round's settlement never formed. The key's entry is now the one with the lowest entry id among those whose locks the seat verified
+   * (stake-lock-signer-node.js keyHolderYields); a seat that took the other one first lets it go here: its stake lock, fee lock, stake seen and
+   * donation rows, in one transaction. Only while nothing was built on it yet: no lock fate of its locks, no settlement of the round, no result of
+   * the entry signed here and no forfeit of it - otherwise false and nothing is changed (the later lock is then refused, as before).
+   */
+  yieldEntryLocks(entryIdBytes, roundIdBytes) {
+    const eid = Buffer.from(entryIdBytes), rid = Buffer.from(roundIdBytes);
+    const outs = [this.stakeLock(eid), this.feeLock(eid)].filter(Boolean).map((l) => String(l.outpoint));
+    if (outs.some((o) => this.lockFate(o))) return false;
+    if (this.db.prepare('SELECT 1 FROM lock_settlements WHERE round_id = ?').get(rid)) return false;
+    if (this.db.prepare('SELECT 1 FROM forfeits WHERE entry_id = ?').get(eid)) return false;
+    if (this.identity && this.hasResult(rid, eid, Buffer.from(this.pubkey))) return false;
+    const own = !this.db.isTransaction;
+    if (own) this.db.exec('BEGIN');
+    try {
+      for (const t of ['stake_seen', 'stake_seen_tick', 'stake_locks', 'fee_locks', 'donation_outputs'])
+        this.db.prepare(`DELETE FROM ${t} WHERE entry_id = ?`).run(eid);
+      if (own) this.db.exec('COMMIT');
+    } catch (e) { if (own) { try { this.db.exec('ROLLBACK'); } catch { /* none open */ } } throw e; }
+    return true;
+  }
+
   /** The round's one settlement of its losers' locks (W4): its intent, then where it stands. */
   putLockSettlement({ roundId, txid, message, signature, state, why }) {
     // A SUBMITTING ROW IS ON THE DISK BEFORE ITS SUBMIT (kanban #1243)
