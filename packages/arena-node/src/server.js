@@ -158,7 +158,7 @@ import { reserveMembersOf } from './reserve-members.js';
 import { createSettleBackoff, refusedForGood, REFUSAL } from './settle-backoff.js';
 import { produceSpentSet, publishSpentSet } from './spent-set-producer.js';
 import { verifySchnorrKept, verifyEd25519Kept } from './verified.js';
-import { DrawnAttestor } from './drawn-attestor.js';
+import { DrawnAttestor, DUE_AFTER_END_MS } from './drawn-attestor.js';
 import { CLOCKS as FEDERATION_CLOCKS } from '../../arena-protocol/src/federation-slash.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { walletFetch, hostOf, payoutAddressRefusal } from './public-fetch.js';
@@ -3128,7 +3128,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       for (const [k, d] of drawnContracts) {
         if (d.openedMs <= now - 4 * 3600000) { drawnContracts.delete(k); continue; }
-        if (Number(d.window.endMs) <= now && Number(d.window.endMs) > now - 1800000) out.push({ roundId: fromHex(k), window: d.window });
+        if (Number(d.window.endMs) <= now && Number(d.window.endMs) > now - DUE_AFTER_END_MS) out.push({ roundId: fromHex(k), window: d.window });
       }
       return out;
     },

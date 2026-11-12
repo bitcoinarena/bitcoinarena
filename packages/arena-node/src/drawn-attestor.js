@@ -5,7 +5,7 @@
 // no attestor daemons: each round's 7 attestors are node keys of its census (sortition.js drawAttestors), and a seat drawn for a round
 // does what arena-attestor's daemon does for a fixed key:
 //
-//   READ.    Its own price, every READ_MS (the seat's feed read, cents), kept for KEEP_MS - a window and the minute before it.
+//   READ.    Its own price, every READ_MS (the seat's feed read, cents), kept for KEEP_MS (2 h) and while a round that needs it is due (kanban #2186).
 //   SIGN.    Once the round's window has ended (+ SETTLE_MS), the market's rule over its own readings (up-down.js upDownOutcome) and
 //            the attestation body {round, outcome, observed_at = the window's end}, signed BIP-340 with its node key. One word a
 //            round: kept, never signed again differently.
@@ -16,12 +16,18 @@
 // Honest seats whose readings agree sign the same bytes. Seats that read a near tie differently sign different bodies; only 5 over
 // ONE body make an attestation, and a round with none by its deadline is refunded as any unattested market is.
 import { attestationBodyId } from '../../arena-protocol/src/attested.js';
-import { upDownOutcome } from '../../arena-protocol/src/up-down.js';
+import { upDownOutcome, UP_DOWN_AVERAGE_MS } from '../../arena-protocol/src/up-down.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { combine, wordToJson, wordFromJson } from '../../arena-attestor/src/attestor.js';
 
 export const READ_MS = 10000;
-export const KEEP_MS = 40 * 60 * 1000;
+// HOW LONG A ROUND IS DUE AFTER ITS WINDOW ENDED (server.js due() lists a drawn round until then; kanban #2186): one constant, so the
+// readings are never dropped while a round can still be signed
+export const DUE_AFTER_END_MS = 30 * 60 * 1000;
+// KEPT AT LEAST 2 H, as the fixed daemon (arena-attestor.mjs KEEP_MS), AND NEVER BELOW THE READING IN FORCE A MINUTE BEFORE THE START OF
+// A ROUND STILL DUE (kanban #2186, #1489 refute of #1844): 40 min dropped the reading before a 15 min window's start 24 min after its end,
+// while server.js keeps the round due 30 min - a seat back 25 min after the end read the whole window and could not sign it.
+export const KEEP_MS = 2 * 3600 * 1000;
 export const SETTLE_MS = 5000;
 export const ASK_MS = 4000;
 
@@ -48,7 +54,8 @@ export class DrawnAttestor {
     if (db) {
       db.exec('CREATE TABLE IF NOT EXISTS drawn_samples (at_ms INTEGER PRIMARY KEY, price TEXT NOT NULL)');
       db.exec('CREATE TABLE IF NOT EXISTS drawn_words (round_hex TEXT PRIMARY KEY, word TEXT NOT NULL)');
-      for (const r of db.prepare('SELECT at_ms AS at, price FROM drawn_samples WHERE at_ms >= ? ORDER BY at_ms').all(this.now() - KEEP_MS)) {
+      // every row kept (kanban #2186): the table is pruned by read() to what a due round still needs, which only a pass knows
+      for (const r of db.prepare('SELECT at_ms AS at, price FROM drawn_samples ORDER BY at_ms').all()) {
         this.samples.push({ atMs: BigInt(r.at), price: BigInt(r.price) });
       }
     }
@@ -81,9 +88,25 @@ export class DrawnAttestor {
       // kanban #1844: kept in the store as it is taken, so a restart loses no window
       if (this.db) try { this.db.prepare('INSERT OR REPLACE INTO drawn_samples (at_ms, price) VALUES (?, ?)').run(at, String(s.price)); } catch { /* memory still holds it */ }
     }
-    const keepFrom = BigInt(at - KEEP_MS);
-    while (this.samples.length && this.samples[0].atMs < keepFrom) this.samples.shift();
-    if (this.db) try { this.db.prepare('DELETE FROM drawn_samples WHERE at_ms < ?').run(at - KEEP_MS); } catch { /* pruned next read */ }
+    // kanban #2186: kept from the earlier of KEEP_MS ago and a minute before the start of every round still due, and the reading in
+    // force at that moment (the last one at or before it) kept too - upDownPrices needs a reading in force a minute before the start
+    const keepFrom = this.keepFrom(at);
+    let cut = 0;
+    while (cut + 1 < this.samples.length && this.samples[cut + 1].atMs <= keepFrom) cut++;
+    if (cut > 0) this.samples.splice(0, cut);
+    if (this.db) try { this.db.prepare('DELETE FROM drawn_samples WHERE at_ms < (SELECT MAX(at_ms) FROM drawn_samples WHERE at_ms <= ?)').run(Number(keepFrom)); } catch { /* pruned next read */ }
+  }
+
+  /** The earliest time a reading is still needed at (kanban #2186): KEEP_MS ago, or a minute before the start of a round still due. */
+  keepFrom(at) {
+    let from = BigInt(at - KEEP_MS);
+    let due = [];
+    try { due = this.due() || []; } catch { due = []; }
+    for (const r of due) {
+      const start = r && r.window && typeof r.window.startMs === 'bigint' ? r.window.startMs - UP_DOWN_AVERAGE_MS : null;
+      if (start !== null && start < from) from = start;
+    }
+    return from;
   }
 
   /** This seat's word on a round: signed once, once its window has ended; null when it is not drawn or cannot read the outcome. */
