@@ -69,6 +69,9 @@ export const LATE_ENTRY_TICK_SLACK_MS = 10000n;
 // THE LOCKLESS ENTRIES A PAYING HEAD-TO-HEAD ROUND TAKES (kanban #1745): per player of its game, joined within the last minute
 export const LOCKLESS_PER_SEAT = 3;
 export const LOCKLESS_HOLD_MS = 60000;
+// THE CAP'S REFUSAL, BY ITS CODE (kanban #2174, a44 refute of #1745): POST /entry reads it and holds the entry aside, unstored; when its lock is
+// handed and the federation holds it, the entry is entered past the cap (enter's `stakeLockHeld`)
+export const LOCKLESS_CAP = 'LOCKLESS_CAP';
 
 /**
  * A STORED ROUND THIS NETWORK CANNOT PARSE IS ABSENT (RULED 2026-09-22 22:59, §23.6): "a record
@@ -643,7 +646,7 @@ export class Round {
    * it. What only a door decides goes - the round being open, entry close, a table this seat thinks is full - and everything about the entry itself stays:
    * the stake, the fee, the handout, the commitment, every item's owner signature.
    */
-  enter(contract, { accepted = false } = {}) {
+  enter(contract, { accepted = false, stakeLockHeld = false } = {}) {
     const round = this.get(contract.roundId);
     if (!round) throw new Error('no such round');
     if (round.state !== OPEN && !accepted) throw new Error('the round is closed');
@@ -811,12 +814,16 @@ export class Round {
         // each stored, relayed to every seat and signed VOID at the close. At most LOCKLESS_PER_SEAT x players of them joined in the last
         // LOCKLESS_HOLD_MS are taken; an older lockless entry no longer counts, so an honest player who is slow to lock never keeps the next one out.
         // The same entry posted again and an entry the round accepted (entry-relay) are still taken.
-        if (asks.stakeMsat > 0n && !accepted && !this.db.prepare('SELECT 1 FROM entries WHERE entry_id = ?').get(Buffer.from(me))) {
+        // BUT NEVER AN ENTRY WHOSE OWN STAKE LOCK IS ALREADY MADE (kanban #2174, a44 refute of #1745): counted across the round, whoever posted them,
+        // 6 free lockless entries from a stranger refused every honest player for a minute, again each minute - the paid round seated nobody. The
+        // refusal carries LOCKLESS_CAP; POST /entry then holds the entry aside, unstored and unrelayed (server.js holdLockless), and POST /lock enters
+        // it with `stakeLockHeld` once the federation holds its own stake lock - a flooder who hands no lock is never stored, a player who locked is seated.
+        if (asks.stakeMsat > 0n && !accepted && !stakeLockHeld && !this.db.prepare('SELECT 1 FROM entries WHERE entry_id = ?').get(Buffer.from(me))) {
           const since = this.now() - LOCKLESS_HOLD_MS;
           const lockless = this.db.prepare('SELECT entry_id FROM entries WHERE round_id = ? AND joined_ms > ?').all(contract.roundId, since)
             .filter((r) => !this.stakeSeen(new Uint8Array(r.entry_id)) && !this.stakeLock(new Uint8Array(r.entry_id))).length;
           if (lockless >= LOCKLESS_PER_SEAT * m.players)
-            throw new Error(`that round already holds ${lockless} entries with no stake lock: try again in a minute`);
+            throw Object.assign(new Error(`that round already holds ${lockless} entries with no stake lock: try again in a minute, or once your stake lock is made`), { code: LOCKLESS_CAP });
         }
       } else if (hidden) throw new Error('that entry hides a move, and its round is not a head-to-head game\'s');
     }
