@@ -11092,8 +11092,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // of their own (no ARENA_WSS_<port>), so announceAddress - and the pull inside it - never ran there; their books still named the
   // quick tunnels two installed nodes left on 10-27/10-28 when the test host seats held the new ones from 10-29 22:1xZ, and every seating
   // tick waited out those dead names. Pulled on the same clock, from a minute after start; ARENA_ADDRESS_PULL=0 stops it
-  if (!announceTimer && process.env.ARENA_ADDRESS_PULL !== '0') {
-    const pullTimer = setInterval(() => { if (!announceTimer) censusForAddresses().then(pullAddresses).catch(() => {}); }, Number(process.env.ARENA_ADDRESS_ANNOUNCE_MS || 600000));
+  // AND STILL PULLS AFTER THE OWNER STOPS THE ANNOUNCEMENTS (kanban #1906, #1949, wf1489 refute of #1533): the timer was made only
+  // when the announcements were off at boot, so after /owner/service stop nothing read the census for addresses again - a node bonded
+  // later was refused (409) at POST /address-announcement until a restart, and one that left was still taken. The timer is always
+  // made now; each tick skips only while announceTimer runs (announceAddress reads the census and pulls itself then).
+  let pullTimer = null;
+  if (process.env.ARENA_ADDRESS_PULL !== '0') {
+    pullTimer = setInterval(() => { if (!announceTimer) censusForAddresses().then(pullAddresses).catch(() => {}); }, Number(process.env.ARENA_ADDRESS_ANNOUNCE_MS || 600000));
     pullTimer.unref();
     setTimeout(() => { if (!announceTimer) censusForAddresses().then(pullAddresses).catch(() => {}); }, Number(process.env.ARENA_ADDRESS_PULL_FIRST_MS || 60000)).unref();
   }
@@ -11603,6 +11608,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         for (const sock of guardianPipes) sock.destroy();
         if (p2pTunnelTimer) clearInterval(p2pTunnelTimer);
         if (announceTimer) clearInterval(announceTimer);
+        if (pullTimer) clearInterval(pullTimer);
         if (p2pTunnels) p2pTunnels.close();
         for (const c of p2pWss.clients) c.terminate();
         wss.close();
