@@ -56,6 +56,13 @@ export const MIRROR_PEERS = 8;
 export const MIRROR_CENSUS_PER_ANSWER = 2;
 export const MIRROR_CENSUS_PER_PASS = 8;
 
+/** GET /federation-record's named height (kanban #2270, the #1818 cost through the other door): a chain census read for a height a
+ * gatherer names happens only for a federation this seat names an invite for, at a height no further below the tip than this, and at
+ * most NAMED_CENSUS_BURST reads at once, refilled at NAMED_CENSUS_PER_MIN a minute. */
+export const NAMED_CENSUS_BELOW_TIP = 288;
+export const NAMED_CENSUS_BURST = 8;
+export const NAMED_CENSUS_PER_MIN = 4;
+
 export function federationsOf(census) {
   const ids = new Map();
   for (const e of census.entries || []) for (const g of (e.advert && e.advert.guardianOf) || []) ids.set(toHex(g.federationId), g.federationId);
@@ -242,9 +249,28 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   // A NAMED HEIGHT NOT READ YET IS READ BEFORE THE ANSWER (kanban #549, measured 2026-10-20 07:37Z: right after a restart every guardian
   // seat of 4dc88be7 answered its gatherer "this seat holds no round with census height 157086" - the read had only been started - so
   // the record waited for the next pass); a held round's census still comes first, and a height already read is not read again
-  async function chainReady(atHeight) {
+  // A STRANGER'S NAMED HEIGHT IS NO CHAIN READ (kanban #2270, a45 refute of #1818): GET /federation-record takes any 64-hex id and any
+  // height from anyone, and each censusAt is a walk over ~2,017 blocks plus a census_kept row. So the chain is read for a named height
+  // only for a federation this seat names an invite for, at a height not above the tip and at most NAMED_CENSUS_BELOW_TIP below it, and
+  // within a token bucket shared by the door (NAMED_CENSUS_BURST, NAMED_CENSUS_PER_MIN). Otherwise the answer is the one before: the
+  // basis without that census ("this seat holds no round with census height n").
+  let namedTokens = NAMED_CENSUS_BURST, namedAt = nowMs();
+  const namedToken = () => {
+    const now = nowMs();
+    namedTokens = Math.min(NAMED_CENSUS_BURST, namedTokens + Math.max(0, now - namedAt) * NAMED_CENSUS_PER_MIN / 60000); namedAt = now;
+    if (namedTokens < 1) return false;
+    namedTokens -= 1; return true;
+  };
+  async function chainReady(atHeight, fidHex = null) {
     if (atHeight === null || typeof censusAt !== 'function' || !Number.isInteger(atHeight) || atHeight < 0 || chainCensus.get(atHeight)) return;
     if (roundBasis(atHeight).ok) return;
+    let invite = null; try { invite = fidHex === null ? null : inviteFor(String(fidHex).toLowerCase()); } catch { invite = null; }
+    if (!invite) return;
+    if (typeof chainTip === 'function') {
+      let t = null; try { t = Number(await chainTip()); } catch { t = null; }
+      if (!Number.isFinite(t) || atHeight > t || atHeight < t - NAMED_CENSUS_BELOW_TIP) return;
+    }
+    if (!namedToken()) return;
     try { const e = await censusAt(atHeight); if (Array.isArray(e) && e.length) chainCensus.set(atHeight, { entries: e }); } catch { /* answered below as before */ }
     while (chainCensus.size > 8) chainCensus.delete(chainCensus.keys().next().value);
   }
@@ -252,7 +278,8 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     const h = atHeight !== null ? atHeight : chainHeight;
     if (h === null) return null;
     const c = chainCensus.get(h);
-    if (!c) { readChainCensus(h); return null; }
+    // a named height is read only by chainReady, under its gates (kanban #2270); the read ahead here is for this seat's own height
+    if (!c) { if (atHeight === null) readChainCensus(h); return null; }
     return { ok: true, census: { ok: true, entries: c.entries }, height: h, networkId, fromChain: true };
   }
   function basis(atHeight = null) {
@@ -335,7 +362,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     return { ok: true, reserveSats: r.reserveSats };
   }
   async function mySignature(federationIdHex, atHeight = null, reserveNamed = null) {
-    await chainReady(atHeight);
+    await chainReady(atHeight, federationIdHex);
     const b = basisFor(federationIdHex, atHeight);
     if (!b.ok) return b;
     const eps = await epsFor(federationIdHex);
@@ -580,7 +607,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   // the gatherer's word alone. And THIS SEAT'S OWN GUARDIAN by a leave statement only while this node is leaving: never by one it does not
   // stand behind now. Its owner's notice or emergency request, and 2f + 1 attestations (a threshold of observers), stand for it as for any
   async function mySignatureWithGone(federationIdHex, goneHex, atHeight = null, reserveNamed = null, absentHex = [], departedHex = [], emergencyHexes = [], { left = [] } = {}) {
-    await chainReady(atHeight);
+    await chainReady(atHeight, federationIdHex);
     const b = basisFor(federationIdHex, atHeight);
     if (!b.ok) return b;
     const eps = await epsFor(federationIdHex);
