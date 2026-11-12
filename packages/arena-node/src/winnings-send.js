@@ -57,6 +57,8 @@ const refuse = (why, status = 409) => ({ ok: false, status, why });
 const PAID = SEND.PAID;
 /** Where an attempt's contract stands at the federation (kanban #1186, contractFate). */
 export const CONTRACT_FATE = Object.freeze({ LIVE: 'LIVE', EXPIRED: 'EXPIRED', GONE: 'GONE', NEVER: 'NEVER' });
+const commitmentKey = (c) => `${toHex(c.hiding)}:${toHex(c.binding)}`;
+const PAIRS_PER_SEND = 256;
 const listKey = (commitments) => commitments.map((c) => `${c.id}:${toHex(c.hiding)}:${toHex(c.binding)}`).join('|');
 const plain = (row) => ({ entry: toHex(row.entryId), attempt: row.attempt || 0, address: row.address, invoice: row.invoice,
   paymentHash: row.paymentHash, invoiceMsat: String(row.invoiceMsat), payoutMsat: String(row.payoutMsat), owedMsat: String(row.owedMsat),
@@ -75,7 +77,7 @@ export class WinningsSend {
     // so the peer answers from that late settlement's rows; empty for the round's own sends.
     // `dkg`: the public shares that name a seat whose share does not stand (kanban #1074); the bounds: how long a seat, and an LNURL endpoint, is waited for
     Object.assign(this, { round, port, curve, random, peersFor, fetcher, lnurlFetch, network, scopeParam, dkg, peerAskMs, peerGraceMs, lnurlMs });
-    this.pairs = new Map();      // `${round}:${entry}:${attempt}` -> nonce pair for the auth signature
+    this.pairs = new Map();      // `${kind}:${round}:${entry}:${attempt}` -> { message, held: Map(commitment key -> nonce pair) }, a pair per ask (kanban #1806)
     this.withheld = new Map();   // a signing's query -> the peers that gave this asker no share for it (kanban #1074)
     this.rebuilt = new Map();    // an unsigned re-send transaction, by everything it is built from
   }
@@ -511,16 +513,20 @@ export class WinningsSend {
     const message = await this.messageFor(kind, roundIdBytes, row, built);
     if (!message) return refuse('this signer node cannot rebuild that message');
     const key = `${kind}:${toHex(roundIdBytes)}:${entryHex}:${row.attempt}`;
-    let pair = this.pairs.get(key);
-    // A PAIR THAT SIGNED A LIST IS SPENT (kanban #1074, the settlement's #1070): the next commit draws a new one, so a list one seat never completed binds nobody
-    if (!pair || toHex(pair.message) !== toHex(message) || pair.list) {
-      const hiding = nonceGenerate340(this.random(32), built.signerNode.share);
-      const binding = nonceGenerate340(this.random(32), built.signerNode.share);
-      pair = { message, hiding, binding, list: null, share: null,
-        commitment: { id: built.signerNode.id, hiding: this.curve.pointFromScalar(hiding), binding: this.curve.pointFromScalar(binding) } };
-      this.pairs.set(key, pair);
-    }
-    return { ok: true, commitment: pair.commitment };
+    let at = this.pairs.get(key);
+    if (!at || toHex(at.message) !== toHex(message)) { at = { message, held: new Map() }; this.pairs.set(key, at); }
+    // A FRESH PAIR FOR EVERY ASK (kanban #1806, the settlement's #1494 and the forfeit's #1521): /send-commit and /send-share answer anyone, and
+    // one unspent pair handed to every asker let a stranger ask for it and at once spend it on a list of made-up commitments, so the honest
+    // asker's list was refused ("keeps no second pair") at every seat and the winner's auth (or a re-send's txid) never formed. Now each ask
+    // draws its own pair, kept by its commitment, and a share spends only the pair its own list carries. At most PAIRS_PER_SEND are kept per
+    // message, the oldest dropped first (a dropped pair signs nothing; its asker asks again). A spent pair is still never handed out again (#1074).
+    const hiding = nonceGenerate340(this.random(32), built.signerNode.share);
+    const binding = nonceGenerate340(this.random(32), built.signerNode.share);
+    const pair = { hiding, binding, list: null, share: null,
+      commitment: { id: built.signerNode.id, hiding: this.curve.pointFromScalar(hiding), binding: this.curve.pointFromScalar(binding) } };
+    at.held.set(commitmentKey(pair.commitment), pair);
+    while (at.held.size > PAIRS_PER_SEND) at.held.delete(at.held.keys().next().value);
+    return { ok: true, commitment: pair.commitment, message };
   }
 
   /** ROUND TWO: the share over the message this signer node rebuilt, for one commitment list, once. */
@@ -528,11 +534,12 @@ export class WinningsSend {
     const row = this.rowOf(roundIdBytes, entryHex, attempt);
     if (!row) return refuse('this signer node holds no send plan for that entry', 404);
     const message = await this.messageFor(kind, roundIdBytes, row, built);
-    const pair = this.pairs.get(`${kind}:${toHex(roundIdBytes)}:${entryHex}:${row.attempt}`);
-    if (!message || !pair || toHex(pair.message) !== toHex(message)) return refuse(`this signer node committed to no ${kind} of that send`);
-    const own = commitments.find((c) => String(c.id) === String(pair.commitment.id));
-    if (!own || toHex(own.hiding) !== toHex(pair.commitment.hiding) || toHex(own.binding) !== toHex(pair.commitment.binding))
-      return refuse('that list does not carry this signer node\'s own commitment');
+    const at = this.pairs.get(`${kind}:${toHex(roundIdBytes)}:${entryHex}:${row.attempt}`);
+    if (!message || !at || !at.held.size || toHex(at.message) !== toHex(message)) return refuse(`this signer node committed to no ${kind} of that send`);
+    // THE PAIR THIS LIST CARRIES, AND NO OTHER (kanban #1806)
+    const own = commitments.find((c) => String(c.id) === String(built.signerNode.id));
+    const pair = own ? at.held.get(commitmentKey(own)) : null;
+    if (!pair) return refuse('that list does not carry this signer node\'s own commitment');
     if (commitments.length < built.needed) return refuse(`${commitments.length} commitments, and this round's key signs at ${built.needed}`);
     const key = listKey(commitments);
     if (pair.list && pair.list !== key) return refuse(`this signer node signed that ${kind} over another list, and keeps no second pair`);
@@ -554,7 +561,7 @@ export class WinningsSend {
     for (;;) {
       const own = await this.commit(roundIdBytes, entryHex, built, kind, row.attempt);
       if (!own.ok) return own;
-      const message = this.pairs.get(`${kind}:${toHex(roundIdBytes)}:${entryHex}:${row.attempt}`).message;
+      const message = own.message;
       const asked = await askPeers(this.peersFor(roundIdBytes), async (base, signal) => {
         const r = await this.fetcher(`${base}/send-commit?${q}`, { method: 'POST', signal });
         return r.ok ? { commitment: decodeCommitments(new Uint8Array(await r.arrayBuffer()))[0] } : null;
