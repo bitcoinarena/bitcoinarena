@@ -122,6 +122,7 @@
   }
 
   function stage(p) {
+    if (p.undecided) return { cls: 'on', text: 'Undecided' };   // the seats holding it do not agree on its stage (kanban #2294)
     if (p.cancelled) return { cls: 'no', text: 'Stopped' };
     var v = p.vote, s = p.signal || {};
     if (v && v.state === 'passed') return { cls: 'ok', text: 'Passed' };
@@ -133,6 +134,7 @@
   }
   function stageLine(p) {
     var v = p.vote, s = p.signal || {};
+    if (p.undecided) return 'The nodes holding it do not agree on its stage yet';
     if (p.cancelled) return p.cancelled;
     if (v && v.count && v.count.approvalPct !== undefined) return 'Vote until block ' + v.last + ': YES ' + v.count.approvalPct + '% of the votes, ' + (v.count.yesOfAllPct || 0) + '% of everyone who could vote';
     if (s.state === 'failed') return 'Signal: ' + (s.supporters || 0) + ' of ' + (s.active || 0) + ' active nodes (15% needed)';

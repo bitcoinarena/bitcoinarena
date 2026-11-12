@@ -636,8 +636,9 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         const p = read('proposal', row.hex); if (!p.ok) return null;
         const o = p.obj;
         const comments = db.prepare("SELECT hex FROM funding_items WHERE kind = 'comment' AND proposal = ? ORDER BY at_ms, id").all(row.id)
-          .map((c) => read('comment', c.hex)).filter((c) => c.ok)
-          .map((c) => ({ id: toHex(c.id), parent: toHex(c.obj.parentId), author: toHex(c.obj.author), atHeight: c.obj.atHeight, text: c.obj.text }));
+          .map((c) => ({ c: read('comment', c.hex), hex: c.hex })).filter((x) => x.c.ok)
+          // each comment's signed hex beside it (kanban #2138, #2203, #2294): the page checks a comment itself, never one seat's JSON
+          .map(({ c, hex }) => ({ id: toHex(c.id), parent: toHex(c.obj.parentId), author: toHex(c.obj.author), atHeight: c.obj.atHeight, text: c.obj.text, hex }));
         const signals = signalsOf(row.id);
         const decided = outcomeOf(row.id);
         const st = decided || signalOutcome({ proposal: o, signals, active: null, tip: height, schedule });
