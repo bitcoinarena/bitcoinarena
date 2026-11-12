@@ -74,6 +74,8 @@ const tallyJson = (t) => ({ totalSats: str(t.totalSats), yesSats: str(t.yesSats)
  */
 export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, verify, blockHashAt = null, genesisFor = () => BALLOT_GENESIS,
   decideDepthFor = () => 6, minDecideDepthFor = () => MIN_DECIDE_DEPTH, depthHeightFor = () => 0, maxBlocksPerPass = 64, log = () => {} }) {
+  // THE PROPOSALS READ THIS CHAIN'S TIP TOO (kanban #1608): one posted once its voting has begun is refused at the door
+  if (proposals && typeof proposals.useTip === 'function' && typeof tipHeight === 'function') proposals.useTip(tipHeight);
   const votesByHeight = new Map();          // height -> the vote outputs of that block (shared by every proposal voting there)
   const hashByHeight = new Map();           // height -> the hash of the block those votes were read from
   const open = new Map();                   // proposal id -> { readTo, readHash, census, votes: [], result } while undecided
