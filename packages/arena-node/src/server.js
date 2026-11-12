@@ -13280,6 +13280,43 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return took.ok ? json(res, 200, took) : text(res, took.status || 409, took.why);
       }
       const slashed = /^\/slash\/([0-9a-f]{64})$/.exec(url.pathname);
+      // A RESULT'S OR A RE-RUN'S PROOF IS ITS ACCUSED NODE'S SIGNED WORD, AND ONE PER SIGNED RESULT IS RELAYED (kanban #2248, a45 refute of #1816, ported to
+      // the 5A.3B fraud-proof door): the proof's free fields (bond outpoint, transcript hash) and the fraud proof's free parts (contract, entry, bundle) let
+      // a stranger re-wrap one public signed result into 2^32+ distinct proofs under distinct hashes, until RELAY_MOST was full and every honest
+      // transcript and slash proof was refused 507. Such a proof is kept only when its evidence is the signed result (or re-run) the proof names, signed by
+      // the accused node, about that round, node, player and transcript - and, where this seat holds the round, the player is one of its entries and the
+      // bond the accused node advertised. At most one per (round, accused node, player, signed result): the same again is 200, another 409, nothing stored.
+      const slashEvidenceWhy = (got) => {
+        if (got.kind !== 'result' && got.kind !== 'rerun') return null;
+        const proof = got.proof;
+        let body, sigOk = false;
+        try {
+          if (got.kind === 'result') {
+            const sp = splitSignedResult(got.signedResult); body = decodePlayerResult(sp.body);
+            if (toHex(resultId(body)) !== toHex(proof.signedResultId)) return 'the evidence is not the result the proof names';
+            try { sigOk = schnorr.verify(sp.signature, resultId(body), body.nodePubkey) === true; } catch { sigOk = false; }
+          } else {
+            const sp = splitSignedRerun(got.signedRerun); const rx = decodeRerunResult(sp.body); body = rx.result;
+            if (toHex(rerunResultId(rx)) !== toHex(proof.signedResultId)) return 'the evidence is not the re-run the proof names';
+            try { sigOk = schnorr.verify(sp.signature, rerunResultId(rx), body.nodePubkey) === true; } catch { sigOk = false; }
+          }
+        } catch (e) { return `the evidence is not a signed result: ${e.message}`; }
+        if (toHex(body.roundId) !== toHex(proof.roundId) || toHex(body.nodePubkey) !== toHex(proof.nodePubkey) || toHex(body.playerPubkey) !== toHex(proof.playerPubkey))
+          return 'the evidence is not the accused node\'s result for that round and player';
+        if (!sigOk) return 'the signature on the evidence is not the accused node\'s';
+        if (toHex(proof.transcriptHash) !== toHex(body.transcriptHash)) return 'the proof names a transcript its evidence was not signed about';
+        if (round.get(proof.roundId)) {
+          if (!round.entriesOf(proof.roundId).some((e) => toHex(e.entry.playerPubkey) === toHex(proof.playerPubkey))) return 'the player is not an entry of that round';
+          let adverts = null;
+          try { adverts = verifier.advertsFor ? verifier.advertsFor(proof.roundId) : null; } catch { adverts = null; }
+          if (adverts instanceof Map) {
+            const advert = adverts.get(toHex(proof.nodePubkey));
+            if (!advert) return 'the accused node advertised no bond for that round';
+            if (toHex(advert.bondTxid) !== toHex(proof.bondTxid) || advert.bondVout !== proof.bondVout) return 'the proof names a bond the accused node did not advertise';
+          }
+        }
+        return null;
+      };
       if (slashed && req.method === 'PUT') {
         const bytes = await read(req), u8 = new Uint8Array(bytes);
         if (!bytes.length) return text(res, 400, 'that is no proof');
@@ -13306,8 +13343,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         }
         if (toHex(fraudProofHash(u8)) !== slashed[1]) return text(res, 409, 'those bytes are not the proof that hash names');
         let evidence, got; try { ({ evidence } = decodeFraudProof(u8)); got = readEvidence(evidence); } catch (e) { return text(res, 400, e.message); }
-        if (round.relayedBytes() + bytes.length > RELAY_MOST) return text(res, 507, 'this relay keeps no more: its store for relayed bytes is full');   // kanban #1532
-        round.relayPut(Buffer.from(slashed[1], 'hex'), bytes);
+        { const why = slashEvidenceWhy(got); if (why) return text(res, 422, why); }   // kanban #2248
+        if (got.kind === 'result' || got.kind === 'rerun') {
+          const accused = Buffer.concat([got.proof.roundId, got.proof.nodePubkey, got.proof.playerPubkey, got.proof.signedResultId].map((b) => Buffer.from(b)));
+          if (!round.relaySlashOf(accused) && round.relayedBytes() + bytes.length > RELAY_MOST) return text(res, 507, 'this relay keeps no more: its store for relayed bytes is full');   // kanban #1532
+          const kept = round.relaySlashPut(accused, Buffer.from(slashed[1], 'hex'), bytes);
+          if (kept === 'same') return text(res, 200, 'already kept');
+          if (kept === 'other') return text(res, 409, 'this relay already keeps a slash proof about that signed result');
+        } else {
+          if (round.relayedBytes() + bytes.length > RELAY_MOST) return text(res, 507, 'this relay keeps no more: its store for relayed bytes is full');   // kanban #1532
+          round.relayPut(Buffer.from(slashed[1], 'hex'), bytes);
+        }
         // ANYONE PUBLISHES A FRAUD PROOF (5A.3B step 1): a pair that holds here, on this seat's own check, is a proof this seat holds, kept as if it had seen both results itself
         if (slashStarter && got.kind === 'double') {
           const none = new Uint8Array(32);
