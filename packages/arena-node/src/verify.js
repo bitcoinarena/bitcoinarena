@@ -21,7 +21,10 @@ import { sha256 } from '../../arena-protocol/src/hash.js';
 import { stateOf } from './settlement-state.js';
 import { verifyKept } from './verify-kept.js';
 import { timed } from './slow.js';
-import { SIGNED_RECEIPT_BYTES } from '../../arena-protocol/src/receipt.js';
+import { SIGNED_RECEIPT_BYTES, splitSignedReceipt, decodeCheckpointReceipt } from '../../arena-protocol/src/receipt.js';
+
+// How many of one peer's /receipts records are taken before the loop is given back (kanban #1636).
+const RECEIPTS_PER_TURN = 64;
 import { resultFrom, signResult, verifiedFinal, runId } from './verdict.js';
 import { stoppedOutcome } from '../../arena-protocol/src/first-mark.js';
 import { noQuorumOutcome as noQuorumRule, VOID } from '../../arena-protocol/src/payout.js';
@@ -47,6 +50,7 @@ import {
 import { encodeSlashProof, slashProofId, slashHolds, joinSlashEvidence, slashHoldsOnRerun, joinRerunSlashEvidence } from '../../arena-protocol/src/slash.js';
 import {
   joinSignedResult, splitSignedResult, decodePlayerResult, resultId, SIGNED_RESULT_BYTES, cutSignedResults,
+  RESULT_FRONT_BYTES, RESULT_SIGNATURE_BYTES,
   encodePlayerResult,
 } from '../../arena-protocol/src/result.js';
 import { decodeRoundContract, encodeRoundContract } from '../../arena-protocol/src/contracts.js';
@@ -214,6 +218,38 @@ async function peerBody(answer, cap = PEER_BODY_MAX_BYTES) {
   for (const c of parts) { out.set(c, at); at += c.length; }
   return out;
 }
+/**
+ * THE FIRST `cap` BYTES OF A PEER'S ANSWER, THE REST NEVER READ (kanban #1632): for an answer whose head is all this
+ * seat uses (a peer's /equivocation pairs), so a padded answer is cut, not read whole, and an honest long one still counts.
+ */
+async function peerHead(answer, cap) {
+  if (!answer.body) return new Uint8Array(0);
+  const out = new Uint8Array(cap); let n = 0;
+  for await (const chunk of answer.body) {
+    const take = Math.min(chunk.length, cap - n);
+    out.set(chunk.subarray(0, take), n); n += take;
+    if (n >= cap) { try { await answer.body.cancel(); } catch { /* gone */ } break; }
+  }
+  return out.slice(0, n);
+}
+/**
+ * PAIRS TAKEN FROM ONE PEER'S /equivocation (kanban #1632): a fork needs one pair. Before, a peer's answer was read whole
+ * and every pair in it ed25519-verified on the seat's one thread - 6000 made-up pairs held it 3.7 s in one stranger's
+ * POST /proof-pull, and again at every close. Now each peer gives at most this many.
+ */
+const EQUIVOCATION_PAIRS_PER_PEER = 32;
+/** A peer's /entry-void answer is one small JSON object (kanban #1632). */
+const ENTRY_VOID_MAX_BYTES = 4096;
+/**
+ * A PEER'S GET /results ANSWER IS BOUNDED (kanban #1634): it was read whole (fetch + arrayBuffer, no #1550 cap) and every
+ * record that named the round, the player and a committee key cost a schnorr.verify, all in one synchronous block - one
+ * seat answering 4000 copies of a member's result with a bad signature (928 KB) held an honest seat's thread 3.95 s in one
+ * close gather of one entry. A peer holds at most one result per committee key, so its answer is at most that many of the
+ * largest record (twice over, for slack); past that it is a peer that is down. And each committee key is checked at most
+ * once per answer, and not at all when this seat already holds that key's result.
+ */
+const RESULT_RECORD_MAX_BYTES = RESULT_FRONT_BYTES + RESULT_SIGNATURE_BYTES;
+const peerResultsCap = (committeeSize) => 2 * Math.max(1, committeeSize) * RESULT_RECORD_MAX_BYTES;
 async function peerJson(answer) { return JSON.parse(Buffer.from(await peerBody(answer)).toString('utf8')); }
 /** GET /checkpoints of every peer AT ONCE (#1550: in parallel, not one after another), each its bytes or null when down. */
 async function peersCheckpoints(peers, roundIdBytes, entryId, cap) {
@@ -394,14 +430,36 @@ export class Verifier {
       // unnamed one on this chain (2026-09-17 19:15, the ghost lag): stalls of 299-377 ms named only 6-9 ms of
       // frame work and left 190-250 ms of this thread's processor unaccounted. Each receipt is checked and written
       // here, per peer, per entry, at the close and at every retry.
-      timed(`close take receipts ${hex(entryIdBytes).slice(0, 8)}`, () => {
-        for (let at = 0; at + SIGNED_RECEIPT_BYTES <= body.length; at += SIGNED_RECEIPT_BYTES) {
-          try {
-            this.round.takeReceipt(body.slice(at, at + SIGNED_RECEIPT_BYTES));
-            report.taken++;
-          } catch (e) { report.refused.push(`${peer}: ${e.message}`); }
-        }
-      }, { over: 20 });
+      //
+      // BOUNDED IN WORK, NOT ONLY IN BYTES (kanban #1636): #1550 capped the body at 16 MB, but every record that was not
+      // byte-equal to a stored receipt cost a schnorr verify, all of them in one block - one seat answering 4000 copies of
+      // a real receipt with one signature byte changed held this thread 2.6 s per entry, at every close and retry (about
+      // 130,000 fit under the cap). Now each (mark, signer) is taken at most once per answer, a peer whose record does not
+      // verify is read no further (an honest seat serves only receipts it verified itself), and the loop is given back
+      // between batches of RECEIPTS_PER_TURN records.
+      const seen = new Set();
+      let at = 0;
+      while (at + SIGNED_RECEIPT_BYTES <= body.length) {
+        let stop = false;
+        timed(`close take receipts ${hex(entryIdBytes).slice(0, 8)}`, () => {
+          for (let n = 0; n < RECEIPTS_PER_TURN && at + SIGNED_RECEIPT_BYTES <= body.length; n++, at += SIGNED_RECEIPT_BYTES) {
+            const one = body.slice(at, at + SIGNED_RECEIPT_BYTES);
+            try {
+              const r = decodeCheckpointReceipt(splitSignedReceipt(one).body);
+              const key = `${hex(r.checkpointId)}:${hex(r.nodePubkey)}`;
+              if (seen.has(key)) continue;
+              seen.add(key);
+              this.round.takeReceipt(one);
+              report.taken++;
+            } catch (e) {
+              report.refused.push(`${peer}: ${e.message}`);
+              if (/does not verify/.test(e.message)) { stop = true; at = body.length; break; }
+            }
+          }
+        }, { over: 20 });
+        if (stop || at + SIGNED_RECEIPT_BYTES > body.length) break;
+        await new Promise((r) => setImmediate(r));
+      }
     }
     // AND ANY SIGNER NODE'S REFUSED FIRST MARK (M3.3-34): the player's own on-time first
     // mark that a signer node, up, refused - checked here (round.onTimeFirstMark). It
@@ -794,16 +852,20 @@ export class Verifier {
       let body;
       try {
         const answer = await fetch(`${peer}/results?round=${hex(roundIdBytes)}&entry=${hex(entryIdBytes)}`, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
-        if (!answer.ok) return;
-        body = new Uint8Array(await answer.arrayBuffer());
+        if (!answer.ok) { try { await answer.body?.cancel(); } catch { /* gone */ } return; }
+        body = await peerBody(answer, peerResultsCap(committee.size));   // kanban #1634: bounded
       } catch { return; }
       let records = [];
       try { records = cutSignedResults(body); } catch { return; }
+      const tried = new Set();   // kanban #1634: one check per committee key per answer, none for a key already proven
       for (const record of records) {
         try {
           const { signature, body: signedBody } = splitSignedResult(record);
           const result = decodePlayerResult(signedBody);
           if (hex(result.roundId) !== hex(roundIdBytes) || hex(result.playerPubkey) !== hex(playerPubkey) || !committee.has(hex(result.nodePubkey))) continue;
+          const key = hex(result.nodePubkey);
+          if (signers.has(key) || tried.has(key)) continue;
+          tried.add(key);
           if (schnorr.verify(signature, resultId(result), result.nodePubkey)) signers.add(hex(result.nodePubkey));
         } catch { /* a record that does not read proves nothing */ }
       }
@@ -1162,31 +1224,39 @@ export class Verifier {
     // mark, or the first mark a peer voided - paired with this signer node's own first
     // mark, so a lost forward still leaves the pair to be pulled at the close.
     const mine = [voided && voided.firstMark, late && late.mark, this.round.firstMarkHeld(roundIdBytes, entryId)].filter(Boolean);
-    if (mine.length) {
-      for (const peer of this.peersOf(roundIdBytes)) {
+    // EVERY PEER'S DOORS READ WITH A DEADLINE AND A CAP, ALL PEERS AT ONCE (kanban #1632): a bare fetch + arrayBuffer read
+    // a padded answer whole; /late-first-mark is one signed mark, /entry-void one small object, and /equivocation gives at
+    // most EQUIVOCATION_PAIRS_PER_PEER pairs - the head of its answer, the rest never read.
+    const peers = this.peersOf(roundIdBytes);
+    const pulled = await Promise.all(peers.map(async (peer) => {
+      const got = { pairs: [], reached: false };
+      if (mine.length) {
         try {
-          const r = await fetch(`${peer}/late-first-mark?round=${hex(roundIdBytes)}&entry=${hex(entryId)}`, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
-          if (r.status === 200) { const theirs = new Uint8Array(await r.arrayBuffer()); for (const m of mine) pairs.push([m, theirs]); }
+          const r = await peerFetch(`${peer}/late-first-mark?round=${hex(roundIdBytes)}&entry=${hex(entryId)}`);
+          if (r.status === 200) { const theirs = await peerBody(r, SIGNED_MARK_BYTES); for (const m of mine) got.pairs.push([m, theirs]); }
         } catch { /* a signer node that cannot answer proves nothing */ }
         try {
-          const r = await fetch(`${peer}/entry-void?entry=${hex(entryId)}`, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
+          const r = await peerFetch(`${peer}/entry-void?entry=${hex(entryId)}`);
           if (r.status === 200) {
-            const got = await r.json();
-            if (got.firstMark) { const theirs = Uint8Array.from(Buffer.from(String(got.firstMark), 'hex')); for (const m of mine) pairs.push([m, theirs]); }
+            const v = JSON.parse(Buffer.from(await peerBody(r, ENTRY_VOID_MAX_BYTES)).toString('utf8'));
+            if (v.firstMark) { const theirs = Uint8Array.from(Buffer.from(String(v.firstMark), 'hex')); for (const m of mine) got.pairs.push([m, theirs]); }
           }
         } catch { /* a signer node that cannot answer proves nothing */ }
       }
-    }
-    for (const peer of this.peersOf(roundIdBytes)) {
-      if (report) report.peers++;
       try {
-        const r = await fetch(`${peer}/equivocation?round=${hex(roundIdBytes)}&entry=${hex(entryId)}`, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
-        if (report) report.reached++;
-        if (r.status !== 200) continue;
-        const body = new Uint8Array(await r.arrayBuffer());
-        for (let at = 0; at + 2 * SIGNED_MARK_BYTES <= body.length; at += 2 * SIGNED_MARK_BYTES)
-          pairs.push([body.slice(at, at + SIGNED_MARK_BYTES), body.slice(at + SIGNED_MARK_BYTES, at + 2 * SIGNED_MARK_BYTES)]);
+        const r = await peerFetch(`${peer}/equivocation?round=${hex(roundIdBytes)}&entry=${hex(entryId)}`);
+        got.reached = true;
+        if (r.status === 200) {
+          const body = await peerHead(r, EQUIVOCATION_PAIRS_PER_PEER * 2 * SIGNED_MARK_BYTES);
+          for (let at = 0; at + 2 * SIGNED_MARK_BYTES <= body.length; at += 2 * SIGNED_MARK_BYTES)
+            got.pairs.push([body.slice(at, at + SIGNED_MARK_BYTES), body.slice(at + SIGNED_MARK_BYTES, at + 2 * SIGNED_MARK_BYTES)]);
+        }
       } catch { /* a signer node that cannot answer proves nothing */ }
+      return got;
+    }));
+    for (const got of pulled) {
+      if (report) { report.peers++; if (got.reached) report.reached++; }
+      pairs.push(...got.pairs);
     }
     // EACH PAIR ONCE, AND A KEPT PAIR NOT CHECKED AGAIN (measured live 2026-10-06 on 0.0.2815, entry 0b68a08f): a
     // page stuck on an old head sent 63 refused marks; every peer served the same 63 pairs, each was verified again on every
@@ -1201,6 +1271,10 @@ export class Verifier {
         const key = Buffer.compare(Buffer.from(a), Buffer.from(b)) < 0 ? hex(a) + hex(b) : hex(b) + hex(a);
         if (seen.has(key)) continue;
         seen.add(key);
+        // NOT OF THIS ENTRY, NOT VERIFIED (kanban #1632): a pair whose marks name another round or entry is dropped before
+        // any signature check
+        const ma = decodeCheckpoint(splitSignedMark(a).body), mb = decodeCheckpoint(splitSignedMark(b).body);
+        if ([ma, mb].some((c) => hex(c.entryId) !== hex(entryId) || hex(c.roundId) !== hex(roundIdBytes))) continue;
         const kept = this.round.pairKept(entryId, a, b);
         if (kept || (await provesEquivocation(a, b, found.entry.sessionPubkey, verify)).ok) {
           // A PULLED PAIR OF FIRST MARKS IS KEPT HERE TOO, so this signer node's own
@@ -1432,16 +1506,26 @@ export class Verifier {
         if (!answer.ok) { refused++; continue; }
         const said = answer.headers.get('x-no-quorum');
         if (said) noQuorumPeers.push({ peer, outcome: said });
-        body = new Uint8Array(await answer.arrayBuffer());
-      } catch { refused++; continue; }      // a peer that is down is not a fault
+        body = await peerBody(answer, peerResultsCap(committee.length));   // kanban #1634: bounded, as #1550's pulls
+      } catch { refused++; continue; }      // a peer that is down (or answers too much) is not a fault
 
       // THE RECORDS A PEER SENT, CHECKED: every one split, decoded, re-encoded to its own id and checked against the
       // signature under the key it names. This is the continuation after that peer answered, and it is timed because a
       // stall named only "a promise" is a stall nobody can act on (2026-09-17 19:15).
       timed(`close gather records ${hex(entryIdBytes).slice(0, 8)}`, () => {
-        // record by record, each its type's size
+        // record by record, each its type's size; kanban #1634: at most one check per committee key per answer, and
+        // none for a key whose result this seat already holds (the store keeps the first valid one anyway)
+        const tried = new Set();
         for (const record of cutSignedResults(body)) {
           fetched++;
+          let r;
+          try { r = decodePlayerResult(splitSignedResult(record).body); } catch { continue; }
+          // only a record that would be checked marks its key: one about another round or player costs no signature
+          if (hex(r.roundId) !== hex(roundIdBytes) || hex(r.playerPubkey) !== hex(playerPubkey)) continue;
+          const key = hex(r.nodePubkey);
+          if (tried.has(key)) continue;
+          tried.add(key);
+          if (this.round.hasResult(roundIdBytes, entryIdBytes, r.nodePubkey)) continue;
           if (this.#keepPeerResult(roundIdBytes, entryIdBytes, record, playerPubkey, committee)) kept++;
         }
       }, { over: 20 });

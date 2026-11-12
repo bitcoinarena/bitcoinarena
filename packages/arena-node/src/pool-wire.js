@@ -62,6 +62,24 @@ export function decodeCommitments(bytes) {
   return out;
 }
 
+/**
+ * A LIST NO COMMITTEE COULD SEND (kanban #1672): round two signed over whatever list the asker posted, once it carried this signer
+ * node's own commitment and at least `needed` entries - an 8 MiB body (85 598 commitments) kept the seat's loop in signShare340 for
+ * about 49 s. A committee is never larger than the draw its threshold belongs to (receiptsNeeded: 5 of 7 or 9, 2 of 2 or 3, so at
+ * most 2 * needed - 1), or the contract's own nodes where the caller knows them; and a participant is in a list once. A longer list,
+ * or one naming an id twice, is refused before any curve work. The why, or null for a list a committee could have sent.
+ */
+export const MOST_COMMITMENTS = 64;
+export function commitmentListRefusal(commitments, { needed, nodes = null } = {}) {
+  const own = Number.isInteger(needed) && needed > 0 ? Math.max(Array.isArray(nodes) ? nodes.length : 0, 2 * needed - 1) : MOST_COMMITMENTS;
+  const most = Math.min(MOST_COMMITMENTS, own);
+  if (!Array.isArray(commitments) || commitments.length > most)
+    return `${commitments && commitments.length} commitments, and no committee of this round's key (${needed} needed) holds more than ${most}`;
+  const ids = new Set(commitments.map((c) => String(c.id)));
+  if (ids.size !== commitments.length) return 'that commitment list names a participant twice';
+  return null;
+}
+
 export const encodeShare = (share) => scalarTo32(share);
 export const decodeShare = (bytes) => {
   if (!(bytes instanceof Uint8Array) || bytes.length !== SHARE_BYTES)
