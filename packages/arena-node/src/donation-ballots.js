@@ -14,9 +14,13 @@ import { donationSetId } from '../../arena-protocol/src/donation.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
 const SIG_BYTES = 64;
-// kanban #1528: what one seat keeps is bounded - every row is re-read and re-checked on each tally
-const MAX_ROWS = 4096;
-const MAX_APPROVALS_PER_PROPOSAL = 256;
+// kanban #1528: what one seat keeps is bounded - every row is re-read and re-checked on each tally.
+// kanban #1899, #1939: bounded PER SIGNER, never globally - a global row cap (4096) and a per-proposal approval cap (256)
+// let one recipient, whatever its share, fill the room the others need (its own proposals, or its own repeat approvals,
+// which the tally counts once) and lock the developers' ballot for good. Each limit below only ever stops the key that hit it.
+const MAX_OPEN_PER_PROPOSER = 8;      // open proposals (not approved, refused or withdrawn) one recipient has under one parent set
+const MAX_KEPT_PER_PROPOSER = 256;    // proposals of any state but approved one recipient has under one parent set
+const MAX_ROWS_PER_SIGNER = 8;        // approvals one recipient has stored for one proposal (only its earliest is counted)
 
 /** `db` a better-sqlite3 handle; `knownSets()` the admin key's sets this seat holds; `verifySecp256k1(sig, digest, pubkey)`. */
 export function createDonationBallots({ db, knownSets, verifySecp256k1, log = () => {} }) {
@@ -32,15 +36,25 @@ export function createDonationBallots({ db, knownSets, verifySecp256k1, log = ()
   // Every stored row, decoded - and, given `parents` (the sets this seat holds), only the rows whose signer may sign them:
   // a proposal whose parent set is held and whose proposer is a key recipient of it, an approval of such a proposal whose
   // signer is a key recipient of the same parent. kanban #1710, #1775: the same check add() makes, applied on every read, so a
-  // stranger's row a seat kept before #1528 is never listed, re-tallied, chained or counted against MAX_ROWS (it stays in the
+  // stranger's row a seat kept before #1528 is never listed, re-tallied, chained or counted against a cap (it stays in the
   // table - nothing is deleted - but it is read as if it were not there).
+  // kanban #1899, #1939: of one signer's approvals of one proposal only its first vote stands - the earliest atHeight, as
+  // tallyDonationProposal counts it, and at the same height the smaller digest, so every seat holding the same rows reads
+  // the same one whatever order they came in. The others stay in the table (nothing is deleted) but are read as if not there,
+  // so a proposal never holds more read approvals than its parent set has recipients.
+  const firstVote = (x, y) => x.atHeight - y.atHeight || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0);
+  const firstVotes = (approvals) => {
+    const by = new Map();
+    for (const a of approvals) { const k = toHex(a.signer); const c = by.get(k); if (!c || firstVote(a, c) < 0) by.set(k, a); }
+    return approvals.filter((a) => by.get(toHex(a.signer)) === a);
+  };
   const ballots = (parents = null) => {
     const byId = new Map();
     for (const r of rows()) {
       try {
         const { body, signature } = split(r.hex);
         if (r.kind === 'proposal') { const p = { ...decodeDonationProposal(body), signature }; byId.set(r.proposal, { ...(byId.get(r.proposal) || { approvals: [] }), proposal: p, hex: r.hex }); }
-        else { const a = { ...decodeDonationApproval(body), signature, hex: r.hex }; const b = byId.get(r.proposal) || { approvals: [] }; b.approvals.push(a); byId.set(r.proposal, b); }
+        else { const a = { ...decodeDonationApproval(body), signature, hex: r.hex }; a.id = toHex(donationApprovalDigest(a)); const b = byId.get(r.proposal) || { approvals: [] }; b.approvals.push(a); byId.set(r.proposal, b); }
       } catch { /* a row that no longer decodes is not counted */ }
     }
     if (!parents) return byId;
@@ -49,12 +63,11 @@ export function createDonationBallots({ db, knownSets, verifySecp256k1, log = ()
       if (!b.proposal) continue;
       const parent = findSet(parents, toHex(b.proposal.parentSetId));
       if (!parent || !keyIn(parent, toHex(b.proposal.proposer))) continue;
-      out.set(id, { ...b, approvals: b.approvals.filter((a) => keyIn(parent, toHex(a.signer))) });
+      out.set(id, { ...b, all: b.approvals, approvals: firstVotes(b.approvals.filter((a) => keyIn(parent, toHex(a.signer)))) });
     }
     return out;
   };
   const heldSets = () => [...(knownSets() || []), ...approvedSets];
-  const keptRows = (byId) => { let n = 0; for (const b of byId.values()) n += (b.proposal ? 1 : 0) + b.approvals.length; return n; };
   async function retally() {
     const known = (knownSets() || []).map((s) => ({ ...s }));
     // kanban #1710, #1775: only the rows signed by a recipient of a set held - the admin key's, or one these very rows approve
@@ -107,15 +120,30 @@ export function createDonationBallots({ db, knownSets, verifySecp256k1, log = ()
       const signerHex = toHex(kind === 'proposal' ? obj.proposer : obj.signer);
       // kanban #1710, #1775: an LNURL entry has no key - compared as no match, never toHex(undefined) and a 500
       if (!keyIn(parent, signerHex)) return { ok: false, status: 403, why: 'its signer is no recipient of the parent set' };
-      if (kind === 'approval' && held.approvals.length >= MAX_APPROVALS_PER_PROPOSAL) return { ok: false, status: 429, why: 'this proposal holds as many approvals as a seat keeps' };
       // the signature now, so nothing unsigned is ever kept or forwarded
       const digest = kind === 'proposal' ? donationProposalId(obj) : donationApprovalDigest(obj);
       const signer = kind === 'proposal' ? obj.proposer : obj.signer;
       if (!(await verifySecp256k1(obj.signature, digest, signer))) return { ok: false, status: 400, why: 'the signature does not verify' };
       const id = toHex(digest);
+      // kanban #1899, #1939: a retry of a row already kept is answered as held before any cap, never 429
       if (db.prepare('SELECT 1 FROM donation_ballots WHERE id = ?').get(id)) return { ok: true, fresh: false, id };
-      // kanban #1710, #1775: the cap counts the rows that stand, not a stranger's kept before #1528
-      if (keptRows(ballots(heldSets())) >= MAX_ROWS) return { ok: false, status: 429, why: 'this seat keeps no more ballots' };
+      // kanban #1899, #1939: every limit is the signer's own, so no recipient can use up the room another one needs
+      if (kind === 'approval') {
+        const counted = held.approvals.find((a) => toHex(a.signer) === signerHex);
+        const mine = (held.all || []).filter((a) => toHex(a.signer) === signerHex).length;
+        if (mine >= MAX_ROWS_PER_SIGNER) {
+          // its vote is already counted from an earlier one: this later one changes nothing and is not kept
+          if (counted && firstVote(counted, { atHeight: obj.atHeight, id }) <= 0) return { ok: true, fresh: false, id, counted: counted.id };
+          return { ok: false, status: 429, why: 'this seat keeps no more approvals of this proposal by this signer' };
+        }
+        // (never reached: read approvals are one per signer, and the signer is a recipient of the parent)
+        if (!counted && held.approvals.length >= parent.recipients.length) return { ok: false, status: 429, why: 'this proposal holds an approval by every recipient' };
+      } else {
+        const mine = [...ballots(heldSets()).entries()].filter(([, b]) => b.proposal && toHex(b.proposal.proposer) === signerHex && toHex(b.proposal.parentSetId) === parentId)
+          .map(([pid]) => (tallies.get(pid) || { state: 'open' }).state).filter((st) => st !== 'approved');
+        if (mine.filter((st) => st === 'open').length >= MAX_OPEN_PER_PROPOSER) return { ok: false, status: 429, why: 'this signer has as many open proposals on this parent set as a seat keeps: withdraw one first' };
+        if (mine.length >= MAX_KEPT_PER_PROPOSER) return { ok: false, status: 429, why: 'this seat keeps no more proposals by this signer on this parent set' };
+      }
       db.prepare('INSERT INTO donation_ballots (id, kind, proposal, hex, at_ms) VALUES (?, ?, ?, ?, ?)').run(id, kind, digestKey, String(hex).toLowerCase(), Date.now());
       await retally();
       return { ok: true, fresh: true, id, proposal: digestKey };
