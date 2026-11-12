@@ -164,6 +164,17 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     // seats a member this node named a withholder is never kept nor counted as equivocation: this node left that seating, and the one it moved to stands.
     const named = v.seating.seated.map(toHex).find((k) => db.prepare('SELECT 1 FROM seat_withheld WHERE round_id = ? AND role = ? AND node = ?').get(rid, role, k));
     if (named) return { ok: false, why: `that seating seats ${named.slice(0, 8)}, which withheld its seating signature here (kanban #1509): this node left it` };
+    // KEPT ONLY IN ITS CANONICAL FORM (kanban #1711): verifySeating checks the seated members' signatures and nothing else, so a
+    // stranger who read them off GET /seating-batch could pad a standing certificate with 65,000 junk (nodePubkey, signature)
+    // pairs (6.2 MB), post it first, and every seat kept and served those bytes - the honest certificate after it then differed
+    // and was refused as "one seating twice". The seat keeps exactly the seated members' signatures, the bytes certify() makes.
+    { const by = new Map(v.seating.signatures.map((x) => [toHex(x.nodePubkey), x.signature]));
+      const canonical = encodeSeatingCertificate({ roundId: v.seating.roundId, role: v.seating.role, seated: v.seating.seated,
+        signatures: v.seating.seated.map((k) => ({ nodePubkey: k, signature: by.get(toHex(k)) })) });
+      if (Buffer.compare(Buffer.from(canonical), Buffer.from(bytes)) !== 0) {
+        bytes = canonical;
+        if (held && Buffer.compare(Buffer.from(held.cert), Buffer.from(bytes)) === 0) return { ok: true, kept: false };
+      } }
     // on a table only the first round and its check-ins hold a seating (kanban #1020)
     try { const a = tableAnchorOf(check.contract);
       if (a && !a.first && !checkInOf(check.contract, a)) return { ok: false, why: 'that round of its table is no check-in' }; } catch { /* the draw above read it */ }
