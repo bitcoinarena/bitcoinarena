@@ -2390,13 +2390,30 @@ export class Round {
       .map((r) => ({ id: new Uint8Array(r.handout_id), bytes: new Uint8Array(r.bytes) }));
   }
 
-  /** §23.2 REFUSED: a lock for a round this signer node refuses, never entered, kept under its handout's id.
-   *  THE FIRST KEPT LOCK STANDS (kanban #1489): the handout's A0, the player's refund key and the round's claim key are public,
-   *  so anyone can lock 1 sat with them; INSERT OR REPLACE let that lock take the player's row, and the forfeit returned it. */
-  putRefusedLock({ handoutId, roundId, outpoint, fields, contractId }) {
-    this.db.prepare('INSERT OR IGNORE INTO refused_locks (handout_id, round_id, outpoint, fields, contract_id, kept_ms) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(Buffer.from(handoutId), Buffer.from(roundId), `${Buffer.from(outpoint.txid).toString('hex')}:${outpoint.outIdx}`,
-        JSON.stringify(fields), contractId, this.now());
+  /** §23.2 REFUSED: a lock for a round this signer node refuses, never entered, kept under an id of its own (`lockId`) and
+   *  named as one of its handout's locks (`handoutId`; kanban #1489, #1669, #1735). The handout's A0, the player's refund key
+   *  and the round's claim key are public, so anyone can lock 1 sat with them: no lock takes another's row, every one kept is
+   *  returned on its own (server.js POST /refused-lock decides which id each one is kept under). `move` [fromId, toId], in the
+   *  same transaction: a lock kept before moves to another id first (the handout's own id always names its largest lock). */
+  putRefusedLock({ lockId, handoutId, roundId, outpoint, fields, contractId, move = null }) {
+    const own = !this.db.isTransaction;
+    if (own) this.db.exec('BEGIN');
+    try {
+      if (move) this.db.prepare('UPDATE refused_locks SET handout_id = ?, of_handout = ? WHERE handout_id = ?')
+        .run(Buffer.from(move[1]), Buffer.from(handoutId), Buffer.from(move[0]));
+      this.db.prepare('INSERT OR IGNORE INTO refused_locks (handout_id, round_id, outpoint, fields, contract_id, kept_ms, of_handout) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run(Buffer.from(lockId || handoutId), Buffer.from(roundId), `${Buffer.from(outpoint.txid).toString('hex')}:${outpoint.outIdx}`,
+          JSON.stringify(fields), contractId, this.now(), Buffer.from(handoutId));
+      if (own) this.db.exec('COMMIT');
+    } catch (e) { if (own) { try { this.db.exec('ROLLBACK'); } catch { /* none open */ } } throw e; }
+  }
+
+  /** Every lock kept for one handout (a row from before the of_handout column is its handout's own), each with the id it is kept under. */
+  refusedLocksOfHandout(handoutIdBytes) {
+    const h = Buffer.from(handoutIdBytes);
+    return this.db.prepare('SELECT handout_id, round_id, outpoint, fields, contract_id, kept_ms FROM refused_locks WHERE of_handout = ? OR (handout_id = ? AND of_handout IS NULL)')
+      .all(h, h).map((r) => ({ lockId: new Uint8Array(r.handout_id), roundId: new Uint8Array(r.round_id), outpoint: r.outpoint, fields: JSON.parse(r.fields),
+        contractId: r.contract_id, keptMs: Number(r.kept_ms) }));
   }
 
   refusedLock(handoutIdBytes) {
