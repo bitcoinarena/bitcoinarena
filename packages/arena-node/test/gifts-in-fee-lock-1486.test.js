@@ -154,7 +154,7 @@ test('the settlement names the round\'s donation target and its federation\'s re
 
 // A FEE PROPOSAL CHANGES THE SPLIT (Daniel 2026-11-12, "Ja" to (3)): a protocol-27 round's door, gates and settlement all read the split in force
 // at its census height - the fee set GET /fees?height= serves and the page reads - so every seat takes, settles and returns it alike.
-test('a fee proposal changes the split: a v27 round created after activation is entered, settled and refunded alike at every seat', async () => {
+test('a fee proposal changes the split: a v27 round created after activation is entered, settled and refunded alike at every seat', stockLocks(async () => {
   const { feesAt, FEES_TODAY, roundSplitBps } = await import('../../arena-protocol/src/fee-proposal.js');
   const { lockSettlement, feeLockPays } = await import('../../arena-protocol/src/lock-settlement.js');
   const { roundMintsFees } = await import('../src/stake-lock-signer-node.js');
@@ -226,4 +226,4 @@ test('a fee proposal changes the split: a v27 round created after activation is 
   assert.equal((await s.forfeit.message(RID, PLAYER, 'stake')).ok, true);
   const back = await s.forfeit.message(RID, PLAYER, 'fee');
   assert.equal(back.ok, true, back.why);
-});
+}));

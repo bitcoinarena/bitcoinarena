@@ -74,6 +74,10 @@ test('#1489 sm1-entry-2 a stake lock that seats nobody in a head-to-head round c
     await closeRound(w);
     const settled = await untilSettled(w);
     assert.equal(settled.state, 'ACCEPTED', `${settled.why} ${JSON.stringify({ lock: lockAns, seats, a: short(a), b: short(b), c: short(c) })}`);
+    // EVERY SEAT'S OWN SETTLEMENT ACCEPTED FIRST (2.0: the second seat reads its settlement ACCEPTED a moment after the first - SUBMITTING
+    // in between, measured - and each seat returns an outside lock only once its own settlement is ACCEPTED without claiming it)
+    { const { stateOf } = await import('../src/settlement-state.js');
+      for (const stop = Date.now() + 30000; Date.now() < stop && !w.nodes.every((d) => stateOf(d.round, w.rid) === 'ACCEPTED');) await new Promise((r) => setTimeout(r, 250)); }
     // the player outside the seats: his held lock comes back now, not at expiry
     const fe = await fetch(`${base(w.nodes[0])}/forfeit?round=${toHex(w.rid)}&entry=${toHex(b.eid)}`);
     const feWhy = fe.status === 200 ? 'signed' : (await fe.text()).slice(0, 200);
