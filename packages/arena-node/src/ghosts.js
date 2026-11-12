@@ -28,6 +28,7 @@ import { batchId, batchTicks } from '../../arena-protocol/src/batch.js';
 import { GENESIS, decodeTranscript } from '../../arena-protocol/src/transcript.js';
 import { replay, RunInProgress } from './replay.js';
 import { pluginForRound, hostedPlugins, itemUnlocksOf } from './plugins.js';
+import { OPEN } from './store.js';
 
 const same = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array
   && a.length === b.length && a.every((v, i) => v === b[i]);
@@ -150,6 +151,16 @@ export function ghostForChecked(options) {
  */
 /** The most ticks one picture replays in one call (see `latest`). */
 export const STEP_BUDGET = 150;
+/**
+ * THE MOST WARM RUNS KEPT AT ONCE (kanban #1820). Each one holds about 70 KB of the truck's arrays in the node thread's core
+ * sandbox - the one round.open's runLengthFits asks too - and core-host.js ends a core that keeps more than LIVE_CAP (256 MB)
+ * alive: 3,608 runs never let go ended it, and the seat then opened no Tick Tock round and pictured no truck until a restart.
+ * Runs of a round that closed are let go at once; past this many a run that is over goes (its last picture is kept), and
+ * when every held run is still being driven no new run is warmed (kanban #2316): a live run is never let go to make room,
+ * because the next picture of it would walk its whole run again from the join tick - with more drivers than this, round
+ * robin, every picture of every driver did (104,030 ticks for one new tick from each of 1,030 drivers).
+ */
+export const GHOST_RUNS_KEEP = 1024;
 
 export class Ghosts {
   constructor(round, { randomnessFor = () => undefined, limit = GHOST_SUBSCRIPTIONS, plugins = [] } = {}) {
@@ -171,6 +182,80 @@ export class Ghosts {
     // HOW FAR EACH RUN'S INPUT CHAIN HAS BEEN CHECKED, so the check is done
     // once per batch instead of once per batch per frame.
     this.chains = new Map();
+    // THE ROUNDS CLOSED SINCE THE LAST SWEEP (kanban #1820): the store's close count as last read
+    this.closeSeq = round?.closeSeq ?? 0;
+    // THE LAST PICTURE OF A RUN THAT IS OVER and was let go to make room (kanban #2316): asked again, it is served from here
+    // instead of the run being walked again from its join tick. A few hundred bytes each, gone with the round.
+    this.ended = new Map();
+    // HOW MANY HELD RUNS REACHED THEIR END, and the (ended, closeSeq) at which a look for room last found none (kanban #2316):
+    // until one of the two moves no held run can have become one to let go, so the full table is not walked again.
+    this.finished = 0;
+    this.noRoomAt = null;
+  }
+
+  /** Lets one warm run go (kanban #1820): its state in the core's sandbox, its checked chain and its kept frames. */
+  #letGo(key) {
+    const run = this.runs.get(key);
+    const had = this.runs.delete(key);
+    this.chains.delete(key);
+    this.ended.delete(key);
+    const prefix = `${key}:`;
+    for (const k of this.frames.keys()) if (k.startsWith(prefix)) this.frames.delete(k);
+    if (run && typeof run.release === 'function') run.release();
+    return had;
+  }
+
+  /** LETS THE RUNS OF EVERY ROUND CLOSED SINCE THE LAST SWEEP GO (kanban #1820): a closed round is driven no further. */
+  #sweepClosed() {
+    const seq = this.round?.closeSeq;
+    if (!Number.isInteger(seq) || seq === this.closeSeq) return;
+    const gone = typeof this.round.closedSince === 'function' ? this.round.closedSince(this.closeSeq) : null;
+    this.closeSeq = seq;
+    const state = new Map();
+    for (const key of [...this.runs.keys()]) {
+      const rh = key.slice(0, key.indexOf(':'));
+      let closed;
+      if (gone) closed = gone.has(rh);
+      else {
+        // MORE CLOSED THAN THE STORE'S LOG REMEMBERS: each held round is asked once
+        if (!state.has(rh)) { const row = this.round.get(Buffer.from(rh, 'hex')); state.set(rh, !row || row.state !== OPEN); }
+        closed = state.get(rh);
+      }
+      if (closed) this.#letGo(key);
+    }
+    // AND THE KEPT LAST PICTURES OF ENDED RUNS OF THOSE ROUNDS (kanban #2316)
+    for (const key of [...this.ended.keys()]) {
+      const rh = key.slice(0, key.indexOf(':'));
+      if (gone ? gone.has(rh) : (() => { const row = this.round.get(Buffer.from(rh, 'hex')); return !row || row.state !== OPEN; })())
+        this.ended.delete(key);
+    }
+  }
+
+  /**
+   * ROOM FOR ONE MORE WARM RUN (kanban #2316), or false. Only a run that will step no further is let go: one of a round that is
+   * no longer OPEN, or one past its last tick (its last picture is kept in `ended`). The least recently used such run goes.
+   * A run still being driven is never let go for room - picturing it again would re-walk it from its join tick, and with more
+   * drivers than GHOST_RUNS_KEEP every picture of every one of them did, round robin.
+   */
+  #makeRoom() {
+    if (this.runs.size < GHOST_RUNS_KEEP) return true;
+    const mark = `${this.finished}:${this.round?.closeSeq ?? 0}`;
+    if (this.noRoomAt === mark) return false;
+    const open = new Map();
+    for (const [key, run] of this.runs) {
+      const rh = key.slice(0, key.indexOf(':'));
+      if (!open.has(rh)) { const row = this.round.get(Buffer.from(rh, 'hex')); open.set(rh, !!row && row.state === OPEN); }
+      // a round no longer OPEN, or a run that could not be made (it holds nothing and steps nowhere)
+      if (!open.get(rh) || !run.ok) { this.#letGo(key); return true; }
+      if (run.ok && Number.isInteger(run.endsAt) && run.at >= run.endsAt) {
+        const last = this.frames.get(`${key}:${run.endsAt}`);
+        this.#letGo(key);
+        if (last && last.ok) this.ended.set(key, last);
+        return true;
+      }
+    }
+    this.noRoomAt = mark;
+    return false;
   }
 
   /**
@@ -214,11 +299,16 @@ export class Ghosts {
   #runFor(roundIdBytes, entryIdBytes, entry) {
     const key = `${hex(roundIdBytes)}:${hex(entryIdBytes)}`;
     const had = this.runs.get(key);
-    if (had) return had;
+    // LEAST RECENTLY USED LAST TO GO (kanban #1820): a run asked again moves to the end of the Map's order
+    if (had) { this.runs.delete(key); this.runs.set(key, had); return had; }
+    this.#sweepClosed();
     // THE LIVE PATH REFUSES AS THE SLOW ONE DOES: a game that draws no picture keeps no run warm for one
     const core = this.#coreOf(roundIdBytes);
     if (core && drawsPicture(core) === false)
       return { ok: false, why: `${core.game || core.name} draws no picture, so its runs have no ghost` };
+    // NO ROOM, NO NEW WARM RUN (kanban #2316): the runs held are all still being driven, and none of them is let go for this one
+    if (!this.#makeRoom())
+      return { ok: false, why: `this seat already keeps ${GHOST_RUNS_KEEP} trucks of open rounds warm, so that one is not pictured until one of them ends` };
     const made = new RunInProgress(entry, {
       core,
       roundRandomness: this.#randomnessOf(roundIdBytes, entry, entryIdBytes),
@@ -229,7 +319,7 @@ export class Ghosts {
 
   /** A run this node will not picture again - a round that closed, say. */
   forget(roundIdBytes, entryIdBytes) {
-    return this.runs.delete(`${hex(roundIdBytes)}:${hex(entryIdBytes)}`);
+    return this.#letGo(`${hex(roundIdBytes)}:${hex(entryIdBytes)}`);
   }
 
   /** The core the round names, as this node's plugins.js resolves it (M3 R1) - or none: nothing is pictured. */
@@ -327,6 +417,9 @@ export class Ghosts {
     // tick, so a watcher arriving with two or three trucks mid-run stopped the Daily for 14-21 s (measured 18.7 s and
     // 20.0 s within one minute) - every batch and every picture waited. A call steps at most STEP_BUDGET ticks; a cold
     // truck is drawn at the tick it has reached and catches up over the next pushes, ten a second.
+    // A RUN THAT IS OVER, let go to make room: its last picture, as it was (kanban #2316)
+    const over = this.ended.get(`${hex(roundIdBytes)}:${hex(entryIdBytes)}`);
+    if (over) { this.served++; return over; }
     const warm = this.runs.get(`${hex(roundIdBytes)}:${hex(entryIdBytes)}`);
     if (warm) {
       const key = `${hex(roundIdBytes)}:${hex(entryIdBytes)}:${Math.min(published, warm.at + STEP_BUDGET)}`;
@@ -355,6 +448,7 @@ export class Ghosts {
     const walked = run.stepTo(this.round.ticksFrom(roundIdBytes, entryIdBytes, run.at + 1), at);
     if (!walked.ok) return { ok: false, why: walked.why };
     this.walked += run.stepped - before;
+    if (run.stepped > before && run.at >= run.endsAt) this.finished++;
 
     const chain = this.#chainThrough(roundIdBytes, entryIdBytes, at);
     if (!chain.ok) return chain;
