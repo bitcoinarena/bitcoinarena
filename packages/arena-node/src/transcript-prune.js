@@ -49,12 +49,17 @@ export function pruneTranscripts({ db, nowMs = Date.now(), keptUntil = (row) => 
 // RELAYED TRANSCRIPTS LEAVE WITH THEM (kanban #1532): a transcript this seat keeps as a publication relay (PUT /transcript, the
 // `relayed` table) goes when its round's claim window has ended, as the round's own transcript does. Its round is read from the
 // bytes the door took: a transcript names it (type 0x09, version, round id), a head-to-head reveal record (33 or 65 bytes) names an
-// entry this seat holds. Anything else there (slash proofs) is not touched.
+// entry this seat holds. Slash proofs and rows of no round: see below (kanban #1917).
 //
 // A RELAYED COPY IS NEVER KEPT FOR EVER (kanban #1725, #1795, refute of #1532): a round whose contract names no claim window (no rules
 // block - the duty poster's DUTY_TEMPLATE) keeps its own transcript, but the copies the relay door took for it go RELAY_NO_WINDOW_DAYS
 // after max(entry close, close here) + W; a copy whose round this seat no longer holds, or whose contract it cannot read, goes
 // RELAY_NO_WINDOW_DAYS after the door took it (seen_ms). Otherwise one entry's junk in such a round kept the relay pool full for good.
+//
+// SLASH PROOFS AND UNKNOWN ROWS GO TOO (kanban #1917, refute 2 of #1532): a relayed slash proof names its round (the `round_id` column
+// the slash door writes, or the proof's own bytes for a row from before) and goes with that round's claim window like its
+// transcripts; a row whose round is read from nowhere goes RELAY_NO_WINDOW_DAYS after the door took it. Before, such rows were
+// skipped and stayed for good, so a pool once full of them stayed full.
 export const RELAY_NO_WINDOW_DAYS = 7;
 export function relayedKeptUntil(contract, closedMs = 0) {
   const until = transcriptKeptUntil(contract, closedMs);
@@ -63,13 +68,14 @@ export function relayedKeptUntil(contract, closedMs = 0) {
 }
 export function pruneRelayed({ db, nowMs = Date.now(), keptUntil = (row) => relayedKeptUntil(decodeRoundContract(new Uint8Array(row.contract)), row.closed_ms) }) {
   const rows = db.prepare(`SELECT hash, seen_ms, CASE WHEN LENGTH(bytes) >= 67 AND SUBSTR(bytes, 1, 1) = x'09' THEN SUBSTR(bytes, 4, 32)
-    WHEN LENGTH(bytes) IN (33, 65) THEN (SELECT round_id FROM entries WHERE entry_id = SUBSTR(relayed.bytes, 1, 32)) END AS rid FROM relayed`).all();
+    WHEN LENGTH(bytes) IN (33, 65) THEN (SELECT round_id FROM entries WHERE entry_id = SUBSTR(relayed.bytes, 1, 32))
+    WHEN LENGTH(bytes) > 199 AND SUBSTR(bytes, 1, 1) = x'0c' THEN SUBSTR(bytes, 4, 32) END AS rid FROM relayed`).all();
   const roundOf = db.prepare('SELECT contract, closed_ms FROM rounds WHERE round_id = ?');
   const del = db.prepare('DELETE FROM relayed WHERE hash = ?');
   const untilOf = new Map(); let deleted = 0;
   const lastly = (seenMs) => Number(seenMs || 0) + RELAY_NO_WINDOW_DAYS * DAY_MS;
   for (const { hash, rid, seen_ms: seenMs } of rows) {
-    if (!rid) continue;
+    if (!rid) { if (nowMs >= lastly(seenMs)) deleted += Number(del.run(hash).changes); continue; }   // kanban #1917: never kept for good
     const k = Buffer.from(rid).toString('hex');
     if (!untilOf.has(k)) {
       const row = roundOf.get(rid);
