@@ -38,10 +38,12 @@ export function trialRun(source, manifest, { ms = TRIAL_MS, name = 'plugin trial
   // kanban #1694: the same entry name and core name the seat loads it under (core-sandbox.js coreFiles), so the core cannot
   // tell the trial from the seat by its module's identifier
   try { box = loadCore({ files: new Map([[SINGLE_ENTRY, String(source)]]), entry: SINGLE_ENTRY }, { name, loadMs: ms, askMs: ms, until, liveCap: ARRAY_BUDGET, oneThread: true }); }   // kanban #1538: kept arrays refused at the budget; #1719: `until` - load and meta share the trial's one deadline
-  catch (e) { return { ok: false, cases: 0, why: `it does not load in the sandbox: ${e.message}` }; }
+  catch (e) { return { ok: false, cases: 0, why: `it does not load in the sandbox: ${String(e.message).slice(0, 300)}` }; }   // kanban #2165: bounded
   try { return trialCases(box, manifest, left); } finally { box.end(); }
 }
 
+// kanban #2165, #2232, #2304: the refusal carries at most 300 characters of the core's text (the seat logs it and answers it
+// in the 422), as server.js cuts a peer's error
 function trialCases(box, manifest, left) {
   if (!box.meta.decide) return { ok: false, cases: 0, why: 'it exports no DECIDE with a decide(moves) function' };
   let cases = 0;
@@ -56,7 +58,7 @@ function trialCases(box, manifest, left) {
         a = JSON.stringify(box.call('decide', { moves: list }, left()));
         if (left() <= 0) throw new Error(`the trial did not finish within ${TRIAL_MS} ms`);
         b = JSON.stringify(box.call('decide', { moves: list }, left()));
-      } catch (e) { return { ok: false, cases, why: `it fails on ${JSON.stringify(list.map((m) => m.move))}: ${e.message}` }; }
+      } catch (e) { return { ok: false, cases, why: `it fails on ${JSON.stringify(list.map((m) => m.move))}: ${String(e.message).slice(0, 300)}` }; }
       if (a !== b) return { ok: false, cases, why: `it answers ${JSON.stringify(list.map((m) => m.move))} differently twice` };
       let v; try { v = JSON.parse(a); } catch { v = null; }
       if (!v || typeof v !== 'object') return { ok: false, cases, why: `it answers ${JSON.stringify(list.map((m) => m.move))} with no verdicts` };
