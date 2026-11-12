@@ -103,7 +103,7 @@ export function eventRefusal(e, { kinds = RELAY_KINDS, nowS = Math.floor(Date.no
 // message handler and took the relay down; the filter also stayed in the subscription and threw again on every later EVENT): ids and authors lists of hex
 // (up to 64 characters, a prefix as NIP-01 allows), kinds a list of whole numbers, since, until and limit whole numbers, a #<letter> tag a list of strings.
 // Answers null for a good filter, else why it is not one; a REQ with one bad filter is CLOSED.
-const LIST_MOST = 500;
+const LIST_MOST = 500, TAG_KEYS_MOST = 8;   // kanban #2553: tag keys per filter
 export function filterRefusal(f) {
   if (!f || typeof f !== 'object' || Array.isArray(f)) return 'a filter is an object';
   const hexList = (v) => Array.isArray(v) && v.length <= LIST_MOST && v.every((x) => typeof x === 'string' && /^[0-9a-f]{1,64}$/.test(x));
@@ -111,7 +111,16 @@ export function filterRefusal(f) {
   if (f.authors !== undefined && !hexList(f.authors)) return 'authors is a list of hex';
   if (f.kinds !== undefined && !(Array.isArray(f.kinds) && f.kinds.length <= LIST_MOST && f.kinds.every((k) => Number.isInteger(k) && k >= 0 && k <= 65535))) return 'kinds is a list of whole numbers';
   for (const k of ['since', 'until', 'limit']) if (f[k] !== undefined && !(Number.isInteger(f[k]) && f[k] >= 0)) return `${k} is a whole number`;
-  for (const [k, v] of Object.entries(f)) if (k[0] === '#' && !(k.length === 2 && Array.isArray(v) && v.length <= LIST_MOST && v.every((x) => typeof x === 'string'))) return `${k.slice(0, 8)} is a list of strings`;
+  // A FILTER NAMES FEW TAG LETTERS (kanban #2553, #1489 r13-nostr-1): any one UTF-16 unit passed as a letter, so one filter could name
+  // thousands of distinct keys ("#一", "#丁", ...) and sqlFor ran a prepare + COUNT for each, then one EXISTS per key - ten such filters
+  // per REQ held the event loop ~270 ms. A tag key is #<a-zA-Z> (NIP-01's letters) and a filter names at most TAG_KEYS_MOST of them.
+  let tagKeys = 0;
+  for (const [k, v] of Object.entries(f)) {
+    if (k[0] !== '#') continue;
+    if (!/^#[a-zA-Z]$/.test(k)) return `${k.slice(0, 8)} is not #<letter a-z or A-Z>`;
+    if (++tagKeys > TAG_KEYS_MOST) return `at most ${TAG_KEYS_MOST} #<letter> conditions per filter`;
+    if (!(Array.isArray(v) && v.length <= LIST_MOST && v.every((x) => typeof x === 'string'))) return `${k.slice(0, 8)} is a list of strings`;
+  }
   return null;
 }
 export function matches(f, e) {
