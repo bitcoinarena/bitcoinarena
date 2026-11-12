@@ -10546,7 +10546,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!found.ok || !found.headToHead) return text(res, 409, 'that round is not a head-to-head game this node hosts: it has no table');
         const now = Number(round.now());
         const tables = presenceTables(round);
-        for (const [rid, t] of tables) { for (const [k, at] of t) if (now - at > PRESENCE_MS) t.delete(k); if (!t.size) tables.delete(rid); }
+        // each table: identity key hex -> { at: last said, since: first said in this unbroken stay (a key gone PRESENCE_MS starts again) }
+        for (const [rid, t] of tables) { for (const [k, p] of t) if (now - p.at > PRESENCE_MS) t.delete(k); if (!t.size) tables.delete(rid); }
         const ridHex = toHex(id);
         if (req.method === 'POST') {
           let body;
@@ -10561,26 +10562,36 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           // seat - each tab read "You are alone in this round" again; one presence on 256 old rounds refused every new table the same way.
           // Now a full table drops the presence said longest ago, never one whose identity a name record of the round names while an
           // unnamed one is there (a named identity is refused only when all 32 are named), and a full map drops the table said to longest ago.
+          // WHO MAKES ROOM IS THE NEWEST ARRIVAL, NOT THE LONGEST SILENT (kanban #2147, audit44 refute of #1645): the page says its presence
+          // before any move or join, so a real player at the table is not yet named by any name record. Dropping the key said longest ago let
+          // a stranger who posted 32 fresh keys AFTER her push her off at every seat - he only had to be later. Now a key keeps its slot for as
+          // long as it keeps saying its presence: a full table drops, among the unnamed, the key whose stay began last (its first say), and
+          // the newcomer takes that slot. A stream of junk keys churns only the newest slot; every player who sat before it keeps hers, a
+          // player who arrives during it still gets a slot, and her next say (every 2 s) takes it back. A named identity is dropped only when
+          // all 32 are named (then the one said longest ago). The table map follows the same rule: a full map drops the table whose
+          // stay began last (the newest of its keys' oldest stays), so tables that have stood longest keep their place.
+          const sinceOf = (tt) => { let s = Infinity; for (const p of tt.values()) if (p.since < s) s = p.since; return s; };
           if (!tables.has(ridHex) && tables.size >= 256) {
-            let old = null, oldAt = Infinity;
-            for (const [rid, tt] of tables) { const last = Math.max(...tt.values()); if (last < oldAt) { oldAt = last; old = rid; } }
-            tables.delete(old);
+            let drop = null, dropSince = -Infinity;
+            for (const [rid, tt] of tables) { const s = sinceOf(tt); if (s >= dropSince) { dropSince = s; drop = rid; } }
+            tables.delete(drop);
           }
           const t = tables.get(ridHex) || new Map();
           if (!t.has(body.key) && t.size >= 32) {
             const named = typeof round.namedIdentitiesOfRound === 'function' ? round.namedIdentitiesOfRound(new Uint8Array(id)) : new Set();
-            let drop = null, dropAt = Infinity;
-            for (const [k, at] of t) if (!named.has(k) && at < dropAt) { dropAt = at; drop = k; }
+            let drop = null, dropSince = -Infinity;
+            for (const [k, p] of t) if (!named.has(k) && p.since >= dropSince) { dropSince = p.since; drop = k; }
             if (drop === null && !named.has(body.key)) return text(res, 503, 'that table is full');
-            if (drop === null) for (const [k, at] of t) if (at < dropAt) { dropAt = at; drop = k; }
+            if (drop === null) { let dropAt = Infinity; for (const [k, p] of t) if (p.at < dropAt) { dropAt = p.at; drop = k; } }
             t.delete(drop);
           }
-          t.set(body.key, now);
+          const was = t.get(body.key);
+          t.set(body.key, { at: now, since: was ? was.since : now });
           tables.set(ridHex, t);
         }
         const t = tables.get(ridHex) || new Map();
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
-        return res.end(JSON.stringify({ round: ridHex, here: [...t].map(([key, at]) => ({ key, name: displayNameFromKey(fromHex(key)), agoMs: now - at })) }));
+        return res.end(JSON.stringify({ round: ridHex, here: [...t].map(([key, p]) => ({ key, name: displayNameFromKey(fromHex(key)), agoMs: now - p.at })) }));
       }
 
       // THE CERTIFIED LOCK SET OF A ROUND (protocol 28, kanban #2561): GET answers what this seat holds - its view, its one set signature, the
