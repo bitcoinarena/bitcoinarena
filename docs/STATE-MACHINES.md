@@ -1542,3 +1542,9 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM3 (add) Federation record: restore before the first answer (kanban #1765)
+- A restarted seat reads every saved record (`federation_records`) back synchronously before its doors open (`federationRecords.restoreNow`, called in `serve` ahead of `listen`), each against its own guardian list: every signature and the threshold. From the first answer a federation saved HALTED, CRITICAL or DRAINING is that status here: `draining()`, `haltOf()` (the #1244 exchange guard), the draining gate, GET /federations and GET /liquidations read it. "No record yet" is never read as OPEN for a federation with a saved record.
+- Such a record is provisional; the 20 s `restore` checks it against the census again (same bytes only - a record gathered in between is kept), and the next gathering replaces it as before.
