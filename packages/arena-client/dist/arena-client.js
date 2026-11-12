@@ -18984,15 +18984,19 @@ function pendingDeposits(storage, federationId) {
   return [...byOp.values()];
 }
 const phraseOfSeed = (seed) => (seed instanceof Uint8Array && seed.length ? toHex(seed).slice(0, 16) : (typeof seed === 'string' && /^[0-9a-f]{16,}$/i.test(seed) ? seed.slice(0, 16).toLowerCase() : null));
+// ANSWERS WHETHER THE ENTRY LANDED (kanban #2183, refuting #1774): the write is read back, so a refused one (QuotaExceededError on a full
+// store, kanban #803) is told apart from a kept one - a Move's receive leg that did not land must stop its payment (moveLegAhead)
 function pendingAdd(storage, federationId, p) {
-  if (!storage || !fedHexOf(federationId) || !p || !p.operation) return;
+  if (!storage || !fedHexOf(federationId) || !p || !p.operation) return false;
+  const kept = () => { try { return pendingDeposits(storage, federationId).some((x) => String(x.operation) === String(p.operation)); } catch { return false; } };
   // A STORE THAT CANNOT LIST ITS KEYS keeps the one list, as before
   if (typeof storage.key !== 'function') {
     try { storage.setItem(PENDING_PREFIX + fedHexOf(federationId), JSON.stringify([...pendingDeposits(storage, federationId).filter((x) => x.operation !== p.operation), { atMs: Date.now(), ...p }])); } catch { /* not kept */ }
-    return;
+    return kept();
   }
   try { storage.setItem(pendingOpKey(federationId, p.operation), JSON.stringify([{ atMs: Date.now(), ...p }])); }
   catch { /* a tab that cannot write keeps no note; the money is not touched */ }
+  return kept();
 }
 function pendingDrop(storage, federationId, operation) {
   if (!storage || !fedHexOf(federationId)) return;
@@ -21705,9 +21709,13 @@ async function migrateFromDraining({ from, to, record, toFederationId, chunkMsat
     if (can <= MIGRATE_DUST_MSAT) break;
     const amount = chunkMsat !== null && can > BigInt(chunkMsat) ? BigInt(chunkMsat) : can;
     onState({ state: 'moving', leftMsat: can, chunkMsat: amount, movedMsat: moved });
-    let made = null;
+    let made = null, unkept = false;
+    // A LEG THAT DID NOT LAND (kanban #2183: a full store refused it): no invoice, so withdrawCollected pays nothing, and the move stops
     const out = await withdrawCollected({ client: from, amountMsat: amount, gateways,
-      invoiceFor: async (msat) => { made = JSON.parse(await to.receive(String(msat), '')); moveLegAhead(storage, toFederationId, made, msat, inRow, phrase16); return { ok: true, invoice: made.invoice }; } });
+      invoiceFor: async (msat) => { made = JSON.parse(await to.receive(String(msat), ''));
+        if (!moveLegAhead(storage, toFederationId, made, msat, inRow, phrase16)) { unkept = true; return { ok: false, why: MOVE_UNKEPT_WHY }; }
+        return { ok: true, invoice: made.invoice }; } });
+    if (unkept) { onState({ state: 'stopped', movedMsat: moved, why: MOVE_UNKEPT_WHY }); return { moved, chunks, state: 'stopped', why: MOVE_UNKEPT_WHY }; }
     // NOTHING PAID (no payment made, or Refunded - the money back in the old wallet): the leg written ahead goes
     if (made && !out.ok && (!out.state || out.state === 'Refunded')) pendingDrop(storage, toFederationId, made.operation);
     const final = out.ok && made ? await to.awaitReceive(made.operation) : null;
@@ -21800,9 +21808,13 @@ function swapGatewayPairs(named = [], listedTo = [], listedFrom = [], max = SWAP
 }
 // A MOVE'S RECEIVE LEG, WRITTEN BEFORE ITS PAYMENT (kanban #1774): the invoice and operation of the receiving wallet as a pending entry of its
 // federation, with the history row its claim writes (`row`); `phrase16` the moving phrase's, so another phrase's scan never drops it (kanban #1233)
+// ANSWERS WHETHER THE LEG IS KEPT (kanban #2183): false only when a store was given and the entry did not land in it (a full store) -
+// the caller then pays nothing. No store or no federation named: nothing could be kept, as before.
+const MOVE_UNKEPT_WHY = 'this browser could not keep the move (storage full) - nothing was sent';
 function moveLegAhead(storage, federationId, made, msat, row, phrase16 = null) {
-  if (!made || !made.operation) return;
-  pendingAdd(storage, federationId, { invoice: made.invoice, operation: made.operation, msat: String(msat), kind: 'move', row,
+  if (!storage || !fedHexOf(federationId)) return true;
+  if (!made || !made.operation) return false;
+  return pendingAdd(storage, federationId, { invoice: made.invoice, operation: made.operation, msat: String(msat), kind: 'move', row,
     ...(phrase16 ? { phrase16: String(phrase16).toLowerCase() } : {}) });
 }
 // `rows`: the history's two kinds - a join's swap, or the player's own Move (movePlayerWallet)
@@ -21828,7 +21840,11 @@ async function swapForRound({ from, to, amountMsat, gateways = [], storage = nul
     // THE RECEIVE LEG IS WRITTEN AHEAD OF THE PAYMENT (kanban #1774, state audit 2026-11-12, SM-C5): a tab closed after the payment left `from`
     // and before the claim in `to` kept nothing naming `to` - the next page never opened its wallet and the paid invoice was never claimed.
     // Now the receive is a pending entry of `to` (arena.deposit.pending, as a deposit's): ledgerFederations names it, resumeDeposits claims it
-    moveLegAhead(storage, toFederationId, made, amount, inRow, phrase16);
+    // A LEG THAT DID NOT LAND (kanban #2183: a full store refused it) is never paid - a tab closed after the payment would name `to` nowhere
+    if (!moveLegAhead(storage, toFederationId, made, amount, inRow, phrase16)) {
+      onState({ state: 'stopped', why: MOVE_UNKEPT_WHY, tried });
+      return { ok: false, state: 'stopped', why: MOVE_UNKEPT_WHY, tried };
+    }
     said = JSON.parse(await from.withdraw(made.invoice, pay || undefined));
     if (said.state !== 'Refunded') break;
     pendingDrop(storage, toFederationId, made.operation);   // Refunded: nothing paid into that invoice
