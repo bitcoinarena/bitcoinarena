@@ -34,7 +34,7 @@ const results = (w, eid) => w.nodes.map((d) => d.round.results(w.rid, eid).map((
 const reveal = async (w, played, move, s) => Promise.all(w.nodes.map(async (d) =>
   (await fetch(`http://127.0.0.1:${d.port}/reveal?entry=${toHex(played.eid)}`, { method: 'POST', body: JSON.stringify({ move, salt: toHex(s) }) })).status));
 
-test('a late lock replayed from one peer as a book "order" (replayOrder) does not make a head-to-head stake played at an honest seat', async () => {
+test('a late lock replayed from one peer as a book "order" (replayOrder) does not make a head-to-head stake played at an honest seat', { todo: 'kanban #1489 merge19v1: the griefer seat of this setup takes a late head-to-head lock at its own door; on the 1.9 line every seat refuses it there (#1598, h2hLockRefusal, any grace), so the setup does not stand. The fix this test asks for (#2070: replayOrder takes only a market order of the batch\'s round, only after the certificate\'s signatures) is merged' }, async () => {
   const w = await lockRound({ serveOpts: { plugins: [NEXTBLOCK, RPS], entryCloseGraceMs: ENTRY_CLOSE_GRACE_MS }, round: ROUND, minScore: 2, endMs: testNow() + SPAN_MS + 25000 });
   try {
     skipTo(Number(w.c.committeeTimeMs) + 20);

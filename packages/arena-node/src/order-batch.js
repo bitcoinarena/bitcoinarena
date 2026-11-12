@@ -1361,7 +1361,7 @@ export class OrderBook {
       return false;
     };
     try {
-      const r = await this.replayOrder(o, base);
+      const r = await this.replayOrder(o, base, rid);   // the batch's round: an entry of another round, or no order, is refused (kanban #2070)
       if (!r.ok) return refused(r.why);
       this.#replayGate.taken(o);
       return true;

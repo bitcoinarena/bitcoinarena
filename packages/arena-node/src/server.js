@@ -2561,13 +2561,28 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // rebuilt settlement 8f0144a1 where the others built ffabdc94): the entry from the seat that handed the batch, kept when its bytes hash
   // to the id (round.importEntry), and its stake and fee lock from the same seat (GET /order-locks), each checked with the federation as
   // POST /lock and POST /fee-lock check them. Answers whether the entry and its locks are held now.
-  orderBook.replayOrder = async (entryHex, base) => {
+  // ONLY A MARKET ORDER OF THE BATCH'S ROUND (kanban #2070, #1489 v1 refute 54 s3 of #1879 / #1733 / #1544): this was a second, ungated copy of the
+  // peer lock carry. Any id a peer's /book-certificates named went here, a head-to-head entry too, and its late stake and fee lock were taken from that
+  // one peer with no entry-close rule and no threshold (takeEntryParts has both since #1879): the griefer read the honest move from GET /reveals, took
+  // his locks at his own seat only when his move won, named his entry in a forged certificate, and every honest seat that had refused the same lock
+  // at its own door (409) saw his stake and signed him DELIVERED 2. A plain entry (no limit price) is never an order of a book, so it is never
+  // replayed here; nor is an entry of another round than the batch's (`ridHex`), read from its bytes before anything is kept.
+  orderBook.replayOrder = async (entryHex, base, ridHex = null) => {
     const eid = Buffer.from(entryHex, 'hex');
+    const notAnOrder = (bytes) => {
+      let e; try { e = decodeEntryContract(new Uint8Array(bytes)); } catch (err) { return `its entry does not decode: ${err.message}`; }
+      if (e.limitPrice === undefined || e.limitPrice === null) return 'that entry is not an order (it names no limit price): only a book\'s order is replayed (kanban #2070)';
+      if (ridHex !== null && toHex(e.roundId) !== String(ridHex)) return 'that entry is in another round than the batch (kanban #2070)';
+      return null;
+    };
     if (!round.entry(eid)) {
       const r = await fetch(`${base}/entry?id=${entryHex}`, { signal: AbortSignal.timeout(10000) });
       if (!r.ok) { await dropSeatBody(r); return { ok: false, why: `${base} holds no entry ${entryHex.slice(0, 16)}` }; }
-      round.importEntry(await seatBody(r, SEAT_RECORD_BYTES), entryHex);   // kanban #1900
+      const bytes = await seatBody(r, SEAT_RECORD_BYTES);   // kanban #1900
+      { const no = notAnOrder(bytes); if (no) return { ok: false, why: no }; }
+      round.importEntry(bytes, entryHex);
     }
+    { const no = notAnOrder(round.entry(eid)); if (no) return { ok: false, why: no }; }
     // AND ITS HANDOUT (measured 2026-10-24 16:51Z on fed2-3 after the entry and locks were replayed: "a loser's P could not be opened: this node
     // accepted no handout for that entry"): the stake's shares, this seat's own among them, checked as POST /handout checks them, and then
     // that they open to the entry's own stake point
