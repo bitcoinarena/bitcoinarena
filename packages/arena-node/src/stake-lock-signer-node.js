@@ -30,11 +30,12 @@ import { decodeEntryContract, decodeRoundContract, entryFederation } from '../..
 import { lockMatchesEntry, lockFieldsFromJson, lockFieldsToJson } from '../../arena-protocol/src/stake-lock.js';
 import { feeLockPays } from '../../arena-protocol/src/lock-settlement.js';
 import { donationOutputsExpected } from '../../arena-protocol/src/donation.js';
-import { reservesEntryExpected, paysReserves, giftsInFeeLock, entryGiftsInFee, giftsFeeBps } from '../../arena-protocol/src/reserves.js';
+import { reservesEntryExpected, paysReserves, giftsInFeeLock, entryGiftsInFee, giftsFeeBps, ROUND_SPLIT_BPS } from '../../arena-protocol/src/reserves.js';
 import { namedClaims, namedClaimKeys, arenaLockContractId, arenaLockMatchesEntry, lockStallBlocks } from '../../arena-protocol/src/arena-lock.js';
 import { networkOf } from '../../arena-protocol/src/constants.js';
 import { toHex as hexOf } from '../../arena-protocol/src/hash.js';
 import { claimReadInput } from '../../arena-protocol/src/named-claim-proof.js';
+import { roundSplitBps } from '../../arena-protocol/src/fee-proposal.js';
 import { pluginForRound } from './plugins.js';
 
 /**
@@ -45,9 +46,10 @@ import { pluginForRound } from './plugins.js';
  * fee lock made the round's one settlement refuse everybody: "an entry's fee lock was
  * never verified, so the fee cannot be claimed").
  */
-export async function roundMintsFees({ contract, port, feeBps = undefined }) {
+// `split`: a protocol-27 round's split in force at its census height (kanban #1486)
+export async function roundMintsFees({ contract, port, feeBps = undefined, split = undefined }) {
   if (!port || typeof port.fees !== 'function') return { mints: false, why: 'this signer node reads no federation fee rule' };
-  const gate = feeLockPays({ contract, fees: await port.fees(), feeBps });
+  const gate = feeLockPays({ contract, fees: await port.fees(), feeBps, split });
   return { mints: gate.pays, why: gate.why };
 }
 
@@ -370,7 +372,9 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
   t = Date.now();
   // A PROTOCOL-27 GAME ROUND'S FEE LOCK HOLDS THE WHOLE 10 % (kanban #1486): the gate is sized on it, as the door's and the page's are
   const gifted = giftsInFeeLock(contract) && entryGiftsInFee(contract, (() => { const g = round.plugins ? pluginForRound(contract, round.plugins) : null; return g && g.ok ? g.plugin.manifest : null; })());
-  const gate = await roundMintsFees({ contract, port, ...(gifted ? { feeBps: giftsFeeBps() } : {}) });
+  // at the split in force at its census height (round.feesFor, the fee set GET /fees?height= serves), as the door and the settlement read it
+  const giftSplit = gifted ? (typeof round.feesFor === 'function' && round.feesFor(contract) ? roundSplitBps(round.feesFor(contract)) : ROUND_SPLIT_BPS) : undefined;
+  const gate = await roundMintsFees({ contract, port, ...(gifted ? { feeBps: giftsFeeBps(giftSplit), split: giftSplit } : {}) });
   timing.gateMs = Date.now() - t;
   if (gate.mints && !(round.feeLock && round.feeLock(entryIdBytes)))
     return { ok: true, contractId: String(id), paidMsat: fields.amountMsat, height: st.blockCount, waitsForFeeLock: true };

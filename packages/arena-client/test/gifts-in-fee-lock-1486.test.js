@@ -46,3 +46,17 @@ test('the page\'s fee-lock gate on protocol 27 mints the whole 10 % lock, as the
   assert.equal(g.pays, true, g.why);
   assert.equal(g.lockMsat, 10000n);
 });
+
+test('after a fee proposal the page sizes a protocol-27 entry and its fee lock on the split in force at the round\'s census height', async () => {
+  const { FEES_TODAY } = await import('../../arena-protocol/src/fee-proposal.js');
+  const { splitForRound } = await import('../src/join.js');
+  const v27 = { ...round(27), feeSet: { ...FEES_TODAY, roundNodeBps: 350, roundDonationBps: 450, roundReserveBps: 150 } };
+  assert.equal(feeBpsForRound(v27), 950);
+  assert.equal(entryBreakdown(v27).feeMsat, 9500n);
+  assert.equal(lockAmountMsat(v27), 90500n);
+  const g = feeLockPays({ contract: v27, fees: { ppm: 1000n, baseMsat: 0n }, feeBps: feeBpsForRound(v27), split: splitForRound(v27) });
+  assert.deepEqual([g.pays, g.lockMsat], [true, 9500n], g.why);
+  assert.equal(splitForRound(round(27)), undefined, 'no set read: today\'s');
+  // below 27 the page is as before: a protocol-20 round's node fee only, from the same set
+  assert.equal(feeBpsForRound({ ...round(20), feeSet: v27.feeSet }), 350);
+});

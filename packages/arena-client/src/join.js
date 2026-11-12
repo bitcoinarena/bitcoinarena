@@ -52,6 +52,8 @@ export const roundPaysReserves = (round) => !!round && paysReserves(round) && !k
 // FROM PROTOCOL 27 (kanban #1486) A GAME ROUND'S FEE LOCK HOLDS THE DEVELOPERS' AND THE RESERVES' PARTS beside the nodes': the whole 10 %,
 // no donation and no reserve output at the lock - a refused or void entry gets them back with its stake, an accepted one pays them at settlement
 export const roundGiftsInFee = (round) => roundPaysReserves(round) && giftsInFeeLock(round);
+/** A protocol-27 round's split in force at its census height, as the page read it (GET /fees?height=); undefined (today's) without one. */
+export const splitForRound = (round) => (round && round.feeSet ? roundSplitBps(round.feeSet) : undefined);
 // `round.feeSet`: the fees in force at the round's census height, as the page read them from the nodes (GET /fees?height=)
 export const feeBpsForRound = (round) => (round && Number.isInteger(round.feeBps) ? round.feeBps
   : roundGiftsInFee(round) ? giftsFeeBps(round.feeSet ? roundSplitBps(round.feeSet) : undefined)

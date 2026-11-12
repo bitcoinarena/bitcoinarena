@@ -151,3 +151,79 @@ test('the settlement names the round\'s donation target and its federation\'s re
   assert.equal(noKey.ok, false);
   assert.match(noKey.why, /no reserve key is known/);
 });
+
+// A FEE PROPOSAL CHANGES THE SPLIT (Daniel 2026-11-12, "Ja" to (3)): a protocol-27 round's door, gates and settlement all read the split in force
+// at its census height - the fee set GET /fees?height= serves and the page reads - so every seat takes, settles and returns it alike.
+test('a fee proposal changes the split: a v27 round created after activation is entered, settled and refunded alike at every seat', async () => {
+  const { feesAt, FEES_TODAY, roundSplitBps } = await import('../../arena-protocol/src/fee-proposal.js');
+  const { lockSettlement, feeLockPays } = await import('../../arena-protocol/src/lock-settlement.js');
+  const { roundMintsFees } = await import('../src/stake-lock-signer-node.js');
+  const { giftsFeeBps, giftsEntryExpected } = await import('../../arena-protocol/src/reserves.js');
+  const { DELIVERED, FAILED, ENTRY_VOID } = await import('../../arena-protocol/src/payout.js');
+  const ACT = 900100;
+  // the proposal: nodes 3.5 %, developers 4.5 %, reserves 1.5 % - 9.5 % in all, from block ACT
+  const NEW = { ...FEES_TODAY, roundNodeBps: 350, roundDonationBps: 450, roundReserveBps: 150 };
+  const feesFor = (c) => feesAt({ height: Number(c.censusHeight), accepted: [{ accepted: true, activationHeight: ACT, fees: NEW }], base: FEES_TODAY });
+  const after = { ...roundOf(GIFTS_IN_FEE_LOCK_VERSION), censusHeight: ACT + 5 };
+  const before = { ...roundOf(GIFTS_IN_FEE_LOCK_VERSION), censusHeight: ACT - 1 };
+  const split = roundSplitBps(feesFor(after));
+  assert.deepEqual([split.nodes, split.protocolDevs + split.gameDevs, split.reserves, giftsFeeBps(split)], [350, 450, 150, 950]);
+
+  // THE DOOR, AT THREE SEATS: 9,500 msat after activation, 10,000 before; the other refused by name at each
+  const seats = [0, 1, 2].map(() => { const r = new Round(openStore(':memory:'), () => clock, { plugins: HOSTED }); r.feesFor = feesFor; return r; });
+  clock = NOW;
+  const ids = seats.map((r) => [r.open(after), r.open(before)]);
+  clock = NOW + 1000;
+  for (const [i, r] of seats.entries()) {
+    const [ra, rb] = ids[i];
+    assert.equal(refusal(() => r.enter(entryOn(ra, { feeMsat: 9500n }))), null, `seat ${i} takes 9,500 after activation`);
+    assert.match(refusal(() => r.enter(entryOn(ra, { feeMsat: 10000n }))), /9500 msat, not 10000/);
+    assert.equal(refusal(() => r.enter(entryOn(rb, { feeMsat: 10000n }))), null, `seat ${i} takes 10,000 before activation`);
+    assert.match(refusal(() => r.enter(entryOn(rb, { feeMsat: 9500n }))), /10000 msat, not 9500/);
+  }
+  // a round below 27 ignores the proposal's split at the door: its 4 % fee and 6 % donation, as before
+  { const r = seats[0]; clock = NOW; const old = r.open({ ...roundOf(20), censusHeight: ACT + 5 }); clock = NOW + 1000;
+    assert.equal(refusal(() => r.enter(entryOn(old, TODAY))), null); }
+
+  // THE GATES: the seats' /stake-lock and door gate and the page's size the same 9,500 msat lock
+  const fees = { ppm: 1000n, baseMsat: 0n };
+  const seatGate = await roundMintsFees({ contract: after, port: { fees: async () => fees }, feeBps: giftsFeeBps(split), split });
+  const pageGate = feeLockPays({ contract: after, fees, feeBps: giftsFeeBps(split), split });
+  assert.equal(seatGate.mints, true, seatGate.why);
+  assert.deepEqual([pageGate.pays, pageGate.lockMsat], [true, 9500n]);
+  assert.equal(giftsEntryExpected({ entry: { stakeMsat: STAKE, feeMsat: 9500n, donationMsat: 0n }, split }).ok, true);
+
+  // THE SETTLEMENT AT EVERY SEAT: the same gifts, the same plan - nodes 3.5 %, developers 4.5 %, reserves 1.5 % of each counted entry;
+  // the ENTRY_VOID entry's fee lock claimed by none
+  const TARGET = { network: [{ recipientPk: key33(0xa1), shareBps: 10000, label: 'dev' }], game: [{ recipientPk: key33(0xa2), shareBps: 10000, label: 'game' }] };
+  const RK = key33(0xe5);
+  const NODES = [b32(8), b32(9)];
+  const e = (k, outcome, score) => ({ entryId: b32(0x60 + k), pubkey: b32(0x70 + k), stakeMsat: STAKE, feeMsat: 9500n, donationMsat: 0n, outcome, score });
+  const entries = [e(1, DELIVERED, 3), e(2, FAILED, 0), e(3, ENTRY_VOID, 0)];
+  const locks = new Map(entries.map((x, i) => [toHex(x.pubkey), { outpoint: { txid: b32(0x90 + i), outIdx: 0n }, amountMsat: 90500n, refundPk: key33(0x10 + i) }]));
+  const feeLocks = new Map(entries.map((x, i) => [toHex(x.pubkey), { outpoint: { txid: b32(0x90 + i), outIdx: 1n }, amountMsat: 9500n, preimage: b32(0xb0 + i) }]));
+  const plans = [];
+  for (const r of seats) {
+    const ls = new LockSettlement(r, { curve, port: {}, dkg: {}, stakeSecrets: {}, feesFor,
+      donationTargetFor: () => ({ ok: true, target: TARGET }), reserveKeyFor: async () => RK });
+    const gf = await ls.giftsFor(after, { feeLocks: feeLocks.size });
+    assert.equal(gf.ok, true, gf.why);
+    assert.deepEqual(gf.gifts.split, split);
+    const plan = lockSettlement({ roundId: b32(0x71), entries, minScore: 1, locks, feeLocks, fees: { ppm: 0n, baseMsat: 0n }, contract: { ...after, nodes: NODES },
+      signerNodes: { gameVerify: NODES, settlement: NODES }, ...ls.roundFees(after), gifts: gf.gifts });
+    assert.equal(plan.ok, true, plan.why);
+    plans.push(JSON.stringify({ c: plan.claims, p: plan.payouts }, (k, v) => (typeof v === 'bigint' ? `${v}` : v instanceof Uint8Array ? toHex(v) : v)));
+    const sum = (kind) => plan.payouts.filter((p) => p.kind === kind).reduce((t, p) => t + p.msat, 0n);
+    assert.deepEqual([sum('signer node'), sum('donation key'), sum('reserve')], [7000n, 9000n, 3000n]);
+    assert.equal(plan.feeClaims.some((c) => toHex(c.outpoint.txid) === toHex(b32(0x92))), false, 'the ENTRY_VOID entry\'s fee lock is not claimed');
+  }
+  assert.equal(new Set(plans).size, 1, 'every seat builds the one plan');
+
+  // THE REFUND: the ENTRY_VOID entry's 9,500 msat fee lock forfeited back at once with its stake, at a seat reading the same round
+  const s = seat(GIFTS_IN_FEE_LOCK_VERSION);
+  s.round.feeLock = (eid) => (toHex(eid) === toHex(PLAYER) ? { outpoint: FEE_AT, contractId: 'cd'.repeat(32), fields: fields(9500n) } : null);
+  s.voids.add(toHex(PLAYER));
+  assert.equal((await s.forfeit.message(RID, PLAYER, 'stake')).ok, true);
+  const back = await s.forfeit.message(RID, PLAYER, 'fee');
+  assert.equal(back.ok, true, back.why);
+});
