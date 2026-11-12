@@ -30,14 +30,43 @@ export class DrawnAttestor {
    * `readPrice()` cents or null; `selfKey` this seat's node key (hex); `sign(digest)` its BIP-340 signature (bytes);
    * `attestorsFor(roundIdBytes)` the round's 7 drawn keys (hex) or null; `peersFor(roundIdBytes)` the drawn attestors' base URLs
    * (this seat's left out); `due()` the rounds to attest now, [{ roundId (bytes), window { startMs, endMs } }]; `hold(bytes, roundId)`
-   * takes a combined attestation (this seat's intake, then every seat); `threshold` 5.
+   * takes a combined attestation (this seat's intake, then every seat); `threshold` 5; `db` the seat's store (node:sqlite), where the
+   * readings and the signed words are kept across a restart (kanban #1844).
    */
-  constructor({ readPrice, selfKey, sign, verify, attestorsFor, peersFor, due, hold, threshold = 5, fetcher = (u, o) => fetch(u, o), now = () => Date.now() }) {
+  constructor({ readPrice, selfKey, sign, verify, attestorsFor, peersFor, due, hold, threshold = 5, fetcher = (u, o) => fetch(u, o), now = () => Date.now(), db = null }) {
     if (typeof verify !== 'function') throw new Error('a drawn attestor needs verify(signature, bodyId, key): the drawn keys\' BIP-340 check (kanban #1487)');
-    Object.assign(this, { readPrice, selfKey, sign, verify, attestorsFor, peersFor, due, hold, threshold, fetcher, now });
+    Object.assign(this, { readPrice, selfKey, sign, verify, attestorsFor, peersFor, due, hold, threshold, fetcher, now, db });
     this.samples = [];          // [{ atMs, price }] BigInt, this seat's own readings
     this.words = new Map();     // round hex -> this seat's word
     this.held = new Set();      // round hex: an attestation of it is held - nothing more to do
+    // THE READINGS AND WORDS IN THE SEAT'S STORE (kanban #1844, state audit 2026-11-12): kept in memory only, a seat restarted after
+    // its round's window ended (a host reboot, a roll of the seats) came back with no reading before the window's start and never
+    // signed it - three of seven drawn seats restarted together and the market went VOID although all seven read the window. As the
+    // fixed daemon keeps them on disk (arena-attestor.mjs SAMPLES_FILE), each reading is written as it is taken and the last KEEP_MS
+    // read back here; a signed word is written before it is served (INSERT OR IGNORE: the first body stays), so a restart never signs
+    // a second body for a round.
+    if (db) {
+      db.exec('CREATE TABLE IF NOT EXISTS drawn_samples (at_ms INTEGER PRIMARY KEY, price TEXT NOT NULL)');
+      db.exec('CREATE TABLE IF NOT EXISTS drawn_words (round_hex TEXT PRIMARY KEY, word TEXT NOT NULL)');
+      for (const r of db.prepare('SELECT at_ms AS at, price FROM drawn_samples WHERE at_ms >= ? ORDER BY at_ms').all(this.now() - KEEP_MS)) {
+        this.samples.push({ atMs: BigInt(r.at), price: BigInt(r.price) });
+      }
+    }
+  }
+
+  /** The word this seat signed for a round before a restart, from its store (kanban #1844), or null. */
+  keptWord(id) {
+    if (!this.db) return null;
+    try {
+      const r = this.db.prepare('SELECT word FROM drawn_words WHERE round_hex = ?').get(id);
+      if (!r) return null;
+      const j = JSON.parse(r.word), w = wordFromJson(j);
+      if (!w) return null;
+      if (j.priceToBeat !== null && j.priceToBeat !== undefined) w.priceToBeat = BigInt(j.priceToBeat);
+      if (j.endPrice !== null && j.endPrice !== undefined) w.endPrice = BigInt(j.endPrice);
+      if (j.label) w.label = j.label;
+      return w;
+    } catch { return null; }
   }
 
   async read() {
@@ -46,22 +75,35 @@ export class DrawnAttestor {
     const at = this.now();
     // a reader answers cents, or { cents, atMs } (the seat's feed: the exchange ticker's last trade)
     if (cents && typeof cents === 'object') cents = cents.cents;
-    if (Number.isFinite(Number(cents)) && Number(cents) > 0) this.samples.push({ atMs: BigInt(at), price: BigInt(Math.round(Number(cents))) });
+    if (Number.isFinite(Number(cents)) && Number(cents) > 0) {
+      const s = { atMs: BigInt(at), price: BigInt(Math.round(Number(cents))) };
+      this.samples.push(s);
+      // kanban #1844: kept in the store as it is taken, so a restart loses no window
+      if (this.db) try { this.db.prepare('INSERT OR REPLACE INTO drawn_samples (at_ms, price) VALUES (?, ?)').run(at, String(s.price)); } catch { /* memory still holds it */ }
+    }
     const keepFrom = BigInt(at - KEEP_MS);
     while (this.samples.length && this.samples[0].atMs < keepFrom) this.samples.shift();
+    if (this.db) try { this.db.prepare('DELETE FROM drawn_samples WHERE at_ms < ?').run(at - KEEP_MS); } catch { /* pruned next read */ }
   }
 
   /** This seat's word on a round: signed once, once its window has ended; null when it is not drawn or cannot read the outcome. */
   wordFor(roundId, window) {
     const id = toHex(roundId);
     if (this.words.has(id)) return this.words.get(id);
+    const kept = this.keptWord(id);
+    if (kept) { this.words.set(id, kept); return kept; }
     const drawn = this.attestorsFor(roundId);
     if (!drawn || !drawn.includes(this.selfKey)) return null;
     if (BigInt(this.now()) < window.endMs + BigInt(SETTLE_MS)) return null;
     const out = upDownOutcome(this.samples, window);
     if (!out.ok) { this.words.set(id, null); return null; }
     const body = { roundId, outcome: out.outcome, observedAtMs: window.endMs };
-    const word = { body, key: this.selfKey, signature: toHex(this.sign(attestationBodyId(body))), priceToBeat: out.priceToBeat, endPrice: out.endPrice, label: out.label };
+    let word = { body, key: this.selfKey, signature: toHex(this.sign(attestationBodyId(body))), priceToBeat: out.priceToBeat, endPrice: out.endPrice, label: out.label };
+    // kanban #1844: written before it is served; a word already kept for the round (signed before a restart) is the one that stands
+    if (this.db) {
+      try { this.db.prepare('INSERT OR IGNORE INTO drawn_words (round_hex, word) VALUES (?, ?)').run(id, JSON.stringify(wordToJson(word))); } catch { /* served from memory */ }
+      word = this.keptWord(id) || word;
+    }
     this.words.set(id, word);
     return word;
   }
