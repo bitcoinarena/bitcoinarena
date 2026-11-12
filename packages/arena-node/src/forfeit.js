@@ -42,7 +42,7 @@ import { resultFinality } from './finality.js';
 import { stateOf } from './settlement-state.js';
 import { pluginForRound } from './plugins.js';
 import { giftsInFeeLock } from '../../arena-protocol/src/reserves.js';
-import { encodeCommitments, decodeCommitments, encodeShare, decodeShare, commitmentListRefusal } from './pool-wire.js';
+import { encodeCommitments, decodeCommitments, decodePeerCommitment, encodeShare, decodeShare, commitmentListRefusal } from './pool-wire.js';
 import { askPeers, PEER_ASK_MS, PEER_GRACE_MS } from './peer-ask.js';
 import { PLAN_ASK, sendPlanAskHeaders, checkSendPlanAsk, forfeitCommitAskBody } from './send-plan-ask.js';
 import { AskerPairs, commitAsker, shareAsker, spendRefusal, OWN } from './asker-pairs.js';
@@ -61,31 +61,9 @@ const PAIRS_PER_FORFEIT = 256;
 // HOW LONG A PAIR HANDED OUT IS KEPT AT LEAST (kanban #1611): the asker's two rounds, and never less than this - a seat busy with a flood answers late
 const PAIR_HOLD_MIN_MS = 60000;
 
-/**
- * A COMMITMENT UNDER ANOTHER SEAT'S ID (kanban #1807): a peer's answer at the commit door names its own FROST id, and nothing else checked it. One seat
- * that answered under another's id (or this seat's) put two commitments for one participant on the list, signShare340 threw at the asker, the throw left
- * the forfeit (or settlement) before any seat was left out, and every ask failed the same way until the lock's expiry. The doors of a list's peers that
- * name this seat's id, an id another peer on the list also names, or an id outside the committee (1..its size): all of them are left out while the
- * threshold remains - of two claiming one id the honest one cannot be told from the forger here, and the forger, once out, names no id on the next list.
- */
-export function misnamedSigners(signers, nodes) {
-  const own = signers.find((s) => s.base === null);
-  const ownId = own ? String(own.commitment.id) : null;
-  const size = Array.isArray(nodes) ? nodes.length : 0;
-  const byId = new Map();
-  for (const s of signers) {
-    if (s.base === null) continue;
-    const id = String(s.commitment.id);
-    if (!byId.has(id)) byId.set(id, []);
-    byId.get(id).push(s.base);
-  }
-  const out = [];
-  for (const [id, bases] of byId) {
-    const n = Number(id);
-    if (id === ownId || bases.length > 1 || (size > 0 && !(Number.isInteger(n) && n >= 1 && n <= size))) out.push(...bases);
-  }
-  return out;
-}
+// misnamedSigners and spoiltShares live in signer-guard.js (kanban #2369, #2372): the winnings send and the reserve payout run them too
+export { misnamedSigners, spoiltShares } from './signer-guard.js';
+import { misnamedSigners, spoiltShares } from './signer-guard.js';
 
 /**
  * WHAT THIS SEAT COMMITTED A LOCK TO, ONE ENUM AND ONE TRANSITION FUNCTION (kanban #1184, the 2026-11-06 state-machine audit). A lock has two ways
@@ -555,7 +533,7 @@ export class Forfeit {
       const asked = await askPeers(this.peersFor(roundIdBytes), async (base, signal) => {
         const r = await this.fetcher(`${base}/forfeit-commit?${cq}`, { method: 'POST', headers, signal });
         if (!r.ok) return { why: (await r.text()).trim() };
-        return { commitment: decodeCommitments(new Uint8Array(await r.arrayBuffer()))[0] };
+        return { commitment: decodePeerCommitment(new Uint8Array(await r.arrayBuffer())) };   // its nonces are points, or it is refused (kanban #2331, #2345)
       }, { boundMs: this.peerAskMs, graceMs: this.peerGraceMs, enough: m.needed - 1, counts: (x) => !!x.commitment });
       const signers = [{ base: null, commitment: own.commitment }];
       const refused = [];
@@ -605,9 +583,15 @@ export class Forfeit {
   async #gatherShares(roundIdBytes, entryIdBytes, kind, m, q, signers) {
     // EACH PEER UNDER ITS OWN ID (kanban #1807), checked before any share is asked; and a list that still throws is a refusal, never an abort
     const misnamed = misnamedSigners(signers, m.nodes);
-    if (misnamed.length) return { ...refuse(`${misnamed[0]} committed under an id that is not its own on this list`), withheld: misnamed };
-    try { return await this.#gatherChecked(roundIdBytes, entryIdBytes, kind, m, q, signers); }
-    catch (e) { return { ...refuse(`the forfeit list could not be signed: ${e.message}`, 500), withheld: [] }; }
+    if (misnamed.out.length) return { ...refuse(`${misnamed.out[0]} committed under an id that is not its own on this list`), withheld: misnamed.out };
+    // ONE DOOR PER ID ON THIS LIST (kanban #2247, #2260): the others naming it are set aside for this pass; a kept one whose share does not stand is left out
+    const list = misnamed.aside.length ? signers.filter((s) => !misnamed.aside.includes(s.base)) : signers;
+    let got;
+    try { got = await this.#gatherChecked(roundIdBytes, entryIdBytes, kind, m, q, list); }
+    catch (e) { got = { ...refuse(`the forfeit list could not be signed: ${e.message}`, 500), withheld: [] }; }
+    // NO PUBLIC SHARE TOLD THEM APART: the kept claimant goes off the next list, so the one set aside is tried alone
+    if (!got.ok && misnamed.kept.length && !(got.withheld && got.withheld.length)) got = { ...got, withheld: misnamed.kept };
+    return got;
   }
 
   async #gatherChecked(roundIdBytes, entryIdBytes, kind, m, q, signers) {
@@ -629,8 +613,7 @@ export class Forfeit {
     const { signature } = aggregate340({ commitments, message: m.message, groupPublicKey: m.claimPk, shares, curve: this.curve });
     if (schnorr.verify(signature, m.message, m.claimPk.subarray(1))) return { ok: true, signature };
     const held = this.dkg && this.dkg.publicSharesFor ? this.dkg.publicSharesFor(m.nodes) : null;
-    const spoilt = held && held.ok ? peers.filter((s, i) => !verifyShare340({ id: s.commitment.id, share: asked[i].value.share,
-      publicShare: held.shares.get(String(s.commitment.id)), groupPublicKey: m.claimPk, message: m.message, commitments, curve: this.curve })) : [];
+    const spoilt = spoiltShares({ signers: peers, shares: asked.map((x) => x.value.share), held, m, commitments, curve: this.curve });
     return { ...refuse('the combined forfeit does not verify under the round\'s claim key', 500), withheld: spoilt.map((s) => s.base) };
   }
 }
