@@ -4101,7 +4101,7 @@ export class Round {
 
   /**
    * A SLASH PROOF KEPT AS A RELAY, AT MOST ONE PER SLOT (kanban #2248, a45 refute of #1816; #2344). `accused` is
-   * round id || accused node || player || door (1 result, 2 re-run). Returns 'kept', 'same' (this proof is already the one kept)
+   * round id || accused node || entry id || door (3 result, 4 re-run), or || player || door (1, 2) for a proof about no held entry (#2381). Returns 'kept', 'same' (this proof is already the one kept)
    * or 'other' (another proof about the same signed result is kept; nothing stored).
    */
   relaySlashPut(accused, proofId, bytes) {
