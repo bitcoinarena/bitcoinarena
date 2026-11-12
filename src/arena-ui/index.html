@@ -4372,7 +4372,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         // happen again"; feedback #010: the handout reached the seats 1.8 s after the close, the lock was made, the seats refused the entry and 6 sat of developers'
         // and reserves' parts stayed spent): the handout, the lock and the entry need ARENA_H2H_LEAD_MS() before the close; with less, nothing is sent or locked
         if (!reuse && window.ARENA_HIDDEN_CHOSEN && window.ARENA_HIDDEN_CHOSEN.round === named.roundIdHex && thisJoin && !thisJoin.free
-          && Number(named.round.entryCloseMs) - Date.now() < window.ARENA_H2H_LEAD_MS() + 1500) {
+          && Number(named.round.entryCloseMs) - (Date.now() + (window.ARENA_SEAT_AHEAD_MS || 0)) < window.ARENA_H2H_LEAD_MS() + 1500) {   // kanban #1892: the seats' clock as the last handout read it
           // NOT `missed` (measured 2026-11-11 on the MacBook, round 9f51edf1 -> 41432520): a missed join is retried in the next round, and that retry
           // locked the stake and made no entry - the hidden move is the old round's. A late tap is refused; the player taps the next round
           window.ARENA_JOIN_REFUSED = 'the entry closed before it went in - nothing was locked';
@@ -4477,9 +4477,16 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             // the close, its lock was made anyway - close + 10 s above is the other games' grace - and refunded 94 of 100 sat, 6 sat in federation fees): a
             // hidden move's round is locked only while the lock and the entry can still land before the close (H2H_LOCK_LEAD_MS); later, nothing is locked
             const h2hHere = !!(window.ARENA_HIDDEN_CHOSEN && window.ARENA_HIDDEN_CHOSEN.round === named.roundIdHex);
-            if (thisJoin && !thisJoin.free && h2hHere && Date.now() > Number(named.round.entryCloseMs) - window.ARENA_H2H_LEAD_MS()) {
-              console.log('[arena] #1485 no lock: head-to-head round ' + named.roundIdHex.slice(0, 8) + ' closes in ' + ((Number(named.round.entryCloseMs) - Date.now()) / 1000).toFixed(1) + ' s');
-              throw new Error('the entry closed before it went in - nothing was locked');
+            // ON THE SEATS' CLOCK (kanban #1892, #1489 refute 2 of #1742): the handout ran beside the funding, which nothing bounds, and a player whose clock
+            // runs slow passed the old Date.now() check - the lock was made and every seat refused the entry after the close. The seats said in the handout's
+            // 201 how long they still had (put.seatCloseAtMs); the smaller of theirs and this clock's must leave the lead, or nothing is locked
+            if (thisJoin && !thisJoin.free && h2hHere) {
+              window.ARENA_SEAT_AHEAD_MS = ARENACLIENT.seatClockAheadMs(put, named.round.entryCloseMs);
+              const h2hLate = ARENACLIENT.h2hLockRefusal({ put, entryCloseMs: named.round.entryCloseMs, leadMs: window.ARENA_H2H_LEAD_MS() });
+              if (h2hLate) {
+                console.log('[arena] #1485 #1892 no lock: head-to-head round ' + named.roundIdHex.slice(0, 8) + ': ' + h2hLate);
+                throw new Error('the entry closed before it went in - nothing was locked');
+              }
             }
             if (thisJoin && !thisJoin.free && Number.isFinite(lastEntryMs) && Date.now() > lastEntryMs) {
               thisJoin.missed = !h2hHere;   // kanban #1485: a head-to-head order is never retried in another round - its hidden move is this round's
@@ -7862,7 +7869,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           // NOTHING FOR A TAP THAT CANNOT GO IN (audit 5, kanban #1406): a tap in the round's last 3 s (the client offers its row down to 1.5 s) set the hidden
           // move, told the bot "tapped" and set a reveal for a join the page then refused; and a tap on another round while a paid join was locking left
           // that join's hidden move replaced - a stake locked with no hidden entry. Both are refused here first, with nothing changed
-          { const row = (window.ARENA_LOBBY_ROWS || []).find((r) => r && r.id === id), left = row ? Number(row.entryCloseMs) - Date.now() : null, j = window.ARENA_JOIN;
+          { const row = (window.ARENA_LOBBY_ROWS || []).find((r) => r && r.id === id), left = row ? Number(row.entryCloseMs) - (Date.now() + (window.ARENA_SEAT_AHEAD_MS || 0)) : null, j = window.ARENA_JOIN;   // kanban #1892: on the seats' clock
             // A PAID HEAD-TO-HEAD TAP NEEDS THE ORDER'S WHOLE LEAD (kanban #1485): refused here, before the opponent is told and before anything is dealt or locked
             const need = row && !row.free && window.ARENA_H2H_LEAD_MS ? window.ARENA_H2H_LEAD_MS() + 1500 : Number(window.ARENA_ORDER_CUTOFF_MS || 3000);
             if (left !== null && left < need) {
