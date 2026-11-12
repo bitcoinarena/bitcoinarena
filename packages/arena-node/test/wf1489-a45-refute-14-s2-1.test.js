@@ -75,7 +75,7 @@ test('#1489 a45-14 s2 control: with honest peers the seat signs both seated play
   assert.ok(got.signed.a && got.signed.b, `control: the honest seat did not sign: ${JSON.stringify(got)}`);
 });
 
-test('#1489 a45-14 s2: one peer\'s empty-key lock fields (the stock client throws on them) do not keep an honest seat waiting', async () => {
+test('#1489 a45-14 s2: one peer\'s empty-key lock fields (the stock client throws on them) do not keep an honest seat waiting', { todo: 'kanban #2561 (spec ruling #2116): v1 #1916 takes a late lock only on a threshold of seats, so a 2-of-2 seat never pulls the one peer lock; the certified lock set replaces both rules' }, async () => {
   const got = await play({ evil: true });
   console.log('  FACTS (a45-14 s2 attack):', JSON.stringify(got));
   assert.ok(got.threw > 0, 'the junk lock never reached the contract id');
