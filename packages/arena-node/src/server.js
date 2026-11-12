@@ -253,7 +253,8 @@ import { readReserve } from './federation-reserve.js';
 import { thresholdOf as thresholdOfFederation, recordStatusName } from '../../arena-protocol/src/federation-record.js';
 import { Roster, endpointsOf, NO_CHAIN_VIEW_WHY, findSeriesPublication as findSeriesPublicationIndexed } from './roster.js';
 import { createSeriesPull, PULL_EVERY_MS } from './series-pull.js';
-import { createEntryRelay, RELAY_HEADER, lookAtMembers, seatView } from './entry-relay.js';
+import { createEntryRelay, RELAY_HEADER, lookAtMembers, seatView, LOCKS_MAX_BYTES } from './entry-relay.js';
+import { peerBody, peerJsonUpTo } from './peer-body.js';
 import { seatingAgent, MAX_PRESENTS_PER_BATCH, PRESENT_BYTES } from './seating-agent.js';
 import { heartbeatAgent } from './heartbeat-agent.js';
 import { HEARTBEAT_SLOTS_PER_ROUND } from '../../arena-protocol/src/heartbeat.js';
@@ -6094,16 +6095,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   });
   // AN ENTRY THE ROUND ACCEPTED, FROM A PEER AND PAST THIS SEAT'S DOOR (kanban #1071, entry-relay.js, §17): the threshold's signed results named it, so none of the door's
   // refusals apply. Everything about the entry itself is still checked. Answers { ok } or { ok: false, why }: not yet.
-  const peerGet = (url) => fetch(url, { signal: AbortSignal.timeout(4000) });
+  const peerGet = (url) => fetch(url, { signal: AbortSignal.timeout(4000) });   // the deadline bounds the body read too
+  // EVERY BODY UP TO A CAP (kanban #1870, #1901; #1550's rule): an entry or a handout no larger than this seat's own door takes (BODY_MOST), a lock or an
+  // address answer a few KiB. A bare arrayBuffer() / json() buffered whatever one peer sent inside the deadline.
+  const PEER_PART_BYTES = 64 * 1024;
+  let takeTurn = 0;
   const takeAcceptedEntry = async (rid, entryHex, from) => {
     const eid = fromHex(entryHex), needed = roundThreshold(decodeRoundContract(new Uint8Array(round.get(rid).contract)).settlementSlots);
     let why = 'no peer that holds it handed the entry over';
-    for (const base of from) {
+    // A BAD PEER IS SKIPPED AND THE NEXT ONE ASKED (kanban #1870, #1901; #1507's rule, #1755): the order is turned a step each pass too, so no fixed
+    // order pins the same seat first.
+    const k = from.length ? (takeTurn = (takeTurn + 1) % 1048576) % from.length : 0, order = [...from.slice(k), ...from.slice(0, k)];
+    for (const base of order) {
       let entry;
       try {
         const r = await peerGet(`${base}/entry?id=${entryHex}`);
-        if (!r.ok) continue;
-        entry = decodeEntryContract(new Uint8Array(await r.arrayBuffer()));
+        if (!r.ok) { try { await r.body?.cancel(); } catch { /* gone */ } continue; }
+        entry = decodeEntryContract(await peerBody(r, BODY_MOST));
       } catch { continue; }
       if (toHex(idOfEntry(entry)) !== entryHex || toHex(entry.roundId) !== toHex(rid)) continue;   // the bytes hash to the id, of this round
       const signers = await verifier.signersNaming(rid, eid, entry.playerPubkey);
@@ -6114,8 +6122,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // passes that peer over like a missing entry, and the next holder is asked. It never throws out of here (membersKnown would reject).
         try {
           const h = await peerGet(`${base}/handout?id=${toHex(ref)}`);
-          if (!h.ok) { why = `${base} answered ${h.status} for its handout`; continue; }
-          const bytes = new Uint8Array(await h.arrayBuffer());
+          if (!h.ok) { try { await h.body?.cancel(); } catch { /* gone */ } why = `${base} answered ${h.status} for its handout`; continue; }
+          const bytes = await peerBody(h, BODY_MOST);   // capped (#1870, #1901)
           const same = stakePointIsTheHandouts(entry, decodeHandout(bytes));
           if (!same.ok) { why = `${base}'s handout: ${same.why}`; continue; }
           const took = await takeHandout(bytes, { accepted: true });
@@ -6134,11 +6142,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const eid = fromHex(entryHex), entry = decodeEntryContract(round.entry(eid));
     if (entry.stakeMsat === 0n) return null;
     const ofPeers = async (path, read) => (await Promise.all([...new Set(from)].map(async (base) => {   // each seat once: a count is read off these (kanban #1783)
-      try { const r = await peerGet(`${base}${path}`); return r.ok ? await read(r) : null; } catch { return null; }
+      try { const r = await peerGet(`${base}${path}`); if (!r.ok) { try { await r.body?.cancel(); } catch { /* gone */ } return null; } return await read(r); } catch { return null; }
     }))).filter(Boolean);
     let why = null;
     if (!round.stakeLock(eid) || (round.feeLock && !round.feeLock(eid))) {
-      let answers = await ofPeers(`/order-locks?entry=${entryHex}`, (r) => r.json());
+      let answers = await ofPeers(`/order-locks?entry=${entryHex}`, (r) => peerJsonUpTo(r, LOCKS_MAX_BYTES));   // capped (#1870, #1901)
       // PAST THE LOCK CLOSE, NOT FROM ONE SEAT (kanban #1783, #1551 refute 0, #1489): #1551 and #1260 refuse a lock new to a seat at its door once its round's
       // lock close passed (head-to-head: the entry close, when the moves turn public), but this repair took a lock from any single peer's GET /order-locks.
       // One seat that took a late lock (its operator, or a patched build) so handed it to every honest seat: the player locked only when the revealed move
@@ -6184,7 +6192,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
     }
     if (!round.payoutAddress(eid)) {
-      for (const named of await ofPeers(`/payout-address?entry=${entryHex}`, (r) => r.json())) {
+      for (const named of await ofPeers(`/payout-address?entry=${entryHex}`, (r) => peerJsonUpTo(r, PEER_PART_BYTES))) {   // capped (#1870, #1901)
         try {
           const signed = new TextEncoder().encode(String(named.signed)), sig = fromHex(String(named.signature));
           if (!ed25519.verify(sig, signed, entry.sessionPubkey)) continue;
