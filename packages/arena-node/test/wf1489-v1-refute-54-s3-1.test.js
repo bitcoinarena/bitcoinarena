@@ -42,13 +42,13 @@ test('a late lock replayed from one peer as a book "order" (replayOrder) does no
     const a = await lockAndPlay(w, mk(1), { hidden: { move: PAPER, salt: sa }, noMarks: true });
     // the griefer: entry and handout at every seat, no lock anywhere (both are in the federation)
     const g = await lockAndPlay(w, mk(2), { hidden: { move: SCISSORS, salt: sg }, noMarks: true, only: [] });
-    skipTo(Number(w.c.entryCloseMs) + 500);
+    skipTo(Number(w.c.entryCloseMs) + 1800);   // GET /reveals serves from the close + H2H_REVEAL_HOLD_MS, 1750 ms (kanban #1822)
     await reveal(w, a, PAPER, sa);
     const pub = await (await fetch(`http://127.0.0.1:${w.nodes[0].port}/reveals?round=${toHex(w.rid)}`)).json();
     const theirs = pub.reveals.find((r) => r.entry === toHex(a.eid));
     assert.ok(theirs, 'the honest reveal is public');
     assert.ok((SCISSORS - theirs.move + 3) % 3 === 1, 'scissors beats paper: the griefer now chooses to take part');
-    skipTo(Number(w.c.entryCloseMs) + 2000);
+    skipTo(Number(w.c.entryCloseMs) + 2500);
     // the griefer's own seat (no #1733 door) takes both his locks now
     w.nodes[0].round.entryCloseGraceMs = null;
     const feeFields = { paymentImage: { kind: 'hash', bytes: sha256(g.entry.feePreimage) }, amountMsat: g.entry.feeMsat, claimPk: w.claimPk,
