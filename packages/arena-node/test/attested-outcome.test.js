@@ -100,7 +100,10 @@ test('an attested round: picks in, no replay, the outcome\'s refusals by name, t
     assert.equal((await outcome(w.a, w.rid)).state, 'OPEN', 'a refused attestation was held');
 
     // THE OUTCOME: two of three attestors say 0
-    for (const d of w.nodes) assert.equal((await post(d, w.rid, signedBy(body, [A0, A2]))).status, 201);
+    // the first seat takes it fresh and hands it on to the round's other seat at once (kanban #1787): that one holds it already
+    assert.equal((await post(w.a, w.rid, signedBy(body, [A0, A2]))).status, 201);
+    assert.equal((await outcome(w.b, w.rid)).state, 'ATTESTED', 'the seat that took it fresh handed it on');
+    assert.equal((await post(w.b, w.rid, signedBy(body, [A0, A2]))).status, 200, 'handed on already: held once');
     assert.equal((await post(w.a, w.rid, signedBy(body, [A0, A2]))).status, 200, 'the same attestation twice is held once');
 
     // CHECK 4: THE TABLE, AT BOTH SEATS, AGAINST THE RULE WRITTEN OUT HERE
