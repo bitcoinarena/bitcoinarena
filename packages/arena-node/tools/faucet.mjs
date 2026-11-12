@@ -27,7 +27,7 @@ import { timingSafeEqual, createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, appendFileSync, renameSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { nodeBountyCheck } from '../src/node-bounty-check.js';
-import { openFeedbackStore, networkPlayers, imageKind, SHOT_MOST, SHOT_UNCLAIMED_MS, REWARD_LEVELS, NODE_BOUNTY_BASE_SATS, lnAddressWorks, lnAddressInvoice } from '../src/feedback-store.js';
+import { openFeedbackStore, networkPlayers, imageKind, SHOT_MOST, SHOT_UNCLAIMED_MS, REWARD_LEVELS, NODE_BOUNTY_BASE_SATS, lnAddressWorks, lnAddressUrl, lnAddressInvoice } from '../src/feedback-store.js';
 const LN_ASKS = new Map();   // ip /64 -> times it asked GET /feedback/lnaddress (kanban #1342, #1537)
 const LN_ASKS_ALL = [], LN_ASKS_MINUTE = 120;   // every check of the last minute, all callers (kanban #1537)
 // ONE GLOBAL WINDOW FOR EVERY DOOR THAT FETCHES A CALLER'S ADDRESS (kanban #1714, refute of #1537): the cap held only GET /feedback/lnaddress, and
@@ -47,10 +47,15 @@ async function addressCheckFor(ip, address) {
   const k = ipKey(ip) || String(ip || ''), day = Math.floor(Date.now() / DAY_MS);
   let c = ADDR_CHECKS.get(k);
   if (!c || c.day !== day) { c = { day, n: 0, busy: false }; ADDR_CHECKS.set(k, c); if (ADDR_CHECKS.size > 5000) for (const [x, v] of ADDR_CHECKS) { if (ADDR_CHECKS.size <= 5000) break; if (!v.busy && x !== k) ADDR_CHECKS.delete(x); } }
+  // text that is no address, or names no public host, fetches nothing: answered here, no budget and no slot used (kanban #1873, #1905)
+  const u = lnAddressUrl(address); if (!u.ok) return u;
   if (c.busy) return { ok: false, why: 'another address from you is still being checked' };
   if (c.n >= FEEDBACK_PER_IP_PER_DAY) return { ok: false, why: 'this address checked all it can today' };
-  // the global minute (kanban #1714): a full minute fetches nothing and does not use the caller's day budget; the report is not counted either
-  if (!addressCheckSlot()) return { ok: false, why: 'too many addresses are being checked just now - try again in a minute' };
+  // the global minute (kanban #1714) still bounds every fetch of a caller's address, both doors together. A FULL MINUTE NEVER REFUSES A REPORT
+  // (kanban #1873, #1905): other callers' checks (GET /feedback/lnaddress takes slots from any Origin) kept the minute full and every honest report
+  // naming a bounty address was refused "try again in a minute", for as long as they liked. Now the report is kept with its address unchecked -
+  // nothing is fetched for it here, and the address is asked again at payout (lnAddressInvoice), so a reward is still never paid to one that fails.
+  if (!addressCheckSlot()) return { ok: true, unchecked: true };
   c.n += 1; c.busy = true;
   try { return await lnAddressWorks(address); } finally { c.busy = false; }
 }
@@ -559,10 +564,15 @@ createServer((req, res) => {
     // unlimited fetcher
     const ip = String(ipKey(ipOf(req)) || ipOf(req) || ''), now = Date.now();   // an IPv6 caller by its /64 (kanban #1511, #1537)
     const seen = (LN_ASKS.get(ip) || []).filter((t) => now - t < 600000); if (seen.length >= 30) return send(200, { ok: false, why: 'too many checks - it is checked again at Send' });
+    // NO GLOBAL SLOT FOR WHAT FETCHES NOTHING (kanban #1873, #1905): text that is no address (or names no public host) counts toward the caller's own
+    // 30 but is answered before the shared minute - a stranger's 'nothing' took a slot and, from a few dozen addresses, kept the minute full
+    const asked = String(new URL(req.url, 'http://x').searchParams.get('a') || '').slice(0, 200), u = lnAddressUrl(asked);
+    const counted = () => { seen.push(now); LN_ASKS.delete(ip); LN_ASKS.set(ip, seen); if (LN_ASKS.size > 5000) LN_ASKS.delete(LN_ASKS.keys().next().value); };
+    if (!u.ok) { counted(); return send(200, { ok: false, why: u.why }); }
     // the global minute shared with POST /feedback's address checks (kanban #1714)
     if (!addressCheckSlot(now)) return send(200, { ok: false, why: 'too many checks - it is checked again at Send' });
-    seen.push(now); LN_ASKS.delete(ip); LN_ASKS.set(ip, seen); if (LN_ASKS.size > 5000) LN_ASKS.delete(LN_ASKS.keys().next().value);
-    lnAddressWorks(String(new URL(req.url, 'http://x').searchParams.get('a') || '').slice(0, 200)).then((w) => send(200, { ok: !!w.ok, why: w.ok ? null : w.why }), (e) => send(200, { ok: false, why: String((e && e.message) || e).slice(0, 120) }));
+    counted();
+    lnAddressWorks(asked).then((w) => send(200, { ok: !!w.ok, why: w.ok ? null : w.why }), (e) => send(200, { ok: false, why: String((e && e.message) || e).slice(0, 120) }));
     return;
   }
   if (path === '/feedback/rewards' && req.method === 'GET') {
