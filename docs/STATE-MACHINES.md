@@ -28,6 +28,9 @@ release commit and brings this file up to date with it - new machines added, cha
 13. [State the 2026-11-10 audits (5, 6) introduced or changed](#13-state-the-2026-11-10-audits-5-6-introduced-or-changed)
 14. [State audit 2026-11-12](#14-state-audit-2026-11-12)
 
+14. [State the 2026-11-10 evening range introduced or changed](#14-state-the-2026-11-10-evening-range-introduced-or-changed-audit-7-base-eb7fd30fc-head-c41b4ac4d)
+15. [State audit 2026-11-12](#15-state-audit-2026-11-12)
+
 ## 1. Rounds and settlement
 
 *From #1204, `settlement.md`.*
@@ -1610,3 +1613,7 @@ Audit 5 (#1399, base 1502786b) and audit 6 (#1415, base eb7fd30fc) for release 2
 - "Can pay": the seat's balance in `to` less what it owes there already (`pay_msat` of every SENDING row, the taken amount up to `want_msat` of every TAKEN row) is at least the row's `want_msat`.
 - A check that fails on a row that never asked (`receive_asked` 0) answers 409/429 and leaves the row in RECEIVING, nothing taken. On a row whose earlier ask may have reached the federation (`receive_asked` 1, or NULL from before #1204) it answers 503 and holds the row in RECEIVING (`why` names the reason); the same notes asked again later go on once the seat can pay.
 - The hour counts a payout by `pay_ms`, the time TAKEN -> SENDING named it (a row from before: `made_ms`), so a late retry counts in the hour it pays.
+
+#### SM-O1 (add) Owner binding across a crash (main.js `ownerFiles`, owner.js `createOwner`, durable-json.js; kanban #1630)
+- `<db>.owner.json` (and `<db>.operator-tokens.json`, `<db>.retire.json`) is written atomically: `<file>.bak` first, then the file, each a temp file + fsync + rename. A reader sees the value before or after a write, never a torn one.
+- An absent file (ENOENT) is "no owner" as before. A file that exists but does not parse is read from `<file>.bak`; with no good `.bak` the node refuses to start (`DurableJsonUnreadable`). A claimed node never comes back unclaimed, never writes a new claim code over an owner, and keeps its owner's `leaving` and `settings` across any crash.
