@@ -27,7 +27,7 @@ test('a full sessionStorage at rememberHidden: the reveal still finds the move t
   };
   const game = pageFunction(PAGE, ['window', 'ARENACLIENT', 'readHidden', 'crypto'], [REVEAL_SLICE], '};', 'return {')(window, ARENACLIENT, readHidden, globalThis.crypto);
   // THE JOIN'S END: the seats took the entry (its commitment and stake lock), the page keeps the move and salt
-  rememberHidden({ roundIdHex: R, entryIdHex: E, move: 2, saltHex: '11'.repeat(32), nodes: ['http://s1', 'http://s2'], entryCloseMs: '1', gameId: '00'.repeat(32), endMs: '2' });
+  rememberHidden({ roundIdHex: R, entryIdHex: E, move: 2, saltHex: '11'.repeat(32), nodes: ['http://s1', 'http://s2'], entryCloseMs: '1', gameId: '00'.repeat(32), endMs: '2', protocolVersion: 27 });   // a round below 28 is revealed at once (kanban #2561)
   // AFTER THE ENTRY CLOSE, in the same tab
   const got = await game.reveal(R);
   assert.equal(got.ok, true, `the reveal of a move this page hid a moment ago: ${got.why || JSON.stringify(got)} - the entry is FORFEIT`);
