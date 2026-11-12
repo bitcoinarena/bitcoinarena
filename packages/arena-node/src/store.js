@@ -1569,6 +1569,11 @@ export function openStore(path = ':memory:') {
   // from before the column counts as held from the start.
   if (!db.prepare('PRAGMA table_info(evidence_blocks)').all().some((c) => c.name === 'seen_ms'))
     db.exec('ALTER TABLE evidence_blocks ADD COLUMN seen_ms INTEGER');
+  // AND WHICH PEER A PULLED RECORD CAME FROM (kanban #1883, #1914, #1489): NULL for this seat's own record (every row from
+  // before the column is one), the peer's address for a record #pullEvidenceBlocks kept - so what one peer can add is
+  // bounded per peer, and this seat serves on only the records of marks it holds itself.
+  if (!db.prepare('PRAGMA table_info(evidence_blocks)').all().some((c) => c.name === 'pulled_from'))
+    db.exec('ALTER TABLE evidence_blocks ADD COLUMN pulled_from TEXT');
   // AND BEFORE AN ENTRY_VOID SAID HOW THIS SIGNER NODE LEARNED IT (M3.3-34): every row
   // it already holds was decided on its own record.
   if (!db.prepare('PRAGMA table_info(entry_voids)').all().some((c) => c.name === 'learned'))
