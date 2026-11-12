@@ -29,7 +29,7 @@
 // the handout was. The two checks together are what makes this sound without a
 // signature: claiming another signer node's key gets you an envelope only that signer node
 // can open, and not claiming one gets you refused.
-import { reconstruct, SHARES_NEEDED } from '../../arena-protocol/src/shares.js';
+import { reconstruct, shareOpensTo, SHARES_NEEDED } from '../../arena-protocol/src/shares.js';
 import { openMyShare, decodeHandout } from '../../arena-protocol/src/handout.js';
 import { sealShare, openShare } from '../../arena-protocol/src/seal.js';
 
@@ -297,7 +297,11 @@ export class StakeSecrets {
           sealed: back.sealed, signerNode: back.signerNode, secret: this.round.identity.secret,
           ephemeralPubkey: back.ephemeralPubkey, curve: this.curve,
         });
-        if (opened.ok) bySignerNode.set(back.signerNode, { signerNode: back.signerNode, value: opened.share.value });
+        if (!opened.ok) continue;
+        const share = { signerNode: back.signerNode, value: opened.share.value };
+        // A KEPT ENVELOPE IS CHECKED AS A FRESH ONE IS (kanban #1756): one kept before this check existed, off the polynomial, counts for nothing.
+        if (!shareOpensTo(share, { commitments: found.handout.commitments, curve: this.curve }).ok) continue;
+        bySignerNode.set(back.signerNode, share);
       } catch { /* not an envelope this signer node can open */ }
     }
 
@@ -324,7 +328,17 @@ export class StakeSecrets {
           ephemeralPubkey: back.ephemeralPubkey, curve: this.curve,
         });
         if (!opened.ok) { refused++; why.push(`${peer}: ${opened.why}`); continue; }
-        bySignerNode.set(back.signerNode, { signerNode: back.signerNode, value: opened.share.value });
+        // A PEER'S SHARE IS CHECKED AGAINST THE HANDOUT'S FELDMAN COMMITMENTS BEFORE IT COUNTS (kanban #1756). The envelope is sealed
+        // under a one-time key the PEER chose, so opening it proves nothing about the value, and the index is the answer's own word:
+        // measured before, one seat answering its index with a made-up value made reconstruct() fail, the honest peers after it were
+        // never asked and the bad share was kept and read first on every later open - the loser's stake never opened. Now a share off
+        // the published polynomial is refused and the next peer is asked, an index already held is never replaced, and only a
+        // verified share is kept.
+        if (bySignerNode.has(back.signerNode)) { refused++; why.push(`${peer}: signer node ${back.signerNode}'s share is already held`); continue; }
+        const share = { signerNode: back.signerNode, value: opened.share.value };
+        const onPolynomial = shareOpensTo(share, { commitments: found.handout.commitments, curve: this.curve });
+        if (!onPolynomial.ok) { refused++; why.push(`${peer}: ${onPolynomial.why}`); continue; }
+        bySignerNode.set(back.signerNode, share);
         if (typeof this.round.putHeldShare === 'function') this.round.putHeldShare({ entryId, signerNode: back.signerNode, bytes: raw });
       } catch (e) { refused++; why.push(`${peer}: ${e.message}`); }
     }
