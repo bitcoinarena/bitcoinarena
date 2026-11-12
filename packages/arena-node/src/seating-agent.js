@@ -286,7 +286,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       // the honest seats as equivocators. It is refused as superseded; only seatings that are not ordered prove equivocation.
       if (comesBefore(new Map(check.drawn.map((k, i) => [toHex(k), i])), v.seating.seated.map(toHex), decodeSeated(old))) {   // 2.0: #738's order (seatingBefore)
         log(`[seating] ${toHex(rid).slice(0, 16)} ${role}: a certificate for a seating before the one held refused (superseded)`);
-        return { ok: false, why: 'superseded: that seating comes before the one certified here' };
+        return { ok: false, superseded: true, why: 'superseded: that seating comes before the one certified here' };
       }
       // 2.0 (kanban #1489 port of #1681): a pair the block above did not settle - the replacement came second while the round already
       // holds entries - keeps #1707's rule: the certificate held stands, the other is refused, no equivocation.
