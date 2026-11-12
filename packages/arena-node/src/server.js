@@ -774,6 +774,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // AND NOT AFTER THE MARKET'S DEADLINE (kanban #1151): a market with no outcome by then is VOID, its stakes back at once
     const timely = attestationTimely(a, { entryCloseMs: c.entryCloseMs, nowMs: round.now(), terms: roundTermsOf(plugin.manifest, c) });
     if (!timely.ok) return { held: false, status: 409, why: timely.why };
+    // AND OBSERVED AT ITS WINDOW'S END (kanban #1515): a market on a period is signed at the end of the round's own window
+    // (observed_at = the window's end, its terms; attestor.js and drawn-attestor.js both sign window.endMs). One seat listing the
+    // round with a later close made the fixed attestors sign another window's outcome, held here as timely - refused now
+    const mw = marketWindowOf(c, plugin.manifest);
+    if (mw.ok && mw.window && BigInt(a.observedAtMs) !== mw.window.endMs)
+      return { held: false, status: 409, why: `that attestation says it was observed at ${new Date(Number(a.observedAtMs)).toISOString()}, and this round's window ends at ${new Date(Number(mw.window.endMs)).toISOString()}: a market on a period is attested at its window's end` };
     // ONE HELD ONCE THE ROUND IS FINAL OR VOID (its persisted state, game-market.js marketStateOf) is kept as evidence only
     const decided = marketTerminal(marketStateOf(round, new Uint8Array(roundIdOf(c)), { contract: c, manifest: plugin.manifest, nowMs: round.now() }).state);
     // a value is kept in the same table under its own body id, its outcome column -1 (no index: the value is in its bytes)
