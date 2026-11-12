@@ -3915,13 +3915,19 @@ nothing. The certificate's time is the latest counted signer's `at_ms`.
 - **Only certified entries are seated, revealed and decided.** A reveal of an
   entry outside the set is refused; the decide plays the set's entries only and
   signs every other entry `VOID`. A lock that arrives after the close, by any
-  door, is in no view and no set: it is not in the round, and its stake comes back
-  (`VOID`, its lock never claimed).
+  door, is in no view and no set: it is not in the round, and goes back by
+  forfeit at once (`VOID`, its lock never claimed). A seat signs that forfeit
+  (`GET /forfeit`, and `?lock=fee` for the entry's fee lock) as soon as it holds
+  the certificate and the lock is not in it, as a refused round's lock (§23.2):
+  no result and no settlement to wait for. A certified entry's lock waits for its
+  round as before.
 - **No certificate by the close + 3 s: the round is `VOID`.** Every entry is
   signed `VOID` and every stake comes back. Never a partial round. A seat that
   holds no certificate when it decides first pulls one from every peer; a
   certificate is a signed object, so one that formed anywhere in time counts
-  wherever it arrives.
+  wherever it arrives. Every lock of a `VOID` round goes back by forfeit at once,
+  stake and fee lock, on the same rule: past the window, none held here and none
+  pulled from the peers when the forfeit is asked.
 - **The page** polls `GET /lock-set?round=`, checks the certificate against the
   seats it dealt its stake to, and reveals only then (arena-client
   `revealWhenCertified`). Past the window with none it says the round is void.
