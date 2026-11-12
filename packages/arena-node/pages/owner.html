@@ -810,8 +810,11 @@ async function leavePanel() {
 // nicht scrollen dürfen"): the card listed all 15 checks. Now a passed package says how many checks passed, a refused one names only the check that
 // failed. A game whose core is a source tree (Tick Tock: its sim hash covers every file of the engine, hash-core.js) is no store package - no seat
 // can hand it over in one file - so it says that the version comes with the node software (Updates) instead of a hash
+// A CHECK THAT THROWS IS A REFUSAL (kanban #2359, refute of #1814/#2307): a relayed package the page's copy of plugin-check.js cannot read
+// (an older bundle threw on clients: [null]) left the card at "checking in this browser..." with its button disabled - now it is refused, named
 function shortCheck(pkg, opts) {
-  const r = C.checkPackage(pkg, opts);
+  let r;
+  try { r = C.checkPackage(pkg, opts); } catch (e) { return { ok: false, checks: [{ check: 'the package can be read', ok: false, detail: e.message }], why: `This package cannot be read: ${e.message}` }; }
   const checks = r.checks || [], failed = checks.filter((c) => !c.ok);
   if (r.ok) return { ...r, checks: [{ check: `all ${checks.length} checks passed in this browser`, ok: true, detail: '' }] };
   if (failed.some((c) => / is the file its manifest names$/.test(c.check)))

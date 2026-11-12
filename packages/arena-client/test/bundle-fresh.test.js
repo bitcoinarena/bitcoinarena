@@ -15,7 +15,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -28,18 +28,24 @@ const BUILDS = [
   ['blwp-core.js', 'packages/nextblock/tools/bundle.js', 'packages/nextblock/dist/blwp-core.js'],
 ];
 
-// ONE TEST PER SCRIPT (kanban #1690, #1523): these were one loop in one test, so the curve tool's ENOENT on the
-// MacBook threw before arena-client.js was compared, and a stale client bundle - one seat of seven still blocking
-// every world seed in the page - went unseen behind it. Each script is now built and compared on its own; one tool
-// failing says so by name and hides no other script.
-for (const [name, tool, built] of BUILDS) test(`${name} a page serves is the build of the source in this tree - in dist and in the WebGL template`, () => {
+// ONE TEST PER SCRIPT (kanban #2356): the three ran as one test, and the curve's build needs esbuild,
+// which a checkout without it (the test MacBook's shared deps) does not have - so the one test threw on
+// the curve before it compared arena-client.js, it was red for that on every run, and a red nobody read
+// let #2310 ship a protocol-only vestedShares fix while the page bundle kept the old one. Now
+// arena-client.js and blwp-core.js (no esbuild) are checked everywhere; the curve is skipped, by name,
+// only where esbuild is absent.
+const ESBUILD = ROOT + 'packages/arena-client/node_modules/esbuild/bin/esbuild';
+for (const [name, tool, built] of BUILDS) test(`${name}, a script a page serves that decides money, is the build of the source in this tree - in dist and in the WebGL template`,
+  { skip: name === 'arena-curve.js' && !existsSync(ESBUILD) ? 'esbuild is not installed here, so the curve cannot be built' : false }, () => {
   const dir = mkdtempSync(join(tmpdir(), 'blwp-fresh-'));
   try {
     const stale = [];
-    execFileSync(process.execPath, [ROOT + tool], { env: { ...process.env, ARENA_BUNDLE_OUT: dir }, stdio: 'pipe' });
-    const fresh = readFileSync(join(dir, name));
-    if (Buffer.compare(fresh, readFileSync(ROOT + built))) stale.push(`${name}: dist is not the build of this source`);
-    if (Buffer.compare(fresh, readFileSync(TEMPLATE + name))) stale.push(`${name}: the WebGL template is not the build of this source`);
+    {
+      execFileSync(process.execPath, [ROOT + tool], { env: { ...process.env, ARENA_BUNDLE_OUT: dir }, stdio: 'pipe' });
+      const fresh = readFileSync(join(dir, name));
+      if (Buffer.compare(fresh, readFileSync(ROOT + built))) stale.push(`${name}: dist is not the build of this source`);
+      if (Buffer.compare(fresh, readFileSync(TEMPLATE + name))) stale.push(`${name}: the WebGL template is not the build of this source`);
+    }
     console.log(`  FACTS (freshness): ${stale.length ? stale.join('; ') : `${name} fresh in dist and the template`}`);
     assert.deepEqual(stale, []);
   } finally { rmSync(dir, { recursive: true, force: true }); }

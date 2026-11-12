@@ -1,3 +1,12 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// A PEER SEAT'S ANSWER, READ UP TO A CAP (kanban #1829, #2244). One seat could answer tens of MB where a few kB are honest, and r.json() or
+// r.arrayBuffer() buffered - and parsed - all of it on every honest seat that asked. The body is read chunk by chunk and refused, the stream
+// cancelled, once it passes the cap; a Content-Length over it is refused unread. Shared by every door that reads a small peer answer:
+// game-market.js (GET /round, GET /round-result, #1829), entry-relay.js seatView (GET /api/round-result, #2244) and server.js
+// learnRoundApps (GET /round, #2244; GET /entry, #2327 #2343), entry-relay.js handLocks (GET /order-locks, #2327 #2343), server.js
+// takeEntryParts, takeAcceptedEntry and replayOrder (GET /order-locks, /payout-address, /entry, /handout, #2368).
+//
 /**
  * ANOTHER SEAT'S ANSWER, READ UP TO A BOUND (kanban #1540, #1723): a seat in the census or the peers list could answer GET /games,
  * /plugin or /network with hundreds of MB, and `await r.json()` held all of it and its parsed objects at once (measured: one

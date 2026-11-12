@@ -559,6 +559,8 @@ export const COMMENT_MOST = 200;
 // hops, each Location checked exactly as the first URL (#1962: name@own-domain answering 301 to its wallet provider works; #1746: a 302 to an
 // internal URL is never fetched). An injected fetchFn is asked with redirect: 'manual' and its hops are checked the same way.
 export { internalAddress, walletUrlRefusal, guardedLookup, publicFetch } from './public-fetch.js';
+// and the a45 #2236 name for the faucet's and the winnings send's one guard by where a name leads (kanban #1809, #2236)
+export { hostReach } from './public-fetch.js';
 // the names #1511 / #1809 gave these checks, kept for their callers: a URL on a public name, an address that is global, one pinned GET
 export const publicHttpsUrl = (u) => !walletUrlRefusal(u);
 export const addressIsGlobal = (address) => !internalAddress(address);

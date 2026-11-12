@@ -29,7 +29,7 @@
 // (identity.js `checkedNames`) - never a key in place of a name.
 import { protocolVersionName } from '../../arena-protocol/src/protocol-version.js';
 import { joinQuery, fetchRound, roundPays } from './join.js';
-import { checkedNames, NAMES_PER_SEAT } from './identity.js';
+import { checkedNames, NAMES_PER_SEAT, NAME_CHECKS_MAX } from './identity.js';
 import { lobbyListingId } from '../../arena-protocol/src/lobby-listing.js';
 import { entryOpenUntilMs } from './late-join.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
@@ -166,6 +166,29 @@ export const CLOSED_KEPT_MS = 2n * 3600n * 1000n;
 // batches of 16; the next reads bring the rest, a second apart)
 export const LOBBY_CONTRACTS_PER_READ = 32;
 export const LOBBY_OTHER_CONTRACTS_PER_READ = 16;
+// THE NAME CHECKS ONE LOBBY READ MAY RUN, ALL ROUNDS TOGETHER (kanban #2259, #2276; refute of #1864): NAME_CHECKS_MAX bounded one round,
+// but a seat makes up any number of rounds (a contract hashes to its id and the seat serves it) - 32 of them with 128 forged names each
+// were 4,096 BIP-340 checks on the main thread in one read, more on every later read. Rows that could be joined spend it first.
+export const LOBBY_NAME_CHECKS_PER_READ = 2 * NAME_CHECKS_MAX;
+
+// ONE ROUND'S NAMES TO CHECK, FAIR ACROSS SEATS (kanban #2259, #2276): only a signer node of the round, by its own fresh signed listing (the
+// key is then its own, not a claim), adds names; ONE seat adds at most NAMES_PER_SEAT for the round however often it lists the round (a seat
+// listing the same round five times spent all NAME_CHECKS_MAX on its forgeries before an honest seat's real record was reached); and the
+// seats' names are taken in turn, one from each, so no seat's forgeries starve another seat's names out of the round's checks
+function namesToCheck(counts, signerNodes) {
+  const bySeat = new Map();
+  for (const c of counts) {
+    if (!c || !Array.isArray(c.names) || !c.names.length || !c.fresh || !signerNodes.has(c.key)) continue;
+    const have = bySeat.get(c.key) || [];
+    if (have.length >= NAMES_PER_SEAT || !c.signed) continue;
+    bySeat.set(c.key, have);
+    // each name carries the seat that supplied it: the read's checks are charged to that seat (kanban #2342, checkedNames `budget.perSeat`)
+    for (const n of c.names) { if (have.length >= NAMES_PER_SEAT) break; have.push({ record: n && n.record, sig: n && n.sig, by: c.key }); }
+  }
+  const lists = [...bySeat.values()], out = [];
+  for (let i = 0; i < NAMES_PER_SEAT; i++) { let any = false; for (const l of lists) if (i < l.length) { out.push(l[i]); any = true; } if (!any) break; }
+  return out;
+}
 
 // A NODE WHOSE READ FAILED IS NOT ASKED AGAIN FOR FAILED_NODE_SKIP_MS (kanban #1133: every lobby read on the owner's iPhone asked the 7 stopped
 // T3 seats and the dead quick tunnels its kept list holds, 11 nodes, and paid for them each second). Failed means the read failed outright -
@@ -250,9 +273,15 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
       const body = await r.json();
       const nodeKey = String(body && body.node).toLowerCase();
       const at = Number(body && body.nowMs);
+      // ONE ENTRY PER ROUND FROM ONE SEAT (kanban #2349; refute of #1864 / #2259): each repeat of a round in one seat's answer was its own
+      // listing with its own signature check - one seat repeating its round 5,000 times cost 5,000 BIP-340 checks (and 5,000 items in the
+      // page's verifyMany batch) on every read. The first entry for a round is kept; a later one from the same answer is dropped unread.
+      const listedHere = new Set();
       for (const x of (body && Array.isArray(body.rounds)) ? body.rounds : []) {
         const id = String(x && x.id).toLowerCase();
         if (!/^[0-9a-f]{64}$/.test(id)) { refused.push(`${node}: listed something that is not a round id`); continue; }
+        if (listedHere.has(id)) continue;
+        listedHere.add(id);
         if (!said.has(id)) said.set(id, []);
         if (Number(x.entryCloseMs) > 0) soonest.set(id, Number(x.entryCloseMs));
         if (x && x.game && x.game.id) gameOf.set(id, String(x.game.id).toLowerCase());
@@ -278,6 +307,7 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
     } catch (e) { refused.push(`${node}: ${e.message}`); failed.push(String(node)); if (e && e.silent) unanswered.push(String(node)); }
   }
   const rows = [], closed = [];
+  const namesFrom = new Map();                              // id -> the names its row checks (namesToCheck)
   // WHY NO ROW (kanban #1133): listings read, rounds named, contracts known, listings stale or with a false signature, rounds short of agreement
   const why = { listings: 0, rounds: said.size, contracts: 0, stale: 0, sigFalse: 0, notEnough: 0 };
   for (const counts of said.values()) why.listings += counts.length;
@@ -360,6 +390,7 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
     const seating = !seatingSaid.length ? null : seatedBy
       ? { state: 'named', game: seatedBy.game, settlement: seatedBy.settlement, drawn: seatedBy.drawnCount || null }
       : { state: seatingSaid.some((x) => x.equivocated) ? 'equivocated' : 'pending' };
+    namesFrom.set(id, namesToCheck(counts, signerNodes));
     rows.push({
       id, phase,
       seating,
@@ -376,7 +407,7 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
       // A NODE THAT CALLED A PAYING ROUND FREE, OR THE REVERSE, IS NAMED: the row
       // says what the contract says, and the disagreement is shown beside it.
       disagrees: counts.filter((c) => c.free !== !pays).map((c) => c.node),
-      names: checkedNames(counts.flatMap((c) => c.names), id, verify),
+      names: [],                                            // checked below, within the read's budget (kanban #2259, #2276)
       // WHAT THE PLAYER IS WARNED OF BEFORE ENTRY (§18A.7 / §22A): a paying round's only
       warnings: pays ? entryWarnings(contract, counts.flatMap((c) => c.warnings || [])) : [],
       contract,
@@ -394,6 +425,21 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
     });
   }
   rows.sort((x, y) => (x.phase === y.phase ? x.entryCloseMs - y.entryCloseMs : (x.phase === 'open' ? -1 : 1)));
+  // THE NAMES, CHECKED WITHIN ONE BUDGET FOR THE WHOLE READ (kanban #2259, #2276): a joinable row first (its signer nodes agree), then the
+  // opened game's, then in the rows' order; a row the budget does not reach shows no names this read
+  // AND FAIR ACROSS THE SEATS THAT SUPPLY THEM (kanban #2342; refute of #2259): the read's budget was one pool, so two colluding seats' made-up
+  // joinable rounds that close sooner (8 x 128 forged names) spent all of it before an honest round was reached - its real names [] on every
+  // read. Each check is now charged to the seat that supplied the name, and each seat gets an equal share of the read's budget: a seat
+  // is one of the nodes the page asks (one key per answer), so no seat's forgeries can take another seat's share
+  const supplying = new Set();
+  for (const from of namesFrom.values()) for (const n of from) supplying.add(n.by);
+  const nameBudget = { left: LOBBY_NAME_CHECKS_PER_READ, perSeat: new Map(), share: Math.floor(LOBBY_NAME_CHECKS_PER_READ / Math.max(1, supplying.size)) };
+  const preferRow = Array.isArray(preferGames) && preferGames.length ? new Set(preferGames.map((g) => String(g).toLowerCase())) : null;
+  const rank = (r) => (r.joinable ? 0 : 2) + (preferRow && preferRow.has(r.game) ? 0 : 1);
+  for (const r of rows.map((r, i) => [r, i]).sort(([a, i], [b, j]) => rank(a) - rank(b) || i - j).map(([r]) => r)) {
+    const from = namesFrom.get(r.id) || [];
+    r.names = from.length ? checkedNames(from, r.id, verify, nameBudget) : [];
+  }
   // FAILED NOW: skipped from here on for FAILED_NODE_SKIP_MS; ANSWERED NOW: out of the list (kanban #1133)
   if (skipFailed) { const silentNow = new Set(unanswered.map(String)), failedNow = new Set(failed.map(String));
     for (const n of unique) { const k = String(n); if (failedNow.has(k) && !silentNow.has(k)) { const times = (FAILS.get(k) || 0) + 1; FAILS.set(k, times); down.set(k, nowMs + Math.min(FAILED_NODE_SKIP_MS, FAILED_NODE_FIRST_SKIP_MS * 2 ** (times - 1))); } else if (!failedNow.has(k)) { down.delete(k); FAILS.delete(k); } }

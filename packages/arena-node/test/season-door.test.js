@@ -214,6 +214,8 @@ test('GET /season?scope=network: the other seats\' rounds merged, a round counte
     seed(d.round, now);
     const game = toHex(NEXTBLOCK_GAME_ID);
     const mine = await (await fetch(`http://127.0.0.1:${d.port}/season-rounds?game=nextblock`)).json();
+    // kanban #2355: another seat hands on its copies with its own signature or none, never this seat's (a seat that does is not read)
+    mine.rounds = mine.rounds.map((r) => ({ ...r, sigs: [] }));
     const local = await (await fetch(`http://127.0.0.1:${d.port}/season?game=nextblock`)).json();
     const extra = { roundId: 'ee'.repeat(32), gameId: game, startMs: String(now - HOUR), void: false,
       entries: [{ player: X, name: 'bob', stakeMsat: '0', payoutMsat: '0', outcome: 'DELIVERED', score: 42 }] };
@@ -237,7 +239,8 @@ test('GET /season?scope=network: the other seats\' rounds merged, a round counte
     assert.equal(j.scope, 'network');
     assert.equal(j.agree, 3);
     assert.deepEqual(j.seats, { asked: 7, answered: 4 }, 'E silent, F this seat itself, G A\'s second address');
-    assert.ok(asked.every((u) => u.endsWith(`/season-rounds?game=${game}&days=7`)), 'every seat asked for the same ids and days');
+    // kanban #2273: the first page of each (one page here: no answer hands on `next`)
+    assert.ok(asked.every((u) => u.endsWith(`/season-rounds?game=${game}&days=7&page=1&after=`)), 'every seat asked for the same ids and days');
     assert.equal(j.rounds, local.rounds + 1, 'this seat\'s two rounds, round 1 over B\'s dissent, and the one only A, B and C hold');
     const unranked = (rows) => rows.map(({ rank, ...x }) => x);
     assert.deepEqual(j.rows.map((x) => x.rank), [1, 2, 3]);
@@ -303,7 +306,7 @@ test('a real node: byte-identical unsigned accounts from six seats award no week
     const nb = asked.filter((u) => u.includes(`game=${game}&`));
     assert.ok(nb.length >= 5);
     for (const u of nb) {
-      const days = Number(/days=(\d+)$/.exec(u)[1]);
+      const days = Number(/days=(\d+)&page=1&after=$/.exec(u)[1]);   // kanban #2273: the paged ask
       assert.ok(days * DAY_MS > Date.now() - week.fromMs && days <= 90, u);
     }
     // ONCE: later ticks ask nobody again for that week

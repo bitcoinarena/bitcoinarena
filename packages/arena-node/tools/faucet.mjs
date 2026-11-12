@@ -731,7 +731,7 @@ createServer((req, res) => {
       // A REPORT HOLDS ITS PLACE BEFORE ITS FIRST WAIT (kanban #1808): it was counted only after the chat post came back, so a burst from one address
       // all passed feedbackDecide with none counted yet and FEEDBACK_PER_IP_PER_DAY / FEEDBACK_PER_DAY never tripped. Now its slot is pushed as soon as
       // it passes, and given back if it is not posted after all; earlier days' entries go first, so REPORTS stays one day long
-      let slot = null;
+      let slot = null, posted = false;
       const giveBack = () => { const i = slot ? REPORTS.indexOf(slot) : -1; if (i >= 0) REPORTS.splice(i, 1); slot = null; };
       { const day = Math.floor(Date.now() / DAY_MS); while (REPORTS.length && Math.floor(REPORTS[0].atMs / DAY_MS) !== day) REPORTS.shift(); }
       try {
@@ -767,11 +767,21 @@ createServer((req, res) => {
         // was taken): its "Bounty address:" line must work as well
         if (!b0.event) { const m = /\nBounty address: (\S+)/.exec(String(b0.text || '')); if (m) { const w = await lnAddressWorks(m[1]); if (!w.ok) { giveBack(); return send(200, { ok: false, why: `That Lightning address does not work: ${w.why}. Check it, or leave it empty.` }); } } }
         const key = readFileSync(env.FAUCET_CHAT_TOKEN_FILE, 'utf8').trim();
+        // POSTED FROM HERE ON (kanban #2271, #1489 a45 refute of #1808): once the fetch starts, the chat may have the whole report even when its answer
+        // comes late (the 10 s timeout) or the connection breaks after the body went out - that report is in the channel, so its slot stays counted
+        // and the caller hears "may have been posted", not "not JSON" (a retry would post it twice). Given back only when the chat clearly did not take
+        // it: a non-2xx answer, or a connection refused before anything was sent
+        posted = true;
         const r = await fetch(`${env.FAUCET_CHAT_URL}/api/channels/${env.FAUCET_CHAT_CHANNEL}/messages`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` }, body: JSON.stringify({ text: (kept && kept.label ? `${kept.label} · ` : '') + d.text }), signal: AbortSignal.timeout(10000) });
         if (!r.ok) { giveBack(); return send(502, { ok: false, why: 'the report could not be kept just now' }); }
         if (d.player) appendFileSync(FOUNDING_FILE, `${JSON.stringify({ player: d.player, atMs: Date.now() })}\n`);
         send(200, { ok: true, ...(kept ? { id: kept.id, kept: kept.kept, number: kept.number ?? null, label: kept.label || null } : {}) });   // its number (kanban #1413)
-      } catch { giveBack(); send(400, { ok: false, why: 'not JSON' }); }
+      } catch (e) {
+        if (!posted) { giveBack(); return send(400, { ok: false, why: 'not JSON' }); }
+        const code = String((e && e.cause && e.cause.code) || '');
+        if (code === 'ECONNREFUSED' || code === 'ENOTFOUND' || code === 'EAI_AGAIN') { giveBack(); return send(502, { ok: false, why: 'the report could not be kept just now' }); }
+        send(504, { ok: false, why: 'the chat did not answer in time: the report may have been posted, do not send it again' });
+      }
     });
     return undefined;
   }
