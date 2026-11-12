@@ -26,9 +26,10 @@ import { toHex } from '../../arena-protocol/src/hash.js';
 import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH, NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 import { BLOCK_TICKS } from '../../nextblock/src/rules/gate.js';
 import { HOSTED } from './plugins/hosted.js';
+import { pointKey } from '../../arena-protocol/test/point-key-fixture.js';  // kanban #1675: fixture keys are curve points
 
 const b32 = (n) => new Uint8Array(32).fill(n);
-const key33 = (n) => Uint8Array.of(0x02, ...new Uint8Array(32).fill(n));
+const key33 = (n) => pointKey(0x02, n);   // kanban #1675: a donation recipient key is a curve point
 const NOW = 1788700000000;
 const STAKE = 100000n;
 const roundOf = (protocolVersion) => ({
