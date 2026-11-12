@@ -63,6 +63,10 @@ export const CHAIN_BASIS_STEP = 6;
 /** How many census seats one mirror pass asks for a record none of its guardians' nodes holds. */
 export const MIRROR_PEERS = 8;
 
+/** A mirror pass reads the chain's census (censusAt) at most this many heights per peer answer, and this many in all (kanban #1818). */
+export const MIRROR_CENSUS_PER_ANSWER = 2;
+export const MIRROR_CENSUS_PER_PASS = 8;
+
 export function federationsOf(census) {
   const ids = new Map();
   for (const e of census.entries || []) for (const g of (e.advert && e.advert.guardianOf) || []) ids.set(toHex(g.federationId), g.federationId);
@@ -898,26 +902,46 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
         const r = await fetcher(`${base}/federations`, { signal: AbortSignal.timeout(8000) });
         if (!r.ok) return;
         const j = await r.json();
-        for (const x of j.federations || []) {
-          if (String(x.federation).toLowerCase() !== fid) continue;
-          let v = verifyFederationRecord(fromHex(String(x.record)), { census: b.census.entries, verify, inviteFederationId, bandPoint: bandFrom });
+        // ONE PEER'S ANSWER IS NOT A LIST OF CHAIN READS (kanban #1818): a record's height is its own, unsigned word, and censusAt derives
+        // a whole census from bitcoind (kept 3 days) - one guardian listing the federation at 2,000 made-up heights cost 2,000 derivations
+        // a pass. A record that does not stand against this seat's census goes to the chain only if it first stands against its own
+        // guardian list (every signature and the threshold, bonds not: cheap, and junk with no signatures stops here), newest first, at
+        // most MIRROR_CENSUS_PER_ANSWER heights from one answer and MIRROR_CENSUS_PER_PASS in the pass
+        const mine = (Array.isArray(j.federations) ? j.federations : []).filter((x) => x && String(x.federation).toLowerCase() === fid);
+        const later = [];
+        for (const x of mine) {
+          let v; try { v = verifyFederationRecord(fromHex(String(x.record)), { census: b.census.entries, verify, inviteFederationId, bandPoint: bandFrom }); } catch (e) { v = { ok: false, why: e.message }; }
           if (!v.ok && typeof censusAt === 'function') {
-            let h = null; try { h = decodeFederationRecord(splitSignedRecord(fromHex(String(x.record))).body).height; } catch { h = null; }
-            if (Number.isInteger(h)) {
-              if (!censusKept.has(h)) censusKept.set(h, Promise.resolve(censusAt(h)).catch(() => null));
-              const entries = await censusKept.get(h);
-              if (entries) v = verifyFederationRecord(fromHex(String(x.record)), { census: entries, verify, inviteFederationId, bandPoint: bandFrom });
+            let rec = null; try { rec = decodeFederationRecord(splitSignedRecord(fromHex(String(x.record))).body); } catch { rec = null; }
+            if (rec && Number.isInteger(rec.height) && Array.isArray(rec.guardians)) {
+              const own = rec.guardians.map((g) => ({ pubkey: g.nodePubkey, advert: { guardianOf: [{ federationId: rec.federationId, guardianKey: g.peerKey }] } }));
+              let self = { ok: false }; try { self = verifyFederationRecord(fromHex(String(x.record)), { census: own, verify, inviteFederationId }); } catch { self = { ok: false }; }
+              if (self.ok) { later.push({ x, h: rec.height }); continue; }
             }
           }
-          if (!v.ok) { why = v.why; continue; }
-          // the newest; at the same height a CLOSED one (final - see keep), else the better status (kanban #1157: one node serving a worse body
-          // at a height others serve better does not set the pick)
-          const sameH = best && v.record.height === best.v.record.height;
-          if (!best || v.record.height > best.v.record.height || (sameH && v.status === 'CLOSED' && best.v.status !== 'CLOSED')
-            || (sameH && best.v.status !== 'CLOSED' && v.status !== 'CLOSED' && (STATUS_RANK[v.status] ?? 0) < (STATUS_RANK[best.v.status] ?? 0))) best = { v, bytes: fromHex(String(x.record)) };
+          take(x, v);
+        }
+        later.sort((p, q) => q.h - p.h);
+        let reads = 0;
+        for (const { x, h } of later) {
+          let v = { ok: false, why: 'its census was not read: too many record heights in one answer' };
+          if (censusKept.has(h) || (reads < MIRROR_CENSUS_PER_ANSWER && censusKept.size < MIRROR_CENSUS_PER_PASS)) {
+            if (!censusKept.has(h)) { censusKept.set(h, Promise.resolve(censusAt(h)).catch(() => null)); reads++; }
+            const entries = await censusKept.get(h);
+            try { v = entries ? verifyFederationRecord(fromHex(String(x.record)), { census: entries, verify, inviteFederationId, bandPoint: bandFrom }) : { ok: false, why: 'no census at that record height' }; } catch (e) { v = { ok: false, why: e.message }; }
+          }
+          take(x, v);
         }
       } catch { /* the next guardian */ }
     }));
+    function take(x, v) {
+      if (!v.ok) { why = v.why; return; }
+      // the newest; at the same height a CLOSED one (final - see keep), else the better status (kanban #1157: one node serving a worse body
+      // at a height others serve better does not set the pick)
+      const sameH = best && v.record.height === best.v.record.height;
+      if (!best || v.record.height > best.v.record.height || (sameH && v.status === 'CLOSED' && best.v.status !== 'CLOSED')
+        || (sameH && best.v.status !== 'CLOSED' && v.status !== 'CLOSED' && (STATUS_RANK[v.status] ?? 0) < (STATUS_RANK[best.v.status] ?? 0))) best = { v, bytes: fromHex(String(x.record)) };
+    }
     await ask(bases);
     if (!best) {
       let others = []; try { others = [...new Set((peerSeats() || []).map((u) => String(u).replace(/\/+$/, '')))].filter((u) => !bases.includes(u)); } catch { others = []; }
