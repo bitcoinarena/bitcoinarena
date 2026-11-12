@@ -30,6 +30,7 @@ import { nodeBountyCheck } from '../src/node-bounty-check.js';
 import { seatPublicFetch } from '../src/public-fetch.js';
 import { openBountySeason, cleanOpenIssues } from '../src/bounty-season.js';
 import { verifiersFromEnv } from '../src/bounty-verify.js';
+import { readJsonBounded } from '../src/lnurl-read.js';   // kanban #2517
 import { openFeedbackStore, networkPlayers, imageKind, SHOT_MOST, SHOT_UNCLAIMED_MS, REWARD_LEVELS, NODE_BOUNTY_BASE_SATS, lnAddressWorks, lnAddressUrl, lnAddressInvoice, reportAddress } from '../src/feedback-store.js';
 import { eventId } from '../src/nostr-relay.js';   // a resent report is matched by its id's hash (kanban #2456, #2498)
 const LN_ASKS = new Map();   // ip /64 -> times it asked GET /feedback/lnaddress (kanban #1342, #1537)
@@ -279,13 +280,17 @@ const originOf = (u) => { try { const x = new URL(String(u).trim()); return (x.p
 const SEAT_TRUSTED_ORIGINS = new Set([...SEASON_BASES, ...String(env.FAUCET_SEAT_TRUSTED_ORIGINS || '').split(',')].map(originOf).filter(Boolean));
 if (env.FAUCET_SEAT_TRUSTED_HOSTS !== undefined) console.log('faucet: FAUCET_SEAT_TRUSTED_HOSTS is ignored (kanban #2074) - name full seat origins in FAUCET_SEAT_TRUSTED_ORIGINS');
 const seatTrusted = (u) => { const o = originOf(u); return !!o && SEAT_TRUSTED_ORIGINS.has(o); };
+// A SEAT'S ANSWER IS READ TO A BOUND (kanban #2517): any operator's seat a season seat lists answers /owner, /roles, /served and /network-games here,
+// and r.json() buffered whatever it sent (a 40 MB /owner taken whole) in the process that pays the welcomes and the mainnet bounties. Each answer
+// is read to NODE_CHECK_MAX_BYTES and the stream cancelled past it; at most NODE_CHECK_MAX_SEATS listed seats are asked
+const NODE_CHECK_MAX_BYTES = 2 * 1024 * 1024, NODE_CHECK_MAX_SEATS = 64;
 const fetchJson1342 = async (u) => { const signal = AbortSignal.timeout(15000);
   const r = seatTrusted(u) ? await fetch(u, { signal, redirect: 'error' }) : await seatPublicFetch(u, { signal });
-  if (!r.ok) throw new Error(`${r.status}`); return r.json(); };
+  if (!r.ok) { try { await r.body?.cancel(); } catch { /* gone */ } throw new Error(`${r.status}`); } return readJsonBounded(r, NODE_CHECK_MAX_BYTES); };
 async function nodeCheckNow(node, npub) {
   const bases = SEASON_BASES;
-  const lists = await Promise.all(bases.map((b) => fetchJson1342(`${b}/network-games`).then((j) => (j.seats || []).map((x) => x.seat), () => [])));
-  const seats = [...new Set([...bases, ...lists.flat()])];
+  const lists = await Promise.all(bases.map((b) => fetchJson1342(`${b}/network-games`).then((j) => (Array.isArray(j && j.seats) ? j.seats : []).slice(0, NODE_CHECK_MAX_SEATS).map((x) => x && x.seat).filter((x) => typeof x === 'string'), () => [])));
+  const seats = [...new Set([...bases, ...lists.flat()])].slice(0, bases.length + NODE_CHECK_MAX_SEATS);
   let excluded = new Set(); try { excluded = ourKeys(); } catch { excluded = new Set(); }
   // the hosts the team's own nodes answer at (kanban #1342: team nodes are never paid)
   // THE TEAM'S OWN SEATS BY THEIR NODE KEYS (audit 7, kanban #1428: our-keys.txt held none of them, and the Mac seats' addresses were no team host):
