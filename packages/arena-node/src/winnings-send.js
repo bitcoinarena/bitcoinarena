@@ -880,9 +880,17 @@ export function resendNonce({ roundId, lateEntryId = null, entryId, attempt }) {
     (attempt >>> 24) & 255, (attempt >>> 16) & 255, (attempt >>> 8) & 255, attempt & 255])).subarray(0, 8);
 }
 
-/** A plan's order key: its payment hashes, sorted and joined. Two plans for one round compare by it. */
+/**
+ * A plan's order key: its payment hashes, sorted and joined. Two plans for one round compare by it.
+ * A HELD ROW SORTS BELOW EVERY INVOICE, AND MORE HELD ROWS LOWER (kanban #1782, wf1489 sm2-settle-2): a held row has no
+ * payment hash (''), and joined as '' the all-held plan's key was ':' (0x3a) - ABOVE every plan whose lowest hash starts
+ * with 0-9. Hole 1 (a)'s plan with the unreachable recipients held then never replaced the first plan at the seats that
+ * kept it (check, adoptPeerPlan: only a lower key does), the seats that cannot reach the recipient refused the first one,
+ * and the walk-away never settled. A held row now counts as '!' (0x21, below '0' and ':'; never a hex hash), so the plan
+ * the unreachable seats can take is the one every seat gives way to. Equal plans keep equal keys.
+ */
 export function planKey(rows) {
-  return rows.map((r) => String(r.paymentHash).toLowerCase()).sort().join(':');
+  return rows.map((r) => String(r.paymentHash).toLowerCase() || '!').sort().join(':');
 }
 
 /** A member of S at the re-send commit door (protocol 27): u8 seat index, then its public nonces (u16 k, k x 66 bytes). */
