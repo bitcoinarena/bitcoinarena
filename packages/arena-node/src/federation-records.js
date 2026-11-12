@@ -956,8 +956,14 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       predecessor = { reserveSats: rec.reserveSats, closed: recordStatusName(rec) === 'CLOSED', nodeKeys: seatedOf(rec).map((key) => toHex(key)) };
       break;
     }
+    // A RETIREMENT CLOSES ONLY AN EMPTY FEDERATION (kanban #1980): the owners' consents were checked against an empty audit and reserve 0
+    // when given, and are kept for good - money paid in before the next gather (an empty federation has load 0, so new rounds and first
+    // deposits go there) would be closed in by a CLOSED record no seat watches, moves or liquidates. The retirement body is built only
+    // while the reserve this body names (read from the guardians, checked by every signer against its own reading) is 0; otherwise the
+    // normal OPEN body, and the retirement goes on once the federation is empty again
+    const retiring = !succ && retiringOf(fid) && BigInt(reserveSats || 0n) === 0n;
     const r = buildFederationRecord({ federationId, networkId: b.networkId || networkId, invite, nominal: rows.length, guardians: rows, gone: [...gone, ...spent.map((x) => x.gone)], height: b.height, reserveSats, bondLock: lock, predecessor,
-      ...(succ ? { successorId: fromHex(succ), closed: !!closedOf(fid) } : retire && retiringOf(fid) ? { closed: true } : {}) });   // retiringOf: federation-retire.js; `retire` false: the plain body (kanban #1665)
+      ...(succ ? { successorId: fromHex(succ), closed: !!closedOf(fid) } : retire && retiring ? { closed: true } : {}) });   // retiringOf: federation-retire.js; `retire` false: the plain body (kanban #1665)
     // the band read against the players' money when a player reserve is named (§23A.3a: load, the bands ... read it), else the reserve
     if (was !== null) r.capacityBand = recordBand({ reserveSats: player !== null && player !== undefined ? BigInt(player) : reserveSats, exposureCapSats: r.exposureCapSats, was });
     // THE PLAYERS' MONEY (§23A.3a RULED 2026-11-07, kanban #1322): with a band, the reference gateway fee cap and the player reserve named,
