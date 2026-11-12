@@ -707,8 +707,18 @@ export class Round {
       // id - passes, as a resend after a reload does; another entry of the same session key in this round is refused. A client makes a new session key for every
       // entry (measured on seat 1: 7,326 entries of all games, no session key twice in a round), so only a forged second entry meets this. Entries a round
       // accepted and relayed are not touched.
+      // BUT A SESSION KEY IS PUBLIC, AND AN ENTRY CARRIES NO SIGNATURE OF IT (kanban #1597, a bypass of #1479): GET /entry hands any entry's key to anyone,
+      // so a copier who saw an honest entry at one seat posted an entry of his own naming the same key to a seat the honest one had not reached yet, and that
+      // seat then refused the honest entry and every resend for good - fewer than the threshold of seats held it, and it was no member (§17). An earlier entry
+      // of the key now holds it here only when it is more than the key's bare name: in a paying round only one backed by a lock at this seat (its stake seen
+      // or its stake lock verified - what seats it, seatedEntriesOf), and in a free round only one that names the same player key - the same player entering
+      // again, which is what #1479 saw. A lockless entry of another player that names the key shuts no one out; it can never play (every batch, mark,
+      // reveal and address must be signed by the session key).
       if (!accepted) { const mine = entryId(contract);
-        if (this.entriesOf(contract.roundId).some((x) => same(x.entry.sessionPubkey, contract.sessionPubkey) && !same(x.entryId, mine)))
+        const holders = asks.stakeMsat === 0n
+          ? this.entriesOf(contract.roundId).filter((x) => same(x.entry.playerPubkey, contract.playerPubkey))
+          : this.seatedEntriesOf(contract.roundId, asks.stakeMsat);
+        if (holders.some((x) => same(x.entry.sessionPubkey, contract.sessionPubkey) && !same(x.entryId, mine)))
           throw new Error('that session key already has an entry in this round: one entry per session key'); }
       // THE HIDDEN MOVE: an entry into a head-to-head round names its commitment, before entry close, and the
       // round seats no more than its game's players; an entry into any other round names none
