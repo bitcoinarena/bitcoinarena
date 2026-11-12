@@ -243,7 +243,8 @@ async function nodeCheckNow(node, npub) {
   const ours = [...new Set([...bases, ...seats.filter((u) => teamHosts.includes(hostOf(u)))])];
   const keys = await Promise.all(ours.map((u) => fetchJson1342(`${u}/roles`).then((j) => String((j && j.node) || '').toLowerCase(), () => '')));
   for (const k of keys) if (/^[0-9a-f]{64}$/.test(k)) excluded.add(k);
-  return nodeBountyCheck({ node, npub, seats, fetchJson: fetchJson1342, excluded, teamHosts });
+  // the census is read from the faucet's own configured seats only (kanban #1682): a listed seat an outsider adds could name any fresh key
+  return nodeBountyCheck({ node, npub, seats, fetchJson: fetchJson1342, excluded, teamHosts, censusSeats: bases });
 }
 const PLAYED = networkPlayers({ seats: String(env.FAUCET_SEASON_SEATS || '').split(',').filter(Boolean), games: String(env.FAUCET_SEASON_GAMES || 'rock-paper-scissors,nextblock,btc-updown').split(',').filter(Boolean) });
 PLAYED.fresh().catch(() => 0);   // kanban #1484: the list is read at start, so the admin page never waits for it

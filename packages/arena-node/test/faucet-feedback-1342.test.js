@@ -303,16 +303,22 @@ test('#1342 a node report: the review list reads its checklist from the seats; "
   const roundOf = (from) => createHash('sha256').update(`round ${from}`).digest();
   const finalOf = (from) => Buffer.from(signFinalSig({ roundId: roundOf(from), entryId: new Uint8Array(32).fill(2), runId: new Uint8Array(32).fill(3),
     signerPubkey: schnorr.getPublicKey(NODE_SECRET), signedAtMs: BigInt(Number(from) + 1000) }, (digest) => schnorr.sign(digest, NODE_SECRET))).toString('hex');
-  const answer = (req, res) => {
+  // KANBAN #1682: the census is read from the faucet's own configured seat (GET /roles of FAUCET_SEASON_SEATS), and a round counts only held by
+  // three census nodes of its committee at their own endpoints - seat 0 is the team's (TEAM), seats 1 and 2 are the node and its peer NODE2
+  // KANBAN #2015, #2049: three OTHER than the node (it is not its own witness) - seat 3 is a third peer NODE3 - and the trusted seat (seat 0, the
+  // faucet's FAUCET_SEASON_SEATS) holds the round too
+  const NODE3 = 'cf'.repeat(32), TEAM = 'ce'.repeat(32), seatKeys = () => [TEAM, NODE, NODE2, NODE3];
+  const answer = (i) => (req, res) => {
     const u = new URL(req.url, 'http://x'); res.writeHead(200, { 'content-type': 'application/json' });
+    if (u.pathname === '/roles') return res.end(JSON.stringify(i === 0 ? { node: TEAM, nodes: seatKeys().map((node, j) => ({ node, endpoint: seatBases[j], bondSats: '1000000' })) } : { node: seatKeys()[i], nodes: [] }));
     if (u.pathname === '/network-games') return res.end(JSON.stringify({ seats: seatBases.map((s) => ({ seat: s })), games: [] }));
     if (u.pathname === '/owner') { const atMs = Date.now(); return res.end(JSON.stringify({ node: NODE, claimed: true, owner: dave.pubkey,
       statement: { atMs, sig: Buffer.from(schnorr.sign(ownerStatementMessage({ node: NODE, owner: dave.pubkey, atMs }), NODE_SECRET)).toString('hex') } })); }
     if (u.pathname === '/served') { const from = u.searchParams.get('from');
-      return res.end(JSON.stringify({ held: [{ roundId: roundOf(from).toString('hex'), committee: [NODE, NODE2], finals: [finalOf(from)] }] })); }
+      return res.end(JSON.stringify({ node: seatKeys()[i], held: [{ roundId: roundOf(from).toString('hex'), committee: [NODE, NODE2, NODE3, TEAM], finals: [finalOf(from)] }] })); }
     return res.end(JSON.stringify({ rows: [] }));
   };
-  const seatServers = [createServer(answer), createServer(answer), createServer(answer)];
+  const seatServers = [createServer(answer(0)), createServer(answer(1)), createServer(answer(2)), createServer(answer(3))];
   const chat = createServer((req, res) => { req.resume(); req.on('end', () => { res.writeHead(200); res.end('{}'); }); });
   for (const s of seatServers) await new Promise((r) => s.listen(0, '127.0.0.1', r));
   await new Promise((r) => chat.listen(0, '127.0.0.1', r));

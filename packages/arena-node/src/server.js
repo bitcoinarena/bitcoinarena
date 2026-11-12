@@ -8078,6 +8078,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           }
         }
         const nodes = now.entries.filter((e) => e && e.pubkey && e.advert).map((e) => ({ node: toHex(e.pubkey), endpoint: String(e.advert.endpoint || ''),
+          // where it answers now: its newest signed address announcement, when it moved off its advert (kanban #1866, #1888: the node bounty's witnesses)
+          ...(() => { try { const at = addressBook.endpointOf(e); return at && String(at) !== String(e.advert.endpoint || '') ? { announced: String(at) } : {}; } catch { return {}; } })(),
           roles: [...(e.advert.roles || [])], guardianCapable: !!e.advert.guardianCapable, serving: e.advert.serving !== false,
           custody: custody.get(toHex(e.pubkey)) || [],
           // ITS BOND AS THE CENSUS COUNTS IT (2026-10-20: "the bonds take a long time to show up, if they show up at all" - the health page
