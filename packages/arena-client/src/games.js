@@ -33,12 +33,16 @@ export async function fetchGames({ nodes, fetcher = fetch, answerMs = GAMES_ANSW
   const unique = [...new Set(nodes.map((n) => String(n).replace(/\/+$/, '')))];
   const byId = new Map();
   const refused = [];
+  // the addresses that answered a list - by address, not by the node key a node says it has: that key is signed by nobody, and
+  // a node naming another's key would push the other's title out of the count below (kanban #2033)
+  const answered = new Set();
   const answers = await Promise.all(unique.map((node) => fetcher(`${node}/games`, { signal: AbortSignal.timeout(answerMs) })
     .then(async (r) => ({ r, body: r.ok ? await r.json() : null }), (e) => ({ e }))));
   for (const [k, node] of unique.entries()) {
     const { r, body, e } = answers[k];
     if (e) { refused.push(`${node}: ${e.message}`); continue; }
     if (!r.ok) { refused.push(`${node}: answered ${r.status}`); continue; }
+    answered.add(node);
     for (const g of (body && Array.isArray(body.games)) ? body.games : []) {
       const id = String(g && g.id).toLowerCase();
       let manifest;
@@ -50,8 +54,8 @@ export async function fetchGames({ nodes, fetcher = fetch, answerMs = GAMES_ANSW
       // says the developer made them
       if (!developerSigned(manifest, verify)) { refused.push(`${node}: game ${id.slice(0, 16)}: its signature is not its developer key ${toHex(manifest.gameDevPubkey).slice(0, 16)}'s`); continue; }
       if (!byId.has(id)) {
-        byId.set(id, { id, name: manifest.gameName, title: typeof g.title === 'string' && g.title ? g.title : manifest.gameName,
-          icon: typeof g.icon === 'string' && g.icon ? `${node}/${g.icon.replace(/^\/+/, '')}` : null, attested: isAttested(manifest),
+        // the title and icon are settled below, from what the answering nodes agree on (kanban #2033), never from one node
+        byId.set(id, { id, name: manifest.gameName, title: manifest.gameName, icon: null, attested: isAttested(manifest),
           known: Object.prototype.hasOwnProperty.call(KNOWN_GOOD_GAMES, id), devKey: toHex(manifest.gameDevPubkey),
           manifest, manifestHex: String(g.manifest).toLowerCase(), nodes: [],
           // ITS SIGNED DESCRIPTION, AS HANDED: checked against the developer key by checkedGameInfo, never taken
@@ -61,6 +65,8 @@ export async function fetchGames({ nodes, fetcher = fetch, answerMs = GAMES_ANSW
           live: { rounds: 0, players: 0 } });
       }
       const got = byId.get(id);
+      if (!got.named) Object.defineProperty(got, 'named', { value: [], enumerable: false });
+      if (!got.named.some((n) => n.node === node)) got.named.push({ node, title: typeof g.title === 'string' && g.title ? g.title : null, icon: typeof g.icon === 'string' && g.icon ? g.icon : null });
       // ONE NODE, COUNTED ONCE (2026-10-14 07:42Z, a phone off the tailnet: "28 nodes" for 14): a seat reached at two
       // addresses (its Funnel name and its named tunnel) answers both with the same node key; it hosts the game once
       const key = body && /^[0-9a-f]{64}$/i.test(String(body.node)) ? String(body.node).toLowerCase() : node;
@@ -74,6 +80,24 @@ export async function fetchGames({ nodes, fetcher = fetch, answerMs = GAMES_ANSW
         got.live.players = Math.max(got.live.players, Number(g.live.players) || 0);
       }
     }
+  }
+  // A GAME'S TITLE AND ICON ARE SIGNED BY NOBODY (kanban #2033, after #1716, #1902, #1541, #1489): the manifest signs only its
+  // gameName. One seat in the lobby's node list could list the genuine, pinned Next Block as "Refunds: send sats to evil.example"
+  // for every player, so a node's title or icon stands only when more than half of the addresses that answered a list name it
+  // byte-identical; otherwise the tile shows the manifest's signed gameName and no icon. The icon is loaded from the first
+  // node, in the lobby's order, that named the agreed one.
+  const agreed = (named, pick) => {
+    const count = new Map();
+    for (const n of named) { const v = pick(n); if (v !== null) count.set(v, (count.get(v) || 0) + 1); }
+    for (const [v, c] of count) if (c * 2 > answered.size) return v;
+    return null;
+  };
+  for (const got of byId.values()) {
+    const named = got.named || [];
+    const title = agreed(named, (n) => n.title);
+    if (title !== null) got.title = title;
+    const icon = agreed(named, (n) => n.icon);
+    if (icon !== null) { const from = named.find((n) => n.icon === icon).node; got.icon = `${from}/${icon.replace(/^\/+/, '')}`; }
   }
   const games = [...byId.values()].sort((a, b) => (Number(b.known) - Number(a.known)) || (b.nodes.length - a.nodes.length) || (a.name < b.name ? -1 : 1));
   return { games, refused };
