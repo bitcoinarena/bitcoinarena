@@ -323,7 +323,7 @@ import { FUNDING_SCHEDULES, activeNodesBefore, activeInWeeks, capStands, encodeF
 import { RESERVES_VERSION as ITEM_RESERVES_FROM } from '../../arena-protocol/src/constants.js';
 import { Forfeit, lostForfeitAllowed } from './forfeit.js';
 import { LockSettlement, locksStake, SUBMITTING } from './settlement.js';
-import { decodeCommitments, encodeCommitments, encodeShare } from './pool-wire.js';
+import { decodeCommitments, encodeCommitments, encodeShare, COMMITMENT_BYTES, MOST_COMMITMENTS } from './pool-wire.js';
 import { setTagNetwork } from '../../arena-protocol/src/tag-switch.js';
 import { keptRead } from './kept-read.js';
 import { guardianAnswers } from './guardian-probe.js';
@@ -11621,7 +11621,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         }
         if (url.pathname === '/forfeit-share') {
           let list;
-          try { list = decodeCommitments(new Uint8Array(await read(req))); } catch (e) { return text(res, 400, e.message); }
+          try { list = decodeCommitments(new Uint8Array(await read(req, MOST_COMMITMENTS * COMMITMENT_BYTES))); } catch (e) { return text(res, e && e.tooLarge ? 413 : 400, e.message); }   // a committee's list at most (kanban #1672)
           const got = await forfeits.share(r8, e8, list, kind);
           if (!got.ok) return text(res, got.status || 409, got.why);
           res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
@@ -11677,7 +11677,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (url.pathname === '/settle-share') {
           let list;
           if (named) list = new Uint8Array(await read(req));
-          else try { list = decodeCommitments(new Uint8Array(await read(req))); } catch (e) { return text(res, 400, e.message); }
+          else try { list = decodeCommitments(new Uint8Array(await read(req, MOST_COMMITMENTS * COMMITMENT_BYTES))); } catch (e) { return text(res, e && e.tooLarge ? 413 : 400, e.message); }   // a committee's list at most (kanban #1672)
           const got = await settlements.share(r8, list, { entry, federation, door: true, ask, named, fallback });
           if (!got.ok) return text(res, got.status || 409, got.why);
           res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
@@ -11871,7 +11871,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           return res.end(Buffer.from(got.named ? got.wire : encodeCommitments([got.commitment])));
         }
         let list;
-        try { const raw = new Uint8Array(await read(req)); list = built.named ? decodeNamedResendList(raw) : decodeCommitments(raw); } catch (e) { return text(res, 400, e.message); }
+        try { const raw = new Uint8Array(await read(req, built.named ? undefined : MOST_COMMITMENTS * COMMITMENT_BYTES)); list = built.named ? decodeNamedResendList(raw) : decodeCommitments(raw); } catch (e) { return text(res, e && e.tooLarge ? 413 : 400, e.message); }   // a plain list: a committee's at most (kanban #1672)
         const got = await sender.share(r8, eHex, built, list, kind, attempt);
         if (!got.ok) return text(res, got.status || 409, got.why);
         res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
