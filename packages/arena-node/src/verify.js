@@ -22,7 +22,10 @@ import { sha256 } from '../../arena-protocol/src/hash.js';
 import { stateOf } from './settlement-state.js';
 import { verifyKept } from './verify-kept.js';
 import { timed } from './slow.js';
-import { SIGNED_RECEIPT_BYTES } from '../../arena-protocol/src/receipt.js';
+import { SIGNED_RECEIPT_BYTES, splitSignedReceipt, decodeCheckpointReceipt } from '../../arena-protocol/src/receipt.js';
+
+// How many of one peer's /receipts records are taken before the loop is given back (kanban #1636).
+const RECEIPTS_PER_TURN = 64;
 import { resultFrom, signResult, verifiedFinal, runId } from './verdict.js';
 import { stoppedOutcome } from '../../arena-protocol/src/first-mark.js';
 import { noQuorumOutcome as noQuorumRule, FAILED, VOID } from '../../arena-protocol/src/payout.js';
@@ -402,14 +405,36 @@ export class Verifier {
       // unnamed one on this chain (2026-09-17 19:15, the ghost lag): stalls of 299-377 ms named only 6-9 ms of
       // frame work and left 190-250 ms of this thread's processor unaccounted. Each receipt is checked and written
       // here, per peer, per entry, at the close and at every retry.
-      timed(`close take receipts ${hex(entryIdBytes).slice(0, 8)}`, () => {
-        for (let at = 0; at + SIGNED_RECEIPT_BYTES <= body.length; at += SIGNED_RECEIPT_BYTES) {
-          try {
-            this.round.takeReceipt(body.slice(at, at + SIGNED_RECEIPT_BYTES));
-            report.taken++;
-          } catch (e) { report.refused.push(`${peer}: ${e.message}`); }
-        }
-      }, { over: 20 });
+      //
+      // BOUNDED IN WORK, NOT ONLY IN BYTES (kanban #1636): #1550 capped the body at 16 MB, but every record that was not
+      // byte-equal to a stored receipt cost a schnorr verify, all of them in one block - one seat answering 4000 copies of
+      // a real receipt with one signature byte changed held this thread 2.6 s per entry, at every close and retry (about
+      // 130,000 fit under the cap). Now each (mark, signer) is taken at most once per answer, a peer whose record does not
+      // verify is read no further (an honest seat serves only receipts it verified itself), and the loop is given back
+      // between batches of RECEIPTS_PER_TURN records.
+      const seen = new Set();
+      let at = 0;
+      while (at + SIGNED_RECEIPT_BYTES <= body.length) {
+        let stop = false;
+        timed(`close take receipts ${hex(entryIdBytes).slice(0, 8)}`, () => {
+          for (let n = 0; n < RECEIPTS_PER_TURN && at + SIGNED_RECEIPT_BYTES <= body.length; n++, at += SIGNED_RECEIPT_BYTES) {
+            const one = body.slice(at, at + SIGNED_RECEIPT_BYTES);
+            try {
+              const r = decodeCheckpointReceipt(splitSignedReceipt(one).body);
+              const key = `${hex(r.checkpointId)}:${hex(r.nodePubkey)}`;
+              if (seen.has(key)) continue;
+              seen.add(key);
+              this.round.takeReceipt(one);
+              report.taken++;
+            } catch (e) {
+              report.refused.push(`${peer}: ${e.message}`);
+              if (/does not verify/.test(e.message)) { stop = true; at = body.length; break; }
+            }
+          }
+        }, { over: 20 });
+        if (stop || at + SIGNED_RECEIPT_BYTES > body.length) break;
+        await new Promise((r) => setImmediate(r));
+      }
     }
     // AND ANY SIGNER NODE'S REFUSED FIRST MARK (M3.3-34): the player's own on-time first
     // mark that a signer node, up, refused - checked here (round.onTimeFirstMark). It
