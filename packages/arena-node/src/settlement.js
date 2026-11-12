@@ -1113,8 +1113,8 @@ export class LockSettlement {
   }
 
   /**
-   * IS A PEER'S SETTLEMENT TRANSACTION THIS ROUND'S (kanban #2176): it spends at least one stake or fee lock this seat verified for an entry
-   * of THIS round - an outpoint is spent once, and only this round's settlement claims this round's locks - and the stock client, asked
+   * IS A PEER'S SETTLEMENT TRANSACTION THIS ROUND'S (kanban #2176, #2417): every claim it spends is a stake or fee lock this seat verified for
+   * an entry of THIS round and for no entry of another round here - an outpoint is spent once - and the stock client, asked
    * here without a signature (it only rebuilds), answers exactly `messageHex` for its parts. The caller has checked the threshold's
    * signature over that message under the round's claim key. Needs no result of this seat's own, no pair and no txid history.
    */
@@ -1140,7 +1140,17 @@ export class LockSettlement {
         if (!/^[0-9]+$/.test(String(i))) throw new Error('bad outpoint');
         return { outpoint: { txid: hex(t, 64), outIdx: BigInt(i) }, preimage: hex(c.preimage, 64), amountMsat: BigInt(String(c.amountMsat)) };
       });
-      if (!claims.some((c) => ours.has(`${toHex(c.outpoint.txid)}:${c.outpoint.outIdx}`))) return false;
+      // EVERY CLAIM IS A LOCK OF THIS ROUND, AND OF NO OTHER ROUND HERE (kanban #2417, a44 refute 71 s2 of #1757/#2176): one matching claim
+      // was enough, and stake_locks / fee_locks are this seat's own - a player who names his round-1 lock X in a round-2 entry at a seat that
+      // never stored X for round 1 put X in round 2's set, and one peer replaying round 1's ACCEPTED row (it claims X) made never-settled
+      // round 2 "combined elsewhere". Round 1's transaction also claims round 1's other locks (none of them round 2's), and an outpoint this
+      // seat holds under an entry of any other round ties the transaction to no round at all.
+      const rid = toHex(roundIdBytes).toLowerCase();
+      for (const c of claims) {
+        const op = `${toHex(c.outpoint.txid)}:${c.outpoint.outIdx}`.toLowerCase();
+        if (!ours.has(op)) return false;
+        if (typeof this.round.lockRoundsAt === 'function' && this.round.lockRoundsAt(op).some((r) => r !== rid)) return false;
+      }
       const payouts = tx.payouts.map((p) => ({ payoutPk: hex(p.payoutPk), msat: BigInt(String(p.msat)),
         ...(p.sent ? { sent: { paymentHash: String(p.sent.paymentHash), gatewayPk: String(p.sent.gatewayPk), expiration: String(p.sent.expiration) } } : {}) }));
       const port = await this.portFor(roundIdBytes);
