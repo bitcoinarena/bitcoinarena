@@ -40,7 +40,7 @@ import { leaderboardCap } from '../../arena-protocol/src/leaderboard-winners.js'
 import { payeeOf } from './winnings-send.js';
 import { readJsonBounded } from './lnurl-read.js';
 import { hostReach, hostOf, walletFetch } from './public-fetch.js';
-import { commitmentPointsRefusal } from './pool-wire.js';
+import { commitmentPointsRefusal, commitmentListRefusal, MOST_COMMITMENTS } from './pool-wire.js';
 
 
 /**
@@ -738,6 +738,8 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
   async function share(body = {}) {
     const { planId, kind, commitments } = body || {};
     if (!Array.isArray(commitments)) return refuse('a share is asked over a commitment list');
+    // no list longer than any committee is hashed or searched (kanban #2161, as #1672 at /settle-share)
+    if (commitments.length > MOST_COMMITMENTS) return refuse(`${commitments.length} commitments, and no committee holds more than ${MOST_COMMITMENTS}`);
     const r = db.prepare('SELECT federation, plan FROM reserve_payouts WHERE plan_id = ?').get(String(planId));
     if (!r) return refuse('this seat keeps no such plan');
     const a = askStands({ ask: 'share', kind: String(kind), planId: String(planId), list: commitmentListOf(commitments), from: body.from, sig: body.sig }, kind === 'claim' ? JSON.parse(r.plan).to : r.federation);
@@ -752,6 +754,10 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     const r = db.prepare('SELECT federation, plan FROM reserve_payouts WHERE plan_id = ?').get(planId);
     const g = r && guardians().get(kind === 'claim' ? JSON.parse(r.plan).to : r.federation);
     if (!g || !g.signer) return refuse('this seat holds no share of that reserve key');
+    // THE FOURTH ROUND-TWO DOOR GETS THE #1672 BOUND (kanban #2161): a list longer than the federation (or than 2 * needed - 1 where its
+    // members are not known), or naming an id twice, is refused before signShare340 - one guardian seat padding the list with thousands of
+    // made-up commitments held every peer's loop for seconds.
+    { const why = commitmentListRefusal(commitments, { needed: g.needed, nodes: g.members }); if (why) return refuse(why); }
     if (commitments.length < g.needed) return refuse(`${commitments.length} commitments, and the reserve key signs at ${g.needed}`);
     const list = commitments.map((c) => `${c.id}:${toHex(c.hiding)}:${toHex(c.binding)}`).join('|');
     if (pair.list && pair.list !== list) return refuse('this seat signed that message over another list');
