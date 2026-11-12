@@ -48,13 +48,13 @@ export const ZAP_TIPS_MINTING_MAX = 16;
 // ZAP_PUBLISH_SLOW_MS or more (or failed) is not proven, and hosts not proven share all but ZAP_PUBLISH_RESERVED of the slots, so a
 // payer's silent hosts cannot hold the sends to relays that answer. Receipts still owed a send are kept in the state file
 // (`owed`) and published again after a restart; a send whose publish throws is tried again on a backoff, up to
-// ZAP_PUBLISH_TRIES. When more than ZAP_PUBLISH_QUEUED sends wait, the newest one of the LONGEST lane is shed (logged), never
-// the oldest overall: a flood sheds its own sends.
+// ZAP_PUBLISH_TRIES. When more than ZAP_PUBLISH_QUEUED sends wait, one is parked, not shed (kanban #2362, below).
 export const ZAP_PUBLISH_PARALLEL = 32;
 export const ZAP_PUBLISH_PER_HOST = 2;
 export const ZAP_PUBLISH_RESERVED = 8;
 export const ZAP_PUBLISH_SLOW_MS = 3000;
 export const ZAP_PUBLISH_QUEUED = 1000;
+export const ZAP_PUBLISH_PARKED = 8000;
 export const ZAP_PUBLISH_TRIES = 6;
 export const ZAP_PUBLISH_RETRY_MS = 30000;
 const HOSTS_KEPT = 4096;
@@ -104,12 +104,28 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
   // the owed list changes once per send: written at most once a second, not on every answer
   const saveSoon = () => { if (!statePath || saveTimer) return; saveTimer = setTimeout(() => { saveTimer = null; save(); }, 1000); saveTimer.unref(); };
 
-  // PUBLISH LANES (kanban #2249, #2261): host -> { queue: [{ receipt, relay, tries }], flying }
+  // PUBLISH LANES (kanban #2249, #2261): host -> { queue: [{ receipt, relay, tries, payer, seq }], flying }
+  // PROVEN PER RELAY URL, SLOW SENDS LEAVE THE RESERVE, NOTHING SHED UNSENT (kanban #2362, #2371, #2376, #1489 a45-refute-17-s2):
+  // - `proven` is keyed by the exact relay URL (normalized), not by host: a stranger's wss:// (or other path) URL to an honest
+  //   relay's host:port fails on its own and no longer unproves the honest ws:// URL. The per-host concurrency cap stays per host.
+  // - a proven send still in flight after ZAP_PUBLISH_SLOW_MS is moved to the unproven pool at once (its URL marked not proven):
+  //   proven-then-silent relays cannot hold the reserved slots for the whole timeout, and a send to a proven URL may start while
+  //   at most ZAP_PUBLISH_PARALLEL - ZAP_PUBLISH_RESERVED unproven sends count against the total, so the reserve stays free.
+  // - over ZAP_PUBLISH_QUEUED waiting sends nothing is settled unsent: the send of the payer key with the most waiting sends (the
+  //   newest on a tie) is PARKED - still owed, still in the state file - and queued again when there is room. Only past
+  //   ZAP_PUBLISH_PARKED parked sends is one given up (logged), again the most numerous payer's newest.
   const lanes = new Map();
-  const proven = new Map();           // host -> true when its last send answered within ZAP_PUBLISH_SLOW_MS (a bounded ring)
+  const proven = new Map();           // relay URL -> true when its last send answered within ZAP_PUBLISH_SLOW_MS (a bounded ring)
   const retries = new Set();
-  let flying = 0, flyingUnproven = 0, queued = 0, closed = false;
+  const slowTimers = new Set();
+  const parked = [];                  // sends owed but waiting outside the lanes (kanban #2362)
+  let flying = 0, flyingUnproven = 0, queued = 0, seq = 0, closed = false;
+  const UNPROVEN_SLOTS = ZAP_PUBLISH_PARALLEL - ZAP_PUBLISH_RESERVED;
   const hostOf = (relay) => { try { return new URL(relay).host.toLowerCase() || String(relay); } catch { return String(relay); } };
+  const urlOf = (relay) => { try { return new URL(relay).href; } catch { return String(relay); } };
+  const payerOf = (receipt) => {
+    try { const d = receipt.tags.find((t) => t[0] === 'description'); return String(JSON.parse(d[1]).pubkey || ''); } catch { return ''; }
+  };
   const lane = (host) => { let l = lanes.get(host); if (!l) { l = { queue: [], flying: 0 }; lanes.set(host, l); } return l; };
   const settle = (job) => {           // this relay is no longer owed a send for this receipt
     const o = owed.get(job.receipt.id);
@@ -118,48 +134,88 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
     if (!o.relays.length) owed.delete(job.receipt.id);
     saveSoon();
   };
-  const markHost = (host, ok) => { proven.delete(host); proven.set(host, ok); if (proven.size > HOSTS_KEPT) proven.delete(proven.keys().next().value); };
+  const markUrl = (url, ok) => { proven.delete(url); proven.set(url, ok); if (proven.size > HOSTS_KEPT) proven.delete(proven.keys().next().value); };
+  const roomFor = (good) => (good
+    ? (flying - flyingUnproven) + Math.min(flyingUnproven, UNPROVEN_SLOTS) < ZAP_PUBLISH_PARALLEL
+    : flying < ZAP_PUBLISH_PARALLEL && flyingUnproven < UNPROVEN_SLOTS);
   const pump = () => {
     if (closed) return;
+    while (parked.length && queued < ZAP_PUBLISH_QUEUED) { const job = parked.shift(); lane(hostOf(job.relay)).queue.push(job); queued++; }
     let moved = true;
-    while (moved && flying < ZAP_PUBLISH_PARALLEL && queued) {
+    while (moved && queued) {
       moved = false;
       for (const [host, l] of [...lanes]) {          // each lane in turn, one send each pass
-        if (flying >= ZAP_PUBLISH_PARALLEL) break;
+        if (!roomFor(true)) break;
         if (!l.queue.length) { if (!l.flying) lanes.delete(host); continue; }
         if (l.flying >= ZAP_PUBLISH_PER_HOST) continue;
-        const good = proven.get(host) === true;
-        if (!good && flyingUnproven >= ZAP_PUBLISH_PARALLEL - ZAP_PUBLISH_RESERVED) continue;
+        const good = proven.get(urlOf(l.queue[0].relay)) === true;
+        if (!roomFor(good)) continue;
         const job = l.queue.shift(); queued--;
         lanes.delete(host); lanes.set(host, l);   // to the back of the turn
-        start(host, l, job, good);
+        start(l, job, good);
         moved = true;
       }
     }
   };
-  const start = (host, l, job, good) => {
-    flying++; l.flying++; if (!good) flyingUnproven++;
+  const start = (l, job, good) => {
+    const url = urlOf(job.relay);
+    const run = { good };
+    flying++; l.flying++; if (good) { /* counted as proven */ } else flyingUnproven++;
     const t0 = Date.now();
+    let slow = null;
+    if (good) {                       // still in flight after SLOW_MS: no longer proven, out of the reserve (kanban #2371)
+      slow = setTimeout(() => {
+        slowTimers.delete(slow); slow = null;
+        if (!run.good) return;
+        run.good = false; flyingUnproven++; markUrl(url, false);
+        log(`publish ${job.receipt.id.slice(0, 16)} -> ${job.relay} slow; that relay is not proven`);
+        pump();
+      }, ZAP_PUBLISH_SLOW_MS);
+      slow.unref(); slowTimers.add(slow);
+    }
     Promise.resolve().then(() => publish(job.receipt, [job.relay]))
-      .then(() => { markHost(host, Date.now() - t0 < ZAP_PUBLISH_SLOW_MS); settle(job); },
+      .then(() => { markUrl(url, Date.now() - t0 < ZAP_PUBLISH_SLOW_MS); settle(job); },
         (e) => {
-          markHost(host, false);
+          markUrl(url, false);
           job.tries++;
           if (job.tries >= ZAP_PUBLISH_TRIES) { log(`publish ${job.receipt.id.slice(0, 16)} -> ${job.relay} given up after ${job.tries} tries: ${e && e.message}`); settle(job); return; }
           log(`publish ${job.receipt.id.slice(0, 16)} -> ${job.relay} failed (${e && e.message}); again later`);
           const t = setTimeout(() => { retries.delete(t); push(job); pump(); }, ZAP_PUBLISH_RETRY_MS * 2 ** (job.tries - 1));
           t.unref(); retries.add(t);
         })
-      .finally(() => { flying--; l.flying--; if (!good) flyingUnproven--; pump(); });
+      .finally(() => {
+        if (slow) { clearTimeout(slow); slowTimers.delete(slow); }
+        flying--; l.flying--; if (!run.good) flyingUnproven--;
+        pump();
+      });
+  };
+  // the send to put aside: of the payer key with the most sends in `jobs`, its newest (the newest overall on a tie)
+  const pick = (jobs) => {
+    const count = new Map();
+    for (const j of jobs) count.set(j.payer, (count.get(j.payer) || 0) + 1);
+    let worst = null;
+    for (const j of jobs) {
+      if (!worst) { worst = j; continue; }
+      const cj = count.get(j.payer), cw = count.get(worst.payer);
+      if (cj > cw || (cj === cw && j.seq > worst.seq)) worst = j;
+    }
+    return worst;
   };
   const push = (job) => {
+    if (job.seq === undefined) { job.seq = ++seq; job.payer = payerOf(job.receipt); }
     lane(hostOf(job.relay)).queue.push(job); queued++;
-    while (queued > ZAP_PUBLISH_QUEUED) {     // shed the longest lane's newest send, never the oldest overall
-      let worst = null;
-      for (const l of lanes.values()) if (l.queue.length && (!worst || l.queue.length > worst.queue.length)) worst = l;
-      const shed = worst.queue.pop(); queued--;
-      log(`publish ${shed.receipt.id.slice(0, 16)} -> ${shed.relay} shed: ${worst.queue.length + 1} sends wait for that relay host`);
-      settle(shed);
+    while (queued > ZAP_PUBLISH_QUEUED) {     // park (not shed) the most numerous payer's newest send (kanban #2362)
+      const all = []; for (const l of lanes.values()) for (const j of l.queue) all.push(j);
+      const out = pick(all);
+      const l = lanes.get(hostOf(out.relay));
+      l.queue.splice(l.queue.indexOf(out), 1); queued--;
+      parked.push(out);
+    }
+    while (parked.length > ZAP_PUBLISH_PARKED) {
+      const out = pick(parked);
+      parked.splice(parked.indexOf(out), 1);
+      log(`publish ${out.receipt.id.slice(0, 16)} -> ${out.relay} given up: ${ZAP_PUBLISH_PARKED} sends are parked, most of them that payer's`);
+      settle(out);
     }
   };
   const enqueuePublish = (receipt, relays) => {
@@ -277,6 +333,6 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
     });
     server.on('error', reject);
     server.listen(port, host, () => resolve({ port: server.address().port, nostrPubkey, pending, receipts, refused, watch,
-      close: () => new Promise((r) => { closed = true; clearInterval(timer); for (const t of retries) clearTimeout(t); if (saveTimer) save(); server.close(r); }) }));
+      close: () => new Promise((r) => { closed = true; clearInterval(timer); for (const t of retries) clearTimeout(t); for (const t of slowTimers) clearTimeout(t); if (saveTimer) save(); server.close(r); }) }));
   });
 }
