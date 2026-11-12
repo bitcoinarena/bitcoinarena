@@ -121,6 +121,9 @@ export const FOREIGN_RECEIPTS_KEPT = 4096;
 // marks only the peer named.
 export const PULLED_BLOCKS_PER_MARK = 16;
 export const PULLED_UNKNOWN_PER_PEER = 128;
+// AND WHAT ONE PEER'S PAIRS CAN ADD HERE, PER ENTRY (kanban #2060, #1548, #1738, #1883, #1914, #1489; putForkPair and
+// putFirstMarkPair with `peer`): new fork pairs, and new first-mark pairs, at most this many each. One pair is the proof.
+export const PULLED_PAIRS_PER_PEER = 16;
 export const FOREIGN_RECEIPTS_MAX_AGE_MS = 24 * 3600000;
 
 export class Round {
@@ -1597,20 +1600,42 @@ export class Round {
       .get(entryIdBytes, a, b, b, a);
   }
 
-  putForkPair({ a, b, receipted = false }) {
+  putForkPair({ a, b, receipted = false, peer = null }) {
     let ca, cb;
     try { ca = this.playerSigned(a); cb = this.playerSigned(b); } catch { return false; }
     if (same(a, b) || !same(ca.entryId, cb.entryId) || !same(ca.roundId, cb.roundId)) return false;
     if (ca.tick !== cb.tick && !same(ca.previousHash, cb.previousHash)) return false;
     const [x, y] = Buffer.compare(Buffer.from(a), Buffer.from(b)) < 0 ? [a, b] : [b, a];
+    // A PAIR PULLED FROM A PEER (`peer`, its address) IS KEPT WITHIN A BOUND PER PEER, AND ITS MARKS' RECORDS AS PULLED (kanban
+    // #2060, #1548, #1738, #1883, #1914, #1489): before, every valid pair in a peer's /equivocation answer became a fork_pairs
+    // row and two evidence_blocks rows as this seat's OWN records (served on, outside #1883's per-peer bound) - one committee
+    // seat that holds a player's session key grew the entry's records at every honest seat without bound on every close
+    // retry (300 pairs a pull: 900 fork_pairs and 1800 own evidence rows after three). A pair already held is merged.
+    const held = this.db.prepare('SELECT 1 FROM fork_pairs WHERE entry_id = ? AND mark_a = ? AND mark_b = ?').get(ca.entryId, x, y);
+    if (peer !== null && !held && !this.#pulledPairRoom('fork_pairs', ca.entryId, peer)) return false;
     // `receipted`: both marks were receipted by a seat - this seat's own chain and a peer's (GET /checkpoints). Kept as the
-    // stronger of what any source said, so a pair first pulled unreceipted and then found in two chains counts.
-    this.db.prepare('INSERT INTO fork_pairs (round_id, entry_id, mark_a, mark_b, seen_ms, receipted) VALUES (?, ?, ?, ?, ?, ?) '
-      + 'ON CONFLICT (entry_id, mark_a, mark_b) DO UPDATE SET receipted = MAX(receipted, excluded.receipted)')
-      .run(ca.roundId, ca.entryId, x, y, this.now(), receipted ? 1 : 0);
-    this.noteEvidenceBlock(ca.roundId, ca.entryId, checkpointId(ca));
-    this.noteEvidenceBlock(cb.roundId, cb.entryId, checkpointId(cb));
+    // stronger of what any source said, so a pair first pulled unreceipted and then found in two chains counts. A pair
+    // kept on this seat's own record stays its own.
+    this.db.prepare('INSERT INTO fork_pairs (round_id, entry_id, mark_a, mark_b, seen_ms, receipted, pulled_from) VALUES (?, ?, ?, ?, ?, ?, ?) '
+      + 'ON CONFLICT (entry_id, mark_a, mark_b) DO UPDATE SET receipted = MAX(receipted, excluded.receipted)'
+      + (peer === null ? ', pulled_from = NULL' : ''))
+      .run(ca.roundId, ca.entryId, x, y, this.now(), receipted ? 1 : 0, peer === null ? null : String(peer));
+    this.#notePairEvidence(ca, peer);
+    this.#notePairEvidence(cb, peer);
     return true;
+  }
+
+  /** Room for one more new pair from `peer` in `table` for this entry (PULLED_PAIRS_PER_PEER; kanban #2060). */
+  #pulledPairRoom(table, entryIdBytes, peer) {
+    return this.db.prepare(`SELECT COUNT(*) n FROM ${table} WHERE entry_id = ? AND pulled_from = ?`).get(entryIdBytes, String(peer)).n
+      < PULLED_PAIRS_PER_PEER;
+  }
+
+  /** A kept pair's mark as evidence: this seat's own record, or (`peer`) a pulled one, within that peer's bound (kanban #2060). */
+  #notePairEvidence(c, peer) {
+    if (peer === null) return this.noteEvidenceBlock(c.roundId, c.entryId, checkpointId(c));
+    const tip = this.tipOf(c.roundId);
+    this.notePulledEvidenceBlock(c.entryId, checkpointId(c), tip && tip.length === 32 ? tip : new Uint8Array(32), undefined, peer);
   }
 
   /**
@@ -1656,17 +1681,24 @@ export class Round {
    * the same mark - the pair provesEquivocation checks. Anything else is not
    * kept. Answers whether the pair is held here now.
    */
-  putFirstMarkPair({ a, b }) {
+  putFirstMarkPair({ a, b, peer = null }) {
     let ca;
     let cb;
     try { ca = this.playerSigned(a); cb = this.playerSigned(b); } catch { return false; }
     if (same(a, b) || !same(ca.entryId, cb.entryId) || !same(ca.roundId, cb.roundId)) return false;
     if (!same(ca.previousHash, NO_PREVIOUS) || !same(cb.previousHash, NO_PREVIOUS)) return false;
     const [x, y] = Buffer.compare(Buffer.from(a), Buffer.from(b)) < 0 ? [a, b] : [b, a];
-    this.db.prepare('INSERT OR IGNORE INTO first_mark_pairs (round_id, entry_id, first_a, first_b, seen_ms) VALUES (?, ?, ?, ?, ?)')
-      .run(ca.roundId, ca.entryId, x, y, this.now());
-    this.noteEvidenceBlock(ca.roundId, ca.entryId, checkpointId(ca));
-    this.noteEvidenceBlock(cb.roundId, cb.entryId, checkpointId(cb));
+    // A PAIR PULLED FROM A PEER (`peer`): within that peer's bound, its marks' records as pulled (kanban #2060, as putForkPair)
+    const held = this.db.prepare('SELECT 1 FROM first_mark_pairs WHERE entry_id = ? AND first_a = ? AND first_b = ?').get(ca.entryId, x, y);
+    if (peer !== null && !held && !this.#pulledPairRoom('first_mark_pairs', ca.entryId, peer)) return false;
+    if (held) {
+      if (peer === null) this.db.prepare('UPDATE first_mark_pairs SET pulled_from = NULL WHERE entry_id = ? AND first_a = ? AND first_b = ?').run(ca.entryId, x, y);
+    } else {
+      this.db.prepare('INSERT OR IGNORE INTO first_mark_pairs (round_id, entry_id, first_a, first_b, seen_ms, pulled_from) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(ca.roundId, ca.entryId, x, y, this.now(), peer === null ? null : String(peer));
+    }
+    this.#notePairEvidence(ca, peer);
+    this.#notePairEvidence(cb, peer);
     return true;
   }
 
