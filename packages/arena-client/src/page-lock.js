@@ -23,7 +23,7 @@ import { taggedHash, toHex, fromHex, sha256 } from '../../arena-protocol/src/has
 import { TAG } from '../../arena-protocol/src/constants.js';
 import { netStakeMsat } from '../../arena-protocol/src/payout.js';
 import { entryFeeMsat } from '../../arena-protocol/src/fee.js';
-import { feeBpsForRound, stakeOf } from './join.js';
+import { feeBpsForRound, stakeOf, splitForRound } from './join.js';
 import { refundKeyOf, lockFieldsToJson, lockFieldsFromJson } from '../../arena-protocol/src/stake-lock.js';
 import { decodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
 import { lockFromClient } from './lock-result.js';
@@ -696,7 +696,7 @@ async function locksFor(round, client, donationMsat, donationRecipients = null) 
     throw new Error(`no stake is locked to this round: its federation charges a base fee of ${feeRule.baseMsat} msat `
       + 'on every input and output - a federation for BLWP runs with disable_base_fees (FEDERATION.md)');
   // its fee lock on what this entry stakes: an order's own amount, else the round's
-  const feeGate = feeLockPays({ contract: { ...round, stakeMsat: stakeOf(round) }, fees: feeRule, feeBps: feeBpsForRound(round) });
+  const feeGate = feeLockPays({ contract: { ...round, stakeMsat: stakeOf(round) }, fees: feeRule, feeBps: feeBpsForRound(round), split: splitForRound(round) });
   // A FEDERATION WITH NO FEES (0/0) quotes every lock exactly - its amount in whole notes - so the stake check needs no
   // allowance on top (2026-10-01: the 2 sat "reserve" made one 100 sat round ask 100.352 + 2.006)
   const zeroFees = !!feeRule && feeRule.baseMsat === 0n && feeRule.ppm === 0n;

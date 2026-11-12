@@ -36,7 +36,8 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { namesNoDraw, mediansPrices, FRONTEND_FEE_VERSION, ITEMS_VERSION, objectionWindowFits } from '../../arena-protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
-import { entryFeeBpsForRound, entryPaysReserves, roundSplit, RESERVES_NODE_FEE_BPS } from '../../arena-protocol/src/reserves.js';
+import { entryFeeBpsForRound, entryPaysReserves, roundSplit, RESERVES_NODE_FEE_BPS, entryGiftsInFee, giftsEntryExpected, giftsFeeBps, ROUND_SPLIT_BPS } from '../../arena-protocol/src/reserves.js';
+import { roundSplitBps } from '../../arena-protocol/src/fee-proposal.js';
 import { itemOf } from '../../arena-protocol/src/items.js';
 import { itemPurchaseKept } from './item-purchase-seat.js';
 import { readTranscript } from './transcript-read.js';
@@ -776,7 +777,17 @@ export class Round {
     // ON PROTOCOL 11 A GAME'S ENTRY PAYS THE RESERVES (§27A.9): the nodes' fee is the mandatory 4 %, and its donation
     // field carries the developers' 4 % and the reserves' 2 % exactly, with its reserve lock named
     const reserves = entryPaysReserves(asks, feeGame.ok ? feeGame.plugin.manifest : null);
-    const feeBps = reserves ? RESERVES_NODE_FEE_BPS : feeGame.ok ? entryFeeBpsOf(feeGame.plugin.manifest) : NODE_FEE_BPS;
+    // FROM PROTOCOL 27 (kanban #1486) the developers' 4 % and the reserves' 2 % ride in the fee lock beside the nodes' 4 %: the fee is the
+    // whole 10 %, the donation 0, and no donation or reserve output is named - a refused entry gets them back with its stake
+    // AT THE SPLIT IN FORCE AT THE ROUND'S CENSUS HEIGHT (`this.feesFor`, server.js: the fee set GET /fees?height= serves and the page reads) -
+    // the one the seats' settlement splits it by (settlement.js giftsFor); today's split where no fee book is read
+    const gifts = entryGiftsInFee(asks, feeGame.ok ? feeGame.plugin.manifest : null);
+    const giftSplit = gifts ? (() => { const set = typeof this.feesFor === 'function' ? this.feesFor(asks) : null; return set ? roundSplitBps(set) : ROUND_SPLIT_BPS; })() : null;
+    if (gifts) {
+      const g = giftsEntryExpected({ entry: { ...contract, stakeMsat: ownAmount ? contract.stakeMsat : asks.stakeMsat }, split: giftSplit });
+      if (!g.ok) throw new Error(g.why);
+    }
+    const feeBps = gifts ? giftsFeeBps(giftSplit) : reserves ? RESERVES_NODE_FEE_BPS : feeGame.ok ? entryFeeBpsOf(feeGame.plugin.manifest) : NODE_FEE_BPS;
     if (reserves) {
       const split = roundSplit(ownAmount ? contract.stakeMsat : asks.stakeMsat);
       const owed = split.protocolDevsMsat + split.gameDevsMsat + split.reservesMsat;
@@ -786,7 +797,7 @@ export class Round {
     }
     const fee = feeMatchesEntry({
       stakeMsat: ownAmount ? contract.stakeMsat : asks.stakeMsat, feeMsat: contract.feeMsat, donationMsat: contract.donationMsat,
-    }, { feeBps, donationInFee: feeGame.ok && donationInFee(feeGame.plugin.manifest) });
+    }, { feeBps, donationInFee: gifts || (feeGame.ok && donationInFee(feeGame.plugin.manifest)) });
     if (!fee.ok) throw new Error(fee.why);
     const donationCap = feeGame.ok ? donationBpsOf(feeGame.plugin.manifest) : null;
     if (donationCap !== null && contract.donationMsat > (asks.stakeMsat * BigInt(donationCap)) / 10000n)

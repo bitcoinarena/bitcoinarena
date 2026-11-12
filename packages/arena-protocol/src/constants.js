@@ -25,13 +25,21 @@ export const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]);
+export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 27]);
 /** The last BLWP/v1 tags become ARENA/v1 at one point per network (tag-switch.js, kanban #525). */
 export const TAG_SWITCH_VERSION = 18;
 /** A node's bond outputs count as their sum: the round's floor is applied to it (census.js nodeBonds, kanban #544). */
 export const BOND_SUM_VERSION = 19;
 /** Under capacity pressure the guardians' custody share is weighted by bond up to B*, squared (§23A.3a part 1, kanban #559/#543). */
 export const PRESSURE_WEIGHT_VERSION = 20;
+/**
+ * 2026.0.27 - NO DEVELOPER OR RESERVE MONEY FOR AN ENTRY THAT IS NOT ACCEPTED (kanban #1486, ruled 2026-11-11: "Er sollte keine fees
+ * entgegen nehmen wenn die order nicht angenommen wird"; FEDERATION.md "Amended 2026-11-11"). A paid game round of this version takes the
+ * developers' 4 % and the reserves' 2 % in the entry's FEE LOCK, beside the nodes' 4 % (fee 10 %, donation 0, no donation or reserve
+ * output), and pays them at settlement for counted entries only - a refused, void or refunded entry gets them back with its stake. 21 is the
+ * drawn attestors' label (#630) and 22-26 are taken on the 2.0 branches, so this is 27; versions are cumulative, keep them in step.
+ */
+export const GIFTS_IN_FEE_LOCK_VERSION = 27;
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (RULED 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
