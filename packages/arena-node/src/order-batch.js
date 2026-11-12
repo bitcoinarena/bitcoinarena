@@ -119,6 +119,8 @@ class Conflict extends Error {}
 // kanban #1547: the sells one entry keeps waiting for a batch at a seat, and the verified sells a seat remembers
 export const SELL_PENDING_MAX = 16;
 const SELL_CHECKED_MAX = 65536;
+// kanban #1933, #1969: the rounds whose parsed certified book a seat keeps (the least recently read goes first)
+const REPLAY_ROUNDS_MAX = 64;
 
 export class OrderBook {
   constructor(round, { plugins, peersFor = () => [], fetcher = (u, o) => fetch(u, o), now = () => Date.now(), intervalMs = Number(BATCH_MS), feesFor = null,
@@ -370,25 +372,90 @@ export class OrderBook {
     return { ok: true, id: toHex(id), sells, events };
   }
 
+  // THE CERTIFIED BOOK, PARSED ONCE (kanban #1933, #1969, after #1526/#1722/#1791): ledger() replayed every certified batch from 0 on each
+  // call - JSON, every order's entry decoded, every sell through #sellStands - and the verified-sell cache lived only in memory. Two
+  // minutes of the sell flood 07d81d630 still lets through (16 sells per seat per 500 ms batch) rest 26,880 sells: the first ledger()
+  // after a restart checked 26,880 Ed25519 signatures on the event loop (40 s measured), past 65,536 resting the cache thrashed on every
+  // call, and a refused POST /sell - never stored, never counted by the 16-waiting cap - cost a whole replay each (130-140 ms), without
+  // bound. Now:
+  //  - A CERTIFIED RECORD'S SELLS ARE NOT VERIFIED AGAIN: a record reaches market_batches only through #store, after #check -> #recordId
+  //    verified every sell's signature here (signing it, or taking its certificate). On replay its fields are parsed and its ids hashed,
+  //    as its cancels already were (a cancel of a certified record was never checked again). A sell that does not parse stays out, as before.
+  //  - EACH CERTIFIED BATCH IS PARSED ONCE per round (a certified batch never changes: CERTIFIED is for good, kept by k and batch id), and
+  //    the ledger of the certified batches alone is kept until the certified set changes (read from the store on each call - k and batch
+  //    id of each certified row, no record - so a certificate stored by any door, a late lower k too, is seen). #sellBacked, GET /book,
+  //    standing and settlement read that ledger without replaying; a ledger with one more batch on top (lead, a follower's #check) runs
+  //    bookLedger over the parsed batches and verifies only that batch's sells.
+  // The kept ledger is shared between callers: read it, never change it.
+  #parsedBook = new Map();   // round hex -> { batches: Map(k -> { batchId, batch }), key, ledger }
+  #parsedBatch(roundIdBytes, rec, { verified }) {
+    const entries = new Map();
+    const entryOf = (id) => { if (!entries.has(id)) entries.set(id, this.#orderEntry(roundIdBytes, id)); return entries.get(id); };
+    const orders = [];
+    for (const id of rec.orders) {
+      const o = entryOf(id);
+      if (!o.ok) return refuse(`a batch names an order this seat cannot read: ${o.why}`);
+      orders.push({ id, outcome: o.entry.pick, price: BigInt(o.entry.limitPrice), stakeMsat: o.entry.stakeMsat - o.entry.donationMsat, feeMsat: o.entry.feeMsat, expiryMs: o.entry.orderExpiryMs || 0n });
+    }
+    const sells = [];
+    for (const s of rec.sells || []) {
+      const x = verified ? this.#sellParsed(roundIdBytes, s, entryOf) : this.#sellStands(roundIdBytes, s);
+      if (x.ok) sells.push(x.sell);
+    }
+    return { ok: true, batch: { k: Number(rec.k), cutoffMs: BigInt(this.cutoffOf(rec.k)), orders, cancels: (rec.cancels || []).map((c) => c.entry), sells } };
+  }
+  /** A sell of a certified record (its signature verified when the record was stored here): its fields and id, no signature check. */
+  #sellParsed(roundIdBytes, s, entryOf) {
+    if (!s || !isHex(s.signature, 64) || !/^[0-9]{1,20}$/.test(String(s.price)) || !/^[0-9]{1,20}$/.test(String(s.sharesMsat)) || !/^[0-9]{1,20}$/.test(String(s.nonce)))
+      return refuse('a sell is { entry, outcome, price, sharesMsat, nonce, signature }', 400);
+    const o = entryOf(s.entry);
+    if (!o.ok) return o;
+    const price = BigInt(s.price);
+    if (price < 1n || price >= PRICE_SCALE || price % TICK !== 0n) return refuse(`a sell price is a whole cent below 1: ${s.price} is not`);
+    let id;
+    try { id = toHex(sellId({ roundId: roundIdBytes, entryId: fromHex(s.entry), outcome: s.outcome, price, sharesMsat: BigInt(s.sharesMsat), nonce: BigInt(s.nonce) })); }
+    catch (e) { return refuse(e.message, 400); }
+    return { ok: true, id, sell: { id, entry: s.entry, outcome: s.outcome, price, sharesMsat: BigInt(s.sharesMsat) } };
+  }
+  /** The round's certified batches, parsed (each once): { ok, batches, key } - key names the certified set and the interval read. */
+  #certifiedBatches(roundIdBytes) {
+    const rid = Buffer.from(roundIdBytes), hex = toHex(roundIdBytes);
+    const rows = this.db.prepare('SELECT k, batch_id FROM market_batches WHERE round_id = ? AND certificate IS NOT NULL ORDER BY k').all(rid);
+    let r = this.#parsedBook.get(hex);
+    if (!r || r.intervalMs !== this.intervalMs) r = { batches: new Map(), intervalMs: this.intervalMs, key: null, ledger: null };
+    this.#parsedBook.delete(hex); this.#parsedBook.set(hex, r);   // most recently read last
+    while (this.#parsedBook.size > REPLAY_ROUNDS_MAX) this.#parsedBook.delete(this.#parsedBook.keys().next().value);
+    const recQ = this.db.prepare('SELECT record FROM market_batches WHERE round_id = ? AND k = ?');
+    const out = [];
+    for (const row of rows) {
+      const k = Number(row.k);
+      let held = r.batches.get(k);
+      if (!held || held.batchId !== row.batch_id) {
+        const p = this.#parsedBatch(roundIdBytes, JSON.parse(recQ.get(rid, k).record), { verified: true });
+        if (!p.ok) return p;   // not kept: read again next time
+        held = { batchId: row.batch_id, batch: p.batch };
+        r.batches.set(k, held);
+      }
+      out.push(held.batch);
+    }
+    if (r.batches.size > rows.length) { const ks = new Set(rows.map((x) => Number(x.k))); for (const k of [...r.batches.keys()]) if (!ks.has(k)) r.batches.delete(k); }
+    return { ok: true, batches: out, key: `${this.intervalMs}|${rows.map((x) => `${x.k}:${x.batch_id}`).join(',')}`, kept: r };
+  }
+
   /** The ledger of the round's certified batches (book-ledger.js), optionally with one more batch on top. */
   ledger(roundIdBytes, extra = null) {
     const m = this.market(roundIdBytes);
     if (!m.ok) return m;
-    const rows = this.db.prepare('SELECT k, record FROM market_batches WHERE round_id = ? AND certificate IS NOT NULL ORDER BY k').all(Buffer.from(roundIdBytes));
-    const records = rows.map((r) => JSON.parse(r.record));
-    if (extra) records.push(extra);
-    const batches = [];
-    for (const rec of records) {
-      const orders = [];
-      for (const id of rec.orders) {
-        const o = this.#orderEntry(roundIdBytes, id);
-        if (!o.ok) return refuse(`a batch names an order this seat cannot read: ${o.why}`);
-        orders.push({ id, outcome: o.entry.pick, price: BigInt(o.entry.limitPrice), stakeMsat: o.entry.stakeMsat - o.entry.donationMsat, feeMsat: o.entry.feeMsat, expiryMs: o.entry.orderExpiryMs || 0n });
-      }
-      const sells = (rec.sells || []).map((s) => { const x = this.#sellStands(roundIdBytes, s); return x.ok ? x.sell : null; }).filter(Boolean);
-      batches.push({ k: Number(rec.k), cutoffMs: BigInt(this.cutoffOf(rec.k)), orders, cancels: (rec.cancels || []).map((c) => c.entry), sells });
+    const c = this.#certifiedBatches(roundIdBytes);
+    if (!c.ok) return c;
+    if (extra) {
+      const p = this.#parsedBatch(roundIdBytes, extra, { verified: false });
+      if (!p.ok) return p;
+      return { ok: true, ...bookLedger({ batches: [...c.batches, p.batch], feeBps: m.feeBps }), market: m };
     }
-    return { ok: true, ...bookLedger({ batches, feeBps: m.feeBps }), market: m };
+    const key = `${m.feeBps}|${c.key}`;
+    if (!c.kept.ledger || c.kept.key !== key) { c.kept.ledger = bookLedger({ batches: c.batches, feeBps: m.feeBps }); c.kept.key = key; }
+    return { ok: true, ...c.kept.ledger, market: m };
   }
 
   /** A record's checks at this seat: answers { ok, id, k, events } or why it does not stand. `importing`: a certified record. */
