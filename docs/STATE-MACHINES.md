@@ -1542,3 +1542,9 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-C1 (change) E-cash in flight: an exchange belongs to one phrase (kanban #1641)
+- An exchange record (arena.ecash.exchange.*) names the phrase whose wallet sent the notes (`fromKey`, its first 16 hex, as merge records do). `resumeEcashExchanges` moves on only the records of the asking tab's phrase (`phrase16`); a record of another phrase is left for that phrase's tab, so the seat's answer (or the notes taken back) is received only into the wallets of the phrase that sent them, never into another player's of the same browser.
+- A record of an older page names no phrase: it is moved only when the browser keeps one phrase (`takeUnnamed`, arena.seeds holds at most one), otherwise it is left as it is.

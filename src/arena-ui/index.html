@@ -5687,10 +5687,13 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       const openW = async (fid, invite) => (window.ARENA_WALLETS && window.ARENA_WALLETS.get(fid))
         || ARENACLIENT.openPlayerWallet({ federationId: ARENACLIENT.fromHex(fid), invite, seed, LockClient, storage: vault() });
       const inviteOf = (fid) => (fid === to ? toInvite : (ARENACLIENT.rememberedInvite ? ARENACLIENT.rememberedInvite(vault(), fid) : null));
-      // AN EXCHANGE LEFT BEFORE (a seat that took the notes and did not answer, a tab closed on the way): moved on first
+      // AN EXCHANGE LEFT BEFORE (a seat that took the notes and did not answer, a tab closed on the way): moved on first - THIS TAB'S PHRASE'S
+      // ONLY (kanban #1641): another tab may be another player; a record of an older page (no phrase named) only in a browser of one phrase
+      const phrase16 = String((window.sessionStorage && sessionStorage.getItem('arena.player.seed')) || '').slice(0, 16) || null;
+      const keptSeeds = (() => { try { return JSON.parse(vault().getItem('arena.seeds') || '[]').length; } catch { return 2; } })();
       const keptKeys = Object.keys(vault()).filter((x) => x.startsWith(ARENACLIENT.ECASH_EXCHANGE_PREFIX));
       if (keptKeys.length) {
-        const said = await ARENACLIENT.resumeEcashExchanges({ storage: vault(), keys: keptKeys, seats: nodes, fetcher: (u, o) => fetch(u, o),
+        const said = await ARENACLIENT.resumeEcashExchanges({ storage: vault(), keys: keptKeys, seats: nodes, fetcher: (u, o) => fetch(u, o), phrase16, takeUnnamed: keptSeeds <= 1,
           walletFor: async (fid) => { const w = await openW(fid, inviteOf(fid)); if (fid !== to || !window.ARENA_NOTE_ARRIVING) return w; window.ARENA_NOTE_ARRIVING(fid, 'exchanged in', 30000); return w; } });
         for (const r of said) console.log(`[arena] exchange kept since ${r.key.slice(21)}: ${r.ok ? `${r.msat} msat received` : r.why}`);
       }
@@ -5708,7 +5711,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         if (window.ARENA_NOTE_ARRIVING) window.ARENA_NOTE_ARRIVING(to, 'exchanged in from federation ' + String(from).slice(0, 8), 30000);
         return tw;
       };
-      const r = await ARENACLIENT.exchangeEcashInto({ storage: vault(), from, to, needMsat, seats: nodes, walletFrom: w, walletTo, onStep, fetcher: (u, o) => fetch(u, o) });
+      const r = await ARENACLIENT.exchangeEcashInto({ storage: vault(), from, to, needMsat, seats: nodes, walletFrom: w, walletTo, onStep, fetcher: (u, o) => fetch(u, o), phrase16 });
       if (window.ARENA_SUM_BALANCES) window.ARENA_SUM_BALANCES();
       return { ...r, ms: Date.now() - t0 };
     };
