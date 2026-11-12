@@ -4970,7 +4970,10 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       if (player && typeof player.lockStatus === 'function' && window.ARENA_WALLET_FEDERATION === ARENACLIENT.toHex(r.round.federationId)) {
         const wasm = await window.ARENA_LOCK_WASM();
         const look = await ARENACLIENT.lookOwed(Object.assign(roundAsk(r, wasm.LockClient), { client: { lockStatus: (t, i) => player.lockStatus(t, i) } }));
-        if (!(look.owedMsat > 0n)) return { look, held: true, LockClient: wasm.LockClient };
+        // A FINAL LOOK WITH NOTHING OWED READS THE ROUND'S WALLET ONCE (kanban #1979, state audit 2026-11-12 SM-L2/SM-T2): the player wallet's look
+        // never reads the round's balance (inTabMsat null, #1265), and the record closes only on a read 0 - a lost round would stay open for good.
+        // The join below reads it, closes the record on 0 (or keeps it open on ecash still there), and is never repeated once the record is done.
+        if (!(look.owedMsat > 0n) && !look.final) return { look, held: true, LockClient: wasm.LockClient };
       }
       const w = await roundWallet(r);
       if (!w) return { look: null, held: false, LockClient: null };
