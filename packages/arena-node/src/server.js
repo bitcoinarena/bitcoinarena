@@ -2368,10 +2368,28 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
   }
 
+  // ONE RE-OFFER CLOCK PER (ENTRY, PEER) (kanban #2387, refute of #2357/#2267/#1862): every first mark this seat stores
+  // is public (GET /checkpoints, GET /start-forfeit), and so is every later mark. A stranger replaying any of them made
+  // the seat POST /first-mark to each peer that had not receipted it, per frame. A peer is offered the first mark again
+  // only for a later mark of a higher tick than the last offer to it (the player moving on, which a stranger cannot
+  // do), or once FIRST_MARK_REOFFER_MS has passed. Every offer that goes out sets the clock.
+  const FIRST_MARK_REOFFER_MS = 60000;
+  const firstMarkReoffered = new Map();
+  function reofferDue(eh, at, tick, now = Date.now()) {
+    const last = firstMarkReoffered.get(`${eh}|${at}`);
+    return !last || tick > last.tick || now - last.at >= FIRST_MARK_REOFFER_MS;
+  }
+  function reofferSent(eh, at, tick, now = Date.now()) {
+    const k = `${eh}|${at}`;
+    const last = firstMarkReoffered.get(k);
+    if (!last && firstMarkReoffered.size > 4096) firstMarkReoffered.clear();
+    firstMarkReoffered.set(k, { at: now, tick: last ? Math.max(Number(last.tick), Number(tick)) : Number(tick) });
+  }
   // A RE-OFFER GOES ONLY WHERE NO ANSWER IS KEPT (kanban #2353, #2357, refute of #2267/#1862): `only` names the peers this
   // call may reach; the record then keeps every other peer's earlier answer instead of being overwritten.
-  async function forwardFirstMark({ bytes, c }, { ask = null, only = null } = {}) {
+  async function forwardFirstMark({ bytes, c }, { ask = null, only = null, tick = null } = {}) {
     const id = checkpointId(c);
+    const eh = toHex(c.entryId);
     const held = round.holdsMark(id);
     if (!held && !round.startForfeit(c.entryId)) return null;      // refused for another reason: nothing to hand on
     // THE MARK THAT GOES ON IS THE ONE THIS SEAT STORED (kanban #1736): "held" is decided by the mark's body, so the
@@ -2401,6 +2419,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const at = String(peer).replace(/\/+$/, '');
       if (only && !only(at)) continue;
       if (held && !voided && offers[at] === 'receipted') continue;       // it has the mark already
+      reofferSent(eh, at, tick == null ? Number(c.tick) : Number(tick));   // kanban #2387: the offer's clock
       let answer;
       let why;
       try {
@@ -2546,7 +2565,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const line = round.startLine(c.roundId, c.entryId);
     if (!f || !line || toHex(checkpointId(f.c)) === toHex(checkpointId(c))) return;
     if (c.tick <= line.lastTick) {
-      if (Object.values(round.firstMarkOffers(c.entryId)).some((a) => a !== 'receipted')) await forwardFirstMark(f);
+      // kanban #2387: a later mark is public too - its replay re-offers to no peer; a mark of a higher tick (the player
+      // moving on) re-offers to each peer that has not receipted, as before.
+      const offers = round.firstMarkOffers(c.entryId);
+      if (!Object.values(offers).some((a) => a !== 'receipted')) return;
+      const eh = toHex(c.entryId);
+      const now = Date.now();
+      const pick = new Set(verifier.peersOf(c.roundId).map((p) => String(p).replace(/\/+$/, ''))
+        .filter((at) => offers[at] !== 'receipted' && reofferDue(eh, at, Number(c.tick), now)));
+      if (pick.size > 0) await forwardFirstMark(f, { only: (at) => pick.has(at), tick: Number(c.tick) });
       return;
     }
     if (round.entryVoid(c.entryId)) return;
@@ -2630,8 +2657,6 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // on) is asked about afresh, so a mark this seat could now take is checked against the peers as before.
   const LATE_BY_PEERS_MS = 30000;
   const lateByPeersAsked = new Map();
-  const FIRST_MARK_REOFFER_MS = 60000;
-  const firstMarkReoffered = new Map();
   function lateByPeersOnce(c, bytes) {
     let owed = '';
     try { owed = String(round.nextTick(c.roundId, c.entryId)); } catch { owed = '?'; }
@@ -14597,11 +14622,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // that stayed down kept the record short of "every peer answered", and each stranger frame then POSTed
         // /first-mark to EVERY peer again, the live ones included. Now the answered peers keep their answers, and a
         // peer still unanswered (or not in the record) is offered the mark at most once per FIRST_MARK_REOFFER_MS.
+        // AND A REPLAY OF ANY FIRST MARK THIS SEAT ALREADY STORES (kanban #2387): the on-time first mark it holds is public
+        // at GET /checkpoints, and replayed it verified and went to every peer that had not receipted it, per frame (after
+        // an ENTRY_VOID, to every peer). Its replay now takes the same per-peer clock (reofferDue).
         let replayOfDecided = false;
+        let replayOfHeld = false;
         if (firstMark) {
           const late = round.startForfeit(firstMark.c.entryId);
           const said = firstMarkForwards.get(toHex(firstMark.c.entryId));
           replayOfDecided = !!late && toHex(late.mark) === toHex(firstMark.bytes) && Array.isArray(said);
+          let stored = null;
+          try { stored = round.holdsMark(checkpointId(firstMark.c)) ? round.firstMarkHeld(firstMark.c.roundId, firstMark.c.entryId) : null; } catch { stored = null; }
+          replayOfHeld = !!stored && toHex(stored) === toHex(firstMark.bytes);
         }
         if (firstMark && markVerifies && !round.holdsMark(checkpointId(firstMark.c))) {
           const own = lateEvidenceHere(firstMark.c, null);
@@ -14627,21 +14659,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let signedFirst = false;
         if (firstMark) { try { round.playerSigned(firstMark.bytes); signedFirst = true; } catch { signedFirst = false; } }
         if (firstMark && signedFirst) {
-          if (!replayOfDecided) forwardFirstMark(firstMark).catch((e) => console.error(`[first-mark] ${e.message}`));
+          if (!replayOfDecided && !replayOfHeld) forwardFirstMark(firstMark).catch((e) => console.error(`[first-mark] ${e.message}`));
           else {
             const eh = toHex(firstMark.c.entryId);
             const said = firstMarkForwards.get(eh) || [];
-            const answered = new Set(said.filter((x) => x.answer !== 'unanswered').map((x) => x.peer));
+            // the decided late start: a peer that answered keeps its answer; the held mark: a peer that receipted it
+            const answered = replayOfHeld
+              ? new Set(Object.entries(round.firstMarkOffers(firstMark.c.entryId)).filter(([, a]) => a === 'receipted').map(([p]) => p))
+              : new Set(said.filter((x) => x.answer !== 'unanswered').map((x) => x.peer));
+            if (replayOfHeld && round.entryVoid(firstMark.c.entryId)) answered.clear();   // the Void goes to every peer
             const now = Date.now();
-            const due = (at) => {
-              if (answered.has(at)) return false;
-              const k = `${eh}|${at}`;
-              const last = firstMarkReoffered.get(k);
-              if (last !== undefined && now - last < FIRST_MARK_REOFFER_MS) return false;
-              if (firstMarkReoffered.size > 4096) firstMarkReoffered.clear();
-              firstMarkReoffered.set(k, now);
-              return true;
-            };
+            const due = (at) => !answered.has(at) && reofferDue(eh, at, Number(firstMark.c.tick), now);
             const wanted = verifier.peersOf(firstMark.c.roundId).map((p) => String(p).replace(/\/+$/, '')).filter(due);
             if (wanted.length > 0) {
               const pick = new Set(wanted);
