@@ -37,6 +37,18 @@ import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
 /** How far ahead of its start a round is looked at: PRESENT is signed in the last minute before seating_close. */
 import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
 /** The most PRESENTs one POST /presents batch is read for (kanban #1271): as POST /presence's 4096 lines. */
+/**
+ * ARE THESE SEATED NODES THE DRAW'S, IN ITS SCORE ORDER (kanban #2564)? `seated` and `drawn` as hex keys (or bytes); each seated node drawn, ranks rising -
+ * the order verifySeating checks a certificate in. A check-in seating signed on another draw fails it.
+ */
+export function seatedInDrawOrder(seated, drawn) {
+  const hx = (k) => (typeof k === 'string' ? k.toLowerCase() : Buffer.from(k).toString('hex'));
+  const rank = new Map((drawn || []).map((k, i) => [hx(k), i]));
+  let last = -1;
+  for (const k of seated || []) { const r = rank.get(hx(k)); if (r === undefined || r <= last) return false; last = r; }
+  return true;
+}
+
 export const MAX_PRESENTS_PER_BATCH = 4096;
 
 export const PRESENT_WINDOW_MS = 60000n;
@@ -118,6 +130,12 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
   // gone since 04:00Z sat in two RPS tables, because a table was seated once, by its first round). `${anchor hex}:${role}` -> [{ index, rid, seated }], lowest index first: a
   // certificate on a later round of the table seats that round and the ones after it. Empty for every table that lost nobody.
   const reseats = new Map();
+  // CHECK-IN SEATINGS THAT DO NOT STAND ON THIS SEAT'S DRAW (kanban #2564, feedback #019, measured 2026-11-12 on an RPS table of federation 337ae01a: check-ins
+  // 264 and 297 were signed at 00:35Z / 00:39Z on a draw that is not the round's - verifySeating against every seat's draw of today: "not in score order" -
+  // and the seats kept seating every later round by them; a client checks them, refuses them and refuses the round). `${rid hex}:${role}`; a stale one is
+  // skipped where a round's seating is looked up, so the table falls back to the newest seating that stands; a round with entries keeps its seats (#1020)
+  const staleReseats = new Set();
+  let reseatsCheckedMs = 0;
   const tableStarts = new Map();   // anchor hex -> round 0's start
   const noteReseat = (rid, role, seated, posted = null) => {
     let c; try { const row = round.get(rid); c = row ? decodeRoundContract(new Uint8Array(row.contract)) : posted; } catch { c = posted; }
@@ -141,9 +159,9 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     try { listReseat(r.anchor, r.role, Number(r.idx), new Uint8Array(r.round_id), decodeSeated(new Uint8Array(r.cert))); } catch { /* unread */ }
   }
   /** The seating that seats round `index` of the table: the newest certificate at or before it, and the table's first otherwise. Null while none stands. */
-  const tableSeatingAt = (anchorHex, role, index) => {
+  const tableSeatingAt = (anchorHex, role, index, { keepStale = false } = {}) => {
     const later = reseats.get(`${anchorHex}:${role}`);
-    if (later) for (let i = later.length - 1; i >= 0; i--) if (later[i].index <= index) return later[i].seated;
+    if (later) for (let i = later.length - 1; i >= 0; i--) if (later[i].index <= index && (keepStale || !staleReseats.has(`${toHex(later[i].rid)}:${role}`))) return later[i].seated;
     return certs.get(`${anchorHex}:${role}`) || null;
   };
   /** Is this round of a table one of its check-ins? The table's rounds are evenly spaced, so round 0's start gives the spacing. */
@@ -534,6 +552,51 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
   // up to 5 s each, every minute, before the tick signed a PRESENT. Each table no one certified made the next tick long, a long tick
   // missed the next rounds' close, and that left more tables uncertified). One pass at a time, its own; the tick does not wait for it.
   let asking = null;
+  // EVERY CHECK-IN SEATING HELD, AGAINST THIS SEAT'S DRAW OF ITS TABLE (kanban #2564): a table's rounds all draw on the table's first round's seed, census and
+  // beacon (known-game tableAnchorOf; measured 2026-11-12: one table's round 0, check-in 264 and check-in 297 drew the same at every seat), so one draw per
+  // table and role - computed once, at most RESEAT_DRAWS new ones a pass - checks all its seatings, each verdict kept. Once a minute. (A first version drew
+  // every seating each minute: fed2-1 holds 46,728 of them and its loop was held past 20 s.)
+  const RESEAT_CHECK_MS = 60000, RESEAT_DRAWS = 8;
+  const tableDraws = new Map();       // `${anchor hex}:${role}` -> drawn keys hex, score order
+  const reseatVerdicts = new Map();   // `${rid hex}:${role}` -> true (stands) / false (stale)
+  const checkReseats = () => {
+    if (nowMs() - reseatsCheckedMs < RESEAT_CHECK_MS) return;
+    reseatsCheckedMs = nowMs();
+    let draws = RESEAT_DRAWS;
+    const pass = { tables: 0, drawn: 0, noDraw: 0, checked: 0, stale: 0 };
+    for (const [key, list] of reseats) {
+      pass.tables++;
+      if (!list.length) continue;
+      const role = key.slice(key.lastIndexOf(':') + 1);
+      let drawn = tableDraws.get(key);
+      if (!drawn) {
+        if (draws-- <= 0) continue;
+        let c = null; try { c = roster.committeeFor(list[list.length - 1].rid, role); } catch { c = null; }
+        if (!c || !c.ok || !Array.isArray(c.drawn)) { pass.noDraw++; if (pass.noDraw === 1) pass.why = c ? c.why : 'no answer'; continue; }
+        drawn = c.drawn.map((e) => toHex(e.pubkey));
+        pass.drawn++;
+        tableDraws.set(key, drawn);
+        if (tableDraws.size > 2000) tableDraws.delete(tableDraws.keys().next().value);
+      }
+      let named = 0;
+      for (const x of list) {
+        const k = `${toHex(x.rid)}:${role}`;
+        if (reseatVerdicts.has(k)) continue;
+        // AND AT A ROUND THAT IS A CHECK-IN BY TODAY'S RULE (measured 2026-11-12 16:4xZ: the fed2 seats held a correctly drawn seating at round 283 of table
+        // a46fcbb3, signed under an older check-in rule; the guardian seats refused it - "that round of its table is no check-in" - and stayed on round 0)
+        let isCheckIn = true;
+        try { const row = round.get(x.rid); const c = row ? decodeRoundContract(new Uint8Array(row.contract)) : contractOf(x.rid, x.index);
+          if (c) isCheckIn = checkInOf(c, tableAnchorOf(c)); } catch { isCheckIn = true; }
+        const stands = isCheckIn && seatedInDrawOrder(x.seated, drawn);
+        reseatVerdicts.set(k, stands);
+        if (reseatVerdicts.size > 200000) reseatVerdicts.delete(reseatVerdicts.keys().next().value);
+        pass.checked++;
+        if (stands) staleReseats.delete(k); else { staleReseats.add(k); named++; pass.stale++; }
+      }
+      if (named) log(`[seating] table ${key.slice(0, 16)} ${role}: ${named} check-in seating(s) held are not this seat's draw in score order - not used (kanban #2564)`);
+    }
+    if (pass.drawn || pass.noDraw || pass.checked) log(`[seating] check-in pass (kanban #2564): ${pass.tables} table role(s), ${pass.drawn} drawn, ${pass.noDraw} not drawable${pass.why ? ` (${pass.why})` : ''}, ${pass.checked} seating(s) checked, ${pass.stale} stale, ${staleReseats.size} stale held`);
+  };
   async function tick() {
     if (busy) return;
     busy = true;
@@ -543,6 +606,10 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     let mark = Date.now(); const lap = (k) => { const n = Date.now(); took[k] += n - mark; mark = n; };
     try {
       index();
+      // OFF UNTIL THE CHECK-INS ARE DRAWN RIGHT (kanban #2564, measured 2026-11-12 on fed2-1: 46,626 of 46,728 held check-in seatings fail verifySeating
+      // against the table's draw - check-ins are signed out of draw order on every table; skipping them all moved every table back to its first seating,
+      // replaced nodes and all). ARENA_CHECKIN_DRAW_CHECK=1 turns it on for a measurement
+      if (process.env.ARENA_CHECKIN_DRAW_CHECK === '1') { try { checkReseats(); } catch (e) { log(`[seating] check-in check: ${e.message}`); } }   // kanban #2564
       if (!asking) asking = askUnwritten().catch((e) => log(`[seating] ${e.message}`)).finally(() => { asking = null; });
       lap('unwritten');
       const now = BigInt(nowMs());
@@ -1154,7 +1221,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     if (!later) return anchor;
     let index = null; try { index = decodeRoundContract(new Uint8Array(round.get(rid).contract)).roundIndex; } catch { index = null; }
     if (index === null) return anchor;
-    for (let i = later.length - 1; i >= 0; i--) if (later[i].index <= index) return later[i].rid;
+    for (let i = later.length - 1; i >= 0; i--) if (later[i].index <= index && !staleReseats.has(`${toHex(later[i].rid)}:${role}`)) return later[i].rid;
     return anchor;
   };
   /** Who seats round `rid`. A round with entries keeps the seats it had when they came (kanban #1020): a later seating does not move money already on the table. */
@@ -1163,16 +1230,18 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     if (!reseats.size || !(reseats.has(`${a}:${role}`) || reseats.has(`${a}:settlement`))) return certs.get(`${a}:${role}`) || null;
     let c; try { c = decodeRoundContract(new Uint8Array(round.get(rid).contract)); } catch { return certs.get(`${a}:${role}`) || null; }
     let index = c.roundIndex;
+    // A ROUND WITH ENTRIES KEEPS ITS SEATS, a stale check-in seating too (kanban #2564 beside #1020 / #2083): the money on it is not moved to another committee
+    const withEntries = !!(round.entriesOf && round.entriesOf(rid).length);
     if (round.entriesOf && round.entriesOf(rid).length && c.nodes && c.nodes.length) {
       const names = c.nodes.map(toHex).sort().join();
       const fits = (s) => s && [...s].sort().join() === names;
       const later = reseats.get(`${a}:settlement`) || [];
-      if (!fits(tableSeatingAt(a, 'settlement', index))) {
+      if (!fits(tableSeatingAt(a, 'settlement', index, { keepStale: true }))) {
         const kept = [...later].reverse().find((x) => x.index <= index && fits(x.seated));
         index = kept ? kept.index : (later[0] ? later[0].index - 1 : index);
       }
     }
-    return tableSeatingAt(a, role, index);
+    return tableSeatingAt(a, role, index, { keepStale: withEntries });
   };
   return {
     tick,
