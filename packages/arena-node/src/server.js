@@ -2356,7 +2356,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
   }
 
-  async function forwardFirstMark({ bytes, c }, { ask = null } = {}) {
+  // A RE-OFFER GOES ONLY WHERE NO ANSWER IS KEPT (kanban #2353, #2357, refute of #2267/#1862): `only` names the peers this
+  // call may reach; the record then keeps every other peer's earlier answer instead of being overwritten.
+  async function forwardFirstMark({ bytes, c }, { ask = null, only = null } = {}) {
     const id = checkpointId(c);
     const held = round.holdsMark(id);
     if (!held && !round.startForfeit(c.entryId)) return null;      // refused for another reason: nothing to hand on
@@ -2385,6 +2387,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const said = [];
     for (const peer of verifier.peersOf(c.roundId)) {
       const at = String(peer).replace(/\/+$/, '');
+      if (only && !only(at)) continue;
       if (held && !voided && offers[at] === 'receipted') continue;       // it has the mark already
       let answer;
       let why;
@@ -2402,7 +2405,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // WHAT THE PEER ANSWERED THE ON-TIME FIRST MARK is §16's evidence (entry-void.js).
       if (held && answer !== 'FORFEIT') round.putFirstMarkOffer({ entryId: c.entryId, peer: at, answer });
     }
-    firstMarkForwards.set(toHex(c.entryId), said);
+    if (only) {
+      const before = firstMarkForwards.get(toHex(c.entryId));
+      const asked = new Set(said.map((x) => x.peer));
+      const kept = Array.isArray(before) ? before.filter((x) => !asked.has(x.peer)) : [];
+      firstMarkForwards.set(toHex(c.entryId), kept.concat(said));
+    } else firstMarkForwards.set(toHex(c.entryId), said);
     // A PEER REFUSED THIS FIRST MARK AS A CONFLICT (409): it may hold another one
     // - pull its proof, and on two first marks gather the shares while the signer nodes
     // are up. Not on a 404 (a signer node that has not taken the entry yet holds no
@@ -2602,6 +2610,28 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   /** The receipts a Void signer node handed over: its own, and every one it holds of the mark. */
   const receiptsGiven = (got) => [got.receipt, ...(Array.isArray(got.receipts) ? got.receipts : [])]
     .filter(Boolean).flatMap((r) => { try { return [fromHex(String(r))]; } catch { return []; } });
+  // THE PEERS ARE ASKED ONCE PER MARK AND INPUT STATE (kanban #2353, refute of #2267/#1862): the player's on-time first
+  // mark is public at GET /checkpoints, so a stranger replaying it at a seat that does not hold it (refused there, e.g.
+  // for inputs it has not seen, so never held) made the seat fetch /entry-void from every peer on every frame. The
+  // answer is kept per (entry, mark, inputs held here) for LATE_BY_PEERS_MS, and a frame in flight shares it: the same
+  // replay asks nobody again, while a player who sends the batches first and the mark again (the inputs held here moved
+  // on) is asked about afresh, so a mark this seat could now take is checked against the peers as before.
+  const LATE_BY_PEERS_MS = 30000;
+  const lateByPeersAsked = new Map();
+  const FIRST_MARK_REOFFER_MS = 60000;
+  const firstMarkReoffered = new Map();
+  function lateByPeersOnce(c, bytes) {
+    let owed = '';
+    try { owed = String(round.nextTick(c.roundId, c.entryId)); } catch { owed = '?'; }
+    const key = `${toHex(c.entryId)}|${toHex(checkpointId(c))}|${toHex(bytes)}|${owed}`;
+    const now = Date.now();
+    const kept = lateByPeersAsked.get(key);
+    if (kept && now - kept.at < LATE_BY_PEERS_MS) return kept.answer;
+    if (lateByPeersAsked.size > 4096) lateByPeersAsked.clear();
+    const answer = lateByPeers(c, bytes);
+    lateByPeersAsked.set(key, { at: now, answer });
+    return answer;
+  }
   async function lateByPeers(c, bytes) {
     for (const peer of verifier.peersOf(c.roundId)) {
       try {
@@ -14532,16 +14562,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // as its start forfeit) is not forwarded again either, once every peer answered the forward that went with it.
         const lineNow = firstMark ? round.startLine(firstMark.c.roundId, firstMark.c.entryId) : null;
         const peersCanTell = !!lineNow && firstMark.c.tick <= lineNow.lastTick;
+        // AND A REPLAY OF THE DECIDED LATE START RE-OFFERS IT ONLY TO A PEER WITH NO ANSWER KEPT (kanban #2357): one peer
+        // that stayed down kept the record short of "every peer answered", and each stranger frame then POSTed
+        // /first-mark to EVERY peer again, the live ones included. Now the answered peers keep their answers, and a
+        // peer still unanswered (or not in the record) is offered the mark at most once per FIRST_MARK_REOFFER_MS.
         let replayOfDecided = false;
         if (firstMark) {
           const late = round.startForfeit(firstMark.c.entryId);
           const said = firstMarkForwards.get(toHex(firstMark.c.entryId));
-          replayOfDecided = !!late && toHex(late.mark) === toHex(firstMark.bytes)
-            && Array.isArray(said) && said.every((x) => x.answer !== 'unanswered');
+          replayOfDecided = !!late && toHex(late.mark) === toHex(firstMark.bytes) && Array.isArray(said);
         }
         if (firstMark && markVerifies && !round.holdsMark(checkpointId(firstMark.c))) {
           const own = lateEvidenceHere(firstMark.c, null);
-          const found = own ? { late: own, receipts: [] } : (peersCanTell ? await lateByPeers(firstMark.c, firstMark.bytes) : null);
+          const found = own ? { late: own, receipts: [] } : (peersCanTell ? await lateByPeersOnce(firstMark.c, firstMark.bytes) : null);
           if (found && found.twoFirst) {
             gatherOnProof(firstMark.c.roundId, firstMark.c.entryId);
             return sock.send('error FORFEIT: ' + TWO_FIRST_MARKS);
@@ -14562,7 +14595,29 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // otherwise be POSTed to every peer, and their 409s would overwrite the 'unanswered' §16's outage refund reads.
         let signedFirst = false;
         if (firstMark) { try { round.playerSigned(firstMark.bytes); signedFirst = true; } catch { signedFirst = false; } }
-        if (firstMark && signedFirst) { if (!replayOfDecided) forwardFirstMark(firstMark).catch((e) => console.error(`[first-mark] ${e.message}`)); }
+        if (firstMark && signedFirst) {
+          if (!replayOfDecided) forwardFirstMark(firstMark).catch((e) => console.error(`[first-mark] ${e.message}`));
+          else {
+            const eh = toHex(firstMark.c.entryId);
+            const said = firstMarkForwards.get(eh) || [];
+            const answered = new Set(said.filter((x) => x.answer !== 'unanswered').map((x) => x.peer));
+            const now = Date.now();
+            const due = (at) => {
+              if (answered.has(at)) return false;
+              const k = `${eh}|${at}`;
+              const last = firstMarkReoffered.get(k);
+              if (last !== undefined && now - last < FIRST_MARK_REOFFER_MS) return false;
+              if (firstMarkReoffered.size > 4096) firstMarkReoffered.clear();
+              firstMarkReoffered.set(k, now);
+              return true;
+            };
+            const wanted = verifier.peersOf(firstMark.c.roundId).map((p) => String(p).replace(/\/+$/, '')).filter(due);
+            if (wanted.length > 0) {
+              const pick = new Set(wanted);
+              forwardFirstMark(firstMark, { only: (at) => pick.has(at) }).catch((e) => console.error(`[first-mark] ${e.message}`));
+            }
+          }
+        }
         else if (isBinary && new Uint8Array(data)[0] === TYPE_CHECKPOINT)
           afterMarkTaken(new Uint8Array(data)).catch((e) => console.error(`[first-mark] ${e.message}`));
         return handled;
