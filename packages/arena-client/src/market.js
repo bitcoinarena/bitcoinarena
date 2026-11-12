@@ -482,6 +482,14 @@ export function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() })
     // read its position from the book after the close (`unfilled`); its stake comes back whole
     if (!row && p.unfilled) { lines.push({ ...at('refunded', { backMsat: String(p.stakeMsat) }), text: `${head}: ${signed} · your order matched nobody: its ${sats(p.stakeMsat)} sats come back whole` }); continue; }
     if (!row) { lines.push({ ...at('unknown'), text: `${head}: ${signed} · your pick is not in the signer nodes' table` }); continue; }
+    // WON OR LOST IS THE VERIFIED OUTCOME'S, NOT A SEAT'S TABLE (kanban #1615): `check` is what this page verified, `o.table`
+    // is one seat's word, unchecked - a seat could hand the real attestation of outcome 0 beside a table built for outcome 1,
+    // and the loser read "you won" under "verified" (or a winner "you lost"). A row whose `won` contradicts the pick against the
+    // verified outcome is shown as unverified, never as a result
+    if (!p.market.scalar && Number.isInteger(check.outcome) && (row.won === true) !== (Number(p.pick) === check.outcome)) {
+      lines.push({ ...at('unverified'), text: `${head}: ${signed} · the signer nodes' table contradicts the verified outcome: what this pick is paid is UNVERIFIED` });
+      continue;
+    }
     const net = BigInt(row.netMsat);
     const pay = BigInt(row.payoutMsat);
     // A FREE ROUND: nothing staked, so the pick was right or wrong and nothing more
