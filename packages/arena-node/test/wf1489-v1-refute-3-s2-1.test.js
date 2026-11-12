@@ -15,7 +15,7 @@ import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js'
 import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
 import { TEST_DONATION_SET_REGTEST } from '../../arena-protocol/src/test-donation-sets.js';
 import { donationSetId } from '../../arena-protocol/src/donation.js';
-import { onCurveX } from '../../arena-protocol/src/point.js';
+import { onCurveX } from '../../arena-protocol/src/guardian-payout.js';   // 2.0: onCurveX lives here (no point.js)
 import { taggedHash } from '../../arena-protocol/src/hash.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
