@@ -1540,6 +1540,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const j = await jsonUpTo(r, PEER_LISTING_BYTES);
           if (!j || !Array.isArray(j.rounds) || (keyed && j.roundKeys !== true)) continue;
           const node = typeof j.node === 'string' && /^[0-9a-f]{64}$/i.test(j.node) ? j.node.toLowerCase() : null;
+          // THE HONEST SHAPE ONLY (kanban #2355, #1489 a45-refute-22-s2, refute of #1856): an honest seat's GET /season-rounds (season-read.js
+          // signedSeasonRoundsJson) hands on each round once, with no signature or its OWN one (the node its answer names). An answer with a
+          // round twice, a second signature or one of another node is not a seat's own account: the seat counts as not answered, before
+          // anything is verified - so one seat costs at most one verify per round it was drawn for.
+          { const seen = new Set(); let honest = true;
+            for (const x of j.rounds) {
+              const rid = x && typeof x === 'object' ? String(x.roundId || '').toLowerCase() : '';
+              if (!/^[0-9a-f]{64}$/.test(rid)) continue;                   // left for the merge to refuse by name, never verified
+              if (seen.has(rid)) { honest = false; break; }
+              seen.add(rid);
+              const sigs = x.sigs;
+              if (sigs !== undefined && (!Array.isArray(sigs) || sigs.length > 1
+                || (sigs.length === 1 && (!node || !sigs[0] || String(sigs[0].node || '').toLowerCase() !== node)))) { honest = false; break; }
+            }
+            if (!honest) continue; }
           answers[i] = { seat: seats[i], node, rounds: seasonRoundsFromJson(j.rounds) };
         } catch { /* missing: no answer in time, or none that reads */ }
       }
