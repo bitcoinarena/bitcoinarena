@@ -3756,6 +3756,8 @@ function priceAttestationStands({ id, sigs, committee, threshold, verify }) {
     let key, sig;
     try { key = typeof s.key === 'string' ? s.key.toLowerCase() : toHex(s.key); } catch { continue; }
     if (!members.has(key) || signed.has(key)) continue;
+    // kanban #1530: the signature and key are decoded inside the checks below - a peer's odd-length or 1-char hex ('a')
+    // made match() return null and threw out of the whole check, so one bad seat hid the result the others signed.
     if (typeof s.signature === 'string') { if (!/^[0-9a-f]{128}$/i.test(s.signature)) continue; sig = fromHex(s.signature.toLowerCase()); }
     else if (s.signature instanceof Uint8Array && s.signature.length === 64) sig = s.signature;
     else continue;
@@ -9975,6 +9977,13 @@ async function agreedChain(providers, { least = 2, timeoutMs = 10000, ask, ancho
   // blocks deep, so nothing a client decides sits in the split. A provider that leaves it deeper is a fork, refused as before.
   const bestAt = new Map(best.hashes.map((h, i) => [h, i]));
   let cut = best.hashes.length;
+  // ONE FORKING SOURCE IS DROPPED, NOT OBEYED (kanban #1529): a seat answering the real chain cut 13 blocks below the tip plus
+  // headers of its own - mined at the easiest target it claims, so free - refused every join that picked it, although the other
+  // three sources agreed on the chain with the most work. A source that forks off the most-work chain deeper than a tip split is
+  // now set aside by name, and the chain stands only while at least `least` sources (and never fewer than two, the most-work one
+  // among them) still agree on it; with fewer the fork is refused as before: two sources that fork are two of whom one is lying.
+  const forked = [];
+  let firstFork = null;
   for (const a of good) {
     // ANSWERS ABOUT DIFFERENT PARTS OF THE CHAIN used to be told apart from a
     // fork here, and that branch is gone rather than left unreachable: every
@@ -9987,14 +9996,15 @@ async function agreedChain(providers, { least = 2, timeoutMs = 10000, ask, ancho
     const stray = a.hashes[i];
     const shared = i > 0 ? bestAt.get(a.hashes[i - 1]) : undefined;
     if (a.hashes.length - i > TIP_SPLIT_BLOCKS || shared === undefined) {
-      return {
-        ok: false,
-        why: `providers ${best.at} and ${a.at} do not agree on the chain: `
-          + `${stray} is not in the one with the most work`,
-      };
+      const why = `providers ${best.at} and ${a.at} do not agree on the chain: `
+        + `${stray} is not in the one with the most work`;
+      if (!firstFork) firstFork = why;
+      forked.push({ at: a.at, why });
+      continue;
     }
     cut = Math.min(cut, shared + 1);
   }
+  if (forked.length && good.length - forked.length < Math.max(least, 2)) return { ok: false, why: firstFork };
 
   return {
     ok: true,
@@ -10002,8 +10012,8 @@ async function agreedChain(providers, { least = 2, timeoutMs = 10000, ask, ancho
     headers: best.headers.slice(0, cut),
     work: best.work,
     from: best.at,
-    agreed: good.length,
-    refused: bad.map((b) => `provider ${b.at}: ${b.why}`),
+    agreed: good.length - forked.length,
+    refused: [...bad, ...forked].map((b) => `provider ${b.at}: ${b.why}`),
   };
 }
 
@@ -13145,21 +13155,38 @@ function servedNodesDiffer(claimed, mine) {
 /**
  * ONE SET OF ROUNDS FROM WHAT SEVERAL SEATS HOLD (measured 2026-10-15 17:3xZ: each seat holds only the FINALs of the
  * rounds it sat on - 14 seats gave 7 roots for one window). `held` is a list of seats' answers, each [{ roundId, committee, finals }];
- * a round's FINALs are joined (each signed FINAL once), and a round two seats name with different committees is left out and
- * named in `conflicts` - servedNodes then checks every FINAL itself, so a seat that hands over a forged one adds nothing.
+ * a round's FINALs are joined (each signed FINAL once) and servedNodes then checks every FINAL itself, so a seat that hands over a
+ * forged one adds nothing.
+ *
+ * ONE SEAT'S ANSWER DOES NOT DECIDE WHO IS PAID (kanban #1522, measured: one seat answering an invented round whose "committee" was
+ * 20 keys it made up, each with a FINAL, took 217,380 msat of a 500-sat item; naming a real round with another committee dropped the
+ * round, and the nodes that served it were paid nothing):
+ *   - a committee larger than any round may name is refused: genesis binds 7 slots, and a round names at most its draw, 9
+ *     (contracts.js sittingSeatsFitTheSlots, sortition.js drawnForRole);
+ *   - each seat's answer is read up to SERVED_HELD_MAX rounds;
+ *   - two seats naming one round with different committees no longer drop the round: the committee most seats name stands, and
+ *     between equally many the one held first (the caller's own record first, then the seats in the order it lists them).
  */
+const SERVED_COMMITTEE_MAX = 9;
+const SERVED_HELD_MAX = 20000;
 function mergeServedRounds(held) {
   const hx = (b) => toHex(b);
   const rounds = new Map(), conflicts = new Set();
-  for (const seat of held || []) for (const r of seat || []) {
-    if (!r || !snIs32(r.roundId) || !Array.isArray(r.committee)) continue;
-    const k = hx(r.roundId), committee = r.committee.map(hx).sort().join();
-    if (!rounds.has(k)) rounds.set(k, { roundId: r.roundId, committee: r.committee, key: committee, finals: new Map() });
-    const into = rounds.get(k);
-    if (into.key !== committee) { conflicts.add(k); continue; }
-    for (const f of r.finals || []) if (f instanceof Uint8Array) into.finals.set(hx(f), f);
+  for (const seat of held || []) {
+    if (!Array.isArray(seat)) continue;
+    for (const r of seat.slice(0, SERVED_HELD_MAX)) {
+      if (!r || !snIs32(r.roundId) || !Array.isArray(r.committee) || !r.committee.length || r.committee.length > SERVED_COMMITTEE_MAX || !r.committee.every(snIs32)) continue;
+      const k = hx(r.roundId), committee = [...new Set(r.committee.map(hx))].sort().join();
+      if (!rounds.has(k)) rounds.set(k, { roundId: r.roundId, copies: new Map(), finals: new Map() });
+      const into = rounds.get(k);
+      if (!into.copies.has(committee)) into.copies.set(committee, { committee: r.committee, seats: 0 });
+      into.copies.get(committee).seats++;
+      if (into.copies.size > 1) conflicts.add(k);
+      for (const f of r.finals || []) if (f instanceof Uint8Array) into.finals.set(hx(f), f);
+    }
   }
-  return { rounds: [...rounds.entries()].filter(([k]) => !conflicts.has(k)).map(([, r]) => ({ roundId: r.roundId, committee: r.committee, finals: [...r.finals.values()] })),
+  const pick = (copies) => { let best = null; for (const c of copies.values()) if (!best || c.seats > best.seats) best = c; return best.committee; };
+  return { rounds: [...rounds.values()].map((r) => ({ roundId: r.roundId, committee: pick(r.copies), finals: [...r.finals.values()] })),
     conflicts: [...conflicts] };
 }
 
@@ -14359,7 +14386,7 @@ async function fetchRound(id, nodes, { fetcher = fetch } = {}) {
  * nobody replays - which is the fault this function exists to end, arriving by
  * another road. So this is the chain rule again, in the small: every node the
  * URL named is asked, and a disagreement is a refusal by name rather than a
- * majority or a first answer.
+ * first answer - unless more than half of the named nodes agree (kanban #1523).
  *
  * WHAT THIS IS NOT is proof that the hash is the block 5A.5 names. Deriving
  * the height from the chain is letter 32's work and the page does not do it;
@@ -14399,12 +14426,22 @@ async function readRandomness(id, nodes, fetcher) {
   if (!said.length)
     throw new Error('no node named this round\'s randomness: ' + refused.join('; '));
   const first = toHex(said[0].hash);
-  for (const s of said.slice(1)) {
-    if (toHex(s.hash) !== first)
-      throw new Error(`${said[0].node} says this round's randomness is ${first} and `
-        + `${s.node} says ${toHex(s.hash)}: a round whose nodes name two worlds is not one round`);
-  }
-  return { randomness: said[0].hash, height: said[0].height, agreed: said.length, refused };
+  const other = said.find((s) => toHex(s.hash) !== first);
+  if (!other) return { randomness: said[0].hash, height: said[0].height, agreed: said.length, refused };
+  // ONE SEAT OF SEVEN DOES NOT CLOSE EVERY WORLD IT SITS ON (kanban #1523): a disagreement threw at once, so one seat answering 32
+  // other bytes made no player's world seed for any round it was named on - after the stake was locked - while six seats read the
+  // same block hash. A value held by MORE THAN HALF OF THE NODES THE ROUND NAMED (not of those that answered: a seat that stays
+  // silent does not lower the bar) is the round's, and the seats that said otherwise are named as refused; with no such majority
+  // (a 2-of-2's one liar, a split) it is still the refusal by name it was.
+  const count = new Map();
+  for (const s of said) { const h = toHex(s.hash); count.set(h, (count.get(h) || 0) + 1); }
+  const [won, n] = [...count].sort((a, b) => b[1] - a[1])[0];
+  if (2 * n <= nodes.length)
+    throw new Error(`${said[0].node} says this round's randomness is ${first} and `
+      + `${other.node} says ${toHex(other.hash)}: a round whose nodes name two worlds is not one round`);
+  const kept = said.filter((s) => toHex(s.hash) === won);
+  for (const s of said) if (toHex(s.hash) !== won) refused.push(`${s.node}: named randomness ${toHex(s.hash)}, not the ${n} of ${nodes.length} nodes' ${won}`);
+  return { randomness: kept[0].hash, height: kept[0].height, agreed: kept.length, refused };
 }
 
 /**
@@ -19158,6 +19195,9 @@ function markLockCommitted(storage, { roundId, playerPubkey, entryId }) {
  * verified; the lock client then refuses one the guardians do not hold as
  * rebuilt, so a lying signer node can point at nothing this key can spend.
  */
+// (kanban #1531) a player has one stake lock in a round, a few versions of it at most (kanban #1273): what one seat's answer and all of them may name
+const LOCKS_PER_SEAT = 8;
+const LOCKS_FOUND_MAX = 64;
 async function findLock({ roundId, playerPubkey, nodes, fetcher = fetch } = {}) {
   const refund = toHex(refundKeyOf(playerPubkey));
   const found = new Map();
@@ -19178,24 +19218,38 @@ async function findLock({ roundId, playerPubkey, nodes, fetcher = fetch } = {}) 
       if (!Array.isArray(raw)) return { said: `${name} malformed`, got: [] };
       const got = [];
       for (const l of raw) {
-        if (!l || typeof l !== 'object' || !/^[0-9a-f]{64}:\d+$/.test(String(l.outpoint))) continue;
-        const [txid, outIdx] = String(l.outpoint).split(':');
-        let lock;
-        try { lock = { outpoint: { txid: fromHex(txid), outIdx: BigInt(outIdx) }, fields: lockFieldsFromJson(l.fields), entryId: l.entryId }; } catch { continue; }
-        got.push({ l, lock });
+        // EVERY FIELD USED LATER IS CHECKED HERE, IN THIS SEAT'S OWN TRY (kanban #1671, refute of #1489 CLIENT-1): an outpoint or entryId
+        // String() cannot convert ({"toString":0,"valueOf":0}) threw in the merge key below, outside any try, and dropped every honest
+        // seat's lock. The outpoint must be text, the entryId absent or text; the merge key is built here from the checked values
+        if (!l || typeof l !== 'object' || typeof l.outpoint !== 'string' || !/^[0-9a-f]{64}:\d+$/.test(l.outpoint)) continue;
+        if (l.entryId !== undefined && l.entryId !== null && typeof l.entryId !== 'string') continue;
+        const [txid, outIdx] = l.outpoint.split(':');
+        let lock, key;
+        try {
+          lock = { outpoint: { txid: fromHex(txid), outIdx: BigInt(outIdx) }, fields: lockFieldsFromJson(l.fields), entryId: l.entryId };
+          key = `${l.outpoint}|${JSON.stringify(l.fields)}|${(l.entryId || '').toLowerCase()}`;
+        } catch { continue; }
+        got.push({ key, lock });
+        if (got.length >= LOCKS_PER_SEAT) break;   // kanban #1531: no more of one seat's answer counts
       }
       return { said: `${name} ${got.length}`, got, node };
     } catch (e) { return { said: `${name} ${String(e && e.message || e).slice(0, 40)}`, got: [] }; }
   }));
   const said = answers.map((a) => a.said);
-  for (const { got } of answers) {
-    for (const { l, lock } of got) {
-      // EVERY SEAT'S VERSION OF AN OUTPOINT, NOT ONLY THE FIRST (kanban #1273, audit 4 #1257 seats-5): one seat listed first answered the real
-      // outpoint with a field changed (or a made-up entry id), and the honest copies were dropped - the stake read "gone" for good, or waited for
-      // its expiry. Each distinct version is kept; the federation's stored contract (heldByGuardians) and the forfeit check pick the real one
-      const key = `${l.outpoint}|${JSON.stringify(l.fields)}|${String(l.entryId || '').toLowerCase()}`;
-      if (!found.has(key)) found.set(key, lock);
-    }
+  // WHAT ONE SEAT CAN ADD IS BOUNDED (kanban #1531, audit #1489 r2 client-3): one seat answered thousands of made-up locks under the
+  // player's refund key, every one was kept, and the collect asked each a forfeit of every seat in turn (redeemStake) or a lockStatus of
+  // the federation (heldByGuardians) - hours of requests. A seat's first LOCKS_PER_SEAT entries count, taken round-robin over the seats
+  // (each seat's first lock before any seat's second), and the whole list stops at LOCKS_FOUND_MAX
+  const lists = answers.map(({ got }) => (Array.isArray(got) ? got.slice(0, LOCKS_PER_SEAT) : []));
+  const picked = [];
+  for (let i = 0; i < LOCKS_PER_SEAT; i++) for (const got of lists) if (i < got.length) picked.push(got[i]);
+  for (const { key, lock } of picked) {
+    if (found.size >= LOCKS_FOUND_MAX) break;
+    // EVERY SEAT'S VERSION OF AN OUTPOINT, NOT ONLY THE FIRST (kanban #1273, audit 4 #1257 seats-5): one seat listed first answered the real
+    // outpoint with a field changed (or a made-up entry id), and the honest copies were dropped - the stake read "gone" for good, or waited for
+    // its expiry. Each distinct version is kept; the federation's stored contract (heldByGuardians) and the forfeit check pick the real one
+    // (kanban #1671) the key was built inside the seat's own try: nothing here can throw for the whole look
+    if (!found.has(key)) found.set(key, lock);
   }
   const out = [...found.values()];
   out.asked = asked.length;
@@ -19375,8 +19429,12 @@ async function redeemStake({ round, roundId, invite, seed, curve, LockClient, st
  * agree, their settlement is the answer, whatever a lone seat says.
  */
 // a settlement's payout list as the page reads it (kanban #1489): each an object with a string pk and an integer msat
+// (kanban #1671) and a kind that is text or absent, and an msat that is text or a number: nothing String() could throw on is kept
 const wellFormedPayouts = (payouts) => Array.isArray(payouts) && payouts.every((p) => p && typeof p === 'object'
-  && typeof p.pk === 'string' && /^\d+$/.test(String(p.msat)));
+  && typeof p.pk === 'string' && (p.kind === undefined || p.kind === null || typeof p.kind === 'string')
+  && (typeof p.msat === 'string' || typeof p.msat === 'number') && /^\d+$/.test(String(p.msat)));
+// a settlement's txid as the page reads it (kanban #1671): 64 hex characters, or the answer is not counted
+const wellFormedTxid = (txid) => typeof txid === 'string' && /^[0-9a-f]{64}$/i.test(txid);
 async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1, payee = null } = {}) {
   // EVERY SIGNER NODE AT ONCE (kanban #593)
   const answers = await Promise.all([...new Set(nodes || [])].map(async (node) => {
@@ -19388,16 +19446,20 @@ async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1, payee
         // EVERY PAYOUT WELL FORMED, OR THE ANSWER IS NOT COUNTED (kanban #1489, audit WF1489 CLIENT-1): a `null` payout threw in keyOf for
         // every seat's answer, and the honest seats' agreeing settlement was lost with it
         if (!wellFormedPayouts(j.moved.payouts)) return { said: `${node}: malformed` };
-        return { ok: true, txid: j.txid, moved: j.moved, from: node };
+        // A TXID THAT IS NOT TEXT IS THIS SEAT'S OWN MALFORMED ANSWER (kanban #1671, refute of #1489 CLIENT-1): `{"toString":0}` threw in
+        // keyOf below, outside this try, for every seat's answer. The settlement's key is built here, inside this seat's try
+        if (!wellFormedTxid(j.txid)) return { said: `${node}: malformed` };
+        const key = `${j.txid.toLowerCase()}|${JSON.stringify(j.moved.payouts.map((p) => [p.kind || 'qualifier', p.pk.toLowerCase(), String(p.msat)]))}`;
+        return { ok: true, txid: j.txid, moved: j.moved, from: node, key };
       }
-      return { said: `${node}: ${j && j.state}` };
+      return { said: `${node}: ${j && typeof j.state === 'string' ? j.state : 'malformed'}` };
     } catch (e) { return { said: `${node}: ${e.message}` }; }
   }));
   const accepted = answers.filter((a) => a.ok);
   // the same settlement: its txid and its payouts in their order (an output's index is its place in the list)
-  const keyOf = (a) => `${String(a.txid).toLowerCase()}|${JSON.stringify(a.moved.payouts.map((p) => [p.kind || 'qualifier', String(p.pk).toLowerCase(), String(p.msat)]))}`;
+  // (kanban #1671) each answer's key was built in its own seat's try
   const groups = new Map();
-  for (const a of accepted) { const k = keyOf(a); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(a); }
+  for (const a of accepted) { const k = a.key; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(a); }
   const ranked = [...groups.values()].sort((x, y) => y.length - x.length);
   const need = Math.max(1, Number(needed) || 1);
   const pays = (a) => !!payee && a.moved.payouts.some((p) => (p.kind || 'qualifier') === 'qualifier' && String(p.pk).toLowerCase() === String(payee).toLowerCase());
@@ -19507,9 +19569,11 @@ async function federationSettlementsOf({ roundId, nodes, fetcher = fetch } = {})
       const j = await r.json();
       // (kanban #1489) a null federation or payout is a malformed answer, not a throw: the next seat is asked
       if (j && j.state === 'ACCEPTED' && Array.isArray(j.federations) && j.federations.length
-        && j.federations.every((f) => f && f.state === 'ACCEPTED' && f.moved && wellFormedPayouts(f.moved.payouts)))
+        && j.federations.every((f) => f && f.state === 'ACCEPTED' && f.moved && wellFormedPayouts(f.moved.payouts)
+          // (kanban #1671) the federation and txid are read with String() by the collect, outside any try: text only
+          && typeof f.federation === 'string' && wellFormedTxid(f.txid)))
         return { ok: true, federations: j.federations, from: node };
-      said.push(`${node}: ${j && j.state}`);
+      said.push(`${node}: ${j && typeof j.state === 'string' ? j.state : 'malformed'}`);
     } catch (e) { said.push(`${node}: ${e.message}`); }
   }
   return { ok: false, why: `no signer node holds every federation's settlement of this round accepted yet (${said.join('; ')})` };
@@ -24819,42 +24883,10 @@ async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verif
     // A READ THAT NEVER GOT AN ANSWER (kanban #803: "Load failed" on a phone) is a node that did not answer, as one past ANSWER_MS is
     } catch (e) { return { node: base, why: e.message, late: true }; }
   }), nodes.map((node) => String(node).replace(/\/+$/, '')))).filter((a) => a.bytes || !a.late);
-  const missing = answers.filter((a) => !a.bytes);
-  if (missing.length)
-    return { ok: false, why: `not every signer node of this round serves its donation set: ${missing.map((a) => `${a.node}: ${a.why}`).join('; ')}` };
-  if (!kept && answers.length * 2 < nodes.length)
-    return { ok: false, why: `only ${answers.length} of ${nodes.length} nodes served this round's donation set in ${DONATION_ANSWER_MS} ms` };
-  const served = toHex(answers[0].bytes);
-  if (answers.some((a) => toHex(a.bytes) !== served)) return { ok: false, why: 'the signer nodes of this round serve different donation sets' };
-  // A SET ITS DEVELOPERS APPROVED (§27A.4.1): the nodes serve, as JSON, the admin key's set it replaces (signed,
-  // checked below as any set), the proposals and approvals since, and the admin key's signature over the approved set (`admin`, kanban
-  // #1337); this page tallies them itself
-  let approval = null;
-  let bytes = answers[0].bytes;
-  if (bytes.length && bytes[0] === 0x7b) {
-    try { approval = JSON.parse(new TextDecoder().decode(bytes)); } catch { approval = null; }
-    if (!approval || approval.approved !== true || typeof approval.root !== 'string' || !Array.isArray(approval.chain))
-      return { ok: false, why: 'the nodes serve a set its developers approved, and not the proof of it' };
-    try { bytes = fromHex(approval.root); } catch { return { ok: false, why: 'the admin key\'s set behind the approved set is not hex' }; }
-  }
-  if (bytes.length <= DONATION_SIGNATURE_BYTES) return { ok: false, why: 'that is no signed donation set' };
-  let set;
-  try { set = { ...decodeDonationSetBody(bytes.slice(0, -DONATION_SIGNATURE_BYTES)), signature: bytes.slice(-DONATION_SIGNATURE_BYTES) }; }
-  catch (e) { return { ok: false, why: `that is no donation set: ${e.message}` }; }
-  if (toHex(set.networkId) !== toHex(round.networkId)) return { ok: false, why: 'that donation set is for another network' };
-  if (!approval) {
-    const named = donationSetMatchesRound(round, set.recipients);
-    if (!named.ok) return { ok: false, why: named.why };
-    // BOTH KEYS ON THE PLAIN PATH TOO (kanban #1447): a set served without approvals stands only if the authority could make it alone
-    const alone = plainDonationSetStands(set, plainPins || undefined);
-    if (!alone.ok) return { ok: false, why: alone.why };
-  }
-  if (!(set.validFrom <= round.censusHeight)) return { ok: false, why: 'that donation set is not in force at the round\'s height' };
-
   // EVERY SIGNER NODE'S ROTATIONS, EACH CHECKED HERE against the network's recovery
   // key: a signer node that hides a rotation cannot hide it from the other signer nodes.
   const offered = new Map();
-  for (const a of answers) for (const r of a.rotations) {
+  for (const a of answers) for (const r of a.rotations || []) {
     try { offered.set(`${r.body}:${r.signature}`, { ...decodeAuthorityRotation(fromHex(String(r.body))), signature: fromHex(String(r.signature)) }); }
     catch { /* not a rotation: nothing to apply */ }
   }
@@ -24864,41 +24896,99 @@ async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verif
     if (await verifyEd25519(rot.signature, authorityRotationId(rot), networkKeys.recovery) === true) signedRotations.add(toHex(rot.signature));
   const inForce = authorityAt({ networkId: round.networkId, authority: networkKeys.authority, recovery: networkKeys.recovery,
     rotations, height: round.censusHeight, verify: (sig) => signedRotations.has(toHex(sig)) });
-  if (await verifyEd25519(set.signature, donationSetBodyId(set), inForce.authority) !== true)
-    return { ok: false, why: 'that donation set is not signed by the network\'s donation authority at the round\'s height' };
-  if (approval) {
-    // the ballots oldest first, each checked against the set it replaces; the set in force at the round's height must be the one it names
-    let ballots;
-    try {
-      ballots = approval.chain.slice().reverse().map((c) => {
-        const pb = fromHex(String(c.proposal));
-        return { proposal: { ...decodeDonationProposal(pb.slice(0, -64)), signature: pb.slice(-64) },
-          approvals: (c.approvals || []).map((h) => { const ab = fromHex(String(h)); return { ...decodeDonationApproval(ab.slice(0, -64)), signature: ab.slice(-64) }; }) };
-      });
-    } catch (e) { return { ok: false, why: `the developers' ballots served do not decode: ${e.message}` }; }
-    const got = await approvedDonationSets({ networkId: round.networkId, known: [set], ballots, verifySecp256k1 });
-    // A CHANGE NEEDS BOTH KEYS (§27A.4.1 RULED 2026-11-07, kanban #1337, 8a94d6cbf: "the authority key alone moves nothing" - and the
-    // recipients alone neither): the approved serial is in force only beside the authority's signature over the same serial and recipients.
-    // The nodes hand it as `admin` (body + signature, like `root`), checked here against the authority in force; without it the approvals
-    // alone make no set in force, and this page used to refuse every approved split for that reason (kanban #1415).
-    const signedSets = [set];
-    if (typeof approval.admin === 'string') {
-      try {
-        const ab = fromHex(approval.admin);
-        if (ab.length > DONATION_SIGNATURE_BYTES) {
-          const admin = { ...decodeDonationSetBody(ab.slice(0, -DONATION_SIGNATURE_BYTES)), signature: ab.slice(-DONATION_SIGNATURE_BYTES) };
-          if (await verifyEd25519(admin.signature, donationSetBodyId(admin), inForce.authority) === true) signedSets.push(admin);
-        }
-      } catch { /* not a signed set: the approvals alone, refused below */ }
+
+  // ONE SEAT CANNOT TAKE THE ROUND'S SET AWAY (kanban #1524): every answering seat had to serve the set byte for byte, so one seat
+  // answering a 4xx or another validly signed set refused every paid join of every round it sat on while six of seven served the
+  // set. The set proves itself (signed by the authority in force, named by round.donationSetId): the answers are grouped by their
+  // bytes, and when the seats disagree a group served by more than half of ALL the round's nodes is taken if it passes every check
+  // below; the seats that said otherwise are reported (`dissent`), not obeyed. With no such group the refusal is said as before.
+  const checkServed = async (served) => {
+    // A SET ITS DEVELOPERS APPROVED (§27A.4.1): the nodes serve, as JSON, the admin key's set it replaces (signed,
+    // checked below as any set), the proposals and approvals since, and the admin key's signature over the approved set (`admin`, kanban
+    // #1337); this page tallies them itself
+    let approval = null;
+    let bytes = served;
+    if (bytes.length && bytes[0] === 0x7b) {
+      try { approval = JSON.parse(new TextDecoder().decode(bytes)); } catch { approval = null; }
+      if (!approval || approval.approved !== true || typeof approval.root !== 'string' || !Array.isArray(approval.chain))
+        return { ok: false, why: 'the nodes serve a set its developers approved, and not the proof of it' };
+      try { bytes = fromHex(approval.root); } catch { return { ok: false, why: 'the admin key\'s set behind the approved set is not hex' }; }
     }
-    const signedSigs = new Set(signedSets.map((x) => toHex(x.signature)));
-    const now = donationSetInForce({ networkId: round.networkId, authority: inForce.authority, recovery: networkKeys.recovery, sets: signedSets, rotations: [],
-      height: round.censusHeight, verify: (sig) => signedSigs.has(toHex(sig)), approved: got.sets });
-    const said = [...got.refused, ...now.refused];
-    if (!now.ok || !now.approvedBy) return { ok: false, why: `the developers' approvals served do not make a set in force at the round's height${said.length ? ': ' + said[0] : ''}` };
-    const named = donationSetMatchesRound(round, now.recipients);
-    if (!named.ok) return { ok: false, why: named.why };
-    set = { networkId: set.networkId, serial: now.serial, validFrom: now.validFrom, recipients: now.recipients, approvedBy: now.approvedBy };
+    if (bytes.length <= DONATION_SIGNATURE_BYTES) return { ok: false, why: 'that is no signed donation set' };
+    let set;
+    try { set = { ...decodeDonationSetBody(bytes.slice(0, -DONATION_SIGNATURE_BYTES)), signature: bytes.slice(-DONATION_SIGNATURE_BYTES) }; }
+    catch (e) { return { ok: false, why: `that is no donation set: ${e.message}` }; }
+    if (toHex(set.networkId) !== toHex(round.networkId)) return { ok: false, why: 'that donation set is for another network' };
+    if (!approval) {
+      const named = donationSetMatchesRound(round, set.recipients);
+      if (!named.ok) return { ok: false, why: named.why };
+      // BOTH KEYS ON THE PLAIN PATH TOO (kanban #1447): a set served without approvals stands only if the authority could make it alone
+      const alone = plainDonationSetStands(set, plainPins || undefined);
+      if (!alone.ok) return { ok: false, why: alone.why };
+    }
+    if (!(set.validFrom <= round.censusHeight)) return { ok: false, why: 'that donation set is not in force at the round\'s height' };
+    if (await verifyEd25519(set.signature, donationSetBodyId(set), inForce.authority) !== true)
+      return { ok: false, why: 'that donation set is not signed by the network\'s donation authority at the round\'s height' };
+    if (approval) {
+      // the ballots oldest first, each checked against the set it replaces; the set in force at the round's height must be the one it names
+      let ballots;
+      try {
+        ballots = approval.chain.slice().reverse().map((c) => {
+          const pb = fromHex(String(c.proposal));
+          return { proposal: { ...decodeDonationProposal(pb.slice(0, -64)), signature: pb.slice(-64) },
+            approvals: (c.approvals || []).map((h) => { const ab = fromHex(String(h)); return { ...decodeDonationApproval(ab.slice(0, -64)), signature: ab.slice(-64) }; }) };
+        });
+      } catch (e) { return { ok: false, why: `the developers' ballots served do not decode: ${e.message}` }; }
+      const got = await approvedDonationSets({ networkId: round.networkId, known: [set], ballots, verifySecp256k1 });
+      // A CHANGE NEEDS BOTH KEYS (§27A.4.1 RULED 2026-11-07, kanban #1337, 8a94d6cbf: "the authority key alone moves nothing" - and the
+      // recipients alone neither): the approved serial is in force only beside the authority's signature over the same serial and recipients.
+      // The nodes hand it as `admin` (body + signature, like `root`), checked here against the authority in force; without it the approvals
+      // alone make no set in force, and this page used to refuse every approved split for that reason (kanban #1415).
+      const signedSets = [set];
+      if (typeof approval.admin === 'string') {
+        try {
+          const ab = fromHex(approval.admin);
+          if (ab.length > DONATION_SIGNATURE_BYTES) {
+            const admin = { ...decodeDonationSetBody(ab.slice(0, -DONATION_SIGNATURE_BYTES)), signature: ab.slice(-DONATION_SIGNATURE_BYTES) };
+            if (await verifyEd25519(admin.signature, donationSetBodyId(admin), inForce.authority) === true) signedSets.push(admin);
+          }
+        } catch { /* not a signed set: the approvals alone, refused below */ }
+      }
+      const signedSigs = new Set(signedSets.map((x) => toHex(x.signature)));
+      const now = donationSetInForce({ networkId: round.networkId, authority: inForce.authority, recovery: networkKeys.recovery, sets: signedSets, rotations: [],
+        height: round.censusHeight, verify: (sig) => signedSigs.has(toHex(sig)), approved: got.sets });
+      const said = [...got.refused, ...now.refused];
+      if (!now.ok || !now.approvedBy) return { ok: false, why: `the developers' approvals served do not make a set in force at the round's height${said.length ? ': ' + said[0] : ''}` };
+      const named = donationSetMatchesRound(round, now.recipients);
+      if (!named.ok) return { ok: false, why: named.why };
+      set = { networkId: set.networkId, serial: now.serial, validFrom: now.validFrom, recipients: now.recipients, approvedBy: now.approvedBy };
+    }
+    return { ok: true, set };
+  };
+  const missing = answers.filter((a) => !a.bytes);
+  const groups = new Map();
+  for (const a of answers) if (a.bytes) { const k = toHex(a.bytes); groups.set(k, [...(groups.get(k) || []), a]); }
+  let chosen = null, set = null, dissent = [];
+  if (!missing.length && groups.size === 1) {
+    if (!kept && answers.length * 2 < nodes.length)
+      return { ok: false, why: `only ${answers.length} of ${nodes.length} nodes served this round's donation set in ${DONATION_ANSWER_MS} ms` };
+    const got = await checkServed(answers[0].bytes);
+    if (!got.ok) return got;
+    chosen = answers; set = got.set;
+  } else if (!missing.length && !groups.size) {
+    return { ok: false, why: `only 0 of ${nodes.length} nodes served this round's donation set in ${DONATION_ANSWER_MS} ms` };
+  } else {
+    for (const g of [...groups.values()].sort((x, y) => y.length - x.length)) {
+      if (g.length * 2 <= nodes.length) break;
+      const got = await checkServed(g[0].bytes);
+      if (got.ok) { chosen = g; set = got.set; break; }
+    }
+    if (!chosen) {
+      if (missing.length)
+        return { ok: false, why: `not every signer node of this round serves its donation set: ${missing.map((a) => `${a.node}: ${a.why}`).join('; ')}` };
+      return { ok: false, why: 'the signer nodes of this round serve different donation sets' };
+    }
+    dissent = answers.filter((a) => !chosen.includes(a)).map((a) => ({ node: a.node, why: a.bytes ? 'serves another donation set' : a.why }));
   }
 
   // AND THE GAME DEV'S SET (§0A.8): every signer node serves the one its round's game's manifest names, and it
@@ -24929,10 +25019,10 @@ async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verif
     if (!gameSet) return { ok: false, why: `no signer node of this round serves its game's donation set: ${tried.join('; ')}` };
     GAME_SETS_FETCHED.set(wantGame, gameSet);
   }
-  if (keepBySet && !kept) DONATION_SETS_FETCHED.set(setKey, answers);
+  if (keepBySet && !kept) DONATION_SETS_FETCHED.set(setKey, chosen);
   // A SET THAT VESTS (§27A.4.1) pays its shares at the round's census height, as the seats split it
-  return { ok: true, set, gameSet, target: { network: vestedShares(set.recipients, round.censusHeight), game: gameSet }, signerNodes: answers.length, rotated: inForce.rotated,
-    why: `${answers.length} signer node(s) serve the set this round names, signed by its donation authority, and the game's set its manifest names` };
+  return { ok: true, set, gameSet, target: { network: vestedShares(set.recipients, round.censusHeight), game: gameSet }, signerNodes: chosen.length, dissent, rotated: inForce.rotated,
+    why: `${chosen.length} signer node(s) serve the set this round names, signed by its donation authority, and the game's set its manifest names` };
 }
 
 // ---- arena-client/src/client.js
@@ -31349,6 +31439,8 @@ async function roundVerdict({ roundId, nodes, committee, verify, threshold = nul
       if (!r.ok) { said.push(`${base}: ${(await r.text()).slice(0, 120)}`); return; }
       const j = await r.json();
       if (!Number.isInteger(j.openCents) || !Number.isInteger(j.closeCents) || !j.key || !j.signature) return;
+      // kanban #1530: a key that is not 64 hex or a signature that is not 128 hex is refused at the door, before grouping.
+      if (typeof j.key !== 'string' || !/^[0-9a-fA-F]{64}$/.test(j.key) || typeof j.signature !== 'string' || !/^[0-9a-fA-F]{128}$/.test(j.signature)) return;
       const k = `${j.openCents}:${j.closeCents}`;
       if (!byResult.has(k)) byResult.set(k, { openCents: j.openCents, closeCents: j.closeCents, sigs: [] });
       byResult.get(k).sigs.push({ key: j.key, signature: j.signature });
@@ -31381,21 +31473,32 @@ async function roundVerdict({ roundId, nodes, committee, verify, threshold = nul
 
 // AS MANY AS SETTLE THE ROUND (2026-10-30: "0 of 2 macht gar keinen sinn"): the two was the two-node test network's; a run fewer than five signer nodes hold cannot settle
 const NODES_HOLDING = SETTLEMENT_THRESHOLD;
+// kanban #1508: EACH NODE GETS A BOUNDED WAIT. One seat that takes GET /transcript and never answers (or dribbles the body) held the
+// whole ask - and with it the page's "keep this tab open" - for ever, while the other seats held the run. A node that has not answered,
+// body read, within this many ms is counted as unanswered and the others decide.
+const NODE_WAIT_MS = 8000;
 
 /**
  * `nodes` the committee's bases; `finalTick` the run's last tick (the client's own count); `mirror` an optional base. Answers
  * { safe, holders: [base], hash, ticks, mirrored, why }.
  */
-async function secureTranscript({ roundId, entryId, nodes, finalTick, mirror = null, fetcher = fetch, need = NODES_HOLDING } = {}) {
+async function secureTranscript({ roundId, entryId, nodes, finalTick, mirror = null, fetcher = fetch, need = NODES_HOLDING, waitMs = NODE_WAIT_MS } = {}) {
   const q = `round=${toHex(roundId)}&entry=${toHex(entryId)}`;
   const said = [];
   const held = await Promise.all([...new Set(nodes || [])].map(async (base) => {
+    // kanban #1508: the fetch and its body read race one timer; the abort also ends a fetcher that honours the signal
+    const ac = new AbortController();
+    let timer;
+    const late = new Promise((_, no) => { timer = setTimeout(() => { ac.abort(); no(new Error(`no answer in ${waitMs} ms`)); }, waitMs); });
     try {
-      const r = await fetcher(`${String(base).replace(/\/+$/, '')}/transcript?${q}`);
-      if (!r.ok) { said.push(`${base}: ${r.status}`); return null; }
-      const ticks = Number(r.headers.get('x-ticks')), hash = String(r.headers.get('x-transcript-hash') || '').toLowerCase();
-      return { base, ticks, hash, bytes: new Uint8Array(await r.arrayBuffer()) };
+      return await Promise.race([late, (async () => {
+        const r = await fetcher(`${String(base).replace(/\/+$/, '')}/transcript?${q}`, { signal: ac.signal });
+        if (!r.ok) { said.push(`${base}: ${r.status}`); return null; }
+        const ticks = Number(r.headers.get('x-ticks')), hash = String(r.headers.get('x-transcript-hash') || '').toLowerCase();
+        return { base, ticks, hash, bytes: new Uint8Array(await r.arrayBuffer()) };
+      })()]);
     } catch (e) { said.push(`${base}: ${e.message}`); return null; }
+    finally { clearTimeout(timer); }
   }));
   const groups = new Map();
   for (const h of held) {
@@ -34213,19 +34316,22 @@ function itemPriceOn(manifest, priceSat, devsPct) {
 /** The served list of the 24 h before `toMs`, from every seat that answers. Answers { ok, served, seats } or { ok: false, why }. */
 async function servedFromSeats({ seats, toMs, fetch, verify, timeoutMs = 15000 }) {
   const fromMs = BigInt(toMs) - BigInt(SERVED_WINDOW_MS);
+  // kept in the order the seats are listed, not the order they answer (kanban #1522): between two committees named by equally many
+  // seats the one held first stands (mergeServedRounds), and that must not be whichever seat answered fastest
   const held = [];
-  await Promise.all((seats || []).map(async (s) => {
+  await Promise.all((seats || []).map(async (s, i) => {
     try {
       const r = await fetch(`${String(s).replace(/\/$/, '')}/served?to=${toMs}&finals=1`, { signal: AbortSignal.timeout(timeoutMs) });
       if (!r.ok) return;
       const a = await r.json();
-      held.push((a.held || []).map((x) => ({ roundId: fromHex(x.roundId), committee: x.committee.map(fromHex), finals: x.finals.map(fromHex) })));
+      held[i] = (a.held || []).slice(0, SERVED_HELD_MAX).map((x) => ({ roundId: fromHex(x.roundId), committee: x.committee.map(fromHex), finals: x.finals.map(fromHex) }));
     } catch { /* a seat that does not answer adds nothing */ }
   }));
-  if (!held.length) return { ok: false, why: 'no seat answered who served a round in the last 24 hours' };
-  const served = servedNodes({ rounds: mergeServedRounds(held).rounds, fromMs, toMs: BigInt(toMs), verify });
+  const answered = held.filter(Boolean).length;
+  if (!answered) return { ok: false, why: 'no seat answered who served a round in the last 24 hours' };
+  const served = servedNodes({ rounds: mergeServedRounds(held.filter(Boolean)).rounds, fromMs, toMs: BigInt(toMs), verify });
   if (!served.nodes.length) return { ok: false, why: 'no node served a round in the last 24 hours: the nodes\' half has nobody to go to' };
-  return { ok: true, served, seats: held.length };
+  return { ok: true, served, seats: answered };
 }
 
 /**
@@ -34512,6 +34618,10 @@ function valueAttestationStands(a, { manifest, roundIdBytes, verify }) {
     return { ok: false, why: `that value attestation is for round ${toHex(a.roundId).slice(0, 16)}, not this round ${scIs32(roundIdBytes) ? toHex(roundIdBytes).slice(0, 16) : ''}`.trim() };
   if (typeof verify !== 'function') return { ok: false, why: 'no verifier to check the attestors\' signatures' };
   const named = new Set(manifest.attestors.map(toHex));
+  // A LIST LONGER THAN THE ATTESTOR SET (kanban #1546) holds a key twice: refused before any signature is checked, so a public
+  // value attestation padded with one good signature repeated (u16 vec, up to 65,535) costs a seat no verification at all
+  if ((a.signatures || []).length > named.size)
+    return { ok: false, why: `that value attestation carries ${(a.signatures || []).length} signatures, more than the ${named.size} attestors game "${manifest.gameName}" names` };
   const signed = new Set();
   for (const s of a.signatures || []) {
     const k = toHex(s.key);
@@ -34723,6 +34833,11 @@ function attestationStands(a, { manifest: game, roundIdBytes, verify, round = nu
   const keysOf = draws ? drawn.map((k) => (typeof k === 'string' ? k.toLowerCase() : toHex(k))) : manifest.attestors.map(toHex);
   const need = draws ? manifest.attestDraw.threshold : manifest.attestThreshold;
   const named = new Set(keysOf);
+  // A LIST LONGER THAN THE ATTESTOR SET (kanban #1546) holds a key twice - each key must be one the set names. Refused before any
+  // signature is checked: the wire's u16 vec carries up to 65,535, and one public attestation padded with a repeat of a good
+  // signature made POST /outcome run every check on the seat's one thread (65,002 Ed25519: 2.5 s; BIP-340 in JS: ~40 s).
+  if ((a.signatures || []).length > named.size)
+    return { ok: false, why: `that attestation carries ${(a.signatures || []).length} signatures, more than the ${named.size} attestors ${draws ? 'this round drew' : `game "${manifest.gameName}" names`}` };
   const signed = new Set();
   for (const s of a.signatures || []) {
     const k = toHex(s.key);

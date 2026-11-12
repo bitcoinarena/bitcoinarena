@@ -2063,11 +2063,18 @@ export async function findLock({ roundId, playerPubkey, nodes, fetcher = fetch }
       if (!Array.isArray(raw)) return { said: `${name} malformed`, got: [] };
       const got = [];
       for (const l of raw) {
-        if (!l || typeof l !== 'object' || !/^[0-9a-f]{64}:\d+$/.test(String(l.outpoint))) continue;
-        const [txid, outIdx] = String(l.outpoint).split(':');
-        let lock;
-        try { lock = { outpoint: { txid: fromHex(txid), outIdx: BigInt(outIdx) }, fields: lockFieldsFromJson(l.fields), entryId: l.entryId }; } catch { continue; }
-        got.push({ l, lock });
+        // EVERY FIELD USED LATER IS CHECKED HERE, IN THIS SEAT'S OWN TRY (kanban #1671, refute of #1489 CLIENT-1): an outpoint or entryId
+        // String() cannot convert ({"toString":0,"valueOf":0}) threw in the merge key below, outside any try, and dropped every honest
+        // seat's lock. The outpoint must be text, the entryId absent or text; the merge key is built here from the checked values
+        if (!l || typeof l !== 'object' || typeof l.outpoint !== 'string' || !/^[0-9a-f]{64}:\d+$/.test(l.outpoint)) continue;
+        if (l.entryId !== undefined && l.entryId !== null && typeof l.entryId !== 'string') continue;
+        const [txid, outIdx] = l.outpoint.split(':');
+        let lock, key;
+        try {
+          lock = { outpoint: { txid: fromHex(txid), outIdx: BigInt(outIdx) }, fields: lockFieldsFromJson(l.fields), entryId: l.entryId };
+          key = `${l.outpoint}|${JSON.stringify(l.fields)}|${(l.entryId || '').toLowerCase()}`;
+        } catch { continue; }
+        got.push({ key, lock });
         if (got.length >= LOCKS_PER_SEAT) break;   // kanban #1531: no more of one seat's answer counts
       }
       return { said: `${name} ${got.length}`, got, node };
@@ -2081,12 +2088,12 @@ export async function findLock({ roundId, playerPubkey, nodes, fetcher = fetch }
   const lists = answers.map(({ got }) => (Array.isArray(got) ? got.slice(0, LOCKS_PER_SEAT) : []));
   const picked = [];
   for (let i = 0; i < LOCKS_PER_SEAT; i++) for (const got of lists) if (i < got.length) picked.push(got[i]);
-  for (const { l, lock } of picked) {
+  for (const { key, lock } of picked) {
     if (found.size >= LOCKS_FOUND_MAX) break;
     // EVERY SEAT'S VERSION OF AN OUTPOINT, NOT ONLY THE FIRST (kanban #1273, audit 4 #1257 seats-5): one seat listed first answered the real
     // outpoint with a field changed (or a made-up entry id), and the honest copies were dropped - the stake read "gone" for good, or waited for
     // its expiry. Each distinct version is kept; the federation's stored contract (heldByGuardians) and the forfeit check pick the real one
-    const key = `${l.outpoint}|${JSON.stringify(l.fields)}|${String(l.entryId || '').toLowerCase()}`;
+    // (kanban #1671) the key was built inside the seat's own try: nothing here can throw for the whole look
     if (!found.has(key)) found.set(key, lock);
   }
   const out = [...found.values()];
@@ -2267,8 +2274,12 @@ export async function redeemStake({ round, roundId, invite, seed, curve, LockCli
  * agree, their settlement is the answer, whatever a lone seat says.
  */
 // a settlement's payout list as the page reads it (kanban #1489): each an object with a string pk and an integer msat
+// (kanban #1671) and a kind that is text or absent, and an msat that is text or a number: nothing String() could throw on is kept
 const wellFormedPayouts = (payouts) => Array.isArray(payouts) && payouts.every((p) => p && typeof p === 'object'
-  && typeof p.pk === 'string' && /^\d+$/.test(String(p.msat)));
+  && typeof p.pk === 'string' && (p.kind === undefined || p.kind === null || typeof p.kind === 'string')
+  && (typeof p.msat === 'string' || typeof p.msat === 'number') && /^\d+$/.test(String(p.msat)));
+// a settlement's txid as the page reads it (kanban #1671): 64 hex characters, or the answer is not counted
+const wellFormedTxid = (txid) => typeof txid === 'string' && /^[0-9a-f]{64}$/i.test(txid);
 export async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1, payee = null } = {}) {
   // EVERY SIGNER NODE AT ONCE (kanban #593)
   const answers = await Promise.all([...new Set(nodes || [])].map(async (node) => {
@@ -2280,16 +2291,20 @@ export async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1
         // EVERY PAYOUT WELL FORMED, OR THE ANSWER IS NOT COUNTED (kanban #1489, audit WF1489 CLIENT-1): a `null` payout threw in keyOf for
         // every seat's answer, and the honest seats' agreeing settlement was lost with it
         if (!wellFormedPayouts(j.moved.payouts)) return { said: `${node}: malformed` };
-        return { ok: true, txid: j.txid, moved: j.moved, from: node };
+        // A TXID THAT IS NOT TEXT IS THIS SEAT'S OWN MALFORMED ANSWER (kanban #1671, refute of #1489 CLIENT-1): `{"toString":0}` threw in
+        // keyOf below, outside this try, for every seat's answer. The settlement's key is built here, inside this seat's try
+        if (!wellFormedTxid(j.txid)) return { said: `${node}: malformed` };
+        const key = `${j.txid.toLowerCase()}|${JSON.stringify(j.moved.payouts.map((p) => [p.kind || 'qualifier', p.pk.toLowerCase(), String(p.msat)]))}`;
+        return { ok: true, txid: j.txid, moved: j.moved, from: node, key };
       }
-      return { said: `${node}: ${j && j.state}` };
+      return { said: `${node}: ${j && typeof j.state === 'string' ? j.state : 'malformed'}` };
     } catch (e) { return { said: `${node}: ${e.message}` }; }
   }));
   const accepted = answers.filter((a) => a.ok);
   // the same settlement: its txid and its payouts in their order (an output's index is its place in the list)
-  const keyOf = (a) => `${String(a.txid).toLowerCase()}|${JSON.stringify(a.moved.payouts.map((p) => [p.kind || 'qualifier', String(p.pk).toLowerCase(), String(p.msat)]))}`;
+  // (kanban #1671) each answer's key was built in its own seat's try
   const groups = new Map();
-  for (const a of accepted) { const k = keyOf(a); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(a); }
+  for (const a of accepted) { const k = a.key; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(a); }
   const ranked = [...groups.values()].sort((x, y) => y.length - x.length);
   const need = Math.max(1, Number(needed) || 1);
   const pays = (a) => !!payee && a.moved.payouts.some((p) => (p.kind || 'qualifier') === 'qualifier' && String(p.pk).toLowerCase() === String(payee).toLowerCase());
@@ -2399,9 +2414,11 @@ export async function federationSettlementsOf({ roundId, nodes, fetcher = fetch 
       const j = await r.json();
       // (kanban #1489) a null federation or payout is a malformed answer, not a throw: the next seat is asked
       if (j && j.state === 'ACCEPTED' && Array.isArray(j.federations) && j.federations.length
-        && j.federations.every((f) => f && f.state === 'ACCEPTED' && f.moved && wellFormedPayouts(f.moved.payouts)))
+        && j.federations.every((f) => f && f.state === 'ACCEPTED' && f.moved && wellFormedPayouts(f.moved.payouts)
+          // (kanban #1671) the federation and txid are read with String() by the collect, outside any try: text only
+          && typeof f.federation === 'string' && wellFormedTxid(f.txid)))
         return { ok: true, federations: j.federations, from: node };
-      said.push(`${node}: ${j && j.state}`);
+      said.push(`${node}: ${j && typeof j.state === 'string' ? j.state : 'malformed'}`);
     } catch (e) { said.push(`${node}: ${e.message}`); }
   }
   return { ok: false, why: `no signer node holds every federation's settlement of this round accepted yet (${said.join('; ')})` };
