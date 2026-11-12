@@ -366,11 +366,19 @@ export class OrderBook {
     if (BigInt(this.now()) >= m.contract.entryCloseMs) return refuse(`the market closed at ${new Date(Number(m.contract.entryCloseMs)).toISOString()}: no ${kind} after it`);
     const c = kind === 'cancel' ? this.#cancelStands(roundIdBytes, body) : this.#sellStands(roundIdBytes, body);
     if (!c.ok) return c;
+    // A CANCEL IS FINAL FOR ITS ENTRY (kanban #2283): cancelId is one id per entry, so a second cancel is the same event - once a batch
+    // carried it, no leader carries it again. A sell placed after it rested where no door could take it out, and the door answered
+    // "inNextBatch" for a cancel no batch would carry. Now a sell of an entry with a cancel here is refused, and a cancel already in a
+    // batch says which one instead of promising the next.
+    const rid = Buffer.from(roundIdBytes);
+    const cancelRow = this.db.prepare("SELECT batch FROM market_book_events WHERE round_id = ? AND kind = 'cancel' AND entry_id = ?").get(rid, String(body.entry));
+    if (kind === 'sell' && cancelRow) return refuse(`that entry's cancel is ${cancelRow.batch === null ? 'waiting for a batch' : `in batch ${cancelRow.batch}`}: a cancelled entry sells nothing more`);
+    if (kind === 'cancel' && cancelRow && cancelRow.batch !== null) return refuse(`that cancel is already carried by batch ${cancelRow.batch}`);
     if (kind === 'sell') {
       // A SELL ONLY OF AN ORDER IN THE BOOK HERE, AND A FEW AT A TIME (kanban #1526: a stranger's lockless order - no sat spent - signed
       // thousands of sells, each nonce a new row, and every leader's lead() went quadratic over them): its locks verified at this seat
       // (tradable), and no more than MAX_UNBATCHED_SELLS of its sells waiting for a batch here
-      const rid = Buffer.from(roundIdBytes), tradable = this.db.prepare('SELECT 1 FROM market_orders WHERE order_id = ? AND round_id = ?');
+      const tradable = this.db.prepare('SELECT 1 FROM market_orders WHERE order_id = ? AND round_id = ?');
       if (!tradable.get(String(body.entry), rid)) { this.#syncTradable(roundIdBytes); if (!tradable.get(String(body.entry), rid)) return refuse('that order is not tradable at this seat: its locks are not verified here, it holds nothing to sell'); }
       const held = this.db.prepare('SELECT 1 FROM market_book_events WHERE event_id = ?').get(c.id);
       const waiting = this.db.prepare("SELECT count(*) AS n FROM market_book_events WHERE round_id = ? AND kind = 'sell' AND entry_id = ? AND batch IS NULL").get(rid, String(body.entry)).n;
@@ -644,6 +652,9 @@ export class OrderBook {
       // ledger skipped the cancel, the cancel was marked batched for good (one id per entry), and the order filled in the next batch
       const lost = L.refused.find((r) => r.why.startsWith('a cancel') && (record.cancels || []).some((c) => c.entry === r.id));
       if (lost) return refuse(`a cancel of that batch does not stand: ${lost.why}`);
+      // NO SELL OF A CANCELLED ENTRY (kanban #2283): its cancel, in this batch or one before, is final - nothing could cancel the sell
+      const late = rec.sells.find((s) => L.positions.get(s.entry)?.cancelled);
+      if (late) return refuse(`a sell of that batch does not stand: entry ${late.entry.slice(0, 16)} is cancelled, and a cancelled entry sells nothing more`);
     }
     return { ok: true, id: rec.id, k, events: rec.events };
   }
@@ -1209,6 +1220,8 @@ export class OrderBook {
       const noCancel = new Set(L.refused.filter((r) => r.why.startsWith('a cancel')).map((r) => r.id));
       record.cancels = record.cancels.filter((c) => !noCancel.has(c.entry));
     } }
+    // and a sell of an entry cancelled in the book or in this set is left out for good (kanban #2283: the seats refuse the set over it)
+    if (record.sells.length) { const L = this.ledger(roundIdBytes, record); if (L.ok) record.sells = record.sells.filter((s) => !L.positions.get(String(s.entry))?.cancelled); }
     if (!record.orders.length && !record.cancels.length && !record.sells.length) return { ok: true, empty: true, decided };
     const idc = this.#recordId(roundIdBytes, record);
     if (!idc.ok) return idc;
