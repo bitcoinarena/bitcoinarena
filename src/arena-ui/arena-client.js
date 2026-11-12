@@ -30521,7 +30521,12 @@ function beaconIsTheChains(contract, beacon, view) {
 
 const sameCC = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array && a.length === b.length && a.every((x, i) => x === b[i]);
 const bytesOfCC = (v) => (v instanceof Uint8Array ? v : typeof v === 'string' ? fromHex(v) : null);
-const proofOf = (p) => (p ? { transaction: bytesOfCC(p.transaction), branch: (p.branch || []).map(bytesOfCC), position: p.position | 0 } : null);
+// A BRANCH IS A LIST OR THE PROOF DOES NOT READ (kanban #2160, #2228, #2301): `(p.branch || []).map` threw a TypeError for a string branch
+const proofOf = (p) => {
+  if (!p) return null;
+  if (p.branch !== undefined && p.branch !== null && !Array.isArray(p.branch)) throw new Error('its branch is not a list');
+  return { transaction: bytesOfCC(p.transaction), branch: (p.branch || []).map(bytesOfCC), position: p.position | 0 };
+};
 
 // THE HEADERS BY THEIR MERKLE ROOT, once per header set: a proof's root is computed once and looked up, instead of
 // re-deriving it against each of ~2,000 headers (measured on testnet4: 280 ms an entry, 2 s a census, before this)
@@ -30558,7 +30563,13 @@ function committedSigned(tx) {
  * ONE CENSUS ENTRY FROM ITS EVIDENCE, as RESOLVE and the update/re-affirmation steps of deriveCensus make it - or why not.
  * `item` is { transaction, branch, position, update?, reaffirm? } (hex or bytes), each proved into `headers`.
  */
-function entryFromEvidence(item, { contract, headers, firstHeight, bond, verify }) {
+// EVIDENCE THAT DOES NOT READ IS A REFUSED ENTRY, NEVER A THROW (kanban #2160, #2228, #2301): one seat's entry with odd-length hex or a branch
+// that is not a list threw out of censusFromEvidence and clientCommittee, so the client never asked the honest seats and named nobody
+function entryFromEvidence(item, opts) {
+  try { return readEntryFromEvidence(item, opts); }
+  catch (e) { return { ok: false, why: `the evidence does not read: ${e && e.message ? e.message : String(e)}` }; }
+}
+function readEntryFromEvidence(item, { contract, headers, firstHeight, bond, verify }) {
   const network = networkOf(contract.networkId);
   if (!network) return { ok: false, why: 'that round names a network this client has no genesis for' };
   const b = proofOf(item);
@@ -30757,6 +30768,7 @@ async function explorerAgrees({ base, points, fetcher = fetch, timeoutMs = 8000 
 
 
 
+
 /**
  * THE ARBITRATION SET AND BOND TERMS A BOND IS REBUILT WITH, per network: genesis' own (testnetShape: 5 of the 7 keys,
  * template-1 maturity 100). Read from genesis-ids.js rather than genesis.js, which the page's bundle does not carry;
@@ -30907,6 +30919,10 @@ async function evidenceFor(roundIdHex, contract, nodes, { fetcher, skip = new Se
       if (!r.ok) { refused.push(`${u}: ${r.status}`); continue; }
       const j = await r.json();
       if (!j || !Array.isArray(j.entries)) { refused.push(`${u}: no entries`); continue; }
+      // A PROVIDER LISTING ONE BOND TWICE IS REFUSED ON ITS OWN, before the union (kanban #2160, #2228, #2301): in the union its repeat
+      // made the census uncommittable and its honest co-provider was skipped with it - on three seats the join was refused
+      const twice = repeatedBondIn(j.entries);
+      if (twice) { refused.push(`${u}: lists one bond twice`); continue; }
       // the nodes this seat left out for their protocol version: shown, never counted
       if (Array.isArray(j.tooOld)) keptTooOld.set(key, j.tooOld.filter((x) => x && /^[0-9a-f]{64}$/.test(String(x.node))));
       roots.add(root); got.push({ from: u, entries: j.entries });
@@ -30922,11 +30938,26 @@ async function evidenceFor(roundIdHex, contract, nodes, { fetcher, skip = new Se
  * ({ transaction, position, branch, update }), so a bond is its raw transaction there; an entry naming txid and vout is keyed by them (#1333:
  * keyed by txid:vout alone, the 18 live entries all became "undefined:undefined" - one entry, a root that never matched).
  */
+// A BOND IS KEYED BY WHAT IT READS AS, NOT HOW IT IS SPELLED (kanban #1708, then #2160, #2228, #2301): lower-casing was not enough - fromHex
+// reads ' d', '+d' and 'd ' as 0x0d too, so a repeat spelled that way kept two copies, censusRootOf threw 'duplicate outpoint' and both
+// providers were skipped, the honest one with the liar. The key is the transaction's txid (witness bytes do not change it), with the
+// re-affirmation's for a carried bond - the client derives one entry from exactly that pair.
+const txidKeyOf = (t) => {
+  if (t === undefined || t === null) return '';
+  try { return toHex(parseTransaction(t instanceof Uint8Array ? t : fromHex(String(t))).txid); }
+  catch { return `raw:${typeof t === 'string' ? t.toLowerCase() : JSON.stringify(t)}`; }
+};
 const bondKeyOf = (e) => (e && e.txid !== undefined && e.vout !== undefined
   ? `o:${Array.isArray(e.txid) || e.txid instanceof Uint8Array ? toHex(Uint8Array.from(e.txid)) : String(e.txid)}:${e.vout}`
-  // A BOND'S HEX IS ONE KEY WHATEVER ITS CASE (kanban #1708): fromHex reads 'AB' and 'ab' alike, so one provider repeating a bond in upper
-  // case kept two copies in the union, censusRootOf threw 'duplicate outpoint' and the join was refused for good
-  : `t:${typeof e?.transaction === 'string' ? e.transaction.toLowerCase() : JSON.stringify(e)}`);
+  : e && e.transaction !== undefined
+    ? `t:${txidKeyOf(e.transaction)}:${e.reaffirm && typeof e.reaffirm === 'object' ? txidKeyOf(e.reaffirm.transaction) : ''}`
+    : `j:${JSON.stringify(e)}`);
+/** The first bond one provider's own list holds twice, or null (kanban #2160, #2228, #2301). */
+const repeatedBondIn = (list) => {
+  const seen = new Set();
+  for (const e of list) { const k = bondKeyOf(e); if (seen.has(k)) return k; seen.add(k); }
+  return null;
+};
 function unionOfEntries(lists) {
   const byBond = new Map();
   for (const list of lists) for (const e of list || []) {
@@ -30990,9 +31021,13 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
   let got;
   for (;;) {
     if (!evidence.ok) return { ...evidence, why: evidence.why + (censusRefused.length ? `; ${censusRefused.map((x) => `${x.node}: ${x.why}`).join('; ')}` : ''), censusRefused };
-    got = committeeFromChain({ contract, roundId, headers: chain.chain.headers, firstHeight: chain.firstHeight, evidence: evidence.entries, roles,
-      bond: { arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK, bondMaturity: g.bondMaturity, tweakPoint: curve.bondTweakPoint, combine: curve.bondCombine },
-      verify: curve.verify, census: skip.size ? null : keptChecked.get(toHex(contract.censusRoot)) || null });
+    // A THROW WHILE CHECKING A PROVIDER'S EVIDENCE IS THAT PROVIDER'S FAULT (kanban #2160, #2228, #2301): it was thrown out of the join,
+    // nobody named and no other seat asked
+    try {
+      got = committeeFromChain({ contract, roundId, headers: chain.chain.headers, firstHeight: chain.firstHeight, evidence: evidence.entries, roles,
+        bond: { arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK, bondMaturity: g.bondMaturity, tweakPoint: curve.bondTweakPoint, combine: curve.bondCombine },
+        verify: curve.verify, census: skip.size ? null : keptChecked.get(toHex(contract.censusRoot)) || null });
+    } catch (e) { got = { ok: false, why: `that census cannot be committed: ${e && e.message ? e.message : String(e)}` }; }
     // A CENSUS THAT CANNOT BE COMMITTED IS A PROVIDER'S FAULT TOO (kanban #1708): a union with one outpoint twice (any encoding of one bond)
     // threw in censusRootOf, which is not a root mismatch, so the loop stopped and never asked the other seats - its providers are skipped
     if (got.ok || evidence.from === 'kept' || !/^(the census the seats handed over hashes to |that census cannot be committed: )/.test(String(got.why))) break;

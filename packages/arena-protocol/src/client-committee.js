@@ -32,7 +32,12 @@ import { toHex, fromHex } from './hash.js';
 
 const sameCC = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array && a.length === b.length && a.every((x, i) => x === b[i]);
 const bytesOfCC = (v) => (v instanceof Uint8Array ? v : typeof v === 'string' ? fromHex(v) : null);
-const proofOf = (p) => (p ? { transaction: bytesOfCC(p.transaction), branch: (p.branch || []).map(bytesOfCC), position: p.position | 0 } : null);
+// A BRANCH IS A LIST OR THE PROOF DOES NOT READ (kanban #2160, #2228, #2301): `(p.branch || []).map` threw a TypeError for a string branch
+const proofOf = (p) => {
+  if (!p) return null;
+  if (p.branch !== undefined && p.branch !== null && !Array.isArray(p.branch)) throw new Error('its branch is not a list');
+  return { transaction: bytesOfCC(p.transaction), branch: (p.branch || []).map(bytesOfCC), position: p.position | 0 };
+};
 
 // THE HEADERS BY THEIR MERKLE ROOT, once per header set: a proof's root is computed once and looked up, instead of
 // re-deriving it against each of ~2,000 headers (measured on testnet4: 280 ms an entry, 2 s a census, before this)
@@ -69,7 +74,13 @@ function committedSigned(tx) {
  * ONE CENSUS ENTRY FROM ITS EVIDENCE, as RESOLVE and the update/re-affirmation steps of deriveCensus make it - or why not.
  * `item` is { transaction, branch, position, update?, reaffirm? } (hex or bytes), each proved into `headers`.
  */
-export function entryFromEvidence(item, { contract, headers, firstHeight, bond, verify }) {
+// EVIDENCE THAT DOES NOT READ IS A REFUSED ENTRY, NEVER A THROW (kanban #2160, #2228, #2301): one seat's entry with odd-length hex or a branch
+// that is not a list threw out of censusFromEvidence and clientCommittee, so the client never asked the honest seats and named nobody
+export function entryFromEvidence(item, opts) {
+  try { return readEntryFromEvidence(item, opts); }
+  catch (e) { return { ok: false, why: `the evidence does not read: ${e && e.message ? e.message : String(e)}` }; }
+}
+function readEntryFromEvidence(item, { contract, headers, firstHeight, bond, verify }) {
   const network = networkOf(contract.networkId);
   if (!network) return { ok: false, why: 'that round names a network this client has no genesis for' };
   const b = proofOf(item);
