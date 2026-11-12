@@ -12352,7 +12352,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const kind = url.searchParams.get('kind') === 'resend' ? 'resend' : 'auth';
         const attempt = url.searchParams.has('attempt') ? Number(url.searchParams.get('attempt')) : null;
         if (url.pathname === '/send-commit') {
-          const got = await sender.commit(r8, eHex, built, kind, attempt, { hash: url.searchParams.get('hash') });
+          // SIGNED BY A SEAT OF THE ROUND (kanban #2308, #2322): the pair is drawn into that seat's own bucket and spent only on a list it signs;
+          // an unsigned ask (a seat on an older build) draws from the one bucket all unsigned asks share
+          const got = await sender.commit(r8, eHex, built, kind, attempt, { hash: url.searchParams.get('hash'), header: req.headers[SEND_PLAN_ASK_HEADER] || null,
+            ask: url.searchParams.get('ask'), at: url.searchParams.get('at') });
           if (!got.ok) return text(res, got.status || 409, got.why);
           res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
           // (a member of S answers its seat and its MuSig2 nonces, kanban #1044 B1)
@@ -12360,7 +12363,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         }
         let list;
         try { const raw = new Uint8Array(await read(req, built.named ? undefined : MOST_COMMITMENTS * COMMITMENT_BYTES)); list = built.named ? decodeNamedResendList(raw) : decodeCommitments(raw); } catch (e) { return text(res, e && e.tooLarge ? 413 : 400, e.message); }   // a plain list: a committee's at most (kanban #1672)
-        const got = await sender.share(r8, eHex, built, list, kind, attempt);
+        const got = await sender.share(r8, eHex, built, list, kind, attempt, { header: req.headers[SEND_PLAN_ASK_HEADER] || null });   // kanban #2308, #2322
         if (!got.ok) return text(res, got.status || 409, got.why);
         res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
         return res.end(Buffer.from(got.named ? got.wire : encodeShare(got.share)));

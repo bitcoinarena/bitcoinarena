@@ -21,14 +21,23 @@ export const SEND_PLAN_ASK_HEADER = 'x-send-plan-ask';
  * What the signature is for: a proposed first plan, a re-send, a seat's kept plan as it hands it out - and (kanban #1185) a paid send's preimage
  * handed to the round's other seats (POST /winnings-paid; the body is the 32-byte preimage).
  */
-export const PLAN_ASK = Object.freeze({ PROPOSE: 1, RESEND: 2, KEPT: 3, PAID: 4 });
+export const PLAN_ASK = Object.freeze({ PROPOSE: 1, RESEND: 2, KEPT: 3, PAID: 4, COMMIT: 5, SHARE: 6 });
+
+/**
+ * A SEND'S NONCE PAIR IS DRAWN AND SPENT BY ONE ASKER (kanban #2308, #2322): POST /send-commit is signed (kind 5) over these bytes - the
+ * send's kind, entry, attempt and hash, the pass's own random ask id and the asker's clock - and POST /send-share (kind 6) over the
+ * commitment list it carries. The asked seat keeps the pair under the signing seat and spends it only on a list that same seat signs.
+ */
+export function sendCommitAskBody({ kind, entry, attempt, hash, ask, at }) {
+  return `send-commit|${kind}|${String(entry).toLowerCase()}|${attempt === null || attempt === undefined ? '' : Number(attempt)}|${String(hash || '').toLowerCase()}|${String(ask).toLowerCase()}|${Number(at)}`;
+}
 
 const TAG_HASH = sha256(new TextEncoder().encode('ARENA/v1/SendPlanAsk'));
 const bytesOf = (body) => (body instanceof Uint8Array ? body : new TextEncoder().encode(String(body ?? '')));
 
 /** The digest a seat signs: the kind, the round, the late entry (or zeros), and the body's hash. */
 export function sendPlanAskDigest({ kind, roundId, lateEntryId = null, body }) {
-  if (!Object.values(PLAN_ASK).includes(kind)) throw new Error('a send plan ask is a proposal, a re-send, a kept plan or a paid preimage');
+  if (!Object.values(PLAN_ASK).includes(kind)) throw new Error('a send plan ask is a proposal, a re-send, a kept plan, a paid preimage, or a send\'s commit or share');
   if (!(roundId instanceof Uint8Array) || roundId.length !== 32) throw new Error('a send plan ask names a 32-byte round');
   if (lateEntryId && (!(lateEntryId instanceof Uint8Array) || lateEntryId.length !== 32)) throw new Error('a late entry is 32 bytes');
   const msg = new Uint8Array(64 + 1 + 32 + 32 + 32);
