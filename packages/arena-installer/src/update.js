@@ -373,6 +373,14 @@ export async function resumeUpdate({ home, env = process.env, sh = run, fetcher 
   const r = await rollBack({ svc, home, moving, oldTexts: j.oldTexts || {}, migrating: j.migrating, confFile: join(home, 'arena.conf'), backup: j.backup, keepDb: served,
     to: j.to, port: j.port, fetcher, waitMs, sleep });
   journalStep(home, j.id, U.ROLLED_BACK, { restored: r.back.ok, dbKept: r.dbKept });
+  // A ROLLBACK THE RESUME MADE IS RECORDED AS THE AUTO UPDATER RECORDS ITS OWN (kanban #1581, audit #1489 sm1-node-2): without it the #1369
+  // day's wait never applied to a release whose updater died, and the first check after the service's restart (or the move right after this
+  // resume inside updateNode) stopped the node again for the same broken release - every ~10 min for good when it kills the updater each time
+  const id = releaseIdOf(j.to);
+  if (id.version) {
+    try { writeFileSync(join(home, 'auto-update.json'), JSON.stringify({ atMs: Date.now(), ok: false, from: releaseIdOf(j.from).version, to: id.version, why, rolledBack: true, resumed: true, ...(id.commit ? { commit: id.commit } : {}) }, null, 2) + '\n', { mode: 0o600 }); }
+    catch { /* the log has it */ }
+  }
   return { resumed: 'rolled-back', from: j.from, to: j.to, why, restored: r.back.ok, dbKept: r.dbKept, ...(r.put.ok ? {} : { notRestored: r.put.failed }) };
 }
 
@@ -611,7 +619,11 @@ export async function updateNode({ progress = () => {}, lock = takeUpdateLock, .
     // AN UPDATE THAT DID NOT FINISH (its updater died) is finished first - kept or rolled back - before this one reads what runs (kanban #1166)
     let resumed = null;
     try { resumed = await resumeUpdate({ ...o }); } catch (e) { end({ failed: true, pct: at.pct, step: 'Finishing the update before', why: e.message }); throw e; }
-    try { r = await moveNode({ ...o, say, failedAt: () => at.step }); } catch (e) { end({ failed: true, pct: at.pct, step: at.step, why: e.message }); throw e; }
+    // THE RELEASE THE RESUME JUST ROLLED BACK is not moved to again in the same call (kanban #1581): the auto updater says so
+    // (retryRolledBack false); `bitcoinarena update` (force) and a release given by hand move as before
+    if (resumed && resumed.resumed === 'rolled-back' && resumed.to === o.newRelease && o.retryRolledBack === false)
+      r = { ok: false, rolledBack: true, why: `the unfinished update to this release was rolled back just now: ${resumed.why}`, restored: resumed.restored };
+    else try { r = await moveNode({ ...o, say, failedAt: () => at.step }); } catch (e) { end({ failed: true, pct: at.pct, step: at.step, why: e.message }); throw e; }
     // the unfinished update was this one, and its release is kept now: done
     if (resumed && resumed.resumed === 'kept' && resumed.to === o.newRelease && !r.ok && r.why === 'that release is the one running') r = { ok: true, already: true, to: o.newRelease, from: resumed.from };
     if (resumed) r = { ...r, resumed };

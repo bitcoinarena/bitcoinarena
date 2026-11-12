@@ -614,13 +614,21 @@ const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]);
+const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 27]);
 /** The last BLWP/v1 tags become ARENA/v1 at one point per network (tag-switch.js, kanban #525). */
 const TAG_SWITCH_VERSION = 18;
 /** A node's bond outputs count as their sum: the round's floor is applied to it (census.js nodeBonds, kanban #544). */
 const BOND_SUM_VERSION = 19;
 /** Under capacity pressure the guardians' custody share is weighted by bond up to B*, squared (§23A.3a part 1, kanban #559/#543). */
 const PRESSURE_WEIGHT_VERSION = 20;
+/**
+ * 2026.0.27 - NO DEVELOPER OR RESERVE MONEY FOR AN ENTRY THAT IS NOT ACCEPTED (kanban #1486, ruled 2026-11-11: "Er sollte keine fees
+ * entgegen nehmen wenn die order nicht angenommen wird"; FEDERATION.md "Amended 2026-11-11"). A paid game round of this version takes the
+ * developers' 4 % and the reserves' 2 % in the entry's FEE LOCK, beside the nodes' 4 % (fee 10 %, donation 0, no donation or reserve
+ * output), and pays them at settlement for counted entries only - a refused, void or refunded entry gets them back with its stake. 21 is the
+ * drawn attestors' label (#630) and 22-26 are taken on the 2.0 branches, so this is 27; versions are cumulative, keep them in step.
+ */
+const GIFTS_IN_FEE_LOCK_VERSION = 27;
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (RULED 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -12945,12 +12953,50 @@ function reservesEntryExpected({ entry, recipients, reserveKey, split = ROUND_SP
 }
 
 /**
- * THE ENTRY FEE RATE OF A ROUND (§27A.9.1): a version-11 round of a game takes the nodes' mandatory 4 %; a market, and every
- * older round, the rate its manifest gives (entryFeeBpsOf: the network's 5 %, or a market's own).
+ * THE DEVELOPERS' AND THE RESERVES' PARTS IN THE FEE LOCK (protocol 27, kanban #1486, ruled 2026-11-11: "Er sollte keine fees entgegen
+ * nehmen wenn die order nicht angenommen wird"): a paid round of version 27 or later takes the whole 10 % in the entry's fee lock - nodes,
+ * developers and reserves - and no donation or reserve output, so a refused, void or refunded entry gets all of it back with its stake,
+ * and only a counted entry pays it, at settlement (lock-settlement.js feeSettlement `gifts`). A market already does (donationInFee).
  */
-const entryFeeBpsForRound = (contract, manifest) => (paysReserves(contract) && !donationInFee(manifest) ? RESERVES_NODE_FEE_BPS : entryFeeBpsOf(manifest));
-/** Does this round's entry pay the reserves - a version-11 round of a game (a market's reserves are a later slice)? */
-const entryPaysReserves = (contract, manifest) => paysReserves(contract) && !donationInFee(manifest);
+const giftsInFeeLock = (contract) => paysReserves(contract) && Number(contract.protocolVersion) >= GIFTS_IN_FEE_LOCK_VERSION;
+/** The whole rate a protocol-27 game entry's fee lock holds, in bps of its stake: nodes + developers + reserves (10 % today). */
+const giftsFeeBps = (split = ROUND_SPLIT_BPS) => split.nodes + split.protocolDevs + split.gameDevs + split.reserves;
+/** Does this round's entry carry the developers' and the reserves' parts in its fee lock - a version-27 round of a game? */
+const entryGiftsInFee = (contract, manifest) => giftsInFeeLock(contract) && !donationInFee(manifest);
+
+/**
+ * WHAT A VERSION-27 GAME ENTRY MUST NAME (kanban #1486): a fee of the whole rate of its stake (giftsFeeBps, floored once - the
+ * rate every fee is, entryFeeMsat), a donation of 0 and no donation or reserve outpoint. Of that fee the nodes' part is their rate
+ * (floored) and the reserves' theirs (floored, roundSplit), and the developers' the rest - so the three are the fee to the msat.
+ * Answers { ok, fee, nodesMsat, devsMsat, reservesMsat } or why not, by name.
+ */
+function giftsEntryExpected({ entry, split = ROUND_SPLIT_BPS }) {
+  if (!entry || typeof entry.stakeMsat !== 'bigint' || typeof entry.feeMsat !== 'bigint') return { ok: false, why: 'that entry names no stake and fee' };
+  if (entry.stakeMsat < 1n) return { ok: false, why: 'a paid entry stakes at least 1 msat' };
+  const parts = roundSplit(entry.stakeMsat, { split });
+  const fee = bps(entry.stakeMsat, giftsFeeBps(split));
+  const devsMsat = fee - parts.nodesMsat - parts.reservesMsat;
+  const v = GIFTS_IN_FEE_LOCK_VERSION;
+  if (entry.donationMsat !== 0n)
+    return { ok: false, why: `on protocol version ${v} the developers' and the reserves' parts are in the fee lock: that entry names a donation of ${entry.donationMsat} msat beside it` };
+  if ((entry.donationOutpoints || []).length || (entry.reserveOutpoint !== undefined && entry.reserveOutpoint !== null))
+    return { ok: false, why: `on protocol version ${v} an entry pays no donation or reserve output at its lock: they are in its fee lock, paid only if it is counted` };
+  if (entry.feeMsat !== fee)
+    return { ok: false, why: `on protocol version ${v} the fee lock holds the nodes' ${split.nodes / 100} %, the developers' ${(split.protocolDevs + split.gameDevs) / 100} % and the reserves' ${split.reserves / 100} %: ${fee} msat, not ${entry.feeMsat}` };
+  return { ok: true, fee, nodesMsat: parts.nodesMsat, devsMsat, reservesMsat: parts.reservesMsat };
+}
+
+/**
+ * THE ENTRY FEE RATE OF A ROUND (§27A.9.1): a version-11 round of a game takes the nodes' mandatory 4 %, and from version 27 the whole 10 %
+ * its fee lock holds (giftsFeeBps); a market, and every older round, the rate its manifest gives (entryFeeBpsOf: the network's 5 %, or a
+ * market's own).
+ */
+// `split`: the round's split in force at its census height (fee-proposal.js roundSplitBps of GET /fees?height=) - read by a protocol-27
+// round only, so the door, the gates and the settlement size its fee lock alike (kanban #1486); a round below 27 is as before
+const entryFeeBpsForRound = (contract, manifest, split = undefined) => (entryGiftsInFee(contract, manifest) ? giftsFeeBps(split || ROUND_SPLIT_BPS)
+  : paysReserves(contract) && !donationInFee(manifest) ? RESERVES_NODE_FEE_BPS : entryFeeBpsOf(manifest));
+/** Does this round's entry pay the reserves BY AN OUTPUT AT ITS LOCK - a version-11 to 26 round of a game (from 27 they ride in the fee lock)? */
+const entryPaysReserves = (contract, manifest) => paysReserves(contract) && !donationInFee(manifest) && !giftsInFeeLock(contract);
 
 // ---- arena-protocol/src/final-sig.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
@@ -14231,8 +14277,14 @@ const knownEntryBps = (gameId) => { const k = feeOfKnownGame(gameId); return k ?
 // A VERSION-11 GAME ROUND'S NODES TAKE 4 % (§27A.9.1); a market keeps its own (its fee lock holds its donation too)
 const knownIsMarket = (gameId) => { const k = feeOfKnownGame(gameId); return !!(k && k.donationBps !== undefined && k.donationBps !== null); };
 const roundPaysReserves = (round) => !!round && paysReserves(round) && !knownIsMarket(round.gameId);
+// FROM PROTOCOL 27 (kanban #1486) A GAME ROUND'S FEE LOCK HOLDS THE DEVELOPERS' AND THE RESERVES' PARTS beside the nodes': the whole 10 %,
+// no donation and no reserve output at the lock - a refused or void entry gets them back with its stake, an accepted one pays them at settlement
+const roundGiftsInFee = (round) => roundPaysReserves(round) && giftsInFeeLock(round);
+/** A protocol-27 round's split in force at its census height, as the page read it (GET /fees?height=); undefined (today's) without one. */
+const splitForRound = (round) => (round && round.feeSet ? roundSplitBps(round.feeSet) : undefined);
 // `round.feeSet`: the fees in force at the round's census height, as the page read them from the nodes (GET /fees?height=)
 const feeBpsForRound = (round) => (round && Number.isInteger(round.feeBps) ? round.feeBps
+  : roundGiftsInFee(round) ? giftsFeeBps(round.feeSet ? roundSplitBps(round.feeSet) : undefined)
   : roundPaysReserves(round) ? (round.feeSet ? roundSplitBps(round.feeSet).nodes : RESERVES_NODE_FEE_BPS) : knownEntryBps(round && round.gameId));
 
 
@@ -16215,14 +16267,16 @@ function settlementNonce(roundId) {
 // table the locks are claimed and paid by is `lockActions`' over it, so a split round settles by the split and nothing
 // else here changes: the payouts are the table's rows, scaled to the claimed locks as any table's are.
 function lockSettlement({ roundId, entries, minScore = 0, locks, fees, feeLocks = new Map(), signerNodes = null, contract = null,
-  sends = new Map(), addressed = null, requireSends = false, donationSet = null, payoutShares = null, feeBps = undefined, websitePct = undefined }) {
+  sends = new Map(), addressed = null, requireSends = false, donationSet = null, payoutShares = null, feeBps = undefined, websitePct = undefined, gifts = null }) {
   // `feeBps` / `websitePct`: the fees in force at the round (fee-proposal.js) - a version-11 round's node fee and the
   // website's share of it; unset, today's (4 % and 20 %)
+  // `gifts`: a protocol-27 game round's { recipients, reserveKey, split } - its fee locks hold the developers' and the reserves' parts too
+  // (kanban #1486), paid here for the counted entries (feeSettlement)
   if (!(locks instanceof Map)) return refuse('the verified stake locks are a Map by player key');
   if (!(feeLocks instanceof Map)) return refuse('the verified fee locks are a Map by player key');
   if (!fees || typeof fees.ppm !== 'bigint' || typeof fees.baseMsat !== 'bigint' || fees.ppm < 0n || fees.baseMsat < 0n)
     return refuse('the guardians\' fee rule is BigInt ppm and base msat, 0 or more');
-  const feePart = feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps, websitePct });
+  const feePart = feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps, websitePct, gifts, rid: roundId });
   if (!feePart.ok) return feePart;
   // THE STAKE PART'S VERDICT IS `lockActions`'. A round with losers and nobody to
   // pay is refused there ("the operator would keep ..."), and so its stakes are not
@@ -16537,7 +16591,7 @@ function lateSettlementNonce(roundId, entryId) {
  * the first settlement paid nobody, nothing is claimed.
  */
 function lateLockSettlement({ roundId, entryId, entry, lock, feeLock = null, shares, winnerLocks = new Map(), fees,
-  signerNodes = null, contract = null, sends = new Map(), requireSends = false, feeBps = undefined, websitePct = undefined }) {
+  signerNodes = null, contract = null, sends = new Map(), requireSends = false, feeBps = undefined, websitePct = undefined, gifts = null }) {
   if (!fees || typeof fees.ppm !== 'bigint' || typeof fees.baseMsat !== 'bigint' || fees.ppm < 0n || fees.baseMsat < 0n)
     return refuse('the guardians\' fee rule is BigInt ppm and base msat, 0 or more');
   if (!entry) return refuse('there is no late entry to settle');
@@ -16586,7 +16640,7 @@ function lateLockSettlement({ roundId, entryId, entry, lock, feeLock = null, sha
   }
 
   const feePart = feeLock
-    ? feeSettlement({ entries: [entry], feeLocks: new Map([[toHex(entry.pubkey), feeLock]]), signerNodes, contract, fees, feeBps, websitePct })
+    ? feeSettlement({ entries: [entry], feeLocks: new Map([[toHex(entry.pubkey), feeLock]]), signerNodes, contract, fees, feeBps, websitePct, gifts, rid: roundId })
     : feeSettlement({ entries: [entry], feeLocks: new Map(), signerNodes, contract, fees, feeBps, websitePct });
   if (!feePart.ok) return feePart;
   const done = finish({ roundId, claims: [{ pubkey: entry.pubkey, outpoint: lock.outpoint, amountMsat: net, kind: 'stake' }], payouts,
@@ -16636,9 +16690,14 @@ function finish(stake, fee) {
  * not a signer node's word.
  */
 // `feeBps`: the round's game's node fee (fee.js feeBpsOf - a market's own, 0.5 % by default), the network's if none
-function feeLockPays({ contract, fees, players = MIN_PLAYERS_PER_ROUND, feeBps = undefined } = {}) {
+// `split`: a protocol-27 round's split in force at its census height (kanban #1486); unset, today's
+function feeLockPays({ contract, fees, players = MIN_PLAYERS_PER_ROUND, feeBps = undefined, split = undefined } = {}) {
   if (!contract) return { pays: false, why: 'no round to size the fee lock for' };
   if (feeBps === undefined && paysReserves(contract)) feeBps = RESERVES_NODE_FEE_BPS;   // version 11: 4 %
+  // A PROTOCOL-27 GAME ENTRY'S FEE LOCK (kanban #1486): sized on the whole 10 % it holds, and it mints only if every sitting signer node's
+  // part of it - the nodes' 4 % - pays more than nothing; the developers' and the reserves' lines are not what the gate asks
+  const giftSplit = split || ROUND_SPLIT_BPS;
+  const gifted = giftsInFeeLock(contract) && feeBps === giftsFeeBps(giftSplit);
   if (!fees || typeof fees.ppm !== 'bigint' || typeof fees.baseMsat !== 'bigint')
     return { pays: false, why: 'the federation\'s fee rule is not known, so no fee lock is minted' };
   const stakeMsat = BigInt(contract.stakeMsat || 0n);
@@ -16652,15 +16711,24 @@ function feeLockPays({ contract, fees, players = MIN_PLAYERS_PER_ROUND, feeBps =
   const pools = { [GAME_VERIFY]: sitting, [SETTLEMENT]: sitting };
   const entries = Array.from({ length: players }, (_, i) => ({ pubkey: key(0xb0, i), stakeMsat, feeMsat: lockMsat, donationMsat: 0n, outcome: FAILED, score: 0 }));
   const feeLocks = new Map(entries.map((e, i) => [toHex(e.pubkey), { outpoint: { txid: key(0xc0, i), outIdx: BigInt(i) }, amountMsat: lockMsat, preimage: key(0xd0, i) }]));
-  const part = feeSettlement({ entries, feeLocks, signerNodes: pools, contract, fees, feeBps });
+  const gift = gifted ? { recipients: GATE_GIFT_TARGET, reserveKey: GATE_GIFT_KEY, split: giftSplit } : null;
+  const part = feeSettlement({ entries, feeLocks, signerNodes: pools, contract, fees, feeBps: gifted ? giftSplit.nodes : feeBps, gifts: gift, rid: gifted ? new Uint8Array(32) : null });
   if (!part.ok) return { ...base, pays: false, why: part.why };
+  const nodePays = part.payouts.filter((p) => !GIFT_KINDS.has(p.kind));
+  const nodeUnpaid = part.unpaid.filter((u) => !u.gift);
   const out = { ...base, inputFeesMsat: part.inputFeesMsat, outputFeesMsat: part.outputFeesMsat,
-    perSignerNodeNetMsat: part.payouts.map((p) => p.msat), unpaidSignerNodes: part.unpaid.length };
+    perSignerNodeNetMsat: nodePays.map((p) => p.msat), unpaidSignerNodes: nodeUnpaid.length };
   if (part.hole) return { ...out, pays: false, why: part.hole.why };
-  if (part.unpaid.length) return { ...out, pays: false, why: `${part.unpaid.length} entitled signer node(s) would be paid nothing after the federation's fees` };
-  if (!part.payouts.length || part.payouts.some((p) => p.msat <= 0n)) return { ...out, pays: false, why: 'a signer node would be paid nothing after the federation\'s fees' };
-  return { ...out, pays: true, why: `every one of ${part.payouts.length} signer nodes is paid more than nothing after the federation's fees` };
+  if (nodeUnpaid.length) return { ...out, pays: false, why: `${nodeUnpaid.length} entitled signer node(s) would be paid nothing after the federation's fees` };
+  if (!nodePays.length || nodePays.some((p) => p.msat <= 0n)) return { ...out, pays: false, why: 'a signer node would be paid nothing after the federation\'s fees' };
+  return { ...out, pays: true, why: `every one of ${nodePays.length} signer nodes is paid more than nothing after the federation's fees` };
 }
+
+// the gate's stand-in donation target and reserve key: it asks only whether the nodes' part pays, never where the gifts go
+const GATE_GIFT_KEY = Uint8Array.from([0x02, ...new Uint8Array(32).fill(0x47)]);
+const GATE_GIFT_TARGET = [{ recipientPk: Uint8Array.from([0x02, ...new Uint8Array(32).fill(0x46)]), shareBps: 10000, label: 'gate' }];
+// the fee part's lines that are no signer node's: a donation key's and the reserves'
+const GIFT_KINDS = new Set(['donation key', 'reserve']);
 
 /**
  * THE FEE PART: every counted entry's fee lock in, each sitting signer node's §22A share
@@ -16671,7 +16739,13 @@ function feeLockPays({ contract, fees, players = MIN_PLAYERS_PER_ROUND, feeBps =
 // `donation`: { recipients } - a market's donation target (two sets: the protocol devs' and the game dev's, key sets), whose
 // donation rides in its fee locks (fee.js entryFeeBpsOf): what the fee locks hold above the node table is that
 // donation, split by `splitDonation` and paid to each key by a pre-expired payout contract, as a walk-away's 25 % is.
-function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps = undefined, donation = null, websitePct = undefined }) {
+// `gifts`: { recipients, reserveKey, split } - A PROTOCOL-27 GAME ROUND (kanban #1486): each counted entry's fee lock holds the nodes', the
+// developers' and the reserves' parts of its stake (reserves.js giftsEntryExpected). The nodes' table is as for any round; each entry's
+// reserves part, summed, is one line to `reserveKey` (RESERVE_LATER_PK on a round that takes any federation: splitByFederation names each
+// federation's own); the rest above the nodes' table is the developers', split over `recipients` as a market's donation is. An entry not
+// counted (a refund outcome) brings no fee lock in, so it pays none of it - its lock comes back to its player.
+// `rid`: the round's id, which a protocol-27 round's donation lines are named under (donationSendId); the gate's is a stand-in
+function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps = undefined, donation = null, websitePct = undefined, gifts = null, rid: ridGiven = null }) {
   const none = { ok: true, claims: [], payouts: [], unpaid: [], poolMsat: 0n, inputFeesMsat: 0n, paidMsat: 0n, outputFeesMsat: 0n, unspentMsat: 0n, unallocatedMsat: 0n };
   if (!feeLocks.size) return none;
   if (!contract || !signerNodes || !Array.isArray(signerNodes[GAME_VERIFY]) || !Array.isArray(signerNodes[SETTLEMENT]))
@@ -16692,7 +16766,9 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
   for (const k of signerNodes.conflicted || []) eligible.delete(String(k).toLowerCase());
   let table;
   // A VERSION-11 GAME ROUND'S NODES TAKE 4 % (§27A.9.1): its fee locks hold that, and the table owes that
-  const rate = feeBps !== undefined ? feeBps : (paysReserves(contract) ? RESERVES_NODE_FEE_BPS : undefined);
+  if (gifts && donation) return refuse('a round\'s fee locks hold a market\'s donation or a game\'s gifts, never both');
+  const giftSplit = gifts ? (gifts.split || ROUND_SPLIT_BPS) : null;
+  const rate = feeBps !== undefined ? feeBps : gifts ? giftSplit.nodes : (paysReserves(contract) ? RESERVES_NODE_FEE_BPS : undefined);
   // the liquidity providers' weights (2026.0.16, §23A.10): `signerNodes.liquidityWeights` node hex -> sat, from the standing liquidity seating
   // and, from 2026.0.20 under capacity pressure, the guardians' weights (§23A.3a part 1): `signerNodes.guardianWeights` node hex -> min(bond, B*)^2
   // and the gateways' weights under peg-in pressure (§23A.3a part 2): `signerNodes.gatewayWeights` node hex -> min(proved peg-in, P*)^2
@@ -16702,17 +16778,34 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
   try { table = nodeFeeTable({ contract, entries: counted, pools: signerNodes, eligible, weights, ...(rate !== undefined ? { feeBps: rate } : {}) }); } catch (e) { return refuse(e.message); }
   const poolMsat = claims.reduce((s, c) => s + c.amountMsat, 0n);
   // A MARKET'S FEE LOCKS HOLD ITS DONATION TOO: the rest above the node table is the donation set's, never the nodes'
-  const donationOwedMsat = donation ? poolMsat - table.fee : 0n;
-  if (donationOwedMsat < 0n) return refuse(`the fee table owes the signer nodes ${table.fee} msat and the fee locks hold only ${poolMsat}`);
-  if (table.fee + donationOwedMsat !== poolMsat) return refuse(`the fee table owes the signer nodes ${table.fee} msat and the fee locks hold ${poolMsat}`);
+  // AND A PROTOCOL-27 GAME ROUND'S HOLD THE DEVELOPERS' AND THE RESERVES' PARTS (kanban #1486): each counted entry's fee is exactly its three
+  // parts, and its reserves part is the reserves' - the rest above the nodes' table the developers'
+  let reservesOwedMsat = 0n;
+  const giftParts = [];
+  if (gifts) {
+    for (const e of counted) {
+      const g = giftsEntryExpected({ entry: { ...e, donationMsat: e.donationMsat ?? 0n }, split: giftSplit });
+      if (!g.ok) return refuse(`no fee lock is claimed: ${g.why}`);
+      reservesOwedMsat += g.reservesMsat;
+      if (e.entryId) giftParts.push({ entryId: typeof e.entryId === 'string' ? e.entryId : toHex(e.entryId), playerPubkey: toHex(e.pubkey), feeMsat: g.devsMsat + g.reservesMsat });
+    }
+  }
+  const donationOwedMsat = donation || gifts ? poolMsat - table.fee - reservesOwedMsat : 0n;
+  if (donationOwedMsat < 0n) return refuse(`the fee table owes the signer nodes ${table.fee} msat${reservesOwedMsat ? ` and the reserves ${reservesOwedMsat}` : ''}, and the fee locks hold only ${poolMsat}`);
+  if (table.fee + reservesOwedMsat + donationOwedMsat !== poolMsat) return refuse(`the fee table owes the signer nodes ${table.fee} msat and the fee locks hold ${poolMsat}`);
   if (table.unallocated > 0n) return refuse(`${table.unallocated} msat of the fee has no eligible signer node in its pool, so no fee lock is claimed`);
+  if (reservesOwedMsat > 0n && !(gifts.reserveKey instanceof Uint8Array && gifts.reserveKey.length === 33))
+    return refuse('this round\'s fee locks hold the reserves\' part, and no reserve key is known for its federation, so no fee lock is claimed');
   let donated = [];
   if (donationOwedMsat > 0n) {
-    const split = splitDonation({ donationMsat: donationOwedMsat, recipients: donation.recipients });
-    if (!split.owed) return refuse(`the market's donation set does not stand, so no fee lock is claimed: ${split.why}`);
+    const whose = gifts ? 'the developers\'' : 'the market\'s';
+    const target = gifts ? gifts.recipients : donation.recipients;
+    if (!target) return refuse(`this round's fee locks hold ${whose} donation, and no donation target is known for it, so no fee lock is claimed`);
+    const split = splitDonation({ donationMsat: donationOwedMsat, recipients: target });
+    if (!split.owed) return refuse(`${whose} donation set does not stand, so no fee lock is claimed: ${split.why}`);
     if (split.shares.some((x) => x.amountMsat > 0n && !(x.recipientPk instanceof Uint8Array)))
-      return refuse('a market\'s donation is paid to keys in the federation, and its set names a recipient without one');
-    const rid = roundId(contract);
+      return refuse(`${whose} donation is paid to keys in the federation, and its set names a recipient without one`);
+    const rid = gifts && ridGiven instanceof Uint8Array ? ridGiven : roundId(contract);
     donated = split.shares.map((x, i) => ({ ...x, id: donationSendId(rid, i), index: i })).filter((x) => x.amountMsat > 0n);
   }
   // ONE PAYOUT PER SIGNER NODE KEY: a signer node in both pools is owed both shares (§22A), paid together. A GUARDIAN SHARE OF A
@@ -16773,9 +16866,15 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
   // THE DONATION'S SHARES, scaled to what the claimed locks pay as the nodes' are, each to its own key
   for (const d of donated) {
     const got = largestPayoutMsat(fees, (d.amountMsat * spendable) / poolMsat);
-    if (got === 0n) { unpaid.push({ pubkey: d.id, owedMsat: d.amountMsat, why: `the donation share for ${d.label || 'a key'} does not pay its own output fee` }); continue; }
+    if (got === 0n) { unpaid.push({ pubkey: d.id, owedMsat: d.amountMsat, why: `the donation share for ${d.label || 'a key'} does not pay its own output fee`, ...(gifts ? { gift: true } : {}) }); continue; }
     payouts.push({ pubkey: d.id, payoutPk: d.recipientPk, owedMsat: d.amountMsat, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: 'donation key',
-      donation: { id: d.id, index: d.index, recipientPk: d.recipientPk, label: d.label } });
+      donation: { id: d.id, index: d.index, recipientPk: d.recipientPk, label: d.label, ...(giftParts.length ? { parts: giftParts } : {}) } });
+  }
+  // THE RESERVES' PART (protocol 27): one line to the federation's reserve key, scaled as the rest
+  if (reservesOwedMsat > 0n) {
+    const got = largestPayoutMsat(fees, (reservesOwedMsat * spendable) / poolMsat);
+    if (got === 0n) unpaid.push({ pubkey: gifts.reserveKey.subarray(1), owedMsat: reservesOwedMsat, why: 'the reserves\' part does not pay its own output fee', gift: true });
+    else payouts.push({ pubkey: gifts.reserveKey.subarray(1), payoutPk: gifts.reserveKey, owedMsat: reservesOwedMsat, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: 'reserve', reserve: true });
   }
   // A FEE THAT CANNOT REACH A SIGNER NODE IS NOT CLAIMED. Measured under the guardians'
   // real rule (1000 msat per input and per output): two 2000 msat fee locks bring
@@ -17868,7 +17967,7 @@ async function locksFor(round, client, donationMsat, donationRecipients = null) 
     throw new Error(`no stake is locked to this round: its federation charges a base fee of ${feeRule.baseMsat} msat `
       + 'on every input and output - a federation for BLWP runs with disable_base_fees (FEDERATION.md)');
   // its fee lock on what this entry stakes: an order's own amount, else the round's
-  const feeGate = feeLockPays({ contract: { ...round, stakeMsat: stakeOf(round) }, fees: feeRule, feeBps: feeBpsForRound(round) });
+  const feeGate = feeLockPays({ contract: { ...round, stakeMsat: stakeOf(round) }, fees: feeRule, feeBps: feeBpsForRound(round), split: splitForRound(round) });
   // A FEDERATION WITH NO FEES (0/0) quotes every lock exactly - its amount in whole notes - so the stake check needs no
   // allowance on top (2026-10-01: the 2 sat "reserve" made one 100 sat round ask 100.352 + 2.006)
   const zeroFees = !!feeRule && feeRule.baseMsat === 0n && feeRule.ppm === 0n;
@@ -18996,6 +19095,15 @@ async function keptLockStake(ask) {
         try { putRoomy(storage, `arena.lock.orphan.${tag}.${Number(r.atMs || 0)}`, JSON.stringify(r)); } catch { /* the next intent is refused for room below */ }
         console.warn(`[arena] #1162 an earlier stake lock for this round did not finish (${r.txid ? `transaction ${String(r.txid).slice(0, 16)}… submitted` : 'nothing answered'}): kept as arena.lock.orphan.${tag}.*`);
       }
+    }
+    // A REFUSED RECORD IS KEPT ASIDE BEFORE THE NEW LOCK WRITES OVER IT (kanban #1584): 'refused' is read from a few "not stored" answers on a
+    // reload (reconcileKeptLock), not from the guardians' word - their consensus may still accept that transaction later, and its stake then
+    // sits under this player's refund key. Its outpoint, fields and stake stay named in arena.lock.orphan.*; with no room for that copy this
+    // PLAY is refused here, before anything is spent.
+    if (now.state === 'refused') {
+      const r = now.record;
+      putRoomy(storage, `arena.lock.orphan.${tag}.${Number(r.refusedMs || r.stateMs || Date.now())}`, JSON.stringify(r));
+      console.warn(`[arena] #1584 an earlier stake lock for this round was read "not stored" (transaction ${String((r.outpoint && r.outpoint.txid) || '').slice(0, 16)}…): kept as arena.lock.orphan.${tag}.*`);
     }
     lockRecordStep(now.state, 'intent');
     // ROOM FIRST: the intent holds the record's room (`room`, given back when the record takes its place), so the record written after it
@@ -25304,6 +25412,23 @@ const LOCK_ACCEPT_HEAD_MS = 3000;   // the lock client's acceptance first; the s
 const OPENED_ROUNDS = new Map();
 
 /**
+ * IS THIS THE SESSION KEY'S SIGNATURE (kanban #1567): Ed25519 through the platform's own WebCrypto - the browser's, the
+ * one the page's session key signs with, and Node's - so the bundle still carries no curve of its own. A page or a test
+ * may hand its own as `verifySession`. Answers false for anything it cannot check.
+ */
+const SESSION_KEYS = new Map();
+async function verifySessionSignature(signature, message, publicKey) {
+  const subtle = globalThis.crypto && globalThis.crypto.subtle;
+  if (!subtle) return false;
+  try {
+    const hex = toHex(publicKey);
+    let key = SESSION_KEYS.get(hex);
+    if (!key) { key = await subtle.importKey('raw', publicKey, { name: 'Ed25519' }, false, ['verify']); SESSION_KEYS.set(hex, key); }
+    return !!(await subtle.verify({ name: 'Ed25519' }, key, signature, message));
+  } catch { return false; }
+}
+
+/**
  * THE CORE STEPPED THROUGH A TRANSCRIPT, as a seat replays it (arena-node replay.js, core adapter eventsOf): each tick's
  * tape, load, sample and liquidation BEFORE that tick, then its five words. The page's core after a reload is then the
  * state its marks were hashed from, and the run goes on from the tick the node is owed. `core` is the page's sim
@@ -25345,7 +25470,7 @@ class Client {
    * the node's own fixtures talk to a process on localhost that has no bond
    * and never will - and a test that wants the real door calls this one.
    */
-  static async at(discovery, { core, sign, verify, contract, roundIdGiven, stakeLock }) {
+  static async at(discovery, { core, sign, verify, verifySession, contract, roundIdGiven, stakeLock }) {
     if (!contract || !contract.nodes)
       throw new Error('no round contract, so there is no committee to check against');
 
@@ -25414,7 +25539,7 @@ class Client {
     }
 
     const client = new Client({
-      base: seen.endpoint.replace(/^ws/, 'http'), core, sign, verify,
+      base: seen.endpoint.replace(/^ws/, 'http'), core, sign, verify, ...(verifySession ? { verifySession } : {}),
     });
     // THE CHAIN THIS CALL PROVED, carried on the client so the page can open its NEXT round from it rather than
     // proving the same headers again at a boundary where a starved tab misses the ten seconds (2026-09-18).
@@ -25452,10 +25577,19 @@ class Client {
     return this.peers;
   }
 
-  constructor({ base, core, sign, verify }) {
+  constructor({ base, core, sign, verify, verifySession = verifySessionSignature }) {
     this.base = base;
     this.core = core;
     this.sign = sign;
+    // THE SESSION KEY'S CURVE, to tell a batch this client signed from one a seat wrote into its own store (kanban #1567).
+    // `verify` is the seats' curve (receipts, adverts); this one is the session key's.
+    this.verifySession = verifySession;
+    // EVERY FRAME THIS CLIENT SIGNED, by batch id (kanban #1567): the only frames it ever publishes again. A resume used to
+    // sign whatever the home seat served past `published`, so a seat that appended a forged batch to its own store and
+    // refused the next one had the player's own client sign the forgery and feed it to the whole committee.
+    this.signedFrames = new Map();
+    // A SEAT THAT SERVED THIS ENTRY A BATCH THIS CLIENT NEVER SIGNED: { base, firstTick, why }, null while none has
+    this.nodeFault = null;
     // Verifying is injected for the same reason signing is: the curve belongs
     // to whoever runs the client, and this file should not decide it.
     this.verify = verify;
@@ -26391,6 +26525,8 @@ class Client {
     // nobody who only knows this entry's public id can write ticks or a load into it. The same signed frame goes to
     // every peer below.
     const bytes = await signBatch(b, this.sign);
+    // KEPT BEFORE IT GOES OUT (kanban #1567): a batch the node took whose answer was lost is still this client's own
+    this.signedFrames.set(toHex(batchId(b)), bytes);
     const answer = await this.send(bytes);
 
     // The node answers how many ticks were NEW. A refusal is a named string
@@ -26717,6 +26853,12 @@ class Client {
     if (!belongs.ok && t.batches.length)
       throw new Error(`the transcript is not this entry's run: ${belongs.why}`);
 
+    // EVERY SERVED BATCH IS ONE THIS CLIENT SIGNED, or none of it is taken (kanban #1567, feedback #013 by Hexbox Tools).
+    // Measured before: a home seat appended 120 forged ticks to its own store and refused the player's next batch; this
+    // resume signed the forgery and fed it to the honest peer, which stored it as the player's, and the player's real
+    // inputs went on 120 ticks late. Nothing served is signed here - ever.
+    const frames = await this.#ownFrames(t, entry, roundId, entryId);
+
     const before = this.nextTick;
     const last = t.batches[t.batches.length - 1];
     this.batchHead = last ? batchId(last) : GENESIS;
@@ -26740,10 +26882,10 @@ class Client {
     }
     // AND THE PEERS ARE FED WHAT THIS NODE TOOK, including a batch whose answer
     // was lost, in the node's own order - a peer missing one refuses the rest.
+    // THE FRAMES THIS CLIENT SIGNED, as it signed them (kanban #1567) - never a fresh signature over what a seat served.
     for (let i = this.published.length; i < t.batches.length; i++) {
       const b = t.batches[i];
-      // signed here as at the first send (kanban #1503): a peer takes a batch only signed by the session key
-      this.published.push({ bytes: await signBatch(b, this.sign), through: batchTicks(b).at(-1) + 1 });
+      this.published.push({ bytes: frames[i], through: batchTicks(b).at(-1) + 1 });
     }
 
     // AND THE COUNT OF WHAT THIS CLIENT HAS ACCEPTED IS RECONCILED WITH IT.
@@ -26774,6 +26916,49 @@ class Client {
     return { ticks: ok.ticks, batches: t.batches.length, nextTick: this.nextTick,
              batchHead: this.batchHead, head: this.head, receipts,
              live: adopted !== null, witnessed: adopted ? this.witnessed(adopted) : 0, transcript: t };
+  }
+
+  /**
+   * THIS CLIENT'S OWN SIGNED FRAME FOR EVERY BATCH A SEAT SERVED (kanban #1567), in the transcript's order: the frame it
+   * signed and kept, or - after a reload, when it kept nothing - the seat's copy of its signature (GET /batch-signatures),
+   * VERIFIED under this entry's session key. A served batch with neither is not this player's: the seat that served it
+   * wrote it itself. That is a node fault, named on `nodeFault`; the run ends there (VOID, the seat's fault, never the
+   * player's) and nothing of it is signed or handed to a peer.
+   */
+  async #ownFrames(t, entry, roundId, entryId) {
+    const frames = new Array(t.batches.length);
+    const missing = [];
+    t.batches.forEach((b, i) => {
+      const kept = this.signedFrames.get(toHex(batchId(b)));
+      if (kept) frames[i] = kept; else missing.push(i);
+    });
+    if (!missing.length) return frames;
+    let sigs = null;
+    let asked = null;
+    try {
+      const r = await readWithOneRetry(fetch, `${this.base}/batch-signatures?round=${toHex(roundId)}&entry=${toHex(entryId)}`);
+      if (r.ok) sigs = new Uint8Array(await r.arrayBuffer());
+      else asked = `it answered ${r.status} for the batches' signatures`;
+    } catch (e) { asked = `it would not hand over the batches' signatures: ${e.message}`; }
+    const W = SIGNED_BATCH_SIGNATURE_BYTES;
+    for (const i of missing) {
+      const b = t.batches[i];
+      const id = batchId(b);
+      const sig = sigs && sigs.length >= (i + 1) * W ? sigs.slice(i * W, (i + 1) * W) : null;
+      if (sig && sig.some((x) => x !== 0) && await this.verifySession(sig, id, entry.sessionPubkey)) {
+        frames[i] = joinSignedBatch(encodeInputBatch(b), sig);
+        this.signedFrames.set(toHex(id), frames[i]);
+        continue;
+      }
+      const ticks = batchTicks(b);
+      const why = `the node at ${this.base} serves a batch at ticks ${b.firstTick}..${ticks.length ? ticks.at(-1) : b.firstTick} `
+        + `as this entry's that this client never signed (${sig ? 'its signature does not verify under the session key' : (asked || 'no signature beside it')}) `
+        + '- it is not signed or published again, and that node is not trusted with this run';
+      this.nodeFault = { base: this.base, firstTick: b.firstTick, batch: i, why };
+      this.endRun(`node fault: ${why}`);
+      throw Object.assign(new Error(why), { nodeFault: true });
+    }
+    return frames;
   }
 
   /**
@@ -26837,6 +27022,9 @@ class Client {
    * from taste.
    */
   setRound({ roundId, entryId, blockTicks }) {
+    // ANOTHER ENTRY'S RUN STARTS WITH NONE OF THIS ONE'S FRAMES (kanban #1567); the same entry again keeps them
+    if (this.signedEntry !== toHex(entryId)) { this.signedFrames = new Map(); this.signedEntry = toHex(entryId); }
+    this.nodeFault = null;
     this.where = { roundId, entryId };
     // A LATE ENTRY'S FIRST TICK IS ITS JOIN TICK: the round's tick it joined at, so its run ends with the round's.
     // An entry at tick 0 starts where it always did.
@@ -30987,8 +31175,8 @@ async function collectLiquidationPayouts({ listed, seed, curve, clientFor, stora
 //   MERGE (the counterparty is this browser's own wallet):  kept --(received: Success/AlreadyReceived, credited >= agreed)--> none
 //   EXCHANGE (exactly one seat):  kept --(the seat named, written)--> handed --(POST to that seat only)--> answered --(received)--> none
 //     handed --(the seat refused / never answered for 10 min)--> reclaiming --(the notes received back into the wallet they left)--> none
-//     reclaiming --(Rejected after a silence: the seat took them)--> handed (asked again, same seat, same notes)
-//   credited < agreed --> short (kept: the evidence);  Rejected (spent by someone else) --> refused (kept: the evidence)
+//     reclaiming --(Rejected after a silence or a refusal: the seat took them)--> handed (asked again, same seat, same notes; kanban #1583)
+//   credited < agreed --> short (kept: the evidence);  Rejected of notes never handed (spent by someone else) --> refused (kept: the evidence)
 // A record is removed only on Success/AlreadyReceived with the credited amount at least what was agreed.
 //
 // THE LOCK CLIENT KEEPS THE STRING TOO: the stock mintv2 send writes it into the wallet's operation log in the same commit that marks
@@ -31222,20 +31410,25 @@ async function advanceEcashExchange({ storage, key, rec, walletFrom, walletTo, f
         if (!r.ok || r.nothing) return { ok: false, pending: !!r.unknown, why: r.nothing ? 'the wallet never sent it' : r.why };
         rec = r.rec; continue;
       }
-      if (rec.state === 'kept') { mv('reclaiming', { refusedBySeat: true, seatSaid: 'never handed to a seat' }); continue; }
+      if (rec.state === 'kept') { mv('reclaiming', { refusedBySeat: true, seatSaid: 'never handed to a seat', neverHanded: true }); continue; }
       if (rec.state === 'handed') {
         // EXACTLY ONE COUNTERPARTY: the seat named before the hand-over; only a record of an older page (no seat named) asks its seats in turn
         let a = { silent: 'no seat named' };
         for (const seat of rec.seat ? [rec.seat] : seats) { a = await askSeat({ seat, rec, fetcher, timeoutMs }); if (a.answer) break; }
         if (a.answer) { mv('answered', { answer: a.answer.ecash, answerMsat: String(a.answer.msat || ''), answeredAtMs: nowMs }); continue; }
-        if (a.refused && rec.seat) { mv('reclaiming', { refusedBySeat: true, seatSaid: a.refused }); continue; }
+        // a seat known to hold the notes (seatTook: a take-back was Rejected) is only asked again, never taken back from twice (kanban #1583)
+        if (a.refused && rec.seat && !rec.seatTook) { mv('reclaiming', { refusedBySeat: true, seatSaid: a.refused }); continue; }
         if (nowMs - Number(rec.handedAtMs || 0) >= ECASH_HANDED_RECLAIM_MS && !rec.seatTook) { mv('reclaiming', { refusedBySeat: false, seatSaid: a.silent || a.refused }); continue; }
         mv('handed', { lastAskMs: nowMs, seatSaid: a.silent || a.refused });
         return { ok: false, pending: true, why: `the seat has not answered yet (${a.silent || a.refused}); asked again with the same notes` };
       }
       if (rec.state === 'reclaiming') {
+        // NOTES HANDED TO A SEAT AND NOT TAKEN BACK ARE THE SEAT'S TO ANSWER (kanban #1583, audit #1489 sm1-page-2): a seat's 4xx is not proof
+        // it took nothing (a restarted seat without its federation client answered 409 for a row it had taken and owed the payout of), so a
+        // Rejected take-back after any refusal goes back to asking that one seat (handed, seatTook) - never the terminal `refused` that is
+        // never asked again. `refused` is left for notes never handed to a seat (kept -> reclaiming), spent elsewhere
         const r = await receiveKeptEcash({ storage, key, rec, receive: (e) => walletFrom.receiveEcash(e), field: 'ecash', federation: rec.from,
-          onRejected: rec.refusedBySeat && rec.seat ? 'refused' : 'handed', put });
+          onRejected: rec.neverHanded && rec.refusedBySeat && rec.seat ? 'refused' : 'handed', put });
         if (r.ok) return { ok: false, reclaimed: true, short: !!r.short, why: rec.seatSaid || 'taken back' };
         if (r.state === 'Rejected') return r.refused ? { ok: false, lost: true, why: `the seat ${rec.seat} refused and the notes were spent: kept as evidence` }
           : { ok: false, pending: true, why: 'the seat took the notes: it is asked again for its answer' };
@@ -37807,7 +38000,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          awaitAttestedClaimKey: awaitAttestedClaimKey,
          sharesNeededFor: sharesNeededFor,
          lockStake: lockStake, handLock: handLock, lockSecretFor: lockSecretFor, lockLine: lockLine,
-         fetchReserveKey: fetchReserveKey, fetchReservesTotal: fetchReservesTotal, fetchReservesPaymentsOut: fetchReservesPaymentsOut, paymentOutLine: paymentOutLine, fetchProposals: fetchProposals, fetchNetworkId: fetchNetworkId, signedProposal: signedProposal, signedComment: signedComment, signedName: signedName, forumIdentity: forumIdentity, forumNameOf: forumNameOf, giftDonation: giftDonation, signedLeaderboardPayout: signedLeaderboardPayout, splitFromPercents: splitFromPercents, fetchLeaderboards: fetchLeaderboards, heightAtDate: heightAtDate, LB_SCOPE: LB_SCOPE, LB_PERIOD_DAYS: LB_PERIOD_DAYS, LB_TOP_MAX: LB_TOP_MAX, fetchFees: fetchFees, feeChangesFrom: feeChangesFrom, signedFeeProposal: signedFeeProposal, earliestActivation: earliestActivation, roundFeesLine: roundFeesLine, marketFeesLine: marketFeesLine, marketFeeBpsOf: marketFeeBpsOf, FEE_UNITS: FEE_UNITS, FEES: FEES, FEES_TODAY: FEES_TODAY, feeProposalStands: feeProposalStands, zapPlayer: zapPlayer, collectZaps: collectZaps, referralOf: referralOf, referralNameFor: referralNameFor, myOrdersFromEntries: myOrdersFromEntries, mountExchange: mountExchange, exchangeLadder: exchangeLadder, exchangeHistory: exchangeHistory, exchangeVolume: exchangeVolume, giftAmountOf: giftAmountOf, giftRecipientsLine: giftRecipientsLine, GIFT_CHOICES_SAT: GIFT_CHOICES_SAT, postFunding: postFunding, newProposalKey: newProposalKey, keyOfNsec: keyOfNsec, npubOf: npubOf, npubOfKey: npubOfKey, reservesDonation: reservesDonation, reservesDonationForRound: reservesDonationForRound, roundPaysReserves: roundPaysReserves,
+         fetchReserveKey: fetchReserveKey, fetchReservesTotal: fetchReservesTotal, fetchReservesPaymentsOut: fetchReservesPaymentsOut, paymentOutLine: paymentOutLine, fetchProposals: fetchProposals, fetchNetworkId: fetchNetworkId, signedProposal: signedProposal, signedComment: signedComment, signedName: signedName, forumIdentity: forumIdentity, forumNameOf: forumNameOf, giftDonation: giftDonation, signedLeaderboardPayout: signedLeaderboardPayout, splitFromPercents: splitFromPercents, fetchLeaderboards: fetchLeaderboards, heightAtDate: heightAtDate, LB_SCOPE: LB_SCOPE, LB_PERIOD_DAYS: LB_PERIOD_DAYS, LB_TOP_MAX: LB_TOP_MAX, fetchFees: fetchFees, feeChangesFrom: feeChangesFrom, signedFeeProposal: signedFeeProposal, earliestActivation: earliestActivation, roundFeesLine: roundFeesLine, marketFeesLine: marketFeesLine, marketFeeBpsOf: marketFeeBpsOf, FEE_UNITS: FEE_UNITS, FEES: FEES, FEES_TODAY: FEES_TODAY, feeProposalStands: feeProposalStands, zapPlayer: zapPlayer, collectZaps: collectZaps, referralOf: referralOf, referralNameFor: referralNameFor, myOrdersFromEntries: myOrdersFromEntries, mountExchange: mountExchange, exchangeLadder: exchangeLadder, exchangeHistory: exchangeHistory, exchangeVolume: exchangeVolume, giftAmountOf: giftAmountOf, giftRecipientsLine: giftRecipientsLine, GIFT_CHOICES_SAT: GIFT_CHOICES_SAT, postFunding: postFunding, newProposalKey: newProposalKey, keyOfNsec: keyOfNsec, npubOf: npubOf, npubOfKey: npubOfKey, reservesDonation: reservesDonation, reservesDonationForRound: reservesDonationForRound, roundPaysReserves: roundPaysReserves, roundGiftsInFee: roundGiftsInFee,
          playerWallet: playerWallet, openPlayerWallet: openPlayerWallet, FAUCET_GRANTS: FAUCET_GRANTS, askFaucet: askFaucet, faucetEcashRowOnce: faucetEcashRowOnce, forgetPhraseWallets: forgetPhraseWallets, useSeatedGateways: useSeatedGateways, seatedGatewaysOf: seatedGatewaysOf, walletDepositOffer: walletDepositOffer, walletDepositChoices: walletDepositChoices, fundPlayerWallet: fundPlayerWallet, earlyDepositOffer: earlyDepositOffer, joinFundingPlan: joinFundingPlan, notSpendableYet: notSpendableYet, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, tidyStorage: tidyStorage, seedRecovers: seedRecovers,
          withdrawPlayerWallet: withdrawPlayerWallet,
          onStorageRefused: onStorageRefused, packWallets: packWallets, scanLostDeposits: scanLostDeposits, saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, reopenUncheckedDone: reopenUncheckedDone, releaseUntakenEntry: releaseUntakenEntry, keptLockUse: keptLockUse,

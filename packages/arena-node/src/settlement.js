@@ -34,7 +34,7 @@ import { heldOutcomes, marketFinalityOf, attestedTable } from './game-market.js'
 import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
 import { lockSettlement, lateLockSettlement, attestedLockSettlement, bookLockSettlement, RESERVE_LATER_PK } from '../../arena-protocol/src/lock-settlement.js';
 import { roundSplitBps } from '../../arena-protocol/src/fee-proposal.js';
-import { paysReserves } from '../../arena-protocol/src/reserves.js';
+import { paysReserves, giftsInFeeLock, ROUND_SPLIT_BPS } from '../../arena-protocol/src/reserves.js';
 import { bookSettlement } from '../../arena-protocol/src/book-ledger.js';
 import { isScalar, marketOfRound } from '../../arena-protocol/src/manifest.js';
 import { FORFEIT, VOID, ENTRY_VOID, isQualifier } from '../../arena-protocol/src/payout.js';
@@ -110,11 +110,12 @@ const LATE_SENDERS_MAX = 4096;
  * every federation prices its own (splitByFederation) - and split into one balanced transaction per federation. `args`:
  * lockSettlement's; `federationOf(outpoint)` -> the federation hex a claimed lock is in; `feesOf(fidHex)` -> its fee rule.
  */
-export function federationPlans(args, { federationOf, feesOf }) {
+// `reserveKeyOf(fidHex)`: each federation's reserve key, for a protocol-27 round's reserves line (kanban #1486) - planned to RESERVE_LATER_PK
+export function federationPlans(args, { federationOf, feesOf, reserveKeyOf = null }) {
   const plan = lockSettlement({ ...args, fees: NO_FEES });
   if (!plan.ok) return { ok: false, why: plan.why };
   if (plan.nothing) return { ok: false, why: plan.why, ...(plan.noFill ? { code: REFUSAL.NOTHING_CLAIMED } : {}) };
-  const split = splitByFederation(plan, { roundId: args.roundId, federationOf, feesOf });
+  const split = splitByFederation(plan, { roundId: args.roundId, federationOf, feesOf, reserveKeyOf });
   if (!split.ok) return { ok: false, why: split.why };
   return { ok: true, plan, split };
 }
@@ -468,8 +469,12 @@ export class LockSettlement {
     const feeKey = takesAnyFederation(contract) ? `${toHex(roundIdBytes)}:late:${toHex(entryIdBytes)}` : toHex(roundIdBytes);
     let fees = this.fees.get(feeKey);
     if (!fees) { fees = await port.fees(); this.fees.set(feeKey, fees); }
+    // A PROTOCOL-27 LATE LOSER'S FEE LOCK HOLDS THE DEVELOPERS' AND THE RESERVES' PARTS TOO (kanban #1486): its own federation's reserve key
+    const ef = takesAnyFederation(contract) ? entryFederation(contract, e) : null;
+    const gf = await this.giftsFor(contract, { feeLocks: feeLock ? 1 : 0, federationHex: ef && ef.ok ? toHex(ef.federationId) : null });
+    if (!gf.ok) return gf;
     const args = { roundId: roundIdBytes, entryId: entryIdBytes, entry, lock, feeLock, shares, fees,
-      signerNodes: feeLock ? this.signerNodesFor(roundIdBytes, contract) : null, contract, ...this.roundFees(contract) };
+      signerNodes: feeLock ? this.signerNodesFor(roundIdBytes, contract) : null, contract, ...this.roundFees(contract), ...(gf.gifts ? { gifts: gf.gifts } : {}) };
     // THE BASE PLAN the late sends are sized from (C3b-2a). With a winnings sender it is never signed, so a winner whose
     // lock row is missing here does not block it: its payout goes by send, refunding to the committee key.
     // WINNINGS-AUTO (RULED 2026-10-01): the late shares are paid by payout contracts to the winners' own lock keys
@@ -592,6 +597,31 @@ export class LockSettlement {
     const set = typeof this.feesFor === 'function' && contract ? this.feesFor(contract) : null;
     if (!set) return {};
     return { websitePct: set.websitePct, ...(paysReserves(contract) ? { feeBps: roundSplitBps(set).nodes } : {}) };
+  }
+
+  /**
+   * A PROTOCOL-27 GAME ROUND'S GIFTS (kanban #1486): its fee locks hold the developers' and the reserves' parts beside the nodes', paid at
+   * settlement for the counted entries only (lock-settlement.js feeSettlement `gifts`). Answers { ok, gifts } - null below 27, for a market
+   * (its donation has its own path) or with no fee lock to claim - or why no lock is claimed. `federationHex`: the federation whose
+   * reserve key is paid (a late loser's on a round that takes any); else the round's, or RESERVE_LATER_PK when it takes any, each federation's
+   * part then paid to its own key (splitByFederation).
+   */
+  async giftsFor(contract, { feeLocks = 1, federationHex = null } = {}) {
+    if (!giftsInFeeLock(contract) || !feeLocks) return { ok: true, gifts: null };
+    const ofGame = this.round.plugins ? pluginForRound(contract, this.round.plugins) : null;
+    if (ofGame && ofGame.ok && donationInFee(ofGame.plugin.manifest)) return { ok: true, gifts: null };
+    const t = this.donationTargetFor ? this.donationTargetFor(contract) : { ok: false, why: 'this signer node names no donation target' };
+    if (!t.ok) return refuse(`no lock is claimed: this round's fee locks hold the developers' part, and ${t.why}`);
+    const set = typeof this.feesFor === 'function' ? this.feesFor(contract) : null;
+    const split = set ? roundSplitBps(set) : ROUND_SPLIT_BPS;
+    let reserveKey = null;
+    if (takesAnyFederation(contract) && !federationHex) reserveKey = RESERVE_LATER_PK;
+    else {
+      const fid = federationHex || toHex(contract.federationId);
+      reserveKey = this.reserveKeyFor ? await this.reserveKeyFor(fid).catch(() => null) : null;
+      if (!reserveKey) return refuse('no lock is claimed: this round\'s fee locks hold the reserves\' part, and no reserve key is known for its federation');
+    }
+    return { ok: true, gifts: { recipients: t.target, reserveKey, split } };
   }
 
   async #bookPlan(roundIdBytes, a, claimPk, held) {
@@ -1033,12 +1063,18 @@ export class LockSettlement {
     }
     // A ROUND THAT TAKES ANY FEDERATION: each claimed lock's federation is its entry's (entryFederation), each federation's fee
     // rule its own port's, read once; the plan decided once and split into one transaction per federation (federationPlans)
+    // A PROTOCOL-27 ROUND'S FEE LOCKS HOLD THE DEVELOPERS' AND THE RESERVES' PARTS TOO (kanban #1486)
+    const gf = await this.giftsFor(contract, { feeLocks: feeLocks.size });
+    if (!gf.ok) return gf;
     if (anyFed) {
       const ds = on.entries.some((e) => e.atTheDoor) && this.donationSetFor ? this.donationSetFor(contract) : null;
       const fed = await this.#federationsOf(roundIdBytes, contract, on.entries.map((e) => ({ entryId: e.entryId, pubkey: e.pubkey })), locks, feeLocks);
       if (!fed.ok) return fed;
+      const reserveKeys = new Map();
+      if (gf.gifts) for (const fid of fed.federationIds) reserveKeys.set(fid, this.reserveKeyFor ? await this.reserveKeyFor(fid).catch(() => null) : null);
       const got = federationPlans({ roundId: roundIdBytes, entries: on.entries, minScore: contract.minScore, payoutShares, locks, feeLocks,
-        signerNodes: feeLocks.size ? this.signerNodesFor(roundIdBytes, contract) : null, contract, donationSet: ds && ds.ok ? ds.set : null }, fed);
+        signerNodes: feeLocks.size ? this.signerNodesFor(roundIdBytes, contract) : null, contract, donationSet: ds && ds.ok ? ds.set : null,
+        ...(gf.gifts ? { gifts: gf.gifts } : {}) }, { ...fed, reserveKeyOf: (fid) => reserveKeys.get(fid) || null });
       if (!got.ok) return refuse(`no lock is claimed: ${got.why}`);
       return { ok: true, anyFed: true, plan: got.plan, split: got.split, base: { plan: got.plan, entryOf: lockEntry }, contract, claimPk, held, locks, lockEntry };
     }
@@ -1052,7 +1088,7 @@ export class LockSettlement {
     const ds = on.entries.some((e) => e.atTheDoor) && this.donationSetFor ? this.donationSetFor(contract) : null;
     const args = { roundId: roundIdBytes, entries: on.entries, minScore: contract.minScore, payoutShares, locks, fees,
       feeLocks, signerNodes: feeLocks.size ? this.signerNodesFor(roundIdBytes, contract) : null, contract, addressed,
-      donationSet: ds && ds.ok ? ds.set : null, ...this.roundFees(contract) };
+      donationSet: ds && ds.ok ? ds.set : null, ...this.roundFees(contract), ...(gf.gifts ? { gifts: gf.gifts } : {}) };
     let plan = lockSettlement(args);
     if (!plan.ok) return refuse(`no lock is claimed: ${plan.why}`);
     if (plan.nothing) return refuse(`no lock is claimed: ${plan.why}`, 409, plan.noFill ? REFUSAL.NOTHING_CLAIMED : null);
@@ -1839,6 +1875,8 @@ export class LockSettlement {
     // WHAT THE ROUND MOVES OVER ALL ITS FEDERATIONS, NEVER REWRITTEN ONCE ONE FEDERATION'S IS IN (kanban #1172): each federation's own moves are kept
     // with its txid (keepScopedMoves) at its first SUBMITTING
     if (!(this.round.fedLockSettlementsOf ? this.round.fedLockSettlementsOf(roundIdBytes) : []).some((r) => r.state === ACCEPTED)) this.keepFederationMoves(roundIdBytes, got);
+    // THE SPLIT'S FEDERATIONS ON DISK BEFORE ANY IS SIGNED (kanban #1576): one whose part fails before its SUBMITTING row keeps the round unsettled and retried
+    if (this.round.putFedLockSplit) this.round.putFedLockSplit(roundIdBytes, got.split.settlements.map((s) => s.federation));
     const results = [];
     for (let i = 0; i < got.split.settlements.length; i++) {
       const s = got.split.settlements[i];
