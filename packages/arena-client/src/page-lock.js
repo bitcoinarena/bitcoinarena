@@ -1504,7 +1504,7 @@ export async function lockStake(ask = {}) {
   return ask.keep ? keptLockStake(ask) : lockStakeNow(ask);
 }
 async function lockStakeNow({ round, roundId, invite, seed, stake, claimKey, playerPubkey, LockClient,
-  storage, donationMsat = 0n, donationRecipients = null, onStep = () => {}, onSubmitted = () => {} } = {}) {
+  storage, donationMsat = 0n, donationRecipients = null, onStep = () => {}, onSubmitted = () => {}, onSubmitting = () => {}, submitTag = '' } = {}) {
   paysIntoALock(round, invite, LockClient);
   if (!stake || namesNothing(stake.stakePoint)) throw new Error('a lock is to the stake\'s point, and this stake names none');
   if (!claimKey || !claimKey.ok || namesNothing(claimKey.claimPk))
@@ -1540,9 +1540,15 @@ async function lockStakeNow({ round, roundId, invite, seed, stake, claimKey, pla
     onStep(`locking the stake${feeGate.pays ? ', the node fee' : ''}${donationShares.length ? ' and the donation' : ''} (submitted, accepted behind)`);
     const preimage = feeGate.pays ? feeSecretFor(seed, roundId) : null;
     const image = preimage ? sha256(preimage) : null;
+    // THE SUBMISSION MARKED BEFORE IT IS MADE, AND TAGGED (kanban #2459): the lock client hands the transaction to the guardians before it
+    // answers, so a tab closed in that window left an intent with no transaction id; the intent now says it was handed on (onSubmitting - a
+    // throw here submits nothing), and the 2.0 lock client keeps the submission under `submitTag` in the wallet's operation log
+    // (lockSubmittedFor), as sendEcash(msat, key) keeps an e-cash send. An older lock client ignores the extra argument.
+    onSubmitting();
     const submitted = JSON.parse(await client.lockSubmit(toHex(stake.stakePoint), String(amount), image ? toHex(image) : '',
       String(feeGate.pays ? feeMsat : 0n), toHex(claimKey.claimPk), toHex(refundPk), delta,
-      JSON.stringify(donationShares.map((d) => ({ pk: toHex(d.recipientPk), msat: String(d.amountMsat), image: toHex(playerPubkey) })))));
+      JSON.stringify(donationShares.map((d) => ({ pk: toHex(d.recipientPk), msat: String(d.amountMsat), image: toHex(playerPubkey) }))),
+      ...(submitTag ? [submitTag] : [])));
     onSubmitted(submitted);
     // WHERE THE LOCK'S TIME WENT, AS THE LOCK CLIENT MEASURED IT (kanban #623: a browser lock 0.3-2.7 s, a bot's 60-160 ms on the same
     // federation): the block count (kept or read), building the outputs, finalizing and submitting, the mint outputs' wait, the store
@@ -1797,6 +1803,13 @@ function stepLockRecord(storage, who, to, patch = {}, { expect = null } = {}) {
   return next;
 }
 
+/** The submission the wallet's operation log kept under `key` (2.0 lock client, kanban #2459): lockSubmit's answer, or null when it holds
+ * none; undefined when the wallet cannot say (no lockSubmittedFor, no key, or it failed). */
+async function lockSubmittedBy(wallet, key) {
+  if (!key || !wallet || typeof wallet.lockSubmittedFor !== 'function') return undefined;
+  try { const r = JSON.parse(await wallet.lockSubmittedFor(key)); return r && r.txid ? r : null; } catch { return undefined; }
+}
+
 /** An intent younger than this is another tab still asking its lock client; an older one that did not fail is a tab that closed meanwhile. */
 export const LOCK_INTENT_LIVE_MS = 120000;
 // what a kept record needs beyond its intent's stake: outpoints, the contract's fields, the fee lock, a few donation outputs
@@ -1829,10 +1842,27 @@ async function keptLockStake(ask) {
       const r = now.record;
       if (!r.failed && Date.now() - Number(r.atMs || 0) < LOCK_INTENT_LIVE_MS)
         throw new Error('another tab is locking this round\'s stake for this player right now: no second lock is made');
+      // A SUBMISSION NO ANSWER NAMED IS FOUND AGAIN BEFORE A NEW LOCK (kanban #2459): a tab closed after the lock client handed the
+      // transaction to the guardians and before it answered left an intent with no transaction id, while the guardians accepted it; copied
+      // aside blind, that stake sat under the player's refund key named nowhere and the next PLAY paid again. The wallet's operation log is
+      // asked for the submission tagged with this intent (lockSubmittedFor); found, its transaction is named in the orphan copy; not there,
+      // nothing was handed on. A wallet that cannot say (an older lock client, an intent written before the tag) refuses this PLAY by name -
+      // never a second stake over a first one nobody can find.
+      if (!r.failed && !r.txid && (r.submitting || !(Number(r.v) >= 3))) {
+        const wallet = await playerWallet({ round: ask.round, invite: ask.invite, seed: ask.seed, LockClient: ask.LockClient, storage, onStep: ask.onStep || (() => {}) });
+        const found = await lockSubmittedBy(wallet, r.submitTag);
+        if (found === undefined)
+          throw new Error('an earlier stake lock for this round was handed to the guardians from a tab that closed before it answered, and this wallet cannot find it: no second lock is made');
+        if (found) {
+          now.record = { ...r, txid: String(found.txid), operation: String(found.operation || ''), outputs: found.outputs || null, foundMs: Date.now() };
+          try { putRoomy(storage, iKey, JSON.stringify(now.record)); } catch { /* the orphan copy below names it */ }
+        }
+      }
       // a tab closed while its lock client was asked: the transaction it names (if any) may hold the stake - kept aside, never written over
       if (!r.failed) {
-        try { putRoomy(storage, `arena.lock.orphan.${tag}.${Number(r.atMs || 0)}`, JSON.stringify(r)); } catch { /* the next intent is refused for room below */ }
-        console.warn(`[arena] #1162 an earlier stake lock for this round did not finish (${r.txid ? `transaction ${String(r.txid).slice(0, 16)}… submitted` : 'nothing answered'}): kept as arena.lock.orphan.${tag}.*`);
+        const o = now.record;
+        try { putRoomy(storage, `arena.lock.orphan.${tag}.${Number(o.atMs || 0)}`, JSON.stringify(o)); } catch { /* the next intent is refused for room below */ }
+        console.warn(`[arena] #1162 an earlier stake lock for this round did not finish (${o.txid ? `transaction ${String(o.txid).slice(0, 16)}… submitted` : 'nothing answered'}): kept as arena.lock.orphan.${tag}.*`);
       }
     }
     // A REFUSED RECORD IS KEPT ASIDE BEFORE THE NEW LOCK WRITES OVER IT (kanban #1584): 'refused' is read from a few "not stored" answers on a
@@ -1847,11 +1877,18 @@ async function keptLockStake(ask) {
     lockRecordStep(now.state, 'intent');
     // ROOM FIRST: the intent holds the record's room (`room`, given back when the record takes its place), so the record written after it
     // fits where it was; refused here, nothing is spent
-    putRoomy(storage, iKey, JSON.stringify({ v: 2, state: 'intent', atMs: Date.now(), preimage: toHex(stake.preimage), body: toHex(stake.body || new Uint8Array(0)),
+    const atMs = Date.now();
+    const submitTag = `arena.lock.${tag}.${atMs}`;
+    putRoomy(storage, iKey, JSON.stringify({ v: 3, state: 'intent', atMs, submitTag, preimage: toHex(stake.preimage), body: toHex(stake.body || new Uint8Array(0)),
       amountMsat: String(lockAmountMsat(ask.round, ask.donationMsat || 0n)), refundPk: toHex(refundKeyOf(playerPubkey)), txid: null, room: '-'.repeat(LOCK_RECORD_ROOM) }));
     let made;
     try {
-      made = await lockStakeNow({ ...ask, onSubmitted: (sub) => {
+      made = await lockStakeNow({ ...ask, submitTag, onSubmitting: () => {
+        // handed on from here (kanban #2459): written into the intent's own room; a browser that cannot write it submits nothing
+        const r = readJson(storage, iKey);
+        if (!r) throw new Error('the stake lock\'s intent is gone from this browser: nothing is submitted');
+        storage.setItem(iKey, JSON.stringify({ ...r, room: '-'.repeat(LOCK_RECORD_ROOM - 50), submitting: true }));
+      }, onSubmitted: (sub) => {
         // the transaction's id the moment it is answered, before anything else can happen to the tab (written into the intent's own room)
         // and its stake and fee outputs with the claim key (kanban #2460): an intent left by a closed tab is refunded from these after its expiry
         try {
