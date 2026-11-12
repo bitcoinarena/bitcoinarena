@@ -45,13 +45,13 @@ import { scalarFrom32, FIELD } from '../../arena-protocol/src/shares.js';
 import { FINAL, SUSPENDED, PROVISIONALLY_FINAL } from '../../arena-protocol/src/objection.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { resultFinality } from './finality.js';
-import { encodeCommitments, decodeCommitments, encodeShare, decodeShare } from './pool-wire.js';
+import { encodeCommitments, decodeCommitments, encodeShare, decodeShare, commitmentListRefusal } from './pool-wire.js';
 import { sendPlanToJson, planKey } from './winnings-send.js';
 import { askerOrder, eligibleAsker } from './payout.js';
 import { REFUSAL } from './settle-backoff.js';
 import { RETRY, retryStep, retryBlocks, locksExpired, isFinalRetry } from './settle-retry.js';
 import { LOCK_FATE, lockFateStep, lockFateOf, markLockFate } from './forfeit.js';
-import { planTakenId, signPlanTaken, countPlanTaken, joinCertificate, splitCertificate } from './plan-taken.js';
+import { planTakenId, signPlanTaken, countPlanTaken, joinCertificate, splitCertificate, PLAN_TAKEN_BYTES } from './plan-taken.js';
 import { PLAN_ASK, SEND_PLAN_ASK_HEADER, sendPlanAskHeaders, checkSendPlanAsk } from './send-plan-ask.js';
 import { askPeers, PEER_ASK_MS, PEER_READ_MS, PEER_GRACE_MS } from './peer-ask.js';
 // the payouts of an accepted settlement kept as rows (GET /donations, GET /reserves): a walk-away's donation keys and a market's reserve
@@ -66,7 +66,8 @@ const feeLine = (payouts) => {
   return `${n} signer node(s) ${nodes} msat${d ? ` and ${d} donation key(s) ${gifts} msat` : ''}`;
 };
 
-// THE NONCE PAIRS KEPT PER SETTLEMENT (kanban #1489): each /settle-commit hands out a pair of its own; the oldest goes past this many.
+// THE NONCE PAIRS KEPT PER SETTLEMENT (kanban #1489): each /settle-commit hands out a pair of its own; the oldest goes past this many,
+// once its asker's pass is over (kanban #1610).
 export const PAIRS_KEPT = 64;
 const listKey = (commitments) => commitments.map((c) => `${c.id}:${toHex(c.hiding)}:${toHex(c.binding)}`).sort().join('|');
 // `code` (settle-backoff.js REFUSAL, kanban #1186): what a sweep decides by - never the text
@@ -1260,12 +1261,20 @@ export class LockSettlement {
     // just been given and spent it on a list of that commitment and four invented ones; the asker's list was then refused ("keeps no second pair") at every seat and no
     // pass reached the threshold. Now no pair is handed out twice: a list from outside spends only the pair its own commit drew. The last PAIRS_KEPT are kept.
     const held = (this.pairs.get(key) || []).filter((p) => toHex(p.message) === toHex(m.message));
+    // NO PAIR IS PUSHED OUT WHILE ITS ASKER MAY STILL NAME IT (kanban #1610): /settle-commit answers anyone, so a stranger's PAIRS_KEPT commits
+    // between an asker's commit and its share request evicted the asker's pair, its share was refused at every seat ("does not carry this
+    // signer node's own commitment") and no pass reached the threshold. A pair is kept for the asker's whole pass - its commit ask, the
+    // grace and its share ask - and past PAIRS_KEPT only a pair older than that goes; with none, the new commit is refused, not a held pair.
+    const now = Number(this.now());
+    const keptMs = 2 * this.peerAskMs + this.peerGraceMs;
+    while (held.length >= PAIRS_KEPT && now - held[0].at >= keptMs) held.shift();
+    if (held.length >= PAIRS_KEPT) return refuse(`this signer node holds ${PAIRS_KEPT} unspent nonce pairs of that settlement handed out in the last ${keptMs} ms: ask again shortly`, 503);
     const hiding = nonceGenerate340(this.random(32), m.signerNode.share);
     const binding = nonceGenerate340(this.random(32), m.signerNode.share);
-    const pair = { message: m.message, hiding, binding, list: null, share: null,
+    const pair = { message: m.message, hiding, binding, list: null, share: null, at: now,
       commitment: { id: m.signerNode.id, hiding: this.curve.pointFromScalar(hiding), binding: this.curve.pointFromScalar(binding) } };
     held.push(pair);
-    this.pairs.set(key, held.slice(-PAIRS_KEPT));
+    this.pairs.set(key, held);
     return { ok: true, commitment: pair.commitment };
   }
 
@@ -1294,6 +1303,8 @@ export class LockSettlement {
     const held = (this.pairs.get(federation ? `${toHex(roundIdBytes)}:fed:${String(federation).toLowerCase()}` : entry ? `${toHex(roundIdBytes)}:${toHex(entry)}` : toHex(roundIdBytes)) || [])
       .filter((p) => toHex(p.message) === toHex(m.message));
     if (!held.length) return refuse('this signer node committed to no settlement of that round');
+    // NO LIST LONGER THAN A COMMITTEE (kanban #1672): a stranger's 85 598-commitment list held the loop ~49 s; refused before any curve work
+    { const why = commitmentListRefusal(commitments, { needed: m.needed, nodes: m.contract && m.contract.nodes }); if (why) return refuse(why); }
     // THE PAIR THE LIST NAMES (kanban #1489): the one whose commitment the list carries, of those this seat handed out.
     const own = commitments.find((c) => String(c.id) === String(held[0].commitment.id));
     const pair = own && held.find((p) => toHex(own.hiding) === toHex(p.commitment.hiding) && toHex(own.binding) === toHex(p.commitment.binding));
@@ -2165,6 +2176,13 @@ export class LockSettlement {
     if (!kept.length) return refuse('this seat keeps no send plan for that settlement');
     const planId = planTakenId({ roundId: roundIdBytes, lateEntryId, rows: kept });
     if (toHex(planId) !== toHex(bytes.subarray(0, 32))) return refuse('that certificate is for another plan than the one this seat kept');
+    // ONE RECORD PER SEAT AT MOST, COUNTED BEFORE ANY SIGNATURE IS CHECKED (kanban #1674): this door is public, and a stranger's
+    // 8 MiB body of one real record repeated 65 535 times held the seat's loop ~61 s in BIP-340 verifies. A certificate that
+    // is not whole 128-byte records, or has more records than the round has seats, is refused here.
+    const tail = bytes.length - 32;
+    if (tail % PLAN_TAKEN_BYTES !== 0) return refuse(`a certificate's signed acceptances are ${PLAN_TAKEN_BYTES} bytes each`, 400);
+    if (tail / PLAN_TAKEN_BYTES > contract.nodes.length)
+      return refuse(`a certificate of ${tail / PLAN_TAKEN_BYTES} signed acceptances, more than the round's ${contract.nodes.length} seats`, 400);
     const records = splitCertificate(bytes.subarray(32));
     const counted = countPlanTaken({ own: records[0], answers: records.slice(1).map((b, i) => ({ base: `record ${i + 1}`, bytes: b })),
       seats: contract.nodes, planId, slots: contract.settlementSlots });
