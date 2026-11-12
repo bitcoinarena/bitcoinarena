@@ -171,12 +171,17 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       let decided = voteOutcome(row.id);
       if (decided) {
         const onChain = await hashAt(period.last);
-        if (onChain && decided.lastHash && onChain !== decided.lastHash) {
+        // A VOTE DECIDED WITH NO ANCHOR (kanban #1750): a store written before the guard below holds an outcome whose last_hash is
+        // NULL (an RPC error read as null in the deciding pass) - no reorg could ever reopen it, so it is counted again from the
+        // blocks held with a hash; the count over the same chain decides the same, a count over a replaced block now follows it
+        if (onChain && (!decided.lastHash || onChain !== decided.lastHash)) {
           db.prepare('DELETE FROM funding_vote_outcomes WHERE proposal = ?').run(row.id);
           // AND A FEE PROPOSAL'S OUTCOME WITH IT (ruled on #1245, kanban #1231): decided again from the set held then
           db.prepare('DELETE FROM fee_outcomes WHERE proposal = ?').run(row.id);
           // the blocks read past the counted one (a passed vote's veto window) hang on the old branch: read again
-          db.prepare('DELETE FROM funding_vote_blocks WHERE proposal = ? AND height >= ?').run(row.id, period.last);
+          const unanchored = db.prepare('SELECT MIN(height) AS h FROM funding_vote_blocks WHERE proposal = ? AND hash IS NULL').get(row.id);
+          db.prepare('DELETE FROM funding_vote_blocks WHERE proposal = ? AND height >= ?').run(row.id,
+            unanchored && Number.isInteger(unanchored.h) ? Math.min(unanchored.h, period.last) : period.last);
           log(`[funding] ${row.id.slice(0, 16)}: the counted last voting block ${period.last} was reorged away - the vote is counted again`);
           decided = null;
         } else if (!decided.passed || row.kind === 'leaderboard') continue;   // a leaderboard payout has no veto window to read on
@@ -212,6 +217,9 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         db.prepare('DELETE FROM funding_vote_blocks WHERE proposal = ? AND height = ?').run(row.id, top.height);
         held.pop();
       }
+      // and a row a store holds with no hash (written before kanban #1750) is read again, with every one after it
+      const noHash = held.findIndex((r) => !r.hash);
+      if (noHash >= 0) { db.prepare('DELETE FROM funding_vote_blocks WHERE proposal = ? AND height >= ?').run(row.id, held[noHash].height); held = held.slice(0, noHash); }
       // read on, a pass at a time, this proposal's votes only
       const prefix = row.id.slice(0, 16);
       let next = held.length ? held[held.length - 1].height + 1 : period.from;
@@ -219,6 +227,9 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       const upTo = Math.min(height, decided ? readEndOf(period) : period.last);
       for (let n = 0; next <= upTo && n < maxBlocksPerPass; next++, n++) {
         const hash = await hashAt(next);
+        // NO BLOCK IS HELD WITHOUT ITS HASH (kanban #1750): a hash that did not answer (above the tip, or an RPC error - main.js
+        // blockHashAt reads both as null) is read on the next pass, never stored as a row no reorg check can test
+        if (!hash) break;
         let votes; try { votes = await voteChain.votesAt(next, hash || undefined); } catch { break; }
         const mine = (votes || []).filter((v) => toHex(v.payload).slice(8, 24) === prefix).map((v) => ({ payload: toHex(v.payload), txid: String(v.txid) }));
         db.prepare('INSERT OR REPLACE INTO funding_vote_blocks (proposal, height, hash, votes) VALUES (?, ?, ?, ?)').run(row.id, next, hash, JSON.stringify(mine));
@@ -226,7 +237,11 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       held = voteBlocks(row.id);
       const readTo = held.length ? held[held.length - 1].height : null;
       if (decided || readTo === null || readTo < period.last || held.length !== readTo - period.from + 1 || height < period.decidableAt) continue;
+      // NEVER DECIDED WITHOUT ITS ANCHOR (kanban #1750): the outcome is held to the hash of its last voting block as held, and that
+      // block must still be this chain's - with no hash (an RPC error) or a moved one, the decision waits for the next pass
       const lastHash = await hashAt(period.last);
+      const lastRow = held.find((r) => r.height === period.last);
+      if (!lastHash || !lastRow || lastRow.hash !== lastHash || held.some((r) => !r.hash)) continue;
       const out = ruleOf(row.kind, countOf(row.id, period, p.obj));
       db.prepare('INSERT OR IGNORE INTO funding_vote_outcomes (proposal, outcome, last_hash, decided_ms) VALUES (?, ?, ?, ?)').run(row.id, JSON.stringify(out), lastHash, now());
       log(`[funding] ${row.id.slice(0, 16)}: vote ${out.passed ? 'passed' : 'failed'} - turnout ${out.turnoutPct} %, YES ${out.approvalPct} % of YES + NO, YES ${out.yesOfAllPct} % of everyone who could vote, ${out.bondsVoted} bond(s)`);
