@@ -63,10 +63,16 @@ export function priceAttestationStands({ id, sigs, committee, threshold, verify 
   const members = new Set((committee || []).map((k) => (typeof k === 'string' ? k.toLowerCase() : toHex(k))));
   const signed = new Set();
   for (const s of sigs || []) {
-    const key = typeof s.key === 'string' ? s.key.toLowerCase() : toHex(s.key);
-    if (!members.has(key) || signed.has(key)) continue;
-    const sig = typeof s.signature === 'string' ? Uint8Array.from(s.signature.match(/../g).map((x) => parseInt(x, 16))) : s.signature;
-    const pk = Uint8Array.from(key.match(/../g).map((x) => parseInt(x, 16)));
+    // kanban #1566: a malformed entry (a key or signature that is not hex of its size, a non-string, a missing field) counts
+    // nothing, as a signature that does not verify - it never throws out of here and so never refuses the others' signatures.
+    let key, sig, pk;
+    try {
+      key = typeof s.key === 'string' ? s.key.toLowerCase() : toHex(s.key);
+      if (!/^[0-9a-f]{64}$/.test(key) || !members.has(key) || signed.has(key)) continue;
+      sig = typeof s.signature === 'string' ? s.signature.toLowerCase() : toHex(s.signature);
+      if (!/^[0-9a-f]{128}$/.test(sig)) continue;
+      sig = fromHex(sig); pk = fromHex(key);
+    } catch { continue; }
     let good = false;
     try { good = !!verify(sig, id, pk); } catch { good = false; }
     if (good) signed.add(key);
