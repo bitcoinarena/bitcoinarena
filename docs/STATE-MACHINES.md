@@ -1542,3 +1542,10 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### Settle (change) A round that takes any federation: settled only in every federation of its split (kanban #1838)
+- The federations of the split (`planOf` `split.settlements`) are kept with the round (`fed_lock_settlement_plans`) by `#settleFederations` and by every peer's `fedMessage`, right after the plan and before anything is built or submitted there.
+- `settlementState` is ACCEPTED only when every row it holds is ACCEPTED and every federation of the split holds an ACCEPTED row; a federation the pass never reached (no port, too few commitments, its shares failed) has no row and keeps the round SUBMITTING.
+- `closedLockRoundsUnsettled` and `lateSettlementCandidates` follow the same rule: the round stays in the retry sweep, and its late losers are not asked about, while one federation of its split lacks an ACCEPTED row. The attested sweep, GET /round-result and the season/Nostr readers read `settlementState` (`stateOf`), so they wait with it.
