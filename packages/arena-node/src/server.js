@@ -11590,6 +11590,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'GET' && url.pathname === '/lock-settlement') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         if (rid.length !== 32) return text(res, 400, 'a settlement is asked for by a round id');
+        // ONE LATE ENTRY'S OR ONE FEDERATION'S ROW, AS A SEAT ASKS IT (kanban #2030): what another seat checks a landed transaction of that scope by,
+        // when its own read of the guardians finds every claimed lock gone and every payout already redeemed - its txid, message and signature
+        const lateQ = url.searchParams.get('late'), fedQ = url.searchParams.get('federation');
+        if (lateQ !== null || fedQ !== null) {
+          if (lateQ !== null && !/^[0-9a-f]{64}$/.test(lateQ)) return text(res, 400, 'a late settlement is named by a 32-byte entry id');
+          if (fedQ !== null && !/^[0-9a-f]{1,128}$/i.test(fedQ)) return text(res, 400, 'a federation settlement is named by its federation id');
+          const s = lateQ !== null ? (round.lateLockSettlement ? round.lateLockSettlement(new Uint8Array(rid), new Uint8Array(Buffer.from(lateQ, 'hex'))) : null)
+            : (round.fedLockSettlement ? round.fedLockSettlement(new Uint8Array(rid), fedQ.toLowerCase()) : null);
+          res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+          return res.end(JSON.stringify(s ? { state: s.state, txid: s.txid, why: s.why, signature: toHex(s.signature), message: toHex(s.message), madeMs: s.madeMs } : { state: 'NONE' }));
+        }
         // A ROUND THAT TAKES ANY FEDERATION (2026.0.3): one settlement per federation, each its own row
         const feds = settlements.fedSummary ? await settlements.fedSummary(new Uint8Array(rid), { moved: true }) : [];
         if (feds.length) {
