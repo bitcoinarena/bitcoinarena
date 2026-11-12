@@ -2061,7 +2061,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }));
     return mergeServedRounds(held.filter(Boolean)).rounds;
   };
-  const fundingBook = round.db ? createFundingBook({ endTimeAt: typeof blockHeaderTimeAt === 'function' ? blockHeaderTimeAt : null, feeChainFrom: (netHex) => { const n = networkOf(fromHex(String(netHex))); return n && Object.prototype.hasOwnProperty.call(FEE_SIGNAL_CHAIN_HEIGHT, n) ? FEE_SIGNAL_CHAIN_HEIGHT[n] : null; },   // kanban #1283
+  const fundingBook = round.db ? createFundingBook({ bindHeightFor: (net) => ballotBindHeight(isRegtestNet(net) ? 'regtest' : toHex(fromHex(net)) === toHex(NETWORK_ID_TESTNET4) ? 'testnet4' : 'mainnet'),   // kanban #2576
+    endTimeAt: typeof blockHeaderTimeAt === 'function' ? blockHeaderTimeAt : null, feeChainFrom: (netHex) => { const n = networkOf(fromHex(String(netHex))); return n && Object.prototype.hasOwnProperty.call(FEE_SIGNAL_CHAIN_HEIGHT, n) ? FEE_SIGNAL_CHAIN_HEIGHT[n] : null; },   // kanban #1283
     db: round.db, schedule: fundingSchedule, log: (l) => console.log(l),
     // BEFORE A FEE DECISION, EVERY SEAT'S APPROVALS AND SIGNALS (ruled on #1245, kanban #1231): GET /funding-items of each network seat this seat reaches
     pull: async (pid) => {
