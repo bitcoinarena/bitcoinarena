@@ -2906,6 +2906,15 @@ const owedKeyOf = (seed, id, order, curve) => {
   }
   return v;
 };
+// ONE READ OF THE OWED SCAN, GIVEN UP AFTER SEAT_READ_MS (kanban #1489): null when the seat failed, refused or did not answer in time
+// (1.9's OWED_LIST_MAX cap is 2.0's OWED_SETTLED_MAX, newest first)
+const OWED_NEXT_MS = 2000;
+const owedRead = (read) => {
+  const signal = AbortSignal.timeout(SEAT_READ_MS);
+  let t;
+  const late = new Promise((resolve) => { t = setTimeout(() => resolve(null), SEAT_READ_MS); });
+  return Promise.race([read(signal).catch(() => null), late]).finally(() => clearTimeout(t));
+};
 export async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fetcher = fetch, sinceMs = 0, known = [], knownBySeed = null } = {}) {
   // EVERY SAVED PHRASE AT ONCE (2026-10-07): each signer node's /settled is read once and matched against
   // every phrase's keys - 7 asks on 7 signer nodes, not 7 per phrase. One `seed` (with `known`) is the one-phrase scan as before.
@@ -2920,9 +2929,15 @@ export async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fe
   // derivations). Now a seat's list is taken newest first up to OWED_SETTLED_MAX ids (a seat answers at most 500, round.js settledSince),
   // each id once, and OWED_KEYS_PER_ROUND keys of a round: one seat costs the page at most OWED_SETTLED_MAX x (ORDER_SCAN + 1) a phrase.
   const listed = new Map();
-  for (const node of nodes) {
-    let got = null;
-    try { const r = await fetcher(`${base(node)}/settled?since=${Math.max(0, Math.floor(Number(sinceMs) || 0))}`); if (r.ok) got = await r.json(); } catch { got = null; }
+  // EVERY SIGNER NODE AT ONCE, EACH WITHIN SEAT_READ_MS (kanban #1489): read one after another with no timeout, one seat that took
+  // the request and never answered stalled the scan for good - a winner whose tab closed was never shown what the honest seats list.
+  // The deadline holds the answer's body too, and holds even for a fetcher that ignores the signal.
+  const since = Math.max(0, Math.floor(Number(sinceMs) || 0));
+  const lists = await Promise.all(nodes.map((node) => owedRead(async (signal) => {
+    const r = await fetcher(`${base(node)}/settled?since=${since}`, { signal });
+    return r.ok ? r.json() : null;
+  })));
+  for (const got of lists) {
     const rounds = got && Array.isArray(got.rounds) ? got.rounds.filter((x) => x && typeof x === 'object') : null;
     if (!rounds) continue;
     const newest = rounds.length > OWED_SETTLED_MAX
@@ -2952,14 +2967,30 @@ export async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fe
       if (!contracts.has(id)) {
         // A CONTRACT READ ONCE IS KEPT: the id is its hash, so it is the round for good - not read again at every scan
         let round = OWED_ROUNDS.get(id) || null;
-        for (const node of round ? [] : nodes) {
-          try {
-            const r = await fetcher(`${base(node)}/round?id=${id}`);
-            if (!r.ok) continue;
-            const c = decodeRoundContract(new Uint8Array(await r.arrayBuffer()));
-            if (toHex(roundIdOf(c)) === id && roundLocks(c)) { round = c; break; }
-          } catch { /* this signer node did not answer, or not with the round */ }
-        }
+        // ONE SIGNER NODE AT A TIME, BUT NONE HOLDS THE SCAN (kanban #1489): each read gives up after SEAT_READ_MS, and a seat
+        // silent for OWED_NEXT_MS has the next one asked beside it - the first answer that is the round wins (its id is the
+        // contract's hash, so any seat's is as good); seats that answer at once are still asked one read per round
+        if (!round) round = await new Promise((resolve) => {
+          let open = 0, next = 0, done = false, t = null;
+          const ask = () => {
+            clearTimeout(t);
+            if (done) return;
+            if (next >= nodes.length) { if (!open) { done = true; resolve(null); } return; }
+            const node = nodes[next++]; open += 1;
+            t = setTimeout(ask, OWED_NEXT_MS);
+            owedRead(async (signal) => {
+              const r = await fetcher(`${base(node)}/round?id=${id}`, { signal });
+              if (!r.ok) return null;
+              const c = decodeRoundContract(new Uint8Array(await r.arrayBuffer()));
+              return toHex(roundIdOf(c)) === id && roundLocks(c) ? c : null;
+            }).then((c) => {
+              open -= 1;
+              if (done) return;
+              if (c) { done = true; clearTimeout(t); resolve(c); } else ask();
+            });
+          };
+          ask();
+        });
         if (round && !OWED_ROUNDS.has(id)) { OWED_ROUNDS.set(id, round); if (OWED_ROUNDS.size > 2000) OWED_ROUNDS.delete(OWED_ROUNDS.keys().next().value); }
         contracts.set(id, round);
       }
