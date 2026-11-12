@@ -3721,6 +3721,11 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       try { const all = readStoredHidden().filter((x) => x.roundIdHex !== h.roundIdHex); all.push(h); window.sessionStorage.setItem(HIDDEN_KEY, JSON.stringify(all.slice(-50))); }
       catch (e) { console.warn('[arena] the hidden move of round ' + String(h.roundIdHex).slice(0, 16) + ' is kept for this page only (' + ((e && e.name) || e) + '): do not reload before its reveal'); }
     }
+    // A MOVE NO SEAT TOOK (kanban #2025): its record, written before the entry went out, goes again - the round is not this tab's
+    function forgetHidden(roundIdHex) {
+      try { window.sessionStorage.setItem(HIDDEN_KEY, JSON.stringify(readHidden().filter((x) => x.roundIdHex !== roundIdHex))); }
+      catch { /* kept for this page only */ }
+    }
     window.ARENA_HIDDEN_MOVES = readHidden;
     // ---------------------------------------------------------------- markets (§0A.7a): Up/Down's page part, packages/btc-updown/page/market-page.js (kanban #521)
     // AN ORDER'S SESSION KEY FROM THE WALLET (kanban #592: "orders follow the wallet, not the tab"): the Ed25519 secret is
@@ -4678,6 +4683,17 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         // seats (its settlement slots) took the entry, the move is the tab's; the rest answer in the background
         const seatsThatCount = Number(named.round.settlementSlots || named.round.gameVerifySlots || 0);
         try { if (window.ARENA_MADE_ENTRY) window.ARENA_MADE_ENTRY(ARENACLIENT.toHex(ARENACLIENT.entryId(entry))); } catch { /* the move still goes */ }   // kanban #2035
+        // THE MOVE AND ITS SALT KEPT BEFORE THE ENTRY GOES OUT (kanban #2025, state audit 2026-11-12): written only after the seats answered (2.8 s, up to
+        // 22 s with a slow seat), a reload or a closed tab in that wait left an entry at the seats, its stake locked, whose move nobody could reveal -
+        // FORFEIT, its stake to the opponent. Now the record is in sessionStorage first, with the entry id made here (the seats make the same one), and
+        // written again with their id once they answered; an entry no seat took has its record taken out again
+        const hiddenRecord = (entryIdHex) => ({ roundIdHex: named.roundIdHex, entryIdHex, move: hidden.move, saltHex: ARENACLIENT.toHex(hidden.salt),
+          nodes: named.nodes, entryCloseMs: String(named.round.entryCloseMs), gameId: ARENACLIENT.toHex(named.round.gameId),
+          endMs: String(ARENACLIENT.roundEndMs(named.round)),   // its reveal deadline: the result stands by then at the latest
+          committee: (window.ARENA_ROUND_COMMITTEE || {})[named.roundIdHex] || null,   // kanban #2561: the seats whose lock set certificate it waits for
+          protocolVersion: Number(named.round.protocolVersion || 1) });   // kanban #2561: only a round of 28 or later waits for a certificate
+        { let ownId = null; try { ownId = ARENACLIENT.toHex(ARENACLIENT.entryId(entry)); } catch { /* the seats' id, written once they answered */ }
+          rememberHidden(hiddenRecord(ownId)); }
         const all = ARENACLIENT.submitPick({ entry, stakeLock, nodes: named.nodes, onEntries: (x) => entriesIn(x),
           onEntry: (p) => { if (seatsThatCount > 0 && p.entries.filter((x) => x.status === 201).length >= seatsThatCount) entriesIn({ entryId: p.entryId, entries: p.entries }); } });
         all.then((x) => entriesIn(x), (e) => entriesIn({ entries: [], why: e.message }));
@@ -4719,6 +4735,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         if (!sent.entries.some((x) => x.status === 201)) {
           // WHY, as the seats said it (2026-10-30: "the signer nodes refused the entry: undefined"): what onEntries hands has no `why` of its own
           const saidWhy = sent.why || [...new Set(sent.entries.map((x) => String(x.why || '').trim()).filter(Boolean))].sort((a, b) => (/not accepted/.test(a) ? 1 : 0) - (/not accepted/.test(b) ? 1 : 0)).slice(0, 2).join(' | ') || 'no seat said why';
+          forgetHidden(named.roundIdHex);
           window.ARENA_JOIN_REFUSED = 'the signer nodes refused the entry: ' + saidWhy; console.error('[arena] hidden move refused, each seat: ' + JSON.stringify(sent.entries.map((x) => [x.status, String(x.why || '').slice(0, 140)]))); return; }
         // THE SAME TRANSACTION RECORD AS AN ORDER'S (2026-10-24: "Make sure that the other apps also get all these timing fixes"): the tx
         // id in the log, the page's signed timing to the seats (explorer), a slow one's log kept in this browser
@@ -4731,11 +4748,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             post(); setTimeout(post, 8000);
           }
           if (tookMs > (window.ARENA_SLOW_TX_MS || 2000) && window.ARENA_KEEP_SLOW_TX) setTimeout(() => window.ARENA_KEEP_SLOW_TX(sent.entryId, tookMs), 8000); }
-        rememberHidden({ roundIdHex: named.roundIdHex, entryIdHex: sent.entryId, move: hidden.move, saltHex: ARENACLIENT.toHex(hidden.salt),
-          nodes: named.nodes, entryCloseMs: String(named.round.entryCloseMs), gameId: ARENACLIENT.toHex(named.round.gameId),
-          endMs: String(ARENACLIENT.roundEndMs(named.round)),   // its reveal deadline: the result stands by then at the latest
-          committee: (window.ARENA_ROUND_COMMITTEE || {})[named.roundIdHex] || null,   // kanban #2561: the seats whose lock set certificate it waits for
-          protocolVersion: Number(named.round.protocolVersion || 1) });   // kanban #2561: only a round of 28 or later waits for a certificate
+        rememberHidden(hiddenRecord(sent.entryId));
         window.ARENA_HIDDEN = { round: named.roundIdHex, entryIdHex: sent.entryId, move: hidden.move };
         return;
       }
