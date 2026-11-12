@@ -336,7 +336,13 @@ export class OrderBook {
     // an order tradable here only after the market closed is in no batch (kanban #1150: a late lock filled against resting orders)
     const orders = this.db.prepare('SELECT order_id FROM market_orders WHERE round_id = ? AND batch IS NULL AND received_ms < ? ORDER BY order_id')
       .all(rid, Math.min(cutoff, this.#closeOf(roundIdBytes))).map((r) => r.order_id);
-    const events = this.db.prepare('SELECT kind, body FROM market_book_events WHERE round_id = ? AND batch IS NULL AND received_ms < ? ORDER BY event_id').all(rid, cutoff);
+    // A CANCEL IS PROPOSED ONLY ONCE ITS ORDER IS IN THE BOOK HERE (kanban #1798, skeptic of #1489 fix:attest:2 791ecbbab): lead() leaves
+    // out a cancel whose order neither the book nor its set holds, so a stranger's cancel of a lockless order (no sat spent, tradable at no
+    // seat) stayed in every seat's proposal of every batch until the close, verified again per proposal at every lead - 250 of them made
+    // each lead take ~41 ms instead of ~6 ms (the #1547 shape). The cancel is still kept (one per entry, its id is cancelId): when the
+    // order's locks are verified here later it is proposed from then on, so a player's cancel that came before the lock is not lost.
+    const events = this.db.prepare('SELECT kind, body FROM market_book_events WHERE round_id = ? AND batch IS NULL AND received_ms < ? '
+      + "AND (kind <> 'cancel' OR lower(entry_id) IN (SELECT order_id FROM market_orders WHERE round_id = ?)) ORDER BY event_id").all(rid, cutoff, rid);
     const pending = this.db.prepare('SELECT k, batch_id, record, own_sig FROM market_batches WHERE round_id = ? AND certificate IS NULL ORDER BY k').all(rid)
       .map((r) => ({ k: String(r.k), batchId: r.batch_id, record: JSON.parse(r.record), ownSig: r.own_sig }));
     return { seat: toHex(this.round.pubkey), k: String(k), orders,
@@ -769,7 +775,9 @@ export class OrderBook {
     { const L = this.ledger(roundIdBytes, record); if (L.ok && L.refused.length) {
       const no = new Set(L.refused.map((r) => r.id));
       record.sells = [...sells].filter(([id]) => !no.has(id)).map(([, s]) => s);
-      record.cancels = record.cancels.filter((c) => !L.refused.some((r) => r.id === c.entry && r.why.startsWith('a cancel')));
+      // by its entry, once (kanban #1798: a Set, not a search of the refused list per cancel)
+      const noCancel = new Set(L.refused.filter((r) => r.why.startsWith('a cancel')).map((r) => r.id));
+      record.cancels = record.cancels.filter((c) => !noCancel.has(c.entry));
     } }
     if (!record.orders.length && !record.cancels.length && !record.sells.length) return { ok: true, empty: true, decided };
     const idc = this.#recordId(roundIdBytes, record);
