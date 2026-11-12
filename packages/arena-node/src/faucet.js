@@ -9,6 +9,7 @@ export const FAUCET_MAX_SATS = 1500000;        // one request: a custody node's 
 export const FAUCET_DAY_CAP_SATS = 30000000;    // all requests of one UTC day
 export const FAUCET_PER_IP_PER_DAY = 30;   // kanban #1397 (Daniel 2026-11-09: "Set the limits much higher"): was 3
 export const DAY_MS = 86400000;
+export const FAUCET_ADDRESS_SHARE = 4, FAUCET_NET48_SHARE = 2;   // kanban #2539: one address (ipKey) takes at most a quarter of the day's sats, one IPv6 /48 half
 
 /** A testnet4 address the faucet pays: bech32 / bech32m with the tb1 prefix, nothing else. */
 export const faucetAddressOk = (a) => /^tb1[02-9ac-hj-np-z]{8,87}$/.test(String(a || ''));
@@ -27,9 +28,19 @@ export function faucetDecide(ask, book, { nowMs = Date.now(), maxSats = FAUCET_M
   if (paid.some((p) => p.address === address)) return { ok: false, why: 'this address got coins from the faucet already' };
   const day = Math.floor(nowMs / DAY_MS);
   const today = paid.filter((p) => Math.floor(p.atMs / DAY_MS) === day);
-  if (ask.ip && today.filter((p) => p.ip === ask.ip).length >= perIpPerDay) return { ok: false, why: `the faucet pays one internet address ${perIpPerDay} times a day: try again tomorrow, or use the guided way` };
+  // ONE CALLER CANNOT TAKE THE DAY (kanban #2539): the address was counted by its raw string, so each address of one IPv6 /64 was a new caller, and
+  // FAUCET_PER_IP_PER_DAY x FAUCET_MAX_SATS (45M) is above the day cap - one IPv4 address took all 30M in 20 requests and every new node's installer
+  // was refused until UTC midnight. An address is now counted by ipKey (a /64 is one, as #1405 counts the players' faucet), and one address takes at
+  // most 1/FAUCET_ADDRESS_SHARE of the day's cap in sats, a whole IPv6 /48 at most 1/FAUCET_NET48_SHARE
+  const key = ask.ip ? ipKey(ask.ip) : null;
+  const mine = key ? today.filter((p) => ipKey(p.ip) === key) : [];
+  if (key && mine.length >= perIpPerDay) return { ok: false, why: `the faucet pays one internet address ${perIpPerDay} times a day: try again tomorrow, or use the guided way` };
   const spent = today.reduce((a, p) => a + p.sats, 0);
   if (spent + sats > dayCapSats) return { ok: false, why: 'the faucet has given out today\'s coins: try again tomorrow, or use the guided way' };
+  const sum = (rows) => rows.reduce((a, p) => a + p.sats, 0);
+  if (key && sum(mine) + sats > Math.floor(dayCapSats / FAUCET_ADDRESS_SHARE)) return { ok: false, why: 'this internet address took its share of today\'s coins: try again tomorrow, or use the guided way' };
+  const net = net48(key);
+  if (net && sum(today.filter((p) => net48(ipKey(p.ip)) === net)) + sats > Math.floor(dayCapSats / FAUCET_NET48_SHARE)) return { ok: false, why: 'this network took its share of today\'s coins: try again tomorrow, or use the guided way' };
   if (sats > balanceSats) return { ok: false, why: 'the faucet is out of coins right now: use the guided way' };
   return { ok: true, sats };
 }
