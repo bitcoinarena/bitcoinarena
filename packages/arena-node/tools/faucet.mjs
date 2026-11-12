@@ -337,18 +337,19 @@ async function paymentSent(payer, hash) {
 async function paymentFinal(payer, hash) {
   if (!payer) return null;
   const r = await lncli(payer, ['trackpayment', hash], 10000);
-  const text = `${r.out || ''}\n${r.err || ''}`;
-  // A NODE'S ALIAS IS NOT LND'S ANSWER (kanban #2589): lncli prints each HTLC's route as the hops' aliases, which their owners choose - a payee node
-  // named "not found" made an in-flight payment read as never made (NONE -> failed), settle() opened the reward again and the holder of the HTLC was
-  // paid twice. "Not initiated" is lnd's error, on stderr, with no payment printed; a printed payment always ends with its own status line
-  const said0 = [...String(r.out || '').matchAll(/Payment status:\s*([A-Z_]+)/g)];
-  if (!said0.length && /isn't initiated|not initiated|not found|unknown payment/i.test(String(r.err || ''))) return 'NONE';
+  // A NODE'S ALIAS IS NOT LND'S ANSWER (kanban #2589, the same hole as #2288 below): lncli prints each HTLC's route as the hops' aliases
   // LNCLI'S OWN WORDS (audit 7, kanban #1430): without --json lncli 0.21 prints a table and "Payment status: SUCCEEDED, preimage: ..." (the refill timer
   // reads the same line) - the JSON match found nothing live, so a settled welcome read as no answer; the payment's line, the last one printed, decides
-  const said = [...text.matchAll(/Payment status:\s*([A-Z_]+)/g)].map((m) => m[1]);
+  // THE STATUS LINE FIRST, NEVER A NODE'S ALIAS (kanban #2288, #1489 a44-refute-73, after #1785): the table's ROUTE column prints each hop's node alias,
+  // which its operator chooses - a receiving or routing node aliased "not found" made a SUCCEEDED or held payment read NONE, settle reopened the link and
+  // the reward was paid twice. A printed "Payment status:" line decides; NONE is read only when none was printed and lncli failed with lnd's own
+  // "payment isn't initiated" error on stderr (stdout, where the aliases are, is never searched for it)
+  const said = [...String(r.out || '').matchAll(/^Payment status:[ \t]*([A-Z_]+)/gm)].map((m) => m[1]);
   const last = said[said.length - 1] || null;
   if (last === 'SUCCEEDED' || last === 'FAILED') return last;
-  return r.timedOut || last ? 'IN_FLIGHT' : null;
+  if (last) return 'IN_FLIGHT';
+  if (!r.ok && !r.timedOut && /rpc error:.*payment (?:isn't|is not|not) initiated/i.test(String(r.err || ''))) return 'NONE';
+  return r.timedOut ? 'IN_FLIGHT' : null;
 }
 const UNSURE_KEEP_MS = 24 * 3600 * 1000;
 // OUT OF THE PLAYERS' QUEUE, AND ONLY ITS OWN CHANGES (audit 6 re-check N3/N4, kanban #1426): in the queue its lncli reads held welcomes past the page's
