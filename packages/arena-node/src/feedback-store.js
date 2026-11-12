@@ -498,6 +498,9 @@ export function openFeedbackStore(path = ':memory:') {
 export function networkPlayers({ seats, games, days = 90, keepMs = 10 * 60 * 1000, fetcher = fetch } = {}) {
   // AND HOW MANY ROUNDS IN WHICH GAMES (Daniel 2026-11-10: "Sag auch in der Feedback page, wieviel runden der spieler gemacht hat und welche apps er genutzt hat")
   let keys = new Set(), at = 0, reading = null, perGame = new Map();
+  // EACH GAME'S PLAYERS AS LAST READ (kanban #2565, measured 2026-11-12: a refresh while no seat answered - one restarting, the rest slow
+  // under load - emptied the list and every reward was refused "not finished a round" for 10 min): a game no seat answers keeps its last list
+  const lastOf = new Map();   // game -> Map(player -> rounds)
   async function refresh() {
     const next = new Set(), counts = new Map();
     // ONE SEAT'S NETWORK VIEW PER GAME, THE GAMES AT ONCE (kanban #1484, Daniel 2026-11-11: "Is VERY slow, speed it up"): scope=network is the whole network's
@@ -509,13 +512,16 @@ export function networkPlayers({ seats, games, days = 90, keepMs = 10 * 60 * 100
           const r = await fetcher(`${String(seat).replace(/\/$/, '')}/season?scope=network&game=${encodeURIComponent(g)}&days=${days}`, { signal: AbortSignal.timeout(20000), redirect: 'error' });   // kanban #1884: a configured seat is asked as given, never redirected
           if (!r.ok) continue;
           const b = await r.json();
+          const read = new Map();
           for (const row of b.rows || []) if (Number(row.rounds) > 0 && /^[0-9a-f]{64}$/i.test(String(row.player || ''))) {
-            const k = String(row.player).toLowerCase(); next.add(k);
-            const m = counts.get(k) || {}; m[g] = (m[g] || 0) + Number(row.rounds); counts.set(k, m); }
+            const k = String(row.player).toLowerCase(); read.set(k, (read.get(k) || 0) + Number(row.rounds)); }
+          lastOf.set(g, read);
           return;
         } catch { /* that seat does not answer: the next one */ }
       }
     }));
+    for (const g of games) for (const [k, n] of lastOf.get(g) || []) {
+      next.add(k); const m = counts.get(k) || {}; m[g] = (m[g] || 0) + n; counts.set(k, m); }
     keys = next; perGame = counts; at = Date.now();
     return keys.size;
   }
