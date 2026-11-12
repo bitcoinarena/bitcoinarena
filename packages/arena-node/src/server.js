@@ -3191,8 +3191,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const locks = await seatJson(l, SEAT_RECORD_BYTES);
     // one seat's word is no proof a head-to-head lock was held before the moves could be known (kanban #2225): such a lock is not replayed
     for (const kind of ['stake', 'fee']) { let h = null; try { h = locks && locks[kind] ? h2hLockRefusal(entry, eid, kind) : null; } catch { h = null; } if (h) return { ok: false, why: h }; }
-    if (locks.stake && !round.stakeLock(eid)) { const g = await takeStakeLock(eid, lockFieldsFromJson(locks.stake)); if (!g.ok) return { ok: false, why: `its stake lock: ${g.why}` }; }
-    if (locks.fee && round.feeLock && !round.feeLock(eid)) { const g = await takeFeeLock(eid, lockFieldsFromJson(locks.fee)); if (!g.ok) return { ok: false, why: `its fee lock: ${g.why}` }; }
+    // a certified batch's order: its locks were verified in time by the threshold, so not refused here for the blocks since (kanban #1992)
+    if (locks.stake && !round.stakeLock(eid)) { const g = await takeStakeLock(eid, lockFieldsFromJson(locks.stake), {}, undefined, { certified: true }); if (!g.ok) return { ok: false, why: `its stake lock: ${g.why}` }; }
+    if (locks.fee && round.feeLock && !round.feeLock(eid)) { const g = await takeFeeLock(eid, lockFieldsFromJson(locks.fee), undefined, { certified: true }); if (!g.ok) return { ok: false, why: `its fee lock: ${g.why}` }; }
     console.log(`[orders] replayed order ${entryHex.slice(0, 16)} from ${base}: its entry and locks are held here now`);
     return { ok: true };
   };
@@ -6379,7 +6380,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   // `atMs` (kanban #1805): the time the door (POST /lock, POST /fee-lock) checked the round's lock close, before any await; kept as the lock's
   // verified_ms. A repair from peers and a replayed order pass none: their rows carry the time they are written (or the vouched time, keepLockTimes).
-  const takeStakeLock = async (eid, fields, timing = {}, atMs = undefined) => {
+  const takeStakeLock = async (eid, fields, timing = {}, atMs = undefined, { certified = false } = {}) => {
     const stored = round.entry(eid);
     if (!stored) return { ok: false, status: 404, why: 'this node holds no such entry' };
     const atUntilMs = atMs === undefined ? undefined : doorTimeUntilOf(stored);   // kanban #1822
@@ -6394,7 +6395,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (ef.ok) { const t = Date.now(); reserveKey = await reserveKeyFor(toHex(ef.federationId)); timing.reserveKeyMs = Date.now() - t; } split = roundSplitBps(feesFor(rcx)); }
     try {
       const t = Date.now(); const port = (await portOfEntryBytes(stored)) || stakeLocks; timing.portMs = Date.now() - t;
-      return await verifyStakeLock({ round, port, entryIdBytes: new Uint8Array(eid), fields, claimPk, donationRecipients, reserveKey, split, timing, atMs, atUntilMs, namersAtPeers, namedGate: (c, fid) => namedClaimGate.refusalNow(c, fid) });
+      return await verifyStakeLock({ round, port, entryIdBytes: new Uint8Array(eid), fields, claimPk, donationRecipients, reserveKey, split, timing, atMs, atUntilMs, namersAtPeers, namedGate: (c, fid) => namedClaimGate.refusalNow(c, fid), certified });
     } catch (e) { return { ok: false, why: `the federation could not be asked: ${e.message}`, ...(e && e.ofFields ? { ofFields: true } : {}) }; }
   };
   // PAST THE LOCKLESS CAP, AN ENTRY WAITS FOR ITS STAKE LOCK INSTEAD OF BEING REFUSED (kanban #2174, a44 refute of #1745): the cap counted every
@@ -6489,12 +6490,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       return lockMatchesEntry({ lock: fields, entry: contract, kind: 'stake', claimPk, height: st.blockCount, expiryBlocks: rc.stakeExpiryBlocks }).ok;
     } catch { return false; }
   };
-  const takeFeeLock = async (eid, fields, atMs = undefined) => {
+  const takeFeeLock = async (eid, fields, atMs = undefined, { certified = false } = {}) => {
     const stored = round.entry(eid);
     if (!stored) return { ok: false, status: 404, why: 'this node holds no such entry' };
     const claimPk = claimKeyOf(decodeEntryContract(stored).roundId);
     const atUntilMs = atMs === undefined ? undefined : doorTimeUntilOf(stored);   // kanban #1822
-    try { return await verifyFeeLock({ round, port: (await portOfEntryBytes(stored)) || stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk, atMs, atUntilMs, namersAtPeers, namedGate: (c, fid) => namedClaimGate.refusalNow(c, fid) }); }
+    try { return await verifyFeeLock({ round, port: (await portOfEntryBytes(stored)) || stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk, atMs, atUntilMs, namersAtPeers, namedGate: (c, fid) => namedClaimGate.refusalNow(c, fid), certified }); }
     catch (e) { return { ok: false, why: `the federation could not be asked: ${e.message}`, ...(e && e.ofFields ? { ofFields: true } : {}) }; }
   };
   // WHEN THIS SEAT TOOK A LOCK, SIGNED (kanban #2483, refutes #2225 on the honest path): a seat that verified a head-to-head lock before the
