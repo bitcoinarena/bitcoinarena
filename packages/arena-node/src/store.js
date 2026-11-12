@@ -1217,10 +1217,13 @@ export function openStore(path = ':memory:') {
     -- WHAT THIS NODE KEEPS AS A RELAY: transcripts by their own hash, so any
     -- node can be one of a contract's publication_relays[] and serve nothing
     -- under a name its bytes do not have.
+    -- capped (kanban #2388): 1 for a transcript the committee does not agree on (a session-signed fork, one seat's word), which shares
+    -- the smaller RELAY_CAPPED_MOST pool; 0 for everything else (the agreed run, this seat's own, the empty one, reveal records, slash proofs).
     CREATE TABLE IF NOT EXISTS relayed (
       hash     BLOB PRIMARY KEY,
       bytes    BLOB NOT NULL,
-      seen_ms  INTEGER NOT NULL
+      seen_ms  INTEGER NOT NULL,
+      capped   INTEGER NOT NULL DEFAULT 0
     );
 
     -- AN OBJECTION AGAINST A RUN, 13A. Only what the pool needs to know that
@@ -1296,6 +1299,9 @@ export function openStore(path = ':memory:') {
     db.exec('ALTER TABLE loads ADD COLUMN room INTEGER');
   // THE IDENTITY'S CONSENT BESIDE A NAME RECORD (kanban #1278, RULED #1276): the identity key over (round id, round key), checked at the door; a row from
   // before carries none, and books its round to nobody
+  // THE RELAY'S CAPPED POOL (kanban #2388): a store from before gets the column; what it already keeps counts as uncapped.
+  if (!db.prepare('PRAGMA table_info(relayed)').all().some((c) => c.name === 'capped'))
+    db.exec('ALTER TABLE relayed ADD COLUMN capped INTEGER NOT NULL DEFAULT 0');
   if (!db.prepare('PRAGMA table_info(lobby_names)').all().some((c) => c.name === 'identity_sig'))
     db.exec('ALTER TABLE lobby_names ADD COLUMN identity_sig BLOB');
   for (const t of ['objections', 'rerun_objections'])
