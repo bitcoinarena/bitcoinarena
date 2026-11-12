@@ -381,7 +381,7 @@ async function paymentSent(payer, hash) {
   while (Date.now() < until) {
     const r = await lncli(payer, ['listpayments', '--include_incomplete', '--max_payments', '30']);
     let p = null; try { p = (JSON.parse(r.out).payments || []).find((x) => x.payment_hash === hash) || null; } catch { p = null; }
-    if (p && p.status === 'SUCCEEDED') return 'sent';
+    if (p && p.status === 'SUCCEEDED') return 'paid';   // final (kanban #2100): not booked pending, not answered pending
     if (p && p.status === 'FAILED') return 'no';
     if (p && (p.htlcs || []).some((h) => h.status === 'IN_FLIGHT' || h.status === 'SUCCEEDED')) return 'sent';
     await new Promise((ok) => setTimeout(ok, PAY_POLL_MS));
@@ -517,17 +517,21 @@ async function grantPay(ask, inv, d, book, row) {
     // is paid; FAILED, or no part sent within PAY_SETTLE_MS, is not, and the next payer is asked
     const paid = await lncli(payer, ['payinvoice', '--force', '--timeout=60s', '--fee_limit=20', ask.invoice], PAY_WAIT_MS);
     const paidSays = lnStatus(paid.out);
-    const state = paidSays === 'SUCCEEDED' || paidSays === 'IN_FLIGHT' ? 'sent' : paid.timedOut ? await paymentSent(payer, inv.payment_hash) : 'no';
+    const said = paidSays === 'SUCCEEDED' || paidSays === 'IN_FLIGHT' ? 'sent' : paid.timedOut ? await paymentSent(payer, inv.payment_hash) : 'no';
+    const state = said === 'paid' ? 'sent' : said, final = said === 'paid' || paidSays === 'SUCCEEDED';   // kanban #2100: a final SUCCEEDED is not pending
     askedPayers.push(PAYERS.indexOf(payer)); askedIds.push(payerId(payer));   // kanban #1926: by its own entry too
     // NOT FINAL YET (kanban #1421): booked as pending with the payers asked; the sweep reads their final word
     if (state === 'sent') {
       const b2 = readBook(); const mine = (b2.players || []).find((x) => ownRow(x, row));
-      if (mine && paidSays === 'SUCCEEDED') { delete mine.pending; delete mine.payers; delete mine.payerIds; saveBook(b2); }
+      if (mine && final) { delete mine.pending; delete mine.payers; delete mine.payerIds; saveBook(b2); }
       else if (mine) { mine.pending = true; mine.payers = [...askedPayers]; mine.payerIds = [...askedIds]; saveBook(b2); }
     }
     if (state === 'sent') {
-      console.log(`${new Date().toISOString()} player ${ask.kind} ${d.grant.invoiceSats} sat (${ask.ip || 'no ip'}): ${inv.payment_hash.slice(0, 16)}`);
-      return { ok: true, sats: d.grant.sats };
+      console.log(`${new Date().toISOString()} player ${ask.kind} ${d.grant.invoiceSats} sat (${ask.ip || 'no ip'}): ${inv.payment_hash.slice(0, 16)}${final ? '' : ' (in flight, pending)'}`);
+      // AN ANSWER THE SWEEP MAY STILL UNDO SAYS SO (kanban #2100, state audit 2026-11-12): a row booked pending is taken off the book when the
+      // payment then FAILS ("the welcome can be asked again"), but { ok, sats } alone read as credited - the page dropped its one-time welcome flag
+      // and nothing ever asked again. A pending row is answered { ok, sats, pending: true, hash }: the page keeps its flag until the sats land
+      return final ? { ok: true, sats: d.grant.sats } : { ok: true, sats: d.grant.sats, pending: true, hash: inv.payment_hash };
     }
     // FAILED, AND SAID SO IN TIME (kanban #2187): lnd's FAILED is the payment's last state - this payer will never pay it
     failedFor.push(!paid.timedOut && paidSays === 'FAILED');
