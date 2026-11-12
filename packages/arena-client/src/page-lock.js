@@ -3224,6 +3224,62 @@ async function refusedReturn({ roundId, playerPubkey, locks, nodes, fetcher, cli
   return { state: 'owed', how: 'forfeit', refused: true, msat: owed };
 }
 
+// THE TAB'S KEPT FEE LOCK, WHILE THE FEDERATION STILL HOLDS IT (kanban #1642): null when there is none or it is spent; else the fee's own
+// state, read the way the stake's is - { state: 'owed', how: 'refund', locks } past its expiry, { state: 'owed', how: 'forfeit', entryId } when
+// the seats give its forfeit, { state: 'waiting' } otherwise. `fee: true` marks it: collectOwed redeems it alone (redeemFee), never the stake again.
+async function keptFeeHeld({ round, roundId, player, kept, storage, client, nodes, fetcher, curve, contractIdOf }) {
+  let k = null;
+  try {
+    k = kept && kept.lock && kept.lock.feeLock ? kept : savedLock(storage, { roundId, playerPubkey: player.pubkey });
+  } catch { k = null; }
+  const fee = k && k.lock && k.lock.feeLock;
+  if (!fee || !fee.outpoint || !fee.fields) return null;
+  let st; try { st = JSON.parse(await lockStatusOf(client, fee.fields, toHex(fee.outpoint.txid), Number(fee.outpoint.outIdx))); } catch { return { state: 'waiting', fee: true, msat: BigInt(fee.fields.amountMsat), why: 'the federation was not read for the fee lock' }; }
+  if (!st || !st.stored) return null;
+  const msat = BigInt(fee.fields.amountMsat);
+  const left = Number(st.stored.blocks_left);
+  if (!(left > 0)) return { state: 'owed', how: 'refund', fee: true, msat, locks: [{ outpoint: fee.outpoint, fields: fee.fields }] };
+  // the entry its forfeit is asked under: the kept record's, else the one the seats name for this seed's stake lock
+  let entryId = (k && k.entry) || null;
+  if (!entryId) { try { const named = await findLock({ roundId, playerPubkey: player.pubkey, nodes, fetcher }); entryId = (named.find((l) => l.entryId) || {}).entryId || null; } catch { entryId = null; } }
+  const waiting = { state: 'waiting', how: 'forfeit', fee: true, msat, blocksLeft: left, blockCount: Number(st.block_count), expiration: Number(fee.fields.expiration) };
+  if (!entryId) return { ...waiting, why: 'no signer node names this seed\'s entry, so the fee lock\'s forfeit cannot be asked yet' };
+  const f = await forfeitOf({ roundId, entryId, nodes, fetcher, lock: 'fee', named: isArenaLock(fee.fields),
+    check: forfeitCheck({ curve, fields: fee.fields, storedId: st.stored.contract_id || null, contractIdOf }) });
+  if (f.ok) return { state: 'owed', how: 'forfeit', fee: true, msat, entryId };
+  return { ...waiting, why: f.why };
+}
+
+/** THE KEPT FEE LOCK ALONE, REDEEMED BY ITS FORFEIT (kanban #1642): the stake already came back; the fee forfeit the seats give now. */
+export async function redeemFee({ round, roundId, invite, seed, curve, LockClient, storage, nodes, fetcher = fetch, client: given = null,
+  entryId = null, kept = null, onStep = () => {}, order = 0 } = {}) {
+  if (!round || !roundLocks(round)) throw new Error('this round names no federation, so its fee is not a lock');
+  const player = playerFor({ ...round, id: roundId }, { seed, curve, order });
+  const k = kept && kept.lock && kept.lock.feeLock ? kept : (storage ? savedLock(storage, { roundId, playerPubkey: player.pubkey }) : null);
+  const fee = k && k.lock && k.lock.feeLock;
+  if (!fee) return { ok: false, final: false, why: 'this tab keeps no fee lock for this round' };
+  let eid = entryId || (k && k.entry) || null;
+  if (!eid) { const named = await findLock({ roundId, playerPubkey: player.pubkey, nodes, fetcher }); eid = (named.find((l) => l.entryId) || {}).entryId || null; }
+  if (!eid) return { ok: false, final: false, why: 'no signer node names this seed\'s entry, so the fee lock\'s forfeit cannot be asked yet' };
+  onStep('asking the signer nodes for the forfeit of the fee lock');
+  const client = given || await LockClient.join(invite, toHex(round.federationId), toHex(lockSecretFor(seed, roundId)),
+    storage ? lockStoreFor(storage, roundId, lockSecretFor(seed, roundId)) : unkeptLockStore());
+  const cid = contractIdVia(LockClient || (client && client.constructor));
+  const f = await forfeitOf({ roundId, entryId: eid, nodes, fetcher, lock: 'fee', named: isArenaLock(fee.fields),
+    check: forfeitCheck({ curve, fields: fee.fields, storedId: await storedIdAt(client, fee), contractIdOf: cid }) });
+  if (!f.ok) return { ok: false, final: false, why: f.why, client };
+  onStep('redeeming the fee lock');
+  // an arena lock (2.0) is taken back by the seats' cancel, as redeemStake takes it; a hash lock by the forfeit's redeem
+  const said = isArenaLock(fee.fields)
+    ? await arenaTakeBack(client, fee.outpoint, { kind: 'cancel', signers: f.signers, signature: f.signature }, player.secret)
+    : JSON.parse(await client.redeem(toHex(fee.outpoint.txid), Number(fee.outpoint.outIdx),
+      JSON.stringify(lockFieldsToJson(fee.fields)), f.signature, toHex(player.secret)));
+  const ok = said.accepted === true;
+  return { ok, final: ok, fee: true, amountMsat: BigInt(said.amount_msat || 0), forfeitFrom: f.from,
+    balance_before: said.balance_before, balance_after: said.balance_after,
+    why: ok ? undefined : said.error || 'the federation did not accept the fee lock\'s redeem', client };
+}
+
 export async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = fetch, client = null, storage = null, kept = null, order = 0, LockClient = null } = {}) {
   if (!round || !roundLocks(round)) throw new Error('this round names no federation, so nothing in it is owed from a lock');
   const player = playerFor({ ...round, id: roundId }, { seed, curve, order });
@@ -3342,6 +3398,17 @@ export async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = f
       }
     }
   }
+  // THE ORDER'S FEE LOCK HAS ITS OWN STATE (kanban #1642, state audit 2026-11-12 SM2 page-1): the seats' /stake-lock names the stake lock
+  // only; the fee lock is known from the tab's saved lock alone, and redeemStake asked its forfeit once, beside the stake's. A fee forfeit
+  // missed on that one ask (the seats' MuSig for it did not form, a peer timed out) was left out, the stake note was written, and from then
+  // on the stake read 'collected' and the round final - the fee lock was never asked again, by forfeit or by the player's key after its
+  // expiry. Once the stake is back (or gone), a kept fee lock the federation still holds is what is owed: by its forfeit when the seats
+  // give one (asked on every look), by refund once it is past its expiry, waiting before that. A lock the tab made that is still stored
+  // is never final.
+  if (client && (stake.state === 'collected' || stake.state === 'gone')) {
+    const fee = await keptFeeHeld({ round, roundId, player, kept, storage, client, nodes, fetcher, curve, contractIdOf });
+    if (fee) stake = fee;
+  }
   const owed = (how) => (stake.state === 'owed' && stake.how === how ? stake.msat : 0n);
   const payoutMsat = payout.state === 'owed' ? payout.msat : 0n;
   // WHAT THIS TAB'S WALLET HOLDS - read, not spent (the stock client throws on an empty one).
@@ -3392,7 +3459,9 @@ export function owedToLine(o) {
 export async function collectOwed({ look, client, ...ask } = {}) {
   const got = { payout: null, stake: null, refund: null };
   if (look.payoutMsat > 0n) got.payout = await redeemPayout({ ...ask, client });
-  if (look.stakeMsat > 0n) got.stake = await returnStake({ ...ask, client, refused: !!(look.stake && look.stake.refused),
+  // the kept fee lock alone, its stake already back (kanban #1642): never the stake's collect again, whose note answers at once
+  if (look.stakeMsat > 0n && look.stake && look.stake.fee) got.stake = await redeemFee({ ...ask, client, entryId: look.stake.entryId || null });
+  else if (look.stakeMsat > 0n) got.stake = await returnStake({ ...ask, client, refused: !!(look.stake && look.stake.refused),
     forfeited: !!(look.stake && look.stake.state === 'owed' && look.stake.how === 'forfeit') });
   if (look.refundMsat > 0n) got.refund = await refundKept({ ...ask, client, locks: (look.stake && look.stake.locks) || null });
   return got;
