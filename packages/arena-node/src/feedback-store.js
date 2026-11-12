@@ -315,13 +315,15 @@ export function openFeedbackStore(path = ':memory:') {
     }
     return out;
   }
-  /** THE ADDRESS A REPORT ASKED TO BE PAID AT (its signed lud16 tag, else its content's lnAddress): null when it named none. */
+  /** THE ADDRESS A REPORT ASKED TO BE PAID AT (its content's lnAddress, else its signed lud16 tag): null when it named none.
+   *  THE CHECKED ADDRESS FIRST (kanban #1677): POST /feedback checks only the content's lnAddress (lnAddressWorks, #1511), so a lud16 tag naming another
+   *  address never takes its place - the tag is read only when the content names none, and lnAddressInvoice refuses an internal host for either. */
   function addressOf(id) {
     const r = get.get(String(id)); if (!r) return null;
     let e = null; try { e = JSON.parse(r.event); } catch { e = null; }
     const tag = e && Array.isArray(e.tags) ? (e.tags.find((t) => Array.isArray(t) && t[0] === 'lud16') || [])[1] : null;
     let c = null; try { c = JSON.parse(e && e.content); } catch { c = null; }
-    const a = String(tag || (c && c.lnAddress) || '').trim();
+    const a = String((c && typeof c.lnAddress === 'string' && c.lnAddress.trim()) || tag || '').trim();
     return /^[a-z0-9._+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(a) || /^lnurl1[02-9ac-hj-np-z]+$/i.test(a) ? a : null;
   }
   /**
@@ -471,6 +473,15 @@ export function imageKind(bytes) {
 // a reward's comment: at most this many characters (LUD-12 wallets take 100-255; the address's own commentAllowed cuts it further)
 export const COMMENT_MOST = 200;
 
+// NEVER AN INTERNAL HOST (kanban #1511, #1677): an LNURL, a Lightning address's domain and a wallet's callback can name any URL, so an IP literal,
+// localhost or a local-only name is refused before any fetch - one test for the address and the callback, at send (lnAddressWorks) and at payout
+// (lnAddressInvoice), so the faucet's process never asks a host the reporter picked inside our network.
+export function publicHttpsUrl(u) {
+  if (!/^https:\/\//.test(String(u || ''))) return false;
+  let host = ''; try { host = new URL(String(u)).hostname.toLowerCase().replace(/\.$/, ''); } catch { host = ''; }
+  return !(!host || /^\[|^\d+(\.\d+){3}$|^\d+$|^0x/i.test(host) || !host.includes('.') || /(^|\.)(localhost|local|internal|lan|home|arpa|localdomain|intranet)$/.test(host));
+}
+
 export async function lnAddressWorks(address, { fetchFn = fetch, timeoutMs = 8000 } = {}) {
   const a = String(address || '').trim();
   let url = null;
@@ -478,9 +489,8 @@ export async function lnAddressWorks(address, { fetchFn = fetch, timeoutMs = 800
   if (m) url = `https://${m[2].toLowerCase()}/.well-known/lnurlp/${encodeURIComponent(m[1].toLowerCase())}`;
   else if (/^lnurl1[02-9ac-hj-np-z]+$/i.test(a)) { try { url = urlOfLnurl(a.toLowerCase()); } catch { url = null; } }
   if (!url || !/^https:\/\//.test(url)) return { ok: false, why: 'that is not a Lightning address (name@wallet.com) or an LNURL' };
-  // NEVER AN INTERNAL HOST (kanban #1511): an LNURL can name any URL, so an IP literal, localhost or a local-only name is refused before any fetch
-  let host = ''; try { host = new URL(url).hostname.toLowerCase().replace(/\.$/, ''); } catch { host = ''; }
-  if (!host || /^\[|^\d+(\.\d+){3}$|^\d+$|^0x/i.test(host) || !host.includes('.') || /(^|\.)(localhost|local|internal|lan|home|arpa|localdomain|intranet)$/.test(host)) return { ok: false, why: 'its wallet must be on a public name' };
+  // NEVER AN INTERNAL HOST (kanban #1511, the test shared with the payout since #1677)
+  if (!publicHttpsUrl(url)) return { ok: false, why: 'its wallet must be on a public name' };
   let j;
   try {
     const r = await fetchFn(url, { signal: AbortSignal.timeout(timeoutMs), headers: { accept: 'application/json' } });
@@ -489,6 +499,7 @@ export async function lnAddressWorks(address, { fetchFn = fetch, timeoutMs = 800
   } catch (e) { return { ok: false, why: /abort|timeout/i.test(String(e && e.name) + String(e && e.message)) ? 'its wallet did not answer in time' : 'its wallet could not be reached' }; }
   if (!j || j.status === 'ERROR') return { ok: false, why: `its wallet said: ${String((j && j.reason) || 'error').slice(0, 120)}` };
   if (j.tag !== 'payRequest' || typeof j.callback !== 'string' || !/^https:\/\//.test(j.callback)) return { ok: false, why: 'its wallet does not take payments at that address' };
+  if (!publicHttpsUrl(j.callback)) return { ok: false, why: 'its wallet must be on a public name' }; // its callback too (kanban #1677)
   return { ok: true, minSats: Math.ceil(Number(j.minSendable || 0) / 1000), maxSats: Math.floor(Number(j.maxSendable || 0) / 1000) };
 }
 
@@ -503,9 +514,12 @@ export async function lnAddressInvoice(address, sats, comment = '', { fetchFn = 
   let url = m ? `https://${m[2].toLowerCase()}/.well-known/lnurlp/${encodeURIComponent(m[1].toLowerCase())}` : null;
   if (!url && /^lnurl1[02-9ac-hj-np-z]+$/i.test(a)) { try { url = urlOfLnurl(a.toLowerCase()); } catch { url = null; } }
   if (!url || !/^https:\/\//.test(url)) return { ok: false, why: 'not a Lightning address or an LNURL' };
+  // NEVER AN INTERNAL HOST AT PAYOUT EITHER (kanban #1677): the #1511 test, before the address's fetch and before its callback's
+  if (!publicHttpsUrl(url)) return { ok: false, why: 'its wallet must be on a public name' };
   const get = async (u) => { const r = await fetchFn(u, { signal: AbortSignal.timeout(timeoutMs), headers: { accept: 'application/json' } }); if (!r.ok) throw new Error(`answered ${r.status}`); return r.json(); };
   let p; try { p = await get(url); } catch (e) { return { ok: false, why: `its wallet: ${e.message}` }; }
   if (!p || p.status === 'ERROR' || p.tag !== 'payRequest' || !/^https:\/\//.test(String(p.callback || ''))) return { ok: false, why: `its wallet takes no payment there${p && p.reason ? `: ${String(p.reason).slice(0, 120)}` : ''}` };
+  if (!publicHttpsUrl(p.callback)) return { ok: false, why: 'its wallet must be on a public name' };
   const msat = Number(sats) * 1000;
   if (msat < Number(p.minSendable || 0) || msat > Number(p.maxSendable || Infinity)) return { ok: false, why: `its wallet takes ${Math.ceil(Number(p.minSendable || 0) / 1000)} to ${Math.floor(Number(p.maxSendable || 0) / 1000)} sat` };
   const room = Math.max(0, Math.floor(Number(p.commentAllowed || 0)));
