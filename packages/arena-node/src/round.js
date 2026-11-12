@@ -1014,9 +1014,10 @@ export class Round {
     // them, no more than 20 BTC, at a tick this batch carries and before the truck was ever driven (load-checks.js).
     // A repeat of the head was checked when it first came.
     if (!seen && b.loads && b.loads.length) {
+      // the next tick too (kanban #1740, #1800): a batch of no ticks carries its loads only at the next one
       const why = loadsRefusal(b, at, () => !!this.db.prepare(
         'SELECT 1 FROM ticks WHERE round_id = ? AND entry_id = ? AND substr(words, 1, 16) != zeroblob(16) LIMIT 1')
-        .get(b.roundId, b.entryId));
+        .get(b.roundId, b.entryId), this.nextTick(b.roundId, b.entryId));
       if (why) throw new Error(why);
     }
 
