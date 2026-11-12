@@ -6130,6 +6130,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!fid || !retireBook.has(fid)) return;
         const held = fedRecords.recordOf(fid);
         if (!held || held.status !== 'CLOSED' || (held.record && held.record.successorId && held.record.successorId.some((x) => x))) return;
+        // NEVER OVER A RESERVE (kanban #1980): a CLOSED record naming a reserve is no retirement - the guardian keeps serving it
+        if (held.record && BigInt(held.record.reserveSats || 0n) > 0n) { console.log(`[retire] ${fid.slice(0, 16)} CLOSED over ${held.record.reserveSats} sat: the guardian keeps serving`); return; }
         // NOT BEFORE A THRESHOLD OF ITS GUARDIANS' SEATS HOLD IT CLOSED (kanban #577, measured 2026-10-22 on 89ce310e): set aside at once, the
         // first guardian took its signature and its reserve answer away, and the others could never close the record themselves
         const at = await fedRecords.closedAtGuardians(fid);
