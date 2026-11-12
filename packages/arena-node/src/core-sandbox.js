@@ -217,9 +217,10 @@ const PURE_MAX = 4096;
  * LOAD ONE CORE INTO A SANDBOX OF ITS OWN, in a thread of its own, from its files (read and checked above). Answers
  * { call(op, input), meta }: `call` hands the driver a JSON copy of `input`, waits for its answer against the op's deadline
  * and answers it revived. A core that does not load (an import outside its files, a top level that throws or does not stop)
- * is refused here, before it is ever asked anything; a core that misses a deadline, dies of its heap limit or grows this
- * process past the backstop is ended - the node waits for its thread to be gone - and refused from then on. A call past
- * its array budget fails alone.
+ * is refused here, before it is ever asked anything. A call on a thread of its own that misses its deadline, dies of its
+ * heap limit or grows this process past the backstop fails alone: that thread is ended - the node waits for it to be gone -
+ * and the next call gets a fresh one (kanban #2008). On the kept thread (KEPT, `oneThread`) the same ends the core, and it
+ * is refused from then on. A call past its array budget fails alone.
  *
  * EVERY CALL THE NODE SIGNS ON IS ANSWERED BY A THREAD STARTED FOR IT (kanban #1721, #1792, #1831): meta, runTicks,
  * runTicksFits, replay and decide each run on a core thread loaded from the core's files for that one call and ended after
@@ -247,16 +248,16 @@ export function loadCore({ files, entry }, { callMs = CALL_MS, stepMs = STEP_MS,
     }
     const key = PURE.has(op) ? `${op}\0${plain(input)}` : null;
     if (key !== null && memo.has(key)) return revive(memo.get(key));
-    let one;
-    try { one = startThread({ files, entry }, opts); } catch (e) { ended = e.message; kept.end(e.message); throw e; }
+    // A CALL'S OWN THREAD THAT DIES FAILS THAT CALL ALONE (kanban #2008, #1539): its heap limit, its deadline, the backstop
+    // or its load. The thread is ended - what it held goes with it - but this core's `ended` and the kept thread are not
+    // touched. A heap death is set by the input (every seat that runs it dies), so ending the core here made every later
+    // round fail on the seats that had replayed it ("it is not run again") while seats on other committees answered the
+    // same round: the seat's history decided its answer again, as the array budget did before #1721.
+    const one = startThread({ files, entry }, opts);
     last = one;
     let json;
     try { json = one.call(op, input, within); }
-    catch (e) {
-      // the thread died, missed its deadline or crossed the backstop: the core is ended, as it was before
-      if (one.ended()) { ended = one.ended(); kept.end(ended); }
-      throw e;
-    } finally { if (!one.ended()) one.end('answered'); }
+    finally { if (!one.ended()) one.end('answered'); }
     if (key !== null) { if (memo.size >= PURE_MAX) memo.clear(); memo.set(key, json); }
     return revive(json);
   };
