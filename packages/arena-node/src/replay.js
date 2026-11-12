@@ -374,7 +374,7 @@ export class RunInProgress {
       this.id = this.s.call('open', { seedWord, config: core.config, runTicks: runTicksForEntry(entry.joinTick, this.runTicks),
         ...(unl.unlocks.length ? { items: unl.unlocks } : {}), slot: slotOf(entry, core) });
     } catch (e) { return Object.assign(this, { ok: false, why: e.message }); }
-    DROP.register(this, { s: this.s, id: this.id });
+    DROP.register(this, { s: this.s, id: this.id }, this);
     this.endsAt = lastTickOfRun(entry.joinTick, this.runTicks);
     // The last tick STEPPED. Nothing yet, so one before the join.
     this.at = entry.joinTick - 1;
@@ -390,6 +390,17 @@ export class RunInProgress {
     this.loadDue = new Map();
     this.loadSeen = new Set();
     this.stepped = 0;
+  }
+
+  /**
+   * LET THE RUN GO NOW (kanban #1820): its state leaves the core's sandbox at once instead of whenever this object is collected,
+   * and the run answers no more. A holder that keeps many runs calls it on each one it drops.
+   */
+  release() {
+    if (!this.ok || this.id === undefined) return;
+    DROP.unregister(this);
+    try { this.s.call('drop', { id: this.id }); } catch { /* gone with it */ }
+    Object.assign(this, { ok: false, why: 'that run was let go' });
   }
 
   /** x, z and heading as of the last tick stepped. Three words, like `replay`. */
