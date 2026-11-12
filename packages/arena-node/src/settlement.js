@@ -181,12 +181,15 @@ export class LockSettlement {
     signerNodesFor = (rid, contract) => ({ gameVerify: contract.nodes, settlement: contract.nodes }), winnings = null,
     turnClock = null, donationSetFor = null, donationTargetFor = null, orderBook = null, now = () => Date.now(), conflictsFor = null,
     reserveKeyFor = null, feesFor = null, peerAskMs = PEER_ASK_MS, peerReadMs = PEER_READ_MS, peerGraceMs = PEER_GRACE_MS, lockSetContested = null,
-    finalityOf = resultFinality } = {}) {
+    pickResync = null, finalityOf = resultFinality } = {}) {
     this.round = round;
     // A CONTESTED LOCK SET (ruling #2587, kanban #2606; server.js -> lock-set-book.js contested): `lockSetContested(rid)` true when two standing
     // certificates over different sets of a protocol-28 head-to-head round reached this seat. The round is VOID: no settlement of either side is
     // built, committed to or signed here - every lock goes back by forfeit (lock-set-book.js lockOut)
     this.lockSetContested = lockSetContested;
+    // A POOL'S PLAIN PICKS WHOSE LOCKS NEVER REACHED THIS SEAT, PULLED FROM ITS PEERS (server.js pullPickLocks, kanban #1790, #2198, #2293):
+    // `pickResync(rid)` -> whether one became stake-seen here; run by bookResync, so a peer down across the close is asked again later
+    this.pickResync = pickResync;
     // HOW LONG A SEAT IS WAITED FOR (peer-ask.js, kanban #1061)
     this.peerAskMs = peerAskMs;
     this.peerReadMs = peerReadMs;
@@ -1254,11 +1257,15 @@ export class LockSettlement {
     // AT MOST ONE READ A ROUND EVERY 30 S: an asker that keeps naming other bytes does not make an overloaded seat read every peer each time
     const last = this.#resyncedAt.get(key) || 0;
     if (Date.now() - last < 30000) return false;
-    if (!this.orderBook || !(this.orderBook.takesOrders ? this.orderBook.takesOrders(roundIdBytes) : this.orderBook.isBook(roundIdBytes))) return false;
+    const book = !!this.orderBook && (this.orderBook.takesOrders ? this.orderBook.takesOrders(roundIdBytes) : this.orderBook.isBook(roundIdBytes));
+    if (!book && !this.pickResync) return false;
     this.#resyncedAt.set(key, Date.now());
     if (this.#resyncedAt.size > 4096) this.#resyncedAt.delete(this.#resyncedAt.keys().next().value);
-    const got = await this.orderBook.sync(roundIdBytes, { force: true });
-    if (!got.ok || !got.fresh) return false;
+    // A POOL'S PLAIN PICK THIS SEAT HELD STAKE-UNSEEN (kanban #2198, #2293): its locks asked of the peers again, a book round's too
+    let fresh = false;
+    if (this.pickResync) { try { fresh = !!(await this.pickResync(roundIdBytes)); } catch { fresh = false; } }
+    if (book) { const got = await this.orderBook.sync(roundIdBytes, { force: true }); if (got.ok && got.fresh) fresh = true; }
+    if (!fresh) return false;
     for (const k of [...this.built.keys()]) if (k === key || k.startsWith(`${key}:fed:`)) this.built.delete(k);
     return true;
   }
