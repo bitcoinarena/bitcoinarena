@@ -5,7 +5,12 @@
 // node on any release:
 //   owner       the node's own GET /owner (its claimed owner key) - found among the seats GET /network-games lists
 //   committees  every seat's GET /served?finals=1 for each of the last 7 UTC days: the rounds whose committee names the node, and those it signed FINAL
-//   in census   a node drawn into a committee is a bonded census node (only those are drawn); the days it served are its days online
+//   in census   the node is a bonded node of the chain's census as the TRUSTED census seats read it (GET /roles: the faucet's own configured seats),
+//               and drawn into committees; the days it served are its days online (kanban #1489 / #1682: "drawn" alone was only "committees > 0")
+//   witnesses   a round counts only held by NODE_BOUNTY_AGREE census nodes of that round's committee, each read at its own advertised endpoint
+//               (the census entry's endpoint, answering with that node key) and each node key once (kanban #1682) - NEVER the node itself
+//               (kanban #2015, #2049: its own door was one of its three witnesses) - and confirmed by a TRUSTED census seat holding the same
+//               round with the same committee (kanban #2015, #2049: three cheap testnet4 bonds of one operator made a round up among themselves)
 // Answers { ok, node, checks: [{ key, label, ok, says }], passes } - `passes` only when every check holds. Team nodes are refused by `excluded`.
 import { splitSignedFinalSig, decodeFinalSig, finalSigId } from '../../arena-protocol/src/final-sig.js';
 import { SEASON_NETWORK_AGREE } from '../../arena-protocol/src/season.js';
@@ -33,12 +38,53 @@ export const NODE_BOUNTY_AGREE = SEASON_NETWORK_AGREE;
 // ONE DAY ONLINE IS ENOUGH (Daniel 2026-11-10: "1 tag online reicht"), looked for in the last NODE_BOUNTY_WINDOW days, today included
 export const NODE_BOUNTY_DAYS = 1, NODE_BOUNTY_WINDOW = 7;
 
+// a seat's address as one string: scheme, lower-case host, the default port dropped (URL does that), no trailing slash - so one seat under
+// several spellings is one address (kanban #1682). A NODE'S ADVERT IS ws:// OR wss:// (kanban #1866, #1888: measured on a live seat's GET /roles,
+// 22 of 25 entries wss://): its http door is the same address with http(s) - as federation-records.js and server.js read it - so ws: is http:
+// and wss: is https:; dropping them left every such node without a witness address and no honest node could pass
+export const seatBaseOf = (u) => { try { const x = new URL(String(u).trim().replace(/^ws(s?):/i, 'http$1:')); if (!/^https?:$/.test(x.protocol)) return '';
+  return `${x.protocol}//${x.host.toLowerCase()}${x.pathname.replace(/\/+$/, '')}`; } catch { return ''; } };
+// THE CENSUS THE CHECK TRUSTS (kanban #1682): node key -> its advertised endpoints, bonded entries only. `census` given as a list of
+// { node, endpoint, bondSats } (GET /roles's `nodes`), or read from `censusSeats` - seats the caller trusts (the faucet's own configured seats),
+// never the listed seats an outsider can add: three colluding seats answering /roles would name any fresh key again
+async function trustedCensus({ census, censusSeats, fetchJson }) {
+  const lists = [];
+  if (Array.isArray(census)) lists.push(census);
+  await Promise.all([...new Set((censusSeats || []).map(seatBaseOf).filter(Boolean))].map(async (u) => {
+    try { const j = await fetchJson(`${u}/roles`); if (j && Array.isArray(j.nodes)) lists.push(j.nodes); } catch { /* a census seat that does not answer adds nothing */ } }));
+  const out = new Map();
+  for (const list of lists) for (const e of list) {
+    const k = String((e && e.node) || '').toLowerCase(), at = seatBaseOf(e && e.endpoint);
+    let bonded = false; try { bonded = BigInt(String(e && e.bondSats)) > 0n; } catch { bonded = false; }
+    if (!/^[0-9a-f]{64}$/.test(k) || !bonded) continue;
+    if (!out.has(k)) out.set(k, new Set());
+    if (at) out.get(k).add(at);
+    // its newest signed address announcement (GET /roles `announced`, the census seat's addressBook.endpointOf - kanban #1866, #1888): a node
+    // that moved is still asked where it answers now
+    const moved = seatBaseOf(e && e.announced);
+    if (moved) out.get(k).add(moved);
+  }
+  return out;
+}
+
 // `teamHosts` hostnames the team runs its nodes on: a node whose own door answers there is a team node, never paid
-export async function nodeBountyCheck({ node, npub, seats, fetchJson, nowMs = Date.now(), excluded = new Set(), days = NODE_BOUNTY_DAYS, window = NODE_BOUNTY_WINDOW, teamHosts = [] }) {
+// `census` / `censusSeats` the bonded census to check against (kanban #1682) - with neither, no node is in the census and none passes
+export async function nodeBountyCheck({ node, npub, seats, fetchJson, nowMs = Date.now(), excluded = new Set(), days = NODE_BOUNTY_DAYS, window = NODE_BOUNTY_WINDOW, teamHosts = [], census = null, censusSeats = [] }) {
   const n = String(node || '').toLowerCase(), me = String(npub || '').toLowerCase();
   // THE OWNER KEY IS OPTIONAL (Daniel 2026-11-10: "npub muss nicht sein"): with one, the answer says whether it is the node's owner - a hint for the reviewer
   if (!/^[0-9a-f]{64}$/.test(n) || (me && !/^[0-9a-f]{64}$/.test(me))) return { ok: false, why: 'a node key (and, if given, an owner key), 64 hex each' };
-  const urls = [...new Set((seats || []).map((u) => String(u).replace(/\/+$/, '')))];
+  const bonded = await trustedCensus({ census, censusSeats, fetchJson });
+  const inCensus = bonded.has(n);
+  // seat address -> the census nodes advertised there (kanban #1682): only such a seat's /served is a witness, for one of those node keys.
+  // ONE ADDRESS, SEVERAL NODES (kanban #1866, #1888): it was "neither" - one cheap bonded node advertising an honest witness's endpoint
+  // cancelled that witness for every committee it sat on. Now the door's own answer says which of them it is (its `node`, which must be one
+  // advertised there); an address one node advertises alone may answer without `node` (as before)
+  const nodeAt = new Map();
+  for (const [k, ats] of bonded) for (const at of ats) { if (!nodeAt.has(at)) nodeAt.set(at, new Set()); nodeAt.get(at).add(k); }
+  // the listed seats and every census endpoint (a committee's members are asked where the chain says they are)
+  // KANBAN #2015, #2049: the trusted census seats are asked too - a round counts only when one of them holds it (below)
+  const trusted = new Set((censusSeats || []).map(seatBaseOf).filter(Boolean));
+  const urls = [...new Set([...(seats || []).map((u) => String(u).replace(/\/+$/, '')), ...nodeAt.keys(), ...trusted])];
   // THE OWNER: the node's own word, SIGNED BY THE NODE (audit 6, kanban #1418): any listed seat can answer GET /owner naming any node, and the last
   // answer won - a seat of one's own named itself the owner of someone else's node. Only a statement the node key signed counts, at most a day old,
   // the newest of them; `at` (the team-host check) is where that statement was served
@@ -66,27 +112,48 @@ export async function nodeBountyCheck({ node, npub, seats, fetchJson, nowMs = Da
     const from = today - d * DAY_MS, to = from + DAY_MS;
     // round id + committee -> the seats holding it and the FINALs they hold (kanban #1489: counted only when NODE_BOUNTY_AGREE seats agree)
     const rounds = new Map();
+    // KANBAN #2015, #2049: round id + committee keys a TRUSTED census seat holds. The census is testnet4's (a bond is 50,000 sat of faucet coin)
+    // and the bounty is paid in mainnet sat: three bonded nodes of one operator, each at its own advert, held a round they made up with the
+    // committee [k1, k2, k3], each signed its own FINAL, and all three keys passed. A round no seat the caller trusts holds is not counted
+    const confirmed = new Set();
     await Promise.all(urls.map(async (u) => {
       try {
+        // A WITNESS IS A CENSUS NODE AT ITS OWN ADVERTISED ENDPOINT (kanban #1682): any other listed seat's /served is not counted - three seats
+        // of one operator invented a round naming a fresh key and passed; one seat under three spellings of its address was three seats
+        const there = nodeAt.get(seatBaseOf(u)), isTrusted = trusted.has(seatBaseOf(u));
+        if ((!there || !there.size) && !isTrusted) return;
         const j = await fetchJson(`${u}/served?from=${from}&to=${to}&finals=1`);
+        if (isTrusted) for (const r of (j && j.held) || []) {
+          const id = String(r && r.roundId).toLowerCase(), committee = (Array.isArray(r && r.committee) ? r.committee : []).map((k) => String(k).toLowerCase());
+          if (/^[0-9a-f]{64}$/.test(id) && committee.includes(n)) confirmed.add(`${id}:${[...committee].sort().join(',')}`);
+        }
+        if (!there || !there.size) return;
+        // the door's `node` names the witness, and only a node advertised at this address; with several there, `node` is required
+        const said = j && j.node !== undefined && j.node !== null ? String(j.node).toLowerCase() : null;
+        const witness = said !== null ? (there.has(said) ? said : null) : there.size === 1 ? [...there][0] : null;
+        if (!witness) return;   // a door answering as another node is not that node
         for (const r of (j && j.held) || []) {
           const id = String(r && r.roundId).toLowerCase(), committee = (Array.isArray(r && r.committee) ? r.committee : []).map((k) => String(k).toLowerCase());
-          if (!/^[0-9a-f]{64}$/.test(id) || !committee.includes(n)) continue;
+          // the claimed node and the witness both in the round's committee (a seat holds only the rounds it sat on)
+          if (!/^[0-9a-f]{64}$/.test(id) || !committee.includes(n) || !committee.includes(witness)) continue;
           const key = `${id}:${[...committee].sort().join(',')}`;
           const e = rounds.get(key) || { id, seats: new Set(), finals: [] };
-          if (e.seats.has(u)) continue;   // a seat answering one round twice is one seat
-          e.seats.add(u); if (Array.isArray(r.finals)) e.finals.push(...r.finals);
+          if (e.seats.has(witness)) continue;   // one node key is one witness, under any address
+          // KANBAN #2015, #2049: the node is never its own witness - its door's FINALs are read, but the NODE_BOUNTY_AGREE are other nodes
+          if (witness !== n) e.seats.add(witness);
+          if (Array.isArray(r.finals)) e.finals.push(...r.finals);
           rounds.set(key, e);
         }
       } catch { /* a seat that does not answer adds nothing */ }
     }));
-    const mine = [...new Map([...rounds.values()].filter((r) => r.seats.size >= NODE_BOUNTY_AGREE).map((r) => [r.id, r])).values()];   // one round, counted once
+    const mine = [...new Map([...rounds.entries()].filter(([k, r]) => r.seats.size >= NODE_BOUNTY_AGREE && confirmed.has(k)).map(([, r]) => [r.id, r])).values()];   // one round, counted once
     return { from, committees: mine.length, signed: mine.filter((r) => r.finals.some((f) => signerOf(f, r.id) === n)).length };
   }));
   const committees = perDay.reduce((t, x) => t + x.committees, 0), signed = perDay.reduce((t, x) => t + x.signed, 0);
   const daysOn = perDay.filter((x) => x.committees > 0).length;
   const checks = [
-    { key: 'census', label: 'Bonded, in the census', ok: committees > 0, says: committees > 0 ? 'drawn into committees' : `not drawn into a committee in the last ${window} days` },
+    { key: 'census', label: 'Bonded, in the census', ok: inCensus && committees > 0,
+      says: !inCensus ? 'not a bonded node of the census' : committees > 0 ? 'bonded, drawn into committees' : `not drawn into a committee in the last ${window} days` },
     { key: 'online', label: `Online ${days} day${days === 1 ? '' : 's'}`, ok: daysOn >= days, says: `served on ${daysOn} of the last ${window} days` },
     { key: 'committees', label: 'Committees and signed rounds', ok: committees > 0 && signed > 0, says: `${committees} committees, ${signed} signed rounds` },
     { key: 'outside', label: 'Not a team node', ok: !team, says: team ? `a team node is never paid${at ? ` (it answers at ${hostOf(at)})` : ''}` : 'outside the team' },
