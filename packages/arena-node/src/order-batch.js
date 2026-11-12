@@ -114,6 +114,8 @@ export const MAX_UNBATCHED_SELLS = 16;
 export const MAX_PROPOSAL_SELLS = 256;
 /** How long a seat waits for one other seat's answer while it leads a batch (proposals, void asks, sets, certificates). */
 export const BATCH_FETCH_MS = 1000;
+/** How many certificates a leader hands a seat that refused its set over a cancel or sell of a batch it missed (kanban #2000). */
+export const MAX_HANDED_CERTS = 64;
 class Conflict extends Error {}
 
 // kanban #1547: the sells one entry keeps waiting for a batch at a seat, and the verified sells a seat remembers
@@ -345,7 +347,13 @@ export class OrderBook {
     // an order tradable here only after the market closed is in no batch (kanban #1150: a late lock filled against resting orders)
     const orders = this.db.prepare('SELECT order_id FROM market_orders WHERE round_id = ? AND batch IS NULL AND received_ms < ? ORDER BY order_id')
       .all(rid, Math.min(cutoff, this.#closeOf(roundIdBytes))).map((r) => r.order_id);
-    const events = this.db.prepare('SELECT kind, body FROM market_book_events WHERE round_id = ? AND batch IS NULL AND received_ms < ? ORDER BY event_id').all(rid, cutoff);
+    // A CANCEL IS PROPOSED ONLY ONCE ITS ORDER IS IN THE BOOK HERE (kanban #1798, skeptic of #1489 fix:attest:2 791ecbbab): lead() leaves
+    // out a cancel whose order neither the book nor its set holds, so a stranger's cancel of a lockless order (no sat spent, tradable at no
+    // seat) stayed in every seat's proposal of every batch until the close, verified again per proposal at every lead - 250 of them made
+    // each lead take ~41 ms instead of ~6 ms (the #1547 shape). The cancel is still kept (one per entry, its id is cancelId): when the
+    // order's locks are verified here later it is proposed from then on, so a player's cancel that came before the lock is not lost.
+    const events = this.db.prepare('SELECT kind, body FROM market_book_events WHERE round_id = ? AND batch IS NULL AND received_ms < ? '
+      + "AND (kind <> 'cancel' OR lower(entry_id) IN (SELECT order_id FROM market_orders WHERE round_id = ?)) ORDER BY event_id").all(rid, cutoff, rid);
     const pending = this.db.prepare('SELECT k, batch_id, record, own_sig FROM market_batches WHERE round_id = ? AND certificate IS NULL ORDER BY k').all(rid)
       .map((r) => ({ k: String(r.k), batchId: r.batch_id, record: JSON.parse(r.record), ownSig: r.own_sig }));
     return { seat: toHex(this.round.pubkey), k: String(k), orders,
@@ -901,7 +909,9 @@ export class OrderBook {
     { const L = this.ledger(roundIdBytes, record); if (L.ok && L.refused.length) {
       const no = new Set(L.refused.map((r) => r.id));
       record.sells = [...sells].filter(([id]) => !no.has(id)).map(([, s]) => s);
-      record.cancels = record.cancels.filter((c) => !L.refused.some((r) => r.id === c.entry && r.why.startsWith('a cancel')));
+      // by its entry, once (kanban #1798: a Set, not a search of the refused list per cancel)
+      const noCancel = new Set(L.refused.filter((r) => r.why.startsWith('a cancel')).map((r) => r.id));
+      record.cancels = record.cancels.filter((c) => !noCancel.has(c.entry));
     } }
     if (!record.orders.length && !record.cancels.length && !record.sells.length) return { ok: true, empty: true, decided };
     const idc = this.#recordId(roundIdBytes, record);
@@ -910,6 +920,30 @@ export class OrderBook {
     const own = this.accept(roundIdBytes, record);
     if (!own.ok) return own;
     const answers = await Promise.all(peers.map((b) => this.#post(b, `/batch?round=${rid}`, record)));
+    // A SEAT THAT MISSED THE BATCH OF A CANCEL'S OR SELL'S ORDER (kanban #2000, skeptic 4 of #1489 fix:attest:2): an honest seat that was
+    // unreachable while that batch was certified (n - needed may be) holds nothing of it, so its ledger refuses the cancel or sell and
+    // it refuses the whole set - the book lost its fault margin over one cancel, and a k1 leader could cause it on purpose by handing
+    // k1 out to only `needed` seats. This leader put the cancel or sell in because its own certified book holds the order, so it hands
+    // that seat the certificates from the order's batch on (each checked there by certify, signatures and all) and asks it once more.
+    // A seat that still refuses (the attacker's case: a cancel before its order is in any certified batch) stays refused.
+    const behind = (a) => !a.ok && /^a (cancel|sell) of that batch does not stand/.test(String(a.why));
+    // A cancel needs its order's batch; a sell also every later one (its fills and earlier sells count against what it may sell). At most
+    // MAX_HANDED_CERTS, posted at once: a seat behind further than that reads the rest at the close (sync), as before.
+    if (answers.some(behind)) {
+      const q = this.db.prepare('SELECT batch FROM market_orders WHERE order_id = ? AND round_id = ? AND batch IS NOT NULL');
+      const batchOf = (e) => { const r = isHex(e, 32) ? q.get(e, Buffer.from(roundIdBytes)) : null; return r ? Number(r.batch) : null; };
+      const want = new Set(record.cancels.map((c) => batchOf(c.entry)).filter((x) => x !== null));
+      const sellFrom = record.sells.map((s) => batchOf(s.entry)).filter((x) => x !== null);
+      const certs = this.certificates(roundIdBytes, sellFrom.length ? Math.min(...sellFrom) - 1 : (want.size ? Math.min(...want) - 1 : null))
+        .filter((c) => want.has(Number(c.k)) || (sellFrom.length && Number(c.k) >= Math.min(...sellFrom))).slice(0, MAX_HANDED_CERTS);
+      if (certs.length) {
+        await Promise.all(peers.map(async (b, i) => {
+          if (!behind(answers[i])) return;
+          await Promise.all(certs.map((cert) => this.#post(b, `/batch-certificate?round=${rid}`, cert)));
+          answers[i] = await this.#post(b, `/batch?round=${rid}`, record);
+        }));
+      }
+    }
     const tSigned = this.now();
     const sigs = this.#counted(m, idc.id, [{ seat: own.seat, signature: own.signature }, ...answers.filter((a) => a.ok).map((a) => ({ seat: a.seat, signature: a.signature }))]);
     let certified = false;
