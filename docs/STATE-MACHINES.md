@@ -1618,6 +1618,7 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 - One round's close logic runs once at a time (`closingNow`): the start's sweep and resumingCloses no longer close one round twice in parallel; a second ask while one runs gets the running one's promise.
 
 #### H2H (change) Head-to-head reveal per seat and the verdict signed over it (kanban #1589)
+#### H2H (change) Head-to-head reveal per seat and the verdict signed over it (kanban #1589, #1648)
 - A seat signs no head-to-head verdict while the round's reveal set is open: a seated entry has no reveal held here and a peer of the round did not answer this seat's `/reveals` pull (`carryReveals` names it in `down`; a 404 - the peer holds no such round - counts as an answer). Its close returns each entry `waiting`, the finality watch closes the round again (`retryClose`, which re-runs `#headToHeadClose` for a head-to-head round) until every peer answered or the result window has passed; only then are all entries decided and signed together.
 - Invariant: an entry's result at every seat is decided from every reveal that stood in the window at any seat of the round that answered before the result window closed; two seats never sign opposite verdicts because one peer missed one seat's single pull.
 

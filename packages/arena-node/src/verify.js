@@ -865,7 +865,7 @@ export class Verifier {
       }
       const carried = await this.carryReveals(roundIdBytes, entries, found.plugin.manifest.moveCount);
       const held = new Map(this.round.revealsOf(roundIdBytes).map((r) => [hex(r.entryId), r]));
-      // NO VERDICT WHILE THE REVEAL SET IS OPEN (kanban #1589, audit 2026-11-12 sm1-h2h-2): a reveal may stand at one seat only (the page
+      // NO VERDICT WHILE THE REVEAL SET IS OPEN (kanban #1589, again as #1648; audit 2026-11-12 sm1-h2h-2): a reveal may stand at one seat only (the page
       // counts it sent at one 201, SM-P3), so a seat whose peer did not answer its /reveals pull decided without it - the honest
       // revealer FORFEIT, his opponent the lone revealer the WINNER - signed, and kept it for good (one result per seat), while the seat
       // holding the reveal signed the opposite: neither verdict reached the threshold, the round never settled. Now a seated entry
