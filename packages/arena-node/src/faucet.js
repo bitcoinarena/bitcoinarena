@@ -143,10 +143,33 @@ export function opponentWant(wants, round, nowMs = Date.now(), tapped = false, w
     const mine = [...wants].filter(([k, x]) => k !== round && x.by && x.by.has(who)).sort((a, b) => b[1].at - a[1].at);
     for (const [k, x] of mine.slice(OPPONENT_WANTS_PER_CALLER - 1)) { x.by.delete(who); if (!x.by.size) wants.delete(k); }
   }
-  if (!wants.has(round) && wants.size >= OPPONENT_WANTS_MOST) return { ok: false, why: 'too many tables just now' };
+  if (!wants.has(round) && wants.size >= OPPONENT_WANTS_MOST && !opponentEvict(wants, who ? opponentNet(who) : `round:${round}`)) return { ok: false, why: 'too many tables just now' };
   const by = wants.get(round)?.by || new Set();
   if (who) by.add(who);
   wants.set(round, { at: nowMs, tapped: tapped === true || wants.get(round)?.tapped === true, by });
   return { ok: true };
 }
-export const opponentWants = (wants, nowMs = Date.now()) => [...wants].filter(([, x]) => nowMs - x.at <= OPPONENT_WANT_MS).sort((a, b) => b[1].at - a[1].at).map(([round, x]) => ({ round, agoMs: nowMs - x.at, tapped: x.tapped }));
+// ONE NETWORK, NOT ONE ADDRESS (kanban #1718, #1781): an IPv6 caller is keyed by its /64, and any home line holds a /56 (256 /64s), so the cap of 2
+// rows per caller alone let two /64s of one attacker fill the 4 rows the test opponent reads, and 32 of them (one /59) fill all 64 rows so a real
+// page was refused. Rows are now also counted per network (an IPv6 /48, an IPv4 address as it stands): the list gives every network's newest row
+// before any network's second (newest first within a rank), and a full list makes room by dropping the oldest row of the network holding the most
+// rows - only one holding more than one caller's share - instead of refusing the newcomer.
+export const opponentNet = (who) => (/^[0-9a-f]{4}(?::[0-9a-f]{4}){3}::\/64$/.test(String(who)) ? `${String(who).split(':').slice(0, 3).join(':')}::/48` : String(who));
+const netsOf = (round, x) => (x.by && x.by.size ? [...new Set([...x.by].map(opponentNet))] : [`round:${round}`]);
+function opponentEvict(wants, newNet) {
+  const rows = new Map();
+  for (const [k, x] of wants) for (const n of netsOf(k, x)) { if (!rows.has(n)) rows.set(n, []); rows.get(n).push([k, x]); }
+  let top = null;
+  for (const [n, list] of rows) if (!top || list.length > top[1].length) top = [n, list];
+  if (!top || top[1].length <= OPPONENT_WANTS_PER_CALLER || (rows.get(newNet) || []).length >= top[1].length) return false;
+  for (const [k, x] of top[1].sort((a, b) => a[1].at - b[1].at)) {
+    if (x.by && x.by.size) for (const c of [...x.by]) if (opponentNet(c) === top[0]) x.by.delete(c);
+    if (!x.by || !x.by.size) { wants.delete(k); return true; }
+  }
+  return false;
+}
+export const opponentWants = (wants, nowMs = Date.now()) => {
+  const live = [...wants].filter(([, x]) => nowMs - x.at <= OPPONENT_WANT_MS).sort((a, b) => b[1].at - a[1].at), seen = new Map();
+  const ranked = live.map(([round, x]) => { const nets = netsOf(round, x); const rank = Math.min(...nets.map((n) => seen.get(n) || 0)); for (const n of nets) seen.set(n, (seen.get(n) || 0) + 1); return { round, x, rank }; });
+  return ranked.sort((a, b) => a.rank - b.rank || b.x.at - a.x.at).map(({ round, x }) => ({ round, agoMs: nowMs - x.at, tapped: x.tapped }));
+};
