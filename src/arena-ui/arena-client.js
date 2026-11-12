@@ -33415,15 +33415,40 @@ async function exchangeEcashInto({ storage, from, to, needMsat, seats, walletFro
   // THE OFFERS READ SIDE BY SIDE (kanban #1483, Daniel 2026-11-11: "stake lock: exchanging at tn4.bitcoin-arena.io/guardian-1 ... make it more
   // efficient"): one after another, every seat that did not answer put its 8 s timeout in front of the lock. All are asked at once; the first
   // offering seats in the seats' order are used, as before. A GET /exchange hands nothing over.
-  const said = await Promise.all((seats || []).map(async (seat) => {
-    try {
-      const r = await fetcher(String(seat).replace(/\/+$/, '') + '/exchange?federations=' + to, { signal: AbortSignal.timeout(offerTimeoutMs) });
-      if (!r.ok) return false;
-      const o = await r.json();
-      return BigInt((o && o.holds && o.holds[to]) || 0) >= need && BigInt((o && o.maxMsat) || 0) >= need;
-    } catch { return false; /* not this seat */ }
-  }));
-  const offering = (seats || []).filter((s, i) => said[i]).slice(0, maxSeats);
+  // THE ORDER-PREFIX DECIDES, NOT THE SLOWEST SEAT (kanban #2413, #2480): waiting for every answer put one silent or stalling seat's whole
+  // offer timeout in front of every exchange, even when the first seats offered at once. The read ends as soon as the answered prefix of
+  // the seats' order holds maxSeats offers (or every seat has answered); the asks still open are aborted.
+  const list = [...(seats || [])];
+  const said = new Array(list.length).fill(undefined);
+  const ctls = list.map(() => new AbortController());
+  const timers = [];
+  const offering = await new Promise((resolve) => {
+    let finished = false;
+    const decide = () => {
+      if (finished) return;
+      const got = [];
+      let i = 0;
+      for (; i < list.length && said[i] !== undefined; i++) { if (said[i]) got.push(list[i]); if (got.length >= maxSeats) break; }
+      if (got.length < maxSeats && i < list.length) return;   // an earlier seat in the order may still offer
+      finished = true;
+      resolve(got.slice(0, maxSeats));
+    };
+    list.forEach((seat, i) => {
+      const ctl = ctls[i];
+      timers.push(setTimeout(() => ctl.abort(new Error('timeout')), offerTimeoutMs));
+      (async () => {
+        try {
+          const r = await fetcher(String(seat).replace(/\/+$/, '') + '/exchange?federations=' + to, { signal: ctl.signal });
+          if (!r.ok) return false;
+          const o = await r.json();
+          return BigInt((o && o.holds && o.holds[to]) || 0) >= need && BigInt((o && o.maxMsat) || 0) >= need;
+        } catch { return false; /* not this seat */ }
+      })().then((ok) => { said[i] = !!ok; decide(); });
+    });
+    decide();
+  });
+  for (const t of timers) clearTimeout(t);
+  ctls.forEach((c, i) => { if (said[i] === undefined) c.abort(new Error('not needed')); });
   if (!offering.length) return { ok: false, from, why: `no seat offers ${Math.ceil(Number(need) / 1000)} sat in federation ${String(to).slice(0, 8)}` };
   let why = '';
   for (let i = 0; i < offering.length; i++) {
