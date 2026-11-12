@@ -288,6 +288,11 @@ export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u)
   // set. The set proves itself (signed by the authority in force, named by round.donationSetId): the answers are grouped by their
   // bytes, and when the seats disagree a group served by more than half of ALL the round's nodes is taken if it passes every check
   // below; the seats that said otherwise are reported (`dissent`), not obeyed. With no such group the refusal is said as before.
+  // THE SAME QUORUM ON BOTH PATHS (kanban #1701, #1767, wf1489 v1 refute-30): the dissent path used to need MORE than half of the nodes
+  // (g*2 <= n refused) while the all-agree path takes exactly half (answers*2 < n refuses) - so on an even committee with one seat down,
+  // the last seat refused every paid join by answering 404 or other bytes, where its silence (a 5xx, a drop, no answer) let the join
+  // through. A dissenting seat is counted no more harshly than a late one: a checked group served by at least half of ALL the round's
+  // nodes stands, whatever the others said.
   const checkServed = async (served) => {
     // A SET ITS DEVELOPERS APPROVED (§27A.4.1): the nodes serve, as JSON, the admin key's set it replaces (signed,
     // checked below as any set), the proposals and approvals since, and the admin key's signature over the approved set (`admin`, kanban
@@ -365,7 +370,7 @@ export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u)
     return { ok: false, why: `only 0 of ${nodes.length} nodes served this round's donation set in ${DONATION_ANSWER_MS} ms` };
   } else {
     for (const g of [...groups.values()].sort((x, y) => y.length - x.length)) {
-      if (g.length * 2 <= nodes.length) break;
+      if (g.length * 2 < nodes.length) break;
       const got = await checkServed(g[0].bytes);
       if (got.ok) { chosen = g; set = got.set; break; }
     }
