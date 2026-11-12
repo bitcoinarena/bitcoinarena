@@ -147,7 +147,9 @@ export const shownNameOf = (record) => record.name || generatedName(record.ident
 export const NAMES_PER_SEAT = 128;
 export const NAME_CHECKS_MAX = 512;
 
-export function checkedNames(items, roundIdHex, verify) {
+// A READ'S SHARE (kanban #2259, #2276): `budget`, when given, is { left } shared by every round of one lobby read - each check
+// spends one, and none is run once it is spent - so the rounds one seat makes up cannot add NAME_CHECKS_MAX each per paint
+export function checkedNames(items, roundIdHex, verify, budget = null) {
   const newest = new Map();
   const seen = new Set();
   let checks = 0;
@@ -162,7 +164,9 @@ export function checkedNames(items, roundIdHex, verify) {
       const had = newest.get(toHex(record.playerPubkey));
       if (had && record.atMs <= had.atMs) continue;
       if (checks >= NAME_CHECKS_MAX) break;
+      if (budget && !(budget.left > 0)) break;
       checks++;
+      if (budget) budget.left--;
       if (!verify(fromHex(String(x.sig)), lobbyNameId(record), record.playerPubkey)) continue;
     } catch { continue; }
     newest.set(toHex(record.playerPubkey), record);
