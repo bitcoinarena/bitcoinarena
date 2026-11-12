@@ -138,18 +138,34 @@ export const shownNameOf = (record) => record.name || generatedName(record.ident
  * Anything else is dropped, never shown. `verify` is BIP-340, injected.
  * @returns {{ player: string, name: string, chosen: boolean }[]} by player key
  */
+// THE SIGNATURE CHECKS ONE ROUND'S NAMES MAY COST, BOUNDED (kanban #1864, attacker audit r8): the lobby builds every row
+// synchronously and re-reads every few seconds, and one seat's /rounds or /names answer was kept whole - 50,000 forged
+// records for this round were 50,000 BIP-340 checks on the main thread each paint (a forgery is dropped only after its
+// check). A round holds at most MAX_PLAYERS_PER_ROUND (64) players: a seat's list is cut to NAMES_PER_SEAT before it is
+// merged, the same record from several seats is checked once, a record no newer than the one kept for its player is not
+// checked at all, and one round's render runs at most NAME_CHECKS_MAX checks whatever the seats hand it.
+export const NAMES_PER_SEAT = 128;
+export const NAME_CHECKS_MAX = 512;
+
 export function checkedNames(items, roundIdHex, verify) {
   const newest = new Map();
+  const seen = new Set();
+  let checks = 0;
   for (const x of Array.isArray(items) ? items : []) {
     let record;
     try {
+      const same = `${String(x && x.record)}|${String(x && x.sig)}`;
+      if (seen.has(same)) continue;
+      seen.add(same);
       record = decodeLobbyName(fromHex(String(x && x.record)));
       if (toHex(record.roundId) !== String(roundIdHex).toLowerCase()) continue;
+      const had = newest.get(toHex(record.playerPubkey));
+      if (had && record.atMs <= had.atMs) continue;
+      if (checks >= NAME_CHECKS_MAX) break;
+      checks++;
       if (!verify(fromHex(String(x.sig)), lobbyNameId(record), record.playerPubkey)) continue;
     } catch { continue; }
-    const player = toHex(record.playerPubkey);
-    const had = newest.get(player);
-    if (!had || record.atMs > had.atMs) newest.set(player, record);
+    newest.set(toHex(record.playerPubkey), record);
   }
   return [...newest.entries()].sort(([a], [b]) => (a < b ? -1 : 1))
     .map(([player, r]) => ({ player, name: shownNameOf(r), chosen: r.name !== '' }));
@@ -173,7 +189,7 @@ export async function namesOf({ roundId, nodes, fetcher = fetch, verify } = {}) 
       if (!r.ok) { refused.push(`${node}: ${r.status}`); continue; }
       const body = await r.json();
       answered++;
-      if (body && Array.isArray(body.names)) items.push(...body.names);
+      if (body && Array.isArray(body.names)) items.push(...body.names.slice(0, NAMES_PER_SEAT));   // kanban #1864: one seat's share, bounded
     } catch (e) { refused.push(`${node}: ${e.name === 'TimeoutError' ? 'no answer in time' : e.message}`); }
   }
   if (!answered) throw new Error(`no signer node answered for the names: ${refused.join('; ') || 'no signer nodes named'}`);
