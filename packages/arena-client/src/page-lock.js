@@ -1103,11 +1103,14 @@ function pendingAdd(storage, federationId, p) {
   if (!storage || !fedHexOf(federationId) || !p || !p.operation) return false;
   const kept = () => { try { return pendingDeposits(storage, federationId).some((x) => String(x.operation) === String(p.operation)); } catch { return false; } };
   // A STORE THAT CANNOT LIST ITS KEYS keeps the one list, as before
+  // THROUGH putRoomy, AS EVERY WALLET WRITE (kanban #2427 / #2484, refuting #2183): a raw setItem never asked the page's storage relief
+  // (onStorageFull -> ARENA_TIDY_STORAGE, kanban #803), so a full browser where one tidy makes room stopped every Move and evacuation.
+  // Only a write still refused after the relief stops the move (and putRoomy says so: onStorageRefused -> the page's storage-full alert).
   if (typeof storage.key !== 'function') {
-    try { storage.setItem(PENDING_PREFIX + fedHexOf(federationId), JSON.stringify([...pendingDeposits(storage, federationId).filter((x) => x.operation !== p.operation), { atMs: Date.now(), ...p }])); } catch { /* not kept */ }
+    try { putRoomy(storage, PENDING_PREFIX + fedHexOf(federationId), JSON.stringify([...pendingDeposits(storage, federationId).filter((x) => x.operation !== p.operation), { atMs: Date.now(), ...p }])); } catch { /* not kept */ }
     return kept();
   }
-  try { storage.setItem(pendingOpKey(federationId, p.operation), JSON.stringify([{ atMs: Date.now(), ...p }])); }
+  try { putRoomy(storage, pendingOpKey(federationId, p.operation), JSON.stringify([{ atMs: Date.now(), ...p }])); }
   catch { /* a tab that cannot write keeps no note; the money is not touched */ }
   return kept();
 }
@@ -3802,7 +3805,8 @@ export async function handLock({ entryId, fields, nodes, needed, fetcher = fetch
  * unnamed): an invoice of exactly that amount from the successor's wallet, paid by the old one (withdrawCollected - the
  * stock send; a refused or refunded send leaves the notes where they were), and waited for until claimed. A chunk that
  * fails is tried again, at most `retries` times in a row. `onState({ state: 'moving' | 'moved' | 'stopped', ... })`.
- * Answers { moved, chunks, state, why }.
+ * Answers { moved, chunks, state, why }; a stop because this browser could not keep a receive leg (storage full, kanban #2427) answers
+ * { moved, movedChunks, leftMsat, state: 'unkept', why } - no `chunks`, so it never reads as a federation found empty.
  */
 export const MIGRATE_DUST_MSAT = 10000n;
 export async function migrateFromDraining({ from, to, record, toFederationId, chunkMsat = null, retries = 3, maxChunks = 64,
@@ -3828,7 +3832,10 @@ export async function migrateFromDraining({ from, to, record, toFederationId, ch
       invoiceFor: async (msat) => { made = JSON.parse(await to.receive(String(msat), ''));
         if (!moveLegAhead(storage, toFederationId, made, msat, inRow, phrase16)) { unkept = true; return { ok: false, why: MOVE_UNKEPT_WHY }; }
         return { ok: true, invoice: made.invoice }; } });
-    if (unkept) { onState({ state: 'stopped', movedMsat: moved, why: MOVE_UNKEPT_WHY }); return { moved, chunks, state: 'stopped', why: MOVE_UNKEPT_WHY }; }
+    // A STOP FOR STORAGE IS NOT AN EMPTY FEDERATION (kanban #2427 / #2484): { moved: 0n, chunks: 0 } is what the page reads as "found empty"
+    // (ARENA_EVACUATE's evacuatedEmpty - never tried again that page) while `can` msat stay in the DRAINING / CRITICAL federation. This stop
+    // answers state 'unkept' with the msat left and no chunk count (the run did not end), so the page tries again at a later status read.
+    if (unkept) { onState({ state: 'unkept', movedMsat: moved, leftMsat: can, why: MOVE_UNKEPT_WHY }); return { moved, movedChunks: chunks, leftMsat: can, state: 'unkept', why: MOVE_UNKEPT_WHY }; }
     // NOTHING PAID (no payment made, or Refunded - the money back in the old wallet): the leg written ahead goes
     if (made && !out.ok && (!out.state || out.state === 'Refunded')) pendingDrop(storage, toFederationId, made.operation);
     const final = out.ok && made ? await to.awaitReceive(made.operation) : null;
