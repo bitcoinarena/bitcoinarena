@@ -1530,6 +1530,8 @@ export class Verifier {
         bundle, roundId: roundIdBytes, entryId: entryIdBytes, entry: found.entry, contract,
         committee: this.round.signerNodes(roundIdBytes), signedResultId, core, roundRandomness: beacon.hash,
         verify: (sig, msg, key) => verifyKept(sig, msg, key),
+        // A LIVE RUN'S INPUTS ARE BOUND TO THE ONES THIS SEAT STORED, which the session key signed (kanban #1952, #1990)
+        storedInputs: (() => { try { return this.round.transcript(roundIdBytes, entryIdBytes); } catch { return null; } })(),
         replayRun: (form, entry, options) => {
           // KEYED BY WHAT IS REPLAYED, NOT BY THE BYTES POSTED (kanban #1517): the raw transcript + inputs bytes let a
           // stranger make every copy of one run a fresh key (whitespace or an unknown key in a live run's inputs, or an
