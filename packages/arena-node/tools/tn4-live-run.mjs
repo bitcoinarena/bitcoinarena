@@ -199,6 +199,27 @@ try {
       await new Promise((r) => setTimeout(r, 5000));
     }
   }
+  // STILL THE WINDOW'S PLAYED ROUND ONCE ITS COMMITTEES ARE DRAWN (kanban #1930, measured 2026-11-12 during #1479: round 35e62b8ef933d3a5
+  // listed backup false when it was picked, became its window's backup when the primary grid's committee was drawn, every seat refused the
+  // entry and 305 sat sat in locks no entry took until they expired): the pick's `backup` is read before the draw, so after the seating the
+  // round's listing row is read again and nothing is paid when it says not played (a backup whose primary is not drawn is the played one:
+  // backup true with played true is taken). A named ROUND gets the same check.
+  {
+    let row = null, asked = 0;
+    for (const n of nodes) {
+      try {
+        const r = await fetch(`${n}/rounds?next=2`, { signal: AbortSignal.timeout(30000) });
+        if (!r.ok) continue;
+        asked++;
+        row = ((await r.json()).rounds || []).find((x) => x.id === env.ROUND) || null;
+        if (row) break;
+      } catch { /* the next seat */ }
+    }
+    if (row && row.played === false)
+      throw new Error(`preflight: round ${env.ROUND.slice(0, 16)} is not its window's played round now (backup ${row.backup}, played ${row.played}): nothing is paid`);
+    if (!row && asked > 0) log({ step: 'played check: the round is not in the listing of the next rounds (a free or an old round), not checked' });
+    log({ step: 'played', backup: row ? row.backup : null, played: row ? row.played : null });
+  }
   if (env.DRY) { log({ step: 'dry run: nothing paid' }); process.exit(0); }
   // THE ROUND, AS ITS OWN SIGNER NODES HOLD IT
   const r = await fetch(`${nodes[0]}/round?id=${env.ROUND}`);
