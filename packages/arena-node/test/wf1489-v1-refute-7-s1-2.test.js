@@ -48,7 +48,7 @@ test('a bonded PASSED record comes back as it was stored, its outcome kept, noth
   const rec = { ...(await keptBy(bondedSecret)), state: 'PASSED', decided: { passed: true, decidedAt: 210, anchor: null } };
   const writes = [];
   const seat = setup({ census: async () => [{ pubkey: bondedX }], store: { read: () => [rec], write: (l) => writes.push(l) } }).seat;
-  assert.equal(seat.list()[0].state, 'ORPHANED');              // not checked yet: counted for nothing, its outcome not live
+  assert.equal(seat.list()[0].state, 'PASSED');                // not checked yet, its outcome still live (kanban #1865): only a census showing it unbonded orphans it
   assert.equal(seat.unchecked(), 1);
   assert.equal(seat.restore(rec.id), false);                   // the tally's restore does not take it back unchecked
   await settle(); await seat.recheck();
