@@ -287,7 +287,23 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
   // A MOVE ONCE CALLED FOR STAYS KNOWN: planned, its inputs count as spent and the drained federation's unspent reserves read 0, so the
   // records no longer list it - and its signing, sending and claiming must go on
   const knownMoves = new Map();
-  const moveOf = (id) => { const m = (moves() || []).find((x) => x.id === id); if (m) knownMoves.set(id, m); return m || knownMoves.get(id) || null; };
+  // ...AND AFTER A RESTART (kanban #2095): knownMoves is memory only, and a seat holding the move PLANNED (its inputs in
+  // reserve_payout_inputs) or further lists it no more - so the move is read back from this seat's own record of it. That row was
+  // written only after this seat checked the plan against the move its records called for (commit, or learn's late check), so its
+  // drained federation, destination, key and drain height are the ones that check saw
+  const HELD = ['PLANNED', 'SUBMITTING', 'SENT', 'REFUNDING', 'PAID'];
+  const heldMoveOf = (id) => {
+    const r = db.prepare(`SELECT plan FROM reserve_payouts WHERE proposal = ? AND state IN (${HELD.map(() => '?').join(', ')})`).get(id, ...HELD);
+    let p = null; try { p = r && r.plan ? JSON.parse(r.plan) : null; } catch { p = null; }
+    if (!p || p.kind !== 'move' || p.proposal !== id) return null;
+    return { id, from: p.federation, to: p.to, toKey: String(p.toKey).toLowerCase(), fromKey: String(p.reserveKey).toLowerCase(), decidableAt: Number(p.decidableAt) || 0 };
+  };
+  const moveOf = (id) => {
+    const m = (moves() || []).find((x) => x.id === id); if (m) knownMoves.set(id, m);
+    if (m || knownMoves.has(id)) return m || knownMoves.get(id);
+    const h = heldMoveOf(id); if (h) knownMoves.set(id, h);   // kanban #2095: after a restart, from this seat's own row
+    return h;
+  };
   const fedOf = (kind, plan) => (kind === 'claim' ? plan.to : plan.federation);
   const keyOfKind = (kind, plan) => (kind === 'claim' ? plan.toKey : plan.reserveKey);
   // `${planId}:${kind}:${asker}` -> [{ message, hiding, binding, commitment, list, share }]: a nonce pair signs ONE list, once; a coordinator taking
