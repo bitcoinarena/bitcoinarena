@@ -271,7 +271,9 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
      */
     historyAt(net, height) {
       // a record whose proposer is not checked yet (kanban #1670) may be a PASSED one: its outcome is not known here yet either
-      const pending = (typeof proposals.unchecked === 'function' && proposals.unchecked(net) > 0)
+      // (kanban #1865: only one stored OPEN and activating by `height` - a decided one is held with its outcome, see proposals.js)
+      const pending = (typeof proposals.openUnchecked === 'function' ? proposals.openUnchecked(net, height) > 0
+        : typeof proposals.unchecked === 'function' && proposals.unchecked(net) > 0)
         || proposals.list().some((p) => p.networkId === net && stateOf(p) === S.COUNTING && p.activationHeight <= height);
       if (pending) return null;
       return liveConfig({ genesis: genesisFor(net), passed: passedOf(net), height }).history;
