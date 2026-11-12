@@ -19,7 +19,7 @@ import { readFileSync, writeFileSync, appendFileSync, renameSync } from 'node:fs
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, readdirSync } from 'node:fs';
-import { join as pathJoin } from 'node:path';
+import { join as pathJoin, dirname, basename } from 'node:path';
 import { PLAYER_GRANTS } from '../src/faucet.js';
 const PLAYER_WELCOME_SATS = PLAYER_GRANTS.welcome.invoiceSats;
 import { refillDecide, feedbackDecide, faucetDecide, playerGrantDecide, playerGrantTotals, ipKey, opponentWant, opponentWants, FAUCET_MAX_SATS, FAUCET_DAY_CAP_SATS, DAY_MS } from '../src/faucet.js';
@@ -162,7 +162,7 @@ const notPaid = (states) => states.length > 0 && states.every((x) => x === 'FAIL
 async function sweepPayments(nowMs = Date.now()) {
   const seen = readBook();
   const keep = new Set(), drop = new Set(), rebook = new Map(), forget = new Set();
-  for (const r of (seen.players || []).filter((x) => x.pending)) {
+  for (const r of (seen.players || []).filter((x) => x.pending && !GRANTING.has(x.hash))) {
     const states = await Promise.all((r.payers || []).map((i) => paymentFinal(PAYERS[i], r.hash).catch(() => null)));
     if (states.includes('SUCCEEDED')) keep.add(r.hash);
     else if (notPaid(states)) drop.add(r.hash);
@@ -182,8 +182,23 @@ async function sweepPayments(nowMs = Date.now()) {
   saveBook(book);
   return true;
 }
+// A GRANT STILL PAYING IS NOT SWEPT (kanban #1627): its row is pending from before the first payinvoice, so a payer not asked yet answers "not
+// initiated" - the grant itself decides it; after a restart nothing is paying and every pending row is read
+const GRANTING = new Set();
 let sweeping = false;
 if (PAYERS.length) setInterval(() => { if (sweeping) return; sweeping = true; sweepPayments().catch(() => {}).finally(() => { sweeping = false; }); }, Number(env.FAUCET_SWEEP_MS || 120000)).unref();
+
+// A WELCOME STILL ON ITS WAY (state audit 2026-11-12, kanban #1834): a row kept in `unsure` is a payment no payer has called FAILED or NONE yet - the
+// sweep forgets it only then - so it may still arrive. playerGrantDecide read book.players only: the page's "try again in a minute" paid a second
+// welcome on a new invoice, and when the first then SUCCEEDED the sweep booked both. The decide now counts unsure rows as the account's own (toward
+// the welcome, the top-ups and the day/hour/address caps), and a welcome still unsure is answered as on its way
+function unsureWelcome(book, ask) {
+  return ask.kind === 'welcome' && (book.unsure || []).some((u) => u.account === ask.account && u.kind === 'welcome')
+    ? { ok: false, why: 'your welcome is still on its way: try again in a few minutes' } : null;
+}
+// counted ONCE (merged in #1489 beside #1628): the unsure rows go into `players` here, so the decide's own unsure count (#1628, faucet.js) is handed
+// none - an unsure top-up counted twice toward PLAYER_TOPUPS_PER_DAY refused an account's last top-up of the day
+const withUnsure = (book) => ({ ...book, players: [...(book.players || []), ...(book.unsure || []).map(({ payers, removedMs, ...row }) => row)], unsure: [] });
 
 async function grant(ask) {
   if (!/^lntb[0-9a-z]{20,1500}$/.test(String(ask.invoice || ''))) return { ok: false, why: 'that is not a testnet invoice' };
@@ -192,10 +207,20 @@ async function grant(ask) {
   const inv = JSON.parse(read.out);
   const book = readBook();
   book.players = book.players || [];
-  const d = playerGrantDecide({ kind: ask.kind, account: ask.account, ip: ask.ip, invoiceSats: Number(inv.num_satoshis) }, book);
+  const onWay = unsureWelcome(book, ask);   // kanban #1834
+  if (onWay) return onWay;
+  const d = playerGrantDecide({ kind: ask.kind, account: ask.account, ip: ask.ip, invoiceSats: Number(inv.num_satoshis) }, withUnsure(book));
   if (!d.ok) return d;
   const row = { account: ask.account, kind: ask.kind, ip: ask.ip, sats: d.grant.invoiceSats, atMs: Date.now(), hash: inv.payment_hash };
-  book.players.push(row);
+  // BOOKED PENDING BEFORE ANY PAYINVOICE (kanban #1627, state audit 2026-11-12 SM-19): a plain row booked here was a welcome (or a refill) paid for
+  // good when the faucet died inside payinvoice - the sweep reads only pending rows and `unsure`, so a payment never made, or one that FAILED after,
+  // refused the account its welcome forever. The row is pending with every payer that may be asked; only SUCCEEDED clears it (here or in the sweep),
+  // and after a restart the sweep removes it once every payer answers NONE/FAILED
+  GRANTING.add(row.hash);
+  try { return await grantPay(ask, inv, d, book, row); } finally { GRANTING.delete(row.hash); }
+}
+async function grantPay(ask, inv, d, book, row) {
+  book.players.push({ ...row, pending: true, payers: PAYERS.map((_, i) => i) });
   saveBook(book);
   const tried = [], askedPayers = [];
   // A PAYER IS NOT ASKED TO PAY ITS OWN NODE'S INVOICE (kanban #1381): payer a is gateway a's lnd - "self-payments not allowed" cost a call before payer b
@@ -208,9 +233,10 @@ async function grant(ask) {
     const state = /Payment status: (SUCCEEDED|IN_FLIGHT)/.test(paid.out) ? 'sent' : paid.timedOut ? await paymentSent(payer, inv.payment_hash) : 'no';
     askedPayers.push(PAYERS.indexOf(payer));
     // NOT FINAL YET (kanban #1421): booked as pending with the payers asked; the sweep reads their final word
-    if (state === 'sent' && !/Payment status: SUCCEEDED/.test(paid.out)) {
+    if (state === 'sent') {
       const b2 = readBook(); const mine = (b2.players || []).find((x) => x.hash === row.hash);
-      if (mine) { mine.pending = true; mine.payers = [...askedPayers]; saveBook(b2); }
+      if (mine && /Payment status: SUCCEEDED/.test(paid.out)) { delete mine.pending; delete mine.payers; saveBook(b2); }
+      else if (mine) { mine.pending = true; mine.payers = [...askedPayers]; saveBook(b2); }
     }
     if (state === 'sent') {
       console.log(`${new Date().toISOString()} player ${ask.kind} ${d.grant.invoiceSats} sat (${ask.ip || 'no ip'}): ${inv.payment_hash.slice(0, 16)}`);
@@ -243,6 +269,12 @@ function takeEcash(federation, msat) {
   }
   return null;
 }
+// THE START SCAN (kanban #1835): a faucet killed between the take and the book write left the same stranded note. At start, a note in taken/ that no
+// book row names as its noteFile goes back to its shelf - only when the book file is there and reads (a lost book must not put given notes back)
+if (ECASH_POOL) { try { const b = JSON.parse(readFileSync(env.FAUCET_BOOK, 'utf8')); const named = new Set((b.players || []).map((x) => x.noteFile).filter(Boolean));
+  for (const fed of readdirSync(ECASH_POOL)) { const t = pathJoin(ECASH_POOL, fed, 'taken'); let fs = []; try { fs = readdirSync(t); } catch { continue; }
+    for (const f of fs) if (f.endsWith('.json') && !named.has(pathJoin(t, f))) { try { renameSync(pathJoin(t, f), pathJoin(ECASH_POOL, fed, f)); console.log(`${new Date().toISOString()} e-cash note ${f} back on the shelf: no welcome booked it`); } catch { /* next start */ } } }
+} catch { /* no book yet, or it does not read: nothing is put back */ } }
 function grantEcash(ask) {
   const book = readBook();
   book.players = book.players || [];
@@ -254,13 +286,17 @@ function grantEcash(ask) {
       try { const n = JSON.parse(readFileSync(had.noteFile, 'utf8')); if (n.ecash) { console.log(`${new Date().toISOString()} player welcome answered again (${ask.ip || 'no ip'}): ${String(had.hash || '').slice(0, 16)}`); return { ok: true, sats: had.sats, ecash: String(n.ecash), again: true }; } } catch { /* the note file is gone: refused below as before */ }
     }
   }
-  const d = playerGrantDecide({ kind: ask.kind, account: ask.account, ip: ask.ip, invoiceSats: PLAYER_WELCOME_SATS }, book);
+  const onWay = unsureWelcome(book, ask);   // kanban #1834: an invoice welcome still unsure blocks a pool note too
+  if (onWay) return onWay;
+  const d = playerGrantDecide({ kind: ask.kind, account: ask.account, ip: ask.ip, invoiceSats: PLAYER_WELCOME_SATS }, withUnsure(book));
   if (!d.ok) return d;
   const got = takeEcash(ask.ecash, d.grant.invoiceSats * 1000);
   if (!got) return null;
   const hash = createHash('sha256').update(got.ecash).digest('hex');
   book.players.push({ account: ask.account, kind: ask.kind, ip: ask.ip, sats: d.grant.invoiceSats, atMs: Date.now(), hash, ecash: true, noteFile: got.file });
-  saveBook(book);
+  // A NOTE LEAVES THE SHELF ONLY FOR A BOOKED WELCOME (state audit 2026-11-12, kanban #1835): a book write that failed (a full disk) left the note in
+  // taken/ with no row - nothing handed it out or put it back, and each retry took the next one. It goes back to the shelf before the 500
+  try { saveBook(book); } catch (e) { try { renameSync(got.file, pathJoin(dirname(dirname(got.file)), basename(got.file))); } catch { /* the start scan puts it back */ } throw e; }
   console.log(`${new Date().toISOString()} player ${ask.kind} ${d.grant.invoiceSats} sat as e-cash (${ask.ip || 'no ip'}): ${hash.slice(0, 16)}`);
   return { ok: true, sats: d.grant.sats, ecash: got.ecash };
 }
