@@ -65,8 +65,14 @@ export function priceAttestationStands({ id, sigs, committee, threshold, verify 
   for (const s of sigs || []) {
     // kanban #1489: a signature that is not 64 bytes (as 128 hex or bytes) counts nothing - it never throws. `"".match(/../g)`
     // is null, and one seat answering GET /round-result with signature "" threw here, so no market on its game ever resolved.
+    // kanban #1958 / #1997: a key is a 64-hex string or a Uint8Array of 32 bytes, nothing else - decoded only then. toHex on any
+    // other value loops to its .length (a JSON key { "length": 4294967295 } held the seat's one thread), and a JSON array of the
+    // 32 bytes counted here while price-feed dropped it, so a seat kept a sample that stood with no signature at all.
+    if (!s || typeof s !== 'object') continue;
     let key, sig;
-    try { key = typeof s.key === 'string' ? s.key.toLowerCase() : toHex(s.key); } catch { continue; }
+    if (typeof s.key === 'string') { if (!/^[0-9a-f]{64}$/i.test(s.key)) continue; key = s.key.toLowerCase(); }
+    else if (isBytes32(s.key)) key = toHex(s.key);
+    else continue;
     if (!members.has(key) || signed.has(key)) continue;
     // kanban #1530: the signature and key are decoded inside the checks below - a peer's odd-length or 1-char hex ('a')
     // made match() return null and threw out of the whole check, so one bad seat hid the result the others signed.

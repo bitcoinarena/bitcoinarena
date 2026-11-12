@@ -358,26 +358,35 @@ export class PriceFeed {
     if (body.kind === 'tape') {
       const t = { roundId: rid, tick: 0, prices: body.prices };
       let id; try { id = priceTapeId(t); } catch (e) { return refuse(e.message, 400); }
-      const s = priceAttestationStands({ id, sigs: body.sigs, committee: c.committee, threshold: c.needed, verify });
+      // kanban #1958 / #1997: the threshold is checked on the signatures in the shape this seat keeps (64-hex key, 128-hex signature), and the kept
+      // ones that verify must reach it - a body whose keys count elsewhere but not in that shape is refused, never kept empty
+      const shaped = (Array.isArray(body.sigs) ? body.sigs : []).map(sigShape).filter(Boolean);
+      const s = priceAttestationStands({ id, sigs: shaped, committee: c.committee, threshold: c.needed, verify });
       if (!s.ok) return refuse(`that tape does not stand: ${s.why}`);
+      const kept = countedSigs(id, shaped, s.signed);
+      if (kept.length < c.needed) return refuse(`that tape does not stand: ${kept.length} of the committee signed it, ${c.needed} are needed`);
       // THE FIRST TAPE THAT STANDS IS KEPT (kanban #1181): another is refused, the same is taken again
       const had = this.tapes.get(body.round);
       const step = legacySampleStep({ signed: null, held: had ? toHex(priceTapeId({ roundId: rid, tick: 0, prices: had.prices })) : null }, { kind: 'hold', value: toHex(id) });
       if (!step.ok) return refuse(step.why);
-      if (!step.again) this.tapes.set(body.round, { tick: 0, prices: body.prices, sigs: countedSigs(id, body.sigs, s.signed) });   // kanban #1770
+      if (!step.again) this.tapes.set(body.round, { tick: 0, prices: body.prices, sigs: kept });   // kanban #1770
       return { ok: true };
     }
     const k = Number(body.k);
     const sample = { roundId: rid, tick: sampleTick(k), priceCents: body.priceCents };
     let id; try { id = priceSampleId(sample); } catch (e) { return refuse(e.message, 400); }
-    const s = priceAttestationStands({ id, sigs: body.sigs, committee: c.committee, threshold: c.needed, verify });
+    // kanban #1958 / #1997: the threshold is checked on the signatures in the shape this seat keeps (64-hex key, 128-hex signature), and the kept
+    // ones that verify must reach it - a body whose keys count elsewhere but not in that shape is refused, never kept empty
+    const shaped = (Array.isArray(body.sigs) ? body.sigs : []).map(sigShape).filter(Boolean);
+    const s = priceAttestationStands({ id, sigs: shaped, committee: c.committee, threshold: c.needed, verify });
     if (!s.ok) return refuse(`that sample does not stand: ${s.why}`);
+    const sigs = countedSigs(id, shaped, s.signed);   // kanban #1770: only the signatures that counted are kept and served
+    if (sigs.length < c.needed) return refuse(`that sample does not stand: ${sigs.length} of the committee signed it, ${c.needed} are needed`);
     // THE FIRST SAMPLE THAT STANDS IS KEPT, per (round, k) (kanban #1181): in memory, and an end in the database first-wins
     const had = this.#held(body.round, k);
     const step = legacySampleStep({ signed: null, held: had ? had.priceCents : null }, { kind: 'hold', value: body.priceCents });
     if (!step.ok) return refuse(step.why);
     if (step.again) return { ok: true };
-    const sigs = countedSigs(id, body.sigs, s.signed);   // kanban #1770: only the signatures that counted are kept and served
     if (this.ends && (k === 0 || k === closeSampleK(Number(c.contract.blockTicks)))) {
       let ch = 1; try { ch = this.ends.putFirst.run(body.round, k, sample.tick, body.priceCents, JSON.stringify(sigs)).changes; } catch { ch = 1; /* kept in memory */ }
       if (ch !== 1) return refuse('another attested value of that moment is held here: the first stands');
