@@ -1414,6 +1414,9 @@ export function openStore(path = ':memory:') {
     db.exec('ALTER TABLE relayed ADD COLUMN capped INTEGER NOT NULL DEFAULT 0');
   if (!db.prepare('PRAGMA table_info(lobby_names)').all().some((c) => c.name === 'identity_sig'))
     db.exec('ALTER TABLE lobby_names ADD COLUMN identity_sig BLOB');
+  // THE ROUNDS A CONSENTED NAME RECORD PUTS AN IDENTITY IN (kanban #2167, refutes #1748): the record's identity key (bytes 64..96, lobby-name.js),
+  // read by match.js before any reveal of that round has reached this seat
+  db.exec('CREATE INDEX IF NOT EXISTS lobby_names_consented_identity ON lobby_names (substr(record, 65, 32)) WHERE identity_sig IS NOT NULL');
   for (const t of ['objections', 'rerun_objections'])
     if (!db.prepare(`PRAGMA table_info(${t})`).all().some((c) => c.name === 'block_hash'))
       db.exec(`ALTER TABLE ${t} ADD COLUMN block_hash BLOB`);

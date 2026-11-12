@@ -4042,6 +4042,15 @@ export class Round {
     return b.length >= 96 ? Buffer.from(b.subarray(64, 96)).toString('hex') : null;
   }
 
+  /**
+   * THE ROUNDS A CONSENTED NAME RECORD NAMES AN IDENTITY IN (kanban #2167): [{ roundId, playerPubkey }] - held at the join, before the round's
+   * reveals (and their h2h_identities rows) reach this seat, so a round still being decided here is seen as the round before in its match.
+   */
+  roundsNamingIdentity(identity) {
+    return this.db.prepare('SELECT round_id, player_pubkey FROM lobby_names WHERE identity_sig IS NOT NULL AND substr(record, 65, 32) = ?').all(Buffer.from(identity))
+      .map((r) => ({ roundId: new Uint8Array(r.round_id), playerPubkey: new Uint8Array(r.player_pubkey) }));
+  }
+
   /** A head-to-head entry's identity, kept once: the key and its signature over matchProofId. */
   putIdentity({ roundId, entryId, identity, sig }) {
     return this.db.prepare('INSERT OR IGNORE INTO h2h_identities (entry_id, round_id, identity, sig) VALUES (?, ?, ?, ?)')
