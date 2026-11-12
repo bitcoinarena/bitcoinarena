@@ -3823,6 +3823,30 @@ export class Round {
       .run(hashBytes, bytes, this.now()).changes;
   }
 
+  /**
+   * A SLASH PROOF KEPT AS A RELAY, AT MOST ONE PER ACCUSED SIGNED RESULT (kanban #2248, a45 refute of #1816). `accused` is
+   * round id || accused node || player || signed result id. Returns 'kept', 'same' (this proof is already the one kept)
+   * or 'other' (another proof about the same signed result is kept; nothing stored).
+   */
+  relaySlashPut(accused, proofId, bytes) {
+    const was = this.relaySlashOf(accused);
+    if (was) return Buffer.from(was).equals(Buffer.from(proofId)) ? 'same' : 'other';
+    const own = !this.db.isTransaction;
+    if (own) this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.prepare('INSERT INTO relayed_slash (accused, proof_id) VALUES (?, ?)').run(accused, proofId);
+      this.relayPut(proofId, bytes);
+      if (own) this.db.exec('COMMIT');
+    } catch (e) { if (own) this.db.exec('ROLLBACK'); throw e; }
+    return 'kept';
+  }
+
+  /** The id of the slash proof kept as a relay about this accused signed result (relaySlashPut's key), or null. */
+  relaySlashOf(accused) {
+    const r = this.db.prepare('SELECT proof_id FROM relayed_slash WHERE accused = ?').get(accused);
+    return r ? new Uint8Array(r.proof_id) : null;
+  }
+
   /** The bytes this node keeps as a relay, all doors together (kanban #1532: the doors refuse past a cap). */
   relayedBytes() {
     return Number(this.db.prepare('SELECT COALESCE(SUM(LENGTH(bytes)), 0) AS n FROM relayed').get().n);
