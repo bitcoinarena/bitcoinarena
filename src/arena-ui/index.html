@@ -6337,7 +6337,10 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           // darstellen"): the round's stake row says what went in; what is missing is the round's fee, kept for a round that was played
           : r.kind === 'refund' ? (() => { const st = (typeof rows !== 'undefined' ? rows : []).find((x) => x.kind === 'stake' && x.round === r.round);
               const inMsat = st ? (BigInt(st.msat || 0) < 0n ? -BigInt(st.msat || 0) : BigInt(st.msat || 0)) : 0n, back = BigInt(r.msat || 0), fee = inMsat > back ? inMsat - back : 0n;
-              return `Refund \u00b7 round ${String(r.round || '').slice(0, 8)} \u00b7 stake back${inMsat > 0n ? ` (${sat(inMsat)} staked${fee > 0n ? `, ${sat(fee)} fee kept` : ''})` : ''}`; })()
+              // WHAT CAME BACK FIRST (measured 2026-11-12 on a 412 px phone: the row is cut at "stake back (100 sat stak..." - the numbers never showed), and a
+              // shortfall is called a fee only when it is one (the round's fees are 10 % at most); a larger one is what came back so far
+              if (!(inMsat > 0n)) return `Refund \u00b7 stake back \u00b7 round ${String(r.round || '').slice(0, 8)}`;
+              return `Refund \u00b7 ${Math.floor(Number(back) / 1000).toLocaleString('en-US')} of ${sat(inMsat)} back${fee > 0n ? (fee * 10n <= inMsat ? ` (${sat(fee)} fee)` : ' so far') : ''} \u00b7 round ${String(r.round || '').slice(0, 8)}`; })()
           : r.kind === 'slash-payout' ? `Slash payout \u00b7 round ${String(r.round || '').slice(0, 8)}`
           : r.kind === 'withdrawal' ? `Withdrawal${r.state && r.state !== 'Success' ? ' (' + r.state + ')' : ''}`
           // A MOVE BETWEEN FEDERATIONS IS NO STAKE (18:4xZ: the 1,000 sat moved out of the CRITICAL b18947f0 showed "Stake · round undefine · not
@@ -7857,7 +7860,10 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         // match only from the previous round of the same game id - a v6 round, then a v5 one, started the score at 0:0. Each slot offers its
         // newest version's rounds alone.
         allRows: () => (holdForReveal() ? [] : fullRounds(sameVersionPerSlot(moneyFirst(window.ARENA_LOBBY_ROWS || [], true), game.id))).map((r) => ({ id: r.id, line: r.line, free: r.free, joinable: !!r.joinable,
-          stakeSats: r.stakeSats, entryCloseMs: r.entryCloseMs !== undefined && r.entryCloseMs !== null ? Number(r.entryCloseMs) : null,
+          // A ROUND'S STAKE FOR EVERY ROW (kanban #1481, Daniel 2026-11-11: "it must be clear that a round is 100 sats"): the lobby's rows name it in
+          // millisatoshi only, so allRows handed the game no stake and its client could not say what a paid round costs
+          stakeSats: r.stakeSats ?? (r.stakeMsat !== undefined && r.stakeMsat !== null ? Number(r.stakeMsat) / 1000 : undefined),
+          entryCloseMs: r.entryCloseMs !== undefined && r.entryCloseMs !== null ? Number(r.entryCloseMs) : null,
           startTimeMs: r.contract ? Number(r.contract.startTimeMs) : null })),
         identity: () => window.ARENA_IDENTITY || null,
         // THE PLAYER WALLET, THE PAGE'S OWN: a client never makes a deposit or a withdraw of its own - it reads
