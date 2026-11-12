@@ -111,6 +111,8 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     CREATE INDEX IF NOT EXISTS seat_presigs_bond ON seat_presigs (txid, vout, kept_ms);
     CREATE TABLE IF NOT EXISTS own_hold_panels (txid TEXT NOT NULL, vout INTEGER NOT NULL, script TEXT NOT NULL, panel_a TEXT NOT NULL, panel_b TEXT NOT NULL, PRIMARY KEY (txid, vout, script));
     CREATE TABLE IF NOT EXISTS seat_withheld (round_id BLOB NOT NULL, role TEXT NOT NULL, node TEXT NOT NULL, PRIMARY KEY (round_id, role, node));
+    CREATE TABLE IF NOT EXISTS seat_seatings (round_id BLOB NOT NULL, role TEXT NOT NULL, seating TEXT NOT NULL, seated TEXT NOT NULL,
+      PRIMARY KEY (round_id, role, seating));
   `);
   // when each PRESENT arrived (kanban #1248)
   if (!db.prepare('PRAGMA table_info(seat_presents)').all().some((c) => c.name === 'received_ms')) db.exec('ALTER TABLE seat_presents ADD COLUMN received_ms INTEGER');
@@ -126,13 +128,28 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
   try { db.exec('ALTER TABLE seat_certs ADD COLUMN confirmed INTEGER'); } catch { /* there already */ }
   const me = toHex(round.pubkey);
   // THE SEATED LISTS OF THE SEATINGS SIGNED (kanban #738): `${rid}:${role}:${seating id}` -> node keys hex, for every seating a
-  // signature over it was kept of - a seating this node did not sign is known by its id only in seat_sigs. Lost at a restart: the
-  // peers hand their signatures with their lists again on every tick until a certificate stands, and none known is no re-sign.
+  // signature over it was kept of - a seating this node did not sign is known by its id only in seat_sigs.
+  // KEPT IN THE STORE BESIDE seat_sigs (kanban #2140, #2208, #2298, wf1489 a44 refute-3): the map alone was lost at a restart, so a kept signature over a
+  // seating before ours - the #1609 withholder's - counted as signing again ("not remembered here") and the restarted seat never moved while the others
+  // did. The map is a cache of seat_seatings; seatingOf reads the store on a miss.
   const seatings = new Map();
   const rememberSeating = (rid, role, id, list) => {
-    seatings.set(`${toHex(rid)}:${role}:${id}`, list);
+    const key = `${toHex(rid)}:${role}:${id}`;
+    if (seatings.has(key)) return;
+    seatings.set(key, list);
     if (seatings.size > 20000) seatings.delete(seatings.keys().next().value);
+    db.prepare('INSERT OR IGNORE INTO seat_seatings (round_id, role, seating, seated) VALUES (?, ?, ?, ?)').run(rid, role, id, JSON.stringify(list));
   };
+  const seatingOf = (w, id) => {
+    const key = `${w.ridHex}:${w.role}:${id}`;
+    if (seatings.has(key)) return seatings.get(key);
+    const r = db.prepare('SELECT seated FROM seat_seatings WHERE round_id = ? AND role = ? AND seating = ?').get(w.t.rid, w.role, id);
+    let list = null; try { list = r ? JSON.parse(r.seated) : null; } catch { list = null; }
+    if (Array.isArray(list)) { seatings.set(key, list); if (seatings.size > 20000) seatings.delete(seatings.keys().next().value); }
+    return Array.isArray(list) ? list : null;
+  };
+  /** The members this node left a seating for, as withholders (kanban #1509, kept in seat_withheld): a seating that seats one is never gone back to (#2208). */
+  const leftFor = (w) => new Set(db.prepare('SELECT node FROM seat_withheld WHERE round_id = ? AND role = ?').all(w.t.rid, w.role).map((r) => r.node));
   const certs = new Map();       // `${rid}:${role}` -> seated hex list (null: equivocated)
   for (const r of db.prepare('SELECT round_id, role, cert FROM seat_certs').all()) {
     try { certs.set(`${toHex(new Uint8Array(r.round_id))}:${r.role}`, decodeSeated(new Uint8Array(r.cert))); } catch { /* unread */ }
@@ -1133,12 +1150,13 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     // that comes before this node's in #738's order - the first 5 drawn, itself among them - was not a withholder here and set off no re-sign either (a
     // seating before ours is the one #738 expects it to leave), so it never moved and the round stood uncertified to its start, the #1509 effect again. A
     // member counts as signing only by a signature over this node's seating or over one not before it; one known to come before it, WITHHELD_SIG_MS on,
-    // withholds. A seating not remembered here (after a restart) still counts, as before.
+    // withholds. A seating not known here, in memory or in seat_seatings, does not count (kanban #2140).
     const id = toHex(seatingId({ roundId: w.t.rid, role: w.role, seated: signed.seated.map(fromHex) }));
     const signs = (k) => db.prepare('SELECT seating FROM seat_sigs WHERE round_id = ? AND role = ? AND node = ?').all(w.t.rid, w.role, k).some((r) => {
       if (r.seating === id) return true;
-      const other = seatings.get(`${w.ridHex}:${w.role}:${r.seating}`);
-      return !other || !seatingBefore(w, other, signed.seated);
+      // from the store after a restart too; an unknown seating does not count (kanban #2140, #2298, wf1489 a44 refute-3)
+      const other = seatingOf(w, r.seating);
+      return !!other && !seatingBefore(w, other, signed.seated);
     });
     return signed.seated.filter((k) => k !== me && !signs(k));
   }
@@ -1157,9 +1175,12 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     if (!signed) return null;
     const known = withheldOf(w);   // kanban #1887
     const id = toHex(seatingId({ roundId: w.t.rid, role: w.role, seated: signed.seated.map(fromHex) }));
+    // A SEATING THIS NODE LEFT FOR A WITHHOLDER is no reason to move (kanban #2208, wf1489 a44 refute-3): one honest seat ticking 10-20 s behind the others
+    // (#803's long ticks) still signed the seating with the withholder in it after the others had left it; that seating does not come before theirs, so
+    // #738 sent them back to it, and the two halves swapped seatings until the start. A seat never goes back to a seating that seats a member it left.
     for (const r of db.prepare('SELECT node, seating FROM seat_sigs WHERE round_id = ? AND role = ? AND seating != ? AND node != ?').all(w.t.rid, w.role, id, me)) {
       if (!signed.seated.includes(r.node)) continue;
-      const other = seatings.get(`${w.ridHex}:${w.role}:${r.seating}`);
+      const other = seatingOf(w, r.seating);   // from the store after a restart too (kanban #2140)
       // a seating that seats a withholder this node left (kanban #1887, #1921, #1965): never a reason to move, it can never stand
       if (other && !seatsWithheld(other, known) && !seatingBefore(w, other, signed.seated)) return { node: r.node, seating: r.seating, seated: other };
     }
@@ -1198,7 +1219,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     const own = seatedFrom({ drawn: w.drawnKeys, present: known.size && heldLess.length >= receiptsNeeded(w.slots) ? heldLess : held, slots: w.slots }).map(toHex);
     candidates.set(toHex(seatingId({ roundId: w.t.rid, role: w.role, seated: own.map(fromHex) })), own);
     for (const r of db.prepare('SELECT DISTINCT seating FROM seat_sigs WHERE round_id = ? AND role = ? AND node != ?').all(w.t.rid, w.role, me)) {
-      const other = seatings.get(`${w.ridHex}:${w.role}:${r.seating}`);
+      const other = seatingOf(w, r.seating);
       if (other && other.every((k) => heldSet.has(k))) candidates.set(r.seating, other);
     }
     let best = null;
@@ -1272,7 +1293,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     const own = seatedFrom({ drawn: w.drawnKeys, present: answeringOf(w, less), slots: w.slots }).map(toHex);
     const pick = new Map([[toHex(seatingId({ roundId: w.t.rid, role: w.role, seated: own.map(fromHex) })), own]]);
     for (const r of db.prepare('SELECT DISTINCT seating FROM seat_sigs WHERE round_id = ? AND role = ? AND node != ?').all(w.t.rid, w.role, me)) {
-      const other = seatings.get(`${w.ridHex}:${w.role}:${r.seating}`);
+      const other = seatingOf(w, r.seating);
       if (other && other.every((k) => heldSet.has(k))) pick.set(r.seating, other);
     }
     for (const [id, list] of pick) {
