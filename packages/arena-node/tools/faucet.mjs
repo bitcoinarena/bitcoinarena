@@ -362,25 +362,32 @@ const UNSURE_KEEP_MS = 24 * 3600 * 1000;
 // 45 s again, and saving the book it had read before its awaits dropped refill rows written meanwhile. The reads run first; the book is read again
 // and only this sweep's decisions, by payment hash, are applied to it in one synchronous step
 const notPaid = (states) => states.length > 0 && states.every((x) => x === 'FAILED' || x === 'NONE');
+// THE PAYER BY WHO IT IS, NOT WHERE IT STOOD IN THE LIST (kanban #1926): `payers` holds indexes into FAUCET_PAYERS, and a restart with the list in
+// another order (a payer added in front) had the sweep ask a different lnd - "not initiated", the row removed while the real payer still held the
+// payment in flight, and a second welcome paid. Each asked payer is now also kept by its own entry (`payerIds`: lnddir|rpcserver) and resolved by it;
+// a payer no longer listed answers nothing (null), so the row stays pending and is never dropped on another node's word. Rows written before keep
+// their indexes
+const payerId = (p) => `${p.dir}|${p.rpcserver}`;
+const askedOf = (r) => Array.isArray(r.payerIds) ? r.payerIds.map((id) => PAYERS.find((p) => payerId(p) === id) || null) : (r.payers || []).map((i) => PAYERS[i]);
 async function sweepPayments(nowMs = Date.now()) {
   const seen = readBook();
   const keep = new Set(), drop = new Set(), rebook = new Map(), forget = new Set();
   for (const r of (seen.players || []).filter((x) => x.pending && !GRANTING.has(x.hash))) {
-    const states = await Promise.all((r.payers || []).map((i) => paymentFinal(PAYERS[i], r.hash).catch(() => null)));
+    const states = await Promise.all(askedOf(r).map((p) => paymentFinal(p, r.hash).catch(() => null)));
     if (states.includes('SUCCEEDED')) keep.add(r.hash);
     else if (notPaid(states)) drop.add(r.hash);
   }
   for (const u of seen.unsure || []) {
-    const states = await Promise.all((u.payers || []).map((i) => paymentFinal(PAYERS[i], u.hash).catch(() => null)));
+    const states = await Promise.all(askedOf(u).map((p) => paymentFinal(p, u.hash).catch(() => null)));
     if (states.includes('SUCCEEDED')) rebook.set(u.hash, u);
     else if (notPaid(states) || (!states.includes('IN_FLIGHT') && nowMs - Number(u.removedMs || 0) > UNSURE_KEEP_MS)) forget.add(u.hash);
   }
   if (!keep.size && !drop.size && !rebook.size && !forget.size) return false;
   const book = readBook();
   book.players = book.players || []; book.unsure = book.unsure || [];
-  for (const r of book.players) if (r.pending && keep.has(r.hash)) { delete r.pending; delete r.payers; console.log(`${new Date().toISOString()} player ${r.kind} ${r.hash.slice(0, 16)}: SUCCEEDED, kept`); }
+  for (const r of book.players) if (r.pending && keep.has(r.hash)) { delete r.pending; delete r.payers; delete r.payerIds; console.log(`${new Date().toISOString()} player ${r.kind} ${r.hash.slice(0, 16)}: SUCCEEDED, kept`); }
   book.players = book.players.filter((r) => { const gone = r.pending && drop.has(r.hash); if (gone) console.log(`${new Date().toISOString()} player ${r.kind} ${r.hash.slice(0, 16)}: not paid by any payer, the row removed (the welcome can be asked again)`); return !gone; });
-  for (const [h, u] of rebook) { const { payers, removedMs, ...row } = u; if (!book.players.some((x) => x.hash === h)) { book.players.push(row); console.log(`${new Date().toISOString()} player ${row.kind} ${h.slice(0, 16)}: paid after all - booked again`); } }
+  for (const [h, u] of rebook) { const { payers, payerIds, removedMs, ...row } = u; if (!book.players.some((x) => x.hash === h)) { book.players.push(row); console.log(`${new Date().toISOString()} player ${row.kind} ${h.slice(0, 16)}: paid after all - booked again`); } }
   book.unsure = book.unsure.filter((u) => !rebook.has(u.hash) && !forget.has(u.hash));
   saveBook(book);
   return true;
@@ -423,9 +430,9 @@ async function grant(ask) {
   try { return await grantPay(ask, inv, d, book, row); } finally { GRANTING.delete(row.hash); }
 }
 async function grantPay(ask, inv, d, book, row) {
-  book.players.push({ ...row, pending: true, payers: PAYERS.map((_, i) => i) });
+  book.players.push({ ...row, pending: true, payers: PAYERS.map((_, i) => i), payerIds: PAYERS.map(payerId) });   // kanban #1926
   saveBook(book);
-  const tried = [], askedPayers = [], failedFor = [];
+  const tried = [], askedPayers = [], askedIds = [], failedFor = [];
   // A PAYER IS NOT ASKED TO PAY ITS OWN NODE'S INVOICE (kanban #1381): payer a is gateway a's lnd - "self-payments not allowed" cost a call before payer b
   for (const payer of await payersFor(inv.destination)) {
     // A TIMEOUT IS NOT A REFUSAL, AND NOT A PAYMENT EITHER (kanban #1381, Daniel 2026-11-09 "scheitere daran die test sats zu bekommen": payer b's
@@ -435,12 +442,12 @@ async function grantPay(ask, inv, d, book, row) {
     const paid = await lncli(payer, ['payinvoice', '--force', '--timeout=60s', '--fee_limit=20', ask.invoice], PAY_WAIT_MS);
     const paidSays = lnStatus(paid.out);
     const state = paidSays === 'SUCCEEDED' || paidSays === 'IN_FLIGHT' ? 'sent' : paid.timedOut ? await paymentSent(payer, inv.payment_hash) : 'no';
-    askedPayers.push(PAYERS.indexOf(payer));
+    askedPayers.push(PAYERS.indexOf(payer)); askedIds.push(payerId(payer));   // kanban #1926: by its own entry too
     // NOT FINAL YET (kanban #1421): booked as pending with the payers asked; the sweep reads their final word
     if (state === 'sent') {
       const b2 = readBook(); const mine = (b2.players || []).find((x) => x.hash === row.hash);
-      if (mine && paidSays === 'SUCCEEDED') { delete mine.pending; delete mine.payers; saveBook(b2); }
-      else if (mine) { mine.pending = true; mine.payers = [...askedPayers]; saveBook(b2); }
+      if (mine && paidSays === 'SUCCEEDED') { delete mine.pending; delete mine.payers; delete mine.payerIds; saveBook(b2); }
+      else if (mine) { mine.pending = true; mine.payers = [...askedPayers]; mine.payerIds = [...askedIds]; saveBook(b2); }
     }
     if (state === 'sent') {
       console.log(`${new Date().toISOString()} player ${ask.kind} ${d.grant.invoiceSats} sat (${ask.ip || 'no ip'}): ${inv.payment_hash.slice(0, 16)}`);
@@ -458,7 +465,7 @@ async function grantPay(ask, inv, d, book, row) {
   // forgotten); the cap is held in grant(), which pays nothing while `unsure` is full
   // AND A GRANT EVERY ASKED PAYER ANSWERED FAILED AT ONCE IS NOT PARKED AT ALL (kanban #2187): lnd's FAILED is final, nothing can still pay it
   const definitelyFailed = askedPayers.length > 0 && failedFor.length === askedPayers.length && failedFor.every(Boolean);
-  if (!definitelyFailed) after.unsure = [...(after.unsure || []), { ...row, payers: askedPayers, removedMs: Date.now() }];
+  if (!definitelyFailed) after.unsure = [...(after.unsure || []), { ...row, payers: askedPayers, payerIds: askedIds, removedMs: Date.now() }];
   saveBook(after);
   console.log(`${new Date().toISOString()} player ${ask.kind} not paid: ${tried.join(' | ')}`);
   return { ok: false, why: 'the faucet could not pay just now: try again in a minute' };
