@@ -233,7 +233,17 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
         return { tip, skipped: 'rpc', why: e.message, read: 0, decided: 0, reorged: 0 };
       }
       if (reorged) refreshLive();
-      for (const p of proposals.list().slice().sort((a, b) => a.votingFrom - b.votingFrom)) {
+      for (const listed of proposals.list().slice().sort((a, b) => a.votingFrom - b.votingFrom || a.publishedAt - b.publishedAt)) {
+        let p = listed;
+        // ITS SCHEDULE FROM THE HISTORY AT ITS PUBLICATION, AS IT IS NOW (kanban #1631, proposals.js reschedule): never the one
+        // frozen at intake. Not known yet: not counted this pass. Rewritten: its count starts again on the new window.
+        const sched = typeof proposals.reschedule === 'function' ? proposals.reschedule(p.id, { at: tip }) : 'same';
+        if (sched === 'pending' && stateOf(p) === S.COUNTING) continue;
+        if (sched === 'moved') {
+          open.delete(p.id);
+          p = proposals.list().find((x) => x.id === listed.id) || listed;
+          log(`[ballot] proposal ${p.id.slice(0, 16)}: its schedule read again from the history at ${p.publishedAt}: ${p.repeal ? 'repeal' : 'ordinary'}, voting ${p.votingFrom}-${p.votingUntil}${stateOf(p) === S.FAILED ? ' (void)' : ''}`);
+        }
         if (stateOf(p) !== S.COUNTING) { open.delete(p.id); heldOutcome.delete(p.id); continue; }       // decided, or orphaned: not counted
         const rule = ruleOf(p);
         if (rule.invalid) {                                     // invalid on its face (kanban #1196): never counted
