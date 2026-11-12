@@ -252,6 +252,11 @@ export class Forfeit {
     if (kind === 'fee') {
       const fl = this.round.feeLock ? this.round.feeLock(entryIdBytes) : null;
       if (!fl) return refuse('this signer node verified no fee lock for that entry, so it returns none');
+      // A PLAIN PICK IN A ROUND THAT BECAME AN ORDER BOOK (kanban #2207, §0A.7b as ruled in #1417): no entry of that round, returned as §23.2
+      // REFUSED - the stake AND its fee lock. The book's settlement claims fee locks only for the orders of its table, so this door is the only
+      // one that moves it; the lock-fate guard in #signable still holds.
+      const b = this.bookStanding ? this.bookStanding(roundIdBytes, entryIdBytes) : null;
+      if (b && !b.book && b.wrongType) return this.#signable(contract, fl, roundIdBytes);
       if (!cancelled && !this.#marketRefund(roundIdBytes, contract).ok) {
         const back = await this.#feeBackWithStake(roundIdBytes, entryIdBytes, contract);
         if (!back.ok)
