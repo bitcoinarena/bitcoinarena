@@ -874,6 +874,15 @@ export function openStore(path = ':memory:') {
       received_ms INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS market_cancels_round ON market_cancels (round_id);
+    -- A CANCEL THIS SEAT'S PLAYER DOOR TOOK, STILL TO BE HANDED ON (kanban #1875, #1909, #1950): retried until every other seat of the round
+    -- holds it or the round's entry close (close_ms) shuts their doors, across a restart; done = 1 once that is so. Never removed.
+    CREATE TABLE IF NOT EXISTS market_cancel_handons (
+      entry_id    BLOB PRIMARY KEY,
+      round_id    BLOB NOT NULL,
+      close_ms    INTEGER NOT NULL,
+      done        INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS market_cancel_handons_open ON market_cancel_handons (done);
 
     -- A HEAD-TO-HEAD ENTRY'S IDENTITY: the player's identity key, signed by it over (round, entry, key) -
     -- what a score across rounds links its rounds by. Kept once per entry. And each round's match record as this seat

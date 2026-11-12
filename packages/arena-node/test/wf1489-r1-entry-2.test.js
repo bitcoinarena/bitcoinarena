@@ -54,9 +54,13 @@ test('a cancel landing at one seat a few ms before the entry close does not stop
   globalThis.fetch = async (u, o) => { if (String(u).includes(`:${w.b.port}/cancel?`)) await wait(120); return realFetch(u, o); };
   try {
     const played = [await lockAndPlay(w, player(20), { noMarks: true, pick: 0 }), await lockAndPlay(w, player(21), { noMarks: true, pick: 1 })];
-    skipTo(Number(w.c.entryCloseMs) - 30);
+    // the last moment the player's door takes a cancel: CANCEL_PLAYER_DOOR_MARGIN_MS before the close (kanban #1875, #1950 - the hand-on lands in the
+    // peers' last margin, where they take only a cancel a round seat holds, and never after the close)
+    const { CANCEL_PLAYER_DOOR_MARGIN_MS } = await import('../src/server.js');
+    skipTo(Number(w.c.entryCloseMs) - CANCEL_PLAYER_DOOR_MARGIN_MS - 30);
     const atA = await realFetch(`http://127.0.0.1:${w.a.port}/cancel?entry=${toHex(played[1].eid)}`, { method: 'POST', body: signCancel(w, played[1]) }).then((r) => r.status);
     await wait(600);
+    const tooLate = await realFetch(`http://127.0.0.1:${w.b.port}/cancel?entry=${toHex(played[0].eid)}`, { method: 'POST', body: signCancel(w, played[0]) }).then((r) => r.status);
     const split = { atA, cancelledAtA: w.a.round.cancelled(played[1].eid), cancelledAtB: w.b.round.cancelled(played[1].eid) };
     await closeRound(w);
     await attestBoth(w, 0);
@@ -65,6 +69,8 @@ test('a cancel landing at one seat a few ms before the entry close does not stop
     const got = await settledBySweep(w, 10000);
     console.log('  #1489-3:', JSON.stringify({ ...split, state: got.state, why: got.why }));
     assert.equal(atA, 201);
+    assert.equal(tooLate, 409, 'the player\'s door took a cancel inside the last margin before the close');
+    assert.equal(split.cancelledAtB, true, 'the hand-on did not reach seat B before the close');
     assert.equal(got.state, 'ACCEPTED', `the market never settled: ${JSON.stringify({ ...split, why: got.why })}`);
   } finally { globalThis.fetch = realFetch; await w.close(); }
 });
