@@ -2518,9 +2518,14 @@ export class Round {
   }
 
   /** The refused-round locks of one round that refund to `refundHex`, shaped as stakeLocksFor's (entryId = the handout id). */
+  // ONE ROW PER LOCK (kanban #1604): a lock is kept under H(handout id || outpoint), and the first one of a handout also under the
+  // handout's id; listed once, under its first row - the handout's id for the first lock (as before), H(handout id || outpoint)
+  // for every later one.
   refusedLocksFor(roundIdBytes, refundHex) {
-    return this.db.prepare('SELECT handout_id, outpoint, fields, contract_id FROM refused_locks WHERE round_id = ?')
-      .all(Buffer.from(roundIdBytes))
+    const byOutpoint = new Map();
+    for (const r of this.db.prepare('SELECT handout_id, outpoint, fields, contract_id FROM refused_locks WHERE round_id = ? ORDER BY rowid')
+      .all(Buffer.from(roundIdBytes))) if (!byOutpoint.has(r.outpoint)) byOutpoint.set(r.outpoint, r);
+    return [...byOutpoint.values()]
       .map((r) => ({ entryId: Buffer.from(r.handout_id).toString('hex'), outpoint: r.outpoint, fields: JSON.parse(r.fields), contractId: r.contract_id, refused: true }))
       .filter((l) => String(l.fields.refundPk).toLowerCase() === String(refundHex).toLowerCase());
   }
