@@ -393,6 +393,9 @@ export class PriceFeed {
       return { ok: true };
     }
     const k = Number(body.k);
+    // THE SAME SAMPLE AGAIN COSTS NOTHING (kanban #2278, variant of #1729): one already held at this price stands (its id is the same), so
+    // it is taken again before any signature is checked - a peer repeating a held end buys no BIP-340 verifies
+    if (Number.isSafeInteger(k) && k >= 0) { const had0 = this.#held(body.round, k); if (had0 && Number(had0.priceCents) === Number(body.priceCents) && typeof body.priceCents === typeof had0.priceCents) return { ok: true }; }
     const sample = { roundId: rid, tick: sampleTick(k), priceCents: body.priceCents };
     let id; try { id = priceSampleId(sample); } catch (e) { return refuse(e.message, 400); }
     // kanban #1958 / #1997: the threshold is checked on the signatures in the shape this seat keeps (64-hex key, 128-hex signature), and the kept
@@ -419,14 +422,28 @@ export class PriceFeed {
   /** The ends this seat lacks, from the committee's seats: each kept only once it stands (hold). */
   async #fetchEnds(roundIdBytes, ks) {
     const rh = toHex(roundIdBytes);
+    // A LEGACY ROUND'S ENDS ARE ASKED FOR AT MOST ONCE PER ASK_ENDS_EVERY_MS (kanban #2278, variant of #1729): GET /round-result is
+    // anyone's, and an end that never stands would otherwise send this seat to the whole committee again on every call
+    if (this.now() - (this.endsAsked.get(rh) ?? -Infinity) < ASK_ENDS_EVERY_MS) return;
+    this.endsAsked.set(rh, this.now());
     for (const base of this.peersFor(roundIdBytes)) {
       const missing = ks.filter((k) => !this.#held(rh, k));
       if (!missing.length) return;
       try {
         const r = await this.fetcher(`${String(base).replace(/\/+$/, '')}/price-samples?round=${rh}&ks=${missing.join(',')}`, { signal: AbortSignal.timeout(10000) });
         if (!r.ok) continue;
-        const j = await r.json();
-        for (const x of (j && j.samples) || []) if (missing.includes(Number(x.k))) this.hold({ round: rh, kind: 'sample', k: Number(x.k), priceCents: x.priceCents, sigs: x.sigs });
+        // ONE PEER'S ANSWER IS BOUNDED (kanban #2278, the #1729 bounds on the legacy path): at most FETCH_READINGS_MAX_BYTES of it is
+        // read, and of it at most one sample per missing k is checked - a padded answer (one junk end repeated) costs one check per end
+        const declared = Number(r.headers && typeof r.headers.get === 'function' ? r.headers.get('content-length') : NaN);
+        if (declared > FETCH_READINGS_MAX_BYTES) continue;
+        const j = await cappedJson(r, FETCH_READINGS_MAX_BYTES);
+        const tried = new Set();
+        for (const x of (j && Array.isArray(j.samples) ? j.samples : [])) {
+          const k = Number(x && x.k);
+          if (!missing.includes(k) || tried.has(k) || this.#held(rh, k)) continue;
+          tried.add(k);
+          this.hold({ round: rh, kind: 'sample', k, priceCents: x.priceCents, sigs: x.sigs });
+        }
       } catch { /* the next seat */ }
     }
   }
