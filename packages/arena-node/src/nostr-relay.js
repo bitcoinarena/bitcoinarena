@@ -194,10 +194,11 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   if (unsized.length) {
     const setSize = db.prepare('UPDATE events SET size = ? WHERE id = ?');
     db.exec('BEGIN');
-    for (const r of unsized) { const e = JSON.parse(r.json); setSize.run(eventSize(e, r.json, indexedTags(e).slice(0, MAX_TAG_ROWS)), r.id); }
+    for (const r of unsized) { let e; try { e = JSON.parse(r.json); } catch { continue; } setSize.run(eventSize(e, r.json, indexedTags(e).slice(0, MAX_TAG_ROWS)), r.id); }   // kanban #1960: an unreadable row is skipped
     db.exec('COMMIT');
   }
-  if (!db.prepare('SELECT 1 FROM tags LIMIT 1').get()) { db.exec('BEGIN'); for (const r of db.prepare('SELECT json FROM events').all()) tagRows(JSON.parse(r.json)); db.exec('COMMIT'); }
+  // kanban #1960, #1994, #2009: the start-up re-index skips a row it cannot read instead of throwing, so one bad stored row never keeps the relay from starting
+  if (!db.prepare('SELECT 1 FROM tags LIMIT 1').get()) { db.exec('BEGIN'); for (const r of db.prepare('SELECT json FROM events').all()) { try { tagRows(JSON.parse(r.json)); } catch { /* unreadable row: not indexed */ } } db.exec('COMMIT'); }
   // kanban #1943, #1983: who holds what, per author and pool (see LOG_SHARE above) - temporary, so it is always rebuilt from the store itself
   db.exec(`CREATE TEMP TABLE IF NOT EXISTS holders (pubkey TEXT, pool INTEGER, n INTEGER, b INTEGER, first INTEGER, PRIMARY KEY (pubkey, pool));
     CREATE INDEX IF NOT EXISTS temp.holders_n ON holders (pool, n, first);
@@ -474,7 +475,7 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
                 }
               }
               if (verdict === 'kept') db.exec('COMMIT'); else db.exec('ROLLBACK');
-            } catch (err) { try { db.exec('ROLLBACK'); } catch { /* none open */ } throw err; }
+            } catch { try { db.exec('ROLLBACK'); } catch { /* none open */ } return send(['OK', e.id, false, 'error: the event could not be stored']); }   // kanban #1960: never half handled
             if (verdict === 'full') return send(['OK', e.id, false, 'blocked: the relay is full']);
             if (verdict === 'older') return send(['OK', e.id, false, 'blocked: older than all this author already has, over the quota']);
           }
