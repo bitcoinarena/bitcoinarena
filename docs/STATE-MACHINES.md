@@ -1542,3 +1542,9 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-F (add) Seat drain state x a held entry's locks (kanban #1848)
+- The drain (`drainingRefusal`: a package naming a successor via `markDraining`, ARENA_DRAINING, or the guardians' DRAINING/CRITICAL/CLOSED/HALTED record) refuses new rounds, series rounds, entries, handouts and deposits only.
+- Invariant: a stake or fee lock handed for an entry this seat already holds is never refused for the drain: POST /lock and POST /fee-lock ask `offerRefusalOfRound(rid, { held: true })`, which leaves `drainingRefusal` out. The entry was taken while the federation was OPEN (POST /entry still asks the drain), so its lock is a stake the round already holds and settles there (§23A.6 step 2). Before: both lock doors answered "draining ... no new round or deposit names it" and POST /refused-lock answered "that player entered the round at this signer node", so the stake waited in the federation for its lock's expiry.
