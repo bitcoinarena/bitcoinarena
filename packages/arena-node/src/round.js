@@ -2607,6 +2607,11 @@ export class Round {
     return this.db.prepare('SELECT round_id FROM settlement_suspects WHERE seen_ms >= ?').all(sinceMs).map((r) => new Uint8Array(r.round_id));
   }
 
+  /** How many handouts this signer node keeps for one round (kanban #1605: the door bounds the ones no entry names). */
+  handoutCount(roundIdBytes) {
+    return this.db.prepare('SELECT COUNT(*) AS n FROM handouts WHERE round_id = ?').get(Buffer.from(roundIdBytes)).n;
+  }
+
   /** Every handout this signer node accepted for one round: its id and bytes. */
   handoutsOf(roundIdBytes) {
     return this.db.prepare('SELECT handout_id, bytes FROM handouts WHERE round_id = ?').all(Buffer.from(roundIdBytes))
