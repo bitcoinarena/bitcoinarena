@@ -1081,8 +1081,8 @@ export class Round {
     const putLiq = this.db.prepare(
       'INSERT OR IGNORE INTO liquidations (round_id, entry_id, tick, size) VALUES (?, ?, ?, ?)');
     const putLoad = this.db.prepare(
-      'INSERT OR IGNORE INTO loads (round_id, entry_id, tick, fee_sats, btc_hund, room) '
-      + 'VALUES (?, ?, ?, ?, ?, ?)');
+      'INSERT OR IGNORE INTO loads (round_id, entry_id, tick, fee_sats, btc_hund, room, parcels) '
+      + 'VALUES (?, ?, ?, ?, ?, ?, ?)');
     const putSample = this.db.prepare(
       'INSERT OR IGNORE INTO samples (round_id, entry_id, tick, price) VALUES (?, ?, ?, ?)');
     const putTape = this.db.prepare(
@@ -1220,8 +1220,9 @@ export class Round {
         fresh += put.run(b.roundId, b.entryId, at[i], words).changes;
       }
       for (const [tick, size] of b.liquidations) putLiq.run(b.roundId, b.entryId, tick, size);
-      for (const [tick, fee, btc, room] of (b.loads || []))
-        putLoad.run(b.roundId, b.entryId, tick, fee, btc, room === undefined ? null : room);
+      for (const [tick, fee, btc, room, parcels] of (b.loads || []))
+        putLoad.run(b.roundId, b.entryId, tick, fee, btc, room === undefined ? null : room,
+          Array.isArray(parcels) && parcels.length ? JSON.stringify(parcels.map(([slot, txid]) => [slot, txid instanceof Uint8Array ? toHex(txid) : String(txid).toLowerCase()])) : null);
       for (const [tick, price] of (b.samples || []))
         putSample.run(b.roundId, b.entryId, tick, price);
       for (const [tick, ...prices] of (b.tapes || []))

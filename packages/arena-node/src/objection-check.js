@@ -25,7 +25,7 @@ import { entryId as entryIdOf } from '../../arena-protocol/src/contracts.js';
 import { resultFrom, runId } from './verdict.js';
 import { replay } from './replay.js';
 import { dissentsOn } from './test-dissent.js';
-import { loadValueRefusal } from './load-checks.js';
+import { loadValueRefusal, loadShapeRefusal } from './load-checks.js';
 
 const hex = (b) => [...b].map((v) => v.toString(16).padStart(2, '0')).join('');
 const NOBODY = new Uint8Array(32);
@@ -60,14 +60,18 @@ export function inputsFormOf(j) {
   const ints = (x, name, min, max) => {
     const seen = new Set();
     return rows(x || [], name).map((r, i) => {
-      if (!Array.isArray(r) || !r.every(Number.isInteger)) throw new Error(`${name} row ${i} is not a list of integers`);
+      // a drawn bed's load (kanban #2574) carries a fifth element, its parcels [[slot, txid hex], ...]; every other element is an integer
+      const parcels = name === 'loads' && Array.isArray(r) && r.length === 5 ? r[4] : undefined;
+      if (parcels !== undefined && !(Array.isArray(parcels) && parcels.every((p) => Array.isArray(p) && p.length === 2 && Number.isInteger(p[0]) && /^[0-9a-f]{64}$/.test(String(p[1])))))
+        throw new Error(`${name} row ${i} names its parcels as [[slot, txid], ...]`);
+      if (!Array.isArray(r) || !(parcels === undefined ? r : r.slice(0, 4)).every(Number.isInteger)) throw new Error(`${name} row ${i} is not a list of integers`);
       if (r.length < min || r.length > max) throw new Error(`${name} row ${i} carries ${r.length} integers, and a ${name} row carries ${min === max ? min : `${min} to ${max}`}`);
       if (seen.has(r[0])) throw new Error(`${name} row ${i} is a second one at tick ${r[0]}`);
       seen.add(r[0]);
       return r;
     }).filter((r) => r[0] >= from && r[0] <= to).sort((a, b) => a[0] - b[0]);
   };
-  return { ticks, liquidations: ints(j.liquidations, 'liquidations', 2, 2), loads: ints(j.loads, 'loads', 3, 4),
+  return { ticks, liquidations: ints(j.liquidations, 'liquidations', 2, 2), loads: ints(j.loads, 'loads', 3, 5),
     samples: ints(j.samples, 'samples', 2, 2), tapes: ints(j.tapes, 'tapes', 1, Infinity) };
 }
 
@@ -106,9 +110,16 @@ export function liveRunKeyOf(bundle) {
  * loadsRefusal, on the whole run: every load's values (loadValueRefusal), at most one a tick, at a tick the run reaches
  * (its first .. one past its last, a batch of no ticks reaching the next), and before the first tick with a control word.
  */
-export function inputsLoadRefusal(form) {
+export function inputsLoadRefusal(form, drawn = null) {
   const loads = form.loads || [];
   if (!loads.length) return null;
+  // A BED OF DRAWN PARCELS (kanban #2574): on a core that draws its parcels, the inputs' loads are held to the snapshot exactly as
+  // at the batch door (Round.batch loadsRefusal) - not to the declared-bed floors, which an honest drawn bed of cheap parcels can
+  // be under; on any other core a load naming parcels is not one the door ever took
+  if (!drawn) {
+    const named = loads.find((l) => l.length > 4 && Array.isArray(l[4]) && l[4].length);
+    if (named) return `the load at tick ${named[0]} names parcels, and this round's core does not draw them`;
+  } else if (drawn.why) return drawn.why;
   const first = form.ticks.length ? form.ticks[0].tick : null;
   const last = form.ticks.length ? form.ticks[form.ticks.length - 1].tick : null;
   const driven = form.ticks.find((r) => r.words.slice(0, 4).some((w) => w !== 0));
@@ -119,7 +130,7 @@ export function inputsLoadRefusal(form) {
       return `the load at tick ${tick} is not at a tick those inputs reach (${first} .. ${last === null ? null : last + 1}): a load goes out with the batch that reaches its tick`;
     if (seen.has(tick)) return `two loads at tick ${tick}: a page declares at most one a tick`;
     seen.add(tick);
-    const why = loadValueRefusal(l);
+    const why = drawn ? (loadShapeRefusal(l) || drawn.check(l)) : loadValueRefusal(l);
     if (why) return why;
     if (driven && driven.tick < tick)
       return `the load at tick ${tick} comes after the truck was driven at tick ${driven.tick}: a bed is declared before ROLL OUT`;
@@ -162,7 +173,7 @@ export function inputsDifferFromStored(form, stored) {
  */
 export async function checkObjectionBundle({ bundle, roundId, entryId, entry, contract, committee, signedResultId,
   core, roundRandomness, verify, storedInputs = null, replayRun = async (form, e, options) => replay(form, e, options), ownInputs = null,
-  knownRun = null, referenceRuns = null, keepRun = null, admitReplay = null }) {
+  knownRun = null, referenceRuns = null, keepRun = null, admitReplay = null, drawn = null }) {
   const no = (step, why) => ({ holds: false, step, why });
   if (!(bundle instanceof Uint8Array) || !bundle.length)
     return no('bundle', 'an objection carries its transcript and receipts (13A)');
@@ -220,7 +231,7 @@ export async function checkObjectionBundle({ bundle, roundId, entryId, entry, co
     if (Number.isInteger(chain.throughTick) && reaches >= chain.throughTick)
       return no('entry', `those inputs reach tick ${reaches}, past the last receipted mark at ${chain.throughTick}`);
     // NO LOAD THE BATCH DOOR REFUSES (kanban #1952, #1990): what a live run's inputs carry is held to the same rules
-    const loadWhy = inputsLoadRefusal(form);
+    const loadWhy = inputsLoadRefusal(form, drawn);
     if (loadWhy) return no('inputs', `those inputs carry a load no honest bed declares: ${loadWhy}`);
     // AND, AT A SEAT, THE RUN IT STORED (kanban #1952, #1990): inputs the player's session key never signed are not his run
     const differs = inputsDifferFromStored(form, storedInputs);

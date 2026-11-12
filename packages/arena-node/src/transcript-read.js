@@ -17,7 +17,7 @@ export function readTranscript(db, roundIdBytes, entryIdBytes) {
   const liq = db.prepare(
     'SELECT tick, size FROM liquidations WHERE round_id = ? AND entry_id = ? ORDER BY tick').all(roundIdBytes, entryIdBytes);
   const loads = db.prepare(
-    'SELECT tick, fee_sats, btc_hund, room FROM loads WHERE round_id = ? AND entry_id = ? ORDER BY tick').all(roundIdBytes, entryIdBytes);
+    'SELECT tick, fee_sats, btc_hund, room, parcels FROM loads WHERE round_id = ? AND entry_id = ? ORDER BY tick').all(roundIdBytes, entryIdBytes);
   const samples = db.prepare(
     'SELECT tick, price FROM samples WHERE round_id = ? AND entry_id = ? ORDER BY tick').all(roundIdBytes, entryIdBytes);
   const tapes = db.prepare('SELECT tick, prices FROM tapes WHERE round_id = ? AND entry_id = ? ORDER BY tick')
@@ -27,7 +27,9 @@ export function readTranscript(db, roundIdBytes, entryIdBytes) {
     tapes,
     ticks: ticks.map((r) => ({ tick: r.tick, words: [...new Int32Array(new Uint8Array(r.words).buffer)] })),
     liquidations: liq.map((r) => [r.tick, r.size]),
-    loads: loads.map((r) => (r.room === null || r.room === undefined ? [r.tick, r.fee_sats, r.btc_hund] : [r.tick, r.fee_sats, r.btc_hund, r.room])),
+    // a drawn bed's parcels (kanban #2574) ride as the fifth element; every other load reads as before
+    loads: loads.map((r) => (r.room === null || r.room === undefined ? [r.tick, r.fee_sats, r.btc_hund]
+      : r.parcels ? [r.tick, r.fee_sats, r.btc_hund, r.room, JSON.parse(r.parcels)] : [r.tick, r.fee_sats, r.btc_hund, r.room])),
     samples: samples.map((r) => [r.tick, r.price]),
   };
 }

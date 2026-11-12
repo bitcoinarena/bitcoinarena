@@ -19,6 +19,7 @@ import { fromHex, toHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { snapshotOfBlocks, snapshotIdOf, offeredParcel, offerIndex, roomOfVsize, OFFER_SLOTS } from '../../arena-protocol/src/ticktock-snapshot.js';
 import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
+import { inputsFormOf, inputsLoadRefusal } from '../src/objection-check.js';
 import { chainSnapshots } from '../src/ticktock-snapshots.js';
 import { HOSTED } from './plugins/hosted.js';
 import { testGame } from './plugins/sign.js';
@@ -70,7 +71,8 @@ test('#2574 an honest page: the drawn parcels at their fee and room, an empty be
   const { send, bed, stored } = seat();
   const a = bed([2, 11, 30]);
   assert.equal(send(10, [[0, 0, 0, 0, []], [5, a.fee, 0, a.room, a.parcels]]), 10);
-  assert.deepEqual(stored(), [[0, 0, 0, 0], [5, a.fee, 0, a.room]]);
+  // the parcels are kept with the load (kanban #2574): the run's inputs carry them to an objection
+  assert.deepEqual(stored(), [[0, 0, 0, 0], [5, a.fee, 0, a.room, a.parcels.map(([sl, t]) => [sl, toHex(t)])]]);
   console.log(`  MEASURED #2574 drawn bed taken: slots 2, 11, 30 -> ${a.fee} sats, room ${a.room}`);
 });
 
@@ -141,4 +143,21 @@ test('#2574 the seat\'s snapshot from its bitcoind: getblock verbosity 2 walked 
   const j = src.json(got, b32(1));
   assert.equal(j.snapshotId, toHex(got.id));
   assert.equal(j.blocks.length, 3);
+});
+
+// THE OBJECTION PATH (kanban #2574): a live run's inputs carry the stored drawn bed, read back with its parcels, and are held to the
+// round's snapshot as at the batch door - not to the declared-bed floors (#1488), which an honest drawn bed of cheap parcels is under
+test('#2574 objection: the stored drawn bed reads back with its parcels and passes; a forged one, or parcels on an old core, do not', () => {
+  const { r, rid, eid, send, bed } = seat();
+  const a = bed([2, 11, 30]);
+  assert.equal(send(10, [[5, a.fee, 0, a.room, a.parcels]]), 10);
+  const t = r.transcript(rid, eid);
+  const form = inputsFormOf({ ticks: Array.from({ length: 10 }, (_, i) => ({ tick: i, words: [...HELD] })), loads: t.loads });   // the 10 held ticks sent above
+  const drawn = r.drawnFor(r.db.prepare('SELECT contract FROM rounds WHERE round_id = ?').get(rid).contract, rid, eid);
+  assert.equal(inputsLoadRefusal(form, drawn), null, 'the honest drawn bed passes the objection check');
+  const forged = inputsFormOf({ ticks: form.ticks, loads: [[5, a.fee, 0, a.room, [[3, toHex(a.parcels[0][1])], [11, toHex(a.parcels[1][1])], [30, toHex(a.parcels[2][1])]]]] });
+  assert.match(inputsLoadRefusal(forged, drawn), /slot 3/, 'a txid at a slot that did not draw it is refused');
+  assert.match(inputsLoadRefusal(form, null), /names parcels, and this round's core does not draw them/);
+  const declared = inputsFormOf({ ticks: form.ticks, loads: [[5, 245, 0, 393214]] });
+  assert.match(inputsLoadRefusal(declared, drawn), /no parcel named/, 'a self-declared bed is refused on the drawing core');
 });

@@ -1840,6 +1840,8 @@ export class Verifier {
         verify: (sig, msg, key) => verifyKept(sig, msg, key),
         // A LIVE RUN'S INPUTS ARE BOUND TO THE ONES THIS SEAT STORED, which the session key signed (kanban #1952, #1990)
         storedInputs: (() => { try { return this.round.transcript(roundIdBytes, entryIdBytes); } catch { return null; } })(),
+        // A DRAWN BED IS HELD TO THE ROUND'S SNAPSHOT here too, as at the batch door (kanban #2574)
+        drawn: (() => { try { return typeof this.round.drawnFor === 'function' ? this.round.drawnFor(new Uint8Array(row.contract), roundIdBytes, entryIdBytes) : null; } catch { return null; } })(),
         // THIS SEAT'S OWN RUN OF THE ENTRY (kanban #1706): a live run's inputs that differ from it are checked against its
         // replay, one key per entry, instead of each costing a replay of its own (objection-check.js 7a)
         ownInputs: () => this.round.transcript(roundIdBytes, entryIdBytes),
