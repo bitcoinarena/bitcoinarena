@@ -1542,3 +1542,9 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-2 (change) Config proposal intake: one deposit, two proposals of its proposer (kanban #1840)
+- A proposal naming a deposit that a kept proposal of the SAME proposer already names is kept (and taken in the peer pull), up to 8 per deposit; one of ANOTHER proposer is still refused 409.
+- Invariant: a deposit that backs more than one kept proposal backs none (proposals.js `counts`). Each of them is void: not tallied, never PASSED into the live config or the serving spans, not pending for `historyAt`, phase `void` (ballot-tally.js). The answer is read from the kept set alone, so it does not depend on arrival order, and every seat that holds two of them agrees.
