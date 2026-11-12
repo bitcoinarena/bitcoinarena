@@ -12837,8 +12837,15 @@ function vestedShares(recipients, height) {
   const out = recipients.map((r, i) => ({ recipientPk: r.recipientPk, label: r.label,
     shareBps: r.vesting ? now[i] : (othersBase > 0 ? Math.floor((r.shareBps * rest) / othersBase) : 0) }));
   const short = DONATION_BPS_TOTAL - out.reduce((t, x) => t + x.shareBps, 0);
+  // The remainder goes to the first plain recipient; when every recipient vests (allowed
+  // when the targets sum to 10000) there is none, and the set summed to 9999 at
+  // intermediate heights, which splitDonation / splitTwoSets refuse (kanban #1863). Then it
+  // goes to the first recipient as published, as splitDonation does - or, should that share
+  // not absorb a negative remainder, the first one that can.
   const first = recipients.findIndex((r) => !r.vesting);
-  if (short && first >= 0) out[first].shareBps += short;
+  let to = first >= 0 ? first : 0;
+  if (out[to].shareBps + short < 0) to = out.findIndex((x) => x.shareBps + short >= 0);
+  if (short && to >= 0) out[to].shareBps += short;
   return out;
 }
 
@@ -13238,7 +13245,22 @@ function mergeServedRounds(held) {
       if (!into.copies.has(committee)) into.copies.set(committee, { committee: r.committee, seats: 0 });
       into.copies.get(committee).seats++;
       if (into.copies.size > 1) conflicts.add(k);
-      for (const f of r.finals || []) if (f instanceof Uint8Array) into.finals.set(hx(f), f);
+      // kanban #1815: what one seat's answer makes the reader verify is bounded. A round counts once per node, so from each seat's
+      // answer at most two FINALs per signer are kept - its earliest and its latest (a node's FINALs on one round fall inside minutes,
+      // so when any of them lies in a window, one of these two does) - and at most SERVED_COMMITTEE_MAX signers, the first listed (a
+      // seat keeps FINALs only from the round's committee). What is no FINAL at all is not kept; servedNodes still checks the rest.
+      // Measured before: one padded answer of 20,000 made-up FINALs under a real committee's keys, junk signatures, cost 20,003
+      // BIP-340 checks (28 s on a seat's main thread) on every item purchase and funding decision.
+      const bySigner = new Map();
+      for (const f of Array.isArray(r.finals) ? r.finals : []) {
+        if (!(f instanceof Uint8Array)) continue;
+        let x; try { const { signature } = splitSignedFinalSig(f); x = decodeFinalSig(f.subarray(0, f.length - signature.length)); } catch { continue; }
+        const key = hx(x.signerPubkey), b = bySigner.get(key);
+        if (!b) { if (bySigner.size < SERVED_COMMITTEE_MAX) bySigner.set(key, { first: [x.signedAtMs, f], last: [x.signedAtMs, f] }); continue; }
+        if (x.signedAtMs < b.first[0]) b.first = [x.signedAtMs, f];
+        if (x.signedAtMs > b.last[0]) b.last = [x.signedAtMs, f];
+      }
+      for (const b of bySigner.values()) for (const [, f] of [b.first, b.last]) into.finals.set(hx(f), f);
     }
   }
   const pick = (copies) => { let best = null; for (const c of copies.values()) if (!best || c.seats > best.seats) best = c; return best.committee; };
@@ -31342,10 +31364,23 @@ function liquidationKeyFor(seed, federationHex, curve) {
  * THE PAYOUTS OF A LIQUIDATION THAT NAME THIS SEED (`listed`: the arbitration set's GET /liquidation-payouts), each collected
  * by Refund into `client` - this player's wallet of the federation the payout was locked in - once (`storage` notes it).
  */
+// A door's list is that door's word (kanban #1853): the claim key is derived once per distinct federation the list names, and
+// for at most MAX_LIQUIDATION_FEDERATIONS of them - an honest list names the few liquidated federations, many payouts each; a
+// padded one naming thousands of federations no longer costs the tab one EC multiply per row.
+const MAX_LIQUIDATION_FEDERATIONS = 32;
 async function collectLiquidationPayouts({ listed, seed, curve, clientFor, storage }) {
   const out = [];
-  for (const p of (listed && listed.payouts) || []) {
-    const key = liquidationKeyFor(seed, p.federation, curve);
+  const keys = new Map();
+  const rows = Array.isArray(listed && listed.payouts) ? listed.payouts : [];
+  for (const p of rows) {
+    const fid = String((p && p.federation) || '').toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(fid)) continue;
+    let key = keys.get(fid);
+    if (!key) {
+      if (keys.size >= MAX_LIQUIDATION_FEDERATIONS) continue;
+      key = liquidationKeyFor(seed, fid, curve);
+      keys.set(fid, key);
+    }
     if (String(p.payoutPk).toLowerCase() !== key.payoutPk) continue;
     const note = movedKey(storage, `arena-liquidation-paid-${p.txid}:${p.outIdx}`);
     if (storage.getItem(note)) { out.push({ ...p, ok: true, kept: true }); continue; }
@@ -32201,18 +32236,34 @@ const shownNameOf = (record) => record.name || generatedName(record.identityPubk
  * Anything else is dropped, never shown. `verify` is BIP-340, injected.
  * @returns {{ player: string, name: string, chosen: boolean }[]} by player key
  */
+// THE SIGNATURE CHECKS ONE ROUND'S NAMES MAY COST, BOUNDED (kanban #1864, attacker audit r8): the lobby builds every row
+// synchronously and re-reads every few seconds, and one seat's /rounds or /names answer was kept whole - 50,000 forged
+// records for this round were 50,000 BIP-340 checks on the main thread each paint (a forgery is dropped only after its
+// check). A round holds at most MAX_PLAYERS_PER_ROUND (64) players: a seat's list is cut to NAMES_PER_SEAT before it is
+// merged, the same record from several seats is checked once, a record no newer than the one kept for its player is not
+// checked at all, and one round's render runs at most NAME_CHECKS_MAX checks whatever the seats hand it.
+const NAMES_PER_SEAT = 128;
+const NAME_CHECKS_MAX = 512;
+
 function checkedNames(items, roundIdHex, verify) {
   const newest = new Map();
+  const seen = new Set();
+  let checks = 0;
   for (const x of Array.isArray(items) ? items : []) {
     let record;
     try {
+      const same = `${String(x && x.record)}|${String(x && x.sig)}`;
+      if (seen.has(same)) continue;
+      seen.add(same);
       record = decodeLobbyName(fromHex(String(x && x.record)));
       if (toHex(record.roundId) !== String(roundIdHex).toLowerCase()) continue;
+      const had = newest.get(toHex(record.playerPubkey));
+      if (had && record.atMs <= had.atMs) continue;
+      if (checks >= NAME_CHECKS_MAX) break;
+      checks++;
       if (!verify(fromHex(String(x.sig)), lobbyNameId(record), record.playerPubkey)) continue;
     } catch { continue; }
-    const player = toHex(record.playerPubkey);
-    const had = newest.get(player);
-    if (!had || record.atMs > had.atMs) newest.set(player, record);
+    newest.set(toHex(record.playerPubkey), record);
   }
   return [...newest.entries()].sort(([a], [b]) => (a < b ? -1 : 1))
     .map(([player, r]) => ({ player, name: shownNameOf(r), chosen: r.name !== '' }));
@@ -32236,7 +32287,7 @@ async function namesOf({ roundId, nodes, fetcher = fetch, verify } = {}) {
       if (!r.ok) { refused.push(`${node}: ${r.status}`); continue; }
       const body = await r.json();
       answered++;
-      if (body && Array.isArray(body.names)) items.push(...body.names);
+      if (body && Array.isArray(body.names)) items.push(...body.names.slice(0, NAMES_PER_SEAT));   // kanban #1864: one seat's share, bounded
     } catch (e) { refused.push(`${node}: ${e.name === 'TimeoutError' ? 'no answer in time' : e.message}`); }
   }
   if (!answered) throw new Error(`no signer node answered for the names: ${refused.join('; ') || 'no signer nodes named'}`);
@@ -32844,7 +32895,8 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
           get signed() { return signedNow(); }, fresh: Number.isFinite(at) && Math.abs(at - nowMs) <= skewMs,
           // for verifyMany (below): what it is checked with, and its answer kept
           checkArgs: () => (parses ? lobbySignedArgs({ id, nodeKey, nowMs: at, x }) : null), setChecked: (ok) => { checked = !!ok; },
-          names: Array.isArray(x.names) ? x.names : [],
+          // ONE SEAT'S NAMES FOR ONE ROUND, BOUNDED before the costly signature check (kanban #1864, identity.js NAMES_PER_SEAT)
+          names: Array.isArray(x.names) ? x.names.slice(0, NAMES_PER_SEAT) : [],
           // THE GAME'S WARNINGS BEFORE ENTRY (§18A.7): the seat's word, only known codes kept (entry-warnings.js)
           warnings: Array.isArray(x.warnings) ? x.warnings.filter((k) => typeof k === 'string') : [],
           // RESERVE SEATS (§5A.7): the seat's word on who is seated - the join checks the certificate itself
@@ -37327,15 +37379,28 @@ const gameTypeOf = (m) => (m && m.resultType === 2 ? 'market' : m && m.resultTyp
 
 const GAMES_ANSWER_MS = 6000;
 
+// ITS DEVELOPER SIGNED IT (kanban #1810): the signature over the manifest body's id (manifest.js manifestStands' first rule), by
+// the developer key the manifest names. The client carries no crypto library (the bundle is its own source, nothing from npm): the
+// check is the platform's Ed25519 (WebCrypto, as the page's pageEd25519Verify and Node's), or a `verify(sig, msg, key)` handed in
+// (sync or async). Each game id is checked once per call, however many seats list it.
+const webCryptoEd25519Verify = async (sig, msg, key) => {
+  try {
+    const k = await globalThis.crypto.subtle.importKey('raw', key, { name: 'Ed25519' }, false, ['verify']);
+    return (await globalThis.crypto.subtle.verify({ name: 'Ed25519' }, k, sig, msg)) === true;
+  } catch { return false; }
+};
+const developerSigned = async (m, verify) => { try { return (await verify(m.signature, manifestBodyId(m), m.gameDevPubkey)) === true; } catch { return false; } };
+
 /**
  * THE GAMES THE NAMED NODES HOST: [{ id, name, title, icon, attested, known, manifest, manifestHex, nodes }], the pinned
  * games first, then by how many nodes host each; and the nodes that did not answer or served something that is not a game.
  */
-async function fetchGames({ nodes, fetcher = fetch, answerMs = GAMES_ANSWER_MS } = {}) {
+async function fetchGames({ nodes, fetcher = fetch, answerMs = GAMES_ANSWER_MS, verify = webCryptoEd25519Verify } = {}) {
   if (!Array.isArray(nodes) || !nodes.length) throw new Error('the games are asked of the nodes a lobby was named, and it was named none');
   const unique = [...new Set(nodes.map((n) => String(n).replace(/\/+$/, '')))];
   const byId = new Map();
   const refused = [];
+  const signedById = new Map();   // game id -> its developer signed it (kanban #1810), checked once
   const answers = await Promise.all(unique.map((node) => fetcher(`${node}/games`, { signal: AbortSignal.timeout(answerMs) })
     .then(async (r) => ({ r, body: r.ok ? await r.json() : null }), (e) => ({ e }))));
   for (const [k, node] of unique.entries()) {
@@ -37347,6 +37412,12 @@ async function fetchGames({ nodes, fetcher = fetch, answerMs = GAMES_ANSWER_MS }
       let manifest;
       try { manifest = decodeManifest(fromHex(String(g.manifest))); } catch (err) { refused.push(`${node}: game ${id.slice(0, 16)}: ${err.message}`); continue; }
       if (toHex(gameIdOf(manifest)) !== id) { refused.push(`${node}: game ${id.slice(0, 16)}: its manifest is another game`); continue; }
+      // A MANIFEST ITS DEVELOPER DID NOT SIGN IS NOT A GAME (kanban #1810: one seat listed nextblock's manifest as version + 1 with a
+      // zero signature, under the id that copy hashes to, and oneTilePerGame - newest version of "developer key:name" - gave it the
+      // nextblock tile on every page, a game id no honest seat hosts): the hash only says the seat served those bytes, the signature
+      // says the developer made them
+      if (!signedById.has(id)) signedById.set(id, await developerSigned(manifest, verify));
+      if (!signedById.get(id)) { refused.push(`${node}: game ${id.slice(0, 16)}: its signature is not its developer key ${toHex(manifest.gameDevPubkey).slice(0, 16)}'s`); continue; }
       if (!byId.has(id)) {
         byId.set(id, { id, name: manifest.gameName, title: typeof g.title === 'string' && g.title ? g.title : manifest.gameName,
           icon: typeof g.icon === 'string' && g.icon ? `${node}/${g.icon.replace(/^\/+/, '')}` : null, attested: isAttested(manifest),

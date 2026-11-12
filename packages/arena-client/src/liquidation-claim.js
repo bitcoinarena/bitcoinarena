@@ -241,10 +241,23 @@ export function liquidationKeyFor(seed, federationHex, curve) {
  * THE PAYOUTS OF A LIQUIDATION THAT NAME THIS SEED (`listed`: the arbitration set's GET /liquidation-payouts), each collected
  * by Refund into `client` - this player's wallet of the federation the payout was locked in - once (`storage` notes it).
  */
+// A door's list is that door's word (kanban #1853): the claim key is derived once per distinct federation the list names, and
+// for at most MAX_LIQUIDATION_FEDERATIONS of them - an honest list names the few liquidated federations, many payouts each; a
+// padded one naming thousands of federations no longer costs the tab one EC multiply per row.
+export const MAX_LIQUIDATION_FEDERATIONS = 32;
 export async function collectLiquidationPayouts({ listed, seed, curve, clientFor, storage }) {
   const out = [];
-  for (const p of (listed && listed.payouts) || []) {
-    const key = liquidationKeyFor(seed, p.federation, curve);
+  const keys = new Map();
+  const rows = Array.isArray(listed && listed.payouts) ? listed.payouts : [];
+  for (const p of rows) {
+    const fid = String((p && p.federation) || '').toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(fid)) continue;
+    let key = keys.get(fid);
+    if (!key) {
+      if (keys.size >= MAX_LIQUIDATION_FEDERATIONS) continue;
+      key = liquidationKeyFor(seed, fid, curve);
+      keys.set(fid, key);
+    }
     if (String(p.payoutPk).toLowerCase() !== key.payoutPk) continue;
     const note = movedKey(storage, `arena-liquidation-paid-${p.txid}:${p.outIdx}`);
     if (storage.getItem(note)) { out.push({ ...p, ok: true, kept: true }); continue; }

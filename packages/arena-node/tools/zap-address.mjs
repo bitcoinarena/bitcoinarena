@@ -38,11 +38,12 @@ const served = await serveZapAddresses({
     return { settled: i.state === 'SETTLED', preimage: /^[0-9a-f]{64}$/.test(String(i.r_preimage)) ? i.r_preimage : null,   // lncli prints bytes as hex
       settledAtS: Number(i.settle_date) || null };
   },
+  // all of a receipt's relays at once, not one after the other (kanban #1828): a silent relay costs one timeout, not eight
   publish: async (receipt, relays) => {
-    for (const r of relays) {
+    await Promise.allSettled(relays.map(async (r) => {
       const a = (await sendToRelay(r, [receipt])).get(receipt.id);
       log(`receipt ${receipt.id.slice(0, 16)} -> ${r}: ${a ? (a.ok ? 'OK' : `refused ${a.why}`) : 'no answer'}`);
-    }
+    }));
   },
 });
 log(`zap addresses ${names.map((n) => `${n}@${host}`).join(', ')} on 127.0.0.1:${served.port}, receipts by ${served.nostrPubkey}`);

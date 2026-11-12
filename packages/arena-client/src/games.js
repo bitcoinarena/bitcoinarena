@@ -12,21 +12,34 @@
 //   file the manifest does not name is never run. The page then runs it in the same origin, so the wallet and the seed
 //   (sessionStorage / localStorage) are the one the player already has.
 import { gameInfoDigest } from '../../arena-protocol/src/game-info.js';
-import { decodeManifest, gameIdOf, isAttested } from '../../arena-protocol/src/manifest.js';
+import { decodeManifest, gameIdOf, isAttested, manifestBodyId } from '../../arena-protocol/src/manifest.js';
 import { KNOWN_GOOD_GAMES } from '../../arena-protocol/src/known-games.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
 const GAMES_ANSWER_MS = 6000;
 
+// ITS DEVELOPER SIGNED IT (kanban #1810): the signature over the manifest body's id (manifest.js manifestStands' first rule), by
+// the developer key the manifest names. The client carries no crypto library (the bundle is its own source, nothing from npm): the
+// check is the platform's Ed25519 (WebCrypto, as the page's pageEd25519Verify and Node's), or a `verify(sig, msg, key)` handed in
+// (sync or async). Each game id is checked once per call, however many seats list it.
+const webCryptoEd25519Verify = async (sig, msg, key) => {
+  try {
+    const k = await globalThis.crypto.subtle.importKey('raw', key, { name: 'Ed25519' }, false, ['verify']);
+    return (await globalThis.crypto.subtle.verify({ name: 'Ed25519' }, k, sig, msg)) === true;
+  } catch { return false; }
+};
+const developerSigned = async (m, verify) => { try { return (await verify(m.signature, manifestBodyId(m), m.gameDevPubkey)) === true; } catch { return false; } };
+
 /**
  * THE GAMES THE NAMED NODES HOST: [{ id, name, title, icon, attested, known, manifest, manifestHex, nodes }], the pinned
  * games first, then by how many nodes host each; and the nodes that did not answer or served something that is not a game.
  */
-export async function fetchGames({ nodes, fetcher = fetch, answerMs = GAMES_ANSWER_MS } = {}) {
+export async function fetchGames({ nodes, fetcher = fetch, answerMs = GAMES_ANSWER_MS, verify = webCryptoEd25519Verify } = {}) {
   if (!Array.isArray(nodes) || !nodes.length) throw new Error('the games are asked of the nodes a lobby was named, and it was named none');
   const unique = [...new Set(nodes.map((n) => String(n).replace(/\/+$/, '')))];
   const byId = new Map();
   const refused = [];
+  const signedById = new Map();   // game id -> its developer signed it (kanban #1810), checked once
   const answers = await Promise.all(unique.map((node) => fetcher(`${node}/games`, { signal: AbortSignal.timeout(answerMs) })
     .then(async (r) => ({ r, body: r.ok ? await r.json() : null }), (e) => ({ e }))));
   for (const [k, node] of unique.entries()) {
@@ -38,6 +51,12 @@ export async function fetchGames({ nodes, fetcher = fetch, answerMs = GAMES_ANSW
       let manifest;
       try { manifest = decodeManifest(fromHex(String(g.manifest))); } catch (err) { refused.push(`${node}: game ${id.slice(0, 16)}: ${err.message}`); continue; }
       if (toHex(gameIdOf(manifest)) !== id) { refused.push(`${node}: game ${id.slice(0, 16)}: its manifest is another game`); continue; }
+      // A MANIFEST ITS DEVELOPER DID NOT SIGN IS NOT A GAME (kanban #1810: one seat listed nextblock's manifest as version + 1 with a
+      // zero signature, under the id that copy hashes to, and oneTilePerGame - newest version of "developer key:name" - gave it the
+      // nextblock tile on every page, a game id no honest seat hosts): the hash only says the seat served those bytes, the signature
+      // says the developer made them
+      if (!signedById.has(id)) signedById.set(id, await developerSigned(manifest, verify));
+      if (!signedById.get(id)) { refused.push(`${node}: game ${id.slice(0, 16)}: its signature is not its developer key ${toHex(manifest.gameDevPubkey).slice(0, 16)}'s`); continue; }
       if (!byId.has(id)) {
         byId.set(id, { id, name: manifest.gameName, title: typeof g.title === 'string' && g.title ? g.title : manifest.gameName,
           icon: typeof g.icon === 'string' && g.icon ? `${node}/${g.icon.replace(/^\/+/, '')}` : null, attested: isAttested(manifest),

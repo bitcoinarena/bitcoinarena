@@ -41,6 +41,9 @@ export function scanSource(text) {
   return findings;
 }
 
+/** The most earlier versions (ancestors) one package may carry (kanban #1854). */
+export const MAX_PACKAGE_ANCESTORS = 64;
+
 /**
  * THE REPORT ON A PACKAGE: `verify(sig, msg, key)` is Ed25519. Answers { ok, gameId, name, version, devKey, parent, checks:
  * [{ check, ok, detail }], findings, why }. Every check is listed, passed or not, so the page shows the whole report.
@@ -58,7 +61,13 @@ export function checkPackage(pkg, { verify, want = null, parentOf = () => null }
   // ITS ANCESTORS, oldest first: each must stand on the one before it (and the oldest on nothing, or on what the caller holds)
   const known = new Map();
   const parentFrom = (id) => known.get(toHex(id)) || parentOf(id) || null;
-  for (const h of pkg.ancestors || []) {
+  // AT MOST MAX_PACKAGE_ANCESTORS of them, counted before one is decoded or verified (kanban #1854): a real chain is
+  // its version count, a handful; a peer's package (32 MB body) could otherwise carry tens of thousands of validly
+  // self-signed ancestors and spend this node's main thread on one ed25519 verify each before the main manifest is read
+  const ancestors = Array.isArray(pkg.ancestors) ? pkg.ancestors : [];
+  if (!add('its earlier versions are a real chain\'s length', ancestors.length <= MAX_PACKAGE_ANCESTORS, `${ancestors.length} of at most ${MAX_PACKAGE_ANCESTORS}`))
+    return out(`it carries ${ancestors.length} earlier versions, more than the ${MAX_PACKAGE_ANCESTORS} a package may carry`, who);
+  for (const h of ancestors) {
     let a;
     try { a = decodeManifest(fromHex(String(h))); } catch (e) { add('its earlier versions read', false, e.message); return out(`an earlier version in it does not decode: ${e.message}`); }
     const s = manifestStands(a, { verify, parentOf: parentFrom });
