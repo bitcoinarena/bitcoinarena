@@ -396,6 +396,26 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     return { ok: true, status: v.status, signers: v.signers, height: v.record.height, gone: gone.length, of: plain.guardians.length };
   }
 
+  // THE HALT OUTLIVES A RESTART (kanban #1763, state audit 2026-11-12 sm2 federation-1): `halted` lives in memory and the store keeps
+  // only the newest record, so a seat restarted during a halt counted the liquidation from the newest HALTED record (1006, not the
+  // run's first 1000) and listed other haltHeight / liquidatesAt / claim windows than the seats that ran on. The run is read back
+  // from the record history (federation_record_history): from the newest down, while a record is HALTED and its own guardians'
+  // signatures meet its threshold (each was checked in full when it was kept); the lowest of that run, with its bytes, is the halt
+  function restoreHaltStart(fid, newestHeight, verify, inviteFederationId) {
+    if (!store || !store.loadAt) return;
+    let rows = []; try { rows = store.loadAt(fid) || []; } catch { return; }
+    const below = rows.map((r) => ({ height: Number(r.height), hex: String(r.record) })).filter((r) => r.height < newestHeight).sort((x, y) => y.height - x.height);
+    for (const r of below) {
+      let bytes, rec;
+      try { bytes = fromHex(r.hex); rec = decodeFederationRecord(splitSignedRecord(bytes).body); } catch { break; }
+      if (rec.status !== FEDERATION_STATUS.HALTED || rec.height !== r.height || toHex(rec.federationId) !== fid) break;
+      const own = rec.guardians.map((g) => ({ pubkey: g.nodePubkey, advert: { guardianOf: [{ federationId: rec.federationId, guardianKey: g.peerKey }] } }));
+      let v; try { v = verifyFederationRecord(bytes, { census: own, verify, inviteFederationId }); } catch { break; }
+      if (!v.ok) break;
+      halted.set(fid, { height: rec.height, bytes });
+    }
+  }
+
   /** MIRROR: the newest signed record of `federationId` its guardians' nodes hold, checked against this seat's census `b`. */
   async function restore(inviteFederationId) {
     if (!store) return { restored: 0 };
@@ -424,7 +444,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
           const own = r.guardians.map((g) => ({ pubkey: g.nodePubkey, advert: { guardianOf: [{ federationId: r.federationId, guardianKey: g.peerKey }] } }));
           v = verifyFederationRecord(bytes, { census: own, verify, inviteFederationId });
         }
-        if (v.ok) { keep(fid, bytes, v); restored++; }
+        if (v.ok) { keep(fid, bytes, v); restored++; if (v.status === 'HALTED') restoreHaltStart(fid, v.record.height, verify, inviteFederationId); }
       } catch { /* not restored: gathered again */ }
     }
     return { restored, of: rows.length };
