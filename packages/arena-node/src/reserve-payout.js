@@ -372,6 +372,15 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
   const unspent = (fed, alsoBy = null, withUnknown = false) => (reserveRows(fed) || []).filter((r) => { if (r.unknown && !withUnknown) return false; const s = spentBy(r.outpoint); return !s || (alsoBy && s === alsoBy); })
     .sort((a, b) => (a.verifiedMs - b.verifiedMs) || (a.outpoint < b.outpoint ? -1 : 1));
   const unknownHeld = (fed) => unspent(fed, null, true).filter((r) => r.unknown);
+  // ANOTHER PAYOUT IN FLIGHT HOLDS PART OF THE RESERVES (kanban #2333): a plan marks its WHOLE inputs spent while it waits for its signatures,
+  // so unspent() leaves out far more than it will pay - its change comes back. A read that finds the reserves short while another payout of the
+  // federation is PLANNED, SUBMITTING, SENT or REFUNDING is no shortfall: SHORT is terminal and broadcast, so it is not decided this pass, and
+  // asked again once that payout landed or expired. The proposals whose in-flight records hold reserve rows of `fed`, other than `pid`
+  const IN_FLIGHT = new Set([PAYOUT.PLANNED, PAYOUT.SUBMITTING, PAYOUT.SENT, PAYOUT.REFUNDING]);
+  const othersInFlight = (fed, pid) => { const ids = new Set();
+    for (const r of reserveRows(fed) || []) { const s = spentBy(r.outpoint); if (!s || s === pid || ids.has(s)) continue; const o = rowOf(s); if (o && IN_FLIGHT.has(o.state)) ids.add(s); }
+    return [...ids]; };
+  const inFlightWhy = (ids) => `another payout of that federation is in flight (${ids.map((x) => String(x).slice(0, 16)).join(', ')}) and holds its inputs`;
   const recordResent = new Set();
   const recordOf = (r) => ({ proposal: r.proposal, planId: r.plan_id, federation: r.federation, state: r.state, plan: planOfRow(r), txid: r.txid,
     preimage: r.preimage, refundTxid: r.refund_txid, why: r.why, claimTxid: r.claim_txid || null, claimMsat: r.claim_msat || null });
@@ -875,6 +884,8 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
       if (payAmountsCover(have, contractMsat, fees)) return { payer: fed, needs, unread };
       // rows whose round this seat cannot read (kanban #1409) might cover it: not a shortfall - another guardian's turn reads them
       if (unknownHeld(fed).length && payAmountsCover(unspent(fed, null, true), contractMsat, fees)) unread.push(`${fed.slice(0, 8)}: rows whose round this seat cannot read would cover it`);
+      // another payout in flight holds whole inputs whose change comes back (kanban #2333): not a shortfall now either
+      else { const busy = othersInFlight(fed, v.id); if (busy.length) unread.push(`${fed.slice(0, 8)}: ${inFlightWhy(busy)}`); }
     }
     return { payer: null, needs, unread };
   }
@@ -896,7 +907,9 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
       if (rec.federation !== lb.federation) return refuse('that shortfall names another federation than the leaderboard payout');
       const have = unspent(lb.federation);
       const heldSats = have.reduce((t, x) => t + BigInt(x.amountMsat), 0n) / 1000n;
-      if (!leaderboardCap({ amountSats: lb.amountSats, reservesSats: heldSats }).ok) return { ok: true };
+      // a shortfall said while another payout held the inputs is not kept (kanban #2333): this seat asks again once that one landed
+      const busy = othersInFlight(lb.federation, lb.id);
+      if (!leaderboardCap({ amountSats: lb.amountSats, reservesSats: heldSats }).ok) return busy.length ? refuse(`this seat keeps no shortfall now: ${inFlightWhy(busy)}`, 503) : { ok: true };
       const port = await portOf(lb.federation);
       if (!port) return refuse('this seat reaches no port into that federation: it cannot recompute the shortfall', 503);
       const w = await winnersBook.union(lb.id, []);
@@ -904,7 +917,8 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
       if (!w.winners.length) return { ok: true };
       const winners = w.winners.map((x) => ({ payoutPk: String(x.payoutPk).toLowerCase(), msat: String(x.msat) }));
       const fees = await port.fees();
-      return leaderboardAmounts({ inputs: have, winners, fees }).covers ? refuse('this seat\'s reserves there cover that leaderboard payout: no shortfall here', 409) : { ok: true };
+      if (leaderboardAmounts({ inputs: have, winners, fees }).covers) return refuse('this seat\'s reserves there cover that leaderboard payout: no shortfall here', 409);
+      return busy.length ? refuse(`this seat keeps no shortfall now: ${inFlightWhy(busy)}`, 503) : { ok: true };
     }
     const v = (passed() || []).find((p) => p.id === rec.proposal);
     if (!v) return refuse('this seat has no passed vote for that proposal: it keeps no shortfall of it', 409);
@@ -1143,8 +1157,12 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
         const heldSats = have.reduce((t, x) => t + BigInt(x.amountMsat), 0n) / 1000n;
         // rows whose round this seat cannot read (kanban #1409): never a SHORT while they exist - asked again, and another guardian's turn reads them
         const unknownNow = unknownHeld(lb.federation).length;
+        // another payout in flight holds whole inputs whose change comes back (kanban #2333): never a SHORT while it does - asked again next pass
+        const busy = othersInFlight(lb.federation, lb.id);
+        const undecided = () => unknownNow ? { id: lb.id, ok: false, why: `not decided this pass: ${unknownNow} reserve row(s) whose round this seat cannot read` }
+          : busy.length ? { id: lb.id, ok: false, why: `not decided this pass: ${inFlightWhy(busy)}` } : null;
         const cap = leaderboardCap({ amountSats: lb.amountSats, reservesSats: heldSats });
-        if (!cap.ok) { out.push(unknownNow ? { id: lb.id, ok: false, why: `not decided this pass: ${unknownNow} reserve row(s) whose round this seat cannot read` } : short(cap.why)); continue; }
+        if (!cap.ok) { out.push(undecided() || short(cap.why)); continue; }
         // THE WINNERS (kanban #1153): this seat's own read frozen once, merged with every guardian peer's frozen evidence, so the plan
         // holds every signed round any co-signer counts; each co-signer checks that list on the evidence and persists it before it commits
         const theirs = (await Promise.all((g.peers || []).map(async (p) => { try { return typeof p.winners === 'function' ? await p.winners(lb.id) : null; } catch { return null; } })))
@@ -1156,7 +1174,7 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
         const inputs = [];
         for (const x of have) { inputs.push({ outpoint: x.outpoint, amountMsat: String(x.amountMsat) }); if (leaderboardAmounts({ inputs, winners, fees }).covers) break; }
         const amounts = leaderboardAmounts({ inputs, winners, fees });
-        if (!amounts.covers) { out.push(unknownNow ? { id: lb.id, ok: false, why: `not decided this pass: ${unknownNow} reserve row(s) whose round this seat cannot read` } : short(`the reserves there (${heldSats} sat) do not cover ${lb.amountSats} sat and the fees`)); continue; }
+        if (!amounts.covers) { out.push(undecided() || short(`the reserves there (${heldSats} sat) do not cover ${lb.amountSats} sat and the fees`)); continue; }
         plan = { kind: 'leaderboard', proposal: lb.id, federation: lb.federation, reserveKey: toHex(g.key), amountSats: String(lb.amountSats), winners,
           rounds: w.pairs, winnersId: w.winnersId, refunds: inputs, changeMsat: String(amounts.changeMsat), nonce: toHex(nonceOf(lb.id, attempt)), ...(attempt ? { attempt: String(attempt) } : {}) };
         const st = await planStands(plan, { evidence: w.evidence });
