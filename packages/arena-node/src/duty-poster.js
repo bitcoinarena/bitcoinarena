@@ -20,7 +20,7 @@
  * and posts nothing: the day falls to the next node an hour later (duty.js dayPostDue). arena.conf duty_post: auto (the default: on while the
  * wallet holds confirmed coins), on, off.
  */
-import { OBJECTION_WINDOW_MS, OBJECTION_WINDOW_H2H_MS, OBJECTION_WINDOW_H2H_REGTEST_MS } from '../../arena-protocol/src/constants.js';   // #1399
+import { OBJECTION_WINDOW_MS, OBJECTION_WINDOW_H2H_MS, OBJECTION_WINDOW_H2H_REGTEST_MS, SUPPORTED_PROTOCOL_VERSIONS } from '../../arena-protocol/src/constants.js';   // #1399, #1486
 import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';   // #1399
 import { join } from 'node:path';
 import { appendFileSync } from 'node:fs';
@@ -111,6 +111,34 @@ export const DUTY_TEMPLATE = Object.freeze({ protocolVersion: 3, configHash: new
 const RPS_TICKS = { blockTicks: 600, startDeadlineTicks: 300 };
 
 /**
+ * THE PROTOCOL AN APP'S DAYS ARE RAISED TO (kanban #1486): ARENA_DUTY_PROTOCOL_<APP> (RPS, NEXTBLOCK, UPDOWN) names the lowest version this
+ * node posts that app's days at - how a new version (27: the developers' and reserves' parts in the fee lock) starts for newly posted days
+ * without a new app version. The template carries it on from the first such day, on every poster. A version this build cannot read is no floor.
+ * -> { version: number | null, why: string | null }
+ */
+export function dutyProtocolFloor(env, game) {
+  const raw = String((env || {})[`ARENA_DUTY_PROTOCOL_${String(game).toUpperCase()}`] || '').trim();
+  if (!raw) return { version: null, why: null };
+  const v = Number(raw);
+  if (!Number.isInteger(v) || !SUPPORTED_PROTOCOL_VERSIONS.includes(v)) return { version: null, why: `ARENA_DUTY_PROTOCOL_${String(game).toUpperCase()}=${raw} is not a protocol version this build reads` };
+  return { version: v, why: null };
+}
+
+/**
+ * THE VERSION A GRID IS WRITTEN IN (kanban #1486): the day's template's, or the newest app version's requirement when higher, raised to the
+ * floor only when the census at the floor can draw the app's committee (`drawableAt(version)` -> { ok, why }) - the census seats a round only
+ * on nodes whose advertisement speaks its version, so a floor named before the adverts are deep posts the day at the old version, said loudly,
+ * instead of a day nobody can be drawn for. -> { version, raised: boolean, why: string | null }
+ */
+export async function gridProtocolOf({ templateVersion, required, floor, drawableAt }) {
+  const base = Math.max(Number(templateVersion || 3), Number(required || 0));
+  if (!(Number.isInteger(floor) && floor > base)) return { version: base, raised: false, why: null };
+  let d; try { d = await drawableAt(floor); } catch (e) { d = { ok: false, why: e.message }; }
+  if (d && d.ok) return { version: floor, raised: true, why: null };
+  return { version: base, raised: false, why: `protocol ${floor} named, but its census draws no committee: ${(d && d.why) || 'not read'}` };
+}
+
+/**
  * THE DAY'S TEMPLATE FOR AN APP: the newest grid template this node holds whose game is a version of it (`family`, a Set of game ids hex),
  * its network's - else DUTY_TEMPLATE on `networkId`, its relays this node's own address. -> { contract, from: 'held' | 'built-in' }
  */
@@ -149,7 +177,7 @@ export function posterOf({ series, templateOf, order }) {
  *   chainBlocks(from, to)     the blocks over [from, to] (header, transactions), cached
  *   dir                       where its postings are kept (<store>.duty)
  *   env                       ARENA_DUTY_POST, ARENA_DUTY_WALLET, ARENA_DUTY_FEE_RATE, ARENA_DUTY_MAX_FEE_RATE, ARENA_DUTY_APPS,
- *                             ARENA_DUTY_ITEM_<APP>, ARENA_FUNDED_ROUNDS_FILE, ARENA_DUTY_EMERGENCY
+ *                             ARENA_DUTY_ITEM_<APP>, ARENA_DUTY_PROTOCOL_<APP> (#1486), ARENA_FUNDED_ROUNDS_FILE, ARENA_DUTY_EMERGENCY
  *   nodeSecret                this node's identity secret: it signs the series it creates
  * and, once its seat listens, attach({ port, host, endpoint, heldTemplates, nameFunded, donationSetAt, nodeKey, lessAbsent }) from server.js.
  */
@@ -236,8 +264,17 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
   const openGrid = (game) => async (kind, opts) => {
     const base = kind.base || {};
     const t = templates.get(game);
-    // THE PROTOCOL A GRID IS WRITTEN IN: the day's shape's, or the newest version's requirement when that is higher
-    const protocolVersion = Math.max(Number(t.contract.protocolVersion || 3), Number(base.requiredProtocol || 0));
+    // THE PROTOCOL A GRID IS WRITTEN IN: the day's shape's, or the newest version's requirement when that is higher - raised to the
+    // operator's floor for the app (ARENA_DUTY_PROTOCOL_<APP>, kanban #1486) once the census at that version can draw the committee
+    const floor = dutyProtocolFloor(env, game);
+    if (floor.why) say({ dutyDay: 'PROTOCOL FLOOR REFUSED', game, why: floor.why });
+    const picked = await gridProtocolOf({ templateVersion: t.contract.protocolVersion, required: base.requiredProtocol, floor: floor.version,
+      drawableAt: async (v) => {
+        const c = { ...t.contract, ...kind.fields, protocolVersion: v, censusHeight: kind.fields.censusHeight };
+        return guard.hostsOf((await censusFor(c)).entries, c, kind.fields.gameId);
+      } });
+    if (picked.why) say({ dutyDay: 'PROTOCOL FLOOR NOT DRAWABLE', game, posts: picked.version, why: picked.why });
+    const protocolVersion = picked.version;
     const contract = { ...t.contract, protocolVersion, censusHeight: kind.fields.censusHeight };
     let census = await censusFor({ ...contract, ...kind.fields });
     // FROM PROTOCOL 22 LESS THE ABSENT (§5A.3, kanban #727): nodes that seating certificates prove drawn and not present at 3 seatings of
