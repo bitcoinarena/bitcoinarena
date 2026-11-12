@@ -11911,8 +11911,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'POST' && (url.pathname === '/reserve-payout/commit' || url.pathname === '/reserve-payout/share' || url.pathname === '/reserve-payout/record')) {
         const ans = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body)); };
         if (!reservePayouts) return ans(501, { ok: false, why: 'this node pays no reserves' });
-        let b; try { b = JSON.parse(Buffer.from(await read(req)).toString('utf8') || '{}'); } catch { return ans(400, { ok: false, why: 'a JSON body' }); }
+        // a share ask is a committee's list at most: 64 commitments of about 190 bytes of JSON, the ask and its signature (kanban #2161)
+        const most = url.pathname.endsWith('/share') ? 64 * 1024 : undefined;
+        let b; try { b = JSON.parse(Buffer.from(await read(req, most)).toString('utf8') || '{}'); } catch (e) { return e && e.tooLarge ? ans(413, { ok: false, why: e.message }) : ans(400, { ok: false, why: 'a JSON body' }); }
         try {
+          if (url.pathname.endsWith('/share') && Array.isArray(b.commitments) && b.commitments.length > MOST_COMMITMENTS)
+            return ans(409, { ok: false, why: `${b.commitments.length} commitments, and no committee holds more than ${MOST_COMMITMENTS}` });   // kanban #2161
           if (url.pathname.endsWith('/commit')) { const r = await reservePayouts.commit({ plan: b.plan, kind: String(b.kind), txid: b.txid || null, from: b.from, sig: b.sig });
             return ans(r.ok ? 200 : (r.status || 400), r.ok ? { ok: true, commitment: { id: r.commitment.id, hiding: toHex(r.commitment.hiding), binding: toHex(r.commitment.binding) } } : r); }
           if (url.pathname.endsWith('/share')) { const r = await reservePayouts.share({ planId: String(b.planId), kind: String(b.kind),
