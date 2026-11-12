@@ -101,9 +101,11 @@ async function keep(env, tx, had) {
   const h = await sha(JSON.stringify(stable));
   if (had === h) return null;
   const e = tx.entry || {};
+  // a payment's write never turns a stored order into another kind (kanban #1696, #1761); an agreed order still replaces a payment row
   return env.DB.prepare(`INSERT INTO txs (id, round, app, federation, stored_ms, settled, hash, json, updated_ms, kind, fed_txid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET round = excluded.round, app = excluded.app, federation = excluded.federation, stored_ms = excluded.stored_ms,
-    settled = excluded.settled, hash = excluded.hash, json = excluded.json, updated_ms = excluded.updated_ms, kind = excluded.kind, fed_txid = excluded.fed_txid`)
+    settled = excluded.settled, hash = excluded.hash, json = excluded.json, updated_ms = excluded.updated_ms, kind = excluded.kind, fed_txid = excluded.fed_txid
+    WHERE excluded.kind = 'order' OR COALESCE(txs.kind, 'order') <> 'order'`)
     .bind(tx.id, e.round || null, e.app || null, e.federation || null, tx.storedFirst ? Date.parse(tx.storedFirst) : Date.now(),
       tx.settlement ? tx.settlement.state : null, h, JSON.stringify(tx), Date.now(), tx.kind || 'order', tx.payment ? tx.payment.txid : null);
 }
@@ -112,16 +114,23 @@ async function keep(env, tx, had) {
 // the explorer"): each a row of its own kind beside the orders - what it paid for, from whom, its federation transaction and its outputs,
 // and which seats keep it. A seat keeps every one of its network (each is handed on to all), and a kept one never changes.
 const PAYMENT_KINDS = ['item', 'donation', 'zap'];
+// NO ONE SEAT SAYS WHAT A PAYMENT IS EITHER (kanban #1696, #1761; the second copy of #1510's first-seat merge): the row is the one at
+// least AGREE seats list byte for byte (keptMs aside, each seat's own time) and more of them than any other; only the seats that list
+// that row are known, and its time is the AGREE-th earliest of theirs. A payment fewer than AGREE seats agree on is not found and not
+// stored - one seat of fourteen could list a made-up 21 BTC item purchase as a real transaction, or a "gift" under a real order's id.
+const withoutKept = (r) => { const { keptMs, ...rest } = r; void keptMs; return rest; };
 function paymentTx(id, answers) {
-  const held = answers.filter((a) => a.row);
-  const r = held[0].row;
-  const { keptMs, ...payment } = r; void keptMs;
+  const r = agreed(answers.filter((a) => a.row).map((a) => withoutKept(a.row)));
+  const same = (a) => !!(r && a.row && JSON.stringify(withoutKept(a.row)) === JSON.stringify(r));
+  const held = answers.filter(same);
+  if (!r || !held.length) return { id, found: false };
+  const payment = r;
   const kept = held.map((a) => Number(a.row.keptMs)).filter(Number.isFinite).sort((a, b) => a - b);
   return { id, kind: PAYMENT_KINDS.includes(r.kind) ? r.kind : 'donation', found: true, readAt: new Date().toISOString(), readMs: null,
     entry: { app: r.gameName || null, federation: r.federation, player: r.kind === 'item' ? r.player : r.donor }, amountMsat: r.totalMsat, payment,
-    settlement: null, client: null, processed: null, result: null, storedFirst: kept.length ? new Date(kept[0]).toISOString() : null,
-    seats: answers.map((a) => ({ seat: seatName(a.seat), key: a.key || null, status: a.status, known: !!a.row,
-      storedAt: a.row && Number.isFinite(Number(a.row.keptMs)) ? new Date(Number(a.row.keptMs)).toISOString() : null, why: a.why || null })) };
+    settlement: null, client: null, processed: null, result: null, storedFirst: kept.length ? new Date(kept[Math.min(AGREE, kept.length) - 1]).toISOString() : null,
+    seats: answers.map((a) => ({ seat: seatName(a.seat), key: a.key || null, status: a.status, known: same(a),
+      storedAt: same(a) && Number.isFinite(Number(a.row.keptMs)) ? new Date(Number(a.row.keptMs)).toISOString() : null, why: a.why || null })) };
 }
 
 /** Every seat's gifts and items kept after `since` (at most `limit` of each), merged into D1; and where a further read goes on from. */
@@ -148,15 +157,20 @@ async function readPayments(env, since, limit) {
   const hashes = new Map();
   for (let i = 0; i < ids.length; i += 90) {
     const part = ids.slice(i, i + 90);
-    const r = await env.DB.prepare(`SELECT id, hash FROM txs WHERE id IN (${part.map(() => '?').join(',')})`).bind(...part).all();
-    for (const x of r.results || []) hashes.set(x.id, x.hash);
+    const r = await env.DB.prepare(`SELECT id, hash, kind FROM txs WHERE id IN (${part.map(() => '?').join(',')})`).bind(...part).all();
+    for (const x of r.results || []) hashes.set(x.id, x);
   }
   const writes = [];
   for (const id of ids) {
     const per = byId.get(id);
     const answers = SEATS.map((seat) => (per.has(seat) ? { seat, status: 200, ...per.get(seat) }
       : answered.get(seat) ? { seat, status: 404 } : { seat, status: got.find((g) => g.seat === seat).status, why: 'did not list its payments' }));
-    const w = await keep(env, paymentTx(id, answers), hashes.get(id));
+    // an order D1 holds is never turned into a payment (kanban #1696, #1761): its id is an entry the seats agreed on
+    const had = hashes.get(id);
+    if (had && (had.kind || 'order') === 'order') continue;
+    const tx = paymentTx(id, answers);
+    if (!tx.found) continue;
+    const w = await keep(env, tx, had ? had.hash : undefined);
     if (w) writes.push(w);
   }
   for (let i = 0; i < writes.length; i += 50) await env.DB.batch(writes.slice(i, i + 50));
@@ -495,8 +509,8 @@ async function readWindow(env, since, limit, before) {
   const hashes = new Map();
   for (let i = 0; i < ids.length; i += 90) {
     const part = ids.slice(i, i + 90);
-    const r = await env.DB.prepare(`SELECT id, hash FROM txs WHERE id IN (${part.map(() => '?').join(',')})`).bind(...part).all();
-    for (const x of r.results || []) hashes.set(x.id, x.hash);
+    const r = await env.DB.prepare(`SELECT id, hash, kind FROM txs WHERE id IN (${part.map(() => '?').join(',')})`).bind(...part).all();
+    for (const x of r.results || []) hashes.set(x.id, x);
   }
   const writes = [];
   for (const id of ids) {
