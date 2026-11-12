@@ -196,7 +196,7 @@ import { SIGNED_RESULT_BYTES, resultId, decodePlayerResult, splitSignedResult } 
 export const MAX_FRAME_BYTES = Math.max(
   MAX_SIGNED_INPUT_BATCH_BYTES, SIGNED_CHECKPOINT_BYTES, SIGNED_RECEIPT_BYTES);
 import { CLOSED } from './store.js';
-import { Round } from './round.js';
+import { Round, refusedLockOwnId } from './round.js';
 import { Verifier } from './verify.js';
 import { Ghosts } from './ghosts.js';
 import { gameLive } from './game-live.js';
@@ -9687,13 +9687,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const opHex = `${toHex(outpoint.txid)}:${outpoint.outIdx}`;
         const keptLocks = round.refusedLocksOfHandout(held.id);
         const again = keptLocks.find((l) => l.outpoint === opHex);
-        if (again) return text(res, 201, `kept for its return: forfeit it at /forfeit?round=${toHex(rid)}&entry=${toHex(again.lockId)}`);
+        // the lock's own id, also for a row kept before #1881 under the bare handout id (kanban #2029: round.js finds it by that id too)
+        if (again) return text(res, 201, `kept for its return: forfeit it at /forfeit?round=${toHex(rid)}&entry=${toHex(refusedLockOwnId(held.id, opHex))}`);
         const amountOf = (l) => { try { return BigInt(l.fields.amountMsat); } catch { return 0n; } };
         const amount = BigInt(fields.amountMsat);
         const asLarge = keptLocks.filter((l) => amountOf(l) >= amount).length;
         if (asLarge >= REFUSED_LOCKS_PER_HANDOUT)
           return text(res, 409, `this signer node already keeps ${asLarge} locks for that handout at least as large (${amount} msat), all refunding to the same player: no more are kept`);
-        const lockId = sha256(new Uint8Array([...held.id, ...new TextEncoder().encode(`lock:${opHex}`)]));
+        const lockId = refusedLockOwnId(held.id, opHex);
         round.putRefusedLock({ lockId, handoutId: held.id, roundId: rid, outpoint, fields: lockFieldsToJson(fields), contractId: String(id) });
         console.log(`[refused-lock] ${toHex(rid).slice(0, 16)}: ${String(fields.amountMsat)} msat kept for its return (${String(refusedWhy).slice(0, 80)})`);
         return text(res, 201, `kept for its return: forfeit it at /forfeit?round=${toHex(rid)}&entry=${toHex(lockId)}`);

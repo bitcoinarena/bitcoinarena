@@ -2223,14 +2223,23 @@ export async function redeemStake({ round, roundId, invite, seed, curve, LockCli
   const cid = contractIdVia(LockClient || (client && client.constructor));
   const locks = await heldByGuardians(client, named, cid);
   if (!locks.length) throw new Error('the federation holds none of the locks the signer nodes name for this seed in this round');
+  // EACH OUTPOINT ONCE, BY ANY OF ITS VERSIONS WHOSE FORFEIT STANDS (kanban #2029, #2056; as lookOwed and refusedReturn do, #1273): a seat
+  // lists a refused round's lone lock under its handout's id and under its own id, and two seats may name it by different ids - one
+  // version's refused forfeit (an alias that names another lock at one seat) never throws while another version's forfeit stands,
+  // and the lock is redeemed once, never once per version
   const forfeits = [];
+  const atOf = (l) => `${toHex(l.outpoint.txid)}:${l.outpoint.outIdx}`;
+  const bad = new Map();
   for (const l of locks) {
+    const k = atOf(l);
+    if (forfeits.some((x) => atOf(x.lock) === k)) continue;
     const a = asked.find((x) => x.lock === l);
-    if (!a.forfeit.ok) throw new Error(a.forfeit.why);
+    if (!a.forfeit.ok) { if (!bad.has(k)) bad.set(k, a.forfeit.why); continue; }
     const check = forfeitCheck({ curve, fields: l.fields, storedId: await storedIdAt(client, l), contractIdOf: cid });
-    if (check && check(a.forfeit) === false) throw new Error('the forfeit given for this lock does not verify against the contract the federation holds at its outpoint');
+    if (check && check(a.forfeit) === false) { if (!bad.has(k)) bad.set(k, 'the forfeit given for this lock does not verify against the contract the federation holds at its outpoint'); continue; }
     forfeits.push({ lock: l, forfeit: a.forfeit });
   }
+  for (const l of locks) if (!forfeits.some((x) => atOf(x.lock) === atOf(l))) throw new Error(bad.get(atOf(l)));
   // AND THE ORDER'S FEE LOCK (measured 2026-10-11 by the bots on the regtest Up/Down market: an order the book
   // never filled came back without its 1 % - 54,450 of 55,000 msat, 55,440 of 56,000 - because only stake locks were ever
   // looked up). The tab's own record of it (this order's saved lock, under its own key); the seats give its forfeit only

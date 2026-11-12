@@ -33,7 +33,7 @@ import {
 } from '../../arena-protocol/src/receipt.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { namesNoDraw, mediansPrices, FRONTEND_FEE_VERSION, ITEMS_VERSION, objectionWindowFits } from '../../arena-protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
 import { entryFeeBpsForRound, entryPaysReserves, roundSplit, RESERVES_NODE_FEE_BPS } from '../../arena-protocol/src/reserves.js';
@@ -125,6 +125,13 @@ export function rankRefusedLocks(rows) {
     .sort((x, y) => (x.a !== y.a ? (x.a > y.a ? -1 : 1) : (x.r.outpoint < y.r.outpoint ? -1 : x.r.outpoint > y.r.outpoint ? 1 : 0)))
     .map((x) => x.r);
 }
+// A REFUSED LOCK'S OWN ID (kanban #1881, #2029, #2056): H(handout id || "lock:" || outpoint) - server.js POST /refused-lock keeps every
+// new lock under it; a row kept under the bare handout id (written before #1881, of_handout NULL or the handout's own id) has it too
+export function refusedLockOwnId(handoutIdBytes, outpoint) {
+  return sha256(new Uint8Array([...handoutIdBytes, ...new TextEncoder().encode(`lock:${outpoint}`)]));
+}
+const bareRefusedRow = (r) => !r.of_handout || Buffer.from(r.of_handout).equals(Buffer.from(r.handout_id));
+const ownIdOfRow = (r) => (bareRefusedRow(r) ? refusedLockOwnId(new Uint8Array(r.handout_id), r.outpoint) : new Uint8Array(r.handout_id));
 
 export class Round {
   /** How long openHeld trusts its last count of the open rows when this store wrote none (kanban #786). */
@@ -2421,10 +2428,20 @@ export class Round {
    *  handout's id. THE BARE HANDOUT ID IS ONLY AN ALIAS (kanban #1881): it names that handout's largest lock here (ties to the lower
    *  outpoint), for a page that still asks by it - two seats holding different locks may resolve it differently, so the page reads
    *  each lock's own id from GET /stake-lock and asks the forfeit by that. */
-  refusedLock(idBytes) {
+  refusedLock(idBytes, roundIdBytes = null) {
     const shape = (r) => ({ roundId: new Uint8Array(r.round_id), outpoint: r.outpoint, fields: JSON.parse(r.fields), contractId: r.contract_id, keptMs: Number(r.kept_ms) });
     const r = this.db.prepare('SELECT round_id, outpoint, fields, contract_id, kept_ms FROM refused_locks WHERE handout_id = ?').get(Buffer.from(idBytes));
     if (r) return shape(r);
+    // A ROW FROM BEFORE #1881, BY THE LOCK'S OWN ID (kanban #2029, #2056): a seat that kept the player's lock before its upgrade
+    // keeps it under the bare handout id, a seat handed it after keeps it under H(handout || "lock:" || outpoint). Found here
+    // by that own id too, so one id gives the forfeit at every seat that keeps the lock - an upgrade never splits a committee.
+    // Bounded: only the round's bare rows (one per handout at most, the bare handout id is the row's key), and never written again.
+    if (roundIdBytes) {
+      const want = Buffer.from(idBytes);
+      const old = this.db.prepare('SELECT handout_id, of_handout, round_id, outpoint, fields, contract_id, kept_ms FROM refused_locks WHERE round_id = ? AND (of_handout IS NULL OR of_handout = handout_id)')
+        .all(Buffer.from(roundIdBytes)).find((o) => Buffer.from(refusedLockOwnId(new Uint8Array(o.handout_id), o.outpoint)).equals(want));
+      if (old) return shape(old);
+    }
     const ranked = rankRefusedLocks(this.db.prepare('SELECT round_id, outpoint, fields, contract_id, kept_ms FROM refused_locks WHERE of_handout = ?').all(Buffer.from(idBytes)));
     return ranked.length ? shape(ranked[0]) : null;
   }
@@ -2432,9 +2449,10 @@ export class Round {
   /** The refused-round locks of one round that refund to `refundHex`, shaped as stakeLocksFor's (entryId = the lock's own id).
    *  BOUNDED AND IN A FIXED ORDER (kanban #1881): each handout's locks ranked largest first (ties to the lower outpoint), at most
    *  `perHandout` of each, listed rank by rank over the handouts - a flood of a stranger's smaller locks never pushes the player's
-   *  own lock past what a page reads of one seat's answer (page-lock.js LOCKS_PER_SEAT). A handout's ONLY lock is listed under the
-   *  handout's id, its alias, as a seat before #1881 lists it - so a committee of old and new seats still agrees on it; it is
-   *  kept under its own id too, and a page that tries every id the seats name finds that one at every seat that keeps it. */
+   *  own lock past what a page reads of one seat's answer (page-lock.js LOCKS_PER_SEAT). Every lock is listed under its own id
+   *  (kanban #2029, #2056; a row from before #1881 too), and a handout's ONLY lock also under the handout's id, its alias, as a seat
+   *  before #1881 lists it - so a committee of old and new seats still agrees on it, and a page that tries every id the seats name
+   *  learns the own id from any seat that lists the lock, and finds it by that at every seat that keeps it. */
   refusedLocksFor(roundIdBytes, refundHex, { perHandout = Infinity } = {}) {
     const rows = this.db.prepare('SELECT handout_id, of_handout, outpoint, fields, contract_id FROM refused_locks WHERE round_id = ?')
       .all(Buffer.from(roundIdBytes))
@@ -2447,13 +2465,20 @@ export class Round {
     }
     const lists = [...byHandout.keys()].sort().map((h) => {
       const all = byHandout.get(h);
-      return rankRefusedLocks(all).slice(0, perHandout).map((r) => ({ r, id: all.length === 1 ? h : Buffer.from(r.handout_id).toString('hex') }));
+      // EACH LOCK UNDER ITS OWN ID, AND A LONE ONE UNDER THE ALIAS TOO (kanban #2029, #2056): listing a lone lock under the alias
+      // only hid its own id - a stranger's 4 larger locks at another seat cut the player's lock from that seat's listing, the page
+      // learned only the alias, and there the alias named a stranger's lock: no id combined. Now every seat that lists the lock
+      // names its own id (a row from before #1881 too), and an old seat's alias still matches.
+      return rankRefusedLocks(all).slice(0, perHandout).map((r) => {
+        const own = toHex(ownIdOfRow(r));
+        return { r, ids: all.length === 1 && own !== h ? [h, own] : [own] };
+      });
     });
     const out = [];
     const most = Math.max(0, ...lists.map((l) => l.length));
     for (let i = 0; i < most; i++) for (const l of lists) if (i < l.length) {
-      const { r, id } = l[i];
-      out.push({ entryId: id, outpoint: r.outpoint, fields: JSON.parse(r.fields), contractId: r.contract_id, refused: true });
+      const { r, ids } = l[i];
+      for (const id of ids) out.push({ entryId: id, outpoint: r.outpoint, fields: JSON.parse(r.fields), contractId: r.contract_id, refused: true });
     }
     return out;
   }
