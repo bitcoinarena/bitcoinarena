@@ -37,6 +37,8 @@ import { decodeBolt11 } from '../../arena-protocol/src/bolt11.js';
 import { moveSeedOf, moveSeedFor } from './reserve-move.js';
 import { leaderboardCap } from '../../arena-protocol/src/leaderboard-winners.js';
 import { payeeOf } from './winnings-send.js';
+import { readJsonBounded } from './lnurl-read.js';
+
 
 /**
  * A LEADERBOARD PAYOUT'S MONEY: the inputs (reserve outputs) less their fees pay every winner's output and its fee; what is
@@ -54,7 +56,8 @@ export function leaderboardAmounts({ inputs, winners, fees }) {
  * (LUD-01); the pay request (LUD-06), then the invoice for exactly `msat`, taken only when its amount and description hash stand.
  */
 export function lnurlClient({ fetch: get = (u, o) => fetch(u, o), network = 'testnet4', timeoutMs = 15000 } = {}) {
-  const fetchJson = async (u) => (await get(u, { signal: AbortSignal.timeout(timeoutMs) })).json();
+  // read to at most LNURL_MAX_BYTES (kanban #1562): the proposal's LNURL is anyone's server
+  const fetchJson = async (u) => readJsonBounded(await get(u, { signal: AbortSignal.timeout(timeoutMs) }));
   async function payRequest(address, msat) {
     let url;
     if (/^lnurl1/i.test(String(address || ''))) { try { url = urlOfLnurl(String(address).toLowerCase()); } catch (e) { return refuse(`that LNURL does not decode: ${e.message}`); } }
