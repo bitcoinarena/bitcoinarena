@@ -50,6 +50,7 @@ import {
 import { encodeSlashProof, slashProofId, slashHolds, joinSlashEvidence, slashHoldsOnRerun, joinRerunSlashEvidence } from '../../arena-protocol/src/slash.js';
 import {
   joinSignedResult, splitSignedResult, decodePlayerResult, resultId, SIGNED_RESULT_BYTES, cutSignedResults,
+  RESULT_FRONT_BYTES, RESULT_SIGNATURE_BYTES,
   encodePlayerResult,
 } from '../../arena-protocol/src/result.js';
 import { decodeRoundContract, encodeRoundContract } from '../../arena-protocol/src/contracts.js';
@@ -239,6 +240,16 @@ async function peerHead(answer, cap) {
 const EQUIVOCATION_PAIRS_PER_PEER = 32;
 /** A peer's /entry-void answer is one small JSON object (kanban #1632). */
 const ENTRY_VOID_MAX_BYTES = 4096;
+/**
+ * A PEER'S GET /results ANSWER IS BOUNDED (kanban #1634): it was read whole (fetch + arrayBuffer, no #1550 cap) and every
+ * record that named the round, the player and a committee key cost a schnorr.verify, all in one synchronous block - one
+ * seat answering 4000 copies of a member's result with a bad signature (928 KB) held an honest seat's thread 3.95 s in one
+ * close gather of one entry. A peer holds at most one result per committee key, so its answer is at most that many of the
+ * largest record (twice over, for slack); past that it is a peer that is down. And each committee key is checked at most
+ * once per answer, and not at all when this seat already holds that key's result.
+ */
+const RESULT_RECORD_MAX_BYTES = RESULT_FRONT_BYTES + RESULT_SIGNATURE_BYTES;
+const peerResultsCap = (committeeSize) => 2 * Math.max(1, committeeSize) * RESULT_RECORD_MAX_BYTES;
 async function peerJson(answer) { return JSON.parse(Buffer.from(await peerBody(answer)).toString('utf8')); }
 /** GET /checkpoints of every peer AT ONCE (#1550: in parallel, not one after another), each its bytes or null when down. */
 async function peersCheckpoints(peers, roundIdBytes, entryId, cap) {
@@ -841,16 +852,20 @@ export class Verifier {
       let body;
       try {
         const answer = await fetch(`${peer}/results?round=${hex(roundIdBytes)}&entry=${hex(entryIdBytes)}`, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
-        if (!answer.ok) return;
-        body = new Uint8Array(await answer.arrayBuffer());
+        if (!answer.ok) { try { await answer.body?.cancel(); } catch { /* gone */ } return; }
+        body = await peerBody(answer, peerResultsCap(committee.size));   // kanban #1634: bounded
       } catch { return; }
       let records = [];
       try { records = cutSignedResults(body); } catch { return; }
+      const tried = new Set();   // kanban #1634: one check per committee key per answer, none for a key already proven
       for (const record of records) {
         try {
           const { signature, body: signedBody } = splitSignedResult(record);
           const result = decodePlayerResult(signedBody);
           if (hex(result.roundId) !== hex(roundIdBytes) || hex(result.playerPubkey) !== hex(playerPubkey) || !committee.has(hex(result.nodePubkey))) continue;
+          const key = hex(result.nodePubkey);
+          if (signers.has(key) || tried.has(key)) continue;
+          tried.add(key);
           if (schnorr.verify(signature, resultId(result), result.nodePubkey)) signers.add(hex(result.nodePubkey));
         } catch { /* a record that does not read proves nothing */ }
       }
@@ -1491,16 +1506,26 @@ export class Verifier {
         if (!answer.ok) { refused++; continue; }
         const said = answer.headers.get('x-no-quorum');
         if (said) noQuorumPeers.push({ peer, outcome: said });
-        body = new Uint8Array(await answer.arrayBuffer());
-      } catch { refused++; continue; }      // a peer that is down is not a fault
+        body = await peerBody(answer, peerResultsCap(committee.length));   // kanban #1634: bounded, as #1550's pulls
+      } catch { refused++; continue; }      // a peer that is down (or answers too much) is not a fault
 
       // THE RECORDS A PEER SENT, CHECKED: every one split, decoded, re-encoded to its own id and checked against the
       // signature under the key it names. This is the continuation after that peer answered, and it is timed because a
       // stall named only "a promise" is a stall nobody can act on (2026-09-17 19:15).
       timed(`close gather records ${hex(entryIdBytes).slice(0, 8)}`, () => {
-        // record by record, each its type's size
+        // record by record, each its type's size; kanban #1634: at most one check per committee key per answer, and
+        // none for a key whose result this seat already holds (the store keeps the first valid one anyway)
+        const tried = new Set();
         for (const record of cutSignedResults(body)) {
           fetched++;
+          let r;
+          try { r = decodePlayerResult(splitSignedResult(record).body); } catch { continue; }
+          // only a record that would be checked marks its key: one about another round or player costs no signature
+          if (hex(r.roundId) !== hex(roundIdBytes) || hex(r.playerPubkey) !== hex(playerPubkey)) continue;
+          const key = hex(r.nodePubkey);
+          if (tried.has(key)) continue;
+          tried.add(key);
+          if (this.round.hasResult(roundIdBytes, entryIdBytes, r.nodePubkey)) continue;
           if (this.#keepPeerResult(roundIdBytes, entryIdBytes, record, playerPubkey, committee)) kept++;
         }
       }, { over: 20 });
