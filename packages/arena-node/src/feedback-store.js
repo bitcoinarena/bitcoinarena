@@ -117,6 +117,26 @@ const tag = (e, k) => { const t = e.tags.find((x) => x[0] === k); return t ? Str
 const said = (x, re) => (re.test(String(x || '')) ? String(x) : '');
 // (kanban #1590, a bypass of #1472: the report as kept, never as received - keptEvent above, since #2003 / #2016 / #2050 the one rule)
 
+/** THE ADDRESS A SIGNED REPORT ASKED TO BE PAID AT (its content's lnAddress, else its signed lud16 tag): null when it named none or named it wrongly.
+ *  THE CHECKED ADDRESS FIRST (kanban #1677): a lud16 tag naming another address never takes the content's place.
+ *  ONLY A STRING IS AN ADDRESS (kanban #2468, #1489 audit44 refute of #1677): a content lnAddress of any other shape (["good@wallet"], an object, a
+ *  number) was checked at send as String() of it, while this read skipped it and took the tag - an address never checked. A content that names an
+ *  lnAddress at all decides alone: a non-string or a malformed string answers null, never the tag. POST /feedback refuses a non-string lnAddress and
+ *  checks exactly what this answers (faucet.mjs), so the address paid is the address checked. */
+export const LN_ADDRESS_RE = /^[a-z0-9._+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$/i;
+export const LNURL_RE = /^lnurl1[02-9ac-hj-np-z]+$/i;
+const addressShape = (a) => (LN_ADDRESS_RE.test(a) || LNURL_RE.test(a) ? a : null);
+export function reportAddress(e) {
+  if (!e || typeof e !== 'object') return null;
+  let c = null; try { c = JSON.parse(e.content); } catch { c = null; }
+  const v = c && typeof c === 'object' && !Array.isArray(c) ? c.lnAddress : undefined;
+  if (v !== undefined && v !== null && v !== '') {
+    if (typeof v !== 'string') return null;   // kanban #2468: never the tag in its place
+    if (v.trim()) return addressShape(v.trim());
+  }
+  const t = Array.isArray(e.tags) ? e.tags.find((x) => Array.isArray(x) && x[0] === 'lud16') : null;
+  return t && typeof t[1] === 'string' ? addressShape(t[1].trim()) : null;
+}
 export function openFeedbackStore(path = ':memory:') {
   const db = new DatabaseSync(path);
   // FREED BYTES ARE ZEROED (kanban #2003, #2016, #2050): a row rewritten without a seed must not leave the seed in the file's free space
@@ -408,16 +428,11 @@ export function openFeedbackStore(path = ':memory:') {
     }
     return out;
   }
-  /** THE ADDRESS A REPORT ASKED TO BE PAID AT (its content's lnAddress, else its signed lud16 tag): null when it named none.
-   *  THE CHECKED ADDRESS FIRST (kanban #1677): POST /feedback checks only the content's lnAddress (lnAddressWorks, #1511), so a lud16 tag naming another
-   *  address never takes its place - the tag is read only when the content names none, and lnAddressInvoice refuses an internal host for either. */
+  /** THE ADDRESS A REPORT ASKED TO BE PAID AT (reportAddress below): null when it named none. */
   function addressOf(id) {
     const r = get.get(String(id)); if (!r) return null;
     let e = null; try { e = JSON.parse(r.event); } catch { e = null; }
-    const tag = e && Array.isArray(e.tags) ? (e.tags.find((t) => Array.isArray(t) && t[0] === 'lud16') || [])[1] : null;
-    let c = null; try { c = JSON.parse(e && e.content); } catch { c = null; }
-    const a = String((c && typeof c.lnAddress === 'string' && c.lnAddress.trim()) || tag || '').trim();
-    return /^[a-z0-9._+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(a) || /^lnurl1[02-9ac-hj-np-z]+$/i.test(a) ? a : null;
+    return reportAddress(e);
   }
   /**
    * PAID STRAIGHT TO THE REPORT'S LIGHTNING ADDRESS (kanban #1474, Daniel 2026-11-11: "Do we have a function to give a comment when we pay?" - "1, ja. Und zeig es
