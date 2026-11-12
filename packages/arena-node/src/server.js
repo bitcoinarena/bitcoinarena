@@ -6811,15 +6811,30 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // stranger dealing fresh player keys stored 320 of 320 for one round (the disk, and every POST /refused-lock decodes them all). Past
     // HANDOUTS_UNENTERED_MAX handouts beyond the round's entries a new one is refused; one already kept, and a certified batch's
     // order (accepted), still go through
-    if (!accepted && !round.handout(id) && round.handoutCount(handout.roundId) - round.entriesOf(handout.roundId).length >= HANDOUTS_UNENTERED_MAX)
-      return { ok: false, status: 429, why: `handout refused: this round already holds ${HANDOUTS_UNENTERED_MAX} handouts that no entry names - nothing is locked, try the next round` };
-    round.rememberHandout({ id, roundId: handout.roundId, bytes: encodeHandout(handout) });
+    // BUT THE NEW ONE MAKES ROOM, IT IS NOT REFUSED (kanban #2136, the #1489 a44 refute of #1605): the cap was round-wide and could not
+    // tell a stranger's handouts from a player's, so 256 free junk posts per seat (~3 s) had every honest POST /handout of the round
+    // answered 429 - no page could enter, a lock-first client (the RPS bot) was refused after its stake and fee were locked, and the
+    // relay (entry-relay.js) was refused the same way. Now the new handout takes the row of the round's OLDEST loose one (no entry
+    // names it, no kept refused-round lock stands on it): the store stays at the cap and a fresh handout always lands. A stranger
+    // must outpace a player's own handout-to-entry time with 256 posts per seat to push that one out. Only when every loose handout
+    // carries a refused-round lock (each one a real federation lock) is a new one refused
     // THE TIME LEFT TO THE CLOSE ON THIS SEAT'S CLOCK (kanban #1892, #1489 refute 2 of #1485/#1742, feedback #010): the page runs this handout beside the
     // funding (wallet, exchange, a deposit invoice) and locks only after both, so the time between this answer and the lock is the funding's, which no
     // lead here can bound. The page's own guard before the lock read the player's Date.now() - wrong for exactly the slow clock this door stands for.
     // The 201 now says how many ms this seat had left at its answer (x-entry-close-in-ms); the page (arena-client seatCloseLeftMs) reads the close on the
     // seats' clock from it and makes no lock with less than the lead left, however long the funding took after the handout
-    return { ok: true, id, signerNode: mine.signerNode, closeInMs: Number(roundContract.entryCloseMs) - Number(round.now()) };
+    const closeInMs = Number(roundContract.entryCloseMs) - Number(round.now());
+    const bytesOut = encodeHandout(handout);
+    if (!accepted && !round.handout(id) && round.handoutCount(handout.roundId) >= HANDOUTS_UNENTERED_MAX) {
+      const { loose, oldest } = round.looseHandouts(handout.roundId);
+      if (loose >= HANDOUTS_UNENTERED_MAX) {
+        if (!oldest || !round.replaceHandout(oldest, { id, roundId: handout.roundId, bytes: bytesOut }))
+          return { ok: false, status: 429, why: `handout refused: this round already holds ${HANDOUTS_UNENTERED_MAX} handouts that no entry names, each with a refused-round lock - nothing is locked, try the next round` };
+        return { ok: true, id, signerNode: mine.signerNode, closeInMs };
+      }
+    }
+    round.rememberHandout({ id, roundId: handout.roundId, bytes: bytesOut });
+    return { ok: true, id, signerNode: mine.signerNode, closeInMs };
   };
   // A LOCK THAT ENTERED NOTHING, ITS ROUND'S ENTRIES CLOSED (kanban #593, playtest 2026-10-23: a page's 100 sat stake for
   // round 9412cdf9, locked while the seats restarted, entered at no seat - back only at its expiry, 1834 blocks on): returned as
