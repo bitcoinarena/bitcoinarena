@@ -360,6 +360,9 @@ export class LockSettlement {
     const got = await this.planOf(roundIdBytes);
     if (!got.ok) return got;
     if (!got.anyFed) return refuse('that round settles in its one federation: it has no per-federation settlement');
+    // A PEER KEEPS THE SPLIT TOO (kanban #1838, merged in #1489 onto #1576's fed_lock_split): a seat that builds a federation's bytes for the
+    // combiner holds the round ACCEPTED only once every federation of the split is, as the combiner does
+    if (this.round.putFedLockSplit && Array.isArray(got.split.settlements)) this.round.putFedLockSplit(roundIdBytes, got.split.settlements.map((x) => x.federation));
     const s = got.split.settlements.find((x) => x.federation === String(fid).toLowerCase());
     if (!s) return refuse(`that round's settlement moves nothing in federation ${String(fid).slice(0, 16)}`, 404);
     const claims = [];

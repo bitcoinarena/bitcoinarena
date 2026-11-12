@@ -17,7 +17,7 @@
 // kept with its bytes and its old outcome, never deleted, and COUNTING again when that block is back or the proposal is posted
 // again from a new block. Each move is a compare-and-set on the state it leaves, and is written to the store BEFORE this
 // seat's memory takes it: a write that fails leaves the proposal where it was.
-import { decodeConfigProposalBody, proposalId, proposalStands, SCHEDULES, REPEAL_SCHEDULES } from '../../arena-protocol/src/ballot.js';
+import { decodeConfigProposalBody, proposalId, proposalStands, isRepeal, SCHEDULES, REPEAL_SCHEDULES } from '../../arena-protocol/src/ballot.js';
 import { depositOf } from '../../arena-protocol/src/ballot-chain.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
@@ -62,14 +62,17 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
       if (!outcome || outcome.passed !== (to === S.PASSED)) return false;
       next = { ...had, state: to, decided: outcome };
     } else if (to === S.ORPHANED) {
-      const { decided, ...rest } = had;
-      next = { ...rest, state: S.ORPHANED, orphaned: { at, why, was: from, ...(decided ? { outcome: decided } : {}) } };
+      // kanban #1635: an outcome a recount held in force (undecided.outcome) is not carried on - an orphan is counted for nothing
+      const { decided, undecided, ...rest } = had;
+      const u = undecided ? (({ outcome: _o, ...x }) => x)(undecided) : null;
+      next = { ...rest, ...(u ? { undecided: u } : {}), state: S.ORPHANED, orphaned: { at, why, was: from, ...(decided ? { outcome: decided } : {}) } };
     } else if (from === S.ORPHANED) {
       const { orphaned, ...rest } = record ? { ...record, orphaned: had.orphaned } : had;
       next = { ...rest, state: S.COUNTING, restored: { at, why, was: orphaned ? orphaned.was : null } };
     } else {
       const { decided, ...rest } = had;
-      next = { ...rest, state: S.COUNTING, undecided: { at: decided ? decided.decidedAt : null, was: from, why } };
+      // kanban #1635: the replaced outcome is kept with the record, so ballot-tally.js holds it in force through a restart mid-recount
+      next = { ...rest, state: S.COUNTING, undecided: { at: decided ? decided.decidedAt : null, was: from, why, ...(decided ? { outcome: decided } : {}) } };
     }
     try { commit(next); } catch { return false; }
     return true;
@@ -81,7 +84,19 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
     if (r && typeof r.depositTxid === 'string') return r.depositTxid;
     try { const b = fromHex(String(r.proposal)); return toHex(decodeConfigProposalBody(b.subarray(0, b.length - 64)).depositTxid); } catch { return null; }
   };
-  const backedBy = (depositHex, id) => [...held.values()].find((r) => r.id !== id && depositTxidOf(r) === depositHex) || null;
+  // A DEPOSIT ITS OWN PROPOSER SIGNED TWICE (kanban #1840): the first-kept rule above decided by ARRIVAL ORDER, so two proposals of
+  // one proposer over one deposit (a resend with an edit, or both posted at once) reaching two seats in different orders left seat 1
+  // counting A and seat 2 counting B, each refusing the other's in the peer pull for good - different configs live. Now such a
+  // competitor is KEPT (and pulled) like any proposal, up to SAME_DEPOSIT_KEPT per deposit, and a deposit that backs more than
+  // one kept proposal backs NONE: every one of them is void (counts(): not tallied, not live, phase 'void'). Contested is monotonic
+  // and read from the set alone, so every seat that holds two of them answers the same. Another proposer naming a kept deposit
+  // is still refused by name (the deposit is not his).
+  const SAME_DEPOSIT_KEPT = 8;
+  const backedBy = (depositHex, id, proposerHex = null) => [...held.values()].find((r) => r.id !== id && depositTxidOf(r) === depositHex
+    && (proposerHex === null || String(r.proposer || '').toLowerCase() !== proposerHex)) || null;
+  const sameDeposit = (depositHex, id) => [...held.values()].filter((r) => r.id !== id && depositTxidOf(r) === depositHex);
+  /** COUNTED: the only kept proposal its deposit backs (kanban #1840). */
+  const counts = (id) => { const r = held.get(id); if (!r) return false; const d = depositTxidOf(r); return !!d && sameDeposit(d, id).length === 0; };
   const api = {
     async add({ proposal: hex, blockHash }) {
       if (!/^[0-9a-f]+$/i.test(String(hex || '')) || String(hex).length < 130) return { ok: false, status: 400, why: 'a proposal is the hex of its body and its 64-byte signature' };
@@ -135,8 +150,10 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
           return { ok: false, status: 422, why: `the proposer holds no active bond in the census at height ${dep.publishedAt} (27A.7.2)` };
       }
       // checked on a proposal that stands on its face and on the chain: refused by its own fault first, then by the deposit (#1489)
-      const other = backedBy(depositHex, id);
+      const other = backedBy(depositHex, id, toHex(p.proposer));
       if (other) return { ok: false, status: 409, why: `that deposit (deposit_txid) already backs proposal ${other.id}: one deposit pays for one proposal` };
+      if (sameDeposit(depositHex, id).length >= SAME_DEPOSIT_KEPT)
+        return { ok: false, status: 409, why: `that deposit already backs ${SAME_DEPOSIT_KEPT} proposals of this proposer: all of them are void (kanban #1840)` };
       const kept = { id, proposal: toHex(bytes), networkId: net, parent: toHex(p.parent), configHash: toHex(p.configHash), class: stands.class,
         proposer: toHex(p.proposer), publishedAt: dep.publishedAt, depositSats: String(dep.depositSats), votingFrom: stands.votingFrom,
         votingUntil: stands.votingUntil, activationHeight: stands.activationHeight, repeal: stands.repeal, depositTxid: depositHex,
@@ -153,9 +170,45 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
       return { ok: true, status: 201, ...kept };
     },
     list: () => [...held.values()].sort((a, b) => b.publishedAt - a.publishedAt),
+    counts,
     /** THE TIP add() reads (kanban #1608), handed by the tally when none was given here. */
     useTip(fn) { if (!tipOf && typeof fn === 'function') tipOf = fn; },
     transition,
+    /**
+     * ITS SCHEDULE READ AGAIN (kanban #1631): whether a proposal is a repeal, and so its voting window (27A.7.6), is a function of
+     * the history live at its publication height - not of what this seat had decided when the proposal reached it. A seat that
+     * took a repeal before it heard of the proposal it repeals (posted to one seat, pulled 10 min later) read it against the
+     * genesis alone and kept the ordinary schedule for good, so two seats counted different blocks and went live on different
+     * configs. The tally (ballot-tally.js) asks this for every kept proposal on every pass, before it counts: 'pending' while
+     * that history is not known here (a proposal activating by then is undecided: nothing of this one is counted or moved),
+     * 'same', or 'moved' - the record's repeal / votingFrom / votingUntil rewritten from the history now (written FIRST, a
+     * failed write moves nothing), a decided one back to COUNTING to be counted on its window, and one that no longer stands
+     * on its face under that schedule (activation before the end of its cooldown) FAILED as void, held to its publication block.
+     */
+    reschedule(id, { at = null } = {}) {
+      const had = held.get(id);
+      const st = stateOf(had);
+      if (!had || st === S.ORPHANED || !historyFor) return 'same';
+      let p; try { const b = fromHex(String(had.proposal)); p = decodeConfigProposalBody(b.subarray(0, b.length - 64)); } catch { return 'same'; }
+      const history = historyFor(had.networkId, had.publishedAt);
+      if (!history) return 'pending';
+      const repeal = isRepeal(p, history);
+      const s = repeal ? ((repealScheduleFor && repealScheduleFor(had.networkId)) || repealSchedule) : ((scheduleFor && scheduleFor(had.networkId)) || schedule)[p.class];
+      const votingFrom = had.publishedAt + s.review, votingUntil = votingFrom + s.voting, earliest = votingUntil + s.cooldown;
+      const stands = p.activationHeight >= earliest;
+      const isVoid = !!(had.decided && had.decided.void);
+      if (repeal === !!had.repeal && votingFrom === had.votingFrom && votingUntil === had.votingUntil && stands === !isVoid) return 'same';
+      const { decided, undecided, ...rest } = had;
+      const rescheduled = { at, was: { state: st, repeal: !!had.repeal, votingFrom: had.votingFrom, votingUntil: had.votingUntil } };
+      const next = stands
+        ? { ...rest, repeal, votingFrom, votingUntil, state: S.COUNTING, rescheduled }
+        : { ...rest, repeal, votingFrom, votingUntil, state: S.FAILED, rescheduled, decided: { passed: false, decidedAt: at,
+          void: `activation_height ${p.activationHeight} is before the end of cooldown (${earliest}) under the history live at ${had.publishedAt}`,
+          anchor: had.blockHash ? { height: had.publishedAt, hash: had.blockHash } : null } };
+      if (held.get(id) !== had) return 'same';                          // compare-and-set: moved meanwhile, asked again next pass
+      try { commit(next); } catch { return 'same'; }
+      return 'moved';
+    },
     /** THE OUTCOME, WRITTEN ONCE (ballot-tally.js): COUNTING -> PASSED | FAILED - not tallied again, across restarts too. */
     decide: (id, outcome) => transition(id, S.COUNTING, outcome && outcome.passed ? S.PASSED : S.FAILED, { outcome }),
     /** A REORG BELOW ITS DECISION - a hash that differs (ballot-tally.js): PASSED | FAILED -> COUNTING, counted again on the chain now. */
@@ -177,7 +230,13 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
      */
     async pull(records) {
       let took = 0;
-      for (const r of (Array.isArray(records) ? records : []).slice(0, 256)) {
+      // OLDEST PUBLICATION FIRST (kanban #1842): a peer lists newest first, and a repeal taken before the proposal it repeals
+      // read a history without it (an ordinary schedule here, a repeal at every other seat); oldest first, the earlier one is
+      // held when the later one is checked (and 503s it until decided here). Bounded first, in the peer's order, as before.
+      const asked = (Array.isArray(records) ? records : []).slice(0, 256)
+        .map((r, i) => ({ r, i, at: r && Number.isFinite(Number(r.publishedAt)) ? Number(r.publishedAt) : Infinity }))
+        .sort((a, b) => a.at - b.at || a.i - b.i).map((x) => x.r);
+      for (const r of asked) {
         if (!r || typeof r.proposal !== 'string' || typeof r.blockHash !== 'string') continue;
         const mine = typeof r.id === 'string' ? held.get(r.id.toLowerCase()) : null;
         if (mine && stateOf(mine) !== S.ORPHANED) continue;             // kept and counted here: nothing to learn

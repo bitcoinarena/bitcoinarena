@@ -10,6 +10,7 @@
 import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { regtest } from './regtest-bond.mjs';
+import { inForceOf } from '../src/add-bond-wallet.js';
 import { openStore, nodeIdentity } from '../src/store.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { readAdvertUpdate, checkAgainstBond } from '../../arena-protocol/src/advert-update.js';
@@ -39,7 +40,10 @@ for (const store of stores) {
   db.close?.();
   const bonds = rt.bondsOf(secret);
   if (!bonds.length) { say({ store, nodeKey: toHex(pubkey).slice(0, 16), skipped: 'no confirmed unspent bond' }); continue; }
-  const bond = [...bonds].sort((x, y) => (y.sats - x.sats) || (y.height - x.height))[0];
+  // THE BODY IN FORCE (kanban #1836): the update still goes on the largest output, but it starts from the node's newest advertisement
+  // over all its outputs (inForceOf, as the census reads it), not the largest's own - an update since on another output is kept
+  const largest = [...bonds].sort((x, y) => (y.sats - x.sats) || (y.height - x.height))[0];
+  const bond = { ...largest, advert: inForceOf(bonds).advert };
   if ((bond.advert.serving !== false) === SERVING) { say({ store, nodeKey: toHex(pubkey).slice(0, 16), skipped: SERVING ? 'already serving' : 'already stepped out' }); continue; }
   const advert = { ...bond.advert, serving: SERVING, timestamp: BigInt(Date.now()) };
   say({ store, nodeKey: toHex(pubkey).slice(0, 16), bond: `${bond.txid}:${bond.vout}`, sats: bond.sats, games: (bond.advert.hostedGames || []).length });

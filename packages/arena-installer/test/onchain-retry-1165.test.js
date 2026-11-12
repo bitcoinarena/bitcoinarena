@@ -21,6 +21,7 @@ import { walletOf, addressScript } from '../src/wallet.js';
 import { nodeKeyOf } from '../src/seed.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { advertInTransaction } from '../../arena-protocol/src/census.js';
+import { readAdvertUpdate } from '../../arena-protocol/src/advert-update.js';
 import { inviteForGuardians } from '../../arena-node/src/invite.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
@@ -154,7 +155,8 @@ test('the key move: the process dies after the new bond is broadcast, before the
   const key = toHex(schnorr.getPublicKey(new Uint8Array(db.prepare('SELECT secret FROM identity WHERE one = 0').get().secret)));
   let olds = []; try { olds = db.prepare('SELECT pubkey FROM identity_old').all(); } catch { olds = []; }
   db.close();
-  const bonds = chain.adverts().length;
+  // a bond, not the old key's step-out update (kanban #1776) that the move sends after it
+  const bonds = chain.adverts().filter(({ hex }) => !readAdvertUpdate(fromHex(hex), { network: 'testnet4' }).ok).length;
   console.log(`  #1165 key move, crash after the broadcast: ${bonds} new bond(s) in the mempool; key ${key === want ? 'the words\' key' : 'still the old one'}; ${olds.length} old key(s) kept; the state's bond ${(n.state.read().bond || {}).txid === (r.bond || {}).txid ? 'is the new one' : 'is not the new one'}`);
   assert.equal(bonds, 1, 'one new bond');
   assert.equal(key, want, 'the node signs with the words\' key');
