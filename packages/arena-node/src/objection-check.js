@@ -81,15 +81,37 @@ export function replayKeyOf(form, marks) {
 }
 
 /**
+ * THE REPLAY KEY OF A LIVE RUN'S BUNDLE, BEFORE ANY CHECK (kanban #1878): the key replayKeyOf gives the inputs a live
+ * run's bundle carries, with its marks - or null for a batch transcript, or bytes that do not read (those go through the
+ * whole check, which names why). A seat's door reads it to refuse, without queueing, a further variant past its cap.
+ */
+export function liveRunKeyOf(bundle) {
+  try {
+    const b = decodeObjectionBundle(bundle);
+    const t = decodeTranscript(b.transcript);
+    if (t.batches.length || !b.inputs) return null;
+    const form = inputsFormOf(JSON.parse(Buffer.from(b.inputs).toString('utf8')));
+    const marks = t.marks.map((m) => { const c = decodeCheckpoint(splitSigned(m).body); return { tick: c.tick, stateHash: c.stateHash }; });
+    return replayKeyOf(form, marks);
+  } catch { return null; }
+}
+
+/**
  * CHECK ONE OBJECTION BUNDLE. `bundle` the bytes posted; `roundId`, `entryId` the run it is filed against; `entry` that
  * entry's signed contract; `contract` the round's; `committee` its signer nodes' keys; `signedResultId` the run the
  * committee signed (the agreed re-run's, for a second objection); `core` the round's core as the seat resolves it
  * (with its `runTicks` and `world`); `roundRandomness` the round's beacon; `verify(sig, msg, pubkey)` BIP-340.
  * `replayRun(form, entry, options)` defaults to the core's own `replay`; a seat hands its worker pool's, same answer.
  * Returns `{ holds, step, why, ... }` - `step` names the check that refused.
+ *
+ * A seat also hands (kanban #1706, #1878; the arbiter and the command line hand none): `ownInputs()` its own stored run;
+ * `knownRun(marks)` the run it remembered as reproducing those marks; `referenceRuns()` (async) the runs committee seats
+ * hand out (GET /replay/transcript); `keepRun(form, key)` told of a run that reproduced every mark; `admitReplay(key)`
+ * asked before a live run's carried inputs are replayed - false refuses them by name, unreplayed.
  */
 export async function checkObjectionBundle({ bundle, roundId, entryId, entry, contract, committee, signedResultId,
-  core, roundRandomness, verify, replayRun = async (form, e, options) => replay(form, e, options), hashTicks = [], ownInputs = null }) {
+  core, roundRandomness, verify, replayRun = async (form, e, options) => replay(form, e, options), hashTicks = [], ownInputs = null,
+  knownRun = null, referenceRuns = null, keepRun = null, admitReplay = null }) {
   // `hashTicks`: the run's state at each, handed back as replayed.hashes (an auditor's tick hash, kanban #1331/#1383)
   const ht = Array.isArray(hashTicks) && hashTicks.length ? { hashTicks } : {};
   const no = (step, why) => ({ holds: false, step, why });
@@ -186,31 +208,65 @@ export async function checkObjectionBundle({ bundle, roundId, entryId, entry, co
   //     the state the seat's own run reached at the last one (a run carried here ends before it), so they give the signed
   //     result too, and any that do not are refused at the marks. Refused by name, without replaying them. If this seat's
   //     own run does not (it missed inputs, or signed wrong), the inputs carried are replayed as before.
-  if (!t.batches.length && typeof ownInputs === 'function' && Number.isInteger(chain.throughTick) && !dissentsOn(entryId)) {
-    let mine = null;
-    try {
-      const own = ownInputs();
-      if (own && Array.isArray(own.ticks) && own.ticks.length) {
+  //
+  //     AND A SEAT THAT DOES NOT HOLD THE WHOLE RUN (kanban #1878): one behind on the feed (5 of 7 lets the player move
+  //     on), one that missed the tail across a restart, or one fed a divergent frame holds a run that does not reproduce
+  //     the marks - and 7a used to fall through there, every one-word copy a full replay again. So the runs tried are, in
+  //     turn: the run this seat REMEMBERED as reproducing these marks (the first one that did, carried or fetched), its
+  //     own, and the runs committee seats hand out (referenceRuns, fetched only when the others did not reproduce them).
+  //     Each is one replay key, replayed at most once (the seat's cache). The first that reproduces every mark decides:
+  //     it gives the signed result - the inputs carried are refused by name, unreplayed - or it does not (the committee
+  //     may have signed wrong), and the inputs carried are replayed as before.
+  const live = !t.batches.length && Number.isInteger(chain.throughTick) && !dissentsOn(entryId);
+  const formKey = live ? replayKeyOf(form, marks) : null;
+  const reproduces = (a) => !!(a && a.ok && (a.divergedAt === null || a.divergedAt === undefined) && !(a.unchecked > 0));
+  if (live) {
+    const over = (run) => {
+      try {
+        if (!run || !Array.isArray(run.ticks) || !run.ticks.length) return null;
         const cut = (r) => r[0] < chain.throughTick;
-        mine = inputsFormOf({ ...own, ticks: own.ticks.filter((x) => x.tick >= form.ticks[0].tick && x.tick < chain.throughTick),
-          liquidations: (own.liquidations || []).filter(cut), loads: (own.loads || []).filter(cut), samples: (own.samples || []).filter(cut), tapes: (own.tapes || []).filter(cut) });
-        if (!mine.ticks.length) mine = null;
-      }
-    } catch { mine = null; }
-    if (mine && replayKeyOf(mine, marks) !== replayKeyOf(form, marks)) {
+        const mine = inputsFormOf({ ...run, ticks: run.ticks.filter((x) => x && x.tick >= form.ticks[0].tick && x.tick < chain.throughTick),
+          liquidations: (run.liquidations || []).filter(cut), loads: (run.loads || []).filter(cut), samples: (run.samples || []).filter(cut), tapes: (run.tapes || []).filter(cut) });
+        return mine.ticks.length ? mine : null;
+      } catch { return null; }
+    };
+    const tried = new Set();
+    // 'refuse', 'carried' (replay the inputs carried), or null (try the next run)
+    const tryRun = async (mine) => {
+      if (!mine) return null;
+      const key = replayKeyOf(mine, marks);
+      if (key === formKey) return 'carried';
+      if (tried.has(key)) return null;
+      tried.add(key);
       let own;
       try { own = await replayRun(mine, entry, { core, roundRandomness, marks }); } catch (e) { own = { ok: false, why: e.message }; }
-      if (own && own.ok && (own.divergedAt === null || own.divergedAt === undefined) && !(own.unchecked > 0)) {
-        const ownBuilt = resultFrom({ answer: own, contract, entry, transcript: { ...t, hash: th }, entryId, nodePubkey: NOBODY, stopped: true });
-        if (ownBuilt.ok && hex(runId(ownBuilt.result)) === hex(signedResultId))
-          return no('replay', 'those inputs are not the run this seat holds for that entry, and the run it holds reproduces every receipted '
-            + 'checkpoint and gives the signed result - inputs that reach the same checkpoints give it too (kanban #1706)');
-      }
+      if (!reproduces(own)) return null;
+      if (typeof keepRun === 'function') { try { keepRun(mine, key); } catch { /* remembering is a saving, never a verdict */ } }
+      const ownBuilt = resultFrom({ answer: own, contract, entry, transcript: { ...t, hash: th }, entryId, nodePubkey: NOBODY, stopped: true });
+      return ownBuilt.ok && hex(runId(ownBuilt.result)) === hex(signedResultId) ? 'refuse' : 'carried';
+    };
+    let verdict = null;
+    if (typeof knownRun === 'function') { let k = null; try { k = knownRun(marks); } catch { k = null; } verdict = await tryRun(k && Array.isArray(k.ticks) ? k : null); }
+    if (!verdict && typeof ownInputs === 'function') { let o = null; try { o = ownInputs(); } catch { o = null; } verdict = await tryRun(over(o)); }
+    if (!verdict && typeof referenceRuns === 'function') {
+      let refs = [];
+      try { refs = (await referenceRuns()) || []; } catch { refs = []; }
+      for (const r of refs) { verdict = await tryRun(over(r)); if (verdict) break; }
     }
+    if (verdict === 'refuse')
+      return no('replay', 'those inputs are not the run this seat holds for that entry, and the run it holds reproduces every receipted '
+        + 'checkpoint and gives the signed result - inputs that reach the same checkpoints give it too (kanban #1706, #1878)');
+    // A BOUNDED NUMBER OF OTHER INPUTS PER ENTRY (kanban #1878): with no run here to check them against, each distinct
+    // set of inputs is a full replay; past the seat's cap a further one is refused by name, unreplayed.
+    if (typeof admitReplay === 'function' && !admitReplay(formKey))
+      return no('replay', 'this seat has already replayed as many different inputs for that entry\'s live run as it replays for one entry, '
+        + 'and holds no run of it that reproduces the receipted checkpoints to check these against - refused without a replay (kanban #1878)');
   }
 
   let answer;
   try { answer = await replayRun(form, entry, { core, roundRandomness, marks, ...ht }); } catch (e) { answer = { ok: false, why: e.message }; }
+  // THE FIRST CARRIED RUN THAT REPRODUCES EVERY MARK is this seat's reference for the entry from now on (kanban #1878)
+  if (live && reproduces(answer) && typeof keepRun === 'function') { try { keepRun(form, formKey); } catch { /* a saving only */ } }
   // THE INPUTS ARE THE RUN THE MARKS RECEIPTED: every mark's state hash reproduced, none left unreached
   if (answer && answer.ok && (answer.divergedAt !== null && answer.divergedAt !== undefined))
     return no('replay', `the inputs do not reproduce the receipted checkpoint at tick ${answer.divergedAt}`);
