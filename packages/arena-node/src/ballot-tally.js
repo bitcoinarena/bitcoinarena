@@ -78,6 +78,7 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
   const bodies = new Map();                 // proposal id -> its decoded body (parent, configHash, config bytes)
   let tip = null;
   let lives = new Map();                    // network hex -> liveConfig at the tip
+  let livesAt = null;                       // the tip `lives` was built at (kanban #2266)
   let spansAll = new Map();                 // network hex -> liveConfig over every passed proposal (no height cut)
   let running = false;
 
@@ -125,8 +126,13 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
       l.set(net, liveConfig({ genesis, passed, height: tip === null ? 0 : tip }));
       s.set(net, liveConfig({ genesis, passed, height: Number.MAX_SAFE_INTEGER }));
     }
-    lives = l; spansAll = s;
+    lives = l; spansAll = s; livesAt = tip;
   };
+  // `LIVE` IS ALWAYS THE TIP'S (kanban #2266, #1489 fix-refute of #1751): a pass that read the tip and then threw (a votesAt /
+  // getblock timeout, the #1633 hash recheck) never reached refreshLive, so `lives` stayed at the height it was built at - after a
+  // restart the construction's height 0, i.e. genesis - while GET /config named the new tip beside it. Every reader of `lives` goes
+  // through here: built again whenever the tip moved since it was built, and every pass refreshes it in its finally as well.
+  const livesNow = () => { if (livesAt !== tip) refreshLive(); return lives; };
   // A KEPT OUTCOME IS THIS SEAT'S STATE FROM ITS FIRST ANSWER (kanban #1570): after a restart `spans` (the serving rule) and
   // `live` (GET /config) are read from the PASSED records in the store at once - not only at the end of the first pass that got
   // through the reorg check, which a bitcoind still loading its block index (-28) holds off for minutes. Until then the seat
@@ -345,7 +351,11 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
       for (const h of votesByHeight.keys()) if (h < floor) { votesByHeight.delete(h); hashByHeight.delete(h); }
       refreshLive();
       return { tip, read, decided, reorged };
-    } finally { running = false; }
+    } finally {
+      running = false;
+      // kanban #2266: whatever the pass decided or wherever the tip went before it threw, `live`/`spans` follow it now
+      try { refreshLive(); } catch (e) { log(`[ballot] the live config could not be rebuilt (${e.message}): rebuilt on the next read`); livesAt = null; }
+    }
   }
 
   /** The phase of a kept proposal at the tip (27A.7.4): review, voting, cooldown, activated, failed - or void (27A.7.2). */
@@ -358,7 +368,7 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
     if (!p.decided) return tip !== null && tip >= p.votingFrom ? 'voting' : 'review';
     if (!p.decided.passed) return 'failed';
     if (tip === null || tip < p.activationHeight) return 'cooldown';
-    const l = lives.get(p.networkId);
+    const l = livesNow().get(p.networkId);
     return l && l.void.some((v) => toHex(v.id) === p.id) ? 'void' : 'activated';
   };
   const historyJson = (h) => h.map((x) => ({ configHash: toHex(x.configHash), config: x.config ? toHex(x.config) : null, since: x.since, by: x.by ? toHex(x.by) : null }));
@@ -378,7 +388,7 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
     live(net) {
       // kanban #1751: no tip yet, and a kept proposal could have moved the config - nothing is said rather than genesis
       if (tip === null && networks().has(net)) return null;
-      const l = lives.get(net) || liveConfig({ genesis: genesisFor(net), passed: [], height: tip === null ? 0 : tip });
+      const l = livesNow().get(net) || liveConfig({ genesis: genesisFor(net), passed: [], height: tip === null ? 0 : tip });
       const now = l.history[l.history.length - 1];
       return { network: net, tip, configHash: toHex(l.configHash), since: now.since, by: now.by ? toHex(now.by) : null,
         history: historyJson(l.history), void: l.void.map((v) => ({ id: toHex(v.id), why: v.why })) };
