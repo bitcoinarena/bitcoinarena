@@ -6,7 +6,7 @@
 // them (arena-protocol funding.js), signs it with the visitor's own key - an nsec, or a key kept in that browser - and hands it to
 // every node (POST /funding), which keep it and pass it on. The curve is the page's (arena-curve.js, globalThis.ARENA_CURVE: pointX,
 // signSchnorr), passed in as `curve` - this bundle carries no crypto of its own.
-import { encodeFundingProposal, decodeFundingProposal, fundingProposalId, encodeFundingComment, fundingCommentId, FUNDING_SIG_BYTES } from '../../arena-protocol/src/funding.js';
+import { encodeFundingProposal, decodeFundingProposal, fundingProposalId, encodeFundingComment, decodeFundingComment, fundingCommentId, FUNDING_SIG_BYTES } from '../../arena-protocol/src/funding.js';
 import { bech32Encode, bech32Decode, convertBits } from '../../arena-protocol/src/bech32.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { encodePlayerName, decodePlayerName, playerNameId } from '../../arena-protocol/src/player-name.js';
@@ -33,8 +33,8 @@ export const npubOf = (sk, curve) => bech32Encode('npub', convertBits(curveOf(cu
 export const npubOfKey = (pkHex) => bech32Encode('npub', convertBits(fromHex(pkHex), 8, 5, true));
 
 /**
- * What the nodes hold: every proposal at least `needed` of them hold, its stage as most of those say, and every comment any of
- * them holds (comments carry no weight; each node checked its signature). Answers { ok, tip, network, proposals, agreeing, asked }.
+ * What the nodes hold: every proposal at least `needed` of them hold (counted by seats), its stage as more than half of those
+ * seats say (else `undecided`), and every comment whose signed hex checks here (kanban #2138, #2203, #2294). Answers { ok, tip, network, proposals, agreeing, asked }.
  */
 export async function fetchProposals({ nodes, needed = 5, fetcher = (u, o) => fetch(u, o), timeoutMs = 10000, verify = null } = {}) {
   const asked = [...new Set((nodes || []).map(fundingBaseOf))];
@@ -42,12 +42,18 @@ export async function fetchProposals({ nodes, needed = 5, fetcher = (u, o) => fe
     try { const r = await fetcher(`${b}/funding`, { signal: AbortSignal.timeout(timeoutMs) }); return r.ok ? await r.json() : null; } catch { return null; }
   }))).filter((a) => a && Array.isArray(a.proposals));
   if (answers.length < needed) return { ok: false, why: `only ${answers.length} of ${asked.length} nodes answered, and ${needed} must`, asked: asked.length };
+  // ONE VIEW PER SEAT (kanban #2138, #2203, #2294): a seat that lists the same hex five times is one seat - `holding`, the stage
+  // and the comments are counted by seats, never by entries
   const by = new Map();
-  for (const a of answers) for (const p of a.proposals) {
-    const had = by.get(p.hex) || { views: [], comments: new Map() };
-    had.views.push(p);
-    for (const c of p.comments || []) had.comments.set(c.id, c);
-    by.set(p.hex, had);
+  for (const a of answers) {
+    const mine = new Set();
+    for (const p of a.proposals) {
+      if (!p || typeof p.hex !== 'string' || mine.has(p.hex)) continue;
+      mine.add(p.hex);
+      const had = by.get(p.hex) || { views: [] };
+      had.views.push(p);
+      by.set(p.hex, had);
+    }
   }
   // EVERY PLAYER'S NAME (PIP, player-name.js): the newest record any node holds whose signature this page checks itself - a node can
   // leave a name out, never write one; without `verify` (a test) the nodes' word is taken
@@ -62,7 +68,8 @@ export async function fetchProposals({ nodes, needed = 5, fetcher = (u, o) => fe
     if (!had || BigInt(n.atMs) > BigInt(had.atMs)) names.set(player, { name: String(n.name), atMs: String(n.atMs) });
   }
   const proposals = [];
-  for (const { views, comments } of by.values()) {
+  const checked = new Map();   // a comment hex checked once per read
+  for (const { views } of by.values()) {
     if (views.length < needed) continue;
     // WHAT IS SHOWN IS WHAT WAS SIGNED (kanban #1617): the id, purpose, amount, Lightning address, author, network and height come
     // from the signed hex the `needed` seats agree on, decoded here - never from the JSON beside it, which is only the first seat's
@@ -77,11 +84,16 @@ export async function fetchProposals({ nodes, needed = 5, fetcher = (u, o) => fe
       p = { id: toHex(id), purpose: o.purpose, amountSats: String(o.amountSats), lnurl: o.lnurl, author: toHex(o.author), network: toHex(o.networkId),
         publishedHeight: o.publishedHeight };
     } catch { continue; }
-    const [stageKey] = fundingMost(views.map((v) => JSON.stringify([v.signal && v.signal.state, v.vote && v.vote.state, v.cancelled || null])));
-    const v = views.find((x) => JSON.stringify([x.signal && x.signal.state, x.vote && x.vote.state, x.cancelled || null]) === stageKey);
+    // THE STAGE MOST SEATS GIVE (kanban #2138, #2203, #2294): one view per seat; a stage is shown only when more than half of the
+    // seats holding the proposal give it - else it is shown as undecided. The signal count is the median seat's.
+    const stageOf = (x) => JSON.stringify([x.signal && x.signal.state, x.vote && x.vote.state, x.cancelled || null]);
+    const [stageKey, stageSeats] = fundingMost(views.map(stageOf));
+    const v = stageSeats * 2 > views.length ? views.find((x) => stageOf(x) === stageKey) : null;
+    const counts = views.map((x) => (Array.isArray(x.signals) ? x.signals.length : 0)).sort((a, b) => a - b);
     proposals.push({ id: p.id, purpose: p.purpose, amountSats: String(p.amountSats), lnurl: p.lnurl, author: p.author, network: p.network,
-      publishedHeight: p.publishedHeight, signal: v.signal, vote: v.vote, cancelled: v.cancelled || null, signals: (v.signals || []).length,
-      comments: [...comments.values()].sort((a, b) => a.atHeight - b.atHeight || (a.id < b.id ? -1 : 1)), holding: views.length });
+      publishedHeight: p.publishedHeight, signal: v ? v.signal : null, vote: v ? v.vote || null : null, cancelled: v ? v.cancelled || null : null, undecided: !v,
+      signals: counts[Math.floor((counts.length - 1) / 2)],
+      comments: fundingComments(views, p.id, { needed, verify, checked }), holding: views.length });
   }
   // PIP NUMBERS (2026-10-17: "Project improvement proposals, PIP - each item set to vote is prefixed with PIP"): the earliest
   // published is PIP-1 - by its published block, then its id - so a number never changes once the proposals before it are held
@@ -89,6 +101,51 @@ export async function fetchProposals({ nodes, needed = 5, fetcher = (u, o) => fe
   proposals.sort((a, b) => b.publishedHeight - a.publishedHeight);
   const tips = answers.map((a) => Number(a.tip)).filter(Number.isInteger).sort((a, b) => a - b);
   return { ok: true, tip: tips.length ? tips[Math.floor(tips.length / 2)] : null, proposals, names: Object.fromEntries(names), agreeing: answers.length, asked: asked.length };
+}
+
+/**
+ * A proposal's comments from its seats' views (kanban #2138, #2203, #2294): a comment is shown as its signed hex says - decoded here,
+ * its id recomputed, its proposal this one and (with `verify`) its writer's signature checked - so no seat can rewrite one or write
+ * one under another key. A comment a seat hands without its hex (a seat on an older build) is shown only when `needed` seats hand the
+ * same one field for field; without `verify` (a test) the version most seats hand is taken.
+ */
+function fundingComments(views, proposalId, { needed, verify, checked }) {
+  const signed = new Map(), bare = new Map();
+  const field = (c) => JSON.stringify([String(c.id), String(c.parent), String(c.author), Number(c.atHeight), String(c.text)]);
+  for (const view of views) {
+    const seen = new Set();
+    for (const c of Array.isArray(view.comments) ? view.comments : []) {
+      if (!c || typeof c !== 'object') continue;
+      if (typeof c.hex === 'string' && c.hex) {
+        const hex = c.hex.toLowerCase();
+        if (!checked.has(hex)) {
+          let got = null;
+          try {
+            const bytes = fromHex(hex);
+            if (bytes.length > FUNDING_SIG_BYTES) {
+              const o = decodeFundingComment(bytes.slice(0, -FUNDING_SIG_BYTES)), id = fundingCommentId(o);
+              if (!verify || verify(bytes.slice(-FUNDING_SIG_BYTES), id, o.author) === true)
+                got = { id: toHex(id), proposal: toHex(o.proposalId), parent: toHex(o.parentId), author: toHex(o.author), atHeight: o.atHeight, text: o.text };
+            }
+          } catch { got = null; }
+          checked.set(hex, got);
+        }
+        const got = checked.get(hex);
+        if (got && got.proposal === proposalId) signed.set(got.id, { id: got.id, parent: got.parent, author: got.author, atHeight: got.atHeight, text: got.text });
+        continue;
+      }
+      const k = field(c); if (seen.has(k)) continue; seen.add(k);
+      const id = String(c.id), had = bare.get(id) || new Map();
+      const e = had.get(k) || { c: { id, parent: String(c.parent), author: String(c.author), atHeight: Number(c.atHeight), text: String(c.text) }, seats: 0 };
+      e.seats++; had.set(k, e); bare.set(id, had);
+    }
+  }
+  for (const [id, versions] of bare) {
+    if (signed.has(id)) continue;
+    const best = [...versions.values()].sort((a, b) => b.seats - a.seats)[0];
+    if (!verify || best.seats >= needed) signed.set(id, best.c);
+  }
+  return [...signed.values()].sort((a, b) => a.atHeight - b.atHeight || (a.id < b.id ? -1 : 1));
 }
 
 /** The network the nodes run, as most of them name it (GET /network). */
