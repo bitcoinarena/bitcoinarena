@@ -453,7 +453,10 @@ export class LockSettlement {
     // A SEAT THAT ONLY TOOK THE HANDED FEDERATION SIGNATURES (kanban #1240, audit 3 FIXES-6): an any-federation round's shares were kept only by
     // the seat that combined its transactions, so every other seat refused every late loser and fewer than a threshold ever committed - the
     // late stake went back to the loser at its expiry. The shares are derived from this seat's own plan (as backfillShares does) and kept.
-    if (!shares && takesAnyFederation(contract)) shares = await this.#sharesFromPlan(roundIdBytes);
+    // SHARES MARKED UNKNOWN (kanban #2277): the row was made ACCEPTED on a txid the history kept without its shares, so the kept ones were another
+    // txid's; derived the same way, only when this seat's plan pays as many as the landed txid's moves
+    const unknown = typeof this.round.lockSettlementSharesUnknown === 'function' && this.round.lockSettlementSharesUnknown(roundIdBytes);
+    if (!shares && (takesAnyFederation(contract) || unknown)) shares = await this.#sharesFromPlan(roundIdBytes);
     if (!shares) return refuse('this signer node kept no shares of the round\'s settlement, so it cannot split a late stake');
     const lockRow = this.round.stakeLock(entryIdBytes);
     if (!lockRow) return refuse('this signer node verified no stake lock for that entry');
@@ -1556,7 +1559,8 @@ export class LockSettlement {
     // THE TXID IS KEPT IN THE HISTORY ALWAYS; THE ROW'S MOVES ONLY WHILE THE ROW IS NOT FINAL ON ANOTHER (kanban #1275, audit 4 #1257 fixesB-4): a
     // settle pass that gathered for seconds wrote its own txid's moves after recover() had made the row ACCEPTED on the other asker's landed one -
     // #1249's rewrite had run and was undone, and the claims, payouts and shares read were those of a transaction that never landed
-    if (typeof this.round.putSettlementTxid === 'function') this.round.putSettlementTxid({ roundId: roundIdBytes, txid: m.txid, message: m.message, claims, payouts: m.plan.payouts.length });
+    // AND WITH ITS WINNERS' SHARES (kanban #2277): a row made ACCEPTED on this txid later puts them back next to its moves
+    if (typeof this.round.putSettlementTxid === 'function') this.round.putSettlementTxid({ roundId: roundIdBytes, txid: m.txid, message: m.message, claims, payouts: m.plan.payouts.length, shares: m.plan.stakeShares || [] });
     // AND WHERE EACH SEND'S FIRST CONTRACT SITS IN IT (kanban #1988): the sends of a round ACCEPTED on this txid are driven from these, never from a rebuild
     if (typeof this.round.putSettlementPayoutKeys === 'function') this.round.putSettlementPayoutKeys({ roundId: roundIdBytes, txid: m.txid,
       payouts: m.plan.payouts.map((p) => ({ kind: p.kind, paymentHash: p.sent ? String(p.sent.paymentHash) : null, donationId: p.donation ? toHex(p.donation.id) : null })) });
