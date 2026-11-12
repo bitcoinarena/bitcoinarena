@@ -89,6 +89,39 @@ export function matches(f, e) {
   return true;
 }
 
+// ONE EVENT IS NOT A STALL FOR EVERYONE (kanban #1752, #1489 r5-nostr-2): the fan-out ran matches() for every filter of every
+// subscription of every socket, and matches() runs e.tags.some(vals.includes) - tags x values. Eight free sockets of 20 REQs x 10
+// filters naming 500 #a values, and kind-8 events with 2000 `a` tags, held the relay's one event loop ~2.6 s per event. Now a filter
+// is compiled into Sets once, when its REQ is accepted, the event's tags into Sets by letter once per event, and a tag check walks
+// the smaller of the two sides: at most min(filter values, event values) lookups per tag, never their product.
+export function compileFilter(f) {
+  const set = (v) => (Array.isArray(v) ? new Set(v) : null);
+  const tags = [];
+  for (const [k, vals] of Object.entries(f)) if (k[0] === '#' && k.length === 2 && Array.isArray(vals)) tags.push([k[1], new Set(vals)]);
+  return { ids: set(f.ids), authors: set(f.authors), kinds: set(f.kinds), since: f.since, until: f.until, tags };
+}
+export function eventTagSets(e) {
+  const m = new Map();
+  for (const t of e.tags) { if (t.length < 2) continue; let s = m.get(t[0]); if (!s) m.set(t[0], (s = new Set())); s.add(t[1]); }
+  return m;
+}
+export function matchesCompiled(c, e, tagSets) {
+  if (c.ids && !c.ids.has(e.id)) return false;
+  if (c.authors && !c.authors.has(e.pubkey)) return false;
+  if (c.kinds && !c.kinds.has(e.kind)) return false;
+  if (c.since !== undefined && e.created_at < c.since) return false;
+  if (c.until !== undefined && e.created_at > c.until) return false;
+  for (const [letter, want] of c.tags) {
+    const have = tagSets.get(letter);
+    if (!have) return false;
+    const [small, big] = have.size < want.size ? [have, want] : [want, have];
+    let hit = false;
+    for (const v of small) if (big.has(v)) { hit = true; break; }
+    if (!hit) return false;
+  }
+  return true;
+}
+
 /**
  * THE RELAY: `{ port, host, dbPath }` ('' or ':memory:' keeps nothing on disk). Answers { port, close(), events() }.
  */
@@ -228,7 +261,8 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
           }
         }
         send(['OK', e.id, true, '']);
-        for (const o of clients) for (const [sid, fs] of o.subs) if (fs.some((f) => matches(f, e))) fanOut(o, sid, e);
+        const tagSets = eventTagSets(e);   // kanban #1752: once per event; each filter was compiled at its REQ
+        for (const o of clients) for (const [sid, fs] of o.subs) if (fs.some((c) => matchesCompiled(c, e, tagSets))) fanOut(o, sid, e);
         return undefined;
       }
       if (m[0] === 'REQ') {
@@ -238,7 +272,7 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
         if (!filters.length || filters.length > MAX_FILTERS) return send(['CLOSED', sid, `invalid: 1 to ${MAX_FILTERS} filters`]);
         { const bad = filters.map(filterRefusal).find(Boolean); if (bad) return send(['CLOSED', sid, `invalid: ${bad}`]); }   // kanban #1470
         if (!subs.has(sid) && subs.size >= MAX_SUBS) return send(['CLOSED', sid, `blocked: at most ${MAX_SUBS} subscriptions`]);
-        subs.set(sid, filters);
+        subs.set(sid, filters.map(compileFilter));   // kanban #1752: Sets, built once
         for (const e of stored(filters)) send(['EVENT', sid, e]);
         return send(['EOSE', sid]);
       }
