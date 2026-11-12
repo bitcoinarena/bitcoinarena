@@ -402,6 +402,28 @@ const hexOf = (b) => Buffer.from(b).toString('hex');
  * thing instead of each having a taste of its own.
  */
 export const GHOST_BACKLOG_BYTES = 262144;
+// ANOTHER SEAT'S ANSWER IS READ ONLY UP TO A BOUND (kanban #1553): a game package (GET /plugin) is its manifest, chain, cores and
+// clients - a few hundred kB to a few MB for the real apps - and a GET /games listing far less. r.json() took any length: a seat
+// streaming hundreds of MB inside the timeout was buffered and parsed whole on this seat's main thread, on every automatic-update
+// sweep. Past the bound the stream is cancelled and the answer refused.
+export const PACKAGE_ANSWER_MAX_BYTES = 16 * 1024 * 1024;
+export const LISTING_ANSWER_MAX_BYTES = 4 * 1024 * 1024;
+export async function readTextCapped(r, maxBytes) {
+  const len = Number(r.headers.get('content-length'));
+  if (Number.isFinite(len) && len > maxBytes) { try { await r.body?.cancel(); } catch {} throw new Error(`its answer of ${len} bytes is over ${maxBytes}`); }
+  if (!r.body) return '';
+  const reader = r.body.getReader(), parts = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) { try { await reader.cancel(); } catch {} throw new Error(`its answer is over ${maxBytes} bytes`); }
+    parts.push(value);
+  }
+  return Buffer.concat(parts, total).toString('utf8');
+}
+export const readJsonCapped = async (r, maxBytes) => JSON.parse(await readTextCapped(r, maxBytes));
 
 export const NOTHING_IS_FUNDED = () => false;
 
@@ -1158,7 +1180,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (hosted.has(game)) return { ok: false, status: 409, why: 'this seat already hosts that game' };
     if (replaces !== null && !hosted.has(replaces)) return { ok: false, status: 409, why: 'this seat does not host the game that version would replace' };
     let pkg;
-    try { const r = await fetch(`${from}/plugin?game=${game}`, { signal: AbortSignal.timeout(15000) }); if (!r.ok) throw new Error(`${r.status} ${(await r.text()).trim()}`); pkg = await r.json(); }
+    try { const r = await fetch(`${from}/plugin?game=${game}`, { signal: AbortSignal.timeout(15000) }); if (!r.ok) throw new Error(`${r.status} ${(await readTextCapped(r, 4096).catch(() => '')).trim()}`); pkg = await readJsonCapped(r, PACKAGE_ANSWER_MAX_BYTES); }   // bounded (kanban #1553)
     catch (e) { return { ok: false, status: 502, why: `that seat did not hand the game over: ${e.message}` }; }
     return adoptPackage(pkg, { game, from, replaces });
   }
@@ -1256,23 +1278,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // NAMED SOURCES, ELSE THE NETWORK'S OWN SEATS (found by this seat, not typed in)
     const sources = set.sources.length ? set.sources : networkSeats();
     for (const from of sources) {
-      let got; try { got = await (await fetch(`${from}/games`, { signal: AbortSignal.timeout(10000) })).json(); } catch { got = { games: [] }; }
-      // A LISTING IS A SEAT'S CLAIM, CHECKED HERE BEFORE ANY /plugin IS ASKED (kanban #1552): the listed manifest must stand
-      // (its developer signed it, its parent the hosted one) and hash to the id beside it - a made-up id never costs a fetch -
-      // and each parent is tried once per source per sweep, and a source whose /plugin fails once is not asked again this sweep
+      let got; try { got = await readJsonCapped(await fetch(`${from}/games`, { signal: AbortSignal.timeout(10000) }), LISTING_ANSWER_MAX_BYTES); } catch { got = { games: [] }; }   // bounded (kanban #1553)
+      // A LISTING IS A SEAT'S CLAIM, CHECKED HERE BEFORE ANY /plugin IS ASKED (kanban #1552, #1553): the listed manifest must stand
+      // (its developer signed it, its parent the hosted one), the game asked for is the manifest's own id - never the id the listing
+      // names beside it - each parent is tried once per source per sweep, and a source whose /plugin fails once is not asked again this sweep
       const tried = new Set();
-      for (const g of got.games || []) {
+      for (const g of (Array.isArray(got?.games) ? got.games : [])) {
         if (typeof g?.id !== 'string' || hosted.has(g.id)) continue;
-        let m; try { m = decodeManifest(fromHex(g.manifest)); } catch { continue; }
+        let m; try { m = decodeManifest(fromHex(String(g?.manifest || ''))); } catch { continue; }
         const parent = toHex(m.parentManifestId);
         if (!hosted.has(parent) || superseded.has(parent) || tried.has(parent)) continue;
         let id; try { id = toHex(gameIdOf(m)); } catch { continue; }
-        if (id !== g.id) continue;
+        // the game asked for is the manifest's own id (kanban #1553) - a listing naming another id beside it is not asked at all (#1552)
+        if (id !== g.id || hosted.has(id)) continue;
         if (!manifestStands(m, { verify: verifyEd25519, parentOf: hostedParent }).ok) continue;
         const u = checkUpdate(installedInfo(parent), { devKey: toHex(m.gameDevPubkey), parent, version: m.version });
         if (!u.ok) continue;
         tried.add(parent);
-        const r = await takeGame({ game: g.id, from, replaces: parent });
+        const r = await takeGame({ game: id, from, replaces: parent });
         console.log(`[plugins] automatic update of ${parent.slice(0, 16)} from ${from}: ${r.ok ? 'taken' : r.why}`);
         if (!r.ok && r.status === 502) break;
       }
@@ -1281,7 +1304,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // federation is not taken automatically: it would make this seat's federation draining (succession), which is the
       // owner's own act from the owner page
       for (const [nid, held] of networksHeld) {
-        let pkg; try { const r = await fetch(`${from}/network?network=${nid}`, { signal: AbortSignal.timeout(10000) }); if (!r.ok) continue; pkg = await r.json(); } catch { continue; }
+        let pkg; try { const r = await fetch(`${from}/network?network=${nid}`, { signal: AbortSignal.timeout(10000) }); if (!r.ok) continue; pkg = await readJsonCapped(r, PACKAGE_ANSWER_MAX_BYTES); } catch { continue; }   // bounded (kanban #1553)
         if (!pkg || !pkg.manifest || pkg.id === held.report.id) continue;
         if (pkg.manifest.federationId !== held.report.federationId) {
           console.log(`[networks] automatic update of ${nid.slice(0, 16)} from ${from}: not taken - it names federation ${String(pkg.manifest.federationId).slice(0, 16)}, a succession is the owner's to take`);
@@ -7127,7 +7150,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (!update && networksHeld.has(network)) return { ok: false, status: 409, why: 'this seat already holds a package of that network: update it' };
     if (update && !networksHeld.has(network)) return { ok: false, status: 409, why: 'this seat holds no package of that network to update' };
     let pkg;
-    try { const r = await fetch(`${from}/network?network=${network}`, { signal: AbortSignal.timeout(15000) }); if (!r.ok) throw new Error(`${r.status} ${(await r.text()).trim()}`); pkg = await r.json(); }
+    try { const r = await fetch(`${from}/network?network=${network}`, { signal: AbortSignal.timeout(15000) }); if (!r.ok) throw new Error(`${r.status} ${(await readTextCapped(r, 4096).catch(() => '')).trim()}`); pkg = await readJsonCapped(r, PACKAGE_ANSWER_MAX_BYTES); }   // bounded (kanban #1553)
     catch (e) { return { ok: false, status: 502, why: `that seat did not hand the network over: ${e.message}` }; }
     const v = checkOnSeat(pkg);
     // the report as JSON: its lines and ids, not the decoded sets and series (BigInts)
