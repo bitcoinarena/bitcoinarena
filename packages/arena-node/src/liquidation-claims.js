@@ -9,6 +9,10 @@
 // A CLAIM IS A SALE OF NOTES TO THE ESCROW: the client hands over its notes as out-of-band e-cash (the stock mint's send, the
 // lock client's sendAllEcash) with the key it is paid to; the arbitration set holds them from then on. Should the federation
 // come back (2f + 1 guardians return), the notes it bought are redeemed into the same escrow - the player was paid already.
+// NOT AS BUILT (kanban #1849, state audit 2026-11-12): the book keeps each note's nonce, amount and payout key, not the e-cash, and the
+// player is paid only at the window's end; a federation that comes back before then is no longer liquidated (liquidationOf null, plan
+// 404) and its notes are nobody's. The page takes them back: the door's 409 "not being liquidated" has it receive its kept notes into
+// its own wallet (arena-client liquidation-claim.js); reissued there, their nonces are spent, so a later halt's spent set refuses these rows.
 //
 // What the notes are is the federation's to say, so it is injected: `validate(federationHex, ecash)` checks every note's
 // signature against that federation's mint keys and the spend keys, offline (fedimint-cli module mint validate), and answers
