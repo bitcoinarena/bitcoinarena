@@ -1589,3 +1589,8 @@ Audit 5 (#1399, base 1502786b) and audit 6 (#1415, base eb7fd30fc) for release 2
 #### SM-I4 (change) Auto-update record vs the update journal's resume (kanban #1581, audit #1489 sm1-node-2)
 - Invariant: every rollback of a release on this node is in auto-update.json (`rolledBack: true`, `to` = its VERSION, `commit` = its COMMIT) before the next check reads it - the updater's own (updateOnce), one that threw (#1440), and one the journal's resume made after its updater died (`resumeUpdate`, `resumed: true`; at the service's start through `resumeUnderLock`, or inside `updateNode`). So the #1369 day's wait applies to all of them.
 - `updateNode` with `retryRolledBack: false` (the auto updater, unless `bitcoinarena update` forces it) does not move to the release its own resume rolled back in the same call; it answers rolled back.
+
+## 15. State audit 2026-11-12, 1.9 fixes ported to 2.0 (kanban #1489)
+
+#### SM-E (change) Stake lock / fee lock per entry (one player key, one entry: kanban #1215, #1640)
+- A player key's stake lock and fee lock stand on ONE entry of the round at a seat. A lock of either kind is refused while another entry of the same player key holds a verified lock of either kind there (`otherStakedUnderKey`, stake-lock-signer-node.js), at the door and again at the write. The entry whose lock stood first owns the key; a reload's second entry under the same key (join.js playerFor) gets no lock, so an entry waiting for its fee lock (`waitsForFeeLock`) is never left beside another entry holding the key's fee lock, where neither could ever be seen.
