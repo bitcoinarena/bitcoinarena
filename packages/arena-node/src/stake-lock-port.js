@@ -326,13 +326,14 @@ export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs =
       return BigInt(j.msat);
     },
     /**
-     * E-cash reissued into the seat's client here: { state: 'Success' | 'Rejected' | 'AlreadyReceived', msat } (kanban #614). An
+     * E-cash reissued into the seat's client here: { state: 'Success' | 'Rejected' | 'AlreadyReceived' | 'Invalid', msat } (kanban #614;
+     * 'Invalid' with `why`, kanban #2384/#2436: not notes of this federation, answered before anything reached a guardian). An
      * AlreadyReceived from a tool of kanban #1160 also says how the earlier receive of that string ended (`earlier`) and what it carried
      * (`carriedMsat`); an older tool says neither.
      */
     async ecashReceive(ecash) {
       const j = await run(bin, ['--mode', 'ecash-receive', '--data-dir', dataDir, '--ecash', String(ecash)], timeoutMs);
-      return { state: String(j.state), msat: BigInt(j.msat || 0), earlier: j.earlier === undefined ? null : String(j.earlier),
+      return { state: String(j.state), msat: BigInt(j.msat || 0), ...(j.why !== undefined ? { why: String(j.why) } : {}), earlier: j.earlier === undefined ? null : String(j.earlier),
         carriedMsat: j.carried_msat === undefined || j.carried_msat === null ? null : BigInt(j.carried_msat) };
     },
     /**
