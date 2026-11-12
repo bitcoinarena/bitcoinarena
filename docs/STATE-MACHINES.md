@@ -1547,3 +1547,6 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-19 (change) Faucet book: players + unsure (kanban #1628)
 - Invariant: an account holds at most one welcome, whatever the order of payer answers. A grant parked in `unsure` (its payer timed out, lnd may still pay it) counts as taken until the sweep rebooks it (any payer SUCCEEDED) or forgets it (all FAILED/NONE, or no IN_FLIGHT after 24 h): `playerGrantDecide` refuses a welcome while the same account has an unsure welcome ("your welcome is still being checked"), and counts the account's unsure top-ups of the day toward `PLAYER_TOPUPS_PER_DAY`.
+
+#### SM-22 (change) Feedback reward link: paying -> paid via settle (kanban #1785)
+- Invariant: a `paying` reward whose payment the bounty payer holds as SUCCEEDED is booked `paid` by the next settle pass, however many payments the wallet holds. `bountyStatus` reads the one hash with `lncli trackpayment` (SUCCEEDED -> paid, FAILED or not initiated -> failed, IN_FLIGHT -> unknown); only when that gives no answer is `listpayments` read, with no 1 MB output cap, and a hash missing from a full list (500) is `unknown`, never `failed`.
