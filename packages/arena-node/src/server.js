@@ -300,7 +300,7 @@ const read = (req, max = BODY_MOST) => new Promise((resolve, reject) => {
 const CORS = {
   'access-control-allow-origin': '*',
   'access-control-allow-methods': 'GET, POST, OPTIONS',
-  'access-control-allow-headers': 'content-type, authorization',
+  'access-control-allow-headers': 'content-type, authorization, x-arena-stake-lock',   // the last: STAKE_LOCK_HEADER (kanban #1596)
   // The headers a client actually reads answers out of. Without this a page
   // sees the body and none of the counts.
   'access-control-expose-headers':
@@ -373,6 +373,9 @@ export async function readTextCapped(r, maxBytes) {
   return Buffer.concat(parts, total).toString('utf8');
 }
 export const readJsonCapped = async (r, maxBytes) => JSON.parse(await readTextCapped(r, maxBytes));
+// THE STAKE LOCK A LOCK-FIRST CLIENT SHOWS WITH ITS HANDOUT (kanban #1596, after #1485): JSON { outpoint: "txid:index", fields, federation? }.
+// Inside a head-to-head round's handout lead a handout is taken only with one the federation holds (takeHandout, stakeLockMadeFor)
+export const STAKE_LOCK_HEADER = 'x-arena-stake-lock';
 
 export const NOTHING_IS_FUNDED = () => false;
 
@@ -4599,7 +4602,40 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }));
     return said.some(Boolean);
   };
-  const takeHandout = async (bytes, { accepted = false } = {}) => {
+  // A STAKE LOCK ALREADY MADE FOR THIS HANDOUT (kanban #1596, after #1485): what a lock-first client (tools/rps-opponent.mjs before #1596, the
+  // lock-round fixture) shows with its handout, as STAKE_LOCK_HEADER = JSON { outpoint: "txid:index", fields, federation? }. Checked as POST
+  // /refused-lock checks a lock: its image is this handout's A0, its refund key the handout player's, its claim key the round's, and the
+  // federation holds that very contract at that outpoint. Answers null when the lock is made, else why not.
+  const stakeLockMadeFor = async (handout, said) => {
+    if (!stakeLocks) return 'this seat reaches no federation, so it cannot read the lock';
+    let fields, outpoint, fed = null;
+    try {
+      const body = JSON.parse(String(said));
+      fields = lockFieldsFromJson(body.fields);
+      const [txid, outIdx] = String(body.outpoint || '').split(':');
+      if (!/^[0-9a-f]{64}$/.test(txid || '') || !/^\d+$/.test(outIdx || '')) throw new Error('an outpoint is txid:index');
+      outpoint = { txid: new Uint8Array(Buffer.from(txid, 'hex')), outIdx: BigInt(outIdx) };
+      if (body.federation !== undefined) {
+        if (!/^[0-9a-f]{64}$/.test(String(body.federation))) throw new Error('a federation is 64 hex');
+        fed = new Uint8Array(Buffer.from(body.federation, 'hex'));
+      }
+    } catch (e) { return `that is not a lock: ${e.message}`; }
+    const image = fields.paymentImage || {};
+    if (image.kind !== 'point' || !(image.bytes instanceof Uint8Array) || !handout.commitments[0] || toHex(image.bytes) !== toHex(handout.commitments[0]))
+      return 'that lock\'s image is not this handout\'s A0';
+    if (toHex(refundKeyOf(handout.playerPubkey)) !== toHex(fields.refundPk)) return 'that lock\'s refund key is not the handout player\'s';
+    const claimPk = claimKeyOf(handout.roundId);
+    if (!(claimPk instanceof Uint8Array) || toHex(claimPk) !== toHex(fields.claimPk)) return 'that lock names another claim key than this round\'s';
+    try {
+      const port = (fed ? await portOfFederation(fed) : await portOfRid(handout.roundId)) || stakeLocks;
+      const [st, id] = await Promise.all([port.status(outpoint), port.contractId(fields)]);
+      if (!st || !st.stored) return 'the federation holds no lock at that outpoint (not accepted yet, spent, or never made)';
+      if (String(id) !== String(st.stored.contractId)) return 'the lock at that outpoint is not the contract shown';
+    } catch (e) { return `the federation could not be asked: ${e.message}`; }
+    return null;
+  };
+  // `lockMade`: the STAKE_LOCK_HEADER a client sent with the handout, or null.
+  const takeHandout = async (bytes, { accepted = false, lockMade = null } = {}) => {
     let handout;
     try { handout = decodeHandout(bytes); } catch (e) { return { ok: false, status: 400, why: 'that is not a handout: ' + e.message }; }
     const forRound = round.get(handout.roundId);
@@ -4617,10 +4653,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // stops. A handout one of the round's own seats already holds was dealt before that seat's lead - the page's lock is made or on its way - so it is
     // taken here until the close itself. The proof is the peer's copy, read here (GET /handout, as replayOrder reads it), byte for byte this one;
     // never a header a client could send. A handout no peer holds is a client's first one and still refused inside the lead.
+    // AND THE LEAD SPARES ONLY A CLIENT THAT HAS LOCKED NOTHING (kanban #1596, the #1489 audit of #1485): a client that locks first and posts the handout
+    // after (the RPS opponent bot, the lock-round fixture) met this refusal after its money - the stake and fee lock made, every seat refusing the
+    // handout and so the entry, its fee parts spent: the #1485 loss itself. A handout that comes with its stake lock, the federation holding it
+    // (stakeLockMadeFor), is taken inside the lead until the close itself, where /entry takes it too: refusing it saves nothing. Without one it is
+    // refused as before, so a client that posts the handout first (the page, the bot since #1596) locks nothing
+    // both spare a handout inside the lead (#1595 a peer's copy, #1596 a lock the federation holds); neither one past the close itself
     const nowMs = BigInt(round.now());
-    if (!accepted && headToHeadReady && headToHeadRound(handout.roundId) && nowMs > roundContract.entryCloseMs - BigInt(H2H_HANDOUT_LEAD_MS)
-      && (nowMs >= roundContract.entryCloseMs || !(await aPeerHoldsHandout(handout.roundId, handout))))
-      return { ok: false, status: 409, why: `handout refused: that round's entries close at ${new Date(Number(roundContract.entryCloseMs)).toISOString()}, and a head-to-head order needs ${H2H_HANDOUT_LEAD_MS / 1000} s before it to lock and enter - nothing is locked, tap the next round` };
+    if (!accepted && headToHeadReady && headToHeadRound(handout.roundId) && nowMs > roundContract.entryCloseMs - BigInt(H2H_HANDOUT_LEAD_MS)) {
+      const lockWhy = nowMs >= roundContract.entryCloseMs ? 'closed'
+        : (await aPeerHoldsHandout(handout.roundId, handout)) ? null
+        : lockMade ? await stakeLockMadeFor(handout, lockMade) : 'none shown';
+      if (lockWhy !== null)
+        return { ok: false, status: 409, why: `handout refused: that round's entries close at ${new Date(Number(roundContract.entryCloseMs)).toISOString()}, and a head-to-head order needs ${H2H_HANDOUT_LEAD_MS / 1000} s before it to lock and enter - nothing is locked, tap the next round${lockMade && lockWhy !== 'closed' ? ` (the stake lock shown: ${lockWhy})` : ''}` };
+    }
     let threshold;
     try { threshold = roundThreshold(roundContract.settlementSlots); } catch (e) { return { ok: false, status: 409, why: e.message }; }
     if (handout.needed !== threshold)
@@ -8552,7 +8598,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // THE ROUND'S THRESHOLD, NOT THE PLAYER'S (M3.3-26). `acceptHandout` checks a handout only against itself, and measured: a crafted
         // 1-of-2 and a 7-of-7 on seven signer nodes were both taken 201. A stake is dealt at the round's number or not at all - the same
         // number the settle opens at and the page deals (takeHandout).
-        const got = await takeHandout(await read(req));
+        const got = await takeHandout(await read(req), { lockMade: req.headers[STAKE_LOCK_HEADER] || null });   // kanban #1596: a lock-first client shows its lock
         steps.at(got.ok ? 'share opened' : 'refused');
         if (!got.ok) return text(res, got.status || 409, got.why);
         steps.named(toHex(got.id));
