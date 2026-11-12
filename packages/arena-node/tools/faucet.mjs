@@ -313,6 +313,16 @@ const GRANTING = new Set();
 let sweeping = false;
 if (PAYERS.length) setInterval(() => { if (sweeping) return; sweeping = true; sweepPayments().catch(() => {}).finally(() => { sweeping = false; }); }, Number(env.FAUCET_SWEEP_MS || 120000)).unref();
 
+// A WELCOME STILL ON ITS WAY (state audit 2026-11-12, kanban #1834): a row kept in `unsure` is a payment no payer has called FAILED or NONE yet - the
+// sweep forgets it only then - so it may still arrive. playerGrantDecide read book.players only: the page's "try again in a minute" paid a second
+// welcome on a new invoice, and when the first then SUCCEEDED the sweep booked both. The decide now counts unsure rows as the account's own (toward
+// the welcome, the top-ups and the day/hour/address caps), and a welcome still unsure is answered as on its way
+function unsureWelcome(book, ask) {
+  return ask.kind === 'welcome' && (book.unsure || []).some((u) => u.account === ask.account && u.kind === 'welcome')
+    ? { ok: false, why: 'your welcome is still on its way: try again in a few minutes' } : null;
+}
+const withUnsure = (book) => ({ ...book, players: [...(book.players || []), ...(book.unsure || []).map(({ payers, removedMs, ...row }) => row)] });
+
 async function grant(ask) {
   if (!/^lntb[0-9a-z]{20,1500}$/.test(String(ask.invoice || ''))) return { ok: false, why: 'that is not a testnet invoice' };
   const read = await lncli(PAYERS[0], ['decodepayreq', ask.invoice]);
@@ -320,7 +330,9 @@ async function grant(ask) {
   const inv = JSON.parse(read.out);
   const book = readBook();
   book.players = book.players || [];
-  const d = playerGrantDecide({ kind: ask.kind, account: ask.account, ip: ask.ip, invoiceSats: Number(inv.num_satoshis) }, book);
+  const onWay = unsureWelcome(book, ask);   // kanban #1834
+  if (onWay) return onWay;
+  const d = playerGrantDecide({ kind: ask.kind, account: ask.account, ip: ask.ip, invoiceSats: Number(inv.num_satoshis) }, withUnsure(book));
   if (!d.ok) return d;
   const row = { account: ask.account, kind: ask.kind, ip: ask.ip, sats: d.grant.invoiceSats, atMs: Date.now(), hash: inv.payment_hash };
   // BOOKED PENDING BEFORE ANY PAYINVOICE (kanban #1627, state audit 2026-11-12 SM-19): a plain row booked here was a welcome (or a refill) paid for
@@ -391,7 +403,9 @@ function grantEcash(ask) {
       try { const n = JSON.parse(readFileSync(had.noteFile, 'utf8')); if (n.ecash) { console.log(`${new Date().toISOString()} player welcome answered again (${ask.ip || 'no ip'}): ${String(had.hash || '').slice(0, 16)}`); return { ok: true, sats: had.sats, ecash: String(n.ecash), again: true }; } } catch { /* the note file is gone: refused below as before */ }
     }
   }
-  const d = playerGrantDecide({ kind: ask.kind, account: ask.account, ip: ask.ip, invoiceSats: PLAYER_WELCOME_SATS }, book);
+  const onWay = unsureWelcome(book, ask);   // kanban #1834: an invoice welcome still unsure blocks a pool note too
+  if (onWay) return onWay;
+  const d = playerGrantDecide({ kind: ask.kind, account: ask.account, ip: ask.ip, invoiceSats: PLAYER_WELCOME_SATS }, withUnsure(book));
   if (!d.ok) return d;
   const got = takeEcash(ask.ecash, d.grant.invoiceSats * 1000);
   if (!got) return null;
