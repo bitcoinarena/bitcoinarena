@@ -21,6 +21,9 @@ import { upDownOutcome, upDownPrices, UP_DOWN_OUTCOMES } from '../../arena-proto
 import { valueAttestationBodyId, encodeValueAttestation } from '../../arena-protocol/src/scalar.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { decodeManifest, gameIdOf, isScalar, RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
+import { decodeRoundContract, roundId as roundIdOf } from '../../arena-protocol/src/contracts.js';
+import { seriesId as seriesIdOf, seriesRoundCheck } from '../../arena-protocol/src/series.js';
+import { parseSeriesLine } from '../../arena-protocol/src/series-line.js';
 
 const PKCS8_ED25519 = Buffer.from('302e020100300506032b657004220420', 'hex');
 
@@ -150,3 +153,37 @@ export function marketVersions({ games = [], name, key, mode = 'outcome' }) {
 }
 
 export { UP_DOWN_OUTCOMES };
+
+/**
+ * THE ROUND'S CLOSE FROM ITS OWN CONTRACT, NOT FROM A SEAT'S WORD (kanban #1489 / #1705, refute of fix:attest:3): a seat's GET
+ * /rounds row is unsigned, so the seat listed first could name a shifted close, have this attestor sign another window, and -
+ * every seat refusing that word (attested.js attestationTimely: observed_at must be the window's end) - turn the round VOID after
+ * watching the price. The close is believed only from contract bytes that ARE the round: a round of no series is the hash of its
+ * contract (contracts.js roundId); a series round is H(series_id || i), so its contract must also be the one the series' template
+ * derives (series.js seriesRoundCheck), the template believed only as the series id it hashes to. `contract` is the bytes of GET
+ * /round?id=, `seriesLine` the text of GET /series-template?id= (asked for only when the contract names a series). `marketIds`
+ * (a Set of hex ids, may be empty) - the contract must play one of them; `periodMs` - the market's own grid (its manifest's
+ * roundPeriodMs; 0 = none): a close off it is no round of the market (attested.js marketWindowOf).
+ *   -> { ok: true, closeMs, gameId } | { ok: false, why, seriesId? } (seriesId: the template to fetch, when it was not given)
+ */
+export function roundCloseOf({ id, contract, seriesLine = null, marketIds = null, periodMs = 0n }) {
+  let c;
+  try { c = decodeRoundContract(contract instanceof Uint8Array ? contract : new Uint8Array(contract)); } catch (e) { return { ok: false, why: `that contract does not read: ${e.message}` }; }
+  const want = String(id).toLowerCase();
+  if (c.seriesId !== undefined && c.seriesId !== null) {
+    const sid = toHex(c.seriesId);
+    if (seriesLine === null || seriesLine === undefined) return { ok: false, why: `round of series ${sid.slice(0, 16)}: its template is needed`, seriesId: sid };
+    let t; try { t = parseSeriesLine(String(seriesLine).trim()); } catch (e) { return { ok: false, why: `that series line does not read: ${e.message}` }; }
+    let tid; try { tid = toHex(seriesIdOf(t)); } catch (e) { return { ok: false, why: `that series template has no id: ${e.message}` }; }
+    if (tid !== sid) return { ok: false, why: `that series line is series ${tid.slice(0, 16)}, not the ${sid.slice(0, 16)} the contract names` };
+    const k = seriesRoundCheck(c, [t]);
+    if (!k.ok) return { ok: false, why: k.why };
+  }
+  let rid; try { rid = toHex(roundIdOf(c)); } catch (e) { return { ok: false, why: `that contract has no round id: ${e.message}` }; }
+  if (rid !== want) return { ok: false, why: `that contract is round ${rid.slice(0, 16)}, not ${want.slice(0, 16)}` };
+  const gameId = toHex(c.gameId);
+  if (marketIds && marketIds.size && !marketIds.has(gameId)) return { ok: false, why: `that round plays game ${gameId.slice(0, 16)}, not this market` };
+  const p = BigInt(periodMs || 0n);
+  if (p > 0n && c.entryCloseMs % p !== 0n) return { ok: false, why: `that round closes at ${c.entryCloseMs}, off the market's ${p} ms grid` };
+  return { ok: true, closeMs: c.entryCloseMs, gameId };
+}
