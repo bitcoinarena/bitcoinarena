@@ -21,6 +21,23 @@ export function referralNameStep(had, next) {
   return had.hash && next.hash < had.hash ? 'new' : 'older';
 }
 
+/**
+ * HOW MANY NAMES OF KEYS THAT EARNED NOTHING A SEAT KEEPS (kanban #1927, the r10 gossip audit P5): a name is said by its key alone, so a stranger
+ * could mint fresh keys without end, sign a name for each and have POST /referral-name keep every one - and hand each on to every seat. A name of a
+ * key this seat saw paid a referral fee (donation_outputs, item 'website') is always kept; a new key that earned nothing is kept only while fewer
+ * than this many such names are held (a new program names itself before its first fee), and past it refused - so not gossiped either.
+ */
+export const REFERRAL_NAMES_UNEARNED_MAX = 256;
+
+const earnedSql = "SELECT recipient_pk FROM donation_outputs WHERE item = 'website'";
+function hasEarned(db, site) {
+  try { return !!db.prepare(`${earnedSql} AND recipient_pk = ? LIMIT 1`).get(site); } catch { return false; }   // no donation_outputs yet: nothing earned
+}
+function unearnedHeld(db) {
+  try { return Number(db.prepare(`SELECT COUNT(*) AS n FROM referral_names WHERE site NOT IN (${earnedSql})`).get().n); }
+  catch { return Number(db.prepare('SELECT COUNT(*) AS n FROM referral_names').get().n); }
+}
+
 /** Check and keep one record ({ record, signature } in hex). { ok, kept: 'new' | 'held' | 'older', site, name } or { ok: false, status, why }. */
 export function keepReferralName(db, body, { verify, nowMs = Date.now() }) {
   let r, sig;
@@ -42,6 +59,11 @@ export function keepReferralName(db, body, { verify, nowMs = Date.now() }) {
     const had = row ? { atMs: Number(row.at_ms), hash: toHex(sha256(new Uint8Array(row.bytes))), name: row.name } : null;
     const step = referralNameStep(had, next);
     if (step !== 'new') { if (own) db.exec('COMMIT'); return { ok: true, kept: step, site, name: step === 'held' ? r.name : had.name }; }
+    // A NEW KEY THAT EARNED NOTHING, PAST THE BOUND, IS REFUSED (kanban #1927): a rename of a kept site never grows the table
+    if (!had && unearnedHeld(db) >= REFERRAL_NAMES_UNEARNED_MAX && !hasEarned(db, site)) {
+      if (own) db.exec('COMMIT');
+      return { ok: false, status: 429, why: `this seat already keeps ${REFERRAL_NAMES_UNEARNED_MAX} names of referral keys that earned no fee here` };
+    }
     db.prepare('INSERT OR REPLACE INTO referral_names (site, name, at_ms, bytes, signature, kept_ms) VALUES (?, ?, ?, ?, ?, ?)')
       .run(site, r.name, next.atMs, Buffer.from(bytes), Buffer.from(sig), nowMs);
     if (own) db.exec('COMMIT');
