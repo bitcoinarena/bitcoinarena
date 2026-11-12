@@ -337,13 +337,15 @@ test('#1342 a bounty Lightning address works only when its wallet answers a pay 
   const { lnAddressWorks, REWARD_DEFAULTS } = await import('../src/feedback-store.js');
   assert.equal(REWARD_DEFAULTS.weeklyBudgetSats, 100000);
   const asked = [];
+  // kanban #2045, #2064: a wallet's name is resolved before it is asked; these stand-in wallets answer on a public address
+  const lookupFn = async () => [{ address: '93.184.215.14', family: 4 }];
   const wallet = (answer, status = 200) => async (url) => { asked.push(url); if (answer instanceof Error) throw answer; return { ok: status === 200, status, json: async () => answer }; };
-  const good = await lnAddressWorks('Alice@Wallet.Example.com', { fetchFn: wallet({ tag: 'payRequest', callback: 'https://wallet.example.com/cb', minSendable: 1000, maxSendable: 100000000 }) });
+  const good = await lnAddressWorks('Alice@Wallet.Example.com', { lookupFn, fetchFn: wallet({ tag: 'payRequest', callback: 'https://wallet.example.com/cb', minSendable: 1000, maxSendable: 100000000 }) });
   assert.deepEqual([good.ok, asked[0]], [true, 'https://wallet.example.com/.well-known/lnurlp/alice']);
-  assert.match((await lnAddressWorks('bob@nowhere.example', { fetchFn: wallet(new TypeError('fetch failed')) })).why, /could not be reached/);
-  assert.match((await lnAddressWorks('bob@w.example', { fetchFn: wallet({ status: 'ERROR', reason: 'unknown user' }) })).why, /unknown user/);
-  assert.match((await lnAddressWorks('bob@w.example', { fetchFn: wallet({}, 404) })).why, /answered 404/);
-  assert.match((await lnAddressWorks('bob@w.example', { fetchFn: wallet({ tag: 'withdrawRequest', callback: 'https://w/cb' }) })).why, /does not take payments/);
+  assert.match((await lnAddressWorks('bob@nowhere.example', { lookupFn, fetchFn: wallet(new TypeError('fetch failed')) })).why, /could not be reached/);
+  assert.match((await lnAddressWorks('bob@w.example', { lookupFn, fetchFn: wallet({ status: 'ERROR', reason: 'unknown user' }) })).why, /unknown user/);
+  assert.match((await lnAddressWorks('bob@w.example', { lookupFn, fetchFn: wallet({}, 404) })).why, /answered 404/);
+  assert.match((await lnAddressWorks('bob@w.example', { lookupFn, fetchFn: wallet({ tag: 'withdrawRequest', callback: 'https://w/cb' }) })).why, /does not take payments/);
   assert.equal((await lnAddressWorks('not an address')).ok, false);
 });
 
