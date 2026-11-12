@@ -249,12 +249,19 @@ const sayAtTables = () => {
 setInterval(sayAtTables, 2000);
 const pass = async () => {
   const wants = (await (await fetch(env.WANTS, { signal: AbortSignal.timeout(3000) })).json()).wants || [];
-  for (const w of wants.slice(0, 4)) {
+  // FOUR REAL TABLES, NOT THE FIRST FOUR ROWS (kanban #1718, #1781): the list is anyone's, so the reading never stops at row 4 - it walks up to 16
+  // rows and reads the first 4 whose contract is a real round, a made-up round skipped without counting
+  let real = 0;
+  for (const w of wants.slice(0, 16)) {
+    if (real >= 4) break;
     // ONE BAD ROUND IS NOT THE WHOLE PASS (kanban #1535): a made-up round anyone posted throws here; skip it and read the next table
     const k = await contractOf(w.round).catch(() => null);
     if (!k) continue;
     const left = Number(k.c.entryCloseMs) - Date.now();
+    // ONLY AN OPEN TABLE COUNTS (kanban #1912, #1954, #1991): a real round that is over is still served by the seats, so four re-posted past
+    // rounds were counted as the 4 tables and the real player's table was never read; one that is over or already entered is skipped uncounted
     if (left <= 0 || k.entered) continue;
+    real++;
     tables.set(tableOf(k.c), Date.now() + 40000);
     sayHere(w.round, k);
     if (busy || left < MIN_LEFT_MS) continue;
