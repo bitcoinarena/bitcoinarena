@@ -2308,10 +2308,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       let seats = []; try { seats = networkSeats(); } catch { seats = []; }
       // kanban #2488: a seat that did not answer is named in `missing` - the signal's decide asks again before it writes its outcome once
       const missing = [];
-      const got = await Promise.all(seats.map(async (base) => { try { const r = await fetch(`${base}/funding-items?proposal=${pid}`, { signal: AbortSignal.timeout(8000) }); if (!r.ok) { missing.push(String(base)); return []; } return ((await r.json()).items || []).map((x) => (x && typeof x === 'object' ? { ...x, seat: String(base) } : x)); } catch { missing.push(String(base)); return []; } }));
-      // with when each seat first held it (kanban #1279) and WHICH seat says so (kanban #1607): one seat's claim alone never backdates a signal
-      const items = got.flat().filter((x) => x && (x.kind === 'signal' || x.kind === 'fee-approval') && /^[0-9a-f]+$/i.test(String(x.hex || '')))
-        .map((x) => ({ kind: x.kind, hex: x.hex, seat: x.seat, ...(/^[0-9]{1,16}$/.test(String(x.atMs || '')) ? { atMs: Number(x.atMs) } : {}) })).slice(0, 4096);
+      // with when each seat first held it (kanban #1279) and WHICH seat says so (kanban #1607): one seat's claim alone never backdates a signal.
+      // kanban #2519: the bound is per seat, not on the flattened list - one seat answering 4096 junk items filled the shared budget and the
+      // other seats' verifying signals and approvals were cut away before the book saw them. Each seat's answer is filtered, deduplicated
+      // by hex and cut to its own FUNDING_PULL_PER_SEAT; what one seat sends never takes another seat's place.
+      const FUNDING_PULL_PER_SEAT = 4096;
+      const got = await Promise.all(seats.map(async (base) => { try {
+        const r = await fetch(`${base}/funding-items?proposal=${pid}`, { signal: AbortSignal.timeout(8000) }); if (!r.ok) { missing.push(String(base)); return []; }
+        const items = (await r.json()).items; if (!Array.isArray(items)) return [];
+        const seen = new Set(); const out = [];
+        for (const x of items) {
+          if (out.length >= FUNDING_PULL_PER_SEAT) break;
+          if (!x || typeof x !== 'object' || (x.kind !== 'signal' && x.kind !== 'fee-approval') || !/^[0-9a-f]+$/i.test(String(x.hex || ''))) continue;
+          const key = `${x.kind}:${String(x.hex).toLowerCase()}`; if (seen.has(key)) continue; seen.add(key);
+          out.push({ kind: x.kind, hex: x.hex, seat: String(base), ...(/^[0-9]{1,16}$/.test(String(x.atMs || '')) ? { atMs: Number(x.atMs) } : {}) });
+        }
+        return out;
+      } catch { missing.push(String(base)); return []; } }));
+      const items = got.flat();
       items.missing = missing;
       return items;
     },
