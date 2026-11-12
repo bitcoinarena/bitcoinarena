@@ -19832,10 +19832,11 @@ const slashPayoutKept = (storage, roundId, order = 0, who = null) => { try {
  */
 async function collectSlashPayout({ round, roundId, invite, seed, curve, LockClient, storage, arbiter, listed = null, fetcher, order = 0 } = {}) {
   const client = await playerWallet({ round, invite, seed, LockClient, storage });
-  const before = BigInt(await client.balanceMsat());
   const got = await redeemSlashPayout({ round, roundId, invite, seed, curve, LockClient, storage, arbiter, listed, client, order, ...(fetcher ? { fetcher } : {}) });
-  const after = BigInt(await client.balanceMsat());
-  const creditedMsat = after > before ? after - before : 0n;
+  // WHAT THE REFUND BROUGHT, NOT WHAT THE WALLET GREW WHILE IT RAN (kanban #2350, as collectIntoPlayerWallet): the page can lock the next
+  // stake from this same wallet, or an earlier lock's change finish issuing, while the arbitration service and the federation are asked.
+  // The refund's own two reads count; one another spend or issue cut counts the payout's amount; a payout read off its kept note came before.
+  const creditedMsat = got.ok && !got.kept ? broughtOf(got.amountMsat, got.balance_before, got.balance_after) : 0n;
   if (creditedMsat > 0n) ledgerAppend(storage, round.federationId, { kind: 'slash-payout', msat: String(creditedMsat), round: toHex(roundId) });
   return { ...got, creditedMsat };
 }
