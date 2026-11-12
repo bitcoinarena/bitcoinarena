@@ -54,6 +54,24 @@ const txThere = (cli, txid, confirmed = false) => { if (confirmed) return true;
   try { const t = JSON.parse(cli('gettransaction', txid)); return Number(t.confirmations) > 0; } catch (e) { return !notFound(e); } };
 const sameAction = (was, { key, what, nowMs }) => !!was && (key ? was.key === key : (!was.key && was.what === what && nowMs - Number(was.atMs || 0) < SAME_ACTION_MS));
 
+/**
+ * THE ADVERTISEMENT IN FORCE, READ AS THE CENSUS READS IT (kanban #1836; census.js newestPerNode, protocol 19): of the node's bond outputs
+ * (`bondsOf` records, each with its own newest update as `advert`), the one whose advertisement is newest - its update's height, else the
+ * output's own; an update before an output's own body at the same height, then the larger txid. bondsOf()[0] is the newest OUTPUT by
+ * height: with an output added beside the first (kanban #544) and the step-out update posted on the largest, it was the added one's stale
+ * body that each of the seat's own posts (its check, roles, add to bond) built on - serving = true, and the stepped-out node was back in
+ * every census, never asked. Answers the record, or null for none.
+ */
+export function inForceOf(bonds) {
+  let best = null;
+  for (const b of bonds || []) {
+    const c = b.updatedBy ? { b, height: b.updatedBy.height, pos: 0, tie: String(b.updatedBy.txid || '').toLowerCase() }
+      : { b, height: b.height, pos: -1, tie: String(b.txid || '').toLowerCase() };
+    if (!best || c.height > best.height || (c.height === best.height && (c.pos > best.pos || (c.pos === best.pos && c.tie > best.tie)))) best = c;
+  }
+  return best ? best.b : null;
+}
+
 export async function addBondFromWallet({ cli, wallet, network = 'testnet4', secret, pubkey, addSats, post = false, blockMs = 600000, now = Date.now(), key = null, journal = null }) {
   let add; try { add = BigInt(String(addSats)); } catch { return { ok: false, why: 'name the sat to add as a whole number' }; }
   if (add < MIN_ADD) return { ok: false, why: `add at least ${MIN_ADD} sat` };
@@ -71,7 +89,7 @@ export async function addBondFromWallet({ cli, wallet, network = 'testnet4', sec
       // never sent (kanban #1423): built and sent anew below
     }
   }
-  const newest = bonds[0];
+  const newest = inForceOf(bonds);   // the advertisement in force, as the census reads it (kanban #1836), not bonds[0]
   const versions = [...new Set([...(newest.advert.protocolVersions || []), ...SUPPORTED_PROTOCOL_VERSIONS])].sort((a, b) => a - b);
   let fundingHex = null, fundingFee = 0n, made;
   try { made = rt.postBond(secret, { advert: { ...newest.advert, protocolVersions: versions }, bondSats: add, utxo: (spk) => {
@@ -140,7 +158,7 @@ export async function changeRolesFromWallet({ cli, wallet, network = 'testnet4',
   const rt = regtest(cli, { network, wallet: wallet || 'arena' });
   const bonds = rt.bondsOf(secret);
   if (!bonds.length) return { ok: false, why: 'this node has no confirmed bond whose advertisement could be updated' };
-  const bond = bonds[0];
+  const bond = inForceOf(bonds);   // the output whose advertisement is in force (kanban #1836), not bonds[0]
   const now = (rt.newestUpdateOf(bond) || {}).advert || bond.advert;
   const before = { roles: [...(now.roles || [])].sort(), custody: !!now.guardianCapable };
   const after = { roles: want.sort(), custody: custody === undefined ? before.custody : !!custody };
@@ -220,7 +238,7 @@ export async function guardianOfFromWallet({ cli, wallet, network = 'testnet4', 
   const rt = regtest(cli, { network, wallet: wallet || 'arena', scan });
   const bonds = rt.bondsOf(secret);
   if (!bonds.length) return { ok: false, noBond: true, why: 'this node has no confirmed bond whose advertisement could be updated' };
-  const bond = bonds[0];
+  const bond = inForceOf(bonds);   // the output whose advertisement is in force (kanban #1836), not bonds[0]
   const now = (rt.newestUpdateOf(bond) || {}).advert || bond.advert;
   if (keep) {
     const want = new Map(((now && now.guardianOf) || []).map((g) => [toHex(g.federationId), g]));

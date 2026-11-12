@@ -2532,6 +2532,12 @@ export class Round {
     return r ? { roundId: new Uint8Array(r.round_id), outpoint: r.outpoint, fields: JSON.parse(r.fields), contractId: r.contract_id, keptMs: Number(r.kept_ms) } : null;
   }
 
+  /** The refused-round lock kept at an outpoint ("txid:idx"), any round (kanban #1639): such a lock stakes no entry. */
+  refusedLockAt(outpointStr) {
+    const r = this.db.prepare('SELECT handout_id, round_id FROM refused_locks WHERE outpoint = ?').get(String(outpointStr));
+    return r ? { handoutId: new Uint8Array(r.handout_id), roundId: new Uint8Array(r.round_id) } : null;
+  }
+
   /** The refused-round locks of one round that refund to `refundHex`, shaped as stakeLocksFor's (entryId = the handout id). */
   // ONE ROW PER LOCK (kanban #1604): a lock is kept under H(handout id || outpoint), and the first one of a handout also under the
   // handout's id; listed once, under its first row - the handout's id for the first lock (as before), H(handout id || outpoint)
@@ -3896,13 +3902,30 @@ export class Round {
   }
 
   /** An objection being checked (kanban #1173): kept at its arrival, before its replay runs. */
+  // ONE ROW, COUNTED PER CHECK (kanban #1845, state audit 2026-11-12): two objections for one entry that reach this seat in the same millisecond share
+  // one row (primary key round, entry, arrived_ms). The first check to answer - a cheap junk one, say - dropped that row while the other check was still
+  // queued, and finalityStep then read no pending objection and kept FINAL past final_after: the in-time objection was re-dated late. Each check now
+  // holds a count on its row and the row goes only when the last check holding it answered. The count lives with the process, as the checks do: a
+  // restart clears every row (clearPendingObjections) and the count with them.
+  _pendingObjectionKey(roundIdBytes, entryIdBytes, arrivedMs) {
+    return `${Buffer.from(roundIdBytes).toString('hex')}:${Buffer.from(entryIdBytes).toString('hex')}:${Number(arrivedMs)}`;
+  }
+
   putPendingObjection(roundIdBytes, entryIdBytes, arrivedMs) {
+    if (!this._pendingObjectionRefs) this._pendingObjectionRefs = new Map();
+    const k = this._pendingObjectionKey(roundIdBytes, entryIdBytes, arrivedMs);
+    this._pendingObjectionRefs.set(k, (this._pendingObjectionRefs.get(k) || 0) + 1);
     this.db.prepare('INSERT OR IGNORE INTO pending_objections (round_id, entry_id, arrived_ms) VALUES (?, ?, ?)')
       .run(Buffer.from(roundIdBytes), Buffer.from(entryIdBytes), Number(arrivedMs));
   }
 
-  /** Its check answered (taken or refused): the pending row goes. */
+  /** Its check answered (taken or refused): the pending row goes once no other check of the same arrival still holds it (kanban #1845). */
   dropPendingObjection(roundIdBytes, entryIdBytes, arrivedMs) {
+    const refs = this._pendingObjectionRefs;
+    const k = this._pendingObjectionKey(roundIdBytes, entryIdBytes, arrivedMs);
+    const n = refs ? (refs.get(k) || 0) - 1 : 0;
+    if (n > 0) { refs.set(k, n); return; }
+    if (refs) refs.delete(k);
     this.db.prepare('DELETE FROM pending_objections WHERE round_id = ? AND entry_id = ? AND arrived_ms = ?')
       .run(Buffer.from(roundIdBytes), Buffer.from(entryIdBytes), Number(arrivedMs));
   }
@@ -3915,7 +3938,7 @@ export class Round {
   }
 
   /** A restarted seat's checks are gone with its process: their pending rows go too (kanban #1173). Answers how many. */
-  clearPendingObjections() { return this.db.prepare('DELETE FROM pending_objections').run().changes; }
+  clearPendingObjections() { if (this._pendingObjectionRefs) this._pendingObjectionRefs.clear(); return this.db.prepare('DELETE FROM pending_objections').run().changes; }
 
   /** The entry FINAL at this seat (kanban #1173): kept once, the first that stood; true when this call kept it. */
   putEntryFinal({ roundId, entryId, runId, finalAfterMs, onRerun = false, atMs }) {
