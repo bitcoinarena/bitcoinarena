@@ -3098,6 +3098,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // `lockSetRound` are made below; asked only when a settlement is built, long after this function returned
     lockSetContested: (rid) => { try { return !!(lockSets && lockSetRound(rid) && lockSets.contested(rid)); } catch { return false; } },
     dkg, port: stakeLocks, curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)), stakeSecrets, winnings, finalityOf, donationSetFor, donationTargetFor, orderBook, reserveKeyFor, feesFor,
+    // A POOL'S PLAIN PICKS PULLED AGAIN WHEN THE SETTLEMENT IS TRIED (kanban #2198, #2293): one pass, at most once in 30 s a round (bookResync)
+    pickResync: (rid) => pullPickLocks(rid, { passes: 1 }),
     peersFor: (rid) => {
       const picked = roster.committeeFor(rid, 'settlement');
       return picked.ok ? peerEndpointsOf(picked.committee, round.pubkey) : (dkg.peers || []);
@@ -5689,21 +5691,30 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   // A POOL'S PLAIN PICK HELD HERE WITHOUT ITS STAKE SEEN (kanban #1790): its locks and address asked of the round's peers, as a head-to-head
   // member's parts are (takeEntryParts: each lock checked with the federation here). A few passes, while the outcome is not yet final.
-  pullPickLocks = async (rid) => {
+  // Answers whether a pick became stake-seen here (the settlement is then built again: settlement.js bookResync).
+  // EVERY UNSEEN PICK IS PULLED, whatever sorts before it (kanban #2198, #2293, #1489 a44-refute-82-1): an order entry anyone can post at the /entry
+  // door with no lock sorted (by entry_id) below a pick, and the pass returned on it - the pick stayed unseen and no settlement was signed. An
+  // entry that is no plain pick is passed over; a relayed round is left to membersKnown as a whole, before the loop.
+  // NOT ONLY AT THE CLOSE (kanban #2198, #2293, a44-refute-82-2): a peer down across the close (a restart) failed all four passes and nothing
+  // pulled again. `passes: 1` is one pass with no wait, run again each time the settlement finds another seat's bytes (settlement.js bookResync).
+  pullPickLocks = async (rid, { passes = 4 } = {}) => {
     const peers = verifier.peersOf(rid).map((p) => String(p).replace(/\/+$/, ''));
-    if (!peers.length) return;
-    for (let pass = 0; pass < 4 && !shuttingDown; pass++) {
+    if (!peers.length || relayedRound(rid)) return false;   // a relayed round's members have their own way (membersKnown)
+    let taken = false;
+    for (let pass = 0; pass < passes && !shuttingDown; pass++) {
       if (pass) await new Promise((go) => { const t = setTimeout(go, 2000 * pass); if (t.unref) t.unref(); });
       let short = 0;
       for (const { entryId: e } of round.entriesOf(rid)) {
         const stored = round.entry(e);
         if (!stored || round.entryVoid(e) || round.stakeSeen(e)) continue;
-        if (!plainPickRound(stored) || relayedRound(rid)) return;   // a relayed round's members have their own way (membersKnown)
+        if (!plainPickRound(stored)) continue;   // an order (the book replays it) or a free entry: not this pull's, and no reason to stop it
         const why = await takeEntryParts(rid, toHex(e), peers);
+        if (round.stakeSeen(e)) taken = true;
         if (why || !round.stakeSeen(e)) short++;
       }
-      if (!short) return;
+      if (!short) break;
     }
+    return taken;
   };
   // A SEAT SIGNS FOR A HEAD-TO-HEAD ROUND ONLY ONCE IT KNOWS WHO IS IN IT (kanban #1071): false when the wait ran out at the result window, and this seat stays silent
   const asksPeers = seatView((...a) => globalThis.fetch(...a));
