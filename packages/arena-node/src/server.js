@@ -11496,9 +11496,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let fields;
         try { fields = lockFieldsFromJson(JSON.parse(Buffer.from(await read(req)).toString('utf8'))); }
         catch (e) { return text(res, 400, `that is not a fee lock: ${e.message}`); }
-        const steps = stepLog('fee-lock', toHex(eid), { keep: txRecord.keep }).on(res); steps.at('body');   // (kanban #618, step-log.js)
         const stored = round.entry(eid);
         if (!stored) return text(res, 404, 'this node holds no such entry');
+        // NAMED ONLY ONCE THE ENTRY IS HELD HERE (kanban #1688): a stranger's fee lock for a made-up id kept a tx_steps row under that id
+        const steps = stepLog('fee-lock', toHex(eid), { keep: txRecord.keep }).on(res); steps.at('body');   // (kanban #618, step-log.js)
         { const why = offerRefusalOfRound(decodeEntryContract(stored).roundId); if (why) return text(res, 409, `lock refused: ${why}`); }
         { const why = lockAfterCloseRefusal(stored, eid, 'fee'); if (why) return text(res, 409, `lock refused: ${why}`); }
         const got = await takeFeeLock(eid, fields);
