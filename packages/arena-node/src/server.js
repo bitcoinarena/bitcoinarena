@@ -331,6 +331,7 @@ import { decodeCommitments, encodeCommitments, encodeShare, COMMITMENT_BYTES, MO
 import { setTagNetwork } from '../../arena-protocol/src/tag-switch.js';
 import { keptRead } from './kept-read.js';
 import { guardianAnswers } from './guardian-probe.js';
+import { messageBudget } from './body-budget.js';
 import { readBody as readRequestBody, attachBody, BODY_MOST } from './body-read.js';   // named apart: stake-lock-port.js's readBody is another thing
 
 // ANOTHER SEAT'S ANSWER TO A SEAT-TO-SEAT GET, READ UP TO A CAP (kanban #1900, #1942, bypass of #1550 / #1744): verify.js
@@ -400,6 +401,16 @@ const RELAY_SLASH_RESERVE = relayPart('ARENA_RELAY_SLASH_RESERVE', 8);
 // signed result (or re-run) beside it carries the accused's own signature - so only a committee member's own signatures can fill
 // it, and one accused node in one round takes at most RELAY_SLASH_ACCUSED_MOST (RELAY_SLASH_RESERVE/16: 2 MiB live, ~4,800 proofs).
 const RELAY_SLASH_ACCUSED_MOST = Number(process.env.ARENA_RELAY_SLASH_ACCUSED_MOST) > 0 ? Number(process.env.ARENA_RELAY_SLASH_ACCUSED_MOST) : Math.floor(RELAY_SLASH_RESERVE / 16);
+// AND THE UNFINISHED WEBSOCKET MESSAGES (kanban #2075, refute of #1469 / #1724 / #1794 / #1911 / #1953): /guardian-p2p took one message of up to
+// 64 MiB per connection outside the body budget and with no time limit - six connections that never sent a message's last fragment pinned
+// 383 MiB (measured 2026-11-12). Every accepted websocket (/play, /guardian-p2p, /guardian-next-p2p, /guardian-api/...) now counts the bytes it
+// received since its last whole message against WS_BUDGET (8 MiB, ARENA_WS_BUDGET; one address at most half, a small unfinished message
+// from a reserve, a message unfinished for WS_MESSAGE_MS = 15 s not waited for) - see body-budget.js messageBudget. A guardian's P2P carries
+// TCP reads of at most 64 KiB per message and its API requests are small, so P2P_MESSAGE_MOST (4 MiB, ARENA_P2P_MESSAGE_MOST) is plenty.
+const WS_BUDGET = Number(process.env.ARENA_WS_BUDGET) > 0 ? Number(process.env.ARENA_WS_BUDGET) : 8 * 1024 * 1024;
+const WS_MESSAGE_MS = Number(process.env.ARENA_WS_MESSAGE_MS) > 0 ? Number(process.env.ARENA_WS_MESSAGE_MS) : 15000;
+const P2P_MESSAGE_MOST = Number(process.env.ARENA_P2P_MESSAGE_MOST) > 0 ? Number(process.env.ARENA_P2P_MESSAGE_MOST) : 4 * 1024 * 1024;
+const wsMessages = messageBudget({ total: WS_BUDGET, perAddress: Math.floor(WS_BUDGET / 2), reserve: Math.max(1024 * 1024, Math.floor(WS_BUDGET / 4)), messageMs: WS_MESSAGE_MS });
 
 // A BROWSER IS THE CLIENT, and a browser will never be on this origin.
 //
@@ -14217,7 +14228,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const guardianPipes = new Set();
   // THE GUARDIANS' P2P THROUGH THE NODES (p2p-tunnel.js, kanban #562): /guardian-p2p ends here as a websocket and goes on to
   // this node's guardian's own P2P port; every node carries the other guardians' P2P ports to their seats the same way
-  const p2pWss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 * 1024 });
+  const p2pWss = new WebSocketServer({ noServer: true, maxPayload: P2P_MESSAGE_MOST });   // kanban #2075: was 64 MiB, see WS_BUDGET
   // THIS NODE'S OWN ADDRESS, ANNOUNCED (kanban #562, 2026-10-21 "1 default, 2 for updates so no needed updates"): signed for the
   // address it names itself and pushed to every census node's seat every ARENA_ADDRESS_ANNOUNCE_MS (10 min) - no advertisement update
   const censusForAddresses = async () => {
@@ -14304,9 +14315,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // the seat ended. Such a request is closed, nothing else
     let at;
     try { at = new URL(req.url, 'http://node').pathname; } catch { try { socket.destroy(); } catch { /* gone */ } return; }
-    if (at === '/play') { wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req)); return; }
+    if (at === '/play') { wss.handleUpgrade(req, socket, head, (ws) => { wsMessages.watch(ws, socket); wss.emit('connection', ws, req); }); return; }
     const p2pOf = at === P2P_TUNNEL_PATHS.guardian ? guardian : at === P2P_TUNNEL_PATHS.next ? guardianNext : null;
-    if (p2pOf && p2pOf.p2pPort) { p2pWss.handleUpgrade(req, socket, head, (ws) => { carryP2p(ws, p2pOf.p2pPort); }); return; }
+    if (p2pOf && p2pOf.p2pPort) { p2pWss.handleUpgrade(req, socket, head, (ws) => { wsMessages.watch(ws, socket); carryP2p(ws, p2pOf.p2pPort); }); return; }
     // A PEER GUARDIAN'S API, carried to its node's current endpoint (kanban #577, p2p-tunnel.js GUARDIAN_API_RELAY_PATH): only for a
     // census node the tunnel follows, so the seat carries nothing but guardians' own public API
     if (at.startsWith(GUARDIAN_API_RELAY_PATH)) {
@@ -14314,7 +14325,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const relayNext = relayed.endsWith(GUARDIAN_NEXT_PATH);       // the node's second federation (kanban #1032)
       const root = p2pTunnels ? p2pTunnels.rootOf(relayNext ? relayed.slice(0, -GUARDIAN_NEXT_PATH.length) : relayed) : null;
       if (!root) { socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n'); return; }
-      p2pWss.handleUpgrade(req, socket, head, (ws) => { carryApi(ws, root, relayNext ? { path: GUARDIAN_NEXT_PATH } : {}); });
+      p2pWss.handleUpgrade(req, socket, head, (ws) => { wsMessages.watch(ws, socket); carryApi(ws, root, relayNext ? { path: GUARDIAN_NEXT_PATH } : {}); });
       return;
     }
     // /guardian-next is the guardian-next's, carried the same way to its own API port
