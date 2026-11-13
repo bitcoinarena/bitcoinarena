@@ -398,3 +398,42 @@ test('#032: a home list out of tick order moves no head back, after a reload or 
     assert.equal(fork.ok, false, 'no second child of an older mark');
   } finally { globalThis.fetch = realFetch; await node.close(); }
 });
+
+// feedback #033 (Hexbox): one seat leaves only its OWN receipt for the newest mark out of /receipts - every list complete and in
+// order - so the newest mark is one receipt short of live after a reload. The head must still be that mark, not the older live one.
+test('#033: one seat withholding only its own receipt for the newest mark moves no reloaded head back', async () => {
+  const { node, client, rid, eid } = await rig();
+  const realFetch = globalThis.fetch;
+  const RECEIPT = 139;
+  try {
+    await inputs(client, rid, eid);
+    const first = await client.checkpoint(driven(60), { roundId: rid, entryId: eid, tick: 60 });
+    await gossipCarry(client, first); carry(client, first);
+    const second = await client.checkpoint(driven(120), { roundId: rid, entryId: eid, tick: 120 });
+    await gossipCarry(client, second); carry(client, second);
+    client.close?.();
+    const mine = Buffer.from(node.round.pubkey);
+    globalThis.fetch = async (url, opts) => {
+      const r = await realFetch(url, opts);
+      if (!/\/receipts\?/.test(String(url))) return r;
+      const all = new Uint8Array(await r.arrayBuffer()), kept = [];
+      for (let at = 0; at + RECEIPT <= all.length; at += RECEIPT) {
+        const rec = all.subarray(at, at + RECEIPT);
+        const own = Buffer.from(rec.subarray(43, 75)).equals(mine) && Buffer.from(rec.subarray(3, 35)).equals(Buffer.from(second.id));
+        if (!own) kept.push(...rec);
+      }
+      return new Response(new Uint8Array(kept), { status: 200 });   // its own receipt for M1 left out, nothing else
+    };
+    const fresh = new Client({ base: `http://127.0.0.1:${node.port}`, core, sign, verify });
+    fresh.nodes = client.nodes; fresh.gameVerifySlots = client.gameVerifySlots;
+    await fresh.resumeAfterReload({ roundId: rid, entryId: eid, blockTicks: BLOCK_TICKS });
+    globalThis.fetch = realFetch;
+    console.log(`  #033 reload: live(second) ${fresh.live(second.id)}, head ${toHex(fresh.head).slice(0, 16)} (second ${toHex(second.id).slice(0, 16)})`);
+    assert.equal(fresh.live(second.id), false, 'the newest mark is one receipt short of live');
+    assert.equal(toHex(fresh.head), toHex(second.id), 'the head is still the newest signed mark');
+    const next = await fresh.checkpoint(driven(180), { roundId: rid, entryId: eid, tick: 180 });
+    const fork = await provesEquivocation(second.bytes, next.bytes, sessionPubkey,
+      (s, m, k) => { try { return ed25519.verify(s, m, k); } catch { return false; } });
+    assert.equal(fork.ok, false, 'no second child of the older mark');
+  } finally { globalThis.fetch = realFetch; await node.close(); }
+});
