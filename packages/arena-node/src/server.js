@@ -12037,7 +12037,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const listed = fedRecords.list();
         const drainPools = Object.fromEntries([...new Set(listed.map((f) => f.successor).filter(Boolean))]
           .map((succ) => [succ, fedRecords.predecessorGuardians(succ).map((k) => toHex(k))]));
-        return res.end(JSON.stringify({ node: toHex(round.pubkey), federations: listed, drainPools }));
+        // the kept records, and beside one a newer less restrictive record judged without keys (kanban #2613): the kept one first
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), federations: typeof fedRecords.served === 'function' ? fedRecords.served() : listed, drainPools }));
       }
       // A SEAT'S HALT OBSERVATIONS (§23A.5 "How a halt is proven"): a peer's signed one taken, and those held served
       if (req.method === 'POST' && url.pathname === '/halt-observations') {
