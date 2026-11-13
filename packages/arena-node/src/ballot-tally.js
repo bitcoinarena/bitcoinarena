@@ -199,13 +199,18 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
   };
   const boundOf = (p) => !!(proposals && typeof proposals.bound === 'function' && proposals.bound(p));
   /** 'kept' (its prefix, signed by a bond of the census), 'other' (not this proposal's), or 'junk' (no bond signed it). */
+  // A BOUND PROPOSAL'S TWINS (kanban #2607, ruling #2591 (c), proposals.js twins): the same body re-signed on the same deposit is the
+  // same proposal, so a vote under any twin's id counts for the one that stands for them, the seq rule across all of them
+  const twinIdsOf = (p) => (boundOf(p) && typeof proposals.twins === 'function' ? proposals.twins(p.id) : [p.id]).map((x) => String(x).toLowerCase());
   const keepVote = (p, o, v) => {
     const d = decodeVote(v.payload);
     // a bound proposal (kanban #2125) reads only the 80-byte seq votes, an older one only the 77-byte ones
     const bound = boundOf(p);
-    if (!d || d.bound !== bound || toHex(d.idPrefix) !== p.id.slice(0, 2 * d.idPrefix.length).toLowerCase()) return 'other';
-    const msg = bound ? voteMessage(fromHex(p.id), d.choice, d.seq) : voteMessage(fromHex(p.id), d.choice);
-    const results = o.census.map((b) => { let good = false; try { good = !!verify(d.signature, msg, b.pubkey); } catch { good = false; } return [pairKey(d.signature, msg, b.pubkey), good]; });
+    if (!d || d.bound !== bound) return 'other';
+    const named = (o.twins || [p.id]).filter((x) => toHex(d.idPrefix) === x.slice(0, 2 * d.idPrefix.length));
+    if (!named.length) return 'other';
+    const msgs = named.map((x) => (bound ? voteMessage(fromHex(x), d.choice, d.seq) : voteMessage(fromHex(x), d.choice)));
+    const results = msgs.flatMap((msg) => o.census.map((b) => { let good = false; try { good = !!verify(d.signature, msg, b.pubkey); } catch { good = false; } return [pairKey(d.signature, msg, b.pubkey), good]; }));
     if (!results.some(([, good]) => good)) return 'junk';     // nothing remembered for junk: memory grows with kept votes only
     for (const [key, good] of results) o.checked.set(key, good);
     return 'kept';
@@ -249,7 +254,10 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
         if (stateOf(p) !== S.COUNTING || !counted(p)) { open.delete(p.id); heldOutcome.delete(p.id); continue; }       // decided, orphaned, or void (#1840): not counted
         if (tip < p.votingFrom) continue;                       // review: votes are not counted yet (27A.7.4)
         let o = open.get(p.id);
-        if (!o) { o = { readTo: p.votingFrom - 1, readHash: null, census: null, votes: [], checked: new Map(), result: null, dirty: true }; open.set(p.id, o); }
+        // a twin taken since its count began (kanban #2607): its votes in the blocks read already were passed over - read them again
+        const twins = twinIdsOf(p);
+        if (o && (o.twins || []).join() !== twins.join()) { open.delete(p.id); o = null; }
+        if (!o) { o = { readTo: p.votingFrom - 1, readHash: null, census: null, votes: [], checked: new Map(), result: null, dirty: true, twins }; open.set(p.id, o); }
         // THE CENSUS AT ITS PUBLICATION (27A.7.3: "the census is snapshotted when the proposal is published"), read once
         if (!o.census) {
           let c = null;
@@ -303,7 +311,7 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
           }
         }
         if (o.dirty) {
-          o.result = tally({ proposal: { class: CLASS[p.class] }, standing: { id: fromHex(p.id), votingFrom: p.votingFrom, votingUntil: p.votingUntil },
+          o.result = tally({ proposal: { class: CLASS[p.class] }, standing: { id: fromHex(p.id), votingFrom: p.votingFrom, votingUntil: p.votingUntil, twins: o.twins.filter((x) => x !== p.id).map(fromHex) },
             census: o.census, votes: o.votes, verify: (sig, msg, pk) => checkedVerify(o, sig, msg, pk), bound: boundOf(p) });
           o.dirty = false;
         }
@@ -336,6 +344,9 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
 
   /** The phase of a kept proposal at the tip (27A.7.4): review, voting, cooldown, activated, failed - or void (27A.7.2). */
   const phaseOf = (p) => {
+    // a twin (kanban #2607) is in the phase of the twin that stands for it
+    const stands = typeof proposals.twinOf === 'function' ? proposals.twinOf(p.id) : p.id;
+    if (stands && stands !== p.id) { const q = proposals.list().find((x) => x.id === stands); if (q) return phaseOf(q); }
     if (stateOf(p) === S.ORPHANED) return 'orphaned';
     if (!counted(p)) return 'void';
     if (!p.decided) return tip !== null && tip >= p.votingFrom ? 'voting' : 'review';
