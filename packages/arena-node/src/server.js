@@ -5646,7 +5646,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       try { const hc = headToHeadRound(entry.roundId); closeMs = hc && typeof hc.entryCloseMs === 'bigint' ? hc.entryCloseMs : null; } catch { closeMs = null; }
       // a pool's plain pick pulled after its entry close (kanban #2300): the same signed word, against the pick's close
       if (closeMs === null && pick && typeof pick.closeMs === 'bigint') closeMs = pick.closeMs;
-      const signedBefore = (a, k) => closeMs !== null && !!a && !!a[k] && takenBeforeClose(rid, eid, k, a[k], a.taken && a.taken[k], closeMs);
+      // ...AND ONLY WHERE THE OTHER SEATS COULD NEVER MAKE THE THRESHOLD THEMSELVES (kanban #2199, #2536): one seat's word is its own clock, so a
+      // colluding seat that took the lock after the reveal and signed an earlier time handed it to every honest seat of a 3-, 5- or 7-seat round
+      // (measured, 3 seats: both honest seats seated the late lock and signed the attacker DELIVERED). Where the other seats can reach the
+      // threshold (slots - 1 >= needed) an honest lock that reached only one seat before the close is outvoted and settles VOID alike; the word
+      // is taken only where they cannot (2-of-2, #2483's case).
+      let oneWordEnough = false;
+      try { const slots = decodeRoundContract(new Uint8Array(round.get(rid).contract)).settlementSlots; oneWordEnough = slots - 1 < roundThreshold(slots); } catch { oneWordEnough = false; }
+      const signedBefore = (a, k) => oneWordEnough && closeMs !== null && !!a && !!a[k] && takenBeforeClose(rid, eid, k, a[k], a.taken && a.taken[k], closeMs);
       const stored = round.entry(eid);
       const lateKinds = ['stake', 'fee'].filter((k) => lockAfterCloseRefusal(stored, eid, k));
       if (lateKinds.length && answers.length) {
