@@ -695,7 +695,10 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
           // at a restart, which is fine: the read runs again). It ends with the round's index, 10 min after the start (a long round once a minute, above).
           const key = `${ridHex}:${role}`;
           const certified = certs.has(key) && !!db.prepare('SELECT 1 FROM seat_certs WHERE round_id = ? AND role = ?').get(t.rid, role);
-          if (certified && (certs.get(key) === null || confirmed.has(key) || nowMs() - (confirmAsked.has(key) ? confirmAsked.get(key) : -Infinity) < CONFIRM_ASK_MS)) continue;
+          // A CONFIRMED CERTIFICATE IS READ AGAIN UNTIL THE ROUND STARTS (kanban #2552, Daniel 2026-11-13): a seat that took the withholder's late S1
+          // while the members briefly held it saw a majority on S1 and confirmed it - "read no more" - and stayed on S1 when the members moved to S2.
+          // Before the start it is read at the same CONFIRM_ASK_MS pace as an unconfirmed one; from the start on a confirmed one is read no more (#2245)
+          if (certified && (certs.get(key) === null || (confirmed.has(key) && late) || nowMs() - (confirmAsked.has(key) ? confirmAsked.get(key) : -Infinity) < CONFIRM_ASK_MS)) continue;
           const c = roster.committeeFor(t.rid, role);
           if (!c.ok) continue;
           if (certified) {
@@ -793,9 +796,10 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
         // the one more than half of them hold is kept now - confirmed, or put in place of the one taken first (keepCert `supersede`) - and the round is not
         // read again for it; short of a majority, the confirm read above asks again in CONFIRM_ASK_MS
         const key = `${w.ridHex}:${w.role}`;
-        if (certs.get(key) && !confirmed.has(key) && db.prepare('SELECT 1 FROM seat_certs WHERE round_id = ? AND role = ?').get(w.t.rid, w.role)) {
+        const beforeStart = BigInt(Math.floor(nowMs())) <= w.t.start;   // kanban #2552: a confirmed one is read again until the start
+        if (certs.get(key) && (!confirmed.has(key) || beforeStart) && db.prepare('SELECT 1 FROM seat_certs WHERE round_id = ? AND role = ?').get(w.t.rid, w.role)) {
           confirmRead(w, answers);
-          if (!confirmed.has(key)) confirmAsked.set(key, nowMs());
+          if (!confirmed.has(key) || beforeStart) confirmAsked.set(key, nowMs());
         }
       }
       lap('take+certify');
