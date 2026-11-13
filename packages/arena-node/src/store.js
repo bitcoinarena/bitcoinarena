@@ -1035,6 +1035,14 @@ export function openStore(path = ':memory:') {
       made_ms      INTEGER NOT NULL,
       PRIMARY KEY (round_id, txid)
     );
+    -- WHERE EACH SEND'S FIRST CONTRACT SITS IN A SETTLEMENT TXID (kanban #1988): per payout output, in order, its kind, payment hash and donation send
+    -- id - kept with the txid, so a round ACCEPTED on it drives its sends against what landed, not against a rebuild a restart may make otherwise
+    CREATE TABLE IF NOT EXISTS lock_settlement_payout_keys (
+      round_id     BLOB NOT NULL,
+      txid         TEXT NOT NULL,
+      payouts      TEXT NOT NULL,
+      PRIMARY KEY (round_id, txid)
+    );
     -- A LATE LOSER'S SECOND SETTLEMENT (§13A, RULED 2026-09-24, slice C3b-1): one per (round, entry), never a second
     -- row under the round's key - an entry the round's settlement left out while it was in its re-run window, which
     -- then ended FAILED or FORFEIT. The same intent and state as the round's own settlement row.
@@ -1414,6 +1422,9 @@ export function openStore(path = ':memory:') {
     db.exec('ALTER TABLE relayed ADD COLUMN capped INTEGER NOT NULL DEFAULT 0');
   if (!db.prepare('PRAGMA table_info(lobby_names)').all().some((c) => c.name === 'identity_sig'))
     db.exec('ALTER TABLE lobby_names ADD COLUMN identity_sig BLOB');
+  // THE ROUNDS A CONSENTED NAME RECORD PUTS AN IDENTITY IN (kanban #2167, refutes #1748): the record's identity key (bytes 64..96, lobby-name.js),
+  // read by match.js before any reveal of that round has reached this seat
+  db.exec('CREATE INDEX IF NOT EXISTS lobby_names_consented_identity ON lobby_names (substr(record, 65, 32)) WHERE identity_sig IS NOT NULL');
   for (const t of ['objections', 'rerun_objections'])
     if (!db.prepare(`PRAGMA table_info(${t})`).all().some((c) => c.name === 'block_hash'))
       db.exec(`ALTER TABLE ${t} ADD COLUMN block_hash BLOB`);

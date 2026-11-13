@@ -95,6 +95,31 @@ export async function servedFromSeats({ seats, toMs, fetch, verify, timeoutMs = 
 }
 
 /**
+ * HAND A PAID RECORD TO THE SEATS (kanban #2420): POSTed to every seat at once (60 s each), not stopping at the first 200 - a seat
+ * that answers 200 and keeps nothing must not be the only one that ever saw it. Kept when two seats answer 200 (the one seat, when
+ * only one is listed): GET /items names a purchase only when two seats do. Answers { keptBy: the first keeping seat in list order or
+ * null, kept: how many kept it, last: the last refusal }.
+ */
+export async function handToSeats({ seats, door, body, fetch, timeoutMs = 60000 }) {
+  const list = (seats || []).slice(0, 64);
+  const why = [];
+  const kept = await Promise.all(list.map(async (s, i) => {
+    try {
+      const r = await fetch(`${String(s).replace(/\/$/, '')}/${door}`, { method: 'POST', body, signal: AbortSignal.timeout(timeoutMs) });
+      if (r.ok) return true;
+      why[i] = `${s}: ${r.status} ${(await r.text()).trim().slice(0, 200)}`;
+    } catch (e) { why[i] = `${s}: ${e.message}`; }
+    return false;
+  }));
+  const n = kept.filter(Boolean).length;
+  const need = Math.min(2, list.length);
+  const refusals = why.filter(Boolean);
+  const last = !list.length ? 'no seat to hand it to' : refusals.length ? refusals[refusals.length - 1] : 'no seat to hand it to';
+  return { keptBy: list.length && n >= need ? list[kept.indexOf(true)] : null, kept: n,
+    last: n && n < need ? `only ${n} of ${list.length} seats kept it (two must): ${last}` : last };
+}
+
+/**
  * BUY ONE ITEM. `manifest` the game's (it sells `itemId`); `networkSet` / `gameSet` the donation sets (paying keys); `wallet` the
  * player's lock client in the federation `federationId` (hex); `player` { pubkey (32 bytes), sign(digest) -> 64-byte BIP340 };
  * `seats` the game's seats; `verify` BIP340; `devsPct` the developers' share the buyer chose (one of ITEM_DEV_SHARES, default
@@ -141,15 +166,9 @@ export async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, f
     ...(terms.reserves ? { gameId: gameIdOf(manifest), reserveKey } : {}) };
   const signature = player.sign(purchaseId(record));
   const body = JSON.stringify({ purchase: toHex(encodePurchase(record)), signature: toHex(signature) });
-  // HANDED TO THE FIRST SEAT THAT KEEPS IT: it checks the record and the federation, then hands it on to every other seat
-  let keptBy = null, last = 'no seat to hand it to';
-  for (const s of seats || []) {
-    try {
-      const r = await fetch(`${String(s).replace(/\/$/, '')}/item-purchase`, { method: 'POST', body, signal: AbortSignal.timeout(60000) });
-      if (r.ok) { keptBy = s; break; }
-      last = `${s}: ${r.status} ${(await r.text()).trim().slice(0, 200)}`;
-    } catch (e) { last = `${s}: ${e.message}`; }
-  }
+  // HANDED TO EVERY SEAT, KEPT ONLY WHEN TWO KEEP IT (kanban #2420): no longer the first seat that answers 200 - one lying seat listed
+  // first said 200, dropped the record and never handed it on, the page said "bought" and no honest seat held the paid item
+  const { keptBy, last } = await handToSeats({ seats, door: 'item-purchase', body, fetch });
   if (!keptBy) return { ok: false, step: 'record', why: `paid (transaction ${submitted.txid}), but no seat kept the record yet: ${last}`, purchaseId: toHex(purchaseId(record)), txid: submitted.txid,
     retry: body };
   return { ok: true, purchaseId: toHex(purchaseId(record)), txid: submitted.txid, priceSat: item.priceSat, paidSat: itemPriceOn(manifest, item.priceSat, devsPct),
@@ -161,6 +180,9 @@ export async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, f
  * are merged by purchase id - no longer the first seat's answer as it is, where one seat answering [] hid a purchase every other seat
  * keeps, or named a made-up one. A purchase is kept when two seats name it (one, when only one seat answered); the record kept is the
  * first seat's in list order.
+ * Kanban #2421: agreement is on the record that matters (id, itemId, gameName), not the id alone - one seat naming the player's real
+ * purchase id with another itemId was counted with the honest seats and its record kept, so the entry named an item never bought and
+ * every seat refused it. A purchase of another game than the one asked is skipped; an id two variants both reach `need` for is not kept.
  */
 export async function ownedItems({ seats, player, gameName = null, fetch }) {
   const answers = await Promise.all((seats || []).map(async (s) => {
@@ -173,17 +195,22 @@ export async function ownedItems({ seats, player, gameName = null, fetch }) {
   }));
   const answered = answers.filter((a) => a);
   const need = answered.length >= 2 ? 2 : 1;
-  const byId = new Map();
+  const byRecord = new Map();
   for (const items of answered) {
     const seen = new Set();
     for (const it of items) {
       if (!it || typeof it.id !== 'string' || seen.has(it.id)) continue;
+      if (gameName && it.gameName !== gameName) continue;     // kanban #2421: only the game asked
       seen.add(it.id);
-      const e = byId.get(it.id);
-      if (e) e.n++; else byId.set(it.id, { it, n: 1 });
+      const k = JSON.stringify([it.id, String(it.itemId), String(it.gameName)]);
+      const e = byRecord.get(k);
+      if (e) e.n++; else byRecord.set(k, { it, n: 1 });
     }
   }
-  return [...byId.values()].filter((e) => e.n >= need).map((e) => e.it);
+  // kanban #2421: one variant per purchase id reaches `need`, else the seats disagree on what was bought and none is kept
+  const byId = new Map();
+  for (const e of byRecord.values()) if (e.n >= need) byId.set(e.it.id, byId.has(e.it.id) ? null : e.it);
+  return [...byId.values()].filter(Boolean);
 }
 
 /**

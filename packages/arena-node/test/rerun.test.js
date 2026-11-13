@@ -560,7 +560,9 @@ test('§13C VOID at the re-run window\'s end files the five first-result signers
     const D = s.win.rerunDeadlineMs;
     const suspendedStill = await firstFiling(verifierAt(D - 1), w.rid, s.eid);
     assert.equal(w.holder.round.slashProofs(w.rid, s.eid).length, 0, 'a proof was filed while SUSPENDED');
-    const proven = { provenTwoFirstMarks: () => true };
+    // the view of a seat that held the proof by the deadline: its §13C decision is its own, not written in this store, which
+    // decides VOID below (a decision once written stands, kanban #2326)
+    const proven = { provenTwoFirstMarks: () => true, noQuorum: () => null, putNoQuorum: undefined };
     const forfeitState = resultFinality(at(w, D, proven), w.rid, s.eid).state;
     const forfeitReleased = new (w.holder.stakeSecrets.constructor)(at(w, D, proven), {}).mayRelease(w.rid, s.eid);
     const forfeited = await firstFiling(verifierAt(D, proven), w.rid, s.eid);
@@ -660,7 +662,9 @@ test('C3a: an entry still SUSPENDED is left out and the round settles without it
     assert.match((await new Forfeit(at(w, D, { stakeLock: () => ({ fields: {} }) }), {}).message(w.rid, s.eid)).why,
       /that entry is VOID \(§13C\): nothing is forfeited/);
     // THEN FORFEIT (§13C with proven equivocation): not claimed in C3a, by name.
-    const forfeited = at(w, D, { ...s.settledWith([s.agreesId]), provenTwoFirstMarks: () => true });
+    // (another seat's view, which held the proof by the deadline: this store's written VOID stands here, kanban #2326)
+    const forfeited = at(w, D, { ...s.settledWith([s.agreesId]), provenTwoFirstMarks: () => true, noQuorum: () => null, putNoQuorum: undefined });
+    assert.equal(resultFinality(at(w, D + 60000, { provenTwoFirstMarks: () => true }), w.rid, s.eid).state, 'VOID', 'the written VOID turned');
     assert.equal(resultFinality(forfeited, w.rid, s.eid).state, 'FORFEIT');
     const afterForfeit = lockAfter(new LockSettlement(forfeited, {}), w.rid, s.eid);
     assert.deepEqual([afterForfeit.claimed, afterForfeit.why], [false, 'claimed in the round\'s second settlement, not built yet']);

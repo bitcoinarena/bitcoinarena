@@ -673,8 +673,21 @@ export class WinningsSend {
   /**
    * The committee's signature of `kind` over one attempt, made here with the peers: every peer asked at once within a bound (kanban #1074 as #1061), and a
    * seat that gave no share, or one that does not stand, left off the next list while the threshold remains (as #1070), asked again at once.
+   *
+   * ONE SIGNING PER SEND AT A TIME (kanban #1489, #1910 - as settle() with #settling): two passes of this seat at once (settle() and the winnings
+   * timer both reaching sendAll) shared its one slot at every peer (nonce-pairs.js), each with its own SELF commitment, so each peer signed the first
+   * list and refused the other ("keeps no second pair"). A second signing of the same send while one runs waits for that one's answer.
    */
   async sign(roundIdBytes, row, built, kind) {
+    const k = `${kind}:${toHex(roundIdBytes)}:${toHex(row.entryId)}:${row.attempt}:${String(row.paymentHash).toLowerCase()}`;
+    if (this.#signing.has(k)) return this.#signing.get(k);
+    const p = this.#signOnce(roundIdBytes, row, built, kind).finally(() => this.#signing.delete(k));
+    this.#signing.set(k, p);
+    return p;
+  }
+  #signing = new Map();    // `${kind}:${round}:${entry}:${attempt}:${hash}` -> the running signing's answer (kanban #1910)
+
+  async #signOnce(roundIdBytes, row, built, kind) {
     const entryHex = toHex(row.entryId);
     const q = `round=${toHex(roundIdBytes)}&entry=${entryHex}&kind=${kind}&attempt=${row.attempt}&hash=${row.paymentHash}${this.scopeParam}`;
     this.lists.begin(q);
@@ -775,8 +788,19 @@ export class WinningsSend {
    * entry's latest attempt: a re-send not yet funded is funded (the committee signs its txid and it is submitted); a
    * funded one is signed over its invoice and asked of its gateway; one that did not pay and has EXPIRED is re-sent
    * through the next live gateway. A PAID winning is left alone, and a gateway asked twice answers its one payment.
+   * ONE PASS PER ROUND AT A TIME (kanban #1910): settle() and the winnings timer both reach it for one round; a second pass while one runs waits for
+   * that one's answer, so the two never sign, mark or re-send the same rows side by side.
    */
   async sendAll(roundIdBytes, built) {
+    const k = toHex(roundIdBytes);
+    if (this.#sending.has(k)) return this.#sending.get(k);
+    const p = this.#sendAllOnce(roundIdBytes, built).finally(() => this.#sending.delete(k));
+    this.#sending.set(k, p);
+    return p;
+  }
+  #sending = new Map();    // round id hex -> the running pass's answer (kanban #1910)
+
+  async #sendAllOnce(roundIdBytes, built) {
     const out = [];
     for (const row of this.round.sendPlansOf(roundIdBytes)) {
       const entryHex = toHex(row.entryId);

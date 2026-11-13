@@ -468,6 +468,7 @@ export class Client {
     // to whoever runs the client, and this file should not decide it.
     this.verify = verify;
     this.sock = null;
+    this.connectingSock = null;  // the newest connect() not yet open: the only one that may become `sock` (kanban #2213)
     this.head = NO_PREVIOUS;      // the mark chain head this client has published
     // WHO HAS WITNESSED WHAT. Mark id -> the distinct committee keys that have
     // receipted it. A Set because five receipts from one node is one node
@@ -1007,6 +1008,11 @@ export class Client {
   connect() {
     return new Promise((resolve, reject) => {
       const sock = new WebSocket(`${this.base.replace(/^http/, 'ws')}/play`);
+      // ONE ATTEMPT AT A TIME (kanban #2213): the newest connect() is the only socket that may become `this.sock`. An
+      // attempt connectFirst gave up on (timed out before 'open') is closed by it through `connectingSock`, and if it opens
+      // anyway it is closed at once - it never takes the place of the socket connectFirst answered with, so one socket
+      // feeds `said` and every reply goes to its own send.
+      this.connectingSock = sock;
       // Binary arrives as a Blob otherwise, and `new Uint8Array(blob)` is
       // silently EMPTY rather than an error - measured: a 139-byte receipt
       // read back as a zero-length array and the reply was never understood.
@@ -1029,6 +1035,12 @@ export class Client {
         return undefined;
       });
       sock.addEventListener('open', () => {
+        if (this.connectingSock !== sock) {             // superseded or given up on (kanban #2213)
+          try { sock.close(); } catch { /* gone */ }
+          reject(new Error('a superseded socket opened'));
+          return;
+        }
+        this.connectingSock = null;
         this.sock = sock;
         if (!this.ended) this.state = 'ready';
         resolve(this);
@@ -1075,6 +1087,8 @@ export class Client {
       } catch (e) {
         this.error = String(e.message || e);
         if (this.sock) { const sk = this.sock; this.sock = null; try { sk.close(); } catch { /* gone */ } }
+        // The attempt that has not opened is not `this.sock`: close it too, or it opens later beside the next (kanban #2213).
+        if (this.connectingSock) { const sk = this.connectingSock; this.connectingSock = null; try { sk.close(); } catch { /* gone */ } }
         backoff = backoff ? Math.min(backoff * 2, 8000) : 1000;
         if (this.ended || now() + backoff >= untilMs) throw new Error(`${this.error} (${this.firstTries} tries)`);
         await this.sleep(backoff);
@@ -1412,9 +1426,29 @@ export class Client {
 
     // The node answers how many ticks were NEW. A refusal is a named string
     // and the chain must not move on one, the same rule the marks follow.
-    if (typeof answer !== 'string' || !/^[0-9]+$/.test(answer)) return { batch: b, answer };
+    if (typeof answer !== 'string' || !/^[0-9]+$/.test(answer)) {
+      // ONE SEAT DOES NOT GATE PUBLISHING (kanban #2515, audit r12): the home seat is one seat of the committee. Measured
+      // before: a home seat that answered "the batch does not follow the chain head" from tick 60 had this client resync
+      // once and end its run, and the honest peer kept 60 of the player's 180 signed ticks - the round FAILED on one
+      // seat's word. A refusal (not a dropped socket, not a stake still on its way) is now put to the other seats: the
+      // same signed frame, after the ones before it, and if enough of them to carry a mark take it - every other seat
+      // when the committee is smaller than that - it is published and the chain moves on. A batch the peers refuse too
+      // is refused, and the resync below still decides.
+      if (typeof answer === 'string' && !answer.startsWith(CLOSED) && !answer.startsWith(`error ${STAKE_NOT_SEEN}`)
+          && this.peers.length && !(await this.#homeForged(roundId, entryId))
+          && await this.#carriedByPeers(bytes, b.firstTick + ticks.length)) {
+        this.batchHead = batchId(b);
+        this.nextTick = b.firstTick + ticks.length;
+        this.homeRefusals = (this.homeRefusals || 0) + 1;
+        this.homeRefusedWhy = answer;
+        this.#wakeMarks();
+        return { batch: b, answer, accepted: ticks.length, homeRefused: answer };
+      }
+      return { batch: b, answer };
+    }
     this.batchHead = batchId(b);
     this.nextTick = b.firstTick + ticks.length;
+    this.homeRefusedWhy = null;
     // AND THE SAME BYTES GO TO EVERY OTHER COMMITTEE NODE, in the order this
     // node took them - see `pumpPeers`. Every batch is KEPT, peers or not: a
     // node refuses a batch that does not follow its own head, so a peer that
@@ -1424,6 +1458,41 @@ export class Client {
     if (this.peers.length) this.pumpPeers();
     this.#wakeMarks();
     return { batch: b, answer, accepted: Number(answer) };
+  }
+
+  /**
+   * WHY THE HOME SEAT REFUSES, READ ONCE PER STRETCH OF REFUSALS (kanban #2515 beside #1567): a home seat that wrote a
+   * batch this client never signed into its own store is a node fault and ends the run, as the resync names it. One that
+   * is only behind or refusing holds nothing forged, and the peers carry the run. Nothing served is adopted here.
+   */
+  async #homeForged(roundId, entryId) {
+    if (this.homeRefusedWhy) return false;
+    try {
+      const r = await readWithOneRetry(fetch, `${this.base}/transcript?round=${toHex(roundId)}&entry=${toHex(entryId)}`);
+      if (!r.ok) return false;
+      const t = decodeTranscript(new Uint8Array(await r.arrayBuffer()));
+      if (toHex(t.roundId) !== toHex(roundId) || toHex(t.entryId) !== toHex(entryId)) return false;
+      if (t.batches.every((x) => this.signedFrames.has(toHex(batchId(x))))) return false;
+      await this.#ownFrames(t, await this.entryFor(entryId), roundId, entryId);
+      return false;
+    } catch (e) { return e.nodeFault === true; }
+  }
+
+  /**
+   * A BATCH THE HOME SEAT REFUSED, OFFERED TO THE PEERS (kanban #2515): queued behind every batch before it, fed, and kept
+   * when enough peers took it. Otherwise it is taken back out of the queue and no feed is left pointing past it.
+   */
+  async #carriedByPeers(bytes, through) {
+    const at = this.published.length;
+    this.published.push({ bytes, through });
+    this.pumpPeers();
+    await this.awaitPeers();
+    const took = this.peers.filter((base) => this.peerFeed(base).next > at).length;
+    const need = Math.min(this.peers.length, receiptsForLive({ gameVerifySlots: this.gameVerifySlots, nodes: this.nodes }));
+    if (took >= need) return true;
+    this.published.splice(at, 1);
+    for (const base of this.peers) { const f = this.peerFeed(base); if (f.next > at) f.next = at; }
+    return false;
   }
 
   // NO `invoice()` AND NO `payStake()` (§23.6, RULED 2026-09-22 22:59). They quoted a joined player the

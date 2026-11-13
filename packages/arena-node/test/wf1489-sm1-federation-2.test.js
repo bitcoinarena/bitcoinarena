@@ -12,7 +12,7 @@ import * as ex from '../src/ecash-exchange.js';
 import { createLiquidations } from '../src/liquidations.js';
 
 const A = 'aa'.repeat(32), B = 'bb'.repeat(32);
-const NOTES = 'fedimintA'.padEnd(40, 'x');
+const NOTES = 'fedimintA'.padEnd(40, 'a')  // kanban #2384, #2436: notes that decode;
 
 test('wf1489-sm1-federation-2: a federation the seat holds HALTED is not exchanged (as server.js wires the check)', async () => {
   // the wiring as server.js has it, word for word
@@ -44,10 +44,10 @@ test('wf1489-sm1-federation-2 (kanban #1577): the exchange INTO a halted federat
   const port = { ecashBalance: async () => 500_000n, ecashReceive: async () => { received++; return { state: 'Success', msat: 100_000n }; },
     ecashSend: async (m) => ({ ecash: 'fedimintx-1', msat: m }), ecashSent: async () => ({ found: false }) };
   const into = ex.createEcashExchange({ db: new DatabaseSync(':memory:'), portOf: async () => port, halted: (f) => liquidations.haltOf(f) });
-  const r1 = await into.exchange({ from: B, to: A, ecash: 'fedimintB'.padEnd(40, 'y'), amountMsat: '100000' });
+  const r1 = await into.exchange({ from: B, to: A, ecash: 'fedimintB'.padEnd(40, 'b'), amountMsat: '100000' });
   assert.equal(r1.ok, false); assert.equal(r1.status, 409);
   const broken = ex.createEcashExchange({ db: new DatabaseSync(':memory:'), portOf: async () => port, halted: () => { throw new Error('records unreadable'); } });
-  const r2 = await broken.exchange({ from: B, to: 'cc'.repeat(32), ecash: 'fedimintB'.padEnd(40, 'z'), amountMsat: '100000' });
+  const r2 = await broken.exchange({ from: B, to: 'cc'.repeat(32), ecash: 'fedimintB'.padEnd(40, 'c'), amountMsat: '100000' });
   assert.equal(r2.ok, false); assert.equal(r2.status, 503);
   assert.equal(received, 0, 'notes were taken although the halt was not ruled out');
 });

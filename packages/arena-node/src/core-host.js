@@ -177,7 +177,33 @@ const LOCKDOWN = `'use strict';
     const a = strOf(this), b = String(that);
     return a < b ? -1 : a > b ? 1 : 0;
   } }.localeCompare);
-  Object.defineProperty(Error, 'prepareStackTrace', { value: undefined, writable: false, configurable: false });
+  // THE SEAT'S INSTALL PATH (kanban #2219, #1489 audit44 refute of #1623): V8's default stack text lists this thread's own
+  // frames below the core's - file:///<install dir>/packages/arena-node/src/core-host.js and node:vm with its line numbers -
+  // so a core that put any bit of new Error().stack in its hash or result answered differently on seats installed in
+  // different directories (measured: 625 against 675 characters for /a and /operator-bob/bitcoin-arena), and read the
+  // operator's user name and the Node build. The stack text is formatted here instead: the error's own head, then the frames
+  // of the core's realm (core:/<file>, arena:driver, arena:call, arena:lockdown, and built-ins with no file) from the top
+  // down to the first frame of anything else, which ends it. The node's frames are never in it, whatever the seat's path or
+  // Node build. Error.stackTraceLimit stays the core's to set (a core may write it): a higher one shows more of the core's own
+  // frames, the same on every seat, and never one of the node's. The global Error binding is fixed: Node formats a
+  // stack by globalThis.Error.prepareStackTrace of the error's realm, so a core that replaced the global Error by an object
+  // of its own would be handed the call sites again. Error.captureStackTrace formats through the same function.
+  // every method it calls is taken here: a core that redefines String.prototype.startsWith or includes changes nothing
+  const errToString = Error.prototype.toString, sw = String.prototype.startsWith, inc = String.prototype.includes;
+  const ownFrame = (f) => typeof f !== 'string' || apply(sw, f, ['core:/']) || apply(sw, f, ['arena:']);
+  const head = (e) => { try { return apply(errToString, e, []); } catch { return 'Error'; } };
+  const prepare = { prepareStackTrace(e, sites) {
+    let s = head(e);
+    for (let i = 0; i < sites.length; i++) {
+      let f, line;
+      try { f = sites[i].getFileName(); line = sites[i].toString(); } catch { break; }
+      if (!ownFrame(f) || typeof line !== 'string' || apply(inc, line, ['file:']) || apply(inc, line, ['node:'])) break;
+      s += '\\n    at ' + line;
+    }
+    return s;
+  } }.prepareStackTrace;
+  Object.defineProperty(Error, 'prepareStackTrace', { value: prepare, writable: false, configurable: false, enumerable: false });
+  Object.defineProperty(globalThis, 'Error', { writable: false, configurable: false });
   // the script's value, handed only to this thread and kept on no global: the core never reaches it
   return Object.freeze({ begin() { used = 0; }, over: () => over, used: () => used,
     bound: () => (count > ${TRACK_MAX} ? Infinity : base + since), exact });

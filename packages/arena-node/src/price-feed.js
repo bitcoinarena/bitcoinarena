@@ -210,6 +210,7 @@ export class PriceFeed {
     this.mine = new Map();       // `${round}:${k}` / `${round}:tape` -> the reading this seat signed (one each)
     this.built = new Map();      // `${round}:${k}` -> the sample made of the readings held (dropped when one more comes)
     this.endsAsked = new Map();  // round hex -> when this seat last asked the committee for the ends' readings
+    this.endsInFlight = new Map(); // round hex -> the pre-protocol-5 ask of the ends now running (kanban #2395): callers share it
     // every map above but `readings` is let go of a round once it is finished (tidy, kanban #742)
     this.evicted = 0;            // rounds let go of since the last held line
     this.heldLoggedAt = null;
@@ -393,6 +394,9 @@ export class PriceFeed {
       return { ok: true };
     }
     const k = Number(body.k);
+    // THE SAME SAMPLE AGAIN COSTS NOTHING (kanban #2278, variant of #1729): one already held at this price stands (its id is the same), so
+    // it is taken again before any signature is checked - a peer repeating a held end buys no BIP-340 verifies
+    if (Number.isSafeInteger(k) && k >= 0) { const had0 = this.#held(body.round, k); if (had0 && Number(had0.priceCents) === Number(body.priceCents) && typeof body.priceCents === typeof had0.priceCents) return { ok: true }; }
     const sample = { roundId: rid, tick: sampleTick(k), priceCents: body.priceCents };
     let id; try { id = priceSampleId(sample); } catch (e) { return refuse(e.message, 400); }
     // kanban #1958 / #1997: the threshold is checked on the signatures in the shape this seat keeps (64-hex key, 128-hex signature), and the kept
@@ -419,14 +423,28 @@ export class PriceFeed {
   /** The ends this seat lacks, from the committee's seats: each kept only once it stands (hold). */
   async #fetchEnds(roundIdBytes, ks) {
     const rh = toHex(roundIdBytes);
+    // A LEGACY ROUND'S ENDS ARE ASKED FOR AT MOST ONCE PER ASK_ENDS_EVERY_MS (kanban #2278, variant of #1729): GET /round-result is
+    // anyone's, and an end that never stands would otherwise send this seat to the whole committee again on every call
+    if (this.now() - (this.endsAsked.get(rh) ?? -Infinity) < ASK_ENDS_EVERY_MS) return;
+    this.endsAsked.set(rh, this.now());
     for (const base of this.peersFor(roundIdBytes)) {
       const missing = ks.filter((k) => !this.#held(rh, k));
       if (!missing.length) return;
       try {
         const r = await this.fetcher(`${String(base).replace(/\/+$/, '')}/price-samples?round=${rh}&ks=${missing.join(',')}`, { signal: AbortSignal.timeout(10000) });
         if (!r.ok) continue;
-        const j = await r.json();
-        for (const x of (j && j.samples) || []) if (missing.includes(Number(x.k))) this.hold({ round: rh, kind: 'sample', k: Number(x.k), priceCents: x.priceCents, sigs: x.sigs });
+        // ONE PEER'S ANSWER IS BOUNDED (kanban #2278, the #1729 bounds on the legacy path): at most FETCH_READINGS_MAX_BYTES of it is
+        // read, and of it at most one sample per missing k is checked - a padded answer (one junk end repeated) costs one check per end
+        const declared = Number(r.headers && typeof r.headers.get === 'function' ? r.headers.get('content-length') : NaN);
+        if (declared > FETCH_READINGS_MAX_BYTES) continue;
+        const j = await cappedJson(r, FETCH_READINGS_MAX_BYTES);
+        const tried = new Set();
+        for (const x of (j && Array.isArray(j.samples) ? j.samples : [])) {
+          const k = Number(x && x.k);
+          if (!missing.includes(k) || tried.has(k) || this.#held(rh, k)) continue;
+          tried.add(k);
+          this.hold({ round: rh, kind: 'sample', k, priceCents: x.priceCents, sigs: x.sigs });
+        }
       } catch { /* the next seat */ }
     }
   }
@@ -446,7 +464,19 @@ export class PriceFeed {
     if (this.now() < endMs) return refuse(`the round runs until ${new Date(endMs).toISOString()}: its result is made at its end`);
     const kClose = closeSampleK(endTick);
     if (c.median) return this.#result5(rid, roundHex, c, endTick, kClose);
-    if (!this.#held(roundHex, 0) || !this.#held(roundHex, kClose)) await this.#fetchEnds(rid, [0, kClose]);
+    // THE ENDS ARE ASKED FOR AT MOST ONCE PER ASK_ENDS_EVERY_MS, AND ONE ASK IS SHARED (kanban #2395, #1489 a44 refute 57, #2170 /
+    // #1730 variant): GET /round-result is public, and a stranger reloading it (one after another or 40 at once) made the seat ask the
+    // committee again on every call - and redo a lying peer's junk verifies each time. As #result5 does, the ask is marked before the
+    // await, and calls that arrive while it runs await the same ask instead of starting their own.
+    if (!this.#held(roundHex, 0) || !this.#held(roundHex, kClose)) {
+      let asking = this.endsInFlight.get(roundHex);
+      if (!asking && !(this.now() - (this.endsAsked.get(roundHex) ?? -Infinity) < ASK_ENDS_EVERY_MS)) {
+        this.endsAsked.set(roundHex, this.now());
+        asking = this.#fetchEnds(rid, [0, kClose]).finally(() => this.endsInFlight.delete(roundHex));
+        this.endsInFlight.set(roundHex, asking);
+      }
+      if (asking) await asking;
+    }
     const open = this.#held(roundHex, 0), close = this.#held(roundHex, kClose);
     if (!open || !close) return refuse(`no attested ${!open ? 'opening sample (k 0)' : `closing sample (k ${kClose})`} of the round is held here or by its committee`);
     const got = roundResultFrom({ roundId: rid, samples: [open, close], endTick });

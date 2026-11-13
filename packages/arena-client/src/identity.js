@@ -281,9 +281,36 @@ export function referralNameFor({ name, storage, random, curve, nowMs = Date.now
  * AND WHAT THIS PLAYER'S REFERRAL LINK EARNED (kanban #681): the website payouts under the same key ('website' rows, referralOf) are
  * collected the same way; `referral` is every one the seats list - { msat, payouts } - collected or not.
  */
+// kanban #2133, #2195: [outpoint, byVersion] in the order the Refund budget is spent - most distinct seats first, then round-robin
+// by the lowest-index seat that listed each outpoint (Map order is the order rows were read, so a seat's own rows keep their order).
+function fairOrder(found, seen) {
+  const tiers = new Map(); // distinct seats -> first seat -> [entries]
+  for (const e of found) {
+    if (seen.has(e[0])) continue;
+    const seatsOf = new Set();
+    for (const v of e[1].values()) for (const si of v.seats) seatsOf.add(si);
+    const n = seatsOf.size, owner = Math.min(...seatsOf);
+    if (!tiers.has(n)) tiers.set(n, new Map());
+    const byOwner = tiers.get(n);
+    if (!byOwner.has(owner)) byOwner.set(owner, []);
+    byOwner.get(owner).push(e);
+  }
+  const out = [];
+  for (const n of [...tiers.keys()].sort((a, b) => b - a)) {
+    const queues = [...tiers.get(n).keys()].sort((a, b) => a - b).map((o) => tiers.get(n).get(o));
+    for (let i = 0, more = true; more; i++) {
+      more = false;
+      for (const q of queues) if (i < q.length) { out.push(q[i]); more = true; }
+    }
+  }
+  return out;
+}
 export const ZAPS_COLLECTED_KEY = 'arena.zaps.collected';
+export const ZAPS_CURSOR_KEY = 'arena.zaps.cursor';
 export const ZAPS_ROWS_PER_SEAT = 200;
 export const ZAPS_REFUNDS_PER_PASS = 50;
+// kanban #2428: settled outpoints remembered (was 500) - one dropped is asked again, found spent, and noted again.
+export const ZAPS_SEEN_KEPT = 4000;
 export async function collectZaps({ storage, keep = storage, random, curve, clients, seats, fetcher = fetch } = {}) {
   if (!curve || typeof curve.pointX !== 'function') throw new Error('a zap is collected with the identity key, and no curve was injected');
   const secret = identitySecretFor(tabSeed({ storage, random }));
@@ -291,39 +318,64 @@ export async function collectZaps({ storage, keep = storage, random, curve, clie
   let done = [];
   try { done = JSON.parse((keep && keep.getItem(ZAPS_COLLECTED_KEY)) || '[]'); } catch { done = []; }
   const seen = new Set(Array.isArray(done) ? done : []);
+  let cursors = {};
+  try { cursors = JSON.parse((keep && keep.getItem(ZAPS_CURSOR_KEY)) || '{}') || {}; } catch { cursors = {}; }
+  if (typeof cursors !== 'object' || Array.isArray(cursors)) cursors = {};
   // kanban #1557: a /donations row is not signed, so one seat answering first with the real outpoint and a changed amountMsat /
   // playerKey / senderOnContract must not stand for that outpoint. Every distinct version is kept (outpoint -> version -> the seats
   // that said it; one version per seat and outpoint, so a seat cannot flood an outpoint), and each is tried - most seats first - until
   // one is collected or reads as spent, as lookOwed keeps every version since #1273.
-  const found = new Map();
+  // `found` holds every well-formed row (the referral total counts them all, collected or not); `open` only the rows this pass may
+  // spend its Refund budget on.
+  const found = new Map(), open = new Map();
   const versionOf = (d) => JSON.stringify([String(d.federationId).toLowerCase(), String(d.amountMsat), !!d.senderOnContract, String(d.playerKey || ''), String(d.item || '')]);
-  await Promise.all((seats || []).map(async (s, si) => {
+  const note = (into, d, si) => {
+    let byVersion = into.get(d.outpoint);
+    if (!byVersion) into.set(d.outpoint, byVersion = new Map());
+    if ([...byVersion.values()].some((v) => v.seats.has(si))) return;
+    const k = versionOf(d);
+    if (!byVersion.has(k)) byVersion.set(k, { d, seats: new Set() });
+    byVersion.get(k).seats.add(si);
+  };
+  const seatList = (seats || []).map((s) => String(s).replace(/\/$/, ''));
+  const rowsOf = await Promise.all(seatList.map(async (s) => {
     try {
-      const r = await fetcher(`${String(s).replace(/\/$/, '')}/donations?key=${pk}&since=0`, { cache: 'no-store', signal: AbortSignal.timeout(8000) });
-      if (!r.ok) return;
-      // kanban #1618: one seat's list is read only to its first ZAPS_ROWS_PER_SEAT well-formed rows (outpoint txid:vout, a 64-hex
-      // federation id, a positive whole msat amount) - a seat listing 20,000 made-up outpoints no longer drives 20,000 Refund calls.
-      let taken = 0;
+      const r = await fetcher(`${s}/donations?key=${pk}&since=0`, { cache: 'no-store', signal: AbortSignal.timeout(8000) });
+      if (!r.ok) return [];
       const list = (await r.json()).donations;
-      for (const d of (Array.isArray(list) ? list : [])) {
-        if (taken >= ZAPS_ROWS_PER_SEAT) break;
-        if (!d || !/^[0-9a-f]{64}:\d+$/.test(String(d.outpoint)) || !/^[0-9a-f]{64}$/i.test(String(d.federationId))
-          || !/^[1-9]\d{0,20}$/.test(String(d.amountMsat))) continue;
-        taken++;
-        let byVersion = found.get(d.outpoint);
-        if (!byVersion) found.set(d.outpoint, byVersion = new Map());
-        if ([...byVersion.values()].some((v) => v.seats.has(si))) continue;
-        const k = versionOf(d);
-        if (!byVersion.has(k)) byVersion.set(k, { d, seats: new Set() });
-        byVersion.get(k).seats.add(si);
-      }
-    } catch { /* another seat answers for it */ }
+      return (Array.isArray(list) ? list : []).filter((d) => d && /^[0-9a-f]{64}:\d+$/.test(String(d.outpoint))
+        && /^[0-9a-f]{64}$/i.test(String(d.federationId)) && /^[1-9]\d{0,20}$/.test(String(d.amountMsat)));
+    } catch { return []; /* another seat answers for it */ }
   }));
+  const nextCursors = {};
+  rowsOf.forEach((rows, si) => {
+    for (const d of rows) note(found, d, si);
+    // kanban #1618: one seat's rows open to the Refund budget are at most ZAPS_ROWS_PER_SEAT well-formed rows a pass (outpoint
+    // txid:vout, a 64-hex federation id, a positive whole msat amount) - a seat listing 20,000 made-up outpoints no longer drives
+    // 20,000 Refund calls.
+    // kanban #2428 (refute of #1618): the seats list a key's rows OLDEST FIRST and never delete a player's, so the first 200 rows
+    // alone froze every zap after the 200th for good (200 old zaps or referral payouts, or 200 one-msat dust zaps a stranger sent).
+    // Rows already settled (in `seen`) no longer use the per-seat budget, and when more than ZAPS_ROWS_PER_SEAT unsettled rows are
+    // listed, a per-seat cursor (kept in `keep`) moves the window forward each pass and wraps, so every row is reached in turn.
+    const unsettled = rows.filter((d) => !seen.has(d.outpoint));
+    let start = 0;
+    if (unsettled.length > ZAPS_ROWS_PER_SEAT) {
+      const c = Number(cursors[seatList[si]]);
+      start = Number.isSafeInteger(c) && c >= 0 ? c % unsettled.length : 0;
+      nextCursors[seatList[si]] = (start + ZAPS_ROWS_PER_SEAT) % unsettled.length;
+    }
+    const n = Math.min(ZAPS_ROWS_PER_SEAT, unsettled.length);
+    for (let i = 0; i < n; i++) note(open, unsettled[(start + i) % unsettled.length], si);
+  });
+  try { if (keep) keep.setItem(ZAPS_CURSOR_KEY, JSON.stringify(nextCursors)); } catch { /* not kept: the window starts at the oldest row again */ }
   const collected = [], spent = [], failed = [], waiting = [];
   const accepted = new Map(); // outpoint -> the version a refund accepted
   let asked = 0;
-  for (const [outpoint, byVersion] of found) {
-    if (seen.has(outpoint)) continue;
+  // kanban #2133, #2195 (refute of #1618): the ZAPS_REFUNDS_PER_PASS budget is spent fairly, not in the order the seats' answers
+  // arrived - else one fast seat with 200 fresh made-up rows a pass took every call and a real zap every honest seat lists waited
+  // for ever. Outpoints listed by more distinct seats go first; among those listed by as many, the seats that listed them take turns
+  // (round-robin by the lowest-index seat that listed each), so one seat's rows alone never use the budget other seats' rows need.
+  for (const [outpoint, byVersion] of fairOrder(open, seen)) {
     const versions = [...byVersion.values()].sort((a, b) => b.seats.size - a.seats.size).map((v) => v.d);
     const tried = [], waits = [];
     let settled = false;
@@ -355,7 +407,7 @@ export async function collectZaps({ storage, keep = storage, random, curve, clie
     if (said.stored_before === null || said.stored_before === undefined) { spent.push(d); return 'spent'; }
     return { ...d, why: said.error || 'the federation did not accept the collect' };
   }
-  try { if (keep) keep.setItem(ZAPS_COLLECTED_KEY, JSON.stringify([...seen].slice(-500))); } catch { /* not kept: asked again, then found spent */ }
+  try { if (keep) keep.setItem(ZAPS_COLLECTED_KEY, JSON.stringify([...seen].slice(-ZAPS_SEEN_KEPT))); } catch { /* not kept: asked again, then found spent */ }
   // kanban #1557: the referral total counts an outpoint's row only when a refund accepted that version or every seat that listed the
   // outpoint gave the same one - a seat's changed amount neither inflates nor hides it.
   const web = [];

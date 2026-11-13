@@ -27,12 +27,21 @@ export function readOperatorUri(uri) {
 }
 
 /**
- * `store`: { read() -> [{ id, hash, scopes, createdAtMs }] , write(list) }; `random(n)` bytes. Answers mint / check / revoke /
+ * `store`: { read() -> { tokens: [{ id, hash, scopes, createdAtMs }], paired } (or an older bare list), write(that) }; `random(n)` bytes. Answers mint / check / revoke /
  * list / first.
  */
 export function createOperatorTokens({ store, nowMs = () => Date.now(), random = (n) => randomBytes(n), log = () => {} }) {
-  let kept = (() => { try { const l = store.read(); return Array.isArray(l) ? l : []; } catch { return []; } })();
-  const save = () => store.write(kept);
+  // A REVOKE OF EVERY TOKEN SURVIVES A RESTART (kanban #2548): an empty list cannot tell "never paired" from "the owner
+  // revoked them all", so once a token was minted the file is { tokens, paired: true } and first() mints nothing after a
+  // revoke-all - a new token is the owner's signed mint. An older file (a bare list) is read as before; a list with a token in
+  // it was paired.
+  let kept = []; let paired = false;
+  try {
+    const l = store.read();
+    if (Array.isArray(l)) { kept = l; paired = l.length > 0; }
+    else if (l && Array.isArray(l.tokens)) { kept = l.tokens; paired = l.paired === true || l.tokens.length > 0; }
+  } catch { /* unreadable: as no file */ }
+  const save = () => store.write({ tokens: kept, paired: (paired = paired || kept.length > 0) });
   const scopesOf = (scopes) => {
     const s = [...new Set((Array.isArray(scopes) ? scopes : []).map(String))];
     if (!s.length || s.some((x) => !OPERATOR_SCOPES.includes(x))) throw new Error(`a token's scopes are some of ${OPERATOR_SCOPES.join(', ')}`);
@@ -66,9 +75,9 @@ export function createOperatorTokens({ store, nowMs = () => Date.now(), random =
       return { ok: true };
     },
     list: () => kept.map(({ id, scopes, createdAtMs }) => ({ id, scopes, createdAtMs })),
-    /** FIRST START: with no token kept, the pairing token - every scope, none of which moves money - minted and its URI logged. */
+    /** FIRST START: on a node that never had a token, the pairing token - every scope, none of which moves money - minted and its URI logged. */
     first(endpoint) {
-      if (kept.length) return null;
+      if (kept.length || paired) return null;
       const t = api.mint(OPERATOR_SCOPES);
       const uri = operatorUri({ endpoint, token: t.token });
       log(`[operator] pair the operator UI with ${uri} (scopes ${t.scopes.join(', ')}; none can move money - spec 27A.7.7)`);
