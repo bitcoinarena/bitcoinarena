@@ -11,7 +11,7 @@
 //   CLOSED    its successor holds everything
 //   unverified  no record that stands: shown, and nothing about it is taken on trust
 import { majorityThenGrace, COMPARE_GRACE_MS } from './committee.js';
-import { verifyFederationRecord, newestRecord } from '../../arena-protocol/src/federation-record.js';
+import { verifyFederationRecord, newestRecord, splitSignedRecord, FEDERATION_STATUS } from '../../arena-protocol/src/federation-record.js';
 import { networkOf } from '../../arena-protocol/src/constants.js';
 import { readInvite } from '../../arena-node/src/invite.js';
 import { readWithOneRetry } from './reread.js';
@@ -39,16 +39,34 @@ export const FEDERATION_ALLOWS = Object.freeze({
 });
 
 /**
+ * NO RECORD STANDS, AND ONE REFUSED SAYS THE FEDERATION IS IN TROUBLE (kanban #2603, feedback #037): a genuine HALTED record refused here
+ * (four bonded strangers naming the federation in their adverts lifted its threshold past its seven signers) made the federation
+ * 'unverified', which allowed everything - deposits and joins into a halted federation. When every record of a federation was refused
+ * and one of them names DRAINING, CRITICAL, HALTED or CLOSED, it stays 'unverified' (nothing taken on trust), with no deposit and no
+ * join; withdraw and move stay open, so a player is never held in a federation on an unverified word.
+ */
+export const UNVERIFIED_RESTRICTED = Object.freeze({ deposit: false, join: false, withdraw: true, move: true });
+const RESTRICTIVE = new Set([FEDERATION_STATUS.DRAINING, FEDERATION_STATUS.CRITICAL, FEDERATION_STATUS.HALTED, FEDERATION_STATUS.CLOSED]);
+const statusName = (v) => Object.keys(FEDERATION_STATUS).find((k) => FEDERATION_STATUS[k] === v) || null;
+/** The restrictive status a refused record of `fid` names, or null (it does not decode, names another federation, or says OPEN). */
+function refusedRestrictive(bytes, fid) {
+  try {
+    const r = splitSignedRecord(bytes).record;
+    return bytesToHex(r.federationId) === fid && RESTRICTIVE.has(r.status) ? statusName(r.status) : null;
+  } catch { return null; }
+}
+
+/**
  * THE FEDERATION'S STATUS AS THIS CLIENT CAN STAND BEHIND IT. `census` is the entries of a census this client checked
  * (with their advertisements); `verify` BIP-340. Answers { status, allows, signers, height, from, why }.
  */
-export async function federationStatus({ federationIdHex, nodes, census, verify, fetcher = fetch, keptMs = 0 }) {
+export async function federationStatus({ federationIdHex, nodes, census, verify, fetcher = fetch, keptMs = 0, guardianKeysOf = null }) {
   const fid = String(federationIdHex).toLowerCase();
   // KEPT A WHILE WHEN ASKED (kanban #625, the owner's log 2026-10-24 20:30Z: each order read the status of every other federation the
   // browser holds notes in, 52-126 s while seats restarted): a status that stood is reused for `keptMs`
   const had = keptMs > 0 ? STATUS_KEPT.get(fid) : null;
   if (had && Date.now() - had.at < keptMs) return had.status;
-  const all = await federationStatuses({ nodes, census, verify, fetcher, only: fid });
+  const all = await federationStatuses({ nodes, census, verify, fetcher, only: fid, guardianKeysOf });
   const st = all.get(fid) || { status: 'unverified', allows: FEDERATION_ALLOWS.unverified, why: all.why || 'no node holds a record of this federation' };
   if (st.status !== 'unverified') STATUS_KEPT.set(fid, { status: st, at: Date.now() });
   return st;
@@ -62,8 +80,11 @@ const FEDERATION_ROWS_PER_SEAT = 2, FEDERATIONS_PER_SEAT = 16;   // kanban #1684
  * others' loads): one read of each seat's /federations, every record checked against the same census. A Map, federation
  * id hex -> status with `federation`; `only` keeps one. `.why` says why none stood when the map is empty.
  */
-export async function federationStatuses({ nodes, census, verify, fetcher = fetch, only = null }) {
-  const verified = new Map(), refused = new Map(), failed = [], checked = new Map();
+// `guardianKeysOf(fidHex)` (optional): the federation config's guardian keys when the page holds that config (its lock client's
+// guardians().keys) - every record of that federation is then held to them (verifyFederationRecord guardianKeys, kanban #2603)
+export async function federationStatuses({ nodes, census, verify, fetcher = fetch, only = null, guardianKeysOf = null }) {
+  const verified = new Map(), refused = new Map(), failed = [], checked = new Map(), restrictive = new Map();
+  const keysOf = (fid) => { if (typeof guardianKeysOf !== 'function') return null; try { const k = guardianKeysOf(fid); return Array.isArray(k) && k.length ? k : null; } catch { return null; } };
   const add = (m, k, v) => { if (!m.has(k)) m.set(k, []); m.get(k).push(v); };
   // NOT HELD FOR THE SLOWEST SEAT, NOR FOR A HUNG ONE (kanban #625: asked with no limit, a restarting seat held an order 26 s a read): each
   // seat within STATUS_ASK_MS, and once more than half answered the rest get COMPARE_GRACE_MS - the records are signed, the newest that stands is taken
@@ -87,10 +108,15 @@ export async function federationStatuses({ nodes, census, verify, fetcher = fetc
         rows.set(fid, n + 1);
         const hex = String(f.record);
         let v = checked.get(hex);
-        if (!v) { v = verifyFederationRecord(hexToBytes(hex), { census, verify, inviteFederationId }); checked.set(hex, v); }
+        if (!v) { v = verifyFederationRecord(hexToBytes(hex), { census, verify, inviteFederationId, guardianKeys: keysOf(fid) }); checked.set(hex, v); }
         // ITS GUARDIANS, for a join one guardian cannot serve (guardian-invites.js) - ONLY ONCE THE RECORD VERIFIES (kanban #1556: one seat
         // answering first with an unsigned record naming the player's federation took every peer slot, so the join fallback named only its hosts)
-        if (v.ok) { noteRecordInvite(f.record); add(verified, fid, { ...v, from: u }); } else add(refused, fid, `${u}: ${v.why}`);
+        if (v.ok) { noteRecordInvite(f.record); add(verified, fid, { ...v, from: u }); }
+        else {
+          add(refused, fid, `${u}: ${v.why}`);
+          const says = restrictive.has(fid) ? null : refusedRestrictive(hexToBytes(hex), fid);
+          if (says) restrictive.set(fid, says);
+        }
       }
     } catch (e) { if (!closed) failed.push(`${u}: ${e.message}`); }
   }), COMPARE_GRACE_MS);
@@ -99,8 +125,11 @@ export async function federationStatuses({ nodes, census, verify, fetcher = fetc
   for (const fid of new Set([...verified.keys(), ...refused.keys()])) {
     const best = newestRecord(verified.get(fid) || []);
     const why = (refused.get(fid) || failed)[0];
+    const says = best ? null : restrictive.get(fid) || null;
     out.set(fid, best ? { ...statusOfRecord(best), federation: fid }
-      : { status: 'unverified', allows: FEDERATION_ALLOWS.unverified, federation: fid, why: why ? `no record stands: ${why}` : 'no node holds a record of this federation' });
+      : { status: 'unverified', allows: says ? UNVERIFIED_RESTRICTED : FEDERATION_ALLOWS.unverified, federation: fid,
+        ...(says ? { refusedSays: says } : {}),
+        why: `${why ? `no record stands: ${why}` : 'no node holds a record of this federation'}${says ? ` - a refused record says ${says}, so no deposit or join` : ''}` });
   }
   if (!out.size && failed.length) out.why = `no record stands: ${failed[0]}`;
   return out;

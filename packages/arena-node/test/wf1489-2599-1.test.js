@@ -7,6 +7,9 @@
 // seat kept it - the federation HALTED (liquidation clocks, the exchange refused), its guardian list one node long, so the spent-set quorum
 // (n - t + 1) was that one guardian's own copy. Safe: a record needs the threshold of the guardians the census lists for the federation, not
 // of the guardians the record chose to list.
+// ADJUSTED BY #2603 (feedback #037): this test's verifier read the guardian set off the census alone, and that assumption was the bug - a census
+// advert's guardianOf is the node's own word, so four bonded strangers lifted a genuine HALTED record past its seven signers. The guardian set
+// is the federation config's keys (broadcast_public_keys); both checks below now hold the config keys, as every seat that holds the config does.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -51,11 +54,12 @@ test('a record one guardian of seven signs listing only itself (nominal 1) does 
   const s = seven();
   assert.equal((await s.seats[1].gather(FED, inviteFederationId)).ok, true);
   const genuine = splitSignedRecord(fromHex(s.seats[1].list()[0].record)).record;
-  const v = verifyFederationRecord(forged(s, genuine), { census: s.census.entries, verify, inviteFederationId });
+  const guardianKeys = s.nodes.map((n) => n.guardianKey);   // #2603: the config's keys, not the census adverts
+  const v = verifyFederationRecord(forged(s, genuine), { census: s.census.entries, verify, inviteFederationId, guardianKeys });
   console.log(`#2599 forged one-guardian HALTED record: ${v.ok ? `verified (${v.status}, ${v.signers} signer)` : `refused: ${v.why}`}`);
   assert.equal(v.ok, false, 'one guardian of seven alone made a record that verifies');
   // the honest record still verifies
-  assert.equal(verifyFederationRecord(fromHex(s.seats[1].list()[0].record), { census: s.census.entries, verify, inviteFederationId }).ok, true);
+  assert.equal(verifyFederationRecord(fromHex(s.seats[1].list()[0].record), { census: s.census.entries, verify, inviteFederationId, guardianKeys }).ok, true);
 });
 
 test('a mirroring seat keeps the genuine OPEN record, not one guardian\'s forged HALTED one', async () => {
@@ -67,6 +71,7 @@ test('a mirroring seat keeps the genuine OPEN record, not one guardian\'s forged
   const o = federationRecords({ round: { pubkey: me.pubkey, identity: { secret: me.secret } },
     newest: () => ({ rid: new Uint8Array(32).fill(9), contract: { censusHeight: 156036, networkId: NET } }),
     roster: { censusFor: () => s.census }, inviteFor: () => null, networkId: NET,
+    guardianKeysOf: async () => s.nodes.map((n) => n.guardianKey),   // #2603: the mirroring seat holds the federation's config
     fetcher: async (url) => {
       const i = s.nodes.findIndex((m) => url.startsWith(m.endpoint.replace('wss:', 'https:')));
       if (i < 0 || !url.endsWith('/federations')) return new Response('no', { status: 404 });
