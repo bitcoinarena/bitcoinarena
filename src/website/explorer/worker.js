@@ -730,12 +730,21 @@ function keptRead(env, k, keepMs, read) {
     if (usable && age < keepMs) return kept.v;
     const mine = await claimRead(env, k, Date.now()).catch(() => true);
     if (!mine && usable) return kept.v;   // another isolate is reading it now: the last copy meanwhile
+    // A READING THAT FAILS SERVES THE LAST COPY AND HOLDS THE CLAIM (kanban #2504, #1489 a44-refute-49-s2): while the whole-table scan failed
+    // (the #1459 D1 out-of-memory) nothing was kept and the claim was released at once, so every next request (?x=1, ?x=2, ...) ran the
+    // failing scan again and answered 500 though a minute-old copy was in state. Now, with a copy, a failed reading answers that copy and
+    // keeps the claim until it runs out (KEEP_CLAIM_MS): every other request meanwhile serves the copy too, and one reading is tried again
+    // after it. Only with no copy at all is the claim let go and the failure thrown.
+    let failed = false;
     try {
       const v = await read(env);
       if (slot.gen === gen) await statePut(env, k, JSON.stringify({ at: Date.now(), v })).catch(() => {});
       return v;
+    } catch (e) {
+      if (usable) { failed = true; return kept.v; }
+      throw e;
     } finally {
-      if (mine) await statePut(env, k + '-claim', '0').catch(() => {});
+      if (mine && !failed) await statePut(env, k + '-claim', '0').catch(() => {});
     }
   })();
   slot.flight = p;
