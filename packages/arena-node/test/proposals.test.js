@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { createProposals } from '../src/proposals.js';
 import { encodeConfigProposalBody, proposalBodyId, CLASS, SCHEDULES, configHashOf } from '../../arena-protocol/src/ballot.js';
-import { depositOutputsExpected } from '../../arena-protocol/src/ballot-chain.js';
+import { depositOutputsExpected, depositCommitmentScript } from '../../arena-protocol/src/ballot-chain.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { decodeSourceList, encodeSourceList } from '../../arena-protocol/src/market-check.js';
@@ -66,12 +66,16 @@ test('on a running seat: POST /proposal reads the deposit through `ballot`, chec
   const { NETWORK_ID_REGTEST } = await import('../../arena-protocol/src/genesis-ids.js');
   const want = depositOutputsExpected(700, KEYS.recipients);
   assert.equal(want.ok, true, want.why);
-  const raw = tx(want.outputs.map((o) => ({ sats: o.sats, script: o.script })));
-  const p = { networkId: NETWORK_ID_REGTEST, parent: new Uint8Array(32).fill(0x10), configHash: configHashOf(Uint8Array.of(9)), config: Uint8Array.of(9),
-    class: CLASS.MONEY, activationHeight: 300 + 8, proposer, depositTxid: Uint8Array.from(parseTransaction(raw).txid) };
+  // regtest is bound from 0 (kanban #2562): the deposit commits to its proposer and the proposal's bytes
+  const body = { networkId: NETWORK_ID_REGTEST, parent: new Uint8Array(32).fill(0x10), configHash: configHashOf(Uint8Array.of(9)), config: Uint8Array.of(9),
+    class: CLASS.MONEY, activationHeight: 300 + 8, proposer };
+  const raw = tx([...want.outputs.map((o) => ({ sats: o.sats, script: o.script })), { sats: 0, script: depositCommitmentScript(body) }]);
+  const p = { ...body, depositTxid: Uint8Array.from(parseTransaction(raw).txid) };
   const hex = toHex(Uint8Array.from([...encodeConfigProposalBody(p), ...schnorr.sign(proposalBodyId(p), secret)]));
   const BLOCK = 'cc'.repeat(32);
-  const d = await serve(openStore(':memory:'), { port: 0, donationSets: [KEYS],
+  let pairing = null;
+  const opStore = (() => { let l = []; return { read: () => l, write: (x) => { l = JSON.parse(JSON.stringify(x)); } }; })();
+  const d = await serve(openStore(':memory:'), { port: 0, donationSets: [KEYS], operator: { store: opStore, writePairing: (u) => { pairing = u; }, endpoint: 'https://seat.example' },
     ballot: { confirmedTx: async (txid, block) => (block === BLOCK && txid === toHex(Uint8Array.from(p.depositTxid).reverse()) ? { raw, height: 300 } : null), lowestBondMinSats: 100000n } });
   try {
     const base = `http://127.0.0.1:${d.port}`;
@@ -83,6 +87,20 @@ test('on a running seat: POST /proposal reads the deposit through `ballot`, chec
     assert.deepEqual([got.class, got.publishedAt, got.depositSats, listed.length], ['MONEY', 300, '700', 1]);
     const wrong = await fetch(`${base}/proposal`, { method: 'POST', body: JSON.stringify({ proposal: hex, blockHash: 'dd'.repeat(32) }) });
     assert.equal(wrong.status, 200, 'kept already: the same proposal answers the one kept');
+    // THE VOTE DOOR ON A BOUND PROPOSAL (kanban #2562): the 80-byte seq vote, seq raised per vote, signed by the node key
+    const { readOperatorUri } = await import('../src/operator-tokens.js');
+    const { decodeVote, voteMessage, CHOICE } = await import('../../arena-protocol/src/ballot.js');
+    const { token } = readOperatorUri(pairing);
+    const node = (await (await fetch(`${base}/operator/status`, { headers: { authorization: `Bearer ${token}` } })).json()).node;
+    const castVote = async (b) => (await fetch(`${base}/operator/vote`, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(b) })).json();
+    const v1 = await castVote({ proposalId: got.id, choice: 'YES' }), v2 = await castVote({ proposalId: got.id, choice: 'NO' }), v3 = await castVote({ proposalId: got.id, choice: 'NO', seq: 40 });
+    const dec = [v1, v2, v3].map((v) => decodeVote(Uint8Array.from(Buffer.from(v.opReturn, 'hex'))));
+    console.log('  DOOR:', JSON.stringify([v1, v2, v3].map((v, i) => ({ bytes: v.opReturn.length / 2, seq: v.seq, decodedSeq: dec[i].seq, bound: dec[i].bound }))));
+    assert.deepEqual(dec.map((x) => [x.bound, x.seq]), [[true, 1], [true, 2], [true, 40]]);
+    assert.equal(v1.opReturn.length / 2, 80);
+    const idb = Uint8Array.from(Buffer.from(got.id, 'hex'));
+    assert.equal(schnorr.verify(dec[1].signature, voteMessage(idb, CHOICE.NO, 2), Uint8Array.from(Buffer.from(node, 'hex'))), true, 'H(proposal_id || choice || seq), the node key');
+    assert.equal((await castVote({ proposalId: got.id, choice: 'NO', seq: -1 })).ok, false);
   } finally { await d.close(); }
 });
 

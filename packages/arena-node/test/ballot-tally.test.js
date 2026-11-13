@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { createBallotTally } from '../src/ballot-tally.js';
 import { encodeConfigProposalBody, proposalBodyId, proposalId, encodeVote, voteMessage, CLASS, CHOICE, configHashOf } from '../../arena-protocol/src/ballot.js';
-import { depositOutputsExpected, BALLOT_GENESIS, SOURCES_GENESIS } from '../../arena-protocol/src/ballot-chain.js';
+import { depositOutputsExpected, depositCommitmentScript, BALLOT_GENESIS, SOURCES_GENESIS } from '../../arena-protocol/src/ballot-chain.js';
 import { MARKET_HOSTS, encodeSourceList } from '../../arena-protocol/src/market-check.js';
 import { SOURCE_ENTRIES } from '../../arena-protocol/src/market-sources.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
@@ -170,14 +170,23 @@ test('a reorg inside an open phase reads its votes again; a reorg under its publ
   assert.match(t2.reorgs()[0].what, /publication block left this chain/);
 });
 
-test('a DESIGN proposal under 30 % turnout fails, and the config stays the genesis', async () => {
-  const { idBytes, record } = kept();
-  const ch = chain(new Map([[101, [vote(C, idBytes, CHOICE.YES, 101, 'c')]]]));         // 20 % of the bonded capital
-  const t = createBallotTally({ proposals: store([record]), tipHeight: ch.tipHeight, votesAt: ch.votesAt, censusAt: ch.censusAt, verify, decideDepthFor: () => 1, minDecideDepthFor: () => 1 });
-  ch.tip = 120; await t.pass();
-  const got = t.list()[0];
-  assert.deepEqual([got.phase, got.tally.turnoutPct, got.tally.quorum, got.tally.passed], ['failed', 20, false, false]);
-  assert.equal(t.live(toHex(H(0x4e))).configHash, toHex(BALLOT_GENESIS.configHash));
+// RULED 2026-11-07 (kanban #1300, #1335; ballot.js THRESHOLDS): DESIGN has no turnout floor any more - it passes with more than 50 %
+// approval and YES from at least 15 % of all bonds. This test said 30 % turnout until #2577 found it stale on 2.0 (it read the rule
+// from before the ruling): 20 % YES alone now passes, and a NO that leaves approval at 50 % or under still fails it.
+test('a DESIGN proposal: 20 % YES alone passes (no turnout floor, YES >= 15 %); with more NO than YES it fails and the config stays', async () => {
+  { const { idBytes, record } = kept();
+    const ch = chain(new Map([[101, [vote(C, idBytes, CHOICE.YES, 101, 'c')]]]));         // 20 % of the bonded capital
+    const t = createBallotTally({ proposals: store([record]), tipHeight: ch.tipHeight, votesAt: ch.votesAt, censusAt: ch.censusAt, verify, decideDepthFor: () => 1, minDecideDepthFor: () => 1 });
+    ch.tip = 120; await t.pass();
+    const got = t.list()[0];
+    assert.deepEqual([got.tally.turnoutPct, got.tally.quorum, got.tally.passed], [20, true, true]); }
+  { const { idBytes, record } = kept();
+    const ch = chain(new Map([[101, [vote(C, idBytes, CHOICE.YES, 101, 'c'), vote(B, idBytes, CHOICE.NO, 101, 'b')]]]));   // YES 20, NO 30: 40 % approval
+    const t = createBallotTally({ proposals: store([record]), tipHeight: ch.tipHeight, votesAt: ch.votesAt, censusAt: ch.censusAt, verify, decideDepthFor: () => 1, minDecideDepthFor: () => 1 });
+    ch.tip = 120; await t.pass();
+    const got = t.list()[0];
+    assert.deepEqual([got.phase, got.tally.turnoutPct, got.tally.approvalPct, got.tally.passed], ['failed', 50, 40, false]);
+    assert.equal(t.live(toHex(H(0x4e))).configHash, toHex(BALLOT_GENESIS.configHash)); }
 });
 
 test('a pass reads at most maxBlocksPerPass blocks, and goes on from there the next pass', async () => {
@@ -204,15 +213,19 @@ test('on a seat: a proposal passes and activates, rounds are served under the co
   const deposits = new Map();                                                    // txid (display) -> { raw, height }
   /** A proposal with its deposit confirmed at `at`, posted to the seat. */
   const propose = async (base, { parent, configHash, config, at, activationHeight, salt }) => {
-    const raw = tx(depositOutputsExpected(1000, KEYS.recipients).outputs.map((o) => ({ sats: o.sats, script: o.script })), salt);
-    const p = { networkId: NETWORK_ID_REGTEST, parent, configHash, config, class: CLASS.DESIGN, activationHeight, proposer: A.pubkey, depositTxid: Uint8Array.from(parseTransaction(raw).txid) };
+    // regtest is bound from 0 (kanban #2562): the deposit commits to its proposer and the proposal's bytes
+    const body = { networkId: NETWORK_ID_REGTEST, parent, configHash, config, class: CLASS.DESIGN, activationHeight, proposer: A.pubkey };
+    const raw = tx([...depositOutputsExpected(1000, KEYS.recipients).outputs.map((o) => ({ sats: o.sats, script: o.script })), { sats: 0, script: depositCommitmentScript(body) }], salt);
+    const p = { ...body, depositTxid: Uint8Array.from(parseTransaction(raw).txid) };
     deposits.set(toHex(Uint8Array.from(p.depositTxid).reverse()), { raw, height: at });
     const hex = toHex(Uint8Array.from([...encodeConfigProposalBody(p), ...schnorr.sign(proposalBodyId(p), A.secret)]));
     const r = await fetch(`${base}/proposal`, { method: 'POST', body: JSON.stringify({ proposal: hex, blockHash: 'ab'.repeat(32) }) });
     return { status: r.status, body: await r.json() };
   };
   const votes = new Map();
-  const cast = (who, idHex, choice, height) => { const id = Uint8Array.from(Buffer.from(idHex, 'hex')); votes.set(height, [...(votes.get(height) || []), vote(who, id, choice, height, `${height}${who === A ? 'a' : 'b'}`)]); };
+  // the bound vote (kanban #2562): seq 1, each bond votes once per proposal here
+  const boundVote = (who, idBytes, choice, height, txid) => ({ payload: encodeVote({ proposalId: idBytes, choice, seq: 1, signature: schnorr.sign(voteMessage(idBytes, choice, 1), who.secret) }), height, txid });
+  const cast = (who, idHex, choice, height) => { const id = Uint8Array.from(Buffer.from(idHex, 'hex')); votes.set(height, [...(votes.get(height) || []), boundVote(who, id, choice, height, `${height}${who === A ? 'a' : 'b'}`)]); };
   let tip = 300;
   const d = await serve(openStore(':memory:'), { port: 0, donationSets: [KEYS],
     ballot: { confirmedTx: async (txid) => deposits.get(txid) || null, lowestBondMinSats: 100000n, tipHeight: async () => tip,

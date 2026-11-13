@@ -96,7 +96,7 @@ import { serviceSettings } from './service-settings.js';
 import { controlsOf, installerIdOf, INSIDE } from './service-control.js';
 import { connect as netConnect } from 'node:net';
 import { relayPost, relayMarks, relayTargets } from './relay.js';
-import { CHOICE, voteMessage, encodeVote, SCHEDULES, REPEAL_SCHEDULES, BALLOT_DEPTH_HEIGHT, MIN_DECIDE_DEPTHS } from '../../arena-protocol/src/ballot.js';
+import { CHOICE, voteMessage, encodeVote, SCHEDULES, REPEAL_SCHEDULES, BALLOT_DEPTH_HEIGHT, MIN_DECIDE_DEPTHS, ballotBindHeight } from '../../arena-protocol/src/ballot.js';
 import { configServesRound } from '../../arena-protocol/src/ballot-chain.js';
 import { createProposals } from './proposals.js';
 import { createBallotTally } from './ballot-tally.js';
@@ -1894,6 +1894,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     scheduleFor: (net) => (isRegtestNet(net) ? SCHEDULES.regtest : toHex(fromHex(net)) === toHex(NETWORK_ID_TESTNET4) ? SCHEDULES.testnet4 : SCHEDULES.mainnet),   // testnet4: a day each (kanban #785)
     // AND ITS REPEAL SCHEDULE (27A.7.6), read against the history live at the proposal's publication - the tally's
     repealScheduleFor: (net) => (isRegtestNet(net) ? REPEAL_SCHEDULES.regtest : toHex(fromHex(net)) === toHex(NETWORK_ID_TESTNET4) ? REPEAL_SCHEDULES.testnet4 : REPEAL_SCHEDULES.mainnet),
+    // THE BINDING'S GATE (ruled 2026-11-12, kanban #2125 / #2012, ported #2562): deposits committed to proposer and bytes, votes by seq,
+    // from the network's BALLOT_BIND_HEIGHT (regtest 0, testnet4 161 400, any other network from its first block)
+    bindHeightFor: (net) => ballotBindHeight(isRegtestNet(net) ? 'regtest' : toHex(fromHex(net)) === toHex(NETWORK_ID_TESTNET4) ? 'testnet4' : 'mainnet'),
     ...(counts ? { historyFor: (net, height, cls) => (ballotTally ? ballotTally.historyAt(net, height, cls) : null) } : {}),
     depthHeightFor: ballotDepthHeightFor, minDecideDepthFor: ballotMinDepthFor,
     // ONLY A BONDED NODE PROPOSES (27A.7.2, kanban #1489): the proposer is checked against the census the tally reads
@@ -2334,7 +2337,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }));
     return mergeServedRounds(held.filter(Boolean)).rounds;
   };
-  const fundingBook = round.db ? createFundingBook({ endTimeAt: typeof blockHeaderTimeAt === 'function' ? blockHeaderTimeAt : null, feeChainFrom: (netHex) => { const n = networkOf(fromHex(String(netHex))); return n && Object.prototype.hasOwnProperty.call(FEE_SIGNAL_CHAIN_HEIGHT, n) ? FEE_SIGNAL_CHAIN_HEIGHT[n] : null; },   // kanban #1283
+  const fundingBook = round.db ? createFundingBook({ bindHeightFor: (net) => ballotBindHeight(isRegtestNet(net) ? 'regtest' : toHex(fromHex(net)) === toHex(NETWORK_ID_TESTNET4) ? 'testnet4' : 'mainnet'),   // kanban #2576
+    endTimeAt: typeof blockHeaderTimeAt === 'function' ? blockHeaderTimeAt : null, feeChainFrom: (netHex) => { const n = networkOf(fromHex(String(netHex))); return n && Object.prototype.hasOwnProperty.call(FEE_SIGNAL_CHAIN_HEIGHT, n) ? FEE_SIGNAL_CHAIN_HEIGHT[n] : null; },   // kanban #1283
     db: round.db, schedule: fundingSchedule, log: (l) => console.log(l),
     // BEFORE A FEE DECISION, EVERY SEAT'S APPROVALS AND SIGNALS (ruled on #1245, kanban #1231): GET /funding-items of each network seat this seat reaches
     pull: async (pid) => {
@@ -8936,10 +8940,32 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           if (!/^[0-9a-f]{64}$/.test(id)) return answer(400, { ok: false, why: 'a vote names a proposal id of 64 hex characters' });
           if (!choice) return answer(400, { ok: false, why: 'a vote is YES, NO or ABSTAIN' });
           const pid = fromHex(id);
-          const signature = schnorr.sign(voteMessage(pid, choice), round.identity.secret);
-          const payload = encodeVote({ proposalId: pid, choice, signature });
+          // A BOUND PROPOSAL (kanban #2125) takes the 80-byte seq vote: H(proposal_id || choice || seq), seq one above the last this
+          // node signed for it (kept in its store), or the operator's own `seq` when that is higher. Any other id: the 77-byte vote.
+          const kept = proposals && typeof proposals.list === 'function' ? proposals.list().find((r) => r.id === id) : null;
+          let seq = null;
+          // AND A FUNDING, FEE OR LEADERBOARD PROPOSAL past the gate (feedback #031, kanban #2580); an id neither book holds is signed
+          // bound when this seat's chain is past its network's gate
+          const fundingBound = !kept && fundingBook && typeof fundingBook.boundOf === 'function' ? fundingBook.boundOf(id) : null;
+          let unknownBound = false;
+          if (!kept && fundingBound === null) {
+            let tipNow = NaN; try { tipNow = typeof chainTip === 'function' ? Number(await chainTip()) : NaN; } catch { tipNow = NaN; }
+            let net = null; try { net = chainNetworkName(); } catch { net = null; }
+            unknownBound = Number.isInteger(tipNow) && tipNow >= ballotBindHeight(net === 'regtest' || net === 'testnet4' ? net : 'mainnet');
+          }
+          if ((kept && typeof proposals.bound === 'function' && proposals.bound(kept)) || fundingBound === true || unknownBound) {
+            round.db.exec('CREATE TABLE IF NOT EXISTS ballot_vote_seq (proposal TEXT PRIMARY KEY, seq INTEGER NOT NULL)');
+            const last = round.db.prepare('SELECT seq FROM ballot_vote_seq WHERE proposal = ?').get(id);
+            const asked = body.seq === undefined ? null : Number(body.seq);
+            if (asked !== null && !(Number.isInteger(asked) && asked >= 0 && asked <= 0xffffffff)) return answer(400, { ok: false, why: 'seq is a u32' });
+            seq = Math.max(last ? Number(last.seq) + 1 : 1, asked ?? 0);
+            if (seq > 0xffffffff) return answer(409, { ok: false, why: 'this node has signed the highest seq there is for that proposal' });
+            round.db.prepare('INSERT OR REPLACE INTO ballot_vote_seq (proposal, seq) VALUES (?, ?)').run(id, seq);
+          }
+          const signature = schnorr.sign(voteMessage(pid, choice, seq), round.identity.secret);
+          const payload = encodeVote({ proposalId: pid, choice, signature, seq });
           console.log(`[operator] vote ${String(body.choice).toUpperCase()} on proposal ${id.slice(0, 16)} signed by this node's bond key; the operator's wallet broadcasts it`);
-          return answer(200, { ok: true, node: toHex(round.pubkey), proposalId: id, choice: String(body.choice).toUpperCase(), opReturn: toHex(payload),
+          return answer(200, { ok: true, node: toHex(round.pubkey), proposalId: id, choice: String(body.choice).toUpperCase(), ...(seq !== null ? { seq } : {}), opReturn: toHex(payload),
             broadcast: 'send it as an OP_RETURN output from your own wallet: this node moves no money (spec 27A.7.7)' });
         }
         // NOT BUILT YET, SAID BY NAME: the declarations (§27A.2) a config token edits

@@ -1940,9 +1940,18 @@ export class Client {
     // which every honest seat signs FORFEIT. So when this client's own head is live (its own verified witnesses), the
     // walk stops AT that head: only a mark served after it may be adopted, and a list that leaves the live head out
     // moves nothing (`headWithheld`) - the head stays where this client can prove it belongs.
-    const ids = [];
-    for (let at = 0; at < cb.length; at += SIGNED_CHECKPOINT_BYTES)
-      ids.push(checkpointId(decodeCheckpoint(splitSigned(cb.subarray(at, at + SIGNED_CHECKPOINT_BYTES)).body)));
+    // IN TICK ORDER, NOT THE LIST'S (feedback #032): the walk below picks the newest live mark and the #1732 floor is a place in
+    // this list, so a home seat that served every mark newest first ([M1, M0]) - omitting nothing, forging nothing - made the walk
+    // land on M0 and the next mark a second child of it (FORFEIT). The marks are put in order by their own ticks here, and only
+    // this round's and this entry's count; a list with two marks at one tick is not one chain, and is taken in its own order.
+    const listed = [];
+    for (let at = 0; at < cb.length; at += SIGNED_CHECKPOINT_BYTES) {
+      const m = decodeCheckpoint(splitSigned(cb.subarray(at, at + SIGNED_CHECKPOINT_BYTES)).body);
+      if (toHex(m.roundId) !== toHex(roundId) || toHex(m.entryId) !== toHex(entryId)) continue;
+      listed.push({ id: checkpointId(m), tick: m.tick, at });
+    }
+    listed.sort((x, y) => x.tick - y.tick || x.at - y.at);
+    const ids = listed.map((x) => x.id);
     const headHex = toHex(this.head);
     const headLive = headHex !== toHex(NO_PREVIOUS) && this.live(this.head);
     let floor = 0;
@@ -1983,19 +1992,18 @@ export class Client {
       };
       await readList(this.base, true).catch(() => {});
       await Promise.all((this.peers || []).map((base) => readList(base, false).catch(() => {})));
-      const unplaced = [...this.witnesses.keys()].filter((id) => !ticks.has(id) || (ticks.get(id) === null && !listed.has(id)));
-      if (unplaced.length) {
-        const why = `the node at ${this.base} leaves the mark ${unplaced[0].slice(0, 16)} out of its checkpoints, a committee node `
-          + 'receipted it and no committee node serves it - this client does not sign a mark on a head it cannot place';
-        this.nodeFault = { base: this.base, firstTick: null, batch: null, why };
-        this.endRun(`node fault: ${why}`);
-        throw Object.assign(new Error(why), { nodeFault: true });
-      }
-      // an honest home list moves nothing here: the walk above keeps its rule (the newest LIVE mark). Only a list that left out a
-      // mark this player signed, which a peer holds, is overruled - by the newest signed mark any list holds.
+      // NO RUN ENDS ON RECEIPTS ALONE (feedback #029, #030): a receipt names a checkpoint id and nothing else - no round, no
+      // entry, no proof the mark is this player's - and every seat serves its receipts to anyone, so one seat could add receipts
+      // over random bytes (#029) or GENUINE ones of another entry's carried mark (#030) and end every reloaded run on the honest
+      // home seat's name. A receipted id that no list holds as a mark under this entry's session key is not this player's to
+      // place: it is ignored. A withheld mark of this player is caught by the signed peer lists above (#027), which need no receipt.
       const at = (id) => ticks.get(id) ?? -1;
       let newest = null;
-      if (withheld.size) for (const [id, tick] of ticks) if (tick !== null && (newest === null || tick > at(newest))) newest = id;
+      // AND AFTER EVERY RELOAD (feedback #033): one seat that leaves only its OWN receipt for the newest mark out of /receipts kept
+      // it under the live threshold - every list complete and in order, nothing withheld - and the walk took the older live mark,
+      // whose next child forks the carried one (FORFEIT). A reloaded client takes the newest mark signed under its session key that
+      // any list holds, live or not: a child of an older parent is a fork either way, and the lists show the committee holds it.
+      if (withheld.size || this.reloading) for (const [id, tick] of ticks) if (tick !== null && (newest === null || tick > at(newest))) newest = id;
       const now = adopted ? toHex(adopted) : null;
       if (newest !== null && newest !== now && at(newest) > (now ? at(now) : -1)) adopted = fromHex(newest);
     }
@@ -2014,7 +2022,8 @@ export class Client {
     this.setRound({ roundId, entryId, blockTicks });
     const where = this.where;
     this.where = null;
-    try { return await this.resume(where); } finally { this.where = where; }
+    this.reloading = true;   // carriedHead: a reload never falls behind the newest signed mark (feedback #033)
+    try { return await this.resume(where); } finally { this.where = where; this.reloading = false; }
   }
 
   /**

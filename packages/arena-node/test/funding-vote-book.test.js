@@ -24,13 +24,13 @@ const ID1 = fundingProposalId(P1);
 const bond = (n, sats) => ({ pubkey: pk(n), outpoint: `${n.toString(16).padStart(2, '0').repeat(32)}:0`, bondSats: BigInt(sats), height: 50, maturity: 100000 });
 const vote = (n, choice, txid = 'aa'.repeat(32)) => ({ payload: encodeVote({ proposalId: ID1, choice, signature: schnorr.sign(voteMessage(ID1, choice), sk(n)) }), txid });
 
-function world() {
+function world(extra = {}) {
   const chain = { tip: 100, blocks: new Map(), bonds: [bond(10, 3000), bond(11, 7000)], censusAsked: [] };
   const at = (h) => chain.blocks.get(h) || (chain.blocks.set(h, { hash: `${h}`.padStart(64, '0'), votes: [] }), chain.blocks.get(h));
   const voteChain = { tipHeight: async () => chain.tip, blockHashAt: async (h) => (h <= chain.tip ? at(h).hash : null),
     votesAt: async (h) => at(h).votes.map((v) => ({ ...v, height: h })), censusAt: async (net, h) => { chain.censusAsked.push(h); return chain.bonds.map((b) => ({ ...b })); } };
   const b = createFundingBook({ db: openStore(':memory:'), verify, schedule: FUNDING_SCHEDULES.short, tip: async () => chain.tip,
-    isBonded: () => true, activeAt: async (end) => ({ ok: true, nodes: [toHex(pk(2))], fromHeight: end - 432 }), voteChain });
+    isBonded: () => true, activeAt: async (end) => ({ ok: true, nodes: [toHex(pk(2))], fromHeight: end - 432 }), voteChain, ...extra });
   return { b, chain, at };
 }
 async function signalled({ b, chain }) {
@@ -77,4 +77,37 @@ test('undecided at 5 deep, decided at 6, once: later votes and a later census do
   const [again] = await w.b.voteRound();
   assert.deepEqual([again.passed, again.yesSats, again.noSats, again.approvalPct, again.lastHash], [false, '3000', '7000', 30, 'ff'.repeat(32)]);
   assert.equal(viewOf(w.b, ID1, 130).state, 'failed');
+});
+
+// kanban #2576 (left open by #2562): past BALLOT_BIND_HEIGHT a funding vote is read by seq, as a config proposal's - a bond's older vote
+// (lower seq) mined later no longer overturns its newer one; below the gate the last vote by height still counts
+const seqVote = (n, choice, seq) => ({ payload: encodeVote({ proposalId: ID1, choice, seq, signature: schnorr.sign(voteMessage(ID1, choice, seq), sk(n)) }), txid: 'bb'.repeat(32) });
+test('#2576: past the gate the highest seq counts, not the last block; below it the last block still does', async () => {
+  for (const [gate, want] of [[0, { passed: true, yes: '10000', no: '0' }], [null, { passed: false, yes: '3000', no: '7000' }]]) {
+    const w = world(gate === null ? {} : { bindHeightFor: () => gate }); await signalled(w);
+    w.at(101).votes.push(vote(10, CHOICE.YES));
+    if (gate === null) { w.at(102).votes.push(vote(11, CHOICE.YES)); w.at(105).votes.push(vote(11, CHOICE.NO)); }   // old: the later block wins
+    else { w.at(102).votes.push(seqVote(10, CHOICE.YES, 1)); w.at(102).votes.push(seqVote(11, CHOICE.YES, 2)); w.at(105).votes.push(seqVote(11, CHOICE.NO, 1)); } // a replayed older vote
+    w.chain.tip = 111;
+    let d = null; for (let i = 0; i < 4 && !d; i++) [d] = await w.b.voteRound();
+    assert.deepEqual([d.passed, d.yesSats, d.noSats], [want.passed, want.yes, want.no], `gate ${gate}`);
+  }
+});
+
+// feedback #031 (kanban #2580): the operator vote door asks the funding book whether a funding / fee / leaderboard proposal is
+// voted bound, so it signs the 80-byte seq vote the bound tally counts (a 77-byte one was dropped: unanimous YES read 0 / 0)
+test('#2580: boundOf says bound past the gate, not below it, and null for an id this seat does not hold', async () => {
+  const bound = world({ bindHeightFor: () => 0 }); await signalled(bound);
+  assert.equal(bound.b.boundOf(toHex(ID1)), true);
+  assert.equal(bound.b.boundOf('ab'.repeat(32)), null, 'an id the funding book does not hold');
+  const old = world({ bindHeightFor: () => 1000 }); await signalled(old);
+  assert.equal(old.b.boundOf(toHex(ID1)), false, 'published at 100, below a gate at 1000');
+  const none = world(); await signalled(none);
+  assert.equal(none.b.boundOf(toHex(ID1)), false, 'no gate given: the old reading');
+  // and the 77-byte vote the door signed before is exactly what the bound tally drops (the report's measurement)
+  const w = world({ bindHeightFor: () => 0 }); await signalled(w);
+  w.at(101).votes.push(vote(10, CHOICE.YES)); w.at(102).votes.push(vote(11, CHOICE.YES));
+  w.chain.tip = 111;
+  let d = null; for (let i = 0; i < 4 && !d; i++) [d] = await w.b.voteRound();
+  assert.deepEqual([d.passed, d.yesSats], [false, '0'], '77-byte votes on a bound proposal count nothing');
 });

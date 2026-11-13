@@ -21,7 +21,7 @@ import { taggedHash, toHex } from './hash.js';
 import { NETWORK_ID_TESTNET4 } from './genesis-ids.js';
 import { PROTOCOL_VERSION, speaksVersion, TYPE_FUNDING_PROPOSAL, TYPE_FUNDING_COMMENT, TYPE_FUNDING_SIGNAL, TAG } from './constants.js';
 import { servedNodes } from './served-nodes.js';
-import { lastVotes, CHOICE } from './ballot.js';
+import { lastVotes, boundVotes, CHOICE } from './ballot.js';
 import { decodePlayerName, playerNameId } from './player-name.js';
 import { decodeFeeProposal, feeProposalId, decodeFeeApproval, feeApprovalId } from './fee-proposal.js';
 import { decodeLeaderboardPayout, leaderboardPayoutId } from './leaderboard-payout.js';
@@ -206,11 +206,20 @@ export function votePeriodOf({ proposal, signal, schedule = FUNDING_SCHEDULES.sp
  * block going to the lower txid. ABSTAIN counts for turnout only. Passed: turnout >= 30 % of the bonded capital and YES >= 60 % of
  * YES + NO. Answers the weights in sat, the percentages, the bonds voted and `passed`.
  */
-export function fundingTally({ proposalId, census = [], votes = [], from, until, verify }) {
-  // the last-vote rule and its replay guard are ballot.js lastVotes, shared with the ballot's tally (kanban #1668, #1734: this
-  // count kept the replayed-vote hole after #1489 fixed it in tally() only - a copy of a bond's old YES undid its final NO here)
+export function fundingTally({ proposalId, census = [], votes = [], from, until, verify, bound = false }) {
+  // `bound` (kanban #2125/#2562/#2576): the 80-byte seq votes, highest seq wins (ballot.js boundVotes)
+  if (bound) {
+    const latest = boundVotes({ proposalId, census, votes, from, until, verify, weightOf: (b) => BigInt(b.weight ?? b.bondSats) });
+    const voidedOf = new Map(census.map((b) => [b.outpoint, !!b.voided]));
+    for (const [k, x] of latest) x.voided = voidedOf.get(k) || false;
+    return countFunding(census, latest);
+  }
+  // the last-vote rule and its replay guard are ballot.js lastVotes, shared with the ballot's tally (kanban #1668, #1734)
   const latest = lastVotes({ proposalId, census, votes, from, until, verify, weightOf: (b) => BigInt(b.weight ?? b.bondSats),
     extraOf: (b) => ({ voided: !!b.voided }) });
+  return countFunding(census, latest);
+}
+function countFunding(census, latest) {
   const total = census.reduce((a, b) => a + BigInt(b.weight ?? b.bondSats), 0n);
   let yes = 0n, no = 0n, abstain = 0n;
   // A VOIDED VOTE (kanban #1334, rule 1 RULED 2026-11-07): its bond was spent before last + lockAfterVote - it stays in everyone who could vote
