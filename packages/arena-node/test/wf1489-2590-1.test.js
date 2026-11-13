@@ -54,10 +54,11 @@ test('#2590-1: a twin of a passed bound proposal (same body, a new signature) po
   console.log('  the twin posted at tip 300:', JSON.stringify({ status: b.status, why: b.why || null, aCounts: proposals.counts(a.id) }));
   assert.equal(proposals.counts(a.id), true, 'the passed proposal still counts');
   assert.equal(liveAt(300), toHex(configHashOf(X)), 'X stays live: no proposer undoes a vote');
-  assert.notEqual(b.status, 201, 'the twin is refused after the voting began');
+  // kanban #2607 (ruling #2591 (c)): the twin is the same proposal - taken (no tip check), and it changes nothing the vote decided
+  assert.equal(b.status, 201, b.why);
 });
 
-test('#2590-1: a twin posted before the voting phase still voids both (kanban #1840 unchanged)', async () => {
+test('#2590-1: a twin posted before the voting phase is the same proposal: one of the two counts (kanban #2607, was #1840)', async () => {
   let tally = null;
   const proposals = createProposals({ confirmedTx: async (txid, block) => { const t = chain.get(txid); return t && t.block === block ? { raw: t.raw, height: t.height } : null; },
     recipientsFor: () => SET, lowestBondMinSatsFor: () => 100000n, verify, scheduleFor: () => SCHEDULES.regtest, repealScheduleFor: () => REPEAL_SCHEDULES.regtest,
@@ -65,5 +66,5 @@ test('#2590-1: a twin posted before the voting phase still voids both (kanban #1
   tally = createBallotTally({ proposals, tipHeight: async () => 200, votesAt: async () => [], censusAt: async () => [], verify, genesisFor: () => GENESIS });
   const a = await proposals.add(signed(3)); assert.equal(a.status, 201, a.why);
   const b = await proposals.add(signed(4)); assert.equal(b.status, 201, b.why);
-  assert.equal(proposals.counts(a.id), false); assert.equal(proposals.counts(b.id), false);
+  assert.equal([proposals.counts(a.id), proposals.counts(b.id)].filter(Boolean).length, 1);
 });
