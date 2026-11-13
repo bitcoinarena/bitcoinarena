@@ -4,7 +4,7 @@
 // THE INSTALLER: start it, open the link it prints, finish in the browser.
 //
 //     arena-install [--tunnel] [--port 7800] [--seat-port 8470] [--home ~/.bitcoinarena]
-//     arena-install --update <arena-node-<version>-<os>-<arch>.tar.gz> [--home ~/.bitcoinarena]
+//     arena-install --update <arena-node-<version>-<os>-<arch>.tar.gz> [--home ~/.bitcoinarena] [--allow-older]
 //     arena-install --update-self [--home ~/.bitcoinarena]   (the node to this release, when it is newer: the desktop app)
 //     arena-install --add-bond <sats> [--yes] [--home ~/.bitcoinarena]
 //     arena-install --rebond <sats> [--yes] [--home ~/.bitcoinarena]
@@ -169,7 +169,8 @@ if (args.includes('--update')) {
   const installUpdaterFn = async (o) => { const file = serviceFile('updater', { home, platform: process.platform, env: process.env });
     return existsSync(file) && !updaterLauncherStale(file) ? { ok: true, already: true } : installUpdater({ ...o, installProgram }); };
   const r = await updateNode({ home, newRelease: `${dir}/${name}`, port: (s.reach && s.reach.port) || (s.service && s.service.port) || seatPort,
-    node: `${dir}/${name}/runtime/${process.platform === 'win32' ? 'node.exe' : 'node'}`, installUpdaterFn, trace: log, progress: within(bar.report, 10, 100) });
+    node: `${dir}/${name}/runtime/${process.platform === 'win32' ? 'node.exe' : 'node'}`, installUpdaterFn, trace: log, progress: within(bar.report, 10, 100),
+    allowOlder: args.includes('--allow-older') });   // #2601: an older signed release only when the owner says so
   console.log(r.ok ? `Updated: ${r.from} -> ${r.to}; the same node answers (${r.identity.slice(0, 16)}...). Backup: ${r.backup}${r.notStarted ? `\nNot running: ${r.notStarted}` : ''}`
     : `${r.rolledBack ? 'Rolled back' : 'Not updated'}: ${r.why}${r.backup ? ` (backup ${r.backup})` : ''}`);
   await finish(r.ok ? 0 : 1);
