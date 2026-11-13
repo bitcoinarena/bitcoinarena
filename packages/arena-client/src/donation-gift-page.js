@@ -8,6 +8,7 @@ import { encodeDonationGift, donationGiftId, giftOutputs, GIFT_TO_GAME, GIFT_TO_
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { recordDonation } from './page-lock.js';
 import { handToSeats } from './item-buy.js';
+import { PAID_GIFT_PREFIX, paidRecordGet, paidRecordPut, paidRecordDrop } from './paid-records.js';
 
 /** Whether a typed amount is one the popup may pay: a whole number of sat from 1 to 10,000,000. Answers { ok, sat } or { ok: false, why }. */
 export function giftAmountOf(typed) {
@@ -41,24 +42,53 @@ export async function giftDonation({ game = null, player = null, recipients, net
   const both = !player && game && Array.isArray(networkSet);
   try { outs = both ? giftOutputs({ totalMsat, networkSet, gameSet: recipients }) : giftOutputs({ totalMsat, recipients }); } catch (e) { return no('split', e.message); }
   if (!wallet || typeof wallet.paySubmit !== 'function') return no('wallet', 'this page\'s wallet cannot pay keys (its lock client has no paySubmit)');
-  let submitted, accepted;
+  // THE SAME GIFT PAID BEFORE AND ITS RECORD NOT KEPT (kanban #2274): this donor's next press of the same gift (target and amount) hands that
+  // record again and pays nothing; any other gift is paid as before. Kept under arena.gift.<donor16>.<to>.<sat> from the payment's answer on.
+  const to = player ? 'player:' + toHex(player) : game ? 'app:' + game.gameName : 'network';
+  const keptKey = `${PAID_GIFT_PREFIX}${toHex(donor.pubkey).slice(0, 16)}.${to}.${amt.sat}`;
+  const kept = paidRecordGet(storage, keptKey);
+  if (kept && kept.submitted) return finishGift({ rec: kept, keptKey, storage, wallet, federationId, donor, fetch, again: true });
+  if (kept) {   // written ahead, the page gone before the federation answered: the wallet history says whether it paid, so said once
+    paidRecordDrop(storage, keptKey);
+    return no('payment', `an earlier gift had no answer (the page closed while paying, ${new Date(Number(kept.atMs)).toISOString()}): look at the wallet history before giving again`);
+  }
+  const rec = { seats: [...(seats || [])], federationId, sat: amt.sat, outputs: outs.length, atMs: String(nowMs()), submitted: null, body: null,
+    target: player ? GIFT_TO_PLAYER : both ? GIFT_TO_BOTH : game ? GIFT_TO_GAME : GIFT_TO_NETWORK, gameDevPubkey: toHex(player || (game ? game.gameDevPubkey : new Uint8Array(32))),
+    gameName: !player && game ? game.gameName : '', origin: !player && origin ? String(origin).slice(0, 64) : '', to };
+  try { paidRecordPut(storage, keptKey, rec); } catch (e) { return no('payment', `nothing paid: the gift could not be written ahead (${e && e.message || e})`); }
   try {
-    submitted = JSON.parse(await wallet.paySubmit(JSON.stringify(outs.map((o) => ({ pk: toHex(o.pk), msat: String(o.msat), image: toHex(donor.pubkey) })))));
-    accepted = JSON.parse(await wallet.lockAccepted(JSON.stringify(submitted)));
-  } catch (e) { return no('payment', String(e && e.message || e)); }
-  const held = accepted.donations || [];
-  if (held.length !== outs.length || !held.every((d) => d.ids_match)) return no('payment', 'the federation does not hold the outputs as they were built');
-  if (storage) recordDonation(storage, federationId, { msat: totalMsat, txid: submitted.txid, to: player ? 'player:' + toHex(player) : game ? 'app:' + game.gameName : 'network' });
-  const record = { target: player ? GIFT_TO_PLAYER : both ? GIFT_TO_BOTH : game ? GIFT_TO_GAME : GIFT_TO_NETWORK, gameDevPubkey: player || (game ? game.gameDevPubkey : new Uint8Array(32)), gameName: !player && game ? game.gameName : '',
-    ...(!player && origin ? { origin: String(origin).slice(0, 64) } : {}),
-    donor: donor.pubkey, federationId: fromHex(federationId), txid: fromHex(submitted.txid), totalMsat,
-    outputs: held.map((d) => ({ outIdx: Number(d.out_idx), pk: fromHex(d.recipient_pk), msat: BigInt(d.amount_msat) })), atMs: BigInt(nowMs()) };
-  const id = donationGiftId(record);
-  const body = JSON.stringify({ gift: toHex(encodeDonationGift(record)), signature: toHex(donor.sign(id)) });
+    rec.submitted = JSON.parse(await wallet.paySubmit(JSON.stringify(outs.map((o) => ({ pk: toHex(o.pk), msat: String(o.msat), image: toHex(donor.pubkey) })))));
+  } catch (e) { paidRecordDrop(storage, keptKey); return no('payment', String(e && e.message || e)); }
+  try { paidRecordPut(storage, keptKey, rec); } catch { /* the payment stands; the record is built and handed below */ }
+  return finishGift({ rec, keptKey, storage, wallet, federationId, donor, fetch, again: false });
+}
+
+// THE PAID GIFT FINISHED (kanban #2274): its acceptance read back (the history row written once, then), the record signed and kept with its
+// body, handed to every seat (kept when two keep it, #2420), and dropped only then. A gift kept from an earlier press goes on from where it stood.
+async function finishGift({ rec, keptKey, storage, wallet, federationId, donor, fetch, again }) {
+  const no = (step, why) => ({ ok: false, step, why });
+  const txid = rec.submitted.txid;
+  if (!rec.body) {
+    if (rec.federationId !== federationId) return no('record', `an earlier gift was paid (transaction ${txid}) from federation ${rec.federationId.slice(0, 8)}: open that federation's wallet to finish its record, nothing is paid again`);
+    let accepted;
+    try { accepted = JSON.parse(await wallet.lockAccepted(JSON.stringify(rec.submitted))); } catch (e) { return no('record', `paid (transaction ${txid}), its acceptance not read yet (${String(e && e.message || e)}): pressed again, it is read again, never paid again`); }
+    const held = accepted.donations || [];
+    if (held.length !== rec.outputs || !held.every((d) => d.ids_match)) return no('payment', 'the federation does not hold the outputs as they were built');
+    const totalMsat = BigInt(rec.sat) * 1000n;
+    if (storage) recordDonation(storage, rec.federationId, { msat: totalMsat, txid, to: rec.to });
+    const record = { target: rec.target, gameDevPubkey: fromHex(rec.gameDevPubkey), gameName: rec.gameName, ...(rec.origin ? { origin: rec.origin } : {}),
+      donor: donor.pubkey, federationId: fromHex(rec.federationId), txid: fromHex(txid), totalMsat,
+      outputs: held.map((d) => ({ outIdx: Number(d.out_idx), pk: fromHex(d.recipient_pk), msat: BigInt(d.amount_msat) })), atMs: BigInt(rec.atMs) };
+    const id = donationGiftId(record);
+    rec.id = toHex(id);
+    rec.body = JSON.stringify({ gift: toHex(encodeDonationGift(record)), signature: toHex(donor.sign(id)) });
+    try { paidRecordPut(storage, keptKey, rec); } catch { /* handed below; a failed hand-over is then kept in nothing but this answer's retry */ }
+  }
   // TO EVERY SEAT, KEPT WHEN TWO KEEP IT (kanban #2420): one seat answering 200 first no longer buries the paid gift's record
-  const { keptBy, last } = await handToSeats({ seats, door: 'donation-gift', body, fetch });
-  if (!keptBy) return { ok: false, step: 'record', why: `paid (transaction ${submitted.txid}), but no seat kept the record yet: ${last}`, txid: submitted.txid, retry: body };
-  return { ok: true, id: toHex(id), txid: submitted.txid, sat: amt.sat, outputs: outs.length, keptBy };
+  const { keptBy, last } = await handToSeats({ seats: rec.seats, door: 'donation-gift', body: rec.body, fetch });
+  if (!keptBy) return { ok: false, step: 'record', paid: true, why: `${again ? 'an earlier gift was ' : ''}paid (transaction ${txid}), but no seat kept the record yet: ${last} - it is handed again, never paid again`, txid, retry: rec.body };
+  paidRecordDrop(storage, keptKey);
+  return { ok: true, id: rec.id, txid, sat: rec.sat, outputs: rec.outputs, keptBy, ...(again ? { earlier: true } : {}) };
 }
 
 /**
