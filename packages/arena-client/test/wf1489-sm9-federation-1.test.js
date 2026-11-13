@@ -39,7 +39,10 @@ test('#1489 sm9 federation-1: an evacuation that stopped with every note still t
   // the player's wallet in the DRAINING federation: 500 000 msat; the gateway refunds every send while it is down
   let bal = 500000n, gatewayDown = true, n = 0, moves = 0;
   const pending = new Map();
+  // 2.0 (kanban #1324): a move goes only through gateways at or under the fee cap - both wallets list one, within it
+  const gw = { gateways: async () => JSON.stringify(['https://gw.test']), gatewayFees: async () => JSON.stringify({ send: { ppm: 100, baseMsat: 0 }, receive: { ppm: 100, baseMsat: 0 } }) };
   const from = {
+    ...gw,
     withdrawableMsat: async () => String(bal > 2000n ? bal - 2000n : 0n),
     withdraw: async (invoice) => {
       const amount = pending.get(invoice);
@@ -49,6 +52,7 @@ test('#1489 sm9 federation-1: an evacuation that stopped with every note still t
     },
   };
   const to = {
+    ...gw,
     receive: async (msat) => { ++n; const invoice = bolt11For(BigInt(msat), n); pending.set(invoice, BigInt(msat)); return JSON.stringify({ invoice, operation: 'op' + n }); },
     awaitReceive: async () => 'Claimed',
   };

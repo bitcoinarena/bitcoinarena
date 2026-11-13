@@ -40,7 +40,7 @@ test('an entry the seats hold has its move and salt in sessionStorage before the
     // THE SEATS: the first takes the entry at once (201), the other six are still answering - a slow seat, a loaded host
     submitPick: ({ entry, nodes: ns, onEntry }) => {
       atSeats.push({ node: ns[0], commit: entry.commit });
-      queueMicrotask(() => { onEntry({ entryId: E, entries: [{ node: ns[0], status: 201 }] }); seatAnswered(); });
+      queueMicrotask(() => { if (onEntry) onEntry({ entryId: E, entries: [{ node: ns[0], status: 201 }] }); seatAnswered(); });   // 2.0's join passes no onEntry (#1391's early answer is 1.9's)
       return new Promise(() => {});
     },
   };
