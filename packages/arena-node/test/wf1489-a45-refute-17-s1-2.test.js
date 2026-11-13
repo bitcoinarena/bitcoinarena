@@ -31,7 +31,7 @@ test('#1489 a45-refute-17-2: later zaps do not push an honest receipt out of the
   };
   const server = keyPair();
   const logs = [];
-  const z = await serveZapAddresses({ port: 0, publicHost: 'zap.example', names: ['bob'], secret: server.secret, curve, invoice,
+  const z = await serveZapAddresses({ allowPrivateRelays: true, /* local test relays, kanban #2454 */ port: 0, publicHost: 'zap.example', names: ['bob'], secret: server.secret, curve, invoice,
     lookup: async () => ({ settled: true, preimage: null, settledAtS: Math.floor(Date.now() / 1000) }),
     publish: async (receipt, relays) => { await Promise.allSettled(relays.map((r) => sendToRelay(r, [receipt]))); },
     watchMs: 3600000, log: (s) => logs.push(s) });

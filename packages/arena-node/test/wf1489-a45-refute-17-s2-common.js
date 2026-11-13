@@ -36,7 +36,7 @@ export async function address(extra = {}) {
   };
   const logs = [];
   const server = keyPair();
-  const z = await serveZapAddresses({ port: 0, publicHost: 'zap.example', names: ['bob'], secret: server.secret, curve, invoice,
+  const z = await serveZapAddresses({ allowPrivateRelays: true, /* local test relays, kanban #2454 */ port: 0, publicHost: 'zap.example', names: ['bob'], secret: server.secret, curve, invoice,
     lookup: async () => ({ settled: true, preimage: null, settledAtS: Math.floor(Date.now() / 1000) }),
     publish: async (receipt, relays) => {     // tools/zap-address.mjs's publish, as c6163b6b9 has it
       const said = await Promise.all(relays.map(async (r) => !!(await sendToRelay(r, [receipt])).get(receipt.id)));
