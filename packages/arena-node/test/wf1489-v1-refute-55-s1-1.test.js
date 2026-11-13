@@ -64,12 +64,16 @@ test('wf1489-v1-refute-55-s1-1: POST /first-mark refusals do not grow evidence_b
     const ev = w.a.round.db.prepare('SELECT COUNT(*) n FROM evidence_blocks WHERE entry_id = ?').get(run.eid).n;
     console.log('  FACTS:', JSON.stringify({ sent: N, statuses, evidenceRowsAtA: ev }));
     assert.ok(ev <= 256, `one player wrote ${ev} evidence_blocks rows for one entry at seat A through POST /first-mark - no bound`);
-    // kanban #1738: the one refused first mark kept here is still evidence; the others write no row
+    // kanban #1738: at most the one refused first mark kept here is evidence; the others write no row. SINCE #2411 (feedback #015)
+    // a first mark sent with no batches is the player's own refusal (FORFEIT, not an up seat's) and is kept as no refused first mark
+    // at all - every refusal here is that one ("send the batches first") - so none is kept and no row is written (kanban #2583:
+    // the bound this test exists for holds either way, 0 <= 1).
     const kept = w.a.round.refusedFirstMark(run.eid);
-    assert.ok(kept, 'the first refused first mark is kept');
-    const keptId = checkpointId(decodeCheckpoint(splitSigned(kept.mark).body));
     const rows = w.a.round.evidenceBlocks(run.eid);
-    assert.ok(rows.some((r) => toHex(r.markId) === toHex(keptId)), 'the kept refused first mark has its evidence record');
-    assert.equal(rows.length, 1, `only the kept refused first mark is evidence (got ${rows.length} rows)`);
+    assert.ok(rows.length <= 1, `at most the kept refused first mark is evidence (got ${rows.length} rows)`);
+    if (kept) {
+      const keptId = checkpointId(decodeCheckpoint(splitSigned(kept.mark).body));
+      assert.ok(rows.some((r) => toHex(r.markId) === toHex(keptId)), 'the kept refused first mark has its evidence record');
+    } else assert.equal(rows.length, 0, 'a player-caused refusal (#2411) keeps no mark and writes no row');
   } finally { await w.close(); }
 });
