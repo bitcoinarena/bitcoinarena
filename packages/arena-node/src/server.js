@@ -5570,6 +5570,22 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const roundContract = decodeRoundContract(new Uint8Array(forRound.contract));
     // NO STAKE IS DEALT FOR A ROUND THIS NODE REFUSES: nothing may be locked for it
     { const why = accepted ? null : offerRefusal(roundContract); if (why) return { ok: false, status: 409, why: `handout refused: ${why}` }; }
+    // NO HANDOUT FOR A HEAD-TO-HEAD ROUND WHOSE TABLE IS ALREADY FULL (kanban #2634, a bypass of #1485 found by the #1489 audit): #1485 refuses the
+    // handout of an order that cannot land before the close, but a paid head-to-head round that already seats its game's players on locks took a
+    // third player's handout in good time (201) - the page then made the federation lock and every seat refused the entry ("already seats ... 2
+    // players", round.js) or its lock at /lock: the developers' and reserves' parts of that lock stayed spent, the #010 loss on a timely tap. The
+    // seats here are the entry door's (round.js seatedEntriesOf, the same at every seat), not counting this handout's own player, so a player
+    // already seated who posts his handout again (a reload) still goes through; a handout a certified batch names (accepted) is never refused here
+    if (!accepted && roundContract.stakeMsat > 0n && typeof round.seatedEntriesOf === 'function') {
+      const g = pluginForRound(roundContract, hosted);
+      if (g.ok && g.headToHead) {
+        const players = g.plugin.manifest.players;
+        const others = round.seatedEntriesOf(handout.roundId, roundContract.stakeMsat)
+          .filter((x) => !(x.entry && x.entry.playerPubkey && Buffer.from(x.entry.playerPubkey).equals(Buffer.from(handout.playerPubkey)))).length;
+        if (others >= players)
+          return { ok: false, status: 409, why: `handout refused: that table is full - the round already seats game "${g.plugin.manifest.gameName}"'s ${players} players; nothing is locked, tap the next round` };
+      }
+    }
     // NO HANDOUT FOR A HEAD-TO-HEAD ROUND THAT CLOSES BEFORE ITS ORDER CAN LAND (kanban #1485, Daniel 2026-11-11: "Er sollte keine fees entgegen nehmen wenn
     // die order nicht angenommen wird"; feedback #010, round 77bd9609: this door took a handout 1.8 s after the close, the player's page locked the stake, and
     // every seat refused the entry - the developers' and reserves' parts of that lock stayed spent). A head-to-head round takes no entry from its close, and a
