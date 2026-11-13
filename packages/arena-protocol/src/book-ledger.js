@@ -323,10 +323,21 @@ export function bookSettlement({ positions, outcome, scalar = null }) {
     if (typeof scalar.value !== 'bigint' || typeof low !== 'bigint' || typeof high !== 'bigint' || low >= high)
       throw new Error('a scalar book settles on a BigInt value between bounds low < high');
     const v = scalar.value < low ? low : scalar.value > high ? high : scalar.value;
-    const longPart = (pool * (v - low)) / (high - low);
-    const leftLong = pay(YES, longPart);
-    const leftShort = pay(NO, pool - longPart + leftLong);
-    if (leftShort > 0n && pay(YES, leftShort) > 0n) throw new Error('a filled scalar book holds no share on either side');
+    const cL = rows.reduce((t, p) => t + p.shares[YES], 0n), cS = rows.reduce((t, p) => t + p.shares[NO], 0n);
+    if (pool > 0n && cL === 0n && cS === 0n) throw new Error('a filled scalar book holds no share on either side');
+    // a side holding no share hands its part to the other
+    const pL = cS === 0n ? pool : cL === 0n ? 0n : (pool * (v - low)) / (high - low), pS = pool - pL;
+    // ONE FLOOR PER ENTRY OVER BOTH SIDES (kanban #2594): floored per side, a complete set (1 LONG + 1 SHORT, ~1 msat) paid
+    // 0 + 0 at any value between the bounds, so an entry whose sell bought the other side at a high limit was owed less than
+    // nothing, the table threw and no lock of the book was claimed. Floored once over its whole holding, a set pays at least
+    // pool / sets >= 1 msat (every fill's cost is rounded up), so no sell debt outruns the winnings it closed
+    const den = (cL || 1n) * (cS || 1n);
+    let given = 0n;
+    for (const p of rows) {
+      const w = ((cL ? p.shares[YES] * pL * (cS || 1n) : 0n) + (cS ? p.shares[NO] * pS * (cL || 1n) : 0n)) / den;
+      win.set(p.entry, w); given += w;
+    }
+    for (const p of rows) { if (given >= pool) break; if (p.shares[YES] > 0n || p.shares[NO] > 0n) { win.set(p.entry, win.get(p.entry) + 1n); given += 1n; } }
   } else {
     const claim = rows.reduce((t, p) => t + p.shares[outcome], 0n);
     if (claim > 0n) pay(outcome, pool);
