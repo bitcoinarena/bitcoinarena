@@ -158,6 +158,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     listReseat(toHex(a.anchorId), role, c.roundIndex, rid, seated);
   };
   const listReseat = (anchorHex, role, index, rid, seated) => {
+    if (certs.get(`${toHex(rid)}:${role}`) === null) seated = null;   // kanban #2091: an equivocated check-in seats nothing, read again or not
     const key = `${anchorHex}:${role}`;
     const list = reseats.get(key) || reseats.set(key, []).get(key);
     // a seating this seat took instead of the one it held (kanban #2245, keepCert `supersede`) replaces it at its index
@@ -172,6 +173,12 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
   for (const r of db.prepare('SELECT s.round_id, s.role, s.anchor, s.idx, c.cert FROM seat_reseats s JOIN seat_certs c ON c.round_id = s.round_id AND c.role = s.role').all()) {
     try { listReseat(r.anchor, r.role, Number(r.idx), new Uint8Array(r.round_id), decodeSeated(new Uint8Array(r.cert))); } catch { /* unread */ }
   }
+  // AN EQUIVOCATED CHECK-IN SEATS NOTHING (kanban #2091, #1489 sm7 census-1): keepCert records the pair and nulls the round's certificate, but
+  // the check-in's first certificate stayed in the table's reseat list - every later round of the table was still seated by whichever of the
+  // two reached this seat first, so two seats holding the same pair seated different nodes. The check-in's entry seats nothing (null), here
+  // and after a restart, until a later check-in seats the table again.
+  const nullReseat = (rid) => { const h = toHex(rid); for (const list of reseats.values()) for (const x of list) if (toHex(x.rid) === h) x.seated = null; };
+  for (const r of db.prepare('SELECT round_id FROM seat_equivocations').all()) nullReseat(new Uint8Array(r.round_id));
   /** The seating that seats round `index` of the table: the newest certificate at or before it, and the table's first otherwise. Null while none stands. */
   const tableSeatingAt = (anchorHex, role, index, { keepStale = false } = {}) => {
     const later = reseats.get(`${anchorHex}:${role}`);
@@ -377,12 +384,18 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
         log(`[seating] ${toHex(rid).slice(0, 16)} ${role}: a certificate for a seating before the one held refused (superseded)`);
         return { ok: false, why: 'superseded: that seating comes before the one certified here' };
       }
+      // AND ONE AFTER IT IS NO EQUIVOCATION EITHER (kanban #2091): the pair is ordered whichever came first - the seat that held the earlier
+      // seating recorded equivocation (the round took no entries there) while the seat that held the later one refused the earlier as superseded.
+      // The held seating stands; the later one replaces it once most drawn seats are seen holding it (the confirm read, keepCert `supersede`, #2245)
+      if (seatingBefore({ drawnKeys: check.drawn }, decodeSeated(old), v.seating.seated.map(toHex)))
+        return { ok: false, why: 'that seating comes after the one held: it takes its place once most of the drawn seats hold it (kanban #2245)' };
       // AND ANY OTHER PAIR AN HONEST #1509 MOVE MAKES (kanban #1707): one leaves members of the other out and takes in only nodes that rank below every member of
       // it (the next reserves). The honest seats sign exactly that pair when they leave a withholder, which can still sign the first seating late and complete
       // it with the signatures it read - so the pair is no proof against anyone. The certificate held stands and the other is refused; the round goes on.
       if (leftOutPair(check.drawn, decodeSeated(old), v.seating.seated.map(toHex))) return { ok: false, why: 'that seating differs from the one held only by members left out for withholding and the reserves after them (kanban #1509): the seating held stands' };
       db.prepare('INSERT OR IGNORE INTO seat_equivocations (round_id, role, a, b) VALUES (?, ?, ?, ?)').run(rid, role, old, bytes);
       certs.set(key, null);
+      nullReseat(rid);   // kanban #2091: and the later rounds of its table it seated
       log(`[seating] ${toHex(rid).slice(0, 16)} ${role}: two seatings - equivocation by ${e.signers.map((k) => toHex(k).slice(0, 8)).join(', ')}; the round takes no entries`);
       return { ok: true, equivocation: true, signers: e.signers.map(toHex) };
     }
