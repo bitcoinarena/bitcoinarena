@@ -701,6 +701,12 @@ createServer((req, res) => {
     lnAddressWorks(asked).then((w) => send(200, { ok: !!w.ok, why: w.ok ? null : w.why }), (e) => send(200, { ok: false, why: String((e && e.message) || e).slice(0, 120) }));
     return;
   }
+  // THE PUBLIC PAYOUT LOG (kanban #2619): what bitcoinarena.io/bounty/ lists - Season 1, sorted by report, each with its time (UTC)
+  if (path === '/feedback/paid-log' && req.method === 'GET') {
+    let rows = []; try { rows = FEEDBACK ? FEEDBACK.paidLog() : []; } catch { rows = []; }
+    const at = (ms) => (ms ? new Date(ms).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : '');
+    return send(200, rows.map((x) => ({ season: 'Season 1', date: at(x.paidMs), reason: `Feedback #${String(x.number).padStart(3, '0')}${x.severity ? ` (${x.severity})` : ''}`, channel: 'bug bounty', sats: x.sats })));
+  }
   if (path === '/feedback/rewards' && req.method === 'GET') {
     // the amounts only toward the private page's origin (Daniel 2026-11-07: "Den bounty Funktion ausmachen bis ich es sage und nur auf einer privaten URL aktivieren")
     if (!(bountyOn() && BOUNTY_ORIGINS.includes(String(req.headers.origin || '')))) return send(200, { ok: true, on: false });
