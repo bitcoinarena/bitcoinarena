@@ -95,3 +95,49 @@ export function createEndpointsOf({ dirs = () => [], inviteOf = () => null, ask 
 
 /** The guardians with each one's endpoint from `map` (peer key hex -> url) where it names it; the advert's otherwise. */
 export const withConfigEndpoints = (guardians, map, toHex) => (map ? guardians.map((g) => (map.has(toHex(g.peerKey)) ? { ...g, endpoint: map.get(toHex(g.peerKey)) } : g)) : guardians);
+
+/** The guardian keys (hex, peer order) of a client configuration: its `broadcast_public_keys` (flat or under `global`), or null. */
+export function configKeys(config) {
+  const g = (config && (config.global || config)) || {};
+  const keys = Object.entries(g.broadcast_public_keys || {}).filter(([peer]) => /^\d+$/.test(peer)).sort((a, b) => Number(a[0]) - Number(b[0]))
+    .map(([, k]) => String(k).toLowerCase());
+  return keys.length && keys.every((k) => /^[0-9a-f]{66}$/.test(k)) ? keys : null;
+}
+
+/**
+ * THE FEDERATION'S OWN GUARDIAN KEYS, WHEN THIS SEAT HOLDS ITS CONFIG (kanban #2603): guardianKeysOf(fidHex) -> [33-byte key] | null.
+ *   LOCAL    a guardian data dir of this node whose invite-code names the federation: its client.json
+ *   JOINED   the stake-lock client of that federation, home or joined before (`joinedPort(fidHex)`, never a new join): the keys of
+ *            the config it downloaded at its join - the same source federationIsBonded counts a round's guardians from
+ * Never a config asked of a guardian's API: one guardian answering for the federation could name only its own key, which is the
+ * #2599 record again. Kept `keepMs` once read (`missMs` when nothing held it).
+ */
+export function createGuardianKeysOf({ dirs = () => [], joinedPort = async () => null, readFile = (f) => readFileSync(f, 'utf8'),
+  keepMs = 600000, missMs = 60000, now = () => Date.now(), fromHex = (h) => Uint8Array.from(String(h).match(/../g).map((x) => parseInt(x, 16))) }) {
+  const kept = new Map();                    // fid -> { at, keys, from }
+  async function read(fid) {
+    for (const dir of (dirs() || []).filter(Boolean)) {
+      if (federationOfDir(dir, readFile) !== fid) continue;
+      try { const k = configKeys(JSON.parse(readFile(join(dir, 'client.json')))); if (k) return { keys: k.map(fromHex), from: `local ${dir}` }; } catch { /* the port below */ }
+    }
+    try {
+      const port = await joinedPort(fid);
+      const g = port && typeof port.guardians === 'function' ? await port.guardians() : null;
+      const gid = g && g.federationId ? (typeof g.federationId === 'string' ? g.federationId : Array.from(g.federationId, (x) => x.toString(16).padStart(2, '0')).join('')) : null;
+      if (g && String(gid).toLowerCase() === fid && Array.isArray(g.keys) && g.keys.length && g.keys.every((k) => k instanceof Uint8Array && k.length === 33))
+        return { keys: g.keys, from: 'stake-lock client' };
+    } catch { /* none */ }
+    return { keys: null, from: null };
+  }
+  const guardianKeysOf = async (fidHex) => {
+    const fid = String(fidHex).toLowerCase();
+    const had = kept.get(fid);
+    if (had && now() - had.at < (had.keys ? keepMs : missMs)) return had.keys;
+    const r = await read(fid);
+    // a federation's keys do not change: once read, a later miss keeps them
+    kept.set(fid, r.keys || !had || !had.keys ? { at: now(), ...r } : { ...had, at: now() });
+    return kept.get(fid).keys;
+  };
+  guardianKeysOf.from = (fidHex) => (kept.get(String(fidHex).toLowerCase()) || {}).from || null;
+  return guardianKeysOf;
+}

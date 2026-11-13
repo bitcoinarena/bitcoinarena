@@ -147,7 +147,7 @@ import { emergencyDepartureStands } from '../../arena-protocol/src/emergency.js'
 import { createAbsenceProducer, guardianConfigOf, wsAdminStatus, ownDeparture, owedDepartures } from './absence-producer.js';
 import { createFoundingSeat, cliSetup, execCli, fileKeySet } from './founding-seat.js';
 import { FOUNDING_WINDOW } from '../../arena-protocol/src/guardian-founding.js';
-import { createEndpointsOf, federationOfDir, configInvite } from './federation-endpoints.js';
+import { createEndpointsOf, createGuardianKeysOf, federationOfDir, configInvite } from './federation-endpoints.js';
 import { execFile as execFileCb } from 'node:child_process';
 import { createLiquidations } from './liquidations.js';
 import { createHalts, wsSessionCount } from './halts.js';
@@ -5974,6 +5974,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // here shadowed it in all of serve() and every head-to-head close threw (measured 2026-10-15 11:38Z)
   const fedEndpointsOf = createEndpointsOf({ dirs: () => [guardian && guardian.dataDir, guardianNext && guardianNext.dataDir],
     inviteOf: (fidHex) => inviteOfFed(fidHex) || (fedRecords && fedRecords.inviteOf ? fedRecords.inviteOf(fidHex) : null) });
+  // EACH FEDERATION'S OWN GUARDIAN KEYS (kanban #2603): this node's guardians' client.json, else the stake-lock client of a federation this
+  // node already joined (never a new join) - every record this seat builds and checks is held to them; a federation neither names is
+  // checked against its record's own threshold
+  const fedGuardianKeysOf = createGuardianKeysOf({ dirs: () => [guardian && guardian.dataDir, guardianNext && guardianNext.dataDir],
+    joinedPort: async (fidHex) => {
+      if (!stakeLocks) return null;
+      if (typeof stakeLocks.joinedFor === 'function') return stakeLocks.joinedFor(fidHex);
+      // a single port (no router): the home federation's only
+      if (typeof stakeLocks.forFederation !== 'function') return stakeLocks;
+      return null;
+    } });
   // THE SIGNED RECORDS IN THIS SEAT'S DATABASE (kanban #552/#557): restored, each checked again, 20 s after start
   round.db.exec('CREATE TABLE IF NOT EXISTS federation_records (federation TEXT PRIMARY KEY, record TEXT NOT NULL)');
   round.db.exec('CREATE TABLE IF NOT EXISTS federation_record_history (federation TEXT NOT NULL, height INTEGER NOT NULL, record TEXT NOT NULL, PRIMARY KEY (federation, height))');
@@ -5988,7 +5999,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   // THE OWNERS' CONSENTS TO RETIRE A FEDERATION (kanban #577), kept beside the store
   const retireBook = createRetireBook(db && db.arenaPath ? `${db.arenaPath}.retire.json` : null);
-  fedRecords = federationRecords({ round, roster, inviteFor: inviteOfFed, store: recordStore, networkId: chainNetworkId() ? fromHex(chainNetworkId()) : null, reserveOf, endpointsOf: fedEndpointsOf,
+  fedRecords = federationRecords({ round, roster, inviteFor: inviteOfFed, store: recordStore, networkId: chainNetworkId() ? fromHex(chainNetworkId()) : null, reserveOf, endpointsOf: fedEndpointsOf, guardianKeysOf: fedGuardianKeysOf,
     // a mirrored record checked against the census at its own height, read off this seat's chain
     censusAt: ballot && typeof ballot.censusEntriesAt === 'function' ? (h) => (chainNetworkId() ? ballot.censusEntriesAt(chainNetworkId(), h) : null) : null,
     // and its tip: a seat that holds no round builds and checks records from the chain's census
