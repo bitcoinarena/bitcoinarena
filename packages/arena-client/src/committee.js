@@ -9,7 +9,7 @@
 //   3. the beacon off the same headers, and the seat's own sortition.
 // The nodes' /committee answers are still read, and only compared: a seat naming another set is named in the answer.
 // Kept per census and committee time: every round of a series shares them, so a series' second join asks nothing new.
-import { verifySeating } from '../../arena-protocol/src/seating.js';
+import { verifySeating, seatingBefore } from '../../arena-protocol/src/seating.js';
 import { slotsForRole } from '../../arena-protocol/src/sortition.js';
 import { committeeFromChain, absenceFromChain, censusKeyRecordFromEvidence, evidenceNamesCensusKey } from '../../arena-protocol/src/client-committee.js';
 import { dropsAbsent } from '../../arena-protocol/src/presence.js';
@@ -353,6 +353,8 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
   const anchor = tableAnchorOf(contract);
   const seatId = anchor ? anchor.anchorId : roundId;
   const seatHex = toHex(seatId);
+  // the seatings a standing certificate superseded, per role, as sorted keys (kanban #2537): a seat still naming one is behind, not lying
+  const supersededOf = {};
   // ONE READ OF A ROLE'S SEATING. `every`: wait for every seat, not for a majority and the grace.
   const askSeating = async (role, every = false) => {
     let spoke = false; const refused = [];
@@ -397,6 +399,39 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
         if (/names another round/.test(String(v.why))) other.push(`${u}: ${v.why}`); else refused.push(`${u}: ${v.why}`);
       } catch { /* that seat says nothing */ }
     }
+    // NOT THE FIRST CERTIFICATE THAT CHECKS, THE LATEST (kanban #2537, wf1489 r13 census-1): one member that drove the honest seats on and then
+    // signed the seating they left completes it with their old signatures (#1812); the seats refuse it as superseded, and the page took it
+    // whenever that member came first in `nodes` - every honest seat then "named another committee" and was called a liar. A seating that comes
+    // before another standing one (#738 order, the seats' own seatingBefore) is dropped from `handed`; two left at one index that are not ordered
+    // and neither replaces the other (#2564) are equivocation: the round is refused, naming the signers they share.
+    if (!anchor && handed.size) {
+      const drawnKeys = (got.drawn[role] || []).map((k) => toHex(k));
+      const drawnRank = new Map(drawnKeys.map((k, i) => [k, i]));
+      const all = [...handed.entries()].map(([hk, e]) => ({ hk, e, hex: e.seated.map((k) => toHex(k)) }));
+      const superseded = all.filter((x) => all.some((y) => y.e.index === x.e.index && seatingBefore(drawnRank, x.hex, y.hex)));
+      for (const x of superseded) {
+        (supersededOf[role] || (supersededOf[role] = new Set())).add([...x.hex].sort().join(','));
+        handed.delete(x.hk);
+      }
+      if (superseded.length) {
+        console.warn(`[arena] #2537 ${role} seating of ${seatHex.slice(0, 8)}: ${superseded.map((x) => x.e.from).join(', ')} handed a superseded seating`);
+        if (found && superseded.some((x) => x.hex.join(',') === found.seated.map((k) => toHex(k)).join(','))) {
+          let best = null;
+          for (const e of handed.values()) if (!best || e.index > best.index || (e.index === best.index && (e.n > best.n || (e.n === best.n && seatingReplaces(e.seated, best.seated, got.drawn[role]))))) best = e;
+          found = best ? { seated: best.seated, from: best.from, index: best.index } : null;
+        }
+      }
+      if (found) {
+        const fh = found.seated.map((k) => toHex(k));
+        for (const e of handed.values()) {
+          const eh = e.seated.map((k) => toHex(k));
+          if (e.index !== found.index || eh.join(',') === fh.join(',')) continue;
+          if (seatingReplaces(e.seated, found.seated, got.drawn[role]) || seatingReplaces(found.seated, e.seated, got.drawn[role])) continue;
+          const shared = eh.filter((k) => fh.includes(k));
+          refused.push(`${e.from}: a ${role} seating that is not ordered with ${found.from}'s - equivocation by ${shared.map((k) => k.slice(0, 8)).join(', ') || 'no shared signer'}`);
+        }
+      }
+    }
     // A CERTIFICATE THAT DID NOT CHECK IS KEPT BESIDE THE ONE THAT DID (measured 2026-10-16 on live testnet4: guardian-1 handing a
     // seating with another node seated was refused here, and guardian-2's standing certificate dropped that refusal - the lying seat
     // went unnamed); settlementSignerNodesFrom refuses the round on it
@@ -439,6 +474,10 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
     // still no part of the committee this client derived itself
     const judge = (role, keys) => {
       const mine = (got.committees[role] || []).map(toHex).sort().join(',');
+      // A SEATING THE STANDING ONE SUPERSEDED (kanban #2537): this client holds a certificate after it, so that answer is a seating the seats left -
+      // said in the console, not counted, and nobody is called a liar for it (the seat that served it would otherwise close the round anyway)
+      if (keys.join(',') !== mine && supersededOf[role] && supersededOf[role].has(keys.join(',')))
+        return { agrees: null, why: `names the ${role} seating a later certificate superseded (kanban #2537)` };
       const agrees = keys.join(',') === mine;
       return { agrees, why: agrees ? null : `names another ${role} committee (${keys.map((k) => k.slice(0, 8)).join(', ') || 'none'}) than the one this client derived (${mine.split(',').map((k) => k.slice(0, 8)).join(', ')})` };
     };

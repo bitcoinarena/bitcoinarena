@@ -36591,6 +36591,8 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
   const anchor = tableAnchorOf(contract);
   const seatId = anchor ? anchor.anchorId : roundId;
   const seatHex = toHex(seatId);
+  // the seatings a standing certificate superseded, per role, as sorted keys (kanban #2537): a seat still naming one is behind, not lying
+  const supersededOf = {};
   // ONE READ OF A ROLE'S SEATING. `every`: wait for every seat, not for a majority and the grace.
   const askSeating = async (role, every = false) => {
     let spoke = false; const refused = [];
@@ -36635,6 +36637,39 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
         if (/names another round/.test(String(v.why))) other.push(`${u}: ${v.why}`); else refused.push(`${u}: ${v.why}`);
       } catch { /* that seat says nothing */ }
     }
+    // NOT THE FIRST CERTIFICATE THAT CHECKS, THE LATEST (kanban #2537, wf1489 r13 census-1): one member that drove the honest seats on and then
+    // signed the seating they left completes it with their old signatures (#1812); the seats refuse it as superseded, and the page took it
+    // whenever that member came first in `nodes` - every honest seat then "named another committee" and was called a liar. A seating that comes
+    // before another standing one (#738 order, the seats' own seatingBefore) is dropped from `handed`; two left at one index that are not ordered
+    // and neither replaces the other (#2564) are equivocation: the round is refused, naming the signers they share.
+    if (!anchor && handed.size) {
+      const drawnKeys = (got.drawn[role] || []).map((k) => toHex(k));
+      const drawnRank = new Map(drawnKeys.map((k, i) => [k, i]));
+      const all = [...handed.entries()].map(([hk, e]) => ({ hk, e, hex: e.seated.map((k) => toHex(k)) }));
+      const superseded = all.filter((x) => all.some((y) => y.e.index === x.e.index && seatingBefore(drawnRank, x.hex, y.hex)));
+      for (const x of superseded) {
+        (supersededOf[role] || (supersededOf[role] = new Set())).add([...x.hex].sort().join(','));
+        handed.delete(x.hk);
+      }
+      if (superseded.length) {
+        console.warn(`[arena] #2537 ${role} seating of ${seatHex.slice(0, 8)}: ${superseded.map((x) => x.e.from).join(', ')} handed a superseded seating`);
+        if (found && superseded.some((x) => x.hex.join(',') === found.seated.map((k) => toHex(k)).join(','))) {
+          let best = null;
+          for (const e of handed.values()) if (!best || e.index > best.index || (e.index === best.index && (e.n > best.n || (e.n === best.n && seatingReplaces(e.seated, best.seated, got.drawn[role]))))) best = e;
+          found = best ? { seated: best.seated, from: best.from, index: best.index } : null;
+        }
+      }
+      if (found) {
+        const fh = found.seated.map((k) => toHex(k));
+        for (const e of handed.values()) {
+          const eh = e.seated.map((k) => toHex(k));
+          if (e.index !== found.index || eh.join(',') === fh.join(',')) continue;
+          if (seatingReplaces(e.seated, found.seated, got.drawn[role]) || seatingReplaces(found.seated, e.seated, got.drawn[role])) continue;
+          const shared = eh.filter((k) => fh.includes(k));
+          refused.push(`${e.from}: a ${role} seating that is not ordered with ${found.from}'s - equivocation by ${shared.map((k) => k.slice(0, 8)).join(', ') || 'no shared signer'}`);
+        }
+      }
+    }
     // A CERTIFICATE THAT DID NOT CHECK IS KEPT BESIDE THE ONE THAT DID (measured 2026-10-16 on live testnet4: guardian-1 handing a
     // seating with another node seated was refused here, and guardian-2's standing certificate dropped that refusal - the lying seat
     // went unnamed); settlementSignerNodesFrom refuses the round on it
@@ -36677,6 +36712,10 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
     // still no part of the committee this client derived itself
     const judge = (role, keys) => {
       const mine = (got.committees[role] || []).map(toHex).sort().join(',');
+      // A SEATING THE STANDING ONE SUPERSEDED (kanban #2537): this client holds a certificate after it, so that answer is a seating the seats left -
+      // said in the console, not counted, and nobody is called a liar for it (the seat that served it would otherwise close the round anyway)
+      if (keys.join(',') !== mine && supersededOf[role] && supersededOf[role].has(keys.join(',')))
+        return { agrees: null, why: `names the ${role} seating a later certificate superseded (kanban #2537)` };
       const agrees = keys.join(',') === mine;
       return { agrees, why: agrees ? null : `names another ${role} committee (${keys.map((k) => k.slice(0, 8)).join(', ') || 'none'}) than the one this client derived (${mine.split(',').map((k) => k.slice(0, 8)).join(', ')})` };
     };
@@ -40159,6 +40198,13 @@ const downSave = (nowMs) => { try { const st = downStore(); if (!st) return; con
 const skippedNodes = (nowMs = Date.now()) => [...downMap()].filter(([, v]) => v > nowMs).map(([node, untilMs]) => ({ node, untilMs }));
 /** Forget every skip (tests). */
 const forgetSkippedNodes = () => { DOWN = new Map(); FAILS.clear(); try { const st = downStore(); if (st) st.removeItem(DOWN_KEY); } catch { /* nothing kept */ } };
+// THE SEATS' WARNING CODES FOR ONE ROUND (kanban #2557): from the listings that count only; a census objection needs the threshold.
+function seatWarnings(counting, needed) {
+  const by = new Map();
+  for (const c of counting) for (const k of new Set(c.warnings || [])) by.set(k, (by.get(k) || 0) + 1);
+  return [...by].filter(([k, n]) => k !== 'census_objected' || n >= needed).map(([k]) => k);
+}
+
 async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, verifyMany = null, skewMs = LOBBY_SKEW_MS, answerMs = SIGNER_ANSWER_MS, skipFailed = false, preferGames = null, rereadMs = 0 } = {}) {
   if (!Array.isArray(nodes) || !nodes.length) throw new Error('a lobby asks the nodes it was named, and it was named none');
   if (typeof verify !== 'function') throw new Error('a lobby checks each signer node\'s signed listing, and no verify was injected');
@@ -40277,9 +40323,31 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
     // then the closed ones, soonest first
     .sort((a, b) => (((soonest.get(a) ?? Infinity) <= nowMs) - ((soonest.get(b) ?? Infinity) <= nowMs)) || ((soonest.get(a) ?? Infinity) - (soonest.get(b) ?? Infinity)));
   const prefer = Array.isArray(preferGames) && preferGames.length ? new Set(preferGames.map((g) => String(g).toLowerCase())) : null;
-  const wanted = prefer
-    ? [...open.filter((id) => prefer.has(gameOf.get(id))), ...open.filter((id) => !prefer.has(gameOf.get(id))).slice(0, LOBBY_OTHER_CONTRACTS_PER_READ)].slice(0, LOBBY_CONTRACTS_PER_READ)
-    : open.slice(0, LOBBY_CONTRACTS_PER_READ);
+  const tiers = prefer
+    ? [open.filter((id) => prefer.has(gameOf.get(id))), open.filter((id) => !prefer.has(gameOf.get(id))).slice(0, LOBBY_OTHER_CONTRACTS_PER_READ)]
+    : [open];
+  // EACH SEAT ITS TURN AT THE READ'S CONTRACT BUDGET (kanban #2556, audit #1489 r13): the order above is any seat's word (its close, its game), so
+  // one seat listing hundreds of made-up ids closing soonest took all LOBBY_CONTRACTS_PER_READ every read - each 404s, is held unreadable, the next
+  // made-up ones take their place - and the honest seats' new round was never fetched and got no row. Now the seats take turns, each its own
+  // listed ids in the order above (the opened game's first, as before): one seat's listing costs at most its share while others list rounds too,
+  // and a read whose ids all fit takes every one of them, as before
+  const wanted = [];
+  const picked = new Set();
+  for (const tier of tiers) {
+    const bySeat = new Map();
+    for (const id of tier) for (const c of said.get(id) || []) {
+      const k = String(c.node);
+      if (!bySeat.has(k)) bySeat.set(k, []);
+      const l = bySeat.get(k);
+      if (l[l.length - 1] !== id) l.push(id);
+    }
+    const queues = [...bySeat.values()].map((ids) => ({ ids, at: 0 }));
+    while (wanted.length < LOBBY_CONTRACTS_PER_READ && queues.some((q) => q.at < q.ids.length))
+      for (const q of queues) {
+        while (q.at < q.ids.length && picked.has(q.ids[q.at])) q.at++;
+        if (q.at < q.ids.length && wanted.length < LOBBY_CONTRACTS_PER_READ) { picked.add(q.ids[q.at]); wanted.push(q.ids[q.at]); q.at++; }
+      }
+  }
   for (let i = 0; i < wanted.length; i += 16)
     await Promise.all(wanted.slice(i, i + 16).map((id) => fetchRound(id, answeredFirst, { fetcher: ask })
       .then(({ contract }) => { CONTRACTS.set(id, contract); UNREADABLE.delete(id); }, (e) => { UNREADABLE.set(id, nowMs); refused.push(`${id.slice(0, 16)}: ${e.message}`); })));
@@ -40353,7 +40421,11 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
       disagrees: counts.filter((c) => c.free !== !pays).map((c) => c.node),
       names: [],                                            // checked below, within the read's budget (kanban #2259, #2276)
       // WHAT THE PLAYER IS WARNED OF BEFORE ENTRY (§18A.7 / §22A): a paying round's only
-      warnings: pays ? entryWarnings(contract, counts.flatMap((c) => c.warnings || [])) : [],
+      // ONLY FROM THE LISTINGS THAT COUNT (kanban #2557): a seat outside the round's committee, or one whose listing is stale or
+      // falsely signed, named 'census_objected' on every paid round and the 'Before you stake' dialog showed it. A game warning is
+      // taken from a fresh, signed listing of a signer node; 'census_objected' (its seats take no entry) only when at least the
+      // round's threshold of those name it. The listing signature does not cover the codes, so one signer node can still name them.
+      warnings: pays ? entryWarnings(contract, seatWarnings(counts.filter((c) => c.counts), needed)) : [],
       contract,
       // THE ROUND'S GAME, FROM ITS CONTRACT (checked against the round id above, so no node's word): one row per game and
       // kind; a market (§0A.7a) - pinned, or a round naming no core, which only a market does - is joined by its pick sheet
@@ -40667,7 +40739,13 @@ function lobbyRowNotOffered(r) {
   // ONE GRID PLAYED PER WINDOW (§5A.5 the backup rule, kanban #702, 2026-10-26: "Yes make it part of the design, in the spec"): a seat names
   // a round it does not play in its window - a backup under a drawn primary, a primary whose backup took entries there - played: false;
   // a round most of the seats that say so do not play is not offered
-  const plays = (r.said || []).filter((c) => c && typeof c.played === 'boolean');
+  // ONLY THE ROUND'S OWN SIGNER NODES VOTE, EACH ONCE (kanban #2555, audit #1489 r13): a row fetchLobby built marks each listing `counts`
+  // (fresh, from a signer node of the round, open and assigned there, signed); only those are read, one per node key - before, every
+  // listing was, so one seat outside the committee naming the id six times with `played: false` hid a round its signer nodes play
+  const fromLobby = (r.said || []).some((c) => c && typeof c.counts === 'boolean');
+  const keys = new Set();
+  const plays = (r.said || []).filter((c) => c && typeof c.played === 'boolean'
+    && (!fromLobby || (c.counts === true && !keys.has(c.key) && keys.add(c.key))));
   if (plays.length && plays.filter((c) => !c.played).length * 2 > plays.length) return 'not played';
   const said = (r.said || []).map((c) => c && c.committee).filter(Boolean);
   // a seat names a drawn committee by its members ({ drawn: { game: [...], settlement: [...] } }), an undrawn one drawn: false and why
