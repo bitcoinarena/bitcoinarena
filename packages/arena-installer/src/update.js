@@ -326,14 +326,15 @@ export const SEAT_DATA_FILES = Object.freeze(['node.db', 'node.db-wal', 'node.db
 const NEVER_RESTORED = new Set(['state.json', 'seed.hex']);
 
 /** THE ROLLBACK: the old service files, the backup (as `keepDb` says), the old release started. { put, back, dbKept } */
-async function rollBack({ svc, home, moving, oldTexts, migrating, confFile, backup, keepDb, from = null, to, port, fetcher, waitMs, sleep }) {
+async function rollBack({ svc, home, moving, oldTexts, migrating, confFile, backup, keepDb, decided = false, from = null, to, port, fetcher, waitMs, sleep }) {
   // started whatever the restore says (measured in the Windows VM: copying the backup back threw while the stopped seat still held its
   // database, and the node was left with nothing running)
   try { await svc.stop(moving, to); } catch { /* the start below is what matters */ }
   // THE DATABASE'S PRINT READ AFTER THE STOP (kanban #2097, state audit 2026-11-12 SM7 NODE-1): the callers read dbChangedSince while the new
   // release still ran - one that reached serve() as the wait ran out could use a nonce, take a lock or an entry between that read and this stop,
   // and the backup went back over it. Read again here, the new release stopped: a database written at any time before the restore is kept
-  keepDb = !!keepDb || dbChangedSince(home, backup);
+  // - unless the journal was already at ROLLING_BACK (kanban #2630): that decision stands, and node.db may hold this rollback's own half copy
+  if (!decided) keepDb = !!keepDb || dbChangedSince(home, backup);
   // and nothing here throws before that start (kanban #1440): a service file or arena.conf that cannot be written is named, not fatal
   const notPut = [];
   for (const [f, t] of Object.entries(oldTexts)) { try { writeFileSync(f, t); } catch (e) { notPut.push(`${String(f).split(/[\\/]/).pop()}: ${e.code || e.message}`); } }
@@ -405,8 +406,9 @@ export async function resumeUpdate({ home, env = process.env, sh = run, fetcher 
   // updater killed while restoreNode copied the backup over node.db left a half copy whose size and mtime differ from the print, and the
   // resume read its own torn copy as "changed since the backup: kept" and started the old release on it). The copy is done again from the start.
   if (j.phase !== U.ROLLING_BACK && !served && dbChangedSince(home, j.backup)) { served = true; why += '; node.db changed since the backup: kept'; }
-  if (j.phase !== U.ROLLING_BACK) journalStep(home, j.id, U.ROLLING_BACK, { served, why });
-  const r = await rollBack({ svc, home, moving, oldTexts: j.oldTexts || {}, migrating: j.migrating, confFile: join(home, 'arena.conf'), backup: j.backup, keepDb: served,
+  const decided = j.phase === U.ROLLING_BACK;
+  if (!decided) journalStep(home, j.id, U.ROLLING_BACK, { served, why });
+  const r = await rollBack({ svc, home, moving, oldTexts: j.oldTexts || {}, migrating: j.migrating, confFile: join(home, 'arena.conf'), backup: j.backup, keepDb: served, decided,
     from: j.from, to: j.to, port: j.port, fetcher, waitMs, sleep });
   journalStep(home, j.id, U.ROLLED_BACK, { restored: r.back.ok, dbKept: r.dbKept });
   // A ROLLBACK THE RESUME MADE IS RECORDED AS THE AUTO UPDATER RECORDS ITS OWN (kanban #1581, audit #1489 sm1-node-2): without it the #1369
@@ -785,7 +787,7 @@ async function moveNode({ home, newRelease, port, node = process.execPath, asset
     // the decision of a rollback already begun stands (kanban #2630): its own partial copy is no write of the seat
     const keepDb = !!j.served || (j.phase !== U.ROLLING_BACK && dbChangedSince(home, bk));
     try { if (j.phase !== U.ROLLING_BACK) journalStep(home, j.id, U.ROLLING_BACK, { served: keepDb, why: e.message }); } catch { /* the resume finishes it */ }
-    const { put, back, dbKept } = await rollBack({ svc, home, moving, oldTexts: Object.fromEntries(oldTexts), migrating, confFile, backup: bk, keepDb, from, to: newRelease, port, fetcher, waitMs, sleep });
+    const { put, back, dbKept } = await rollBack({ svc, home, moving, oldTexts: Object.fromEntries(oldTexts), migrating, confFile, backup: bk, keepDb, decided: j.phase === U.ROLLING_BACK, from, to: newRelease, port, fetcher, waitMs, sleep });
     try { journalStep(home, j.id, U.ROLLED_BACK, { restored: back.ok, dbKept }); } catch { /* the resume finishes it */ }
     step(`rolled back after the failure: the old release ${back.ok ? 'answers' : `does not answer (${back.why})`}${put.ok ? '' : `; not put back: ${put.failed.join(', ')}`}`);
     return { ok: false, rolledBack: true, from, to: newRelease, backup: bk ? bk.dir : null, failedAt: failedStep, dbKept,
