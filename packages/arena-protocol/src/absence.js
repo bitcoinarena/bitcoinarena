@@ -16,6 +16,7 @@ import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
 import { TAG, PROTOCOL_VERSION, TYPE_ABSENCE_ATTESTATION, TYPE_DEPARTURE_NOTICE } from './constants.js';
 import { parseTransaction, commitmentsOf } from './tx.js';
+import { splitBlock } from './block.js';
 
 const is32 = (b) => b instanceof Uint8Array && b.length === 32;
 const is33 = (b) => b instanceof Uint8Array && b.length === 33;
@@ -64,11 +65,18 @@ const byNode = (record, nodePubkey) => (record.guardians || []).find((g) => toHe
 /**
  * THE NOTICE IS ANCHORED ON CHAIN (ruled 2026-11-13, kanban #2600 / #2608, the backdating of #2599): posted_at is the guardian's own
  * word, so a notice signed at tip T with posted_at T - 432 let him leave at once and keep his bond. From the gate on a notice counts
- * from the height at which its hash is CONFIRMED: an OP_RETURN "ARN" 'L' || departure_id (36 bytes) in any transaction, as votes and
- * deposits are carried. posted_height is that block's height, read from the seat's own chain - never a field the guardian writes - and
- * leave_after >= posted_height + departure_notice. A notice with no anchor is no notice. A named block hash is not an anchor (it proves
- * "not before", and backdating needs "not after"). No freshness window: the bytes can be pulled from any peer at any time and checked
- * against the anchored hash, so an offline seat reads the anchor when it comes back and never stalls.
+ * from the height at which it is CONFIRMED on chain. posted_height is that block's height, read from the seat's own chain - never a
+ * field the guardian writes - and leave_after >= posted_height + departure_notice. A notice with no anchor is no notice. A named block
+ * hash is not an anchor (it proves "not before", and backdating needs "not after").
+ *
+ * ANCHORING IS PUBLISHING (kanban #2612, feedback #041, owner decision on option (c)): the anchor carries the WHOLE signed notice, not
+ * its hash - one OP_RETURN "ARN" 'L' || notice (108) || signature (64), 176 bytes pushed with OP_PUSHDATA1 (a 179-byte script). With
+ * only H(notice) on chain a guardian could anchor in secret at A with leave_after A + 432, keep serving, and show the notice at
+ * A + 432: every seat took it as due at once and the period in which the federation founds a replacement was gone. Now every seat
+ * reads the notice from the chain at the anchor's height (absences.js scanDepartures), so the period starts when the federation can
+ * see it. A transaction that carries only the hash (the #2608 form, never posted) anchors nothing. Standard and relayed by Bitcoin Core
+ * 30 and later (-datacarriersize 100000 by default; measured with testmempoolaccept on regtest Core 31.1); consensus has no limit, so a
+ * seat on any version reads it in a block.
  *
  * THE GATE: a record judged at or above its network's DEPARTURE_ANCHOR_HEIGHT reads notices anchored; below it, the old rule byte for
  * byte (posted_at as written, its residual standing). Beside the ballot's BALLOT_BIND_HEIGHT (ballot.js): regtest from 0, mainnet from
@@ -82,26 +90,47 @@ export const anchorRequired = (gate, height) => Number.isInteger(gate) && Number
 /** The blocks a leaving node adds to leave_after for its anchor to confirm in (absence-producer.js): one day. */
 export const DEPARTURE_ANCHOR_SLACK = 144;
 export const DEPARTURE_ANCHOR_MARKER = Uint8Array.from([0x41, 0x52, 0x4e, 0x4c]);     // "ARN" 'L'
-export const DEPARTURE_ANCHOR_BYTES = 4 + 32;
-/** The anchor's payload for a notice: "ARN" 'L' || departure_id - and the OP_RETURN script that pushes it. */
+export const DEPARTURE_NOTICE_BYTES = 1 + 2 + 32 + 33 + 4 + 4 + 32;
+export const DEPARTURE_ANCHOR_BYTES = 4 + DEPARTURE_NOTICE_BYTES + 64;                   // 176
+/** The anchor's payload for a signed notice: "ARN" 'L' || notice || signature - and the OP_RETURN script that pushes it. */
 export function encodeDepartureAnchor(d) {
+  if (!(d && d.signature instanceof Uint8Array && d.signature.length === 64)) throw new Error('an anchor carries the signed notice: its 64-byte signature with it');
   const out = new Uint8Array(DEPARTURE_ANCHOR_BYTES);
-  out.set(DEPARTURE_ANCHOR_MARKER, 0); out.set(departureId(d), 4);
+  out.set(DEPARTURE_ANCHOR_MARKER, 0); out.set(encodeDeparture(d), 4); out.set(d.signature, 4 + DEPARTURE_NOTICE_BYTES);
   return out;
 }
-export const departureAnchorScript = (d) => Uint8Array.from([0x6a, DEPARTURE_ANCHOR_BYTES, ...encodeDepartureAnchor(d)]);
+export const departureAnchorScript = (d) => Uint8Array.from([0x6a, 0x4c, DEPARTURE_ANCHOR_BYTES, ...encodeDepartureAnchor(d)]);
+/** The signed notice an anchor payload carries, or null (another payload, the hash-only form, bytes that are no notice). */
+export function decodeDepartureAnchor(p) {
+  if (!(p instanceof Uint8Array) || p.length !== DEPARTURE_ANCHOR_BYTES) return null;
+  for (let i = 0; i < 4; i++) if (p[i] !== DEPARTURE_ANCHOR_MARKER[i]) return null;
+  try { return { ...decodeDeparture(p.slice(4, 4 + DEPARTURE_NOTICE_BYTES)), signature: p.slice(4 + DEPARTURE_NOTICE_BYTES) }; } catch { return null; }
+}
+const txidOf = (tx) => toHex(Uint8Array.from(tx.txid).reverse());
+/** Every notice a parsed transaction carries in its outputs (its signature not checked here). */
+export const departuresOfTx = (tx) => commitmentsOf(tx).map(decodeDepartureAnchor).filter(Boolean);
+/** Every notice in a raw block, with its transaction's id and the block's height: what a seat reads off its chain (absences.js). */
+export function departuresInBlock(raw, height) {
+  const out = [];
+  for (const t of splitBlock(raw).transactions) {
+    let tx; try { tx = parseTransaction(t); } catch { continue; }
+    for (const notice of departuresOfTx(tx)) out.push({ notice, txid: txidOf(tx), height });
+  }
+  return out;
+}
 /**
  * A NOTICE'S ANCHOR, READ OFF ITS TRANSACTION: `raw` a transaction confirmed at `height` on the seat's own chain (the caller reads it
- * there: getrawtransaction with the block hash, the block on the main chain - as a ballot deposit is read). Answers
- * { ok, postedHeight } or why not.
+ * there: getrawtransaction with the block hash, the block on the main chain - as a ballot deposit is read). The transaction must carry
+ * the notice's own bytes (kanban #2612); its hash alone is no anchor. Answers { ok, postedHeight, txid, signature } - the signature as
+ * the chain carries it, the one the seat checks - or why not.
  */
 export function departureAnchorOf({ raw, height, notice }) {
   let tx; try { tx = parseTransaction(raw); } catch (e) { return { ok: false, why: `that is no transaction: ${e.message}` }; }
   if (!Number.isInteger(height) || height < 0) return { ok: false, why: 'an anchor counts once it is confirmed at a height' };
-  let want; try { want = toHex(encodeDepartureAnchor(notice)); } catch (e) { return { ok: false, why: e.message }; }
-  if (!commitmentsOf(tx).some((p) => p.length === DEPARTURE_ANCHOR_BYTES && toHex(p) === want))
-    return { ok: false, why: 'that transaction carries no "ARN" \'L\' anchor of this notice' };
-  return { ok: true, postedHeight: height, txid: toHex(Uint8Array.from(tx.txid).reverse()) };
+  let want; try { want = toHex(encodeDeparture(notice)); } catch (e) { return { ok: false, why: e.message }; }
+  const found = departuresOfTx(tx).find((n) => toHex(encodeDeparture(n)) === want);
+  if (!found) return { ok: false, why: 'that transaction does not carry this notice in an "ARN" \'L\' anchor' };
+  return { ok: true, postedHeight: height, txid: txidOf(tx), signature: found.signature };
 }
 
 /**
