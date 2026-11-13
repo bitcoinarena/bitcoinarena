@@ -236,6 +236,17 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
       // checked on a proposal that stands on its face and on the chain: refused by its own fault first, then by the deposit (#1489)
       const other = backedBy(depositHex, id, toHex(p.proposer));
       if (other) return { ok: false, status: 409, why: `that deposit (deposit_txid) already backs proposal ${other.id}: one deposit pays for one proposal` };
+      // A BOUND TWIN ONCE THE VOTING BEGAN (kanban #2590): the deposit commits to the body, not the signature, and proposal_id covers the
+      // signature - so the proposer can sign the same body again and the twin passes depositOf. Taken at any time (#2562), it voided the
+      // first (#1840) after its vote had passed and activated: one proposer undoing a vote. A second proposal over a deposit this seat
+      // already keeps is taken only while the tip is below its first voting block - the #1608 tip check, kept for twins alone.
+      if (bound && sameDeposit(depositHex, id).length && tipOf) {
+        let tip = NaN;
+        try { tip = Number(await tipOf()); } catch { tip = NaN; }
+        if (!Number.isFinite(tip)) return { ok: false, status: 503, why: 'this seat could not read its tip: ask again shortly' };
+        if (tip >= stands.votingFrom)
+          return { ok: false, status: 409, why: `that deposit already backs a proposal of this proposer whose voting began at ${stands.votingFrom} (tip ${tip}): a second one signed over it is refused` };
+      }
       if (sameDeposit(depositHex, id).length >= SAME_DEPOSIT_KEPT)
         return { ok: false, status: 409, why: `that deposit already backs ${SAME_DEPOSIT_KEPT} proposals of this proposer: all of them are void (kanban #1840)` };
       const kept = { id, proposal: toHex(bytes), networkId: net, parent: toHex(p.parent), configHash: toHex(p.configHash), class: stands.class,
