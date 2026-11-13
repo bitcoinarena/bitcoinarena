@@ -29,6 +29,8 @@ import { absenceHex, readAbsenceHex, departureHex, readDepartureHex, dueDepartur
 import { emergencyDepartureStands, emergencyDepartureEffect, emergencyDepartureId } from '../../arena-protocol/src/emergency.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { withConfigEndpoints } from './federation-endpoints.js';
+import { recordInviteSource } from '../../arena-protocol/src/trusted-guardian-keys.js';
+import { readInvite } from './invite.js';
 import { buildFederationRecord, encodeFederationRecord, federationRecordId, joinSignedRecord, verifyFederationRecord, verifyFederationRecords,
   FEDERATION_STATUS, GONE, decodeFederationRecord, splitSignedRecord, guardianKeySet, highestVerified, recordStatusName, thresholdOf, loadReserveOf, statusFor, paysDrainShares, playerReserveOf, GATEWAY_FEE_MAX_REFERENCE, RESTRICTION_RANK, selfConsistentRestrictive } from '../../arena-protocol/src/federation-record.js';
 import { recordBand, bandOfRecord } from '../../arena-protocol/src/capacity.js';
@@ -206,15 +208,24 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   guardianKeysOf = null }) {
   // the keys once read, by federation id hex: a federation's config keys do not change (a successor is another federation)
   const keysKnown = new Map();
-  // THE INVITES THIS SEAT HAS SEEN IN A FEDERATION'S RECORDS (kanban #2609): where the trusted key fetch asks first, for a federation this seat
+  // THE INVITES THIS SEAT HAS SEEN IN A FEDERATION'S RECORDS (kanban #2609): where the trusted key fetch asks, for a federation this seat
   // names no invite for. Any record's invite, a stranger's too - the fetch takes keys only from a config whose endpoints hash to the id and a
-  // threshold of those endpoints agree on, so a made-up invite gets nothing
-  const invitesSeen = new Map();             // fid -> Set(invite), at most 8
+  // threshold of those endpoints agree on, so a made-up invite gets nothing.
+  // NOT FIRST COME (kanban #2618, feedback #047): the first 8 were kept for good, and eight strangers' junk invites noted first kept the seat
+  // keyless. Each record's invite goes to the fetch with the node keys whose signatures over the record verify (recordInviteSource); the
+  // fetch's book (trusted-guardian-keys.js) bounds them per signer, evicts an invite that fails the id check and asks this seat's own invite
+  // and the kept record's first. Here they wait only until the next keysFor hands them over (at most MIRROR_INVITES a federation)
+  const invitesSeen = new Map();             // fid -> Map(invite -> { invite, signers })
+  const MIRROR_INVITES = 64;
+  const inviteVerify = (sg, m, key) => { try { return schnorr.verify(sg, m, key); } catch { return false; } };
   function noteInvite(fid, bytes) {
     let inv = null; try { inv = decodeFederationRecord(splitSignedRecord(bytes).body).invite; } catch { inv = null; }
     if (typeof inv !== 'string' || !inv) return;
-    if (!invitesSeen.has(fid)) invitesSeen.set(fid, new Set());
-    const s = invitesSeen.get(fid); if (s.size < 8) s.add(inv);
+    if (!invitesSeen.has(fid)) invitesSeen.set(fid, new Map());
+    const m = invitesSeen.get(fid);
+    if (m.has(inv) || m.size >= MIRROR_INVITES) return;
+    const src = recordInviteSource(bytes, inviteVerify);
+    if (src) m.set(inv, src);
   }
   async function keysFor(fidHex) {
     const fid = String(fidHex).toLowerCase();
@@ -222,13 +233,33 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     const invites = [];
     try { const i = inviteFor(fid); if (i) invites.push(String(i)); } catch { /* none */ }
     { const k = kept.get(fid); if (k && k.record && k.record.invite) invites.push(String(k.record.invite)); }
-    invites.push(...(invitesSeen.get(fid) || []));
+    invites.push(...(invitesSeen.get(fid) || new Map()).values());
+    invitesSeen.delete(fid);
     let k = null; try { k = await guardianKeysOf(fid, { invites }); } catch { k = null; }
-    if (Array.isArray(k) && guardianKeySet(k)) { keysKnown.set(fid, k); return k; }
+    if (Array.isArray(k) && guardianKeySet(k)) { const first = !keysKnown.has(fid); keysKnown.set(fid, k); if (first) dropUnkeyed(fid, k); return k; }
     return keysKnown.get(fid) || null;
   }
   // THE GUARDIAN BOND LOCK IS ON AT THIS BODY'S HEIGHT (#1104's line; #1318's departure on schedule rides on it)
   const lockOn = (b) => !!(bondLock && Number.isInteger(bondLock.from) && b.height >= bondLock.from);
+  // WHAT WAS KEPT WITHOUT KEYS IS JUDGED AGAIN WHEN THEY COME (kanban #2618, feedback #047): a seat that mirrored the strangers' forgery while it
+  // held no keys kept it (OPEN at genuine + 7), and the genuine HALTED record below that height could never replace it once the keys came. The
+  // first time this seat holds a federation's keys, the kept record - and the one beside it, and the held one - is checked against its own
+  // guardian list under those keys (every signer a guardian whose key is the config's, the threshold signed); one that fails is dropped, with
+  // its draining word and halt start, so the next pass keeps what stands under the keys
+  function dropUnkeyed(fid, keys) {
+    const sv = (sg, m, key) => { try { return schnorr.verify(sg, m, key); } catch { return false; } };
+    const ifid = (inv) => { const f = readInvite(inv).federationId; return f ? fromHex(f) : null; };
+    const stands = (bytes) => {
+      try {
+        const r = decodeFederationRecord(splitSignedRecord(bytes).body);
+        const own = r.guardians.map((g) => ({ pubkey: g.nodePubkey, advert: { guardianOf: [{ federationId: r.federationId, guardianKey: g.peerKey }] } }));
+        return verifyFederationRecord(bytes, { census: own, verify: sv, inviteFederationId: ifid, guardianKeys: keys }).ok;
+      } catch { return false; }
+    };
+    const k = kept.get(fid);
+    if (k && k.bytes && !stands(k.bytes)) { kept.delete(fid); draining.delete(fid); halted.delete(fid); }
+    for (const m of [beside, holding]) { const x = m.get(fid); if (x && x.bytes && !stands(x.bytes)) m.delete(fid); }
+  }
   // THE CHAIN TIP A RECORD'S HEIGHT IS BOUNDED BY (kanban #2604): null when this seat reads none
   async function tipNow() {
     if (typeof chainTip !== 'function') return null;
