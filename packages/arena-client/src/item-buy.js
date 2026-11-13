@@ -21,6 +21,7 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { itemsSecretFor } from '../../arena-protocol/src/player-key.js';
 import { entryItemDigest } from '../../arena-protocol/src/contracts.js';
 import { ITEMS_VERSION, RESERVES_VERSION } from '../../arena-protocol/src/constants.js';
+import { PAID_PURCHASE_PREFIX, PAID_GIFT_PREFIX, paidRecordGet, paidRecordPut, paidRecordDrop, paidRecordKeys } from './paid-records.js';
 
 /**
  * THE TERMS A GAME VERSION SELLS ITS ITEMS ON: a version requiring protocol 11 the reserves' - nodes 40 %, the
@@ -125,11 +126,19 @@ export async function handToSeats({ seats, door, body, fetch, timeoutMs = 60000 
  * `seats` the game's seats; `verify` BIP340; `devsPct` the developers' share the buyer chose (one of ITEM_DEV_SHARES, default
  * 50 - the nodes' half is paid whatever it is). Answers { ok, purchaseId, txid, priceSat, paidSat, devsPct, outputs, keptBy } or { ok: false, step, why }.
  */
-export async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, federationId, player, seats, fetch, verify, nowMs = () => Date.now(), devsPct = null, reserveNeeded = 5 }) {
+export async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, federationId, player, seats, fetch, verify, nowMs = () => Date.now(), devsPct = null, reserveNeeded = 5, storage = null }) {
   const no = (step, why) => ({ ok: false, step, why });
   const item = itemOf(manifest, itemId);
   if (!item) return no('item', `"${manifest && manifest.gameName}" sells no item "${itemId}"`);
   const terms = itemTermsOf(manifest);
+  // THIS ITEM PAID BEFORE AND ITS RECORD NOT KEPT (kanban #2274): the kept purchase goes on - acceptance, record, seats - and nothing is paid again
+  const keptKey = `${PAID_PURCHASE_PREFIX}${manifest.gameName}.${itemId}.${toHex(player.pubkey).slice(0, 16)}`;
+  const kept = paidRecordGet(storage, keptKey);
+  if (kept && kept.submitted) return finishPurchase({ rec: kept, keptKey, storage, manifest, item, itemId, terms, wallet, federationId, player, fetch, again: true });
+  if (kept) {   // written ahead, the page gone before the federation answered: whether it paid is the wallet history's to say, so said once
+    paidRecordDrop(storage, keptKey);
+    return no('payment', `an earlier payment of this item had no answer (the page closed while paying, ${new Date(Number(kept.boughtAtMs)).toISOString()}): look at the wallet history before buying again`);
+  }
   if (devsPct === null || devsPct === undefined) devsPct = terms.defaultShare;
   if (!terms.shares.includes(Number(devsPct))) return no('share', `a developers' share is one of ${terms.shares.join(', ')} %`);
   // THE RESERVES' KEY FIRST: on the reserves' terms nothing is paid before five of the game's nodes name the
@@ -153,26 +162,60 @@ export async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, f
   // window (purchaseImage), so this payment stands for this item's record alone
   const image = toHex(purchaseImage({ playerPubkey: player.pubkey, gameDevPubkey: manifest.gameDevPubkey, gameName: manifest.gameName, itemId, priceSat: item.priceSat,
     servedFromMs: got.served.fromMs, servedToMs: got.served.toMs }));
-  let submitted, accepted;
+  // WRITTEN AHEAD (kanban #2274): the purchase is kept before the payment and again with its transaction the moment the federation
+  // answers it, so a record the seats do not keep is handed again on the next press, never paid again. One that cannot be written pays nothing.
+  const rec = { seats: [...(seats || [])], federationId, devsPct: Number(devsPct), servedFromMs: String(got.served.fromMs), servedToMs: String(got.served.toMs),
+    servedRoot: got.served.root, reserveKey: reserveKey ? toHex(reserveKey) : null, reserveMsat: built.reserve ? String(built.reserve.msat) : null,
+    outputs: built.outputs.length, boughtAtMs: String(nowMs()), submitted: null, body: null };
+  try { paidRecordPut(storage, keptKey, rec); } catch (e) { return no('payment', `nothing paid: the purchase could not be written ahead (${e && e.message || e})`); }
   try {
-    submitted = JSON.parse(await wallet.paySubmit(JSON.stringify(built.outputs.map((o) => ({ pk: toHex(o.pk), msat: String(o.msat), image })))));
-    accepted = JSON.parse(await wallet.lockAccepted(JSON.stringify(submitted)));
-  } catch (e) { return no('payment', String(e && e.message || e)); }
-  const outs = accepted.donations || [];
-  if (outs.length !== built.outputs.length || !outs.every((d) => d.ids_match)) return no('payment', 'the federation does not hold the outputs as they were built');
-  const record = { gameDevPubkey: manifest.gameDevPubkey, gameName: manifest.gameName, itemId, priceSat: item.priceSat, devsPct: Number(devsPct), playerPubkey: player.pubkey,
-    federationId: fromHex(federationId), txid: fromHex(submitted.txid), servedFromMs: got.served.fromMs, servedToMs: got.served.toMs, servedRoot: fromHex(got.served.root),
-    outputs: outs.map((d) => ({ outIdx: Number(d.out_idx), pk: fromHex(d.recipient_pk), msat: BigInt(d.amount_msat) })), boughtAtMs: BigInt(nowMs()),
-    ...(terms.reserves ? { gameId: gameIdOf(manifest), reserveKey } : {}) };
-  const signature = player.sign(purchaseId(record));
-  const body = JSON.stringify({ purchase: toHex(encodePurchase(record)), signature: toHex(signature) });
+    rec.submitted = JSON.parse(await wallet.paySubmit(JSON.stringify(built.outputs.map((o) => ({ pk: toHex(o.pk), msat: String(o.msat), image })))));
+  } catch (e) { paidRecordDrop(storage, keptKey); return no('payment', String(e && e.message || e)); }
+  try { paidRecordPut(storage, keptKey, rec); } catch { /* the payment stands; the record is built and handed below */ }
+  return finishPurchase({ rec, keptKey, storage, manifest, item, itemId, terms, wallet, federationId, player, fetch, again: false });
+}
+
+// THE PAID PURCHASE FINISHED (kanban #2274): its acceptance read back, the record signed and kept with its body, handed to every seat
+// (kept when two keep it, #2420); dropped only then. A purchase kept from an earlier press goes on from where it stood - its body as it was.
+async function finishPurchase({ rec, keptKey, storage, manifest, item, itemId, terms, wallet, federationId, player, fetch, again }) {
+  const no = (step, why) => ({ ok: false, step, why });
+  const txid = rec.submitted.txid;
+  if (!rec.body) {
+    if (rec.federationId !== federationId) return no('record', `paid (transaction ${txid}) from federation ${rec.federationId.slice(0, 8)}: open that federation's wallet to finish the record, nothing is paid again`);
+    let accepted;
+    try { accepted = JSON.parse(await wallet.lockAccepted(JSON.stringify(rec.submitted))); } catch (e) { return no('record', `paid (transaction ${txid}), its acceptance not read yet (${String(e && e.message || e)}): pressed again, it is read again, never paid again`); }
+    const outs = accepted.donations || [];
+    if (outs.length !== rec.outputs || !outs.every((d) => d.ids_match)) return no('payment', 'the federation does not hold the outputs as they were built');
+    const record = { gameDevPubkey: manifest.gameDevPubkey, gameName: manifest.gameName, itemId, priceSat: item.priceSat, devsPct: rec.devsPct, playerPubkey: player.pubkey,
+      federationId: fromHex(rec.federationId), txid: fromHex(txid), servedFromMs: BigInt(rec.servedFromMs), servedToMs: BigInt(rec.servedToMs), servedRoot: fromHex(rec.servedRoot),
+      outputs: outs.map((d) => ({ outIdx: Number(d.out_idx), pk: fromHex(d.recipient_pk), msat: BigInt(d.amount_msat) })), boughtAtMs: BigInt(rec.boughtAtMs),
+      ...(terms.reserves ? { gameId: gameIdOf(manifest), reserveKey: fromHex(rec.reserveKey) } : {}) };
+    rec.body = JSON.stringify({ purchase: toHex(encodePurchase(record)), signature: toHex(player.sign(purchaseId(record))) });
+    rec.purchaseId = toHex(purchaseId(record));
+    try { paidRecordPut(storage, keptKey, rec); } catch { /* handed below; a failed hand-over is then kept in nothing but this answer's retry */ }
+  }
   // HANDED TO EVERY SEAT, KEPT ONLY WHEN TWO KEEP IT (kanban #2420): no longer the first seat that answers 200 - one lying seat listed
   // first said 200, dropped the record and never handed it on, the page said "bought" and no honest seat held the paid item
-  const { keptBy, last } = await handToSeats({ seats, door: 'item-purchase', body, fetch });
-  if (!keptBy) return { ok: false, step: 'record', why: `paid (transaction ${submitted.txid}), but no seat kept the record yet: ${last}`, purchaseId: toHex(purchaseId(record)), txid: submitted.txid,
-    retry: body };
-  return { ok: true, purchaseId: toHex(purchaseId(record)), txid: submitted.txid, priceSat: item.priceSat, paidSat: itemPriceOn(manifest, item.priceSat, devsPct),
-    devsPct: Number(devsPct), outputs: outs.length, keptBy, ...(terms.reserves ? { reserveKey: toHex(reserveKey), reserveMsat: built.reserve.msat } : {}) };
+  const { keptBy, last } = await handToSeats({ seats: rec.seats, door: 'item-purchase', body: rec.body, fetch });
+  if (!keptBy) return { ok: false, step: 'record', paid: true, why: `${again ? 'an earlier purchase of this item was ' : ''}paid (transaction ${txid}), but no seat kept the record yet: ${last} - it is handed again, never paid again`,
+    purchaseId: rec.purchaseId, txid, retry: rec.body };
+  paidRecordDrop(storage, keptKey);
+  return { ok: true, purchaseId: rec.purchaseId, txid, priceSat: item.priceSat, paidSat: itemPriceOn(manifest, item.priceSat, rec.devsPct),
+    devsPct: rec.devsPct, outputs: rec.outputs, keptBy, ...(again ? { earlier: true } : {}), ...(terms.reserves ? { reserveKey: rec.reserveKey, reserveMsat: BigInt(rec.reserveMsat) } : {}) };
+}
+
+/** AT LOAD (kanban #2274): every kept paid record that has its signed body is handed again to the seats it names; the kept ones are
+ *  dropped. Answers [{ key, ok, why }]. */
+export async function resendPaidRecords({ storage, fetch }) {
+  const said = [];
+  for (const key of paidRecordKeys(storage)) {
+    const rec = paidRecordGet(storage, key);
+    if (!rec || !rec.body) continue;
+    const { keptBy, last } = await handToSeats({ seats: rec.seats, door: key.startsWith(PAID_GIFT_PREFIX) ? 'donation-gift' : 'item-purchase', body: rec.body, fetch });
+    if (keptBy) paidRecordDrop(storage, key);
+    said.push({ key, ok: !!keptBy, why: keptBy ? `kept by ${keptBy}` : last });
+  }
+  return said;
 }
 
 /**

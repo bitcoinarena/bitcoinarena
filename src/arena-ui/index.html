@@ -3171,6 +3171,13 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     function vault() {
       try { const s = window.localStorage; s.getItem('arena.vault'); return s; } catch { return window.sessionStorage; }
     }
+    // AT LOAD (kanban #2274): every paid purchase or gift whose record the seats did not keep yet is handed again to the seats it names
+    setTimeout(() => {
+      if (typeof ARENACLIENT === 'undefined' || !ARENACLIENT.resendPaidRecords) return;
+      ARENACLIENT.resendPaidRecords({ storage: vault(), fetch: (u, o) => fetch(u, o) })
+        .then((said) => { for (const r of said) console.log('[arena] paid record ' + r.key + ': ' + (r.ok ? r.why : 'not kept yet, ' + r.why)); })
+        .catch(() => { /* handed again on the next load or press */ });
+    }, 15000);
     // A TAB OPEN FROM A BUILD THAT KEPT THESE IN THE TAB: they move over once - a record when the
     // browser has none under its key, a wallet's database only whole and only when none of it is there.
     (function moveTabRecordsToVault() {
@@ -10619,6 +10626,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           say('Paying ' + String(window.ARENA_ITEM_PRICE(it.priceSat)) + ' sat …');
           const got = await buyShopItem(shop, it).catch((e) => ({ ok: false, step: 'page', why: e.message }));
           if (got.ok) { owned = await itemsOwnedNow(shop.game.name, seats, { fresh: true }).catch(() => owned); say('Bought: ' + it.name + ' is yours (transaction ' + String(got.txid).slice(0, 12) + '…).'); paint(); if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE(); }
+          // PAID, THE RECORD NOT KEPT YET (kanban #2274): the purchase is kept in this browser and handed again on the next Buy or load, never paid again
+          else if (got.paid) say('Paid, the record is handed again (' + got.step + '): ' + got.why, true);
           else say('Not bought (' + got.step + '): ' + got.why, true);
         } });
       paint();
@@ -10652,7 +10661,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         nodes: (row.said || []).map((c) => c.node).filter(Boolean), verifyEd25519: pageEd25519Verify, keepBySet: true });
       if (!ds.ok || !ds.target) return { ok: false, step: 'donation', why: ds.why || 'the round names no donation sets' };
       return ARENACLIENT.buyItem({ manifest: shop.game.manifest, itemId: it.id, networkSet: ds.target.network, gameSet: ds.target.game, wallet, federationId, devsPct,
-        player: { pubkey: key.pubkey, sign: key.sign }, seats: shop.game.nodes || [], fetch: (u, o) => fetch(u, o),
+        player: { pubkey: key.pubkey, sign: key.sign }, seats: shop.game.nodes || [], fetch: (u, o) => fetch(u, o), storage: vault(),
         verify: (sg, m, k) => window.ARENA_CURVE.verify(sg, m, k) });
     }
     // DONATE TO THE DEVELOPERS (2026-10-17: "donate to developer, a popup opens with an amount to choose from
