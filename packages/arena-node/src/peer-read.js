@@ -48,3 +48,28 @@ export const binaryUpTo = async (r, maxBytes) => {
 
 /** a seat's games, at most PEER_LISTING_GAMES of them: the rest of a longer list is not read (kanban #1540) */
 export const listedGames = (got) => (got && Array.isArray(got.games) ? got.games.slice(0, PEER_LISTING_GAMES) : []);
+
+// EVERY ANSWER A SEAT READS FROM ANOTHER SEAT HAS A LIMIT, AS EVERY REQUEST BODY DOES (kanban #2637, a bypass of #1469): #1469 capped what a
+// seat reads from a request (body-read.js, 413); the same bytes came back in as a peer's ANSWER read with a bare r.json() - pullProposals'
+// GET /proposals held a 16 MiB answer whole (heap +20.4 MB in one pull, no upper bound), as did /reserves, /absences, /emergency-departures,
+// /funding-items, /lock-namer, /founding, address pulls and others. Fixing them one read at a time left the next one open, so the cap now
+// sits on the fetch itself: answersUpTo(fetch) gives a fetch whose answers' json(), text(), arrayBuffer(), bytes(), blob() and formData()
+// read at most `maxBytes` (chunk by chunk; past it the stream is cancelled and the read throws, as bytesUpTo). The stream itself (r.body)
+// is untouched, so a read that names its own bound (bytesUpTo / textUpTo / jsonUpTo with PEER_PACKAGE_BYTES, PEER_HEADERS_BYTES, ...) still
+// reads up to that. A stand-in answer with no body at all (a test's fetchFn) is handed on as it is. server.js reads every peer through it.
+export const PEER_ANSWER_BYTES = 8 * 1048576;
+export function capAnswer(r, maxBytes = PEER_ANSWER_BYTES) {
+  if (!r || typeof r !== 'object' || r.body === undefined) return r;
+  const own = (k, v) => { try { Object.defineProperty(r, k, { value: v, configurable: true, writable: true }); } catch { /* frozen: left as is */ } };
+  const clone = typeof r.clone === 'function' ? r.clone.bind(r) : null;
+  const bytes = () => bytesUpTo(r, maxBytes);
+  own('arrayBuffer', async () => { const b = await bytes(); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength); });
+  own('bytes', async () => new Uint8Array(await bytes()));
+  own('text', async () => (await bytes()).toString('utf8'));
+  own('json', async () => JSON.parse((await bytes()).toString('utf8')));
+  own('blob', async () => new Blob([await bytes()], { type: r.headers?.get?.('content-type') || '' }));
+  own('formData', async () => new Response(await bytes(), { headers: r.headers }).formData());
+  if (clone) own('clone', () => capAnswer(clone(), maxBytes));
+  return r;
+}
+export const answersUpTo = (fetchFn, maxBytes = PEER_ANSWER_BYTES) => async (...a) => capAnswer(await fetchFn(...a), maxBytes);

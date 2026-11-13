@@ -28,7 +28,13 @@ import { blockRandom, blockRandomReady } from '../../arena-protocol/src/block-ra
 import { servedNodes, mergeServedRounds, SERVED_WINDOW_MS, SERVED_HELD_MAX, SERVED_ANSWER_BYTES_MAX } from '../../arena-protocol/src/served-nodes.js';
 import { decodePurchase } from '../../arena-protocol/src/purchase.js';
 import { itemOf } from '../../arena-protocol/src/items.js';
-import { textUpTo, jsonUpTo, listedGames, PEER_LISTING_BYTES, PEER_PACKAGE_BYTES } from './peer-read.js';   // kanban #1540, #1723
+import { textUpTo, jsonUpTo, listedGames, PEER_LISTING_BYTES, PEER_PACKAGE_BYTES, answersUpTo } from './peer-read.js';   // kanban #1540, #1723
+// EVERY PEER ANSWER THIS MODULE READS IS READ UP TO A BOUND (kanban #2637, a bypass of #1469): `fetch` in server.js is the process's fetch
+// (looked up at each call, so main.js's routed fetch and a test's stand-in both still apply) with its answers capped at PEER_ANSWER_BYTES
+// (8 MiB, peer-read.js answersUpTo) - a bare r.json() / r.text() / r.arrayBuffer() on another seat's answer can no longer hold it whole.
+// A read that names its own bound on r.body (PEER_PACKAGE_BYTES, SERVED_ANSWER_BYTES_MAX, ...) keeps it. test/wf1489-bypass-body-limit-1
+// refuses a read of the global fetch past this door.
+const fetch = answersUpTo((...a) => globalThis.fetch(...a));
 import { keepItemPurchase, itemsOwned, purchasesSince } from './item-purchase-seat.js';
 import { keepDonationGift, giftsOf, giftsSince } from './donation-gift-seat.js';
 import { decodeDonationGift, GIFT_TO_GAME, GIFT_TO_PLAYER, GIFT_TO_BOTH, playerGiftRecipients } from '../../arena-protocol/src/donation-gift.js';
@@ -855,6 +861,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // results to ARENA_NOSTR_PUBLISH. Their images are named under ARENA_BADGE_IMAGE_BASE, else the first stable public address.
   nostrBadgesOn = badgesOn(), badgeImageBase = imageBaseOf(process.env.ARENA_BADGE_IMAGE_BASE) || replayPublic[0] || null,
   nostrBadgesTickMs = 60000 } = {}) {
+  // a seasonFetch handed in (a test's seats, a harness) reads its answers through the same bound as `fetch` (kanban #2637, #1469)
+  seasonFetch = answersUpTo(seasonFetch);
   // THE TAG SWITCH'S NETWORK (tag-switch.js, kanban #525): the chain this seat follows names whose BLWP/v1 -> ARENA/v1 point it uses
   { const n = { 'bitcoin-regtest': 'regtest', 'bitcoin-testnet4': 'testnet4' }[chain]; if (n) setTagNetwork(n); }
   let bondWarned = false;   //: a foreign bond proof is said once
@@ -6623,7 +6631,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
   };
   // A SEAT SIGNS FOR A HEAD-TO-HEAD ROUND ONLY ONCE IT KNOWS WHO IS IN IT (kanban #1071): false when the wait ran out at the result window, and this seat stays silent
-  const asksPeers = seatView((...a) => globalThis.fetch(...a));
+  const asksPeers = seatView((...a) => fetch(...a));   // the capped door (kanban #2637); seatView reads with jsonUpTo too
   const membersKnown = async (rid, c) => {
     const held = () => new Set(round.entriesOf(rid).map(({ entryId: e }) => toHex(e)));
     // A FREE ROUND THIS SEAT HOLDS NOTHING OF: no backup rule refuses a free entry, and nothing of it is signed here
