@@ -38,8 +38,6 @@ import { stateOf, PROPOSAL_STATE as S } from './proposals.js';
 
 /** THE FEWEST CONFIRMATIONS AN OUTCOME IS WRITTEN AT (kanban #1152): a one- or two-block reorg never moves a decided proposal - a repeal's included. */
 export const MIN_DECIDE_DEPTH = 3;
-/** HOW FAR ABOVE ITS OLD PUBLICATION HEIGHT AN ORPHANED PROPOSAL'S DEPOSIT IS LOOKED FOR (kanban #1941): about six hours of blocks. */
-export const REFIND_SPAN = 36;
 
 /**
  * A BLOCK'S HASH AT A HEIGHT, WITH ITS THREE ANSWERS (kanban #1152), over a bitcoind `call(method, params)` (chain-rpc.js): the
@@ -78,7 +76,6 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
   const open = new Map();                   // proposal id -> { readTo, readHash, census, votes: [], result } while undecided
   const reorgs = [];                        // what the reorg checks did, newest last (GET /proposals shows the last few)
   const bodies = new Map();                 // proposal id -> its decoded body (parent, configHash, config bytes)
-  const refindSeen = new Map();             // orphaned proposal id -> height -> the block hash its deposit was looked for in (#1941)
   let tip = null;
   let lives = new Map();                    // network hex -> liveConfig at the tip
   let livesAt = null;                       // the tip `lives` was built at (kanban #2266)
@@ -200,37 +197,6 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
       moved++;
       reorgs.push({ id: p.id, at: tip, what }); if (reorgs.length > 16) reorgs.shift();
       log(`[ballot] reorg: proposal ${p.id.slice(0, 16)}: ${what}`);
-    }
-    // ITS DEPOSIT MINED AGAIN IN ANOTHER BLOCK (kanban #1941): a reorg across the publication height usually puts the deposit
-    // back in the mempool and into a later block of the winning branch. Its old block never returns, and every peer holds the
-    // same old block hash, so the proposal stayed ORPHANED for good, deposit paid and confirmed. Now each orphaned proposal looks
-    // for its deposit in this chain's blocks from its old publication height up to REFIND_SPAN above it, and a block that holds
-    // it is handed to proposals.add - the ORPHANED -> COUNTING path that checks everything again (deposit, set, census,
-    // schedule). Bounded: each height is asked once per hash it has (memory only; a restart asks each once again).
-    for (const p of proposals.list()) {
-      if (stateOf(p) !== S.ORPHANED || typeof p.proposal !== 'string' || !Number.isInteger(p.publishedAt)) continue;
-      let seen = refindSeen.get(p.id);
-      if (!seen) { seen = new Map(); refindSeen.set(p.id, seen); }
-      const top = Math.min(tip === null ? p.publishedAt : tip, p.publishedAt + REFIND_SPAN);
-      for (let h = p.publishedAt; h <= top; h++) {
-        const x = await blockHashAt(h);                        // throws on an RPC error: the pass is skipped
-        if (!x) break;
-        const hash = String(x).toLowerCase();
-        if (hash === p.blockHash || seen.get(h) === hash) continue;
-        let got = null;
-        try { got = await proposals.add({ proposal: p.proposal, blockHash: hash }); } catch { got = null; }
-        if (!got || got.status === 503) break;                 // not answerable yet: asked again next pass
-        seen.set(h, hash);
-        if (got.ok && got.status === 201) {
-          refindSeen.delete(p.id);
-          open.delete(p.id);
-          const what = `its deposit is on this chain in block ${h}: taken again from that block, counted again`;
-          moved++;
-          reorgs.push({ id: p.id, at: tip, what }); if (reorgs.length > 16) reorgs.shift();
-          log(`[ballot] reorg: proposal ${p.id.slice(0, 16)}: ${what}`);
-          break;
-        }
-      }
     }
     // a moved chain: no vote read before is trusted again - every open proposal reads its heights afresh
     if (moved) { votesByHeight.clear(); hashByHeight.clear(); }
