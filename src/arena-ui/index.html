@@ -4699,7 +4699,6 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         // (measured: counted at 6.5 s median, the entry taken at ~2.8 s), and the next round's tap is not held as "busy"
         let entriesIn = null;
         const tookEntries = new Promise((res) => { entriesIn = res; });
-        try { if (window.ARENA_MADE_ENTRY) window.ARENA_MADE_ENTRY(ARENACLIENT.toHex(ARENACLIENT.entryId(entry))); } catch { /* the move still goes */ }   // kanban #2035
         // THE MOVE AND ITS SALT KEPT BEFORE THE ENTRY GOES OUT (kanban #2025, state audit 2026-11-12): written only after the seats answered (2.8 s, up to
         // 22 s with a slow seat), a reload or a closed tab in that wait left an entry at the seats, its stake locked, whose move nobody could reveal -
         // FORFEIT, its stake to the opponent. Now the record is in sessionStorage first, with the entry id made here (the seats make the same one), and
@@ -4711,6 +4710,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           protocolVersion: Number(named.round.protocolVersion || 1) });   // kanban #2561: only a round of 28 or later waits for a certificate
         { let ownId = null; try { ownId = ARENACLIENT.toHex(ARENACLIENT.entryId(entry)); } catch { /* the seats' id, written once they answered */ }
           rememberHidden(hiddenRecord(ownId)); }
+        try { if (window.ARENA_MADE_ENTRY) window.ARENA_MADE_ENTRY(ARENACLIENT.toHex(ARENACLIENT.entryId(entry))); } catch { /* the move still goes */ }   // kanban #2035
         const all = ARENACLIENT.submitPick({ entry, stakeLock, nodes: named.nodes, onEntries: (x) => entriesIn(x) });
         all.then((x) => entriesIn(x), (e) => entriesIn({ entries: [], why: e.message }));
         // THIS TAB'S NAME RECORD, FROM THE TAP UNTIL THE CLOSE (kanban #1263; #1364, measured on UI 590: a move tapped 1.5 s before the close had its entry
