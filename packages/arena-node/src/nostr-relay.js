@@ -69,6 +69,12 @@ const HARD_SLOW_BYTES = 2 * SLOW_BYTES;   // kanban #1717: past this backlog no 
 // TOTAL_SLOW_BYTES bounds the unsent backlog of all clients together; past it the client with the largest backlog is dropped
 // (an unread socket, never one that reads), so no per-address limit is needed (behind the tunnel every peer has one address).
 const TOTAL_SLOW_BYTES = 2 * SLOW_BYTES;   // 8 MB: a socket that reads keeps almost nothing unsent (ws writes straight to the kernel)
+// kanban #2089 (#1489 v1-refute-50-s4-2, the honest path of #1904): a REQ answer is queued in one synchronous loop, so honest readers
+// asking at the same moment hold a few MB each for a moment. Past TOTAL_SLOW_BYTES the shed now waits SHED_SETTLE_MS and drops only
+// clients whose backlog did not shrink meanwhile (they do not read); a reader has drained by then. Past PANIC_SLOW_BYTES (a flood inside
+// that wait) the largest backlog is dropped at once, as before.
+const SHED_SETTLE_MS = 250;
+const PANIC_SLOW_BYTES = 8 * TOTAL_SLOW_BYTES;   // 64 MB
 const PINGS = 30;   // kanban #1871: pongs answered per socket per 10 s (a ping is no 'message', so it is outside the message budget)
 const hex = (n) => new RegExp(`^[0-9a-f]{${n}}$`);
 const HEX64 = hex(64), HEX128 = hex(128);
@@ -486,23 +492,38 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   };
   // ALL CLIENTS TOGETHER ARE BOUNDED (kanban #1871, #1904): `queued` is an upper estimate of the unsent bytes of all clients - each
   // message queued adds its length, a 1 s timer (and every time the estimate passes the bound) sets it to the real sum of bufferedAmount.
-  // Past lim.totalSlowBytes the clients with the largest backlogs are dropped until the sum is under it again.
+  // Past lim.totalSlowBytes the clients with the largest backlogs that did not read for SHED_SETTLE_MS are dropped until the sum is under it again (#2089).
   const backlog = () => { let n = 0; for (const o of clients) n += o.ws.bufferedAmount; return n; };
   let queued = 0;
   const recount = setInterval(() => { queued = backlog(); }, 1000);
   recount.unref?.();
+  const shedOne = (big) => {
+    queued -= big.ws.bufferedAmount;
+    clients.delete(big);
+    // a reset, not a close: what the kernel still holds for that socket (it never read it) is thrown away too, not sent after
+    try { big.ws._socket?.resetAndDestroy?.(); } catch { /* gone */ }
+    big.ws.terminate();
+  };
+  const mostBehind = (ok = () => true) => { let big = null; for (const o of clients) if (ok(o) && (!big || o.ws.bufferedAmount > big.ws.bufferedAmount)) big = o; return big; };
+  let settle = null;   // kanban #2089: the pending look - each client's backlog when the bound was passed
   const shed = () => {
     queued = backlog();
-    while (queued > lim.totalSlowBytes) {
-      let big = null;
-      for (const o of clients) if (!big || o.ws.bufferedAmount > big.ws.bufferedAmount) big = o;
-      if (!big || !big.ws.bufferedAmount) break;
-      queued -= big.ws.bufferedAmount;
-      clients.delete(big);
-      // a reset, not a close: what the kernel still holds for that socket (it never read it) is thrown away too, not sent after
-      try { big.ws._socket?.resetAndDestroy?.(); } catch { /* gone */ }
-      big.ws.terminate();
-    }
+    // A FLOOD INSIDE THE WAIT: the largest backlogs go at once, as before #2089, until the sum is under the panic bound
+    while (queued > PANIC_SLOW_BYTES) { const big = mostBehind(); if (!big || !big.ws.bufferedAmount) break; shedOne(big); }
+    if (queued <= lim.totalSlowBytes || settle) return;
+    const was = new Map([...clients].map((o) => [o, o.ws.bufferedAmount]));
+    settle = setTimeout(() => {
+      settle = null;
+      queued = backlog();
+      // ONLY A CLIENT THAT DID NOT READ: its backlog is no smaller than when the bound was passed (a reader drained meanwhile)
+      while (queued > lim.totalSlowBytes) {
+        const big = mostBehind((o) => was.has(o) && o.ws.bufferedAmount > 0 && o.ws.bufferedAmount >= was.get(o));
+        if (!big) break;
+        shedOne(big);
+      }
+      if (queued > lim.totalSlowBytes) shed();   // still past it (new backlog since): look again after another wait
+    }, SHED_SETTLE_MS);
+    settle.unref?.();
   };
   const queue = (o, msg) => {   // every message the relay sends goes through here
     o.ws.send(msg);
@@ -642,6 +663,6 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   return {
     port: server.address().port,
     events: () => all.all().map((r) => JSON.parse(r.json)),
-    close: () => new Promise((r) => { clearInterval(recount); for (const c of clients) c.ws.terminate(); wss.close(); server.close(() => { db.close(); r(); }); }),
+    close: () => new Promise((r) => { clearInterval(recount); clearTimeout(settle); for (const c of clients) c.ws.terminate(); wss.close(); server.close(() => { db.close(); r(); }); }),
   };
 }
