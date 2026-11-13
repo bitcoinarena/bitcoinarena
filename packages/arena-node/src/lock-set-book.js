@@ -30,6 +30,13 @@ export const LOCK_SET_PEER_MS = 2500;
  * that stands has reached this seat (and one pull more is made before the first such return).
  */
 export const LOCK_SET_RETURN_AFTER_MS = 2000 + LOCK_SET_PEER_MS;
+/**
+ * WHEN A ROUND'S SET IS FINAL HERE (kanban #2588): the close + LOCK_SET_WINDOW_MS + this - the gossip a seat steps a round's set for. A set
+ * signature's time is its signer's own word, so a signature dated inside the window can be made at any time: taken later, one dishonest seat
+ * certified a round every seat had answered VOID (the honest player's page stops there and never reveals - he FORFEITS). From then on no
+ * signature or certificate is taken while none is held, and VOID is said only from then (before it the set is pending): VOID is never taken back.
+ */
+export const LOCK_SET_FINAL_AFTER_MS = 2000;
 const lsVerify = (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } };
 
 export class LockSetBook {
@@ -86,7 +93,7 @@ export class LockSetBook {
   /** Is the round VOID for want of a certificate? Only once the window is past and no certificate is held here. */
   voidNow(rid, c = this.roundOf(rid)) {
     if (!c) return false;
-    return !this.certified(rid) && this.#now() > Number(c.entryCloseMs) + LOCK_SET_WINDOW_MS;
+    return !this.certified(rid) && this.#now() > Number(c.entryCloseMs) + LOCK_SET_WINDOW_MS + LOCK_SET_FINAL_AFTER_MS;
   }
 
   #signed(rid) {
@@ -117,6 +124,8 @@ export class LockSetBook {
     const committee = this.#committee(rid), members = new Set(committee), threshold = this.#threshold(committee);
     const close = Number(c.entryCloseMs), room = this.#room(toHex(rid));
     const got = { views: 0, signatures: 0, certificate: false };
+    // THE SET IS FINAL (kanban #2588): nothing taken past the gossip while no certificate is held - only a second one over another set (#2585)
+    if (this.#now() > close + LOCK_SET_WINDOW_MS + LOCK_SET_FINAL_AFTER_MS && !this.certified(rid)) return { ok: true, ...got, final: true };
     const read = (x, idOf) => {
       if (!x || !HEX64.test(String(x.key)) || !members.has(String(x.key)) || !HEX128.test(String(x.sig))) return null;
       const atMs = Number(x.atMs);
