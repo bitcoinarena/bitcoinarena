@@ -40,7 +40,10 @@ test('#1489-a44-refute-38-s1-1 (kanban #2163): one peer\'s padded /entry-void an
     const took = Date.now() - t0;
     clearInterval(tick);
     console.log('  FACTS:', JSON.stringify({ bodyBytes: body.length, asked, answer: String(answer).slice(0, 80), tookMs: took, worstLoopGapMs: worst }));
-    assert.ok(asked > 0, 'lateByPeers never asked the peer');
+    // Merged onto 1.9 (kanban #2536): 1.9 asks the peers only about a first mark the entry's session key signed, for an entry it
+    // holds a start line of (#1900, #2267), so this stranger's made-up mark never reaches lateByPeers there - the peer is not asked
+    // at all. lateByPeers itself reads the door through verify.js peerEntryVoid (capped, timed) all the same.
+    assert.ok(asked > 0 || /no such entry/.test(String(answer)), `lateByPeers never asked the peer, and the mark was not refused: ${answer}`);
     assert.ok(worst < 2000, `one peer's ${body.length}-byte /entry-void answer held the seat's thread ${worst} ms (lateByPeers, server.js)`);
   } finally {
     evil.closeAllConnections(); evil.close();
