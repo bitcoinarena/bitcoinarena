@@ -556,7 +556,7 @@ export class OrderBook {
   }
 
   /** A record's checks at this seat: answers { ok, id, k, events } or why it does not stand. `importing`: a certified record. */
-  #check(roundIdBytes, m, record, { importing = false } = {}) {
+  #check(roundIdBytes, m, record, { importing = false, late = false } = {}) {
     if (!record || !/^[0-9]{1,15}$/.test(String(record.k)) || !Array.isArray(record.orders)) return refuse('a batch is { k, orders, cancels, sells, leader, leaderSig }', 400);
     const k = BigInt(record.k);
     if (BigInt(this.cutoffOf(k)) > m.contract.entryCloseMs + BigInt(this.intervalMs)) return refuse(`batch ${k} is after the market closed: nothing trades after its close`);
@@ -568,7 +568,8 @@ export class OrderBook {
       // up - and not more than maxLagMs after it - a back-dated k, posted once the outcome is known, took orders and fills into the past
       const now = this.now(), cutoff = this.cutoffOf(k);
       if (cutoff > now + this.intervalMs) return refuse(`batch ${k}'s cutoff is ${cutoff - now} ms ahead: a batch is signed at its cutoff, not before`);
-      if (now - cutoff > this.maxLagMs) return refuse(`batch ${k}'s cutoff was ${now - cutoff} ms ago: a batch is signed no later than ${this.maxLagMs} ms after its cutoff`);
+      // `late` (kanban #2103): a set already signed in time by enough seats that one of them is honest (#lateSign) - not a back-dated one
+      if (!late && now - cutoff > this.maxLagMs) return refuse(`batch ${k}'s cutoff was ${now - cutoff} ms ago: a batch is signed no later than ${this.maxLagMs} ms after its cutoff`);
       this.#syncTradable(roundIdBytes);
       // AN ORDER IN BATCH k WAS TRADABLE HERE BEFORE k'S CUTOFF AND BEFORE THE MARKET CLOSED (kanban #1150: a late lock filled against
       // resting orders; the batch after the close took what was locked in its last interval)
@@ -626,10 +627,10 @@ export class OrderBook {
   }
 
   /** POST /batch: the leader's set for batch k - held here and signed, or refused by name. */
-  accept(roundIdBytes, record) {
+  accept(roundIdBytes, record, { late = false } = {}) {
     const m = this.market(roundIdBytes);
     if (!m.ok) return m;
-    const c = this.#check(roundIdBytes, m, record);
+    const c = this.#check(roundIdBytes, m, record, { late });
     if (!c.ok) return c;
     const rid = Buffer.from(roundIdBytes), k = Number(c.k), seat = toHex(this.round.pubkey);
     const state = this.#state(rid, k);
@@ -801,6 +802,16 @@ export class OrderBook {
     if (!stands.ok) return stands;
     const declined = () => ({ ok: true, seat, declined: toHex(schnorr.sign(batchDeclineId({ roundId: roundIdBytes, k: BigInt(k) }), this.round.identity.secret)) });
     let state = this.#state(rid, k);
+    // A SEAT THAT NEVER GOT THE SET SIGNS IT NOW, INSTEAD OF DECLINING (kanban #2103): with one seat of a 5-of-7 round down and the
+    // leader's POST /batch to two live seats lost, k held 4 signatures and 2 declines for good - certify needs 5, void 3, and the two
+    // could neither sign (maxLagMs) nor decline enough - so the four signers signed nothing later and the book froze until the down
+    // seat came back. A void ask that carries k's record and the signatures of at least n - needed + 1 seats (one of them honest, so
+    // the set was signed at its cutoff, not back-dated) is signed here as POST /batch would sign it, with every other check
+    if (state === BATCH.ABSENT && ask && ask.record) {
+      const s = this.#lateSign(roundIdBytes, m, k, ask);
+      if (s.ok) return { ok: true, seat, signed: s.signature, batchId: ask.batchId };
+      state = this.#state(rid, k);
+    }
     if (state === BATCH.ABSENT) {
       const late = this.now() - this.cutoffOf(k);
       if (late < this.intervalMs) return refuse(`batch ${k}'s cutoff was ${late} ms ago and its set may still be on its way: this seat declines it only from the next cutoff, ${this.intervalMs} ms after`);
@@ -812,6 +823,26 @@ export class OrderBook {
     if (held.own_sig) return { ok: true, seat, signed: held.own_sig, batchId: held.batch_id };
     // the certified record goes with the certificate (kanban #1886): the asker checks it is a set OF BATCH k before it takes k as decided
     return { ok: true, seat, batchId: held.batch_id, certificate: JSON.parse(held.certificate), record: JSON.parse(held.record) };
+  }
+
+  /**
+   * A LATE SIGNATURE OF BATCH k ON A VOID ASK (kanban #2103): the ask's record is the set it names (ask.batchId), and it carries
+   * valid signatures of at least n - needed + 1 distinct round seats over that id, k's leader counted - more than the seats that may
+   * be faulty, so at least one honest seat signed it inside maxLagMs of its cutoff. Then accept() with every check but the lag one
+   * (the leader, each order's locks verified here before the cutoff, the sells and cancels, #signGuard: nothing held above k, nothing
+   * below it undecided, nothing of the set in another batch). Answers { ok, signature } or why not (the ask is then declined as before).
+   */
+  #lateSign(roundIdBytes, m, k, ask) {
+    const record = ask.record;
+    if (!record || typeof record !== 'object' || !Array.isArray(record.orders) || String(record.k) !== String(k) || String(record.leaderSig) !== String(ask.leaderSig)) return refuse('that void ask carries no record of batch k');
+    const rec = this.#recordId(roundIdBytes, record);
+    if (!rec.ok || rec.id !== ask.batchId) return refuse('that void ask\'s record is not the set it names');
+    const sigs = Array.isArray(ask.sigs) ? ask.sigs.slice(0, 2 * m.seats.length) : [];
+    const counted = this.#counted(m, rec.id, [...sigs, { seat: toHex(this.leaderOf(m.contract, k)), signature: ask.leaderSig }]);
+    const honest = m.contract.nodes.length - m.needed + 1;
+    if (counted.length < honest) return refuse(`batch ${k} carries ${counted.length} seats' signatures: a late signature needs ${honest}`);
+    const a = this.accept(roundIdBytes, record, { late: true });
+    return a.ok ? { ok: true, signature: a.signature } : a;
   }
 
   /**
@@ -867,7 +898,8 @@ export class OrderBook {
       const worst = [...signedBy.keys()].map((id) => [id, blockers(id)]).sort((a, b) => a[1] - b[1])[0];
       if (worst[1] < enough)
         return refuse(`${worst[1]} seats can never sign set ${worst[0].slice(0, 16)} of batch ${k} (${ok.size} declined, the others signed another set of it) and it is void only once ${enough} cannot: ${m.needed} could still sign it`, 403);
-    } else if (ok.size < enough) return refuse(`${ok.size} seats declined batch ${k} and it is void only once ${enough} have: ${m.needed} could still sign it`, 403);
+    // (kanban #2103: it said "<needed> could still sign it", which was false once the seats that had not answered could not sign any more)
+    } else if (ok.size < enough) return refuse(`${ok.size} seats declined batch ${k} and it is void only once ${enough} have: ${m.contract.nodes.length - ok.size} seats have not declined it`, 403);
     const rid = Buffer.from(roundIdBytes), kn = Number(k);
     // ABSENT, DECLINED or SIGNED -> VOID, for good
     const moved = this.#move(rid, kn, BATCH.VOID, {
@@ -911,12 +943,16 @@ export class OrderBook {
   async #proposalOf(base, rid, k) { const a = await this.#ask(`${base}/batch-proposal?round=${rid}&k=${k}`); return a.ok ? a.body : null; }
 
   /** A pending batch decided, from the proposals and if need be the seats' answers: certified, void, or still pending. */
-  async #decide(roundIdBytes, m, k, record, id, sigs, peers, known = { sigs: [], records: new Map() }) {
+  async #decide(roundIdBytes, m, k, record, id, sigs, peers, known = { sigs: [], records: new Map() }, live = null) {
     const rid = toHex(roundIdBytes);
     let counted = this.#counted(m, id, sigs);
     if (counted.length < m.needed) {
       // this seat's own signed ask, naming the set k's leader signed (kanban #1167: the seats answer nothing else)
-      const ask = this.voidAskFor(roundIdBytes, k, record);
+      // with the record and the signatures counted so far (kanban #2103): a seat that never got the set signs it late (#lateSign) -
+      // only when the seats that answered the proposals without a signature (`live`) are too few to void k; else k is voided as before
+      const bare = this.voidAskFor(roundIdBytes, k, record);
+      const unsigned = live ? [...live].filter((s) => !counted.some((c) => c.seat === s)).length : 0;
+      const ask = bare && (unsigned < m.contract.nodes.length - m.needed + 1 ? { ...bare, record, sigs: counted } : bare);
       if (!ask) return { state: 'PENDING', why: `the set of batch ${k} does not read: no void ask for it` };
       const answers = await Promise.all(peers.map((b) => this.#post(b, `/batch-void-ask?round=${rid}&k=${k}`, ask)));
       const own = this.voidAsk(roundIdBytes, k, ask);
@@ -1079,7 +1115,8 @@ export class OrderBook {
       // the set most seats signed (an honest seat signs one set per batch)
       const tally = (bid) => q.sigs.filter((s) => s.batchId === bid).length;
       const [id, record] = [...q.ids].sort((a, b) => tally(b[0]) - tally(a[0]))[0];
-      const d = await this.#decide(roundIdBytes, m, pk, record, id, q.sigs.filter((s) => s.batchId === id), peers, { sigs: q.sigs, records: q.ids });
+      const d = await this.#decide(roundIdBytes, m, pk, record, id, q.sigs.filter((s) => s.batchId === id), peers, { sigs: q.sigs, records: q.ids },
+        new Set(proposals.map((p) => p && p.seat).filter(Boolean)));
       decided.push({ k: pk, ...d });
       if (d.state === 'PENDING') return refuse(`batch ${pk} is still undecided (${d.why}): the book does not move on before it is`);
     }
@@ -1094,7 +1131,16 @@ export class OrderBook {
     // an order the leader itself holds tradable, unbatched, from before the cutoff and the close (its own #check asks the same)
     const limit = Math.min(this.cutoffOf(k), Number(m.contract.entryCloseMs));
     const readyHere = (o) => { const r = this.db.prepare('SELECT batch, received_ms FROM market_orders WHERE order_id = ?').get(o); return !!r && r.batch === null && Number(r.received_ms) < limit; };
-    const orders = [...seen].filter(([o, n]) => n >= m.needed && readyHere(o)).map(([o]) => o).sort();
+    // ONE SET THE SAME THRESHOLD OF SEATS LISTED WHOLE (kanban #2103): R listed by one 5-seat subset and S by another went into one set,
+    // and each seat missing one lock refused the whole set - 4 signatures with one seat down, a batch neither certified nor void. An
+    // order joins only while at least the threshold of proposals list every order taken so far (most-listed first); the rest wait
+    let holders = proposals.map((p) => new Set(p.orders || []));
+    const orders = [];
+    for (const [o] of [...seen].filter(([o, n]) => n >= m.needed && readyHere(o)).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))) {
+      const h = holders.filter((x) => x.has(o));
+      if (h.length >= m.needed) { orders.push(o); holders = h; }
+    }
+    orders.sort();
     const cancels = new Map();
     const sells = new Map();
     const eventBatched = (id) => { const r = this.db.prepare('SELECT batch FROM market_book_events WHERE event_id = ?').get(id); return !!r && r.batch !== null; };
