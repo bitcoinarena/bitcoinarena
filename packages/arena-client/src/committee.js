@@ -18,6 +18,7 @@ import { networkOf } from '../../arena-protocol/src/constants.js';
 import { NETWORK_ID_TESTNET4, ARBITRATION_KEYS_TESTNET4, ARBITRATION_KEYS_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
 import { genesisFor, committeesStand, censusKeyFirstHeight } from '../../arena-protocol/src/genesis.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
 import { seriesRoundIdOf } from '../../arena-protocol/src/contracts.js';
 import { agreedChain, httpProvider, headerSources } from './headers.js';
@@ -172,11 +173,24 @@ async function evidenceFor(roundIdHex, contract, nodes, { fetcher, skip = new Se
  * ({ transaction, position, branch, update }), so a bond is its raw transaction there; an entry naming txid and vout is keyed by them (#1333:
  * keyed by txid:vout alone, the 18 live entries all became "undefined:undefined" - one entry, a root that never matched).
  */
-const bondKeyOf = (e) => (e && e.txid !== undefined && e.vout !== undefined
-  ? `o:${Array.isArray(e.txid) || e.txid instanceof Uint8Array ? toHex(Uint8Array.from(e.txid)) : String(e.txid)}:${e.vout}`
-  // A BOND'S HEX IS ONE KEY WHATEVER ITS CASE (kanban #1708): fromHex reads 'AB' and 'ab' alike, so one provider repeating a bond in upper
-  // case kept two copies in the union, censusRootOf threw 'duplicate outpoint' and the join was refused for good
-  : `t:${typeof e?.transaction === 'string' ? e.transaction.toLowerCase() : JSON.stringify(e)}`);
+// A BOND IS KEYED BY WHAT IT READS AS, NOT HOW IT IS SPELLED (kanban #1708, then on 1.9 #2160, #2228, #2301; ported to 2.0 with #2500): lower-casing was not enough - fromHex
+// reads ' d', '+d' and 'd ' as 0x0d too, so a repeat spelled that way kept two copies, censusRootOf threw 'duplicate outpoint' and both
+// providers were skipped, the honest one with the liar. The key is the transaction's txid (witness bytes do not change it), with the
+// re-affirmation's for a carried bond - the client derives one entry from exactly that pair.
+const txidKeyOf = (t) => {
+  if (t === undefined || t === null) return '';
+  try { return toHex(parseTransaction(t instanceof Uint8Array ? t : fromHex(String(t))).txid); }
+  catch { return `raw:${typeof t === 'string' ? t.toLowerCase() : JSON.stringify(t)}`; }
+};
+// THE TRANSACTION FIRST (kanban #2500, #1489 a44-refute-48-s2): an entry carrying its transaction was keyed by the txid / vout fields the
+// provider wrote beside it whenever it wrote them, so one seat repeating a bond with made-up txid / vout fields kept two copies in the
+// union (1.9: past the own-list repeat check), the union threw 'duplicate outpoint' and the honest co-provider was skipped with it. An entry with a transaction is keyed
+// is keyed by that transaction (what the client derives the bond from); provider-written txid / vout key only an entry that carries none.
+const bondKeyOf = (e) => (e && e.transaction !== undefined
+  ? `t:${txidKeyOf(e.transaction)}:${e.reaffirm && typeof e.reaffirm === 'object' ? txidKeyOf(e.reaffirm.transaction) : ''}`
+  : e && e.txid !== undefined && e.vout !== undefined
+    ? `o:${Array.isArray(e.txid) || e.txid instanceof Uint8Array ? toHex(Uint8Array.from(e.txid)) : String(e.txid)}:${e.vout}`
+    : `j:${JSON.stringify(e)}`);
 export function unionOfEntries(lists) {
   const byBond = new Map();
   for (const list of lists) for (const e of list || []) {
