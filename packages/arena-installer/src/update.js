@@ -326,14 +326,15 @@ export const SEAT_DATA_FILES = Object.freeze(['node.db', 'node.db-wal', 'node.db
 const NEVER_RESTORED = new Set(['state.json', 'seed.hex']);
 
 /** THE ROLLBACK: the old service files, the backup (as `keepDb` says), the old release started. { put, back, dbKept } */
-async function rollBack({ svc, home, moving, oldTexts, migrating, confFile, backup, keepDb, from = null, to, port, fetcher, waitMs, sleep, note = () => {} }) {
+async function rollBack({ svc, home, moving, oldTexts, migrating, confFile, backup, keepDb, from = null, to, port, fetcher, waitMs, sleep, note = () => {}, decided = false }) {
   // started whatever the restore says (measured in the Windows VM: copying the backup back threw while the stopped seat still held its
   // database, and the node was left with nothing running)
   try { await svc.stop(moving, to); } catch { /* the start below is what matters */ }
   // THE DATABASE'S PRINT READ AFTER THE STOP (kanban #2097, state audit 2026-11-12 SM7 NODE-1): the callers read dbChangedSince while the new
   // release still ran - one that reached serve() as the wait ran out could use a nonce, take a lock or an entry between that read and this stop,
   // and the backup went back over it. Read again here, the new release stopped: a database written at any time before the restore is kept
-  keepDb = !!keepDb || dbChangedSince(home, backup);
+  // ... unless a resumed ROLLING_BACK already decided it (kanban #1646): its own half copy is what changed the print
+  keepDb = !!keepDb || (!decided && dbChangedSince(home, backup));
   // and nothing here throws before that start (kanban #1440): a service file or arena.conf that cannot be written is named, not fatal
   const notPut = [];
   for (const [f, t] of Object.entries(oldTexts)) { try { writeFileSync(f, t); } catch (e) { notPut.push(`${String(f).split(/[\\/]/).pop()}: ${e.code || e.message}`); } }
@@ -418,7 +419,7 @@ export async function resumeUpdate({ home, env = process.env, sh = run, fetcher 
   else if (!served && dbChangedSince(home, j.backup)) { served = true; why += '; node.db changed since the backup: kept'; }
   if (j.phase !== U.ROLLING_BACK) journalStep(home, j.id, U.ROLLING_BACK, { served, why });
   const r = await rollBack({ svc, home, moving, oldTexts: j.oldTexts || {}, migrating: j.migrating, confFile: join(home, 'arena.conf'), backup: j.backup, keepDb: served,
-    from: j.from, to: j.to, port: j.port, fetcher, waitMs, sleep, note: (x) => journalNote(home, j.id, x) });
+    from: j.from, to: j.to, port: j.port, fetcher, waitMs, sleep, note: (x) => journalNote(home, j.id, x), decided });
   // the backup was put back (by the rollback that died after it): not a kept database
   const dbKept = r.dbKept && !alreadyBack;
   journalStep(home, j.id, U.ROLLED_BACK, { restored: r.back.ok, dbKept });
