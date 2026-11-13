@@ -78,8 +78,18 @@ export function verifyEd25519Word(signature, digest, key) {
  * first bad signature), and the round went VOID with 6 good signatures. `verify(signature, bodyId, key)` is the attestors' scheme: ed25519 by default
  * (the fixed attestors), BIP-340 for the drawn ones (the seat passes schnorr.verify). Pass the caller's own word first: it is never replaced.
  */
-export function combine(words, { attestors, threshold, verify = verifyEd25519Word }) {
-  const named = new Set(attestors.map((k) => (typeof k === 'string' ? k : toHex(k))));
+// THE ROUND'S OWN MARKET NAMES THE KEYS, NOT THE DAEMON'S FLAGS (kanban #2635, bypass of #1487): the fixed daemon attests every
+// version of the market that names its key, but combined by its one --attestors list. A version that rotated an attestor out (v2
+// names A, B, D; the flags still say A, B, C) let the dropped C serve a VALID word that A and B put into the attestation, and every
+// seat's attestationStands refused the whole of it on C's key - each retry the same, the round VOID at its deadline. `manifest`
+// (the decoded manifest of the version the round's contract names) now decides which keys count and the threshold; `attestors` /
+// `threshold` stand only when no manifest is known. A drawn market's per-round set is passed as `attestors`, with no manifest.
+export function combine(words, { attestors = [], threshold, manifest = null, verify = verifyEd25519Word }) {
+  if (manifest && Array.isArray(manifest.attestors) && manifest.attestors.length && Number.isInteger(manifest.attestThreshold) && manifest.attestThreshold > 0) {
+    attestors = manifest.attestors;
+    threshold = manifest.attestThreshold;
+  }
+  const named = new Set(attestors.map((k) => (typeof k === 'string' ? k.toLowerCase() : toHex(k))));
   const byBody = new Map();
   for (const w of words) {
     if (!w || !w.body || !named.has(w.key)) continue;
