@@ -265,17 +265,25 @@ export function decodeVote(payload) {
  * counts as ABSTAIN (it signed both). Answers outpoint -> { choice, seq, height, txid, weight }; height / txid are of the first
  * such vote by (height, txid). Shared by the ballot's tally and the funding count (funding.js).
  */
-export function boundVotes({ proposalId: id, census, votes, from, until, verify, weightOf }) {
-  const prefix = toHex(id.subarray(0, VOTE_BOUND_PREFIX));
+// TWINS (ruling #2591 (c), kanban #2607): a bound proposal is its deposit's commitment (proposer key + body hash), so the same body
+// re-signed on the same deposit - another proposal_id - is the SAME proposal. `twins`: the ids of the other signatures over it; a
+// vote signed under any of them counts for this one, and the seq rule below runs across all of them (highest seq wins, equal seq
+// with a different choice = ABSTAIN), whichever id each vote names.
+export function boundVotes({ proposalId: id, census, votes, from, until, verify, weightOf, twins = [] }) {
+  const ids = [id, ...(twins || []).filter((t) => t instanceof Uint8Array && t.length === 32 && toHex(t) !== toHex(id))];
+  const prefixes = ids.map((x) => toHex(x.subarray(0, VOTE_BOUND_PREFIX)));
   const best = new Map();                            // outpoint -> { seq, choice, conflicted, height, txid, weight }
   for (const v of votes || []) {
     if (!(v?.payload instanceof Uint8Array)) continue;
     const d = decodeVote(v.payload);
-    if (!d || !d.bound || toHex(d.idPrefix) !== prefix) continue;
+    if (!d || !d.bound) continue;
+    const named = ids.filter((_, i) => prefixes[i] === toHex(d.idPrefix));
+    if (!named.length) continue;
     if (!(v.height >= from && v.height < until)) continue;
-    const msg = voteMessage(id, d.choice, d.seq);
+    const msgs = named.map((x) => voteMessage(x, d.choice, d.seq));
     for (const b of census || []) {
-      let good = false; try { good = !!verify(d.signature, msg, b.pubkey); } catch { good = false; }
+      let good = false;
+      for (const msg of msgs) { try { good = !!verify(d.signature, msg, b.pubkey); } catch { good = false; } if (good) break; }
       if (!good) continue;
       const had = best.get(b.outpoint);
       if (!had || d.seq > had.seq) { best.set(b.outpoint, { seq: d.seq, choice: d.choice, conflicted: false, height: v.height, txid: v.txid, weight: weightOf(b) }); continue; }
@@ -371,8 +379,9 @@ export function tally({ proposal, standing, census: all, votes, verify, ageBlock
   const census = aged ? (all || []).filter((b) => Number.isInteger(b.height) && b.height <= standing.publishedAt - ageBlocks) : all;
   // `bound` (kanban #2125/#2562): the proposal is read under the binding (its deposit at or above BALLOT_BIND_HEIGHT): highest seq wins;
   // below it the last vote by height with the replay guard (lastVotes, kanban #1489 / #1734)
+  // `standing.twins`: the ids of its twins (ruling #2591 (c), kanban #2607), whose votes count for it - bound only
   const latest = bound
-    ? boundVotes({ proposalId: id, census, votes, from: standing.votingFrom, until: standing.votingUntil, verify, weightOf: (b) => BigInt(b.bondSats) })
+    ? boundVotes({ proposalId: id, census, votes, from: standing.votingFrom, until: standing.votingUntil, verify, weightOf: (b) => BigInt(b.bondSats), twins: standing.twins || [] })
     : lastVotes({ proposalId: id, census, votes, from: standing.votingFrom, until: standing.votingUntil, verify, weightOf: (b) => BigInt(b.bondSats) });
   const total = (census || []).reduce((a, b) => a + BigInt(b.bondSats), 0n);
   let yes = 0n, no = 0n, abstain = 0n;
