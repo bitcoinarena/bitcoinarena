@@ -82,6 +82,11 @@ export const ZAP_ASKERS_KEPT = 4096;
 //   handed one bolt11 that only the first could pay.
 export const ZAP_LET_GO_MAX = 4000;
 export const ZAP_MINTS_ALL = 300;
+// AT ONCE, TOO (kanban #2302, #1489 a44-refute-56-s1): the window bounds above count mints, not mints in flight, so strangers from fresh
+// addresses had up to ZAP_MINTS_ALL invoice() calls - each an `lncli addinvoice` child - running at the same moment (64 asks: 64 children).
+// Callers not on this host have at most ZAP_MINTING_MAX invoices being made at once, on both doors together; past it the ask is refused
+// (asked again a moment later it is served). The host's own tools are not limited.
+export const ZAP_MINTING_MAX = 16;
 
 /** The asker a mint is counted against: an IPv4 address as it is, an IPv6 address by its /64 (kanban #1964). */
 export function askerKey(a) {
@@ -149,6 +154,7 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
   const tipMinting = new Map();       // the same key -> the mint in flight, which asks at the same moment share
   const askers = new Map();           // asker key (IPv4, IPv6 /64) -> { since, n }: fresh invoices minted for it in this window (kanban #1743, #1801, #1964)
   const letGo = new Map();            // paymentHash -> the zap let go from a full book, watched until its invoice expires (kanban #1922)
+  let strangersMinting = 0;            // invoices being made right now for callers not on this host (kanban #2302)
   let mintsAll = [];                  // when each fresh invoice for a caller not on this host was minted, the last window's (kanban #1964)
   const nowSec = () => Math.floor(Date.now() / 1000);
   const local = (a) => a === '127.0.0.1' || a === '::1';
@@ -438,13 +444,16 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
         if (minting.size >= ZAP_PENDING_MAX) return refuse('too many zaps are being invoiced here; try again later');
         // every open zap is watched until it expires (kanban #1922): with the book and the let-go room both full, a new one waits
         if (pending.size + letGo.size + minting.size >= ZAP_PENDING_MAX + ZAP_LET_GO_MAX) return refuse('the book of open zaps is full; try again later');
+        const stranger = !local(asker);
+        if (stranger && strangersMinting >= ZAP_MINTING_MAX) return refuse('too many invoices are being made here at once; try again in a moment');
         const no = mayMint(asker);
         if (no) return refuse(no);
         minting.set(request.id, request.pubkey);
+        if (stranger) strangersMinting++;
         let made;
         try { made = await invoice({ name, amountMsat, descriptionHash: hex(sha256hex(description)), expiryS }); }
         catch (e) { return refuse(`no invoice was made: ${String(e.message).slice(0, 160)}`); }
-        finally { minting.delete(request.id); }
+        finally { minting.delete(request.id); if (stranger) strangersMinting--; }
         while (pending.size >= ZAP_PENDING_MAX && letGoOldest()) { /* kanban #1743 */ }
         pending.set(made.paymentHash, { paymentHash: made.paymentHash, name, description, relays: zap.relays, invoice: made.request,
           amountMsat: String(amountMsat), until: nowSec() + expiryS });
@@ -466,15 +475,18 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
       if (tips.get(key) === kept) tips.delete(key);
       let mint = tipMinting.get(key);
       if (!mint) {
+        const stranger = !local(asker);
+        if (stranger && strangersMinting >= ZAP_MINTING_MAX) return refuse('too many invoices are being made here at once; try again in a moment');
         const no = mayMint(asker);
         if (no) return refuse(no);
+        if (stranger) strangersMinting++;
         mint = invoice({ name, amountMsat, descriptionHash: hex(sha256hex(metadata)), expiryS }).then((made) => {
           tips.delete(key);
           tips.set(key, { request: made.request, paymentHash: made.paymentHash, until: nowSec() + expiryS });
           while (tips.size > ZAP_TIPS_KEPT) tips.delete(tips.keys().next().value);
           log(`tip invoice ${name} ${amountMsat} msat ${made.paymentHash.slice(0, 16)}`);
           return made;
-        }).finally(() => { tipMinting.delete(key); });
+        }).finally(() => { tipMinting.delete(key); if (stranger) strangersMinting--; });
         tipMinting.set(key, mint);
       }
       let made;
