@@ -446,6 +446,13 @@ export function openFeedbackStore(path = ':memory:') {
   /** Who did what to a report, oldest first. */
   const moves = (id) => db.prepare('SELECT * FROM report_moves WHERE id = ? ORDER BY at_ms').all(String(id)).map((m) => ({ from: m.from_state, to: m.to_state, atMs: m.at_ms, by: m.by, note: m.note }));
   /** THE BUDGET BAR: approved this week and in all, paid, and links not yet claimed. */
+  // THE PUBLIC PAYOUT LOG (kanban #2619): every paid reward with its report's number and severity and the time it was paid, sorted by the
+  // report's number - no key, no address, no invoice. bitcoinarena.io/bounty/ reads it live, so a payout shows there the moment it is paid.
+  const paidLogRows = db.prepare(`SELECT r.number AS number, r.severity AS severity, w.amount_sats AS sats, w.paid_ms AS paidMs FROM reports r
+    JOIN rewards w ON w.report = r.id WHERE w.state = 'paid' ORDER BY r.number`);
+  function paidLog() {
+    return paidLogRows.all().map((x) => ({ number: Number(x.number), severity: x.severity || null, sats: Number(x.sats), paidMs: x.paidMs == null ? null : Number(x.paidMs) }));
+  }
   function budget({ rules = REWARD_DEFAULTS, nowMs = Date.now() } = {}) {
     const R = { ...REWARD_DEFAULTS, ...(rules || {}) };
     const sum = (sql, ...a) => db.prepare(sql).get(...a).s;
@@ -495,7 +502,7 @@ export function openFeedbackStore(path = ':memory:') {
       takenBy: taken ? { id: taken.id, label: feedbackLabel(taken.number), sameNode: !!(taken.node && String(taken.node) === String(report.node)) } : null,
       full: !mine && !taken && held.length >= NODE_BOUNTY_MOST };
   }
-  return { take, mine, move, approve, list, shotsInUse, note, moves, budget, csv, nodeBountyFor, createReward, withdrawRequest, lnurlOf, claim, settle, rewards, payToAddress, addressOf, reward: (k1) => rewardRow(rewardOf.get(String(k1))), report: (id) => row(get.get(String(id))), close: () => db.close(), eventId };
+  return { take, mine, move, approve, list, shotsInUse, note, moves, budget, paidLog, csv, nodeBountyFor, createReward, withdrawRequest, lnurlOf, claim, settle, rewards, payToAddress, addressOf, reward: (k1) => rewardRow(rewardOf.get(String(k1))), report: (id) => row(get.get(String(id))), close: () => db.close(), eventId };
 }
 
 /**
