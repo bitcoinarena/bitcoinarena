@@ -97,6 +97,12 @@ const FEEDBACK = env.FAUCET_FEEDBACK_DB ? openFeedbackStore(env.FAUCET_FEEDBACK_
 // BUG BOUNTY SEASON 2 (kanban #2623): its own file, so Season 1's feedback.db, /bounty and the paid log stay as they are; off when not named
 const S2 = FEEDBACK && env.FAUCET_BOUNTY_S2_DB ? openBountySeason(env.FAUCET_BOUNTY_S2_DB, { startMs: env.FAUCET_BOUNTY_S2_START ? Date.parse(env.FAUCET_BOUNTY_S2_START) : null }) : null;
 const S2_VERIFY = verifiersFromEnv(env);
+// SEASON 2 STARTS (Daniel 2026-11-13 ~17:55Z: "Season 2 läuft ab Sonntag"): before it no Season 2 approval; a Season 1 report past the weekly budget
+// waits for it and is approved by the Season 2 rules once it runs (the sweep below)
+const S2_START_MS = env.FAUCET_BOUNTY_S2_START ? Date.parse(env.FAUCET_BOUNTY_S2_START) : null;
+const S2_STARTED = () => !Number.isFinite(S2_START_MS) || Date.now() >= S2_START_MS;
+const S2_START_DAY = Number.isFinite(S2_START_MS) ? new Date(S2_START_MS).toISOString().slice(0, 10) : null;
+const S2_LEVEL_BY_SATS = { 500: 'useful', 1000: 'low', 2000: 'medium', 5000: 'high', 10000: 'critical' };
 // the address a reporter's NIP-98 sign-in names for /feedback/link and /feedback/verify (the stage page's own origin, through its Worker)
 const S2_BASES = String(env.FAUCET_BOUNTY_S2_BASES || 'https://testnet-stage.bitcoinarena.io/api/faucet/feedback').split(',').map((x) => x.trim().replace(/\/+$/, '')).filter(Boolean);
 const S2_VERIFY_ASKS = new Map();   // pubkey -> last /feedback/verify (one a minute)
@@ -589,6 +595,27 @@ function grantEcash(ask) {
 }
 
 const WANTS = new Map();
+/** A SEASON 2 APPROVAL the plan fits: the report store approves the season's amount (outside Season 1's weekly budget), the season records it. */
+function s2Approve(r, p, by) {
+  const out = FEEDBACK.approve(r.id, p.sats, { played: PLAYED.played, excluded: ourKeys(), severity: p.level, by,
+    rules: { ...RULES, weeklyBudgetSats: Number.MAX_SAFE_INTEGER, mostSats: Math.max(Number(RULES.mostSats) || 20000, p.sats), leastSats: Math.min(Number(RULES.leastSats ?? 100), p.sats) } });
+  return out.ok ? { ...out, season2: S2.commit(r, p, { by }) } : out;
+}
+// THE WAITING REPORTS, ONCE SEASON 2 RUNS (kanban #2623): oldest first, the links read live, by the Season 2 rules; one the pot cannot take waits on
+if (S2) setInterval(() => { if (!S2_STARTED() || !bountyOn()) return;
+  oneAdmin(async () => {
+    for (const a of S2.approvals({ state: 'waiting' })) {
+      const r = FEEDBACK.report(a.report);
+      if (!r || r.state !== 'new') continue;
+      if (a.level !== 'node') await S2.verify(r.pubkey, S2_VERIFY, { cause: 'season2-start' });
+      const p = S2.plan(r, { level: a.level, codeOnly: a.codeOnly, followUp: a.followUp });
+      if (!p.ok) continue;
+      if (p.waits) { if (p.season !== a.season) S2.wait(r, p, { by: 'season2' }); continue; }
+      const out = s2Approve(r, p, 'season2');
+      console.log(`${new Date().toISOString()} season 2: ${r.label || r.id.slice(0, 12)} ${out.ok ? `approved ${p.sats} sat` : `not approved: ${out.why}`}`);
+    }
+  }).catch(() => {});
+}, Number(env.FAUCET_BOUNTY_S2_SWEEP_MS || 60000)).unref();
 const ORIGIN_OK = /^https:\/\/([a-z0-9-]+\.)?(testnet(-stage)?\.bitcoin-?arena\.io|bitcoin-arena-site\.pages\.dev)$/;   // testnet-stage: the bounty's stage (kanban #1342)
 createServer((req, res) => {
   const origin = String(req.headers.origin || '');
@@ -730,6 +757,7 @@ createServer((req, res) => {
           // community bonus from the reporter's links read live now, held to the season's pot (past it the report waits for the next season, still new)
           if (b.season2 === true) {
             if (!S2) return send(503, { ok: false, why: 'Season 2 is not kept here' });
+            if (!S2_STARTED()) return send(200, { ok: false, why: `Season 2 starts ${S2_START_DAY}` });
             const r = FEEDBACK.report(b.id);
             if (!r) return send(200, { ok: false, why: 'no such report' });
             if (r.state !== 'new') return send(200, { ok: false, why: `a ${r.state} report is not approved for money` });
@@ -738,13 +766,23 @@ createServer((req, res) => {
             const p = S2.plan(r, { level, codeOnly: b.codeOnly === true, followUp: b.followUp === true });
             if (!p.ok) return send(200, p);
             if (p.waits) return send(200, { ok: false, waits: true, why: `Season ${p.season}'s pot has ${p.pot.leftSats} sat left and this report is ${p.sats}: it waits for the next season`, season2: S2.wait(r, p, { by }) });
-            const out = FEEDBACK.approve(b.id, p.sats, { played: PLAYED.played, excluded: ourKeys(), severity: level, by,
-              rules: { ...RULES, weeklyBudgetSats: Number.MAX_SAFE_INTEGER, mostSats: Math.max(Number(RULES.mostSats) || 20000, p.sats), leastSats: Math.min(Number(RULES.leastSats ?? 100), p.sats) } });
-            return send(200, out.ok ? { ...out, season2: S2.commit(r, p, { by }) } : out);
+            return send(200, s2Approve(r, p, by));
           }
           // A CRITICAL BUG ABOVE THE BANDS IS THE OWNER'S OWN CALL: critical: true lifts mostSats to the amount for this one approval
           const rules = b.critical === true ? { ...RULES, mostSats: Math.max(Number(b.amountSats) || 0, RULES.mostSats || 0) } : RULES;
-          return send(200, FEEDBACK.approve(b.id, b.amountSats, { played: PLAYED.played, excluded: ourKeys(), rules, severity: b.severity || null, by }));
+          const s1 = FEEDBACK.approve(b.id, b.amountSats, { played: PLAYED.played, excluded: ourKeys(), rules, severity: b.severity || null, by });
+          // PAST THE SEASON 1 BUDGET THE REPORT MOVES TO SEASON 2 (Daniel 2026-11-13 ~17:55Z): kept waiting, a note on its log, approved by the Season 2
+          // rules once Season 2 runs; a report that fits stays Season 1 as before
+          if (!s1.ok && S2 && /this week's budget/.test(String(s1.why || ''))) {
+            const r = FEEDBACK.report(b.id);
+            const level = String(b.severity || '').toLowerCase() || S2_LEVEL_BY_SATS[Number(b.amountSats)] || '';
+            const p = r ? S2.plan(r, { level, codeOnly: b.codeOnly === true, followUp: b.followUp === true }) : { ok: false };
+            if (!p.ok) return send(200, s1);
+            const waiting = S2.wait(r, p, { by });
+            FEEDBACK.remark(r.id, `moved to Season 2: the Season 1 budget is used up; approved by the Season 2 rules${S2_START_DAY ? ` once Season 2 starts (${S2_START_DAY})` : ''}`, { by });
+            return send(200, { ok: true, movedToSeason2: true, why: s1.why, season2: waiting });
+          }
+          return send(200, s1);
         }
         if (b.action === 'reject') return send(200, FEEDBACK.move(b.id, 'rejected', { reason: b.reason, by }));
         if (b.action === 'duplicate') return send(200, FEEDBACK.move(b.id, 'duplicate', { duplicateOf: b.of, by }));
