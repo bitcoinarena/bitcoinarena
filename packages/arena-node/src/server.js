@@ -11579,30 +11579,40 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // A FEE LOCK IS THE TRY'S IT WAS LOCKED WITH (kanban #1945): every join deals a fresh handout under the same player key, so
         // two tries of one player hold two handouts whose refund key the fee lock names. It is kept beside the handout whose kept stake
         // lock is an output of its own lock transaction (the same txid); only with no such stake, the first handout as before.
-        let held = null;
+        // EVERY HANDOUT THAT NAMES THE LOCK, NOT THE FIRST ONE TAKEN (kanban #2390, #1489 a44 refute 12 s2 of #1605): a handout carries no player
+        // signature and each seat checks only its own share, so a stranger copies a player's public A0 and cuts a polynomial that opens at one
+        // seat, under any player key - its own, or the player's copied. Taken there before the player's own (the page's #593 re-hand to a seat that
+        // missed it mid-join, a lock-first client), the first A0 match was the stranger's: the player's stake was refused there (its refund key not
+        // that handout player's), or kept under the forged handout's id alone, which no other seat holds. A handout stands for the lock when its A0
+        // is the image (a stake) and its player's refund key is the lock's (stake and fee); the refund key is refused only when none does.
+        const matches = []; let a0Seen = false;
         const feeId = (h) => sha256(new Uint8Array([...h.id, ...new TextEncoder().encode('fee')]));
         const txHex = toHex(outpoint.txid);
         for (const h of round.handoutsOf(rid)) {
           let d; try { d = decodeHandout(h.bytes); } catch { continue; }
-          if (image.kind === 'point' && d.commitments[0] && toHex(d.commitments[0]) === hex) { held = { id: h.id, handout: d }; break; }
-          if (image.kind === 'hash' && toHex(refundKeyOf(d.playerPubkey)) === toHex(fields.refundPk)) {
+          const refunds = toHex(refundKeyOf(d.playerPubkey)) === toHex(fields.refundPk);
+          if (image.kind === 'point' && d.commitments[0] && toHex(d.commitments[0]) === hex) { a0Seen = true; if (refunds) matches.push({ id: h.id, handout: d }); }
+          if (image.kind === 'hash' && refunds) {
+            // A FEE LOCK IS THE TRY'S IT WAS LOCKED WITH (kanban #1945): the handout whose kept stake lock is an output of its own lock transaction first
             const stakeKept = round.refusedLock(h.id);
-            if (stakeKept && String(stakeKept.outpoint).split(':')[0] === txHex) { held = { id: feeId(h), handout: d }; break; }
-            if (!held) held = { id: feeId(h), handout: d };
+            const m = { id: feeId(h), handout: d };
+            if (stakeKept && String(stakeKept.outpoint).split(':')[0] === txHex) matches.unshift(m); else matches.push(m);
           }
         }
-        if (!held) return text(res, 409, image.kind === 'hash'
+        if (!matches.length && a0Seen) return text(res, 409, 'that lock\'s refund key is not the handout player\'s: it returns to nobody this round dealt');
+        if (!matches.length) return text(res, 409, image.kind === 'hash'
           ? 'this signer node holds no handout for that round whose player that fee lock refunds to: no fee of that round'
           : 'this signer node holds no handout for that round whose A0 is the lock\'s image: no stake of that round');
-        if (toHex(refundKeyOf(held.handout.playerPubkey)) !== toHex(fields.refundPk))
-          return text(res, 409, 'that lock\'s refund key is not the handout player\'s: it returns to nobody this round dealt');
-        const player = toHex(held.handout.playerPubkey);
+        // a fee lock stays the one handout's it was locked with (#1945); a stake lock is kept against every handout that names it (below)
+        if (image.kind === 'hash') matches.splice(1);
+        const held = matches[0];
+        const players = new Set(matches.map((x) => toHex(x.handout.playerPubkey)));
         // ENTERED = AN ENTRY THIS SEAT HOLDS A STAKE FOR (kanban #1582, state audit 2026-11-12): the /entry door takes an entry before
         // any lock (kanban #1437), so a player whose lock /lock refused (the last head-to-head seat taken, another entry of his key
         // staked, a lock after close) has an entry here that the round never counts or settles - a bare held entry kept his lock to
         // its expiry. Only an entry of his whose stake this seat saw or whose stake lock it holds (round.js seatedEntriesOf's rule)
         // settles a stake with the round.
-        if (round.entriesOf(rid).some(({ entryId, entry }) => toHex(entry.playerPubkey) === player && (!!round.stakeSeen(entryId) || !!round.stakeLock(entryId))))
+        if (round.entriesOf(rid).some(({ entryId, entry }) => players.has(toHex(entry.playerPubkey)) && (!!round.stakeSeen(entryId) || !!round.stakeLock(entryId))))
           return text(res, 409, 'that player entered the round at this signer node: the stake is settled with the round');
         const lport = (lockFed ? await portOfFederation(lockFed) : await portOfRid(rid)) || stakeLocks;
         const [st, id] = await Promise.all([lport.status(outpoint), lport.contractId(fields)]);
@@ -11634,7 +11644,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (asLarge >= REFUSED_LOCKS_PER_HANDOUT)
           return text(res, 409, `this signer node already keeps ${asLarge} locks for that handout at least as large (${amount} msat), all refunding to the same player: no more are kept`);
         const lockId = refusedLockOwnId(held.id, opHex);
-        round.putRefusedLock({ lockId, handoutId: held.id, roundId: rid, outpoint, fields: lockFieldsToJson(fields), contractId: String(id) });
+        const kept = { roundId: rid, outpoint, fields: lockFieldsToJson(fields), contractId: String(id) };
+        round.putRefusedLock({ lockId, handoutId: held.id, ...kept });
+        // AND UNDER EVERY OTHER HANDOUT THAT NAMES IT (kanban #2390): a forged handout copying A0 and the player's key, taken first at one seat, kept
+        // the lock there under the forged handout's own id only - no other seat held that id and the forfeit gathered 1 of 2 commitments. The lock is
+        // now kept under each naming handout's own id as well (at most 8: a stranger may hold up to the round's handout cap), so the id of the
+        // player's own handout - the one every seat holds - names it at every seat. A lock one handout names is kept as before.
+        for (const x of matches.slice(1, 8)) round.putRefusedLock({ lockId: refusedLockOwnId(x.id, opHex), handoutId: x.id, ...kept });
         console.log(`[refused-lock] ${toHex(rid).slice(0, 16)}: ${String(fields.amountMsat)} msat kept for its return (${String(refusedWhy).slice(0, 80)})`);
         return text(res, 201, `kept for its return: forfeit it at /forfeit?round=${toHex(rid)}&entry=${toHex(lockId)}`);
       }
