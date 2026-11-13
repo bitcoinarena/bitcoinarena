@@ -197,7 +197,10 @@ const bountyDecode = async (invoice) => {
   const r = await lncli(BOUNTY_PAYER, ['decodepayreq', invoice]);
   if (!r.ok) return (await bountyReady()) ? { ok: false } : { ok: false, paused: true };
   const j = JSON.parse(r.out);
-  return { ok: true, amountSats: Number(j.num_satoshis), paymentHash: j.payment_hash };
+  // THE AMOUNT IN MSAT (kanban #2589): num_satoshis is the invoice's msat cut down to whole sats, and payinvoice pays the msat - an invoice for 999 msat
+  // over the reward passed "exactly N sat" and was paid N.999 sat. A part-sat amount is not a whole number, so claim() refuses it
+  const msat = j.num_msat !== undefined && j.num_msat !== null && j.num_msat !== '' ? Number(j.num_msat) : Number(j.num_satoshis) * 1000;
+  return { ok: true, amountSats: msat / 1000, paymentHash: j.payment_hash };
 };
 const bountyPay = async (invoice, amountSats = 0) => {
   const feeLimit = Math.max(20, Math.ceil(Number(amountSats || 0) * BOUNTY_FEE_LIMIT_PCT / 100));
@@ -315,7 +318,11 @@ async function paymentFinal(payer, hash) {
   if (!payer) return null;
   const r = await lncli(payer, ['trackpayment', hash], 10000);
   const text = `${r.out || ''}\n${r.err || ''}`;
-  if (/isn't initiated|not initiated|not found|unknown payment/i.test(text)) return 'NONE';
+  // A NODE'S ALIAS IS NOT LND'S ANSWER (kanban #2589): lncli prints each HTLC's route as the hops' aliases, which their owners choose - a payee node
+  // named "not found" made an in-flight payment read as never made (NONE -> failed), settle() opened the reward again and the holder of the HTLC was
+  // paid twice. "Not initiated" is lnd's error, on stderr, with no payment printed; a printed payment always ends with its own status line
+  const said0 = [...String(r.out || '').matchAll(/Payment status:\s*([A-Z_]+)/g)];
+  if (!said0.length && /isn't initiated|not initiated|not found|unknown payment/i.test(String(r.err || ''))) return 'NONE';
   // LNCLI'S OWN WORDS (audit 7, kanban #1430): without --json lncli 0.21 prints a table and "Payment status: SUCCEEDED, preimage: ..." (the refill timer
   // reads the same line) - the JSON match found nothing live, so a settled welcome read as no answer; the payment's line, the last one printed, decides
   const said = [...text.matchAll(/Payment status:\s*([A-Z_]+)/g)].map((m) => m[1]);
