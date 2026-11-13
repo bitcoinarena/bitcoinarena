@@ -24,6 +24,12 @@ const HEX128 = /^[0-9a-f]{128}$/;
 /** How often a seat pulls its peers while a round's set is open, and how long it waits for one peer. */
 export const LOCK_SET_PULL_MS = 150;
 export const LOCK_SET_PEER_MS = 2500;
+/**
+ * WHEN A LOCK OUTSIDE THE CERTIFICATE GOES BACK (kanban #2585): not before the close + LOCK_SET_WINDOW_MS + this. A seat steps a round's set until
+ * the close + the window + 2 s and pushes a certificate to every peer the moment it holds one, so by then any other certificate of the round
+ * that stands has reached this seat (and one pull more is made before the first such return).
+ */
+export const LOCK_SET_RETURN_AFTER_MS = 2000 + LOCK_SET_PEER_MS;
 const lsVerify = (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } };
 
 export class LockSetBook {
@@ -40,7 +46,10 @@ export class LockSetBook {
     this.answerDelayMs = 0;
     this.db = round.db;
     this.db.exec(`CREATE TABLE IF NOT EXISTS lock_set_signed (round_id BLOB PRIMARY KEY, entries TEXT NOT NULL, at_ms INTEGER NOT NULL, sig BLOB NOT NULL);
-      CREATE TABLE IF NOT EXISTS lock_set_certs (round_id BLOB PRIMARY KEY, cert BLOB NOT NULL, at_ms INTEGER NOT NULL)`);
+      CREATE TABLE IF NOT EXISTS lock_set_certs (round_id BLOB PRIMARY KEY, cert BLOB NOT NULL, at_ms INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS lock_set_conflicts (round_id BLOB PRIMARY KEY, cert BLOB NOT NULL, at_ms INTEGER NOT NULL)`);
+    /** rid hex -> the one pull made before a lock outside the certificate is first returned (kanban #2585) */
+    this.returnPulls = new Map();
   }
 
   #room(ridHex) {
@@ -129,10 +138,14 @@ export class LockSetBook {
       const ok = read(s, lockSetSignatureId);
       if (ok) { room.sigs.set(ok.key, ok); got.signatures++; }
     }
-    if (body && typeof body.certificate === 'string' && /^[0-9a-f]+$/.test(body.certificate) && body.certificate.length <= 2 * 32768 && !this.certified(rid)) {
+    if (body && typeof body.certificate === 'string' && /^[0-9a-f]+$/.test(body.certificate) && body.certificate.length <= 2 * 32768) {
+      const held = this.certified(rid);
       let bytes = null; try { bytes = fromHex(body.certificate); } catch { bytes = null; }
-      const st = bytes ? lockSetCertificateStands(bytes, { roundId: rid, committee, threshold, entryCloseMs: c.entryCloseMs, verify: lsVerify }) : { ok: false };
-      if (st.ok) { this.#keep(rid, { ...st, bytes }); got.certificate = true; }
+      const st = bytes && !(held && toHex(held.bytes) === body.certificate)
+        ? lockSetCertificateStands(bytes, { roundId: rid, committee, threshold, entryCloseMs: c.entryCloseMs, verify: lsVerify }) : { ok: false };
+      if (st.ok && !held) { this.#keep(rid, { ...st, bytes }); got.certificate = true; }
+      // A SECOND CERTIFICATE OVER ANOTHER SET (kanban #2585): kept as the round's conflict - see conflicted()
+      else if (st.ok && st.setId !== held.setId) this.#conflict(rid, bytes);
     }
     this.#assemble(rid, c, committee, threshold);
     return { ok: true, ...got };
@@ -146,18 +159,58 @@ export class LockSetBook {
 
   /** A threshold of signatures over one set: the certificate (the earliest threshold of them, so its time is the earliest it could be). */
   #assemble(rid, c, committee, threshold) {
-    if (this.certified(rid)) return;
+    const held = this.certified(rid);
+    if (held && this.conflicted(rid)) return;
     const room = this.#room(toHex(rid));
     const bySet = new Map();
     for (const s of room.sigs.values()) { const l = bySet.get(s.setId) || []; l.push(s); bySet.set(s.setId, l); }
     for (const list of bySet.values()) {
-      if (list.length < threshold) continue;
+      if (list.length < threshold || (held && list[0].setId === held.setId)) continue;
       const use = [...list].sort((a, b) => a.atMs - b.atMs).slice(0, threshold).sort((a, b) => (a.key < b.key ? -1 : 1));
       const set = lockSetOf({ roundId: rid, entries: use[0].entries });
       const bytes = encodeLockSetCertificate({ set, sigs: use.map((s) => ({ key: fromHex(s.key), atMs: BigInt(s.atMs), sig: fromHex(s.sig) })) });
       const st = lockSetCertificateStands(bytes, { roundId: rid, committee, threshold, entryCloseMs: c.entryCloseMs, verify: lsVerify });
-      if (st.ok) { this.#keep(rid, { ...st, bytes }); return; }
+      if (st.ok) { if (held) this.#conflict(rid, bytes); else this.#keep(rid, { ...st, bytes }); return; }
     }
+  }
+
+  /**
+   * TWO CERTIFICATES OVER TWO SETS (kanban #2585). An honest seat signs one set, but honest seats sign different sets when their views differ (an
+   * entry whose stake only some of them saw), and a committee of 2t - 1 (the draw: 9 for 7 slots, 3 for 2) has two thresholds overlapping in ONE
+   * seat: one dishonest seat signing both sets makes two certificates, each held by the seats that signed it. A lock in one and not the other is
+   * then claimed by the one side's settlement and was returned at once by the other's forfeit. Kept here once; the round's set is contested.
+   */
+  #conflict(rid, bytes) {
+    this.db.prepare('INSERT OR IGNORE INTO lock_set_conflicts (round_id, cert, at_ms) VALUES (?, ?, ?)').run(rid, bytes, this.#now());
+    this.log(`[lock-set] ${toHex(rid).slice(0, 16)}: a second certificate over another set - the round's set is contested (kanban #2585)`);
+  }
+
+  /** Whether a second standing certificate over another set of this round reached this seat (kanban #2585). */
+  conflicted(rid) { return !!this.db.prepare('SELECT 1 FROM lock_set_conflicts WHERE round_id = ?').get(rid); }
+
+  /**
+   * WHY A LOCK OF THE ROUND GOES BACK AT ONCE (kanban #2561, the forfeit's lockSetOut), or null: outside the certified set, or every lock once the
+   * round is VOID for want of a certificate (none held here past the close + the window, and none pulled from the peers now - the decide's own
+   * rule, verify.js #headToHeadClose). OUTSIDE THE SET ONLY ONCE THE SET CANNOT BE CONTESTED (kanban #2585): after the close + the window +
+   * LOCK_SET_RETURN_AFTER_MS and one more pull of the peers, and never while a second certificate over another set is held - the lock then waits
+   * for its round (or its expiry), as a certified one does.
+   */
+  async lockOut(rid, entryIdHex) {
+    const c = this.roundOf(rid);
+    if (!c) return null;
+    let cert = this.certified(rid);
+    if (!cert && this.voidNow(rid, c)) cert = await this.settle(rid);
+    if (!cert) return this.voidNow(rid, c) ? 'that round has no certified lock set and its window has closed: it is VOID, every lock goes back at once (kanban #2561)' : null;
+    if (cert.entries.includes(String(entryIdHex).toLowerCase())) return null;
+    if (this.#now() <= Number(c.entryCloseMs) + LOCK_SET_WINDOW_MS + LOCK_SET_RETURN_AFTER_MS) return null;
+    const k = toHex(rid);
+    if (!this.returnPulls.has(k)) {
+      this.returnPulls.set(k, this.pull(rid).catch(() => {}));
+      if (this.returnPulls.size > 4096) this.returnPulls.delete(this.returnPulls.keys().next().value);
+    }
+    await this.returnPulls.get(k);
+    if (this.conflicted(rid)) return null;
+    return 'that lock is not in the round\'s certified lock set: it is not in the round and goes back at once (kanban #2561)';
   }
 
   /** This seat's own view, made once from the close on. */
