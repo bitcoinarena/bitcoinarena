@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>Feedback review</title>
+<title>Feedback review &middot; Bounty Season 1</title>
 <!-- kanban #1342 section 4: the owner's review list of player feedback. Every call carries the admin code (x-arena-admin), checked by the faucet
      against its hash; the code is kept in this browser only. A player's words are a stranger's text: only ever set with textContent. -->
 <style>
@@ -42,7 +42,7 @@
 <!-- ONE HEADER FOR EVERY PAGE (kanban #1457, Daniel 2026-11-11: "Der Header muss überall gleich aussehen"): the start page's header, drawn by site-chrome.js -->
 <script src="https://testnet.bitcoinarena.io/site-chrome.js" data-foot="none"></script>
 <main>
-  <h1>Feedback review</h1>
+  <h1>Feedback review &middot; Bounty Season 1</h1>
   <p class="sub" data-payouts>Player reports, the reward rules and the payouts. Nothing is paid without an approval here.</p>
 
   <div class="panel" id="login">
@@ -105,7 +105,7 @@
     // "approved in all". The critical and node part is named under it: by the rule it never blocks another approval (outside the budget)
     const weekAll = Number(b.weekApprovedSats || 0);   // every approval of the week, critical and node ones too (feedback-store budget)
     s.append(stat('approved this week' + (Number(b.weekOutsideBudgetSats) > 0 ? ` (${sats(b.weekOutsideBudgetSats)} of it critical: outside the budget)` : ''), `${sats(weekAll)} of ${sats(b.weeklyBudgetSats)}`),
-      stat('approved in all', sats(b.allApprovedSats)), stat('paid', sats(b.paidSats)),
+      stat('approved in Season 1', sats(b.allApprovedSats)), stat('paid in Season 1', sats(b.paidSats)),
       stat('links not yet claimed', `${b.openRewards.n} · ${sats(b.openRewards.s)}`), stat('new reports', String((b.counts && b.counts.new) || 0)));
     $('weekbar').style.width = `${Math.min(100, (100 * weekAll) / Math.max(1, b.weeklyBudgetSats))}%`;
     // REAL SATS ON MAINNET (kanban #1450, Daniel 2026-11-11: bounties are real Lightning payments on mainnet): said by the faucet's payout network
@@ -134,7 +134,7 @@
         // written into this line hid both, so every later cell sat two columns left: the text under State, the player under Game)
         el('td', { text: r.type + (r.screenshot ? ' 🖼' : '') }), el('td', {}, el('span', { cls: `tag s-${r.state}`, text: r.state })),
         el('td', { cls: 'hide-s', text: r.game || '' }), el('td', { text: r.happened.length > 140 ? `${r.happened.slice(0, 140)}…` : r.happened }), who,
-        el('td', { text: r.reward ? `${sats(r.reward.amountSats)} · ${r.reward.state}` : r.amountSats ? `${sats(r.amountSats)} approved` : '' }));
+        el('td', { text: r.reward ? `${sats(r.reward.amountSats)} · ${r.reward.state} · Season 1` : r.amountSats ? `${sats(r.amountSats)} approved · Season 1` : '' }));
       tr.addEventListener('click', () => open(r.id));
       tb.append(tr);
     }
@@ -181,7 +181,7 @@
       }, (e) => box.replaceChildren(el('h2', { text: 'Node bounty checklist' }), el('div', { cls: 'bad', text: e.message }))); }
     if (r.reason) d.append(el('div', { cls: 'bad', text: `Rejected: ${r.reason}` }));
     if (r.duplicateOf) d.append(el('div', { cls: 'dim', text: `Duplicate of ${r.duplicateOf.slice(0, 16)}…` }));
-    if (r.reward) d.append(el('div', {}, el('b', { text: `Reward ${sats(r.reward.amountSats)} (${r.reward.network}) · ${r.reward.state}${r.reward.address ? ` · to ${r.reward.address}` : ''}` }),
+    if (r.reward) d.append(el('div', {}, el('b', { text: `Season 1 reward ${sats(r.reward.amountSats)} (${r.reward.network}) · ${r.reward.state}${r.reward.address ? ` · to ${r.reward.address}` : ''}` }),
       r.reward.comment ? el('div', { cls: 'dim', text: `Comment: ${r.reward.comment}` }) : null, r.reward.why && r.reward.state !== 'paid' ? el('div', { cls: 'warn', text: r.reward.why }) : null,
       r.reward.lnurl ? el('div', {}, el('code', { text: r.reward.lnurl })) : null));
     const act = async (body, ok) => { let a; try { a = await call('act', { id: r.id, ...body }); } catch (e) { return say(e.message, true); } if (!a.ok) return say(a.why, true); say(ok); await load(); await open(r.id); };
