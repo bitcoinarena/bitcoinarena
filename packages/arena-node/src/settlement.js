@@ -1604,7 +1604,7 @@ export class LockSettlement {
     }
     const { signature } = aggregate340({ commitments, message: m.message, groupPublicKey: m.claimPk, shares, curve: this.curve });
     if (schnorr.verify(signature, m.message, m.claimPk.subarray(1))) return { ok: true, signature };
-    const held = this.dkg && this.dkg.publicSharesFor ? this.dkg.publicSharesFor(m.contract.nodes) : null;
+    const held = this.dkg && this.dkg.publicSharesFor ? this.dkg.publicSharesFor(m.nodes || (m.contract && m.contract.nodes)) : null;   // the committee (kanban #2247, #2260): a late or federation message carries no contract
     if (held && held.ok) {
       // a share under an id with no public share, or whose check throws, does not stand (kanban #2247, #2260: spoiltShares)
       const spoilt = new Set(spoiltShares({ signers, shares, held, m, commitments, curve: this.curve }));
