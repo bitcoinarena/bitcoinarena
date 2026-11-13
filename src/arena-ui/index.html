@@ -10977,8 +10977,16 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       try { sessionStorage.removeItem('arena.nostr.showWords'); } catch { /* none */ }
       if (already) return;
       box.style.display = 'flex';
+      // THE WALLET SCREEN IS MODAL FOR THE KEYBOARD TOO (kanban #2628, feedback #051, measured on UI 660 in a fresh Chrome: the first Tab went to the
+      // footer's Donate, then the footer links and the wallet bar behind the screen, Create a new wallet only on the 18th Tab): everything beside it
+      // is inert while it shows, and the focus starts on its first action
+      const behind = Array.from(document.body.children).filter((e) => e !== box && !e.inert && e.tagName !== 'SCRIPT');
+      behind.forEach((e) => { e.inert = true; });
+      window.ARENA_WALLET_SCREEN.inert = behind.length;
+      const firstFocus = (n) => { const b = box.querySelector('button, textarea, input'); if (b) b.focus(); else if (n < 40) setTimeout(() => firstFocus(n + 1), 50); };
+      setTimeout(() => firstFocus(0), 0);
       window.ARENA_WALLET_BUSY = () => ({ text: $('ws-busy').textContent, ring: !!$('ws-busy').querySelector('.ws-spin') });
-      const done = () => { box.style.display = 'none'; window.ARENA_WALLET_SCREEN.done = true; };
+      const done = () => { box.style.display = 'none'; window.ARENA_WALLET_SCREEN.done = true; behind.forEach((e) => { e.inert = false; }); };
       // CREATE: the seed made here, and its 24 words shown at once (below)
       const create = () => {
         try { ARENACLIENT.tabSeed({ storage: window.sessionStorage, random: (n) => crypto.getRandomValues(new Uint8Array(n)) }); } catch (e) { return { ok: false, why: 'This browser cannot keep a wallet: ' + e.message }; }
