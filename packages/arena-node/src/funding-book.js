@@ -134,13 +134,15 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
   const lateCensus = new Map();                 // proposal -> { height, outpoints: Set }
   const spentAtOf = (pid) => { const l = lateCensus.get(pid); return l ? (op) => (l.outpoints.has(op) ? null : l.height) : null; };
   // A PROPOSAL PUBLISHED AT OR ABOVE ITS NETWORK'S BALLOT_BIND_HEIGHT is voted and counted bound (kanban #2576)
-  const boundFor = (o) => typeof bindHeightFor === 'function' && o && o.networkId instanceof Uint8Array && Number.isInteger(o.publishedHeight)
-    && o.publishedHeight >= bindHeightFor(toHex(o.networkId));
-  const countOf = (pid, period, o, until = period.until) => { const c = voteCensus(pid); if (!c) return null;
+  // kanban #2590: publishedHeight is the author's own field, so a vote is read bound when any of its blocks is at or above the gate
+  const voteEndOf = (o, kind) => o.publishedHeight + (kind === 'leaderboard' ? 0 : schedule.signal) + schedule.vote;
+  const boundFor = (o, kind) => typeof bindHeightFor === 'function' && o && o.networkId instanceof Uint8Array && Number.isInteger(o.publishedHeight)
+    && voteEndOf(o, kind) > bindHeightFor(toHex(o.networkId));
+  const countOf = (pid, period, o, until = period.until, kind = 'proposal') => { const c = voteCensus(pid); if (!c) return null;
     const w = voteWeights({ census: c.census, publishedHeight: o.publishedHeight, last: period.last, schedule, spentAt: spentAtOf(pid) });
     // THE BOUND VOTE PAST THE GATE (kanban #2576, left open by #2562): a proposal published at or above its network's BALLOT_BIND_HEIGHT
     // is counted by seq (highest inside the period counts, equal seq with two choices = ABSTAIN), as a config proposal's; below it, as before
-    const bound = boundFor(o);
+    const bound = boundFor(o, kind);
     return { ...fundingTally({ proposalId: fromHex(pid), census: w.voters, votes: votesHeld(pid), from: period.from, until, verify, bound }),
       votersEligible: w.voters.length, bondsInCensus: c.census.length }; };
   /** The last block a passed proposal's votes are read to: its last payment's due height (rule 5, at most four tranches). */
@@ -151,7 +153,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
     const decided = voteOutcome(pid);
     const blocks = voteBlocks(pid);
     return { ...period, censusHeight: voteCensus(pid) ? voteCensus(pid).height : null, readTo: blocks.length ? blocks[blocks.length - 1].height : null,
-      state: decided ? (decided.passed ? 'passed' : 'failed') : 'voting', count: decided || ruleOf(kind, countOf(pid, period, o)) };
+      state: decided ? (decided.passed ? 'passed' : 'failed') : 'voting', count: decided || ruleOf(kind, countOf(pid, period, o, period.until, kind)) };
   }
   async function voteRound() {
     if (!voteChain) return [];
@@ -265,7 +267,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       const lastHash = await hashAt(period.last);
       const lastRow = held.find((r) => r.height === period.last);
       if (!lastHash || !lastRow || lastRow.hash !== lastHash || held.some((r) => !r.hash)) continue;
-      const out = ruleOf(row.kind, countOf(row.id, period, p.obj));
+      const out = ruleOf(row.kind, countOf(row.id, period, p.obj, period.until, row.kind));
       db.prepare('INSERT OR IGNORE INTO funding_vote_outcomes (proposal, outcome, last_hash, decided_ms) VALUES (?, ?, ?, ?)').run(row.id, JSON.stringify(out), lastHash, now());
       log(`[funding] ${row.id.slice(0, 16)}: vote ${out.passed ? 'passed' : 'failed'} - turnout ${out.turnoutPct} %, YES ${out.approvalPct} % of YES + NO, YES ${out.yesOfAllPct} % of everyone who could vote, ${out.bondsVoted} bond(s)`);
       done.push({ id: row.id, ...out, lastHash });
@@ -319,7 +321,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         // a cancelled proposal keeps listing the payments due before the cancelling one: they may have gone, and their records stand
         if (fixed.cancelled_k !== null && t.k >= fixed.cancelled_k) break;
         if (!(Number.isInteger(tip) && tip >= t.payableAt) || readTo < t.dueAt) break;
-        const again = countOf(row.id, period, p.obj, t.dueAt + 1);
+        const again = countOf(row.id, period, p.obj, t.dueAt + 1, row.kind);
         // A STOP NEEDS THE FLOOR A PASS NEEDS (kanban #1311/#1334): NO at least 20 % of rule 1's weight - one late NO does not stop a tranche
         if (!again || (!again.passed && again.stops)) {
           const why = `payment ${t.k + 1} of ${t.of} cancelled at its due block ${t.dueAt}: YES ${again ? again.approvalPct : '?'} % of YES + NO, ${again ? again.yesOfAllPct : '?'} % of everyone who could vote`;
@@ -623,7 +625,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       const row = db.prepare("SELECT kind, hex FROM funding_items WHERE id = ? AND kind IN ('proposal', 'fee', 'leaderboard')").get(String(id));
       if (!row) return null;
       const r = read(row.kind, row.hex);
-      return r.ok ? boundFor(r.obj) : null;
+      return r.ok ? boundFor(r.obj, row.kind) : null;
     },
   };
   return book;
