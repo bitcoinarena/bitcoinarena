@@ -241,13 +241,37 @@ export function splitSignedRecord(bytes) {
   throw new Error('that is not a signed federation record');
 }
 
+/** The federation config's guardian keys (`broadcast_public_keys`) as a hex set, or null when none are given or they do not read. */
+export function guardianKeySet(guardianKeys) {
+  if (!Array.isArray(guardianKeys) || !guardianKeys.length) return null;
+  const out = new Set();
+  for (const k of guardianKeys) {
+    const h = typeof k === 'string' ? k.toLowerCase() : k instanceof Uint8Array ? toHex(k) : null;
+    if (!h || !/^[0-9a-f]{66}$/.test(h)) return null;
+    out.add(h);
+  }
+  return out;
+}
+
 /**
  * IS THIS A RECORD A CLIENT MAY BELIEVE? `census` is a census this client checked (entries with `pubkey` and `advert`);
  * a signature counts only from a census node whose advertisement names this federation with the guardian key the record
  * lists for that node. `inviteFederationId(invite)` reads the invite's federation id (the caller's parser). `bandPoint`: the height records
- * name their band from, by default the one of the network the record names. Answers { ok, record, status, signers } or { ok: false, why }.
+ * name their band from, by default the one of the network the record names. `guardianKeys`
+ * (optional): the federation's own config keys (`broadcast_public_keys`), when the caller holds that config. Answers
+ * { ok, record, status, signers, keyed } or { ok: false, why }.
+ *
+ * THE THRESHOLD (kanban #2599, #2603):
+ *   with guardianKeys   thresholdOf(max(nominal, guardianKeys.length)); a record that lists a peer key not in the config is refused, and
+ *                       only signers whose listed key is a config key count, one key per node and one node per key. A guardian that
+ *                       lists only itself (#2599: nominal 1) still needs the threshold of the whole config.
+ *   without             thresholdOf(nominal), the record's own. A census advert's guardianOf is the node's own word, never checked
+ *                       against the federation: #2599's max(nominal, census guardians) let four bonded strangers naming the
+ *                       federation lift a genuine HALTED record's 5 of 7 to 8 (#2603, feedback #037) - refused, and the client read
+ *                       the federation as allow-everything. Without the config an omitted real guardian and a stranger's advert look
+ *                       the same, so no census count can stand in for it; the caller that holds the config passes it.
  */
-export function verifyFederationRecord(bytes, { census, verify, inviteFederationId, networkId = null, bandPoint = undefined }) {
+export function verifyFederationRecord(bytes, { census, verify, inviteFederationId, networkId = null, bandPoint = undefined, guardianKeys = null }) {
   let s; try { s = splitSignedRecord(bytes); } catch (e) { return { ok: false, why: e.message }; }
   const r = s.record;
   if (networkId && toHex(networkId) !== toHex(r.networkId)) return { ok: false, why: 'that record is of another network' };
@@ -258,27 +282,38 @@ export function verifyFederationRecord(bytes, { census, verify, inviteFederation
   let named; try { named = inviteFederationId(r.invite); } catch (e) { return { ok: false, why: `its invite does not read: ${e.message}` }; }
   if (!named || toHex(named) !== toHex(r.federationId)) return { ok: false, why: 'its invite names another federation than the record' };
   const fid = toHex(r.federationId);
-  const guarding = new Map();
+  const wanted = guardianKeys === null || guardianKeys === undefined ? null : guardianKeySet(guardianKeys);
+  if ((guardianKeys !== null && guardianKeys !== undefined) && !wanted) return { ok: false, why: 'the federation config names no 33-byte guardian keys' };
+  if (wanted) {
+    const stranger = r.guardians.find((g) => !wanted.has(toHex(g.peerKey)));
+    if (stranger) return { ok: false, why: `it lists guardian key ${toHex(stranger.peerKey).slice(0, 16)}, which the federation's config does not name` };
+  }
+  // node -> the guardian keys its census advert names for this federation (a node may name more than one; the record picks)
+  const claims = new Map();
   for (const e of census || []) {
-    for (const g of (e.advert && e.advert.guardianOf) || []) if (toHex(g.federationId) === fid) guarding.set(toHex(e.pubkey), toHex(g.guardianKey));
+    if (!e || !e.pubkey) continue;
+    for (const g of (e.advert && e.advert.guardianOf) || []) {
+      if (toHex(g.federationId) !== fid) continue;
+      const k = toHex(e.pubkey);
+      if (!claims.has(k)) claims.set(k, new Set());
+      claims.get(k).add(toHex(g.guardianKey));
+    }
   }
   const listed = new Map(r.guardians.map((g) => [toHex(g.nodePubkey), toHex(g.peerKey)]));
   const id = federationRecordId(r);
-  const signers = new Set();
+  const signers = new Set(), keysSigned = new Set();
   for (const sig of s.signatures) {
-    const k = toHex(sig.nodePubkey);
-    if (!guarding.has(k) || listed.get(k) !== guarding.get(k)) continue;           // not a bonded guardian of this federation
+    const k = toHex(sig.nodePubkey), key = listed.get(k);
+    if (!key || !claims.has(k) || !claims.get(k).has(key)) continue;               // not a bonded guardian of this federation
+    if (wanted && !wanted.has(key)) continue;                                       // not one of the config's guardians
+    if (signers.has(k) || keysSigned.has(key)) continue;                            // one node per key, one key per node
     let good = false; try { good = verify(sig.signature, id, sig.nodePubkey) === true; } catch { good = false; }
-    if (good) signers.add(k);
+    if (good) { signers.add(k); keysSigned.add(key); }
   }
-  // THE THRESHOLD OF THE GUARDIANS THE CENSUS LISTS, NOT OF THOSE THE RECORD CHOSE TO LIST (kanban #2599): the record's threshold is read
-  // off its own nominal, so one guardian of seven signed a body listing only itself, nominal 1 (threshold 1), HALTED, at a higher height,
-  // and every seat mirrored it - the federation halted and its spent-set quorum was that one guardian. A record needs the threshold of
-  // the larger of its nominal and the census nodes whose advert names this federation.
-  const need = thresholdOf(Math.max(r.nominal, guarding.size));
+  const need = wanted ? thresholdOf(Math.max(r.nominal, wanted.size)) : thresholdOf(r.nominal);
   if (signers.size < need)
-    return { ok: false, why: `${signers.size} of its bonded guardians signed it, and a record needs ${need}${need > r.threshold ? ` (the census lists ${guarding.size} guardians of it, the record names ${r.nominal})` : ''}` };
-  return { ok: true, record: r, status: nameOf(FEDERATION_STATUS, r.status), signers: signers.size, id };
+    return { ok: false, why: `${signers.size} of its bonded guardians signed it, and a record needs ${need}${need > r.threshold ? ` (the federation's config names ${wanted.size} guardians, the record ${r.nominal})` : ''}` };
+  return { ok: true, record: r, status: nameOf(FEDERATION_STATUS, r.status), signers: signers.size, id, keyed: !!wanted };
 }
 
 /**
