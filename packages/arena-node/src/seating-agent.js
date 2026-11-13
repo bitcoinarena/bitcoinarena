@@ -1208,9 +1208,11 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     const left = withheldOf(w);
     const signs = (k) => db.prepare('SELECT seating FROM seat_sigs WHERE round_id = ? AND role = ? AND node = ?').all(w.t.rid, w.role, k).some((r) => {
       if (r.seating === id) return true;
-      // from the store after a restart too; an unknown seating does not count (kanban #2140, #2298, wf1489 a44 refute-3)
+      // from the store after a restart too; an unknown seating does not count (kanban #2140, #2298, wf1489 a44 refute-3). AND ONLY OVER A SEATING
+      // THE SEATS CAN MEET ON (kanban #2140, #2208): one that seats a drawn node no honest seat holds a PRESENT of (one dead above the reserve)
+      // set off #738 but left resign nothing to move to; one that seats a member this node left for withholding is one it never goes back to
       const other = seatingOf(w, r.seating);
-      return !!other && !seatingBefore(w, other, signed.seated);
+      return !!other && !seatingBefore(w, other, signed.seated) && other.every((x) => held.has(x) && !left.has(x));
     });
     // A MEMBER THE OTHERS LEFT FOR WITHHOLDING, THOUGH IT SIGNED THIS SEATING LATE (kanban #2501, wf1489 a44 refute-3 s2, after #1609/#1707): the #1609 withholder
     // signs the seating before ours until a few honest members have left it (#1509) and re-signed without it, then signs ours. A seat whose timer ran a tick
@@ -1250,9 +1252,15 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     // A SEATING THIS NODE LEFT FOR A WITHHOLDER is no reason to move (kanban #2208, wf1489 a44 refute-3): one honest seat ticking 10-20 s behind the others
     // (#803's long ticks) still signed the seating with the withholder in it after the others had left it; that seating does not come before theirs, so
     // #738 sent them back to it, and the two halves swapped seatings until the start. A seat never goes back to a seating that seats a member it left.
+    // AND BELOW PROTOCOL 22 A SEATING THE SEATS CANNOT MEET ON IS NONE EITHER (kanban #2140, wf1489 a44 refute-3): a signature over a later seating that
+    // seats a drawn node whose PRESENT this node does not hold (one dead above the reserve) named a #738 move that resign could never make - no candidate
+    // seats it - and the round stood uncertified. Such a signer is judged by withholdersOf instead, which counts no signature over that seating
+    const presentsHeld = seatingListsPresent(w.t.contract) ? null
+      : new Set(db.prepare('SELECT node FROM seat_presents WHERE round_id = ? AND role = ?').all(w.t.rid, w.role).map((r) => r.node));
     for (const r of db.prepare('SELECT node, seating FROM seat_sigs WHERE round_id = ? AND role = ? AND seating != ? AND node != ?').all(w.t.rid, w.role, id, me)) {
       if (!signed.seated.includes(r.node)) continue;
       const other = seatingOf(w, r.seating);   // from the store after a restart too (kanban #2140)
+      if (other && presentsHeld && !other.every((k) => presentsHeld.has(k))) continue;
       // a seating that seats a withholder this node left (kanban #1887, #1921, #1965): never a reason to move, it can never stand
       if (other && !seatsWithheld(other, known) && !seatingBefore(w, other, signed.seated)) return { node: r.node, seating: r.seating, seated: other };
     }
