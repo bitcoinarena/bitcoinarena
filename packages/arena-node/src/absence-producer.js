@@ -80,14 +80,16 @@ export async function wsAdminStatus(port, password, { timeoutMs = 10000, WebSock
  * [{ federation, peerKey }]) and holds none of its notices yet (`held(federation, peerHex)`). `tip()` the chain tip, `offer(d)` keeps it,
  * `post(hex)` sends it to every seat ({ postedTo, of }). Answers one line per seat: { made: true } for one made before, or the notice made now, or why not.
  */
-export async function owedDepartures({ seats, held, tip, departureNotice, nodePubkey, sign, offer, post }) {
+// `slack(tip)` (kanban #2608): blocks added to leave_after for the anchor to confirm in - past the gate a notice counts from its anchor's
+// height, never from posted_at, so one made at the tip with no slack could never stand
+export async function owedDepartures({ seats, held, tip, departureNotice, nodePubkey, sign, offer, post, slack = () => 0 }) {
   const out = [];
   let at = null;
   for (const own of seats || []) {
     if (held(own.federation, toHex(own.peerKey))) { out.push({ federation: own.federation, made: true }); continue; }
     try {
       if (at === null) at = Number(await tip());
-      const d = ownDeparture({ own, tip: at, departureNotice, nodePubkey, sign });
+      const d = ownDeparture({ own, tip: at, departureNotice, nodePubkey, sign, slack: slack(at) });
       const k = offer(d);
       if (!k || !k.ok) { out.push({ federation: own.federation, why: (k && k.why) || 'not kept' }); continue; }
       const hex = departureHex(d);
@@ -98,7 +100,8 @@ export async function owedDepartures({ seats, held, tip, departureNotice, nodePu
   return out;
 }
 
-export function ownDeparture({ own, tip, departureNotice, nodePubkey, sign }) {
+export function ownDeparture({ own, tip, departureNotice, nodePubkey, sign, slack = 0 }) {
   if (!Number.isInteger(tip) || !Number.isInteger(departureNotice)) throw new Error('a departure notice needs the chain tip and the departure_notice clock');
-  return signDeparture({ federationId: fromHex(own.federation), peerKey: own.peerKey, leaveAfterHeight: tip + departureNotice, postedAt: tip, nodePubkey }, sign);
+  const extra = Number.isInteger(slack) && slack > 0 ? slack : 0;
+  return signDeparture({ federationId: fromHex(own.federation), peerKey: own.peerKey, leaveAfterHeight: tip + departureNotice + extra, postedAt: tip, nodePubkey }, sign);
 }

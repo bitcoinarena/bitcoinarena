@@ -7,7 +7,7 @@
 //
 // An attestation travels as its encoding followed by its 64-byte signature, in hex (`absenceHex`), so the second ask of a
 // record gathering hands every guardian seat exactly the set the proof was made of, and each one checks it on its own.
-import { encodeAbsence, decodeAbsence, absenceId, abandonmentProof, encodeDeparture, decodeDeparture, departureId, departureStands } from '../../arena-protocol/src/absence.js';
+import { encodeAbsence, decodeAbsence, absenceId, abandonmentProof, encodeDeparture, decodeDeparture, departureId, departureStands, departureAnchorOf } from '../../arena-protocol/src/absence.js';
 import { encodeEmergencyDeparture, decodeEmergencyDeparture, emergencyDepartureId } from '../../arena-protocol/src/emergency.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
@@ -20,12 +20,33 @@ export function readAbsenceHex(hex) {
 
 // A DEPARTURE NOTICE travels the same way (§23A.5, RULED 2026-09-21: "Leaving is legitimate"): the leaving guardian's
 // own signed (federation_id, peer, leave_after_height); from leave_after on the record has it DEPARTED, its bond untouched
-export const departureHex = (d) => toHex(encodeDeparture(d)) + toHex(d.signature);
+// AND ITS ANCHOR WITH IT (kanban #2608): from the gate a notice counts from the confirmed height of its "ARN" 'L' anchor (absence.js), so
+// it travels with where that anchor is - the anchor transaction's txid and the block it confirmed in, 64 bytes after the signature. The
+// receiving seat reads that one transaction from its own bitcoind (as a ballot deposit is read) and takes the height from its chain: the
+// reference only says where to look, never what height. Without them the bytes are the old 172.
+const NOTICE_BYTES = 1 + 2 + 32 + 33 + 4 + 4 + 32;
+const anchorRef = (a) => (a && /^[0-9a-f]{64}$/.test(String(a.txid || '')) && /^[0-9a-f]{64}$/.test(String(a.blockHash || '')) ? String(a.txid) + String(a.blockHash) : '');
+export const departureHex = (d) => toHex(encodeDeparture(d)) + toHex(d.signature) + anchorRef(d.anchor);
 export function readDepartureHex(hex) {
   const b = fromHex(String(hex || ''));
-  if (b.length < 65) throw new Error('a notice is its encoding and a 64-byte signature');
-  return { ...decodeDeparture(b.slice(0, b.length - 64)), signature: b.slice(b.length - 64) };
+  if (b.length !== NOTICE_BYTES + 64 && b.length !== NOTICE_BYTES + 128) throw new Error('a notice is its encoding and a 64-byte signature, and its anchor\'s txid and block hash if it names one');
+  const d = { ...decodeDeparture(b.slice(0, NOTICE_BYTES)), signature: b.slice(NOTICE_BYTES, NOTICE_BYTES + 64) };
+  if (b.length > NOTICE_BYTES + 64) d.anchor = { txid: toHex(b.slice(NOTICE_BYTES + 64, NOTICE_BYTES + 96)), blockHash: toHex(b.slice(NOTICE_BYTES + 96)) };
+  return d;
 }
+/**
+ * THE ANCHOR READ ON THIS SEAT'S CHAIN (kanban #2608): `confirmedTx(txidHex, blockHashHex)` -> { raw, height } or null (main.js: the
+ * block on this bitcoind's main chain). Answers the notice with `anchor.height` set when that transaction carries its "ARN" 'L' anchor,
+ * else the notice with no anchor height (it does not count past the gate). Any time: no freshness window.
+ */
+export async function readAnchor(d, confirmedTx) {
+  if (!d || !d.anchor || typeof confirmedTx !== 'function') return d;
+  const { txid, blockHash } = d.anchor;
+  let tx = null; try { tx = await confirmedTx(txid, blockHash); } catch { tx = null; }
+  const a = tx ? departureAnchorOf({ raw: tx.raw, height: tx.height, notice: d }) : { ok: false };
+  return { ...d, anchor: a.ok && a.txid === txid ? { txid, blockHash, height: a.postedHeight } : { txid, blockHash } };
+}
+const anchorHeightOf = (d) => (d && d.anchor && Number.isInteger(d.anchor.height) ? d.anchor.height : null);
 
 // AN OWNER'S EMERGENCY LEAVE REQUEST travels the same way (§23A.5a, protocol 17): (node_key, emergency_key, posted_at), signed by the
 // emergency key; whether the node's advertisement names that key is the census's to say (emergency.js emergencyDepartureStands)
@@ -37,11 +58,12 @@ export function readEmergencyHex(hex) {
 }
 
 /** The notice of `notices` that stands for `peerKey` against `record` and is due at `height` (the earliest leave_after). */
-export function dueDeparture(notices, { record, peerKey, departureNotice, height, verify }) {
+// `gate`: the network's DEPARTURE_ANCHOR_HEIGHT (absence.js; null: the old rule) - at or above it each notice counts from its anchor's height
+export function dueDeparture(notices, { record, peerKey, departureNotice, height, verify, gate = null }) {
   let best = null; let why = 'no notice from that guardian';
   for (const d of notices || []) {
     if (toHex(d.peerKey) !== toHex(peerKey)) continue;
-    const st = departureStands(d, { record, departureNotice, verify });
+    const st = departureStands(d, { record, departureNotice, verify, height, gate, anchorHeight: anchorHeightOf(d) });
     if (!st.ok) { why = st.why; continue; }
     if (d.leaveAfterHeight > height) { why = `it leaves after ${d.leaveAfterHeight}, the record is at ${height}`; continue; }
     if (!best || d.leaveAfterHeight < best.leaveAfterHeight) best = d;
@@ -56,7 +78,8 @@ export function dueDeparture(notices, { record, peerKey, departureNotice, height
 // is taken only from a guardian of that record about a peer of it, bounded per federation; one about a federation it holds no record of (a seat
 // just restarted, a founding) goes into a small bucket of its own, so what fills that bucket never crowds out a held federation's guardians.
 export const UNKNOWN_FEDERATION_MAX = 512;
-export function createAbsences({ verify, max = 4096, store = null, nodeOf = null, guardiansOf = null, unknownMax = UNKNOWN_FEDERATION_MAX }) {
+// `confirmedTx`, `anchorGate` (kanban #2608): the anchor read on this seat's chain (readAnchor) and the network's DEPARTURE_ANCHOR_HEIGHT
+export function createAbsences({ verify, max = 4096, store = null, nodeOf = null, guardiansOf = null, unknownMax = UNKNOWN_FEDERATION_MAX, confirmedTx = null, anchorGate = null }) {
   const notices = new Map();                 // `${fid}:${peer}` -> departure notice (one per guardian: the latest posted)
   const emergencies = new Map();             // node key -> the owner's emergency leave request (one per node: the EARLIEST posted)
   const held = new Map();                    // `${fid}:${peer}:${attester}` -> attestation (the newest height)
@@ -64,8 +87,10 @@ export function createAbsences({ verify, max = 4096, store = null, nodeOf = null
   // and the founding it triggers never started): `store` { read() -> { departures: [hex], absences: [hex] }, write(that) } - every
   // kept notice and attestation is written, and read back at start through the same checks (each signature verified again)
   let loading = false;
+  // each notice with its anchor reference, and the height this seat read that anchor at (its own chain's word, kanban #2608)
   const save = () => { if (!store || loading) return; try { store.write({ departures: [...notices.values()].map(departureHex), absences: [...held.values()].map(absenceHex),
-    emergencies: [...emergencies.values()].map(emergencyHex) }); } catch { /* kept in memory */ } };
+    emergencies: [...emergencies.values()].map(emergencyHex),
+    departureAnchors: Object.fromEntries([...notices.values()].filter((d) => anchorHeightOf(d) !== null).map((d) => [toHex(departureId(d)), d.anchor])) }); } catch { /* kept in memory */ } };
 
   // the guardians a held record names for `fidHex` (a Set of node key hex), or null: no record held (or no way to ask)
   const membersOf = (fidHex) => { if (typeof guardiansOf !== 'function') return null; let g = null; try { g = guardiansOf(fidHex); } catch { g = null; } return Array.isArray(g) ? new Set(g.map((x) => String(x).toLowerCase())) : null; };
@@ -106,7 +131,10 @@ export function createAbsences({ verify, max = 4096, store = null, nodeOf = null
     if (members && !named) return { ok: false, why: 'the notice is about a peer the federation record this seat holds does not name' };
     const k = `${fid}:${toHex(d.peerKey)}:${toHex(d.nodePubkey)}`;
     const had = notices.get(k);
-    if (had && had.postedAt >= d.postedAt) return { ok: true, kept: false };
+    // THE SAME NOTICE, ANCHORED NOW (kanban #2608): a copy whose anchor this seat read on its chain replaces one with none, or a later one
+    const sameId = had && toHex(departureId(had)) === toHex(departureId(d));
+    const anchoredBetter = sameId && anchorHeightOf(d) !== null && (anchorHeightOf(had) === null || anchorHeightOf(d) < anchorHeightOf(had));
+    if (had && had.postedAt >= d.postedAt && !anchoredBetter) return { ok: true, kept: false };
     if (!had && members && countOf(notices, fid) >= max) return { ok: false, why: 'this seat holds as many notices of that federation as it keeps' };
     if (!had && !members && (loading ? countOf(notices, fid) >= max : (typeof guardiansOf === 'function' ? unknownCount(notices) >= unknownMax : notices.size >= max))) return { ok: false, why: 'this seat holds as many notices as it keeps' };
     notices.set(k, d);
@@ -130,7 +158,10 @@ export function createAbsences({ verify, max = 4096, store = null, nodeOf = null
   const emergencyFor = (nodeKey) => emergencies.get(typeof nodeKey === 'string' ? nodeKey.toLowerCase() : toHex(nodeKey)) || null;
   const listEmergencies = () => [...emergencies.values()].map(emergencyHex);
   const departureFor = (record, peerKey, departureNotice, height) => dueDeparture([...notices.entries()].filter(([k]) => k.startsWith(`${toHex(record.federationId)}:${toHex(peerKey)}:`)).map(([, d]) => d),
-    { record, peerKey, departureNotice, height, verify });
+    { record, peerKey, departureNotice, height, verify, gate: anchorGate });
+  /** A notice with its anchor read on this seat's chain (readAnchor), then taken: POST /departure and a peer's pull (kanban #2608). */
+  const anchorDeparture = (d) => readAnchor(d, confirmedTx);
+  async function offerAnchored(d) { return offerDeparture(await anchorDeparture(d)); }
   const listDepartures = (fidHex) => [...notices.entries()].filter(([k]) => !fidHex || k.startsWith(`${fidHex}:`)).map(([, d]) => departureHex(d));
   const list = (fidHex) => [...held.entries()].filter(([k]) => !fidHex || k.startsWith(`${fidHex}:`)).map(([, a]) => absenceHex(a));
   // READ BACK WHOLE AT A RESTART (kanban #1404, audit 5 #1399): the store is read while the seat holds no federation record yet (server.js restores
@@ -140,12 +171,20 @@ export function createAbsences({ verify, max = 4096, store = null, nodeOf = null
   if (store) {
     let had = null; try { had = store.read(); } catch { had = null; }
     loading = true;
-    for (const h of (had && had.departures) || []) { try { offerDeparture(readDepartureHex(h)); } catch { /* not one */ } }
+    const anchors = (had && had.departureAnchors) || {};
+    for (const h of (had && had.departures) || []) {
+      try {
+        const d = readDepartureHex(h);
+        const a = anchors[toHex(departureId(d))];
+        if (d.anchor && a && a.txid === d.anchor.txid && a.blockHash === d.anchor.blockHash && Number.isInteger(a.height)) d.anchor.height = a.height;
+        offerDeparture(d);
+      } catch { /* not one */ }
+    }
     for (const h of (had && had.absences) || []) { try { offer(readAbsenceHex(h)); } catch { /* not one */ } }
     for (const h of (had && had.emergencies) || []) { try { offerEmergency(readEmergencyHex(h)); } catch { /* not one */ } }
     loading = false;
   }
   /** Whether this seat keeps a notice of node `nodeHex` for (federation, peer) - the leaver's own check that its notice is made (kanban #1379). */
   const heldDeparture = (fidHex, peerHex, nodeHex) => notices.has(`${String(fidHex).toLowerCase()}:${String(peerHex).toLowerCase()}:${String(nodeHex).toLowerCase()}`);
-  return { offer, proofFor, list, offerDeparture, departureFor, listDepartures, heldDeparture, offerEmergency, emergencyFor, listEmergencies };
+  return { offer, proofFor, list, offerDeparture, offerAnchored, anchorDeparture, anchorGate, departureFor, listDepartures, heldDeparture, offerEmergency, emergencyFor, listEmergencies };
 }
