@@ -21,7 +21,7 @@ import { emergencyDepartureStands, emergencyDepartureEffect, emergencyDepartureI
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { withConfigEndpoints } from './federation-endpoints.js';
 import { buildFederationRecord, encodeFederationRecord, federationRecordId, joinSignedRecord, verifyFederationRecord, verifyFederationRecords,
-  FEDERATION_STATUS, GONE, decodeFederationRecord, splitSignedRecord, guardianKeySet, RESTRICTION_RANK, selfConsistentRestrictive } from '../../arena-protocol/src/federation-record.js';
+  FEDERATION_STATUS, GONE, decodeFederationRecord, splitSignedRecord, guardianKeySet, RESTRICTION_RANK, selfConsistentRestrictive, thresholdOf } from '../../arena-protocol/src/federation-record.js';
 
 /**
  * The census nodes guarding `federationId`, as the record lists them. `keys` (optional, kanban #2603): the federation config's guardian
@@ -193,6 +193,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   }
   const kept = new Map();                    // federation id hex -> { bytes, record, status, height, signers, atMs }
   const beside = new Map();                  // federation id hex -> a newer, less restrictive keyless record held beside the kept one (#2613)
+  const holding = new Map();                 // federation id hex -> a restrictive keyless record served for the page's hold only (#2615)
   const draining = new Map();                // federation id hex -> status name
   // THE HALT A LIQUIDATION COUNTS FROM (§23A.5): the lowest-height signed HALTED record of the run of HALTED records
   // this seat holds - kept with its bytes, so anyone checks it - and forgotten once a newer record is not HALTED (a recovery)
@@ -664,13 +665,26 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     // 7 of 7 HALTED record and eight strangers' OPEN one (nominal 11) in one pass; the genuine one was refused (it needs 8), the forgery picked,
     // and with nothing kept the #2613 guard had nothing to hold. A refused record signed by its own threshold, more restrictive than the pick and
     // signed by more than f of the larger set (selfConsistentRestrictive), is kept first - with its halt start - and the pick goes beside it
-    let restrict = null;
+    // A HOLD IS NOT A HALT (kanban #2615, feedback #044): three bonded strangers' own HALTED record (nominal 3, all three signing) passed the
+    // #2614 rule beside a genuine 7 of 7 OPEN one, and a keyless seat kept it - halt start, haltOf, GET /liquidations, the draining gate, the
+    // exchange's halted check - and kept it after the strangers went silent. A refused restrictive record takes those effects only when its
+    // signers reach thresholdOf(the pick's signers): the bar a record of the pick's size clears to stand. The genuine 7 of 7 HALTED one under
+    // eight strangers' OPEN (#042/#043) has 7 >= thresholdOf(8) = 6; the three strangers under the genuine 7 of 7 OPEN have 3 < 5. Below the
+    // bar it is only HELD: served beside the kept record so the page's restrictive-word hold applies (#2605/#2611), nothing else - and dropped
+    // once no one serves it and a newer record is kept
+    let restrict = null, hold = null;
     async function settle() {
-      best = null; restrict = null;
+      best = null; restrict = null; hold = null;
       if (!cands.length) return;
       const verdicts = judge(fid, cands.map((c) => ({ bytes: c.bytes, census: c.census })), { inviteFederationId, keys, tip: await tipNow(), census: b.census.entries });
       cands.forEach((c, i) => take(c.x, verdicts[i]));
-      if (!keys && best) { const r = selfConsistentRestrictive(verdicts, best.v); if (r) restrict = { bytes: cands[r.index].bytes, v: r.v }; }
+      if (!keys && best) {
+        const r = selfConsistentRestrictive(verdicts, best.v);
+        if (r) {
+          const it = { bytes: cands[r.index].bytes, v: r.v };
+          if (r.v.signers >= thresholdOf(best.v.signers)) restrict = it; else hold = it;
+        }
+      }
     }
     function take(x, v) {
       if (!v.ok) { why = v.why; return; }
@@ -694,7 +708,13 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     }
     if (!best) return { ok: false, why, mirrored: false };
     if (restrict) keep(fid, restrict.bytes, restrict.v, 'mirror');
-    if (!keep(fid, best.bytes, best.v, 'mirror')) { const k = kept.get(fid); return { ok: true, mirrored: false, status: k.status, signers: k.signers, height: k.height, why: recordStep(k, { height: best.v.record.height, status: best.v.status }, 'mirror').why }; }
+    const kept0 = keep(fid, best.bytes, best.v, 'mirror');
+    if (hold) holding.set(fid, { bytes: hold.bytes, record: hold.v.record, status: hold.v.status, height: hold.v.record.height, signers: hold.v.signers });
+    else if (holding.has(fid)) {
+      const h = holding.get(fid), k = kept.get(fid);
+      if (!cands.some((c) => toHex(c.bytes) === toHex(h.bytes)) && k && k.height > h.height) holding.delete(fid);
+    }
+    if (!kept0) { const k = kept.get(fid); return { ok: true, mirrored: false, status: k.status, signers: k.signers, height: k.height, why: recordStep(k, { height: best.v.record.height, status: best.v.status }, 'mirror').why }; }
     return { ok: true, mirrored: true, status: best.v.status, signers: best.v.signers, height: best.v.record.height };
   }
 
@@ -830,14 +850,16 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
      * the config keys and did not keep - so a client reads both words. One row more per such federation; list() stays one row each. */
     served() {
       const out = api.list();
-      for (const [federation, a] of beside) {
-        if (!kept.has(federation)) continue;
-        out.push({ federation, status: a.status, height: a.height, signers: a.signers, record: toHex(a.bytes), beside: true,
+      for (const [federation, a] of [...holding].map(([f, h]) => [f, { ...h, held: true }]).concat([...beside])) {
+        if (!kept.has(federation) || out.some((x) => x.federation === federation && x.record === toHex(a.bytes))) continue;
+        out.push({ federation, status: a.status, height: a.height, signers: a.signers, record: toHex(a.bytes), ...(a.held ? { held: true } : { beside: true }),
           ...(a.record ? { reserveSats: String(a.record.reserveSats), exposureCapSats: String(a.record.exposureCapSats),
             load: a.record.exposureCapSats > 0n ? Number((a.record.reserveSats * 10000n) / a.record.exposureCapSats) / 10000 : null } : {}) });
       }
       return out;
     },
+    /** The restrictive keyless record served for the page's hold only - no halt, no gate (kanban #2615) - or null. */
+    heldOf: (fidHex) => { const h = holding.get(String(fidHex).toLowerCase()); return h ? { record: h.record, status: h.status, height: h.height } : null; },
     /** The newer, less restrictive keyless record held beside the kept one, or null (kanban #2613). */
     besideOf: (fidHex) => { const a = beside.get(String(fidHex).toLowerCase()); return a ? { record: a.record, status: a.status, height: a.height } : null; },
     list: () => [...kept.entries()].map(([federation, k]) => ({ federation, status: k.status, height: k.height, signers: k.signers, record: toHex(k.bytes),
