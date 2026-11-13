@@ -5,6 +5,9 @@
 // the funding gate only asks that the round pays. Each costs the stranger a fresh Ed25519 key and a handout, no sats. Every one
 // is stored, relayed to every seat, and at the close each seat signs, stores and gathers a VOID result for each of them.
 // SAFE: a paid 2-player round does not hold dozens of entries nobody locked a stake for.
+// SINCE #2174 an entry past the lockless cap is held aside and entered once the federation holds ITS OWN stake lock (POST /lock, /fee-lock,
+// /lock-claim): one that locked real sats is no longer a lockless entry. The fixture makes every client's stake lock at the federation, so the
+// stranger here makes none (`stakeHeld: false`, and shows none with the handout): a stranger with fresh keys and no sats, as this test means.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
@@ -30,7 +33,7 @@ test('#1489 r5-h2h-1: a paid head-to-head round does not hold dozens of lockless
     // the stranger: entries with fresh keys, handout + entry at every seat, no lock anywhere
     let taken = 0;
     for (let i = 0; i < JUNK; i++) {
-      try { await lockAndPlay(w, mk(0x41 + i), { hidden: { move: i % 3, salt: new Uint8Array(randomBytes(32)) }, noMarks: true, only: [] }); taken++; }
+      try { await lockAndPlay(w, mk(0x41 + i), { hidden: { move: i % 3, salt: new Uint8Array(randomBytes(32)) }, noMarks: true, only: [], stakeHeld: false, lockFirst: false }); taken++; }
       catch { /* refused at a door: that is the safe answer */ }
     }
     const held = w.nodes.map((d) => d.round.entriesOf(w.rid).length);

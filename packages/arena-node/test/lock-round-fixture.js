@@ -176,7 +176,7 @@ export async function openLockRound(on, { minScore = 1, stakeMsat = STAKE, endMs
 const gameFeeBps = (w) => { const f = pluginForRound(w.c, (w.a || w.nodes[0]).round.plugins); if (!f.ok) return undefined;
   return entryGiftsInFee(w.c, f.plugin.manifest) ? entryFeeBpsForRound(w.c, f.plugin.manifest) : entryFeeBpsOf(f.plugin.manifest); };
 // `order`: { price (PRICE_SCALE units), expiryMs } - a market order: the entry buys `pick` at that limit
-export async function lockAndPlay(w, who, { session: fixedSession = null, feeLock = true, feeFirst = false, address = false, noMarks = false, fork = null, staleMarks = 1, game = null, donation = null, pick = undefined, hidden = null, order = null, only = null, unreached = [], expirySpan = null, frontendPk = null, lockHeaders = null, lockFirst = true, lockClaim = true } = {}) {
+export async function lockAndPlay(w, who, { session: fixedSession = null, feeLock = true, feeFirst = false, address = false, noMarks = false, fork = null, staleMarks = 1, game = null, donation = null, pick = undefined, hidden = null, order = null, only = null, unreached = [], expirySpan = null, frontendPk = null, lockHeaders = null, lockFirst = true, lockClaim = true, stakeHeld = true } = {}) {
   const session = fixedSession || ed25519.utils.randomSecretKey();   // `session`: a fixed session key, for a test that enters twice with one (kanban #1479)
   const preimage = secretScalar();
   const e = rand(32);
@@ -220,10 +220,12 @@ export async function lockAndPlay(w, who, { session: fixedSession = null, feeLoc
   const span = expirySpan ?? (w.c.stakeExpiryBlocks > 144 ? w.c.stakeExpiryBlocks : 200);
   const fields = { paymentImage: { kind: 'point', bytes: entry.stakePoint }, amountMsat: netStakeMsat(entry), claimPk: w.claimPk,
     refundPk: refundKeyOf(who.key), expiration: w.port.height + span };
-  await w.port.put(outpoint, fields);
+  // `stakeHeld: false`: no lock is ever made at the federation - a client with no sats (kanban #2174: an entry past the lockless cap is entered
+  // only once the federation holds its own stake lock, so the fixture's made lock would let it in)
+  if (stakeHeld) await w.port.put(outpoint, fields);
   const feeFields = feeLock ? { paymentImage: { kind: 'hash', bytes: sha256(feeSecret) }, amountMsat: entry.feeMsat, claimPk: w.claimPk,
     refundPk: refundKeyOf(who.key), expiration: w.port.height + span } : null;
-  if (feeLock) await w.port.put(feeOutpoint, feeFields);
+  if (feeLock && stakeHeld) await w.port.put(feeOutpoint, feeFields);
   const input = { roundId: w.rid, entryId: eid, previousHash: GENESIS_HASH, firstTick: 0,
     ticks: Array.from({ length: who.ticks }, (_, t) => play.words(t)), liquidations: [], loads: game ? [] : bedFrom(0) };
   let endHash;
