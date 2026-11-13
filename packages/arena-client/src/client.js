@@ -65,6 +65,8 @@ import { readWithOneRetry } from './reread.js';
 import { NO_SHARES } from '../../arena-protocol/src/handout.js';
 import { entryFeeMsat } from '../../arena-protocol/src/fee.js';
 import { netStakeMsat } from '../../arena-protocol/src/payout.js';
+// ONE NODE'S GET /receipts ANSWER, AT MOST (kanban #2554): the seat's own cap on a peer body (#1550)
+const RECEIPTS_MAX_BYTES = 16 * 1024 * 1024;
 // THE PLAYER'S DONATION (M3.2 6e): the split, the failure rule, the LNURL checks.
 import { donationSetMatchesRound, splitDonation, donationAfterFailures, donationSetPaysKeys } from '../../arena-protocol/src/donation.js';
 import { donationKeysForNetworkId } from '../../arena-protocol/src/donation-keys.js';
@@ -1371,16 +1373,28 @@ export class Client {
     const r = await readWithOneRetry(fetch,
       `${base}/receipts?round=${toHex(roundId)}&entry=${toHex(entryId)}`);
     if (!r.ok) throw new Error(`the node refused the receipts: ${(await r.text()).trim()}`);
+    // BOUNDED IN WORK ON THE PAGE TOO (kanban #2554, refute of #1636 - the seat's carryReceipts has the same bounds): one seat's
+    // answer is read up to RECEIPTS_MAX_BYTES, each (mark, signer) is verified once - a copy of a receipt already taken costs no
+    // signature check - and the loop gives the page's thread back every 64 records, so one committee seat answering its own
+    // valid receipt thousands of times cannot hold the page on a resume
+    const said = Number(r.headers && r.headers.get ? r.headers.get('content-length') : NaN);
+    if (Number.isFinite(said) && said > RECEIPTS_MAX_BYTES) throw new Error(`${said} bytes of receipts is more than one node's answer may be`);
     const bytes = new Uint8Array(await r.arrayBuffer());
+    if (bytes.length > RECEIPTS_MAX_BYTES) throw new Error(`${bytes.length} bytes of receipts is more than one node's answer may be`);
     if (bytes.length % SIGNED_RECEIPT_BYTES !== 0)
       throw new Error(
         `${bytes.length} bytes is not a whole number of ${SIGNED_RECEIPT_BYTES}-byte receipts`);
 
     const out = [];
-    for (let at = 0; at < bytes.length; at += SIGNED_RECEIPT_BYTES) {
+    const taken = new Set();
+    for (let at = 0, n = 0; at < bytes.length; at += SIGNED_RECEIPT_BYTES, n += 1) {
+      if (n > 0 && n % 64 === 0) await new Promise((ok) => setTimeout(ok, 0));
       const one = bytes.subarray(at, at + SIGNED_RECEIPT_BYTES);
       const { body, signature } = splitSignedReceipt(one);
       const rec = decodeCheckpointReceipt(body);
+      const key = `${toHex(rec.checkpointId)}:${toHex(rec.nodePubkey)}`;
+      if (taken.has(key)) continue;
+      taken.add(key);
       if (!this.nodes.some((n) => toHex(n) === toHex(rec.nodePubkey)))
         throw new Error(
           `a receipt signed by ${toHex(rec.nodePubkey)}, which is not on this round's committee`);
