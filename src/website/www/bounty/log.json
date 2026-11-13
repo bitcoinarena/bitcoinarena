@@ -1,288 +1,288 @@
 [
  {
   "season": "Season 1",
-  "date": "2026-11-11",
+  "date": "2026-11-11 18:15 UTC",
   "reason": "Feedback #001 (high)",
   "channel": "bug bounty",
   "sats": 5000
  },
  {
   "season": "Season 1",
-  "date": "2026-11-11",
+  "date": "2026-11-11 18:15 UTC",
   "reason": "Feedback #002 (high)",
   "channel": "bug bounty",
   "sats": 5000
  },
  {
   "season": "Season 1",
-  "date": "2026-11-11",
+  "date": "2026-11-11 18:15 UTC",
   "reason": "Feedback #004 (medium)",
   "channel": "bug bounty",
   "sats": 2000
  },
  {
   "season": "Season 1",
-  "date": "2026-11-11",
+  "date": "2026-11-11 18:15 UTC",
   "reason": "Feedback #005 (low)",
   "channel": "bug bounty",
   "sats": 1000
  },
  {
   "season": "Season 1",
-  "date": "2026-11-11",
+  "date": "2026-11-11 18:15 UTC",
   "reason": "Feedback #006 (useful)",
   "channel": "bug bounty",
   "sats": 500
  },
  {
   "season": "Season 1",
-  "date": "2026-11-11",
+  "date": "2026-11-11 18:45 UTC",
   "reason": "Feedback #007 (useful)",
   "channel": "bug bounty",
   "sats": 500
  },
  {
   "season": "Season 1",
-  "date": "2026-11-12",
+  "date": "2026-11-12 19:09 UTC",
   "reason": "Feedback #008 (medium)",
   "channel": "bug bounty",
   "sats": 2000
  },
  {
   "season": "Season 1",
-  "date": "2026-11-11",
+  "date": "2026-11-11 22:08 UTC",
   "reason": "Feedback #009 (medium)",
   "channel": "bug bounty",
   "sats": 2000
  },
  {
   "season": "Season 1",
-  "date": "2026-11-11",
+  "date": "2026-11-12 14:08 UTC",
   "reason": "Feedback #010 (medium)",
   "channel": "bug bounty",
   "sats": 2000
  },
  {
   "season": "Season 1",
-  "date": "2026-11-12",
+  "date": "2026-11-12 07:11 UTC",
   "reason": "Feedback #011 (high)",
   "channel": "bug bounty",
   "sats": 5000
  },
  {
   "season": "Season 1",
-  "date": "2026-11-12",
+  "date": "2026-11-12 07:11 UTC",
   "reason": "Feedback #012 (critical)",
   "channel": "bug bounty",
   "sats": 10000
  },
  {
   "season": "Season 1",
-  "date": "2026-11-12",
+  "date": "2026-11-12 07:11 UTC",
   "reason": "Feedback #013 (high)",
   "channel": "bug bounty",
   "sats": 5000
  },
  {
   "season": "Season 1",
-  "date": "2026-11-12",
+  "date": "2026-11-12 07:13 UTC",
   "reason": "Feedback #014 (high)",
   "channel": "bug bounty",
   "sats": 5000
  },
  {
   "season": "Season 1",
-  "date": "2026-11-12",
+  "date": "2026-11-12 07:13 UTC",
   "reason": "Feedback #015 (high)",
   "channel": "bug bounty",
   "sats": 5000
  },
  {
   "season": "Season 1",
-  "date": "2026-11-12",
+  "date": "2026-11-12 07:13 UTC",
   "reason": "Feedback #016 (low)",
   "channel": "bug bounty",
   "sats": 1000
  },
  {
   "season": "Season 1",
-  "date": "2026-11-12",
+  "date": "2026-11-12 13:42 UTC",
   "reason": "Feedback #017 (medium)",
   "channel": "bug bounty",
   "sats": 2000
  },
  {
   "season": "Season 1",
-  "date": "2026-11-12",
+  "date": "2026-11-12 13:42 UTC",
   "reason": "Feedback #018 (high)",
   "channel": "bug bounty",
   "sats": 5000
  },
  {
   "season": "Season 1",
-  "date": "2026-11-12",
+  "date": "2026-11-12 20:54 UTC",
   "reason": "Feedback #020 (high)",
   "channel": "bug bounty",
   "sats": 5000
  },
  {
   "season": "Season 1",
-  "date": "2026-11-12",
+  "date": "2026-11-12 20:55 UTC",
   "reason": "Feedback #021 (medium)",
   "channel": "bug bounty",
   "sats": 2000
  },
  {
   "season": "Season 1",
-  "date": "2026-11-12",
+  "date": "2026-11-12 20:54 UTC",
   "reason": "Feedback #023 (medium)",
   "channel": "bug bounty",
   "sats": 2000
  },
  {
   "season": "Season 1",
-  "date": "2026-11-12",
+  "date": "2026-11-12 21:38 UTC",
   "reason": "Feedback #029 (low)",
   "channel": "bug bounty",
   "sats": 1000
  },
  {
   "season": "Season 1",
-  "date": "2026-11-12",
+  "date": "2026-11-12 22:32 UTC",
   "reason": "Feedback #030 (low)",
   "channel": "bug bounty",
   "sats": 1000
  },
  {
   "season": "Season 1",
-  "date": "2026-11-12",
+  "date": "2026-11-12 22:32 UTC",
   "reason": "Feedback #031 (low)",
   "channel": "bug bounty",
   "sats": 1000
  },
  {
   "season": "Season 1",
-  "date": "2026-11-13",
+  "date": "2026-11-13 14:37 UTC",
+  "reason": "Feedback #032 (low)",
+  "channel": "bug bounty",
+  "sats": 1000
+ },
+ {
+  "season": "Season 1",
+  "date": "2026-11-13 14:21 UTC",
   "reason": "Feedback #033 (medium)",
   "channel": "bug bounty",
   "sats": 1000
  },
  {
   "season": "Season 1",
-  "date": "2026-11-13",
+  "date": "2026-11-13 14:21 UTC",
   "reason": "Feedback #034 (medium)",
   "channel": "bug bounty",
   "sats": 1000
  },
  {
   "season": "Season 1",
-  "date": "2026-11-13",
+  "date": "2026-11-13 14:21 UTC",
   "reason": "Feedback #035 (medium)",
   "channel": "bug bounty",
   "sats": 1000
  },
  {
   "season": "Season 1",
-  "date": "2026-11-13",
+  "date": "2026-11-13 14:21 UTC",
   "reason": "Feedback #036 (medium)",
   "channel": "bug bounty",
   "sats": 1000
  },
  {
   "season": "Season 1",
-  "date": "2026-11-13",
+  "date": "2026-11-13 14:21 UTC",
   "reason": "Feedback #037 (high)",
   "channel": "bug bounty",
   "sats": 2000
  },
  {
   "season": "Season 1",
-  "date": "2026-11-13",
+  "date": "2026-11-13 14:21 UTC",
   "reason": "Feedback #038 (high)",
   "channel": "bug bounty",
   "sats": 1000
  },
  {
   "season": "Season 1",
-  "date": "2026-11-13",
+  "date": "2026-11-13 14:21 UTC",
   "reason": "Feedback #039 (high)",
   "channel": "bug bounty",
   "sats": 1000
  },
  {
   "season": "Season 1",
-  "date": "2026-11-13",
+  "date": "2026-11-13 14:21 UTC",
   "reason": "Feedback #040 (high)",
   "channel": "bug bounty",
   "sats": 1000
  },
  {
   "season": "Season 1",
-  "date": "2026-11-13",
+  "date": "2026-11-13 14:21 UTC",
   "reason": "Feedback #041 (medium)",
   "channel": "bug bounty",
   "sats": 1000
  },
  {
   "season": "Season 1",
-  "date": "2026-11-13",
+  "date": "2026-11-13 14:21 UTC",
   "reason": "Feedback #042 (high)",
   "channel": "bug bounty",
   "sats": 1000
  },
  {
   "season": "Season 1",
-  "date": "2026-11-13",
+  "date": "2026-11-13 14:21 UTC",
   "reason": "Feedback #043 (high)",
   "channel": "bug bounty",
   "sats": 1000
  },
  {
   "season": "Season 1",
-  "date": "2026-11-13",
+  "date": "2026-11-13 14:21 UTC",
   "reason": "Feedback #044 (high)",
   "channel": "bug bounty",
   "sats": 1000
  },
  {
   "season": "Season 1",
-  "date": "2026-11-13",
+  "date": "2026-11-13 14:21 UTC",
   "reason": "Feedback #045 (high)",
   "channel": "bug bounty",
   "sats": 1000
  },
  {
   "season": "Season 1",
-  "date": "2026-11-13",
+  "date": "2026-11-13 14:21 UTC",
   "reason": "Feedback #046 (high)",
   "channel": "bug bounty",
   "sats": 1000
  },
  {
   "season": "Season 1",
-  "date": "2026-11-13",
+  "date": "2026-11-13 14:21 UTC",
   "reason": "Feedback #047 (high)",
   "channel": "bug bounty",
   "sats": 1000
  },
  {
   "season": "Season 1",
-  "date": "2026-11-13",
-  "reason": "Feedback #049 (high)",
-  "channel": "bug bounty",
-  "sats": 1000
- },
- {
-  "season": "Season 1",
-  "date": "2026-11-13",
+  "date": "2026-11-13 14:21 UTC",
   "reason": "Feedback #048 (useful)",
   "channel": "bug bounty",
   "sats": 500
  },
  {
   "season": "Season 1",
-  "date": "2026-11-13",
-  "reason": "Feedback #032 (low)",
+  "date": "2026-11-13 14:21 UTC",
+  "reason": "Feedback #049 (high)",
   "channel": "bug bounty",
   "sats": 1000
  }
