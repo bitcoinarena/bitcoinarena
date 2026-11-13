@@ -29,7 +29,7 @@ import { absenceHex, readAbsenceHex, departureHex, readDepartureHex, dueDepartur
 import { emergencyDepartureStands, emergencyDepartureEffect, emergencyDepartureId } from '../../arena-protocol/src/emergency.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { withConfigEndpoints } from './federation-endpoints.js';
-import { buildFederationRecord, encodeFederationRecord, federationRecordId, joinSignedRecord, verifyFederationRecord,
+import { buildFederationRecord, encodeFederationRecord, federationRecordId, joinSignedRecord, verifyFederationRecord, verifyFederationRecords,
   FEDERATION_STATUS, GONE, decodeFederationRecord, splitSignedRecord, guardianKeySet, highestVerified, recordStatusName, thresholdOf, loadReserveOf, statusFor, paysDrainShares, playerReserveOf, GATEWAY_FEE_MAX_REFERENCE } from '../../arena-protocol/src/federation-record.js';
 import { recordBand, bandOfRecord } from '../../arena-protocol/src/capacity.js';
 
@@ -215,6 +215,23 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   }
   // THE GUARDIAN BOND LOCK IS ON AT THIS BODY'S HEIGHT (#1104's line; #1318's departure on schedule rides on it)
   const lockOn = (b) => !!(bondLock && Number.isInteger(bondLock.from) && b.height >= bondLock.from);
+  // THE CHAIN TIP A RECORD'S HEIGHT IS BOUNDED BY (kanban #2604): null when this seat reads none
+  async function tipNow() {
+    if (typeof chainTip !== 'function') return null;
+    try { const t = Number(await chainTip()); return Number.isInteger(t) && t >= 0 ? t : null; } catch { return null; }
+  }
+  /**
+   * A FEDERATION'S RECORDS JUDGED TOGETHER (kanban #2604, feedback #038): `items` [{ bytes, census }] the records of `fidHex` this seat sees at
+   * once, with the record it keeps as context - so without the config no record stands on its own nominal (verifyFederationRecords), and none
+   * above the tip. One verdict per item. 2.0: `ownBand` (default) holds each record to this seat's band height (bandFrom), as gather and mirror
+   * always did; false leaves the network's own (restoreNow, a proof's record). `net`: the network the record must be of (a proof's record).
+   */
+  function judge(fidHex, items, { keys = null, tip = null, census = null, inviteFederationId, ownBand = true, net = null } = {}) {
+    const k = kept.get(String(fidHex).toLowerCase());
+    const context = k && k.bytes ? [{ bytes: k.bytes, census: census || (items[0] && items[0].census) || [], context: true }] : [];
+    const sv = (sg, m, key) => { try { return schnorr.verify(sg, m, key); } catch { return false; } };
+    return verifyFederationRecords([...items, ...context], { verify: sv, inviteFederationId, networkId: net, bandPoint: ownBand ? bandFrom : undefined, guardianKeys: keys, tip }).slice(0, items.length);
+  }
   const kept = new Map();                    // federation id hex -> { bytes, record, status, height, signers, atMs }
   const draining = new Map();                // federation id hex -> status name
   // THE HALT A LIQUIDATION COUNTS FROM (§23A.5): the lowest-height signed HALTED record of the run of HALTED records
@@ -490,16 +507,23 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     if (asked.answered < thresholdOf(asked.of)) return { ok: false, why: `${asked.answered} of ${asked.of} guardians answered with their records below ${b.height}: this guardian does not sign this round` };
     const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
     const keys = await keysFor(fid);
-    for (const hex of [...asked.hexes, ...(previous ? [String(previous).toLowerCase()] : [])]) {
+    // EVERY RECORD BELOW THIS HEIGHT, JUDGED TOGETHER (kanban #2604): each with the census it stands against (this basis's, else its own height's)
+    const items = [];
+    for (const hex of new Set([...asked.hexes, ...(previous ? [String(previous).toLowerCase()] : [])])) {
       let bytes, r; try { bytes = fromHex(hex); r = splitSignedRecord(bytes).record; } catch { continue; }
       if (toHex(r.federationId) !== fid || r.height >= b.height || !inviteFederationId) continue;
-      let v = verifyFederationRecord(bytes, { census: b.census.entries, verify, inviteFederationId, bandPoint: bandFrom, guardianKeys: keys });
+      let census = b.census.entries;
+      const v = verifyFederationRecord(bytes, { census, verify, inviteFederationId, bandPoint: bandFrom, guardianKeys: keys });
       if (!v.ok && typeof censusAt === 'function') {
         const entries = await Promise.resolve().then(() => censusAt(r.height)).catch(() => null);
         if (!entries) return { ok: false, why: `the census at ${r.height} is not read, so a record below ${b.height} cannot be checked: this guardian does not sign this round` };
-        v = verifyFederationRecord(bytes, { census: entries, verify, inviteFederationId, bandPoint: bandFrom, guardianKeys: keys });
+        census = entries;
       }
-      if (v.ok) rows.push({ ...v, hex });
+      items.push({ bytes, census, hex });
+    }
+    if (items.length) {
+      const verdicts = judge(fid, items.map((x) => ({ bytes: x.bytes, census: x.census })), { inviteFederationId, keys, tip: await tipNow(), census: b.census.entries });
+      items.forEach((x, i) => { if (verdicts[i].ok) rows.push({ ...verdicts[i], hex: x.hex }); });
     }
     const best = highestVerified(rows);
     return { ok: true, was: best ? bandOfRecord(best.record) : 'CALM', hex: best ? best.hex || null : null };
@@ -635,7 +659,8 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     let height, fid; try { const r = splitSignedRecord(record).record; height = r.height; fid = toHex(r.federationId); } catch (e) { return { ok: false, status: 400, why: e.message }; }
     const entries = typeof censusAt === 'function' ? await Promise.resolve().then(() => censusAt(height)).catch(() => null) : null;
     if (!entries) return { ok: false, status: 503, wait: true, why: `the census at ${height} is not read here` };
-    const v = verifyFederationRecord(record, { census: entries, verify: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } }, inviteFederationId, networkId, guardianKeys: await keysFor(fid) });
+    // judged with the record this seat keeps of that federation, and below the tip (kanban #2604): without the config no record stands on its own nominal
+    const [v] = judge(fid, [{ bytes: record, census: entries }], { inviteFederationId, keys: await keysFor(fid), tip: await tipNow(), net: networkId, ownBand: false });
     return v.ok ? { ok: true, record: v.record } : { ok: false, status: 409, why: `that record does not stand: ${v.why}` };
   }
   /** A THEFT'S PROOF HANDED TO THIS SEAT (PUT /slash/<id>): kept when the bytes hash to that id, the record in them stands here, is the proof's federation's, and seats the node. */
@@ -729,7 +754,8 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     try { if (toHex(abandonedProofId(bytes)) !== id) return { ok: false, status: 409, why: 'those bytes are not the proof that hash names' }; p = decodeAbandonedProof(bytes); record = p.record; height = splitSignedRecord(record).record.height; } catch (e) { return { ok: false, status: 400, why: e.message }; }
     const entries = typeof censusAt === 'function' ? await Promise.resolve().then(() => censusAt(height)).catch(() => null) : null;
     if (!entries) return { ok: false, status: 503, why: `the census at ${height} is not read here` };
-    const v = verifyFederationRecord(record, { census: entries, verify: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } }, inviteFederationId, networkId, guardianKeys: await keysFor(toHex(p.federationId)) });
+    // judged with the record this seat keeps of that federation, and below the tip (kanban #2604)
+    const [v] = judge(toHex(p.federationId), [{ bytes: record, census: entries }], { inviteFederationId, keys: await keysFor(toHex(p.federationId)), tip: await tipNow(), net: networkId, ownBand: false });
     if (!v.ok) return { ok: false, status: 409, why: `that record does not stand: ${v.why}` };
     if (toHex(v.record.federationId) !== toHex(p.federationId)) return { ok: false, status: 409, why: 'that record is another federation\'s' };
     if (!abandonedRows(v.record, abandonedFrom).some((r) => toHex(r.nodePubkey) === toHex(p.nodePubkey) && toHex(r.proofRef) === toHex(p.proofRef))) return { ok: false, status: 409, why: 'that record has no such ABANDONED row' };
@@ -913,7 +939,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       if (good) signatures.push({ nodePubkey: g.nodePubkey, signature: fromHex(said.signature) });
     }
     const signed = joinSignedRecord(finalBytes, signatures);
-    const v = verifyFederationRecord(signed, { census: b.census.entries, verify: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } }, inviteFederationId, bandPoint: bandFrom, guardianKeys: keys });
+    const [v] = judge(toHex(federationId), [{ bytes: signed, census: b.census.entries }], { inviteFederationId, keys, tip: await tipNow() });
     if (!v.ok) return { ok: false, why: v.why, signatures: signatures.length, of: plain.guardians.length };
     keep(toHex(federationId), signed, v);
     return { ok: true, status: v.status, signers: v.signers, height: v.record.height, gone: gone.length, of: plain.guardians.length };
@@ -938,7 +964,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
         const bytes = fromHex(String(row.record));
         const r = decodeFederationRecord(splitSignedRecord(bytes).body);
         const own = r.guardians.map((g) => ({ pubkey: g.nodePubkey, advert: { guardianOf: [{ federationId: r.federationId, guardianKey: g.peerKey }] } }));
-        const v = verifyFederationRecord(bytes, { census: own, verify, inviteFederationId, guardianKeys: keysKnown.get(fid) || null });
+        const [v] = judge(fid, [{ bytes, census: own }], { inviteFederationId, keys: keysKnown.get(fid) || null, ownBand: false });
         if (v.ok && keep(fid, bytes, v, 'restore')) { provisional.add(fid); restored++; }
       } catch { /* restored at 20 s, or gathered again */ }
     }
@@ -960,10 +986,11 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
         const h = decodeFederationRecord(splitSignedRecord(bytes).body).height;
         const b = basisFor(fid);
         const keys = await keysFor(fid);
-        let v = b && b.ok ? verifyFederationRecord(bytes, { census: b.census.entries, verify, inviteFederationId, bandPoint: bandFrom, guardianKeys: keys }) : { ok: false };
+        const tip = await tipNow();
+        let v = b && b.ok ? judge(fid, [{ bytes, census: b.census.entries }], { inviteFederationId, keys, tip })[0] : { ok: false };
         if (!v.ok && typeof censusAt === 'function') {
           const entries = await Promise.race([Promise.resolve(censusAt(h)).catch(() => null), new Promise((ok) => setTimeout(() => ok(null), 5000))]);
-          if (entries) v = verifyFederationRecord(bytes, { census: entries, verify, inviteFederationId, bandPoint: bandFrom, guardianKeys: keys });
+          if (entries) v = judge(fid, [{ bytes, census: entries }], { inviteFederationId, keys, tip })[0];
         }
         // NO CENSUS YET (2026-10-20: "It is also not reading the federations at all reliably so everything gateway related is never
         // shown" - measured 12:48Z: six test host seats restarted one by one under load 18 held no record for minutes, their chain view not
@@ -973,7 +1000,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
         if (!v.ok) {
           const r = decodeFederationRecord(splitSignedRecord(bytes).body);
           const own = r.guardians.map((g) => ({ pubkey: g.nodePubkey, advert: { guardianOf: [{ federationId: r.federationId, guardianKey: g.peerKey }] } }));
-          v = verifyFederationRecord(bytes, { census: own, verify, inviteFederationId, bandPoint: bandFrom, guardianKeys: keys });
+          v = judge(fid, [{ bytes, census: own }], { inviteFederationId, keys, tip })[0];
         }
         if (v.ok) { keep(fid, bytes, v); restored++; }
       } catch { /* not restored: gathered again */ }
@@ -1014,21 +1041,31 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
               if (self.ok) { later.push({ x, h: rec.height }); continue; }
             }
           }
-          take(x, v);
+          cand(x, b.census.entries);
         }
         later.sort((p, q) => q.h - p.h);
         for (const { x, h } of later) {
-          let v = { ok: false, why: 'its census was not read: too many record heights in one answer' };
+          let v = { ok: false, why: 'its census was not read: too many record heights in one answer' }; let used = null;
           const reads = pass.byBase.get(base) || 0;   // this node's new heights in the whole pass, every federation (kanban #2339)
           if (censusKept.has(h) || (reads < MIRROR_CENSUS_PER_ANSWER && censusKept.size < MIRROR_CENSUS_PER_PASS)) {
             if (!censusKept.has(h)) { censusKept.set(h, Promise.resolve(censusAt(h)).catch(() => null)); pass.byBase.set(base, reads + 1); }
             const entries = await censusKept.get(h);
-            try { v = entries ? verifyFederationRecord(fromHex(String(x.record)), { census: entries, verify, inviteFederationId, bandPoint: bandFrom, guardianKeys: keys }) : { ok: false, why: 'no census at that record height' }; } catch (e) { v = { ok: false, why: e.message }; }
+            used = entries || null;
+            if (!entries) v = { ok: false, why: 'no census at that record height' };
           }
-          take(x, v);
+          if (used) cand(x, used); else why = v.why;
         }
       } catch { /* the next guardian */ }
     }));
+    // EVERY RECORD OF THE FEDERATION THIS MIRROR SEES, JUDGED TOGETHER (kanban #2604): each with the census it stands against
+    const cands = [];
+    function cand(x, census) { let bytes = null; try { bytes = fromHex(String(x.record)); } catch { return; } cands.push({ x, bytes, census }); }
+    async function settle() {
+      best = null;
+      if (!cands.length) return;
+      const verdicts = judge(fid, cands.map((c) => ({ bytes: c.bytes, census: c.census })), { inviteFederationId, keys, tip: await tipNow(), census: b.census.entries });
+      cands.forEach((c, i) => take(c.x, verdicts[i]));
+    }
     function take(x, v) {
       if (!v.ok) { why = v.why; return; }
       // the newest; at the same height a CLOSED one (final - see keep), else the better status (kanban #1157: one node serving a worse body
@@ -1038,12 +1075,14 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
         || (sameH && best.v.status !== 'CLOSED' && v.status !== 'CLOSED' && (STATUS_RANK[v.status] ?? 0) < (STATUS_RANK[best.v.status] ?? 0))) best = { v, bytes: fromHex(String(x.record)) };
     }
     await ask(bases);
+    await settle();
     if (!best) {
       let others = []; try { others = [...new Set((peerSeats() || []).map((u) => String(u).replace(/\/+$/, '')))].filter((u) => !bases.includes(u)); } catch { others = []; }
       if (others.length) {
         const turn = peerTurns.get(fid) || 0; peerTurns.set(fid, turn + 1);
         const from = (turn * MIRROR_PEERS) % others.length;
         await ask([...others.slice(from), ...others.slice(0, from)].slice(0, MIRROR_PEERS));
+        await settle();
         if (!best) why = `${why}, nor ${Math.min(MIRROR_PEERS, others.length)} of the census seats asked`;
       }
     }

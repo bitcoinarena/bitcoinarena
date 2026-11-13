@@ -333,5 +333,94 @@ export function highestVerified(rows) {
   return best;
 }
 
+/** How restrictive a status is, for the no-config guard (kanban #2604): a move to a lower rank is a move toward allowing more. */
+export const RESTRICTION_RANK = Object.freeze({ OPEN: 0, DRAINING: 1, CRITICAL: 2, CLOSED: 3, HALTED: 4 });
+
+/**
+ * THE RECORDS OF ONE FEDERATION, JUDGED TOGETHER (kanban #2604, feedback #038). verifyFederationRecord without the config holds a record to its
+ * own nominal - and one bonded node whose advert names the federation under a made-up key signed { guardians: [itself], nominal 1, OPEN,
+ * height genuine + 1 }: it verified alone, was the newest, and a client read the federation OPEN over a genuine 7 of 7 HALTED or CLOSED record.
+ * So without the config no record is judged alone. `items`: the records the caller sees of the federation together - bytes, or
+ * { bytes, census, context } (`census` this item's own; `context: true` a record the caller already holds, which counts toward N and the
+ * guard but whose verdict the caller ignores). Answers one verdict per item, as verifyFederationRecord's.
+ *
+ *   TIP (rule 3)        a record whose height is above `tip` (when known) is refused: a made-up far height would be "newest" for good.
+ *   BAND (2.0)          every record held to its capacity band at `bandPoint`, as verifyFederationRecord holds it.
+ *   WITH guardianKeys   each record as verifyFederationRecord with the keys (the config decides who is a guardian); the tip bound too.
+ *   WITHOUT (rules 1-2)
+ *     self-consistent   thresholdOf(its nominal) of the guardians it lists signed it, each a census node naming the key listed for it.
+ *                       (Not every listed guardian need be in the census: only census signers count anyway, so a listed stranger adds
+ *                       nothing an attacker could use, and a genuine record whose one guardian's bond lapsed still sets N.)
+ *     N                 the largest nominal of a self-consistent record seen (at least 1)
+ *     stands            thresholdOf(max(N, its nominal)) valid signers - so a record listing fewer guardians than the federation's largest
+ *                       self-consistent record needs that record's threshold; to lift N a sybil set must sign thresholdOf(N) itself
+ *     guard             a record that stands and is less restrictive (RESTRICTION_RANK) than a self-consistent record Q at or below its
+ *                       height, Q listing at least thresholdOf(N) guardians, also needs valid signatures of thresholdOf(Q.nominal) of
+ *                       Q's own guardians: a federation is reopened by the guardians that halted (closed, drained) it, nobody else. A
+ *                       sybil's small restrictive record (nominal < thresholdOf(N)) does not hold the genuine one back.
+ */
+export function verifyFederationRecords(items, { census = null, verify, inviteFederationId, networkId = null, bandPoint = undefined, guardianKeys = null, tip = null }) {
+  const tipOk = Number.isInteger(tip) && tip >= 0;
+  const rows = (items || []).map((it) => {
+    const bytes = it instanceof Uint8Array ? it : it && it.bytes;
+    const c = it instanceof Uint8Array ? census : (it && it.census) || census;
+    let s; try { s = splitSignedRecord(bytes); } catch (e) { return { v: { ok: false, why: e.message } }; }
+    const r = s.record;
+    if (tipOk && r.height > tip) return { v: { ok: false, why: `its height ${r.height} is above the chain tip ${tip}` } };
+    if (guardianKeys !== null && guardianKeys !== undefined) return { v: verifyFederationRecord(bytes, { census: c, verify, inviteFederationId, networkId, bandPoint, guardianKeys }) };
+    if (networkId && toHex(networkId) !== toHex(r.networkId)) return { v: { ok: false, why: 'that record is of another network' } };
+    // its capacity band as verifyFederationRecord holds it (§23A.3a, 2.0): named from `bandPoint`, by default its network's
+    const point = bandPoint === undefined ? capacityBandPoint(networkOf(r.networkId)) : bandPoint;
+    const due = Number.isInteger(point) && r.height >= point;
+    if (due && !r.capacityBand) return { v: { ok: false, why: `a record at ${r.height} must name its capacity band: CAPACITY_BAND_HEIGHT is ${point}` } };
+    if (!due && r.capacityBand) return { v: { ok: false, why: `a record at ${r.height} must not name a capacity band: CAPACITY_BAND_HEIGHT is ${point === null ? 'not named' : point}` } };
+    let named; try { named = inviteFederationId(r.invite); } catch (e) { return { v: { ok: false, why: `its invite does not read: ${e.message}` } }; }
+    if (!named || toHex(named) !== toHex(r.federationId)) return { v: { ok: false, why: 'its invite names another federation than the record' } };
+    const fid = toHex(r.federationId);
+    const claims = new Map();
+    for (const e of c || []) {
+      if (!e || !e.pubkey) continue;
+      for (const g of (e.advert && e.advert.guardianOf) || []) {
+        if (toHex(g.federationId) !== fid) continue;
+        const k = toHex(e.pubkey);
+        if (!claims.has(k)) claims.set(k, new Set());
+        claims.get(k).add(toHex(g.guardianKey));
+      }
+    }
+    const listed = new Map(r.guardians.map((g) => [toHex(g.nodePubkey), toHex(g.peerKey)]));
+    const id = federationRecordId(r);
+    const signers = new Set(), keysSigned = new Set();
+    for (const sig of s.signatures) {
+      const k = toHex(sig.nodePubkey), key = listed.get(k);
+      if (!key || !claims.has(k) || !claims.get(k).has(key) || signers.has(k) || keysSigned.has(key)) continue;
+      let good = false; try { good = verify(sig.signature, id, sig.nodePubkey) === true; } catch { good = false; }
+      if (good) { signers.add(k); keysSigned.add(key); }
+    }
+    return { r, id, fid, listed, signers, selfOk: signers.size >= thresholdOf(r.nominal) };
+  });
+  if (guardianKeys !== null && guardianKeys !== undefined) return rows.map((x) => x.v);
+  // one federation per call; rows of another federation than the first readable one are refused
+  const first = rows.find((x) => x.r);
+  const fid = first ? first.fid : null;
+  let N = 1;
+  for (const x of rows) if (x.r && x.fid === fid && x.selfOk) N = Math.max(N, x.r.nominal);
+  const restrictive = rows.filter((x) => x.r && x.fid === fid && x.selfOk && RESTRICTION_RANK[nameOf(FEDERATION_STATUS, x.r.status)] > 0 && x.r.nominal >= thresholdOf(N));
+  return rows.map((x) => {
+    if (x.v) return x.v;
+    if (x.fid !== fid) return { ok: false, why: 'one federation\'s records are judged together, and this is another federation' };
+    const status = nameOf(FEDERATION_STATUS, x.r.status);
+    const need = thresholdOf(Math.max(N, x.r.nominal));
+    if (x.signers.size < need)
+      return { ok: false, why: `${x.signers.size} of its bonded guardians signed it, and a record needs ${need}${N > x.r.nominal ? ` (another record of this federation, signed by its own threshold, lists ${N} guardians; this one ${x.r.nominal})` : ''}` };
+    for (const q of restrictive) {
+      if (q === x || q.r.height > x.r.height || RESTRICTION_RANK[status] >= RESTRICTION_RANK[nameOf(FEDERATION_STATUS, q.r.status)]) continue;
+      const by = [...x.signers].filter((k) => q.listed.has(k)).length;
+      if (by < thresholdOf(q.r.nominal))
+        return { ok: false, why: `it says ${status} over the ${nameOf(FEDERATION_STATUS, q.r.status)} record at ${q.r.height}, and only ${by} of that record's ${q.r.nominal} guardians signed it (it needs ${thresholdOf(q.r.nominal)})` };
+    }
+    return { ok: true, record: x.r, status, signers: x.signers.size, id: x.id, keyed: false, n: N };
+  });
+}
+
 /** Of several verified records of one federation, the newest by height (§23A.4: "newest height with valid signatures wins"). */
 export const newestRecord = (verified) => verified.filter((v) => v && v.ok).sort((a, b) => b.record.height - a.record.height)[0] || null;
