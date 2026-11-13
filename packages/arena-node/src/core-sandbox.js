@@ -232,7 +232,8 @@ function startThread({ files, entry }, { callMs, stepMs, askMs, loadMs, name, ar
       const d = deathOf(sup, id);
       end(caught
         ? `the core grew this node by ${caught} MB in ${what}, and a call may grow it by at most ${Math.round(rssBackstop / 1048576)} MB: its thread was ended at ${triggerMb} MB, and it is not run again`
-        : `the core's thread died in ${what}${d && d.error ? ` (${d.error === 'ERR_WORKER_OUT_OF_MEMORY' ? 'out of its heap' : d.error})` : ''}: it is not run again`);
+        // kanban #2549: the death's text is the core's own (its error event's code or message) - bounded like every other failure text
+        : `the core's thread died in ${what}${d && d.error ? ` (${d.error === 'ERR_WORKER_OUT_OF_MEMORY' ? 'out of its heap' : String(d.error).slice(0, 512)})` : ''}: it is not run again`);
       throw new Error(ended);
     }
     end(`the core did not stop within ${ms} ms (${what}): its thread was ended, and it is not run again`);
@@ -352,7 +353,8 @@ export function sandboxFor(core, options) {
       // ...BUT A LOAD THAT ONLY RAN OUT OF TIME is not cached (kanban #1586): a busy node can miss LOAD_MS once, and a refusal kept
       // for the thread's life left every later close of that game - a head-to-head decide's retry too - failing until a restart
       if (/did not stop within \d+ ms \(loading\)/.test(e.message)) throw e;
-      s = { refused: e.message };
+      // kanban #2549 (refute of #1695): a refusal kept for the thread's life is bounded - whatever path built its text
+      s = { refused: String(e && e.message).slice(0, WHY_MAX) };
     }
     cache.set(key, s);
   }
