@@ -53,7 +53,11 @@ test('#2590-1: a twin of a passed bound proposal (same body, a new signature) po
   const b = await proposals.add(twin);                                   // tip 300: long after its voting phase (201-207)
   console.log('  the twin posted at tip 300:', JSON.stringify({ status: b.status, why: b.why || null, aCounts: proposals.counts(a.id) }));
   assert.equal(proposals.counts(a.id), true, 'the passed proposal still counts');
-  assert.equal(liveAt(300), toHex(configHashOf(X)), 'X stays live: no proposer undoes a vote');
+  // kanban #2629: the twin reopens the count over both ids, and the outcome the vote made stays in force until the chain's votes
+  // decide it again (wf1489-2607-1: passed again) - the proposer moves nothing a vote decided
+  const held = proposals.list().find((r) => r.id === a.id);
+  assert.equal(held.state, 'COUNTING');
+  assert.equal(held.undecided.outcome.passed, true, 'X stays in force: no proposer undoes a vote');
   // kanban #2607 (ruling #2591 (c)): the twin is the same proposal - taken (no tip check), and it changes nothing the vote decided
   assert.equal(b.status, 201, b.why);
 });
