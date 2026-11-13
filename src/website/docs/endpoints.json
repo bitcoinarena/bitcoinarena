@@ -11504,5 +11504,133 @@
   "audience": "operator/monitoring",
   "line": 0,
   "summary": "Take a node's record"
+ },
+ {
+  "method": "POST",
+  "path": "/owner/departure-anchor",
+  "params": "none",
+  "auth": "owner",
+  "returns": "200 JSON plan or anchor state",
+  "purpose": "Anchors a guardian's departure notice on chain: plan, fund from the node wallet (post), or follow an owner-sent txid (kanban #2610).",
+  "audience": "operator/monitoring",
+  "line": 7990,
+  "summary": "Departure notice anchor",
+  "query": [],
+  "body": "JSON { departure?, post?, txid?, sinceHeight? }",
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "The plan or the anchor's state."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "owner",
+  "pathParams": [],
+  "openapiPath": "/owner/departure-anchor"
+ },
+ {
+  "method": "GET",
+  "path": "/lock-namer",
+  "params": "outpoint",
+  "auth": "none",
+  "returns": "200 JSON entry bytes and claims, or 404",
+  "purpose": "The entry this seat took first naming a lock outpoint, with the player's claims it holds (kanban #1692, #1758, #1897).",
+  "audience": "seat",
+  "line": 10099,
+  "summary": "Lock namer",
+  "query": [
+   {
+    "name": "outpoint",
+    "required": true,
+    "description": "outpoint"
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "The entry's bytes and claims."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "No entry names that lock here."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": [],
+  "openapiPath": "/lock-namer"
+ },
+ {
+  "method": "GET, POST",
+  "path": "/lock-claim",
+  "params": "entry",
+  "auth": "none",
+  "returns": "200 JSON kept signature; 400 on a bad entry id or signature",
+  "purpose": "The player's BIP-340 claim on an entry's locks: POST keeps a checked claim, GET answers it (kanban #1897, #1938).",
+  "audience": "player/page",
+  "line": 10115,
+  "summary": "Lock claim",
+  "query": [
+   {
+    "name": "entry",
+    "required": true,
+    "description": "entry"
+   }
+  ],
+  "body": "64-byte signature (POST)",
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "The claim kept or answered."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "Bad entry id or signature."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "none",
+  "pathParams": [],
+  "openapiPath": "/lock-claim"
+ },
+ {
+  "method": "GET",
+  "path": "/batch-signatures",
+  "params": "round",
+  "auth": "none",
+  "returns": "200 bytes, 64 per batch in transcript order",
+  "purpose": "Each batch's session-key signature in the order GET /transcript serves, zeros where the seat took it bare (kanban #1567, feedback #013).",
+  "audience": "player/page",
+  "line": 10327,
+  "summary": "Batch signatures",
+  "query": [
+   {
+    "name": "round",
+    "required": true,
+    "description": "round"
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/octet-stream",
+    "description": "64 bytes per batch."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": [],
+  "openapiPath": "/batch-signatures"
  }
 ]
