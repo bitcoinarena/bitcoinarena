@@ -828,7 +828,7 @@ export class Verifier {
       if (this.lockSets && typeof this.lockSetRound === 'function' && this.lockSetRound(roundIdBytes)) {
         const cert = await this.lockSets.settle(roundIdBytes);
         seated = new Set(cert ? cert.entries : []);
-        if (!cert) console.log(`[h2h] ${hex(roundIdBytes).slice(0, 16)}: no certified lock set - every entry VOID (kanban #2561)`);
+        if (!cert) console.log(`[h2h] ${hex(roundIdBytes).slice(0, 16)}: ${typeof this.lockSets.contested === 'function' && this.lockSets.contested(roundIdBytes) ? 'a contested lock set (two certificates, ruling #2587)' : 'no certified lock set'} - every entry VOID (kanban #2561)`);
       }
       const carried = await this.carryReveals(roundIdBytes, entries, found.plugin.manifest.moveCount);
       const held = new Map(this.round.revealsOf(roundIdBytes).map((r) => [hex(r.entryId), r]));

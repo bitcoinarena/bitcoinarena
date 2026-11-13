@@ -2928,6 +2928,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   const settlements = new LockSettlement(round, {
     conflictsFor,
+    // RULING #2587 (kanban #2606): a contested certified lock set is VOID - no settlement of either side is signed here. `lockSets` and
+    // `lockSetRound` are made below; asked only when a settlement is built, long after this function returned
+    lockSetContested: (rid) => { try { return !!(lockSets && lockSetRound(rid) && lockSets.contested(rid)); } catch { return false; } },
     dkg, port: stakeLocks, curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)), stakeSecrets, winnings, finalityOf, donationSetFor, donationTargetFor, orderBook, reserveKeyFor, feesFor,
     peersFor: (rid) => {
       const picked = roster.committeeFor(rid, 'settlement');

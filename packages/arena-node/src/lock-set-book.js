@@ -16,7 +16,7 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import {
   LOCK_SET_WINDOW_MS, LOCK_SET_VIEW_WAIT_MS, LOCK_SET_MAX_ENTRIES, lockSetOf, lockSetId, lockSetSignatureId, lockSetViewId,
-  encodeLockSetCertificate, lockSetCertificateStands, lockSetToSign,
+  encodeLockSetCertificate, lockSetCertificateStands, lockSetToSign, decodeLockSetCertificate, encodeSignedLockSet,
 } from '../../arena-protocol/src/lock-set.js';
 
 const HEX64 = /^[0-9a-f]{64}$/;
@@ -54,7 +54,8 @@ export class LockSetBook {
     this.db = round.db;
     this.db.exec(`CREATE TABLE IF NOT EXISTS lock_set_signed (round_id BLOB PRIMARY KEY, entries TEXT NOT NULL, at_ms INTEGER NOT NULL, sig BLOB NOT NULL);
       CREATE TABLE IF NOT EXISTS lock_set_certs (round_id BLOB PRIMARY KEY, cert BLOB NOT NULL, at_ms INTEGER NOT NULL);
-      CREATE TABLE IF NOT EXISTS lock_set_conflicts (round_id BLOB PRIMARY KEY, cert BLOB NOT NULL, at_ms INTEGER NOT NULL)`);
+      CREATE TABLE IF NOT EXISTS lock_set_conflicts (round_id BLOB PRIMARY KEY, cert BLOB NOT NULL, at_ms INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS lock_set_double_signs (round_id BLOB NOT NULL, key TEXT NOT NULL, a BLOB NOT NULL, b BLOB NOT NULL, at_ms INTEGER NOT NULL, PRIMARY KEY (round_id, key))`);
     /** rid hex -> the one pull made before a lock outside the certificate is first returned (kanban #2585) */
     this.returnPulls = new Map();
   }
@@ -90,9 +91,14 @@ export class LockSetBook {
     return cert;
   }
 
-  /** Is the round VOID for want of a certificate? Only once the window is past and no certificate is held here. */
+  /**
+   * Is the round VOID? CONTESTED (ruling #2587, kanban #2606): two standing certificates over different sets - VOID at once, whatever this seat
+   * certified first (earliest-wins refused: each certificate's time is its signers' own clocks). Else for want of a certificate: only once the
+   * window is past and no certificate is held here.
+   */
   voidNow(rid, c = this.roundOf(rid)) {
     if (!c) return false;
+    if (this.conflicted(rid)) return true;
     return !this.certified(rid) && this.#now() > Number(c.entryCloseMs) + LOCK_SET_WINDOW_MS + LOCK_SET_FINAL_AFTER_MS;
   }
 
@@ -114,6 +120,8 @@ export class LockSetBook {
       views: [...room.views.values()], signatures: [...room.sigs.values()],
       certificate: cert ? toHex(cert.bytes) : null, entries: cert ? cert.entries : null, certifiedAtMs: cert ? cert.atMs : null,
       void: this.voidNow(rid, c),
+      // RULING #2587: the second certificate is served too, so a seat that pulls sees the contest before it settles
+      ...(this.conflicted(rid) ? { contested: true, conflict: toHex(new Uint8Array(this.db.prepare('SELECT cert FROM lock_set_conflicts WHERE round_id = ?').get(rid).cert)) } : {}),
     };
   }
 
@@ -143,25 +151,41 @@ export class LockSetBook {
       if (ok) { room.views.set(ok.key, ok); got.views++; }
     }
     for (const s of (Array.isArray(body && body.signatures) ? body.signatures : []).slice(0, committee.length)) {
-      if (room.sigs.has(String(s && s.key))) continue;   // one set signature a seat; a second (an equivocation) is never counted
+      const had = room.sigs.get(String(s && s.key));
+      // one set signature a seat; a second over ANOTHER set (an equivocation) is never counted - it is kept as slash evidence (ruling #2587)
+      if (had && (had.sig === String(s.sig) || this.#doubleSigned(rid, had.key))) continue;
       const ok = read(s, lockSetSignatureId);
-      if (ok) { room.sigs.set(ok.key, ok); got.signatures++; }
+      if (ok && !had) { room.sigs.set(ok.key, ok); got.signatures++; }
+      else if (ok && had.setId && ok.setId !== had.setId) this.#doubleSign(rid, had, ok);
     }
-    if (body && typeof body.certificate === 'string' && /^[0-9a-f]+$/.test(body.certificate) && body.certificate.length <= 2 * 32768) {
-      const held = this.certified(rid);
-      let bytes = null; try { bytes = fromHex(body.certificate); } catch { bytes = null; }
-      const st = bytes && !(held && toHex(held.bytes) === body.certificate)
-        ? lockSetCertificateStands(bytes, { roundId: rid, committee, threshold, entryCloseMs: c.entryCloseMs, verify: lsVerify }) : { ok: false };
-      if (st.ok && !held) { this.#keep(rid, { ...st, bytes }); got.certificate = true; }
-      // A SECOND CERTIFICATE OVER ANOTHER SET (kanban #2585): kept as the round's conflict - see conflicted()
-      else if (st.ok && st.setId !== held.setId) this.#conflict(rid, bytes);
-    }
+    // RULING #2587: a peer's second certificate (state().conflict) is taken as any certificate is - a seat that pulls sees the contest
+    const certs = [body && body.certificate, body && body.conflict].filter((x) => typeof x === 'string');
+    for (const certificate of certs) if (this.#takeCertificate(rid, c, committee, threshold, certificate)) got.certificate = true;
     const before = this.certified(rid), wasConflicted = this.conflicted(rid);
     this.#assemble(rid, c, committee, threshold);
     // A CERTIFICATE OR CONFLICT MADE HERE TRAVELS (feedback #035): step() returns at once once certified, so one assembled in take() was
     // never pushed and the conflict reached the other side only by a pull
-    if ((!before && this.certified(rid)) || (!wasConflicted && this.conflicted(rid))) { try { this.#push(rid, this.peersOf(rid) || [], this.#room(toHex(rid))); } catch { /* best effort */ } }
+    if ((!before && this.certified(rid)) || (!wasConflicted && this.conflicted(rid)) || this.#pushConflict) {
+      this.#pushConflict = false;
+      try { this.#push(rid, this.peersOf(rid) || [], this.#room(toHex(rid))); } catch { /* best effort */ }
+    }
     return { ok: true, ...got };
+  }
+
+  #pushConflict = false;
+  /** One certificate a peer (or a player) handed: kept when none is held, kept as the conflict when it stands over another set. True when kept. */
+  #takeCertificate(rid, c, committee, threshold, certificate) {
+    const body = { certificate };
+    if (/^[0-9a-f]+$/.test(body.certificate) && body.certificate.length <= 2 * 32768) {
+      const held = this.certified(rid);
+      let bytes = null; try { bytes = fromHex(body.certificate); } catch { bytes = null; }
+      const st = bytes && !(held && toHex(held.bytes) === body.certificate)
+        ? lockSetCertificateStands(bytes, { roundId: rid, committee, threshold, entryCloseMs: c.entryCloseMs, verify: lsVerify }) : { ok: false };
+      if (st.ok && !held) { this.#keep(rid, { ...st, bytes }); return true; }
+      // A SECOND CERTIFICATE OVER ANOTHER SET (kanban #2585): kept as the round's conflict - see conflicted(); handed on at once (#2587)
+      if (st.ok && st.setId !== held.setId) { if (!this.conflicted(rid)) this.#pushConflict = true; this.#conflict(rid, bytes); }
+    }
+    return false;
   }
 
   #keep(rid, cert) {
@@ -195,11 +219,44 @@ export class LockSetBook {
    */
   #conflict(rid, bytes) {
     this.db.prepare('INSERT OR IGNORE INTO lock_set_conflicts (round_id, cert, at_ms) VALUES (?, ?, ?)').run(rid, bytes, this.#now());
-    this.log(`[lock-set] ${toHex(rid).slice(0, 16)}: a second certificate over another set - the round's set is contested (kanban #2585)`);
+    this.log(`[lock-set] ${toHex(rid).slice(0, 16)}: a second certificate over another set - the round's set is contested: VOID (kanban #2585, ruling #2587)`);
+    // THE SEATS THAT SIGNED BOTH (ruling #2587): each key on both certificates with its two signatures is the slash evidence
+    try {
+      const held = this.certified(rid);
+      const a = held ? decodeLockSetCertificate(held.bytes) : null, b = decodeLockSetCertificate(bytes);
+      if (a && toHex(lockSetId(a.set)) !== toHex(lockSetId(b.set))) {
+        for (const x of a.sigs) {
+          const y = b.sigs.find((s) => toHex(s.key) === toHex(x.key));
+          if (!y) continue;
+          this.#doubleSign(rid, { key: toHex(x.key), entries: a.set.entries.map(toHex), atMs: Number(x.atMs), sig: toHex(x.sig) },
+            { key: toHex(y.key), entries: b.set.entries.map(toHex), atMs: Number(y.atMs), sig: toHex(y.sig) });
+        }
+      }
+    } catch { /* the certificates stood when taken; nothing to add */ }
   }
 
-  /** Whether a second standing certificate over another set of this round reached this seat (kanban #2585). */
+  #doubleSigned(rid, key) { return !!this.db.prepare('SELECT 1 FROM lock_set_double_signs WHERE round_id = ? AND key = ?').get(rid, String(key)); }
+
+  /** Keep one key's two set signatures over two different sets of the round (ruling #2587): the slash proof's evidence. Once per (round, key). */
+  #doubleSign(rid, x, y) {
+    const bytesOf = (s) => encodeSignedLockSet({ set: lockSetOf({ roundId: rid, entries: s.entries }), atMs: BigInt(s.atMs), sig: fromHex(s.sig) });
+    const w = this.db.prepare('INSERT OR IGNORE INTO lock_set_double_signs (round_id, key, a, b, at_ms) VALUES (?, ?, ?, ?, ?)').run(rid, String(x.key), bytesOf(x), bytesOf(y), this.#now());
+    if (w.changes) this.log(`[lock-set] ${toHex(rid).slice(0, 16)}: seat ${String(x.key).slice(0, 16)} signed two different lock sets - slashable, the whole bond to the reserves (ruling #2587)`);
+  }
+
+  /**
+   * THE DOUBLE SIGNERS OF A ROUND THIS SEAT HOLDS EVIDENCE OF (ruling #2587, kanban #2606): [{ key, signedLockSets: [a, b] }] - each pair two
+   * signed LockSets (protocol lock-set.js encodeSignedLockSet) by one committee key over two sets: the evidence of slash.js
+   * slashHoldsOnTwoLockSets, which with the accused's advertised bond (twoLockSetsProof) is the proof any seat or auditor files.
+   */
+  doubleSigns(rid) {
+    return this.db.prepare('SELECT key, a, b FROM lock_set_double_signs WHERE round_id = ? ORDER BY key').all(rid)
+      .map((r) => ({ key: r.key, signedLockSets: [new Uint8Array(r.a), new Uint8Array(r.b)] }));
+  }
+
+  /** Whether a second standing certificate over another set of this round reached this seat (kanban #2585): the set is CONTESTED - VOID (#2587). */
   conflicted(rid) { return !!this.db.prepare('SELECT 1 FROM lock_set_conflicts WHERE round_id = ?').get(rid); }
+  contested(rid) { return this.conflicted(rid); }
 
   /**
    * WHY A LOCK OF THE ROUND GOES BACK AT ONCE (kanban #2561, the forfeit's lockSetOut), or null: outside the certified set, or every lock once the
@@ -211,6 +268,10 @@ export class LockSetBook {
   async lockOut(rid, entryIdHex) {
     const c = this.roundOf(rid);
     if (!c) return null;
+    // A CONTESTED SET IS VOID (ruling #2587, kanban #2606): every lock goes back by forfeit at once - in either set or in none. The contest is
+    // handed on again to every peer it has not reached, so the other side settles nothing either
+    if (this.conflicted(rid)) { try { this.#push(rid, this.peersOf(rid) || [], this.#room(toHex(rid))); } catch { /* best effort */ } }
+    if (this.conflicted(rid)) return 'that round\'s lock set is contested - two certificates over different sets: it is VOID, every lock goes back at once (ruling #2587)';
     let cert = this.certified(rid);
     if (!cert && this.voidNow(rid, c)) cert = await this.settle(rid);
     if (!cert) return this.voidNow(rid, c) ? 'that round has no certified lock set and its window has closed: it is VOID, every lock goes back at once (kanban #2561)' : null;
@@ -224,7 +285,7 @@ export class LockSetBook {
     const peers = this.peersOf(rid) || [];
     const fresh = (p) => (room.answeredAt.get(String(p)) || 0) >= since;
     await Promise.all(peers.filter((p) => !fresh(p)).map((p) => this.#pullOne(rid, p, room).catch(() => {})));   // one pull per peer at a time (#pullOne)
-    if (this.conflicted(rid)) return null;
+    if (this.conflicted(rid)) return 'that round\'s lock set is contested - two certificates over different sets: it is VOID, every lock goes back at once (ruling #2587)';
     // EVERY PEER, NOT n - t (feedback #036): in a draw of 2t - 1 the seat in the overlap of two thresholds is the one that can sign two
     // sets - the attacker's - so its answer met an n - t quorum by itself while the honest seat holding the other certificate stayed
     // unheard. A lock outside the set goes back only once every committee peer answered since the close + the window + 2 s; while one
@@ -275,19 +336,23 @@ export class LockSetBook {
   #say(rid) {
     const me = toHex(this.round.pubkey), room = this.#room(toHex(rid));
     const cert = this.certified(rid);
-    return { views: room.views.has(me) ? [room.views.get(me)] : [], signatures: room.sigs.has(me) ? [room.sigs.get(me)] : [], ...(cert ? { certificate: toHex(cert.bytes) } : {}) };
+    // RULING #2587 ("seats share certificates"): the second certificate travels with the first, so every peer sees the contest at once
+    const conflict = this.conflicted(rid) ? this.db.prepare('SELECT cert FROM lock_set_conflicts WHERE round_id = ?').get(rid) : null;
+    return { views: room.views.has(me) ? [room.views.get(me)] : [], signatures: room.sigs.has(me) ? [room.sigs.get(me)] : [], ...(cert ? { certificate: toHex(cert.bytes) } : {}),
+      ...(conflict ? { conflict: toHex(new Uint8Array(conflict.cert)) } : {}) };
   }
 
   /** Push what is new to each peer (fire and forget) - one push per (peer, what). */
   #push(rid, peers, room) {
     const said = this.#say(rid);
-    const tag = `${said.views.length}:${said.signatures.length}:${said.certificate ? 1 : 0}`;
+    const tag = `${said.views.length}:${said.signatures.length}:${said.certificate ? 1 : 0}:${said.conflict ? 1 : 0}`;
     for (const p of peers) {
       const k = `${p}|${tag}`;
       if (room.pushed.has(k)) continue;
       room.pushed.add(k);
       this.fetch(`${String(p).replace(/\/+$/, '')}/lock-set?round=${toHex(rid)}`, { method: 'POST', body: JSON.stringify(said), signal: AbortSignal.timeout(LOCK_SET_PEER_MS) })
-        .then((r) => r.body && r.body.cancel && r.body.cancel()).catch(() => {});
+        // a push that did not land is made again on the next call (ruling #2587: the contest must reach every seat before it settles)
+        .then((r) => r.body && r.body.cancel && r.body.cancel()).catch(() => { room.pushed.delete(k); });
     }
   }
 
@@ -337,10 +402,12 @@ export class LockSetBook {
     return this.certified(rid);
   }
 
-  /** The certificate for a decide: this seat's, else one pulled from the peers now; null when none stands anywhere it asked. */
+  /**
+   * The certificate for a decide: this seat's, else one pulled from the peers now; null when none stands anywhere it asked - or when the set is
+   * CONTESTED (ruling #2587): two certificates over different sets, the round is VOID and every entry is signed VOID.
+   */
   async settle(rid) {
-    if (this.certified(rid)) return this.certified(rid);
-    await this.pull(rid);
-    return this.certified(rid);
+    if (!this.certified(rid)) await this.pull(rid);
+    return this.conflicted(rid) ? null : this.certified(rid);
   }
 }
