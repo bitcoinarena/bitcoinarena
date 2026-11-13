@@ -425,8 +425,19 @@ export class PriceFeed {
       try {
         const r = await this.fetcher(`${String(base).replace(/\/+$/, '')}/price-samples?round=${rh}&ks=${missing.join(',')}`, { signal: AbortSignal.timeout(10000) });
         if (!r.ok) continue;
-        const j = await r.json();
-        for (const x of (j && j.samples) || []) if (missing.includes(Number(x.k))) this.hold({ round: rh, kind: 'sample', k: Number(x.k), priceCents: x.priceCents, sigs: x.sigs });
+        // ONE PEER'S ANSWER IS BOUNDED (kanban #2170, #1730 / #1729 variant): at most FETCH_READINGS_MAX_BYTES of it is read, and each
+        // missing k is checked at most once per answer (never again once held) - an answer repeating one sample N times costs one
+        // hold() per missing k (n x n verifies at most), not one a copy. A wrong first copy leaves that k to the next seat.
+        const declared = Number(r.headers && typeof r.headers.get === 'function' ? r.headers.get('content-length') : NaN);
+        if (declared > FETCH_READINGS_MAX_BYTES) continue;
+        const j = await cappedJson(r, FETCH_READINGS_MAX_BYTES);
+        const tried = new Set();
+        for (const x of (j && Array.isArray(j.samples) ? j.samples : [])) {
+          const k = Number(x && x.k);
+          if (!missing.includes(k) || tried.has(k) || this.#held(rh, k)) continue;
+          tried.add(k);
+          this.hold({ round: rh, kind: 'sample', k, priceCents: x.priceCents, sigs: x.sigs });
+        }
       } catch { /* the next seat */ }
     }
   }
