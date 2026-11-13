@@ -158,9 +158,10 @@ import { readInvite } from './invite.js';
 import { holdsNothing, guardedFederationOf, auditGuardian, createRetireBook } from './federation-retire.js';
 import { federationRecords, seatedOf as seatedOfRecord, GATHER_FRESH_MS } from './federation-records.js';
 import { createAbsences, readAbsenceHex, readDepartureHex, absenceHex, departureHex, readEmergencyHex, emergencyHex } from './absences.js';
-import { departureAnchorHeight, anchorRequired, DEPARTURE_ANCHOR_SLACK } from '../../arena-protocol/src/absence.js';
+import { departureAnchorHeight, anchorRequired, DEPARTURE_ANCHOR_SLACK, departureId } from '../../arena-protocol/src/absence.js';
 import { emergencyDepartureStands } from '../../arena-protocol/src/emergency.js';
 import { createAbsenceProducer, guardianConfigOf, wsAdminStatus, ownDeparture, owedDepartures } from './absence-producer.js';
+import { createDepartureAnchors, bondCliAnchorWallet, installerAnchorWallet, fileStore as anchorFileStore } from './departure-anchor.js';
 import { createFoundingSeat, cliSetup, execCli, fileKeySet } from './founding-seat.js';
 import { FOUNDING_WINDOW, foundingPressurePoint, foundingCandidateVersion, bondMinGuardianOf } from '../../arena-protocol/src/guardian-founding.js';
 import { foundingPressureReader } from './founding-pressure.js';
@@ -913,6 +914,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   let ownGuardianSeat = () => null;
   let ownGuardianSeats = () => [];   // every record seating this node (kanban #1379)
   let departuresPass = async () => [];
+  let departureAnchors = null;     // kanban #2610: this node's own departure anchors (departure-anchor.js), set where the departures are
   const guardianWiring = { founding: false, absences: false, spentSet: false };   // which guardian wirings this seat started
   let fedRecordsSettled = false, foundingPassNow = () => {};   // the founding's first pass waits for the restored federation records (kanban #585)
   let foundingSeat = null;                     // founding-seat.js, with ARENA_FOUNDING=1            // { federation, peerKey } of the record naming this node a guardian, once records are held
@@ -7450,9 +7452,54 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       post: async (hex) => { const posted = await Promise.all(networkSeats().map((u) => fetch(`${u}/departure`, { method: 'POST', body: hex, signal: AbortSignal.timeout(15000) })
         .then((x) => x.ok).catch(() => false))); return { postedTo: posted.filter(Boolean).length, of: posted.length }; } });
     for (const x of out) if (x.notice) console.log(`[owner] departure notice for ${x.federation.slice(0, 16)}: leave after ${x.leaveAfterHeight}, posted to ${x.postedTo} of ${x.of} seats`);
+    // EACH OWN NOTICE ITS ANCHOR (kanban #2610): judged at or past the gate it counts only from its "ARN" 'L' anchor - funded once from the
+    // node's wallet, confirmed, then published with it (departure-anchor.js); below the gate none is needed and none is paid for
+    const anchors = [];
+    for (const d of ownNotices()) {
+      if (!anchorRequired(anchorGate, d.leaveAfterHeight)) continue;
+      try { anchors.push({ id: toHex(departureId(d)), ...(await departureAnchors.anchor(d)) }); } catch (e) { anchors.push({ id: toHex(departureId(d)), ok: false, why: e.message }); }
+    }
+    for (const a of anchors) if (a.why) console.log(`[owner] departure anchor for ${String(a.id).slice(0, 16)}: ${a.phase || 'not sent'} - ${a.why}`);
+    if (anchors.length) for (const x of out) x.anchors = anchors;
     return out;
   };
-  { const t = setInterval(() => { departuresPass().catch((e) => console.log(`[owner] departure notices: ${e.message}`)); }, 60000); if (t.unref) t.unref(); }
+  // THIS NODE'S OWN NOTICES, held here (kanban #2610): the ones its node key signed
+  const ownNotices = () => { const me = toHex(round.pubkey); return absences.listDepartures().map((h) => { try { return readDepartureHex(h); } catch { return null; } })
+    .filter((d) => d && toHex(d.nodePubkey) === me).map(({ anchor, ...d }) => { void anchor; return d; }); };
+  // THE WALLET THE ANCHOR IS PAID FROM (kanban #2610): an installed node's own (ARENA_HOME, the one the wizard funded), else the bond wallet a seat
+  // set up by hand names (ARENA_BOND_CLI); neither: the owner sends it by hand and hands its txid to POST /owner/departure-anchor
+  const anchorWallet = (() => {
+    let w = null, tried = false;
+    return async () => {
+      if (tried) return w;
+      tried = true;
+      try {
+        if (process.env.ARENA_HOME) w = await installerAnchorWallet({ home: process.env.ARENA_HOME });
+        else { const { bondCliFrom } = await import('./add-bond-wallet.js'); const c = bondCliFrom(); w = c ? bondCliAnchorWallet(c.cli) : null; }
+      } catch (e) { console.log(`[owner] no wallet for departure anchors: ${e.message}`); w = null; }
+      return w;
+    };
+  })();
+  const anchorsFile = db && db.arenaPath ? `${db.arenaPath}.departure-anchors.json` : null;
+  {
+    const lazy = { name: null, build: async (d) => { const w = await anchorWallet(); return w ? w.build(d) : { ok: false, why: 'this node names no wallet to fund the anchor from (ARENA_BOND_CLI, or an installed node\'s own)' }; },
+      send: async (hex) => { const w = await anchorWallet(); if (!w) throw new Error('no wallet'); return w.send(hex); },
+      where: async (txid) => { const w = await anchorWallet(); return w && typeof w.where === 'function' ? w.where(txid) : null; } };
+    anchorWallet().then((w) => { lazy.name = w ? w.name : null; if (!w || typeof w.where !== 'function') delete lazy.where; }).catch(() => {});
+    departureAnchors = createDepartureAnchors({ wallet: lazy,
+      chain: typeof chainTip === 'function' ? { tip: () => chainTip(),
+        blockAt: async (h) => { if (!ballot || typeof ballot.blockHashAt !== 'function' || typeof chainBlockTxids !== 'function') return null;
+          const hash = await ballot.blockHashAt(h); return hash ? { hash: String(hash), txids: (await chainBlockTxids(h)).map(String) } : null; } } : null,
+      confirmedTx: ballot && typeof ballot.confirmedTx === 'function' ? ballot.confirmedTx : null,
+      store: anchorsFile ? anchorFileStore(anchorsFile, { readFileSync, writeFileSync, renameSync }) : null,
+      // kept here first (read on this node's chain, as every seat reads it), then posted to every seat as POST /departure
+      publish: async (d) => { await absences.offerAnchored(d); const hex = departureHex(d);
+        const posted = await Promise.all(networkSeats().map((u) => fetch(`${u}/departure`, { method: 'POST', body: hex, signal: AbortSignal.timeout(15000) }).then((x) => x.ok).catch(() => false)));
+        return { postedTo: posted.filter(Boolean).length, of: posted.length }; },
+      log: (l) => console.log(l) });
+  }
+  { const t = setInterval(() => { departuresPass().catch((e) => console.log(`[owner] departure notices: ${e.message}`));
+    departureAnchors.pass().catch((e) => console.log(`[owner] departure anchors: ${e.message}`)); }, 60000); if (t.unref) t.unref(); }
   // A FOUNDING BY SORTITION (§23A.2), with ARENA_FOUNDING=1: every 10 min the seat reads a trigger off the records it
   // holds (founding-seat.js), the beacon and the census at trigger_height from its chain view, and - while its own guardian waits in
   // Fedimint's setup - takes part through the guardian's own setup API (fedimint-cli, ARENA_FEDIMINT_CLI). GET/POST /founding.
@@ -9026,7 +9073,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             try { const g = await stakeLocks.guardians(); custody = { guardian: true, keys: g.keys || [], threshold: g.threshold }; }
             catch (e) { custody = { guardian: true, keys: [], threshold: Infinity, why: e.message }; }
           }
-          return answer(200, leaveStatus({ rounds, nowMs, leavingAtMs: owner.leavingAtMs(), custody }));
+          // and each own departure notice's anchor (kanban #2610): sent, confirmed, published
+          return answer(200, { ...leaveStatus({ rounds, nowMs, leavingAtMs: owner.leavingAtMs(), custody }), departureAnchors: departureAnchors ? departureAnchors.list() : [] });
         }
         // THE SEATINGS THIS NODE MISSED (§5A.3): over the newest rounds held whose seating stands, drawn and not seated,
         // in a row - and from three on, the warning with the serving = false update offered
@@ -9375,6 +9423,32 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           r.departures = await departuresPass();
           if (r.departures.length === 1) r.departure = r.departures[0];
           return answer(200, r);
+        }
+        // A DEPARTURE NOTICE'S ANCHOR BY HAND (kanban #2610): signed by the owner. { departure?: notice hex (default: each of this node's own
+        // notices held here), post?, txid?, sinceHeight? } - without post or txid the plan: the OP_RETURN script to send and the record if
+        // there is one; with post: true the anchor funded from the node's wallet (once per notice: asked again, the same transaction is
+        // followed); with txid: an anchor the owner sent himself (bitcoin-cli, another wallet), followed until it is confirmed, then the
+        // notice published with it. Leave does the same on its own past the gate (departuresPass).
+        if (url.pathname === '/owner/departure-anchor') {
+          const a = owner.authorize(body, 'departure-anchor');
+          if (!a.ok) return answer(a.status || 401, a);
+          const args = body.args || {};
+          let notices;
+          if (args.departure) {
+            try { const { anchor, ...d } = readDepartureHex(String(args.departure).trim()); void anchor; notices = [d]; } catch (e) { return answer(400, { ok: false, why: `a departure notice in hex: ${e.message}` }); }
+            if (toHex(notices[0].nodePubkey) !== toHex(round.pubkey)) return answer(400, { ok: false, why: 'that notice is not signed by this node: each guardian anchors its own' });
+          } else notices = ownNotices();
+          if (!notices.length) return answer(404, { ok: false, why: 'this node holds no departure notice of its own: Leave makes one' });
+          if (args.txid && notices.length !== 1) return answer(400, { ok: false, why: 'name the notice (departure) the transaction anchors' });
+          const out = [];
+          for (const d of notices) {
+            const plan = departureAnchors.planOf(d);
+            if (args.txid) out.push({ ...plan, ...(await departureAnchors.anchor(d, { adopt: { txid: args.txid, sinceHeight: Number.isInteger(args.sinceHeight) ? args.sinceHeight : undefined } })) });
+            else if (args.post === true) out.push({ ...plan, ...(await departureAnchors.anchor(d)) });
+            else out.push({ ...plan, required: anchorRequired(anchorGate, d.leaveAfterHeight), gate: anchorGate });
+          }
+          const failed = out.some((x) => x.ok === false);
+          return answer(failed && out.length === 1 ? 400 : 200, { ok: !failed, anchors: out });
         }
         // INSTALL, UPDATE, REMOVE (2026-10-10: like an App Store, from the browser, no restart): each
         // signed by the owner; a game is fetched from another seat, checked (plugin-check.js + the trial run) and activated at once
