@@ -22,7 +22,7 @@ function seat(holdsB, { db = new DatabaseSync(':memory:'), invalid = new Set() }
         // a tool of kanban #2384/#2436: base32 that is not notes of this federation is answered Invalid, exit 0
         if (invalid.has(e)) return { state: 'Invalid', msat: 0n, why: 'does not decode: unexpected end of input' };
         if (!e.startsWith('fedimintq')) throw new Error('arena-stake-lock: Error: invalid base32 / could not decode ECash');
-        return { state: 'Success', msat: 100_000n };
+        return { state: 'Success', msat: 100_000n, carriedMsat: 100_000n };   // the notes' own amount (kanban #1936)
       } },
     [B]: { ecashBalance: async () => holdsB,
       ecashSend: async (m, { key }) => {

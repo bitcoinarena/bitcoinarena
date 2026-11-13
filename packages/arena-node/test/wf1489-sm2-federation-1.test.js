@@ -23,7 +23,7 @@ function seat({ holdsB = 150_000n, failFirstReceiveOf = null } = {}) {
         if (failOnce && e === failOnce) { failOnce = null; throw new Error('arena-stake-lock ecash-receive: no guardian answered'); }
         if (received.has(e)) return { state: 'AlreadyReceived', msat: 0n, earlier: 'Success', carriedMsat: received.get(e) };
         received.set(e, 100_000n);
-        return { state: 'Success', msat: 100_000n };
+        return { state: 'Success', msat: 100_000n, carriedMsat: 100_000n };   // the notes' own amount (kanban #1936)
       } },
     [B]: { ecashBalance: async () => holdsB,
       ecashSend: async (m, { key = null } = {}) => {
