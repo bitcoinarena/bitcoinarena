@@ -47,9 +47,17 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
 <script src="https://testnet.bitcoinarena.io/site-chrome.js" data-foot="none"></script>
 <main>
   <h1>Bug bounty and zaps</h1>
-  <p><b>Not open yet.</b> This page says what the rules will be and lists every payment once there is one.</p>
+  <p><b>Open since 2026-11-11.</b> Reports are paid over Lightning, and every payment is listed below.</p>
   <ul>
-    <li><b>Bug bounty: 150,000 sats in all,</b> over Lightning, for confirmed bugs and useful reports.</li>
+    <li><b>Bug bounty,</b> over Lightning, for confirmed bugs and useful reports - by severity:
+      <ul>
+        <li>Useful feedback: <b>500 sats</b> (a clear note on what confused you, with the screen and the step)</li>
+        <li>Bug, low: <b>1,000 sats</b> (a wrong text or a layout glitch that does not stop play)</li>
+        <li>Bug, medium: <b>2,000 sats</b> (a round or a deposit that needs a retry to go through)</li>
+        <li>Bug, high: <b>5,000 sats</b> (play or a payout stops and only a reload or a restart helps)</li>
+        <li>Bug, critical: <b>10,000 sats</b> (money can be lost or taken, or the result is wrong)</li>
+      </ul></li>
+    <li><b>Node bounty: 10,000 sats</b> for running a node, for the first 10 outside nodes - one per person and one per node, reported from the node's owner page.</li>
     <li><b>Zaps: 50,000 sats in all,</b> for helpful testers and posts, including any posting fees.</li>
     <li><b>Never for game results.</b> Nobody is paid for winning a round.</li>
     <li>Test sats have no value. Only these Lightning payments are real money.</li>
@@ -59,7 +67,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
   <ul>
     <li><b>Checked first.</b> Each report is read on its ticket and marked valid or not, with a severity: critical, high, medium or low.</li>
     <li><b>Approved and paid by the project owner,</b> who answers for every payout. If the owner sets a different severity, that is written on the ticket.</li>
-    <li><b>From one bounty wallet, over Lightning,</b> kept only for this. Its address and balance go on this page before the bounty opens, and every payout is listed below with its ticket.</li>
+    <li><b>Limits:</b> a key that finished a round on the network in the last 90 days (not needed for the node bounty), at most 3 paid reports per key in 7 days, and a weekly budget of 100,000 sats (a critical bug and the node bounty are outside it). Variants of one bug found earlier are paid in the lower band.</li>
+    <li><b>From one bounty wallet, over Lightning,</b> kept only for this. Every payout is listed below with its report.</li>
     <li>The network's reserves never pay a single report. They may top up the bounty wallet once a year, by a public proposal and vote.</li>
   </ul>
   <h2 style="font-size:20px;margin:26px 0 0">Paid so far</h2>
