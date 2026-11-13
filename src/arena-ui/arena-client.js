@@ -18023,17 +18023,25 @@ function decodeVote(payload) {
  * counts as ABSTAIN (it signed both). Answers outpoint -> { choice, seq, height, txid, weight }; height / txid are of the first
  * such vote by (height, txid). Shared by the ballot's tally and the funding count (funding.js).
  */
-function boundVotes({ proposalId: id, census, votes, from, until, verify, weightOf }) {
-  const prefix = toHex(id.subarray(0, VOTE_BOUND_PREFIX));
+// TWINS (ruling #2591 (c), kanban #2607): a bound proposal is its deposit's commitment (proposer key + body hash), so the same body
+// re-signed on the same deposit - another proposal_id - is the SAME proposal. `twins`: the ids of the other signatures over it; a
+// vote signed under any of them counts for this one, and the seq rule below runs across all of them (highest seq wins, equal seq
+// with a different choice = ABSTAIN), whichever id each vote names.
+function boundVotes({ proposalId: id, census, votes, from, until, verify, weightOf, twins = [] }) {
+  const ids = [id, ...(twins || []).filter((t) => t instanceof Uint8Array && t.length === 32 && toHex(t) !== toHex(id))];
+  const prefixes = ids.map((x) => toHex(x.subarray(0, VOTE_BOUND_PREFIX)));
   const best = new Map();                            // outpoint -> { seq, choice, conflicted, height, txid, weight }
   for (const v of votes || []) {
     if (!(v?.payload instanceof Uint8Array)) continue;
     const d = decodeVote(v.payload);
-    if (!d || !d.bound || toHex(d.idPrefix) !== prefix) continue;
+    if (!d || !d.bound) continue;
+    const named = ids.filter((_, i) => prefixes[i] === toHex(d.idPrefix));
+    if (!named.length) continue;
     if (!(v.height >= from && v.height < until)) continue;
-    const msg = voteMessage(id, d.choice, d.seq);
+    const msgs = named.map((x) => voteMessage(x, d.choice, d.seq));
     for (const b of census || []) {
-      let good = false; try { good = !!verify(d.signature, msg, b.pubkey); } catch { good = false; }
+      let good = false;
+      for (const msg of msgs) { try { good = !!verify(d.signature, msg, b.pubkey); } catch { good = false; } if (good) break; }
       if (!good) continue;
       const had = best.get(b.outpoint);
       if (!had || d.seq > had.seq) { best.set(b.outpoint, { seq: d.seq, choice: d.choice, conflicted: false, height: v.height, txid: v.txid, weight: weightOf(b) }); continue; }
@@ -18129,8 +18137,9 @@ function tally({ proposal, standing, census: all, votes, verify, ageBlocks = nul
   const census = aged ? (all || []).filter((b) => Number.isInteger(b.height) && b.height <= standing.publishedAt - ageBlocks) : all;
   // `bound` (kanban #2125/#2562): the proposal is read under the binding (its deposit at or above BALLOT_BIND_HEIGHT): highest seq wins;
   // below it the last vote by height with the replay guard (lastVotes, kanban #1489 / #1734)
+  // `standing.twins`: the ids of its twins (ruling #2591 (c), kanban #2607), whose votes count for it - bound only
   const latest = bound
-    ? boundVotes({ proposalId: id, census, votes, from: standing.votingFrom, until: standing.votingUntil, verify, weightOf: (b) => BigInt(b.bondSats) })
+    ? boundVotes({ proposalId: id, census, votes, from: standing.votingFrom, until: standing.votingUntil, verify, weightOf: (b) => BigInt(b.bondSats), twins: standing.twins || [] })
     : lastVotes({ proposalId: id, census, votes, from: standing.votingFrom, until: standing.votingUntil, verify, weightOf: (b) => BigInt(b.bondSats) });
   const total = (census || []).reduce((a, b) => a + BigInt(b.bondSats), 0n);
   let yes = 0n, no = 0n, abstain = 0n;
@@ -37371,6 +37380,7 @@ const FEDERATION_ALLOWS = Object.freeze({
  */
 const UNVERIFIED_RESTRICTED = Object.freeze({ deposit: false, join: false, withdraw: true, move: true });
 const RESTRICTIVE = new Set([FEDERATION_STATUS.DRAINING, FEDERATION_STATUS.CRITICAL, FEDERATION_STATUS.HALTED, FEDERATION_STATUS.CLOSED]);
+const HOLD_RANK = Object.freeze({ OPEN: 0, DRAINING: 1, CRITICAL: 2, CLOSED: 3, HALTED: 4 });
 const statusName = (v) => Object.keys(FEDERATION_STATUS).find((k) => FEDERATION_STATUS[k] === v) || null;
 /** The restrictive status a refused record of `fid` names, or null (it does not decode, names another federation, or says OPEN). */
 function refusedRestrictive(bytes, fid) {
@@ -37467,9 +37477,11 @@ async function federationStatuses({ nodes, census, verify, fetcher = fetch, only
         // nominal 11 and the genuine 7/7 HALTED record fell under #2604's threshold, so the page read OPEN. Every counting rule loses to enough
         // bonds; this one fails closed: a record of this federation (verified or not) naming DRAINING, CRITICAL, HALTED or CLOSED keeps deposit
         // and join off. The worst a stranger gets is a held deposit; withdraw and move stay open, and with the keys the record decides alone.
-        if ((v.ok ? !keysOf(fid) : true) && !restrictive.has(fid)) {
+        // the MOST restrictive word is kept (kanban #2611, feedback #040: a sybil DRAINING record over a genuine HALTED one stood as
+        // DRAINING and let join through) - HALTED > CLOSED > CRITICAL > DRAINING
+        if (v.ok ? !keysOf(fid) : true) {
           const says = refusedRestrictive(hexToBytes(hex), fid);
-          if (says) restrictive.set(fid, says);
+          if (says && (!restrictive.has(fid) || HOLD_RANK[says] > HOLD_RANK[restrictive.get(fid)])) restrictive.set(fid, says);
         }
       }
       if (v.ok) noteRecordInvite(hex);
@@ -37481,7 +37493,7 @@ async function federationStatuses({ nodes, census, verify, fetcher = fetch, only
     const why = (refused.get(fid) || failed)[0];
     const says = best ? null : restrictive.get(fid) || null;
     // a verified record read without the config keys does not lift another record's restrictive word (kanban #2605)
-    const held = best && !keysOf(fid) && restrictive.has(fid) && !RESTRICTIVE.has(best.record.status) ? restrictive.get(fid) : null;
+    const held = best && !keysOf(fid) && restrictive.has(fid) && HOLD_RANK[restrictive.get(fid)] > (HOLD_RANK[best.status] || 0) ? restrictive.get(fid) : null;
     const st = best ? { ...statusOfRecord(best), federation: fid,
       ...(held ? { allows: { ...statusOfRecord(best).allows, deposit: false, join: false }, heldBy: held,
         why: `a record of this federation says ${held} and this client holds no guardian keys to rule it out, so no deposit or join` } : {}) }
@@ -37532,9 +37544,11 @@ function loadRefusesDeposit({ load, networkId }) {
  * lowest load; ties by the newest record (its height). A federation whose load the record does not say comes after every
  * one that says it. Null when none is OPEN.
  */
-function pickFederation(statuses, { known = () => true } = {}) {
-  // a federation whose deposits are stopped (an alarm, or its load on mainnet) is not picked (kanban #1093 part 5, #807)
-  const open = (statuses || []).filter((f) => f && f.status === 'OPEN' && known(f.federation) && !f.alarm && !(f.allows && f.allows.deposit === false));
+function pickFederation(statuses, { known = () => true, need = 'deposit' } = {}) {
+  // a federation whose deposits are stopped (an alarm, or its load on mainnet) is not picked (kanban #1093 part 5, #807); AND ITS allows SAY
+  // SO for what is asked (kanban #2611, feedback #040): a federation #2605 holds (OPEN, but a record says HALTED or CLOSED and this client has
+  // no guardian keys) is OPEN with deposit and join off - the lock picker and the evacuation target read only the status and took it
+  const open = (statuses || []).filter((f) => f && f.status === 'OPEN' && known(f.federation) && !(need === 'deposit' && f.alarm) && !(f.allows && f.allows[need] === false));
   if (!open.length) return null;
   const loadOf = (f) => (typeof f.load === 'number' ? f.load : Infinity);
   return [...open].sort((a, b) => loadOf(a) - loadOf(b) || (b.height || 0) - (a.height || 0))[0];
@@ -37597,7 +37611,7 @@ function lockFederation({ stakeMsat, parts = [], statuses = [], known = () => tr
   const need = BigInt(stakeMsat || 0);
   const covers = new Set((parts || []).filter((p) => p && p.federation && BigInt(p.msat ?? 0) >= need).map((p) => String(p.federation).toLowerCase()));
   if (!covers.size) return { federation: null, why: `no federation's wallet here holds the ${need / 1000n} sat stake: deposit first (it goes to the lowest-load federation)` };
-  const pick = pickFederation((statuses || []).filter((f) => f && f.invite && covers.has(String(f.federation).toLowerCase())), { known });
+  const pick = pickFederation((statuses || []).filter((f) => f && f.invite && covers.has(String(f.federation).toLowerCase())), { known, need: 'join' });
   if (!pick) return { federation: null, why: 'no federation that holds the stake here is OPEN and known' };
   return { federation: String(pick.federation).toLowerCase(), invite: pick.invite,
     why: `lock in federation ${String(pick.federation).slice(0, 16)}: it holds the stake here and has the lowest load of those that do (${typeof pick.load === 'number' ? pick.load.toFixed(2) : '-'})` };
@@ -37740,7 +37754,7 @@ function safeFederation(from, statuses = [], { known = () => true } = {}) {
   const me = String(from.federation || '').toLowerCase();
   const usable = (statuses || []).filter((f) => f && f.invite && String(f.federation).toLowerCase() !== me);
   const succ = from.successorId && !/^0+$/.test(String(from.successorId))
-    ? usable.find((f) => String(f.federation).toLowerCase() === String(from.successorId).toLowerCase() && f.status === 'OPEN' && known(f.federation)) : null;
+    ? usable.find((f) => String(f.federation).toLowerCase() === String(from.successorId).toLowerCase() && f.status === 'OPEN' && known(f.federation) && !(f.allows && f.allows.deposit === false)) : null;
   return succ || pickFederation(usable, { known });
 }
 
@@ -44110,6 +44124,26 @@ function lockSetToSign({ own, views, threshold }) {
   const count = new Map();
   for (const v of views) for (const e of new Set(v)) count.set(e, (count.get(e) || 0) + 1);
   return [...new Set(own)].filter((e) => (count.get(e) || 0) >= threshold).sort();
+}
+
+/**
+ * A SIGNED LOCK SET, AS EVIDENCE (ruling #2587, kanban #2606): the set's bytes (u16 length + LockSet), the signer's u64 at_ms and its 64-byte
+ * BIP-340 signature over lockSetSignatureId({ setId, atMs }). What a seat serves as its set signature, in one encoding a slash proof can carry:
+ * two of these by one key over two different sets of one round are the offence (slash.js slashHoldsOnTwoLockSets).
+ */
+function encodeSignedLockSet({ set, atMs, sig }) {
+  const setBytes = encodeLockSet(set);
+  const w = new Writer();
+  w.u16(setBytes.length); w.bytes(setBytes); w.u64(BigInt(atMs)); w.bytes(lsBytes(sig), 64);
+  return w.finish();
+}
+function decodeSignedLockSet(bytes) {
+  const r = new Reader(bytes);
+  const set = decodeLockSet(r.bytes(r.u16()));
+  const atMs = r.u64();
+  const sig = r.bytes(64);
+  r.end();
+  return { set, atMs, sig };
 }
 
 // ---- arena-client/src/head-to-head.js
