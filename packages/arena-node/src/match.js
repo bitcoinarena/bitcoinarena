@@ -56,7 +56,22 @@ function matchAt(round, plugins, roundIdBytes, depth) {
   if (!found.ok || !found.headToHead) return null;
   // the round's seated players: in a paying round only the entries backed by a lock (kanban #1437, audit 8 R3) - its stake seen, the ones played (kanban #1544)
   const entries = typeof round.seatedEntriesOf === 'function' ? round.seatedEntriesOf(roundIdBytes, c.stakeMsat, { played: true }) : round.entriesOf(roundIdBytes);
-  if (entries.length !== 2) return null;
+  // A PAYING ROUND WHOSE LOCKS HAVE NOT ALL REACHED THIS SEAT YET (kanban #2404, refutes #1748 + #2167, #1489 a44-refute-59-s2): its entries are
+  // held here but their locks crossed to another seat (the client handed them there, or the network was slow), and this seat pulls them only at
+  // its own close (server.js takeEntryParts). Until then fewer than two entries are seated-and-played here, and answering null ('not a
+  // head-to-head round') let the next round of the match be kept as a new match for good while the other seats continued it. Such a round is
+  // UNDECIDED while it is open, or closed less than UNDECIDED_GRACE_MS ago with nothing signed by this seat for any of its entries yet.
+  if (entries.length !== 2) {
+    const all = round.entriesOf(roundIdBytes);
+    if (all.length >= 2 && entries.length < all.length) {
+      const pending = (e) => !(typeof round.hasResult === 'function' && round.hasResult(roundIdBytes, e.entryId, round.pubkey))
+        && !(typeof round.entryVoid === 'function' && round.entryVoid(e.entryId));
+      if (row.state === OPEN && all.some(pending)) return UNDECIDED;
+      const recentClose = row.closed_ms != null && Number(round.now()) - Number(row.closed_ms) < UNDECIDED_GRACE_MS;
+      if (recentClose && all.every(pending)) return UNDECIDED;
+    }
+    return null;
+  }
   // EACH SIDE'S IDENTITY: its reveal's, else the one its consented name record names (audit 5 #1401) - a loser who left the identity off his reveal, or
   // forfeited, broke the chain and the next round's score started at 0-0; the consent is fixed at the join, before anything is known
   const idOf = ({ entryId, entry }) => round.identityOf(entryId)
