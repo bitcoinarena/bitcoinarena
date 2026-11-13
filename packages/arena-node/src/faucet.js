@@ -84,6 +84,9 @@ export function ipKey(ip) {
 
 /** Whether a player's request is paid: { ok, grant } or { ok: false, why }. `book`: { players: [{ account, kind, ip, sats, atMs }] }. Never paid twice as a welcome. */
 export function playerGrantDecide({ kind, account, ip = null, invoiceSats, nowMs = Date.now() }, book) {
+  // kanban #2499, #2531 (#1489 a44-refute-5-s3): a kind or an account that is no string (["welcome"], ["<hex>"]) read as one by String()
+  // and matched no row by ===: a second welcome while the first was unsure, no daily top-up count. Strings only, as stored and compared
+  if (typeof kind !== 'string' || typeof account !== 'string') return { ok: false, why: 'a grant names its kind and its account as strings' };
   const grant = Object.hasOwn(PLAYER_GRANTS, String(kind)) ? PLAYER_GRANTS[kind] : null;
   if (!grant) return { ok: false, why: 'a grant is welcome or topup' };
   if (!/^[0-9a-f]{64}$/.test(String(account || ''))) return { ok: false, why: 'an account is 32 bytes of hex' };
