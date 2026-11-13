@@ -1016,7 +1016,8 @@ export class LockSettlement {
       const o = this.winnings;
       w = new o.constructor({ round: this.round.lateSendScope(entryIdBytes), port: o.port, curve: o.curve, random: o.random,
         peersFor: o.peersFor, fetcher: o.fetcher, lnurlFetch: o.lnurlFetch, network: o.network, scopeParam: `&late=${toHex(entryIdBytes)}`,
-        dkg: o.dkg, peerAskMs: o.peerAskMs, peerGraceMs: o.peerGraceMs, lnurlMs: o.lnurlMs });
+        dkg: o.dkg, peerAskMs: o.peerAskMs, peerGraceMs: o.peerGraceMs, lnurlMs: o.lnurlMs,
+        localHosts: o.localHosts });   // the operator's own local LNURL hosts, as the round's sender asks them (kanban #2323, #2340, #2236)
       this.lateSenders.set(key, w);
       // BOUNDED (kanban #1518): a sender is rebuilt from the store whenever it is asked again, so past a few thousand the oldest goes
       if (this.lateSenders.size > LATE_SENDERS_MAX) this.lateSenders.delete(this.lateSenders.keys().next().value);
