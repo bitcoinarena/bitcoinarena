@@ -2755,14 +2755,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     pullProof: (rid, eid) => verifier.pullFirstMarkProofReach(rid, eid),
     // THE CERTIFIED LOCK SET (kanban #2561, §17A): a lock outside this seat's certificate, or any lock once the round is VOID for want of one
     // (none held here past close + the window, and none pulled from the peers now - the decide's own rule, verify.js #headToHeadClose)
-    lockSetOut: async (rid, eid) => {
-      const c = lockSetRound(rid);
-      if (!c) return null;
-      let cert = lockSets.certified(rid);
-      if (!cert && lockSets.voidNow(rid, c)) cert = await lockSets.settle(rid);
-      if (cert) return cert.entries.includes(toHex(eid)) ? null : 'that lock is not in the round\'s certified lock set: it is not in the round and goes back at once (kanban #2561)';
-      return lockSets.voidNow(rid, c) ? 'that round has no certified lock set and its window has closed: it is VOID, every lock goes back at once (kanban #2561)' : null;
-    },
+    // (lock-set-book.js lockOut; a lock outside the set only once no second certificate can contest it - kanban #2585)
+    lockSetOut: (rid, eid) => lockSets.lockOut(rid, toHex(eid)),
   });
 
   // AND THE LOSERS' LOCKS, CLAIMED INTO THE ROUND'S ONE SETTLEMENT (W4, the owner
