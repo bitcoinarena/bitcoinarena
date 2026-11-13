@@ -57,7 +57,7 @@ import { scalarFrom32, FIELD } from '../../arena-protocol/src/shares.js';
 import { FINAL, SUSPENDED, PROVISIONALLY_FINAL } from '../../arena-protocol/src/objection.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { resultFinality, settledResult } from './finality.js';
-import { encodeCommitments, decodeCommitments, decodePeerCommitment, encodeShare, decodeShare, commitmentListRefusal, peerCommitmentRefusal, leftOffLast } from './pool-wire.js';
+import { encodeCommitments, decodeCommitments, decodePeerCommitment, encodeShare, decodeShare, commitmentListRefusal, peerCommitmentRefusal, leftOffLast, committedIds } from './pool-wire.js';
 import { sendPlanToJson, planKey } from './winnings-send.js';
 import { askerOrder, eligibleAsker } from './payout.js';
 import { REFUSAL } from './settle-backoff.js';
@@ -996,8 +996,8 @@ export class LockSettlement {
       const own = await this.commit(roundIdBytes, { entry: entryIdBytes, acks: held.acks, own: true });
       if (!own.ok) return own;
       const { signers, refused, committed, refusedBy } = await this.#peerCommitments(roundIdBytes, own, q, m, held.acks);
-      if (signers.length < m.needed)
-        return refuse(`${signers.length} of the ${m.needed} signer nodes the late settlement needs committed to it: ${refused.join('; ')}`);
+      if (committedIds(signers) < m.needed)
+        return refuse(`${committedIds(signers)} of the ${m.needed} signer nodes the late settlement needs committed to it: ${refused.join('; ')}`);
       const listed = this.#lists.listed(q, signers, m.needed);
       const combined = await this.#gatherShares(roundIdBytes, m, q, listed, null, refusedBy, { entry: entryIdBytes });
       // A SEAT THAT GAVE NO SHARE IS LEFT OUT, A POISONED LIST TRIES THE LISTS THAT LEAVE OUT WHO READ IT (nonce-pool.js SignerLists, kanban #2044)
@@ -1528,8 +1528,9 @@ export class LockSettlement {
     const refused = [], committed = [], refusedBy = [];
     // A COMMITMENT UNDER ANOTHER SIGNER'S ID IS A REFUSAL (kanban #2402, #2471): listed, it made this seat's own share() refuse the list
     // with nobody left off, every pass. A seat left off this settlement before is read last, so its forged id never pushes out an honest one.
+    // One under an id a PEER already holds is listed beside it (`contest`, kanban #2402 a45-refute-3 s1-2): the share check decides which one stands.
     for (const { peer: base, value, error } of leftOffLast(asked, this.#lists.withheld.get(query))) {
-      const bad = value && value.commitment ? peerCommitmentRefusal(value.commitment, signers) : null;
+      const bad = value && value.commitment ? peerCommitmentRefusal(value.commitment, signers, { contest: true }) : null;
       if (value && value.commitment && !bad) { signers.push({ base, commitment: value.commitment, who: value.who }); if (value.who) committed.push(value.who); continue; }
       refused.push(`${base}: ${bad || (value ? value.why : error.message)}`);
       if (value && value.byName) refusedBy.push(base);
@@ -3080,12 +3081,12 @@ export class LockSettlement {
       const own = await this.commit(roundIdBytes, { acks: held.acks, own: true });
       if (!own.ok) return own;
       const { signers, refused, committed, refusedBy } = await this.#peerCommitments(roundIdBytes, own, q, m, held.acks);
-      if (signers.length < m.needed) {
+      if (committedIds(signers) < m.needed) {
         this.#stoppedAt(roundIdBytes, m.contract, '', 'commit', committed, refusedBy);
         // THE ASKER ITSELF HELD THE BOOK SHORT (kanban #740): peers that rebuilt another settlement have it read the batches again,
         // and the next pass builds anew
         if (refused.some((x) => /rebuilt settlement/.test(x))) await this.bookResync(roundIdBytes);
-        return refuse(`${signers.length} of the ${m.needed} signer nodes the settlement needs committed to it: ${refused.join('; ')}`);
+        return refuse(`${committedIds(signers)} of the ${m.needed} signer nodes the settlement needs committed to it: ${refused.join('; ')}`);
       }
       const listed = this.#lists.listed(q, signers, m.needed);
       const combined = await this.#gatherShares(roundIdBytes, m, q, listed, '', refusedBy, {});
@@ -3186,7 +3187,7 @@ export class LockSettlement {
         const own = await this.commit(roundIdBytes, { federation: fid, acks: held.acks, own: true });
         if (!own.ok) { results.push({ federation: fid, ok: false, why: own.why }); continue; }
         const { signers, refused, committed, refusedBy } = await this.#peerCommitments(roundIdBytes, own, q, m, held.acks);
-        if (signers.length < m.needed) { this.#stoppedAt(roundIdBytes, m.contract, fid, 'commit', committed, refusedBy); results.push({ federation: fid, ok: false, why: `${signers.length} of the ${m.needed} signer nodes committed: ${refused.join('; ')}` }); continue; }
+        if (committedIds(signers) < m.needed) { this.#stoppedAt(roundIdBytes, m.contract, fid, 'commit', committed, refusedBy); results.push({ federation: fid, ok: false, why: `${committedIds(signers)} of the ${m.needed} signer nodes committed: ${refused.join('; ')}` }); continue; }
         const listed = this.#lists.listed(q, signers, m.needed);
         const combined = await this.#gatherShares(roundIdBytes, m, q, listed, fid, refusedBy, { federation: fid });
         if (!combined.ok) {
