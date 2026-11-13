@@ -187,8 +187,8 @@ export function decodeVote(payload) {
  * a copy can never move a vote later. One helper so the two counts cannot drift apart again (#1734: the funding vote had kept the
  * replay hole after the ballot's fix).
  */
-export function lastVotes({ proposalId: id, census, votes, from, until, verify, weightOf, bound = false }) {
-  if (bound) return boundVotes({ proposalId: id, census, votes, from, until, verify, weightOf });
+export function lastVotes({ proposalId: id, census, votes, from, until, verify, weightOf, bound = false, twins = [] }) {
+  if (bound) return boundVotes({ proposalId: id, census, votes, from, until, verify, weightOf, twins });
   const prefix = toHex(id.subarray(0, 8));
   const first = new Map();                           // payload hex -> the occurrence of those bytes that ranks lowest
   for (const v of votes || []) {
@@ -220,17 +220,25 @@ export function lastVotes({ proposalId: id, census, votes, from, until, verify, 
  * stranger beats the holder's later vote with a higher seq. Two votes with the one highest seq and different choices: the bond
  * counts as ABSTAIN (it signed both). Same answer shape as lastVotes; height / txid are of the first such vote by (height, txid).
  */
-function boundVotes({ proposalId: id, census, votes, from, until, verify, weightOf }) {
-  const prefix = toHex(id.subarray(0, VOTE_BOUND_PREFIX));
+// TWINS (ruling #2591 (c), kanban #2607): a bound proposal is its deposit's commitment (proposer key + body hash), so the same body
+// re-signed on the same deposit - another proposal_id - is the SAME proposal. `twins`: the ids of the other signatures over it; a
+// vote signed under any of them counts for this one, and the seq rule below runs across all of them (highest seq wins, equal seq
+// with a different choice = ABSTAIN), whichever id each vote names.
+function boundVotes({ proposalId: id, census, votes, from, until, verify, weightOf, twins = [] }) {
+  const ids = [id, ...(twins || []).filter((t) => t instanceof Uint8Array && t.length === 32 && toHex(t) !== toHex(id))];
+  const prefixes = ids.map((x) => toHex(x.subarray(0, VOTE_BOUND_PREFIX)));
   const best = new Map();                            // outpoint -> { seq, choice, conflicted, height, txid, weight }
   for (const v of votes || []) {
     if (!(v?.payload instanceof Uint8Array)) continue;
     const d = decodeVote(v.payload);
-    if (!d || !d.bound || toHex(d.idPrefix) !== prefix) continue;
+    if (!d || !d.bound) continue;
+    const named = ids.filter((_, i) => prefixes[i] === toHex(d.idPrefix));
+    if (!named.length) continue;
     if (!(v.height >= from && v.height < until)) continue;
-    const msg = voteMessage(id, d.choice, d.seq);
+    const msgs = named.map((x) => voteMessage(x, d.choice, d.seq));
     for (const b of census || []) {
-      let good = false; try { good = verify(d.signature, msg, b.pubkey) === true; } catch { good = false; }
+      let good = false;
+      for (const msg of msgs) { try { good = verify(d.signature, msg, b.pubkey) === true; } catch { good = false; } if (good) break; }
       if (!good) continue;
       const had = best.get(b.outpoint);
       if (!had || d.seq > had.seq) { best.set(b.outpoint, { seq: d.seq, choice: d.choice, conflicted: false, height: v.height, txid: v.txid, weight: weightOf(b) }); continue; }
@@ -254,9 +262,10 @@ function boundVotes({ proposalId: id, census, votes, from, until, verify, weight
  * unchanged; a bond that changes its mind signs anew (BIP-340 with fresh aux randomness gives new bytes).
  */
 export function tally({ proposal, standing, census, votes, verify, bound = false }) {
-  // `bound`: the proposal is read under the binding (its deposit at or above BALLOT_BIND_HEIGHT): highest seq wins (boundVotes)
+  // `bound`: the proposal is read under the binding (its deposit at or above BALLOT_BIND_HEIGHT): highest seq wins (boundVotes);
+  // `standing.twins`: the ids of its twins (ruling #2591 (c)), whose votes count for it - bound only
   const latest = lastVotes({ proposalId: standing.id, census, votes, from: standing.votingFrom, until: standing.votingUntil, verify,
-    weightOf: (b) => BigInt(b.bondSats), bound });
+    weightOf: (b) => BigInt(b.bondSats), bound, twins: bound ? standing.twins || [] : [] });
   const total = (census || []).reduce((a, b) => a + BigInt(b.bondSats), 0n);
   let yes = 0n, no = 0n, abstain = 0n;
   for (const x of latest.values()) { if (x.choice === CHOICE.YES) yes += x.weight; else if (x.choice === CHOICE.NO) no += x.weight; else abstain += x.weight; }
