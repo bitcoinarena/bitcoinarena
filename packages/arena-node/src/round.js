@@ -3722,8 +3722,17 @@ export class Round {
   }
 
   /** A series' proven publication fee (§5A.5): kept once; { txid, feeSats } or null. */
-  putSeriesPublication(seriesIdBytes, { txid, feeSats }) {
+  putSeriesPublication(seriesIdBytes, { txid, feeSats, tx = null, parents = null }) {
     this.db.prepare('INSERT OR IGNORE INTO series_publications (series_id, txid, fee_sats) VALUES (?, ?, ?)').run(Buffer.from(seriesIdBytes), String(txid), String(feeSats));
+    // THE PROOF KEPT TOO (kanban #2638): what another seat of the round pulls and checks itself - hex, the parents a JSON list
+    if (typeof tx === 'string' && Array.isArray(parents))
+      this.db.prepare('INSERT OR IGNORE INTO series_publication_proofs (series_id, tx, parents) VALUES (?, ?, ?)').run(Buffer.from(seriesIdBytes), tx, JSON.stringify(parents));
+  }
+
+  /** A series' kept publication proof (kanban #2638): { tx, parents } hex, or null - a row kept before the proof was kept has none. */
+  seriesPublicationProof(seriesIdBytes) {
+    const r = this.db.prepare('SELECT tx, parents FROM series_publication_proofs WHERE series_id = ?').get(Buffer.from(seriesIdBytes));
+    return r ? { tx: r.tx, parents: JSON.parse(r.parents) } : null;
   }
 
   seriesPublication(seriesIdBytes) {

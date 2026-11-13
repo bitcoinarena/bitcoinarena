@@ -59,5 +59,10 @@ test('a series\' publication fee is kept only when its tx is the confirmed publi
     assert.equal(good.status, 200, good.text);
     assert.deepEqual(JSON.parse(good.text), { txid: toHex(parseTransaction(pub).txid.slice().reverse()), feeSats: '1250', payoutSats: '1250' }, 'the txid as an explorer prints it');
     assert.deepEqual(s.round.seriesPublication(sid), { txid: toHex(parseTransaction(pub).txid), feeSats: 1250n });
+    // THE PROOF IS SERVED TO THE ROUND'S OTHER SEATS (kanban #2638): what they pull and check against their own chain
+    const served = await fetch(`http://127.0.0.1:${s.port}/series-publication?series=${hex(sid)}`);
+    assert.equal(served.status, 200);
+    assert.deepEqual(await served.json(), { series: hex(sid), tx: hex(pub), parents: [hex(parent)] });
+    assert.equal((await fetch(`http://127.0.0.1:${s.port}/series-publication?series=${'ab'.repeat(32)}`)).status, 404);
   } finally { await s.close(); }
 });

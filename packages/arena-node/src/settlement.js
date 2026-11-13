@@ -182,8 +182,11 @@ export class LockSettlement {
     signerNodesFor = (rid, contract) => ({ gameVerify: contract.nodes, settlement: contract.nodes }), winnings = null,
     turnClock = null, donationSetFor = null, donationTargetFor = null, orderBook = null, now = () => Date.now(), conflictsFor = null,
     reserveKeyFor = null, feesFor = null, peerAskMs = PEER_ASK_MS, peerReadMs = PEER_READ_MS, peerGraceMs = PEER_GRACE_MS, lockSetContested = null,
-    pickResync = null, finalityOf = resultFinality } = {}) {
+    pickResync = null, finalityOf = resultFinality, publicationPull = null } = {}) {
     this.round = round;
+    // THE SERIES' PUBLICATION PROOF PULLED BEFORE A SETTLEMENT IS BUILT (server.js pullSeriesPublication, kanban #2638): `publicationPull(rid)`
+    // asks the round's peers for a proof this seat lacks, so every seat of a series' paying round builds the same publisher line
+    this.publicationPull = publicationPull;
     // A CONTESTED LOCK SET (ruling #2587, kanban #2606; server.js -> lock-set-book.js contested): `lockSetContested(rid)` true when two standing
     // certificates over different sets of a protocol-28 head-to-head round reached this seat. The round is VOID: no settlement of either side is
     // built, committed to or signed here - every lock goes back by forfeit (lock-set-book.js lockOut)
@@ -380,6 +383,7 @@ export class LockSettlement {
     const key = `${toHex(roundIdBytes)}:fed:${String(fid).toLowerCase()}`;
     const kept = this.built.get(key);
     if (kept) return kept;
+    await this.#pullPublication(roundIdBytes);
     const got = await this.planOf(roundIdBytes);
     if (!got.ok) return got;
     if (!got.anyFed) return refuse('that round settles in its one federation: it has no per-federation settlement');
@@ -441,6 +445,7 @@ export class LockSettlement {
     const key = `${toHex(roundIdBytes)}:${toHex(entryIdBytes)}`;
     const kept = onlyBase ? null : this.built.get(key);
     if (kept) return kept;
+    await this.#pullPublication(roundIdBytes);
     const row = this.round.get(roundIdBytes);
     if (!row) return refuse('this node holds no such round', 404);
     const contract = decodeRoundContract(new Uint8Array(row.contract));
@@ -1060,6 +1065,12 @@ export class LockSettlement {
     } catch { return false; }
   }
 
+  /** A series' publication proof this seat lacks, asked of its peers before a settlement is built (kanban #2638); never fails a build. */
+  async #pullPublication(roundIdBytes) {
+    if (typeof this.publicationPull !== 'function') return;
+    try { await this.publicationPull(roundIdBytes); } catch { /* a peer that does not answer is as one that keeps none */ }
+  }
+
   /** WHAT THIS SIGNER NODE WILL SIGN, rebuilt from its own store and the stock client - or the refusal. */
   async message(roundIdBytes) {
     { const held = this.#contestedHold(roundIdBytes); if (held) return held; }
@@ -1069,6 +1080,7 @@ export class LockSettlement {
     // A POOL BUILT BEFORE A CERTIFICATE MADE THE ROUND A BOOK (kanban #1666) is dropped, never signed: the book's plan is built instead
     if (kept && kept.pool && this.orderBook && this.orderBook.isBook(roundIdBytes)) { this.built.delete(key); this.byPlan.delete(key); }
     else if (kept) return kept;
+    await this.#pullPublication(roundIdBytes);
     const got = await this.planOf(roundIdBytes, { withSends: true });
     if (!got.ok) return got;
     if (got.anyFed) return refuse('that round takes any federation: it is signed one federation at a time (name the federation)');
