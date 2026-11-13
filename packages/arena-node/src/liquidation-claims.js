@@ -22,6 +22,9 @@
 import { settleClaims } from '../../arena-protocol/src/federation-slash.js';
 import { keyedPay, payoutOf, PAYOUT, runPayouts } from './keyed-payout.js';
 
+// A HALT THE ARBITER CANNOT STAND ON (kanban #2617): liquidationOf answers { ok: false, why } - no verified HALTED record a strict majority of
+// its seats list - and nothing is taken or settled, with the reason
+const refusedLiq = (liq) => ({ ok: false, status: 409, why: `this arbitration set settles nothing for that federation yet: ${liq.why}` });
 const isHex = (s, n) => typeof s === 'string' && new RegExp(`^[0-9a-f]{${n}}$`).test(s);
 
 // PENDING OUTPUTS (spec §23A.5 "Notes still in issuance at the halt", RULED 2026-10-14): `checkPending(federationHex, requestHex)`
@@ -44,6 +47,7 @@ export function createLiquidationClaims({ validate, liquidationOf, height, escro
     if (typeof body.ecash !== 'string' || !body.ecash) return { ok: false, status: 400, why: 'a claim presents its notes as e-cash' };
     const liq = await liquidationOf(fid);
     if (!liq) return { ok: false, status: 409, why: 'that federation is not being liquidated: no seat holds it HALTED' };
+    if (liq.ok === false) return refusedLiq(liq);
     const at = await height();
     if (at < liq.liquidatesAt) return { ok: false, status: 409, why: `the claim window opens at ${liq.liquidatesAt} (halted at ${liq.haltHeight} + abandon_blocks); the tip is ${at}` };
     if (at > liq.lateClaimsUntil) return { ok: false, status: 409, why: `claims close at ${liq.lateClaimsUntil}, drain_blocks after the halt: notes presented later are the holder's loss` };
@@ -79,6 +83,7 @@ export function createLiquidationClaims({ validate, liquidationOf, height, escro
     if (typeof checkPending !== 'function') return { ok: false, status: 501, why: 'this arbitration service checks no pending outputs' };
     const liq = await liquidationOf(fid);
     if (!liq) return { ok: false, status: 409, why: 'that federation is not being liquidated: no seat holds it HALTED' };
+    if (liq.ok === false) return refusedLiq(liq);
     const at = await height();
     if (at < liq.liquidatesAt) return { ok: false, status: 409, why: `the claim window opens at ${liq.liquidatesAt}; the tip is ${at}` };
     if (at > liq.lateClaimsUntil) return { ok: false, status: 409, why: `claims closed at ${liq.lateClaimsUntil}` };
@@ -107,6 +112,7 @@ export function createLiquidationClaims({ validate, liquidationOf, height, escro
     const fid = String(fidHex || '').toLowerCase();
     const liq = await liquidationOf(fid);
     if (!liq) return { ok: false, status: 404, why: 'that federation is not being liquidated' };
+    if (liq.ok === false) return refusedLiq(liq);
     const mine = [...(claims.get(fid) || new Map()).values()];
     // what the escrow holds: on chain until it is pegged in, then what the safe federation credited for it (payOutLiquidation)
     const escrowMsat = given !== null ? BigInt(given) : BigInt(await escrowMsatOf(fid));
