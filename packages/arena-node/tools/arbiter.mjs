@@ -25,7 +25,7 @@ import { bitcoindRpc, blocksOver, blockCache } from '../src/chain-rpc.js';
 import { arbitrationMembers, judgeProof, buildSlash, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash, buildEscrowPegin, intentLanded, writeJsonAtomic, resumeIntent, resumeSlashIntent, txidOf, liquidationFromSeats, verifyHaltRecord } from '../src/arbiter.js';
 import { wsClientConfig } from '../src/federation-endpoints.js';
 import { readInvite } from '../src/invite.js';
-import { createTrustedGuardianKeys } from '../../arena-protocol/src/trusted-guardian-keys.js';
+import { createTrustedGuardianKeys, recordInviteSource } from '../../arena-protocol/src/trusted-guardian-keys.js';
 import { createLiquidationClaims, payOutLiquidation } from '../src/liquidation-claims.js';
 import { fedimintNoteValidator } from '../src/note-validate.js';
 import { clocksFor, liquidationRemainderPayees } from '../../arena-protocol/src/federation-slash.js';
@@ -257,6 +257,7 @@ const liqClocks = clocksFor(network === 'testnet4' ? 'testnet4' : network).clock
 // THE FEDERATION'S OWN GUARDIAN KEYS (kanban #2617, #2609): the config a threshold of its guardians answer alike at the endpoints its id commits
 // to (trusted-guardian-keys.js), kept in the state once agreed - a halted federation may no longer answer, so they are learned each pass while
 // it still does (learnGuardianKeys) and the kept ones are read after
+const verifyInviteSig = (sg, m, k) => { try { return schnorr.verify(sg, m, k); } catch { return false; } };
 const trustedKeys = createTrustedGuardianKeys({ fetcher: (url) => wsClientConfig(url, { timeoutMs: 6000 }), timeoutMs: 6500 });
 async function guardianKeysFor(fid, invites = []) {
   state.guardianKeys = state.guardianKeys || {};
@@ -270,15 +271,17 @@ async function guardianKeysFor(fid, invites = []) {
 async function learnGuardianKeys() {
   for (const fid of liqClients.keys()) {
     if (state.guardianKeys && state.guardianKeys[fid]) continue;
-    const invites = new Set();
+    const invites = new Map();
     for (const s of seats) {
       let j; try { j = await get(`${s}/federations`); } catch { continue; }
       for (const f of j.federations || []) {
         if (String(f.federation || '').toLowerCase() !== fid || typeof f.record !== 'string') continue;
-        try { invites.add(splitSignedRecord(fromHex(f.record)).record.invite); } catch { /* not a record */ }
+        // with the node keys whose signatures over the record verify (kanban #2618, feedback #047): the fetch bounds record invites per signer
+        // and evicts one that fails the id check - never the first 8 for good
+        try { const src = recordInviteSource(fromHex(f.record), verifyInviteSig); if (src && !invites.has(src.invite)) invites.set(src.invite, src); } catch { /* not a record */ }
       }
     }
-    const k = await guardianKeysFor(fid, [...invites]);
+    const k = await guardianKeysFor(fid, [...invites.values()]);
     say({ liquidationKeys: fid.slice(0, 16), held: !!k });
   }
 }
@@ -303,7 +306,8 @@ const inviteFederationId = (invite) => { const f = readInvite(invite).federation
 // each signer a node of this arbiter's own census at the record's height
 async function verifyHalt(fid, bytes) {
   let r; try { r = splitSignedRecord(bytes).record; } catch (e) { return { ok: false, why: e.message }; }
-  const keys = await guardianKeysFor(fid, [r.invite]);
+  // the presented record's invite is its author's: a record source, charged to its verified signers (kanban #2618)
+  const keys = await guardianKeysFor(fid, [recordInviteSource(bytes, verifyInviteSig)]);
   if (!keys) return { ok: false, why: 'this arbiter holds no guardian keys of that federation (no threshold of its guardians answered one config)' };
   const contract = await censusTemplate();
   const census = await censusAt(contract, r.height);
