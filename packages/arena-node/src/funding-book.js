@@ -227,23 +227,6 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
     } catch (e) { if (own) db.exec('ROLLBACK'); throw e; }
     return Boolean(outcomeToo);
   }
-  // kanban #2139: the proposals whose every held vote block this process has asked once (the full walk-back), and one step that
-  // drops a proposal's vote blocks from a height up - with its outcome (and a fee proposal's) when `outcomeToo`, and its census too
-  const walkedAll = new Set();
-  function dropVoteFrom(pid, fromHeight, outcomeToo, censusToo = false) {
-    const own = !db.isTransaction;
-    if (own) db.exec('BEGIN IMMEDIATE');
-    try {
-      if (censusToo) db.prepare('DELETE FROM funding_vote_census WHERE proposal = ?').run(pid);
-      db.prepare('DELETE FROM funding_vote_blocks WHERE proposal = ? AND height >= ?').run(pid, fromHeight);
-      if (outcomeToo) {
-        db.prepare('DELETE FROM funding_vote_outcomes WHERE proposal = ?').run(pid);
-        db.prepare('DELETE FROM fee_outcomes WHERE proposal = ?').run(pid);
-      }
-      if (own) db.exec('COMMIT');
-    } catch (e) { if (own) db.exec('ROLLBACK'); throw e; }
-    return Boolean(outcomeToo);
-  }
   async function voteRound() {
     if (!voteChain) return [];
     const height = await Promise.resolve(voteChain.tipHeight()).catch(() => null);
