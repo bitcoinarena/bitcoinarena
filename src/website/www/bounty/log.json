@@ -1,1 +1,140 @@
-[]
+[
+ {
+  "date": "2026-11-11",
+  "reason": "Feedback #001 (high)",
+  "channel": "bug bounty",
+  "sats": 5000
+ },
+ {
+  "date": "2026-11-11",
+  "reason": "Feedback #002 (high)",
+  "channel": "bug bounty",
+  "sats": 5000
+ },
+ {
+  "date": "2026-11-11",
+  "reason": "Feedback #004 (medium)",
+  "channel": "bug bounty",
+  "sats": 2000
+ },
+ {
+  "date": "2026-11-11",
+  "reason": "Feedback #005 (low)",
+  "channel": "bug bounty",
+  "sats": 1000
+ },
+ {
+  "date": "2026-11-11",
+  "reason": "Feedback #006 (useful)",
+  "channel": "bug bounty",
+  "sats": 500
+ },
+ {
+  "date": "2026-11-11",
+  "reason": "Feedback #007 (useful)",
+  "channel": "bug bounty",
+  "sats": 500
+ },
+ {
+  "date": "2026-11-12",
+  "reason": "Feedback #008 (medium)",
+  "channel": "bug bounty",
+  "sats": 2000
+ },
+ {
+  "date": "2026-11-11",
+  "reason": "Feedback #009 (medium)",
+  "channel": "bug bounty",
+  "sats": 2000
+ },
+ {
+  "date": "2026-11-11",
+  "reason": "Feedback #010 (medium)",
+  "channel": "bug bounty",
+  "sats": 2000
+ },
+ {
+  "date": "2026-11-12",
+  "reason": "Feedback #011 (high)",
+  "channel": "bug bounty",
+  "sats": 5000
+ },
+ {
+  "date": "2026-11-12",
+  "reason": "Feedback #012 (critical)",
+  "channel": "bug bounty",
+  "sats": 10000
+ },
+ {
+  "date": "2026-11-12",
+  "reason": "Feedback #013 (high)",
+  "channel": "bug bounty",
+  "sats": 5000
+ },
+ {
+  "date": "2026-11-12",
+  "reason": "Feedback #014 (high)",
+  "channel": "bug bounty",
+  "sats": 5000
+ },
+ {
+  "date": "2026-11-12",
+  "reason": "Feedback #015 (high)",
+  "channel": "bug bounty",
+  "sats": 5000
+ },
+ {
+  "date": "2026-11-12",
+  "reason": "Feedback #016 (low)",
+  "channel": "bug bounty",
+  "sats": 1000
+ },
+ {
+  "date": "2026-11-12",
+  "reason": "Feedback #017 (medium)",
+  "channel": "bug bounty",
+  "sats": 2000
+ },
+ {
+  "date": "2026-11-12",
+  "reason": "Feedback #018 (high)",
+  "channel": "bug bounty",
+  "sats": 5000
+ },
+ {
+  "date": "2026-11-12",
+  "reason": "Feedback #020 (high)",
+  "channel": "bug bounty",
+  "sats": 5000
+ },
+ {
+  "date": "2026-11-12",
+  "reason": "Feedback #021 (medium)",
+  "channel": "bug bounty",
+  "sats": 2000
+ },
+ {
+  "date": "2026-11-12",
+  "reason": "Feedback #023 (medium)",
+  "channel": "bug bounty",
+  "sats": 2000
+ },
+ {
+  "date": "2026-11-12",
+  "reason": "Feedback #029 (low)",
+  "channel": "bug bounty",
+  "sats": 1000
+ },
+ {
+  "date": "2026-11-12",
+  "reason": "Feedback #030 (low)",
+  "channel": "bug bounty",
+  "sats": 1000
+ },
+ {
+  "date": "2026-11-12",
+  "reason": "Feedback #031 (low)",
+  "channel": "bug bounty",
+  "sats": 1000
+ }
+]
