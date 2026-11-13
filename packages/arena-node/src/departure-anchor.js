@@ -5,6 +5,9 @@
 // transaction's txid and block hash. #2608 built the reading side; nothing posted the anchor, so past the gate a node's own notice would
 // never count. Here the node funds that transaction from its wallet, waits until it is confirmed on its own chain, reads it there as every
 // seat will (absences.js readAnchor), and only then publishes the notice with its anchor.
+// THE ANCHOR CARRIES THE WHOLE NOTICE (kanban #2612, feedback #041): OP_RETURN "ARN" 'L' || notice || signature (176 bytes, absence.js), so
+// sending it IS publishing it - every seat reads it off its chain at the anchor's block (absences.js scanDepartures); the POST that
+// follows only makes it known sooner.
 //
 //   (none) --build, written--> BUILT --sent--> SENT --confirmed `depth` deep, read on this chain--> CONFIRMED --posted--> PUBLISHED
 //

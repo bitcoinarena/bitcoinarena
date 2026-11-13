@@ -3616,9 +3616,22 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
     }
   };
+  // AND EVERY NOTICE ANCHORED ON THIS SEAT'S CHAIN (kanban #2612, feedback #041): the anchor carries the notice, so the seat reads it at
+  // the anchor's block and the federation sees it from there - a guardian cannot keep it back until its period is over
+  const departureChain = ballot && typeof ballot.tipHeight === 'function' && typeof ballot.blockHashAt === 'function' && typeof ballot.departuresAt === 'function'
+    ? { tipHeight: ballot.tipHeight, blockHashAt: ballot.blockHashAt, departuresAt: ballot.departuresAt } : null;
+  let departureScanning = false;
+  const scanDepartureChain = async () => {
+    if (!departureChain || departureScanning) return;
+    departureScanning = true;
+    try { const r = await absences.scanDepartures(departureChain); if (r.took) console.log(`[departure] ${r.took} anchored notice(s) read off the chain at ${r.from}-${r.to}`); }
+    catch (e) { console.log(`[departure] the chain read stopped: ${e.message}`); } finally { departureScanning = false; }
+  };
+  const departureScan = setInterval(() => { scanDepartureChain(); }, 60000);
+  if (departureScan.unref) departureScan.unref();
   const emergencyPull = setInterval(() => { pullEmergencies().catch(() => {}); pullDepartures().catch(() => {}); }, 600000);
   if (emergencyPull.unref) emergencyPull.unref();
-  const emergencyFirstPull = setTimeout(() => { pullEmergencies().catch(() => {}); pullDepartures().catch(() => {}); }, 30000);
+  const emergencyFirstPull = setTimeout(() => { pullEmergencies().catch(() => {}); pullDepartures().catch(() => {}); scanDepartureChain(); }, 30000);
   if (emergencyFirstPull.unref) emergencyFirstPull.unref();
   const holdsOfRound = (rid, contract) => roster.slashHoldsFor(rid, { posted: contract });
   const seating = (seatingOn ?? process.env.ARENA_SEATING === '1') ? seatingAgent({ round, roster, endpointOf: addressBook.endpointOf,
@@ -7549,7 +7562,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // each held record with its body: a DRAINING one seats its seated guardians first; the notices are read against it
       records: () => (fedRecords.list() || []).map((x) => { const held = fedRecords.recordOf(x.federation);
         return { federation: x.federation, status: x.status, height: x.height, load: typeof x.load === 'number' ? x.load : null, ...(held && held.record ? { record: held.record } : {}) }; }),
-      notices: () => absences.listDepartures().map((h) => { try { return readDepartureHex(h); } catch { return null; } }).filter(Boolean),
+      // each with the anchor height this seat read on its chain (kanban #2612): past the gate a notice triggers from that height only, and the
+      // hex form carries none - read back from it, no anchored notice ever triggered a founding
+      notices: () => absences.departureNotices(),
       // the owner's emergency leave requests that stand against the census now (§23A.5a): a guardian's starts its federation's succession
       emergencies: () => { const now = fedRecords && fedRecords.censusNow ? fedRecords.censusNow() : { ok: false };
         if (!now.ok) return [];
@@ -15482,7 +15497,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         signer.close().catch(() => {});
         clearInterval(autoUpdateTimer);
         clearInterval(recordTimer);
-        clearInterval(emergencyPull); clearTimeout(emergencyFirstPull);
+        clearInterval(emergencyPull); clearTimeout(emergencyFirstPull); clearInterval(departureScan);
         clearInterval(networkAppsTimer);
         clearInterval(winningsTimer);
         if (auditTimer) clearInterval(auditTimer);

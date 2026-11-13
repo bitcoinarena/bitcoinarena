@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // KANBAN #2608 (spec ruling #2600, comment 7660; the backdating of #2599): a guardian's departure notice counts from the height at which
-// its hash is confirmed on chain - OP_RETURN "ARN" 'L' || departure_id in any transaction - read from the seat's own chain. posted_at is
+// it is confirmed on chain - OP_RETURN "ARN" 'L' || notice || signature (#2612; #2608 had departure_id) in any transaction - read from the seat's own chain. posted_at is
 // the guardian's word: signed at tip T with posted_at T - 432, the old rule let him leave at once and keep his bond. From the network's
 // DEPARTURE_ANCHOR_HEIGHT on, a notice without an anchor is no notice; below it, the old rule holds.
 import { test } from 'node:test';
@@ -62,7 +62,8 @@ test('#2608 the gate: testnet4 at 161 600 (~600 above the tip of 2026-11-13), re
   assert.deepEqual([departureAnchorHeight('testnet4'), departureAnchorHeight('regtest'), departureAnchorHeight('mainnet'), departureAnchorHeight('signet')], [161600, 0, 0, 0]);
   const d = notice({ postedAt: 1, leaveAfter: 500 });
   const a = encodeDepartureAnchor(d);
-  assert.deepEqual([a.length, toHex(a.subarray(0, 4)), toHex(a.subarray(4))], [36, '41524e4c', toHex(departureId(d))], '"ARN" \'L\' || departure_id, 36 bytes');
+  // #2612: the anchor carries the signed notice itself, not its id
+  assert.deepEqual([a.length, toHex(a.subarray(0, 4)), toHex(a.subarray(4))], [176, '41524e4c', departureHex(d)], '"ARN" \'L\' || notice || signature, 176 bytes');
 });
 
 test('#2608 a backdated notice is refused after the gate: signed at T with posted_at T - 432, anchored at T, leaving at T is not a departure', async () => {
