@@ -163,7 +163,7 @@ import { createAbsenceProducer, guardianConfigOf, wsAdminStatus, ownDeparture, o
 import { createFoundingSeat, cliSetup, execCli, fileKeySet } from './founding-seat.js';
 import { FOUNDING_WINDOW, foundingPressurePoint, foundingCandidateVersion, bondMinGuardianOf } from '../../arena-protocol/src/guardian-founding.js';
 import { foundingPressureReader } from './founding-pressure.js';
-import { createEndpointsOf, federationOfDir, configInvite } from './federation-endpoints.js';
+import { createEndpointsOf, createGuardianKeysOf, federationOfDir, configInvite } from './federation-endpoints.js';
 import { execFile as execFileCb } from 'node:child_process';
 import { createLiquidations } from './liquidations.js';
 import { createArbitrationEvents } from './arbitration-events.js';
@@ -7202,6 +7202,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // here shadowed it in all of serve() and every head-to-head close threw (measured 2026-10-15 11:38Z)
   const fedEndpointsOf = createEndpointsOf({ dirs: () => [guardian && guardian.dataDir, guardianNext && guardianNext.dataDir],
     inviteOf: (fidHex) => inviteOfFed(fidHex) || (fedRecords && fedRecords.inviteOf ? fedRecords.inviteOf(fidHex) : null) });
+  // EACH FEDERATION'S OWN GUARDIAN KEYS (kanban #2603): this node's guardians' client.json, else the stake-lock client of a federation this
+  // node already joined (never a new join) - every record this seat builds and checks is held to them; a federation neither names is
+  // checked against its record's own threshold
+  const fedGuardianKeysOf = createGuardianKeysOf({ dirs: () => [guardian && guardian.dataDir, guardianNext && guardianNext.dataDir],
+    joinedPort: async (fidHex) => {
+      if (!stakeLocks) return null;
+      if (typeof stakeLocks.joinedFor === 'function') return stakeLocks.joinedFor(fidHex);
+      // a single port (no router): the home federation's only
+      if (typeof stakeLocks.forFederation !== 'function') return stakeLocks;
+      return null;
+    } });
   // THE SIGNED RECORDS IN THIS SEAT'S DATABASE (kanban #552/#557): restored, each checked again, 20 s after start
   round.db.exec('CREATE TABLE IF NOT EXISTS federation_records (federation TEXT PRIMARY KEY, record TEXT NOT NULL)');
   round.db.exec('CREATE TABLE IF NOT EXISTS federation_record_history (federation TEXT NOT NULL, height INTEGER NOT NULL, record TEXT NOT NULL, PRIMARY KEY (federation, height))');
@@ -7277,7 +7288,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // A THEFT'S PROOF, BUILT AND JUDGED ON ITS OWN BYTES (kanban #1093 part 2, ruling #1109 X): the stake-lock tool exports the signed sessions and verifies them (theft-evidence.js)
     ...theftTools({ bin: process.env.ARENA_STAKE_LOCK_BIN || null, dirOf: (fid) => reserveAuditDirOf(fid), log: (l) => console.log(l) }),
     txConfirmations: async (txid) => (typeof chainTxConfirmations === 'function' ? chainTxConfirmations(txid) : null),
-    bandFrom: capacityBandPoint(chainNetworkId() ? networkOf(fromHex(chainNetworkId())) : null), endpointsOf: fedEndpointsOf,
+    bandFrom: capacityBandPoint(chainNetworkId() ? networkOf(fromHex(chainNetworkId())) : null), endpointsOf: fedEndpointsOf, guardianKeysOf: fedGuardianKeysOf,
     // a guardian's bond counts in the cap only while it is locked past the drain (kanban #1093 part 7): from BOND_LOCK_HEIGHT, or on regtest ARENA_BOND_LOCK_HEIGHT
     bondLock: (() => { const net = chainNetworkId() ? networkOf(fromHex(chainNetworkId())) : null; const env = process.env.ARENA_BOND_LOCK_HEIGHT;
       const from = env !== undefined && env !== '' && (net === 'regtest' || net === 'devnet') ? Number(env) : bondLockPoint(net);   // a harness's own height, never a live network's

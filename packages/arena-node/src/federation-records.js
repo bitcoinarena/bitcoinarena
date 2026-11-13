@@ -30,17 +30,27 @@ import { emergencyDepartureStands, emergencyDepartureEffect, emergencyDepartureI
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { withConfigEndpoints } from './federation-endpoints.js';
 import { buildFederationRecord, encodeFederationRecord, federationRecordId, joinSignedRecord, verifyFederationRecord,
-  FEDERATION_STATUS, GONE, decodeFederationRecord, splitSignedRecord, highestVerified, recordStatusName, thresholdOf, loadReserveOf, statusFor, paysDrainShares, playerReserveOf, GATEWAY_FEE_MAX_REFERENCE } from '../../arena-protocol/src/federation-record.js';
+  FEDERATION_STATUS, GONE, decodeFederationRecord, splitSignedRecord, guardianKeySet, highestVerified, recordStatusName, thresholdOf, loadReserveOf, statusFor, paysDrainShares, playerReserveOf, GATEWAY_FEE_MAX_REFERENCE } from '../../arena-protocol/src/federation-record.js';
 import { recordBand, bandOfRecord } from '../../arena-protocol/src/capacity.js';
 
-/** The census nodes guarding `federationId`, as the record lists them. */
-export function guardiansOf(census, federationId) {
+/**
+ * The census nodes guarding `federationId`, as the record lists them. `keys` (optional, kanban #2603): the federation config's guardian
+ * keys (`broadcast_public_keys`) - then only a node whose advert names one of them counts, one node per key and one key per node, in
+ * census order (as federationIsBonded counts them): a bonded stranger whose advert claims the federation under a made-up key never
+ * enters the body this seat builds, so it cannot lift the record's nominal past what the real guardians can sign.
+ */
+export function guardiansOf(census, federationId, keys = null) {
   const fid = toHex(federationId);
+  const wanted = keys ? guardianKeySet(keys) : null;
+  const keysTaken = new Set();
   const out = [];
+  const claims = (e) => ((e.advert && e.advert.guardianOf) || []).filter((x) => toHex(x.federationId) === fid && (!wanted || wanted.has(toHex(x.guardianKey))));
   // ONE ROW PER NODE, ITS BOND THE SUM OF ITS OUTPUTS (kanban #544): an added second output names the same guardian, not a second one;
   // the row's bond outpoint is the node's lowest
-  for (const n of nodeBonds((census.entries || []).filter((e) => ((e.advert && e.advert.guardianOf) || []).some((x) => toHex(x.federationId) === fid)))) {
-    const e = n.entry, g = e.advert.guardianOf.find((x) => toHex(x.federationId) === fid);
+  for (const n of nodeBonds((census.entries || []).filter((e) => claims(e).length))) {
+    const e = n.entry, g = wanted ? claims(e).find((x) => !keysTaken.has(toHex(x.guardianKey))) : e.advert.guardianOf.find((x) => toHex(x.federationId) === fid);
+    if (!g) continue;
+    if (wanted) keysTaken.add(toHex(g.guardianKey));
     out.push({ peerKey: g.guardianKey, nodePubkey: e.pubkey, operatorId: (e.advert && e.advert.operatorId) || '', bondTxid: e.txid, bondVout: e.vout,
       endpoint: (e.advert && e.advert.guardianEndpoint) || '', bondSats: typeof e.bondSats === 'bigint' ? n.bondSats : String(n.bondSats),
       outputs: n.outputs.map((o) => ({ bondSats: BigInt(o.bondSats), maturity: o.maturity })),   // each output's maturity: the lock (kanban #1093 part 7)
@@ -188,7 +198,21 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   theftEvidenceOf = async () => null,
   // THE CHECKER'S OWN VERIFIER OF THOSE BYTES: async (theft-slash.js theftVerifyInput) -> the tool's `theft-verify` line, or undefined where this seat runs none;
   // and its chain: async (txid display hex) -> confirmations | null
-  verifySessions = async () => undefined, txConfirmations = async () => null }) {
+  verifySessions = async () => undefined, txConfirmations = async () => null,
+  // THE FEDERATION'S OWN GUARDIAN KEYS (kanban #2603): async (fidHex) -> [33-byte key] | null, its config's broadcast_public_keys when
+  // this seat holds that config (server.js: its own guardian's client.json, else the stake-lock client of a federation it joined). Every
+  // record this seat builds lists only census nodes advertising one of them, and every record it verifies is held to them
+  // (verifyFederationRecord guardianKeys). Null: no config here - a record is then held to its own threshold, nothing else
+  guardianKeysOf = null }) {
+  // the keys once read, by federation id hex: a federation's config keys do not change (a successor is another federation)
+  const keysKnown = new Map();
+  async function keysFor(fidHex) {
+    const fid = String(fidHex).toLowerCase();
+    if (typeof guardianKeysOf !== 'function') return null;
+    let k = null; try { k = await guardianKeysOf(fid); } catch { k = null; }
+    if (Array.isArray(k) && guardianKeySet(k)) { keysKnown.set(fid, k); return k; }
+    return keysKnown.get(fid) || null;
+  }
   // THE GUARDIAN BOND LOCK IS ON AT THIS BODY'S HEIGHT (#1104's line; #1318's departure on schedule rides on it)
   const lockOn = (b) => !!(bondLock && Number.isInteger(bondLock.from) && b.height >= bondLock.from);
   const kept = new Map();                    // federation id hex -> { bytes, record, status, height, signers, atMs }
@@ -465,14 +489,15 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     const asked = await askPrevious(fid, b);
     if (asked.answered < thresholdOf(asked.of)) return { ok: false, why: `${asked.answered} of ${asked.of} guardians answered with their records below ${b.height}: this guardian does not sign this round` };
     const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
+    const keys = await keysFor(fid);
     for (const hex of [...asked.hexes, ...(previous ? [String(previous).toLowerCase()] : [])]) {
       let bytes, r; try { bytes = fromHex(hex); r = splitSignedRecord(bytes).record; } catch { continue; }
       if (toHex(r.federationId) !== fid || r.height >= b.height || !inviteFederationId) continue;
-      let v = verifyFederationRecord(bytes, { census: b.census.entries, verify, inviteFederationId, bandPoint: bandFrom });
+      let v = verifyFederationRecord(bytes, { census: b.census.entries, verify, inviteFederationId, bandPoint: bandFrom, guardianKeys: keys });
       if (!v.ok && typeof censusAt === 'function') {
         const entries = await Promise.resolve().then(() => censusAt(r.height)).catch(() => null);
         if (!entries) return { ok: false, why: `the census at ${r.height} is not read, so a record below ${b.height} cannot be checked: this guardian does not sign this round` };
-        v = verifyFederationRecord(bytes, { census: entries, verify, inviteFederationId, bandPoint: bandFrom });
+        v = verifyFederationRecord(bytes, { census: entries, verify, inviteFederationId, bandPoint: bandFrom, guardianKeys: keys });
       }
       if (v.ok) rows.push({ ...v, hex });
     }
@@ -607,10 +632,10 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   };
   /** The signed record a proof carries, held to this seat's census at its own height: { ok, record } or { ok: false, status, wait, why }. */
   async function recordStands(record, inviteFederationId) {
-    let height; try { height = splitSignedRecord(record).record.height; } catch (e) { return { ok: false, status: 400, why: e.message }; }
+    let height, fid; try { const r = splitSignedRecord(record).record; height = r.height; fid = toHex(r.federationId); } catch (e) { return { ok: false, status: 400, why: e.message }; }
     const entries = typeof censusAt === 'function' ? await Promise.resolve().then(() => censusAt(height)).catch(() => null) : null;
     if (!entries) return { ok: false, status: 503, wait: true, why: `the census at ${height} is not read here` };
-    const v = verifyFederationRecord(record, { census: entries, verify: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } }, inviteFederationId, networkId });
+    const v = verifyFederationRecord(record, { census: entries, verify: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } }, inviteFederationId, networkId, guardianKeys: await keysFor(fid) });
     return v.ok ? { ok: true, record: v.record } : { ok: false, status: 409, why: `that record does not stand: ${v.why}` };
   }
   /** A THEFT'S PROOF HANDED TO THIS SEAT (PUT /slash/<id>): kept when the bytes hash to that id, the record in them stands here, is the proof's federation's, and seats the node. */
@@ -704,7 +729,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     try { if (toHex(abandonedProofId(bytes)) !== id) return { ok: false, status: 409, why: 'those bytes are not the proof that hash names' }; p = decodeAbandonedProof(bytes); record = p.record; height = splitSignedRecord(record).record.height; } catch (e) { return { ok: false, status: 400, why: e.message }; }
     const entries = typeof censusAt === 'function' ? await Promise.resolve().then(() => censusAt(height)).catch(() => null) : null;
     if (!entries) return { ok: false, status: 503, why: `the census at ${height} is not read here` };
-    const v = verifyFederationRecord(record, { census: entries, verify: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } }, inviteFederationId, networkId });
+    const v = verifyFederationRecord(record, { census: entries, verify: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } }, inviteFederationId, networkId, guardianKeys: await keysFor(toHex(p.federationId)) });
     if (!v.ok) return { ok: false, status: 409, why: `that record does not stand: ${v.why}` };
     if (toHex(v.record.federationId) !== toHex(p.federationId)) return { ok: false, status: 409, why: 'that record is another federation\'s' };
     if (!abandonedRows(v.record, abandonedFrom).some((r) => toHex(r.nodePubkey) === toHex(p.nodePubkey) && toHex(r.proofRef) === toHex(p.proofRef))) return { ok: false, status: 409, why: 'that record has no such ABANDONED row' };
@@ -730,11 +755,11 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   }
 
   /** The body for one federation from a basis, with `gone` - the guardians whose nodes said they are leaving. */
-  function bodyFor(b, federationId, gone = [], reserveSats = 0n, eps = null, was = null, player = null) {
+  function bodyFor(b, federationId, gone = [], reserveSats = 0n, eps = null, was = null, player = null, keys = null) {
     const fid = toHex(federationId);
     const invite = inviteFor(fid);
     if (!invite) return { ok: false, why: 'this seat names no invite for that federation' };
-    const guardians = withConfigEndpoints(guardiansOf(b.census, federationId), eps, toHex);
+    const guardians = withConfigEndpoints(guardiansOf(b.census, federationId, keys), eps, toHex);
     if (!guardians.length) return { ok: false, why: 'no census node guards that federation' };
     const succ = successorOf(fid);
     const spent = spentGuardians(b, federationId);
@@ -794,13 +819,14 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     if (!prior.ok) return prior;
     const was = prior.was;
     const eps = await epsFor(federationIdHex);
-    const first = bodyFor(b, fromHex(federationIdHex), [], 0n, eps);
+    const keys = await keysFor(federationIdHex);
+    const first = bodyFor(b, fromHex(federationIdHex), [], 0n, eps, null, null, keys);
     if (!first.ok) return first;
     const res = await reserveFor(federationIdHex, first.guardians, reserveNamed);
     if (!res.ok) return res;
     const pl = await playerFor(federationIdHex, res.reserveSats, playerNamed);
     if (!pl.ok) return pl;
-    const built = bodyFor(b, fromHex(federationIdHex), [], res.reserveSats, eps, was, pl.player);
+    const built = bodyFor(b, fromHex(federationIdHex), [], res.reserveSats, eps, was, pl.player, keys);
     if (!built.guardians.some((g) => toHex(g.nodePubkey) === toHex(round.pubkey))) return { ok: false, why: 'this node does not guard that federation' };
     const leaving = leavingAtMs() !== null;
     const id = federationRecordId(built.record);
@@ -813,7 +839,8 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     const b = basisFor(toHex(federationId));
     if (!b.ok) return b;
     const eps = await epsFor(toHex(federationId));
-    const first = bodyFor(b, federationId, [], 0n, eps);
+    const keys = await keysFor(toHex(federationId));
+    const first = bodyFor(b, federationId, [], 0n, eps, null, null, keys);
     if (!first.ok) return first;
     // THE RESERVE, read once here and named to every guardian seat, each of which signs only on its own same reading
     const res = await reserveFor(toHex(federationId), first.guardians);
@@ -823,7 +850,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     if (!prior.ok) return prior;
     const pl = await playerFor(toHex(federationId), reserveSats, null, true);
     const was = prior.was, handed = (prior.hex ? `&previous=${prior.hex}` : '') + (pl.player !== null ? `&player=${pl.player}` : '');
-    const plain = bodyFor(b, federationId, [], reserveSats, eps, was, pl.player);
+    const plain = bodyFor(b, federationId, [], reserveSats, eps, was, pl.player, keys);
     const asked = await Promise.all(plain.guardians.map(async (g) => {
       const base = String(g.advertEndpoint || '').replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
       if (toHex(g.nodePubkey) === toHex(round.pubkey)) return { g, said: await mySignature(toHex(federationId), null, reserveSats, { previous: prior.hex, inviteFederationId, player: pl.player }) };
@@ -867,7 +894,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     }
     // THE BODY WITH THEM GONE, and the signatures over exactly it: a guardian's signature counts for the body it signed,
     // so with anyone gone every seat signs again - the leave statements move the body, and the seat asks once more
-    const final = gone.length ? bodyFor(b, federationId, gone, reserveSats, eps, was, pl.player) : plain;
+    const final = gone.length ? bodyFor(b, federationId, gone, reserveSats, eps, was, pl.player, keys) : plain;
     const finalBytes = encodeFederationRecord(final.record);
     const id = federationRecordId(final.record);
     let answers = asked;
@@ -886,7 +913,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       if (good) signatures.push({ nodePubkey: g.nodePubkey, signature: fromHex(said.signature) });
     }
     const signed = joinSignedRecord(finalBytes, signatures);
-    const v = verifyFederationRecord(signed, { census: b.census.entries, verify: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } }, inviteFederationId, bandPoint: bandFrom });
+    const v = verifyFederationRecord(signed, { census: b.census.entries, verify: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } }, inviteFederationId, bandPoint: bandFrom, guardianKeys: keys });
     if (!v.ok) return { ok: false, why: v.why, signatures: signatures.length, of: plain.guardians.length };
     keep(toHex(federationId), signed, v);
     return { ok: true, status: v.status, signers: v.signers, height: v.record.height, gone: gone.length, of: plain.guardians.length };
@@ -911,7 +938,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
         const bytes = fromHex(String(row.record));
         const r = decodeFederationRecord(splitSignedRecord(bytes).body);
         const own = r.guardians.map((g) => ({ pubkey: g.nodePubkey, advert: { guardianOf: [{ federationId: r.federationId, guardianKey: g.peerKey }] } }));
-        const v = verifyFederationRecord(bytes, { census: own, verify, inviteFederationId });
+        const v = verifyFederationRecord(bytes, { census: own, verify, inviteFederationId, guardianKeys: keysKnown.get(fid) || null });
         if (v.ok && keep(fid, bytes, v, 'restore')) { provisional.add(fid); restored++; }
       } catch { /* restored at 20 s, or gathered again */ }
     }
@@ -932,10 +959,11 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
         const bytes = fromHex(String(r.record));
         const h = decodeFederationRecord(splitSignedRecord(bytes).body).height;
         const b = basisFor(fid);
-        let v = b && b.ok ? verifyFederationRecord(bytes, { census: b.census.entries, verify, inviteFederationId, bandPoint: bandFrom }) : { ok: false };
+        const keys = await keysFor(fid);
+        let v = b && b.ok ? verifyFederationRecord(bytes, { census: b.census.entries, verify, inviteFederationId, bandPoint: bandFrom, guardianKeys: keys }) : { ok: false };
         if (!v.ok && typeof censusAt === 'function') {
           const entries = await Promise.race([Promise.resolve(censusAt(h)).catch(() => null), new Promise((ok) => setTimeout(() => ok(null), 5000))]);
-          if (entries) v = verifyFederationRecord(bytes, { census: entries, verify, inviteFederationId, bandPoint: bandFrom });
+          if (entries) v = verifyFederationRecord(bytes, { census: entries, verify, inviteFederationId, bandPoint: bandFrom, guardianKeys: keys });
         }
         // NO CENSUS YET (2026-10-20: "It is also not reading the federations at all reliably so everything gateway related is never
         // shown" - measured 12:48Z: six test host seats restarted one by one under load 18 held no record for minutes, their chain view not
@@ -945,7 +973,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
         if (!v.ok) {
           const r = decodeFederationRecord(splitSignedRecord(bytes).body);
           const own = r.guardians.map((g) => ({ pubkey: g.nodePubkey, advert: { guardianOf: [{ federationId: r.federationId, guardianKey: g.peerKey }] } }));
-          v = verifyFederationRecord(bytes, { census: own, verify, inviteFederationId, bandPoint: bandFrom });
+          v = verifyFederationRecord(bytes, { census: own, verify, inviteFederationId, bandPoint: bandFrom, guardianKeys: keys });
         }
         if (v.ok) { keep(fid, bytes, v); restored++; }
       } catch { /* not restored: gathered again */ }
@@ -958,7 +986,8 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   async function mirror(federationId, b, inviteFederationId, pass = { kept: new Map(), byBase: new Map() }) {
     const fid = toHex(federationId);
     const censusKept = pass.kept;
-    const guardians = guardiansOf(b.census, federationId);
+    const keys = await keysFor(fid);
+    const guardians = guardiansOf(b.census, federationId, keys);
     if (!guardians.length) return { ok: false, why: 'no census node guards that federation' };
     const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
     let best = null; let why = 'none of its guardians holds a record';
@@ -976,12 +1005,12 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
         const mine = (Array.isArray(j.federations) ? j.federations : []).filter((x) => x && String(x.federation).toLowerCase() === fid);
         const later = [];
         for (const x of mine) {
-          let v; try { v = verifyFederationRecord(fromHex(String(x.record)), { census: b.census.entries, verify, inviteFederationId, bandPoint: bandFrom }); } catch (e) { v = { ok: false, why: e.message }; }
+          let v; try { v = verifyFederationRecord(fromHex(String(x.record)), { census: b.census.entries, verify, inviteFederationId, bandPoint: bandFrom, guardianKeys: keys }); } catch (e) { v = { ok: false, why: e.message }; }
           if (!v.ok && typeof censusAt === 'function') {
             let rec = null; try { rec = decodeFederationRecord(splitSignedRecord(fromHex(String(x.record))).body); } catch { rec = null; }
             if (rec && Number.isInteger(rec.height) && Array.isArray(rec.guardians)) {
               const own = rec.guardians.map((g) => ({ pubkey: g.nodePubkey, advert: { guardianOf: [{ federationId: rec.federationId, guardianKey: g.peerKey }] } }));
-              let self = { ok: false }; try { self = verifyFederationRecord(fromHex(String(x.record)), { census: own, verify, inviteFederationId, bandPoint: bandFrom }); } catch { self = { ok: false }; }
+              let self = { ok: false }; try { self = verifyFederationRecord(fromHex(String(x.record)), { census: own, verify, inviteFederationId, bandPoint: bandFrom, guardianKeys: keys }); } catch { self = { ok: false }; }
               if (self.ok) { later.push({ x, h: rec.height }); continue; }
             }
           }
@@ -994,7 +1023,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
           if (censusKept.has(h) || (reads < MIRROR_CENSUS_PER_ANSWER && censusKept.size < MIRROR_CENSUS_PER_PASS)) {
             if (!censusKept.has(h)) { censusKept.set(h, Promise.resolve(censusAt(h)).catch(() => null)); pass.byBase.set(base, reads + 1); }
             const entries = await censusKept.get(h);
-            try { v = entries ? verifyFederationRecord(fromHex(String(x.record)), { census: entries, verify, inviteFederationId, bandPoint: bandFrom }) : { ok: false, why: 'no census at that record height' }; } catch (e) { v = { ok: false, why: e.message }; }
+            try { v = entries ? verifyFederationRecord(fromHex(String(x.record)), { census: entries, verify, inviteFederationId, bandPoint: bandFrom, guardianKeys: keys }) : { ok: false, why: 'no census at that record height' }; } catch (e) { v = { ok: false, why: e.message }; }
           }
           take(x, v);
         }
@@ -1065,16 +1094,17 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     if (!prior.ok) return prior;
     const was = prior.was;
     const eps = await epsFor(federationIdHex);
-    const first = bodyFor(b, fromHex(federationIdHex), [], 0n, eps);
+    const keys = await keysFor(federationIdHex);
+    const first = bodyFor(b, fromHex(federationIdHex), [], 0n, eps, null, null, keys);
     if (!first.ok) return first;
     const res = await reserveFor(federationIdHex, first.guardians, reserveNamed);
     if (!res.ok) return res;
     const pl = await playerFor(federationIdHex, res.reserveSats, playerNamed);
     if (!pl.ok) return pl;
-    const plain = bodyFor(b, fromHex(federationIdHex), [], res.reserveSats, eps, was, pl.player);
+    const plain = bodyFor(b, fromHex(federationIdHex), [], res.reserveSats, eps, was, pl.player, keys);
     if (!plain.guardians.some((g) => toHex(g.nodePubkey) === toHex(round.pubkey))) return { ok: false, why: 'this node does not guard that federation' };
-    const keys = new Set(plain.guardians.map((g) => toHex(g.peerKey)));
-    if (!goneHex.every((k) => keys.has(k))) return { ok: false, why: 'that names a guardian this federation does not have' };
+    const listedKeys = new Set(plain.guardians.map((g) => toHex(g.peerKey)));
+    if (!goneHex.every((k) => listedKeys.has(k))) return { ok: false, why: 'that names a guardian this federation does not have' };
     const plainId = federationRecordId(plain.record);
     // a peer the attestations handed along are about is ABANDONED - only if they prove it to this seat, on its own record
     let absent; let notices;
@@ -1122,7 +1152,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       const onTime = lockOn(b) ? guardianSlashStands({ proof: p, scheduled: scheduledDeparture({ outputs: g.outputs, departureNotice }) }) : null;
       gone.push({ peerKey: g.peerKey, sinceHeight: p.sinceHeight, kind: onTime && onTime.onSchedule ? GONE.DEPARTED : GONE.ABANDONED, proofRef: p.id });
     }
-    return signBody(bodyFor(b, fromHex(federationIdHex), gone, res.reserveSats, eps, was, pl.player).record);
+    return signBody(bodyFor(b, fromHex(federationIdHex), gone, res.reserveSats, eps, was, pl.player, keys).record);
   }
 
   // one gather pass (gatherAll starts it): kanban #2370 - never two at once, and the public door's no more often than GATHER_FRESH_MS
@@ -1194,7 +1224,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       const fid = String(fidHex).toLowerCase();
       const b = basisFor(fid);
       if (!b || !b.ok) return { closed: 0, of: 0, why: (b && b.why) || 'no census' };
-      const guardians = guardiansOf(b.census, fromHex(fid));
+      const guardians = guardiansOf(b.census, fromHex(fid), await keysFor(fid));
       const answers = await Promise.all(guardians.map(async (g) => {
         const base = String(g.advertEndpoint || '').replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
         if (toHex(g.nodePubkey) === toHex(round.pubkey)) { const k = kept.get(fid); return !!k && k.status === 'CLOSED'; }
@@ -1223,7 +1253,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     // THE FEDERATION'S GUARDIANS BY THE CENSUS (kanban #552): node keys hex of the census that names it (the held round's, else the chain's) -
     // what stands before this seat holds its record (seatedGuardians is null then; "the census rule then stands")
     censusGuardians(fidHex) {
-      try { const b = basisFor(String(fidHex).toLowerCase()); return b && b.ok ? guardiansOf(b.census, fromHex(String(fidHex))).map((g) => toHex(g.nodePubkey)) : []; } catch { return []; }
+      try { const b = basisFor(String(fidHex).toLowerCase()); return b && b.ok ? guardiansOf(b.census, fromHex(String(fidHex)), keysKnown.get(String(fidHex).toLowerCase()) || null).map((g) => toHex(g.nodePubkey)) : []; } catch { return []; }
     },
     seatedGuardians(fidHex) {
       const k = kept.get(String(fidHex).toLowerCase());
