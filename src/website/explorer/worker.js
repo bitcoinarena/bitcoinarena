@@ -54,6 +54,14 @@ function agreed(values) {
   return JSON.parse(top[0][0]);
 }
 
+// HOW MANY SEATS BACK A ROW (kanban #2440, #2491, #2525, #1489 a44 refute 0 s3): the seats its merge counts as holding it (an order:
+// the seats that know it; a payment: the seats that list it byte for byte). No honest order's entry id is a payment's id or federation
+// txid, so where they meet one of the two is made up - and two agreeing seats (AGREE=2) can make up either. The one MORE seats back wins;
+// on a tie the row D1 holds stays. Without this, two seats' made-up order took a real gift's id for good (the mirror of #1599), hid a gift
+// all 14 seats list by naming its federation txid (#2201's check), and /api/tx/<that txid> showed their order instead of the gift.
+const support = (tx) => (tx && Array.isArray(tx.seats) ? tx.seats.filter((x) => x && x.known).length : 0);
+const supportOf = (json) => { try { return support(JSON.parse(json)); } catch { return 0; } };
+
 /** One transaction from every seat's answer ([{ seat, status, body, why }]), merged. */
 function merge(id, answers, readMs = null) {
   const held = answers.filter((a) => a.body && a.body.known);
@@ -100,7 +108,7 @@ async function sha(text) {
 }
 
 /** A merged transaction's write into D1, or null when it is what D1 holds already (its hash leaves out when it was read). */
-async function keep(env, tx, had) {
+async function keep(env, tx, had, over = false) {
   const { readAt, readMs, ...stable } = tx; void readAt; void readMs;
   const h = await sha(JSON.stringify(stable));
   if (had === h) return null;
@@ -109,12 +117,13 @@ async function keep(env, tx, had) {
   return env.DB.prepare(`INSERT INTO txs (id, round, app, federation, stored_ms, settled, hash, json, updated_ms, kind, fed_txid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET round = excluded.round, app = excluded.app, federation = excluded.federation, stored_ms = excluded.stored_ms,
     settled = excluded.settled, hash = excluded.hash, json = excluded.json, updated_ms = excluded.updated_ms, kind = excluded.kind, fed_txid = excluded.fed_txid
-    WHERE txs.kind = excluded.kind OR excluded.kind = 'order'`)
+    WHERE txs.kind = excluded.kind OR excluded.kind = 'order' OR ? = 1`)
     // a write replaces only a row of its own kind (kanban #1599): one seat's GET /payments row named with an order's entry id (public on
     // the explorer) no longer turns that order into its made-up gift - the round left /api/played, /api/totals and the volume. An order
-    // (merged across the seats, #1510) still takes back an id a payment row held first.
+    // (merged across the seats, #1510) still takes back an id a payment row held first - the readers let it only when more seats back it
+    // than back that payment (kanban #2440); `over` lets a payment more seats back take back an id an order held first (kanban #2440).
     .bind(tx.id, e.round || null, e.app || null, e.federation || null, tx.storedFirst ? Date.parse(tx.storedFirst) : Date.now(),
-      tx.settlement ? tx.settlement.state : null, h, JSON.stringify(tx), Date.now(), tx.kind || 'order', tx.payment ? tx.payment.txid : null);
+      tx.settlement ? tx.settlement.state : null, h, JSON.stringify(tx), Date.now(), tx.kind || 'order', tx.payment ? tx.payment.txid : null, over ? 1 : 0);
 }
 
 // THE GIFTS, ZAPS AND ITEMS BOUGHT (kanban #683, 2026-10-26: "I don't see item purchases in the explorer"; #682: a gift "doesn't show in
@@ -128,6 +137,10 @@ const isRow = (x) => !!x && typeof x === 'object' && !Array.isArray(x);
 // that row are known, and its time is the AGREE-th earliest of theirs. A payment fewer than AGREE seats agree on is not found and not
 // stored - one seat of fourteen could list a made-up 21 BTC item purchase as a real transaction, or a "gift" under a real order's id.
 const withoutKept = (r) => { const { keptMs, ...rest } = r; void keptMs; return rest; };
+// AN ID IS A STRING OF 64 HEX DIGITS, NOT ANYTHING THAT PRINTS AS ONE (kanban #2129, #2192, #2286): hex64.test(String(x)) let one seat's
+// id [<hex>] (an array) through, it reached the SELECT ... IN (?) bind and D1 threw, so the minute's read of every seat's orders (or
+// gifts) stopped. The raw value is tested, so only a real string id is read
+const isHexId = (x) => typeof x === 'string' && hex64.test(x);
 function paymentTx(id, answers) {
   const r = agreed(answers.filter((a) => a.row).map((a) => withoutKept(a.row)));
   const same = (a) => !!(r && a.row && JSON.stringify(withoutKept(a.row)) === JSON.stringify(r));
@@ -142,59 +155,96 @@ function paymentTx(id, answers) {
       storedAt: same(a) && Number.isFinite(Number(a.row.keptMs)) ? new Date(Number(a.row.keptMs)).toISOString() : null, why: a.why || null })) };
 }
 
-/** Every seat's gifts and items kept after `since` (at most `limit` of each), merged into D1; and where a further read goes on from. */
-async function readPayments(env, since, limit) {
+/** Every seat's gifts and items kept after `since` (at most `limit` of each), merged into D1. `since` is one number for every seat (the
+ *  minute's own read), or, for the walk, `walk` = { since: Map seat -> its own cursor, pending: Map seat -> Map id -> row } (kanban #2392):
+ *  only the seats in walk.since are asked, and what each listed earlier that is not stored yet counts as its listing here too. */
+async function readPayments(env, since, limit, walk = null) {
   const t0 = Date.now();
-  const got = await Promise.all(SEATS.map(async (seat) => ({ seat, ...(await ask(`${seat}/payments?since=${since}&limit=${limit}`, READ_MS)) })));
+  const asked = walk ? SEATS.filter((s) => walk.since.has(s)) : SEATS;
+  const sinceOf = (seat) => (walk ? walk.since.get(seat) : since);
+  const got = await Promise.all(asked.map(async (seat) => ({ seat, ...(await ask(`${seat}/payments?since=${sinceOf(seat)}&limit=${limit}`, READ_MS)) })));
   const byId = new Map();
-  // GOES ON FROM (kanban #1885, #1920, #1963; was the earliest last row of ANY full list, before any check - guardian-1 alone answered
-  // `limit` junk rows whose last keptMs was 0 and held the walk at its first page for good): each seat's list is cut to the `limit` asked
-  // for; a list is full only when `limit` of its rows pass the id checks with a keptMs after `since`, and its last is the latest of those.
-  // The walk goes on from the AGREE-th earliest last of the full lists (one seat's alone neither holds it back nor sends it on), always
-  // after `since`; fewer than AGREE full lists: nothing is left
-  const lasts = [];
-  const rowOk = (r) => isRow(r) && hex64.test(String(r.id)) && hex64.test(String(r.txid));   // (kanban #1600: a plain object)
+  // HOW FAR EACH SEAT REACHED (kanban #1602, #2127, #2392): per seat, the smaller of its two lists' reach - the last row's kept time
+  // (whole ms) of a list it filled to its limit, or "all of it" (Infinity) when the list is not full. Each seat's reach is its own: the
+  // walk goes on per seat from that seat's reach, in that seat's own clock, so no seat moves (or holds) another seat's cursor. #2127 went
+  // on from the AGREE-th smallest reach of all seats: with only AGREE seats holding a payment and their clocks apart, the walk went past
+  // what the earlier-clocked seat had not listed yet, and the later one no longer listed it - each listed by one seat, never stored
+  // (measured: 2 of 300 lost). A full page whose last row is not a whole ms past since is no reach (null): that seat is not walked
+  // further (one seat answering since + 1 or since + 1e-300 slows only itself). Each seat's list is cut to the `limit` asked for
+  // (kanban #1885, #1920, #1963), and only a row that passes the id checks is read.
+  const rowOk = (r) => isRow(r) && isHexId(r.id) && isHexId(r.txid);   // (kanban #1600: a plain object; #2129: a string id, not an array)
+  const reach = new Map();
   for (const g of got) {
     if (!g.body || !Array.isArray(g.body.gifts) || !Array.isArray(g.body.items)) continue;
-    for (const whole of [g.body.gifts, g.body.items]) {
-      const list = whole.slice(0, limit);
-      const after = list.filter((r) => rowOk(r) && Number.isFinite(Number(r.keptMs)) && Number(r.keptMs) > since).map((r) => Number(r.keptMs));
-      if (after.length >= limit) lasts.push(Math.max(...after));
-      for (const r of list) {
-        if (!rowOk(r)) continue;
-        if (!byId.has(r.id)) byId.set(r.id, new Map());
-        byId.get(r.id).set(g.seat, { row: r, key: g.body.seat || null });
+    let r = Infinity;
+    for (const kind of ['gifts', 'items']) {
+      const list = g.body[kind].slice(0, limit);
+      // ONE SEAT'S JUNK ROW DROPS ONLY THAT ROW (kanban #1600): a null (or any non-object) row threw at r.id / .keptMs, and the minute's
+      // read of every seat's gifts, zaps and items stopped
+      const lastRow = list[list.length - 1];
+      if (list.length >= limit) {
+        const last = rowOk(lastRow) ? Math.floor(Number(lastRow.keptMs)) : NaN;
+        if (r !== null) r = Number.isFinite(last) && last > sinceOf(g.seat) ? Math.min(r, last) : null;
+      }
+      for (const row of list) {
+        if (!rowOk(row)) continue;
+        if (!byId.has(row.id)) byId.set(row.id, new Map());
+        byId.get(row.id).set(g.seat, { row, key: g.body.seat || null });
       }
     }
+    reach.set(g.seat, r);
   }
-  lasts.sort((a, b) => a - b);
-  const next = lasts.length >= AGREE ? lasts[AGREE - 1] : null;
-  // ONLY AN ID AGREE SEATS LIST IS LOOKED UP OR WRITTEN (kanban #1885, #1920, #1963): one seat's made-up rows cost no D1 query
-  for (const [id, per] of byId) if (per.size < AGREE) byId.delete(id);
-  // a seat that answered and did not list it does not keep it; a seat before GET /payments (404) or that did not answer is said so
-  const answered = new Map(got.map((g) => [g.seat, !!(g.body && Array.isArray(g.body.gifts))]));
+  // a seat's earlier listing of a payment not stored yet (kanban #2392): the AGREE-th seat may list it a minute or more later
+  if (walk) for (const [seat, rows] of walk.pending) for (const [id, row] of rows) {
+    if (!byId.has(id)) byId.set(id, new Map());
+    if (!byId.get(id).has(seat)) byId.get(id).set(seat, { row, key: null });
+  }
+  // ONLY AN ID AGREE SEATS LIST IS LOOKED UP OR WRITTEN (kanban #1885, #1920, #1963): one seat's made-up rows cost no D1 query; the walk
+  // keeps them open (kanban #2392) in case more seats list them later
+  const few = new Map();
+  for (const [id, per] of byId) if (per.size < AGREE) { few.set(id, per); byId.delete(id); }
+  // a seat that answered and did not list it does not keep it; a seat before GET /payments (404) or that did not answer is said so; a seat
+  // the walk no longer asks (it reached the end) is one that answered
+  const answered = new Map(SEATS.map((seat) => { const g = got.find((x) => x.seat === seat); return [seat, g ? !!(g.body && Array.isArray(g.body.gifts)) : !!walk]; }));
   const ids = [...byId.keys()];
   const hashes = new Map();
+  // the orders D1 holds at these ids: how many seats back each (kanban #2440)
+  const orderAt = new Map();
   for (let i = 0; i < ids.length; i += 90) {
     const part = ids.slice(i, i + 90);
-    const r = await env.DB.prepare(`SELECT id, hash, kind FROM txs WHERE id IN (${part.map(() => '?').join(',')})`).bind(...part).all();
-    for (const x of r.results || []) hashes.set(x.id, x);
+    const r = await env.DB.prepare(`SELECT id, hash, kind, CASE WHEN kind IS NULL OR kind = 'order' THEN json ELSE NULL END AS oj FROM txs WHERE id IN (${part.map(() => '?').join(',')})`).bind(...part).all();
+    for (const x of r.results || []) { hashes.set(x.id, x); if ((x.kind || 'order') === 'order') orderAt.set(x.id, supportOf(x.oj)); }
   }
-  const writes = [];
+  // the federation txids the rows name that are an order's id in D1 (kanban #2201): no honest gift's txid is an order's entry id, so one
+  // of the two is made up - the one fewer seats back (kanban #2440: two seats' made-up order at a real gift's txid hid the gift for good)
+  const txids = [...new Set(ids.flatMap((id) => [...byId.get(id).values()].map((v) => String(v.row.txid))))];
+  const orderIds = new Map();
+  for (let i = 0; i < txids.length; i += 90) {
+    const part = txids.slice(i, i + 90);
+    const r = await env.DB.prepare(`SELECT id, json FROM txs WHERE kind = 'order' AND id IN (${part.map(() => '?').join(',')})`).bind(...part).all();
+    for (const x of r.results || []) orderIds.set(x.id, supportOf(x.json));
+  }
+  const writes = [], open = new Map();
   for (const id of ids) {
     const per = byId.get(id);
     const answers = SEATS.map((seat) => (per.has(seat) ? { seat, status: 200, ...per.get(seat) }
-      : answered.get(seat) ? { seat, status: 404 } : { seat, status: got.find((g) => g.seat === seat).status, why: 'did not list its payments' }));
-    // an order D1 holds is never turned into a payment (kanban #1696, #1761): its id is an entry the seats agreed on
+      : answered.get(seat) ? { seat, status: 404 } : { seat, status: (got.find((g) => g.seat === seat) || { status: 0 }).status, why: 'did not list its payments' }));
     const had = hashes.get(id);
-    if (had && (had.kind || 'order') === 'order') continue;
     const tx = paymentTx(id, answers);
-    if (!tx.found) continue;
-    const w = await keep(env, tx, had ? had.hash : undefined);
+    if (!tx.found) { open.set(id, per); continue; }   // fewer than AGREE seats list the same row: not stored (kanban #1601), kept for the walk
+    // its federation txid is an order's id D1 holds that as many seats back or more: made up, not stored (kanban #2201, #2440)
+    if (orderIds.has(String(tx.payment.txid)) && support(tx) <= orderIds.get(String(tx.payment.txid))) continue;
+    // an order D1 holds at its id is never turned into a payment (#1696, #1761, #1599) unless more seats back this payment - then the
+    // payment takes its id back (kanban #2440)
+    if (orderAt.has(id) && support(tx) <= orderAt.get(id)) continue;
+    const w = await keep(env, tx, had ? had.hash : undefined, orderAt.has(id));
     if (w) writes.push(w);
   }
   for (let i = 0; i < writes.length; i += 50) await env.DB.batch(writes.slice(i, i + 50));
-  return { seats: [...answered.values()].filter(Boolean).length, payments: ids.length, written: writes.length, next, ms: Date.now() - t0 };
+  const stored = ids.length - open.size;
+  for (const [id, per] of few) open.set(id, per);
+  return { seats: [...got].filter((g) => g.body && Array.isArray(g.body.gifts)).length, payments: ids.length + few.size, written: writes.length,
+    stored, reach, open, ms: Date.now() - t0 };
 }
 
 // THE EXPLORER'S OWN STATE IN D1 (2026-10-26, Cloudflare blocked KV puts for the day: "exceeded the daily Workers KV free tier limit of
@@ -203,16 +253,50 @@ async function readPayments(env, since, limit) {
 const stateGet = async (env, k) => { const r = await env.DB.prepare('SELECT v FROM state WHERE k = ?').bind(k).first(); return r ? r.v : null; };
 const statePut = (env, k, v) => env.DB.prepare('INSERT INTO state (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v').bind(k, String(v)).run();
 
-// THE OLDER ONES TOO: from the first a seat kept, a page each minute (KV 'payments-walk'), until a read leaves nothing over; the
-// minute's own read covers the newest READ_BACK_MS from then on
+// THE OLDER ONES TOO: from the first a seat kept, a page each minute, until a read leaves nothing over; the minute's own read covers
+// the newest READ_BACK_MS from then on.
+// ONE CURSOR PER SEAT (kanban #2392, #2127, #1602): each seat is walked from its own cursor ('payments-walk:<seat>'), in its own clock,
+// a page a minute, until its lists are not full ('done') or it gives no reach (not answering a page, a full page not past since). A payment
+// is stored once AGREE seats have listed the same row - in the same minute or not: a seat's listings not stored yet are kept
+// ('payments-walk-open:<seat>', at most WALK_OPEN rows, each at most WALK_ROW_BYTES, the oldest dropped first, so one seat's junk fills
+// only its own) and count with the other seats' later pages. 'payments-walk' says the walk's state: 'done' when every seat is, else
+// the smallest cursor still walked.
+const WALK_OPEN = 400, WALK_ROW_BYTES = 4096;
 async function paymentsWalk(env) {
   const at = await stateGet(env, 'payments-walk');
   if (at === 'done') return;
-  const n = await readPayments(env, Number(at) || 0, BACKFILL_ROWS);
-  if (!n.seats) return;   // no seat lists payments yet (before their roll): asked again next minute
-  // never backwards and never where it was (kanban #1885, #1920, #1963)
-  await statePut(env, 'payments-walk', n.next === null || !(n.next > (Number(at) || 0)) ? 'done' : String(n.next));
-  console.log(JSON.stringify({ paymentsWalk: { from: Number(at) || 0, ...n } }));
+  const st = new Map(((await env.DB.prepare("SELECT k, v FROM state WHERE k LIKE 'payments-walk:%' OR k LIKE 'payments-walk-open:%'").bind().all()).results || [])
+    .map((r) => [r.k, r.v]));
+  const since = new Map(), pending = new Map();
+  for (const seat of SEATS) {
+    const name = seatName(seat), c = st.get(`payments-walk:${name}`);
+    if (c !== 'done') since.set(seat, Number(c) || 0);
+    let rows = []; try { rows = JSON.parse(st.get(`payments-walk-open:${name}`) || '[]'); } catch { rows = []; }
+    pending.set(seat, new Map((Array.isArray(rows) ? rows : []).filter(isRow).map((r) => [r.id, r])));
+  }
+  if (since.size) {
+    const n = await readPayments(env, null, BACKFILL_ROWS, { since, pending });
+    if (!n.seats) return;   // no seat lists payments yet (before their roll): asked again next minute
+    const writes = [];
+    for (const seat of since.keys()) {
+      const r = n.reach.has(seat) ? n.reach.get(seat) : null;
+      const v = r === null || r === Infinity ? 'done' : String(r);
+      since.set(seat, v);
+      writes.push(statePut(env, `payments-walk:${seatName(seat)}`, v));
+    }
+    // each seat's listings not stored yet, its newest WALK_OPEN kept (by its own kept time)
+    for (const seat of SEATS) {
+      const before = JSON.stringify([...pending.get(seat).values()]);
+      const mine = [...n.open].filter(([, per]) => per.has(seat)).map(([, per]) => per.get(seat).row)
+        .filter((r) => JSON.stringify(r).length <= WALK_ROW_BYTES).sort((a, b) => (Number(b.keptMs) || 0) - (Number(a.keptMs) || 0)).slice(0, WALK_OPEN).reverse();
+      const now = JSON.stringify(mine);
+      if (now !== before) writes.push(statePut(env, `payments-walk-open:${seatName(seat)}`, now));
+    }
+    await Promise.all(writes);
+    console.log(JSON.stringify({ paymentsWalk: { seats: n.seats, payments: n.payments, written: n.written, open: n.open.size, ms: n.ms } }));
+  }
+  const left = [...since.values()].filter((v) => v !== 'done').map(Number);
+  await statePut(env, 'payments-walk', left.length ? String(Math.min(...left)) : 'done');
 }
 
 // THE OLDER TRANSACTIONS TOO (2026-10-24: "You should do that for each tx"): besides the newest READ_BACK_MS, each minute reads one
@@ -372,16 +456,21 @@ async function readReserveHistory(env) {
 }
 async function metrics(env) {
   const kept = JSON.parse((await stateGet(env, 'metrics')) || 'null');
+  // the volume is a kept reading too (kanban #2231, #2303, audit a44 #49): the json_extract scan below ran on every GET /api/metrics and /metrics
+  const volume = await keptRead(env, 'volume', VOLUME_KEEP_MS, readVolume);
+  const history = JSON.parse((await stateGet(env, 'reserve-history')) || 'null');
+  return { volume, reserve: kept ? kept.reserve : null, referral: kept ? kept.referral : null, readAt: kept ? kept.readAt : null, seats: kept ? kept.seats : null,
+    reserveHistory: history };
+}
+const VOLUME_KEEP_MS = 60000;
+async function readVolume(env) {
   const since = Math.floor(Date.now() / DAY_MS) * DAY_MS - (VOLUME_DAYS - 1) * DAY_MS;
   // the stakes of the orders (kanban #683: the gifts and items bought are rows too, not stakes)
   // THE STAKE IS READ BEFORE THE GROUPING (kanban #1459, the owner 2026-11-11: "metrics is offline" - D1_ERROR: out of memory: SQLITE_NOMEM): grouped
   // directly, SQLite sorted each order's whole json (14.5 KB on average, 238 MB in all) by its day; now only the day and the stake are sorted
   const r = await env.DB.prepare(`WITH x AS MATERIALIZED (SELECT stored_ms / ${DAY_MS} AS d, CAST(json_extract(json, '$.entry.stakeMsat') AS INTEGER) AS s
     FROM txs WHERE stored_ms >= ? AND kind = 'order') SELECT d, COUNT(*) AS n, SUM(s) AS msat FROM x GROUP BY d ORDER BY d DESC`).bind(since).all();
-  const volume = (r.results || []).map((x) => ({ day: new Date(Number(x.d) * DAY_MS).toISOString().slice(0, 10), txs: Number(x.n), msat: String(x.msat || 0) }));
-  const history = JSON.parse((await stateGet(env, 'reserve-history')) || 'null');
-  return { volume, reserve: kept ? kept.reserve : null, referral: kept ? kept.referral : null, readAt: kept ? kept.readAt : null, seats: kept ? kept.seats : null,
-    reserveHistory: history };
+  return (r.results || []).map((x) => ({ day: new Date(Number(x.d) * DAY_MS).toISOString().slice(0, 10), txs: Number(x.n), msat: String(x.msat || 0) }));
 }
 
 // PLAYED ROUNDS (kanban #1090, the owner 2026-11-03: "Played rounds mit Tages / Wochen / Monats Anzeige", "Auch rueckwirkend seit 1.11",
@@ -509,7 +598,10 @@ async function sendPlayed(env, now = Date.now(), post = fetch) {
 }
 
 /** EVERY ROUND SINCE THE FIRST ONE HELD HERE, PER GAME (kanban #1197, the homepage's numbers): rounds, settled rounds and entries - nothing that shrinks when nobody plays. */
-async function totals(env) {
+// kept for TOTALS_KEEP_MS (its max-age) whatever the query (kanban #2231, #2303, audit a44 #49): it grouped every order ever held on each request
+const TOTALS_KEEP_MS = 300000;
+const totals = (env) => keptRead(env, 'totals', TOTALS_KEEP_MS, readTotals);
+async function readTotals(env) {
   const r = await env.DB.prepare(`SELECT app, COUNT(DISTINCT round) AS rounds, COUNT(DISTINCT CASE WHEN settled = 'ACCEPTED' THEN round END) AS settled, COUNT(*) AS entries,
     MIN(stored_ms) AS first FROM txs WHERE kind = 'order' AND round IS NOT NULL GROUP BY app`).all();
   const games = {}; let first = null;
@@ -527,15 +619,58 @@ async function totals(env) {
 // its time and served from there for PLAYED_KEEP_MS, whatever the query; a new mark (code or admin address) drops the copy, so the counts after
 // marking are read fresh.
 const PLAYED_KEEP_MS = 60000;
-async function played(env) {
-  const kept = await stateGet(env, 'played').then((v) => (v ? JSON.parse(v) : null)).catch(() => null);
-  if (kept && Number.isFinite(kept.at) && Date.now() - kept.at >= 0 && Date.now() - kept.at < PLAYED_KEEP_MS) return kept.v;
-  const v = await readPlayed(env);
-  await statePut(env, 'played', JSON.stringify({ at: Date.now(), v })).catch(() => {});
-  return v;
-}
+const played = (env) => keptRead(env, 'played', PLAYED_KEEP_MS, readPlayed);
 // the list's kept totals too (kanban #2540): a mark changes what the default filter hides
-const dropPlayed = (env) => Promise.all([statePut(env, 'played', '').catch(() => {}), statePut(env, 'recent-totals', '').catch(() => {})]);
+const dropPlayed = (env) => Promise.all([dropKept(env, 'played'), statePut(env, 'recent-totals', '').catch(() => {})]);
+
+// ONE READING AT A TIME, NOT ONE PER REQUEST (kanban #2164, #2231, #2303, audit a44 #49 on #1680): the kept copy was checked and written with
+// nothing claimed in between, so every request that came while the first reading was still running found no copy and ran its own whole-table
+// scan - a stranger's parallel traffic got (rate x scan time) scans at each expiry. Now, per isolate, the callers of one key share one
+// promise (the check of the copy and the reading both); across isolates the reading is claimed in state ('<key>-claim', its time, taken by a
+// conditional upsert, held at most KEEP_CLAIM_MS): an isolate that finds the claim taken serves the last copy, even an old one, and reads
+// itself only when there is no copy at all. A copy dated in the future is never served. A drop (a new mark) clears the copy and makes a
+// reading already running not write its now-old answer.
+const KEEP_CLAIM_MS = 30000;
+const keptByDb = new WeakMap();   // env.DB -> Map(key -> { gen, flight })
+function keptSlot(env, k) {
+  let m = keptByDb.get(env.DB); if (!m) keptByDb.set(env.DB, (m = new Map()));
+  if (!m.has(k)) m.set(k, { gen: 0, flight: null });
+  return m.get(k);
+}
+async function claimRead(env, k, now) {
+  const r = await env.DB.prepare('INSERT INTO state (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v WHERE CAST(state.v AS INTEGER) <= ?')
+    .bind(k + '-claim', String(now), now - KEEP_CLAIM_MS).run();
+  const changes = r && r.meta && r.meta.changes !== undefined ? r.meta.changes : r && r.changes !== undefined ? r.changes : 1;
+  return Number(changes) > 0;
+}
+function keptRead(env, k, keepMs, read) {
+  const slot = keptSlot(env, k);
+  if (slot.flight) return slot.flight;
+  const gen = slot.gen;
+  const p = (async () => {
+    const kept = await stateGet(env, k).then((v) => (v ? JSON.parse(v) : null)).catch(() => null);
+    const age = kept && Number.isFinite(kept.at) ? Date.now() - kept.at : NaN;
+    const usable = age >= 0;
+    if (usable && age < keepMs) return kept.v;
+    const mine = await claimRead(env, k, Date.now()).catch(() => true);
+    if (!mine && usable) return kept.v;   // another isolate is reading it now: the last copy meanwhile
+    try {
+      const v = await read(env);
+      if (slot.gen === gen) await statePut(env, k, JSON.stringify({ at: Date.now(), v })).catch(() => {});
+      return v;
+    } finally {
+      if (mine) await statePut(env, k + '-claim', '0').catch(() => {});
+    }
+  })();
+  slot.flight = p;
+  const clear = () => { if (slot.flight === p) slot.flight = null; };
+  p.then(clear, clear);
+  return p;
+}
+async function dropKept(env, k) {
+  const slot = keptSlot(env, k); slot.gen += 1; slot.flight = null;
+  await statePut(env, k, '').catch(() => {});
+}
 async function readPlayed(env) {
   const [rows, marks] = await Promise.all([
     env.DB.prepare(`SELECT id, round, app, stored_ms AS ms, settled, json_extract(json, '$.entry.player') AS p FROM txs WHERE kind = 'order' AND stored_ms >= ? AND round IS NOT NULL`).bind(PLAYED_FROM_MS).all(),
@@ -603,7 +738,7 @@ async function readWindow(env, since, limit, before) {
     if (!g.body || !Array.isArray(g.body.txs)) continue;
     for (const t of g.body.txs.slice(0, limit)) {
       // ONE SEAT'S JUNK ELEMENT DROPS ONLY THAT ELEMENT (kanban #1600): a null one threw at t.id and no seat's orders were stored that minute
-      if (!isRow(t) || !hex64.test(String(t.id)) || !t.detail || (before && Number(t.storedMs) >= before)) continue;
+      if (!isRow(t) || !isHexId(t.id) || !t.detail || (before && Number(t.storedMs) >= before)) continue;
       if (!byId.has(t.id)) byId.set(t.id, new Map());
       byId.get(t.id).set(g.seat, { status: 200, body: t.detail });
     }
@@ -618,6 +753,14 @@ async function readWindow(env, since, limit, before) {
     const r = await env.DB.prepare(`SELECT id, hash, kind FROM txs WHERE id IN (${part.map(() => '?').join(',')})`).bind(...part).all();
     for (const x of r.results || []) hashes.set(x.id, x);
   }
+  // the payment rows D1 holds at these ids, or whose federation txid is one of them: how many seats back each (kanban #2440)
+  const payBack = new Map();
+  const more = (id, n) => payBack.set(id, Math.max(payBack.get(id) || 0, n));
+  for (let i = 0; i < ids.length; i += 90) {
+    const part = ids.slice(i, i + 90), qs = part.map(() => '?').join(',');
+    const r = await env.DB.prepare(`SELECT id, fed_txid, json FROM txs WHERE kind <> 'order' AND (id IN (${qs}) OR fed_txid IN (${qs}))`).bind(...part, ...part).all();
+    for (const x of r.results || []) { const n = supportOf(x.json); if (byId.has(x.id)) more(x.id, n); if (x.fed_txid && byId.has(x.fed_txid)) more(x.fed_txid, n); }
+  }
   const writes = [];
   for (const id of ids) {
     const per = byId.get(id);
@@ -625,6 +768,8 @@ async function readWindow(env, since, limit, before) {
       : answered.get(seat) ? { seat, status: 404, body: { known: false } } : { seat, status: 0, body: null, why: 'did not answer the read' }));
     const tx = merge(id, answers, null);
     if (!tx.found) continue;   // fewer than AGREE seats hold its entry: not stored, so not counted (kanban #1510)
+    // a payment at its id or with it as federation txid that as many seats back or more: this order is made up, not stored (kanban #2440)
+    if (payBack.has(id) && support(tx) <= payBack.get(id)) continue;
     const had = hashes.get(id);   // a row { id, hash, kind } since kanban #1696: keep() compares the hash alone
     const w = await keep(env, tx, had ? had.hash : undefined);
     if (w) writes.push(w);
@@ -732,10 +877,24 @@ async function recentTotal(env, q, where, binds, now = Date.now()) {
 
 async function txOf(env, ctx, id) {
   // by its id, or a gift's or purchase's by its federation transaction - what the wallet history names (kanban #682)
-  const row = await env.DB.prepare('SELECT json FROM txs WHERE id = ? OR fed_txid = ? LIMIT 1').bind(id, id).first();
-  if (row) return { ...JSON.parse(row.json), cached: true };
+  // AN ORDER'S ID SHOWS THE ORDER (kanban #2201, #1599, #1489 a44): two agreeing seats could list a gift with a fresh id whose federation
+  // txid is a real order's entry id (or a gift row holding the order's id itself, until the minute reads the order), and until D1 held
+  // that order, /api/tx/<order> and /tx/<order> served the seats' made-up 21M BTC gift as cached without asking the seats. Only an order
+  // row with this id is served from D1 straight away; a payment row (by its id, or another row's by fed_txid) is served only after the
+  // seats were asked and agree on no order with this id - an order they do agree on is kept (it takes the id back, #1599) and shown.
+  // WHERE AN ORDER AND A PAYMENT MEET, THE ONE MORE SEATS BACK (kanban #2440, #2525): an order row with this id is served at once unless
+  // a payment whose federation txid is this id has more seats behind it; a found order takes the id from a payment (by its id or its
+  // txid) only when more seats back the order - two seats' made-up order at a stored gift's txid no longer shows instead of the gift.
+  const own = await env.DB.prepare('SELECT json, kind FROM txs WHERE id = ?').bind(id).first();
+  const alias = own && own.kind !== 'order' ? null : await env.DB.prepare("SELECT json FROM txs WHERE fed_txid = ? AND id <> ? AND kind <> 'order' LIMIT 1").bind(id, id).first();
+  if (own && own.kind === 'order') {
+    const row = alias && supportOf(alias.json) > supportOf(own.json) ? alias : own;
+    return { ...JSON.parse(row.json), cached: true };
+  }
+  const row = own || alias;
   const tx = await readTx(id);
-  if (tx.found) { const w = await keep(env, tx, null); if (w) ctx.waitUntil(w.run()); }
+  if (tx.found && !(row && support(tx) <= supportOf(row.json))) { const w = await keep(env, tx, null); if (w) ctx.waitUntil(w.run()); return tx; }
+  if (row) return { ...JSON.parse(row.json), cached: true };
   return tx;
 }
 

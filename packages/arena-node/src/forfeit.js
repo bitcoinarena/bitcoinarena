@@ -42,7 +42,7 @@ import { resultFinality } from './finality.js';
 import { stateOf } from './settlement-state.js';
 import { pluginForRound } from './plugins.js';
 import { giftsInFeeLock } from '../../arena-protocol/src/reserves.js';
-import { encodeCommitments, decodeCommitments, decodePeerCommitment, encodeShare, decodeShare, commitmentListRefusal } from './pool-wire.js';
+import { encodeCommitments, decodeCommitments, encodeShare, decodeShare, commitmentListRefusal, decodePeerCommitment, peerCommitmentRefusal, leftOffLast } from './pool-wire.js';
 import { askPeers, PEER_ASK_MS, PEER_GRACE_MS } from './peer-ask.js';
 import { PLAN_ASK, sendPlanAskHeaders, checkSendPlanAsk, forfeitCommitAskBody } from './send-plan-ask.js';
 import { commitAsker, shareAsker, spendRefusal, OWN } from './asker-pairs.js';
@@ -115,7 +115,7 @@ export class Forfeit {
    * federation (it hashes a contract the way the guardians do); `peersFor(rid)`
    * names the other settlement signer nodes' bases.
    */
-  constructor(round, { dkg, port, curve, random, peersFor = () => [], fetcher = (u, o) => fetch(u, o), onVoid = null, pullProof = null, refusedNow = null, bookStanding = null, isBook = null, lockSetOut = null,
+  constructor(round, { dkg, port, curve, random, peersFor = () => [], fetcher = (u, o) => fetch(u, o), onVoid = null, pullProof = null, refusedNow = null, bookStanding = null, isBook = null, lockSetOut = null, kindPending = null,
     peerAskMs = PEER_ASK_MS, peerGraceMs = PEER_GRACE_MS } = {}) {
     this.round = round;
     // HOW LONG A SEAT IS WAITED FOR (peer-ask.js, kanban #1074 as #1061)
@@ -125,6 +125,8 @@ export class Forfeit {
     this.bookStanding = bookStanding;
     // rid -> whether the round is an order book (order-batch.js isBook: a certified batch holds an order) - its orders are its entries, else its plain picks
     this.isBook = isBook;
+    // rid -> the batches holding an order still undecided here (order-batch.js kindPending, kanban #1666): the round's kind is not decided yet
+    this.kindPending = kindPending;
     // §23.2 REFUSED: rid -> why this node refuses the round, or null while it offers it
     this.refusedNow = refusedNow;
     // THE CERTIFIED LOCK SET (protocol 28, kanban #2561, §17A): rid, eid -> why this entry's lock is not in its round (a lock outside the
@@ -177,6 +179,11 @@ export class Forfeit {
     if (kind === 'fee') {
       const fl = this.round.feeLock ? this.round.feeLock(entryIdBytes) : null;
       if (!fl) return refuse('this signer node verified no fee lock for that entry, so it returns none');
+      // A PLAIN PICK IN A ROUND THAT BECAME AN ORDER BOOK (kanban #2207, §0A.7b as ruled in #1417): no entry of that round, returned as §23.2
+      // REFUSED - the stake AND its fee lock. The book's settlement claims fee locks only for the orders of its table, so this door is the only
+      // one that moves it; the lock-fate guard in #signable still holds.
+      const b = this.bookStanding ? this.bookStanding(roundIdBytes, entryIdBytes) : null;
+      if (b && !b.book && b.wrongType) return this.#signable(contract, fl, roundIdBytes);
       if (!cancelled && !this.#marketRefund(roundIdBytes, contract).ok) {
         const back = await this.#feeBackWithStake(roundIdBytes, entryIdBytes, contract);
         if (!back.ok)
@@ -412,6 +419,9 @@ export class Forfeit {
     // handed in late cannot turn the round into one that claims the locks returned here. FINAL never turns VOID either.
     const fin = marketStateOf(this.round, roundIdBytes, { contract, manifest: f.plugin.manifest, nowMs });
     if (fin.voided) return { ok: true, why: fin.why };
+    // NO "NOBODY PICKED IT" REFUND WHILE THE ROUND'S KIND IS UNDECIDED (kanban #1666): which entries count (plain picks or orders) waits for the
+    // pending batch holding orders - an order handed back as a pool's now could be filled by that batch once it is certified
+    if (typeof this.kindPending === 'function' && this.kindPending(roundIdBytes).length) return { ok: false };
     // ONLY THE ENTRIES THE SETTLEMENT COUNTS (kanban #1436, audit 8 R2; settlement.js #attestedPlan, stake-secret.js): those whose stake this seat
     // saw, and of the round's kind - a pool's plain picks, an order book's orders (§0A.7b, #1411). One lockless entry naming the outcome (or an
     // order, in a round that ended a pool) kept every real stake from coming back at once while the settlement - counting none of them - claimed
@@ -580,9 +590,11 @@ export class Forfeit {
       }, { boundMs: this.peerAskMs, graceMs: this.peerGraceMs, enough: m.needed - 1, counts: (x) => !!x.commitment });
       const signers = [{ base: null, commitment: own.commitment }];
       const refused = [];
-      for (const { peer: base, value, error } of asked) {
-        if (value && value.commitment) signers.push({ base, commitment: value.commitment });
-        else refused.push(`${base}: ${value ? value.why : error.message}`);
+      // A COMMITMENT UNDER ANOTHER SIGNER'S ID IS A REFUSAL (kanban #2402, #2471, as settlement.js #peerCommitments)
+      for (const { peer: base, value, error } of leftOffLast(asked, this.lists.withheld.get(q))) {
+        const bad = value && value.commitment ? peerCommitmentRefusal(value.commitment, signers) : null;
+        if (value && value.commitment && !bad) signers.push({ base, commitment: value.commitment });
+        else refused.push(`${base}: ${bad || (value ? value.why : error.message)}`);
       }
       if (signers.length < m.needed)
         return refuse(`${signers.length} of the ${m.needed} signer nodes the forfeit needs committed to it: ${refused.join('; ')}`);

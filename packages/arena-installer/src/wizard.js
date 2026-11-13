@@ -17,7 +17,7 @@
 // owner login against the running node) -> done. The state is on disk after every step (state.js), so the wizard can be closed and resumed.
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, renameSync } from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { testConnection, TESTNET4_ELECTRUM } from './chain-test.js';
 import { newSeed, confirmPositions, checkConfirm, ownerKeyOf, nostrPubkeyHex, CONFIRM_WORDS, emergencyOf, seedOfWords, seedOfNsec, newNsec, nodeKeyOf, signNostrEvent } from './seed.js';
@@ -642,7 +642,7 @@ const serviceRun = async (b) => {
         let own;
         try { own = adoptIdentity(db, seedOfNsec(b.nsec).secret); } finally { db.close(); }
         if (!own) return { ok: false, why: 'this node folder has another node identity already: set up another node folder for that' };
-        writeDurableJson(state.path('node.db.owner.json'), { pubkey: owner, claimedAtMs: now, nostrSeed: true });
+        bindOwner(owner, now, { nostrSeed: true });
         done.owner = now;
       }
       state.save({ origin: action, control, seedOwnerPubkey: pubkey, emergencyPubkey: em.pubkey, done, ...(owner ? { owner: { mode: 'nostr', pubkey: owner } } : {}) });
@@ -706,7 +706,7 @@ const serviceRun = async (b) => {
       let pubkey, mode;
       if (b.mode === 'nostr') { pubkey = nostrPubkeyHex(b.npub); mode = 'nostr'; if (!pubkey) return { ok: false, why: 'that is neither an npub nor 64 hex characters' }; }
       else { pubkey = s.seedOwnerPubkey; mode = 'seed'; }
-      writeDurableJson(state.path('node.db.owner.json'), { pubkey, claimedAtMs: Date.now() });
+      bindOwner(pubkey, Date.now());
       mark('owner', { owner: { mode, pubkey } });
       return { ok: true, owner: { mode, pubkey } };
     },
@@ -1127,6 +1127,19 @@ const serviceRun = async (b) => {
     const { secret } = ownerKeyOf(seed);
     // the node signs as its x-only key; /identity answers its 32 bytes
     return signOwnerRequest({ node: identityHex, action: 'login', args: {}, secret, sign: (m, k) => schnorr.sign(m, k), pubkeyOf: (k) => schnorr.getPublicKey(k) });
+  };
+  // THE OWNER FILE ON A RERUN (kanban #2099): node.db.owner.json is the seat's too - owner.js keeps the owner's signed Leave (leaving) and
+  // the store settings in it. The installer run again on an installed node (#734) confirms its owner step with the same owner: the file
+  // was written whole as { pubkey, claimedAtMs } and the next restart read leavingAtMs null - the node that left took new rounds again.
+  // The same owner keeps the file as it is (claimedAtMs, leaving, settings); only a new owner key writes a new one, atomically.
+  const bindOwner = (pubkey, nowMs, extra = {}) => {
+    const file = state.path('node.db.owner.json');
+    let had = null;
+    try { had = JSON.parse(readFileSync(file, 'utf8')); } catch { had = null; }
+    if (had && had.pubkey === pubkey) return had;
+    const next = { pubkey, claimedAtMs: nowMs, ...extra };
+    writeDurableJson(file, next);   // with its .bak, temp + fsync + rename (HEAD's durable write, #1630)
+    return next;
   };
   const ownerLogin = async (body) => {
     try {

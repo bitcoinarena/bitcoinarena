@@ -23,7 +23,7 @@ test('a44 refute 21-1: an asked RECEIVING row whose notes reached the seat is no
         received.set(e, 100_000n);
         // the federation reissued the notes, the answer was lost on the way back (tool timeout)
         if (loseAnswerOf === e) { loseAnswerOf = null; throw new Error('arena-stake-lock ecash-receive: timed out'); }
-        return { state: 'Success', msat: 100_000n };
+        return { state: 'Success', msat: 100_000n, carriedMsat: 100_000n };   // the notes' own amount (kanban #1936)
       } },
     [B]: { ecashBalance: async () => holdsB,
       ecashSend: async (m, { key }) => {

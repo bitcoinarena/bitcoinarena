@@ -358,6 +358,15 @@ export function openStore(path = ':memory:') {
       accepted_ms INTEGER NOT NULL
     );
 
+    -- A HANDOUT SHOWN WITH ITS STAKE LOCK (kanban #2415, #2481): the door checked the lock with the federation (image A0, the player's
+    -- refund key, the round's claim key), so no other handout pushes this one out of a full round (round.js looseHandouts). A table of its
+    -- own so a store written before it existed gains it.
+    CREATE TABLE IF NOT EXISTS handout_locks (
+      handout_id  BLOB PRIMARY KEY,
+      round_id    BLOB NOT NULL,
+      pinned_ms   INTEGER NOT NULL
+    );
+
     -- (NO HOLDS TABLE IN A NEW STORE: it was the hold invoice's record of a stake in flight - the withdrawn Lightning
     -- custody's, §23.6; cut 2b RULED 2026-09-25. A store from before keeps its own, untouched and unread: a store is
     -- not rewritten.)
@@ -1435,6 +1444,10 @@ export function openStore(path = ':memory:') {
       db.exec(`ALTER TABLE ${t} ADD COLUMN bundle BLOB`);
   // A FORK PAIR SAYS WHETHER BOTH ITS MARKS WERE RECEIPTED BY A SEAT (§13BRULED 2026-10-05 (b)): a
   // same-parent pair forfeits only then. A row from before counts as not receipted.
+  // A SETTLEMENT TXID OF THE HISTORY KEEPS THE WINNERS' SHARES IT PAYS (kanban #2277): a row made ACCEPTED on it splits a late stake by them. A row
+  // from before carries none (NULL), and the round's shares are then derived from this seat's own plan instead of kept from another txid
+  if (!db.prepare('PRAGMA table_info(lock_settlement_txids)').all().some((c) => c.name === 'shares'))
+    db.exec('ALTER TABLE lock_settlement_txids ADD COLUMN shares TEXT');
   if (!db.prepare('PRAGMA table_info(fork_pairs)').all().some((c) => c.name === 'receipted'))
     db.exec('ALTER TABLE fork_pairs ADD COLUMN receipted INTEGER NOT NULL DEFAULT 0');
   // A DONATION OUTPUT SAYS WHETHER THE SENDER'S KEY IS ON ITS CONTRACT (2026-10-05): 1 when its payment

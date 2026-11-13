@@ -3,13 +3,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ReplayGate, REPLAY_RETRY_MS } from '../src/order-batch.js';
 
-const STALE = "its stake lock: that stake lock's lock height 157414 (its expiration 159249 less the round's 1835 blocks) is more than 12 blocks below the height 158732 it is verified at: a loser could refund before settlement";
+// kanban #1992: a certified order's replay is no longer refused for the freshness window (the threshold verified its lock in time), so that
+// text is not for good any more; what no later block can lift is a lock the federation no longer holds unexpired
+const STALE = 'its stake lock: that lock has expired at the federation: a replayed order needs a lock still held';
+const FRESHNESS = "its stake lock: that stake lock's lock height 157414 (its expiration 159249 less the round's 1835 blocks) is more than 12 blocks below the height 158732 it is verified at: a loser could refund before settlement";
 
 test('a refusal no later block can lift is not asked again; any other waits its retry time, across every peer', () => {
   let t = 1_000_000;
   const g = new ReplayGate({ now: () => t });
   assert.equal(g.allow('a'), true);
-  assert.equal(g.refused('a', STALE), true, 'a stake lock older than the freshness window is refused for good');
+  assert.equal(g.refused('a', STALE), true, 'an expired lock is refused for good');
+  assert.equal(g.refused('f', FRESHNESS), false, 'the freshness rule\'s text is not a refusal for good (kanban #1992)');
   t += 10 * REPLAY_RETRY_MS;
   assert.equal(g.allow('a'), false, 'still not asked after many retry times');
 

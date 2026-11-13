@@ -113,6 +113,9 @@ function valueOf(storage, s) {
   if (blob === null) throw new Error(`the wallet's long value ${s.slice(1, 9)} is gone from this browser`);
   return unpackHex(blob);
 }
+// AND A KEY WRITTEN PACKED LEAVES NO RAW ROW OF IT (kanban #1978): an older page's unpacked row of the same key would be a second, older value of it
+// in entries(), and a packing pass would move it over the newer one. Removed only after the packed write took (as remove() drops both).
+function dropRaw(storage, prefix, k) { if (packHex(k) !== String(k)) storage.removeItem(prefix + k); }
 const WALLET_KEY = /^(arena\.(?:walletdb|lockdb)\.[0-9a-f]{16}\.[0-9a-f]{16}\.)(.*)$/s;
 /** EVERY WALLET THIS BROWSER KEEPS, PACKED IN PLACE: nothing is lost, an entry already packed is left. Answers the characters freed. */
 export function packWallets(storage) {
@@ -122,6 +125,9 @@ export function packWallets(storage) {
     const m = WALLET_KEY.exec(k); if (!m) continue;
     const v = storage.getItem(k); if (v === null) continue;
     const key = m[1] + packHex(m[2]);
+    // ONE KEY, TWO ROWS (kanban #1978): a raw row an older page left beside the packed row the wallet wrote since (a pass stopped by a full browser
+    // leaves raw rows, and the wallet writes on under the packed key) - the packed row is the newer value; the raw one goes, never over it
+    if (key !== k && storage.getItem(key) !== null) { freed += k.length + v.length; storage.removeItem(k); continue; }
     const val = v[0] === BLOB_MARK || (v[0] === PACKED && unpackHex(v).length < BLOB_MIN) ? v : keptValue(storage, unpackHex(v));
     if (key === k && val === v) continue;
     // the old one first: on a full browser the shorter copy fits only then, and it goes straight back if the browser refuses
@@ -190,7 +196,7 @@ export function lockStoreFor(storage, roundId, secret) {
     put(k, v) {
       if (!inMemory && storageChars(storage) >= LOCK_ROOM_CHARS) toMemory();
       if (!inMemory) {
-        try { putWalletValue(storage, prefix + packHex(k), v); return; } catch (e) { if (!/quota/i.test(`${e && e.name} ${e && e.message}`)) throw e; toMemory(); }
+        try { putWalletValue(storage, prefix + packHex(k), v); dropRaw(storage, prefix, k); return; } catch (e) { if (!/quota/i.test(`${e && e.name} ${e && e.message}`)) throw e; toMemory(); }   // kanban #1978: the raw row goes once the packed one is written
       }
       inMemory.set(k, v);
     },
@@ -503,7 +509,7 @@ export function walletStoreFor(storage, federationId, secret) {
       }
       return JSON.stringify(out);
     },
-    put(k, v) { putWalletValue(storage, prefix + packHex(k), v); },
+    put(k, v) { putWalletValue(storage, prefix + packHex(k), v); dropRaw(storage, prefix, k); },   // kanban #1978
     remove(k) { storage.removeItem(prefix + packHex(k)); storage.removeItem(prefix + k); },
   };
 }
@@ -3058,6 +3064,10 @@ export async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fe
   const base = (n) => String(n).replace(/\/+$/, '');
   const skipOf = (s) => new Set(((knownBySeed && knownBySeed.get(toHex(s))) || (list.length === 1 ? known : [])).map((h) => String(h).toLowerCase()));
   const skips = list.map(skipOf);
+  // KNOWN BY ROUND AND ORDER (kanban #2106): an entry is '<round>:<order>' (a plain round id is its order 0, as older callers pass it). Skipping
+  // the whole round while one order's record was kept left another order of it whose record was lost (a full browser, a tab that died between
+  // the lock and the record) found by nothing and collected by nothing; now only the kept (round, order) pairs are skipped.
+  const isKnown = (i, id, order) => skips[i].has(id + ':' + order) || (order === 0 && skips[i].has(id));
   // ONE SEAT'S WORD COSTS THE PAGE NO UNBOUNDED WORK (kanban #1489): every listed id costs ORDER_SCAN + 1 key derivations per kept
   // phrase on the page's thread - one seat answering /settled with 3000 made-up ids froze the page 16.7 s at every load (99,033
   // derivations). Now a seat's list is taken newest first up to OWED_SETTLED_MAX ids (a seat answers at most 500, round.js settledSince),
@@ -3130,9 +3140,9 @@ export async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fe
   const matches = [];
   for (const [id, l] of listed) {
     for (let i = 0; i < list.length; i++) {
-      if (skips[i].has(id)) continue;
       // EVERY ORDER'S KEY TOO: a tab's orders in a market round are keyed 0, 1, 2 ... - read up to ORDER_SCAN (32: a bot places 12 a window)
       for (let order = 0; order <= ORDER_SCAN; order++) {
+        if (isKnown(i, id, order)) continue;   // kanban #2106: this order's record is kept, not the round's
         const mine = owedKeyOf(list[i], id, order, curve);
         const payout = l.payouts.has(mine); const lock = l.refunds.has(mine);
         if (payout || lock) matches.push({ id, payout, lock, seed: list[i], order });
@@ -3387,9 +3397,14 @@ async function refusedReturn({ roundId, playerPubkey, locks, nodes, fetcher, cli
   // and an order cut off mid-join (a seat restarting) may have reached a seat with its lock and without its handout. The tab
   // kept the handout's bytes with the lock; a seat that holds it already answers so
   const handKey = `${toHex(roundId)}:${toHex(playerPubkey)}`;
+  // WITH ITS STAKE LOCK SHOWN (kanban #2415, #2481): a stranger's junk handouts can push a never-entered handout out of a full round (#2136),
+  // and a seat refuses a new handout for a round it refuses; the lock the federation holds (x-arena-stake-lock, the header a lock-first
+  // client sends, #1596) is what lets the seat take this one back - and keeps it from being pushed out again
   if (handoutBody && !HANDOUT_HANDED.has(handKey)) {
     HANDOUT_HANDED.add(handKey);
-    await Promise.all([...new Set(nodes || [])].map((node) => fetcher(`${String(node).replace(/\/+$/, '')}/handout`, { method: 'POST', body: handoutBody }).catch(() => null)));
+    const stake = still.find((l) => l.fields && l.fields.paymentImage && l.fields.paymentImage.kind === 'point');
+    const shown = stake ? { headers: { 'x-arena-stake-lock': JSON.stringify({ outpoint: `${toHex(stake.outpoint.txid)}:${stake.outpoint.outIdx}`, fields: lockFieldsToJson(stake.fields) }) } } : {};
+    await Promise.all([...new Set(nodes || [])].map((node) => fetcher(`${String(node).replace(/\/+$/, '')}/handout`, { method: 'POST', body: handoutBody, ...shown }).catch(() => null)));
   }
   let kept = 0;
   for (const lock of still) kept += (await handRefusedLock({ roundId, lock, nodes, fetcher })).kept > 0 ? 1 : 0;
@@ -3788,7 +3803,7 @@ export async function collectOwed({ look, client, ...ask } = {}) {
  * WINNINGS-AUTO (RULED 2026-10-01): WHAT IS OWED GOES INTO THE PLAYER WALLET BY ITSELF - the payout contract
  * redeemed, the stake back by the signer nodes' forfeit or by the player's key after expiry - the moment it exists, with
  * no press. Into the player's own federation wallet (one per seed and federation) and NOTHING out of it: no Lightning,
- * no withdraw. What arrived is written in the history as a "winnings" row, by what the wallet's balance actually grew.
+ * no withdraw. What arrived is written in the history as a "winnings" row, by what each redeem reports it credited (kanban #2038).
  */
 /**
  * WHAT ONE ACCEPTED REDEEM BROUGHT INTO THE WALLET (kanban #2350, live 2026-11-12 05:39Z, round 4e1c1615 never entered: the seats forfeited
@@ -3820,12 +3835,21 @@ export async function collectIntoPlayerWallet({ look, round, roundId, invite, se
   if (!look || !(look.payoutMsat > 0n || look.stakeMsat > 0n || look.refundMsat > 0n)) return { collected: false, creditedMsat: 0n };
   const client = await playerWallet({ round, invite, seed, LockClient, storage });
   const got = await collectOwed({ look, client, round, roundId, invite, seed, curve, LockClient, storage, nodes, order, ...(fetcher ? { fetcher } : {}) });
-  // WHAT THE REDEEMS BROUGHT, NOT WHAT THE WALLET GREW WHILE THEY RAN (kanban #2350): the page locks the next stake from this same wallet meanwhile
+  // WHAT THE REDEEMS BROUGHT, NOT WHAT THE WALLET GREW WHILE THEY RAN (kanban #2350, #2038): the page locks the next stake from this same wallet meanwhile
   const creditedMsat = collectBrought(got);
+  // and the contracts redeemed in THIS call, the row's key (kanban #2038); an answer from the tab's note (kept) names none
+  const parts = [];
+  if (got.payout && got.payout.ok && !got.payout.kept) parts.push(`p:${got.payout.txid}:${got.payout.outIdx}`);
+  if (got.stake && got.stake.ok && !got.stake.kept) parts.push('s');
+  if (got.refund) for (const e of got.refund.locks || []) if (e.state === 'refunded') parts.push(`r:${e.kind}`);
   // A STAKE THAT ONLY CAME BACK IS A REFUND ROW, NOT WINNINGS (2026-10-03: "the money that comes back must be
   // visible in the TX history"): nobody won, or the round was refunded - no payout, the stake (or its expiry refund) back
   const kind = look.payoutMsat > 0n ? 'winnings' : 'refund';
-  if (creditedMsat > 0n) ledgerAppend(storage, round.federationId, { kind, msat: String(creditedMsat), round: toHex(roundId) });
+  // ONE ROW PER REDEEMED CONTRACT SET (kanban #2038): keyed by the round, this phrase's key, the order and the contracts redeemed (the payout's
+  // outpoint, the stake's redeem, the refunded locks), so two collects that both get an accepted answer for the same contracts write one row
+  const mine = toHex(refundKeyOf(playerFor({ ...round, id: roundId }, { seed, curve, order }).pubkey));
+  const rowId = `col-${toHex(sha256(new TextEncoder().encode(`${toHex(roundId)}|${mine}|${order}|${parts.join('|')}`))).slice(0, 40)}`;
+  if (creditedMsat > 0n) ledgerAppend(storage, round.federationId, { kind, msat: String(creditedMsat), round: toHex(roundId) }, rowId);
   // COLLECTED ONLY WHEN SOMETHING WAS (kanban #593: this said `collected: true` whatever came of the redeems - the record of round
   // 8464c5fd was marked done with its 100 sat still in the federation, the redeem never tried): a payout, stake or refund the
   // federation accepted, or money that reached the wallet
@@ -3971,8 +3995,9 @@ export async function migrateFromDraining({ from, to, record, toFederationId, ch
   gateways = [], onState = () => {}, storage = null, fromFederationId = null, phrase16 = null } = {}) {
   const hex = (b) => (b instanceof Uint8Array ? toHex(b) : String(b || '')).toLowerCase();
   const inRow = { kind: 'moved-in', from: hex(fromFederationId) };
-  // DRAINING, or CRITICAL with the safe federation the page chose as `successorId` (evacuatePlayerWallet, 2026-10-13)
-  if (!record || !['DRAINING', 'CRITICAL'].includes(record.status)) return { moved: 0n, chunks: 0, state: 'not draining' };
+  // DRAINING, or CRITICAL with the safe federation the page chose as `successorId` (evacuatePlayerWallet, 2026-10-13); or CLOSED
+  // (kanban #1982: a player away for the whole drain still holds notes in a federation whose record turned CLOSED)
+  if (!record || !['DRAINING', 'CRITICAL', 'CLOSED'].includes(record.status)) return { moved: 0n, chunks: 0, state: 'not draining' };
   if (!record.successorId || /^0+$/.test(hex(record.successorId))) return { moved: 0n, chunks: 0, state: 'no successor named' };
   if (hex(record.successorId) !== hex(toFederationId)) return { moved: 0n, chunks: 0, state: 'that wallet is not in the successor' };
   let moved = 0n, chunks = 0, failed = 0;
@@ -4012,7 +4037,9 @@ export async function migrateFromDraining({ from, to, record, toFederationId, ch
     }
   }
   onState({ state: 'moved', movedMsat: moved, chunks });
-  return { moved, chunks, state: 'moved' };
+  // FOUND EMPTY, SAID SO (kanban #2289): `empty` only when the wallet held nothing above dust and nothing was moved - a stop
+  // ('stopped', the notes still there) or a refusal before the loop answers moved 0 / chunks 0 too, and is never "empty"
+  return { moved, chunks, state: 'moved', empty: chunks === 0 && moved === 0n };
 }
 
 /**
@@ -4038,8 +4065,14 @@ export async function migratePlayerWallet({ round, invite, seed, LockClient, sto
  * of this seed are opened as the stake opens them; then the chunks of migrateFromDraining.
  */
 export async function evacuatePlayerWallet({ from, target, seed, LockClient, storage, onState = () => {}, chunkMsat = null, gateways = [] } = {}) {
-  if (!from || !['DRAINING', 'CRITICAL'].includes(from.status) || !from.invite) return { moved: 0n, chunks: 0, state: 'not draining' };
+  // AND OUT OF A CLOSED ONE (kanban #1982): the seats close a drain by its clock, not by the players' notes being out, so a player who
+  // did not open the page during the drain still holds notes there - they go to its successor (safeFederation) as a DRAINING one's do
+  if (!from || !['DRAINING', 'CRITICAL', 'CLOSED'].includes(from.status) || !from.invite) return { moved: 0n, chunks: 0, state: 'not draining' };
   if (!target || target.status !== 'OPEN' || !target.invite) return { moved: 0n, chunks: 0, state: 'no safe federation to move to' };
+  // NO NEW MONEY WHERE NONE IS TAKEN (kanban #2433, after #807): the move invoices the target, so a target that takes no new deposits is refused
+  // before a wallet is opened in it - unless the guardians named it as the draining federation's successor
+  const named = from.successorId && String(from.successorId).toLowerCase() === String(target.federation).toLowerCase();
+  if (!named && !takesDeposits(String(target.federation))) return { moved: 0n, chunks: 0, state: 'no safe federation to move to', why: 'that federation takes no new deposits' };
   const fromId = fromHex(String(from.federation)), toId = fromHex(String(target.federation));
   const a = await openPlayerWallet({ federationId: fromId, invite: from.invite, seed, LockClient, storage });
   const b = await openPlayerWallet({ federationId: toId, invite: target.invite, seed, LockClient, storage });

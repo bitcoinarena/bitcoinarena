@@ -82,6 +82,29 @@ const sample = async () => {
   if (r.median === null) log({ step: 'no reading', sources: r.sources });
 };
 
+// A SEAT'S OR PEER'S ANSWER, READ UP TO A CAP (kanban #2457): GET /games, GET /rounds and the peers' GET /attestation were read whole
+// with r.json(), so one seat of --seats (or one peer) could answer millions of rows: the daemon buffered and JSON-parsed them all before
+// the SEAT_ROWS cut, ran out of heap and died on every tick - no attestation, every round VOID. Now a Content-Length over the cap is
+// refused unread and the stream is cancelled once it passes the cap; such a seat or peer counts as not answered.
+const ROUNDS_ANSWER_BYTES = 256 * 1024;
+const GAMES_ANSWER_BYTES = 4 * 1024 * 1024;
+const WORD_ANSWER_BYTES = 64 * 1024;
+async function cappedJson(r, cap) {
+  const said = Number(r.headers.get('content-length'));
+  if (said > cap) { try { await r.body?.cancel(); } catch { /* dropped */ } throw new Error(`its answer is ${said} bytes, more than ${cap}`); }
+  if (!r.body) throw new Error('its answer has no body');
+  const reader = r.body.getReader();
+  const parts = []; let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.byteLength;
+    if (n > cap) { reader.cancel().catch(() => {}); throw new Error(`its answer passed ${cap} bytes`); }
+    parts.push(value);
+  }
+  return JSON.parse(Buffer.concat(parts).toString('utf8'));
+}
+
 // EVERY VERSION OF THE MARKET THAT NAMES THIS KEY (marketsToAttest): the seats' /games, read again each minute - with --game-id
 // the listed ids are kept beside them; without it and before the first read, the game's name alone matches, as before
 let marketIds = new Set(GAME_IDS);
@@ -100,7 +123,7 @@ const readMarkets = async () => {
     try {
       const r = await fetch(`${seat}/games`, { signal: AbortSignal.timeout(8000) });
       if (!r.ok) return;
-      games.push(...((await r.json()).games || [])); read++;
+      games.push(...((await cappedJson(r, GAMES_ANSWER_BYTES)).games || [])); read++; // kanban #2457: capped
     } catch { /* the other seats */ }
   }));
   if (!read) return;
@@ -139,7 +162,7 @@ const CONTRACT_RETRY_MS = Number(arg('contract-retry-ms', '30000'));
 const closes = new Map();              // round hex -> { closeMs } believed from its contract (never changes: the bytes are the round)
 const closeTried = new Map();          // round hex -> ms its contract was last asked for, while none verified
 const noClose = new Set();             // round hex: logged once as having no close to sign
-const getJson = async (u) => { const r = await fetch(u, { signal: AbortSignal.timeout(8000) }); if (!r.ok) return null; return r.json(); };
+const getJson = async (u, cap = ROUNDS_ANSWER_BYTES) => { const r = await fetch(u, { signal: AbortSignal.timeout(8000) }); if (!r.ok) return null; return cappedJson(r, cap); };   // kanban #2457: every answer read up to a cap
 const roundsOfGame = async () => {
   await readMarkets();
   const byId = new Map();              // round hex -> Map seat -> listed close
@@ -149,7 +172,7 @@ const roundsOfGame = async () => {
       // the full listing every 5 s made a seat sign all its ~2,400 rows each 45 s window - 4,800 signatures a window, its
       // listing-sign worker at ~42 % (measured 16:02Z on seat 3). A market's rounds whose window ended within the hour are a
       // handful, kept in the listing's closed tally.
-      const j = await getJson(`${seat}/rounds?next=16`);
+      const j = await getJson(`${seat}/rounds?next=16`, ROUNDS_ANSWER_BYTES);   // kanban #2457: capped
       if (!j) return;
       const rows = Array.isArray(j) ? j : j.rounds || [];
       // entryCloseMs is decimal ms (a string on the wire)
@@ -344,7 +367,7 @@ const handleRound = async (r) => {
   if (SEATS.every((seat) => held.has(seat) || (absent.get(seat) || 0) > Date.now())) return;
   // THE OTHER ATTESTORS' WORDS, and the attestation once the threshold of them sign one body
   const theirs = await Promise.all(PEERS.map(async (p) => {
-    try { const x = await fetch(`${p}/attestation?round=${r.id}`, { signal: AbortSignal.timeout(5000) }); return x.ok ? wordFromJson(await x.json()) : null; } catch { return null; }
+    try { const x = await fetch(`${p}/attestation?round=${r.id}`, { signal: AbortSignal.timeout(5000) }); return x.ok ? wordFromJson(await cappedJson(x, WORD_ANSWER_BYTES)) : null; } catch { return null; }
   }));
   const all = [mine, ...theirs.filter(Boolean)];
   // kanban #2635 (bypass of #1487): by the attestors of the version the round's contract names - a key that version dropped is no

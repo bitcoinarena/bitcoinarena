@@ -93,7 +93,7 @@ class ScanBusy extends Error {}
  * to do (no wallet, an update still in the mempool), { busy } when a UTXO scan runs already, else guardianOfFromWallet's answer.
  * `lockDir`: where the one-scan-per-bitcoind lock lives (none named: no lock, bitcoind's own refusal still answered as busy).
  */
-export async function advertSelfOnce({ mine, secret, last, hostedGames = [], network = 'testnet4', dry = false, lockDir = null }) {
+export async function advertSelfOnce({ mine, secret, last, hostedGames = [], network = 'testnet4', dry = false, lockDir = null, ownerRoles = null }) {
   const { bondCliFrom, guardianOfFromWallet } = await import('./add-bond-wallet.js');
   const b = bondCliFrom(); if (!b) return null;
   if (last && last.txid) { try { b.cli('getmempoolentry', last.txid); return null; } catch { /* confirmed or gone: look again */ } }
@@ -126,7 +126,7 @@ export async function advertSelfOnce({ mine, secret, last, hostedGames = [], net
     return { success: true, unspents: descriptors.flatMap((d) => got.get(d)) };
   };
   try {
-    const r = await guardianOfFromWallet({ cli: b.cli, wallet: b.wallet, network, secret, guardianOf: mine, keep: true, scan,
+    const r = await guardianOfFromWallet({ cli: b.cli, wallet: b.wallet, network, secret, guardianOf: mine, keep: true, scan, ownerRoles,
       hostedGames: hostedGames.map((h) => (typeof h === 'string' ? fromHex(h) : h)), post: !dry });
     return r && r.noBond ? null : r;     // no bond yet: nothing to do
   } catch (e) {
@@ -152,7 +152,7 @@ export function advertSelfInWorker(ask) {
  * `census()` the census entries (null: this seat reads none), `mine()` / `hostedGames()` what the advertisement should name, `selfFile`
  * where a posted update is remembered. `check()` answers what it did: 'none' | 'current' | 'busy' | 'read'.
  */
-export function createAdvertSelf({ census, pubkey, secret, mine, hostedGames, selfFile = null, lockDir = null, network = 'testnet4', dry = false, log = console.log }) {
+export function createAdvertSelf({ census, pubkey, secret, mine, hostedGames, selfFile = null, lockDir = null, network = 'testnet4', dry = false, log = console.log, ownerRoles = () => null }) {
   let lastRead = null, said = null;
   const check = async (nowMs = Date.now()) => {
     const m = mine(), h = hostedGames();
@@ -168,7 +168,9 @@ export function createAdvertSelf({ census, pubkey, secret, mine, hostedGames, se
     }
     said = null;
     log(`[advert] own advertisement due (${d.why}): reading the bond wallet`);
-    const r = await advertSelfInWorker({ mine: m, hostedGames: h, secret, last, network, dry, lockDir });
+    // the owner's roles change kept in owner_actions (kanban #2182): built on while it is unconfirmed, never undone
+    let roles = null; try { roles = ownerRoles(); } catch { roles = null; }
+    const r = await advertSelfInWorker({ mine: m, hostedGames: h, secret, last, network, dry, lockDir, ownerRoles: roles });
     if (r && r.busy) { log(`[advert] own advertisement not read: ${r.why}; next check in 10 min`); return 'busy'; }
     lastRead = { want: d.want, atMs: nowMs };
     if (r && r.same) { log('[advert] own advertisement names them on chain already: the census takes the update once 6 deep'); return 'read'; }

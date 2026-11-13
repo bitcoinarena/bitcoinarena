@@ -11,6 +11,8 @@ import { randomBytes } from 'node:crypto';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { serveZapAddresses } from '../src/zap-address.js';
 import { sendToRelay } from '../src/nostr-results.js';
+import { globalLookup } from '../src/feedback-store.js';
+import WebSocket from 'ws';
 
 const env = (k, d) => (process.env[k] === undefined || process.env[k] === '' ? d : process.env[k]);
 const host = env('ZAP_HOST');
@@ -42,7 +44,8 @@ const served = await serveZapAddresses({
   // The address hands one relay per call (kanban #2249) and sends again later when this throws: a relay that did not answer.
   publish: async (receipt, relays) => {
     const said = await Promise.all(relays.map(async (r) => {
-      const a = (await sendToRelay(r, [receipt])).get(receipt.id);
+      // the server kept only public wss:// relays (kanban #2454); the dial connects only to a global address the name resolves to now
+      const a = (await sendToRelay(r, [receipt], { connect: (u) => new WebSocket(u, { lookup: globalLookup, followRedirects: false }) })).get(receipt.id);
       log(`receipt ${receipt.id.slice(0, 16)} -> ${r}: ${a ? (a.ok ? 'OK' : `refused ${a.why}`) : 'no answer'}`);
       return !!a;
     }));

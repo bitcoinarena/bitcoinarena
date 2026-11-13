@@ -48,7 +48,9 @@ export async function auditGuardian({ run, dataDir }) {
 export function createRetireBook(file) {
   let book = {};
   // kanban #1630: written atomically with a .bak (durable-json.js), a torn file read from its .bak - a crash never drops a consent
-  try { if (file) book = readDurableJson(file, {}) || {}; } catch { book = {}; }
+  // kanban #2487 (SM-O1): a consents file that exists but does not parse, with no good .bak, refuses to start (thrown on) - a lost
+  // consent is loud, never read as "no consents"; any other read failure starts empty as before
+  try { if (file) book = readDurableJson(file, {}) || {}; } catch (e) { if (e && e.code === 'DURABLE_JSON_UNREADABLE') throw e; book = {}; }
   const save = () => { if (file) { try { writeDurableJson(file, book); } catch { /* kept in memory */ } } };
   return {
     has: (fid) => Object.prototype.hasOwnProperty.call(book, String(fid).toLowerCase()),

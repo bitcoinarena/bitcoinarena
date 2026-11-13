@@ -38,6 +38,7 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { pluginForRound } from './plugins.js';
 import { marketOfRound } from '../../arena-protocol/src/manifest.js';
 import { verifySchnorrKept, verifyEd25519Kept } from './verified.js';
+import { jsonUpTo, BODY_MOST } from './body-read.js';
 
 const refuse = (why, status = 409) => ({ ok: false, status, why });
 const verifyEd = verifyEd25519Kept;   // kept per (sig, msg, key) - verified.js (kanban #576)
@@ -61,8 +62,9 @@ export function marketRates(manifest, fees = null) {
 
 /** How long an order whose replay was refused waits before it is asked again, of any peer (kanban #1087). */
 export const REPLAY_RETRY_MS = 10 * 60 * 1000;
-/** A refusal no later block can lift: the stake lock is already older than the freshness window at the height it is verified at. */
-const REPLAY_NEVER = /blocks below the height \d+ it is verified at/;
+/** A refusal no later block can lift: the lock has expired at the federation. Not the freshness rule any more (kanban #1992): a replay of a
+ * certified batch's order is not refused for the blocks since its lock was verified, so that text no longer marks an order for good. */
+const REPLAY_NEVER = /that lock has expired at the federation/;
 /** Which orders may be asked again (kanban #1087): `allow(o)` false while a refusal holds, `refused(o, why)` answers whether it is for good. */
 export class ReplayGate {
   constructor({ now = () => Date.now(), retryMs = REPLAY_RETRY_MS, max = 4096 } = {}) { this.now = now; this.retryMs = retryMs; this.max = max; this.held = new Map(); }
@@ -125,6 +127,18 @@ const SELL_CHECKED_MAX = 65536;
 const REPLAY_ROUNDS_MAX = 64;
 // at most this many pending items of one seat's proposal are read by a leader (kanban #1934, #1971, #2004)
 const PENDING_PER_PROPOSAL = 64;
+// A SIGNATURE LIST IS BOUNDED WHERE IT IS COUNTED (kanban #2175, #2253; audit a44 refute of #1686): #counted tries at most
+// SIG_TRIES_PER_SEAT signatures per seat and at most that many times the round's seats in one call, whatever list it is handed - a round
+// seat's padded void-ask certificate or padded proposal `pending` list held the leader's event loop 15.6 s and 29.2 s.
+export const SIG_TRIES_PER_SEAT = 2;
+// the pending batches one proposal is read for: one item per k, at most this many k (an honest seat holds one or two pending)
+export const PROPOSAL_PENDING_MAX = 16;
+// ONE PEER'S /book-certificates ANSWER IS BOUNDED WHERE IT IS TAKEN (kanban #2485; a44 refute of #1686): #take tries one certificate per
+// k of an answer and at most SYNC_TAKE_MAX certificates not held here, yielding the event loop every SYNC_TAKE_YIELD of them - one round
+// seat's answer of 20,000 junk-signed certificates for one k held the reading seat's loop 19.1 s (one leaderSig verify each) and its
+// honest peers' answers timed out. What is left of a long honest list is read on the next pass (the cursor stays below it).
+export const SYNC_TAKE_MAX = 256;
+export const SYNC_TAKE_YIELD = 32;
 
 export class OrderBook {
   constructor(round, { plugins, peersFor = () => [], fetcher = (u, o) => fetch(u, o), now = () => Date.now(), intervalMs = Number(BATCH_MS), feesFor = null,
@@ -311,11 +325,19 @@ export class OrderBook {
     if (BigInt(this.now()) >= m.contract.entryCloseMs) return refuse(`the market closed at ${new Date(Number(m.contract.entryCloseMs)).toISOString()}: no ${kind} after it`);
     const c = kind === 'cancel' ? this.#cancelStands(roundIdBytes, body) : this.#sellStands(roundIdBytes, body);
     if (!c.ok) return c;
+    // A CANCEL IS FINAL FOR ITS ENTRY (kanban #2283): cancelId is one id per entry, so a second cancel is the same event - once a batch
+    // carried it, no leader carries it again. A sell placed after it rested where no door could take it out, and the door answered
+    // "inNextBatch" for a cancel no batch would carry. Now a sell of an entry with a cancel here is refused, and a cancel already in a
+    // batch says which one instead of promising the next.
+    const rid = Buffer.from(roundIdBytes);
+    const cancelRow = this.db.prepare("SELECT batch FROM market_book_events WHERE round_id = ? AND kind = 'cancel' AND entry_id = ?").get(rid, String(body.entry));
+    if (kind === 'sell' && cancelRow) return refuse(`that entry's cancel is ${cancelRow.batch === null ? 'waiting for a batch' : `in batch ${cancelRow.batch}`}: a cancelled entry sells nothing more`);
+    if (kind === 'cancel' && cancelRow && cancelRow.batch !== null) return refuse(`that cancel is already carried by batch ${cancelRow.batch}`);
     if (kind === 'sell') {
       // A SELL ONLY OF AN ORDER IN THE BOOK HERE, AND A FEW AT A TIME (kanban #1526: a stranger's lockless order - no sat spent - signed
       // thousands of sells, each nonce a new row, and every leader's lead() went quadratic over them): its locks verified at this seat
       // (tradable), and no more than MAX_UNBATCHED_SELLS of its sells waiting for a batch here
-      const rid = Buffer.from(roundIdBytes), tradable = this.db.prepare('SELECT 1 FROM market_orders WHERE order_id = ? AND round_id = ?');
+      const tradable = this.db.prepare('SELECT 1 FROM market_orders WHERE order_id = ? AND round_id = ?');
       if (!tradable.get(String(body.entry), rid)) { this.#syncTradable(roundIdBytes); if (!tradable.get(String(body.entry), rid)) return refuse('that order is not tradable at this seat: its locks are not verified here, it holds nothing to sell'); }
       const held = this.db.prepare('SELECT 1 FROM market_book_events WHERE event_id = ?').get(c.id);
       const waiting = this.db.prepare("SELECT count(*) AS n FROM market_book_events WHERE round_id = ? AND kind = 'sell' AND entry_id = ? AND batch IS NULL").get(rid, String(body.entry)).n;
@@ -419,7 +441,10 @@ export class OrderBook {
   #recordId(roundIdBytes, record) {
     const ids = [...record.orders];
     const events = [];
-    for (const c of record.cancels || []) { const x = this.#cancelStands(roundIdBytes, c); if (!x.ok) return x; ids.push(x.id); events.push(x.id); }
+    // ONE CANCEL PER ENTRY (kanban #2485): a record naming an entry's cancel twice is refused before its signature is verified again
+    const cancelled = new Set();
+    for (const c of record.cancels || []) { if (c && cancelled.has(String(c.entry))) return refuse('a batch cancels one entry twice', 400); if (c) cancelled.add(String(c.entry));
+      const x = this.#cancelStands(roundIdBytes, c); if (!x.ok) return x; ids.push(x.id); events.push(x.id); }
     const sells = [];
     for (const s of record.sells || []) { const x = this.#sellStands(roundIdBytes, s); if (!x.ok) return x; ids.push(x.id); sells.push(x.sell); events.push(x.id); }
     let id;
@@ -577,6 +602,9 @@ export class OrderBook {
       // ledger skipped the cancel, the cancel was marked batched for good (one id per entry), and the order filled in the next batch
       const lost = L.refused.find((r) => r.why.startsWith('a cancel') && (record.cancels || []).some((c) => c.entry === r.id));
       if (lost) return refuse(`a cancel of that batch does not stand: ${lost.why}`);
+      // NO SELL OF A CANCELLED ENTRY (kanban #2283): its cancel, in this batch or one before, is final - nothing could cancel the sell
+      const late = rec.sells.find((s) => L.positions.get(s.entry)?.cancelled);
+      if (late) return refuse(`a sell of that batch does not stand: entry ${late.entry.slice(0, 16)} is cancelled, and a cancelled entry sells nothing more`);
     }
     return { ok: true, id: rec.id, k, events: rec.events };
   }
@@ -643,16 +671,33 @@ export class OrderBook {
     for (const s of record.sells || []) { const e = this.#sellStands(roundIdBytes, s).id; claim('sell', eventAt.get(e), e); putEvent.run(e, rid, 'sell', s.entry, JSON.stringify(s), at, k); }
   }
 
+  /** Whether a certificate's set carries the threshold of the round's seats' signatures, read without the orders' entries (kanban #1992). */
+  #signedByThreshold(roundIdBytes, cert) {
+    const m = this.market(roundIdBytes);
+    if (!m.ok || !cert || !cert.record) return false;
+    const ids = this.#idsOf(roundIdBytes, cert.record);
+    if (!ids) return false;
+    let id;
+    try { id = toHex(bookBatchId({ roundId: roundIdBytes, k: BigInt(cert.record.k), orderIds: ids })); } catch { return false; }
+    return this.#counted(m, id, Array.isArray(cert.sigs) ? cert.sigs : []).length >= m.needed;
+  }
+
   /** Signatures over a batch id that count: distinct seats of the round, each verifying. */
   #counted(m, id, sigs) {
     // A SIGNATURE IS TRIED ONCE (kanban #1686): a failed (seat, signature) pair is never verified again in the same list, so repeats of
     // one junk signature cost nothing; the doors bound the list itself to the round's seats (certify, applyVoid).
-    const ok = new Map(), tried = new Set();
+    // AND THE LIST IS BOUNDED HERE (kanban #2175, #2253): at most SIG_TRIES_PER_SEAT tries per seat and SIG_TRIES_PER_SEAT x seats
+    // verifies per call - lead() and #decide hand this lists built from the peers' answers, which no door bounds.
+    const ok = new Map(), tried = new Set(), tries = new Map();
+    const budget = SIG_TRIES_PER_SEAT * m.seats.length;
+    if (!Array.isArray(sigs)) return [];
     for (const s of sigs) {
+      if (tried.size >= budget) break;
       if (!s || !isHex(s.seat, 32) || !isHex(s.signature, 64) || !m.seats.includes(s.seat) || ok.has(s.seat)) continue;
       const pair = `${s.seat}:${s.signature}`;
-      if (tried.has(pair)) continue;
+      if (tried.has(pair) || (tries.get(s.seat) || 0) >= SIG_TRIES_PER_SEAT) continue;
       tried.add(pair);
+      tries.set(s.seat, (tries.get(s.seat) || 0) + 1);
       if (verifySchnorr(fromHex(s.signature), fromHex(id), fromHex(s.seat))) ok.set(s.seat, s.signature);
     }
     return [...ok].map(([seat, signature]) => ({ seat, signature }));
@@ -854,7 +899,7 @@ export class OrderBook {
     try {
       const r = await Promise.race([this.fetcher(url, ac ? { ...opts, signal: ac.signal } : opts), late]);
       if (!r.ok) return { ok: false, why: String(await Promise.race([r.text(), late])).trim() };
-      return { ok: true, body: await Promise.race([r.json(), late]) };
+      return { ok: true, body: await Promise.race([jsonUpTo(r, BODY_MOST), late]) }; // kanban #2458: capped at what a door takes
     } catch (e) { return { ok: false, why: e.message }; } finally { clearTimeout(timer); }
   }
 
@@ -875,7 +920,8 @@ export class OrderBook {
       if (!ask) return { state: 'PENDING', why: `the set of batch ${k} does not read: no void ask for it` };
       const answers = await Promise.all(peers.map((b) => this.#post(b, `/batch-void-ask?round=${rid}&k=${k}`, ask)));
       const own = this.voidAsk(roundIdBytes, k, ask);
-      const all = [own, ...answers.filter((a) => a.ok)];
+      // AN ANSWER'S CERTIFICATE NO LONGER THAN THE ROUND'S SEATS (kanban #2175): a longer one is ignored, never verified
+      const all = [own, ...answers.filter((a) => a.ok && (a.certificate == null || (Array.isArray(a.certificate) && a.certificate.length <= m.seats.length)))];
       // a seat that holds the batch certified without having signed it answers the certificate (kanban #1150: it used to decline it)
       counted = this.#counted(m, id, [...counted, ...all.filter((a) => a.signed && a.batchId === id).map((a) => ({ seat: a.seat, signature: a.signed })),
         ...all.filter((a) => Array.isArray(a.certificate) && a.batchId === id).flatMap((a) => a.certificate)]);
@@ -1098,6 +1144,8 @@ export class OrderBook {
       const noCancel = new Set(L.refused.filter((r) => r.why.startsWith('a cancel')).map((r) => r.id));
       record.cancels = record.cancels.filter((c) => !noCancel.has(c.entry));
     } }
+    // and a sell of an entry cancelled in the book or in this set is left out for good (kanban #2283: the seats refuse the set over it)
+    if (record.sells.length) { const L = this.ledger(roundIdBytes, record); if (L.ok) record.sells = record.sells.filter((s) => !L.positions.get(String(s.entry))?.cancelled); }
     if (!record.orders.length && !record.cancels.length && !record.sells.length) return { ok: true, empty: true, decided };
     const idc = this.#recordId(roundIdBytes, record);
     if (!idc.ok) return idc;
@@ -1259,7 +1307,7 @@ export class OrderBook {
         const after = cursors.get(base);
         const r = await Promise.race([this.fetcher(`${base}/book-certificates?round=${rid}${after === undefined ? '' : `&after=${after}`}`, ac ? { signal: ac.signal } : undefined), late]);
         if (!r.ok) throw new Error(`answered ${r.status}`);
-        body = await Promise.race([r.json(), late]);
+        body = await Promise.race([jsonUpTo(r, BODY_MOST), late]); // kanban #2458: capped
         if (!body || !Array.isArray(body.certificates)) throw new Error('answered no list of certificates');
       } catch (e) { state.unheard.push(`${base}: ${e.message}`); return; } finally { clearTimeout(timer); }
       const next = await this.#take(roundIdBytes, rid, base, body, held, state, cursors.get(base));
@@ -1293,9 +1341,19 @@ export class OrderBook {
       if (!held.has(String(k))) state.complete = false;
       if (/^[0-9]{1,15}$/.test(String(k))) below = Math.min(below, Number(k));
     }
+    let tried = 0;
     for (const cert of body.certificates) {
       const k = cert && cert.record ? String(cert.record.k) : null;
       if (k === null || !/^[0-9]{1,15}$/.test(k)) continue;
+      // ONE CERTIFICATE PER k OF ONE ANSWER (kanban #2485): an honest seat lists each batch once; a repeat is not looked at
+      if (done.has(k)) continue;
+      // AT MOST SYNC_TAKE_MAX NOT HELD HERE PER ANSWER (kanban #2485): the rest waits for the next pass - the read is not kept and the
+      // cursor stays below the first batch left
+      if (!held.has(k)) {
+        if (tried >= SYNC_TAKE_MAX) { state.complete = false; below = Math.min(below, Number(k)); continue; }
+        tried += 1;
+        if (tried % SYNC_TAKE_YIELD === 0) await new Promise((resolve) => setImmediate(resolve));
+      }
       done.set(k, false);
       // A BATCH HELD HERE WHOSE ORDER IS NOT WHOLE HERE (kanban #620, fed2-3 16:51Z: the entry and locks replayed, then "a loser's P could
       // not be opened: this node accepted no handout for that entry"): what is missing is replayed from this peer
@@ -1374,6 +1432,18 @@ export class OrderBook {
   }
 
   /**
+   * THE ROUND'S KIND NOT DECIDED YET AT THIS SEAT (kanban #1666, audit #1489): no certified batch holds an order (isBook false), but a batch this
+   * seat signed that holds one is still pending - it can be certified (its signers hold it) and then the round is a book (§0A.7b). Until it is
+   * certified or voided the round is neither a pool nor a book here: the pool settlement, a losing plain pick's share and a pool refund wait.
+   * Answers the undecided batches holding an order ([] once the round is a book, or when none holds one).
+   */
+  kindPending(roundIdBytes) {
+    if (this.isBook(roundIdBytes)) return [];
+    return this.db.prepare('SELECT k, record FROM market_batches WHERE round_id = ? AND certificate IS NULL ORDER BY k').all(Buffer.from(roundIdBytes))
+      .filter((r) => { try { return (JSON.parse(r.record).orders || []).length > 0; } catch { return true; } }).map((r) => Number(r.k));
+  }
+
+  /**
    * WHAT THE RETURN DOOR MAY DO WITH AN ORDER'S LOCKS (comment 1127): { book, filled, cancelled, inPending } - a filled order's
    * locks are closed until settlement (a whole return would hand back filled money); an unfilled order whose cancel a
    * certified batch carried comes back at once; an order in a batch not yet decided waits for it.
@@ -1382,7 +1452,12 @@ export class OrderBook {
     const raw = this.round.entry(entryIdBytes);
     if (!raw) return { book: false };
     // A PLAIN PICK IN A ROUND THAT BECAME A BOOK (§0A.7b, kanban #1411/#1417): not an entry of that round - its lock comes back at once, whole
-    if (!isOrder(decodeEntryContract(raw))) return { book: false, wrongType: this.isBook(roundIdBytes) ? 'a plain pick in a round that is an order book (§0A.7b): not an entry of that round, its stake comes back' : null };
+    // ... and while a batch holding an order is undecided here the round's kind is not decided (kanban #1666): `kindPending` names it
+    if (!isOrder(decodeEntryContract(raw))) {
+      if (this.isBook(roundIdBytes)) return { book: false, wrongType: 'a plain pick in a round that is an order book (§0A.7b): not an entry of that round, its stake comes back' };
+      const undecided = this.kindPending(roundIdBytes);
+      return { book: false, wrongType: null, ...(undecided.length ? { kindPending: undecided } : {}) };
+    }
     const L = this.ledger(roundIdBytes);
     if (!L.ok) return { book: true, filled: true, cancelled: false, inPending: false, why: L.why };
     const p = L.positions.get(toHex(entryIdBytes));

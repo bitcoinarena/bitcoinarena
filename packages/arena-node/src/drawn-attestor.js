@@ -20,6 +20,9 @@ import { attestationBodyId } from '../../arena-protocol/src/attested.js';
 import { upDownOutcome, UP_DOWN_AVERAGE_MS } from '../../arena-protocol/src/up-down.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { combine, wordToJson, wordFromJson } from '../../arena-attestor/src/attestor.js';
+import { jsonUpTo } from './body-read.js';
+// the most of one drawn seat's GET /attestation-word answer that is read (kanban #2458)
+const WORD_ANSWER_MAX = 16 * 1024;
 
 export const READ_MS = 10000;
 // HOW LONG A ROUND IS DUE AFTER ITS WINDOW ENDED (server.js due() lists a drawn round until then; kanban #2186): one constant, so the
@@ -65,8 +68,9 @@ export class DrawnAttestor {
    * `readPrice()` cents or null; `selfKey` this seat's node key (hex); `sign(digest)` its BIP-340 signature (bytes);
    * `attestorsFor(roundIdBytes)` the round's 7 drawn keys (hex) or null; `peersFor(roundIdBytes)` the drawn attestors' base URLs
    * (this seat's left out); `due()` the rounds to attest now, [{ roundId (bytes), window { startMs, endMs } }]; `hold(bytes, roundId)`
-   * takes a combined attestation (this seat's intake, then every seat); `threshold` 5; `db` the seat's store (node:sqlite), where the
-   * readings and the signed words are kept across a restart (kanban #1844).
+   * takes a combined attestation (this seat's intake, then every seat): true held here and taken by every seat, false not held,
+   * { held: true, delivered: false } held here but some seat has not taken it yet (asked again each pass while due); `threshold` 5;
+   * `db` the seat's store (node:sqlite), where the readings and the signed words are kept across a restart (kanban #1844).
    */
   constructor({ readPrice, selfKey, sign, verify, attestorsFor, peersFor, due, hold, threshold = 5, fetcher = (u, o) => fetch(u, o), now = () => Date.now(), db = null }) {
     if (typeof verify !== 'function') throw new Error('a drawn attestor needs verify(signature, bodyId, key): the drawn keys\' BIP-340 check (kanban #1487)');
@@ -74,6 +78,7 @@ export class DrawnAttestor {
     this.samples = [];          // [{ atMs, price }] BigInt, this seat's own readings
     this.words = new Map();     // round hex -> this seat's word
     this.held = new Set();      // round hex: an attestation of it is held - nothing more to do
+    this.delivering = new Map(); // round hex -> combined bytes: held here, not yet taken by every seat of the round (kanban #1989)
     // THE READINGS AND WORDS IN THE SEAT'S STORE (kanban #1844, state audit 2026-11-12): kept in memory only, a seat restarted after
     // its round's window ended (a host reboot, a roll of the seats) came back with no reading before the window's start and never
     // signed it - three of seven drawn seats restarted together and the market went VOID although all seven read the window. As the
@@ -170,21 +175,36 @@ export class DrawnAttestor {
     for (const r of this.due()) {
       const id = toHex(r.roundId);
       if (this.held.has(id)) continue;
+      // COMBINED, STILL DELIVERING (kanban #1989): the attestation was held here, but a settlement or drawn seat did not take the one
+      // push (restarting, past the 8 s, 404/409 at that moment) - and no seat pulls outcomes, so it would stay OPEN and turn VOID at the
+      // deadline while the others are FINAL. Handed again on every pass while the round is due, to the seats that have not taken it
+      if (this.delivering.has(id)) {
+        try { const got = await this.hold(this.delivering.get(id), r.roundId); if (got === true || (got && got.delivered)) { this.delivering.delete(id); this.held.add(id); } } catch { /* asked again next pass */ }
+        continue;
+      }
       const mine = this.wordFor(r.roundId, r.window);
       if (!mine) continue;
       const drawn = this.attestorsFor(r.roundId) || [];
       const theirs = await Promise.all((this.peersFor(r.roundId) || []).map(async (base) => {
         try {
           const res = await this.fetcher(`${String(base).replace(/\/+$/, '')}/attestation-word?round=${id}`, { signal: AbortSignal.timeout(ASK_MS) });
-          return res.status === 200 ? wordFromJson(await res.json()) : null;
+          // kanban #2458: a word is under 1 kB - an answer past WORD_ANSWER_MAX counts as no word, like a 404
+          return res.status === 200 ? wordFromJson(await jsonUpTo(res, WORD_ANSWER_MAX)) : null;
         } catch { return null; }
       }));
       // each word checked with the drawn attestors' scheme (BIP-340, kanban #1487): a junk signature counts for nothing and never replaces a good one
       const got = combine([mine, ...theirs], { attestors: drawn, threshold: this.threshold, verify: this.verify });
       if (!got) continue;
-      try { if (await this.hold(got.bytes, r.roundId)) { this.held.add(id); done.push({ round: id, signers: got.signers, outcome: got.body.outcome }); } } catch { /* asked again next pass */ }
+      try {
+        const h = await this.hold(got.bytes, r.roundId);
+        if (h === true || (h && h.held)) {
+          if (h === true || h.delivered) this.held.add(id); else this.delivering.set(id, got.bytes);
+          done.push({ round: id, signers: got.signers, outcome: got.body.outcome });
+        }
+      } catch { /* asked again next pass */ }
     }
     for (const id of [...this.words.keys()].slice(0, Math.max(0, this.words.size - 512))) this.words.delete(id);
+    for (const id of [...this.delivering.keys()].slice(0, Math.max(0, this.delivering.size - 512))) this.delivering.delete(id);
     return done;
   }
 }

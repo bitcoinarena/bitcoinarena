@@ -180,9 +180,14 @@ test('#1215 a second entry of the same player key with its own lock is refused -
       const got = mode === 'at-once' ? await Promise.all([hand(s.eid), hand(eid2)]) : [await hand(s.eid), await hand(eid2)];
       const kept = [s.d.round.stakeLock(s.eid), s.d.round.stakeLock(eid2)].filter(Boolean).length;
       console.log(`  #1215 ${mode}: ${got.map((x) => x.status).join(' / ')} - ${got.find((x) => x.status === 409)?.said || 'none refused'}`);
-      assert.deepEqual(got.map((x) => x.status).sort(), [201, 409], `${mode}: ${got.map((x) => x.said).join(' | ')}`);
-      assert.match(got.find((x) => x.status === 409).said, /one player key stakes one entry/);
       assert.equal(kept, 1, `${mode}: ${kept} entries of one key staked`);
+      // THE KEY'S ENTRY IS THE LOWEST ENTRY ID (kanban #2477): the same at every seat, whichever lock came first. A higher entry's lock is
+      // refused; a lower one's lock coming second takes the key from the higher one (both answered 201, one kept)
+      const lower = Buffer.compare(Buffer.from(s.eid), Buffer.from(eid2)) < 0 ? s.eid : eid2;
+      assert.ok(s.d.round.stakeLock(lower), `${mode}: the lower entry id is not the one staked`);
+      const refused = got.filter((x) => x.status === 409);
+      assert.ok(refused.length <= 1 && got.some((x) => x.status === 201), `${mode}: ${got.map((x) => x.said).join(' | ')}`);
+      for (const r of refused) assert.match(r.said, /one player key stakes one entry/);
     } finally { await s.close(); }
   }
 });
