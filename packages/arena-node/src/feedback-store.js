@@ -65,8 +65,20 @@ export const AUTH_AGE_MOST_S = 60;
 // seedRunSpans, the same function log-level.js redact masks with - any non-letter between the words (list numbers in any layout, a tab table, a JSON
 // array, quotes, dots, underscores, "+", zero-width spaces), 4-letter BIP39 prefixes counted as their words. A list number just before the first word
 // ("1.", "(1)", "#1", "1-") goes with the run.
+// EVERY WALLET KEY SPELLING, NOT ONLY NSEC AND BARE HEX (kanban #2632, a bypass of #1472): an extended private key (xprv/tprv/yprv/zprv/uprv/vprv and
+// the multisig Yprv/Zprv/Uprv/Vprv, 111 base58 characters), a 64-hex key glued to anything that is not hex ("0x" + 64 hex: \b never falls between the x
+// and the hex; "key_<hex>" alike) and a WIF private key (5/K/L mainnet, 9/c testnet, 51 or 52 base58 characters) went through and reached the stored
+// report and the chat post. scrubKeys is the one door every report passes (take's happened/expected, the kept event's content and tags, the debug read,
+// faucet.js feedbackDecide), so the keys are removed here by their shape. A key with a typo still counts: nothing checks its checksum.
+const WALLET_KEYS = Object.freeze([
+  /\b(nsec|ncryptsec)1[0-9a-z]{20,}\b/gi,
+  /\b[xtyzuvXYZUV]prv[1-9A-HJ-NP-Za-km-z]{100,112}\b/g,
+  /(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])/gi,
+  /\b[5KLc9][1-9A-HJ-NP-Za-km-z]{50,51}\b/g,
+]);
 export const scrubKeys = (t) => {
-  let s = String(t).replace(/\b(nsec|ncryptsec)1[0-9a-z]{20,}\b/gi, '[removed]').replace(/\b[0-9a-f]{64}\b/gi, '[removed]');
+  let s = String(t);
+  for (const re of WALLET_KEYS) s = s.replace(re, '[removed]');
   for (const [a, b] of seedRunSpans(s).reverse()) {
     const lead = /[#(]?\d{1,2}[ \t]*[.):-]?[ \t]*$/.exec(s.slice(0, a));
     s = s.slice(0, lead ? lead.index : a) + '[removed]' + s.slice(b);
