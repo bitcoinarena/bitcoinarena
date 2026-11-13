@@ -30,7 +30,8 @@ const NEXT = Object.freeze({ new: ['accepted', 'rejected', 'duplicate'], accepte
 export const TEXT_MOST = 4000;
 // THE REWARD RULES (kanban #1342 section 2): settings the owner can change; testnet sats in phase 1
 // the weekly budget: 100,000 sats (Daniel 2026-11-10: "Wir haben auch ein Budget von 100000 sats pro Woche")
-export const REWARD_DEFAULTS = Object.freeze({ perKeyPerWeek: 3, weeklyBudgetSats: 100000, mostSats: 20000, leastSats: 100 });
+// NO LIMIT PER PERSON (kanban #2622, Daniel 2026-11-13: the rules as Season 1 was really paid - one tester 21 paid reports, another 15): perKeyPerWeek null
+export const REWARD_DEFAULTS = Object.freeze({ perKeyPerWeek: null, weeklyBudgetSats: 100000, mostSats: 20000, leastSats: 100 });
 /**
  * THE REWARD LEVELS (Daniel 2026-11-08, final: "500 / 1,000 / 2,000 / 5,000 / 20,000"): one table the feedback form shows and the approval pays from,
  * so form and payout never differ. A critical bug is outside the weekly budget. A node bounty's base is its own pot (#1342 node bounty).
@@ -271,7 +272,7 @@ export function openFeedbackStore(path = ':memory:') {
     // whether or not their key finished a round; `played` stays for the admin view (rounds, apps) only. The other limits stand.
     const since = nowMs - WEEK_MS;
     const mine = db.prepare(`SELECT COUNT(*) AS n FROM reports WHERE pubkey = ? AND state IN ('accepted', 'paid') AND changed_ms >= ?`).get(r.pubkey, since).n;
-    if (mine >= R.perKeyPerWeek) return { ok: false, why: `that key has ${mine} rewards this week: at most ${R.perKeyPerWeek}` };
+    if (Number.isFinite(R.perKeyPerWeek) && mine >= R.perKeyPerWeek) return { ok: false, why: `that key has ${mine} rewards this week: at most ${R.perKeyPerWeek}` };
     const week = db.prepare(`SELECT COALESCE(SUM(amount_sats), 0) AS s FROM reports WHERE state IN ('accepted', 'paid') AND changed_ms >= ? AND COALESCE(severity, '') NOT IN ('critical', 'node')`).get(since).s;   // a critical one is outside the budget
     if (!(lv && lv.outsideBudget) && week + sats > R.weeklyBudgetSats) return { ok: false, why: `this week's budget: ${week} of ${R.weeklyBudgetSats} sat approved, ${sats} more does not fit` };
     // THE LEVEL AS THE GUARDS READ IT (audit 6, kanban #1422): stored normalised ('Node' was kept as given and missed by the guards' severity = 'node')
