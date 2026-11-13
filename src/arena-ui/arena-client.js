@@ -37512,6 +37512,26 @@ function tgkFail(e, inv, t) {
 }
 
 /**
+ * A HOLDING PLACE UNDER THE BOOK'S OWN RULES (kanban #2620, feedback #049): a caller that collects record invites before it hands them to the
+ * fetch (a seat between two keysFor) keeps them here - per signer TGK_PER_SIGNER, at most TGK_BOOK, a full buffer giving up the entry of the
+ * most crowded signers, trusted strings always taken - never a first-come list strangers can fill before the genuine record arrives.
+ * has(invite); admit(src) - a trusted invite string or { invite, signers }; take() -> the sources, oldest first, and empties it.
+ */
+function createInviteBuffer() {
+  let e = { book: new Map(), failed: new Map(), seq: 0 };
+  return {
+    has: (inv) => e.book.has(inv),
+    admit: (src) => tgkAdmit(e, src, 0),
+    size: () => e.book.size,
+    take: () => {
+      const out = [...e.book.entries()].sort((p, q) => p[1].seq - q[1].seq).map(([invite, x]) => (x.trusted ? invite : { invite, signers: x.signers }));
+      e = { book: new Map(), failed: new Map(), seq: 0 };
+      return out;
+    },
+  };
+}
+
+/**
  * trustedGuardianKeys(federationId, invites, fetcher) -> { ok, keys: [hex, peer order], threshold, n, agreed, endpoints, why, asked }.
  * `federationId` hex or 32 bytes; `invites` one or a list: a string is a trusted source, { invite, signers } a record's (recordInviteSource) -
  * where to ask, never what to believe; `fetcher(url) -> config JSON`. Kept in `cache` (a Map, per federation): a hit for `keepMs`, a miss for
