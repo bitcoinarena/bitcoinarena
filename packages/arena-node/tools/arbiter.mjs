@@ -34,7 +34,9 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { bitcoindRpc, blocksOver, blockCache } from '../src/chain-rpc.js';
-import { arbitrationMembers, judgeProof, judgeAuditProof, judgeDoubleProof, judgeTableProof, judgeAbandoned, buildAbandonedSlash, buildSlash, settledEntries, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash, buildEscrowPegin, intentLanded, writeJsonAtomic, resumeIntent, resumeSlashIntent, txidOf, spentSetFromSeats } from '../src/arbiter.js';
+import { arbitrationMembers, judgeProof, judgeAuditProof, judgeDoubleProof, judgeTableProof, judgeAbandoned, buildAbandonedSlash, buildSlash, settledEntries, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash, buildEscrowPegin, intentLanded, writeJsonAtomic, resumeIntent, resumeSlashIntent, txidOf, liquidationFromSeats, verifyHaltRecord } from '../src/arbiter.js';
+import { wsClientConfig } from '../src/federation-endpoints.js';
+import { createTrustedGuardianKeys } from '../../arena-protocol/src/trusted-guardian-keys.js';
 import { createLiquidationClaims, payOutLiquidation, escrowCoverageMsat } from '../src/liquidation-claims.js';
 import { liquidationEvent, slashEvent, stampEvent, signEvent, eventKey } from '../src/arbitration-events.js';
 import { fedimintNoteValidator } from '../src/note-validate.js';
@@ -68,7 +70,8 @@ import { parseTransaction } from '../../arena-protocol/src/tx.js';
 const env = process.env;
 const network = env.ARENA_ARBITER_NETWORK || 'regtest';
 const set = arbitrationMembers(network);
-const seats = String(env.ARENA_ARBITER_SEATS || '').split(',').map((s) => s.trim().replace(/\/+$/, '')).filter(Boolean);
+// each seat once (kanban #2617): the halt is taken only as a strict majority of these list it, so one seat named twice would count twice
+const seats = [...new Set(String(env.ARENA_ARBITER_SEATS || '').split(',').map((s) => s.trim().replace(/\/+$/, '')).filter(Boolean))];
 const rpc = bitcoindRpc({ url: env.ARENA_BITCOIND_URL, cookiePath: env.ARENA_BITCOIND_COOKIE });
 const statePath = env.ARENA_ARBITER_STATE || null;
 const state = statePath && existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'utf8')) : { handled: {} };
@@ -417,6 +420,7 @@ async function resumeKept(seat, s, kind) {
   return false;
 }
 async function pass() {
+  await learnGuardianKeys().catch((e) => say({ guardianKeysError: e.message }));
   await payLiquidations().catch((e) => say({ liquidationsError: e.message }));
   // THE PROOFS OF A ROUND IN ASCENDING PROOF ID (§5A.3): the first pays each loss, a later one only what is still owed
   const found = new Map(), abandoned = [];
@@ -462,6 +466,47 @@ const allow = ({ nodeKey }) => (open.has(toHex(nodeKey)) || Object.values(state.
 // - the escrow output its slashes paid; the claims kept in ARENA_LIQ_CLAIMS_FILE; the halt and the spent set read from the seats
 const pairs = (v) => new Map(String(v || '').split(',').map((x) => x.trim()).filter(Boolean).map((x) => x.split('=')).filter((x) => x.length === 2).map(([k, v2]) => [k.toLowerCase(), v2]));
 const liqClients = pairs(env.ARENA_LIQ_CLIENTS); const liqEscrows = pairs(env.ARENA_LIQ_ESCROWS);
+const liqClocks = clocksFor(network === 'testnet4' ? 'testnet4' : network).clocks;
+// THE FEDERATION'S OWN GUARDIAN KEYS (kanban #2617, #2609): the config a threshold of its guardians answer alike at the endpoints its id commits
+// to (trusted-guardian-keys.js), kept in the state once agreed - a halted federation may no longer answer, so they are learned each pass while
+// it still does (learnGuardianKeys) and the kept ones are read after
+const trustedKeys = createTrustedGuardianKeys({ fetcher: (url) => wsClientConfig(url, { timeoutMs: 6000 }), timeoutMs: 6500 });
+async function guardianKeysFor(fid, invites = []) {
+  state.guardianKeys = state.guardianKeys || {};
+  const had = state.guardianKeys[fid];
+  if (Array.isArray(had) && had.length) return had.map((h) => fromHex(h));
+  let k = null; try { k = await trustedKeys.of(fid, invites.filter(Boolean)); } catch { k = null; }
+  if (!Array.isArray(k) || !k.length) return null;
+  state.guardianKeys[fid] = k; keep();
+  return k.map((h) => fromHex(h));
+}
+async function learnGuardianKeys() {
+  for (const fid of liqClients.keys()) {
+    if (state.guardianKeys && state.guardianKeys[fid]) continue;
+    const invites = new Set();
+    for (const s of seats) {
+      let j; try { j = await get(`${s}/federations`); } catch { continue; }
+      for (const f of j.federations || []) {
+        if (String(f.federation || '').toLowerCase() !== fid || typeof f.record !== 'string') continue;
+        try { invites.add(splitSignedRecord(fromHex(f.record)).record.invite); } catch { /* not a record */ }
+      }
+    }
+    const k = await guardianKeysFor(fid, [...invites]);
+    say({ liquidationKeys: fid.slice(0, 16), held: !!k });
+  }
+}
+const inviteFederationId = (invite) => { const f = readInvite(invite).federationId; return f ? fromHex(f) : null; };
+// A HALT RECORD CHECKED HERE (kanban #2617): HALTED, of the federation, at or below this arbiter's tip, signed by its own guardians (their keys),
+// each signer a node of this arbiter's own census at the record's height
+async function verifyHalt(fid, bytes) {
+  let r; try { r = splitSignedRecord(bytes).record; } catch (e) { return { ok: false, why: e.message }; }
+  const keys = await guardianKeysFor(fid, [r.invite]);
+  if (!keys) return { ok: false, why: 'this arbiter holds no guardian keys of that federation (no threshold of its guardians answered one config)' };
+  // the census from this set's own chain (censusRead: the chain census contract, no seat's round as a template)
+  const census = await censusRead(r.height);
+  if (!census.ok) return { ok: false, why: `no census at ${r.height}: ${census.why}` };
+  return verifyHaltRecord(bytes, { fid, keys, census: census.entries, tip: census.tip, networkId: chainNetworkId || null, inviteFederationId });
+}
 let claims = null;
 if (liqClients.size) {
   const claimsFile = env.ARENA_LIQ_CLAIMS_FILE || null;
@@ -480,20 +525,22 @@ if (liqClients.size) {
   claims = createLiquidationClaims({
     take: reissueInto,
     validate: fedimintNoteValidator({ cli: env.ARENA_FEDIMINT_CLI || 'fedimint-cli', dataDirFor: (fid) => liqClients.get(fid) || null, home: env.ARENA_FEDIMINT_HOME || env.HOME }),
-    // THE FIRST SEAT THAT LISTS IT, with the spent set and the record from any seat that has them (kanban #326 rehearsal 17, 2026-10-26:
-    // the test host seats list T2 with its record and no spent set, the one T2 seat still up with the spent set; the first answer
-    // alone left the remainder with no record to read the guardians from)
-    // EVERY SEAT, EVERY COPY CHECKED (kanban #1236, audit 2 RES-4): the first copy any seat listed was taken unchecked; the record
-    // from any seat that has one (rehearsal 17: the test host seats list T2 with its record and no spent set)
+    // EVERY SEAT, EVERY COPY CHECKED (kanban #1236, audit 2 RES-4): the first copy any seat listed was taken unchecked
+    // NOTHING OF IT FROM THE FIRST SEAT (kanban #2617, feedback #046): the listing was listings[0] whole - its halt height, clocks and halt record
+    // unchecked, so one seat listed first voided every claim. liquidationFromSeats: the halt record a strict majority of the seats list, verified
+    // against the federation's guardian keys and this arbiter's own census; the clocks computed here
     liquidationOf: async (fid) => {
       const listings = (await Promise.all(seats.map(async (s) => {
         try { const j = await (await fetch(`${s}/liquidations`, { signal: AbortSignal.timeout(15000) })).json(); return (j.liquidations || []).find((x) => x.federation === fid) || null; } catch { return null; }
       }))).filter(Boolean);
       if (!listings.length) return null;
-      const record = (listings.find((l) => l.haltRecord || l.record) || {});
-      const ss = spentSetFromSeats(listings, { verify: (sig, m, k) => { try { return schnorr.verify(sig, m, k); } catch { return false; } } });
-      if (ss.spentNonces === null) say({ liquidation: fid.slice(0, 16), spentSet: ss.why });
-      return { ...listings[0], record: record.haltRecord || record.record || null, spentNonces: ss.spentNonces, spentSetSession: ss.session ?? null };
+      state.liquidationHalts = state.liquidationHalts || {};
+      const got = await liquidationFromSeats(fid, listings, { seatCount: seats.length, clocks: liqClocks, verifyHalt: (bytes) => verifyHalt(fid, bytes),
+        frozen: state.liquidationHalts[fid] || null });
+      if (!got.ok) { say({ liquidation: fid.slice(0, 16), refused: got.why }); return got; }
+      if (!state.liquidationHalts[fid]) { state.liquidationHalts[fid] = { height: got.haltHeight, record: got.haltRecord, atMs: Date.now() }; keep(); }
+      if (got.spentNonces === null) say({ liquidation: fid.slice(0, 16), spentSet: got.spentSetWhy });
+      return got;
     },
     height: async () => Number(await rpc('getblockcount')),
     // ONCE SPENT, WHAT THIS SET HOLDS FOR THE TABLE (kanban #1247): the claimed amount, not the spent output's 0
@@ -505,7 +552,7 @@ if (liqClients.size) {
       const o = await rpc('gettxout', [txid, Number(vout), false]);
       return o ? BigInt(Math.round(Number(o.value) * 1e8)) * 1000n : 0n;
     },
-    clocks: clocksFor(network === 'testnet4' ? 'testnet4' : network).clocks,
+    clocks: liqClocks,
     load: () => { try { return claimsFile ? JSON.parse(readFileSync(claimsFile, 'utf8')) : []; } catch { return []; } },
     // written whole or not at all (kanban #1352): a torn file was read as no claims - with `take`, notes already taken
     save: (rows) => { if (claimsFile) writeJsonAtomic(claimsFile, rows); },
