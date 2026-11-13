@@ -32255,7 +32255,11 @@ class Client {
       // place: it is ignored. A withheld mark of this player is caught by the signed peer lists above (#027), which need no receipt.
       const at = (id) => ticks.get(id) ?? -1;
       let newest = null;
-      if (withheld.size) for (const [id, tick] of ticks) if (tick !== null && (newest === null || tick > at(newest))) newest = id;
+      // AND AFTER EVERY RELOAD (feedback #033): one seat that leaves only its OWN receipt for the newest mark out of /receipts kept
+      // it under the live threshold - every list complete and in order, nothing withheld - and the walk took the older live mark,
+      // whose next child forks the carried one (FORFEIT). A reloaded client takes the newest mark signed under its session key that
+      // any list holds, live or not: a child of an older parent is a fork either way, and the lists show the committee holds it.
+      if (withheld.size || this.reloading) for (const [id, tick] of ticks) if (tick !== null && (newest === null || tick > at(newest))) newest = id;
       const now = adopted ? toHex(adopted) : null;
       if (newest !== null && newest !== now && at(newest) > (now ? at(now) : -1)) adopted = fromHex(newest);
     }
@@ -32274,7 +32278,8 @@ class Client {
     this.setRound({ roundId, entryId, blockTicks });
     const where = this.where;
     this.where = null;
-    try { return await this.resume(where); } finally { this.where = where; }
+    this.reloading = true;   // carriedHead: a reload never falls behind the newest signed mark (feedback #033)
+    try { return await this.resume(where); } finally { this.where = where; this.reloading = false; }
   }
 
   /**
