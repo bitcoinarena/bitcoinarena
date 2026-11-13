@@ -19198,7 +19198,8 @@ function recordDonation(storage, federationId, { msat, round, txid = null, to = 
  *  referral link brought, `round` the round that paid it - or 'zap-in', a zap from another player. `outpoint` is the payout collected. */
 function recordReceived(storage, federationId, { kind, msat, round = null, outpoint = null }) {
   if (kind !== 'referral' && kind !== 'zap-in') return;
-  ledgerAppend(storage, federationId, { kind, msat: String(msat), round: round ? String(round) : null, ...(outpoint ? { outpoint: String(outpoint) } : {}) });
+  // kanban #2319: one row per collected outpoint (content id 'zap-<outpoint>'): two tabs, or a pass that books what an unfinished one began, write it once
+  ledgerAppend(storage, federationId, { kind, msat: String(msat), round: round ? String(round) : null, ...(outpoint ? { outpoint: String(outpoint) } : {}) }, outpoint ? `zap-${outpoint}` : null);
 }
 /** The rest: the smallest whole sat whose whole notes cover what the wallet is short. */
 function restOfFeesMsat(shortMsat) {
@@ -26507,6 +26508,8 @@ async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verif
 
 
 
+// ONE NODE'S GET /receipts ANSWER, AT MOST (kanban #2554): the seat's own cap on a peer body (#1550)
+const RECEIPTS_MAX_BYTES = 16 * 1024 * 1024;
 // THE PLAYER'S DONATION (M3.2 6e): the split, the failure rule, the LNURL checks.
 
 
@@ -27812,16 +27815,28 @@ class Client {
     const r = await readWithOneRetry(fetch,
       `${base}/receipts?round=${toHex(roundId)}&entry=${toHex(entryId)}`);
     if (!r.ok) throw new Error(`the node refused the receipts: ${(await r.text()).trim()}`);
+    // BOUNDED IN WORK ON THE PAGE TOO (kanban #2554, refute of #1636 - the seat's carryReceipts has the same bounds): one seat's
+    // answer is read up to RECEIPTS_MAX_BYTES, each (mark, signer) is verified once - a copy of a receipt already taken costs no
+    // signature check - and the loop gives the page's thread back every 64 records, so one committee seat answering its own
+    // valid receipt thousands of times cannot hold the page on a resume
+    const said = Number(r.headers && r.headers.get ? r.headers.get('content-length') : NaN);
+    if (Number.isFinite(said) && said > RECEIPTS_MAX_BYTES) throw new Error(`${said} bytes of receipts is more than one node's answer may be`);
     const bytes = new Uint8Array(await r.arrayBuffer());
+    if (bytes.length > RECEIPTS_MAX_BYTES) throw new Error(`${bytes.length} bytes of receipts is more than one node's answer may be`);
     if (bytes.length % SIGNED_RECEIPT_BYTES !== 0)
       throw new Error(
         `${bytes.length} bytes is not a whole number of ${SIGNED_RECEIPT_BYTES}-byte receipts`);
 
     const out = [];
-    for (let at = 0; at < bytes.length; at += SIGNED_RECEIPT_BYTES) {
+    const taken = new Set();
+    for (let at = 0, n = 0; at < bytes.length; at += SIGNED_RECEIPT_BYTES, n += 1) {
+      if (n > 0 && n % 64 === 0) await new Promise((ok) => setTimeout(ok, 0));
       const one = bytes.subarray(at, at + SIGNED_RECEIPT_BYTES);
       const { body, signature } = splitSignedReceipt(one);
       const rec = decodeCheckpointReceipt(body);
+      const key = `${toHex(rec.checkpointId)}:${toHex(rec.nodePubkey)}`;
+      if (taken.has(key)) continue;
+      taken.add(key);
       if (!this.nodes.some((n) => toHex(n) === toHex(rec.nodePubkey)))
         throw new Error(
           `a receipt signed by ${toHex(rec.nodePubkey)}, which is not on this round's committee`);
@@ -31021,6 +31036,43 @@ function purchaseStands(p, { manifest, networkSet, gameSet, served, verify, rese
   return { ok: true, id };
 }
 
+// ---- arena-client/src/paid-records.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// A PAID RECORD IS KEPT UNTIL THE SEATS KEEP IT (kanban #2274): an item purchase (item-buy.js) or a gift / zap (donation-gift-page.js) pays
+// first and hands its signed record to the seats after (handToSeats: kept when two seats keep it, #2420). A record the seats did not keep
+// was dropped before, and the next press of Buy or Give paid a second time - the first payment's outputs named by no record. Now the
+// purchase (the gift) is written ahead from the moment the federation answers the payment, and again with its signed body; the next press
+// of THE SAME purchase (the same item by the same buyer) or THE SAME gift (the same donor, target and amount) hands that body again
+// instead of paying, and the record goes once the seats kept it. A different gift is paid as before. resendPaidRecords (item-buy.js)
+// hands every kept body again when the page loads.
+// Invariant: one item (one gift press), one payment - a paid purchase's record is handed again, never paid again.
+
+const PAID_PURCHASE_PREFIX = 'arena.purchase.';
+const PAID_GIFT_PREFIX = 'arena.gift.';
+
+// a caller that hands no storage (a tool, a test) keeps them for the life of the module
+const paidRecordsInMemory = new Map();
+const paidRecordsMemStore = { getItem: (k) => (paidRecordsInMemory.has(k) ? paidRecordsInMemory.get(k) : null), setItem: (k, v) => paidRecordsInMemory.set(k, String(v)),
+  removeItem: (k) => paidRecordsInMemory.delete(k), key: (i) => [...paidRecordsInMemory.keys()][i] ?? null, get length() { return paidRecordsInMemory.size; } };
+const paidRecordStore = (storage) => storage || paidRecordsMemStore;
+
+function paidRecordGet(storage, key) {
+  try { const v = paidRecordStore(storage).getItem(key); return v ? JSON.parse(v) : null; } catch { return null; }
+}
+/** Written with putRoomy: a write the browser refuses throws, and nothing is paid on a record that could not be written ahead. */
+function paidRecordPut(storage, key, rec) { putRoomy(paidRecordStore(storage), key, JSON.stringify(rec)); }
+/** Dropped once the seats kept it (a storage with no removeItem gets it emptied, which reads as none). */
+function paidRecordDrop(storage, key) {
+  try { const st = paidRecordStore(storage); if (typeof st.removeItem === 'function') st.removeItem(key); else st.setItem(key, ''); } catch { /* kept: handed again, a seat answers it the same */ }
+}
+/** Every kept paid record's key in `storage`. */
+function paidRecordKeys(storage) {
+  const st = paidRecordStore(storage); const keys = [];
+  try { for (let i = 0; i < st.length; i++) { const k = st.key(i); if (k && (k.startsWith(PAID_PURCHASE_PREFIX) || k.startsWith(PAID_GIFT_PREFIX))) keys.push(k); } } catch { /* none */ }
+  return keys;
+}
+
 // ---- arena-client/src/item-buy.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -31035,6 +31087,7 @@ function purchaseStands(p, { manifest, networkSet, gameSet, served, verify, rese
 //   4. THE RECORD: the game, the item, the price, the buyer, the federation, the transaction, every output and the served list,
 //      signed with the player's key, handed to a seat (POST /item-purchase), which hands it on to every other.
 // No float touches an amount; every step that fails says which, and nothing is paid before the list and the split stand.
+
 
 
 
@@ -31148,11 +31201,19 @@ async function handToSeats({ seats, door, body, fetch, timeoutMs = 60000 }) {
  * `seats` the game's seats; `verify` BIP340; `devsPct` the developers' share the buyer chose (one of ITEM_DEV_SHARES, default
  * 50 - the nodes' half is paid whatever it is). Answers { ok, purchaseId, txid, priceSat, paidSat, devsPct, outputs, keptBy } or { ok: false, step, why }.
  */
-async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, federationId, player, seats, fetch, verify, nowMs = () => Date.now(), devsPct = null, reserveNeeded = 5 }) {
+async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, federationId, player, seats, fetch, verify, nowMs = () => Date.now(), devsPct = null, reserveNeeded = 5, storage = null }) {
   const no = (step, why) => ({ ok: false, step, why });
   const item = itemOf(manifest, itemId);
   if (!item) return no('item', `"${manifest && manifest.gameName}" sells no item "${itemId}"`);
   const terms = itemTermsOf(manifest);
+  // THIS ITEM PAID BEFORE AND ITS RECORD NOT KEPT (kanban #2274): the kept purchase goes on - acceptance, record, seats - and nothing is paid again
+  const keptKey = `${PAID_PURCHASE_PREFIX}${manifest.gameName}.${itemId}.${toHex(player.pubkey).slice(0, 16)}`;
+  const kept = paidRecordGet(storage, keptKey);
+  if (kept && kept.submitted) return finishPurchase({ rec: kept, keptKey, storage, manifest, item, itemId, terms, wallet, federationId, player, fetch, again: true });
+  if (kept) {   // written ahead, the page gone before the federation answered: whether it paid is the wallet history's to say, so said once
+    paidRecordDrop(storage, keptKey);
+    return no('payment', `an earlier payment of this item had no answer (the page closed while paying, ${new Date(Number(kept.boughtAtMs)).toISOString()}): look at the wallet history before buying again`);
+  }
   if (devsPct === null || devsPct === undefined) devsPct = terms.defaultShare;
   if (!terms.shares.includes(Number(devsPct))) return no('share', `a developers' share is one of ${terms.shares.join(', ')} %`);
   // THE RESERVES' KEY FIRST: on the reserves' terms nothing is paid before five of the game's nodes name the
@@ -31176,26 +31237,60 @@ async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, federati
   // window (purchaseImage), so this payment stands for this item's record alone
   const image = toHex(purchaseImage({ playerPubkey: player.pubkey, gameDevPubkey: manifest.gameDevPubkey, gameName: manifest.gameName, itemId, priceSat: item.priceSat,
     servedFromMs: got.served.fromMs, servedToMs: got.served.toMs }));
-  let submitted, accepted;
+  // WRITTEN AHEAD (kanban #2274): the purchase is kept before the payment and again with its transaction the moment the federation
+  // answers it, so a record the seats do not keep is handed again on the next press, never paid again. One that cannot be written pays nothing.
+  const rec = { seats: [...(seats || [])], federationId, devsPct: Number(devsPct), servedFromMs: String(got.served.fromMs), servedToMs: String(got.served.toMs),
+    servedRoot: got.served.root, reserveKey: reserveKey ? toHex(reserveKey) : null, reserveMsat: built.reserve ? String(built.reserve.msat) : null,
+    outputs: built.outputs.length, boughtAtMs: String(nowMs()), submitted: null, body: null };
+  try { paidRecordPut(storage, keptKey, rec); } catch (e) { return no('payment', `nothing paid: the purchase could not be written ahead (${e && e.message || e})`); }
   try {
-    submitted = JSON.parse(await wallet.paySubmit(JSON.stringify(built.outputs.map((o) => ({ pk: toHex(o.pk), msat: String(o.msat), image })))));
-    accepted = JSON.parse(await wallet.lockAccepted(JSON.stringify(submitted)));
-  } catch (e) { return no('payment', String(e && e.message || e)); }
-  const outs = accepted.donations || [];
-  if (outs.length !== built.outputs.length || !outs.every((d) => d.ids_match)) return no('payment', 'the federation does not hold the outputs as they were built');
-  const record = { gameDevPubkey: manifest.gameDevPubkey, gameName: manifest.gameName, itemId, priceSat: item.priceSat, devsPct: Number(devsPct), playerPubkey: player.pubkey,
-    federationId: fromHex(federationId), txid: fromHex(submitted.txid), servedFromMs: got.served.fromMs, servedToMs: got.served.toMs, servedRoot: fromHex(got.served.root),
-    outputs: outs.map((d) => ({ outIdx: Number(d.out_idx), pk: fromHex(d.recipient_pk), msat: BigInt(d.amount_msat) })), boughtAtMs: BigInt(nowMs()),
-    ...(terms.reserves ? { gameId: gameIdOf(manifest), reserveKey } : {}) };
-  const signature = player.sign(purchaseId(record));
-  const body = JSON.stringify({ purchase: toHex(encodePurchase(record)), signature: toHex(signature) });
+    rec.submitted = JSON.parse(await wallet.paySubmit(JSON.stringify(built.outputs.map((o) => ({ pk: toHex(o.pk), msat: String(o.msat), image })))));
+  } catch (e) { paidRecordDrop(storage, keptKey); return no('payment', String(e && e.message || e)); }
+  try { paidRecordPut(storage, keptKey, rec); } catch { /* the payment stands; the record is built and handed below */ }
+  return finishPurchase({ rec, keptKey, storage, manifest, item, itemId, terms, wallet, federationId, player, fetch, again: false });
+}
+
+// THE PAID PURCHASE FINISHED (kanban #2274): its acceptance read back, the record signed and kept with its body, handed to every seat
+// (kept when two keep it, #2420); dropped only then. A purchase kept from an earlier press goes on from where it stood - its body as it was.
+async function finishPurchase({ rec, keptKey, storage, manifest, item, itemId, terms, wallet, federationId, player, fetch, again }) {
+  const no = (step, why) => ({ ok: false, step, why });
+  const txid = rec.submitted.txid;
+  if (!rec.body) {
+    if (rec.federationId !== federationId) return no('record', `paid (transaction ${txid}) from federation ${rec.federationId.slice(0, 8)}: open that federation's wallet to finish the record, nothing is paid again`);
+    let accepted;
+    try { accepted = JSON.parse(await wallet.lockAccepted(JSON.stringify(rec.submitted))); } catch (e) { return no('record', `paid (transaction ${txid}), its acceptance not read yet (${String(e && e.message || e)}): pressed again, it is read again, never paid again`); }
+    const outs = accepted.donations || [];
+    if (outs.length !== rec.outputs || !outs.every((d) => d.ids_match)) return no('payment', 'the federation does not hold the outputs as they were built');
+    const record = { gameDevPubkey: manifest.gameDevPubkey, gameName: manifest.gameName, itemId, priceSat: item.priceSat, devsPct: rec.devsPct, playerPubkey: player.pubkey,
+      federationId: fromHex(rec.federationId), txid: fromHex(txid), servedFromMs: BigInt(rec.servedFromMs), servedToMs: BigInt(rec.servedToMs), servedRoot: fromHex(rec.servedRoot),
+      outputs: outs.map((d) => ({ outIdx: Number(d.out_idx), pk: fromHex(d.recipient_pk), msat: BigInt(d.amount_msat) })), boughtAtMs: BigInt(rec.boughtAtMs),
+      ...(terms.reserves ? { gameId: gameIdOf(manifest), reserveKey: fromHex(rec.reserveKey) } : {}) };
+    rec.body = JSON.stringify({ purchase: toHex(encodePurchase(record)), signature: toHex(player.sign(purchaseId(record))) });
+    rec.purchaseId = toHex(purchaseId(record));
+    try { paidRecordPut(storage, keptKey, rec); } catch { /* handed below; a failed hand-over is then kept in nothing but this answer's retry */ }
+  }
   // HANDED TO EVERY SEAT, KEPT ONLY WHEN TWO KEEP IT (kanban #2420): no longer the first seat that answers 200 - one lying seat listed
   // first said 200, dropped the record and never handed it on, the page said "bought" and no honest seat held the paid item
-  const { keptBy, last } = await handToSeats({ seats, door: 'item-purchase', body, fetch });
-  if (!keptBy) return { ok: false, step: 'record', why: `paid (transaction ${submitted.txid}), but no seat kept the record yet: ${last}`, purchaseId: toHex(purchaseId(record)), txid: submitted.txid,
-    retry: body };
-  return { ok: true, purchaseId: toHex(purchaseId(record)), txid: submitted.txid, priceSat: item.priceSat, paidSat: itemPriceOn(manifest, item.priceSat, devsPct),
-    devsPct: Number(devsPct), outputs: outs.length, keptBy, ...(terms.reserves ? { reserveKey: toHex(reserveKey), reserveMsat: built.reserve.msat } : {}) };
+  const { keptBy, last } = await handToSeats({ seats: rec.seats, door: 'item-purchase', body: rec.body, fetch });
+  if (!keptBy) return { ok: false, step: 'record', paid: true, why: `${again ? 'an earlier purchase of this item was ' : ''}paid (transaction ${txid}), but no seat kept the record yet: ${last} - it is handed again, never paid again`,
+    purchaseId: rec.purchaseId, txid, retry: rec.body };
+  paidRecordDrop(storage, keptKey);
+  return { ok: true, purchaseId: rec.purchaseId, txid, priceSat: item.priceSat, paidSat: itemPriceOn(manifest, item.priceSat, rec.devsPct),
+    devsPct: rec.devsPct, outputs: rec.outputs, keptBy, ...(again ? { earlier: true } : {}), ...(terms.reserves ? { reserveKey: rec.reserveKey, reserveMsat: BigInt(rec.reserveMsat) } : {}) };
+}
+
+/** AT LOAD (kanban #2274): every kept paid record that has its signed body is handed again to the seats it names; the kept ones are
+ *  dropped. Answers [{ key, ok, why }]. */
+async function resendPaidRecords({ storage, fetch }) {
+  const said = [];
+  for (const key of paidRecordKeys(storage)) {
+    const rec = paidRecordGet(storage, key);
+    if (!rec || !rec.body) continue;
+    const { keptBy, last } = await handToSeats({ seats: rec.seats, door: key.startsWith(PAID_GIFT_PREFIX) ? 'donation-gift' : 'item-purchase', body: rec.body, fetch });
+    if (keptBy) paidRecordDrop(storage, key);
+    said.push({ key, ok: !!keptBy, why: keptBy ? `kept by ${keptBy}` : last });
+  }
+  return said;
 }
 
 /**
@@ -31317,6 +31412,7 @@ function entryUnlocks(entry, manifest) {
 
 
 
+
 /** Whether a typed amount is one the popup may pay: a whole number of sat from 1 to 10,000,000. Answers { ok, sat } or { ok: false, why }. */
 function giftAmountOf(typed) {
   const s = String(typed == null ? '' : typed).trim().replace(/[,_\s]/g, '');
@@ -31349,24 +31445,53 @@ async function giftDonation({ game = null, player = null, recipients, networkSet
   const both = !player && game && Array.isArray(networkSet);
   try { outs = both ? giftOutputs({ totalMsat, networkSet, gameSet: recipients }) : giftOutputs({ totalMsat, recipients }); } catch (e) { return no('split', e.message); }
   if (!wallet || typeof wallet.paySubmit !== 'function') return no('wallet', 'this page\'s wallet cannot pay keys (its lock client has no paySubmit)');
-  let submitted, accepted;
+  // THE SAME GIFT PAID BEFORE AND ITS RECORD NOT KEPT (kanban #2274): this donor's next press of the same gift (target and amount) hands that
+  // record again and pays nothing; any other gift is paid as before. Kept under arena.gift.<donor16>.<to>.<sat> from the payment's answer on.
+  const to = player ? 'player:' + toHex(player) : game ? 'app:' + game.gameName : 'network';
+  const keptKey = `${PAID_GIFT_PREFIX}${toHex(donor.pubkey).slice(0, 16)}.${to}.${amt.sat}`;
+  const kept = paidRecordGet(storage, keptKey);
+  if (kept && kept.submitted) return finishGift({ rec: kept, keptKey, storage, wallet, federationId, donor, fetch, again: true });
+  if (kept) {   // written ahead, the page gone before the federation answered: the wallet history says whether it paid, so said once
+    paidRecordDrop(storage, keptKey);
+    return no('payment', `an earlier gift had no answer (the page closed while paying, ${new Date(Number(kept.atMs)).toISOString()}): look at the wallet history before giving again`);
+  }
+  const rec = { seats: [...(seats || [])], federationId, sat: amt.sat, outputs: outs.length, atMs: String(nowMs()), submitted: null, body: null,
+    target: player ? GIFT_TO_PLAYER : both ? GIFT_TO_BOTH : game ? GIFT_TO_GAME : GIFT_TO_NETWORK, gameDevPubkey: toHex(player || (game ? game.gameDevPubkey : new Uint8Array(32))),
+    gameName: !player && game ? game.gameName : '', origin: !player && origin ? String(origin).slice(0, 64) : '', to };
+  try { paidRecordPut(storage, keptKey, rec); } catch (e) { return no('payment', `nothing paid: the gift could not be written ahead (${e && e.message || e})`); }
   try {
-    submitted = JSON.parse(await wallet.paySubmit(JSON.stringify(outs.map((o) => ({ pk: toHex(o.pk), msat: String(o.msat), image: toHex(donor.pubkey) })))));
-    accepted = JSON.parse(await wallet.lockAccepted(JSON.stringify(submitted)));
-  } catch (e) { return no('payment', String(e && e.message || e)); }
-  const held = accepted.donations || [];
-  if (held.length !== outs.length || !held.every((d) => d.ids_match)) return no('payment', 'the federation does not hold the outputs as they were built');
-  if (storage) recordDonation(storage, federationId, { msat: totalMsat, txid: submitted.txid, to: player ? 'player:' + toHex(player) : game ? 'app:' + game.gameName : 'network' });
-  const record = { target: player ? GIFT_TO_PLAYER : both ? GIFT_TO_BOTH : game ? GIFT_TO_GAME : GIFT_TO_NETWORK, gameDevPubkey: player || (game ? game.gameDevPubkey : new Uint8Array(32)), gameName: !player && game ? game.gameName : '',
-    ...(!player && origin ? { origin: String(origin).slice(0, 64) } : {}),
-    donor: donor.pubkey, federationId: fromHex(federationId), txid: fromHex(submitted.txid), totalMsat,
-    outputs: held.map((d) => ({ outIdx: Number(d.out_idx), pk: fromHex(d.recipient_pk), msat: BigInt(d.amount_msat) })), atMs: BigInt(nowMs()) };
-  const id = donationGiftId(record);
-  const body = JSON.stringify({ gift: toHex(encodeDonationGift(record)), signature: toHex(donor.sign(id)) });
+    rec.submitted = JSON.parse(await wallet.paySubmit(JSON.stringify(outs.map((o) => ({ pk: toHex(o.pk), msat: String(o.msat), image: toHex(donor.pubkey) })))));
+  } catch (e) { paidRecordDrop(storage, keptKey); return no('payment', String(e && e.message || e)); }
+  try { paidRecordPut(storage, keptKey, rec); } catch { /* the payment stands; the record is built and handed below */ }
+  return finishGift({ rec, keptKey, storage, wallet, federationId, donor, fetch, again: false });
+}
+
+// THE PAID GIFT FINISHED (kanban #2274): its acceptance read back (the history row written once, then), the record signed and kept with its
+// body, handed to every seat (kept when two keep it, #2420), and dropped only then. A gift kept from an earlier press goes on from where it stood.
+async function finishGift({ rec, keptKey, storage, wallet, federationId, donor, fetch, again }) {
+  const no = (step, why) => ({ ok: false, step, why });
+  const txid = rec.submitted.txid;
+  if (!rec.body) {
+    if (rec.federationId !== federationId) return no('record', `an earlier gift was paid (transaction ${txid}) from federation ${rec.federationId.slice(0, 8)}: open that federation's wallet to finish its record, nothing is paid again`);
+    let accepted;
+    try { accepted = JSON.parse(await wallet.lockAccepted(JSON.stringify(rec.submitted))); } catch (e) { return no('record', `paid (transaction ${txid}), its acceptance not read yet (${String(e && e.message || e)}): pressed again, it is read again, never paid again`); }
+    const held = accepted.donations || [];
+    if (held.length !== rec.outputs || !held.every((d) => d.ids_match)) return no('payment', 'the federation does not hold the outputs as they were built');
+    const totalMsat = BigInt(rec.sat) * 1000n;
+    if (storage) recordDonation(storage, rec.federationId, { msat: totalMsat, txid, to: rec.to });
+    const record = { target: rec.target, gameDevPubkey: fromHex(rec.gameDevPubkey), gameName: rec.gameName, ...(rec.origin ? { origin: rec.origin } : {}),
+      donor: donor.pubkey, federationId: fromHex(rec.federationId), txid: fromHex(txid), totalMsat,
+      outputs: held.map((d) => ({ outIdx: Number(d.out_idx), pk: fromHex(d.recipient_pk), msat: BigInt(d.amount_msat) })), atMs: BigInt(rec.atMs) };
+    const id = donationGiftId(record);
+    rec.id = toHex(id);
+    rec.body = JSON.stringify({ gift: toHex(encodeDonationGift(record)), signature: toHex(donor.sign(id)) });
+    try { paidRecordPut(storage, keptKey, rec); } catch { /* handed below; a failed hand-over is then kept in nothing but this answer's retry */ }
+  }
   // TO EVERY SEAT, KEPT WHEN TWO KEEP IT (kanban #2420): one seat answering 200 first no longer buries the paid gift's record
-  const { keptBy, last } = await handToSeats({ seats, door: 'donation-gift', body, fetch });
-  if (!keptBy) return { ok: false, step: 'record', why: `paid (transaction ${submitted.txid}), but no seat kept the record yet: ${last}`, txid: submitted.txid, retry: body };
-  return { ok: true, id: toHex(id), txid: submitted.txid, sat: amt.sat, outputs: outs.length, keptBy };
+  const { keptBy, last } = await handToSeats({ seats: rec.seats, door: 'donation-gift', body: rec.body, fetch });
+  if (!keptBy) return { ok: false, step: 'record', paid: true, why: `${again ? 'an earlier gift was ' : ''}paid (transaction ${txid}), but no seat kept the record yet: ${last} - it is handed again, never paid again`, txid, retry: rec.body };
+  paidRecordDrop(storage, keptKey);
+  return { ok: true, id: rec.id, txid, sat: rec.sat, outputs: rec.outputs, keptBy, ...(again ? { earlier: true } : {}) };
 }
 
 /**
@@ -34670,7 +34795,7 @@ async function presentNotes({ events, network, arbitration = arbitrationOf(netwo
       for (let n = 0; n < CLAIM_SPILL_SLOTS; n++) {
         const k = spillClaimKey(eKey, n);
         if (storage.getItem(k) != null) continue;
-        const body = JSON.stringify({ v: 2, door: st.door, atMs: nowMs, payoutPk: pk, ecash, state: 'kept', spill: true });
+        const body = JSON.stringify({ v: 2, door: st.door, atMs: nowMs, payoutPk: pk, ecash, state: 'kept', spill: true, haltHeight: haltH });
         put(storage, k, body);
         if (storage.getItem(k) !== body) continue;   // another tab took this slot in the same moment
         seen.set(k, body); return { key: k, rec: JSON.parse(body) };
@@ -34680,17 +34805,34 @@ async function presentNotes({ events, network, arbitration = arbitrationOf(netwo
     // ONE WAY TO PRESENT A KEPT RECORD (kanban #2184): the claim's own record and each spill record <claim key>~<n> alike
     const returnedKey = returnedClaimKey(fid);
     const haltH = st.event && st.event.halt ? Number(st.event.halt.height) : null;
+    // A CLAIM IS BOUND TO THE HALT IT WAS HANDED OVER IN (kanban #2489, a44 refute of #1849, #1489): `taken` read the standing event's list by
+    // payout key alone - one key per federation and seed, the same in every halt - and GET /liquidations is any seat's list (it can withhold,
+    // not forge). One seat serving only an OLDER halt's signed event, which lists this key accepted, had a later halt's posted record moved to
+    // the taken notes and let go at once on the older halt's payout; the guardians came back and the notes were gone. A record now names the
+    // halt it was handed over in (haltHeight) and the nonces the door answered for it (nonces): it is taken only on an event of that halt
+    // whose accepted list names one of its own nonces, and an event of an older halt than the record's leaves it untouched (no repost, no
+    // return, no move). A record written before this (no haltHeight) keeps the old reading.
+    const recTaken = (r) => {
+      if (!r || !taken) return false;
+      if (r.haltHeight != null && Number(r.haltHeight) !== haltH) return false;
+      const own = Array.isArray(r.nonces) ? r.nonces.map((n) => String(n).toLowerCase()) : [];
+      return !own.length || acceptedFor(st.event, pk).some((c) => own.includes(String(c && c.nonce || '').toLowerCase()));
+    };
+    const olderEvent = (r) => !!r && r.haltHeight != null && haltH != null && Number(r.haltHeight) > haltH;
+    const answeredNonces = (j) => [...new Set([...(Array.isArray(j.accepted) ? j.accepted : []), ...(Array.isArray(j.refused) ? j.refused : [])]
+      .map((x) => String(x && x.nonce || '').toLowerCase()).filter((n) => /^[0-9a-f]{2,130}$/.test(n)))];
     const presentKept = async (key, rec) => {
       if (rec && (rec.state === 'kept' || (rec.state === 'posted' && nowMs - Number(rec.postedAtMs || 0) >= REPOST_MS))) {
         try {
           const r = await fetcher(door, { method: 'POST', body: JSON.stringify({ federation: fid, ecash: rec.ecash, payoutPk: pk }), signal: AbortSignal.timeout(30000) });
           const j = await r.json().catch(() => ({}));
-          if (r.ok && !rec.memoryOnly) rec = step(key, rec, 'posted', { door: st.door, postedAtMs: nowMs });
+          // kanban #2489: the record is bound to the halt it was presented in and the nonces the door answered for it
+          if (r.ok && !rec.memoryOnly) rec = step(key, rec, 'posted', { door: st.door, postedAtMs: nowMs, haltHeight: haltH, ...(answeredNonces(j).length ? { nonces: answeredNonces(j) } : {}) });
           // the door answered it (kanban #1230): a refusal is an answer too - the notes reached it - a 5xx is not. AND ONLY A REFUSAL OF THESE NOTES
           // (kanban #1264, audit 4 #1257 fixesA-2): the door's own "not taken" answers - the claim window not open yet at its tip, no seat holding the
           // federation HALTED yet, the notes not validated, a reissue refused, a tunnel's 4xx - took nothing, and counting them dropped the notes once
           // another claim of the key was accepted. An answer counts when it names the notes it refused (`refused`), as "claimed before" does
-          else if (!r.ok && !(Number(r.status) >= 500) && Array.isArray(j.refused) && j.refused.length > 0 && !rec.memoryOnly && !rec.answered) { rec = { ...rec, answered: true }; try { if ((storage.getItem(key) ?? null) === seen.get(key)) { writeClaim(storage, key, rec, put); seen.set(key, JSON.stringify(rec)); } } catch { /* kept in memory */ } }
+          else if (!r.ok && !(Number(r.status) >= 500) && Array.isArray(j.refused) && j.refused.length > 0 && !rec.memoryOnly && !rec.answered) { rec = { ...rec, answered: true, haltHeight: haltH, ...(answeredNonces(j).length ? { nonces: answeredNonces(j) } : {}) }; try { if ((storage.getItem(key) ?? null) === seen.get(key)) { writeClaim(storage, key, rec, put); seen.set(key, JSON.stringify(rec)); } } catch { /* kept in memory */ } }
           // THE FEDERATION CAME BACK BEFORE THE PAYOUT (kanban #1849, state audit 2026-11-12): once 2f + 1 guardians return, no seat lists it
           // HALTED, the door answers "not being liquidated" (409, no note refused), plan() pays nothing, and the set's book keeps only nonces -
           // no e-cash it could redeem - so a kept/posted record held the player's whole balance out of the wallet for good. Not accepted for
@@ -34725,13 +34867,17 @@ async function presentNotes({ events, network, arbitration = arbitrationOf(netwo
     // and the notes that had left the wallet were lost. A record the door never answered (no answer, or a 5xx) is presented again, whatever the
     // set lists for its key; one the door answered (taken, or refused as claimed before) is taken by the set's word
     const tKey = takenClaimKey(fid, pk);
+    if (olderEvent(rec)) {
+      out.push({ federation: fid, ok: false, kept: true, why: `the event shown is of an older halt (${haltH}) than this claim's (${rec.haltHeight}): the claim waits for its own halt's event` });
+      rec = undefined;
+    }
     // TAKEN, THE NOTES KEPT UNTIL PAID OR BACK (kanban #2196, #2292): written to tKey first; a record whose notes cannot be kept stays as it is
-    if (rec && (rec.state === 'posted' || rec.answered) && taken) {
+    if (rec && (rec.state === 'posted' || rec.answered) && recTaken(rec)) {
       let keptTaken = !rec.ecash;
       if (rec.ecash) {
         try {
           const items = readTaken(storage, tKey);
-          if (!items.some((x) => x.ecash === rec.ecash)) items.push({ ecash: rec.ecash, haltHeight: haltH, door: st.door, postedAtMs: Number(rec.postedAtMs || 0), atMs: nowMs });
+          if (!items.some((x) => x.ecash === rec.ecash)) items.push({ ecash: rec.ecash, haltHeight: haltH, door: st.door, payoutsBefore: null, postedAtMs: Number(rec.postedAtMs || 0), atMs: nowMs });
           put(storage, tKey, JSON.stringify({ v: 1, items })); keptTaken = true;
         } catch { keptTaken = false; }
       }
@@ -34742,16 +34888,37 @@ async function presentNotes({ events, network, arbitration = arbitrationOf(netwo
     // THE TAKEN NOTES (kanban #2196): let go once the set lists the payout naming this key; presented again hourly, and received back into the
     // wallet when the door answers that the federation is not being liquidated any more (it came back before the payout)
     const tookRows = [];   // its rows follow the hand-over's, so a pass still answers first what it did with the wallet
-    const takenItems = readTaken(storage, tKey);
+    let takenItems = readTaken(storage, tKey);
     if (takenItems.length) {
-      let paid = false;
+      // PAID ONLY BY A PAYOUT LISTED AFTER THE NOTES WERE TAKEN (kanban #2489, a44 refute of #1849, #1489): any payout of (federation, key) let
+      // every taken item go - and GET /liquidation-payouts names no halt, so a federation paid once, back, and halted again had the second
+      // halt's accepted notes dropped at once on the FIRST halt's payout. Each item now keeps the payouts of its key already listed when it
+      // was taken (payoutsBefore, read in the pass that took it) and is let go only on one not among them; the others stay as they are
+      let listedNow = null;   // outpoints of this key's payouts, or null when the listing could not be read
       try {
         const r = await fetcher(`${st.door}/liquidation-payouts?federation=${fid}`, { method: 'GET', cache: 'no-store', signal: AbortSignal.timeout(15000) });
-        if (r && r.ok) { const j = await r.json(); paid = ((j && j.payouts) || []).some((p) => p && String(p.federation).toLowerCase() === fid && String(p.payoutPk).toLowerCase() === pk); }
-      } catch { paid = false; }
-      if (paid) { try { storage.removeItem(tKey); } catch { /* read again next pass */ } tookRows.push({ federation: fid, ok: true, paid: true, why: 'the payout of this claim is listed: the taken notes are let go', door: st.door }); }
-      else {
-        for (const it of takenItems) {
+        if (r && r.ok) {
+          const j = await r.json();
+          listedNow = ((j && j.payouts) || []).filter((p) => p && String(p.federation).toLowerCase() === fid && String(p.payoutPk).toLowerCase() === pk)
+            .map((p) => `${String(p.txid).toLowerCase()}:${Number(p.outIdx)}`);
+        }
+      } catch { listedNow = null; }
+      if (listedNow && takenItems.some((x) => x.payoutsBefore === null)) {
+        try { put(storage, tKey, JSON.stringify({ v: 1, items: readTaken(storage, tKey).map((x) => (x.payoutsBefore === null ? { ...x, payoutsBefore: listedNow } : x)) })); } catch { /* read again next pass */ }
+        takenItems = takenItems.map((x) => (x.payoutsBefore === null ? { ...x, payoutsBefore: listedNow, fresh: true } : x));
+      }
+      // an item taken before this (no payoutsBefore at all) is let go on any payout of its key, as before
+      const paidItem = (it) => !!listedNow && !it.fresh && (Array.isArray(it.payoutsBefore) ? listedNow.some((o) => !it.payoutsBefore.includes(o)) : listedNow.length > 0);
+      const paidOnes = takenItems.filter(paidItem);
+      if (paidOnes.length) {
+        try {
+          const left = readTaken(storage, tKey).filter((x) => !paidOnes.some((p) => p.ecash === x.ecash));
+          if (left.length) put(storage, tKey, JSON.stringify({ v: 1, items: left })); else storage.removeItem(tKey);
+        } catch { /* read again next pass */ }
+        tookRows.push({ federation: fid, ok: true, paid: true, why: 'the payout of this claim is listed: the taken notes are let go', door: st.door });
+      }
+      {
+        for (const it of takenItems.filter((x) => !paidItem(x))) {
           if (nowMs - Number(it.postedAtMs || 0) < REPOST_MS) { tookRows.push({ federation: fid, ok: true, taken: true, kept: true, why: 'accepted; waiting for the payout', door: st.door }); continue; }
           try {
             const r = await fetcher(door, { method: 'POST', body: JSON.stringify({ federation: fid, ecash: it.ecash, payoutPk: pk }), signal: AbortSignal.timeout(30000) });
@@ -34790,7 +34957,7 @@ async function presentNotes({ events, network, arbitration = arbitrationOf(netwo
         if (!rec && inWindow && !live && returnedHalt && Number(returnedHalt.haltHeight) === haltH) out.push({ federation: fid, ok: true, returned: true, why: 'that federation came back from this halt: nothing is handed over again' });
         else if (!rec && inWindow && !live) {
           let wrote = false;
-          try { rec = step(eKey, null, 'intent', { door: st.door, atMs: nowMs, payoutPk: pk }); wrote = true; }
+          try { rec = step(eKey, null, 'intent', { door: st.door, atMs: nowMs, payoutPk: pk, haltHeight: haltH }); wrote = true; }
           catch (e) { out.push({ federation: fid, ok: false, why: `nothing handed over: this browser could not write the claim first (${e.message})` }); }
           if (wrote) {
             let sent = null, w = null;
@@ -34840,8 +35007,9 @@ async function presentNotes({ events, network, arbitration = arbitrationOf(netwo
         try { sr = JSON.parse(raw); } catch { sr = null; }
         if (!sr || sr.v !== 2 || typeof sr.ecash !== 'string') continue;
         if (sr.payoutPk ? String(sr.payoutPk).toLowerCase() !== pk : slot !== eKey) continue;
+        if (olderEvent(sr)) continue;   // kanban #2489: an older halt's event leaves it as it is
         try {
-          if ((sr.state === 'posted' || sr.answered) && taken) { step(k, sr, 'none'); out.push({ federation: fid, ok: true, taken: true, why: 'the arbitration set lists this claim as accepted' }); continue; }
+          if ((sr.state === 'posted' || sr.answered) && recTaken(sr)) { step(k, sr, 'none'); out.push({ federation: fid, ok: true, taken: true, why: 'the arbitration set lists this claim as accepted' }); continue; }
           await presentKept(k, sr);
         } catch (e) { out.push({ federation: fid, ok: false, why: e.message, kept: true, door: st.door }); }
       }
@@ -34857,17 +35025,19 @@ async function presentNotes({ events, network, arbitration = arbitrationOf(netwo
       const raw = storage.getItem(movedKey(storage, pKey));
       seen.set(pKey, raw ?? null);
       if (raw) { try { const j = JSON.parse(raw); prec = Array.isArray(j) ? { v: 2, state: 'kept', reqs: j } : (j && j.v === 2 ? j : null); } catch { prec = null; } }
-      if (prec && (prec.state === 'posted' || prec.answered) && taken) { step(pKey, prec, 'none'); prec = undefined; }
+      // kanban #2489: the pending outputs' record is bound to its halt as the notes' (no nonce of its own to name: the requests)
+      if (olderEvent(prec)) prec = undefined;
+      else if (prec && (prec.state === 'posted' || prec.answered) && taken && (prec.haltHeight == null || Number(prec.haltHeight) === haltH)) { step(pKey, prec, 'none'); prec = undefined; }
       if (prec !== undefined && Number.isInteger(height) && height >= st.window.opens && height <= st.window.closes) {
         if (!prec) {
           const w = await walletFor(fid);
           const reqs = w && typeof w.pendingOutputs === 'function' ? (JSON.parse(await w.pendingOutputs()) || []).map((x) => x.request).filter(Boolean) : [];
-          if (reqs.length) prec = step(pKey, null, 'kept', { reqs, door: st.door, payoutPk: pk });
+          if (reqs.length) prec = step(pKey, null, 'kept', { reqs, door: st.door, payoutPk: pk, haltHeight: haltH });
         }
         if (prec && (prec.state === 'kept' || (prec.state === 'posted' && nowMs - Number(prec.postedAtMs || 0) >= REPOST_MS))) {
           const r = await fetcher(door, { method: 'POST', body: JSON.stringify({ federation: fid, pending: prec.reqs, payoutPk: pk }), signal: AbortSignal.timeout(60000) });
           const j = await r.json().catch(() => ({}));
-          if (r.ok) prec = step(pKey, prec, 'posted', { door: st.door, postedAtMs: nowMs });
+          if (r.ok) prec = step(pKey, prec, 'posted', { door: st.door, postedAtMs: nowMs, haltHeight: haltH });
           out.push({ federation: fid, pending: true, ok: !!r.ok, accepted: j.accepted || [], refused: j.refused || [], why: j.why || null, kept: true, door: st.door });
         }
       }
@@ -35866,6 +36036,7 @@ function referralNameStands(r, signature, { verify }) {
 
 
 
+
 /** Where a tab keeps the name its player chose. */
 const CUSTOM_NAME_KEY = 'arena.player.name';
 
@@ -36141,6 +36312,11 @@ function fairOrder(found, seen) {
   return out;
 }
 const ZAPS_COLLECTED_KEY = 'arena.zaps.collected';
+/** THE REFUNDS THIS BROWSER BEGAN (kanban #2319): an outpoint is written here (putRoomy) BEFORE its refund is sent and leaves once the
+ *  pass has filed it. A refund the guardians accepted in a pass that never ended (the tab closed, reloaded, the call cut or timed out)
+ *  is found spent by the next pass; with its mark here it is this browser's own collect and is returned as collected - booked once
+ *  (the page's row id is 'zap-<outpoint>', so two tabs that both see it write one row) - not filed as spent and never booked. */
+const ZAPS_COLLECTING_KEY = 'arena.zaps.collecting';
 const ZAPS_CURSOR_KEY = 'arena.zaps.cursor';
 const ZAPS_ROWS_PER_SEAT = 200;
 const ZAPS_REFUNDS_PER_PASS = 50;
@@ -36153,6 +36329,12 @@ async function collectZaps({ storage, keep = storage, random, curve, clients, se
   let done = [];
   try { done = JSON.parse((keep && keep.getItem(ZAPS_COLLECTED_KEY)) || '[]'); } catch { done = []; }
   const seen = new Set(Array.isArray(done) ? done : []);
+  let marked = [];
+  try { marked = JSON.parse((keep && keep.getItem(ZAPS_COLLECTING_KEY)) || '[]'); } catch { marked = []; }
+  const collecting = new Set(Array.isArray(marked) ? marked : []);
+  const begun = new Set(collecting);   // marked by an earlier pass: this pass's own spent answer to its own first refund is not one
+  const keepSeen = () => { try { if (keep) keep.setItem(ZAPS_COLLECTED_KEY, JSON.stringify([...seen].slice(-ZAPS_SEEN_KEPT))); } catch { /* not kept: asked again, then found spent */ } };
+  const keepCollecting = () => { if (keep) putRoomy(keep, ZAPS_COLLECTING_KEY, JSON.stringify([...collecting].slice(-ZAPS_SEEN_KEPT))); };
   let cursors = {};
   try { cursors = JSON.parse((keep && keep.getItem(ZAPS_CURSOR_KEY)) || '{}') || {}; } catch { cursors = {}; }
   if (typeof cursors !== 'object' || Array.isArray(cursors)) cursors = {};
@@ -36220,7 +36402,11 @@ async function collectZaps({ storage, keep = storage, random, curve, clients, se
       if (r === 'skip') continue;
       if (r && r.why !== undefined) { tried.push(r); continue; }
       if (r === 'collected') accepted.set(outpoint, d);
+      // filed: noted as seen at once (not only at the pass's end), then the mark leaves (kanban #2319)
       seen.add(outpoint);
+      keepSeen();
+      collecting.delete(outpoint);
+      try { keepCollecting(); } catch { /* the mark stays: the outpoint is already seen and never asked again */ }
       settled = true;
       break;
     }
@@ -36236,13 +36422,22 @@ async function collectZaps({ storage, keep = storage, random, curve, clients, se
     if (!m || !/^\d+$/.test(String(d.amountMsat))) return 'skip';
     const image = d.senderOnContract && /^[0-9a-f]{64}$/.test(String(d.playerKey || '')) ? d.playerKey : '00'.repeat(32);
     const fields = JSON.stringify({ paymentImage: { kind: 'hash', bytes: image }, amountMsat: String(d.amountMsat), claimPk: pk, refundPk: pk, expiration: 0 });
+    // kanban #2319: the intent is written ahead; a refund whose mark cannot be kept is not sent (its answer could be lost unbooked)
+    if (!collecting.has(d.outpoint)) {
+      collecting.add(d.outpoint);
+      try { keepCollecting(); } catch (e) { collecting.delete(d.outpoint); return { ...d, why: `not collected: this browser cannot note it (${String(e && e.message || e)})` }; }
+    }
     let said;
     try { said = JSON.parse(await client.refund(m[1], Number(m[2]), fields, toHex(secret))); } catch (e) { return { ...d, why: String(e && e.message || e) }; }
-    if (said.accepted === true) { collected.push({ outpoint: d.outpoint, federationId: d.federationId, amountMsat: String(d.amountMsat), item: d.item || null, roundId: d.roundId || null }); return 'collected'; }
-    if (said.stored_before === null || said.stored_before === undefined) { spent.push(d); return 'spent'; }
+    const mine = { outpoint: d.outpoint, federationId: d.federationId, amountMsat: String(d.amountMsat), item: d.item || null, roundId: d.roundId || null };
+    if (said.accepted === true) { collected.push(mine); return 'collected'; }
+    if (said.stored_before === null || said.stored_before === undefined) {
+      if (begun.has(d.outpoint)) { collected.push(mine); return 'collected'; }   // a refund this browser began, accepted in a pass that did not end
+      spent.push(d); return 'spent';
+    }
     return { ...d, why: said.error || 'the federation did not accept the collect' };
   }
-  try { if (keep) keep.setItem(ZAPS_COLLECTED_KEY, JSON.stringify([...seen].slice(-ZAPS_SEEN_KEPT))); } catch { /* not kept: asked again, then found spent */ }
+  keepSeen();
   // kanban #1557: the referral total counts an outpoint's row only when a refund accepted that version or every seat that listed the
   // outpoint gave the same one - a seat's changed amount neither inflates nor hides it.
   const web = [];
@@ -39586,7 +39781,7 @@ function quietOrders({ picks, lines, read = new Set(), loadedMs = 0, nowMs = Dat
  * won, net and payout) and the table's refunded and losing pool must be the rebuilt ones exactly. { ok, table, row } with BigInt
  * amounts, or { ok: false, why }. Which entries a seat counts (the stakes it saw) stays its word; what each is paid does not.
  */
-function rebuildTable({ table, check, market, entryIdHex, pick }) {
+function rebuildTable({ table, check, market, entryIdHex, pick, stakeMsat = null, order = false }) {
   if (!table || !Array.isArray(table.rows)) return { ok: false, why: 'no table' };
   const msat = (v) => (typeof v === 'bigint' ? (v >= 0n ? v : null) : typeof v === 'string' && /^\d{1,30}$/.test(v) ? BigInt(v)
     : Number.isSafeInteger(v) && v >= 0 ? BigInt(v) : null);
@@ -39614,6 +39809,12 @@ function rebuildTable({ table, check, market, entryIdHex, pick }) {
   const theirs = table.rows.find((r) => r.entryId === want);
   if (!row || !theirs) return { ok: false, why: 'this pick is not in the rebuilt table' };
   if (row.pick !== Number(pick)) return { ok: false, why: 'the table names another pick for this entry' };
+  // THIS PICK'S STAKE IS THE ROUND CONTRACT'S, NOT THE SEAT'S ROW (kanban #2542, refute of #1615/#1644): the page knows what it staked;
+  // a row that stakes more - or, for a pick that is not an order (filled in part), anything else - is the seat's word, never a result
+  if (stakeMsat !== null) {
+    const mineStake = BigInt(stakeMsat);
+    if (order ? row.stakeMsat > mineStake : row.stakeMsat !== mineStake) return { ok: false, why: 'the table stakes this pick other than its round contract' };
+  }
   if (theirs.won !== row.won || msat(theirs.netMsat) !== row.netMsat || msat(theirs.payoutMsat) !== row.payoutMsat) return { ok: false, why: 'this pick\'s row is not the one the verified outcome pays' };
   if (table.refunded !== t.refunded) return { ok: false, why: 'its refund is not the one the verified outcome makes' };
   if (!market.scalar && msat(table.losingPoolMsat) !== t.losingPoolMsat) return { ok: false, why: 'its losing pool is not its rows\' own' };
@@ -39681,7 +39882,7 @@ function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() }) {
     // seats use (pariMutuelTable / scalarPayoutTable), and reads won, payout, net, refunded and the losing pool from ITS table only.
     // A seat's table that differs from it in any of these - a truthy non-boolean `won`, a forged payout, a refund no rule makes, a
     // scalar share the value does not pay - or that cannot be rebuilt is shown as unverified, never as a result.
-    const rebuilt = rebuildTable({ table: o.table, check, market: p.market, entryIdHex: p.entryIdHex, pick: p.pick });
+    const rebuilt = rebuildTable({ table: o.table, check, market: p.market, entryIdHex: p.entryIdHex, pick: p.pick, stakeMsat: p.stakeMsat, order: !!p.order });
     if (!rebuilt.ok) {
       lines.push({ ...at('unverified'), text: `${head}: ${signed} · the signer nodes' table contradicts the verified outcome: what this pick is paid is UNVERIFIED (${rebuilt.why})` });
       continue;
