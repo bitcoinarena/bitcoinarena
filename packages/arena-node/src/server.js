@@ -5309,7 +5309,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (round.entry(eid)) return true;   // a parallel hand-over entered it meanwhile
     try { round.enter(contract, { stakeLockHeld: true }); } catch { return false; }
     pendingLockless.delete(key);
-    const c = relayedRound(contract.roundId);   // now it goes on to the other seats, as every entry taken here does (kanban #1068, #1216)
+    const c = relayedRound(contract.roundId) || pickRelayRound(contract);   // now it goes on to the other seats, as every entry taken here does (kanban #1068, #1216, #2546)
     if (c) entryRelay.entryTaken(contract.roundId, hex, c.entryCloseMs);
     return true;
   };
@@ -5488,6 +5488,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     let c; try { c = decodeRoundContract(new Uint8Array(row.contract)); } catch { return null; }
     const g = pluginForRound(c, hosted);
     return g.ok && g.attested && !g.headToHead ? e.roundId : null;
+  };
+  // A POOL'S PLAIN PICK IS HANDED ON WHOLE, ENTRY FIRST (kanban #2546, a44 refute of #1787/#1790): its locks went on (#1790) but the entry did
+  // not - relayedRound leaves every attested round out, so entryTaken never ran - and a seat restarting while the page placed the pick answered the
+  // lock hand-on 404 (no such entry) for good: the seats rebuilt different pari-mutuel tables, no threshold signed one, and every stake and fee
+  // waited for its lock's expiry. The pick's entry now goes through the entry relay as a relayed round's does (handEntry: handout, entry, then
+  // its locks); each seat checks it at its own door. Answers the attested round's contract for a plain pick (`e` decoded), or null.
+  const pickRelayRound = (e) => {
+    if (!e || e.limitPrice !== undefined || e.stakeMsat === 0n) return null;
+    const c = attestedRoundOf(e.roundId);
+    return c && typeof c.entryCloseMs === 'bigint' ? c : null;
   };
   // WHAT A SEAT HANDS ON OF A HEAD-TO-HEAD ENTRY (kanban #1068, entry-relay.js)
   headToHeadRound = (rid) => {
@@ -10320,7 +10330,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // A CLIENT'S COPY GOES ON TO THE SEATS IT DID NOT REACH (kanban #1068, entry-relay.js)
         // EVERY ROUND'S ENTRY REACHES EVERY SEAT, NOT ONLY A HEAD-TO-HEAD ONE'S (kanban #1216, audit 3 CONSENSUS-1): an entry a player posted to some seats only
         // is handed on to the rest, each door checking it as a client's copy - so withholding it from seats reveals nothing and buys no VOID
-        { const c = relayedRound(contract.roundId);   // EVERY COPY IS HANDED ON, the header or not (kanban #1260, audit 4 PLAYER-1): a client sent it itself and nothing went on
+        { const c = relayedRound(contract.roundId) || pickRelayRound(contract);   // EVERY COPY IS HANDED ON, the header or not (kanban #1260, audit 4 PLAYER-1): a client sent it itself and nothing went on
           if (c) entryRelay.entryTaken(contract.roundId, toHex(joined), c.entryCloseMs); }
         // NO HOLD IS ISSUED HERE ANY MORE. This door used to ask the signer node's Lightning for a hold
         // invoice on the entry's payment hash, and said how that went in `x-hold`. That was the withdrawn Lightning custody's
