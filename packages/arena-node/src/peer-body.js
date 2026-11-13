@@ -25,3 +25,27 @@ export async function peerBody(answer, cap) {
 
 /** A peer's JSON answer, at most `cap` bytes. */
 export async function peerJsonUpTo(answer, cap) { return JSON.parse(Buffer.from(await peerBody(answer, cap)).toString('utf8')); }
+
+/** A peer's refusal text: at most `cap` bytes of it are read, the rest dropped with the connection (kanban #2084). */
+export const PEER_WHY_BYTES = 4096;
+export async function peerWhyUpTo(answer, cap = PEER_WHY_BYTES) {
+  if (!answer.body || typeof answer.body[Symbol.asyncIterator] !== 'function') return String(typeof answer.text === 'function' ? await answer.text() : '').slice(0, cap);
+  const parts = []; let n = 0;
+  for await (const chunk of answer.body) {
+    parts.push(chunk.subarray(0, Math.max(0, cap - n))); n += chunk.length;
+    if (n >= cap) { try { await answer.body.cancel(); } catch { /* gone */ } break; }
+  }
+  return Buffer.concat(parts).toString('utf8');
+}
+
+/**
+ * THE FORFEIT'S SEAT-TO-SEAT ANSWERS (kanban #2084, #1489 v1-refute-53-s3-2): a commitment or a share is a few dozen bytes, read up to
+ * its size like every other peer pull (peerBody). An answer that is no stream (a test's stub) is read as it offers itself, and its
+ * length is still held to the cap.
+ */
+export async function peerBytesUpTo(answer, cap) {
+  if (answer.body && typeof answer.body[Symbol.asyncIterator] === 'function' && answer.headers) return peerBody(answer, cap);
+  const b = new Uint8Array(await answer.arrayBuffer());
+  if (b.length > cap) throw new Error(`answer past ${cap} bytes`);
+  return b;
+}
