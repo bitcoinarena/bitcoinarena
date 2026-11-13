@@ -18,7 +18,7 @@ import { MAINNET_CLOCKS } from '../../arena-protocol/src/federation-slash.js';
 import { readInvite } from '../../arena-node/src/invite.js';
 import { readWithOneRetry } from './reread.js';
 import { noteRecordInvite } from './guardian-invites.js';
-import { createTrustedGuardianKeys } from '../../arena-protocol/src/trusted-guardian-keys.js';
+import { createTrustedGuardianKeys, recordInviteSource } from '../../arena-protocol/src/trusted-guardian-keys.js';
 // THE PAGE'S TRUSTED GUARDIAN KEYS (kanban #2609): createTrustedGuardianKeys().guardianKeysOf is what a page hands federationStatuses
 export { createTrustedGuardianKeys };
 
@@ -141,9 +141,18 @@ export async function federationStatuses({ nodes, census, verify, fetcher = fetc
   if (guardianKeysOf && typeof guardianKeysOf.wait === 'function') {
     await Promise.all([...seen].map(([fid, byHex]) => {
       if (keysOf(fid)) return null;
-      const invites = new Set();
-      for (const hex of byHex.keys()) { try { const r = splitSignedRecord(hexToBytes(hex)).record; if (bytesToHex(r.federationId) === fid && r.invite && invites.size < 8) invites.add(String(r.invite)); } catch { /* not a record */ } }
-      return guardianKeysOf.wait(fid, [...invites], TRUSTED_KEYS_WAIT_MS).catch(() => null);
+      // NOT FIRST COME (kanban #2618, feedback #047): each record's invite with the node keys whose signatures over it verify - the fetch's
+      // book bounds them per signer and evicts one that fails the id check, so strangers' junk invites cannot keep the genuine one out
+      const invites = new Map();
+      for (const hex of byHex.keys()) {
+        try {
+          const r = splitSignedRecord(hexToBytes(hex)).record;
+          if (bytesToHex(r.federationId) !== fid || !r.invite || invites.has(String(r.invite))) continue;
+          const src = recordInviteSource(hexToBytes(hex), verify);
+          if (src) invites.set(src.invite, src);
+        } catch { /* not a record */ }
+      }
+      return guardianKeysOf.wait(fid, [...invites.values()], TRUSTED_KEYS_WAIT_MS).catch(() => null);
     }));
   }
   for (const [fid, byHex] of seen) {
