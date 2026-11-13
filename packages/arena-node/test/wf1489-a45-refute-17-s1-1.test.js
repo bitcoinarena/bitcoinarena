@@ -31,7 +31,7 @@ test('#1489 a45-refute-17: four silent-relay zaps ahead in the publish queue do 
     return { request: testInvoice({ amountMsat, paymentHash, descriptionHash }), paymentHash: hex(paymentHash) };
   };
   const server = keyPair();
-  const z = await serveZapAddresses({ port: 0, publicHost: 'zap.example', names: ['bob'], secret: server.secret, curve, invoice,
+  const z = await serveZapAddresses({ allowPrivateRelays: true, /* local test relays, kanban #2454 */ port: 0, publicHost: 'zap.example', names: ['bob'], secret: server.secret, curve, invoice,
     lookup: async () => ({ settled: true, preimage: null, settledAtS: Math.floor(Date.now() / 1000) }),
     // the zap tool's publish as tools/zap-address.mjs has it after #1828: all of a receipt's relays at once
     publish: async (receipt, relays) => { await Promise.allSettled(relays.map((r) => sendToRelay(r, [receipt]))); },
