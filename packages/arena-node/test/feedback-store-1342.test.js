@@ -105,12 +105,12 @@ test('#1342 the reports outlive a restart: the same file reopened holds them wit
 });
 
 // ---- slice 2: only real feedback from real players gets money ----
-test('#1342 approval for money: a player who finished a round, not ours, not a duplicate, within the per-key and weekly caps and the amount range', () => {
+test('#1342 approval for money (#2621: no round needed): not ours, not a duplicate, within the per-key and weekly caps and the amount range', () => {
   const s = openFeedbackStore();
   const player = key(1), stranger = key(2), bot = key(3), second = key(4);
   const played = (k) => [player.pubkey, bot.pubkey, second.pubkey].includes(k);
   const excluded = new Set([bot.pubkey]);
-  const rules = { perKeyPerWeek: 3, weeklyBudgetSats: 11000, mostSats: 5000, leastSats: 100 };
+  const rules = { perKeyPerWeek: 3, weeklyBudgetSats: 12000, mostSats: 5000, leastSats: 100 };   // #2621: the stranger's 1,000 counts too
   const take = (k, w) => { const e = report(k, w); s.take(e); return e.id; };
   const ids = { p1: take(player, 'bug one in the lobby'), p2: take(player, 'bug two in the lobby'), p3: take(player, 'bug three'), p4: take(player, 'bug four'),
     st: take(stranger, 'never played, wants sats'), bt: take(bot, 'our own bot reports'), s1: take(second, 'the same lobby bug'), s2: take(second, 'another real bug') };
@@ -122,7 +122,7 @@ test('#1342 approval for money: a player who finished a round, not ours, not a d
     budget: ask(ids.s2, 5000), withinBudget: ask(ids.s2, 4000),
   };
   console.log('  FACTS #1342 approve:', JSON.stringify(steps));
-  assert.match(steps.stranger, /not finished a round/);
+  assert.equal(steps.stranger, 'ok 1000');   // kanban #2621: no round needed
   assert.match(steps.bot, /ours/);
   assert.match(steps.duplicate, /duplicate/);
   assert.match(steps.tooMuch, /100 to 5000 sat/);
@@ -130,9 +130,9 @@ test('#1342 approval for money: a player who finished a round, not ours, not a d
   assert.deepEqual([steps.p1, steps.p2, steps.p3], ['ok 5000', 'ok 1000', 'ok 1000']);
   assert.match(steps.p4, /3 rewards this week: at most 3/);
   assert.match(steps.again, /an accepted report is not approved/);
-  assert.match(steps.budget, /this week's budget: 7000 of 11000 sat approved, 5000 more does not fit/);
+  assert.match(steps.budget, /this week's budget: 8000 of 12000 sat approved, 5000 more does not fit/);
   assert.equal(steps.withinBudget, 'ok 4000', 'what fits the budget exactly is approved');
-  assert.equal(s.report(ids.st).state, STATES.NEW, 'a refused approval moves nothing');
+  assert.equal(s.report(ids.bt).state, STATES.NEW, 'a refused approval moves nothing');   // kanban #2621: the stranger is approved now, the bot is the refused one
 });
 
 test('#1342 networkPlayers reads each game\'s network board from the first seat that answers: a key with rounds counts, one with 0 does not', async () => {

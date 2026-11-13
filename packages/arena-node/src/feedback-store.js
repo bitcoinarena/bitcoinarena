@@ -267,7 +267,8 @@ export function openFeedbackStore(path = ':memory:') {
       if (paidRows.some((x) => x.node && String(x.node) === String(r.node))) return { ok: false, why: 'one node bounty per node: that node has one' };
       if (paidNodes.length >= NODE_BOUNTY_MOST) return { ok: false, why: `the node bounty is for the first ${NODE_BOUNTY_MOST} outside nodes: all are taken` };
     }
-    if (!(lv && lv.node) && (typeof played !== 'function' || played(r.pubkey) !== true)) return { ok: false, why: 'that key has not finished a round on the network: only players are rewarded' };
+    // NO ROUND NEEDED (kanban #2621, Daniel 2026-11-13: "Es muss keiner eine runde gespielt haben, neues req"): a reporter is paid for the report
+    // whether or not their key finished a round; `played` stays for the admin view (rounds, apps) only. The other limits stand.
     const since = nowMs - WEEK_MS;
     const mine = db.prepare(`SELECT COUNT(*) AS n FROM reports WHERE pubkey = ? AND state IN ('accepted', 'paid') AND changed_ms >= ?`).get(r.pubkey, since).n;
     if (mine >= R.perKeyPerWeek) return { ok: false, why: `that key has ${mine} rewards this week: at most ${R.perKeyPerWeek}` };
