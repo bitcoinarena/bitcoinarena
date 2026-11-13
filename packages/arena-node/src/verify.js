@@ -688,6 +688,12 @@ export class Verifier {
         for (const m of mine) {
           if (hex(m.bytes) === hex(theirs)) continue;
           if (m.c.tick !== tc.tick && hex(m.c.previousHash) !== hex(tc.previousHash)) continue;
+          // TWO CHAINS FROM ONE PARENT FORFEIT ONLY WHEN BOTH WERE RECEIPTED (ruled 2026-10-05 (b); kanban #2550, #1489 r13 play-2): a peer's
+          // listed mark is its word, and a stale-head mark every seat refused is public at /equivocation - one seat appended it to its
+          // /checkpoints and every honest seat signed an honest stuck page FORFEIT. A peer's mark at another tick (one parent) that THIS seat
+          // refused itself as not following the chain head (offered_marks) was not carried here, whatever the peer lists: no pair is kept
+          // from it. A pair at one tick, and a fork limb this seat never saw (one mark at each seat), are unchanged
+          if (m.c.tick !== tc.tick && this.round.refusedOfferedMark(checkpointId(tc))) continue;
           try {
             // both receipted: this seat's own chain, and the peer's receipted chain it serves
             if ((await provesEquivocation(m.bytes, theirs, sessionPubkey, verify)).ok && this.round.putForkPair({ a: m.bytes, b: theirs, receipted: true })) {
