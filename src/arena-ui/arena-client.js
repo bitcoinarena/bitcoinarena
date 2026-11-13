@@ -27948,6 +27948,7 @@ class Client {
     if (!headLive) {
       const listed = new Set(ids.map(toHex));
       const ticks = new Map(ids.map((id, k) => [toHex(id), null]));
+      const signedOf = new Map();   // a listed mark's own signed bytes, to send it again when it is adopted short of live (#034)
       let entry = null;
       try { entry = await this.entryFor(entryId); } catch { entry = null; }
       const withheld = new Set();   // signed marks a peer lists and the home list leaves out
@@ -27961,6 +27962,7 @@ class Client {
           const id = checkpointId(m);
           if (!entry || !(await this.verifySession(signature, id, entry.sessionPubkey))) continue;   // not this player's
           ticks.set(toHex(id), m.tick);
+          if (!signedOf.has(toHex(id))) signedOf.set(toHex(id), b.slice(at, at + SIGNED_CHECKPOINT_BYTES));
           if (!home && !listed.has(toHex(id))) withheld.add(toHex(id));
         }
       };
@@ -27984,6 +27986,11 @@ class Client {
       if (withheld.size || this.reloading || heldNotLive) for (const [id, tick] of ticks) if (tick !== null && (newest === null || tick > at(newest))) newest = id;
       const now = adopted ? toHex(adopted) : null;
       if (newest !== null && newest !== now && at(newest) > (now ? at(now) : -1)) adopted = fromHex(newest);
+      // AND A HEAD TAKEN SHORT OF LIVE IS SENT AGAIN (feedback #034): a reload loses pendingLink, so a mark one seat stored and
+      // another never got (a blip) was adopted and never offered again - every later mark "stored but not carried", the run
+      // stalled for good with every seat honest. It is this client's pending link now: #relink offers it to the committee again.
+      if (adopted && !this.live(adopted) && signedOf.has(toHex(adopted)))
+        this.pendingLink = { id: adopted, bytes: signedOf.get(toHex(adopted)), tick: at(toHex(adopted)), final: false };
     }
     return { adopted, receipts: marks.length };
   }
