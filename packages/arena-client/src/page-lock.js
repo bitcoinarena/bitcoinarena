@@ -1859,8 +1859,13 @@ async function keptLockStake(ask) {
     if (['submitted', 'accepted', 'committed'].includes(now.state))
       throw new Error(`no second lock is made for this round: this player's stake lock for it is already ${now.state}`);
     const iKey = lockIntentKey(roundId, playerPubkey);
-    if (now.state === 'intent') {
-      const r = now.record;
+    // kanban #1946: the intent key is read whatever the saved record says - lockRecordOf answers the saved record first, so an intent a dead
+    // tab left under a REFUSED record (PLAY 2 after a refused PLAY 1) was invisible and written over, its submitted transaction named nowhere
+    const pending = now.state === 'intent' ? now.record : readJson(storage, iKey);
+    if (pending) {
+      const r = pending;
+      // the intent itself is what is kept aside below - under a REFUSED record now.record is that record, not the intent (kanban #1946)
+      let kept = r;
       if (!r.failed && Date.now() - Number(r.atMs || 0) < LOCK_INTENT_LIVE_MS)
         throw new Error('another tab is locking this round\'s stake for this player right now: no second lock is made');
       // A SUBMISSION NO ANSWER NAMED IS FOUND AGAIN BEFORE A NEW LOCK (kanban #2459): a tab closed after the lock client handed the
@@ -1875,13 +1880,14 @@ async function keptLockStake(ask) {
         if (found === undefined)
           throw new Error('an earlier stake lock for this round was handed to the guardians from a tab that closed before it answered, and this wallet cannot find it: no second lock is made');
         if (found) {
-          now.record = { ...r, txid: String(found.txid), operation: String(found.operation || ''), outputs: found.outputs || null, foundMs: Date.now() };
-          try { putRoomy(storage, iKey, JSON.stringify(now.record)); } catch { /* the orphan copy below names it */ }
+          kept = { ...r, txid: String(found.txid), operation: String(found.operation || ''), outputs: found.outputs || null, foundMs: Date.now() };
+          if (now.state === 'intent') now.record = kept;
+          try { putRoomy(storage, iKey, JSON.stringify(kept)); } catch { /* the orphan copy below names it */ }
         }
       }
       // a tab closed while its lock client was asked: the transaction it names (if any) may hold the stake - kept aside, never written over
       if (!r.failed) {
-        const o = now.record;
+        const o = kept;
         try { putRoomy(storage, `arena.lock.orphan.${tag}.${Number(o.atMs || 0)}`, JSON.stringify(o)); } catch { /* the next intent is refused for room below */ }
         console.warn(`[arena] #1162 an earlier stake lock for this round did not finish (${o.txid ? `transaction ${String(o.txid).slice(0, 16)}… submitted` : 'nothing answered'}): kept as arena.lock.orphan.${tag}.*`);
       }
