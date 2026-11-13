@@ -188,7 +188,7 @@ async function evidenceFor(roundIdHex, contract, nodes, { fetcher, skip = new Se
   if (!got.length) return { ok: false, why: `no node handed over the census: ${refused.join('; ')}` };
   if (got.length < providers) return { ok: false, lookOnly: true, from: got[0].from, entries: got[0].entries, refused,
     why: `only ${got.length} provider handed over the census - a bond list one provider serves alone is enough to look, not to lock (${refused.join('; ') || 'no other answered'})` };
-  return { ok: true, entries: unionOfEntries(got.map((g) => g.entries)), from: got.map((g) => g.from).join(' + '), fromNodes: got.map((g) => g.from), refused };
+  return { ok: true, entries: unionOfEntries(got.map((g) => g.entries)), from: got.map((g) => g.from).join(' + '), fromNodes: got.map((g) => g.from), lists: got.map((g) => g.entries), refused };
 }
 /**
  * Census entries from several providers, joined by bond; the first copy of each bond is kept. A seat's GET /census entry is the bond's evidence
@@ -281,21 +281,37 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
   // round and named nobody)
   const censusRefused = []; const skip = new Set();
   let got;
+  const tryEntries = (entries, census) => {
+    try {
+      return committeeFromChain({ contract, roundId, headers: chain.chain.headers, firstHeight: chain.firstHeight, evidence: entries, roles,
+        bond: { arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK, bondMaturity: g.bondMaturity, tweakPoint: curve.bondTweakPoint, combine: curve.bondCombine },
+        verify: curve.verify, census });
+    } catch (e) { return { ok: false, why: `that census cannot be committed: ${e && e.message ? e.message : String(e)}` }; }
+  };
+  const refusedWhy = /^(the census the seats handed over hashes to |that census cannot be committed: )/;
   for (;;) {
     if (!evidence.ok) return { ...evidence, why: evidence.why + (censusRefused.length ? `; ${censusRefused.map((x) => `${x.node}: ${x.why}`).join('; ')}` : ''), censusRefused };
     // A THROW WHILE CHECKING A PROVIDER'S EVIDENCE IS THAT PROVIDER'S FAULT (kanban #2160, #2228, #2301): it was thrown out of the join,
     // nobody named and no other seat asked
-    try {
-      got = committeeFromChain({ contract, roundId, headers: chain.chain.headers, firstHeight: chain.firstHeight, evidence: evidence.entries, roles,
-        bond: { arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK, bondMaturity: g.bondMaturity, tweakPoint: curve.bondTweakPoint, combine: curve.bondCombine },
-        verify: curve.verify, census: skip.size ? null : keptChecked.get(toHex(contract.censusRoot)) || null });
-    } catch (e) { got = { ok: false, why: `that census cannot be committed: ${e && e.message ? e.message : String(e)}` }; }
+    got = tryEntries(evidence.entries, skip.size ? null : keptChecked.get(toHex(contract.censusRoot)) || null);
     // A CENSUS THAT CANNOT BE COMMITTED IS A PROVIDER'S FAULT TOO (kanban #1708): a union with one outpoint twice (any encoding of one bond)
     // threw in censusRootOf, which is not a root mismatch, so the loop stopped and never asked the other seats - its providers are skipped
-    if (got.ok || evidence.from === 'kept' || !/^(the census the seats handed over hashes to |that census cannot be committed: )/.test(String(got.why))) break;
+    if (got.ok || evidence.from === 'kept' || !refusedWhy.test(String(got.why))) break;
     censusRefused.push({ node: evidence.from, why: `its census ${String(got.why).replace(/^the census the seats handed over |^that census /, '')}` });
     // each provider of a union that did not hash to the root is skipped (#1333: skipping the joined "a + b" skipped nobody, and the same pair came back forever)
-    for (const n of evidence.fromNodes || [evidence.from]) skip.add(n);
+    // - BUT NOT AN HONEST ONE WITH THE LIAR (kanban #2532, #1489 a44-refute-48-s2): the union keeps the first copy of each bond, so one seat
+    // listed first with a broken copy of a true bond (a wrong position or branch, the same txid) dropped the honest copy, and both providers
+    // were skipped - on three seats the last one alone was look-only and the join refused. Each provider's own list is checked alone then:
+    // when some stand and some do not, only those that do not are skipped (the next union pairs the others again); when none or all
+    // stand alone, every provider of the union is skipped, as before.
+    const providers = evidence.fromNodes || [evidence.from];
+    let faulty = providers;
+    if (providers.length > 1 && Array.isArray(evidence.lists) && evidence.lists.length === providers.length) {
+      const alone = evidence.lists.map((entries) => tryEntries(entries, null));
+      const bad = providers.filter((_, i) => !alone[i].ok);
+      if (bad.length && bad.length < providers.length) faulty = bad;
+    }
+    for (const n of faulty) skip.add(n);
     evidence = await evidenceFor(roundIdHex, contract, nodes, { fetcher, skip });
   }
   if (!got.ok) return { ...got, censusRefused };
