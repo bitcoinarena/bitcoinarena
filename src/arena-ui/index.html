@@ -3128,6 +3128,19 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         return ok;
       };
     })();
+    // EACH FEDERATION'S GUARDIAN KEYS FROM A SOURCE NO BONDED STRANGER CAN WRITE (kanban #2609): the client config whose api_endpoints hash to
+    // the federation id, answered alike by a threshold of those endpoints (arena-protocol trusted-guardian-keys.js), asked over the guardians'
+    // own WebSocket API. One instance per page, kept per federation (an hour once agreed, a minute on a miss); each ask 4 s at most and a status
+    // read waits 2 s at most for it - until then the keyless rules judge. ARENA_FED_KEYS_OF(fidHex, invite) notes the round's invite (where to
+    // ask first: never trusted, the id decides) and hands the guardianKeysOf every federationStatuses call takes; null on an older bundle.
+    window.ARENA_FED_KEYS = null;
+    window.ARENA_FED_KEYS_OF = (fidHex, invite) => {
+      if (!window.ARENA_FED_KEYS && typeof ARENACLIENT !== 'undefined' && ARENACLIENT.createTrustedGuardianKeys) window.ARENA_FED_KEYS = ARENACLIENT.createTrustedGuardianKeys({ timeoutMs: 4000 });
+      const k = window.ARENA_FED_KEYS;
+      if (!k) return null;
+      if (fidHex && invite) { try { if (ARENACLIENT.inviteNamesFederation(invite, fidHex)) k.learn(fidHex, invite); } catch { /* not an invite */ } }
+      return k.guardianKeysOf;
+    };
     // THE LOBBY'S SIGNATURES OFF THE PAGE'S THREAD (kanban #573, playtest 2026-10-21: "the Rps game is lagging a bit on an iPhone 16, animations
     // are not smooth"; measured with its client open: the page checked 11,677 BIP-340 signatures in 10 s, 3.4 s of the thread the game draws
     // on, on an M1 Max - a phone's CPU is several times slower): each paint's checks go to one worker running the same arena-curve.js, in one
@@ -3626,8 +3639,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             // EVERY FEDERATION THE SEATS LIST, each record checked against this census: the round's own is its
             // status; the others' loads say whether Move is offered (§23A.3: above 90 %, to one below 50 %)
             const all = ARENACLIENT.federationStatuses
-              ? await ARENACLIENT.federationStatuses({ nodes, census, verify: window.ARENA_VERIFY_KEPT, censusHeight: round.censusHeight })
-              : new Map([[fedHex, await ARENACLIENT.federationStatus({ federationIdHex: fedHex, nodes, census, verify: window.ARENA_VERIFY_KEPT, censusHeight: round.censusHeight })]]);
+              ? await ARENACLIENT.federationStatuses({ nodes, census, verify: window.ARENA_VERIFY_KEPT, censusHeight: round.censusHeight, guardianKeysOf: window.ARENA_FED_KEYS_OF(fedHex, null) })
+              : new Map([[fedHex, await ARENACLIENT.federationStatus({ federationIdHex: fedHex, nodes, census, verify: window.ARENA_VERIFY_KEPT, censusHeight: round.censusHeight, guardianKeysOf: window.ARENA_FED_KEYS_OF(fedHex, null) })]]);
             const fs = all.get(fedHex) || { status: 'unverified', allows: ARENACLIENT.FEDERATION_ALLOWS.unverified, why: all.why || 'no node holds a record of this federation' };
             window.ARENA_FED_TRIED = true;   // checked, whatever it said: no longer "loading"
             window.ARENA_FED_STATUS = { ...fs, federation: fedHex }; window.ARENA_FED_STATUS_AT = Date.now();
@@ -4188,10 +4201,10 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
               const census = ARENACLIENT.checkedCensusFor(named.round);
               const here = Array.from(named.round.federationId, (b) => b.toString(16).padStart(2, '0')).join('');
               for (const old of (census ? ARENACLIENT.ledgerFederations(vault()) : []).filter((f) => f !== here)) {
-                const st = await ARENACLIENT.federationStatus({ federationIdHex: old, nodes: named.nodes, census, verify: window.ARENA_VERIFY_KEPT, keptMs: 120000, censusHeight: named.round.censusHeight });
+                const st = await ARENACLIENT.federationStatus({ federationIdHex: old, nodes: named.nodes, census, verify: window.ARENA_VERIFY_KEPT, keptMs: 120000, censusHeight: named.round.censusHeight, guardianKeysOf: window.ARENA_FED_KEYS_OF(old, null) });
                 if (st.status !== 'DRAINING' || st.successorId !== here || !st.invite) continue;
                 const su = window.ARENA_FED_STATUS && window.ARENA_FED_STATUS.federation === here ? window.ARENA_FED_STATUS
-                  : { ...(await ARENACLIENT.federationStatus({ federationIdHex: here, nodes: named.nodes, census, verify: window.ARENA_VERIFY_KEPT, censusHeight: named.round.censusHeight })), invite: named.federation };
+                  : { ...(await ARENACLIENT.federationStatus({ federationIdHex: here, nodes: named.nodes, census, verify: window.ARENA_VERIFY_KEPT, censusHeight: named.round.censusHeight, guardianKeysOf: window.ARENA_FED_KEYS_OF(here, named.federation) })), invite: named.federation };
                 const moved = await ARENACLIENT.migratePlayerWallet({ round: Object.assign({}, named.round, { federationId: ARENACLIENT.fromHex(old) }), invite: st.invite,
                   seed, LockClient: wasm.LockClient, storage: vault(), status: st, successor: { ...su, invite: su.invite || named.federation },
                   onState: (m) => onStep(m.state === 'moving' ? `moving your balance out of federation ${old.slice(0, 8)} (being replaced): ${Math.floor(Number(m.leftMsat) / 1000)} sat to go`
@@ -5675,7 +5688,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       let fed = window.ARENA_FED_STATUS && window.ARENA_FED_STATUS.federation === fid ? window.ARENA_FED_STATUS : null;
       // THE SIGNED STATUS, asked of the seats here when no join asked it yet - a deposit is opened before any join
       if (!fed && census && nodes && nodes.length) {
-        try { fed = { ...(await ARENACLIENT.federationStatus({ federationIdHex: fid, nodes, census, verify: window.ARENA_VERIFY_KEPT, censusHeight: round.censusHeight })), federation: fid }; }
+        try { fed = { ...(await ARENACLIENT.federationStatus({ federationIdHex: fid, nodes, census, verify: window.ARENA_VERIFY_KEPT, censusHeight: round.censusHeight, guardianKeysOf: window.ARENA_FED_KEYS_OF(fid, invite) })), federation: fid }; }
         catch { /* shown as not read */ }
       }
       const $ = (id) => document.getElementById(id);
@@ -8606,7 +8619,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
               if (window.ARENA_LEARN_NODES) window.ARENA_LEARN_NODES(best.census);
               const round = best.x.c;
               const fedHex = Array.from(round.federationId, (b) => b.toString(16).padStart(2, '0')).join('');
-              const all = await ARENACLIENT.federationStatuses({ nodes, census: best.census, verify: window.ARENA_VERIFY_KEPT, censusHeight: round.censusHeight });
+              const all = await ARENACLIENT.federationStatuses({ nodes, census: best.census, verify: window.ARENA_VERIFY_KEPT, censusHeight: round.censusHeight, guardianKeysOf: window.ARENA_FED_KEYS_OF(fedHex, null) });
               const fs = all.get(fedHex) || [...all.values()][0] || { status: 'unverified', allows: ARENACLIENT.FEDERATION_ALLOWS.unverified, why: all.why || 'no node holds a record' };
               window.ARENA_FED_TRIED = true;
               window.ARENA_FED_STATUS = { ...fs, federation: fs.federation || fedHex }; window.ARENA_FED_STATUS_AT = Date.now();
