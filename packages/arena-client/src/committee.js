@@ -204,10 +204,14 @@ const txidKeyOf = (t) => {
   try { return toHex(parseTransaction(t instanceof Uint8Array ? t : fromHex(String(t))).txid); }
   catch { return `raw:${typeof t === 'string' ? t.toLowerCase() : JSON.stringify(t)}`; }
 };
-const bondKeyOf = (e) => (e && e.txid !== undefined && e.vout !== undefined
-  ? `o:${Array.isArray(e.txid) || e.txid instanceof Uint8Array ? toHex(Uint8Array.from(e.txid)) : String(e.txid)}:${e.vout}`
-  : e && e.transaction !== undefined
-    ? `t:${txidKeyOf(e.transaction)}:${e.reaffirm && typeof e.reaffirm === 'object' ? txidKeyOf(e.reaffirm.transaction) : ''}`
+// THE TRANSACTION FIRST (kanban #2500, #1489 a44-refute-48-s2): an entry carrying its transaction was keyed by the txid / vout fields the
+// provider wrote beside it whenever it wrote them, so one seat repeating a bond with made-up txid / vout fields slipped past the own-list
+// repeat check, the union threw 'duplicate outpoint' and the honest co-provider was skipped with it. An entry with a transaction is keyed
+// by that transaction (what the client derives the bond from); provider-written txid / vout key only an entry that carries none.
+const bondKeyOf = (e) => (e && e.transaction !== undefined
+  ? `t:${txidKeyOf(e.transaction)}:${e.reaffirm && typeof e.reaffirm === 'object' ? txidKeyOf(e.reaffirm.transaction) : ''}`
+  : e && e.txid !== undefined && e.vout !== undefined
+    ? `o:${Array.isArray(e.txid) || e.txid instanceof Uint8Array ? toHex(Uint8Array.from(e.txid)) : String(e.txid)}:${e.vout}`
     : `j:${JSON.stringify(e)}`);
 /** The first bond one provider's own list holds twice, or null (kanban #2160, #2228, #2301). */
 const repeatedBondIn = (list) => {
