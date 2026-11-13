@@ -43,6 +43,7 @@ import { computePayoutTable, payoutTableId, decodePayoutTable } from './payout.j
 import { payoutRuleForRound } from './manifest.js';
 import { lockAction, lockActionByte, lockActionOf, EXPIRE } from './lock-action.js';
 import { outcomeByte, outcomeOf } from './result.js';
+import { decodeSignedLockSet, lockSetId, lockSetSignatureId } from './lock-set.js';
 
 const hex = (b) => toHex(b);
 
@@ -1477,4 +1478,68 @@ function concat(a, b) {
   out.set(a, 0);
   out.set(b, a.length);
   return out;
+}
+
+/**
+ * RULING #2587 (kanban #2606), a new §5A.3 row: "signing two `LockSet`s for one `round_id` with different entries. Proof: the two signed
+ * LockSets, the accused's node key on both." An honest seat signs ONE set per round and keeps it before it serves it (lock-set-book.js), so a
+ * restart cannot make it sign a second; a committee of 2t - 1 has two thresholds overlapping in one seat, and that seat signing both sets is
+ * what makes two certificates (a contested set: the round is VOID, every lock back). No player lost money, so THE WHOLE BOND GOES TO THE
+ * RESERVES (#976): lockSetSlashDistribution. Not one of the six OFFENCES rows above (affectedEntries / playersShares do not apply: it names
+ * no entry), so it is listed on its own.
+ */
+export const TWO_LOCK_SETS = 'TWO_LOCK_SETS';
+export const LOCK_SET_OFFENCES = [TWO_LOCK_SETS];
+
+/**
+ * THE PROOF BODY of a double-signed lock set, in the slash proof's one encoding (encodeSlashProof): the round, the accused, its advertised
+ * bond, and the two set ids in one order - the lower names (`signedResultId`), the higher rides in `transcriptHash` (as orderedResultIds does
+ * for TWO_RESULTS) - so one offence has one commitment. No player is named (`playerPubkey` 32 zero bytes). `a`, `b`: the two signed LockSets
+ * (bytes, lock-set.js encodeSignedLockSet), which travel beside the proof.
+ */
+export function twoLockSetsProof({ nodePubkey, a, b, bondTxid, bondVout }) {
+  const x = decodeSignedLockSet(a), y = decodeSignedLockSet(b);
+  const { named, other } = orderedResultIds(lockSetId(x.set), lockSetId(y.set));
+  return { roundId: x.set.roundId, playerPubkey: EMPTY, nodePubkey, transcriptHash: other, signedResultId: named, bondTxid, bondVout };
+}
+
+/**
+ * DID THIS NODE SIGN TWO DIFFERENT LOCK SETS FOR ONE ROUND? Only bytes the accused signed; nothing replayed, nothing injected but the
+ * BIP-340 verifier. `signedLockSets`: the two signed LockSets (bytes); `committee` the round's seat keys; `advert` the accused's advertisement
+ * naming its bond. A signature under the VIEW tag never counts (it is what a seat saw, not a set it signed), and the same set twice is a
+ * retransmission, not an offence. Answers { slashed: false, why } or { slashed: true, offence, bond, commitment, ids, toReserves: true, why }.
+ */
+export function slashHoldsOnTwoLockSets({ proof, signedLockSets, advert, committee, verify }) {
+  if (typeof verify !== 'function') return { slashed: false, why: 'checking two signed lock sets needs a verifier, and none was injected' };
+  if (!Array.isArray(committee) || !committee.length) return { slashed: false, why: 'no committee, so nobody was serving this round' };
+  if (!proof || !committee.some((k) => hex(k) === hex(proof.nodePubkey)))
+    return { slashed: false, why: `${proof ? hex(proof.nodePubkey) : '(none)'} is not on this round's committee, so it signed no lock set it owed` };
+  if (!Array.isArray(signedLockSets) || signedLockSets.length !== 2)
+    return { slashed: false, why: 'this offence is a PAIR: two signed lock sets, and no other number of them' };
+  const sets = [];
+  for (const [at, bytes] of signedLockSets.entries()) {
+    let s; try { s = decodeSignedLockSet(bytes); } catch (e) { return { slashed: false, why: `lock set ${at} is not a signed lock set: ${e.message}` }; }
+    if (hex(s.set.roundId) !== hex(proof.roundId)) return { slashed: false, why: `lock set ${at} is for a different round` };
+    const setId = lockSetId(s.set);
+    let good = false;
+    try { good = !!verify(s.sig, lockSetSignatureId({ setId, atMs: s.atMs }), proof.nodePubkey); } catch { good = false; }
+    if (!good) return { slashed: false, why: `lock set ${at} is not signed by ${hex(proof.nodePubkey)} as a set signature` };
+    sets.push(setId);
+  }
+  if (hex(sets[0]) === hex(sets[1])) return { slashed: false, why: 'those are the same set, signed twice: a retransmission, not an offence' };
+  const { named, other } = orderedResultIds(sets[0], sets[1]);
+  if (hex(proof.signedResultId) !== hex(named) || hex(proof.transcriptHash) !== hex(other))
+    return { slashed: false, why: 'the pair is named in the wrong order: the lower set id is the one the proof names, or one offence could be minted as two proofs' };
+  if (hex(proof.playerPubkey) !== hex(EMPTY)) return { slashed: false, why: 'this offence names no player: the proof\'s player field is 32 zero bytes' };
+  if (!advert || hex(advert.nodePubkey) !== hex(proof.nodePubkey)) return { slashed: false, why: 'no advertisement from the accused node to name its bond' };
+  if (hex(advert.bondTxid) !== hex(proof.bondTxid) || advert.bondVout !== proof.bondVout)
+    return { slashed: false, why: `the proof names bond ${hex(proof.bondTxid)}:${proof.bondVout} and the node advertised ${hex(advert.bondTxid)}:${advert.bondVout}` };
+  return { slashed: true, offence: TWO_LOCK_SETS, bond: { txid: proof.bondTxid, vout: proof.bondVout }, commitment: slashCommitment(proof),
+    ids: { named, other }, toReserves: true, why: 'the node signed two different lock sets for one round (ruling #2587)' };
+}
+
+/** RULING #2587 + #976: no player lost money in a contested (VOID) round, so the whole slashed bond goes to the protocol reserves. */
+export function lockSetSlashDistribution({ bondSats }) {
+  if (typeof bondSats !== 'bigint' || bondSats < 0n) throw new Error('a bond is BigInt satoshi');
+  return { toReserves: bondSats, toPlayers: 0n, toNodes: 0n, toDevelopers: 0n, toPool: 0n, burned: 0n, shares: new Map() };
 }
