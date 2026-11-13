@@ -21,7 +21,7 @@
 // naming strangers' URLs gets nothing past the id check.
 import { sha256bytes } from './sha256.js';
 import { utf8Encode } from './utf8.js';
-import { thresholdOf } from './federation-record.js';
+import { thresholdOf, splitSignedRecord, federationRecordId } from './federation-record.js';
 import { readInvite } from '../../arena-node/src/invite.js';
 
 const tgkHex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
@@ -84,52 +84,133 @@ export function wsAskClientConfig(url, { timeoutMs = 6000, WebSocketImpl = globa
 
 const tgkBounded = (p, ms) => Promise.race([Promise.resolve(p), new Promise((_, no) => setTimeout(() => no(new Error('no answer in time')), ms))]);
 
+
+// WHICH INVITES THE FETCH ASKS (kanban #2618, feedback #047 against #2609): the first 8 invites of any record were kept for good, and a record's
+// invite only has to name the federation id - its URLs are its author's. Eight bonded strangers' records with junk invites, noted first, filled
+// every slot: the genuine endpoints were asked 0 times (the junk ones 56) and the seat stayed keyless. Now, per federation:
+//   EVICTED    an invite that fails - none of its URLs answers a config hashing to the id, or the endpoints it led to reach no threshold -
+//              leaves the book at once and is remembered failed for TGK_FAILED_MS: not taken again, not asked again, in that time
+//   TRUSTED    a plain-string invite is a trusted source (the seat's own invite, the kept record's, the round's on the page) and is asked
+//              first, with an invite that already led to agreed keys; the records' invites only when those found no endpoints
+//   PER SIGNER a record's invite ({ invite, signers }) is taken only while one of its record's verified signers backs fewer than
+//              TGK_PER_SIGNER invites (in the book or remembered failed), and charges every one of them: strangers cannot crowd out an invite
+//              the genuine guardians signed, and k strangers bring at most k * TGK_PER_SIGNER a window
+//   BOUNDED    at most TGK_BOOK invites a federation; a new one replaces the untried record invite of the most crowded signers (not one less
+//              crowded than itself), never a trusted or good one
+//   ONE KEY    once keys are agreed nothing is asked until the hit expires (keepMs)
+// Each invite is asked at at most TGK_URLS_PER_INVITE of its URLs.
+export const TGK_PER_SIGNER = 2, TGK_BOOK = 16, TGK_FAILED_MS = 600000, TGK_URLS_PER_INVITE = 8;
+
+/** The invite of a signed record and the node keys (hex) whose signatures over it verify - what a record's invite is charged to. Null if none. */
+export function recordInviteSource(bytes, verify) {
+  let s; try { s = splitSignedRecord(bytes); } catch { return null; }
+  const invite = s.record && typeof s.record.invite === 'string' ? s.record.invite : null;
+  if (!invite || typeof verify !== 'function') return null;
+  let id; try { id = federationRecordId(s.record); } catch { return null; }
+  const signers = [];
+  for (const g of s.signatures) { let ok = false; try { ok = !!verify(g.signature, id, g.nodePubkey); } catch { ok = false; } if (ok) signers.push(tgkHex(g.nodePubkey)); }
+  return signers.length ? { invite, signers: [...new Set(signers)] } : null;
+}
+
+function tgkEntryOf(cache, fid) {
+  let e = cache.get(fid);
+  if (!e) { e = { at: 0, r: null, pending: null, book: new Map(), failed: new Map(), endpoints: null, seq: 0 }; cache.set(fid, e); }
+  if (!e.book) Object.assign(e, { book: new Map(), failed: new Map(), endpoints: null, seq: 0 });
+  return e;
+}
+/** Take `src` (a trusted invite string, or { invite, signers }) into the federation's book, as the rules above say. */
+function tgkAdmit(e, src, t) {
+  const trusted = typeof src === 'string';
+  const inv = trusted ? src : src && typeof src.invite === 'string' ? src.invite : null;
+  if (!inv) return;
+  for (const [k, f] of e.failed) if (f.until <= t) e.failed.delete(k);
+  if (e.failed.has(inv)) return;
+  const had = e.book.get(inv);
+  if (had) { if (trusted) had.trusted = true; return; }
+  let signers = [];
+  if (!trusted) {
+    signers = Array.isArray(src.signers) ? src.signers.filter((x) => typeof x === 'string') : [];
+    if (!signers.length) return;
+    const backs = new Map();
+    for (const x of [...e.book.values(), ...e.failed.values()]) for (const s of x.signers || []) backs.set(s, (backs.get(s) || 0) + 1);
+    if (!signers.some((s) => (backs.get(s) || 0) < TGK_PER_SIGNER)) return;
+  }
+  if (e.book.size >= TGK_BOOK) {
+    // full: the untried record invite of the most crowded signers goes (an entry's crowding is its least-charged signer's count: what it
+    // stands on), the oldest of those - never a trusted or good one, and never one less crowded than the newcomer
+    const backs = new Map();
+    for (const x of [...e.book.values(), ...e.failed.values()]) for (const s of x.signers || []) backs.set(s, (backs.get(s) || 0) + 1);
+    const crowd = (sg) => (sg.length ? Math.min(...sg.map((s) => backs.get(s) || 0)) : Infinity);
+    const mine = trusted ? -1 : crowd(signers) + 1;
+    const old = [...e.book.entries()].filter(([, x]) => !x.trusted && x.state === 'untried')
+      .map(([k, x]) => ({ k, c: crowd(x.signers), seq: x.seq })).sort((p, q) => q.c - p.c || p.seq - q.seq)[0];
+    if (!old || (!trusted && old.c < mine)) { if (!trusted) return; } else e.book.delete(old.k);
+  }
+  e.book.set(inv, { trusted, state: 'untried', signers, seq: ++e.seq });
+}
+function tgkFail(e, inv, t) {
+  const x = e.book.get(inv);
+  e.book.delete(inv);
+  e.failed.set(inv, { until: t + TGK_FAILED_MS, signers: x ? x.signers : [] });
+  if (e.failed.size > 256) e.failed.delete(e.failed.keys().next().value);
+}
+
 /**
- * trustedGuardianKeys(federationId, invite, fetcher) -> { ok, keys: [hex, peer order], threshold, n, agreed, endpoints, why }.
- * `federationId` hex or 32 bytes; `invite` one invite or a list (where to ask first - never trusted); `fetcher(url) -> config JSON`.
- * Kept in `cache` (a Map, per federation): a hit for `keepMs`, a miss for `missMs` unless a new invite is given.
+ * trustedGuardianKeys(federationId, invites, fetcher) -> { ok, keys: [hex, peer order], threshold, n, agreed, endpoints, why, asked }.
+ * `federationId` hex or 32 bytes; `invites` one or a list: a string is a trusted source, { invite, signers } a record's (recordInviteSource) -
+ * where to ask, never what to believe; `fetcher(url) -> config JSON`. Kept in `cache` (a Map, per federation): a hit for `keepMs`, a miss for
+ * `missMs` unless the book holds an untried invite.
  */
 export async function trustedGuardianKeys(federationId, invite, fetcher = wsAskClientConfig, { cache = TGK_DEFAULT_CACHE, timeoutMs = 6000, keepMs = 3600000, missMs = 60000, now = () => Date.now() } = {}) {
   const fid = typeof federationId === 'string' ? federationId.toLowerCase() : tgkHex(federationId);
-  const invites = [...new Set((Array.isArray(invite) ? invite : [invite]).filter((x) => typeof x === 'string' && x))];
-  const had = cache && cache.get(fid);
-  if (had && !had.pending) {
-    if (had.r.ok && now() - had.at < keepMs) return had.r;
-    if (!had.r.ok && now() - had.at < missMs && invites.every((i) => had.tried.has(i))) return had.r;
-  }
-  if (had && had.pending) return had.pending;
-  const tried = new Set([...(had && had.tried ? had.tried : []), ...invites]);
-  const pending = tgkFetchKeys(fid, invites, fetcher, timeoutMs).catch((e) => ({ ok: false, why: e.message }));
-  if (cache) cache.set(fid, { pending, tried, at: now(), r: had && had.r });
-  const r = await pending;
+  const e = tgkEntryOf(cache, fid);
+  for (const src of Array.isArray(invite) ? invite : [invite]) tgkAdmit(e, src, now());
+  if (e.pending) return e.pending;
+  if (e.r && e.r.ok && now() - e.at < keepMs) return e.r;
+  const untried = [...e.book.values()].some((x) => x.state === 'untried');
+  if (e.r && !e.r.ok && now() - e.at < missMs && !untried) return e.r;
+  e.pending = tgkFetchKeys(fid, e, fetcher, timeoutMs, now).catch((err) => ({ ok: false, why: err.message }));
+  const r = await e.pending;
+  e.pending = null;
   // a federation's keys do not change: once agreed, a later miss keeps them
-  if (cache) cache.set(fid, { at: now(), tried, r: !r.ok && had && had.r && had.r.ok ? had.r : r });
-  return cache ? cache.get(fid).r : r;
+  if (r.ok || !(e.r && e.r.ok)) e.r = r;
+  e.at = now();
+  return e.r;
 }
 const TGK_DEFAULT_CACHE = new Map();
 
-async function tgkFetchKeys(fid, invites, fetcher, timeoutMs) {
+async function tgkFetchKeys(fid, e, fetcher, timeoutMs, now) {
   if (!/^[0-9a-f]{64}$/.test(fid)) return { ok: false, why: 'not a federation id' };
   const answers = new Map();                 // url -> config | null
+  const asked = { n: 0 };
   const ask = (url) => {
-    if (!answers.has(url)) answers.set(url, tgkBounded(fetcher(url), timeoutMs).then((c) => c, () => null));
+    if (!answers.has(url)) { asked.n++; answers.set(url, tgkBounded(fetcher(url), timeoutMs).then((c) => c, () => null)); }
     return answers.get(url);
   };
-  // 1. the endpoints the id commits to: from any answer at an invite's URLs whose api_endpoints hash to the id
-  const urls = [];
-  for (const inv of invites) {
-    try { const r = readInvite(inv); if (r.federationId === fid) urls.push(...r.guardians.map((g) => g.url)); } catch { /* not an invite */ }
+  // 1. the endpoints the id commits to: once an answer hashed to the id they are kept (e.endpoints); else from the book, the trusted and good
+  // invites first, the records' invites only when those found none. An invite none of whose URLs answers such a config is evicted
+  let endpoints = e.endpoints, from = null;
+  const tryInvites = async (list) => {
+    await Promise.all(list.map(async ([inv]) => {
+      let urls = [];
+      try { const r = readInvite(inv); if (r.federationId === fid) urls = [...new Set(r.guardians.map((g) => g.url))].slice(0, TGK_URLS_PER_INVITE); } catch { urls = []; }
+      let hit = null;
+      for (const c of await Promise.all(urls.map(ask))) if (!hit && c && federationIdOfConfig(c) === fid) hit = configApiEndpoints(c);
+      if (!hit) { tgkFail(e, inv, now()); return; }
+      if (!endpoints) { endpoints = hit; from = inv; }
+      else if (!from) from = inv;
+    }));
+  };
+  if (!endpoints) {
+    const all = [...e.book.entries()];
+    await tryInvites(all.filter(([, x]) => x.trusted || x.state === 'good'));
+    if (!endpoints) await tryInvites(all.filter(([, x]) => !x.trusted && x.state !== 'good'));
   }
-  if (!urls.length) return { ok: false, why: 'no invite of this federation to ask' };
-  let endpoints = null;
-  await Promise.all([...new Set(urls)].map(async (u) => {
-    const c = await ask(u);
-    if (!endpoints && c && federationIdOfConfig(c) === fid) endpoints = configApiEndpoints(c);
-  }));
-  if (!endpoints) return { ok: false, why: 'no guardian at the invite answered a config whose endpoints hash to the federation id' };
+  if (!endpoints) return { ok: false, asked: asked.n, why: e.book.size || e.failed.size ? 'no guardian at the invites answered a config whose endpoints hash to the federation id' : 'no invite of this federation to ask' };
+  e.endpoints = endpoints;
   // 2. every committed endpoint's config; the keys only from thresholdOf(n) identical answers that hash to the id
   const n = endpoints.length, threshold = thresholdOf(n);
-  const got = await Promise.all(endpoints.map((e) => ask(e.url)));
+  const got = await Promise.all(endpoints.map((x) => ask(x.url)));
   const groups = new Map();
   for (const c of got) {
     if (!c || federationIdOfConfig(c) !== fid) continue;
@@ -137,31 +218,30 @@ async function tgkFetchKeys(fid, invites, fetcher, timeoutMs) {
     if (a) groups.set(a, (groups.get(a) || 0) + 1);
   }
   const [best, count] = [...groups.entries()].sort((p, q) => q[1] - p[1])[0] || [null, 0];
-  if (!best || count < threshold) return { ok: false, n, threshold, agreed: count, why: `${count} of ${n} guardians answered one config, ${threshold} needed` };
+  if (!best || count < threshold) {
+    // no threshold: the invite that led here is evicted too (the endpoints stay known - the id committed to them - and are asked next time)
+    if (from && e.book.has(from)) tgkFail(e, from, now());
+    return { ok: false, n, threshold, agreed: count, asked: asked.n, why: `${count} of ${n} guardians answered one config, ${threshold} needed` };
+  }
+  if (from && e.book.has(from)) e.book.get(from).state = 'good';
   const a = JSON.parse(best);
-  return { ok: true, keys: a.keys, threshold, n, agreed: count, endpoints: a.eps.map(([peer, url, name]) => ({ peer, url, name })) };
+  return { ok: true, keys: a.keys, threshold, n, agreed: count, asked: asked.n, endpoints: a.eps.map(([peer, url, name]) => ({ peer, url, name })) };
 }
 
 /**
- * A per-federation source for a page or a seat: of(fid, invites) -> Promise<keys hex[] | null>; known(fid) -> 33-byte keys | null at once
- * (what a synchronous caller - federationStatuses - reads while the fetch runs: null until agreed, the keyless rules meanwhile);
- * learn(fid, invite) notes an invite and starts the fetch in the background.
+ * A per-federation source for a page, a seat or the arbiter: of(fid, invites) -> Promise<keys hex[] | null> (invites as trustedGuardianKeys
+ * takes them); known(fid) -> 33-byte keys | null at once (what a synchronous caller - federationStatuses - reads while the fetch runs: null
+ * until agreed, the keyless rules meanwhile); learn(fid, invites) starts the fetch in the background; book(fid) what the fetch holds.
  */
 export function createTrustedGuardianKeys({ fetcher = wsAskClientConfig, timeoutMs = 6000, keepMs = 3600000, missMs = 60000, now = () => Date.now(), onKeys = null } = {}) {
-  const cache = new Map(), invites = new Map();
+  const cache = new Map();
   const fromHex = (h) => Uint8Array.from(h.match(/../g).map((x) => parseInt(x, 16)));
-  const note = (fid, inv) => {
-    if (typeof inv !== 'string' || !inv) return;
-    if (!invites.has(fid)) invites.set(fid, new Set());
-    const s = invites.get(fid);
-    if (!s.has(inv) && s.size < 8) s.add(inv);
-  };
   async function of(fidHex, inv = []) {
     const fid = String(fidHex).toLowerCase();
-    for (const i of Array.isArray(inv) ? inv : [inv]) note(fid, i);
-    const had = cache.get(fid);
-    const r = await trustedGuardianKeys(fid, [...(invites.get(fid) || [])], fetcher, { cache, timeoutMs, keepMs, missMs, now });
-    if (r.ok && !(had && had.r && had.r.ok) && typeof onKeys === 'function') { try { onKeys(fid, r); } catch { /* the caller's */ } }
+    const before = cache.get(fid);
+    const hadKeys = !!(before && before.r && before.r.ok);
+    const r = await trustedGuardianKeys(fid, (Array.isArray(inv) ? inv : [inv]).filter(Boolean), fetcher, { cache, timeoutMs, keepMs, missMs, now });
+    if (r.ok && !hadKeys && typeof onKeys === 'function') { try { onKeys(fid, r); } catch { /* the caller's */ } }
     return r.ok ? r.keys : null;
   }
   function known(fidHex) {
@@ -176,7 +256,8 @@ export function createTrustedGuardianKeys({ fetcher = wsAskClientConfig, timeout
     return known(fidHex);
   }
   const result = (fidHex) => { const h = cache.get(String(fidHex).toLowerCase()); return (h && h.r) || null; };
+  const book = (fidHex) => { const h = cache.get(String(fidHex).toLowerCase()); return h && h.book ? { book: [...h.book].map(([invite, x]) => ({ invite, ...x })), failed: [...h.failed.keys()] } : null; };
   // the synchronous guardianKeysOf federationStatuses takes, carrying learn and wait
   const guardianKeysOf = Object.assign((fidHex) => known(fidHex), { learn, wait });
-  return { of, known, learn, wait, result, guardianKeysOf };
+  return { of, known, learn, wait, result, book, guardianKeysOf };
 }
