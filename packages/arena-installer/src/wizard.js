@@ -56,6 +56,7 @@ import { SUPPORTED_PROTOCOL_VERSIONS } from '../../arena-protocol/src/constants.
 import { instancesChoice, instancesNote, INSTANCES_MAX, RAM_FROM } from './instances.js';
 import { INSTANCE, PORT_OFFSET } from './instance.js';
 import { QUIET } from '../../arena-node/src/log-level.js';
+import { writeDurableJson } from '../../arena-node/src/durable-json.js';   // kanban #2099: bindOwner's write
 
 export const TOKEN_MS = 30 * 60000;        // the setup token's life
 // A SESSION LASTS A WEEK IDLE AND OUTLIVES AN INSTALLER RESTART (ruling 8: "Tells user to bookmark this page as it can take days on
