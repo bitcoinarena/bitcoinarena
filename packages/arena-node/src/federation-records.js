@@ -168,10 +168,24 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   guardianKeysOf = null }) {
   // the keys once read, by federation id hex: a federation's config keys do not change (a successor is another federation)
   const keysKnown = new Map();
+  // THE INVITES THIS SEAT HAS SEEN IN A FEDERATION'S RECORDS (kanban #2609): where the trusted key fetch asks first, for a federation this seat
+  // names no invite for. Any record's invite, a stranger's too - the fetch takes keys only from a config whose endpoints hash to the id and a
+  // threshold of those endpoints agree on, so a made-up invite gets nothing
+  const invitesSeen = new Map();             // fid -> Set(invite), at most 8
+  function noteInvite(fid, bytes) {
+    let inv = null; try { inv = decodeFederationRecord(splitSignedRecord(bytes).body).invite; } catch { inv = null; }
+    if (typeof inv !== 'string' || !inv) return;
+    if (!invitesSeen.has(fid)) invitesSeen.set(fid, new Set());
+    const s = invitesSeen.get(fid); if (s.size < 8) s.add(inv);
+  }
   async function keysFor(fidHex) {
     const fid = String(fidHex).toLowerCase();
     if (typeof guardianKeysOf !== 'function') return null;
-    let k = null; try { k = await guardianKeysOf(fid); } catch { k = null; }
+    const invites = [];
+    try { const i = inviteFor(fid); if (i) invites.push(String(i)); } catch { /* none */ }
+    { const k = kept.get(fid); if (k && k.record && k.record.invite) invites.push(String(k.record.invite)); }
+    invites.push(...(invitesSeen.get(fid) || []));
+    let k = null; try { k = await guardianKeysOf(fid, { invites }); } catch { k = null; }
     if (Array.isArray(k) && guardianKeySet(k)) { keysKnown.set(fid, k); return k; }
     return keysKnown.get(fid) || null;
   }
@@ -614,7 +628,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   async function mirror(federationId, b, inviteFederationId, pass = { kept: new Map(), byBase: new Map() }) {
     const fid = toHex(federationId);
     const censusKept = pass.kept;
-    const keys = await keysFor(fid);
+    let keys = await keysFor(fid);
     const guardians = guardiansOf(b.census, federationId, keys);
     if (!guardians.length) return { ok: false, why: 'no census node guards that federation' };
     const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
@@ -660,7 +674,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     }));
     // EVERY RECORD OF THE FEDERATION THIS MIRROR SEES, JUDGED TOGETHER (kanban #2604): each with the census it stands against
     const cands = [];
-    function cand(x, census) { let bytes = null; try { bytes = fromHex(String(x.record)); } catch { return; } cands.push({ x, bytes, census }); }
+    function cand(x, census) { let bytes = null; try { bytes = fromHex(String(x.record)); } catch { return; } noteInvite(fid, bytes); cands.push({ x, bytes, census }); }
     // AND THE RESTRICTIVE RECORD THE PICK WOULD DROP (kanban #2614, feedback #043): a keyless seat with no record of F yet mirrored the genuine
     // 7 of 7 HALTED record and eight strangers' OPEN one (nominal 11) in one pass; the genuine one was refused (it needs 8), the forgery picked,
     // and with nothing kept the #2613 guard had nothing to hold. A refused record signed by its own threshold, more restrictive than the pick and
@@ -676,6 +690,8 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     async function settle() {
       best = null; restrict = null; hold = null;
       if (!cands.length) return;
+      // the records' invites are known now: a seat that had no keys for the federation asks the trusted fetch before it judges (kanban #2609)
+      if (!keys) keys = await keysFor(fid);
       const verdicts = judge(fid, cands.map((c) => ({ bytes: c.bytes, census: c.census })), { inviteFederationId, keys, tip: await tipNow(), census: b.census.entries });
       cands.forEach((c, i) => take(c.x, verdicts[i]));
       if (!keys && best) {
