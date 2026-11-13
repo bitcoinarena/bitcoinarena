@@ -30,6 +30,7 @@ import { displayNameFromKey } from '../../arena-protocol/src/display-name.js';
 import { signEvent } from './nwc.js';
 import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
 import { encodeReferralName, referralNameId } from '../../arena-protocol/src/referral-name.js';
+import { putRoomy } from './page-lock.js';
 
 /** Where a tab keeps the name its player chose. */
 export const CUSTOM_NAME_KEY = 'arena.player.name';
@@ -306,6 +307,11 @@ function fairOrder(found, seen) {
   return out;
 }
 export const ZAPS_COLLECTED_KEY = 'arena.zaps.collected';
+/** THE REFUNDS THIS BROWSER BEGAN (kanban #2319): an outpoint is written here (putRoomy) BEFORE its refund is sent and leaves once the
+ *  pass has filed it. A refund the guardians accepted in a pass that never ended (the tab closed, reloaded, the call cut or timed out)
+ *  is found spent by the next pass; with its mark here it is this browser's own collect and is returned as collected - booked once
+ *  (the page's row id is 'zap-<outpoint>', so two tabs that both see it write one row) - not filed as spent and never booked. */
+export const ZAPS_COLLECTING_KEY = 'arena.zaps.collecting';
 export const ZAPS_CURSOR_KEY = 'arena.zaps.cursor';
 export const ZAPS_ROWS_PER_SEAT = 200;
 export const ZAPS_REFUNDS_PER_PASS = 50;
@@ -318,6 +324,12 @@ export async function collectZaps({ storage, keep = storage, random, curve, clie
   let done = [];
   try { done = JSON.parse((keep && keep.getItem(ZAPS_COLLECTED_KEY)) || '[]'); } catch { done = []; }
   const seen = new Set(Array.isArray(done) ? done : []);
+  let marked = [];
+  try { marked = JSON.parse((keep && keep.getItem(ZAPS_COLLECTING_KEY)) || '[]'); } catch { marked = []; }
+  const collecting = new Set(Array.isArray(marked) ? marked : []);
+  const begun = new Set(collecting);   // marked by an earlier pass: this pass's own spent answer to its own first refund is not one
+  const keepSeen = () => { try { if (keep) keep.setItem(ZAPS_COLLECTED_KEY, JSON.stringify([...seen].slice(-ZAPS_SEEN_KEPT))); } catch { /* not kept: asked again, then found spent */ } };
+  const keepCollecting = () => { if (keep) putRoomy(keep, ZAPS_COLLECTING_KEY, JSON.stringify([...collecting].slice(-ZAPS_SEEN_KEPT))); };
   let cursors = {};
   try { cursors = JSON.parse((keep && keep.getItem(ZAPS_CURSOR_KEY)) || '{}') || {}; } catch { cursors = {}; }
   if (typeof cursors !== 'object' || Array.isArray(cursors)) cursors = {};
@@ -385,7 +397,11 @@ export async function collectZaps({ storage, keep = storage, random, curve, clie
       if (r === 'skip') continue;
       if (r && r.why !== undefined) { tried.push(r); continue; }
       if (r === 'collected') accepted.set(outpoint, d);
+      // filed: noted as seen at once (not only at the pass's end), then the mark leaves (kanban #2319)
       seen.add(outpoint);
+      keepSeen();
+      collecting.delete(outpoint);
+      try { keepCollecting(); } catch { /* the mark stays: the outpoint is already seen and never asked again */ }
       settled = true;
       break;
     }
@@ -401,13 +417,22 @@ export async function collectZaps({ storage, keep = storage, random, curve, clie
     if (!m || !/^\d+$/.test(String(d.amountMsat))) return 'skip';
     const image = d.senderOnContract && /^[0-9a-f]{64}$/.test(String(d.playerKey || '')) ? d.playerKey : '00'.repeat(32);
     const fields = JSON.stringify({ paymentImage: { kind: 'hash', bytes: image }, amountMsat: String(d.amountMsat), claimPk: pk, refundPk: pk, expiration: 0 });
+    // kanban #2319: the intent is written ahead; a refund whose mark cannot be kept is not sent (its answer could be lost unbooked)
+    if (!collecting.has(d.outpoint)) {
+      collecting.add(d.outpoint);
+      try { keepCollecting(); } catch (e) { collecting.delete(d.outpoint); return { ...d, why: `not collected: this browser cannot note it (${String(e && e.message || e)})` }; }
+    }
     let said;
     try { said = JSON.parse(await client.refund(m[1], Number(m[2]), fields, toHex(secret))); } catch (e) { return { ...d, why: String(e && e.message || e) }; }
-    if (said.accepted === true) { collected.push({ outpoint: d.outpoint, federationId: d.federationId, amountMsat: String(d.amountMsat), item: d.item || null, roundId: d.roundId || null }); return 'collected'; }
-    if (said.stored_before === null || said.stored_before === undefined) { spent.push(d); return 'spent'; }
+    const mine = { outpoint: d.outpoint, federationId: d.federationId, amountMsat: String(d.amountMsat), item: d.item || null, roundId: d.roundId || null };
+    if (said.accepted === true) { collected.push(mine); return 'collected'; }
+    if (said.stored_before === null || said.stored_before === undefined) {
+      if (begun.has(d.outpoint)) { collected.push(mine); return 'collected'; }   // a refund this browser began, accepted in a pass that did not end
+      spent.push(d); return 'spent';
+    }
     return { ...d, why: said.error || 'the federation did not accept the collect' };
   }
-  try { if (keep) keep.setItem(ZAPS_COLLECTED_KEY, JSON.stringify([...seen].slice(-ZAPS_SEEN_KEPT))); } catch { /* not kept: asked again, then found spent */ }
+  keepSeen();
   // kanban #1557: the referral total counts an outpoint's row only when a refund accepted that version or every seat that listed the
   // outpoint gave the same one - a seat's changed amount neither inflates nor hides it.
   const web = [];
