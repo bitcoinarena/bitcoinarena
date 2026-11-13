@@ -143,6 +143,7 @@ const LOCKDOWN = `'use strict';
     }
     base = live; since = 0;
     return live;
+  };
   // (kanban #2475) the budget checked without reserving: IteratorToList below reads the elements before anything is allocated
   const fits = (n) => { if (over !== null || !(n >= 0) || used + n > budget) { over = said; throw new RangeErr(said); } };
   // IteratorToList, as %TypedArray% runs it, into a list of our own - each element's bytes checked as it comes, so an endless
