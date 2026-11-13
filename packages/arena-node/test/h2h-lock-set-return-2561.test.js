@@ -18,6 +18,7 @@ import { msForTicks } from '../../arena-protocol/src/tick.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { LOCK_SET_VERSION } from '../../arena-protocol/src/constants.js';
 import { LOCK_SET_WINDOW_MS } from '../../arena-protocol/src/lock-set.js';
+import { LOCK_SET_RETURN_AFTER_MS } from '../src/lock-set-book.js';
 import { lockFieldsToJson } from '../../arena-protocol/src/stake-lock.js';
 
 // ON 2.0, 27 AND UP IS ALSO THE ARENA LOCK (arena-lock.js NAMED_CLAIM_VERSION, regtest's point 0): this fixture's locks are stock contracts, so its
@@ -69,22 +70,26 @@ test('2-of-2: a lock outside the certificate is forfeited back at once (stake an
       d.round.putFeeLock({ entryId: late.eid, roundId: w.rid, outpoint: late.feeOutpoint, fields: lockFieldsToJson(held(late.feeOutpoint).fields), contractId: held(late.feeOutpoint).id, atMs: at });
       d.round.putStakeSeen({ entryId: late.eid, paidMsat: w.c.stakeMsat, atMs: at });
     }
-    // AT ONCE: right after the certificate, before any reveal or settlement
-    const lateStake = await forfeitAt(w.nodes[0], w, late.eid);
-    const lateFee = await forfeitAt(w.nodes[0], w, late.eid, 'fee');
+    // INSIDE THE WINDOW the late lock waits (kanban #2585: a second certificate over another set may still reach this seat); a certified one too
+    const lateEarly = await forfeitAt(w.nodes[0], w, late.eid);
     const certified = await forfeitAt(w.nodes[0], w, a.eid);
     const ra = await revealAt(w.nodes, a, ROCK, sa), rb = await revealAt(w.nodes, b, SCISSORS, sb);
     let n = [0, 0];
     for (let i = 0; i < 80 && !n.every((v) => v >= 2); i++) { await wait(100); n = await decided(w.nodes, w); }
+    // AT ONCE once the set cannot be contested (close + the window + LOCK_SET_RETURN_AFTER_MS), long before any settlement or the lock's expiry
+    skipTo(close + LOCK_SET_WINDOW_MS + LOCK_SET_RETURN_AFTER_MS + 100);
+    const lateStake = await forfeitAt(w.nodes[0], w, late.eid);
+    const lateFee = await forfeitAt(w.nodes[0], w, late.eid, 'fee');
     const got = { a: outcomes(w.nodes, w, a.eid), b: outcomes(w.nodes, w, b.eid), late: outcomes(w.nodes, w, late.eid) };
     console.log('  FACTS (#2561 late lock back):', JSON.stringify({ certAt: sets.map((s) => s.certifiedAtMs && s.certifiedAtMs - close), entries: sets.map((s) => s.entries && s.entries.length),
-      lateStake, lateFee, certified, ra, rb, decided: n, got }));
+      lateEarly, lateStake, lateFee, certified, ra, rb, decided: n, got }));
     for (const s of sets) assert.deepEqual([...(s.entries || [])].sort(), [toHex(a.eid), toHex(b.eid)].sort(), 'the certified set is not the honest pair');
     assert.equal(lateStake.status, 200, `the late lock's stake did not come back at once: ${lateStake.why}`);
     assert.ok(lateStake.verifies, 'the late stake\'s forfeit does not verify under the round\'s claim key');
     assert.equal(lateFee.status, 200, `the late lock's fee lock did not come back at once: ${lateFee.why}`);
     assert.ok(lateFee.verifies, 'the late fee lock\'s forfeit does not verify');
     assert.notEqual(certified.status, 200, 'a certified entry\'s stake was forfeited back before its round settled');
+    assert.notEqual(lateEarly.status, 200, 'a lock outside the certificate came back inside the window, before a second certificate could reach the seat (kanban #2585)');
     for (const per of got.a) assert.equal(per, 'DELIVERED 2', JSON.stringify(got));
     for (const per of got.b) assert.equal(per, 'FAILED 0', JSON.stringify(got));
   } finally { await w.close(); }
