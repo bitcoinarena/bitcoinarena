@@ -149,7 +149,8 @@ import { createAbsenceProducer, guardianConfigOf, wsAdminStatus, ownDeparture, o
 import { createDepartureAnchors, bondCliAnchorWallet, installerAnchorWallet, fileStore as anchorFileStore } from './departure-anchor.js';
 import { createFoundingSeat, cliSetup, execCli, fileKeySet } from './founding-seat.js';
 import { FOUNDING_WINDOW } from '../../arena-protocol/src/guardian-founding.js';
-import { createEndpointsOf, createGuardianKeysOf, federationOfDir, configInvite } from './federation-endpoints.js';
+import { createEndpointsOf, createGuardianKeysOf, federationOfDir, configInvite, wsClientConfig } from './federation-endpoints.js';
+import { createTrustedGuardianKeys } from '../../arena-protocol/src/trusted-guardian-keys.js';
 import { execFile as execFileCb } from 'node:child_process';
 import { createLiquidations } from './liquidations.js';
 import { createHalts, wsSessionCount } from './halts.js';
@@ -6013,7 +6014,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // EACH FEDERATION'S OWN GUARDIAN KEYS (kanban #2603): this node's guardians' client.json, else the stake-lock client of a federation this
   // node already joined (never a new join) - every record this seat builds and checks is held to them; a federation neither names is
   // checked against its record's own threshold
+  // AND EVERY OTHER FEDERATION'S (kanban #2609): the config whose api_endpoints hash to the federation id, answered alike by thresholdOf(n) of
+  // those endpoints (trusted-guardian-keys.js) - so a record of a federation this node neither guards nor joined is judged with keys too
+  const fedTrustedKeys = createTrustedGuardianKeys({ fetcher: (url) => wsClientConfig(url, { timeoutMs: 6000 }), timeoutMs: 6500 });
   const fedGuardianKeysOf = createGuardianKeysOf({ dirs: () => [guardian && guardian.dataDir, guardianNext && guardianNext.dataDir],
+    trusted: fedTrustedKeys, inviteOf: (fidHex) => inviteOfFed(fidHex) || (fedRecords && fedRecords.inviteOf ? fedRecords.inviteOf(fidHex) : null),
     joinedPort: async (fidHex) => {
       if (!stakeLocks) return null;
       if (typeof stakeLocks.joinedFor === 'function') return stakeLocks.joinedFor(fidHex);
