@@ -11,7 +11,7 @@
 //   CLOSED    its successor holds everything
 //   unverified  no record that stands: shown, and nothing about it is taken on trust
 import { majorityThenGrace, COMPARE_GRACE_MS } from './committee.js';
-import { verifyFederationRecord, newestRecord, loadReserveOf, splitSignedRecord, FEDERATION_STATUS } from '../../arena-protocol/src/federation-record.js';
+import { verifyFederationRecords, newestRecord, loadReserveOf, splitSignedRecord, FEDERATION_STATUS } from '../../arena-protocol/src/federation-record.js';
 import { networkOf } from '../../arena-protocol/src/constants.js';
 import { genesisFor } from '../../arena-protocol/src/genesis.js';
 import { MAINNET_CLOCKS } from '../../arena-protocol/src/federation-slash.js';
@@ -62,13 +62,13 @@ function refusedRestrictive(bytes, fid) {
  * THE FEDERATION'S STATUS AS THIS CLIENT CAN STAND BEHIND IT. `census` is the entries of a census this client checked
  * (with their advertisements); `verify` BIP-340. Answers { status, allows, signers, height, from, why }.
  */
-export async function federationStatus({ federationIdHex, nodes, census, verify, fetcher = fetch, keptMs = 0, guardianKeysOf = null }) {
+export async function federationStatus({ federationIdHex, nodes, census, verify, fetcher = fetch, keptMs = 0, guardianKeysOf = null, tip = null, censusHeight = null }) {
   const fid = String(federationIdHex).toLowerCase();
   // KEPT A WHILE WHEN ASKED (kanban #625, the owner's log 2026-10-24 20:30Z: each order read the status of every other federation the
   // browser holds notes in, 52-126 s while seats restarted): a status that stood is reused for `keptMs`
   const had = keptMs > 0 ? STATUS_KEPT.get(fid) : null;
   if (had && Date.now() - had.at < keptMs) return had.status;
-  const all = await federationStatuses({ nodes, census, verify, fetcher, only: fid, guardianKeysOf });
+  const all = await federationStatuses({ nodes, census, verify, fetcher, only: fid, guardianKeysOf, tip, censusHeight });
   const st = all.get(fid) || { status: 'unverified', allows: FEDERATION_ALLOWS.unverified, why: all.why || 'no node holds a record of this federation' };
   if (st.status !== 'unverified') STATUS_KEPT.set(fid, { status: st, at: Date.now() });
   return st;
@@ -76,6 +76,10 @@ export async function federationStatus({ federationIdHex, nodes, census, verify,
 const STATUS_KEPT = new Map();
 const STATUS_ASK_MS = 6000;
 const FEDERATION_ROWS_PER_SEAT = 2, FEDERATIONS_PER_SEAT = 16;   // kanban #1684: what one seat's GET /federations may cost
+/** A RECORD'S HEIGHT IS BOUNDED (kanban #2604): above `tip`, or - with no tip - above the census height the page checked plus this many
+ * blocks (a week: a record is signed at a seat's census height, newer than the round's census by the round's age, never by more), it is
+ * refused - a made-up far height would otherwise be the newest record for good. */
+export const CENSUS_TIP_SLACK = 1008;
 
 /**
  * EVERY FEDERATION THE SEATS LIST, EACH AS federationStatus ANSWERS IT (§23A.3,: Move is offered against the
@@ -84,8 +88,13 @@ const FEDERATION_ROWS_PER_SEAT = 2, FEDERATIONS_PER_SEAT = 16;   // kanban #1684
  */
 // `guardianKeysOf(fidHex)` (optional): the federation config's guardian keys when the page holds that config (its lock client's
 // guardians().keys) - every record of that federation is then held to them (verifyFederationRecord guardianKeys, kanban #2603)
-export async function federationStatuses({ nodes, census, verify, fetcher = fetch, only = null, guardianKeysOf = null }) {
-  const verified = new Map(), refused = new Map(), failed = [], alarms = new Map(), firsts = new Map(), checked = new Map(), restrictive = new Map();
+// ONE FEDERATION'S RECORDS ARE JUDGED TOGETHER (kanban #2604, feedback #038): every row of a federation from every seat of this read goes
+// through verifyFederationRecords at once - without the config, no record stands on its own nominal (a one-node record over a genuine 7 of 7
+// HALTED or CLOSED one was the newest and read OPEN). `tip` / `censusHeight`: the height bound (CENSUS_TIP_SLACK).
+export async function federationStatuses({ nodes, census, verify, fetcher = fetch, only = null, guardianKeysOf = null, tip = null, censusHeight = null }) {
+  const verified = new Map(), refused = new Map(), failed = [], alarms = new Map(), firsts = new Map(), restrictive = new Map();
+  const seen = new Map();                    // fid -> Map(record hex -> [seat])
+  const bound = Number.isInteger(tip) ? tip : Number.isInteger(censusHeight) ? censusHeight + CENSUS_TIP_SLACK : null;
   const keysOf = (fid) => { if (typeof guardianKeysOf !== 'function') return null; try { const k = guardianKeysOf(fid); return Array.isArray(k) && k.length ? k : null; } catch { return null; } };
   const add = (m, k, v) => { if (!m.has(k)) m.set(k, []); m.get(k).push(v); };
   // NOT HELD FOR THE SLOWEST SEAT, NOR FOR A HUNG ONE (kanban #625: asked with no limit, a restarting seat held an order 26 s a read): each
@@ -113,21 +122,32 @@ export async function federationStatuses({ nodes, census, verify, fetcher = fetc
         if (n >= FEDERATION_ROWS_PER_SEAT || (!n && rows.size >= FEDERATIONS_PER_SEAT)) continue;
         rows.set(fid, n + 1);
         if (Number.isInteger(f.firstHeight)) add(firsts, fid, f.firstHeight);
-        const hex = String(f.record);
-        let v = checked.get(hex);
-        if (!v) { v = verifyFederationRecord(hexToBytes(hex), { census, verify, inviteFederationId, guardianKeys: keysOf(fid) }); checked.set(hex, v); }
+        const hex = String(f.record).toLowerCase();
+        if (!seen.has(fid)) seen.set(fid, new Map());
+        if (!seen.get(fid).has(hex)) seen.get(fid).set(hex, []);
+        seen.get(fid).get(hex).push(u);
+      }
+    } catch (e) { if (!closed) failed.push(`${u}: ${e.message}`); }
+  }), COMPARE_GRACE_MS);
+  closed = true;
+  for (const [fid, byHex] of seen) {
+    const hexes = [...byHex.keys()];
+    const verdicts = verifyFederationRecords(hexes.map(hexToBytes), { census, verify, inviteFederationId, guardianKeys: keysOf(fid), tip: bound });
+    hexes.forEach((hex, i) => {
+      const v = verdicts[i];
+      for (const u of byHex.get(hex)) {
         // ITS GUARDIANS, for a join one guardian cannot serve (guardian-invites.js) - ONLY ONCE THE RECORD VERIFIES (kanban #1556: one seat
         // answering first with an unsigned record naming the player's federation took every peer slot, so the join fallback named only its hosts)
-        if (v.ok) { noteRecordInvite(f.record); add(verified, fid, { ...v, from: u }); }
+        if (v.ok) { add(verified, fid, { ...v, from: u }); }
         else {
           add(refused, fid, `${u}: ${v.why}`);
           const says = restrictive.has(fid) ? null : refusedRestrictive(hexToBytes(hex), fid);
           if (says) restrictive.set(fid, says);
         }
       }
-    } catch (e) { if (!closed) failed.push(`${u}: ${e.message}`); }
-  }), COMPARE_GRACE_MS);
-  closed = true;
+      if (v.ok) noteRecordInvite(hex);
+    });
+  }
   const out = new Map();
   for (const fid of new Set([...verified.keys(), ...refused.keys()])) {
     const best = newestRecord(verified.get(fid) || []);
