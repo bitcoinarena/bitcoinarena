@@ -158,11 +158,12 @@ export function inputsDifferFromStored(form, stored) {
  * A seat also hands (kanban #1706, #1878; the arbiter and the command line hand none): `ownInputs()` its own stored run;
  * `knownRun(marks)` the run it remembered as reproducing those marks; `referenceRuns()` (async) the runs committee seats
  * hand out (GET /replay/transcript); `keepRun(form, key)` told of a run that reproduced every mark; `admitReplay(key)`
- * asked before a live run's carried inputs are replayed - false refuses them by name, unreplayed.
+ * asked before a live run's carried inputs are replayed - false refuses them by name, unreplayed. `heldThroughTick` the tick
+ * of the last mark of its own canonical transcript of the entry (kanban #2596): a transcript stopping before it is refused.
  */
 export async function checkObjectionBundle({ bundle, roundId, entryId, entry, contract, committee, signedResultId,
   core, roundRandomness, verify, storedInputs = null, replayRun = async (form, e, options) => replay(form, e, options), ownInputs = null,
-  knownRun = null, referenceRuns = null, keepRun = null, admitReplay = null }) {
+  knownRun = null, referenceRuns = null, keepRun = null, admitReplay = null, heldThroughTick = null }) {
   const no = (step, why) => ({ holds: false, step, why });
   if (!(bundle instanceof Uint8Array) || !bundle.length)
     return no('bundle', 'an objection carries its transcript and receipts (13A)');
@@ -194,6 +195,14 @@ export async function checkObjectionBundle({ bundle, roundId, entryId, entry, co
   const chain = checkTranscript(t);
   if (!chain.ok) return no('chain', `the chain is broken at ${chain.in} ${chain.at}: ${chain.why}`);
   if (!t.marks.length) return no('chain', 'that transcript carries no checkpoints, so nothing in it was receipted');
+  // NOT CUT SHORT OF THE MARKS THIS SEAT HOLDS RECEIPTED (kanban #2596): the marks are a chain from the first, so the public
+  // canonical transcript with its last marks dropped is still whole - and the public inputs cut before the new last mark
+  // reproduce it, a run LIVE there and scored at that mark (§15): another score, another transcript hash. A stranger holding
+  // only what any seat hands out held an objection against an honest DELIVERED run that way. A run whose later marks the
+  // committee receipted did not end at an earlier one, so a seat (heldThroughTick: its canonical transcript's last mark)
+  // refuses a transcript that stops before it; the stranger's checker and the arbiter hand none.
+  if (Number.isInteger(heldThroughTick) && Number.isInteger(chain.throughTick) && chain.throughTick < heldThroughTick)
+    return no('chain', `that transcript stops at the checkpoint at tick ${chain.throughTick}, and this seat holds that run's receipted checkpoints through tick ${heldThroughTick}: a run cut short of its own receipted checkpoints is not the run`);
 
   // THE RUN'S INPUTS: the transcript's own batches, or - a live run, whose ticks travel as play frames and whose canonical
   // transcript is its receipted marks over no batches - the bundle's fifth part, as GET /replay/transcript hands it out.
@@ -227,6 +236,15 @@ export async function checkObjectionBundle({ bundle, roundId, entryId, entry, co
     if (differs)
       return no('inputs', `those inputs' ${differs} are not the ones this seat stored for that entry, which the player's session key signed: a mark over inputs never sent is the player's own, not the committee's`);
   }
+  // PAST THE TICKS THIS SEAT HOLDS (kanban #2596, a refute of #1952 / #1990): the stored run binds the inputs only over the
+  // ticks both hold, so at a seat that holds a prefix of the run (fed half of it - 5 of 7 lets the player move on) the tail
+  // carried was bound by nothing but the marks, whose state hashes the player computes himself. A tail no seat stored, under
+  // a mark receipted where the honest tail was stored, held the objection at that seat alone. Such inputs are taken only
+  // when a run this seat or a committee seat holds vouches for them (7a below); a seat's checker only - the stranger's
+  // checker and the arbiter hand no stored run.
+  const storedTicks = storedInputs && typeof storedInputs === 'object' && Array.isArray(storedInputs.ticks) ? storedInputs.ticks : null;
+  const pastStored = !t.batches.length && storedInputs !== null && typeof storedInputs === 'object'
+    && (!storedTicks || !storedTicks.length || form.ticks[form.ticks.length - 1].tick > storedTicks[storedTicks.length - 1].tick);
 
   // 6. EVERY CHECKPOINT HAS A RECEIPT SIGNED BY A COMMITTEE MEMBER. A receipt from anyone else, or one whose signature
   //    does not verify, refuses the bundle by name: an objection carries evidence, and a forged piece is not evidence.
@@ -320,6 +338,9 @@ export async function checkObjectionBundle({ bundle, roundId, entryId, entry, co
     // set of inputs is a full replay; past the seat's cap a further one is refused by name, unreplayed.
     // Only where NO run reproduced the marks (kanban #2017, #2051): when one did and it does not give the signed result
     // (the committee signed wrong), the carried inputs are what a genuine objection is checked by - never capped.
+    if (!vouched && pastStored)
+      return no('inputs', 'those inputs reach past the ticks this seat stored for that entry, and no run this seat or a committee seat holds '
+        + 'reproduces the receipted checkpoints or is those inputs: a tail no seat stored is not a run the player\'s session key signed (kanban #2596)');
     if (!vouched && typeof admitReplay === 'function' && !admitReplay(formKey))
       return no('replay', 'this seat has already replayed as many different inputs for that entry\'s live run as it replays for one entry, '
         + 'and holds no run of it that reproduces the receipted checkpoints to check these against - refused without a replay (kanban #1878)');
