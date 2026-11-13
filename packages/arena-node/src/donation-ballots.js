@@ -114,67 +114,150 @@ export function createDonationBallots({ db, knownSets, verifySecp256k1, log = ()
     approvedSets = sets; tallies = t;
     for (const s of sets) if (!before.has(toHex(s.approvedBy))) log(`[donation-ballot] approved: serial ${s.serial}, in force from height ${s.validFrom} (${s.recipients.map((r) => (r.label || toHex(r.recipientPk).slice(0, 8)) + ' ' + r.shareBps).join(', ')})`);
   }
-  return {
+  // the checks and the write of one object (add is this, then the parked objects again)
+  async function addOne(kind, hex) {
+    if (kind !== 'proposal' && kind !== 'approval') return { ok: false, status: 400, why: 'a proposal or an approval' };
+    let obj;
+    try { const { body, signature } = split(String(hex || '').toLowerCase()); obj = kind === 'proposal' ? { ...decodeDonationProposal(body), signature } : { ...decodeDonationApproval(body), signature }; }
+    catch (e) { return { ok: false, status: 400, why: `that is no donation ${kind}: ${e.message}` }; }
+    const digestKey = kind === 'proposal' ? toHex(donationProposalId(obj)) : toHex(obj.proposalId);
+    const held = kind === 'approval' ? ballots(heldSets()).get(digestKey) : null;
+    if (kind === 'approval' && !(held && held.proposal)) return { ok: false, status: 404, why: 'this seat holds no such proposal: send the proposal first', early: obj };
+    // kanban #1528: kept only when signed by a recipient of a parent set this seat holds (the admin key's, or one approved
+    // before) - before, any self-signed object from a key minted at will was kept for good, answered fresh and so forwarded
+    // to every seat, and re-tallied on every add
+    const prop = kind === 'proposal' ? obj : held.proposal;
+    const parentId = toHex(prop.parentSetId);
+    // kanban #2062, #2081: the parent among the held sets of the proposal's own network, and the serial above the parent's
+    const parent = parentOf(heldSets(), prop);
+    if (!parent) return { ok: false, status: 403, why: 'its parent set is not one this seat holds on its network', ...(kind === 'proposal' ? { early: obj } : {}) };
+    if (!aboveParent(prop, parent)) return { ok: false, status: 403, why: `its serial is not above its parent set's (${parent.serial})` };
+    const signerHex = toHex(kind === 'proposal' ? obj.proposer : obj.signer);
+    // kanban #1710, #1775: an LNURL entry has no key - compared as no match, never toHex(undefined) and a 500
+    if (!keyIn(parent, signerHex)) return { ok: false, status: 403, why: 'its signer is no recipient of the parent set' };
+    // the signature now, so nothing unsigned is ever kept or forwarded
+    const digest = kind === 'proposal' ? donationProposalId(obj) : donationApprovalDigest(obj);
+    const signer = kind === 'proposal' ? obj.proposer : obj.signer;
+    if (!(await verifySecp256k1(obj.signature, digest, signer))) return { ok: false, status: 400, why: 'the signature does not verify' };
+    // A CONTRIBUTION AGREEMENT IN A PROPOSAL (§27A.4.2, kanban #1346) is signed by the contributor's own key too, over the agreement's id
+    if (kind === 'proposal') for (const r of obj.recipients || []) {
+      if (!r.contribution) continue;
+      if (!(await verifySecp256k1(r.contribution.signature, contributionAgreementId(r.contribution.agreement), r.recipientPk)))
+        return { ok: false, status: 400, why: `the contribution agreement of ${toHex(r.recipientPk).slice(0, 16)} is not signed by that key` };
+    }
+    const id = toHex(digest);
+    // kanban #1899, #1939: a retry of a row already kept is answered as held before any cap, never 429
+    if (db.prepare('SELECT 1 FROM donation_ballots WHERE id = ?').get(id)) return { ok: true, fresh: false, id };
+    // kanban #1899, #1939: every limit is the signer's own, so no recipient can use up the room another one needs
+    if (kind === 'approval') {
+      const counted = held.approvals.find((a) => toHex(a.signer) === signerHex);
+      const mine = (held.all || []).filter((a) => toHex(a.signer) === signerHex).length;
+      if (mine >= MAX_ROWS_PER_SIGNER) {
+        // its vote is already counted from an earlier one: this later one changes nothing and is not kept
+        if (counted && firstVote(counted, { atHeight: obj.atHeight, id }) <= 0) return { ok: true, fresh: false, id, counted: counted.id };
+        return { ok: false, status: 429, why: 'this seat keeps no more approvals of this proposal by this signer' };
+      }
+      // (never reached: read approvals are one per signer, and the signer is a recipient of the parent)
+      if (!counted && held.approvals.length >= parent.recipients.length) return { ok: false, status: 429, why: 'this proposal holds an approval by every recipient' };
+    } else {
+      // kanban #2062, #2081: left out of the caps only a proposal that IS an approved set in force - a tally of 'approved'
+      // alone is no set (another network, a serial not above the parent's) and still counts against its proposer
+      const isSet = (pid) => approvedSets.some((s) => s.approvedBy && toHex(s.approvedBy) === pid);
+      const mine = [...ballots(heldSets()).entries()].filter(([pid, b]) => b.proposal && toHex(b.proposal.proposer) === signerHex && toHex(b.proposal.parentSetId) === parentId
+          && toHex(b.proposal.networkId) === toHex(obj.networkId) && !isSet(pid))
+        .map(([pid]) => (tallies.get(pid) || { state: 'open' }).state);
+      if (mine.filter((st) => st === 'open').length >= MAX_OPEN_PER_PROPOSER) return { ok: false, status: 429, why: 'this signer has as many open proposals on this parent set as a seat keeps: withdraw one first' };
+      if (mine.length >= MAX_KEPT_PER_PROPOSER) return { ok: false, status: 429, why: 'this seat keeps no more proposals by this signer on this parent set' };
+    }
+    db.prepare('INSERT INTO donation_ballots (id, kind, proposal, hex, at_ms) VALUES (?, ?, ?, ?, ?)').run(id, kind, digestKey, String(hex).toLowerCase(), Date.now());
+    await retally();
+    return { ok: true, fresh: true, id, proposal: digestKey };
+  }
+  // AN OBJECT THAT CAME TOO EARLY WAITS, IT IS NOT LOST (kanban #2535, #1489 state audit census 7): the developers' nodes forward a
+  // proposal and its approvals as separate fire-and-forget POSTs, so a seat can hear an approval before its proposal (404) or a
+  // proposal before the last approval of its parent set (403) - refused, it was gone for good and the seats approved different sets.
+  // Such an object, signed under the key it names, is parked here (at most EARLY_MAX, the oldest go first) and added again after
+  // every object this seat takes; what a forward missed altogether comes back with the peer pull (pull, the server's timer).
+  const EARLY_MAX = 1024;
+  // a peer pull's bounds (kanban #2812): objects tried per pull, and hexes refused before that are not tried again
+  const PULL_TRIES = 1024, REFUSED_KEPT = 8192;
+  const refusedHexes = new Set();
+  const parked = new Map();   // hex -> kind
+  const park = async (kind, hex, obj) => {
+    try {
+      const digest = kind === 'proposal' ? donationProposalId(obj) : donationApprovalDigest(obj);
+      if (!(await verifySecp256k1(obj.signature, digest, kind === 'proposal' ? obj.proposer : obj.signer))) return false;
+    } catch { return false; }
+    parked.delete(hex); parked.set(hex, kind);
+    while (parked.size > EARLY_MAX) parked.delete(parked.keys().next().value);
+    return true;
+  };
+  let unparking = false;
+  const unpark = async () => {
+    if (unparking || !parked.size) return;
+    unparking = true;
+    try {
+      for (let pass = 0; pass < 8; pass++) {
+        let took = 0;
+        for (const [hex, kind] of [...parked]) {
+          const r = await api.add(kind, hex, { parking: false });
+          if (r.ok || r.status === 400) parked.delete(hex);
+          if (r.ok && r.fresh) took++;
+        }
+        if (!took) break;
+      }
+    } finally { unparking = false; }
+  };
+  const api = {
     approved: () => approvedSets,
     retally,
     /** A new proposal or approval as hex (body || 64-byte signature): kept if it decodes and its signer may sign it. */
-    async add(kind, hex) {
-      if (kind !== 'proposal' && kind !== 'approval') return { ok: false, status: 400, why: 'a proposal or an approval' };
-      let obj;
-      try { const { body, signature } = split(String(hex || '').toLowerCase()); obj = kind === 'proposal' ? { ...decodeDonationProposal(body), signature } : { ...decodeDonationApproval(body), signature }; }
-      catch (e) { return { ok: false, status: 400, why: `that is no donation ${kind}: ${e.message}` }; }
-      const digestKey = kind === 'proposal' ? toHex(donationProposalId(obj)) : toHex(obj.proposalId);
-      const held = kind === 'approval' ? ballots(heldSets()).get(digestKey) : null;
-      if (kind === 'approval' && !(held && held.proposal)) return { ok: false, status: 404, why: 'this seat holds no such proposal: send the proposal first' };
-      // kanban #1528: kept only when signed by a recipient of a parent set this seat holds (the admin key's, or one approved
-      // before) - before, any self-signed object from a key minted at will was kept for good, answered fresh and so forwarded
-      // to every seat, and re-tallied on every add
-      const prop = kind === 'proposal' ? obj : held.proposal;
-      const parentId = toHex(prop.parentSetId);
-      // kanban #2062, #2081: the parent among the held sets of the proposal's own network, and the serial above the parent's
-      const parent = parentOf(heldSets(), prop);
-      if (!parent) return { ok: false, status: 403, why: 'its parent set is not one this seat holds on its network' };
-      if (!aboveParent(prop, parent)) return { ok: false, status: 403, why: `its serial is not above its parent set's (${parent.serial})` };
-      const signerHex = toHex(kind === 'proposal' ? obj.proposer : obj.signer);
-      // kanban #1710, #1775: an LNURL entry has no key - compared as no match, never toHex(undefined) and a 500
-      if (!keyIn(parent, signerHex)) return { ok: false, status: 403, why: 'its signer is no recipient of the parent set' };
-      // the signature now, so nothing unsigned is ever kept or forwarded
-      const digest = kind === 'proposal' ? donationProposalId(obj) : donationApprovalDigest(obj);
-      const signer = kind === 'proposal' ? obj.proposer : obj.signer;
-      if (!(await verifySecp256k1(obj.signature, digest, signer))) return { ok: false, status: 400, why: 'the signature does not verify' };
-      // A CONTRIBUTION AGREEMENT IN A PROPOSAL (§27A.4.2, kanban #1346) is signed by the contributor's own key too, over the agreement's id
-      if (kind === 'proposal') for (const r of obj.recipients || []) {
-        if (!r.contribution) continue;
-        if (!(await verifySecp256k1(r.contribution.signature, contributionAgreementId(r.contribution.agreement), r.recipientPk)))
-          return { ok: false, status: 400, why: `the contribution agreement of ${toHex(r.recipientPk).slice(0, 16)} is not signed by that key` };
-      }
-      const id = toHex(digest);
-      // kanban #1899, #1939: a retry of a row already kept is answered as held before any cap, never 429
-      if (db.prepare('SELECT 1 FROM donation_ballots WHERE id = ?').get(id)) return { ok: true, fresh: false, id };
-      // kanban #1899, #1939: every limit is the signer's own, so no recipient can use up the room another one needs
-      if (kind === 'approval') {
-        const counted = held.approvals.find((a) => toHex(a.signer) === signerHex);
-        const mine = (held.all || []).filter((a) => toHex(a.signer) === signerHex).length;
-        if (mine >= MAX_ROWS_PER_SIGNER) {
-          // its vote is already counted from an earlier one: this later one changes nothing and is not kept
-          if (counted && firstVote(counted, { atHeight: obj.atHeight, id }) <= 0) return { ok: true, fresh: false, id, counted: counted.id };
-          return { ok: false, status: 429, why: 'this seat keeps no more approvals of this proposal by this signer' };
+    async add(kind, hex, { parking = true } = {}) {
+      const r = await addOne(kind, hex);
+      if (r.ok && r.fresh) await unpark();
+      else if (parking && !r.ok && r.early && await park(kind, String(hex || '').toLowerCase(), r.early)) return { ...r, early: undefined, parked: true };
+      return r.early ? { ...r, early: undefined } : r;
+    },
+    /** WHAT A FORWARD MISSED, FROM A PEER (kanban #2535): another seat's GET /donation-ballots `ballots` list - each object checked by add as
+     *  if posted here, nothing taken on trust; oldest serial first, each proposal before its approvals, repeated until a pass takes nothing
+     *  new (at most 8). The count of objects new here. */
+    async pull(list) {
+      const serialOf = (x) => BigInt(/^\d{1,20}$/.test(String(x.serial)) ? x.serial : 0);
+      const items = (Array.isArray(list) ? list : []).filter((b) => b && typeof b.hex === 'string').slice(0, 512)
+        .sort((x, y) => { const a = serialOf(x), b = serialOf(y); return a < b ? -1 : a > b ? 1 : 0; });
+      // ONE PEER ANSWER COSTS WHAT AN HONEST LIST CAN HOLD (kanban #2812, #1489 r22-gossip-2): 512 items each repeating one proposal with 256
+      // junk approvals named for a real recipient cost every pulling seat 131,072 secp256k1 verifies, each after a rebuild of all held ballots -
+      // ~2 min of its thread, every 10 min, from one seat. Now each object is tried once a pull (by its hex), an object this seat holds or
+      // refused before is not tried again, one approval a (proposal, signer) is tried a pull, and a pull tries at most PULL_TRIES objects.
+      const tried = new Set(), signerTried = new Set();
+      let tries = 0;
+      const tryAdd = async (kind, hex) => {
+        const h = String(hex).toLowerCase();
+        if (tried.has(h) || refusedHexes.has(h) || tries >= PULL_TRIES) return false;
+        tried.add(h);
+        if (db.prepare('SELECT 1 FROM donation_ballots WHERE hex = ?').get(h)) return false;
+        if (kind === 'approval') {
+          let k = null; try { const a = decodeDonationApproval(split(h).body); k = `${toHex(a.proposalId)}:${toHex(a.signer)}`; } catch { k = null; }
+          if (k === null || signerTried.has(k)) return false;
+          signerTried.add(k);
         }
-        // (never reached: read approvals are one per signer, and the signer is a recipient of the parent)
-        if (!counted && held.approvals.length >= parent.recipients.length) return { ok: false, status: 429, why: 'this proposal holds an approval by every recipient' };
-      } else {
-        // kanban #2062, #2081: left out of the caps only a proposal that IS an approved set in force - a tally of 'approved'
-        // alone is no set (another network, a serial not above the parent's) and still counts against its proposer
-        const isSet = (pid) => approvedSets.some((s) => s.approvedBy && toHex(s.approvedBy) === pid);
-        const mine = [...ballots(heldSets()).entries()].filter(([pid, b]) => b.proposal && toHex(b.proposal.proposer) === signerHex && toHex(b.proposal.parentSetId) === parentId
-            && toHex(b.proposal.networkId) === toHex(obj.networkId) && !isSet(pid))
-          .map(([pid]) => (tallies.get(pid) || { state: 'open' }).state);
-        if (mine.filter((st) => st === 'open').length >= MAX_OPEN_PER_PROPOSER) return { ok: false, status: 429, why: 'this signer has as many open proposals on this parent set as a seat keeps: withdraw one first' };
-        if (mine.length >= MAX_KEPT_PER_PROPOSER) return { ok: false, status: 429, why: 'this seat keeps no more proposals by this signer on this parent set' };
+        tries++;
+        const r = await api.add(kind, h, { parking: false });
+        if (!r.ok && r.status !== 404 && r.status !== 403) { refusedHexes.add(h); if (refusedHexes.size > REFUSED_KEPT) refusedHexes.delete(refusedHexes.values().next().value); }
+        return !!r.fresh;
+      };
+      let took = 0;
+      for (let pass = 0; pass < 8; pass++) {
+        let fresh = 0;
+        if (pass) tried.clear(), signerTried.clear();
+        for (const b of items) {
+          try { if (await tryAdd('proposal', b.hex)) fresh++; } catch { /* not one */ }
+          for (const a of (Array.isArray(b.approvals) ? b.approvals : []).slice(0, 256)) { try { if (typeof a === 'string' && await tryAdd('approval', a)) fresh++; } catch { /* not one */ } }
+        }
+        took += fresh;
+        if (!fresh) break;
       }
-      db.prepare('INSERT INTO donation_ballots (id, kind, proposal, hex, at_ms) VALUES (?, ?, ?, ?, ?)').run(id, kind, digestKey, String(hex).toLowerCase(), Date.now());
-      await retally();
-      return { ok: true, fresh: true, id, proposal: digestKey };
+      return took;
     },
     /** Every proposal: its bytes, its approvals' bytes, its tally. */
     list() {
@@ -203,4 +286,5 @@ export function createDonationBallots({ db, knownSets, verifySecp256k1, log = ()
       return out;
     },
   };
+  return api;
 }
