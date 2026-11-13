@@ -501,6 +501,8 @@ export class Verifier {
               // no receipt at all, or one whose signature does not verify: nothing that shows a start (kanban #2661)
               if (!r || /does not verify/.test(e.message)) { report.ignored.push(`${peer}: ${e.message}`); if (/does not verify/.test(e.message)) { stop = true; at = body.length; break; } continue; }
               report.refused.push(`${peer}: ${e.message}`);
+              // kanban #2551: which mark a receipt for a mark this node has not got names - the close asks whether it is this entry's
+              if (r && /a mark this node has not got/.test(e.message)) (report.foreign ||= []).push({ peer, at: report.refused.length - 1, markId: hex(r.checkpointId) });
               if (/does not verify/.test(e.message)) { stop = true; at = body.length; break; }
             }
           }
@@ -609,6 +611,7 @@ export class Verifier {
     // signed FAILED over the late-carried mark - the hold settled into the pool.
     if (voided && !this.round.provenTwoFirstMarks(roundIdBytes, entryId))
       return { entryId, stored: false, why: 'this signer node holds the entry ENTRY_VOID (§16): it signs no run for it' };
+    if (!canonical) await this.#placeForeign(roundIdBytes, entryId, entry);
     if (!canonical && this.#neverStarted(roundIdBytes, entryId)) {
       const ruled = stoppedOutcome({ receiptedMarks: 0, deadlinePassed: true });
       return this.#sign({ roundIdBytes, entryId, entry, contract,
@@ -902,7 +905,10 @@ export class Verifier {
     if (this.round.firstMarkHeld(roundIdBytes, entryId)) return false;
     if (this.round.entryVoid(entryId)) return false;
     const carried = this.carried.get(`${hex(roundIdBytes)}:${hex(entryId)}`);
-    return !!carried && this.#unreached(roundIdBytes, carried) === 0 && carried.refused.length === 0 && carried.taken === 0
+    // kanban #2551: a receipt for a mark this node has not got is doubt only when that mark was shown to be this entry's (#placeForeign)
+    const unplaced = new Set(carried && carried.unplaced ? carried.unplaced : []);
+    const refused = carried ? carried.refused.filter((_, i) => !unplaced.has(i)) : [];
+    return !!carried && this.#unreached(roundIdBytes, carried) === 0 && refused.length === 0 && carried.taken === 0
       && !(carried.refusedMarks && carried.refusedMarks.length);
   }
 
@@ -914,6 +920,37 @@ export class Verifier {
   #headToHead(contract) {
     const found = pluginForRound(contract, this.plugins);
     return found.ok && found.headToHead === true ? found : null;
+  }
+
+  /**
+   * A RECEIPT FOR A MARK THIS NODE HAS NOT GOT IS DOUBT ONLY WHEN THE MARK IS THIS ENTRY'S (kanban #2551, #1489 r13 play-1): a receipt carries a
+   * checkpoint id and a node key, nothing that ties it to the entry asked about, and takeReceipt checks only its signature - so one seat adding
+   * to its GET /receipts answer a receipt it signed over 32 random bytes (or a real receipt of another entry's mark) kept #neverStarted false,
+   * and a paying entry whose player sat down and never played was signed FORFEIT at no honest seat. Each such mark is looked for in the peers'
+   * GET /checkpoints for this round and entry: it counts as doubt once one peer serves it there, of this round and entry, signed under the
+   * entry's session key. Otherwise its refusal is set aside (`carried.unplaced`, indexes into carried.refused) - the rest of the close reads as before.
+   */
+  async #placeForeign(roundIdBytes, entryId, entry) {
+    const carried = this.carried.get(`${hex(roundIdBytes)}:${hex(entryId)}`);
+    if (!carried || !Array.isArray(carried.foreign) || !carried.foreign.length || this.round.firstMarkHeld(roundIdBytes, entryId)) return;
+    const want = new Set(carried.foreign.map((f) => f.markId));
+    const placed = new Set();
+    const cap = (want.size + PEER_MARKS_AHEAD) * SIGNED_CHECKPOINT_BYTES;
+    for (const { body } of await peersCheckpoints(this.peersOf(roundIdBytes), roundIdBytes, entryId, cap)) {
+      if (!body) continue;
+      for (let at = 0; at + SIGNED_CHECKPOINT_BYTES <= body.length; at += SIGNED_CHECKPOINT_BYTES) {
+        let c, sig;
+        try { const x = splitSignedMark(body.slice(at, at + SIGNED_CHECKPOINT_BYTES)); c = decodeCheckpoint(x.body); sig = x.signature; } catch { continue; }
+        if (hex(c.roundId) !== hex(roundIdBytes) || hex(c.entryId) !== hex(entryId)) continue;
+        const id = hex(checkpointId(c));
+        if (!want.has(id) || placed.has(id)) continue;
+        let ok = false;
+        try { ok = !!entry && sessionCurve.verify(sig, checkpointId(c), entry.sessionPubkey); } catch { ok = false; }
+        if (ok) placed.add(id);
+      }
+    }
+    carried.unplaced = carried.foreign.filter((f) => !placed.has(f.markId)).map((f) => f.at);
+    if (carried.unplaced.length) console.log(`[close] ${hex(entryId).slice(0, 16)}: ${carried.unplaced.length} receipt(s) for marks no peer shows as this entry's - not counted as a start (kanban #2551)`);
   }
 
   /**
