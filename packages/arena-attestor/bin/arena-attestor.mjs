@@ -90,6 +90,7 @@ const MARKETS_EVERY_MS = Number(arg('markets-every-ms', '60000'));
 let versions = [];                     // [{ id, version }] of the seats' listing, oldest first
 let listed = false;
 const periods = new Map();             // market id hex -> its manifest's roundPeriodMs (0n: no grid)
+const manifestsById = new Map();       // market id hex -> its decoded manifest: the keys and threshold its rounds combine by (kanban #2635)
 const readMarkets = async () => {
   if (Date.now() - marketsReadMs < MARKETS_EVERY_MS) return;
   const games = [];
@@ -111,7 +112,8 @@ const readMarkets = async () => {
   // market believed above (kanban #2080: a forged manifest's grid is no grid of this market's) - a grid of a market no longer
   // believed is dropped with it
   for (const id of [...periods.keys()]) if (!next.has(id)) periods.delete(id);
-  for (const g of games) { try { const m = decodeManifest(fromHex(String(g.manifest))); const id = toHex(gameIdOf(m)); if (next.has(id)) periods.set(id, m.roundPeriodMs); } catch { /* not a manifest */ } }
+  for (const id of [...manifestsById.keys()]) if (!next.has(id)) manifestsById.delete(id);
+  for (const g of games) { try { const m = decodeManifest(fromHex(String(g.manifest))); const id = toHex(gameIdOf(m)); if (next.has(id)) { periods.set(id, m.roundPeriodMs); manifestsById.set(id, m); } } catch { /* not a manifest */ } }
   const added = [...next].filter((id) => !marketIds.has(id));
   const dropped = [...marketIds].filter((id) => !next.has(id));
   // THE WHOLE LIST at the first read and on every change, the latest version named
@@ -345,7 +347,9 @@ const handleRound = async (r) => {
     try { const x = await fetch(`${p}/attestation?round=${r.id}`, { signal: AbortSignal.timeout(5000) }); return x.ok ? wordFromJson(await x.json()) : null; } catch { return null; }
   }));
   const all = [mine, ...theirs.filter(Boolean)];
-  const att = combine(all, { attestors: ATTESTORS, threshold: THRESHOLD });
+  // kanban #2635 (bypass of #1487): by the attestors of the version the round's contract names - a key that version dropped is no
+  // signer of its rounds, its valid word left out; the --attestors / --threshold flags only for a market whose manifest was not read
+  const att = combine(all, { attestors: ATTESTORS, threshold: THRESHOLD, manifest: manifestsById.get(c.gameId) || null });
   if (!att) return;
   // every seat at once (kanban #1891): a seat that holds a POST open delays no other seat
   await Promise.all(SEATS.map(async (seat) => {
