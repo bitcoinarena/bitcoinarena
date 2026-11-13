@@ -143,6 +143,7 @@ import { readInvite } from './invite.js';
 import { holdsNothing, guardedFederationOf, auditGuardian, createRetireBook } from './federation-retire.js';
 import { federationRecords, GATHER_FRESH_MS } from './federation-records.js';
 import { createAbsences, readAbsenceHex, readDepartureHex, absenceHex, departureHex, readEmergencyHex, emergencyHex } from './absences.js';
+import { departureAnchorHeight, anchorRequired, DEPARTURE_ANCHOR_SLACK } from '../../arena-protocol/src/absence.js';
 import { emergencyDepartureStands } from '../../arena-protocol/src/emergency.js';
 import { createAbsenceProducer, guardianConfigOf, wsAdminStatus, ownDeparture, owedDepartures } from './absence-producer.js';
 import { createFoundingSeat, cliSetup, execCli, fileKeySet } from './founding-seat.js';
@@ -601,6 +602,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   randomnessFor, chainFor, peers = [], headerBytes, bondProof, proposals: givenProposals = null,
   // THE BALLOT'S PROPOSALS: { confirmedTx(txidHex, blockHashHex), lowestBondMinSats } - main.js reads bitcoind
   ballot = null,
+  // THE DEPARTURE ANCHOR'S GATE (kanban #2608): a record judged at or above it reads each departure notice from its "ARN" 'L' anchor's
+  // height (absence.js). Undefined: the network's DEPARTURE_ANCHOR_HEIGHT by `chain`; null (or no chain): the old rule
+  departureAnchorGate = undefined,
   // A LIGHTNING INVOICE READER, AND NOTHING MORE (§23.6, RULED 2026-09-22 22:59). `/federation-invoice`
   // uses its `decode` to read what the federation's LNv2 invoice commits to. It no longer issues, looks up,
   // settles or cancels holds, and it pays nothing: that was the withdrawn Lightning custody's custody by one operator.
@@ -815,7 +819,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const gatewaySeatings = new Map(), ownSeatings = new Map();
   // THE LIQUIDITY SEATINGS (§23A.10): the same, for the providers and their weights
   const liquiditySeatings = new Map(), ownLiquiditySeatings = new Map();
+  const anchorGate = departureAnchorGate !== undefined ? departureAnchorGate
+    : chain ? departureAnchorHeight(String(chain).replace(/^bitcoin-/, '') === 'test' ? 'testnet4' : String(chain).replace(/^bitcoin-/, '')) : null;
   const absences = createAbsences({ verify: (sig, m, k) => { try { return schnorr.verify(sig, m, k); } catch { return false; } },
+    // A NOTICE COUNTS FROM ITS ANCHOR (kanban #2608): the anchor transaction read from this seat's bitcoind, as a ballot deposit is
+    confirmedTx: ballot && typeof ballot.confirmedTx === 'function' ? ballot.confirmedTx : null, anchorGate,
     // a departure notice is taken only from the node key the held record names for that guardian (kanban #1222)
     nodeOf: (fidHex, peerHex) => { const k = fedRecords && typeof fedRecords.recordOf === 'function' ? fedRecords.recordOf(fidHex) : null;
       const g = k && k.record ? k.record.guardians.find((x) => toHex(x.peerKey) === peerHex) : null; return g ? toHex(g.nodePubkey) : null; },
@@ -3121,9 +3129,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       for (const h of (got && Array.isArray(got.requests) ? got.requests : []).slice(0, 256)) { try { await takeEmergency(readEmergencyHex(h), { pass: false }); } catch { /* not one */ } }
     }
   };
-  const emergencyPull = setInterval(() => { pullEmergencies().catch(() => {}); }, 600000);
+  // AND THE ANCHORED DEPARTURE NOTICES (kanban #2608): a seat that was down takes them from its peers when it is back - the anchor is
+  // chain state and the bytes are checked against it, so there is no freshness window. Only notices that name an anchor are pulled.
+  const pullDepartures = async () => {
+    for (const u of networkSeats()) {
+      let got; try { const r = await fetch(`${u}/absences`, { signal: AbortSignal.timeout(10000) }); got = r.ok ? await r.json() : null; } catch { got = null; }
+      for (const h of (got && Array.isArray(got.departures) ? got.departures : []).slice(0, 256)) {
+        try { const d = readDepartureHex(h); if (d.anchor) await absences.offerAnchored(d); } catch { /* not one */ }
+      }
+    }
+  };
+  const emergencyPull = setInterval(() => { pullEmergencies().catch(() => {}); pullDepartures().catch(() => {}); }, 600000);
   if (emergencyPull.unref) emergencyPull.unref();
-  const emergencyFirstPull = setTimeout(() => { pullEmergencies().catch(() => {}); }, 30000);
+  const emergencyFirstPull = setTimeout(() => { pullEmergencies().catch(() => {}); pullDepartures().catch(() => {}); }, 30000);
   if (emergencyFirstPull.unref) emergencyFirstPull.unref();
   const seating = (seatingOn ?? process.env.ARENA_SEATING === '1') ? seatingAgent({ round, roster, endpointOf: addressBook.endpointOf,
     // a table's round 0 this seat never wrote, built from the series it holds (kanban #604); `writers` is set further down
@@ -6106,6 +6124,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const me = toHex(round.pubkey);
     const out = await owedDepartures({ seats: ownGuardianSeats(), held: (f, p) => absences.heldDeparture(f, p, me), tip: () => chainTip(),
       departureNotice: fedClocks.departureNotice, nodePubkey: round.pubkey, sign: (h) => schnorr.sign(h, round.identity.secret), offer: (d) => absences.offerDeparture(d),
+      // judged past the anchor's gate, it needs time for its anchor to confirm (kanban #2608)
+      slack: (at) => (anchorRequired(anchorGate, at + fedClocks.departureNotice) ? DEPARTURE_ANCHOR_SLACK : 0),
       post: async (hex) => { const posted = await Promise.all(networkSeats().map((u) => fetch(`${u}/departure`, { method: 'POST', body: hex, signal: AbortSignal.timeout(15000) })
         .then((x) => x.ok).catch(() => false))); return { postedTo: posted.filter(Boolean).length, of: posted.length }; } });
     for (const x of out) if (x.notice) console.log(`[owner] departure notice for ${x.federation.slice(0, 16)}: leave after ${x.leaveAfterHeight}, posted to ${x.postedTo} of ${x.of} seats`);
@@ -6168,7 +6188,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // guardingOpen: by default the census adverts' guardian_of[] naming a federation held OPEN, other than the one succeeded
       nominal: g && Number.isInteger(g.federationNominal) ? g.federationNominal : 4, bondMinGuardian: BigInt(process.env.ARENA_BOND_MIN_GUARDIAN || 50000),
       // a founding every 6 blocks on every network (guardian-founding.js FOUNDING_WINDOW); the genesis clock stays in the network id
-      clocks: { ...fedClocks, foundingWindow: FOUNDING_WINDOW }, ownKey: round.pubkey, sign: (h) => schnorr.sign(h, round.identity.secret), verify: schnorrVerify,
+      clocks: { ...fedClocks, foundingWindow: FOUNDING_WINDOW, departureAnchorGate: anchorGate }, ownKey: round.pubkey, sign: (h) => schnorr.sign(h, round.identity.secret), verify: schnorrVerify,
       post: async (m) => { await Promise.all(networkSeats().map((u) => fetch(`${u}/founding`, { method: 'POST', body: JSON.stringify(m), signal: AbortSignal.timeout(15000) }).catch(() => null))); },
       peers: () => networkSeats(), fetchJson: async (u) => (await fetch(u, { signal: AbortSignal.timeout(15000) })).json(),
       endpointOf: (e) => addressBook.endpointOf(e),
@@ -11844,7 +11864,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       if (req.method === 'POST' && url.pathname === '/departure') {
         let d; try { d = readDepartureHex(Buffer.from(await read(req)).toString('utf8').trim()); } catch (e) { return text(res, 400, `a departure notice, its encoding and signature in hex: ${e.message}`); }
-        const r = absences.offerDeparture(d);
+        // its anchor, if it names one, read on this seat's chain first (kanban #2608): the height is the chain's, not the poster's
+        const r = await absences.offerAnchored(d);
         return r.ok ? json(res, r.kept ? 201 : 200, r) : text(res, 422, r.why);
       }
       // A CERTIFICATE HANDED OVER (§5A.7: "a node that sees two certificates for one round publishes both"): kept if it
