@@ -12,13 +12,14 @@ import { readFileSync } from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { signLiquiditySeating, standingLiquiditySeating, liquiditySeatingFrom } from '../../arena-protocol/src/liquidity-seating.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
+import { seatingEpochAt } from '../../arena-protocol/src/gateway-seating.js';
 
 const src = readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
 const from = src.indexOf('const gatherLiquidity = async () => {');
 const body = src.slice(from, src.indexOf('\n    };\n', from) + 7);
 const NAMES = ['chainTip', 'GATEWAY_EPOCH_BLOCKS', 'fedRecords', 'addressBook', 'toHex', 'round', 'liquiditySeatings', 'ownLiquiditySeatings', 'getJson',
   'checkGatewayClaim', 'checkLiquidityClaim', 'schnorrVerify', 'chainTxOut', 'provenFreeSats', 'messageCurve', 'liquiditySeatingFrom', 'liquiditySaid',
-  'signLiquiditySeating', 'standingLiquiditySeating', 'schnorr', 'keepSeating'];
+  'signLiquiditySeating', 'standingLiquiditySeating', 'schnorr', 'keepSeating', 'seatingEpochAt'];   // 2.0: the epoch comes from gateway-seating.js
 const makeGather = new Function(...NAMES, `${body}\nreturn gatherLiquidity;`);
 
 const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
@@ -42,7 +43,7 @@ test('a provider that answers on one pass and not the next cannot make two seats
   const fedRecords = { list: () => [{ federation: fid }], recordOf: () => ({ record: { threshold: 3 } }), seatedGuardians: () => guardians.map((g) => g.pubkey), censusNow: () => ({ ok: true, entries }) };
   for (const s of seats) s.pass = makeGather(async () => 144 * 1091 + 5, 144, fedRecords, { endpointOf: () => null }, toHex, { pubkey: s.g.pubkey, identity: { secret: s.g.secret } },
     s.standing, s.own, getJson, () => ({ ok: true }), () => ({ ok: true }), verify, undefined, null, null, liquiditySeatingFrom, () => {},
-    signLiquiditySeating, standingLiquiditySeating, schnorr, () => {});
+    signLiquiditySeating, standingLiquiditySeating, schnorr, () => {}, seatingEpochAt);
   const [A, B, C, D] = seats;
   // pass 1, both providers answer: A and B sign {P1, P2}; D signs it too and sees it stand (A, B, D) - D freezes it
   await A.pass(); await B.pass(); await D.pass();
