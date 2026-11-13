@@ -20,7 +20,7 @@ import { absenceHex, readAbsenceHex, departureHex, readDepartureHex, dueDepartur
 import { emergencyDepartureStands, emergencyDepartureEffect, emergencyDepartureId } from '../../arena-protocol/src/emergency.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { withConfigEndpoints } from './federation-endpoints.js';
-import { recordInviteSource } from '../../arena-protocol/src/trusted-guardian-keys.js';
+import { recordInviteSource, createInviteBuffer } from '../../arena-protocol/src/trusted-guardian-keys.js';
 import { readInvite } from './invite.js';
 import { buildFederationRecord, encodeFederationRecord, federationRecordId, joinSignedRecord, verifyFederationRecord, verifyFederationRecords,
   FEDERATION_STATUS, GONE, decodeFederationRecord, splitSignedRecord, guardianKeySet, RESTRICTION_RANK, selfConsistentRestrictive, thresholdOf } from '../../arena-protocol/src/federation-record.js';
@@ -63,6 +63,8 @@ export const CHAIN_BASIS_STEP = 6;
 
 /** How many census seats one mirror pass asks for a record none of its guardians' nodes holds. */
 export const MIRROR_PEERS = 8;
+// THE RECORDS OF ONE FEDERATION ONE PEER'S ANSWER BRINGS (kanban #2620, feedback #049): a seat serves a few (its kept, the one beside, the held one)
+export const MIRROR_ROWS_PER_ANSWER = 8;
 
 /** A mirror pass reads the chain's census (censusAt) at most this many heights per peer answer, and this many in all (kanban #1818).
  * "In all" is the whole gather pass, every federation of it (kanban #2339): one bonded seat listing K made-up federation ids in its
@@ -176,18 +178,21 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   // NOT FIRST COME (kanban #2618, feedback #047): the first 8 were kept for good, and eight strangers' junk invites noted first kept the seat
   // keyless. Each record's invite goes to the fetch with the node keys whose signatures over the record verify (recordInviteSource); the
   // fetch's book (trusted-guardian-keys.js) bounds them per signer, evicts an invite that fails the id check and asks this seat's own invite
-  // and the kept record's first. Here they wait only until the next keysFor hands them over (at most MIRROR_INVITES a federation)
-  const invitesSeen = new Map();             // fid -> Map(invite -> { invite, signers })
-  const MIRROR_INVITES = 64;
+  // and the kept record's first. Here they wait only until the next keysFor hands them over.
+  // UNDER THE BOOK'S RULES HERE TOO (kanban #2620, feedback #049): this wait was a first-come list of 64 - one stranger answering with 64
+  // single-signer fillers, each with its own junk invite, filled it before the genuine HALTED record was noted, and the genuine invite never
+  // reached the book. It is now the book's own buffer (createInviteBuffer: per signer, bounded, the most crowded signers' entry given up),
+  // and one peer's answer brings at most MIRROR_ROWS_PER_ANSWER records of a federation
+  const invitesSeen = new Map();             // fid -> createInviteBuffer()
   const inviteVerify = (sg, m, key) => { try { return schnorr.verify(sg, m, key); } catch { return false; } };
   function noteInvite(fid, bytes) {
     let inv = null; try { inv = decodeFederationRecord(splitSignedRecord(bytes).body).invite; } catch { inv = null; }
     if (typeof inv !== 'string' || !inv) return;
-    if (!invitesSeen.has(fid)) invitesSeen.set(fid, new Map());
+    if (!invitesSeen.has(fid)) invitesSeen.set(fid, createInviteBuffer());
     const m = invitesSeen.get(fid);
-    if (m.has(inv) || m.size >= MIRROR_INVITES) return;
+    if (m.has(inv)) return;
     const src = recordInviteSource(bytes, inviteVerify);
-    if (src) m.set(inv, src);
+    if (src) m.admit(src);
   }
   async function keysFor(fidHex) {
     const fid = String(fidHex).toLowerCase();
@@ -195,7 +200,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     const invites = [];
     try { const i = inviteFor(fid); if (i) invites.push(String(i)); } catch { /* none */ }
     { const k = kept.get(fid); if (k && k.record && k.record.invite) invites.push(String(k.record.invite)); }
-    invites.push(...(invitesSeen.get(fid) || new Map()).values());
+    { const m = invitesSeen.get(fid); if (m) invites.push(...m.take()); }
     invitesSeen.delete(fid);
     let k = null; try { k = await guardianKeysOf(fid, { invites }); } catch { k = null; }
     if (Array.isArray(k) && guardianKeySet(k)) { const first = !keysKnown.has(fid); keysKnown.set(fid, k); if (first) dropUnkeyed(fid, k); return k; }
@@ -675,7 +680,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
         // a pass. A record that does not stand against this seat's census goes to the chain only if it first stands against its own
         // guardian list (every signature and the threshold, bonds not: cheap, and junk with no signatures stops here), newest first, at
         // most MIRROR_CENSUS_PER_ANSWER heights from one answer and MIRROR_CENSUS_PER_PASS in the pass
-        const mine = (Array.isArray(j.federations) ? j.federations : []).filter((x) => x && String(x.federation).toLowerCase() === fid);
+        const mine = (Array.isArray(j.federations) ? j.federations : []).filter((x) => x && String(x.federation).toLowerCase() === fid).slice(0, MIRROR_ROWS_PER_ANSWER);
         const later = [];
         for (const x of mine) {
           let v; try { v = verifyFederationRecord(fromHex(String(x.record)), { census: b.census.entries, verify, inviteFederationId, guardianKeys: keys }); } catch (e) { v = { ok: false, why: e.message }; }
