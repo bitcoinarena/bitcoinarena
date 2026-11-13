@@ -178,14 +178,7 @@ export class Forfeit {
       const fl = this.round.feeLock ? this.round.feeLock(entryIdBytes) : null;
       if (!fl) return refuse('this signer node verified no fee lock for that entry, so it returns none');
       if (!cancelled && !this.#marketRefund(roundIdBytes, contract).ok) {
-        let back = await this.#feeBackWithStake(roundIdBytes, entryIdBytes, contract);
-        // AN ENTRY LEFT OUTSIDE THE SEATS GETS ITS FEE LOCK BACK WITH ITS STAKE (kanban #2430): a paying head-to-head entry that got no
-        // seat is signed VOID, its fee lock never claimed (lock-settlement.js), and its stake comes back at settlement (#1582) - so does
-        // its fee lock, on the same conditions read for this fee lock: no seat here, the settlement ACCEPTED here, the lock not among its claims
-        if (!back.ok && this.round.stakeLock(entryIdBytes)) {
-          const out = this.#outsideTheSeats(roundIdBytes, entryIdBytes, contract, fl);
-          if (out.ok) back = out;
-        }
+        const back = await this.#feeBackWithStake(roundIdBytes, entryIdBytes, contract);
         if (!back.ok)
           return refuse('a fee lock comes back at once only for a cancelled order or a refunded market (or with a protocol-27 entry\'s voided stake): '
             + `this one is claimed at resolution, or expires back to its player${back.why ? ` (${back.why})` : ''}`);
