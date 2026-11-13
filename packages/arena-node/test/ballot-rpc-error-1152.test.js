@@ -228,15 +228,17 @@ test('#1152 on two running seats: seat B never got the POST /proposal, and pulls
   const { openStore } = await import('../src/store.js');
   const { TEST_DONATION_SET_KEYS_REGTEST: KEYS } = await import('../../arena-protocol/src/test-donation-set-keys-regtest.js');
   const { NETWORK_ID_REGTEST } = await import('../../arena-protocol/src/genesis-ids.js');
-  const { depositOutputsExpected } = await import('../../arena-protocol/src/ballot-chain.js');
+  const { depositOutputsExpected, depositCommitmentScript } = await import('../../arena-protocol/src/ballot-chain.js');
   const { parseTransaction } = await import('../../arena-protocol/src/tx.js');
   const { configHashOf } = await import('../../arena-protocol/src/ballot.js');
   const le = (n, bytes) => Uint8Array.from({ length: bytes }, (_, i) => Number((BigInt(n) >> BigInt(8 * i)) & 0xffn));
   const tx = (outs) => Uint8Array.from([...le(2, 4), 1, ...new Uint8Array(32).fill(7), ...le(0, 4), 0, ...le(0xffffffff, 4),
     outs.length, ...outs.flatMap((o) => [...le(o.sats, 8), o.script.length, ...o.script]), ...le(0, 4)]);
-  const raw = tx(depositOutputsExpected(700, KEYS.recipients).outputs.map((o) => ({ sats: o.sats, script: o.script })));
-  const p = { networkId: NETWORK_ID_REGTEST, parent: BALLOT_GENESIS.configHash, configHash: configHashOf(Uint8Array.of(9)), config: Uint8Array.of(9),
-    class: CLASS.MONEY, activationHeight: 300 + 8, proposer: A.pubkey, depositTxid: Uint8Array.from(parseTransaction(raw).txid) };
+  // regtest is bound from 0 (kanban #2562): the deposit commits to its proposer and the proposal's bytes
+  const body = { networkId: NETWORK_ID_REGTEST, parent: BALLOT_GENESIS.configHash, configHash: configHashOf(Uint8Array.of(9)), config: Uint8Array.of(9),
+    class: CLASS.MONEY, activationHeight: 300 + 8, proposer: A.pubkey };
+  const raw = tx([...depositOutputsExpected(700, KEYS.recipients).outputs.map((o) => ({ sats: o.sats, script: o.script })), { sats: 0, script: depositCommitmentScript(body) }]);
+  const p = { ...body, depositTxid: Uint8Array.from(parseTransaction(raw).txid) };
   const hex = toHex(Uint8Array.from([...encodeConfigProposalBody(p), ...schnorr.sign(proposalBodyId(p), A.secret)]));
   const BLOCK = 'cc'.repeat(32), TXID = toHex(Uint8Array.from(p.depositTxid).reverse());
   // ONE CHAIN BOTH SEATS READ: the deposit is in BLOCK at 300

@@ -115,6 +115,24 @@ export const THRESHOLDS = Object.freeze({
 });
 export const VOTE_MARKER = Uint8Array.from([0x41, 0x52, 0x4e, 0x56]);     // "ARN" 'V'
 export const VOTE_BYTES = 4 + 8 + 1 + 64;                                  // 77, inside the 80-byte OP_RETURN limit
+/**
+ * THE BOUND VOTE (ruled 2026-11-12, kanban #2125, closes #1490 / #1734): the bond key signs H(proposal_id || choice || seq), seq
+ * a u32 (big-endian) the holder raises with each vote, and per bond the highest seq mined inside the voting phase counts. Its
+ * payload: "ARN" 'V', proposal_id[0:7], choice, seq, signature - 80 bytes, the OP_RETURN limit. A choice made here, named: the
+ * id prefix gives up its eighth byte so the u32 fits (the prefix only finds the proposal; the signature covers the whole id).
+ * The two formats are told apart by length; which one a proposal reads is fixed by its publication height (BALLOT_BIND_HEIGHT).
+ */
+export const VOTE_BOUND_PREFIX = 7;
+export const VOTE_BOUND_BYTES = 4 + VOTE_BOUND_PREFIX + 1 + 4 + 64;        // 80
+/**
+ * THE GATE OF THE BINDING (ruled 2026-11-12, #2125 votes + deposits, #2012 the chain check): a proposal whose deposit confirmed at
+ * or above its network's height is read bound - its deposit must commit to its proposer and bytes (ballot-chain.js depositOf), its
+ * votes are the 80-byte seq votes; below it, the old reading byte for byte (77-byte votes, last by height, the #1608 tip check).
+ * regtest from 0, mainnet from its first block, testnet4 at the roll after 2026-11-12 (tip then ~160 925): 161 400.
+ */
+export const BALLOT_BIND_HEIGHT = Object.freeze({ regtest: 0, testnet4: 161400, mainnet: 0 });
+/** The gate of a network by name ('regtest' | 'testnet4'); any other network is read as mainnet (bound from its first block). */
+export const ballotBindHeight = (network) => (Object.prototype.hasOwnProperty.call(BALLOT_BIND_HEIGHT, network) ? BALLOT_BIND_HEIGHT[network] : BALLOT_BIND_HEIGHT.mainnet);
 
 /**
  * THE HASH A CONFIG IS NAMED BY (§27A.7.1): "config_hash = H(canonical(game_config))" - the tagged hash of the config's bytes,
@@ -153,6 +171,12 @@ export function decodeConfigProposalBody(bytes) {
   return p;
 }
 export const proposalBodyId = (p) => taggedHash(TAG.configProposalBody, encodeConfigProposalBody(p));
+/**
+ * WHAT A BOUND DEPOSIT COMMITS TO (ruled #2125 / #2012): "H(proposal bytes)" - the body with its deposit_txid zeroed, since the
+ * txid hashes this commitment and cannot be inside it (nor can the signature, which signs the txid). It pins the network, parent,
+ * config, class, activation and proposer at the deposit's confirmation.
+ */
+export const proposalCommitment = (p) => taggedHash(TAG.configProposalCommit, encodeConfigProposalBody({ ...p, depositTxid: new Uint8Array(32) }));
 /** proposal_id = H(canonical(config_proposal)): the body and the proposer's signature together. */
 export function proposalId(p) {
   if (!(p.signature instanceof Uint8Array) || p.signature.length !== 64) throw new Error('a proposal carries its proposer\'s 64-byte signature');
@@ -196,22 +220,99 @@ export function proposalStands(p, { publishedAt, depositSats, lowestBondMinSats,
   return { ok: true, id: proposalId(p), class: className(p.class), repeal, votingFrom: publishedAt + s.review, votingUntil, activationHeight: p.activationHeight };
 }
 
-/** What a bond key signs to vote: H(proposal_id || choice). */
-export const voteMessage = (id, choice) => taggedHash(TAG.vote, Uint8Array.from([...id, choice]));
-/** THE OP_RETURN PAYLOAD (§27A.7.3): "ARN" 'V', proposal_id[0:8], choice, the bond key's signature - 77 bytes. */
-export function encodeVote({ proposalId: id, choice, signature }) {
+const u32be = (n) => Uint8Array.from([(n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff]);
+const isSeq = (n) => Number.isInteger(n) && n >= 0 && n <= 0xffffffff;
+/** What a bond key signs to vote: H(proposal_id || choice), and for a bound vote (`seq` given) H(proposal_id || choice || seq). */
+export const voteMessage = (id, choice, seq = null) => (seq === null || seq === undefined
+  ? taggedHash(TAG.vote, Uint8Array.from([...id, choice]))
+  : taggedHash(TAG.vote, Uint8Array.from([...id, choice, ...u32be(seq)])));
+/**
+ * THE OP_RETURN PAYLOAD (§27A.7.3): "ARN" 'V', proposal_id[0:8], choice, the bond key's signature - 77 bytes; with `seq`, the
+ * bound vote: "ARN" 'V', proposal_id[0:7], choice, seq, signature - 80 bytes.
+ */
+export function encodeVote({ proposalId: id, choice, signature, seq = null }) {
   if (!isVoteBytes32(id)) throw new Error('a vote names a 32-byte proposal id');
   if (!Object.values(CHOICE).includes(choice)) throw new Error('a vote is YES, NO or ABSTAIN');
   if (!(signature instanceof Uint8Array) || signature.length !== 64) throw new Error('a vote carries a 64-byte signature');
+  if (seq !== null && seq !== undefined) {
+    if (!isSeq(seq)) throw new Error('a bound vote\'s seq is a u32');
+    const out = new Uint8Array(VOTE_BOUND_BYTES);
+    out.set(VOTE_MARKER, 0); out.set(id.subarray(0, VOTE_BOUND_PREFIX), 4); out[11] = choice; out.set(u32be(seq), 12); out.set(signature, 16);
+    return out;
+  }
   const out = new Uint8Array(VOTE_BYTES);
   out.set(VOTE_MARKER, 0); out.set(id.subarray(0, 8), 4); out[12] = choice; out.set(signature, 13);
   return out;
 }
+/** Either format: { idPrefix, choice, signature, seq, bound } - `seq` null and `bound` false for the 77-byte vote - or null. */
 export function decodeVote(payload) {
-  if (!(payload instanceof Uint8Array) || payload.length !== VOTE_BYTES) return null;
+  if (!(payload instanceof Uint8Array) || (payload.length !== VOTE_BYTES && payload.length !== VOTE_BOUND_BYTES)) return null;
   if (VOTE_MARKER.some((b, i) => payload[i] !== b)) return null;
+  if (payload.length === VOTE_BOUND_BYTES) {
+    if (!Object.values(CHOICE).includes(payload[11])) return null;
+    const seq = ((payload[12] << 24) | (payload[13] << 16) | (payload[14] << 8) | payload[15]) >>> 0;
+    return { idPrefix: payload.slice(4, 11), choice: payload[11], seq, signature: payload.slice(16), bound: true };
+  }
   if (!Object.values(CHOICE).includes(payload[12])) return null;
-  return { idPrefix: payload.slice(4, 12), choice: payload[12], signature: payload.slice(13) };
+  return { idPrefix: payload.slice(4, 12), choice: payload[12], signature: payload.slice(13), seq: null, bound: false };
+}
+
+/**
+ * EACH BOND'S VOTE UNDER THE BINDING (ruled 2026-11-12, kanban #2125; closes #1490 / #1734): only 80-byte seq votes, inside
+ * [from, until), each counting for every census bond whose key verifies it under H(proposal_id || choice || seq). Per bond outpoint
+ * the HIGHEST seq wins, whatever block it lands in - so neither a copy of old bytes nor a YES replaced by RBF and mined later by a
+ * stranger beats the holder's later vote with a higher seq. Two votes with the one highest seq and different choices: the bond
+ * counts as ABSTAIN (it signed both). Answers outpoint -> { choice, seq, height, txid, weight }; height / txid are of the first
+ * such vote by (height, txid). Shared by the ballot's tally and the funding count (funding.js).
+ */
+export function boundVotes({ proposalId: id, census, votes, from, until, verify, weightOf }) {
+  const prefix = toHex(id.subarray(0, VOTE_BOUND_PREFIX));
+  const best = new Map();                            // outpoint -> { seq, choice, conflicted, height, txid, weight }
+  for (const v of votes || []) {
+    if (!(v?.payload instanceof Uint8Array)) continue;
+    const d = decodeVote(v.payload);
+    if (!d || !d.bound || toHex(d.idPrefix) !== prefix) continue;
+    if (!(v.height >= from && v.height < until)) continue;
+    const msg = voteMessage(id, d.choice, d.seq);
+    for (const b of census || []) {
+      let good = false; try { good = !!verify(d.signature, msg, b.pubkey); } catch { good = false; }
+      if (!good) continue;
+      const had = best.get(b.outpoint);
+      if (!had || d.seq > had.seq) { best.set(b.outpoint, { seq: d.seq, choice: d.choice, conflicted: false, height: v.height, txid: v.txid, weight: weightOf(b) }); continue; }
+      if (d.seq < had.seq) continue;
+      if (d.choice !== had.choice) had.conflicted = true;
+      if (v.height < had.height || (v.height === had.height && String(v.txid) < String(had.txid))) { had.height = v.height; had.txid = v.txid; }
+    }
+  }
+  const out = new Map();
+  for (const [k, x] of best) out.set(k, { choice: x.conflicted ? CHOICE.ABSTAIN : x.choice, seq: x.seq, height: x.height, txid: x.txid, weight: x.weight });
+  return out;
+}
+
+/** The old reading (below BALLOT_BIND_HEIGHT), byte for byte: 77-byte votes, per bond the last by height, a replayed copy once. */
+function oldLatest({ id, census, votes, standing, verify }) {
+  const prefix = toHex(id.subarray(0, 8));
+  const first = new Map();                           // payload hex -> the occurrence of those bytes that ranks lowest
+  for (const v of votes || []) {
+    if (!(v?.payload instanceof Uint8Array)) continue;
+    const k = toHex(v.payload), had = first.get(k);
+    if (!had || v.height < had.height || (v.height === had.height && String(v.txid) > String(had.txid))) first.set(k, v);
+  }
+  const latest = new Map();                          // outpoint -> { choice, height, txid, weight }
+  for (const v of first.values()) {
+    const d = decodeVote(v.payload);
+    if (!d || d.bound || toHex(d.idPrefix) !== prefix) continue;     // the old reading: 77-byte votes only, as before
+    if (v.height < standing.votingFrom || v.height >= standing.votingUntil) continue;
+    const msg = voteMessage(id, d.choice);
+    for (const b of census || []) {
+      let good = false; try { good = !!verify(d.signature, msg, b.pubkey); } catch { good = false; }
+      if (!good) continue;
+      const had = latest.get(b.outpoint);
+      const later = !had || v.height > had.height || (v.height === had.height && String(v.txid) < String(had.txid));
+      if (later) latest.set(b.outpoint, { choice: d.choice, height: v.height, txid: v.txid, weight: BigInt(b.bondSats) });
+    }
+  }
+  return latest;
 }
 
 /**
@@ -239,7 +340,7 @@ export function lastVotes({ proposalId: id, census, votes, from, until, verify, 
   const latest = new Map();                          // outpoint -> { choice, height, txid, weight }
   for (const v of first.values()) {
     const d = decodeVote(v.payload);
-    if (!d || toHex(d.idPrefix) !== prefix) continue;
+    if (!d || d.bound || toHex(d.idPrefix) !== prefix) continue;    // the old reading: 77-byte votes only (bound ones: boundVotes)
     if (!(v.height >= from && v.height < until)) continue;
     const msg = voteMessage(id, d.choice);
     for (const b of census || []) {
@@ -262,13 +363,17 @@ export function lastVotes({ proposalId: id, census, votes, from, until, verify, 
  * A replayed vote counts once, at its first occurrence (kanban #1489): see lastVotes. The vote bytes and their signature are
  * unchanged; a bond that changes its mind signs anew (BIP-340 with fresh aux randomness gives new bytes).
  */
-export function tally({ proposal, standing, census: all, votes, verify, ageBlocks = null }) {
+export function tally({ proposal, standing, census: all, votes, verify, ageBlocks = null, bound = false }) {
+  const id = standing.id;
   // A MONEY VOTE COUNTS ONLY BONDS OF RULE 1'S AGE (kanban #1335): at least `ageBlocks` old at the proposal's publication, so rented capital
   // does not set the fee - for the votes and for "all eligible capital" alike. A bond with no height is not counted.
   const aged = THRESHOLDS[proposal.class] && THRESHOLDS[proposal.class].minAge && Number.isInteger(ageBlocks) && Number.isInteger(standing.publishedAt);
   const census = aged ? (all || []).filter((b) => Number.isInteger(b.height) && b.height <= standing.publishedAt - ageBlocks) : all;
-  const latest = lastVotes({ proposalId: standing.id, census, votes, from: standing.votingFrom, until: standing.votingUntil, verify,
-    weightOf: (b) => BigInt(b.bondSats) });
+  // `bound` (kanban #2125/#2562): the proposal is read under the binding (its deposit at or above BALLOT_BIND_HEIGHT): highest seq wins;
+  // below it the last vote by height with the replay guard (lastVotes, kanban #1489 / #1734)
+  const latest = bound
+    ? boundVotes({ proposalId: id, census, votes, from: standing.votingFrom, until: standing.votingUntil, verify, weightOf: (b) => BigInt(b.bondSats) })
+    : lastVotes({ proposalId: id, census, votes, from: standing.votingFrom, until: standing.votingUntil, verify, weightOf: (b) => BigInt(b.bondSats) });
   const total = (census || []).reduce((a, b) => a + BigInt(b.bondSats), 0n);
   let yes = 0n, no = 0n, abstain = 0n;
   for (const x of latest.values()) { if (x.choice === CHOICE.YES) yes += x.weight; else if (x.choice === CHOICE.NO) no += x.weight; else abstain += x.weight; }

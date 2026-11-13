@@ -40,6 +40,10 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
  * refused (kanban #1608).
  * `blockHashAt(height)` -> this seat's block hash at that height, null above the tip (throws: no answer): given (here, or to
  * recheck by the tally), a kept record's proposer is judged only on the branch its publication block is on (kanban #2032).
+ * `bindHeightFor(net)` -> the network's BALLOT_BIND_HEIGHT (ballot.js; none given: never bound, the old reading): a proposal whose
+ * deposit confirmed at or above it is BOUND (ruled 2026-11-12, kanban #2125 / #2012) - its deposit must commit to its proposer
+ * and bytes (ballot-chain.js depositOf), it is taken at any time (the commitment, not this seat's tip, fixes it before its voting),
+ * and the tally reads its votes by seq (`bound(record)`).
  */
 export const PROPOSAL_STATE = Object.freeze({ COUNTING: 'COUNTING', PASSED: 'PASSED', FAILED: 'FAILED', ORPHANED: 'ORPHANED' });
 const S = PROPOSAL_STATE;
@@ -50,8 +54,14 @@ const MOVES = Object.freeze({ [S.COUNTING]: [S.PASSED, S.FAILED, S.ORPHANED], [S
 export const stateOf = (r) => (r && S[r.state] ? r.state : r && r.orphaned ? S.ORPHANED : r && r.decided ? (r.decided.passed ? S.PASSED : S.FAILED) : S.COUNTING);
 
 export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsFor, verify, store, schedule = SCHEDULES.mainnet, scheduleFor = null,
-  repealSchedule = REPEAL_SCHEDULES.mainnet, repealScheduleFor = null, historyFor = null, exampleCheck = null, depthHeightFor = null, minDecideDepthFor = null, censusAt = null, tipHeight = null, blockHashAt = null }) {
+  repealSchedule = REPEAL_SCHEDULES.mainnet, repealScheduleFor = null, historyFor = null, exampleCheck = null, depthHeightFor = null, minDecideDepthFor = null, censusAt = null, tipHeight = null, bindHeightFor = null, blockHashAt = null }) {
   let tipOf = typeof tipHeight === 'function' ? tipHeight : null;
+  /** BOUND: deposited at or above its network's BALLOT_BIND_HEIGHT (kanban #2125); below it, or with no gate given, the old reading. */
+  const isBound = (net, height) => {
+    if (typeof bindHeightFor !== 'function') return false;
+    const gate = Number(bindHeightFor(net));
+    return Number.isFinite(gate) && Number.isInteger(height) && height >= gate;
+  };
   const held = new Map((store && store.read ? store.read() || [] : []).map((x) => [x.id, { ...x, state: stateOf(x) }]));
   // EVERY KEPT RECORD IS HELD TO THE CENSUS AGAIN ON LOAD (kanban #1670, after #1489): a record a seat kept on a build without the
   // proposer check (a never-bonded key, a 1-sat deposit) would otherwise stay COUNTING - served and tallied - or PASSED after the
@@ -194,7 +204,8 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
       // the network's donation set IN FORCE AT THE DEPOSIT'S HEIGHT (27A.4): the set the deposit had to pay
       const recipients = recipientsFor(net, tx.height);
       if (!recipients) return { ok: false, status: 422, why: `this seat knows no donation set in force for that network at height ${tx.height}` };
-      const dep = depositOf({ raw: tx.raw, height: tx.height, proposal: p, recipients });
+      const bound = isBound(net, tx.height);
+      const dep = depositOf({ raw: tx.raw, height: tx.height, proposal: p, recipients, bound });
       if (!dep.ok) return { ok: false, status: 422, why: dep.why };
       // THE HISTORY A REPEAL IS READ AGAINST: the configs live before, at the height it was published at (27A.7.6)
       const history = historyFor ? historyFor(net, dep.publishedAt, p.class) : null;
@@ -211,7 +222,12 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
       // and activation - counted on his own vote, and live retroactively under rounds this seat served. Taken only while this
       // seat's tip is below its first voting block (a review-0 repeal, whose voting starts at its own block: at that block).
       // Mainnet's review is 1008 blocks, time enough for every seat to hear of it (POST or the peer pull). A tip not read is a 503.
-      if (tipOf) {
+      // BOUND (ruling #2012 (c)): the deposit commits to these bytes and confirmed at the publication height - before the first
+      // voting block (votingFrom >= publishedAt: a repeal's review 0 votes from that very block) - so the chain, not this seat's
+      // tip, says it was there in time: a late pull is as good as an early POST, and every seat that hears of it takes it.
+      if (bound) {
+        if (!(dep.publishedAt <= stands.votingFrom)) return { ok: false, status: 422, why: `its deposit confirmed at ${dep.publishedAt}, after its first voting block ${stands.votingFrom}` };
+      } else if (tipOf) {
         let tip = NaN;
         try { tip = Number(await tipOf()); } catch { tip = NaN; }
         if (!Number.isFinite(tip)) return { ok: false, status: 503, why: 'this seat could not read its tip: ask again shortly' };
@@ -259,6 +275,8 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
       return { ok: true, status: 201, ...kept };
     },
     list: () => [...held.values()].sort((a, b) => b.publishedAt - a.publishedAt),
+    /** Is a kept record read bound (kanban #2125): its votes by seq. From its network's gate and its publication height, never the store's word. */
+    bound: (r) => !!r && isBound(r.networkId, Number(r.publishedAt)),
     counts,
     /** THE TIP add() reads (kanban #1608), handed by the tally when none was given here. */
     useTip(fn) { if (!tipOf && typeof fn === 'function') tipOf = fn; },
