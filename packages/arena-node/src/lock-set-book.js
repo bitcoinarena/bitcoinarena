@@ -62,7 +62,7 @@ export class LockSetBook {
   #room(ridHex) {
     let r = this.rooms.get(ridHex);
     if (!r) {
-      r = { views: new Map(), sigs: new Map(), cert: null, pulledAt: new Map(), pulling: new Map(), pushed: new Set() };
+      r = { views: new Map(), sigs: new Map(), cert: null, pulledAt: new Map(), pulling: new Map(), pushed: new Set(), answeredAt: new Map() };
       this.rooms.set(ridHex, r);
       if (this.rooms.size > 512) this.rooms.delete(this.rooms.keys().next().value);
     }
@@ -156,7 +156,11 @@ export class LockSetBook {
       // A SECOND CERTIFICATE OVER ANOTHER SET (kanban #2585): kept as the round's conflict - see conflicted()
       else if (st.ok && st.setId !== held.setId) this.#conflict(rid, bytes);
     }
+    const before = this.certified(rid), wasConflicted = this.conflicted(rid);
     this.#assemble(rid, c, committee, threshold);
+    // A CERTIFICATE OR CONFLICT MADE HERE TRAVELS (feedback #035): step() returns at once once certified, so one assembled in take() was
+    // never pushed and the conflict reached the other side only by a pull
+    if ((!before && this.certified(rid)) || (!wasConflicted && this.conflicted(rid))) { try { this.#push(rid, this.peersOf(rid) || [], this.#room(toHex(rid))); } catch { /* best effort */ } }
     return { ok: true, ...got };
   }
 
@@ -212,13 +216,17 @@ export class LockSetBook {
     if (!cert) return this.voidNow(rid, c) ? 'that round has no certified lock set and its window has closed: it is VOID, every lock goes back at once (kanban #2561)' : null;
     if (cert.entries.includes(String(entryIdHex).toLowerCase())) return null;
     if (this.#now() <= Number(c.entryCloseMs) + LOCK_SET_WINDOW_MS + LOCK_SET_RETURN_AFTER_MS) return null;
-    const k = toHex(rid);
-    if (!this.returnPulls.has(k)) {
-      this.returnPulls.set(k, this.pull(rid).catch(() => {}));
-      if (this.returnPulls.size > 4096) this.returnPulls.delete(this.returnPulls.keys().next().value);
-    }
-    await this.returnPulls.get(k);
+    // NOT ON ONE MISSED PULL (feedback #035): the pull before a return was made once per round and its misses swallowed, so a peer that
+    // held the contesting certificate and missed that one GET let the lock go back for good. Now the peers that have not answered since
+    // the window closed (+ 2 s of gossip) are asked again on each call (one pull per peer in flight), and the lock goes back only
+    // once enough of them answered that no other threshold can exist without one of them: n - t peers (with this seat, n - t + 1).
+    const room = this.#room(toHex(rid)), since = Number(c.entryCloseMs) + LOCK_SET_WINDOW_MS + 2000;
+    const peers = this.peersOf(rid) || [];
+    const fresh = (p) => (room.answeredAt.get(String(p)) || 0) >= since;
+    await Promise.all(peers.filter((p) => !fresh(p)).map((p) => this.#pullOne(rid, p, room).catch(() => {})));   // one pull per peer at a time (#pullOne)
     if (this.conflicted(rid)) return null;
+    const committee = this.#committee(rid), need = committee.length - this.#threshold(committee);
+    if (peers.filter(fresh).length < need) return null;
     return 'that lock is not in the round\'s certified lock set: it is not in the round and goes back at once (kanban #2561)';
   }
 
@@ -291,6 +299,7 @@ export class LockSetBook {
         const text = await r.text();
         if (text.length > 262144) return;
         this.take(rid, JSON.parse(text));
+        room.answeredAt.set(k, this.#now());   // feedback #035: this peer answered (its certificate, if any, is taken)
       } catch { /* a peer that is down or slow says nothing */ }
     })().finally(() => { room.pulling.delete(k); room.pulledAt.set(k, Date.now()); });
     room.pulling.set(k, go);
