@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>Feedback review &middot; Bounty Season 1</title>
+<title>Feedback review &middot; Bug bounty by week</title>
 <!-- kanban #1342 section 4: the owner's review list of player feedback. Every call carries the admin code (x-arena-admin), checked by the faucet
      against its hash; the code is kept in this browser only. A player's words are a stranger's text: only ever set with textContent. -->
 <style>
@@ -42,7 +42,7 @@
 <!-- ONE HEADER FOR EVERY PAGE (kanban #1457, Daniel 2026-11-11: "Der Header muss überall gleich aussehen"): the start page's header, drawn by site-chrome.js -->
 <script src="https://testnet.bitcoinarena.io/site-chrome.js" data-foot="none"></script>
 <main>
-  <h1>Feedback review &middot; Bounty Season 1</h1>
+  <h1>Feedback review &middot; Bug bounty by week</h1>
   <p class="sub" data-payouts>Player reports, the reward rules and the payouts. Nothing is paid without an approval here.</p>
 
   <div class="panel" id="login">
@@ -63,6 +63,8 @@
         <select id="f-state"><option value="">every state</option><option>new</option><option>accepted</option><option>rejected</option><option>duplicate</option><option>paid</option></select>
         <select id="f-type"><option value="">every category</option><option>bug</option><option>improvement</option></select>
         <select id="f-source"><option value="">frontend and node</option><option value="frontend">frontend</option><option value="node">node</option></select>
+        <select id="f-week" aria-label="Week"><option value="">every week</option><option value="1">Week 1</option><option value="2">Week 2</option></select>
+        <label class="dim"><input type="checkbox" id="f-showweek"> show week</label>
         <input id="f-game" placeholder="game" size="14"><input id="f-key" placeholder="player key (hex)" size="20">
         <button id="reload">Show</button><button id="csv">Export CSV</button><button id="logout">Forget code</button>
       </div>
@@ -79,6 +81,17 @@
   let LEVELS = [];
   const $ = (id) => document.getElementById(id);
   const el = (tag, props = {}, ...kids) => { const e = document.createElement(tag); for (const [k, v] of Object.entries(props)) { if (k === 'text') e.textContent = v; else if (k === 'cls') e.className = v; else e.setAttribute(k, v); } for (const c of kids) if (c) e.append(c); return e; };
+  /* WEEK-OF */
+  // THE WEEK OF A REPORT (kanban #2639): Week 2 when the season file lists it (approved or waiting), or it came at or after the end of Week 1 and is
+  // still new; every other report is Week 1
+  function weekOf(r, listed, s1EndMs) {
+    if (listed && listed.has(r.id)) return 2;
+    if (Number.isFinite(s1EndMs) && r.state === 'new' && Number(r.receivedMs) >= s1EndMs) return 2;
+    return 1;
+  }
+  /* /WEEK-OF */
+  let WEEK2 = new Set(), S1_END = null;
+  try { $('f-showweek').checked = localStorage.getItem('arena.feedback.admin.showweek') === '1'; } catch { /* off */ }
   const sats = (n) => `${Number(n || 0).toLocaleString('en')} sat`;
   const when = (ms) => (ms ? new Date(ms).toISOString().slice(0, 16).replace('T', ' ') : '');
   let code = ''; try { code = localStorage.getItem('arena.feedback.admin') || ''; } catch { code = ''; }
@@ -104,8 +117,8 @@
     // Woche. Es muss deckungsgleich sein"): the week's figure counts every approval of the last 7 days - with this week's whole history it equals
     // "approved in all". The critical and node part is named under it: by the rule it never blocks another approval (outside the budget)
     const weekAll = Number(b.weekPaidSats ?? b.weekApprovedSats ?? 0);   // paid this week (Daniel 2026-11-12: "Das ist was diese Woche ausgezahlt wurde")
-    s.append(stat('paid this week', `${sats(weekAll)} of ${sats(b.weeklyBudgetSats)}`),
-      stat('approved in Season 1', sats(b.allApprovedSats)), stat('paid in Season 1', sats(b.paidSats)),
+    s.append(stat('paid in the last 7 days', `${sats(weekAll)} of ${sats(b.weeklyBudgetSats)}`),
+      stat('approved, all weeks', sats(b.allApprovedSats)), stat('paid, all weeks', sats(b.paidSats)),
       stat('links not yet claimed', `${b.openRewards.n} · ${sats(b.openRewards.s)}`),
       // kanban #2287: links being paid on their own line (void links are in neither)
       ...(b.payingRewards && b.payingRewards.n ? [stat('links being paid', `${b.payingRewards.n} · ${sats(b.payingRewards.s)}`)] : []), stat('new reports', String((b.counts && b.counts.new) || 0)));
@@ -121,8 +134,16 @@
     let j; try { j = await call(`list?${q}`); } catch (e) { return fail(e.message); }
     if (!j.ok) return fail(j.why || 'not read');
     show(true); budget(j.budget); if (Array.isArray(j.levels)) LEVELS = j.levels;
+    // WHICH REPORTS ARE WEEK 2 (kanban #2639): the season file's approvals, waiting included, and the end of Week 1; read with the list
+    try { const w = await call('season'); if (w && w.ok) { WEEK2 = new Set([...(w.approvals || []), ...(w.waiting || [])].map((a) => a.report)); S1_END = Number.isFinite(w.s1EndMs) ? w.s1EndMs : null; } }
+    catch { WEEK2 = new Set(j.reports.filter((r) => r.season2 && r.season2.approval).map((r) => r.id)); }
+    const wantWeek = Number($('f-week').value) || 0, showWeek = $('f-showweek').checked;
     const tb = $('rows'); tb.replaceChildren();
+    let shown = 0;
     for (const r of j.reports) {
+      const wk = weekOf(r, WEEK2, S1_END);
+      if (wantWeek && wk !== wantWeek) continue;
+      shown++;
       const who = el('td', {}, el('code', { text: `${r.pubkey.slice(0, 12)}…` }), el('div', { cls: r.ours ? 'warn' : r.played ? 'dim' : 'bad', text: r.ours ? 'ours' : r.played ? 'has played before' : 'never finished a round' }),
         // HOW MUCH AND WHAT (Daniel 2026-11-10: "wieviel runden der spieler gemacht hat und welche apps er genutzt hat")
         r.rounds && r.rounds.rounds ? el('div', { cls: 'dim', text: `${r.rounds.rounds} rounds · ${r.rounds.games.map(([g, n]) => `${g} ${n}`).join(', ')}` }) : null);
@@ -131,16 +152,16 @@
       const nbFirst = r.nodeBounty && r.nodeBounty.first && r.state === 'new';
       const from = el('td', {}, el('span', { cls: `tag ${r.source === 'node' ? 's-accepted' : 's-new'}`, text: r.source === 'node' ? 'node' : 'frontend' }), r.node ? el('div', {}, el('code', { text: `${r.node.slice(0, 10)}…` })) : null,
         nbFirst ? el('div', {}, el('span', { cls: 'tag s-paid', text: `+${sats(r.nodeBounty.sats)} first node feedback` })) : null);
-      const tr = el('tr', { cls: 'pick' }, el('td', {}, el('b', { text: r.label || '' }), el('div', { cls: 'dim', text: when(r.receivedMs) })), from,
+      const tr = el('tr', { cls: 'pick' }, el('td', {}, el('b', { text: r.label || '' }), el('div', { cls: 'dim', text: when(r.receivedMs) }), showWeek ? el('div', {}, el('span', { cls: `tag ${wk === 2 ? 's-accepted' : 's-new'}`, text: `Week ${wk}` })) : null), from,
         // its number (kanban #1413) heads the first cell; CATEGORY AND STATE are their own cells (Daniel 2026-11-10: "The table is off" - a comment
         // written into this line hid both, so every later cell sat two columns left: the text under State, the player under Game)
         el('td', { text: r.type + (r.screenshot ? ' 🖼' : '') }), el('td', {}, el('span', { cls: `tag s-${r.state}`, text: r.state })),
         el('td', { cls: 'hide-s', text: r.game || '' }), el('td', { text: r.happened.length > 140 ? `${r.happened.slice(0, 140)}…` : r.happened }), who,
-        el('td', { text: r.reward ? `${sats(r.reward.amountSats)} · ${r.reward.state} · Season 1` : r.amountSats ? `${sats(r.amountSats)} approved · Season 1` : '' }));
+        el('td', { text: r.reward ? `${sats(r.reward.amountSats)} · ${r.reward.state} · Week ${wk}` : r.amountSats ? `${sats(r.amountSats)} approved · Week ${wk}` : '' }));
       tr.addEventListener('click', () => open(r.id));
       tb.append(tr);
     }
-    say(`${j.reports.length} report${j.reports.length === 1 ? '' : 's'}`);
+    say(`${shown} report${shown === 1 ? '' : 's'}${wantWeek ? ` in Week ${wantWeek}` : ''}`);
   }
   async function open(id) {
     let j; try { j = await call(`report/${id}`); } catch (e) { return say(e.message, true); }
@@ -183,7 +204,7 @@
       }, (e) => box.replaceChildren(el('h2', { text: 'Node bounty checklist' }), el('div', { cls: 'bad', text: e.message }))); }
     if (r.reason) d.append(el('div', { cls: 'bad', text: `Rejected: ${r.reason}` }));
     if (r.duplicateOf) d.append(el('div', { cls: 'dim', text: `Duplicate of ${r.duplicateOf.slice(0, 16)}…` }));
-    if (r.reward) d.append(el('div', {}, el('b', { text: `Season 1 reward ${sats(r.reward.amountSats)} (${r.reward.network}) · ${r.reward.state}${r.reward.address ? ` · to ${r.reward.address}` : ''}` }),
+    if (r.reward) d.append(el('div', {}, el('b', { text: `Week ${weekOf(r, WEEK2, S1_END)} reward ${sats(r.reward.amountSats)} (${r.reward.network}) · ${r.reward.state}${r.reward.address ? ` · to ${r.reward.address}` : ''}` }),
       r.reward.comment ? el('div', { cls: 'dim', text: `Comment: ${r.reward.comment}` }) : null, r.reward.why && r.reward.state !== 'paid' ? el('div', { cls: 'warn', text: r.reward.why }) : null,
       r.reward.lnurl ? el('div', {}, el('code', { text: r.reward.lnurl })) : null));
     const act = async (body, ok) => { let a; try { a = await call('act', { id: r.id, ...body }); } catch (e) { return say(e.message, true); } if (!a.ok) return say(a.why, true); say(ok); await load(); await open(r.id); };
@@ -227,6 +248,8 @@
   }
   $('enter').addEventListener('click', () => { code = $('code').value.trim(); try { localStorage.setItem('arena.feedback.admin', code); } catch { /* this tab only */ } load(); });
   $('reload').addEventListener('click', load);
+  $('f-week').addEventListener('change', load);
+  $('f-showweek').addEventListener('change', () => { try { localStorage.setItem('arena.feedback.admin.showweek', $('f-showweek').checked ? '1' : '0'); } catch { /* this visit */ } load(); });
   $('logout').addEventListener('click', () => { code = ''; try { localStorage.removeItem('arena.feedback.admin'); } catch { /* none */ } show(false); });
   $('csv').addEventListener('click', async () => { const r = await fetch(`${API}/export.csv`, { headers: { 'x-arena-admin': code } }); if (!r.ok) return say('not read', true);
     const a = el('a', { href: URL.createObjectURL(await r.blob()), download: 'arena-feedback.csv' }); document.body.append(a); a.click(); a.remove(); });

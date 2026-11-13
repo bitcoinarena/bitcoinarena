@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Bitcoin Arena: bug bounty, Season 1</title>
-<meta name="description" content="The rules of the Bitcoin Arena bug bounty, Season 1, and a public log of what was paid.">
-<meta property="og:title" content="Bitcoin Arena: bug bounty, Season 1">
-<meta property="og:description" content="The rules of the Bitcoin Arena bug bounty, Season 1, and a public log of what was paid.">
+<title>Bitcoin Arena: bug bounty, Week 1</title>
+<meta name="description" content="The rules of the Bitcoin Arena bug bounty, Week 1, and a public log of what was paid.">
+<meta property="og:title" content="Bitcoin Arena: bug bounty, Week 1">
+<meta property="og:description" content="The rules of the Bitcoin Arena bug bounty, Week 1, and a public log of what was paid.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://bitcoinarena.io/bounty/">
 <meta property="og:image" content="https://testnet.bitcoinarena.io/arena-og.png">
@@ -46,7 +46,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
 <!-- ONE HEADER FOR EVERY PAGE (kanban #1457, Daniel 2026-11-11: "Der Header muss überall gleich aussehen"): the start page's header, drawn by site-chrome.js -->
 <script src="https://testnet.bitcoinarena.io/site-chrome.js" data-foot="none"></script>
 <main>
-  <h1>Bug bounty &middot; Season 1</h1>
+  <h1>Bug bounty &middot; Week 1 (Nov 11-13)</h1>
   <p><b>Open since 2026-11-11.</b> Reports are paid over Lightning, and every payment is listed below.</p>
   <ul>
     <li><b>Bug bounty,</b> over Lightning, for confirmed bugs and useful reports - by severity:
@@ -66,26 +66,26 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
   <ul>
     <li><b>Checked first.</b> Each report is read on its ticket and marked valid or not, with a severity: critical, high, medium or low.</li>
     <li><b>Approved and paid by the project owner,</b> who answers for every payout. If the owner sets a different severity, that is written on the ticket.</li>
-    <li><b>No limit per person.</b> Every confirmed report is paid, however many one tester sends: in Season 1 one tester has 21 paid reports, another 15.</li>
-    <li><b>A weekly budget of 100,000 sats.</b> Paid so far in Season 1: <span id="s1-paid">88,500</span> sats, all in the first week.</li>
-    <script>/* #2623: the sum of the Season 1 rows of the live payout log the table below reads; the number above stays when it cannot be read */fetch('/api/faucet/feedback/paid-log').then(function (r) { if (!r.ok) throw 0; return r.json(); }).then(function (l) { var s = 0, n = 0; (Array.isArray(l) ? l : []).forEach(function (x) { if (x && x.season === 'Season 1' && Number.isFinite(Number(x.sats))) { s += Number(x.sats); n++; } }); if (n) document.getElementById('s1-paid').textContent = s.toLocaleString('en-US'); }).catch(function () {});</script>
-    <li><b>After the budget, Season 2.</b> When the Season 1 budget is used up, new reports move to Season 2 by themselves. Season 2 starts on Sunday, 15 November 2026. Its rules apply, and they may be announced later.</li>
-    <li><b>Follow-ups are paid less.</b> A new finding gets its tier. A report that finds a gap in the fix for an earlier report, or another variant of a bug that is already known, is a follow-up: it is fixed like any other report, but paid 1,000 sats, because it builds on the earlier finding and on the fix made for it. In Season 1 that was 15 reports (10 high, 5 medium) at 1,000 sats; the first report of the federation-record chain (#037, high) was paid 2,000 sats.</li>
-    <li><b>Paid in Season 1, by tier:</b> critical 10,000 (1 report), high 5,000 (8), medium 2,000 (7), low 1,000 (6), useful 500 (3), and the follow-ups above. Node bounty: none paid yet.</li>
+    <li><b>No limit per person.</b> Every confirmed report is paid, however many one tester sends: in Week 1 one tester has 21 paid reports, another 15.</li>
+    <li><b>A weekly budget of 100,000 sats.</b> Paid so far in Week 1 (Nov 11-13): <span id="s1-paid">88,500</span> sats.</li>
+    <script>/* #2623: the sum of the Week 1 rows of the live payout log the table below reads; the number above stays when it cannot be read */fetch('/api/faucet/feedback/paid-log').then(function (r) { if (!r.ok) throw 0; return r.json(); }).then(function (l) { var s = 0, n = 0; (Array.isArray(l) ? l : []).forEach(function (x) { if (x && (x.season === 'Season 1' || x.season === 'Week 1') && Number.isFinite(Number(x.sats))) { s += Number(x.sats); n++; } }); if (n) document.getElementById('s1-paid').textContent = s.toLocaleString('en-US'); }).catch(function () {});</script>
+    <li><b>Week 1 has ended.</b> Reports received since 13 November 2026, 20:37 UTC go to Week 2 by themselves. Week 2 starts on Sunday, 15 November 2026. Its rules apply, and they may be announced later.</li>
+    <li><b>Follow-ups are paid less.</b> A new finding gets its tier. A report that finds a gap in the fix for an earlier report, or another variant of a bug that is already known, is a follow-up: it is fixed like any other report, but paid 1,000 sats, because it builds on the earlier finding and on the fix made for it. In Week 1 that was 15 reports (10 high, 5 medium) at 1,000 sats; the first report of the federation-record chain (#037, high) was paid 2,000 sats.</li>
+    <li><b>Paid in Week 1, by tier:</b> critical 10,000 (1 report), high 5,000 (8), medium 2,000 (7), low 1,000 (6), useful 500 (3), and the follow-ups above. Node bounty: none paid yet.</li>
     <li><b>From one bounty wallet, over Lightning,</b> kept only for this. Every payout is listed below with its report.</li>
     <li>The network's reserves never pay a single report. They may top up the bounty wallet once a year, by a public proposal and vote.</li>
   </ul>
-  <h2 style="font-size:20px;margin:26px 0 0">Paid in Season 1</h2>
-  <table id="rows"><thead><tr><th>Season</th><th>Date</th><th>For</th><th>Channel</th><th>Sats</th></tr></thead><tbody></tbody></table>
+  <h2 style="font-size:20px;margin:26px 0 0">Paid in Week 1</h2>
+  <table id="rows"><thead><tr><th>Week</th><th>Date</th><th>For</th><th>Channel</th><th>Sats</th></tr></thead><tbody></tbody></table>
   <p id="sum" style="margin-top:14px"></p>
   <script>
   (function () {
     var body = document.querySelector('#rows tbody');
     fetch('/api/faucet/feedback/paid-log').then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); }).then(function (l) { if (!Array.isArray(l) || !l.length) throw new Error('empty'); return l; }).catch(function () { return fetch('log.json').then(function (r) { return r.ok ? r.json() : []; }).catch(function () { return []; }); }).then(function (list) {
       var total = 0, by = {};
-      list.forEach(function (p) { var tr = document.createElement('tr'); [p.season || 'Season 1', p.date, p.reason, p.channel, Number(p.sats).toLocaleString('en-US')].forEach(function (x) { var td = document.createElement('td'); td.textContent = x; tr.appendChild(td); }); body.appendChild(tr); total += Number(p.sats); by[p.channel] = (by[p.channel] || 0) + Number(p.sats); });
+      list.forEach(function (p) { var tr = document.createElement('tr'); [String(p.season || 'Season 1').replace(/^Season (\d+)$/, 'Week $1'), p.date, p.reason, p.channel, Number(p.sats).toLocaleString('en-US')].forEach(function (x) { var td = document.createElement('td'); td.textContent = x; tr.appendChild(td); }); body.appendChild(tr); total += Number(p.sats); by[p.channel] = (by[p.channel] || 0) + Number(p.sats); });
       if (!list.length) { var tr = document.createElement('tr'), td = document.createElement('td'); td.colSpan = 5; td.textContent = 'Nothing paid yet.'; tr.appendChild(td); body.appendChild(tr); }
-      else document.getElementById('sum').textContent = 'Season 1: ' + total.toLocaleString('en-US') + ' sats paid: ' + Object.keys(by).map(function (k) { return k + ' ' + by[k].toLocaleString('en-US'); }).join(', ');
+      else document.getElementById('sum').textContent = 'Week 1: ' + total.toLocaleString('en-US') + ' sats paid: ' + Object.keys(by).map(function (k) { return k + ' ' + by[k].toLocaleString('en-US'); }).join(', ');
     });
   })();
   </script>

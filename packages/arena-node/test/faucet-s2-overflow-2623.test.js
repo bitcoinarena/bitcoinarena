@@ -51,7 +51,7 @@ test('#2623 overflow: past the Season 1 budget a report waits for Season 2 and i
     const r3 = await report(key(3), 'A report the admin approves for Season 2 by hand before Season 2 has started at all');
 
     const before = await act({ action: 'approve', id: r3, severity: 'low', season2: true });
-    assert.equal(before.ok, false); assert.match(before.why, /Season 2 starts \d{4}-\d{2}-\d{2}/);
+    assert.equal(before.ok, false); assert.match(before.why, /Week 2 starts \d{4}-\d{2}-\d{2}/);
     const a1 = await act({ action: 'approve', id: r1, severity: 'medium', amountSats: 2000 });
     assert.equal(a1.ok, true); assert.equal(a1.report.amountSats, 2000); assert.equal(a1.season2, undefined, 'it fits: Season 1');
     const a2 = await act({ action: 'approve', id: r2, severity: 'medium', amountSats: 2000 });
@@ -59,7 +59,7 @@ test('#2623 overflow: past the Season 1 budget a report waits for Season 2 and i
     assert.equal(a2.season2.state, 'waiting');
     const r2now = await reportOf(r2);
     assert.equal(r2now.report.state, 'new', 'not approved under Season 1');
-    assert.ok(r2now.moves.some((m) => /Season 2/.test(m.note || '')), 'the ticket says it moved to Season 2');
+    assert.ok(r2now.moves.some((m) => /Week 2/.test(m.note || '')), 'the ticket says it moved to Season 2');
 
     for (let i = 0; i < 40 && Date.now() < startMs + 3000; i++) { const r = await reportOf(r2); if (r.report.state === 'accepted') break; await new Promise((x) => setTimeout(x, 300)); }
     const after = await reportOf(r2);

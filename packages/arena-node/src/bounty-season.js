@@ -198,13 +198,13 @@ export function openBountySeason(path = ':memory:', { startMs = null, potSats = 
   function plan(report, { level, codeOnly = false, followUp = false, nowMs = Date.now() } = {}) {
     if (!report || !report.id) return { ok: false, why: 'no such report' };
     const had = db.prepare('SELECT * FROM approvals WHERE report = ?').get(report.id);
-    if (had && had.state === 'approved') return { ok: false, why: 'that report has its Season 2 approval' };
+    if (had && had.state === 'approved') return { ok: false, why: 'that report has its Week 2 approval' };
     const flags = String(level).toLowerCase() === 'node' ? {} : flagsOf(report.pubkey, { nowMs });
     const p = seasonPayout({ level, codeOnly, followUp, flags });
     if (!p.ok) return p;
     const season = seasonNow(nowMs);
     const now = pot(season);
-    if (p.level === 'node' && now.nodes >= NODES_PER_SEASON) return { ok: false, why: `the node bounty is for the first ${NODES_PER_SEASON} nodes of a season: all are taken in Season ${season}` };
+    if (p.level === 'node' && now.nodes >= NODES_PER_SEASON) return { ok: false, why: `the node bounty is for the first ${NODES_PER_SEASON} nodes of a week: all are taken in Week ${season}` };
     const fits = p.sats <= now.leftSats;
     return { ok: true, fits, waits: !fits, season, flags, ...p, pot: now };
   }
@@ -232,7 +232,7 @@ export function openBountySeason(path = ':memory:', { startMs = null, potSats = 
    */
   function payable(id, { nowMs = Date.now() } = {}) {
     const a = approval(id);
-    if (!a || a.state !== 'approved') return { ok: false, why: 'no Season 2 approval for that report' };
+    if (!a || a.state !== 'approved') return { ok: false, why: 'no Week 2 approval for that report' };
     const p = seasonPayout({ level: a.level, codeOnly: a.codeOnly, followUp: a.followUp, flags: a.level === 'node' ? {} : flagsOf(a.pubkey, { nowMs }) });
     const sats = Math.min(p.sats, a.sats);
     db.prepare('UPDATE approvals SET payable_sats = ?, payable_ms = ? WHERE report = ?').run(sats, nowMs, a.report);
