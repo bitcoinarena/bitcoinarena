@@ -14255,5 +14255,316 @@
   "changesState": false,
   "needsAuth": "none",
   "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/owner/departure-anchor",
+  "params": "none",
+  "auth": "owner",
+  "returns": "200 JSON; 4xx with a reason",
+  "purpose": "Anchors a guardian's departure notice on chain: plan, fund from the node wallet, or follow an owner-sent txid (kanban #2610).",
+  "audience": "operator/monitoring",
+  "line": 9515,
+  "summary": "Departure notice anchor",
+  "query": [],
+  "body": "JSON { departure?, post?, txid?, sinceHeight? }",
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "Departure notice anchor"
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "owner",
+  "pathParams": [],
+  "openapiPath": "/owner/departure-anchor"
+ },
+ {
+  "method": "GET, POST",
+  "path": "/operator/fee-signal",
+  "params": "none",
+  "auth": "operator token",
+  "returns": "200 JSON; 4xx with a reason",
+  "purpose": "The operator UI's fee signal door (§27A.7.7), scoped bearer token paired through arena-operator: URI.",
+  "audience": "operator/monitoring",
+  "line": 9066,
+  "summary": "Operator fee signal",
+  "query": [],
+  "body": "JSON (POST)",
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "Operator fee signal"
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "operator token",
+  "pathParams": [],
+  "openapiPath": "/operator/fee-signal"
+ },
+ {
+  "method": "GET",
+  "path": "/lock-namer",
+  "params": "outpoint",
+  "auth": "none",
+  "returns": "200 JSON; 4xx with a reason",
+  "purpose": "The entry this seat took first naming a lock outpoint, with the player's claims it holds (kanban #1692, #1758, #1897).",
+  "audience": "seat",
+  "line": 11782,
+  "summary": "Lock namer",
+  "query": [
+   {
+    "name": "outpoint",
+    "required": true,
+    "description": "outpoint"
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "Lock namer"
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": [],
+  "openapiPath": "/lock-namer"
+ },
+ {
+  "method": "GET, POST",
+  "path": "/lock-claim",
+  "params": "entry",
+  "auth": "none",
+  "returns": "200 JSON; 4xx with a reason",
+  "purpose": "The player's BIP-340 claim on an entry's locks: POST keeps a checked claim, GET answers it (kanban #1897, #1938).",
+  "audience": "player/page",
+  "line": 11798,
+  "summary": "Lock claim",
+  "query": [
+   {
+    "name": "entry",
+    "required": true,
+    "description": "entry"
+   }
+  ],
+  "body": "64-byte signature (POST)",
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "Lock claim"
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "none",
+  "pathParams": [],
+  "openapiPath": "/lock-claim"
+ },
+ {
+  "method": "GET",
+  "path": "/batch-signatures",
+  "params": "round",
+  "auth": "none",
+  "returns": "200 JSON; 4xx with a reason",
+  "purpose": "Each batch's session-key signature in transcript order, zeros where the seat took it bare (kanban #1567, feedback #013).",
+  "audience": "player/page",
+  "line": 12010,
+  "summary": "Batch signatures",
+  "query": [
+   {
+    "name": "round",
+    "required": true,
+    "description": "round"
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "Batch signatures"
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": [],
+  "openapiPath": "/batch-signatures"
+ },
+ {
+  "method": "GET",
+  "path": "/send-refunds",
+  "params": "scope",
+  "auth": "none",
+  "returns": "200 JSON; 4xx with a reason",
+  "purpose": "The presigned refunds (c) of a protocol-27 settlement this seat holds for each send to a qualifier (kanban #1044 B1, ruling #1134).",
+  "audience": "player/page",
+  "line": 12885,
+  "summary": "Send refunds",
+  "query": [
+   {
+    "name": "scope",
+    "required": true,
+    "description": "scope"
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "Send refunds"
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": [],
+  "openapiPath": "/send-refunds"
+ },
+ {
+  "method": "GET",
+  "path": "/contribution-shares",
+  "params": "round",
+  "auth": "none",
+  "returns": "200 JSON; 4xx with a reason",
+  "purpose": "Each contribution agreement's share for a round at its census height, from this seat's book of counted rounds (§27A.4.2, kanban #1346).",
+  "audience": "player/page",
+  "line": 13518,
+  "summary": "Contribution shares",
+  "query": [
+   {
+    "name": "round",
+    "required": true,
+    "description": "round"
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "Contribution shares"
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": [],
+  "openapiPath": "/contribution-shares"
+ },
+ {
+  "method": "GET, POST",
+  "path": "/contribution-end",
+  "params": "none",
+  "auth": "signed",
+  "returns": "200 JSON; 4xx with a reason",
+  "purpose": "A contributor's leave or termination by the cold admin key: hex body and signature, kept once per kind; GET answers what is held (§27A.4.2).",
+  "audience": "player/page",
+  "line": 13559,
+  "summary": "Contribution end",
+  "query": [],
+  "body": "hex body || 64-byte signature (POST)",
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "Contribution end"
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "signed",
+  "pathParams": [],
+  "openapiPath": "/contribution-end"
+ },
+ {
+  "method": "POST",
+  "path": "/guardian-halt-observations",
+  "params": "none",
+  "auth": "signed",
+  "returns": "200 JSON; 4xx with a reason",
+  "purpose": "A guardian's own signed view in a halt, taken when the held record binds its signer to that guardian (kanban #1319).",
+  "audience": "seat",
+  "line": 14144,
+  "summary": "Guardian halt observations",
+  "query": [],
+  "body": "signed observation",
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "Guardian halt observations"
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "signed",
+  "pathParams": [],
+  "openapiPath": "/guardian-halt-observations"
+ },
+ {
+  "method": "POST",
+  "path": "/h2h-audit",
+  "params": "none",
+  "auth": "signed",
+  "returns": "200 JSON; 4xx with a reason",
+  "purpose": "A head-to-head audit: its bytes and the auditor's signature, taken once before the round's short window closed (§13A.1, kanban #1412).",
+  "audience": "seat",
+  "line": 14603,
+  "summary": "Head-to-head audit",
+  "query": [],
+  "body": "audit bytes + signature",
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "Head-to-head audit"
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "signed",
+  "pathParams": [],
+  "openapiPath": "/h2h-audit"
+ },
+ {
+  "method": "GET",
+  "path": "/h2h-audits",
+  "params": "round",
+  "auth": "none",
+  "returns": "200 JSON; 4xx with a reason",
+  "purpose": "The head-to-head audits this seat holds for a round (§13A.1, kanban #1412).",
+  "audience": "player/page",
+  "line": 14623,
+  "summary": "Head-to-head audits",
+  "query": [
+   {
+    "name": "round",
+    "required": true,
+    "description": "round"
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "Head-to-head audits"
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": [],
+  "openapiPath": "/h2h-audits"
  }
 ]
