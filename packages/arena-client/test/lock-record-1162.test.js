@@ -268,13 +268,18 @@ test('#1254 a lock named in an entry no seat took is let go of when every seat a
   // one seat did not answer: nothing can be ruled out, kept
   const silent = PL.releaseUntakenEntry(storage, { ...who, locks: answered([], 2, 1) });
   const before = PL.keptLockUse(PL.savedLock(storage, who), { entry: null, beforeStart: true, beforeClose: true }).use;
-  // every seat answered, none holds it: let go of, and the new tab uses the lock
-  const released = PL.releaseUntakenEntry(storage, { ...who, locks: answered([]) });
+  // every seat answered no lock, but a seat holds the entry itself (kanban #1839): kept - "no lock listed" is not "no entry took it"
+  const none = { entryId: toHex(entryA), asked: 2, answered: 2, heldBy: [] };
+  const entryHeld = PL.releaseUntakenEntry(storage, { ...who, locks: answered([]), entries: { ...none, heldBy: ['http://seat-1'] } });
+  const noEntryAnswer = PL.releaseUntakenEntry(storage, { ...who, locks: answered([]) });
+  assert.equal(entryHeld, false); assert.equal(noEntryAnswer, false);
+  // every seat answered, none holds the lock or the entry: let go of, and the new tab uses the lock
+  const released = PL.releaseUntakenEntry(storage, { ...who, locks: answered([]), entries: none });
   const after = PL.keptLockUse(PL.savedLock(storage, who), { entry: null, beforeStart: true, beforeClose: true }).use;
   console.log('  FACTS #1254:', JSON.stringify({ namedBySeat: named, oneSilent: silent, useBefore: before, released, useAfter: after }));
   assert.equal(named, false); assert.equal(silent, false); assert.equal(before, 'staked');
   assert.equal(released, true); assert.equal(after, 'reuse');
   // a committed lock is never let go of
   PL.bindLockEntry(storage, { ...who, entryId: entryA }); PL.markLockCommitted(storage, { ...who, entryId: entryA });
-  assert.equal(PL.releaseUntakenEntry(storage, { ...who, locks: answered([]) }), false);
+  assert.equal(PL.releaseUntakenEntry(storage, { ...who, locks: answered([]), entries: { entryId: toHex(entryA), asked: 2, answered: 2, heldBy: [] } }), false);
 });

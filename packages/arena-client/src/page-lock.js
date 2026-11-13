@@ -2107,11 +2107,18 @@ export function bindLockEntry(storage, { roundId, playerPubkey, entryId: eid }) 
  * failed (a seat 503, the round full, offline) left the lock "staked" in an entry no seat holds - a new tab, which has no copy of that entry, could never
  * use it again. `locks` is findLock's answer for this seed in the round: when every seat asked answered and none names the kept lock under the entry,
  * the entry is let go of (never one a seat committed to). Answers true when it was.
+ * AND NO SEAT HOLDS THE ENTRY ITSELF (kanban #1839, state audit 2026-11-12 sm3-entry-1): GET /stake-lock lists only VERIFIED locks, so an entry every
+ * seat took (201) whose /lock never landed (the tab reloaded first) read "none" - the lock was let go of, the next entry naming it was refused at every
+ * seat (a lock stakes the entry that named it first, #1489), and stake and fee backed nothing until expiry. `entries` is entryHeldAt's answer for the
+ * kept entry: the lock is let go of only when every seat asked answered and none holds that entry; without it, never. An entry a seat holds keeps the
+ * lock, and its stake comes back through the seats' unentered return (POST /refused-lock) after the round's close.
  */
-export function releaseUntakenEntry(storage, { roundId, playerPubkey, locks }) {
+export function releaseUntakenEntry(storage, { roundId, playerPubkey, locks, entries = null }) {
   const now = lockRecordOf(storage, { roundId, playerPubkey });
   if (now.state === 'none' || now.state === 'intent' || now.record.committedTo || !now.record.entry) return false;
   if (!locks || !(locks.asked > 0) || locks.answered !== locks.asked) return false;
+  if (!entries || String(entries.entryId || '').toLowerCase() !== String(now.record.entry).toLowerCase()
+    || !(entries.asked > 0) || entries.answered !== entries.asked || entries.heldBy.length) return false;
   const at = now.record.outpoint ? `${String(now.record.outpoint.txid)}:${String(now.record.outpoint.outIdx)}` : null;
   const named = (locks || []).some((l) => String(l.entryId || '').toLowerCase() === String(now.record.entry).toLowerCase()
     || (at && l.outpoint && `${toHex(l.outpoint.txid)}:${String(l.outpoint.outIdx)}` === at));
@@ -2119,6 +2126,24 @@ export function releaseUntakenEntry(storage, { roundId, playerPubkey, locks }) {
   const { entry: _gone, ...rest } = now.record;
   putRoomy(storage, now.key, JSON.stringify(rest));
   return true;
+}
+
+/**
+ * WHICH SEATS HOLD AN ENTRY (kanban #1839): GET /entry?id= at each seat - 200 holds it, 404 does not, anything else (or no answer) is not an answer.
+ * { entryId, asked, answered, heldBy } - what releaseUntakenEntry needs before it lets go of a lock named in that entry.
+ */
+export async function entryHeldAt({ entryId, nodes, fetcher = fetch } = {}) {
+  const id = typeof entryId === 'string' ? entryId.toLowerCase() : toHex(entryId);
+  const asked = [...new Set(nodes || [])];
+  const said = await Promise.all(asked.map(async (node) => {
+    try {
+      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/entry?id=${id}`, { signal: AbortSignal.timeout(SEAT_READ_MS) });
+      try { await r.arrayBuffer(); } catch { /* the body is not read */ }
+      return r.status === 200 ? 'held' : r.status === 404 ? 'not' : 'silent';
+    } catch { return 'silent'; }
+  }));
+  return { entryId: id, asked: asked.length, answered: said.filter((x) => x !== 'silent').length,
+    heldBy: asked.filter((_, i) => said[i] === 'held').map((n) => String(n).replace(/\/+$/, '')) };
 }
 
 /** A signer node committed the kept lock to `entryId`: from now on it is that entry's stake, not one to reuse. Final: never another entry. */
