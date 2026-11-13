@@ -343,8 +343,10 @@ export function openFeedbackStore(path = ':memory:') {
     const since = nowMs - WEEK_MS;
     const mine = db.prepare(`SELECT COUNT(*) AS n FROM reports WHERE pubkey = ? AND state IN ('accepted', 'paid') AND changed_ms >= ?`).get(r.pubkey, since).n;
     if (Number.isFinite(R.perKeyPerWeek) && mine >= R.perKeyPerWeek) return { ok: false, why: `that key has ${mine} rewards this week: at most ${R.perKeyPerWeek}` };
-    const week = db.prepare(`SELECT COALESCE(SUM(amount_sats), 0) AS s FROM reports WHERE state IN ('accepted', 'paid') AND changed_ms >= ? AND COALESCE(severity, '') NOT IN ('critical', 'node')`).get(since).s;   // a critical one is outside the budget
-    if (!(lv && lv.outsideBudget) && week + sats > R.weeklyBudgetSats) return { ok: false, why: `this week's budget: ${week} of ${R.weeklyBudgetSats} sat approved, ${sats} more does not fit` };
+    // THE CAP IS EVERYTHING (Daniel 2026-11-13 ~20:35Z: "der cap ist 100k"): node bounties and critical findings count in the week's budget too -
+    // kept outside it, the faucet counted 94,000 of 100,000 while 104,000 was approved, and a report that should have moved to Season 2 stayed in Season 1
+    const week = db.prepare(`SELECT COALESCE(SUM(amount_sats), 0) AS s FROM reports WHERE state IN ('accepted', 'paid') AND changed_ms >= ?`).get(since).s;   // a critical one is outside the budget
+    if (week + sats > R.weeklyBudgetSats) return { ok: false, why: `this week's budget: ${week} of ${R.weeklyBudgetSats} sat approved, ${sats} more does not fit` };
     // THE LEVEL AS THE GUARDS READ IT (audit 6, kanban #1422): stored normalised ('Node' was kept as given and missed by the guards' severity = 'node')
     const level = lv ? lv.level : (severity ? String(severity).toLowerCase() : null);
     db.prepare('UPDATE reports SET state = ?, amount_sats = ?, severity = ?, changed_ms = ? WHERE id = ? AND state = ?').run(STATES.ACCEPTED, sats, level, nowMs, r.id, STATES.NEW);

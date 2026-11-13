@@ -275,26 +275,26 @@ test('#1342 a report: bug or improvement, at least 50 characters, from the front
 });
 
 // THE REWARD LEVELS (Daniel 2026-11-08, final): one table the form shows and approve pays from
-test('#1342 levels 500 / 1,000 / 2,000 / 5,000 / 10,000: an approval by level pays its amount; a critical one is outside the weekly budget', () => {
+test('#1342 levels 500 / 1,000 / 2,000 / 5,000 / 10,000: an approval by level pays its amount; a critical one counts in the weekly budget (Daniel 2026-11-13: the cap is 100k)', () => {
   assert.deepEqual(REWARD_LEVELS.map((l) => [l.level, l.sats]), [['useful', 500], ['low', 1000], ['medium', 2000], ['high', 5000], ['critical', 10000]]);
   assert.equal(NODE_BOUNTY_BASE_SATS, 10000);
   const s = openFeedbackStore();
-  const rules = { perKeyPerWeek: 3, weeklyBudgetSats: 3000, mostSats: 20000, leastSats: 100 };
+  const rules = { perKeyPerWeek: 3, weeklyBudgetSats: 13000, mostSats: 20000, leastSats: 100 };
   const one = (n, sev) => { const e = report(key(n), `Report ${n} about the ${sev} level of a bug in the lobby.`); s.take(e); return s.approve(e.id, null, { played: () => true, rules, severity: sev }); };
   const medium = one(11, 'medium'), critical = one(12, 'critical'), low = one(13, 'low'), more = one(14, 'low');
   const bar = s.budget ? s.budget({ rules }) : null;
   console.log('  MEASURED #1342 levels:', JSON.stringify({ medium: medium.ok && medium.report.amountSats, critical: critical.ok && critical.report.amountSats, low: low.ok && low.report.amountSats, more: more.ok ? 'ok' : more.why, week: bar && bar.weekApprovedSats }));
   assert.equal(medium.report.amountSats, 2000);
-  assert.equal(critical.ok, true, 'critical: 10,000 though the week\'s budget is 3,000');
+  assert.equal(critical.ok, true, 'critical: 10,000 within the week\'s 13,000');
   assert.equal(critical.report.amountSats, 10000);
-  assert.equal(low.report.amountSats, 1000, '2,000 + 1,000 fill the 3,000 budget; the critical one is not in it');
-  assert.match(more.why, /this week's budget: 3000 of 3000/);
+  assert.equal(low.report.amountSats, 1000, '2,000 + 10,000 + 1,000 fill the 13,000 budget, the critical one in it');
+  assert.match(more.why, /this week's budget: 13000 of 13000/);
 });
 
 // THE NODE BOUNTY (Daniel 2026-11-08; 10,000 since 2026-11-10): sats, its own pot, one per person, a node report only; its checklist is the faucet's (node-bounty-check)
 test('#1342 a node bounty: 10,000 from its own pot for a node report; one per person; a frontend report cannot take it; a node operator need not have played', () => {
   const s = openFeedbackStore();
-  const rules = { perKeyPerWeek: 3, weeklyBudgetSats: 1000, mostSats: 20000, leastSats: 100 };
+  const rules = { perKeyPerWeek: 3, weeklyBudgetSats: 100000, mostSats: 20000, leastSats: 100 };
   const nodeReport = (n, text) => { const e = report(key(n), text, { type: 'bug', tags: [['source', 'node'], ['node', 'ee'.repeat(32)]] }); s.take(e); return e.id; };
   const a = nodeReport(21, 'The installer stopped at the bond step on Ubuntu and I had to restart it twice.');
   const b = nodeReport(21, 'After the update the owner page did not show the federation of my guardian.');
@@ -336,7 +336,7 @@ test('#1402 a rejected report\'s reward link no longer pays, a paid one blocks t
 
 test('#1402 one node bounty per node: the same node reported under a second key is refused', () => {
   const s = openFeedbackStore();
-  const rules = { perKeyPerWeek: 3, weeklyBudgetSats: 1000, mostSats: 20000, leastSats: 100 };
+  const rules = { perKeyPerWeek: 3, weeklyBudgetSats: 100000, mostSats: 20000, leastSats: 100 };
   const nodeReport = (n, text) => { const e = report(key(n), text, { type: 'bug', tags: [['source', 'node'], ['node', 'ab'.repeat(32)]] }); s.take(e); return e.id; };
   const first = s.approve(nodeReport(31, 'My node ran the whole week and the owner page showed every round it served.'), null, { played: () => false, rules, severity: 'node' });
   const second = s.approve(nodeReport(32, 'Same node, a new owner key after a reset: the installer asked for the bond again.'), null, { played: () => false, rules, severity: 'node' });
@@ -377,4 +377,17 @@ test('#1342 the faucet asks the bounty address of a signed and of an unsigned re
   assert.ok(src.includes('if (words.lnAddress) { const w = await lnAddressWorks(words.lnAddress);'), 'signed');
   assert.ok(src.includes("if (!b0.event) { const m = /\\nBounty address: (\\S+)/.exec(String(b0.text || '')); if (m) { const w = await lnAddressWorks(m[1]);"), 'unsigned');
   assert.ok(src.indexOf('if (!b0.event) { const m =') < src.indexOf("const key = readFileSync(env.FAUCET_CHAT_TOKEN_FILE, 'utf8').trim();"), 'before the chat post');
+});
+
+test('the week\'s cap counts node bounties and critical findings too (Daniel 2026-11-13: "der cap ist 100k")', () => {
+  const s = openFeedbackStore();
+  const rules = { perKeyPerWeek: null, weeklyBudgetSats: 15000, mostSats: 20000, leastSats: 100 };
+  const n = report(key(31), 'The installer stopped at the bond step on Ubuntu and I had to restart it twice.', { type: 'bug', tags: [['source', 'node'], ['node', 'dd'.repeat(32)]] }); s.take(n);
+  const c = report(key(32), 'A seat pays one winner twice when the close is retried after a restart of that seat.'); s.take(c);
+  const node = s.approve(n.id, null, { played: () => false, rules, severity: 'node' });
+  assert.equal(node.ok, true, node.why);
+  const crit = s.approve(c.id, 10000, { played: () => true, rules, severity: 'critical' });
+  console.log('  MEASURED cap:', JSON.stringify({ node: node.ok, critical: crit.ok ? 'approved' : crit.why }));
+  assert.equal(crit.ok, false, 'a critical finding past the cap does not fit');
+  assert.match(crit.why, /this week's budget: 10000 of 15000/);
 });
