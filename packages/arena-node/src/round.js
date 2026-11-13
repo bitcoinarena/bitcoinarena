@@ -3706,7 +3706,11 @@ export class Round {
     if (!feds.length) return null;
     // EVERY FEDERATION OF THE SPLIT, NOT ONLY THE ROWS THERE ARE (kanban #1576): a federation the split names with no row yet (its part never built) keeps it SUBMITTING
     const accepted = new Set(feds.filter((r) => r.state === 'ACCEPTED').map((r) => r.federation));
-    return feds.every((r) => r.state === 'ACCEPTED') && this.fedLockSplitOf(roundIdBytes).every((f) => accepted.has(f)) ? 'ACCEPTED' : 'SUBMITTING';
+    // NO SPLIT KEPT AT ALL (kanban #2352, #1489 a44-refute-88-s2-1): a store from the build before #1576/#1838 holds federation rows and no split -
+    // a federation never reached has no row there, so its rows alone cannot say the round is settled. It is SUBMITTING until a settlement
+    // pass keeps the split (#settleFederations writes it from the plan before anything is signed)
+    const split = this.fedLockSplitOf(roundIdBytes);
+    return split.length && feds.every((r) => r.state === 'ACCEPTED') && split.every((f) => accepted.has(f)) ? 'ACCEPTED' : 'SUBMITTING';
   }
 
   /**
@@ -3779,6 +3783,7 @@ export class Round {
         AND NOT EXISTS (SELECT 1 FROM settle_retries t WHERE t.round_id = r.round_id AND t.scope = '' AND t.state IN ('SETTLED', 'EXPIRED'))
         AND NOT (EXISTS (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = r.round_id)
           AND NOT EXISTS (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = r.round_id AND f.state <> 'ACCEPTED')
+          AND EXISTS (SELECT 1 FROM fed_lock_split p WHERE p.round_id = r.round_id)   -- kanban #2352: no split kept (an old build's store): asked again
           AND NOT EXISTS (SELECT 1 FROM fed_lock_split p WHERE p.round_id = r.round_id AND NOT EXISTS
             (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = p.round_id AND f.federation_id = p.federation_id AND f.state = 'ACCEPTED')))`)
       .all(CLOSED, fromMs, toMs).map((r) => new Uint8Array(r.round_id));
@@ -4015,6 +4020,7 @@ export class Round {
           OR (NOT EXISTS (SELECT 1 FROM lock_settlements s WHERE s.round_id = o.round_id)
             AND EXISTS (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = o.round_id)
             AND NOT EXISTS (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = o.round_id AND f.state <> 'ACCEPTED')
+            AND EXISTS (SELECT 1 FROM fed_lock_split p WHERE p.round_id = o.round_id)
             AND NOT EXISTS (SELECT 1 FROM fed_lock_split p WHERE p.round_id = o.round_id AND NOT EXISTS
               (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = p.round_id AND f.federation_id = p.federation_id AND f.state = 'ACCEPTED'))))`).all()
       .map((r) => ({ roundId: new Uint8Array(r.round_id), entryId: new Uint8Array(r.entry_id) }));

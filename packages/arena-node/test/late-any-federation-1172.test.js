@@ -84,6 +84,8 @@ function lateSeat() {
 
 test('#1172 a late loser of a round that takes any federation is a candidate once every federation is in, built and confirmed in its own federation', async () => {
   const { ls, round, ports, built } = lateSeat();
+  // kanban #2352: the split is kept before any row, as #settleFederations does (a store with rows and no split is an old build's, asked again)
+  round.putFedLockSplit(RID, [A]);
   round.putFedLockSettlement({ roundId: RID, federation: A, txid: 'a1'.repeat(32), message: new Uint8Array(32), signature: new Uint8Array(64), state: 'SUBMITTING', why: 'test' });
   const early = round.lateSettlementCandidates().length;
   round.putFedLockSettlement({ roundId: RID, federation: A, txid: 'a1'.repeat(32), message: new Uint8Array(32), signature: new Uint8Array(64), state: 'ACCEPTED', why: 'test' });

@@ -18,6 +18,7 @@ const row = (federation, state) => ({ roundId: RID, federation, txid: federation
 test('ACCEPTED once every federation is; SUBMITTING while one is not; null with none; a one-federation round reads its row', () => {
   const round = new Round(openStore(':memory:'));
   assert.equal(stateOf(round, RID), null);
+  round.putFedLockSplit(RID, [A, B]);   // kanban #2352: kept before any row, as #settleFederations does
   round.putFedLockSettlement(row(A, 'ACCEPTED'));
   round.putFedLockSettlement(row(B, 'SUBMITTING'));
   assert.equal(stateOf(round, RID), 'SUBMITTING');
