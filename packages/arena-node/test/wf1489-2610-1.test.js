@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// KANBAN #2610 (the posting side of #2608, ruling #2600): a leaving node funds and sends OP_RETURN "ARN" 'L' || departure_id from its
+// KANBAN #2610 (the posting side of #2608, ruling #2600): a leaving node funds and sends OP_RETURN "ARN" 'L' || notice || signature (#2612) from its
 // wallet, waits until it is confirmed on its own chain, and only then publishes the notice with the anchor's txid and block hash - once per
 // notice, across restarts. The seats' #2608 reader (absences.js offerAnchored / departureFor) takes what it publishes.
 import { test } from 'node:test';
@@ -12,7 +12,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { departureId, departureAnchorScript, DEPARTURE_ANCHOR_HEIGHT, DEPARTURE_ANCHOR_SLACK } from '../../arena-protocol/src/absence.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
-import { createAbsences, readDepartureHex } from '../src/absences.js';
+import { createAbsences, readDepartureHex, departureHex } from '../src/absences.js';
 import { ownDeparture } from '../src/absence-producer.js';
 import { createDepartureAnchors, bondCliAnchorWallet, installerAnchorWallet, PHASE } from '../src/departure-anchor.js';
 
@@ -54,7 +54,8 @@ function fakeBitcoind({ tip = GATE + 10, funds = true } = {}) {
     switch (a[0]) {
       case 'walletcreatefundedpsbt': {
         if (!funds) { const e = new Error('Insufficient funds'); e.stderr = 'error code: -4\nInsufficient funds'; throw e; }
-        const outs = JSON.parse(named.outputs).map((o) => { const p = fromHex(o.data); return { value: 0n, script: Uint8Array.from([0x6a, p.length, ...p]) }; });
+        // as Core writes a `data` output: one push, OP_PUSHDATA1 above 75 bytes
+        const outs = JSON.parse(named.outputs).map((o) => { const p = fromHex(o.data); return { value: 0n, script: Uint8Array.from(p.length > 75 ? [0x6a, 0x4c, p.length, ...p] : [0x6a, p.length, ...p]) }; });
         const hex = rawTx([...outs, { value: 90000n, script: Uint8Array.from([0x00, 0x14, ...new Array(20).fill(9)]) }]);
         return JSON.stringify({ psbt: `psbt:${hex}`, fee: 0.00000302, changepos: 1, options: JSON.parse(named.options) });
       }
@@ -87,7 +88,7 @@ function fakeBitcoind({ tip = GATE + 10, funds = true } = {}) {
 const memStore = () => { let file = null; return { read: () => (file ? JSON.parse(file) : null), write: (v) => { file = JSON.stringify(v); }, peek: () => (file ? JSON.parse(file) : null) }; };
 const builds = (btc) => btc.calls.filter((c) => c[0] === 'walletcreatefundedpsbt').length;
 
-test('#2610 the anchor transaction carries exactly OP_RETURN "ARN" \'L\' || departure_id, funded from the bond wallet at 2 sat/vB', async () => {
+test('#2610 the anchor transaction carries exactly OP_RETURN "ARN" \'L\' || notice || signature (#2612), funded from the bond wallet at 2 sat/vB', async () => {
   const btc = fakeBitcoind();
   const d = ownNotice(GATE + 10);
   const published = [];
@@ -95,12 +96,12 @@ test('#2610 the anchor transaction carries exactly OP_RETURN "ARN" \'L\' || depa
   const r = await anchors.anchor(d);
   assert.equal(r.phase, PHASE.SENT);
   const fund = btc.calls.find((c) => c[0] === 'walletcreatefundedpsbt');
-  assert.deepEqual(JSON.parse(fund.find((x) => x.startsWith('outputs=')).slice(8)), [{ data: `41524e4c${toHex(departureId(d))}` }]);
+  assert.deepEqual(JSON.parse(fund.find((x) => x.startsWith('outputs=')).slice(8)), [{ data: `41524e4c${departureHex(d).slice(0, (108 + 64) * 2)}` }]);
   assert.equal(JSON.parse(fund.find((x) => x.startsWith('options=')).slice(8)).fee_rate, 2);
   const tx = parseTransaction(fromHex(btc.known.get(r.txid)));
   const ret = tx.outputs.filter((o) => o.script[0] === 0x6a);
   assert.equal(ret.length, 1);
-  assert.equal(toHex(ret[0].script), `6a2441524e4c${toHex(departureId(d))}`, 'OP_RETURN, a 36-byte push: "ARN" \'L\' and the notice\'s id');
+  assert.equal(toHex(ret[0].script), `6a4cb041524e4c${departureHex(d).slice(0, (108 + 64) * 2)}`, 'OP_RETURN, a 176-byte OP_PUSHDATA1: "ARN" \'L\', the notice and its signature (#2612)');
   assert.equal(toHex(ret[0].script), toHex(departureAnchorScript(d)), 'the script #2608 reads');
   assert.deepEqual([btc.sent, r.feeSats], [[r.txid], '302']);
   // a wallet without funds sends nothing and says why
@@ -127,7 +128,6 @@ test('#2610 the notice is published with its anchor only once the anchor is conf
   await anchors.pass();
   assert.equal(published.length, 1, 'published once');
   // A SEAT (absences.js, #2608): the wire form read back, the anchor read on its own chain, DEPARTED from leave_after
-  const { departureHex } = await import('../src/absences.js');
   const wire = departureHex(published[0]);
   assert.equal(wire.length, (108 + 64 + 64) * 2);
   const seat = createAbsences({ verify, confirmedTx: btc.confirmedTx, anchorGate: GATE });
@@ -245,7 +245,6 @@ test('#2610 an installed node pays the anchor from its own wallet as an on-chain
 test('#2610 on a running seat: POST /owner/departure-anchor is the owner\'s, anchors only this node\'s own notices, and GET /owner/leave lists the anchors', async () => {
   const { ownerSecretFromSeed, signOwnerRequest } = await import('../src/owner.js');
   const { joinedWithLock } = await import('./lock-fixture.js');
-  const { departureHex } = await import('../src/absences.js');
   const secret = ownerSecretFromSeed(new Uint8Array(32).fill(8));
   const ownerRec = { pubkey: toHex(schnorr.getPublicKey(secret)), claimedAtMs: 1 };
   const s = await joinedWithLock({ owner: { store: { read: () => ownerRec, write: (o) => Object.assign(ownerRec, o), writeCode: () => {} } } });

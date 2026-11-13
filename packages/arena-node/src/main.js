@@ -59,6 +59,7 @@ import { readAdvertUpdate } from '../../arena-protocol/src/advert-update.js';
 import { fromHex } from '../../arena-protocol/src/hash.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { votesInBlock } from '../../arena-protocol/src/ballot-chain.js';
+import { departuresInBlock } from '../../arena-protocol/src/absence.js';
 import { chainHashReader } from './ballot-tally.js';
 import { PROTOCOL_VERSION, networkOf } from '../../arena-protocol/src/constants.js';
 import { censusOfView, censusReplacer, censusReviver } from './roster.js';
@@ -434,6 +435,11 @@ if (url) {
       votesAt: async (height, hash) => {
         const raw = fromHex(String(await call('getblock', [hash || await call('getblockhash', [height]), 0])));
         return votesInBlock(raw, height);
+      },
+      // AND THE DEPARTURE NOTICES ANCHORED IN A BLOCK (kanban #2612): the whole notice is in its anchor, so each seat reads them off its chain
+      departuresAt: async (height, hash) => {
+        const raw = fromHex(String(await call('getblock', [hash || await call('getblockhash', [height]), 0])));
+        return departuresInBlock(raw, height);
       },
       censusAt: async (networkIdHex, height) => {
         const contract = { networkId: fromHex(networkIdHex), censusHeight: height, censusConfirmations: 1,
