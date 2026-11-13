@@ -20,7 +20,7 @@ import { absenceHex, readAbsenceHex, departureHex, readDepartureHex, dueDepartur
 import { emergencyDepartureStands, emergencyDepartureEffect, emergencyDepartureId } from '../../arena-protocol/src/emergency.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { withConfigEndpoints } from './federation-endpoints.js';
-import { buildFederationRecord, encodeFederationRecord, federationRecordId, joinSignedRecord, verifyFederationRecord,
+import { buildFederationRecord, encodeFederationRecord, federationRecordId, joinSignedRecord, verifyFederationRecord, verifyFederationRecords,
   FEDERATION_STATUS, GONE, decodeFederationRecord, splitSignedRecord, guardianKeySet } from '../../arena-protocol/src/federation-record.js';
 
 /**
@@ -174,6 +174,22 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     let k = null; try { k = await guardianKeysOf(fid); } catch { k = null; }
     if (Array.isArray(k) && guardianKeySet(k)) { keysKnown.set(fid, k); return k; }
     return keysKnown.get(fid) || null;
+  }
+  // THE CHAIN TIP A RECORD'S HEIGHT IS BOUNDED BY (kanban #2604): null when this seat reads none
+  async function tipNow() {
+    if (typeof chainTip !== 'function') return null;
+    try { const t = Number(await chainTip()); return Number.isInteger(t) && t >= 0 ? t : null; } catch { return null; }
+  }
+  /**
+   * A FEDERATION'S RECORDS JUDGED TOGETHER (kanban #2604, feedback #038): `items` [{ bytes, census }] the records of `fidHex` this seat sees at
+   * once, with the record it keeps as context - so without the config no record stands on its own nominal (verifyFederationRecords), and none
+   * above the tip. One verdict per item.
+   */
+  function judge(fidHex, items, { keys = null, tip = null, census = null, inviteFederationId } = {}) {
+    const k = kept.get(String(fidHex).toLowerCase());
+    const context = k && k.bytes ? [{ bytes: k.bytes, census: census || (items[0] && items[0].census) || [], context: true }] : [];
+    const sv = (sg, m, key) => { try { return schnorr.verify(sg, m, key); } catch { return false; } };
+    return verifyFederationRecords([...items, ...context], { verify: sv, inviteFederationId, guardianKeys: keys, tip }).slice(0, items.length);
   }
   const kept = new Map();                    // federation id hex -> { bytes, record, status, height, signers, atMs }
   const draining = new Map();                // federation id hex -> status name
@@ -509,7 +525,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       if (good) signatures.push({ nodePubkey: g.nodePubkey, signature: fromHex(said.signature) });
     }
     const signed = joinSignedRecord(finalBytes, signatures);
-    const v = verifyFederationRecord(signed, { census: b.census.entries, verify: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } }, inviteFederationId, guardianKeys: keys });
+    const [v] = judge(toHex(federationId), [{ bytes: signed, census: b.census.entries }], { inviteFederationId, keys, tip: await tipNow() });
     if (!v.ok) return { ok: false, why: v.why, signatures: signatures.length, of: plain.guardians.length };
     keep(toHex(federationId), signed, v);
     return { ok: true, status: v.status, signers: v.signers, height: v.record.height, gone: gone.length, of: plain.guardians.length };
@@ -534,7 +550,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
         const bytes = fromHex(String(row.record));
         const r = decodeFederationRecord(splitSignedRecord(bytes).body);
         const own = r.guardians.map((g) => ({ pubkey: g.nodePubkey, advert: { guardianOf: [{ federationId: r.federationId, guardianKey: g.peerKey }] } }));
-        const v = verifyFederationRecord(bytes, { census: own, verify, inviteFederationId, guardianKeys: keysKnown.get(fid) || null });
+        const [v] = judge(fid, [{ bytes, census: own }], { inviteFederationId, keys: keysKnown.get(fid) || null });
         if (v.ok && keep(fid, bytes, v, 'restore')) { provisional.add(fid); restored++; }
       } catch { /* restored at 20 s, or gathered again */ }
     }
@@ -556,10 +572,11 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
         const h = decodeFederationRecord(splitSignedRecord(bytes).body).height;
         const b = basisFor(fid);
         const keys = await keysFor(fid);
-        let v = b && b.ok ? verifyFederationRecord(bytes, { census: b.census.entries, verify, inviteFederationId, guardianKeys: keys }) : { ok: false };
+        const tip = await tipNow();
+        let v = b && b.ok ? judge(fid, [{ bytes, census: b.census.entries }], { inviteFederationId, keys, tip })[0] : { ok: false };
         if (!v.ok && typeof censusAt === 'function') {
           const entries = await Promise.race([Promise.resolve(censusAt(h)).catch(() => null), new Promise((ok) => setTimeout(() => ok(null), 5000))]);
-          if (entries) v = verifyFederationRecord(bytes, { census: entries, verify, inviteFederationId, guardianKeys: keys });
+          if (entries) v = judge(fid, [{ bytes, census: entries }], { inviteFederationId, keys, tip })[0];
         }
         // NO CENSUS YET (2026-10-20: "It is also not reading the federations at all reliably so everything gateway related is never
         // shown" - measured 12:48Z: six test host seats restarted one by one under load 18 held no record for minutes, their chain view not
@@ -569,7 +586,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
         if (!v.ok) {
           const r = decodeFederationRecord(splitSignedRecord(bytes).body);
           const own = r.guardians.map((g) => ({ pubkey: g.nodePubkey, advert: { guardianOf: [{ federationId: r.federationId, guardianKey: g.peerKey }] } }));
-          v = verifyFederationRecord(bytes, { census: own, verify, inviteFederationId, guardianKeys: keys });
+          v = judge(fid, [{ bytes, census: own }], { inviteFederationId, keys, tip })[0];
         }
         if (v.ok) { keep(fid, bytes, v); restored++; }
       } catch { /* not restored: gathered again */ }
@@ -610,21 +627,31 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
               if (self.ok) { later.push({ x, h: rec.height }); continue; }
             }
           }
-          take(x, v);
+          cand(x, b.census.entries);
         }
         later.sort((p, q) => q.h - p.h);
         for (const { x, h } of later) {
-          let v = { ok: false, why: 'its census was not read: too many record heights in one answer' };
+          let v = { ok: false, why: 'its census was not read: too many record heights in one answer' }; let used = null;
           const reads = pass.byBase.get(base) || 0;   // this node's new heights in the whole pass, every federation (kanban #2339)
           if (censusKept.has(h) || (reads < MIRROR_CENSUS_PER_ANSWER && censusKept.size < MIRROR_CENSUS_PER_PASS)) {
             if (!censusKept.has(h)) { censusKept.set(h, Promise.resolve(censusAt(h)).catch(() => null)); pass.byBase.set(base, reads + 1); }
             const entries = await censusKept.get(h);
-            try { v = entries ? verifyFederationRecord(fromHex(String(x.record)), { census: entries, verify, inviteFederationId, guardianKeys: keys }) : { ok: false, why: 'no census at that record height' }; } catch (e) { v = { ok: false, why: e.message }; }
+            used = entries || null;
+            if (!entries) v = { ok: false, why: 'no census at that record height' };
           }
-          take(x, v);
+          if (used) cand(x, used); else why = v.why;
         }
       } catch { /* the next guardian */ }
     }));
+    // EVERY RECORD OF THE FEDERATION THIS MIRROR SEES, JUDGED TOGETHER (kanban #2604): each with the census it stands against
+    const cands = [];
+    function cand(x, census) { let bytes = null; try { bytes = fromHex(String(x.record)); } catch { return; } cands.push({ x, bytes, census }); }
+    async function settle() {
+      best = null;
+      if (!cands.length) return;
+      const verdicts = judge(fid, cands.map((c) => ({ bytes: c.bytes, census: c.census })), { inviteFederationId, keys, tip: await tipNow(), census: b.census.entries });
+      cands.forEach((c, i) => take(c.x, verdicts[i]));
+    }
     function take(x, v) {
       if (!v.ok) { why = v.why; return; }
       // the newest; at the same height a CLOSED one (final - see keep), else the better status (kanban #1157: one node serving a worse body
@@ -634,12 +661,14 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
         || (sameH && best.v.status !== 'CLOSED' && v.status !== 'CLOSED' && (STATUS_RANK[v.status] ?? 0) < (STATUS_RANK[best.v.status] ?? 0))) best = { v, bytes: fromHex(String(x.record)) };
     }
     await ask(bases);
+    await settle();
     if (!best) {
       let others = []; try { others = [...new Set((peerSeats() || []).map((u) => String(u).replace(/\/+$/, '')))].filter((u) => !bases.includes(u)); } catch { others = []; }
       if (others.length) {
         const turn = peerTurns.get(fid) || 0; peerTurns.set(fid, turn + 1);
         const from = (turn * MIRROR_PEERS) % others.length;
         await ask([...others.slice(from), ...others.slice(0, from)].slice(0, MIRROR_PEERS));
+        await settle();
         if (!best) why = `${why}, nor ${Math.min(MIRROR_PEERS, others.length)} of the census seats asked`;
       }
     }
