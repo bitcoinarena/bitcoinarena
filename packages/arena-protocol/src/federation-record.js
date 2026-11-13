@@ -271,8 +271,13 @@ export function verifyFederationRecord(bytes, { census, verify, inviteFederation
     let good = false; try { good = verify(sig.signature, id, sig.nodePubkey) === true; } catch { good = false; }
     if (good) signers.add(k);
   }
-  if (signers.size < r.threshold)
-    return { ok: false, why: `${signers.size} of its bonded guardians signed it, and a record needs ${r.threshold}` };
+  // THE THRESHOLD OF THE GUARDIANS THE CENSUS LISTS, NOT OF THOSE THE RECORD CHOSE TO LIST (kanban #2599): the record's threshold is read
+  // off its own nominal, so one guardian of seven signed a body listing only itself, nominal 1 (threshold 1), HALTED, at a higher height,
+  // and every seat mirrored it - the federation halted and its spent-set quorum was that one guardian. A record needs the threshold of
+  // the larger of its nominal and the census nodes whose advert names this federation.
+  const need = thresholdOf(Math.max(r.nominal, guarding.size));
+  if (signers.size < need)
+    return { ok: false, why: `${signers.size} of its bonded guardians signed it, and a record needs ${need}${need > r.threshold ? ` (the census lists ${guarding.size} guardians of it, the record names ${r.nominal})` : ''}` };
   return { ok: true, record: r, status: nameOf(FEDERATION_STATUS, r.status), signers: signers.size, id };
 }
 
