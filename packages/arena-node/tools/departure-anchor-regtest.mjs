@@ -4,6 +4,9 @@
 // side (departure-anchor.js) against it - the anchor funded with walletcreatefundedpsbt from that wallet, sent, not published while in the
 // mempool, confirmed, read as a seat reads it (getrawtransaction with the block hash, main.js ballot.confirmedTx), then published; a seat
 // (absences.js) takes the published notice and has the guardian DEPARTED from leave_after. A restart from the record file posts nothing new.
+// KANBAN #2612: the anchor carries the whole notice (OP_RETURN "ARN" 'L' || notice || signature, 176 bytes) - Core's testmempoolaccept takes
+// it under its default policy, a seat that was never told reads it off the raw block (scanDepartures), and the #2608 hash-only form, mined,
+// gives no notice and no anchor height.
 //
 //   BITCOIN_BIN=/path/to/bin RT_DIR=/some/empty/dir node tools/departure-anchor-regtest.mjs
 //
@@ -12,7 +15,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { departureAnchorScript, departureId, departureAnchorHeight, DEPARTURE_ANCHOR_SLACK } from '../../arena-protocol/src/absence.js';
+import { departureAnchorScript, departureId, departureAnchorHeight, DEPARTURE_ANCHOR_SLACK, departuresInBlock } from '../../arena-protocol/src/absence.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { createAbsences, readDepartureHex, departureHex } from '../src/absences.js';
@@ -82,6 +85,28 @@ try {
   const again = await b.anchor(notice); await b.pass();
   ok(again.txid === r.txid && funds === 1 && published.length === 1, `restart: the same anchor ${r.txid.slice(0, 16)}, funded ${funds} time(s), published ${published.length} time(s)`);
   say('fee', `${r.feeSats} sat`);
+  const vt = JSON.parse(node('decoderawtransaction', raw));
+  say('anchor tx', { vsize: vt.vsize, opReturnScriptBytes: out.script.length, policy: 'default (no -datacarriersize given)' });
+  // A SEAT THAT WAS NEVER TOLD (#2612): it reads every block from the gate on, as main.js serves them (getblock verbosity 0)
+  const scanner = { tipHeight: chain.tip, blockHashAt: async (h) => { try { return node('getblockhash', String(h)); } catch { return null; } },
+    departuresAt: async (h, hash) => departuresInBlock(fromHex(node('getblock', hash, '0')), h) };
+  const blind = createAbsences({ verify: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } }, confirmedTx, anchorGate: gate });
+  let found = 0, read = 0;
+  for (;;) { const x = await blind.scanDepartures(scanner, { max: 500 }); found += x.found; read += x.took; if (x.to === null || x.to >= await chain.tip()) break; }
+  ok(found === 1 && read === 1, `a seat never told read the notice off block ${p.height} (found ${found}, took ${read})`);
+  ok(blind.departureNotices()[0].anchor.height === p.height, 'at the anchor\'s height');
+  ok(blind.departureFor(record, peer, NOTICE, notice.leaveAfterHeight).ok, 'DEPARTED from leave_after on the chain read alone');
+  // THE #2608 FORM (a hash only), mined: no notice on chain, no anchor height from it
+  const n2 = ownDeparture({ own: { federation: toHex(FED), peerKey: peer }, tip: await chain.tip(), departureNotice: NOTICE, nodePubkey: pub, sign: (m) => schnorr.sign(m, secret), slack: DEPARTURE_ANCHOR_SLACK });
+  const f2 = JSON.parse(cli('-named', 'walletcreatefundedpsbt', 'inputs=[]', `outputs=${JSON.stringify([{ data: `41524e4c${toHex(departureId(n2))}` }])}`, `options=${JSON.stringify({ fee_rate: 2 })}`));
+  const h2 = JSON.parse(cli('finalizepsbt', JSON.parse(cli('walletprocesspsbt', f2.psbt)).psbt)).hex;
+  const t2 = cli('sendrawtransaction', h2);
+  const b2 = JSON.parse(node('generatetoaddress', '1', addr))[0];
+  const x2 = await blind.scanDepartures(scanner);
+  ok(departuresInBlock(fromHex(node('getblock', b2, '0')), 0).length === 0 && x2.took === 0, `the hash-only anchor ${t2.slice(0, 16)} mined: no notice in its block, nothing taken`);
+  const shown = await blind.anchorDeparture({ ...n2, anchor: { txid: t2, blockHash: b2 } });
+  ok(!Number.isInteger(shown.anchor.height), 'shown later with that transaction: no anchor height');
+  ok(!blind.departureFor(record, peer, NOTICE, n2.leaveAfterHeight + 10).ok || blind.departureFor(record, peer, NOTICE, n2.leaveAfterHeight + 10).notice.leaveAfterHeight === notice.leaveAfterHeight, 'the hash-only notice never becomes the departure');
 } finally {
   try { node('stop'); } catch { d.kill(); }
 }
