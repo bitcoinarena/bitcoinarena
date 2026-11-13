@@ -288,6 +288,24 @@ function namedFirstByAnother(round, entry, entryIdBytes, kind, outpoint, atPeers
   for (const p of atPeers || []) if (p && p.entryId && Buffer.from(p.entryId).toString('hex') !== me && !notIt(p)) return true;
   return false;
 }
+// A CLAIMED ENTRY TAKES ITS LOCK BACK FROM AN UNCLAIMED COPY (kanban #1603, #2536 - the #1897 claim rule at the write): the page posts its entry
+// and its claim to its home seat first and waits for the answer, so the home seat (or anyone who read the entry first) posts a copy under its own
+// session key to the other seats with the player's own lock fields before the player's entry and claim get there. With no claim anywhere yet the
+// copy was the first namer, its lock was verified and kept, and the player's own lock - claimed a moment later - was refused for good ("already
+// stakes another entry"): the player's stake backed an entry whose session key the copier holds. The claim decides who the lock is for, so a lock
+// held by an entry of the same player key that this seat holds NO fitting claim for is let go (round.yieldEntryLocks: its stake and fee locks and
+// donation rows, only while nothing was built on them) when the claimed entry hands that lock. Only this seat's own claims count here.
+function claimTakesBack(round, entry, entryIdBytes, kind, outpoint, heldBy) {
+  if (!heldBy || typeof round.yieldEntryLocks !== 'function' || typeof round.entry !== 'function') return false;
+  const claimed = claimedHere(round, entry, kind, outpoint).map((c) => hexOf(c.entryId));
+  if (!claimed.includes(hexOf(entryIdBytes)) || claimed.includes(hexOf(heldBy))) return false;
+  const held = round.entry(heldBy);
+  let e; try { e = held ? decodeEntryContract(new Uint8Array(held)) : null; } catch { e = null; }
+  if (!e || !Buffer.from(e.playerPubkey).equals(Buffer.from(entry.playerPubkey))) return false;
+  if (!yieldable(round, heldBy)) return false;
+  return round.yieldEntryLocks(heldBy, e.roundId);
+}
+
 // what the round's other seats answer for this outpoint; never fatal - a seat that does not answer adds nothing
 async function askNamers(namersAtPeers, entry, kind, outpoint) {
   if (typeof namersAtPeers !== 'function') return [];
@@ -381,7 +399,7 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
   // ONE LOCK IS ONE ENTRY. A lock this signer node already counted for another entry
   // cannot stake a second: two signer nodes on one stake is one signer node played free.
   const taken = round.stakeLockAt ? round.stakeLockAt(outpoint) : null;
-  if (taken && !Buffer.from(taken.entryId).equals(Buffer.from(entryIdBytes)))
+  if (taken && !Buffer.from(taken.entryId).equals(Buffer.from(entryIdBytes)) && !claimTakesBack(round, entry, entryIdBytes, 'stake', outpoint, taken.entryId))
     return { ok: false, why: 'that stake lock already stakes another entry in this round: one lock is one entry' };
   const stakeNamedFirstWhy = 'that stake lock outpoint was named first by another entry (in this round or another, at this seat or another of the round): '
     + 'a lock stakes the entry that named it first (kanban #1489, #1692, #1758)';
@@ -483,6 +501,8 @@ export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk
   if (zero(entry.feePreimage)) return { ok: false, why: 'that entry hands over no F, so its fee lock could never be claimed' };
   // ONE FEE LOCK IS ONE ENTRY TOO (kanban #1214): no fee lock was checked against another entry at all
   const feeTaken = () => { const t = round.feeLockAt ? round.feeLockAt(outpoint) : null; return t && !Buffer.from(t.entryId).equals(Buffer.from(entryIdBytes)); };
+  { const t = round.feeLockAt ? round.feeLockAt(outpoint) : null;   // kanban #1603: a claimed entry takes its fee lock back from an unclaimed copy
+    if (t && feeTaken()) claimTakesBack(round, entry, entryIdBytes, 'fee', outpoint, t.entryId); }
   if (feeTaken()) return { ok: false, why: 'that fee lock already pays the fee of another entry in this round: one lock is one entry' };
   const feeNamedFirstWhy = 'that fee lock outpoint was named first by another entry (in this round or another, at this seat or another of the round): '
     + 'a lock pays for the entry that named it first (kanban #1489, #1692, #1758)';
