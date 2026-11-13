@@ -97,14 +97,24 @@ export function commitmentPointsRefusal(c) {
  * refused that list ("names a participant twice") and the pass ended with nobody left off - every pass, so one seat of seven held every
  * settlement, forfeit, send and reserve payout. A peer's commitment is listed only when its id is a participant id, is that peer's own
  * signer id where the asker knows it (`id`), and is not on the list yet (`signers`, the asker first). The why, or null to list it.
+ * `contest` (kanban #2402, a45-refute-3 s1-2): an id a PEER already holds on the list is listed too, beside it, and never refused. Refused, the
+ * honest seat that answered second was displaced by a forger that answered first under its id: with one seat down the forger's share did not
+ * stand, leaving it out left one short of the threshold, the pass gave up and the next pass read the same order - one forger stopped every
+ * forfeit. Listed, misnamedSigners keeps the first and sets the other aside, the kept one's share is checked under that id's public share,
+ * and a kept one whose share does not stand is left out while its rival still counts: the one whose share verifies signs. The asker's own
+ * id is never contested.
  */
-export function peerCommitmentRefusal(commitment, signers, { id = null } = {}) {
+export function peerCommitmentRefusal(commitment, signers, { id = null, contest = false } = {}) {
   if (!commitment || !Number.isInteger(commitment.id) || commitment.id < 1) return 'its commitment names no participant id';
   if (Number.isInteger(id) && commitment.id !== id) return `its commitment names signer ${commitment.id}, and that seat is signer ${id}`;
-  if ((signers || []).some((s) => s && s.commitment && String(s.commitment.id) === String(commitment.id)))
+  const holders = (signers || []).filter((s) => s && s.commitment && String(s.commitment.id) === String(commitment.id));
+  if (holders.length && !(contest && holders.every((s) => s.base !== null && s.base !== undefined)))
     return `its commitment names signer ${commitment.id}, who is on the list already`;
   return null;
 }
+
+/** HOW MANY PARTICIPANTS A LIST OF SIGNERS HOLDS (kanban #2402): two doors contesting one id count once against the threshold. */
+export const committedIds = (signers) => new Set((signers || []).map((s) => String(s.commitment.id))).size;
 
 /** THE ANSWERS IN THE ORDER THEY ARE LISTED (kanban #2402): a seat left off before (`out`) last, so a forged id it sent never takes an honest seat's place. */
 export const leftOffLast = (asked, out) => (out && out.size ? [...asked.filter((x) => !out.has(x.peer)), ...asked.filter((x) => out.has(x.peer))] : asked);
