@@ -42,7 +42,7 @@ import { resultFinality } from './finality.js';
 import { stateOf } from './settlement-state.js';
 import { pluginForRound } from './plugins.js';
 import { giftsInFeeLock } from '../../arena-protocol/src/reserves.js';
-import { encodeCommitments, decodeCommitments, encodeShare, decodeShare, commitmentListRefusal, decodePeerCommitment, peerCommitmentRefusal, leftOffLast } from './pool-wire.js';
+import { encodeCommitments, decodeCommitments, encodeShare, decodeShare, commitmentListRefusal, decodePeerCommitment, peerCommitmentRefusal, leftOffLast, committedIds } from './pool-wire.js';
 import { askPeers, PEER_ASK_MS, PEER_GRACE_MS } from './peer-ask.js';
 import { PLAN_ASK, sendPlanAskHeaders, checkSendPlanAsk, forfeitCommitAskBody } from './send-plan-ask.js';
 import { commitAsker, shareAsker, spendRefusal, OWN } from './asker-pairs.js';
@@ -590,14 +590,15 @@ export class Forfeit {
       }, { boundMs: this.peerAskMs, graceMs: this.peerGraceMs, enough: m.needed - 1, counts: (x) => !!x.commitment });
       const signers = [{ base: null, commitment: own.commitment }];
       const refused = [];
-      // A COMMITMENT UNDER ANOTHER SIGNER'S ID IS A REFUSAL (kanban #2402, #2471, as settlement.js #peerCommitments)
+      // A COMMITMENT UNDER ANOTHER SIGNER'S ID IS A REFUSAL (kanban #2402, #2471, as settlement.js #peerCommitments); one under an id a peer already
+      // holds is listed beside it (`contest`): #gatherShares keeps one, and the share check - not the order of the answers - tells which one stands
       for (const { peer: base, value, error } of leftOffLast(asked, this.lists.withheld.get(q))) {
-        const bad = value && value.commitment ? peerCommitmentRefusal(value.commitment, signers) : null;
+        const bad = value && value.commitment ? peerCommitmentRefusal(value.commitment, signers, { contest: true }) : null;
         if (value && value.commitment && !bad) signers.push({ base, commitment: value.commitment });
         else refused.push(`${base}: ${bad || (value ? value.why : error.message)}`);
       }
-      if (signers.length < m.needed)
-        return refuse(`${signers.length} of the ${m.needed} signer nodes the forfeit needs committed to it: ${refused.join('; ')}`);
+      if (committedIds(signers) < m.needed)
+        return refuse(`${committedIds(signers)} of the ${m.needed} signer nodes the forfeit needs committed to it: ${refused.join('; ')}`);
       const listed = this.lists.listed(q, signers, m.needed);
       const combined = await this.#gatherShares(roundIdBytes, entryIdBytes, kind, m, q, listed);
       if (combined.ok) { ({ signature } = combined); this.lists.done(q); break; }
