@@ -822,7 +822,15 @@ export class Verifier {
     // nobody and is signed VOID - its reveal cannot change the seated players' verdicts. Its stake SEEN, not only its stake lock waiting for its
     // fee lock (kanban #1544): the settlement counts only a seen stake, so an unseen one played was a stake never at risk
     let seated = new Set((typeof this.round.seatedEntriesOf === 'function' ? this.round.seatedEntriesOf(roundIdBytes, contract.stakeMsat, { played: true }) : entries).map(({ entryId }) => hex(entryId)));
+    // ONE DECISION PER ROUND, NOT ONE PER RETRY (kanban #2625, state audit 2026-11-13 sm1-find-h2h 3): a retry signs only its entry (#1586), but
+    // decided again from its OWN /reveals pull - past the result window (#1589 waits only until then) the watch retried A while the peer holding
+    // B's reveal was silent (A the lone revealer, WIN, signed) and B a moment later when it answered (paper beats rock, B WIN, signed): one seat,
+    // two winners, no loser's lock claimed. Now the first decision of a round is kept (head_to_head_decisions: the verdicts and the reveal set
+    // they were decided over) before any verdict of it is signed, and every later close or retry of the round, after a restart too, signs from it.
+    const stored = typeof this.round.headToHeadDecision === 'function';
+    const fromStored = (d) => ({ results: d.results, held: new Map(d.reveals.map((r) => [r.entry, { entryId: new Uint8Array(Buffer.from(r.entry, 'hex')), move: r.move, salt: new Uint8Array(Buffer.from(r.salt, 'hex')) }])) });
     const decided = (async () => {
+      { const d = stored ? this.round.headToHeadDecision(roundIdBytes) : null; if (d) return fromStored(d); }
       // PROTOCOL 28: ONLY THE CERTIFIED LOCK SET IS PLAYED (kanban #2561, ruling #2116 (b)) - this seat's certificate, else one pulled from the
       // peers now; none standing anywhere it asked and every entry is VOID, every stake back (never a partial round)
       if (this.lockSets && typeof this.lockSetRound === 'function' && this.lockSetRound(roundIdBytes)) {
@@ -847,7 +855,11 @@ export class Verifier {
       let box = null;
       try { box = found.core ? sandboxFor(found.core) : null; } catch (e) { throw new Error(`game "${found.plugin.manifest.gameName}"'s decide adapter does not load in its sandbox: ${e.message}`); }
       if (!box || !box.meta.decide) throw new Error(`game "${found.plugin.manifest.gameName}"'s decide adapter is not installed on this node`);
-      return { held, results: headToHeadResults(list, (moves, config) => box.call('decide', { moves, config }), found.config, { players: found.plugin.manifest.players }) };
+      const results = headToHeadResults(list, (moves, config) => box.call('decide', { moves, config }), found.config, { players: found.plugin.manifest.players });
+      if (!stored) return { held, results };
+      // kanban #2625: kept once - a decision a concurrent close kept first is the one signed from
+      return fromStored(this.round.keepHeadToHeadDecision(roundIdBytes, { results,
+        reveals: [...held.values()].map((r) => ({ entry: hex(r.entryId), move: r.move, salt: hex(r.salt) })) }));
     })();
     // A RETRY SIGNS ONLY THE ENTRY IT WAS ASKED FOR (kanban #1586), decided over all of the round's reveals as the close is
     return entries.filter(({ entryId }) => !only || hex(entryId) === hex(only)).map(({ entryId, entry }) => decided.then(({ held, results, waiting }) => {
