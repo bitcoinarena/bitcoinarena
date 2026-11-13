@@ -333,7 +333,10 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       return false;
     }
     const step = recordStep(had ? { height: had.height, status: had.status } : null, { height: v.record.height, status: v.status }, from);
-    const late = !!(had && had.height > v.record.height);
+    // A LATE OLDER RECORD NEVER REPLACES A HEIGHT THE HISTORY HOLDS (kanban #2466, audit44 refute 67 s2-2): it is refused as a take, and the
+    // store keeps the first body at a height (INSERT OR IGNORE) - so in memory it went over a held OPEN@1003 and moved the running seat's halt
+    // start down to 1000 while a restart read 1006. Only a height not held yet is filled in from it
+    const late = !!(had && had.height > v.record.height) && !((historyOf(fid) || new Map()).has(Number(v.record.height)));
     if (step.take || late) remember(fid, Object.assign(Object.create(null), v.record, { __hex: toHex(bytes), __status: v.status }));
     // ONE DERIVATION FOR THE RUNNING SEAT AND THE RESTART (kanban #2172, #1763/#1578 refuted in audit44): an older record that
     // arrives after a newer one (a lagging guardian, a mirror) changes the history the run is read from - an older HALTED one
