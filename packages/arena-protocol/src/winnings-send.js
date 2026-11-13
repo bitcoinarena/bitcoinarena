@@ -44,7 +44,23 @@ export function sendableInvoiceMsat(payoutMsat, fee) {
  * gateways (RULED 2026-09-23), as `arena-stake-lock --mode gateways` reports them. Two names on one key are one
  * gateway, a name that does not answer is none - the door's own count. Null when there is none.
  */
+// THE GATEWAY'S OWN TERMS, BOUNDED (kanban #2602): its fee and expiration delta come from its own routing_info and it may change them
+// any time. Unbounded, the lowest key answering ppm 900,000 kept 47 % of every winning, and a reserve payout's contract grew by it. The
+// limits are the stock LNv2 client's (it refuses a gateway over them for its own sends): send fee 100 sat + 15,000 ppm, delta 1440 blocks.
+// A gateway over them is not a payout gateway; the next lowest key within them is.
+export const GATEWAY_SEND_FEE_LIMIT = Object.freeze({ baseMsat: 100_000n, ppm: 15_000n });
+export const GATEWAY_EXPIRATION_DELTA_LIMIT = 1440;
+export function gatewayTermsWithinLimits(g) {
+  const f = g && g.sendFeeDefault;
+  let base = 0n, ppm = 0n;
+  try { base = BigInt(f && f.baseMsat !== undefined ? f.baseMsat : 0); ppm = BigInt(f && f.ppm !== undefined ? f.ppm : 0); } catch { return false; }
+  if (base < 0n || ppm < 0n || base > GATEWAY_SEND_FEE_LIMIT.baseMsat || ppm > GATEWAY_SEND_FEE_LIMIT.ppm) return false;
+  const d = g && g.expirationDeltaDefault;
+  if (d !== null && d !== undefined && !(Number.isSafeInteger(Number(d)) && Number(d) >= 0 && Number(d) <= GATEWAY_EXPIRATION_DELTA_LIMIT)) return false;
+  return true;
+}
 export function lowestLiveGateway(listed) {
+  listed = (Array.isArray(listed) ? listed : []).filter(gatewayTermsWithinLimits);
   const n = federationGatewayCount(listed);
   if (!n.keys.length) return null;
   const key = [...n.keys].sort()[0];
