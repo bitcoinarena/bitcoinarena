@@ -109,10 +109,14 @@ export function configKeys(config) {
  *   LOCAL    a guardian data dir of this node whose invite-code names the federation: its client.json
  *   JOINED   the stake-lock client of that federation, home or joined before (`joinedPort(fidHex)`, never a new join): the keys of
  *            the config it downloaded at its join - the same source federationIsBonded counts a round's guardians from
- * Never a config asked of a guardian's API: one guardian answering for the federation could name only its own key, which is the
- * #2599 record again. Kept `keepMs` once read (`missMs` when nothing held it).
+ *   TRUSTED  (kanban #2609) any other federation: `trusted` (arena-protocol trusted-guardian-keys.js createTrustedGuardianKeys) - the config
+ *            whose api_endpoints hash to the federation id, answered alike by thresholdOf(n) of those endpoints; asked first at the
+ *            invites `inviteOf(fidHex)` and the caller's `{ invites }` name (records' invites: never trusted, the id check decides)
+ * Never one guardian's config alone: one guardian answering for the federation could name only its own key, which is the #2599 record
+ * again. Kept `keepMs` once read (`missMs` when nothing held it; the trusted source keeps its own).
  */
 export function createGuardianKeysOf({ dirs = () => [], joinedPort = async () => null, readFile = (f) => readFileSync(f, 'utf8'),
+  trusted = null, inviteOf = () => null,
   keepMs = 600000, missMs = 60000, now = () => Date.now(), fromHex = (h) => Uint8Array.from(String(h).match(/../g).map((x) => parseInt(x, 16))) }) {
   const kept = new Map();                    // fid -> { at, keys, from }
   async function read(fid) {
@@ -129,14 +133,25 @@ export function createGuardianKeysOf({ dirs = () => [], joinedPort = async () =>
     } catch { /* none */ }
     return { keys: null, from: null };
   }
-  const guardianKeysOf = async (fidHex) => {
+  async function viaTrusted(fid, invites) {
+    if (!trusted || typeof trusted.of !== 'function') return null;
+    let own = null; try { own = inviteOf(fid); } catch { own = null; }
+    try { const k = await trusted.of(fid, [own, ...(invites || [])].filter(Boolean)); return Array.isArray(k) && k.length ? k.map(fromHex) : null; } catch { return null; }
+  }
+  const guardianKeysOf = async (fidHex, { invites = [] } = {}) => {
     const fid = String(fidHex).toLowerCase();
-    const had = kept.get(fid);
-    if (had && now() - had.at < (had.keys ? keepMs : missMs)) return had.keys;
-    const r = await read(fid);
-    // a federation's keys do not change: once read, a later miss keeps them
-    kept.set(fid, r.keys || !had || !had.keys ? { at: now(), ...r } : { ...had, at: now() });
-    return kept.get(fid).keys;
+    let had = kept.get(fid);
+    if (!(had && now() - had.at < (had.keys ? keepMs : missMs))) {
+      const r = await read(fid);
+      // a federation's keys do not change: once read, a later miss keeps them
+      kept.set(fid, r.keys || !had || !had.keys ? { at: now(), ...r } : { ...had, at: now() });
+      had = kept.get(fid);
+    }
+    if (had.keys) return had.keys;
+    // no local or joined config: the trusted fetch (it keeps its own hits and misses)
+    const k = await viaTrusted(fid, invites);
+    if (k) { kept.set(fid, { at: now(), keys: k, from: 'trusted fetch' }); return k; }
+    return null;
   };
   guardianKeysOf.from = (fidHex) => (kept.get(String(fidHex).toLowerCase()) || {}).from || null;
   return guardianKeysOf;
