@@ -69,8 +69,11 @@ export function decodeCommitments(bytes) {
  * 33 bytes no secp256k1 point has (x >= p, x off the curve, a bad prefix) went on the list, the asker's own share threw in groupCommitment, and with no
  * duplicate id to blame #leaveOut had nobody to drop - the seat stopped every forfeit and every settlement until expiry. It now throws here, inside
  * the ask, so the peer counts as refused and the list is made of the others. The wire and its bytes are unchanged.
+ * AND EXACTLY ONE COMMITMENT (kanban #2402, #2471): read with that bound - never a list the asker decodes and takes the first of.
  */
 export function decodePeerCommitment(bytes) {
+  if (!(bytes instanceof Uint8Array) || bytes.length !== COMMITMENT_BYTES)
+    throw new Error(`a seat's commitment is ${COMMITMENT_BYTES} bytes, not ${bytes && bytes.length}`);
   const c = decodeCommitments(bytes)[0];
   const why = commitmentPointsRefusal(c);
   if (why) throw new Error(why);
@@ -87,6 +90,24 @@ export function commitmentPointsRefusal(c) {
   }
   return null;
 }
+
+/**
+ * A PEER'S COMMITMENT THE ASKER MAY LIST (kanban #2402, #2471; a44-refute-51 s2, the bypass of #1672 / #2161): one seat that answered
+ * round one under ANOTHER signer's id (the asker's own, or a peer's) made the asker's list name an id twice, the asker's own round two
+ * refused that list ("names a participant twice") and the pass ended with nobody left off - every pass, so one seat of seven held every
+ * settlement, forfeit, send and reserve payout. A peer's commitment is listed only when its id is a participant id, is that peer's own
+ * signer id where the asker knows it (`id`), and is not on the list yet (`signers`, the asker first). The why, or null to list it.
+ */
+export function peerCommitmentRefusal(commitment, signers, { id = null } = {}) {
+  if (!commitment || !Number.isInteger(commitment.id) || commitment.id < 1) return 'its commitment names no participant id';
+  if (Number.isInteger(id) && commitment.id !== id) return `its commitment names signer ${commitment.id}, and that seat is signer ${id}`;
+  if ((signers || []).some((s) => s && s.commitment && String(s.commitment.id) === String(commitment.id)))
+    return `its commitment names signer ${commitment.id}, who is on the list already`;
+  return null;
+}
+
+/** THE ANSWERS IN THE ORDER THEY ARE LISTED (kanban #2402): a seat left off before (`out`) last, so a forged id it sent never takes an honest seat's place. */
+export const leftOffLast = (asked, out) => (out && out.size ? [...asked.filter((x) => !out.has(x.peer)), ...asked.filter((x) => out.has(x.peer))] : asked);
 
 /**
  * A LIST NO COMMITTEE COULD SEND (kanban #1672): round two signed over whatever list the asker posted, once it carried this signer

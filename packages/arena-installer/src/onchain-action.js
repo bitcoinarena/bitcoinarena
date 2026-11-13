@@ -30,7 +30,7 @@
 import { randomBytes } from 'node:crypto';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
-import { bondsOf } from './state.js';
+import { bondsOf, withoutSpentBonds } from './state.js';
 
 export const ACTION = Object.freeze({ BUILT: 'built', SENT: 'sent', DONE: 'done', VOID: 'void' });
 const A = ACTION;
@@ -59,6 +59,8 @@ export function applyOps(n, ops = [], atMs = Date.now()) {
     else if (o.op === 'merge') patch[o.key] = { ...(cur(o.key) || {}), ...o.value };
     else if (o.op === 'push') patch[o.key] = [...(o.key === 'bonds' ? bondsOf({ ...n, ...patch }) : cur(o.key) || []), ...o.values];
     else if (o.op === 'replace-first') { patch.bond = o.value; patch.bonds = [o.value, ...bondsOf({ ...n, ...patch }).slice(1)]; }
+    // kanban #2098: the bond outputs the chain shows spent (a withdrawal the record missed) leave bond / bonds before the new one is written
+    else if (o.op === 'drop-bonds') Object.assign(patch, withoutSpentBonds({ ...n, ...patch }, o.values, { txid: o.txid || null, atMs }) || {});
     else if (o.op === 'done') patch.done = { ...(cur('done') || {}), [o.step]: atMs };
     else throw new Error(`not an op an on-chain record knows: ${o.op}`);
   }

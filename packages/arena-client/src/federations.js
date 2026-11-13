@@ -121,6 +121,12 @@ export async function federationStatuses({ nodes, census, verify, fetcher = fetc
         if (n >= FEDERATION_ROWS_PER_SEAT || (!n && rows.size >= FEDERATIONS_PER_SEAT)) continue;
         rows.set(fid, n + 1);
         const hex = String(f.record).toLowerCase();
+        // THE RECORD IS FILED UNDER THE FEDERATION IT NAMES, NEVER UNDER THE SEAT'S LABEL (kanban #2154, #2222, a44 refute of #1684): one seat
+        // listed federation A's genuine OPEN record under B's id and B, HALTED by its own guardians, showed OPEN. The body is decoded first
+        // (cheap, no signature checked) and a row whose record names another federation than its label is refused before any verify
+        let named = null;
+        try { named = bytesToHex(splitSignedRecord(hexToBytes(hex)).record.federationId); } catch { /* verify says why */ }
+        if (named !== null && named !== fid) { add(refused, fid, `${u}: that record is of another federation`); continue; }
         if (!seen.has(fid)) seen.set(fid, new Map());
         if (!seen.get(fid).has(hex)) seen.get(fid).set(hex, []);
         seen.get(fid).get(hex).push(u);
@@ -152,7 +158,8 @@ export async function federationStatuses({ nodes, census, verify, fetcher = fetc
     const hexes = [...byHex.keys()];
     const verdicts = verifyFederationRecords(hexes.map(hexToBytes), { census, verify, inviteFederationId, guardianKeys: keysOf(fid), tip: bound });
     hexes.forEach((hex, i) => {
-      const v = verdicts[i];
+      // a record stands only for the federation it names (kanban #2154)
+      const v = verdicts[i].ok && verdicts[i].record && bytesToHex(verdicts[i].record.federationId) !== fid ? { ok: false, why: 'that record is of another federation' } : verdicts[i];
       for (const u of byHex.get(hex)) {
         // ITS GUARDIANS, for a join one guardian cannot serve (guardian-invites.js) - ONLY ONCE THE RECORD VERIFIES (kanban #1556: one seat
         // answering first with an unsigned record naming the player's federation took every peer slot, so the join fallback named only its hosts)
@@ -175,7 +182,7 @@ export async function federationStatuses({ nodes, census, verify, fetcher = fetc
   }
   const out = new Map();
   for (const fid of new Set([...verified.keys(), ...refused.keys()])) {
-    const best = newestRecord(verified.get(fid) || []);
+    const best = pageRecord(verified.get(fid) || []);
     const why = (refused.get(fid) || failed)[0];
     const says = best ? null : restrictive.get(fid) || null;
     // a verified record read without the config keys does not lift another record's restrictive word (kanban #2605)
@@ -189,6 +196,22 @@ export async function federationStatuses({ nodes, census, verify, fetcher = fetc
   }
   if (!out.size && failed.length) out.why = `no record stands: ${failed[0]}`;
   return out;
+}
+
+// THE PAGE'S PICK DOES NOT FOLLOW THE FASTER SEAT (kanban #1937): a record's height is its census height, so the guardians sign several
+// records at one height over time (OPEN with all seated, CRITICAL once two owners left), and a seat that has not gathered since keeps the
+// OPEN one. newestRecord sorts by height only, so at a tie the first seat to answer set the page's status: the same signed facts read
+// CRITICAL in one tab and OPEN (deposit allowed) in the next. Here the newest height, and at one height CLOSED (final, as the seats keep
+// it), else the WORSE status (OPEN < DRAINING < CRITICAL < HALTED): every record compared stands at its census' threshold, and the page
+// takes the careful one; last the record id, so any order of answers gives the same pick.
+const PAGE_STATUS_RANK = Object.freeze({ OPEN: 0, DRAINING: 1, CRITICAL: 2, HALTED: 3, CLOSED: 4 });
+const idHex = (v) => (v.id instanceof Uint8Array ? bytesToHex(v.id) : String(v.id ?? ''));
+export function pageRecord(verified) {
+  const ok = (verified || []).filter((v) => v && v.ok);
+  ok.sort((a, b) => (b.record.height - a.record.height)
+    || ((PAGE_STATUS_RANK[b.status] ?? 0) - (PAGE_STATUS_RANK[a.status] ?? 0))
+    || (idHex(a) < idHex(b) ? -1 : idHex(a) > idHex(b) ? 1 : 0));
+  return ok[0] || null;
 }
 
 function statusOfRecord(best) {
@@ -356,7 +379,7 @@ export function federationSays(status) {
 }
 
 // ---- the known-good list and the player's own confirmation (spec §23.6) ----
-import { federationIsKnown, knownFederation, takesDeposits } from '../../arena-protocol/src/known-federations.js';
+import { federationIsKnown, knownFederation, takesDeposits, takesNewRounds } from '../../arena-protocol/src/known-federations.js';
 export { federationIsKnown, knownFederation };
 
 /** Every guardian of `federationIdHex` in a census this client checked: operator, node key, guardian endpoint, bond. */
@@ -410,12 +433,17 @@ export function withdrawFederation({ lobbyInvite, parts = [], statuses = [] }) {
  * to move it to a safe federation"): `from` is a federation's checked status ({ federation, status, successorId }). DRAINING or
  * CRITICAL only. Its named successor when that one is OPEN with an invite; else the lowest-load OPEN, known federation other
  * than itself (pickFederation). Null when there is nowhere safe - the notes stay and the next status read tries again.
+ * AND CLOSED (kanban #1982): the drain ends by a clock (the seats' DRAIN_MS and no open round naming it), never by every player's
+ * notes being out - a player away for the whole drain comes back to a CLOSED record with his notes still there, and nothing moved them.
  */
 export function safeFederation(from, statuses = [], { known = () => true } = {}) {
-  if (!from || !['DRAINING', 'CRITICAL'].includes(from.status)) return null;
+  if (!from || !['DRAINING', 'CRITICAL', 'CLOSED'].includes(from.status)) return null;
   const me = String(from.federation || '').toLowerCase();
   const usable = (statuses || []).filter((f) => f && f.invite && String(f.federation).toLowerCase() !== me);
   const succ = from.successorId && !/^0+$/.test(String(from.successorId))
     ? usable.find((f) => String(f.federation).toLowerCase() === String(from.successorId).toLowerCase() && f.status === 'OPEN' && known(f.federation) && !(f.allows && f.allows.deposit === false)) : null;
-  return succ || pickFederation(usable, { known });
+  // THE FALLBACK TAKES NEW MONEY (kanban #2433, state audit 2026-11-12): moving the notes makes an invoice in the target (migrateFromDraining's
+  // to.receive), so only a federation that takes deposits and opens rounds (kanban #807) and whose load does not refuse a deposit (allows.deposit);
+  // the guardians' named successor stays the one exception. None -> null: the notes wait for the next status read
+  return succ || pickFederation(usable.filter((f) => takesDeposits(f.federation) && takesNewRounds(f.federation) && !(f.allows && f.allows.deposit === false)), { known });
 }

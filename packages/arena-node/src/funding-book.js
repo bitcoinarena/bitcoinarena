@@ -16,13 +16,13 @@ import { createHash } from 'node:crypto';
 import { newerPlayerName, PLAYER_NAME_SKEW_MS } from '../../arena-protocol/src/player-name.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { VOTE_BOUND_BYTES } from '../../arena-protocol/src/ballot.js';
-import { feeProposalStands, feeProposalOutcome, feesAt as feesAtOf, FEES, FEES_TODAY, donationChanges, devMajority } from '../../arena-protocol/src/fee-proposal.js';
+import { feeProposalStands, feeProposalOutcome, FEES, FEES_TODAY, donationChanges, devMajority, applyFeeChanges, feeSetStands } from '../../arena-protocol/src/fee-proposal.js';
 import { leaderboardVotePeriod, leaderboardPasses } from '../../arena-protocol/src/leaderboard-payout.js';
 
 export const FUNDING_SQL = `CREATE TABLE IF NOT EXISTS funding_items (id TEXT PRIMARY KEY, kind TEXT NOT NULL, proposal TEXT NOT NULL, hex TEXT NOT NULL, at_ms INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS funding_signal_ends (proposal TEXT PRIMARY KEY, seen_ms INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS funding_outcomes (proposal TEXT PRIMARY KEY, outcome TEXT NOT NULL, decided_ms INTEGER NOT NULL);
-  CREATE TABLE IF NOT EXISTS funding_vote_census (proposal TEXT PRIMARY KEY, height INTEGER NOT NULL, census TEXT NOT NULL, hash TEXT);
+  CREATE TABLE IF NOT EXISTS funding_vote_census (proposal TEXT PRIMARY KEY, height INTEGER NOT NULL, census TEXT NOT NULL, hash TEXT, legacy INTEGER NOT NULL DEFAULT 0);
   CREATE TABLE IF NOT EXISTS funding_vote_blocks (proposal TEXT NOT NULL, height INTEGER NOT NULL, hash TEXT, votes TEXT NOT NULL, PRIMARY KEY (proposal, height));
   CREATE TABLE IF NOT EXISTS funding_vote_outcomes (proposal TEXT PRIMARY KEY, outcome TEXT NOT NULL, last_hash TEXT, decided_ms INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS funding_payments (proposal TEXT PRIMARY KEY, tranches INTEGER NOT NULL, cancelled TEXT, cancelled_k INTEGER);
@@ -151,7 +151,15 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
   voteChain = null, maxBlocksPerPass = 64, seasonedNodes = null, devKeysOf = null, pull = null, endTimeAt = null, bindHeightFor = null }) {
   db.exec(FUNDING_SQL);
   // kanban #1749: the census is held to the hash of the block it was read at (a store from before has no column: added, rows without one)
-  if (!db.prepare('PRAGMA table_info(funding_vote_census)').all().some((c) => c.name === 'hash')) db.exec('ALTER TABLE funding_vote_census ADD COLUMN hash TEXT');
+  // kanban #2169 (a44-refute-63): only the rows of such a store are LEGACY - the one kind of census that may still take the first hash
+  // it finds; a row this build (or the #1749 build) wrote without a hash was read while getblockhash did not answer and is read again
+  const censusCols = () => db.prepare('PRAGMA table_info(funding_vote_census)').all().map((c) => c.name);
+  const preHash = !censusCols().includes('hash');
+  if (preHash) db.exec('ALTER TABLE funding_vote_census ADD COLUMN hash TEXT');
+  if (!censusCols().includes('legacy')) {
+    db.exec('ALTER TABLE funding_vote_census ADD COLUMN legacy INTEGER NOT NULL DEFAULT 0');
+    if (preHash) db.exec('UPDATE funding_vote_census SET legacy = 1 WHERE hash IS NULL');
+  }
   // kanban #2536: a payment's cancellation is held to the hash of the due block it was counted at (older rows: none, taken at the next pass)
   if (!db.prepare('PRAGMA table_info(funding_payments)').all().some((c) => c.name === 'cancelled_hash')) db.exec('ALTER TABLE funding_payments ADD COLUMN cancelled_hash TEXT');
   const rows = (kind) => db.prepare('SELECT id, proposal, hex, kind FROM funding_items WHERE kind = ? ORDER BY at_ms, id').all(kind);
@@ -176,8 +184,8 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
   // THE VOTE (§27A.9.3 stage 2): opened only by a signal this seat decided passed; the census taken ONCE at the
   // vote's start (signalEnd); each voting block read once for this proposal's votes, held to by its hash; the outcome written once
   // when the last voting block is `decideDepth` deep, and reopened only when that counted block is reorged away
-  const voteCensus = (pid) => { const r = db.prepare('SELECT height, census, hash FROM funding_vote_census WHERE proposal = ?').get(pid);
-    return r ? { height: r.height, hash: r.hash || null, census: JSON.parse(r.census).map((b) => ({ pubkey: fromHex(b.pubkey), outpoint: b.outpoint, bondSats: BigInt(b.bondSats),
+  const voteCensus = (pid) => { const r = db.prepare('SELECT height, census, hash, legacy FROM funding_vote_census WHERE proposal = ?').get(pid);
+    return r ? { height: r.height, hash: r.hash || null, legacy: r.legacy === 1, census: JSON.parse(r.census).map((b) => ({ pubkey: fromHex(b.pubkey), outpoint: b.outpoint, bondSats: BigInt(b.bondSats),
       height: Number.isInteger(b.height) ? b.height : null, maturity: Number.isInteger(b.maturity) ? b.maturity : null })) } : null; };
   const voteBlocks = (pid) => db.prepare('SELECT height, hash, votes FROM funding_vote_blocks WHERE proposal = ? ORDER BY height').all(pid);
   const voteOutcome = (pid) => { const r = db.prepare('SELECT outcome, last_hash FROM funding_vote_outcomes WHERE proposal = ?').get(pid); return r ? { ...JSON.parse(r.outcome), lastHash: r.last_hash } : null; };
@@ -227,11 +235,29 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
     } catch (e) { if (own) db.exec('ROLLBACK'); throw e; }
     return Boolean(outcomeToo);
   }
+  // ONLY THE NEWEST VOTE PASS WRITES (kanban #2405, #2474, #1489 refute of #2139 - audit44 item 14, skeptic 2): two passes could
+  // run at once (server.js ticks every 120 s; a getblock or cs_main held through a reorg outlives that), and the #2139 check after
+  // the read loop held only one pass's rows against its own `decided`. A slow pass wrote an abandoned branch's row (INSERT OR
+  // REPLACE) after the other pass checked its rows, or dropped every row (an RPC error in its re-check) while the other counted -
+  // the outcome was written FAILED on a row set that was not the chain's, anchored to a block that never moves. Now every pass
+  // takes a number; after EVERY await (each chain read) a pass that is no longer the newest stops there and writes nothing more.
+  // A pass writes only between awaits, so no other pass's write can land between its last check and its writes: the rows it
+  // checks are the rows it counts. The outcome is also written only when the store still holds the row set the pass checked.
+  let votePassSeq = 0;
+  const SUPERSEDED = Symbol('superseded vote pass');
+  // the stored form of a census (kanban #1749); one function, so a legacy row is compared byte for byte with a fresh read (#2400)
+  const censusText = (c) => JSON.stringify(c.map((b) => ({ pubkey: toHex(b.pubkey), outpoint: b.outpoint, bondSats: String(b.bondSats),
+    height: Number.isInteger(b.height) ? b.height : null, maturity: Number.isInteger(b.maturity) ? b.maturity : null })));
   async function voteRound() {
+    const gen = ++votePassSeq;
+    try { return await votePass(gen); } catch (e) { if (e === SUPERSEDED) return []; throw e; }
+  }
+  async function votePass(gen) {
     if (!voteChain) return [];
-    const height = await Promise.resolve(voteChain.tipHeight()).catch(() => null);
+    const newest = (x) => { if (gen !== votePassSeq) throw SUPERSEDED; return x; };
+    const height = newest(await Promise.resolve(voteChain.tipHeight()).catch(() => null));
     if (!Number.isInteger(height)) return [];
-    const hashAt = async (h) => { try { const x = await voteChain.blockHashAt(h); return x ? String(x).toLowerCase() : null; } catch { return null; } };
+    const hashAt = async (h) => { let x = null; try { x = await voteChain.blockHashAt(h); } catch { x = null; } newest(); return x ? String(x).toLowerCase() : null; };
     const done = [];
     for (const row of votedRows()) {
       const signal = outcomeOf(row.id);
@@ -243,12 +269,30 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       // that read it later counted with the chain's - one vote, two outcomes, never healed. Now its block hash is stored with it and
       // checked every pass, decided or not: a different hash at period.from (never a missing one - an RPC error or a tip below it) drops
       // the census, the vote blocks and the outcome (a fee proposal's with it), and all are read again on this chain. A census stored
-      // without a hash (before this column, or while the hash could not be read) takes the hash it finds first.
+      // without a hash from a store before this column (legacy) takes the hash it finds first.
+      // NEVER ADOPTED WHEN READ BLIND (kanban #2169, a44-refute-63): a census stored while getblockhash did not answer (before === after
+      // as null === null, fixed below) is not legacy - adopting the first hash found pinned an abandoned branch's census to the block
+      // that replaced it. Such a row is dropped with its vote and read again, like a census whose block moved.
+      // A LEGACY CENSUS IS CHECKED, NOT ADOPTED (kanban #2400, a44-refute-63 s2): a census from a store before the hash column was
+      // never held to any block - taking the first hash found pinned an abandoned branch's census (a bond the reorg withdrew) to the
+      // block that replaced it across an upgrade or restart. censusAt reads history, so it is read again at period.from between two
+      // equal hash reads: byte-identical to the stored one, it takes that hash and the vote stands; different, it is dropped with its
+      // vote blocks and outcome and read again, like a census whose block moved. Unresolved (an RPC error, a reorg in between), the
+      // proposal waits for the next pass - never counted on a census no block vouches for.
       const held0 = voteCensus(row.id);
+      let legacyMoved = false;
+      if (held0 && !held0.hash && held0.legacy) {
+        const before = await hashAt(period.from);
+        let c = null; try { c = before ? await voteChain.censusAt(toHex(p.obj.networkId), period.from) : null; } catch { c = null; }
+        const after = c ? await hashAt(period.from) : null;
+        if (!before || !c || before !== after) continue;
+        const storedText = db.prepare('SELECT census FROM funding_vote_census WHERE proposal = ?').get(row.id).census;
+        if (censusText(c) === storedText) db.prepare('UPDATE funding_vote_census SET hash = ? WHERE proposal = ? AND hash IS NULL').run(after, row.id);
+        else legacyMoved = true;
+      }
       if (held0) {
         const fromHash = await hashAt(period.from);
-        if (fromHash && !held0.hash) db.prepare('UPDATE funding_vote_census SET hash = ? WHERE proposal = ? AND hash IS NULL').run(fromHash, row.id);
-        else if (fromHash && fromHash !== held0.hash) {
+        if (legacyMoved || (!held0.hash && !held0.legacy) || (fromHash && held0.hash && fromHash !== held0.hash)) {
           const own = !db.isTransaction;   // one step: the census never goes without its blocks and outcome
           if (own) db.exec('BEGIN IMMEDIATE');
           try {
@@ -285,12 +329,11 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         // kanban #1749: the hash read before and after the census - a reorg in between leaves it for the next pass
         const before = await hashAt(period.from);
         let c = null; try { c = await voteChain.censusAt(toHex(p.obj.networkId), period.from); } catch { c = null; }
+        newest();
         if (!c) continue;
         const after = await hashAt(period.from);
-        if (before !== after) continue;
-        db.prepare('INSERT OR IGNORE INTO funding_vote_census (proposal, height, census, hash) VALUES (?, ?, ?, ?)').run(row.id, period.from,
-          JSON.stringify(c.map((b) => ({ pubkey: toHex(b.pubkey), outpoint: b.outpoint, bondSats: String(b.bondSats),
-            height: Number.isInteger(b.height) ? b.height : null, maturity: Number.isInteger(b.maturity) ? b.maturity : null }))), after);
+        if (!before || before !== after) continue;   // kanban #2169: never stored without a known hash
+        db.prepare('INSERT OR IGNORE INTO funding_vote_census (proposal, height, census, hash) VALUES (?, ?, ?, ?)').run(row.id, period.from, censusText(c), after);
       }
       // blocks a reorg replaced are read again. THE WALK-BACK READS EVERY HELD ROW (kanban #2139, refute of #1633 audit44 item 14):
       // it stopped at the newest row whose hash still matched, so rows of an abandoned branch BELOW it (a reorg that landed between
@@ -332,7 +375,11 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         // NO BLOCK IS HELD WITHOUT ITS HASH (kanban #1750): a hash that did not answer (above the tip, or an RPC error - main.js
         // blockHashAt reads both as null) is read on the next pass, never stored as a row no reorg check can test
         if (!hash) break;
-        let votes; try { votes = await voteChain.votesAt(next, hash || undefined); } catch { break; }
+        let votes; try { votes = await voteChain.votesAt(next, hash || undefined); } catch { newest(); break; }
+        newest();
+        // kanban #2474: rows written and not yet checked after the loop - a pass stopped before its check (a newer pass took over)
+        // leaves them to the next pass's full walk-back, never to its newest-row check alone
+        walkedAll.delete(row.id);
         // the 77-byte vote names 8 bytes of the id; the bound seq vote (kanban #2562 / #2576, 80 bytes) names 7 - both are kept, the tally decides
         const mine = (votes || []).filter((v) => { const h = toHex(v.payload); return h.slice(8, 24) === prefix || (v.payload.length === VOTE_BOUND_BYTES && h.slice(8, 22) === prefix.slice(0, 14)); })
           .map((v) => ({ payload: toHex(v.payload), txid: String(v.txid) }));
@@ -367,6 +414,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
           log(`[funding] ${row.id.slice(0, 16)}: the chain changed while the vote was read (block ${r.height}) - its blocks are read again from there`);
           broken = true; break;
         }
+        walkedAll.add(row.id);   // kanban #2474: this pass's rows are checked (or dropped from the first that moved)
         if (broken) continue;
       }
       const readTo = held.length ? held[held.length - 1].height : null;
@@ -376,6 +424,10 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       const lastHash = await hashAt(period.last);
       const lastRow = held.find((r) => r.height === period.last);
       if (!lastHash || !lastRow || lastRow.hash !== lastHash || held.some((r) => !r.hash)) continue;
+      // kanban #2405, #2474: counted only from the row set checked above - the store read again after the last await must hold
+      // exactly those rows (heights, hashes, votes); anything else waits for the next pass
+      const now0 = voteBlocks(row.id);
+      if (now0.length !== held.length || now0.some((r, i) => r.height !== held[i].height || r.hash !== held[i].hash || r.votes !== held[i].votes)) continue;
       const out = ruleOf(row.kind, countOf(row.id, period, p.obj, period.until, row.kind));
       db.prepare('INSERT OR IGNORE INTO funding_vote_outcomes (proposal, outcome, last_hash, decided_ms) VALUES (?, ?, ?, ?)').run(row.id, JSON.stringify(out), lastHash, now());
       log(`[funding] ${row.id.slice(0, 16)}: vote ${out.passed ? 'passed' : 'failed'} - turnout ${out.turnoutPct} %, YES ${out.approvalPct} % of YES + NO, YES ${out.yesOfAllPct} % of everyone who could vote, ${out.bondsVoted} bond(s)`);
@@ -462,10 +514,35 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
   }
   // THE FEE DECISIONS: accepted sets in activation order; feesAt(height) the one in force
   const feeOutcomes = () => db.prepare('SELECT proposal, outcome, activation FROM fee_outcomes ORDER BY activation, proposal').all()
-    .map((r) => ({ proposal: r.proposal, ...JSON.parse(r.outcome) }));
+    .map((r) => ({ proposal: r.proposal, activation: r.activation, ...JSON.parse(r.outcome) }));
+  // THE FEES IN FORCE ARE FOLDED, NEVER FROZEN (kanban #2313, state audit 2026-11-12): a decision keeps only what does not depend
+  // on the other proposals - its signal and vote passed (`passed`), the protocol developers' majority (`devs`) - and the set is
+  // made here, over FEES_TODAY, from each such proposal's OWN changes in activation order (ties by proposal id), each one's limits
+  // and donation rule checked against the set folded before it. A whole set frozen at decide time made the order seats decided in
+  // matter: B (activation 400) decided before A (activation 140) existed kept a set without A, and undid A from 400 on the seat
+  // that watched live, not on one that caught up. A pure function of the outcomes held - a reorg that reopens one re-folds it.
+  function feeFold() {
+    const props = new Map(rows('fee').map((r) => [r.id, read('fee', r.hex)]).filter(([, x]) => x.ok).map(([id, x]) => [id, x.obj]));
+    let set = FEES_TODAY;
+    const out = [];
+    for (const o of feeOutcomes()) {
+      const p = props.get(o.proposal);
+      // a decision written before #2313 has no `passed`: it stands as it was decided
+      const passed = o.passed === undefined ? o.accepted === true : o.passed === true;
+      if (!p || !passed) { out.push({ proposal: o.proposal, activationHeight: o.activation, inForce: false, fees: set }); continue; }
+      const next = applyFeeChanges(set, p.changes);
+      const stands = feeSetStands(next).ok && (donationChanges(p, set).length === 0 || (o.devs === undefined ? o.accepted === true : o.devs === true));
+      if (stands) set = next;
+      out.push({ proposal: o.proposal, activationHeight: o.activation, inForce: stands, fees: set });
+    }
+    return out;
+  }
+  const decisionOf = (d, f, o) => (f && f.inForce ? { accepted: true, fees: f.fees, activationHeight: o.activationHeight, passed: d.passed, devs: d.devs }
+    : { ...d, accepted: false, fees: undefined, why: d.accepted === false && d.why ? d.why : 'its set does not stand on the fees in force before its activation' });
   function feesAt(height) {
-    const accepted = feeOutcomes().filter((o) => o.accepted).map((o) => ({ accepted: true, activationHeight: o.activationHeight, fees: o.fees }));
-    return feesAtOf({ height, accepted, base: FEES_TODAY });
+    let at = FEES_TODAY;
+    for (const f of feeFold()) if (f.activationHeight <= height) at = f.fees;
+    return at;
   }
   const approvalsOf = (pid) => db.prepare("SELECT hex FROM funding_items WHERE kind = 'fee-approval' AND proposal = ? ORDER BY at_ms, id").all(pid)
     .map((x) => read('fee-approval', x.hex)).filter((x) => x.ok).map((x) => ({ approval: x.obj, signature: x.signature }));
@@ -485,7 +562,10 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       if (signal.state === 'passed' && !vote) continue;                 // its vote is still open
       const o = row.p.obj;
       let devKeys = [];
-      if (donationChanges(o, feesAt(o.activationHeight - 1)).length) {
+      // a proposal that moves any donation fee asks the developers' keys (kanban #2313): whether its change moves a donation is
+      // known only when the set it lands on is folded, and that set can still change under it
+      const donationFee = o.changes.some((c) => FEES[c.fee].donation);
+      if (donationFee) {
         devKeys = typeof devKeysOf === 'function' ? await Promise.resolve(devKeysOf(toHex(o.networkId))).catch(() => null) : null;
         if (!Array.isArray(devKeys)) { log(`[fees] ${pid.slice(0, 16)}: the protocol developers' keys not read yet`); continue; }
       }
@@ -496,7 +576,10 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         let took = 0; for (const it of Array.isArray(got) ? got : []) { try { const r = await book.add(it.kind, it.hex, { heldAtMs: it.atMs === undefined ? null : Number(it.atMs), from: it.seat ?? null }); if (r && r.ok && r.fresh) took++; } catch { /* the next */ } }
         if (took) log(`[fees] ${pid.slice(0, 16)}: ${took} approval(s) or signal(s) pulled from the peers before deciding`);
       }
-      const out = feeProposalOutcome({ proposal: o, current: feesAt(o.activationHeight - 1), signal, tally: vote, approvals: approvalsOf(pid), devKeys, verify, schedule });
+      const decided = feeProposalOutcome({ proposal: o, current: feesAt(o.activationHeight - 1), signal, tally: vote, approvals: approvalsOf(pid), devKeys, verify, schedule });
+      // kept with it (kanban #2313): what feeFold re-reads - its signal and vote, and the developers' majority over everything it moves
+      const out = { ...decided, passed: !!(signal.state === 'passed' && vote && vote.passed === true),
+        devs: donationFee ? devMajority({ proposalId: fromHex(pid), approvals: approvalsOf(pid), devKeys, verify }).majority : false };
       db.prepare('INSERT OR IGNORE INTO fee_outcomes (proposal, outcome, activation, decided_ms) VALUES (?, ?, ?, ?)').run(pid, JSON.stringify(out), o.activationHeight, now());
       log(`[fees] ${pid.slice(0, 16)}: ${out.accepted ? `accepted - in force from ${o.activationHeight}` : `refused - ${out.why}`}`);
       done.push({ id: pid, ...out });
@@ -510,11 +593,13 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       const o = p.obj;
       const st = outcomeOf(row.id) || signalOutcome({ proposal: o, signals: signalsOf(row.id), active: null, tip: height, schedule });
       const decided = db.prepare('SELECT outcome FROM fee_outcomes WHERE proposal = ?').get(row.id);
+      // the decision as the fold holds it (kanban #2313): accepted = in force from its activation over the set folded before it
+      const folded = decided ? feeFold().find((f) => f.proposal === row.id) : null;
       const before = feesAt(o.activationHeight - 1);
       const devs = approvalsOf(row.id).map((a) => ({ dev: toHex(a.approval.dev), approve: a.approval.approve }));
       return { id: row.id, network: toHex(o.networkId), author: toHex(o.author), publishedHeight: o.publishedHeight, activationHeight: o.activationHeight,
         changes: o.changes.map((c) => ({ fee: c.fee, from: before[c.fee], to: c.value, donation: !!FEES[c.fee].donation })), purpose: o.purpose,
-        needsDevs: donationChanges(o, before).length > 0, devs, signal: st, vote: voteView(row.id, o, st), decision: decided ? JSON.parse(decided.outcome) : null, hex: row.hex };
+        needsDevs: donationChanges(o, before).length > 0, devs, signal: st, vote: voteView(row.id, o, st), decision: decided ? decisionOf(JSON.parse(decided.outcome), folded, o) : null, hex: row.hex };
     }).filter(Boolean).sort((a, b) => b.publishedHeight - a.publishedHeight);
   }
   /** THE LEADERBOARD PAYOUTS WHOSE VOTE PASSED HERE: [{ id, proposal (decoded), decidableAt }] - reserve-payout.js pays them. */

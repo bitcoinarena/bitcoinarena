@@ -11,7 +11,13 @@ import { seriesId, seriesRound } from '../../arena-protocol/src/series.js';
 import { seriesLineOf } from '../../arena-protocol/src/series-line.js';
 import { encodeManifest, manifestBodyId, gameIdOf, decodeManifest, RESULT_TYPE, PAYOUT_RULE, NO_PARENT, SOURCE_KIND, GAME_MARKET_REFUND,
   SCALAR_SIDES } from '../../arena-protocol/src/manifest.js';
-import { encodeValueAttestation, valueAttestationBodyId } from '../../arena-protocol/src/scalar.js';
+import { encodeValueAttestation, valueAttestationBodyId, scalarPayoutTable } from '../../arena-protocol/src/scalar.js';
+import { pariMutuelTable } from '../../arena-protocol/src/attested.js';
+// THE SEATS' TABLES AS GET /outcome SENDS THEM, built by the protocol's own rule: the page rebuilds each and refuses one that differs
+// (kanban #1615; #2153, #2221, #2299, #2354), so a hand-made table no seat would send reads as unverified
+const asJson = (t) => JSON.parse(JSON.stringify(t, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
+const ent = (id, pick, stakeMsat = 100000n, feeMsat = 1000n, donationMsat = 500n) => ({ entryId: id.repeat(32), stakeMsat, feeMsat, donationMsat, pick });
+const scalarTable = (entries, value, low = 8000000n, high = 9000000n) => asJson(scalarPayoutTable({ entries, value, bounds: { low, high } }));
 import { encodeRoundContract, roundId } from '../../arena-protocol/src/contracts.js';
 import { roundResultId } from '../../arena-protocol/src/round-result.js';
 import { GAME_MARKET_VERSION, SCALAR_VERSION, SCALAR_TEMPLATE_VERSION } from '../../arena-protocol/src/constants.js';
@@ -64,11 +70,11 @@ test('a scalar market\'s value is believed only signed by its manifest\'s attest
   assert.deepEqual([above.value, above.clamped], [9500000n, 9000000n]);
 
   const pick = { roundIdHex: rid, entryIdHex: 'e1'.repeat(32), market, pick: 0, stakeMsat: '100000', entryCloseMs: '1' };
-  const table = { refunded: false, rows: [{ entryId: 'e1'.repeat(32), netMsat: '98500', payoutMsat: '118200', won: true }] };
+  const table = scalarTable([ent('e1', 0), ent('e2', 1), ent('e4', 1), ent('e5', 1)], 8300000n);
   const [line] = marketLines({ picks: [pick], outcomes: new Map([[rid, { state: 'ATTESTED', label: 'LONG', final: true, table, check: ok }]]), nowMs: 2 });
   assert.equal(line.text, `btc-at-18 ${rid.slice(0, 8)}: value 83,000.00 USD between 80,000.00 USD and 90,000.00 USD (2 of 3 attestors, verified) · 'LONG' gets 118.2 of your 98.5 sats · +19.7`);
   const [clampedLine] = marketLines({ picks: [{ ...pick, pick: 1 }], outcomes: new Map([[rid, { state: 'ATTESTED', label: 'LONG', final: false,
-    table: { refunded: false, rows: [{ entryId: 'e1'.repeat(32), netMsat: '98500', payoutMsat: '0', won: false }] }, check: above }]]), nowMs: 2 });
+    table: scalarTable([ent('e1', 1), ent('e2', 0)], 9500000n), check: above }]]), nowMs: 2 });
   assert.match(clampedLine.text, /value 95,000.00 USD \(paid as 90,000.00 USD\) .* 'SHORT' gets 0 of your 98.5 sats · -98.5 \(final after the objection window\)$/);
   const [waiting] = marketLines({ picks: [pick], outcomes: new Map(), nowMs: 2 });
   assert.match(waiting.text, /waiting for 2 of 3 attestors to sign the value$/);
@@ -134,14 +140,14 @@ test('a market on a game is believed only from its source round\'s result, signe
 
   const pick = { ...record, market };
   const rid = record.roundIdHex;
-  const table = { refunded: false, losingPoolMsat: '50000', rows: [{ entryId: 'e2'.repeat(32), netMsat: '98500', payoutMsat: '148000', won: true }] };
+  const table = asJson(pariMutuelTable({ entries: [ent('e2', 0), ent('e5', 1, 50250n, 500n, 250n)], outcome: 0 }));
   const [won] = marketLines({ picks: [pick], outcomes: new Map([[rid, { state: 'ATTESTED', label: 'BULLS', final: true, table, check: ok }]]), nowMs: Number(S) });
   assert.equal(won.text, `tick-tock-fronts ${rid.slice(0, 8)}: 'BULLS' (source round ${toHex(SOURCE_ID).slice(0, 8)} ended BULLS, signed by its committee, verified) · you won 49.5 sats`);
   assert.deepEqual([won.state, won.gainMsat, won.final, won.finalAtMs], ['won', '49500', true, null]);
   //: every attested line says whether its result is final, and when - a lost one too, so the client counts it down
-  const lostTable = { ...table, rows: [{ ...table.rows[0], won: false, payoutMsat: '0' }] };
+  const lostTable = asJson(pariMutuelTable({ entries: [ent('e2', 0), ent('e6', 1)], outcome: 0 }));
   // the other pick loses: a lost row beside the pick the verified outcome names is refused as unverified (kanban #1615)
-  const [lost] = marketLines({ picks: [{ ...pick, pick: 1 }], outcomes: new Map([[rid, { state: 'ATTESTED', label: 'BULLS', final: false, finalAtMs: '1788200600000', table: lostTable, check: ok }]]), nowMs: Number(S) });
+  const [lost] = marketLines({ picks: [{ ...pick, entryIdHex: 'e6'.repeat(32), pick: 1 }], outcomes: new Map([[rid, { state: 'ATTESTED', label: 'BULLS', final: false, finalAtMs: '1788200600000', table: lostTable, check: ok }]]), nowMs: Number(S) });
   assert.deepEqual([lost.state, lost.lostMsat, lost.final, lost.finalAtMs], ['lost', '98500', false, 1788200600000]);
   //: a pick with no row in the table stays unknown - unless the page read its position from the book (0 shares, 0 cost)
   const noRow = { ...table, rows: [] };
@@ -174,6 +180,6 @@ test('a scalar template round\'s pick keeps its question and bounds, and its val
   const ok = await checkMarketOutcome({ outcome: { attestation: valueAtt(9500000n, ATTESTORS.slice(0, 2), roundId(round)) }, market, roundIdHex: rid, verify: verifyEd });
   assert.deepEqual([ok.verified, ok.value, ok.clamped], [true, 9500000n, 9000000n], ok.why);
   const [line] = marketLines({ picks: [{ ...record, market }], outcomes: new Map([[rid, { state: 'ATTESTED', label: 'Higher', final: true, check: ok,
-    table: { refunded: false, rows: [{ entryId: 'e3'.repeat(32), netMsat: '98500', payoutMsat: '197000', won: true }] } }]]), nowMs: Number(round.entryCloseMs) + 1 });
+    table: scalarTable([ent('e3', 0), ent('e4', 1)], 9500000n) }]]), nowMs: Number(round.entryCloseMs) + 1 });
   assert.match(line.text, /value 95,000.00 USD \(paid as 90,000.00 USD\) between 80,000.00 USD and 90,000.00 USD .* 'Higher' gets 197 of your 98.5 sats · \+98.5$/);
 });

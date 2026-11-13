@@ -3703,23 +3703,52 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     // A HEAD-TO-HEAD MOVE: the move a head-to-head game's client chose, read by the join it starts: { round, move }
     window.ARENA_HIDDEN_CHOSEN = null;
     function hiddenFor(roundIdHex) { const c = window.ARENA_HIDDEN_CHOSEN; return c && c.round === roundIdHex ? c : null; }
-    // THE TAB'S HIDDEN MOVES, kept with the tab's seed (sessionStorage): the move and its salt until they are revealed - a
-    // reload between entry and reveal must not lose the salt, or the move could never be shown and the entry forfeits
+    // THE PHRASE'S HIDDEN MOVES: the move and its salt until they are revealed - a reload between entry and reveal must not lose the salt, or the
+    // move could never be shown and the entry forfeits. KEPT WITH THE PHRASE, NOT THE TAB (kanban #2037, state audit 2026-11-12): the salt was in
+    // sessionStorage while the phrase that staked it (arena.seeds), its stake lock and its collect are kept in the browser - a tab closed between the
+    // move and the close left a committed entry no later tab of the same phrase could reveal, and its stake forfeited. Now each move is kept in
+    // localStorage under the phrase's first 16 hex (phrase16, as arena.wallet.last.<phrase16>), read only by a tab holding that phrase, and dropped an
+    // hour after its result stands (endMs). A tab with no phrase, or a browser refusing localStorage, keeps it in the tab as before; moves a tab kept
+    // there before this fix are still read
     const HIDDEN_KEY = 'arena.h2h.moves';
-    // AND IN THE PAGE'S MEMORY TOO (kanban #2024): a write sessionStorage refuses (a full origin quota, a storage the browser
-    // refuses) used to keep the move nowhere - the reveal answered "this tab hid no move" and the entry, its stake locked, was
-    // forfeit in the same tab. The page's own copy is read with the stored list, so a failed write still reveals in this page.
+    const HIDDEN_KEEP_MS = 3600000;
+    // AND IN THE PAGE'S MEMORY TOO (kanban #2024): a write the storage refuses (a full origin quota, a storage the browser refuses) used to keep the
+    // move nowhere - the reveal answered "this tab hid no move" and the entry, its stake locked, was forfeit in the same tab. The page's own copy is
+    // read with the stored lists, so a failed write still reveals in this page.
     const hiddenInPage = new Map();
-    function readStoredHidden() { try { const v = JSON.parse(window.sessionStorage.getItem(HIDDEN_KEY) || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } }
+    const hiddenPhrase = () => { try { const p = String(window.sessionStorage.getItem('arena.player.seed') || '').slice(0, 16).toLowerCase(); return /^[0-9a-f]{16}$/.test(p) ? p : null; } catch { return null; } };
+    const hiddenList = (st) => { try { const a = JSON.parse(st.getItem(HIDDEN_KEY) || '[]'); return Array.isArray(a) ? a : []; } catch { return []; } };
     function readHidden() {
-      const stored = readStoredHidden(), have = new Set(stored.map((x) => x && x.roundIdHex));
-      return stored.concat([...hiddenInPage.values()].filter((x) => !have.has(x.roundIdHex)));
+      const ph = hiddenPhrase(), out = [];
+      if (ph) { try { for (const x of hiddenList(window.localStorage)) if (x && x.phrase16 === ph) out.push(x); } catch { /* none kept in the browser */ } }
+      try { for (const x of hiddenList(window.sessionStorage)) if (x && !out.some((y) => y.roundIdHex === x.roundIdHex)) out.push(x); } catch { /* none in the tab */ }
+      for (const x of hiddenInPage.values()) if (!out.some((y) => y.roundIdHex === x.roundIdHex)) out.push(x);
+      return out;
     }
     function rememberHidden(h) {
       hiddenInPage.delete(h.roundIdHex); hiddenInPage.set(h.roundIdHex, h);
       while (hiddenInPage.size > 50) hiddenInPage.delete(hiddenInPage.keys().next().value);
-      try { const all = readStoredHidden().filter((x) => x.roundIdHex !== h.roundIdHex); all.push(h); window.sessionStorage.setItem(HIDDEN_KEY, JSON.stringify(all.slice(-50))); }
+      const ph = hiddenPhrase();
+      if (ph) {
+        try {
+          const now = Date.now();
+          const all = hiddenList(window.localStorage).filter((x) => x && !(x.phrase16 === ph && x.roundIdHex === h.roundIdHex)
+            && !(Number(x.endMs) > 0 && Number(x.endMs) + HIDDEN_KEEP_MS < now));
+          all.push(Object.assign({}, h, { phrase16: ph }));
+          window.localStorage.setItem(HIDDEN_KEY, JSON.stringify(all.slice(-200)));
+          return;
+        } catch { /* the browser keeps nothing: kept in the tab below */ }
+      }
+      try { const all = hiddenList(window.sessionStorage).filter((x) => x.roundIdHex !== h.roundIdHex); all.push(h); window.sessionStorage.setItem(HIDDEN_KEY, JSON.stringify(all.slice(-50))); }
       catch (e) { console.warn('[arena] the hidden move of round ' + String(h.roundIdHex).slice(0, 16) + ' is kept for this page only (' + ((e && e.name) || e) + '): do not reload before its reveal'); }
+    }
+    // A MOVE NO SEAT TOOK (kanban #2025): its record, written before the entry went out, goes again - the round is not this tab's
+    function forgetHidden(roundIdHex) {
+      hiddenInPage.delete(roundIdHex);
+      const ph = hiddenPhrase();
+      if (ph) { try { window.localStorage.setItem(HIDDEN_KEY, JSON.stringify(hiddenList(window.localStorage).filter((x) => !(x && x.phrase16 === ph && x.roundIdHex === roundIdHex)))); } catch { /* none kept in the browser */ } }
+      try { window.sessionStorage.setItem(HIDDEN_KEY, JSON.stringify(hiddenList(window.sessionStorage).filter((x) => x.roundIdHex !== roundIdHex))); }
+      catch { /* kept for this page only */ }
     }
     window.ARENA_HIDDEN_MOVES = readHidden;
     // ---------------------------------------------------------------- markets (§0A.7a): Up/Down's page part, packages/btc-updown/page/market-page.js (kanban #521)
@@ -4598,7 +4627,9 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           }
           // AND WHAT THE COLLECT NEEDS AFTER THE WINDOW, KEPT IN THE TAB (6d): a reload -
           // onto the round link or anywhere - collects from this, not from the join.
-          ARENACLIENT.saveCollect(vault(), Object.assign({}, window.ARENA_LOCK_JOIN, { round: named.round, stakeLock }));
+          // A RECORD THE BROWSER REFUSED IS SAID (kanban #2106): the 24 h scan brings it back (it now looks per order), and the log says why it must
+          if (ARENACLIENT.saveCollect(vault(), Object.assign({}, window.ARENA_LOCK_JOIN, { round: named.round, stakeLock })) === false)
+            console.error('[arena] the collect record of this order was not kept (the browser refused it) - the 24 h scan looks for it at the next load');
         }
         window.ARENA_STAKE = {
           dealt: true, signerNodes: signerNodes.signerNodes.length, agreed: signerNodes.agreed,
@@ -4678,6 +4709,17 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         // seats (its settlement slots) took the entry, the move is the tab's; the rest answer in the background
         const seatsThatCount = Number(named.round.settlementSlots || named.round.gameVerifySlots || 0);
         try { if (window.ARENA_MADE_ENTRY) window.ARENA_MADE_ENTRY(ARENACLIENT.toHex(ARENACLIENT.entryId(entry))); } catch { /* the move still goes */ }   // kanban #2035
+        // THE MOVE AND ITS SALT KEPT BEFORE THE ENTRY GOES OUT (kanban #2025, state audit 2026-11-12): written only after the seats answered (2.8 s, up to
+        // 22 s with a slow seat), a reload or a closed tab in that wait left an entry at the seats, its stake locked, whose move nobody could reveal -
+        // FORFEIT, its stake to the opponent. Now the record is in sessionStorage first, with the entry id made here (the seats make the same one), and
+        // written again with their id once they answered; an entry no seat took has its record taken out again
+        const hiddenRecord = (entryIdHex) => ({ roundIdHex: named.roundIdHex, entryIdHex, move: hidden.move, saltHex: ARENACLIENT.toHex(hidden.salt),
+          nodes: named.nodes, entryCloseMs: String(named.round.entryCloseMs), gameId: ARENACLIENT.toHex(named.round.gameId),
+          endMs: String(ARENACLIENT.roundEndMs(named.round)),   // its reveal deadline: the result stands by then at the latest
+          committee: (window.ARENA_ROUND_COMMITTEE || {})[named.roundIdHex] || null,   // kanban #2561: the seats whose lock set certificate it waits for
+          protocolVersion: Number(named.round.protocolVersion || 1) });   // kanban #2561: only a round of 28 or later waits for a certificate
+        { let ownId = null; try { ownId = ARENACLIENT.toHex(ARENACLIENT.entryId(entry)); } catch { /* the seats' id, written once they answered */ }
+          rememberHidden(hiddenRecord(ownId)); }
         const all = ARENACLIENT.submitPick({ entry, stakeLock, nodes: named.nodes, onEntries: (x) => entriesIn(x),
           onEntry: (p) => { if (seatsThatCount > 0 && p.entries.filter((x) => x.status === 201).length >= seatsThatCount) entriesIn({ entryId: p.entryId, entries: p.entries }); } });
         all.then((x) => entriesIn(x), (e) => entriesIn({ entries: [], why: e.message }));
@@ -4719,6 +4761,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         if (!sent.entries.some((x) => x.status === 201)) {
           // WHY, as the seats said it (2026-10-30: "the signer nodes refused the entry: undefined"): what onEntries hands has no `why` of its own
           const saidWhy = sent.why || [...new Set(sent.entries.map((x) => String(x.why || '').trim()).filter(Boolean))].sort((a, b) => (/not accepted/.test(a) ? 1 : 0) - (/not accepted/.test(b) ? 1 : 0)).slice(0, 2).join(' | ') || 'no seat said why';
+          forgetHidden(named.roundIdHex);
           window.ARENA_JOIN_REFUSED = 'the signer nodes refused the entry: ' + saidWhy; console.error('[arena] hidden move refused, each seat: ' + JSON.stringify(sent.entries.map((x) => [x.status, String(x.why || '').slice(0, 140)]))); return; }
         // THE SAME TRANSACTION RECORD AS AN ORDER'S (2026-10-24: "Make sure that the other apps also get all these timing fixes"): the tx
         // id in the log, the page's signed timing to the seats (explorer), a slow one's log kept in this browser
@@ -4731,11 +4774,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             post(); setTimeout(post, 8000);
           }
           if (tookMs > (window.ARENA_SLOW_TX_MS || 2000) && window.ARENA_KEEP_SLOW_TX) setTimeout(() => window.ARENA_KEEP_SLOW_TX(sent.entryId, tookMs), 8000); }
-        rememberHidden({ roundIdHex: named.roundIdHex, entryIdHex: sent.entryId, move: hidden.move, saltHex: ARENACLIENT.toHex(hidden.salt),
-          nodes: named.nodes, entryCloseMs: String(named.round.entryCloseMs), gameId: ARENACLIENT.toHex(named.round.gameId),
-          endMs: String(ARENACLIENT.roundEndMs(named.round)),   // its reveal deadline: the result stands by then at the latest
-          committee: (window.ARENA_ROUND_COMMITTEE || {})[named.roundIdHex] || null,   // kanban #2561: the seats whose lock set certificate it waits for
-          protocolVersion: Number(named.round.protocolVersion || 1) });   // kanban #2561: only a round of 28 or later waits for a certificate
+        rememberHidden(hiddenRecord(sent.entryId));
         window.ARENA_HIDDEN = { round: named.roundIdHex, entryIdHex: sent.entryId, move: hidden.move };
         return;
       }
@@ -5083,7 +5122,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         if (window.ARENA_NEW_WALLET && seeds.length === 1 && seeds[0] === tabHex) { console.log('[arena] collect scan: a wallet made in this page - no round before it to find'); return; }
         // ONE READ OF EACH SIGNER NODE PER SCAN (2026-10-07): its /settled list is matched against every
         // phrase's keys - 7 asks on 7 signer nodes however many phrases are kept (was 7 per phrase: 49 for seven)
-        const knownBySeed = new Map(seeds.map((hex) => [hex, ARENACLIENT.savedCollects(vault(), { seed: ARENACLIENT.fromHex(hex) }).map((r) => r.roundIdHex)]));
+        // KNOWN BY ROUND AND ORDER (kanban #2106): a kept order 0 no longer hides a lost record of order 2 of the same round from the scan
+        const knownBySeed = new Map(seeds.map((hex) => [hex, ARENACLIENT.savedCollects(vault(), { seed: ARENACLIENT.fromHex(hex) }).map((r) => r.roundIdHex + ':' + (Number(r.order) || 0))]));
         const found = await ARENACLIENT.findOwedRounds({ seeds: seeds.map((hex) => ARENACLIENT.fromHex(hex)), knownBySeed, curve: window.ARENA_CURVE, nodes: named.nodes,
           sinceMs: Date.now() - OWED_LOOKBACK_MS });
         for (const hex of seeds) {
@@ -6311,15 +6351,21 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         }
         await loadWasm();
         const offer = await ARENACLIENT.walletDepositOffer({ federationId, invite: into, seed, LockClient: wasm.LockClient, storage: vault(), gateways: window.ARENA_LEDGER_GATEWAYS || [],
-          onClaimed: (d) => { welcomeLanded(); if (d && d.amountMsat) window.ARENA_MONEY_ALERT.credited(d.amountMsat, true); paintHistory(); if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE(); } });
+          onClaimed: (d) => { try { if (/^pending:/.test(sessionStorage.getItem('arena.welcome.pending') || '')) sessionStorage.removeItem('arena.welcome.pending'); } catch { /* no storage */ } welcomeLanded(); if (d && d.amountMsat) window.ARENA_MONEY_ALERT.credited(d.amountMsat, true); paintHistory(); if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE(); } });
         if (offer.client && window.ARENA_KEEP_WALLET) window.ARENA_KEEP_WALLET(ARENACLIENT.toHex(federationId), offer.client);
         const grant = ARENACLIENT.FAUCET_GRANTS.welcome;
         const d = await offer.invoice(grant.invoiceMsat);
         window.ARENA_MONEY_ALERT.nextWords(grant.sats + ' sats have been credited to your wallet for testing.');
-        await ARENACLIENT.askFaucet({ url: window.ARENA_FAUCET_URL, kind: 'welcome', invoice: d.invoice, seed });
-        try { sessionStorage.removeItem('arena.welcome.pending'); } catch { /* no storage */ }
+        const paid = await ARENACLIENT.askFaucet({ url: window.ARENA_FAUCET_URL, kind: 'welcome', invoice: d.invoice, seed });
+        // A PENDING ANSWER KEEPS THE FLAG (kanban #2100, state audit 2026-11-12): the faucet's payment is still in flight and its sweep takes the row
+        // off the book if it FAILS; the flag is kept as "pending:<hash>" until this offer is claimed (onClaimed), and the welcome is asked again in
+        // 3 min (and at the next load) - refused "already has" while the faucet's row is pending, given once the sweep dropped it
+        if (paid && paid.pending) {
+          try { sessionStorage.setItem('arena.welcome.pending', 'pending:' + String(paid.hash || '')); } catch { /* no storage */ }
+          setTimeout(() => { welcomeRunning = false; welcomeSats(); }, 180000);
+        } else { try { sessionStorage.removeItem('arena.welcome.pending'); } catch { /* no storage */ } }
         window.ARENA_TRACK('faucet-welcome');
-      } catch (e) { welcomeRunning = false; welcomeLanded(); if (/already has/.test(String(e && e.message))) { try { sessionStorage.removeItem('arena.welcome.pending'); } catch { /* no storage */ } } window.ARENA_MONEY_ALERT.nextWords(null); window.ARENA_MONEY_ALERT.notComing(); console.log('[faucet] no welcome sats: ' + (e && e.message ? e.message : e)); }
+      } catch (e) { welcomeRunning = false; welcomeLanded(); if (/already has/.test(String(e && e.message)) && !/^pending:/.test(pending)) { try { sessionStorage.removeItem('arena.welcome.pending'); } catch { /* no storage */ } } window.ARENA_MONEY_ALERT.nextWords(null); window.ARENA_MONEY_ALERT.notComing(); console.log('[faucet] no welcome sats: ' + (e && e.message ? e.message : e)); }
     }
     // AT THE START (a Nostr login reloads the page with its seed), and at once when the wallet is made in this page
     window.ARENA_WELCOME = welcomeSats;
@@ -9538,7 +9584,9 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         const statuses = [...all.values()];
         for (const fid of ARENACLIENT.ledgerFederations(vault())) {
           const st = all.get(fid);
-          if (!st || !['DRAINING', 'CRITICAL'].includes(st.status) || evacuating.has(fid) || evacuatedEmpty.has(fid)) continue;
+          // AND CLOSED (kanban #1982): a drain is closed by its clock, not by this player's notes being out - a player away for the whole
+          // drain comes back to a CLOSED record with notes still there, moved now to its successor first (safeFederation)
+          if (!st || !['DRAINING', 'CRITICAL', 'CLOSED'].includes(st.status) || evacuating.has(fid) || evacuatedEmpty.has(fid)) continue;
           const target = ARENACLIENT.safeFederation({ ...st, federation: fid }, statuses,
             { known: (f) => ARENACLIENT.federationIsKnown(f) || ARENACLIENT.federationConfirmed(window.ARENA_BROWSER_STORE(), f) });
           if (!target) { console.warn('[arena] federation ' + fid.slice(0, 16) + ' is ' + st.status + ' and no safe federation is OPEN: the notes stay, tried again at the next status read'); continue; }
@@ -9551,7 +9599,9 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
                 + (m.leftMsat !== undefined ? `, ${Math.floor(Number(m.leftMsat) / 1000)} sat to go` : '') + (m.why ? ` (${m.why})` : '')) });
             // EMPTY ONLY WHEN THE RUN ENDED 'moved' WITH NOTHING TO MOVE (kanban #2427 / #2484): a stop - for storage ('unkept') or any other - left
             // the notes in the failing federation, so it is tried again at the next status read; a stop for storage also says the storage is full
-            if (r.state === 'moved' && String(r.moved) === '0' && Number(r.chunks) === 0) evacuatedEmpty.add(fid);
+            // AND ONLY A FEDERATION FOUND EMPTY (kanban #2289): a stopped move (the gateway refunded, the notes all still there) also answers 0 msat in
+            // 0 chunks - migrateFromDraining says `empty` when it found nothing above dust
+            if (r.state === 'moved' && r.empty === true) evacuatedEmpty.add(fid);
             if (r.state === 'unkept') window.ARENA_MONEY_ALERT.full();
             window.ARENA_EVACUATED = { from: fid, to: String(target.federation), state: r.state, moved: String(r.moved), chunks: r.chunks ?? r.movedChunks };
             console.log(`[arena] out of federation ${fid.slice(0, 16)}: ${r.state}, ${r.moved} msat in ${r.chunks ?? r.movedChunks} chunk(s) to ${String(target.federation).slice(0, 16)}`);

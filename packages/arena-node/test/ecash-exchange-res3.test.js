@@ -30,7 +30,7 @@ function seat({ lostReceive = 0 } = {}) {
         if (received.has(k)) return { state: 'AlreadyReceived', msat: 0n, earlier: 'Success', carriedMsat: received.get(k) };
         received.set(k, 100_000n);
         if (lostReceive > 0) { lostReceive--; throw new Error('arena-stake-lock ecash-receive timed out'); }
-        return { state: 'Success', msat: 100_000n }; } },
+        return { state: 'Success', msat: 100_000n, carriedMsat: 100_000n }; } },
     [B]: { ecashBalance: async () => holdsB,
       ecashSend: async (m) => { sends++; holdsB -= m; return { ecash: `fedimintb-${++n}`, msat: m }; },
       ecashSent: async () => ({ found: false }) },
@@ -103,7 +103,7 @@ test('RES-3 a row from before the fix (keyed by the raw string, receive_asked NU
 test('#1244 an exchange out of or into a federation this seat lists as liquidating is refused before anything is asked or written', async () => {
   const asked = [];
   const ports = {
-    [A]: { ecashBalance: async () => 0n, ecashReceive: async () => { asked.push('receive'); return { state: 'Success', msat: 100_000n }; } },
+    [A]: { ecashBalance: async () => 0n, ecashReceive: async () => { asked.push('receive'); return { state: 'Success', msat: 100_000n, carriedMsat: 100_000n }; } },
     [B]: { ecashBalance: async () => 10_000_000n, ecashSend: async (m) => { asked.push('send'); return { ecash: 'fedimintb-1', msat: m }; }, ecashSent: async () => ({ found: false }) },
   };
   const db = new DatabaseSync(':memory:');
@@ -129,7 +129,7 @@ test('#1272 an exchange taken before its federation was listed is finished after
   const run = async ({ sendFailsOnce }) => {
     let failed = !sendFailsOnce, sends = 0;
     const ports = {
-      [A]: { ecashBalance: async () => 0n, ecashReceive: async () => ({ state: 'Success', msat: 100_000n }) },
+      [A]: { ecashBalance: async () => 0n, ecashReceive: async () => ({ state: 'Success', msat: 100_000n, carriedMsat: 100_000n }) },
       [B]: { ecashBalance: async () => 10_000_000n, ecashSend: async (m) => { if (!failed) { failed = true; throw new Error('the tool timed out'); } sends++; return { ecash: `fedimintb-${sends}`, msat: m }; },
         ecashSent: async () => ({ found: false }) },
     };

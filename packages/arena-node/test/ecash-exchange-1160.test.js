@@ -25,7 +25,7 @@ function seat({ lostReceive = 0, lostSend = 0, oldTool = false, carries = 100_00
         if (received.has(e)) return oldTool ? { state: 'AlreadyReceived', msat: 0n } : { state: 'AlreadyReceived', msat: 0n, earlier: 'Success', carriedMsat: carries };
         received.set(e, carries);
         if (lostReceive > 0) { lostReceive--; throw new Error('arena-stake-lock ecash-receive timed out'); }
-        return { state: 'Success', msat: carries }; } },
+        return { state: 'Success', msat: carries, carriedMsat: carries }; } },
     [B]: { ecashBalance: async () => holdsB,
       ecashSend: async (m, { key = null } = {}) => { calls.push('send');
         if (key && !oldTool && log.has(key)) return { ...log.get(key), again: true };
