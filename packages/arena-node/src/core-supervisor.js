@@ -36,7 +36,8 @@ if (parentPort && workerData && workerData.arenaCoreSupervisor) {
       });
       const c = { worker, ctrl, triggerMb: m.triggerMb, error: null, asking: false };
       cores.set(m.id, c);
-      worker.on('error', (e) => { c.error = (e && (e.code || e.message)) || String(e); });
+      // kanban #2549: the core controls its error's code and message - only the first 512 characters are carried
+      worker.on('error', (e) => { c.error = String((e && (e.code || e.message)) || e).slice(0, 512); });
       worker.on('exit', (code) => {
         cores.delete(m.id);
         if (report) report.postMessage({ id: m.id, code, error: c.error });
