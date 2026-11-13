@@ -41,6 +41,15 @@ import { splitByFederation } from '../../arena-protocol/src/federation-settlemen
 import { pluginForRound, payoutRuleOfRound } from './plugins.js';
 import { heldOutcomes, marketFinalityOf, attestedTable } from './game-market.js';
 import { jsonUpTo, BODY_MOST } from './body-read.js';
+import { answersUpTo, binaryUpTo, textUpTo } from './peer-read.js';
+// A PEER'S SETTLEMENT ANSWER HAS A LIMIT (kanban #2113, #1489 v1-refute-53-s3): #peerCommitments read each peer's POST /settle-commit answer
+// with a bare arrayBuffer(), bounded only in time (peerAskMs) - one peer's 256 MiB answer was read whole right before the settlement was
+// signed; /settle-share, /settle-sends and /lock-settlement the same. Every answer this settlement reads from a peer now goes through
+// answersUpTo (PEER_ANSWER_BYTES, 8 MiB: a send plan, a kept settlement), and the FROST answers - one encoded commitment, one share - and
+// a refusal's text are read up to PEER_FROST_BYTES.
+export const PEER_FROST_BYTES = 64 * 1024;
+// a refusal's text, up to the bound (a stand-in answer with no body stream, a test's, is read as it offers itself)
+const whyUpTo = async (r) => (r.body === undefined && typeof r.text === 'function' ? r.text() : textUpTo(r, PEER_FROST_BYTES));
 import { lockSettlement, lateLockSettlement, attestedLockSettlement, bookLockSettlement, RESERVE_LATER_PK } from '../../arena-protocol/src/lock-settlement.js';
 import { fallbackInputs } from './fallback-inputs.js';
 import { fallbackFiler } from '../../arena-protocol/src/fallback-claim.js';
@@ -317,7 +326,7 @@ export class LockSettlement {
     this.random = random;
     this.stakeSecrets = stakeSecrets;
     this.peersFor = peersFor;
-    this.fetcher = fetcher;
+    this.fetcher = answersUpTo(fetcher);
     this.built = new Map();          // round id hex -> the settlement this signer node rebuilt
     this.summaries = new Map();      // round id hex -> what its settlement moved, rebuilt after a restart
     this.byPlan = new Map();         // round id hex -> { fp, built }: the last build and the plan it was built for
@@ -1519,8 +1528,8 @@ export class LockSettlement {
     const ask = this.#askHeaders(roundIdBytes, m, query, ASK_COMMIT, acks);
     const asked = await askPeers(this.peersFor(roundIdBytes), async (base, signal) => {
       const r = await this.fetcher(`${base}/settle-commit?${query}&txid=${m.txid}`, { method: 'POST', signal, ...(acks ? { body: acks } : {}), ...ask });
-      if (!r.ok) return { why: (await r.text()).trim(), byName: refusedByName(r) };
-      const commitment = decodePeerCommitment(new Uint8Array(await r.arrayBuffer()));   // its nonces are points, or it is refused (kanban #2331, #2345)
+      if (!r.ok) return { why: String(await whyUpTo(r)).trim(), byName: refusedByName(r) };
+      const commitment = decodePeerCommitment(new Uint8Array(await binaryUpTo(r, PEER_FROST_BYTES)));   // its nonces are points, or it is refused (kanban #2331, #2345)
       return { commitment, who: this.#commitWord(roundIdBytes, m, r, commitment), leftOut: !!(this.#lists.withheld.get(query) || new Set()).has(base) };
     // A SEAT LEFT OUT FOR A WITHHELD SHARE (kanban #1070) does not count towards the threshold that ends the wait: it will not be on the list
     }, { boundMs: this.peerAskMs, graceMs: this.peerGraceMs, enough: m.needed - 1, counts: (x) => !!x.commitment && !x.leftOut });
@@ -1583,8 +1592,8 @@ export class LockSettlement {
     const peers = signers.filter((s) => s.base !== null);
     const asked = await askPeers(peers.map((s) => s.base), async (base, signal) => {
       const r = await this.fetcher(`${base}/settle-share?${q}`, { method: 'POST', body, signal, ...ask });
-      if (!r.ok) return { status: r.status, why: (await r.text()).trim(), byName: refusedByName(r) };
-      return { share: decodeShare(new Uint8Array(await r.arrayBuffer())) };
+      if (!r.ok) return { status: r.status, why: String(await whyUpTo(r)).trim(), byName: refusedByName(r) };
+      return { share: decodeShare(new Uint8Array(await binaryUpTo(r, PEER_FROST_BYTES))) };
     }, { boundMs: this.peerAskMs });
     // A PAIR SPENT ON ANOTHER LIST (kanban #2044, the forfeit's #1699): a pair drawn for this ask, so one who read this list spent it - the seat refusing
     // is not at fault: `poisoned`, and the seats that gave a share meanwhile are named (`sharers`) for nonce-pool.js SignerLists to leave out first
