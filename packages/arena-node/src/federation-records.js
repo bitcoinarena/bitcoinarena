@@ -30,7 +30,7 @@ import { emergencyDepartureStands, emergencyDepartureEffect, emergencyDepartureI
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { withConfigEndpoints } from './federation-endpoints.js';
 import { buildFederationRecord, encodeFederationRecord, federationRecordId, joinSignedRecord, verifyFederationRecord, verifyFederationRecords,
-  FEDERATION_STATUS, GONE, decodeFederationRecord, splitSignedRecord, guardianKeySet, highestVerified, recordStatusName, thresholdOf, loadReserveOf, statusFor, paysDrainShares, playerReserveOf, GATEWAY_FEE_MAX_REFERENCE, RESTRICTION_RANK } from '../../arena-protocol/src/federation-record.js';
+  FEDERATION_STATUS, GONE, decodeFederationRecord, splitSignedRecord, guardianKeySet, highestVerified, recordStatusName, thresholdOf, loadReserveOf, statusFor, paysDrainShares, playerReserveOf, GATEWAY_FEE_MAX_REFERENCE, RESTRICTION_RANK, selfConsistentRestrictive } from '../../arena-protocol/src/federation-record.js';
 import { recordBand, bandOfRecord } from '../../arena-protocol/src/capacity.js';
 
 /**
@@ -538,6 +538,12 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     if (items.length) {
       const verdicts = judge(fid, items.map((x) => ({ bytes: x.bytes, census: x.census })), { inviteFederationId, keys, tip: await tipNow(), census: b.census.entries });
       items.forEach((x, i) => { if (verdicts[i].ok) rows.push({ ...verdicts[i], hex: x.hex }); });
+      // AND THE REFUSED RESTRICTIVE RECORD ITS OWN THRESHOLD SIGNED (kanban #2614, as the mirror): without keys it is read beside the pick
+      if (!keys) {
+        const pick = highestVerified(verdicts.filter((v) => v.ok));
+        const r = pick ? selfConsistentRestrictive(verdicts, pick) : null;
+        if (r) rows.push({ ...r.v, hex: items[r.index].hex });
+      }
     }
     // A KEYLESS SEAT NEVER LOOSENS THE BAND IT READS BELOW THIS HEIGHT (kanban #2613, as keep()): without the config keys a newer record that is
     // less restrictive (RESTRICTION_RANK) than one before it - strangers' OPEN over a genuine HALTED - does not set the band; with keys the highest
@@ -1085,11 +1091,17 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     // EVERY RECORD OF THE FEDERATION THIS MIRROR SEES, JUDGED TOGETHER (kanban #2604): each with the census it stands against
     const cands = [];
     function cand(x, census) { let bytes = null; try { bytes = fromHex(String(x.record)); } catch { return; } cands.push({ x, bytes, census }); }
+    // AND THE RESTRICTIVE RECORD THE PICK WOULD DROP (kanban #2614, feedback #043): a keyless seat with no record of F yet mirrored the genuine
+    // 7 of 7 HALTED record and eight strangers' OPEN one (nominal 11) in one pass; the genuine one was refused (it needs 8), the forgery picked,
+    // and with nothing kept the #2613 guard had nothing to hold. A refused record signed by its own threshold, more restrictive than the pick and
+    // signed by more than f of the larger set (selfConsistentRestrictive), is kept first - with its halt start - and the pick goes beside it
+    let restrict = null;
     async function settle() {
-      best = null;
+      best = null; restrict = null;
       if (!cands.length) return;
       const verdicts = judge(fid, cands.map((c) => ({ bytes: c.bytes, census: c.census })), { inviteFederationId, keys, tip: await tipNow(), census: b.census.entries });
       cands.forEach((c, i) => take(c.x, verdicts[i]));
+      if (!keys && best) { const r = selfConsistentRestrictive(verdicts, best.v); if (r) restrict = { bytes: cands[r.index].bytes, v: r.v }; }
     }
     function take(x, v) {
       if (!v.ok) { why = v.why; return; }
@@ -1112,6 +1124,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       }
     }
     if (!best) return { ok: false, why, mirrored: false };
+    if (restrict) keep(fid, restrict.bytes, restrict.v, 'mirror');
     if (!keep(fid, best.bytes, best.v, 'mirror')) { const k = kept.get(fid); return { ok: true, mirrored: false, status: k.status, signers: k.signers, height: k.height, why: recordStep(k, { height: best.v.record.height, status: best.v.status }, 'mirror').why }; }
     return { ok: true, mirrored: true, status: best.v.status, signers: best.v.signers, height: best.v.record.height };
   }
