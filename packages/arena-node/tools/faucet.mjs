@@ -28,6 +28,8 @@ import { readFileSync, writeFileSync, appendFileSync, renameSync } from 'node:fs
 import { execFile } from 'node:child_process';
 import { nodeBountyCheck } from '../src/node-bounty-check.js';
 import { seatPublicFetch } from '../src/public-fetch.js';
+import { openBountySeason, cleanOpenIssues } from '../src/bounty-season.js';
+import { verifiersFromEnv } from '../src/bounty-verify.js';
 import { openFeedbackStore, networkPlayers, imageKind, SHOT_MOST, SHOT_UNCLAIMED_MS, REWARD_LEVELS, NODE_BOUNTY_BASE_SATS, lnAddressWorks, lnAddressUrl, lnAddressInvoice } from '../src/feedback-store.js';
 const LN_ASKS = new Map();   // ip /64 -> times it asked GET /feedback/lnaddress (kanban #1342, #1537)
 const LN_ASKS_ALL = [], LN_ASKS_MINUTE = 120;   // every check of the last minute, all callers (kanban #1537)
@@ -83,6 +85,14 @@ const rpc = async (method, params = []) => {
 const REPORTS = [];   // this day's reports: their count and address, in memory
 // THE REPORTS KEPT FOR REVIEW (kanban #1342): one SQLite file beside the book; none when FAUCET_FEEDBACK_DB is not set
 const FEEDBACK = env.FAUCET_FEEDBACK_DB ? openFeedbackStore(env.FAUCET_FEEDBACK_DB) : null;
+// BUG BOUNTY SEASON 2 (kanban #2623): its own file, so Season 1's feedback.db, /bounty and the paid log stay as they are; off when not named
+const S2 = FEEDBACK && env.FAUCET_BOUNTY_S2_DB ? openBountySeason(env.FAUCET_BOUNTY_S2_DB, { startMs: env.FAUCET_BOUNTY_S2_START ? Date.parse(env.FAUCET_BOUNTY_S2_START) : null }) : null;
+const S2_VERIFY = verifiersFromEnv(env);
+// the address a reporter's NIP-98 sign-in names for /feedback/link and /feedback/verify (the stage page's own origin, through its Worker)
+const S2_BASES = String(env.FAUCET_BOUNTY_S2_BASES || 'https://testnet-stage.bitcoinarena.io/api/faucet/feedback').split(',').map((x) => x.trim().replace(/\/+$/, '')).filter(Boolean);
+const S2_VERIFY_ASKS = new Map();   // pubkey -> last /feedback/verify (one a minute)
+const S2_VERIFY_GAP_MS = 60000;
+const S2_KEY_PLATFORMS = (only) => Object.fromEntries(Object.entries(S2_VERIFY).filter(([k]) => !only || only.includes(k)));
 // THE SCREENSHOTS (Daniel 2026-11-07): a folder beside the store, one file per image under its SHA-256
 const SHOTS = env.FAUCET_FEEDBACK_SHOTS || (env.FAUCET_FEEDBACK_DB ? `${env.FAUCET_FEEDBACK_DB}.shots` : null);
 if (SHOTS) mkdirSync(SHOTS, { recursive: true });
@@ -542,7 +552,7 @@ createServer((req, res) => {
     if (!isAdmin(req)) return send(403, { ok: false, why: 'not the admin code' });
     const q = new URL(req.url, 'http://x').searchParams;
     const withReward = (r, ours) => { const w = FEEDBACK.rewards({ pubkey: r.pubkey }).find((x) => x.report === r.id);
-      return { ...r, lnAddress: FEEDBACK.addressOf(r.id), ours: ours.has(r.pubkey), played: PLAYED.played(r.pubkey), rounds: PLAYED.history ? PLAYED.history(r.pubkey) : null, nodeBounty: FEEDBACK.nodeBountyFor(r), reward: w ? { ...w, lnurl: w.state === 'paid' ? null : FEEDBACK.lnurlOf(w.k1, { base: PUBLIC_BASE }), page: `${PUBLIC_BASE}/lnurlw/${w.k1}` } : null }; };
+      return { ...r, lnAddress: FEEDBACK.addressOf(r.id), ours: ours.has(r.pubkey), played: PLAYED.played(r.pubkey), rounds: PLAYED.history ? PLAYED.history(r.pubkey) : null, nodeBounty: FEEDBACK.nodeBountyFor(r), season2: S2 ? { approval: S2.approval(r.id), links: S2.links(r.pubkey), flags: S2.flagsOf(r.pubkey) } : null, reward: w ? { ...w, lnurl: w.state === 'paid' ? null : FEEDBACK.lnurlOf(w.k1, { base: PUBLIC_BASE }), page: `${PUBLIC_BASE}/lnurlw/${w.k1}` } : null }; };
     if (path === '/feedback/admin/list' && req.method === 'GET') {
       PLAYED.fresh().catch(() => 0).then(() => { const ours = ourKeys();
         send(200, { ok: true, reports: FEEDBACK.list({ state: q.get('state'), type: q.get('type'), game: q.get('game'), pubkey: q.get('pubkey'), source: q.get('source') }).map((r) => withReward(r, ours)), budget: { ...FEEDBACK.budget({ rules: RULES }), network: BOUNTY_NETWORK },   // the payout network, for the admin's wording (kanban #1450)
@@ -570,6 +580,10 @@ createServer((req, res) => {
       if (m && req.method === 'GET') { const f = shotFile(m[1]); if (!f) return send(404, { ok: false, why: 'no such screenshot' });
         res.writeHead(200, { 'content-type': f.endsWith('.png') ? 'image/png' : f.endsWith('.webp') ? 'image/webp' : 'image/jpeg', 'cache-control': 'private, no-store', ...cors });
         return res.end(readFileSync(f)); } }
+    if (S2 && path === '/feedback/admin/season' && req.method === 'GET') {
+      const season = Number(q.get('season')) || S2.seasonNow(Date.now());
+      return send(200, { ok: true, pot: S2.pot(season), approvals: S2.approvals({ season }), waiting: S2.approvals({ state: 'waiting' }), verifiers: Object.keys(S2_VERIFY) });
+    }
     if (path === '/feedback/admin/export.csv' && req.method === 'GET') {
       res.writeHead(200, { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': 'attachment; filename="arena-feedback.csv"', 'cache-control': 'no-store', ...cors });
       return res.end(FEEDBACK.csv());
@@ -593,6 +607,22 @@ createServer((req, res) => {
             if (chk.ok && chk.owner && chk.owner.other) return send(200, { ok: false, why: 'the node names another owner: its bounty goes to that owner\'s report', checks: chk.checks, owner: chk.owner });
             if (!chk.ok || !chk.passes) return send(200, { ok: false, why: `the node checklist does not pass: ${(chk.checks || []).filter((c) => !c.ok).map((c) => `${c.label} (${c.says})`).join('; ') || chk.why}`, checks: chk.checks || null });
           }
+          // SEASON 2 (kanban #2623): the amount is the season's rule, not the admin's - the level (or a follow-up) halved for a code-only finding, the
+          // community bonus from the reporter's links read live now, held to the season's pot (past it the report waits for the next season, still new)
+          if (b.season2 === true) {
+            if (!S2) return send(503, { ok: false, why: 'Season 2 is not kept here' });
+            const r = FEEDBACK.report(b.id);
+            if (!r) return send(200, { ok: false, why: 'no such report' });
+            if (r.state !== 'new') return send(200, { ok: false, why: `a ${r.state} report is not approved for money` });
+            const level = String(b.severity || '').toLowerCase();
+            if (level !== 'node') await S2.verify(r.pubkey, S2_VERIFY, { cause: 'approve' });
+            const p = S2.plan(r, { level, codeOnly: b.codeOnly === true, followUp: b.followUp === true });
+            if (!p.ok) return send(200, p);
+            if (p.waits) return send(200, { ok: false, waits: true, why: `Season ${p.season}'s pot has ${p.pot.leftSats} sat left and this report is ${p.sats}: it waits for the next season`, season2: S2.wait(r, p, { by }) });
+            const out = FEEDBACK.approve(b.id, p.sats, { played: PLAYED.played, excluded: ourKeys(), severity: level, by,
+              rules: { ...RULES, weeklyBudgetSats: Number.MAX_SAFE_INTEGER, mostSats: Math.max(Number(RULES.mostSats) || 20000, p.sats), leastSats: Math.min(Number(RULES.leastSats ?? 100), p.sats) } });
+            return send(200, out.ok ? { ...out, season2: S2.commit(r, p, { by }) } : out);
+          }
           // A CRITICAL BUG ABOVE THE BANDS IS THE OWNER'S OWN CALL: critical: true lifts mostSats to the amount for this one approval
           const rules = b.critical === true ? { ...RULES, mostSats: Math.max(Number(b.amountSats) || 0, RULES.mostSats || 0) } : RULES;
           return send(200, FEEDBACK.approve(b.id, b.amountSats, { played: PLAYED.played, excluded: ourKeys(), rules, severity: b.severity || null, by }));
@@ -609,6 +639,15 @@ createServer((req, res) => {
           return one(() => FEEDBACK.payToAddress(w.reward.k1, { invoiceFor: (a, sats, c) => lnAddressInvoice(a, sats, c), decode: bountyDecode, pay: bountyPay, network: BOUNTY_NETWORK }))
             .then((paid) => send(200, { ...w, reward: paid.reward || w.reward, lnurl: paid.ok ? null : lnurl, paid }), (e) => send(200, { ...w, lnurl, paid: { ok: false, why: e.message } })); }
         if (b.action === 'note') return send(200, FEEDBACK.note(b.id, { ticket: b.ticket, severity: b.severity, by }));
+        // SEASON 2 (kanban #2623): read a reporter's links live; before paying, the amount with the bonus read again; the draw's entries, read again
+        if (S2 && b.action === 'verify') { const r = b.id ? FEEDBACK.report(b.id) : null; const k = r ? r.pubkey : String(b.pubkey || '');
+          if (!/^[0-9a-f]{64}$/.test(k)) return send(200, { ok: false, why: 'no such report or key' });
+          const flags = await S2.verify(k, S2_VERIFY, { cause: 'admin' }); return send(200, { ok: true, flags, links: S2.links(k) }); }
+        if (S2 && b.action === 'payable') { const r = FEEDBACK.report(b.id); if (!r) return send(200, { ok: false, why: 'no such report' });
+          await S2.verify(r.pubkey, S2_VERIFY, { cause: 'payout' }); return send(200, S2.payable(r.id)); }
+        if (S2 && b.action === 'draw-entries') { const season = Number(b.season) || S2.seasonNow(Date.now());
+          for (const k of S2.keysOfSeason(season)) await S2.verify(k, S2_KEY_PLATFORMS(['telegram', 'discord']), { cause: 'draw' });
+          return send(200, { ok: true, season, entries: S2.drawEntries(season) }); }
         return send(400, { ok: false, why: 'an action is approve, reject, duplicate, reward or note' });
       }).catch(() => send(500, { ok: false, why: 'try again' })));
       return undefined;
@@ -700,6 +739,29 @@ createServer((req, res) => {
     counted();
     lnAddressWorks(asked).then((w) => send(200, { ok: !!w.ok, why: w.ok ? null : w.why }), (e) => send(200, { ok: false, why: String((e && e.message) || e).slice(0, 120) }));
     return;
+  }
+  // SEASON 2, THE PUBLIC PART (kanban #2623): the open-issues list (areas and ticket numbers only), the season's pot, and a reporter's own links
+  if (path === '/feedback/open-issues' && req.method === 'GET') {
+    let o = null; try { o = env.FAUCET_OPEN_ISSUES ? JSON.parse(readFileSync(env.FAUCET_OPEN_ISSUES, 'utf8')) : null; } catch { o = null; }
+    return send(200, cleanOpenIssues(o));
+  }
+  if (S2 && path === '/feedback/season' && req.method === 'GET') { const p = S2.pot(S2.seasonNow(Date.now()));
+    return send(200, { season: p.season, potSats: p.potSats, usedSats: p.usedSats, leftSats: p.leftSats, nodes: p.nodes, nodesMost: p.nodesMost }); }
+  if (S2 && (path === '/feedback/link' || path === '/feedback/verify')) {
+    if (req.method === 'OPTIONS') { res.writeHead(204, { ...cors, 'access-control-allow-methods': 'POST', 'access-control-allow-headers': 'authorization', 'access-control-max-age': '86400' }); return res.end(); }
+    if (req.method !== 'POST') return send(405, { ok: false, why: 'POST' });
+    let ev = null;
+    try { const h = String(req.headers.authorization || ''); if (h.startsWith('Nostr ')) ev = JSON.parse(Buffer.from(h.slice(6), 'base64').toString('utf8')); } catch { ev = null; }
+    if (!ev) return send(401, { ok: false, why: 'sign in with your key (NIP-98)' });
+    let who = null, last = null;
+    for (const base of S2_BASES) { const m = FEEDBACK.mine(ev, { url: base + path.slice('/feedback'.length), method: 'POST' }); if (m.ok) { who = m.pubkey; break; } last = m; }
+    if (!who) return send(401, { ok: false, why: last ? last.why : 'that sign-in does not stand' });
+    if (path === '/feedback/link') { const c = S2.makeCode(who); return send(200, { ...c, links: S2.links(who).map(({ userId, ...l }) => l), flags: S2.flagsOf(who) }); }
+    const lastAsk = S2_VERIFY_ASKS.get(who) || 0;
+    if (Date.now() - lastAsk < S2_VERIFY_GAP_MS) return send(429, { ok: false, why: 'one check a minute' });
+    S2_VERIFY_ASKS.set(who, Date.now()); if (S2_VERIFY_ASKS.size > 5000) S2_VERIFY_ASKS.delete(S2_VERIFY_ASKS.keys().next().value);
+    S2.verify(who, S2_VERIFY, { cause: 'reporter' }).then((flags) => send(200, { ok: true, flags, links: S2.links(who).map(({ userId, ...l }) => l) }), () => send(200, { ok: false, why: 'try again' }));
+    return undefined;
   }
   // THE PUBLIC PAYOUT LOG (kanban #2619): what bitcoinarena.io/bounty/ lists - Season 1, sorted by report, each with its time (UTC)
   if (path === '/feedback/paid-log' && req.method === 'GET') {
