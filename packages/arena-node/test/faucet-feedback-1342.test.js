@@ -169,7 +169,7 @@ test('#1342 the review list behind the admin code: who played and who is ours, a
     console.log('  FACTS #1342 admin:', JSON.stringify(facts));
     assert.deepEqual([noCode.status, wrongCode.status], [403, 403]);
     assert.deepEqual(flags, { alice: { played: true, ours: false }, bob: { played: false, ours: false }, carol: { played: true, ours: true } });
-    assert.match(facts.bob, /not finished a round/);
+    assert.equal(facts.bob, undefined);   // kanban #2621: no round needed, bob's approval goes through
     assert.match(facts.carol, /ours/);
     assert.equal(facts.alice, true);
     assert.equal(facts.reward, 'lnurl1dp');
