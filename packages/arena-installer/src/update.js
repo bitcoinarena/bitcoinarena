@@ -368,8 +368,11 @@ export async function resumeUpdate({ home, env = process.env, sh = run, fetcher 
     journalStep(home, j.id, U.KEPT);
     return { resumed: 'kept', from: j.from, to: j.to, why };
   }
-  // a database written since the backup is kept whatever `served` says (kanban #1227)
-  if (!served && dbChangedSince(home, j.backup)) { served = true; why += '; node.db changed since the backup: kept'; }
+  // a database written since the backup is kept whatever `served` says (kanban #1227) - asked only BEFORE the rollback began: a journal already
+  // at ROLLING_BACK holds the decision (`served`), made before any file was copied back (kanban #2630, state audit 2026-11-12 SM-I3: an
+  // updater killed while restoreNode copied the backup over node.db left a half copy whose size and mtime differ from the print, and the
+  // resume read its own torn copy as "changed since the backup: kept" and started the old release on it). The copy is done again from the start.
+  if (j.phase !== U.ROLLING_BACK && !served && dbChangedSince(home, j.backup)) { served = true; why += '; node.db changed since the backup: kept'; }
   if (j.phase !== U.ROLLING_BACK) journalStep(home, j.id, U.ROLLING_BACK, { served, why });
   const r = await rollBack({ svc, home, moving, oldTexts: j.oldTexts || {}, migrating: j.migrating, confFile: join(home, 'arena.conf'), backup: j.backup, keepDb: served,
     to: j.to, port: j.port, fetcher, waitMs, sleep });
@@ -734,7 +737,8 @@ async function moveNode({ home, newRelease, port, node = process.execPath, asset
     step(`failed after the node was stopped (${failedStep || j.phase}): ${e.message}; rolling back`);
     say(null, `Going back to ${releaseIdOf(from).version || 'the release it ran'}`);
     const bk = backup || j.backup || null;
-    const keepDb = !!j.served || dbChangedSince(home, bk);
+    // the decision of a rollback already begun stands (kanban #2630): its own partial copy is no write of the seat
+    const keepDb = !!j.served || (j.phase !== U.ROLLING_BACK && dbChangedSince(home, bk));
     try { if (j.phase !== U.ROLLING_BACK) journalStep(home, j.id, U.ROLLING_BACK, { served: keepDb, why: e.message }); } catch { /* the resume finishes it */ }
     const { put, back, dbKept } = await rollBack({ svc, home, moving, oldTexts: Object.fromEntries(oldTexts), migrating, confFile, backup: bk, keepDb, to: newRelease, port, fetcher, waitMs, sleep });
     try { journalStep(home, j.id, U.ROLLED_BACK, { restored: back.ok, dbKept }); } catch { /* the resume finishes it */ }
