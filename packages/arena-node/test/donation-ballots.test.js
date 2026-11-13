@@ -26,7 +26,11 @@ test('kept, tallied, approved at more than half, and the chain back to the admin
   const db = new DatabaseSync(':memory:');
   const b = createDonationBallots({ db, knownSets: () => [ROOT], verifySecp256k1 });
   const { p, hex } = prop(2);
-  assert.equal((await b.add('approval', appr(p, 1, 200))).status, 404, 'an approval before its proposal is not kept');
+  // kanban #2535: an approval before its proposal is answered 404 and parked (another store here), and counted once the proposal arrives
+  { const e = createDonationBallots({ db: new DatabaseSync(':memory:'), knownSets: () => [ROOT], verifySecp256k1 });
+    const k = await e.add('approval', appr(p, 1, 200)); assert.equal(k.status, 404); assert.equal(k.parked, true);
+    assert.equal(e.list().length, 0, 'an approval alone is no proposal');
+    await e.add('proposal', hex); assert.equal(e.list()[0].votes.length, 1, 'counted once its proposal arrives'); }
   const r = await b.add('proposal', hex);
   assert.equal(r.ok, true); assert.equal(r.fresh, true);
   assert.equal((await b.add('proposal', hex)).fresh, false, 'the same proposal twice is kept once');
