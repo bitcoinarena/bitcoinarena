@@ -154,7 +154,7 @@ export async function presentNotes({ events, network, arbitration = arbitrationO
       for (let n = 0; n < CLAIM_SPILL_SLOTS; n++) {
         const k = spillClaimKey(eKey, n);
         if (storage.getItem(k) != null) continue;
-        const body = JSON.stringify({ v: 2, door: st.door, atMs: nowMs, payoutPk: pk, ecash, state: 'kept', spill: true });
+        const body = JSON.stringify({ v: 2, door: st.door, atMs: nowMs, payoutPk: pk, ecash, state: 'kept', spill: true, haltHeight: haltH });
         put(storage, k, body);
         if (storage.getItem(k) !== body) continue;   // another tab took this slot in the same moment
         seen.set(k, body); return { key: k, rec: JSON.parse(body) };
@@ -164,17 +164,34 @@ export async function presentNotes({ events, network, arbitration = arbitrationO
     // ONE WAY TO PRESENT A KEPT RECORD (kanban #2184): the claim's own record and each spill record <claim key>~<n> alike
     const returnedKey = returnedClaimKey(fid);
     const haltH = st.event && st.event.halt ? Number(st.event.halt.height) : null;
+    // A CLAIM IS BOUND TO THE HALT IT WAS HANDED OVER IN (kanban #2489, a44 refute of #1849, #1489): `taken` read the standing event's list by
+    // payout key alone - one key per federation and seed, the same in every halt - and GET /liquidations is any seat's list (it can withhold,
+    // not forge). One seat serving only an OLDER halt's signed event, which lists this key accepted, had a later halt's posted record moved to
+    // the taken notes and let go at once on the older halt's payout; the guardians came back and the notes were gone. A record now names the
+    // halt it was handed over in (haltHeight) and the nonces the door answered for it (nonces): it is taken only on an event of that halt
+    // whose accepted list names one of its own nonces, and an event of an older halt than the record's leaves it untouched (no repost, no
+    // return, no move). A record written before this (no haltHeight) keeps the old reading.
+    const recTaken = (r) => {
+      if (!r || !taken) return false;
+      if (r.haltHeight != null && Number(r.haltHeight) !== haltH) return false;
+      const own = Array.isArray(r.nonces) ? r.nonces.map((n) => String(n).toLowerCase()) : [];
+      return !own.length || acceptedFor(st.event, pk).some((c) => own.includes(String(c && c.nonce || '').toLowerCase()));
+    };
+    const olderEvent = (r) => !!r && r.haltHeight != null && haltH != null && Number(r.haltHeight) > haltH;
+    const answeredNonces = (j) => [...new Set([...(Array.isArray(j.accepted) ? j.accepted : []), ...(Array.isArray(j.refused) ? j.refused : [])]
+      .map((x) => String(x && x.nonce || '').toLowerCase()).filter((n) => /^[0-9a-f]{2,130}$/.test(n)))];
     const presentKept = async (key, rec) => {
       if (rec && (rec.state === 'kept' || (rec.state === 'posted' && nowMs - Number(rec.postedAtMs || 0) >= REPOST_MS))) {
         try {
           const r = await fetcher(door, { method: 'POST', body: JSON.stringify({ federation: fid, ecash: rec.ecash, payoutPk: pk }), signal: AbortSignal.timeout(30000) });
           const j = await r.json().catch(() => ({}));
-          if (r.ok && !rec.memoryOnly) rec = step(key, rec, 'posted', { door: st.door, postedAtMs: nowMs });
+          // kanban #2489: the record is bound to the halt it was presented in and the nonces the door answered for it
+          if (r.ok && !rec.memoryOnly) rec = step(key, rec, 'posted', { door: st.door, postedAtMs: nowMs, haltHeight: haltH, ...(answeredNonces(j).length ? { nonces: answeredNonces(j) } : {}) });
           // the door answered it (kanban #1230): a refusal is an answer too - the notes reached it - a 5xx is not. AND ONLY A REFUSAL OF THESE NOTES
           // (kanban #1264, audit 4 #1257 fixesA-2): the door's own "not taken" answers - the claim window not open yet at its tip, no seat holding the
           // federation HALTED yet, the notes not validated, a reissue refused, a tunnel's 4xx - took nothing, and counting them dropped the notes once
           // another claim of the key was accepted. An answer counts when it names the notes it refused (`refused`), as "claimed before" does
-          else if (!r.ok && !(Number(r.status) >= 500) && Array.isArray(j.refused) && j.refused.length > 0 && !rec.memoryOnly && !rec.answered) { rec = { ...rec, answered: true }; try { if ((storage.getItem(key) ?? null) === seen.get(key)) { writeClaim(storage, key, rec, put); seen.set(key, JSON.stringify(rec)); } } catch { /* kept in memory */ } }
+          else if (!r.ok && !(Number(r.status) >= 500) && Array.isArray(j.refused) && j.refused.length > 0 && !rec.memoryOnly && !rec.answered) { rec = { ...rec, answered: true, haltHeight: haltH, ...(answeredNonces(j).length ? { nonces: answeredNonces(j) } : {}) }; try { if ((storage.getItem(key) ?? null) === seen.get(key)) { writeClaim(storage, key, rec, put); seen.set(key, JSON.stringify(rec)); } } catch { /* kept in memory */ } }
           // THE FEDERATION CAME BACK BEFORE THE PAYOUT (kanban #1849, state audit 2026-11-12): once 2f + 1 guardians return, no seat lists it
           // HALTED, the door answers "not being liquidated" (409, no note refused), plan() pays nothing, and the set's book keeps only nonces -
           // no e-cash it could redeem - so a kept/posted record held the player's whole balance out of the wallet for good. Not accepted for
@@ -209,13 +226,17 @@ export async function presentNotes({ events, network, arbitration = arbitrationO
     // and the notes that had left the wallet were lost. A record the door never answered (no answer, or a 5xx) is presented again, whatever the
     // set lists for its key; one the door answered (taken, or refused as claimed before) is taken by the set's word
     const tKey = takenClaimKey(fid, pk);
+    if (olderEvent(rec)) {
+      out.push({ federation: fid, ok: false, kept: true, why: `the event shown is of an older halt (${haltH}) than this claim's (${rec.haltHeight}): the claim waits for its own halt's event` });
+      rec = undefined;
+    }
     // TAKEN, THE NOTES KEPT UNTIL PAID OR BACK (kanban #2196, #2292): written to tKey first; a record whose notes cannot be kept stays as it is
-    if (rec && (rec.state === 'posted' || rec.answered) && taken) {
+    if (rec && (rec.state === 'posted' || rec.answered) && recTaken(rec)) {
       let keptTaken = !rec.ecash;
       if (rec.ecash) {
         try {
           const items = readTaken(storage, tKey);
-          if (!items.some((x) => x.ecash === rec.ecash)) items.push({ ecash: rec.ecash, haltHeight: haltH, door: st.door, postedAtMs: Number(rec.postedAtMs || 0), atMs: nowMs });
+          if (!items.some((x) => x.ecash === rec.ecash)) items.push({ ecash: rec.ecash, haltHeight: haltH, door: st.door, payoutsBefore: null, postedAtMs: Number(rec.postedAtMs || 0), atMs: nowMs });
           put(storage, tKey, JSON.stringify({ v: 1, items })); keptTaken = true;
         } catch { keptTaken = false; }
       }
@@ -226,16 +247,37 @@ export async function presentNotes({ events, network, arbitration = arbitrationO
     // THE TAKEN NOTES (kanban #2196): let go once the set lists the payout naming this key; presented again hourly, and received back into the
     // wallet when the door answers that the federation is not being liquidated any more (it came back before the payout)
     const tookRows = [];   // its rows follow the hand-over's, so a pass still answers first what it did with the wallet
-    const takenItems = readTaken(storage, tKey);
+    let takenItems = readTaken(storage, tKey);
     if (takenItems.length) {
-      let paid = false;
+      // PAID ONLY BY A PAYOUT LISTED AFTER THE NOTES WERE TAKEN (kanban #2489, a44 refute of #1849, #1489): any payout of (federation, key) let
+      // every taken item go - and GET /liquidation-payouts names no halt, so a federation paid once, back, and halted again had the second
+      // halt's accepted notes dropped at once on the FIRST halt's payout. Each item now keeps the payouts of its key already listed when it
+      // was taken (payoutsBefore, read in the pass that took it) and is let go only on one not among them; the others stay as they are
+      let listedNow = null;   // outpoints of this key's payouts, or null when the listing could not be read
       try {
         const r = await fetcher(`${st.door}/liquidation-payouts?federation=${fid}`, { method: 'GET', cache: 'no-store', signal: AbortSignal.timeout(15000) });
-        if (r && r.ok) { const j = await r.json(); paid = ((j && j.payouts) || []).some((p) => p && String(p.federation).toLowerCase() === fid && String(p.payoutPk).toLowerCase() === pk); }
-      } catch { paid = false; }
-      if (paid) { try { storage.removeItem(tKey); } catch { /* read again next pass */ } tookRows.push({ federation: fid, ok: true, paid: true, why: 'the payout of this claim is listed: the taken notes are let go', door: st.door }); }
-      else {
-        for (const it of takenItems) {
+        if (r && r.ok) {
+          const j = await r.json();
+          listedNow = ((j && j.payouts) || []).filter((p) => p && String(p.federation).toLowerCase() === fid && String(p.payoutPk).toLowerCase() === pk)
+            .map((p) => `${String(p.txid).toLowerCase()}:${Number(p.outIdx)}`);
+        }
+      } catch { listedNow = null; }
+      if (listedNow && takenItems.some((x) => x.payoutsBefore === null)) {
+        try { put(storage, tKey, JSON.stringify({ v: 1, items: readTaken(storage, tKey).map((x) => (x.payoutsBefore === null ? { ...x, payoutsBefore: listedNow } : x)) })); } catch { /* read again next pass */ }
+        takenItems = takenItems.map((x) => (x.payoutsBefore === null ? { ...x, payoutsBefore: listedNow, fresh: true } : x));
+      }
+      // an item taken before this (no payoutsBefore at all) is let go on any payout of its key, as before
+      const paidItem = (it) => !!listedNow && !it.fresh && (Array.isArray(it.payoutsBefore) ? listedNow.some((o) => !it.payoutsBefore.includes(o)) : listedNow.length > 0);
+      const paidOnes = takenItems.filter(paidItem);
+      if (paidOnes.length) {
+        try {
+          const left = readTaken(storage, tKey).filter((x) => !paidOnes.some((p) => p.ecash === x.ecash));
+          if (left.length) put(storage, tKey, JSON.stringify({ v: 1, items: left })); else storage.removeItem(tKey);
+        } catch { /* read again next pass */ }
+        tookRows.push({ federation: fid, ok: true, paid: true, why: 'the payout of this claim is listed: the taken notes are let go', door: st.door });
+      }
+      {
+        for (const it of takenItems.filter((x) => !paidItem(x))) {
           if (nowMs - Number(it.postedAtMs || 0) < REPOST_MS) { tookRows.push({ federation: fid, ok: true, taken: true, kept: true, why: 'accepted; waiting for the payout', door: st.door }); continue; }
           try {
             const r = await fetcher(door, { method: 'POST', body: JSON.stringify({ federation: fid, ecash: it.ecash, payoutPk: pk }), signal: AbortSignal.timeout(30000) });
@@ -274,7 +316,7 @@ export async function presentNotes({ events, network, arbitration = arbitrationO
         if (!rec && inWindow && !live && returnedHalt && Number(returnedHalt.haltHeight) === haltH) out.push({ federation: fid, ok: true, returned: true, why: 'that federation came back from this halt: nothing is handed over again' });
         else if (!rec && inWindow && !live) {
           let wrote = false;
-          try { rec = step(eKey, null, 'intent', { door: st.door, atMs: nowMs, payoutPk: pk }); wrote = true; }
+          try { rec = step(eKey, null, 'intent', { door: st.door, atMs: nowMs, payoutPk: pk, haltHeight: haltH }); wrote = true; }
           catch (e) { out.push({ federation: fid, ok: false, why: `nothing handed over: this browser could not write the claim first (${e.message})` }); }
           if (wrote) {
             let sent = null, w = null;
@@ -324,8 +366,9 @@ export async function presentNotes({ events, network, arbitration = arbitrationO
         try { sr = JSON.parse(raw); } catch { sr = null; }
         if (!sr || sr.v !== 2 || typeof sr.ecash !== 'string') continue;
         if (sr.payoutPk ? String(sr.payoutPk).toLowerCase() !== pk : slot !== eKey) continue;
+        if (olderEvent(sr)) continue;   // kanban #2489: an older halt's event leaves it as it is
         try {
-          if ((sr.state === 'posted' || sr.answered) && taken) { step(k, sr, 'none'); out.push({ federation: fid, ok: true, taken: true, why: 'the arbitration set lists this claim as accepted' }); continue; }
+          if ((sr.state === 'posted' || sr.answered) && recTaken(sr)) { step(k, sr, 'none'); out.push({ federation: fid, ok: true, taken: true, why: 'the arbitration set lists this claim as accepted' }); continue; }
           await presentKept(k, sr);
         } catch (e) { out.push({ federation: fid, ok: false, why: e.message, kept: true, door: st.door }); }
       }
@@ -341,17 +384,19 @@ export async function presentNotes({ events, network, arbitration = arbitrationO
       const raw = storage.getItem(movedKey(storage, pKey));
       seen.set(pKey, raw ?? null);
       if (raw) { try { const j = JSON.parse(raw); prec = Array.isArray(j) ? { v: 2, state: 'kept', reqs: j } : (j && j.v === 2 ? j : null); } catch { prec = null; } }
-      if (prec && (prec.state === 'posted' || prec.answered) && taken) { step(pKey, prec, 'none'); prec = undefined; }
+      // kanban #2489: the pending outputs' record is bound to its halt as the notes' (no nonce of its own to name: the requests)
+      if (olderEvent(prec)) prec = undefined;
+      else if (prec && (prec.state === 'posted' || prec.answered) && taken && (prec.haltHeight == null || Number(prec.haltHeight) === haltH)) { step(pKey, prec, 'none'); prec = undefined; }
       if (prec !== undefined && Number.isInteger(height) && height >= st.window.opens && height <= st.window.closes) {
         if (!prec) {
           const w = await walletFor(fid);
           const reqs = w && typeof w.pendingOutputs === 'function' ? (JSON.parse(await w.pendingOutputs()) || []).map((x) => x.request).filter(Boolean) : [];
-          if (reqs.length) prec = step(pKey, null, 'kept', { reqs, door: st.door, payoutPk: pk });
+          if (reqs.length) prec = step(pKey, null, 'kept', { reqs, door: st.door, payoutPk: pk, haltHeight: haltH });
         }
         if (prec && (prec.state === 'kept' || (prec.state === 'posted' && nowMs - Number(prec.postedAtMs || 0) >= REPOST_MS))) {
           const r = await fetcher(door, { method: 'POST', body: JSON.stringify({ federation: fid, pending: prec.reqs, payoutPk: pk }), signal: AbortSignal.timeout(60000) });
           const j = await r.json().catch(() => ({}));
-          if (r.ok) prec = step(pKey, prec, 'posted', { door: st.door, postedAtMs: nowMs });
+          if (r.ok) prec = step(pKey, prec, 'posted', { door: st.door, postedAtMs: nowMs, haltHeight: haltH });
           out.push({ federation: fid, pending: true, ok: !!r.ok, accepted: j.accepted || [], refused: j.refused || [], why: j.why || null, kept: true, door: st.door });
         }
       }
