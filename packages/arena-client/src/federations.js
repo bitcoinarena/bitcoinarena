@@ -18,6 +18,9 @@ import { MAINNET_CLOCKS } from '../../arena-protocol/src/federation-slash.js';
 import { readInvite } from '../../arena-node/src/invite.js';
 import { readWithOneRetry } from './reread.js';
 import { noteRecordInvite } from './guardian-invites.js';
+import { createTrustedGuardianKeys } from '../../arena-protocol/src/trusted-guardian-keys.js';
+// THE PAGE'S TRUSTED GUARDIAN KEYS (kanban #2609): createTrustedGuardianKeys().guardianKeysOf is what a page hands federationStatuses
+export { createTrustedGuardianKeys };
 
 // HEX BY TABLE (kanban #1391, profiled on stage UI 603: the regex-and-map decode of each seat's signed records took 1.1 s of every minute of an RPS page):
 // the same bytes for hex; a character that is not hex reads as 0, as parseInt's NaN did
@@ -76,6 +79,7 @@ export async function federationStatus({ federationIdHex, nodes, census, verify,
 }
 const STATUS_KEPT = new Map();
 const STATUS_ASK_MS = 6000;
+export const TRUSTED_KEYS_WAIT_MS = 2000;   // kanban #2609: how long one read waits for a federation's trusted keys
 const FEDERATION_ROWS_PER_SEAT = 2, FEDERATIONS_PER_SEAT = 16;   // kanban #1684: what one seat's GET /federations may cost
 /** A RECORD'S HEIGHT IS BOUNDED (kanban #2604): above `tip`, or - with no tip - above the census height the page checked plus this many
  * blocks (a week: a record is signed at a seat's census height, newer than the round's census by the round's age, never by more), it is
@@ -131,6 +135,17 @@ export async function federationStatuses({ nodes, census, verify, fetcher = fetc
     } catch (e) { if (!closed) failed.push(`${u}: ${e.message}`); }
   }), COMPARE_GRACE_MS);
   closed = true;
+  // THE TRUSTED KEYS (kanban #2609): a guardianKeysOf carrying learn/wait (trusted-guardian-keys.js) is handed every record's invite - where its
+  // fetch asks first; never trusted, the federation id decides - and waited for at most TRUSTED_KEYS_WAIT_MS, every federation at once. Not
+  // there in time: this read is judged by the keyless rules, and the keys are there for the next
+  if (guardianKeysOf && typeof guardianKeysOf.wait === 'function') {
+    await Promise.all([...seen].map(([fid, byHex]) => {
+      if (keysOf(fid)) return null;
+      const invites = new Set();
+      for (const hex of byHex.keys()) { try { const r = splitSignedRecord(hexToBytes(hex)).record; if (bytesToHex(r.federationId) === fid && r.invite && invites.size < 8) invites.add(String(r.invite)); } catch { /* not a record */ } }
+      return guardianKeysOf.wait(fid, [...invites], TRUSTED_KEYS_WAIT_MS).catch(() => null);
+    }));
+  }
   for (const [fid, byHex] of seen) {
     const hexes = [...byHex.keys()];
     const verdicts = verifyFederationRecords(hexes.map(hexToBytes), { census, verify, inviteFederationId, guardianKeys: keysOf(fid), tip: bound });
