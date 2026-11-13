@@ -472,7 +472,16 @@ export function federationPorts({ home, bin, baseDir, inviteOf = () => null, mak
     ports.set(fid, port);
     return port;
   }
-  return Object.assign(Object.create(home), { forFederation, homeFederation, whyNot: (idHex) => whyNot.get(String(idHex).toLowerCase()) || null,
+  // THE PORT OF A FEDERATION THIS NODE ALREADY HOLDS, NEVER A NEW JOIN (kanban #2603: federation-records reads a record's guardian keys
+  // from it, and a record check must not start a 180 s join): home, a port made, or a joined directory on disk; else null
+  async function joinedFor(idHex) {
+    const fid = String(idHex || '').toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(fid)) return null;
+    if (fid === await homeFederation()) return home;
+    if (ports.has(fid)) return ports.get(fid);
+    return exists(join(join(baseDir, fid), 'client.db')) ? forFederation(fid) : null;
+  }
+  return Object.assign(Object.create(home), { forFederation, joinedFor, homeFederation, whyNot: (idHex) => whyNot.get(String(idHex).toLowerCase()) || null,
     close() { home.close(); for (const p of ports.values()) p.close(); } });
 }
 
