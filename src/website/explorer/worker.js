@@ -655,8 +655,17 @@ function keptRead(env, k, keepMs, read) {
     const age = kept && Number.isFinite(kept.at) ? Date.now() - kept.at : NaN;
     const usable = age >= 0;
     if (usable && age < keepMs) return kept.v;
-    const mine = await claimRead(env, k, Date.now()).catch(() => true);
+    let mine = await claimRead(env, k, Date.now()).catch(() => true);
     if (!mine && usable) return kept.v;   // another isolate is reading it now: the last copy meanwhile
+    // AND WITH NO COPY AT ALL, IT WAITS FOR THE HOLDER'S (kanban #2544, refute of #1680/#2164): an isolate that lost the claim on a cold
+    // start read the whole table itself, so a stranger's requests spread over 10 isolates ran 10 scans while one held the claim. It now
+    // polls the state for the holder's copy and reads itself only once the claim is free again (the holder failed, or KEEP_CLAIM_MS ran out)
+    for (const until = Date.now() + KEEP_CLAIM_MS; !mine && Date.now() < until;) {
+      await new Promise((ok) => setTimeout(ok, 100));
+      const now = await stateGet(env, k).then((v) => (v ? JSON.parse(v) : null)).catch(() => null);
+      if (now && Number.isFinite(now.at) && Date.now() - now.at >= 0) return now.v;
+      mine = await claimRead(env, k, Date.now()).catch(() => false);
+    }
     try {
       const v = await read(env);
       if (slot.gen === gen) await statePut(env, k, JSON.stringify({ at: Date.now(), v })).catch(() => {});
@@ -672,7 +681,10 @@ function keptRead(env, k, keepMs, read) {
 }
 async function dropKept(env, k) {
   const slot = keptSlot(env, k); slot.gen += 1; slot.flight = null;
-  await statePut(env, k, '').catch(() => {});
+  // THE COPY IS MARKED OLD, NOT EMPTIED (kanban #2544): an empty copy after every mark sent every isolate that lost the claim to its own
+  // whole-table scan; an old one (at 0) is read fresh by the claim's holder and served meanwhile by the others
+  const old = await stateGet(env, k).then((v) => (v ? JSON.parse(v) : null)).catch(() => null);
+  await statePut(env, k, old && 'v' in old ? JSON.stringify({ at: 0, v: old.v }) : '').catch(() => {});
 }
 async function readPlayed(env) {
   const [rows, marks] = await Promise.all([
