@@ -77,8 +77,16 @@ export async function fetchProposals({ nodes, needed = 5, fetcher = (u, o) => fe
       p = { id: toHex(id), purpose: o.purpose, amountSats: String(o.amountSats), lnurl: o.lnurl, author: toHex(o.author), network: toHex(o.networkId),
         publishedHeight: o.publishedHeight };
     } catch { continue; }
-    const [stageKey] = fundingMost(views.map((v) => JSON.stringify([v.signal && v.signal.state, v.vote && v.vote.state, v.cancelled || null])));
-    const v = views.find((x) => JSON.stringify([x.signal && x.signal.state, x.vote && x.vote.state, x.cancelled || null]) === stageKey);
+    const stageOf = (x) => JSON.stringify([x.signal && x.signal.state, x.vote && x.vote.state, x.cancelled || null]);
+    const [stageKey] = fundingMost(views.map(stageOf));
+    // AND WHAT IS SHOWN WITH IT, BY MOST OF THOSE SEATS (kanban #2494, #1489 a44-refute-17-s2-1): the vote's count and last block, the
+    // signal's end, supporters and active nodes were the first-listed seat's JSON among those giving the stage - one seat listed first
+    // set "YES 99%" beside six honest seats' 12 %. The version most of the seats giving the stage hand is shown (on 2.0 with the
+    // signal count, which is read off the shown view)
+    const agree = views.filter((x) => stageOf(x) === stageKey);
+    const shownOf = (x) => JSON.stringify([x.signal || null, x.vote || null, x.cancelled || null, Array.isArray(x.signals) ? x.signals.length : 0]);
+    const [shownKey] = fundingMost(agree.map(shownOf));
+    const v = agree.find((x) => shownOf(x) === shownKey);
     proposals.push({ id: p.id, purpose: p.purpose, amountSats: String(p.amountSats), lnurl: p.lnurl, author: p.author, network: p.network,
       publishedHeight: p.publishedHeight, signal: v.signal, vote: v.vote, cancelled: v.cancelled || null, signals: (v.signals || []).length,
       comments: [...comments.values()].sort((a, b) => a.atHeight - b.atHeight || (a.id < b.id ? -1 : 1)), holding: views.length });
