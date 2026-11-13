@@ -2405,6 +2405,7 @@ a transaction is §5A.3B.
 | Signing a release with no valid proof (template 3, §5A.3B, kanban #971) | The release, whose witness names the signers + the bytes that hash to its `OP_RETURN` and do not check |
 | Signing a release or an escrow payout that pays other than its `payout_table` (template 3, §5A.3B) | The release or the payout + the table |
 | Signing an `AUDIT` (§13A.1) over a result a valid objection contradicts (kanban #724, #725) | The `AUDIT` + its signature + the rows it vouched for + transcript + receipts + replay of the objection that held |
+| Signing two `LockSet`s for one `round_id` with different entries (§17A.6, RULED 2026-11-13 on #2587) | The two signed LockSets, the accused's node key on both — the whole bond goes to the reserves (no player lost money) |
 
 **Only bytes the accused signed (RULED 2026-11-02, kanban #1035).** A row of
 this table stands only on bytes the accused signed with its node key. A FROST
@@ -6131,6 +6132,30 @@ certificate as soon as a threshold of signatures is in. Measured on seven seats
 with one seat answering 1.5 s late and one down (`h2h-lock-set-2561.test.js`):
 the certificate at the close + 1.25 s, the page saw it at + 1.31 s, all six live
 seats signed both results at + 1.46 s. An 8 s round stays inside its slot.
+
+## 17A.6 A contested set *(RULED 2026-11-13 on #2587; kanban #2606)*
+
+A committee of 2t - 1 has two thresholds that overlap in one seat, so one seat that
+signs two sets can make two certificates that stand over different sets of one round.
+
+- **The round is `VOID`.** A seat that holds two standing certificates over
+  different sets decides no set (every entry is signed `VOID`), returns every lock
+  by forfeit at once (stake and fee lock, in either set or in none), and builds,
+  commits to and signs no settlement of either side. A seat that acked one side's
+  settlement before it saw the second certificate stops there; a settlement that
+  still lands is read by offence (a) (#1131): no correct table exists for a `VOID`
+  round.
+- **Not "earliest wins":** a certificate's time is its signers' own clocks, so two
+  seats would name different firsts.
+- **Seats share certificates:** `GET /lock-set?round=` serves the second
+  certificate (`conflict`) beside the first, and a seat hands it to every peer at
+  once, again on each forfeit ask until it landed.
+- **The offence (§5A.3):** signing two `LockSet`s for one `round_id` with different
+  entries. Evidence: each signed set as `u16 len || LockSet || u64 at_ms || sig[64]`
+  (`encodeSignedLockSet`); the proof is the slash proof body with no player, the
+  lower set id named and the higher beside it, so one offence has one commitment
+  (`slashHoldsOnTwoLockSets`). A view signature never counts. No player lost money,
+  so the whole bond goes to the reserves (#976).
 
 ---
 
