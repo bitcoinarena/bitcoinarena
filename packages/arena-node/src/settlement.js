@@ -262,10 +262,14 @@ export class LockSettlement {
   constructor(round, { dkg, port, curve, random, stakeSecrets, peersFor = () => [], fetcher = (u, o) => fetch(u, o),
     signerNodesFor = (rid, contract) => ({ gameVerify: contract.nodes, settlement: contract.nodes }), winnings = null,
     turnClock = null, donationSetFor = null, donationTargetFor = null, orderBook = null, now = () => Date.now(), conflictsFor = null,
-    reserveKeyFor = null, auditedRoundOf = () => false, payeesFor = null, feesFor = null, peerKeyOf = () => null, peerAskMs = PEER_ASK_MS, peerReadMs = PEER_READ_MS, peerGraceMs = PEER_GRACE_MS, askPointOf = undefined, finalityOf = resultFinality, settledOf = settledResult } = {}) {
+    reserveKeyFor = null, auditedRoundOf = () => false, payeesFor = null, feesFor = null, peerKeyOf = () => null, peerAskMs = PEER_ASK_MS, peerReadMs = PEER_READ_MS, peerGraceMs = PEER_GRACE_MS, lockSetContested = null, askPointOf = undefined, finalityOf = resultFinality, settledOf = settledResult } = {}) {
     this.round = round;
     // WHERE A NETWORK'S SETTLEMENT_ASK_HEIGHT LIES (kanban #1075): constants.js settlementAskPoint; a harness's own to read a round below it
     this.askPointOf = askPointOf;
+    // A CONTESTED LOCK SET (ruling #2587, kanban #2606; server.js -> lock-set-book.js contested): `lockSetContested(rid)` true when two standing
+    // certificates over different sets of a protocol-28 head-to-head round reached this seat. The round is VOID: no settlement of either side is
+    // built, committed to or signed here - every lock goes back by forfeit (lock-set-book.js lockOut)
+    this.lockSetContested = lockSetContested;
     // HOW LONG A SEAT IS WAITED FOR (peer-ask.js, kanban #1061)
     this.peerAskMs = peerAskMs;
     this.peerReadMs = peerReadMs;
@@ -448,6 +452,7 @@ export class LockSettlement {
    * its claimed locks (each loser's P opened as message() opens it), its payouts, its nonce - built by that federation's port.
    */
   async fedMessage(roundIdBytes, fid) {
+    { const held = this.#contestedHold(roundIdBytes); if (held) return held; }
     const key = `${toHex(roundIdBytes)}:fed:${String(fid).toLowerCase()}`;
     const kept = this.built.get(key);
     if (kept) return kept;
@@ -512,6 +517,7 @@ export class LockSettlement {
   }
 
   async lateMessage(roundIdBytes, entryIdBytes, { onlyBase = false } = {}) {
+    { const held = this.#contestedHold(roundIdBytes); if (held) return held; }
     if (this.#attestedOf(roundIdBytes)) return refuse('an attested round has no late entry: its picks are all in its one settlement');
     const key = `${toHex(roundIdBytes)}:${toHex(entryIdBytes)}`;
     const kept = onlyBase ? null : this.built.get(key);
@@ -1082,8 +1088,16 @@ export class LockSettlement {
     return w.sendAll(roundIdBytes, m);
   }
 
+  /** Ruling #2587: a refusal when the round's certified lock set is contested (VOID), else null. */
+  #contestedHold(roundIdBytes) {
+    let contested = false;
+    try { contested = typeof this.lockSetContested === 'function' && !!this.lockSetContested(roundIdBytes); } catch { contested = false; }
+    return contested ? refuse('that round\'s lock set is contested - two certificates over different sets: it is VOID, no settlement is signed and every lock goes back (ruling #2587)', 409, null, { state: 'VOID', outcome: 'VOID' }) : null;
+  }
+
   /** WHAT THIS SIGNER NODE WILL SIGN, rebuilt from its own store and the stock client - or the refusal. */
   async message(roundIdBytes) {
+    { const held = this.#contestedHold(roundIdBytes); if (held) return held; }
     { const held = this.#attestedHold(roundIdBytes); if (held) return held; }
     const key = toHex(roundIdBytes);
     const kept = this.built.get(key);
@@ -1136,6 +1150,7 @@ export class LockSettlement {
    * apart from the claim's (`fallbackBuilt`): the same round may stand on either, and the fallback's body is its own (Fallback inputs).
    */
   async fallbackMessage(roundIdBytes) {
+    { const held = this.#contestedHold(roundIdBytes); if (held) return held; }   // ruling #2587: a contested lock set has no fallback either
     const key = toHex(roundIdBytes);
     const kept = this.fallbackBuilt.get(key);
     if (kept) return kept;
@@ -2889,6 +2904,8 @@ export class LockSettlement {
   async #settleOnce(roundIdBytes) {
     // THE REGTEST FAULT (test-named-offence.js `settle-hold`, off by default): this seat is silent in this round's settlement
     if (settleHoldOn(roundIdBytes)) return refuse('test switch: this seat holds the settlement of this round (settle-hold)', 503);
+    // RULING #2587: a contested lock set settles nothing - unless a settlement of it already went in (kept ACCEPTED: evidence, offence (a))
+    { const held = this.#contestedHold(roundIdBytes); const kept = held && this.round.lockSettlement(roundIdBytes); if (held && !(kept && kept.state === ACCEPTED)) return held; }
     { const row = this.round.get(roundIdBytes);
       if (row && takesAnyFederation(decodeRoundContract(new Uint8Array(row.contract)))) return this.#settleFederations(roundIdBytes); }
     const held = this.#attestedHold(roundIdBytes);
