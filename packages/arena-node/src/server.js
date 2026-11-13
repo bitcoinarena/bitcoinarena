@@ -6817,7 +6817,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // say (GET /order-locks stakeVerifiedMs / feeVerifiedMs) they verified it by that close - as honest seats' doors do - and it keeps that time here
       // (round.keepLockTimes; a head-to-head round seats only locks held before its close, round.js seatedEntriesOf). Otherwise the entry stays unlocked
       // here (not seated), with no wait: no honest seat takes it later. A lock that reached most seats in time is still repaired.
-      const closedAt = lockCloseOf(entry);
+      // A HEAD-TO-HEAD LOCK THE DOOR REFUSES IS NOT TAKEN FROM ONE PEER EITHER (kanban #2225, refutes #1626 / #1598): with no grace configured
+      // lockCloseOf names no close, and one colluding seat's GET /order-locks handed every honest seat a fee lock its own door refused once the
+      // moves were public (h2hLockRefusal) - the risk-free bet #1626 closed at the door. Then the entry close is the lock close here too
+      let closedAt = lockCloseOf(entry);
+      if (closedAt === null && entry.limitPrice === undefined && headToHeadReady) {
+        const hc = headToHeadRound(entry.roundId);
+        if (hc && typeof hc.entryCloseMs === 'bigint') closedAt = hc.entryCloseMs - 1n;
+      }
       let vouchedMs = null;
       if (closedAt !== null && BigInt(Math.floor(Number(round.now()))) > closedAt) {
         const needed = roundThreshold(slotsForRole(decodeRoundContract(new Uint8Array(round.get(rid).contract)), 'settlement'));   // 2.0: the settlement role's slots
