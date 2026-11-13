@@ -3150,14 +3150,71 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (!kept) return null;
     return { payoutPk: refundKeyOf(contract.creatorPubkey), msat: publisherPayoutMsat(kept.feeSats) };
   };
+  // A SERIES' PUBLICATION PROOF TAKEN (§5A.5): `first` the series' round 0 as this seat holds it, `txHex` the publication, `parentsHex` the
+  // transactions its inputs spend. The tx must be the series' first confirmed publication on THIS seat's chain, its parents must prove its fee;
+  // then the row and the proof are kept once. Every byte proves itself, so the door and a peer's pull take it alike. -> { ok, status, why }
+  const takeSeriesPublication = async (sid, first, txHex, parentsHex) => {
+    if (!/^[0-9a-f]+$/i.test(String(txHex || '')) || !Array.isArray(parentsHex) || !parentsHex.every((h) => /^[0-9a-f]*$/i.test(String(h))))
+      return { ok: false, status: 400, why: 'a series publication names its series id, the publication and its parents in hex' };
+    if (typeof chainFor !== 'function') return { ok: false, status: 503, why: 'this seat reads no chain' };
+    let view; try { view = await chainFor({ contract: first, roundIdBytes: roundIdOf(first) }); } catch (e) { return { ok: false, status: 503, why: `this seat cannot read its chain: ${e.message}` }; }
+    const pub = findSeriesPublication(view, sid);
+    if (!pub) return { ok: false, status: 409, why: 'this seat\'s chain holds no confirmed publication of that series yet' };
+    const tx = fromHex(String(txHex).toLowerCase());
+    let txid; try { txid = parseTransaction(tx).txid; } catch (e) { return { ok: false, status: 422, why: `the publication does not parse: ${e.message}` }; }
+    if (toHex(txid) !== toHex(pub.tx.txid)) return { ok: false, status: 409, why: 'that is not the series\' first confirmed publication' };
+    const parents = parentsHex.map((h) => String(h).toLowerCase());
+    const fee = publicationFee(tx, parents.map((h) => fromHex(h)));
+    if (!fee.ok) return { ok: false, status: 422, why: fee.why };
+    round.putSeriesPublication(sid, { txid: toHex(pub.tx.txid), feeSats: fee.feeSats, tx: toHex(tx), parents });
+    return { ok: true };
+  };
+  // EVERY SEAT OF THE PAYING ROUND DECIDES THE PUBLISHER LINE ALIKE (kanban #2638, outside report #054): POST /series-publication keeps the
+  // proof at the one seat it reaches, and the publisher line stood only where that row stood - a proof posted to some of round 0's seats made
+  // them build two settlements, none reached the threshold and the round never settled (the duty poster posts no proof, and round-2of2.mjs
+  // posts it seat by seat). So a seat of round 0 of a series naming its creator that holds no proof pulls the one its peers keep before it
+  // builds the settlement, and again when another seat asks it to sign other bytes (LockSettlement bookResync), checking each against its
+  // own chain as the door does. A proof once taken is never dropped, so the seats converge on one line: paid wherever any seat holds one.
+  // Each peer read capped at what the door takes; a pull not forced runs at most once in 30 s a round. -> whether a proof was taken here
+  const publicationPulledAt = new Map();
+  const pullSeriesPublication = async (rid, { force = false } = {}) => {
+    const row = round.get(rid);
+    if (!row) return false;
+    let c; try { c = decodeRoundContract(new Uint8Array(row.contract)); } catch { return false; }
+    if (!(c.seriesId instanceof Uint8Array) || !(c.creatorPubkey instanceof Uint8Array) || Number(c.roundIndex) !== 0) return false;
+    if (round.seriesPublication(c.seriesId)) return false;
+    const key = toHex(rid), now = Date.now();
+    if (!force && now - (publicationPulledAt.get(key) || 0) < 30000) return false;
+    publicationPulledAt.set(key, now);
+    if (publicationPulledAt.size > 4096) publicationPulledAt.delete(publicationPulledAt.keys().next().value);
+    const peers = verifier.peersOf(rid).map((p) => String(p).replace(/\/+$/, ''));
+    for (const peer of peers) {
+      if (shuttingDown) return false;
+      let body = null;
+      try {
+        const r = await fetch(`${peer}/series-publication?series=${toHex(c.seriesId)}`, { signal: AbortSignal.timeout(5000) });
+        body = r.ok ? await jsonUpTo(r, BODY_MOST + 4096) : null;
+      } catch { body = null; }
+      if (!body || typeof body !== 'object') continue;
+      const took = await takeSeriesPublication(c.seriesId, c, body.tx, body.parents);
+      if (took.ok) { console.log(`[series] #2638 ${toHex(c.seriesId).slice(0, 16)}: its publication proof pulled from ${peer}`); return true; }
+    }
+    return false;
+  };
   const settlements = new LockSettlement(round, {
     conflictsFor,
+    publicationPull: (rid) => pullSeriesPublication(rid).catch(() => false),
     // RULING #2587 (kanban #2606): a contested certified lock set is VOID - no settlement of either side is signed here. `lockSets` and
     // `lockSetRound` are made below; asked only when a settlement is built, long after this function returned
     lockSetContested: (rid) => { try { return !!(lockSets && lockSetRound(rid) && lockSets.contested(rid)); } catch { return false; } },
     dkg, port: stakeLocks, curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)), stakeSecrets, winnings, finalityOf, donationSetFor, donationTargetFor, orderBook, reserveKeyFor, feesFor,
     // A POOL'S PLAIN PICKS PULLED AGAIN WHEN THE SETTLEMENT IS TRIED (kanban #2198, #2293): one pass, at most once in 30 s a round (bookResync)
-    pickResync: (rid) => pullPickLocks(rid, { passes: 1 }),
+    // ...AND THE SERIES' PUBLICATION PROOF (kanban #2638): a peer that built the publisher line asks this seat to sign other bytes
+    pickResync: async (rid) => {
+      const picks = await pullPickLocks(rid, { passes: 1 }).catch(() => false);
+      const pub = await pullSeriesPublication(rid, { force: true }).catch(() => false);
+      return !!picks || pub;
+    },
     peersFor: (rid) => {
       const picked = roster.committeeFor(rid, 'settlement');
       return picked.ok ? peerEndpointsOf(picked.committee, round.pubkey) : (dkg.peers || []);
@@ -12051,20 +12108,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const sid = fromHex(String(j.series).toLowerCase());
         const t = series.find((x) => toHex(seriesId(x)) === toHex(sid));
         if (!t) return text(res, 404, 'this seat holds no such series');
-        const first = seriesRound(t, 0);
-        let view; try { view = await chainFor({ contract: first, roundIdBytes: roundIdOf(first) }); } catch (e) { return text(res, 503, `this seat cannot read its chain: ${e.message}`); }
-        const pub = findSeriesPublication(view, sid);
-        if (!pub) return text(res, 409, 'this seat\'s chain holds no confirmed publication of that series yet');
-        const tx = fromHex(String(j.tx).toLowerCase());
-        if (toHex(parseTransaction(tx).txid) !== toHex(pub.tx.txid)) return text(res, 409, 'that is not the series\' first confirmed publication');
-        const fee = publicationFee(tx, j.parents.map((h) => fromHex(String(h).toLowerCase())));
-        if (!fee.ok) return text(res, 422, fee.why);
-        round.putSeriesPublication(sid, { txid: toHex(pub.tx.txid), feeSats: fee.feeSats });
+        const took = await takeSeriesPublication(sid, seriesRound(t, 0), j.tx, j.parents);
+        if (!took.ok) return text(res, took.status, took.why);
         const kept = round.seriesPublication(sid);
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         // the txid as an explorer prints it (measured 2026-10-15 19:39Z: the answer named 1deaef5f..., the internal byte order of the
         // publication 9f90fcd4... - right, but not findable); the row keeps the internal order it always had
         return res.end(JSON.stringify({ txid: toHex(fromHex(kept.txid).reverse()), feeSats: String(kept.feeSats), payoutSats: String(publisherPayoutMsat(kept.feeSats) / 1000n) }));
+      }
+      // THE PROOF THIS SEAT KEEPS (kanban #2638): { series, tx, parents } hex, what another seat of the paying round pulls and checks against its
+      // own chain - 404 with none (or a row kept before proofs were)
+      if (req.method === 'GET' && url.pathname === '/series-publication') {
+        const q = String(url.searchParams.get('series') || '');
+        if (!/^[0-9a-f]{64}$/i.test(q)) return text(res, 400, 'a series publication is asked for by its series id');
+        const proof = round.seriesPublicationProof(fromHex(q.toLowerCase()));
+        if (!proof) return text(res, 404, 'this seat keeps no proven publication of that series');
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ series: q.toLowerCase(), tx: proof.tx, parents: proof.parents }));
       }
 
       // A ROUND'S CREATOR SIGNATURE (§6): what rides beside a contract that names its creator, hex - 404 with none

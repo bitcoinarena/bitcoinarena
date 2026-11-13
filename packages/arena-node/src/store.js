@@ -993,6 +993,14 @@ export function openStore(path = ':memory:') {
       fee_sats  TEXT NOT NULL
     );
 
+    -- ...AND THE PROOF ITSELF (kanban #2638): the publication's raw bytes and the parents that prove its fee, hex, kept beside the row so
+    -- every other seat of the series' paying round can pull it (GET /series-publication) and check it against its own chain
+    CREATE TABLE IF NOT EXISTS series_publication_proofs (
+      series_id BLOB PRIMARY KEY,
+      tx        TEXT NOT NULL,
+      parents   TEXT NOT NULL
+    );
+
     -- A ROUND'S CREATOR SIGNATURE (§6): the BIP-340 signature by the key the contract names over its id, kept
     -- beside the round as the id is (a signature is never inside the bytes it signs), and served at GET /round-creator.
     CREATE TABLE IF NOT EXISTS round_creators (
