@@ -62,6 +62,7 @@ import {
 } from '../../arena-protocol/src/result.js';
 import { decodeRoundContract, encodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { matchProofId } from '../../arena-protocol/src/match.js';
+import { decodeLobbyName, lobbyNameId } from '../../arena-protocol/src/lobby-name.js';
 import { headToHeadResults, headToHeadCommit } from '../../arena-protocol/src/head-to-head.js';
 import { splitSigned as splitSignedMark, decodeCheckpoint, checkpointId, SIGNED_CHECKPOINT_BYTES } from '../../arena-protocol/src/checkpoint.js';
 import { pluginForRound, hostedPlugins, itemUnlocksOf } from './plugins.js';
@@ -995,8 +996,45 @@ export class Verifier {
     const byId = new Map(entries.map((e) => [hex(e.entryId), e.entry]));
     // NO MORE PEERS ONCE EVERY ENTRY'S REVEAL IS HELD (kanban #576, measured 2026-10-23 02:39Z: /reveals was the largest fetch left on
     // test host seat 1, 216 a minute): a reveal is bound to its entry's commitment, so another peer can add nothing
-    const allHeld = () => { const held = new Set(this.round.revealsOf(roundIdBytes).map((r) => hex(r.entryId))); return [...byId.keys()].every((k) => held.has(k)); };
+    // A NAME RECORD THIS SEAT MISSED IS CARRIED (kanban #1851, state audit 2026-11-12 sm3-h2h-1): the page posts its name record once to every seat at the
+    // join, and /name refuses after a head-to-head round's entry close (#1263). A seat that missed it (restarting, slow, a lost post) dropped the reveal's
+    // identity for want of consent (#1401) and booked the entry to the bare round key for good, while the other seats booked it to the player's identity.
+    // The record is signed by the player's round key and the consent by the identity, so a peer's copy is checked here on its own: taken only if both
+    // signatures verify, it names this round and a player of it, and its signed atMs is at or before the entry close - what the door would have taken.
+    let closeMs = null;
+    try { closeMs = Number(decodeRoundContract(new Uint8Array(this.round.get(roundIdBytes).contract)).entryCloseMs); } catch { closeMs = null; }
+    const players = new Set(entries.filter((e) => e.entry && e.entry.playerPubkey instanceof Uint8Array).map((e) => hex(e.entry.playerPubkey)));
+    const unconsented = () => typeof this.round.consentedIdentityOf === 'function' && [...players].some((p) => !this.round.consentedIdentityOf(roundIdBytes, Buffer.from(p, 'hex')));
+    const carryNames = async (peer) => {
+      let body;
+      try {
+        const answer = await fetch(`${peer}/names?round=${hex(roundIdBytes)}`, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
+        if (!answer.ok) return;
+        body = JSON.parse((await capped(answer, 65536 + players.size * 1024)).toString('utf8'));
+      } catch { return; }
+      for (const n of (body && Array.isArray(body.names) ? body.names : [])) {
+        try {
+          if (!/^[0-9a-f]+$/i.test(String(n.record)) || !/^[0-9a-f]{128}$/i.test(String(n.sig)) || !/^[0-9a-f]{128}$/i.test(String(n.identitySig))) continue;
+          const bytes = new Uint8Array(Buffer.from(n.record, 'hex')), sig = new Uint8Array(Buffer.from(n.sig, 'hex')), identitySig = new Uint8Array(Buffer.from(n.identitySig, 'hex'));
+          const rec = decodeLobbyName(bytes);
+          if (hex(rec.roundId) !== hex(roundIdBytes) || !players.has(hex(rec.playerPubkey))) continue;
+          if (closeMs === null || !Number.isFinite(closeMs) || !(Number(rec.atMs) <= closeMs)) continue;
+          if (this.round.consentedIdentityOf(roundIdBytes, rec.playerPubkey)) continue;
+          if (!schnorr.verify(sig, lobbyNameId(rec), rec.playerPubkey)) continue;
+          if (!schnorr.verify(identitySig, matchProofId({ roundId: roundIdBytes, entryId: rec.playerPubkey, identityKey: rec.identityPubkey }), rec.identityPubkey)) continue;
+          this.round.putLobbyName({ roundId: roundIdBytes, playerPubkey: rec.playerPubkey, record: bytes, signature: sig, atMs: rec.atMs, identitySig });
+        } catch { /* a record that does not read or verify is not carried */ }
+      }
+    };
+    // ...and an entry is held in full only with its reveal AND, where its player's consent is held here, its identity: the reveal door dropped the
+    // identity of a reveal that came before the consent was carried, and a peer's /reveals serves it again
+    const allHeld = () => {
+      const held = new Set(this.round.revealsOf(roundIdBytes).map((r) => hex(r.entryId)));
+      return [...byId.entries()].every(([k, e]) => held.has(k) && !(typeof this.round.identityOf === 'function' && typeof this.round.consentedIdentityOf === 'function'
+        && e.playerPubkey instanceof Uint8Array && this.round.consentedIdentityOf(roundIdBytes, e.playerPubkey) && !this.round.identityOf(Buffer.from(k, 'hex'))));
+    };
     for (const peer of this.peersOf(roundIdBytes)) {
+      if (this.round.putLobbyName && unconsented()) await carryNames(peer);
       if (allHeld()) break;
       let body;
       try {
