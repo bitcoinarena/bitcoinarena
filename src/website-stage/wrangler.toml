@@ -1,0 +1,6 @@
+# kanban #1342: the bounty stage, testnet-stage.bitcoinarena.io -> the Pages branch `stage` (a Worker custom domain gets its DNS record from Cloudflare)
+name = "arena-bounty-stage"
+main = "worker.js"
+compatibility_date = "2025-09-01"
+workers_dev = false
+routes = [ { pattern = "testnet-stage.bitcoinarena.io", custom_domain = true } ]
