@@ -219,14 +219,17 @@ export class LockSetBook {
     // NOT ON ONE MISSED PULL (feedback #035): the pull before a return was made once per round and its misses swallowed, so a peer that
     // held the contesting certificate and missed that one GET let the lock go back for good. Now the peers that have not answered since
     // the window closed (+ 2 s of gossip) are asked again on each call (one pull per peer in flight), and the lock goes back only
-    // once enough of them answered that no other threshold can exist without one of them: n - t peers (with this seat, n - t + 1).
+    // once every peer answered (feedback #036: not n - t - the overlap seat may be the one that signed both sets).
     const room = this.#room(toHex(rid)), since = Number(c.entryCloseMs) + LOCK_SET_WINDOW_MS + 2000;
     const peers = this.peersOf(rid) || [];
     const fresh = (p) => (room.answeredAt.get(String(p)) || 0) >= since;
     await Promise.all(peers.filter((p) => !fresh(p)).map((p) => this.#pullOne(rid, p, room).catch(() => {})));   // one pull per peer at a time (#pullOne)
     if (this.conflicted(rid)) return null;
-    const committee = this.#committee(rid), need = committee.length - this.#threshold(committee);
-    if (peers.filter(fresh).length < need) return null;
+    // EVERY PEER, NOT n - t (feedback #036): in a draw of 2t - 1 the seat in the overlap of two thresholds is the one that can sign two
+    // sets - the attacker's - so its answer met an n - t quorum by itself while the honest seat holding the other certificate stayed
+    // unheard. A lock outside the set goes back only once every committee peer answered since the close + the window + 2 s; while one
+    // is unheard it waits for its round (or its expiry), as a contested one does.
+    if (peers.some((p) => !fresh(p))) return null;
     return 'that lock is not in the round\'s certified lock set: it is not in the round and goes back at once (kanban #2561)';
   }
 
