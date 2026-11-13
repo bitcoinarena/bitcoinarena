@@ -468,7 +468,7 @@ export function quietOrders({ picks, lines, read = new Set(), loadedMs = 0, nowM
  * won, net and payout) and the table's refunded and losing pool must be the rebuilt ones exactly. { ok, table, row } with BigInt
  * amounts, or { ok: false, why }. Which entries a seat counts (the stakes it saw) stays its word; what each is paid does not.
  */
-function rebuildTable({ table, check, market, entryIdHex, pick }) {
+function rebuildTable({ table, check, market, entryIdHex, pick, stakeMsat = null, order = false }) {
   if (!table || !Array.isArray(table.rows)) return { ok: false, why: 'no table' };
   const msat = (v) => (typeof v === 'bigint' ? (v >= 0n ? v : null) : typeof v === 'string' && /^\d{1,30}$/.test(v) ? BigInt(v)
     : Number.isSafeInteger(v) && v >= 0 ? BigInt(v) : null);
@@ -496,6 +496,12 @@ function rebuildTable({ table, check, market, entryIdHex, pick }) {
   const theirs = table.rows.find((r) => r.entryId === want);
   if (!row || !theirs) return { ok: false, why: 'this pick is not in the rebuilt table' };
   if (row.pick !== Number(pick)) return { ok: false, why: 'the table names another pick for this entry' };
+  // THIS PICK'S STAKE IS THE ROUND CONTRACT'S, NOT THE SEAT'S ROW (kanban #2542, refute of #1615/#1644): the page knows what it staked;
+  // a row that stakes more - or, for a pick that is not an order (filled in part), anything else - is the seat's word, never a result
+  if (stakeMsat !== null) {
+    const mineStake = BigInt(stakeMsat);
+    if (order ? row.stakeMsat > mineStake : row.stakeMsat !== mineStake) return { ok: false, why: 'the table stakes this pick other than its round contract' };
+  }
   if (theirs.won !== row.won || msat(theirs.netMsat) !== row.netMsat || msat(theirs.payoutMsat) !== row.payoutMsat) return { ok: false, why: 'this pick\'s row is not the one the verified outcome pays' };
   if (table.refunded !== t.refunded) return { ok: false, why: 'its refund is not the one the verified outcome makes' };
   if (!market.scalar && msat(table.losingPoolMsat) !== t.losingPoolMsat) return { ok: false, why: 'its losing pool is not its rows\' own' };
@@ -563,7 +569,7 @@ export function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() })
     // seats use (pariMutuelTable / scalarPayoutTable), and reads won, payout, net, refunded and the losing pool from ITS table only.
     // A seat's table that differs from it in any of these - a truthy non-boolean `won`, a forged payout, a refund no rule makes, a
     // scalar share the value does not pay - or that cannot be rebuilt is shown as unverified, never as a result.
-    const rebuilt = rebuildTable({ table: o.table, check, market: p.market, entryIdHex: p.entryIdHex, pick: p.pick });
+    const rebuilt = rebuildTable({ table: o.table, check, market: p.market, entryIdHex: p.entryIdHex, pick: p.pick, stakeMsat: p.stakeMsat, order: !!p.order });
     if (!rebuilt.ok) {
       lines.push({ ...at('unverified'), text: `${head}: ${signed} · the signer nodes' table contradicts the verified outcome: what this pick is paid is UNVERIFIED (${rebuilt.why})` });
       continue;
