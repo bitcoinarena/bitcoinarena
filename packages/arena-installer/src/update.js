@@ -43,6 +43,7 @@ import { quickTunnelUrl } from './reach.js';
 import { gatewayMetricsOwn } from './gateway.js';
 import { installLnd, LND_FILES } from './lnd.js';
 import { QUIET } from '../../arena-node/src/log-level.js';
+import { newerVersion } from '../../arena-node/src/release-latest.js';
 
 /** Files that are the node: kept across an update, backed up before it. */
 export const NODE_FILES = Object.freeze(['node.db', 'node.db-wal', 'node.db-shm', 'arena.conf', 'node.env', 'state.json', 'seed.hex', 'node.db.owner.json',
@@ -639,7 +640,7 @@ async function moveNode({ home, newRelease, port, node = process.execPath, asset
   fetcher = fetch, nowMs = () => Date.now(), waitMs = null, sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), platform = process.platform,
   quickUrl = quickTunnelUrl, restartService = (id, o) => control('restart', id, o), installUpdaterFn = null, fetchApps = ensureApps, arch = process.arch,
   lndKit = { installLnd }, refreshGames = async (o) => (await import('./change-roles.js')).refreshHostedGames(o), trace: given = QUIET,
-  say = () => {}, failedAt = () => null, freeBytes = freeBytesAt }) {
+  say = () => {}, failedAt = () => null, freeBytes = freeBytesAt, allowOlder = false }) {
   // EVERY STEP SAID AT --verbose, WITH ITS TIME; THE DECISIONS AT --debug (kanban #693, 2026-10-26: "shows more info on what its doing, what
   // is going wrong etc")
   const trace = given.tag('update');
@@ -669,6 +670,12 @@ async function moveNode({ home, newRelease, port, node = process.execPath, asset
   step(`the seat's service ${svc.where} ${oldSeat === null ? 'is missing' : `runs ${from || '(no release named)'}`}; moving to ${newRelease}, seat port ${port}`);
   if (!from) return { ok: false, why: `no Bitcoin Arena service names a release (${svc.where})` };
   if (from === newRelease) return { ok: false, why: 'that release is the one running' };
+  // NEVER BACK TO AN OLDER RELEASE UNASKED (kanban #2601, update audit): a signed asset is not a NEWER one - whoever serves the download (a mirror,
+  // the website, the network path) could hand `--update` an old release's asset, SHA256SUMS and signature, all genuine, and the node went back to
+  // a release with known holes. Both releases name their VERSION (inside the signed archive): the new one must not be older, unless the owner
+  // says so (allowOlder: arena-install --update ... --allow-older)
+  const [fromV, toV] = [releaseIdOf(from).version, releaseIdOf(newRelease).version];
+  if (!allowOlder && fromV && toV && newerVersion(fromV, toV)) return { ok: false, why: `release ${toV} is older than the release this node runs (${fromV}): not moved back (--allow-older to mean it)` };
   // THE NEW RELEASE'S APPS (kanban #575): downloaded and checked before anything is stopped - an app that cannot be fetched leaves the
   // node running as it is
   say(2, `Getting the apps of ${label}`);
