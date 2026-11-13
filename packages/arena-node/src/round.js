@@ -4050,6 +4050,20 @@ export class Round {
       .run(Buffer.from(roundId), Buffer.from(entryId), move, Buffer.from(salt), receivedMs).changes === 1;
   }
 
+  /**
+   * A HEAD-TO-HEAD ROUND'S ONE DECISION (kanban #2625): kept once - the first decision stands, a second changes nothing - and
+   * read back as stored ({ results, reveals } as JSON), or null while the round is undecided here.
+   */
+  keepHeadToHeadDecision(roundIdBytes, decision) {
+    this.db.prepare('INSERT OR IGNORE INTO head_to_head_decisions (round_id, decision) VALUES (?, ?)').run(Buffer.from(roundIdBytes), JSON.stringify(decision));
+    return this.headToHeadDecision(roundIdBytes);
+  }
+
+  headToHeadDecision(roundIdBytes) {
+    const r = this.db.prepare('SELECT decision FROM head_to_head_decisions WHERE round_id = ?').get(Buffer.from(roundIdBytes));
+    return r ? JSON.parse(r.decision) : null;
+  }
+
   /** Every reveal this seat holds for a round: [{ entryId, move, salt, receivedMs }]. */
   revealsOf(roundIdBytes) {
     return this.db.prepare('SELECT entry_id, move, salt, received_ms FROM head_to_head_reveals WHERE round_id = ? ORDER BY entry_id')
