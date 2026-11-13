@@ -2005,7 +2005,11 @@ export class Client {
       // it under the live threshold - every list complete and in order, nothing withheld - and the walk took the older live mark,
       // whose next child forks the carried one (FORFEIT). A reloaded client takes the newest mark signed under its session key that
       // any list holds, live or not: a child of an older parent is a fork either way, and the lists show the committee holds it.
-      if (withheld.size || this.reloading) for (const [id, tick] of ticks) if (tick !== null && (newest === null || tick > at(newest))) newest = id;
+      // AND ON EVERY RESUME AFTER IT (kanban #2584): a head this client holds that is not live is the newest signed mark a reload
+      // took (#033) - nothing else moves the head onto a mark short of live. The same seat closing the socket made the same-tab
+      // resume walk back to the older live mark (FORFEIT); so a held head that is not live is treated as a reload's.
+      const heldNotLive = headHex !== toHex(NO_PREVIOUS);
+      if (withheld.size || this.reloading || heldNotLive) for (const [id, tick] of ticks) if (tick !== null && (newest === null || tick > at(newest))) newest = id;
       const now = adopted ? toHex(adopted) : null;
       if (newest !== null && newest !== now && at(newest) > (now ? at(now) : -1)) adopted = fromHex(newest);
     }
