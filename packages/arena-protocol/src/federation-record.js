@@ -266,16 +266,41 @@ export function verifyFederationRecords(items, { census = null, verify, inviteFe
     if (x.fid !== fid) return { ok: false, why: 'one federation\'s records are judged together, and this is another federation' };
     const status = nameOf(FEDERATION_STATUS, x.r.status);
     const need = thresholdOf(Math.max(N, x.r.nominal));
+    // A REFUSED RECORD SIGNED BY ITS OWN THRESHOLD SAYS SO (kanban #2614): `self` carries it, so a keyless seat that picks another record in
+    // the same pass can hold the restrictive one (selfConsistentRestrictive); a record below its own threshold carries nothing
+    const self = x.selfOk ? { self: { record: x.r, status, signers: x.signers.size, id: x.id, n: N, keyed: false } } : {};
     if (x.signers.size < need)
-      return { ok: false, why: `${x.signers.size} of its bonded guardians signed it, and a record needs ${need}${N > x.r.nominal ? ` (another record of this federation, signed by its own threshold, lists ${N} guardians; this one ${x.r.nominal})` : ''}` };
+      return { ok: false, ...self, why: `${x.signers.size} of its bonded guardians signed it, and a record needs ${need}${N > x.r.nominal ? ` (another record of this federation, signed by its own threshold, lists ${N} guardians; this one ${x.r.nominal})` : ''}` };
     for (const q of restrictive) {
       if (q === x || q.r.height > x.r.height || RESTRICTION_RANK[status] >= RESTRICTION_RANK[nameOf(FEDERATION_STATUS, q.r.status)]) continue;
       const by = [...x.signers].filter((k) => q.listed.has(k)).length;
       if (by < thresholdOf(q.r.nominal))
-        return { ok: false, why: `it says ${status} over the ${nameOf(FEDERATION_STATUS, q.r.status)} record at ${q.r.height}, and only ${by} of that record's ${q.r.nominal} guardians signed it (it needs ${thresholdOf(q.r.nominal)})` };
+        return { ok: false, ...self, why: `it says ${status} over the ${nameOf(FEDERATION_STATUS, q.r.status)} record at ${q.r.height}, and only ${by} of that record's ${q.r.nominal} guardians signed it (it needs ${thresholdOf(q.r.nominal)})` };
     }
     return { ok: true, record: x.r, status, signers: x.signers.size, id: x.id, keyed: false, n: N };
   });
+}
+
+/**
+ * THE RESTRICTIVE RECORD A KEYLESS PICK MUST NOT DROP (kanban #2614, feedback #043): of `verdicts` (verifyFederationRecords' answers for one
+ * federation, without keys), the refused records signed by their own threshold (`self`) that are more restrictive (RESTRICTION_RANK) than
+ * `chosen` (the verdict picked) and signed by more than faultsOf(max(N, chosen's nominal)) census guardians - at least f + 1 of the larger
+ * guardian set. Without the floor one bonded node's own HALTED record (nominal 1, signed by itself) would halt the federation at every keyless
+ * seat; with it a stranger set needs f + 1 signers of its own. The most restrictive, then the newest; null when none. Answers { index, v } with
+ * `v` shaped as a verdict that stands ({ ok: true, record, status, signers, id, keyed: false }).
+ */
+export function selfConsistentRestrictive(verdicts, chosen) {
+  if (!chosen || !chosen.ok || chosen.keyed !== false) return null;
+  const rank = (st) => RESTRICTION_RANK[st] ?? 0;
+  let out = null;
+  (verdicts || []).forEach((v, index) => {
+    const s = v && !v.ok && v.self;
+    if (!s || rank(s.status) <= rank(chosen.status)) return;
+    if (s.signers <= faultsOf(Math.max(s.n || 1, chosen.record.nominal))) return;
+    if (!out || rank(s.status) > rank(out.v.status) || (rank(s.status) === rank(out.v.status) && s.record.height > out.v.record.height))
+      out = { index, v: { ok: true, record: s.record, status: s.status, signers: s.signers, id: s.id, keyed: false } };
+  });
+  return out;
 }
 
 /** Of several verified records of one federation, the newest by height (§23A.4: "newest height with valid signatures wins"). */
