@@ -20,7 +20,7 @@ export async function linkFromText(S2, verifiers, { platform, userId, username, 
   if (!r.ok) return { ok: false, reply: `Not linked: ${r.why}.` };
   const flags = await S2.verify(r.pubkey, { [platform]: verifiers[platform] }, { cause: 'link' });
   const said = platform === 'x' ? (flags.x ? 'you follow @bitcoinarena_io: +25% on confirmed reports' : 'you do not follow @bitcoinarena_io yet - follow, then press Check again in My feedback')
-    : flags[platform] ? 'you are a member: +50% on confirmed reports, and you are in the season draw with a confirmed report' : 'you are not a member yet - join, then press Check again in My feedback';
+    : flags[platform] ? 'you are a member: +50% on confirmed reports, and you are in the draw of the week with a confirmed report' : 'you are not a member yet - join, then press Check again in My feedback';
   return { ok: true, pubkey: r.pubkey, reply: `${NAMES[platform]} linked to your report key; ${said}.` };
 }
 
