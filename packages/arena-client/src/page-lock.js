@@ -1912,8 +1912,12 @@ async function keptLockStake(ask) {
     if (['submitted', 'accepted', 'committed'].includes(now.state))
       throw new Error(`no second lock is made for this round: this player's stake lock for it is already ${now.state}`);
     const iKey = lockIntentKey(roundId, playerPubkey);
-    if (now.state === 'intent') {
-      const r = now.record;
+    // kanban #1946: the intent key is read whatever the saved record says - lockRecordOf answers the saved record first, so an intent a dead
+    // tab left under a REFUSED record (PLAY 2 after a refused PLAY 1) was invisible and written over, its submitted transaction named nowhere
+    const pending = now.state === 'intent' ? now.record : readJson(storage, iKey);
+    if (pending) {
+      const r = pending;
+      // the intent itself is what is kept aside below - under a REFUSED record now.record is that record, not the intent (kanban #1946)
       if (!r.failed && Date.now() - Number(r.atMs || 0) < LOCK_INTENT_LIVE_MS)
         throw new Error('another tab is locking this round\'s stake for this player right now: no second lock is made');
       // a tab closed while its lock client was asked: the transaction it names (if any) may hold the stake - kept aside, never written over
