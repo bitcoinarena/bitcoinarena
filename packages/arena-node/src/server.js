@@ -1889,7 +1889,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     try {
       let seats = []; try { seats = networkSeats(); } catch { seats = []; }
       for (const u of seats.slice(0, 32)) {
-        let got; try { const r = await seasonFetch(`${u}/proposals`, { signal: AbortSignal.timeout(10000) }); got = r.ok ? await r.json() : null; } catch { got = null; }
+        let got; try { const r = await seasonFetch(`${u}/proposals`, { signal: AbortSignal.timeout(10000) }); got = r.ok ? await jsonUpTo(r, PEER_LISTING_BYTES) : null; } catch { got = null; }   // kanban #2636, #1469: capped
         if (got && Array.isArray(got.proposals)) took += await proposals.pull(got.proposals);
       }
       if (took) console.log(`[ballot] took ${took} proposal(s) from the seats it knows`);
@@ -2102,7 +2102,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (own.ok) return reserveKeys.setFor(fedHex, epoch, own.pool.groupPublicKey);
     const said = new Map();
     await Promise.all(g.peers.map(async (u) => { try {
-      const r = await (await fetch(`${u}/reserves`, { signal: AbortSignal.timeout(8000) })).json();
+      const r = await jsonUpTo(await fetch(`${u}/reserves`, { signal: AbortSignal.timeout(8000) }), PEER_LISTING_BYTES);   // kanban #2636, #1469: capped
       const f = (r.federations || []).find((x) => x.federationId === fedHex && x.key);
       if (f) said.set(f.key, (said.get(f.key) || 0) + 1);
     } catch { /* a seat that does not answer names nothing */ } }));
@@ -2163,7 +2163,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // /reserves?all=1 a minute to the 22 seats of one host, ~200 kB each - the same answer, every federation in it, read again for each
     // federation the node holds a key of; with a new TLS handshake each, its doors went unanswered for 5-15 s)
     const listsOf = new Map();   // seat -> its /reserves?all=1 answer (a promise; null when it did not answer)
-    const listOf = (u) => { if (!listsOf.has(u)) listsOf.set(u, fetch(`${u}/reserves?all=1`, { signal: AbortSignal.timeout(8000) }).then((r) => r.json()).catch(() => null)); return listsOf.get(u); };
+    const listOf = (u) => { if (!listsOf.has(u)) listsOf.set(u, fetch(`${u}/reserves?all=1`, { signal: AbortSignal.timeout(8000) }).then((r) => jsonUpTo(r, PEER_LISTING_BYTES)).catch(() => null)); return listsOf.get(u); };   // kanban #2636, #1469: capped
     let checks = 0, kept = 0, later = 0;
     // EACH SEAT ITS OWN SHARE OF THE CHECKS (kanban #2521): the RESERVE_PEER_CHECKS budget was one for all seats, so one seat listed
     // first with 200 fresh made-up outpoints each pass took every check and the rows the honest seats list were never asked. Now each
@@ -2237,7 +2237,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       let seats = []; try { seats = networkSeats(); } catch { seats = []; }
       // kanban #2488: a seat that did not answer is named in `missing` - the signal's decide asks again before it writes its outcome once
       const missing = [];
-      const got = await Promise.all(seats.map(async (base) => { try { const r = await fetch(`${base}/funding-items?proposal=${pid}`, { signal: AbortSignal.timeout(8000) }); if (!r.ok) { missing.push(String(base)); return []; } return ((await r.json()).items || []).map((x) => (x && typeof x === 'object' ? { ...x, seat: String(base) } : x)); } catch { missing.push(String(base)); return []; } }));
+      const got = await Promise.all(seats.map(async (base) => { try { const r = await fetch(`${base}/funding-items?proposal=${pid}`, { signal: AbortSignal.timeout(8000) }); if (!r.ok) { missing.push(String(base)); return []; } return ((await jsonUpTo(r, PEER_LISTING_BYTES)).items || []).map((x) => (x && typeof x === 'object' ? { ...x, seat: String(base) } : x)); } catch { missing.push(String(base)); return []; } }));
       // with when each seat first held it (kanban #1279) and WHICH seat says so (kanban #1607): one seat's claim alone never backdates a signal
       const items = got.flat().filter((x) => x && (x.kind === 'signal' || x.kind === 'fee-approval') && /^[0-9a-f]+$/i.test(String(x.hex || '')))
         .map((x) => ({ kind: x.kind, hex: x.hex, seat: x.seat, ...(/^[0-9]{1,16}$/.test(String(x.atMs || '')) ? { atMs: Number(x.atMs) } : {}) })).slice(0, 4096);
@@ -2532,7 +2532,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       try {
         const r = await fetch(`${at}/first-mark`, { method: 'POST', body, signal: AbortSignal.timeout(3000) });
         let got;
-        try { got = JSON.parse(await r.text()); } catch { got = {}; }
+        try { got = JSON.parse(await textUpTo(r, 65536)); } catch { got = {}; }   // kanban #2636, #1469: capped
         why = got.why ? String(got.why).slice(0, 120) : undefined;
         if (r.ok && got.receipt) { try { round.takeReceipt(fromHex(String(got.receipt))); } catch { /* not this mark's */ } answer = 'receipted'; }
         else if (got.entryVoid) answer = 'late';
@@ -3208,9 +3208,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
     return r;
   }
+  // READ UP TO A BOUND (kanban #2636, bypass of #1469): both pulls below run on every seat, 30 s after start and every 10 min, and read
+  // every network seat's answer - a bare r.json() held one seat's 32 MiB answer whole (4x what a request body may carry), twice a pass.
+  // At most 256 notices are taken from each, a few hundred KiB of hex; the answer is read up to PEER_LISTING_BYTES (4 MiB) and dropped
+  // past it. The same bound holds every other peer answer this file read bare (/proposals, /reserves, /funding-items, /first-mark,
+  // /lock-namer, the founding's fetchJson, /gateway-seating, the liquidity seatings, the address pull) - all through peer-read.js.
   const pullEmergencies = async () => {
     for (const u of networkSeats()) {
-      let got; try { const r = await fetch(`${u}/emergency-departures`, { signal: AbortSignal.timeout(10000) }); got = r.ok ? await r.json() : null; } catch { got = null; }
+      let got; try { const r = await fetch(`${u}/emergency-departures`, { signal: AbortSignal.timeout(10000) }); got = r.ok ? await jsonUpTo(r, PEER_LISTING_BYTES) : null; } catch { got = null; }
       for (const h of (got && Array.isArray(got.requests) ? got.requests : []).slice(0, 256)) { try { await takeEmergency(readEmergencyHex(h), { pass: false }); } catch { /* not one */ } }
     }
   };
@@ -3218,7 +3223,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // chain state and the bytes are checked against it, so there is no freshness window. Only notices that name an anchor are pulled.
   const pullDepartures = async () => {
     for (const u of networkSeats()) {
-      let got; try { const r = await fetch(`${u}/absences`, { signal: AbortSignal.timeout(10000) }); got = r.ok ? await r.json() : null; } catch { got = null; }
+      let got; try { const r = await fetch(`${u}/absences`, { signal: AbortSignal.timeout(10000) }); got = r.ok ? await jsonUpTo(r, PEER_LISTING_BYTES) : null; } catch { got = null; }
       for (const h of (got && Array.isArray(got.departures) ? got.departures : []).slice(0, 256)) {
         try { const d = readDepartureHex(h); if (d.anchor) await absences.offerAnchored(d); } catch { /* not one */ }
       }
@@ -5039,7 +5044,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       try {
         const r = await fetch(`${base}/lock-namer?kind=${kind}&outpoint=${op}&player=${toHex(entry.playerPubkey)}`, { signal: AbortSignal.timeout(1500) });
         if (!r.ok) return null;
-        const body = await r.json();
+        const body = await jsonUpTo(r, PEER_LISTING_BYTES);   // kanban #2636, #1469: capped
         if (!body || typeof body.entry !== 'string' || typeof body.bytes !== 'string' || !Number.isFinite(body.joinedMs)) return null;
         const bytes = fromHex(body.bytes), e = decodeEntryContract(bytes), id = idOfEntry(e);
         if (toHex(id) !== body.entry.toLowerCase()) return null;
@@ -6367,7 +6372,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // a founding every 6 blocks on every network (guardian-founding.js FOUNDING_WINDOW); the genesis clock stays in the network id
       clocks: { ...fedClocks, foundingWindow: FOUNDING_WINDOW, departureAnchorGate: anchorGate }, ownKey: round.pubkey, sign: (h) => schnorr.sign(h, round.identity.secret), verify: schnorrVerify,
       post: async (m) => { await Promise.all(networkSeats().map((u) => fetch(`${u}/founding`, { method: 'POST', body: JSON.stringify(m), signal: AbortSignal.timeout(15000) }).catch(() => null))); },
-      peers: () => networkSeats(), fetchJson: async (u) => (await fetch(u, { signal: AbortSignal.timeout(15000) })).json(),
+      peers: () => networkSeats(), fetchJson: async (u) => jsonUpTo(await fetch(u, { signal: AbortSignal.timeout(15000) }), PEER_LISTING_BYTES),   // kanban #2636, #1469: capped
       endpointOf: (e) => addressBook.endpointOf(e),
       postTo: async (root, m) => { await fetch(`${root}/founding`, { method: 'POST', body: JSON.stringify(m), signal: AbortSignal.timeout(15000) }); },
       say: (o) => console.log(`[founding] ${JSON.stringify(o)}`) });
@@ -6685,7 +6690,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           if (!e || !e.advert || !e.advert.endpoint) continue;
           try {
             const r = await fetch(`${String(addressBook.endpointOf(e) || e.advert.endpoint).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '')}/gateway-seating?federation=${fid}&epoch=${ep}`, { signal: AbortSignal.timeout(10000) });
-            if (r.status === 200) signed.push(await r.json());
+            if (r.status === 200) signed.push(await jsonUpTo(r, PEER_LISTING_BYTES));   // kanban #2636, #1469: capped
           } catch { /* that guardian's signature is missing this time */ }
         }
         if (!signed.length) continue;
@@ -6698,7 +6703,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const sf = setTimeout(() => { gatherSeatings().catch(() => {}); }, 90000); if (sf.unref) sf.unref();
     // THE LIQUIDITY SEATINGS (§23A.10): a guardian lists its federation's providers - every census node's liquidity claim, the
     // federation's custody nodes' LND keys from their gateway claims - and signs it once per epoch; every seat keeps the standing one
-    const getJson = async (u) => { try { const r = await fetch(u, { signal: AbortSignal.timeout(10000) }); return r.status === 200 ? await r.json() : null; } catch { return null; } };
+    const getJson = async (u) => { try { const r = await fetch(u, { signal: AbortSignal.timeout(10000) }); return r.status === 200 ? await jsonUpTo(r, PEER_LISTING_BYTES) : null; } catch { return null; } };   // kanban #2636, #1469: capped
     const gatherLiquidity = async () => {
       const epoch = Math.floor(Number(await chainTip()) / GATEWAY_EPOCH_BLOCKS) - 1;
       const now = fedRecords.censusNow ? fedRecords.censusNow() : { ok: false };
@@ -8527,7 +8532,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           if (!a.ok) return answer(a.status || 401, a);
           const prov = process.env.ARENA_LIQUIDITY_PROVIDER_URL || (process.env.ARENA_HOME ? `http://127.0.0.1:${(await import('../../arena-installer/src/state.js')).LIQUIDITY_PROVIDER_PORT}` : null);
           if (!prov) return answer(501, { ok: false, why: 'this node runs no liquidity provider service (ARENA_LIQUIDITY_PROVIDER_URL)' });
-          let r; try { const x = await fetch(`${prov.replace(/\/+$/, '')}/new-address`, { method: 'POST', signal: AbortSignal.timeout(60000) }); r = await x.json(); } catch (e) { r = { ok: false, why: `the provider service did not answer: ${e.message}` }; }
+          let r; try { const x = await fetch(`${prov.replace(/\/+$/, '')}/new-address`, { method: 'POST', signal: AbortSignal.timeout(60000) }); r = await jsonUpTo(x, PEER_LISTING_BYTES); } catch (e) { r = { ok: false, why: `the provider service did not answer: ${e.message}` }; }
           if (r.ok) dashboardKept = null;
           return answer(r.ok ? 200 : 502, r);
         }
@@ -12885,7 +12890,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE OTHERS' NEWEST ADDRESSES, PULLED as well (address-book.js pullAnnouncements, kanban #577): a node a push missed learns them here
   const pullAddresses = async (list) => {
     try {
-      const get = async (u) => { const r = await fetch(u, { signal: AbortSignal.timeout(15000) }); return r.ok ? r.json() : null; };
+      const get = async (u) => { const r = await fetch(u, { signal: AbortSignal.timeout(15000) }); return r.ok ? jsonUpTo(r, PEER_LISTING_BYTES) : null; };   // kanban #2636, #1469: capped
       const p = await pullAnnouncements({ entries: list || [], book: addressBook, ownKey: toHex(round.pubkey), get });
       if (p.kept) console.log(`[address] ${p.kept} newer address(es) taken from ${p.answered} of ${p.asked} seat(s)`);
     } catch { /* the next round */ }
