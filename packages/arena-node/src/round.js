@@ -2216,7 +2216,11 @@ export class Round {
     // before the close) seats it, and the entry is VOID as a lockless one (#1437). A fee lock whose door time stands before the close but whose
     // federation answer comes back after it writes the stake seen at that door time (#1805, #1822), which seats the entry again.
     const feeDoorShut = close !== null && BigInt(Math.floor(Number(this.now()))) >= close;
-    const locked = all.filter(({ entryId }) => { const seen = this.stakeSeen(entryId), lock = this.stakeLock(entryId);
+    // AN ENTRY THIS SEAT DECIDED IS NO MEMBER TAKES NO SEAT (kanban #2281, #2536): an entry fewer seats than the threshold took is ENTRY_VOID
+    // 'below-threshold' here (§17, server.js lookAtMembers), but it still counted among the lock-backed entries - with the lowest entry id it
+    // took a seat here while the other seats seated the member whose lock it pushed out: two seat sets, no threshold result.
+    const noMember = (entryId) => { const v = this.entryVoid(entryId); return !!v && v.evidenceKind === 'below-threshold'; };
+    const locked = all.filter(({ entryId }) => { if (noMember(entryId)) return false; const seen = this.stakeSeen(entryId), lock = this.stakeLock(entryId);
       return (!!seen && inTime(seen.seenMs)) || (!feeDoorShut && !!lock && inTime(lock.verifiedMs)); });
     // `played` (kanban #1544) keeps of the seats only the entries whose stake is SEEN - the seats themselves are the same as the door's (#1588)
     const playedOnly = (list) => played ? list.filter(({ entryId }) => { const seen = this.stakeSeen(entryId); return !!seen && inTime(seen.seenMs); }) : list;
