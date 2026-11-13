@@ -256,7 +256,7 @@ export const MAX_FRAME_BYTES = Math.max(
   MAX_SIGNED_INPUT_BATCH_BYTES, SIGNED_CHECKPOINT_BYTES, SIGNED_RECEIPT_BYTES);
 import { CLOSED, relayRowCost } from './store.js';
 import { Round, lockClaimHolds, refusedLockOwnId, LOCKLESS_CAP, LOCKLESS_HOLD_MS } from './round.js';
-import { Verifier } from './verify.js';
+import { Verifier, peerEntryVoid } from './verify.js';
 import { Ghosts } from './ghosts.js';
 import { gameLive } from './game-live.js';
 import { readReserve } from './federation-reserve.js';
@@ -3036,9 +3036,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   async function lateByPeers(c, bytes) {
     for (const peer of verifier.peersOf(c.roundId)) {
       try {
-        const r = await fetch(`${String(peer).replace(/\/+$/, '')}/entry-void?entry=${toHex(c.entryId)}`, { signal: AbortSignal.timeout(1500) });
-        if (!r.ok) { await dropSeatBody(r); continue; }
-        const got = await seatJson(r, SEAT_ENTRY_VOID_BYTES);   // kanban #1900
+        // TIMED AND CAPPED (kanban #2163, the #1632 cap on this door; #1900): one timed read of at most ENTRY_VOID_MAX_BYTES (verify.js
+        // peerEntryVoid) - a padded answer read whole on the seat's thread held it seconds per /play message
+        const got = await peerEntryVoid(peer, toHex(c.entryId), 1500);
+        if (!got) continue;
         // SAME-MARK VOID EVIDENCE ONLY (M3.3-34, ruled 2026-09-12, path 1): a
         // peer's Void of a DIFFERENT first mark is the player's second first
         // mark. Measured before: this signer node took it as a normal mark (the peer's
@@ -6806,6 +6807,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // A lock first handed after the close has no such statement from an honest seat (verified_ms is the round-clock time it was taken).
       let closeMs = null;
       try { const hc = headToHeadRound(entry.roundId); closeMs = hc && typeof hc.entryCloseMs === 'bigint' ? hc.entryCloseMs : null; } catch { closeMs = null; }
+      // a pool's plain pick pulled after its entry close (kanban #2300): the same signed word, against the pick's close
+      if (closeMs === null && pick && typeof pick.closeMs === 'bigint') closeMs = pick.closeMs;
       const signedBefore = (a, k) => closeMs !== null && !!a && !!a[k] && takenBeforeClose(rid, eid, k, a[k], a.taken && a.taken[k], closeMs);
       // PAST THE LOCK CLOSE, NOT FROM ONE SEAT (kanban #1783, #1551 refute 0, #1489): #1551 and #1260 refuse a lock new to a seat at its door once its round's
       // lock close passed (head-to-head: the entry close, when the moves turn public), but this repair took a lock from any single peer's GET /order-locks.
@@ -12190,6 +12193,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           return res.end(Buffer.from(sig));
         }
         const sig = new Uint8Array(await read(req));
+        // an entry held aside past the lockless cap (kanban #2174) is entered here too once the federation holds its stake lock:
+        // the claim (kanban #1897) comes before /lock, and a claim of an entry not yet stored was refused 404
+        if (!round.entry(new Uint8Array(eid))) await enterPendingLockless(new Uint8Array(eid));
         const kept = round.putLockClaim(new Uint8Array(eid), sig);
         if (!kept.ok) return text(res, /no such entry/.test(kept.why) ? 404 : 400, kept.why);
         return text(res, 201, 'lock claim kept: the locks this entry names go to a claimed entry only');
