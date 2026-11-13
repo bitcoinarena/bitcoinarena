@@ -46,7 +46,7 @@ test('a late fee lock one peer seat took is not carried by the honest seats into
       const r = await fetch(`http://127.0.0.1:${d.port}/lock?entry=${toHex(g.eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(g.fields)) });
       assert.equal(r.status, 201, await r.text());
     }
-    skipTo(Number(w.c.entryCloseMs) + 500);
+    skipTo(Number(w.c.entryCloseMs) + 1800);   // GET /reveals serves from the close + H2H_REVEAL_HOLD_MS, 1750 ms (kanban #1822)
     // the honest player reveals at once, as the page does
     await reveal(w, a, PAPER, sa);
     // the griefer reads the honest move from the public door
@@ -55,7 +55,7 @@ test('a late fee lock one peer seat took is not carried by the honest seats into
     assert.ok(theirs, 'the honest reveal is public');
     const wins = (SCISSORS - theirs.move + 3) % 3 === 1;
     assert.ok(wins, 'scissors beats paper: the griefer now chooses to take part');
-    skipTo(Number(w.c.entryCloseMs) + 2000);   // inside the 15 s grace
+    skipTo(Number(w.c.entryCloseMs) + 2500);   // inside the 15 s grace
     const feeFields = { paymentImage: { kind: 'hash', bytes: sha256(g.entry.feePreimage) }, amountMsat: g.entry.feeMsat, claimPk: w.claimPk,
       refundPk: refundKeyOf(mk(2).key), expiration: g.fields.expiration };
     const feeAns = [];

@@ -42,7 +42,7 @@ const until = async (ok, ms = 30000) => { for (const stop = Date.now() + ms; Dat
 const postObjection = (d, w, eid, body) => fetch(`${base(d)}/objection?round=${toHex(w.rid)}&entry=${toHex(eid)}`, { method: 'POST', body });
 const ownResult = (d, w, eid) => decodePlayerResult(splitSignedResult(d.round.results(w.rid, eid).find((r) => toHex(r.nodePubkey) === toHex(d.round.pubkey)).bytes).body);
 
-test('wf1489 v1-refute-29 s1: a seat whose own stored run does not reproduce the marks replays the bundle carried (no refusal by its own run)', async () => {
+test('wf1489 v1-refute-29 s1: a seat whose own stored run does not reproduce the marks replays the bundle carried (no refusal by its own run)', { todo: 'kanban #1489 merge19v1: on the 1.9 line #1952/#1990 (item 66) binds a live run\'s objection inputs to the run this seat stored, which the session key signed - inputs that differ from it are refused before any replay (step inputs), so this reference-run path (#1706/#1878) is not reached; no copy costs a replay either way' }, async () => {
   const w = await lockRound({ endMs: testNow() + 4000 });
   try {
     const honest = await lockAndPlay(w, WINNER, { noMarks: true });
