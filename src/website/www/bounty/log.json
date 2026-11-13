@@ -136,5 +136,107 @@
   "reason": "Feedback #031 (low)",
   "channel": "bug bounty",
   "sats": 1000
+ },
+ {
+  "date": "2026-11-13",
+  "reason": "Feedback #033 (medium)",
+  "channel": "bug bounty",
+  "sats": 1000
+ },
+ {
+  "date": "2026-11-13",
+  "reason": "Feedback #034 (medium)",
+  "channel": "bug bounty",
+  "sats": 1000
+ },
+ {
+  "date": "2026-11-13",
+  "reason": "Feedback #035 (medium)",
+  "channel": "bug bounty",
+  "sats": 1000
+ },
+ {
+  "date": "2026-11-13",
+  "reason": "Feedback #036 (medium)",
+  "channel": "bug bounty",
+  "sats": 1000
+ },
+ {
+  "date": "2026-11-13",
+  "reason": "Feedback #037 (high)",
+  "channel": "bug bounty",
+  "sats": 2000
+ },
+ {
+  "date": "2026-11-13",
+  "reason": "Feedback #038 (high)",
+  "channel": "bug bounty",
+  "sats": 1000
+ },
+ {
+  "date": "2026-11-13",
+  "reason": "Feedback #039 (high)",
+  "channel": "bug bounty",
+  "sats": 1000
+ },
+ {
+  "date": "2026-11-13",
+  "reason": "Feedback #040 (high)",
+  "channel": "bug bounty",
+  "sats": 1000
+ },
+ {
+  "date": "2026-11-13",
+  "reason": "Feedback #041 (medium)",
+  "channel": "bug bounty",
+  "sats": 1000
+ },
+ {
+  "date": "2026-11-13",
+  "reason": "Feedback #042 (high)",
+  "channel": "bug bounty",
+  "sats": 1000
+ },
+ {
+  "date": "2026-11-13",
+  "reason": "Feedback #043 (high)",
+  "channel": "bug bounty",
+  "sats": 1000
+ },
+ {
+  "date": "2026-11-13",
+  "reason": "Feedback #044 (high)",
+  "channel": "bug bounty",
+  "sats": 1000
+ },
+ {
+  "date": "2026-11-13",
+  "reason": "Feedback #045 (high)",
+  "channel": "bug bounty",
+  "sats": 1000
+ },
+ {
+  "date": "2026-11-13",
+  "reason": "Feedback #046 (high)",
+  "channel": "bug bounty",
+  "sats": 1000
+ },
+ {
+  "date": "2026-11-13",
+  "reason": "Feedback #047 (high)",
+  "channel": "bug bounty",
+  "sats": 1000
+ },
+ {
+  "date": "2026-11-13",
+  "reason": "Feedback #049 (high)",
+  "channel": "bug bounty",
+  "sats": 1000
+ },
+ {
+  "date": "2026-11-13",
+  "reason": "Feedback #048 (useful)",
+  "channel": "bug bounty",
+  "sats": 500
  }
 ]
