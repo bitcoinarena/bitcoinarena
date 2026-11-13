@@ -1311,7 +1311,8 @@ export function recordDonation(storage, federationId, { msat, round, txid = null
  *  referral link brought, `round` the round that paid it - or 'zap-in', a zap from another player. `outpoint` is the payout collected. */
 export function recordReceived(storage, federationId, { kind, msat, round = null, outpoint = null }) {
   if (kind !== 'referral' && kind !== 'zap-in') return;
-  ledgerAppend(storage, federationId, { kind, msat: String(msat), round: round ? String(round) : null, ...(outpoint ? { outpoint: String(outpoint) } : {}) });
+  // kanban #2319: one row per collected outpoint (content id 'zap-<outpoint>'): two tabs, or a pass that books what an unfinished one began, write it once
+  ledgerAppend(storage, federationId, { kind, msat: String(msat), round: round ? String(round) : null, ...(outpoint ? { outpoint: String(outpoint) } : {}) }, outpoint ? `zap-${outpoint}` : null);
 }
 /** The rest: the smallest whole sat whose whole notes cover what the wallet is short. */
 export function restOfFeesMsat(shortMsat) {
