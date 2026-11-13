@@ -1992,6 +1992,28 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   if (proposalsPull && proposalsPull.unref) proposalsPull.unref();
   const proposalsFirstPull = proposals && proposalsPullMs > 0 ? setTimeout(() => { pullProposals().catch(() => {}); }, 30000) : null;
   if (proposalsFirstPull && proposalsFirstPull.unref) proposalsFirstPull.unref();
+  // THE DEVELOPERS' BALLOTS A FORWARD MISSED, PULLED THE SAME WAY (kanban #2535): forwardBallot sends each object once, so a seat that was
+  // down, slow past 8 s, or heard an object before what it rests on kept a different approved set for good. Each peer's GET /donation-ballots
+  // list goes through donationBallots.pull (add checks every object as if posted here). Same timers as the proposals'.
+  let ballotsPulling = false;
+  const pullDonationBallots = async () => {
+    if (!donationBallots || ballotsPulling) return 0;
+    ballotsPulling = true;
+    let took = 0;
+    try {
+      let seats = []; try { seats = networkSeats(); } catch { seats = []; }
+      for (const u of seats.slice(0, 32)) {
+        let got; try { const r = await seasonFetch(`${u}/donation-ballots`, { signal: AbortSignal.timeout(10000) }); got = r.ok ? await jsonUpTo(r, PEER_LISTING_BYTES) : null; } catch { got = null; }   // capped as the proposals' read
+        if (got && Array.isArray(got.ballots)) took += await donationBallots.pull(got.ballots);
+      }
+      if (took) console.log(`[donation-ballot] took ${took} object(s) from the seats it knows`);
+    } finally { ballotsPulling = false; }
+    return took;
+  };
+  const ballotsPull = donationBallots && proposalsPullMs > 0 ? setInterval(() => { pullDonationBallots().catch(() => {}); }, proposalsPullMs) : null;
+  if (ballotsPull && ballotsPull.unref) ballotsPull.unref();
+  const ballotsFirstPull = donationBallots && proposalsPullMs > 0 ? setTimeout(() => { pullDonationBallots().catch(() => {}); }, 30000) : null;
+  if (ballotsFirstPull && ballotsFirstPull.unref) ballotsFirstPull.unref();
   // A SEAT SERVES A ROUND ONLY UNDER A CONFIG IT RUNS FOR THAT ROUND (27A.7.5): of the configs the ballot named, the one live at
   // the round's creation - its census height (ballot-chain.js configServesRound). A config the ballot never named is not
   // governed here and is served as before; with no proposal passed the history holds the genesis alone, and nothing changes.
@@ -13931,7 +13953,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (seriesPullTimer) clearInterval(seriesPullTimer);
         if (seriesPullFirst) clearTimeout(seriesPullFirst);
         if (ballotTimer) clearInterval(ballotTimer);
-        if (proposalsPull) clearInterval(proposalsPull); if (proposalsFirstPull) clearTimeout(proposalsFirstPull);
+        if (proposalsPull) clearInterval(proposalsPull); if (proposalsFirstPull) clearTimeout(proposalsFirstPull); if (ballotsPull) clearInterval(ballotsPull); if (ballotsFirstPull) clearTimeout(ballotsFirstPull);
         for (const t of finalityTimers) clearTimeout(t);
         finalityTimers.clear();
         for (const t of rerunTimers) clearTimeout(t);
