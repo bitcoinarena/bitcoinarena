@@ -487,6 +487,18 @@ export class OrderBook {
     try { return Number(decodeRoundContract(new Uint8Array(row.contract)).entryCloseMs); } catch { return Infinity; }
   }
 
+  /**
+   * NO MORE SELLS THAN AN HONEST LEADER TAKES (kanban #1722, #1791; #2114 for the pending items and the void ask): MAX_PROPOSAL_SELLS of
+   * each seat's proposal, MAX_UNBATCHED_SELLS of one order from each - counted before any signature is checked. A refusal, or null.
+   */
+  #recordTooBig(m, record) {
+    const n = m.contract.nodes.length, sl = Array.isArray(record.sells) ? record.sells : [], cl = Array.isArray(record.cancels) ? record.cancels : [];
+    if (sl.length > n * MAX_PROPOSAL_SELLS || cl.length > n * MAX_PROPOSAL_SELLS) return refuse(`a batch carries at most ${n * MAX_PROPOSAL_SELLS} sells and as many cancels`, 400);
+    const per = new Map();
+    for (const s of sl) { const e = String(s && s.entry); per.set(e, (per.get(e) || 0) + 1); if (per.get(e) > n * MAX_UNBATCHED_SELLS) return refuse(`a batch carries at most ${n * MAX_UNBATCHED_SELLS} sells of one order`, 400); }
+    return null;
+  }
+
   /** The id of a batch record: its orders, cancels and sells, by their ids. */
   #recordId(roundIdBytes, record) {
     const ids = [...record.orders];
@@ -633,12 +645,7 @@ export class OrderBook {
     } else for (const id of record.orders) { const o = this.#orderEntry(roundIdBytes, id); if (!o.ok && !o.undecodable) return o; }
     // kanban #1722, #1791: no more sells than an honest leader takes (MAX_PROPOSAL_SELLS of each seat's proposal, MAX_UNBATCHED_SELLS of
     // one order from each) - counted before a signature is checked, so a leader's flood costs a follower nothing
-    if (!importing) {
-      const n = m.contract.nodes.length, sl = Array.isArray(record.sells) ? record.sells : [], cl = Array.isArray(record.cancels) ? record.cancels : [];
-      if (sl.length > n * MAX_PROPOSAL_SELLS || cl.length > n * MAX_PROPOSAL_SELLS) return refuse(`a batch carries at most ${n * MAX_PROPOSAL_SELLS} sells and as many cancels`, 400);
-      const per = new Map();
-      for (const s of sl) { const e = String(s && s.entry); per.set(e, (per.get(e) || 0) + 1); if (per.get(e) > n * MAX_UNBATCHED_SELLS) return refuse(`a batch carries at most ${n * MAX_UNBATCHED_SELLS} sells of one order`, 400); }
-    }
+    if (!importing) { const big = this.#recordTooBig(m, record); if (big) return big; }
     const rec = this.#recordId(roundIdBytes, record);
     if (!rec.ok) return rec;
     if (!isHex(String(record.leaderSig), 64) || !verifySchnorr(fromHex(String(record.leaderSig)), fromHex(rec.id), fromHex(leader))) return refuse('that batch is not signed by its leader', 403);
@@ -1080,8 +1087,13 @@ export class OrderBook {
       // the leader's signature over the CLAIMED id first (kanban #1934, #1971, #2004): a forged item costs one Schnorr verify and stops
       // its proposal's pending list (lead()), never a #recordId of its cancels and sells first
       if (!verifySchnorr(fromHex(String(x.record.leaderSig)), fromHex(String(x.batchId)), fromHex(leader))) return null;
-      const rec = this.#recordId(roundIdBytes, x.record);
-      if (!rec.ok || rec.id !== String(x.batchId)) return null;
+      // kanban #2114 (#1489 v1-refute-56-s3-1): the serving seat leads a k of its own and signs its record, so the Schnorr check passes,
+      // and #recordId then Ed25519-verified every sell of it (3000 fresh ones: lead() 2 s, every batch). Deciding a pending item needs only
+      // that the record reads to the id its leader signed - by the ids it hashes, as voidAskFor names it; its sells and cancels are
+      // verified where the record is taken into a book (accept), each held first to what an honest leader takes (#recordTooBig)
+      if (this.#recordTooBig(m, x.record)) return null;
+      const ids = this.#idsOf(roundIdBytes, x.record);
+      if (!ids || toHex(bookBatchId({ roundId: roundIdBytes, k, orderIds: ids })) !== String(x.batchId)) return null;
       return true;
     } catch { return false; }
   }
