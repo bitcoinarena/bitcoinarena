@@ -7146,7 +7146,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     };
     const sf = setTimeout(() => { gatherSeatings().catch(() => {}); }, 90000); if (sf.unref) sf.unref();
     // THE LIQUIDITY SEATINGS (§23A.10): a guardian lists its federation's providers - every census node's liquidity claim, the
-    // federation's custody nodes' LND keys from their gateway claims - and signs it once per epoch; every seat keeps the standing one
+    // federation's custody nodes' LND keys from their gateway claims - and signs it once per epoch (kanban #2640); every seat keeps the standing one
     const getJson = async (u) => { try { const r = await fetch(u, { signal: AbortSignal.timeout(10000) }); return r.status === 200 ? await jsonUpTo(r, PEER_LISTING_BYTES) : null; } catch { return null; } };   // kanban #2636, #1469: capped
     const gatherLiquidity = async () => {
       const epoch = Math.floor(Number(await chainTip()) / GATEWAY_EPOCH_BLOCKS) - 1;
@@ -7161,7 +7161,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!seatedHex.includes(me)) liquiditySaid(fid, epoch, `not signed here: this node is not one of the ${seatedHex.length} seated guardians`);
         // A LIST OF NOBODY IS NO LIST (kanban #926, measured 2026-11-01: seats restarted under load read 0 of 2 claims, signed an empty seating and kept it, so no list reached the threshold and rounds of that
         // epoch did not settle): one that names no provider is read again each pass, and nothing is signed until one does
-        if (seatedHex.includes(me) && !(liquiditySeatings.get(`${fid}:${epoch}`)?.providers?.length)) {   // until one stands: a list read under load may name fewer, and the guardians must agree
+        // ONE LIST PER FEDERATION AND EPOCH, KEPT (kanban #2640, outside report #055; §23A.10 "the same way as the gateway seating"): a guardian that
+        // re-signed on every pass until a list stood served a new list each time a provider answered on one pass and not the next, so two lists
+        // could both reach the threshold - one seat froze the first, another the second, and the paid rounds of that epoch never settled. Once it
+        // signed a list naming a provider it keeps it (held across a restart, 'liquidity-own'); an empty read is still no list (#926)
+        if (seatedHex.includes(me) && !ownLiquiditySeatings.has(`${fid}:${epoch}`) && !(liquiditySeatings.get(`${fid}:${epoch}`)?.providers?.length)) {
           const lnKeys = [], claims = [];
           for (const node of seatedHex) { const ep = endpointOf(node); const g = ep && await getJson(`${ep}/gateway-claim`); if (g && g.node === node && checkGatewayClaim(g, schnorrVerify).ok) lnKeys.push(g.lightningPubkey); }
           for (const e of entries) { const ep = endpointOf(toHex(e.pubkey)); const c = ep && await getJson(`${ep}/liquidity-claim`); if (c && c.node === toHex(e.pubkey) && checkLiquidityClaim(c, schnorrVerify).ok) claims.push(c); }
@@ -7169,7 +7173,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const proven = typeof chainTxOut === 'function' ? new Map() : null;
           if (proven) for (const c of claims) proven.set(c.node, await provenFreeSats({ claim: c, curve: messageCurve, txOut: chainTxOut }));
           const providers = liquiditySeatingFrom({ claims, federationLnKeys: lnKeys, proven });
-          if (!providers.length) { ownLiquiditySeatings.delete(`${fid}:${epoch}`); liquiditySaid(fid, epoch, `not signed: no provider read, ${claims.length} claim(s), ${lnKeys.length} gateway key(s)`); }
+          if (!providers.length) { liquiditySaid(fid, epoch, `not signed: no provider read, ${claims.length} claim(s), ${lnKeys.length} gateway key(s)`); }
           else { ownLiquiditySeatings.set(`${fid}:${epoch}`, signLiquiditySeating({ federationId: fid, epoch, providers }, me, (h) => schnorr.sign(h, round.identity.secret)));
           keepSeating('liquidity-own', fid, epoch, ownLiquiditySeatings.get(`${fid}:${epoch}`));
           liquiditySaid(fid, epoch, `signed: ${providers.length} provider(s) [${providers.map((p) => `${p.node.slice(0, 8)}:${p.weight}`).join(', ')}] of ${claims.length} claim(s), ${lnKeys.length} gateway key(s)`); }
