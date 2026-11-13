@@ -132,9 +132,14 @@ export async function federationStatuses({ nodes, census, verify, fetcher = fetc
         // ITS GUARDIANS, for a join one guardian cannot serve (guardian-invites.js) - ONLY ONCE THE RECORD VERIFIES (kanban #1556: one seat
         // answering first with an unsigned record naming the player's federation took every peer slot, so the join fallback named only its hosts)
         if (v.ok) { add(verified, fid, { ...v, from: u }); }
-        else {
-          add(refused, fid, `${u}: ${v.why}`);
-          const says = restrictive.has(fid) ? null : refusedRestrictive(hexToBytes(hex), fid);
+        else add(refused, fid, `${u}: ${v.why}`);
+        // WITHOUT THE CONFIG KEYS, ANY RECORD'S RESTRICTIVE WORD HOLDS DEPOSIT AND JOIN (kanban #2605, feedback #039): with no guardian keys
+        // a client cannot tell the federation's guardians from bonded strangers naming it - 8 bonded sybils signed their own OPEN record of
+        // nominal 11 and the genuine 7/7 HALTED record fell under #2604's threshold, so the page read OPEN. Every counting rule loses to enough
+        // bonds; this one fails closed: a record of this federation (verified or not) naming DRAINING, CRITICAL, HALTED or CLOSED keeps deposit
+        // and join off. The worst a stranger gets is a held deposit; withdraw and move stay open, and with the keys the record decides alone.
+        if ((v.ok ? !keysOf(fid) : true) && !restrictive.has(fid)) {
+          const says = refusedRestrictive(hexToBytes(hex), fid);
           if (says) restrictive.set(fid, says);
         }
       }
@@ -146,7 +151,11 @@ export async function federationStatuses({ nodes, census, verify, fetcher = fetc
     const best = newestRecord(verified.get(fid) || []);
     const why = (refused.get(fid) || failed)[0];
     const says = best ? null : restrictive.get(fid) || null;
-    out.set(fid, best ? { ...statusOfRecord(best), federation: fid }
+    // a verified record read without the config keys does not lift another record's restrictive word (kanban #2605)
+    const held = best && !keysOf(fid) && restrictive.has(fid) && !RESTRICTIVE.has(best.record.status) ? restrictive.get(fid) : null;
+    out.set(fid, best ? { ...statusOfRecord(best), federation: fid,
+      ...(held ? { allows: { ...statusOfRecord(best).allows, deposit: false, join: false }, heldBy: held,
+        why: `a record of this federation says ${held} and this client holds no guardian keys to rule it out, so no deposit or join` } : {}) }
       : { status: 'unverified', allows: says ? UNVERIFIED_RESTRICTED : FEDERATION_ALLOWS.unverified, federation: fid,
         ...(says ? { refusedSays: says } : {}),
         why: `${why ? `no record stands: ${why}` : 'no node holds a record of this federation'}${says ? ` - a refused record says ${says}, so no deposit or join` : ''}` });
