@@ -714,6 +714,12 @@ export class Verifier {
         for (const m of mine) {
           if (hex(m.bytes) === hex(theirs)) continue;
           if (m.c.tick !== tc.tick && hex(m.c.previousHash) !== hex(tc.previousHash)) continue;
+          // TWO CHAINS FROM ONE PARENT FORFEIT ONLY WHEN BOTH WERE RECEIPTED (ruled 2026-10-05 (b); kanban #2550, #1489 r13 play-2): a peer's
+          // listed mark is its word, and a stale-head mark every seat refused is public at /equivocation - one seat appended it to its
+          // /checkpoints and every honest seat signed an honest stuck page FORFEIT. A peer's mark at another tick (one parent) that THIS seat
+          // refused itself as not following the chain head (offered_marks) was not carried here, whatever the peer lists: no pair is kept
+          // from it. A pair at one tick, and a fork limb this seat never saw (one mark at each seat), are unchanged
+          if (m.c.tick !== tc.tick && this.round.refusedOfferedMark(checkpointId(tc))) continue;
           try {
             // both receipted: this seat's own chain, and the peer's receipted chain it serves
             if ((await provesEquivocation(m.bytes, theirs, sessionPubkey, verify)).ok && this.round.putForkPair({ a: m.bytes, b: theirs, receipted: true })) {
@@ -855,16 +861,6 @@ export class Verifier {
   }
 
   /**
-   * THE CORE A ROUND'S RUNS ARE REPLAYED UNDER (M3 R1): the one its contract names, as this signer node's
-   * plugins.js resolves it - or none, and the replay refuses (replay.js NO_CORE_RULE).
-   */
-  /** Is this round's game attested (§0A.7a)? Then nothing of it is replayed, gathered or signed as a run here. */
-  #headToHead(contract) {
-    const found = pluginForRound(contract, this.plugins);
-    return found.ok && found.headToHead === true ? found : null;
-  }
-
-  /**
    * A RECEIPT FOR A MARK THIS NODE HAS NOT GOT IS DOUBT ONLY WHEN THE MARK IS THIS ENTRY'S (kanban #2551, #1489 r13 play-1): a receipt carries a
    * checkpoint id and a node key, nothing that ties it to the entry asked about, and takeReceipt checks only its signature - so one seat adding
    * to its GET /receipts answer a receipt it signed over 32 random bytes (or a real receipt of another entry's mark) kept #neverStarted false,
@@ -893,6 +889,16 @@ export class Verifier {
     }
     carried.unplaced = carried.foreign.filter((f) => !placed.has(f.markId)).map((f) => f.at);
     if (carried.unplaced.length) console.log(`[close] ${hex(entryId).slice(0, 16)}: ${carried.unplaced.length} receipt(s) for marks no peer shows as this entry's - not counted as a start (kanban #2551)`);
+  }
+
+  /**
+   * THE CORE A ROUND'S RUNS ARE REPLAYED UNDER (M3 R1): the one its contract names, as this signer node's
+   * plugins.js resolves it - or none, and the replay refuses (replay.js NO_CORE_RULE).
+   */
+  /** Is this round's game attested (§0A.7a)? Then nothing of it is replayed, gathered or signed as a run here. */
+  #headToHead(contract) {
+    const found = pluginForRound(contract, this.plugins);
+    return found.ok && found.headToHead === true ? found : null;
   }
 
   /**

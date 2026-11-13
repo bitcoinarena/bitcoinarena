@@ -486,6 +486,11 @@ export class Round {
       .get(checkpointId).n;
   }
 
+  /** kanban #2550: did this node refuse this mark itself as one that does not follow the chain head (kept in offered_marks)? */
+  refusedOfferedMark(checkpointIdBytes) {
+    return !!this.db.prepare('SELECT 1 FROM offered_marks WHERE checkpoint_id = ? LIMIT 1').get(checkpointIdBytes);
+  }
+
   /**
    * Opens a round. Returns its id - the tagged hash of the contract.
    *
