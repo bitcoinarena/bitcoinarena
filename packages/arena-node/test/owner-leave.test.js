@@ -26,7 +26,7 @@ test('what a leaving seat still owes: open rounds, objection windows, and a payi
   assert.equal(s.freeAtMs, null, 'not free while a settlement is not accepted');
   assert.equal(s.waitingSettlement, true);
   const t = leaveStatus({ nowMs: NOW, leavingAtMs: NOW, rounds: [R('open', 60000), R('objecting', -60000)] });
-  assert.equal(t.freeAtMs, NOW + 60000 + 600000, 'free once the last round\'s objection window is over');
+  assert.equal(t.freeAtMs, NOW + 60000 + 600000 + 5000, 'free once the last round\'s objection window is over and FINAL is signed (#2338)');
   assert.equal(leaveStatus({ nowMs: NOW, rounds: [] }).freeNow, true);
 });
 

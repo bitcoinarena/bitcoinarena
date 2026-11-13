@@ -173,15 +173,23 @@ export async function payOutLiquidation({ fid, v, claims, height, run, spendEscr
   const p = await claims.plan(fid, { escrowMsat: BigInt(v.claimedMsat) });
   if (!p.ok) return { why: p.why };
   const done = new Set(v.paidNonces || []);
+  // WHAT THE ESCROW STILL HOLDS (kanban #2626, feedback #050): what was credited less what was paid - not the plan's remainder. A spent set that
+  // stands only after a batch voids a note already paid; the plan then counted it as never paid and the remainder (or a late note) paid it twice.
+  const paidSoFar = v.notesPaidMsat !== undefined ? BigInt(v.notesPaidMsat) : (v.payouts || []).reduce((a, x) => a + BigInt(x.msat), 0n);
+  const holds = BigInt(v.claimedMsat) - paidSoFar;
   // A NOTE BATCH ASKED BEFORE A STOP (kanban #1174) is the batch: its notes, its list, read back under its key - not the notes due now
   const asked = v.notesPay && payoutOf(v.notesPay) === PAYOUT.ASKED ? v.notesPay : null;
-  const due = asked ? asked.notes.map((n) => ({ ...n })) : p.paidNotes.filter((n) => !done.has(n.nonce) && BigInt(n.msat) > 0n);
+  let room = holds;
+  const due = asked ? asked.notes.map((n) => ({ ...n })) : p.paidNotes.filter((n) => !done.has(n.nonce) && BigInt(n.msat) > 0n)
+    .map((n) => { const m = BigInt(n.msat) < room ? BigInt(n.msat) : (room > 0n ? room : 0n); room -= m; return { ...n, msat: String(m) }; })
+    .filter((n) => BigInt(n.msat) > 0n);
   if (!due.length) {
     // THE REMAINDER, once: only after drain_blocks (settleClaims names a split only then), every note's payout made first
     if (!p.split || v.remainderTxid || !remainderPayees) return { paid: 0, notes: done.size, ...(p.split && !remainderPayees ? { why: 'the remainder waits for its payees' } : {}) };
     // A REMAINDER ASKED BEFORE A STOP (kanban #1174): its record is the remainder, read back under its key
     const askedRest = v.remainderPay && payoutOf(v.remainderPay) === PAYOUT.ASKED ? v.remainderPay : null;
-    const rest = askedRest ? BigInt(askedRest.rest) : BigInt(p.remainderMsat);
+    const rest = askedRest ? BigInt(askedRest.rest) : holds;
+    if (rest <= 0n) return { paid: 0, notes: done.size, why: 'the escrow holds nothing more for a remainder' };
     const to = askedRest ? askedRest.list.map((x) => ({ ...x })) : (await remainderPayees(fid, rest)).filter((x) => BigInt(x.msat) > 0n);
     if (!to.length) return { why: 'no payee for the remainder' };
     if (to.reduce((a, x) => a + BigInt(x.msat), 0n) > rest) return { why: 'the remainder\'s payees come to more than the remainder' };
@@ -202,6 +210,7 @@ export async function payOutLiquidation({ fid, v, claims, height, run, spendEscr
   if (!got.ok) return { why: `no payout transaction: ${got.why}`, held: !!got.held };
   const paid = { txid: got.txid, payouts: got.payouts };
   v.notesBatches = v.notesPay.batch;
+  v.notesPaidMsat = String(paidSoFar + [...byKey.values()].reduce((a, m) => a + m, 0n));
   v.notesPay = null;
   v.paidNonces = [...done, ...due.map((n) => n.nonce).filter((x) => !done.has(x))];
   v.payouts = [...(v.payouts || []), ...(paid.payouts || []).map((x) => ({ payoutPk: x.refund_pk, msat: String(x.amount_msat), txid: paid.txid, outIdx: x.out_idx }))];

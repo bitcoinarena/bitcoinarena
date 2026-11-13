@@ -7,7 +7,9 @@
 // objection window, and - a paying round with entries - until its settlement is accepted. This answers what is still owed
 // and from when the seat is free. Custody: a guardian may go only if the federation keeps its threshold without it
 // (federation-slash.js haltsAt: f + 1 gone halts it, and a halt is what a guardian's bond answers for).
-export const LEAVE_OWED_WHY = Object.freeze({ open: 'its entries or its run are not over yet', objection: 'its objection window is still open',
+import { FINAL_TOLERANCE_MS } from '../../arena-protocol/src/window.js';
+
+export const LEAVE_OWED_WHY = Object.freeze({ open: 'its entries or its run are not over yet', objection: 'its objection window is still open, or it has not signed FINAL yet',
   settlement: 'its settlement is not accepted yet' });
 
 /**
@@ -19,7 +21,10 @@ export function leaveStatus({ rounds = [], nowMs, leavingAtMs = null, custody = 
   const owed = [];
   for (const r of rounds) {
     if (!r.assigned) continue;
-    const freeAtMs = Number(r.endMs) + Number(r.objectionWindowMs);
+    // kanban #2338: free at the round's finalAfterMs (end + W + T, window.js), not at end + W. The seat signs FINAL only
+    // then, and a head-to-head seat still learning the round's members (server.js membersKnown) may sign its results as late
+    // as that; with the 60 s head-to-head window those 5 s were the whole margin, and a seat stopped in them never signed.
+    const freeAtMs = Number(r.endMs) + Number(r.objectionWindowMs) + Number(FINAL_TOLERANCE_MS);
     const why = nowMs < Number(r.endMs) ? 'open' : nowMs < freeAtMs ? 'objection' : (r.paying && r.entries > 0 && !r.settlementAccepted) ? 'settlement' : null;
     if (why) owed.push({ id: r.id, why, freeAtMs: why === 'settlement' ? null : freeAtMs });
   }

@@ -23,6 +23,8 @@ function fakeBitcoind(n, { delayMs = 0 } = {}) {
     if (method === 'getbestblockhash') return `h${n - 1}`;
     if (method === 'getblockhash') { if (params[0] >= n) throw new Error('Block height out of range'); return `h${params[0]}`; }
     if (method === 'getblock') return rawFor(Number(String(params[0]).slice(1)));
+    // the sizes the blocks are packed by (kanban #2441): a header, a count and one 61-byte transaction
+    if (method === 'getblockstats') return { total_size: rawFor(0).length / 2 };
     throw new Error(`not served: ${method}`);
   };
   const fetcher = async (_url, init) => {

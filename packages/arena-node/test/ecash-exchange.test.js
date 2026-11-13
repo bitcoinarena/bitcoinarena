@@ -8,7 +8,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { createEcashExchange } from '../src/ecash-exchange.js';
 
 const A = 'aa'.repeat(32), B = 'bb'.repeat(32);
-const NOTES = 'fedimintA'.padEnd(40, 'x');
+// kanban #2384, #2436: notes that decode (a string the federation's base32 cannot read is refused 400 before anything is written)
+const NOTES = 'fedimintq'.padEnd(40, 'a');
 
 function seat({ holdsB = 500_000n, payFails = 0 } = {}) {
   const calls = [];

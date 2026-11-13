@@ -355,13 +355,18 @@ if (url) {
       // A REORG DURING THE READ IS NOT KEPT UNDER THE KEY'S HASH (kanban #1841): the key's hash is read first, the walk takes minutes
       // and reads the top heights last - a chain that moved to another branch meanwhile derived that branch's census, and kept under
       // the old block's hash it was answered for three days once the chain went back to it. The census height is read again, and the
-      // view's own block there must be the key's block (the one the cache holds under that hash); otherwise nothing is kept: read again
+      // view's own block there must be the key's block; otherwise nothing is kept: read again.
+      // BY THE HASH THE VIEW READ IT UNDER, NOT BY THE CACHE (kanban #2191, #1489 a44 refute 95): the check passed whenever the cache did
+      // not hold the key's block (a restart, or evicted) - a chain going A -> B -> A during the walk re-read A's hash at the end, the view
+      // was all branch B, and B's census was kept under A's hash for three days (two seats, one ballot, two censuses: invariant #786).
+      // blocksOver names the hash each block came under; the census height's must be the key's, whatever the cache holds
       if (census.ok) {
         let same = false;
         try {
-          const atHeight = viewRead && viewRead.blocks ? viewRead.blocks[height - viewRead.firstHeight] : undefined;
-          const keptBlock = blocksKept.get(hash);
-          same = String(await call('getblockhash', [height])) === hash && atHeight !== undefined && (keptBlock === undefined || keptBlock === atHeight);
+          const at = viewRead && viewRead.blocks ? height - viewRead.firstHeight : -1;
+          const atHeight = at >= 0 ? viewRead.blocks[at] : undefined;
+          const atHash = at >= 0 && Array.isArray(viewRead.hashes) ? viewRead.hashes[at] : undefined;
+          same = atHeight !== undefined && atHash === hash && String(await call('getblockhash', [height])) === hash;
         } catch { same = false; }
         if (!same) return { ok: false, why: 'the chain reorganised during this census read: read again' };
       }

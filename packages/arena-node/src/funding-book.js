@@ -32,12 +32,55 @@ export const FUNDING_SQL = `CREATE TABLE IF NOT EXISTS funding_items (id TEXT PR
 /**
  * A PEER'S "I HELD IT AT ..." IS A CLAIM, NOT A FACT (kanban #1607, audit #1489 r4 census-2): with the end block's time as the cutoff (#1410, every live
  * seat), a pulled signal took the earliest atMs ONE peer stated, and an UPDATE moved a held one earlier on that word - so one seat answering `atMs: 0` for
- * a signal signed after the end, to chosen seats only, flipped the outcome there: two outcomes for one period, two fee sets in force. Now this seat keeps
- * its own receipt time, keeps each peer's claim apart (by the seat it pulled it from), and counts a signal held before the cutoff here, or claimed held
- * before it by at least PEER_CLAIM_SEATS distinct named seats. GET /funding-items answers this seat's own receipt time only, so a claim is never relayed
- * as a fact. Without `endTimeAt` (the cutoff is this seat's own first sight, the #1279 interim, no live seat) the claims count as before.
+ * a signal signed after the end, to chosen seats only, flipped the outcome there: two outcomes for one period, two fee sets in force. This seat keeps
+ * its own receipt time and keeps each peer's claim apart (by the seat it pulled it from). GET /funding-items answers this seat's own receipt time only, so
+ * a claim is never relayed as a fact. Without `endTimeAt` (the cutoff is this seat's own first sight, the #1279 interim, no live seat) the claims count
+ * as before.
+ *
+ * WHEN A SIGNAL COUNTS (kanban #2131, #2193, a44 refute of #1607): #1607 counted a signal held here before the cutoff, or claimed held before it by
+ * PEER_CLAIM_SEATS (2) named seats. Both halves split one period: (1) two colluding seats (two bonds, one operator) answering atMs 0 to chosen seats still
+ * backdated a late signal there; (2) a signal one honest seat X held just before the cutoff, handed on to Y and Z just after it, counted at X (its own
+ * time) and nowhere else (one claim) - a split a lone signer makes with no seat at all. Now every seat judges from the same evidence, its own receipt
+ * being one more seat's word: B = the named seats (this one included) that held it by the cutoff, L = those that first held it after. It counts
+ *   - when this seat held it by the cutoff AND more holders held it before than after (B > L): what X does now sees Y's and Z's late receipts as Y and
+ *     Z do, so X lands where they land; a lone seat that holds it (no peer reports it, #1426) still counts it;
+ *   - or when more than a third of the active census (the nodes the signal is counted over) claim it held by the cutoff (3 B > census): a seat that was
+ *     down catches up on the network's word, and no handful of bonds can buy that word - two seats of a census of 100 never backdate anything.
+ * The peers' word alone never makes a late arrival count unless a third of the census says so; a seat's own early arrival counts unless the holders
+ * it hears from say the signal mostly reached the network late. Shared protocol rules unchanged.
+ *
+ * ONE RULE, NO OWN BRANCH, WITH A MARGIN (kanban #2431, #2488, #2524, a44 refute 8 skeptic 2): `own && B > L` still let this seat's own copy decide alone,
+ * with a simple majority one claim could flip: a stranger signer posting unforwarded to two seats X and W just before the cutoff counted there (B 2 > L 1)
+ * and nowhere else; one peer missing from X's single decide pull did the same (B 2, L 1 at X; B 2, L 2 at W); and ONE colluding seat answering atMs 0 to
+ * a seat that held the signal itself 1 s before the cutoff made B 2 > L 1 there. Now this seat's receipt is exactly one more holder's word, under the
+ * same rule at every seat: it counts when the holders that held it by the cutoff outnumber those that first held it after by more than two to one
+ * (B > 2 L - one late holder takes three early ones, so a late hand-on, a lying seat or a missing answer moves no outcome near the cutoff), or when more
+ * than a third of the active census claims it held by the cutoff (3 B > census). A signal every holder had in time (L = 0) still counts, a lone seat's
+ * own (#1426) too. Besides, decide() waits for every network seat to answer its pull (until PULL_WAIT_MS past the end block's time, a deadline every
+ * seat reads alike), and POST /funding hands on every fresh signal and fee approval whatever its x-arena-forwarded says (server.js).
  */
-export const PEER_CLAIM_SEATS = 2;
+export const CLAIM_QUORUM_DEN = 3;
+/** the margin: a signal counts on the holders' word when more than CLAIM_MARGIN early holders stand for each late one */
+export const CLAIM_MARGIN = 2;
+/** decide() waits this long past the end block's time for every network seat to answer its pull (kanban #2488), then decides on what it holds */
+export const PULL_WAIT_MS = 6 * 3600_000;
+/** `own` this seat held it by the cutoff; `before` / `after` distinct named peer seats that claim they held it by / after the cutoff; `census` the active nodes. */
+export function heldBeforeCounts({ own, before, after, census }) {
+  const B = before + (own ? 1 : 0), L = after + (own ? 0 : 1);
+  if (B <= 0) return false;
+  if (B > CLAIM_MARGIN * L) return true;
+  return B * CLAIM_QUORUM_DEN > Math.max(0, Number(census) || 0);
+}
+
+/**
+ * ONE KEY CANNOT FILL EVERY SEAT'S BOOK (kanban #2522, audit #1489 r12 gossip-3): anyone may propose, so one stranger key posted proposals that differed
+ * only in their amount - each kept for good, forwarded to every seat, served in GET /funding and walked by every decide()/voteRound() pass. A seat now
+ * keeps at most FUNDING_PER_AUTHOR_MAX proposals of each kind (funding, fee, leaderboard) by one author key, and at most FUNDING_COMMENTS_PER_AUTHOR_MAX
+ * comments by one key on one proposal; one past that is refused (429) and so never forwarded. The author is read from its fixed place in the signed bytes
+ * (after the 1-byte type and 2-byte version: network and author for a proposal, proposal and parent and author for a comment).
+ */
+export const FUNDING_PER_AUTHOR_MAX = 32;
+export const FUNDING_COMMENTS_PER_AUTHOR_MAX = 32;
 
 /** A payment's id: the proposal's own for a single payment (rule 5), else one per tranche. */
 export const trancheIdOf = (pid, k, of) => (of === 1 ? pid : createHash('sha256').update(`ARENA/v1/FundingTranche:${pid}:${k}`).digest('hex'));
@@ -58,7 +101,9 @@ export const paymentIdsOf = (pid) => [pid, ...Array.from({ length: FUNDING_TRANC
  *   { kind: 'fix', tranches }                        null -> FIXED
  *   { kind: 'refix', tranches, payable: false }      FIXED -> FIXED with the derived count, only while no part is payable yet (no part
  *                                                    can have gone under the old ids): a row the old reserve rule fixed
- *   { kind: 'cancel', k, why }                       FIXED -> CANCELLED; a CANCELLED row never changes
+ *   { kind: 'cancel', k, why, hash }                 FIXED -> CANCELLED, held to `hash`: its due block's as this seat counted it
+ *   { kind: 'reopen', reorged: true, recorded: false } CANCELLED -> FIXED, only when the due block it was counted at is no longer
+ *                                                    this chain's and no payout of part k or a later one is recorded (kanban #2536)
  * Answers { ok: true, row } or { ok: false, why }.
  */
 export const FUNDING_PAYMENT_STATE = Object.freeze({ FIXED: 'FIXED', CANCELLED: 'CANCELLED' });
@@ -66,7 +111,7 @@ export const fundingPaymentStateOf = (row) => (!row ? null : row.cancelled !== n
 export function fundingPaymentStep(row, ev) {
   const state = fundingPaymentStateOf(row);
   const count = (n) => n === 1 || n === FUNDING_TRANCHES;
-  if (ev.kind === 'fix') return state === null && count(ev.tranches) ? { ok: true, row: { tranches: ev.tranches, cancelled: null, cancelled_k: null } }
+  if (ev.kind === 'fix') return state === null && count(ev.tranches) ? { ok: true, row: { tranches: ev.tranches, cancelled: null, cancelled_k: null, cancelled_hash: null } }
     : { ok: false, why: state ? 'its parts are fixed already' : 'no such part count' };
   if (ev.kind === 'refix') {
     if (state !== FUNDING_PAYMENT_STATE.FIXED) return { ok: false, why: state ? 'a cancelled proposal keeps its parts' : 'nothing fixed to change' };
@@ -77,7 +122,16 @@ export function fundingPaymentStep(row, ev) {
   if (ev.kind === 'cancel') {
     if (state !== FUNDING_PAYMENT_STATE.FIXED) return { ok: false, why: state ? 'cancelled already, for good' : 'nothing fixed to cancel' };
     if (!Number.isInteger(ev.k) || ev.k < 0 || ev.k >= row.tranches) return { ok: false, why: 'no such part' };
-    return { ok: true, row: { ...row, cancelled: String(ev.why || 'cancelled'), cancelled_k: ev.k } };
+    return { ok: true, row: { ...row, cancelled: String(ev.why || 'cancelled'), cancelled_k: ev.k, cancelled_hash: ev.hash ? String(ev.hash) : null } };
+  }
+  // A CANCELLATION IS HELD TO ITS CHAIN (kanban #2536, state audit 2026-11-12): it was "for good", but it is a re-count of vote blocks
+  // held by hash - a reorg that took the NO away left this seat refusing the parts a seat on the new chain pays. It reopens only when
+  // its due block moved and nothing of part k on is recorded (a payout that may have gone keeps the row as it is)
+  if (ev.kind === 'reopen') {
+    if (state !== FUNDING_PAYMENT_STATE.CANCELLED) return { ok: false, why: state ? 'not cancelled' : 'nothing fixed to reopen' };
+    if (ev.reorged !== true) return { ok: false, why: 'its due block is still this chain\'s' };
+    if (ev.recorded !== false) return { ok: false, why: 'a payout of a cancelled part may have gone' };
+    return { ok: true, row: { ...row, cancelled: null, cancelled_k: null, cancelled_hash: null } };
   }
   return { ok: false, why: 'no such step' };
 }
@@ -98,6 +152,8 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
   db.exec(FUNDING_SQL);
   // kanban #1749: the census is held to the hash of the block it was read at (a store from before has no column: added, rows without one)
   if (!db.prepare('PRAGMA table_info(funding_vote_census)').all().some((c) => c.name === 'hash')) db.exec('ALTER TABLE funding_vote_census ADD COLUMN hash TEXT');
+  // kanban #2536: a payment's cancellation is held to the hash of the due block it was counted at (older rows: none, taken at the next pass)
+  if (!db.prepare('PRAGMA table_info(funding_payments)').all().some((c) => c.name === 'cancelled_hash')) db.exec('ALTER TABLE funding_payments ADD COLUMN cancelled_hash TEXT');
   const rows = (kind) => db.prepare('SELECT id, proposal, hex, kind FROM funding_items WHERE kind = ? ORDER BY at_ms, id').all(kind);
   // the proposals the signal and the vote run over: funding proposals and fee proposals
   // ... and leaderboard payout requests: voted on as they are, but with no signal - their vote starts at publication
@@ -108,11 +164,14 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
   const read = (kind, hex) => readSignedFunding(kind, fromHex(hex), verify);
   const outcomeOf = (pid) => { const r = db.prepare('SELECT outcome FROM funding_outcomes WHERE proposal = ?').get(pid); return r ? JSON.parse(r.outcome) : null; };
   // `beforeMs` (kanban #1279, RULED #1277 A): only the signals some seat held before the signal period ended (at_ms is the earliest time a seat held it)
-  // kanban #1607: with the end block's time as the cutoff, a peer's earlier time counts only when PEER_CLAIM_SEATS distinct named seats claim it
+  // kanban #1607, #2131, #2193: with the end block's time as the cutoff, a signal counts by heldBeforeCounts over the named seats' claims and this seat's own time
   const claimsOnly = typeof endTimeAt === 'function';
-  const claimedBefore = (id, beforeMs) => db.prepare("SELECT COUNT(DISTINCT seat) AS n FROM funding_held_claims WHERE id = ? AND seat != '' AND at_ms <= ?").get(id, Number(beforeMs)).n >= PEER_CLAIM_SEATS;
-  const signalsOf = (pid, beforeMs = null) => db.prepare("SELECT id, hex, at_ms FROM funding_items WHERE kind = 'signal' AND proposal = ?").all(pid)
-    .filter((r) => beforeMs === null || Number(r.at_ms) <= Number(beforeMs) || (claimsOnly && claimedBefore(r.id, beforeMs)))
+  const claimsOf = (id, beforeMs) => db.prepare("SELECT COALESCE(SUM(CASE WHEN at_ms <= ? THEN 1 ELSE 0 END), 0) AS b, COALESCE(SUM(CASE WHEN at_ms > ? THEN 1 ELSE 0 END), 0) AS l FROM funding_held_claims WHERE id = ? AND seat != ''")
+    .get(Number(beforeMs), Number(beforeMs), id);
+  const counts = (r, beforeMs, census) => { const own = Number(r.at_ms) <= Number(beforeMs); if (!claimsOnly) return own;
+    const c = claimsOf(r.id, beforeMs); return heldBeforeCounts({ own, before: Number(c.b), after: Number(c.l), census }); };
+  const signalsOf = (pid, beforeMs = null, census = 0) => db.prepare("SELECT id, hex, at_ms FROM funding_items WHERE kind = 'signal' AND proposal = ?").all(pid)
+    .filter((r) => beforeMs === null || counts(r, beforeMs, census))
     .map((r) => read('signal', r.hex)).filter((x) => x.ok).map((x) => ({ node: toHex(x.obj.node), atHeight: x.obj.atHeight }));
   // THE VOTE (§27A.9.3 stage 2): opened only by a signal this seat decided passed; the census taken ONCE at the
   // vote's start (signalEnd); each voting block read once for this proposal's votes, held to by its hash; the outcome written once
@@ -150,6 +209,23 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
     const blocks = voteBlocks(pid);
     return { ...period, censusHeight: voteCensus(pid) ? voteCensus(pid).height : null, readTo: blocks.length ? blocks[blocks.length - 1].height : null,
       state: decided ? (decided.passed ? 'passed' : 'failed') : 'voting', count: decided || ruleOf(kind, countOf(pid, period, o, period.until, kind)) };
+  }
+  // kanban #2139: the proposals whose every held vote block this process has asked once (the full walk-back), and one step that
+  // drops a proposal's vote blocks from a height up - with its outcome (and a fee proposal's) when `outcomeToo`, and its census too
+  const walkedAll = new Set();
+  function dropVoteFrom(pid, fromHeight, outcomeToo, censusToo = false) {
+    const own = !db.isTransaction;
+    if (own) db.exec('BEGIN IMMEDIATE');
+    try {
+      if (censusToo) db.prepare('DELETE FROM funding_vote_census WHERE proposal = ?').run(pid);
+      db.prepare('DELETE FROM funding_vote_blocks WHERE proposal = ? AND height >= ?').run(pid, fromHeight);
+      if (outcomeToo) {
+        db.prepare('DELETE FROM funding_vote_outcomes WHERE proposal = ?').run(pid);
+        db.prepare('DELETE FROM fee_outcomes WHERE proposal = ?').run(pid);
+      }
+      if (own) db.exec('COMMIT');
+    } catch (e) { if (own) db.exec('ROLLBACK'); throw e; }
+    return Boolean(outcomeToo);
   }
   async function voteRound() {
     if (!voteChain) return [];
@@ -216,8 +292,25 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
           JSON.stringify(c.map((b) => ({ pubkey: toHex(b.pubkey), outpoint: b.outpoint, bondSats: String(b.bondSats),
             height: Number.isInteger(b.height) ? b.height : null, maturity: Number.isInteger(b.maturity) ? b.maturity : null }))), after);
       }
-      // blocks a reorg replaced are read again: walk back from the newest held block while its hash moved
+      // blocks a reorg replaced are read again. THE WALK-BACK READS EVERY HELD ROW (kanban #2139, refute of #1633 audit44 item 14):
+      // it stopped at the newest row whose hash still matched, so rows of an abandoned branch BELOW it (a reorg that landed between
+      // two block reads of one pass, written by a build before the check after the read loop) stood for good. The first time this
+      // process sees a proposal every held row is asked; after that a row set is only ever written as one chain (the check after
+      // the read loop), so the newest row standing means every row under it stands (a block moved means every block above moved).
       let held = voteBlocks(row.id);
+      if (!walkedAll.has(row.id)) {
+        let bad = -1, moved = false;
+        for (let i = 0; i < held.length; i++) {
+          const h = await hashAt(held[i].height);
+          if (!h || !held[i].hash || h !== held[i].hash) { bad = i; moved = Boolean(h && held[i].hash); break; }
+        }
+        if (bad >= 0) {
+          if (dropVoteFrom(row.id, held[bad].height, moved && decided && held[bad].height <= period.last)) decided = null;
+          log(`[funding] ${row.id.slice(0, 16)}: held vote block ${held[bad].height} is not this chain's - read again from it`);
+          held = held.slice(0, bad);
+        }
+        walkedAll.add(row.id);
+      }
       while (held.length) {
         const top = held[held.length - 1];
         const h = await hashAt(top.height);
@@ -231,6 +324,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       // read on, a pass at a time, this proposal's votes only
       const prefix = row.id.slice(0, 16);
       let next = held.length ? held[held.length - 1].height + 1 : period.from;
+      const anchorAt = held.length ? held[held.length - 1].height : null;   // the held block this pass reads on from
       // a passed vote is read on through its payments' due heights: a NO in the delay cancels (rule 5)
       const upTo = Math.min(height, decided ? readEndOf(period) : period.last);
       for (let n = 0; next <= upTo && n < maxBlocksPerPass; next++, n++) {
@@ -245,6 +339,36 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         db.prepare('INSERT OR REPLACE INTO funding_vote_blocks (proposal, height, hash, votes) VALUES (?, ?, ?, ?)').run(row.id, next, hash, JSON.stringify(mine));
       }
       held = voteBlocks(row.id);
+      // THE BLOCKS OF ONE PASS ARE ONE CHAIN (kanban #2139, the second copy of the #1633 hole - ballot-tally.js had it closed):
+      // each block's hash was asked on its own, a few RPC awaits apart, so a reorg landing between two reads kept the abandoned
+      // branch's votes in funding_vote_blocks while the anchor below (the new branch's last voting block) said nothing moved -
+      // the vote was written PASSED (or FAILED) on votes not on this chain, and this seat paid tranches every other seat refuses.
+      // After the read loop the census block and every row from the block this pass went on from up to the newest are asked
+      // again (rows below the anchor were asked at the walk-back: one of them moved means the anchor moved). A moved or missing
+      // hash drops the rows from the first such height up (and the outcome, with a fee proposal's, when a moved one is a counted
+      // block), and nothing is decided this pass.
+      const added = held.filter((r) => anchorAt === null || r.height >= anchorAt);
+      if (anchorAt === null ? added.length : added.length > 1) {
+        let broken = false;
+        const c = voteCensus(row.id);
+        const censusNow = await hashAt(period.from);
+        // no answer (an RPC error): the rows this pass wrote are not held unchecked - they are read again next pass
+        if (!censusNow) { dropVoteFrom(row.id, anchorAt === null ? -1 : anchorAt + 1, false); broken = true; }
+        else if (c && c.hash && censusNow !== c.hash) {
+          // the census block itself moved: everything goes, as the check at the top of the pass does it
+          dropVoteFrom(row.id, -1, true, true); decided = null; broken = true;
+          log(`[funding] ${row.id.slice(0, 16)}: the census block ${period.from} moved while the vote was read - census and vote are read again`);
+        }
+        for (const r of broken ? [] : added) {
+          const h = await hashAt(r.height);
+          if (h && r.hash && h === r.hash) continue;
+          const moved = Boolean(h && r.hash);
+          if (dropVoteFrom(row.id, r.height, moved && decided && r.height <= period.last)) decided = null;
+          log(`[funding] ${row.id.slice(0, 16)}: the chain changed while the vote was read (block ${r.height}) - its blocks are read again from there`);
+          broken = true; break;
+        }
+        if (broken) continue;
+      }
       const readTo = held.length ? held[held.length - 1].height : null;
       if (decided || readTo === null || readTo < period.last || held.length !== readTo - period.from + 1 || height < period.decidableAt) continue;
       // NEVER DECIDED WITHOUT ITS ANCHOR (kanban #1750): the outcome is held to the hash of its last voting block as held, and that
@@ -266,15 +390,15 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
    * proposal, k, of, lnurl, amountSats, proposalSats, dueAt, decidableAt }].
    */
   // every write of a payment row is one fundingPaymentStep, kept by compare-and-set on the row as it was read
-  const paymentRow = (pid) => db.prepare('SELECT tranches, cancelled, cancelled_k FROM funding_payments WHERE proposal = ?').get(pid) || null;
+  const paymentRow = (pid) => db.prepare('SELECT tranches, cancelled, cancelled_k, cancelled_hash FROM funding_payments WHERE proposal = ?').get(pid) || null;
   function stepPayment(pid, ev) {
     const was = paymentRow(pid);
     const s = fundingPaymentStep(was, ev); if (!s.ok) return { ...s, row: was };
     const r = s.row;
     const ch = was === null
-      ? db.prepare('INSERT OR IGNORE INTO funding_payments (proposal, tranches, cancelled, cancelled_k) VALUES (?, ?, ?, ?)').run(pid, r.tranches, r.cancelled, r.cancelled_k).changes
-      : db.prepare('UPDATE funding_payments SET tranches = ?, cancelled = ?, cancelled_k = ? WHERE proposal = ? AND tranches = ? AND cancelled IS ? AND cancelled_k IS ?')
-        .run(r.tranches, r.cancelled, r.cancelled_k, pid, was.tranches, was.cancelled, was.cancelled_k).changes;
+      ? db.prepare('INSERT OR IGNORE INTO funding_payments (proposal, tranches, cancelled, cancelled_k, cancelled_hash) VALUES (?, ?, ?, ?, ?)').run(pid, r.tranches, r.cancelled, r.cancelled_k, r.cancelled_hash ?? null).changes
+      : db.prepare('UPDATE funding_payments SET tranches = ?, cancelled = ?, cancelled_k = ?, cancelled_hash = ? WHERE proposal = ? AND tranches = ? AND cancelled IS ? AND cancelled_k IS ? AND cancelled_hash IS ?')
+        .run(r.tranches, r.cancelled, r.cancelled_k, r.cancelled_hash ?? null, pid, was.tranches, was.cancelled, was.cancelled_k, was.cancelled_hash ?? null).changes;
     return ch === 1 ? { ok: true, row: r } : { ok: false, why: 'the row moved meanwhile', row: paymentRow(pid) };
   }
   // `recorded(id)`: whether a reserve payout record exists under that payment id (any state) - a refix never moves a proposal
@@ -302,6 +426,22 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       if (!fixed) continue;
       const held = voteBlocks(row.id); const readTo = held.length ? held[held.length - 1].height : -1;
       const plan = scheduleOf(fixed.tranches);
+      // A CANCELLATION WHOSE DUE BLOCK MOVED IS COUNTED AGAIN (kanban #2536): voteRound walks the vote blocks back over a reorg and reads
+      // the new chain; the cancellation follows them. The held row at its due height names the block this seat counts now: no row yet
+      // (walked back, not read again) keeps it; a row with another hash than the one it was cancelled at reopens it - unless a payout
+      // record of part k or a later one exists. A cancellation written before this column takes the held hash first.
+      if (fundingPaymentStateOf(fixed) === FUNDING_PAYMENT_STATE.CANCELLED && plan[fixed.cancelled_k]) {
+        const dueRow = held.find((r) => r.height === plan[fixed.cancelled_k].dueAt);
+        if (dueRow && dueRow.hash && !fixed.cancelled_hash) {
+          db.prepare('UPDATE funding_payments SET cancelled_hash = ? WHERE proposal = ? AND cancelled_hash IS NULL').run(dueRow.hash, row.id);
+          fixed = paymentRow(row.id);
+        } else if (dueRow && dueRow.hash && dueRow.hash !== fixed.cancelled_hash) {
+          const rec = typeof recorded === 'function' && plan.slice(fixed.cancelled_k).some((t) => recorded(trancheIdOf(row.id, t.k, t.of)));
+          const s = stepPayment(row.id, { kind: 'reopen', reorged: true, recorded: rec });
+          if (s.ok) log(`[funding] ${row.id.slice(0, 16)}: the due block ${plan[fixed.cancelled_k].dueAt} its payment ${fixed.cancelled_k + 1} was cancelled at was reorged away - counted again`);
+          fixed = s.row;
+        }
+      }
       for (const t of plan) {
         // a cancelled proposal keeps listing the payments due before the cancelling one: they may have gone, and their records stand
         if (fixed.cancelled_k !== null && t.k >= fixed.cancelled_k) break;
@@ -309,8 +449,9 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         const again = countOf(row.id, period, p.obj, t.dueAt + 1, row.kind);
         if (!again || !again.passed) {
           const why = `payment ${t.k + 1} of ${t.of} cancelled at its due block ${t.dueAt}: YES ${again ? again.approvalPct : '?'} % of YES + NO, ${again ? again.yesOfAllPct : '?'} % of everyone who could vote`;
-          // compare-and-set from FIXED: a re-count after a reorg never moves a cancellation already kept
-          if (stepPayment(row.id, { kind: 'cancel', k: t.k, why }).ok) log(`[funding] ${row.id.slice(0, 16)}: ${why}`);
+          // compare-and-set from FIXED, held to the hash of the due block counted (kanban #2536: a reorg of it reopens the count above)
+          const dueHash = (held.find((r) => r.height === t.dueAt) || {}).hash || null;
+          if (stepPayment(row.id, { kind: 'cancel', k: t.k, why, hash: dueHash }).ok) log(`[funding] ${row.id.slice(0, 16)}: ${why}`);
           break;
         }
         out.push({ id: trancheIdOf(row.id, t.k, t.of), proposal: row.id, k: t.k, of: t.of, lnurl: p.obj.lnurl, amountSats: t.amountSats,
@@ -423,6 +564,14 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         }
         return { ok: true, fresh: false, id };
       }
+      // kanban #2522: bounded per author key (FUNDING_PER_AUTHOR_MAX), comments per author and proposal (FUNDING_COMMENTS_PER_AUTHOR_MAX)
+      if (kind === 'proposal' || kind === 'fee' || kind === 'leaderboard') {
+        const n = db.prepare('SELECT COUNT(*) AS n FROM funding_items WHERE kind = ? AND substr(hex, 71, 64) = ?').get(kind, toHex(r.obj.author)).n;
+        if (n >= FUNDING_PER_AUTHOR_MAX) return { ok: false, status: 429, why: `this seat keeps at most ${FUNDING_PER_AUTHOR_MAX} ${kind} proposals of one author` };
+      } else if (kind === 'comment') {
+        const n = db.prepare("SELECT COUNT(*) AS n FROM funding_items WHERE kind = 'comment' AND proposal = ? AND substr(hex, 135, 64) = ?").get(toHex(r.obj.proposalId), toHex(r.obj.author)).n;
+        if (n >= FUNDING_COMMENTS_PER_AUTHOR_MAX) return { ok: false, status: 429, why: `this seat keeps at most ${FUNDING_COMMENTS_PER_AUTHOR_MAX} comments of one author on one proposal` };
+      }
       const height = await Promise.resolve(tip()).catch(() => null);
       // A PLAYER'S NAME (PIP, player-name.js): the newest per player is kept, the one it replaces dropped; one dated
       // more than the skew ahead of this seat's clock is refused, so nobody pins a name by dating it in the future
@@ -488,8 +637,9 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         const p = read('proposal', row.hex); if (!p.ok) return null;
         const o = p.obj;
         const comments = db.prepare("SELECT hex FROM funding_items WHERE kind = 'comment' AND proposal = ? ORDER BY at_ms, id").all(row.id)
-          .map((c) => read('comment', c.hex)).filter((c) => c.ok)
-          .map((c) => ({ id: toHex(c.id), parent: toHex(c.obj.parentId), author: toHex(c.obj.author), atHeight: c.obj.atHeight, text: c.obj.text }));
+          .map((c) => ({ c: read('comment', c.hex), hex: c.hex })).filter((x) => x.c.ok)
+          // each comment's signed hex beside it (kanban #2138, #2203, #2294): the page checks a comment itself, never one seat's JSON
+          .map(({ c, hex }) => ({ id: toHex(c.id), parent: toHex(c.obj.parentId), author: toHex(c.obj.author), atHeight: c.obj.atHeight, text: c.obj.text, hex }));
         const signals = signalsOf(row.id);
         const decided = outcomeOf(row.id);
         const st = decided || signalOutcome({ proposal: o, signals, active: null, tip: height, schedule });
@@ -520,8 +670,11 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         // `decideDepth` deep, after asking the seats it reaches, and counts a signal only when some seat held it before then
         db.prepare('INSERT OR IGNORE INTO funding_signal_ends (proposal, seen_ms) VALUES (?, ?)').run(row.id, now());
         if (height < end + Math.max(1, Number(schedule.decideDepth) || 1) - 1) continue;
+        // kanban #2488: the seats that did not answer this pull (server.js pull sets `missing`; a pull that throws missed every seat)
+        let unanswered = [];
         if (typeof pull === 'function') {
-          let got = []; try { got = await pull(row.id); } catch { got = []; }
+          let got = []; try { got = await pull(row.id); } catch { got = []; unanswered = ['*']; }
+          if (got && Array.isArray(got.missing)) unanswered = got.missing.map(String);
           let took = 0; for (const it of Array.isArray(got) ? got : []) { try { const x = await book.add(it.kind, it.hex, { heldAtMs: it.atMs === undefined ? null : Number(it.atMs), from: it.seat ?? null }); if (x && x.ok && x.fresh) took++; } catch { /* the next */ } }
           if (took) log(`[funding] ${row.id.slice(0, 16)}: ${took} signal(s) or approval(s) pulled from the peers before deciding the signal`);
         }
@@ -536,9 +689,13 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
           // moment, a seat missed signals other seats still counted until it - two outcomes again. It decides once its own clock has passed it
           if (t > now()) { log(`[funding] ${row.id.slice(0, 16)}: the end block is dated ${Math.round((t - now()) / 1000)} s ahead of this seat's clock: decided after it`); continue; }
           endSeen = t;
+          // A SEAT MISSING FROM THE PULL (kanban #2488, a44 refute 8 s2-3): the outcome is written once, so one seat that did not answer (restarting, or
+          // withholding) must not decide it - the pull is asked again next pass, until every seat answered or PULL_WAIT_MS past the end block's time
+          if (unanswered.length && now() < t + PULL_WAIT_MS) { log(`[funding] ${row.id.slice(0, 16)}: ${unanswered.length} seat(s) did not answer the pull: decided once they do, or ${Math.round((t + PULL_WAIT_MS - now()) / 60000)} min from now`); continue; }
         }
         const a = await activeAt(end).catch((e) => ({ ok: false, why: e.message }));
         if (!a || !a.ok) { log(`[funding] ${row.id.slice(0, 16)}: the signal ended at ${end}, its active nodes not read yet: ${a ? a.why : '?'}`); continue; }
+        const census = Array.isArray(a.nodes) ? a.nodes.length : 0;   // kanban #2131: the claim quorum is a third of the active nodes, before the seasoned filter
         // THE SIGNAL RULE: only nodes with a bond 3 months old count, among the active and among the signals
         if (typeof seasonedNodes === 'function') {
           const seasoned = await Promise.resolve(seasonedNodes(toHex(p.obj.networkId), p.obj.publishedHeight, end)).catch(() => null);
@@ -546,7 +703,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
           const s = new Set(seasoned.map((k) => String(k).toLowerCase()));
           a.nodes = a.nodes.filter((k) => s.has(String(k).toLowerCase()));
         }
-        const out = { ...signalOutcome({ proposal: p.obj, signals: signalsOf(row.id, endSeen), active: a.nodes, tip: height, schedule }), activeFrom: a.fromHeight ?? null, activeTo: end };
+        const out = { ...signalOutcome({ proposal: p.obj, signals: signalsOf(row.id, endSeen, census), active: a.nodes, tip: height, schedule }), activeFrom: a.fromHeight ?? null, activeTo: end };
         db.prepare('INSERT OR IGNORE INTO funding_outcomes (proposal, outcome, decided_ms) VALUES (?, ?, ?)').run(row.id, JSON.stringify(out), now());
         log(`[funding] ${row.id.slice(0, 16)}: signal ${out.state} - ${out.supporters} of ${out.active} active nodes (${out.pct} %, ${out.needed} needed)`);
         done.push({ id: row.id, ...out });

@@ -8,9 +8,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { createProposals } from '../src/proposals.js';
+import { createProposals, stateOf } from '../src/proposals.js';
 import { createBallotTally } from '../src/ballot-tally.js';
-import { encodeConfigProposalBody, proposalBodyId, encodeVote, voteMessage, CHOICE, CLASS, SCHEDULES, REPEAL_SCHEDULES, configHashOf } from '../../arena-protocol/src/ballot.js';
+import { proposalId, decodeConfigProposalBody, encodeConfigProposalBody, proposalBodyId, encodeVote, voteMessage, CHOICE, CLASS, SCHEDULES, REPEAL_SCHEDULES, configHashOf } from '../../arena-protocol/src/ballot.js';
 import { depositOutputsExpected, depositCommitmentScript } from '../../arena-protocol/src/ballot-chain.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
@@ -55,9 +55,14 @@ const vote = (i, id, choice, seq, txid) => ({ payload: encodeVote({ proposalId: 
 test('#2607-1: a twin of a passed bound proposal posted after its vote is taken, and the proposal stays passed and live', async () => {
   const { chain, signed } = deposit(true);
   const tip = { at: 300 };
-  const { proposals, liveAt } = seat({ chain, tip });
-  const a = await proposals.add(signed(1)); assert.equal(a.status, 201, a.why);
-  assert.equal(proposals.decide(a.id, { passed: true, decidedAt: 207, anchor: null }), true);
+  const a1 = signed(1); const a1b = fromHex(a1.proposal);
+  const aId = toHex(proposalId({ ...decodeConfigProposalBody(a1b.subarray(0, a1b.length - 64)), signature: a1b.slice(a1b.length - 64) }));
+  // the vote that passed it, on the chain: bonds 1 (50) and 2 (30) YES at 202
+  const votes = new Map([[202, [vote(1, aId, CHOICE.YES, 1, 'd1'.repeat(32)), vote(2, aId, CHOICE.YES, 1, 'd2'.repeat(32))]]]);
+  const { proposals, tally, liveAt } = seat({ chain, tip, votes });
+  const a = await proposals.add(a1); assert.equal(a.status, 201, a.why);
+  for (let i = 0; i < 3; i++) await tally.pass();
+  assert.equal(stateOf(proposals.list().find((r) => r.id === a.id)), 'PASSED');
   assert.equal(liveAt(300), toHex(configHashOf(X)));
   const b = await proposals.add(signed(2));                                // tip 300, long after its voting (201-206)
   console.log('  the twin at tip 300:', JSON.stringify({ status: b.status, why: b.why || null, aCounts: proposals.counts(a.id) }));
@@ -65,6 +70,10 @@ test('#2607-1: a twin of a passed bound proposal posted after its vote is taken,
   assert.equal(proposals.counts(a.id), true, 'the decided twin stands for both');
   assert.equal(proposals.counts(b.id), false, 'the twin is not counted twice');
   assert.equal(proposals.twinOf(b.id), a.id);
+  // kanban #2629: the twin reopens the count over both ids (its outcome held in force meanwhile); the chain's votes pass it again
+  assert.equal(proposals.list().find((r) => r.id === a.id).undecided.outcome.passed, true, 'its outcome is held through the recount');
+  for (let i = 0; i < 3; i++) await tally.pass();
+  assert.equal(stateOf(proposals.list().find((r) => r.id === a.id)), 'PASSED');
   assert.equal(liveAt(300), toHex(configHashOf(X)), 'X stays live');
 });
 

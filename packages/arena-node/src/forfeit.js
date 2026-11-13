@@ -271,7 +271,7 @@ export class Forfeit {
       // VOID (§13C, §23.2 "do nothing"): nothing is forfeited - nobody acts, and
       // the lock returns to the player at its expiry. Not ENTRY_VOID's forfeit.
       // A LOCK OUTSIDE THE SEATS COMES BACK AT SETTLEMENT (kanban #1582 with #1588): /lock keeps every valid lock of a paying head-to-head
-      // round, and the seats are the game's players in the order their entries came (round.js seatedEntriesOf) - a player whose lock is
+      // round, and the seats are the game's players with the lowest entry ids (round.js seatedEntriesOf, #2538) - a player whose lock is
       // held but who got no seat is signed VOID and never claimed. Before, that stake waited for the lock's expiry (144 blocks live);
       // now it comes back as soon as THIS signer node's settlement of the round is ACCEPTED without claiming it, as nobodyWonReturn does
       const out = this.#outsideTheSeats(roundIdBytes, entryIdBytes, contract, lock);
@@ -526,8 +526,22 @@ export class Forfeit {
    * THE FORFEIT, asked by anyone: the one this signer node keeps, or - if it is due -
    * made now with its peers, checked under the claim key, kept, and handed to
    * them.
+   *
+   * ONE PASS PER LOCK AT A TIME (kanban #1489, #1910 - as settle() with #settling): GET /forfeit answers anyone, and two passes of this seat at once
+   * shared its one slot at every peer (nonce-pairs.js: a seat's signed ask while its pair is unspent is handed that same pair back), each with its own
+   * SELF commitment - so the two lists differed, each peer signed whichever share reached it first and refused the other ("keeps no second pair"),
+   * and the refused pass filled the withheld map for the same query. A second ask while one runs waits for that one's answer instead.
    */
   async forfeit(roundIdBytes, entryIdBytes, kind = 'stake') {
+    const k = `${toHex(roundIdBytes)}:${toHex(entryIdBytes)}:${kind === 'fee' ? 'fee' : 'stake'}`;
+    if (this.#forfeiting.has(k)) return this.#forfeiting.get(k);
+    const p = this.#forfeitOnce(roundIdBytes, entryIdBytes, kind).finally(() => this.#forfeiting.delete(k));
+    this.#forfeiting.set(k, p);
+    return p;
+  }
+  #forfeiting = new Map();   // `${round}:${entry}:${kind}` -> the running pass's answer (kanban #1910)
+
+  async #forfeitOnce(roundIdBytes, entryIdBytes, kind) {
     const kept = this.round.forfeit(keptUnder(entryIdBytes, kind));
     if (kept) return { ok: true, ...kept, kept: true };
     const m = await this.message(roundIdBytes, entryIdBytes, kind);

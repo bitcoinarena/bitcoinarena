@@ -73,7 +73,10 @@ test('#1489 sm1-h2h-1: locks reaching two seats in different orders seat differe
     for (const stop = Date.now() + 25000; Date.now() < stop && results(w, a.eid).some((x) => !x.length); await new Promise((r) => setTimeout(r, 500)));
     const got = { a: results(w, a.eid), b: results(w, b.eid), c: results(w, c.eid) };
     console.log('  FACTS (results):', JSON.stringify(got));
-    for (const per of got.a) assert.deepEqual([...new Set(per)], ['DELIVERED 2'], `the seated winner's result at each seat: ${JSON.stringify({ ...got, seats })}`);
+    // since kanban #2538 the seats are the lowest entry ids among the locked entries (not the order the entries came), so A - entered first -
+    // is seated only when its id is among the two lowest; seated, its rock wins at every seat, else it is VOID at every seat
+    const aSeated = seats[0].includes(toHex(a.eid).slice(0, 8));
+    for (const per of got.a) assert.deepEqual([...new Set(per)], [aSeated ? 'DELIVERED 2' : 'VOID 0'], `A's result at each seat: ${JSON.stringify({ ...got, seats })}`);
     assert.deepEqual(seats[0], seats[1], `the two seats of one round seat different players: ${JSON.stringify(seats)}`);
   } finally { await w.close(); }
 });

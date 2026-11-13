@@ -694,8 +694,12 @@ export function roundFitsManifest(contract, m, gameId = gameIdOf(m)) {
   if (isHeadToHead(m)) {
     if (contract.rankNumerator !== m.rankNumerator || contract.rankDenominator !== m.rankDenominator)
       return { ok: false, why: `that round's rank curve is ${contract.rankNumerator}/${contract.rankDenominator}; ${name} pays ${m.rankNumerator}/${m.rankDenominator}` };
+    // kanban #2444: a head-to-head round's min_score is the game's exactly (H2H_WIN_SCORE), never more - a WIN scores 2, so a round
+    // asking 3 (or any u32 above) would take stakes and fees while its winner could never qualify for the loser's stake
     if (!Number.isInteger(contract.minScore) || contract.minScore < m.minScore)
       return { ok: false, why: `that round's min_score ${contract.minScore} is below ${name}'s ${m.minScore}` };
+    if (contract.minScore !== m.minScore)
+      return { ok: false, why: `that round's min_score ${contract.minScore} is above ${name}'s ${m.minScore}: a head-to-head win scores ${H2H_WIN_SCORE}` };
     return { ok: true, headToHead: true };
   }
   if (!Number.isInteger(contract.blockTicks) || contract.blockTicks < 1 || contract.blockTicks > m.runTicksMax)

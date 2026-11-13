@@ -154,8 +154,8 @@ export async function verifyEntryGifts({ round, port, entry, contract, entryIdBy
 
 // (NO "HEAD-TO-HEAD FULL" REFUSAL AT /lock, kanban #1588: it refused the lock that would seat one player more HERE, and two seats that saw two
 // locks in different orders seated different players and then waited forever for the lock each refused. A valid lock is kept; who is seated is
-// round.js seatedEntriesOf's rule - the game's players among the lock-backed entries, in the order the entries were taken, not their locks - so
-// crossing locks seat the same players at every seat. The /entry door still refuses a new entry once the round seats its players, kanban #1437.)
+// round.js seatedEntriesOf's rule - the game's players among the lock-backed entries, the lowest entry ids (kanban #2538), not their locks' order -
+// so crossing locks and crossing entries seat the same players at every seat. The /entry door still refuses a new entry once the round seats its players, kanban #1437.)
 
 /**
  * Another entry of the same player key in this round holding a verified lock here (kanban #1215).

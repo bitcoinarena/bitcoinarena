@@ -22,7 +22,7 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { decodeRoundContract, seriesRoundIdOf } from '../../arena-protocol/src/contracts.js';
 import { slotsForRole } from '../../arena-protocol/src/sortition.js';
 import { signPresent, verifyPresent, decodePresent, seatedFrom, signSeating, seatingId, encodeSeatingCertificate, verifySeating,
-  seatingEquivocation, seatingCloseMs, decodeSeatingCertificate, SEATING_ROLES } from '../../arena-protocol/src/seating.js';
+  seatingEquivocation, seatingCloseMs, decodeSeatingCertificate, SEATING_ROLES, seatingBefore as seatingOrderBefore } from '../../arena-protocol/src/seating.js';
 import { endpointsOf } from './roster.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
@@ -925,12 +925,8 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
   // T can only go on to seatings after T - never to S. So S never completes, at most one certificate stands, and no two can prove
   // equivocation against an honest seat.
   const rankOf = (w) => w.rank || (w.rank = new Map(w.drawnKeys.map((k, i) => [toHex(k), i])));
-  /** Does seating `a` come before seating `b` (node keys hex, both in score order) in this round's draw? */
-  function seatingBefore(w, a, b) {
-    if (a.join(',') === b.join(',') || b.length < a.length) return false;
-    const r = rankOf(w);
-    return a.every((k, i) => r.has(k) && r.has(b[i]) && r.get(b[i]) <= r.get(k));
-  }
+  /** Does seating `a` come before seating `b` (node keys hex, both in score order) in this round's draw? (one rule with the page, kanban #2537) */
+  function seatingBefore(w, a, b) { return seatingOrderBefore(w.drawnKeys, a, b); }
   // A MEMBER THAT ANSWERS BUT NEVER SIGNS (kanban #1509, wf1489 r1 census-1): a drawn seat that hands out its PRESENT and answers every read, with its seating
   // signature always null, is never silent (#979) and signs no other seating (#738), so every honest seat waited for it until the start - no certificate, no
   // entries, one free seat voiding every round it was drawn into. A member of this node's seating of whom no signature over any seating is held

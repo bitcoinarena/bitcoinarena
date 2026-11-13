@@ -44,6 +44,41 @@ export function runAgainIn(said, { waitMs, had = -1, everyMs = 1000, maxMs = 300
   return { waitMs: moved ? everyMs : Math.min(Math.max(waitMs, everyMs) * 2, maxMs), had: said.have };
 }
 
+/**
+ * EVERY ASK OF A PEER IS BOUNDED, IN TIME AND IN BYTES (kanban #2541, wf1489 r13 gossip-1): run() asked each peer of both committees
+ * one after the other, POST /dkg, GET /dkg and GET /dkg-agreement, with no timeout - one seat that took the connection and never
+ * finished its answer (or trickled it) held the run forever, the peers after it were never told or asked, no share was stored, and
+ * makeClaimKey's attempt never scheduled another run. Now the peers are asked side by side, each ask is aborted after
+ * DKG_ASK_MS, and an answer longer than DKG_ANSWER_MAX bytes is refused: a hung peer is passed by like a refusing one and asked
+ * again on the next run.
+ */
+export const DKG_ASK_MS = 10000;
+export const DKG_ANSWER_MAX = 1 << 20;
+
+/** One fetch of one peer, aborted after `ms`; its body read in the same time and at most `max` bytes. */
+export async function askPeer(fetcher, url, opts = {}, { ms = DKG_ASK_MS, max = DKG_ANSWER_MAX } = {}) {
+  const ctl = new AbortController();
+  let timer;
+  const expired = new Promise((_, rej) => { timer = setTimeout(() => { ctl.abort(); rej(new Error(`no answer in ${ms} ms`)); }, ms); });
+  if (timer.unref) timer.unref();
+  const read = (async () => {
+    const r = await (fetcher || fetch)(url, { ...opts, signal: ctl.signal });
+    const chunks = []; let size = 0;
+    if (r.body) {
+      for await (const c of r.body) {
+        size += c.length;
+        if (size > max) { ctl.abort(); throw new Error(`an answer over ${max} bytes`); }
+        chunks.push(c);
+      }
+    }
+    const bytes = new Uint8Array(size); let at = 0;
+    for (const c of chunks) { bytes.set(c, at); at += c.length; }
+    return { ok: r.ok, status: r.status, bytes, text: () => Buffer.from(bytes).toString('utf8') };
+  })();
+  try { return await Promise.race([read, expired]); }
+  finally { clearTimeout(timer); read.catch(() => {}); }
+}
+
 export class Dkg {
   /**
    * `curve` is the group the daemon already injects everywhere else. `random`
@@ -262,11 +297,13 @@ export class Dkg {
     // committee's census peers exchanged both contributions and then asked
     // nobody for their agreement - "1 of the committee's 2 signer nodes have said which
     // contributions they combined" - because this read the daemon-wide list.
-    for (const peer of peers) {
+    // each peer asked side by side and bounded (kanban #2541)
+    const answers = await Promise.allSettled(peers.map((peer) =>
+      askPeer(this.fetcher, `${peer.replace(/\/+$/, '')}/dkg-agreement?epoch=${toHex(where.epochId)}`)));
+    for (const a of answers) {
       try {
-        const r = await (this.fetcher || fetch)(`${peer.replace(/\/+$/, '')}/dkg-agreement?epoch=${toHex(where.epochId)}`);
-        if (!r.ok) continue;
-        statements.push(splitSignedAgreement(new Uint8Array(await r.arrayBuffer())));
+        if (a.status !== 'fulfilled' || !a.value.ok) continue;
+        statements.push(splitSignedAgreement(a.value.bytes));
       } catch { /* a signer node that does not answer is waited for, by name */ }
     }
     const agreed = agreementHolds({
@@ -367,8 +404,8 @@ export class Dkg {
   /** One ask of one peer, and a refusal is an answer rather than a throw. */
   async tell(url, bytes) {
     try {
-      const r = await (this.fetcher || fetch)(url, { method: 'POST', body: bytes });
-      if (!r.ok) return { ok: false, why: `${r.status} ${(await r.text()).trim()}` };
+      const r = await askPeer(this.fetcher, url, { method: 'POST', body: bytes });   // bounded (kanban #2541)
+      if (!r.ok) return { ok: false, why: `${r.status} ${r.text().trim()}` };
       return { ok: true };
     } catch (e) { return { ok: false, why: e.message }; }
   }
@@ -392,22 +429,27 @@ export class Dkg {
     const done = this.peersDone.get(id) || Dkg.keep(this.peersDone, id, { told: new Set(), got: new Set() }, 4096);
     const told = [];
     const refused = [];
-    for (const peer of peers) {
-      if (done.told.has(peer)) continue;
-      const said = await this.tell(`${peer.replace(/\/+$/, '')}/dkg?epoch=${id}`, bytes);
+    // every peer told side by side, so one that never answers holds nobody else up (kanban #2541)
+    const toTell = peers.filter((peer) => !done.told.has(peer));
+    const tellings = await Promise.all(toTell.map((peer) => this.tell(`${peer.replace(/\/+$/, '')}/dkg?epoch=${id}`, bytes)));
+    for (const [i, said] of tellings.entries()) {
+      const peer = toTell[i];
       if (said.ok) { told.push(peer); done.told.add(peer); } else refused.push(`${peer}: ${said.why}`);
     }
 
     // AND ASK FOR THEIRS. A peer serves its own contribution for an epoch, so
     // this fills in whatever did not arrive by being pushed.
     const got = [];
-    for (const peer of peers) {
-      if (done.got.has(peer)) continue;
+    // fetched side by side and bounded (kanban #2541), each answer then taken in turn as before
+    const toAsk = peers.filter((peer) => !done.got.has(peer));
+    const fetched = await Promise.allSettled(toAsk.map((peer) => askPeer(this.fetcher, `${peer.replace(/\/+$/, '')}/dkg?epoch=${id}`)));
+    for (const [i, a] of fetched.entries()) {
+      const peer = toAsk[i];
       try {
-        const r = await (this.fetcher || fetch)(`${peer.replace(/\/+$/, '')}/dkg?epoch=${id}`);
-        if (!r.ok) { refused.push(`${peer}: ${r.status} ${(await r.text()).trim()}`); continue; }
-        const theirs = new Uint8Array(await r.arrayBuffer());
-        const took = await this.accept(theirs);
+        if (a.status !== 'fulfilled') throw a.reason;
+        const r = a.value;
+        if (!r.ok) { refused.push(`${peer}: ${r.status} ${r.text().trim()}`); continue; }
+        const took = await this.accept(r.bytes);
         if (took.ok) { got.push(peer); done.got.add(peer); } else refused.push(`${peer}: ${took.why}`);
       } catch (e) { refused.push(`${peer}: ${e.message}`); }
     }

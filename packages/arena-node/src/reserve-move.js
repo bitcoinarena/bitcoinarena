@@ -13,8 +13,15 @@
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
 const utf8 = (s) => new TextEncoder().encode(s);
-/** A move's id: one per (drained federation, destination) - X drains once. */
-export const moveIdOf = (from, to) => toHex(taggedHash('ARENA/v1/ReserveMove', Uint8Array.from([...fromHex(from), ...fromHex(to)])));
+/** A move's id: one per (drained federation, destination, sequence). Sequence 0 is the first move (its id as before); sequence n the move
+ *  after n finished ones (kanban #2435, state audit 2026-11-12: one id per pair let X drain once - a REFUNDED move, or a reserve output
+ *  reaching X after its move was CLAIMED, stayed in X for good while moveTargets kept listing it). reserve-payout.js moves under the
+ *  lowest sequence whose record is not finished (REFUNDED, SHORT, CLAIMED); each input is still spent once, by the spent set. */
+export const moveIdOf = (from, to, seq = 0) => {
+  const n = Number(seq) || 0;
+  const tail = n > 0 ? [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255] : [];
+  return toHex(taggedHash('ARENA/v1/ReserveMove', Uint8Array.from([...fromHex(from), ...fromHex(to), ...tail])));
+};
 /** The encryption seed of the destination's incoming contract: the move's own, so every seat rebuilds the same contract. */
 export const moveSeedOf = (moveIdHex) => taggedHash('ARENA/v1/ReserveMoveSeed', utf8(String(moveIdHex)));
 /** The seed of a plan's own invoice: each attempt draws a `seedTag` the plan names, so a second attempt asks for another payment hash
@@ -26,7 +33,7 @@ export const moveSeedFor = (plan) => moveSeedOf(plan && plan.seedTag ? `${plan.p
  * THE MOVES THESE RECORDS CALL FOR. `feds` [{ id (hex), status ('OPEN' | 'DRAINING' | 'CRITICAL' | 'HALTED' | 'CLOSED'), height (of the
  * newest record), successor (hex or null), key (hex or null: its reserve key), unspentMsat (BigInt) }]. Answers { moves: [{ id, from,
  * to, toKey, fromKey, decidableAt }], waiting: [{ federation, why }] } - a federation that is draining with reserves either moves or says
- * why it waits.
+ * why it waits; so does a closed one that still holds reserves (kanban #1981).
  */
 export function moveTargets(feds) {
   const byId = new Map(feds.map((f) => [String(f.id).toLowerCase(), f]));
@@ -36,7 +43,11 @@ export function moveTargets(feds) {
     const from = String(f.id).toLowerCase();
     if (!(BigInt(f.unspentMsat || 0n) > 0n)) continue;
     if (f.status === 'HALTED') { waiting.push({ federation: from, why: 'halted: its notes are frozen until it recovers' }); continue; }
-    if (f.status !== 'DRAINING' && f.status !== 'CRITICAL') continue;
+    // A CLOSED federation that still holds reserves moves as a draining one does (kanban #1981): server.js closedOf turns the record
+    // CLOSED by the drain clock (DRAIN_MS, no open round naming it), never by the money - a move that waited the whole drain (the
+    // successor's reserve key not dealt yet) was dropped without a word, and the reserves stayed there for good. It takes no new money,
+    // so its reserves either move or say why they wait.
+    if (f.status !== 'DRAINING' && f.status !== 'CRITICAL' && f.status !== 'CLOSED') continue;
     if (!f.key) { waiting.push({ federation: from, why: 'no reserve key is known for it here' }); continue; }
     const succ = f.successor ? String(f.successor).toLowerCase() : null;
     const s = succ && byId.get(succ);

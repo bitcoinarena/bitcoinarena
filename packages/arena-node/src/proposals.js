@@ -155,8 +155,9 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
   // body hash). The same body re-signed on the same deposit - another proposal_id, since the id covers the signature - is the SAME
   // proposal: its deposit is not voided (#1840 stays for a DIFFERENT body on one deposit, and for unbound deposits, which commit to
   // nothing), votes under any twin id count for it (ballot-tally.js, protocol tally `twins`), and one twin stands for the group: the
-  // one already decided (or holding an outcome through a recount), else one counting, else the lowest id - so a twin posted after
-  // the outcome never moves it. The #2590 tip check for twins is gone: a twin changes nothing a vote decided.
+  // one already decided (or holding an outcome through a recount), else one counting, else the lowest id. A twin taken after the
+  // outcome reopens the count over every twin (kanban #2629, add): the outcome held in force until it is decided again.
+  // The #2590 tip check for twins is gone.
   const bodyHexOf = (r) => { const h = String((r && r.proposal) || '').toLowerCase(); return h.length > 128 ? h.slice(0, -128) : null; };
   const boundRecord = (r) => !!r && isBound(r.networkId, Number(r.publishedAt));
   const rankOf = (r) => { const st = stateOf(r); return st === S.PASSED || st === S.FAILED ? 0 : st === S.COUNTING ? (r.undecided && r.undecided.outcome ? 1 : 2) : 3; };
@@ -268,6 +269,21 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
         votingUntil: stands.votingUntil, activationHeight: stands.activationHeight, repeal: stands.repeal, depositTxid: depositHex,
         // THE BLOCK IT WAS PUBLISHED IN: a reorg that takes it out unpublishes the proposal (ballot-tally.js)
         blockHash: String(blockHash).toLowerCase(), state: S.COUNTING };
+      // A TWIN AFTER ITS GROUP'S OUTCOME COUNTS IT AGAIN (kanban #2629, state audit #1489 sm1 census-1): votes under a twin's id
+      // can sit in the voting blocks before any seat holds the twin, so a seat that decided before the twin reached it and one
+      // that took it before its own decision wrote two final outcomes for one proposal - and two live configs. Now a decided
+      // twin of the group is undecided BEFORE the new one is kept (its outcome held in force through the recount, #1635), and
+      // the group is counted again over every twin it holds: the outcome is one function of the chain and the twins held, the
+      // same at every seat. Undecided first: a crash between the two writes only recounts to the outcome it had.
+      if (bound) {
+        const body = toHex(bytes).slice(0, -128);
+        for (const r of sameDeposit(depositHex, id)) {
+          const st = stateOf(r);
+          if ((st !== S.PASSED && st !== S.FAILED) || !boundRecord(r) || bodyHexOf(r) !== body) continue;
+          if (!api.undecide(r.id, `a twin (${id.slice(0, 16)}) was taken after its outcome: counted again over every twin (kanban #2629)`) && stateOf(held.get(r.id)) === st)
+            return { ok: false, status: 503, why: 'this seat could not reopen the count of its twin: ask again shortly' };
+        }
+      }
       // TAKEN AGAIN FROM A NEW BLOCK: the orphaned record moves back to COUNTING with the record checked here
       if (was) {
         if (!transition(id, S.ORPHANED, S.COUNTING, { record: kept, at: dep.publishedAt, why: 'posted again from a block of this chain' }))

@@ -125,6 +125,11 @@ export function leaveStands(sig, id, nodePubkey) {
  *   same height, kept CLOSED, next not   -> refused (CLOSED is final, kanban #577)
  *   same height, from a mirror, worse    -> refused: a node serving a worse body at the height this seat holds moves nothing; the next
  *                                           height's record does, when a threshold signs it
+ *   same height, from a mirror, better   -> refused too (kanban #1664, state audit #1489 federation-5): records of one height are signed
+ *                                           hours apart (the census height is a day's), so a node that has not gathered since still serves
+ *                                           the OLDER, better body - a seat whose own gather failed took it back over the CRITICAL/HALTED one
+ *                                           its guardians signed later, cleared `draining` and the halt height. A mirror moves the status only
+ *                                           at a newer height (or to CLOSED); this seat's own gather still may at the same height
  *   else                                 -> taken
  * Answers { take, why }.
  */
@@ -134,7 +139,7 @@ export function recordStep(had, next, from = 'gather') {
   if (had.height > next.height) return { take: false, why: `a record at ${next.height} is older than the one kept at ${had.height}` };
   if (had.height < next.height) return { take: true, why: 'newer' };
   if (had.status === 'CLOSED' && next.status !== 'CLOSED') return { take: false, why: 'the record kept at that height is CLOSED, and CLOSED is final' };
-  if (from === 'mirror' && next.status !== 'CLOSED' && (STATUS_RANK[next.status] ?? 0) > (STATUS_RANK[had.status] ?? 0))
+  if (from === 'mirror' && next.status !== 'CLOSED' && next.status !== had.status)
     return { take: false, why: `a mirrored ${next.status} record does not replace the ${had.status} one kept at the same height ${next.height}` };
   return { take: true, why: 'the same height' };
 }
@@ -486,8 +491,14 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     const guardians = withConfigEndpoints(guardiansOf(b.census, federationId, keys), eps, toHex);
     if (!guardians.length) return { ok: false, why: 'no census node guards that federation' };
     const succ = successorOf(fid);
+    // A RETIREMENT CLOSES ONLY AN EMPTY FEDERATION (kanban #1980): the owners' consents were checked against an empty audit and reserve 0
+    // when given, and are kept for good - money paid in before the next gather (an empty federation has load 0, so new rounds and first
+    // deposits go there) would be closed in by a CLOSED record no seat watches, moves or liquidates. The retirement body is built only
+    // while the reserve this body names (read from the guardians, checked by every signer against its own reading) is 0; otherwise the
+    // normal OPEN body, and the retirement goes on once the federation is empty again
+    const retiring = !succ && retiringOf(fid) && BigInt(reserveSats || 0n) === 0n;
     const r = buildFederationRecord({ federationId, networkId: b.networkId || networkId, invite, nominal: guardians.length, guardians, gone, height: b.height, reserveSats,
-      ...(succ ? { successorId: fromHex(succ), closed: !!closedOf(fid) } : retiringOf(fid) ? { closed: true } : {}) });   // retiringOf: federation-retire.js
+      ...(succ ? { successorId: fromHex(succ), closed: !!closedOf(fid) } : retiring ? { closed: true } : {}) });   // retiringOf: federation-retire.js
     return { ok: true, record: r, guardians };
   }
 

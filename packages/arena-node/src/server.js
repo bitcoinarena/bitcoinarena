@@ -28,7 +28,13 @@ import { blockRandom, blockRandomReady } from '../../arena-protocol/src/block-ra
 import { servedNodes, mergeServedRounds, SERVED_WINDOW_MS, SERVED_HELD_MAX, SERVED_ANSWER_BYTES_MAX } from '../../arena-protocol/src/served-nodes.js';
 import { decodePurchase } from '../../arena-protocol/src/purchase.js';
 import { itemOf } from '../../arena-protocol/src/items.js';
-import { textUpTo, jsonUpTo, listedGames, PEER_LISTING_BYTES, PEER_PACKAGE_BYTES } from './peer-read.js';   // kanban #1540, #1723
+import { textUpTo, jsonUpTo, listedGames, PEER_LISTING_BYTES, PEER_PACKAGE_BYTES, answersUpTo } from './peer-read.js';   // kanban #1540, #1723
+// EVERY PEER ANSWER THIS MODULE READS IS READ UP TO A BOUND (kanban #2637, a bypass of #1469): `fetch` in server.js is the process's fetch
+// (looked up at each call, so main.js's routed fetch and a test's stand-in both still apply) with its answers capped at PEER_ANSWER_BYTES
+// (8 MiB, peer-read.js answersUpTo) - a bare r.json() / r.text() / r.arrayBuffer() on another seat's answer can no longer hold it whole.
+// A read that names its own bound on r.body (PEER_PACKAGE_BYTES, SERVED_ANSWER_BYTES_MAX, ...) keeps it. test/wf1489-bypass-body-limit-1
+// refuses a read of the global fetch past this door.
+const fetch = answersUpTo((...a) => globalThis.fetch(...a));
 import { keepItemPurchase, itemsOwned, purchasesSince } from './item-purchase-seat.js';
 import { keepDonationGift, giftsOf, giftsSince } from './donation-gift-seat.js';
 import { decodeDonationGift, GIFT_TO_GAME, GIFT_TO_PLAYER, GIFT_TO_BOTH, playerGiftRecipients } from '../../arena-protocol/src/donation-gift.js';
@@ -36,7 +42,7 @@ import { federationGatewayCount } from '../../arena-protocol/src/gateways.js';
 import { guardianThreshold } from '../../arena-protocol/src/threshold.js';
 import { stateOf } from './settlement-state.js';
 import { nostrResults, publishRelays } from './nostr-results.js';
-import { createReachCheck } from './reach-check.js';
+import { createReachCheck, askerAddress } from './reach-check.js';
 import { ownBondOf, ownBondsOf, outputOfEntry, ownOutputsOnChain, lockAt, withdrawSpend } from './bond-withdraw.js';
 import { BOND_TEMPLATE_V2 } from '../../arena-protocol/src/bond-script.js';
 import { latestReleaseReader } from './release-latest.js';
@@ -65,7 +71,7 @@ import { stakeWithinCeiling, isTestNetwork } from '../../arena-protocol/src/cens
 import { pruneTranscripts, pruneRelayed, pruneUnusedRounds, PRUNE_EVERY_MS } from './transcript-prune.js';
 import { maxPlayersPerRound } from '../../arena-protocol/src/replay-budget.js';
 import { bondWeightedMedian } from '../../arena-protocol/src/census-median.js';
-import { publicationFee, publisherPayoutMsat, publisherRoundIndex } from '../../arena-protocol/src/publisher-payout.js';
+import { publicationFee, publisherPayoutMsat } from '../../arena-protocol/src/publisher-payout.js';
 import { seriesRoundIdOf, stakePointIsTheHandouts, entryId as idOfEntry } from '../../arena-protocol/src/contracts.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { readAdvertUpdate } from '../../arena-protocol/src/advert-update.js';
@@ -112,7 +118,7 @@ import { lobbyListingId } from '../../arena-protocol/src/lobby-listing.js';
 import { listingSigner } from './listing-sign.js';
 import { decodeLobbyName, lobbyNameId } from '../../arena-protocol/src/lobby-name.js';
 import { roundEndMs, startDeadlineOf } from '../../arena-protocol/src/first-mark.js';
-import { OBJECTION_WINDOW_MS, windowsOf } from '../../arena-protocol/src/window.js';
+import { OBJECTION_WINDOW_MS, FINAL_TOLERANCE_MS, windowsOf } from '../../arena-protocol/src/window.js';
 import { msForTicks } from '../../arena-protocol/src/tick.js';
 import { entryFeeMsat, feeBpsOf, entryFeeBpsOf } from '../../arena-protocol/src/fee.js';
 import { cancelId, BATCH_MS } from '../../arena-protocol/src/order-book.js';
@@ -158,7 +164,7 @@ import { reserveMembersOf } from './reserve-members.js';
 import { createSettleBackoff, refusedForGood, REFUSAL } from './settle-backoff.js';
 import { produceSpentSet, publishSpentSet } from './spent-set-producer.js';
 import { verifySchnorrKept, verifyEd25519Kept } from './verified.js';
-import { DrawnAttestor } from './drawn-attestor.js';
+import { DrawnAttestor, DUE_AFTER_END_MS, KEEP_MS as DRAWN_KEEP_MS } from './drawn-attestor.js';
 import { CLOCKS as FEDERATION_CLOCKS } from '../../arena-protocol/src/federation-slash.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { walletFetch, hostOf, payoutAddressRefusal } from './public-fetch.js';
@@ -312,9 +318,51 @@ const seatJson = async (answer, cap) => JSON.parse(Buffer.from(await seatBody(an
 /** An answer this seat does not read: its body dropped unread (kanban #1900). */
 async function dropSeatBody(answer) { try { await answer.body?.cancel(); } catch { /* gone */ } }
 
-// who sits at each head-to-head round's table, per seat (POST /here): round hex -> identity key hex -> last said (ms)
+// who sits at each head-to-head round's table, per seat (POST /here): round hex -> identity key hex -> { at, since, said, stay, src }
 const presenceByRound = new WeakMap();
 const presenceTables = (round) => { let t = presenceByRound.get(round); if (!t) { t = new Map(); presenceByRound.set(round, t); } return t; };
+// THE ORDER OF SAYS, EXACT (kanban #2385): two says in one millisecond are still one before the other
+let presenceSeq = 0;
+// WHERE A PRESENCE CAME FROM (kanban #2385, #2437): the asker's address (behind cloudflared / tailscale serve the address the proxy saw,
+// reach-check.js askerAddress); an IPv6 address by its /48, so one holder of a block of addresses is one source, not 65,536
+export function presenceSource(req) {
+  const a = askerAddress(req);
+  if (!a.includes(':')) return a;
+  const [head, tail] = a.toLowerCase().split('::');
+  const left = head ? head.split(':') : [], right = tail !== undefined && tail ? tail.split(':') : [];
+  const groups = tail === undefined ? left : [...left, ...Array(Math.max(0, 8 - left.length - right.length)).fill('0'), ...right];
+  return groups.slice(0, 3).map((g) => g || '0').join(':') + '::/48';
+}
+// WHOM A FULL TABLE DROPS (kanban #2385, #2437, audit44 refute s2 of #1645/#2147): `t` is the table (key -> { said, stay, src }),
+// `named` the identities a name record of the round names, `src` the newcomer's source. Answers the key to drop, or null if all are named.
+// Keys cost nothing and every order rule (drop the oldest said, drop the newest stay) is gamed by saying at the right moment. What a
+// stranger cannot make for free is ADDRESSES: the seat drops from the source that holds the most unnamed keys at the table (the
+// newcomer's own counted), so 32 throwaway keys from one address only ever push out each other - never a player who sits from
+// another address, however early or late she came, however often she comes back. Inside that source it drops the key said longest
+// ago, but never the source's longest unbroken stay (a player behind the same address who sat first keeps her seat while later keys
+// churn). When every source holds one key, the same rule runs over the whole table.
+export function presenceToDrop(t, named, src) {
+  const count = new Map([[src, 1]]);
+  for (const [k, p] of t) if (!named.has(k)) count.set(p.src, (count.get(p.src) || 0) + 1);
+  let most = 0; for (const n of count.values()) if (n > most) most = n;
+  const pick = (inSource) => {
+    let first = null, firstStay = Infinity;
+    for (const [k, p] of t) if (!named.has(k) && inSource(p) && p.stay < firstStay) { firstStay = p.stay; first = k; }
+    let drop = null, dropSaid = Infinity;
+    for (const [k, p] of t) if (!named.has(k) && inSource(p) && k !== first && p.said < dropSaid) { dropSaid = p.said; drop = k; }
+    return drop;
+  };
+  if (most > 1) {
+    // the newcomer's own source first when it is among the largest, else the largest whose key said longest ago is oldest
+    const largest = [...count].filter(([, n]) => n === most).map(([s]) => s);
+    const order = largest.includes(src) ? [src, ...largest.filter((s) => s !== src)] : largest;
+    for (const s of order) { const d = pick((p) => p.src === s); if (d !== null) return d; }
+  }
+  const d = pick(() => true);
+  if (d !== null) return d;
+  for (const [k] of t) if (!named.has(k)) return k;
+  return null;
+}
 
 // EVERY BODY HAS A LIMIT (kanban #1469; one reader for every server since kanban #1592): see body-read.js - and in this server all bodies in
 // flight share one budget besides (kanban #1724, #1794, #1911, #1953: `read` below, body-budget.js)
@@ -558,6 +606,15 @@ export function objectionIntake(round, rid, eid, blockHash = null, bundle = null
     // kept as evidence (late) and suspends nothing - this seat may have signed FINAL, released P or acked on it already
     const kept = typeof round.entryFinal === 'function' ? round.entryFinal(rid, eid) : null;
     if (kept && BigInt(arrivedMs ?? round.now()) < BigInt(kept.finalAfterMs)) arrivedMs = kept.finalAfterMs;
+    // SO DOES A §13C OUTCOME DECIDED HERE (kanban #2272, state audit 2026-11-12): a no-quorum VOID/FORFEIT this seat already wrote is read first by the
+    // settlement, the finality watch and the restart; an objection taken over it as in time would turn the entry SUSPENDED beside it - two records
+    // that disagree. It is kept as evidence (dated at final_after, late) and the decision stands
+    const decided = !kept && typeof round.noQuorum === 'function' ? round.noQuorum(eid) : null;
+    if (decided) {
+      let finalAfter = null;
+      try { finalAfter = windowsOf(decodeRoundContract(new Uint8Array(round.get(rid).contract))).finalAfterMs; } catch { finalAfter = null; }
+      if (finalAfter !== null && BigInt(arrivedMs ?? round.now()) < BigInt(finalAfter)) arrivedMs = Number(finalAfter);
+    }
     // AN OBJECTION COUNTS BY WHEN IT REACHED THIS SEAT, ON ITS OWN CLOCK (§13A, WINDOW-10-SPEC, RULED 2026-10-01):
     // before this seat's window close + 5 s it suspends the run here; after, it suspends nothing and is kept as evidence.
     // A block it names is kept and decides nothing.
@@ -788,6 +845,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // results to ARENA_NOSTR_PUBLISH. Their images are named under ARENA_BADGE_IMAGE_BASE, else the first stable public address.
   nostrBadgesOn = badgesOn(), badgeImageBase = imageBaseOf(process.env.ARENA_BADGE_IMAGE_BASE) || replayPublic[0] || null,
   nostrBadgesTickMs = 60000 } = {}) {
+  // a seasonFetch handed in (a test's seats, a harness) reads its answers through the same bound as `fetch` (kanban #2637, #1469)
+  seasonFetch = answersUpTo(seasonFetch);
   // THE TAG SWITCH'S NETWORK (tag-switch.js, kanban #525): the chain this seat follows names whose BLWP/v1 -> ARENA/v1 point it uses
   { const n = { 'bitcoin-regtest': 'regtest', 'bitcoin-testnet4': 'testnet4' }[chain]; if (n) setTagNetwork(n); }
   let bondWarned = false;   //: a foreign bond proof is said once
@@ -1464,7 +1523,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           console.log(`[networks] automatic update of ${nid.slice(0, 16)} from ${from}: not taken - it names federation ${String(pkg.manifest.federationId).slice(0, 16)}, a succession is the owner's to take`);
           continue;
         }
-        const r = await takeNetwork({ network: nid, from, update: true });
+        const r = await takeNetwork({ network: nid, from, update: true, auto: true });
         console.log(`[networks] automatic update of ${nid.slice(0, 16)} from ${from}: ${r.ok ? `taken (package ${String(r.id).slice(0, 16)})` : r.why}`);
       }
     }
@@ -1830,7 +1889,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     try {
       let seats = []; try { seats = networkSeats(); } catch { seats = []; }
       for (const u of seats.slice(0, 32)) {
-        let got; try { const r = await seasonFetch(`${u}/proposals`, { signal: AbortSignal.timeout(10000) }); got = r.ok ? await r.json() : null; } catch { got = null; }
+        let got; try { const r = await seasonFetch(`${u}/proposals`, { signal: AbortSignal.timeout(10000) }); got = r.ok ? await jsonUpTo(r, PEER_LISTING_BYTES) : null; } catch { got = null; }   // kanban #2636, #1469: capped
         if (got && Array.isArray(got.proposals)) took += await proposals.pull(got.proposals);
       }
       if (took) console.log(`[ballot] took ${took} proposal(s) from the seats it knows`);
@@ -2043,7 +2102,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (own.ok) return reserveKeys.setFor(fedHex, epoch, own.pool.groupPublicKey);
     const said = new Map();
     await Promise.all(g.peers.map(async (u) => { try {
-      const r = await (await fetch(`${u}/reserves`, { signal: AbortSignal.timeout(8000) })).json();
+      const r = await jsonUpTo(await fetch(`${u}/reserves`, { signal: AbortSignal.timeout(8000) }), PEER_LISTING_BYTES);   // kanban #2636, #1469: capped
       const f = (r.federations || []).find((x) => x.federationId === fedHex && x.key);
       if (f) said.set(f.key, (said.get(f.key) || 0) + 1);
     } catch { /* a seat that does not answer names nothing */ } }));
@@ -2104,8 +2163,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // /reserves?all=1 a minute to the 22 seats of one host, ~200 kB each - the same answer, every federation in it, read again for each
     // federation the node holds a key of; with a new TLS handshake each, its doors went unanswered for 5-15 s)
     const listsOf = new Map();   // seat -> its /reserves?all=1 answer (a promise; null when it did not answer)
-    const listOf = (u) => { if (!listsOf.has(u)) listsOf.set(u, fetch(`${u}/reserves?all=1`, { signal: AbortSignal.timeout(8000) }).then((r) => r.json()).catch(() => null)); return listsOf.get(u); };
+    const listOf = (u) => { if (!listsOf.has(u)) listsOf.set(u, fetch(`${u}/reserves?all=1`, { signal: AbortSignal.timeout(8000) }).then((r) => jsonUpTo(r, PEER_LISTING_BYTES)).catch(() => null)); return listsOf.get(u); };   // kanban #2636, #1469: capped
     let checks = 0, kept = 0, later = 0;
+    // EACH SEAT ITS OWN SHARE OF THE CHECKS (kanban #2521): the RESERVE_PEER_CHECKS budget was one for all seats, so one seat listed
+    // first with 200 fresh made-up outpoints each pass took every check and the rows the honest seats list were never asked. Now each
+    // seat's rows are checked against its own share (the budget split over the seats, at least RESERVE_PEER_CHECKS_MIN each), and a row
+    // that did not verify is backed off and passed over for the seat that listed it only - another seat listing the same outpoint still
+    // has its own row asked (so a seat cannot shadow an honest row by listing it first with wrong fields).
+    const RESERVE_PEER_CHECKS_MIN = 4;
+    const perSeat = Math.max(RESERVE_PEER_CHECKS_MIN, Math.floor(RESERVE_PEER_CHECKS / Math.max(1, seats.length)));
+    const checksOf = new Map();   // seat -> checks used this pass
     for (const fedHex of Object.keys(g)) {
       const key = await keyFor(fedHex);
       const port = key ? await portOf(fedHex) : null;
@@ -2117,16 +2184,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const f = (r.federations || []).find((x) => x.federationId === fedHex); listed = f && Array.isArray(f.paidIn) ? f.paidIn : []; }
         catch { continue; }
         for (const row of listed) {
-          if (!row || seen.has(row.outpoint) || checks >= RESERVE_PEER_CHECKS) continue;
-          seen.add(row.outpoint);
+          if (!row || seen.has(row.outpoint) || seen.has(`${u} ${row.outpoint}`) || (checksOf.get(u) || 0) >= perSeat) continue;
+          seen.add(`${u} ${row.outpoint}`);
           const [tx, idx] = String(row.outpoint).split(':');
-          try { if (round.donationOutputAt({ txid: fromHex(tx), outIdx: idx })) continue; } catch { continue; }
-          const missKey = `${fedHex}/${row.outpoint}`;
+          try { if (round.donationOutputAt({ txid: fromHex(tx), outIdx: idx })) { seen.add(row.outpoint); continue; } } catch { continue; }
+          const missKey = `${fedHex}/${u}/${row.outpoint}`;
           const missed = reserveMissed.get(missKey);
           if (missed && now() < missed.nextAt) { later++; continue; }
-          checks++;
+          checks++; checksOf.set(u, (checksOf.get(u) || 0) + 1);
           const v = await verifyPeerReserveRow({ row, port, reserveKey: key, federationId: fromHex(fedHex) }).catch((e) => ({ ok: false, why: e.message }));
-          if (v.ok) { reserveMissed.delete(missKey); kept++; round.putDonationOutputs([v.row]); console.log(`[reserves] ${fedHex.slice(0, 8)}: kept ${row.amountMsat} msat at ${row.outpoint.slice(0, 16)}… from ${u}`); }
+          if (v.ok) { seen.add(row.outpoint); reserveMissed.delete(missKey); kept++; round.putDonationOutputs([v.row]); console.log(`[reserves] ${fedHex.slice(0, 8)}: kept ${row.amountMsat} msat at ${row.outpoint.slice(0, 16)}… from ${u}`); }
           else {
             const misses = (missed ? missed.misses : 0) + 1;
             const waitMs = Math.min(RESERVE_RETRY_FIRST_MS * 2 ** (misses - 1), RESERVE_RETRY_MAX_MS);
@@ -2168,10 +2235,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // BEFORE A FEE DECISION, EVERY SEAT'S APPROVALS AND SIGNALS (ruled on #1245, kanban #1231): GET /funding-items of each network seat this seat reaches
     pull: async (pid) => {
       let seats = []; try { seats = networkSeats(); } catch { seats = []; }
-      const got = await Promise.all(seats.map(async (base) => { try { const r = await fetch(`${base}/funding-items?proposal=${pid}`, { signal: AbortSignal.timeout(8000) }); return r.ok ? ((await r.json()).items || []).map((x) => (x && typeof x === 'object' ? { ...x, seat: String(base) } : x)) : []; } catch { return []; } }));
+      // kanban #2488: a seat that did not answer is named in `missing` - the signal's decide asks again before it writes its outcome once
+      const missing = [];
+      const got = await Promise.all(seats.map(async (base) => { try { const r = await fetch(`${base}/funding-items?proposal=${pid}`, { signal: AbortSignal.timeout(8000) }); if (!r.ok) { missing.push(String(base)); return []; } return ((await jsonUpTo(r, PEER_LISTING_BYTES)).items || []).map((x) => (x && typeof x === 'object' ? { ...x, seat: String(base) } : x)); } catch { missing.push(String(base)); return []; } }));
       // with when each seat first held it (kanban #1279) and WHICH seat says so (kanban #1607): one seat's claim alone never backdates a signal
-      return got.flat().filter((x) => x && (x.kind === 'signal' || x.kind === 'fee-approval') && /^[0-9a-f]+$/i.test(String(x.hex || '')))
+      const items = got.flat().filter((x) => x && (x.kind === 'signal' || x.kind === 'fee-approval') && /^[0-9a-f]+$/i.test(String(x.hex || '')))
         .map((x) => ({ kind: x.kind, hex: x.hex, seat: x.seat, ...(/^[0-9]{1,16}$/.test(String(x.atMs || '')) ? { atMs: Number(x.atMs) } : {}) })).slice(0, 4096);
+      items.missing = missing;
+      return items;
     },
     // THE PROTOCOL DEVELOPERS OF A NETWORK: the keys of the network's donation set in force at this seat's tip - their
     // majority answers a fee proposal that changes a donation; a set of LNURLs names no key, and none can approve
@@ -2461,7 +2532,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       try {
         const r = await fetch(`${at}/first-mark`, { method: 'POST', body, signal: AbortSignal.timeout(3000) });
         let got;
-        try { got = JSON.parse(await r.text()); } catch { got = {}; }
+        try { got = JSON.parse(await textUpTo(r, 65536)); } catch { got = {}; }   // kanban #2636, #1469: capped
         why = got.why ? String(got.why).slice(0, 120) : undefined;
         if (r.ok && got.receipt) { try { round.takeReceipt(fromHex(String(got.receipt))); } catch { /* not this mark's */ } answer = 'receipted'; }
         else if (got.entryVoid) answer = 'late';
@@ -2523,6 +2594,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // HOLDS is counted only before a Void (`orHeld`): at the door a different
   // one already goes to the chain's own refusal, which keeps that proof
   // (equivocation at a tick, or a parent that is not the head).
+  // kanban #2445: is this signed mark the decoded mark `c` by id (any encoding of the same fields)?
+  const sameMarkId = (m, c) => {
+    try { return toHex(checkpointId(decodeCheckpoint(splitSigned(m).body))) === toHex(checkpointId(c)); } catch { return false; }
+  };
   const secondFirstMark = (c, bytes, { orHeld = false } = {}) => {
     if (round.equivocation(c.roundId, c.entryId).length > 0) return true;
     const late = round.startForfeit(c.entryId);
@@ -2555,9 +2630,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const startLine = round.startLine(c.roundId, c.entryId);
     const retryOfRefusedLateStart = !!late && !carried(late.mark)
       && !!startLine && c.tick > startLine.lastTick && late.markTick > startLine.lastTick;
+    // THE OTHER MARK IS ANOTHER ID, NOT OTHER BYTES (kanban #2445): checkpointId re-encodes the fields, so the voided
+    // first mark with its version byte changed by a stranger (public at /checkpoints, /entry-void) is the same mark, its
+    // signature intact - compared by bytes it was kept as "two first marks" and the outage refund became a FORFEIT.
     const other = [late && !retryOfRefusedLateStart && late.mark,
       voided && voided.firstMark, orHeld && round.firstMarkHeld(c.roundId, c.entryId)]
-      .find((m) => m && toHex(m) !== toHex(bytes));
+      .find((m) => m && toHex(m) !== toHex(bytes) && !sameMarkId(m, c));
     if (!other || !round.putFirstMarkPair({ a: other, b: bytes })) return false;
     // A VOID SIGNER NODE ALSO KEEPS THE PLAYER'S LATE FIRST MARK AS A LATE START (M3.3-34,
     // ruled 2026-09-13), next to the pair: the late start's own record, through
@@ -2729,6 +2807,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const theirs = got.firstMark ? fromHex(String(got.firstMark)) : null;
         const line = round.startLine(c.roundId, c.entryId);
         if (theirs && line && c.tick <= line.lastTick && toHex(theirs) !== toHex(bytes)
+          && !sameMarkId(theirs, c)   // the same mark re-encoded is not a different first mark (kanban #2445)
           && round.putFirstMarkPair({ a: theirs, b: bytes })) return { twoFirst: true };
         const late = lateEvidenceHere(c, { kind: got.evidenceKind, evidence: got.evidence }, got.receipt ? fromHex(String(got.receipt)) : null);
         if (late) return { late, receipts: receiptsGiven(got) };
@@ -2922,19 +3001,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // made may still carry an operator; it decodes and is ignored.
   const conflictsFor = () => ({ conflicted: new Map(), self: null, serving: { voids: false } });
   // THE SERIES PUBLISHER'S FEE BACK (§5A.5): a series round naming its creator whose series' publication fee
-  // this seat holds proven (POST /series-publication) pays min(fee, 10,000 sat) to the creator's key - in round 0, or the first
-  // round of the series with entries (publisher-payout.js publisherRoundIndex); every other round pays nothing of it
+  // this seat holds proven (POST /series-publication) pays min(fee, 10,000 sat) to the creator's key - in round 0 only.
+  // ONE PAYING ROUND EVERY SEAT NAMES ALIKE (kanban #2514): "the first round of the series with entries" was read from the entries
+  // THIS seat holds of rounds 0..k-1 - and a seat holds only the rounds whose committee it sat on, so a seat of round k that missed
+  // the earlier round that paid named the publisher again while one that sat on it did not: two settlements for one round (no
+  // threshold), or the publisher paid out of the nodes' fee once more in every round whose seats missed the earlier ones. The round
+  // index is in the contract every seat of the round holds, so round 0 is the one paying round they all agree on; a round 0 without
+  // entries has no fee lock to pay it from, and the fee back is then not paid (publisher-payout.js publisherRoundIndex is unchanged)
   const publisherFor = (rid, contract) => {
     if (!(contract.seriesId instanceof Uint8Array) || !(contract.creatorPubkey instanceof Uint8Array)) return null;
+    if (Number(contract.roundIndex) !== 0) return null;
     const kept = round.seriesPublication(contract.seriesId);
     if (!kept) return null;
-    const counts = new Map();
-    for (let j = 0; j <= contract.roundIndex; j++) {
-      const n = j === contract.roundIndex ? Math.max(1, round.entriesOf(rid).length) : round.entriesOf(seriesRoundIdOf(contract.seriesId, j)).length;
-      counts.set(j, n);
-      if (n > 0) break;                                     // the first with entries is found: later ones never pay it
-    }
-    if (publisherRoundIndex(counts) !== contract.roundIndex) return null;
     return { payoutPk: refundKeyOf(contract.creatorPubkey), msat: publisherPayoutMsat(kept.feeSats) };
   };
   const settlements = new LockSettlement(round, {
@@ -3057,7 +3135,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // its price; a round of such a game whose window ended in the last 30 min and that this seat is drawn for gets its word, the other
   // drawn seats' words, and - once 5 signed one body - the attestation held here and handed to the round's settlement committee
   const drawnHosted = [...hosted.values()].some((h) => h && h.manifest && isDrawnAttest(h.manifest));
-  const drawnContracts = new Map();   // round hex -> { c, window, openedMs }: the drawn-attestation rounds of the last 4 h only
+  // round hex -> { c, window, openedMs }: the drawn-attestation rounds until their window ended DUE_AFTER_END_MS ago (kanban #2406: a flat
+  // 4 h after opening dropped every round of a market on a period of 4 h or more before it was ever due - none signed, all VOID)
+  const drawnContracts = new Map();
   let drawnAfterRowid = 0;             // the rounds row read last (kanban #791)
   const drawnAttestor = drawnHosted ? new DrawnAttestor({
     readPrice: () => prices.readPrice(), selfKey: toHex(round.pubkey), sign: (d) => schnorr.sign(d, round.identity.secret),
@@ -3073,7 +3153,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // here - 22,022 rounds opened in the last 4 h, mostly RPS grid rounds, each id hexed and looked up again every 10 s): the rows
       // after the last rowid read are read, and only the drawn-attestation rounds among them are kept, with when they were opened
       const now = round.now(), out = [];
-      for (const r of round.db.prepare('SELECT rowid AS n, lower(hex(round_id)) AS h, opened_ms AS at FROM rounds WHERE rowid > ? AND opened_ms > ?').all(drawnAfterRowid, now - 4 * 3600000)) {
+      // kanban #2406: rows opened within DRAWN_KEEP_MS (the attestor's KEEP_MS - the longest market window and its due time) are read,
+      // so a seat restarted inside a long window still holds its round when it falls due
+      for (const r of round.db.prepare('SELECT rowid AS n, lower(hex(round_id)) AS h, opened_ms AS at FROM rounds WHERE rowid > ? AND opened_ms > ?').all(drawnAfterRowid, now - DRAWN_KEEP_MS)) {
         if (r.n > drawnAfterRowid) drawnAfterRowid = r.n;
         try {
           const c = round.contractOf(fromHex(r.h)), plugin = c ? attestedOf(c) : null;
@@ -3081,8 +3163,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         } catch { /* not a drawn round */ }
       }
       for (const [k, d] of drawnContracts) {
-        if (d.openedMs <= now - 4 * 3600000) { drawnContracts.delete(k); continue; }
-        if (Number(d.window.endMs) <= now && Number(d.window.endMs) > now - 1800000) out.push({ roundId: fromHex(k), window: d.window });
+        if (Number(d.window.endMs) <= now - DUE_AFTER_END_MS) { drawnContracts.delete(k); continue; }
+        if (Number(d.window.endMs) <= now && Number(d.window.endMs) > now - DUE_AFTER_END_MS) out.push({ roundId: fromHex(k), window: d.window });
       }
       return out;
     },
@@ -3126,9 +3208,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
     return r;
   }
+  // READ UP TO A BOUND (kanban #2636, bypass of #1469): both pulls below run on every seat, 30 s after start and every 10 min, and read
+  // every network seat's answer - a bare r.json() held one seat's 32 MiB answer whole (4x what a request body may carry), twice a pass.
+  // At most 256 notices are taken from each, a few hundred KiB of hex; the answer is read up to PEER_LISTING_BYTES (4 MiB) and dropped
+  // past it. The same bound holds every other peer answer this file read bare (/proposals, /reserves, /funding-items, /first-mark,
+  // /lock-namer, the founding's fetchJson, /gateway-seating, the liquidity seatings, the address pull) - all through peer-read.js.
   const pullEmergencies = async () => {
     for (const u of networkSeats()) {
-      let got; try { const r = await fetch(`${u}/emergency-departures`, { signal: AbortSignal.timeout(10000) }); got = r.ok ? await r.json() : null; } catch { got = null; }
+      let got; try { const r = await fetch(`${u}/emergency-departures`, { signal: AbortSignal.timeout(10000) }); got = r.ok ? await jsonUpTo(r, PEER_LISTING_BYTES) : null; } catch { got = null; }
       for (const h of (got && Array.isArray(got.requests) ? got.requests : []).slice(0, 256)) { try { await takeEmergency(readEmergencyHex(h), { pass: false }); } catch { /* not one */ } }
     }
   };
@@ -3136,7 +3223,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // chain state and the bytes are checked against it, so there is no freshness window. Only notices that name an anchor are pulled.
   const pullDepartures = async () => {
     for (const u of networkSeats()) {
-      let got; try { const r = await fetch(`${u}/absences`, { signal: AbortSignal.timeout(10000) }); got = r.ok ? await r.json() : null; } catch { got = null; }
+      let got; try { const r = await fetch(`${u}/absences`, { signal: AbortSignal.timeout(10000) }); got = r.ok ? await jsonUpTo(r, PEER_LISTING_BYTES) : null; } catch { got = null; }
       for (const h of (got && Array.isArray(got.departures) ? got.departures : []).slice(0, 256)) {
         try { const d = readDepartureHex(h); if (d.anchor) await absences.offerAnchored(d); } catch { /* not one */ }
       }
@@ -4663,7 +4750,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     let v = heldKept.get(k);
     const c = v && v.bad ? null : round.contractOf(rid);
     if (!v || (!v.bad && v.c !== c)) {
-      if (c) { let endMs = null; try { endMs = roundEndMs(c); } catch { endMs = null; } v = { c, endMs }; } else v = { bad: true };
+      if (c) {
+        let endMs = null; try { endMs = roundEndMs(c); } catch { endMs = null; }
+        // A HEAD-TO-HEAD ROUND IS CLOSED (AND DECIDED) ONLY ONCE ITS END + FINAL_TOLERANCE_MS HAS PASSED ON THIS SEAT'S CLOCK (kanban #1976, audit
+        // #1489 sm5-h2h-1): the reveal door times a reveal by the receiving seat's own clock, so a seat whose clock ran up to 5 s behind still took a
+        // reveal after a seat ahead had closed, carried the peers' /reveals once and signed without it - the two signed opposite verdicts and the
+        // round never settled. Closed this late, every reveal any seat took by its own end is carried before this seat decides. The early close at the
+        // reveal door (every seated player revealed) stays: a full set of reveals cannot change.
+        let closeMs = endMs;
+        if (endMs !== null) { const f = pluginForRound(c, hosted); if (f.ok && f.headToHead) closeMs = endMs + BigInt(FINAL_TOLERANCE_MS); }
+        v = { c, endMs, closeMs };
+      } else v = { bad: true };
       heldKept.set(k, v);
     }
     return v;
@@ -4784,7 +4881,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const h = heldOf(roundId);
         if (h.bad || h.endMs === null) continue;
         const end = h.endMs;
-        if (nowMs < end) continue;
+        if (nowMs < h.closeMs) continue;
         if (round.close(held.roundId)) {
           if (hasEntry.get(held.roundId)) console.log(`[close] ${toHex(held.roundId).slice(0, 16)} is over at ${end}: closed by this signer node`);
           else quietClosed += 1;
@@ -4947,7 +5044,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       try {
         const r = await fetch(`${base}/lock-namer?kind=${kind}&outpoint=${op}&player=${toHex(entry.playerPubkey)}`, { signal: AbortSignal.timeout(1500) });
         if (!r.ok) return null;
-        const body = await r.json();
+        const body = await jsonUpTo(r, PEER_LISTING_BYTES);   // kanban #2636, #1469: capped
         if (!body || typeof body.entry !== 'string' || typeof body.bytes !== 'string' || !Number.isFinite(body.joinedMs)) return null;
         const bytes = fromHex(body.bytes), e = decodeEntryContract(bytes), id = idOfEntry(e);
         if (toHex(id) !== body.entry.toLowerCase()) return null;
@@ -5395,7 +5492,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
   };
   // A SEAT SIGNS FOR A HEAD-TO-HEAD ROUND ONLY ONCE IT KNOWS WHO IS IN IT (kanban #1071): false when the wait ran out at the result window, and this seat stays silent
-  const asksPeers = seatView((...a) => globalThis.fetch(...a));
+  const asksPeers = seatView((...a) => fetch(...a));   // the capped door (kanban #2637); seatView reads with jsonUpTo too
   const membersKnown = async (rid, c) => {
     const held = () => new Set(round.entriesOf(rid).map(({ entryId: e }) => toHex(e)));
     // A FREE ROUND THIS SEAT HOLDS NOTHING OF: no backup rule refuses a free entry, and nothing of it is signed here
@@ -5486,6 +5583,22 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const roundContract = decodeRoundContract(new Uint8Array(forRound.contract));
     // NO STAKE IS DEALT FOR A ROUND THIS NODE REFUSES: nothing may be locked for it
     { const why = accepted ? null : offerRefusal(roundContract); if (why) return { ok: false, status: 409, why: `handout refused: ${why}` }; }
+    // NO HANDOUT FOR A HEAD-TO-HEAD ROUND WHOSE TABLE IS ALREADY FULL (kanban #2634, a bypass of #1485 found by the #1489 audit): #1485 refuses the
+    // handout of an order that cannot land before the close, but a paid head-to-head round that already seats its game's players on locks took a
+    // third player's handout in good time (201) - the page then made the federation lock and every seat refused the entry ("already seats ... 2
+    // players", round.js) or its lock at /lock: the developers' and reserves' parts of that lock stayed spent, the #010 loss on a timely tap. The
+    // seats here are the entry door's (round.js seatedEntriesOf, the same at every seat), not counting this handout's own player, so a player
+    // already seated who posts his handout again (a reload) still goes through; a handout a certified batch names (accepted) is never refused here
+    if (!accepted && roundContract.stakeMsat > 0n && typeof round.seatedEntriesOf === 'function') {
+      const g = pluginForRound(roundContract, hosted);
+      if (g.ok && g.headToHead) {
+        const players = g.plugin.manifest.players;
+        const others = round.seatedEntriesOf(handout.roundId, roundContract.stakeMsat)
+          .filter((x) => !(x.entry && x.entry.playerPubkey && Buffer.from(x.entry.playerPubkey).equals(Buffer.from(handout.playerPubkey)))).length;
+        if (others >= players)
+          return { ok: false, status: 409, why: `handout refused: that table is full - the round already seats game "${g.plugin.manifest.gameName}"'s ${players} players; nothing is locked, tap the next round` };
+      }
+    }
     // NO HANDOUT FOR A HEAD-TO-HEAD ROUND THAT CLOSES BEFORE ITS ORDER CAN LAND (kanban #1485, Daniel 2026-11-11: "Er sollte keine fees entgegen nehmen wenn
     // die order nicht angenommen wird"; feedback #010, round 77bd9609: this door took a handout 1.8 s after the close, the player's page locked the stake, and
     // every seat refused the entry - the developers' and reserves' parts of that lock stayed spent). A head-to-head round takes no entry from its close, and a
@@ -6065,6 +6178,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!fid || !retireBook.has(fid)) return;
         const held = fedRecords.recordOf(fid);
         if (!held || held.status !== 'CLOSED' || (held.record && held.record.successorId && held.record.successorId.some((x) => x))) return;
+        // NEVER OVER A RESERVE (kanban #1980): a CLOSED record naming a reserve is no retirement - the guardian keeps serving it
+        if (held.record && BigInt(held.record.reserveSats || 0n) > 0n) { console.log(`[retire] ${fid.slice(0, 16)} CLOSED over ${held.record.reserveSats} sat: the guardian keeps serving`); return; }
         // NOT BEFORE A THRESHOLD OF ITS GUARDIANS' SEATS HOLD IT CLOSED (kanban #577, measured 2026-10-22 on 89ce310e): set aside at once, the
         // first guardian took its signature and its reserve answer away, and the others could never close the record themselves
         const at = await fedRecords.closedAtGuardians(fid);
@@ -6257,7 +6372,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // a founding every 6 blocks on every network (guardian-founding.js FOUNDING_WINDOW); the genesis clock stays in the network id
       clocks: { ...fedClocks, foundingWindow: FOUNDING_WINDOW, departureAnchorGate: anchorGate }, ownKey: round.pubkey, sign: (h) => schnorr.sign(h, round.identity.secret), verify: schnorrVerify,
       post: async (m) => { await Promise.all(networkSeats().map((u) => fetch(`${u}/founding`, { method: 'POST', body: JSON.stringify(m), signal: AbortSignal.timeout(15000) }).catch(() => null))); },
-      peers: () => networkSeats(), fetchJson: async (u) => (await fetch(u, { signal: AbortSignal.timeout(15000) })).json(),
+      peers: () => networkSeats(), fetchJson: async (u) => jsonUpTo(await fetch(u, { signal: AbortSignal.timeout(15000) }), PEER_LISTING_BYTES),   // kanban #2636, #1469: capped
       endpointOf: (e) => addressBook.endpointOf(e),
       postTo: async (root, m) => { await fetch(`${root}/founding`, { method: 'POST', body: JSON.stringify(m), signal: AbortSignal.timeout(15000) }); },
       say: (o) => console.log(`[founding] ${JSON.stringify(o)}`) });
@@ -6575,7 +6690,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           if (!e || !e.advert || !e.advert.endpoint) continue;
           try {
             const r = await fetch(`${String(addressBook.endpointOf(e) || e.advert.endpoint).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '')}/gateway-seating?federation=${fid}&epoch=${ep}`, { signal: AbortSignal.timeout(10000) });
-            if (r.status === 200) signed.push(await r.json());
+            if (r.status === 200) signed.push(await jsonUpTo(r, PEER_LISTING_BYTES));   // kanban #2636, #1469: capped
           } catch { /* that guardian's signature is missing this time */ }
         }
         if (!signed.length) continue;
@@ -6588,7 +6703,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const sf = setTimeout(() => { gatherSeatings().catch(() => {}); }, 90000); if (sf.unref) sf.unref();
     // THE LIQUIDITY SEATINGS (§23A.10): a guardian lists its federation's providers - every census node's liquidity claim, the
     // federation's custody nodes' LND keys from their gateway claims - and signs it once per epoch; every seat keeps the standing one
-    const getJson = async (u) => { try { const r = await fetch(u, { signal: AbortSignal.timeout(10000) }); return r.status === 200 ? await r.json() : null; } catch { return null; } };
+    const getJson = async (u) => { try { const r = await fetch(u, { signal: AbortSignal.timeout(10000) }); return r.status === 200 ? await jsonUpTo(r, PEER_LISTING_BYTES) : null; } catch { return null; } };   // kanban #2636, #1469: capped
     const gatherLiquidity = async () => {
       const epoch = Math.floor(Number(await chainTip()) / GATEWAY_EPOCH_BLOCKS) - 1;
       const now = fedRecords.censusNow ? fedRecords.censusNow() : { ok: false };
@@ -6794,7 +6909,26 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
     console.log(`[networks] federation ${oldFed.slice(0, 16)} is draining: its successor is ${successor.slice(0, 16)} - no new round or deposit names it`);
   };
-  const activateNetwork = (pkg, r) => {
+  // A PACKAGE'S SERIES PASS THE DOOR A PULLED SERIES PASSES unless the owner took that package (kanban #2545, attack audit r13): the
+  // unattended automatic update took ANY series one source seat listed in its GET /network - nobody funded or published, any stake -
+  // and wrote its 960 rounds a day, though POST /series and the series pull (#757) refuse it. A series the owner's signed install or
+  // update did not name is held only with its creator's signature, its bond_min and, paying, funded here or its publication confirmed
+  // on this seat's own chain (publishedHere, asked once in the background). The owner's series are kept beside the package
+  // (owner-series.json), so a restart gates the same ones
+  const packageSeriesGate = (t) => {
+    const id = toHex(seriesId(t));
+    try {
+      const cr = seriesCreatorStands(t, t.creatorSignature || null, { verify: (sg, m, k) => schnorr.verify(sg, m, k), seriesIdOf: seriesId });
+      if (!cr.ok) return { ok: false, why: cr.why };
+      const r0 = seriesRound(t, 0); const bm = bondMinStands(r0, roundIdOf(r0)); if (!bm.ok) return { ok: false, why: bm.why };
+    } catch (e) { return { ok: false, why: e.message }; }
+    if (!(BigInt(t.stakeMsat || 0n) > 0n)) return { ok: false, why: 'a free series is taken only where its operator runs it' };
+    if (funded({ kind: 'series', contract: { stakeMsat: t.stakeMsat, seriesIdBytes: fromHex(id) }, node: fundingView })) return { ok: true };
+    return { ok: false, later: true, why: 'nobody funded it here and its publication is not confirmed on this seat\'s chain' };
+  };
+  const ownerSeriesFile = (nid) => joinPath(networksDir, nid, 'owner-series.json');
+  const ownerSeriesOf = (nid) => { try { return new Set(JSON.parse(readFileSync(ownerSeriesFile(nid), 'utf8')).filter((x) => typeof x === 'string')); } catch { return new Set(); } };
+  const activateNetwork = (pkg, r, { ownerSeries = new Set() } = {}) => {
     const prev = networksHeld.get(r.networkId);
     const before = fedOf(inviteFor(r.networkId));
     const setIds = new Set(prev ? prev.setIds : []);
@@ -6811,17 +6945,34 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (held.has(id) || offChainSeries.has(id)) continue;
       refusedSeries.delete(id);
       if (refuseSeries(t)) continue;
-      const w = seriesWriter(round, t);
-      if (!series.some((x) => toHex(seriesId(x)) === id)) series.push(t);
-      writers.push(w); held.add(id); storeSeries.add(id); droppedSeries.delete(id); seriesVersion++;
-      console.log(`[networks] series ${id.slice(0, 16)} held from network package ${r.id.slice(0, 16)}: written from now, no restart`);
+      if (!ownerSeries.has(id)) {
+        const g = packageSeriesGate(t);
+        if (!g.ok) {
+          console.log(`[networks] series ${id.slice(0, 16)} of network package ${r.id.slice(0, 16)} not held: ${g.why} (#2545)`);
+          if (g.later) publishedHere(t).then((p) => {
+            const h = networksHeld.get(r.networkId);
+            if (!p.ok || !h || !h.seriesIds.has(id) || offChainSeries.has(id) || writers.some((x) => toHex(x.id) === id) || refuseSeries(t)) return;
+            holdPackageSeries(t, id, r);
+          }, () => {});
+          continue;
+        }
+      }
+      holdPackageSeries(t, id, r);
+      held.add(id);
     }
-    networksHeld.set(r.networkId, { pkg, report: r, seriesIds: seriesIdsHeld, setIds });
+    networksHeld.set(r.networkId, { pkg, report: r, seriesIds: seriesIdsHeld, setIds, ownerSeries });
     if (before && before !== r.federationId) markDraining(r.networkId, before, r.federationId);
     if (writers.length) startSeriesTimer();
   };
+  const holdPackageSeries = (t, id, r) => {
+    const w = seriesWriter(round, t);
+    if (!series.some((x) => toHex(seriesId(x)) === id)) series.push(t);
+    writers.push(w); storeSeries.add(id); droppedSeries.delete(id); seriesVersion++;
+    console.log(`[networks] series ${id.slice(0, 16)} held from network package ${r.id.slice(0, 16)}: written from now, no restart`);
+    startSeriesTimer();
+  };
   const topSerialOf = (nid) => { let top = -1n; for (const x of donationSets) if (toHex(x.networkId) === nid && x.serial > top) top = x.serial; return top; };
-  async function takeNetwork({ network, from, update = false }) {
+  async function takeNetwork({ network, from, update = false, auto = false }) {
     if (!networksDir) return { ok: false, status: 409, why: 'this seat keeps no installed networks (no plugins directory)' };
     from = String(from || '').replace(/\/+$/, '');
     if (!/^[0-9a-f]{64}$/.test(network) || !/^https?:\/\//.test(from)) return { ok: false, status: 400, why: 'name a network id and the seat to take it from' };
@@ -6842,7 +6993,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
     mkdirSync(joinPath(networksDir, network), { recursive: true });
     writeFileSync(joinPath(networksDir, network, 'package.json'), JSON.stringify(pkg));
-    activateNetwork(pkg, v);
+    // the owner's own install or update names its series; the automatic one keeps only what the owner named before (#2545)
+    const ownerSeries = auto ? new Set(networksHeld.get(network)?.ownerSeries || []) : new Set(v.series.map((t) => toHex(seriesId(t))));
+    writeFileSync(ownerSeriesFile(network), JSON.stringify([...ownerSeries]));
+    activateNetwork(pkg, v, { ownerSeries });
     console.log(`[networks] ${update ? 'updated' : 'installed'} network ${network.slice(0, 16)} (package ${v.id.slice(0, 16)}) from ${from}: ${v.sets.length} set(s), ${v.series.length} series, federation ${String(v.federationId).slice(0, 16)} - in force now`);
     return { ...plain(v), ok: true, network, from, running: true, update,
       held: { sets: v.sets.length, series: v.series.map((t) => toHex(seriesId(t))), federationId: v.federationId } };
@@ -6889,7 +7043,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       try { for (const [fed, d] of Object.entries(JSON.parse(readFileSync(joinPath(networksDir, id, 'draining.json'), 'utf8')))) markDraining(id, fed, d.successor, d.sinceMs, false); } catch { /* none draining */ }
       const v = checkOnSeat(pkg);
       if (!v.ok || v.networkId !== id) { console.error(`[networks] installed network ${id.slice(0, 16)} refused: ${v.why || 'another network id'}`); continue; }
-      activateNetwork(pkg, v);
+      activateNetwork(pkg, v, { ownerSeries: ownerSeriesOf(id) });
     }
   }
 
@@ -8378,7 +8532,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           if (!a.ok) return answer(a.status || 401, a);
           const prov = process.env.ARENA_LIQUIDITY_PROVIDER_URL || (process.env.ARENA_HOME ? `http://127.0.0.1:${(await import('../../arena-installer/src/state.js')).LIQUIDITY_PROVIDER_PORT}` : null);
           if (!prov) return answer(501, { ok: false, why: 'this node runs no liquidity provider service (ARENA_LIQUIDITY_PROVIDER_URL)' });
-          let r; try { const x = await fetch(`${prov.replace(/\/+$/, '')}/new-address`, { method: 'POST', signal: AbortSignal.timeout(60000) }); r = await x.json(); } catch (e) { r = { ok: false, why: `the provider service did not answer: ${e.message}` }; }
+          let r; try { const x = await fetch(`${prov.replace(/\/+$/, '')}/new-address`, { method: 'POST', signal: AbortSignal.timeout(60000) }); r = await jsonUpTo(x, PEER_LISTING_BYTES); } catch (e) { r = { ok: false, why: `the provider service did not answer: ${e.message}` }; }
           if (r.ok) dashboardKept = null;
           return answer(r.ok ? 200 : 502, r);
         }
@@ -10130,7 +10284,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'GET' && url.pathname === '/equivocation') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
-        const found = round.equivocation(rid, eid);
+        // THE PROVING PAIRS FIRST (kanban #2439, #1632, #1489 a44 refute 38): a reader takes only the head of this
+        // answer (EQUIVOCATION_PAIRS_PER_PEER pairs). Sorted by tick alone, a player that first sent 40 refused stale-head
+        // marks - each an unreceipted "two chains from one parent" pair that proves nothing (RULED 2026-10-05 (b)) - pushed
+        // its real fork past that head, and no other seat ever kept it. Now same-tick pairs, first-mark pairs and receipted
+        // parent forks come before unreceipted parent forks, each group by tick (a stable sort of the tick-sorted list).
+        // A player cannot fill the head with same-tick pairs without proving its own fork.
+        const weak = (f) => (f.how === 'two chains from one parent' && f.receipted !== true ? 1 : 0);
+        const found = round.equivocation(rid, eid).sort((x, y) => weak(x) - weak(y));
         if (!found.length) return text(res, 204, 'no equivocation held for that entry');
         const body = Buffer.concat(found.flatMap(
           (f) => [Buffer.from(f.stored), Buffer.from(f.offered)]));
@@ -10418,10 +10579,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // seat took it a second before the market's deadline and the next one a second after it - FINAL at one, VOID at the other, both
         // terminal, and neither the settlement nor the return door reached its threshold. A seat that takes one fresh and timely now posts
         // it to the round's other settlement seats before it answers (as a drawn seat's own combined one, kanban #630), so their arrival
-        // times differ by milliseconds, not by the daemon's timeouts. `handed=1` marks such a post: it is not handed on again.
-        if (got.fresh && !(got.now && got.now.evidenceOnly) && url.searchParams.get('handed') !== '1') {
+        // times differ by milliseconds, not by the daemon's timeouts.
+        // NO CLIENT-SET FLAG SKIPS IT (kanban #2179, #1489 refute of #1787): a `handed=1` query once marked a seat's hand-on post and was
+        // not handed on again - but anybody holding the bytes (the attestors' public words, combined) could post them to one seat with it
+        // a second before the deadline: that seat went FINAL and handed nothing on, the daemon's own post was then held already, and the
+        // next seat, reached after the deadline, went VOID. Every fresh one is handed on now, however it came; the loop is bounded by
+        // freshness alone - a seat hands one on only the first time it takes it, so a post back to a seat that holds it answers 200 there.
+        if (got.fresh && !(got.now && got.now.evidenceOnly)) {
           const to = winningsPeers(new Uint8Array(target));   // the settlement committee, as the return and book doors read it
-          await Promise.all(to.map((base) => fetch(`${String(base).replace(/\/+$/, '')}/outcome?round=${toHex(new Uint8Array(target))}&handed=1`,
+          await Promise.all(to.map((base) => fetch(`${String(base).replace(/\/+$/, '')}/outcome?round=${toHex(new Uint8Array(target))}`,
             { method: 'POST', body: raw, signal: AbortSignal.timeout(3000) }).catch(() => null)));
         }
         res.writeHead(got.fresh ? 201 : 200, { 'content-type': 'application/json', ...CORS });
@@ -10503,7 +10669,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!found.ok || !found.headToHead) return text(res, 409, 'that round is not a head-to-head game this node hosts: it has no table');
         const now = Number(round.now());
         const tables = presenceTables(round);
-        for (const [rid, t] of tables) { for (const [k, at] of t) if (now - at > PRESENCE_MS) t.delete(k); if (!t.size) tables.delete(rid); }
+        // each table: identity key hex -> { at: last said, since: first said in this unbroken stay (a key gone PRESENCE_MS starts again) }
+        for (const [rid, t] of tables) { for (const [k, p] of t) if (now - p.at > PRESENCE_MS) t.delete(k); if (!t.size) tables.delete(rid); }
         const ridHex = toHex(id);
         if (req.method === 'POST') {
           let body;
@@ -10518,26 +10685,51 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           // seat - each tab read "You are alone in this round" again; one presence on 256 old rounds refused every new table the same way.
           // Now a full table drops the presence said longest ago, never one whose identity a name record of the round names while an
           // unnamed one is there (a named identity is refused only when all 32 are named), and a full map drops the table said to longest ago.
+          // WHO MAKES ROOM IS THE NEWEST ARRIVAL, NOT THE LONGEST SILENT (kanban #2147, audit44 refute of #1645): the page says its presence
+          // before any move or join, so a real player at the table is not yet named by any name record. Dropping the key said longest ago let
+          // a stranger who posted 32 fresh keys AFTER her push her off at every seat - he only had to be later. Now a key keeps its slot for as
+          // long as it keeps saying its presence: a full table drops, among the unnamed, the key whose stay began last (its first say), and
+          // the newcomer takes that slot. A stream of junk keys churns only the newest slot; every player who sat before it keeps hers, a
+          // player who arrives during it still gets a slot, and her next say (every 2 s) takes it back. A named identity is dropped only when
+          // all 32 are named (then the one said longest ago). The table map follows the same rule: a full map drops the table whose
+          // stay began last (the newest of its keys' oldest stays), so tables that have stood longest keep their place.
+          // SOURCES, NOT ORDER (kanban #2385, #2437, audit44 refute s2): #2147's "drop the newest stay" let a stranger who filled the table
+          // BEFORE the players came leave them one slot to knock each other off, and one fresh key said after a (re)arriving player took his
+          // seat. Each key now also keeps the source it was said from, and a full table makes room from the source that holds the most
+          // keys (presenceToDrop): a stranger's keys only push out his own. A full map drops a table only one source sits at - the one
+          // said to longest ago of the source that sits alone at the most tables - else, as before, the table whose stay began last.
+          const src = presenceSource(req);
           if (!tables.has(ridHex) && tables.size >= 256) {
-            let old = null, oldAt = Infinity;
-            for (const [rid, tt] of tables) { const last = Math.max(...tt.values()); if (last < oldAt) { oldAt = last; old = rid; } }
-            tables.delete(old);
+            const solo = new Map();   // source -> [table round hex, last said]
+            for (const [rid, tt] of tables) {
+              const srcs = new Set([...tt.values()].map((p) => p.src));
+              if (srcs.size !== 1) continue;
+              const s1 = [...srcs][0], last = Math.max(...[...tt.values()].map((p) => p.said));
+              const e = solo.get(s1) || { n: 0, rid: null, last: Infinity }; e.n++; if (last < e.last) { e.last = last; e.rid = rid; } solo.set(s1, e);
+            }
+            let drop = null, most = 1;
+            for (const e of solo.values()) if (e.n > most) { most = e.n; drop = e.rid; }
+            if (drop === null) {
+              let dropStay = -Infinity;
+              for (const [rid, tt] of tables) { let s0 = Infinity; for (const p of tt.values()) if (p.stay < s0) s0 = p.stay; if (s0 >= dropStay) { dropStay = s0; drop = rid; } }
+            }
+            tables.delete(drop);
           }
           const t = tables.get(ridHex) || new Map();
           if (!t.has(body.key) && t.size >= 32) {
             const named = typeof round.namedIdentitiesOfRound === 'function' ? round.namedIdentitiesOfRound(new Uint8Array(id)) : new Set();
-            let drop = null, dropAt = Infinity;
-            for (const [k, at] of t) if (!named.has(k) && at < dropAt) { dropAt = at; drop = k; }
+            let drop = presenceToDrop(t, named, src);
             if (drop === null && !named.has(body.key)) return text(res, 503, 'that table is full');
-            if (drop === null) for (const [k, at] of t) if (at < dropAt) { dropAt = at; drop = k; }
+            if (drop === null) { let dropAt = Infinity; for (const [k, p] of t) if (p.said < dropAt) { dropAt = p.said; drop = k; } }
             t.delete(drop);
           }
-          t.set(body.key, now);
+          const was = t.get(body.key), seq = ++presenceSeq;
+          t.set(body.key, { at: now, since: was ? was.since : now, said: seq, stay: was ? was.stay : seq, src });
           tables.set(ridHex, t);
         }
         const t = tables.get(ridHex) || new Map();
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
-        return res.end(JSON.stringify({ round: ridHex, here: [...t].map(([key, at]) => ({ key, name: displayNameFromKey(fromHex(key)), agoMs: now - at })) }));
+        return res.end(JSON.stringify({ round: ridHex, here: [...t].map(([key, p]) => ({ key, name: displayNameFromKey(fromHex(key)), agoMs: now - p.at })) }));
       }
 
       // THE CERTIFIED LOCK SET OF A ROUND (protocol 28, kanban #2561): GET answers what this seat holds - its view, its one set signature, the
@@ -10958,6 +11150,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         } catch (e) { return text(res, 400, `that is not a lock: ${e.message}`); }
         if (round.stakeLockAt(outpoint) || (round.feeLockAt && round.feeLockAt(outpoint)))
           return text(res, 409, 'that lock stakes an entry at this signer node: it is settled with its round, never returned as refused');
+        // A HELD ENTRY'S OWN LOCK IS NOT RETURNED WHILE THE LOCK DOORS STILL TAKE IT (kanban #2547, state audit 2026-11-12): during a drain
+        // POST /lock and POST /fee-lock take the lock of an entry held here (offerRefusalOfRound with held: true, #1848), but this door read
+        // the drain as a refusal. With the page's hand-over in flight (it reached one seat, not yet this one) anyone handed that very lock
+        // here first - every field is public - and it was kept as refused: returnedHere (#1639) then refused it at /lock and at every
+        // repair, one seat staked the entry and this one never could, and the round's settlement and the lock's forfeit both stalled.
+        // So while the round is refused only for new entries (the drain), a lock an entry held here names as its stake or fee lock, and that
+        // the lock doors would still take for it (no lock close refusal), is settled with the round; once the lock doors close it is kept.
+        if (offerRefusalOfRound(rid) && !offerRefusalOfRound(rid, { held: true })) {
+          for (const kind of ['stake', 'fee']) {
+            const eid = round.firstEntryNamingLock(rid, kind, outpoint);
+            const stored = eid && round.entry(eid);
+            if (stored && !lockAfterCloseRefusal(stored, eid, kind) && !orderLockAfterClose(stored))
+              return text(res, 409, `that lock is the ${kind} lock of an entry this signer node holds, and its lock doors still take it: it is settled with the round, never returned as refused (kanban #1848, #2547)`);
+          }
+        }
         const claimPk = claimKeyOf(rid);
         if (!(claimPk instanceof Uint8Array) || toHex(claimPk) !== toHex(fields.claimPk))
           return text(res, 409, 'that lock names another claim key than this round\'s');
@@ -10966,12 +11173,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // THE STAKE: its image is A0 of the handout. ITS NODE-FEE LOCK (image H(F), the same transaction, the same refund key -
         // measured live 07:26Z: 49a50535's stake came back and its 2000 msat fee lock stayed for its expiry): the handout
         // whose player's refund key it names. Kept under an id of its own, H(handout id || "fee").
+        // A FEE LOCK IS THE TRY'S IT WAS LOCKED WITH (kanban #1945): every join deals a fresh handout under the same player key, so
+        // two tries of one player hold two handouts whose refund key the fee lock names. It is kept beside the handout whose kept stake
+        // lock is an output of its own lock transaction (the same txid); only with no such stake, the first handout as before.
         let held = null;
+        const feeId = (h) => sha256(new Uint8Array([...h.id, ...new TextEncoder().encode('fee')]));
+        const txHex = toHex(outpoint.txid);
         for (const h of round.handoutsOf(rid)) {
           let d; try { d = decodeHandout(h.bytes); } catch { continue; }
           if (image.kind === 'point' && d.commitments[0] && toHex(d.commitments[0]) === hex) { held = { id: h.id, handout: d }; break; }
           if (image.kind === 'hash' && toHex(refundKeyOf(d.playerPubkey)) === toHex(fields.refundPk)) {
-            held = { id: sha256(new Uint8Array([...h.id, ...new TextEncoder().encode('fee')])), handout: d }; break; }
+            const stakeKept = round.refusedLock(h.id);
+            if (stakeKept && String(stakeKept.outpoint).split(':')[0] === txHex) { held = { id: feeId(h), handout: d }; break; }
+            if (!held) held = { id: feeId(h), handout: d };
+          }
         }
         if (!held) return text(res, 409, image.kind === 'hash'
           ? 'this signer node holds no handout for that round whose player that fee lock refunds to: no fee of that round'
@@ -11239,7 +11454,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const got = sender.paid(r8, eHex, pre);
           return got.ok ? text(res, 201, 'the winning is kept as paid') : text(res, got.status || 409, got.why);
         }
-        const built = late8 ? await settlements.lateMessage(r8, late8) : await settlements.message(r8);
+        // AN ACCEPTED ROUND'S SENDS ARE SIGNED AGAINST THE TXID THAT LANDED (kanban #1988), not a rebuild a restart may make otherwise
+        const built = late8 ? await settlements.lateMessage(r8, late8) : await settlements.sendsBuilt(r8);
         if (!built.ok) return text(res, built.status || 409, built.why);
         const kind = url.searchParams.get('kind') === 'resend' ? 'resend' : 'auth';
         const attempt = url.searchParams.has('attempt') ? Number(url.searchParams.get('attempt')) : null;
@@ -11278,7 +11494,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!by.ok) return text(res, by.status || 403, `this seat takes a re-send only from a seat of the round: ${by.why}`);
         const late8 = lateHex ? new Uint8Array(Buffer.from(lateHex, 'hex')) : null;
         if (late8 && !round.lateLockSettlement(new Uint8Array(rid), late8)) return text(res, 409, 'no late settlement for that entry');
-        const built = late8 ? await settlements.lateMessage(new Uint8Array(rid), late8) : await settlements.message(new Uint8Array(rid));
+        const built = late8 ? await settlements.lateMessage(new Uint8Array(rid), late8) : await settlements.sendsBuilt(new Uint8Array(rid));
         if (!built.ok) return text(res, built.status || 409, built.why);
         const sender = late8 ? settlements.lateWinningsFor(new Uint8Array(rid), late8) : winnings;
         const got = await sender.checkResend(new Uint8Array(rid), built, proposed, { from: by.who });
@@ -11412,6 +11628,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'GET' && url.pathname === '/lock-settlement') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         if (rid.length !== 32) return text(res, 400, 'a settlement is asked for by a round id');
+        // ONE LATE ENTRY'S OR ONE FEDERATION'S ROW, AS A SEAT ASKS IT (kanban #2030): what another seat checks a landed transaction of that scope by,
+        // when its own read of the guardians finds every claimed lock gone and every payout already redeemed - its txid, message and signature
+        const lateQ = url.searchParams.get('late'), fedQ = url.searchParams.get('federation');
+        if (lateQ !== null || fedQ !== null) {
+          if (lateQ !== null && !/^[0-9a-f]{64}$/.test(lateQ)) return text(res, 400, 'a late settlement is named by a 32-byte entry id');
+          if (fedQ !== null && !/^[0-9a-f]{1,128}$/i.test(fedQ)) return text(res, 400, 'a federation settlement is named by its federation id');
+          const s = lateQ !== null ? (round.lateLockSettlement ? round.lateLockSettlement(new Uint8Array(rid), new Uint8Array(Buffer.from(lateQ, 'hex'))) : null)
+            : (round.fedLockSettlement ? round.fedLockSettlement(new Uint8Array(rid), fedQ.toLowerCase()) : null);
+          res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+          return res.end(JSON.stringify(s ? { state: s.state, txid: s.txid, why: s.why, signature: toHex(s.signature), message: toHex(s.message), madeMs: s.madeMs } : { state: 'NONE' }));
+        }
         // A ROUND THAT TAKES ANY FEDERATION (2026.0.3): one settlement per federation, each its own row
         const feds = settlements.fedSummary ? await settlements.fedSummary(new Uint8Array(rid), { moved: true }) : [];
         if (feds.length) {
@@ -11665,7 +11892,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!fundingBook) return ans(501, { ok: false, why: 'this node keeps no funding proposals' });
         let b; try { b = JSON.parse(Buffer.from(await read(req)).toString('utf8') || '{}'); } catch { return ans(400, { ok: false, why: 'a JSON body: { kind, hex }' }); }
         const r = await fundingBook.add(b.kind, b.hex);
-        if (r.ok && r.fresh && !req.headers['x-arena-forwarded']) forwardFunding(b.kind, b.hex);
+        // kanban #2431: x-arena-forwarded is anyone's to send - a signer posting a signal "forwarded" to two seats only kept it off the others until the
+        // cutoff. A fresh signal or fee approval is handed on whatever the header says (fresh only once per seat, so no loop)
+        if (r.ok && r.fresh && (!req.headers['x-arena-forwarded'] || b.kind === 'signal' || b.kind === 'fee-approval')) forwardFunding(b.kind, b.hex);
         return ans(r.ok ? 200 : (r.status || 400), r);
       }
       if (req.method === 'POST' && url.pathname === '/donation-ballot') {
@@ -12661,7 +12890,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE OTHERS' NEWEST ADDRESSES, PULLED as well (address-book.js pullAnnouncements, kanban #577): a node a push missed learns them here
   const pullAddresses = async (list) => {
     try {
-      const get = async (u) => { const r = await fetch(u, { signal: AbortSignal.timeout(15000) }); return r.ok ? r.json() : null; };
+      const get = async (u) => { const r = await fetch(u, { signal: AbortSignal.timeout(15000) }); return r.ok ? jsonUpTo(r, PEER_LISTING_BYTES) : null; };   // kanban #2636, #1469: capped
       const p = await pullAnnouncements({ entries: list || [], book: addressBook, ownKey: toHex(round.pubkey), get });
       if (p.kept) console.log(`[address] ${p.kept} newer address(es) taken from ${p.answered} of ${p.asked} seat(s)`);
     } catch { /* the next round */ }
@@ -12961,7 +13190,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             if (closeAtEnd) {
               // (an id the store does not hold is refused before heldOf, which would keep a `bad` entry for it)
               const h = id.length === 32 && round.get(id) ? heldOf(id) : { bad: true };
-              if (h.bad || h.endMs === null || BigInt(round.now()) < h.endMs) return sock.send('error this seat closes its rounds itself, at their end');
+              // (a head-to-head round at its end + FINAL_TOLERANCE_MS, as the close sweep: kanban #1976)
+              if (h.bad || h.endMs === null || BigInt(round.now()) < h.closeMs) return sock.send('error this seat closes its rounds itself, at their end');
             }
             const shut = round.close(id);
             // A CLOSED ROUND IS REPLAYED, and by the daemon rather than by

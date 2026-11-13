@@ -24,6 +24,12 @@ const MAX_TIMING_BYTES = 8000;
 // refusal kept a row for 14 days, so one transaction's record grew without end and showed a stranger's attempts. The first refused rows
 // of an id are kept; after MAX_REFUSED_ROWS a refusal stays only in the log line. Answered (2xx) steps are kept as before.
 export const MAX_REFUSED_ROWS = 8;
+// AND ITS ANSWERED STEPS, PER DOOR (kanban #2155, wf1489 a44 refute 46 of #1688): a player's verified lock is public (GET /order-locks), and
+// a stranger who posts it again to POST /lock or POST /fee-lock is answered 201 - it does stake this very entry - so each replay kept one more
+// row under the player's transaction for 14 days. An id keeps at most MAX_ANSWERED_ROWS_PER_DOOR answered (< 400) rows per door, the first
+// ones (the player's own and a few honest retries); later ones stay only in the [steps] log line. One id's record is so at most
+// MAX_REFUSED_ROWS + doors x MAX_ANSWERED_ROWS_PER_DOOR rows, whoever posts.
+export const MAX_ANSWERED_ROWS_PER_DOOR = 4;
 
 /** The bytes a page signs over its timing: the tag, the transaction id and the timing's JSON, hashed. */
 export function timingMessage(idHex, timingJson) {
@@ -55,6 +61,7 @@ export function createTxRecord({ db, now = () => Date.now() }) {
   const put = db.prepare('INSERT OR REPLACE INTO tx_steps (id, kind, at_ms, steps, status, ms) VALUES (?, ?, ?, ?, ?, ?)');
   const of = db.prepare('SELECT id, kind, at_ms, steps, status, ms FROM tx_steps WHERE id = ? ORDER BY at_ms');
   const refusedOf = db.prepare('SELECT COUNT(*) AS n FROM tx_steps WHERE id = ? AND status >= 400');
+  const answeredOf = db.prepare('SELECT COUNT(*) AS n FROM tx_steps WHERE id = ? AND kind = ? AND (status IS NULL OR status < 400)');
   const putTiming = db.prepare('INSERT OR REPLACE INTO tx_client_timing (id, timing, kept_ms) VALUES (?, ?, ?)');
   const timingOf = db.prepare('SELECT timing, kept_ms FROM tx_client_timing WHERE id = ?');
   const putRound = db.prepare('INSERT OR IGNORE INTO tx_round_events (round, at_ms, what, detail) VALUES (?, ?, ?, ?)');
@@ -73,7 +80,8 @@ export function createTxRecord({ db, now = () => Date.now() }) {
     keep({ kind, id, t0, steps, status, ms }) {
       if (!/^[0-9a-f]{64}$/.test(String(id))) return;
       try {
-        if (Number(status) >= 400 && Number(refusedOf.get(String(id)).n) >= MAX_REFUSED_ROWS) return;   // (kanban #1688)
+        if (Number(status) >= 400) { if (Number(refusedOf.get(String(id)).n) >= MAX_REFUSED_ROWS) return; }   // (kanban #1688)
+        else if (Number(answeredOf.get(String(id), String(kind)).n) >= MAX_ANSWERED_ROWS_PER_DOOR) return;   // (kanban #2155)
         put.run(String(id), String(kind), Number(t0), JSON.stringify(steps), Number(status) || null, Number(ms) || null); prune(); } catch { /* the log line stands */ }
     },
     /** Every door a transaction passed here, oldest first: [{ door, atMs, at, steps, status, ms }]. */

@@ -141,7 +141,9 @@ export async function refreshHostedGames({ home, release, post = false, chainKit
   const r = await onchainAction({ state: st, kind: 'games', key: JSON.stringify({ now, protocols, rolesNow }), chainKit,
     build: async (s2) => {
       if (!s2.bond || s2.bond.txid !== s.bond.txid) return { ok: false, why: 'the bond changed meanwhile: ask again' };
-      const built = await advertUpdateOf({ st, s: s2, release, roles: rolesNow, hostedGames: now, nowMs, chainKit });
+      // THE ROLES AS THEY ARE WHEN IT IS BUILT (kanban #2181): s2's, not the outer read's - a roles change the owner page finished while
+      // the new release's apps were loading (DONE, state.json roles = the new ones) would else be advertised away by this later update
+      const built = await advertUpdateOf({ st, s: s2, release, roles: s2.roles || [], hostedGames: now, nowMs, chainKit });
       if (!built.ok) return built;
       const u = built.update;
       return { ok: true, tip: built.tip, txs: [{ name: 'funding', hex: u.funding.hex }, { name: 'update', hex: u.update.hex }],

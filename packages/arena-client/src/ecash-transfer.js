@@ -30,13 +30,14 @@ export const ECASH_TRANSFER_STATES = Object.freeze({ NONE: 'none', INTENT: 'inte
 const TRANSFER_EDGES = Object.freeze({
   none: ['intent'],
   intent: ['kept', 'none'],
-  kept: ['handed', 'reclaiming', 'none', 'short', 'refused'],
+  kept: ['handed', 'reclaiming', 'none', 'short', 'refused', 'kept'],
   handed: ['answered', 'reclaiming', 'handed'],
   reclaiming: ['none', 'short', 'handed', 'refused', 'reclaiming'],
-  answered: ['none', 'short', 'refused'],
+  answered: ['none', 'short', 'refused', 'answered'],
   short: [], refused: [], unreadable: [],
 });
-export const ECASH_HANDED_RECLAIM_MS = 600000;   // a seat silent this long after the hand-over: the notes are taken back (if it did not take them)
+export const ECASH_HANDED_RECLAIM_MS = 600000;
+export const ECASH_RECEIVE_CLAIM_MS = 300000;    // a receive's claim on its record (kanban #2212): older than this, its tab is taken as gone   // a seat silent this long after the hand-over: the notes are taken back (if it did not take them)
 const SEAT_NOT_TAKEN = new Set([400, 404, 409, 429]);   // the seat's own refusal: it says it took nothing (ecash-exchange.js answers these before or instead of a receive)
 
 /** THE ONE TRANSITION: `rec` (or null) to state `to` with `patch`; null for none. Throws for a step a transfer does not take. */
@@ -186,20 +187,35 @@ export async function recoverEcashIntent({ storage, key, rec, wallet, put = putR
  * A KEPT STRING RECEIVED (`field` of `rec`: 'ecash', or 'answer' for a seat's), by `receive(ecash)` (a wallet's receiveEcash). The record
  * is removed only on Success/AlreadyReceived with the credited amount (the receive's msat, else the string's face value) at least
  * `agreedMsat`; less is `short`; a Rejected is `onRejected` ('refused', or 'handed' for notes a silent seat took). `settle(got)` runs
- * between a Success and the removal (the page waits for the balance to show it). Answers { ok, state, credited, short, refused, retry, why }.
+ * between a Success and the removal (the page waits for the balance to show it). The record is claimed for the receive (kanban #2212): one
+ * another tab is receiving answers `busy` and receives nothing. Answers { ok, state, credited, short, refused, retry, busy, why }.
  */
 export async function receiveKeptEcash({ storage, key, rec, receive, field = 'ecash', agreedMsat = null, federation = null, onRejected = 'refused',
-  settle = null, put = putRoomy }) {
+  settle = null, put = putRoomy, nowMs = () => Date.now() }) {
   const ecash = rec && rec[field];
   if (!ecash) return { ok: false, why: 'the record keeps no e-cash to receive' };
   const agreed = BigInt(agreedMsat === null ? rec.msat || 0 : agreedMsat);
   const face = ecashFaceValue(ecash);
-  const write = (to, patch) => { if (rec.memoryOnly) return null; try { return moveEcashTransfer(storage, key, rec, to, patch, put); } catch (e) { if (moved(e)) return null; throw e; } };
+  // every move out of the receive drops its claim (kanban #2212): a record kept as short/refused/handed carries none into its next step
+  const write = (to, patch) => { if (rec.memoryOnly) return null; try { return moveEcashTransfer(storage, key, rec, to, { ...patch, receivingAtMs: undefined }, put); } catch (e) { if (moved(e)) return null; throw e; } };
   if (federation && face && face.federation && face.federation !== String(federation).toLowerCase())
     return { ok: false, why: `that e-cash is of federation ${face.federation.slice(0, 8)}, not ${String(federation).slice(0, 8)}: not received` };
+  // ONE RECEIVE OF ONE RECORD AT A TIME (kanban #2212, the 2026-11-12 state audit): two tabs restored together both received the same kept
+  // merge string; the one that lost the race got Rejected (the notes spent - by the other tab) and wrote the record 'refused' ("spent
+  // elsewhere") while the winner waited in `settle`, whose removal then found the record moved. The receive now first CLAIMS the record
+  // (a self-step stamping receivingAtMs, a compare-and-set like every move): a tab whose claim finds the record moved, or claimed by
+  // another receive in the last ECASH_RECEIVE_CLAIM_MS, receives nothing and writes nothing (`busy`). A receive that ends without a final
+  // answer gives the claim back; a claim of a closed tab is taken over once it is that old.
+  if (!rec.memoryOnly) {
+    if (rec.receivingAtMs && nowMs() - Number(rec.receivingAtMs) < ECASH_RECEIVE_CLAIM_MS)
+      return { ok: false, retry: true, busy: true, why: 'another receive of this record is running (another tab)' };
+    try { rec = moveEcashTransfer(storage, key, rec, rec.state, { receivingAtMs: nowMs() }, put); }
+    catch (e) { if (moved(e)) return { ok: false, retry: true, busy: true, why: 'the record moved under this receive (another tab is receiving it)' }; /* not written: received unclaimed, as before */ }
+  }
+  const unclaim = () => { if (rec.receivingAtMs) write(rec.state, {}); };
   let got;
   try { got = JSON.parse(await receive(ecash)); }
-  catch (e) { return { ok: false, retry: true, why: e && e.message ? e.message : String(e) }; }
+  catch (e) { unclaim(); return { ok: false, retry: true, why: e && e.message ? e.message : String(e) }; }
   const state = got && got.state;
   if (state === 'Success' || state === 'AlreadyReceived') {
     const credited = creditedOf(got, ecash);
@@ -216,6 +232,7 @@ export async function receiveKeptEcash({ storage, key, rec, receive, field = 'ec
     write(onRejected, onRejected === 'handed' ? { seatTook: true } : { why: `the federation said Rejected: the ${field === 'answer' ? 'seat\'s' : 'kept'} notes were spent elsewhere` });
     return { ok: false, state, refused: onRejected === 'refused', why: 'the federation said Rejected' };
   }
+  unclaim();
   return { ok: false, state, retry: true, why: `the federation said ${state}` };
 }
 
@@ -300,15 +317,40 @@ export async function exchangeEcashInto({ storage, from, to, needMsat, seats, wa
   // THE OFFERS READ SIDE BY SIDE (kanban #1483, Daniel 2026-11-11: "stake lock: exchanging at tn4.bitcoin-arena.io/guardian-1 ... make it more
   // efficient"): one after another, every seat that did not answer put its 8 s timeout in front of the lock. All are asked at once; the first
   // offering seats in the seats' order are used, as before. A GET /exchange hands nothing over.
-  const said = await Promise.all((seats || []).map(async (seat) => {
-    try {
-      const r = await fetcher(String(seat).replace(/\/+$/, '') + '/exchange?federations=' + to, { signal: AbortSignal.timeout(offerTimeoutMs) });
-      if (!r.ok) return false;
-      const o = await r.json();
-      return BigInt((o && o.holds && o.holds[to]) || 0) >= need && BigInt((o && o.maxMsat) || 0) >= need;
-    } catch { return false; /* not this seat */ }
-  }));
-  const offering = (seats || []).filter((s, i) => said[i]).slice(0, maxSeats);
+  // THE ORDER-PREFIX DECIDES, NOT THE SLOWEST SEAT (kanban #2413, #2480): waiting for every answer put one silent or stalling seat's whole
+  // offer timeout in front of every exchange, even when the first seats offered at once. The read ends as soon as the answered prefix of
+  // the seats' order holds maxSeats offers (or every seat has answered); the asks still open are aborted.
+  const list = [...(seats || [])];
+  const said = new Array(list.length).fill(undefined);
+  const ctls = list.map(() => new AbortController());
+  const timers = [];
+  const offering = await new Promise((resolve) => {
+    let finished = false;
+    const decide = () => {
+      if (finished) return;
+      const got = [];
+      let i = 0;
+      for (; i < list.length && said[i] !== undefined; i++) { if (said[i]) got.push(list[i]); if (got.length >= maxSeats) break; }
+      if (got.length < maxSeats && i < list.length) return;   // an earlier seat in the order may still offer
+      finished = true;
+      resolve(got.slice(0, maxSeats));
+    };
+    list.forEach((seat, i) => {
+      const ctl = ctls[i];
+      timers.push(setTimeout(() => ctl.abort(new Error('timeout')), offerTimeoutMs));
+      (async () => {
+        try {
+          const r = await fetcher(String(seat).replace(/\/+$/, '') + '/exchange?federations=' + to, { signal: ctl.signal });
+          if (!r.ok) return false;
+          const o = await r.json();
+          return BigInt((o && o.holds && o.holds[to]) || 0) >= need && BigInt((o && o.maxMsat) || 0) >= need;
+        } catch { return false; /* not this seat */ }
+      })().then((ok) => { said[i] = !!ok; decide(); });
+    });
+    decide();
+  });
+  for (const t of timers) clearTimeout(t);
+  ctls.forEach((c, i) => { if (said[i] === undefined) c.abort(new Error('not needed')); });
   if (!offering.length) return { ok: false, from, why: `no seat offers ${Math.ceil(Number(need) / 1000)} sat in federation ${String(to).slice(0, 8)}` };
   let why = '';
   for (let i = 0; i < offering.length; i++) {
@@ -340,19 +382,72 @@ export async function exchangeEcashInto({ storage, from, to, needMsat, seats, wa
  * exchangeEcashInto writes the sending phrase (fromKey, as the merge records do) and a record of another phrase is left alone: its own
  * tab, or the next tab opened on it, moves it on. A record of an older page names no phrase and is moved only when the caller says the
  * browser keeps one phrase (`takeUnnamed`, as scanLostDeposits' dropUnnamed).
+ * A FREE PHRASE'S RECORD IS MOVED ON, NOT STRANDED (kanban #2148, #1489 a44 refute 27): "the next tab opened on it" never comes when the
+ * player uses one tab - the seed keeper gives it the kept phrase with the most entries, and the combine drains the other phrase's wallets
+ * into it as the same player's. A record of another phrase is now treated as the combine treats that phrase's wallets: taken only under
+ * that phrase's Web Lock (arena.phrase.<16>, `locks.request(..., { ifAvailable: true })`, the lock its own tab and the merge hold), and
+ * finished with that phrase's own wallets (`walletForPhrase(fromKey, federationHex)`; the caller's `walletFor` when none is given), which
+ * `leavePhrase(fromKey)` closes while the lock is still held. A
+ * phrase a live tab holds is still left alone (the #1641 case), and so is every other phrase when no lock list exists (`locks` null).
+ * WHILE IT HOLDS ANOTHER PHRASE'S LOCK, THE RESUME SAYS SO (kanban #2401, #2470, #1489 a44 refute 27 s2): as the collect (withRecordPhrase)
+ * and the deposit resume do, it writes arena.seed.collecting.<16> = { at } into `storage`, kept fresh every 10 s, and removes it before the
+ * lock goes (`onHold(h16)` / `leavePhrase(h16)` tell the page, which counts the phrase as held here): a tab opened or reloaded on that phrase
+ * meanwhile waits for the lock ((b), 2026-10-07: "the seed keeper must not mint") instead of dropping the phrase and minting a new one.
+ * AND IT NEVER WAITS LONG ON THAT PHRASE'S WALLETS (kanban #2401, #2470): the caller (the stake lock of a join) awaits this, and another
+ * phrase's wallets open cold. Each open is raced against `openMs` (10 s, the merge's MERGE_OPEN_MS), and its from-wallet is opened only when
+ * the record needs it (an intent read from its log, or notes taken back) - a record waiting on its seat opens nothing of that phrase.
  */
 export async function resumeEcashExchanges({ storage, keys, walletFor, fetcher = fetch, seats = [], nowMs = Date.now(), put = putRoomy, timeoutMs = 30000,
-  phrase16 = null, takeUnnamed = false }) {
+  phrase16 = null, takeUnnamed = false, walletForPhrase = null, leavePhrase = () => {}, onHold = () => {}, openMs = 10000,
+  locks = (typeof navigator !== 'undefined' && navigator && navigator.locks && typeof navigator.locks.request === 'function') ? navigator.locks : null }) {
   const mine = phrase16 ? String(phrase16).slice(0, 16) : null;
   const out = [];
+  const advance = async (key, rec, open) => {
+    try {
+      const walletFrom = await open(rec.from);
+      const r = await advanceEcashExchange({ storage, key, rec, walletFrom, walletTo: () => open(rec.to), fetcher, seats, nowMs, put, timeoutMs });
+      out.push({ key, ...r });
+    } catch (e) { out.push({ key, ok: false, why: e && e.message ? e.message : String(e) }); }
+  };
   for (const key of (keys || []).filter((k) => String(k).startsWith(ECASH_EXCHANGE_PREFIX))) {
     const rec = readEcashTransfer(storage, key);
     if (!rec || ['short', 'refused', 'unreadable'].includes(rec.state)) continue;
-    if (rec.fromKey ? rec.fromKey !== mine : !takeUnnamed) continue;   // another phrase's (kanban #1641), or unnamed in a browser of many phrases
+    if (!rec.fromKey) { if (takeUnnamed) await advance(key, rec, walletFor); continue; }   // unnamed: only in a browser of one phrase
+    if (rec.fromKey === mine) { await advance(key, rec, walletFor); continue; }
+    // ANOTHER PHRASE'S (kanban #1641, #2148): only while no live tab holds it, under its lock, into its own wallets
+    if (!locks || !/^[0-9a-f]{16}$/i.test(rec.fromKey)) continue;
+    const other = String(rec.fromKey).toLowerCase();
+    const opener = walletForPhrase ? (fid) => walletForPhrase(other, fid) : walletFor;
+    // EACH OPEN BOUNDED (kanban #2401): an open that ends after its limit (the lock may be gone by then) is handed to leavePhrase(h16, { late: true }):
+    // the page drops its clients from the cache unless this tab holds that phrase again
+    const open = (fid) => new Promise((ok, no) => {
+      let late = false;
+      const timer = setTimeout(() => { late = true; no(new Error(`the wallet of phrase ${other.slice(0, 8)} did not open in ${openMs / 1000} s: its exchange is moved on later`)); }, openMs);
+      Promise.resolve().then(() => opener(fid)).then((w) => { clearTimeout(timer); if (!late) ok(w); else { try { leavePhrase(other, { late: true }); } catch { /* the next open reads the store */ } } },
+        (e) => { clearTimeout(timer); no(e); });
+    });
+    // ITS FROM-WALLET ONLY WHEN THE RECORD NEEDS IT (kanban #2401): an intent is read from its log at once; notes are taken back through it
+    const openLazily = (r) => {
+      if (r.state === 'intent') return open;
+      let w = null;
+      return (fid) => (fid === r.from ? Promise.resolve({ receiveEcash: async (e) => (await (w || (w = open(fid)))).receiveEcash(e) }) : open(fid));
+    };
     try {
-      const walletFrom = await walletFor(rec.from);
-      const r = await advanceEcashExchange({ storage, key, rec, walletFrom, walletTo: () => walletFor(rec.to), fetcher, seats, nowMs, put, timeoutMs });
-      out.push({ key, ...r });
+      await locks.request('arena.phrase.' + other, { ifAvailable: true }, async (lock) => {
+        if (!lock) return;   // a live tab plays that phrase: its own tab moves it on
+        const again = readEcashTransfer(storage, key);   // read again under the lock: its tab may have finished it in between
+        if (!again || ['short', 'refused', 'unreadable'].includes(again.state) || again.fromKey !== rec.fromKey) return;
+        // THE COLLECTING MARK (kanban #2401, #2470): a tab picking this phrase now waits for the lock rather than minting
+        const mark = 'arena.seed.collecting.' + other;
+        const say = () => { try { storage.setItem(mark, JSON.stringify({ at: Date.now() })); } catch { /* the lock is held all the same */ } };
+        say(); const beat = setInterval(say, 10000);
+        try { onHold(other); } catch { /* the lock is held all the same */ }
+        try { await advance(key, again, openLazily(again)); } finally {
+          clearInterval(beat);
+          try { storage.removeItem(mark); } catch { /* stale in 30 s */ }
+          try { await leavePhrase(other); } catch { /* the next open reads the store */ }   // its wallets closed before the lock goes
+        }
+      });
     } catch (e) { out.push({ key, ok: false, why: e && e.message ? e.message : String(e) }); }
   }
   return out;
