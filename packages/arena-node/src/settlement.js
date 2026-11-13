@@ -464,7 +464,10 @@ export class LockSettlement {
     const fields = lockFieldsFromJson(lockRow.fields);
     if (toHex(fields.claimPk) !== toHex(claimPk)) return refuse('that lock names another claim key than the round\'s');
     const lock = { outpoint: outpointOf(lockRow.outpoint), amountMsat: fields.amountMsat, refundPk: fields.refundPk };
-    const byPlayer = new Map(this.round.entriesOf(roundIdBytes).map((x) => [toHex(x.entry.playerPubkey), x.entryId]));
+    // A WINNER'S LOCK FROM THE ENTRY THAT HOLDS ONE (kanban #2592): an entry carries no player signature, so a lockless copy of a winner's entry
+    // under another session key, its id sorted after the winner's, named the winner here - "no key to pay" - and the late lock went back to its loser
+    const byPlayer = new Map(this.round.entriesOf(roundIdBytes).filter((x) => this.round.stakeLock(x.entryId))
+      .map((x) => [toHex(x.entry.playerPubkey), x.entryId]));
     const winnerLocks = new Map();
     const entryOf = new Map();
     for (const x of shares) {
