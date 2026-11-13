@@ -90,7 +90,10 @@ function merge(id, answers, readMs = null) {
   const processed = proc.length ? { game: pick('game'), settlement: pick('settlement'), asker: pick('asker'), outcomes: pick('outcomes') || [],
     settledAt: pick('settledAt'), settlementWhy: pick('settlementWhy'), names } : null;
   // stored first: the AGREE-th earliest time of the seats that hold the entry - no one seat moves it to another day (kanban #1510)
-  const stored = known.map((a) => a.body.storedAt).filter(Boolean).sort();
+  // ONLY A TIME COUNTS, IN TIME ORDER (kanban #2559, refute of #1599): a storedAt that is no date (one seat's S+'x') sorted as a string
+  // became storedFirst, Date.parse gave NaN, stored_ms NOT NULL failed and the whole batch of 50 rolled back - no order stored that minute
+  const stored = known.map((a) => a.body.storedAt).filter((x) => typeof x === 'string' && Number.isFinite(Date.parse(x)))
+    .sort((x, y) => Date.parse(x) - Date.parse(y));
   return { id, found: known.length > 0, readAt: new Date().toISOString(), readMs,
     entry, locks: agreed(known.map((a) => a.body.locks)), settlement, client, processed, result,
     storedFirst: stored[Math.min(AGREE, stored.length) - 1] || null, seats };
@@ -122,7 +125,7 @@ async function keep(env, tx, had, over = false) {
     // the explorer) no longer turns that order into its made-up gift - the round left /api/played, /api/totals and the volume. An order
     // (merged across the seats, #1510) still takes back an id a payment row held first - the readers let it only when more seats back it
     // than back that payment (kanban #2440); `over` lets a payment more seats back take back an id an order held first (kanban #2440).
-    .bind(tx.id, e.round || null, e.app || null, e.federation || null, tx.storedFirst ? Date.parse(tx.storedFirst) : Date.now(),
+    .bind(tx.id, e.round || null, e.app || null, e.federation || null, tx.storedFirst && Number.isFinite(Date.parse(tx.storedFirst)) ? Date.parse(tx.storedFirst) : Date.now(),
       tx.settlement ? tx.settlement.state : null, h, JSON.stringify(tx), Date.now(), tx.kind || 'order', tx.payment ? tx.payment.txid : null, over ? 1 : 0);
 }
 
@@ -147,7 +150,7 @@ function paymentTx(id, answers) {
   const held = answers.filter(same);
   if (!r || !held.length) return { id, found: false };
   const payment = r;
-  const kept = held.map((a) => Number(a.row.keptMs)).filter(Number.isFinite).sort((a, b) => a - b);
+  const kept = held.map((a) => Number(a.row.keptMs)).filter((x) => Number.isFinite(x) && Math.abs(x) <= 8.64e15).sort((a, b) => a - b);
   return { id, kind: PAYMENT_KINDS.includes(r.kind) ? r.kind : 'donation', found: true, readAt: new Date().toISOString(), readMs: null,
     entry: { app: r.gameName || null, federation: r.federation, player: r.kind === 'item' ? r.player : r.donor }, amountMsat: r.totalMsat, payment,
     settlement: null, client: null, processed: null, result: null, storedFirst: kept.length ? new Date(kept[Math.min(AGREE, kept.length) - 1]).toISOString() : null,
