@@ -79,7 +79,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
   <script>
   (function () {
     var body = document.querySelector('#rows tbody');
-    fetch('log.json').then(function (r) { return r.ok ? r.json() : []; }).catch(function () { return []; }).then(function (list) {
+    fetch('/api/faucet/feedback/paid-log').then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); }).then(function (l) { if (!Array.isArray(l) || !l.length) throw new Error('empty'); return l; }).catch(function () { return fetch('log.json').then(function (r) { return r.ok ? r.json() : []; }).catch(function () { return []; }); }).then(function (list) {
       var total = 0, by = {};
       list.forEach(function (p) { var tr = document.createElement('tr'); [p.season || 'Season 1', p.date, p.reason, p.channel, Number(p.sats).toLocaleString('en-US')].forEach(function (x) { var td = document.createElement('td'); td.textContent = x; tr.appendChild(td); }); body.appendChild(tr); total += Number(p.sats); by[p.channel] = (by[p.channel] || 0) + Number(p.sats); });
       if (!list.length) { var tr = document.createElement('tr'), td = document.createElement('td'); td.colSpan = 5; td.textContent = 'Nothing paid yet.'; tr.appendChild(td); body.appendChild(tr); }
