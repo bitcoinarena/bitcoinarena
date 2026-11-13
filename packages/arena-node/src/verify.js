@@ -1840,6 +1840,8 @@ export class Verifier {
         verify: (sig, msg, key) => verifyKept(sig, msg, key),
         // A LIVE RUN'S INPUTS ARE BOUND TO THE ONES THIS SEAT STORED, which the session key signed (kanban #1952, #1990)
         storedInputs: (() => { try { return this.round.transcript(roundIdBytes, entryIdBytes); } catch { return null; } })(),
+        // NOT CUT SHORT OF THE RECEIPTED MARKS THIS SEAT HOLDS (kanban #2596): its canonical transcript's last mark
+        heldThroughTick: (() => { try { const c = this.round.canonicalTranscript(roundIdBytes, entryIdBytes); return Number.isInteger(c && c.throughTick) ? c.throughTick : null; } catch { return null; } })(),
         // THIS SEAT'S OWN RUN OF THE ENTRY (kanban #1706): a live run's inputs that differ from it are checked against its
         // replay, one key per entry, instead of each costing a replay of its own (objection-check.js 7a)
         ownInputs: () => this.round.transcript(roundIdBytes, entryIdBytes),
