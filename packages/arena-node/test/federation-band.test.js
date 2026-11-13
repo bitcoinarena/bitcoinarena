@@ -74,8 +74,10 @@ test('a second record at one height keeps its gap from the height below, so a re
   const n = net();
   await n.step(96, 75000);
   await n.step(102, 65000); assert.equal(n.bandAt(), 'PRESSURE');
+  // ONE RESERVE PER RECORD HEIGHT (kanban #2314, ported from 1.9 in the #2536 block): a repeat gather at 102 names the reserve 102 was
+  // signed with (65000), not the guardians' 59000 of now - so the repeat cannot move the band at all; it stays PRESSURE, read against 96
   const again = await n.step(102, 59000);
-  assert.equal(again.ok, true); assert.equal(n.bandAt(), 'CALM');
+  assert.equal(again.ok, true); assert.equal(n.bandAt(), 'PRESSURE', 'a repeat at 102 keeps 102\'s reserve (kanban #2314)');
   await n.step(102, 65000);
   assert.equal(n.bandAt(), 'PRESSURE', 'read against 96, not against the repeat at 102');
 });
