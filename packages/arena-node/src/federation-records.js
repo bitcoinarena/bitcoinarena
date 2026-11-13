@@ -333,15 +333,20 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       return false;
     }
     const step = recordStep(had ? { height: had.height, status: had.status } : null, { height: v.record.height, status: v.status }, from);
-    if (step.take || (had && had.height > v.record.height)) remember(fid, Object.assign(Object.create(null), v.record, { __hex: toHex(bytes), __status: v.status }));
+    const late = !!(had && had.height > v.record.height);
+    if (step.take || late) remember(fid, Object.assign(Object.create(null), v.record, { __hex: toHex(bytes), __status: v.status }));
+    // ONE DERIVATION FOR THE RUNNING SEAT AND THE RESTART (kanban #2172, #1763/#1578 refuted in audit44): an older record that
+    // arrives after a newer one (a lagging guardian, a mirror) changes the history the run is read from - an older HALTED one
+    // moves the start down, an older recovery cuts the run - and a restart reads exactly that history. The halt start is
+    // therefore always haltStartOf the kept HALTED record, never a value only this process saw
+    if (late && had.status === 'HALTED') halted.set(fid, haltStartOf(fid, had.height, had.bytes));
     if (!step.take) return false;
     kept.set(fid, { bytes, record: v.record, status: v.status, height: v.record.height, signers: v.signers, atMs: nowMs() });
     { const a = beside.get(fid); if (a && a.height <= v.record.height) beside.delete(fid); }
     if (store) { try { store.save(fid, toHex(bytes)); } catch { /* kept in memory */ } }
     if (['DRAINING', 'CRITICAL', 'CLOSED', 'HALTED'].includes(v.status)) draining.set(fid, v.status); else draining.delete(fid);
     if (v.status !== 'HALTED') halted.delete(fid);
-    else if (!halted.has(fid)) halted.set(fid, haltStartOf(fid, v.record.height, bytes));
-    else if (halted.get(fid).height > v.record.height) halted.set(fid, { height: v.record.height, bytes });
+    else halted.set(fid, haltStartOf(fid, v.record.height, bytes));   // kanban #2172: history-based, as a restart derives it
     return true;
   }
 
