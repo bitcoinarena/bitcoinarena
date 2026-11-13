@@ -127,13 +127,18 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
   // (rules 1, 2); 60 % YES and YES at least 20 % of everyone who could vote (rule 3). `until` the vote's end, or a payment's due
   // height + 1 for its re-count (rule 5)
   // A PROPOSAL PUBLISHED AT OR ABOVE ITS NETWORK'S BALLOT_BIND_HEIGHT is voted and counted bound (kanban #2576)
-  const boundFor = (o) => typeof bindHeightFor === 'function' && o && o.networkId instanceof Uint8Array && Number.isInteger(o.publishedHeight)
-    && o.publishedHeight >= bindHeightFor(toHex(o.networkId));
-  const countOf = (pid, period, o, until = period.until) => { const c = voteCensus(pid); if (!c) return null;
+  // kanban #2590: publishedHeight is the AUTHOR'S OWN FIELD (only "not above tip + 1" is checked), so "published at or above the gate"
+  // let him date it one block below and have its whole vote, past the gate, read the old way (77 bytes, last by height: the #1490 hole).
+  // Now a vote is read bound when any of its blocks is at or above the gate - its end (until, exclusive) is above it; only a vote that
+  // ended before the gate keeps the old reading. A choice, named: an honest item whose vote straddles the gate is voted by seq throughout.
+  const voteEndOf = (o, kind) => o.publishedHeight + (kind === 'leaderboard' ? 0 : schedule.signal) + schedule.vote;
+  const boundFor = (o, kind) => typeof bindHeightFor === 'function' && o && o.networkId instanceof Uint8Array && Number.isInteger(o.publishedHeight)
+    && voteEndOf(o, kind) > bindHeightFor(toHex(o.networkId));
+  const countOf = (pid, period, o, until = period.until, kind = 'proposal') => { const c = voteCensus(pid); if (!c) return null;
     const w = voteWeights({ census: c.census, publishedHeight: o.publishedHeight, last: period.last, schedule });
     // THE BOUND VOTE PAST THE GATE (kanban #2576, left open by #2562): a proposal published at or above its network's BALLOT_BIND_HEIGHT
     // is counted by seq (highest inside the period counts, equal seq with two choices = ABSTAIN), as a config proposal's; below it, as before
-    const bound = boundFor(o);
+    const bound = boundFor(o, kind);
     return { ...fundingTally({ proposalId: fromHex(pid), census: w.voters, votes: votesHeld(pid), from: period.from, until, verify, bound }),
       votersEligible: w.voters.length, bondsInCensus: c.census.length }; };
   /** The last block a passed proposal's votes are read to: its last payment's due height (rule 5, at most four tranches). */
@@ -144,7 +149,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
     const decided = voteOutcome(pid);
     const blocks = voteBlocks(pid);
     return { ...period, censusHeight: voteCensus(pid) ? voteCensus(pid).height : null, readTo: blocks.length ? blocks[blocks.length - 1].height : null,
-      state: decided ? (decided.passed ? 'passed' : 'failed') : 'voting', count: decided || ruleOf(kind, countOf(pid, period, o)) };
+      state: decided ? (decided.passed ? 'passed' : 'failed') : 'voting', count: decided || ruleOf(kind, countOf(pid, period, o, period.until, kind)) };
   }
   async function voteRound() {
     if (!voteChain) return [];
@@ -247,7 +252,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       const lastHash = await hashAt(period.last);
       const lastRow = held.find((r) => r.height === period.last);
       if (!lastHash || !lastRow || lastRow.hash !== lastHash || held.some((r) => !r.hash)) continue;
-      const out = ruleOf(row.kind, countOf(row.id, period, p.obj));
+      const out = ruleOf(row.kind, countOf(row.id, period, p.obj, period.until, row.kind));
       db.prepare('INSERT OR IGNORE INTO funding_vote_outcomes (proposal, outcome, last_hash, decided_ms) VALUES (?, ?, ?, ?)').run(row.id, JSON.stringify(out), lastHash, now());
       log(`[funding] ${row.id.slice(0, 16)}: vote ${out.passed ? 'passed' : 'failed'} - turnout ${out.turnoutPct} %, YES ${out.approvalPct} % of YES + NO, YES ${out.yesOfAllPct} % of everyone who could vote, ${out.bondsVoted} bond(s)`);
       done.push({ id: row.id, ...out, lastHash });
@@ -301,7 +306,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         // a cancelled proposal keeps listing the payments due before the cancelling one: they may have gone, and their records stand
         if (fixed.cancelled_k !== null && t.k >= fixed.cancelled_k) break;
         if (!(Number.isInteger(tip) && tip >= t.payableAt) || readTo < t.dueAt) break;
-        const again = countOf(row.id, period, p.obj, t.dueAt + 1);
+        const again = countOf(row.id, period, p.obj, t.dueAt + 1, row.kind);
         if (!again || !again.passed) {
           const why = `payment ${t.k + 1} of ${t.of} cancelled at its due block ${t.dueAt}: YES ${again ? again.approvalPct : '?'} % of YES + NO, ${again ? again.yesOfAllPct : '?'} % of everyone who could vote`;
           // compare-and-set from FIXED: a re-count after a reorg never moves a cancellation already kept
@@ -561,7 +566,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       const row = db.prepare("SELECT kind, hex FROM funding_items WHERE id = ? AND kind IN ('proposal', 'fee', 'leaderboard')").get(String(id));
       if (!row) return null;
       const r = read(row.kind, row.hex);
-      return r.ok ? boundFor(r.obj) : null;
+      return r.ok ? boundFor(r.obj, row.kind) : null;
     },
   };
   return book;
