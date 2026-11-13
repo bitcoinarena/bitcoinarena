@@ -99,7 +99,12 @@ test('#2585 no conflict: a lock outside the one certificate still goes back (aft
   assert.deepEqual(b1.certified(rid) && b1.certified(rid).entries, [A]);
   const early = await lockOut(b1, L);
   now = CLOSE + LOCK_SET_WINDOW_MS + 10_000;
+  // SINCE #036 every peer must have answered: with x silent the lock waits for its round (or its expiry)
+  const whileXSilent = await lockOut(b1, L);
+  books.set('x', { take: () => {}, state: () => ({ views: [], signatures: [] }) });   // x answers (nothing to show)
   const later = await lockOut(b1, L), certified = await lockOut(b1, A);
+  books.delete('x');
+  if (typeof b1.lockOut === 'function') assert.equal(whileXSilent, null, `a lock outside the set came back with a peer unheard: ${whileXSilent}`);
   console.log('  FACTS (#2585 control):', JSON.stringify({ early, later, certified }));
   assert.ok(later && /not in the round's certified lock set/.test(later), `a lock outside the certificate does not come back: ${later}`);
   assert.equal(certified, null);
@@ -131,4 +136,29 @@ test('#035 one missed pull does not return a lock while a contesting certificate
   assert.equal(afterBack, null, `seat 1 returned E's lock after one missed pull: ${afterBack}`);
   assert.deepEqual([...s2book.certified(rid).entries].sort(), [A, E].sort(), 'seat 2 kept the certificate that plays E');
   assert.equal(b1.conflicted(rid), true, 'the contesting certificate was pulled once seat 2 answered');
+});
+
+// feedback #036 (Hexbox): as #035, but the dishonest seat x ANSWERS seat 1's pulls (with its [A] signature) while honest seat 2, holding
+// [A, E], stays unheard - x's answer alone met the n - t quorum. A lock outside the set waits until every peer answered.
+test('#036 the double signer answering does not stand in for the unheard honest seat', async () => {
+  books.clear();
+  now = CLOSE + 100;
+  const b1 = bookOf(s1, [A]), b2 = bookOf(s2, [A, E]);
+  const xv = signed(x, [A, E], lockSetViewId, CLOSE + 50);
+  b1.take(rid, { views: [xv] }); b2.take(rid, { views: [xv] });
+  for (let i = 0; i < 4; i++) { await b1.step(rid); await b2.step(rid); await tick(); }
+  // seats 1 and 2 cannot reach each other (both ways) while the two certificates form
+  const s1book = books.get('s1'), s2book = books.get('s2'); books.delete('s1'); books.delete('s2');
+  const xSigA = signed(x, [A], lockSetSignatureId, CLOSE + 150);
+  b1.take(rid, { signatures: [xSigA] });
+  s2book.take(rid, { signatures: [signed(x, [A, E], lockSetSignatureId, CLOSE + 150)] });
+  for (let i = 0; i < 4; i++) { await b1.step(rid); await s2book.step(rid); await tick(); }
+  books.set('s1', s1book);   // seat 1 is reachable again; seat 2 stays unheard
+  // x answers seat 1's pulls with a valid body that reveals nothing of [A, E]
+  books.set('x', { take: () => {}, state: () => ({ views: [], signatures: [xSigA] }) });
+  now = CLOSE + LOCK_SET_WINDOW_MS + 10_000;
+  const out = await b1.lockOut(rid, E);
+  books.delete('x');
+  console.log('  FACTS (#036):', JSON.stringify({ out, conflicted: b1.conflicted(rid) }));
+  assert.equal(out, null, `seat 1 returned E's lock on the double signer's answer while seat 2 (holding [A, E]) is unheard: ${out}`);
 });
