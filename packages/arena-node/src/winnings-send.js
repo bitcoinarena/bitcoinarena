@@ -610,6 +610,11 @@ export class WinningsSend {
     // older build sends it - nobody named. Each asker draws from its own bucket below, and a pair is spent only on a list its own asker signs.
     const keptMs = 2 * this.peerAskMs + this.peerGraceMs;
     const now = Number(this.round.now());
+    // A RE-SEND ATTEMPT IS SIGNED ONLY FOR A SEAT OF THE ROUND (kanban #2134, after #1629): a share given on a kept attempt N+1 bars the #1241
+    // lower-hash replace, and an unsigned ask (anyone at the door) could set it - a stranger's commit and a share over a made-up list pinned
+    // each seat's own attempt 1, so two seats that kept different ones never met on one hash and the re-send never reached the threshold.
+    // Attempt N+1 exists only through /resend-sends, which takes it only from a seat of the round (#1154); attempt 0 keeps the unsigned bucket.
+    if (row.attempt > 0 && !own && !header) return refuse('this signer node draws a nonce pair for a re-send only for a seat of the round: sign the ask', 403);
     let asker = null;
     if (own) asker = this.ownKey();
     else if (header) {
@@ -665,6 +670,9 @@ export class WinningsSend {
     // one seat of seven stopped the send for good. Now a list spends a pair only when the same asker signs it (PLAN_ASK.SHARE over the list's
     // bytes) - or, for a pair drawn by an unsigned ask (a seat on an older build), when the list is unsigned too, as before. Anyone else's
     // list, a peer seat's included, spends nothing.
+    if (row.attempt > 0 && !local && !header) return refuse('this signer node signs a re-send only for a seat of the round: sign the ask', 403);   // kanban #2134
+    // ONE NONCE UNDER TWO IDS IS NO LIST (kanban #2134): a commitment copied under other signers' ids is made up, and is never signed
+    { const seen = new Set(); for (const c of commitments) { const k = `${toHex(c.hiding)}:${toHex(c.binding)}`; if (seen.has(k)) return refuse('that list carries one nonce under two ids'); seen.add(k); } }
     let by = null;
     if (!local && header) {
       const checked = this.askedBy(header, PLAN_ASK.SHARE, roundIdBytes, built, encodeCommitments(commitments));

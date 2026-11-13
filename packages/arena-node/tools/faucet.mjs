@@ -1055,6 +1055,8 @@ createServer((req, res) => {
       // all passed feedbackDecide with none counted yet and FEEDBACK_PER_IP_PER_DAY / FEEDBACK_PER_DAY never tripped. Now its slot is pushed as soon as
       // it passes, and given back if it is not posted after all; earlier days' entries go first, so REPORTS stays one day long
       let slot = null, posted = false, own = null;
+      // A SIGNED REPORT THE STORE KEPT IS ANSWERED KEPT (kanban #1985, #2536): its answer when the chat post after it fails - never "could not be kept"
+      let keptAnswer = null;
       const giveBack = () => { const i = slot ? REPORTS.indexOf(slot) : -1; if (i >= 0) REPORTS.splice(i, 1); slot = null; };
       { const day = Math.floor(Date.now() / DAY_MS); while (REPORTS.length && Math.floor(REPORTS[0].atMs / DAY_MS) !== day) REPORTS.shift(); }
       try {
@@ -1086,7 +1088,7 @@ createServer((req, res) => {
               const token = readFileSync(env.FAUCET_CHAT_TOKEN_FILE, 'utf8').trim();
               const r = await fetch(`${env.FAUCET_CHAT_URL}/api/channels/${env.FAUCET_CHAT_CHANNEL}/messages`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ text: (had.label ? `${had.label} · ` : '') + d1.text }), signal: AbortSignal.timeout(10000) });
               if (!r.ok) throw new Error('chat');
-            } catch { UNPOSTED.add(had.id); return send(502, { ok: false, why: 'the report could not be kept just now' }); }
+            } catch { UNPOSTED.add(had.id); return send(200, { ...firstAnswer(had), posted: false }); }   // kept already (kanban #1985): its chat post is tried again on the next send
             return send(200, firstAnswer(had));
           }
           const pre = feedbackDecide({ ...b, ip, signed: true }, REPORTS);
@@ -1110,6 +1112,10 @@ createServer((req, res) => {
           counted = true;
           slot = null;
           UNPOSTED.add(kept.id);   // until the chat post below comes back (kanban #2456)
+          // KEPT IS KEPT (kanban #1985, #2536): the report is numbered and counted in the store now; a chat post that fails below no longer answers
+          // 502 "could not be kept" - the page then signed the same words anew and a second report was kept. Answered kept, posted false; the
+          // same event sent again tries the chat post again (UNPOSTED, #2456)
+          keptAnswer = { ok: true, id: kept.id, kept: true, number: kept.number ?? null, label: kept.label || null, posted: false };
           dayLimitNote({ k: 'report', ip, signed: true });   // kanban #2284: kept for good, so on the day's file
         }
         // DECIDED AND COUNTED AT ONCE (kanban #2158, #2226): the report was put into REPORTS only after the address check and the chat post came back,
@@ -1130,12 +1136,13 @@ createServer((req, res) => {
         // it: a non-2xx answer, or a connection refused before anything was sent
         posted = true;
         const r = await fetch(`${env.FAUCET_CHAT_URL}/api/channels/${env.FAUCET_CHAT_CHANNEL}/messages`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` }, body: JSON.stringify({ text: (kept && kept.label ? `${kept.label} · ` : '') + d.text }), signal: AbortSignal.timeout(10000) });
-        if (!r.ok) { giveBack(); return send(502, { ok: false, why: 'the report could not be kept just now' }); }
+        if (!r.ok) { if (keptAnswer) return send(200, keptAnswer); giveBack(); return send(502, { ok: false, why: 'the report could not be kept just now' }); }
         if (kept) UNPOSTED.delete(kept.id);
         if (slot) dayLimitNote({ k: 'report', ip, signed: !!slot.signed });   // kanban #2284: posted, its slot stays counted - on the day's file (a kept signed one was noted when kept)
         if (d.player) appendFileSync(FOUNDING_FILE, `${JSON.stringify({ player: d.player, atMs: Date.now() })}\n`);
         send(200, { ok: true, ...(kept ? { id: kept.id, kept: kept.kept, number: kept.number ?? null, label: kept.label || null } : {}) });   // its number (kanban #1413)
       } catch (e) {
+        if (keptAnswer) return send(200, { ...keptAnswer, posted: null });   // kept; whether the chat took it is not known (kanban #1985)
         if (!posted) { giveBack(); return send(400, { ok: false, why: 'not JSON' }); }
         const code = String((e && e.cause && e.cause.code) || '');
         if (code === 'ECONNREFUSED' || code === 'ENOTFOUND' || code === 'EAI_AGAIN') { giveBack(); return send(502, { ok: false, why: 'the report could not be kept just now' }); }
