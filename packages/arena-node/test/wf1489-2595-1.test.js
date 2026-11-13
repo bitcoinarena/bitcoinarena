@@ -149,7 +149,10 @@ function setup() {
   return { ...d, view, ev, contract: decodeRoundContract(new Uint8Array(d.round.get(d.rid).contract)) };
 }
 
-import { clientCommittee, settlementSignerNodesFrom, forgetSeatings } from '../../arena-client/src/committee.js';
+import * as committeeModule from '../../arena-client/src/committee.js';
+const { clientCommittee, settlementSignerNodesFrom } = committeeModule;
+// 2.0 keeps no seating cache between asks (1.9 does: forgetSeatings)
+const forgetSeatings = () => (typeof committeeModule.forgetSeatings === 'function' ? committeeModule.forgetSeatings() : undefined);
 import { pageCurve } from '../../arena-client/src/page-curve.js';
 import { blockHashOf } from '../../arena-protocol/src/chain.js';
 
