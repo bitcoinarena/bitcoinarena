@@ -30,7 +30,7 @@ import { emergencyDepartureStands, emergencyDepartureEffect, emergencyDepartureI
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { withConfigEndpoints } from './federation-endpoints.js';
 import { buildFederationRecord, encodeFederationRecord, federationRecordId, joinSignedRecord, verifyFederationRecord, verifyFederationRecords,
-  FEDERATION_STATUS, GONE, decodeFederationRecord, splitSignedRecord, guardianKeySet, highestVerified, recordStatusName, thresholdOf, loadReserveOf, statusFor, paysDrainShares, playerReserveOf, GATEWAY_FEE_MAX_REFERENCE } from '../../arena-protocol/src/federation-record.js';
+  FEDERATION_STATUS, GONE, decodeFederationRecord, splitSignedRecord, guardianKeySet, highestVerified, recordStatusName, thresholdOf, loadReserveOf, statusFor, paysDrainShares, playerReserveOf, GATEWAY_FEE_MAX_REFERENCE, RESTRICTION_RANK } from '../../arena-protocol/src/federation-record.js';
 import { recordBand, bandOfRecord } from '../../arena-protocol/src/capacity.js';
 
 /**
@@ -233,6 +233,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     return verifyFederationRecords([...items, ...context], { verify: sv, inviteFederationId, networkId: net, bandPoint: ownBand ? bandFrom : undefined, guardianKeys: keys, tip }).slice(0, items.length);
   }
   const kept = new Map();                    // federation id hex -> { bytes, record, status, height, signers, atMs }
+  const beside = new Map();                  // federation id hex -> a newer, less restrictive keyless record held beside the kept one (#2613)
   const draining = new Map();                // federation id hex -> status name
   // THE HALT A LIQUIDATION COUNTS FROM (§23A.5): the lowest-height signed HALTED record of the run of HALTED records
   // this seat holds - kept with its bytes, so anyone checks it - and forgotten once a newer record is not HALTED (a recovery)
@@ -273,10 +274,23 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     // AND A MIRROR NEVER WORSENS THE STATUS AT ONE HEIGHT (kanban #1157): recordStep. An older record still goes into the history, as
     // before; one refused at the kept height does not overwrite that height's
     const had = kept.get(fid);
+    // A KEYLESS SEAT NEVER LOOSENS WHAT IT KEEPS (kanban #2613, feedback #042): a seat that holds no config keys for the federation cannot
+    // tell its guardians from bonded strangers - 8 of them signing their own OPEN record (nominal 11, genuine + 1) made the genuine 7 of 7
+    // HALTED one need 8, and the seat kept the OPEN one: halt start gone, GET /liquidations and the exchange's halted check passing. A record
+    // judged without keys (v.keyed === false) that is less restrictive (RESTRICTION_RANK) than the kept one at or above its height does not
+    // replace it: it is held beside it (served by GET /federations next to the kept one, so a client sees both and its restrictive-word hold
+    // applies) and the kept record, its halt start and the draining gate stay. A record judged with the config keys decides as before.
+    if (v.keyed === false && had && v.record.height >= had.height && toHex(bytes) !== toHex(had.bytes)
+      && (RESTRICTION_RANK[v.status] ?? 0) < (RESTRICTION_RANK[had.status] ?? 0)) {
+      const a = beside.get(fid);
+      if (!a || a.height < v.record.height) beside.set(fid, { bytes, record: v.record, status: v.status, height: v.record.height, signers: v.signers, atMs: nowMs() });
+      return false;
+    }
     const step = recordStep(had ? { height: had.height, status: had.status } : null, { height: v.record.height, status: v.status }, from);
     if (step.take || (had && had.height > v.record.height)) remember(fid, Object.assign(Object.create(null), v.record, { __hex: toHex(bytes), __status: v.status }));
     if (!step.take) return false;
     kept.set(fid, { bytes, record: v.record, status: v.status, height: v.record.height, signers: v.signers, atMs: nowMs() });
+    { const a = beside.get(fid); if (a && a.height <= v.record.height) beside.delete(fid); }
     if (store) { try { store.save(fid, toHex(bytes)); } catch { /* kept in memory */ } }
     if (['DRAINING', 'CRITICAL', 'CLOSED', 'HALTED'].includes(v.status)) draining.set(fid, v.status); else draining.delete(fid);
     if (v.status !== 'HALTED') halted.delete(fid);
@@ -525,7 +539,18 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       const verdicts = judge(fid, items.map((x) => ({ bytes: x.bytes, census: x.census })), { inviteFederationId, keys, tip: await tipNow(), census: b.census.entries });
       items.forEach((x, i) => { if (verdicts[i].ok) rows.push({ ...verdicts[i], hex: x.hex }); });
     }
-    const best = highestVerified(rows);
+    // A KEYLESS SEAT NEVER LOOSENS THE BAND IT READS BELOW THIS HEIGHT (kanban #2613, as keep()): without the config keys a newer record that is
+    // less restrictive (RESTRICTION_RANK) than one before it - strangers' OPEN over a genuine HALTED - does not set the band; with keys the highest
+    const rankOf = (x) => RESTRICTION_RANK[x.status || recordStatusName(x.record)] ?? 0;
+    let best;
+    if (keys) best = highestVerified(rows);
+    else {
+      best = null;
+      for (const x of [...rows].sort((p, q) => p.record.height - q.record.height)) {
+        if (best && rankOf(x) < rankOf(best)) continue;
+        best = best && rankOf(x) === rankOf(best) && x.record.height === best.record.height ? highestVerified([best, x]) : x;
+      }
+    }
     return { ok: true, was: best ? bandOfRecord(best.record) : 'CALM', hex: best ? best.hex || null : null };
   }
 
@@ -1227,7 +1252,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     return out;
   }
 
-  return {
+  const api = {
     mySignature, mySignatureWithGone, gather, restore, restoreNow,
     gatherAll(inviteFederationId, { minAgeMs = 0 } = {}) {
       if (passes.running) return passes.running;
@@ -1236,6 +1261,20 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
         .finally(() => { passes.doneAt = nowMs(); passes.running = null; });
       return passes.running;
     },
+    /** WHAT GET /federations SERVES (kanban #2613): every kept record, and beside it a newer, less restrictive one this seat judged without
+     * the config keys and did not keep - so a client reads both words. One row more per such federation; list() stays one row each. */
+    served() {
+      const out = api.list();
+      for (const [federation, a] of beside) {
+        if (!kept.has(federation)) continue;
+        out.push({ federation, status: a.status, height: a.height, signers: a.signers, record: toHex(a.bytes), beside: true,
+          ...(a.record ? { reserveSats: String(a.record.reserveSats), exposureCapSats: String(a.record.exposureCapSats),
+            load: a.record.exposureCapSats > 0n ? Number((a.record.reserveSats * 10000n) / a.record.exposureCapSats) / 10000 : null } : {}) });
+      }
+      return out;
+    },
+    /** The newer, less restrictive keyless record held beside the kept one, or null (kanban #2613). */
+    besideOf: (fidHex) => { const a = beside.get(String(fidHex).toLowerCase()); return a ? { record: a.record, status: a.status, height: a.height } : null; },
     list: () => [...kept.entries()].map(([federation, k]) => ({ federation, status: k.status, height: k.height, signers: k.signers, record: toHex(k.bytes),
       // ITS FIRST HEIGHT HERE (§23A.2 RULED 2026-11-07, kanban #1297/#1323): the oldest record this seat holds of it - a client sends no first deposit
       // to a federation younger than drain_blocks, and reads its age as the median of the seats' answers
@@ -1330,4 +1369,5 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     },
     FEDERATION_STATUS,
   };
+  return api;
 }
