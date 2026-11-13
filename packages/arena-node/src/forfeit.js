@@ -41,8 +41,9 @@ import { resultFinality, settledResult, agreedRerunOf } from './finality.js';
 import { stateOf } from './settlement-state.js';
 import { pluginForRound } from './plugins.js';
 import { giftsInFeeLock } from '../../arena-protocol/src/reserves.js';
-import { encodeCommitments, decodeCommitments, encodeShare, decodeShare, commitmentListRefusal, decodePeerCommitment, peerCommitmentRefusal, leftOffLast, committedIds } from './pool-wire.js';
+import { encodeCommitments, decodeCommitments, encodeShare, decodeShare, commitmentListRefusal, decodePeerCommitment, peerCommitmentRefusal, leftOffLast, committedIds, COMMITMENT_BYTES, SHARE_BYTES } from './pool-wire.js';
 import { askPeers, PEER_ASK_MS, PEER_GRACE_MS } from './peer-ask.js';
+import { peerBytesUpTo, peerWhyUpTo } from './peer-body.js';
 import { NoncePool, SignerLists, sharesRefused, BOUND_ELSEWHERE, PAIRS_PER_KEY, PAIRS_ALL as POOL_ALL, LIST_TRIALS } from './nonce-pool.js';
 import { namedClaims, namedClaimKeys, arenaLockContractId } from '../../arena-protocol/src/arena-lock.js';
 import { forfeitLostOn } from './test-named-offence.js';
@@ -719,8 +720,9 @@ export class Forfeit {
       // EVERY PEER AT ONCE, WITHIN A BOUND (kanban #1074 as #1061): the list needs the threshold, so a hung seat costs the grace, not the forfeit
       const asked = await askPeers(this.peersFor(roundIdBytes), async (base, signal) => {
         const r = await this.fetcher(`${base}/forfeit-commit?${cq}`, { method: 'POST', headers, signal });
-        if (!r.ok) return { why: (await r.text()).trim() };
-        return { commitment: decodePeerCommitment(new Uint8Array(await r.arrayBuffer())) };   // its nonces are points, or it is refused (kanban #2331, #2345)
+        // kanban #2084: read up to a commitment's size (and a refusal up to 4 KiB), never whatever the peer sends inside the bound
+        if (!r.ok) return { why: (await peerWhyUpTo(r)).trim() };
+        return { commitment: decodePeerCommitment(await peerBytesUpTo(r, COMMITMENT_BYTES)) };   // its nonces are points, or it is refused (kanban #2331, #2345)
       }, { boundMs: this.peerAskMs, graceMs: this.peerGraceMs, enough: m.needed - 1, counts: (x) => !!x.commitment });
       const signers = [{ base: null, commitment: own.commitment }];
       const refused = [];
@@ -781,8 +783,8 @@ export class Forfeit {
     const peers = signers.filter((s) => s.base !== null);
     const asked = await askPeers(peers.map((s) => s.base), async (base, signal) => {
       const r = await this.fetcher(`${base}/forfeit-share?${q}`, { method: 'POST', body, headers, signal });
-      if (!r.ok) return { status: r.status, why: (await r.text()).trim() };
-      return { share: decodeShare(new Uint8Array(await r.arrayBuffer())) };
+      if (!r.ok) return { status: r.status, why: (await peerWhyUpTo(r)).trim() };   // kanban #2084: capped as the commit's
+      return { share: decodeShare(await peerBytesUpTo(r, SHARE_BYTES)) };
     }, { boundMs: this.peerAskMs });
     // A PAIR SPENT ON ANOTHER LIST (kanban #1699, #1764): a pair drawn for this ask, so one who read this list spent it - the seat refusing is not at fault
     const failed = sharesRefused(asked);
