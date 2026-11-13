@@ -917,6 +917,12 @@ export function openStore(path = ':memory:') {
       received_ms INTEGER NOT NULL,
       PRIMARY KEY (round_id, entry_id)
     );
+    -- A HEAD-TO-HEAD ROUND'S ONE DECISION AT THIS SEAT (kanban #2625): the verdicts and the reveal set they were decided over, kept
+    -- before the first verdict is signed; every later close or retry of the round signs from it and never decides again.
+    CREATE TABLE IF NOT EXISTS head_to_head_decisions (
+      round_id    BLOB PRIMARY KEY,
+      decision    TEXT NOT NULL
+    );
 
     -- A STAKE LOCK THIS SIGNER NODE VERIFIED (23.1 step 5): the contract the player
     -- handed over, the federation's id for it, and where it sits.
