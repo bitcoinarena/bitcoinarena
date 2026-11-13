@@ -290,6 +290,8 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
     // seating, so it does not refuse the round when a checked certificate stands - it is said in the console; with none standing it still counts
     const other = [];
     let found = null;
+    // HOW MANY SEATS HAND EACH CERTIFICATE THAT CHECKS (kanban #2595): `${index}|seated hex` -> { seated, from, index, n }
+    const handed = new Map();
     // EVERY SEAT ASKED AT ONCE, EACH WITHIN SEATING_ASK_MS (kanban #625, measured 2026-10-24 20:07Z: asked one after the other with no
     // limit, a restarting seat held an order's committee 20 s): read in the seats' order once more than half answered and the grace passed
     const said = new Array(nodes.length).fill(null);
@@ -323,6 +325,8 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
           // round): the seats' own rule (seating-agent #1681) - of a seating and the one that replaces it, the replacement stands - is applied here too
           if (!found || index > found.index || (index === found.index && seatingReplaces(v.seating.seated, found.seated, got.drawn[role])))
             found = { seated: v.seating.seated, from: u, index };
+          { const hk = `${index}|${v.seating.seated.map((k) => toHex(k)).join(',')}`;
+            const e = handed.get(hk) || handed.set(hk, { seated: v.seating.seated, from: u, index, n: 0 }).get(hk); e.n++; }
           continue;
         }
         if (/names another round/.test(String(v.why))) other.push(`${u}: ${v.why}`); else refused.push(`${u}: ${v.why}`);
@@ -331,6 +335,20 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
     // A CERTIFICATE THAT DID NOT CHECK IS KEPT BESIDE THE ONE THAT DID (measured 2026-10-16 on live testnet4: guardian-1 handing a
     // seating with another node seated was refused here, and guardian-2's standing certificate dropped that refusal - the lying seat
     // went unnamed); settlementSignerNodesFrom refuses the round on it
+    // A CERTIFICATE ONE SEAT ALONE HANDS DOES NOT OVERRIDE, AT ITS INDEX, ONE MORE SEATS HAND (kanban #2595): an ordered #738 pair is replace-shaped as well -
+    // S of the fewer PRESENTs, then T every honest seat moved to - and S stands once the member that signed T first signs S late (wf1489 r6 census-1). The
+    // seats hold T; that member served S from its own door, this client took it by the rule above, and every honest seat was named for answering T. The
+    // replacement is still taken when more than one seat hands it (#2564: the drawn seats that moved), or when no other one is handed by more seats.
+    if (found) {
+      const at = [...handed.values()].filter((e) => e.index === found.index);
+      const mine = at.find((e) => e.seated.map((k) => toHex(k)).join(',') === found.seated.map((k) => toHex(k)).join(','));
+      const most = Math.max(...at.map((e) => e.n));
+      if (mine && mine.n === 1 && most > 1) {
+        let best = null;
+        for (const e of at) if (e.n === most && (!best || seatingReplaces(e.seated, best.seated, got.drawn[role]))) best = e;
+        found = { seated: best.seated, from: best.from, index: best.index };
+      }
+    }
     if (found && other.length) console.warn(`[arena] #1389 ${role} seating of ${seatHex.slice(0, 8)}: ${other.length} seat(s) answered another round's certificate (an older seat): ${other.join('; ')}`);
     return { found, spoke, refused: found ? refused : [...refused, ...other], other, answered: said.some(Boolean) };
   };
