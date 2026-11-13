@@ -29660,7 +29660,16 @@ async function fetchProposals({ nodes, needed = 5, fetcher = (u, o) => fetch(u, 
     // seats holding the proposal give it - else it is shown as undecided. The signal count is the median seat's.
     const stageOf = (x) => JSON.stringify([x.signal && x.signal.state, x.vote && x.vote.state, x.cancelled || null]);
     const [stageKey, stageSeats] = fundingMost(views.map(stageOf));
-    const v = stageSeats * 2 > views.length ? views.find((x) => stageOf(x) === stageKey) : null;
+    // AND WHAT IS SHOWN WITH IT, BY MOST OF THOSE SEATS (kanban #2494, #1489 a44-refute-17-s2-1): the vote's count and last block, the
+    // signal's end, supporters and active nodes were the first-listed seat's JSON among those giving the stage - one seat listed first
+    // set "YES 99%" beside six honest seats' 12 %. The version most of the seats giving the stage hand is shown
+    let v = null;
+    if (stageSeats * 2 > views.length) {
+      const agree = views.filter((x) => stageOf(x) === stageKey);
+      const shownOf = (x) => JSON.stringify([x.signal || null, x.vote || null, x.cancelled || null]);
+      const [shownKey] = fundingMost(agree.map(shownOf));
+      v = agree.find((x) => shownOf(x) === shownKey);
+    }
     const counts = views.map((x) => (Array.isArray(x.signals) ? x.signals.length : 0)).sort((a, b) => a - b);
     proposals.push({ id: p.id, purpose: p.purpose, amountSats: String(p.amountSats), lnurl: p.lnurl, author: p.author, network: p.network,
       publishedHeight: p.publishedHeight, signal: v ? v.signal : null, vote: v ? v.vote || null : null, cancelled: v ? v.cancelled || null : null, undecided: !v,
