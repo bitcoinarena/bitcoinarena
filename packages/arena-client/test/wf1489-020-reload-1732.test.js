@@ -437,3 +437,28 @@ test('#033: one seat withholding only its own receipt for the newest mark moves 
     assert.equal(fork.ok, false, 'no second child of the older mark');
   } finally { globalThis.fetch = realFetch; await node.close(); }
 });
+
+// feedback #034 (Hexbox): a mark only one seat stored (another blipped) is adopted after a reload under the #033 rule - and was never
+// sent again (pendingLink was lost with the tab), so every later mark was "stored but not carried" and the run stalled. The adopted
+// head short of live must be the pending link, which #relink offers to the committee again.
+test('#034: a head adopted short of live after a reload is the pending link, so it is sent again', async () => {
+  const { node, client, rid, eid } = await rig();
+  try {
+    await inputs(client, rid, eid);
+    const m0 = await client.checkpoint(driven(60), { roundId: rid, entryId: eid, tick: 60 });
+    await gossipCarry(client, m0); carry(client, m0);
+    const m1 = await client.checkpoint(driven(120), { roundId: rid, entryId: eid, tick: 120 });
+    await gossipCarry(client, m1); carry(client, m1);
+    const m2 = await client.checkpoint(driven(180), { roundId: rid, entryId: eid, tick: 180 });   // only this seat's own receipt
+    client.close?.();
+    const fresh = new Client({ base: `http://127.0.0.1:${node.port}`, core, sign, verify });
+    fresh.nodes = client.nodes; fresh.gameVerifySlots = client.gameVerifySlots;
+    await fresh.resumeAfterReload({ roundId: rid, entryId: eid, blockTicks: BLOCK_TICKS });
+    console.log(`  #034 reload: head ${toHex(fresh.head).slice(0, 16)} (m2 ${toHex(m2.id).slice(0, 16)}), live(m2) ${fresh.live(m2.id)}, pendingLink ${fresh.pendingLink ? toHex(fresh.pendingLink.id).slice(0, 16) : null}`);
+    assert.equal(toHex(fresh.head), toHex(m2.id), 'the newest signed mark is the head (#033)');
+    assert.equal(fresh.live(m2.id), false);
+    assert.ok(fresh.pendingLink, 'the adopted mark short of live is pending');
+    assert.equal(toHex(fresh.pendingLink.id), toHex(m2.id));
+    assert.equal(toHex(fresh.pendingLink.bytes), toHex(m2.bytes), 'its own signed bytes, ready to send again');
+  } finally { await node.close(); }
+});
