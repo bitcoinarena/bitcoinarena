@@ -1170,7 +1170,10 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       // a notice handed along for this peer: DEPARTED from its leave_after - only if it stands here and is due at this height
       if (notices.some((d) => toHex(d.peerKey) === toHex(g.peerKey))) {
         if (!Number.isInteger(departureNotice)) return { ok: false, why: 'this seat runs no departure_notice clock' };
-        const d = dueDeparture(notices, { record: plain.record, peerKey: g.peerKey, departureNotice, height: b.height, verify: sv });
+        // EACH ANCHOR READ ON THIS SEAT'S OWN CHAIN (kanban #2608): the height a handed notice counts from is never the gatherer's word
+        const mine = await Promise.all(notices.filter((d) => toHex(d.peerKey) === toHex(g.peerKey))
+          .map((d) => (absences && typeof absences.anchorDeparture === 'function' ? absences.anchorDeparture(d) : { ...d, anchor: undefined })));
+        const d = dueDeparture(mine, { record: plain.record, peerKey: g.peerKey, departureNotice, height: b.height, verify: sv, gate: absences ? absences.anchorGate ?? null : null });
         if (!d.ok) return { ok: false, why: `that departure does not stand here: ${d.why}` };
         gone.push({ peerKey: g.peerKey, sinceHeight: d.sinceHeight, kind: GONE.DEPARTED, proofRef: d.id }); continue;
       }

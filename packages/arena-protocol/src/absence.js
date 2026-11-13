@@ -15,6 +15,7 @@
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex, fromHex } from './hash.js';
 import { TAG, PROTOCOL_VERSION, TYPE_ABSENCE_ATTESTATION, TYPE_DEPARTURE_NOTICE } from './constants.js';
+import { parseTransaction, commitmentsOf } from './tx.js';
 
 const is32 = (b) => b instanceof Uint8Array && b.length === 32;
 const is33 = (b) => b instanceof Uint8Array && b.length === 33;
@@ -61,18 +62,69 @@ const guardianOf = (record, peerKey) => (record.guardians || []).find((g) => toH
 const byNode = (record, nodePubkey) => (record.guardians || []).find((g) => toHex(g.nodePubkey) === toHex(nodePubkey)) || null;
 
 /**
- * A DEPARTURE NOTICE THAT STANDS (§23A.5): signed by the leaving guardian's own node key, for a guardian of the record, with
- * leave_after at least departure_notice blocks after it was posted. Answers { ok, peerKey, leaveAfterHeight } or why not.
+ * THE NOTICE IS ANCHORED ON CHAIN (ruled 2026-11-13, kanban #2600 / #2608, the backdating of #2599): posted_at is the guardian's own
+ * word, so a notice signed at tip T with posted_at T - 432 let him leave at once and keep his bond. From the gate on a notice counts
+ * from the height at which its hash is CONFIRMED: an OP_RETURN "ARN" 'L' || departure_id (36 bytes) in any transaction, as votes and
+ * deposits are carried. posted_height is that block's height, read from the seat's own chain - never a field the guardian writes - and
+ * leave_after >= posted_height + departure_notice. A notice with no anchor is no notice. A named block hash is not an anchor (it proves
+ * "not before", and backdating needs "not after"). No freshness window: the bytes can be pulled from any peer at any time and checked
+ * against the anchored hash, so an offline seat reads the anchor when it comes back and never stalls.
+ *
+ * THE GATE: a record judged at or above its network's DEPARTURE_ANCHOR_HEIGHT reads notices anchored; below it, the old rule byte for
+ * byte (posted_at as written, its residual standing). Beside the ballot's BALLOT_BIND_HEIGHT (ballot.js): regtest from 0, mainnet from
+ * its first block, testnet4 about 600 blocks above the tip of 2026-11-13 (~161 011): 161 600.
  */
-export function departureStands(d, { record, departureNotice, verify }) {
+export const DEPARTURE_ANCHOR_HEIGHT = Object.freeze({ regtest: 0, testnet4: 161600, mainnet: 0 });
+/** The gate of a network by name ('regtest' | 'testnet4'); any other network is read as mainnet (anchored from its first block). */
+export const departureAnchorHeight = (network) => (Object.prototype.hasOwnProperty.call(DEPARTURE_ANCHOR_HEIGHT, network) ? DEPARTURE_ANCHOR_HEIGHT[network] : DEPARTURE_ANCHOR_HEIGHT.mainnet);
+/** Whether a notice judged at `height` must be anchored under `gate` (no gate given: never, the old rule). */
+export const anchorRequired = (gate, height) => Number.isInteger(gate) && Number.isInteger(height) && height >= gate;
+/** The blocks a leaving node adds to leave_after for its anchor to confirm in (absence-producer.js): one day. */
+export const DEPARTURE_ANCHOR_SLACK = 144;
+export const DEPARTURE_ANCHOR_MARKER = Uint8Array.from([0x41, 0x52, 0x4e, 0x4c]);     // "ARN" 'L'
+export const DEPARTURE_ANCHOR_BYTES = 4 + 32;
+/** The anchor's payload for a notice: "ARN" 'L' || departure_id - and the OP_RETURN script that pushes it. */
+export function encodeDepartureAnchor(d) {
+  const out = new Uint8Array(DEPARTURE_ANCHOR_BYTES);
+  out.set(DEPARTURE_ANCHOR_MARKER, 0); out.set(departureId(d), 4);
+  return out;
+}
+export const departureAnchorScript = (d) => Uint8Array.from([0x6a, DEPARTURE_ANCHOR_BYTES, ...encodeDepartureAnchor(d)]);
+/**
+ * A NOTICE'S ANCHOR, READ OFF ITS TRANSACTION: `raw` a transaction confirmed at `height` on the seat's own chain (the caller reads it
+ * there: getrawtransaction with the block hash, the block on the main chain - as a ballot deposit is read). Answers
+ * { ok, postedHeight } or why not.
+ */
+export function departureAnchorOf({ raw, height, notice }) {
+  let tx; try { tx = parseTransaction(raw); } catch (e) { return { ok: false, why: `that is no transaction: ${e.message}` }; }
+  if (!Number.isInteger(height) || height < 0) return { ok: false, why: 'an anchor counts once it is confirmed at a height' };
+  let want; try { want = toHex(encodeDepartureAnchor(notice)); } catch (e) { return { ok: false, why: e.message }; }
+  if (!commitmentsOf(tx).some((p) => p.length === DEPARTURE_ANCHOR_BYTES && toHex(p) === want))
+    return { ok: false, why: 'that transaction carries no "ARN" \'L\' anchor of this notice' };
+  return { ok: true, postedHeight: height, txid: toHex(Uint8Array.from(tx.txid).reverse()) };
+}
+
+/**
+ * A DEPARTURE NOTICE THAT STANDS (§23A.5): signed by the leaving guardian's own node key, for a guardian of the record, with
+ * leave_after at least departure_notice blocks after it was posted. Answers { ok, peerKey, leaveAfterHeight, postedHeight } or why not.
+ * ANCHORED (kanban #2608): judged at `height` at or above `gate`, "posted" is `anchorHeight` - the confirmed height of its "ARN" 'L'
+ * anchor on the seat's chain, at or below `height` - and a notice without one does not stand. Below the gate (or no gate): posted_at.
+ */
+export function departureStands(d, { record, departureNotice, verify, height: at = null, gate = null, anchorHeight = null }) {
   try { encodeDeparture(d); } catch (e) { return { ok: false, why: e.message }; }
   if (toHex(d.federationId) !== toHex(record.federationId)) return { ok: false, why: 'that notice names another federation' };
   const g = guardianOf(record, d.peerKey);
   if (!g) return { ok: false, why: 'that peer is not a guardian of this federation' };
   if (toHex(g.nodePubkey) !== toHex(d.nodePubkey)) return { ok: false, why: 'the notice names another node key than the record has for that peer' };
   if (!verify(d.signature, departureId(d), d.nodePubkey)) return { ok: false, why: 'the notice is not signed by the leaving guardian\'s node key' };
-  if (d.leaveAfterHeight < d.postedAt + departureNotice) return { ok: false, why: `leave_after ${d.leaveAfterHeight} is less than departure_notice (${departureNotice} blocks) after it was posted at ${d.postedAt}` };
-  return { ok: true, peerKey: d.peerKey, leaveAfterHeight: d.leaveAfterHeight };
+  let posted = d.postedAt;
+  if (anchorRequired(gate, at)) {
+    if (!Number.isInteger(anchorHeight)) return { ok: false, why: `no "ARN" 'L' anchor of that notice is confirmed on this seat's chain: from height ${gate} a notice counts only from its anchor` };
+    if (anchorHeight > at) return { ok: false, why: `its anchor confirmed at ${anchorHeight}, after the height ${at} it is judged at` };
+    posted = anchorHeight;
+  }
+  if (d.leaveAfterHeight < posted + departureNotice) return { ok: false, why: `leave_after ${d.leaveAfterHeight} is less than departure_notice (${departureNotice} blocks) after it was posted at ${posted}${posted !== d.postedAt ? ' (its anchor\'s height)' : ''}` };
+  return { ok: true, peerKey: d.peerKey, leaveAfterHeight: d.leaveAfterHeight, postedHeight: posted };
 }
 
 /**

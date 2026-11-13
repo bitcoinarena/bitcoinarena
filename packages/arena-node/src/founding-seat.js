@@ -48,19 +48,22 @@ const goneNodes = (record) => { const s = new Set(seatedOf(record).map((g) => to
  * THE NOTICE TRIGGERS (§23A.6): of `notices` (decoded departure notices), each one that stands against the held record
  * of its federation (`held`: [{ federation, status, record }], status OPEN, DRAINING or CRITICAL) and leaves that federation's seated
  * guardians DRAINING or CRITICAL. Answers [{ federation, height: posted_at, wouldBe, nominal, seatedFirst, departing }] (node keys hex).
+ * ANCHORED (kanban #2608): with the tip at or above `gate`, a notice triggers only from its "ARN" 'L' anchor's confirmed height
+ * (`d.anchor.height`, read on this seat's chain), and that is its trigger height - posted_at is the guardian's word and could be dated back.
  */
-export function noticeTriggers({ held = [], notices = [], departureNotice, verify }) {
+export function noticeTriggers({ held = [], notices = [], departureNotice, verify, gate = null, tip = null }) {
   const rows = [];
   if (!Number.isInteger(departureNotice)) return rows;
   for (const d of notices || []) {
     const fid = toHex(d.federationId);
     const h = (held || []).find((r) => r && r.record && lower(r.federation) === fid);
     if (!h || !['OPEN', 'DRAINING', 'CRITICAL'].includes(h.status)) continue;
-    if (!departureStands(d, { record: h.record, departureNotice, verify }).ok) continue;
+    const st = departureStands(d, { record: h.record, departureNotice, verify, height: tip, gate, anchorHeight: d.anchor && Number.isInteger(d.anchor.height) ? d.anchor.height : null });
+    if (!st.ok) continue;
     const seated = seatedOf(h.record).filter((g) => toHex(g.peerKey) !== toHex(d.peerKey));
     let wouldBe; try { wouldBe = statusFor({ nominal: h.record.nominal, seated: Math.min(h.record.nominal, seated.length) }).status; } catch { continue; }
     if (wouldBe !== 'DRAINING' && wouldBe !== 'CRITICAL') continue;
-    rows.push({ federation: fid, height: d.postedAt, wouldBe, nominal: h.record.nominal, seatedFirst: seated.map((g) => toHex(g.nodePubkey)),
+    rows.push({ federation: fid, height: st.postedHeight, wouldBe, nominal: h.record.nominal, seatedFirst: seated.map((g) => toHex(g.nodePubkey)),
       departing: [...new Set([toHex(d.nodePubkey), ...goneNodes(h.record)])] });
   }
   return rows;
@@ -348,7 +351,8 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
     const rows = held.map((r) => (r && r.record && r.status === 'DRAINING'
       ? { ...r, nominal: r.record.nominal, seatedFirst: seatedOf(r.record).map((g) => toHex(g.nodePubkey)), departing: goneNodes(r.record), successor: named(r) } : r));
     let notes = [];
-    try { notes = noticeTriggers({ held, notices: (await notices()) || [], departureNotice: clocks.departureNotice, verify }); } catch { notes = []; }
+    try { notes = noticeTriggers({ held, notices: (await notices()) || [], departureNotice: clocks.departureNotice, verify,
+      gate: clocks && Number.isInteger(clocks.departureAnchorGate) ? clocks.departureAnchorGate : null, tip: h0 }); } catch { notes = []; }
     try { notes = notes.concat(emergencyTriggers({ held, requests: (await emergencies()) || [] })); } catch { /* the notices alone */ }
     // A FEDERATION EXISTS when this seat holds a record OR the census names one (measured on the test host 2026-10-18: the seven
     // new seats and the three installer nodes hold no round, so no record - they drew a GENESIS trigger at 156970 on a network with two
