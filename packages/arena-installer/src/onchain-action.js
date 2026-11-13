@@ -98,8 +98,7 @@ export const EFFECTS = {
     const { nodeKeyOf } = await import('./seed.js');
     const next = nodeKeyOf(fromHex(String(state.readSecret('seed.hex') || '').trim()));
     if (toHex(schnorr.getPublicKey(next)) !== a.meta.to) throw new Error('the key from the words is not the one this action was built for');
-    // a busy timeout (kanban #2297): the seat's own write of a moment no longer leaves the move open at once
-    const db = new DatabaseSync(state.path('node.db'), { timeout: 2000 });
+    const db = new DatabaseSync(state.path('node.db'));
     try {
       db.exec('BEGIN IMMEDIATE');
       try {
