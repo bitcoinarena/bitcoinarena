@@ -487,15 +487,27 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   // ALL CLIENTS TOGETHER ARE BOUNDED (kanban #1871, #1904): `queued` is an upper estimate of the unsent bytes of all clients - each
   // message queued adds its length, a 1 s timer (and every time the estimate passes the bound) sets it to the real sum of bufferedAmount.
   // Past lim.totalSlowBytes the clients with the largest backlogs are dropped until the sum is under it again.
+  // WHO IS SHED IS WHO HAS HELD A BACKLOG LONGEST, NOT WHO HOLDS THE MOST NOW (kanban #2119, #1489 v1-refute-50-s4): a REQ answer is queued
+  // in one synchronous loop, so a client reading at full speed holds its whole answer as backlog for that moment - a stranger who spread
+  // ~7 MB thinly over paused sockets (each below one honest answer) made the honest reader the largest, and it was the one cut off. Now
+  // each 1 s recount marks since when a client has held a backlog (`heldSince`, cleared when it is seen empty); shed() drops the clients
+  // that held one at a recount first, the longest-held first (the larger of equal ones), and a backlog built since the last recount
+  // (an answer being read) only when nothing held is left.
   const backlog = () => { let n = 0; for (const o of clients) n += o.ws.bufferedAmount; return n; };
   let queued = 0;
-  const recount = setInterval(() => { queued = backlog(); }, 1000);
+  const recount = setInterval(() => {
+    const now = Date.now();
+    queued = 0;
+    for (const o of clients) { const b = o.ws.bufferedAmount; queued += b; if (b > 0) { if (!o.heldSince) o.heldSince = now; } else o.heldSince = 0; }
+  }, 1000);
   recount.unref?.();
+  const before = (x, y) => (x.heldSince && y.heldSince ? x.heldSince < y.heldSince || (x.heldSince === y.heldSince && x.ws.bufferedAmount > y.ws.bufferedAmount)
+    : x.heldSince ? true : y.heldSince ? false : x.ws.bufferedAmount > y.ws.bufferedAmount);
   const shed = () => {
     queued = backlog();
     while (queued > lim.totalSlowBytes) {
       let big = null;
-      for (const o of clients) if (!big || o.ws.bufferedAmount > big.ws.bufferedAmount) big = o;
+      for (const o of clients) if (o.ws.bufferedAmount && (!big || before(o, big))) big = o;
       if (!big || !big.ws.bufferedAmount) break;
       queued -= big.ws.bufferedAmount;
       clients.delete(big);
