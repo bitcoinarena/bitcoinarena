@@ -30,10 +30,10 @@ const BLOCK = '20'.repeat(32);
 const sk = (i) => (i === 1 ? secret : new Uint8Array(32).fill(0x30 + i));
 const CENSUS = [1, 2, 3].map((i) => ({ pubkey: schnorr.getPublicKey(sk(i)), outpoint: `${String(i).repeat(64)}:0`, bondSats: [0, 50, 30, 20][i] }));
 
-// one deposit at 200 for P: G -> X (regtest 1 / 6 / 1: voting 201-206, activation 208); `aux` picks the signature, the body is the same
+// one deposit at 200 for P: G -> X (regtest 1 / 6 / 1: voting 201-206, activation 210 - 2.0's depth rule, #1196, wants 3 blocks after the last vote); `aux` picks the signature, the body is the same
 function deposit(bound) {
   const chain = new Map();
-  const body = { networkId: NET, parent: GENESIS.configHash, configHash: configHashOf(X), config: X, class: CLASS.DESIGN, activationHeight: 208, proposer };
+  const body = { networkId: NET, parent: GENESIS.configHash, configHash: configHashOf(X), config: X, class: CLASS.DESIGN, activationHeight: 210, proposer };
   const outs = depositOutputsExpected(1000, SET).outputs.map((o) => ({ sats: o.sats, script: o.script }));
   const raw = tx(9, bound ? [...outs, { sats: 0, script: depositCommitmentScript(body) }] : outs);
   const depositTxid = Uint8Array.from(parseTransaction(raw).txid);
@@ -99,6 +99,6 @@ test('#2607-1: unbound, two signatures over one deposit still void it (#1840 unc
   const { chain, signed } = deposit(false);
   const { proposals } = seat({ chain, bound: false, tip: { at: 200 } });
   const a = await proposals.add(signed(5)); assert.equal(a.status, 201, a.why);
-  const b = await proposals.add(signed(6, { activationHeight: 209 })); assert.equal(b.status, 201, b.why);   // a different body
+  const b = await proposals.add(signed(6, { activationHeight: 211 })); assert.equal(b.status, 201, b.why);   // a different body
   assert.equal(proposals.counts(a.id), false); assert.equal(proposals.counts(b.id), false);
 });
