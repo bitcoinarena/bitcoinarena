@@ -151,8 +151,31 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
   const backedBy = (depositHex, id, proposerHex = null) => [...held.values()].find((r) => r.id !== id && depositTxidOf(r) === depositHex
     && (proposerHex === null || String(r.proposer || '').toLowerCase() !== proposerHex)) || null;
   const sameDeposit = (depositHex, id) => [...held.values()].filter((r) => r.id !== id && depositTxidOf(r) === depositHex);
-  /** COUNTED: the only kept proposal its deposit backs (kanban #1840). */
-  const counts = (id) => { const r = held.get(id); if (!r) return false; const d = depositTxidOf(r); return !!d && sameDeposit(d, id).length === 0; };
+  // TWINS ARE ONE PROPOSAL (ruling #2591 (c), kanban #2607): a BOUND proposal's identity is its deposit's commitment (proposer key +
+  // body hash). The same body re-signed on the same deposit - another proposal_id, since the id covers the signature - is the SAME
+  // proposal: its deposit is not voided (#1840 stays for a DIFFERENT body on one deposit, and for unbound deposits, which commit to
+  // nothing), votes under any twin id count for it (ballot-tally.js, protocol tally `twins`), and one twin stands for the group: the
+  // one already decided (or holding an outcome through a recount), else one counting, else the lowest id - so a twin posted after
+  // the outcome never moves it. The #2590 tip check for twins is gone: a twin changes nothing a vote decided.
+  const bodyHexOf = (r) => { const h = String((r && r.proposal) || '').toLowerCase(); return h.length > 128 ? h.slice(0, -128) : null; };
+  const boundRecord = (r) => !!r && isBound(r.networkId, Number(r.publishedAt));
+  const rankOf = (r) => { const st = stateOf(r); return st === S.PASSED || st === S.FAILED ? 0 : st === S.COUNTING ? (r.undecided && r.undecided.outcome ? 1 : 2) : 3; };
+  /** The group of a kept record: [record] alone, or every twin with it (same deposit, same body, bound) - null when its deposit is void. */
+  const groupOf = (id) => {
+    const r = held.get(id); if (!r) return null;
+    const d = depositTxidOf(r); if (!d) return null;
+    const others = sameDeposit(d, id);
+    if (!others.length) return [r];
+    const body = bodyHexOf(r);
+    if (!boundRecord(r) || !body || others.some((o) => !boundRecord(o) || bodyHexOf(o) !== body)) return null;   // #1840: void
+    return [r, ...others];
+  };
+  const standsFor = (id) => {
+    const g = groupOf(id); if (!g) return null;
+    return g.slice().sort((a, b) => rankOf(a) - rankOf(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0].id;
+  };
+  /** COUNTED: the only kept proposal its deposit backs (kanban #1840), or the twin that stands for its group (#2607). */
+  const counts = (id) => standsFor(id) === id;
   // THE CENSUS OF A KEPT RECORD'S OWN BRANCH (kanban #2032, after #1670 / #1865): a restart while a reorg has taken out its
   // publication block (and a fresh bond with it) read the census of ANOTHER branch, which left the proposer out - and the
   // record was written `unbonded` for good, never restored when its block came back. With a block reader the census is read
@@ -236,19 +259,10 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
       // checked on a proposal that stands on its face and on the chain: refused by its own fault first, then by the deposit (#1489)
       const other = backedBy(depositHex, id, toHex(p.proposer));
       if (other) return { ok: false, status: 409, why: `that deposit (deposit_txid) already backs proposal ${other.id}: one deposit pays for one proposal` };
-      // A BOUND TWIN ONCE THE VOTING BEGAN (kanban #2590): the deposit commits to the body, not the signature, and proposal_id covers the
-      // signature - so the proposer can sign the same body again and the twin passes depositOf. Taken at any time (#2562), it voided the
-      // first (#1840) after its vote had passed and activated: one proposer undoing a vote. A second proposal over a deposit this seat
-      // already keeps is taken only while the tip is below its first voting block - the #1608 tip check, kept for twins alone.
-      if (bound && sameDeposit(depositHex, id).length && tipOf) {
-        let tip = NaN;
-        try { tip = Number(await tipOf()); } catch { tip = NaN; }
-        if (!Number.isFinite(tip)) return { ok: false, status: 503, why: 'this seat could not read its tip: ask again shortly' };
-        if (tip >= stands.votingFrom)
-          return { ok: false, status: 409, why: `that deposit already backs a proposal of this proposer whose voting began at ${stands.votingFrom} (tip ${tip}): a second one signed over it is refused` };
-      }
+      // kanban #2607 (ruling #2591 (c)): a bound twin - the same body re-signed over the same deposit - is the same proposal, taken at
+      // any time; the #2590 tip check for twins is gone (counts(): one twin stands for the group, a decided one first)
       if (sameDeposit(depositHex, id).length >= SAME_DEPOSIT_KEPT)
-        return { ok: false, status: 409, why: `that deposit already backs ${SAME_DEPOSIT_KEPT} proposals of this proposer: all of them are void (kanban #1840)` };
+        return { ok: false, status: 409, why: `that deposit already backs ${SAME_DEPOSIT_KEPT} proposals of this proposer: no more are kept (kanban #1840, #2607)` };
       const kept = { id, proposal: toHex(bytes), networkId: net, parent: toHex(p.parent), configHash: toHex(p.configHash), class: stands.class,
         proposer: toHex(p.proposer), publishedAt: dep.publishedAt, depositSats: String(dep.depositSats), votingFrom: stands.votingFrom,
         votingUntil: stands.votingUntil, activationHeight: stands.activationHeight, repeal: stands.repeal, depositTxid: depositHex,
@@ -268,6 +282,10 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
     /** Is a kept record read bound (kanban #2125): its votes by seq. From its network's gate and its publication height, never the store's word. */
     bound: (r) => !!r && isBound(r.networkId, Number(r.publishedAt)),
     counts,
+    /** The twin that stands for `id`'s group (kanban #2607): `id` itself when it has none; null when its deposit is void (#1840). */
+    twinOf: standsFor,
+    /** The ids of `id`'s twins, `id` first ([id] alone when it has none, [] when void). */
+    twins: (id) => { const g = groupOf(id); return g ? g.map((r) => r.id) : []; },
     /** THE TIP add() reads (kanban #1608), handed by the tally when none was given here. */
     useTip(fn) { if (!tipOf && typeof fn === 'function') tipOf = fn; },
     /** How many kept records of `net` (any network: none given) wait for their proposer check (kanban #1670). */
