@@ -154,3 +154,23 @@ export function lockSetToSign({ own, views, threshold }) {
   for (const v of views) for (const e of new Set(v)) count.set(e, (count.get(e) || 0) + 1);
   return [...new Set(own)].filter((e) => (count.get(e) || 0) >= threshold).sort();
 }
+
+/**
+ * A SIGNED LOCK SET, AS EVIDENCE (ruling #2587, kanban #2606): the set's bytes (u16 length + LockSet), the signer's u64 at_ms and its 64-byte
+ * BIP-340 signature over lockSetSignatureId({ setId, atMs }). What a seat serves as its set signature, in one encoding a slash proof can carry:
+ * two of these by one key over two different sets of one round are the offence (slash.js slashHoldsOnTwoLockSets).
+ */
+export function encodeSignedLockSet({ set, atMs, sig }) {
+  const setBytes = encodeLockSet(set);
+  const w = new Writer();
+  w.u16(setBytes.length); w.bytes(setBytes); w.u64(BigInt(atMs)); w.bytes(lsBytes(sig), 64);
+  return w.finish();
+}
+export function decodeSignedLockSet(bytes) {
+  const r = new Reader(bytes);
+  const set = decodeLockSet(r.bytes(r.u16()));
+  const atMs = r.u64();
+  const sig = r.bytes(64);
+  r.end();
+  return { set, atMs, sig };
+}

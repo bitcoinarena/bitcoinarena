@@ -84,7 +84,10 @@ test('#2585 one dishonest seat in a 3-seat draw: two certificates over two sets;
   // SINCE #035 a certificate assembled in take() is pushed at once, so the sides may converge on the first one; either way two
   // certificates over two sets exist (x signed both) and NEITHER side returns E's lock while that conflict can stand
   const split = JSON.stringify([...c1.entries].sort()) !== JSON.stringify([...c2.entries].sort());
-  if (split) assert.equal(out1, null, `seat 1 returns E's lock at once while seat 2's certificate plays E: ${out1}`);
+  // RULING #2587 (kanban #2606): a seat that HOLDS both certificates reads the round VOID and returns every lock at once; one that does not
+  // hold the second never returns E while seat 2 may play it
+  if (split && b1.conflicted(rid)) assert.ok(out1 && /contested/.test(out1), `a contested round is VOID, every lock back: ${out1}`);
+  else if (split) assert.equal(out1, null, `seat 1 returns E's lock at once while seat 2's certificate plays E: ${out1}`);
   // converged on one set (the first certificate travelled): E is played by no honest side, so its lock may go back - but never while
   // a seat that holds E in its certificate is unheard (the #035 case below)
   else assert.ok(!c1.entries.includes(E) || out1 === null);
@@ -127,13 +130,20 @@ test('#035 one missed pull does not return a lock while a contesting certificate
   s2book.take(rid, { signatures: [signed(x, [A, E], lockSetSignatureId, CLOSE + 150)] });
   for (let i = 0; i < 4; i++) { await b1.step(rid); await s2book.step(rid); await tick(); }
   now = CLOSE + LOCK_SET_WINDOW_MS + 10_000;
+  const contestedWhileDown = b1.conflicted(rid);   // seat 2's push may already have handed seat 1 its certificate
   const whileDown = await b1.lockOut(rid, E);
   books.set('s2', s2book);                                         // seat 2 is back, its [A, E] certificate standing
   await new Promise((ok) => setTimeout(ok, 1100));                // past the per-peer pull spacing
   const afterBack = await b1.lockOut(rid, E);
   console.log('  FACTS (#035):', JSON.stringify({ whileDown, afterBack, conflicted: b1.conflicted(rid) }));
-  assert.equal(whileDown, null, `seat 1 returned E's lock with seat 2 unheard: ${whileDown}`);
-  assert.equal(afterBack, null, `seat 1 returned E's lock after one missed pull: ${afterBack}`);
+  // RULING #2587 (kanban #2606): holding both certificates, seat 1 reads the round VOID (every lock back); holding one, it waits for seat 2
+  if (contestedWhileDown) assert.ok(whileDown && /contested/.test(whileDown), `a contested round is VOID: ${whileDown}`);
+  else assert.equal(whileDown, null, `seat 1 returned E's lock with seat 2 unheard: ${whileDown}`);
+  // RULING #2587 (kanban #2606): once seat 2 answered, seat 1 holds both certificates - the round is VOID and E's lock goes back as every lock
+  // does (seat 2 is handed the contest by the same push and settles nothing either)
+  assert.ok(afterBack && /contested/.test(afterBack), `seat 1, holding both certificates, reads the round VOID: ${afterBack}`);
+  await tick();
+  assert.equal(s2book.conflicted(rid), true, 'seat 2 was handed the contest once it was back');
   assert.deepEqual([...s2book.certified(rid).entries].sort(), [A, E].sort(), 'seat 2 kept the certificate that plays E');
   assert.equal(b1.conflicted(rid), true, 'the contesting certificate was pulled once seat 2 answered');
 });
