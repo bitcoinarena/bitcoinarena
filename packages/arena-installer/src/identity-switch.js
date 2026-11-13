@@ -25,14 +25,32 @@ import { buildBond, buildAdvertUpdate, advertFor, lockOf, censusKeyOfNode, bondN
 import { emergencyOf, nodeKeyOf } from './seed.js';
 import { nodeState, bondsOf } from './state.js';
 import { fromHex, toHex, sha256 } from '../../arena-protocol/src/hash.js';
-import { onchainAction, resumeOpen } from './onchain-action.js';
+import { onchainAction, resumeOpen, lastActionOf } from './onchain-action.js';
+
+// THE SEAT RESTART IS OWED BY THE MOVE, NOT BY THE DOOR (kanban #2297): the seat reads its key from node.db once, at start, and only
+// POST /owner/key-from-words restarts it - on an answer with `bond`. A move whose key swap was busy (SQLITE_BUSY) stays open and is
+// finished by whichever door of the wallet comes first (resumeOpen: Add to bond, the roles, the games refresh, the custody agent), none
+// of which restarts the seat; from then on node.db holds the words' key and the move was answered { already } forever, so the seat kept
+// signing as the old key. Now the move's DONE record writes keySwitch.restart (one locked write with the new bond and node.db already
+// swapped); every ask answers that move with its bond while the mark stands, and the answer that carries the bond takes the mark away
+// (compare-and-set on the bond) - so the restart is owed until a door is told to do it, whoever finished the move.
+const restartOwed = (s) => { const k = s.keySwitch; return k && k.restart && typeof k.from === 'string' ? k : null; };
+function answerMove(st, plan, bond, extra = {}) {
+  st.update((n) => { const k = restartOwed(n); return k && k.bond === bond.txid ? { keySwitch: { ...k, restart: false, restartAskedMs: Date.now() } } : null; });
+  return { ok: true, plan, bond, ...extra };
+}
 
 export async function switchToSeedKey({ home, release, post = false, chainKit = { coinsOf, broadcast, seen: txSeen }, state = null, nowMs = Date.now() }) {
   const st = state || nodeState(home);
   // a move sent before and not finished (a crash between the broadcast and the key swap): finished first - the seat restarts on its answer
   const resumed = await resumeOpen(st, { chainKit });
-  if (resumed.done && resumed.done.kind.startsWith('key-switch ') && resumed.done.result) return { ok: true, plan: resumed.done.result.plan, bond: resumed.done.result.bond, resumed: true };
+  if (resumed.done && resumed.done.kind.startsWith('key-switch ') && resumed.done.result) return answerMove(st, resumed.done.result.plan, resumed.done.result.bond, { resumed: true });
   const s = st.read();
+  // a move finished by another door (kanban #2297): its restart still owed - answered with its bond, so the door restarts the seat
+  {
+    const k = restartOwed(s), last = k && lastActionOf(s, `key-switch ${k.from}`);
+    if (last && last.phase === 'done' && last.result && last.result.bond && last.result.bond.txid === k.bond) return answerMove(st, last.result.plan, last.result.bond, { resumed: true });
+  }
   if (s.control === 'nostr') return { ok: false, why: 'this node runs on your Nostr key: its key is your nsec, not your 24 words' };
   const outputs = bondsOf(s);
   if (!outputs.length) return { ok: false, why: 'this node has no bond yet: its bond will be posted under the key from your words' };
@@ -98,9 +116,9 @@ export async function switchToSeedKey({ home, release, post = false, chainKit = 
         ...stepOuts.flatMap((u) => [{ name: 'step-out funding', hex: u.funding.hex }, { name: 'step-out', hex: u.update.hex }])],
         effect: 'key-switch', meta: { from: nowPub, to: nextPub },
         ops: [{ op: 'set', key: 'bond', value: bond }, { op: 'set', key: 'bonds', value: [bond] }, { op: 'push', key: 'oldBonds', values: outputs.map((b) => ({ ...b, key: nowPub })) },
-          { op: 'set', key: 'identityFromSeed', value: true }, { op: 'set', key: 'keySwitch', value: { from: nowPub, to: nextPub, bond: bond.txid, atMs: nowMs } }],
+          { op: 'set', key: 'identityFromSeed', value: true }, { op: 'set', key: 'keySwitch', value: { from: nowPub, to: nextPub, bond: bond.txid, atMs: nowMs, restart: true } }],
         result: { plan, bond } };
     } });
   if (!r.ok) return r;
-  return { ok: true, plan: r.result.plan, bond: r.result.bond, ...(r.already ? { already: true } : {}) };
+  return answerMove(st, r.result.plan, r.result.bond, r.already ? { already: true } : {});
 }
