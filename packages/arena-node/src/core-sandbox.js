@@ -295,7 +295,7 @@ export function loadCore({ files, entry }, { callMs = CALL_MS, stepMs = STEP_MS,
   // answerMax (kanban #1691), until (kanban #1719), lingerAs (kanban #1880) and loadUntil (kanban #2058) reach every thread this core starts
   const opts = { callMs, stepMs, askMs, loadMs, name, arrayBudget, liveCap, heap, rssBackstop, answerMax, until, lingerAs, loadUntil };
   const leftOf = (ms) => (Number.isFinite(until) ? Math.max(1, Math.min(ms, until - Date.now())) : ms);
-  const kept = startThread({ files, entry }, opts);
+  let kept = startThread({ files, entry }, opts);
   let ended = null;
   let last = kept;
   const memo = new Map();
@@ -304,8 +304,14 @@ export function loadCore({ files, entry }, { callMs = CALL_MS, stepMs = STEP_MS,
     if (ended) throw new Error(ended);
     op = String(op);
     if (oneThread || KEPT.has(op)) {
+      // THE WARM GHOST'S THREAD THAT DIES ENDS THAT THREAD ALONE (kanban #2121, #1489 v1-refute-45-s3-1, as #2008 for a call's own
+      // thread): a player's input that kills its heap while a ghost is stepped is set by the input, not by the core, and ending the
+      // core made every later signed call on this seat throw "it is not run again" while seats that never drew that ghost answered.
+      // The next KEPT call gets a fresh kept thread (the open runs went with the old one: the ghosts open them again). Only the
+      // plugin trial (`oneThread`), which watches one thread across calls, still ends the core.
+      if (!oneThread && kept.ended()) kept = startThread({ files, entry }, opts);
       last = kept;
-      try { return revive(kept.call(op, input, within)); } finally { if (kept.ended()) ended = kept.ended(); }
+      try { return revive(kept.call(op, input, within)); } finally { if (oneThread && kept.ended()) ended = kept.ended(); }
     }
     const key = PURE.has(op) ? `${op}\0${plain(input)}` : null;
     if (key !== null && memo.has(key)) return revive(memo.get(key));
