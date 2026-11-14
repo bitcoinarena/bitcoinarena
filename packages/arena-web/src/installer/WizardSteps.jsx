@@ -154,66 +154,125 @@ export class AppsStep extends React.Component {
   }
 }
 
-// HOW THIS NODE IS CONTROLLED, THEN NEW OR RESTORED (kanban #652/#654, 2026-10-25: "User first selects Operation Mode: Nostr /
-// New Seed (24 Words)", then new or restore; #653 "Only allow nsec then")
+// THE FIRST STEP, AS THE PLAYER PAGE'S WALLET SCREEN (kanban #648, the owner 2026-10-25: "i find this two steps confusing and different
+// than the user facing handling ... user can generate a fresh seed (independant from nostr) or create a seed/wallet from his existing
+// nostr identity by logging in via the different options - create a new nostr identity and seed/wallet. this selection could then
+// automatically, but with explanation on this step, replace the separate owner step of the installer"): the player page's choices
+// (src/arena/WalletStart.jsx: Create / Restore / Login with Nostr / New to Nostr), each saying who the node's owner becomes. The owner
+// is bound by the installer from this choice (POST /api/start, or the seed step for new words), so the owner step is done; "Use another
+// Nostr key as owner" keeps the npub path. A Nostr extension or phone signer never hands out its key, and a node runs alone on its
+// own key - so it names the owner only, and the node gets new 24 words of its own.
+/** A key shortened for a line of text: npub1abcdefg…uvwxyz. */
+export const shortKey = (k) => (k && k.length > 24 ? `${k.slice(0, 12)}…${k.slice(-6)}` : (k || ''));
+/** The first step's choice for a state already saved (setup run again, or the step opened from the bar). */
+export const startWayOf = (st) => (st && st.origin === 'restore' ? 'restore' : st && st.control === 'nostr' ? 'nostr' : 'new');
+export const START_WAYS = Object.freeze([
+  ['new', 'Create a new seed', '24 words, no Nostr needed. Setup makes them; you write them down at the Seed step.'],
+  ['nostr', 'Use my Nostr identity', 'The Nostr key you already have. Your node\'s wallet and keys come from it, and it logs you in.'],
+  ['newnostr', 'Create a new Nostr identity', 'New to Nostr? Setup makes a Nostr key for you. It is your node\'s key and your login.'],
+  ['restore', 'Restore my node', 'A node you set up before, on this or another computer: from its 24 words or its Nostr key (nsec).'],
+]);
+
 export class StartStep extends React.Component {
   constructor(props) {
     super(props);
     const st = props.st || {};
-    this.state = { control: st.control || 'words', action: st.origin || 'new', words: '', nsec: '', made: null, busy: false, msg: null, code: null, ...(props.initial || {}) };
-    this.go = this.go.bind(this); this.makeKey = this.makeKey.bind(this);
+    const pick = st.ownerPick && st.ownerPick.pubkey ? (st.ownerPick.npub || st.ownerPick.pubkey) : '';
+    this.state = { way: startWayOf(st), how: 'nsec', text: '', nsec: '', made: null, saved: false, copied: false, other: !!pick, npub: pick, busy: false, msg: null, ...(props.initial || {}) };
+    this.go = this.go.bind(this); this.makeKey = this.makeKey.bind(this); this.fromExtension = this.fromExtension.bind(this);
   }
   async makeKey() {
     const r = await this.props.post('/api/start/nsec');
     if (!r.ok) return this.setState({ msg: said(r) });
-    this.setState({ nsec: r.nsec, made: r.nsec, msg: null });
+    this.setState({ made: r.nsec, saved: false, copied: false, msg: null });
+  }
+  async fromExtension() {
+    const nostr = this.props.nostr || (typeof window !== 'undefined' ? window.nostr : null);
+    if (!nostr) return this.setState({ msg: said({ ok: false, why: 'no Nostr extension in this browser - paste your npub instead' }) });
+    try { this.setState({ npub: await nostr.getPublicKey(), msg: null }); } catch (e) { this.setState({ msg: said({ ok: false, why: `the extension said no: ${e && e.message ? e.message : e}` }) }); }
+  }
+  async copy() {
+    try { await navigator.clipboard.writeText(this.state.made); this.setState({ copied: true }); } catch { this.setState({ copied: false }); }
+  }
+  /** Names the owner only: Log in with an extension or phone signer. */
+  signer() { return this.state.way === 'nostr' && this.state.how === 'signer'; }
+  /** What POST /api/start is sent for this choice. */
+  body() {
+    const { way, how, text, nsec, made, other, npub } = this.state;
+    const ownerNpub = this.signer() || other ? npub.trim() || undefined : undefined;
+    if (way === 'new') return { control: 'words', action: 'new', ownerNpub };
+    if (way === 'nostr') return how === 'signer' ? { control: 'words', action: 'new', ownerNpub } : { control: 'nostr', action: 'new', nsec, ownerNpub };
+    if (way === 'newnostr') return { control: 'nostr', action: 'new', nsec: made, ownerNpub };
+    return /^nsec1/i.test(text.trim()) ? { control: 'nostr', action: 'restore', nsec: text, ownerNpub } : { control: 'words', action: 'restore', words: text, ownerNpub };
+  }
+  ready() {
+    const { way, how, text, nsec, made, saved, other, npub } = this.state;
+    if ((this.signer() || other) && !npub.trim()) return false;
+    if (way === 'nostr') return how === 'signer' || /^nsec1/i.test(nsec.trim());
+    if (way === 'newnostr') return !!made && saved;
+    if (way === 'restore') { const t = text.trim(); return /^nsec1/i.test(t) || (t ? t.split(/\s+/).length : 0) === 24; }
+    return true;
   }
   async go() {
-    const { control, action, words, nsec } = this.state;
     this.setState({ busy: true, msg: null });
-    const r = await this.props.post('/api/start', { control, action, words: control === 'words' && action === 'restore' ? words : undefined, nsec: control === 'nostr' ? nsec : undefined });
+    const r = await this.props.post('/api/start', this.body());
     this.setState({ busy: false });
     if (!r.ok) return this.setState({ msg: said(r) });
-    this.setState({ words: '', nsec: '', made: null });
+    this.setState({ text: '', nsec: '', made: null });
     this.props.reload();   // the emergency code has its own step next (kanban #647)
   }
+  /** Who logs in as the owner with this choice, in one line. */
+  ownerLine() {
+    const st = this.props.st || {};
+    const { way, text, other, npub } = this.state;
+    if (this.signer()) return npub.trim() ? <>the Nostr key <code>{shortKey(npub.trim())}</code>. Your node gets its own 24 words for its wallet (you write them down at the Seed step); they never log you in.</> : <>the Nostr key you read or paste above.</>;
+    if (other) return npub.trim() ? <>the Nostr key <code>{shortKey(npub.trim())}</code>, and only it. The node's wallet and keys still come from {way === 'new' ? 'your 24 words' : 'your choice above'}.</> : <>the Nostr key you name below.</>;
+    if (st.done && st.done.owner && st.ownerNpub && way !== 'new') return <>stays <code>{shortKey(st.ownerNpub)}</code>, as this node has it now.</>;
+    if (way === 'new') return <>your 24 words. You type them on your node's owner page (/dashboard/owner) to log in, in any browser.</>;
+    if (way === 'restore') return /^nsec1/i.test(text.trim()) ? <>your Nostr key: an extension, a phone signer, or the nsec.</> : <>your 24 words, as before.</>;
+    return <>your Nostr key: log in with it on the owner page - an extension, a phone signer, or the nsec.</>;
+  }
   render() {
-    const { control, action, words, nsec, made, busy, msg } = this.state;
-    const n = words.trim() ? words.trim().split(/\s+/).length : 0;
-    const pick = (name, value, cur, title, text) => (
-      <label className={`choice${cur === value ? ' on' : ''}`}><input type="radio" name={name} id={`start-${name}-${value}`} checked={cur === value} onChange={() => this.setState({ [name]: value, msg: null })} />
-        <div><b>{title}</b><p>{text}</p></div></label>);
-    const ready = control === 'words' ? (action === 'new' || n === 24) : /^nsec1/i.test(nsec.trim());
+    const { way, how, text, nsec, made, saved, copied, other, npub, busy, msg } = this.state;
+    const t = text.trim(), n = t ? t.split(/\s+/).length : 0;
+    const choice = (name, value, cur, title, sub, extra) => (
+      <label key={value} className={`choice${cur === value ? ' on' : ''}`}><input type="radio" name={name} id={`start-${name}-${value}`} checked={cur === value} onChange={() => this.setState({ [name]: value, msg: null })} />
+        <div><b>{title}</b><p>{sub}</p>{extra}</div></label>);
+    const npubField = (id) => <>
+      <label htmlFor={id}>npub of the owner key</label>
+      <input id={id} autoComplete="off" spellCheck="false" placeholder="npub1…" value={npub} onChange={(e) => this.setState({ npub: e.target.value })} />
+      <button type="button" className="ghost" id={`${id}-ext`} onClick={this.fromExtension}>Read from my Nostr extension</button>
+    </>;
     return (
       <div className="aw">
-        <h2>1. How you control your node</h2>
-        <div className="choices">
-          {pick('control', 'words', control, '24 words', 'Setup makes or restores 24 words. They hold your node\'s wallet and keys, and log you in as its owner.')}
-          {pick('control', 'nostr', control, 'Nostr key (nsec)', 'Your Nostr key is your node: its identity on the network, its wallet and keys come from it, and you log in with it. No extra words to keep.')}
-        </div>
-        <h3>New or restore</h3>
-        <div className="choices">
-          {control === 'words' ? <>
-            {pick('action', 'new', action, 'Set up a new node', 'Setup makes new 24 words. You write them down in step 5.')}
-            {pick('action', 'restore', action, 'Restore from my 24 words', 'For a node you set up before, on this or another computer. The node comes back from the words.')}
-          </> : <>
-            {pick('action', 'new', action, 'Use my Nostr key for a new node', 'Your Nostr key becomes this node\'s only key.')}
-            {pick('action', 'restore', action, 'Restore my node from my Nostr key', 'For a node you set up before with this Nostr key. It comes back from the key.')}
+        <h2>1. Your node's key and its owner</h2>
+        <p className="sub">The same choices as the Arena's wallet. The key you choose holds your node's wallet and keys, and logs you in as its owner.</p>
+        <div className="choices" id="start-ways">{START_WAYS.map(([k, title, sub]) => choice('way', k, way, title, sub))}</div>
+        {way === 'nostr' ? <div className="choices" id="start-nostr">
+          {choice('how', 'nsec', how, 'Paste my nsec', 'Your node runs on its own with this key, also when you are away - so it needs the key itself. Only on a computer you trust.',
+            how === 'nsec' ? <input id="start-nsec" type="password" autoComplete="off" spellCheck="false" placeholder="nsec1…" value={nsec} onChange={(e) => this.setState({ nsec: e.target.value })} /> : null)}
+          {choice('how', 'signer', how, 'Log in with an extension or a phone signer (owner only)', 'Alby, nos2x or a phone signer like Amber never give out your key, so they cannot run your node. Your Nostr key becomes its owner; the node gets new 24 words of its own for its wallet.',
+            how === 'signer' ? npubField('start-signer-npub') : null)}
+        </div> : null}
+        {way === 'newnostr' ? (made ? <div className="ws-warn" id="start-made">
+          <p><b>This is your Nostr identity and your node's key.</b> Save it now - in a password manager or on paper. Nobody can recover it for you, and anyone who has it owns your node.</p>
+          <pre className="key">{made}</pre>
+          <button type="button" className="ghost" id="start-copy" onClick={() => this.copy()}>{copied ? 'Copied ✓' : 'Copy the key'}</button>
+          <label className="check"><input type="checkbox" id="start-saved" checked={saved} onChange={(e) => this.setState({ saved: e.target.checked })} /> I saved my key</label>
+        </div> : <button type="button" className="ghost" id="start-make" onClick={this.makeKey}>Create my Nostr key</button>) : null}
+        {way === 'restore' ? <>
+          <label htmlFor="start-words">Your 24 words in order, or your nsec</label>
+          <textarea id="start-words" rows="4" autoComplete="off" autoCapitalize="off" spellCheck="false" value={text} onChange={(e) => this.setState({ text: e.target.value })} />
+          <p className="sub">{/^nsec1/i.test(t) ? 'A Nostr key: the node comes back from it.' : `${n} of 24 words.`} Type it only here, on your own computer.</p>
+        </> : null}
+        <div className="owner-box" id="start-owner"><b>Owner login:</b> {this.ownerLine()}
+          <p className="sub">Setup sets the owner from this choice, so there is no separate owner step. The owner logs in at your node's owner page to run it.</p>
+          {this.signer() ? null : <>
+            <label className="check"><input type="checkbox" id="start-other" checked={other} onChange={(e) => this.setState({ other: e.target.checked })} /> Use another Nostr key as owner</label>
+            {other ? npubField('start-owner-npub') : null}
           </>}
         </div>
-        {control === 'words' && action === 'restore' ? <>
-          <label htmlFor="start-words">Your 24 words, in order, separated by spaces</label>
-          <textarea id="start-words" rows="4" autoComplete="off" autoCapitalize="off" spellCheck="false" value={words} onChange={(e) => this.setState({ words: e.target.value })} />
-          <p className="sub">{n} of 24 words. Type them only here, on your own computer.</p>
-        </> : null}
-        {control === 'nostr' ? <>
-          <label htmlFor="start-nsec">Your nsec</label>
-          <input id="start-nsec" type="password" autoComplete="off" spellCheck="false" placeholder="nsec1…" value={nsec} onChange={(e) => this.setState({ nsec: e.target.value, made: null })} />
-          <p className="sub">Only on a computer you trust. Your node keeps it: it is your node's own key on the network and signs for it, also when you are away.</p>
-          {action === 'new' && !nsec ? <button type="button" className="ghost" id="start-make" onClick={this.makeKey}>New to Nostr? Create a key</button> : null}
-          {made ? <div className="msg ok" id="start-made"><b>Your new Nostr key.</b> Save it in a password manager or a Nostr app now. Without it you cannot log in to or restore this node:<pre>{made}</pre></div> : null}
-        </> : null}
-        <button type="button" id="start-go" disabled={busy || !ready} onClick={this.go}>{action === 'restore' ? 'Restore' : 'Continue'}</button>
+        <button type="button" id="start-go" disabled={busy || !this.ready()} onClick={this.go}>{way === 'restore' ? 'Restore' : 'Continue'}</button>
         <Msg r={msg} />
       </div>);
   }
@@ -240,10 +299,11 @@ export class SeedStep extends React.Component {
   }
   render() {
     const { phase, words, positions, answers, msg } = this.state;
+    const st = this.props.st || {};
     return (
       <div className="aw">
         <h2>5. Your seed: write it down</h2>
-        <p>These 24 words are your node's wallet and your owner login. <b>Write them on paper, in order.</b> Anyone who has them owns your node. Without them, a lost computer means a lost node.</p>
+        <p>{st.ownerPick ? <>These 24 words are your node's wallet and keys; your owner login is the Nostr key you named at the first step.</> : <>These 24 words are your node's wallet and your owner login.</>} <b>Write them on paper, in order.</b> Anyone who has them owns your node{st.ownerPick ? '\'s coins' : ''}. Without them, a lost computer means a lost node.</p>
         {phase === 'start' ? <button type="button" id="seed-show" onClick={this.show}>Show my 24 words</button> : null}
         {phase === 'shown' ? <>
           <div className="words">{words.map((w, i) => <span key={i}><b>{i + 1}</b>{w}</span>)}</div>
@@ -308,10 +368,14 @@ export class EmergencyStep extends React.Component {
   }
 }
 
+// THE OWNER, SET AT THE FIRST STEP (kanban #648): this step is done by then and opens again from the bar - it says who the owner is and
+// why, and changes it: the key this node was set up with (its 24 words, or a Nostr node's nsec), or another Nostr key (an npub)
 export class OwnerStep extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { mode: 'seed', npub: '', msg: null, ...(props.initial || {}) };
+    const st = props.st || {};
+    const other = !!(st.owner && st.owner.mode === 'nostr' && st.owner.pubkey !== st.nostrPubkey);
+    this.state = { mode: other ? 'nostr' : 'seed', npub: other ? (st.ownerNpub || '') : '', msg: null, ...(props.initial || {}) };
     this.fromExtension = this.fromExtension.bind(this); this.save = this.save.bind(this);
   }
   async fromExtension() {
@@ -332,14 +396,20 @@ export class OwnerStep extends React.Component {
       </label>);
   }
   render() {
+    const st = this.props.st || {};
     const { mode, npub, msg } = this.state;
+    const nostrNode = st.control === 'nostr';
+    const who = !st.owner ? null : st.owner.mode === 'seed' ? 'your 24 words' : st.owner.pubkey === st.nostrPubkey ? 'your Nostr key, the one this node runs on' : 'another Nostr key you named';
     return (
       <div className="aw">
         <h2>7. Owner login</h2>
-        <p className="sub">How you log in to your node's owner page later.</p>
+        {who ? <div className="owner-box" id="owner-now"><b>Your owner: {who}</b>{st.ownerNpub ? <> <code>{shortKey(st.ownerNpub)}</code></> : null}
+          <p className="sub">Set from your choice at the first step. The owner logs in at your node's owner page (/dashboard/owner) to run it. Change it here if you want.</p></div>
+          : <p className="sub">How you log in to your node's owner page later.</p>}
         <div className="choices">
-          {this.choice('seed', 'My 24 words', 'Type them on the owner page in any browser. They stay in that browser.')}
-          {this.choice('nostr', 'Nostr', 'Log in with your Nostr key: a browser extension such as Alby or nos2x, or paste your npub.', mode === 'nostr' ? <>
+          {nostrNode ? this.choice('seed', 'My Nostr key (nsec)', 'The key this node runs on: log in with an extension, a phone signer, or the nsec.')
+            : this.choice('seed', 'My 24 words', 'Type them on the owner page in any browser. They stay in that browser.')}
+          {this.choice('nostr', 'Another Nostr key', 'Log in with a Nostr key from a browser extension such as Alby or nos2x, or paste its npub.', mode === 'nostr' ? <>
             <label htmlFor="npub">npub</label><input id="npub" placeholder="npub1..." value={npub} onChange={(e) => this.setState({ npub: e.target.value })} />
           </> : null)}
         </div>
