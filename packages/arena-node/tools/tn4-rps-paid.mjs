@@ -88,7 +88,11 @@ const nodes = env.NODES ? env.NODES.split(',').map((u) => u.trim().replace(/\/+$
 const invite = readFileSync(env.INVITE_FILE, 'utf8').replace(/["\s]/g, '');
 // THE NEWEST VERSION'S TABLES by default (2026-10-27: the day grids post v5 62a940ae; v5 decides with v4's core, which decides as v1's -
 // the moves, the hidden entry and the reveal are the same); RPS_V1=1 / RPS_V2=1 for the older tables
-const GAME = toHex(env.RPS_V1 ? RPS_GAME_ID : env.RPS_V2 ? RPS_GAME_ID_V2 : RPS_GAME_ID_V5);
+// THE VERSION THE GRID POSTS (kanban #2642, measured 2026-11-14 ~20:30Z: the live grid posts RPS 769a4754 (v9) only, and this tool's v5
+// default found "no RPS round held whose entry closes more than 270 s ahead" for 45 min beside 280 such v9 rounds): RPS_GAME_ID=<hex>,
+// or RPS_GAME_ID=listed - the RPS version with the most rounds open far enough ahead in the seat's own listing
+const GAME_NAMED = env.RPS_GAME_ID && env.RPS_GAME_ID !== 'listed' ? String(env.RPS_GAME_ID).toLowerCase() : null;
+let GAME = GAME_NAMED || toHex(env.RPS_V1 ? RPS_GAME_ID : env.RPS_V2 ? RPS_GAME_ID_V2 : RPS_GAME_ID_V5);
 
 async function paidEntry(c, rid, roundHex, move, who) {
   const STAKE = BigInt(c.stakeMsat);
@@ -219,6 +223,12 @@ try {
     // AHEAD_S (default 270): a round whose seating is still to come (seating close = entry close - 200 s on an RPS grid), so its
     // certificate forms while this waits - measured 20:38Z and 20:53Z: a round taken 150 s ahead had missed its seating under load
     const ahead = Number(env.AHEAD_S || 270) * 1000;
+    if (env.RPS_GAME_ID === 'listed') {
+      const n = new Map();
+      for (const r of list) if (r.game && r.game.name === 'rock-paper-scissors' && Number(r.entryCloseMs) - now > ahead) n.set(r.game.id, (n.get(r.game.id) || 0) + 1);
+      const best = [...n.entries()].sort((a, b) => b[1] - a[1])[0];
+      if (best) { GAME = best[0]; log({ step: 'rps version', game: GAME.slice(0, 16), roundsAhead: best[1] }); }
+    }
     const rows = list.filter((r) => r.game && r.game.id === GAME && Number(r.entryCloseMs) - now > ahead
       && (!env.FEDERATION || String(r.federation || '').toLowerCase().startsWith(String(env.FEDERATION).toLowerCase()))).sort((a, b) => Number(a.entryCloseMs) - Number(b.entryCloseMs) || (a.id < b.id ? -1 : 1));
     if (!rows.length) throw new Error(`no RPS round held whose entry closes more than ${ahead / 1000} s ahead`);

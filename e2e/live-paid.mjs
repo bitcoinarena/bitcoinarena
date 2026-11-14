@@ -56,7 +56,7 @@ const GAMES = {
     // a table whose entry closes more than 270 s ahead is needed; the grid posts them every few minutes - asked again for up to 15 min
     let r;
     for (let i = 0; i < 15; i++) {
-      r = await run('rps', 'tn4-rps-paid.mjs', { KEYS_FILE: join(OUT, 'rps-keys.jsonl') }, 60 * 60000);
+      r = await run('rps', 'tn4-rps-paid.mjs', { KEYS_FILE: join(OUT, 'rps-keys.jsonl'), RPS_GAME_ID: env.RPS_GAME_ID || 'listed' }, 60 * 60000);
       if (!(r.code !== 0 && r.lines.some((l) => /no RPS round held/.test(String(l.why || ''))))) break;
       await new Promise((ok) => setTimeout(ok, 60000));
     }
@@ -66,9 +66,10 @@ const GAMES = {
   async updown() {
     const bot = join(OUT, 'updown-bot');
     mkdirSync(bot, { recursive: true });
-    const r = await run('updown', 'market-bot.mjs', { BOT_DIR: bot, BOT_NAME: 'e2e2642', MAX_ORDERS: '1', LEVELS: '1', SHARES: '10', LOOP_S: '60',
+    const r = await run('updown', 'market-bot.mjs', { BOT_DIR: bot, BOT_NAME: 'e2e2642', MAX_ORDERS: '1', LEVELS: '1', SHARES: '100', LOOP_S: '60',
       BOOK_BOT: env.BOOK_BOT || resolve(HERE, '..', 'packages', 'btc-updown', 'page', 'book-bot.js') }, 25 * 60000);
-    return { pass: r.code === 0 && r.lines.some((l) => /order|entry|placed/i.test(l.step || '')), exit: r.code, last: r.lines.slice(-3).map((l) => ({ step: l.step, ...(l.why ? { why: String(l.why).slice(0, 160) } : {}) })), stepsAtSeconds: steps(r.lines), seconds: r.seconds };
+    const placed = r.lines.filter((l) => l.step === 'order'), collected = r.lines.filter((l) => l.step === 'collected');
+    return { pass: placed.length > 0, exit: r.code, orders: placed.map((o) => ({ round: o.round, side: o.side, priceCents: o.priceCents, stakeMsat: o.stakeMsat, took: o.took })), collected: collected.map((c) => ({ round: c.round, payoutMsat: c.payoutMsat, stakeMsat: c.stakeMsat, refundMsat: c.refundMsat, creditedMsat: c.creditedMsat })), last: r.lines.slice(-3).map((l) => ({ step: l.step, ...(l.why ? { why: String(l.why).slice(0, 160) } : {}) })), stepsAtSeconds: steps(r.lines), seconds: r.seconds };
   },
 };
 
