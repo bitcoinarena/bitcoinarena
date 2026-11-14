@@ -25,7 +25,7 @@ export const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 27, 28, 29]);
+export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 27, 28, 29, 30]);
 /** The last BLWP/v1 tags become ARENA/v1 at one point per network (tag-switch.js, kanban #525). */
 export const TAG_SWITCH_VERSION = 18;
 /** A node's bond outputs count as their sum: the round's floor is applied to it (census.js nodeBonds, kanban #544). */
@@ -59,6 +59,15 @@ export const LOCK_SET_VERSION = 28;
 export const TIE_SALT_VERSION = 29;
 /** Whether a round of protocol version `v` breaks score ties by H(round_id || pubkey) (kanban #1614). */
 export const saltsTies = (v) => Number.isInteger(v) && v >= TIE_SALT_VERSION;
+/**
+ * 2026.0.30 - EVERY BOND COUNTS IN THE BOND_MIN MEDIAN (kanban #2686, audit #1489 r3-census-1; Daniel 2026-11-14 "ja"). Below this version
+ * census-median.js leaves out every node that declares nothing (the installer's adverts declare nothing), so one declaring seat was the
+ * whole median and, after notice_period, every seat refused every new round naming less. From 30 a node that declares no bond_min counts
+ * at its network's BOND_MIN_DEFAULT_SATS with its whole bond. Rounds below 30 keep the old median byte for byte.
+ */
+export const BOND_MEDIAN_ALL_VERSION = 30;
+/** Whether a round of protocol version `v` counts every census bond in the bond_min median (kanban #2686). */
+export const mediansAllBonds = (v) => Number.isInteger(v) && v >= BOND_MEDIAN_ALL_VERSION;
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (RULED 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
