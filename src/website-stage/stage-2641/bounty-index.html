@@ -156,6 +156,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
   <h2 id="open-issues">Open issues<a class="rl" href="#open-issues" aria-label="Link to this rule" title="Copy the link to this rule"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7.78 4.3 9.3 2.78a3.25 3.25 0 0 1 4.6 4.6l-2.5 2.5a3.25 3.25 0 0 1-4.6 0 .75.75 0 0 1 1.06-1.06 1.75 1.75 0 0 0 2.48 0l2.5-2.5a1.75 1.75 0 0 0-2.48-2.48L8.84 5.36A.75.75 0 0 1 7.78 4.3Zm-3.56 7.46 2.5-2.5a1.75 1.75 0 0 1 2.48 0 .75.75 0 1 0 1.06-1.06 3.25 3.25 0 0 0-4.6 0l-2.5 2.5a3.25 3.25 0 0 0 4.6 4.6l1.52-1.52a.75.75 0 1 0-1.06-1.06L6.7 14.24a1.75 1.75 0 0 1-2.48-2.48Z"/></svg></a></h2>
   <p>Already known, by area. <a href="/kanban/">All open issues</a></p>
   <table><thead><tr><th>Area</th><th>Tickets</th></tr></thead><tbody id="s2-open"><tr><td colspan="2">Reading &hellip;</td></tr></tbody></table>
+  <p class="note" id="s2-updated"></p>
   <script>
     /* the week's pot and the open-issues list (areas and ticket numbers only), read from the faucet (kanban #2623, #2641) */
     (function () {
@@ -165,12 +166,18 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         document.getElementById('pot-bar').style.width = Math.min(100, Math.round(100 * s.usedSats / s.potSats)) + '%';
         document.getElementById('pot-nodes').textContent = 'This season: ' + s.nodes + ' of ' + s.nodesMost + '.';
       }).catch(function () { document.getElementById('pot-used').textContent = '?'; });
-      fetch('/api/faucet/feedback/open-issues').then(function (r) { if (!r.ok) throw 0; return r.json(); }).then(function (o) {
-        var tb = document.getElementById('s2-open'); tb.textContent = '';
-        (o.areas || []).forEach(function (a) { var tr = document.createElement('tr'), t1 = document.createElement('td'), t2 = document.createElement('td');
-          t1.textContent = a.area; t2.textContent = a.tickets.join(' '); tr.append(t1, t2); tb.append(tr); });
+      // the list at once: this browser's last copy, else the one built into the page; then the edge's (kanban #2641)
+      var SNAP = {"updated":"2026-11-14T15:49:09.283Z","areas":[{"area":"Census","tickets":["#1248"]},{"area":"Committees and bonds","tickets":["#925","#1038","#1063","#1351","#1386","#2564","#2643","#2660","#2670","#2739","#2740","#2766"]},{"area":"Faucet and feedback","tickets":["#2664","#2732","#2733","#2734","#2755","#2756","#2757"]},{"area":"Federation","tickets":["#718","#1169","#1358","#1367","#2650","#2752","#2767"]},{"area":"Installer","tickets":["#1369"]},{"area":"Lightning payouts","tickets":["#2656","#2687","#2696","#2714","#2716","#2746","#2748"]},{"area":"Liquidation","tickets":["#1247","#1253"]},{"area":"Markets","tickets":["#1376"]},{"area":"Next Block game","tickets":["#962","#2747","#2764"]},{"area":"Node software","tickets":["#1482","#2651","#2659","#2667","#2668","#2674","#2691","#2697","#2698","#2700","#2709","#2719","#2729","#2730","#2735","#2736","#2743","#2751","#2753","#2759","#2765"]},{"area":"Other","tickets":["#1008","#1204","#1352","#1489","#2644","#2645","#2646","#2657","#2661","#2663","#2665","#2666","#2669","#2673","#2676","#2677","#2678","#2679","#2683","#2684","#2688","#2690","#2692","#2693","#2695","#2699","#2703","#2704","#2705","#2706","#2710","#2711","#2713","#2715","#2717","#2718","#2720","#2722","#2723","#2725","#2726","#2728","#2731","#2738","#2741","#2742","#2744","#2749","#2750","#2754","#2758","#2760","#2761","#2763","#2768"]},{"area":"Presence","tickets":["#1372"]},{"area":"Reserves","tickets":["#1176","#1359","#2652","#2662"]},{"area":"Rock Paper Scissors game","tickets":["#2658"]},{"area":"Settlement","tickets":["#1049","#1077","#1170","#1183","#1239","#1370","#2648","#2649","#2653","#2680","#2701","#2702","#2737"]},{"area":"Slashing","tickets":["#975","#1155","#1187","#1188","#1189","#1191","#1192","#1193","#1246","#1357"]},{"area":"Update stage","tickets":["#1377","#1380"]},{"area":"Website","tickets":["#1007"]}]};
+      var show = function (o) { if (!o || !Array.isArray(o.areas)) return; var tb = document.getElementById('s2-open'); tb.textContent = '';
+        o.areas.forEach(function (a) { var tr = document.createElement('tr'), t1 = document.createElement('td'), t2 = document.createElement('td');
+          t1.textContent = a.area; t2.textContent = (a.tickets || []).join(' '); tr.append(t1, t2); tb.append(tr); });
         if (!tb.children.length) tb.innerHTML = '<tr><td colspan="2">None open.</td></tr>';
-      }).catch(function () { document.getElementById('s2-open').innerHTML = '<tr><td colspan="2">Not readable just now.</td></tr>'; });
+        var u = document.getElementById('s2-updated'); if (u && o.updated) u.textContent = 'Updated ' + o.updated.slice(0, 16).replace('T', ' ') + ' UTC'; };
+      var kept = null; try { kept = JSON.parse(localStorage.getItem('arena.open-issues') || 'null'); } catch (e) { kept = null; }
+      show(kept && kept.updated && (!SNAP.updated || kept.updated >= SNAP.updated) ? kept : SNAP);
+      fetch('/api/faucet/feedback/open-issues', { cache: 'no-cache' }).then(function (r) { if (!r.ok) throw 0; return r.json(); }).then(function (o) {
+        show(o); try { localStorage.setItem('arena.open-issues', JSON.stringify(o)); } catch (e) { /* this visit only */ } }).catch(function () {
+        if (!document.querySelector('#s2-open td:nth-child(2)')) document.getElementById('s2-open').innerHTML = '<tr><td colspan="2">Not readable just now.</td></tr>'; });
     })();
   </script>
   <span id="season-1"></span><details id="week-1" style="margin-top:28px"><summary style="cursor:pointer;font-size:20px;font-weight:600">Season 1 (2026-11-11 to 2026-11-13): rules and payouts<a class="rl" href="#week-1" aria-label="Link to this rule" title="Copy the link to this rule"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7.78 4.3 9.3 2.78a3.25 3.25 0 0 1 4.6 4.6l-2.5 2.5a3.25 3.25 0 0 1-4.6 0 .75.75 0 0 1 1.06-1.06 1.75 1.75 0 0 0 2.48 0l2.5-2.5a1.75 1.75 0 0 0-2.48-2.48L8.84 5.36A.75.75 0 0 1 7.78 4.3Zm-3.56 7.46 2.5-2.5a1.75 1.75 0 0 1 2.48 0 .75.75 0 1 0 1.06-1.06 3.25 3.25 0 0 0-4.6 0l-2.5 2.5a3.25 3.25 0 0 0 4.6 4.6l1.52-1.52a.75.75 0 1 0-1.06-1.06L6.7 14.24a1.75 1.75 0 0 1-2.48-2.48Z"/></svg></a></summary>
