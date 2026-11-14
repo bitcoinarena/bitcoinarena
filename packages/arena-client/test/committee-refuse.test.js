@@ -4,7 +4,9 @@
 // the committee itself", RULED 2026-09-28: "a node's committee answer, a contract's node list or a seating certificate that
 // differs from the client's own computation -> the round is refused, the lobby says which node answered what, and no share is sealed,
 // no stake locked, no entry signed")., measured 2026-10-16 on live testnet4: guardian-3 forging its /committee was
-// named and the join still dealt to the client's seven, on 12 of 12 rounds.
+// named and the join still dealt to the client's seven, on 12 of 12 rounds. Kanban #2643: against a seating certificate the client checked
+// itself, an unsigned differing answer (a /committee list, a certificate that does not verify) is named and does not refuse the round,
+// unless at least as many seats differ as agree.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { settlementSignerNodesFrom } from '../src/committee.js';
@@ -21,14 +23,35 @@ test('every seat agrees: the client\'s settlement committee is dealt to', () => 
   assert.equal(got.agreed, 2);
 });
 
-test('one seat names another committee: the round is refused and the seat named with what it answered', () => {
+test('one seat names another committee where no checked certificate stands: the round is refused and the seat named with what it answered', () => {
   const liar = { node: 'https://g3', agrees: false, why: 'names another settlement committee (66666666) than the one this client derived (01010101, 02020202)' };
-  assert.throws(() => settlementSignerNodesFrom(derived({ seats: [...derived().seats, liar] })), (e) => e.message === 'the round is refused: https://g3 names other signer nodes than this client worked out - nothing is sealed, locked or signed'
+  assert.throws(() => settlementSignerNodesFrom(derived({ seating: { game: null, settlement: null }, seats: [...derived().seats, liar] })), (e) => e.message === 'the round is refused: https://g3 names other signer nodes than this client worked out - nothing is sealed, locked or signed'
     && /^https:\/\/g3 names another settlement committee \(66666666\) than the one this client derived /.test(e.detail));
 });
 
-test('a seating certificate that does not match the draw refuses the round, naming the seat', () => {
+// kanban #2643: an unsigned answer against a certificate the client checked itself proves nothing - named, the round stands
+test('one seat names another committee against a checked certificate: named on refused, the round stands (kanban #2643)', () => {
+  const liar = { node: 'https://g3', agrees: false, why: 'names another settlement committee (66666666) than the one this client derived (01010101, 02020202)',
+    roles: { game: { agrees: true }, settlement: { agrees: false } } };
+  const got = settlementSignerNodesFrom(derived({ seats: [...derived().seats, liar] }));
+  assert.equal(got.signerNodes.length, 7);
+  assert.match(got.refused.join('\n'), /^https:\/\/g3 names another settlement committee \(66666666\).*unsigned, against a checked certificate/m);
+});
+
+test('as many seats differ as agree, against a checked certificate: the round is refused (kanban #2643)', () => {
+  const liar = (i) => ({ node: `https://g${i}`, agrees: false, why: 'names another settlement committee (66666666) than the one this client derived (01010101)' });
+  assert.throws(() => settlementSignerNodesFrom(derived({ seats: [...derived().seats, liar(3), liar(4)] })), /the round is refused: 2 seats name other signer nodes/);
+});
+
+test('a seating certificate that does not match the draw, beside a checked one: named on refused, the round stands (kanban #2643)', () => {
   const seating = { ...derived().seating, settlement: { seated: SEVEN, from: 'https://g2', refused: ['https://g1: the certificate\'s signatures do not verify'] } };
+  const got = settlementSignerNodesFrom(derived({ seating }));
+  assert.equal(got.signerNodes.length, 7);
+  assert.match(got.refused.join('\n'), /a settlement seating certificate that does not match this client's draw - https:\/\/g1:/);
+});
+
+test('a seating certificate that does not match the draw, with none checked: the round is refused, naming the seat', () => {
+  const seating = { game: { seated: SEVEN, from: 'https://g2', refused: [] }, settlement: { unread: true, refused: ['https://g1: the certificate\'s signatures do not verify'] } };
   assert.throws(() => settlementSignerNodesFrom(derived({ seating })), (e) => /^the round is refused: a seating certificate does not match this client's draw/.test(e.message) && /a settlement seating certificate that does not match this client's draw - https:\/\/g1:/.test(e.detail));
 });
 

@@ -4243,6 +4243,10 @@ refusal
   certificate that differs from the client's own computation -> the round
   is refused, the lobby says which node answered what, and no share is
   sealed, no stake locked, no entry signed
+  except (kanban #2643): where the client holds a seating certificate it
+  checked itself, a node's unsigned committee answer or a certificate
+  that does not verify is named, not refusing - the round stands unless
+  at least as many nodes differ as agree
 ```
 
 What the nodes deliver is **transport**: headers, the census entries with
