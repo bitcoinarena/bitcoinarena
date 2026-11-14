@@ -236,6 +236,12 @@ export function attestationTimely(a, { entryCloseMs, nowMs, terms = null, window
     const t = marketTimes({ entryCloseMs, terms });
     if (BigInt(a.observedAtMs) < t.resolveAtMs)
       return { ok: false, why: `that attestation says it was observed at ${new Date(Number(a.observedAtMs)).toISOString()}, before the market's resolution time ${new Date(Number(t.resolveAtMs)).toISOString()}` };
+    // AND NOT AFTER IT EITHER (kanban #2649): the market asks for the outcome AT its resolution time, and its attestors sign
+    // observed_at = that time (attestor.js, drawn-attestor.js: the window's end = entry close + resolveAfterCloseMs). An outcome
+    // observed later is the outcome of another window - whoever steers when the attestors sign could pick among ~10 min of them.
+    // The same check holds for value attestations (scalar.js reads them here too).
+    if (BigInt(a.observedAtMs) !== t.resolveAtMs)
+      return { ok: false, why: `that attestation says it was observed at ${new Date(Number(a.observedAtMs)).toISOString()}, after the market's resolution time ${new Date(Number(t.resolveAtMs)).toISOString()}: it is the outcome of another moment than the one the market asked for` };
     // AND NOT AFTER ITS DEADLINE (kanban #1151): at the deadline a market with no outcome is VOID and its stakes go back at
     // once; an attestation withheld until then and handed in late would turn it ATTESTED over locks already returned
     if (BigInt(nowMs) >= t.deadlineMs)
