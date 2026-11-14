@@ -45076,11 +45076,13 @@ const h2hFromHex = (h) => Uint8Array.from(String(h).match(/../g) || [], (x) => p
 async function lockSetOfSeats({ roundIdHex, nodes, committee = null, verify = null, entryCloseMs, fetcher = fetch, timeoutMs = H2H_SEAT_ASK_MS }) {
   const said = await Promise.all(nodes.map(async (node) => {
     try {
-      return await h2hAsk(async (signal) => {
+      // kanban #2658 (2.0): h2hAsk / h2hJson are not defined on this branch (the #2561 port took them from a tree that had them) - every
+      // seat's answer threw, was read as no answer, and a protocol-28 reveal waited for a certificate it never saw: VOID. 1.9's reading.
+      return await withDeadline(timeoutMs, async (signal) => {
         const r = await fetcher(`${String(node).replace(/\/+$/, '')}/lock-set?round=${roundIdHex}`, { signal, cache: 'no-store' });
         if (!r.ok) { try { r.body && r.body.cancel && await r.body.cancel(); } catch { /* gone */ } return null; }
-        return h2hJson(r);
-      }, timeoutMs);
+        return JSON.parse(await cappedText(r, H2H_REVEALS_CAP));
+      });
     } catch { return null; }
   }));
   const answered = said.filter((x) => x && typeof x === 'object');

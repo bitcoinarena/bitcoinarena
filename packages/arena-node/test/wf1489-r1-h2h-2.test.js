@@ -24,6 +24,9 @@ import { LOCK_SET_VERSION } from '../../arena-protocol/src/constants.js';
 import { revealMove } from '../../arena-client/src/head-to-head.js';
 import { revealAsPage } from '../tools/h2h-reveal.mjs';
 
+// 2.0 (kanban #2658 port): a protocol-28 round names its claims (Arena lock); the fixture's federation answers no LNv2 version, so the
+// named-claim height is put past every test round, as h2h-lock-set-2561.test.js does
+process.env.ARENA_DONATION_NETWORK = 'regtest'; process.env.ARENA_TEST_NAMED_CLAIM_HEIGHT = '999999999';
 const START_DEADLINE = 300, BLOCK_TICKS = 600;
 const SPAN_MS = Number(msForTicks(2 * START_DEADLINE + BLOCK_TICKS).ms);
 const ROUND = { gameId: RPS_GAME_ID, simCoreHash: RPS_CORE_HASH, configHash: RPS_CONFIG_HASH, blockTicks: BLOCK_TICKS, startDeadlineTicks: START_DEADLINE, protocolVersion: LOCK_SET_VERSION };
