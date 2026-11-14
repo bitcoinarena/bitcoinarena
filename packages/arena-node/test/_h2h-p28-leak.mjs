@@ -19,6 +19,10 @@ import { LOCK_SET_VERSION } from '../../arena-protocol/src/constants.js';
 import { lockFieldsToJson } from '../src/stake-lock-signer-node.js';
 import { revealWhenCertified } from '../../arena-client/src/head-to-head.js';
 
+// kanban #2536, 2.0: protocol 27 and up is also the Arena lock here (arena-lock.js NAMED_CLAIM_VERSION, regtest's point 0) and this fixture's locks
+// are stock contracts, so its rounds sit below regtest's named-claim point by the harness switch, as h2h-lock-set-2561 does on 2.0
+process.env.ARENA_DONATION_NETWORK = 'regtest'; process.env.ARENA_TEST_NAMED_CLAIM_HEIGHT = '999999999';
+
 const START_DEADLINE = 300, BLOCK_TICKS = 600;
 const SPAN_MS = Number(msForTicks(2 * START_DEADLINE + BLOCK_TICKS).ms);
 const ROUND = { gameId: RPS_GAME_ID, simCoreHash: RPS_CORE_HASH, configHash: RPS_CONFIG_HASH, blockTicks: BLOCK_TICKS, startDeadlineTicks: START_DEADLINE, protocolVersion: LOCK_SET_VERSION };
