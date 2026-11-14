@@ -60,7 +60,10 @@ test('#2607-1: a twin of a passed bound proposal posted after its vote is taken,
   // the vote that passed it, on the chain: bonds 1 (50) and 2 (30) YES at 202
   const votes = new Map([[202, [vote(1, aId, CHOICE.YES, 1, 'd1'.repeat(32)), vote(2, aId, CHOICE.YES, 1, 'd2'.repeat(32))]]]);
   const { proposals, tally, liveAt } = seat({ chain, tip, votes });
+  // kanban #2432 (decided 2026-11-14): a text counts only when held before its voting ended - this seat holds A during its voting
+  tip.at = 203;
   const a = await proposals.add(a1); assert.equal(a.status, 201, a.why);
+  tip.at = 300;
   for (let i = 0; i < 3; i++) await tally.pass();
   assert.equal(stateOf(proposals.list().find((r) => r.id === a.id)), 'PASSED');
   assert.equal(liveAt(300), toHex(configHashOf(X)));

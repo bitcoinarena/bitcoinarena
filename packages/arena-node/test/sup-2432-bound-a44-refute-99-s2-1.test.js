@@ -7,10 +7,13 @@
 // The same withheld proposal on the bound reading: committed at 200, the proposer's seq vote at 202, the bytes shown only at tip 250.
 // Measured on 1.9: taken 201, passed on the proposer's own 35 %, activated, the round at 220 on genesis refused after the fact. Kept as
 // todo: closing it means refusing a bound proposal shown after its voting (or activation), which the #2012 (c) ruling does not do.
+// DECIDED 2026-11-14 (kanban #2432, "a text counts only if a seat majority held it before voting ended"): a bound proposal a seat first
+// holds after its voting ended is kept LATE and not counted until bonds holding more than half of the census weight (the proposer's
+// left out) signed that they held it before its voting ended. No longer todo.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { createProposals } from '../src/proposals.js';
+import { createProposals, seenMessage } from '../src/proposals.js';
 import { createBallotTally } from '../src/ballot-tally.js';
 import { encodeConfigProposalBody, proposalBodyId, proposalId, encodeVote, voteMessage, CLASS, CHOICE, SCHEDULES, configHashOf } from '../../arena-protocol/src/ballot.js';
 import { depositOutputsExpected, depositCommitmentScript, BALLOT_GENESIS, configServesRound } from '../../arena-protocol/src/ballot-chain.js';
@@ -31,7 +34,8 @@ const CENSUS = [{ pubkey: ATTACKER.pubkey, outpoint: 'aa:0', bondSats: 35000000n
   { pubkey: H2.pubkey, outpoint: 'cc:0', bondSats: 30000000n }];
 
 
-test('#2432 (1.9, bound) wf1489-a44-refute-99-s2-1: three colluding seats forge seenAt and the #1608 late-reveal attack passes again, retroactively', { todo: 'kanban #2432: open for a ruling - under #2012 (c) a bound proposal is taken at any time, even after its activation' }, async () => {
+const fromHexT = (h) => Uint8Array.from(Buffer.from(h, 'hex'));
+async function setUp({ tip = 250, seenSigner = null } = {}) {
   const DEP_HEIGHT = 200;
   const want = depositOutputsExpected(1000, SET);
   const config = Uint8Array.of(9, 9, 9);
@@ -45,15 +49,21 @@ test('#2432 (1.9, bound) wf1489-a44-refute-99-s2-1: three colluding seats forge 
   const txid = toHex(Uint8Array.from(p.depositTxid).reverse());
   const BLOCK = 'dd'.repeat(32);
   const votes = new Map([[202, [{ payload: encodeVote({ proposalId: idBytes, choice: CHOICE.YES, seq: 1, signature: schnorr.sign(voteMessage(idBytes, CHOICE.YES, 1), ATTACKER.secret) }), height: 202, txid: 'a1' }]]]);
-  let tip = 250;
+  const tipRef = { tip };
   let tally = null;
   const proposals = createProposals({ bindHeightFor: () => 0, confirmedTx: async (t, b) => (t === txid && b === BLOCK ? { raw, height: DEP_HEIGHT } : null),
     recipientsFor: () => SET, lowestBondMinSatsFor: () => 100000n, verify, schedule: SCHEDULES.regtest,
-    historyFor: (net, h) => tally.historyAt(net, h), censusAt: async () => CENSUS, store: { read: () => [], write: () => {} } });
-  tally = createBallotTally({ proposals, tipHeight: async () => tip, votesAt: async (h) => votes.get(h) || [], censusAt: async () => CENSUS, verify,
+    historyFor: (net, h) => tally.historyAt(net, h), censusAt: async () => CENSUS, store: { read: () => [], write: () => {} }, ...(seenSigner ? { seenSigner } : {}) });
+  tally = createBallotTally({ proposals, tipHeight: async () => tipRef.tip, votesAt: async (h) => votes.get(h) || [], censusAt: async () => CENSUS, verify,
     decideDepthFor: () => 1, minDecideDepthFor: () => 1 });
   await tally.pass();
   assert.equal(configServesRound({ configHash: BALLOT_GENESIS.configHash, height: 220, history: tally.spans(NETHEX) }).ok, true);
+  tally.tipRef = tipRef;
+  return { proposals, tally, hex, BLOCK, idBytes };
+}
+
+test('#2432 (1.9, bound) wf1489-a44-refute-99-s2-1: three colluding seats forge seenAt and the #1608 late-reveal attack passes again, retroactively', async () => {
+  const { proposals, tally, hex, BLOCK } = await setUp();
   // THE REVEAL at tip 250 (voting 201..206 and activation 208 behind): on the bound reading taken at any time (#2012 (c))
   const got = await proposals.add({ proposal: hex, blockHash: BLOCK });
   console.log('  REVEAL at tip 250:', got.status, got.why || '');
@@ -64,4 +74,32 @@ test('#2432 (1.9, bound) wf1489-a44-refute-99-s2-1: three colluding seats forge 
     tally: listed && listed.tally && { yes: String(listed.tally.yesSats), turnout: listed.tally.turnoutPct, passed: listed.tally.passed }, roundAt220OnGenesis: after }));
   assert.ok(!(listed && listed.tally && listed.tally.passed), 'a proposal nobody honest saw during its voting must not pass on the proposer\'s own vote because 3 of his seats say they saw it');
   assert.equal(after.ok, true, 'a round created at 220 under the config live then is still served');
+});
+
+test('#2432: the same late reveal counts once bonds holding a census majority signed that they held it before its voting ended', async () => {
+  const { proposals, tally, hex, BLOCK, idBytes } = await setUp();
+  await tally.pass();
+  const got = await proposals.add({ proposal: hex, blockHash: BLOCK });
+  assert.equal(proposals.counts(got.id), false, 'kept late: not counted on its own');
+  assert.equal(tally.list()[0].phase, 'late');
+  const id = toHex(idBytes);
+  const sight = (k, at) => ({ by: toHex(k.pubkey), at, sig: toHex(schnorr.sign(seenMessage(id, at), k.secret)) });
+  // the proposer's own sighting, one held after the voting (207), a forged signature, and H2 (30 of 65) alone: not a majority
+  assert.equal(await proposals.vouch(id, { sightings: [sight(ATTACKER, 201), sight(H1, 207), { ...sight(H1, 203), sig: 'ab'.repeat(64) }, sight(H2, 203)] }), false);
+  assert.equal(proposals.counts(id), false, 'counted on the proposer\'s own word, a late or forged sighting, or a minority');
+  // H1 (35 of 65) signed it in time too: a majority - counted, relayed with its sightings
+  assert.equal(await proposals.vouch(id, { sightings: [sight(H1, 204)] }), true);
+  assert.equal(proposals.counts(id), true);
+  assert.deepEqual(proposals.list()[0].sightings.map((x) => x.by).sort(), [toHex(H1.pubkey), toHex(H2.pubkey)].sort());
+});
+
+test('#2432: a seat that holds the proposal before its voting ends counts it and signs its own sighting', async () => {
+  const signer = key(0x60);
+  const { proposals, tally, hex, BLOCK } = await setUp({ tip: 203, seenSigner: { pubkey: signer.pubkey, sign: (m) => schnorr.sign(m, signer.secret) } });
+  const got = await proposals.add({ proposal: hex, blockHash: BLOCK });
+  assert.equal(got.status, 201);
+  assert.equal(proposals.counts(got.id), true, 'held in time: counted');
+  assert.equal(got.sightings.length, 1);
+  assert.equal(verify(fromHexT(got.sightings[0].sig), seenMessage(got.id, 203), signer.pubkey), true);
+  void tally;
 });
