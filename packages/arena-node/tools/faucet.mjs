@@ -30,6 +30,8 @@ import { nodeBountyCheck } from '../src/node-bounty-check.js';
 import { seatPublicFetch } from '../src/public-fetch.js';
 import { openBountySeason, cleanOpenIssues } from '../src/bounty-season.js';
 import { verifiersFromEnv } from '../src/bounty-verify.js';
+import { socialCheck, resolversFromEnv } from '../src/bounty-social.js';   // kanban #2641
+import { userbotFromEnv } from '../src/telegram-userbot.js';   // kanban #2641
 import { readJsonBounded } from '../src/lnurl-read.js';   // kanban #2517
 import { openFeedbackStore, networkPlayers, imageKind, SHOT_MOST, SHOT_UNCLAIMED_MS, REWARD_LEVELS, NODE_BOUNTY_BASE_SATS, lnAddressWorks, lnAddressUrl, lnAddressInvoice, reportAddress } from '../src/feedback-store.js';
 import { eventId } from '../src/nostr-relay.js';   // a resent report is matched by its id's hash (kanban #2456, #2498)
@@ -108,6 +110,17 @@ const FEEDBACK = env.FAUCET_FEEDBACK_DB ? openFeedbackStore(env.FAUCET_FEEDBACK_
 // BUG BOUNTY SEASON 2 (kanban #2623): its own file, so Season 1's feedback.db, /bounty and the paid log stay as they are; off when not named
 const S2 = FEEDBACK && env.FAUCET_BOUNTY_S2_DB ? openBountySeason(env.FAUCET_BOUNTY_S2_DB, { startMs: env.FAUCET_BOUNTY_S2_START ? Date.parse(env.FAUCET_BOUNTY_S2_START) : null }) : null;
 const S2_VERIFY = verifiersFromEnv(env);
+// WEEK 2'S SOCIAL SCREEN (kanban #2641): names typed per platform, read live. Telegram through the user account reader when it is logged in (else the
+// bot's seen-map); Armada through its own module when its key is configured
+const S2_USERBOT = S2 ? await userbotFromEnv(env, { log: (m) => console.log(`${new Date().toISOString()} ${m}`) }).catch(() => null) : null;
+let S2_ARMADA = null;
+if (S2) { try { const a = await import('../src/bounty-armada.js'); const v = a.armadaFromEnv(env);
+  if (v) { S2_VERIFY.armada = v; S2_ARMADA = async (input) => { const pk = await a.armadaPubkeyOf(input); if (!pk) return { userId: null, member: null, why: 'that is not a Nostr key (npub) or name@domain' };
+    const r = await v({ userId: pk }); return { userId: pk, username: a.bech32Encode('npub', Buffer.from(pk, 'hex')).slice(0, 20) + '…', member: r.member, why: r.why }; }; } } catch (e) { console.log(`${new Date().toISOString()} armada check off: ${String(e.message).slice(0, 80)}`); } }
+if (S2_USERBOT && !S2_VERIFY.telegram) S2_VERIFY.telegram = async (l) => S2_USERBOT(l.username);
+const S2_NAMES = S2 ? resolversFromEnv(S2, env, { userbot: S2_USERBOT, armada: S2_ARMADA }) : {};
+const S2_SOCIAL_ASKS = new Map();   // pubkey -> last /feedback/social with names (one each 15 s)
+const S2_SOCIAL_GAP_MS = 15000;
 // SEASON 2 STARTS (Daniel 2026-11-13 ~17:55Z: "Season 2 läuft ab Sonntag"): before it no Season 2 approval; a Season 1 report past the weekly budget
 // waits for it and is approved by the Season 2 rules once it runs (the sweep below)
 const S2_START_MS = env.FAUCET_BOUNTY_S2_START ? Date.parse(env.FAUCET_BOUNTY_S2_START) : null;
@@ -995,8 +1008,8 @@ createServer((req, res) => {
   }
   if (S2 && path === '/feedback/season' && req.method === 'GET') { const p = S2.pot(S2.seasonNow(Date.now()));
     return send(200, { season: p.season, potSats: p.potSats, usedSats: p.usedSats, leftSats: p.leftSats, nodes: p.nodes, nodesMost: p.nodesMost }); }
-  if (S2 && (path === '/feedback/link' || path === '/feedback/verify')) {
-    if (req.method === 'OPTIONS') { res.writeHead(204, { ...cors, 'access-control-allow-methods': 'POST', 'access-control-allow-headers': 'authorization', 'access-control-max-age': '86400' }); return res.end(); }
+  if (S2 && (path === '/feedback/link' || path === '/feedback/verify' || path === '/feedback/social')) {
+    if (req.method === 'OPTIONS') { res.writeHead(204, { ...cors, 'access-control-allow-methods': 'POST', 'access-control-allow-headers': 'authorization, content-type', 'access-control-max-age': '86400' }); return res.end(); }
     if (req.method !== 'POST') return send(405, { ok: false, why: 'POST' });
     let ev = null;
     try { const h = String(req.headers.authorization || ''); if (h.startsWith('Nostr ')) ev = JSON.parse(Buffer.from(h.slice(6), 'base64').toString('utf8')); } catch { ev = null; }
@@ -1004,6 +1017,23 @@ createServer((req, res) => {
     let who = null, last = null;
     for (const base of S2_BASES) { const m = FEEDBACK.mine(ev, { url: base + path.slice('/feedback'.length), method: 'POST' }); if (m.ok) { who = m.pubkey; break; } last = m; }
     if (!who) return send(401, { ok: false, why: last ? last.why : 'that sign-in does not stand' });
+    // THE SOCIAL SCREEN (kanban #2641): { x, telegram, discord, armada } names, each read live; no names answers the stored links and the bonus
+    if (path === '/feedback/social') {
+      let raw = '';
+      req.on('data', (c) => { raw += c; if (raw.length > 4096) req.destroy(); });
+      req.on('end', () => {
+        let asked = {}; try { asked = raw ? JSON.parse(raw) : {}; } catch { return send(400, { ok: false, why: 'JSON with x, telegram, discord, armada' }); }
+        if (!asked || typeof asked !== 'object' || Array.isArray(asked)) return send(400, { ok: false, why: 'JSON with x, telegram, discord, armada' });
+        const any = ['x', 'telegram', 'discord', 'armada'].some((k) => typeof asked[k] === 'string' && asked[k].trim());
+        if (any) {
+          const lastAsk = S2_SOCIAL_ASKS.get(who) || 0;
+          if (Date.now() - lastAsk < S2_SOCIAL_GAP_MS) return send(429, { ok: false, why: 'one check every 15 seconds' });
+          S2_SOCIAL_ASKS.set(who, Date.now()); if (S2_SOCIAL_ASKS.size > 5000) S2_SOCIAL_ASKS.delete(S2_SOCIAL_ASKS.keys().next().value);
+        }
+        return socialCheck(S2, who, any ? asked : {}, S2_NAMES).then((j) => send(200, { ...j, on: Object.keys(S2_NAMES) }), () => send(200, { ok: false, why: 'try again' }));
+      });
+      return undefined;
+    }
     if (path === '/feedback/link') { const c = S2.makeCode(who); return send(200, { ...c, links: S2.links(who).map(({ userId, ...l }) => l), flags: S2.flagsOf(who) }); }
     const lastAsk = S2_VERIFY_ASKS.get(who) || 0;
     if (Date.now() - lastAsk < S2_VERIFY_GAP_MS) return send(429, { ok: false, why: 'one check a minute' });

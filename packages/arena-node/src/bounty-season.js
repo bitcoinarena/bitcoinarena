@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // BUG BOUNTY SEASON 2 (kanban #2623, the rules page testnet-stage.bitcoinarena.io/bounty/): a pot of 100,000 sat per one-week season for confirmed
-// reports, community bonuses and node bounties; a community bonus from linked Telegram / Discord / X accounts; code-only findings at half; follow-ups
+// reports, community bonuses and node bounties; a community bonus from linked X / Telegram / Discord / Armada accounts (Week 2 rule, kanban #2641); code-only findings at half; follow-ups
 // at 1,000; the node bounty for the first 3 nodes of a season. Its own file (FAUCET_BOUNTY_S2_DB), so Season 1's feedback.db keeps its schema.
 // This module only computes and records: paying stays the separate manual step it was (it never calls a wallet).
 import { DatabaseSync } from 'node:sqlite';
@@ -14,7 +14,12 @@ export const FOLLOW_UP_SATS = 1000;
 export const NODE_SATS = 10000;
 export const NODES_PER_SEASON = 3;
 export const LEVEL_SATS = Object.freeze({ useful: 500, low: 1000, medium: 2000, high: 5000, critical: 10000 });
-export const PLATFORMS = Object.freeze(['telegram', 'discord', 'x']);
+export const PLATFORMS = Object.freeze(['telegram', 'discord', 'x', 'armada']);
+/** WEEK 2 (kanban #2641): the communities the second bonus counts - any 2 of these 3 */
+export const COMMUNITIES = Object.freeze(['telegram', 'discord', 'armada']);
+export const X_BONUS_PCT = 25;
+export const COMMUNITY_BONUS_PCT = 25;
+export const COMMUNITY_LEAST = 2;
 export const LINK_CODE_MS = 24 * 3600 * 1000;
 export const LINK_CODES_OPEN_MOST = 5;
 /** A membership read longer ago than this does not count for a bonus or the draw: it is read again first. */
@@ -23,10 +28,13 @@ export const CHECK_FRESH_MS = 24 * 3600 * 1000;
 const CODE_ABC = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 export const LINK_CODE_RE = /\bBA-([ABCDEFGHJKMNPQRSTUVWXYZ23456789]{8})\b/i;
 
-/** THE BONUS IN PERCENT from the stored flags: Telegram or Discord member +50, X follower +25, both +75. */
+/**
+ * THE BONUS IN PERCENT from the stored flags (Week 2, Daniel 2026-11-14, kanban #2641: "Twitter / X gibt 25% mehr. Und dann 2 of 3 gibt nochmal 25%
+ * mehr: telegram, discord, Armada"): X follower +25; a member of at least 2 of Telegram, Discord and Armada another +25; at most +50. All optional.
+ */
 export function bonusPct(flags = {}) {
-  const community = !!(flags.telegram || flags.discord);
-  return (community ? 50 : 0) + (flags.x ? 25 : 0);
+  const n = COMMUNITIES.filter((p) => flags[p] === true).length;
+  return (flags.x === true ? X_BONUS_PCT : 0) + (n >= COMMUNITY_LEAST ? COMMUNITY_BONUS_PCT : 0);
 }
 
 /**
@@ -105,11 +113,14 @@ export function openBountySeason(path = ':memory:', { startMs = null, potSats = 
     CREATE TABLE IF NOT EXISTS link_codes (code TEXT PRIMARY KEY, pubkey TEXT NOT NULL, made_ms INTEGER NOT NULL, used_ms INTEGER, platform TEXT, user_id TEXT);
     CREATE TABLE IF NOT EXISTS links (pubkey TEXT NOT NULL, platform TEXT NOT NULL, user_id TEXT NOT NULL, username TEXT, linked_ms INTEGER NOT NULL,
       member INTEGER, checked_ms INTEGER, why TEXT, PRIMARY KEY (pubkey, platform));
+    CREATE TABLE IF NOT EXISTS tg_seen (username TEXT PRIMARY KEY, user_id TEXT NOT NULL, seen_ms INTEGER NOT NULL);
     CREATE UNIQUE INDEX IF NOT EXISTS links_by_account ON links (platform, user_id);
     CREATE TABLE IF NOT EXISTS checks (pubkey TEXT NOT NULL, platform TEXT NOT NULL, user_id TEXT NOT NULL, member INTEGER, at_ms INTEGER NOT NULL, why TEXT, cause TEXT);
     CREATE TABLE IF NOT EXISTS approvals (report TEXT PRIMARY KEY, pubkey TEXT NOT NULL, season INTEGER NOT NULL, level TEXT NOT NULL, code_only INTEGER NOT NULL,
       follow_up INTEGER NOT NULL, base_sats INTEGER NOT NULL, bonus_pct INTEGER NOT NULL, sats INTEGER NOT NULL, state TEXT NOT NULL, flags TEXT, at_ms INTEGER NOT NULL,
       payable_sats INTEGER, payable_ms INTEGER, by TEXT);`);
+  // HOW A LINK WAS MADE (kanban #2641): 'code' (a one-time code posted from the account - proven) or 'name' (a username typed in the form and found live)
+  try { db.exec("ALTER TABLE links ADD COLUMN proof TEXT NOT NULL DEFAULT 'code'"); } catch { /* there already */ }
   const seasonNow = (nowMs) => seasonAt(nowMs, startMs);
 
   /** A ONE-TIME LINK CODE for a reporter's key (signed in with it): 24 hours, used once, at most LINK_CODES_OPEN_MOST open at a time. */
@@ -138,16 +149,54 @@ export function openBountySeason(path = ':memory:', { startMs = null, potSats = 
     if (!c) return { ok: false, why: 'unknown code' };
     if (c.used_ms != null) return { ok: false, why: 'that code was used already' };
     if (nowMs - c.made_ms > LINK_CODE_MS) return { ok: false, why: 'that code has expired: make a new one' };
-    const held = db.prepare('SELECT pubkey FROM links WHERE platform = ? AND user_id = ?').get(platform, String(userId));
-    if (held && held.pubkey !== c.pubkey) return { ok: false, why: 'that account is linked to another report key' };
+    const held = db.prepare('SELECT pubkey, proof FROM links WHERE platform = ? AND user_id = ?').get(platform, String(userId));
+    if (held && held.pubkey !== c.pubkey && held.proof === 'code') return { ok: false, why: 'that account is linked to another report key' };
+    // a code proves the account: a key that only typed its name in the form (kanban #2641) gives it up
+    if (held && held.pubkey !== c.pubkey) db.prepare('DELETE FROM links WHERE platform = ? AND user_id = ?').run(platform, String(userId));
     db.prepare('UPDATE link_codes SET used_ms = ?, platform = ?, user_id = ? WHERE code = ? AND used_ms IS NULL').run(nowMs, platform, String(userId), code);
-    db.prepare(`INSERT INTO links (pubkey, platform, user_id, username, linked_ms) VALUES (?, ?, ?, ?, ?)
-      ON CONFLICT (pubkey, platform) DO UPDATE SET user_id = excluded.user_id, username = excluded.username, linked_ms = excluded.linked_ms, member = NULL, checked_ms = NULL, why = NULL`)
+    db.prepare(`INSERT INTO links (pubkey, platform, user_id, username, linked_ms, proof) VALUES (?, ?, ?, ?, ?, 'code')
+      ON CONFLICT (pubkey, platform) DO UPDATE SET user_id = excluded.user_id, username = excluded.username, linked_ms = excluded.linked_ms, member = NULL, checked_ms = NULL, why = NULL, proof = 'code'`)
       .run(c.pubkey, platform, String(userId), username ? String(username).slice(0, 64) : null, nowMs);
     return { ok: true, pubkey: c.pubkey, platform };
   }
 
-  const linkRow = (x) => ({ platform: x.platform, userId: x.user_id, username: x.username, linkedMs: x.linked_ms, member: x.member == null ? null : !!x.member, checkedMs: x.checked_ms, why: x.why });
+  /**
+   * A USERNAME TYPED IN THE FORM (Week 2, kanban #2641: "der User gibt jeweils seine usernames dafür an und prüft live"), found live as the account
+   * `userId`: linked to the signed-in key. One key per account: an account another key holds is refused (and a code posted from the account takes it
+   * from a key that only typed its name). A key's earlier account on the platform is replaced.
+   */
+  function claimName(pubkey, platform, { userId, username = null, nowMs = Date.now() } = {}) {
+    if (!/^[0-9a-f]{64}$/.test(String(pubkey))) return { ok: false, why: 'no key' };
+    if (!PLATFORMS.includes(platform)) return { ok: false, why: 'no such platform' };
+    if (!userId) return { ok: false, why: 'no account' };
+    const held = db.prepare('SELECT pubkey FROM links WHERE platform = ? AND user_id = ?').get(platform, String(userId));
+    if (held && held.pubkey !== pubkey) return { ok: false, why: 'that account is linked to another report key' };
+    const had = db.prepare('SELECT user_id FROM links WHERE pubkey = ? AND platform = ?').get(pubkey, platform);
+    if (had && had.user_id === String(userId)) {
+      db.prepare('UPDATE links SET username = ? WHERE pubkey = ? AND platform = ?').run(username ? String(username).slice(0, 64) : null, pubkey, platform);
+      return { ok: true, pubkey, platform, again: true };
+    }
+    db.prepare(`INSERT INTO links (pubkey, platform, user_id, username, linked_ms, proof) VALUES (?, ?, ?, ?, ?, 'name')
+      ON CONFLICT (pubkey, platform) DO UPDATE SET user_id = excluded.user_id, username = excluded.username, linked_ms = excluded.linked_ms, member = NULL, checked_ms = NULL, why = NULL, proof = 'name'`)
+      .run(pubkey, platform, String(userId), username ? String(username).slice(0, 64) : null, nowMs);
+    return { ok: true, pubkey, platform };
+  }
+
+  /**
+   * THE TELEGRAM NAMES THE BOT HAS SEEN (kanban #2641): the Bot API cannot turn a @username into a user id, so the bot keeps username -> id from every
+   * update it gets (group messages, joins, member changes, direct messages). Usernames are kept lower case, without the @.
+   */
+  const tgName = (u) => String(u || '').trim().replace(/^@/, '').toLowerCase();
+  function seeTelegram({ userId, username, nowMs = Date.now() } = {}) {
+    const n = tgName(username);
+    if (!userId || !/^[a-z0-9_]{4,32}$/.test(n)) return false;
+    db.prepare('INSERT INTO tg_seen (username, user_id, seen_ms) VALUES (?, ?, ?) ON CONFLICT (username) DO UPDATE SET user_id = excluded.user_id, seen_ms = excluded.seen_ms')
+      .run(n, String(userId), nowMs);
+    return true;
+  }
+  function telegramIdOf(username) { const x = db.prepare('SELECT user_id FROM tg_seen WHERE username = ?').get(tgName(username)); return x ? x.user_id : null; }
+
+  const linkRow = (x) => ({ platform: x.platform, userId: x.user_id, username: x.username, proof: x.proof || 'code', linkedMs: x.linked_ms, member: x.member == null ? null : !!x.member, checkedMs: x.checked_ms, why: x.why });
   const linksOf = (pubkey) => db.prepare('SELECT * FROM links WHERE pubkey = ? ORDER BY platform').all(String(pubkey)).map(linkRow);
 
   /** A MEMBERSHIP READ, stored on the link with its time (and kept in `checks`). */
@@ -177,7 +226,7 @@ export function openBountySeason(path = ':memory:', { startMs = null, potSats = 
 
   /** THE STORED FLAGS of a key: a platform counts when its last read said member and is fresh (CHECK_FRESH_MS). */
   function flagsOf(pubkey, { nowMs = Date.now() } = {}) {
-    const f = { telegram: false, discord: false, x: false };
+    const f = { telegram: false, discord: false, x: false, armada: false };
     for (const l of linksOf(pubkey)) if (l.member === true && l.checkedMs != null && nowMs - l.checkedMs <= CHECK_FRESH_MS) f[l.platform] = true;
     return f;
   }
@@ -256,6 +305,6 @@ export function openBountySeason(path = ':memory:', { startMs = null, potSats = 
   }
   const keysOfSeason = (season) => db.prepare(`SELECT DISTINCT pubkey FROM approvals WHERE season = ? AND state = 'approved'`).all(Number(season)).map((x) => x.pubkey);
 
-  return { makeCode, redeem, links: linksOf, record, verify, flagsOf, pot, plan, commit, wait, approval, approvals, payable, drawEntries, keysOfSeason,
+  return { makeCode, redeem, claimName, seeTelegram, telegramIdOf, links: linksOf, record, verify, flagsOf, pot, plan, commit, wait, approval, approvals, payable, drawEntries, keysOfSeason,
     seasonNow, close: () => db.close() };
 }
