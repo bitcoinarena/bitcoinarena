@@ -79,6 +79,14 @@ export function instrumentCore(text, rel = 'core') {
         break;
       case 'TryStatement':
         if (node.finalizer) add(node.finalizer.start + 1, OPEN(depth), `${RESERVED}c();`);
+        // A TRY WHOSE CATCH CANNOT HAND C THE CAUGHT VALUE (kanban #2712, audit #1489 r4-hosting-5, high): `catch ({ message })` (a destructuring
+        // parameter) and a `finally` with no catch (whose return, break or throw swallows what was thrown) let V8's own overflow pass c unseen,
+        // and the core read where it happened. Its block is wrapped - inserted text only - in a try whose catch asks c with the value and throws
+        // it on: an overflow is sticky before the core's own catch or finally runs, and anything else goes on exactly as before.
+        if (!node.handler || (node.handler.param && node.handler.param.type !== 'Identifier')) {
+          add(node.block.start, OPEN(depth), '{try');
+          add(node.block.end, CLOSE(depth), `catch(${RESERVED}w){${RESERVED}c(${RESERVED}w);throw ${RESERVED}w;}}`);
+        }
         break;
       default: break;
     }
@@ -108,17 +116,25 @@ export function instrumentCore(text, rel = 'core') {
 /** The lockdown's half (core-host.js): the counting functions, made in the core's realm. `RangeErr` is the realm's RangeError,
  *  taken before any core code ran. Answers { e, x, c, begin(), over() }. Inserted as source text into the lockdown script. */
 export const DEPTH_LOCKDOWN = `(() => {
-    const max = ${DEPTH_MAX}, said = ${JSON.stringify(DEPTH_SAID)}, RE = RangeError, ownDesc = Object.getOwnPropertyDescriptor, isProto = Object.prototype.isPrototypeOf, apply = Reflect.apply, REp = RangeError.prototype;
+    const max = ${DEPTH_MAX}, said = ${JSON.stringify(DEPTH_SAID)}, RE = RangeError, isArr = Array.isArray, ownDesc = Object.getOwnPropertyDescriptor, isProto = Object.prototype.isPrototypeOf, apply = Reflect.apply, REp = RangeError.prototype;
     let d = 0, sticky = null;
     const e = () => { if (sticky !== null) throw new RE(sticky); if (++d > max) { d--; throw new RE(said); } };
     const x = () => { if (d > 0) d--; };
     const overflow = 'Maximum call stack size exceeded';
+    // kanban #2712: an overflow WRAPPED (a SuppressedError's error / suppressed, an AggregateError's errors, a cause) is the overflow too -
+    // own data properties only, a few levels deep, so no getter of the core's runs here
+    const isOverflow = (err, depth) => {
+      if (err === null || typeof err !== 'object' || depth > 4) return false;
+      if (apply(isProto, REp, [err])) { const m = ownDesc(err, 'message'); if (m && m.value === overflow) return true; }
+      const inner = (k) => { const v = ownDesc(err, k); return !!(v && 'value' in v && isOverflow(v.value, depth + 1)); };
+      if (inner('error') || inner('suppressed') || inner('cause')) return true;
+      const es = ownDesc(err, 'errors');
+      if (es && 'value' in es && isArr(es.value)) { const len = ownDesc(es.value, 'length'); for (let i = 0; i < (len ? len.value : 0) && i < 16; i++) { const v = ownDesc(es.value, String(i)); if (v && 'value' in v && isOverflow(v.value, depth + 1)) return true; } }
+      return false;
+    };
     const c = (err) => {
       if (sticky !== null) throw new RE(sticky);
-      if (err !== null && typeof err === 'object' && apply(isProto, REp, [err])) {
-        const m = ownDesc(err, 'message');
-        if (m && m.value === overflow) { sticky = 'the core overflowed the stack'; throw new RE(sticky); }
-      }
+      if (isOverflow(err, 0)) { sticky = 'the core overflowed the stack'; throw new RE(sticky); }
     };
     return Object.freeze({ e, x, c, begin() { d = 0; }, over: () => sticky });
   })()`;
