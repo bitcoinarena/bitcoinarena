@@ -121,6 +121,8 @@ export function openBountySeason(path = ':memory:', { startMs = null, potSats = 
       payable_sats INTEGER, payable_ms INTEGER, by TEXT);`);
   // HOW A LINK WAS MADE (kanban #2641): 'code' (a one-time code posted from the account - proven) or 'name' (a username typed in the form and found live)
   try { db.exec("ALTER TABLE links ADD COLUMN proof TEXT NOT NULL DEFAULT 'code'"); } catch { /* there already */ }
+  // WHY A PAYOUT WENT DOWN (kanban #2641), e.g. "left Discord: -25 %"
+  try { db.exec('ALTER TABLE approvals ADD COLUMN payable_why TEXT'); } catch { /* there already */ }
   const seasonNow = (nowMs) => seasonAt(nowMs, startMs);
 
   /** A ONE-TIME LINK CODE for a reporter's key (signed in with it): 24 hours, used once, at most LINK_CODES_OPEN_MOST open at a time. */
@@ -270,7 +272,7 @@ export function openBountySeason(path = ':memory:', { startMs = null, potSats = 
 
   const approvalRow = (x) => (x ? { report: x.report, pubkey: x.pubkey, season: x.season, level: x.level, codeOnly: !!x.code_only, followUp: !!x.follow_up,
     baseSats: x.base_sats, bonusPct: x.bonus_pct, sats: x.sats, state: x.state, flags: JSON.parse(x.flags || '{}'), atMs: x.at_ms,
-    payableSats: x.payable_sats, payableMs: x.payable_ms } : null);
+    payableSats: x.payable_sats, payableMs: x.payable_ms, payableWhy: x.payable_why || null } : null);
   const approval = (id) => approvalRow(db.prepare('SELECT * FROM approvals WHERE report = ?').get(String(id)));
   const approvals = ({ season = null, state = null } = {}) => db.prepare(`SELECT * FROM approvals WHERE (? IS NULL OR season = ?) AND (? IS NULL OR state = ?) ORDER BY at_ms`)
     .all(season, season, state, state).map(approvalRow);
@@ -284,8 +286,14 @@ export function openBountySeason(path = ':memory:', { startMs = null, potSats = 
     if (!a || a.state !== 'approved') return { ok: false, why: 'no Week 2 approval for that report' };
     const p = seasonPayout({ level: a.level, codeOnly: a.codeOnly, followUp: a.followUp, flags: a.level === 'node' ? {} : flagsOf(a.pubkey, { nowMs }) });
     const sats = Math.min(p.sats, a.sats);
-    db.prepare('UPDATE approvals SET payable_sats = ?, payable_ms = ? WHERE report = ?').run(sats, nowMs, a.report);
-    return { ok: true, report: a.report, approvedSats: a.sats, payableSats: sats, bonusPct: Math.min(p.bonusPct, a.bonusPct), flags: flagsOf(a.pubkey, { nowMs }) };
+    // WHY IT WENT DOWN (Daniel 2026-11-14, kanban #2641: "tun ggf nochmal den Betrag reduzieren wenn der User nicht mehr in den angegeben socials ist"):
+    // the communities counted at approval that do not count now (left, or not readable now - a failed read is no member)
+    const now = a.level === 'node' ? {} : flagsOf(a.pubkey, { nowMs });
+    const NAMES = { x: 'X', telegram: 'Telegram', discord: 'Discord', armada: 'Armada' };
+    const lost = PLATFORMS.filter((k) => a.flags && a.flags[k] === true && now[k] !== true);
+    const why = sats < a.sats ? `left ${lost.map((k) => NAMES[k]).join(', ') || 'a community'}: -${a.bonusPct - p.bonusPct} %` : null;
+    db.prepare('UPDATE approvals SET payable_sats = ?, payable_ms = ?, payable_why = ? WHERE report = ?').run(sats, nowMs, why, a.report);
+    return { ok: true, report: a.report, approvedSats: a.sats, payableSats: sats, bonusPct: Math.min(p.bonusPct, a.bonusPct), flags: now, lost, why };
   }
 
   /**

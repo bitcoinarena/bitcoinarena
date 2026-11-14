@@ -117,7 +117,12 @@ let S2_ARMADA = null;
 if (S2) { try { const a = await import('../src/bounty-armada.js'); const v = a.armadaFromEnv(env);
   if (v) { S2_VERIFY.armada = v; S2_ARMADA = async (input) => { const pk = await a.armadaPubkeyOf(input); if (!pk) return { userId: null, member: null, why: 'that is not a Nostr key (npub) or name@domain' };
     const r = await v({ userId: pk }); return { userId: pk, username: a.bech32Encode('npub', Buffer.from(pk, 'hex')).slice(0, 20) + '…', member: r.member, why: r.why }; }; } } catch (e) { console.log(`${new Date().toISOString()} armada check off: ${String(e.message).slice(0, 80)}`); } }
-if (S2_USERBOT && !S2_VERIFY.telegram) S2_VERIFY.telegram = async (l) => S2_USERBOT(l.username);
+// the user account reader is the Telegram check first (Daniel 2026-11-14); a read it cannot make falls back to the bot's getChatMember by id
+if (S2_USERBOT) { const bot = S2_VERIFY.telegram;
+  S2_VERIFY.telegram = async (l) => { const u = l.username ? await S2_USERBOT(l.username).catch(() => null) : null;
+    if (u && (u.member === true || (u.member === false && !bot))) return { member: u.member, why: u.why };
+    // a name not in the list may have changed: the stable id decides
+    return bot ? bot(l) : { member: u ? u.member : null, why: u ? u.why : 'no reader' }; }; }
 const S2_NAMES = S2 ? resolversFromEnv(S2, env, { userbot: S2_USERBOT, armada: S2_ARMADA }) : {};
 const S2_SOCIAL_ASKS = new Map();   // pubkey -> last /feedback/social with names (one each 15 s)
 const S2_SOCIAL_GAP_MS = 15000;
