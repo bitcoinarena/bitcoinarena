@@ -22,7 +22,7 @@ function seat(holdsB, { db = new DatabaseSync(':memory:'), invalid = new Set() }
         // a tool of kanban #2384/#2436: base32 that is not notes of this federation is answered Invalid, exit 0
         if (invalid.has(e)) return { state: 'Invalid', msat: 0n, why: 'does not decode: unexpected end of input' };
         if (!e.startsWith('fedimintq')) throw new Error('arena-stake-lock: Error: invalid base32 / could not decode ECash');
-        return { state: 'Success', msat: 100_000n };
+        return { state: 'Success', msat: 100_000n, carriedMsat: 100_000n };   // kanban #2536, 2.0: the tool says what the notes carried (#1936)
       } },
     [B]: { ecashBalance: async () => holdsB,
       ecashSend: async (m, { key }) => {
@@ -76,7 +76,8 @@ test('a44 refute 21 s2-4 (#2384, #2436): a garbage row left RECEIVING by a build
   // the row as the build before wrote it: asked, the tool failed, held RECEIVING at the stranger's amount
   db.prepare("INSERT INTO ecash_exchanges (id, from_fed, to_fed, state, why, made_ms, want_msat, receive_asked) VALUES (?, ?, ?, 'receiving', 'the receive did not answer', ?, '1000000', 1)")
     .run(ex.noteKey(g), A, B, Date.now());
-  assert.equal((await x.exchange({ from: A, to: B, ecash: HONEST.replace('fedimintq', 'fedimintr'), amountMsat: '100000' })).status, 409, 'counted while open (as before)');
+  // kanban #2536, 2.0: 1.9's #2143 (an asked RECEIVING row counted as owed at its want_msat) is not on 2.0, so the old row pins nothing here
+  assert.notEqual((await x.exchange({ from: A, to: B, ecash: HONEST.replace('fedimintq', 'fedimintr'), amountMsat: '100000' })).status, 409, '2.0 does not count an asked RECEIVING row as owed');
   assert.equal((await x.exchange({ from: A, to: B, ecash: g, amountMsat: '1000000' })).status, 400);
   assert.equal(x.stateOf(ex.noteKey(g)).state, ex.EXCHANGE.REFUSED);
   const h = await x.exchange({ from: A, to: B, ecash: HONEST, amountMsat: '100000' });
