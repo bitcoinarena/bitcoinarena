@@ -88,7 +88,8 @@ test('a batch that would leave a gap is refused, and says which tick is due', ()
 test('the words come back exactly as they went in', () => {
   const r = fresh(), c = contract();
   const rid = r.open(c); const e = entryFor(rid); const eid = r.enter(e);
-  const words = [[65536, -22000, 0, 65536, 1], [0, 0, 65536, 0, 0]];
+  // word 4 is the truck core's practice switch: 0 here, a staked Next Block round refuses it (kanban #2654)
+  const words = [[65536, -22000, 0, 65536, 0], [0, 0, 65536, 0, 0]];
   r.batch(encodeInputBatch({ roundId: rid, entryId: eid, previousHash: GENESIS, firstTick: 0, ticks: words, liquidations: [] }));
   assert.deepEqual(r.transcript(rid, eid).ticks.map((x) => x.words), words);
 });
