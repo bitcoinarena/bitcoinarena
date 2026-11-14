@@ -9,6 +9,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { leakRun } from './_h2h-p28-leak.mjs';
 
+// kanban #2536, 2.0: protocol 27 and up is also the Arena lock here (arena-lock.js NAMED_CLAIM_VERSION, regtest's point 0) and this fixture's locks
+// are stock contracts, so its rounds sit below regtest's named-claim point by the harness switch, as h2h-lock-set-2561 does on 2.0
+process.env.ARENA_DONATION_NETWORK = 'regtest'; process.env.ARENA_TEST_NAMED_CLAIM_HEIGHT = '999999999';
+
 test('#2126 (1.9, protocol 28) two seats, the partner answers /time with the fast browser clock (30 s): no move goes out before the close', { timeout: 170000 }, async () => {
   const f = await leakRun({ n: 2, keyBase: 0xb0, partnerTime: (close, now) => now + 30000, partnerSkewMs: 0, pageSkewMs: 30000, pageStartAt: (close) => close - 30000 + 120 });
   console.log('  FACTS (#2126):', JSON.stringify(f));
