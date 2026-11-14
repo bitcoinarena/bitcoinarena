@@ -457,7 +457,10 @@ export class Verifier {
    * could not. Kept in `carried` so a close can say what it was offered.
    */
   async carryReceipts(roundIdBytes, entryIdBytes) {
-    const report = { taken: 0, refused: [], down: [], answered: 0 };
+    // `ignored` (kanban #2661, #1489 r2-play-1): what shows no start - bytes that are no receipt, a signature that does not verify.
+    // #neverStarted reads `refused` as doubt that the player started; one junk answer (144 zero bytes: "not a checkpoint receipt") put
+    // there kept every walk-away of the round from FORFEIT at every honest seat. Such lines are kept apart and are not doubt.
+    const report = { taken: 0, refused: [], ignored: [], down: [], answered: 0 };
     for (const peer of this.peersOf(roundIdBytes)) {
       let body;
       try {
@@ -484,14 +487,17 @@ export class Verifier {
         timed(`close take receipts ${hex(entryIdBytes).slice(0, 8)}`, () => {
           for (let n = 0; n < RECEIPTS_PER_TURN && at + SIGNED_RECEIPT_BYTES <= body.length; n++, at += SIGNED_RECEIPT_BYTES) {
             const one = body.slice(at, at + SIGNED_RECEIPT_BYTES);
+            let r = null;
             try {
-              const r = decodeCheckpointReceipt(splitSignedReceipt(one).body);
+              r = decodeCheckpointReceipt(splitSignedReceipt(one).body);
               const key = `${hex(r.checkpointId)}:${hex(r.nodePubkey)}`;
               if (seen.has(key)) continue;
               seen.add(key);
               this.round.takeReceipt(one);
               report.taken++;
             } catch (e) {
+              // no receipt at all, or one whose signature does not verify: nothing that shows a start (kanban #2661)
+              if (!r || /does not verify/.test(e.message)) { report.ignored.push(`${peer}: ${e.message}`); if (/does not verify/.test(e.message)) { stop = true; at = body.length; break; } continue; }
               report.refused.push(`${peer}: ${e.message}`);
               if (/does not verify/.test(e.message)) { stop = true; at = body.length; break; }
             }
