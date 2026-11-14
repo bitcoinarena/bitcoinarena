@@ -2856,23 +2856,50 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         ['tape', 'sample'].forEach(function (k) { var h = held[k]; if (h) { try { h[0].apply(h[1], h[2]); } catch (e) { /* that core is gone */ } } });
       }
       P.heard_ = heard;
+      // NOT ONE SEAT'S WORD (kanban #2721, audit #1489 r5-client-1, high): the seats were asked in list order and the first that answered
+      // decided alone whether a feed runs (404 / feed:false) and which price every tick plays - a made-up sample went to the core and, with
+      // its signatures, into the player's signed batch, which the feed seats then refused. Now every seat is asked each poll: the feed is on
+      // or off when at least two seats (every seat of a one-seat list) say so and more say that than the other; a sample or the tape is
+      // taken only when at least two seats serve the same one and more than serve any other at that tick.
       async function poll() {
         if (!P.round) return;
         var since = 0; P.samples.forEach(function (v, k) { if (k >= since) since = k + 1; });
-        for (var i = 0; i < P.nodes.length; i++) {
+        var need = Math.min(2, P.nodes.length);
+        var said = await Promise.all(P.nodes.map(async function (n) {
           try {
-            var r = await fetch(String(P.nodes[i]).replace(/\/+$/, '') + '/price-samples?round=' + P.round + '&since=' + since, { cache: 'no-store', signal: AbortSignal.timeout(3000) });
-            if (r.status === 404) { heard(false); return; }      // a seat without the door runs no feed
-            if (!r.ok) continue;
+            var r = await fetch(String(n).replace(/\/+$/, '') + '/price-samples?round=' + P.round + '&since=' + since, { cache: 'no-store', signal: AbortSignal.timeout(3000) });
+            if (r.status === 404) return { feed: false };      // a seat without the door runs no feed
+            if (!r.ok) return null;
             var j = await r.json();
-            heard(j.feed === true);
-            (j.samples || []).forEach(function (x) { if (!P.samples.has(x.tick)) P.samples.set(x.tick, { priceCents: x.priceCents, sigs: x.sigs, readings: x.readings }); });
-            if (j.tape && !P.tape) P.tape = j.tape;
-            if (!P.active && (P.samples.size || P.tape)) { P.active = true; console.log('[arena] the committee\'s price is on: this run plays the attested samples only'); }
-            return;
-          } catch (e) { /* the next seat */ }
+            return j && typeof j === 'object' ? j : null;
+          } catch (e) { return null; }
+        }));
+        var answered = said.filter(function (j) { return !!j; });
+        if (!answered.length) { if (!P.heard && ++P.misses >= 3) heard(false); return; }
+        var on = answered.filter(function (j) { return j.feed === true; }).length, off = answered.length - on;
+        if (on >= need && on > off) heard(true); else if (off >= need && off > on) heard(false);
+        var votes = new Map();      // tick -> Map(key -> { n, x })
+        answered.forEach(function (j) {
+          var mine = new Set();
+          (Array.isArray(j.samples) ? j.samples : []).forEach(function (x) {
+            if (!x || !Number.isInteger(x.tick) || mine.has(x.tick)) return;
+            mine.add(x.tick);
+            var k = String(x.priceCents), m = votes.get(x.tick) || new Map(); votes.set(x.tick, m);
+            var v = m.get(k) || { n: 0, x: x }; v.n++; m.set(k, v);
+          });
+        });
+        votes.forEach(function (m, tick) {
+          if (P.samples.has(tick)) return;
+          var ranked = Array.from(m.values()).sort(function (a, b) { return b.n - a.n; });
+          if (ranked[0].n >= need && (ranked.length === 1 || ranked[0].n > ranked[1].n)) { var x = ranked[0].x; P.samples.set(tick, { priceCents: x.priceCents, sigs: x.sigs, readings: x.readings }); }
+        });
+        if (!P.tape) {
+          var tapes = new Map();
+          answered.forEach(function (j) { if (j.tape) { var k = JSON.stringify(j.tape.prices || j.tape); var v = tapes.get(k) || { n: 0, t: j.tape }; v.n++; tapes.set(k, v); } });
+          var tr = Array.from(tapes.values()).sort(function (a, b) { return b.n - a.n; });
+          if (tr.length && tr[0].n >= need && (tr.length === 1 || tr[0].n > tr[1].n)) P.tape = tr[0].t;
         }
-        if (!P.heard && ++P.misses >= 3) heard(false);
+        if (!P.active && (P.samples.size || P.tape)) { P.active = true; console.log('[arena] the committee\'s price is on: this run plays the attested samples only'); }
       }
       // the join names the round and its seats; the samples are read every 2 s from then on
       P.watch = function (roundHex, nodes) {
