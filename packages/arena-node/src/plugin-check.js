@@ -22,7 +22,9 @@ const shaHex = (b) => toHex(sha256(b));
 // THE SCAN: what a decide adapter may not do, by pattern on its source (comments included - an honest adapter has no reason to
 // spell any of these). Each finding names the rule and the line.
 export const SCAN_RULES = Object.freeze([
-  ['loads another module', /\bimport\s*\(|\brequire\s*\(|^\s*import\s[^;]*\bfrom\b|^\s*import\s+['"]/m],
+  // kanban #2751: the `import ... from` form is found by importFromAt below, linearly - as /^\s*import\s[^;]*\bfrom\b/m every line starting
+  // `import ` with no ';' after it ran to the end of the text and back (O(lines x length): 10 s for a 352 kB core, hours for a 24 MB one)
+  ['loads another module', /\bimport\s*\(|\brequire\s*\(|^\s*import\s+['"]/m],
   ['evaluates code', /\beval\s*\(|\bnew\s+Function\s*\(|\bFunction\s*\(/],
   ['reaches the network', /\bfetch\s*\(|XMLHttpRequest|WebSocket|\bhttp[s]?\b\s*\.\s*request|\bnet\s*\.\s*connect|\bnavigator\b/],
   ['reaches the file system or the process', /\bprocess\b|\bchild_process\b|\bfs\s*\.|\bDeno\b|\bBun\b/],
@@ -31,12 +33,40 @@ export const SCAN_RULES = Object.freeze([
   ['reaches its own constructor', /\bconstructor\s*\.\s*constructor\b|__proto__|\bprototype\s*\[|\bReflect\b|\bProxy\b/],
   ['hides its text', /\\u\{?[0-9a-fA-F]{2,}|\\x[0-9a-fA-F]{2}|\batob\s*\(|\bString\s*\.\s*fromCharCode\b/],
 ]);
+/**
+ * WHERE A LINE `import <whitespace>...` IS FOLLOWED BY A WORD `from` BEFORE ANY ';' (the old /^\s*import\s[^;]*\bfrom\b/m), or -1 - in one pass
+ * (kanban #2751): the next ';' and the next whole word `from` are known for every position from one scan back to front, so each import line
+ * costs one look-up, not a scan to the end of the text.
+ */
+export function importFromAt(text) {
+  const t = String(text), n = t.length;
+  const word = (c) => /[A-Za-z0-9_$]/.test(c);
+  const nextSemi = new Int32Array(n + 1), nextFrom = new Int32Array(n + 1);
+  nextSemi[n] = -1; nextFrom[n] = -1;
+  for (let i = n - 1; i >= 0; i--) {
+    nextSemi[i] = t[i] === ';' ? i : nextSemi[i + 1];
+    nextFrom[i] = t.startsWith('from', i) && (i === 0 || !word(t[i - 1])) && (i + 4 >= n || !word(t[i + 4])) ? i : nextFrom[i + 1];
+  }
+  for (let at = 0; at < n;) {
+    const end = t.indexOf('\n', at), stop = end < 0 ? n : end;
+    let i = at; while (i < stop && /\s/.test(t[i])) i++;
+    if (t.startsWith('import', i) && i + 6 < n && /\s/.test(t[i + 6])) {
+      const f = nextFrom[i + 7], s = nextSemi[i + 7];
+      if (f >= 0 && (s < 0 || f < s)) return i;
+    }
+    at = stop + 1;
+  }
+  return -1;
+}
 export function scanSource(text) {
   const findings = [];
   const lines = String(text).split('\n');
+  const lineAt = (index) => String(text).slice(0, index).split('\n').length;
   for (const [rule, re] of SCAN_RULES) {
-    const hit = new RegExp(re.source, re.flags.includes('m') ? re.flags : re.flags + 'm').exec(text);
-    if (hit) { const line = String(text).slice(0, hit.index).split('\n').length; findings.push({ rule, line, text: (lines[line - 1] || '').trim().slice(0, 120) }); }
+    let hit = new RegExp(re.source, re.flags.includes('m') ? re.flags : re.flags + 'm').exec(text);
+    let index = hit ? hit.index : -1;
+    if (rule === 'loads another module') { const f = importFromAt(text); if (f >= 0 && (index < 0 || f < index)) index = f; }   // kanban #2751
+    if (index >= 0) { const line = lineAt(index); findings.push({ rule, line, text: (lines[line - 1] || '').trim().slice(0, 120) }); }
   }
   return findings;
 }
