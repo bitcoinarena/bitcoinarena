@@ -614,7 +614,7 @@ const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 27, 28, 29]);
+const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 27, 28, 29, 30]);
 /** The last BLWP/v1 tags become ARENA/v1 at one point per network (tag-switch.js, kanban #525). */
 const TAG_SWITCH_VERSION = 18;
 /** A node's bond outputs count as their sum: the round's floor is applied to it (census.js nodeBonds, kanban #544). */
@@ -648,6 +648,15 @@ const LOCK_SET_VERSION = 28;
 const TIE_SALT_VERSION = 29;
 /** Whether a round of protocol version `v` breaks score ties by H(round_id || pubkey) (kanban #1614). */
 const saltsTies = (v) => Number.isInteger(v) && v >= TIE_SALT_VERSION;
+/**
+ * 2026.0.30 - EVERY BOND COUNTS IN THE BOND_MIN MEDIAN (kanban #2686, audit #1489 r3-census-1; Daniel 2026-11-14 "ja"). Below this version
+ * census-median.js leaves out every node that declares nothing (the installer's adverts declare nothing), so one declaring seat was the
+ * whole median and, after notice_period, every seat refused every new round naming less. From 30 a node that declares no bond_min counts
+ * at its network's BOND_MIN_DEFAULT_SATS with its whole bond. Rounds below 30 keep the old median byte for byte.
+ */
+const BOND_MEDIAN_ALL_VERSION = 30;
+/** Whether a round of protocol version `v` counts every census bond in the bond_min median (kanban #2686). */
+const mediansAllBonds = (v) => Number.isInteger(v) && v >= BOND_MEDIAN_ALL_VERSION;
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (RULED 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -3176,10 +3185,13 @@ function decodeInputBatch(bytes) {
   } catch { throw new Error('trailing bytes after the batch'); }
   if (!b.attests.length) delete b.attests;
   // each room joins the load at its tick; a room with no load there is not a batch this encoder writes
+  // ONE PASS, NOT ROOMS x LOADS (kanban #2707, audit #1489 r4-play-4): a frame of 65,535 loads with a room each joined in ~4.3e9 steps
+  let loadAt = null;
   for (const [at, room] of rooms) {
-    const l = b.loads.filter((x) => x[0] === at);
-    if (l.length !== 1 || l[0].length > 3) throw new Error('a room names no single load at its tick');
-    l[0].push(room);
+    if (!loadAt) { loadAt = new Map(); for (const x of b.loads) loadAt.set(x[0], loadAt.has(x[0]) ? null : x); }
+    const l = loadAt.get(at);
+    if (!l || l.length > 3) throw new Error('a room names no single load at its tick');
+    l.push(room);
   }
   if (b.tapes.length > 1) throw new Error('a batch carries at most one tape');
   // one encoding per batch: empty optional tails are written as none
@@ -13609,6 +13621,29 @@ const BALLOT_BIND_HEIGHT = Object.freeze({ regtest: 0, testnet4: 161400, mainnet
 const ballotBindHeight = (network) => (Object.prototype.hasOwnProperty.call(BALLOT_BIND_HEIGHT, network) ? BALLOT_BIND_HEIGHT[network] : BALLOT_BIND_HEIGHT.mainnet);
 
 /**
+ * THE KEYED VOTE (ruled 2026-11-14, kanban #2671, audit #1489 r2-census-1): a bound vote did not name its bond, so every vote - junk
+ * included - was tried against every census key: a stranger filling one block of a proposal's phase with 10,000 vote outputs cost each
+ * seat 10,000 x census BIP-340 checks on its thread. The keyed vote names its bond by the first VOTE_KEY_PREFIX bytes of the bond's
+ * x-only key, so a vote is looked up in the census once and checked once against the key(s) it names (one; two only if two census keys
+ * share those bytes). Its payload, 80 bytes, the OP_RETURN limit: "ARN" 'K', proposal_id[0:4], choice, seq (u32 BE), key[0:3], the
+ * signature over H(proposal_id || choice || seq), as the bound vote's. The id prefix gives up three more bytes for the key (the prefix only
+ * finds the proposal; the signature covers the whole id). Read under the binding rules (highest seq wins, twins), keyed votes only.
+ */
+const VOTE_KEYED_MARKER = Uint8Array.from([0x41, 0x52, 0x4e, 0x4b]);  // "ARN" 'K'
+const VOTE_KEYED_PREFIX = 4;
+const VOTE_KEY_PREFIX = 3;
+const VOTE_KEYED_BYTES = 4 + VOTE_KEYED_PREFIX + 1 + 4 + VOTE_KEY_PREFIX + 64;   // 80
+/**
+ * THE GATE OF THE KEYED VOTE (kanban #2671): a config proposal published at or above its network's height takes keyed votes only; below
+ * it the reading it had (bound or not) byte for byte. regtest from 0, mainnet from its first block, testnet4 at 162 000 (tip 161 295 on
+ * 2026-11-14: about five days for the seat roll that carries it).
+ */
+const BALLOT_KEY_HEIGHT = Object.freeze({ regtest: 0, testnet4: 162000, mainnet: 0 });
+const ballotKeyHeight = (network) => (Object.prototype.hasOwnProperty.call(BALLOT_KEY_HEIGHT, network) ? BALLOT_KEY_HEIGHT[network] : BALLOT_KEY_HEIGHT.mainnet);
+/** The x-only bond key (32 bytes, or 33 with its parity byte) as the keyed vote names it: its first VOTE_KEY_PREFIX bytes, hex. */
+const voteKeyPrefixOf = (key) => { const k = key instanceof Uint8Array ? key : fromHex(String(key)); return toHex((k.length === 33 ? k.subarray(1) : k).subarray(0, VOTE_KEY_PREFIX)); };
+
+/**
  * THE HASH A CONFIG IS NAMED BY (§27A.7.1): "config_hash = H(canonical(game_config))" - the tagged hash of the config's bytes,
  * the hash every config of the network is named by (nextblock config/game-config.js TAG_GAME_CONFIG; the ballot's genesis
  * 2170f250 is exactly this over its bytes, ballot-genesis.test.js). A proposal carries the FULL config and the hash it names,
@@ -13689,10 +13724,18 @@ const voteMessage = (id, choice, seq = null) => (seq === null || seq === undefin
  * THE OP_RETURN PAYLOAD (§27A.7.3): "ARN" 'V', proposal_id[0:8], choice, the bond key's signature - 77 bytes; with `seq`, the
  * bound vote: "ARN" 'V', proposal_id[0:7], choice, seq, signature - 80 bytes.
  */
-function encodeVote({ proposalId: id, choice, signature, seq = null }) {
+function encodeVote({ proposalId: id, choice, signature, seq = null, bondKey = null }) {
   if (!isVoteBytes32(id)) throw new Error('a vote names a 32-byte proposal id');
   if (!Object.values(CHOICE).includes(choice)) throw new Error('a vote is YES, NO or ABSTAIN');
   if (!(signature instanceof Uint8Array) || signature.length !== 64) throw new Error('a vote carries a 64-byte signature');
+  // kanban #2671: naming the bond key makes the keyed vote (a seq is required with it)
+  if (bondKey !== null && bondKey !== undefined) {
+    if (!isSeq(seq)) throw new Error('a keyed vote carries a u32 seq');
+    const out = new Uint8Array(VOTE_KEYED_BYTES);
+    out.set(VOTE_KEYED_MARKER, 0); out.set(id.subarray(0, VOTE_KEYED_PREFIX), 4); out[8] = choice; out.set(u32be(seq), 9);
+    out.set(fromHex(voteKeyPrefixOf(bondKey)), 13); out.set(signature, 16);
+    return out;
+  }
   if (seq !== null && seq !== undefined) {
     if (!isSeq(seq)) throw new Error('a bound vote\'s seq is a u32');
     const out = new Uint8Array(VOTE_BOUND_BYTES);
@@ -13706,6 +13749,12 @@ function encodeVote({ proposalId: id, choice, signature, seq = null }) {
 /** Either format: { idPrefix, choice, signature, seq, bound } - `seq` null and `bound` false for the 77-byte vote - or null. */
 function decodeVote(payload) {
   if (!(payload instanceof Uint8Array) || (payload.length !== VOTE_BYTES && payload.length !== VOTE_BOUND_BYTES)) return null;
+  // kanban #2671: the keyed vote, told apart by its marker ("ARN" 'K')
+  if (payload.length === VOTE_KEYED_BYTES && VOTE_KEYED_MARKER.every((b, i) => payload[i] === b)) {
+    if (!Object.values(CHOICE).includes(payload[8])) return null;
+    const seq = ((payload[9] << 24) | (payload[10] << 16) | (payload[11] << 8) | payload[12]) >>> 0;
+    return { idPrefix: payload.slice(4, 8), choice: payload[8], seq, keyPrefix: payload.slice(13, 16), signature: payload.slice(16), bound: true, keyed: true };
+  }
   if (VOTE_MARKER.some((b, i) => payload[i] !== b)) return null;
   if (payload.length === VOTE_BOUND_BYTES) {
     if (!Object.values(CHOICE).includes(payload[11])) return null;
@@ -13730,8 +13779,8 @@ function decodeVote(payload) {
  * a copy can never move a vote later. One helper so the two counts cannot drift apart again (#1734: the funding vote had kept the
  * replay hole after the ballot's fix).
  */
-function lastVotes({ proposalId: id, census, votes, from, until, verify, weightOf, bound = false, twins = [] }) {
-  if (bound) return boundVotes({ proposalId: id, census, votes, from, until, verify, weightOf, twins });
+function lastVotes({ proposalId: id, census, votes, from, until, verify, weightOf, bound = false, twins = [], keyed = false }) {
+  if (bound || keyed) return boundVotes({ proposalId: id, census, votes, from, until, verify, weightOf, twins, keyed });
   const prefix = toHex(id.subarray(0, 8));
   const first = new Map();                           // payload hex -> the occurrence of those bytes that ranks lowest
   for (const v of votes || []) {
@@ -13767,19 +13816,21 @@ function lastVotes({ proposalId: id, census, votes, from, until, verify, weightO
 // re-signed on the same deposit - another proposal_id - is the SAME proposal. `twins`: the ids of the other signatures over it; a
 // vote signed under any of them counts for this one, and the seq rule below runs across all of them (highest seq wins, equal seq
 // with a different choice = ABSTAIN), whichever id each vote names.
-function boundVotes({ proposalId: id, census, votes, from, until, verify, weightOf, twins = [] }) {
+// KEYED (kanban #2671): only keyed votes, each checked against the census bonds whose key it names - a lookup, never a scan
+function boundVotes({ proposalId: id, census, votes, from, until, verify, weightOf, twins = [], keyed = false }) {
   const ids = [id, ...(twins || []).filter((t) => t instanceof Uint8Array && t.length === 32 && toHex(t) !== toHex(id))];
-  const prefixes = ids.map((x) => toHex(x.subarray(0, VOTE_BOUND_PREFIX)));
+  const prefixes = ids.map((x) => toHex(x.subarray(0, keyed ? VOTE_KEYED_PREFIX : VOTE_BOUND_PREFIX)));
+  const byKey = keyed ? censusByKeyPrefix(census) : null;
   const best = new Map();                            // outpoint -> { seq, choice, conflicted, height, txid, weight }
   for (const v of votes || []) {
     if (!(v?.payload instanceof Uint8Array)) continue;
     const d = decodeVote(v.payload);
-    if (!d || !d.bound) continue;
+    if (!d || !d.bound || !!d.keyed !== !!keyed) continue;
     const named = ids.filter((_, i) => prefixes[i] === toHex(d.idPrefix));
     if (!named.length) continue;
     if (!(v.height >= from && v.height < until)) continue;
     const msgs = named.map((x) => voteMessage(x, d.choice, d.seq));
-    for (const b of census || []) {
+    for (const b of keyed ? byKey.get(toHex(d.keyPrefix)) || [] : census || []) {
       let good = false;
       for (const msg of msgs) { try { good = verify(d.signature, msg, b.pubkey) === true; } catch { good = false; } if (good) break; }
       if (!good) continue;
@@ -13795,6 +13846,13 @@ function boundVotes({ proposalId: id, census, votes, from, until, verify, weight
   return out;
 }
 
+/** kanban #2671: the census bonds by the VOTE_KEY_PREFIX bytes of their x-only key - what a keyed vote is looked up in. */
+function censusByKeyPrefix(census) {
+  const m = new Map();
+  for (const b of census || []) { let k; try { k = voteKeyPrefixOf(b.pubkey); } catch { continue; } if (!m.has(k)) m.set(k, []); m.get(k).push(b); }
+  return m;
+}
+
 /**
  * THE TALLY (§27A.7.3-4). `census`: the bonds active at the proposal's publication - [{ pubkey, outpoint, bondSats }];
  * `votes`: the vote outputs found on chain - [{ payload, height, txid }]. A vote counts for every bond whose key its signature
@@ -13804,11 +13862,11 @@ function boundVotes({ proposalId: id, census, votes, from, until, verify, weight
  * A replayed vote counts once, at its first occurrence (kanban #1489): see lastVotes. The vote bytes and their signature are
  * unchanged; a bond that changes its mind signs anew (BIP-340 with fresh aux randomness gives new bytes).
  */
-function tally({ proposal, standing, census, votes, verify, bound = false }) {
+function tally({ proposal, standing, census, votes, verify, bound = false, keyed = false }) {
   // `bound`: the proposal is read under the binding (its deposit at or above BALLOT_BIND_HEIGHT): highest seq wins (boundVotes);
   // `standing.twins`: the ids of its twins (ruling #2591 (c)), whose votes count for it - bound only
   const latest = lastVotes({ proposalId: standing.id, census, votes, from: standing.votingFrom, until: standing.votingUntil, verify,
-    weightOf: (b) => BigInt(b.bondSats), bound, twins: bound ? standing.twins || [] : [] });
+    weightOf: (b) => BigInt(b.bondSats), bound, keyed, twins: bound || keyed ? standing.twins || [] : [] });
   const total = (census || []).reduce((a, b) => a + BigInt(b.bondSats), 0n);
   let yes = 0n, no = 0n, abstain = 0n;
   for (const x of latest.values()) { if (x.choice === CHOICE.YES) yes += x.weight; else if (x.choice === CHOICE.NO) no += x.weight; else abstain += x.weight; }
@@ -40645,8 +40703,11 @@ const gameTypeOf = (m) => (m && m.resultType === 2 ? 'market' : m && m.resultTyp
 const GAMES_ANSWER_MS = 6000;
 // ONE SEAT'S ANSWER IS BOUNDED (kanban #2558, audit #1489 r13: one seat listing 2000 made-up manifests cost one games read 2001
 // developer-signature checks and 2002 refusals, and - signed under its own throwaway key - would have filled the lobby with tiles):
-// at most this many of a seat's games are decoded and checked, the pinned known-good ids first. An honest seat hosts a handful.
-const GAMES_PER_SEAT = 32;
+// at most this many of a seat's games are decoded and checked, the pinned known-good ids first. An honest seat lists every VERSION it
+// still hosts: 41 on 2026-11-14 (24 btc-updown-15m, 10 rock-paper-scissors, 7 nextblock) - at 32 the newest versions were cut, and Rock
+// Paper Scissors and Up or Down "cannot be loaded" on the live page (feedback #064/#065/#068): their client hashes are named only by
+// v6+ / the newest. 256 keeps a flood at a bounded cost (256 signature checks a seat, against 2000) and room for many more versions.
+const GAMES_PER_SEAT = 256;
 
 // ITS DEVELOPER SIGNED IT (kanban #1810): the signature over the manifest body's id (manifest.js manifestStands' first rule), by
 // the developer key the manifest names. The client carries no crypto library (the bundle is its own source, nothing from npm): the
