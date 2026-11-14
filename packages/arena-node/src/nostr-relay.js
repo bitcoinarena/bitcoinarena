@@ -72,6 +72,8 @@ const SEED_KIND = 30078, SEED_POOL = 2, SEED_EVENTS = 100000, SEED_BYTES = 128 *
 const POOL_SQL = (k) => `(CASE WHEN ${k} = ${SEED_KIND} THEN ${SEED_POOL} WHEN ${k} IN (0, 3) OR ${k} BETWEEN 10000 AND 19999 OR ${k} BETWEEN 30000 AND 39999 THEN 0 ELSE 1 END)`;   // 0 state, 1 log, 2 seeds
 const poolOf = (k) => (k === SEED_KIND ? SEED_POOL : isReplaceable(k) || isParam(k) ? 0 : 1);
 const SLOW_BYTES = 4 * 1024 * 1024;   // kanban #1542: the most one client may leave unread before it is dropped
+// kanban #2738: the stored JSON one REQ may read and parse, all its filters together - twice what one socket may hold unread
+const REQ_READ_BYTES = 2 * SLOW_BYTES;
 const HARD_SLOW_BYTES = 2 * SLOW_BYTES;   // kanban #1717: past this backlog no message at all is queued; the client is dropped
 // kanban #1871, #1904 (bypasses of #1542/#1717): the bound was per socket only, so N unread sockets of one stranger held N x ~4.7 MB.
 // TOTAL_SLOW_BYTES bounds the unsent backlog of all clients together; past it the client with the largest backlog is dropped
@@ -471,14 +473,23 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
     // filters together; kanban #2378: and at most WORK_ROWS seeks checking candidates, 4 x SCAN_ROWS counting drives
     const out = new Map(), budget = { left: SCAN_ROWS, count: 4 * SCAN_ROWS, drive: 4 * SCAN_ROWS, work: WORK_ROWS };
     let broad = false;
+    // A REQ READS AT MOST REQ_READ_BYTES OF STORED JSON (kanban #2738, audit #1489 r6-nostr-1, high): the plan budgets bounded the scan, not the
+    // bytes - ten disjoint limit:500 filters over 63 KB events with 6,200 multi-letter tags each handed ~5,000 rows (~320 MB) to JSON.parse
+    // and the tag sets before the send loop's SLOW_BYTES cut, holding the relay 2.75 s per REQ. Rows are now read one at a time and parsed only
+    // while the REQ's read stays under the bound (the send loop cuts at SLOW_BYTES anyway); past it the answer is cut and says so (`broad`)
+    let readBytes = 0, cut = false;
     for (const f of filters) {
+      if (cut) break;
       const q = plan(f, budget);
       if (!q) continue;
       let rows;
-      if (q.sql) { rows = db.prepare(q.sql).all(...q.args).map((r) => r.json); broad = broad || !!q.broad; }
+      if (q.sql) { rows = db.prepare(q.sql).iterate(...q.args); broad = broad || !!q.broad; }
       else { const r = walkRows(q, budget); rows = r.rows; broad = broad || r.broad; }
       const c = compileFilter(f);   // kanban #2378: the last check by Sets (min of both sides per tag), not tags x values
-      for (const json of rows) {
+      for (const row of rows) {
+        const json = typeof row === 'string' ? row : row.json;
+        readBytes += json.length;
+        if (readBytes > REQ_READ_BYTES) { cut = true; broad = true; if (typeof rows.return === 'function') rows.return(); break; }
         const e = JSON.parse(json);
         if (!out.has(e.id) && matchesCompiled(c, e, eventTagSets(e))) out.set(e.id, e);
       }
