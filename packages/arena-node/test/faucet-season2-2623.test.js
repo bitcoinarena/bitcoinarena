@@ -90,7 +90,7 @@ test('#2623 the faucet: link code by sign-in, Season 2 approval with bonus and h
     const entries = await act({ action: 'draw-entries', season: 2 });
     assert.deepEqual(entries.entries, ['telegram:@ann']);
     const open = await j('/feedback/open-issues');
-    assert.deepEqual(open.areas, [{ area: 'Slashing', tickets: ['#1155'] }]);
+    assert.deepEqual(open.areas, [{ area: 'Slashing', tickets: ['#1155'], items: [] }]);
     // A DUPLICATE OF TICKET #77 (kanban #2745): rejected with dupTicket, the ticket's text behind the report's own token; an unknown token is 404
     const r4 = await report(cat, 'The payout page spins forever, the same thing the team has on a ticket already.');
     const rej = await act({ action: 'reject', id: r4, reason: 'Thanks for the report. This is a duplicate of a known issue (ticket #77).', dupTicket: 77 });
