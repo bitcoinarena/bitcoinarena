@@ -10548,9 +10548,18 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       const ds = await ARENACLIENT.fetchDonationSet({ round: Object.assign({}, row.contract, { id: ARENACLIENT.fromHex(row.id) }),
         nodes: (row.said || []).map((c) => c.node).filter(Boolean), verifyEd25519: pageEd25519Verify, keepBySet: true });
       if (!ds.ok || !ds.target) return { ok: false, step: 'donation', why: ds.why || 'the round names no donation sets' };
+      // ONLY BONDED NODES ARE A COMMITTEE (kanban #1896): the served list counts a round's committee only when its keys are nodes of a
+      // census this page checked - that round's, checked here as a join checks it when no census is held yet
+      let census = ARENACLIENT.newestCheckedCensus ? ARENACLIENT.newestCheckedCensus() : null;
+      if (!census) {
+        const rc = Object.assign({}, row.contract, { id: ARENACLIENT.fromHex(row.id) });
+        try { await ARENACLIENT.clientCommittee(row.id, rc, (row.said || []).map((c) => c.node).filter(Boolean), { curve: window.ARENA_CURVE, compare: false }); } catch { /* refused below */ }
+        census = ARENACLIENT.newestCheckedCensus ? ARENACLIENT.newestCheckedCensus() : null;
+      }
+      if (!census) return { ok: false, step: 'served', why: 'this page could not check the network\'s census, so it cannot tell which keys served a round' };
       return ARENACLIENT.buyItem({ manifest: shop.game.manifest, itemId: it.id, networkSet: ds.target.network, gameSet: ds.target.game, wallet, federationId, devsPct,
         player: { pubkey: key.pubkey, sign: key.sign }, seats: shop.game.nodes || [], fetch: (u, o) => fetch(u, o),
-        verify: (sg, m, k) => window.ARENA_CURVE.verify(sg, m, k) });
+        verify: (sg, m, k) => window.ARENA_CURVE.verify(sg, m, k), bondedKeys: census.entries.map((e) => ARENACLIENT.toHex(e.pubkey)) });
     }
     // DONATE TO THE DEVELOPERS (2026-10-17: "donate to developer, a popup opens with an amount to choose from
     // 100, 500, 1000, 5000 satoshis or custom"; "B e cash"; Tick Tock's countdown box, the other games, the main testnet UI's footer):
