@@ -79,7 +79,8 @@ const scalar = () => { for (;;) { const s = rand(32); const v = scalarFrom32(s);
 // the player's key with its secret: the winner collects its payout and its stake under it (redeemPayout / redeemStake)
 const evenPlayer = () => { let k; do { k = secp256k1.utils.randomSecretKey(); } while (secp256k1.getPublicKey(k, true)[0] !== 0x02); return { secret: k, pubkey: schnorr.getPublicKey(k) }; };
 
-import { hiddenMove, moveCommitment, revealMove } from '../../arena-client/src/head-to-head.js';
+import { hiddenMove, moveCommitment } from '../../arena-client/src/head-to-head.js';
+import { revealAsPage } from './h2h-reveal.mjs';   // kanban #2658: from protocol 28 the reveal waits for the certified lock set
 import { RPS_GAME_ID } from '../../rock-paper-scissors/plugin/rock-paper-scissors.js';
 import { GAME_ID_V2 as RPS_GAME_ID_V2 } from '../../rock-paper-scissors/plugin/rock-paper-scissors-v2.js';
 import { GAME_ID_V5 as RPS_GAME_ID_V5 } from '../../rock-paper-scissors/plugin/rock-paper-scissors-v5.js';
@@ -282,7 +283,7 @@ try {
   // and P2's reached the seats after the reveal window - a FORFEIT the harness made); each seat's refusal is logged with its reason
   await Promise.all([[p1, 'P1'], [p2, 'P2']].map(async ([p, who]) => {
     const t0 = Date.now();
-    const said = await revealMove({ entryIdHex: toHex(p.eid), move: p.hidden.move, salt: p.hidden.salt, nodes });
+    const said = (await revealAsPage({ c, roundIdHex: roundHex, entryIdHex: toHex(p.eid), move: p.hidden.move, salt: p.hidden.salt, nodes })).seats || [];
     log({ step: 'revealed', player: who, ms: Date.now() - t0, said: said.map((x) => x.status ?? x),
       refused: said.filter((x) => x.status === 409).map((x) => `${x.node}: ${x.why}`) });
   }));
