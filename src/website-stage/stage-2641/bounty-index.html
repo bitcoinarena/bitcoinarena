@@ -75,6 +75,9 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
   .bhead { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: 13px; color: var(--dim); } .bhead b { color: var(--text); text-transform: uppercase; letter-spacing: .04em; font-size: 13px; }
   .pcard { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); color: var(--text); text-decoration: none; min-width: 0; }
   .pcard:hover { border-color: var(--btc); } .pcard .ptext { flex: 1 1 auto; min-width: 0; font-weight: 600; } .pcard .plus { flex: none; }
+  .steps3 { grid-template-columns: repeat(3, 1fr); } .steps3 li { align-items: center; text-align: center; } .steps3 li::before { display: none; }
+  .fold { margin-top: 22px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); padding: 10px 14px; } .fold > summary { cursor: pointer; font-weight: 700; font-size: 17px; }
+  .fine { margin: 10px 0 0; padding-left: 18px; font-size: 15px; } .fine li { margin-bottom: 6px; }
   .gbadge { font-size: 12px; font-weight: 800; padding: 2px 9px; border-radius: 999px; background: linear-gradient(135deg, #f7931a, #f0388a); color: #0d1117; }
   .joins { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; } .join { display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px 5px 5px; border-radius: 999px; background: var(--panel); border: 1px solid var(--line); color: var(--text); text-decoration: none; font-size: 14px; font-weight: 600; } .join:hover { border-color: var(--btc); } .join .ic { width: 26px; height: 26px; }
   table { font-size: 14px; } @media (max-width: 480px) { body { padding: 20px 14px 48px; } .hero { padding: 20px 16px; } th, td { padding: 8px; } }
@@ -87,23 +90,18 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
 <main>
   <section class="hero">
     <div class="tag">Bug bounty &middot; Season 2</div>
-    <h1>Find bugs. Earn real sats.</h1>
-    <p class="lead">Play a round, tell us what broke, and we pay you over Lightning. No sign-up, no key needed.</p>
-    <p class="when">Season 2 started Saturday, 14 November, 07:12 UTC and ends Saturday, 21 November, 07:12 UTC.</p>
+    <h1>Find bugs. Earn sats.</h1>
+    <p class="lead">Play, report, get paid over Lightning.</p>
     <a class="go" href="/">Play a round</a>
   </section>
 
-  <nav class="toc" aria-label="Rules"><a href="#how-to-report">How it works</a> &middot; <a href="#pay">Pay</a> &middot; <a href="#community-bonus">Bonus</a> &middot; <a href="#budget">Budget</a> &middot; <a href="#draw">Draw</a> &middot; <a href="#node-bounty">Node bounty</a> &middot; <a href="#half">Half pay</a> &middot; <a href="#follow-ups">Follow-ups</a> &middot; <a href="#duplicates">Duplicates</a> &middot; <a href="#no-game-results">Game results</a> &middot; <a href="#open-issues">Open issues</a> &middot; <a href="#week-1">Season 1</a></nav>
-
-  <h2 id="how-to-report">How it works<a class="rl" href="#how-to-report" aria-label="Link to this rule" title="Copy the link to this rule"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7.78 4.3 9.3 2.78a3.25 3.25 0 0 1 4.6 4.6l-2.5 2.5a3.25 3.25 0 0 1-4.6 0 .75.75 0 0 1 1.06-1.06 1.75 1.75 0 0 0 2.48 0l2.5-2.5a1.75 1.75 0 0 0-2.48-2.48L8.84 5.36A.75.75 0 0 1 7.78 4.3Zm-3.56 7.46 2.5-2.5a1.75 1.75 0 0 1 2.48 0 .75.75 0 1 0 1.06-1.06 3.25 3.25 0 0 0-4.6 0l-2.5 2.5a3.25 3.25 0 0 0 4.6 4.6l1.52-1.52a.75.75 0 1 0-1.06-1.06L6.7 14.24a1.75 1.75 0 0 1-2.48-2.48Z"/></svg></a></h2>
-  <ol class="steps">
-    <li><span class="si"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8 5v14l11-7z"/></svg></span><b>Play a round</b><span>on the <a href="/">game page</a>.</span></li>
-    <li><span class="si"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M4 4h16v12H7l-3 3zM7 8v2h10V8zm0 4v2h7v-2z"/></svg></span><b>Press Feedback</b><span>at the bottom. Say what happened and what you expected.</span></li>
-    <li><span class="si"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M10 2a8 8 0 0 1 6.3 12.9l5.4 5.4-1.4 1.4-5.4-5.4A8 8 0 1 1 10 2m0 2a6 6 0 1 0 0 12 6 6 0 0 0 0-12"/></svg></span><b>We check it</b><span>and give it a level. You see it in My feedback.</span></li>
-    <li><span class="si"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg></span><b>You get paid</b><span>over Lightning, real sats on mainnet.</span></li>
+  <ol class="steps steps3" id="how-to-report">
+    <li><span class="si"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8 5v14l11-7z"/></svg></span><b>Play a round</b></li>
+    <li><span class="si"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M4 4h16v12H7l-3 3zM7 8v2h10V8zm0 4v2h7v-2z"/></svg></span><b>Report it</b></li>
+    <li><span class="si"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg></span><b>Get paid</b></li>
   </ol>
 
-  <h2 id="pay">What a report pays<a class="rl" href="#pay" aria-label="Link to this rule" title="Copy the link to this rule"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7.78 4.3 9.3 2.78a3.25 3.25 0 0 1 4.6 4.6l-2.5 2.5a3.25 3.25 0 0 1-4.6 0 .75.75 0 0 1 1.06-1.06 1.75 1.75 0 0 0 2.48 0l2.5-2.5a1.75 1.75 0 0 0-2.48-2.48L8.84 5.36A.75.75 0 0 1 7.78 4.3Zm-3.56 7.46 2.5-2.5a1.75 1.75 0 0 1 2.48 0 .75.75 0 1 0 1.06-1.06 3.25 3.25 0 0 0-4.6 0l-2.5 2.5a3.25 3.25 0 0 0 4.6 4.6l1.52-1.52a.75.75 0 1 0-1.06-1.06L6.7 14.24a1.75 1.75 0 0 1-2.48-2.48Z"/></svg></a></h2>
+  <h2 id="pay">What you get</h2>
   <div class="tiles">
     <div class="tile t-crit"><b>10,000</b><span>critical</span><small>money can be lost or taken</small></div>
     <div class="tile t-high"><b>5,000</b><span>high</span><small>play or a payout stops</small></div>
@@ -111,10 +109,10 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     <div class="tile t-low"><b>1,000</b><span>low</span><small>wrong text, layout glitch</small></div>
     <div class="tile t-use"><b>500</b><span>useful idea</span><small>something could be better</small></div>
   </div>
-  <p class="note">In sats, per confirmed report, for a bug you show in a real round. No limit per person.</p>
 
-  <h2 id="community-bonus">Your community bonus<a class="rl" href="#community-bonus" aria-label="Link to this rule" title="Copy the link to this rule"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7.78 4.3 9.3 2.78a3.25 3.25 0 0 1 4.6 4.6l-2.5 2.5a3.25 3.25 0 0 1-4.6 0 .75.75 0 0 1 1.06-1.06 1.75 1.75 0 0 0 2.48 0l2.5-2.5a1.75 1.75 0 0 0-2.48-2.48L8.84 5.36A.75.75 0 0 1 7.78 4.3Zm-3.56 7.46 2.5-2.5a1.75 1.75 0 0 1 2.48 0 .75.75 0 1 0 1.06-1.06 3.25 3.25 0 0 0-4.6 0l-2.5 2.5a3.25 3.25 0 0 0 4.6 4.6l1.52-1.52a.75.75 0 1 0-1.06-1.06L6.7 14.24a1.75 1.75 0 0 1-2.48-2.48Z"/></svg></a></h2>
-  <p>Optional. On every confirmed report:</p>
+  <p class="note" id="half">Found it in code only? Half.</p>
+
+  <h2 id="community-bonus">Bonus</h2>
   <div class="bonus">
     <div class="bgroup b-social"><div class="bhead"><b>Social media · follow</b><span class="gbadge">+20 % each</span></div>
       <a class="pcard" href="https://x.com/bitcoinarena_io" target="_blank" rel="noopener"><span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M18.9 2H22l-6.8 7.8L23 22h-6.3l-4.9-6.4L6.1 22H3l7.3-8.3L1 2h6.4l4.4 5.9L18.9 2zm-1.1 18h1.7L6.3 3.9H4.5L17.8 20z"/></svg></span><span class="ptext">Follow @bitcoinarena_io on X</span><span class="plus">+20 %</span></a>
@@ -126,37 +124,36 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       <a class="pcard" href="https://armada.buzz/invite/naddr1qvzqqqyzz5pzpt3qdj9s02tf33v6t5epfuxgk90eklx42cg2ftatwmuzznkww6anqqqqf5522e#BAEU9DouYIxVptZrIZWPrgMF" target="_blank" rel="noopener"><span class="ic" aria-hidden="true"><svg viewBox="20 2 88 124" aria-hidden="true" focusable="false"><g fill="#19e6e6"><path d="M95.4 104.865H32.59c-1.18 0-2.14-.96-2.14-2.14s.96-2.14 2.14-2.14H95.4c1.18 0 2.14.96 2.14 2.14s-.96 2.14-2.14 2.14z"/><path d="M83.98 115.565H44.01a1.43 1.43 0 1 1 0-2.86h39.97a1.43 1.43 0 1 1 0 2.86z"/><path d="M73.99 123.775H54.01a1.071 1.071 0 0 1 0-2.14h19.98a1.071 1.071 0 0 1 0 2.14z"/></g><path fill="#f0388a" d="M64 4.225l-39.97 88.5h17.13l2.31-5.2 2.76-6.22-2.22-1.43-1.42-12.84h9.99l4.89-11.01L64 41.335l11.42 25.7h9.99l-1.43 12.84-2.22 1.43 2.77 6.22 2.31 5.2h17.13z"/><path fill="#f0388a" d="M76.84 79.165c-.15 0-.31-.05-.44-.15l-12.41-9.65-12.41 9.65c-.31.24-.76.19-1-.13a.706.706 0 0 1 .13-1l12.85-9.99c.26-.2.62-.2.88 0l12.85 9.99a.715.715 0 0 1-.43 1.28z"/></svg></span><span class="ptext">Join our Armada community</span></a>
     </div>
   </div>
-  <p class="note">All three together give +60 %: a high bug then pays 8,000 sats instead of 5,000. Type your names in the Feedback form and press Check. We check again before we pay; if you left, that part drops.</p>
+
+  <p class="note">Up to +60 %.</p>
 
   <div class="duo">
-    <section class="card" id="budget"><h3>This season's pot<a class="rl" href="#budget" aria-label="Link to this rule" title="Copy the link to this rule"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7.78 4.3 9.3 2.78a3.25 3.25 0 0 1 4.6 4.6l-2.5 2.5a3.25 3.25 0 0 1-4.6 0 .75.75 0 0 1 1.06-1.06 1.75 1.75 0 0 0 2.48 0l2.5-2.5a1.75 1.75 0 0 0-2.48-2.48L8.84 5.36A.75.75 0 0 1 7.78 4.3Zm-3.56 7.46 2.5-2.5a1.75 1.75 0 0 1 2.48 0 .75.75 0 1 0 1.06-1.06 3.25 3.25 0 0 0-4.6 0l-2.5 2.5a3.25 3.25 0 0 0 4.6 4.6l1.52-1.52a.75.75 0 1 0-1.06-1.06L6.7 14.24a1.75 1.75 0 0 1-2.48-2.48Z"/></svg></a></h3>
-      <div class="pot"><b id="pot-used">&hellip;</b> <span>of 100,000 sats</span></div>
+    <section class="card" id="budget"><h3>Season pot</h3>
+      <div class="pot"><b id="pot-used">&hellip;</b> <span>/ 100,000 sats</span></div>
       <div class="bar"><i id="pot-bar"></i></div>
-      <p class="note">150,000 sats a season (a season runs one week): 100,000 for reports, bonuses and node bounties, 50,000 for the draw. When the pot is empty, new reports wait for the next season.</p>
     </section>
-    <section class="card" id="draw"><h3>Season draw: 50,000<a class="rl" href="#draw" aria-label="Link to this rule" title="Copy the link to this rule"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7.78 4.3 9.3 2.78a3.25 3.25 0 0 1 4.6 4.6l-2.5 2.5a3.25 3.25 0 0 1-4.6 0 .75.75 0 0 1 1.06-1.06 1.75 1.75 0 0 0 2.48 0l2.5-2.5a1.75 1.75 0 0 0-2.48-2.48L8.84 5.36A.75.75 0 0 1 7.78 4.3Zm-3.56 7.46 2.5-2.5a1.75 1.75 0 0 1 2.48 0 .75.75 0 1 0 1.06-1.06 3.25 3.25 0 0 0-4.6 0l-2.5 2.5a3.25 3.25 0 0 0 4.6 4.6l1.52-1.52a.75.75 0 1 0-1.06-1.06L6.7 14.24a1.75 1.75 0 0 1-2.48-2.48Z"/></svg></a></h3>
+    <section class="card" id="draw"><h3>Season draw: 50,000 for the top 5</h3>
       <ol class="podium"><li><b>1</b>20,000</li><li><b>2</b>12,000</li><li><b>3</b>8,000</li><li><b>4</b>6,000</li><li><b>5</b>4,000</li></ol>
-      <p class="note">You are in with one confirmed report this season and a membership in Telegram, Discord or Armada. One entry per person. The seed is the first Bitcoin block mined after Season 2 ends (21 Nov, 07:12 UTC). Anyone can rerun it: <a href="draw.mjs">draw.mjs</a>.</p>
     </section>
   </div>
 
-  <section class="card wide" id="node-bounty"><h3>Run a node: 10,000 sats<a class="rl" href="#node-bounty" aria-label="Link to this rule" title="Copy the link to this rule"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7.78 4.3 9.3 2.78a3.25 3.25 0 0 1 4.6 4.6l-2.5 2.5a3.25 3.25 0 0 1-4.6 0 .75.75 0 0 1 1.06-1.06 1.75 1.75 0 0 0 2.48 0l2.5-2.5a1.75 1.75 0 0 0-2.48-2.48L8.84 5.36A.75.75 0 0 1 7.78 4.3Zm-3.56 7.46 2.5-2.5a1.75 1.75 0 0 1 2.48 0 .75.75 0 1 0 1.06-1.06 3.25 3.25 0 0 0-4.6 0l-2.5 2.5a3.25 3.25 0 0 0 4.6 4.6l1.52-1.52a.75.75 0 1 0-1.06-1.06L6.7 14.24a1.75 1.75 0 0 1-2.48-2.48Z"/></svg></a></h3>
-    <p class="note">Keep a node running for a day. The first 3 nodes each season are paid, from the pot. <span id="pot-nodes"></span></p>
-  </section>
+  <details class="fold" id="rules"><summary>Details</summary>
+    <ul class="fine">
+      <li id="duplicates">First report wins. Duplicates and known issues pay nothing.</li>
+      <li id="follow-ups">A gap in a fix or another variant: 1,000 sats.</li>
+      <li>Found it in the code only: half. Show it in a real round for the full level.</li>
+      <li id="node-bounty">Run a node for a day: 10,000 sats, the first 3 nodes a season.</li>
+      <li id="no-game-results">Winning a round is never paid. Test sats have no value.</li>
+      <li>Draw: one confirmed report this season and a member of Telegram, Discord or Armada; one entry per person. Seed: the first Bitcoin block after Season 2 ends (2026-11-21 07:12 UTC). <a href="draw.mjs">draw.mjs</a></li>
+      <li>The pot is 100,000 sats a season (a season runs one week). When it is empty, reports wait for the next season.</li>
+      <li>We check every report and decide its level. Our decision is final.</li>
+    </ul>
+  </details>
 
-  <h2>Good to know</h2>
-  <dl class="faq">
-    <dt id="half">Found it in the code only?<a class="rl" href="#half" aria-label="Link to this rule" title="Copy the link to this rule"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7.78 4.3 9.3 2.78a3.25 3.25 0 0 1 4.6 4.6l-2.5 2.5a3.25 3.25 0 0 1-4.6 0 .75.75 0 0 1 1.06-1.06 1.75 1.75 0 0 0 2.48 0l2.5-2.5a1.75 1.75 0 0 0-2.48-2.48L8.84 5.36A.75.75 0 0 1 7.78 4.3Zm-3.56 7.46 2.5-2.5a1.75 1.75 0 0 1 2.48 0 .75.75 0 1 0 1.06-1.06 3.25 3.25 0 0 0-4.6 0l-2.5 2.5a3.25 3.25 0 0 0 4.6 4.6l1.52-1.52a.75.75 0 1 0-1.06-1.06L6.7 14.24a1.75 1.75 0 0 1-2.48-2.48Z"/></svg></a></dt><dd>That pays half. Show it in a real round on testnet4 for the full level.</dd>
-    <dt id="follow-ups">A gap in a fix, or another variant?<a class="rl" href="#follow-ups" aria-label="Link to this rule" title="Copy the link to this rule"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7.78 4.3 9.3 2.78a3.25 3.25 0 0 1 4.6 4.6l-2.5 2.5a3.25 3.25 0 0 1-4.6 0 .75.75 0 0 1 1.06-1.06 1.75 1.75 0 0 0 2.48 0l2.5-2.5a1.75 1.75 0 0 0-2.48-2.48L8.84 5.36A.75.75 0 0 1 7.78 4.3Zm-3.56 7.46 2.5-2.5a1.75 1.75 0 0 1 2.48 0 .75.75 0 1 0 1.06-1.06 3.25 3.25 0 0 0-4.6 0l-2.5 2.5a3.25 3.25 0 0 0 4.6 4.6l1.52-1.52a.75.75 0 1 0-1.06-1.06L6.7 14.24a1.75 1.75 0 0 1-2.48-2.48Z"/></svg></a></dt><dd>That is a follow-up: 1,000 sats.</dd>
-    <dt id="duplicates">Someone was faster?<a class="rl" href="#duplicates" aria-label="Link to this rule" title="Copy the link to this rule"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7.78 4.3 9.3 2.78a3.25 3.25 0 0 1 4.6 4.6l-2.5 2.5a3.25 3.25 0 0 1-4.6 0 .75.75 0 0 1 1.06-1.06 1.75 1.75 0 0 0 2.48 0l2.5-2.5a1.75 1.75 0 0 0-2.48-2.48L8.84 5.36A.75.75 0 0 1 7.78 4.3Zm-3.56 7.46 2.5-2.5a1.75 1.75 0 0 1 2.48 0 .75.75 0 1 0 1.06-1.06 3.25 3.25 0 0 0-4.6 0l-2.5 2.5a3.25 3.25 0 0 0 4.6 4.6l1.52-1.52a.75.75 0 1 0-1.06-1.06L6.7 14.24a1.75 1.75 0 0 1-2.48-2.48Z"/></svg></a></dt><dd>The first report wins; a duplicate pays nothing. A match with our open-issues list below counts as a duplicate. We tell you the ticket number.</dd>
-    <dt id="no-game-results">Won a round?<a class="rl" href="#no-game-results" aria-label="Link to this rule" title="Copy the link to this rule"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7.78 4.3 9.3 2.78a3.25 3.25 0 0 1 4.6 4.6l-2.5 2.5a3.25 3.25 0 0 1-4.6 0 .75.75 0 0 1 1.06-1.06 1.75 1.75 0 0 0 2.48 0l2.5-2.5a1.75 1.75 0 0 0-2.48-2.48L8.84 5.36A.75.75 0 0 1 7.78 4.3Zm-3.56 7.46 2.5-2.5a1.75 1.75 0 0 1 2.48 0 .75.75 0 1 0 1.06-1.06 3.25 3.25 0 0 0-4.6 0l-2.5 2.5a3.25 3.25 0 0 0 4.6 4.6l1.52-1.52a.75.75 0 1 0-1.06-1.06L6.7 14.24a1.75 1.75 0 0 1-2.48-2.48Z"/></svg></a></dt><dd>Nice, but winning is never paid. Test sats have no value; only the Lightning payouts are real money.</dd>
-    <dt>Who decides?</dt><dd>We do: new, duplicate or follow-up, and the level. Our decision is final.</dd>
-  </dl>
-
-  <h2 id="open-issues">Open issues<a class="rl" href="#open-issues" aria-label="Link to this rule" title="Copy the link to this rule"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7.78 4.3 9.3 2.78a3.25 3.25 0 0 1 4.6 4.6l-2.5 2.5a3.25 3.25 0 0 1-4.6 0 .75.75 0 0 1 1.06-1.06 1.75 1.75 0 0 0 2.48 0l2.5-2.5a1.75 1.75 0 0 0-2.48-2.48L8.84 5.36A.75.75 0 0 1 7.78 4.3Zm-3.56 7.46 2.5-2.5a1.75 1.75 0 0 1 2.48 0 .75.75 0 1 0 1.06-1.06 3.25 3.25 0 0 0-4.6 0l-2.5 2.5a3.25 3.25 0 0 0 4.6 4.6l1.52-1.52a.75.75 0 1 0-1.06-1.06L6.7 14.24a1.75 1.75 0 0 1-2.48-2.48Z"/></svg></a></h2>
-  <p>Already known, by area. <a href="/kanban/">All open issues</a></p>
-  <table><thead><tr><th>Area</th><th>Tickets</th></tr></thead><tbody id="s2-open"><tr><td colspan="2">Reading &hellip;</td></tr></tbody></table>
-  <p class="note" id="s2-updated"></p>
+  <details class="fold" id="open-issues"><summary><span id="oi-count">149</span> known issues</summary>
+    <table><thead><tr><th>Area</th><th>Tickets</th></tr></thead><tbody id="s2-open"><tr><td colspan="2">Reading &hellip;</td></tr></tbody></table>
+    <p class="note" id="s2-updated"></p>
+  </details>
   <script>
     /* the week's pot and the open-issues list (areas and ticket numbers only), read from the faucet (kanban #2623, #2641) */
     (function () {
@@ -164,7 +161,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       fetch('/api/faucet/feedback/season').then(function (r) { if (!r.ok) throw 0; return r.json(); }).then(function (s) {
         document.getElementById('pot-used').textContent = fmt(s.usedSats);
         document.getElementById('pot-bar').style.width = Math.min(100, Math.round(100 * s.usedSats / s.potSats)) + '%';
-        document.getElementById('pot-nodes').textContent = 'This season: ' + s.nodes + ' of ' + s.nodesMost + '.';
+        
       }).catch(function () { document.getElementById('pot-used').textContent = '?'; });
       // the list at once: this browser's last copy, else the one built into the page; then the edge's (kanban #2641)
       var SNAP = {"updated":"2026-11-14T15:49:09.283Z","areas":[{"area":"Census","tickets":["#1248"]},{"area":"Committees and bonds","tickets":["#925","#1038","#1063","#1351","#1386","#2564","#2643","#2660","#2670","#2739","#2740","#2766"]},{"area":"Faucet and feedback","tickets":["#2664","#2732","#2733","#2734","#2755","#2756","#2757"]},{"area":"Federation","tickets":["#718","#1169","#1358","#1367","#2650","#2752","#2767"]},{"area":"Installer","tickets":["#1369"]},{"area":"Lightning payouts","tickets":["#2656","#2687","#2696","#2714","#2716","#2746","#2748"]},{"area":"Liquidation","tickets":["#1247","#1253"]},{"area":"Markets","tickets":["#1376"]},{"area":"Next Block game","tickets":["#962","#2747","#2764"]},{"area":"Node software","tickets":["#1482","#2651","#2659","#2667","#2668","#2674","#2691","#2697","#2698","#2700","#2709","#2719","#2729","#2730","#2735","#2736","#2743","#2751","#2753","#2759","#2765"]},{"area":"Other","tickets":["#1008","#1204","#1352","#1489","#2644","#2645","#2646","#2657","#2661","#2663","#2665","#2666","#2669","#2673","#2676","#2677","#2678","#2679","#2683","#2684","#2688","#2690","#2692","#2693","#2695","#2699","#2703","#2704","#2705","#2706","#2710","#2711","#2713","#2715","#2717","#2718","#2720","#2722","#2723","#2725","#2726","#2728","#2731","#2738","#2741","#2742","#2744","#2749","#2750","#2754","#2758","#2760","#2761","#2763","#2768"]},{"area":"Presence","tickets":["#1372"]},{"area":"Reserves","tickets":["#1176","#1359","#2652","#2662"]},{"area":"Rock Paper Scissors game","tickets":["#2658"]},{"area":"Settlement","tickets":["#1049","#1077","#1170","#1183","#1239","#1370","#2648","#2649","#2653","#2680","#2701","#2702","#2737"]},{"area":"Slashing","tickets":["#975","#1155","#1187","#1188","#1189","#1191","#1192","#1193","#1246","#1357"]},{"area":"Update stage","tickets":["#1377","#1380"]},{"area":"Website","tickets":["#1007"]}]};
@@ -172,7 +169,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         o.areas.forEach(function (a) { var tr = document.createElement('tr'), t1 = document.createElement('td'), t2 = document.createElement('td');
           t1.textContent = a.area; t2.textContent = (a.tickets || []).join(' '); tr.append(t1, t2); tb.append(tr); });
         if (!tb.children.length) tb.innerHTML = '<tr><td colspan="2">None open.</td></tr>';
-        var u = document.getElementById('s2-updated'); if (u && o.updated) u.textContent = 'Updated ' + o.updated.slice(0, 16).replace('T', ' ') + ' UTC'; };
+        var c = document.getElementById('oi-count'); if (c) c.textContent = o.areas.reduce(function (n, a) { return n + (a.tickets || []).length; }, 0); var u = document.getElementById('s2-updated'); if (u && o.updated) u.textContent = 'Updated ' + o.updated.slice(0, 16).replace('T', ' ') + ' UTC'; };
       var kept = null; try { kept = JSON.parse(localStorage.getItem('arena.open-issues') || 'null'); } catch (e) { kept = null; }
       show(kept && kept.updated && (!SNAP.updated || kept.updated >= SNAP.updated) ? kept : SNAP);
       fetch('/api/faucet/feedback/open-issues', { cache: 'no-cache' }).then(function (r) { if (!r.ok) throw 0; return r.json(); }).then(function (o) {
@@ -180,6 +177,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         if (!document.querySelector('#s2-open td:nth-child(2)')) document.getElementById('s2-open').innerHTML = '<tr><td colspan="2">Not readable just now.</td></tr>'; });
     })();
   </script>
+
   <span id="season-1"></span><details id="week-1" style="margin-top:28px"><summary style="cursor:pointer;font-size:20px;font-weight:600">Season 1 (2026-11-11 to 2026-11-13): rules and payouts<a class="rl" href="#week-1" aria-label="Link to this rule" title="Copy the link to this rule"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7.78 4.3 9.3 2.78a3.25 3.25 0 0 1 4.6 4.6l-2.5 2.5a3.25 3.25 0 0 1-4.6 0 .75.75 0 0 1 1.06-1.06 1.75 1.75 0 0 0 2.48 0l2.5-2.5a1.75 1.75 0 0 0-2.48-2.48L8.84 5.36A.75.75 0 0 1 7.78 4.3Zm-3.56 7.46 2.5-2.5a1.75 1.75 0 0 1 2.48 0 .75.75 0 1 0 1.06-1.06 3.25 3.25 0 0 0-4.6 0l-2.5 2.5a3.25 3.25 0 0 0 4.6 4.6l1.52-1.52a.75.75 0 1 0-1.06-1.06L6.7 14.24a1.75 1.75 0 0 1-2.48-2.48Z"/></svg></a></summary>
 
   
@@ -231,7 +229,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
 document.addEventListener('click', function (e) { var a = e.target && e.target.closest ? e.target.closest('a.rl') : null; if (!a) return;
   var url = location.origin + location.pathname + a.getAttribute('href'); try { navigator.clipboard.writeText(url); } catch (x) {}
   a.classList.add('copied'); a.title = 'Link copied'; setTimeout(function () { a.classList.remove('copied'); a.title = 'Copy the link to this rule'; }, 1500); });
-function openWeek1() { if (location.hash === '#week-1' || location.hash === '#season-1') { var d = document.getElementById('week-1'); if (d) { d.open = true; d.scrollIntoView(); } } }
+function openWeek1() { var id = location.hash.slice(1) === 'season-1' ? 'week-1' : location.hash.slice(1); var e = id && document.getElementById(id); if (!e) return;
+  var d = e.tagName === 'DETAILS' ? e : e.closest('details'); if (d) d.open = true; e.scrollIntoView(); }
 window.addEventListener('hashchange', openWeek1); openWeek1();</script>
 </body>
 </html>
