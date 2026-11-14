@@ -794,7 +794,7 @@ test('custody on an Electrum node is refused as it is switched on; the emergency
     assert.equal((await c.post('/api/apps', { apps: st.appInfo.map((a) => a.id) })).json.ok, true);
     assert.equal((await c.get('/api/state')).json.step, 'emergency', 'after the words: the emergency code');
     assert.equal((await c.post('/api/emergency/written')).json.ok, true);
-    assert.equal((await c.get('/api/state')).json.step, 'owner');
+    assert.equal((await c.get('/api/state')).json.step, 'reach', 'the restored words own the node: no owner step (kanban #648)');
   } finally { server.close(); rmSync(home, { recursive: true, force: true }); }
 });
 
