@@ -31,6 +31,60 @@ export function discordVerifier({ token, guildId, fetchFn = fetch, timeoutMs = 8
   };
 }
 
+/** A DISCORD NAME AS TYPED: the username (lower case, no @, no "#0"); null when it cannot be one (2-32 of a-z 0-9 _ .). */
+export function discordName(input) {
+  const n = String(input || '').trim().replace(/^@/, '').replace(/#0$/, '').toLowerCase();
+  return /^[a-z0-9_.]{2,32}$/.test(n) ? n : null;
+}
+
+/**
+ * A DISCORD USERNAME -> MEMBER OF OUR SERVER (Week 2, kanban #2641): GET /guilds/{id}/members/search?query=<name> with the bot's token, then the one
+ * member whose username is exactly that name (the search matches prefixes of usernames and nicknames). Answers { userId, username, member, why }:
+ * userId null when no member has that username (not in the server); member false while membership screening is pending.
+ */
+export function discordSearch({ token, guildId, fetchFn = fetch, timeoutMs = 8000 }) {
+  return async (input) => {
+    const name = discordName(input);
+    if (!name) return { userId: null, member: null, why: 'that is not a Discord username' };
+    try {
+      const r = await fetchFn(`https://discord.com/api/v10/guilds/${encodeURIComponent(guildId)}/members/search?query=${encodeURIComponent(name)}&limit=100`,
+        { headers: { authorization: `Bot ${token}` }, signal: AbortSignal.timeout(timeoutMs) });
+      if (r.status !== 200) return { userId: null, member: null, why: `discord ${r.status}` };
+      const list = await r.json().catch(() => null);
+      if (!Array.isArray(list)) return { userId: null, member: null, why: 'discord answered no list' };
+      const m = list.find((x) => x && x.user && String(x.user.username || '').toLowerCase() === name && !x.user.bot);
+      if (!m) return { userId: null, username: name, member: false, why: 'not in the server' };
+      return { userId: String(m.user.id), username: m.user.username, member: !m.pending, why: m.pending ? 'membership screening pending' : 'member' };
+    } catch (e) { return { userId: null, member: null, why: short(e) }; }
+  };
+}
+
+/** A TELEGRAM NAME AS TYPED: the username without @ (5-32 of a-z 0-9 _, lower case); null when it cannot be one. */
+export function telegramName(input) {
+  const n = String(input || '').trim().replace(/^https?:\/\/t\.me\//i, '').replace(/^@/, '').toLowerCase();
+  return /^[a-z][a-z0-9_]{3,31}$/.test(n) ? n : null;
+}
+
+/**
+ * A TELEGRAM USERNAME -> MEMBER OF OUR GROUP (kanban #2641). With the user account reader (`userbot`, src/telegram-userbot.js) the group's live member
+ * list answers it directly. Without it the name must be one the bot has seen (`idOf`, the seen-map the link bot keeps) and getChatMember reads it live;
+ * a name it has not seen answers { userId: null, member: null, unseen: true }.
+ */
+export function telegramByName({ idOf, verify, userbot = null }) {
+  return async (input) => {
+    const name = telegramName(input);
+    if (!name) return { userId: null, member: null, why: 'that is not a Telegram username' };
+    if (userbot) {
+      const u = await userbot(name).catch((e) => ({ member: null, why: short(e) }));
+      if (u && u.member !== null && u.member !== undefined) return { userId: u.userId || (idOf && idOf(name)) || null, username: `@${name}`, member: u.member, why: u.why || null };
+    }
+    const id = idOf ? idOf(name) : null;
+    if (!id) return { userId: null, username: `@${name}`, member: null, unseen: true, why: 'not seen yet: write one message in the Bitcoin Arena Telegram group (or send your BA- code to @BitcoinArenaBot), then check again' };
+    const r = await verify({ userId: id, username: `@${name}` });
+    return { userId: id, username: `@${name}`, member: r.member, why: r.why };
+  };
+}
+
 // THE X WEB APP'S PUBLIC BEARER: the constant the web client ships (not a secret, not tied to our account); X_WEB_BEARER overrides it
 const X_WEB_BEARER = 'AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA';
 const X_UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36';
@@ -70,6 +124,22 @@ export function xVerifier({ session = () => xSessionFromChrome(), fetchFn = fetc
       if (link.userId && rel.target && rel.target.id_str && String(rel.target.id_str) !== String(link.userId)) return { member: false, why: 'that X name belongs to another account now' };
       return { member: !!(rel.target && rel.target.following), why: rel.target && rel.target.following ? 'follows' : 'does not follow' };
     } catch (e) { return { member: null, why: short(e) }; }
+  };
+}
+
+/** AN X NAME -> FOLLOWS @bitcoinarena_io (kanban #2641): the same friendships/show read, answering the account's stable id with it. */
+export function xByName({ session = () => xSessionFromChrome(), fetchFn = fetch, gap = spaced(3000), timeoutMs = 10000 } = {}) {
+  return async (input) => {
+    const name = String(input || '').trim().replace(/^https?:\/\/(www\.)?(x|twitter)\.com\//i, '').replace(/^@/, '').replace(/[/?].*$/, '');
+    if (!/^[A-Za-z0-9_]{1,15}$/.test(name)) return { userId: null, member: null, why: 'that is not an X username' };
+    try {
+      const s = await session(); await gap();
+      const r = await fetchFn(`https://x.com/i/api/1.1/friendships/show.json?source_screen_name=${X_ACCOUNT}&target_screen_name=${encodeURIComponent(name)}`, { headers: xHeaders(s), signal: AbortSignal.timeout(timeoutMs) });
+      const j = await r.json().catch(() => null); const rel = j && j.relationship;
+      if (r.status === 404 || (j && Array.isArray(j.errors) && j.errors.some((e) => e && (e.code === 50 || e.code === 163)))) return { userId: null, username: name, member: false, why: 'no such X account' };
+      if (r.status !== 200 || !rel || !rel.target) return { userId: null, member: null, why: `x ${r.status}` };
+      return { userId: rel.target.id_str ? String(rel.target.id_str) : null, username: rel.target.screen_name || name, member: !!rel.target.following, why: rel.target.following ? 'follows' : 'does not follow' };
+    } catch (e) { return { userId: null, member: null, why: short(e) }; }
   };
 }
 
