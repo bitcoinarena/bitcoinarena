@@ -46,7 +46,7 @@ export async function slashOwing({
   const truth = settledOnFalse && offence !== TWO_RESULTS && replayed ? [{ pubkey: proof.playerPubkey, outcome: replayed.outcome, score: replayed.score }] : [];
   let split;
   try {
-    const losses = realLosses({ roundId: roundIdBytes, entries, truth, affected: harmed.affected, minScore: contract.minScore, payoutShares });
+    const losses = realLosses({ roundId: roundIdBytes, entries, truth, affected: harmed.affected, minScore: contract.minScore, payoutShares, protocolVersion: contract.protocolVersion });
     split = slashDistribution({ escrowSats: bondSats, roundId: roundIdBytes, contract, losses, paid });
   } catch (e) { return { ok: false, why: e.message }; }
 

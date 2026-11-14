@@ -358,7 +358,7 @@ export function slashLosses({ verdict, entries, contract, roundId, signed = verd
   // THE NAMED CLAIM'S ROWS (a) AND (b) (RULED 2026-11-06, kanban #1146 B): #976's rule on what the judge read of the transaction - one function for path B,
   // a template-3 release and its fallback. `settled` false: (b)'s round still has unsettled locks at the cap, each read as gone back to its player
   if (verdict.offence === OFF_TABLE_CLAIM || verdict.offence === FORFEIT_OF_LOST_ENTRY) {
-    const got = namedClaimLosses({ held: verdict, entries, roundId, minScore: contract.minScore, payoutShares, settled });
+    const got = namedClaimLosses({ held: verdict, entries, roundId, minScore: contract.minScore, payoutShares, settled, protocolVersion: contract.protocolVersion });
     return got.ok ? { ok: true, losses: got.losses, truth: [], level: got.level } : got;
   }
   const harmed = affectedEntries({ offence: verdict.offence, playerPubkey: verdict.playerPubkey, entries, signed, replayed: verdict.replayed });
@@ -366,7 +366,7 @@ export function slashLosses({ verdict, entries, contract, roundId, signed = verd
   const named = entries.find((e) => toHex(e.playerPubkey) === toHex(verdict.playerPubkey));
   const settledOnFalse = !!(named && named.finalProven && named.runId === verdict.contradictedRunId && verdict.offence !== TWO_RESULTS && verdict.replayed);
   const correct = [...truth.filter((t) => toHex(t.pubkey) !== toHex(verdict.playerPubkey)), ...(settledOnFalse ? [{ pubkey: verdict.playerPubkey, outcome: verdict.replayed.outcome, score: verdict.replayed.score }] : [])];
-  try { return { ok: true, losses: realLosses({ roundId, entries, truth: correct, affected: harmed.affected, minScore: contract.minScore, payoutShares }), truth: correct }; }
+  try { return { ok: true, losses: realLosses({ roundId, entries, truth: correct, affected: harmed.affected, minScore: contract.minScore, payoutShares, protocolVersion: contract.protocolVersion }), truth: correct }; }
   catch (e) { return { ok: false, why: e.message }; }
 }
 

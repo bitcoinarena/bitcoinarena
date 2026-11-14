@@ -14,6 +14,7 @@ import { pageCurve } from '../src/page-curve.js';
 import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
 import { decodeRoundContract, encodeRoundContract, roundId } from '../../arena-protocol/src/contracts.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { signedSeats } from './settled-signed.js';   // kanban #2108: seats sign their /settled answers
 
 const CONTRACT_HEX = readFileSync(new URL('./page-collect-other-seeds.test.js', import.meta.url), 'utf8').match(/CONTRACT_HEX = '([0-9a-f]+)'/)[1];
 const base = decodeRoundContract(fromHex(CONTRACT_HEX));
@@ -36,7 +37,7 @@ test('wf1489-v1-refute-14-s3-1: seats answering /round?id= with a 404 just insid
   };
   const nodes = ['https://liar1', 'https://liar2', 'https://liar3', 'https://h1', 'https://h2', 'https://h3', 'https://h4'];
   const t0 = Date.now();
-  const found = await PL.findOwedRounds({ seed, curve: pageCurve, nodes, fetcher, sinceMs: 0 });
+  const found = await PL.findOwedRounds({ seed, curve: pageCurve, nodes, ...signedSeats(fetcher, nodes), sinceMs: 0 });
   const ms = Date.now() - t0;
   console.log(`  FACTS ${N} owed rounds, 3 of 7 seats answering 404 at 1.9 s: ${found.length} found after ${ms} ms, ${liarReads} reads of the slow seats`);
   assert.equal(found.length, N);
