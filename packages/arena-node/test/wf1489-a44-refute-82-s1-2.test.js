@@ -23,7 +23,7 @@ const signedBy = (body, by) => ({ ...body, signatures: by.map((a) => attestorSig
 const post = async (d, rid, a) => { const r = await fetch(`http://127.0.0.1:${d.port}/outcome?round=${toHex(rid)}`, { method: 'POST', body: encodeAttestation(a) }); return r.status; };
 const outcome = async (d, rid) => (await fetch(`http://127.0.0.1:${d.port}/outcome?round=${toHex(rid)}`)).json();
 
-test("#1489 a44-refute-82-s1-2 the seat holding the locks unreachable for 15 s across the close: the pull gives up after 4 passes and nothing pulls again", { timeout: 150000 }, async () => {
+test("#1489 a44-refute-82-s1-2 the seat holding the locks unreachable for 15 s across the close: the other seat does not take them after its own door closed (kanban #2529)", { timeout: 150000 }, async () => {
   const w = await lockRound({ stakeMsat: STAKE, round: ROUND, endMs: testNow() + 900000,
     serveOpts: { plugins: [NEXTBLOCK, MARKET.registration], donationSets: [TEST_DONATION_SET_KEYS_REGTEST] } });
   skipTo(Number(w.c.committeeTimeMs) + 100);
@@ -54,6 +54,10 @@ test("#1489 a44-refute-82-s1-2 the seat holding the locks unreachable for 15 s a
     }
     const facts = { seenAtA: !!w.a.round.stakeSeen(late.eid), seenAtB: !!w.b.round.stakeSeen(late.eid), state: got.state, why: String(got.why || '').slice(0, 200) };
     console.log('  FACTS:', JSON.stringify(facts));
-    assert.equal(got.state, 'ACCEPTED', `the market never settles: ${JSON.stringify(facts)}`);
+    // DECIDED 2026-11-14 (kanban #2529, "each seat verifies itself"): seat b never verified the pick's locks before its own door closed, so it
+    // does not take them on seat a's word - it does not hold the pick as staked. (Left open: with 2 seats and the pick held at one, the two
+    // tables differ and this market does not settle by 2-of-2 - the cost of never taking one seat's word.)
+    assert.equal(facts.seenAtB, false, `seat b took a pick's locks after its own door closed, on its peer's word: ${JSON.stringify(facts)}`);
+    assert.equal(facts.seenAtA, true);
   } finally { globalThis.fetch = realFetch; await w.close(); }
 });

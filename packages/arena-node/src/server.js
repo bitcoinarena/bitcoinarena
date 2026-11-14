@@ -6820,7 +6820,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // is taken only where they cannot (2-of-2, #2483's case).
       let oneWordEnough = false;
       try { const slots = decodeRoundContract(new Uint8Array(round.get(rid).contract)).settlementSlots; oneWordEnough = slots - 1 < roundThreshold(slots); } catch { oneWordEnough = false; }
-      const signedBefore = (a, k) => oneWordEnough && closeMs !== null && !!a && !!a[k] && takenBeforeClose(rid, eid, k, a[k], a.taken && a.taken[k], closeMs);
+      // A POOL PICK: EACH SEAT VERIFIES ITSELF (kanban #2529, decided 2026-11-14 "each seat verifies itself"): one peer's word - its signed
+      // "taken before the close" (#2483's 2-of-2 rule) or its GET /order-locks verifiedMs, both stamped by its own clock - is never taken for
+      // a pick. A colluding seat (or one whose clock runs behind) took the locks 20 s after the close, said 5 s before, and the honest seat
+      // pulled them and paid the late pick 495,000 msat. A lock new to this seat is taken from a peer only while this seat's OWN door would
+      // still take it (lockAfterCloseRefusal at its own clock): the peer only carries the fields, this seat checks them and the time itself.
+      const signedBefore = (a, k) => !pick && oneWordEnough && closeMs !== null && !!a && !!a[k] && takenBeforeClose(rid, eid, k, a[k], a.taken && a.taken[k], closeMs);
+      const lateKinds = ['stake', 'fee'].filter((k) => lockAfterCloseRefusal(round.entry(eid), eid, k));
+      if (pick && lateKinds.length && answers.length) {
+        console.log(`[entry] ${entryHex.slice(0, 16)}: a pick's ${lateKinds.join(' and ')} lock new to this seat after its own door closed: not taken on a peer's word (kanban #2529)`);
+        answers = [];
+      }
       // PAST THE LOCK CLOSE, NOT FROM ONE SEAT (kanban #1783, #1551 refute 0, #1489): #1551 and #1260 refuse a lock new to a seat at its door once its round's
       // lock close passed (head-to-head: the entry close, when the moves turn public), but this repair took a lock from any single peer's GET /order-locks.
       // One seat that took a late lock (its operator, or a patched build) so handed it to every honest seat: the player locked only when the revealed move
@@ -6877,11 +6887,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       let mine = null;
       for (const locks of answers) {
         why = null;
-        if (pick) {
-          const before = (ms) => ms !== undefined && ms !== null && Number.isFinite(Number(ms)) && BigInt(Math.floor(Number(ms))) < pick.closeMs;
-          if ((locks.stake && !round.stakeLock(eid) && !before(locks.stakeVerifiedMs)) || (locks.fee && round.feeLock && !round.feeLock(eid) && !before(locks.feeVerifiedMs))) {
-            why = `that peer verified the lock at or after the entry close ${pick.closeMs} (or says not when): not taken (kanban #2300, #1793)`; continue;
-          }
+        // kanban #2529: a pick's lock is held to this seat's own door at its own clock (above), not to the peer's verifiedMs
+        if (pick && ['stake', 'fee'].some((k) => locks[k] && !(k === 'stake' ? round.stakeLock(eid) : (!round.feeLock || round.feeLock(eid))) && lockAfterCloseRefusal(round.entry(eid), eid, k))) {
+          why = `this seat's own door no longer takes a lock of that pick (its entry close ${pick.closeMs} passed): not taken on a peer's word (kanban #2529)`; continue;
         }
         let stakeF = null, feeF = null;
         try { if (locks.stake) stakeF = lockFieldsFromJson(locks.stake); if (locks.fee) feeF = lockFieldsFromJson(locks.fee); }
