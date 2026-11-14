@@ -149,7 +149,7 @@ export function tableFalse({ table, contract, entries, payoutShares = null, fees
   const rows = entriesOfRows(table, entries);
   if (!rows) return differs;
   let f;
-  try { f = computePayoutTable({ roundId: table.roundId, entries: rows, minScore: contract.minScore, payoutShares }); } catch (e) { differs.push(`F cannot be computed from its rows: ${e.message}`); return differs; }
+  try { f = computePayoutTable({ roundId: table.roundId, entries: rows, minScore: contract.minScore, payoutShares, protocolVersion: contract.protocolVersion }); } catch (e) { differs.push(`F cannot be computed from its rows: ${e.message}`); return differs; }
   f.activated.forEach((e, i) => {
     const row = rowOf.get(hex(e.entryId));
     if (row.amountMsat !== f.table[i].amountMsat) differs.push(`entry ${hex(e.entryId).slice(0, 16)} is paid ${row.amountMsat} and F of the table's own outcomes pays ${f.table[i].amountMsat}`);
