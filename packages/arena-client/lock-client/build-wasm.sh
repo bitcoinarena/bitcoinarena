@@ -72,6 +72,12 @@ fi
 # share-by-share check, as before. The earlier variants (ARENA_NOTE_YIELDS, ARENA_NOTE_BATCH) patch the same lines.
 if [ -n "${ARENA_NOTE_YIELDS:-}${ARENA_NOTE_BATCH:-}" ]; then echo "ARENA_NOTE_YIELDS/ARENA_NOTE_BATCH: replaced by the batch every build applies (#196)" >&2; exit 2; fi
 patch -p1 < $HERE/fedimint-mintv2-note-batch2.patch; grep -q "static COMBINED" modules/fedimint-mintv2-client/src/api.rs
+# A REJECTED TRANSACTION NO LONGER STRANDS ITS GOOD NOTES (kanban #2771, upstream PR fedimint/fedimint#9497 as ported to v0.12.2 in
+# george-prime/fedimint blwp-v0122-pr9497 9f36eff9a9c): when a spend is rejected because one input note is already spent, the stock
+# input state machine refunded ALL inputs in one transaction - the federation rejected that refund too, and every good note was dropped
+# from the wallet (gw-c lost the use of 49M sat that way, 11-08..11-14). The fix checks each input at the federation, refunds only the
+# unspent ones, and keeps the refund settled. Applies to the fork's base unchanged (input.rs is byte-identical to v0.12.2's).
+patch -p1 < $HERE/fedimint-mintv2-refund-9497.patch; grep -q "await_primary_module_outputs_for_unit" modules/fedimint-mintv2-client/src/input.rs
 # A NEW WALLET'S FIRST RECEIVE IS AS QUICK AS A TOP-UP (kanban #1381, the owner 2026-11-09 "it is very slow on new accounts"; measured: the welcome's 500 sat
 # credited 15-20 s after the faucet paid, a 300 sat top-up into the same wallet 1.6-1.9 s). Every transaction's rebalance stocks the wallet up to
 # TARGET_PER_DENOMINATION (3) notes of every denomination from 1 msat up; an empty wallet's first receive asked ~50 notes (its claim 8432 bytes, the
