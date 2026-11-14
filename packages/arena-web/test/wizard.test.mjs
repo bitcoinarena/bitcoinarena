@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { RolesStep, AppsStep, SeedStep, OwnerStep, PromiseStep, onAtStart, OPT_IN_ROLES, appOnAtStart, StepBar, SetupRefused } from '../dist/test/wizard.mjs';
+import { RolesStep, AppsStep, SeedStep, OwnerStep, StartStep, START_WAYS, startWayOf, PromiseStep, onAtStart, OPT_IN_ROLES, appOnAtStart, StepBar, SetupRefused } from '../dist/test/wizard.mjs';
 
 const roleInfo = {
   verify: { title: 'Game / verify', does: 'replays and signs rounds', chips: ['🔒 bond', '🌐 https address'], needs: 'Replays each round it is seated on.', slice: 1 },
@@ -84,6 +84,73 @@ test('owner: the 24 words by default, Nostr with an npub (from the extension), e
   const n = driven(OwnerStep, { post: async () => ({}), reload() {}, nostr: null });
   await n.fromExtension();
   assert.match(n.state.msg.text, /no Nostr extension/);
+});
+
+// KANBAN #648: the first step as the player page's wallet screen - a new seed, my Nostr identity (the nsec, or an extension / phone
+// signer as owner only), a new Nostr identity, restore - each saying who the owner becomes; "Use another Nostr key as owner" keeps the npub
+test('#648 start: the player page\'s four choices, each posted to /api/start with the owner it names', async () => {
+  assert.deepEqual(START_WAYS.map(([k]) => k), ['new', 'nostr', 'newnostr', 'restore']);
+  const html = renderToStaticMarkup(React.createElement(StartStep, { st: {}, post: async () => ({}), reload() {} }));
+  for (const t of ['Create a new seed', 'Use my Nostr identity', 'Create a new Nostr identity', 'Restore my node']) assert.ok(html.includes(t), t);
+  assert.match(html, /id="start-owner"[\s\S]*Owner login:[\s\S]*your 24 words[\s\S]*no separate owner step[\s\S]*Use another Nostr key as owner/);
+  const posts = []; let reloaded = 0;
+  const make = (st = {}) => driven(StartStep, { st, post: async (p, b) => { posts.push([p, b]); return p === '/api/start/nsec' ? { ok: true, nsec: 'nsec1made' } : { ok: true }; }, reload: () => { reloaded++; }, nostr: { getPublicKey: async () => 'ab'.repeat(32) } });
+  // a new seed
+  let c = make(); assert.equal(c.ready(), true); await c.go();
+  assert.deepEqual(posts.pop(), ['/api/start', { control: 'words', action: 'new', ownerNpub: undefined }]);
+  // ... with another Nostr key as owner: Continue waits for the key
+  c = make(); c.setState({ other: true }); assert.equal(c.ready(), false);
+  await c.fromExtension(); assert.equal(c.ready(), true);
+  assert.match(renderToStaticMarkup(c.render()), /the Nostr key <code>abababababab…ababab<\/code>, and only it/);
+  await c.go(); assert.deepEqual(posts.pop(), ['/api/start', { control: 'words', action: 'new', ownerNpub: 'ab'.repeat(32) }]);
+  // my Nostr identity: the nsec runs the node
+  c = make(); c.setState({ way: 'nostr' }); assert.equal(c.ready(), false);
+  assert.match(renderToStaticMarkup(c.render()), /id="start-nsec"[\s\S]*owner only/);
+  c.setState({ nsec: 'nsec1abc' }); await c.go();
+  assert.deepEqual(posts.pop(), ['/api/start', { control: 'nostr', action: 'new', nsec: 'nsec1abc', ownerNpub: undefined }]);
+  // ... or an extension / phone signer: owner only, the node gets 24 words of its own
+  c = make(); c.setState({ way: 'nostr', how: 'signer' }); assert.equal(c.ready(), false);
+  let h = renderToStaticMarkup(c.render());
+  assert.match(h, /cannot run your node/); assert.doesNotMatch(h, /Use another Nostr key as owner/, 'it is the other key already');
+  c.setState({ npub: 'npub1someone' });
+  assert.match(renderToStaticMarkup(c.render()), /the Nostr key <code>npub1someone<\/code>\. Your node gets its own 24 words/);
+  await c.go(); assert.deepEqual(posts.pop(), ['/api/start', { control: 'words', action: 'new', ownerNpub: 'npub1someone' }]);
+  // a new Nostr identity: shown, "I saved my key" before Continue
+  c = make(); c.setState({ way: 'newnostr' }); await c.makeKey();
+  assert.match(renderToStaticMarkup(c.render()), /id="start-made"[\s\S]*nsec1made[\s\S]*I saved my key/);
+  assert.equal(c.ready(), false); c.setState({ saved: true }); assert.equal(c.ready(), true);
+  await c.go(); assert.deepEqual(posts.pop(), ['/api/start', { control: 'nostr', action: 'new', nsec: 'nsec1made', ownerNpub: undefined }]);
+  // restore: 24 words or an nsec in the one field
+  c = make(); c.setState({ way: 'restore', text: 'w '.repeat(23) }); assert.equal(c.ready(), false);
+  c.setState({ text: 'w '.repeat(24) }); await c.go();
+  assert.deepEqual(posts.pop(), ['/api/start', { control: 'words', action: 'restore', words: 'w '.repeat(24), ownerNpub: undefined }]);
+  c = make(); c.setState({ way: 'restore', text: ' nsec1old ' }); assert.match(renderToStaticMarkup(c.render()), /Owner login:<\/b> your Nostr key/);
+  await c.go(); assert.deepEqual(posts.pop(), ['/api/start', { control: 'nostr', action: 'restore', nsec: ' nsec1old ', ownerNpub: undefined }]);
+  assert.equal(reloaded, 7);
+  // a refusal is shown and nothing moves on
+  const r = driven(StartStep, { st: {}, post: async () => ({ ok: false, why: 'that is not an nsec (it starts with nsec1)' }), reload() { reloaded++; } });
+  await r.go(); assert.equal(reloaded, 7);
+  assert.match(renderToStaticMarkup(r.render()), /class="msg bad"[^>]*>that is not an nsec/);
+  // run again: the saved choice, and the owner the node has said as kept
+  assert.deepEqual([startWayOf({ control: 'nostr', origin: 'new' }), startWayOf({ control: 'words', origin: 'restore' }), startWayOf({})], ['nostr', 'restore', 'new']);
+  h = renderToStaticMarkup(React.createElement(StartStep, { st: { control: 'words', origin: 'restore', done: { owner: 1 }, ownerNpub: 'npub1abcdefghijklmnopqrstuvwxyz' }, post: async () => ({}), reload() {} }));
+  assert.match(h, /stays <code>npub1abcdefg…uvwxyz<\/code>, as this node has it now/);
+});
+
+test('#648 owner: opened again from the bar, it says who the owner is and why; a Nostr node\'s own choice is its nsec', () => {
+  let h = renderToStaticMarkup(React.createElement(OwnerStep, { st: { control: 'words', owner: { mode: 'seed', pubkey: 'aa'.repeat(32) }, ownerNpub: 'npub1ownerownerownerownerowner' }, post: async () => ({}), reload() {} }));
+  assert.match(h, /id="owner-now"><b>Your owner: your 24 words<\/b> <code>npub1ownerow…rowner<\/code>[\s\S]*Set from your choice at the first step/);
+  assert.match(h, /<label class="choice on"><input type="radio" name="om" checked="" value="seed"\/><div><b>My 24 words/);
+  h = renderToStaticMarkup(React.createElement(OwnerStep, { st: { control: 'nostr', nostrPubkey: 'bb'.repeat(32), owner: { mode: 'nostr', pubkey: 'cc'.repeat(32) }, ownerNpub: 'npub1otherotherotherotherother' }, post: async () => ({}), reload() {} }));
+  assert.match(h, /Your owner: another Nostr key you named/);
+  assert.match(h, /<b>My Nostr key \(nsec\)<\/b>/);
+  assert.match(h, /<label class="choice on"><input type="radio" name="om" checked="" value="nostr"\/>[\s\S]*id="npub"[^>]*value="npub1otherotherotherotherother"/);
+});
+
+test('#648 seed: with another key as owner, the words are the wallet, not the login', () => {
+  const h = renderToStaticMarkup(React.createElement(SeedStep, { st: { ownerPick: { mode: 'nostr', pubkey: 'ab'.repeat(32) } }, post: async () => ({}), reload() {} }));
+  assert.match(h, /your owner login is the Nostr key you named at the first step/);
+  assert.match(renderToStaticMarkup(React.createElement(SeedStep, { st: {}, post: async () => ({}), reload() {} })), /your node&#x27;s wallet and your owner login/);
 });
 
 test('promise: Continue only once I UNDERSTAND is typed; posted as typed', async () => {
