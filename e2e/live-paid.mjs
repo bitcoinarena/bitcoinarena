@@ -53,15 +53,21 @@ const GAMES = {
       stepsAtSeconds: steps(r.lines), seconds: r.seconds };
   },
   async rps() {
-    const r = await run('rps', 'tn4-rps-paid.mjs', { KEYS_FILE: join(OUT, 'rps-keys.jsonl') }, 60 * 60000);
+    // a table whose entry closes more than 270 s ahead is needed; the grid posts them every few minutes - asked again for up to 15 min
+    let r;
+    for (let i = 0; i < 15; i++) {
+      r = await run('rps', 'tn4-rps-paid.mjs', { KEYS_FILE: join(OUT, 'rps-keys.jsonl') }, 60 * 60000);
+      if (!(r.code !== 0 && r.lines.some((l) => /no RPS round held/.test(String(l.why || ''))))) break;
+      await new Promise((ok) => setTimeout(ok, 60000));
+    }
     const fin = r.lines.filter((l) => /settle|final|result|reveal/i.test(l.step || '')).slice(-3);
     return { pass: r.code === 0, exit: r.code, round: (last(r.lines, 'round') || {}).id || null, last: fin.map((l) => ({ step: l.step, ...(l.why ? { why: String(l.why).slice(0, 160) } : {}) })), stepsAtSeconds: steps(r.lines), seconds: r.seconds };
   },
   async updown() {
     const bot = join(OUT, 'updown-bot');
     mkdirSync(bot, { recursive: true });
-    const r = await run('updown', 'market-bot.mjs', { BOT_DIR: bot, BOT_NAME: 'e2e2642', MAX_ORDERS: '1', LEVELS: '1', SHARES: '10', LOOP_S: '60', ONCE: '1',
-      BOOK_BOT: env.BOOK_BOT || resolve(HERE, '..', 'packages', 'btc-updown', 'plugin', 'book-bot.js') }, 25 * 60000);
+    const r = await run('updown', 'market-bot.mjs', { BOT_DIR: bot, BOT_NAME: 'e2e2642', MAX_ORDERS: '1', LEVELS: '1', SHARES: '10', LOOP_S: '60',
+      BOOK_BOT: env.BOOK_BOT || resolve(HERE, '..', 'packages', 'btc-updown', 'page', 'book-bot.js') }, 25 * 60000);
     return { pass: r.code === 0 && r.lines.some((l) => /order|entry|placed/i.test(l.step || '')), exit: r.code, last: r.lines.slice(-3).map((l) => ({ step: l.step, ...(l.why ? { why: String(l.why).slice(0, 160) } : {}) })), stepsAtSeconds: steps(r.lines), seconds: r.seconds };
   },
 };

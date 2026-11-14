@@ -1,0 +1,44 @@
+{
+ "suite": "bitcoin-arena live paid rounds, testnet4 (kanban #2642)",
+ "started": "2026-11-14T19:21:39.770Z",
+ "games": {
+  "rps": {
+   "pass": false,
+   "exit": 1,
+   "round": null,
+   "last": [],
+   "stepsAtSeconds": {
+    "stopped": 3
+   },
+   "seconds": 3
+  },
+  "updown": {
+   "pass": false,
+   "exit": null,
+   "last": [
+    {
+     "step": "quote"
+    },
+    {
+     "step": "quote"
+    },
+    {
+     "step": "quote"
+    }
+   ],
+   "stepsAtSeconds": {
+    "wallet open": 2,
+    "quote": 3,
+    "deposit step": 8,
+    "deposit": 88,
+    "order": 91,
+    "no open window": 340,
+    "order failed": 708,
+    "pass failed": 1011,
+    "not seated": 1076,
+    "collected": 1153
+   },
+   "seconds": 1500
+  }
+ }
+}
