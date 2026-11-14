@@ -31,6 +31,7 @@ import { execFile } from 'node:child_process';
 import { routeGuardianSockets } from './guardian-ws-local.mjs';
 import { randomBytes } from 'node:crypto';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
+import { presenceId } from '../../arena-protocol/src/match.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { feldmanGroup } from '../src/curve.js';
 import { lockFieldsToJson } from '../src/stake-lock-signer-node.js';
@@ -302,7 +303,11 @@ try {
   let p2 = null;
   if (env.OPPONENT) {
     // A WANT LIVES 12 s AT THE FAUCET (faucet.js OPPONENT_WANT_MS) and the page says it again while it waits: so does this, every 4 s to the entry close
-    const ask = async () => { const r = await fetch(env.OPPONENT, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ round: roundHex }) }); return { status: r.status, said: (await r.text()).slice(0, 120) }; };
+    // A TAPPED WANT, AS THE PAGE SENDS IT (kanban #2658, measured 2026-11-14 21:41Z: an untapped want waits for the seats' round-result to show one
+    // player, which never came, and the bot did not sit down): an identity key of this run and its Schnorr signature over presenceId(round, key)
+    const idSecret = secp256k1.utils.randomSecretKey(), idKey = schnorr.getPublicKey(idSecret);
+    const tap = { key: toHex(idKey), sig: toHex(schnorr.sign(presenceId({ roundId: fromHex(roundHex), identityKey: idKey }), idSecret)) };
+    const ask = async () => { const r = await fetch(env.OPPONENT, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ round: roundHex, tap }) }); return { status: r.status, said: (await r.text()).slice(0, 120) }; };
     log({ step: 'opponent asked', ...(await ask()) });
     const again = setInterval(() => { if (Date.now() > Number(c.entryCloseMs)) clearInterval(again); else ask().catch(() => {}); }, 4000);
   } else p2 = await paidEntry(c, rid, roundHex, moves[1], 'P2');
