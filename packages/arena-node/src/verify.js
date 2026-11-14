@@ -1089,7 +1089,14 @@ export class Verifier {
     try { closeMs = Number(decodeRoundContract(new Uint8Array(this.round.get(roundIdBytes).contract)).entryCloseMs); } catch { closeMs = null; }
     const players = new Set(entries.filter((e) => e.entry && e.entry.playerPubkey instanceof Uint8Array).map((e) => hex(e.entry.playerPubkey)));
     const unconsented = () => typeof this.round.consentedIdentityOf === 'function' && [...players].some((p) => !this.round.consentedIdentityOf(roundIdBytes, Buffer.from(p, 'hex')));
-    const carryNames = async (peer) => {
+    // SERVED BY MORE THAN ONE PEER (kanban #2659, #1489 r1-h2h-4): the record's atMs is the player's own word - signed by his round key, it
+    // proves nothing about WHEN he signed it. A player who named no identity could read the result, sign a backdated record only for a round he
+    // won and hand it to ONE seat he runs: every honest seat carried it and booked his wins to his identity, his losses to bare keys (#1263/#1401
+    // reopened). The page posts its record to every seat at the join, and an honest seat's door takes it only before the close, so a record is
+    // now carried only when at least f + 1 peers (f = floor((n - 1) / 3) of the n seats, never fewer than two peers) serve the same signed bytes:
+    // at least one honest seat took it at its door in time. Gathered from every peer first, then carried.
+    const nameSeen = new Map();   // record hex -> { peers: Set, n }
+    const gatherNames = async (peer) => {
       let body;
       try {
         const answer = await fetch(`${peer}/names?round=${hex(roundIdBytes)}`, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
@@ -1106,8 +1113,17 @@ export class Verifier {
           if (this.round.consentedIdentityOf(roundIdBytes, rec.playerPubkey)) continue;
           if (!schnorr.verify(sig, lobbyNameId(rec), rec.playerPubkey)) continue;
           if (!schnorr.verify(identitySig, matchProofId({ roundId: roundIdBytes, entryId: rec.playerPubkey, identityKey: rec.identityPubkey }), rec.identityPubkey)) continue;
-          this.round.putLobbyName({ roundId: roundIdBytes, playerPubkey: rec.playerPubkey, record: bytes, signature: sig, atMs: rec.atMs, identitySig });
+          const k = hex(bytes), seen = nameSeen.get(k) || { peers: new Set(), n: { bytes, rec, sig, identitySig } };
+          seen.peers.add(peer); nameSeen.set(k, seen);
         } catch { /* a record that does not read or verify is not carried */ }
+      }
+    };
+    const carryNames = async (peers) => {
+      await Promise.all(peers.map((peer) => gatherNames(peer)));
+      const need = Math.max(2, Math.floor(peers.length / 3) + 1);   // n = peers + this seat: f + 1 = floor((n - 1) / 3) + 1
+      for (const { peers: by, n } of nameSeen.values()) {
+        if (by.size < need || this.round.consentedIdentityOf(roundIdBytes, n.rec.playerPubkey)) continue;
+        this.round.putLobbyName({ roundId: roundIdBytes, playerPubkey: n.rec.playerPubkey, record: n.bytes, signature: n.sig, atMs: n.rec.atMs, identitySig: n.identitySig });
       }
     };
     // ...and an entry is held in full only with its reveal AND, where its player's consent is held here, its identity: the reveal door dropped the
@@ -1117,9 +1133,9 @@ export class Verifier {
       return [...byId.entries()].every(([k, e]) => held.has(k) && !(typeof this.round.identityOf === 'function' && typeof this.round.consentedIdentityOf === 'function'
         && e.playerPubkey instanceof Uint8Array && this.round.consentedIdentityOf(roundIdBytes, e.playerPubkey) && !this.round.identityOf(Buffer.from(k, 'hex'))));
     };
+    if (this.round.putLobbyName && unconsented()) await carryNames([...new Set(this.peersOf(roundIdBytes))]);
     let asked = 0;   // kanban #2708: how many peers were asked for their reveals (answered = asked - down)
     for (const peer of this.peersOf(roundIdBytes)) {
-      if (this.round.putLobbyName && unconsented()) await carryNames(peer);
       if (allHeld()) break;
       asked++;
       let body;
