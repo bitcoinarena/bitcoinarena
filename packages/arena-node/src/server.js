@@ -80,7 +80,7 @@ import { rulesStand } from '../../arena-protocol/src/rules.js';
 import { stakeWithinCeiling, isTestNetwork, maxRoundPoolSats, attestedGrossCapSats, minCap, incomeSeatSats, INCOME_SEASON_BLOCKS } from '../../arena-protocol/src/census-health.js';
 import { pruneTranscripts, pruneRelayed, pruneUnusedRounds, PRUNE_EVERY_MS } from './transcript-prune.js';
 import { maxPlayersPerRound } from '../../arena-protocol/src/replay-budget.js';
-import { bondWeightedMedian } from '../../arena-protocol/src/census-median.js';
+import { bondWeightedMedian, bondMinDefaultSats } from '../../arena-protocol/src/census-median.js';
 import { publicationFee, publisherPayoutMsat, publisherRoundIndex } from '../../arena-protocol/src/publisher-payout.js';
 import { seriesRoundIdOf, stakePointIsTheHandouts, entryId as idOfEntry } from '../../arena-protocol/src/contracts.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
@@ -216,7 +216,7 @@ import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/sr
 import { hostOf, payoutAddressRefusal, lnurlPublicFetch } from './public-fetch.js';
 import { WinningsSend, sendPlanToJson, decodeNamedResendList } from './winnings-send.js';
 import { PLAN_ASK, SEND_PLAN_ASK_HEADER, sendPlanAskHeaders, checkSendPlanAsk } from './send-plan-ask.js';
-import { objectionWindowAllowed } from '../../arena-protocol/src/constants.js';   // kanban #1398
+import { objectionWindowAllowed, mediansAllBonds } from '../../arena-protocol/src/constants.js';   // kanban #1398
 import { settledListDigest } from '../../arena-protocol/src/settled-list.js';   // kanban #2108, #2123
 import { TYPE_SETTLEMENT_ACK, TYPE_CHECKPOINT, TYPE_INPUT_BATCH, TYPE_SIGNED_INPUT_BATCH, STAKE_NOT_SEEN, takesAnyFederation, networkOf, TYPE_RERUN_RESULT, TYPE_AUDIT_SLASH_PROOF, TYPE_ABANDONED_PROOF, TYPE_THEFT_PROOF, TYPE_BOUND_PROOF, SUPPORTED_PROTOCOL_VERSIONS, GATEWAY_SEAT_VERSION, LIQUIDITY_VERSION, PRESSURE_WEIGHT_VERSION, AUDITOR_VERSION, seatingRulesEpochOf } from '../../arena-protocol/src/constants.js';
 import { splitSigned, decodeCheckpoint, checkpointId } from '../../arena-protocol/src/checkpoint.js';
@@ -1112,7 +1112,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (!medianAtHeight.has(key)) {
         let c; try { c = roster.censusFor(rid, h, { asRoundsOwn: false, posted: contract }); } catch { c = { ok: false }; }
         if (!c.ok) continue;                     // not readable now: asked again next time
-        medianAtHeight.set(key, bondWeightedMedian(c.entries || [], 'bondMinSats'));
+        // kanban #2686: from protocol 30 every census bond counts, one declaring nothing at its network's default
+        medianAtHeight.set(key, bondWeightedMedian(c.entries || [], 'bondMinSats',
+          mediansAllBonds(contract.protocolVersion) ? { undeclared: bondMinDefaultSats(networkOf(contract.networkId) || 'mainnet') } : {}));
         if (medianAtHeight.size > 4096) medianAtHeight.delete(medianAtHeight.keys().next().value);
       }
       const m = medianAtHeight.get(key);
