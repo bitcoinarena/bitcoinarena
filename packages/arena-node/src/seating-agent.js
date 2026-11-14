@@ -36,6 +36,7 @@ import { signSlashPresig, slashPresigVerifies } from '../../arena-protocol/src/s
 import { endpointsOf } from './roster.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
+import { jsonUpTo, textUpTo, PEER_ANSWER_BYTES } from './peer-read.js';   // kanban #2651
 
 /** How far ahead of its start a round is looked at: PRESENT is signed in the last minute before seating_close. */
 import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
@@ -542,7 +543,8 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
   const gone = (r) => (r.status >= 502 && r.status <= 504) || r.status === 530;
   const noDoor = async (base, path, r) => {
     if (r.status !== 404 || !/^\/(present|seating)/.test(path)) return;
-    try { if ((await r.text()).trim() === 'no such door' && !path.startsWith('/seating-batch') && !path.startsWith('/presents')) resting.set(base, nowMs() + NO_SEATING_REST_MS); } catch { /* not read: asked again */ }
+    // kanban #2651: a 404's body is a few words; read at most 4 KiB of it (a stand-in with no body at all offers its text())
+    try { if ((await (r.body === undefined ? r.text() : textUpTo(r, 4096))).trim() === 'no such door' && !path.startsWith('/seating-batch') && !path.startsWith('/presents')) resting.set(base, nowMs() + NO_SEATING_REST_MS); } catch { /* not read: asked again */ }
   };
   const post = async (base, path, body) => {
     let r;
@@ -557,7 +559,10 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     try { r = await fetcher(`${base}${path}`, { signal: AbortSignal.timeout(5000) }); } catch { unreachable(base); return null; }
     if (gone(r)) { unreachable(base); return null; }
     reached(base);
-    try { if (r.ok) return await r.json(); await noDoor(base, path, r); } catch { /* an answer that is not JSON says nothing */ }
+    // kanban #2651 (a bypass of #2637): server.js builds this agent without a `fetcher`, so the default is the process fetch (main.js:
+    // routed, no size cap). A drawn seat's /seating-batch, /present, /seating, /seating-sig answer is read to at most PEER_ANSWER_BYTES
+    // (8 MiB, as every other peer read) and then dropped - one seat streaming tens of MB no longer gets buffered and parsed whole
+    try { if (r.ok) return await jsonUpTo(r, PEER_ANSWER_BYTES); await noDoor(base, path, r); } catch { /* an answer that is not JSON says nothing */ }
     return null;
   };
 
