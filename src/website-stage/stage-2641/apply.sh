@@ -17,7 +17,7 @@ OLD=$(grep -o 'class="build-line">UI [0-9]*' "$T/out.html" | head -1 | grep -o '
 sed -i "s#>UI $OLD<#>UI $UI<#g; s#· UI $OLD'#· UI $UI'#g" "$T/out.html"
 grep -q "ARENA_SOCIAL_PANEL" "$T/out.html" && ! grep -q "UI $OLD\b" "$T/out.html" || { echo "check the page: panel or UI stamp missing"; exit 3; }
 cp "$T/out.html" "$OUT/index.html.new" && mv -f "$OUT/index.html.new" "$OUT/index.html"
-# 3. the stage rules page and the published draw script
+# 3. the stage rules page (redesigned 2026-11-14, bounty-redesign.py made it from the old page) and the published draw script
 mkdir -p "$OUT/bounty.new" && cp "$HERE/bounty-index.html" "$OUT/bounty.new/index.html" && cp "$REPO/packages/arena-node/tools/bounty-draw.mjs" "$OUT/bounty.new/draw.mjs"
 [ -e "$OUT/bounty" ] && mv "$OUT/bounty" "$OUT/bounty.pre-2641-$(date -u +%Y%m%dT%H%MZ)"; mv "$OUT/bounty.new" "$OUT/bounty"
 echo "done: $OUT (UI $UI); deploy a preview branch first, then the stage"
