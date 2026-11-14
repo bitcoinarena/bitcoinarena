@@ -210,7 +210,9 @@ import { SIGNED_RESULT_BYTES, resultId, decodePlayerResult, splitSignedResult } 
 export const MAX_FRAME_BYTES = Math.max(
   MAX_SIGNED_INPUT_BATCH_BYTES, SIGNED_CHECKPOINT_BYTES, SIGNED_RECEIPT_BYTES);
 import { CLOSED, relayRowCost } from './store.js';
-import { Round, refusedLockOwnId, lockClaimHolds, LOCKLESS_CAP, LOCKLESS_HOLD_MS } from './round.js';
+import { Round, refusedLockOwnId, lockClaimHolds, LOCKLESS_CAP, LOCKLESS_HOLD_MS, TRANSCRIPT_BATCH_MAX_BYTES } from './round.js';
+// kanban #2707: the largest signed batch frame the store could ever take - its type byte, the batch, its signature
+const SIGNED_BATCH_FRAME_MAX_BYTES = 1 + TRANSCRIPT_BATCH_MAX_BYTES + 64;
 import { Verifier, peerEntryVoid } from './verify.js';
 import { Ghosts } from './ghosts.js';
 import { gameLive } from './game-live.js';
@@ -13844,6 +13846,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (bytes[0] === TYPE_INPUT_BATCH)
           return sock.send('error an input batch is taken only signed by its entry\'s session key (a signed input batch frame)');
         if (bytes[0] !== TYPE_SIGNED_INPUT_BATCH) return sock.send('error that frame is not an input this door takes');
+        // NOT DECODED WHEN NO STORE COULD TAKE IT (kanban #2707, audit #1489 r4-play-4, high): a stranger's frame of a few MB, under the
+        // socket's ceiling, was decoded and re-encoded several times before round.batch refused it for its size - seconds of the loop each
+        if (bytes.length > SIGNED_BATCH_FRAME_MAX_BYTES)
+          return sock.send(`error a batch is at most ${TRANSCRIPT_BATCH_MAX_BYTES} bytes - a transcript frames each with a u16 length - and that frame is ${bytes.length}: send its ticks as several batches`);
 
         const took = timed('batch stored', () => round.signedBatch(bytes), { over: 20 });
         timed('frame answered', () => sock.send(String(took)), { over: 20 });
@@ -13878,7 +13884,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       try {
         if (bytes[0] === TYPE_CHECKPOINT) return decodeCheckpoint(splitSigned(bytes).body).entryId;
         if (bytes[0] === TYPE_INPUT_BATCH) return decodeInputBatch(bytes).entryId;
-        if (bytes[0] === TYPE_SIGNED_INPUT_BATCH) return splitSignedBatch(bytes).batch.entryId;
+        if (bytes[0] === TYPE_SIGNED_INPUT_BATCH) return bytes.length > SIGNED_BATCH_FRAME_MAX_BYTES ? null : splitSignedBatch(bytes).batch.entryId;   // kanban #2707
       } catch { /* the handler names what is wrong with it */ }
       return null;
     };
