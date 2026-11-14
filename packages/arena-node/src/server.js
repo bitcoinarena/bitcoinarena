@@ -1061,21 +1061,27 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // median of the declared bond_min, a rise counted only once it has held notice_period (bondMinInForce). The median is read at the census
   // height and at six points across the notice before it (a dip between two of them is not seen, so this errs strict), each kept per
   // height. A round naming a higher bond_min is stricter, and taken. Rounds of protocol 1 and 2 are not asked: their floor is their own.
-  const medianAtHeight = new Map();            // height -> bigint | null
+  const medianAtHeight = new Map();            // network:version:bond_min:depth:height -> bigint | null (kanban #2685)
   const bondMinFloorFor = (contract, rid) => {
     if (!(contract.protocolVersion >= 3)) return null;
     const notice = NOTICE_BLOCKS[networkOf(contract.networkId)] || NOTICE_BLOCKS.mainnet;
     const H = Number(contract.censusHeight), step = Math.max(1, Math.floor(notice / 6));
     const heights = []; for (let h = H - notice; h < H; h += step) heights.push(h); heights.push(H);
     const history = [];
+    // KEPT PER WHAT THE CENSUS IS DERIVED FROM, NOT PER HEIGHT ALONE (kanban #2685, audit #1489 r3-census-2, high): the census read here is the
+    // posted contract's (deriveCensus drops bonds under ITS bond_min, adverts not speaking ITS version, and reads its depth rule - roster.js
+    // censusFor's own key), so a stranger's throw-away round naming bond_min = one chosen bond put that bond's declared value in as the median
+    // of all seven heights, and every honest round there was refused after it. Keyed as roster.js keys a census: network, version, bond_min, depth.
+    const whose = `${contract.networkId instanceof Uint8Array ? toHex(contract.networkId) : ''}:${contract.protocolVersion ?? ''}:${contract.bondMinSats ?? ''}:${contract.censusConfirmations ?? ''}`;
     for (const h of heights) {
-      if (!medianAtHeight.has(h)) {
+      const key = `${whose}:${h}`;
+      if (!medianAtHeight.has(key)) {
         let c; try { c = roster.censusFor(rid, h, { asRoundsOwn: false, posted: contract }); } catch { c = { ok: false }; }
         if (!c.ok) continue;                     // not readable now: asked again next time
-        medianAtHeight.set(h, bondWeightedMedian(c.entries || [], 'bondMinSats'));
+        medianAtHeight.set(key, bondWeightedMedian(c.entries || [], 'bondMinSats'));
         if (medianAtHeight.size > 4096) medianAtHeight.delete(medianAtHeight.keys().next().value);
       }
-      const m = medianAtHeight.get(h);
+      const m = medianAtHeight.get(key);
       if (typeof m === 'bigint') history.push({ height: h, median: m });
     }
     return history.length ? { ...bondMinInForce(history, H, notice), points: history.length } : null;
