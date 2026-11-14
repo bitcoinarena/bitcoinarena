@@ -542,6 +542,7 @@ async function area() {
   gameDevs();
   standingPanel();
   uptimePanel();
+  gatewayWatch(); setInterval(gatewayWatch, 300000);   // kanban #2773
   roundsPanel();
   capacityPlea();
   bondAnswer();
@@ -775,6 +776,15 @@ function uptimePanel() {
   mount('uptime', 'mountUptime', { api: { get: getJson }, onBelow: (u) => need('uptime', u.inclusion && u.inclusion.inForce ? 'bad' : 'warn',
     u.inclusion && u.inclusion.inForce ? 'Your node was not up 15 minutes without a break in the last 24 hours: it is left out of the next draw.'
       : 'Your node was not up 15 minutes without a break in the last 24 hours: from 2.0 that leaves it out of the draw.', 'overview') });
+}
+// THE GATEWAY MONEY-LOSS WARNING (kanban #2773, the owner 2026-11-14: "eine Warnung im owner dashboard"): the gateway this node hosts,
+// as /dashboard.json reads it (hosts.js + gateway-loss.js) - failed payments "note already spent", e-cash gone with no payment to
+// explain it, dead notes - on the Overview, red; read again every 5 minutes; nothing when the node hosts no gateway
+async function gatewayWatch() {
+  try {
+    const d = await getJson('/dashboard.json'), g = d && d.hosts && d.hosts.gateway, w = g && g.warning;
+    need('gateway', w && w.level !== 'ok' ? w.level : null, w ? `Gateway ${w.text.replace(/^[^:]*: /, `${g.name}: `)}. See the node dashboard.` : '', 'overview');
+  } catch { /* the dashboard did not answer: said nowhere, read again */ }
 }
 let standingRead = null;   // GET /owner/standing, read once for the Bond answer
 const readStanding = () => (standingRead = standingRead || getJson('/owner/standing'));
