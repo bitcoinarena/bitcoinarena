@@ -104,7 +104,11 @@ export class LockSetBook {
 
   #signed(rid) {
     const row = this.db.prepare('SELECT entries, at_ms, sig FROM lock_set_signed WHERE round_id = ?').get(rid);
-    return row ? { key: toHex(this.round.pubkey), atMs: Number(row.at_ms), entries: JSON.parse(row.entries), sig: toHex(new Uint8Array(row.sig)) } : null;
+    if (!row) return null;
+    const entries = JSON.parse(row.entries);
+    // ALWAYS WITH ITS setId (kanban #2660): #assemble groups the room's signatures by setId, and state() (GET /lock-set, public) put this
+    // record back into the room - without a setId the seat's own signature stopped counting and a committee with exactly its threshold went VOID
+    return { key: toHex(this.round.pubkey), atMs: Number(row.at_ms), entries, sig: toHex(new Uint8Array(row.sig)), setId: toHex(lockSetId(lockSetOf({ roundId: rid, entries }))) };
   }
 
   /** GET /lock-set's answer. */
