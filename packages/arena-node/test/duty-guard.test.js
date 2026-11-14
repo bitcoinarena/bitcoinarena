@@ -19,7 +19,7 @@ const DEV = 'ab'.repeat(32);
 const manifestOf = (name, version, extra = {}) => ({ gameName: name, version, gameDevPubkey: fromHex(DEV), requiredProtocolVersion: 2, cores: [], ...extra });
 // a catalog as catalogOf builds it, from listings whose "manifest" is the id it decodes to
 const catalogFrom = (games) => catalogOf([{ games: games.map((g) => ({ id: g.id, manifest: g.id })) }],
-  { decode: (bytes) => games.find((g) => g.id === toHex(bytes)).m, idOf: (m) => fromHex(games.find((g) => g.m === m).id) });
+  { decode: (bytes) => games.find((g) => g.id === toHex(bytes)).m, idOf: (m) => fromHex(games.find((g) => g.m === m).id), signed: () => true });   // test manifests carry no signature (#2774)
 const entry = (hosts, roles = ['game', 'verify', 'settlement']) => ({ roles, hostedGames: hosts.map(fromHex) });
 const contract = { networkId: NETWORK_ID_TESTNET4 };
 

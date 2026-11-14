@@ -124,7 +124,7 @@ export function bumpStep(k, to, { atMs = Date.now(), ...fields } = {}) {
  */
 export function createGridBase({ chainCall, prepare = null, censusEntriesAt, contractAt, catalogSeats, chainSeats, localCount = 0, devOf = {},
   protocolFor = () => undefined, pinnedFor = () => null, builtinFor = () => ({ gameId: null, fields: {} }), cores = {}, rpsBase = {},
-  donationSetAt, censusDepth = 6, checkSeats = 16, decode, idOf, blockHashOf, fetchFn = fetch, say = () => {}, now = Date.now }) {
+  donationSetAt, censusDepth = 6, checkSeats = 16, decode, idOf, manifestSigned = undefined, blockHashOf, fetchFn = fetch, say = () => {}, now = Date.now }) {
   // a census seat's answer, read up to a bound (kanban #1723, the poster's copy of #1540): any bonded seat could answer GET /games
   // with 120 MB, and r.json() held all of it in the poster - the seat's own process - on every pass
   const seatJson = async (url, ms = 20000, maxBytes = PEER_LISTING_BYTES) => { const r = await fetchFn(url, { signal: AbortSignal.timeout(ms) });
@@ -133,7 +133,7 @@ export function createGridBase({ chainCall, prepare = null, censusEntriesAt, con
   // PEER_LISTING_GAMES entries of each seat's listing are walked (kanban #1723)
   const seatCatalog = keptFor(5 * 60000, async () => guard.catalogOf((await Promise.all((await catalogSeats()).map((u) => seatJson(`${u}/games`)
     .then((got) => ({ games: listedGames(got) })).catch(() => null)))).filter(Boolean),
-    { decode, idOf }), now, (c) => !c || !c.size);
+    { decode, idOf, ...(manifestSigned ? { signed: manifestSigned } : {}) }), now, (c) => !c || !c.size);
   // THE SEATS' CHAINS (GET /headers), read again every 15 min. BOUNDED (kanban #2018, #2052): each answer is read up to the reader's own
   // chain plus PEER_HEADERS_SLACK blocks of 80 bytes - r.arrayBuffer() held whatever a census seat sent (256 MB measured, 3,355,443
   // headers hashed) - and the seats are read HEADER_READS at a time, not all checkSeats at once
