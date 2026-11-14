@@ -367,6 +367,17 @@ export function openStore(path = ':memory:') {
       pinned_ms   INTEGER NOT NULL
     );
 
+    -- ONE PIN PER LOCK (kanban #2644, a bypass of #1605/#2136/#2415 found by the #1489 audit): nothing ties a lock to one handout - the same
+    -- A0 with fresh coefficients is a new handout id every time - so one real lock (even another player's, copied from public data) pinned any
+    -- number of forged handouts, never loose, and the round's store grew without bound. A lock's outpoint pins the FIRST handout shown with
+    -- it in its round, and only that one (round.js pinHandout); a later one shown with it stays loose, under the cap.
+    CREATE TABLE IF NOT EXISTS handout_lock_outpoints (
+      round_id    BLOB NOT NULL,
+      outpoint    TEXT NOT NULL,
+      handout_id  BLOB NOT NULL,
+      PRIMARY KEY (round_id, outpoint)
+    );
+
     -- (NO HOLDS TABLE IN A NEW STORE: it was the hold invoice's record of a stake in flight - the withdrawn Lightning
     -- custody's, §23.6; cut 2b RULED 2026-09-25. A store from before keeps its own, untouched and unread: a store is
     -- not rewritten.)
