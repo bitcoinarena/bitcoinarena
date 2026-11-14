@@ -93,6 +93,17 @@
   function colour(hex) { var h = parseInt(hex.slice(0, 6), 16) % 360; return 'hsl(' + h + ' 70% 62%)'; }
   function who(hex) { return ARENACLIENT.forumNameOf(hex, state.names); }
   function pip(p) { return 'PIP-' + p.pip; }
+  // A PROPOSAL'S LINK IS ITS ID (kanban #2528, Daniel 2026-11-14): PIP numbers follow publishedHeight, the author's own field, and the seats
+  // refuse only one dated ahead of their chain - so a stranger's proposal backdated to block 1 became PIP-1 on the next reload and a
+  // shared '#pip=1' opened its Lightning address. The number is shown only; every link is '#p=<id>'. An old '#pip=N' link is resolved once,
+  // by today's numbering, and replaced by its id.
+  function hrefOf(p) { return '#p=' + p.id; }
+  function idOfHash(h, list) {
+    if (h.indexOf('#p=') === 0) return h.slice(3);
+    if (h.indexOf('#pip=') === 0) { var q = (list || []).find(function (x) { return String(x.pip) === h.slice(5); }); return q ? q.id : ''; }
+    return null;
+  }
+  // (end of the #2528 links)
   function mine() { return state.key ? ARENACLIENT.toHex(window.ARENA_CURVE.pointX(state.key)) : null; }
   function load(src) { return new Promise(function (ok, bad) { var s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = function () { bad(new Error('could not load ' + src)); }; document.head.appendChild(s); }); }
   // THE IN-GAME KEY: the wallet phrases this browser keeps for the Arena page (arena.seeds); the one whose wallet holds the most here,
@@ -147,7 +158,7 @@
   }
   function listView() {
     R.draw(view, 'list', { status: state.list ? state.list.length + ' proposal' + (state.list.length === 1 ? '' : 's') + ' · ' + state.agreeing + ' of ' + state.asked + ' nodes answered · block ' + state.tip : 'Reading the nodes…',
-      items: state.list && state.list.map(function (p) { return { pip: p.pip, href: '#pip=' + p.pip, title: title(p), by: who(p.author) + ' · block ' + p.publishedHeight + ' · to ' + p.lnurl,
+      items: state.list && state.list.map(function (p) { return { pip: p.pip, href: hrefOf(p), title: title(p), by: who(p.author) + ' · block ' + p.publishedHeight + ' · to ' + p.lnurl,
         amount: sats(p.amountSats), replies: String(p.comments.length), stage: stage(p) }; }) });
   }
 
@@ -186,7 +197,7 @@
       var p = ARENACLIENT.signedProposal({ secretKey: state.key, networkId: net, publishedHeight: state.tip, amountSats: x.amount, lnurl: x.lnurl, purpose: purposeOf(x.title, x.content, x.improves) });
       return ARENACLIENT.postFunding({ nodes: state.nodes, kind: 'proposal', hex: p.hex }).then(function (r) {
         if (!r.ok) return { ok: false, say: 'Not taken: ' + r.why };
-        setTimeout(function () { refresh().then(function () { var q = (state.list || []).find(function (y) { return y.id === p.id; }); location.hash = q ? '#pip=' + q.pip : '#p=' + p.id; }); }, 1500);
+        setTimeout(function () { refresh().then(function () { location.hash = hrefOf(p); }); }, 1500);   // kanban #2528: by its id
         return { ok: true, say: 'Published to ' + r.took + ' of ' + r.asked + ' nodes. Its 1-week signal starts now.' };
       });
     }).catch(function (e) { return { ok: false, say: e.message }; });
@@ -328,8 +339,8 @@
     if (h === '#new-leaderboard') payoutView();
     else if (h === '#new-fees') feesView();
     else if (h === '#new') newView();
-    else if (h.indexOf('#pip=') === 0) { var q = (state.list || []).find(function (x) { return String(x.pip) === h.slice(5); }); threadView(q ? q.id : ''); }
-    else if (h.indexOf('#p=') === 0) threadView(h.slice(3)); else listView();
+    else if (h.indexOf('#pip=') === 0) { var id = idOfHash(h, state.list); if (id) { location.replace(hrefOf({ id: id })); return; } threadView(''); }   // kanban #2528: an old link, once
+    else if (h.indexOf('#p=') === 0) threadView(idOfHash(h, state.list)); else listView();
     showKey();
     window.ARENA_FORUM = { balance: (document.querySelector('#balance') || {}).textContent, view: h || '#', keyFrom: state.keyFrom, me: mine(), name: mine() ? who(mine()) : null, pips: (state.list || []).map(function (p) { return pip(p); }), reserves: state.reserves, proposals: state.list ? state.list.length : null, comments: state.list ? state.list.reduce(function (t, p) { return t + p.comments.length; }, 0) : null, agreeing: state.agreeing, tip: state.tip };
   }
