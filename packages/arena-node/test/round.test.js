@@ -54,14 +54,14 @@ test('a batch is stored tick by tick, and a repeat writes nothing', () => {
   const bytes = encodeInputBatch({
     roundId: rid, entryId: eid, previousHash: GENESIS, firstTick: 0,
     ticks: [[65536, 0, 0, 0, 0], [65536, 100, 0, 0, 0], [65536, 200, 0, 0, 0]],
-    liquidations: [[11, 3 * 65536]],
+    liquidations: [[1, 3 * 65536]],   // kanban #2689: at a tick the batch carries (it was 11, past the batch's ticks 0..2)
   });
   assert.equal(r.batch(bytes), 3, 'three ticks were new');
   assert.equal(r.batch(bytes), 0, 'the same message again writes nothing');
   assert.equal(r.batch(bytes), 0, 'and again');
   const t = r.transcript(rid, eid);
   assert.equal(t.ticks.length, 3);
-  assert.deepEqual(t.liquidations, [[11, 3 * 65536]], 'nor is the strike doubled');
+  assert.deepEqual(t.liquidations, [[1, 3 * 65536]], 'nor is the strike doubled');
 });
 
 test('a batch that would leave a gap is refused, and says which tick is due', () => {
