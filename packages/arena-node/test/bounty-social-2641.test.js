@@ -9,6 +9,8 @@ import { discordSearch, telegramByName, xByName, discordName, telegramName } fro
 import { socialCheck } from '../src/bounty-social.js';
 import { telegramUserbot, readOnly, READ_CALLS, userbotFromEnv } from '../src/telegram-userbot.js';
 import { seeTelegramUpdate } from '../tools/bounty-link-bot.mjs';
+import { socialLoad, socialSave, socialMissing, socialBonus, socialKey } from '../src/bounty-social-store.js';
+import { readFileSync } from 'node:fs';
 
 const K = (n) => n.toString(16).padStart(64, '0');
 
@@ -145,4 +147,60 @@ test('#2641 the social check: members linked to the key with their reads, one ke
   assert.equal(f.results.telegram.member, null); assert.equal(f.links.length, 0);
   // the old database file without the proof column opens and takes it
   s.close();
+});
+
+const rep = (n, pubkey) => ({ id: `r${n}`.padEnd(64, '0'), pubkey });
+
+test('#2641 a second report from the same key gets the bonus with no new input: the stored links are read live again at approval', async () => {
+  const s = openBountySeason();
+  const yes = { x: async () => ({ userId: '77', member: true }), discord: async () => ({ userId: '201', member: true }), armada: async () => ({ userId: 'b'.repeat(64), member: true }) };
+  await socialCheck(s, K(1), { x: 'ann', discord: 'ann', armada: 'npub1ann' }, yes);
+  const live = { x: async () => ({ member: true }), discord: async () => ({ member: true }), armada: async () => ({ member: true }) };
+  const r1 = rep(1, K(1)); await s.verify(K(1), live, { cause: 'approve' }); const p1 = s.plan(r1, { level: 'high' }); s.commit(r1, p1);
+  assert.equal(p1.bonusPct, 50); assert.equal(p1.sats, 7500);
+  // days later (the form read is stale by then): the approval reads the stored accounts again, nothing typed
+  const later = Date.now() + 3 * 24 * 3600 * 1000;
+  assert.equal(s.flagsOf(K(1), { nowMs: later }).x, false, 'an old read alone counts for nothing');
+  const r2 = rep(2, K(1)); await s.verify(K(1), live, { cause: 'approve', nowMs: () => later });
+  const p2 = s.plan(r2, { level: 'medium', nowMs: later }); assert.equal(p2.bonusPct, 50); assert.equal(p2.sats, 3000);
+});
+
+test('#2641 payout: approved at +50 %, left one of the two communities, +25 % paid and the admin sees why; a failed read is no member', async () => {
+  const s = openBountySeason();
+  await socialCheck(s, K(1), { x: 'ann', discord: 'ann', telegram: 'annie' }, { x: async () => ({ userId: '77', member: true }), discord: async () => ({ userId: '201', member: true }), telegram: async () => ({ userId: '9', member: true }) });
+  const r1 = rep(1, K(1)); const p1 = s.plan(r1, { level: 'high' }); s.commit(r1, p1); assert.equal(p1.sats, 7500);
+  await s.verify(K(1), { x: async () => ({ member: true }), telegram: async () => ({ member: true }), discord: async () => ({ member: false, why: 'not in the server' }) }, { cause: 'payout' });
+  const pay = s.payable(r1.id);
+  assert.equal(pay.payableSats, 6250, '+25 %: X only, one community left'); assert.deepEqual(pay.lost, ['discord']); assert.equal(pay.why, 'left Discord: -25 %');
+  assert.equal(s.approval(r1.id).payableWhy, 'left Discord: -25 %');
+  // the reads come back: never above the approval
+  await s.verify(K(1), { discord: async () => ({ member: true }) });
+  assert.equal(s.payable(r1.id).payableSats, 7500); assert.equal(s.approval(r1.id).payableWhy, null);
+  // a read that fails is no member
+  await s.verify(K(1), { x: async () => { throw new Error('x down'); }, telegram: async () => ({ member: null, why: 'telegram 502' }) });
+  const p3 = s.payable(r1.id); assert.equal(p3.payableSats, 5000); assert.match(p3.why, /^left (X, Telegram|Telegram, X): -50 %$/);
+});
+
+test('#2641 the browser store: validated names kept per key, failed ones dropped, unreadable checks keep what was kept, storage errors tolerated', () => {
+  const mem = new Map();
+  const ls = { getItem: (k) => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => mem.set(k, String(v)), removeItem: (k) => mem.delete(k) };
+  assert.equal(socialLoad(ls, K(1)), null);
+  socialSave(ls, K(1), { x: 'ann', discord: 'ann', telegram: 'nobody1' }, { x: { member: true }, discord: { member: true }, telegram: { member: null } }, 1000);
+  assert.deepEqual(socialLoad(ls, K(1)), { x: 'ann', discord: 'ann', checkedAt: 1000 });
+  assert.equal(socialLoad(ls, K(2)), null, 'per key');
+  socialSave(ls, K(1), { discord: 'ann', armada: 'npub1x' }, { discord: { member: false }, armada: { member: true } }, 2000);
+  assert.deepEqual(socialLoad(ls, K(1)), { x: 'ann', armada: 'npub1x', checkedAt: 2000 }, 'discord failed: dropped');
+  socialSave(ls, K(1), { x: 'ann' }, { x: { member: null } }, 3000);
+  assert.equal(socialLoad(ls, K(1)).x, 'ann', 'a read that did not happen drops nothing');
+  socialSave(ls, K(1), { x: 'ann', armada: 'npub1x' }, { x: { member: false }, armada: { member: false } }, 4000);
+  assert.equal(mem.has(socialKey(K(1))), false, 'nothing validated: nothing kept');
+  mem.set(socialKey(K(3)), '{not json'); assert.equal(socialLoad(ls, K(3)), null);
+  const broken = { getItem: () => { throw new Error('denied'); }, setItem: () => { throw new Error('full'); }, removeItem: () => { throw new Error('x'); } };
+  assert.equal(socialLoad(broken, K(1)), null); assert.equal(socialSave(broken, K(1), { x: 'a' }, { x: { member: true } }), null);
+  assert.equal(socialLoad(ls, 'not a key'), null);
+  assert.deepEqual(socialMissing({ x: 'ann', discord: 'ann', checkedAt: 1 }, [{ platform: 'x', member: true }, { platform: 'discord', member: false }]), { discord: 'ann' });
+  assert.equal(socialBonus({ x: true, telegram: true }), 25); assert.equal(socialBonus({ telegram: true, armada: true }), 25); assert.equal(socialBonus({ x: true, discord: true, armada: true }), 50);
+  // the page carries the same functions (copied between the markers)
+  const src = readFileSync(new URL('../src/bounty-social-store.js', import.meta.url), 'utf8');
+  assert.match(src, /\/\/ ---- social-store begin[\s\S]+\/\/ ---- social-store end/);
 });
