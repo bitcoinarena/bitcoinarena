@@ -88,8 +88,9 @@ export function lockAction({
  * qualifier `stake + share`, the stake half is their own money returning, and only the share half comes out of the pool.
  */
 // `payoutShares`: the round's game's top split (manifest.js payoutRuleForRound), or null for the rank curve.
-export function lockActions({ roundId, entries, minScore = 0, payoutShares = null }) {
-  const table = computePayoutTable({ roundId, entries, minScore, payoutShares });
+// `protocolVersion`: the round's (computePayoutTable: from 29 ties go by H(round_id || pubkey), kanban #1614).
+export function lockActions({ roundId, entries, minScore = 0, payoutShares = null, protocolVersion = null }) {
+  const table = computePayoutTable({ roundId, entries, minScore, payoutShares, protocolVersion });
   const claims = new Set(table.settling);
   const paidTo = new Map(table.table.map((r, i) => [i, r.amountMsat]));
 

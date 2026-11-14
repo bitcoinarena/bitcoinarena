@@ -27,6 +27,7 @@ import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
 import { TEST_DONATION_SET_REGTEST } from '../../arena-protocol/src/test-donation-sets.js';
 import { donationSetId } from '../../arena-protocol/src/donation.js';
 import { pageFunction } from './page-script.js';
+import { signedSeats } from './settled-signed.js';   // kanban #2108: seats sign their /settled answers
 
 const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -71,7 +72,7 @@ test('wf1489-sm7-page-2: an order whose collect record was lost is found again b
   const html = readFileSync(PAGE, 'utf8');
   const a = html.indexOf(SCAN_FROM); assert.ok(a > 0, 'index.html holds findTheRoundsOwed');
   const b = html.indexOf(SCAN_END, a); assert.ok(b > a);
-  const ARENACLIENT = { ...PL, toHex, fromHex, findOwedRounds: (ask) => PL.findOwedRounds({ ...ask, fetcher: seats }) };
+  const ARENACLIENT = { ...PL, toHex, fromHex, findOwedRounds: (ask) => PL.findOwedRounds({ ...ask, fetcher: signedSeats(seats).fetcher }) };
   const window = { ARENA_CURVE: pageCurve, ARENA_TRACK: () => {}, ARENA_BROWSER_STORE: () => storage };
   const findTheRoundsOwed = pageFunction(PAGE, ['window', 'ARENACLIENT', 'collectSeed', 'vault', 'OWED_LOOKBACK_MS', 'lookThePayout'],
     [html.slice(a, b + SCAN_END.length)], 'return findTheRoundsOwed;')(window, ARENACLIENT, () => seed, () => storage, 24 * 3600 * 1000, () => {});
