@@ -37035,7 +37035,8 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
  * cannot derive it - and, by the spec's "The client computes the committee itself" (RULED 2026-09-28), when ANY seat's committee
  * answer or seating certificate differs from the client's own computation: "the round is refused, the lobby says which node answered
  * what, and no share is sealed, no stake locked, no entry signed" (measured 2026-10-16 on live testnet4: one seat
- * forging its /committee was named and the join still dealt to the client's seven).
+ * forging its /committee was named and the join still dealt to the client's seven). Kanban #2643: against a certificate the client checked itself, an
+ * unsigned differing answer is named, not refusing, unless at least as many seats differ as agree.
  */
 async function clientSettlementSignerNodes(roundIdHex, contract, nodes, opts = {}) {
   return settlementSignerNodesFrom(await clientCommittee(roundIdHex, contract, nodes, opts));
@@ -37049,7 +37050,22 @@ function settlementSignerNodesFrom(got) {
     if (st && st.missing) throw new Error(`that round has no signer nodes yet: no certificate naming its ${role} signer nodes stands${st.refused.length ? ` (${st.refused[0]})` : ''} - nothing is entered (§5A.7)`);
   }
   const named = [], who = [];
-  for (const s of got.seats || []) if (s.agrees === false) { named.push(`${s.node} ${s.why}`); who.push(s.node); }
+  // AN UNSIGNED ANSWER AGAINST A CHECKED CERTIFICATE IS NAMED, IT DOES NOT CLOSE THE ROUND (kanban #2643, wf1489 r1 census-2): a seat's
+  // /committee list and a seating certificate that does not verify carry no signature - they prove nothing and risk no bond - so where
+  // this client holds a certificate it checked itself (every seated node's signature, score order, threshold), ONE seat answering junk
+  // refused every round for every client. Against such a certificate a differing seat is named (on `refused` and in the console) and the
+  // round stands, unless at least as many seats differ as agree; a role with no checked certificate is refused as before.
+  const certified = (role) => !!(got.seating && got.seating[role] && Array.isArray(got.seating[role].seated));
+  const contra = [];
+  for (const s of got.seats || []) {
+    if (s.agrees !== false) continue;
+    const differ = s.roles ? Object.entries(s.roles).filter(([, x]) => x && x.agrees === false).map(([r]) => r) : ['game', 'settlement'];
+    if (differ.length && differ.every(certified)) contra.push(s); else { named.push(`${s.node} ${s.why}`); who.push(s.node); }
+  }
+  const agreeing = (got.seats || []).filter((s) => s.agrees === true).length;
+  const outvoted = contra.length < agreeing;
+  if (!outvoted) for (const s of contra) { named.push(`${s.node} ${s.why}`); who.push(s.node); }
+  const noted = outvoted ? contra.map((s) => `${s.node} ${s.why} (unsigned, against a checked certificate)`) : [];
   // NOT A LIE, AN UNANSWERED READ (kanban #1036): the client has no certificate to hold the seats against, so nobody is named, the round is not closed, and the next try reads again
   if (who.length && ['game', 'settlement'].some((role) => got.seating && got.seating[role] && got.seating[role].unread)) {
     console.warn(`[arena] #1036 seating unread: ${named.join('; ')}`);
@@ -37057,8 +37073,9 @@ function settlementSignerNodesFrom(got) {
   }
   for (const role of ['game', 'settlement']) {
     const st = got.seating && got.seating[role];
-    for (const why of (st && Array.isArray(st.refused) ? st.refused : [])) named.push(`a ${role} seating certificate that does not match this client's draw - ${why}`);
+    for (const why of (st && Array.isArray(st.refused) ? st.refused : [])) (certified(role) ? noted : named).push(`a ${role} seating certificate that does not match this client's draw - ${why}`);
   }
+  if (noted.length) console.warn(`[arena] #2643 named, the checked certificate stands: ${noted.join('; ')}`);
   if (named.length) {
     // ONE LINE ON THE SCREEN (kanban #1036, the owner's phone: nine seats with two lists of seven ids each filled it and could not be read): who, in a few words; the rest on
     // the error's `detail` and in the console, as "the lobby says which node answered what" asks
@@ -37070,7 +37087,7 @@ function settlementSignerNodesFrom(got) {
     throw e;
   }
   return { signerNodes: got.committees.settlement, agreed: (got.seats || []).filter((s) => s.agrees).length,
-    refused: (got.censusRefused || []).map((x) => `${x.node}: ${x.why}`), derived: got };
+    refused: [...(got.censusRefused || []).map((x) => `${x.node}: ${x.why}`), ...noted], derived: got };
 }
 
 /**
