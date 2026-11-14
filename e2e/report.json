@@ -1,0 +1,1361 @@
+{
+ "suite": "bitcoin-arena e2e (kanban #2642)",
+ "merged": [
+  {
+   "file": "/Users/daniel/wf1489/e2e-2642/out-dev/report.json",
+   "started": "2026-11-14T09:38:38.750Z",
+   "seconds": 244,
+   "commit": null
+  },
+  {
+   "file": "/Users/daniel/wf1489/e2e-2642/out-installer/report.json",
+   "started": "2026-11-14T09:57:20.378Z",
+   "seconds": 418,
+   "commit": null
+  },
+  {
+   "file": "/Users/daniel/wf1489/e2e-2642/old/out-faucet-2/report.json",
+   "started": "2026-11-14T09:57:32.577Z",
+   "seconds": 1048,
+   "commit": null
+  },
+  {
+   "file": "/Users/daniel/wf1489/e2e-2642/out-page-4/report.json",
+   "started": "2026-11-14T10:05:30.265Z",
+   "seconds": 1857,
+   "commit": null
+  },
+  {
+   "file": "/Users/daniel/wf1489/e2e-2642/out-faucet/report.json",
+   "started": "2026-11-14T10:16:18.759Z",
+   "seconds": 1200,
+   "commit": null
+  },
+  {
+   "file": "/Users/daniel/wf1489/e2e-2642/out-page-6/report.json",
+   "started": "2026-11-14T10:59:45.255Z",
+   "seconds": 1127,
+   "commit": null
+  },
+  {
+   "file": "/Users/daniel/wf1489/e2e-2642/out-main/report.json",
+   "started": "2026-11-14T11:20:30.749Z",
+   "seconds": 6376,
+   "commit": "a79895475"
+  }
+ ],
+ "commit": "a79895475",
+ "pass": 48,
+ "fail": 7,
+ "notCovered": 2,
+ "results": [
+  {
+   "id": "deposit.lightning",
+   "area": "deposit",
+   "title": "deposit 10 000 sat over Lightning: the page makes an invoice through a federation gateway, a devnet lnd pays it, the balance shows it",
+   "money": 2,
+   "reach": 3,
+   "result": "pass",
+   "evidence": {
+    "before": "0 sat",
+    "after": "10,000 sat",
+    "paid": {
+     "from": "a",
+     "dest": "03cb44c7ec15d117",
+     "status": "SUCCEEDED"
+    },
+    "secondsToShow": 2,
+    "gateway": null
+   },
+   "seconds": 23.7,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-main/flows/deposit.lightning",
+   "run": "2026-11-14T11:20:30.749Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-main/report.json"
+  },
+  {
+   "id": "faucet.page-welcome",
+   "area": "faucet",
+   "title": "a new wallet in the page gets its 3,000 sat welcome from the faucet",
+   "money": 2,
+   "reach": 3,
+   "result": "pass",
+   "evidence": {
+    "ask": {
+     "invoiceAsk": {
+      "at": 1794652575652,
+      "kind": "welcome",
+      "invoice": "lnbcrt30u1p40swv… -> lntb"
+     },
+     "posts": 2
+    },
+    "credited": "3000 sats have been credited",
+    "bookRow": {
+     "sats": 3000,
+     "hash": "ead83b5b5700a541…"
+    },
+    "payment": "SUCCEEDED",
+    "balanceText": "3000 sats",
+    "console": []
+   },
+   "seconds": 63.7,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-faucet/flows/faucet.page-welcome",
+   "run": "2026-11-14T10:16:18.759Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-faucet/report.json"
+  },
+  {
+   "id": "faucet.player-grant",
+   "area": "faucet",
+   "title": "POST /player: welcome 3,000 and top-up 300 over Lightning, repeats refused",
+   "money": 2,
+   "reach": 3,
+   "result": "pass",
+   "evidence": {
+    "account": "9490eb762613…",
+    "welcomeMs": 747,
+    "welcomeSettled": true,
+    "topupSettled": true,
+    "refused": {
+     "regtestInvoice": "that is not a testnet invoice",
+     "secondWelcome": "this account already has its welcome sats",
+     "reusedInvoice": "that invoice was already used: make a new one",
+     "wrongAmount": "this grant pays an invoice of 3000 sat",
+     "badAccount": "an account is 32 bytes of hex"
+    },
+    "totals": {
+     "ok": true,
+     "newAccounts": {
+      "grants": 1,
+      "sats": 3000,
+      "accounts": 1,
+      "today": {
+       "grants": 1,
+       "sats": 3000,
+       "accounts": 1
+      }
+     },
+     "returning": {
+      "grants": 1,
+      "sats": 300,
+      "accounts": 1,
+      "today": {
+       "grants": 1,
+       "sats": 300,
+       "accounts": 1
+      }
+     },
+     "totalSats": 3300,
+     "dayCapSats": 10000000
+    }
+   },
+   "seconds": 2,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-faucet/flows/faucet.player-grant",
+   "run": "2026-11-14T09:57:32.577Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/old/out-faucet-2/report.json"
+  },
+  {
+   "id": "faucet.service-up",
+   "area": "faucet",
+   "title": "the faucet service runs against the devnet (own wallet, payers b/a, chat stub)",
+   "money": 2,
+   "reach": 3,
+   "result": "pass",
+   "evidence": {
+    "run": "/Users/daniel/wf1489/e2e-2642/faucet/run-2026-11-14T10-26-18-937Z",
+    "ports": {
+     "front": 13015,
+     "faucet": 13016,
+     "chat": 13017,
+     "rpc": 13018
+    },
+    "balanceSats": 299899718,
+    "maxSats": 1500000,
+    "leftTodaySats": 30000000,
+    "pid": 945,
+    "standIns": [
+     "RPC proxy tb1<->bcrt1",
+     "lncli-regtest (--network=regtest, lntb->lnbcrt)",
+     "front proxy lnbcrt->lntb on POST /player",
+     "chat stub",
+     "telegram reader off, no X/Discord/Armada"
+    ]
+   },
+   "seconds": 0.6,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-faucet/flows/faucet.service-up",
+   "run": "2026-11-14T10:16:18.759Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-faucet/report.json"
+  },
+  {
+   "id": "lightning.gateways-live",
+   "area": "lightning",
+   "title": "two gateways of two operators are registered at all seven guardians and hold e-cash (what a paid round and a deposit need)",
+   "money": 2,
+   "reach": 3,
+   "result": "pass",
+   "evidence": {
+    "gatewayAEcashMsat": 49962058240,
+    "lndBChannels": 1
+   },
+   "seconds": 0.2,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-main/flows/lightning.gateways-live",
+   "run": "2026-11-14T11:20:30.749Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-main/report.json"
+  },
+  {
+   "id": "round.paid.headless-entry",
+   "area": "rounds",
+   "title": "a paid entry (10 000 sat) end to end with the page's own wasm lock client: Lightning deposit through a gateway, stake and fee locked in the federation, played, handed over to 7 seats, settled, the payout withdrawn to a devnet lnd (tools/tn4-live-run.mjs)",
+   "money": 2,
+   "reach": 3,
+   "result": "fail",
+   "why": "at least 5 seats take the entry and verify the lock (seen: {\"exit\":1,\"deposit\":{\"msat\":\"10700000\",\"final\":\"Claimed\"},\"locked\":\"9500000\",\"handedOver\":[\"400/404\",\"400/404\",\"400/404\",\"400/404\",\"400/404\",\"400/404\",\"400/404\"],\"last\":[{\"step\":\"handed over\"},{\"step\":\"marked bot\",\"why\":\"MARK_BOT=off\"},{\"step\":\"stopped\",\"why\":\"Error: fewer seats than needed took the lock\\n    at file:///Users/daniel/wf1489/wt/wt-2642/packages/arena-node/tools/tn4-live-run.mjs:393:)",
+   "stack": "Error: at least 5 seats take the entry and verify the lock (seen: {\"exit\":1,\"deposit\":{\"msat\":\"10700000\",\"final\":\"Claimed\"},\"locked\":\"9500000\",\"handedOver\":[\"400/404\",\"400/404\",\"400/404\",\"400/404\",\"400/404\",\"400/404\",\"400/404\"],\"last\":[{\"step\":\"handed over\"},{\"step\":\"marked bot\",\"why\":\"MARK_BOT=off\"},{\"step\":\"stopped\",\"why\":\"Error: fewer seats than needed took the lock\\n    at file:///Users/daniel/wf1489/wt/wt-2642/packages/arena-node/tools/tn4-live-run.mjs:393:) |     at check (file:///Users/daniel/wf1489/wt/wt-2642/e2e/lib/ctx.mjs:20:20) |     at Object.run (file:///Users/daniel/wf1489/wt/wt-2642/e2e/flows/devnet.mjs:224:7) |     at process.processTicksAndRejections (node:internal/process/task_queues:104:5)",
+   "seconds": 4.5,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-main/flows/round.paid.headless-entry",
+   "run": "2026-11-14T11:20:30.749Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-main/report.json"
+  },
+  {
+   "id": "round.paid.open",
+   "area": "rounds",
+   "title": "a paid round (10 000 sat) opens on the federation with two live gateways and is listed with its stake at every seat",
+   "money": 2,
+   "reach": 3,
+   "result": "pass",
+   "evidence": {
+    "round": "1e17a3c972765a38",
+    "stakeMsat": "10000000",
+    "firstAskRefused": null,
+    "listedAt": 7,
+    "phase": "open",
+    "entryClose": "2026-11-14T11:27:32.000Z"
+   },
+   "seconds": 8.8,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-main/flows/round.paid.open",
+   "run": "2026-11-14T11:20:30.749Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-main/report.json"
+  },
+  {
+   "id": "wallet.create-and-verify",
+   "area": "wallet",
+   "title": "create a wallet: 24 words shown, the seed check (3 words from memory) passes, the backup warning goes",
+   "money": 2,
+   "reach": 3,
+   "result": "pass",
+   "evidence": {
+    "asked": [
+     12,
+     22,
+     24
+    ],
+    "words": 24,
+    "warningGone": true
+   },
+   "seconds": 10.2,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-main/flows/wallet.create-and-verify",
+   "run": "2026-11-14T11:20:30.749Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-main/report.json"
+  },
+  {
+   "id": "wallet.reload-keeps-balance",
+   "area": "wallet",
+   "title": "a reload of the same browser opens the same wallet with the same balance",
+   "money": 2,
+   "reach": 3,
+   "result": "pass",
+   "evidence": {
+    "funded": 10000,
+    "shown": 10000
+   },
+   "seconds": 19.8,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-main/flows/wallet.reload-keeps-balance",
+   "run": "2026-11-14T11:20:30.749Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-main/report.json"
+  },
+  {
+   "id": "withdraw.lightning",
+   "area": "withdraw",
+   "title": "withdraw 2 000 sat to an invoice of a devnet lnd that runs no gateway: the invoice is paid, the balance drops",
+   "money": 2,
+   "reach": 3,
+   "result": "fail",
+   "why": "the payee's invoice is settled (seen: ♥ Donate\nDocs\nFeedback\nGet 300 sats\nUI 9999\nBitcoin Arena\n←\nArena\n10,000 sat\nDeposit\nWithdraw\nLeaderboard\n⚙\n☰\nWithdraw\n×\nYou can withdraw up to 10,000 sat. Make an invoice in your own wallet for any amount up to that and paste it here.\nYou withdraw 2,000 sat.\nWithdraw\n✓\n10,000 sat\n⌛\n0 sat)",
+   "stack": "Error: the payee's invoice is settled (seen: ♥ Donate | Docs | Feedback | Get 300 sats",
+   "seconds": 244.1,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-main/flows/withdraw.lightning",
+   "run": "2026-11-14T11:20:30.749Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-main/report.json"
+  },
+  {
+   "id": "faucet.coins",
+   "area": "faucet",
+   "title": "POST /faucet pays regtest coins once per address; limits refuse",
+   "money": 2,
+   "reach": 2,
+   "result": "pass",
+   "evidence": {
+    "address": "tb1qknscuw3kfw53gu3t86tvsz69wa9kaz2e89xlgn",
+    "txid": "078d336b9d39097c733bbc4d5e42a4833d843825124f1db93c49cf04cd77a657",
+    "received": 0.001,
+    "refused": {
+     "sameAddress": "this address got coins from the faucet already",
+     "regtest": "that is not a testnet4 address (it starts with tb1)",
+     "tooMuch": "the faucet sends at most 1,500,000 sat at once",
+     "partSat": "the amount must be a whole number of sat"
+    },
+    "leftTodaySats": 29900000,
+    "rpcRewrites": 1
+   },
+   "seconds": 0.9,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-faucet/flows/faucet.coins",
+   "run": "2026-11-14T09:57:32.577Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/old/out-faucet-2/report.json"
+  },
+  {
+   "id": "wallet.restore-from-words",
+   "area": "wallet",
+   "title": "restore the funded wallet from its 24 words in a second, empty browser: same wallet, the balance comes back",
+   "money": 2,
+   "reach": 2,
+   "result": "pass",
+   "evidence": {
+    "funded": 10000,
+    "restored": 10000,
+    "seconds": 17
+   },
+   "seconds": 24.3,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-main/flows/wallet.restore-from-words",
+   "run": "2026-11-14T11:20:30.749Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-main/report.json"
+  },
+  {
+   "id": "bounty.lnurlw-claim",
+   "area": "bounty",
+   "title": "the reward's LNURL-withdraw pays a devnet invoice once; wrong k1/amount/network refused",
+   "money": 2,
+   "reach": 1,
+   "result": "pass",
+   "evidence": {
+    "paidMs": 3011,
+    "settled": "SETTLED",
+    "refused": {
+     "k1": "k1 does not match the link",
+     "small": "the invoice must be for exactly 1000 sat",
+     "big": "the invoice must be for exactly 1000 sat",
+     "otherNetwork": "that invoice could not be read",
+     "twice": "this reward was claimed"
+    },
+    "myFeedback": "Feedback #001 · 2026-11-14 · bug · paid E2E #2642 page-mwg8sinl: the order strip froze after I pressed Play and the bala"
+   },
+   "seconds": 3.4,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-faucet/flows/bounty.lnurlw-claim",
+   "run": "2026-11-14T09:57:32.577Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/old/out-faucet-2/report.json"
+  },
+  {
+   "id": "bounty.season2",
+   "area": "bounty",
+   "title": "Week 2: pot, link code, social check without readers (no bonus), S2 approvals, reward private-only",
+   "money": 2,
+   "reach": 1,
+   "result": "pass",
+   "evidence": {
+    "pot": 100000,
+    "linkCode": "BA-…",
+    "social": {
+     "telegram": {
+      "member": null,
+      "why": "this check is not on yet"
+     },
+     "discord": {
+      "member": null,
+      "why": "this check is not on yet"
+     },
+     "x": {
+      "member": null,
+      "why": "this check is not on yet"
+     },
+     "armada": {
+      "member": null,
+      "why": "this check is not on yet"
+     }
+    },
+    "approvals": {
+     "medium": 2000,
+     "highCodeOnly": 2500
+    },
+    "usedSats": 4500,
+    "privateOnly": true
+   },
+   "seconds": 0.5,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-faucet/flows/bounty.season2",
+   "run": "2026-11-14T09:57:32.577Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/old/out-faucet-2/report.json"
+  },
+  {
+   "id": "seats.owner-door-locked",
+   "area": "owner",
+   "title": "the owner's actions refuse a caller without the owner's login (POST /owner/roles, /owner/leave, /owner/bond-withdraw, /owner/settings); the owner's reads are public",
+   "money": 2,
+   "reach": 1,
+   "result": "pass",
+   "evidence": {
+    "posts": {
+     "/owner/roles": 409,
+     "/owner/leave": 409,
+     "/owner/bond-withdraw": 409,
+     "/owner/settings": 409,
+     "/owner/plugins/install": 409,
+     "/owner/network/update": 409,
+     "/owner/key-from-words": 409
+    },
+    "reads": {
+     "/owner": 200,
+     "/owner/standing": 200,
+     "/owner/rounds": 200,
+     "/owner/version": 200
+    }
+   },
+   "seconds": 0.1,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-main/flows/seats.owner-door-locked",
+   "run": "2026-11-14T11:20:30.749Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-main/report.json"
+  },
+  {
+   "id": "leaderboard.page",
+   "area": "leaderboard",
+   "title": "the Leaderboard button opens the season board read from the seats",
+   "money": 1,
+   "reach": 3,
+   "result": "pass",
+   "evidence": {
+    "text": "✕ Close / LEADERBOARD / Tick Tock, Next Block / 7 days / 30 days / 90 days / Asking the nodes …",
+    "asked": [
+     "/api/season?game=nextblock&days=7 -",
+     "/season?game=nextblock&days=7&scope=network 200",
+     "/season?game=nextblock&days=7&scope=network 200",
+     "/season?game=nextblock&days=7&scope=network 200"
+    ]
+   },
+   "seconds": 7.3,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-main/flows/leaderboard.page",
+   "run": "2026-11-14T11:20:30.749Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-main/report.json"
+  },
+  {
+   "id": "season.board-and-badges",
+   "area": "leaderboard",
+   "title": "season board (seat and network scope), season rounds, badge definitions and a player's badges answer",
+   "money": 1,
+   "reach": 3,
+   "result": "pass",
+   "evidence": {
+    "seasonKeys": [
+     "node",
+     "game",
+     "days",
+     "from",
+     "to",
+     "fromMs",
+     "toMs",
+     "rows"
+    ],
+    "networkKeys": [
+     "node",
+     "game",
+     "days",
+     "from",
+     "to",
+     "fromMs",
+     "toMs",
+     "rows"
+    ],
+    "seasonRounds": 3,
+    "badgeDefinitions": 4,
+    "badgesOn": false
+   },
+   "seconds": 0,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-page/flows/season.board-and-badges",
+   "run": "2026-11-14T10:05:30.265Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-page-4/report.json"
+  },
+  {
+   "id": "feedback.fakes",
+   "area": "feedback",
+   "title": "forged, tampered, replayed, stale and other-key reports; bad bounty addresses; NIP-98 My feedback",
+   "money": 1,
+   "reach": 2,
+   "result": "pass",
+   "evidence": {
+    "replay": {
+     "label": "Feedback #002",
+     "keptOnce": true,
+     "chatPostsOnce": true
+    },
+    "refused": {
+     "a forged signature": "invalid: the signature is not its author's",
+     "content changed after signing": "invalid: the id is not the event's hash",
+     "another key's report under K's pubkey": "invalid: the id is not the event's hash",
+     "a report re-hashed under K but signed by X": "invalid: the signature is not its author's",
+     "a kind 1 note": "that is not a feedback report",
+     "a report signed two days ago": "that report was signed more than a day ago",
+     "a report under 50 characters": "say what happened in at least 50 characters (18 so far)",
+     "a report of no known type": "a report is one of bug, improvement",
+     "a node report naming no node": "node feedback names the node (its key, 64 hex)",
+     "a report dated an hour ahead": "invalid: created_at is too far in the future",
+     "an lnAddress that is no address": "That Lightning address does not work: that is not a Lightning address (name@wallet.com) or an LNURL. Check it, or leave it empty.",
+     "an lnAddress on a local-only name": "That Lightning address does not work: its wallet must be on a public name. Check it, or leave it empty.",
+     "an lnAddress on an IP literal": "That Lightning address does not work: its wallet must be on a public name. Check it, or leave it empty.",
+     "an lnAddress on the team's own host": "That Lightning address does not work: its wallet must be on a public name. Check it, or leave it empty.",
+     "an lnAddress that is a number": "That Lightning address is not text. Check it, or leave it empty.",
+     "an lnAddress that is a list": "That Lightning address is not text. Check it, or leave it empty.",
+     "a lud16 tag on a LAN address": "That Lightning address does not work: its wallet must be on a public name. Check it, or leave it empty.",
+     "unsigned report with a bad address": "That Lightning address does not work: its wallet must be on a public name. Check it, or leave it empty."
+    },
+    "scrubbed": true,
+    "mine": {
+     "own": 2,
+     "otherKeySees": 0,
+     "wrongUrl": "that sign-in names another address or method",
+     "old": "that sign-in is older than a minute"
+    }
+   },
+   "seconds": 0.1,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-faucet/flows/feedback.fakes",
+   "run": "2026-11-14T09:57:32.577Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/old/out-faucet-2/report.json"
+  },
+  {
+   "id": "markets.reads",
+   "area": "markets",
+   "title": "market rounds, price samples and the exchange door answer",
+   "money": 1,
+   "reach": 2,
+   "result": "pass",
+   "evidence": {
+    "marketRounds": 0,
+    "priceSamples": 400,
+    "note": "no market round is opened on the devnet: the devnet hosts no market game (btc-updown is not in DEVNET_APPS)"
+   },
+   "seconds": 0,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-dev/flows/markets.reads",
+   "run": "2026-11-14T09:38:38.750Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-dev/report.json"
+  },
+  {
+   "id": "nostr.login-nsec",
+   "area": "wallet",
+   "title": "log in with a Nostr nsec in a fresh browser: the page opens a wallet for that key, and a reload keeps it",
+   "money": 1,
+   "reach": 2,
+   "result": "pass",
+   "evidence": {
+    "npub": "npub1tfu3jqlac46jwry",
+    "shown": "0 sat",
+    "afterReload": "0 sat",
+    "storage": "[\"arena.nostr\",\"arena.seeds\",\"arena.seed.held.7001282cb1f1c320\",\"arena.seed.held.5a9a84a1ee719694\"]"
+   },
+   "seconds": 32.1,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-main/flows/nostr.login-nsec",
+   "run": "2026-11-14T11:20:30.749Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-main/report.json"
+  },
+  {
+   "id": "bounty.admin-review",
+   "area": "bounty",
+   "title": "the admin review list: code only, duplicate/reject never approved, approve once, reward link",
+   "money": 1,
+   "reach": 1,
+   "result": "pass",
+   "evidence": {
+    "duplicate": "a duplicate report is not approved for money: the first report of it is",
+    "rejected": "a rejected report is not approved for money",
+    "approved": "Feedback #001",
+    "amountSats": 1000,
+    "k1": "5de931844bdb…",
+    "lnurl": "lnurl1dp68gup69uhnzv…"
+   },
+   "seconds": 0,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-faucet/flows/bounty.admin-review",
+   "run": "2026-11-14T09:57:32.577Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/old/out-faucet-2/report.json"
+  },
+  {
+   "id": "proposals.ballot-reads",
+   "area": "proposals",
+   "title": "proposals and the ballot's live config answer at every seat with the same config hash",
+   "money": 1,
+   "reach": 1,
+   "result": "pass",
+   "evidence": {
+    "configHash": "2170f25079f5652b",
+    "proposals": 0,
+    "fundingProposals": 0
+   },
+   "seconds": 0,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-dev/flows/proposals.ballot-reads",
+   "run": "2026-11-14T09:38:38.750Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-dev/report.json"
+  },
+  {
+   "id": "referrals.name-and-fees",
+   "area": "referrals",
+   "title": "referral fees answer and a referral name post is checked (refused unsigned)",
+   "money": 1,
+   "reach": 1,
+   "result": "pass",
+   "evidence": {
+    "totalMsat": "0",
+    "unsignedNamePost": 400,
+    "why": "that is not a referral name: reader ran off the end\n"
+   },
+   "seconds": 0,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-dev/flows/referrals.name-and-fees",
+   "run": "2026-11-14T09:38:38.750Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-dev/report.json"
+  },
+  {
+   "id": "seats.operator-door-locked",
+   "area": "owner",
+   "title": "the operator doors refuse a caller without a token (/operator/status, /operator/vote, /operator/config)",
+   "money": 1,
+   "reach": 1,
+   "result": "pass",
+   "evidence": {
+    "codes": [
+     401,
+     401,
+     401
+    ]
+   },
+   "seconds": 0,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-dev/flows/seats.operator-door-locked",
+   "run": "2026-11-14T09:38:38.750Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-dev/report.json"
+  },
+  {
+   "id": "feedback.page-signed",
+   "area": "feedback",
+   "title": "the page's Feedback sends a signed report; My feedback lists it",
+   "money": 0,
+   "reach": 3,
+   "result": "pass",
+   "evidence": {
+    "label": "Feedback #001",
+    "id": "9782a9f6c3879c00…",
+    "pubkey": "88e25b8d6e44ac23…",
+    "chatPosts": 1,
+    "myFeedback": "Feedback #001 · 2026-11-14 · bug · waiting for the team E2E #2642 page-mwg8sinl: the order strip froze after I pressed Play and the balance stayed the same for ",
+    "viaMenu": false,
+    "debugChars": 751
+   },
+   "seconds": 3.8,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-faucet/flows/feedback.page-signed",
+   "run": "2026-11-14T09:57:32.577Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/old/out-faucet-2/report.json"
+  },
+  {
+   "id": "installer.auto-update",
+   "area": "installer",
+   "title": "auto update (checkOnce): the newer release downloaded from 127.0.0.1 - a wrong download refused by its SHA-256, the real one checked against SHA256SUMS + signature, unpacked and moved to",
+   "money": 0,
+   "reach": 3,
+   "result": "pass",
+   "evidence": {
+    "wrongDownload": "arena-node-2026.1.9.27-darwin-arm64.tar.gz downloaded with SHA-256 f5904816672067e0..., not the 6df86497277527e7... the signed latest.json names: not used",
+    "moved": {
+     "ok": true,
+     "from": "2026.1.9.26",
+     "to": "2026.1.9.27"
+    },
+    "seconds": 17,
+    "after": {
+     "identity": "034ecfb1652b613ad53ab17732ad60c4adf80fe90645fa5b48d5a29118238717",
+     "version": "2026.1.9.27",
+     "commit": "ab85a72fcfcb6c8329d0b371edfee16e54aefca9",
+     "latestWhy": "release checks are off on this node"
+    },
+    "served": [
+     "HEAD arena-node-2026.1.9.27-darwin-arm64.tar.gz.part00 (wrong bytes)",
+     "GET arena-node-2026.1.9.27-darwin-arm64.tar.gz.part00 (wrong bytes)",
+     "HEAD arena-node-2026.1.9.27-darwin-arm64.tar.gz.part00",
+     "GET arena-node-2026.1.9.27-darwin-arm64.tar.gz.part00",
+     "GET SHA256SUMS",
+     "GET SHA256SUMS.sig"
+    ],
+    "record": {
+     "ok": true,
+     "to": "2026.1.9.27"
+    }
+   },
+   "seconds": 17.8,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-installer/flows/installer.auto-update",
+   "run": "2026-11-14T09:57:20.378Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-installer/report.json"
+  },
+  {
+   "id": "installer.rollback-failed-release",
+   "area": "installer",
+   "title": "node rollback: an update to a newer release whose seat does not start is rolled back - the old release answers again as the same node",
+   "money": 0,
+   "reach": 3,
+   "result": "pass",
+   "evidence": {
+    "to": "2026.1.9.28",
+    "seconds": 47,
+    "ok": false,
+    "rolledBack": true,
+    "restored": true,
+    "failedAt": "Waiting for your node's first answer",
+    "why": "the new release did not come up: the node did not answer on port 18340 within 45 s (ECONNREFUSED). Its last log lines: [games] hosting none (ARENA_APPS names no game) | [operator] pair the operator UI with arena-operator:http://127.0.0.1:18340#765efd6df2c4b0d2399aa44db52c3741aef89ba932ae632b5414d43b",
+    "after": {
+     "identity": "034ecfb1652b613ad53ab17732ad60c4adf80fe90645fa5b48d5a29118238717",
+     "version": "2026.1.9.27",
+     "commit": "ab85a72fcfcb6c8329d0b371edfee16e54aefca9",
+     "latestWhy": "release checks are off on this node"
+    },
+    "journal": "rolled-back"
+   },
+   "seconds": 47.1,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-installer/flows/installer.rollback-failed-release",
+   "run": "2026-11-14T09:57:20.378Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-installer/report.json"
+  },
+  {
+   "id": "installer.seed-words",
+   "area": "installer",
+   "title": "seed step: 24 words shown, wrong words asked back refused, the right ones accepted; seed.hex 0600 and the words' owner bound",
+   "money": 0,
+   "reach": 3,
+   "result": "pass",
+   "evidence": {
+    "asked": [
+     2,
+     6,
+     15
+    ],
+    "refused": "words 2, 6, 15 are not what was shown - check what you wrote down",
+    "seedHexMode": "600",
+    "owner": {
+     "mode": "seed",
+     "pubkey": "62e5221f2991ae99d35b3efca2627407863717cb01bbc4f1a8562fd0303377bd"
+    },
+    "step": "emergency",
+    "shots": [
+     "07-seed-words.png",
+     "08-seed-asked-back.png"
+    ]
+   },
+   "seconds": 3.5,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-installer/flows/installer.seed-words",
+   "run": "2026-11-14T09:57:20.378Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-installer/report.json"
+  },
+  {
+   "id": "installer.update",
+   "area": "installer",
+   "title": "node update: a node running a real release (seat answering) moved to the next real release - backed up, units rewritten, the same node answering as the new version",
+   "money": 0,
+   "reach": 3,
+   "result": "pass",
+   "evidence": {
+    "from": "2026.1.9.26",
+    "to": "2026.1.9.27",
+    "seconds": 4,
+    "ok": true,
+    "backup": "/Users/daniel/wf1489/e2e-2642/installer-2026-11-14T10-02-40-520Z/update/home/.bitcoinarena/backups/2026-11-14T10-02-45-493Z",
+    "moved": [
+     "arena-node.service"
+    ],
+    "answered": {
+     "version": "2026.1.9.27",
+     "commit": "ab85a72fcfcb6c8329d0b371edfee16e54aefca9"
+    },
+    "after": {
+     "identity": "034ecfb1652b613ad53ab17732ad60c4adf80fe90645fa5b48d5a29118238717",
+     "version": "2026.1.9.27",
+     "commit": "ab85a72fcfcb6c8329d0b371edfee16e54aefca9",
+     "latestWhy": "release checks are off on this node"
+    },
+    "backupFiles": [
+     "arena.conf",
+     "node.db",
+     "node.db-shm",
+     "node.db-wal",
+     "node.db.operator-tokens.json",
+     "state.json"
+    ]
+   },
+   "seconds": 8.3,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-installer/flows/installer.update",
+   "run": "2026-11-14T09:57:20.378Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-installer/report.json"
+  },
+  {
+   "id": "page.boot",
+   "area": "page",
+   "title": "the page boots on the devnet lobby link: the pinned Next Block client is accepted, the lobby lists the open rounds, no uncaught error",
+   "money": 0,
+   "reach": 3,
+   "result": "pass",
+   "evidence": {
+    "rows": [
+     {
+      "id": "4202d47adc26",
+      "free": true,
+      "phase": "open",
+      "join": true
+     }
+    ],
+    "unity": true,
+    "rewrites": [
+     "ARENA_FAUCET_URL -> /api/faucet/player on 127.0.0.1",
+     "arena-client.js chainAnchorFor -> the devnet genesis"
+    ],
+    "requests": 94,
+    "blockedExternal": 27
+   },
+   "seconds": 4.9,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-page/flows/page.boot",
+   "run": "2026-11-14T10:05:30.265Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-page-4/report.json"
+  },
+  {
+   "id": "round.free.headless-play",
+   "area": "rounds",
+   "title": "a free Next Block round played headless to its signed result: entry at 7 seats, batches and marks, 7 of 7 results agreeing with the local replay",
+   "money": 0,
+   "reach": 3,
+   "result": "pass",
+   "evidence": {
+    "round": "8a20f3be3acf2217",
+    "entry": "cb5642a9d6f765e2",
+    "outcome": "FAILED",
+    "score": 37799,
+    "agreeing": "7/7"
+   },
+   "seconds": 234.4,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-dev/flows/round.free.headless-play",
+   "run": "2026-11-14T09:38:38.750Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-dev/report.json"
+  },
+  {
+   "id": "round.free.page-join",
+   "area": "rounds",
+   "title": "press PLAY on a free round in the page (Unity lobby): the entry is taken by the round's seats",
+   "money": 0,
+   "reach": 3,
+   "result": "not covered",
+   "why": "the page cannot prove a seat on a private chain: \"[arena] warm: the session reads were not done ahead (no proven endpoint: no bond: no provider proved that bond into the chain (provider 0: the transaction 4bcfeee33b506c189e680814adf55d653629c6b06ff684270a37e7c6cf233404 \" - the client anchors to compiled-in blocks only (directory.js chainAnchorFor; the suite points it at the devnet genesis) and every devnet seat serves the ONE shared bond proof of runner/proof (GET /bond: 409 \"the bond proof this node was given is node X's\" at six of seven seats, and node 1's is not in the served headers). Joins are covered headless by round.free.headless-play and round.paid.headless-entry",
+   "seconds": 134,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-page/flows/round.free.page-join",
+   "run": "2026-11-14T10:59:45.255Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-page-6/report.json"
+  },
+  {
+   "id": "seats.games-and-network",
+   "area": "node",
+   "title": "/games lists the hosted games with manifest and icon; /network names the regtest network and its federation",
+   "money": 0,
+   "reach": 3,
+   "result": "fail",
+   "why": "the game manifest is served (seen: 400)",
+   "stack": "Error: the game manifest is served (seen: 400) |     at check (file:///Users/daniel/wf1489/wt/wt-2642/e2e/lib/ctx.mjs:20:20) |     at Object.run (file:///Users/daniel/wf1489/wt/wt-2642/e2e/flows/devnet.mjs:42:7) |     at process.processTicksAndRejections (node:internal/process/task_queues:104:5)",
+   "seconds": 0,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-dev/flows/seats.games-and-network",
+   "run": "2026-11-14T09:38:38.750Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-dev/report.json"
+  },
+  {
+   "id": "seats.identity-and-roles",
+   "area": "node",
+   "title": "seven seats answer /identity, /guardian, /roles with one census and every role filled",
+   "money": 0,
+   "reach": 3,
+   "result": "fail",
+   "why": "every /identity answers its signed identity (seen: [{\"status\":200,\"bytes\":32},{\"status\":200,\"bytes\":32},{\"status\":200,\"bytes\":32},{\"status\":200,\"bytes\":32},{\"status\":200,\"bytes\":32},{\"status\":200,\"bytes\":32},{\"status\":200,\"bytes\":32}])",
+   "stack": "Error: every /identity answers its signed identity (seen: [{\"status\":200,\"bytes\":32},{\"status\":200,\"bytes\":32},{\"status\":200,\"bytes\":32},{\"status\":200,\"bytes\":32},{\"status\":200,\"bytes\":32},{\"status\":200,\"bytes\":32},{\"status\":200,\"bytes\":32}]) |     at check (file:///Users/daniel/wf1489/wt/wt-2642/e2e/lib/ctx.mjs:20:20) |     at Object.run (file:///Users/daniel/wf1489/wt/wt-2642/e2e/flows/devnet.mjs:29:7) |     at process.processTicksAndRejections (node:internal/process/task_queues:104:5)",
+   "seconds": 0,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-dev/flows/seats.identity-and-roles",
+   "run": "2026-11-14T09:38:38.750Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-dev/report.json"
+  },
+  {
+   "id": "explorer.round-reads",
+   "area": "explorer",
+   "title": "the explorer's reads of a played round: /rounds, /round, /api/round-result, /results, /transcript, /census, /committee, /headers",
+   "money": 0,
+   "reach": 2,
+   "result": "fail",
+   "why": "every explorer read answers 200 (seen: [{\"path\":\"/round-result?round=8a20f3be3acf22170e599e586444ae91d4eb7d38fd2895a2e0aee6595383c0bf\",\"status\":409,\"bytes\":79},{\"path\":\"/outcome?round=8a20f3be3acf22170e599e586444ae91d4eb7d38fd2895a2e0aee6595383c0bf\",\"status\":409,\"bytes\":77}])",
+   "stack": "Error: every explorer read answers 200 (seen: [{\"path\":\"/round-result?round=8a20f3be3acf22170e599e586444ae91d4eb7d38fd2895a2e0aee6595383c0bf\",\"status\":409,\"bytes\":79},{\"path\":\"/outcome?round=8a20f3be3acf22170e599e586444ae91d4eb7d38fd2895a2e0aee6595383c0bf\",\"status\":409,\"bytes\":77}]) |     at check (file:///Users/daniel/wf1489/wt/wt-2642/e2e/lib/ctx.mjs:20:20) |     at Object.run (file:///Users/daniel/wf1489/wt/wt-2642/e2e/flows/devnet.mjs:103:7) |     at process.processTicksAndRejections (node:internal/process/task_queues:104:5)",
+   "seconds": 0,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-dev/flows/explorer.round-reads",
+   "run": "2026-11-14T09:38:38.750Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-dev/report.json"
+  },
+  {
+   "id": "feedback.page-unsigned",
+   "area": "feedback",
+   "title": "a tab with no wallet sends an unsigned report (posted, not kept)",
+   "money": 0,
+   "reach": 2,
+   "result": "pass",
+   "evidence": {
+    "said": "Thank you, it reached the team.",
+    "myFeedback": "Open a wallet first: your reports are listed under your key."
+   },
+   "seconds": 3.3,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-faucet/flows/feedback.page-unsigned",
+   "run": "2026-11-14T09:57:32.577Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/old/out-faucet-2/report.json"
+  },
+  {
+   "id": "installer.chain-devnet",
+   "area": "installer",
+   "title": "Bitcoin step: \"My Bitcoin Core\" tested and saved against the devnet bitcoind - refused by its genesis (regtest is not testnet4)",
+   "money": 0,
+   "reach": 2,
+   "result": "pass",
+   "evidence": {
+    "tested": "Failed: block 0 is 0f9188f13cb7b2c7... (chain \"regtest\"): not testnet4",
+    "step": "chain",
+    "devnet": "http://127.0.0.1:13001",
+    "shots": [
+     "03-bitcoin-tested.png",
+     "04-bitcoin-save-refused.png"
+    ]
+   },
+   "seconds": 3.1,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-installer/flows/installer.chain-devnet",
+   "run": "2026-11-14T09:57:20.378Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-installer/report.json"
+  },
+  {
+   "id": "installer.downgrade-guard",
+   "area": "installer",
+   "title": "back to the previous release: refused unasked (#2601), then done with --allow-older - the same node answers as the older release",
+   "money": 0,
+   "reach": 2,
+   "result": "pass",
+   "evidence": {
+    "refused": "release 2026.1.9.26 is older than the release this node runs (2026.1.9.27): not moved back (--allow-older to mean it)",
+    "moved": {
+     "ok": true,
+     "from": "/Users/daniel/wf1489/e2e-2642/installer-2026-11-14T10-02-40-520Z/update/home/.bitcoinarena/releases/arena-node-2026.1.9.27-darwin-arm64",
+     "to": "/Users/daniel/wf1489/e2e-2642/installer-2026-11-14T10-02-40-520Z/update/home/.bitcoinarena/releases/arena-node-2026.1.9.26-darwin-arm64",
+     "answered": {
+      "version": "2026.1.9.26",
+      "commit": "650581bd6e999174f7d6c2100ce4236cac54eff7"
+     }
+    },
+    "after": {
+     "identity": "034ecfb1652b613ad53ab17732ad60c4adf80fe90645fa5b48d5a29118238717",
+     "version": "2026.1.9.26",
+     "commit": "650581bd6e999174f7d6c2100ce4236cac54eff7",
+     "latestWhy": "release checks are off on this node"
+    }
+   },
+   "seconds": 2,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-installer/flows/installer.downgrade-guard",
+   "run": "2026-11-14T09:57:20.378Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-installer/report.json"
+  },
+  {
+   "id": "installer.emergency-owner-handoff",
+   "area": "installer",
+   "title": "emergency code shown and written down; the wizard reaches the reach step and hands the owner key to its own session only",
+   "money": 0,
+   "reach": 2,
+   "result": "pass",
+   "evidence": {
+    "codeLength": 38,
+    "step": "reach",
+    "handoff": "seed",
+    "withoutSession": 401,
+    "done": [
+     "start",
+     "chain",
+     "roles",
+     "federation",
+     "promise",
+     "lightning",
+     "apps",
+     "seed",
+     "owner",
+     "emergency"
+    ],
+    "shots": [
+     "09-emergency.png",
+     "10-reach.png"
+    ]
+   },
+   "seconds": 2.6,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-installer/flows/installer.emergency-owner-handoff",
+   "run": "2026-11-14T09:57:20.378Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-installer/report.json"
+  },
+  {
+   "id": "installer.reach-service",
+   "area": "installer",
+   "title": "reach step (direct check) and \"Install and start\" (service, owner login) - the wizard's finish",
+   "money": 0,
+   "reach": 2,
+   "result": "not covered",
+   "why": "not drivable on this machine: the reach step's direct check asks the live testnet4 seats (reach.js REACH_SEATS, hard-coded, no setting) to connect back, and \"Install and start\" writes launchd agents into the user's real gui domain (service.js installService) where a live node runs - neither has a regtest/devnet or temp-domain switch. The wizard was driven up to the reach step (installer.emergency-owner-handoff); the seat it would start is covered by the update flows",
+   "seconds": 0.1,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-installer/flows/installer.reach-service",
+   "run": "2026-11-14T09:57:20.378Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-installer/report.json"
+  },
+  {
+   "id": "installer.resume-after-restart",
+   "area": "installer",
+   "title": "the installer closed and started again: the page resumes on the same session at the next step (Bitcoin step's record written into state.json)",
+   "money": 0,
+   "reach": 2,
+   "result": "pass",
+   "evidence": {
+    "restartedPid": 75840,
+    "step": "roles",
+    "sessionKept": true,
+    "chainWritten": {
+     "kind": "core",
+     "url": "http://127.0.0.1:13001",
+     "height": 544
+    },
+    "shots": [
+     "05-roles-after-restart.png"
+    ]
+   },
+   "seconds": 2.6,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-installer/flows/installer.resume-after-restart",
+   "run": "2026-11-14T09:57:20.378Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-installer/report.json"
+  },
+  {
+   "id": "installer.roles-apps",
+   "area": "installer",
+   "title": "roles step (the default roles saved) and apps step (every app of the tree on) saved through the page",
+   "money": 0,
+   "reach": 2,
+   "result": "pass",
+   "evidence": {
+    "roleTiles": [
+     "role-verify",
+     "role-settlement",
+     "role-custody",
+     "role-liquidity"
+    ],
+    "roles": [
+     "verify",
+     "settlement"
+    ],
+    "apps": [
+     "nextblock",
+     "btc-updown",
+     "rock-paper-scissors"
+    ],
+    "step": "seed",
+    "shots": [
+     "06-apps.png"
+    ]
+   },
+   "seconds": 2.9,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-installer/flows/installer.roles-apps",
+   "run": "2026-11-14T09:57:20.378Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-installer/report.json"
+  },
+  {
+   "id": "installer.start-new-seed",
+   "area": "installer",
+   "title": "first step: \"Create a new seed\" chosen in the page, the wizard moves to the Bitcoin step",
+   "money": 0,
+   "reach": 2,
+   "result": "pass",
+   "evidence": {
+    "origin": "new",
+    "control": "words",
+    "step": "chain",
+    "shots": [
+     "02-bitcoin.png"
+    ]
+   },
+   "seconds": 2.6,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-installer/flows/installer.start-new-seed",
+   "run": "2026-11-14T09:57:20.378Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-installer/report.json"
+  },
+  {
+   "id": "installer.update-cli-signature",
+   "area": "installer",
+   "title": "`arena-install --update <asset>`: a forged SHA256SUMS and a file that is not the signed one refused; the real signed asset passes its check and unpacks",
+   "money": 0,
+   "reach": 2,
+   "result": "pass",
+   "evidence": {
+    "asset": "arena-node-2026.1.9.27-darwin-arm64.tar.gz",
+    "forgedSums": {
+     "status": 2,
+     "out": "[----------]   0 %  Checking the signature | [----------]   0 %  Failed at \"Checking the signature\": SHA256SUMS is not signed by the Arena release key | Refused: SHA256SUMS is not signed by the Arena release key"
+    },
+    "notTheSignedFile": {
+     "status": 2,
+     "out": "[----------]   0 %  Checking the signature | [----------]   0 %  Failed at \"Checking the signature\": arena-node-2026.1.9.27-darwin-arm64.tar.gz is not the signed file (sha256 f5904816672067e0, signed 6df86497277527e7) | Refused: arena-node-2026.1.9.27-darwin-arm64.tar.gz is not the signed file (sha256 f5904816672067e0, signed 6df86497277527e7)"
+    },
+    "genuine": {
+     "status": 1,
+     "out": "[----------]   3 %  Unpacking (arena-node-2026.1.9.27-darwin-arm64) | [#---------]  10 %  Checking the new release (2026.1.9.27) | [#---------]  10 %  Failed at \"Checking the new release\": no node is installed at /Users/daniel/wf1489/e2e-2642/installer-2026-11-14T10-02-40-520Z/cli-update/home/.bitcoinarena | Not updated: no node is installed at /Users/daniel/wf1489/e2e-2642/installer-2026-11-14T10-02-40-520Z/cli-update/home/.bitcoinarena"
+    },
+    "unpacked": "/Users/daniel/wf1489/e2e-2642/installer-2026-11-14T10-02-40-520Z/cli-update/home/.bitcoinarena/releases/arena-node-2026.1.9.27-darwin-arm64"
+   },
+   "seconds": 2.7,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-installer/flows/installer.update-cli-signature",
+   "run": "2026-11-14T09:57:20.378Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-installer/report.json"
+  },
+  {
+   "id": "installer.wizard-opens",
+   "area": "installer",
+   "title": "the installer starts in a temp home and its setup page opens in Chrome from the one-time link",
+   "money": 0,
+   "reach": 2,
+   "result": "pass",
+   "evidence": {
+    "home": "/Users/daniel/wf1489/e2e-2642/installer-2026-11-14T10-02-40-520Z/wizard-home/.bitcoinarena",
+    "link": "http://127.0.0.1:18310/?t=(token)",
+    "step": "start",
+    "build": {
+     "version": null,
+     "commit": null
+    },
+    "usedLink": 403,
+    "noSession": 401,
+    "otherHost": 421,
+    "noHeader": 403,
+    "shots": [
+     "01-start.png"
+    ]
+   },
+   "seconds": 2.4,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-installer/flows/installer.wizard-opens",
+   "run": "2026-11-14T09:57:20.378Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-installer/report.json"
+  },
+  {
+   "id": "settings.name",
+   "area": "settings",
+   "title": "settings: a player name is saved and kept over a reload; a name with markup is refused",
+   "money": 0,
+   "reach": 2,
+   "result": "fail",
+   "why": "the name is kept in the browser after a reload (seen: [])",
+   "stack": "Error: the name is kept in the browser after a reload (seen: []) |     at check (file:///Users/daniel/wf1489/wt/wt-2642/e2e/lib/ctx.mjs:20:20) |     at Object.run (file:///Users/daniel/wf1489/wt/wt-2642/e2e/flows/page.mjs:208:7) |     at process.processTicksAndRejections (node:internal/process/task_queues:104:5)",
+   "seconds": 25.2,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-page/flows/settings.name",
+   "run": "2026-11-14T10:59:45.255Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-page-6/report.json"
+  },
+  {
+   "id": "feedback.screenshot",
+   "area": "feedback",
+   "title": "screenshots: not an image, SVG, too big, unknown hash refused; a PNG kept",
+   "money": 0,
+   "reach": 1,
+   "result": "pass",
+   "evidence": {
+    "refused": {
+     "notImage": "a screenshot is a PNG, JPEG or WebP image",
+     "svg": "a screenshot is a PNG, JPEG or WebP image",
+     "tooBig": "a screenshot is at most 1.5 MB",
+     "unknownHash": "that screenshot was not uploaded here"
+    },
+    "kept": "6b7fa434f92a8b80"
+   },
+   "seconds": 0,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-faucet/flows/feedback.screenshot",
+   "run": "2026-11-14T09:57:32.577Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/old/out-faucet-2/report.json"
+  },
+  {
+   "id": "page.sub.dashboard",
+   "area": "page",
+   "title": "/dashboard/ loads and renders without an uncaught exception",
+   "money": 0,
+   "reach": 1,
+   "result": "pass",
+   "evidence": {
+    "chars": 327,
+    "start": "Bitcoin Arena · Node Dashboards /  / Each testnet4 node serves its own dashboard: its own earnings, the ",
+    "failedRequests": 0
+   },
+   "seconds": 8,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-page/flows/page.sub.dashboard",
+   "run": "2026-11-14T10:05:30.265Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-page-4/report.json"
+  },
+  {
+   "id": "page.sub.games-btc-updown",
+   "area": "page",
+   "title": "/games/btc-updown/ loads and renders without an uncaught exception",
+   "money": 0,
+   "reach": 1,
+   "result": "fail",
+   "why": "/games/btc-updown/ is served (seen: 404)",
+   "stack": "Error: /games/btc-updown/ is served (seen: 404) |     at check (file:///Users/daniel/wf1489/wt/wt-2642/e2e/lib/ctx.mjs:20:20) |     at Object.run (file:///Users/daniel/wf1489/wt/wt-2642/e2e/flows/page.mjs:237:7) |     at process.processTicksAndRejections (node:internal/process/task_queues:104:5)",
+   "seconds": 8,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-page/flows/page.sub.games-btc-updown",
+   "run": "2026-11-14T10:05:30.265Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-page-4/report.json"
+  },
+  {
+   "id": "page.sub.guardians",
+   "area": "page",
+   "title": "/guardians/ loads and renders without an uncaught exception",
+   "money": 0,
+   "reach": 1,
+   "result": "pass",
+   "evidence": {
+    "chars": 1680,
+    "start": "Guardian check /  / This device opens every guardian of the two testnet4 federations at the address its ",
+    "failedRequests": 0
+   },
+   "seconds": 8.1,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-page/flows/page.sub.guardians",
+   "run": "2026-11-14T10:05:30.265Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-page-4/report.json"
+  },
+  {
+   "id": "page.sub.health",
+   "area": "page",
+   "title": "/health/ loads and renders without an uncaught exception",
+   "money": 0,
+   "reach": 1,
+   "result": "pass",
+   "evidence": {
+    "chars": 758,
+    "start": "Bitcoin Arena / Games / How it works / Explorer / Build & run / Download / Proposals / Security / Docs / App → / Network",
+    "failedRequests": 0
+   },
+   "seconds": 8,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-page/flows/page.sub.health",
+   "run": "2026-11-14T10:05:30.265Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-page-4/report.json"
+  },
+  {
+   "id": "page.sub.offline",
+   "area": "page",
+   "title": "/offline/ loads and renders without an uncaught exception",
+   "money": 0,
+   "reach": 1,
+   "result": "pass",
+   "evidence": {
+    "chars": 727,
+    "start": "My node is offline /  / Take your own node out of the network while it is offline, so it keeps its bond.",
+    "failedRequests": 0
+   },
+   "seconds": 8,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-page/flows/page.sub.offline",
+   "run": "2026-11-14T10:05:30.265Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-page-4/report.json"
+  },
+  {
+   "id": "page.sub.platform",
+   "area": "page",
+   "title": "/platform/ loads and renders without an uncaught exception",
+   "money": 0,
+   "reach": 1,
+   "result": "pass",
+   "evidence": {
+    "chars": 4724,
+    "start": "Contents / Play on testnet → / GLOSSARY / PLAY / Start playing / Your wallet / Federations / Stake locks and settl",
+    "failedRequests": 0
+   },
+   "seconds": 8.2,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-page/flows/page.sub.platform",
+   "run": "2026-11-14T10:05:30.265Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-page-4/report.json"
+  },
+  {
+   "id": "page.sub.proposals",
+   "area": "page",
+   "title": "/proposals/ loads and renders without an uncaught exception",
+   "money": 0,
+   "reach": 1,
+   "result": "pass",
+   "evidence": {
+    "chars": 726,
+    "start": "Bitcoin Arena / Games / How it works / Explorer / Build & run / Download / Proposals / Security / Docs / App → / PROTOCO",
+    "failedRequests": 0
+   },
+   "seconds": 8.2,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-page/flows/page.sub.proposals",
+   "run": "2026-11-14T10:05:30.265Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-page-4/report.json"
+  },
+  {
+   "id": "page.sub.referral",
+   "area": "page",
+   "title": "/referral/ loads and renders without an uncaught exception",
+   "money": 0,
+   "reach": 1,
+   "result": "pass",
+   "evidence": {
+    "chars": 4008,
+    "start": "Bitcoin Arena / Games / How it works / Explorer / Build & run / Download / Proposals / Security / Docs / App → / Referra",
+    "failedRequests": 0
+   },
+   "seconds": 8,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-page/flows/page.sub.referral",
+   "run": "2026-11-14T10:05:30.265Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-page-4/report.json"
+  },
+  {
+   "id": "page.sub.wallet",
+   "area": "page",
+   "title": "/wallet/ loads and renders without an uncaught exception",
+   "money": 0,
+   "reach": 1,
+   "result": "pass",
+   "evidence": {
+    "chars": 25,
+    "start": "Lightning Wallet testnet4",
+    "failedRequests": 0
+   },
+   "seconds": 8.1,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-page/flows/page.sub.wallet",
+   "run": "2026-11-14T10:59:45.255Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-page-6/report.json"
+  },
+  {
+   "id": "round.replay",
+   "area": "rounds",
+   "title": "the played entry replays from a seat's transcript in the core's sandbox to the signed outcome",
+   "money": 0,
+   "reach": 1,
+   "result": "pass",
+   "evidence": {
+    "last": {
+     "step": "replay",
+     "round": "8a20f3be3acf22170e599e586444ae91d4eb7d38fd2895a2e0aee6595383c0bf",
+     "entry": "cb5642a9d6f765e21676ef994655d3f3e8a873ea319148061911eacb718deff8",
+     "core": "68e2b3d6757dc26a76f95eaf0b57799f4e965267ae70a2e79ce4228154acb589",
+     "ms": 4174,
+     "ok": true,
+     "outcome": "FAILED",
+     "score": 37799,
+     "ticks": 4920,
+     "stateHash": "99145116db836b0c8729f218d2d3028604f7747ffa39a2207cdbab07290a4b03",
+     "marksChecked": 2,
+     "marksAgree": true,
+     "transcriptHash": "3dcf4dd1ef3d1452272fed469bac61e4f1b4f1e6b09a837eda387087e1cb5bb7",
+     "seatsSigned": 7,
+     "seatsAgreeWithThisReplay": 7
+    }
+   },
+   "seconds": 4.7,
+   "dir": "/Users/daniel/wf1489/e2e-2642/out-dev/flows/round.replay",
+   "run": "2026-11-14T09:38:38.750Z",
+   "from": "/Users/daniel/wf1489/e2e-2642/out-dev/report.json"
+  }
+ ]
+}

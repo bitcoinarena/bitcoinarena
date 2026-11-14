@@ -1,0 +1,22 @@
+#!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// THE FAUCET'S lncli ON THE REGTEST DEVNET (kanban #2642): tools/faucet.mjs runs `lncli --network=testnet4` (its payers) and `--network=<bounty
+// network>` (the bounty payer), and takes only lntb invoices for a player's grant. The devnet's lnds are regtest. This wrapper runs the real lncli
+// (E2E_REAL_LNCLI) with --network=regtest and gives every lntb argument back its regtest prefix (e2e/lib/bech32-hrp.mjs: the same invoice, its
+// signature untouched). Everything else - the call, its output, its exit code - is lncli's own. Each call is appended to E2E_LNCLI_LOG when set.
+import { spawnSync } from 'node:child_process';
+import { appendFileSync } from 'node:fs';
+import { testnetToRegtestInvoice } from '../lib/bech32-hrp.mjs';
+const real = process.env.E2E_REAL_LNCLI;
+if (!real) { process.stderr.write('lncli-regtest: E2E_REAL_LNCLI is not set\n'); process.exit(2); }
+const rewrote = [];
+const args = process.argv.slice(2).map((a) => {
+  if (/^--network=/.test(a)) { if (a !== '--network=regtest') rewrote.push(a); return '--network=regtest'; }
+  if (/^lntb[0-9a-z]{20,}$/i.test(a)) { const r = testnetToRegtestInvoice(a); if (r !== a) rewrote.push('lntb->lnbcrt'); return r; }
+  return a;
+});
+const r = spawnSync(real, args, { stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 256 * 1024 * 1024 });
+process.stdout.write(r.stdout || ''); process.stderr.write(r.stderr || '');
+if (process.env.E2E_LNCLI_LOG) { try { appendFileSync(process.env.E2E_LNCLI_LOG, `${JSON.stringify({ at: new Date().toISOString(), cmd: args.filter((a) => !/^--(lnddir|rpcserver)=/.test(a)).map((a) => (a.length > 40 ? `${a.slice(0, 24)}…` : a)), rewrote, status: r.status })}\n`); } catch { /* a log only */ } }
+process.exit(r.status === null ? 1 : r.status);
