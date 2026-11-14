@@ -828,7 +828,8 @@ export class Round {
           throw new Error(`that round's entries closed at ${new Date(Number(asks.entryCloseMs)).toISOString()}: a head-to-head round takes no entry after it - the moves are being revealed`);
         // ONLY ENTRIES BACKED BY A LOCK TAKE A SEAT OF A PAYING ROUND (kanban #1437, audit 8 R3); which ones, the same at every seat: seatedEntriesOf (kanban #1588)
         const me = entryId(contract);   // seats counted by entry id (kanban #1479)
-        const seated = this.seatedEntriesOf(contract.roundId, asks.stakeMsat).filter((x) => !same(x.entryId, me)).length;
+        // kanban #2691: a table is full only with entries whose stake is SEEN - one still waiting for its fee lock yields its seat (seatedEntriesOf)
+        const seated = this.seatedEntriesOf(contract.roundId, asks.stakeMsat, { played: true }).filter((x) => !same(x.entryId, me)).length;
         if (seated >= m.players && !accepted) throw new Error(`that round already seats game "${m.gameName}"'s ${m.players} players`);
         // AND A PAYING ROUND HOLDS ONLY A FEW ENTRIES NOBODY LOCKED A STAKE FOR (kanban #1745, audit #1489 r5 h2h-1): the door takes an entry before its
         // lock and the seats above count only locked ones, so a stranger with fresh keys and no sats filled a paid RPS round with 24 lockless entries -
@@ -2256,7 +2257,14 @@ export class Round {
     // the `players` lowest entry ids among the lock-backed entries (`locked` is in entry id order, entriesOf): the same set at every seat that
     // holds the same entries and locks. An entry left outside is VOID and its lock comes back at settlement (#1582). The /entry door still refuses
     // a new entry once the round seats its players (#1437), so only entries that raced in before the seats filled compete for them.
-    const seated = new Set(locked.slice(0, players).map(({ entryId }) => Buffer.from(entryId).toString('hex')));
+    // A SEEN STAKE GOES BEFORE A STAKE LOCK STILL WAITING FOR ITS FEE LOCK (kanban #2691, audit #1489 r3-h2h-1): a stake lock alone held its seat
+    // until the close with no limit, then seated nobody (#1861) - one cheap lock (its stake comes back as VOID) filled a paid table, the doors
+    // refused the real second player ("that table is full") and the honest player's round was VOID. The seats are now the entries whose stake is
+    // seen (stake and fee lock) by entry id, and only then those still waiting for a fee lock, by entry id - the same at every seat holding the
+    // same locks; a real player who locks both parts takes the seat from a stake-only one
+    const isSeen = ({ entryId }) => { const seen = this.stakeSeen(entryId); return !!seen && inTime(seen.seenMs); };
+    const order = [...locked.filter(isSeen), ...locked.filter((x) => !isSeen(x))];
+    const seated = new Set(order.slice(0, players).map(({ entryId }) => Buffer.from(entryId).toString('hex')));
     return playedOnly(locked.filter(({ entryId }) => seated.has(Buffer.from(entryId).toString('hex'))));   // answered in entry id order, as before
   }
 

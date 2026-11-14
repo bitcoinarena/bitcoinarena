@@ -7087,7 +7087,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const g = pluginForRound(roundContract, hosted);
       if (g.ok && g.headToHead) {
         const players = g.plugin.manifest.players;
-        const others = round.seatedEntriesOf(handout.roundId, roundContract.stakeMsat)
+        // kanban #2691: full only with seen stakes - a stake lock still waiting for its fee lock yields its seat to a player who locks both
+        const others = round.seatedEntriesOf(handout.roundId, roundContract.stakeMsat, { played: true })
           .filter((x) => !(x.entry && x.entry.playerPubkey && Buffer.from(x.entry.playerPubkey).equals(Buffer.from(handout.playerPubkey)))).length;
         if (others >= players)
           return { ok: false, status: 409, why: `handout refused: that table is full - the round already seats game "${g.plugin.manifest.gameName}"'s ${players} players; nothing is locked, tap the next round` };
