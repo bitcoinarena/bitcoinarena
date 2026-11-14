@@ -91,7 +91,7 @@ import { serviceSettings } from './service-settings.js';
 import { controlsOf, installerIdOf, INSIDE } from './service-control.js';
 import { connect as netConnect } from 'node:net';
 import { relayPost, relayMarks, relayTargets } from './relay.js';
-import { CHOICE, voteMessage, encodeVote, SCHEDULES, REPEAL_SCHEDULES, ballotBindHeight } from '../../arena-protocol/src/ballot.js';
+import { CHOICE, voteMessage, encodeVote, SCHEDULES, REPEAL_SCHEDULES, ballotBindHeight, ballotKeyHeight } from '../../arena-protocol/src/ballot.js';
 import { configServesRound } from '../../arena-protocol/src/ballot-chain.js';
 import { createProposals } from './proposals.js';
 import { createBallotTally } from './ballot-tally.js';
@@ -1953,6 +1953,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // THE BINDING'S GATE (ruled 2026-11-12, kanban #2125 / #2012): deposits committed to proposer and bytes, votes by seq, from
     // the network's BALLOT_BIND_HEIGHT (regtest 0, testnet4 161 400, any other network from its first block)
     bindHeightFor: (net) => { const k = donationKeysForNetworkId(fromHex(net)); return ballotBindHeight(k ? k.network : 'mainnet'); },
+    keyHeightFor: (net) => { const k = donationKeysForNetworkId(fromHex(net)); return ballotKeyHeight(k ? k.network : 'mainnet'); },   // kanban #2671
     ...(counts ? { historyFor: (net, height) => (ballotTally ? ballotTally.historyAt(net, height) : null) } : {}),
     // ONLY A BONDED NODE PROPOSES (27A.7.2, kanban #1489): the proposer is checked against the census the tally reads
     ...(typeof ballot.censusAt === 'function' ? { censusAt: ballot.censusAt } : {}),
@@ -2356,6 +2357,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const fundingBook = round.db ? createFundingBook({ db: round.db, schedule: fundingSchedule, log: (l) => console.log(l),
     // the ballot binding's gate for funding votes too (kanban #2576): seq votes from the network's BALLOT_BIND_HEIGHT
     bindHeightFor: (net) => { const k = donationKeysForNetworkId(fromHex(net)); return ballotBindHeight(k ? k.network : 'mainnet'); },
+    keyHeightFor: (net) => { const k = donationKeysForNetworkId(fromHex(net)); return ballotKeyHeight(k ? k.network : 'mainnet'); },   // kanban #2671
     endTimeAt: typeof blockHeaderTimeAt === 'function' ? blockHeaderTimeAt : null,
     // BEFORE A FEE DECISION, EVERY SEAT'S APPROVALS AND SIGNALS (ruled on #1245, kanban #1231): GET /funding-items of each network seat this seat reaches
     pull: async (pid) => {
@@ -8214,8 +8216,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             if (seq > 0xffffffff) return answer(409, { ok: false, why: 'this node has signed the highest seq there is for that proposal' });
             round.db.prepare('INSERT OR REPLACE INTO ballot_vote_seq (proposal, seq) VALUES (?, ?)').run(id, seq);
           }
+          // A KEYED PROPOSAL (kanban #2671): the vote names this node's bond key, so each seat looks it up and checks it once
+          const keyed = !!(kept && typeof proposals.keyed === 'function' && proposals.keyed(kept));
+          if (keyed && seq === null) return answer(409, { ok: false, why: 'a keyed proposal takes a seq vote, and this one was not read bound' });
           const signature = schnorr.sign(voteMessage(pid, choice, seq), round.identity.secret);
-          const payload = encodeVote({ proposalId: pid, choice, signature, seq });
+          const payload = encodeVote({ proposalId: pid, choice, signature, seq, ...(keyed ? { bondKey: round.pubkey } : {}) });
           console.log(`[operator] vote ${String(body.choice).toUpperCase()} on proposal ${id.slice(0, 16)} signed by this node's bond key; the operator's wallet broadcasts it`);
           return answer(200, { ok: true, node: toHex(round.pubkey), proposalId: id, choice: String(body.choice).toUpperCase(), ...(seq !== null ? { seq } : {}), opReturn: toHex(payload),
             broadcast: 'send it as an OP_RETURN output from your own wallet: this node moves no money (spec 27A.7.7)' });
