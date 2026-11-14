@@ -82,9 +82,10 @@ test('an honest page: an empty bed when the bay opens, each change, ROLL OUT, th
   assert.equal(send(100, (t) => (t > 200 ? DRIVE : HELD), [[200, 16334, 141, 369618]]), 100);
   assert.equal(send(100, () => DRIVE), 100);
   assert.deepEqual(stored(), [[4, 0, 0, 0], [60, 3214, 62, 88474], [120, 16334, 141, 369618], [200, 16334, 141, 369618]]);
-  // the practice word (the fifth) is not driving: a page in practice mode sets it from tick 0
+  // the practice word (the fifth) is not driving - but a staked round takes no practice ticks at all (kanban #2654): the
+  // core shields a practice run from every damage, so a page in practice mode is refused in this paid round
   const p = seat();
-  assert.equal(p.send(50, () => [0, 0, 0, 0, 65536], [[10, 2162, 1, 252308]]), 50);
+  assert.throws(() => p.send(50, () => [0, 0, 0, 0, 65536], [[10, 2162, 1, 252308]]), /takes no practice ticks/);
 });
 
 test('Hexbox 1: a full bed with no fee and no BTC is refused, and nothing of the batch is stored', () => {
