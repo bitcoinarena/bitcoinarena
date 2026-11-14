@@ -17,6 +17,7 @@ import { Worker, parentPort, workerData } from 'node:worker_threads';
 export const C = Object.freeze({ STATE: 0, SLEEP: 1, CODE: 2, CALL: 3, FROM_MB: 4, HIGH_MB: 5, CAUGHT: 6 });
 export const ANSWERED = 1, EXITED = 2;
 const SAMPLE_MS = 2;
+import { CORE_STACK_MB } from './core-depth.js';
 const MB = 1048576;
 
 // only in the thread core-sandbox.js started as a supervisor - a replay worker imports this file too
@@ -29,7 +30,9 @@ if (parentPort && workerData && workerData.arenaCoreSupervisor) {
     if (m.type === 'spawn') {
       const ctrl = new Int32Array(m.ctrl);
       const worker = new Worker(new URL('./core-host.js', import.meta.url), {
-        execArgv: ['--experimental-vm-modules', '--disable-warning=ExperimentalWarning'], env: {}, resourceLimits: m.heap,
+        execArgv: ['--experimental-vm-modules', '--disable-warning=ExperimentalWarning'], env: {},
+        // kanban #2220, #2476: room for core-depth.js's DEPTH_MAX frames, so V8's own overflow is not reached through the core's functions
+        resourceLimits: { stackSizeMb: CORE_STACK_MB, ...m.heap },
         workerData: { files: m.files, entry: m.entry, name: m.name, port: m.port, ctrl: m.ctrl, arrayBudget: m.arrayBudget, liveCap: m.liveCap,
           answerMax: m.answerMax },
         transferList: [m.port],
