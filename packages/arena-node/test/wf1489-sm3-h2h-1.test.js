@@ -38,7 +38,9 @@ const nameBody = (rid, who, identity) => {
 const proof = (identity, rid, eid) => ({ key: toHex(identity.key), sig: toHex(schnorr.sign(matchProofId({ roundId: rid, entryId: eid, identityKey: identity.key }), identity.secret)) });
 
 test('#1489 sm3-h2h-1: a seat that missed a player\'s name record books his head-to-head entry to no identity, while the other seat books it to his', { timeout: 110000 }, async () => {
-  const w = await lockRound({ serveOpts: { plugins: [NEXTBLOCK, RPS] }, round: ROUND, minScore: 2, endMs: testNow() + SPAN_MS + 4000 });
+  // kanban #2659: THREE SEATS. A missed name record is carried only when at least two peers serve it (one seat alone could serve a record its
+  // player signed after the close with a backdated atMs - wf1489-r1-h2h-4); in two seats the one peer is that one seat, so the carry needs a third
+  const w = await lockRound({ serveOpts: { plugins: [NEXTBLOCK, RPS] }, round: ROUND, minScore: 2, n: 3, endMs: testNow() + SPAN_MS + 4000 });
   try {
     skipTo(Number(w.c.committeeTimeMs) + 20);
     const ALICE = keypair(), BOB = keypair();
@@ -46,9 +48,11 @@ test('#1489 sm3-h2h-1: a seat that missed a player\'s name record books his head
     const sa = new Uint8Array(randomBytes(32)), sb = new Uint8Array(randomBytes(32));
     const a = await lockAndPlay(w, pa, { hidden: { move: ROCK, salt: sa }, noMarks: true });
     const b = await lockAndPlay(w, pb, { hidden: { move: SCISSORS, salt: sb }, noMarks: true });
-    // the names go out with the join: both reach seat 0; Alice's post to seat 1 is lost (that seat was restarting), Bob's arrives
+    // the names go out with the join: both reach seats 0 and 2; Alice's post to seat 1 is lost (that seat was restarting), Bob's arrives
     const post = (d, body) => fetch(`http://127.0.0.1:${d.port}/name`, { method: 'POST', body }).then((r) => r.status);
-    const names = { alice0: await post(w.nodes[0], nameBody(w.rid, pa, ALICE)), bob0: await post(w.nodes[0], nameBody(w.rid, pb, BOB)), bob1: await post(w.nodes[1], nameBody(w.rid, pb, BOB)) };
+    const aliceName = nameBody(w.rid, pa, ALICE);   // one record, posted to every seat as the page does
+    const names = { alice0: await post(w.nodes[0], aliceName), alice2: await post(w.nodes[2], aliceName), bob0: await post(w.nodes[0], nameBody(w.rid, pb, BOB)),
+      bob1: await post(w.nodes[1], nameBody(w.rid, pb, BOB)), bob2: await post(w.nodes[2], nameBody(w.rid, pb, BOB)) };
     skipTo(Number(w.c.entryCloseMs) + 500);
     // seat 1 is back: the page's own resend of Alice's name, after the close, is refused there; the reveals reach both seats
     names.alice1Late = await post(w.nodes[1], nameBody(w.rid, pa, ALICE));
