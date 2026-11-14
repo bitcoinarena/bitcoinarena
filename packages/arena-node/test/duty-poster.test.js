@@ -167,7 +167,7 @@ test('the newest version the census can draw is posted (v24 over v13), on the ce
   const gb = createGridBase({ chainCall: async (m) => (m === 'getblockcount' ? 2000 : censusHash),
     censusEntriesAt: async () => [entry(games), entry(games), entry([games[1]])], contractAt: () => ({ networkId: NETWORK_ID_TESTNET4 }),
     catalogSeats: async () => seats, chainSeats: async () => seats, localCount: 1, devOf: { nextblock: DEV }, donationSetAt: () => new Uint8Array(32),
-    decode: (bytes) => games.find((g) => g.id === toHex(bytes)).m, idOf: (m) => fromHex(games.find((g) => g.m === m).id), blockHashOf,
+    decode: (bytes) => games.find((g) => g.id === toHex(bytes)).m, idOf: (m) => fromHex(games.find((g) => g.m === m).id), manifestSigned: () => true, blockHashOf,
     fetchFn: async (url) => (url.endsWith('/games') ? { ok: true, json: async () => ({ games: games.map((g) => ({ id: g.id, manifest: g.id })) }) }
       : { ok: true, arrayBuffer: async () => hdr.buffer.slice(0) }) });
   const base = await gb.gridBase('nextblock', DAY);
