@@ -48,8 +48,9 @@ test('the entry id is the tagged hash of its contract', () => {
 });
 
 test('a batch is stored tick by tick, and a repeat writes nothing', () => {
-  const r = fresh(), c = contract();
-  const rid = r.open(c); const e = entryFor(rid); const eid = r.enter(e);
+  // a FREE round: a staked Next Block run takes no player-declared liquidations (kanban #2655)
+  const r = fresh(), c = { ...contract(), stakeMsat: 0n };
+  const rid = r.open(c); const e = { ...entryFor(rid), stakeMsat: 0n, feeMsat: entryFeeMsat(0n) }; const eid = r.enter(e);
   const bytes = encodeInputBatch({
     roundId: rid, entryId: eid, previousHash: GENESIS, firstTick: 0,
     ticks: [[65536, 0, 0, 0, 0], [65536, 100, 0, 0, 0], [65536, 200, 0, 0, 0]],
@@ -188,9 +189,9 @@ test('a round outlives the process that opened it', async () => {
 
 
 test('a player who joined late starts at his own joinTick, not at zero', () => {
-  const r = fresh(), c = contract();
+  const r = fresh(), c = { ...contract(), stakeMsat: 0n };   // free: its liquidation is taken (kanban #2655)
   const rid = r.open(c);
-  const eid = r.enter({ ...entryFor(rid), joinTick: 50 });
+  const eid = r.enter({ ...entryFor(rid), stakeMsat: 0n, feeMsat: entryFeeMsat(0n), joinTick: 50 });
   assert.equal(r.nextTick(rid, eid), 50, 'read off the contract he signed');
   assert.throws(() => r.batch(encodeInputBatch({
     roundId: rid, entryId: eid, previousHash: GENESIS, firstTick: 0,
