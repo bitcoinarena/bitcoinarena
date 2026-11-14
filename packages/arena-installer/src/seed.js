@@ -112,6 +112,12 @@ export function nostrPubkeyHex(text) {
   const bytes = []; for (let i = 0; i + 8 <= bits.length; i += 8) bytes.push(bits.slice(i, i + 8).reduce((a, b) => (a << 1) | b, 0));
   return bytes.length === 32 ? Buffer.from(bytes).toString('hex') : null;
 }
+/** A 64-hex x-only key as its npub (NIP-19), for the page to say who the owner is (kanban #648); null when it is not 64 hex. */
+export function npubOf(hex) {
+  const t = String(hex || '').trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(t)) return null;
+  return bech32Encode('npub', convertBits([...Buffer.from(t, 'hex')], 8, 5, true));
+}
 function bech32Valid(hrp, data) {
   const G = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
   let chk = 1;
