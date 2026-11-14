@@ -34107,12 +34107,21 @@ async function fetchReserveKey({ federationId, nodes, needed = 5, fetcher = (u, 
         // key that seat's guardian seats agreed on at their threshold - every seat that knows the federation names it. Five must still agree.
         const f = ((await r.json()).federations || []).find((x) => x.federationId === fed && /^0[23][0-9a-f]{64}$/.test(String(x.key || x.reserveKey || '')));
         const k = f ? String(f.key || f.reserveKey) : null;
-        if (k) { said.set(k, (said.get(k) || 0) + 1); if (said.get(k) >= needed) done(); }
+        if (k) said.set(k, (said.get(k) || 0) + 1);
       } catch { /* a node that does not answer names nothing */ }
-    })().finally(() => { left -= 1; if (!left) done(); });
+    })().finally(() => {
+      left -= 1;
+      // NOT THE FIRST KEY TO REACH `needed` (kanban #2652): the nodes are URLs from a lobby link, and five extra paths of one stranger answering
+      // at once made five votes for the stranger's key before the real seats answered. Done early only when no other key - one named already
+      // or one still unheard - can reach `needed` with the answers still out; two keys that both reach it are refused below.
+      const top = [...said.values()].sort((a, b) => b - a);
+      if (!left || ((top[0] || 0) >= needed && (top[1] || 0) + left < needed)) done();
+    });
   });
   const best = [...said.entries()].sort((a, b) => b[1] - a[1])[0];
   if (!best) return { ok: false, why: `none of the round's ${asked.length} signer nodes names a reserve key for federation ${fed.slice(0, 8)}` };
+  const rival = [...said.entries()].find(([k, n]) => k !== best[0] && n >= needed);
+  if (rival) return { ok: false, why: `the round's signer nodes name two reserve keys, ${best[0].slice(0, 16)} and ${rival[0].slice(0, 16)}, each at least ${needed} times - the reserves are not paid to either` };
   if (best[1] < needed) return { ok: false, why: `only ${best[1]} of the round's signer nodes name reserve key ${best[0].slice(0, 16)}, and ${needed} must` };
   return { ok: true, key: fromHex(best[0]), agreeing: best[1], asked: asked.length };
 }
@@ -43481,7 +43490,7 @@ function outcomeFinality(held, { windowMs, nowMs }) {
  * MAY AN ATTESTATION COME IN YET (§0A.7a slice 2): only once the round's entries have closed on the seat's clock, and only
  * for an outcome seen after that close - an outcome known while a pick could still be made is a pick to be copied.
  */
-function attestationTimely(a, { entryCloseMs, nowMs, terms = null, window = null }) {
+function attestationTimely(a, { entryCloseMs, nowMs, terms = null, window = null, event = false }) {
   // A MARKET ON A GRID IS OBSERVED AT ITS OWN WINDOW'S END (kanban #1489): its attestors sign observed_at = the window's end
   // (marketWindowOf), so an outcome observed at any other moment is the outcome of another window - one a seat listing the
   // round with a shifted close could pick after watching the price. `window` is marketWindowOf(contract, manifest).window.
@@ -43493,6 +43502,14 @@ function attestationTimely(a, { entryCloseMs, nowMs, terms = null, window = null
     const t = marketTimes({ entryCloseMs, terms });
     if (BigInt(a.observedAtMs) < t.resolveAtMs)
       return { ok: false, why: `that attestation says it was observed at ${new Date(Number(a.observedAtMs)).toISOString()}, before the market's resolution time ${new Date(Number(t.resolveAtMs)).toISOString()}` };
+    // AND NOT AFTER IT EITHER (kanban #2649): the market asks for the outcome AT its resolution time, and its attestors sign
+    // observed_at = that time (attestor.js, drawn-attestor.js: the window's end = entry close + resolveAfterCloseMs). An outcome
+    // observed later is the outcome of another window - whoever steers when the attestors sign could pick among ~10 min of them.
+    // The same check holds for value attestations (scalar.js reads them here too).
+    // A TEMPLATE'S EVENT (feature 5, `event`) is a real-world fact its attestors report once it happened, observed after its resolution
+    // time (market-template.test.js): that one keeps the lower bound only
+    if (!event && BigInt(a.observedAtMs) !== t.resolveAtMs)
+      return { ok: false, why: `that attestation says it was observed at ${new Date(Number(a.observedAtMs)).toISOString()}, after the market's resolution time ${new Date(Number(t.resolveAtMs)).toISOString()}: it is the outcome of another moment than the one the market asked for` };
     // AND NOT AFTER ITS DEADLINE (kanban #1151): at the deadline a market with no outcome is VOID and its stakes go back at
     // once; an attestation withheld until then and handed in late would turn it ATTESTED over locks already returned
     if (BigInt(nowMs) >= t.deadlineMs)
