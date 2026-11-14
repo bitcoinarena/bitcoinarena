@@ -2,7 +2,7 @@
   "about": "What a node downloads of each app at its pinned commit (kanban #575): every file with its SHA-256. Written by tools/pin-apps.mjs from the apps' checkouts; never by hand.",
   "apps": {
     "arena-app-next-block": {
-      "commit": "1cced18e98ac04bf75ccb2ee23439a2859cf2546",
+      "commit": "16f465a8cb66aca314645c257a61e7a23108d633",
       "files": {
         "README.md": "7fc7113426fb4d9d22e36b8000a3693e669f40de4e020c5fb1bf89014dafc482",
         "app.json": "d00b5867765dbf6d73aa5e17fd93a400d33af4847ab100b5a7bbe3886e11bbdb",
@@ -251,7 +251,7 @@
         "plugin/known-v7.js": "3467731a13689cdd0a5fa76e0a8bf888022bc19ae1ab42b825d99e500e56975b",
         "plugin/known.js": "b04bacea77a3c85d3c7d9296eca3d9f8815df64b006cf63ef9a158870216f691",
         "plugin/nextblock-manifest.js": "71244d6c0807ef9fcbcdadd6410e1f6d8a7791a90621483991289e226887fa9b",
-        "plugin/nextblock-replay.html": "962c0e622886eb31d95118e05406c3324c7086af55c2b07ad6baa8aa47b88f8a",
+        "plugin/nextblock-replay.html": "36edfdb470d58ba838b27cc72d511dc318ce422ee1534990b0582def94950583",
         "plugin/nextblock-v2.js": "850090668b617382eafb5de181bdd199e15ccca5dc25f686a90c9a6063453059",
         "plugin/nextblock-v3.js": "7b6baaee190239d612168d0452e9e22c7839babb4d2aed0c695ef92d58fbcaeb",
         "plugin/nextblock-v4.js": "469596b80f8f311d47df51bff61e92886901c4aac5d7c7a9bb159d76c4633e4b",
