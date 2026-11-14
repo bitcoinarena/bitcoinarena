@@ -69,8 +69,11 @@ function merge(id, answers, readMs = null) {
   const entry = agreed(held.map((a) => a.body.entry));
   // the seats that hold that entry (kanban #1510): only they speak for the rest of it
   const known = entry ? held.filter((a) => JSON.stringify(a.body.entry) === JSON.stringify(entry)) : [];
+  // HAS IT = HOLDS THE AGREED ENTRY (kanban #2120, refute of #1510): a seat's own body.known was shown, so a seat sending a made-up entry
+  // under a real id read "Has it: yes" with its own stored time and counted in "Nodes N of 14"; paymentTx already used the agreed row
+  const holds = new Set(known);
   const seats = answers.map((a) => ({ seat: seatName(a.seat), key: a.body && a.body.seat ? a.body.seat : null,
-    status: a.status, known: !!(a.body && a.body.known), storedAt: a.body && a.body.storedAt ? a.body.storedAt : null,
+    status: a.status, known: holds.has(a), storedAt: holds.has(a) && a.body.storedAt ? a.body.storedAt : null,
     steps: a.body && Array.isArray(a.body.steps) ? a.body.steps : [], book: a.body ? a.body.book || null : null, why: a.why || null,
     did: a.body && a.body.processed && Array.isArray(a.body.processed.mine) ? a.body.processed.mine : [],
     locks: a.body && a.body.locks ? a.body.locks : null }));
@@ -87,7 +90,9 @@ function merge(id, answers, readMs = null) {
   // fewer than AGREE seats send the same of is left null
   const proc = known.map((a) => a.body.processed).filter(Boolean);
   const pick = (k) => agreed(proc.map((p) => p[k]).filter((v) => v && (!Array.isArray(v) || v.length)));
-  const names = Object.fromEntries(seats.filter((x) => x.key).map((x) => [x.key, x.seat]));
+  // A KEY'S NAME ONLY FROM A SEAT THAT HOLDS THE AGREED ENTRY (kanban #2090, refute of #1510): every answering seat's body.seat was taken and
+  // the last one won, so a seat that does not hold the order (fed2-7, known:false) renamed the asker and attestors
+  const names = Object.fromEntries(seats.filter((x) => x.key && x.known).map((x) => [x.key, x.seat]));
   const processed = proc.length ? { game: pick('game'), settlement: pick('settlement'), asker: pick('asker'), outcomes: pick('outcomes') || [],
     settledAt: pick('settledAt'), settlementWhy: pick('settlementWhy'), names } : null;
   // stored first: the AGREE-th earliest time of the seats that hold the entry - no one seat moves it to another day (kanban #1510)
