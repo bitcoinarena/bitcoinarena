@@ -23806,9 +23806,26 @@ function pendingDrop(storage, federationId, operation) {
  */
 function depositEnded(storage, federationId, operation, final, d) {
   let added = false;
-  if (final === DEPOSIT_STATE.CLAIMED) added = depositRowOnce(storage, federationId, d);
+  if (final === DEPOSIT_STATE.CLAIMED) {
+    added = depositRowOnce(storage, federationId, d);
+    // THE ROW FIRST, THEN THE ENTRY (kanban #2534, the #1179 order): a full browser refuses the history row (ledgerAppend answers false), and
+    // dropping the pending entry anyway left a claimed deposit named nowhere - its federation's only record, so ledgerFederations no longer
+    // named a wallet that holds the sats. The entry is dropped only once the row is held (written now, or by an earlier page); else the next
+    // page (resumeDeposits) writes it.
+    if (!added && !depositRowHeld(storage, federationId, d)) return false;
+  }
   if (final === DEPOSIT_STATE.CLAIMED || final === DEPOSIT_STATE.EXPIRED || final === DEPOSIT_STATE.FAILED) pendingDrop(storage, federationId, operation);
   return added;
+}
+/** Is this claimed deposit's history row held in this browser (kanban #2534)? By its invoice's hash, else by its operation's row key. */
+function depositRowHeld(storage, federationId, d) {
+  if (!storage || !fedHexOf(federationId)) return false;
+  let invoiceHash = null;
+  try { invoiceHash = toHex(decodeBolt11(d.invoice).paymentHash); } catch { invoiceHash = null; }
+  const kind = d.row && typeof d.row.kind === 'string' ? d.row.kind : 'deposit';
+  if (invoiceHash) return ledgerRows(storage, federationId).some((r) => r.kind === kind && r.invoiceHash === invoiceHash);
+  if (d.operation) { try { return storage.getItem(`${ledgerKey(federationId)}.dep-op-${String(d.operation).toLowerCase().replace(/[^0-9a-z_-]/g, '')}`) !== null; } catch { return false; } }
+  return false;
 }
 /** THE WELCOME THAT CAME AS E-CASH (kanban #1381): one deposit row per e-cash string, however many pages received it. */
 function faucetEcashRowOnce(storage, federationId, { ecash, msat }) {
@@ -24584,8 +24601,12 @@ async function keptLockStake(ask) {
     if (['submitted', 'accepted', 'committed'].includes(now.state))
       throw new Error(`no second lock is made for this round: this player's stake lock for it is already ${now.state}`);
     const iKey = lockIntentKey(roundId, playerPubkey);
-    if (now.state === 'intent') {
-      const r = now.record;
+    // kanban #1946: the intent key is read whatever the saved record says - lockRecordOf answers the saved record first, so an intent a dead
+    // tab left under a REFUSED record (PLAY 2 after a refused PLAY 1) was invisible and written over, its submitted transaction named nowhere
+    const pending = now.state === 'intent' ? now.record : readJson(storage, iKey);
+    if (pending) {
+      const r = pending;
+      // the intent itself is what is kept aside below - under a REFUSED record now.record is that record, not the intent (kanban #1946)
       if (!r.failed && Date.now() - Number(r.atMs || 0) < LOCK_INTENT_LIVE_MS)
         throw new Error('another tab is locking this round\'s stake for this player right now: no second lock is made');
       // a tab closed while its lock client was asked: the transaction it names (if any) may hold the stake - kept aside, never written over
@@ -24775,11 +24796,18 @@ function bindLockEntry(storage, { roundId, playerPubkey, entryId: eid }) {
  * failed (a seat 503, the round full, offline) left the lock "staked" in an entry no seat holds - a new tab, which has no copy of that entry, could never
  * use it again. `locks` is findLock's answer for this seed in the round: when every seat asked answered and none names the kept lock under the entry,
  * the entry is let go of (never one a seat committed to). Answers true when it was.
+ * AND NO SEAT HOLDS THE ENTRY ITSELF (kanban #1839, state audit 2026-11-12 sm3-entry-1): GET /stake-lock lists only VERIFIED locks, so an entry every
+ * seat took (201) whose /lock never landed (the tab reloaded first) read "none" - the lock was let go of, the next entry naming it was refused at every
+ * seat (a lock stakes the entry that named it first, #1489), and stake and fee backed nothing until expiry. `entries` is entryHeldAt's answer for the
+ * kept entry: the lock is let go of only when every seat asked answered and none holds that entry; without it, never. An entry a seat holds keeps the
+ * lock, and its stake comes back through the seats' unentered return (POST /refused-lock) after the round's close.
  */
-function releaseUntakenEntry(storage, { roundId, playerPubkey, locks }) {
+function releaseUntakenEntry(storage, { roundId, playerPubkey, locks, entries = null }) {
   const now = lockRecordOf(storage, { roundId, playerPubkey });
   if (now.state === 'none' || now.state === 'intent' || now.record.committedTo || !now.record.entry) return false;
   if (!locks || !(locks.asked > 0) || locks.answered !== locks.asked) return false;
+  if (!entries || String(entries.entryId || '').toLowerCase() !== String(now.record.entry).toLowerCase()
+    || !(entries.asked > 0) || entries.answered !== entries.asked || entries.heldBy.length) return false;
   const at = now.record.outpoint ? `${String(now.record.outpoint.txid)}:${String(now.record.outpoint.outIdx)}` : null;
   const named = (locks || []).some((l) => String(l.entryId || '').toLowerCase() === String(now.record.entry).toLowerCase()
     || (at && l.outpoint && `${toHex(l.outpoint.txid)}:${String(l.outpoint.outIdx)}` === at));
@@ -24787,6 +24815,24 @@ function releaseUntakenEntry(storage, { roundId, playerPubkey, locks }) {
   const { entry: _gone, ...rest } = now.record;
   putRoomy(storage, now.key, JSON.stringify(rest));
   return true;
+}
+
+/**
+ * WHICH SEATS HOLD AN ENTRY (kanban #1839): GET /entry?id= at each seat - 200 holds it, 404 does not, anything else (or no answer) is not an answer.
+ * { entryId, asked, answered, heldBy } - what releaseUntakenEntry needs before it lets go of a lock named in that entry.
+ */
+async function entryHeldAt({ entryId, nodes, fetcher = fetch } = {}) {
+  const id = typeof entryId === 'string' ? entryId.toLowerCase() : toHex(entryId);
+  const asked = [...new Set(nodes || [])];
+  const said = await Promise.all(asked.map(async (node) => {
+    try {
+      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/entry?id=${id}`, { signal: AbortSignal.timeout(SEAT_READ_MS) });
+      try { await r.arrayBuffer(); } catch { /* the body is not read */ }
+      return r.status === 200 ? 'held' : r.status === 404 ? 'not' : 'silent';
+    } catch { return 'silent'; }
+  }));
+  return { entryId: id, asked: asked.length, answered: said.filter((x) => x !== 'silent').length,
+    heldBy: asked.filter((_, i) => said[i] === 'held').map((n) => String(n).replace(/\/+$/, '')) };
 }
 
 /** A signer node committed the kept lock to `entryId`: from now on it is that entry's stake, not one to reuse. Final: never another entry. */
@@ -34284,8 +34330,16 @@ async function fetchProposals({ nodes, needed = 5, fetcher = (u, o) => fetch(u, 
       p = { id: toHex(id), purpose: o.purpose, amountSats: String(o.amountSats), lnurl: o.lnurl, author: toHex(o.author), network: toHex(o.networkId),
         publishedHeight: o.publishedHeight };
     } catch { continue; }
-    const [stageKey] = fundingMost(views.map((v) => JSON.stringify([v.signal && v.signal.state, v.vote && v.vote.state, v.cancelled || null])));
-    const v = views.find((x) => JSON.stringify([x.signal && x.signal.state, x.vote && x.vote.state, x.cancelled || null]) === stageKey);
+    const stageOf = (x) => JSON.stringify([x.signal && x.signal.state, x.vote && x.vote.state, x.cancelled || null]);
+    const [stageKey] = fundingMost(views.map(stageOf));
+    // AND WHAT IS SHOWN WITH IT, BY MOST OF THOSE SEATS (kanban #2494, #1489 a44-refute-17-s2-1): the vote's count and last block, the
+    // signal's end, supporters and active nodes were the first-listed seat's JSON among those giving the stage - one seat listed first
+    // set "YES 99%" beside six honest seats' 12 %. The version most of the seats giving the stage hand is shown (on 2.0 with the
+    // signal count, which is read off the shown view)
+    const agree = views.filter((x) => stageOf(x) === stageKey);
+    const shownOf = (x) => JSON.stringify([x.signal || null, x.vote || null, x.cancelled || null, Array.isArray(x.signals) ? x.signals.length : 0]);
+    const [shownKey] = fundingMost(agree.map(shownOf));
+    const v = agree.find((x) => shownOf(x) === shownKey);
     proposals.push({ id: p.id, purpose: p.purpose, amountSats: String(p.amountSats), lnurl: p.lnurl, author: p.author, network: p.network,
       publishedHeight: p.publishedHeight, signal: v.signal, vote: v.vote, cancelled: v.cancelled || null, signals: (v.signals || []).length,
       comments: [...comments.values()].sort((a, b) => a.atHeight - b.atHeight || (a.id < b.id ? -1 : 1)), holding: views.length });
@@ -36298,6 +36352,7 @@ async function explorerAgrees({ base, points, fetcher = fetch, timeoutMs = 8000 
 
 
 
+
 /**
  * THE ARBITRATION SET AND BOND TERMS A BOND IS REBUILT WITH, per network: genesis' own (testnetShape: 5 of the 7 keys,
  * template-1 maturity 100). Read from genesis-ids.js rather than genesis.js, which the page's bundle does not carry;
@@ -36437,18 +36492,31 @@ async function evidenceFor(roundIdHex, contract, nodes, { fetcher, skip = new Se
   if (!got.length) return { ok: false, why: `no node handed over the census: ${refused.join('; ')}` };
   if (got.length < providers) return { ok: false, lookOnly: true, from: got[0].from, entries: got[0].entries, refused,
     why: `only ${got.length} provider handed over the census - a bond list one provider serves alone is enough to look, not to lock (${refused.join('; ') || 'no other answered'})` };
-  return { ok: true, entries: unionOfEntries(got.map((g) => g.entries)), from: got.map((g) => g.from).join(' + '), fromNodes: got.map((g) => g.from), refused };
+  return { ok: true, entries: unionOfEntries(got.map((g) => g.entries)), from: got.map((g) => g.from).join(' + '), fromNodes: got.map((g) => g.from), lists: got.map((g) => g.entries), refused };
 }
 /**
  * Census entries from several providers, joined by bond; the first copy of each bond is kept. A seat's GET /census entry is the bond's evidence
  * ({ transaction, position, branch, update }), so a bond is its raw transaction there; an entry naming txid and vout is keyed by them (#1333:
  * keyed by txid:vout alone, the 18 live entries all became "undefined:undefined" - one entry, a root that never matched).
  */
-const bondKeyOf = (e) => (e && e.txid !== undefined && e.vout !== undefined
-  ? `o:${Array.isArray(e.txid) || e.txid instanceof Uint8Array ? toHex(Uint8Array.from(e.txid)) : String(e.txid)}:${e.vout}`
-  // A BOND'S HEX IS ONE KEY WHATEVER ITS CASE (kanban #1708): fromHex reads 'AB' and 'ab' alike, so one provider repeating a bond in upper
-  // case kept two copies in the union, censusRootOf threw 'duplicate outpoint' and the join was refused for good
-  : `t:${typeof e?.transaction === 'string' ? e.transaction.toLowerCase() : JSON.stringify(e)}`);
+// A BOND IS KEYED BY WHAT IT READS AS, NOT HOW IT IS SPELLED (kanban #1708, then on 1.9 #2160, #2228, #2301; ported to 2.0 with #2500): lower-casing was not enough - fromHex
+// reads ' d', '+d' and 'd ' as 0x0d too, so a repeat spelled that way kept two copies, censusRootOf threw 'duplicate outpoint' and both
+// providers were skipped, the honest one with the liar. The key is the transaction's txid (witness bytes do not change it), with the
+// re-affirmation's for a carried bond - the client derives one entry from exactly that pair.
+const txidKeyOf = (t) => {
+  if (t === undefined || t === null) return '';
+  try { return toHex(parseTransaction(t instanceof Uint8Array ? t : fromHex(String(t))).txid); }
+  catch { return `raw:${typeof t === 'string' ? t.toLowerCase() : JSON.stringify(t)}`; }
+};
+// THE TRANSACTION FIRST (kanban #2500, #1489 a44-refute-48-s2): an entry carrying its transaction was keyed by the txid / vout fields the
+// provider wrote beside it whenever it wrote them, so one seat repeating a bond with made-up txid / vout fields kept two copies in the
+// union (1.9: past the own-list repeat check), the union threw 'duplicate outpoint' and the honest co-provider was skipped with it. An entry with a transaction is keyed
+// by that transaction (what the client derives the bond from); provider-written txid / vout key only an entry that carries none.
+const bondKeyOf = (e) => (e && e.transaction !== undefined
+  ? `t:${txidKeyOf(e.transaction)}:${e.reaffirm && typeof e.reaffirm === 'object' ? txidKeyOf(e.reaffirm.transaction) : ''}`
+  : e && e.txid !== undefined && e.vout !== undefined
+    ? `o:${Array.isArray(e.txid) || e.txid instanceof Uint8Array ? toHex(Uint8Array.from(e.txid)) : String(e.txid)}:${e.vout}`
+    : `j:${JSON.stringify(e)}`);
 function unionOfEntries(lists) {
   const byBond = new Map();
   for (const list of lists) for (const e of list || []) {
@@ -36583,17 +36651,36 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
   // round and named nobody)
   const censusRefused = []; const skip = new Set();
   let got, bondRead = bondTerms;
+  const tryEntries = (entries, census) => {
+    try {
+      return committeeFromChain({ contract, roundId, headers: chain.chain.headers, firstHeight: chain.firstHeight, evidence: entries, roles,
+        bond: bondRead, verify: curve.verify, census });
+    } catch (e) { return { ok: false, why: `that census cannot be committed: ${e && e.message ? e.message : String(e)}` }; }
+  };
+  const refusedWhy = /^(the census the seats handed over hashes to |that census cannot be committed: )/;
   for (;;) {
     if (!evidence.ok) return { ...evidence, why: evidence.why + (censusRefused.length ? `; ${censusRefused.map((x) => `${x.node}: ${x.why}`).join('; ')}` : ''), censusRefused };
     bondRead = await withKeys(evidence);
-    got = committeeFromChain({ contract, roundId, headers: chain.chain.headers, firstHeight: chain.firstHeight, evidence: evidence.entries, roles,
-      bond: bondRead, verify: curve.verify, census: skip.size ? null : keptChecked.get(toHex(contract.censusRoot)) || null });
+    // A THROW WHILE CHECKING A PROVIDER'S EVIDENCE IS THAT PROVIDER'S FAULT (kanban #2532, as 1.9's #2160): a refusal by name, never a throw out of the join
+    got = tryEntries(evidence.entries, skip.size ? null : keptChecked.get(toHex(contract.censusRoot)) || null);
     // A CENSUS THAT CANNOT BE COMMITTED IS A PROVIDER'S FAULT TOO (kanban #1708): a union with one outpoint twice (any encoding of one bond)
     // threw in censusRootOf, which is not a root mismatch, so the loop stopped and never asked the other seats - its providers are skipped
-    if (got.ok || evidence.from === 'kept' || !/^(the census the seats handed over hashes to |that census cannot be committed: )/.test(String(got.why))) break;
+    if (got.ok || evidence.from === 'kept' || !refusedWhy.test(String(got.why))) break;
     censusRefused.push({ node: evidence.from, why: `its census ${String(got.why).replace(/^the census the seats handed over |^that census /, '')}` });
     // each provider of a union that did not hash to the root is skipped (#1333: skipping the joined "a + b" skipped nobody, and the same pair came back forever)
-    for (const n of evidence.fromNodes || [evidence.from]) skip.add(n);
+    // - BUT NOT AN HONEST ONE WITH THE LIAR (kanban #2532, #1489 a44-refute-48-s2): the union keeps the first copy of each bond, so one seat
+    // listed first with a broken copy of a true bond (a wrong position or branch, the same txid) dropped the honest copy, and both providers
+    // were skipped - on three seats the last one alone was look-only and the join refused. Each provider's own list is checked alone then:
+    // when some stand and some do not, only those that do not are skipped (the next union pairs the others again); when none or all
+    // stand alone, every provider of the union is skipped, as before.
+    const providers = evidence.fromNodes || [evidence.from];
+    let faulty = providers;
+    if (providers.length > 1 && Array.isArray(evidence.lists) && evidence.lists.length === providers.length) {
+      const alone = evidence.lists.map((entries) => tryEntries(entries, null));
+      const bad = providers.filter((_, i) => !alone[i].ok);
+      if (bad.length && bad.length < providers.length) faulty = bad;
+    }
+    for (const n of faulty) skip.add(n);
     evidence = await evidenceFor(roundIdHex, contract, nodes, { fetcher, skip });
   }
   if (!got.ok) return { ...got, censusRefused };
@@ -46038,7 +46125,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          fetchReserveKey: fetchReserveKey, fetchReservesTotal: fetchReservesTotal, fetchReservesPaymentsOut: fetchReservesPaymentsOut, paymentOutLine: paymentOutLine, fetchProposals: fetchProposals, fetchNetworkId: fetchNetworkId, signedProposal: signedProposal, signedComment: signedComment, signedName: signedName, forumIdentity: forumIdentity, forumNameOf: forumNameOf, giftDonation: giftDonation, signedLeaderboardPayout: signedLeaderboardPayout, splitFromPercents: splitFromPercents, fetchLeaderboards: fetchLeaderboards, heightAtDate: heightAtDate, LB_SCOPE: LB_SCOPE, LB_PERIOD_DAYS: LB_PERIOD_DAYS, LB_TOP_MAX: LB_TOP_MAX, fetchFees: fetchFees, feeChangesFrom: feeChangesFrom, signedFeeProposal: signedFeeProposal, earliestActivation: earliestActivation, roundFeesLine: roundFeesLine, marketFeesLine: marketFeesLine, marketFeeBpsOf: marketFeeBpsOf, FEE_UNITS: FEE_UNITS, FEES: FEES, FEES_TODAY: FEES_TODAY, feeProposalStands: feeProposalStands, zapPlayer: zapPlayer, collectZaps: collectZaps, referralOf: referralOf, referralNameFor: referralNameFor, myOrdersFromEntries: myOrdersFromEntries, mountExchange: mountExchange, exchangeLadder: exchangeLadder, exchangeHistory: exchangeHistory, exchangeVolume: exchangeVolume, giftAmountOf: giftAmountOf, giftRecipientsLine: giftRecipientsLine, GIFT_CHOICES_SAT: GIFT_CHOICES_SAT, postFunding: postFunding, newProposalKey: newProposalKey, keyOfNsec: keyOfNsec, npubOf: npubOf, npubOfKey: npubOfKey, reservesDonation: reservesDonation, reservesDonationForRound: reservesDonationForRound, roundPaysReserves: roundPaysReserves, roundGiftsInFee: roundGiftsInFee,
          playerWallet: playerWallet, openPlayerWallet: openPlayerWallet, FAUCET_GRANTS: FAUCET_GRANTS, askFaucet: askFaucet, faucetEcashRowOnce: faucetEcashRowOnce, forgetPhraseWallets: forgetPhraseWallets, useSeatedGateways: useSeatedGateways, seatedGatewaysOf: seatedGatewaysOf, walletDepositOffer: walletDepositOffer, walletDepositChoices: walletDepositChoices, fundPlayerWallet: fundPlayerWallet, earlyDepositOffer: earlyDepositOffer, joinFundingPlan: joinFundingPlan, notSpendableYet: notSpendableYet, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, tidyStorage: tidyStorage, seedRecovers: seedRecovers,
          withdrawPlayerWallet: withdrawPlayerWallet,
-         onStorageRefused: onStorageRefused, packWallets: packWallets, scanLostDeposits: scanLostDeposits, saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, reopenUncheckedDone: reopenUncheckedDone, releaseUntakenEntry: releaseUntakenEntry, keptLockUse: keptLockUse,
+         onStorageRefused: onStorageRefused, packWallets: packWallets, scanLostDeposits: scanLostDeposits, saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, reopenUncheckedDone: reopenUncheckedDone, releaseUntakenEntry: releaseUntakenEntry, entryHeldAt: entryHeldAt, keptLockUse: keptLockUse,
          reconcileKeptLock: reconcileKeptLock, bindLockEntry: bindLockEntry, lockRecordOf: lockRecordOf, collectState: collectState, forfeitCheck: forfeitCheck, settlementAgreement: settlementAgreement, useWalletGate: useWalletGate,
          roundEndMs: roundEndMs,
          ledgerRows: ledgerRows, ledgerReadSavedStakes: ledgerReadSavedStakes, ledgerHistory: ledgerHistory,
