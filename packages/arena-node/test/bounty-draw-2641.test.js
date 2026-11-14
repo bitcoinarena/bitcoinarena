@@ -46,3 +46,13 @@ test('#2641 the seed block: the first header time after the end; exactly at the 
   times[25] = E + 50;       // an earlier block stamped after the end (within the margin) is the first one
   assert.equal((await seedBlockAfter(end, chain)).height, 25);
 });
+
+test('#2641 the open-issues list holds our own audit cards too, by area and number only', async () => {
+  const { openIssueAreas } = await import('../src/bounty-season.js');
+  const l = openIssueAreas([{ id: 2700, title: 'Audit [high] Season account signature leaves out bot mark: unsigned', status: 'todo', tags: [] },
+    { id: 2701, title: 'State machine (settle, retry) double payout window', status: 'todo', tags: [] },
+    { id: 2702, title: 'Polish the lobby colours', status: 'todo', tags: ['UX'] }, { id: 2703, title: 'Audit [low] fixed thing', status: 'done', tags: [] }]);
+  const all = l.areas.flatMap((a) => a.tickets);
+  assert.deepEqual(all.sort(), ['#2700', '#2701']);
+  assert.equal(JSON.stringify(l).includes('signature'), false, 'never a title');
+});

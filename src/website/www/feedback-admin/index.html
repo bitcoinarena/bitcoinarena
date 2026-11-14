@@ -63,8 +63,8 @@
         <select id="f-state"><option value="">every state</option><option>new</option><option>accepted</option><option>rejected</option><option>duplicate</option><option>paid</option></select>
         <select id="f-type"><option value="">every category</option><option>bug</option><option>improvement</option></select>
         <select id="f-source"><option value="">frontend and node</option><option value="frontend">frontend</option><option value="node">node</option></select>
-        <select id="f-week" aria-label="Week"><option value="">every week</option><option value="1">Week 1</option><option value="2">Week 2</option></select>
-        <label class="dim"><input type="checkbox" id="f-showweek"> show week</label>
+        <select id="f-week" aria-label="Season"><option value="">every season</option><option value="1">Season 1</option><option value="2">Season 2</option></select>
+        <label class="dim"><input type="checkbox" id="f-showweek"> show season</label>
         <input id="f-game" placeholder="game" size="14"><input id="f-key" placeholder="player key (hex)" size="20">
         <button id="reload">Show</button><button id="csv">Export CSV</button><button id="logout">Forget code</button>
       </div>
@@ -152,16 +152,16 @@
       const nbFirst = r.nodeBounty && r.nodeBounty.first && r.state === 'new';
       const from = el('td', {}, el('span', { cls: `tag ${r.source === 'node' ? 's-accepted' : 's-new'}`, text: r.source === 'node' ? 'node' : 'frontend' }), r.node ? el('div', {}, el('code', { text: `${r.node.slice(0, 10)}…` })) : null,
         nbFirst ? el('div', {}, el('span', { cls: 'tag s-paid', text: `+${sats(r.nodeBounty.sats)} first node feedback` })) : null);
-      const tr = el('tr', { cls: 'pick' }, el('td', {}, el('b', { text: r.label || '' }), el('div', { cls: 'dim', text: when(r.receivedMs) }), showWeek ? el('div', {}, el('span', { cls: `tag ${wk === 2 ? 's-accepted' : 's-new'}`, text: `Week ${wk}` })) : null), from,
+      const tr = el('tr', { cls: 'pick' }, el('td', {}, el('b', { text: r.label || '' }), el('div', { cls: 'dim', text: when(r.receivedMs) }), showWeek ? el('div', {}, el('span', { cls: `tag ${wk === 2 ? 's-accepted' : 's-new'}`, text: `Season ${wk}` })) : null), from,
         // its number (kanban #1413) heads the first cell; CATEGORY AND STATE are their own cells (Daniel 2026-11-10: "The table is off" - a comment
         // written into this line hid both, so every later cell sat two columns left: the text under State, the player under Game)
         el('td', { text: r.type + (r.screenshot ? ' 🖼' : '') }), el('td', {}, el('span', { cls: `tag s-${r.state}`, text: r.state })),
         el('td', { cls: 'hide-s', text: r.game || '' }), el('td', { text: r.happened.length > 140 ? `${r.happened.slice(0, 140)}…` : r.happened }), who,
-        el('td', { text: r.reward ? `${sats(r.reward.amountSats)} · ${r.reward.state} · Week ${wk}` : r.amountSats ? `${sats(r.amountSats)} approved · Week ${wk}` : '' }));
+        el('td', { text: r.reward ? `${sats(r.reward.amountSats)} · ${r.reward.state} · Season ${wk}` : r.amountSats ? `${sats(r.amountSats)} approved · Season ${wk}` : '' }));
       tr.addEventListener('click', () => open(r.id));
       tb.append(tr);
     }
-    say(`${shown} report${shown === 1 ? '' : 's'}${wantWeek ? ` in Week ${wantWeek}` : ''}`);
+    say(`${shown} report${shown === 1 ? '' : 's'}${wantWeek ? ` in Season ${wantWeek}` : ''}`);
   }
   async function open(id) {
     let j; try { j = await call(`report/${id}`); } catch (e) { return say(e.message, true); }
@@ -204,7 +204,7 @@
       }, (e) => box.replaceChildren(el('h2', { text: 'Node bounty checklist' }), el('div', { cls: 'bad', text: e.message }))); }
     if (r.reason) d.append(el('div', { cls: 'bad', text: `Rejected: ${r.reason}` }));
     if (r.duplicateOf) d.append(el('div', { cls: 'dim', text: `Duplicate of ${r.duplicateOf.slice(0, 16)}…` }));
-    if (r.reward) d.append(el('div', {}, el('b', { text: `Week ${weekOf(r, WEEK2, S1_END)} reward ${sats(r.reward.amountSats)} (${r.reward.network}) · ${r.reward.state}${r.reward.address ? ` · to ${r.reward.address}` : ''}` }),
+    if (r.reward) d.append(el('div', {}, el('b', { text: `Season ${weekOf(r, WEEK2, S1_END)} reward ${sats(r.reward.amountSats)} (${r.reward.network}) · ${r.reward.state}${r.reward.address ? ` · to ${r.reward.address}` : ''}` }),
       r.reward.comment ? el('div', { cls: 'dim', text: `Comment: ${r.reward.comment}` }) : null, r.reward.why && r.reward.state !== 'paid' ? el('div', { cls: 'warn', text: r.reward.why }) : null,
       r.reward.lnurl ? el('div', {}, el('code', { text: r.reward.lnurl })) : null));
     const act = async (body, ok) => { let a; try { a = await call('act', { id: r.id, ...body }); } catch (e) { return say(e.message, true); } if (!a.ok) return say(a.why, true); say(ok); await load(); await open(r.id); };

@@ -1,0 +1,6 @@
+[Unit]
+Description=#2623 the public open-issues list (areas and ticket numbers only) from the board
+[Service]
+Type=oneshot
+WorkingDirectory=/home/daniel/blwp-testnet4/faucet/code1489/packages/arena-node
+ExecStart=/home/daniel/.nvm/versions/node/v24.22.3/bin/node tools/bounty-open-issues.mjs /home/daniel/blwp-testnet4/faucet/open-issues.json

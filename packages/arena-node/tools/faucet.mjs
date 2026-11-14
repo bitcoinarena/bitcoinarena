@@ -709,7 +709,7 @@ if (S2) setInterval(() => { if (!S2_STARTED() || !bountyOn()) return;
       if (!p.ok) continue;
       if (p.waits) { if (p.season !== a.season) S2.wait(r, p, { by: 'season2' }); continue; }
       const out = s2Approve(r, p, 'season2');
-      console.log(`${new Date().toISOString()} week 2: ${r.label || r.id.slice(0, 12)} ${out.ok ? `approved ${p.sats} sat` : `not approved: ${out.why}`}`);
+      console.log(`${new Date().toISOString()} season 2: ${r.label || r.id.slice(0, 12)} ${out.ok ? `approved ${p.sats} sat` : `not approved: ${out.why}`}`);
     }
   }).catch(() => {});
 }, Number(env.FAUCET_BOUNTY_S2_SWEEP_MS || 60000)).unref();
@@ -860,8 +860,8 @@ createServer((req, res) => {
           // SEASON 2 (kanban #2623): the amount is the season's rule, not the admin's - the level (or a follow-up) halved for a code-only finding, the
           // community bonus from the reporter's links read live now, held to the season's pot (past it the report waits for the next season, still new)
           if (b.season2 === true) {
-            if (!S2) return send(503, { ok: false, why: 'Week 2 is not kept here' });
-            if (!S2_STARTED()) return send(200, { ok: false, why: `Week 2 starts ${S2_START_DAY}` });
+            if (!S2) return send(503, { ok: false, why: 'Season 2 is not kept here' });
+            if (!S2_STARTED()) return send(200, { ok: false, why: `Season 2 starts ${S2_START_DAY}` });
             const r = FEEDBACK.report(b.id);
             if (!r) return send(200, { ok: false, why: 'no such report' });
             if (r.state !== 'new') return send(200, { ok: false, why: `a ${r.state} report is not approved for money` });
@@ -869,7 +869,7 @@ createServer((req, res) => {
             if (level !== 'node') await S2.verify(r.pubkey, S2_VERIFY, { cause: 'approve' });
             const p = S2.plan(r, { level, codeOnly: b.codeOnly === true, followUp: b.followUp === true });
             if (!p.ok) return send(200, p);
-            if (p.waits) return send(200, { ok: false, waits: true, why: `Week ${p.season}'s pot has ${p.pot.leftSats} sat left and this report is ${p.sats}: it waits for the next week`, season2: S2.wait(r, p, { by }) });
+            if (p.waits) return send(200, { ok: false, waits: true, why: `Season ${p.season}'s pot has ${p.pot.leftSats} sat left and this report is ${p.sats}: it waits for the next season`, season2: S2.wait(r, p, { by }) });
             return send(200, s2Approve(r, p, by));
           }
           // A CRITICAL BUG ABOVE THE BANDS IS THE OWNER'S OWN CALL: critical: true lifts mostSats to the amount for this one approval
@@ -878,7 +878,7 @@ createServer((req, res) => {
           // Week 1, whatever its budget says - it takes the overflow path below
           const late0 = FEEDBACK.report(b.id);
           const late = !!(S2 && Number.isFinite(S1_END_MS) && late0 && late0.state === 'new' && late0.receivedMs >= S1_END_MS);
-          const s1 = late ? { ok: false, why: 'received after Week 1 ended' } : FEEDBACK.approve(b.id, b.amountSats, { played: PLAYED.played, excluded: ourKeys(), rules, severity: b.severity || null, by });
+          const s1 = late ? { ok: false, why: 'received after Season 1 ended' } : FEEDBACK.approve(b.id, b.amountSats, { played: PLAYED.played, excluded: ourKeys(), rules, severity: b.severity || null, by });
           // PAST THE WEEK 1 BUDGET THE REPORT MOVES TO WEEK 2 (Daniel 2026-11-13 ~17:55Z): kept waiting, a note on its log, approved by the Week 2
           // rules once Week 2 runs; a report that fits stays Week 1 as before
           if (late || (!s1.ok && S2 && /this week's budget/.test(String(s1.why || '')))) {
@@ -887,7 +887,7 @@ createServer((req, res) => {
             const p = r ? S2.plan(r, { level, codeOnly: b.codeOnly === true, followUp: b.followUp === true }) : { ok: false };
             if (!p.ok) return send(200, s1);
             const waiting = S2.wait(r, p, { by });
-            FEEDBACK.remark(r.id, late ? 'received after Week 1 ended: Week 2 rules' : `moved to Week 2: the Week 1 budget is used up; approved by the Week 2 rules${S2_START_DAY ? ` once Week 2 starts (${S2_START_DAY})` : ''}`, { by });
+            FEEDBACK.remark(r.id, late ? 'received after Season 1 ended: Season 2 rules' : `moved to Season 2: the Season 1 budget is used up; approved by the Season 2 rules${S2_START_DAY ? ` once Season 2 starts (${S2_START_DAY})` : ''}`, { by });
             return send(200, { ok: true, movedToSeason2: true, why: s1.why, season2: waiting });
           }
           return send(200, s1);

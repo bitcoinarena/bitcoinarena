@@ -13,6 +13,11 @@ const key = readFileSync(process.env.KANBAN_KEY_FILE || `${process.env.HOME}/.co
 const r = await fetch(`${process.env.KANBAN_URL || 'http://127.0.0.1:18850'}/api/tasks`, { headers: { authorization: `Bearer ${key}` } });
 const body = await r.json();
 const list = openIssueAreas(Array.isArray(body) ? body : body.tasks);
+// ONE LINE A RUN (kanban #2641): changed or not, the counts, added and removed. The faucet serves the file as it is: no page deploy, ever
+const ids = (l) => new Set(((l && l.areas) || []).flatMap((a) => a.tickets));
+let before = null; try { before = JSON.parse(readFileSync(out, 'utf8')); } catch { before = null; }
+const [was, now] = [ids(before), ids(list)];
+const added = [...now].filter((t) => !was.has(t)).length, removed = [...was].filter((t) => !now.has(t)).length;
 writeFileSync(`${out}.next`, `${JSON.stringify(list, null, 1)}\n`);
 renameSync(`${out}.next`, out);
-console.log(`${list.areas.length} areas, ${list.areas.reduce((s, a) => s + a.tickets.length, 0)} tickets`);
+console.log(`${new Date().toISOString()} open issues: ${added || removed ? 'changed' : 'unchanged'}, ${list.areas.length} areas, ${now.size} tickets (+${added} -${removed}); served live by the faucet, no deploy`);

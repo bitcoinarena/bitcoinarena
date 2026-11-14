@@ -62,10 +62,11 @@ test('#2639 after the Week 1 cutoff a report waits for Week 2, whatever the Week
     assert.equal(a2.season2.state, 'waiting');
     const r2 = await reportOf(after);
     assert.equal(r2.report.state, 'new');
-    assert.ok(r2.moves.some((m) => /received after Week 1 ended: Week 2 rules/.test(m.note || '')), JSON.stringify(r2.moves));
+    assert.ok(r2.moves.some((m) => /received after Season 1 ended: Season 2 rules/.test(m.note || '')), JSON.stringify(r2.moves));
     const early = await act({ action: 'approve', id: after, severity: 'low', season2: true });
-    assert.match(early.why, /^Week 2 starts \d{4}-\d{2}-\d{2}$/);
-    assert.doesNotMatch(JSON.stringify([a2, early, r2.moves]).replace(/movedToSeason2/g, ""), /Season/, 'the admin reads Week, not Season');
+    assert.match(early.why, /^Season 2 starts \d{4}-\d{2}-\d{2}$/);
+    // kanban #2641 (Daniel 2026-11-14: "Nenn es doch überall Season, nicht Week"): the admin reads Season again
+    assert.doesNotMatch(JSON.stringify([a2, early, r2.moves]), /Week/, 'the admin reads Season, not Week');
     const season = await j('/feedback/admin/season', { headers: { 'x-arena-admin': ADMIN } });
     assert.equal(season.s1EndMs, cutoff);
   } finally { faucet.kill(); chatServer.close(); }
@@ -85,7 +86,7 @@ test('#2639 the admin page\'s week of a report: Week 2 when the season file list
   assert.equal(weekOf({ id: 'f', state: 'new', receivedMs: 500 }, listed, null), 1, 'no cutoff known');
   assert.match(page, /id="f-week"/); assert.match(page, /id="f-showweek"/);
   assert.match(page, /arena\.feedback\.admin\.showweek/);
-  assert.doesNotMatch(page.replace(/feedback\/admin\/season|\bseason2\b|\.season\b|s1EndMs/g, ''), /Season/, 'no Season left in the admin text');
+  assert.doesNotMatch(page.replace(/^\s*\/\/.*$/gm, '').replace(/WEEK2|weekOf|wantWeek|showWeek|f-week|f-showweek|showweek|Week \(kanban|THE WEEK/g, ''), />[^<]*\bWeek\b|`[^`]*\bWeek \$/, 'no Week left in the admin text (kanban #2641)');
   const worker = readFileSync(new URL('../../../src/website/worker.js', import.meta.url), 'utf8');
   assert.match(worker, /admin\\\/\(list\|act\|export\\\.csv\|season\|/, 'the Worker passes /feedback/admin/season on');
 });

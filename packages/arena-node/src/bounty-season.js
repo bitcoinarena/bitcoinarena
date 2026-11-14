@@ -90,13 +90,18 @@ export function areaOf(title) {
   for (const [re, name] of AREAS) { const m = re.exec(t); if (m) return name || (m[1].trim()[0].toUpperCase() + m[1].trim().slice(1).toLowerCase()); }
   return 'Other';
 }
-/** THE PUBLIC OPEN-ISSUES LIST from the board's tasks: open bug tickets (tag Bug, or a title naming a Feedback report), grouped by area - ticket numbers only. */
+/**
+ * THE PUBLIC OPEN-ISSUES LIST from the board's tasks: open bug tickets (tag Bug, a title naming a Feedback report) and our own security audit cards
+ * ("Audit [...]", state-machine, attack/bypass/refute findings - Daniel 2026-11-14, kanban #2641: "da fehlen unsere ganzen Security-Audits"), grouped
+ * by area - ticket numbers only, never a title.
+ */
+export const OPEN_ISSUE_TITLE = /^Audit\b|feedback #\d+|\bsecurity\b|state machine|\b(attack|bypass|refute|exploit)\b|Hexbox/i;
 export function openIssueAreas(tasks, { nowMs = Date.now() } = {}) {
   const by = new Map();
   for (const x of tasks || []) {
     if (!x || x.archived || x.status === 'done') continue;
     const tags = Array.isArray(x.tags) ? x.tags : [];
-    if (!(tags.includes('Bug') || /feedback #\d+/i.test(String(x.title || '')))) continue;
+    if (!(tags.includes('Bug') || OPEN_ISSUE_TITLE.test(String(x.title || '')))) continue;
     const a = areaOf(x.title);
     if (!by.has(a)) by.set(a, []);
     by.get(a).push(`#${Number(x.id)}`);
@@ -255,13 +260,13 @@ export function openBountySeason(path = ':memory:', { startMs = null, potSats = 
   function plan(report, { level, codeOnly = false, followUp = false, nowMs = Date.now() } = {}) {
     if (!report || !report.id) return { ok: false, why: 'no such report' };
     const had = db.prepare('SELECT * FROM approvals WHERE report = ?').get(report.id);
-    if (had && had.state === 'approved') return { ok: false, why: 'that report has its Week 2 approval' };
+    if (had && had.state === 'approved') return { ok: false, why: 'that report has its Season 2 approval' };
     const flags = String(level).toLowerCase() === 'node' ? {} : flagsOf(report.pubkey, { nowMs });
     const p = seasonPayout({ level, codeOnly, followUp, flags });
     if (!p.ok) return p;
     const season = seasonNow(nowMs);
     const now = pot(season);
-    if (p.level === 'node' && now.nodes >= NODES_PER_SEASON) return { ok: false, why: `the node bounty is for the first ${NODES_PER_SEASON} nodes of a week: all are taken in Week ${season}` };
+    if (p.level === 'node' && now.nodes >= NODES_PER_SEASON) return { ok: false, why: `the node bounty is for the first ${NODES_PER_SEASON} nodes of a season: all are taken in Season ${season}` };
     const fits = p.sats <= now.leftSats;
     return { ok: true, fits, waits: !fits, season, flags, ...p, pot: now };
   }
@@ -289,7 +294,7 @@ export function openBountySeason(path = ':memory:', { startMs = null, potSats = 
    */
   function payable(id, { nowMs = Date.now() } = {}) {
     const a = approval(id);
-    if (!a || a.state !== 'approved') return { ok: false, why: 'no Week 2 approval for that report' };
+    if (!a || a.state !== 'approved') return { ok: false, why: 'no Season 2 approval for that report' };
     const p = seasonPayout({ level: a.level, codeOnly: a.codeOnly, followUp: a.followUp, flags: a.level === 'node' ? {} : flagsOf(a.pubkey, { nowMs }) });
     const sats = Math.min(p.sats, a.sats);
     // WHY IT WENT DOWN (Daniel 2026-11-14, kanban #2641: "tun ggf nochmal den Betrag reduzieren wenn der User nicht mehr in den angegeben socials ist"):
