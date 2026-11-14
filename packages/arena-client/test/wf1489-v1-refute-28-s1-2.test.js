@@ -49,7 +49,7 @@ test('the shipped page bundle: a seat inventing a 20-key round is paid nothing o
     throw new Error(`no such door ${url}`);
   };
   const r = await buyItem({ manifest: MANIFEST, itemId: 'large-truck', networkSet: NET, gameSet: NET, wallet: w, federationId: 'fe'.repeat(32),
-    player, seats: ['https://good', 'https://bad'], fetch, verify, nowMs: () => NOW });
+    player, seats: ['https://good', 'https://bad'], fetch, verify, nowMs: () => NOW, bondedKeys: NODE_KEYS.map(toHex) });   // kanban #1896: the keys of a census the page checked
   assert.equal(r.ok, true, r.why);
   const toSybils = SYBIL_KEYS.reduce((t, k) => t + paidTo(w.paid, k), 0n);
   assert.equal(toSybils, 0n, `${toSybils} msat of the buyer's payment went to ${SYBIL_KEYS.length} keys one seat made up (page bundle)`);
