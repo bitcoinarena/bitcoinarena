@@ -970,7 +970,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // AND NOT AFTER THE MARKET'S DEADLINE (kanban #1151): a market with no outcome by then is VOID, its stakes back at once
     // AND OBSERVED AT THE ROUND'S OWN WINDOW END, for a market on a grid (kanban #1489): not at a close some seat listed for it
     const grid = marketWindowOf(c, plugin.manifest);
-    const timelyAt = (nowMs) => attestationTimely(a, { entryCloseMs: c.entryCloseMs, nowMs, terms: roundTermsOf(plugin.manifest, c), window: grid.ok ? grid.window : null });
+    const timelyAt = (nowMs) => attestationTimely(a, { entryCloseMs: c.entryCloseMs, nowMs, terms: roundTermsOf(plugin.manifest, c), event: !!c.event, window: grid.ok ? grid.window : null });
     const deadlineMs = marketDeadlineOf(plugin.manifest, c);
     const timely = timelyAt(receivedAtMs !== null ? receivedAtMs : round.now());
     if (!timely.ok) {

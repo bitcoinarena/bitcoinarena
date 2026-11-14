@@ -217,7 +217,7 @@ export function outcomeFinality(held, { windowMs, nowMs }) {
  * MAY AN ATTESTATION COME IN YET (§0A.7a slice 2): only once the round's entries have closed on the seat's clock, and only
  * for an outcome seen after that close - an outcome known while a pick could still be made is a pick to be copied.
  */
-export function attestationTimely(a, { entryCloseMs, nowMs, terms = null, window = null }) {
+export function attestationTimely(a, { entryCloseMs, nowMs, terms = null, window = null, event = false }) {
   // A MARKET ON A GRID IS OBSERVED AT ITS OWN WINDOW'S END (kanban #1489): its attestors sign observed_at = the window's end
   // (marketWindowOf), so an outcome observed at any other moment is the outcome of another window - one a seat listing the
   // round with a shifted close could pick after watching the price. `window` is marketWindowOf(contract, manifest).window.
@@ -233,7 +233,9 @@ export function attestationTimely(a, { entryCloseMs, nowMs, terms = null, window
     // observed_at = that time (attestor.js, drawn-attestor.js: the window's end = entry close + resolveAfterCloseMs). An outcome
     // observed later is the outcome of another window - whoever steers when the attestors sign could pick among ~10 min of them.
     // The same check holds for value attestations (scalar.js reads them here too).
-    if (BigInt(a.observedAtMs) !== t.resolveAtMs)
+    // A TEMPLATE'S EVENT (feature 5, `event`) is a real-world fact its attestors report once it happened, observed after its resolution
+    // time (market-template.test.js): that one keeps the lower bound only
+    if (!event && BigInt(a.observedAtMs) !== t.resolveAtMs)
       return { ok: false, why: `that attestation says it was observed at ${new Date(Number(a.observedAtMs)).toISOString()}, after the market's resolution time ${new Date(Number(t.resolveAtMs)).toISOString()}: it is the outcome of another moment than the one the market asked for` };
     // AND NOT AFTER ITS DEADLINE (kanban #1151): at the deadline a market with no outcome is VOID and its stakes go back at
     // once; an attestation withheld until then and handed in late would turn it ATTESTED over locks already returned
