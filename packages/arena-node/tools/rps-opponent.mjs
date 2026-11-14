@@ -101,7 +101,8 @@ const splitFile = join(DIR, 'splits.json');
 const big = (_, v) => (typeof v === 'bigint' ? { $n: String(v) } : v instanceof Uint8Array ? { $b: toHex(v) } : v);
 const un = (_, v) => (v && typeof v === 'object' && v.$n !== undefined ? BigInt(v.$n) : v && typeof v === 'object' && v.$b !== undefined ? fromHex(v.$b) : v);
 try { for (const [k, x] of JSON.parse(readFileSync(splitFile, 'utf8'), un)) splits.set(k, x); } catch { /* none kept yet */ }
-const splitKey = (c) => [toHex(c.federationId), c.stakeMsat, toHex(c.donationSetId), toHex(c.gameId)].join(':');
+// the protocol version is part of the key (kanban #2658): a protocol-27 round's entry carries no donation, a cached split of an older round's did
+const splitKey = (c) => [toHex(c.federationId), c.stakeMsat, toHex(c.donationSetId), toHex(c.gameId), Number(c.protocolVersion)].join(':');
 // A SEAT THAT ANSWERS FIRST: the donation sets of a round come from whichever of a few seats holds them soonest
 const firstSeat = async (u, o) => { const path = String(u).replace(/^https?:\/\/[^/]+/, ''); return Promise.any(nodes.slice(0, 5).map(async (n) => { const r = await fetch(`${n}${path}`, { ...o, signal: AbortSignal.timeout(3000) }); if (!r.ok) throw new Error(String(r.status)); return r; })); };
 const keys = new Map();   // federation hex -> its reserve key, read once

@@ -40556,6 +40556,11 @@ const h2hFromHex = (h) => Uint8Array.from(String(h).match(/../g) || [], (x) => p
  * void }. A certificate counts only if it stands against `committee` (hex keys, the round's seats the page dealt its stake to) under
  * `verify` (BIP-340); without a committee, only one at least two seats serve with the same entries (one seat on a one-seat list).
  */
+// THE CERTIFICATE'S THRESHOLD AS THE SEATS COUNT IT (arena-node lock-set-book.js #threshold): the committee table, else a majority of the
+// committee - a round seated by 6 (a 7-slot round with one seat gone) has no row in receiptsNeeded, and every reveal of such a protocol-28
+// table threw "no committee threshold for 6 slots" in the page, the house bot and tn4-rps-paid.mjs (kanban #2658, measured 2026-11-14 21:47Z)
+const lockSetThreshold = (n) => { try { return receiptsNeeded(n); } catch { return Math.floor(n / 2) + 1; } };
+
 async function lockSetOfSeats({ roundIdHex, nodes, committee = null, verify = null, entryCloseMs, fetcher = fetch, timeoutMs = H2H_SEAT_MS }) {
   const said = await Promise.all(nodes.map(async (node) => {
     try {
@@ -40574,7 +40579,7 @@ async function lockSetOfSeats({ roundIdHex, nodes, committee = null, verify = nu
   for (const x of answered) {
     if (!x.certificate || !/^[0-9a-f]+$/.test(String(x.certificate))) continue;
     if (committee && committee.length && typeof verify === 'function') {
-      const st = lockSetCertificateStands(h2hFromHex(x.certificate), { roundId: h2hFromHex(roundIdHex), committee, threshold: receiptsNeeded(committee.length),
+      const st = lockSetCertificateStands(h2hFromHex(x.certificate), { roundId: h2hFromHex(roundIdHex), committee, threshold: lockSetThreshold(committee.length),
         entryCloseMs: BigInt(entryCloseMs), verify });
       if (st.ok) { certified = { entries: st.entries, atMs: st.atMs }; break; }
     } else if (Array.isArray(x.entries)) {
