@@ -87,11 +87,18 @@ export const LOCKLESS_CAP = 'LOCKLESS_CAP';
 // see that it parses, and a tick batch decoded it again for its blockTicks - on every batch from every player. Kept by
 // the contract's bytes (a contract never changes), up to 8192; only these two answers leave, never the decoded object.
 const contractFacts = new Map();
+// THE NEXT BLOCK GAME ID (arena-installer bond.js NEXTBLOCK_GAME_ID): its core's fifth input word is the practice switch (kanban #2654)
+const NEXTBLOCK_GAME_HEX = '495516ae59539661062cd72fd8716afbb378bd386297ab09b20aba0a2cd44150';
 const factsOf = (contract) => {
   const key = Buffer.from(contract).toString('base64');
   let f = contractFacts.get(key);
   if (f === undefined) {
-    try { const c = decodeRoundContract(new Uint8Array(contract)); f = { blockTicks: c.blockTicks }; } catch { f = null; }
+    try {
+      const c = decodeRoundContract(new Uint8Array(contract));
+      // kanban #2654: a staked Next Block round, where the truck core's practice word (input word 4) is a shield
+      const staked = BigInt(c.stakeMsat || 0) > 0n;
+      f = { blockTicks: c.blockTicks, practiceRefused: staked && Buffer.from(c.gameId || []).toString('hex') === NEXTBLOCK_GAME_HEX };
+    } catch { f = null; }
     contractFacts.set(key, f);
     if (contractFacts.size > 8192) contractFacts.delete(contractFacts.keys().next().value);
   }
@@ -1141,6 +1148,11 @@ export class Round {
     // The transport already refuses a frame that could not decode at all;
     // this refuses one that decodes and still could not be honest.
     const blockTicks = factsOf(round.contract).blockTicks;
+    // NO PRACTICE IN A PAID RUN (kanban #2654, audit #1489 r1-play-2): the truck core withholds every damage while the fifth input
+    // word is set and still scores the run DELIVERED, so a modified client signing practice ticks could not lose a staked round.
+    // The honest client never sends it in a signed run (b04de1f8a); a seat now refuses such a batch in a staked Next Block round.
+    if (factsOf(round.contract).practiceRefused && b.ticks.some((w) => w && w.length > 4 && Number(w[4]) !== 0))
+      throw new Error('a staked Next Block run takes no practice ticks (input word 4 must be 0)');
     if (b.ticks.length > blockTicks)
       throw new Error(
         `a batch carries at most the round's ${blockTicks} ticks, got ${b.ticks.length}`);
