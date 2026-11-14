@@ -22,7 +22,11 @@ export function check(cond, what, seen) {
 
 /** JSON from a URL, or throws with the status and the body's start. */
 export async function getJson(url, { ms = 15000, headers = {} } = {}) {
-  const r = await fetch(url, { headers, signal: AbortSignal.timeout(ms) });
+  // A KEPT-ALIVE SOCKET THE SEAT HAS JUST CLOSED fails as "fetch failed" with no answer at all (undici reuses it; measured twice on the
+  // devnet, season.board-and-badges at 0 s while every door answered 200 a moment later): asked once more, as tn4-live-run.mjs does
+  let r;
+  try { r = await fetch(url, { headers, signal: AbortSignal.timeout(ms) }); }
+  catch (e) { if (!/fetch failed/.test(String(e && e.message))) throw e; await wait(1000); r = await fetch(url, { headers, signal: AbortSignal.timeout(ms) }); }
   const t = await r.text();
   if (!r.ok) { const e = new Error(`${url}: ${r.status} ${t.slice(0, 200)}`); e.status = r.status; e.body = t; throw e; }
   try { return JSON.parse(t); } catch { return t; }

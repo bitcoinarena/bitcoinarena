@@ -17,6 +17,23 @@ const each = (ctx, f) => Promise.all(ctx.dn.nodes.map((n, k) => f(n, k).catch((e
 
 export const flows = [
   {
+    id: 'lightning.payee-routes', area: 'lightning', title: 'harness: the payee lnd (C) is reachable from both gateways\' lnds (devnet.mjs liquidity opens a->c only; a withdrawal through gateway B failed "FailureReasonNoRoute")', money: 2, reach: 0, order: -1, timeoutMs: 180000,
+    async run(ctx) {
+      const c = ctx.dn.lncli('c', 'getinfo').identity_pubkey;
+      const opened = [];
+      for (const x of ['a', 'b']) {
+        if (ctx.dn.lncli(x, 'listchannels').channels.some((ch) => ch.remote_pubkey === c)) continue;
+        try { ctx.dn.lncli(x, 'connect', `${c}@127.0.0.1:${ctx.dn.base + 51}`); } catch { /* already a peer */ }
+        ctx.dn.lncli(x, 'openchannel', `--node_key=${c}`, '--local_amt=2000000');
+        opened.push(x);
+      }
+      if (opened.length) { ctx.dn.mine(7); await wait(20000); }
+      const routes = ['a', 'b'].map((x) => ctx.dn.lncli(x, 'listchannels').channels.some((ch) => ch.remote_pubkey === c && ch.active));
+      check(routes.every(Boolean), 'both gateway lnds hold an active channel to the payee', routes);
+      return { opened, routes };
+    },
+  },
+  {
     id: 'seats.identity-and-roles', area: 'node', title: 'seven seats answer /identity, /guardian, /roles with one census and every role filled', money: 0, reach: 3, timeoutMs: 60000,
     async run(ctx) {
       const g = await each(ctx, (n) => getJson(`${n}/guardian`));

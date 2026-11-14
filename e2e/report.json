@@ -2,12 +2,6 @@
  "suite": "bitcoin-arena e2e (kanban #2642)",
  "merged": [
   {
-   "file": "/Users/user/wf1489/e2e-2642/out-dev/report.json",
-   "started": "2026-11-14T09:38:38.750Z",
-   "seconds": 244,
-   "commit": null
-  },
-  {
    "file": "/Users/user/wf1489/e2e-2642/out-installer/report.json",
    "started": "2026-11-14T09:57:20.378Z",
    "seconds": 418,
@@ -20,33 +14,39 @@
    "commit": null
   },
   {
-   "file": "/Users/user/wf1489/e2e-2642/out-page-4/report.json",
-   "started": "2026-11-14T10:05:30.265Z",
-   "seconds": 1857,
-   "commit": null
-  },
-  {
    "file": "/Users/user/wf1489/e2e-2642/out-faucet/report.json",
    "started": "2026-11-14T10:16:18.759Z",
    "seconds": 1200,
    "commit": null
   },
   {
-   "file": "/Users/user/wf1489/e2e-2642/out-page-6/report.json",
-   "started": "2026-11-14T10:59:45.255Z",
-   "seconds": 1127,
-   "commit": null
+   "file": "/Users/user/wf1489/e2e-2642/out-final/report.json",
+   "started": "2026-11-14T14:23:24.907Z",
+   "seconds": 1827,
+   "commit": "a79895475"
   },
   {
-   "file": "/Users/user/wf1489/e2e-2642/out-main/report.json",
-   "started": "2026-11-14T11:20:30.749Z",
-   "seconds": 6376,
+   "file": "/Users/user/wf1489/e2e-2642/out-triage/report.json",
+   "started": "2026-11-14T18:27:51.052Z",
+   "seconds": 233,
+   "commit": "a79895475"
+  },
+  {
+   "file": "/Users/user/wf1489/e2e-2642/out-triage2/report.json",
+   "started": "2026-11-14T18:33:53.657Z",
+   "seconds": 281,
+   "commit": "a79895475"
+  },
+  {
+   "file": "/Users/user/wf1489/e2e-2642/out-triage3/report.json",
+   "started": "2026-11-14T18:43:42.253Z",
+   "seconds": 99,
    "commit": "a79895475"
   }
  ],
  "commit": "a79895475",
- "pass": 48,
- "fail": 7,
+ "pass": 55,
+ "fail": 0,
  "notCovered": 2,
  "results": [
   {
@@ -64,13 +64,13 @@
      "dest": "03cb44c7ec15d117",
      "status": "SUCCEEDED"
     },
-    "secondsToShow": 2,
+    "secondsToShow": 3,
     "gateway": null
    },
-   "seconds": 23.7,
-   "dir": "/Users/user/wf1489/e2e-2642/out-main/flows/deposit.lightning",
-   "run": "2026-11-14T11:20:30.749Z",
-   "from": "/Users/user/wf1489/e2e-2642/out-main/report.json"
+   "seconds": 23.3,
+   "dir": "/Users/user/wf1489/e2e-2642/out-triage3/flows/deposit.lightning",
+   "run": "2026-11-14T18:43:42.253Z",
+   "from": "/Users/user/wf1489/e2e-2642/out-triage3/report.json"
   },
   {
    "id": "faucet.page-welcome",
@@ -192,13 +192,13 @@
    "reach": 3,
    "result": "pass",
    "evidence": {
-    "gatewayAEcashMsat": 49962058240,
+    "gatewayAEcashMsat": 49940336640,
     "lndBChannels": 1
    },
    "seconds": 0.2,
-   "dir": "/Users/user/wf1489/e2e-2642/out-main/flows/lightning.gateways-live",
-   "run": "2026-11-14T11:20:30.749Z",
-   "from": "/Users/user/wf1489/e2e-2642/out-main/report.json"
+   "dir": "/Users/user/wf1489/e2e-2642/out-final/flows/lightning.gateways-live",
+   "run": "2026-11-14T14:23:24.907Z",
+   "from": "/Users/user/wf1489/e2e-2642/out-final/report.json"
   },
   {
    "id": "round.paid.headless-entry",
@@ -206,13 +206,39 @@
    "title": "a paid entry (10 000 sat) end to end with the page's own wasm lock client: Lightning deposit through a gateway, stake and fee locked in the federation, played, handed over to 7 seats, settled, the payout withdrawn to a devnet lnd (tools/tn4-live-run.mjs)",
    "money": 2,
    "reach": 3,
-   "result": "fail",
-   "why": "at least 5 seats take the entry and verify the lock (seen: {\"exit\":1,\"deposit\":{\"msat\":\"10700000\",\"final\":\"Claimed\"},\"locked\":\"9500000\",\"handedOver\":[\"400/404\",\"400/404\",\"400/404\",\"400/404\",\"400/404\",\"400/404\",\"400/404\"],\"last\":[{\"step\":\"handed over\"},{\"step\":\"marked bot\",\"why\":\"MARK_BOT=off\"},{\"step\":\"stopped\",\"why\":\"Error: fewer seats than needed took the lock\\n    at file:///Users/user/wf1489/wt/wt-2642/packages/arena-node/tools/tn4-live-run.mjs:393:)",
-   "stack": "Error: at least 5 seats take the entry and verify the lock (seen: {\"exit\":1,\"deposit\":{\"msat\":\"10700000\",\"final\":\"Claimed\"},\"locked\":\"9500000\",\"handedOver\":[\"400/404\",\"400/404\",\"400/404\",\"400/404\",\"400/404\",\"400/404\",\"400/404\"],\"last\":[{\"step\":\"handed over\"},{\"step\":\"marked bot\",\"why\":\"MARK_BOT=off\"},{\"step\":\"stopped\",\"why\":\"Error: fewer seats than needed took the lock\\n    at file:///Users/user/wf1489/wt/wt-2642/packages/arena-node/tools/tn4-live-run.mjs:393:) |     at check (file:///Users/user/wf1489/wt/wt-2642/e2e/lib/ctx.mjs:20:20) |     at Object.run (file:///Users/user/wf1489/wt/wt-2642/e2e/flows/devnet.mjs:224:7) |     at process.processTicksAndRejections (node:internal/process/task_queues:104:5)",
-   "seconds": 4.5,
-   "dir": "/Users/user/wf1489/e2e-2642/out-main/flows/round.paid.headless-entry",
-   "run": "2026-11-14T11:20:30.749Z",
-   "from": "/Users/user/wf1489/e2e-2642/out-main/report.json"
+   "result": "pass",
+   "evidence": {
+    "exit": 0,
+    "deposit": {
+     "msat": "10700000",
+     "final": "Claimed"
+    },
+    "locked": "9500000",
+    "handedOver": [
+     "201/201",
+     "201/201",
+     "201/201",
+     "201/201",
+     "201/201",
+     "201/201",
+     "201/201"
+    ],
+    "last": [
+     {
+      "step": "settled"
+     },
+     {
+      "step": "collected"
+     },
+     {
+      "step": "lightning payout"
+     }
+    ]
+   },
+   "seconds": 1148.1,
+   "dir": "/Users/user/wf1489/e2e-2642/out-final/flows/round.paid.headless-entry",
+   "run": "2026-11-14T14:23:24.907Z",
+   "from": "/Users/user/wf1489/e2e-2642/out-final/report.json"
   },
   {
    "id": "round.paid.open",
@@ -222,17 +248,17 @@
    "reach": 3,
    "result": "pass",
    "evidence": {
-    "round": "1e17a3c972765a38",
+    "round": "78f9e8509169fc44",
     "stakeMsat": "10000000",
     "firstAskRefused": null,
     "listedAt": 7,
     "phase": "open",
-    "entryClose": "2026-11-14T11:27:32.000Z"
+    "entryClose": "2026-11-14T14:30:26.000Z"
    },
-   "seconds": 8.8,
-   "dir": "/Users/user/wf1489/e2e-2642/out-main/flows/round.paid.open",
-   "run": "2026-11-14T11:20:30.749Z",
-   "from": "/Users/user/wf1489/e2e-2642/out-main/report.json"
+   "seconds": 8.4,
+   "dir": "/Users/user/wf1489/e2e-2642/out-final/flows/round.paid.open",
+   "run": "2026-11-14T14:23:24.907Z",
+   "from": "/Users/user/wf1489/e2e-2642/out-final/report.json"
   },
   {
    "id": "wallet.create-and-verify",
@@ -243,17 +269,17 @@
    "result": "pass",
    "evidence": {
     "asked": [
-     12,
-     22,
-     24
+     4,
+     11,
+     18
     ],
     "words": 24,
     "warningGone": true
    },
-   "seconds": 10.2,
-   "dir": "/Users/user/wf1489/e2e-2642/out-main/flows/wallet.create-and-verify",
-   "run": "2026-11-14T11:20:30.749Z",
-   "from": "/Users/user/wf1489/e2e-2642/out-main/report.json"
+   "seconds": 9.3,
+   "dir": "/Users/user/wf1489/e2e-2642/out-triage3/flows/wallet.create-and-verify",
+   "run": "2026-11-14T18:43:42.253Z",
+   "from": "/Users/user/wf1489/e2e-2642/out-triage3/report.json"
   },
   {
    "id": "wallet.reload-keeps-balance",
@@ -266,10 +292,10 @@
     "funded": 10000,
     "shown": 10000
    },
-   "seconds": 19.8,
-   "dir": "/Users/user/wf1489/e2e-2642/out-main/flows/wallet.reload-keeps-balance",
-   "run": "2026-11-14T11:20:30.749Z",
-   "from": "/Users/user/wf1489/e2e-2642/out-main/report.json"
+   "seconds": 19.1,
+   "dir": "/Users/user/wf1489/e2e-2642/out-triage3/flows/wallet.reload-keeps-balance",
+   "run": "2026-11-14T18:43:42.253Z",
+   "from": "/Users/user/wf1489/e2e-2642/out-triage3/report.json"
   },
   {
    "id": "withdraw.lightning",
@@ -277,13 +303,17 @@
    "title": "withdraw 2 000 sat to an invoice of a devnet lnd that runs no gateway: the invoice is paid, the balance drops",
    "money": 2,
    "reach": 3,
-   "result": "fail",
-   "why": "the payee's invoice is settled (seen: ♥ Donate\nDocs\nFeedback\nGet 300 sats\nUI 9999\nBitcoin Arena\n←\nArena\n10,000 sat\nDeposit\nWithdraw\nLeaderboard\n⚙\n☰\nWithdraw\n×\nYou can withdraw up to 10,000 sat. Make an invoice in your own wallet for any amount up to that and paste it here.\nYou withdraw 2,000 sat.\nWithdraw\n✓\n10,000 sat\n⌛\n0 sat)",
-   "stack": "Error: the payee's invoice is settled (seen: ♥ Donate | Docs | Feedback | Get 300 sats",
-   "seconds": 244.1,
-   "dir": "/Users/user/wf1489/e2e-2642/out-main/flows/withdraw.lightning",
-   "run": "2026-11-14T11:20:30.749Z",
-   "from": "/Users/user/wf1489/e2e-2642/out-main/report.json"
+   "result": "pass",
+   "evidence": {
+    "before": 10000,
+    "after": 8000,
+    "paidSat": 2000,
+    "seconds": 2
+   },
+   "seconds": 22.7,
+   "dir": "/Users/user/wf1489/e2e-2642/out-triage3/flows/withdraw.lightning",
+   "run": "2026-11-14T18:43:42.253Z",
+   "from": "/Users/user/wf1489/e2e-2642/out-triage3/report.json"
   },
   {
    "id": "faucet.coins",
@@ -319,13 +349,13 @@
    "result": "pass",
    "evidence": {
     "funded": 10000,
-    "restored": 10000,
-    "seconds": 17
+    "restored": 8000,
+    "seconds": 18
    },
-   "seconds": 24.3,
-   "dir": "/Users/user/wf1489/e2e-2642/out-main/flows/wallet.restore-from-words",
-   "run": "2026-11-14T11:20:30.749Z",
-   "from": "/Users/user/wf1489/e2e-2642/out-main/report.json"
+   "seconds": 24.2,
+   "dir": "/Users/user/wf1489/e2e-2642/out-triage3/flows/wallet.restore-from-words",
+   "run": "2026-11-14T18:43:42.253Z",
+   "from": "/Users/user/wf1489/e2e-2642/out-triage3/report.json"
   },
   {
    "id": "bounty.lnurlw-claim",
@@ -415,10 +445,29 @@
      "/owner/version": 200
     }
    },
+   "seconds": 0,
+   "dir": "/Users/user/wf1489/e2e-2642/out-final/flows/seats.owner-door-locked",
+   "run": "2026-11-14T14:23:24.907Z",
+   "from": "/Users/user/wf1489/e2e-2642/out-final/report.json"
+  },
+  {
+   "id": "lightning.payee-routes",
+   "area": "lightning",
+   "title": "harness: the payee lnd (C) is reachable from both gateways' lnds (devnet.mjs liquidity opens a->c only; a withdrawal through gateway B failed \"FailureReasonNoRoute\")",
+   "money": 2,
+   "reach": 0,
+   "result": "pass",
+   "evidence": {
+    "opened": [],
+    "routes": [
+     true,
+     true
+    ]
+   },
    "seconds": 0.1,
-   "dir": "/Users/user/wf1489/e2e-2642/out-main/flows/seats.owner-door-locked",
-   "run": "2026-11-14T11:20:30.749Z",
-   "from": "/Users/user/wf1489/e2e-2642/out-main/report.json"
+   "dir": "/Users/user/wf1489/e2e-2642/out-triage3/flows/lightning.payee-routes",
+   "run": "2026-11-14T18:43:42.253Z",
+   "from": "/Users/user/wf1489/e2e-2642/out-triage3/report.json"
   },
   {
    "id": "leaderboard.page",
@@ -436,10 +485,10 @@
      "/season?game=nextblock&days=7&scope=network 200"
     ]
    },
-   "seconds": 7.3,
-   "dir": "/Users/user/wf1489/e2e-2642/out-main/flows/leaderboard.page",
-   "run": "2026-11-14T11:20:30.749Z",
-   "from": "/Users/user/wf1489/e2e-2642/out-main/report.json"
+   "seconds": 6.3,
+   "dir": "/Users/user/wf1489/e2e-2642/out-final/flows/leaderboard.page",
+   "run": "2026-11-14T14:23:24.907Z",
+   "from": "/Users/user/wf1489/e2e-2642/out-final/report.json"
   },
   {
    "id": "season.board-and-badges",
@@ -469,14 +518,14 @@
      "toMs",
      "rows"
     ],
-    "seasonRounds": 3,
+    "seasonRounds": 8,
     "badgeDefinitions": 4,
     "badgesOn": false
    },
-   "seconds": 0,
-   "dir": "/Users/user/wf1489/e2e-2642/out-page/flows/season.board-and-badges",
-   "run": "2026-11-14T10:05:30.265Z",
-   "from": "/Users/user/wf1489/e2e-2642/out-page-4/report.json"
+   "seconds": 0.1,
+   "dir": "/Users/user/wf1489/e2e-2642/out-triage/flows/season.board-and-badges",
+   "run": "2026-11-14T18:27:51.052Z",
+   "from": "/Users/user/wf1489/e2e-2642/out-triage/report.json"
   },
   {
    "id": "feedback.fakes",
@@ -537,9 +586,9 @@
     "note": "no market round is opened on the devnet: the devnet hosts no market game (btc-updown is not in DEVNET_APPS)"
    },
    "seconds": 0,
-   "dir": "/Users/user/wf1489/e2e-2642/out-dev/flows/markets.reads",
-   "run": "2026-11-14T09:38:38.750Z",
-   "from": "/Users/user/wf1489/e2e-2642/out-dev/report.json"
+   "dir": "/Users/user/wf1489/e2e-2642/out-final/flows/markets.reads",
+   "run": "2026-11-14T14:23:24.907Z",
+   "from": "/Users/user/wf1489/e2e-2642/out-final/report.json"
   },
   {
    "id": "nostr.login-nsec",
@@ -549,15 +598,15 @@
    "reach": 2,
    "result": "pass",
    "evidence": {
-    "npub": "npub1tfu3jqlac46jwry",
+    "npub": "npub1v7u7ancjnaj05u9",
     "shown": "0 sat",
     "afterReload": "0 sat",
-    "storage": "[\"arena.nostr\",\"arena.seeds\",\"arena.seed.held.7001282cb1f1c320\",\"arena.seed.held.5a9a84a1ee719694\"]"
+    "storage": "[\"arena.nostr\",\"arena.seeds\",\"arena.seed.held.3391ef5d2dc6ad2b\",\"arena.seed.held.ebe880566289e795\"]"
    },
-   "seconds": 32.1,
-   "dir": "/Users/user/wf1489/e2e-2642/out-main/flows/nostr.login-nsec",
-   "run": "2026-11-14T11:20:30.749Z",
-   "from": "/Users/user/wf1489/e2e-2642/out-main/report.json"
+   "seconds": 32.7,
+   "dir": "/Users/user/wf1489/e2e-2642/out-final/flows/nostr.login-nsec",
+   "run": "2026-11-14T14:23:24.907Z",
+   "from": "/Users/user/wf1489/e2e-2642/out-final/report.json"
   },
   {
    "id": "bounty.admin-review",
@@ -592,9 +641,9 @@
     "fundingProposals": 0
    },
    "seconds": 0,
-   "dir": "/Users/user/wf1489/e2e-2642/out-dev/flows/proposals.ballot-reads",
-   "run": "2026-11-14T09:38:38.750Z",
-   "from": "/Users/user/wf1489/e2e-2642/out-dev/report.json"
+   "dir": "/Users/user/wf1489/e2e-2642/out-final/flows/proposals.ballot-reads",
+   "run": "2026-11-14T14:23:24.907Z",
+   "from": "/Users/user/wf1489/e2e-2642/out-final/report.json"
   },
   {
    "id": "referrals.name-and-fees",
@@ -609,9 +658,9 @@
     "why": "that is not a referral name: reader ran off the end\n"
    },
    "seconds": 0,
-   "dir": "/Users/user/wf1489/e2e-2642/out-dev/flows/referrals.name-and-fees",
-   "run": "2026-11-14T09:38:38.750Z",
-   "from": "/Users/user/wf1489/e2e-2642/out-dev/report.json"
+   "dir": "/Users/user/wf1489/e2e-2642/out-final/flows/referrals.name-and-fees",
+   "run": "2026-11-14T14:23:24.907Z",
+   "from": "/Users/user/wf1489/e2e-2642/out-final/report.json"
   },
   {
    "id": "seats.operator-door-locked",
@@ -628,9 +677,9 @@
     ]
    },
    "seconds": 0,
-   "dir": "/Users/user/wf1489/e2e-2642/out-dev/flows/seats.operator-door-locked",
-   "run": "2026-11-14T09:38:38.750Z",
-   "from": "/Users/user/wf1489/e2e-2642/out-dev/report.json"
+   "dir": "/Users/user/wf1489/e2e-2642/out-final/flows/seats.operator-door-locked",
+   "run": "2026-11-14T14:23:24.907Z",
+   "from": "/Users/user/wf1489/e2e-2642/out-final/report.json"
   },
   {
    "id": "feedback.page-signed",
@@ -800,7 +849,7 @@
    "evidence": {
     "rows": [
      {
-      "id": "4202d47adc26",
+      "id": "38b0a4187875",
       "free": true,
       "phase": "open",
       "join": true
@@ -811,13 +860,13 @@
      "ARENA_FAUCET_URL -> /api/faucet/player on 127.0.0.1",
      "arena-client.js chainAnchorFor -> the devnet genesis"
     ],
-    "requests": 94,
+    "requests": 133,
     "blockedExternal": 27
    },
-   "seconds": 4.9,
-   "dir": "/Users/user/wf1489/e2e-2642/out-page/flows/page.boot",
-   "run": "2026-11-14T10:05:30.265Z",
-   "from": "/Users/user/wf1489/e2e-2642/out-page-4/report.json"
+   "seconds": 5,
+   "dir": "/Users/user/wf1489/e2e-2642/out-final/flows/page.boot",
+   "run": "2026-11-14T14:23:24.907Z",
+   "from": "/Users/user/wf1489/e2e-2642/out-final/report.json"
   },
   {
    "id": "round.free.headless-play",
@@ -827,16 +876,16 @@
    "reach": 3,
    "result": "pass",
    "evidence": {
-    "round": "8a20f3be3acf2217",
-    "entry": "cb5642a9d6f765e2",
+    "round": "01ba807f56f18d2c",
+    "entry": "d5dbe3535b40faae",
     "outcome": "FAILED",
-    "score": 37799,
+    "score": 1605404,
     "agreeing": "7/7"
    },
-   "seconds": 234.4,
-   "dir": "/Users/user/wf1489/e2e-2642/out-dev/flows/round.free.headless-play",
-   "run": "2026-11-14T09:38:38.750Z",
-   "from": "/Users/user/wf1489/e2e-2642/out-dev/report.json"
+   "seconds": 223.7,
+   "dir": "/Users/user/wf1489/e2e-2642/out-final/flows/round.free.headless-play",
+   "run": "2026-11-14T14:23:24.907Z",
+   "from": "/Users/user/wf1489/e2e-2642/out-final/report.json"
   },
   {
    "id": "round.free.page-join",
@@ -846,10 +895,10 @@
    "reach": 3,
    "result": "not covered",
    "why": "the page cannot prove a seat on a private chain: \"[arena] warm: the session reads were not done ahead (no proven endpoint: no bond: no provider proved that bond into the chain (provider 0: the transaction 4bcfeee33b506c189e680814adf55d653629c6b06ff684270a37e7c6cf233404 \" - the client anchors to compiled-in blocks only (directory.js chainAnchorFor; the suite points it at the devnet genesis) and every devnet seat serves the ONE shared bond proof of runner/proof (GET /bond: 409 \"the bond proof this node was given is node X's\" at six of seven seats, and node 1's is not in the served headers). Joins are covered headless by round.free.headless-play and round.paid.headless-entry",
-   "seconds": 134,
-   "dir": "/Users/user/wf1489/e2e-2642/out-page/flows/round.free.page-join",
-   "run": "2026-11-14T10:59:45.255Z",
-   "from": "/Users/user/wf1489/e2e-2642/out-page-6/report.json"
+   "seconds": 133.4,
+   "dir": "/Users/user/wf1489/e2e-2642/out-final/flows/round.free.page-join",
+   "run": "2026-11-14T14:23:24.907Z",
+   "from": "/Users/user/wf1489/e2e-2642/out-final/report.json"
   },
   {
    "id": "seats.games-and-network",
@@ -857,13 +906,31 @@
    "title": "/games lists the hosted games with manifest and icon; /network names the regtest network and its federation",
    "money": 0,
    "reach": 3,
-   "result": "fail",
-   "why": "the game manifest is served (seen: 400)",
-   "stack": "Error: the game manifest is served (seen: 400) |     at check (file:///Users/user/wf1489/wt/wt-2642/e2e/lib/ctx.mjs:20:20) |     at Object.run (file:///Users/user/wf1489/wt/wt-2642/e2e/flows/devnet.mjs:42:7) |     at process.processTicksAndRejections (node:internal/process/task_queues:104:5)",
+   "result": "pass",
+   "evidence": {
+    "games": [
+     "nextblock"
+    ],
+    "iconBytes": 0,
+    "network": "bitcoin-regtest",
+    "configHash": "2170f25079f5652b",
+    "fees": {
+     "roundNodeBps": 400,
+     "roundDonationBps": 400,
+     "roundReserveBps": 200,
+     "itemNodesPct": 40,
+     "itemReservesPct": 20,
+     "itemDevsPct": 40,
+     "marketNodeBps": 40,
+     "marketDonationBps": 40,
+     "marketReserveBps": 20,
+     "websitePct": 10
+    }
+   },
    "seconds": 0,
-   "dir": "/Users/user/wf1489/e2e-2642/out-dev/flows/seats.games-and-network",
-   "run": "2026-11-14T09:38:38.750Z",
-   "from": "/Users/user/wf1489/e2e-2642/out-dev/report.json"
+   "dir": "/Users/user/wf1489/e2e-2642/out-final/flows/seats.games-and-network",
+   "run": "2026-11-14T14:23:24.907Z",
+   "from": "/Users/user/wf1489/e2e-2642/out-final/report.json"
   },
   {
    "id": "seats.identity-and-roles",
@@ -871,13 +938,22 @@
    "title": "seven seats answer /identity, /guardian, /roles with one census and every role filled",
    "money": 0,
    "reach": 3,
-   "result": "fail",
-   "why": "every /identity answers its signed identity (seen: [{\"status\":200,\"bytes\":32},{\"status\":200,\"bytes\":32},{\"status\":200,\"bytes\":32},{\"status\":200,\"bytes\":32},{\"status\":200,\"bytes\":32},{\"status\":200,\"bytes\":32},{\"status\":200,\"bytes\":32}])",
-   "stack": "Error: every /identity answers its signed identity (seen: [{\"status\":200,\"bytes\":32},{\"status\":200,\"bytes\":32},{\"status\":200,\"bytes\":32},{\"status\":200,\"bytes\":32},{\"status\":200,\"bytes\":32},{\"status\":200,\"bytes\":32},{\"status\":200,\"bytes\":32}]) |     at check (file:///Users/user/wf1489/wt/wt-2642/e2e/lib/ctx.mjs:20:20) |     at Object.run (file:///Users/user/wf1489/wt/wt-2642/e2e/flows/devnet.mjs:29:7) |     at process.processTicksAndRejections (node:internal/process/task_queues:104:5)",
+   "result": "pass",
+   "evidence": {
+    "guardians": 7,
+    "census": [
+     1428
+    ],
+    "roles": [
+     "game",
+     "settlement",
+     "verify"
+    ]
+   },
    "seconds": 0,
-   "dir": "/Users/user/wf1489/e2e-2642/out-dev/flows/seats.identity-and-roles",
-   "run": "2026-11-14T09:38:38.750Z",
-   "from": "/Users/user/wf1489/e2e-2642/out-dev/report.json"
+   "dir": "/Users/user/wf1489/e2e-2642/out-final/flows/seats.identity-and-roles",
+   "run": "2026-11-14T14:23:24.907Z",
+   "from": "/Users/user/wf1489/e2e-2642/out-final/report.json"
   },
   {
    "id": "explorer.round-reads",
@@ -885,13 +961,26 @@
    "title": "the explorer's reads of a played round: /rounds, /round, /api/round-result, /results, /transcript, /census, /committee, /headers",
    "money": 0,
    "reach": 2,
-   "result": "fail",
-   "why": "every explorer read answers 200 (seen: [{\"path\":\"/round-result?round=8a20f3be3acf22170e599e586444ae91d4eb7d38fd2895a2e0aee6595383c0bf\",\"status\":409,\"bytes\":79},{\"path\":\"/outcome?round=8a20f3be3acf22170e599e586444ae91d4eb7d38fd2895a2e0aee6595383c0bf\",\"status\":409,\"bytes\":77}])",
-   "stack": "Error: every explorer read answers 200 (seen: [{\"path\":\"/round-result?round=8a20f3be3acf22170e599e586444ae91d4eb7d38fd2895a2e0aee6595383c0bf\",\"status\":409,\"bytes\":79},{\"path\":\"/outcome?round=8a20f3be3acf22170e599e586444ae91d4eb7d38fd2895a2e0aee6595383c0bf\",\"status\":409,\"bytes\":77}]) |     at check (file:///Users/user/wf1489/wt/wt-2642/e2e/lib/ctx.mjs:20:20) |     at Object.run (file:///Users/user/wf1489/wt/wt-2642/e2e/flows/devnet.mjs:103:7) |     at process.processTicksAndRejections (node:internal/process/task_queues:104:5)",
+   "result": "pass",
+   "evidence": {
+    "reads": [
+     "/round 739B",
+     "/api/round-result 444B",
+     "/round-result 79B",
+     "/results 1624B",
+     "/transcript 99607B",
+     "/census 11540B",
+     "/committee 224B",
+     "/headers 116960B",
+     "/outcome 77B",
+     "/replay 23223B"
+    ],
+    "listed": 2
+   },
    "seconds": 0,
-   "dir": "/Users/user/wf1489/e2e-2642/out-dev/flows/explorer.round-reads",
-   "run": "2026-11-14T09:38:38.750Z",
-   "from": "/Users/user/wf1489/e2e-2642/out-dev/report.json"
+   "dir": "/Users/user/wf1489/e2e-2642/out-final/flows/explorer.round-reads",
+   "run": "2026-11-14T14:23:24.907Z",
+   "from": "/Users/user/wf1489/e2e-2642/out-final/report.json"
   },
   {
    "id": "feedback.page-unsigned",
@@ -1147,13 +1236,16 @@
    "title": "settings: a player name is saved and kept over a reload; a name with markup is refused",
    "money": 0,
    "reach": 2,
-   "result": "fail",
-   "why": "the name is kept in the browser after a reload (seen: [])",
-   "stack": "Error: the name is kept in the browser after a reload (seen: []) |     at check (file:///Users/user/wf1489/wt/wt-2642/e2e/lib/ctx.mjs:20:20) |     at Object.run (file:///Users/user/wf1489/wt/wt-2642/e2e/flows/page.mjs:208:7) |     at process.processTicksAndRejections (node:internal/process/task_queues:104:5)",
-   "seconds": 25.2,
-   "dir": "/Users/user/wf1489/e2e-2642/out-page/flows/settings.name",
-   "run": "2026-11-14T10:59:45.255Z",
-   "from": "/Users/user/wf1489/e2e-2642/out-page-6/report.json"
+   "result": "pass",
+   "evidence": {
+    "said": "NAME / Current name / Update / Updated.",
+    "refused": "NAME / Current name / Update / a name is letters and digits, with space, dot, dash or underscore between them",
+    "kept": "E2E Hauler"
+   },
+   "seconds": 25.7,
+   "dir": "/Users/user/wf1489/e2e-2642/out-final/flows/settings.name",
+   "run": "2026-11-14T14:23:24.907Z",
+   "from": "/Users/user/wf1489/e2e-2642/out-final/report.json"
   },
   {
    "id": "feedback.screenshot",
@@ -1188,24 +1280,10 @@
     "start": "Bitcoin Arena · Node Dashboards /  / Each testnet4 node serves its own dashboard: its own earnings, the ",
     "failedRequests": 0
    },
-   "seconds": 8,
-   "dir": "/Users/user/wf1489/e2e-2642/out-page/flows/page.sub.dashboard",
-   "run": "2026-11-14T10:05:30.265Z",
-   "from": "/Users/user/wf1489/e2e-2642/out-page-4/report.json"
-  },
-  {
-   "id": "page.sub.games-btc-updown",
-   "area": "page",
-   "title": "/games/btc-updown/ loads and renders without an uncaught exception",
-   "money": 0,
-   "reach": 1,
-   "result": "fail",
-   "why": "/games/btc-updown/ is served (seen: 404)",
-   "stack": "Error: /games/btc-updown/ is served (seen: 404) |     at check (file:///Users/user/wf1489/wt/wt-2642/e2e/lib/ctx.mjs:20:20) |     at Object.run (file:///Users/user/wf1489/wt/wt-2642/e2e/flows/page.mjs:237:7) |     at process.processTicksAndRejections (node:internal/process/task_queues:104:5)",
-   "seconds": 8,
-   "dir": "/Users/user/wf1489/e2e-2642/out-page/flows/page.sub.games-btc-updown",
-   "run": "2026-11-14T10:05:30.265Z",
-   "from": "/Users/user/wf1489/e2e-2642/out-page-4/report.json"
+   "seconds": 8.1,
+   "dir": "/Users/user/wf1489/e2e-2642/out-final/flows/page.sub.dashboard",
+   "run": "2026-11-14T14:23:24.907Z",
+   "from": "/Users/user/wf1489/e2e-2642/out-final/report.json"
   },
   {
    "id": "page.sub.guardians",
@@ -1215,14 +1293,14 @@
    "reach": 1,
    "result": "pass",
    "evidence": {
-    "chars": 1680,
+    "chars": 1678,
     "start": "Guardian check /  / This device opens every guardian of the two testnet4 federations at the address its ",
     "failedRequests": 0
    },
    "seconds": 8.1,
-   "dir": "/Users/user/wf1489/e2e-2642/out-page/flows/page.sub.guardians",
-   "run": "2026-11-14T10:05:30.265Z",
-   "from": "/Users/user/wf1489/e2e-2642/out-page-4/report.json"
+   "dir": "/Users/user/wf1489/e2e-2642/out-final/flows/page.sub.guardians",
+   "run": "2026-11-14T14:23:24.907Z",
+   "from": "/Users/user/wf1489/e2e-2642/out-final/report.json"
   },
   {
    "id": "page.sub.health",
@@ -1237,9 +1315,9 @@
     "failedRequests": 0
    },
    "seconds": 8,
-   "dir": "/Users/user/wf1489/e2e-2642/out-page/flows/page.sub.health",
-   "run": "2026-11-14T10:05:30.265Z",
-   "from": "/Users/user/wf1489/e2e-2642/out-page-4/report.json"
+   "dir": "/Users/user/wf1489/e2e-2642/out-final/flows/page.sub.health",
+   "run": "2026-11-14T14:23:24.907Z",
+   "from": "/Users/user/wf1489/e2e-2642/out-final/report.json"
   },
   {
    "id": "page.sub.offline",
@@ -1253,10 +1331,10 @@
     "start": "My node is offline /  / Take your own node out of the network while it is offline, so it keeps its bond.",
     "failedRequests": 0
    },
-   "seconds": 8,
-   "dir": "/Users/user/wf1489/e2e-2642/out-page/flows/page.sub.offline",
-   "run": "2026-11-14T10:05:30.265Z",
-   "from": "/Users/user/wf1489/e2e-2642/out-page-4/report.json"
+   "seconds": 8.1,
+   "dir": "/Users/user/wf1489/e2e-2642/out-final/flows/page.sub.offline",
+   "run": "2026-11-14T14:23:24.907Z",
+   "from": "/Users/user/wf1489/e2e-2642/out-final/report.json"
   },
   {
    "id": "page.sub.platform",
@@ -1271,9 +1349,9 @@
     "failedRequests": 0
    },
    "seconds": 8.2,
-   "dir": "/Users/user/wf1489/e2e-2642/out-page/flows/page.sub.platform",
-   "run": "2026-11-14T10:05:30.265Z",
-   "from": "/Users/user/wf1489/e2e-2642/out-page-4/report.json"
+   "dir": "/Users/user/wf1489/e2e-2642/out-final/flows/page.sub.platform",
+   "run": "2026-11-14T14:23:24.907Z",
+   "from": "/Users/user/wf1489/e2e-2642/out-final/report.json"
   },
   {
    "id": "page.sub.proposals",
@@ -1287,10 +1365,10 @@
     "start": "Bitcoin Arena / Games / How it works / Explorer / Build & run / Download / Proposals / Security / Docs / App → / PROTOCO",
     "failedRequests": 0
    },
-   "seconds": 8.2,
-   "dir": "/Users/user/wf1489/e2e-2642/out-page/flows/page.sub.proposals",
-   "run": "2026-11-14T10:05:30.265Z",
-   "from": "/Users/user/wf1489/e2e-2642/out-page-4/report.json"
+   "seconds": 8.1,
+   "dir": "/Users/user/wf1489/e2e-2642/out-final/flows/page.sub.proposals",
+   "run": "2026-11-14T14:23:24.907Z",
+   "from": "/Users/user/wf1489/e2e-2642/out-final/report.json"
   },
   {
    "id": "page.sub.referral",
@@ -1304,10 +1382,10 @@
     "start": "Bitcoin Arena / Games / How it works / Explorer / Build & run / Download / Proposals / Security / Docs / App → / Referra",
     "failedRequests": 0
    },
-   "seconds": 8,
-   "dir": "/Users/user/wf1489/e2e-2642/out-page/flows/page.sub.referral",
-   "run": "2026-11-14T10:05:30.265Z",
-   "from": "/Users/user/wf1489/e2e-2642/out-page-4/report.json"
+   "seconds": 8.1,
+   "dir": "/Users/user/wf1489/e2e-2642/out-final/flows/page.sub.referral",
+   "run": "2026-11-14T14:23:24.907Z",
+   "from": "/Users/user/wf1489/e2e-2642/out-final/report.json"
   },
   {
    "id": "page.sub.wallet",
@@ -1322,9 +1400,9 @@
     "failedRequests": 0
    },
    "seconds": 8.1,
-   "dir": "/Users/user/wf1489/e2e-2642/out-page/flows/page.sub.wallet",
-   "run": "2026-11-14T10:59:45.255Z",
-   "from": "/Users/user/wf1489/e2e-2642/out-page-6/report.json"
+   "dir": "/Users/user/wf1489/e2e-2642/out-final/flows/page.sub.wallet",
+   "run": "2026-11-14T14:23:24.907Z",
+   "from": "/Users/user/wf1489/e2e-2642/out-final/report.json"
   },
   {
    "id": "round.replay",
@@ -1336,26 +1414,26 @@
    "evidence": {
     "last": {
      "step": "replay",
-     "round": "8a20f3be3acf22170e599e586444ae91d4eb7d38fd2895a2e0aee6595383c0bf",
-     "entry": "cb5642a9d6f765e21676ef994655d3f3e8a873ea319148061911eacb718deff8",
+     "round": "01ba807f56f18d2c7343039923197b9a492154d3a95b4c8aa67bcf2c163b3354",
+     "entry": "d5dbe3535b40faaefaefcfbf1bb2f16426e6bda0d52d9d7a0ca9bc9a73bd65f8",
      "core": "68e2b3d6757dc26a76f95eaf0b57799f4e965267ae70a2e79ce4228154acb589",
-     "ms": 4174,
+     "ms": 1611,
      "ok": true,
      "outcome": "FAILED",
-     "score": 37799,
+     "score": 1605404,
      "ticks": 4920,
-     "stateHash": "99145116db836b0c8729f218d2d3028604f7747ffa39a2207cdbab07290a4b03",
+     "stateHash": "c52a5473e7876c6747d7aa6a1226b8213ab42ef58354fdd8ee6d3a82d685f10a",
      "marksChecked": 2,
      "marksAgree": true,
-     "transcriptHash": "3dcf4dd1ef3d1452272fed469bac61e4f1b4f1e6b09a837eda387087e1cb5bb7",
+     "transcriptHash": "7b9a80e8cd345b0b5656e4a1f08fcc43152e229a6fb5ed661db014f055ac95b3",
      "seatsSigned": 7,
      "seatsAgreeWithThisReplay": 7
     }
    },
-   "seconds": 4.7,
-   "dir": "/Users/user/wf1489/e2e-2642/out-dev/flows/round.replay",
-   "run": "2026-11-14T09:38:38.750Z",
-   "from": "/Users/user/wf1489/e2e-2642/out-dev/report.json"
+   "seconds": 1.9,
+   "dir": "/Users/user/wf1489/e2e-2642/out-final/flows/round.replay",
+   "run": "2026-11-14T14:23:24.907Z",
+   "from": "/Users/user/wf1489/e2e-2642/out-final/report.json"
   }
  ]
 }

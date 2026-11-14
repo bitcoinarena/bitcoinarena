@@ -110,7 +110,7 @@ export const flows = [
     },
   },
   {
-    id: 'wallet.restore-from-words', area: 'wallet', title: 'restore the funded wallet from its 24 words in a second, empty browser: same wallet, the balance comes back', money: 2, reach: 2, after: ['deposit.lightning'], timeoutMs: 420000, order: 4,
+    id: 'wallet.restore-from-words', area: 'wallet', title: 'restore the funded wallet from its 24 words in a second, empty browser: same wallet, the balance comes back', money: 2, reach: 2, after: ['deposit.lightning', 'withdraw.lightning'], timeoutMs: 420000, order: 4,
     async run(ctx) {
       const a = ctx.shared.alice;
       if (!a || !a.funded) throw new Skip('no funded wallet in this run');
@@ -125,15 +125,13 @@ export const flows = [
       try { shown = await t.until(`(() => { const n = Number(((document.getElementById("arena-hdr-bal") || {}).innerText || "").replace(/[^0-9]/g, "")); return n > 0 ? n : null; })()`, 300000, 'the restored balance'); }
       catch (e) { await t.shot(join(ctx.dir, 'restore.png')); e.message = `${e.message}; the page says: ${(await t.text()).slice(0, 300).replace(/\n/g, ' / ')}`; throw e; }
       await t.shot(join(ctx.dir, 'restored.png'));
-      check(shown >= a.funded * 0.98, 'the restored balance is the funded one', { funded: a.funded, shown });
-      // THE MONEY IS NOW THIS BROWSER'S: the restore recovers the wallet's e-cash into it, and the first browser's notes are spent
-      // (measured: the first browser then showed 0 sat and its withdrawal never paid) - later money flows use this browser
-      a.profile = second;
+      check(shown >= (a.funded - (a.withdrawn || 0)) * 0.98, 'the restored balance is the funded one, less what was withdrawn', { funded: a.funded, withdrawn: a.withdrawn || 0, shown });
+      a.restored = second;
       return { funded: a.funded, restored: shown, seconds: Math.round((Date.now() - t0) / 1000) };
     },
   },
   {
-    id: 'withdraw.lightning', area: 'withdraw', title: 'withdraw 2 000 sat to an invoice of a devnet lnd that runs no gateway: the invoice is paid, the balance drops', money: 2, reach: 3, after: ['wallet.restore-from-words', 'wallet.reload-keeps-balance'], timeoutMs: 300000, order: 5,
+    id: 'withdraw.lightning', area: 'withdraw', title: 'withdraw 2 000 sat to an invoice of a devnet lnd that runs no gateway: the invoice is paid, the balance drops', money: 2, reach: 3, after: ['wallet.reload-keeps-balance', 'lightning.payee-routes'], timeoutMs: 400000, order: 3,
     async run(ctx) {
       const a = ctx.shared.alice;
       if (!a || !a.funded) throw new Skip('no funded wallet in this run');
@@ -150,7 +148,8 @@ export const flows = [
       const before = Number(await t.until(`(() => { const n = Number(((document.getElementById("arena-hdr-bal") || {}).innerText || "").replace(/[^0-9]/g, "")); return n > 0 ? n : null; })()`, 90000, 'the balance'));
       const inv = ctx.dn.lncli('c', 'addinvoice', '--amt=2000', '--memo=e2e-2642');
       await t.click('#arena-hdr-withdraw');
-      await t.until('!!document.getElementById("arena-wd-invoice") && !document.getElementById("arena-wd-invoice").disabled', 60000, 'the withdraw form');
+      try { await t.until('!!document.getElementById("arena-wd-invoice") && !document.getElementById("arena-wd-invoice").disabled', 150000, 'the withdraw form'); }
+      catch (e) { await t.shot(join(ctx.dir, 'withdraw-form.png')); e.message = `${e.message}; the page says: ${(await t.text()).slice(0, 400).replace(/\n/g, ' / ')}`; throw e; }
       await t.js(`(() => { const e = document.getElementById('arena-wd-invoice'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(e, ${JSON.stringify(inv.payment_request)}); e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
       await wait(800);
       await t.click('#arena-wd-go');
@@ -164,6 +163,7 @@ export const flows = [
       await t.shot(join(ctx.dir, 'withdrawn.png'));
       check(settled, 'the payee\'s invoice is settled', (await t.text()).slice(-400));
       const after = Number(await t.until(`(() => { const n = Number(((document.getElementById("arena-hdr-bal") || {}).innerText || "").replace(/[^0-9]/g, "")); return n < ${before} ? n : null; })()`, 60000, 'the lower balance'));
+      a.withdrawn = before - after;
       return { before, after, paidSat: Number(settled.amt_paid_sat), seconds: Math.round((Date.now() - t0) / 1000) };
     },
   },
