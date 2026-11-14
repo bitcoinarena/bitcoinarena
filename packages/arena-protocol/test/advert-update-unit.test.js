@@ -178,10 +178,11 @@ test('newestUpdates: the newest valid update wins by height, then by position in
   assert.deepEqual({ height: got.height, position: got.position, key: got.advert.guardianOf[0].guardianKey }, { height: 102, position: 1, key: key(0x13) });
   assert.equal(hex(got.advertId), hex(advertId(A3)));
   assert.equal(hex(got.raw), hex(VIEW.blocks[2].transactions[1]));
-  // a census one block earlier takes A1; the order inside block 102 decides between A2 and A3 regardless of timestamps
+  // a census one block earlier takes A1; inside block 102 the order decides - but only a NEWER body is an update (kanban #2426): with A2
+  // mined after A3, A2 (timestamp below A3's) is a replayed older body and A3 stays in force
   assert.equal(newest({ atHeight: 101 }).advert.guardianOf[0].guardianKey[1], 0x11);
   const flipped = { ...VIEW, blocks: VIEW.blocks.map((b, i) => (i === 2 ? { transactions: [...b.transactions].reverse() } : b)) };
-  assert.equal(newest({}, [ENTRY], flipped).advert.guardianOf[0].guardianKey[1], 0x12);
+  assert.equal(newest({}, [ENTRY], flipped).advert.guardianOf[0].guardianKey[1], 0x13);
 });
 
 test('newestUpdates does not apply: no signature check or no blocks, above the census or below the bond, another bond or key, a bad or throwing signature, an unparsable entry', () => {
