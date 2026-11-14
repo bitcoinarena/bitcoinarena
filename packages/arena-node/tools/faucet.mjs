@@ -7,7 +7,7 @@
 //   POST /faucet { address, sats }  -> { ok, txid, sats } or { ok: false, why }
 //   GET  /faucet                    -> { ok, balanceSats, maxSats, leftTodaySats }
 //   POST /player { kind: welcome | topup, account, invoice } -> { ok, sats } or { ok: false, why } (kanban #926: a player's test sats over Lightning)
-//   POST /opponent { round }  GET /opponent : a table with somebody at it (kanban #926), said by the page, read by tools/rps-opponent.mjs
+//   POST /opponent { round, tap?: { key, sig } }  GET /opponent : a table with somebody at it (kanban #926), said by the page, read by tools/rps-opponent.mjs
 //   GET  /player                    -> what was given, new accounts and returning apart (no account, no address)
 //   POST /feedback { event? , text?, build?, game?, round?, player? } -> a report: posted to Arena Chat; a signed `event` (kind 27842) is also kept for review (kanban #1342)
 //   GET  /feedback/mine  (Authorization: Nostr <base64 NIP-98 event>) -> the signed-in key's own reports and their states (kanban #1342)
@@ -608,8 +608,8 @@ createServer((req, res) => {
     if (req.method !== 'POST') return send(405, { ok: false, why: 'GET or POST' });
     let raw = '';
     req.setEncoding('utf8');
-    req.on('data', (c) => { raw += c; if (raw.length > 512) req.destroy(); });
-    req.on('end', () => { try { const b = JSON.parse(raw || '{}'); send(200, opponentWant(WANTS, b.round, Date.now(), b.tapped === true, ipKey(ipOf(req)) || 'none')); /* one caller, at most two tables (kanban #1535) */ } catch { send(400, { ok: false, why: 'not JSON' }); } });
+    req.on('data', (c) => { raw += c; if (raw.length > 1024) req.destroy(); });   // kanban #2087: a signed tap is ~260 bytes more
+    req.on('end', () => { try { const b = JSON.parse(raw || '{}'); send(200, opponentWant(WANTS, b.round, Date.now(), b.tap || null, ipKey(ipOf(req)) || 'none')); /* one caller, at most two tables (kanban #1535) */ } catch { send(400, { ok: false, why: 'not JSON' }); } });
     return undefined;
   }
   if (path === '/refill') {

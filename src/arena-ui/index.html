@@ -8006,7 +8006,10 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             if (left > 0) setTimeout(async () => { const g = window.ARENA_GAME; if (!g || !g.reveal) return; g.reveal(id).catch(() => {});
               for (let i = 0; i < 16; i++) { await new Promise((ok) => setTimeout(ok, 200)); const got = await g.reveals(id).catch(() => ({})); if (Object.keys(got).length >= 2) break; } }, left + 120); }
           // THE TAP, TOLD AT ONCE (kanban #926, measured 2026-11-01): an entry lands about 4 s after it, so an opponent that waited to see it had no time left in an 8 s round
-          if (window.ARENA_OPPONENT_URL && window.ARENA_BOTS_ON()) fetch(window.ARENA_OPPONENT_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ round: id, tapped: true }), keepalive: true }).catch(() => {});
+          // SIGNED (kanban #2087): the tab's presence proof for this round - an unsigned tap is no tap to the opponent
+          if (window.ARENA_OPPONENT_URL && window.ARENA_BOTS_ON()) { let tap = null;
+            try { tap = ARENACLIENT.presenceProofFor({ roundIdHex: id, storage: window.sessionStorage, random: (n) => crypto.getRandomValues(new Uint8Array(n)), curve: window.ARENA_CURVE }); } catch (e) { tap = null; }
+            fetch(window.ARENA_OPPONENT_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(tap ? { round: id, tap } : { round: id }), keepalive: true }).catch(() => {}); }
           return window.ARENA_LOBBY_ACT ? window.ARENA_LOBBY_ACT.join(id) : false; },
         hidden: (id) => readHidden().find((x) => x.roundIdHex === id) || null,
         // every move this tab hid in this game's rounds, newest last - a round leaves the lobby's rows at its entry close, and
