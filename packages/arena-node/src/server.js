@@ -1948,6 +1948,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     ...(counts ? { historyFor: (net, height) => (ballotTally ? ballotTally.historyAt(net, height) : null) } : {}),
     // ONLY A BONDED NODE PROPOSES (27A.7.2, kanban #1489): the proposer is checked against the census the tally reads
     ...(typeof ballot.censusAt === 'function' ? { censusAt: ballot.censusAt } : {}),
+    // THIS SEAT'S SIGNED SIGHTING of each proposal it holds before its voting ends (kanban #2432): a seat late on it counts it only once
+    // bonds holding a census majority signed one - never on seat URLs or a seat's own unsigned word
+    ...(round && round.identity && round.identity.secret && round.pubkey ? { seenSigner: { pubkey: round.pubkey, sign: (m) => schnorr.sign(m, round.identity.secret) } } : {}),
     // AND JUDGED ON THE BRANCH OF ITS OWN PUBLICATION BLOCK after a restart (kanban #2032): the tally's block reader
     ...(ballot && typeof ballot.chainHashAt === 'function' ? { blockHashAt: ballot.chainHashAt } : ballot && typeof ballot.blockHashAt === 'function' ? { blockHashAt: ballot.blockHashAt } : {}),
     verify: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } },
