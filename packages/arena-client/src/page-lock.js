@@ -1153,9 +1153,26 @@ function pendingDrop(storage, federationId, operation) {
  */
 export function depositEnded(storage, federationId, operation, final, d) {
   let added = false;
-  if (final === DEPOSIT_STATE.CLAIMED) added = depositRowOnce(storage, federationId, d);
+  if (final === DEPOSIT_STATE.CLAIMED) {
+    added = depositRowOnce(storage, federationId, d);
+    // THE ROW FIRST, THEN THE ENTRY (kanban #2534, the #1179 order): a full browser refuses the history row (ledgerAppend answers false), and
+    // dropping the pending entry anyway left a claimed deposit named nowhere - its federation's only record, so ledgerFederations no longer
+    // named a wallet that holds the sats. The entry is dropped only once the row is held (written now, or by an earlier page); else the next
+    // page (resumeDeposits) writes it.
+    if (!added && !depositRowHeld(storage, federationId, d)) return false;
+  }
   if (final === DEPOSIT_STATE.CLAIMED || final === DEPOSIT_STATE.EXPIRED || final === DEPOSIT_STATE.FAILED) pendingDrop(storage, federationId, operation);
   return added;
+}
+/** Is this claimed deposit's history row held in this browser (kanban #2534)? By its invoice's hash, else by its operation's row key. */
+function depositRowHeld(storage, federationId, d) {
+  if (!storage || !fedHexOf(federationId)) return false;
+  let invoiceHash = null;
+  try { invoiceHash = toHex(decodeBolt11(d.invoice).paymentHash); } catch { invoiceHash = null; }
+  const kind = d.row && typeof d.row.kind === 'string' ? d.row.kind : 'deposit';
+  if (invoiceHash) return ledgerRows(storage, federationId).some((r) => r.kind === kind && r.invoiceHash === invoiceHash);
+  if (d.operation) { try { return storage.getItem(`${ledgerKey(federationId)}.dep-op-${String(d.operation).toLowerCase().replace(/[^0-9a-z_-]/g, '')}`) !== null; } catch { return false; } }
+  return false;
 }
 /** THE WELCOME THAT CAME AS E-CASH (kanban #1381): one deposit row per e-cash string, however many pages received it. */
 export function faucetEcashRowOnce(storage, federationId, { ecash, msat }) {
@@ -1859,8 +1876,13 @@ async function keptLockStake(ask) {
     if (['submitted', 'accepted', 'committed'].includes(now.state))
       throw new Error(`no second lock is made for this round: this player's stake lock for it is already ${now.state}`);
     const iKey = lockIntentKey(roundId, playerPubkey);
-    if (now.state === 'intent') {
-      const r = now.record;
+    // kanban #1946: the intent key is read whatever the saved record says - lockRecordOf answers the saved record first, so an intent a dead
+    // tab left under a REFUSED record (PLAY 2 after a refused PLAY 1) was invisible and written over, its submitted transaction named nowhere
+    const pending = now.state === 'intent' ? now.record : readJson(storage, iKey);
+    if (pending) {
+      const r = pending;
+      // the intent itself is what is kept aside below - under a REFUSED record now.record is that record, not the intent (kanban #1946)
+      let kept = r;
       if (!r.failed && Date.now() - Number(r.atMs || 0) < LOCK_INTENT_LIVE_MS)
         throw new Error('another tab is locking this round\'s stake for this player right now: no second lock is made');
       // A SUBMISSION NO ANSWER NAMED IS FOUND AGAIN BEFORE A NEW LOCK (kanban #2459): a tab closed after the lock client handed the
@@ -1875,13 +1897,14 @@ async function keptLockStake(ask) {
         if (found === undefined)
           throw new Error('an earlier stake lock for this round was handed to the guardians from a tab that closed before it answered, and this wallet cannot find it: no second lock is made');
         if (found) {
-          now.record = { ...r, txid: String(found.txid), operation: String(found.operation || ''), outputs: found.outputs || null, foundMs: Date.now() };
-          try { putRoomy(storage, iKey, JSON.stringify(now.record)); } catch { /* the orphan copy below names it */ }
+          kept = { ...r, txid: String(found.txid), operation: String(found.operation || ''), outputs: found.outputs || null, foundMs: Date.now() };
+          if (now.state === 'intent') now.record = kept;
+          try { putRoomy(storage, iKey, JSON.stringify(kept)); } catch { /* the orphan copy below names it */ }
         }
       }
       // a tab closed while its lock client was asked: the transaction it names (if any) may hold the stake - kept aside, never written over
       if (!r.failed) {
-        const o = now.record;
+        const o = kept;
         try { putRoomy(storage, `arena.lock.orphan.${tag}.${Number(o.atMs || 0)}`, JSON.stringify(o)); } catch { /* the next intent is refused for room below */ }
         console.warn(`[arena] #1162 an earlier stake lock for this round did not finish (${o.txid ? `transaction ${String(o.txid).slice(0, 16)}… submitted` : 'nothing answered'}): kept as arena.lock.orphan.${tag}.*`);
       }
@@ -2081,11 +2104,18 @@ export function bindLockEntry(storage, { roundId, playerPubkey, entryId: eid }) 
  * failed (a seat 503, the round full, offline) left the lock "staked" in an entry no seat holds - a new tab, which has no copy of that entry, could never
  * use it again. `locks` is findLock's answer for this seed in the round: when every seat asked answered and none names the kept lock under the entry,
  * the entry is let go of (never one a seat committed to). Answers true when it was.
+ * AND NO SEAT HOLDS THE ENTRY ITSELF (kanban #1839, state audit 2026-11-12 sm3-entry-1): GET /stake-lock lists only VERIFIED locks, so an entry every
+ * seat took (201) whose /lock never landed (the tab reloaded first) read "none" - the lock was let go of, the next entry naming it was refused at every
+ * seat (a lock stakes the entry that named it first, #1489), and stake and fee backed nothing until expiry. `entries` is entryHeldAt's answer for the
+ * kept entry: the lock is let go of only when every seat asked answered and none holds that entry; without it, never. An entry a seat holds keeps the
+ * lock, and its stake comes back through the seats' unentered return (POST /refused-lock) after the round's close.
  */
-export function releaseUntakenEntry(storage, { roundId, playerPubkey, locks }) {
+export function releaseUntakenEntry(storage, { roundId, playerPubkey, locks, entries = null }) {
   const now = lockRecordOf(storage, { roundId, playerPubkey });
   if (now.state === 'none' || now.state === 'intent' || now.record.committedTo || !now.record.entry) return false;
   if (!locks || !(locks.asked > 0) || locks.answered !== locks.asked) return false;
+  if (!entries || String(entries.entryId || '').toLowerCase() !== String(now.record.entry).toLowerCase()
+    || !(entries.asked > 0) || entries.answered !== entries.asked || entries.heldBy.length) return false;
   const at = now.record.outpoint ? `${String(now.record.outpoint.txid)}:${String(now.record.outpoint.outIdx)}` : null;
   const named = (locks || []).some((l) => String(l.entryId || '').toLowerCase() === String(now.record.entry).toLowerCase()
     || (at && l.outpoint && `${toHex(l.outpoint.txid)}:${String(l.outpoint.outIdx)}` === at));
@@ -2093,6 +2123,24 @@ export function releaseUntakenEntry(storage, { roundId, playerPubkey, locks }) {
   const { entry: _gone, ...rest } = now.record;
   putRoomy(storage, now.key, JSON.stringify(rest));
   return true;
+}
+
+/**
+ * WHICH SEATS HOLD AN ENTRY (kanban #1839): GET /entry?id= at each seat - 200 holds it, 404 does not, anything else (or no answer) is not an answer.
+ * { entryId, asked, answered, heldBy } - what releaseUntakenEntry needs before it lets go of a lock named in that entry.
+ */
+export async function entryHeldAt({ entryId, nodes, fetcher = fetch } = {}) {
+  const id = typeof entryId === 'string' ? entryId.toLowerCase() : toHex(entryId);
+  const asked = [...new Set(nodes || [])];
+  const said = await Promise.all(asked.map(async (node) => {
+    try {
+      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/entry?id=${id}`, { signal: AbortSignal.timeout(SEAT_READ_MS) });
+      try { await r.arrayBuffer(); } catch { /* the body is not read */ }
+      return r.status === 200 ? 'held' : r.status === 404 ? 'not' : 'silent';
+    } catch { return 'silent'; }
+  }));
+  return { entryId: id, asked: asked.length, answered: said.filter((x) => x !== 'silent').length,
+    heldBy: asked.filter((_, i) => said[i] === 'held').map((n) => String(n).replace(/\/+$/, '')) };
 }
 
 /** A signer node committed the kept lock to `entryId`: from now on it is that entry's stake, not one to reuse. Final: never another entry. */
