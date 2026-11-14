@@ -10,6 +10,8 @@ T=$(mktemp -d "${TMPDIR:-/tmp}/stage2641.XXXX"); cp "$SRC/index.html" "$T/index.
 # 1. the page diff (written against page960 -> page960-s2641); a hunk that does not apply is the Feedback form's own line, done by feedback-form.py
 patch -F3 -o "$T/out.html" "$T/index.html" "$HERE/index.patch" -r "$T/rej" || true
 grep -q "const social = SOCIAL_ON()" "$T/out.html" || python3 "$HERE/feedback-form.py" "$T/out.html"
+# the Founding Tester checkbox is never appended (Daniel 2026-11-14)
+sed -i "s#, shotRow, tick, say, levels#, shotRow, say, levels#" "$T/out.html"
 # 2. the UI stamp
 OLD=$(grep -o 'class="build-line">UI [0-9]*' "$T/out.html" | head -1 | grep -o '[0-9]*$')
 sed -i "s#>UI $OLD<#>UI $UI<#g; s#· UI $OLD'#· UI $UI'#g" "$T/out.html"

@@ -7,6 +7,8 @@ i=s.index(a); j=s.index('\n', i); line=s[i:j]
 assert "levels, el('div', { cls: 'row' }, mineBtn, off, send)));" in line, 'row'
 line=line.replace("el('h3', { text: 'Feedback' })", "(RULES_ON() ? el('div', { cls: 'fb-title' }, el('h3', { text: 'Feedback' }), ruleLink('', 'Rules')) : el('h3', { text: 'Feedback' }))",1)
 line=line.replace("levels, el('div', { cls: 'row' }, mineBtn, off, send)));", "levels, social, el('div', { cls: 'row' }, mineBtn, off, send)));")
+# THE FOUNDING TESTER CHECKBOX IS NOT IN THE FORM AT ALL (Daniel 2026-11-14: "Es gibt ja eine Checkbox im Feedback, die weg"; hidden since 2026-11-10)
+line=line.replace(', tick, say, levels', ', say, levels')
 s=s[:i]+"      const social = SOCIAL_ON() ? window.ARENA_SOCIAL_PANEL() : null;   // kanban #2641\n"+line+s[j:]
 b="      const recount = () => { const n = t.value.trim().length; count.textContent = n < LEAST ? (LEAST - n) + ' more characters' : n + ' characters'; count.className = 'fb-count' + (n < LEAST ? ' short' : ''); send.disabled = n < LEAST"
 assert s.count(b)==1, 'recount'
