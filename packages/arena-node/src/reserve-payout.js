@@ -585,7 +585,9 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     if (plan.refunds.length > 1 && leaderboardAmounts({ inputs: plan.refunds.slice(0, -1), winners: plan.winners, fees }).covers) return refuse('the plan spends more reserve outputs than the payout needs');
     if (String(plan.changeMsat) !== String(amounts.changeMsat)) return refuse(`the change is ${plan.changeMsat} msat, and those inputs leave ${amounts.changeMsat}`);
     const paid = plan.winners.reduce((t, w) => t + BigInt(w.msat), 0n);
-    if (paid !== BigInt(plan.amountSats) * 1000n) return refuse(`the winners are paid ${paid} msat, and the request is ${plan.amountSats} sat`);
+    // AT MOST THE REQUEST (kanban #2656): a place no net-positive identity fills stays in the reserves (leaderboard-winners.js), so the
+    // winners may be paid less than the request; which places are paid, and how much, is checked against this seat's own read below
+    if (paid <= 0n || paid > BigInt(plan.amountSats) * 1000n) return refuse(`the winners are paid ${paid} msat, and the request is ${plan.amountSats} sat`);
     if (late) return { ok: true, planId: pid, signer: g };
     // THE 10 % CAP over the reserves this seat holds there now (the plan's own inputs counted)
     const held = unspent(plan.federation, plan.proposal).reduce((t, r) => t + BigInt(r.amountMsat), 0n) / 1000n;
