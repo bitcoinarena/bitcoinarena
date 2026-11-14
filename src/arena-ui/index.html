@@ -5113,6 +5113,17 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     // in. The lobby's signer nodes list what they settled in the last 24 h; the rounds whose keys this
     // tab's seed derives are kept like the rounds this tab joined, and looked at and withdrawn the
     // same way. The signer nodes are asked nothing per round.
+    // THE NODE KEYS OF A CENSUS THIS PAGE CHECKED (kanban #1896, #2108, #2123): the newest one, or - with none checked yet - a listed paid
+    // round's, checked here as a join checks it (clientCommittee, compare off). Hex keys, or null when no census can be checked.
+    window.ARENA_CENSUS_KEYS = async () => {
+      const keysOf = () => { const c = ARENACLIENT.newestCheckedCensus ? ARENACLIENT.newestCheckedCensus() : null; return c ? c.entries.map((e) => ARENACLIENT.toHex(e.pubkey)) : null; };
+      let keys = keysOf();
+      if (keys) return keys;
+      const row = (window.ARENA_LOBBY || []).map((x) => x.raw).find((r) => r && r.contract && r.id && Array.isArray(r.said) && r.said.length);
+      if (!row) return null;
+      try { await ARENACLIENT.clientCommittee(row.id, Object.assign({}, row.contract, { id: ARENACLIENT.fromHex(row.id) }), row.said.map((c) => c.node).filter(Boolean), { curve: window.ARENA_CURVE, compare: false }); } catch { /* none */ }
+      return keysOf();
+    };
     const OWED_LOOKBACK_MS = 24 * 3600 * 1000;
     async function findTheRoundsOwed(named) {
       if (typeof ARENACLIENT === 'undefined' || !ARENACLIENT.findOwedRounds || !window.ARENA_CURVE || !named || !named.federation) return;
@@ -5133,8 +5144,10 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         // phrase's keys - 7 asks on 7 signer nodes however many phrases are kept (was 7 per phrase: 49 for seven)
         // KNOWN BY ROUND AND ORDER (kanban #2106): a kept order 0 no longer hides a lost record of order 2 of the same round from the scan
         const knownBySeed = new Map(seeds.map((hex) => [hex, ARENACLIENT.savedCollects(vault(), { seed: ARENACLIENT.fromHex(hex) }).map((r) => r.roundIdHex + ':' + (Number(r.order) || 0))]));
+        // ONLY SIGNED ANSWERS COUNT, ONE PER CENSUS KEY (kanban #2108, #2123): with a census this page checked, only its bonded keys
+        let bonded = null; try { bonded = window.ARENA_CENSUS_KEYS ? await window.ARENA_CENSUS_KEYS() : null; } catch { bonded = null; }
         const found = await ARENACLIENT.findOwedRounds({ seeds: seeds.map((hex) => ARENACLIENT.fromHex(hex)), knownBySeed, curve: window.ARENA_CURVE, nodes: named.nodes,
-          sinceMs: Date.now() - OWED_LOOKBACK_MS });
+          sinceMs: Date.now() - OWED_LOOKBACK_MS, bonded });
         for (const hex of seeds) {
           const mine = found.filter((f) => ARENACLIENT.toHex(f.seed) === hex);
           console.log('[arena] collect scan (' + (hex === tabHex ? 'this tab\'s phrase ' : 'kept phrase ') + hex.slice(0, 8) + '): the last 24 h settled rounds over '
@@ -10664,16 +10677,16 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       if (!ds.ok || !ds.target) return { ok: false, step: 'donation', why: ds.why || 'the round names no donation sets' };
       // ONLY BONDED NODES ARE A COMMITTEE (kanban #1896): the served list counts a round's committee only when its keys are nodes of a
       // census this page checked - that round's, checked here as a join checks it when no census is held yet
-      let census = ARENACLIENT.newestCheckedCensus ? ARENACLIENT.newestCheckedCensus() : null;
-      if (!census) {
+      let bondedKeys = await window.ARENA_CENSUS_KEYS();
+      if (!bondedKeys) {
         const rc = Object.assign({}, row.contract, { id: ARENACLIENT.fromHex(row.id) });
         try { await ARENACLIENT.clientCommittee(row.id, rc, (row.said || []).map((c) => c.node).filter(Boolean), { curve: window.ARENA_CURVE, compare: false }); } catch { /* refused below */ }
-        census = ARENACLIENT.newestCheckedCensus ? ARENACLIENT.newestCheckedCensus() : null;
+        bondedKeys = await window.ARENA_CENSUS_KEYS();
       }
-      if (!census) return { ok: false, step: 'served', why: 'this page could not check the network\'s census, so it cannot tell which keys served a round' };
+      if (!bondedKeys) return { ok: false, step: 'served', why: 'this page could not check the network\'s census, so it cannot tell which keys served a round' };
       return ARENACLIENT.buyItem({ manifest: shop.game.manifest, itemId: it.id, networkSet: ds.target.network, gameSet: ds.target.game, wallet, federationId, devsPct,
         player: { pubkey: key.pubkey, sign: key.sign }, seats: shop.game.nodes || [], fetch: (u, o) => fetch(u, o), storage: vault(),
-        verify: (sg, m, k) => window.ARENA_CURVE.verify(sg, m, k), bondedKeys: census.entries.map((e) => ARENACLIENT.toHex(e.pubkey)) });
+        verify: (sg, m, k) => window.ARENA_CURVE.verify(sg, m, k), bondedKeys });
     }
     // DONATE TO THE DEVELOPERS (2026-10-17: "donate to developer, a popup opens with an amount to choose from
     // 100, 500, 1000, 5000 satoshis or custom"; "B e cash"; Tick Tock's countdown box, the other games, the main testnet UI's footer):
