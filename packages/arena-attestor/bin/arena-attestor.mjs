@@ -252,9 +252,15 @@ const closeOfRound = async (r) => {
   }
   // no contract: a listed close only while every seat listing the round names the same close AND the same game (kanban #2080)
   const pairs = [...new Set([...r.listedBy.values()].map((l) => `${l.close}/${l.gameId}`))];
-  if (pairs.length !== 1) return { closeMs: null, why: `the seats list ${pairs.length} (close, game) pairs for it and none serves its contract` };
-  const only = [...r.listedBy.values()][0];
-  return { closeMs: only.close, gameId: only.gameId, from: 'listing' };
+  if (pairs.length === 1) { const only = [...r.listedBy.values()][0]; return { closeMs: only.close, gameId: only.gameId, from: 'listing' }; }
+  // SEATS DISAGREE (kanban #2647, audit #1489 r1-attest-1): one seat listing a shifted close made the round unsigned (VOID) - or, read
+  // first, signed on its window. A (close, game) pair listed by more than half of ALL configured seats is the round's; else none
+  const votes = new Map();
+  for (const l of r.listedBy.values()) { const k = `${l.close}/${l.gameId}`; votes.set(k, { n: (votes.get(k)?.n || 0) + 1, l }); }
+  const top = [...votes.values()].find((v) => v.n * 2 > SEATS.length);
+  if (!top) return { closeMs: null, why: `the seats list ${pairs.length} (close, game) pairs for it, none by a majority of the ${SEATS.length} seats, and none serves its contract` };
+  log({ step: 'listed close by majority', round: r.id, closeMs: top.l.close, seats: top.n, of: SEATS.length });
+  return { closeMs: top.l.close, gameId: top.l.gameId, from: 'listing' };
 };
 
 // THE ROUNDS WORTH WORK THIS TICK: every round whose close is known from its contract or that holds a word; of the others, only
