@@ -28,7 +28,7 @@ import { readFileSync, writeFileSync, appendFileSync, renameSync } from 'node:fs
 import { execFile } from 'node:child_process';
 import { nodeBountyCheck } from '../src/node-bounty-check.js';
 import { seatPublicFetch } from '../src/public-fetch.js';
-import { openBountySeason, cleanOpenIssues } from '../src/bounty-season.js';
+import { openBountySeason, cleanOpenIssues, seasonEndMs } from '../src/bounty-season.js';
 import { verifiersFromEnv } from '../src/bounty-verify.js';
 import { socialCheck, resolversFromEnv } from '../src/bounty-social.js';   // kanban #2641
 import { userbotFromEnv } from '../src/telegram-userbot.js';   // kanban #2641
@@ -822,7 +822,7 @@ createServer((req, res) => {
         return res.end(readFileSync(f)); } }
     if (S2 && path === '/feedback/admin/season' && req.method === 'GET') {
       const season = Number(q.get('season')) || S2.seasonNow(Date.now());
-      return send(200, { ok: true, s1EndMs: Number.isFinite(S1_END_MS) ? S1_END_MS : null, s2StartMs: Number.isFinite(S2_START_MS) ? S2_START_MS : null, started: S2_STARTED(), pot: S2.pot(season), approvals: S2.approvals({ season }), waiting: S2.approvals({ state: 'waiting' }), verifiers: Object.keys(S2_VERIFY) });
+      return send(200, { ok: true, s1EndMs: Number.isFinite(S1_END_MS) ? S1_END_MS : null, s2StartMs: Number.isFinite(S2_START_MS) ? S2_START_MS : null, started: S2_STARTED(), weekEndMs: seasonEndMs(season, S2_START_MS), pot: S2.pot(season), approvals: S2.approvals({ season }), waiting: S2.approvals({ state: 'waiting' }), verifiers: Object.keys(S2_VERIFY) });
     }
     if (path === '/feedback/admin/export.csv' && req.method === 'GET') {
       res.writeHead(200, { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': 'attachment; filename="arena-feedback.csv"', 'cache-control': 'no-store', ...cors });
@@ -901,7 +901,7 @@ createServer((req, res) => {
         if (S2 && b.action === 'payable') { const r = FEEDBACK.report(b.id); if (!r) return send(200, { ok: false, why: 'no such report' });
           await S2.verify(r.pubkey, S2_VERIFY, { cause: 'payout' }); return send(200, S2.payable(r.id)); }
         if (S2 && b.action === 'draw-entries') { const season = Number(b.season) || S2.seasonNow(Date.now());
-          for (const k of S2.keysOfSeason(season)) await S2.verify(k, S2_KEY_PLATFORMS(['telegram', 'discord']), { cause: 'draw' });
+          for (const k of S2.keysOfSeason(season)) await S2.verify(k, S2_KEY_PLATFORMS(['telegram', 'discord', 'armada']), { cause: 'draw' });
           return send(200, { ok: true, season, entries: S2.drawEntries(season) }); }
         return send(400, { ok: false, why: 'an action is approve, reject, duplicate, reward or note' });
       }).catch(() => send(500, { ok: false, why: 'try again' })));

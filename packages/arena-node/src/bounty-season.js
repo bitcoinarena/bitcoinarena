@@ -57,6 +57,12 @@ export function seasonAt(nowMs, startMs = null) {
   return FIRST_SEASON + Math.floor((nowMs - startMs) / SEASON_MS);
 }
 
+/** WHEN A WEEK ENDS (kanban #2641): its start + 7 days; Week 2 starts at `startMs`. null without a start. */
+export function seasonEndMs(season, startMs = null) {
+  if (!Number.isFinite(startMs)) return null;
+  return startMs + (Number(season) - FIRST_SEASON + 1) * SEASON_MS;
+}
+
 export function newLinkCode() {
   const b = randomBytes(8); let s = '';
   for (const x of b) s += CODE_ABC[x % CODE_ABC.length];
@@ -297,8 +303,10 @@ export function openBountySeason(path = ':memory:', { startMs = null, potSats = 
   }
 
   /**
-   * THE DRAW'S ENTRIES for a season: every key with an approved report in it that is a Telegram or Discord member (fresh read) - one entry per person,
-   * named by its platform username (telegram first). Call after verify() for each key (membership is read again right before the draw).
+   * THE DRAW'S ENTRIES for a season: every key with an approved report in it that is a member of Telegram, Discord or Armada (fresh read) - one entry
+   * per person, i.e. per report key, however many of the three it is in (Daniel 2026-11-14, kanban #2641: "Ein user darf entweder in discord, Armada
+   * oder telegram gezählt [werden], er wird aber nur einmal gezählt"); an account belongs to one key only (links_by_account). Named by its platform
+   * username (telegram, then discord, then armada). Call after verify() for each key (membership is read again right before the draw).
    */
   function drawEntries(season, { nowMs = Date.now() } = {}) {
     const keys = db.prepare(`SELECT DISTINCT pubkey FROM approvals WHERE season = ? AND state = 'approved' AND level <> 'node'`).all(Number(season)).map((x) => x.pubkey);
@@ -306,7 +314,7 @@ export function openBountySeason(path = ':memory:', { startMs = null, potSats = 
     for (const k of keys) {
       const f = flagsOf(k, { nowMs });
       const ls = linksOf(k);
-      const pick = (f.telegram && ls.find((l) => l.platform === 'telegram')) || (f.discord && ls.find((l) => l.platform === 'discord')) || null;
+      const pick = COMMUNITIES.map((p) => f[p] && ls.find((l) => l.platform === p)).find(Boolean) || null;
       if (pick) out.push(`${pick.platform}:${pick.username || pick.userId}`);
     }
     return [...new Set(out)].sort();
