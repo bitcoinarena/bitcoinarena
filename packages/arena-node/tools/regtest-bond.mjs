@@ -243,7 +243,7 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
       if (!maturity.ok) continue;
       if (u.byMarker ? toHex(keyOfAdvert(advert, maturity.maturity).outputKey) !== u.scriptPubKey.slice(4)
         : advert.bondScriptTemplateVersion !== 1) continue;
-      const newer = newestUpdateOf({ txid: fromHex(u.txid).reverse(), vout: u.vout, height: u.height, nodePubkey: nodeKey });
+      const newer = newestUpdateOf({ txid: fromHex(u.txid).reverse(), vout: u.vout, height: u.height, nodePubkey: nodeKey, advert });
       out.push({ txid: u.txid, vout: u.vout, height: u.height, sats: Math.round(u.amount * 1e8), maturity: maturity.maturity,
         advert: newer ? newer.advert : advert, bondAdvert: advert, bondSignature: advertSignature, ...(ancestor ? { ancestor: true } : {}),
         ...(newer ? { updatedBy: { txid: newer.txidHex, height: newer.height } } : {}) });
@@ -302,6 +302,8 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
    */
   let markers = null;
   function newestUpdateOf(bond) {
+    const tsOfBody = (a) => { try { return a && a.timestamp !== undefined && a.timestamp !== null ? BigInt(a.timestamp) : null; } catch { return null; } };
+    const ownTs = tsOfBody(bond.advert);
     if (!markers) {
       const scan = scanUtxos([`raw(5120${toHex(bondMarker(network))})`]);
       markers = (scan.unspents || []).filter((m) => m.height > 0);
@@ -317,8 +319,15 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
       let signed = false;
       try { signed = schnorr.verify(read.signature, read.advertId, read.nodePubkey); } catch { signed = false; }
       if (!signed) continue;
-      if (!best || m.height > best.height) best = { advert: read.advert, height: m.height, txidHex: m.txid };
+      // ONLY A NEWER BODY IS AN UPDATE (kanban #2426, advert-update.js newestUpdates): a body the node signed before - the bond's own, an
+      // old check, an old step-out - re-posted by anyone is not newer than what it copies. The update in force is the one with the highest
+      // signed timestamp above the bond's own body; of equal ones the first mined, as the census counts only a strictly newer one.
+      const ts = tsOfBody(read.advert);
+      if (ts === null || (ownTs !== null && ts <= ownTs)) continue;
+      if (best && (ts < best.ts || (ts === best.ts && m.height >= best.height))) continue;
+      best = { advert: read.advert, height: m.height, txidHex: m.txid, ts };
     }
+    if (best) delete best.ts;
     return best;
   }
 
