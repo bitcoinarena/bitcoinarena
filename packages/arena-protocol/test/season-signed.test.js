@@ -43,8 +43,8 @@ test('the scenario: three colluding seats hand in byte-identical invented rounds
   assert.deepEqual(m.rounds.map((r) => r.roundId), [R1.roundId, R2.roundId].sort(), 'only the rounds the threshold of their draw signed');
   assert.ok(m.excluded.some((x) => x.round === FAKE.roundId && /signed by enough of its seats \(3 at most\)/.test(x.why)), JSON.stringify(m.excluded));
   const w = leaderboardWinners({ ...WINDOW, rounds: m.rounds });
-  // A +2S, C 0, B and D -S each (sharing place 3): the honest board
-  assert.deepEqual(w.winners.map((x) => [x.player, x.places]), [[A, '1'], [C, '2'], [B, '3-3 shared by 2'], [D, '3-3 shared by 2']]);
+  // A +2S, C 0, B and D -S each: only A won money, so only A is paid; places 2 and 3 stay in the reserves (kanban #2656)
+  assert.deepEqual(w.winners.map((x) => [x.player, x.places]), [[A, '1']]);
   assert.ok(!w.winners.some((x) => x.player === X), 'X is paid nothing');
 });
 

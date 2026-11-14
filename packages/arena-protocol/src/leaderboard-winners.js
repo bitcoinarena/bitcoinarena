@@ -33,7 +33,13 @@ export function leaderboardWinners({ rounds, games, fromMs, toMs, top, amountMsa
   }
   const isIdentity = (p) => { const ks = keysOf.get(p) || []; return ks.length > 0 && ks.every((k) => LB_HEX64.test(k) && k !== p); };
   const skipped = [], ranked = [];
-  for (const row of s.rows) (isIdentity(row.player) ? ranked : skipped).push(row);
+  // A money award from the reserves goes only to an identity that staked in the window (badges.js's round-badge rule, stakeMsat > 0):
+  // free rounds cost nothing and net 0, which ranks above every paying player who lost, so fresh identities made for free rounds
+  // would share every place the net-positive players leave open (kanban #2450). And only to an identity that won money in the window
+  // (netMsat > 0): one paid round alone (its own net stake back, only the fee lost) nets -10 % of a stake, still above every honest
+  // player who lost a game, so fresh identities at one fee each would farm the places left open the same way (kanban #2656). A place
+  // no net-positive identity fills stays in the reserves.
+  for (const row of s.rows) (isIdentity(row.player) && row.stakedMsat > 0n && row.netMsat > 0n ? ranked : skipped).push(row);
   const places = placeAmounts({ amountMsat, top, splitBps });
   const winners = [];
   let place = 0, i = 0;

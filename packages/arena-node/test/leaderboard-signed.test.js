@@ -103,7 +103,8 @@ test('the scenario, old rule: three colluding seats\' identical invented rounds 
   const bySeat = new Map([['me', unsigned(seatAnswer(1, [R1, R2]))], ...COLLUDERS([R1, R2]).map(([k, v]) => [k, unsigned(v)])]);
   const m = mergeSeasonAccounts(bySeat, { agree: SEASON_NETWORK_AGREE, keys: true });
   const w = leaderboardWinners({ ...SEASON, rounds: m.rounds });
-  assert.deepEqual(w.winners.map((x) => x.player), [X, A, C], 'X, who played no round, takes place 1');
+  // only identities that won money are paid (kanban #2656): C nets 0 and is not
+  assert.deepEqual(w.winners.map((x) => x.player), [X, A], 'X, who played no round, takes place 1');
 });
 
 test('the scenario, new rule: the colluders\' invented round is not counted, X is paid nothing, the honest top 3 are paid', async () => {
@@ -112,8 +113,8 @@ test('the scenario, new rule: the colluders\' invented round is not counted, X i
   const r = out.find((x) => x.id === LB);
   assert.deepEqual([r.ok, r.state], [true, PAYOUT.PAID], r.why);
   assert.equal(w.fed.submits.length, 1);
-  // A +2S, C 0, B and D -S sharing place 3
-  assert.deepEqual(paidTo(w), [[keyOf(A), '1000000'], [keyOf(C), '1000000'], [keyOf(B), '500000'], [keyOf(D), '500000']]);
+  // A +2S, C 0, B and D -S: only A won money; places 2 and 3 stay in the reserves (kanban #2656)
+  assert.deepEqual(paidTo(w), [[keyOf(A), '1000000']]);
   assert.ok(!paidTo(w).some(([k]) => k === keyOf(X)), 'X is paid nothing');
   const own = w.seats[0].book.recordOf(LB);
   assert.equal(own.pairs.length, 2, 'two signed rounds, the invented one not among them');
@@ -138,7 +139,7 @@ test('frozen once: a round signed after the freeze changes no list; the seats ar
   for (const s of w.seats) assert.equal((await s.book.freeze(LB)).ok, true);
   rounds = [R1, R2, R3];                         // D's big win of R3, signed by five of its seats, arrives after every seat froze
   await w.seats[0].api.round({ height: 600 });
-  assert.deepEqual(paidTo(w).map(([k]) => k), [keyOf(A), keyOf(C), keyOf(B), keyOf(D)], 'R3 is not on the list');
+  assert.deepEqual(paidTo(w).map(([k]) => k), [keyOf(A)], 'R3 is not on the list (D, who nets +7S with it, is not paid)');
   assert.ok(w.seats.every((s) => s.collects === 1), 'each seat read the season once');
   // before the window has closed FREEZE_GRACE_MS ago, nothing is read at all
   const early = world(() => HONEST([R1, R2]), { clock: { now: DUE_MS - 1 } });
