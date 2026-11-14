@@ -461,7 +461,11 @@ export class Verifier {
    * could not. Kept in `carried` so a close can say what it was offered.
    */
   async carryReceipts(roundIdBytes, entryIdBytes) {
-    const report = { taken: 0, refused: [], down: [], answered: 0 };
+    // `ignored` (kanban #2661, #1489 r2-play-1): what shows no start - bytes that are no receipt, a signature that does not verify, signers off the
+    // committee, receipts of another entry's marks. #neverStarted reads `refused` as doubt that the player started; one junk answer (144 zero
+    // bytes: "not a checkpoint receipt") put there kept every walk-away of the round from FORFEIT at every honest seat. Such lines are kept and
+    // logged apart, and a peer that answered only them counts as having answered nothing.
+    const report = { taken: 0, refused: [], ignored: [], down: [], answered: 0 };
     // WHO MAY HAVE SIGNED A RECORD WORTH A VERIFY (kanban #2151, #1489 audit44 refute of #1636): the round's assigned
     // committee, read once per carry. #1636 bounded only the records that FAIL to verify: a peer answering records that
     // each verify under a fresh key for a random mark passed the per-(mark, signer) dedupe every time, so every one of
@@ -519,6 +523,8 @@ export class Verifier {
               this.round.takeReceipt(one);
               report.taken++;
             } catch (e) {
+              // no receipt at all, or one whose signature does not verify: nothing that shows a start (kanban #2661)
+              if (!r || /does not verify/.test(e.message)) { report.ignored.push(`${peer}: ${e.message}`); if (/does not verify/.test(e.message)) { stop = true; at = body.length; break; } continue; }
               report.refused.push(`${peer}: ${e.message}`);
               // kanban #2551: which mark a receipt for a mark this node has not got names - the close asks whether it is this entry's
               if (r && /a mark this node has not got/.test(e.message)) (report.foreign ||= []).push({ peer, at: report.refused.length - 1, markId: hex(r.checkpointId) });
@@ -530,8 +536,8 @@ export class Verifier {
         await new Promise((r) => setImmediate(r));
       }
       // NAMED ONCE PER PEER, NOT ONCE PER RECORD: what was skipped unverified, so a close still says what it was offered
-      if (skipped.offCommittee) report.refused.push(`${peer}: ${skipped.offCommittee} receipts from signers off this round's committee, skipped unverified`);
-      if (skipped.otherEntry) report.refused.push(`${peer}: ${skipped.otherEntry} receipts for marks of another entry, skipped unverified`);
+      if (skipped.offCommittee) report.ignored.push(`${peer}: ${skipped.offCommittee} receipts from signers off this round's committee, skipped unverified`);
+      if (skipped.otherEntry) report.ignored.push(`${peer}: ${skipped.otherEntry} receipts for marks of another entry, skipped unverified`);
       if (skipped.foreignOver) report.refused.push(`${peer}: ${skipped.foreignOver} more receipts for marks this node has not got than one committee's worth (${foreignPerAnswer}), skipped unverified`);
     }
     // AND ANY SIGNER NODE'S REFUSED FIRST MARK (M3.3-34): the player's own on-time first
