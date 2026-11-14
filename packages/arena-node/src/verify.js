@@ -946,7 +946,10 @@ export class Verifier {
       // every walk-away round it sat on. When this seat and the peers that answered are a threshold of the committee and none of them held the
       // missing reveal, the silent ones can hold it at most below a threshold: they cannot carry the opposite verdict, so this one is decided now.
       const answered = carried && Number.isInteger(carried.asked) ? 1 + carried.asked - carried.down.length : 0;
-      const quorumAnswered = answered >= receiptsNeeded(Math.max(1, (contract.nodes || []).length));
+      // a committee size with no known threshold (a 6-node committee is live, feedback #019) keeps the old rule - wait - and never throws:
+      // the throw here crashed every seat at start on audit90 (2026-11-14 12:15Z), the close runs inside the finality watch's startup pass
+      let need = Infinity; try { need = receiptsNeeded(Math.max(1, (contract.nodes || []).length)); } catch { need = Infinity; }
+      const quorumAnswered = answered >= need;
       if (missing && carried && carried.down.length && !quorumAnswered && !resultWindow(this.round, roundIdBytes, contract).ok)
         return { waiting: `reveals not settled: ${carried.down.length} peer(s) of the round did not answer (${carried.down.join('; ').slice(0, 140)})` };
       const list = entries.filter(({ entryId }) => seated.has(hex(entryId)))
