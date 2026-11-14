@@ -14,16 +14,16 @@ import { readFileSync } from 'node:fs';
 
 const K = (n) => n.toString(16).padStart(64, '0');
 
-test('#2641 bonusPct: every combination of X, Telegram, Discord, Armada', () => {
-  const ps = ['x', ...COMMUNITIES];
-  for (let m = 0; m < 16; m++) {
+test('#2641 bonusPct: every combination of X, Nostr, Telegram, Discord, Armada (X +20, Nostr +20, 2 of 3 +20, at most +60)', () => {
+  const ps = ['x', 'nostr', ...COMMUNITIES];
+  for (let m = 0; m < 32; m++) {
     const f = Object.fromEntries(ps.map((p, i) => [p, !!(m & (1 << i))]));
     const n = COMMUNITIES.filter((p) => f[p]).length;
-    assert.equal(bonusPct(f), (f.x ? 25 : 0) + (n >= 2 ? 25 : 0), JSON.stringify(f));
+    assert.equal(bonusPct(f), (f.x ? 20 : 0) + (f.nostr ? 20 : 0) + (n >= 2 ? 20 : 0), JSON.stringify(f));
   }
   assert.equal(bonusPct({ x: 'yes', telegram: 1, discord: 1 }), 0, 'only true counts');
-  assert.equal(seasonPayout({ level: 'high', flags: { x: true, telegram: true, discord: true, armada: true } }).sats, 7500, 'at most +50 %');
-  assert.equal(seasonPayout({ level: 'medium', flags: { discord: true, armada: true } }).sats, 2500);
+  assert.equal(seasonPayout({ level: 'high', flags: { x: true, nostr: true, telegram: true, discord: true, armada: true } }).sats, 8000, 'at most +60 %');
+  assert.equal(seasonPayout({ level: 'medium', flags: { discord: true, armada: true } }).sats, 2400);
 });
 
 const jsonRes = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -122,7 +122,7 @@ test('#2641 the social check: members linked to the key with their reads, one ke
   const a = await socialCheck(s, K(1), { x: 'ann', discord: 'ann', telegram: 'ann', armada: 'npub1ann', other: 'x' }, resolvers, { nowMs: () => t0 });
   assert.deepEqual(Object.fromEntries(Object.entries(a.results).map(([k, v]) => [k, v.member])), { telegram: null, discord: true, x: true, armada: true });
   assert.equal(a.results.telegram.unseen, true);
-  assert.deepEqual(a.flags, { telegram: false, discord: true, x: true, armada: true }); assert.equal(a.bonusPct, 50);
+  assert.deepEqual(a.flags, { telegram: false, discord: true, x: true, armada: true, nostr: false }); assert.equal(a.bonusPct, 40);
   assert.equal(a.links.length, 3); assert.equal(a.links.every((l) => l.proof === 'name'), true);
   assert.equal(a.links.some((l) => 'userId' in l), false, 'no platform ids go back');
   // a non-member links nothing; empty names are not asked
@@ -157,28 +157,28 @@ test('#2641 a second report from the same key gets the bonus with no new input: 
   await socialCheck(s, K(1), { x: 'ann', discord: 'ann', armada: 'npub1ann' }, yes);
   const live = { x: async () => ({ member: true }), discord: async () => ({ member: true }), armada: async () => ({ member: true }) };
   const r1 = rep(1, K(1)); await s.verify(K(1), live, { cause: 'approve' }); const p1 = s.plan(r1, { level: 'high' }); s.commit(r1, p1);
-  assert.equal(p1.bonusPct, 50); assert.equal(p1.sats, 7500);
+  assert.equal(p1.bonusPct, 40); assert.equal(p1.sats, 7000);
   // days later (the form read is stale by then): the approval reads the stored accounts again, nothing typed
   const later = Date.now() + 3 * 24 * 3600 * 1000;
   assert.equal(s.flagsOf(K(1), { nowMs: later }).x, false, 'an old read alone counts for nothing');
   const r2 = rep(2, K(1)); await s.verify(K(1), live, { cause: 'approve', nowMs: () => later });
-  const p2 = s.plan(r2, { level: 'medium', nowMs: later }); assert.equal(p2.bonusPct, 50); assert.equal(p2.sats, 3000);
+  const p2 = s.plan(r2, { level: 'medium', nowMs: later }); assert.equal(p2.bonusPct, 40); assert.equal(p2.sats, 2800);
 });
 
-test('#2641 payout: approved at +50 %, left one of the two communities, +25 % paid and the admin sees why; a failed read is no member', async () => {
+test('#2641 payout: approved at +40 %, left one of the two communities, +20 % paid and the admin sees why; a failed read is no member', async () => {
   const s = openBountySeason();
   await socialCheck(s, K(1), { x: 'ann', discord: 'ann', telegram: 'annie' }, { x: async () => ({ userId: '77', member: true }), discord: async () => ({ userId: '201', member: true }), telegram: async () => ({ userId: '9', member: true }) });
-  const r1 = rep(1, K(1)); const p1 = s.plan(r1, { level: 'high' }); s.commit(r1, p1); assert.equal(p1.sats, 7500);
+  const r1 = rep(1, K(1)); const p1 = s.plan(r1, { level: 'high' }); s.commit(r1, p1); assert.equal(p1.sats, 7000);
   await s.verify(K(1), { x: async () => ({ member: true }), telegram: async () => ({ member: true }), discord: async () => ({ member: false, why: 'not in the server' }) }, { cause: 'payout' });
   const pay = s.payable(r1.id);
-  assert.equal(pay.payableSats, 6250, '+25 %: X only, one community left'); assert.deepEqual(pay.lost, ['discord']); assert.equal(pay.why, 'left Discord: -25 %');
-  assert.equal(s.approval(r1.id).payableWhy, 'left Discord: -25 %');
+  assert.equal(pay.payableSats, 6000, '+20 %: X only, one community left'); assert.deepEqual(pay.lost, ['discord']); assert.equal(pay.why, 'left Discord: -20 %');
+  assert.equal(s.approval(r1.id).payableWhy, 'left Discord: -20 %');
   // the reads come back: never above the approval
   await s.verify(K(1), { discord: async () => ({ member: true }) });
-  assert.equal(s.payable(r1.id).payableSats, 7500); assert.equal(s.approval(r1.id).payableWhy, null);
+  assert.equal(s.payable(r1.id).payableSats, 7000); assert.equal(s.approval(r1.id).payableWhy, null);
   // a read that fails is no member
   await s.verify(K(1), { x: async () => { throw new Error('x down'); }, telegram: async () => ({ member: null, why: 'telegram 502' }) });
-  const p3 = s.payable(r1.id); assert.equal(p3.payableSats, 5000); assert.match(p3.why, /^left (X, Telegram|Telegram, X): -50 %$/);
+  const p3 = s.payable(r1.id); assert.equal(p3.payableSats, 5000); assert.match(p3.why, /^left (X, Telegram|Telegram, X): -40 %$/);
 });
 
 test('#2641 the browser store: validated names kept per key, failed ones dropped, unreadable checks keep what was kept, storage errors tolerated', () => {
@@ -199,8 +199,34 @@ test('#2641 the browser store: validated names kept per key, failed ones dropped
   assert.equal(socialLoad(broken, K(1)), null); assert.equal(socialSave(broken, K(1), { x: 'a' }, { x: { member: true } }), null);
   assert.equal(socialLoad(ls, 'not a key'), null);
   assert.deepEqual(socialMissing({ x: 'ann', discord: 'ann', checkedAt: 1 }, [{ platform: 'x', member: true }, { platform: 'discord', member: false }]), { discord: 'ann' });
-  assert.equal(socialBonus({ x: true, telegram: true }), 25); assert.equal(socialBonus({ telegram: true, armada: true }), 25); assert.equal(socialBonus({ x: true, discord: true, armada: true }), 50);
+  assert.equal(socialBonus({ x: true, telegram: true }), 20); assert.equal(socialBonus({ telegram: true, armada: true }), 20); assert.equal(socialBonus({ x: true, nostr: true, telegram: true, armada: true }), 60); assert.equal(socialBonus({ x: true, discord: true, armada: true }), 40);
   // the page carries the same functions (copied between the markers)
   const src = readFileSync(new URL('../src/bounty-social-store.js', import.meta.url), 'utf8');
   assert.match(src, /\/\/ ---- social-store begin[\s\S]+\/\/ ---- social-store end/);
+});
+
+test('#2641 Nostr: the newest signed contact list decides; forged or other-author lists are ignored; npub and NIP-05 resolve', async () => {
+  const { nostrVerifier, nostrPubkeyOf, ARENA_NOSTR_PUBKEY } = await import('../src/bounty-nostr.js');
+  const { schnorr } = await import('@noble/curves/secp256k1.js');
+  const { eventId } = await import('../src/nostr-relay.js');
+  const { bech32Encode } = await import('../src/bounty-armada.js');
+  const sk = new Uint8Array(32).fill(9), pk = Buffer.from(schnorr.getPublicKey(sk)).toString('hex');
+  const ev = (t, follows, key = sk) => { const e = { pubkey: Buffer.from(schnorr.getPublicKey(key)).toString('hex'), created_at: t, kind: 3, content: '', tags: follows ? [['p', 'a'.repeat(64)], ['p', ARENA_NOSTR_PUBKEY]] : [['p', 'a'.repeat(64)]] };
+    e.id = eventId(e); e.sig = Buffer.from(schnorr.sign(Buffer.from(e.id, 'hex'), key)).toString('hex'); return e; };
+  const relays = (evs) => async (urls, filters) => { assert.deepEqual(filters[0].kinds, [3]); return evs; };
+  assert.equal((await nostrVerifier({ query: relays([ev(100, true)]) })({ userId: pk })).member, true);
+  assert.equal((await nostrVerifier({ query: relays([ev(100, true), ev(200, false)]) })({ userId: pk })).member, false, 'unfollowed later');
+  assert.equal((await nostrVerifier({ query: relays([ev(200, true), ev(100, false)]) })({ userId: pk })).member, true);
+  const forged = { ...ev(300, true), sig: '0'.repeat(128) };
+  assert.equal((await nostrVerifier({ query: relays([forged]) })({ userId: pk })).member, false, 'a forged list counts for nothing');
+  assert.equal((await nostrVerifier({ query: relays([ev(300, true, new Uint8Array(32).fill(8))]) })({ userId: pk })).member, false, 'another author');
+  assert.equal((await nostrVerifier({ query: async () => { throw new Error('relays down'); } })({ userId: pk })).member, null);
+  assert.equal((await nostrVerifier({ query: relays([]) })({ userId: 'nope' })).member, null);
+  assert.equal(await nostrPubkeyOf(bech32Encode('npub', Buffer.from(pk, 'hex'))), pk);
+  const asked = [];
+  const fakeFetch = async (url) => { asked.push(url); return new Response(JSON.stringify({ names: { ann: pk } }), { status: 200, headers: { 'content-type': 'application/json' } }); };
+  assert.equal(await nostrPubkeyOf('Ann@Example.com', { fetchFn: fakeFetch }), pk);
+  assert.deepEqual(asked, ['https://example.com/.well-known/nostr.json?name=ann']);
+  assert.equal(await nostrPubkeyOf('ann@127.0.0.1'), null, 'no IP literal as a NIP-05 host');
+  assert.equal(await nostrPubkeyOf('not a key'), null);
 });

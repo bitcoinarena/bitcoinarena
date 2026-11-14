@@ -16,6 +16,7 @@ sed -i "s#, shotRow, tick, say, levels#, shotRow, say, levels#" "$T/out.html"
 python3 "$HERE/dup-link.py" "$T/out.html"
 python3 "$HERE/join-icons.py" "$T/out.html"
 python3 "$HERE/season-words.py" "$T/out.html"
+python3 "$HERE/nostr-wide.py" "$T/out.html" "$REPO/packages/arena-node/src/bounty-social-store.js"
 # 2. the UI stamp
 OLD=$(grep -o 'class="build-line">UI [0-9]*' "$T/out.html" | head -1 | grep -o '[0-9]*$')
 sed -i "s#>UI $OLD<#>UI $UI<#g; s#· UI $OLD'#· UI $UI'#g" "$T/out.html"

@@ -12,16 +12,16 @@ import { linkFromText } from '../tools/bounty-link-bot.mjs';
 const K = (n) => String(n).repeat(64).slice(0, 64);
 const rep = (n, pubkey = K(1)) => ({ id: String(n).padStart(64, '0'), pubkey });
 
-test('#2623 #2641 the payout: level, half for code-only, 1,000 for a follow-up, bonus X +25 / 2 of 3 communities +25, node 10,000 flat', () => {
+test('#2623 #2641 the payout: level, half for code-only, 1,000 for a follow-up, bonus X +20 / Nostr +20 / 2 of 3 communities +20, node 10,000 flat', () => {
   assert.equal(bonusPct({}), 0); assert.equal(bonusPct({ telegram: true }), 0); assert.equal(bonusPct({ discord: true }), 0);
-  assert.equal(bonusPct({ x: true }), 25); assert.equal(bonusPct({ telegram: true, discord: true, x: true }), 50);
-  assert.equal(seasonPayout({ level: 'high', flags: { telegram: true, armada: true, x: true } }).sats, 7500, 'the page: "a high bug then pays 7,500"');
+  assert.equal(bonusPct({ x: true }), 20); assert.equal(bonusPct({ telegram: true, discord: true, x: true }), 40);
+  assert.equal(seasonPayout({ level: 'high', flags: { telegram: true, armada: true, x: true, nostr: true } }).sats, 8000, 'the page: "a high bug then pays 8,000"');
   assert.equal(seasonPayout({ level: 'high' }).sats, 5000);
   assert.equal(seasonPayout({ level: 'high', codeOnly: true }).sats, 2500);
   assert.equal(seasonPayout({ level: 'critical', codeOnly: true, flags: { discord: true } }).sats, 5000, 'one community alone: no bonus');
-  assert.equal(seasonPayout({ level: 'critical', codeOnly: true, flags: { discord: true, armada: true } }).sats, 6250);
+  assert.equal(seasonPayout({ level: 'critical', codeOnly: true, flags: { discord: true, armada: true } }).sats, 6000);
   assert.equal(seasonPayout({ level: 'high', followUp: true }).sats, 1000);
-  assert.equal(seasonPayout({ level: 'medium', followUp: true, flags: { x: true } }).sats, 1250);
+  assert.equal(seasonPayout({ level: 'medium', followUp: true, flags: { x: true } }).sats, 1200);
   assert.equal(seasonPayout({ level: 'useful', codeOnly: true }).sats, 250);
   assert.deepEqual(seasonPayout({ level: 'node', codeOnly: true, flags: { telegram: true, x: true } }).sats, 10000);
   assert.equal(seasonPayout({ level: 'huge' }).ok, false);
@@ -40,7 +40,7 @@ test('#2623 link codes: one use, 24 hours, one key per account; reads stored wit
   assert.match(s.redeem(late.code, { platform: 'discord', userId: '9', nowMs: t0 + LINK_CODE_MS + 1 }).why, /expired/);
   const other = s.makeCode(K(2), { nowMs: t0 });
   assert.match(s.redeem(other.code, { platform: 'telegram', userId: '7', nowMs: t0 + 3 }).why, /another report key/);
-  assert.deepEqual(s.flagsOf(K(1), { nowMs: t0 + 5 }), { telegram: false, discord: false, x: false, armada: false }, 'linked is not yet a member');
+  assert.deepEqual(s.flagsOf(K(1), { nowMs: t0 + 5 }), { telegram: false, discord: false, x: false, armada: false, nostr: false }, 'linked is not yet a member');
   let calls = 0;
   const flags = await s.verify(K(1), { telegram: async (l) => { calls++; assert.equal(l.userId, '7'); return { member: true }; } }, { nowMs: () => t0 + 10 });
   assert.equal(calls, 1); assert.equal(flags.telegram, true);
@@ -77,12 +77,12 @@ test('#2623 before payout the bonus is read again and never rises; the draw take
     const c = s.makeCode(k); assert.equal(s.redeem(c.code, { platform: plat, userId: id, username: name }).ok, true); }
   const yes = { telegram: async () => ({ member: true }), discord: async () => ({ member: true }), x: async () => ({ member: true }) };
   for (const k of [K(1), K(2), K(3)]) await s.verify(k, yes);
-  const r1 = rep(1, K(1)); const p1 = s.plan(r1, { level: 'high' }); assert.equal(p1.sats, 7500); s.commit(r1, p1);
+  const r1 = rep(1, K(1)); const p1 = s.plan(r1, { level: 'high' }); assert.equal(p1.sats, 7000); s.commit(r1, p1);
   const r2 = rep(2, K(2)); s.commit(r2, s.plan(r2, { level: 'low' }));
   const r3 = rep(3, K(3)); s.commit(r3, s.plan(r3, { level: 'low' }));
   await s.verify(K(1), { telegram: async () => ({ member: false }), x: async () => ({ member: true }) });
   const pay = s.payable(r1.id);
-  assert.equal(pay.payableSats, 6250, 'left the group since: one community left, +25 % for X only');
+  assert.equal(pay.payableSats, 6000, 'left the group since: one community left, +20 % for X only');
   assert.deepEqual(s.drawEntries(2), ['discord:ann_d', 'discord:bob'], 'K1 left Telegram (still on Discord), K3 is only an X follower');
 });
 
