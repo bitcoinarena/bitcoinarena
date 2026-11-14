@@ -822,7 +822,7 @@ createServer((req, res) => {
         return res.end(readFileSync(f)); } }
     if (S2 && path === '/feedback/admin/season' && req.method === 'GET') {
       const season = Number(q.get('season')) || S2.seasonNow(Date.now());
-      return send(200, { ok: true, s1EndMs: Number.isFinite(S1_END_MS) ? S1_END_MS : null, pot: S2.pot(season), approvals: S2.approvals({ season }), waiting: S2.approvals({ state: 'waiting' }), verifiers: Object.keys(S2_VERIFY) });
+      return send(200, { ok: true, s1EndMs: Number.isFinite(S1_END_MS) ? S1_END_MS : null, s2StartMs: Number.isFinite(S2_START_MS) ? S2_START_MS : null, started: S2_STARTED(), pot: S2.pot(season), approvals: S2.approvals({ season }), waiting: S2.approvals({ state: 'waiting' }), verifiers: Object.keys(S2_VERIFY) });
     }
     if (path === '/feedback/admin/export.csv' && req.method === 'GET') {
       res.writeHead(200, { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': 'attachment; filename="arena-feedback.csv"', 'cache-control': 'no-store', ...cors });
