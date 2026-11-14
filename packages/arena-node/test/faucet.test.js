@@ -64,7 +64,19 @@ test('the opponent\'s want list: newest first, gone after its time, bounded, and
   assert.equal(opponentWant(w, b, 2000).ok, true);
   assert.deepEqual(opponentWants(w, 2500).map((x) => x.round), [b, a]);
   assert.equal(opponentWants(w, 2500)[0].tapped, false);
-  opponentWant(w, b, 2600, true); opponentWant(w, b, 2700);
+  // kanban #2087: a bare `true` is no tap; a tap is the tab's presence proof for the round
+  opponentWant(w, b, 2600, true);
+  assert.equal(opponentWants(w, 2650)[0].tapped, false, 'an unsigned tap is no tap');
+  const { schnorr } = await import('@noble/curves/secp256k1.js');
+  const { presenceId } = await import('../../arena-protocol/src/match.js');
+  const sk = new Uint8Array(32).fill(7), key = schnorr.getPublicKey(sk), hex = (u) => Buffer.from(u).toString('hex');
+  const sig = schnorr.sign(presenceId({ roundId: Buffer.from(b, 'hex'), identityKey: key }), sk);
+  opponentWant(w, b, 2610, { key: hex(key), sig: hex(sig) });
+  assert.equal(opponentWants(w, 2650)[0].tapped, true);
+  const other = new Map();
+  opponentWant(other, a, 2620, { key: hex(key), sig: hex(sig) });   // the same proof on another round
+  assert.equal(opponentWants(other, 2650)[0].tapped, false, 'a proof for another round is no tap there');
+  opponentWant(w, b, 2700);
   assert.equal(opponentWants(w, 2800)[0].tapped, true);   // a tap stays said while the page goes on saying it is there
   assert.deepEqual(opponentWants(w, 1000 + OPPONENT_WANT_MS + 1).map((x) => x.round), [b]);
   const many = new Map();
