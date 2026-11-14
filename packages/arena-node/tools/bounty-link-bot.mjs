@@ -13,28 +13,48 @@ import { openBountySeason, LINK_CODE_RE } from '../src/bounty-season.js';
 import { verifiersFromEnv, xSearch, xSessionFromChrome, X_ACCOUNT } from '../src/bounty-verify.js';
 
 const NAMES = { telegram: 'Telegram', discord: 'Discord', x: 'X' };
+/**
+ * EVERY TELEGRAM ACCOUNT THE BOT SEES (kanban #2641): username -> user id into the seen-map, from a message's sender, the members a message says
+ * joined, and a chat_member / my_chat_member change - so a @username typed on the social screen can be read live with getChatMember. Answers how
+ * many accounts it took.
+ */
+export function seeTelegramUpdate(S2, x, nowMs = Date.now()) {
+  const users = [];
+  const m = x && (x.message || x.edited_message);
+  if (m && m.from) users.push(m.from);
+  if (m && Array.isArray(m.new_chat_members)) users.push(...m.new_chat_members);
+  for (const k of ['chat_member', 'my_chat_member']) { const c = x && x[k]; if (c) { if (c.from) users.push(c.from); if (c.new_chat_member && c.new_chat_member.user) users.push(c.new_chat_member.user); } }
+  let n = 0;
+  for (const u of users) if (u && !u.is_bot && u.id && u.username && S2.seeTelegram({ userId: String(u.id), username: u.username, nowMs })) n++;
+  return n;
+}
+
 /** ONE POSTED CODE: link it, read the membership at once, and the words the bot answers with. */
 export async function linkFromText(S2, verifiers, { platform, userId, username, text, nowMs = Date.now() }) {
   if (!LINK_CODE_RE.test(String(text || ''))) return null;
   const r = S2.redeem(text, { platform, userId, username, nowMs });
   if (!r.ok) return { ok: false, reply: `Not linked: ${r.why}.` };
   const flags = await S2.verify(r.pubkey, { [platform]: verifiers[platform] }, { cause: 'link' });
+  // WEEK 2 (kanban #2641): X +25 %; any 2 of Telegram, Discord, Armada another +25 %
   const said = platform === 'x' ? (flags.x ? 'you follow @bitcoinarena_io: +25% on confirmed reports' : 'you do not follow @bitcoinarena_io yet - follow, then press Check again in My feedback')
-    : flags[platform] ? 'you are a member: +50% on confirmed reports, and you are in the draw of the week with a confirmed report' : 'you are not a member yet - join, then press Check again in My feedback';
+    : flags[platform] ? 'you are a member: with a second of Telegram, Discord and Armada it is +25% on confirmed reports' : 'you are not a member yet - join, then press Check again in My feedback';
   return { ok: true, pubkey: r.pubkey, reply: `${NAMES[platform]} linked to your report key; ${said}.` };
 }
 
 const rd = (f) => { try { return f ? readFileSync(f, 'utf8').trim() : ''; } catch { return ''; } };
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 
-async function telegramLoop(S2, verifiers, token) {
+async function telegramLoop(S2, verifiers, token, chatId = '') {
   const api = (m, body) => fetch(`https://api.telegram.org/bot${token}/${m}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(40000) }).then((r) => r.json());
   let offset = 0;
+  // the group's admins are known at once (getChatAdministrators names them); every other account as soon as the bot sees it (kanban #2641)
+  if (chatId) try { const a = await api('getChatAdministrators', { chat_id: chatId }); let n = 0; for (const c of (a && a.result) || []) if (c.user && !c.user.is_bot && c.user.username && S2.seeTelegram({ userId: String(c.user.id), username: c.user.username })) n++; log('telegram admins seen', n); } catch { /* the updates fill it */ }
   for (;;) {
     try {
-      const u = await api('getUpdates', { offset, timeout: 30, allowed_updates: ['message'] });
+      const u = await api('getUpdates', { offset, timeout: 30, allowed_updates: ['message', 'edited_message', 'chat_member', 'my_chat_member'] });
       for (const x of (u && u.result) || []) {
         offset = x.update_id + 1;
+        try { seeTelegramUpdate(S2, x); } catch { /* the seen-map is a help, never a stop */ }
         const m = x.message; if (!m || !m.from || m.from.is_bot || typeof m.text !== 'string' || !/^\/link(@\w+)?\b/i.test(m.text.trim())) continue;
         const out = await linkFromText(S2, verifiers, { platform: 'telegram', userId: String(m.from.id), username: m.from.username ? `@${m.from.username}` : (m.from.first_name || String(m.from.id)), text: m.text });
         const reply = out ? out.reply : 'Send /link followed by the code from My feedback, like /link BA-ABCD2345.';
@@ -103,7 +123,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const verifiers = verifiersFromEnv(env);
   const tg = rd(env.FAUCET_BOUNTY_TG_TOKEN_FILE), dc = rd(env.FAUCET_BOUNTY_DISCORD_TOKEN_FILE), guild = rd(env.FAUCET_BOUNTY_DISCORD_GUILD_FILE);
   log('link bots:', [tg && 'telegram', dc && guild && 'discord', env.FAUCET_BOUNTY_X_PORT && 'x'].filter(Boolean).join(', '));
-  if (tg) telegramLoop(S2, verifiers, tg);
+  if (tg) telegramLoop(S2, verifiers, tg, rd(env.FAUCET_BOUNTY_TG_CHAT_FILE));
   if (dc && guild) discordLoop(S2, verifiers, dc, guild).catch((e) => log('discord stopped', String(e.message).slice(0, 100)));
   if (env.FAUCET_BOUNTY_X_PORT) xLoop(S2, verifiers, Number(env.FAUCET_BOUNTY_X_PORT), Number(env.BOUNTY_X_EVERY_MS || 180000));
 }
