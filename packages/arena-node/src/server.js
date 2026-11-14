@@ -2341,6 +2341,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // over, on the nodes that served a round (signed FINALs, this seat's and every other's) in the 432 blocks before its end, on the
   // chain's median time (`blockTimeAt`). ARENA_FUNDING_SCHEDULE=short runs a live proof's 1-block signal.
   const fundingSchedule = process.env.ARENA_FUNDING_SCHEDULE === 'short' ? FUNDING_SCHEDULES.short : FUNDING_SCHEDULES.spec;
+  // THE SEATS' SERVED MERGE TAKES ONLY BONDED COMMITTEES, AS THE PAGE'S (kanban #2739, audit #1489 r6-gossip-1, high; #1896 fixed only item-buy.js):
+  // one seat answering GET /served with an invented round whose committee is a made-up key with a self-signed FINAL was dropped by the page
+  // (mergeServedRounds `bonded`) and kept here, so the seat's served root differed from the page's and every item purchase was refused after
+  // the payment had gone out - and made-up keys counted toward a funding signal's active nodes. The node keys of the census of the newest round
+  // this seat holds (the census the page checks is a round's too); none readable yet, the merge is as before rather than refusing a paid purchase.
+  const bondedNodeKeys = () => {
+    try {
+      const row = round.db.prepare('SELECT contract FROM rounds ORDER BY rowid DESC LIMIT 1').get();
+      if (!row) return null;
+      const c = roster.censusFor(roundIdOf(decodeRoundContract(new Uint8Array(row.contract))));
+      if (!c || !c.ok || !Array.isArray(c.entries) || !c.entries.length) return null;
+      return new Set(c.entries.map((e) => toHex(e.pubkey).toLowerCase()));
+    } catch { return null; }
+  };
   const servedRoundsBetween = async (from, to) => {
     const held = [round.finalSigsBetween(from, to).map((r) => ({ ...r, committee: round.signerNodes(r.roundId) }))];
     let seats = []; try { seats = networkSeats(); } catch { seats = []; }
@@ -2354,7 +2368,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         held[i + 1] = (a.held || []).slice(0, SERVED_HELD_MAX).map((x) => ({ roundId: fromHex(x.roundId), committee: x.committee.map(fromHex), finals: x.finals.map(fromHex) }));
       } catch { /* a seat that does not answer adds nothing */ }
     }));
-    return mergeServedRounds(held.filter(Boolean)).rounds;
+    return mergeServedRounds(held.filter(Boolean), { bonded: bondedNodeKeys() }).rounds;   // kanban #2739
   };
   const fundingBook = round.db ? createFundingBook({ db: round.db, schedule: fundingSchedule, log: (l) => console.log(l),
     // the ballot binding's gate for funding votes too (kanban #2576): seq votes from the network's BALLOT_BIND_HEIGHT
@@ -10092,7 +10106,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             held[i + 1] = (a.held || []).slice(0, SERVED_HELD_MAX).map((x) => ({ roundId: fromHex(x.roundId), committee: x.committee.map(fromHex), finals: x.finals.map(fromHex) }));
           } catch { /* a seat that does not answer adds nothing */ }
         }));
-        const merged = servedNodes({ rounds: mergeServedRounds(held.filter(Boolean)).rounds, fromMs: from, toMs: to, verify: (sg, m, k) => schnorr.verify(sg, m, k) });
+        const merged = servedNodes({ rounds: mergeServedRounds(held.filter(Boolean), { bonded: bondedNodeKeys() }).rounds, fromMs: from, toMs: to, verify: (sg, m, k) => schnorr.verify(sg, m, k) });   // kanban #2739
         const got = await keepItemPurchase({ p, manifest: game.manifest, networkSet: vestedShares(forced.recipients, height), gameSet: game.donationSet,
           served: { fromMs: merged.fromMs, toMs: merged.toMs, nodes: merged.nodes, root: merged.root }, port: await portOfFederation(p.federationId), db: round.db,
           verify: (sg, m, k) => schnorr.verify(sg, m, k), reserveKey: itemReserveKey, keepReserve: (row) => round.putDonationOutputs([row]), keepDonations: (rows) => round.putDonationOutputs(rows), fees: feesAtHeight(height),
