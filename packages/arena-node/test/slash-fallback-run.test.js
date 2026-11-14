@@ -74,7 +74,7 @@ const entries = [{ pubkey: accused.key, txid: bond.txid, vout: bond.vout, bondSa
  * slash-start-run.js does. `down` answers nothing at its door; `deviant` reads the player's loss otherwise, so it builds another table (the loads no longer would: a fallback
  * opens past the reserve key's cap, so its reserves' part is all in the escrow, kanban #1130).
  */
-function world({ down = [], deviant = [], tip = START_HEIGHT + clocks.fallbackBlocks - 1 } = {}) {
+function world({ down = [], deviant = [], tip = START_HEIGHT + clocks.fallbackBlocks - 1, refusal = 'txn-already-in-mempool' } = {}) {
   const urlOf = (k) => `http://seat-${k}`;
   const seats = new Map(), sent = [], dbs = new Map();
   const holders = LAYOUT.map(([p, xs]) => ({ key: p.hex, shares: xs.length }));
@@ -94,7 +94,7 @@ function world({ down = [], deviant = [], tip = START_HEIGHT + clocks.fallbackBl
   // ONE CHAIN: the first send of a txid is taken, any later one is refused as bitcoind refuses it
   const send = (by) => async (hex) => {
     const txid = toHex([...parseTransaction(fromHex(hex)).txid].reverse());
-    if (sent.some((x) => x.txid === txid)) throw new Error('txn-already-in-mempool');
+    if (sent.some((x) => x.txid === txid)) throw new Error(refusal);
     sent.push({ by, hex, txid });
     return txid;
   };
@@ -214,4 +214,20 @@ test('fewer than t shares answer: no spend, and a holder asked before the clock 
   assert.deepEqual(await early.passOf(others[0]), undefined, 'a holder files nothing before the fallback opens');
   const said = await early.seats.get(others[1].hex).signer.takeCommit({ kind: 'fallback', start: startHex, proof: toHex(proofBytes), tableId: '00'.repeat(32) });
   assert.equal(said.why, 'that hold\'s fallback has not opened yet');
+});
+
+test('kanban #1201: a copy with another witness, refused as txn-same-nonwitness-data-in-mempool, counts as sent and is not filed again', async () => {
+  // THE SAME TXID, ANOTHER HOLDER'S SIGNATURE: bitcoind refuses it by that reason, and main.js chainSend words it so
+  const w = world({ refusal: 'the mempool refuses it: txn-same-nonwitness-data-in-mempool' });
+  const first = await w.passOf(others[0]);
+  assert.ok(first && first.ok, first && first.why);
+  for (const p of others.slice(1)) {
+    const r = await w.passOf(p);
+    assert.ok(r && r.ok, r && r.why);
+    assert.equal(r.txid, first.txid, 'the txid in the mempool');
+    const row = w.dbs.get(p.hex).prepare('SELECT sent FROM slash_spends WHERE start = ? AND path = ?').get(startHex, 'fallback');
+    assert.equal(row.sent, first.txid, 'its own record says sent');
+    assert.equal(await w.passOf(p), undefined, 'and it files nothing again');
+  }
+  assert.equal(w.sent.length, 1, 'one transaction on the chain');
 });

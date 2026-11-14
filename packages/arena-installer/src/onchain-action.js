@@ -32,7 +32,7 @@ const A = ACTION;
 const MOVES = Object.freeze({ [A.BUILT]: [A.SENT, A.VOID], [A.SENT]: [A.DONE], [A.DONE]: [], [A.VOID]: [] });
 
 /** A broadcast answer that means the transaction is there already: a success. */
-export const ALREADY = /already in (the )?(block ?chain|mempool|utxo set)|txn-already-(known|in-mempool)|already have transaction|outputs already in utxo set|transaction already exists/i;
+export const ALREADY = /txn-same-nonwitness-data-in-mempool|already in (the )?(block ?chain|mempool|utxo set)|txn-already-(known|in-mempool)|already have transaction|outputs already in utxo set|transaction already exists/i;
 /** A refusal that means the transaction's inputs are spent by another one. */
 export const CONFLICT = /missing ?inputs|missingorspent|txn-mempool-conflict|rejecting replacement|spends-conflicting|bad-txns-inputs-spent/i;
 

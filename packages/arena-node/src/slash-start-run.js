@@ -25,7 +25,7 @@ const coinsOfJson = (p) => p.map((x) => ({ value: BigInt(x.value), script: fromH
 const bondOf = (e) => ({ txid: e.txid, vout: e.vout, value: BigInt(e.bondSats), script: e.script });
 const display = (internal) => toHex(Uint8Array.from(internal).reverse());
 /** A send refused because the very transaction is already there: this seat sent it before. */
-const ALREADY = /already in (the )?(mempool|block ?chain)|txn-already-known|txn-already-in-mempool|already known|outputs already in utxo set/i;
+const ALREADY = /txn-same-nonwitness-data-in-mempool|already in (the )?(mempool|block ?chain)|txn-already-known|txn-already-in-mempool|already known|outputs already in utxo set/i;
 
 /** A PROOF'S FEE COIN AS THIS SEAT KEEPS IT (kanban #1191): slash_fee_coins, moved by coinStep only (createSlashStarter). */
 export const FEE_COIN = Object.freeze({ NONE: 'none', FUNDING: 'funding', FUNDED: 'funded', FILING: 'filing', FILED: 'filed' });

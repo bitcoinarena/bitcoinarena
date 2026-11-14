@@ -31,7 +31,7 @@ import { gatherCensusSignature } from './census-sign.js';
 const verifySig = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
 const display = (internalHex) => toHex(fromHex(internalHex).reverse());
 const same = (a, b) => toHex(a) === toHex(b);
-const ALREADY = /already in (the )?(mempool|block ?chain)|txn-already-known|txn-already-in-mempool|already known/i;
+const ALREADY = /txn-same-nonwitness-data-in-mempool|already in (the )?(mempool|block ?chain)|txn-already-known|txn-already-in-mempool|already known/i;
 /** "Every seat checks its escrows every 6 blocks" (#1085): a new spend is built once per such window, at its first height. */
 export const ESCROW_CHECK_BLOCKS = 6;
 const outpointOf = (s) => { const [txid, vout] = String(s).split(':'); return { txid: fromHex(txid).reverse(), vout: Number(vout) }; };
