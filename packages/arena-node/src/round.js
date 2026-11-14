@@ -1206,6 +1206,23 @@ export class Round {
       if (why) throw new Error(why);
     }
 
+    // AND EVERY OTHER EVENT AT A TICK THIS BATCH CARRIES, AS A LOAD IS (kanban #2689, audit #1489 r3-play-1, high): a liquidation, sample, tape
+    // or attestation could name any tick - one the run played and the committee receipted a mark over long before - and the row landed there
+    // (nothing stored at that tick yet): the seat's close replayed a past rewritten after its marks, and past the last carried mark the
+    // canonical transcript did not hold it at all (the #1568 split). The honest client sends each with the batch that reaches its tick
+    // (client.js publish: `at < through`, and its one tape at tick 0). A batch of no ticks carries them only at the next tick.
+    if (!seen) {
+      const next = this.nextTick(b.roundId, b.entryId);
+      const first = b.firstTick, last = at.length ? at[at.length - 1] : b.firstTick;
+      for (const [name, events] of [['liquidation', b.liquidations || []], ['sample', b.samples || []], ['tape', b.tapes || []], ['attestation', b.attests || []]]) {
+        for (const ev of events) {
+          const tick = Number(ev[0]);
+          if (!at.length ? tick !== next || first !== next : (tick < first || tick > last))
+            throw new Error(`the ${name} at tick ${tick} is not at a tick this batch carries (${at.length ? `${first} .. ${last}` : `the next tick, ${next}`}): an event goes out with the batch that reaches its tick`);
+        }
+      }
+    }
+
     // AND ONE EVENT PER TICK, THE SAME IN THE TABLES AS IN THE BYTES (kanban #1568). The tables below keep the FIRST
     // liquidation, load, sample or tape at a tick (INSERT OR IGNORE); the batch bytes go unchanged into the canonical
     // transcript, whose flatten() and the core's eventsOf keep the LAST. Two different events at one tick - in one batch
