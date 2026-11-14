@@ -14,7 +14,7 @@
 import { readSignedFunding, signalOutcome, votePeriodOf, fundingTally, voteWeights, trancheSchedule, FUNDING_SCHEDULES, FUNDING_TRANCHES } from '../../arena-protocol/src/funding.js';
 import { createHash } from 'node:crypto';
 import { newerPlayerName, PLAYER_NAME_SKEW_MS } from '../../arena-protocol/src/player-name.js';
-import { VOTE_BOUND_BYTES } from '../../arena-protocol/src/ballot.js';
+import { VOTE_BOUND_BYTES, decodeVote, voteMessage } from '../../arena-protocol/src/ballot.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { countFeeChain } from '../../arena-protocol/src/fee-signal-chain.js';
 import { feeProposalStands, feeProposalOutcome, feesAt as feesAtOf, FEES, FEES_TODAY, donationChanges, devMajority, applyFeeChanges, feeSetStands } from '../../arena-protocol/src/fee-proposal.js';
@@ -159,12 +159,35 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
   const voteEndOf = (o, kind) => o.publishedHeight + (kind === 'leaderboard' ? 0 : schedule.signal) + schedule.vote;
   const boundFor = (o, kind) => typeof bindHeightFor === 'function' && o && o.networkId instanceof Uint8Array && Number.isInteger(o.publishedHeight)
     && voteEndOf(o, kind) > bindHeightFor(toHex(o.networkId));
+  // EACH (SIGNATURE, MESSAGE, BOND) CHECKED ONCE (kanban #2672, audit #1489 r2-census-2, the #1564 hole ballot-tally.js closed): GET /funding
+  // ran fundingTally over every held vote against every voting bond on each request. Only votes some census bond signed are held now
+  // (votePass below), and their pair results are remembered here - a read of the list looks them up. Bounded by the held votes x census;
+  // past VERIFIED_MOST it starts afresh (a re-check, never a different answer).
+  const VERIFIED_MOST = 200000;
+  const verified = new Map();
+  const heldVerify = (sig, msg, pk) => {
+    const k = `${toHex(sig)}:${toHex(msg)}:${toHex(pk)}`;
+    if (verified.has(k)) return verified.get(k);
+    let good = false; try { good = verify(sig, msg, pk) === true; } catch { good = false; }
+    if (verified.size >= VERIFIED_MOST) verified.clear();
+    verified.set(k, good);
+    return good;
+  };
+  /** Some bond of `census` signed this vote for proposal `pid` (its pair results remembered); junk is checked once and not remembered. */
+  const signedByCensus = (pid, payload, census) => {
+    const d = decodeVote(payload); if (!d) return false;
+    const msg = d.bound ? voteMessage(fromHex(pid), d.choice, d.seq) : voteMessage(fromHex(pid), d.choice);
+    const results = census.map((b) => { let good = false; try { good = verify(d.signature, msg, b.pubkey) === true; } catch { good = false; } return [b.pubkey, good]; });
+    if (!results.some(([, good]) => good)) return false;
+    for (const [pk, good] of results) { if (verified.size >= VERIFIED_MOST) verified.clear(); verified.set(`${toHex(d.signature)}:${toHex(msg)}:${toHex(pk)}`, good); }
+    return true;
+  };
   const countOf = (pid, period, o, until = period.until, kind = 'proposal') => { const c = voteCensus(pid); if (!c) return null;
     const w = voteWeights({ census: c.census, publishedHeight: o.publishedHeight, last: period.last, schedule, spentAt: spentAtOf(pid) });
     // THE BOUND VOTE PAST THE GATE (kanban #2576, left open by #2562): a proposal published at or above its network's BALLOT_BIND_HEIGHT
     // is counted by seq (highest inside the period counts, equal seq with two choices = ABSTAIN), as a config proposal's; below it, as before
     const bound = boundFor(o, kind);
-    return { ...fundingTally({ proposalId: fromHex(pid), census: w.voters, votes: votesHeld(pid), from: period.from, until, verify, bound }),
+    return { ...fundingTally({ proposalId: fromHex(pid), census: w.voters, votes: votesHeld(pid), from: period.from, until, verify: heldVerify, bound }),
       votersEligible: w.voters.length, bondsInCensus: c.census.length }; };
   /** The last block a passed proposal's votes are read to: its last payment's due height (rule 5, at most four tranches). */
   const readEndOf = (period) => period.last + schedule.delay + (FUNDING_TRANCHES - 1) * schedule.trancheEvery;
@@ -335,6 +358,8 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       if (noHash >= 0) { db.prepare('DELETE FROM funding_vote_blocks WHERE proposal = ? AND height >= ?').run(row.id, held[noHash].height); held = held.slice(0, noHash); }
       // read on, a pass at a time, this proposal's votes only
       const prefix = row.id.slice(0, 16);
+      const censusNow0 = voteCensus(row.id);
+      if (!censusNow0) continue;
       let next = held.length ? held[held.length - 1].height + 1 : period.from;
       const anchorAt = held.length ? held[held.length - 1].height : null;   // the held block this pass reads on from
       // a passed vote is read on through its payments' due heights: a NO in the delay cancels (rule 5)
@@ -351,6 +376,8 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         walkedAll.delete(row.id);
         // the 77-byte vote names 8 bytes of the id; the bound seq vote (kanban #2562 / #2576, 80 bytes) names 7 - both are kept, the tally decides
         const mine = (votes || []).filter((v) => { const h = toHex(v.payload); return h.slice(8, 24) === prefix || (v.payload.length === VOTE_BOUND_BYTES && h.slice(8, 22) === prefix.slice(0, 14)); })
+          // kanban #2672: a vote no bond of the vote's census signed is not held (it was kept for good and re-verified on every GET /funding)
+          .filter((v) => signedByCensus(row.id, v.payload, censusNow0.census))
           .map((v) => ({ payload: toHex(v.payload), txid: String(v.txid) }));
         db.prepare('INSERT OR REPLACE INTO funding_vote_blocks (proposal, height, hash, votes) VALUES (?, ?, ?, ?)').run(row.id, next, hash, JSON.stringify(mine));
       }
