@@ -94,9 +94,15 @@ export function instrumentCore(text, rel = 'core') {
   else if (text.indexOf('\n') >= 0) add(text.indexOf('\n') + 1, -Infinity, IMPORT);
   else add(text.length, -Infinity, '\n' + IMPORT);
   edits.sort((a, b) => b[0] - a[0] || b[1] - a[1]);
-  let out = text;
-  for (const [at, , s] of edits) out = out.slice(0, at) + s + out.slice(at);
-  return out;
+  // ONE PASS, LINEAR (kanban #2675, audit #1489 r2-hosting-13, high): each edit was applied as out.slice(0, at) + s + out.slice(at),
+  // copying the whole growing text per edit - O(N x length) in the seat's own thread before any trial deadline (30k tiny functions,
+  // 180 kB: 4.5 s frozen; a 16 MB package: minutes). The same edits in the same order, gathered back to front and joined once:
+  // byte for byte the text the old loop made (an edit at the same place as an earlier one still lands before it)
+  const parts = [];
+  let upTo = text.length;
+  for (const [at, , s] of edits) { parts.push(text.slice(at, upTo), s); upTo = at; }
+  parts.push(text.slice(0, upTo));
+  return parts.reverse().join('');
 }
 
 /** The lockdown's half (core-host.js): the counting functions, made in the core's realm. `RangeErr` is the realm's RangeError,
