@@ -36362,7 +36362,8 @@ function referralNameFor({ name, storage, random, curve, nowMs = Date.now() } = 
  * and not asked again. Answers { key, collected: [{ outpoint, federationId, amountMsat, item, roundId }], spent, failed, waiting, totalMsat,
  * referral }.
  * AND WHAT THIS PLAYER'S REFERRAL LINK EARNED (kanban #681): the website payouts under the same key ('website' rows, referralOf) are
- * collected the same way; `referral` is every one the seats list - { msat, payouts } - collected or not.
+ * collected the same way; `referral` is every one this wallet collected - { msat, payouts } - kept in `keep` (arena.zaps.referral,
+ * kanban #1929): a row a seat lists is data, not money.
  */
 // kanban #2133, #2195: [outpoint, byVersion] in the order the Refund budget is spent - most distinct seats first, then round-robin
 // by the lowest-index seat that listed each outpoint (Map order is the order rows were read, so a seat's own rows keep their order).
@@ -36515,16 +36516,20 @@ async function collectZaps({ storage, keep = storage, random, curve, clients, se
     return { ...d, why: said.error || 'the federation did not accept the collect' };
   }
   keepSeen();
-  // kanban #1557: the referral total counts an outpoint's row only when a refund accepted that version or every seat that listed the
-  // outpoint gave the same one - a seat's changed amount neither inflates nor hides it.
-  const web = [];
-  for (const [outpoint, byVersion] of found) {
-    const d = accepted.get(outpoint) || (byVersion.size === 1 ? [...byVersion.values()][0].d : null);
-    if (d && d.item === 'website' && /^\d+$/.test(String(d.amountMsat))) web.push(d);
-  }
+  // kanban #1929 (Daniel 2026-11-14: only collected payments count): the referral total is the website payouts the federation
+  // accepted to this key, in this pass or an earlier one, kept in `keep` (arena.zaps.referral: outpoint -> msat) - never a seat's
+  // bare /donations list, which one seat could make up (a row with no contract behind it). A payout waiting for a wallet in its
+  // federation is counted once it is collected.
+  let earned = {};
+  try { const k = JSON.parse((keep && keep.getItem(ZAPS_REFERRAL_KEY)) || '{}'); if (k && typeof k === 'object' && !Array.isArray(k)) earned = k; } catch { earned = {}; }
+  for (const c of collected) if (c.item === 'website' && /^\d{1,21}$/.test(String(c.amountMsat))) earned[c.outpoint] = String(c.amountMsat);
+  const web = Object.entries(earned).filter(([o, a]) => /^[0-9a-f]{64}:\d+$/.test(o) && /^\d{1,21}$/.test(String(a))).slice(-ZAPS_SEEN_KEPT);
+  try { if (keep && collected.some((c) => c.item === 'website')) keep.setItem(ZAPS_REFERRAL_KEY, JSON.stringify(Object.fromEntries(web))); } catch { /* counted again once kept */ }
   return { key: pk, collected, spent, failed, waiting, totalMsat: String(collected.reduce((t, c) => t + BigInt(c.amountMsat), 0n)),
-    referral: { msat: String(web.reduce((t, d) => t + BigInt(d.amountMsat || 0), 0n)), payouts: web.length } };
+    referral: { msat: String(web.reduce((t, [, a]) => t + BigInt(a), 0n)), payouts: web.length } };
 }
+/** kanban #1929: the website (referral) payouts this wallet collected, outpoint -> msat. */
+const ZAPS_REFERRAL_KEY = 'arena.zaps.referral';
 
 // ---- arena-protocol/src/lobby-listing.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
