@@ -15,7 +15,7 @@ R("group('g-social', 'Social media', 'Follow us: +20 % each')", "group('g-social
 R("group('g-community', 'Community', 'Join any 2: +20 %')", "group('g-community', 'Community · join', 'any 2: +20 %')")
 R("    #arena-feedback .fb-social-say {", """    #arena-feedback .fb-social-help { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 2px; }
     #arena-feedback a.fb-pill { display: inline-flex; align-items: center; gap: 5px; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; text-decoration: none; }
-    #arena-feedback a.fb-pill-max { background: linear-gradient(135deg, #f7931a, #f0388a); color: #0d1117; } #arena-feedback a.fb-pill-draw { border: 1px solid var(--fs-line); color: var(--fs-text); background: #21262d; }
+    #arena-feedback a.fb-rule.fb-pill-max { background: linear-gradient(135deg, #f7931a, #f0388a); color: #0d1117; text-decoration: none; } #arena-feedback a.fb-rule.fb-pill-draw { border: 1px solid var(--fs-line); color: var(--fs-text); background: #21262d; text-decoration: none; }
     #arena-feedback .fb-pill-ico svg { width: 13px; height: 13px; display: block; color: #f7931a; }
     #arena-feedback .fb-gbadge { font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 999px; background: linear-gradient(135deg, #f7931a, #f0388a); color: #0d1117; }
     #arena-feedback .fb-social-say {""")
