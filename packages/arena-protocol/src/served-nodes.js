@@ -151,7 +151,12 @@ export const SERVED_CHECKS_MAX = 1024;
 export const SERVED_ANSWER_BYTES_MAX = 32 * 1024 * 1024;
 // `own` (default true): held[0] is the reader's own record (server.js), and the rounds it names are marked `own` - servedNodes does
 // not charge their checks to the answers (kanban #2361). A reader with no record of its own (the page, item-buy.js) passes false.
-export function mergeServedRounds(held, { own = true } = {}) {
+// `bonded` (kanban #1896, decided 2026-11-14 "(b) committee nodes only count"): a Set of node keys (hex) of a census the reader checked,
+// or null. Given, a committee copy counts only when every key of it is such a node: a copy naming a key no checked census bonds is
+// not taken - no vote, no FINAL - however many seat URLs name it (measured before: one stranger's server at three URLs named a real
+// round with a committee of one made-up key, outvoted two honest seats, and that key took the nodes' whole half of a 500-sat item).
+// null (the seats' own merges) reads as before.
+export function mergeServedRounds(held, { own = true, bonded = null } = {}) {
   const hx = (b) => toHex(b);
   const rounds = new Map(), conflicts = new Set();
   (held || []).forEach((seat, at) => {
@@ -162,6 +167,7 @@ export function mergeServedRounds(held, { own = true } = {}) {
       const k = hx(r.roundId);
       if (seen.has(k)) continue;                              // kanban #2239: one answer names a round once
       seen.add(k);
+      if (bonded && !r.committee.every((k) => bonded.has(hx(k)))) continue;   // kanban #1896: only bonded nodes are a committee
       const committee = [...new Set(r.committee.map(hx))].sort().join();
       if (!rounds.has(k)) rounds.set(k, { roundId: r.roundId, copies: new Map(), finals: new Map(), sources: new Map(), own: false });
       const into = rounds.get(k);
