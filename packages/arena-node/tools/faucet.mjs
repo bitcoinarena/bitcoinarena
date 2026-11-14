@@ -681,6 +681,16 @@ function grantEcash(ask) {
   return { ok: true, sats: d.grant.sats, ecash: got.ecash };
 }
 
+// THE TICKET BEHIND A DUPLICATE (kanban #2745): read from the board (FAUCET_KANBAN_URL, the key in FAUCET_KANBAN_KEY_FILE); only title and description are kept
+async function dupFromTicket(id, ticket) {
+  const n = Number(String(ticket || '').replace(/^#/, ''));
+  if (!Number.isInteger(n) || n <= 0) return { ok: false, why: 'dupTicket is a ticket number' };
+  const key = readFileSync(env.FAUCET_KANBAN_KEY_FILE || `${env.HOME}/.config/blwp/kanban-key`, 'utf8').trim();
+  const r = await fetch(`${env.FAUCET_KANBAN_URL || 'http://127.0.0.1:18850'}/api/tasks/${n}`, { headers: { authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(10000) });
+  if (r.status !== 200) return { ok: false, why: `ticket #${n} could not be read (${r.status})` };
+  const t = await r.json();
+  return FEEDBACK.dupSnapshot(id, { id: t.id, title: t.title, description: t.description });
+}
 const WANTS = new Map();
 /** A SEASON 2 APPROVAL the plan fits: the report store approves the season's amount (outside Season 1's weekly budget), the season records it. */
 function s2Approve(r, p, by) {
@@ -882,7 +892,11 @@ createServer((req, res) => {
           }
           return send(200, s1);
         }
-        if (b.action === 'reject') return send(200, FEEDBACK.move(b.id, 'rejected', { reason: b.reason, by }));
+        // A DUPLICATE OF A KNOWN TICKET (kanban #2745): with dupTicket, the ticket's title and description go behind a secret link for the reporter
+        if (b.action === 'reject') { const out = FEEDBACK.move(b.id, 'rejected', { reason: b.reason, by });
+          if (!out.ok || b.dupTicket == null) return send(200, out);
+          return dupFromTicket(b.id, b.dupTicket).then((d) => send(200, { ...out, dupLink: d }), () => send(200, { ...out, dupLink: { ok: false, why: 'the ticket could not be read' } })); }
+        if (b.action === 'dup-link') return dupFromTicket(b.id, b.ticket).then((d) => send(200, d), () => send(200, { ok: false, why: 'the ticket could not be read' }));
         if (b.action === 'duplicate') return send(200, FEEDBACK.move(b.id, 'duplicate', { duplicateOf: b.of, by }));
         if (b.action === 'reward') { const w = FEEDBACK.createReward(b.id, { network: BOUNTY_NETWORK, comment: b.comment ?? null, by });
           if (!w.ok) return send(200, w);
@@ -1046,6 +1060,16 @@ createServer((req, res) => {
     S2.verify(who, S2_VERIFY, { cause: 'reporter' }).then((flags) => send(200, { ok: true, flags, links: S2.links(who).map(({ userId, ...l }) => l) }), () => send(200, { ok: false, why: 'try again' }));
     return undefined;
   }
+  // A DUPLICATE'S TICKET TEXT (kanban #2745): only by its secret token; the ticket number, title and description, nothing else; never indexed or cached
+  { const m = /^\/feedback\/dup\/([0-9a-f]{32})$/.exec(path);
+    if (m && req.method === 'GET') { const x = FEEDBACK ? FEEDBACK.dupLink(m[1]) : null;
+      const H = { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow', 'referrer-policy': 'no-referrer' };
+      if (!x) { res.writeHead(404, H); return res.end('<!doctype html><meta name="robots" content="noindex"><title>Not found</title><p>Not found.</p>'); }
+      const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+      res.writeHead(200, H);
+      return res.end(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex, nofollow"><title>Ticket #${x.ticket}</title>
+<style>body{margin:0;background:#0d1117;color:#e6edf3;font:16px/1.5 system-ui,sans-serif;padding:28px 16px}main{max-width:720px;margin:0 auto}h1{font-size:22px;margin:0 0 6px}p.d{color:#8b949e;font-size:14px;margin:0 0 18px}pre{white-space:pre-wrap;word-break:break-word;background:#161b22;border:1px solid #30363d;border-radius:10px;padding:14px;font:14px/1.5 ui-monospace,monospace}</style></head>
+<body><main><h1>Ticket #${x.ticket}: ${esc(x.title)}</h1><p class="d">The ticket your report matched, as it read on ${new Date(x.madeMs).toISOString().slice(0, 10)}. This link is only for you.</p><pre>${esc(x.body)}</pre></main></body></html>`); } }
   // THE PUBLIC PAYOUT LOG (kanban #2619): what bitcoinarena.io/bounty/ lists - Season 1, sorted by report, each with its time (UTC)
   if (path === '/feedback/paid-log' && req.method === 'GET') {
     let rows = []; try { rows = FEEDBACK ? FEEDBACK.paidLog() : []; } catch { rows = []; }
