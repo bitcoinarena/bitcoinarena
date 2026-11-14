@@ -1150,6 +1150,11 @@ export class Round {
     // The honest client never sends it in a signed run (b04de1f8a); a seat now refuses such a batch in a staked Next Block round.
     if (factsOf(round.contract).practiceRefused && b.ticks.some((w) => w && w.length > 4 && Number(w[4]) !== 0))
       throw new Error('a staked Next Block run takes no practice ticks (input word 4 must be 0)');
+    // NO PLAYER-DECLARED LIQUIDATIONS IN A PAID RUN (kanban #2655, audit #1489 r1-play-1; Daniel 2026-11-14 "1"): the client names each
+    // strike's tick and size and nobody attests it, so a modified client cratered every tank near the front and won. Until the
+    // committee attests liquidations (the To Do card for it), a staked Next Block run takes none; free rounds keep them.
+    if (factsOf(round.contract).practiceRefused && (b.liquidations || []).some(([, size]) => Number(size) !== 0))
+      throw new Error('a staked Next Block run takes no player-declared liquidations until the committee attests them');
     if (b.ticks.length > blockTicks)
       throw new Error(
         `a batch carries at most the round's ${blockTicks} ticks, got ${b.ticks.length}`);
