@@ -6,7 +6,7 @@
 // Every storage call is in a try (a private window, blocked or full storage): without it the page works, it only asks again.
 // The page carries a copy of the functions between the markers below (the build step copies them; no imports, plain functions).
 // ---- social-store begin
-const SOCIAL_PLATFORMS = ['x', 'telegram', 'discord', 'armada'];
+const SOCIAL_PLATFORMS = ['x', 'telegram', 'discord', 'armada', 'nostr'];
 function socialKey(pubkey) { return 'arena.bounty.social:' + String(pubkey || ''); }
 function socialLoad(storage, pubkey) {
   if (!/^[0-9a-f]{64}$/.test(String(pubkey || ''))) return null;
@@ -48,11 +48,11 @@ function socialMissing(saved, links) {
   for (const p of SOCIAL_PLATFORMS) if (saved[p] && !have.has(p)) out[p] = saved[p];
   return out;
 }
-/** The bonus the flags give, as the faucet counts it: X +25; 2 of Telegram, Discord, Armada +25. */
+/** The bonus the flags give, as the faucet counts it: X +20; Nostr +20; 2 of Telegram, Discord, Armada +20 (kanban #2641). */
 function socialBonus(flags) {
   const f = flags || {};
   const n = ['telegram', 'discord', 'armada'].filter((p) => f[p] === true).length;
-  return (f.x === true ? 25 : 0) + (n >= 2 ? 25 : 0);
+  return (f.x === true ? 20 : 0) + (f.nostr === true ? 20 : 0) + (n >= 2 ? 20 : 0);
 }
 // ---- social-store end
 export { SOCIAL_PLATFORMS, socialKey, socialLoad, socialSave, socialMissing, socialBonus };

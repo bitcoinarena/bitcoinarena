@@ -14,12 +14,14 @@ export const FOLLOW_UP_SATS = 1000;
 export const NODE_SATS = 10000;
 export const NODES_PER_SEASON = 3;
 export const LEVEL_SATS = Object.freeze({ useful: 500, low: 1000, medium: 2000, high: 5000, critical: 10000 });
-export const PLATFORMS = Object.freeze(['telegram', 'discord', 'x', 'armada']);
+export const PLATFORMS = Object.freeze(['telegram', 'discord', 'x', 'armada', 'nostr']);
 /** WEEK 2 (kanban #2641): the communities the second bonus counts - any 2 of these 3 */
 export const COMMUNITIES = Object.freeze(['telegram', 'discord', 'armada']);
-export const X_BONUS_PCT = 25;
-export const COMMUNITY_BONUS_PCT = 25;
+export const X_BONUS_PCT = 20;
+export const COMMUNITY_BONUS_PCT = 20;
 export const COMMUNITY_LEAST = 2;
+/** A NOSTR FOLLOW (kanban #2641, Daniel 2026-11-14: "Twitter +20%, Nostr +20%, und dann 2 of 3 ist nochmal +20%, gesamt +60% maximal"). */
+export const NOSTR_BONUS_PCT = 20;
 export const LINK_CODE_MS = 24 * 3600 * 1000;
 export const LINK_CODES_OPEN_MOST = 5;
 /** A membership read longer ago than this does not count for a bonus or the draw: it is read again first. */
@@ -29,12 +31,12 @@ const CODE_ABC = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 export const LINK_CODE_RE = /\bBA-([ABCDEFGHJKMNPQRSTUVWXYZ23456789]{8})\b/i;
 
 /**
- * THE BONUS IN PERCENT from the stored flags (Week 2, Daniel 2026-11-14, kanban #2641: "Twitter / X gibt 25% mehr. Und dann 2 of 3 gibt nochmal 25%
- * mehr: telegram, discord, Armada"): X follower +25; a member of at least 2 of Telegram, Discord and Armada another +25; at most +50. All optional.
+ * THE BONUS IN PERCENT from the stored flags (Season 2, Daniel 2026-11-14, kanban #2641: "Twitter +20%, Nostr +20%, und dann 2 of 3 ist nochmal +20%,
+ * gesamt +60% maximal"): X follower +20; Nostr follower +20; a member of at least 2 of Telegram, Discord and Armada +20; at most +60. All optional.
  */
 export function bonusPct(flags = {}) {
   const n = COMMUNITIES.filter((p) => flags[p] === true).length;
-  return (flags.x === true ? X_BONUS_PCT : 0) + (n >= COMMUNITY_LEAST ? COMMUNITY_BONUS_PCT : 0);
+  return (flags.x === true ? X_BONUS_PCT : 0) + (n >= COMMUNITY_LEAST ? COMMUNITY_BONUS_PCT : 0) + (flags.nostr === true ? NOSTR_BONUS_PCT : 0);
 }
 
 /**
@@ -239,7 +241,7 @@ export function openBountySeason(path = ':memory:', { startMs = null, potSats = 
 
   /** THE STORED FLAGS of a key: a platform counts when its last read said member and is fresh (CHECK_FRESH_MS). */
   function flagsOf(pubkey, { nowMs = Date.now() } = {}) {
-    const f = { telegram: false, discord: false, x: false, armada: false };
+    const f = { telegram: false, discord: false, x: false, armada: false, nostr: false };
     for (const l of linksOf(pubkey)) if (l.member === true && l.checkedMs != null && nowMs - l.checkedMs <= CHECK_FRESH_MS) f[l.platform] = true;
     return f;
   }

@@ -32,6 +32,7 @@ import { openBountySeason, cleanOpenIssues, seasonEndMs } from '../src/bounty-se
 import { verifiersFromEnv } from '../src/bounty-verify.js';
 import { socialCheck, resolversFromEnv } from '../src/bounty-social.js';   // kanban #2641
 import { userbotFromEnv } from '../src/telegram-userbot.js';   // kanban #2641
+import { nostrVerifier, nostrPubkeyOf } from '../src/bounty-nostr.js';   // kanban #2641
 import { readJsonBounded } from '../src/lnurl-read.js';   // kanban #2517
 import { openFeedbackStore, networkPlayers, imageKind, SHOT_MOST, SHOT_UNCLAIMED_MS, REWARD_LEVELS, NODE_BOUNTY_BASE_SATS, lnAddressWorks, lnAddressUrl, lnAddressInvoice, reportAddress } from '../src/feedback-store.js';
 import { eventId } from '../src/nostr-relay.js';   // a resent report is matched by its id's hash (kanban #2456, #2498)
@@ -115,7 +116,7 @@ const S2_VERIFY = verifiersFromEnv(env);
 const S2_USERBOT = S2 ? await userbotFromEnv(env, { log: (m) => console.log(`${new Date().toISOString()} ${m}`) }).catch(() => null) : null;
 let S2_ARMADA = null;
 if (S2) { try { const a = await import('../src/bounty-armada.js'); const v = a.armadaFromEnv(env);
-  if (v) { S2_VERIFY.armada = v; S2_ARMADA = async (input) => { const pk = await a.armadaPubkeyOf(input); if (!pk) return { userId: null, member: null, why: 'that is not a Nostr key (npub) or name@domain' };
+  if (v) { S2_VERIFY.armada = v; S2_ARMADA = async (input) => { const pk = await nostrPubkeyOf(input); if (!pk) return { userId: null, member: null, why: 'that is not a Nostr key (npub) or name@domain' };
     const r = await v({ userId: pk }); return { userId: pk, username: a.bech32Encode('npub', Buffer.from(pk, 'hex')).slice(0, 20) + '…', member: r.member, why: r.why }; }; } } catch (e) { console.log(`${new Date().toISOString()} armada check off: ${String(e.message).slice(0, 80)}`); } }
 // the user account reader is the Telegram check first (Daniel 2026-11-14); a read it cannot make falls back to the bot's getChatMember by id
 if (S2_USERBOT) { const bot = S2_VERIFY.telegram;
@@ -123,7 +124,11 @@ if (S2_USERBOT) { const bot = S2_VERIFY.telegram;
     if (u && (u.member === true || (u.member === false && !bot))) return { member: u.member, why: u.why };
     // a name not in the list may have changed: the stable id decides
     return bot ? bot(l) : { member: u ? u.member : null, why: u ? u.why : 'no reader' }; }; }
-const S2_NAMES = S2 ? resolversFromEnv(S2, env, { userbot: S2_USERBOT, armada: S2_ARMADA }) : {};
+// A NOSTR FOLLOW (kanban #2641): the key's newest contact list on our relay and big public ones names our profile key
+if (S2 && env.FAUCET_BOUNTY_NOSTR !== 'off') S2_VERIFY.nostr = nostrVerifier();
+const S2_NOSTR = S2_VERIFY.nostr ? async (input) => { const pk = await nostrPubkeyOf(input); if (!pk) return { userId: null, member: null, why: 'that is not a Nostr key (npub) or name@domain' };
+  const r = await S2_VERIFY.nostr({ userId: pk }); return { userId: pk, username: (await import('../src/bounty-armada.js')).bech32Encode('npub', Buffer.from(pk, 'hex')).slice(0, 20) + '…', member: r.member, why: r.why }; } : null;
+const S2_NAMES = S2 ? { ...resolversFromEnv(S2, env, { userbot: S2_USERBOT, armada: S2_ARMADA }), ...(S2_NOSTR ? { nostr: S2_NOSTR } : {}) } : {};
 const S2_SOCIAL_ASKS = new Map();   // pubkey -> last /feedback/social with names (one each 15 s)
 const S2_SOCIAL_GAP_MS = 15000;
 // SEASON 2 STARTS (Daniel 2026-11-13 ~17:55Z: "Season 2 läuft ab Sonntag"): before it no Season 2 approval; a Season 1 report past the weekly budget
@@ -1043,7 +1048,7 @@ createServer((req, res) => {
       req.on('end', () => {
         let asked = {}; try { asked = raw ? JSON.parse(raw) : {}; } catch { return send(400, { ok: false, why: 'JSON with x, telegram, discord, armada' }); }
         if (!asked || typeof asked !== 'object' || Array.isArray(asked)) return send(400, { ok: false, why: 'JSON with x, telegram, discord, armada' });
-        const any = ['x', 'telegram', 'discord', 'armada'].some((k) => typeof asked[k] === 'string' && asked[k].trim());
+        const any = ['x', 'telegram', 'discord', 'armada', 'nostr'].some((k) => typeof asked[k] === 'string' && asked[k].trim());
         if (any) {
           const lastAsk = S2_SOCIAL_ASKS.get(who) || 0;
           if (Date.now() - lastAsk < S2_SOCIAL_GAP_MS) return send(429, { ok: false, why: 'one check every 15 seconds' });
