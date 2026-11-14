@@ -10,7 +10,8 @@ import { donationKeyShares } from '../../arena-client/src/page-lock.js';
 import { entryFeeMsat } from '../../arena-protocol/src/fee.js';
 import { netStakeMsat } from '../../arena-protocol/src/payout.js';
 import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
-import { paysReserves, roundSplit } from '../../arena-protocol/src/reserves.js';
+import { paysReserves, roundSplit, giftsFeeBps } from '../../arena-protocol/src/reserves.js';
+import { roundGiftsInFee } from '../../arena-client/src/join.js';
 import { decodeDonationSet } from '../../arena-protocol/src/donation.js';
 import { decodeDonationSetBody } from '../../arena-protocol/src/authority.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
@@ -25,6 +26,14 @@ export async function entrySplit({ c, roundHex, nodes, needed = 5, fetcher = fet
   if (!paysReserves(c)) {
     const feeMsat = entryFeeMsat(stake);
     return { feeMsat, donationMsat: 0n, netMsat: netStakeMsat({ stakeMsat: stake, feeMsat, donationMsat: 0n }), shares: [], reserveKey: null };
+  }
+  // FROM PROTOCOL 27 (kanban #1486) A GAME ROUND'S FEE LOCK HOLDS THE DEVELOPERS' AND THE RESERVES' PARTS beside the nodes', as the page's join
+  // builds it (join.js roundGiftsInFee / feeBpsForRound): the whole fee rate of the stake, no donation, no donation or reserve output (kanban #2658,
+  // measured 2026-11-14 21:27Z: every seat refused this tool's and the house bot's protocol-28 RPS entries - "the developers' and the reserves'
+  // parts are in the fee lock: that entry names a donation of 6000 msat beside it")
+  if (roundGiftsInFee(c)) {
+    const feeMsat = (stake * BigInt(giftsFeeBps())) / 10000n;
+    return { feeMsat, donationMsat: 0n, netMsat: netStakeMsat({ stakeMsat: stake, feeMsat, donationMsat: 0n }), shares: [], reserveKey: null, giftsInFee: true };
   }
   const split = roundSplit(stake);
   const fed = toHex(c.federationId);
