@@ -6274,6 +6274,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // `published`: the series' publication is confirmed on this node's own chain (publishedHere) - what stands in for the operator naming it
   // funded on a node no operator of the series runs (kanban #757)
   const takeGridSeries = (t, { persist = true, published = false } = {}) => {
+    // A CUT IS THE NODE'S OWN, NEVER A PEER'S (kanban #2681, audit #1489 r3-gossip-1, high): `cut=N` is beside the series id (series.js
+    // withoutSeries), so one peer answering the pull - or a stranger's POST /series on a node not funding it - with the real published line
+    // plus ` cut=0` made this node hold the series and write none of its rounds, for good (held, never pulled again, the cut kept in the
+    // grid file and handed on). A series taken on its publication alone is taken without a cut; only the operator's funded line keeps one.
+    if (published && t && Number.isInteger(t.seriesCutFrom)) { const { seriesCutFrom: _c, ...rest } = t; void _c; t = rest; }
     if (!isGridSeries(t)) return { ok: false, code: 400, why: 'this door takes a grid series (a line naming grid, period=N and count=N)' };
     const lead = seriesLeadIsValid(t);
     if (!lead.ok) return { ok: false, code: 409, why: lead.why };
