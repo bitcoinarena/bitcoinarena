@@ -40,6 +40,7 @@ test('only closed lock rounds with no accepted settlement, inside the window, ar
   round(db, 6, { closedMs: NOW - 5 * MIN });            // its close is still running
   round(db, 7, { closedMs: NOW - 1500 * MIN });         // too old
   round(db, 8); fedSettled(db, 8, 'a', 'ACCEPTED');     // every federation in
+  db.prepare('INSERT INTO fed_lock_split (round_id, federation_id) VALUES (?, ?)').run(rid(8), 'a');   // kanban #2352: its split kept, as #settleFederations does
   round(db, 9); fedSettled(db, 9, 'a', 'ACCEPTED'); fedSettled(db, 9, 'b', 'SUBMITTING');   // one short
   assert.deepEqual(listed(db), [1, 3, 9]);
 }));
