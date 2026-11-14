@@ -100,7 +100,7 @@
   "kind": "bug"
  },
  "2767": {
-  "text": "federation: one seat's unsigned record can move a donor's funds",
+  "text": "federation: donor funds can follow a wrong record",
   "kind": "bug"
  },
  "1369": {
