@@ -1,0 +1,292 @@
+--- /mnt/bitcoin/relocated/blwp-work/sitemirror/page960/index.html	2026-11-10 12:23:46.588467271 +0100
++++ /mnt/bitcoin/relocated/blwp-work/sitemirror/page960-s2641/index.html	2026-11-14 09:53:11.077882999 +0100
+@@ -171,6 +171,38 @@
+     #arena-feedback .card > .row:last-child { position: sticky; bottom: -18px; margin: 10px -18px -18px; padding: 10px 18px 18px; background: #161b22; border-top: 1px solid #30363d; }
+     #arena-feedback input.fb-ln { display: block; width: 100%; box-sizing: border-box; margin: 8px 0 0; padding: 7px; border-radius: 8px; border: 1px solid #30363d; background: #0d1117; color: #e6edf3; font: inherit; }
+     #arena-feedback .fb-row { padding: 8px 0; border-bottom: 1px solid #30363d; } #arena-feedback .fb-head { color: #8b949e; font-size: 13px; } #arena-feedback .fb-why { color: #f85149; font-size: 13px; }
++    /* kanban #2641: the social screen - the page's palette (orange accent #f7931a, GitHub-dark greys), icons, chips, the bonus badge */
++    #arena-feedback .fb-social { --fs-bg: #0d1117; --fs-line: #30363d; --fs-text: #e6edf3; --fs-dim: #8b949e; --fs-field: #161b22;
++      margin: 12px 0 0; padding: 12px; border-radius: 12px; border: 1px solid transparent; color: var(--fs-text);
++      background: linear-gradient(var(--fs-bg), var(--fs-bg)) padding-box, linear-gradient(135deg, #f7931a, #5865f2 55%, #f0388a) border-box; }
++    #arena-feedback .fb-social-head { display: flex; align-items: center; gap: 8px; } #arena-feedback .fb-social-head b { font-size: 15px; }
++    #arena-feedback .fb-social-opt { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--fs-line); color: var(--fs-dim); }
++    #arena-feedback .fb-social-help { font-size: 12px; color: var(--fs-dim); margin: 2px 0 6px; }
++    #arena-feedback .fb-social-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
++    #arena-feedback .fb-social-ico { flex: 0 0 32px; width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; background: var(--fs-field); border: 1px solid var(--fs-line); color: var(--fs-text); }
++    #arena-feedback .fb-social-ico svg { width: 18px; height: 18px; display: block; }
++    #arena-feedback .fb-social-row input { flex: 1 1 auto; min-width: 0; box-sizing: border-box; padding: 7px 9px; border-radius: 8px; border: 1px solid var(--fs-line); background: var(--fs-field); color: var(--fs-text); font: inherit; }
++    #arena-feedback .fb-social-row input:focus { outline: none; border-color: #f7931a; } #arena-feedback .fb-social-row input.ok { border-color: #238636; }
++    #arena-feedback .fb-social-chip { flex: 0 0 auto; font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 999px; white-space: nowrap; background: #21262d; color: var(--fs-dim); border: 1px solid var(--fs-line); }
++    #arena-feedback .fb-social-chip.ok { background: rgba(46,160,67,.15); color: #3fb950; border-color: rgba(46,160,67,.5); }
++    #arena-feedback .fb-social-chip.no { background: rgba(248,81,73,.12); color: #f85149; border-color: rgba(248,81,73,.45); }
++    #arena-feedback .fb-social-chip.wait { background: rgba(210,153,34,.14); color: #d29922; border-color: rgba(210,153,34,.45); }
++    #arena-feedback .fb-social-line { display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: 12px; margin: 3px 0 0 40px; color: var(--fs-dim); }
++    #arena-feedback .fb-social-line a { color: #58a6ff; text-decoration: none; } #arena-feedback .fb-social-line a:hover { text-decoration: underline; } #arena-feedback .fb-social-join { margin-left: auto; }
++    #arena-feedback .fb-social-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--fs-line); flex-wrap: wrap; }
++    #arena-feedback .fb-social-bonus { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--fs-dim); flex-wrap: wrap; }
++    #arena-feedback .fb-social-badge { font-weight: 700; font-size: 13px; padding: 2px 9px; border-radius: 999px; background: #21262d; color: var(--fs-dim); border: 1px solid var(--fs-line); }
++    #arena-feedback .fb-social-badge.on { background: rgba(46,160,67,.18); color: #3fb950; border-color: rgba(46,160,67,.55); }
++    #arena-feedback .fb-social-badge.max { background: linear-gradient(135deg, #f7931a, #f0388a); color: #0d1117; border-color: transparent; }
++    #arena-feedback .fb-social-bonus-note { color: var(--fs-text); }
++    #arena-feedback .fb-social-say { font-size: 13px; color: #d29922; margin-top: 6px; } #arena-feedback .fb-social-say:empty { display: none; }
++    @media (max-width: 380px) { #arena-feedback .fb-social { padding: 10px; } #arena-feedback .fb-social-line { margin-left: 0; } #arena-feedback .fb-social-chip { font-size: 10px; padding: 2px 6px; } }
++    /* no light block: the page and its dialogs are dark in both colour schemes, so the panel stays in the dialog's own colours */
++    #arena-feedback .fb-send-why { font-size: 13px; color: #d29922; text-align: right; margin-top: 8px; } #arena-feedback .fb-send-why:empty { display: none; }
++    #arena-feedback .fb-title { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; } #arena-feedback .fb-title h3 { margin: 0 0 8px; }
++    #arena-feedback a.fb-rule { color: #58a6ff; text-decoration: none; } #arena-feedback a.fb-rule:hover { text-decoration: underline; }
++    #arena-feedback .fb-title a.fb-rule { font-size: 13px; font-weight: 600; } #arena-feedback .fb-chips-head a.fb-rule, #arena-feedback .fb-budget-line a.fb-rule { color: inherit; text-decoration: underline dotted; }
++    #arena-feedback .fb-rules { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; margin-top: 3px; }
+     #arena-feedback .fb-reward { margin-top: 4px; color: #3fb950; } #arena-feedback .fb-reward a { color: #f7931a; } #arena-feedback .card { max-height: 86vh; overflow-y: auto; }
+     #arena-feedback .fb-count { font-size: 12px; color: #8b949e; margin: 2px 0 0; text-align: right; } #arena-feedback .fb-count.short { color: #d29922; }
+     #arena-feedback .fb-shot { display: block; margin: 8px 0 0; color: #8b949e; font-size: 13px; } #arena-feedback .fb-shot input { max-width: 100%; color: #e6edf3; }
+@@ -1838,6 +1870,146 @@
+       try { return ARENACLIENT.tabIdentity({ storage: window.sessionStorage, random: () => { throw new Error('this tab has no wallet yet'); }, curve: window.ARENA_CURVE }).pubkeyHex || null; } catch { return null; } };
+     const hasIdentity = () => !!myPubkey();
+     const el = (tag, props = {}, ...kids) => { const e = document.createElement(tag); for (const [k, v] of Object.entries(props)) { if (k === 'text') e.textContent = v; else if (k === 'cls') e.className = v; else e.setAttribute(k, v); } for (const c of kids) if (c) e.append(c); return e; };
++    // WEEK 2'S SOCIAL SCREEN (kanban #2641, Daniel 2026-11-14: "Alles optional: Twitter / X gibt 25% mehr. Und dann 2 of 3 gibt nochmal 25% mehr:
++    // telegram, discord, Armada ... der User gibt jeweils seine usernames dafür an und prüft live"): a name per platform, checked live by the faucet
++    // (POST /feedback/social, NIP-98); names that check out are remembered in this browser per report key ("Merke dir die angegebenen social Daten im
++    // Browser"), shown as validated with "change", and sent once more when the faucet holds no link for them (another device). The stage only.
++    // ---- social-store begin
++    const SOCIAL_PLATFORMS = ['x', 'telegram', 'discord', 'armada'];
++    function socialKey(pubkey) { return 'arena.bounty.social:' + String(pubkey || ''); }
++    function socialLoad(storage, pubkey) {
++      if (!/^[0-9a-f]{64}$/.test(String(pubkey || ''))) return null;
++      let raw = null;
++      try { raw = storage && storage.getItem(socialKey(pubkey)); } catch (e) { return null; }
++      if (!raw) return null;
++      let o = null;
++      try { o = JSON.parse(raw); } catch (e) { return null; }
++      if (!o || typeof o !== 'object') return null;
++      const out = {};
++      for (const p of SOCIAL_PLATFORMS) if (typeof o[p] === 'string' && o[p].trim() && o[p].length <= 120) out[p] = o[p].trim();
++      if (!Object.keys(out).length) return null;
++      out.checkedAt = Number.isFinite(o.checkedAt) ? o.checkedAt : null;
++      return out;
++    }
++    function socialSave(storage, pubkey, asked, results, nowMs) {
++      if (!/^[0-9a-f]{64}$/.test(String(pubkey || ''))) return null;
++      const kept = socialLoad(storage, pubkey) || {};
++      delete kept.checkedAt;
++      for (const p of SOCIAL_PLATFORMS) {
++        const r = results && results[p];
++        if (!r) continue;
++        const name = asked && typeof asked[p] === 'string' ? asked[p].trim() : '';
++        if (r.member === true && name) kept[p] = name;
++        else if (r.member === false) delete kept[p];
++      }
++      try {
++        if (!Object.keys(kept).length) { storage.removeItem(socialKey(pubkey)); return null; }
++        kept.checkedAt = Number(nowMs) || Date.now();
++        storage.setItem(socialKey(pubkey), JSON.stringify(kept));
++      } catch (e) { return null; }
++      return kept;
++    }
++    /** The saved names the server holds no link for (another device, a cleared server): those are sent once more. */
++    function socialMissing(saved, links) {
++      if (!saved) return {};
++      const have = new Set((links || []).filter((l) => l && l.member === true).map((l) => l.platform));
++      const out = {};
++      for (const p of SOCIAL_PLATFORMS) if (saved[p] && !have.has(p)) out[p] = saved[p];
++      return out;
++    }
++    /** The bonus the flags give, as the faucet counts it: X +25; 2 of Telegram, Discord, Armada +25. */
++    function socialBonus(flags) {
++      const f = flags || {};
++      const n = ['telegram', 'discord', 'armada'].filter((p) => f[p] === true).length;
++      return (f.x === true ? 25 : 0) + (n >= 2 ? 25 : 0);
++    }
++    // ---- social-store end
++    const SOCIAL_ON = () => location.hostname === 'testnet-stage.bitcoinarena.io' && hasIdentity();
++    // EVERY RULE BY ITS LINK (Daniel 2026-11-14: "Alle Regeln per link verlinken"): the stage's rules page has an anchor per rule
++    const RULES_ON = () => location.hostname === 'testnet-stage.bitcoinarena.io';
++    const ruleLink = (anchor, text, cls) => el('a', { href: '/bounty/' + (anchor ? '#' + anchor : ''), target: '_blank', rel: 'noopener', cls: 'fb-rule' + (cls ? ' ' + cls : ''), text });
++    // THE LOOK (Daniel 2026-11-14: "Füge die Icons stattdessen ein statt text, community bonus section hübscher machen, auch farblich"): each platform
++    // by its icon (the footer's own for X, Telegram, Discord; Armada's mark from armada.buzz, inlined), a status chip per row, the bonus as a badge
++    const SOCIAL_ICONS = {"x": "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusable=\"false\"><path fill=\"currentColor\" d=\"M18.9 2H22l-6.8 7.8L23 22h-6.3l-4.9-6.4L6.1 22H3l7.3-8.3L1 2h6.4l4.4 5.9L18.9 2zm-1.1 18h1.7L6.3 3.9H4.5L17.8 20z\"/></svg>", "telegram": "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusable=\"false\"><path fill=\"#229ED9\" d=\"M21.9 3.4L18.6 19c-.2 1.1-.9 1.4-1.8.9l-5-3.7-2.4 2.3c-.3.3-.5.5-1 .5l.4-5.1 9.3-8.4c.4-.4-.1-.6-.6-.2L6 12.6 1 11c-1.1-.3-1.1-1.1.2-1.6L20.5 2c.9-.3 1.7.2 1.4 1.4z\"/></svg>", "discord": "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusable=\"false\"><path fill=\"#5865F2\" d=\"M20.3 4.4A19.6 19.6 0 0 0 15.4 3l-.6 1.3a18.2 18.2 0 0 0-5.6 0L8.6 3a19.6 19.6 0 0 0-4.9 1.4C.6 9.1-.3 13.6.2 18.1a19.8 19.8 0 0 0 6 3l1.3-2.1a12.9 12.9 0 0 1-2-1l.5-.4a14.1 14.1 0 0 0 12 0l.5.4c-.6.4-1.3.7-2 1l1.3 2.1a19.7 19.7 0 0 0 6-3c.5-5.2-.9-9.7-3.5-13.7zM8.5 15.3c-1.2 0-2.2-1.1-2.2-2.4s1-2.4 2.2-2.4 2.2 1.1 2.2 2.4-1 2.4-2.2 2.4zm7 0c-1.2 0-2.2-1.1-2.2-2.4s1-2.4 2.2-2.4 2.2 1.1 2.2 2.4-1 2.4-2.2 2.4z\"/></svg>", "armada": "<svg viewBox=\"20 2 88 124\" aria-hidden=\"true\" focusable=\"false\"><g fill=\"#19e6e6\"><path d=\"M95.4 104.865H32.59c-1.18 0-2.14-.96-2.14-2.14s.96-2.14 2.14-2.14H95.4c1.18 0 2.14.96 2.14 2.14s-.96 2.14-2.14 2.14z\"/><path d=\"M83.98 115.565H44.01a1.43 1.43 0 1 1 0-2.86h39.97a1.43 1.43 0 1 1 0 2.86z\"/><path d=\"M73.99 123.775H54.01a1.071 1.071 0 0 1 0-2.14h19.98a1.071 1.071 0 0 1 0 2.14z\"/></g><path fill=\"#f0388a\" d=\"M64 4.225l-39.97 88.5h17.13l2.31-5.2 2.76-6.22-2.22-1.43-1.42-12.84h9.99l4.89-11.01L64 41.335l11.42 25.7h9.99l-1.43 12.84-2.22 1.43 2.77 6.22 2.31 5.2h17.13z\"/><path fill=\"#f0388a\" d=\"M76.84 79.165c-.15 0-.31-.05-.44-.15l-12.41-9.65-12.41 9.65c-.31.24-.76.19-1-.13a.706.706 0 0 1 .13-1l12.85-9.99c.26-.2.62-.2.88 0l12.85 9.99a.715.715 0 0 1-.43 1.28z\"/></svg>"};
++    window.ARENA_SOCIAL_PANEL = () => {
++      const me = myPubkey(); const S2 = location.origin + '/api/faucet/feedback';
++      const store = (() => { try { return window.localStorage; } catch (e) { return null; } })();
++      const post = async (door, body) => { const url = S2 + '/' + door; const auth = await identitySign({ kind: HTTP_AUTH_KIND, tags: [['u', url], ['method', 'POST']], content: '' });
++        const r = await fetch(url, { method: 'POST', headers: { authorization: 'Nostr ' + btoa(JSON.stringify(auth)), 'content-type': 'application/json' }, body: JSON.stringify(body || {}) });
++        const j = await r.json().catch(() => ({ ok: false, why: 'try again' })); if (r.status === 429) j.why = j.why || 'one check every 15 seconds'; return j; };
++      const armadaHref = (document.getElementById('arena-foot-armada') || {}).href || 'https://armada.buzz/';
++      const ROWS = [
++        { p: 'x', name: 'X', ph: '@yourname on X', join: 'https://x.com/bitcoinarena_io', joinText: 'Follow @bitcoinarena_io', no: 'not following' },
++        { p: 'telegram', name: 'Telegram', ph: '@yourname on Telegram', join: 'https://t.me/+KihHE8JhcVM3NDVi', joinText: 'Join the group', no: 'not a member' },
++        { p: 'discord', name: 'Discord', ph: 'Discord username', join: 'https://discord.gg/9zZbASZyue', joinText: 'Join the server', no: 'not a member' },
++        { p: 'armada', name: 'Armada', ph: 'Armada npub1… or name@domain', join: armadaHref, joinText: 'Join the community', no: 'not a member' },
++      ];
++      const box = el('div', { cls: 'fb-social' });
++      const badge = el('span', { cls: 'fb-social-badge', text: '+0 %' });
++      const bonus = el('div', { cls: 'fb-social-bonus', role: 'status' }, el('span', { text: 'Social bonus' }), badge, el('span', { cls: 'fb-social-bonus-note', text: '' }));
++      const say = el('div', { cls: 'fb-social-say', role: 'status' });
++      const fields = {};
++      box.append(el('div', { cls: 'fb-social-head' }, el('b', { text: 'Community bonus' }), el('span', { cls: 'fb-social-opt', text: 'optional' })),
++        el('div', { cls: 'fb-social-help' }, ruleLink('community-bonus', 'X +25 %, any 2 of Telegram / Discord / Armada +25 %'), el('span', { text: ' · ' }), ruleLink('draw', 'weekly draw')));
++      for (const r of ROWS) {
++        const ico = el('span', { cls: 'fb-social-ico fb-social-ico-' + r.p, role: 'img', 'aria-label': r.name, title: r.name }); ico.innerHTML = SOCIAL_ICONS[r.p];
++        const input = el('input', { type: 'text', maxlength: '100', autocomplete: 'off', spellcheck: 'false', placeholder: r.ph, 'aria-label': r.name + ' username' });
++        const chip = el('span', { cls: 'fb-social-chip', text: 'not checked' });
++        const change = el('a', { href: '#', cls: 'fb-social-change', text: 'change' }); change.hidden = true;
++        change.onclick = (e) => { e.preventDefault(); input.readOnly = false; input.classList.remove('ok'); change.hidden = true; setChip(fields[r.p], 'idle'); input.focus(); };
++        const join = el('a', { href: r.join, target: '_blank', rel: 'noopener noreferrer', cls: 'fb-social-join', text: r.joinText });
++        const note = el('span', { cls: 'fb-social-note' });
++        box.append(el('div', { cls: 'fb-social-row' }, ico, input, chip), el('div', { cls: 'fb-social-line' }, note, change, join));
++        fields[r.p] = { input, chip, note, change, row: r, checkedValue: null, checking: false };
++        input.addEventListener('input', () => { const f = fields[r.p]; if (f.checkedValue !== null && input.value.trim() !== f.checkedValue) { f.checkedValue = null; setChip(f, 'idle'); } changed(); });
++      }
++      const check = el('button', { type: 'button', cls: 'send fb-social-check', text: 'Check' });
++      box.append(el('div', { cls: 'fb-social-foot' }, bonus, check), say);
++      const changed = () => box.dispatchEvent(new Event('social-change'));
++      // A NAME TYPED BUT NOT CHECKED holds Send back: only "not checked" and "checking" block; empty fields and checked ones (member or not) never do
++      box.pending = () => Object.values(fields).some((f) => f.input.value.trim() && (f.checking || f.checkedValue !== f.input.value.trim()));
++      function setChip(f, kind, text, note) { f.chip.className = 'fb-social-chip ' + kind; f.chip.textContent = text || (kind === 'idle' ? 'not checked' : ''); f.note.textContent = note || ''; }
++      const showOne = (p, res) => { const f = fields[p]; if (!f || !res) return;
++        f.checking = false; f.checkedValue = f.input.value.trim(); changed();
++        if (res.member === true) { setChip(f, 'ok', 'member'); f.input.readOnly = true; f.input.classList.add('ok'); f.change.hidden = false; }
++        else if (res.member === false) setChip(f, 'no', f.row.no, res.why && /another report key/.test(res.why) ? res.why : '');
++        else setChip(f, 'wait', 'check again', res.why || 'could not be checked'); };
++      const showBonus = (j) => { const n = j && Number.isFinite(j.bonusPct) ? j.bonusPct : socialBonus(j && j.flags);
++        badge.textContent = '+' + n + ' %'; badge.className = 'fb-social-badge' + (n >= 50 ? ' max' : n > 0 ? ' on' : '');
++        bonus.lastChild.textContent = n > 0 ? 'applies to this report' : ''; };
++      const fromLinks = (j) => { for (const l of (j && j.links) || []) if (l.member === true && fields[l.platform] && !fields[l.platform].input.value) { fields[l.platform].input.value = l.username || ''; showOne(l.platform, { member: true }); } };
++      let checked = false;   // a check the user ran wins over the first read's late answer
++      const run = async (asked, restore = false) => {
++        checked = true; check.disabled = true; say.textContent = 'Checking …';
++        // a cached name sent again (another device) stays as validated meanwhile: it never holds Send back (Daniel: "Ausser es ist schon was gecached")
++        if (!restore) for (const p of Object.keys(asked)) if (fields[p]) { fields[p].checking = true; setChip(fields[p], 'wait', 'checking…'); } changed();
++        try {
++          const j = await post('social', asked);
++          if (!j.ok) { say.textContent = j.why || 'not checked'; return null; }
++          for (const p of Object.keys(j.results || {})) showOne(p, j.results[p]);
++          if (store) socialSave(store, me, asked, j.results || {}, Date.now());
++          fromLinks(j); showBonus(j); say.textContent = '';
++          return j;
++        } catch (e) { say.textContent = (e && e.message) || 'not checked'; return null; } finally { check.disabled = false;
++          for (const p of Object.keys(asked)) if (fields[p] && fields[p].checking) { fields[p].checking = false; if (fields[p].checkedValue === null) setChip(fields[p], 'idle'); } changed(); }
++      };
++      check.onclick = () => { const asked = {}; for (const p of Object.keys(fields)) { const f = fields[p]; if (!f.input.readOnly && f.input.value.trim()) asked[p] = f.input.value.trim(); }
++        if (!Object.keys(asked).length) { say.textContent = 'Type a username first (all optional).'; return; } run(asked); };
++      // what this browser remembers, then what the faucet holds; saved names it holds no link for are sent once more
++      const saved = store ? socialLoad(store, me) : null;
++      if (saved) for (const p of SOCIAL_PLATFORMS) if (saved[p]) { fields[p].input.value = saved[p]; showOne(p, { member: true }); setChip(fields[p], 'ok', 'member', 'validated'); }
++      (async () => {
++        try {
++          const j = await post('social', {});
++          if (!j.ok) return;
++          if (checked) return;
++          const missing = socialMissing(saved, j.links);
++          if (Object.keys(missing).length) { await run(missing, true); return; }
++          fromLinks(j); showBonus(j);
++        } catch (e) { /* the panel works without it */ }
++      })();
++      return box;
++    };
+     window.ARENA_OPEN_FEEDBACK = (ctx = {}) => {
+       if (!feedbackUrl() || document.getElementById('arena-feedback')) return;
+       const d = el('div', { id: 'arena-feedback', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Feedback' });
+@@ -1875,9 +2047,16 @@
+           // COMPACT (Daniel 2026-11-10: "Die Erklärung wieviel sats es gibt ist zu gross, viel zu viel Text. Kompakter machen"): one row of chips, the example in each chip's tooltip
+           const chips = el('div', { cls: 'fb-chips' }, ...j.levels.map((l) => { const c = el('span', { cls: 'fb-chip' }, el('b', { text: Number(l.sats).toLocaleString('en-US') }), el('span', { text: ' ' + String(l.label).replace(/^Bug, /, '') }));
+             if (l.example) c.title = l.example; return c; }));
+-          levels.append(el('div', { cls: 'fb-chips-head', text: 'Rewards in ' + unit + ':' }), chips);
++          levels.append((RULES_ON() ? el('div', { cls: 'fb-chips-head' }, ruleLink('pay', 'Rewards in ' + unit), el('span', { text: ':' })) : el('div', { cls: 'fb-chips-head', text: 'Rewards in ' + unit + ':' })), chips);
+           // THIS WEEK'S BUDGET (Daniel 2026-11-10: "ein Budget von 100000 sats pro Woche das wird im Fenster angezeigt wie weit wir schon sind")
+-          if (j.budget && Number(j.budget.weeklyBudgetSats) > 0) {
++          // WEEK 2'S POT ON THE STAGE (kanban #2641): the season answer (approved of the pot this week), not Week 1's budget
++          const showBudget = (used, all) => {
++            const bar = el('div', { cls: 'fb-budget-bar' }, el('div', { cls: 'fb-budget-fill' }));
++            bar.firstChild.style.width = Math.min(100, Math.round((used / all) * 100)) + '%';
++            levels.append(el('div', { cls: 'fb-budget' }, el('div', { cls: 'fb-budget-line' }, ruleLink('budget', 'This week: ' + used.toLocaleString('en-US') + ' / ' + all.toLocaleString('en-US') + ' sats')), bar)); };
++          if (location.hostname === 'testnet-stage.bitcoinarena.io') {
++            fetch(location.origin + '/api/faucet/feedback/season').then((r) => r.json()).then((p) => { if (p && Number(p.potSats) > 0) showBudget(Number(p.usedSats) || 0, Number(p.potSats)); }).catch(() => {});
++          } else if (j.budget && Number(j.budget.weeklyBudgetSats) > 0) {
+             const used = Number(j.budget.weekApprovedSats) || 0, all = Number(j.budget.weeklyBudgetSats);
+             const bar = el('div', { cls: 'fb-budget-bar' }, el('div', { cls: 'fb-budget-fill' }));
+             bar.firstChild.style.width = Math.min(100, Math.round((used / all) * 100)) + '%';
+@@ -1889,9 +2068,15 @@
+       // footer's Feedback opens now has it next to Cancel, and the thank-you line opens it
+       const mineBtn = el('button', { type: 'button', cls: 'off', text: 'My feedback' });
+       mineBtn.onclick = () => { d.remove(); if (window.ARENA_MY_FEEDBACK) window.ARENA_MY_FEEDBACK(); };
+-      d.append(el('div', { cls: 'card' }, el('h3', { text: 'Feedback' }), el('p', { text: 'Your words, the build and the game are sent. No amounts, and no private key.' }), type, t, count, x, ln, shotRow, tick, say, levels, el('div', { cls: 'row' }, mineBtn, off, send)));
++      const social = SOCIAL_ON() ? window.ARENA_SOCIAL_PANEL() : null;   // kanban #2641
++      d.append(el('div', { cls: 'card' }, (RULES_ON() ? el('div', { cls: 'fb-title' }, el('h3', { text: 'Feedback' }), ruleLink('', 'Rules')) : el('h3', { text: 'Feedback' })), el('p', { text: 'Your words, the build and the game are sent. No amounts, and no private key.' }), type, t, count, x, ln, shotRow, tick, say, levels, social, el('div', { cls: 'row' }, mineBtn, off, send)));
+       const LEAST = 50;
+-      const recount = () => { const n = t.value.trim().length; count.textContent = n < LEAST ? (LEAST - n) + ' more characters' : n + ' characters'; count.className = 'fb-count' + (n < LEAST ? ' short' : ''); send.disabled = n < LEAST; };
++      const sendWhy = el('div', { cls: 'fb-send-why', role: 'status' });
++      { const card = d.querySelector('.card'); card.insertBefore(sendWhy, card.lastChild); }
++      const recount = () => { const n = t.value.trim().length; count.textContent = n < LEAST ? (LEAST - n) + ' more characters' : n + ' characters'; count.className = 'fb-count' + (n < LEAST ? ' short' : '');
++        const waits = !!(social && social.isConnected && social.pending && social.pending());
++        send.disabled = n < LEAST || waits; sendWhy.textContent = waits ? 'Press Check for your community names first (or clear them)' : ''; };
++      if (social) social.addEventListener('social-change', recount);
+       t.addEventListener('input', recount); recount();
+       const shrink = (file) => new Promise((ok, no) => {
+         if (file.size <= 1400000) return ok(file);
+@@ -1915,7 +2100,7 @@
+           icon('Telegram', 'https://t.me/+KihHE8JhcVM3NDVi'), icon('Nostr', 'https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2')));
+       off.onclick = () => d.remove();
+       send.onclick = async () => {
+-        if (t.value.trim().length < 50) { recount(); return; }
++        if (t.value.trim().length < 50 || (social && social.isConnected && social.pending && social.pending())) { recount(); return; }
+         const lnAddress = ln.value.trim();
+         if (!lnOk(lnAddress)) { say.textContent = 'That is not a Lightning address (name@wallet.com) or an LNURL.'; ln.focus(); return; }
+         try { if (lnAddress) localStorage.setItem('arena.feedback.ln', lnAddress); } catch { /* not remembered */ }
+@@ -1953,7 +2138,7 @@
+           if (body.event) { say.style.cursor = 'pointer'; say.style.textDecoration = 'underline'; say.onclick = () => { d.remove(); if (window.ARENA_MY_FEEDBACK) window.ARENA_MY_FEEDBACK(); }; }
+           t.value = ''; x.value = ''; shot.value = '';
+           // THE INVITATION IN PLACE OF THE FORM; Close stays
+-          for (const n of [type, t, count, x, ln, shotRow, tick, send]) n.remove();
++          for (const n of [type, t, count, x, ln, shotRow, tick, send, social]) if (n) n.remove();
+           off.textContent = 'Close'; say.after(community());
+         } catch (e) { say.textContent = (e && e.message) || 'not sent'; send.disabled = false; }
+       };
+@@ -2007,12 +2192,19 @@
+         const j = await r.json();
+         if (!j.ok) throw new Error(j.why || 'not read');
+         list.replaceChildren();
+-        if (!j.reports.length) { list.textContent = 'No signed reports yet. Send one from Feedback.'; return; }
++        if (!j.reports.length) list.textContent = 'No signed reports yet. Send one from Feedback.';   // and on to the Season 2 links below (kanban #2623)
+         const said = { new: 'waiting for the team', accepted: 'accepted', rejected: 'not accepted', duplicate: 'already reported by someone', paid: 'paid' };
+         for (const rp of j.reports) {
+           const row = el('div', { cls: 'fb-row' }, el('div', { cls: 'fb-head', text: (rp.label ? rp.label + ' · ' : '') + new Date(rp.receivedMs).toISOString().slice(0, 10) + ' · ' + rp.type + (rp.screenshot ? ' · with screenshot' : '') + ' · ' + (said[rp.state] || rp.state) }),
+             el('div', { cls: 'fb-text', text: rp.happened.length > 160 ? rp.happened.slice(0, 160) + '…' : rp.happened }));
+           if (rp.reason) row.append(el('div', { cls: 'fb-why', text: 'Why: ' + rp.reason }));
++          // the rule behind the state (kanban #2641)
++          if (RULES_ON()) { const why = String(rp.reason || ''); const rules = [];
++            if (rp.state === 'duplicate' || /duplicate|known issue|open-issues/i.test(why)) rules.push(['duplicates', 'Rule: duplicates']);
++            if (/follow-?up/i.test(why)) rules.push(['follow-ups', 'Rule: follow-ups']);
++            if (/code-only|half/i.test(why)) rules.push(['half', 'Rule: code-only pays half']);
++            if (rp.state === 'accepted' || rp.state === 'paid') rules.push(['pay', 'Rule: pay per report']);
++            if (rules.length) row.append(el('div', { cls: 'fb-rules' }, ...rules.map(([a, t]) => ruleLink(a, t)))); }
+           if (window.ARENA_BOUNTY_ON && rp.reward && rp.reward.lnurl) {
+             const copy = el('button', { type: 'button', text: 'Copy' }); copy.onclick = () => { navigator.clipboard.writeText(rp.reward.lnurl).then(() => { copy.textContent = 'Copied'; }, () => {}); };
+             row.append(el('div', { cls: 'fb-reward' }, el('span', { text: 'Reward ' + Number(rp.reward.sats).toLocaleString('en-US') + ' sat' + (rp.reward.network === 'mainnet' ? '' : ' (testnet sats, no value)') + ': ' }),
+@@ -2021,6 +2213,27 @@
+           list.append(row);
+         }
+       } catch (e) { list.textContent = (e && e.message) || 'not read'; }
++      // SEASON 2'S COMMUNITY BONUS (kanban #2623, the stage only): a one-time code links Telegram, Discord or X to this report key; the faucet reads
++      // the membership live and keeps it with its time (Telegram or Discord member +50 %, X follower +25 %, both +75 %)
++      if (SOCIAL_ON()) {   // kanban #2641: the social screen first; the one-time code stays as the other way
++        const S2 = location.origin + '/api/faucet/feedback';
++        const box = el('div', { cls: 'fb-row' }), out = el('div', { cls: 'fb-text', role: 'status' });
++        const linkBtn = el('button', { type: 'button', cls: 'off', text: 'Or link with a one-time code' }), checkBtn = el('button', { type: 'button', cls: 'off', text: 'Check again' });
++        const post = async (door) => { const url = S2 + '/' + door; const auth = await identitySign({ kind: HTTP_AUTH_KIND, tags: [['u', url], ['method', 'POST']], content: '' });
++          const r = await fetch(url, { method: 'POST', headers: { authorization: 'Nostr ' + btoa(JSON.stringify(auth)) } }); return r.json(); };
++        const NAMES = { telegram: 'Telegram', discord: 'Discord', x: 'X' };
++        const status = (j) => { const ls = (j && j.links) || []; return ls.length ? 'Linked: ' + ls.map((l) => NAMES[l.platform] + ' ' + (l.username || '') + ' - ' + (l.member === true ? (l.platform === 'x' ? 'follows' : 'member') : l.member === false ? (l.platform === 'x' ? 'does not follow' : 'not a member') : 'not checked yet') + (l.checkedMs ? ' (' + new Date(l.checkedMs).toISOString().slice(0, 16).replace('T', ' ') + ' UTC)' : '')).join(' · ') : 'Nothing linked yet.'; };
++        linkBtn.onclick = async () => { out.textContent = 'Making a code …';
++          try { const j = await post('link'); if (!j.ok) throw new Error(j.why || 'no code');
++            out.replaceChildren(el('div', { text: 'Your code: ' + j.code + ' (24 hours, once). Post it in one of these:' }),
++              el('div', { text: 'Telegram: send /link ' + j.code + ' to @BitcoinArenaBot or in our group' }), el('a', { href: 'https://t.me/+KihHE8JhcVM3NDVi', target: '_blank', rel: 'noopener', text: 'Join the Telegram group' }),
++              el('div', { text: 'Discord: type /link code:' + j.code + ' in our server, or DM it to ArenaBot' }), el('a', { href: 'https://discord.gg/9zZbASZyue', target: '_blank', rel: 'noopener', text: 'Join the Discord server' }),
++              el('div', { text: 'X: post "@bitcoinarena_io ' + j.code + '" from your account, and follow @bitcoinarena_io' }),
++              el('div', { text: status(j) })); } catch (e) { out.textContent = (e && e.message) || 'no code'; } };
++        checkBtn.onclick = async () => { out.textContent = 'Checking …'; try { const j = await post('verify'); out.textContent = j.ok ? status(j) : (j.why || 'not checked'); } catch (e) { out.textContent = (e && e.message) || 'not checked'; } };
++        box.append(window.ARENA_SOCIAL_PANEL(), el('div', { cls: 'row' }, linkBtn, checkBtn), out);
++        list.after(box);
++      }
+     };
+     window.addEventListener('DOMContentLoaded', () => {
+       const b = document.getElementById('arena-foot-feedback'); if (!b) return;

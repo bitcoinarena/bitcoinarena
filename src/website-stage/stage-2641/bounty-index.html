@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bitcoin Arena: bug bounty, Week 2</title>
+<meta name="description" content="The rules of the Bitcoin Arena bug bounty, Week 2, and the log of Week 1.">
+<meta property="og:title" content="Bitcoin Arena: bug bounty, Week 2">
+<meta property="og:description" content="The rules of the Bitcoin Arena bug bounty, Week 2, and the log of Week 1.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://bitcoinarena.io/bounty/">
+<meta property="og:image" content="https://testnet.bitcoinarena.io/arena-og.png">
+<meta name="twitter:card" content="summary_large_image">
+  <script id="arena-ref-source">/* THE SOURCE OF A VISIT (kanban #1458, Daniel 2026-11-11: "Make sure Stacker News is recognised through the referrer and the utm is set correctly, without us having to add it"): the same script inline on bitcoinarena.io, testnet. and docs., before the stats script reads the address. A link's own utm_ always wins. Without one, the referrer's host names the source (the map below), put into the address as utm_source/utm_medium so Umami counts it as if the link had carried it. The visit's first source is kept in this tab (sessionStorage, the source name only) and added to links to the other bitcoinarena.io hosts, so a visitor who goes on to the game keeps it. Stacker News sends no referrer on post links (rel="noreferrer", measured 2026-11-11): its links need their own utm. */(function(){try{
+var M=[[/(^|\.)stacker\.news$/,'stacker-news','community'],[/(^|\.)(x\.com|twitter\.com|t\.co)$/,'x','social'],[/(^|\.)(primal\.net|njump\.me|nostr\.com|iris\.to|coracle\.social|snort\.social|jumble\.social|yakihonne\.com|damus\.io|habla\.news|nostrudel\.ninja)$/,'nostr','social'],[/(^|\.)armada\.buzz$/,'armada','community'],[/(^|\.)reddit\.com$/,'reddit','social'],[/(^|\.)bitcointalk\.org$/,'bitcointalk','forum'],[/(^|\.)github\.com$/,'github','referral'],[/(^|\.)discord\.com$/,'discord','community'],[/(^|\.)(t\.me|telegram\.org)$/,'telegram','community'],[/^news\.ycombinator\.com$/,'hackernews','forum']];
+var OWN=/(^|\.)(bitcoinarena\.io|bitcoin-arena\.io)$/,K='arena.src',q=new URLSearchParams(location.search),src=null;
+if(q.get('utm_source')==='sn'){q.set('utm_source','stacker-news');q.set('utm_medium','community');history.replaceState(history.state,'',location.pathname+'?'+q.toString()+location.hash)}/* #1468: links posted 11-01..11-11 say utm_source=sn - one name for Stacker News */
+if(q.get('utm_source'))src=[q.get('utm_source'),q.get('utm_medium')||''];
+else{var h='';try{h=new URL(document.referrer).hostname.toLowerCase()}catch(e){}
+if(h&&!OWN.test(h)){src=[h.replace(/^www\./,''),'referral'];for(var i=0;i<M.length;i++)if(M[i][0].test(h)){src=[M[i][1],M[i][2]];break}}
+if(src){q.set('utm_source',src[0]);q.set('utm_medium',src[1]);history.replaceState(history.state,'',location.pathname+'?'+q.toString()+location.hash)}}
+var kept=null;try{kept=JSON.parse(sessionStorage.getItem(K)||'null')}catch(e){}
+if(!kept&&src){kept=src;try{sessionStorage.setItem(K,JSON.stringify(src))}catch(e){}}
+window.ARENA_SOURCE=kept?kept[0]:null;
+if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,function(e){var a=e.target&&e.target.closest?e.target.closest('a[href]'):null;if(!a)return;try{var u=new URL(a.href);if(u.hostname===location.hostname||!OWN.test(u.hostname)||/[?&]utm_/.test(u.search))return;u.searchParams.set('utm_source',kept[0]);if(kept[1])u.searchParams.set('utm_medium',kept[1]);a.href=u.toString()}catch(e){}},true)});
+}catch(e){}})();</script>
+  <script defer src="https://stats.bitcoinarena.io/script.js" data-website-id="4f00ff2b-032e-4683-890c-63458e0b178e" data-domains="bitcoinarena.io,www.bitcoinarena.io"></script>
+  <script>/* kanban #943: the campaign reached the stats when the script read the address; then it leaves the address, past the script's own history hook, so no second view */addEventListener('load',function(){var n=0,c=function(){if(!window.umami&&n++<50)return setTimeout(c,100);setTimeout(function(){var u=new URL(location.href),k=Array.from(u.searchParams.keys()).filter(function(x){return/^utm_/.test(x)});if(k.length){k.forEach(function(x){u.searchParams.delete(x)});History.prototype.replaceState.call(history,history.state,'',u.pathname+u.search+u.hash)}},500)};c()})</script>
+<style>
+  :root { --bg: #0d1117; --panel: #161b22; --line: #30363d; --text: #e6edf3; --dim: #8b949e; --btc: #f7931a; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, sans-serif; padding: 32px 16px 56px; }
+  main { max-width: 640px; margin: 0 auto; }
+  a { color: var(--btc); } h1 { font-size: 30px; margin: 0 0 6px; } p { color: var(--dim); margin: 0 0 18px; }
+  .go { display: inline-block; margin: 8px 0 22px; padding: 12px 22px; border-radius: 10px; background: var(--btc); color: #1a1000; font-weight: 700; text-decoration: none; }
+  ul { color: var(--dim); padding-left: 20px; } li { margin-bottom: 8px; }
+  .big { font: 700 56px/1 system-ui, sans-serif; color: var(--btc); } table { width: 100%; border-collapse: collapse; margin-top: 18px; background: var(--panel); border-radius: 10px; overflow: hidden; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; } th { color: var(--dim); font-size: 13px; font-weight: 600; } tr:last-child td { border-bottom: 0; }
+  footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--dim); font-size: 14px; }
+  /* NOSTR IS PURPLE EVERYWHERE (kanban #1344, Daniel 2026-11-07) */
+  footer a.nostr-id, a.nostr-id, nav.top .nid, nav.site .nid { color: #b98cff; }
+  footer a.nostr-id:hover, a.nostr-id:hover, nav.top .nid:hover, nav.site .nid:hover { color: #d4b8ff; }
+  /* kanban #2641: every rule has its own link (Daniel 2026-11-14: "Alle Regeln per link verlinken") */
+  .toc { margin: 10px 0 14px; padding: 10px 12px; border: 1px solid #30363d; border-radius: 10px; line-height: 1.9; font-size: 14px; }
+  .toc a { white-space: nowrap; }
+  a.rl { display: inline-flex; vertical-align: middle; margin: 0 4px; color: #8b949e; opacity: .55; text-decoration: none; }
+  a.rl svg { width: 13px; height: 13px; } a.rl:hover, a.rl:focus, a.rl.copied { opacity: 1; color: #f7931a; }
+  [id]:target { scroll-margin-top: 80px; background: rgba(247,147,26,.10); border-radius: 6px; }
+</style>
+<link rel="me" href="https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2">
+</head>
+<body>
+<!-- ONE HEADER FOR EVERY PAGE (kanban #1457, Daniel 2026-11-11: "Der Header muss überall gleich aussehen"): the start page's header, drawn by site-chrome.js -->
+<script src="https://testnet.bitcoinarena.io/site-chrome.js" data-foot="none"></script>
+<main>
+  <h1>Bug bounty &middot; Week 2</h1>
+  <p><b>Week 2 started on Saturday, 14 November 2026, 07:12 UTC.</b> The bounty runs week by week. Real sats over Lightning (mainnet).</p>
+  <nav class="toc" aria-label="Rules"><b>Rules:</b> <a href="#budget">Budget</a> &middot; <a href="#pay">Pay</a> &middot; <a href="#half">Half for code-only</a> &middot; <a href="#follow-ups">Follow-ups</a> &middot; <a href="#duplicates">Duplicates</a> &middot; <a href="#community-bonus">Community bonus</a> &middot; <a href="#node-bounty">Node bounty</a> &middot; <a href="#draw">Weekly draw</a> &middot; <a href="#no-game-results">Never for game results</a> &middot; <a href="#how-to-report">How to report</a> &middot; <a href="#open-issues">Open issues</a> &middot; <a href="#week-1">Week 1</a></nav>
+  <ul>
+    <li id="budget"><b>Budget per week: 150,000 sats</b><a class="rl" href="#budget" aria-label="Link to this rule" title="Copy the link to this rule"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7.78 4.3 9.3 2.78a3.25 3.25 0 0 1 4.6 4.6l-2.5 2.5a3.25 3.25 0 0 1-4.6 0 .75.75 0 0 1 1.06-1.06 1.75 1.75 0 0 0 2.48 0l2.5-2.5a1.75 1.75 0 0 0-2.48-2.48L8.84 5.36A.75.75 0 0 1 7.78 4.3Zm-3.56 7.46 2.5-2.5a1.75 1.75 0 0 1 2.48 0 .75.75 0 1 0 1.06-1.06 3.25 3.25 0 0 0-4.6 0l-2.5 2.5a3.25 3.25 0 0 0 4.6 4.6l1.52-1.52a.75.75 0 1 0-1.06-1.06L6.7 14.24a1.75 1.75 0 0 1-2.48-2.48Z"/></svg></a> - a pot of 100,000 sats for bugs, improvements, community bonuses and node bounties, and a draw of 50,000 sats at the end of the week. When the pot is empty, new reports wait for the next week.</li>
+    <li id="pay"><b>Pay per confirmed report:</b><a class="rl" href="#pay" aria-label="Link to this rule" title="Copy the link to this rule"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7.78 4.3 9.3 2.78a3.25 3.25 0 0 1 4.6 4.6l-2.5 2.5a3.25 3.25 0 0 1-4.6 0 .75.75 0 0 1 1.06-1.06 1.75 1.75 0 0 0 2.48 0l2.5-2.5a1.75 1.75 0 0 0-2.48-2.48L8.84 5.36A.75.75 0 0 1 7.78 4.3Zm-3.56 7.46 2.5-2.5a1.75 1.75 0 0 1 2.48 0 .75.75 0 1 0 1.06-1.06 3.25 3.25 0 0 0-4.6 0l-2.5 2.5a3.25 3.25 0 0 0 4.6 4.6l1.52-1.52a.75.75 0 1 0-1.06-1.06L6.7 14.24a1.75 1.75 0 0 1-2.48-2.48Z"/></svg></a> critical 10,000 &middot; high 5,000 &middot; medium 2,000 &middot; low 1,000 &middot; useful improvement 500.
+      <ul>
+        <li id="half">Bugs shown in a real round on testnet4 pay the full level. Code-only findings without a round pay half.<a class="rl" href="#half" aria-label="Link to this rule" title="Copy the link to this rule"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7.78 4.3 9.3 2.78a3.25 3.25 0 0 1 4.6 4.6l-2.5 2.5a3.25 3.25 0 0 1-4.6 0 .75.75 0 0 1 1.06-1.06 1.75 1.75 0 0 0 2.48 0l2.5-2.5a1.75 1.75 0 0 0-2.48-2.48L8.84 5.36A.75.75 0 0 1 7.78 4.3Zm-3.56 7.46 2.5-2.5a1.75 1.75 0 0 1 2.48 0 .75.75 0 1 0 1.06-1.06 3.25 3.25 0 0 0-4.6 0l-2.5 2.5a3.25 3.25 0 0 0 4.6 4.6l1.52-1.52a.75.75 0 1 0-1.06-1.06L6.7 14.24a1.75 1.75 0 0 1-2.48-2.48Z"/></svg></a></li>
+        <li id="follow-ups">Follow-ups - a gap in a fix, or another variant of a known bug - pay 1,000.<a class="rl" href="#follow-ups" aria-label="Link to this rule" title="Copy the link to this rule"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7.78 4.3 9.3 2.78a3.25 3.25 0 0 1 4.6 4.6l-2.5 2.5a3.25 3.25 0 0 1-4.6 0 .75.75 0 0 1 1.06-1.06 1.75 1.75 0 0 0 2.48 0l2.5-2.5a1.75 1.75 0 0 0-2.48-2.48L8.84 5.36A.75.75 0 0 1 7.78 4.3Zm-3.56 7.46 2.5-2.5a1.75 1.75 0 0 1 2.48 0 .75.75 0 1 0 1.06-1.06 3.25 3.25 0 0 0-4.6 0l-2.5 2.5a3.25 3.25 0 0 0 4.6 4.6l1.52-1.52a.75.75 0 1 0-1.06-1.06L6.7 14.24a1.75 1.75 0 0 1-2.48-2.48Z"/></svg></a></li>
+        <li id="duplicates"><a class="rl" href="#duplicates" aria-label="Link to this rule" title="Copy the link to this rule"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7.78 4.3 9.3 2.78a3.25 3.25 0 0 1 4.6 4.6l-2.5 2.5a3.25 3.25 0 0 1-4.6 0 .75.75 0 0 1 1.06-1.06 1.75 1.75 0 0 0 2.48 0l2.5-2.5a1.75 1.75 0 0 0-2.48-2.48L8.84 5.36A.75.75 0 0 1 7.78 4.3Zm-3.56 7.46 2.5-2.5a1.75 1.75 0 0 1 2.48 0 .75.75 0 1 0 1.06-1.06 3.25 3.25 0 0 0-4.6 0l-2.5 2.5a3.25 3.25 0 0 0 4.6 4.6l1.52-1.52a.75.75 0 1 0-1.06-1.06L6.7 14.24a1.75 1.75 0 0 1-2.48-2.48Z"/></svg></a> First report wins. Duplicates pay nothing. A report that matches a ticket on our open-issues list counts as a duplicate.</li>
+        <li>No limit per person.</li>
+      </ul></li>
+    <li id="community-bonus"><b>Community bonus</b><a class="rl" href="#community-bonus" aria-label="Link to this rule" title="Copy the link to this rule"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7.78 4.3 9.3 2.78a3.25 3.25 0 0 1 4.6 4.6l-2.5 2.5a3.25 3.25 0 0 1-4.6 0 .75.75 0 0 1 1.06-1.06 1.75 1.75 0 0 0 2.48 0l2.5-2.5a1.75 1.75 0 0 0-2.48-2.48L8.84 5.36A.75.75 0 0 1 7.78 4.3Zm-3.56 7.46 2.5-2.5a1.75 1.75 0 0 1 2.48 0 .75.75 0 1 0 1.06-1.06 3.25 3.25 0 0 0-4.6 0l-2.5 2.5a3.25 3.25 0 0 0 4.6 4.6l1.52-1.52a.75.75 0 1 0-1.06-1.06L6.7 14.24a1.75 1.75 0 0 1-2.48-2.48Z"/></svg></a> (optional, nobody has to join), on every confirmed report: follows @bitcoinarena_io on X +25%; a member of at least 2 of Telegram, Discord and Armada another +25%; both +50% (a high bug then pays 7,500). Checked again at payout: a community you have left no longer counts.</li>
+    <li id="node-bounty"><b>Node bounty: 10,000 sats</b><a class="rl" href="#node-bounty" aria-label="Link to this rule" title="Copy the link to this rule"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7.78 4.3 9.3 2.78a3.25 3.25 0 0 1 4.6 4.6l-2.5 2.5a3.25 3.25 0 0 1-4.6 0 .75.75 0 0 1 1.06-1.06 1.75 1.75 0 0 0 2.48 0l2.5-2.5a1.75 1.75 0 0 0-2.48-2.48L8.84 5.36A.75.75 0 0 1 7.78 4.3Zm-3.56 7.46 2.5-2.5a1.75 1.75 0 0 1 2.48 0 .75.75 0 1 0 1.06-1.06 3.25 3.25 0 0 0-4.6 0l-2.5 2.5a3.25 3.25 0 0 0 4.6 4.6l1.52-1.52a.75.75 0 1 0-1.06-1.06L6.7 14.24a1.75 1.75 0 0 1-2.48-2.48Z"/></svg></a> for running a node for 1 day, for the first 3 nodes each season, paid from the pot.</li>
+    <li id="draw"><b>Weekly draw: 50,000 sats</b><a class="rl" href="#draw" aria-label="Link to this rule" title="Copy the link to this rule"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7.78 4.3 9.3 2.78a3.25 3.25 0 0 1 4.6 4.6l-2.5 2.5a3.25 3.25 0 0 1-4.6 0 .75.75 0 0 1 1.06-1.06 1.75 1.75 0 0 0 2.48 0l2.5-2.5a1.75 1.75 0 0 0-2.48-2.48L8.84 5.36A.75.75 0 0 1 7.78 4.3Zm-3.56 7.46 2.5-2.5a1.75 1.75 0 0 1 2.48 0 .75.75 0 1 0 1.06-1.06 3.25 3.25 0 0 0-4.6 0l-2.5 2.5a3.25 3.25 0 0 0 4.6 4.6l1.52-1.52a.75.75 0 1 0-1.06-1.06L6.7 14.24a1.75 1.75 0 0 1-2.48-2.48Z"/></svg></a> among everyone with at least one confirmed report in that week who is a member of Telegram, Discord or Armada at draw time (one entry per person, however many of the three you are in). Places 1-5: 20,000 / 12,000 / 8,000 / 6,000 / 4,000. <b>Week 2 ends 2026-11-21 07:12 UTC; the seed is the hash of the first Bitcoin block mined after that time</b> (the first block on Bitcoin mainnet whose header time is after the end; a block stamped exactly at the end does not count). The entry list (platform usernames) and the seed are published, and a published script, <a href="draw.mjs">draw.mjs</a>, finds that block and picks the 5 winners. Membership is checked again right before the draw.</li>
+    <li id="no-game-results"><b>Never for game results.</b><a class="rl" href="#no-game-results" aria-label="Link to this rule" title="Copy the link to this rule"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7.78 4.3 9.3 2.78a3.25 3.25 0 0 1 4.6 4.6l-2.5 2.5a3.25 3.25 0 0 1-4.6 0 .75.75 0 0 1 1.06-1.06 1.75 1.75 0 0 0 2.48 0l2.5-2.5a1.75 1.75 0 0 0-2.48-2.48L8.84 5.36A.75.75 0 0 1 7.78 4.3Zm-3.56 7.46 2.5-2.5a1.75 1.75 0 0 1 2.48 0 .75.75 0 1 0 1.06-1.06 3.25 3.25 0 0 0-4.6 0l-2.5 2.5a3.25 3.25 0 0 0 4.6 4.6l1.52-1.52a.75.75 0 1 0-1.06-1.06L6.7 14.24a1.75 1.75 0 0 1-2.48-2.48Z"/></svg></a> Nobody is paid for winning a round. Test sats have no value; only the Lightning payments are real money.</li>
+  </ul>
+  <p id="how-to-report"><b>How to report:</b><a class="rl" href="#how-to-report" aria-label="Link to this rule" title="Copy the link to this rule"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7.78 4.3 9.3 2.78a3.25 3.25 0 0 1 4.6 4.6l-2.5 2.5a3.25 3.25 0 0 1-4.6 0 .75.75 0 0 1 1.06-1.06 1.75 1.75 0 0 0 2.48 0l2.5-2.5a1.75 1.75 0 0 0-2.48-2.48L8.84 5.36A.75.75 0 0 1 7.78 4.3Zm-3.56 7.46 2.5-2.5a1.75 1.75 0 0 1 2.48 0 .75.75 0 1 0 1.06-1.06 3.25 3.25 0 0 0-4.6 0l-2.5 2.5a3.25 3.25 0 0 0 4.6 4.6l1.52-1.52a.75.75 0 1 0-1.06-1.06L6.7 14.24a1.75 1.75 0 0 1-2.48-2.48Z"/></svg></a> play a round, then use Feedback at the bottom of the <a href="https://testnet-stage.bitcoinarena.io/">game page</a>. No sign-up and no Nostr key needed.</p>
+  <p>Our open-issues list is kept short on purpose: it names the area, not the bug. Whether a report is new, a duplicate of a known issue, or a follow-up, and which level it gets, is decided by Bitcoin Arena. Our decision is final. If a report is a duplicate, we tell you the ticket number, so you can check it once the fix is public.</p>
+  <h2 style="font-size:20px;margin:26px 0 8px">The pot of the week</h2>
+  <p id="s2-pot">Reading &hellip;</p>
+  <h2 style="font-size:20px;margin:26px 0 8px">Your community bonus</h2>
+  <p>On the <a href="/">game page</a>, open <b>Feedback</b> or <b>My feedback</b> and type your names in the <b>Community bonus</b> box - all optional:</p>
+  <ul>
+    <li><b>X:</b> your @name; it counts when you follow <a href="https://x.com/bitcoinarena_io" rel="noopener">@bitcoinarena_io</a>.</li>
+    <li><b>Telegram:</b> your @username; it counts when you are in our <a href="https://t.me/+KihHE8JhcVM3NDVi" rel="noopener">group</a>.</li>
+    <li><b>Discord:</b> your username; it counts when you are in our <a href="https://discord.gg/9zZbASZyue" rel="noopener">server</a>.</li>
+    <li><b>Armada:</b> your npub (or name@domain); it counts when you are in our community on <a href="https://armada.buzz/" rel="noopener">Armada</a>.</li>
+  </ul>
+  <p>Press <b>Check</b>: each one is checked live and the page shows the bonus that applies. Names that check out are remembered in your browser, so your next report gets the bonus without typing them again. Membership is checked again at approval, at payout and right before the draw. Another way to link Telegram, Discord or X: <b>Or link with a one-time code</b> in My feedback. The draw script is public: <a href="draw.mjs">draw.mjs</a> (entries + block hash &rarr; 5 winners).</p>
+  <h2 id="open-issues" style="font-size:20px;margin:26px 0 8px">Open issues<a class="rl" href="#open-issues" aria-label="Link to this rule" title="Copy the link to this rule"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7.78 4.3 9.3 2.78a3.25 3.25 0 0 1 4.6 4.6l-2.5 2.5a3.25 3.25 0 0 1-4.6 0 .75.75 0 0 1 1.06-1.06 1.75 1.75 0 0 0 2.48 0l2.5-2.5a1.75 1.75 0 0 0-2.48-2.48L8.84 5.36A.75.75 0 0 1 7.78 4.3Zm-3.56 7.46 2.5-2.5a1.75 1.75 0 0 1 2.48 0 .75.75 0 1 0 1.06-1.06 3.25 3.25 0 0 0-4.6 0l-2.5 2.5a3.25 3.25 0 0 0 4.6 4.6l1.52-1.52a.75.75 0 1 0-1.06-1.06L6.7 14.24a1.75 1.75 0 0 1-2.48-2.48Z"/></svg></a></h2>
+  <p>Known open issues by area. A report in one of these areas may already be known. <a href="/kanban/">All open issues</a></p>
+  <table><thead><tr><th>Area</th><th>Tickets</th></tr></thead><tbody id="s2-open"><tr><td colspan="2">Reading &hellip;</td></tr></tbody></table>
+  <script>
+    /* SEASON 2 ON THE STAGE (kanban #2623): the pot of this season and the open-issues list (areas and ticket numbers only), read from the faucet */
+    (function () {
+      var fmt = function (n) { return Number(n).toLocaleString('en-US'); };
+      fetch('/api/faucet/feedback/season').then(function (r) { if (!r.ok) throw 0; return r.json(); }).then(function (s) {
+        document.getElementById('s2-pot').textContent = 'Week ' + s.season + ': ' + fmt(s.usedSats) + ' of ' + fmt(s.potSats) + ' sats approved, ' + fmt(s.leftSats) + ' left. Node bounties: ' + s.nodes + ' of ' + s.nodesMost + '.';
+      }).catch(function () { document.getElementById('s2-pot').textContent = 'Not readable just now.'; });
+      fetch('/api/faucet/feedback/open-issues').then(function (r) { if (!r.ok) throw 0; return r.json(); }).then(function (o) {
+        var tb = document.getElementById('s2-open'); tb.textContent = '';
+        (o.areas || []).forEach(function (a) { var tr = document.createElement('tr'), t1 = document.createElement('td'), t2 = document.createElement('td');
+          t1.textContent = a.area; t2.textContent = a.tickets.join(' '); tr.append(t1, t2); tb.append(tr); });
+        if (!tb.children.length) tb.innerHTML = '<tr><td colspan="2">None open.</td></tr>';
+      }).catch(function () { document.getElementById('s2-open').innerHTML = '<tr><td colspan="2">Not readable just now.</td></tr>'; });
+    })();
+  </script>
+  <details id="week-1" style="margin-top:28px"><summary style="cursor:pointer;font-size:20px;font-weight:600">Week 1 (2026-11-11 to 2026-11-13): rules and payouts<a class="rl" href="#week-1" aria-label="Link to this rule" title="Copy the link to this rule"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7.78 4.3 9.3 2.78a3.25 3.25 0 0 1 4.6 4.6l-2.5 2.5a3.25 3.25 0 0 1-4.6 0 .75.75 0 0 1 1.06-1.06 1.75 1.75 0 0 0 2.48 0l2.5-2.5a1.75 1.75 0 0 0-2.48-2.48L8.84 5.36A.75.75 0 0 1 7.78 4.3Zm-3.56 7.46 2.5-2.5a1.75 1.75 0 0 1 2.48 0 .75.75 0 1 0 1.06-1.06 3.25 3.25 0 0 0-4.6 0l-2.5 2.5a3.25 3.25 0 0 0 4.6 4.6l1.52-1.52a.75.75 0 1 0-1.06-1.06L6.7 14.24a1.75 1.75 0 0 1-2.48-2.48Z"/></svg></a></summary>
+
+  
+  <p>Week 1 ran from 2026-11-11 to 2026-11-13. Every payment is listed below.</p>
+  <ul>
+    <li><b>Bug bounty,</b> over Lightning, for confirmed bugs and useful reports - by severity:
+      <ul>
+        <li>Useful feedback: <b>500 sats</b> (a clear note on what confused you, with the screen and the step)</li>
+        <li>Bug, low: <b>1,000 sats</b> (a wrong text or a layout glitch that does not stop play)</li>
+        <li>Bug, medium: <b>2,000 sats</b> (a round or a deposit that needs a retry to go through)</li>
+        <li>Bug, high: <b>5,000 sats</b> (play or a payout stops and only a reload or a restart helps)</li>
+        <li>Bug, critical: <b>10,000 sats</b> (money can be lost or taken, or the result is wrong)</li>
+      </ul></li>
+    <li><b>Node bounty: 10,000 sats</b> for running a node, for the first 10 outside nodes - one per person and one per node, reported from the node's owner page.</li>
+    <li><b>Never for game results.</b> Nobody is paid for winning a round.</li>
+    <li>Test sats have no value. Only these Lightning payments are real money.</li>
+  </ul>
+  <p>Found something? Use Feedback at the bottom of the <a href="https://testnet.bitcoinarena.io/">game page</a>.</p>
+  <h3 style="font-size:17px;margin:20px 0 0">How a report was paid</h3>
+  <ul>
+    <li><b>Checked first.</b> Each report is read on its ticket and marked valid or not, with a severity: critical, high, medium or low.</li>
+    <li><b>Approved and paid by the project owner,</b> who answers for every payout. If the owner sets a different severity, that is written on the ticket.</li>
+    <li><b>No limit per person.</b> Every confirmed report is paid, however many one tester sends: in Week 1 one tester has 21 paid reports, another 15.</li>
+    <li><b>A weekly budget of 100,000 sats.</b> Paid so far in Week 1 (Nov 11-13): <span id="s1-paid">94,500</span> sats.</li>
+    <script>/* #2639: the sum of the Week 1 rows of the live payout log; the number above stays when it cannot be read */fetch('/api/faucet/feedback/paid-log').then(function (r) { if (!r.ok) throw 0; return r.json(); }).then(function (l) { var s = 0, n = 0; (Array.isArray(l) ? l : []).forEach(function (x) { if (x && (x.season === 'Season 1' || x.season === 'Week 1') && Number.isFinite(Number(x.sats))) { s += Number(x.sats); n++; } }); if (n) document.getElementById('s1-paid').textContent = s.toLocaleString('en-US'); }).catch(function () {});</script><li style="display:none"></li>
+    <li><b>Follow-ups are paid less.</b> A new finding gets its tier. A report that finds a gap in the fix for an earlier report, or another variant of a bug that is already known, is a follow-up: it is fixed like any other report, but paid 1,000 sats, because it builds on the earlier finding and on the fix made for it. In Week 1 that was 15 reports (10 high, 5 medium) at 1,000 sats; the first report of the federation-record chain (#037, high) was paid 2,000 sats.</li>
+    <li><b>Paid in Week 1, by tier:</b> critical 10,000 (1 report), high 5,000 (8), medium 2,000 (7), low 1,000 (6), useful 500 (3), and the follow-ups above. Node bounty: none paid yet.</li>
+    <li><b>From one bounty wallet, over Lightning,</b> kept only for this. Every payout is listed below with its report.</li>
+    <li>The network's reserves never pay a single report. They may top up the bounty wallet once a year, by a public proposal and vote.</li>
+  </ul>
+  <h3 style="font-size:17px;margin:20px 0 0">Paid in Week 1</h3>
+  <table id="rows"><thead><tr><th>Week</th><th>Date</th><th>For</th><th>Channel</th><th>Sats</th></tr></thead><tbody></tbody></table>
+  <p id="sum" style="margin-top:14px"></p>
+  <script>
+  (function () {
+    var body = document.querySelector('#rows tbody');
+    fetch('/api/faucet/feedback/paid-log').then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); }).then(function (l) { if (!Array.isArray(l) || !l.length) throw new Error('empty'); return l; }).catch(function () { return fetch('log.json').then(function (r) { return r.ok ? r.json() : []; }).catch(function () { return []; }); }).then(function (list) {
+      var total = 0, by = {};
+      list.forEach(function (p) { var tr = document.createElement('tr'); [String(p.season || 'Season 1').replace(/^Season (\d+)$/, 'Week $1'), p.date, p.reason, p.channel, Number(p.sats).toLocaleString('en-US')].forEach(function (x) { var td = document.createElement('td'); td.textContent = x; tr.appendChild(td); }); body.appendChild(tr); total += Number(p.sats); by[p.channel] = (by[p.channel] || 0) + Number(p.sats); });
+      if (!list.length) { var tr = document.createElement('tr'), td = document.createElement('td'); td.colSpan = 5; td.textContent = 'Nothing paid yet.'; tr.appendChild(td); body.appendChild(tr); }
+      else document.getElementById('sum').textContent = 'Week 1: ' + total.toLocaleString('en-US') + ' sats paid: ' + Object.keys(by).map(function (k) { return k + ' ' + by[k].toLocaleString('en-US'); }).join(', ');
+    });
+  })();
+  </script>
+    </details>
+<footer><a href="/">Bitcoin Arena</a> &middot; <a class="nostr-id" href="https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2" rel="me" title="Bitcoin Arena on Nostr - verified as bitcoinarena.io (NIP-05)">Nostr: bitcoinarena.io <span aria-label="verified">&#10003;</span></a></footer>
+</main>
+<script>/* #2641: a rule's link icon copies its address; #week-1 opens Week 1 */
+document.addEventListener('click', function (e) { var a = e.target && e.target.closest ? e.target.closest('a.rl') : null; if (!a) return;
+  var url = location.origin + location.pathname + a.getAttribute('href'); try { navigator.clipboard.writeText(url); } catch (x) {}
+  a.classList.add('copied'); a.title = 'Link copied'; setTimeout(function () { a.classList.remove('copied'); a.title = 'Copy the link to this rule'; }, 1500); });
+function openWeek1() { if (location.hash === '#week-1') { var d = document.getElementById('week-1'); if (d) { d.open = true; d.scrollIntoView(); } } }
+window.addEventListener('hashchange', openWeek1); openWeek1();</script>
+</body>
+</html>
