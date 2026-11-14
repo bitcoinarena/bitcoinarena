@@ -21121,6 +21121,8 @@ const owedSiteOf = (n) => {
 };
 // `bonded` (kanban #2108, #2123): the node keys (hex) of a census this page checked, or null. Only an answer signed by its node's key
 // (settled-list.js) counts, and with `bonded` only one whose key that census bonds; the allowance is one per node key, not per site.
+// kanban #2653: how far a seat's signed /settled `since` may lie after the page's own clock (clock skew) and still answer its request
+const OWED_SINCE_SKEW_MS = 10 * 60 * 1000;
 async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fetcher = fetch, sinceMs = 0, known = [], knownBySeed = null, bonded = null } = {}) {
   // EVERY SAVED PHRASE AT ONCE (2026-10-07): each signer node's /settled is read once and matched against
   // every phrase's keys - 7 asks on 7 signer nodes, not 7 per phrase. One `seed` (with `known`) is the one-phrase scan as before.
@@ -21174,10 +21176,17 @@ async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fetcher =
     return good ? node : null;
   };
   // AT MOST OWED_SETTLED_MAX ROUNDS FROM ONE NODE KEY, NEWEST FIRST, EACH ID ONCE PER SEAT (kanban #1489, #1832, #1966, #2108)
+  // EVERY SIGNED ANSWER OF A KEY COUNTS, NOT THE FIRST (kanban #2653, bypass of #2108/#2123): the first signed answer of a key won and
+  // the key's answers at later URLs were dropped - so a stranger's URL listed first replayed an honest seat's own signed answer to
+  // `since=<far future>` (an empty list) and the seat's real list, with the round owed to this player, was never read. Now every
+  // valid signed answer of one key is merged (the union of their rounds, still one allowance per key), and an answer whose signed
+  // `since` lies after both the asked one and now (OWED_SINCE_SKEW_MS for clock skew) answers another request and is not read.
+  const sinceLimit = Math.max(since, Date.now()) + OWED_SINCE_SKEW_MS;
   const bySite = new Map();
   lists.forEach((got, n) => {
     const h = signerOf(got);
-    if (!h || bySite.has(h)) return;                         // unsigned, not bonded, or a key already read at another URL
+    if (!h) return;                                          // unsigned or not bonded
+    if (Number(got.since) > sinceLimit) return;              // kanban #2653: a signed `since` after the asked one is not this page's answer
     // the seat's newest entries in one pass, objects only (owedNewest, kanban #1772): no sort of a seat's whole list
     const all = owedNewest(got.rounds, Math.min(OWED_SETTLED_MAX, OWED_LIST_MAX));
     if (!bySite.has(h)) bySite.set(h, []);
