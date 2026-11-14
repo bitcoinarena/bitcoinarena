@@ -698,7 +698,7 @@ export function tableAgainstFinals({ claimed, roundId, contract, attested = fals
   if (complete) {
     const rows = claimed.rows.map((r) => proved.get(hex(r.entryId)));
     let honest;
-    try { honest = computePayoutTable({ roundId: claimed.roundId, entries: rows, minScore: contract.minScore, payoutShares: rule.payoutShares }); }
+    try { honest = computePayoutTable({ roundId: claimed.roundId, entries: rows, minScore: contract.minScore, payoutShares: rule.payoutShares, protocolVersion: contract.protocolVersion }); }
     catch (e) { return no(`F cannot be computed from those entries: ${e.message}`); }
     const owed = new Map(honest.activated.map((e, i) => [hex(e.entryId), honest.table[i].amountMsat]));
     for (const r of claimed.rows) {
@@ -1539,8 +1539,9 @@ export function slashHeightIsValid({ slashHeight, censusHeight, tipHeight } = {}
  * WHAT F PAYS EACH ENTRY, in msat, by key: a table row, or the net stake where the money never left the player or comes back to them (a VOID
  * entry's refund, a delivered player under the round's floor, computePayoutTable's `settling`).
  */
-function receivedBy({ roundId, rows, minScore, payoutShares }) {
-  const computed = computePayoutTable({ roundId, entries: rows, minScore, payoutShares });
+// `protocolVersion`: the round's (kanban #1614: from 29 score ties go by H(round_id || pubkey))
+function receivedBy({ roundId, rows, minScore, payoutShares, protocolVersion = null }) {
+  const computed = computePayoutTable({ roundId, entries: rows, minScore, payoutShares, protocolVersion });
   const out = new Map(computed.table.map((r) => [hex(r.pubkey), r.amountMsat]));
   const settling = new Set(computed.settling);
   for (const e of rows) if (isRefund(e.outcome) || (computed.activated.includes(e) && !settling.has(e))) out.set(hex(e.pubkey), netStakeMsat(e));
@@ -1556,14 +1557,14 @@ function receivedBy({ roundId, rows, minScore, payoutShares }) {
  * An empty `truth` is the case with no loss: an objection in time (the result was corrected before any money moved) and a doubled result
  * with no replay. Answers a Map of player key hex -> msat, holding only losses above zero.
  */
-export function realLosses({ roundId, entries = [], truth = [], affected = [], minScore = 0, payoutShares = null } = {}) {
+export function realLosses({ roundId, entries = [], truth = [], affected = [], minScore = 0, payoutShares = null, protocolVersion = null } = {}) {
   const losses = new Map();
   if (!truth.length || !affected.length) return losses;
   const correct = new Map(truth.map((t) => [hex(t.pubkey), t]));
   // AN ENTRY WITH NO RESULT YET IS NOT IN F, as a table leaves it out until it is decided
   const settled = entries.filter((e) => e.outcome);
-  const did = receivedBy({ roundId, rows: settled, minScore, payoutShares });
-  const should = receivedBy({ roundId, minScore, payoutShares,
+  const did = receivedBy({ roundId, rows: settled, minScore, payoutShares, protocolVersion });
+  const should = receivedBy({ roundId, minScore, payoutShares, protocolVersion,
     rows: settled.map((e) => { const t = correct.get(hex(e.pubkey)); return t ? { ...e, outcome: t.outcome, score: t.score } : e; }) });
   for (const e of affected) {
     const k = hex(e.playerPubkey);
@@ -1623,7 +1624,7 @@ export function slashDistribution({ escrowSats, roundId, contract, losses = new 
  *         leftTheRound): owed to the entries whose locks it claimed, pro rata by the amounts it claimed of each.
  * Shares are floored; the msat a split leaves goes one at a time in ascending H(round_id || pubkey), as §22A's remainder.
  */
-export function namedClaimLosses({ held, entries = [], roundId, minScore = 0, payoutShares = null, settled = true } = {}) {
+export function namedClaimLosses({ held, entries = [], roundId, minScore = 0, payoutShares = null, settled = true, protocolVersion = null } = {}) {
   if (!held || !OFFENCES.includes(held.offence)) return { ok: false, why: 'not a named claim\'s offence' };
   const losses = new Map();
   if (held.offence === FORFEIT_OF_LOST_ENTRY) {
@@ -1635,13 +1636,13 @@ export function namedClaimLosses({ held, entries = [], roundId, minScore = 0, pa
     const gone = new Set([hex(forfeited)]);
     const exact = entries.every((e) => !e.activated || e.outcome);
     if (exact) {
-      const should = receivedBy({ roundId, rows: entries, minScore, payoutShares });
-      const did = settled ? receivedBy({ roundId, rows: withGoneStakes(entries, gone), minScore, payoutShares }) : new Map(entries.map((e) => [hex(e.playerPubkey), netStakeMsat(e)]));
+      const should = receivedBy({ roundId, rows: entries, minScore, payoutShares, protocolVersion });
+      const did = settled ? receivedBy({ roundId, rows: withGoneStakes(entries, gone), minScore, payoutShares, protocolVersion }) : new Map(entries.map((e) => [hex(e.playerPubkey), netStakeMsat(e)]));
       for (const e of harmed.affected) { const k = hex(e.playerPubkey); const loss = (should.get(k) || 0n) - (did.get(k) || 0n); if (loss > 0n) losses.set(k, loss); }
       return { ok: true, losses, level: 1 };
     }
     const proved = entries.filter((e) => e.outcome);
-    const fPrime = receivedBy({ roundId, rows: withGoneStakes(proved, gone), minScore, payoutShares });
+    const fPrime = receivedBy({ roundId, rows: withGoneStakes(proved, gone), minScore, payoutShares, protocolVersion });
     const weights = new Map();
     for (const e of harmed.affected) if (e.outcome && isQualifier(e, minScore)) { const w = fPrime.get(hex(e.playerPubkey)) || 0n; if (w > 0n) weights.set(hex(e.playerPubkey), w); }
     for (const [k, v] of proRata(netStakeMsat(out), weights, roundId)) if (v > 0n) losses.set(k, v);
@@ -1667,7 +1668,7 @@ export function namedClaimLosses({ held, entries = [], roundId, minScore = 0, pa
     for (const o of (spends[0] && spends[0].outputs) || []) if (o && o.amount_msat !== undefined) paid.set(low(o.refund_pk), (paid.get(low(o.refund_pk)) || 0n) + BigInt(o.amount_msat));
     const truthByKey = new Map(held.truth.map((t) => [hex(t.pubkey), t]));
     const rows = entries.map((e) => { const t = truthByKey.get(hex(e.playerPubkey)); return t ? { ...e, outcome: t.outcome, score: t.score } : e; }).filter((e) => e.outcome);
-    const should = receivedBy({ roundId, rows, minScore, payoutShares });
+    const should = receivedBy({ roundId, rows, minScore, payoutShares, protocolVersion });
     for (const e of harmed.affected) {
       const k = hex(e.playerPubkey), c = claimed.get(refundOf(e));
       const did = (paid.get(refundOf(e)) || 0n) + (c && c.stake ? 0n : netStakeMsat(e));

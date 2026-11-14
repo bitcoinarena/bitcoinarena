@@ -102,7 +102,7 @@ export function standingOf(round, roundIdBytes, entryIdBytes, contract) {
     if (!rule.ok) return { ...base, state: mine.state, outcome: mine.outcome, pendingMsat: null, kind: null,
       provisional: entries.length < counted, signedSoFar: entries.length, entries: counted, why: rule.why };
     kind = 'payout';
-    const { table } = computePayoutTable({ roundId: roundIdBytes, entries, minScore: contract.minScore, payoutShares: rule.payoutShares });
+    const { table } = computePayoutTable({ roundId: roundIdBytes, entries, minScore: contract.minScore, payoutShares: rule.payoutShares, protocolVersion: contract.protocolVersion });
     const row = table.find((t) => toHex(t.pubkey) === toHex(mine.pubkey));
     pendingMsat = row ? String(row.amountMsat) : '0';
   }

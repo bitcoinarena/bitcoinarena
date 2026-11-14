@@ -25,7 +25,7 @@ export const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 24, 25, 26, 27, 28]);
+export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 24, 25, 26, 27, 28, 29]);
 /**
  * THE VERSION THAT RUNS THE CENSUS KEY'S DAEMON (5A.3B, RULED 2026-11-02, kanban #1048 answer 2). A node that does not speak it cannot deal or sign, so a share given to it counts against
  * the threshold and nobody can use it: a node whose advertisement does not list this version is out of the key's census, in T and the shares alike. It is above BOND_SUM_VERSION, so
@@ -148,6 +148,16 @@ export const GIFTS_IN_FEE_LOCK_VERSION = 27;
  * 22-26 are the 2.0 branches' and 27 the gifts', so this is 28.
  */
 export const LOCK_SET_VERSION = 28;
+/**
+ * 2026.0.29 - A SCORE TIE IS BROKEN BY H(round_id || pubkey) (kanban #1614, decided 2026-11-14 "Ja alle 15": "tie-break H(round_id ||
+ * pubkey), from the next protocol"). Below this version computePayoutTable orders equal scores by the bare player key, which the player
+ * mints - a key ground to start 0x00 won every tie at a paid boundary in every round. From 29 the tie goes by the remainder rule's own
+ * hash (TAG.remainder over round_id || pubkey), which no key can win in advance for every round. Rounds below 29 keep the old order
+ * byte for byte, so the seats agree on every round already played. 22-26 are the 2.0 branches', 27 the gifts', 28 the lock set's.
+ */
+export const TIE_SALT_VERSION = 29;
+/** Whether a round of protocol version `v` breaks score ties by H(round_id || pubkey) (kanban #1614). */
+export const saltsTies = (v) => Number.isInteger(v) && v >= TIE_SALT_VERSION;
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (RULED 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census

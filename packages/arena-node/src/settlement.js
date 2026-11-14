@@ -108,8 +108,8 @@ const verifyAck = (sig, msg, key) => { try { return schnorr.verify(sig, msg, key
 /** A seat that refused by name: its door answered. A 5xx is nobody's word, a tunnel's as likely as the seat's, and reads as no answer. */
 const refusedByName = (r) => !(r.status >= 500);
 // F OVER THE ENTRIES THIS SEAT SETTLES, each row naming its entry: the table a seat's SettlementAck is about (§5A.3, kanban #1040)
-const entryRows = (roundId, entries, minScore, payoutShares) => {
-  const f = computePayoutTable({ roundId, entries, minScore, payoutShares });
+const entryRows = (roundId, entries, minScore, payoutShares, protocolVersion = null) => {   // protocolVersion: kanban #1614
+  const f = computePayoutTable({ roundId, entries, minScore, payoutShares, protocolVersion });
   return f.activated.map((e, i) => ({ entryId: e.entryId, pubkey: e.pubkey, amountMsat: f.table[i].amountMsat, outcome: e.outcome, score: e.score, ...(e.atTheDoor ? { atTheDoor: true } : {}) }));
 };
 // THE WHOLE OF WHAT A SEAT ACKS (§5A.3, kanban #1043): the rows and the transaction they rebuild to, each claim by the entry whose lock it spends
@@ -1382,7 +1382,7 @@ export class LockSettlement {
         { ...fed, reserveKeyOf: (fid) => reserveKeys.get(fid) || null });
       if (!got.ok) return refuse(`no lock is claimed: ${got.why}`);
       return { ok: true, anyFed: true, plan: got.plan, split: got.split, base: { plan: got.plan, entryOf: lockEntry }, contract, claimPk, held, locks, lockEntry,
-        ackRows: entryRows(roundIdBytes, on.entries, contract.minScore, payoutShares) };
+        ackRows: entryRows(roundIdBytes, on.entries, contract.minScore, payoutShares, contract.protocolVersion) };
     }
     let fees = this.fees.get(key);
     if (!fees) { fees = await (await this.portFor(roundIdBytes)).fees(); this.fees.set(key, fees); }
@@ -1407,7 +1407,7 @@ export class LockSettlement {
       plan = lockSettlement({ ...args, sends: this.winnings.sendsFor(roundIdBytes, base, claimPk), requireSends: true });
       if (!plan.ok) return refuse(`no lock is claimed: ${plan.why}`);
     }
-    return { ok: true, plan, base, contract, claimPk, held, locks, lockEntry, ackRows: entryRows(roundIdBytes, on.entries, contract.minScore, payoutShares) };
+    return { ok: true, plan, base, contract, claimPk, held, locks, lockEntry, ackRows: entryRows(roundIdBytes, on.entries, contract.minScore, payoutShares, contract.protocolVersion) };
   }
 
   /**
@@ -1751,7 +1751,7 @@ export class LockSettlement {
   async #goneStakes(roundIdBytes, contract, entries, locks, payoutShares) {
     const key = toHex(roundIdBytes), gone = new Set();
     let h;
-    try { h = lockActions({ roundId: roundIdBytes, entries, minScore: contract.minScore, payoutShares }); } catch { return gone; }
+    try { h = lockActions({ roundId: roundIdBytes, entries, minScore: contract.minScore, payoutShares, protocolVersion: contract.protocolVersion }); } catch { return gone; }
     const suspect = this.#suspectGone.has(key);
     // READ GONE BEFORE, KEPT (kanban #1183): a restarted seat builds F' again from its store, not F
     const kept = new Set(typeof this.round.goneStakesOf === 'function' ? this.round.goneStakesOf(roundIdBytes) : []);

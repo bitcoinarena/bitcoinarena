@@ -614,7 +614,7 @@ const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 24, 25, 26, 27, 28]);
+const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 24, 25, 26, 27, 28, 29]);
 /**
  * THE VERSION THAT RUNS THE CENSUS KEY'S DAEMON (5A.3B, RULED 2026-11-02, kanban #1048 answer 2). A node that does not speak it cannot deal or sign, so a share given to it counts against
  * the threshold and nobody can use it: a node whose advertisement does not list this version is out of the key's census, in T and the shares alike. It is above BOND_SUM_VERSION, so
@@ -737,6 +737,16 @@ const GIFTS_IN_FEE_LOCK_VERSION = 27;
  * 22-26 are the 2.0 branches' and 27 the gifts', so this is 28.
  */
 const LOCK_SET_VERSION = 28;
+/**
+ * 2026.0.29 - A SCORE TIE IS BROKEN BY H(round_id || pubkey) (kanban #1614, decided 2026-11-14 "Ja alle 15": "tie-break H(round_id ||
+ * pubkey), from the next protocol"). Below this version computePayoutTable orders equal scores by the bare player key, which the player
+ * mints - a key ground to start 0x00 won every tie at a paid boundary in every round. From 29 the tie goes by the remainder rule's own
+ * hash (TAG.remainder over round_id || pubkey), which no key can win in advance for every round. Rounds below 29 keep the old order
+ * byte for byte, so the seats agree on every round already played. 22-26 are the 2.0 branches', 27 the gifts', 28 the lock set's.
+ */
+const TIE_SALT_VERSION = 29;
+/** Whether a round of protocol version `v` breaks score ties by H(round_id || pubkey) (kanban #1614). */
+const saltsTies = (v) => Number.isInteger(v) && v >= TIE_SALT_VERSION;
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (RULED 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -4439,14 +4449,15 @@ const payingRanks = (qualifiers) =>
  * Dropping the remainder instead would break the sum invariant below, and
  * giving it to the top rank would be a silent extra prize.
  */
+const remainderKey = (roundId, pubkey) => {
+  const w = new Writer();
+  w.bytes32(roundId);
+  w.bytes32(pubkey);
+  return bytesToBigInt(taggedHash(TAG.remainder, w.finish()));
+};
 function remainderOrder(roundId, entries) {
   return entries
-    .map((e) => {
-      const w = new Writer();
-      w.bytes32(roundId);
-      w.bytes32(e.pubkey);
-      return { e, key: bytesToBigInt(taggedHash(TAG.remainder, w.finish())) };
-    })
+    .map((e) => ({ e, key: remainderKey(roundId, e.pubkey) }))
     .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
     .map((x) => x.e);
 }
@@ -4497,7 +4508,9 @@ function payoutSharesFit(shares) {
 
 // `payoutShares`: the round's game's top split (manifest.js payoutSharesOf), or null for §18A's rank curve - the default,
 // so every caller that names none computes exactly the table it always did.
-function computePayoutTable({ roundId, entries, minScore = 0, payoutShares = null }) {
+// `protocolVersion`: the round contract's version. From TIE_SALT_VERSION (29) equal scores are ordered by H(round_id || pubkey), the
+// remainder rule's key (kanban #1614); below it, or unnamed, by the bare key as every round already played was.
+function computePayoutTable({ roundId, entries, minScore = 0, payoutShares = null, protocolVersion = null }) {
   if (payoutShares !== null && payoutShares !== undefined) {
     const fit = payoutSharesFit(payoutShares);
     if (!fit.ok) throw new Error(fit.why);
@@ -4513,12 +4526,19 @@ function computePayoutTable({ roundId, entries, minScore = 0, payoutShares = nul
   // Qualification is generous on purpose: a cautious player keeps their stake
   // and simply does not place. Disqualifying them would move their stake into
   // the pool, which is a levy on a legal strategy rather than balance.
+  // TIES (kanban #1614): from protocol 29 decided by the same rule the remainder uses, H(round_id || pubkey), so the
+  // order is neither the order the entries arrived in nor a key the player ground to win every tie; below 29 by the bare
+  // key, as the rounds already played were settled
+  const salted = saltsTies(protocolVersion);
+  const tieKey = salted ? new Map(entries.map((e) => [e, remainderKey(roundId, e.pubkey)])) : null;
   const qualifiers = activated
     .filter((e) => isQualifier(e, minScore))
     .sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
-      // ties decided by the same rule the remainder uses, so the order is not
-      // the order the entries happened to arrive in
+      if (salted) {
+        const ka = tieKey.get(a), kb = tieKey.get(b);
+        if (ka !== kb) return ka < kb ? -1 : 1;
+      }
       return compareBytes(a.pubkey, b.pubkey);
     });
 
@@ -21246,8 +21266,9 @@ function lockAction({
  * qualifier `stake + share`, the stake half is their own money returning, and only the share half comes out of the pool.
  */
 // `payoutShares`: the round's game's top split (manifest.js payoutRuleForRound), or null for the rank curve.
-function lockActions({ roundId, entries, minScore = 0, payoutShares = null }) {
-  const table = computePayoutTable({ roundId, entries, minScore, payoutShares });
+// `protocolVersion`: the round's (computePayoutTable: from 29 ties go by H(round_id || pubkey), kanban #1614).
+function lockActions({ roundId, entries, minScore = 0, payoutShares = null, protocolVersion = null }) {
+  const table = computePayoutTable({ roundId, entries, minScore, payoutShares, protocolVersion });
   const claims = new Set(table.settling);
   const paidTo = new Map(table.table.map((r, i) => [i, r.amountMsat]));
 
@@ -21603,7 +21624,7 @@ function lockSettlement({ roundId, entries, minScore = 0, locks, fees, feeLocks 
   // pay is refused there ("the operator would keep ..."), and so its stakes are not
   // claimed here either - but its fee locks still are: the fee is owed.
   let h;
-  try { h = lockActions({ roundId, entries, minScore, payoutShares }); } catch (e) {
+  try { h = lockActions({ roundId, entries, minScore, payoutShares, protocolVersion: contract ? contract.protocolVersion : null }); } catch (e) {
     if (!feePart.claims.length) return refuse(e.message);
     return finish({ roundId, claims: [], payouts: [], unpaid: [], forfeits: [], poolMsat: 0n, inputFeesMsat: 0n, spendableMsat: 0n, stakeWhy: e.message }, feePart);
   }
