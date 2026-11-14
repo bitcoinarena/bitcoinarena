@@ -27,8 +27,17 @@ export function newKey() {
 // `states` (optional, filled): { federation id hex: { status, successor } } - successor the record's successor_id hex, null for none;
 // what moves a dev's money out of a DRAINING federation into its successor (kanban #578, the owner: "federations that are draining
 // and are re-created keep their dev settings")
-export async function invitesFromSeats({ seats, fetcher = fetch, decode, want = 3, timeoutMs = 15000, states = null }) {
+// NOT ONE SEAT'S UNSIGNED WORD (kanban #2767, feedback #058, high): the state was the FIRST lister's plain JSON `status` and an unsigned
+// record's successor, keyed by the seat's own `federation` field, and kept for the life of the process - one seat answering first moved a
+// dev's whole balance into a federation its operator runs (bin/arena-donor.mjs migrateFromDraining), and a real DRAIN signed later was never
+// read. Now a state comes from the record's own bytes (its status and successor_id, its own federation id, which the seat's field and - when
+// `federationIdOf` is given - its invite must name), and only when at least two of the seats that answered (the one seat of a one-seat list)
+// serve the same status and successor and more serve that than anything else; a federation without such agreement has no state (nothing
+// moves). Every call reads the states afresh: what was set before and is not agreed now is dropped.
+const STATUS_NAMES = Object.freeze({ 1: 'OPEN', 2: 'DRAINING', 3: 'CRITICAL', 4: 'CLOSED', 5: 'HALTED' });
+export async function invitesFromSeats({ seats, fetcher = fetch, decode, want = 3, timeoutMs = 15000, states = null, federationIdOf = null }) {
   const out = {};
+  const votes = new Map();       // fid -> Map(status|successor -> { n, state })
   let answered = 0;
   for (const seat of seats || []) {
     if (answered >= want) break;
@@ -36,15 +45,34 @@ export async function invitesFromSeats({ seats, fetcher = fetch, decode, want = 
     try { d = await (await fetcher(`${String(seat).replace(/\/+$/, '')}/federations`, { signal: AbortSignal.timeout(timeoutMs) })).json(); } catch { continue; }
     if (!d || !Array.isArray(d.federations)) continue;
     answered++;
+    const mine = new Set();      // one vote per federation per seat
     for (const f of d.federations) {
       if (!f || f.status === 'CLOSED' || typeof f.record !== 'string') continue;
       try {
         const r = decode(f.record);
         const fid = String(f.federation).toLowerCase();
-        if (r && r.invite) out[fid] = r.invite;
+        // the record's own federation (and its invite's), never only the seat's field - for its invite and its state alike
+        if (r && r.federationId && Buffer.from(r.federationId).toString('hex') !== fid) continue;
+        if (typeof federationIdOf === 'function') { let named = null; try { named = String(federationIdOf(r.invite)).toLowerCase(); } catch { named = null; } if (named !== fid) continue; }
+        if (r && r.invite) out[fid] = out[fid] || r.invite;
+        if (!states || mine.has(fid)) continue;
+        const status = r && Number.isInteger(r.status) ? STATUS_NAMES[r.status] : null;
+        if (!status) continue;
         const succ = r && r.successorId ? Buffer.from(r.successorId).toString('hex') : '';
-        if (states && !states[fid]) states[fid] = { status: String(f.status || ''), successor: /^0*$/.test(succ) ? null : succ };
+        const state = { status, successor: /^0*$/.test(succ) ? null : succ };
+        mine.add(fid);
+        if (!votes.has(fid)) votes.set(fid, new Map());
+        const m = votes.get(fid), k = `${state.status}|${state.successor}`;
+        m.set(k, { n: (m.has(k) ? m.get(k).n : 0) + 1, state });
       } catch { /* a record that does not read */ }
+    }
+  }
+  if (states) {
+    const need = Math.min(2, Math.max(1, answered));
+    for (const k of Object.keys(states)) delete states[k];
+    for (const [fid, m] of votes) {
+      const ranked = [...m.values()].sort((a, b) => b.n - a.n);
+      if (ranked[0].n >= need && (ranked.length === 1 || ranked[0].n > ranked[1].n)) states[fid] = ranked[0].state;
     }
   }
   return out;
