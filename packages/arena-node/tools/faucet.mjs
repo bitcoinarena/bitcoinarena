@@ -32,6 +32,7 @@ import { openBountySeason, cleanOpenIssues, seasonEndMs } from '../src/bounty-se
 import { verifiersFromEnv } from '../src/bounty-verify.js';
 import { socialCheck, resolversFromEnv } from '../src/bounty-social.js';   // kanban #2641
 import { userbotFromEnv } from '../src/telegram-userbot.js';   // kanban #2641
+import { nostrVerifier, nostrPubkeyOf } from '../src/bounty-nostr.js';   // kanban #2641
 import { readJsonBounded } from '../src/lnurl-read.js';   // kanban #2517
 import { openFeedbackStore, networkPlayers, imageKind, SHOT_MOST, SHOT_UNCLAIMED_MS, REWARD_LEVELS, NODE_BOUNTY_BASE_SATS, lnAddressWorks, lnAddressUrl, lnAddressInvoice, reportAddress } from '../src/feedback-store.js';
 import { eventId } from '../src/nostr-relay.js';   // a resent report is matched by its id's hash (kanban #2456, #2498)
@@ -115,7 +116,7 @@ const S2_VERIFY = verifiersFromEnv(env);
 const S2_USERBOT = S2 ? await userbotFromEnv(env, { log: (m) => console.log(`${new Date().toISOString()} ${m}`) }).catch(() => null) : null;
 let S2_ARMADA = null;
 if (S2) { try { const a = await import('../src/bounty-armada.js'); const v = a.armadaFromEnv(env);
-  if (v) { S2_VERIFY.armada = v; S2_ARMADA = async (input) => { const pk = await a.armadaPubkeyOf(input); if (!pk) return { userId: null, member: null, why: 'that is not a Nostr key (npub) or name@domain' };
+  if (v) { S2_VERIFY.armada = v; S2_ARMADA = async (input) => { const pk = await nostrPubkeyOf(input); if (!pk) return { userId: null, member: null, why: 'that is not a Nostr key (npub) or name@domain' };
     const r = await v({ userId: pk }); return { userId: pk, username: a.bech32Encode('npub', Buffer.from(pk, 'hex')).slice(0, 20) + '…', member: r.member, why: r.why }; }; } } catch (e) { console.log(`${new Date().toISOString()} armada check off: ${String(e.message).slice(0, 80)}`); } }
 // the user account reader is the Telegram check first (the owner 2026-11-14); a read it cannot make falls back to the bot's getChatMember by id
 if (S2_USERBOT) { const bot = S2_VERIFY.telegram;
@@ -123,7 +124,11 @@ if (S2_USERBOT) { const bot = S2_VERIFY.telegram;
     if (u && (u.member === true || (u.member === false && !bot))) return { member: u.member, why: u.why };
     // a name not in the list may have changed: the stable id decides
     return bot ? bot(l) : { member: u ? u.member : null, why: u ? u.why : 'no reader' }; }; }
-const S2_NAMES = S2 ? resolversFromEnv(S2, env, { userbot: S2_USERBOT, armada: S2_ARMADA }) : {};
+// A NOSTR FOLLOW (kanban #2641): the key's newest contact list on our relay and big public ones names our profile key
+if (S2 && env.FAUCET_BOUNTY_NOSTR !== 'off') S2_VERIFY.nostr = nostrVerifier();
+const S2_NOSTR = S2_VERIFY.nostr ? async (input) => { const pk = await nostrPubkeyOf(input); if (!pk) return { userId: null, member: null, why: 'that is not a Nostr key (npub) or name@domain' };
+  const r = await S2_VERIFY.nostr({ userId: pk }); return { userId: pk, username: (await import('../src/bounty-armada.js')).bech32Encode('npub', Buffer.from(pk, 'hex')).slice(0, 20) + '…', member: r.member, why: r.why }; } : null;
+const S2_NAMES = S2 ? { ...resolversFromEnv(S2, env, { userbot: S2_USERBOT, armada: S2_ARMADA }), ...(S2_NOSTR ? { nostr: S2_NOSTR } : {}) } : {};
 const S2_SOCIAL_ASKS = new Map();   // pubkey -> last /feedback/social with names (one each 15 s)
 const S2_SOCIAL_GAP_MS = 15000;
 // SEASON 2 STARTS (the owner 2026-11-13 ~17:55Z: "Season 2 läuft ab Sonntag"): before it no Season 2 approval; a Season 1 report past the weekly budget
@@ -709,7 +714,7 @@ if (S2) setInterval(() => { if (!S2_STARTED() || !bountyOn()) return;
       if (!p.ok) continue;
       if (p.waits) { if (p.season !== a.season) S2.wait(r, p, { by: 'season2' }); continue; }
       const out = s2Approve(r, p, 'season2');
-      console.log(`${new Date().toISOString()} week 2: ${r.label || r.id.slice(0, 12)} ${out.ok ? `approved ${p.sats} sat` : `not approved: ${out.why}`}`);
+      console.log(`${new Date().toISOString()} season 2: ${r.label || r.id.slice(0, 12)} ${out.ok ? `approved ${p.sats} sat` : `not approved: ${out.why}`}`);
     }
   }).catch(() => {});
 }, Number(env.FAUCET_BOUNTY_S2_SWEEP_MS || 60000)).unref();
@@ -860,8 +865,8 @@ createServer((req, res) => {
           // SEASON 2 (kanban #2623): the amount is the season's rule, not the admin's - the level (or a follow-up) halved for a code-only finding, the
           // community bonus from the reporter's links read live now, held to the season's pot (past it the report waits for the next season, still new)
           if (b.season2 === true) {
-            if (!S2) return send(503, { ok: false, why: 'Week 2 is not kept here' });
-            if (!S2_STARTED()) return send(200, { ok: false, why: `Week 2 starts ${S2_START_DAY}` });
+            if (!S2) return send(503, { ok: false, why: 'Season 2 is not kept here' });
+            if (!S2_STARTED()) return send(200, { ok: false, why: `Season 2 starts ${S2_START_DAY}` });
             const r = FEEDBACK.report(b.id);
             if (!r) return send(200, { ok: false, why: 'no such report' });
             if (r.state !== 'new') return send(200, { ok: false, why: `a ${r.state} report is not approved for money` });
@@ -869,7 +874,7 @@ createServer((req, res) => {
             if (level !== 'node') await S2.verify(r.pubkey, S2_VERIFY, { cause: 'approve' });
             const p = S2.plan(r, { level, codeOnly: b.codeOnly === true, followUp: b.followUp === true });
             if (!p.ok) return send(200, p);
-            if (p.waits) return send(200, { ok: false, waits: true, why: `Week ${p.season}'s pot has ${p.pot.leftSats} sat left and this report is ${p.sats}: it waits for the next week`, season2: S2.wait(r, p, { by }) });
+            if (p.waits) return send(200, { ok: false, waits: true, why: `Season ${p.season}'s pot has ${p.pot.leftSats} sat left and this report is ${p.sats}: it waits for the next season`, season2: S2.wait(r, p, { by }) });
             return send(200, s2Approve(r, p, by));
           }
           // A CRITICAL BUG ABOVE THE BANDS IS THE OWNER'S OWN CALL: critical: true lifts mostSats to the amount for this one approval
@@ -878,7 +883,7 @@ createServer((req, res) => {
           // Week 1, whatever its budget says - it takes the overflow path below
           const late0 = FEEDBACK.report(b.id);
           const late = !!(S2 && Number.isFinite(S1_END_MS) && late0 && late0.state === 'new' && late0.receivedMs >= S1_END_MS);
-          const s1 = late ? { ok: false, why: 'received after Week 1 ended' } : FEEDBACK.approve(b.id, b.amountSats, { played: PLAYED.played, excluded: ourKeys(), rules, severity: b.severity || null, by });
+          const s1 = late ? { ok: false, why: 'received after Season 1 ended' } : FEEDBACK.approve(b.id, b.amountSats, { played: PLAYED.played, excluded: ourKeys(), rules, severity: b.severity || null, by });
           // PAST THE WEEK 1 BUDGET THE REPORT MOVES TO WEEK 2 (the owner 2026-11-13 ~17:55Z): kept waiting, a note on its log, approved by the Week 2
           // rules once Week 2 runs; a report that fits stays Week 1 as before
           if (late || (!s1.ok && S2 && /this week's budget/.test(String(s1.why || '')))) {
@@ -887,7 +892,7 @@ createServer((req, res) => {
             const p = r ? S2.plan(r, { level, codeOnly: b.codeOnly === true, followUp: b.followUp === true }) : { ok: false };
             if (!p.ok) return send(200, s1);
             const waiting = S2.wait(r, p, { by });
-            FEEDBACK.remark(r.id, late ? 'received after Week 1 ended: Week 2 rules' : `moved to Week 2: the Week 1 budget is used up; approved by the Week 2 rules${S2_START_DAY ? ` once Week 2 starts (${S2_START_DAY})` : ''}`, { by });
+            FEEDBACK.remark(r.id, late ? 'received after Season 1 ended: Season 2 rules' : `moved to Season 2: the Season 1 budget is used up; approved by the Season 2 rules${S2_START_DAY ? ` once Season 2 starts (${S2_START_DAY})` : ''}`, { by });
             return send(200, { ok: true, movedToSeason2: true, why: s1.why, season2: waiting });
           }
           return send(200, s1);
@@ -1043,7 +1048,7 @@ createServer((req, res) => {
       req.on('end', () => {
         let asked = {}; try { asked = raw ? JSON.parse(raw) : {}; } catch { return send(400, { ok: false, why: 'JSON with x, telegram, discord, armada' }); }
         if (!asked || typeof asked !== 'object' || Array.isArray(asked)) return send(400, { ok: false, why: 'JSON with x, telegram, discord, armada' });
-        const any = ['x', 'telegram', 'discord', 'armada'].some((k) => typeof asked[k] === 'string' && asked[k].trim());
+        const any = ['x', 'telegram', 'discord', 'armada', 'nostr'].some((k) => typeof asked[k] === 'string' && asked[k].trim());
         if (any) {
           const lastAsk = S2_SOCIAL_ASKS.get(who) || 0;
           if (Date.now() - lastAsk < S2_SOCIAL_GAP_MS) return send(429, { ok: false, why: 'one check every 15 seconds' });
