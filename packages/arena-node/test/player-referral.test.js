@@ -70,7 +70,10 @@ test('the page collects the referral payout into its wallet with the identity se
   const refunds = [];
   const client = { refund: async (txid, outIdx, fields, secretHex) => { refunds.push({ txid, outIdx, fields: JSON.parse(fields), secretHex }); return JSON.stringify({ accepted: true }); } };
   const got = await collectZaps({ storage: s, keep, curve, clients: new Map([[F, client]]), seats: ['https://a.example'], fetcher });
-  assert.deepEqual(got.referral, { msat: '1100', payouts: 2 }, 'every website payout the seats list, collected or waiting for a wallet there');
+  // kanban #1929 (Daniel 2026-11-14): the total is what this wallet collected, not what a seat lists (the 300 waits for a wallet in its federation)
+  assert.deepEqual(got.referral, { msat: '800', payouts: 1 }, 'every website payout this wallet collected');
+  const again = await collectZaps({ storage: s, keep, curve, clients: new Map([[F, client]]), seats: ['https://a.example'], fetcher });
+  assert.deepEqual([again.collected.length, again.referral], [0, { msat: '800', payouts: 1 }], 'a later pass still says what was collected before');
   assert.deepEqual(got.collected.map((c) => [c.item, c.amountMsat, c.roundId]), [['website', '800', R], ['zap', '21000', '00'.repeat(32)]]);
   assert.deepEqual(refunds[0], { txid: 'c1'.repeat(32), outIdx: 2, secretHex: toHex(identitySecretFor(fromHex(SEED))),
     fields: { paymentImage: { kind: 'hash', bytes: '00'.repeat(32) }, amountMsat: '800', claimPk: pk, refundPk: pk, expiration: 0 } });
