@@ -614,7 +614,7 @@ const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 24, 25, 26, 27, 28]);
+const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 24, 25, 26, 27, 28, 29]);
 /**
  * THE VERSION THAT RUNS THE CENSUS KEY'S DAEMON (5A.3B, RULED 2026-11-02, kanban #1048 answer 2). A node that does not speak it cannot deal or sign, so a share given to it counts against
  * the threshold and nobody can use it: a node whose advertisement does not list this version is out of the key's census, in T and the shares alike. It is above BOND_SUM_VERSION, so
@@ -737,6 +737,16 @@ const GIFTS_IN_FEE_LOCK_VERSION = 27;
  * 22-26 are the 2.0 branches' and 27 the gifts', so this is 28.
  */
 const LOCK_SET_VERSION = 28;
+/**
+ * 2026.0.29 - A SCORE TIE IS BROKEN BY H(round_id || pubkey) (kanban #1614, decided 2026-11-14 "Ja alle 15": "tie-break H(round_id ||
+ * pubkey), from the next protocol"). Below this version computePayoutTable orders equal scores by the bare player key, which the player
+ * mints - a key ground to start 0x00 won every tie at a paid boundary in every round. From 29 the tie goes by the remainder rule's own
+ * hash (TAG.remainder over round_id || pubkey), which no key can win in advance for every round. Rounds below 29 keep the old order
+ * byte for byte, so the seats agree on every round already played. 22-26 are the 2.0 branches', 27 the gifts', 28 the lock set's.
+ */
+const TIE_SALT_VERSION = 29;
+/** Whether a round of protocol version `v` breaks score ties by H(round_id || pubkey) (kanban #1614). */
+const saltsTies = (v) => Number.isInteger(v) && v >= TIE_SALT_VERSION;
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (RULED 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -4439,14 +4449,15 @@ const payingRanks = (qualifiers) =>
  * Dropping the remainder instead would break the sum invariant below, and
  * giving it to the top rank would be a silent extra prize.
  */
+const remainderKey = (roundId, pubkey) => {
+  const w = new Writer();
+  w.bytes32(roundId);
+  w.bytes32(pubkey);
+  return bytesToBigInt(taggedHash(TAG.remainder, w.finish()));
+};
 function remainderOrder(roundId, entries) {
   return entries
-    .map((e) => {
-      const w = new Writer();
-      w.bytes32(roundId);
-      w.bytes32(e.pubkey);
-      return { e, key: bytesToBigInt(taggedHash(TAG.remainder, w.finish())) };
-    })
+    .map((e) => ({ e, key: remainderKey(roundId, e.pubkey) }))
     .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
     .map((x) => x.e);
 }
@@ -4497,7 +4508,9 @@ function payoutSharesFit(shares) {
 
 // `payoutShares`: the round's game's top split (manifest.js payoutSharesOf), or null for §18A's rank curve - the default,
 // so every caller that names none computes exactly the table it always did.
-function computePayoutTable({ roundId, entries, minScore = 0, payoutShares = null }) {
+// `protocolVersion`: the round contract's version. From TIE_SALT_VERSION (29) equal scores are ordered by H(round_id || pubkey), the
+// remainder rule's key (kanban #1614); below it, or unnamed, by the bare key as every round already played was.
+function computePayoutTable({ roundId, entries, minScore = 0, payoutShares = null, protocolVersion = null }) {
   if (payoutShares !== null && payoutShares !== undefined) {
     const fit = payoutSharesFit(payoutShares);
     if (!fit.ok) throw new Error(fit.why);
@@ -4513,12 +4526,19 @@ function computePayoutTable({ roundId, entries, minScore = 0, payoutShares = nul
   // Qualification is generous on purpose: a cautious player keeps their stake
   // and simply does not place. Disqualifying them would move their stake into
   // the pool, which is a levy on a legal strategy rather than balance.
+  // TIES (kanban #1614): from protocol 29 decided by the same rule the remainder uses, H(round_id || pubkey), so the
+  // order is neither the order the entries arrived in nor a key the player ground to win every tie; below 29 by the bare
+  // key, as the rounds already played were settled
+  const salted = saltsTies(protocolVersion);
+  const tieKey = salted ? new Map(entries.map((e) => [e, remainderKey(roundId, e.pubkey)])) : null;
   const qualifiers = activated
     .filter((e) => isQualifier(e, minScore))
     .sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
-      // ties decided by the same rule the remainder uses, so the order is not
-      // the order the entries happened to arrive in
+      if (salted) {
+        const ka = tieKey.get(a), kb = tieKey.get(b);
+        if (ka !== kb) return ka < kb ? -1 : 1;
+      }
       return compareBytes(a.pubkey, b.pubkey);
     });
 
@@ -7546,11 +7566,20 @@ async function checkAgainstBond(read, bond, verify) {
  * Answers Map(outpoint key -> { advert, advertId, txid, height, position }). `seen(entry, read, height)`: told of every valid update in chain order, the newest or not: a bond's presig
  * stays in the update that posted it, whatever came after (one pass over the view).
  */
+//
+// ONLY A NEWER BODY IS AN UPDATE (kanban #2426, decided 2026-11-14 "the higher-timestamp rule, now"): the node's signature covers the body
+// alone, so anyone could re-post a body the node once signed - its seat's old check, the bond's own creation body, an old step-out - as a
+// newer update, and undo a step-out (or step a serving node out). An update counts only when its signed `timestamp` is strictly greater
+// than every body of that node key before it in chain order: each of its bonds' creation bodies (at their heights) and every update that
+// counted. A replay is never newer than what it copies, so it counts nowhere.
+const tsOf = (a) => { try { return a && a.timestamp !== undefined && a.timestamp !== null ? BigInt(a.timestamp) : null; } catch { return null; } };
 function newestUpdates(view, entries, { atHeight, network = 'regtest', verify, seen = null } = {}) {
   const found = new Map();
   // NO LIST OF BONDS, NOTHING TO UPDATE: measured before, a missing list threw on entries.map.
   if (typeof verify !== 'function' || !view || !Array.isArray(view.blocks) || !Array.isArray(entries)) return found;
   const want = new Map(entries.map((e) => [`${Array.from(e.txid).join(',')}:${e.vout}`, e]));
+  const nodeOf = (k) => Array.from(k).join(',');
+  const events = [];   // { height, position, ts, node, key?, update? } - the bonds' own bodies at position -1
   view.blocks.forEach((block, i) => {
     const height = view.firstHeight + i;
     if (height > atHeight) return;
@@ -7568,11 +7597,23 @@ function newestUpdates(view, entries, { atHeight, network = 'regtest', verify, s
       try { signed = !!verify(read.signature, read.advertId, read.nodePubkey); } catch { signed = false; }
       if (!signed) return;
       if (seen) seen(e, read, height);
-      const had = found.get(key);
-      if (!had || height > had.height || (height === had.height && position > had.position))
-        found.set(key, { advert: read.advert, advertId: read.advertId, txid: read.txid, height, position, raw });
+      events.push({ height, position, ts: tsOf(read.advert), node: nodeOf(read.nodePubkey), key,
+        update: { advert: read.advert, advertId: read.advertId, txid: read.txid, height, position, raw } });
     });
   });
+  for (const e of entries) {
+    const pk = e.pubkey || (e.advert && e.advert.nodePubkey);
+    if (pk && Number.isInteger(e.height)) events.push({ height: e.height, position: -1, ts: tsOf(e.advert), node: nodeOf(pk) });
+  }
+  events.sort((a, b) => (a.height - b.height) || (a.position - b.position));
+  const newest = new Map();   // node key -> the newest timestamp of its bodies so far
+  for (const ev of events) {
+    const had = newest.has(ev.node) ? newest.get(ev.node) : null;
+    if (!ev.update) { if (ev.ts !== null && (had === null || ev.ts > had)) newest.set(ev.node, ev.ts); continue; }
+    if (ev.ts === null || (had !== null && ev.ts <= had)) continue;   // kanban #2426: not newer than a body before it - a replay
+    newest.set(ev.node, ev.ts);
+    found.set(ev.key, ev.update);
+  }
   return found;
 }
 
@@ -17558,7 +17599,12 @@ const SERVED_CHECKS_MAX = 1024;
 const SERVED_ANSWER_BYTES_MAX = 32 * 1024 * 1024;
 // `own` (default true): held[0] is the reader's own record (server.js), and the rounds it names are marked `own` - servedNodes does
 // not charge their checks to the answers (kanban #2361). A reader with no record of its own (the page, item-buy.js) passes false.
-function mergeServedRounds(held, { own = true } = {}) {
+// `bonded` (kanban #1896, decided 2026-11-14 "(b) committee nodes only count"): a Set of node keys (hex) of a census the reader checked,
+// or null. Given, a committee copy counts only when every key of it is such a node: a copy naming a key no checked census bonds is
+// not taken - no vote, no FINAL - however many seat URLs name it (measured before: one stranger's server at three URLs named a real
+// round with a committee of one made-up key, outvoted two honest seats, and that key took the nodes' whole half of a 500-sat item).
+// null (the seats' own merges) reads as before.
+function mergeServedRounds(held, { own = true, bonded = null } = {}) {
   const hx = (b) => toHex(b);
   const rounds = new Map(), conflicts = new Set();
   (held || []).forEach((seat, at) => {
@@ -17569,6 +17615,7 @@ function mergeServedRounds(held, { own = true } = {}) {
       const k = hx(r.roundId);
       if (seen.has(k)) continue;                              // kanban #2239: one answer names a round once
       seen.add(k);
+      if (bonded && !r.committee.every((k) => bonded.has(hx(k)))) continue;   // kanban #1896: only bonded nodes are a committee
       const committee = [...new Set(r.committee.map(hx))].sort().join();
       if (!rounds.has(k)) rounds.set(k, { roundId: r.roundId, copies: new Map(), finals: new Map(), sources: new Map(), own: false });
       const into = rounds.get(k);
@@ -20918,6 +20965,27 @@ function wholeInvite(invite) {
 
 const forgetGuardianInvites = () => { seen.clear(); NOTED_RECORDS.clear(); };   // tests
 
+// ---- arena-protocol/src/settled-list.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// A SEAT'S GET /settled ANSWER, SIGNED BY ITS NODE KEY (kanban #2108, #2123; decided 2026-11-14: "/settled signed by the census key").
+// The owed scan (arena-client page-lock.js findOwedRounds) counted a seat by its site: the live federation's seats share one host, so
+// they tied with liar domains (#2108) and shared one 500-id allowance between them (#2123). Now each answer names its node and is
+// signed by that node's key over this digest; the page counts only signed answers, one allowance per node key, and - given the census
+// it checked - only keys that census bonds. Nothing here is consensus: the digest binds the answer's fields as sent, all as strings.
+
+const TAG_SETTLED_LIST = 'ARENA/v1/SettledList';
+
+const str = (v) => (v === undefined || v === null ? '' : String(v));
+const strs = (l) => (Array.isArray(l) ? l.map(str) : []);
+
+/** The digest a seat signs over its /settled answer: { node, since, rounds: [{ id, state, madeMs, payouts, refunds }] }. */
+function settledListDigest({ node, since, rounds }) {
+  const body = JSON.stringify([str(node).toLowerCase(), str(since),
+    (Array.isArray(rounds) ? rounds : []).map((r) => [str(r && r.id), str(r && r.state), str(r && r.madeMs), strs(r && r.payouts), strs(r && r.refunds)])]);
+  return taggedHash(TAG_SETTLED_LIST, new TextEncoder().encode(body));
+}
+
 // ---- arena-client/src/lock-result.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -21246,8 +21314,9 @@ function lockAction({
  * qualifier `stake + share`, the stake half is their own money returning, and only the share half comes out of the pool.
  */
 // `payoutShares`: the round's game's top split (manifest.js payoutRuleForRound), or null for the rank curve.
-function lockActions({ roundId, entries, minScore = 0, payoutShares = null }) {
-  const table = computePayoutTable({ roundId, entries, minScore, payoutShares });
+// `protocolVersion`: the round's (computePayoutTable: from 29 ties go by H(round_id || pubkey), kanban #1614).
+function lockActions({ roundId, entries, minScore = 0, payoutShares = null, protocolVersion = null }) {
+  const table = computePayoutTable({ roundId, entries, minScore, payoutShares, protocolVersion });
   const claims = new Set(table.settling);
   const paidTo = new Map(table.table.map((r, i) => [i, r.amountMsat]));
 
@@ -21603,7 +21672,7 @@ function lockSettlement({ roundId, entries, minScore = 0, locks, fees, feeLocks 
   // pay is refused there ("the operator would keep ..."), and so its stakes are not
   // claimed here either - but its fee locks still are: the fee is owed.
   let h;
-  try { h = lockActions({ roundId, entries, minScore, payoutShares }); } catch (e) {
+  try { h = lockActions({ roundId, entries, minScore, payoutShares, protocolVersion: contract ? contract.protocolVersion : null }); } catch (e) {
     if (!feePart.claims.length) return refuse(e.message);
     return finish({ roundId, claims: [], payouts: [], unpaid: [], forfeits: [], poolMsat: 0n, inputFeesMsat: 0n, spendableMsat: 0n, stakeWhy: e.message }, feePart);
   }
@@ -22690,6 +22759,7 @@ function lockClaimKeyOf(entry) {
 // wallet that holds it; and a lock already made, that no signer node has committed
 // yet, is kept with its stake (`saveLock`), so a reload before the signer node takes
 // the entry uses that lock instead of dealing and paying again.
+
 
 
 
@@ -25798,7 +25868,9 @@ const owedSiteOf = (n) => {
   else return h.split('.').slice(-2).join('.');
   return 'v4:' + h;
 };
-async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fetcher = fetch, sinceMs = 0, known = [], knownBySeed = null } = {}) {
+// `bonded` (kanban #2108, #2123): the node keys (hex) of a census this page checked, or null. Only an answer signed by its node's key
+// (settled-list.js) counts, and with `bonded` only one whose key that census bonds; the allowance is one per node key, not per site.
+async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fetcher = fetch, sinceMs = 0, known = [], knownBySeed = null, bonded = null } = {}) {
   // EVERY SAVED PHRASE AT ONCE (2026-10-07): each signer node's /settled is read once and matched against
   // every phrase's keys - 7 asks on 7 signer nodes, not 7 per phrase. One `seed` (with `known`) is the one-phrase scan as before.
   const list = Array.isArray(seeds) ? seeds : [seed];
@@ -25834,13 +25906,29 @@ async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fetcher =
     const r = await fetcher(`${base(node)}/settled?since=${since}`, { signal });
     return r.ok ? r.json() : null;
   })));
-  // AT MOST OWED_SETTLED_MAX ROUNDS FROM ONE SITE, NEWEST FIRST, EACH ID ONCE PER SEAT (kanban #1489, #1832, #1966)
+  // ONLY SIGNED ANSWERS COUNT, ONE ALLOWANCE PER NODE KEY (kanban #2108, #2123, decided 2026-11-14 "/settled signed by the census key"):
+  // a site was the unit, and the live federation's seats share one host - so they tied with liar domains and shared one 500-id
+  // allowance. Now an answer counts only when it names its node and that key signed it (settled-list.js), and - with the census the
+  // page checked - only a key that census bonds. Each node key is one allowance (a key answering at several URLs once); an answer of
+  // more than a seat ever sends (OWED_SETTLED_MAX) is not read. Unsigned answers (seats before this) add nothing.
+  const bondedSet = bonded ? new Set([...bonded].map((k) => String(k).toLowerCase())) : null;
+  const verifySig = curve && typeof curve.verify === 'function' ? curve.verify : null;
+  const signerOf = (got) => {
+    if (!got || !Array.isArray(got.rounds) || got.rounds.length > OWED_SETTLED_MAX || !verifySig) return null;
+    const node = String(got.node || '').toLowerCase(), sig = String(got.sig || '').toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(node) || !/^[0-9a-f]{128}$/.test(sig)) return null;
+    if (bondedSet && !bondedSet.has(node)) return null;
+    let good = false;
+    try { good = !!verifySig(fromHex(sig), settledListDigest({ node, since: got.since, rounds: got.rounds }), fromHex(node)); } catch { good = false; }
+    return good ? node : null;
+  };
+  // AT MOST OWED_SETTLED_MAX ROUNDS FROM ONE NODE KEY, NEWEST FIRST, EACH ID ONCE PER SEAT (kanban #1489, #1832, #1966, #2108)
   const bySite = new Map();
   lists.forEach((got, n) => {
+    const h = signerOf(got);
+    if (!h || bySite.has(h)) return;                         // unsigned, not bonded, or a key already read at another URL
     // the seat's newest entries in one pass, objects only (owedNewest, kanban #1772): no sort of a seat's whole list
-    const all = got && Array.isArray(got.rounds) ? owedNewest(got.rounds, OWED_SETTLED_MAX) : null;
-    if (!all) return;
-    const h = owedSiteOf(nodes[n]);
+    const all = owedNewest(got.rounds, OWED_SETTLED_MAX);
     if (!bySite.has(h)) bySite.set(h, []);
     const seen = new Set(), rows = bySite.get(h);
     all.forEach((x, i) => {
@@ -42590,6 +42678,7 @@ function purchaseStands(p, { manifest, networkSet, gameSet, served, verify, rese
 
 
 
+
 /**
  * THE TERMS A GAME VERSION SELLS ITS ITEMS ON: a version requiring protocol 11 the reserves' - nodes 40 %, the
  * protocol reserves 20 %, the developers 40/30/20/10/0 % added on top; an older one 's - nodes 50 %, the developers 50 .. 0 %.
@@ -42638,7 +42727,11 @@ async function readJsonUpTo(r, maxBytes) {
 }
 
 /** The served list of the 24 h before `toMs`, from every seat that answers. Answers { ok, served, seats } or { ok: false, why }. */
-async function servedFromSeats({ seats, toMs, fetch, verify, timeoutMs = 15000 }) {
+// `bondedKeys` (kanban #1896): the node keys (hex) of a census this page checked. A round's committee counts only when all its keys are
+// among them (mergeServedRounds `bonded`); with none the page cannot tell a node from a URL, and nothing is read.
+async function servedFromSeats({ seats, toMs, fetch, verify, timeoutMs = 15000, bondedKeys = null }) {
+  const bonded = bondedKeys ? new Set([...bondedKeys].map((k) => String(k).toLowerCase())) : null;
+  if (!bonded || !bonded.size) return { ok: false, why: 'this page has checked no census, so it cannot tell which keys are nodes: no served list is read' };
   const fromMs = BigInt(toMs) - BigInt(SERVED_WINDOW_MS);
   // kept in the order the seats are listed, not the order they answer (kanban #1522): between two committees named by equally many
   // seats the one held first stands (mergeServedRounds), and that must not be whichever seat answered fastest
@@ -42657,7 +42750,7 @@ async function servedFromSeats({ seats, toMs, fetch, verify, timeoutMs = 15000 }
   const answered = held.filter(Boolean).length;
   if (!answered) return { ok: false, why: 'no seat answered who served a round in the last 24 hours' };
   // kanban #2361: the page holds no record of its own - no answer's rounds are taken as the reader's, every answer's checks are charged
-  const served = servedNodes({ rounds: mergeServedRounds(held.filter(Boolean), { own: false }).rounds, fromMs, toMs: BigInt(toMs), verify });
+  const served = servedNodes({ rounds: mergeServedRounds(held.filter(Boolean), { own: false, bonded }).rounds, fromMs, toMs: BigInt(toMs), verify });
   if (!served.nodes.length) return { ok: false, why: 'no node served a round in the last 24 hours: the nodes\' half has nobody to go to' };
   return { ok: true, served, seats: answered };
 }
@@ -42668,7 +42761,8 @@ async function servedFromSeats({ seats, toMs, fetch, verify, timeoutMs = 15000 }
  * `seats` the game's seats; `verify` BIP340; `devsPct` the developers' share the buyer chose (one of ITEM_DEV_SHARES, default
  * 50 - the nodes' half is paid whatever it is). Answers { ok, purchaseId, txid, priceSat, paidSat, devsPct, outputs, keptBy } or { ok: false, step, why }.
  */
-async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, federationId, player, seats, fetch, verify, nowMs = () => Date.now(), devsPct = null, reserveNeeded = 5 }) {
+// `bondedKeys`: the node keys (hex) of a census this page checked (kanban #1896); left out, the newest census this page checked.
+async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, federationId, player, seats, fetch, verify, nowMs = () => Date.now(), devsPct = null, reserveNeeded = 5, bondedKeys = null }) {
   const no = (step, why) => ({ ok: false, step, why });
   const item = itemOf(manifest, itemId);
   if (!item) return no('item', `"${manifest && manifest.gameName}" sells no item "${itemId}"`);
@@ -42684,7 +42778,8 @@ async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, federati
     reserveKey = rk.key;
   }
   const toMs = BigInt(nowMs() - 60000);                     // a minute back: the newest FINALs have reached every seat
-  const got = await servedFromSeats({ seats, toMs, fetch, verify });
+  if (!bondedKeys) { const c = newestCheckedCensus(); bondedKeys = c ? c.entries.map((e) => toHex(e.pubkey)) : null; }
+  const got = await servedFromSeats({ seats, toMs, fetch, verify, bondedKeys });
   if (!got.ok) return no('served', got.why);
   let built;
   try {

@@ -121,7 +121,7 @@ export function lockSettlement({ roundId, entries, minScore = 0, locks, fees, fe
   // pay is refused there ("the operator would keep ..."), and so its stakes are not
   // claimed here either - but its fee locks still are: the fee is owed.
   let h;
-  try { h = lockActions({ roundId, entries, minScore, payoutShares }); } catch (e) {
+  try { h = lockActions({ roundId, entries, minScore, payoutShares, protocolVersion: contract ? contract.protocolVersion : null }); } catch (e) {
     if (!feePart.claims.length) return refuse(e.message);
     return finish({ roundId, claims: [], payouts: [], unpaid: [], forfeits: [], poolMsat: 0n, inputFeesMsat: 0n, spendableMsat: 0n, stakeWhy: e.message }, feePart);
   }
