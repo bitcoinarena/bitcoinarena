@@ -20,7 +20,7 @@ import { execFile } from 'node:child_process';
 import { readFileSync, writeFileSync, existsSync, renameSync } from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { testConnection, TESTNET4_ELECTRUM } from './chain-test.js';
-import { newSeed, confirmPositions, checkConfirm, ownerKeyOf, nostrPubkeyHex, CONFIRM_WORDS, emergencyOf, seedOfWords, seedOfNsec, newNsec, nodeKeyOf, signNostrEvent } from './seed.js';
+import { newSeed, confirmPositions, checkConfirm, ownerKeyOf, nostrPubkeyHex, CONFIRM_WORDS, emergencyOf, seedOfWords, seedOfNsec, newNsec, nodeKeyOf, signNostrEvent, npubOf } from './seed.js';
 import { nextStep, doneOf, seatConf, writeSeatConf, ROLES, guardianSetupOf, ownCoreOf } from './state.js';
 import { appsIn, appsView, chosenApps, hostedGameIdsOf } from './apps.js';
 import { installService, installProgram } from './service.js';
@@ -194,7 +194,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
   const view = () => {
     const s = state.read();
     return { network: 'testnet4', step: nextStep(s), done: doneOf(s), origin: s.origin || null, control: s.control || null, chainSwitchedFrom: s.chainSwitchedFrom || null, chain: s.chain ? { ...s.chain, password: s.chain.password ? '(set)' : undefined } : null,
-      chainTest: s.chainTest || null, roles: s.roles || [], hostGroup: s.hostGroup || "", roleInfo: ROLES, appInfo: appsView(releaseApps), apps: chosenApps(s, releaseApps), electrum: TESTNET4_ELECTRUM, owner: s.owner || null, service: s.service || null,
+      chainTest: s.chainTest || null, roles: s.roles || [], hostGroup: s.hostGroup || "", roleInfo: ROLES, appInfo: appsView(releaseApps), apps: chosenApps(s, releaseApps), electrum: TESTNET4_ELECTRUM, owner: s.owner || null, ownerNpub: s.owner ? npubOf(s.owner.pubkey) : null, ownerPick: s.ownerPick ? { ...s.ownerPick, npub: npubOf(s.ownerPick.pubkey) } : null, nostrPubkey: s.nostrPubkey || null, service: s.service || null,
       build: buildOf(), seatPort: portOf(), defaultPort: seatPort, reach: s.reach || null, direct: s.direct || null, login: login ? { url: login.url, result: login.result } : null,
       lightning: s.lightning || null, coreSync: s.core ? { dir: s.core.dir || state.home, interim: !!s.core.interim, prune: !!s.core.prune } : null, gatewaySeat: GATEWAY_SEAT, launchers: s.launchers || null, gateway: s.gateway ? { ...s.gateway, passwordFile: undefined } : null, bond: s.bond || null, custodyLater: laterCustody(s), wallet: (s.done || {}).seed ? (() => { const parts = withOtherNodes(s, depositParts(s, (s.roles || []).includes('custody') ? (s.custody || {}).pegInSats ?? CUSTODY_PEG_IN_SATS : 0), { further: !!fundFrom });
         return { address: walletOf(fromHex(state.readSecret('seed.hex'))).address, needSats: String(Object.values(parts).reduce((a, x) => a + x, 0)), parts }; })() : null,
@@ -363,6 +363,8 @@ const serviceRun = async (b) => {
     // from its store before the node holds it
     let nostrKey = null;
     if (s.control === 'nostr') { const db = openStore(state.path('node.db')); try { nostrKey = nodeIdentity(db).secret; } finally { db.close(); } }
+    // another Nostr key named as owner (kanban #648): the node's nsec is not it, so the browser's signer logs in, as for any npub owner
+    if (nostrKey && toHex(schnorr.getPublicKey(nostrKey)) !== s.owner.pubkey) nostrKey = null;
     if (state.exists('seed.hex') && s.control !== 'nostr') {   // (a Nostr node's identity is its nsec, adopted at the first step)
       const db = openStore(state.path('node.db'));
       try { s = state.save({ identityFromSeed: adoptIdentity(db, nodeKeyOf(fromHex(state.readSecret('seed.hex').trim()))) }); } finally { db.close(); }
@@ -601,20 +603,38 @@ const serviceRun = async (b) => {
     //                    so new and restore differ only in what the page says.
     // With 24 words the node's identity comes from the seed (adopted before its first start). A node that has a seed keeps it: only the
     // words or nsec that gave it are taken again.
+    // THE OWNER FROM THE SAME CHOICE (kanban #648, 2026-10-25: "this selection could then automatically, but with explanation on this step,
+    // replace the separate owner step"): the words' own key (they log in at /Dashboard/owner), or the nsec's - bound before the node's first
+    // start, as POST /api/owner binds it, and the owner step is done. `ownerNpub` is "use another Nostr key as owner" (an npub or 64 hex: an
+    // extension or a phone signer can name the owner, but cannot give a node that runs alone its key). New words bind their owner when they
+    // are confirmed (POST /api/seed/confirm). Run again on a node that has its owner, the owner stays unless another key is named here.
     'POST /api/start': async (b) => {
       const control = b.control || (b.mode === 'restore' || b.mode === 'new' ? 'words' : null);
       const action = b.action || b.mode;
       if (!['words', 'nostr'].includes(control)) return { ok: false, why: 'choose 24 words or Nostr' };
       if (!['new', 'restore'].includes(action)) return { ok: false, why: 'choose a new node or a restore' };
+      let pick = null;
+      if (b.ownerNpub != null && String(b.ownerNpub).trim() !== '') {
+        const pk = nostrPubkeyHex(b.ownerNpub);
+        if (!pk) return { ok: false, why: 'the other owner key is neither an npub nor 64 hex characters' };
+        pick = { mode: 'nostr', pubkey: pk };
+      }
       const s0 = state.read();
       const keep = (hex) => (state.exists('seed.hex') && state.readSecret('seed.hex').trim() !== hex
         ? { ok: false, why: `this node has other ${s0.control === 'nostr' ? 'Nostr key' : 'words'} already: set up another node folder for that` } : null);
       if (control === 'words' && action === 'new') {
         if (state.exists('seed.hex') && (s0.origin === 'restore' || s0.control === 'nostr')) return { ok: false, why: 'this node has its seed already' };
-        mark('start', { origin: 'new', control: 'words' });
-        return { ok: true, control, origin: 'new' };
+        // its words written down already (setup run again): another owner named here is bound now; the words' owner is bound at the seed step
+        if (pick && state.exists('seed.hex')) {
+          const now = Date.now();
+          bindOwner(pick.pubkey, now);
+          state.update((n) => ({ origin: 'new', control: 'words', ownerPick: pick, owner: pick, done: { ...(n.done || {}), start: now, owner: now } }));
+          return { ok: true, control, origin: 'new', owner: pick };
+        }
+        mark('start', { origin: 'new', control: 'words', ownerPick: pick });
+        return { ok: true, control, origin: 'new', ...(pick ? { owner: pick } : {}) };
       }
-      let seed, owner = null;
+      let seed, nostrKey = null;
       if (control === 'words') {
         const words = String(b.words || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
         if (words.length !== 24) return { ok: false, why: `type all 24 words, in order (${words.length} typed)` };
@@ -624,7 +644,7 @@ const serviceRun = async (b) => {
       } else {
         const r = seedOfNsec(b.nsec);
         if (!r.ok) return { ok: false, why: r.why };
-        seed = r.seed; owner = r.pubkey;
+        seed = r.seed; nostrKey = r.pubkey;
       }
       const hex = toHex(seed);
       const refused = keep(hex);
@@ -633,19 +653,21 @@ const serviceRun = async (b) => {
       pendingSeed = null;
       const { pubkey } = ownerKeyOf(seed);
       const em = emergencyOf(seed);
-      const now = Date.now(), done = { ...(s0.done || {}), start: now, seed: now };
-      if (owner) {
+      const now = Date.now(), done = { ...(s0.done || {}), start: now, seed: now, owner: now };
+      if (nostrKey) {
         // THE NODE RUNS ON THE NSEC ITSELF (2026-10-25: "The node must also operate on its own with the nsec"): the Nostr key is the
-        // node's identity on the network - it signs its proposals and bonds with no one at the page - and its owner
+        // node's identity on the network - it signs its proposals and bonds with no one at the page - and, unless another key is named, its owner
         const db = openStore(state.path('node.db'));
         let own;
         try { own = adoptIdentity(db, seedOfNsec(b.nsec).secret); } finally { db.close(); }
         if (!own) return { ok: false, why: 'this node folder has another node identity already: set up another node folder for that' };
-        bindOwner(owner, now, { nostrSeed: true });
-        done.owner = now;
       }
-      state.save({ origin: action, control, seedOwnerPubkey: pubkey, emergencyPubkey: em.pubkey, done, ...(owner ? { owner: { mode: 'nostr', pubkey: owner } } : {}) });
-      return { ok: true, control, origin: action, ownerPubkey: owner || pubkey, emergencyCode: em.code };
+      // the owner: the key named here, else the one this node has already (setup run again, #2099), else the key this choice gives
+      const had = (s0.done || {}).owner && s0.owner && s0.owner.pubkey ? s0.owner : null;
+      const owner = pick || had || (nostrKey ? { mode: 'nostr', pubkey: nostrKey } : { mode: 'seed', pubkey });
+      bindOwner(owner.pubkey, now, nostrKey && owner.pubkey === nostrKey ? { nostrSeed: true } : {});
+      state.save({ origin: action, control, seedOwnerPubkey: pubkey, emergencyPubkey: em.pubkey, done, owner, ownerPick: pick, nostrPubkey: nostrKey });
+      return { ok: true, control, origin: action, ownerPubkey: nostrKey || pubkey, owner, emergencyCode: em.code };
     },
     // a Nostr key for someone who has none (the owner's wallet screenshot: "New to Nostr? Create an account"): shown once, never kept here
     'POST /api/start/nsec': async () => ({ ok: true, ...newNsec() }),
@@ -666,8 +688,13 @@ const serviceRun = async (b) => {
       // THE EMERGENCY CODE, shown now to be written down beside the words (§23A.5a) - derived, never stored
       const em = emergencyOf(pendingSeed.seed);
       pendingSeed = null;
-      mark('seed', { seedOwnerPubkey: pubkey, emergencyPubkey: em.pubkey });
-      return { ok: true, emergencyCode: em.code };
+      // THE OWNER WITH THE WORDS (kanban #648): the key chosen at the first step - the words' own, or another Nostr key - bound now,
+      // before the node's first start, so the owner step is done; a node that has its owner keeps it
+      const s1 = state.read();
+      const owner = (s1.done || {}).owner && s1.owner ? s1.owner : (s1.ownerPick || { mode: 'seed', pubkey });
+      bindOwner(owner.pubkey, Date.now());
+      state.update((n) => ({ seedOwnerPubkey: pubkey, emergencyPubkey: em.pubkey, owner, done: { ...(n.done || {}), seed: Date.now(), owner: (n.done || {}).owner || Date.now() } }));
+      return { ok: true, emergencyCode: em.code, owner };
     },
 
     // THE EMERGENCY CODE'S OWN STEP (kanban #647, the owner's playtest 2026-10-25: "the emergency code notice should be an overlay or a separate
@@ -684,7 +711,7 @@ const serviceRun = async (b) => {
     // where the owner page reads it - the owner page opens logged in. Only to this setup's own session, before Finish ends it.
     'GET /api/owner/handoff': async () => {
       const s = state.read();
-      if (s.control === 'nostr') {
+      if (s.control === 'nostr' && (s.owner || {}).pubkey === nostrPubOf(s)) {
         const db = new DatabaseSync(state.path('node.db'), { readOnly: true });
         try { return { ok: true, kind: 'nsec', secret: toHex(new Uint8Array(db.prepare('SELECT secret FROM identity WHERE one = 0').get().secret)) }; } finally { db.close(); }
       }
@@ -704,8 +731,10 @@ const serviceRun = async (b) => {
       if (!(s.done || {}).seed) return { ok: false, why: 'confirm the seed first' };
       let pubkey, mode;
       if (b.mode === 'nostr') { pubkey = nostrPubkeyHex(b.npub); mode = 'nostr'; if (!pubkey) return { ok: false, why: 'that is neither an npub nor 64 hex characters' }; }
+      // the key this node was set up with (kanban #648): a Nostr node's nsec - it has no words to type - else the words' own key
+      else if (s.control === 'nostr' && nostrPubOf(s)) { pubkey = nostrPubOf(s); mode = 'nostr'; }
       else { pubkey = s.seedOwnerPubkey; mode = 'seed'; }
-      bindOwner(pubkey, Date.now());
+      bindOwner(pubkey, Date.now(), mode === 'nostr' && pubkey === nostrPubOf(s) ? { nostrSeed: true } : {});
       mark('owner', { owner: { mode, pubkey } });
       return { ok: true, owner: { mode, pubkey } };
     },
@@ -1129,6 +1158,12 @@ const serviceRun = async (b) => {
   // the store settings in it. The installer run again on an installed node (#734) confirms its owner step with the same owner: the file
   // was written whole as { pubkey, claimedAtMs } and the next restart read leavingAtMs null - the node that left took new rounds again.
   // The same owner keeps the file as it is (claimedAtMs, leaving, settings); only a new owner key writes a new one, atomically.
+  /** A Nostr node's own key (its nsec's, x-only hex): kept at the first step since kanban #648, read from its store before that. */
+  const nostrPubOf = (s) => {
+    if (s.control !== 'nostr') return null;
+    if (s.nostrPubkey) return s.nostrPubkey;
+    try { const db = new DatabaseSync(state.path('node.db'), { readOnly: true }); try { const r = db.prepare('SELECT secret FROM identity WHERE one = 0').get(); return r ? toHex(schnorr.getPublicKey(new Uint8Array(r.secret))) : null; } finally { db.close(); } } catch { return null; }
+  };
   const bindOwner = (pubkey, nowMs, extra = {}) => {
     const file = state.path('node.db.owner.json');
     let had = null;
