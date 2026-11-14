@@ -12,6 +12,7 @@ import { pageCurve } from '../src/page-curve.js';
 import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
 import { decodeRoundContract, encodeRoundContract, roundId } from '../../arena-protocol/src/contracts.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { signedSeats } from './settled-signed.js';   // kanban #2108: seats sign their /settled answers
 
 const CONTRACT_HEX = readFileSync(new URL('./page-collect-other-seeds.test.js', import.meta.url), 'utf8').match(/CONTRACT_HEX = '([0-9a-f]+)'/)[1];
 const contract = decodeRoundContract(fromHex(CONTRACT_HEX));
@@ -31,7 +32,7 @@ test('wf1489-client-3: one seat listing 3000 made-up settled rounds does not cos
   let derived = 0;
   const curve = { ...pageCurve, pointX: (s) => { derived += 1; return pageCurve.pointX(s); } };
   const t0 = Date.now();
-  const found = await PL.findOwedRounds({ seed, curve, nodes: ['https://liar', 'https://h1'], fetcher, sinceMs: 0 });
+  const found = await PL.findOwedRounds({ seed, curve, nodes: ['https://liar', 'https://h1'], ...signedSeats(fetcher, ['https://liar', 'https://h1']), sinceMs: 0 });
   const ms = Date.now() - t0;
   console.log(`  FACTS one seat listing 3000 fake rounds: ${derived} key derivations, ${ms} ms of the page's thread, ${found.length} found`);
   assert.deepEqual(found.map((f) => f.roundIdHex), [id]);

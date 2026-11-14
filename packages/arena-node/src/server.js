@@ -217,6 +217,7 @@ import { hostOf, payoutAddressRefusal, lnurlPublicFetch } from './public-fetch.j
 import { WinningsSend, sendPlanToJson, decodeNamedResendList } from './winnings-send.js';
 import { PLAN_ASK, SEND_PLAN_ASK_HEADER, sendPlanAskHeaders, checkSendPlanAsk } from './send-plan-ask.js';
 import { objectionWindowAllowed } from '../../arena-protocol/src/constants.js';   // kanban #1398
+import { settledListDigest } from '../../arena-protocol/src/settled-list.js';   // kanban #2108, #2123
 import { TYPE_SETTLEMENT_ACK, TYPE_CHECKPOINT, TYPE_INPUT_BATCH, TYPE_SIGNED_INPUT_BATCH, STAKE_NOT_SEEN, takesAnyFederation, networkOf, TYPE_RERUN_RESULT, TYPE_AUDIT_SLASH_PROOF, TYPE_ABANDONED_PROOF, TYPE_THEFT_PROOF, TYPE_BOUND_PROOF, SUPPORTED_PROTOCOL_VERSIONS, GATEWAY_SEAT_VERSION, LIQUIDITY_VERSION, PRESSURE_WEIGHT_VERSION, AUDITOR_VERSION, seatingRulesEpochOf } from '../../arena-protocol/src/constants.js';
 import { splitSigned, decodeCheckpoint, checkpointId } from '../../arena-protocol/src/checkpoint.js';
 import { MAX_SIGNED_INPUT_BATCH_BYTES, decodeInputBatch, splitSignedBatch, batchId } from '../../arena-protocol/src/batch.js';
@@ -13692,12 +13693,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // WHAT EACH SETTLEMENT MOVED, after a restart too: asked one round at a time, kept once found
         const listedRounds = [];
         for (const r of round.settledSince(since)) listedRounds.push({ r, moved: await settlements.summaryOf(r.roundId) });
-        return res.end(JSON.stringify({ node: toHex(round.pubkey), nowMs: String(nowMs), since: String(since),
-          rounds: listedRounds.map(({ r, moved }) => {
-            return { id: toHex(r.roundId), state: r.state, madeMs: String(r.madeMs),
-              payouts: moved && Array.isArray(moved.payouts) ? moved.payouts.filter((p) => p.kind === 'qualifier').map((p) => String(p.pk).toLowerCase()) : [],
-              refunds: r.refunds };
-          }) }));
+        const settledRounds = listedRounds.map(({ r, moved }) => {
+          return { id: toHex(r.roundId), state: r.state, madeMs: String(r.madeMs),
+            payouts: moved && Array.isArray(moved.payouts) ? moved.payouts.filter((p) => p.kind === 'qualifier').map((p) => String(p.pk).toLowerCase()) : [],
+            refunds: r.refunds };
+        });
+        // SIGNED BY THIS NODE'S KEY (kanban #2108, #2123): the page's owed scan counts only signed answers, one allowance per census key
+        const settledNode = toHex(round.pubkey);
+        const settledSig = toHex(schnorr.sign(settledListDigest({ node: settledNode, since: String(since), rounds: settledRounds }), round.identity.secret));
+        return res.end(JSON.stringify({ node: settledNode, nowMs: String(nowMs), since: String(since), rounds: settledRounds, sig: settledSig }));
       }
 
       // AND IN PUBLIC: the forfeit of a qualifier's lock - kept, or made now with

@@ -13,6 +13,7 @@ import { pageCurve } from '../src/page-curve.js';
 import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
 import { decodeRoundContract, encodeRoundContract, roundId } from '../../arena-protocol/src/contracts.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { signedSeats } from './settled-signed.js';   // kanban #2108: seats sign their /settled answers
 
 const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
 const HTML = readFileSync(PAGE, 'utf8');
@@ -36,6 +37,7 @@ test('3 kept phrases, 7 signer nodes: one /settled read per node; a round owed t
     if (url.includes('/round?id=')) return { ok: true, arrayBuffer: async () => encodeRoundContract(contract).buffer.slice(0) };
     return { ok: false };
   };
+  globalThis.fetch = signedSeats(globalThis.fetch).fetcher;
   const BL = { ...PL, findOwedRounds: PL.findOwedRounds, tabSeed: () => seeds[0], toHex, fromHex };
   const window = { ARENA_CURVE: curve, sessionStorage: null };
   const scan = pageFunction(PAGE, ['ARENACLIENT', 'vault', 'collectSeed', 'window', 'lookThePayout', 'crypto'], [SCAN], 'return findTheRoundsOwed;')(
@@ -59,6 +61,7 @@ test('a fresh browser behind the start screen: the scan waits for the wallet, th
   globalThis.fetch = async (url) => { asked.push({ url, at: Date.now() }); return url.includes('/settled?') ? { ok: true, json: async () => ({ rounds: [] }) } : { ok: false }; };
   let reads = 0, minted = 0;
   const collect = () => { reads += 1; if (reads < 3) return null; if (!minted) minted = Date.now(); return seed; };
+  globalThis.fetch = signedSeats(globalThis.fetch).fetcher;
   const BL = { ...PL, findOwedRounds: PL.findOwedRounds, tabSeed: () => seed, toHex, fromHex };
   const window = { ARENA_CURVE: pageCurve, sessionStorage: null };
   const errors = []; const was = console.error; console.error = (m) => errors.push(String(m));
@@ -89,8 +92,8 @@ test('a second owed scan does not read the round contract again', async () => {
     if (url.includes('/round?id=')) return { ok: true, arrayBuffer: async () => encodeRoundContract(contract).buffer.slice(0) };
     return { ok: false };
   };
-  const first = await PL.findOwedRounds({ seed, curve: pageCurve, nodes, fetcher });
-  const second = await PL.findOwedRounds({ seed, curve: pageCurve, nodes, fetcher });
+  const first = await PL.findOwedRounds({ seed, curve: pageCurve, nodes, ...signedSeats(fetcher, nodes) });
+  const second = await PL.findOwedRounds({ seed, curve: pageCurve, nodes, ...signedSeats(fetcher, nodes) });
   assert.deepEqual([first.length, second.length], [1, 1]);
   assert.equal(toHex(roundId(second[0].round)), id);
   assert.equal(asked.filter((u) => u.includes('/round?id=')).length, 1, 'the contract read once for two scans');

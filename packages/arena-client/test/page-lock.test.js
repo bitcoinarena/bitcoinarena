@@ -48,6 +48,7 @@ import { TRUCK_68E2_HASH } from '../../nextblock/plugin/truck-cores.js';   // th
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 import { pointKey } from '../../arena-protocol/test/point-key-fixture.js';  // kanban #1675: fixture keys are curve points
+import { signedSeats } from './settled-signed.js';   // kanban #2108: seats sign their /settled answers
 // The shape of a real invite (bech32m, prefix `fed1`, separator `1`): the first
 // rehearsal's page threw on its own invite because this constant had no separator.
 const INVITE = 'fed11qgqpw9thwvaz7te3xgmjuvpwxqhrzw' + 'q'.repeat(20);
@@ -979,7 +980,7 @@ test('a device holding only the seed matches its own key against the keys each s
     if (m && contracts.has(m[1])) return new Response(contracts.get(m[1]), { status: 200 });
     return new Response('no', { status: 404 });
   };
-  const ask = { seed, curve: pageCurve, nodes: ['http://a.test'], fetcher: signerNodes, sinceMs: 1000 };
+  const ask = { seed, curve: pageCurve, nodes: ['http://a.test'], ...signedSeats(signerNodes, ['http://a.test']), sinceMs: 1000 };
   const found = await findOwedRounds(ask);
   console.log(`  found ${found.length} of ${listing.length} listed: ${found.map((f) => `${f.roundIdHex.slice(0, 12)} payout=${f.payout} lock=${f.lock}`).join(', ')}; asked ${asked.join(' ')}`);
   assert.deepEqual(found.map((f) => f.roundIdHex), [toHex(rid)], 'not exactly the round that pays this seed');
