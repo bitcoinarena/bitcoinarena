@@ -333,7 +333,11 @@ try {
     if (said.every((x) => x.finality === 'FINAL') || Date.now() > until) break;
     await new Promise((r) => setTimeout(r, 30000));
   }
-  const rr = await (await fetch(`${nodes[0]}/api/round-result?round=${roundHex}`)).json().catch((e) => ({ error: e.message }));
+  // THE RESULT FROM A SEAT AT THE TABLE (kanban #2658, 2026-11-14: nodes[0] was not drawn for round 4516a6f6 and answered no players): every seat
+  // is asked in turn, the first that names the table's players answers
+  let rr = { error: 'no seat named the table\'s players' };
+  for (const n of nodes) { const got = await fetch(`${n}/api/round-result?round=${roundHex}`, { signal: AbortSignal.timeout(10000) }).then((r) => r.json()).catch(() => null);
+    if (got && Array.isArray(got.players) && got.players.length) { rr = { from: n, ...got }; break; } }
   log({ step: 'result', result: JSON.stringify(rr).slice(0, 600) });
 
   // THE WINNER COLLECTS, as the page's redeemPayout and redeemStake do (2026.1.9.11 release check, the owner HARD: "Auszahlung muss
