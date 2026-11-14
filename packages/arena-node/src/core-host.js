@@ -12,6 +12,7 @@ import { readFileSync } from 'node:fs';
 import { posix } from 'node:path';
 import { workerData } from 'node:worker_threads';
 import { getHeapStatistics } from 'node:v8';
+import { DEPTH_LOCKDOWN, DEPTH_MODULE } from './core-depth.js';
 
 const { files: fileList, entry, name, port, ctrl: ctrlBuffer, arrayBudget, liveCap, answerMax } = workerData;
 const files = new Map(fileList);
@@ -290,8 +291,10 @@ const LOCKDOWN = `'use strict';
   } }.localeCompare);
   Object.defineProperty(Error, 'prepareStackTrace', { value: undefined, writable: false, configurable: false });
   // the script's value, handed only to this thread and kept on no global: the core never reaches it
-  return Object.freeze({ begin() { used = 0; }, over: () => over, used: () => used,
-    bound: () => (count > ${TRACK_MAX} ? Infinity : base + since), exact });
+  // kanban #2220, #2476: the core's call depth (core-depth.js), counted in its own realm
+  const depth = ${DEPTH_LOCKDOWN};
+  return Object.freeze({ begin() { used = 0; depth.begin(); }, over: () => (over !== null ? over : depth.over()), used: () => used,
+    bound: () => (count > ${TRACK_MAX} ? Infinity : base + since), exact, depth });
 })();`;
 
 /** Answer the node: the message first, then the flag it waits on. */
@@ -345,12 +348,19 @@ function build() {
     if (!codeCache.has(key)) codeCache.set(key, m.createCachedData());
     return m;
   };
+  // kanban #2220, #2476: the count's functions, the core's realm's own (made by the lockdown), as the module every core file
+  // imports first (core-depth.js instrumentCore wrote that import; a core that writes one itself is refused there)
+  const depthModule = new vm.SyntheticModule(['e', 'x', 'c'], function () {
+    this.setExport('e', budget.depth.e); this.setExport('x', budget.depth.x); this.setExport('c', budget.depth.c);
+  }, { context, identifier: DEPTH_MODULE });
   const moduleOf = (rel) => {
+    if (rel === DEPTH_MODULE) return depthModule;
     if (!modules.has(rel)) modules.set(rel, compile(rel, files.get(rel), `core:/${rel}`));
     return modules.get(rel);
   };
   // THE GATE: a relative path inside the hashed files, and nothing else
   const resolve = (specifier, fromRel) => {
+    if (specifier === DEPTH_MODULE) return DEPTH_MODULE;
     if (!/^\.\.?\//.test(specifier)) throw new Error(`the core imports "${specifier}", and a core may import only its own files`);
     const rel = posix.normalize(posix.join(posix.dirname(fromRel), specifier));
     if (rel.startsWith('../') || !files.has(rel)) throw new Error(`the core imports "${specifier}", which is not one of its hashed files`);
@@ -358,7 +368,7 @@ function build() {
   };
   const linked = new Set();
   const link = (rel) => {
-    if (linked.has(rel)) return;
+    if (linked.has(rel) || rel === DEPTH_MODULE) return;
     linked.add(rel);
     const m = moduleOf(rel);
     const deps = m.moduleRequests.map((r) => resolve(r.specifier, rel));
