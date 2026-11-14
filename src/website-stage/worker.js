@@ -6,7 +6,8 @@
 // SEASON 2 (kanban #2623): the stage's own faucet doors - a reporter's link code and membership check (NIP-98 signed for this origin), the season's
 // pot, the open-issues list and the paid log - passed on to the faucet (FAUCET_ORIGIN, a secret of this Worker). Nothing else of the faucet is reachable here.
 const STAGE = 'https://stage.bitcoin-arena-site.pages.dev';
-const FAUCET_DOORS = new Map([['/api/faucet/feedback/link', 'POST'], ['/api/faucet/feedback/verify', 'POST'], ['/api/faucet/feedback/season', 'GET'],
+// WEEK 2 (kanban #2641): the social screen's live check of typed names
+const FAUCET_DOORS = new Map([['/api/faucet/feedback/link', 'POST'], ['/api/faucet/feedback/verify', 'POST'], ['/api/faucet/feedback/social', 'POST'], ['/api/faucet/feedback/season', 'GET'],
   ['/api/faucet/feedback/open-issues', 'GET'], ['/api/faucet/feedback/paid-log', 'GET']]);
 export default {
   async fetch(request, env) {
