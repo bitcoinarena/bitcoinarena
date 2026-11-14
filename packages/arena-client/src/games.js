@@ -19,8 +19,11 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 const GAMES_ANSWER_MS = 6000;
 // ONE SEAT'S ANSWER IS BOUNDED (kanban #2558, audit #1489 r13: one seat listing 2000 made-up manifests cost one games read 2001
 // developer-signature checks and 2002 refusals, and - signed under its own throwaway key - would have filled the lobby with tiles):
-// at most this many of a seat's games are decoded and checked, the pinned known-good ids first. An honest seat hosts a handful.
-export const GAMES_PER_SEAT = 32;
+// at most this many of a seat's games are decoded and checked, the pinned known-good ids first. An honest seat lists every VERSION it
+// still hosts: 41 on 2026-11-14 (24 btc-updown-15m, 10 rock-paper-scissors, 7 nextblock) - at 32 the newest versions were cut, and Rock
+// Paper Scissors and Up or Down "cannot be loaded" on the live page (feedback #064/#065/#068): their client hashes are named only by
+// v6+ / the newest. 256 keeps a flood at a bounded cost (256 signature checks a seat, against 2000) and room for many more versions.
+export const GAMES_PER_SEAT = 256;
 
 // ITS DEVELOPER SIGNED IT (kanban #1810): the signature over the manifest body's id (manifest.js manifestStands' first rule), by
 // the developer key the manifest names. The client carries no crypto library (the bundle is its own source, nothing from npm): the
