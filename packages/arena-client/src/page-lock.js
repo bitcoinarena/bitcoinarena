@@ -1134,9 +1134,26 @@ function pendingDrop(storage, federationId, operation) {
  */
 export function depositEnded(storage, federationId, operation, final, d) {
   let added = false;
-  if (final === DEPOSIT_STATE.CLAIMED) added = depositRowOnce(storage, federationId, d);
+  if (final === DEPOSIT_STATE.CLAIMED) {
+    added = depositRowOnce(storage, federationId, d);
+    // THE ROW FIRST, THEN THE ENTRY (kanban #2534, the #1179 order): a full browser refuses the history row (ledgerAppend answers false), and
+    // dropping the pending entry anyway left a claimed deposit named nowhere - its federation's only record, so ledgerFederations no longer
+    // named a wallet that holds the sats. The entry is dropped only once the row is held (written now, or by an earlier page); else the next
+    // page (resumeDeposits) writes it.
+    if (!added && !depositRowHeld(storage, federationId, d)) return false;
+  }
   if (final === DEPOSIT_STATE.CLAIMED || final === DEPOSIT_STATE.EXPIRED || final === DEPOSIT_STATE.FAILED) pendingDrop(storage, federationId, operation);
   return added;
+}
+/** Is this claimed deposit's history row held in this browser (kanban #2534)? By its invoice's hash, else by its operation's row key. */
+function depositRowHeld(storage, federationId, d) {
+  if (!storage || !fedHexOf(federationId)) return false;
+  let invoiceHash = null;
+  try { invoiceHash = toHex(decodeBolt11(d.invoice).paymentHash); } catch { invoiceHash = null; }
+  const kind = d.row && typeof d.row.kind === 'string' ? d.row.kind : 'deposit';
+  if (invoiceHash) return ledgerRows(storage, federationId).some((r) => r.kind === kind && r.invoiceHash === invoiceHash);
+  if (d.operation) { try { return storage.getItem(`${ledgerKey(federationId)}.dep-op-${String(d.operation).toLowerCase().replace(/[^0-9a-z_-]/g, '')}`) !== null; } catch { return false; } }
+  return false;
 }
 /** THE WELCOME THAT CAME AS E-CASH (kanban #1381): one deposit row per e-cash string, however many pages received it. */
 export function faucetEcashRowOnce(storage, federationId, { ecash, msat }) {
