@@ -67,6 +67,7 @@ export function createSeriesPull({ peers, held, take, parse, idOf, fetchFn = fet
         if (r && now() - r.atMs < retryMs) continue;
         done++;
         let why = 'no peer answered its line';
+        const triedLines = new Set();   // kanban #2681: a line one peer spoiled (a stripped creator=) does not stop the others' being tried
         for (const u of roots) {
           let line = null;
           try { const res = await fetchFn(`${u}/series-template?id=${id}`, { signal: AbortSignal.timeout(timeoutMs) }); line = res.ok ? await res.text() : null; } catch { line = null; }
@@ -74,10 +75,11 @@ export function createSeriesPull({ peers, held, take, parse, idOf, fetchFn = fet
           let t; try { t = parse(line.trim()); } catch (e) { why = `its line did not read: ${e.message}`; continue; }
           // A LINE IS BELIEVED ONLY AS ITS OWN ID: whatever a peer sends, it must hash to the id asked for
           if (idOf(t) !== id) { why = `${u} answered a line of another series`; continue; }
+          if (triedLines.has(line.trim())) continue;   // the same line from another peer is refused the same way
+          triedLines.add(line.trim());
           let got; try { got = await take(t); } catch (e) { got = { ok: false, why: e.message }; }
           if (got && got.ok) { why = null; break; }
           why = (got && got.why) || 'refused';
-          break;                       // the same line from another peer is refused the same way
         }
         if (why === null) { out.took++; refusedAt.delete(id); }
         else { refusedAt.set(id, { atMs: now(), why }); out.refused.push({ series: id.slice(0, 16), why: String(why).slice(0, 160) }); }
