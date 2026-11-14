@@ -1171,6 +1171,8 @@ createServer((req, res) => {
     req.on('end', () => {
       let ask;
       try { ask = JSON.parse(raw || '{}'); } catch { return send(400, { ok: false, why: 'not JSON' }); }
+      // kanban #2499, #2531: kind and account are strings, or nothing is asked - every check after compares them with ===
+      if (!ask || typeof ask !== 'object' || typeof ask.kind !== 'string' || typeof ask.account !== 'string') return send(400, { ok: false, why: 'kind and account are strings' });
       const who = { kind: ask.kind, account: ask.account, ip: ipOf(req) };
       // A PAGE THAT STOPPED WAITING TAKES NOTHING (audit 6, kanban #1419): a request whose connection closed while it was queued is dropped here
       one(async () => (req.socket.destroyed ? { ok: false, why: 'the page stopped waiting: ask again' } : null)

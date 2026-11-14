@@ -157,10 +157,16 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
   let strangersMinting = 0;            // invoices being made right now for callers not on this host (kanban #2302)
   let mintsAll = [];                  // when each fresh invoice for a caller not on this host was minted, the last window's (kanban #1964)
   const nowSec = () => Math.floor(Date.now() / 1000);
-  const local = (a) => a === '127.0.0.1' || a === '::1';
+  // THIS HOST'S OWN TOOLS (kanban #2109, #1489 v1-refute-19-s3-1): a caller whose socket is this machine and that sent no proxy header.
+  // Never read from a header: a stranger through the local proxy who names 127.0.0.1 in X-Forwarded-For (or cf-connecting-ip) is
+  // counted under that address like any other asker, not exempt.
+  const ownTool = (req) => {
+    const peer = String(req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+    return (peer === '127.0.0.1' || peer === '::1') && !req.headers['x-forwarded-for'] && !req.headers['cf-connecting-ip'];
+  };
   // '' when it may mint (and is counted), else why not
-  const mayMint = (asker) => {
-    if (local(asker)) return '';
+  const mayMint = (asker, own) => {
+    if (own) return '';
     const now = nowSec();
     const who = askerKey(asker);
     let a = askers.get(who);
@@ -399,7 +405,7 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
       const m = u.pathname.match(/^(?:\/\.well-known)?\/lnurlp\/([a-z0-9._-]+)(\/cb)?$/);
       if (req.method !== 'GET' || !m || !names.includes(m[1])) return json(404, { status: 'ERROR', reason: 'no such address here' });
       const name = m[1];
-      const asker = askerAddress(req);
+      const asker = askerAddress(req), own = ownTool(req);
       const metadata = addressMetadata(name, publicHost);
       if (!m[2]) {
         return json(200, { tag: 'payRequest', callback: `${base}/lnurlp/${name}/cb`, metadata, minSendable, maxSendable,
@@ -444,9 +450,9 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
         if (minting.size >= ZAP_PENDING_MAX) return refuse('too many zaps are being invoiced here; try again later');
         // every open zap is watched until it expires (kanban #1922): with the book and the let-go room both full, a new one waits
         if (pending.size + letGo.size + minting.size >= ZAP_PENDING_MAX + ZAP_LET_GO_MAX) return refuse('the book of open zaps is full; try again later');
-        const stranger = !local(asker);
+        const stranger = !own;   // kanban #2302 with #2109: only this node's own loopback tool is no stranger
         if (stranger && strangersMinting >= ZAP_MINTING_MAX) return refuse('too many invoices are being made here at once; try again in a moment');
-        const no = mayMint(asker);
+        const no = mayMint(asker, own);
         if (no) return refuse(no);
         minting.set(request.id, request.pubkey);
         if (stranger) strangersMinting++;
@@ -465,7 +471,7 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
       if (comment && comment.length > ZAP_COMMENT_MAX) return refuse(`a comment is at most ${ZAP_COMMENT_MAX} characters`);
       // A PLAIN TIP (kanban #1801): its invoice is hashed over the address's metadata only, so one of the same name and amount, still
       // open and unpaid, serves the next tipper as well as a new one would.
-      const key = `${local(asker) ? asker : askerKey(asker)}|${name}|${amountMsat}`;   // one asker's own invoice only (kanban #1999)
+      const key = `${own ? asker : askerKey(asker)}|${name}|${amountMsat}`;   // one asker's own invoice only (kanban #1999)
       const kept = tips.get(key);
       if (kept && kept.until - nowSec() >= expiryS / 2) {
         let got = null;
@@ -475,9 +481,9 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
       if (tips.get(key) === kept) tips.delete(key);
       let mint = tipMinting.get(key);
       if (!mint) {
-        const stranger = !local(asker);
+        const stranger = !own;   // kanban #2302 with #2109: only this node's own loopback tool is no stranger
         if (stranger && strangersMinting >= ZAP_MINTING_MAX) return refuse('too many invoices are being made here at once; try again in a moment');
-        const no = mayMint(asker);
+        const no = mayMint(asker, own);
         if (no) return refuse(no);
         if (stranger) strangersMinting++;
         mint = invoice({ name, amountMsat, descriptionHash: hex(sha256hex(metadata)), expiryS }).then((made) => {

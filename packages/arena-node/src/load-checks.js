@@ -77,6 +77,9 @@ export function loadValueRefusal([tick, fee, btc, room]) {
   if (room === undefined || room === null)
     return `the load at tick ${tick} carries no room: every page has sent the room its bed fills since the cargo factor became the bed fill, and a load without one scores 0.7 of a bed with no parcel on it`;
   if (!Number.isInteger(fee) || fee < 0) return `the load at tick ${tick} pays ${fee} sats: a fee is not negative`;
+  // kanban #2112 (#1489 v1-refute-66-s3-1, Hexbox #011): the core reads the fee as `feeSats | 0` (an i32), and a batch carries it as one;
+  // a live run's inputs are free JSON, so 2^32 would pass the rule below and be played as 0 sats
+  if (fee > 0x7fffffff) return `the load at tick ${tick} pays ${fee} sats: a fee is at most ${0x7fffffff} (the core reads it as a 32-bit integer)`;
   if (!Number.isInteger(btc) || btc < 0 || btc > BTC_MOST_HUND)
     return `the load at tick ${tick} carries ${btc} hundredths of a BTC: a truck carries 0 .. ${BTC_MOST_HUND} (20 BTC)`;
   if (!Number.isInteger(room) || room < 0 || room > BED_ROOM_UNITS)

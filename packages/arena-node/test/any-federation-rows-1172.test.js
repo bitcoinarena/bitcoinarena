@@ -205,6 +205,8 @@ function lateSeat() {
 
 test('#1172 a late loser of a round that takes any federation is a candidate once every federation is in, and is built in its own federation', async () => {
   const { ls, round, ports, built } = lateSeat();
+  // kanban #2352: the split is kept before any row, as #settleFederations does (a store with rows and no split is an old build's, asked again)
+  round.putFedLockSplit(RID, [A]);
   round.putFedLockSettlement({ roundId: RID, federation: A, txid: 'a1'.repeat(32), message: new Uint8Array(32), signature: new Uint8Array(64), state: 'SUBMITTING', why: 'test' });
   const early = round.lateSettlementCandidates().length;
   round.putFedLockSettlement({ roundId: RID, federation: A, txid: 'a1'.repeat(32), message: new Uint8Array(32), signature: new Uint8Array(64), state: 'ACCEPTED', why: 'test' });
@@ -234,6 +236,7 @@ test('#1172 a late loser of a round that takes any federation is a candidate onc
 test('#1240 a seat that kept no shares of an any-federation round derives them from its plan and builds the late loser\'s settlement', async () => {
   const { ls, round, built } = lateSeat();
   round.db.prepare('DELETE FROM lock_settlement_shares WHERE round_id = ?').run(Buffer.from(RID));
+  round.putFedLockSplit(RID, [A]);   // kanban #2352: kept before any row, as #settleFederations does
   round.putFedLockSettlement({ roundId: RID, federation: A, txid: 'a1'.repeat(32), message: new Uint8Array(32), signature: new Uint8Array(64), state: 'ACCEPTED', why: 'test' });
   const WINNER = [{ pubkey: W1.pubkey, msat: STAKE - FEE }];
   let planned = 0;
@@ -250,6 +253,7 @@ test('#1240 a seat that kept no shares of an any-federation round derives them f
   // a plan that pays another number of outputs than the kept moves is not taken
   const other = lateSeat();
   other.round.db.prepare('DELETE FROM lock_settlement_shares WHERE round_id = ?').run(Buffer.from(RID));
+  other.round.putFedLockSplit(RID, [A]);
   other.round.putFedLockSettlement({ roundId: RID, federation: A, txid: 'a1'.repeat(32), message: new Uint8Array(32), signature: new Uint8Array(64), state: 'ACCEPTED', why: 'test' });
   other.ls.planOf = async () => ({ ok: true, anyFed: true, plan: { ...PLAN.plan, stakeShares: WINNER }, split: { settlements: [{ payouts: [{}, {}] }] } });
   const no = await other.ls.lateMessage(RID, LATE.entryId);
