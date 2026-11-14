@@ -22,6 +22,7 @@ import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { withConfigEndpoints } from './federation-endpoints.js';
 import { recordInviteSource, createInviteBuffer } from '../../arena-protocol/src/trusted-guardian-keys.js';
 import { readInvite } from './invite.js';
+import { answersUpTo } from './peer-read.js';   // kanban #2650
 import { buildFederationRecord, encodeFederationRecord, federationRecordId, joinSignedRecord, verifyFederationRecord, verifyFederationRecords,
   FEDERATION_STATUS, GONE, decodeFederationRecord, splitSignedRecord, guardianKeySet, RESTRICTION_RANK, selfConsistentRestrictive, thresholdOf } from '../../arena-protocol/src/federation-record.js';
 
@@ -146,7 +147,9 @@ export function recordStep(had, next, from = 'gather') {
 
 // `successorOf(fidHex)`: the successor this seat was told of (hex) or null; `closedOf(fidHex)`: whether the drain is over
 // (§23A.6 steps 2 and 4) - both read into the body every guardian seat builds the same way
-export function federationRecords({ round, roster, inviteFor, networkId, leavingAtMs = () => null, fetcher = fetch, nowMs = () => Date.now(), newest = null,
+// kanban #2650 (a bypass of #2637): the default fetcher is the capped one - every GET /federations, /federation-record answer from a
+// guardian or census seat is read to at most PEER_ANSWER_BYTES (8 MiB), not buffered and parsed whole whatever its size
+export function federationRecords({ round, roster, inviteFor, networkId, leavingAtMs = () => null, fetcher = answersUpTo((...a) => globalThis.fetch(...a)), nowMs = () => Date.now(), newest = null,
   successorOf = () => null, closedOf = () => false, retiringOf = () => false, reserveOf = null, absences = null, abandonBlocks = null, departureNotice = null,
   // THE GUARDIANS' ADDRESSES FROM THE FEDERATION'S OWN CONFIGURATION (federation-endpoints.js): async (fidHex) -> Map(peer key
   // hex -> API URL) | null; a guardian it names takes that endpoint into the body, one it does not keeps its advert's

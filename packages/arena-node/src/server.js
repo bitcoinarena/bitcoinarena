@@ -6641,7 +6641,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   // THE OWNERS' CONSENTS TO RETIRE A FEDERATION (kanban #577), kept beside the store
   const retireBook = createRetireBook(db && db.arenaPath ? `${db.arenaPath}.retire.json` : null);
-  fedRecords = federationRecords({ round, roster, inviteFor: inviteOfFed, store: recordStore, networkId: chainNetworkId() ? fromHex(chainNetworkId()) : null, reserveOf, endpointsOf: fedEndpointsOf, guardianKeysOf: fedGuardianKeysOf,
+  fedRecords = federationRecords({ round, roster, fetcher: fetch /* the capped door, kanban #2650 */, inviteFor: inviteOfFed, store: recordStore, networkId: chainNetworkId() ? fromHex(chainNetworkId()) : null, reserveOf, endpointsOf: fedEndpointsOf, guardianKeysOf: fedGuardianKeysOf,
     // a mirrored record checked against the census at its own height, read off this seat's chain
     censusAt: ballot && typeof ballot.censusEntriesAt === 'function' ? (h) => (chainNetworkId() ? ballot.censusEntriesAt(chainNetworkId(), h) : null) : null,
     // and its tip: a seat that holds no round builds and checks records from the chain's census
@@ -6921,7 +6921,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   try {
     for (const r of round.db.prepare('SELECT federation, epoch, kind, body FROM gateway_seatings').all()) ({ own: ownSeatings, liquidity: liquiditySeatings, 'liquidity-own': ownLiquiditySeatings }[r.kind] || gatewaySeatings).set(`${r.federation}:${r.epoch}`, JSON.parse(r.body));
   } catch { /* none kept */ }
-  const watchFor = (g) => createGatewayWatch({ federationId: async () => federationOfDir(g.dataDir),
+  const watchFor = (g) => createGatewayWatch({ fetcher: fetch /* the capped door, kanban #2650 */, federationId: async () => federationOfDir(g.dataDir),
       endpointOf: (e) => addressBook.endpointOf(e),   // its announced address first (kanban #577)
       // the federation's reserve and cap from its record: under peg-in pressure the proved peg-in ranks first (§23A.3a part 2)
       pressureFor: async (fid) => { const r = fedRecords.recordOf(fid); return r && r.record ? { reserveSats: r.record.reserveSats, exposureCapSats: r.record.exposureCapSats } : null; },
