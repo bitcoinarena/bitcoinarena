@@ -5,6 +5,10 @@
 // faucet pays an address once, an IP a few times a day, and no more than a daily cap in all; when it says no, the installer shows the
 // guided way (public faucets) instead. These are the rules alone - the server (tools/faucet.mjs) pays through its bitcoind wallet.
 
+import { schnorr } from '@noble/curves/secp256k1.js';
+import { presenceId } from '../../arena-protocol/src/match.js';
+import { fromHex } from '../../arena-protocol/src/hash.js';
+
 export const FAUCET_MAX_SATS = 1500000;        // one request: a custody node's whole deposit fits (bond, peg-in, channels, fees)
 export const FAUCET_DAY_CAP_SATS = 30000000;    // all requests of one UTC day
 export const FAUCET_PER_IP_PER_DAY = 30;   // kanban #1397 (Daniel 2026-11-09: "Set the limits much higher"): was 3
@@ -182,7 +186,15 @@ export function feedbackDecide({ text, ip = null, build = '', game = '', round =
 // re-posting made-up rounds every second pushed every real player's table out of its reading. Each row now names the callers (ipKey) that said
 // it; the list ranks them per network (below), and since #1912 a caller's extra rows are ranked behind, never deleted.
 export const OPPONENT_WANT_MS = 12000, OPPONENT_WANTS_MOST = 64, OPPONENT_WANTS_PER_CALLER = 2;
-export function opponentWant(wants, round, nowMs = Date.now(), tapped = false, who = null) {
+// A TAP IS SIGNED (kanban #2087, Daniel 2026-11-14: "a signed tap only"): the bare `tapped: true` the door took was anyone's, so one caller
+// posting a real open round with it sent the bot to an empty table and past the real player's. A tap now counts only as { key, sig }: the
+// tapping tab's identity key and its Schnorr signature over presenceId(round, key) - the presence proof it says at the round's seats
+// (identity.js presenceProofFor). Anything else - `true` among it - is no tap; the bot then waits for the entry at the seats as for any row.
+export function tapSigned(round, tap) {
+  if (!tap || typeof tap !== 'object' || !/^[0-9a-f]{64}$/.test(String(round || '')) || !/^[0-9a-f]{64}$/.test(String(tap.key || '')) || !/^[0-9a-f]{128}$/.test(String(tap.sig || ''))) return false;
+  try { return schnorr.verify(fromHex(tap.sig), presenceId({ roundId: fromHex(round), identityKey: fromHex(tap.key) }), fromHex(tap.key)); } catch { return false; }
+}
+export function opponentWant(wants, round, nowMs = Date.now(), tap = null, who = null) {
   if (!/^[0-9a-f]{64}$/.test(String(round || ''))) return { ok: false, why: 'a round is 32 bytes of hex' };
   for (const [k, x] of wants) if (nowMs - x.at > OPPONENT_WANT_MS) wants.delete(k);
   // A CALLER OVER ITS SHARE IS RANKED, NOT DELETED (kanban #1489, #1912 + #1954 + #1991): every device behind one IPv4 (CGNAT, a cafe) is one
@@ -191,7 +203,7 @@ export function opponentWant(wants, round, nowMs = Date.now(), tapped = false, w
   if (!wants.has(round) && wants.size >= OPPONENT_WANTS_MOST && !opponentEvict(wants, who ? opponentNet(who) : `round:${round}`)) return { ok: false, why: 'too many tables just now' };
   const by = wants.get(round)?.by || new Set();
   if (who) by.add(who);
-  wants.set(round, { at: nowMs, tapped: tapped === true || wants.get(round)?.tapped === true, by });
+  wants.set(round, { at: nowMs, tapped: tapSigned(round, tap) || wants.get(round)?.tapped === true, by });
   return { ok: true };
 }
 // ONE NETWORK, NOT ONE ADDRESS (kanban #1718, #1781): an IPv6 caller is keyed by its /64, and any home line holds a /56 (256 /64s), so the cap of 2

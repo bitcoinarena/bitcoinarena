@@ -23,7 +23,8 @@ test('#1943 #1983: state or log spam from free keys - honest new events kept, th
     const oks = await publish(r.port, honest, socks);
     assert.deepEqual(oks.map((m) => [m[2], m[3]]), [[true, ''], [true, '']]);
     const kept = r.events();
-    assert.ok(kept.length <= 20, `${kept.length} kept`);
+    // kanban #2393: the seeds (kind 30078) are counted against a quota of their own, not the total
+    assert.ok(kept.filter((x) => x.kind !== 30078).length <= 20, `${kept.length} kept`);
     for (const e of honest) assert.ok(kept.some((x) => x.id === e.id));
     assert.equal(kept.filter((x) => x.pubkey === old.pub).length, 1, 'an earlier player keeps their profile');
     assert.equal(kept.filter((x) => x.pubkey === node.pub).length, 2, 'the node keeps its earlier award');

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // Adapted to 1.9 by #2536 (kanban #2393): 1.9's full relay makes room by fair share (#1943, #1983) and protects only the authors in
 // `keep` (ARENA_RELAY_KEEP, the seats' node keys, #2146 / #2214): a node's events are never given back for another author's write. The test
-// runs the relay as it must be run, with the node's key kept. The new-seed half is measured and kept as todo (open, needs a ruling).
+// runs the relay as it must be run, with the node's key kept. The new-seed half: the seeds' own quota (kanban #2393, Daniel 2026-11-14).
 // kanban #1489 a44-refute-20 skeptic 2: #2144 BROUGHT BACK THE #1620 OFF SWITCH, through one-per-key events.
 // #2144 makes a full relay drop only REGULAR events (and 30762 results) to make room, and refuses the new event when none is left.
 // Keys are free: a stranger fills the total with ONE kind 30078 under each of many fresh keys (each inside its quota, each one-per-key).
@@ -45,7 +45,8 @@ test('#2393 (1.9, node key kept): a relay filled with strangers\' one-per-key ev
   } finally { for (const s of socks) s.terminate(); await r.close(); }
 });
 
-test('#2393 (1.9): a relay filled with strangers\' one-per-key events still takes a NEW player\'s seed', { todo: 'kanban #2393 open: fair share refuses a new author when every holder holds one event; taking it would let strangers evict existing seeds (#2447) - needs a ruling' }, async () => {
+// kanban #2393 (Daniel 2026-11-14): the encrypted seeds (kind 30078) have a quota of their own, so strangers' seeds fill neither the total nor it here
+test('#2393 (1.9): a relay filled with strangers\' one-per-key events still takes a NEW player\'s seed', async () => {
   const r = await startRelay({ port: 0, limits: { authorEvents: 5, totalEvents: 20 } });
   const socks = [];
   try {

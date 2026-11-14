@@ -61,8 +61,16 @@ const eventSize = (e, json, rows) => Buffer.byteLength(json) + EVENT_ROW_BYTES +
 // So no stranger can shut the relay to anybody else: what free keys add is taken back from the largest holders first, which are theirs.
 // Who holds what (per author and pool) is kept by triggers in temporary tables, rebuilt from the store at every start.
 const LOG_SHARE = 0.5;
-const POOL_SQL = (k) => `(CASE WHEN ${k} IN (0, 3) OR ${k} BETWEEN 10000 AND 19999 OR ${k} BETWEEN 30000 AND 39999 THEN 0 ELSE 1 END)`;   // 0 state, 1 log
-const poolOf = (k) => (isReplaceable(k) || isParam(k) ? 0 : 1);
+// THE ENCRYPTED SEEDS HAVE A QUOTA OF THEIR OWN (kanban #2393, #1489 a44-refute-20-s2; Daniel 2026-11-14): keys are free, so strangers
+// filled the total with one kind 30078 under each fresh key - one event a key, so nobody held more than anybody and fair share had nothing
+// to take - and every node's next signed round result (30762, never sent again) was refused 'blocked: the relay is full'. Kind 30078 (NIP-78
+// app data: the players' NIP-44-encrypted game seeds) is now pool 2, counted against SEED_EVENTS / SEED_BYTES and never against the total
+// the other pools share: no number of seeds refuses a node's result, a profile or a badge. Inside the seed pool room is made as in a pool
+// above (steps 2-4): a holder of more seeds than the writer gives back its oldest, an author replaces its own, else the new seed is refused -
+// an existing player's only seed is never pushed out by strangers' (#2447).
+const SEED_KIND = 30078, SEED_POOL = 2, SEED_EVENTS = 100000, SEED_BYTES = 128 * 1024 * 1024;
+const POOL_SQL = (k) => `(CASE WHEN ${k} = ${SEED_KIND} THEN ${SEED_POOL} WHEN ${k} IN (0, 3) OR ${k} BETWEEN 10000 AND 19999 OR ${k} BETWEEN 30000 AND 39999 THEN 0 ELSE 1 END)`;   // 0 state, 1 log, 2 seeds
+const poolOf = (k) => (k === SEED_KIND ? SEED_POOL : isReplaceable(k) || isParam(k) ? 0 : 1);
 const SLOW_BYTES = 4 * 1024 * 1024;   // kanban #1542: the most one client may leave unread before it is dropped
 const HARD_SLOW_BYTES = 2 * SLOW_BYTES;   // kanban #1717: past this backlog no message at all is queued; the client is dropped
 // kanban #1871, #1904 (bypasses of #1542/#1717): the bound was per socket only, so N unread sockets of one stranger held N x ~4.7 MB.
@@ -260,7 +268,8 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
       DELETE FROM holders WHERE pubkey = old.pubkey AND pool = ${POOL_SQL('old.kind')} AND n <= 0;
       UPDATE pools SET n = n - 1, b = b - COALESCE(old.size, 0) WHERE pool = ${POOL_SQL('old.kind')};
     END;`);
-  const totalUse = db.prepare('SELECT COALESCE(SUM(n), 0) AS n, COALESCE(SUM(b), 0) AS b FROM pools');
+  const totalUse = db.prepare(`SELECT COALESCE(SUM(n), 0) AS n, COALESCE(SUM(b), 0) AS b FROM pools WHERE pool != ${SEED_POOL}`);   // kanban #2393: seeds apart
+  const seedUse = db.prepare(`SELECT COALESCE(SUM(n), 0) AS n, COALESCE(SUM(b), 0) AS b FROM pools WHERE pool = ${SEED_POOL}`);
   const poolUse = db.prepare('SELECT n, b FROM pools WHERE pool = ?');
   const holderUse = db.prepare('SELECT n, b FROM holders WHERE pubkey = ? AND pool = ?');
   const largest = { n: db.prepare('SELECT pubkey, n, b FROM holders WHERE pool = ? AND pubkey != ? AND pubkey NOT IN (SELECT value FROM json_each(?)) ORDER BY n DESC, first DESC LIMIT 1'),
@@ -281,7 +290,8 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
     created_at ASC, id DESC LIMIT 1`);
   const dropId = db.prepare('DELETE FROM events WHERE id = ?');
   const has = db.prepare('SELECT 1 AS x FROM events WHERE id = ?');
-  const lim = { authorEvents: AUTHOR_EVENTS, authorBytes: AUTHOR_BYTES, totalEvents: TOTAL_EVENTS, totalBytes: TOTAL_BYTES, logShare: LOG_SHARE, totalSlowBytes: TOTAL_SLOW_BYTES, ...limits };
+  const lim = { authorEvents: AUTHOR_EVENTS, authorBytes: AUTHOR_BYTES, totalEvents: TOTAL_EVENTS, totalBytes: TOTAL_BYTES, logShare: LOG_SHARE, totalSlowBytes: TOTAL_SLOW_BYTES,
+    seedEvents: SEED_EVENTS, seedBytes: SEED_BYTES, ...limits };
   // MAKING ROOM IS NOT A WAY TO DELETE A NODE'S RESULTS (kanban #2146, #2214; #1489 a44-refute-24): keys are free - strangers who fill the
   // total with one event a key leave the NODE the largest holder, and then every stranger 30078 under a fresh key and `d` took one of the
   // node's kept, signed round results. An author in `keep` (the seats' node keys: ARENA_RELAY_KEEP for tools/nostr-relay.mjs) is never the
@@ -597,7 +607,8 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
             // after the replaceable drop and the author's own trim, so a replacement (a newer kind 0 profile, a node's settled 30762 under the same d)
             // or an author rolling its own oldest out adds nothing and is kept on a full relay; only an event that grows the store past the total is
             // refused. kanban #1811: all of it is one transaction (one write, not one per tag row), rolled back when it is refused.
-            const before = { ...totalUse.get() };
+            const seed = poolOf(e.kind) === SEED_POOL, useOf = () => (seed ? seedUse : totalUse).get();   // kanban #2393: the seeds' own quota
+            const before = { ...useOf() };
             let verdict = 'kept';
             db.exec('BEGIN');
             try {
@@ -614,21 +625,21 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
               else {
                 // kanban #1769: only growth past the total counts (a store already past a lowered limit keeps what does not grow it);
                 // kanban #1943, #1983: room is made by fair share (LOG_SHARE above), refused only when nobody holds more than this author
-                const capN = Math.max(lim.totalEvents, before.n), capB = Math.max(lim.totalBytes, before.b);
+                const capN = Math.max(seed ? lim.seedEvents : lim.totalEvents, before.n), capB = Math.max(seed ? lim.seedBytes : lim.totalBytes, before.b);
                 const P = poolOf(e.kind), Q = 1 - P;
                 for (;;) {
-                  const t = totalUse.get();
+                  const t = useOf();
                   const dim = t.n > capN ? 'n' : t.b > capB ? 'b' : null;
                   if (!dim) break;
                   const share = (pool) => (dim === 'n' ? lim.totalEvents : lim.totalBytes) * (pool === 1 ? lim.logShare : 1 - lim.logShare);
                   let victim = null;
-                  const q = poolUse.get(Q);
+                  const q = seed ? null : poolUse.get(Q);   // 1. never across the seeds' quota
                   if (q && q[dim] > share(Q)) { const h = largest[dim].get(Q, '', keepJson); if (h) victim = oldestIn.get(h.pubkey, Q, e.id); }   // 1.
                   if (!victim) {   // 2.
                     const mine = holderUse.get(e.pubkey, P) || { n: 0, b: 0 }, h = largest[dim].get(P, e.pubkey, keepJson);
                     if (h && (h[dim] > mine[dim] || keepSet.has(e.pubkey))) victim = oldestIn.get(h.pubkey, P, e.id);   // a kept author's write takes from the largest other (#2146)
                   }
-                  if (!victim && P === 0) victim = oldestIn.get(e.pubkey, 0, e.id);   // 3.
+                  if (!victim && P !== 1) victim = oldestIn.get(e.pubkey, P, e.id);   // 3. (a state event, or a seed)
                   if (!victim) { verdict = 'full'; break; }   // 4.
                   dropId.run(victim.id);
                 }
