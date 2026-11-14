@@ -25,6 +25,9 @@ R("        box.append(el('div', { cls: 'fb-social-row' }, ico, input, chip), el(
 R("      for (const r of ROWS) {\n        const ico =", "      const items = el('div', { cls: 'fb-social-items' }); box.append(items);\n      for (const r of ROWS) {\n        const ico =")
 R("    #arena-feedback .fb-social-say {", """    /* WIDER ON IPAD AND DESKTOP (Daniel 2026-11-14: "Auf dem Desktop muss man zuviel scrollen, mach es breiter"): the dialog up to 920 px, the
        community rows in two columns; a phone stays as it is */
-    @media (min-width: 768px) { #arena-feedback .card { width: min(920px, 94vw); } #arena-feedback .fb-social-items { display: grid; grid-template-columns: 1fr 1fr; gap: 0 18px; } }
+    @media (min-width: 768px) { #arena-feedback div.card { width: min(920px, calc(100vw - 32px)); max-width: 920px; } #arena-feedback .fb-social-items { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 0 18px; } }
+    /* nothing in the box is wider than its column (the 440 px base rule came later in the file and won: the two columns ran out of the dialog) */
+    #arena-feedback div.card { margin: 0 auto; } #arena-feedback .fb-social-item, #arena-feedback .fb-social-row, #arena-feedback .fb-social-line { min-width: 0; }
+    #arena-feedback .fb-social-chip { min-width: 0; overflow: hidden; text-overflow: ellipsis; max-width: 45%; }
     #arena-feedback .fb-social-say {""")
 open(p, 'w').write(s); print('nostr-wide ok')
