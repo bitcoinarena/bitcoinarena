@@ -13,6 +13,7 @@ import { pageCurve } from '../src/page-curve.js';
 import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
 import { decodeRoundContract, encodeRoundContract, roundId } from '../../arena-protocol/src/contracts.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { signedSeats } from './settled-signed.js';   // kanban #2108: seats sign their /settled answers
 
 const CONTRACT_HEX = readFileSync(new URL('./page-collect-other-seeds.test.js', import.meta.url), 'utf8').match(/CONTRACT_HEX = '([0-9a-f]+)'/)[1];
 const contract = decodeRoundContract(fromHex(CONTRACT_HEX));
@@ -38,7 +39,7 @@ test('wf1489-v1-refute-10-s3-2: one liar host behind a few hostname spellings do
     }
     return { ok: false };
   };
-  const found = await PL.findOwedRounds({ seed, curve: pageCurve, nodes: ['https://honest.example', ...liars], fetcher, sinceMs: 0 });
+  const found = await PL.findOwedRounds({ seed, curve: pageCurve, nodes: ['https://honest.example', ...liars], ...signedSeats(fetcher, ['https://honest.example']), sinceMs: 0 });
   console.log(`  FACTS honest seat lists 500 (the player's round oldest) beside ${liars.length} spellings of one liar host: ${found.length} found`);
   assert.deepEqual(found.map((f) => f.roundIdHex), [id], 'the honest seat\'s listed round owed to this phrase was not found');
 });

@@ -13,6 +13,7 @@ import { pageCurve } from '../src/page-curve.js';
 import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
 import { decodeRoundContract, encodeRoundContract, roundId } from '../../arena-protocol/src/contracts.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { signedSeats } from './settled-signed.js';   // kanban #2108: seats sign their /settled answers
 
 const CONTRACT_HEX = readFileSync(new URL('./page-collect-other-seeds.test.js', import.meta.url), 'utf8').match(/CONTRACT_HEX = '([0-9a-f]+)'/)[1];
 const base = decodeRoundContract(fromHex(CONTRACT_HEX));
@@ -36,7 +37,7 @@ test('wf1489-v1-refute-14-s4-4: a seat answering every /round?id= with the right
   };
   const nodes = ['https://late', 'https://h1', 'https://h2', 'https://h3', 'https://h4', 'https://h5', 'https://h6'];
   const t0 = Date.now();
-  const found = await PL.findOwedRounds({ seed, curve: pageCurve, nodes, fetcher, sinceMs: 0 });
+  const found = await PL.findOwedRounds({ seed, curve: pageCurve, nodes, ...signedSeats(fetcher, nodes), sinceMs: 0 });
   const ms = Date.now() - t0;
   console.log(`  FACTS ${N} owed rounds, one seat answering the right contract at 1900 ms: ${found.length} found after ${ms} ms, ${lateReads} reads of it`);
   assert.equal(found.length, N);
