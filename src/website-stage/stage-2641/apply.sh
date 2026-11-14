@@ -14,6 +14,7 @@ grep -q "const social = SOCIAL_ON()" "$T/out.html" || python3 "$HERE/feedback-fo
 sed -i "s#, shotRow, tick, say, levels#, shotRow, say, levels#" "$T/out.html"
 # kanban #2745: a duplicate's secret ticket link in My feedback
 python3 "$HERE/dup-link.py" "$T/out.html"
+python3 "$HERE/join-icons.py" "$T/out.html"
 # 2. the UI stamp
 OLD=$(grep -o 'class="build-line">UI [0-9]*' "$T/out.html" | head -1 | grep -o '[0-9]*$')
 sed -i "s#>UI $OLD<#>UI $UI<#g; s#· UI $OLD'#· UI $UI'#g" "$T/out.html"
