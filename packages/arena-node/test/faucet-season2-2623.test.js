@@ -29,13 +29,14 @@ test('#2623 the faucet: link code by sign-in, Season 2 approval with bonus and h
   const dir = mkdtempSync(join(tmpdir(), 'faucet-s2-2623-'));
   writeFileSync(join(dir, 'token'), 'x');
   writeFileSync(join(dir, 'open.json'), JSON.stringify({ updated: '2026-11-13T00:00:00Z', areas: [{ area: 'Slashing', tickets: ['#1155'], title: 'secret words' }] }));
-  const chatServer = createServer((req, res) => { req.resume(); req.on('end', () => { res.writeHead(200); res.end('{}'); }); });
+  // the chat, and the board's ticket #77 for a duplicate's link (kanban #2745): with comments and history the faucet must not keep
+  const chatServer = createServer((req, res) => { req.resume(); req.on('end', () => { if (req.url === '/api/tasks/77') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ id: 77, title: 'Known payout bug', description: 'The payout spins after round two.', comments: [{ body: 'INTERNAL COMMENT' }], events: [{ action: 'HISTORY-EVENT' }] })); } res.writeHead(200); res.end('{}'); }); });
   await new Promise((r) => chatServer.listen(0, '127.0.0.1', r));
   const port = 20000 + Math.floor(Math.random() * 9000), db = join(dir, 'feedback.db'), s2db = join(dir, 'season2.db');
   const faucet = spawn(process.execPath, [fileURLToPath(new URL('../tools/faucet.mjs', import.meta.url))], { stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, FAUCET_PORT: String(port), FAUCET_CHAT_URL: `http://127.0.0.1:${chatServer.address().port}`, FAUCET_CHAT_CHANNEL: '6', FAUCET_CHAT_TOKEN_FILE: join(dir, 'token'),
       FAUCET_FEEDBACK_DB: db, FAUCET_FOUNDING_FILE: join(dir, 'founding.jsonl'), FAUCET_BOOK: join(dir, 'book.json'), FAUCET_BOUNTY_ORIGINS: PRIVATE,
-      FAUCET_ADMIN_SHA256: createHash('sha256').update(ADMIN).digest('hex'), FAUCET_BOUNTY_S2_DB: s2db, FAUCET_BOUNTY_S2_BASES: STAGE, FAUCET_OPEN_ISSUES: join(dir, 'open.json') } });
+      FAUCET_ADMIN_SHA256: createHash('sha256').update(ADMIN).digest('hex'), FAUCET_BOUNTY_S2_DB: s2db, FAUCET_BOUNTY_S2_BASES: STAGE, FAUCET_OPEN_ISSUES: join(dir, 'open.json'), FAUCET_KANBAN_URL: `http://127.0.0.1:${chatServer.address().port}`, FAUCET_KANBAN_KEY_FILE: join(dir, 'token') } });
   let err = ''; faucet.stderr.on('data', (d) => { err += d; });
   const base = `http://127.0.0.1:${port}`;
   const j = (p, o) => fetch(`${base}${p}`, o).then(async (r) => ({ status: r.status, ...(await r.json()) }));
@@ -90,6 +91,18 @@ test('#2623 the faucet: link code by sign-in, Season 2 approval with bonus and h
     assert.deepEqual(entries.entries, ['telegram:@ann']);
     const open = await j('/feedback/open-issues');
     assert.deepEqual(open.areas, [{ area: 'Slashing', tickets: ['#1155'] }]);
+    // A DUPLICATE OF TICKET #77 (kanban #2745): rejected with dupTicket, the ticket's text behind the report's own token; an unknown token is 404
+    const r4 = await report(cat, 'The payout page spins forever, the same thing the team has on a ticket already.');
+    const rej = await act({ action: 'reject', id: r4, reason: 'Thanks for the report. This is a duplicate of a known issue (ticket #77).', dupTicket: 77 });
+    assert.equal(rej.ok, true, JSON.stringify(rej)); assert.deepEqual(rej.dupLink, { ok: true, report: r4, ticket: 77 });
+    const { DatabaseSync } = await import('node:sqlite'); const kdb = new DatabaseSync(db, { readOnly: true });
+    const tok = kdb.prepare('SELECT token FROM dup_links WHERE report = ?').get(r4).token; kdb.close();
+    const page = await fetch(`${base}/feedback/dup/${tok}`);
+    assert.equal(page.status, 200); assert.equal(page.headers.get('x-robots-tag'), 'noindex, nofollow'); assert.equal(page.headers.get('cache-control'), 'no-store');
+    const html = await page.text(); assert.match(html, /Ticket #77: Known payout bug/); assert.match(html, /spins after round two/);
+    assert.equal(html.includes('INTERNAL COMMENT') || html.includes('HISTORY-EVENT'), false, 'no comments, no history');
+    assert.equal((await fetch(`${base}/feedback/dup/${'0'.repeat(32)}`)).status, 404);
+    assert.equal(JSON.stringify(await j('/feedback/admin/list', { headers: { 'x-arena-admin': ADMIN } })).includes(tok), false, 'the token is not in the admin list');
     const log = await fetch(`${base}/feedback/paid-log`).then((r) => r.json());
     assert.deepEqual(log, [], 'nothing was paid: approval only computes and records');
   } finally { faucet.kill(); chatServer.close(); if (err.trim()) console.log('  stderr:', err.slice(0, 400)); }

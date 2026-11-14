@@ -12,6 +12,12 @@ const FAUCET_DOORS = new Map([['/api/faucet/feedback/link', 'POST'], ['/api/fauc
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    // A DUPLICATE'S SECRET TICKET LINK (kanban #2745): GET, a page of its own (HTML), never indexed or cached
+    if (/^\/api\/faucet\/feedback\/dup\/[0-9a-f]{32}$/.test(url.pathname)) {
+      if (!env.FAUCET_ORIGIN || request.method !== 'GET') return new Response('Not found', { status: 404 });
+      const r = await fetch(`${env.FAUCET_ORIGIN}${url.pathname.slice('/api/faucet'.length)}`, { headers: { origin: url.origin } });
+      return new Response(r.body, { status: r.status, headers: { 'content-type': r.headers.get('content-type') || 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow', 'referrer-policy': 'no-referrer' } });
+    }
     const door = FAUCET_DOORS.get(url.pathname);
     if (door) {
       if (!env.FAUCET_ORIGIN) return new Response('{"ok":false,"why":"the faucet is off"}', { status: 503, headers: { 'content-type': 'application/json' } });
