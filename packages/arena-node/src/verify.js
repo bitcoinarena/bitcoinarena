@@ -17,6 +17,7 @@ import { sandboxFor } from './core-sandbox.js';
 import { windowsOf } from '../../arena-protocol/src/window.js';
 import { noQuorumGoesToRerun } from '../../arena-protocol/src/constants.js';
 import { dissentsOn, dissentsFirstOn, dissentsFailOn, postsLateOn, LATE_POSTING_AFTER_MS } from './test-dissent.js';
+import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { ReplayPool } from './pool.js';
 import { checkObjectionBundle, replayKeyOf, liveRunKeyOf } from './objection-check.js';
 import { sha256 } from '../../arena-protocol/src/hash.js';
@@ -866,7 +867,13 @@ export class Verifier {
       // with no reveal held here, while a peer of the round did not answer, signs nothing yet: the finality watch closes again
       // (retryClose) until every peer answered - then every reveal that stood at any seat is held - or the result window has passed.
       const missing = entries.some(({ entryId }) => seated.has(hex(entryId)) && !held.has(hex(entryId)));
-      if (missing && carried && carried.down.length && !resultWindow(this.round, roundIdBytes, contract).ok)
+      // ...BUT NOT ON ONE PEER'S SILENCE ONCE A THRESHOLD ANSWERED (kanban #2708, audit #1489 r4-h2h-1, high): a seat answering 503 (or nothing) held
+      // every honest seat's verdict until the result window had passed, and the lone revealer's WIN was then VOID (no quorum) - one seat of 7 on
+      // every walk-away round it sat on. When this seat and the peers that answered are a threshold of the committee and none of them held the
+      // missing reveal, the silent ones can hold it at most below a threshold: they cannot carry the opposite verdict, so this one is decided now.
+      const answered = carried && Number.isInteger(carried.asked) ? 1 + carried.asked - carried.down.length : 0;
+      const quorumAnswered = answered >= receiptsNeeded(Math.max(1, (contract.nodes || []).length));
+      if (missing && carried && carried.down.length && !quorumAnswered && !resultWindow(this.round, roundIdBytes, contract).ok)
         return { waiting: `reveals not settled: ${carried.down.length} peer(s) of the round did not answer (${carried.down.join('; ').slice(0, 140)})` };
       const list = entries.filter(({ entryId }) => seated.has(hex(entryId)))
         .map(({ entryId }) => { const r = held.get(hex(entryId)); return { key: hex(entryId), move: r ? r.move : null }; });
@@ -1033,9 +1040,11 @@ export class Verifier {
       return [...byId.entries()].every(([k, e]) => held.has(k) && !(typeof this.round.identityOf === 'function' && typeof this.round.consentedIdentityOf === 'function'
         && e.playerPubkey instanceof Uint8Array && this.round.consentedIdentityOf(roundIdBytes, e.playerPubkey) && !this.round.identityOf(Buffer.from(k, 'hex'))));
     };
+    let asked = 0;   // kanban #2708: how many peers were asked for their reveals (answered = asked - down)
     for (const peer of this.peersOf(roundIdBytes)) {
       if (this.round.putLobbyName && unconsented()) await carryNames(peer);
       if (allHeld()) break;
+      asked++;
       let body;
       try {
         // BOUNDED IN TIME AND SIZE (kanban #1507): a seat that answered 200 and trickled its body a byte at a time held
@@ -1070,7 +1079,7 @@ export class Verifier {
         }
       }
     }
-    return { down };
+    return { down, asked };
   }
 
   #attested(contract) {
