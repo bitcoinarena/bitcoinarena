@@ -39,7 +39,7 @@ const verifySig = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch {
 const display = (internalHex) => toHex(fromHex(internalHex).reverse());
 const same = (a, b) => toHex(a) === toHex(b);
 /** A send refused because the very transaction is already there: another signer sent it first. */
-const ALREADY = /already in (the )?(mempool|block ?chain)|txn-already-known|txn-already-in-mempool|already known/i;
+const ALREADY = /txn-same-nonwitness-data-in-mempool|already in (the )?(mempool|block ?chain)|txn-already-known|txn-already-in-mempool|already known/i;
 
 /**
  * A START'S RELEASE AT ONE PANEL MEMBER (kanban #1192, the state machine audit of 2026-11-06): none -> proposed (its own proposal kept and signed) -> sending (the signed

@@ -27,7 +27,7 @@ import { keyedPay, payoutOf, PAYOUT } from './keyed-payout.js';
 const verifySig = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
 const display = (internalHex) => toHex(fromHex(internalHex).reverse());
 const same = (a, b) => toHex(a) === toHex(b);
-const ALREADY = /already in (the )?(mempool|block ?chain)|txn-already-known|txn-already-in-mempool|already known/i;
+const ALREADY = /txn-same-nonwitness-data-in-mempool|already in (the )?(mempool|block ?chain)|txn-already-known|txn-already-in-mempool|already known/i;
 const outpointOf = (s) => { const [txid, vout] = String(s).split(':'); return { txid: fromHex(txid).reverse(), vout: Number(vout) }; };
 const nameOf = (txidDisplay, vout) => `${txidDisplay}:${vout}`;
 /** Load: what a federation's reserve holds of its cap (§27A.9.2); the lowest is the safest. */
