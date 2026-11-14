@@ -11466,10 +11466,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // (the door re-reads the clock after the peer ask: a take is never stored at or after the close)
         if (door === 'held' && cancelDoorAt(round.now(), c.entryCloseMs, true) === 'closed')
           return text(res, 409, `entries closed at ${new Date(Number(c.entryCloseMs)).toISOString()}: that order is in the round now, and its fee is due`);
-        if (round.putCancel({ roundId: entry.roundId, entryId: new Uint8Array(eid), signature, receivedMs: round.now() }) && !relayed
+        // EVERY FRESH CANCEL IS HANDED ON, MARKED OR NOT (kanban #2682, audit #1489 r3-entry-2, high; the #2179 class on this door): the hand-on
+        // was skipped for a request carrying x-arena-relayed - a header any client sets - so a player posting his own cancel with it to 3 of 7
+        // seats well before the close left it there alone: two market tables, neither at 5 of 7, every payout stalled to the lock expiry. Now a
+        // cancel this seat had not held is handed on whoever brought it (one already held is not: putCancel answers false, so the seats' own
+        // hand-ons stop after one hop each). The player's answer waits for the first try; a seat's relay does not wait on this seat's own.
+        if (round.putCancel({ roundId: entry.roundId, entryId: new Uint8Array(eid), signature, receivedMs: round.now() })
             && typeof round.putCancelHandOn === 'function') {
           round.putCancelHandOn({ roundId: entry.roundId, entryId: new Uint8Array(eid), closeMs: c.entryCloseMs });
-          await handCancelsOn(toHex(eid)).catch((e) => console.error(`[cancel] hand-on: ${e.message}`));   // to the round's other seats, before the close (kanban #1435, #1950)
+          const on = handCancelsOn(toHex(eid)).catch((e) => console.error(`[cancel] hand-on: ${e.message}`));   // to the round's other seats, before the close (kanban #1435, #1950)
+          if (!relayed) await on;
         }
         console.log(`[cancel] ${toHex(entry.roundId).slice(0, 16)} ${toHex(eid).slice(0, 16)}: cancelled by its player`);
         res.writeHead(201, { 'content-type': 'application/json', ...CORS });
