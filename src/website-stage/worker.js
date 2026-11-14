@@ -10,8 +10,19 @@ const STAGE = 'https://stage.bitcoin-arena-site.pages.dev';
 const FAUCET_DOORS = new Map([['/api/faucet/feedback/link', 'POST'], ['/api/faucet/feedback/verify', 'POST'], ['/api/faucet/feedback/social', 'POST'], ['/api/faucet/feedback/season', 'GET'],
   ['/api/faucet/feedback/open-issues', 'GET'], ['/api/faucet/feedback/paid-log', 'GET']]);
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    // THE OPEN-ISSUES LIST FROM THE EDGE (kanban #2641, the owner 2026-11-14: "Die Ticket-Kiste muss cached sein"): kept 5 minutes, served stale up to an
+    // hour while it is fetched again, so a reader never waits on the faucet
+    if (url.pathname === '/api/faucet/feedback/open-issues' && request.method === 'GET' && env.FAUCET_ORIGIN) {
+      const key = new Request(`${url.origin}${url.pathname}`), cache = caches.default;
+      const hit = await cache.match(key);
+      if (hit) return hit;
+      const r = await fetch(`${env.FAUCET_ORIGIN}/feedback/open-issues`, { headers: { origin: url.origin } });
+      const out = new Response(r.body, { status: r.status, headers: { 'content-type': 'application/json', 'cache-control': 'public, max-age=300, stale-while-revalidate=3600', 'x-robots-tag': 'noindex, nofollow' } });
+      if (r.status === 200) ctx.waitUntil(cache.put(key, out.clone()));
+      return out;
+    }
     // A DUPLICATE'S SECRET TICKET LINK (kanban #2745): GET, a page of its own (HTML), never indexed or cached
     if (/^\/api\/faucet\/feedback\/dup\/[0-9a-f]{32}$/.test(url.pathname)) {
       if (!env.FAUCET_ORIGIN || request.method !== 'GET') return new Response('Not found', { status: 404 });

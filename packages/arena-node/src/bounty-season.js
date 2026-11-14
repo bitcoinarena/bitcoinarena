@@ -97,26 +97,46 @@ export function areaOf(title) {
  * ("Audit [...]", state-machine, attack/bypass/refute findings - the owner 2026-11-14, kanban #2641: "da fehlen unsere ganzen Security-Audits"), grouped
  * by area - ticket numbers only, never a title.
  */
-export const OPEN_ISSUE_TITLE = /^Audit\b|feedback #\d+|\bsecurity\b|state machine|\b(attack|bypass|refute|exploit)\b|Hexbox/i;
-export function openIssueAreas(tasks, { nowMs = Date.now() } = {}) {
-  const by = new Map();
-  for (const x of tasks || []) {
-    if (!x || x.archived || x.status === 'done') continue;
-    const tags = Array.isArray(x.tags) ? x.tags : [];
-    if (!(tags.includes('Bug') || OPEN_ISSUE_TITLE.test(String(x.title || '')))) continue;
-    const a = areaOf(x.title);
-    if (!by.has(a)) by.set(a, []);
-    by.get(a).push(`#${Number(x.id)}`);
-  }
-  const areas = [...by.entries()].map(([area, tickets]) => ({ area, tickets: tickets.sort((p, q) => Number(p.slice(1)) - Number(q.slice(1))) }))
-    .sort((p, q) => p.area.localeCompare(q.area));
-  return { updated: new Date(nowMs).toISOString(), areas };
+/**
+ * A PUBLIC BUG (the owner 2026-11-14, kanban #2641: "Nur Tickets anzeigen, die Bugs sind, und keine Feature Requests"): open (not done, not parked in
+ * backlog) and a bug - its title starts "Audit [", "Fix does not hold", "State audit", "Regression:" or "Feedback #", it carries the Bug tag, or the
+ * reviewed summary map marks it kind "bug". Features, builds, releases and ops never.
+ */
+export const BUG_TITLE = /^(Audit \[|Fix does not hold|State audit|Regression:|Feedback #)/i;
+const summaryOf = (summaries, id) => { const v = summaries && summaries[String(id)]; return v == null ? null : typeof v === 'string' ? { text: v, kind: null } : { text: v.text || null, kind: v.kind || null }; };
+export function isPublicBug(x, summaries = {}) {
+  if (!x || x.archived || x.status === 'done' || x.status === 'backlog') return false;
+  const sm = summaryOf(summaries, x.id);
+  if (sm && sm.kind && sm.kind !== 'bug') return false;
+  const tags = Array.isArray(x.tags) ? x.tags : [];
+  return tags.includes('Bug') || BUG_TITLE.test(String(x.title || '')) || !!(sm && sm.kind === 'bug');
 }
-/** The list as served: only area names (letters, digits, spaces, / and -) and ticket numbers survive, whatever the file holds. */
+/** ONE LINE PER TICKET: the reviewed summary, or "<area>: issue under review" - never the ticket's own title. */
+const SAFE_LINE = (t) => String(t || '').replace(/[^A-Za-z0-9 ,.:;'()/+%-]/g, '').replace(/\s+/g, ' ').trim().slice(0, 120);
+/**
+ * THE PUBLIC OPEN-ISSUES LIST from the board's tasks: open public bugs (isPublicBug), grouped by area, each with its ticket number and its one-line
+ * summary from `summaries` (kanban #2641) - never a title. `missing` lists the ids that still need a summary.
+ */
+export function openIssueAreas(tasks, { nowMs = Date.now(), summaries = {} } = {}) {
+  const by = new Map(), missing = [];
+  for (const x of tasks || []) {
+    if (!isPublicBug(x, summaries)) continue;
+    const a = areaOf(x.title), sm = summaryOf(summaries, x.id);
+    if (!sm || !sm.text) missing.push(Number(x.id));
+    if (!by.has(a)) by.set(a, []);
+    by.get(a).push({ id: `#${Number(x.id)}`, text: SAFE_LINE(sm && sm.text) || `${a}: issue under review` });
+  }
+  const areas = [...by.entries()].map(([area, items]) => { items.sort((p, q) => Number(p.id.slice(1)) - Number(q.id.slice(1)));
+    return { area, tickets: items.map((x) => x.id), items }; }).sort((p, q) => p.area.localeCompare(q.area));
+  return { updated: new Date(nowMs).toISOString(), areas, missing: missing.sort((p, q) => p - q) };
+}
+/** The list as served: area names, ticket numbers and the one-line summaries (letters, digits, plain punctuation), whatever the file holds. */
 export function cleanOpenIssues(o) {
-  const areas = (o && Array.isArray(o.areas) ? o.areas : []).slice(0, 50).map((x) => ({
-    area: String((x && x.area) || '').replace(/[^A-Za-z0-9 /-]/g, '').slice(0, 40),
-    tickets: (x && Array.isArray(x.tickets) ? x.tickets : []).map(String).filter((t) => /^#\d{1,6}$/.test(t)).slice(0, 200) })).filter((x) => x.area);
+  const areas = (o && Array.isArray(o.areas) ? o.areas : []).slice(0, 50).map((x) => {
+    const area = String((x && x.area) || '').replace(/[^A-Za-z0-9 /-]/g, '').slice(0, 40);
+    const tickets = (x && Array.isArray(x.tickets) ? x.tickets : []).map(String).filter((t) => /^#\d{1,6}$/.test(t)).slice(0, 200);
+    const items = (x && Array.isArray(x.items) ? x.items : []).filter((i) => i && /^#\d{1,6}$/.test(String(i.id))).slice(0, 200).map((i) => ({ id: String(i.id), text: SAFE_LINE(i.text) || `${area}: issue under review` }));
+    return { area, tickets, items }; }).filter((x) => x.area);
   return { updated: o && typeof o.updated === 'string' ? o.updated.slice(0, 30) : null, areas };
 }
 

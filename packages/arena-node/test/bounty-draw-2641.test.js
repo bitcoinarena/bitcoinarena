@@ -47,12 +47,20 @@ test('#2641 the seed block: the first header time after the end; exactly at the 
   assert.equal((await seedBlockAfter(end, chain)).height, 25);
 });
 
-test('#2641 the open-issues list holds our own audit cards too, by area and number only', async () => {
-  const { openIssueAreas } = await import('../src/bounty-season.js');
-  const l = openIssueAreas([{ id: 2700, title: 'Audit [high] Season account signature leaves out bot mark: unsigned', status: 'todo', tags: [] },
-    { id: 2701, title: 'State machine (settle, retry) double payout window', status: 'todo', tags: [] },
-    { id: 2702, title: 'Polish the lobby colours', status: 'todo', tags: ['UX'] }, { id: 2703, title: 'Audit [low] fixed thing', status: 'done', tags: [] }]);
-  const all = l.areas.flatMap((a) => a.tickets);
-  assert.deepEqual(all.sort(), ['#2700', '#2701']);
-  assert.equal(JSON.stringify(l).includes('signature'), false, 'never a title');
+test('#2641 the open-issues list: open public bugs only, one reviewed line each (never the title), a fallback and the ids still to summarise', async () => {
+  const { openIssueAreas, isPublicBug } = await import('../src/bounty-season.js');
+  const T = [{ id: 2700, title: 'Audit [high] Season account signature leaves out bot mark: unsigned', status: 'waiting', tags: [] },
+    { id: 2701, title: 'State machine (settle, retry) double payout window', status: 'waiting', tags: [] },
+    { id: 2702, title: 'Polish the lobby colours', status: 'todo', tags: ['UX'] }, { id: 2703, title: 'Audit [low] fixed thing', status: 'done', tags: [] },
+    { id: 2704, title: 'Feedback #070: a button overlaps', status: 'backlog', tags: [] }, { id: 2705, title: 'Release 2026.1.9.30', status: 'in_progress', tags: [] },
+    { id: 2706, title: 'Regression: payout page blank', status: 'review', tags: [] }, { id: 2707, title: 'Old wording', status: 'waiting', tags: ['Bug'] }];
+  const map = { 2700: { text: 'season: an account signature leaves something out', kind: 'bug' }, 2701: { text: 'settlement: a payout window', kind: 'bug' }, 2707: { text: 'x', kind: 'task' } };
+  assert.deepEqual(T.map((x) => isPublicBug(x, map)), [true, true, false, false, false, false, true, false], 'features, done, parked and tasks out; a mapped bug in');
+  const l = openIssueAreas(T, { summaries: map });
+  const items = l.areas.flatMap((a) => a.items);
+  assert.deepEqual(items.map((x) => x.id).sort(), ['#2700', '#2701', '#2706']);
+  assert.equal(items.find((x) => x.id === '#2700').text, 'season: an account signature leaves something out');
+  assert.match(items.find((x) => x.id === '#2706').text, /: issue under review$/, 'no summary yet: the fallback');
+  assert.deepEqual(l.missing, [2706]);
+  assert.equal(JSON.stringify(l).includes('bot mark') || JSON.stringify(l).includes('blank'), false, 'never a title');
 });

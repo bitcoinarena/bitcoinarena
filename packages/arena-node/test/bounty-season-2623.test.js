@@ -118,7 +118,8 @@ test('#2623 the open-issues list names areas and ticket numbers, never a ticket\
     { id: 7, status: 'done', tags: ['Bug'], title: 'payout fixed' },
     { id: 8, status: 'waiting', tags: ['Protocol'], title: 'not a bug' },
   ], { nowMs: 0 });
-  assert.deepEqual(o.areas, [{ area: 'Committees and bonds', tickets: ['#2564'] }, { area: 'Slashing', tickets: ['#1155'] }]);
+  assert.deepEqual(o.areas.map(({ area, tickets }) => ({ area, tickets })), [{ area: 'Committees and bonds', tickets: ['#2564'] }, { area: 'Slashing', tickets: ['#1155'] }]);
   assert.doesNotMatch(JSON.stringify(o), /FROST|derives|secret/);
-  assert.deepEqual(cleanOpenIssues({ updated: 'x', areas: [{ area: 'Evil<script>', tickets: ['#1', 'drop'] }] }).areas, [{ area: 'Evilscript', tickets: ['#1'] }]);
+  assert.deepEqual(cleanOpenIssues({ updated: 'x', areas: [{ area: 'Evil<script>', tickets: ['#1', 'drop'], items: [{ id: '#1', text: 'a <b>bad</b> line' }, { id: 'x', text: 'no' }] }] }).areas,
+    [{ area: 'Evilscript', tickets: ['#1'], items: [{ id: '#1', text: 'a bbad/b line' }] }]);
 });
