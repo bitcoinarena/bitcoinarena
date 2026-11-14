@@ -71,7 +71,11 @@ const rand = (n) => new Uint8Array(randomBytes(n));
 // "fetch failed" under load, and the run stopped with its stake locked; the other player's, 5 s later, went through at every seat)
 { const once = globalThis.fetch;
   globalThis.fetch = async (u, o) => { for (let i = 0; ; i++) { try { return await once(u, o); }
-    catch (e) { if (i >= 2 || !/fetch failed/.test(String(e && e.message))) throw e; await new Promise((ok) => setTimeout(ok, 1000)); } } }; }
+    catch (e) {
+      // A FAILED ASK NAMES ITS SEAT (kanban #2642, 2026-11-14 20:39Z: a paid run stopped on a bare "TypeError: fetch failed" with its stake locked,
+      // and no line said which seat): the URL and the cause go into the error that stops the run
+      if (i >= 2 || !/fetch failed/.test(String(e && e.message))) { const m = `${e && e.message} (${o && o.method || 'GET'} ${String(u).slice(0, 160)}${e && e.cause ? `: ${e.cause.code || e.cause.message}` : ''})`; try { e.message = m; } catch { /* frozen */ } throw e; }
+      await new Promise((ok) => setTimeout(ok, 1000)); } } }; }
 const run = (bin, args) => new Promise((done) => execFile(bin, args, { timeout: 240000 },
   (err, out, errOut) => done({ ok: !err, out: String(out), err: String(errOut || (err && err.message) || '') })));
 const payer = (...a) => run(env.LNCLI, [`--lnddir=${env.PAYER_DIR}`, `--rpcserver=${env.PAYER_RPC}`, `--network=${env.ARENA_TN4_NETWORK || 'testnet4'}`, ...a]);
@@ -156,6 +160,10 @@ async function paidEntry(c, rid, roundHex, move, who) {
     log({ step: 'locked', outpoint: `${toHex(lk.outpoint.txid)}:${lk.outpoint.outIdx}`, msat: net, ms: Date.now() - t2, ...(locks.txid ? { tx: locks.txid.slice(0, 16), donationOutputs: (locks.entryFields.donationOutpoints || []).length, reserveOutput: !!locks.entryFields.reserveOutpoint } : {}) });
     const fee = locks.fee, hand = fee ? fee.fields : null;
     if (fee) log({ step: 'fee locked', outpoint: `${toHex(fee.outpoint.txid)}:${fee.outpoint.outIdx}` });
+    // THE KEY KEPT AS SOON AS THE MONEY IS LOCKED (kanban #2642, 2026-11-14: round 54470ee2's run stopped between the locks and the handover, and
+    // its 90,000 msat stake's key was gone with the process - the keys line below comes only after the handover)
+    if (env.KEYS_FILE) appendFileSync(env.KEYS_FILE, `${JSON.stringify({ at: new Date().toISOString(), round: roundHex, entry: null, player: who, step: 'locked',
+      secret: toHex(me.secret), stake: `${toHex(lk.outpoint.txid)}:${lk.outpoint.outIdx}`, fee: fee ? `${toHex(fee.outpoint.txid)}:${fee.outpoint.outIdx}` : null })}\n`);
     // THE CONTRACT'S SLOTS NAME THE THRESHOLD, as join.js reads it: 9 drawn for 7 slots, so a round with 6 seated plays at 5
     // (2026.1.9.11 release check: "no committee threshold for 6 slots" after the deposit)
     const needed = receiptsNeeded(c.settlementSlots ?? c.gameVerifySlots);
@@ -178,7 +186,10 @@ async function paidEntry(c, rid, roundHex, move, who) {
     const marking = markBot(entryKeys(eid, entry));
     // EVERY SEAT AT ONCE (2026.1.9.12 release check, 2026-10-29: locked at 11:29:32Z, handed to the 14 seats one after another until
     // 11:32:43Z - 35 s past the entry close; every signer node said "the round is closed")
-    const signerNodes = await Promise.all(nodes.map(async (n) => {
+    // ONE SEAT DOWN IS ONE SEAT NOT TAKING IT (kanban #2642, 2026-11-14 20:44Z: seat 31221 refused connections - ECONNREFUSED on /handout - and the
+    // throw stopped the whole run with 90,000 msat locked): each seat's own failure is its answer, and the count below decides
+    const signerNodes = await Promise.all(nodes.map((n) => handOne(n).catch((e) => ({ node: n, error: String(e && e.message || e).slice(0, 160) }))));
+    async function handOne(n) {
       // SKIP_ENTRY=<port or host> (kanban #1068): P2's entry, handout and locks are not handed to that seat, as a client that
       // never reached it; the seats that took it hand it on (entry-relay.js), and the run reads whether the skipped seat holds it
       if (who === 'P2' && env.SKIP_ENTRY && n.includes(env.SKIP_ENTRY)) return { node: n, skipped: true };
@@ -198,7 +209,7 @@ async function paidEntry(c, rid, roundHex, move, who) {
       }
       return { node: n, handout: h.status, entry: en.status, ...(en.status >= 300 ? { entryWhy: enWhy } : {}),
         lock: l.status, lockSaid: (await l.text()).trim().slice(0, 160) };
-    }));
+    }
     log({ step: 'handed over', entry: toHex(eid).slice(0, 16), signerNodes });
     log({ step: 'marked bot', entry: toHex(eid).slice(0, 16), ...await marking });
     // KEYS_FILE: the player's key and locks, one line each, so a collect that failed can be done again by hand (testnet only). Kept BEFORE
@@ -282,7 +293,15 @@ try {
   if (env.DRY) { log({ step: 'dry run: nothing paid' }); process.exit(0); }
   const moves = [Number(env.MOVE_1 ?? 0), Number(env.MOVE_2 ?? 2)];   // 0 rock, 1 paper, 2 scissors (the game's own numbering)
   const p1 = await paidEntry(c, rid, roundHex, moves[0], 'P1');
-  const p2 = await paidEntry(c, rid, roundHex, moves[1], 'P2');
+  // OPPONENT=<faucet>/opponent (kanban #2658, #2642): one player of ours against the house bot - the table is said to the faucet's opponent door
+  // as the page says it (rps-opponent.mjs watches it and sits down), and only P1 is ours
+  let p2 = null;
+  if (env.OPPONENT) {
+    // A WANT LIVES 12 s AT THE FAUCET (faucet.js OPPONENT_WANT_MS) and the page says it again while it waits: so does this, every 4 s to the entry close
+    const ask = async () => { const r = await fetch(env.OPPONENT, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ round: roundHex }) }); return { status: r.status, said: (await r.text()).slice(0, 120) }; };
+    log({ step: 'opponent asked', ...(await ask()) });
+    const again = setInterval(() => { if (Date.now() > Number(c.entryCloseMs)) clearInterval(again); else ask().catch(() => {}); }, 4000);
+  } else p2 = await paidEntry(c, rid, roundHex, moves[1], 'P2');
   const table = await (await fetch(`${nodes[0]}/api/round-result?round=${roundHex}`)).json().catch(() => null);
   log({ step: 'table', players: table && table.players ? table.players.length : null });
   // THE REVEALS after the entry close
@@ -290,7 +309,7 @@ try {
   if (wait > 0) { log({ step: 'waiting for the entry close', ms: wait }); await new Promise((r) => setTimeout(r, wait)); }
   // BOTH AT ONCE, as two players' pages do (kanban #604, 2026-10-24 05:36Z: one after the other, P1's reveal waited 37 s on one seat
   // and P2's reached the seats after the reveal window - a FORFEIT the harness made); each seat's refusal is logged with its reason
-  await Promise.all([[p1, 'P1'], [p2, 'P2']].map(async ([p, who]) => {
+  await Promise.all([[p1, 'P1'], [p2, 'P2']].filter(([p]) => p).map(async ([p, who]) => {
     const t0 = Date.now();
     const said = await revealMove({ entryIdHex: toHex(p.eid), move: p.hidden.move, salt: p.hidden.salt, nodes });
     log({ step: 'revealed', player: who, ms: Date.now() - t0, said: said.map((x) => x.status ?? x),
@@ -300,7 +319,7 @@ try {
   const until = Date.now() + 20 * 60000;
   for (;;) {
     const said = [];
-    for (const [p, who] of [[p1, 'P1'], [p2, 'P2']]) {
+    for (const [p, who] of [[p1, 'P1'], [p2, 'P2']].filter(([q]) => q)) {
       let s; try { s = await settlementBy({ entryId: p.eid, signerNodes: c.nodes, nodes }); } catch (e) { s = { error: e.message }; }
       said.push({ player: who, finality: s.finality, answered: s.answered, outcome: (s.per || []).map((x) => x.outcome).filter(Boolean)[0] });
     }
@@ -323,7 +342,7 @@ try {
   }
   if (!st.ok) throw new Error(`no accepted settlement to collect from: ${st.why}`);
   log({ step: 'settled', txid: st.txid.slice(0, 16), from: st.from, payouts: st.moved.payouts.length });
-  for (const [p, who] of [[p1, 'P1'], [p2, 'P2']]) {
+  for (const [p, who] of [[p1, 'P1'], [p2, 'P2']].filter(([q]) => q)) {
     const before = await p.lc.balanceMsat();
     const mine = toHex(refundKeyOf(p.playerPubkey));
     const at = st.moved.payouts.findIndex((x) => x.kind === 'qualifier' && String(x.pk).toLowerCase() === mine);

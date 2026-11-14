@@ -56,7 +56,7 @@ const GAMES = {
     // a table whose entry closes more than 270 s ahead is needed; the grid posts them every few minutes - asked again for up to 15 min
     let r;
     for (let i = 0; i < 15; i++) {
-      r = await run('rps', 'tn4-rps-paid.mjs', { KEYS_FILE: join(OUT, 'rps-keys.jsonl'), RPS_GAME_ID: env.RPS_GAME_ID || 'listed' }, 60 * 60000);
+      r = await run('rps', 'tn4-rps-paid.mjs', { KEYS_FILE: join(OUT, 'rps-keys.jsonl'), RPS_GAME_ID: env.RPS_GAME_ID || 'listed', ...(env.RPS_OPPONENT ? { OPPONENT: env.RPS_OPPONENT } : {}) }, 60 * 60000);
       if (!(r.code !== 0 && r.lines.some((l) => /no RPS round held/.test(String(l.why || ''))))) break;
       await new Promise((ok) => setTimeout(ok, 60000));
     }
