@@ -76,6 +76,20 @@ const WALLET_KEYS = Object.freeze([
   /(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])/gi,
   /\b[5KLc9][1-9A-HJ-NP-Za-km-z]{50,51}\b/g,
 ]);
+/**
+ * A TICKET'S TEXT FOR A DUPLICATE'S REPORTER (kanban #2745): scrubKeys, then anything that reads as a key, token, path, cookie, address or code -
+ * hex of 32+ characters, long base64/base58-like runs, filesystem paths, cookie pairs, admin/token/secret assignments, IPv4 and IPv6 addresses - is "…".
+ */
+export const scrubTicket = (t) => scrubKeys(String(t || ''))
+  .replace(/(?<![\w:])(?=[0-9a-f:]*(?:::|[a-f][0-9a-f]*:|:[0-9a-f]*[a-f]))(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}(?![\w:])/gi, '…')
+  .replace(/\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b/g, '…')
+  .replace(/\b(?:npub|nsec|lnurl|lnbc|lntb)1[0-9a-z]{20,}\b/gi, '…')
+  .replace(/\b[0-9a-f]{32,}\b/gi, '…')
+  .replace(/\b[A-Za-z0-9_\-+/=]{32,}\b/g, '…')
+  .replace(/(?:~|\.{1,2})?\/(?:[\w.@+-]+\/)+[\w.@+-]*/g, '…')
+  .replace(/\b[\w-]*(?:token|secret|password|passwd|cookie|admin|auth|key|code|session|bearer)[\w-]*\s*[:=]\s*\S+/gi, '…')
+  .replace(/\b[A-Za-z_][\w-]*=[^\s;]{8,};?/g, '…');
+
 export const scrubKeys = (t) => {
   let s = String(t);
   for (const re of WALLET_KEYS) s = s.replace(re, '[removed]');
@@ -147,7 +161,8 @@ export function openFeedbackStore(path = ':memory:') {
     CREATE INDEX IF NOT EXISTS reports_by_key ON reports (pubkey, received_ms);
     CREATE TABLE IF NOT EXISTS report_moves (id TEXT NOT NULL, from_state TEXT NOT NULL, to_state TEXT NOT NULL, at_ms INTEGER NOT NULL, by TEXT, note TEXT);
     CREATE TABLE IF NOT EXISTS rewards (k1 TEXT PRIMARY KEY, report TEXT NOT NULL UNIQUE, pubkey TEXT NOT NULL, amount_sats INTEGER NOT NULL, network TEXT NOT NULL,
-      created_ms INTEGER NOT NULL, state TEXT NOT NULL DEFAULT 'open', invoice TEXT, payment_hash TEXT, tried_ms INTEGER, paid_ms INTEGER, why TEXT);`);
+      created_ms INTEGER NOT NULL, state TEXT NOT NULL DEFAULT 'open', invoice TEXT, payment_hash TEXT, tried_ms INTEGER, paid_ms INTEGER, why TEXT);
+    CREATE TABLE IF NOT EXISTS dup_links (token TEXT PRIMARY KEY, report TEXT NOT NULL UNIQUE, ticket INTEGER NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, made_ms INTEGER NOT NULL);`);
   // COLUMNS ADDED AFTER THE FIRST FILE (kanban #1342 follow-up): a file from before gains them, null for its old rows
   for (const [col, ddl] of [['source', 'TEXT'], ['node', 'TEXT'], ['screenshot', 'TEXT'], ['number', 'INTEGER']])
     if (!db.prepare('PRAGMA table_info(reports)').all().some((c) => c.name === col)) db.exec(`ALTER TABLE reports ADD COLUMN ${col} ${ddl}`);
@@ -265,7 +280,34 @@ export function openFeedbackStore(path = ':memory:') {
   function mine(authEvent, opts) {
     const who = authOf(authEvent, opts);
     if (!who.ok) return who;
-    return { ok: true, pubkey: who.pubkey, reports: db.prepare('SELECT * FROM reports WHERE pubkey = ? ORDER BY received_ms DESC').all(who.pubkey).map(row) };
+    // a duplicate's secret ticket link goes only to the report's own key, here (kanban #2745)
+    const dup = db.prepare('SELECT token FROM dup_links WHERE report = ?');
+    return { ok: true, pubkey: who.pubkey, reports: db.prepare('SELECT * FROM reports WHERE pubkey = ? ORDER BY received_ms DESC').all(who.pubkey).map((r) => {
+      const x = row(r); const d = dup.get(r.id); return d ? { ...x, dupToken: d.token } : x; }) };
+  }
+
+  /**
+   * A DUPLICATE OF A KNOWN TICKET (kanban #2745, Daniel 2026-11-14: "bekommt der Submitter einen secret link der den kritischen Teil des Tickets
+   * erhält ... nur den Ticket Text, nicht die Kommentare und die Historie"): the ticket's title and description as they are now, scrubbed, kept under a
+   * random 128-bit token tied to the report (one per report; a new snapshot replaces it). Only title and description are taken from `task`.
+   */
+  function dupSnapshot(id, task, { nowMs = Date.now() } = {}) {
+    const r = get.get(String(id));
+    if (!r) return { ok: false, why: 'no such report' };
+    const n = Number(task && task.id);
+    if (!Number.isInteger(n) || n <= 0) return { ok: false, why: 'no such ticket' };
+    const title = scrubTicket(String((task && task.title) || '')).slice(0, 300), body = scrubTicket(String((task && task.description) || '')).slice(0, 20000);
+    const had = db.prepare('SELECT token FROM dup_links WHERE report = ?').get(r.id);
+    const token = had ? had.token : randomBytes(16).toString('hex');
+    db.prepare(`INSERT INTO dup_links (token, report, ticket, title, body, made_ms) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT (report) DO UPDATE SET ticket = excluded.ticket, title = excluded.title, body = excluded.body, made_ms = excluded.made_ms`).run(token, r.id, n, title, body, nowMs);
+    return { ok: true, report: r.id, ticket: n };
+  }
+  /** The snapshot behind a token, or null. */
+  function dupLink(token) {
+    if (!/^[0-9a-f]{32}$/.test(String(token || ''))) return null;
+    const x = db.prepare('SELECT ticket, title, body, made_ms FROM dup_links WHERE token = ?').get(String(token));
+    return x ? { ticket: x.ticket, title: x.title, body: x.body, madeMs: x.made_ms } : null;
   }
 
   /**
@@ -633,7 +675,7 @@ export function openFeedbackStore(path = ':memory:') {
       takenBy: taken ? { id: taken.id, label: feedbackLabel(taken.number), sameNode: !!(taken.node && String(taken.node) === String(report.node)) } : null,
       full: !mine && !taken && held.length >= NODE_BOUNTY_MOST };
   }
-  return { take, mine, move, approve, list, shotsInUse, note, remark, moves, budget, paidLog, csv, nodeBountyFor, createReward, withdrawRequest, lnurlOf, claim, settle, rewards, payToAddress, addressOf, reward: (k1) => rewardRow(rewardOf.get(String(k1))), report: (id) => row(get.get(String(id))), close: () => db.close(), eventId };
+  return { take, mine, dupSnapshot, dupLink, move, approve, list, shotsInUse, note, remark, moves, budget, paidLog, csv, nodeBountyFor, createReward, withdrawRequest, lnurlOf, claim, settle, rewards, payToAddress, addressOf, reward: (k1) => rewardRow(rewardOf.get(String(k1))), report: (id) => row(get.get(String(id))), close: () => db.close(), eventId };
 }
 
 /** The most of one seat's GET /season?scope=network answer the faucet reads (kanban #2517). */
