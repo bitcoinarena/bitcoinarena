@@ -23,7 +23,8 @@ import { feldmanGroup } from '../src/curve.js';
 import { lockFieldsToJson } from '../src/stake-lock-signer-node.js';
 import { attestedClaimKey } from '../../arena-client/src/join.js';
 import { pageCurve } from '../../arena-client/src/page-curve.js';
-import { hiddenMove, moveCommitment, revealMove } from '../../arena-client/src/head-to-head.js';
+import { hiddenMove, moveCommitment } from '../../arena-client/src/head-to-head.js';
+import { revealAsPage } from './h2h-reveal.mjs';   // kanban #2658: from protocol 28 the reveal waits for the certified lock set
 import { decodeRoundContract, roundId, encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
 import { markBot, entryKeys } from './mark-bot.mjs';   // kanban #2035: every live entry marked bot in the explorer
 import { dealHandout, encodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
@@ -206,11 +207,13 @@ async function enter(c, rid, ready) {
   for (const n of nodes) fetch(`${n}/name`, { method: 'POST', signal: AbortSignal.timeout(POST_MS), body: nameBody }).catch(() => null);
   log({ step: 'entered', round: roundHex.slice(0, 8), entry: toHex(eid).slice(0, 8), took, of: said.length, needed, ms: steps, leftAtEndMs: Number(c.entryCloseMs) - Date.now(),
     ...(took < needed ? { refused: [...new Set(said.map((x) => x.why).filter(Boolean))].slice(0, 2) } : {}) });
-  // THE REVEAL AFTER THE ENTRY CLOSE, as a page's
+  // THE REVEAL AFTER THE ENTRY CLOSE, as a page's - from protocol 28 once the lock set is certified (kanban #2658: one revealMove at close + 150 ms
+  // was refused 409 by every seat, the bot FORFEITED and the player at its table won every paid round)
   const proof = { key: toHex(identityKey), sig: toHex(schnorr.sign(matchProofId({ roundId: rid, entryId: eid, identityKey }), identity)) };
   setTimeout(async () => {
-    const r = await revealMove({ entryIdHex: toHex(eid), move: hidden.move, salt: hidden.salt, nodes, identity: proof }).catch((x) => [{ status: 0, why: x.message }]);
-    log({ step: 'revealed', round: roundHex.slice(0, 8), move: hidden.move, ok: r.filter((x) => x.status === 200 || x.status === 201).length, of: r.length });
+    const said = await revealAsPage({ c, roundIdHex: roundHex, entryIdHex: toHex(eid), move: hidden.move, salt: hidden.salt, nodes, identity: proof }).catch((x) => ({ seats: [{ status: 0, why: x.message }] }));
+    const r = said.seats || [];
+    log({ step: 'revealed', round: roundHex.slice(0, 8), move: hidden.move, ok: r.filter((x) => x.status === 200 || x.status === 201).length, of: r.length, ...(said.why ? { why: said.why } : {}) });
   }, Math.max(0, Number(c.entryCloseMs) - Date.now() + 150));
   return { ok: took >= needed };
 }
