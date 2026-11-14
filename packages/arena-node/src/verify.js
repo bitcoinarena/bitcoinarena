@@ -1911,10 +1911,15 @@ export class Verifier {
       try {
         const answer = await peerFetch(`${peer}/postings?round=${hex(roundIdBytes)}&entry=${hex(entryIdBytes)}`);
         if (!answer.ok) continue;
-        body = await peerBody(answer);
+        // BOUNDED, AND ONE CHECK PER SIGNER KEY (kanban #2729, audit #1489 r5-gossip-3, high; #1634 for /results): one seat answered 16 MiB of
+        // copies of a posting naming its own key with random signatures and every honest seat verified each one on its thread (74,000 BIP-340
+        // checks, ~48 s per publish). The read is capped at two postings per signer node, and an answer gets one check per signer key at most,
+        // none for a key whose posting this seat already holds (a held posting is never replaced)
+        body = await peerBody(answer, 2 * Math.max(1, signerNodes.length) * SIGNED_POSTING_BYTES);
       } catch { continue; }                  // a peer that is down is not a fault
+      const tried = new Set(this.round.postings(roundIdBytes, entryIdBytes).map((x) => hex(x.signerNodePubkey)));
       for (let at = 0; at + SIGNED_POSTING_BYTES <= body.length; at += SIGNED_POSTING_BYTES)
-        this.#keepPeerPosting(roundIdBytes, entryIdBytes, body.slice(at, at + SIGNED_POSTING_BYTES), playerPubkey, signerNodes);
+        this.#keepPeerPosting(roundIdBytes, entryIdBytes, body.slice(at, at + SIGNED_POSTING_BYTES), playerPubkey, signerNodes, tried);
     }
 
     const count = transcriptIsPublished({
@@ -2140,10 +2145,13 @@ export class Verifier {
       try {
         const answer = await peerFetch(`${peer}/reruns?round=${hex(roundIdBytes)}&entry=${hex(entryIdBytes)}`);
         if (!answer.ok) continue;
-        body = await peerBody(answer);
+        // kanban #2729: the same bound as /postings - two re-runs per signer node read (a price round's result is 10 bytes longer), one check per
+        // signer key and answer (a held re-run may still be replaced by a fresh one that counts, putRerun, so held keys are checked again)
+        body = await peerBody(answer, 2 * Math.max(1, signerNodes.length) * (SIGNED_RERUN_BYTES + 16));
       } catch { continue; }
+      const tried = new Set();
       for (const rec of cutSignedReruns(body))
-        this.#keepPeerRerun(roundIdBytes, rec.slice(), found.entry.playerPubkey, signerNodes, entryIdBytes);
+        this.#keepPeerRerun(roundIdBytes, rec.slice(), found.entry.playerPubkey, signerNodes, entryIdBytes, tried);
     }
 
     const count = rerunIsAgreed({
@@ -2334,7 +2342,7 @@ export class Verifier {
   }
 
   /** One re-run from a peer: about this round and player, from a joined signer node, and signed by it. */
-  #keepPeerRerun(roundIdBytes, record, playerPubkey, signerNodes, entryIdBytes) {
+  #keepPeerRerun(roundIdBytes, record, playerPubkey, signerNodes, entryIdBytes, tried = null) {
     let x, signature;
     try {
       const split = splitSignedRerun(record);
@@ -2343,6 +2351,7 @@ export class Verifier {
     } catch { return false; }
     if (hex(x.result.roundId) !== hex(roundIdBytes) || hex(x.result.playerPubkey) !== hex(playerPubkey)) return false;
     if (!signerNodes.some((s) => hex(s) === hex(x.result.nodePubkey))) return false;
+    if (tried) { if (tried.has(hex(x.result.nodePubkey))) return false; tried.add(hex(x.result.nodePubkey)); }   // kanban #2729
     let ok = false;
     try { ok = schnorr.verify(signature, rerunResultId(x), x.result.nodePubkey); } catch { ok = false; }
     if (!ok) return false;
@@ -2463,7 +2472,7 @@ export class Verifier {
   }
 
   /** One posting from a peer: about this round and player, from a joined signer node, and signed by it. */
-  #keepPeerPosting(roundIdBytes, entryIdBytes, record, playerPubkey, signerNodes) {
+  #keepPeerPosting(roundIdBytes, entryIdBytes, record, playerPubkey, signerNodes, tried = null) {
     let p, signature;
     try {
       const split = splitSignedPosting(record);
@@ -2472,6 +2481,8 @@ export class Verifier {
     } catch { return false; }
     if (hex(p.roundId) !== hex(roundIdBytes) || hex(p.playerPubkey) !== hex(playerPubkey)) return false;
     if (!signerNodes.some((s) => hex(s) === hex(p.signerNodePubkey))) return false;
+    // kanban #2729: one signature check per signer key and answer, none for a key held already
+    if (tried) { if (tried.has(hex(p.signerNodePubkey))) return false; tried.add(hex(p.signerNodePubkey)); }
     let ok = false;
     try { ok = schnorr.verify(signature, transcriptPostingId(p), p.signerNodePubkey); } catch { ok = false; }
     if (!ok) return false;
