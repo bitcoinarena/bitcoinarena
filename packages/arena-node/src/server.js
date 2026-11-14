@@ -6109,7 +6109,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     //    does the oldest young one go. A fresh handout still always lands (#2136), and the store stays bounded.
     // Only when no loose handout may go (each one pinned by a real lock or named by an entry) is a new one refused
     const bytesOut = encodeHandout(handout);
-    const pin = async () => { if (lockMade && (await lockShown()) === null) round.pinHandout(id, handout.roundId); };
+    // ONE LOCK PINS ONE HANDOUT (kanban #2644): the lock's outpoint pins only the first handout shown with it in this round (round.js
+    // pinHandout); a forged handout shown with the same lock (the same A0, fresh coefficients) stays loose and under the cap
+    const lockOutpoint = () => { try { const [t, i] = String(JSON.parse(String(lockMade)).outpoint).split(':'); return `${t}:${BigInt(i)}`; } catch { return null; } };
+    const pin = async () => { if (lockMade && (await lockShown()) === null) round.pinHandout(id, handout.roundId, lockOutpoint()); };
     if (!accepted && !round.handout(id) && round.handoutCount(handout.roundId) >= HANDOUTS_UNENTERED_MAX) {
       const { loose, oldest, oldestYoung } = round.looseHandouts(handout.roundId, { graceMs: HANDOUT_ENTRY_GRACE_MS });
       const goes = loose >= HANDOUTS_LOOSE_CEILING ? oldestYoung : loose >= HANDOUTS_UNENTERED_MAX ? oldest : null;

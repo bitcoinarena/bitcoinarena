@@ -2791,10 +2791,18 @@ export class Round {
    * A HANDOUT WHOSE STAKE LOCK THE FEDERATION WAS SHOWN HOLDING (kanban #2415, #2481): the door checked the lock a client showed with it
    * (server.js stakeLockMadeFor - image A0, the player's refund key, the round's claim key, the contract at that outpoint). Such a handout
    * is never pushed out by another: its player's entry, or its refused-round return, reads it.
+   * ONE LOCK PINS ONE HANDOUT (kanban #2644): `outpoint` ("txid:index") pins the first handout shown with it in this round and no other -
+   * nothing ties a lock to one handout, and one lock shown with endless forged handouts (the same A0, fresh coefficients) pinned them all,
+   * outside every cap. Answers whether this handout is pinned.
    */
-  pinHandout(handoutIdBytes, roundIdBytes) {
-    this.db.prepare('INSERT OR IGNORE INTO handout_locks (handout_id, round_id, pinned_ms) VALUES (?, ?, ?)')
-      .run(Buffer.from(handoutIdBytes), Buffer.from(roundIdBytes), this.now());
+  pinHandout(handoutIdBytes, roundIdBytes, outpoint) {
+    const id = Buffer.from(handoutIdBytes), rid = Buffer.from(roundIdBytes);
+    if (typeof outpoint !== 'string' || !outpoint) return false;
+    this.db.prepare('INSERT OR IGNORE INTO handout_lock_outpoints (round_id, outpoint, handout_id) VALUES (?, ?, ?)').run(rid, outpoint, id);
+    const first = this.db.prepare('SELECT handout_id FROM handout_lock_outpoints WHERE round_id = ? AND outpoint = ?').get(rid, outpoint);
+    if (!first || !Buffer.from(first.handout_id).equals(id)) return false;
+    this.db.prepare('INSERT OR IGNORE INTO handout_locks (handout_id, round_id, pinned_ms) VALUES (?, ?, ?)').run(id, rid, this.now());
+    return true;
   }
 
   /**
