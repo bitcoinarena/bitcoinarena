@@ -224,7 +224,7 @@ test('on a seat: a proposal passes and activates, rounds are served under the co
   };
   const votes = new Map();
   // the bound vote (kanban #2562): seq 1, each bond votes once per proposal here
-  const boundVote = (who, idBytes, choice, height, txid) => ({ payload: encodeVote({ proposalId: idBytes, choice, seq: 1, signature: schnorr.sign(voteMessage(idBytes, choice, 1), who.secret) }), height, txid });
+  const boundVote = (who, idBytes, choice, height, txid) => ({ payload: encodeVote({ proposalId: idBytes, choice, seq: 1, signature: schnorr.sign(voteMessage(idBytes, choice, 1), who.secret), bondKey: who.pubkey }), height, txid });   // kanban #2671: regtest is keyed from 0
   const cast = (who, idHex, choice, height) => { const id = Uint8Array.from(Buffer.from(idHex, 'hex')); votes.set(height, [...(votes.get(height) || []), boundVote(who, id, choice, height, `${height}${who === A ? 'a' : 'b'}`)]); };
   let tip = 300;
   const d = await serve(openStore(':memory:'), { port: 0, donationSets: [KEYS],

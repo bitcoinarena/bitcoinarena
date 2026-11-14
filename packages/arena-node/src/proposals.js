@@ -65,13 +65,19 @@ const MOVES = Object.freeze({ [S.COUNTING]: [S.PASSED, S.FAILED, S.ORPHANED], [S
 export const stateOf = (r) => (r && S[r.state] ? r.state : r && r.orphaned ? S.ORPHANED : r && r.decided ? (r.decided.passed ? S.PASSED : S.FAILED) : S.COUNTING);
 
 export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsFor, verify, store, schedule = SCHEDULES.mainnet, scheduleFor = null,
-  repealSchedule = REPEAL_SCHEDULES.mainnet, repealScheduleFor = null, historyFor = null, exampleCheck = null, depthHeightFor = null, minDecideDepthFor = null, censusAt = null, tipHeight = null, bindHeightFor = null, blockHashAt = null,
+  repealSchedule = REPEAL_SCHEDULES.mainnet, repealScheduleFor = null, historyFor = null, exampleCheck = null, depthHeightFor = null, minDecideDepthFor = null, censusAt = null, tipHeight = null, bindHeightFor = null, keyHeightFor = null, blockHashAt = null,
   seenSigner = null }) {
   let tipOf = typeof tipHeight === 'function' ? tipHeight : null;
   /** BOUND: deposited at or above its network's BALLOT_BIND_HEIGHT (kanban #2125); below it, or with no gate given, the old reading. */
   const isBound = (net, height) => {
     if (typeof bindHeightFor !== 'function') return false;
     const gate = Number(bindHeightFor(net));
+    return Number.isFinite(gate) && Number.isInteger(height) && height >= gate;
+  };
+  /** KEYED: published at or above its network's BALLOT_KEY_HEIGHT (kanban #2671) - its votes name their bond; no gate given, never. */
+  const isKeyed = (net, height) => {
+    if (typeof keyHeightFor !== 'function') return false;
+    const gate = Number(keyHeightFor(net));
     return Number.isFinite(gate) && Number.isInteger(height) && height >= gate;
   };
   const held = new Map((store && store.read ? store.read() || [] : []).map((x) => [x.id, { ...x, state: stateOf(x) }]));
@@ -365,6 +371,8 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
     list: () => [...held.values()].sort((a, b) => b.publishedAt - a.publishedAt),
     /** Is a kept record read bound (kanban #2125): its votes by seq. From its network's gate and its publication height, never the store's word. */
     bound: (r) => !!r && isBound(r.networkId, Number(r.publishedAt)),
+    /** Is a kept record read keyed (kanban #2671): its votes name their bond. From its network's gate and its publication height. */
+    keyed: (r) => !!r && isKeyed(r.networkId, Number(r.publishedAt)),
     counts,
     /** The twin that stands for `id`'s group (kanban #2607): `id` itself when it has none; null when its deposit is void (#1840). */
     twinOf: standsFor,
