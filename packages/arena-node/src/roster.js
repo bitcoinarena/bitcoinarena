@@ -454,8 +454,14 @@ export class Roster {
     // An RPS grid's 450 rounds name one each, and a derivation per round cost every seat 0.5-1.3 s per posted round
     // (measured on testnet4, 2026-10-11), which is why a grid was posted one round every 4 s. A census kept this way is
     // still checked against each round's own root below, on every ask.
+    // AND BY ITS BOND FLOOR AND DEPTH (kanban #1970, state audit 2026-11-12): deriveCensus also reads `bond_min` (the
+    // floor, per output or on sums) and `census_confirmations` (the depth rule). Keyed without them, the first round a seat
+    // asked at a census height fixed the census of every other round there: a higher bracket's valid round was refused
+    // ("the chain gives ...") and a round naming the lower floor's root was served with bonds under its own floor - two
+    // seats on one chain, two verdicts, by arrival order. A series id hashes its whole template, both fields with it.
     const whose = contract.seriesId instanceof Uint8Array ? `series:${toHex(contract.seriesId)}`
-      : `census:${contract.networkId instanceof Uint8Array ? toHex(contract.networkId) : ''}:${contract.protocolVersion ?? ''}`;
+      : `census:${contract.networkId instanceof Uint8Array ? toHex(contract.networkId) : ''}:${contract.protocolVersion ?? ''}`
+        + `:${contract.bondMinSats ?? ''}:${contract.censusConfirmations ?? ''}`;
     const kept = `${whose}:${view.firstHeight}:${contract.censusHeight}:${asRoundsOwn ? 'round' : 'height'}`;
     // KEPT IN MEMORY UNDER THE BLOCK AT THE CENSUS HEIGHT (kanban #1373, audit 2 #1204 FED-B2): as the store's key (#786) - after a reorg below the census
     // height the old branch's census is another key, never served; with no such block in the view nothing is read from memory

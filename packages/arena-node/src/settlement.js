@@ -1892,6 +1892,9 @@ export class LockSettlement {
       const h = await this.#historyVerdict(rid).catch((e) => ({ verdict: 'unknown', why: e.message }));
       if (h.verdict !== 'in') continue;
       this.#putRow(rid, { txid: h.txid, message: h.message, signature: h.signature, state: ACCEPTED, verified: true, why: `found in the federation after a REFUSED row: ${h.why}` });
+      // ITS OUTPUTS ARE INDEXED TOO (kanban #2279), as every other path to ACCEPTED on a landed txid does: else a walk-away's donation-key payouts
+      // and a market's reserve payout of that settlement were listed by no book of this seat (the backfill below reads this row as well)
+      await this.indexRecovered(rid, h.txid).catch((e) => console.log(`[settle] ${toHex(rid).slice(0, 16)} donation keys not indexed: ${e.message}`));
       out.push({ round: toHex(rid), ok: true, state: ACCEPTED, why: h.why });
     }
     // AND EVERY FEDERATION'S AND LATE ENTRY'S ROW NOT ACCEPTED (kanban #1172, and #1186's gap on this line): asked of its own federation, every txid
@@ -2320,7 +2323,9 @@ export class LockSettlement {
     if (!this.round.lockSettlementsIn || !this.round.donationBackfilled) return out;
     for (const rid of this.round.lockSettlementsIn(ACCEPTED)) {
       const kept = this.round.lockSettlement(rid);
-      if (!kept || !String(kept.why || '').startsWith('found in the federation after this signer node was inside it')) continue;
+      // EVERY ROW RECOVERED FROM THE FEDERATION (kanban #2279): also recover()'s "found in the federation after a REFUSED row" and one found on
+      // another txid, not only "after this signer node was inside it" - a seat that stopped before indexing such a row is caught up here
+      if (!kept || !String(kept.why || '').startsWith('found in the federation')) continue;
       if (this.round.donationBackfilled(rid) || this.round.settlementDonationOutputs(rid) > 0) continue;
       out.checked++;
       const r = await this.indexRecovered(rid, kept.txid, { onlyStored: true });
