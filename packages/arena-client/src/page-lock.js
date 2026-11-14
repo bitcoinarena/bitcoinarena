@@ -20,6 +20,7 @@
 import { ANCESTOR_TAG } from '../../arena-protocol/src/ancestor.js';
 import { noteInvite, wholeInvite } from './guardian-invites.js';
 import { taggedHash, toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
+import { settledListDigest } from '../../arena-protocol/src/settled-list.js';
 import { gatewayFeeWithin } from '../../arena-protocol/src/federation-record.js';
 import { TAG, networkOf } from '../../arena-protocol/src/constants.js';
 import { netStakeMsat } from '../../arena-protocol/src/payout.js';
@@ -3126,7 +3127,9 @@ export const owedSiteOf = (n) => {
   else return h.split('.').slice(-2).join('.');
   return 'v4:' + h;
 };
-export async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fetcher = fetch, sinceMs = 0, known = [], knownBySeed = null } = {}) {
+// `bonded` (kanban #2108, #2123): the node keys (hex) of a census this page checked, or null. Only an answer signed by its node's key
+// (settled-list.js) counts, and with `bonded` only one whose key that census bonds; the allowance is one per node key, not per site.
+export async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fetcher = fetch, sinceMs = 0, known = [], knownBySeed = null, bonded = null } = {}) {
   // EVERY SAVED PHRASE AT ONCE (2026-10-07): each signer node's /settled is read once and matched against
   // every phrase's keys - 7 asks on 7 signer nodes, not 7 per phrase. One `seed` (with `known`) is the one-phrase scan as before.
   const list = Array.isArray(seeds) ? seeds : [seed];
@@ -3162,13 +3165,29 @@ export async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fe
     const r = await fetcher(`${base(node)}/settled?since=${since}`, { signal });
     return r.ok ? r.json() : null;
   })));
-  // AT MOST OWED_SETTLED_MAX ROUNDS FROM ONE SITE, NEWEST FIRST, EACH ID ONCE PER SEAT (kanban #1489, #1832, #1966)
+  // ONLY SIGNED ANSWERS COUNT, ONE ALLOWANCE PER NODE KEY (kanban #2108, #2123, decided 2026-11-14 "/settled signed by the census key"):
+  // a site was the unit, and the live federation's seats share one host - so they tied with liar domains and shared one 500-id
+  // allowance. Now an answer counts only when it names its node and that key signed it (settled-list.js), and - with the census the
+  // page checked - only a key that census bonds. Each node key is one allowance (a key answering at several URLs once); an answer of
+  // more than a seat ever sends (OWED_SETTLED_MAX) is not read. Unsigned answers (seats before this) add nothing.
+  const bondedSet = bonded ? new Set([...bonded].map((k) => String(k).toLowerCase())) : null;
+  const verifySig = curve && typeof curve.verify === 'function' ? curve.verify : null;
+  const signerOf = (got) => {
+    if (!got || !Array.isArray(got.rounds) || got.rounds.length > OWED_SETTLED_MAX || !verifySig) return null;
+    const node = String(got.node || '').toLowerCase(), sig = String(got.sig || '').toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(node) || !/^[0-9a-f]{128}$/.test(sig)) return null;
+    if (bondedSet && !bondedSet.has(node)) return null;
+    let good = false;
+    try { good = !!verifySig(fromHex(sig), settledListDigest({ node, since: got.since, rounds: got.rounds }), fromHex(node)); } catch { good = false; }
+    return good ? node : null;
+  };
+  // AT MOST OWED_SETTLED_MAX ROUNDS FROM ONE NODE KEY, NEWEST FIRST, EACH ID ONCE PER SEAT (kanban #1489, #1832, #1966, #2108)
   const bySite = new Map();
   lists.forEach((got, n) => {
+    const h = signerOf(got);
+    if (!h || bySite.has(h)) return;                         // unsigned, not bonded, or a key already read at another URL
     // the seat's newest entries in one pass, objects only (owedNewest, kanban #1772): no sort of a seat's whole list
-    const all = got && Array.isArray(got.rounds) ? owedNewest(got.rounds, OWED_SETTLED_MAX) : null;
-    if (!all) return;
-    const h = owedSiteOf(nodes[n]);
+    const all = owedNewest(got.rounds, OWED_SETTLED_MAX);
     if (!bySite.has(h)) bySite.set(h, []);
     const seen = new Set(), rows = bySite.get(h);
     all.forEach((x, i) => {

@@ -26,6 +26,8 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { openStore } from '../src/store.js';
+import { settledListDigest } from '../../arena-protocol/src/settled-list.js';
+const fromHexS = (h) => Uint8Array.from(Buffer.from(String(h), 'hex'));
 import { serve } from '../src/server.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { assumeAssigned } from './assignment.js';
@@ -170,6 +172,9 @@ test('the signer nodes list the rounds they settled since a time with the keys e
     assert.deepEqual(mine.payouts, [toHex(refundKeyOf(WINNER.key))], 'the winner\'s payout is not listed for its seed to collect');
     assert.deepEqual([...mine.refunds].sort(), [toHex(refundKeyOf(WINNER.key)), toHex(refundKeyOf(LOSER.key))].sort(), 'the listed refund keys are not the two locks\'');
     assert.equal('contract' in mine, false, 'every listed round carries its contract');
+    // SIGNED BY THE SEAT'S NODE KEY (kanban #2108, #2123): the page counts only an answer its census key signed
+    assert.ok(schnorr.verify(fromHexS(listed.sig), settledListDigest({ node: listed.node, since: listed.since, rounds: listed.rounds }), fromHexS(listed.node)),
+      'the /settled answer is not signed by the node it names');
     // AND THE CONTRACT OF A ROUND A DEVICE MATCHED, FROM /round: its id.
     const c = new Uint8Array(await (await fetch(`http://127.0.0.1:${w.a.port}/round?id=${mine.id}`)).arrayBuffer());
     assert.equal(toHex(roundId(decodeRoundContract(c))), toHex(w.rid), 'the round\'s contract is not its id');
