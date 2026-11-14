@@ -25,7 +25,7 @@ export const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 27, 28]);
+export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 27, 28, 29]);
 /** The last BLWP/v1 tags become ARENA/v1 at one point per network (tag-switch.js, kanban #525). */
 export const TAG_SWITCH_VERSION = 18;
 /** A node's bond outputs count as their sum: the round's floor is applied to it (census.js nodeBonds, kanban #544). */
@@ -49,6 +49,16 @@ export const GIFTS_IN_FEE_LOCK_VERSION = 27;
  * 22-26 are the 2.0 branches' and 27 the gifts', so this is 28.
  */
 export const LOCK_SET_VERSION = 28;
+/**
+ * 2026.0.29 - A SCORE TIE IS BROKEN BY H(round_id || pubkey) (kanban #1614, decided 2026-11-14 "Ja alle 15": "tie-break H(round_id ||
+ * pubkey), from the next protocol"). Below this version computePayoutTable orders equal scores by the bare player key, which the player
+ * mints - a key ground to start 0x00 won every tie at a paid boundary in every round. From 29 the tie goes by the remainder rule's own
+ * hash (TAG.remainder over round_id || pubkey), which no key can win in advance for every round. Rounds below 29 keep the old order
+ * byte for byte, so the seats agree on every round already played. 22-26 are the 2.0 branches', 27 the gifts', 28 the lock set's.
+ */
+export const TIE_SALT_VERSION = 29;
+/** Whether a round of protocol version `v` breaks score ties by H(round_id || pubkey) (kanban #1614). */
+export const saltsTies = (v) => Number.isInteger(v) && v >= TIE_SALT_VERSION;
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (RULED 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
