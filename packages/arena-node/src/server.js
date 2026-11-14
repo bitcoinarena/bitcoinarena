@@ -7756,7 +7756,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     };
     setInterval(() => { confirmTick().catch((e) => console.log(`[reserve-alarm] confirm: ${e.message}`)); }, Number(process.env.ARENA_ALARM_CONFIRM_MS || 300_000)).unref?.();
   }
-  fedRecords = federationRecords({ round, roster, inviteFor: inviteOfFed, store: recordStore, networkId: chainNetworkId() ? fromHex(chainNetworkId()) : null, reserveOf,
+  fedRecords = federationRecords({ round, roster, fetcher: fetch /* the capped door, kanban #2650 */, inviteFor: inviteOfFed, store: recordStore, networkId: chainNetworkId() ? fromHex(chainNetworkId()) : null, reserveOf,
     alarmOf: (fid) => reserveAlarms.of(fid),
     // A THEFT'S PROOF, BUILT AND JUDGED ON ITS OWN BYTES (kanban #1093 part 2, ruling #1109 X): the stake-lock tool exports the signed sessions and verifies them (theft-evidence.js)
     ...theftTools({ bin: process.env.ARENA_STAKE_LOCK_BIN || null, dirOf: (fid) => reserveAuditDirOf(fid), log: (l) => console.log(l) }),
@@ -8094,7 +8094,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const heldReads = createHeldReads({ me: toHex(round.pubkey), sign: (h) => schnorr.sign(h, round.identity.secret), tip: async () => (typeof chainTip === 'function' ? chainTip() : null),
     portOf: (fid) => portOfFederation(fromHex(fid)), setFor: async (fid, epoch) => heldSetOf(fid, epoch), verify: schnorrVerify,
     rulesOn: (epoch) => seatingRulesActive(epoch, chainNetworkId() ? seatingRulesEpochOf(networkOf(fromHex(chainNetworkId()))) : null) });
-  const watchFor = (g) => createGatewayWatch({ federationId: async () => federationOfDir(g.dataDir),
+  const watchFor = (g) => createGatewayWatch({ fetcher: fetch /* the capped door, kanban #2650 */, federationId: async () => federationOfDir(g.dataDir),
       // the peg-in age rule by this seat's own chain, and the one block a claimed height names (§23A.3a, kanban #999/#1026)
       rulesNetwork: chainNetworkId() ? networkOf(fromHex(chainNetworkId())) : null,
       outpointAt: ballot && typeof ballot.outpointAt === 'function' ? (h, o) => ballot.outpointAt(h, o) : null,

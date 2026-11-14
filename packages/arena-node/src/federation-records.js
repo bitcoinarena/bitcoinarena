@@ -31,6 +31,7 @@ import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { withConfigEndpoints } from './federation-endpoints.js';
 import { recordInviteSource, createInviteBuffer } from '../../arena-protocol/src/trusted-guardian-keys.js';
 import { readInvite } from './invite.js';
+import { answersUpTo } from './peer-read.js';   // kanban #2650
 import { buildFederationRecord, encodeFederationRecord, federationRecordId, joinSignedRecord, verifyFederationRecord, verifyFederationRecords,
   FEDERATION_STATUS, GONE, decodeFederationRecord, splitSignedRecord, guardianKeySet, highestVerified, recordStatusName, thresholdOf, loadReserveOf, statusFor, paysDrainShares, playerReserveOf, GATEWAY_FEE_MAX_REFERENCE, RESTRICTION_RANK, selfConsistentRestrictive } from '../../arena-protocol/src/federation-record.js';
 import { recordBand, bandOfRecord } from '../../arena-protocol/src/capacity.js';
@@ -152,7 +153,9 @@ export function recordStep(had, next, from = 'gather') {
 
 // `successorOf(fidHex)`: the successor this seat was told of (hex) or null; `closedOf(fidHex)`: whether the drain is over
 // (§23A.6 steps 2 and 4) - both read into the body every guardian seat builds the same way
-export function federationRecords({ round, roster, inviteFor, networkId, leavingAtMs = () => null, fetcher = fetch, nowMs = () => Date.now(), newest = null,
+// kanban #2650 (a bypass of #2637): the default fetcher is the capped one - every GET /federations, /federation-record answer from a
+// guardian or census seat is read to at most PEER_ANSWER_BYTES (8 MiB), not buffered and parsed whole whatever its size
+export function federationRecords({ round, roster, inviteFor, networkId, leavingAtMs = () => null, fetcher = answersUpTo((...a) => globalThis.fetch(...a)), nowMs = () => Date.now(), newest = null,
   // `playerHeldOf(fidHex)`: { ok, sats: [bigint] } - the gateways' proved e-cash this seat counts (its gateway watch: each paid seat's held
   // lock, heldLockCounted), or { ok: false }; null: this seat names no player reserve (kanban #1322)
   playerHeldOf = null,

@@ -18,11 +18,13 @@ import { pegInPressure } from '../../arena-protocol/src/capacity.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { nodeBondOf } from '../../arena-protocol/src/census.js';
 import { heldLockCounted } from '../../arena-protocol/src/held-proof.js';
+import { answersUpTo } from './peer-read.js';   // kanban #2650
 
 // `endpointOf(entry)`: where that node answers now - its newest signed address announcement before its advert's endpoint (kanban
 // #577, measured 2026-10-22: the three installer guardians of 89ce310e restarted on an update, their quick tunnels took new names,
 // the seats held the announcements, and still read every claim at the advert's dead address - "0 of 2 gateway seats filled")
-export function createGatewayWatch({ federationId, seated, entries, tip, beaconAt, verify, fetcher = fetch, network = 'testnet4', bondMinGuardian = 50000n,
+// kanban #2650: the default fetcher is capped (peer-read.js answersUpTo, 8 MiB) - a node's /gateway-claim is not read whole whatever its size
+export function createGatewayWatch({ federationId, seated, entries, tip, beaconAt, verify, fetcher = answersUpTo((...a) => globalThis.fetch(...a)), network = 'testnet4', bondMinGuardian = 50000n,
   endpointOf = (e) => (e && e.advert ? e.advert.endpoint : null),
   epochBlocks = GATEWAY_EPOCH_BLOCKS, timeoutMs = 10000, incoming = null, keep = null,
   // THE SIGNED SEATING OF AN EPOCH (gateway-seating.js), where one stands: async (fid, epoch) -> [node hex] | null
