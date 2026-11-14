@@ -99,8 +99,15 @@ export function inForceOf(bonds) {
     }
     return c.tie > best.tie;
   };
+  // ONLY THE NEWEST BODY IS IN FORCE (kanban #2426): a body the node signed before, re-posted by anyone as an update of one of its outputs,
+  // is older than the newest the node signed - so of the outputs, only those whose advertisement carries the highest signed timestamp
+  // are read (all, when a record carries none)
+  const tsOf = (a) => { try { return a && a.timestamp !== undefined && a.timestamp !== null ? BigInt(a.timestamp) : null; } catch { return null; } };
+  const all = (bonds || []).filter(Boolean);
+  const stamps = all.map((b) => tsOf(b.advert));
+  const top = stamps.every((t) => t !== null) && stamps.length ? stamps.reduce((m, t) => (t > m ? t : m)) : null;
   let best = null;
-  for (const b of bonds || []) {
+  for (const b of top === null ? all : all.filter((x, i) => stamps[i] === top)) {
     const c = b.updatedBy
       ? { b, own: false, height: b.updatedBy.height, pos: Number.isInteger(b.updatedBy.position) ? b.updatedBy.position : null, tie: internalHex(b.updatedBy.txid) }
       : { b, own: true, height: b.height, pos: -1, tie: internalHex(b.txid) };

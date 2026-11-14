@@ -237,7 +237,7 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
       if (!maturity.ok) continue;
       if (u.byMarker ? toHex(keyAt(nodeKey, maturity.maturity).outputKey) !== u.scriptPubKey.slice(4)
         : advert.bondScriptTemplateVersion !== 1) continue;
-      const newer = newestUpdateOf({ txid: fromHex(u.txid).reverse(), vout: u.vout, height: u.height, nodePubkey: nodeKey });
+      const newer = newestUpdateOf({ txid: fromHex(u.txid).reverse(), vout: u.vout, height: u.height, nodePubkey: nodeKey, advert });
       out.push({ txid: u.txid, vout: u.vout, height: u.height, sats: Math.round(u.amount * 1e8), maturity: maturity.maturity,
         advert: newer ? newer.advert : advert, bondAdvert: advert, bondSignature: advertSignature, ...(ancestor ? { ancestor: true } : {}),
         // its POSITION in its block too (kanban #2190): two updates of the node in one block are ordered by it, as the census orders them
@@ -299,6 +299,8 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
   }
   function newestUpdateOf(bond) {
     blockTxids.clear();
+    const tsOfBody = (a) => { try { return a && a.timestamp !== undefined && a.timestamp !== null ? BigInt(a.timestamp) : null; } catch { return null; } };
+    const ownTs = tsOfBody(bond.advert);
     if (!markers) {
       const scan = scanUtxos([`raw(5120${toHex(bondMarker(network))})`]);
       markers = (scan.unspents || []).filter((m) => m.height > 0);
@@ -314,15 +316,25 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
       let signed = false;
       try { signed = schnorr.verify(read.signature, read.advertId, read.nodePubkey); } catch { signed = false; }
       if (!signed) continue;
-      // TWO UPDATES OF THIS BOND IN ONE BLOCK (kanban #2190): the later position in the block wins, as advert-update.js newestUpdates
-      // decides it for the census - not whichever marker the UTXO scan listed first
-      if (!best || m.height > best.height) best = { advert: read.advert, height: m.height, txidHex: m.txid };
-      else if (m.height === best.height) {
-        const pm = positionIn(m.height, m.txid), pb = best.position !== undefined ? best.position : positionIn(best.height, best.txidHex);
-        best.position = pb;
-        if (Number.isInteger(pm) && Number.isInteger(pb) && pm > pb) best = { advert: read.advert, height: m.height, txidHex: m.txid, position: pm };
+      // ONLY A NEWER BODY IS AN UPDATE (kanban #2426, advert-update.js newestUpdates): a body the node signed before - the bond's own, an
+      // old check, an old step-out - re-posted by anyone is not newer than what it copies. The update in force is the one with the highest
+      // signed timestamp above the bond's own body; of equal ones the first mined, as the census counts only a strictly newer one.
+      const ts = tsOfBody(read.advert);
+      if (ts === null || (ownTs !== null && ts <= ownTs)) continue;
+      if (best && ts < best.ts) continue;
+      if (best && ts === best.ts) {
+        if (m.height > best.height) continue;
+        if (m.height === best.height) {
+          const pm = positionIn(m.height, m.txid), pb = best.position !== undefined ? best.position : positionIn(best.height, best.txidHex);
+          best.position = pb;
+          if (!(Number.isInteger(pm) && Number.isInteger(pb) && pm < pb)) continue;
+          best = { advert: read.advert, height: m.height, txidHex: m.txid, position: pm, ts };
+          continue;
+        }
       }
+      best = { advert: read.advert, height: m.height, txidHex: m.txid, ts };
     }
+    if (best) delete best.ts;
     if (best && best.position === undefined) best.position = positionIn(best.height, best.txidHex);
     return best;
   }

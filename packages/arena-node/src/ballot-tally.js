@@ -34,7 +34,7 @@ import { tally, CLASS, decodeVote, voteMessage } from '../../arena-protocol/src/
 import { liveConfig, BALLOT_GENESIS } from '../../arena-protocol/src/ballot-chain.js';
 import { decodeConfigProposalBody } from '../../arena-protocol/src/ballot.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
-import { stateOf, PROPOSAL_STATE as S } from './proposals.js';
+import { stateOf, isLate, PROPOSAL_STATE as S } from './proposals.js';
 
 /** THE FEWEST CONFIRMATIONS AN OUTCOME IS WRITTEN AT (kanban #1152): a one- or two-block reorg never moves a decided proposal - a repeal's included. */
 export const MIN_DECIDE_DEPTH = 3;
@@ -427,6 +427,7 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
     const stands = typeof proposals.twinOf === 'function' ? proposals.twinOf(p.id) : p.id;
     if (stands && stands !== p.id) { const q = proposals.list().find((x) => x.id === stands); if (q) return phaseOf(q); }
     if (stateOf(p) === S.ORPHANED) return 'orphaned';
+    if (isLate(p)) return 'late';                                   // kanban #2432: held only after its voting ended, not seen in time by a census majority
     if (!counted(p)) return 'void';
     if (!p.decided) return tip !== null && tip >= p.votingFrom ? 'voting' : 'review';
     if (!p.decided.passed) return 'failed';

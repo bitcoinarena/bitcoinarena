@@ -130,7 +130,7 @@ export const SIGNATURES_NOT_VERIFIED =
  * stay distinguishable from "not in the table at all", which is what a
  * refunded player is.
  */
-function payoutsFor(payout, finals) {
+function payoutsFor(payout, finals, protocolVersion = null) {
   if (!payout) return { ok: true, amounts: null };
   if (!Array.isArray(payout.entries))
     return { ok: false, why: 'that payout names no entries to compute a table from' };
@@ -158,7 +158,8 @@ function payoutsFor(payout, finals) {
   }
 
   let table;
-  try { table = computePayoutTable(payout); }
+  // the round's version is the contract's, never the caller's (from 29 ties go by H(round_id || pubkey), kanban #1614)
+  try { table = computePayoutTable({ ...payout, protocolVersion }); }
   catch (err) { return { ok: false, why: `that payout cannot be computed: ${err.message}` }; }
 
   return { ok: true, amounts: new Map(table.table.map((r) => [hex(r.pubkey), r.amountMsat])) };
@@ -302,7 +303,7 @@ export function leaderboard(rows, {
   }
 
   // The amounts, from the round's own inputs through section 20's function.
-  const paid = payoutsFor(payout, [...ranked, ...unranked]);
+  const paid = payoutsFor(payout, [...ranked, ...unranked], contract.protocolVersion);
   if (!paid.ok) return { ok: false, why: paid.why };
 
   // Score descending, then the key. Never arrival, and never a comparison that

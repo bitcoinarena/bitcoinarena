@@ -534,7 +534,7 @@ export function slashHoldsOnTable({
 
   let honest;
   try {
-    honest = computePayoutTable({ roundId: claimed.roundId, entries, minScore, payoutShares: rule.payoutShares });
+    honest = computePayoutTable({ roundId: claimed.roundId, entries, minScore, payoutShares: rule.payoutShares, protocolVersion: contract.protocolVersion });
   } catch (e) {
     return { slashed: false, why: `F cannot be computed from those inputs: ${e.message}` };
   }

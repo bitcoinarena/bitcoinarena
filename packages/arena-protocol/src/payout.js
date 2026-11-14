@@ -9,7 +9,7 @@
 
 import { Writer, Reader } from './encode.js';
 import { taggedHash, bytesToBigInt } from './hash.js';
-import { TAG, TYPE_PAYOUT_TABLE, PROTOCOL_VERSION, speaksVersion } from './constants.js';
+import { TAG, TYPE_PAYOUT_TABLE, PROTOCOL_VERSION, speaksVersion, saltsTies } from './constants.js';
 
 export const DELIVERED = 'DELIVERED';
 export const FAILED = 'FAILED';
@@ -113,14 +113,15 @@ export const payingRanks = (qualifiers) =>
  * Dropping the remainder instead would break the sum invariant below, and
  * giving it to the top rank would be a silent extra prize.
  */
+const remainderKey = (roundId, pubkey) => {
+  const w = new Writer();
+  w.bytes32(roundId);
+  w.bytes32(pubkey);
+  return bytesToBigInt(taggedHash(TAG.remainder, w.finish()));
+};
 export function remainderOrder(roundId, entries) {
   return entries
-    .map((e) => {
-      const w = new Writer();
-      w.bytes32(roundId);
-      w.bytes32(e.pubkey);
-      return { e, key: bytesToBigInt(taggedHash(TAG.remainder, w.finish())) };
-    })
+    .map((e) => ({ e, key: remainderKey(roundId, e.pubkey) }))
     .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
     .map((x) => x.e);
 }
@@ -171,7 +172,9 @@ export function payoutSharesFit(shares) {
 
 // `payoutShares`: the round's game's top split (manifest.js payoutSharesOf), or null for §18A's rank curve - the default,
 // so every caller that names none computes exactly the table it always did.
-export function computePayoutTable({ roundId, entries, minScore = 0, payoutShares = null }) {
+// `protocolVersion`: the round contract's version. From TIE_SALT_VERSION (29) equal scores are ordered by H(round_id || pubkey), the
+// remainder rule's key (kanban #1614); below it, or unnamed, by the bare key as every round already played was.
+export function computePayoutTable({ roundId, entries, minScore = 0, payoutShares = null, protocolVersion = null }) {
   if (payoutShares !== null && payoutShares !== undefined) {
     const fit = payoutSharesFit(payoutShares);
     if (!fit.ok) throw new Error(fit.why);
@@ -187,12 +190,19 @@ export function computePayoutTable({ roundId, entries, minScore = 0, payoutShare
   // Qualification is generous on purpose: a cautious player keeps their stake
   // and simply does not place. Disqualifying them would move their stake into
   // the pool, which is a levy on a legal strategy rather than balance.
+  // TIES (kanban #1614): from protocol 29 decided by the same rule the remainder uses, H(round_id || pubkey), so the
+  // order is neither the order the entries arrived in nor a key the player ground to win every tie; below 29 by the bare
+  // key, as the rounds already played were settled
+  const salted = saltsTies(protocolVersion);
+  const tieKey = salted ? new Map(entries.map((e) => [e, remainderKey(roundId, e.pubkey)])) : null;
   const qualifiers = activated
     .filter((e) => isQualifier(e, minScore))
     .sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
-      // ties decided by the same rule the remainder uses, so the order is not
-      // the order the entries happened to arrive in
+      if (salted) {
+        const ka = tieKey.get(a), kb = tieKey.get(b);
+        if (ka !== kb) return ka < kb ? -1 : 1;
+      }
       return compareBytes(a.pubkey, b.pubkey);
     });
 

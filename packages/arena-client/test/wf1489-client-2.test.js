@@ -14,6 +14,7 @@ import { pageCurve } from '../src/page-curve.js';
 import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
 import { decodeRoundContract, encodeRoundContract, roundId } from '../../arena-protocol/src/contracts.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { signedSeats } from './settled-signed.js';   // kanban #2108: seats sign their /settled answers
 
 const CONTRACT_HEX = readFileSync(new URL('./page-collect-other-seeds.test.js', import.meta.url), 'utf8').match(/CONTRACT_HEX = '([0-9a-f]+)'/)[1];
 const contract = decodeRoundContract(fromHex(CONTRACT_HEX));
@@ -29,7 +30,7 @@ const honest = (url) => {
 test('wf1489-client-2a: one seat that never answers /settled does not stall the owed scan (the honest seats list the payout)', async () => {
   PL.forgetOwedRounds();
   const fetcher = (url) => (url.startsWith('https://liar') ? new Promise(() => {}) : Promise.resolve(honest(url)));
-  const scan = PL.findOwedRounds({ seed, curve: pageCurve, nodes: ['https://liar', 'https://h1', 'https://h2'], fetcher, sinceMs: 0 });
+  const scan = PL.findOwedRounds({ seed, curve: pageCurve, nodes: ['https://liar', 'https://h1', 'https://h2'], ...signedSeats(fetcher, ['https://liar', 'https://h1', 'https://h2']), sinceMs: 0 });
   let t; const LIMIT = 30000;
   const res = await Promise.race([scan.then((f) => ({ found: f })), new Promise((r) => { t = setTimeout(() => r({ stalled: true }), LIMIT); })]);
   clearTimeout(t);
@@ -45,7 +46,7 @@ test('wf1489-client-2b: one seat listing 3000 made-up settled rounds does not co
   let derived = 0;
   const curve = { ...pageCurve, pointX: (s) => { derived += 1; return pageCurve.pointX(s); } };
   const t0 = Date.now();
-  const found = await PL.findOwedRounds({ seed, curve, nodes: ['https://liar', 'https://h1'], fetcher, sinceMs: 0 });
+  const found = await PL.findOwedRounds({ seed, curve, nodes: ['https://liar', 'https://h1'], ...signedSeats(fetcher, ['https://liar', 'https://h1']), sinceMs: 0 });
   const ms = Date.now() - t0;
   console.log(`  FACTS one seat listing 3000 fake rounds: ${derived} key derivations, ${ms} ms of the page's thread, ${found.length} found`);
   assert.deepEqual(found.map((f) => f.roundIdHex), [id]);
