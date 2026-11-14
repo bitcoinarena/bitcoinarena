@@ -403,7 +403,7 @@ export async function txidOf(rpc, hex) { try { return String((await rpc('decoder
 export async function post(rpc, hex) {
   const [r] = await rpc('testmempoolaccept', [[hex]]);
   // SENT BEFORE (kanban #1232): the same bytes already in the mempool are this transaction posted, its answer lost
-  if (r && !r.allowed && /txn-already-in-mempool|txn-already-known/.test(String(r['reject-reason'] || ''))) return { ok: true, txid: r.txid, tested: r, again: true };
+  if (r && !r.allowed && /txn-already-in-mempool|txn-already-known|txn-same-nonwitness-data-in-mempool/.test(String(r['reject-reason'] || ''))) return { ok: true, txid: r.txid, tested: r, again: true };
   if (!r || !r.allowed) return { ok: false, why: `the mempool refuses it: ${r && r['reject-reason']}`, tested: r };
   const txid = await rpc('sendrawtransaction', [hex]);
   return { ok: true, txid, tested: r };

@@ -33,7 +33,7 @@ const SCAN_MAX = 144;                       // blocks looked through per pass fo
 const RESCAN = 6;                           // the newest blocks looked at again each pass (a reorg near the tip)
 const REORG_WATCH = 144;                    // a published anchor's block is checked while it is less deep than this
 // "already there" from a broadcast is a success: the bytes are in the mempool or a block
-export const ALREADY = /already in (the )?(block ?chain|mempool|utxo set)|txn-already-(known|in-mempool)|already have transaction|outputs already in utxo set|transaction already exists|-27\b/i;
+export const ALREADY = /txn-same-nonwitness-data-in-mempool|already in (the )?(block ?chain|mempool|utxo set)|txn-already-(known|in-mempool)|already have transaction|outputs already in utxo set|transaction already exists|-27\b/i;
 
 const strip = (d) => { const { anchor, ...rest } = d; void anchor; return rest; };
 export const anchorIdOf = (d) => toHex(departureId(d));
