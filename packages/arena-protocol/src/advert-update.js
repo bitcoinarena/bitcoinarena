@@ -102,11 +102,20 @@ export async function checkAgainstBond(read, bond, verify) {
  * Answers Map(outpoint key -> { advert, advertId, txid, height, position }). `seen(entry, read, height)`: told of every valid update in chain order, the newest or not: a bond's presig
  * stays in the update that posted it, whatever came after (one pass over the view).
  */
+//
+// ONLY A NEWER BODY IS AN UPDATE (kanban #2426, decided 2026-11-14 "the higher-timestamp rule, now"): the node's signature covers the body
+// alone, so anyone could re-post a body the node once signed - its seat's old check, the bond's own creation body, an old step-out - as a
+// newer update, and undo a step-out (or step a serving node out). An update counts only when its signed `timestamp` is strictly greater
+// than every body of that node key before it in chain order: each of its bonds' creation bodies (at their heights) and every update that
+// counted. A replay is never newer than what it copies, so it counts nowhere.
+const tsOf = (a) => { try { return a && a.timestamp !== undefined && a.timestamp !== null ? BigInt(a.timestamp) : null; } catch { return null; } };
 export function newestUpdates(view, entries, { atHeight, network = 'regtest', verify, seen = null } = {}) {
   const found = new Map();
   // NO LIST OF BONDS, NOTHING TO UPDATE: measured before, a missing list threw on entries.map.
   if (typeof verify !== 'function' || !view || !Array.isArray(view.blocks) || !Array.isArray(entries)) return found;
   const want = new Map(entries.map((e) => [`${Array.from(e.txid).join(',')}:${e.vout}`, e]));
+  const nodeOf = (k) => Array.from(k).join(',');
+  const events = [];   // { height, position, ts, node, key?, update? } - the bonds' own bodies at position -1
   view.blocks.forEach((block, i) => {
     const height = view.firstHeight + i;
     if (height > atHeight) return;
@@ -124,10 +133,22 @@ export function newestUpdates(view, entries, { atHeight, network = 'regtest', ve
       try { signed = !!verify(read.signature, read.advertId, read.nodePubkey); } catch { signed = false; }
       if (!signed) return;
       if (seen) seen(e, read, height);
-      const had = found.get(key);
-      if (!had || height > had.height || (height === had.height && position > had.position))
-        found.set(key, { advert: read.advert, advertId: read.advertId, txid: read.txid, height, position, raw });
+      events.push({ height, position, ts: tsOf(read.advert), node: nodeOf(read.nodePubkey), key,
+        update: { advert: read.advert, advertId: read.advertId, txid: read.txid, height, position, raw } });
     });
   });
+  for (const e of entries) {
+    const pk = e.pubkey || (e.advert && e.advert.nodePubkey);
+    if (pk && Number.isInteger(e.height)) events.push({ height: e.height, position: -1, ts: tsOf(e.advert), node: nodeOf(pk) });
+  }
+  events.sort((a, b) => (a.height - b.height) || (a.position - b.position));
+  const newest = new Map();   // node key -> the newest timestamp of its bodies so far
+  for (const ev of events) {
+    const had = newest.has(ev.node) ? newest.get(ev.node) : null;
+    if (!ev.update) { if (ev.ts !== null && (had === null || ev.ts > had)) newest.set(ev.node, ev.ts); continue; }
+    if (ev.ts === null || (had !== null && ev.ts <= had)) continue;   // kanban #2426: not newer than a body before it - a replay
+    newest.set(ev.node, ev.ts);
+    found.set(ev.key, ev.update);
+  }
   return found;
 }

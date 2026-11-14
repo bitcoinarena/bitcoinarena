@@ -87,8 +87,15 @@ const sameAction = (was, { key, what, nowMs }) => !!was && (key ? was.key === ke
  * every census, never asked. Answers the record, or null for none.
  */
 export function inForceOf(bonds) {
+  // ONLY THE NEWEST BODY IS IN FORCE (kanban #2426): a body the node signed before, re-posted by anyone as an update of one of its outputs,
+  // is older than the newest the node signed - so of the outputs, only those whose advertisement carries the highest signed timestamp
+  // are read (all, when a record carries none)
+  const tsOf = (a) => { try { return a && a.timestamp !== undefined && a.timestamp !== null ? BigInt(a.timestamp) : null; } catch { return null; } };
+  const all = (bonds || []).filter(Boolean);
+  const stamps = all.map((b) => tsOf(b.advert));
+  const top = stamps.every((t) => t !== null) && stamps.length ? stamps.reduce((m, t) => (t > m ? t : m)) : null;
   let best = null;
-  for (const b of bonds || []) {
+  for (const b of top === null ? all : all.filter((x, i) => stamps[i] === top)) {
     const c = b.updatedBy ? { b, height: b.updatedBy.height, pos: 0, tie: String(b.updatedBy.txid || '').toLowerCase() }
       : { b, height: b.height, pos: -1, tie: String(b.txid || '').toLowerCase() };
     if (!best || c.height > best.height || (c.height === best.height && (c.pos > best.pos || (c.pos === best.pos && c.tie > best.tie)))) best = c;
