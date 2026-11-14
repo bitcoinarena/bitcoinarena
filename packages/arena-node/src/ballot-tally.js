@@ -30,7 +30,7 @@
 // already learned outran its slice on the slower machine and held seven seats at 105-170 % of a core): a pass reads at most
 // `maxBlocksPerPass` blocks over all proposals, each proposal keeps how far it has read, nothing already read or decided is
 // asked again, and the vote cache drops every height below the lowest phase still open.
-import { tally, CLASS, decodeVote, voteMessage } from '../../arena-protocol/src/ballot.js';
+import { tally, CLASS, decodeVote, voteMessage, censusByKeyPrefix } from '../../arena-protocol/src/ballot.js';
 import { liveConfig, BALLOT_GENESIS } from '../../arena-protocol/src/ballot-chain.js';
 import { decodeConfigProposalBody } from '../../arena-protocol/src/ballot.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
@@ -251,15 +251,23 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
   // A BOUND PROPOSAL'S TWINS (kanban #2607, ruling #2591 (c), proposals.js twins): the same body re-signed on the same deposit is the
   // same proposal, so a vote under any twin's id counts for the one that stands for them, the seq rule across all of them
   const twinIdsOf = (p) => (boundOf(p) && typeof proposals.twins === 'function' ? proposals.twins(p.id) : [p.id]).map((x) => String(x).toLowerCase());
+  // A KEYED PROPOSAL (kanban #2671, ruled 2026-11-14): published at or above its network's BALLOT_KEY_HEIGHT - its votes name their bond
+  const keyedOf = (p) => !!(proposals && typeof proposals.keyed === 'function' && proposals.keyed(p));
   const keepVote = (p, o, v) => {
     const d = decodeVote(v.payload);
-    // a bound proposal (kanban #2125) reads only the 80-byte seq votes, an older one only the 77-byte ones
-    const bound = boundOf(p);
-    if (!d || d.bound !== bound) return 'other';
+    // a bound proposal (kanban #2125) reads only the 80-byte seq votes, an older one only the 77-byte ones; a keyed one only keyed votes
+    const keyed = keyedOf(p);
+    const bound = keyed || boundOf(p);
+    if (!d || d.bound !== bound || !!d.keyed !== keyed) return 'other';
     const named = (o.twins || [p.id]).filter((x) => toHex(d.idPrefix) === x.slice(0, 2 * d.idPrefix.length));
     if (!named.length) return 'other';
     const msgs = named.map((x) => (bound ? voteMessage(fromHex(x), d.choice, d.seq) : voteMessage(fromHex(x), d.choice)));
-    const results = msgs.flatMap((msg) => o.census.map((b) => { let good = false; try { good = !!verify(d.signature, msg, b.pubkey); } catch { good = false; } return [pairKey(d.signature, msg, b.pubkey), good]; }));
+    // ONE LOOKUP, NOT THE CENSUS (kanban #2671): a keyed vote is checked only against the bond key(s) it names - junk under a proposal's
+    // prefix costs one check at most, where it cost one per census bond (10,000 junk outputs x a census of 20 = 200,000 checks a block)
+    if (keyed && !o.byKey) o.byKey = censusByKeyPrefix(o.census);
+    const against = keyed ? o.byKey.get(toHex(d.keyPrefix)) || [] : o.census;
+    if (!against.length) return 'junk';
+    const results = msgs.flatMap((msg) => against.map((b) => { let good = false; try { good = !!verify(d.signature, msg, b.pubkey); } catch { good = false; } return [pairKey(d.signature, msg, b.pubkey), good]; }));
     if (!results.some(([, good]) => good)) return 'junk';     // nothing remembered for junk: memory grows with kept votes only
     for (const [key, good] of results) o.checked.set(key, good);
     return 'kept';
@@ -387,7 +395,7 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
         }
         if (o.dirty) {
           o.result = tally({ proposal: { class: CLASS[p.class] }, standing: { id: fromHex(p.id), votingFrom: p.votingFrom, votingUntil: p.votingUntil, twins: o.twins.filter((x) => x !== p.id).map(fromHex) },
-            census: o.census, votes: o.votes, verify: (sig, msg, pk) => checkedVerify(o, sig, msg, pk), bound: boundOf(p) });
+            census: o.census, votes: o.votes, verify: (sig, msg, pk) => checkedVerify(o, sig, msg, pk), bound: keyedOf(p) || boundOf(p), keyed: keyedOf(p) });
           o.dirty = false;
         }
         // DECIDED ONCE: the whole phase read, and its last block deep enough - no later than the block before its activation
