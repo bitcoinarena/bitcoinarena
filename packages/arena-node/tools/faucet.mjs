@@ -192,6 +192,16 @@ const readBook = () => {
 };
 const saveBook = (b) => { writeFileSync(`${env.FAUCET_BOOK}.new`, JSON.stringify(b, null, 1)); renameSync(`${env.FAUCET_BOOK}.new`, env.FAUCET_BOOK); };
 const balanceSats = async () => Math.round(Number((await rpc('getbalances')).mine.trusted) * 1e8);
+// THE PUBLIC BALANCE, READ OUTSIDE THE PAYMENT QUEUE (kanban #2664, #1489 r2-faucet-3): GET /faucet is the installer's open door, and each one
+// was a getbalances RPC queued in one() beside every welcome and top-up - a few hundred open GETs held a new player's welcome for 9 s and more.
+// It now answers from a balance read at most every BALANCE_KEEP_MS, one read at a time, never through the queue
+const BALANCE_KEEP_MS = 5000;
+let balanceKept = null, balanceAt = 0, balanceRead = null;
+const balanceCached = () => {
+  if (balanceKept !== null && Date.now() - balanceAt < BALANCE_KEEP_MS) return Promise.resolve(balanceKept);
+  if (!balanceRead) balanceRead = balanceSats().then((v) => { balanceKept = v; balanceAt = Date.now(); return v; }).finally(() => { balanceRead = null; });
+  return balanceRead;
+};
 // THE CALLER'S ADDRESS: the site's Worker names it (behind it x-forwarded-for is Cloudflare's), else the tunnel's header; no header, no limit by address
 // ONLY THE WORKER NAMES IT (audit 8, kanban #1434): x-arena-ip counts with the Worker's key (FAUCET_WORKER_KEY); any other caller - straight over
 // the tunnel - is the address the tunnel itself added last to x-forwarded-for, whatever the caller wrote before it
@@ -1261,11 +1271,11 @@ createServer((req, res) => {
   }
   if (path !== '' && path !== '/faucet') return send(404, { ok: false, why: 'no such door' });
   if (req.method === 'GET') {
-    return one(async () => {
+    return (async () => {
       const day = Math.floor(Date.now() / DAY_MS);
       const given = readBook().paid.filter((p) => Math.floor(p.atMs / DAY_MS) === day).reduce((a, p) => a + p.sats, 0);
-      return { ok: true, balanceSats: await balanceSats(), maxSats: FAUCET_MAX_SATS, leftTodaySats: Math.max(0, FAUCET_DAY_CAP_SATS - given) };
-    }).then((b) => send(200, b), (e) => send(500, { ok: false, why: e.message }));
+      return { ok: true, balanceSats: await balanceCached(), maxSats: FAUCET_MAX_SATS, leftTodaySats: Math.max(0, FAUCET_DAY_CAP_SATS - given) };
+    })().then((b) => send(200, b), (e) => send(500, { ok: false, why: e.message }));
   }
   if (req.method !== 'POST') return send(405, { ok: false, why: 'GET or POST' });
   let body = '';
@@ -1274,6 +1284,10 @@ createServer((req, res) => {
   req.on('end', () => {
     let ask;
     try { ask = JSON.parse(body || '{}'); } catch { return send(400, { ok: false, why: 'not JSON' }); }
+    // THE BOOK'S OWN RULES FIRST, OUTSIDE THE QUEUE (kanban #2664): an ask the book refuses (no address, an address paid, a limit) is answered
+    // at once, with no RPC and no place in the queue the welcomes wait in; only an ask the book would pay is queued and checked again there
+    const pre = faucetDecide({ address: ask.address, sats: ask.sats, ip: ipOf(req) }, readBook(), { balanceSats: Number.MAX_SAFE_INTEGER });
+    if (!pre.ok) return send(200, pre);
     one(() => pay({ address: ask.address, sats: ask.sats, ip: ipOf(req) }))
       .then((r) => send(200, r), (e) => { console.log(`${new Date().toISOString()} failed: ${e.message}`); send(500, { ok: false, why: `the faucet could not pay: ${e.message}` }); });
   });
