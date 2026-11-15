@@ -61,20 +61,20 @@ test('#2623 the faucet: link code by sign-in, Season 2 approval with bonus and h
     const v = await j('/feedback/verify', { method: 'POST', headers: auth(ann, `${STAGE}/verify`) });
     assert.equal(v.ok, true); assert.equal(v.flags.telegram, true); assert.equal(v.links[0].userId, undefined, 'no platform id goes back');
 
-    // SEASON 2 APPROVALS: high + Telegram = 7,500; code-only critical without links = 5,000. The admin's amount is not what counts
+    // SEASON 2 APPROVALS (kanban #2784: the full level only for a played round by a proven human; no reporter here played a round - no seats - so 25 %): high + Telegram = 1,250 + 50 % = 1,875; code-only critical without links = 2,500. The admin's amount is not what counts
     const a1 = await act({ action: 'approve', id: r1, severity: 'high', season2: true, amountSats: 99 });
-    assert.equal(a1.ok, true, JSON.stringify(a1)); assert.equal(a1.report.amountSats, 7500); assert.equal(a1.season2.bonusPct, 50);
+    assert.equal(a1.ok, true, JSON.stringify(a1)); assert.equal(a1.report.amountSats, 1875); assert.equal(a1.season2.bonusPct, 50);
     const a2 = await act({ action: 'approve', id: r2, severity: 'critical', season2: true, codeOnly: true });
-    assert.equal(a2.ok, true, JSON.stringify(a2)); assert.equal(a2.report.amountSats, 5000); assert.equal(a2.season2.codeOnly, true);
+    assert.equal(a2.ok, true, JSON.stringify(a2)); assert.equal(a2.report.amountSats, 2500); assert.equal(a2.season2.codeOnly, true);
     assert.equal((await act({ action: 'approve', id: r1, severity: 'high', season2: true })).ok, false, 'not twice');
     // SEASON 1'S PATH UNCHANGED: no season2 flag, the admin's amount
     const a3 = await act({ action: 'approve', id: r3, severity: 'low', amountSats: 1000 });
     assert.equal(a3.ok, true); assert.equal(a3.report.amountSats, 1000); assert.equal(a3.season2, undefined);
     const pay = await act({ action: 'payable', id: r1 });
-    assert.equal(pay.payableSats, 7500);
+    assert.equal(pay.payableSats, 1875);
 
     const season = await j('/feedback/season');
-    assert.deepEqual({ s: season.season, used: season.usedSats, left: season.leftSats }, { s: 2, used: 12500, left: 87500 });
+    assert.deepEqual({ s: season.season, used: season.usedSats, left: season.leftSats }, { s: 2, used: 4375, left: 95625 });
     const adm = await j('/feedback/admin/season', { headers: { 'x-arena-admin': ADMIN } });
     assert.equal(adm.approvals.length, 2);
     const entries = await act({ action: 'draw-entries', season: 2 });

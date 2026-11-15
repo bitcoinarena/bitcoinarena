@@ -33,14 +33,21 @@ export function bonusPct(flags = {}) {
  * WHAT ONE APPROVAL PAYS, by the Season 2 rules: the level's sats; a follow-up 1,000; a code-only finding (no real round) half the level; then the
  * community bonus on top. A node bounty is 10,000 flat (it is not a report: no bonus, no half).
  */
-export function seasonPayout({ level, codeOnly = false, followUp = false, flags = {} } = {}) {
+// kanban #2784 (the owner 2026-11-15): the full level only when the reporter played a round AND is proven human - at least one verified social account
+// (Telegram, Discord or Armada membership, or follows on X); else - a code-only report, or a player with no verified account (a bot) - 25 %.
+export const HUMAN_FLAGS = Object.freeze(['telegram', 'discord', 'armada', 'x']);
+export function seasonPayout({ level, codeOnly = false, followUp = false, flags = {}, played = true } = {}) {
   const lv = String(level || '').toLowerCase();
   if (lv === 'node') return { ok: true, level: 'node', baseSats: NODE_SATS, bonusPct: 0, sats: NODE_SATS };
   if (!Object.hasOwn(LEVEL_SATS, lv)) return { ok: false, why: 'a level is useful, low, medium, high, critical or node' };
   let base = followUp ? FOLLOW_UP_SATS : LEVEL_SATS[lv];
-  if (codeOnly) base = Math.floor(base / 2);
+  const human = HUMAN_FLAGS.some((k) => !!(flags && flags[k]));
+  const full = !codeOnly && !!played && human;
+  if (!full) base = Math.floor(base / 4);   // 25 % (kanban #2784)
   const pct = bonusPct(flags);
-  return { ok: true, level: lv, baseSats: base, bonusPct: pct, sats: Math.floor(base * (100 + pct) / 100), codeOnly: !!codeOnly, followUp: !!followUp };
+  // `codeOnly` on the answer (and the approval's code_only) says "paid at 25 %": a payable() read again then never rises to the full level
+  return { ok: true, level: lv, baseSats: base, bonusPct: pct, sats: Math.floor(base * (100 + pct) / 100), codeOnly: !full, followUp: !!followUp,
+    played: !codeOnly && !!played, human, quarter: !full };
 }
 
 /** THE SEASON AT A TIME: Season 2 from `startMs` (null: Season 2 until a start is set), then one more each week. */
@@ -200,12 +207,12 @@ export function openBountySeason(path = ':memory:', { startMs = null, potSats = 
    * Answers { ok, fits: true, sats, ... } to approve now, { ok, fits: false, waits: true } when the pot cannot take it (recorded as waiting for the
    * next season; the report stays unapproved), or { ok: false, why }. commit() records an approval the store took.
    */
-  function plan(report, { level, codeOnly = false, followUp = false, nowMs = Date.now() } = {}) {
+  function plan(report, { level, codeOnly = false, followUp = false, played = true, nowMs = Date.now() } = {}) {
     if (!report || !report.id) return { ok: false, why: 'no such report' };
     const had = db.prepare('SELECT * FROM approvals WHERE report = ?').get(report.id);
     if (had && had.state === 'approved') return { ok: false, why: 'that report has its Season 2 approval' };
     const flags = String(level).toLowerCase() === 'node' ? {} : flagsOf(report.pubkey, { nowMs });
-    const p = seasonPayout({ level, codeOnly, followUp, flags });
+    const p = seasonPayout({ level, codeOnly, followUp, flags, played });
     if (!p.ok) return p;
     const season = seasonNow(nowMs);
     const now = pot(season);

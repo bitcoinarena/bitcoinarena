@@ -594,7 +594,7 @@ if (S2) setInterval(() => { if (!S2_STARTED() || !bountyOn()) return;
       const r = FEEDBACK.report(a.report);
       if (!r || r.state !== 'new') continue;
       if (a.level !== 'node') await S2.verify(r.pubkey, S2_VERIFY, { cause: 'season2-start' });
-      const p = S2.plan(r, { level: a.level, codeOnly: a.codeOnly, followUp: a.followUp });
+      const p = S2.plan(r, { level: a.level, codeOnly: a.codeOnly, followUp: a.followUp, played: !!PLAYED.played(r.pubkey) });
       if (!p.ok) continue;
       if (p.waits) { if (p.season !== a.season) S2.wait(r, p, { by: 'season2' }); continue; }
       const out = s2Approve(r, p, 'season2');
@@ -740,7 +740,8 @@ createServer((req, res) => {
             if (r.state !== 'new') return send(200, { ok: false, why: `a ${r.state} report is not approved for money` });
             const level = String(b.severity || '').toLowerCase();
             if (level !== 'node') await S2.verify(r.pubkey, S2_VERIFY, { cause: 'approve' });
-            const p = S2.plan(r, { level, codeOnly: b.codeOnly === true, followUp: b.followUp === true });
+            await PLAYED.fresh().catch(() => 0);   // kanban #2784: the full level only for a reporter who played a round (and is proven human)
+            const p = S2.plan(r, { level, codeOnly: b.codeOnly === true, followUp: b.followUp === true, played: !!PLAYED.played(r.pubkey) });
             if (!p.ok) return send(200, p);
             if (p.waits) return send(200, { ok: false, waits: true, why: `Season ${p.season}'s pot has ${p.pot.leftSats} sat left and this report is ${p.sats}: it waits for the next season`, season2: S2.wait(r, p, { by }) });
             return send(200, s2Approve(r, p, by));
@@ -753,7 +754,7 @@ createServer((req, res) => {
           if (!s1.ok && S2 && /this week's budget/.test(String(s1.why || ''))) {
             const r = FEEDBACK.report(b.id);
             const level = String(b.severity || '').toLowerCase() || S2_LEVEL_BY_SATS[Number(b.amountSats)] || '';
-            const p = r ? S2.plan(r, { level, codeOnly: b.codeOnly === true, followUp: b.followUp === true }) : { ok: false };
+            const p = r ? S2.plan(r, { level, codeOnly: b.codeOnly === true, followUp: b.followUp === true, played: !!PLAYED.played(r.pubkey) }) : { ok: false };
             if (!p.ok) return send(200, s1);
             const waiting = S2.wait(r, p, { by });
             FEEDBACK.remark(r.id, `moved to Season 2: the Season 1 budget is used up; approved by the Season 2 rules${S2_START_DAY ? ` once Season 2 starts (${S2_START_DAY})` : ''}`, { by });
