@@ -700,7 +700,12 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
   let frontendGross = 0n;
   for (const [k, siteMsat] of sites.shares) {
     const payoutPk = fromHex(k);
-    const got = largestPayoutMsat(fees, (siteMsat * spendable) / poolMsat);
+    // kanban #2795: a website's line is capped at what is left of the nodes' part after the publisher's fee back and the
+    // websites before it - in a small round the publisher can take all of it, and an uncapped website line then made the fee
+    // lines come to more than the fee locks hold, refusing the whole round's one settlement (the winner's payout with it).
+    const left = nodePartMsat - publisherGross - frontendGross;
+    const share = (siteMsat * spendable) / poolMsat;
+    const got = left > 0n ? largestPayoutMsat(fees, share < left ? share : left) : 0n;
     if (got === 0n) { unpaid.push({ pubkey: payoutPk.subarray(1), owedMsat: siteMsat, why: 'the website\'s share does not pay its own output fee' }); continue; }
     frontendGross += got + lnv2FeeMsat(fees, got);
     payouts.push({ pubkey: payoutPk.subarray(1), payoutPk, owedMsat: siteMsat, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: 'frontend' });
