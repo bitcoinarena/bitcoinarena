@@ -938,11 +938,14 @@ createServer((req, res) => {
     S2.verify(who, S2_VERIFY, { cause: 'reporter' }).then((flags) => send(200, { ok: true, flags, links: S2.links(who).map(({ userId, ...l }) => l) }), () => send(200, { ok: false, why: 'try again' }));
     return undefined;
   }
-  // THE PUBLIC PAYOUT LOG (kanban #2619): what bitcoinarena.io/bounty/ lists - Season 1, sorted by report, each with its time (UTC)
+  // THE PUBLIC PAYOUT LOG (kanban #2619): what bitcoinarena.io/bounty/ lists, sorted by report, each with its time (UTC) and its own season
+  // (kanban #2868, feedback #091/#092: it was 'Season 1' for every row, so the page's Season 1 sum took in the Season 2 payouts): a report with a
+  // Season 2 book approval is paid from that approval's season, every other one from Season 1's budget
   if (path === '/feedback/paid-log' && req.method === 'GET') {
     let rows = []; try { rows = FEEDBACK ? FEEDBACK.paidLog() : []; } catch { rows = []; }
     const at = (ms) => (ms ? new Date(ms).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : '');
-    return send(200, rows.map((x) => ({ season: 'Season 1', date: at(x.paidMs), reason: `Feedback #${String(x.number).padStart(3, '0')}${x.severity ? ` (${x.severity})` : ''}`, channel: 'bug bounty', sats: x.sats })));
+    const seasonOf = (id) => { try { const a = S2 ? S2.approval(id) : null; return a && Number.isInteger(a.season) && a.season > 0 ? a.season : 1; } catch { return 1; } };
+    return send(200, rows.map((x) => ({ season: `Season ${seasonOf(x.id)}`, date: at(x.paidMs), reason: `Feedback #${String(x.number).padStart(3, '0')}${x.severity ? ` (${x.severity})` : ''}`, channel: 'bug bounty', sats: x.sats })));
   }
   if (path === '/feedback/rewards' && req.method === 'GET') {
     // the amounts only toward the private page's origin (the owner 2026-11-07: "Den bounty Funktion ausmachen bis ich es sage und nur auf einer privaten URL aktivieren")

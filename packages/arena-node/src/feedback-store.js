@@ -358,8 +358,10 @@ export function openFeedbackStore(path = ':memory:') {
       if (paidRows.some((x) => x.node && String(x.node) === String(r.node))) return { ok: false, why: 'one node bounty per node: that node has one' };
       if (paidNodes.length >= NODE_BOUNTY_MOST) return { ok: false, why: `the node bounty is for the first ${NODE_BOUNTY_MOST} outside nodes: all are taken` };
     }
-    // NO ROUND NEEDED (kanban #2621, the owner 2026-11-13: "Es muss keiner eine runde gespielt haben, neues req"): a reporter is paid for the report
-    // whether or not their key finished a round; `played` stays for the admin view (rounds, apps) only. The other limits stand.
+    // NO ROUND NEEDED HERE (kanban #2621, the owner 2026-11-13: "Es muss keiner eine runde gespielt haben, neues req"): this is the SEASON 1 approval
+    // (the admin's amount); `played` stays for the admin view (rounds, apps) only. The other limits stand. SEASON 2 approvals do not come here:
+    // bounty-season.js seasonPayout pays the full level only for a played round by a verified X account, else 15 % (kanban #2784, #2788,
+    // feedback #090 / kanban #2868 - the Season 2 page and the feedback form say the same).
     const since = nowMs - WEEK_MS;
     const mine = db.prepare(`SELECT COUNT(*) AS n FROM reports WHERE pubkey = ? AND state IN ('accepted', 'paid') AND changed_ms >= ?`).get(r.pubkey, since).n;
     if (Number.isFinite(R.perKeyPerWeek) && mine >= R.perKeyPerWeek) return { ok: false, why: `that key has ${mine} rewards this week: at most ${R.perKeyPerWeek}` };
@@ -603,10 +605,11 @@ export function openFeedbackStore(path = ':memory:') {
   /** THE BUDGET BAR: approved this week and in all, paid, and links not yet claimed. */
   // THE PUBLIC PAYOUT LOG (kanban #2619): every paid reward with its report's number and severity and the time it was paid, sorted by the
   // report's number - no key, no address, no invoice. bitcoinarena.io/bounty/ reads it live, so a payout shows there the moment it is paid.
-  const paidLogRows = db.prepare(`SELECT r.number AS number, r.severity AS severity, w.amount_sats AS sats, w.paid_ms AS paidMs FROM reports r
+  // `id` is the report's id for the caller's season lookup (kanban #2868); GET /feedback/paid-log does not send it
+  const paidLogRows = db.prepare(`SELECT r.id AS id, r.number AS number, r.severity AS severity, w.amount_sats AS sats, w.paid_ms AS paidMs FROM reports r
     JOIN rewards w ON w.report = r.id WHERE w.state = 'paid' ORDER BY r.number`);
   function paidLog() {
-    return paidLogRows.all().map((x) => ({ number: Number(x.number), severity: x.severity || null, sats: Number(x.sats), paidMs: x.paidMs == null ? null : Number(x.paidMs) }));
+    return paidLogRows.all().map((x) => ({ id: x.id, number: Number(x.number), severity: x.severity || null, sats: Number(x.sats), paidMs: x.paidMs == null ? null : Number(x.paidMs) }));
   }
   function budget({ rules = REWARD_DEFAULTS, nowMs = Date.now() } = {}) {
     const R = { ...REWARD_DEFAULTS, ...(rules || {}) };
