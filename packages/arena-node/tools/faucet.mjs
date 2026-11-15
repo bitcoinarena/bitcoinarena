@@ -957,6 +957,8 @@ createServer((req, res) => {
           if (rep && S2.approval && S2.approval(rep.id)) { await S2.verify(rep.pubkey, S2_VERIFY, { cause: 'payout' }); const p = S2.payable(rep.id); if (p && p.ok) capSats = p.payableSats; }
           return rewardAct(b, by, capSats);
         })().catch((e) => send(200, { ok: false, why: e.message }));
+        // WITHDRAW AN OPEN REWARD LINK (kanban #2786): open -> void, its LNURL refuses; a paid or paying link stays
+        if (b.action === 'void-reward') return send(200, FEEDBACK.voidReward(b.id, { why: b.why ?? null, by }));
         if (b.action === 'note') return send(200, FEEDBACK.note(b.id, { ticket: b.ticket, severity: b.severity, by }));
 
         // SEASON 2 (kanban #2623): read a reporter's links live; before paying, the amount with the bonus read again; the draw's entries, read again
@@ -1158,7 +1160,7 @@ createServer((req, res) => {
       if (m.ok && !(bountyOn() && BOUNTY_ORIGINS.includes(String(req.headers.origin || '')))) return send(200, { ...m, reports: m.reports.map((r) => ({ ...r, amountSats: null, reward: null })) });
       if (m.ok) { const byReport = new Map(FEEDBACK.rewards({ pubkey: m.pubkey }).map((w) => [w.report, w]));
         return send(200, { ...m, reports: m.reports.map((r) => { const w = byReport.get(r.id);
-          return { ...r, reward: w ? { sats: w.amountSats, network: w.network, state: w.state, comment: w.comment, address: w.address, paidMs: w.paidMs, lnurl: w.state === 'paid' ? null : FEEDBACK.lnurlOf(w.k1, { base: PUBLIC_BASE }) } : null }; }) }); }   // comment, address: kanban #1474
+          return { ...r, reward: w ? { sats: w.amountSats, network: w.network, state: w.state, comment: w.comment, address: w.address, paidMs: w.paidMs, lnurl: w.state !== 'open' ? null : FEEDBACK.lnurlOf(w.k1, { base: PUBLIC_BASE }) } : null }; }) }); }   // comment, address: kanban #1474
       last = m; }
     return send(401, { ok: false, why: last ? last.why : 'that sign-in does not stand' });
   }

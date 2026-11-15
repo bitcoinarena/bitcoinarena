@@ -469,6 +469,22 @@ export function openFeedbackStore(path = ':memory:') {
     return { ok: true, reward: rewardRow(rewardOf.get(k1)), made: true };
   }
 
+  /** THE OWNER WITHDRAWS AN OPEN LINK (kanban #2786, the owner 2026-11-15 "Keine Auszahlungen"): open -> void in one compare-and-set, so its LNURL
+   *  refuses from then on; the row stays (never deleted) and the report keeps its state. A link being paid or paid is not touched. */
+  function voidReward(id, { why = null, by = null, nowMs = Date.now() } = {}) {
+    const r = get.get(String(id)); if (!r) return { ok: false, why: 'no such report' };
+    const w = db.prepare('SELECT * FROM rewards WHERE report = ?').get(r.id);
+    if (!w) return { ok: false, why: 'this report has no reward link' };
+    if (w.state === 'void') return { ok: true, reward: rewardRow(w), made: false };
+    if (w.state !== 'open') return { ok: false, why: w.state === 'paid' ? 'its reward is paid' : 'its reward is being paid: try again in a minute' };
+    const said = String(why || 'withdrawn by the owner').replace(/\s+/g, ' ').trim().slice(0, 200);
+    return immediately(() => {
+      if (db.prepare("UPDATE rewards SET state = 'void', why = ? WHERE k1 = ? AND state = 'open'").run(said, w.k1).changes !== 1) return { ok: false, why: 'its reward is being paid: try again in a minute' };
+      db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, r.state, nowMs, by, `reward link withdrawn, ${w.amount_sats} sat on ${w.network}: ${said}`);
+      return { ok: true, reward: rewardRow(rewardOf.get(w.k1)), made: true };
+    });
+  }
+
   /** LUD-03's first answer, at `<base>/lnurlw/<k1>`: the request a wallet reads; an ERROR for a paid or unknown link. */
   function withdrawRequest(k1, { base, network = null }) {
     const w = rewardOf.get(String(k1));
@@ -713,7 +729,7 @@ export function openFeedbackStore(path = ':memory:') {
       takenBy: taken ? { id: taken.id, label: feedbackLabel(taken.number), sameNode: !!(taken.node && String(taken.node) === String(report.node)) } : null,
       full: !mine && !taken && held.length >= NODE_BOUNTY_MOST };
   }
-  return { take, mine, dupSnapshot, dupLink, move, approve, list, shotsInUse, note, remark, moves, budget, paidLog, csv, nodeBountyFor, createReward, withdrawRequest, lnurlOf, claim, settle, rewards, payToAddress, addressOf, reward: (k1) => rewardRow(rewardOf.get(String(k1))), report: (id) => row(get.get(String(id))), close: () => db.close(), eventId };
+  return { take, mine, dupSnapshot, dupLink, move, approve, list, shotsInUse, note, remark, moves, budget, paidLog, csv, nodeBountyFor, createReward, voidReward, withdrawRequest, lnurlOf, claim, settle, rewards, payToAddress, addressOf, reward: (k1) => rewardRow(rewardOf.get(String(k1))), report: (id) => row(get.get(String(id))), close: () => db.close(), eventId };
 }
 
 /** The most of one seat's GET /season?scope=network answer the faucet reads (kanban #2517). */

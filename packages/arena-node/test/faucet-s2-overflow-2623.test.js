@@ -64,7 +64,7 @@ test('#2623 overflow: past the Season 1 budget a report waits for Season 2 and i
     for (let i = 0; i < 40 && Date.now() < startMs + 3000; i++) { const r = await reportOf(r2); if (r.report.state === 'accepted') break; await new Promise((x) => setTimeout(x, 300)); }
     const after = await reportOf(r2);
     assert.equal(after.report.state, 'accepted', 'approved on its own once Season 2 runs');
-    assert.equal(after.report.amountSats, 2000, 'by the Season 2 rules: medium, no bonus');
+    assert.equal(after.report.amountSats, 500, 'by the Season 2 rules: medium 2,000, no bonus; 25 % without a played round by a proven human (#2784)');
     assert.equal(after.report.season2.approval.state, 'approved');
     assert.equal(after.report.season2.approval.season, 2);
     const late = await act({ action: 'approve', id: r3, severity: 'low', season2: true });
