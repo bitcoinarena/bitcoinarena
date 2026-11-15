@@ -39,6 +39,9 @@ import { pluginForRound } from './plugins.js';
 import { marketOfRound } from '../../arena-protocol/src/manifest.js';
 import { verifySchnorrKept, verifyEd25519Kept } from './verified.js';
 import { jsonUpTo, BODY_MOST } from './body-read.js';
+import { textUpTo } from './peer-read.js';
+/** The most of a peer's refusal read as its reason (kanban #2705). */
+const REFUSAL_MOST = 4096;
 
 const refuse = (why, status = 409) => ({ ok: false, status, why });
 const verifyEd = verifyEd25519Kept;   // kept per (sig, msg, key) - verified.js (kanban #576)
@@ -996,7 +999,9 @@ export class OrderBook {
     late.catch(() => {});
     try {
       const r = await Promise.race([this.fetcher(url, ac ? { ...opts, signal: ac.signal } : opts), late]);
-      if (!r.ok) return { ok: false, why: String(await Promise.race([r.text(), late])).trim() };
+      // kanban #2705 (#1489 r4-gossip-5): a refusal is a reason, not a body - one seat answered every ask with a 409 streaming junk and each
+      // leader buffered whatever came in BATCH_FETCH_MS (96 MiB measured); now its first REFUSAL_MOST bytes, the stream cancelled after
+      if (!r.ok) return { ok: false, why: String(await Promise.race([textUpTo(r, REFUSAL_MOST).catch((e) => `its refusal: ${e.message}`), late])).trim() };
       return { ok: true, body: await Promise.race([jsonUpTo(r, BODY_MOST), late]) }; // kanban #2458: capped at what a door takes
     } catch (e) { return { ok: false, why: e.message }; } finally { clearTimeout(timer); }
   }
