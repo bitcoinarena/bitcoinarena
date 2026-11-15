@@ -135,7 +135,11 @@
     if (!j.ok) return fail(j.why || 'not read');
     show(true); budget(j.budget); if (Array.isArray(j.levels)) LEVELS = j.levels;
     // WHICH REPORTS ARE WEEK 2 (kanban #2639): the season file's approvals, waiting included, and the end of Week 1; read with the list
-    try { const w = await call('season'); if (w && w.ok) { WEEK2 = new Set([...(w.approvals || []), ...(w.waiting || [])].map((a) => a.report)); S1_END = Number.isFinite(w.s1EndMs) ? w.s1EndMs : null; } }
+    try { const w = await call('season'); if (w && w.ok) { WEEK2 = new Set([...(w.approvals || []), ...(w.waiting || [])].map((a) => a.report)); S1_END = Number.isFinite(w.s1EndMs) ? w.s1EndMs : null;
+      // THE SEASON'S POT AS IT REALLY STANDS (kanban #2784, the owner 2026-11-15: "zeig das auch korrekt an"): paid, else payable under the current rule
+      if (w.pot && Number(w.pot.potSats) > 0) { $('stats').querySelectorAll('.stat.pot').forEach((x) => x.remove());
+        const st = el('div', { cls: 'stat pot' }, el('b', { text: `${sats(w.pot.usedSats)} used · ${sats(w.pot.leftSats)} left` }), el('span', { text: `Season ${w.pot.season} pot of ${sats(w.pot.potSats)} (paid, else payable now)` }));
+        $('stats').prepend(st); } } }
     catch { WEEK2 = new Set(j.reports.filter((r) => r.season2 && r.season2.approval).map((r) => r.id)); }
     const wantWeek = Number($('f-week').value) || 0, showWeek = $('f-showweek').checked;
     const tb = $('rows'); tb.replaceChildren();
