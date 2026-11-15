@@ -44,9 +44,12 @@ export function bonusPct(flags = {}) {
  * WHAT ONE APPROVAL PAYS, by the Season 2 rules: the level's sats (a follow-up 1,000) in full only when the reporter played a round AND is proven
  * human - a linked, verified X (Twitter) account (kanban #2788, the owner 2026-11-15: "Um human zu beweisen benoetigen wir einen Twitter"; Telegram,
  * Discord and Armada no longer prove it, they stay a bonus); everything else - a code-only finding (no played round) or a player with no verified X
- * account (counts as a bot) - pays 25 % (kanban #2784; code-only was half). Then the community bonus on top. A node bounty is 10,000 flat (it is not a
+ * account (counts as a bot) - pays BOT_PCT, 15 % (kanban #2784; 25 % until the owner's 15 % later that day; code-only was half). Then the community bonus on top. A node bounty is 10,000 flat (it is not a
  * report: no bonus, no half).
  */
+// WHAT A BOT GETS (kanban #2784, the owner 2026-11-15: "Setze die Bot-Bounties nur auf 15 % jetzt"): the share of the level for everything that is not a
+// played round by a verified X account (was 25 %)
+export const BOT_PCT = 15;
 export const HUMAN_FLAGS = Object.freeze(['x']);
 export function seasonPayout({ level, codeOnly = false, followUp = false, flags = {}, played = true } = {}) {
   const lv = String(level || '').toLowerCase();
@@ -55,9 +58,9 @@ export function seasonPayout({ level, codeOnly = false, followUp = false, flags 
   let base = followUp ? FOLLOW_UP_SATS : LEVEL_SATS[lv];
   const human = HUMAN_FLAGS.some((k) => !!(flags && flags[k]));
   const full = !codeOnly && !!played && human;
-  if (!full) base = Math.floor(base / 4);   // 25 % (kanban #2784)
+  if (!full) base = Math.floor((base * BOT_PCT) / 100);   // a bot's share (kanban #2784: 25 %, the owner 2026-11-15 later: 15 %)
   const pct = bonusPct(flags);
-  // `codeOnly` on the answer (and the approval's code_only) says "paid at 25 %": a payable() read again then never rises to the full level
+  // `codeOnly` on the answer (and the approval's code_only) says "paid at the bot share": a payable() read again then never rises to the full level
   return { ok: true, level: lv, baseSats: base, bonusPct: pct, sats: Math.floor(base * (100 + pct) / 100), codeOnly: !full, followUp: !!followUp,
     played: !codeOnly && !!played, human, quarter: !full };
 }
@@ -353,7 +356,7 @@ export function openBountySeason(path = ':memory:', { startMs = null, potSats = 
     const now = a.level === 'node' ? {} : flagsOf(a.pubkey, { nowMs });
     const NAMES = { x: 'X', telegram: 'Telegram', discord: 'Discord', armada: 'Armada' };
     const lost = PLATFORMS.filter((k) => a.flags && a.flags[k] === true && now[k] !== true);
-    const why = sats < a.sats ? `left ${lost.map((k) => NAMES[k]).join(', ') || 'a community'}: -${a.bonusPct - p.bonusPct} %${!a.codeOnly && p.quarter ? ', no verified X account: 25 %' : ''}` : null;   // kanban #2788: X proves a human
+    const why = sats < a.sats ? `left ${lost.map((k) => NAMES[k]).join(', ') || 'a community'}: -${a.bonusPct - p.bonusPct} %${!a.codeOnly && p.quarter ? `, no verified X account: ${BOT_PCT} %` : ''}` : null;   // kanban #2788: X proves a human
     db.prepare('UPDATE approvals SET payable_sats = ?, payable_ms = ?, payable_why = ? WHERE report = ?').run(sats, nowMs, why, a.report);
     return { ok: true, report: a.report, approvedSats: a.sats, payableSats: sats, bonusPct: Math.min(p.bonusPct, a.bonusPct), flags: now, lost, why };
   }

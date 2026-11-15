@@ -12,24 +12,24 @@ import { linkFromText } from '../tools/bounty-link-bot.mjs';
 const K = (n) => String(n).repeat(64).slice(0, 64);
 const rep = (n, pubkey = K(1)) => ({ id: String(n).padStart(64, '0'), pubkey });
 
-test('#2623 #2641 #2784 the payout: the full level only for a played round by a proven human (a verified X account only - kanban #2788), else 25 %; 1,000 for a follow-up; bonus X +20 / Nostr +20 / 2 of 3 communities +20; node 10,000 flat', () => {
+test('#2623 #2641 #2784 the payout: the full level only for a played round by a proven human (a verified X account only - kanban #2788), else 15 % (the owner 2026-11-15, was 25 %); 1,000 for a follow-up; bonus X +20 / Nostr +20 / 2 of 3 communities +20; node 10,000 flat', () => {
   assert.equal(bonusPct({}), 0); assert.equal(bonusPct({ telegram: true }), 0); assert.equal(bonusPct({ discord: true }), 0);
   assert.equal(bonusPct({ x: true }), 20); assert.equal(bonusPct({ telegram: true, discord: true, x: true }), 40);
   assert.equal(seasonPayout({ level: 'high', flags: { telegram: true, armada: true, x: true, nostr: true } }).sats, 8000, 'the page: "a high bug then pays 8,000"');
-  assert.equal(seasonPayout({ level: 'high' }).sats, 1250, 'played, no verified account: counts as a bot, 25 %');
+  assert.equal(seasonPayout({ level: 'high' }).sats, 750, 'played, no verified account: counts as a bot, 15 %');
   assert.equal(seasonPayout({ level: 'high', flags: { x: true } }).sats, 6000, 'played and a verified X account: the full level (+20 % X bonus)');
-  assert.equal(seasonPayout({ level: 'high', flags: { x: true }, played: false }).sats, 1500, 'a human who played no round: 25 % (+20 %)');
+  assert.equal(seasonPayout({ level: 'high', flags: { x: true }, played: false }).sats, 900, 'a human who played no round: 15 % (+20 %)');
   // kanban #2788 (the owner 2026-11-15): only X proves a human; Telegram, Discord and Armada stay a bonus
   for (const f of [{ telegram: true }, { discord: true }, { armada: true }, { telegram: true, discord: true, armada: true }, { nostr: true }]) {
     const p = seasonPayout({ level: 'high', flags: f });
-    assert.equal(p.human, false, JSON.stringify(f)); assert.equal(p.quarter, true, JSON.stringify(f)); assert.equal(p.baseSats, 1250, JSON.stringify(f)); }
-  assert.equal(seasonPayout({ level: 'high', flags: { nostr: true } }).sats, Math.floor(1250 * 1.2), 'a Nostr follow is a bonus, not proof of a human');
-  assert.equal(seasonPayout({ level: 'high', codeOnly: true }).sats, 1250);
-  assert.equal(seasonPayout({ level: 'critical', codeOnly: true, flags: { discord: true } }).sats, 2500, 'one community alone: no bonus');
-  assert.equal(seasonPayout({ level: 'critical', codeOnly: true, flags: { discord: true, armada: true } }).sats, 3000);
-  assert.equal(seasonPayout({ level: 'high', followUp: true }).sats, 250);
+    assert.equal(p.human, false, JSON.stringify(f)); assert.equal(p.quarter, true, JSON.stringify(f)); assert.equal(p.baseSats, 750, JSON.stringify(f)); }
+  assert.equal(seasonPayout({ level: 'high', flags: { nostr: true } }).sats, Math.floor(750 * 1.2), 'a Nostr follow is a bonus, not proof of a human');
+  assert.equal(seasonPayout({ level: 'high', codeOnly: true }).sats, 750);
+  assert.equal(seasonPayout({ level: 'critical', codeOnly: true, flags: { discord: true } }).sats, 1500, 'one community alone: no bonus');
+  assert.equal(seasonPayout({ level: 'critical', codeOnly: true, flags: { discord: true, armada: true } }).sats, 1800);
+  assert.equal(seasonPayout({ level: 'high', followUp: true }).sats, 150);
   assert.equal(seasonPayout({ level: 'medium', followUp: true, flags: { x: true } }).sats, 1200);
-  assert.equal(seasonPayout({ level: 'useful', codeOnly: true }).sats, 125);
+  assert.equal(seasonPayout({ level: 'useful', codeOnly: true }).sats, 75);
   assert.deepEqual(seasonPayout({ level: 'node', codeOnly: true, flags: { telegram: true, x: true } }).sats, 10000);
   assert.equal(seasonPayout({ level: 'huge' }).ok, false);
   assert.equal(seasonAt(5, null), 2); assert.equal(seasonAt(1000, 2000), 2); assert.equal(seasonAt(2000 + SEASON_MS, 2000), 3);
