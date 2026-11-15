@@ -1334,6 +1334,8 @@ export const ISSUE_POLL_MS = 1000;
 export const LANDED_POLL_MS = 2000;
 const LANDED = Object.freeze({ landed: true });
 export const ISSUE_WAIT_MS = 600000;
+/** How long a join waits for notes still being issued before it goes on without them (kanban #2869). */
+export const ISSUE_JOIN_WAIT_MS = 12000;
 export async function issuingMsat(client) {
   if (!client || typeof client.issuingMsat !== 'function') return 0n;
   try { return BigInt(await client.issuingMsat()); } catch { return 0n; }
@@ -1385,8 +1387,12 @@ export async function fundPlayerWallet({ round, invite, seed, LockClient, storag
     if (n.need === null || have < n.need) {
       const issuing = await issuingMsat(client);
       if (issuing > 0n && have + issuing >= (n.need !== null ? n.need : n.floor)) {
-        const w = await awaitIssued(client, { untilMs: entryClosesMs, onStep });
-        if (w.issuing > 0n) onStep(`the player wallet's ${w.issuing} msat were still being issued at the round's entry close`);
+        // AT MOST ISSUE_JOIN_WAIT_MS (kanban #2869, the owner's order #096 2026-11-15 22:11Z: 161 sat being issued after the Beelink reboot never landed, the
+        // order waited silently for them until the round's close - "ich hab 517 sats, kann aber keine Order machen"): then the quote stands as it is and
+        // the player is asked for the rest, with the notes still arriving named
+        const joinEnd = Date.now() + ISSUE_JOIN_WAIT_MS;
+        const w = await awaitIssued(client, { untilMs: entryClosesMs === null || entryClosesMs === undefined ? joinEnd : Math.min(Number(entryClosesMs), joinEnd), onStep });
+        if (w.issuing > 0n) onStep(`${Math.ceil(Number(w.issuing) / 1000)} sat of your balance are still being issued by the federation (not spendable yet)`);
         have = w.have; n = await needFor(client, LockClient, locks);
       }
     }
@@ -4020,7 +4026,7 @@ export async function migrateFromDraining({ from, to, record, toFederationId, ch
   if (hex(record.successorId) !== hex(toFederationId)) return { moved: 0n, chunks: 0, state: 'that wallet is not in the successor' };
   // ONLY THROUGH A GATEWAY AT OR UNDER THE CAP (§23A.9, kanban #1324): the paying leg from the old federation's, the receiving leg in the successor's;
   // none on either side: the move waits and says so
-  const pay = await gatewaysWithinCap(from, [...gateways, ...await seatedGatewaysOf(from), ...await federationGateways(from)], feeMax || record.gatewayFeeMax || null);
+  const pay = await gatewaysWithinCap(from, [...await seatedGatewaysOf(from), ...gateways, ...await federationGateways(from)], feeMax || record.gatewayFeeMax || null);
   const recv = await gatewaysWithinCap(to, [...await seatedGatewaysOf(to), ...await federationGateways(to)], feeMax || record.gatewayFeeMax || null);
   if (!pay.gateways.length || !recv.gateways.length) {
     const why = !pay.gateways.length ? capWhy('of the old federation', pay.refused) : capWhy('of the successor', recv.refused);
@@ -4158,11 +4164,12 @@ export async function swapForRound({ from, to, amountMsat, gateways = [], storag
   // outbound, "InsufficientBalance"; once receiving, gw-b's node then finding "NoRoute" - and every swap ended Refunded):
   // receive through one listed gateway, pay through another, and a payment that ends Refunded - the money back - tries the next
   // pair; any other end stops, as money may be on its way.
-  // each leg's own federation's seated gateways first (§23A.9), then its list
+  // each leg's own federation's seated gateways first (§23A.9), then the lobby's named, then its list (kanban #2870: the named led, and after a
+  // reboot their old quick-tunnel names cost a swap 39.6 s)
   // and only through gateways at or under the federations' fee cap (§23A.9, kanban #1324): none on a leg, the swap waits and says so
   // EACH LEG UNDER ITS OWN FEDERATION'S CAP (§23A.9 "in the federation record", kanban #1324): the receiving leg the round's, the paying leg the old one's
-  const recvOk = await gatewaysWithinCap(to, [...gateways, ...await seatedGatewaysOf(to), ...await federationGateways(to)], feeMaxTo || feeMax);
-  const payOk = await gatewaysWithinCap(from, [...gateways, ...await seatedGatewaysOf(from), ...await federationGateways(from)], feeMaxFrom || feeMax);
+  const recvOk = await gatewaysWithinCap(to, [...await seatedGatewaysOf(to), ...gateways, ...await federationGateways(to)], feeMaxTo || feeMax);
+  const payOk = await gatewaysWithinCap(from, [...await seatedGatewaysOf(from), ...gateways, ...await federationGateways(from)], feeMaxFrom || feeMax);
   if (!recvOk.gateways.length || !payOk.gateways.length) {
     const why = !recvOk.gateways.length ? capWhy('of the round\'s federation', recvOk.refused) : capWhy('of the paying federation', payOk.refused);
     onState({ state: 'waiting', why });

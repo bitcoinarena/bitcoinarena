@@ -9383,8 +9383,12 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             window.ARENA_WALLET_BALANCE = { sats: Number(sum / 1000n), pending: window.ARENA_PENDING_SATS || 0, arriving: Number(arriving / 1000n), merging: Number(merging / 1000n), parts, unread, arrivingLine,
               federation: parts.length === 1 ? 'federation ' + parts[0].federation.slice(0, 16) + '\u2026' : parts.length + ' federations' };
             lastBalance(window.ARENA_WALLET_BALANCE);
-            if (arriving > 0n) { console.log('[arena] ' + Number(arriving / 1000n) + ' sat still being issued to the player wallet'); setTimeout(() => window.ARENA_SUM_BALANCES(), 500); }
-            if (parts.length > 1) console.log('[arena] balance over ' + parts.length + ' federations: ' + Number(sum / 1000n) + ' sat (' + parts.map((x) => x.federation.slice(0, 8) + ' ' + x.sats).join(', ') + ')');
+            // ONCE PER CHANGE, READ AGAIN EVERY 3 S (kanban #2869, the owner's #096: 161 sat that never landed re-read the balance every 500 ms and logged it each time -
+            // the 300-line console of his report held nothing else, the order's own lines were gone)
+            if (arriving > 0n) { const said = Number(arriving / 1000n); if (window.ARENA_ARRIVING_SAID !== said) { window.ARENA_ARRIVING_SAID = said; console.log('[arena] ' + said + ' sat still being issued to the player wallet'); }
+              if (!window.ARENA_ARRIVING_AGAIN) window.ARENA_ARRIVING_AGAIN = setTimeout(() => { window.ARENA_ARRIVING_AGAIN = null; window.ARENA_SUM_BALANCES(); }, 3000); } else window.ARENA_ARRIVING_SAID = 0;
+            { const line = parts.length > 1 ? 'balance over ' + parts.length + ' federations: ' + Number(sum / 1000n) + ' sat (' + parts.map((x) => x.federation.slice(0, 8) + ' ' + x.sats).join(', ') + ')' : '';
+              if (line && window.ARENA_BALANCE_LINE_SAID !== line) { window.ARENA_BALANCE_LINE_SAID = line; console.log('[arena] ' + line); } }   // kanban #2869: once per change
           }
         } finally { window.ARENA_BALANCE_TRIED = true; if (window.ARENA_PAINT_SETTINGS) window.ARENA_PAINT_SETTINGS(); }
       })().finally(() => { summing = null; }));
@@ -10035,6 +10039,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         const r = String(raw || openStep || '');
         const words = /deposit|invoice|lightning/i.test(r) ? 'waiting for your deposit'
           : /test sats|welcome/i.test(r) ? 'your test sats are arriving'
+          : /being issued|issuing/i.test(r) ? 'your sats are still being issued by the federation'   // kanban #2869
           : /finding the round/i.test(r) ? 'finding the round'
           : /exchang|moving|reissu|split|merg|swap|succession|change/i.test(r) ? 'preparing your sats'
           : /lock|commit|submit|accept|fee lock|refund/i.test(r) ? 'locking your stake'
