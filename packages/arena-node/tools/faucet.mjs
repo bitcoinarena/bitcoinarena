@@ -97,7 +97,8 @@ const UNPOSTED = new Set();
 // THE REPORTS KEPT FOR REVIEW (kanban #1342): one SQLite file beside the book; none when FAUCET_FEEDBACK_DB is not set
 const FEEDBACK = env.FAUCET_FEEDBACK_DB ? openFeedbackStore(env.FAUCET_FEEDBACK_DB) : null;
 // BUG BOUNTY SEASON 2 (kanban #2623): its own file, so Season 1's feedback.db, /bounty and the paid log stay as they are; off when not named
-const S2 = FEEDBACK && env.FAUCET_BOUNTY_S2_DB ? openBountySeason(env.FAUCET_BOUNTY_S2_DB, { startMs: env.FAUCET_BOUNTY_S2_START ? Date.parse(env.FAUCET_BOUNTY_S2_START) : null }) : null;
+const S2 = FEEDBACK && env.FAUCET_BOUNTY_S2_DB ? openBountySeason(env.FAUCET_BOUNTY_S2_DB, { startMs: env.FAUCET_BOUNTY_S2_START ? Date.parse(env.FAUCET_BOUNTY_S2_START) : null,
+  paidOf: (id) => FEEDBACK.paidSatsOf(id) }) : null;   // kanban #2784: the pot counts what was paid
 const S2_VERIFY = verifiersFromEnv(env);
 // SEASON 2 STARTS (the owner 2026-11-13 ~17:55Z: "Season 2 läuft ab Sonntag"): before it no Season 2 approval; a Season 1 report past the weekly budget
 // waits for it and is approved by the Season 2 rules once it runs (the sweep below)

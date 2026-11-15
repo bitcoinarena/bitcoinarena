@@ -420,6 +420,9 @@ export function openFeedbackStore(path = ':memory:') {
     });
   }
 
+  /** THE SATS PAID FOR A REPORT (kanban #2784, the Season 2 pot): its reward's amount when that reward is paid, else null. */
+  function paidSatsOf(id) { const w = db.prepare("SELECT amount_sats FROM rewards WHERE report = ? AND state = 'paid'").get(String(id)); return w ? Number(w.amount_sats) : null; }
+
   /** LUD-03's first answer, at `<base>/lnurlw/<k1>`: the request a wallet reads; an ERROR for a paid or unknown link. */
   function withdrawRequest(k1, { base, network = null }) {
     const w = rewardOf.get(String(k1));
@@ -643,7 +646,7 @@ export function openFeedbackStore(path = ':memory:') {
       takenBy: taken ? { id: taken.id, label: feedbackLabel(taken.number), sameNode: !!(taken.node && String(taken.node) === String(report.node)) } : null,
       full: !mine && !taken && held.length >= NODE_BOUNTY_MOST };
   }
-  return { take, mine, move, approve, list, shotsInUse, note, remark, moves, budget, paidLog, csv, nodeBountyFor, createReward, voidReward, withdrawRequest, lnurlOf, claim, settle, rewards, payToAddress, addressOf, reward: (k1) => rewardRow(rewardOf.get(String(k1))), report: (id) => row(get.get(String(id))), close: () => db.close(), eventId };
+  return { take, mine, move, approve, list, shotsInUse, note, remark, moves, budget, paidLog, csv, nodeBountyFor, createReward, voidReward, paidSatsOf, withdrawRequest, lnurlOf, claim, settle, rewards, payToAddress, addressOf, reward: (k1) => rewardRow(rewardOf.get(String(k1))), report: (id) => row(get.get(String(id))), close: () => db.close(), eventId };
 }
 
 /** The most of one seat's GET /season?scope=network answer the faucet reads (kanban #2517). */

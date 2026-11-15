@@ -109,7 +109,9 @@ export function cleanOpenIssues(o) {
   return { updated: o && typeof o.updated === 'string' ? o.updated.slice(0, 30) : null, areas };
 }
 
-export function openBountySeason(path = ':memory:', { startMs = null, potSats = SEASON_POT_SATS } = {}) {
+// `paidOf(reportId)` (kanban #2784 pot): the sats actually paid for a report (its paid reward), null when not paid - the faucet passes the report
+// store's; without it every approval counts by the current rule.
+export function openBountySeason(path = ':memory:', { startMs = null, potSats = SEASON_POT_SATS, paidOf = null } = {}) {
   const db = new DatabaseSync(path);
   db.exec(`PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000;
     CREATE TABLE IF NOT EXISTS link_codes (code TEXT PRIMARY KEY, pubkey TEXT NOT NULL, made_ms INTEGER NOT NULL, used_ms INTEGER, platform TEXT, user_id TEXT);
@@ -199,7 +201,16 @@ export function openBountySeason(path = ':memory:', { startMs = null, potSats = 
 
   function pot(season) {
     const s = Number(season);
-    const used = db.prepare(`SELECT COALESCE(SUM(sats), 0) AS s FROM approvals WHERE season = ? AND state = 'approved'`).get(s).s;
+    // WHAT THE POT HAS REALLY GIVEN (kanban #2784, the owner 2026-11-15): an approval counts what was paid for it, else what it pays now under the
+    // current rule (seasonPayout from its stored level, code-only, follow-up and flags; never above its stored amount). The stored amount alone
+    // kept the old 50 % approvals at 50 % after they were paid at 25 %: 11,750 used where 5,875 was paid or payable.
+    let used = 0;
+    for (const a of db.prepare(`SELECT * FROM approvals WHERE season = ? AND state = 'approved'`).all(s)) {
+      const paid = typeof paidOf === 'function' ? paidOf(a.report) : null;
+      if (Number.isInteger(paid) && paid >= 0) { used += paid; continue; }
+      const now = seasonPayout({ level: a.level, codeOnly: !!a.code_only, followUp: !!a.follow_up, flags: a.level === 'node' ? {} : JSON.parse(a.flags || '{}') });
+      used += now.ok ? Math.min(now.sats, a.sats) : a.sats;
+    }
     const waiting = db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(sats), 0) AS s FROM approvals WHERE state = 'waiting'`).get();
     const nodes = db.prepare(`SELECT COUNT(*) AS n FROM approvals WHERE season = ? AND state = 'approved' AND level = 'node'`).get(s).n;
     return { season: s, potSats: potSats, usedSats: used, leftSats: potSats - used, nodes, nodesMost: NODES_PER_SEASON, waiting: { n: waiting.n, sats: waiting.s } };
