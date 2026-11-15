@@ -10,7 +10,7 @@
 //   - and every core's source passes the scan: no module loading, no network, no file system, no process, no eval.
 // A decide adapter is pure: it takes the revealed moves and answers verdicts. Replayed games' wasm cores are not packaged
 // here (their cores are installed with their engine); attested markets have no core and package their manifest and client.
-import { sandboxFor } from './core-sandbox.js';
+import { sandboxChecked } from './core-sandbox.js';
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -103,7 +103,7 @@ export async function registrationFromPackage(at, pkg, { title = null, within = 
     const core = { name: c.name, hash: c.hash, url: pathToFileURL(file).href, configs: new Map((signed ? signed.configs : []).map((h) => [toHex(h), {}])) };
     // THE INSTALL LOAD IS HELD TO THE TRIAL'S BOUND (kanban #1694): a core that passed the trial loaded within TRIAL_MS, so the
     // seat waits no longer for it here (was LOAD_MS, 10 s of the node's thread per version, on install and every restart)
-    if (!sandboxFor(core, { loadMs: TRIAL_MS }).meta.decide) throw new Error(`core ${c.hash.slice(0, 16)} exports no DECIDE`);
+    if (!sandboxChecked(core, { loadMs: TRIAL_MS }).meta.decide) throw new Error(`core ${c.hash.slice(0, 16)} exports no DECIDE`);
     cores.set(c.hash, core);
   }
   // ONLY THE EARLIER VERSIONS THE CHECK READ (kanban #2332, #2346): the newest MAX_PACKAGE_ANCESTORS, which checkPackage decoded

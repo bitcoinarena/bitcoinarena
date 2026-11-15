@@ -374,6 +374,25 @@ export function sandboxFor(core, options) {
   return s;
 }
 
+/**
+ * A LOAD CHECK KEEPS NO THREAD (kanban #2688, #1489 r3-hosting-2): hostedPlugins and registrationFromPackage load every installed version's
+ * cores at start to check they load - and each kept a live core thread for CORE_IDLE_MS with what its top level allocated, one per version its
+ * developer ever published (autoUpdate takes them unattended): a few dozen versions were GBs at every start. Answers what sandboxFor answers
+ * (it throws as sandboxFor does) and ends the thread at once when this check started it; a core already running for a round is left running.
+ * The next real ask loads it again (as after the idle sweep).
+ */
+export function sandboxChecked(core, options) {
+  const key = `${core && core.url}|${(core && core.root) || ''}|${core && (core.sourceHash || core.hash)}`;
+  const had = cache.has(key);
+  const s = sandboxFor(core, options);
+  const meta = s.meta;
+  if (!had && cache.get(key) === s && typeof s.end === 'function') {
+    askedAt.delete(key); cache.delete(key);
+    try { s.end(); } catch { /* already gone */ }
+  }
+  return { meta };
+}
+
 // AN IDLE CORE'S THREAD IS ENDED, and loaded again on its next ask (kanban #576, measured 2026-10-23 03:5xZ on test host seat 1:
 // RSS 1,139 MB of which the node's own heap was 212 MB - the rest mostly the 11 worker threads, one isolate per core of every
 // game version it hosts, each kept for the life of the process though most versions are seldom played). Every caller asks

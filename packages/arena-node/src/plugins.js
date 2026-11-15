@@ -16,7 +16,7 @@ import { manifestStands, roundFitsManifest, isAttested, isHeadToHead, gameIdOf, 
 import { donationSetId } from '../../arena-protocol/src/donation.js';
 import { verifyEd25519 } from './ed25519.js';
 import { gameInfoStands, gameInfoJson } from '../../arena-protocol/src/game-info.js';
-import { sandboxFor } from './core-sandbox.js';
+import { sandboxFor, sandboxChecked } from './core-sandbox.js';
 
 /**
  * THE GAMES A NODE HOSTS, by game_id (hex): the registrations its launcher handed it, each checked here once - a
@@ -62,7 +62,7 @@ export function hostedPlugins(registrations = [], { verify = verifyEd25519, log 
           throw new Error(`game "${p.manifest.gameName}": config ${config.slice(0, 16)} is installed on core ${hash.slice(0, 16)}, and its manifest lists no such config for it`);
       // AND IT LOADS IN ITS SANDBOX (§0A.6): read and hashed by this node, linked to its own files only, run
       // with no network, file system or clock - the only way this node ever runs it. One that does not is not hosted.
-      try { sandboxFor(core); }
+      try { sandboxChecked(core); }   // kanban #2688: the check keeps no thread
       catch (e) { throw new Error(`game "${p.manifest.gameName}": core ${hash.slice(0, 16)} does not load in its sandbox: ${e.message}`); }
     }
     // `replayPage`: the game's own replay page, when it has one - the engine serves it, never draws a game
