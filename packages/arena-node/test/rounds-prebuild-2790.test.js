@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE NEXT LISTING WINDOW IS BUILT BEFORE IT IS ASKED (kanban #2790, after #2783 / feedback #082): the first listing of each 45 s window signed
-// every row it named while its asker waited - 30.0 s on fed2-1 and 11.7 s on guardian-4 (live, 2026-11-15) - and any caller could make that
-// build once a window. A timer now builds the next window 15 s before it starts, with the rows the running window was asked for; the first
-// ask of the new window is served from it, signing nothing.
+// THE LISTING IS BUILT IN THE BACKGROUND AND A REQUEST SIGNS NOTHING (kanban #2790). Live after the first fix (audit9b, 2026-11-15): the window
+// built ahead held the rows the last window was asked for, and requests after each window start still signed ~800 rows; one `all=1` made the next
+// build sign all 11,239 rows (116 s) and a normal request waited past 60 s. Now each window is one fixed, bounded build that no ask changes, and a
+// request only cuts from it: `all=1` lists what the window holds, a row whose facts changed is listed as signed and signed again in the background.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { openStore } from '../src/store.js';
@@ -39,7 +39,8 @@ const pageChecks = (body) => body.rounds.every((x) => schnorr.verify(fromHex(x.s
   nodePubkey: fromHex(body.node), nowMs: BigInt(body.nowMs), phase: x.phase, assignedHere: !!x.assignedHere,
   joined: Number(x.joined), playing: Number(x.playing) }), fromHex(body.node)));
 
-test('#2790 the first full listing of a new window signs nothing: the window was built ahead, and its rows check the page\'s way', async () => {
+const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+test('#2790 a request signs nothing: the window is built in the background, all=1 does not grow it, a changed row is signed again off the request', async () => {
   const first = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, funded: () => true, now: () => NOW });
   const nodes = [first.round.pubkey];
   await first.close();
@@ -50,27 +51,51 @@ test('#2790 the first full listing of a new window signs nothing: the window was
   try {
     const at = `http://127.0.0.1:${s.port}`;
     const ask = async (q) => { const t = performance.now(); const body = await (await fetch(`${at}/rounds${q}`)).json(); return { ms: performance.now() - t, body }; };
-    const full = await ask('?all=1&probe=a');
-    const rows = full.body.rounds.length;
-    assert.ok(rows > 2000, `the node lists ${rows} rounds - not a large listing`);
-    assert.equal(BigInt(full.body.nowMs), BigInt(NOW));
-    // 31 s into the window: inside the 15 s before the next one - the timer builds it
-    clock = NOW + 31000;
+    const signs = () => s.listingSignatures();
     const built = () => (typeof s.listingWindowsBuilt === 'function' ? s.listingWindowsBuilt() : 0);
-    for (let i = 0; i < 120 && built() < 1; i++) await new Promise((r) => setTimeout(r, 250));
-    // the window is not served before its time: the running one still answers
-    const early = await ask('?next=1');
-    assert.equal(BigInt(early.body.nowMs), BigInt(NOW), 'the window built ahead was served before its time');
+    // the seat's first listing waits for the first build; the build is the window's whole row set
+    const lobby = await ask('?next=1');
+    const held = signs();
+    assert.ok(held >= lobby.body.rounds.length && held < 2000, `the first window signed ${held} rows - not a bounded set`);
+    // all=1: what the window holds, nothing signed for it
+    const all = await ask('?all=1&probe=a');
+    assert.equal(signs(), held, `all=1 signed ${signs() - held} rows while its asker waited`);
+    assert.ok(all.body.rounds.length <= held, `all=1 listed ${all.body.rounds.length} rows, more than the window holds (${held})`);
+    assert.ok(pageChecks(all.body));
+    // THE NEXT WINDOW, built ahead: the same bounded set, however much all=1 asked
+    clock = NOW + 31000;
+    const b0 = built();
+    for (let i = 0; i < 160 && built() <= b0; i++) await delay(250);
+    const grew = signs() - held;
+    assert.ok(grew <= held + 64, `after all=1 the next window signed ${grew} rows (the first window held ${held})`);
     clock = NOW + 45000;
-    await new Promise((r) => setTimeout(r, 5100));   // past the 5 s a small listing is kept in real time (server.js /rounds)
-    const before = s.listingSignatures();
-    const later = await ask('?all=1&probe=b');
-    const signedByAsk = s.listingSignatures() - before;
-    console.log('  FACTS:', JSON.stringify({ rows, built: built(), firstMs: Math.round(full.ms), newWindowMs: Math.round(later.ms), signedByAsk }));
-    assert.equal(BigInt(later.body.nowMs), BigInt(NOW) + 45000n, 'the new window does not carry its own time');
-    assert.equal(later.body.rounds.length, rows);
-    assert.equal(signedByAsk, 0, `the first full listing of the new window signed ${signedByAsk} rows while its asker waited`);
-    assert.ok(later.ms < 1000, `the first full listing of the new window took ${Math.round(later.ms)} ms`);
-    assert.ok(pageChecks(later.body), 'a row of the window built ahead does not check the page\'s way');
+    await delay(5100);   // past the 5 s a small listing is kept in real time (server.js /rounds)
+    const before = signs();
+    const asks = [await ask('?next=8'), await ask('?ahead=900000'), await ask('?all=1&probe=b'), await ask('?next=1&ahead=50h')];
+    assert.equal(signs(), before, `the first asks of the new window signed ${signs() - before} rows while their askers waited`);
+    for (const a of asks) {
+      assert.equal(BigInt(a.body.nowMs), BigInt(NOW) + 45000n, 'the new window does not carry its own time');
+      assert.ok(a.ms < 1000, `a listing of the new window took ${Math.round(a.ms)} ms`);
+      assert.ok(pageChecks(a.body), 'a row of the new window does not check the page\'s way');
+    }
+    // A ROW'S FACTS CHANGE (a player joins): listed as signed, signed again in the background, then listed with the new count
+    const pick = asks[2].body.rounds[3];
+    const own = s.round.playersOf.bind(s.round);
+    s.round.playersOf = (rid) => (Buffer.from(rid).toString('hex') === pick.id ? { joined: 1, playing: 0 } : own(rid));
+    const b1 = signs();
+    const now1 = await ask('?all=1&probe=c');
+    assert.equal(signs(), b1, 'the changed row was signed while its asker waited');
+    const row1 = now1.body.rounds.find((x) => x.id === pick.id);
+    assert.equal(row1.sig, pick.sig, 'the changed row is listed with the signature it had');
+    assert.ok(pageChecks(now1.body), 'the changed row, listed as signed, does not check');
+    for (let i = 0; i < 40 && signs() === b1; i++) await delay(100);
+    assert.equal(signs(), b1 + 1, 'the background signed more than the changed row');
+    await delay(5100);
+    const now2 = await ask('?all=1&probe=d');
+    const row2 = now2.body.rounds.find((x) => x.id === pick.id);
+    assert.equal(row2.joined, 1, 'the changed row still shows its old count');
+    assert.notEqual(row2.sig, pick.sig);
+    assert.ok(pageChecks(now2.body));
+    console.log('  FACTS:', JSON.stringify({ held, all: all.body.rounds.length, grew, firstMs: Math.round(lobby.ms), newWindowMs: asks.map((a) => Math.round(a.ms)) }));
   } finally { await s.close(); }
 });

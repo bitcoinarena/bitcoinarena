@@ -7835,37 +7835,39 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // in 45 min, load 25-28). So the window stays 45 s and is only the signed time; which rounds are listed, and each row's
   // phase, are read at the request (announcedRounds) - a row whose phase turned is signed again alone.
   const SIGN_EVERY_MS = 45000n;
-  let signedSet = null;                           // { atMs: bigint, sigs: Map<id hex, {key, sig}>, committees: Map, asked: Map }
-  // THE NEXT WINDOW BUILT BEFORE IT IS ASKED (kanban #2790, after #2783 / feedback #082): the first listing of a window signed every row it
-  // named and drew their committees while the asker waited - measured live 2026-11-15 after audit9a, 30.0 s on fed2-1 and 11.7 s on guardian-4 for
-  // the first ask of each 45 s window, and any caller could make that build once a window. Now a timer builds the next window
-  // LISTING_PREBUILD_LEAD_MS before it starts, for the window's own time (old window + SIGN_EVERY_MS: the rows' signed time is never ahead of
-  // the clock when they are served), with the rows the running window was asked for; a request takes it once its time has come. A
-  // build still running when its window is due leaves the old window served up to LISTING_SERVE_MAX_MS (inside the page's 60 s skew); past
-  // that a request starts a window of its own as before. Rows a window was not asked for are not signed, so a seat nobody lists signs nothing.
-  const LISTING_PREBUILD_LEAD_MS = 15000n;
-  const LISTING_SERVE_MAX_MS = 55000n;
-  let nextSet = null;                             // { set, ready: bool } - the window being built ahead, or built and waiting for its time
+  // THE LISTING IS BUILT IN THE BACKGROUND, NEVER ON A REQUEST (kanban #2790, after #2783 / feedback #082). Measured live 2026-11-15: the first
+  // listing of each 45 s window signed every row it named while its asker waited (30.0 s on fed2-1, 11.7 s on guardian-4). A first fix
+  // (audit9b) built ahead only the rows the last window was asked for; live it still signed ~800 rows on requests after each window start
+  // (a build that ran past its window's due time was dropped, and rows asked late were not in it), and one `all=1` made the next build sign
+  // all 11,239 rows (116 s), so a normal request waited past 60 s.
+  // Now one background build per window signs a FIXED, BOUNDED set that does not depend on what anyone asks: per series the soonest
+  // LISTING_BUILD_PER_SERIES rounds (the `next` cut, over its bound of 64) and every round starting within LISTING_BUILD_SOON_MS (a page's
+  // ahead=900000), every round of no series, at most LISTING_BUILD_MAX_ROWS in all, soonest first. It is built LEAD before its window (the lead
+  // grows with the last build's time) for the window's own time, and taken by requests once that time has come. A build that is late leaves
+  // the old window served until it is ready; nothing is dropped. A request cuts its rows from the served window and signs NOTHING: a row the
+  // window does not hold is not listed (it comes with the next window), and a row whose facts changed (a join, its committee time passed) is
+  // served with the facts its signature covers and handed to the background, which signs it again within a second. `all=1` and `ahead`
+  // alone list what the window holds. A seat nobody lists builds nothing: builds stop LISTING_IDLE_MS after the last listing.
+  const LISTING_BUILD_PER_SERIES = 72;
+  const LISTING_BUILD_SOON_MS = 20n * 60000n;
+  const LISTING_BUILD_MAX_ROWS = 5000;
+  const LISTING_LEAD_MIN_MS = 15000;
+  const LISTING_LEAD_MAX_MS = 40000;
+  const LISTING_IDLE_MS = 120000;
+  let signedSet = null;                           // the served window: { atMs: bigint, rows: Map<id hex, scan row>, sigs: Map<id, {key, sig, facts}>, committees: Map }
+  let nextSet = null;                             // { set, ready } - the window being built, or built and waiting for its time
+  let lastBuildMs = 0, listingAskedAt = 0;
+  const dirtyRows = new Set();                    // rows of the served window whose facts changed: signed again in the background
+  let firstWindow = null;                         // resolves when a window is first served
   const turnWindow = (to, now) => {
     // a drawn committee of a round no longer held is let go when a window turns (it was, when a full set was signed)
     // AND WHAT THE WINDOW THAT ENDED SIGNED, said once (the number is measured by)
     if (signedSet && signedSet.signed) console.log(`[listing] window of ${Number(now - signedSet.atMs) / 1000} s: ${signedSet.signed} row signature(s), ${listingSigned} since the start`);
     if (signedSet) { const held = new Set(); for (const rid of openHeld()) held.add(toHex(rid));
       for (const id of committeeDrawn.keys()) if (!held.has(id)) committeeDrawn.delete(id); }
-    signedSet = to;
+    signedSet = to; dirtyRows.clear();
   };
-  const newWindow = (atMs) => ({ atMs, sigs: new Map(), committees: new Map(), signing: new Map(), signed: 0, asked: new Map() });
-  const windowSet = () => {
-    const now = BigInt(round.now());
-    if (nextSet && nextSet.ready && now >= nextSet.set.atMs && (!signedSet || nextSet.set.atMs > signedSet.atMs)) { turnWindow(nextSet.set, now); nextSet = null; }
-    if (!signedSet || now - signedSet.atMs >= SIGN_EVERY_MS) {
-      // the next window is still being built: the old one is served while it is inside the page's skew
-      if (signedSet && nextSet && !nextSet.ready && now - signedSet.atMs < LISTING_SERVE_MAX_MS) return signedSet;
-      nextSet = null;
-      turnWindow(newWindow(now), now);
-    }
-    return signedSet;
-  };
+  const newWindow = (atMs) => ({ atMs, rows: new Map(), sigs: new Map(), committees: new Map(), signing: new Map(), signed: 0 });
   // THE SIGNATURES IN ONE LONG-LIVED WORKER, not on this loop (listing-sign.js)
   const signer = listingSigner(round.identity.secret);
   const rowFacts = (rid, c, nowMs) => {
@@ -7888,7 +7890,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const job = signer.sign(ask.map(({ r }) => lobbyListingId({ roundId: r.roundId, nodePubkey: round.pubkey, nowMs: set.atMs,
         phase: r.facts.phase, assignedHere: r.facts.assignedHere, joined: r.facts.joined, playing: r.facts.playing })));
       ask.forEach(({ r, k }, i) => set.signing.set(`${r.id}|${k}`, job.then((sigs) => toHex(sigs[i]))));
-      job.then((sigs) => { ask.forEach(({ r, k }, i) => { set.sigs.set(r.id, { key: k, sig: toHex(sigs[i]) }); set.signing.delete(`${r.id}|${k}`); }); },
+      job.then((sigs) => { ask.forEach(({ r, k }, i) => { set.sigs.set(r.id, { key: k, sig: toHex(sigs[i]), facts: r.facts }); set.signing.delete(`${r.id}|${k}`); }); },
         () => { for (const { r, k } of ask) set.signing.delete(`${r.id}|${k}`); });
       listingSigned += ask.length; set.signed += ask.length;
     }
@@ -7900,38 +7902,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return out;
   };
   let listingSigned = 0;                          // signatures made since the start (the [listing] line below)
-  // THE PREBUILD (kanban #2790): the running window's asked rows, their facts at the next window's time, signed and their committees drawn
-  let listingBuilt = 0;                           // windows built ahead since the start (the test reads it)
-  const prebuildWindow = async () => {
-    const cur = signedSet;
-    if (!cur || nextSet || !cur.asked.size) return;
-    const now = BigInt(round.now());
-    if (now < cur.atMs + SIGN_EVERY_MS - LISTING_PREBUILD_LEAD_MS || now - cur.atMs >= LISTING_SERVE_MAX_MS) return;
-    const set = newWindow(cur.atMs + SIGN_EVERY_MS);
-    const job = { set, ready: false };
-    nextSet = job;
-    const t0 = performance.now();
-    let sliceAt = t0;
-    const yieldIfLong = async () => { if (performance.now() - sliceAt < LISTING_SLICE_MS) return; await new Promise((r) => setImmediate(r)); sliceAt = performance.now(); };
-    try {
-      const rows = [];
-      for (const [id, x] of cur.asked) {
-        await yieldIfLong();
-        if (set.atMs >= x.endMs) continue;
-        rows.push({ id, roundId: x.roundId, facts: rowFacts(x.roundId, x.c, set.atMs) });
-        if (!set.committees.has(id)) set.committees.set(id, committeeOf(x.roundId));
-        set.asked.set(id, x);
-      }
-      await windowSigs(set, rows);
-      if (nextSet === job) { job.ready = true; listingBuilt += 1; }
-      console.log(`[listing] window ${set.atMs} built ahead in ${Math.round(performance.now() - t0)} ms: ${rows.length} row(s)`);
-    } catch (e) {
-      if (nextSet === job) nextSet = null;
-      console.log(`[listing] the window ahead was not built: ${e && e.message}`);
-    }
-  };
-  const prebuildTimer = setInterval(() => { prebuildWindow().catch(() => {}); }, 1000);
-  if (prebuildTimer.unref) prebuildTimer.unref();
+  let listingBuilt = 0;                           // windows built since the start (the test reads it)
   // WHETHER A HELD ROUND IS ANNOUNCED AT ALL, and the end it is listed to - read again once the series held change
   const listable = (kept) => {
     if (kept.listedUnder !== seriesVersion) {
@@ -7973,6 +7944,98 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
     return scanBuilding;
   };
+  // `next` AS ONE CUT (kanban #742, #1066, 2026-10-12): per series at most `perSeries` rounds still open with room to join, as many closed
+  // ones beside them, and every open round closing within NEXT_SPAN_MS - `candidates` sorted here by start. Used by a request and by the
+  // background build alike (kanban #2790).
+  const cutPerSeries = (candidates, perSeries, nowMs) => {
+    candidates.sort((x, y) => (x.c.startTimeMs < y.c.startTimeMs ? -1 : x.c.startTimeMs > y.c.startTimeMs ? 1 : 0));
+    const count = new Map(), closed = new Map(), kept = [];
+    const NEXT_ROOM_MS = 30000;
+    const NEXT_SPAN_MS = 120000;
+    for (const x of candidates) {
+      if (!(x.c.seriesId instanceof Uint8Array)) { kept.push(x); continue; }
+      const k = toHex(x.c.seriesId);
+      const roomy = Number(nowMs) + NEXT_ROOM_MS < Number(x.c.entryCloseMs);
+      const tally = roomy ? count : closed;
+      const n = tally.get(k) || 0;
+      if (n >= perSeries && !(roomy && Number(x.c.entryCloseMs) <= Number(nowMs) + NEXT_SPAN_MS)) continue;
+      tally.set(k, n + 1); kept.push(x);
+    }
+    return kept;
+  };
+  // ONE WINDOW, BUILT (kanban #2790): its fixed row set at `atMs`, their facts at that time, committees drawn and every row signed
+  const buildWindow = async (atMs) => {
+    const t0 = performance.now();
+    let sliceAt = t0;
+    const yieldIfLong = async () => { if (performance.now() - sliceAt < LISTING_SLICE_MS) return; await new Promise((r) => setImmediate(r)); sliceAt = performance.now(); };
+    const set = newWindow(atMs);
+    set.closeSeq = round.closeSeq;   // a round closed after this is dropped by the requests (kanban #791, #2790)
+    const live = [];
+    for (const x of await openScan(atMs, yieldIfLong)) if (atMs < x.endMs) live.push(x);
+    const picked = new Set(cutPerSeries(live.slice(), LISTING_BUILD_PER_SERIES, atMs));
+    for (const x of live) if (x.c.startTimeMs <= atMs + LISTING_BUILD_SOON_MS) picked.add(x);
+    const chosen = [...picked].sort((x, y) => (x.c.startTimeMs < y.c.startTimeMs ? -1 : x.c.startTimeMs > y.c.startTimeMs ? 1 : 0)).slice(0, LISTING_BUILD_MAX_ROWS);
+    const rows = [];
+    for (const x of chosen) {
+      await yieldIfLong();
+      const id = toHex(x.held.roundId);
+      set.rows.set(id, x);
+      rows.push({ id, roundId: x.held.roundId, facts: rowFacts(x.held.roundId, x.c, atMs) });
+      set.committees.set(id, committeeOf(x.held.roundId));
+    }
+    await windowSigs(set, rows);
+    lastBuildMs = performance.now() - t0;
+    console.log(`[listing] window ${atMs} built in ${Math.round(lastBuildMs)} ms: ${rows.length} row(s) of ${live.length} listed`);
+    return set;
+  };
+  const startBuild = (atMs) => {
+    const job = { set: null, ready: false, atMs };
+    nextSet = job;
+    job.done = buildWindow(atMs).then((set) => { if (nextSet === job) { job.set = set; job.ready = true; listingBuilt += 1; } return set; },
+      (e) => { if (nextSet === job) nextSet = null; console.log(`[listing] the window was not built: ${e && e.message}`); return null; });
+    return job;
+  };
+  // THE BACKGROUND TICK: take a built window whose time has come, start the next one LEAD before its time, sign the changed rows again
+  let dirtySigning = false;
+  const listingTick = () => {
+    const now = BigInt(round.now());
+    if (nextSet && nextSet.ready && now >= nextSet.atMs) {
+      if (signedSet && now - signedSet.atMs > SIGN_EVERY_MS + 5000n) console.log(`[listing] window ${nextSet.atMs} served ${Number(now - nextSet.atMs) / 1000} s after its time: its build took ${Math.round(lastBuildMs)} ms`);
+      turnWindow(nextSet.set, now); nextSet = null;
+    }
+    const idle = Date.now() - listingAskedAt > LISTING_IDLE_MS;
+    if (!nextSet && signedSet && !idle) {
+      const lead = BigInt(Math.round(Math.min(LISTING_LEAD_MAX_MS, Math.max(LISTING_LEAD_MIN_MS, lastBuildMs * 1.5 + 2000))));
+      if (now >= signedSet.atMs + SIGN_EVERY_MS - lead) startBuild(signedSet.atMs + SIGN_EVERY_MS > now ? signedSet.atMs + SIGN_EVERY_MS : now);
+    }
+    if (dirtyRows.size && signedSet && !dirtySigning) {
+      const set = signedSet, rows = [];
+      for (const id of [...dirtyRows].slice(0, 512)) {
+        dirtyRows.delete(id);
+        const x = set.rows.get(id);
+        if (x) rows.push({ id, roundId: x.held.roundId, facts: rowFacts(x.held.roundId, x.c, now) });
+      }
+      if (rows.length) { dirtySigning = true; windowSigs(set, rows).catch(() => {}).finally(() => { dirtySigning = false; }); }
+    }
+  };
+  const listingTimer = setInterval(() => { try { listingTick(); } catch (e) { console.log(`[listing] tick: ${e && e.message}`); } }, 1000);
+  if (listingTimer.unref) listingTimer.unref();
+  // THE SERVED WINDOW FOR A REQUEST: the one built; after a seat start, or after it was idle, the first request waits for one build (bounded)
+  const LISTING_FIRST_WAIT_MS = 30000;
+  const servedWindow = async () => {
+    listingAskedAt = Date.now();
+    const now = BigInt(round.now());
+    if (nextSet && nextSet.ready && now >= nextSet.atMs) { turnWindow(nextSet.set, now); nextSet = null; }
+    // NO WINDOW YET (a seat start) OR IDLE (no build running and the served one past a page's skew): one build now, waited for (bounded);
+    // a build already running is not waited for - the old window is served until it is ready
+    if (!signedSet || (!nextSet && now - signedSet.atMs >= SIGN_EVERY_MS + 15000n)) {
+      if (!nextSet) startBuild(now);
+      const job = nextSet;
+      await Promise.race([job.done, new Promise((r) => setTimeout(r, LISTING_FIRST_WAIT_MS))]);
+      if (job.ready && (!signedSet || job.set.atMs > signedSet.atMs) && BigInt(round.now()) >= job.atMs) { turnWindow(job.set, BigInt(round.now())); if (nextSet === job) nextSet = null; }
+    }
+    return signedSet;
+  };
   const LISTING_BARE_NEXT = Number(process.env.ARENA_LISTING_BARE_NEXT || 8);
   const announcedRounds = async (url) => {
     let sliceAt = performance.now();
@@ -7981,10 +8044,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       await new Promise((r) => setImmediate(r));
       sliceAt = performance.now();
     };
-    // EVERY LISTING, FULL OR `next`, AT ITS WINDOW'S TIME: rows signed once a window, as asked
-    const set = windowSet();
+    // EVERY LISTING, FULL OR `next`, CUT FROM THE WINDOW BUILT IN THE BACKGROUND, AT ITS TIME (kanban #2790): nothing is signed here
+    const set = await servedWindow();
     const nowMs = BigInt(round.now());
     const listed = [];
+    if (!set) return { nowMs, listed };
     // EVERY ANNOUNCED ROUND, WITH ITS TIMES AND WHO IS RESPONSIBLE FOR IT (2026-09-28 16:12, ROUNDS-EP-1612):
     // every round this node holds that has not ended - a series' rounds 72 h ahead included - with its start and
     // end as ISO-8601 UTC and its committees as the census and the beacon draw them (Roster.committeeFor, the
@@ -8023,16 +8087,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const compactOf = (k) => (compact && k && k.drawn && typeof k.drawn === 'object' ? { ...k, drawn: true } : k);
     const gamesRaw = url.searchParams.get('games');
     const gameSet = gamesRaw ? new Set(String(gamesRaw).toLowerCase().split(',').filter((g) => /^[0-9a-f]{64}$/.test(g)).slice(0, 16)) : null;
-    for (const x of await openScan(nowMs, yieldIfLong)) {
+    // A ROUND CLOSED SINCE THE WINDOW WAS BUILT IS NOT UPCOMING (kanban #791): the store's log of closes, or the open list when the log ran over
+    let closedNow = null;
+    if (round.closeSeq !== set.closeSeq) {
+      closedNow = typeof round.closedSince === 'function' ? round.closedSince(set.closeSeq) : null;
+      if (!closedNow) { const open = new Set(); for (const rid of openHeld()) open.add(toHex(rid)); closedNow = { has: (id) => !open.has(id) }; }
+    }
+    for (const x of set.rows.values()) {
       if (nowMs >= x.endMs) continue;   // over: announced no longer
+      if (closedNow && closedNow.has(round.hexOf ? round.hexOf(x.held.roundId) : toHex(x.held.roundId))) continue;
       if (aheadMs !== null && x.c.startTimeMs > nowMs + aheadMs) continue;
       if (gameSet && gameSet.size && !gameSet.has(toHex(x.c.gameId))) continue;
       candidates.push(x);
     }
-    if (perSeries !== null) {
-      candidates.sort((x, y) => (x.c.startTimeMs < y.c.startTimeMs ? -1 : x.c.startTimeMs > y.c.startTimeMs ? 1 : 0));
-      const count = new Map();
-      const kept = [];
       // A ROUND WHOSE ENTRY HAS CLOSED DOES NOT TAKE AN OPEN ONE'S PLACE (2026-10-12 16:47: "no rounds
       // opens for Rps"): counted by start, an 8 s grid's `next` rounds were the ones already started - measured at 14:50:42Z,
       // 32 Rock Paper Scissors rounds listed, the latest entry closing 46 s ahead - and after a lobby read over the Funnel
@@ -8045,28 +8112,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // next, so seven seats answer from seven moments up to 44 s apart (measured 15:05Z: nowMs 0..44 s behind). Eight rounds
       // of an 8 s grid are 64 s, and the seven windows shared too few of them - no round had 5 of 7 seats saying it open,
       // none was joinable. Two minutes of a short grid overlap every window; a 90 s series is unchanged (8 rounds are 12 min).
-      const closed = new Map();
-      const NEXT_ROOM_MS = 30000;
-      const NEXT_SPAN_MS = 120000;
-      for (const x of candidates) {
-        if (!(x.c.seriesId instanceof Uint8Array)) { kept.push(x); continue; }
-        const k = toHex(x.c.seriesId);
-        const roomy = Number(nowMs) + NEXT_ROOM_MS < Number(x.c.entryCloseMs);
-        const tally = roomy ? count : closed;
-        const n = tally.get(k) || 0;
-        if (n >= perSeries && !(roomy && Number(x.c.entryCloseMs) <= Number(nowMs) + NEXT_SPAN_MS)) continue;
-        tally.set(k, n + 1); kept.push(x);
-      }
-      candidates.length = 0; candidates.push(...kept);
-    }
+    if (perSeries !== null) { const kept = cutPerSeries(candidates, perSeries, nowMs); candidates.length = 0; candidates.push(...kept); }
     const rows = [];
     for (const x of candidates) {
       await yieldIfLong();
       rows.push({ ...x, id: toHex(x.held.roundId), roundId: x.held.roundId, facts: rowFacts(x.held.roundId, x.c, nowMs) });
     }
-    for (const r of rows) if (!set.asked.has(r.id)) set.asked.set(r.id, { roundId: r.roundId, c: r.c, endMs: r.endMs });   // what the next window builds ahead (#2790)
-    const sigOf = await windowSigs(set, rows);
-    for (const { held, c, endMs, id, facts } of rows) {
+    // EACH ROW WITH THE FACTS ITS SIGNATURE COVERS (kanban #2790): a row whose facts changed since is handed to the background to be signed
+    // again, and listed meanwhile as it was signed - nothing is signed while the asker waits
+    const signedRows = [];
+    for (const r of rows) {
+      const kept = set.sigs.get(r.id);
+      if (!kept) continue;
+      if (kept.key !== factsKey(r.facts)) dirtyRows.add(r.id);
+      signedRows.push({ ...r, facts: kept.facts, sig: kept.sig });
+    }
+    const sigOf = new Map(signedRows.map((r) => [r.id, r.sig]));
+    for (const { held, c, endMs, id, facts } of signedRows) {
       await yieldIfLong();
       const players = { joined: facts.joined, playing: facts.playing };
       const free = c.stakeMsat === 0n;
@@ -14214,7 +14276,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       close: () => new Promise((r) => {
         // NO RE-GATHER OUTLIVES THE DAEMON.
         shuttingDown = true;
-        clearInterval(settleRecoverTimer); clearInterval(prebuildTimer); clearInterval(cancelHandOnTimer); clearInterval(transcriptPruneClock); clearInterval(unusedClock); clearInterval(donationBackfillClock); clearTimeout(donationBackfillTimer); clearInterval(donationBackfillClock); clearTimeout(donationBackfillTimer);
+        clearInterval(settleRecoverTimer); clearInterval(listingTimer); clearInterval(cancelHandOnTimer); clearInterval(transcriptPruneClock); clearInterval(unusedClock); clearInterval(donationBackfillClock); clearTimeout(donationBackfillTimer); clearInterval(donationBackfillClock); clearTimeout(donationBackfillTimer);
         if (attestedSweep) { clearInterval(attestedSweep); attestedSweep = null; }
         if (marketsTimer) clearInterval(marketsTimer);
         if (orderBatchTimeout) { clearTimeout(orderBatchTimeout); orderBatchTimeout = null; }

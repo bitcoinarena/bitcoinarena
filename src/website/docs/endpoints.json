@@ -2520,7 +2520,7 @@
     "name": "all",
     "required": false,
     "type": "integer",
-    "description": "1: every announced round this node holds, unbounded (slow at grid density: tens of thousands of rows). Without it, a bare /rounds is next=8.",
+    "description": "1: every round of the node's current listing window: per series the next 72 and every round starting within 20 min (kanban #2790; the window is built in the background every 45 s). Without it, a bare /rounds is next=8.",
     "example": 1
    }
   ],
