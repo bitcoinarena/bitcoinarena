@@ -172,6 +172,9 @@ export function createDonationBallots({ db, knownSets, verifySecp256k1, log = ()
   // Such an object, signed under the key it names, is parked here (at most EARLY_MAX, the oldest go first) and added again after
   // every object this seat takes; what a forward missed altogether comes back with the peer pull (pull, the server's timer).
   const EARLY_MAX = 1024;
+  // a peer pull's bounds (kanban #2812): objects tried per pull, and hexes refused before that are not tried again
+  const PULL_TRIES = 1024, REFUSED_KEPT = 8192;
+  const refusedHexes = new Set();
   const parked = new Map();   // hex -> kind
   const park = async (kind, hex, obj) => {
     try {
@@ -215,12 +218,34 @@ export function createDonationBallots({ db, knownSets, verifySecp256k1, log = ()
       const serialOf = (x) => BigInt(/^\d{1,20}$/.test(String(x.serial)) ? x.serial : 0);
       const items = (Array.isArray(list) ? list : []).filter((b) => b && typeof b.hex === 'string').slice(0, 512)
         .sort((x, y) => { const a = serialOf(x), b = serialOf(y); return a < b ? -1 : a > b ? 1 : 0; });
+      // ONE PEER ANSWER COSTS WHAT AN HONEST LIST CAN HOLD (kanban #2812, #1489 r22-gossip-2): 512 items each repeating one proposal with 256
+      // junk approvals named for a real recipient cost every pulling seat 131,072 secp256k1 verifies, each after a rebuild of all held ballots -
+      // ~2 min of its thread, every 10 min, from one seat. Now each object is tried once a pull (by its hex), an object this seat holds or
+      // refused before is not tried again, one approval a (proposal, signer) is tried a pull, and a pull tries at most PULL_TRIES objects.
+      const tried = new Set(), signerTried = new Set();
+      let tries = 0;
+      const tryAdd = async (kind, hex) => {
+        const h = String(hex).toLowerCase();
+        if (tried.has(h) || refusedHexes.has(h) || tries >= PULL_TRIES) return false;
+        tried.add(h);
+        if (db.prepare('SELECT 1 FROM donation_ballots WHERE hex = ?').get(h)) return false;
+        if (kind === 'approval') {
+          let k = null; try { const a = decodeDonationApproval(split(h).body); k = `${toHex(a.proposalId)}:${toHex(a.signer)}`; } catch { k = null; }
+          if (k === null || signerTried.has(k)) return false;
+          signerTried.add(k);
+        }
+        tries++;
+        const r = await api.add(kind, h, { parking: false });
+        if (!r.ok && r.status !== 404 && r.status !== 403) { refusedHexes.add(h); if (refusedHexes.size > REFUSED_KEPT) refusedHexes.delete(refusedHexes.values().next().value); }
+        return !!r.fresh;
+      };
       let took = 0;
       for (let pass = 0; pass < 8; pass++) {
         let fresh = 0;
+        if (pass) tried.clear(), signerTried.clear();
         for (const b of items) {
-          try { if ((await api.add('proposal', b.hex, { parking: false })).fresh) fresh++; } catch { /* not one */ }
-          for (const a of (Array.isArray(b.approvals) ? b.approvals : []).slice(0, 256)) { try { if (typeof a === 'string' && (await api.add('approval', a, { parking: false })).fresh) fresh++; } catch { /* not one */ } }
+          try { if (await tryAdd('proposal', b.hex)) fresh++; } catch { /* not one */ }
+          for (const a of (Array.isArray(b.approvals) ? b.approvals : []).slice(0, 256)) { try { if (typeof a === 'string' && await tryAdd('approval', a)) fresh++; } catch { /* not one */ } }
         }
         took += fresh;
         if (!fresh) break;
