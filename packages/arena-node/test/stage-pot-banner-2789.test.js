@@ -37,7 +37,7 @@ test('#2789 used up: red, the used-up text', () => {
 
 test('#2789 the faucet\'s season answer carries pendingNew (a number only)', () => {
   const f = readFileSync(new URL('../tools/faucet.mjs', import.meta.url), 'utf8');
-  assert.match(f, /pendingNew: FEEDBACK\.countNew\(seasonEndMs\(p\.season - 1, S2_START_MS\) \?\? 0\)/);
+  assert.match(f, /pendingNew: FEEDBACK\.countNew\(seasonEndMs\(p\.season - 1, S2_START_MS, S2_END_MS\) \?\? 0\)/);
 });
 
 test('#2789 the report store counts reports still new since a time', async () => {

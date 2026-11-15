@@ -57,3 +57,16 @@ test('#2784 a pot per season (Season 2 120,000) and the draw prize as its own fi
   assert.match(src, /pots: seasonFigures\(env\.FAUCET_BOUNTY_POTS\), drawPrizes: seasonFigures\(env\.FAUCET_BOUNTY_DRAW_PRIZES\)/);
   assert.match(src, /drawPrizeSats: p\.drawPrizeSats/);
 });
+
+test('#2784 Season 2 public: it runs from its start to 2026-11-22 17:00Z, the next seasons one week each from there', async () => {
+  const { seasonAt, seasonEndMs, SEASON_MS } = await import('../src/bounty-season.js');
+  const start = Date.parse('2026-11-14T07:12:35Z'), end = Date.parse('2026-11-22T17:00:00Z');
+  assert.equal(seasonAt(Date.parse('2026-11-15T16:55:00Z'), start, end), 2);
+  assert.equal(seasonAt(Date.parse('2026-11-21T08:00:00Z'), start, end), 2, 'past the old one-week end, still Season 2');
+  assert.equal(seasonAt(end - 1, start, end), 2); assert.equal(seasonAt(end, start, end), 3);
+  assert.equal(seasonAt(end + SEASON_MS, start, end), 4);
+  assert.equal(seasonEndMs(2, start, end), end); assert.equal(seasonEndMs(3, start, end), end + SEASON_MS); assert.equal(seasonEndMs(1, start, end), start);
+  assert.equal(seasonAt(Date.parse('2026-11-21T08:00:00Z'), start), 3, 'without the end: weekly as before');
+  const s = openBountySeason(':memory:', { startMs: start, s2EndMs: end, pots: { 2: 120000 } });
+  assert.equal(s.seasonNow(Date.parse('2026-11-21T08:00:00Z')), 2);
+});

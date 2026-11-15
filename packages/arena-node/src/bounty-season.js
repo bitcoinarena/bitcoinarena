@@ -66,14 +66,18 @@ export function seasonPayout({ level, codeOnly = false, followUp = false, flags 
 }
 
 /** THE SEASON AT A TIME: Season 2 from `startMs` (null: Season 2 until a start is set), then one more each week. */
-export function seasonAt(nowMs, startMs = null) {
+// `s2EndMs` (kanban #2784, the owner 2026-11-15: Season 2 public, ends 2026-11-22 17:00:00Z): Season 2 runs from `startMs` to it, the seasons after
+// one week each from there; without it every season is one week from `startMs`.
+export function seasonAt(nowMs, startMs = null, s2EndMs = null) {
   if (!Number.isFinite(startMs) || nowMs < startMs) return FIRST_SEASON;
+  if (Number.isFinite(s2EndMs)) return nowMs < s2EndMs ? FIRST_SEASON : FIRST_SEASON + 1 + Math.floor((nowMs - s2EndMs) / SEASON_MS);
   return FIRST_SEASON + Math.floor((nowMs - startMs) / SEASON_MS);
 }
 
 /** WHEN A WEEK ENDS (kanban #2641): its start + 7 days; Week 2 starts at `startMs`. null without a start. */
-export function seasonEndMs(season, startMs = null) {
+export function seasonEndMs(season, startMs = null, s2EndMs = null) {
   if (!Number.isFinite(startMs)) return null;
+  if (Number.isFinite(s2EndMs)) return Number(season) < FIRST_SEASON ? startMs : s2EndMs + (Number(season) - FIRST_SEASON) * SEASON_MS;
   return startMs + (Number(season) - FIRST_SEASON + 1) * SEASON_MS;
 }
 
@@ -156,7 +160,7 @@ export function cleanOpenIssues(o) {
 // store's; without it every approval counts by the current rule.
 // `pots` (kanban #2784, the owner 2026-11-15: "Season 2 pot = 120,000"): a pot per season, { 2: 120000 }; a season not named has `potSats`.
 // `drawPrizes`: the season draw's prize, its own figure beside the pot ({ 2: 50000 }), never counted in it.
-export function openBountySeason(path = ':memory:', { startMs = null, potSats = SEASON_POT_SATS, pots = {}, drawPrizes = {}, paidOf = null } = {}) {
+export function openBountySeason(path = ':memory:', { startMs = null, s2EndMs = null, potSats = SEASON_POT_SATS, pots = {}, drawPrizes = {}, paidOf = null } = {}) {
   const potOf = (season) => (Number.isInteger(Number(pots && pots[season])) && Number(pots[season]) > 0 ? Number(pots[season]) : potSats);
   const drawPrizeOf = (season) => (Number.isInteger(Number(drawPrizes && drawPrizes[season])) && Number(drawPrizes[season]) > 0 ? Number(drawPrizes[season]) : null);
   const db = new DatabaseSync(path);
@@ -176,7 +180,7 @@ export function openBountySeason(path = ':memory:', { startMs = null, potSats = 
   try { db.exec("ALTER TABLE links ADD COLUMN proof TEXT NOT NULL DEFAULT 'code'"); } catch { /* there already */ }
   // WHY A PAYOUT WENT DOWN (kanban #2641), e.g. "left Discord: -25 %"
   try { db.exec('ALTER TABLE approvals ADD COLUMN payable_why TEXT'); } catch { /* there already */ }
-  const seasonNow = (nowMs) => seasonAt(nowMs, startMs);
+  const seasonNow = (nowMs) => seasonAt(nowMs, startMs, s2EndMs);
 
   /** A ONE-TIME LINK CODE for a reporter's key (signed in with it): 24 hours, used once, at most LINK_CODES_OPEN_MOST open at a time. */
   function makeCode(pubkey, { nowMs = Date.now() } = {}) {

@@ -112,6 +112,7 @@ function seasonFigures(text) { const o = {}; for (const part of String(text || '
 const FEEDBACK = env.FAUCET_FEEDBACK_DB ? openFeedbackStore(env.FAUCET_FEEDBACK_DB) : null;
 // BUG BOUNTY SEASON 2 (kanban #2623): its own file, so Season 1's feedback.db, /bounty and the paid log stay as they are; off when not named
 const S2 = FEEDBACK && env.FAUCET_BOUNTY_S2_DB ? openBountySeason(env.FAUCET_BOUNTY_S2_DB, { startMs: env.FAUCET_BOUNTY_S2_START ? Date.parse(env.FAUCET_BOUNTY_S2_START) : null,
+  s2EndMs: env.FAUCET_BOUNTY_S2_END ? Date.parse(env.FAUCET_BOUNTY_S2_END) : null,   // kanban #2784: Season 2 public, ends 2026-11-22 17:00Z
   pots: seasonFigures(env.FAUCET_BOUNTY_POTS), drawPrizes: seasonFigures(env.FAUCET_BOUNTY_DRAW_PRIZES),   // kanban #2784: '2:120000', '2:50000'
   paidOf: (id) => FEEDBACK.paidSatsOf(id) }) : null;   // kanban #2784: the pot counts what was paid
 const S2_VERIFY = verifiersFromEnv(env);
@@ -152,6 +153,7 @@ function s2LiveSlot(now = Date.now()) {
 // SEASON 2 STARTS (the owner 2026-11-13 ~17:55Z: "Season 2 läuft ab Sonntag"): before it no Season 2 approval; a Season 1 report past the weekly budget
 // waits for it and is approved by the Season 2 rules once it runs (the sweep below)
 const S2_START_MS = env.FAUCET_BOUNTY_S2_START ? Date.parse(env.FAUCET_BOUNTY_S2_START) : null;
+const S2_END_MS = env.FAUCET_BOUNTY_S2_END ? Date.parse(env.FAUCET_BOUNTY_S2_END) : null;   // kanban #2784
 // WEEK 1 ENDED (kanban #2639): a report received at or after this time belongs to Week 2
 const S1_END_MS = env.FAUCET_BOUNTY_S1_END ? Date.parse(env.FAUCET_BOUNTY_S1_END) : null;
 const S2_STARTED = () => !Number.isFinite(S2_START_MS) || Date.now() >= S2_START_MS;
@@ -877,7 +879,7 @@ createServer((req, res) => {
         return res.end(readFileSync(f)); } }
     if (S2 && path === '/feedback/admin/season' && req.method === 'GET') {
       const season = Number(q.get('season')) || S2.seasonNow(Date.now());
-      return send(200, { ok: true, s1EndMs: Number.isFinite(S1_END_MS) ? S1_END_MS : null, s2StartMs: Number.isFinite(S2_START_MS) ? S2_START_MS : null, started: S2_STARTED(), weekEndMs: seasonEndMs(season, S2_START_MS), pot: S2.pot(season), approvals: S2.approvals({ season }), waiting: S2.approvals({ state: 'waiting' }), verifiers: Object.keys(S2_VERIFY) });
+      return send(200, { ok: true, s1EndMs: Number.isFinite(S1_END_MS) ? S1_END_MS : null, s2StartMs: Number.isFinite(S2_START_MS) ? S2_START_MS : null, started: S2_STARTED(), weekEndMs: seasonEndMs(season, S2_START_MS, S2_END_MS), pot: S2.pot(season), approvals: S2.approvals({ season }), waiting: S2.approvals({ state: 'waiting' }), verifiers: Object.keys(S2_VERIFY) });
     }
     if (path === '/feedback/admin/export.csv' && req.method === 'GET') {
       res.writeHead(200, { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': 'attachment; filename="arena-feedback.csv"', 'cache-control': 'no-store', ...cors });
@@ -1087,9 +1089,9 @@ createServer((req, res) => {
   if (S2 && path === '/feedback/season' && req.method === 'GET') { const p = S2.pot(S2.seasonNow(Date.now()));
     // usedUp (kanban #2787): from Season 3 on, a pot that cannot take even the smallest payout (a useful note at 25 %) means no bounty this season
     return send(200, { season: p.season, potSats: p.potSats, usedSats: p.usedSats, leftSats: p.leftSats, drawPrizeSats: p.drawPrizeSats, nodes: p.nodes, nodesMost: p.nodesMost,
-      usedUp: p.season >= NO_CARRY_FROM_SEASON && p.leftSats < Math.floor((LEVEL_SATS.useful * BOT_PCT) / 100), nextSeasonMs: seasonEndMs(p.season, S2_START_MS),
+      usedUp: p.season >= NO_CARRY_FROM_SEASON && p.leftSats < Math.floor((LEVEL_SATS.useful * BOT_PCT) / 100), nextSeasonMs: seasonEndMs(p.season, S2_START_MS, S2_END_MS),
       // kanban #2789: this season's reports still waiting for review (a number only), for the stage pot banner from 98 %
-      pendingNew: FEEDBACK.countNew(seasonEndMs(p.season - 1, S2_START_MS) ?? 0) }); }
+      pendingNew: FEEDBACK.countNew(seasonEndMs(p.season - 1, S2_START_MS, S2_END_MS) ?? 0) }); }
   if (S2 && (path === '/feedback/link' || path === '/feedback/verify' || path === '/feedback/social')) {
     if (req.method === 'OPTIONS') { res.writeHead(204, { ...cors, 'access-control-allow-methods': 'POST', 'access-control-allow-headers': 'authorization, content-type', 'access-control-max-age': '86400' }); return res.end(); }
     if (req.method !== 'POST') return send(405, { ok: false, why: 'POST' });

@@ -36,5 +36,5 @@ test('#2787 faucet: a no-bounty plan is answered noBounty and noted on the repor
   const src = readFileSync(new URL('../tools/faucet.mjs', import.meta.url), 'utf8');
   assert.match(src, /if \(p\.noBounty\) \{ FEEDBACK\.remark\(r\.id, p\.why, \{ by \}\); return send\(200, \{ ok: false, noBounty: true/);
   assert.match(src, /if \(p\.waits \|\| p\.noBounty\) \{ if \(p\.waits && p\.season !== a\.season\) S2\.wait\(/);
-  assert.match(src, /usedUp: p\.season >= NO_CARRY_FROM_SEASON && p\.leftSats < Math\.floor\(\(LEVEL_SATS\.useful \* BOT_PCT\) \/ 100\), nextSeasonMs: seasonEndMs\(p\.season, S2_START_MS\)/);
+  assert.match(src, /usedUp: p\.season >= NO_CARRY_FROM_SEASON && p\.leftSats < Math\.floor\(\(LEVEL_SATS\.useful \* BOT_PCT\) \/ 100\), nextSeasonMs: seasonEndMs\(p\.season, S2_START_MS, S2_END_MS\)/);
 });
