@@ -63,6 +63,8 @@ import { CLOSED } from './store.js';
 
 const EVERY = PRICE_SAMPLE_EVERY_MS;
 export const SIGN_SLACK_MS = 15000;
+/** A failed read is tried once more only while this much of its 5 s period is left (kanban #2780). */
+export const READ_RETRY_ROOM_MS = 1000;
 /** Protocol 5: a standing sample is served once every committee reading is in, or this long after its moment (all were posted). */
 export const SERVE_AFTER_MS = 2500;
 /** Protocol 5: a seat short of an end's readings asks the committee again at most this often. */
@@ -282,6 +284,12 @@ export class PriceFeed {
     if (this.readings.has(at)) return this.readings.get(at).cents;
     let got = null, failed = null;
     try { got = await this.readPrice(); } catch (e) { got = null; failed = `the read failed: ${e && e.message ? e.message : e}`; }
+    // ONE MORE TRY INSIDE THE SAME PERIOD (kanban #2780): measured 2026-11-15 on the test host, the seats' reads timed out together at the
+    // wall clock's 5-minute marks (the host's CPU taken by other jobs for seconds) while the venue answered in 0.2 s; three seats of a committee
+    // missing the same moment cost the round that sample. A failed read is asked once more while its period has room left (READ_RETRY_ROOM_MS)
+    if (failed && this.now() < at + EVERY - READ_RETRY_ROOM_MS) {
+      try { got = await this.readPrice(); failed = null; } catch (e) { got = null; failed = `the read failed: ${e && e.message ? e.message : e}`; }
+    }
     // a reader may answer cents (read now) or { cents, atMs } (the price's own time, the exchange ticker's last trade) - and, from the
     // exchange ticker, answerMs (the answer's own time) and the best bid and ask of the same answer
     const r = Number.isInteger(got) ? { cents: got, atMs: now } : got && Number.isInteger(got.cents) ? { cents: got.cents, atMs: Number(got.atMs),
