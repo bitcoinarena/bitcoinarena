@@ -27,7 +27,7 @@
 // crates). The fee lock is not checked here: its claim hash and the §22A node
 // slots wait on a ruling (PRIORITIES).
 import { decodeEntryContract, decodeRoundContract, entryFederation } from '../../arena-protocol/src/contracts.js';
-import { lockMatchesEntry, lockFieldsFromJson, lockFieldsToJson } from '../../arena-protocol/src/stake-lock.js';
+import { lockMatchesEntry, lockFieldsMatchEntry, lockFieldsFromJson, lockFieldsToJson } from '../../arena-protocol/src/stake-lock.js';
 import { STAKE_EXPIRY_BLOCKS } from '../../arena-protocol/src/constants.js';
 import { feeLockPays } from '../../arena-protocol/src/lock-settlement.js';
 import { donationOutputsExpected } from '../../arena-protocol/src/donation.js';
@@ -167,6 +167,12 @@ export async function arenaLockStands({ contract, entry, kind, fields, outpoint,
   const named = namedClaims(contract);
   if (!named) return fields.arena ? { ok: false, why: `this round locks to the stock contract (protocol ${contract.protocolVersion}): that ${kind} lock is an Arena lock` } : null;
   if (!fields.arena) return { ok: false, why: `this round locks to an Arena lock (protocol 27): that ${kind} lock is a stock contract to one claim key` };
+  // (kanban #2752) EVERY CHECK THAT NEEDS NO FEDERATION FIRST: the lock's fields against the entry at height 0 (the freshness check alone needs
+  // the federation's height, below) - a hand-over that can never be the entry's lock asks the federation nothing
+  { const { seatKeys, threshold } = namedClaimKeys(contract);
+    let stall = null; try { stall = lockStallBlocks(networkOf(contract.networkId)); } catch { stall = null; }
+    const pre = arenaLockMatchesEntry({ lock: fields, entry, kind, roundId: entry.roundId, seatKeys, threshold, height: 0, expiryBlocks: contract.stakeExpiryBlocks, stallBlocks: stall });
+    if (!pre.ok) return pre; }
   if (gate) { const g = await gate(contract, hexOf(federationId)); if (g) return { ok: false, why: g }; }
   if (!port.arenaStatus) return { ok: false, why: 'this node\'s federation tool reads no Arena lock' };
   const st = await port.arenaStatus(outpoint);
@@ -514,6 +520,10 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
   if (otherStakedUnderKey(round, entry, entryIdBytes, 'stake'))
     return { ok: false, why: 'another entry of that player key is already staked in this round: one player key stakes one entry' };
   { const back = returnedHere(round, outpoint); if (back) return { ok: false, why: back }; }
+  // FIELDS THAT CAN NEVER BE THE ENTRY'S LOCK COST NO FEDERATION QUESTION (kanban #2752, #1489 r7-entry-2): checked here, before the
+  // federation is asked (the height check alone waits for its answer, in lockMatchesEntry below)
+  // (2.0) a stock lock on a stock round here; an Arena lock's own height-free check runs first in arenaLockStands
+  if (claimPk instanceof Uint8Array && !namedClaims(contract) && !fields.arena) { const pre = lockFieldsMatchEntry({ lock: fields, entry, kind: 'stake', claimPk, expiryBlocks: contract.stakeExpiryBlocks }); if (!pre.ok) return pre; }
 
   let t = Date.now();
   // the round's other seats asked beside the federation (kanban #1692, #1758)
@@ -624,6 +634,8 @@ export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk
   if (otherStakedUnderKey(round, entry, entryIdBytes, 'fee'))
     return { ok: false, why: 'another entry of that player key already has a fee lock in this round: one player key, one fee lock (kanban #1215)' };
   { const back = returnedHere(round, outpoint); if (back) return { ok: false, why: back }; }
+  // (kanban #2752) fields that can never be the entry's fee lock cost no federation question (a stock lock here; an Arena lock in arenaLockStands)
+  if (claimPk instanceof Uint8Array && !namedClaims(contract) && !fields.arena) { const pre = lockFieldsMatchEntry({ lock: fields, entry, kind: 'fee', claimPk, expiryBlocks: contract.stakeExpiryBlocks }); if (!pre.ok) return pre; }
   const feeNamersAsked = askNamers(namersAtPeers, entry, 'fee', outpoint);   // beside the federation (kanban #1692, #1758)
   const arena = await arenaLockStands({ contract, entry, kind: 'fee', fields, outpoint, port, gate: namedGate, federationId: fed.federationId });
   let st, id, doorTimeDropped = false;

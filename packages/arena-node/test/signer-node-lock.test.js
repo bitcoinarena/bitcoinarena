@@ -54,7 +54,8 @@ test('the player\'s own lock is verified: the signer node asks the federation, t
 test('a lock that is not the entry\'s is refused by name, and the stake stays unseen', async () => {
   const cases = [
     ['no lock at the outpoint', async (s) => { s.port.locks.clear(); return s.fields; }, /holds no lock at the entry's stake_lock_outpoint/],
-    ['a contract other than the one stored', async (s) => ({ ...s.fields, amountMsat: s.fields.amountMsat + 1n }), /its id is another/],
+    // (kanban #2752) another contract whose fields could still be the entry's lock: a wrong amount is refused before the federation is asked
+    ['a contract other than the one stored', async (s) => ({ ...s.fields, expiration: s.fields.expiration + 1 }), /its id is another/],
     ['a stored lock for the wrong amount', async (s) => { const f = { ...s.fields, amountMsat: s.fields.amountMsat - 1n }; await s.port.put(s.outpoint, f); return f; }, /holds \d+ msat, and the entry's net stake/],
     ['a hash image', async (s) => { const f = { ...s.fields, paymentImage: { kind: 'hash', bytes: s.entry.stakeCommitment } }; await s.port.put(s.outpoint, f); return f; }, /payment image is not the entry's stake point/],
     ['another claim key', async (s) => { const f = { ...s.fields, claimPk: Uint8Array.from([0x02, ...b32(0xc2)]) }; await s.port.put(s.outpoint, f); return f; }, /claim_pk is not this round's attested claim key/],
