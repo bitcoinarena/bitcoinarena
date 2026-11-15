@@ -172,17 +172,25 @@ export function closeSampleK(endTick) {
 export async function exchangeTickerCents(fetcher = fetch) {
   const r = await fetcher('https://api.exchange.coinbase.com/products/BTC-USD/ticker', { signal: AbortSignal.timeout(4000) });
   if (!r.ok) throw new Error(`the ticker answered ${r.status}`);
+  // THE ANSWER'S OWN TIME (kanban #2780, ruling #2781): its Date header, to the second - set beside the seat's clock, it says whether the
+  // venue answered fresh at all (a frozen venue, or this seat's clock off)
+  let answerMs = NaN; try { answerMs = Date.parse(r.headers && typeof r.headers.get === 'function' ? r.headers.get('date') : ''); } catch { answerMs = NaN; }
   const j = await r.json();
   const cents = Math.round(Number(j && j.price) * 100);
   const atMs = Date.parse(j && j.time);
   if (!Number.isInteger(cents) || cents <= 0) throw new Error('the ticker answered no price');
   if (!Number.isFinite(atMs)) throw new Error('the ticker answered no trade time');
-  return { cents, atMs };
+  // AND THE BEST BID AND ASK OF THE SAME ANSWER: their mid is the reading when the last trade is stale (ruling #2781 (b))
+  const bid = Math.round(Number(j && j.bid) * 100), ask = Math.round(Number(j && j.ask) * 100);
+  return { cents, atMs, ...(Number.isFinite(answerMs) ? { answerMs } : {}), ...(Number.isInteger(bid) && Number.isInteger(ask) && bid > 0 && ask >= bid ? { bid, ask } : {}) };
 }
 
-/** The default reading: the exchange ticker; the spot price only when the ticker does not answer (its age unknown: now). */
+/**
+ * The default reading: the exchange ticker's answer (ruling #2781: no reading when the venue gives no fresh answer - the spot price is a
+ * cached figure with its own lag, and is no longer read in its place).
+ */
 export async function coinbaseReading(fetcher = fetch) {
-  try { return await exchangeTickerCents(fetcher); } catch { return { cents: await coinbaseCents(fetcher), atMs: Date.now() }; }
+  return exchangeTickerCents(fetcher);
 }
 
 /** BTC/USD in whole cents from Coinbase's spot price - the fallback feed. */
@@ -274,17 +282,33 @@ export class PriceFeed {
     if (this.readings.has(at)) return this.readings.get(at).cents;
     let got = null, failed = null;
     try { got = await this.readPrice(); } catch (e) { got = null; failed = `the read failed: ${e && e.message ? e.message : e}`; }
-    // a reader may answer cents (read now) or { cents, atMs } (the price's own time, the exchange ticker's last trade)
-    const r = Number.isInteger(got) ? { cents: got, atMs: now } : got && Number.isInteger(got.cents) ? { cents: got.cents, atMs: Number(got.atMs) } : null;
-    // a price already older than one period when it is read is no reading (interim C)
-    const c = r && r.cents > 0 && Number.isFinite(r.atMs) && now - r.atMs <= EVERY ? r.cents : null;
-    if (c !== null) this.readings.set(at, { cents: c, atMs: Math.min(r.atMs, now) });
+    // a reader may answer cents (read now) or { cents, atMs } (the price's own time, the exchange ticker's last trade) - and, from the
+    // exchange ticker, answerMs (the answer's own time) and the best bid and ask of the same answer
+    const r = Number.isInteger(got) ? { cents: got, atMs: now } : got && Number.isInteger(got.cents) ? { cents: got.cents, atMs: Number(got.atMs),
+      answerMs: Number.isFinite(Number(got.answerMs)) ? Number(got.answerMs) : null, bid: Number.isInteger(got.bid) ? got.bid : null, ask: Number.isInteger(got.ask) ? got.ask : null } : null;
+    // THE READING (ruling #2781 (b), kanban #2780): the last trade when it is at most one period old; otherwise the mid of the best bid and
+    // ask of the same answer, rounded to the cent ("trade" or "mid", so the mix is seen). No reading only when the venue gave no fresh answer:
+    // the read failed, or the answer's own time is more than one period behind this seat's clock (a frozen venue - rule C's case - or a clock off)
+    let c = null, src = null, behind = null;
+    if (r && r.answerMs !== null && r.answerMs !== undefined) behind = now - r.answerMs;
+    const fresh = behind === null || behind <= EVERY;
+    if (r && r.cents > 0 && fresh) {
+      if (Number.isFinite(r.atMs) && now - r.atMs <= EVERY) { c = r.cents; src = 'trade'; }
+      else if (Number.isInteger(r.bid) && Number.isInteger(r.ask) && r.bid > 0 && r.ask >= r.bid && behind !== null) { c = Math.round((r.bid + r.ask) / 2); src = 'mid'; }
+    }
+    if (c !== null) {
+      this.readings.set(at, { cents: c, atMs: src === 'trade' ? Math.min(r.atMs, now) : Math.min(r.answerMs, now), src });
+      const n = this.readSources || (this.readSources = { trade: 0, mid: 0 }); n[src] += 1;
+    }
     // WHY A MOMENT HAS NO READING, SAID (kanban #2780): every seat's read failed together for hours on 11-14 (no reading of its own, none heard,
     // no sample for any round) and nothing said why - the read dropped it silently. A failed or stale read is counted by its reason and logged
     // at most once a minute: the reason, how many moments since the last line, and the trade's age when the ticker was stale.
     else {
+      const s1 = (ms) => `${Math.round(ms / 100) / 10} s`;
       const why = failed || (!r ? 'the reader answered no price' : !(r.cents > 0) ? `the reader answered ${r.cents} cents`
-        : !Number.isFinite(r.atMs) ? 'the reader answered no trade time' : `the last trade was ${Math.round((now - r.atMs) / 100) / 10} s old (a reading is at most ${EVERY / 1000} s old, interim C)`);
+        : !fresh ? `the venue's answer is ${s1(behind)} behind this seat's clock (a fresh answer is at most ${EVERY / 1000} s behind)`
+        : !Number.isFinite(r.atMs) ? 'the reader answered no trade time'
+        : `the last trade was ${s1(now - r.atMs)} old and the answer carried no bid and ask to read the mid of (a trade is at most ${EVERY / 1000} s old)`);
       const m = this.readMisses || (this.readMisses = { n: 0, at: 0, why: null });
       m.n += 1; m.why = why;
       if (now - m.at >= 60000) { this.log(`[prices] no reading at ${new Date(at).toISOString()}: ${why} (${m.n} moment(s) without one since the last line)`); m.n = 0; m.at = now; }
@@ -651,8 +675,10 @@ export class PriceFeed {
     if (this.heldLoggedAt === null || now - this.heldLoggedAt >= HELD_LOG_EVERY_MS) {
       const s = this.heldSizes();
       this.log(`[prices] held: samples ${s.samples} (${s.sampleEntries}), tapes ${s.tapes}, signed ${s.signed}, heard ${s.heard} (${s.heardSamples}), `
-        + `heardTapes ${s.heardTapes}, mine ${s.mine}, built ${s.built}, endsAsked ${s.endsAsked}; ${this.evicted} finished round(s) let go of since the last line`);
-      this.heldLoggedAt = now; this.evicted = 0;
+        + `heardTapes ${s.heardTapes}, mine ${s.mine}, built ${s.built}, endsAsked ${s.endsAsked}; ${this.evicted} finished round(s) let go of since the last line`
+        // (kanban #2780, ruling #2781) the readings since the last line, by what they were read from
+        + `; readings ${(this.readSources && this.readSources.trade) || 0} trade, ${(this.readSources && this.readSources.mid) || 0} mid`);
+      this.heldLoggedAt = now; this.evicted = 0; this.readSources = { trade: 0, mid: 0 };
     }
     return [...gone];
   }

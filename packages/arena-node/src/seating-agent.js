@@ -94,7 +94,9 @@ function leavesFor(rank, p, q) {
 const joinBytes = (list) => { const out = new Uint8Array(list.reduce((n, x) => n + x.length, 0)); let at = 0; for (const x of list) { out.set(x, at); at += x.length; } return out; };
 
 export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, nowMs = () => Date.now(), log = () => {}, windowOf = () => null,
-  onSeated = () => {}, leftNode = () => false, contractOf = () => null, leftOutOf = () => [], testHoldPresents = null, endpointOf = null, holdsOf = null }) {
+  onSeated = () => {}, leftNode = () => false, contractOf = () => null, leftOutOf = () => [], testHoldPresents = null, endpointOf = null, holdsOf = null, servesRound = () => true }) {
+  // `servesRound(contract)` (kanban #2780, ruling #2781 (c)): whether this node can serve the round - a node that hosts a price game but runs
+  // no price feed signs no PRESENT for its rounds, so the seating passes it over and a reserve takes the place, as for any absent node
   // `holdsOf(rid, contract)`: what the round asks of its seated nodes' template-3 bonds, { ok, plan } as slash-presig.js roundPresigPlan answers (kanban #972). None given asks nothing
   // `leftOutOf(rid)`: the node keys (hex) the round's census left out as absent (protocol 22, kanban #727) - they may say PRESENT
   // undrawn, and every seated node names them in its SEEN
@@ -873,6 +875,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       const outbox = new Map();
       for (const w of work) {
         if (w.closed || !w.amDrawn || leftNode(me)) continue;
+        { let serves = true; try { serves = servesRound(w.t.contract) !== false; } catch { serves = true; } if (!serves) continue; }   // kanban #2780
         if (db.prepare('SELECT 1 FROM seat_presents WHERE round_id = ? AND role = ? AND node = ?').get(w.t.rid, w.role, me)) continue;
         const p = signPresent({ roundId: w.t.rid, role: w.role, nodePubkey: round.pubkey }, sign);
         takePresent(p);

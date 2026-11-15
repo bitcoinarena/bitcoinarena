@@ -110,7 +110,7 @@ for (const version of [5, 4]) {
     assert.deepEqual(seat.tidy(), []);
     for (const m of used) for (const r of net.rounds) assert.ok(held(seat)[m].has(r.rh), `${m} still holds ${r.rh.slice(0, 8)} inside A's window`);
     assert.equal(lines.length, 1);
-    assert.match(lines[0], /^\[prices\] held: samples \d+ \(\d+\), tapes \d+, signed \d+, heard \d+ \(\d+\), heardTapes \d+, mine \d+, built \d+, endsAsked \d+; 0 finished round\(s\) let go of since the last line$/);
+    assert.match(lines[0], /^\[prices\] held: samples \d+ \(\d+\), tapes \d+, signed \d+, heard \d+ \(\d+\), heardTapes \d+, mine \d+, built \d+, endsAsked \d+; 0 finished round\(s\) let go of since the last line; readings \d+ trade, \d+ mid$/);
 
     // past it: A leaves every map; B keeps every entry it had
     t = finishAt;
@@ -145,7 +145,7 @@ for (const version of [5, 4]) {
     assert.deepEqual(seat.tidy(), [A.rh]);
     for (const m of MAPS) assert.equal(held(seat)[m].has(A.rh), false);
     assert.equal(lines.length, 2);
-    assert.match(lines[1], /; 2 finished round\(s\) let go of since the last line$/);
+    assert.match(lines[1], /; 2 finished round\(s\) let go of since the last line; readings \d+ trade, \d+ mid$/);
 
     // B closes too and its window passes: the seat holds nothing of either
     B.state = CLOSED; B.closed_ms = t;

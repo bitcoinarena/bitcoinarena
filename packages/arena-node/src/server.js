@@ -3850,6 +3850,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     leftNode: (hex) => !!absences.emergencyFor(hex),
     // the nodes a 22 round's census left out as absent: they may say PRESENT undrawn, and every SEEN names them (kanban #727)
     leftOutOf: (rid) => { const c = roster.censusFor(rid); return c && c.ok && Array.isArray(c.absent) ? c.absent.map((x) => x.node) : []; },
+    // A FEED GAME'S ROUND IS SERVED ONLY WITH THE FEED (kanban #2780, ruling #2781 (c)): a sample needs readings of 5 of the round's 7 seats,
+    // and a seated node that signs none takes a place one that does could hold - so without the feed this node signs no PRESENT for it
+    servesRound: (c) => { try { return !!priceFeed || !c || !priceRound(c); } catch { return true; } },
     sign: (digest) => schnorr.sign(digest, round.identity.secret),
     verify: verifySchnorrKept,   // kept per (sig, msg, key): a PRESENT refused once is not checked again (kanban #587)
     // WHAT THE ROUND ASKS OF ITS TEMPLATE-3 BONDS (5A.3B, kanban #972): the panels leave out its attestors, and those are the game's

@@ -29,7 +29,7 @@ const certOnce = (rid, role) => {
     signatures: seated.map((k) => ({ nodePubkey: k, signature: signSeating({ roundId: rid, role, seated }, signer(nodes.find((n) => toHex(n.pubkey) === toHex(k)))) })) });
 };
 
-function world({ withhold = null, leftNode = () => false, now = NOW, servesCert = false } = {}) {
+function world({ withhold = null, leftNode = () => false, now = NOW, servesCert = false, servesRound = undefined } = {}) {
   const db = new DatabaseSync(':memory:');
   db.exec('CREATE TABLE rounds (round_id BLOB, contract BLOB)');
   const c = { ...contractFor(nodes.slice(0, 7).map((n) => n.pubkey)), startTimeMs: START };
@@ -56,7 +56,7 @@ function world({ withhold = null, leftNode = () => false, now = NOW, servesCert 
     }
     return new Response('ok', { status: 200 });
   };
-  const agent = seatingAgent({ round, roster, sign: signer(me), verify, fetcher, nowMs: () => now, leftNode });
+  const agent = seatingAgent({ round, roster, sign: signer(me), verify, fetcher, nowMs: () => now, leftNode, ...(servesRound ? { servesRound } : {}) });
   return { agent, rid, asked, verifies: () => verifies, drawn };
 }
 
@@ -104,6 +104,19 @@ test('a node its owner took out with the emergency key (§23A.5a, protocol 17) i
   const back = world({ leftNode: (hex) => hex === me });
   await back.agent.tick();
   assert.equal(back.agent.presentsOf(back.rid).some((p) => p.node === me), false, 'the owner\'s node, back online, says PRESENT for nothing');
+});
+
+test('kanban #2780, ruling #2781 (c): a node that cannot serve the round (a feed game, no feed here) signs no PRESENT for it; the others are taken as before', async () => {
+  const me = toHex(nodes[0].pubkey);
+  const asked = [];
+  const no = world({ servesRound: (c) => { asked.push(c); return false; } });
+  await no.agent.tick();
+  assert.ok(asked.length > 0, 'asked with the round\'s contract');
+  assert.equal(no.agent.presentsOf(no.rid).some((p) => p.node === me), false, 'this node says PRESENT for nothing');
+  assert.equal(no.agent.presentsOf(no.rid).filter((p) => p.role === 'game').length, 8, 'the eight others are held: a reserve takes the place');
+  const yes = world({ servesRound: () => true });
+  await yes.agent.tick();
+  assert.equal(yes.agent.presentsOf(yes.rid).some((p) => p.node === me), true, 'a node that serves it signs PRESENT as before');
 });
 
 test('a seat restarted after its round started reads the certificate it lacks - and sends no PRESENT, signs no seating', async () => {
