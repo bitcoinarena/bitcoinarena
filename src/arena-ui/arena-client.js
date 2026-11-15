@@ -11592,7 +11592,28 @@ function lockMatchesEntry({ lock, entry, kind, claimPk, height, expiryBlocks = S
   if (!lock || !entry) return { ok: false, why: 'there is no lock or no entry to compare' };
   if (!Number.isInteger(height) || height < 0)
     return { ok: false, why: 'there is no federation height, so nothing says the expiry is far enough' };
+  const fields = lockFieldsMatchEntry({ lock, entry, kind, claimPk, expiryBlocks });
+  if (!fields.ok) return fields;
+  const lockHeight = lock.expiration - expiryBlocks;
+  if (lockHeight < height - STAKE_LOCK_FRESHNESS_BLOCKS)
+    return {
+      ok: false,
+      why: `that ${kind} lock's lock height ${lockHeight} (its expiration ${lock.expiration} less the round's ${expiryBlocks} blocks) `
+        + `is more than ${STAKE_LOCK_FRESHNESS_BLOCKS} blocks below the height ${height} it is verified at: `
+        + 'a loser could refund before settlement',
+    };
+  return { ok: true };
+}
 
+/**
+ * EVERY CHECK OF lockMatchesEntry THAT NEEDS NO FEDERATION HEIGHT (kanban #2752, #1489 r7-entry-2): the image, the amount, the claim and
+ * refund keys and an expiration at all. A seat runs it before it asks the federation anything, so a hand-over whose fields can never
+ * be the entry's lock costs no federation question - a stranger who knows only a public entry id could otherwise fill the seat's one
+ * federation lane with junk /lock posts.
+ */
+function lockFieldsMatchEntry({ lock, entry, kind, claimPk, expiryBlocks = STAKE_EXPIRY_BLOCKS } = {}) {
+  if (kind !== 'stake' && kind !== 'fee') return { ok: false, why: 'a lock is a stake lock or a fee lock' };
+  if (!lock || !entry) return { ok: false, why: 'there is no lock or no entry to compare' };
   const image = lock.paymentImage || {};
   if (kind === 'stake') {
     if (!(entry.stakePoint instanceof Uint8Array) || entry.stakePoint.every((b) => b === 0))
@@ -11620,14 +11641,6 @@ function lockMatchesEntry({ lock, entry, kind, claimPk, height, expiryBlocks = S
     return { ok: false, why: `that ${kind} lock's refund_pk is not the entry's player key` };
   if (!Number.isInteger(lock.expiration)) return { ok: false, why: `that ${kind} lock names no expiration height` };
   if (!Number.isInteger(expiryBlocks) || expiryBlocks < 1) return { ok: false, why: 'the round names no stake_expiry_blocks to check the lock against' };
-  const lockHeight = lock.expiration - expiryBlocks;
-  if (lockHeight < height - STAKE_LOCK_FRESHNESS_BLOCKS)
-    return {
-      ok: false,
-      why: `that ${kind} lock's lock height ${lockHeight} (its expiration ${lock.expiration} less the round's ${expiryBlocks} blocks) `
-        + `is more than ${STAKE_LOCK_FRESHNESS_BLOCKS} blocks below the height ${height} it is verified at: `
-        + 'a loser could refund before settlement',
-    };
   return { ok: true };
 }
 
@@ -26346,6 +26359,28 @@ function movedKey(storage, key) {
 
 
 
+// A SEAT'S ROTATIONS, READ AND CHECKED UP TO A BOUND (kanban #2669, #1489 r2-client-2): GET /donation-rotations was read whole and every distinct
+// body:signature it listed was checked against the recovery key (an Ed25519 verify each) before any set check - one seat listing 20,000 junk
+// rotations made 20,000 checks on every paid join and order of every round it sat on. Now its answer is read up to ROTATIONS_ANSWER_MAX bytes,
+// only its first ROTATIONS_PER_SEAT rotations count, and a rotation is checked only when it is this round's network's and in force at its census
+// height (authorityAt would refuse any other unchecked)
+const ROTATIONS_ANSWER_MAX = 64 * 1024, ROTATIONS_PER_SEAT = 16;
+async function rotationBytesUpTo(r, max) {   // as committee.js bytesUpTo (kanban #2740): chunk by chunk, the stream cancelled past `max`
+  const said = Number(r.headers && typeof r.headers.get === 'function' ? r.headers.get('content-length') : NaN);
+  if (Number.isFinite(said) && said > max) { try { await r.body?.cancel(); } catch { /* gone */ } throw new Error(`its answer is ${said} bytes, more than ${max}`); }
+  const reader = r.body && typeof r.body.getReader === 'function' ? r.body.getReader() : null;
+  if (!reader) {
+    if (typeof r.arrayBuffer !== 'function' && typeof r.json === 'function') return new TextEncoder().encode(JSON.stringify(await r.json()));   // a test's stand-in answer
+    const b = new Uint8Array(await r.arrayBuffer()); if (b.length > max) throw new Error(`its answer is more than ${max} bytes`); return b;
+  }
+  const parts = []; let n = 0;
+  try {
+    for (;;) { const { done, value } = await reader.read(); if (done) break; n += value.byteLength; if (n > max) throw new Error(`its answer is more than ${max} bytes`); parts.push(value); }
+  } catch (e) { try { await reader.cancel(); } catch { /* gone */ } throw e; }
+  const all = new Uint8Array(n); let at = 0; for (const p of parts) { all.set(p, at); at += p.byteLength; }
+  return all;
+}
+
 /**
  * WHAT THIS TAB HAS ALREADY ASKED ITS WALLET TO DONATE, per round and player
  * key, share by share (M3.2 6e). Measured before: the page's once-only flag
@@ -26590,7 +26625,9 @@ async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verif
       let rotations = [];
       try {
         const rr = await donationWithinMs(fetcher(`${base}/donation-rotations?round=${rid}`), DONATION_ANSWER_MS);   // bounded too: a set read, then a hung rotations read, held a join 38 s+ (04:11Z)
-        if (rr.status === 200) rotations = (await rr.json()).rotations || [];
+        if (rr.status === 200) { const j = JSON.parse(new TextDecoder().decode(await rotationBytesUpTo(rr, ROTATIONS_ANSWER_MAX)));   // kanban #2669: bounded
+          rotations = Array.isArray(j && j.rotations) ? j.rotations.slice(0, ROTATIONS_PER_SEAT) : []; }
+        else { try { await rr.body?.cancel(); } catch { /* gone */ } }
       } catch { rotations = []; }
       return { node: base, bytes, rotations };
     // A READ THAT NEVER GOT AN ANSWER (kanban #803: "Load failed" on a phone) is a node that did not answer, as one past ANSWER_MS is
@@ -26599,8 +26636,11 @@ async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verif
   // EVERY SIGNER NODE'S ROTATIONS, EACH CHECKED HERE against the network's recovery
   // key: a signer node that hides a rotation cannot hide it from the other signer nodes.
   const offered = new Map();
-  for (const a of answers) for (const r of a.rotations || []) {
-    try { offered.set(`${r.body}:${r.signature}`, { ...decodeAuthorityRotation(fromHex(String(r.body))), signature: fromHex(String(r.signature)) }); }
+  for (const a of answers) for (const r of (a.rotations || []).slice(0, ROTATIONS_PER_SEAT)) {
+    try { const rot = decodeAuthorityRotation(fromHex(String(r.body)));
+      // (kanban #2669) another network's, or one not in force at the round's census height, is never checked: authorityAt refuses it anyway
+      if (toHex(rot.networkId) !== toHex(round.networkId) || !Number.isInteger(rot.validFrom) || rot.validFrom > round.censusHeight) continue;
+      offered.set(`${r.body}:${r.signature}`, { ...rot, signature: fromHex(String(r.signature)) }); }
     catch { /* not a rotation: nothing to apply */ }
   }
   const rotations = [...offered.values()];
