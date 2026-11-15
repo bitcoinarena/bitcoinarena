@@ -89,7 +89,11 @@ const sample = async () => {
 const ROUNDS_ANSWER_BYTES = 256 * 1024;
 const GAMES_ANSWER_BYTES = 4 * 1024 * 1024;
 const WORD_ANSWER_BYTES = 64 * 1024;
-async function cappedJson(r, cap) {
+// kanban #2702 (#1489 r4-attest-11): the round's contract (GET /round), a series template and a seat's answer to POST /outcome were still
+// read whole (arrayBuffer / text) - one seat streamed 256 MiB into the daemon for one made-up round, 32 at once. Each is capped now.
+const CONTRACT_ANSWER_BYTES = 64 * 1024;
+async function cappedJson(r, cap) { return JSON.parse((await cappedBytes(r, cap)).toString('utf8')); }
+async function cappedBytes(r, cap) {
   const said = Number(r.headers.get('content-length'));
   if (said > cap) { try { await r.body?.cancel(); } catch { /* dropped */ } throw new Error(`its answer is ${said} bytes, more than ${cap}`); }
   if (!r.body) throw new Error('its answer has no body');
@@ -102,7 +106,7 @@ async function cappedJson(r, cap) {
     if (n > cap) { reader.cancel().catch(() => {}); throw new Error(`its answer passed ${cap} bytes`); }
     parts.push(value);
   }
-  return JSON.parse(Buffer.concat(parts).toString('utf8'));
+  return Buffer.concat(parts);
 }
 
 // EVERY VERSION OF THE MARKET THAT NAMES THIS KEY (marketsToAttest): the seats' /games, read again each minute - with --game-id
@@ -217,13 +221,13 @@ const firstOf = (items, fn) => new Promise((resolve) => {
 const contractFrom = async (seat, r) => {
   const x = await fetch(`${seat}/round?id=${r.id}`, { signal: AbortSignal.timeout(8000) });
   if (!x.ok) return null;
-  const bytes = new Uint8Array(await x.arrayBuffer());
+  const bytes = new Uint8Array(await cappedBytes(x, CONTRACT_ANSWER_BYTES));   // kanban #2702
   let got = roundCloseOf({ id: r.id, contract: bytes, marketIds });
   if (!got.ok && got.seriesId) {
     const t = await firstOf([seat, ...SEATS.filter((s) => s !== seat)], async (s2) => {
       const y = await fetch(`${s2}/series-template?id=${got.seriesId}`, { signal: AbortSignal.timeout(8000) });
       if (!y.ok) return null;
-      const k = roundCloseOf({ id: r.id, contract: bytes, seriesLine: await y.text(), marketIds });
+      const k = roundCloseOf({ id: r.id, contract: bytes, seriesLine: (await cappedBytes(y, CONTRACT_ANSWER_BYTES)).toString('utf8'), marketIds });
       return k.ok ? k : null;
     });
     if (t) got = t;
@@ -385,7 +389,7 @@ const handleRound = async (r) => {
     if (held.has(seat) || (absent.get(seat) || 0) > Date.now()) return;
     try {
       const x = await fetch(`${seat}/outcome?round=${r.id}`, { method: 'POST', body: att.bytes, signal: AbortSignal.timeout(8000) });
-      const text = (await x.text()).trim();
+      const text = (await cappedBytes(x, WORD_ANSWER_BYTES).catch(() => Buffer.from(''))).toString('utf8').trim();   // kanban #2702: capped
       if (x.status === 201 || x.status === 200) { held.add(seat); log({ step: 'posted', round: r.id, seat, status: x.status, signers: att.signers, ...(MODE === 'value' ? { value: att.body.value } : { outcome: att.body.outcome }),
         words: all.map((w) => ({ key: w.key.slice(0, 8), ...(MODE === 'value' ? { value: w.body.value } : { outcome: w.body.outcome }) })) }); }
       else if (x.status === 404) {
