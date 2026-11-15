@@ -40556,14 +40556,34 @@ async function revealMove({ entryIdHex, move, salt, nodes, identity = null, fetc
   }));
 }
 
+// ONE SERVER, ONE VOTE (kanban #2709, #1489 r4-h2h-3; the page's rule of #2329/#2364): the node list comes from the join link, so one seat named
+// twice ('http://evil' and 'http://evil/', two paths or a trailing dot of one host) was two votes here and outvoted the honest seat. Each
+// address is asked once (its normalized spelling) and every host is one vote: its addresses settle among themselves (the answer most of
+// them give, none on a tie). The quorum is two hosts, one for a round whose seats all sit on one host.
+const h2hSeatKey = (n) => { const t = String(n).trim().replace(/\/+$/, ''); try { const u = new URL(t); return (u.origin + u.pathname).replace(/\/+$/, ''); } catch { return t; } };
+const h2hHostKey = (n) => { try { const u = new URL(String(n).trim()); if (u.hostname) return u.hostname.toLowerCase().replace(/\.+$/, ''); } catch { /* not a URL */ } return h2hSeatKey(n); };
+function seatsByHost(nodes) {
+  const listed = [], seen = new Set();
+  for (const n of nodes || []) { const k = h2hSeatKey(n); if (!seen.has(k)) { seen.add(k); listed.push(n); } }
+  const hostOf = listed.map(h2hHostKey);
+  return { listed, hostOf, hosts: [...new Set(hostOf)] };
+}
+// one host's word from its addresses' answers (values compared as strings): the one most of them give, none on a tie
+const hostWord = (vals) => {
+  const c = new Map(); for (const v of vals) if (v !== undefined) c.set(v, (c.get(v) || 0) + 1);
+  const r = [...c].sort((a, b) => b[1] - a[1]);
+  return r.length && (r.length === 1 || r[0][1] > r[1][1]) ? r[0][0] : undefined;
+};
+
 /** Every reveal the round's seats hold, merged by entry: { [entryIdHex]: move }. */
 // A MOVE COUNTS ONLY WHEN THE SEATS AGREE ON IT (kanban #1489): the merge was last-answer-wins, so one seat answering late with
 // an opponent's move changed flipped the provisional verdict the page shows before any seat signs. Each seat now gives one
 // vote per entry; an entry's move is the one at least two seats (or every seat, on a one-seat list) name, and more seats than
 // name any other move. A tie, or a move only one seat of several names, leaves the entry undecided here.
 async function revealsOfRound({ roundIdHex, nodes, fetcher = fetch, timeoutMs = H2H_SEAT_MS }) {
-  const votes = new Map();   // entry -> Map(move -> seats naming it)
-  await Promise.all(nodes.map(async (node) => {
+  const { listed, hostOf, hosts } = seatsByHost(nodes);   // kanban #2709: each address once, each host one vote
+  const said = new Map();   // host -> Map(entry -> [move per address])
+  await Promise.all(listed.map(async (node, ni) => {
     try {
       const j = await withDeadline(timeoutMs, async (signal) => {
         const r = await fetcher(`${String(node).replace(/\/+$/, '')}/reveals?round=${roundIdHex}`, { signal });
@@ -40574,13 +40594,18 @@ async function revealsOfRound({ roundIdHex, nodes, fetcher = fetch, timeoutMs = 
       for (const x of (j && Array.isArray(j.reveals) ? j.reveals : [])) {
         if (Number.isInteger(x.move) && typeof x.entry === 'string' && !mine.has(x.entry)) mine.set(x.entry, x.move);
       }
-      for (const [entry, move] of mine) {
-        if (!votes.has(entry)) votes.set(entry, new Map());
-        const m = votes.get(entry); m.set(move, (m.get(move) || 0) + 1);
-      }
+      if (!said.has(hostOf[ni])) said.set(hostOf[ni], new Map());
+      const h = said.get(hostOf[ni]);
+      for (const [entry, move] of mine) { if (!h.has(entry)) h.set(entry, []); h.get(entry).push(move); }
     } catch { /* a seat that is down says nothing */ }
   }));
-  const need = Math.min(2, nodes.length);
+  const votes = new Map();   // entry -> Map(move -> hosts naming it)
+  for (const h of said.values()) for (const [entry, moves] of h) {
+    const move = hostWord(moves); if (move === undefined) continue;
+    if (!votes.has(entry)) votes.set(entry, new Map());
+    const m = votes.get(entry); m.set(move, (m.get(move) || 0) + 1);
+  }
+  const need = Math.min(2, hosts.length);
   const out = {};
   for (const [entry, m] of votes) {
     const ranked = [...m].sort((a, b) => b[1] - a[1]);
@@ -40609,7 +40634,8 @@ const h2hFromHex = (h) => Uint8Array.from(String(h).match(/../g) || [], (x) => p
 const lockSetThreshold = (n) => { try { return receiptsNeeded(n); } catch { return Math.floor(n / 2) + 1; } };
 
 async function lockSetOfSeats({ roundIdHex, nodes, committee = null, verify = null, entryCloseMs, fetcher = fetch, timeoutMs = H2H_SEAT_MS }) {
-  const said = await Promise.all(nodes.map(async (node) => {
+  const { listed, hostOf, hosts } = seatsByHost(nodes);   // kanban #2709: each address once; an unsigned set counts one vote per host
+  const said = await Promise.all(listed.map(async (node) => {
     try {
       return await withDeadline(timeoutMs, async (signal) => {
         const r = await fetcher(`${String(node).replace(/\/+$/, '')}/lock-set?round=${roundIdHex}`, { signal, cache: 'no-store' });
@@ -40623,7 +40649,9 @@ async function lockSetOfSeats({ roundIdHex, nodes, committee = null, verify = nu
   if (!answered.some((x) => x.required === true)) return { required: false, certified: null, void: false };
   let certified = null;
   const byEntries = new Map();
-  for (const x of answered) {
+  const byHost = new Map();   // entries key -> hosts serving it (unsigned path)
+  for (const [i, x] of said.entries()) {
+    if (!x || typeof x !== 'object') continue;
     if (!x.certificate || !/^[0-9a-f]+$/.test(String(x.certificate))) continue;
     if (committee && committee.length && typeof verify === 'function') {
       const st = lockSetCertificateStands(h2hFromHex(x.certificate), { roundId: h2hFromHex(roundIdHex), committee, threshold: lockSetThreshold(committee.length),
@@ -40631,8 +40659,10 @@ async function lockSetOfSeats({ roundIdHex, nodes, committee = null, verify = nu
       if (st.ok) { certified = { entries: st.entries, atMs: st.atMs }; break; }
     } else if (Array.isArray(x.entries)) {
       const k = [...x.entries].sort().join(',');
-      byEntries.set(k, (byEntries.get(k) || 0) + 1);
-      if (byEntries.get(k) >= Math.min(2, nodes.length)) { certified = { entries: [...x.entries].sort(), atMs: Number(x.certifiedAtMs) || null }; break; }
+      if (!byHost.has(k)) byHost.set(k, new Set());
+      byHost.get(k).add(hostOf[i]);
+      byEntries.set(k, byHost.get(k).size);
+      if (byEntries.get(k) >= Math.min(2, hosts.length)) { certified = { entries: [...x.entries].sort(), atMs: Number(x.certifiedAtMs) || null }; break; }
     }
   }
   return { required: true, certified, void: !certified && answered.some((x) => x.void === true) };
