@@ -131,6 +131,13 @@ export async function seedFor(signer, { pool = new SimplePool(), relays = NOSTR_
     // our relay is in the list it must be one of them (public relays prune NIP-78 app data, ours keeps it)
     if (!found && (asked.unanswered.length || (relays.includes(NOSTR_RELAYS[0]) && !up.includes(NOSTR_RELAYS[0]))))
       throw new Error(`your Nostr relays did not answer in time (${(asked.unanswered.length ? asked.unanswered : [NOSTR_RELAYS[0]]).join(', ')}): try again in a moment (no new wallet is made, so it cannot replace yours)`);
+    // A SIGNER'S SEED IS RANDOM, SO THE GAME'S OWN RELAY MUST HAVE SAID "NOTHING" (kanban #2713, #1489 r4-nostr-6): the check above held
+    // only for our default list - a list (the account's own relays) whose first relay, the one the seed is kept on, did not even connect let
+    // another relay's empty answer mint a second random seed, published and taken by every later login: the wallet funded under the first
+    // was no longer the account's. The list's first relay is the game's own (NOSTR_RELAYS[0] by default); without its answer no random seed
+    // is made. An nsec's seed is derived (the same every time), so for it a relay out changes nothing.
+    if (!found && signer.method !== 'nsec' && relays.length && !up.includes(relays[0]))
+      throw new Error(`your game's Nostr relay (${relays[0]}) did not answer: try again in a moment (no new wallet is made, so it cannot replace yours)`);
   }
   if (found) {
     let plain;
