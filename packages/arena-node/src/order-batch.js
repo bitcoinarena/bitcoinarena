@@ -768,7 +768,7 @@ export class OrderBook {
   }
 
   /** Signatures over a batch id that count: distinct seats of the round, each verifying. */
-  #counted(m, id, sigs) {
+  #counted(m, id, sigs, spend = null) {
     // A SIGNATURE IS TRIED ONCE (kanban #1686): a failed (seat, signature) pair is never verified again in the same list, so repeats of
     // one junk signature cost nothing; the doors bound the list itself to the round's seats (certify, applyVoid).
     // AND THE LIST IS BOUNDED HERE (kanban #2175, #2253): at most SIG_TRIES_PER_SEAT tries per seat and SIG_TRIES_PER_SEAT x seats
@@ -777,12 +777,13 @@ export class OrderBook {
     const budget = SIG_TRIES_PER_SEAT * m.seats.length;
     if (!Array.isArray(sigs)) return [];
     for (const s of sigs) {
-      if (tried.size >= budget) break;
+      if (tried.size >= budget || (spend && spend.left <= 0)) break;
       if (!s || !isHex(s.seat, 32) || !isHex(s.signature, 64) || !m.seats.includes(s.seat) || ok.has(s.seat)) continue;
       const pair = `${s.seat}:${s.signature}`;
       if (tried.has(pair) || (tries.get(s.seat) || 0) >= SIG_TRIES_PER_SEAT) continue;
       tried.add(pair);
       tries.set(s.seat, (tries.get(s.seat) || 0) + 1);
+      if (spend) spend.left--;
       if (verifySchnorr(fromHex(s.signature), fromHex(id), fromHex(s.seat))) ok.set(s.seat, s.signature);
     }
     return [...ok].map(([seat, signature]) => ({ seat, signature }));
@@ -914,6 +915,12 @@ export class OrderBook {
     if (!m.ok) return m;
     if (!body || !/^[0-9]{1,15}$/.test(String(body.k))) return refuse('a void is { k, declines, sets }', 400);
     const k = BigInt(body.k);
+    // ONE VERIFY BUDGET PER VOID (kanban #2678, #1489 r2-attest-2, bypass of #1686): declines were bounded to the seats, but each of up to
+    // seats + 1 made-up `sets` ran #counted with its own SIG_TRIES_PER_SEAT x seats - ~119 BIP-340 verifies per stranger's POST before the 403.
+    // Now k must be a batch of this round's book (as #askStands), and declines and every set share SIG_TRIES_PER_SEAT x seats verifies in all.
+    const cutoff = BigInt(this.cutoffOf(k));
+    if (cutoff < m.contract.committeeTimeMs || cutoff > m.contract.entryCloseMs + BigInt(this.intervalMs)) return refuse(`batch ${k} is outside this round's book: nothing to void`);
+    const spend = { left: SIG_TRIES_PER_SEAT * m.seats.length };
     const msg = batchDeclineId({ roundId: roundIdBytes, k });
     // A VOID'S DECLINES ARE BOUNDED BY THE ROUND'S SEATS (kanban #1686): one stranger's POST /batch-void of ~20,000 junk declines held
     // the seat's event loop ~15 s, one BIP-340 verify each. A list longer than the round's seats is refused before any verify, a seat
@@ -927,9 +934,15 @@ export class OrderBook {
       const pair = `${d.seat}:${d.signature}`;
       if (tried.has(pair)) continue;
       tried.add(pair);
+      spend.left--;
       if (verifySchnorr(fromHex(d.signature), msg, fromHex(d.seat))) ok.add(d.seat);
     }
     const enough = m.contract.nodes.length - m.needed + 1;
+    // before any set's signature is verified: the decliners and every seat the sets name together must be able to reach `enough`
+    const named = new Set(ok);
+    for (const x of (Array.isArray(body.sets) ? body.sets : []).slice(0, m.seats.length + 1))
+      if (x && Array.isArray(x.sigs)) for (const s of x.sigs.slice(0, SIG_TRIES_PER_SEAT * m.seats.length)) if (s && m.seats.includes(s.seat)) named.add(s.seat);
+    if (named.size > ok.size && named.size < enough) return refuse(`${ok.size} seats declined batch ${k} and the sets name ${named.size - ok.size} more: it is void only once ${enough} cannot sign it`, 403);
     // the seats that signed each set of k, from `sets` (anything that does not read or verify is ignored)
     const signedBy = new Map();
     for (const x of (Array.isArray(body.sets) ? body.sets : []).slice(0, m.seats.length + 1)) {
@@ -938,7 +951,7 @@ export class OrderBook {
       try { id = toHex(bookBatchId({ roundId: roundIdBytes, k, orderIds: x.ids })); } catch { continue; }
       if (id !== x.batchId) continue;
       const seats = signedBy.get(id) || new Set();
-      for (const s of this.#counted(m, id, x.sigs)) seats.add(s.seat);
+      for (const s of this.#counted(m, id, x.sigs, spend)) seats.add(s.seat);
       if (seats.size) signedBy.set(id, seats);
     }
     if (signedBy.size) {
