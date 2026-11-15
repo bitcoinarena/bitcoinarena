@@ -26,13 +26,29 @@ const seasonMem = new Map(), SEASON_READS = new Map(), seasonFailed = new Map();
 const keptAt = (kept) => Number(/^\{"at":(\d+)/.exec(kept || '')?.[1] || 0);
 const edgeCache = () => { try { return typeof caches !== 'undefined' && caches.default ? caches.default : null; } catch { return null; } };
 const edgeUrl = (key) => `https://bitcoinarena.io/__season-cache/${encodeURIComponent(key)}`;
+// NOT ONE SEAT'S WORD (kanban #2698, #1489 r4-faucet-13): the board was Promise.any over the three seats - the first parseable answer, so the
+// fastest seat showed any ranking it liked (a made-up leader, real players left out) for 30 minutes, and the tester report read it from KV.
+// Now all three are read: a board two of them answer with the same rows is taken (each seat's answer names its own node, so the rows are
+// compared); else each row two of them list the same way; fewer than two answers keep the last copy.
+const agreedBoard = (texts) => {
+  const boards = texts.map((t) => { try { const b = JSON.parse(t); return b && typeof b === 'object' && Array.isArray(b.rows) ? b : null; } catch { return null; } }).filter(Boolean);
+  if (boards.length < 2) throw new Error(`${boards.length} of ${SEASON_SEATS.length} seats answered a board: one seat's word is not the board`);
+  const rowsOf = boards.map((b) => JSON.stringify(b.rows));
+  const same = rowsOf.findIndex((r, i) => rowsOf.some((o, j) => j !== i && o === r));
+  if (same >= 0) return JSON.stringify(boards[same]);
+  const count = new Map(); for (const b of boards) for (const r of new Set(b.rows.map((x) => JSON.stringify(x)))) count.set(r, (count.get(r) || 0) + 1);
+  const rows = [], seen = new Set();
+  for (const b of boards) for (const x of b.rows) { const k = JSON.stringify(x); if (count.get(k) >= 2 && !seen.has(k)) { seen.add(k); rows.push(x); } }
+  return JSON.stringify({ ...boards[0], node: null, rows, merged: true });
+};
 // one read of a board from the seats per isolate at a time; the answer goes to memory and the edge cache, never to KV
 const fetchSeason = (game, days) => {
   const key = seasonKey(game, days);
   if (SEASON_READS.has(key)) return SEASON_READS.get(key);
   const p = (async () => {
     try {
-      const body = await Promise.any(SEASON_SEATS.map(async (s) => { const r = await fetch(`${s}/season?game=${game}&days=${days}&scope=network`, { signal: AbortSignal.timeout(25000) }); if (!r.ok) throw new Error(String(r.status)); const t = await r.text(); JSON.parse(t); return t; }));
+      const said = await Promise.allSettled(SEASON_SEATS.map(async (s) => { const r = await fetch(`${s}/season?game=${game}&days=${days}&scope=network`, { signal: AbortSignal.timeout(25000) }); if (!r.ok) throw new Error(String(r.status)); return r.text(); }));
+      const body = agreedBoard(said.filter((x) => x.status === 'fulfilled').map((x) => x.value));   // kanban #2698
       const kept = `{"at":${Date.now()},"season":${body}}`;
       seasonMem.set(key, kept); seasonFailed.delete(key);
       const edge = edgeCache();
@@ -84,9 +100,13 @@ async function nightOn(env) { try { return (await env.CHAIN.get('night', { cache
 async function nightCount() {
   const headers = { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'public, max-age=30' };
   try {
-    const rows = await Promise.any(SEASON_SEATS.map(async (s) => { const r = await fetch(`${s}/rounds?next=1`, { signal: AbortSignal.timeout(15000) }); if (!r.ok) throw new Error(String(r.status)); return (await r.json()).rounds || []; }));
-    const live = rows.filter((r) => r.phase === 'open' || Number(r.playing) > 0);
-    return new Response(JSON.stringify({ ok: true, at: Date.now(), joined: live.reduce((n, r) => n + (Number(r.joined) || 0), 0), playing: rows.reduce((n, r) => n + (Number(r.playing) || 0), 0), rounds: live.length }), { headers });
+    // kanban #2698: every seat's count, and the middle one (two answers: the lower) - never the fastest seat's alone
+    const said = await Promise.allSettled(SEASON_SEATS.map(async (s) => { const r = await fetch(`${s}/rounds?next=1`, { signal: AbortSignal.timeout(15000) }); if (!r.ok) throw new Error(String(r.status)); const j = await r.json(); if (!j || !Array.isArray(j.rounds)) throw new Error('no rounds'); return j.rounds; }));
+    const counts = said.filter((x) => x.status === 'fulfilled').map(({ value: rows }) => { const live = rows.filter((r) => r.phase === 'open' || Number(r.playing) > 0);
+      return { joined: live.reduce((n, r) => n + (Number(r.joined) || 0), 0), playing: rows.reduce((n, r) => n + (Number(r.playing) || 0), 0), rounds: live.length }; });
+    if (counts.length < 2) throw new Error('one seat\'s word');
+    const mid = (k) => { const v = counts.map((c) => c[k]).sort((a, b) => a - b); return v.length === 2 ? v[0] : v[Math.floor(v.length / 2)]; };
+    return new Response(JSON.stringify({ ok: true, at: Date.now(), joined: mid('joined'), playing: mid('playing'), rounds: mid('rounds') }), { headers });
   } catch { return new Response('{"ok":false,"why":"no seat answered"}', { status: 503, headers }); }
 }
 // THE PUBLIC TESTNET REPORT'S NUMBERS (kanban #926 item 11): the kept 7-day boards, each player once, as tools/weekly-testers.mjs counts them; team keys and the test opponent left out
