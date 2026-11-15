@@ -10,8 +10,10 @@
  *   node tools/gateway-dead-notes.mjs --data-dir <gateway data dir> --federation <id hex> --client-dir <a fedimint-cli client of that
  *        federation> --work <dir> --out <file.json> [--fedimint-cli <path>] [--dbtool <path>] [--module <mintv2 instance, 2>]
  *
- *   1. rsync -a --inplace <data-dir>/gatewayd.db/ into <work>/copy/ - the WHOLE database, its write-ahead logs (*.log) included (#2771:
- *      a copy without them is a rollback); RocksDB itself drops the files of an older copy that no longer belong
+ *   1. cp -a <data-dir>/gatewayd.db into a NEW <work>/copy-<time>/ - the WHOLE database, its write-ahead logs (*.log) included (#2771:
+ *      a copy without them is a rollback). Always a new folder: a copy laid over an older one keeps that one's newer write-ahead log,
+ *      and RocksDB then refuses the database ("Sequence number is being set backwards during recovery", measured on the devnet
+ *      2026-11-15). The older copies are kept (nothing is deleted here), about 20 MB each.
  *   2. fedimint-dbtool list of the copy; the mintv2 spendable notes in it (gateway-loss.js notesInDump)
  *   3. the guardians' spent set: mintv2 recovery items, read once and then only the new ones (<work>/spent-<fed>.txt, its count beside it)
  *   4. { atMs, federation, notes, dead, deadMsat } to --out - the file a node's ARENA_HOSTS_GATEWAY and the health watcher's HW_GATEWAYS
@@ -52,9 +54,11 @@ export function main(argv = process.argv.slice(2)) {
   const clientDir = arg(argv, '--client-dir'), cli = arg(argv, '--fedimint-cli', 'fedimint-cli'), dbtool = arg(argv, '--dbtool', 'fedimint-dbtool');
   const module = Number(arg(argv, '--module', '2'));
   if (!dataDir || !/^[0-9a-f]{64}$/.test(fed) || !work || !out || !clientDir) { console.error('usage: gateway-dead-notes.mjs --data-dir D --federation ID --client-dir C --work W --out F.json'); process.exit(2); }
-  mkdirSync(`${work}/copy`, { recursive: true });
-  execFileSync('rsync', ['-a', '--inplace', `${dataDir.replace(/\/+$/, '')}/gatewayd.db/`, `${work}/copy/`], { stdio: 'inherit' });
-  const dump = execFileSync(dbtool, ['--database-dir', `${work}/copy`, 'list', '--prefix', ''], { maxBuffer: 1 << 30, encoding: 'utf8' }).split('\n');
+  const copy = `${work}/copy-${new Date().toISOString().replace(/[-:.]/g, '')}`;
+  mkdirSync(work, { recursive: true });
+  if (existsSync(copy)) throw new Error(`${copy} exists already`);
+  execFileSync('cp', ['-a', `${dataDir.replace(/\/+$/, '')}/gatewayd.db`, copy], { stdio: 'inherit' });
+  const dump = execFileSync(dbtool, ['--database-dir', copy, 'list', '--prefix', ''], { maxBuffer: 1 << 30, encoding: 'utf8' }).split('\n');
   const notes = notesInDump(dump, fed, module);
   const api = (method, params) => JSON.parse(execFileSync(cli, ['--data-dir', clientDir, 'dev', 'api', '--module', 'mintv2', '--peer-id', '0', method, ...(params ? [params] : [])],
     { maxBuffer: 1 << 30, encoding: 'utf8', timeout: 120000 })).value;
