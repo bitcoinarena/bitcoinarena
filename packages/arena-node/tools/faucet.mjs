@@ -539,15 +539,20 @@ function takeEcash(federation, msat) {
   for (const f of names) {
     const to = pathJoin(shelf, 'taken', f);
     try { renameSync(pathJoin(shelf, f), to); } catch { continue; }   // another take had it
+    // THE TAKE'S OWN TIME ON THE FILE (kanban #2768): a rename keeps the mint time; the start scan puts back only a note taken minutes ago
+    try { const at = new Date(); utimesSync(to, at, at); } catch { /* the scan then leaves it taken */ }
     try { const n = JSON.parse(readFileSync(to, 'utf8')); if (String(n.msat) === String(msat) && n.ecash) return { ecash: String(n.ecash), file: to }; } catch { /* a broken file: the next */ }
   }
   return null;
 }
 // THE START SCAN (kanban #1835): a faucet killed between the take and the book write left the same stranded note. At start, a note in taken/ that no
+// (kanban #2768) only a note taken in the last RESHELVE_MS goes back: one taken long ago that no row names was handed out under a row the book lost
+const RESHELVE_MS = 15 * 60000;
+let reshelfOld = 0;
 // book row names as its noteFile goes back to its shelf - only when the book file is there and reads (a lost book must not put given notes back)
 if (ECASH_POOL) { try { const b = JSON.parse(readFileSync(env.FAUCET_BOOK, 'utf8')); const named = new Set((b.players || []).map((x) => x.noteFile).filter(Boolean));
   for (const fed of readdirSync(ECASH_POOL)) { const t = pathJoin(ECASH_POOL, fed, 'taken'); let fs = []; try { fs = readdirSync(t); } catch { continue; }
-    for (const f of fs) if (f.endsWith('.json') && !named.has(pathJoin(t, f))) { try { renameSync(pathJoin(t, f), pathJoin(ECASH_POOL, fed, f)); console.log(`${new Date().toISOString()} e-cash note ${f} back on the shelf: no welcome booked it`); } catch { /* next start */ } } }
+    for (const f of fs) if (f.endsWith('.json') && !named.has(pathJoin(t, f))) { let takenMs = 0; try { takenMs = statSync(pathJoin(t, f)).mtimeMs; } catch { takenMs = 0; } if (!(Date.now() - takenMs <= RESHELVE_MS)) { reshelfOld++; continue; } try { renameSync(pathJoin(t, f), pathJoin(ECASH_POOL, fed, f)); console.log(`${new Date().toISOString()} e-cash note ${f} back on the shelf: no welcome booked it`); } catch { /* next start */ } } }
 } catch { /* no book yet, or it does not read: nothing is put back */ } }
 function grantEcash(ask) {
   const book = readBook();
