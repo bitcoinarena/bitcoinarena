@@ -129,8 +129,14 @@ export function acceptedNotInWalk(db, table, limit = 50) {
   };
 }
 
+/**
+ * THE MOST ONE RELAY FRAME MAY BE (kanban #2693, #1489 r3-nostr-1): an answer to EVENT is ["OK", id, bool, short text]. Without a bound the ws
+ * default of 100 MiB per message applied - a relay a zap payer names (any public wss:// host) answered with one 48 MiB frame and the zap server
+ * held ~230 MiB for that one socket, 32 sends at once. A larger frame closes the socket (ws 1009): the send counts as not answered and is retried.
+ */
+export const RELAY_FRAME_MAX = 64 * 1024;
 /** Send `events` to one relay and gather its OK for each: Map id -> { ok, why }; an id with no answer in time is left out. */
-export async function sendToRelay(url, events, { connect = (u) => new WebSocket(u), timeoutMs = 10000 } = {}) {
+export async function sendToRelay(url, events, { connect = (u) => new WebSocket(u, { maxPayload: RELAY_FRAME_MAX }), timeoutMs = 10000 } = {}) {
   const answers = new Map();
   if (!events.length) return answers;
   let ws;

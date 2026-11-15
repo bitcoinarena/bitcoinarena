@@ -17,6 +17,8 @@ import { readFileSync, writeFileSync, existsSync, renameSync } from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { buildDefinitionEvent, buildAwardEvent, isNostrKey } from '../src/nostr-badges.js';
 import { eventId } from '../src/nostr-relay.js';
+import { RELAY_FRAME_MAX } from '../src/nostr-results.js';
+import WebSocket from 'ws';   // kanban #2693: the ws client, which bounds a frame (maxPayload) - the global one does not
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
 export const FOUNDING_BADGE = Object.freeze({ d: 'arena-founding-tester', name: 'Founding Tester',
@@ -54,7 +56,7 @@ function sendTo(relay, event, ms = 8000) {
   return new Promise((done) => {
     let ws; const end = (r) => { clearTimeout(t); try { ws.close(); } catch { /* gone */ } done(r); };
     const t = setTimeout(() => end({ relay, ok: false, why: 'no answer' }), ms);
-    try { ws = new WebSocket(relay); } catch (e) { clearTimeout(t); return done({ relay, ok: false, why: e.message }); }
+    try { ws = new WebSocket(relay, { maxPayload: RELAY_FRAME_MAX }); } catch (e) { clearTimeout(t); return done({ relay, ok: false, why: e.message }); }
     ws.onopen = () => ws.send(JSON.stringify(['EVENT', event]));
     ws.onmessage = (m) => { let a; try { a = JSON.parse(m.data); } catch { return; } if (a[0] === 'OK' && a[1] === event.id) end({ relay, ok: !!a[2], why: a[3] || null }); };
     ws.onerror = () => end({ relay, ok: false, why: 'no connection' });
