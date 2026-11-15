@@ -912,7 +912,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const hosted = hostedPlugins(plugins);
   // GET /season's boards, kept per query: { at, json }, 32 at most
   const seasonKept = new Map();
-  const SEASON_KEEP_MS = 30000;
+  // KEPT A FEW MINUTES (kanban #2860, the owner's playtest 2026-11-15: RPS orders timed out at Beelink load ~28; a seat's profile had seasonRounds +
+  // signSeason at ~9 %, GET /season and /season-rounds often in the [lag] lines): every seat asks every other for its season rounds, so a 30 s
+  // keep re-read the store and signed every round twice a minute per query. The same bytes are now kept 5 minutes (ARENA_SEASON_KEEP_MS).
+  const SEASON_KEEP_MS = Number(process.env.ARENA_SEASON_KEEP_MS) > 0 ? Number(process.env.ARENA_SEASON_KEEP_MS) : 300000;
   // A NETWORK SEASON'S ASKS: each other seat's /season-rounds within SEASON_PEER_TIMEOUT_MS (8 s), its silence
   // counted as missing; SEASON_PEER_LANES of them at once, so one board never opens a request to every seat in one burst
   const SEASON_PEER_TIMEOUT_MS = 8000;
@@ -11669,7 +11672,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // A SEASON: ONE GAME'S BOARD ACROSS ITS ROUNDS (feature 1). ?game= a hosted game's name (every version
       // this node hosts under it) or one game id in hex, ?days= 1 to 90 (a week if none). Built from this node's own store
       // (season-read.js: FINAL results, amounts the ACCEPTED settlements paid) by protocol season.js, which computes no
-      // payout - presentation, not authority. Public and read-only; kept SEASON_KEEP_MS (30 s) per query, as a lobby's
+      // payout - presentation, not authority. Public and read-only; kept SEASON_KEEP_MS (5 min, kanban #2860) per query, as a lobby's
       // listing is: a page polls it, and every ask would otherwise verify the window's results again.
       //
       // ?scope=network: THE SAME SEASON ACROSS EVERY SEAT THIS ONE KNOWS (networkSeats: the newest census's advertised
@@ -11698,7 +11701,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             if (!raw || Date.now() - raw.at > SEASON_KEEP_MS) {
               const wMax = seasonWindow({ nowMs: Date.now(), days: SEASON_DAYS_MAX });
               raw = { at: Date.now(), read: held.length ? seasonRounds(round, { games: new Set(held), fromMs: wMax.fromMs, toMs: wMax.toMs, isMarket: (c) => !!attestedOf(c) }) : [] };
-              seasonRaw.set(rq, raw); if (seasonRaw.size > 8) seasonRaw.delete(seasonRaw.keys().next().value);
+              seasonRaw.set(rq, raw); if (seasonRaw.size > 32) seasonRaw.delete(seasonRaw.keys().next().value);
             }
             const read = raw.read.filter((r) => r.startMs >= BigInt(w.fromMs) && r.startMs < BigInt(w.toMs));
             const s = season(read, { games: ids, fromMs: w.fromMs, toMs: w.toMs });
@@ -11715,7 +11718,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // another seat's network season to merge - every msat and start time a decimal string. ?game= as /season's, or a comma
       // list of game ids in hex (a network season asks for exactly the ids it resolved), ?days= as /season's. Each entry
       // names the round key it joined under (`roundKeys: true` says so): the weekly board badge merges on it. Public and
-      // read-only; kept SEASON_KEEP_MS (30 s) per query, so fourteen seats asking at once cost one read of the store.
+      // read-only; kept SEASON_KEEP_MS (5 min, kanban #2860) per query, so fourteen seats asking at once cost one read of the store.
       if (req.method === 'GET' && url.pathname === '/season-rounds') {
         const asked = seasonQuery(url, { list: true });
         if (!asked.ok) return text(res, asked.status, asked.why);
@@ -11741,7 +11744,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           // a shorter window is a filter of this one read (kanban #2725)
           const all = rounds.map((x) => ({ id: String(x.roundId), startMs: Number(x.startMs), json: JSON.stringify(x) })).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
           kept = { at: Date.now(), all };
-          seasonRaw.set(q, kept); if (seasonRaw.size > 8) seasonRaw.delete(seasonRaw.keys().next().value);
+          seasonRaw.set(q, kept); if (seasonRaw.size > 32) seasonRaw.delete(seasonRaw.keys().next().value);
         }
         const head = { node: toHex(round.pubkey), game: { ids }, days: w.days, fromMs: w.fromMs, toMs: w.toMs, roundKeys: true, signed: true };
         const byId = kept.all.filter((x) => x.startMs >= w.fromMs && x.startMs < w.toMs);
