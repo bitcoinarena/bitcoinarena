@@ -32434,6 +32434,33 @@ async function explorerAgrees({ base, points, fetcher = fetch, timeoutMs = 8000 
 
 
 
+// A SEAT'S ANSWER IS READ UP TO A BOUND (kanban #2740, #1489 r6-census-1): GET /census, /committee and /seating were read whole (json, arrayBuffer,
+// text), bounded only by READ_MS - one seat streaming 64 MiB of whitespace made the tab hold all of it before the honest providers were asked
+// (a phone's tab froze; the join never finished). Each is read chunk by chunk up to its cap, the stream cancelled past it (that seat refused).
+const CENSUS_ANSWER_MAX = 4 * 1024 * 1024, COMMITTEE_ANSWER_MAX = 64 * 1024, SEATING_ANSWER_MAX = 256 * 1024;
+async function bytesUpTo(r, max) {
+  const said = Number(r.headers && typeof r.headers.get === 'function' ? r.headers.get('content-length') : NaN);
+  if (Number.isFinite(said) && said > max) { try { await r.body?.cancel(); } catch { /* gone */ } throw new Error(`its answer is ${said} bytes, more than ${max}`); }
+  const reader = r.body && typeof r.body.getReader === 'function' ? r.body.getReader() : null;
+  if (!reader) { const b = new Uint8Array(await r.arrayBuffer()); if (b.length > max) throw new Error(`its answer is more than ${max} bytes`); return b; }
+  const parts = []; let n = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      n += value.byteLength;
+      if (n > max) throw new Error(`its answer is more than ${max} bytes`);
+      parts.push(value);
+    }
+  } catch (e) { try { await reader.cancel(); } catch { /* gone */ } throw e; }
+  const all = new Uint8Array(n); let at = 0;
+  for (const p of parts) { all.set(p, at); at += p.byteLength; }
+  return all;
+}
+// a test's stand-in answer with no stream and no arrayBuffer is read by its own json()/text()
+const jsonUpTo = async (r, max) => (r.body === undefined && typeof r.arrayBuffer !== 'function' && typeof r.json === 'function' ? r.json() : JSON.parse(new TextDecoder().decode(await bytesUpTo(r, max))));
+const textUpTo = async (r, max) => (r.body === undefined && typeof r.arrayBuffer !== 'function' && typeof r.text === 'function' ? r.text() : new TextDecoder().decode(await bytesUpTo(r, max)));
+
 /**
  * THE ARBITRATION SET AND BOND TERMS A BOND IS REBUILT WITH, per network: genesis' own (testnetShape: 5 of the 7 keys,
  * template-1 maturity 100). Read from genesis-ids.js rather than genesis.js, which the page's bundle does not carry;
@@ -32582,7 +32609,7 @@ async function evidenceFor(roundIdHex, contract, nodes, { fetcher, skip = new Se
     try {
       const r = await readWithOneRetry(fetcher, `${baseOf(u)}/census?round=${roundIdHex}`);
       if (!r.ok) { refused.push(`${u}: ${r.status}`); continue; }
-      const j = await r.json();
+      const j = await jsonUpTo(r, CENSUS_ANSWER_MAX);   // kanban #2740: bounded
       if (!j || !Array.isArray(j.entries)) { refused.push(`${u}: no entries`); continue; }
       // A PROVIDER LISTING ONE BOND TWICE IS REFUSED ON ITS OWN, before the union (kanban #2160, #2228, #2301): in the union its repeat
       // made the census uncommittable and its honest co-provider was skipped with it - on three seats the join was refused
@@ -32754,7 +32781,7 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
       if (kept) { said[i] = kept; return; }
       try {
         const r = await fetcher(`${baseOf(u)}/seating?round=${seatHex}&role=${role}${anchor ? `&at=${toHex(roundId)}` : ''}`, { signal: AbortSignal.timeout(SEATING_ASK_MS) });
-        said[i] = { status: r.status, ok: r.ok, body: await r.text() };
+        said[i] = { status: r.status, ok: r.ok, body: await textUpTo(r, SEATING_ANSWER_MAX) };   // kanban #2740: bounded
         keepSeatingAnswer(keyOf, drawnKey, said[i]);
       } catch { said[i] = null; }
     });
@@ -32878,7 +32905,7 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
         try {
           const r = await readWithOneRetry(fetcher, `${baseOf(u)}/committee?role=${role}&round=${roundIdHex}`);
           if (!r.ok) { said[role] = { agrees: null, why: `answered ${r.status}` }; continue; }
-          const b = new Uint8Array(await r.arrayBuffer());
+          const b = await bytesUpTo(r, COMMITTEE_ANSWER_MAX);   // kanban #2740: bounded
           const keys = []; for (let i = 0; i + 32 <= b.length; i += 32) keys.push(toHex(b.subarray(i, i + 32)));
           said[role] = { keys: keys.sort(), ...judge(role, keys) };
         } catch (e) { said[role] = { agrees: null, why: e.message }; }
