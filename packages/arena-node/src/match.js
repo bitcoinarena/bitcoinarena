@@ -74,8 +74,10 @@ function matchAt(round, plugins, roundIdBytes, depth) {
   }
   // EACH SIDE'S IDENTITY: its reveal's, else the one its consented name record names (audit 5 #1401) - a loser who left the identity off his reveal, or
   // forfeited, broke the chain and the next round's score started at 0-0; the consent is fixed at the join, before anything is known
+  // kanban #2690: the record names an identity for a round key, not for an entry - two entries of one key (a stranger's copy of a public key) book by it neither
+  const keyCount = (k) => round.entriesOf(roundIdBytes).filter((x) => Buffer.compare(Buffer.from(x.entry.playerPubkey), Buffer.from(k)) === 0).length;
   const idOf = ({ entryId, entry }) => round.identityOf(entryId)
-    || (typeof round.consentedIdentityOf === 'function' && entry ? ((h) => (h ? { identity: Uint8Array.from(Buffer.from(h, 'hex')) } : null))(round.consentedIdentityOf(roundIdBytes, entry.playerPubkey)) : null);
+    || (typeof round.consentedIdentityOf === 'function' && entry && keyCount(entry.playerPubkey) === 1 ? ((h) => (h ? { identity: Uint8Array.from(Buffer.from(h, 'hex')) } : null))(round.consentedIdentityOf(roundIdBytes, entry.playerPubkey)) : null);
   const named = entries.map((e) => ({ entryId: e.entryId, id: idOf(e), result: agreedResult(round, roundIdBytes, e.entryId) }));
   if (named.some((x) => !x.id)) return null;
   if (named.some((x) => !x.result)) {                                 // not decided yet: counted once it is

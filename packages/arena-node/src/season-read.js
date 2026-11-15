@@ -103,13 +103,18 @@ function entriesOf(round, rid, contract, { paid, market }) {
     try { const r = decodeLobbyName(n.record); named.set(hex(r.playerPubkey), { identity: hex(r.identityPubkey), consented: !!n.identitySig, name: r.name || null }); } catch { /* not a record */ }
   }
 
-  return round.entriesOf(rid).map(({ entryId, entry }) => {
+  // A ROUND KEY TWO ENTRIES NAME BOOKS NEITHER BY ITS RECORD (kanban #2690, #1489 r3-h2h-2): an entry carries no signature of its player key, so a
+  // stranger posted his own entry under an honest player's public round key and her consented record booked HIS forfeit to her identity. The record
+  // books an entry only when it is the round's one entry of that key; a reveal's own proof (the identity over round AND entry) still books its entry.
+  const all = round.entriesOf(rid);
+  const perKey = new Map(); for (const { entry } of all) { const k = hex(entry.playerPubkey); perKey.set(k, (perKey.get(k) || 0) + 1); }
+  return all.map(({ entryId, entry }) => {
     const key = hex(entry.playerPubkey);
     const proven = typeof round.identityOf === 'function' ? round.identityOf(entryId) : null;
     const record = named.get(key) || null;
     // A ROUND BOOKS TO AN IDENTITY ONLY WITH ITS CONSENT (kanban #1278, RULED #1276): the record's identity with its proof, or a head-to-head reveal's
     // proof (the identity key over round and entry); two different identities proven over one round key book it to neither; else the bare round key
-    const consented = record && record.consented ? record.identity : null;
+    const consented = record && record.consented && perKey.get(key) === 1 ? record.identity : null;
     const player = proven && consented && hex(proven.identity) !== consented ? key : proven ? hex(proven.identity) : consented || key;
     // `roundKey` beside the player: the key the entry joined under, so a reader can tell an identity from a bare round key
     // (the badges award only an identity, protocol badges.js). season() reads no such field; /season-rounds sends it, for the
