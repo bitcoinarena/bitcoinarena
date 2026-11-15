@@ -40,3 +40,11 @@ test('#2784 the report store says what was paid, and the faucet hands it to the 
   const src = readFileSync(new URL('../tools/faucet.mjs', import.meta.url), 'utf8');
   assert.match(src, /paidOf: \(id\) => FEEDBACK\.paidSatsOf\(id\)/);
 });
+
+test('#2784 payable after the bot share went down: the approval\'s amount by the current rule, and it says why', () => {
+  const s = openBountySeason(':memory:', { startMs: 0 });
+  s.commit(rep(1), old('medium'), { nowMs: 10 });   // approved at the old half: 1,000
+  const p = s.payable(rep(1).id, { nowMs: 20 });
+  assert.equal(p.payableSats, 300, 'medium 2,000 at 15 %');
+  assert.equal(p.why, 'the bot share is 15 % now (approved 1000)');
+});

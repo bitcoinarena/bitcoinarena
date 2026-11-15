@@ -356,7 +356,8 @@ export function openBountySeason(path = ':memory:', { startMs = null, potSats = 
     const now = a.level === 'node' ? {} : flagsOf(a.pubkey, { nowMs });
     const NAMES = { x: 'X', telegram: 'Telegram', discord: 'Discord', armada: 'Armada' };
     const lost = PLATFORMS.filter((k) => a.flags && a.flags[k] === true && now[k] !== true);
-    const why = sats < a.sats ? `left ${lost.map((k) => NAMES[k]).join(', ') || 'a community'}: -${a.bonusPct - p.bonusPct} %${!a.codeOnly && p.quarter ? `, no verified X account: ${BOT_PCT} %` : ''}` : null;   // kanban #2788: X proves a human
+    // nothing left and no bonus lost: the rule itself went down (kanban #2784: the bot share 25 % -> 15 %)
+    const why = sats < a.sats ? (!lost.length && a.bonusPct === p.bonusPct ? `the bot share is ${BOT_PCT} % now (approved ${a.sats})` : `left ${lost.map((k) => NAMES[k]).join(', ') || 'a community'}: -${a.bonusPct - p.bonusPct} %${!a.codeOnly && p.quarter ? `, no verified X account: ${BOT_PCT} %` : ''}`) : null;   // kanban #2788: X proves a human
     db.prepare('UPDATE approvals SET payable_sats = ?, payable_ms = ?, payable_why = ? WHERE report = ?').run(sats, nowMs, why, a.report);
     return { ok: true, report: a.report, approvedSats: a.sats, payableSats: sats, bonusPct: Math.min(p.bonusPct, a.bonusPct), flags: now, lost, why };
   }
