@@ -541,7 +541,9 @@ if (url) {
         if (!census.ok) { console.error(`[ballot] no census at ${height}: ${census.why}`); return null; }
         // each bond's confirmation height and CLTV maturity: the funding vote's age (rules 1, 2) and lock (rule 1), §27A.9.5
         return census.entries.map((e) => ({ pubkey: e.pubkey, outpoint: `${Buffer.from(e.txid).toString('hex')}:${e.vout}`, bondSats: e.bondSats,
-          height: Number.isInteger(e.height) ? e.height : null, maturity: e.advert && Number.isInteger(e.advert.bondMaturityHeight) ? e.advert.bondMaturityHeight : null }));
+          height: Number.isInteger(e.height) ? e.height : null, maturity: e.advert && Number.isInteger(e.advert.bondMaturityHeight) ? e.advert.bondMaturityHeight : null,
+          // kanban #2741: the scalars each node declares (proposal_deposit_sats prices a proposal, its bond-weighted median - proposals.js)
+          ...(e.advert && e.advert.declares ? { advert: { declares: e.advert.declares } } : {}) }));
       },
       // THE WHOLE CENSUS AT A HEIGHT, ADVERTS AND ALL: a founding's trigger height is the chain's, not any round's - the
       // seats' newest rounds name census heights days back, and their views end at those rounds' beacons (measured live 2026-10-15:
