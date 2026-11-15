@@ -15,6 +15,9 @@ import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { hmac } from '@noble/hashes/hmac.js';
 import { hkdf, extract as hkdfExtract, expand as hkdfExpand } from '@noble/hashes/hkdf.js';
+import { checkedFetch } from './public-fetch.js';
+import { faucetUrlRefusal } from './feedback-store.js';
+import { readJsonBounded } from './lnurl-read.js';
 
 export const ARMADA_RELAYS = ['wss://relay.ditto.pub', 'wss://relay.dreamith.to'];
 const HEX64 = /^[0-9a-f]{64}$/;
@@ -255,7 +258,12 @@ export function wsQuery({ timeoutMs = 8000, WebSocketImpl = globalThis.WebSocket
 }
 
 // ---- the API ----
-export async function armadaPubkeyOf(input, { fetchFn = fetch, timeoutMs = 8000 } = {}) {
+// A NAME@DOMAIN IS RESOLVED ON A PUBLIC HOST ONLY, SIZE-CAPPED (kanban #2683, #1489 r3-faucet-1): a stranger's POST /feedback/social { armada }
+// made the faucet GET any host it named with the process's own fetch (127.0.0.1.nip.io, tailnet and team hosts) and read the answer whole
+// (64 MB measured). Now as nostrPubkeyOf: checkedFetch (public name and address, every redirect checked, never a team host - FAUCET_TEAM_HOSTS),
+// 16 KiB read bounded, 8 s.
+const armadaFetch = (url, o = {}) => checkedFetch(url, { signal: o.signal, headers: o.headers, refusal: faucetUrlRefusal });   // + the faucet's team hosts by name
+export async function armadaPubkeyOf(input, { fetchFn = armadaFetch, timeoutMs = 8000 } = {}) {
   const s = String(input || '').trim();
   const k = key32(s, 'npub'); if (k) return k;
   const d = bech32Decode(s);
@@ -264,8 +272,8 @@ export async function armadaPubkeyOf(input, { fetchFn = fetch, timeoutMs = 8000 
   if (!m) return null;
   try {
     const r = await fetchFn(`https://${m[2].toLowerCase()}/.well-known/nostr.json?name=${encodeURIComponent(m[1].toLowerCase())}`, { signal: AbortSignal.timeout(timeoutMs), redirect: 'error' });
-    if (!r.ok) return null;
-    const j = await r.json(), v = j && j.names && j.names[m[1].toLowerCase()];
+    if (!r || !r.ok) return null;
+    const j = await readJsonBounded(r, 16 * 1024), v = j && j.names && j.names[m[1].toLowerCase()];
     return typeof v === 'string' && HEX64.test(v.toLowerCase()) ? v.toLowerCase() : null;
   } catch { return null; }
 }
