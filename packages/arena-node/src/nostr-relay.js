@@ -54,7 +54,8 @@ const eventSize = (e, json, rows) => Buffer.byteLength(json) + EVENT_ROW_BYTES +
 // need it). When an event would take the store past the total, room is made, one event at a time, in this order:
 //   1. the OTHER pool, if it is over its share, gives back: the oldest event of its largest holder goes;
 //   2. else, in the event's own pool, an author who holds MORE than the event's author then will (events or bytes, whichever is over) loses
-//      its oldest - the largest such holder first, the most recently arrived of equal ones first;
+//      its oldest - the largest such holder first, the most recently arrived of equal ones first; by count, when the largest holds ONE
+//      event, also that one, for an author who held at most one before (kanban #2677: one-event-per-fresh-key spam cannot lock new authors out);
 //   3. else, a STATE event rolls out its own author's oldest STATE event (its newest wins, as under its own quota);
 //   4. else it is refused ('blocked: the relay is full'): its author already holds as much as anybody - a LOG event never erases its own
 //      author's older records to take more.
@@ -648,7 +649,12 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
                   if (q && q[dim] > share(Q)) { const h = largest[dim].get(Q, '', keepJson); if (h) victim = oldestIn.get(h.pubkey, Q, e.id); }   // 1.
                   if (!victim) {   // 2.
                     const mine = holderUse.get(e.pubkey, P) || { n: 0, b: 0 }, h = largest[dim].get(P, e.pubkey, keepJson);
-                    if (h && (h[dim] > mine[dim] || keepSet.has(e.pubkey))) victim = oldestIn.get(h.pubkey, P, e.id);   // a kept author's write takes from the largest other (#2146)
+                    // THE ONE-EVENT-PER-KEY MASS (kanban #2677, #1489 r2-nostr-11): strangers filled the total with ONE event under each fresh key,
+                    // so nobody held more than a new player's first profile or the zap server's next receipt and both were refused for good. When the
+                    // largest other holder holds a single event, a writer that held at most one before this event gets in by count: the most recently
+                    // arrived single-event holder gives its event back. Every other case stays strict (a tie refuses), and bytes always do.
+                    const over = h && (h[dim] > mine[dim] || (dim === 'n' && h.n === 1 && mine.n <= 2));
+                    if (h && (over || keepSet.has(e.pubkey))) victim = oldestIn.get(h.pubkey, P, e.id);   // a kept author's write takes from the largest other (#2146)
                   }
                   if (!victim && P !== 1) victim = oldestIn.get(e.pubkey, P, e.id);   // 3. (a state event, or a seed)
                   if (!victim) { verdict = 'full'; break; }   // 4.
