@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { createProposals, stateOf } from '../src/proposals.js';
+import { createProposals, stateOf, seenMessage } from '../src/proposals.js';
 import { createBallotTally } from '../src/ballot-tally.js';
 import { proposalId, decodeConfigProposalBody, encodeConfigProposalBody, proposalBodyId, encodeVote, voteMessage, CHOICE, CLASS, SCHEDULES, REPEAL_SCHEDULES, configHashOf } from '../../arena-protocol/src/ballot.js';
 import { depositOutputsExpected, depositCommitmentScript } from '../../arena-protocol/src/ballot-chain.js';
@@ -50,6 +50,9 @@ function seat({ chain, bound = true, tip, votes = new Map() }) {
   tally = createBallotTally({ proposals, tipHeight: async () => tip.at, votesAt: async (h) => (votes.get(h) || []).map((v) => ({ ...v, height: h })), censusAt: async () => CENSUS, verify, genesisFor: () => GENESIS });
   return { proposals, tally, liveAt: (h) => toHex(tally.historyAt(toHex(NET), h).at(-1).configHash) };
 }
+// kanban #2700 (ruling #2776): a bound proposal counts once bonds holding more than half of the census weight (the proposer's left out)
+// signed that they held it before its voting ended - here bond 2 (30 of 50), its sighting as the peer pull brings it
+const sightOf = (i, id, at) => ({ by: toHex(schnorr.getPublicKey(sk(i))), at, sig: toHex(schnorr.sign(seenMessage(id, at), sk(i))) });
 const vote = (i, id, choice, seq, txid) => ({ payload: encodeVote({ proposalId: fromHex(id), choice, seq, signature: schnorr.sign(voteMessage(fromHex(id), choice, seq), sk(i)) }), txid });
 
 test('#2607-1: a twin of a passed bound proposal posted after its vote is taken, and the proposal stays passed and live', async () => {
@@ -63,6 +66,7 @@ test('#2607-1: a twin of a passed bound proposal posted after its vote is taken,
   // kanban #2432 (decided 2026-11-14): a text counts only when held before its voting ended - this seat holds A during its voting
   tip.at = 203;
   const a = await proposals.add(a1); assert.equal(a.status, 201, a.why);
+  assert.equal(await proposals.vouch(a.id, { sightings: [sightOf(2, a.id, 203)] }), true, 'bond 2 held it in time too: a census majority (kanban #2700)');
   tip.at = 300;
   for (let i = 0; i < 3; i++) await tally.pass();
   assert.equal(stateOf(proposals.list().find((r) => r.id === a.id)), 'PASSED');
@@ -88,6 +92,7 @@ test('#2607-1: votes under either twin id count for the one proposal, the seq ru
   const a = await proposals.add(signed(3)); assert.equal(a.status, 201, a.why);
   const b = await proposals.add(signed(4)); assert.equal(b.status, 201, b.why);
   assert.notEqual(a.id, b.id);
+  for (const t of [a, b]) await proposals.vouch(t.id, { sightings: [sightOf(2, t.id, 200)] });   // kanban #2700: held in time by a census majority
   // bond 1 (50): YES seq 1 under A, NO seq 2 under B -> NO; bond 2 (30): YES seq 4 under A, NO seq 4 under B -> ABSTAIN;
   // bond 3 (20): YES seq 1 under B, YES seq 1 under A (the same choice) -> YES
   votes.set(201, [vote(1, a.id, CHOICE.YES, 1, 'a1'.repeat(32)), vote(2, a.id, CHOICE.YES, 4, 'a2'.repeat(32))]);

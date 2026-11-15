@@ -307,6 +307,17 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
           p = proposals.list().find((x) => x.id === listed.id) || listed;
           log(`[ballot] proposal ${p.id.slice(0, 16)}: its schedule read again from the history at ${p.publishedAt}: ${p.repeal ? 'repeal' : 'ordinary'}, voting ${p.votingFrom}-${p.votingUntil}${stateOf(p) === S.FAILED ? ' (void)' : ''}`);
         }
+        // NO SIGHTINGS QUORUM BY THE BLOCK BEFORE ITS ACTIVATION: FAILED (kanban #2700, ruling #2776): a bound proposal counts only once bonds
+        // holding more than half of the census weight signed that they held it before its voting ended (proposals.js vouch); sightings only
+        // grow and arrive by the peer pull, so a seat does not decide "failed" for want of them at the decide depth - it keeps pulling and
+        // decides at activation_height - 1 at the latest: passed if the quorum is held by then (counted below), failed otherwise.
+        if (stateOf(p) === S.COUNTING && isLate(p) && tip >= p.activationHeight - 1
+          && (typeof proposals.twinOf !== 'function' || proposals.twinOf(p.id) === p.id)) {
+          const outcome = { passed: false, why: `no census majority signed that it held it before its voting ended by ${p.activationHeight - 1}, the block before its activation (kanban #2432, #2700)`,
+            decidedAt: tip, sightingsWeight: p.late && p.late.agreed ? p.late.agreed.weight : null };
+          if (proposals.decide(p.id, outcome)) { decided++; log(`[ballot] proposal ${p.id.slice(0, 16)} FAILED at ${tip}: ${outcome.why}`); }
+          open.delete(p.id); heldOutcome.delete(p.id); continue;
+        }
         if (stateOf(p) !== S.COUNTING || !counted(p)) { open.delete(p.id); heldOutcome.delete(p.id); continue; }       // decided, orphaned, or void (#1840): not counted
         const rule = ruleOf(p);
         if (rule.invalid) {                                     // invalid on its face (kanban #1196): never counted
@@ -420,7 +431,7 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
     const stands = typeof proposals.twinOf === 'function' ? proposals.twinOf(p.id) : p.id;
     if (stands && stands !== p.id) { const q = proposals.list().find((x) => x.id === stands); if (q) return phaseOf(q); }
     if (stateOf(p) === S.ORPHANED) return 'orphaned';
-    if (isLate(p)) return 'late';                                   // kanban #2432: held only after its voting ended, not seen in time by a census majority
+    if (isLate(p)) return p.late && Number.isFinite(p.late.at) && p.late.at < p.votingUntil ? 'sightings' : 'late';   // kanban #2432; #2700: held in time here, waiting for a census majority's sightings
     if (!counted(p)) return 'void';
     if (!p.decided && ruleOf(p).invalid) return 'invalid';
     if (!p.decided) return tip !== null && tip >= p.votingFrom ? 'voting' : 'review';

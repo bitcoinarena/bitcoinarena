@@ -93,13 +93,18 @@ test('#2432: the same late reveal counts once bonds holding a census majority si
   assert.deepEqual(proposals.list()[0].sightings.map((x) => x.by).sort(), [toHex(H1.pubkey), toHex(H2.pubkey)].sort());
 });
 
-test('#2432: a seat that holds the proposal before its voting ends counts it and signs its own sighting', async () => {
-  const signer = key(0x60);
-  const { proposals, tally, hex, BLOCK } = await setUp({ tip: 203, seenSigner: { pubkey: signer.pubkey, sign: (m) => schnorr.sign(m, signer.secret) } });
+// kanban #2700 (ruling #2776): held in time at ONE seat is no majority - the seat signs its own sighting and counts the proposal only once
+// bonds holding more than half of the census weight (the proposer's left out) signed theirs, its own included
+test('#2432/#2700: a seat that holds the proposal before its voting ends signs its own sighting and counts it once a census majority has', async () => {
+  const { proposals, tally, hex, BLOCK } = await setUp({ tip: 203, seenSigner: { pubkey: H2.pubkey, sign: (m) => schnorr.sign(m, H2.secret) } });
   const got = await proposals.add({ proposal: hex, blockHash: BLOCK });
   assert.equal(got.status, 201);
-  assert.equal(proposals.counts(got.id), true, 'held in time: counted');
   assert.equal(got.sightings.length, 1);
-  assert.equal(verify(fromHexT(got.sightings[0].sig), seenMessage(got.id, 203), signer.pubkey), true);
-  void tally;
+  assert.equal(verify(fromHexT(got.sightings[0].sig), seenMessage(got.id, 203), H2.pubkey), true);
+  assert.equal(proposals.counts(got.id), false, 'held in time here, but H2 is 30 of 65: not a census majority');
+  await tally.pass();
+  assert.equal(tally.list()[0].phase, 'sightings');
+  const sight = (k, at) => ({ by: toHex(k.pubkey), at, sig: toHex(schnorr.sign(seenMessage(got.id, at), k.secret)) });
+  assert.equal(await proposals.vouch(got.id, { sightings: [sight(H1, 204)] }), true, 'H1 and H2 (65 of 65): counted');
+  assert.equal(proposals.counts(got.id), true);
 });

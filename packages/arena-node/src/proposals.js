@@ -289,6 +289,13 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
           seenAt = tip;
           if (tip >= stands.votingUntil)
             lateWhy = `its voting ended at ${stands.votingUntil} and this seat first held it at ${tip}: kept, but not counted until bonds holding more than half of the census weight signed that they held it before its voting ended (kanban #2432)`;
+          // HELD IN TIME HERE IS NOT A MAJORITY (kanban #2700, #1489 r4-census-1): the #2432 rule ran only at a seat that first held the text
+          // late - a proposer who showed it to ONE seat in its last voting block had that seat count it on its own sighting (passed, live)
+          // while every other seat kept it late and never counted it: he chose which seats moved to the new config. Now every seat counts a
+          // bound proposal only once bonds holding more than half of the census weight (the proposer's left out) signed that they held it
+          // before its voting ended - its own sighting included, the others' taken from the peer pull (vouch), the same rule everywhere.
+          else if (typeof censusAt === 'function')
+            lateWhy = `held here at ${tip}, before its voting ended at ${stands.votingUntil}: counted once bonds holding more than half of the census weight signed that they held it in time (kanban #2432, #2700)`;
         }
       } else if (tipOf && !seenBefore) {
         let tip = NaN;
@@ -329,7 +336,7 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
         // AN ORPHAN TAKEN AGAIN keeps what it was: kept late stays late until vouched for, its sightings stay (kanban #2432)
         ...(was && was.late ? { late: was.late } : {}), ...(was && Array.isArray(was.sightings) ? { sightings: was.sightings } : {}) };
       // THIS SEAT'S OWN SIGHTING (kanban #2432): held before its voting ended, its node key signs "held at `seenAt`"
-      if (!lateWhy && !kept.late && !kept.sightings && seenAt !== null && seenAt < stands.votingUntil && seenSigner && typeof seenSigner.sign === 'function') {
+      if (!kept.sightings && seenAt !== null && seenAt < stands.votingUntil && seenSigner && typeof seenSigner.sign === 'function') {   // kanban #2700: also while it waits for the majority
         try { kept.sightings = [{ by: xOnlyHex(seenSigner.pubkey), at: seenAt, sig: toHex(Uint8Array.from(seenSigner.sign(seenMessage(id, seenAt)))) }]; } catch { /* kept without one */ }
       }
       // KEPT LATE: vouched for at once with what it holds (counted at once when no bond but the proposer's is in the census)

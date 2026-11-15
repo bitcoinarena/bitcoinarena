@@ -227,7 +227,16 @@ test('on a seat: a proposal passes and activates, rounds are served under the co
   const boundVote = (who, idBytes, choice, height, txid) => ({ payload: encodeVote({ proposalId: idBytes, choice, seq: 1, signature: schnorr.sign(voteMessage(idBytes, choice, 1), who.secret), bondKey: who.pubkey }), height, txid });   // kanban #2671: regtest is keyed from 0
   const cast = (who, idHex, choice, height) => { const id = Uint8Array.from(Buffer.from(idHex, 'hex')); votes.set(height, [...(votes.get(height) || []), boundVote(who, id, choice, height, `${height}${who === A ? 'a' : 'b'}`)]); };
   let tip = 300;
-  const d = await serve(openStore(':memory:'), { port: 0, donationSets: [KEYS],
+  // kanban #2700 (ruling #2776): a bound proposal counts once bonds holding more than half of the census weight (A's, the proposer's, left
+  // out) signed that they held it before its voting ended - this seat's own key holds no bond here, so B's sighting (30 of 50) comes from a
+  // peer's GET /proposals, through the seat's own pull, as on the network
+  const { seenMessage } = await import('../src/proposals.js');
+  const { createServer } = await import('node:http');
+  const peerRecords = [];
+  const peer = createServer((req, res) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ proposals: peerRecords })); });
+  await new Promise((ok) => peer.listen(0, '127.0.0.1', ok));
+  const seenByB = async (rec, at) => { peerRecords.push({ ...rec, sightings: [{ by: toHex(B.pubkey), at, sig: toHex(schnorr.sign(seenMessage(rec.id, at), B.secret)) }] }); await d.pullProposals(); };
+  const d = await serve(openStore(':memory:'), { port: 0, donationSets: [KEYS], peers: [`http://127.0.0.1:${peer.address().port}`],
     ballot: { confirmedTx: async (txid) => deposits.get(txid) || null, lowestBondMinSats: 100000n, tipHeight: async () => tip,
       votesAt: async (h) => votes.get(h) || [], censusAt: async () => CENSUS, everyMs: 3600000 } });
   try {
@@ -240,6 +249,7 @@ test('on a seat: a proposal passes and activates, rounds are served under the co
     const first = await propose(base, { parent: BALLOT_GENESIS.configHash, configHash: NEW.hash, config: NEW.bytes, at: 300, activationHeight: 308, salt: 1 });
     assert.equal(first.status, 201, first.body.why);
     assert.deepEqual([first.body.repeal, first.body.votingFrom, first.body.votingUntil], [false, 301, 307]);
+    await seenByB(first.body, 300);
     cast(A, first.body.id, CHOICE.YES, 302); cast(B, first.body.id, CHOICE.NO, 303);
     for (tip = 300; tip <= 306; tip++) await d.ballotPass();
     tip = 306;
@@ -276,6 +286,7 @@ test('on a seat: a proposal passes and activates, rounds are served under the co
     const back = await propose(base, { parent: NEW.hash, configHash: BALLOT_GENESIS.configHash, config: BALLOT_GENESIS.config, at: 310, activationHeight: 316, salt: 3 });
     assert.equal(back.status, 201, back.body.why);
     assert.deepEqual([back.body.repeal, back.body.votingFrom, back.body.votingUntil, back.body.activationHeight], [true, 310, 316, 316]);
+    await seenByB(back.body, 310);
     cast(A, back.body.id, CHOICE.YES, 311); cast(B, back.body.id, CHOICE.YES, 312);
     for (tip = 310; tip <= 316; tip++) await d.ballotPass();
     const after = await config();
@@ -284,7 +295,7 @@ test('on a seat: a proposal passes and activates, rounds are served under the co
     assert.doesNotMatch((await post(BALLOT_GENESIS.configHash, 316)).text, BOUND);
     assert.match((await post(NEW.hash, 316)).text, BOUND);
     assert.doesNotMatch((await post(NEW.hash, 312)).text, BOUND, 'a round created while NEW was live keeps NEW');
-  } finally { await d.close(); }
+  } finally { await d.close(); peer.close(); }
 });
 
 const added = (host) => ({ host, url: `https://${host}/x`, read: 'text', path: '', docs: `https://${host}/docs` });
