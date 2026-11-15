@@ -144,8 +144,13 @@ export function checkPackage(pkg, { verify, want = null, parentOf = () => null }
   const stands = manifestStands(manifest, { verify: verifyRest, parentOf: parentFrom });
   if (!add('signed by its developer, and stands', stands.ok, stands.ok ? `developer ${who.devKey.slice(0, 16)}…` : stands.why)) return out(`its manifest does not stand: ${stands.why}`, who);
   if (want && !add('the game asked for', want === gameId, gameId.slice(0, 16))) return out(`that package is game ${gameId.slice(0, 16)}, not ${String(want).slice(0, 16)}`, who);
+  // WHAT IS CHECKED IS WHAT IS HOSTED (kanban #2673): the set's fields are signed by nobody, so each entry must already be the
+  // type the seat hosts - a hex string key, an integer share, a string label (or none). A relayed "10000" passed the id check
+  // through Number() and then failed in hostedPlugins, after adoptPackage had counted it as the parent's one try.
+  const rowOk = (r) => !!r && typeof r === 'object' && typeof r.recipientPk === 'string' && Number.isInteger(r.shareBps) && (r.label == null || typeof r.label === 'string');
   let set = null;
-  try { set = (pkg.donationSet || []).map((r) => ({ recipientPk: fromHex(r.recipientPk), shareBps: Number(r.shareBps), label: String(r.label || '') })); } catch { set = null; }
+  if (pkg.donationSet != null && !(Array.isArray(pkg.donationSet) && pkg.donationSet.every(rowOk))) set = null;
+  else try { set = (pkg.donationSet || []).map((r) => ({ recipientPk: fromHex(r.recipientPk), shareBps: Number(r.shareBps), label: String(r.label || '') })); } catch { set = null; }
   let setOk = false;
   try { setOk = !!set && toHex(donationSetId(set)) === toHex(manifest.gameDonationSetId); } catch { setOk = false; }
   if (!add('its donation set is the one its manifest names', setOk)) return out('its donation set is not the one its manifest names', who);
