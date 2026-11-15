@@ -906,7 +906,13 @@ async function facets(env) { return JSON.parse((await stateGet(env, 'facets')) |
 const cursorOf = (x) => `${Number(x.stored_ms)}_${x.id}`;
 const cursorIn = (c) => { const m = /^(\d{1,16})_([0-9a-f]{64})$/.exec(String(c || '')); return m ? { ms: Number(m[1]), id: m[2] } : null; };
 /** The filters a page is asked with, as SQL: app (- for none), kind, fed, since (seconds back), q (hex: part of an id, round or federation transaction). */
-function filterSql(q, now = Date.now()) {
+// A SEARCH WALKS THE TABLE ONLY INSIDE THE MINUTE'S BUDGET (kanban #2758, #1489 r7-faucet-2): `q` was matched with instr() over id, round and
+// fed_txid on every row, newest first, looking for a page - a q that matches nothing walked all of txs, with the marked-hidden json_extract per
+// row, and each fresh q is a fresh URL (the #2540 totals bound the count, not the page). Now a whole 64-hex q is an exact match on the three
+// indexed columns; a part of one is matched anywhere in them (instr, as before) only while its filter is one of the minute's kept totals or
+// there is room for it (recentTotal's RECENT_TOTAL_KEYS) - past that it matches the start of an id, round or federation transaction only,
+// read through their indexes, never by walking the table. `substring: false` asks for that.
+function filterSql(q, now = Date.now(), { substring = true } = {}) {
   const where = [], binds = [];
   const app = String(q.get('app') || '');
   if (app === '-') where.push('app IS NULL'); else if (app) { where.push('app = ?'); binds.push(app.slice(0, 80)); }
@@ -919,7 +925,12 @@ function filterSql(q, now = Date.now()) {
   const part = String(q.get('q') || '').toLowerCase();
   // and every transaction a liquidation or a slash names (kanban #723)
   // instr, not LIKE: D1 refuses a LIKE pattern over 50 bytes, so a whole 64-hex id ("%" + 64 + "%") answered 500 (kanban #1107, 2026-11-03)
-  if (/^[0-9a-f]{1,64}$/.test(part)) { where.push('(instr(id, ?) > 0 OR instr(round, ?) > 0 OR instr(fed_txid, ?) > 0 OR instr(txids, ?) > 0)'); binds.push(part, part, part, part); }
+  // (2.0) and a liquidation's or slash's named transactions (txids, kanban #723): matched only on those kinds' rows, read through txs_kind_stored
+  if (hex64.test(part)) { where.push("txs.id IN (SELECT id FROM txs WHERE id = ? UNION SELECT id FROM txs WHERE round = ? UNION SELECT id FROM txs WHERE fed_txid = ? UNION SELECT id FROM txs WHERE kind IN ('liquidation', 'slash') AND instr(txids, ?) > 0)"); binds.push(part, part, part, part); }
+  else if (/^[0-9a-f]{1,63}$/.test(part) && substring) { where.push('(instr(id, ?) > 0 OR instr(round, ?) > 0 OR instr(fed_txid, ?) > 0 OR instr(txids, ?) > 0)'); binds.push(part, part, part, part); }
+  else if (/^[0-9a-f]{1,63}$/.test(part)) { const hi = part + 'g';   // past the last hex digit: [part, part+'g') is every value that starts with part
+    where.push("txs.id IN (SELECT id FROM txs WHERE id >= ? AND id < ? UNION SELECT id FROM txs WHERE round >= ? AND round < ? UNION SELECT id FROM txs WHERE fed_txid >= ? AND fed_txid < ? UNION SELECT id FROM txs WHERE kind IN ('liquidation', 'slash') AND (txids >= ? AND txids < ? OR instr(txids, ?) > 0))");
+    binds.push(part, hi, part, hi, part, hi, part, hi, ' ' + part); }
   // OUR BOTS' AND THE OWNER'S TRANSACTIONS LEFT OUT (kanban #1107, the owner 2026-11-03: "bot Transaktionen und admin tx standardmäßig ausblenden, es
   // gibt ein flag um es einzublenden"): an order whose entry id or player key is marked (POST /api/mark), and every other transaction of a round
   // whose orders are all marked; ?marked=1 shows them
@@ -945,7 +956,10 @@ const rowOut = (x) => ({ id: x.id, kind: x.kind || 'order', round: x.round, app:
 /** One page of the list, newest first: { txs, older, newer, total, facets } - older/newer the cursors of the pages beside it, or null. */
 async function recent(env, q = new URLSearchParams()) {
   const limit = Math.min(PAGE_MAX, Math.max(1, Number(q.get('limit')) || PAGE));
-  const { where, binds } = filterSql(q);
+  // (kanban #2758) a part of an id is searched anywhere only inside the minute's budget of kept totals
+  const part = String(q.get('q') || '').toLowerCase();
+  const substring = /^[0-9a-f]{1,63}$/.test(part) ? await totalRoom(env, q) : true;
+  const { where, binds } = filterSql(q, Date.now(), { substring });
   const before = cursorIn(q.get('before')), after = before ? null : cursorIn(q.get('after'));
   const at = before || after;
   const w = at ? [...where, after ? '(stored_ms > ? OR (stored_ms = ? AND id > ?))' : '(stored_ms < ? OR (stored_ms = ? AND id < ?))'] : where;
@@ -973,6 +987,14 @@ function totalKey(q) {
   const since = Number(q.get('since')), part = String(q.get('q') || '').toLowerCase();
   return JSON.stringify([app, kind, hex64.test(fed) ? fed : '', Number.isFinite(since) && since > 0 ? since : 0,
     /^[0-9a-f]{1,64}$/.test(part) ? part : '', q.get('marked') === '1' ? 1 : 0]);
+}
+/** Is `q`'s filter one of the minute's kept totals, or is there room for it (kanban #2758: a substring search is walked only then)? */
+async function totalRoom(env, q, now = Date.now()) {
+  const key = totalKey(q);
+  const read = await stateGet(env, 'recent-totals').then((v) => (v ? JSON.parse(v) : null)).catch(() => null);
+  const live = (e) => e && Number.isFinite(e.at) && now - e.at >= 0 && now - e.at < RECENT_TOTAL_KEEP_MS;
+  const kept = read && typeof read === 'object' && !Array.isArray(read) ? Object.entries(read).filter(([, e]) => live(e)) : [];
+  return kept.some(([k]) => k === key) || kept.length < RECENT_TOTAL_KEYS;
 }
 async function recentTotal(env, q, where, binds, now = Date.now()) {
   const key = totalKey(q);
