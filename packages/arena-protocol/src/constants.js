@@ -25,7 +25,7 @@ export const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 24, 25, 26, 27, 28, 29, 30]);
+export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]);
 /**
  * THE VERSION THAT RUNS THE CENSUS KEY'S DAEMON (5A.3B, RULED 2026-11-02, kanban #1048 answer 2). A node that does not speak it cannot deal or sign, so a share given to it counts against
  * the threshold and nobody can use it: a node whose advertisement does not list this version is out of the key's census, in T and the shares alike. It is above BOND_SUM_VERSION, so
@@ -167,6 +167,16 @@ export const saltsTies = (v) => Number.isInteger(v) && v >= TIE_SALT_VERSION;
 export const BOND_MEDIAN_ALL_VERSION = 30;
 /** Whether a round of protocol version `v` counts every census bond in the bond_min median (kanban #2686). */
 export const mediansAllBonds = (v) => Number.isInteger(v) && v >= BOND_MEDIAN_ALL_VERSION;
+/**
+ * 2026.0.31 - A TIE AT A PAID PLACE IS SPLIT EVENLY (kanban #2687, audit #1489 r3-settle-11; spec ruling #2776, 2026-11-15). From 29 a tie
+ * went by H(round_id || pubkey), but the round id is public before a player's key is fixed: a client that ground 32 keys per round won the
+ * tie - the whole loser pool with one paying rank - in 24 rounds of 24. From 31 entries tied at a paid place share the sum of the places
+ * they occupy, equally; no order among them is computed, and the odd msat of that division goes to the protocol reserves. Rounds below
+ * 31 keep #1614's order byte for byte.
+ */
+export const TIE_SPLIT_VERSION = 31;
+/** Whether a round of protocol version `v` splits a tie at a paid place evenly (kanban #2687). */
+export const splitsTies = (v) => Number.isInteger(v) && v >= TIE_SPLIT_VERSION;
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (RULED 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
