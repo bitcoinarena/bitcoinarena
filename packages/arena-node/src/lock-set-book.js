@@ -11,6 +11,9 @@
 //   4. CERTIFY. A threshold of signatures over one set, each at a time inside [close, close + LOCK_SET_WINDOW_MS], is the certificate; kept.
 // No reveal is taken or served here before it (server.js POST /reveal, GET /reveals), and only its entries are seated and decided
 // (verify.js #headToHeadClose). None standing anywhere by the close + window: the round is VOID.
+import { textUpTo } from './peer-read.js';
+/** The most of a peer's GET /lock-set answer read (kanban #2706). */
+const LOCK_SET_ANSWER_MOST = 262144;
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
@@ -368,8 +371,11 @@ export class LockSetBook {
       try {
         const r = await this.fetch(`${k.replace(/\/+$/, '')}/lock-set?round=${toHex(rid)}`, { signal: AbortSignal.timeout(LOCK_SET_PEER_MS) });
         if (!r.ok) { try { await r.body?.cancel(); } catch { /* gone */ } return; }
-        const text = await r.text();
-        if (text.length > 262144) return;
+        // kanban #2706 (#1489 r4-gossip-3): read up to the bound, not whole and measured after - one peer streamed 96 MiB within
+        // LOCK_SET_PEER_MS and every honest seat buffered it on every 150 ms pull (204 MiB held); past 256 KiB the stream is cancelled
+        // (an answer with no stream - an injected stand-in - is read as it offers itself, still held to the bound)
+        const text = r.body ? await textUpTo(r, LOCK_SET_ANSWER_MOST) : String(await r.text());
+        if (text.length > LOCK_SET_ANSWER_MOST) return;
         this.take(rid, JSON.parse(text));
         room.answeredAt.set(k, this.#now());   // feedback #035: this peer answered (its certificate, if any, is taken)
       } catch { /* a peer that is down or slow says nothing */ }
