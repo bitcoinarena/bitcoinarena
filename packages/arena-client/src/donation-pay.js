@@ -39,6 +39,27 @@ import { roundId } from '../../arena-protocol/src/contracts.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { playerFor, TAB_SEED_KEY } from './join.js';
 import { movedKey } from './storage-keys.js';
+// A SEAT'S ROTATIONS, READ AND CHECKED UP TO A BOUND (kanban #2669, #1489 r2-client-2): GET /donation-rotations was read whole and every distinct
+// body:signature it listed was checked against the recovery key (an Ed25519 verify each) before any set check - one seat listing 20,000 junk
+// rotations made 20,000 checks on every paid join and order of every round it sat on. Now its answer is read up to ROTATIONS_ANSWER_MAX bytes,
+// only its first ROTATIONS_PER_SEAT rotations count, and a rotation is checked only when it is this round's network's and in force at its census
+// height (authorityAt would refuse any other unchecked)
+const ROTATIONS_ANSWER_MAX = 64 * 1024, ROTATIONS_PER_SEAT = 16;
+async function rotationBytesUpTo(r, max) {   // as committee.js bytesUpTo (kanban #2740): chunk by chunk, the stream cancelled past `max`
+  const said = Number(r.headers && typeof r.headers.get === 'function' ? r.headers.get('content-length') : NaN);
+  if (Number.isFinite(said) && said > max) { try { await r.body?.cancel(); } catch { /* gone */ } throw new Error(`its answer is ${said} bytes, more than ${max}`); }
+  const reader = r.body && typeof r.body.getReader === 'function' ? r.body.getReader() : null;
+  if (!reader) {
+    if (typeof r.arrayBuffer !== 'function' && typeof r.json === 'function') return new TextEncoder().encode(JSON.stringify(await r.json()));   // a test's stand-in answer
+    const b = new Uint8Array(await r.arrayBuffer()); if (b.length > max) throw new Error(`its answer is more than ${max} bytes`); return b;
+  }
+  const parts = []; let n = 0;
+  try {
+    for (;;) { const { done, value } = await reader.read(); if (done) break; n += value.byteLength; if (n > max) throw new Error(`its answer is more than ${max} bytes`); parts.push(value); }
+  } catch (e) { try { await reader.cancel(); } catch { /* gone */ } throw e; }
+  const all = new Uint8Array(n); let at = 0; for (const p of parts) { all.set(p, at); at += p.byteLength; }
+  return all;
+}
 
 /**
  * WHAT THIS TAB HAS ALREADY ASKED ITS WALLET TO DONATE, per round and player
@@ -284,7 +305,9 @@ export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u)
       let rotations = [];
       try {
         const rr = await donationWithinMs(fetcher(`${base}/donation-rotations?round=${rid}`), DONATION_ANSWER_MS);   // bounded too: a set read, then a hung rotations read, held a join 38 s+ (04:11Z)
-        if (rr.status === 200) rotations = (await rr.json()).rotations || [];
+        if (rr.status === 200) { const j = JSON.parse(new TextDecoder().decode(await rotationBytesUpTo(rr, ROTATIONS_ANSWER_MAX)));   // kanban #2669: bounded
+          rotations = Array.isArray(j && j.rotations) ? j.rotations.slice(0, ROTATIONS_PER_SEAT) : []; }
+        else { try { await rr.body?.cancel(); } catch { /* gone */ } }
       } catch { rotations = []; }
       return { node: base, bytes, rotations };
     // A READ THAT NEVER GOT AN ANSWER (kanban #803: "Load failed" on a phone) is a node that did not answer, as one past ANSWER_MS is
@@ -293,8 +316,11 @@ export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u)
   // EVERY SIGNER NODE'S ROTATIONS, EACH CHECKED HERE against the network's recovery
   // key: a signer node that hides a rotation cannot hide it from the other signer nodes.
   const offered = new Map();
-  for (const a of answers) for (const r of a.rotations || []) {
-    try { offered.set(`${r.body}:${r.signature}`, { ...decodeAuthorityRotation(fromHex(String(r.body))), signature: fromHex(String(r.signature)) }); }
+  for (const a of answers) for (const r of (a.rotations || []).slice(0, ROTATIONS_PER_SEAT)) {
+    try { const rot = decodeAuthorityRotation(fromHex(String(r.body)));
+      // (kanban #2669) another network's, or one not in force at the round's census height, is never checked: authorityAt refuses it anyway
+      if (toHex(rot.networkId) !== toHex(round.networkId) || !Number.isInteger(rot.validFrom) || rot.validFrom > round.censusHeight) continue;
+      offered.set(`${r.body}:${r.signature}`, { ...rot, signature: fromHex(String(r.signature)) }); }
     catch { /* not a rotation: nothing to apply */ }
   }
   const rotations = [...offered.values()];
