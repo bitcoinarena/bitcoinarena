@@ -316,3 +316,35 @@ test('a real node: byte-identical unsigned accounts from six seats award no week
     for (const p of [b32(0x51), b32(0x52)]) assert.deepEqual(await of(p), [], 'a round key holds no place');
   } finally { await d.close(); }
 });
+
+// kanban #2859 (testnet4 seat 7, 2026-11-15: storedSeasonGames read every joined round's contract again every 60 s, ~1 s): the stored
+// game set reads on from the last entry seen - the same answers, a new game's round counted, an old one not read again
+test('the games this store holds rounds of are read on from the last entry: a new game counts, the old rounds are not read again', async () => {
+  const db = openStore(':memory:');
+  const prepare = db.prepare.bind(db);
+  let read = 0;   // rows the stored-games reads handed back
+  db.prepare = (sql) => {
+    const st = prepare(sql);
+    // the stored-games read: before #2859 every joined round (rounds r WHERE EXISTS an entry), now the entries after the last seen
+    if (!/^SELECT r\.contract FROM rounds r WHERE EXISTS|^SELECT e\.rowid AS rowid/.test(sql)) return st;
+    return { all: (...a) => { const r = st.all(...a); read += r.length; return r; },
+      *iterate(...a) { for (const r of st.iterate(...a)) { read += 1; yield r; } }, get: (...a) => st.get(...a), run: (...a) => st.run(...a) };
+  };
+  const realNow = Date.now;
+  let skew = 0;
+  Date.now = () => realNow() + skew;
+  const d = await serve(db, { plugins: HOSTED, port: 0, ...opts });
+  try {
+    seed(d.round, realNow());
+    const rounds = async (gid) => (await (await fetch(`http://127.0.0.1:${d.port}/season-rounds?game=${toHex(gid)}`)).json()).rounds.length;
+    assert.equal(await rounds(b32(0x77)), 1);
+    assert.equal(await rounds(b32(0x78)), 0, 'no round of that game held');
+    const first = read;
+    assert.ok(first >= 5, 'the first look reads every joined round');
+    writeRound(d.round, 6, [{ key: b32(0x56), outcome: 'DELIVERED', score: 1 }], { stakeMsat: 0n, startMs: realNow() - HOUR, gameId: b32(0x78) });
+    skew = 61000;
+    assert.equal(await rounds(b32(0x78)), 1, 'the new game counted after the keep');
+    assert.equal(read - first, 1, 'only the new entry read, not every joined round again');
+    assert.equal(await rounds(b32(0x77)), 1, 'the old game still counted');
+  } finally { Date.now = realNow; await d.close(); }
+});

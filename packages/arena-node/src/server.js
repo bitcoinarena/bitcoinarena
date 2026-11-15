@@ -68,7 +68,7 @@ import { blockHashOf } from '../../arena-protocol/src/chain.js';
 import { explorerAgrees } from '../../arena-client/src/explorer-check.js';
 import { rulesStand } from '../../arena-protocol/src/rules.js';
 import { stakeWithinCeiling, isTestNetwork } from '../../arena-protocol/src/census-health.js';
-import { pruneTranscripts, pruneRelayed, pruneUnusedRounds, PRUNE_EVERY_MS } from './transcript-prune.js';
+import { pruneTranscripts, pruneRelayed, pruneUnusedRounds, readUsedRounds, PRUNE_EVERY_MS } from './transcript-prune.js';
 import { maxPlayersPerRound } from '../../arena-protocol/src/replay-budget.js';
 import { bondWeightedMedian, bondMinDefaultSats } from '../../arena-protocol/src/census-median.js';
 import { publicationFee, publisherPayoutMsat } from '../../arena-protocol/src/publisher-payout.js';
@@ -1785,17 +1785,32 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // query's cache key - read again at most every SEASON_GAMES_KEEP_MS (one decode of every joined round's game id)
   const SEASON_GAMES_KEEP_MS = 60000;
   const seasonRaw = new Map();   // kanban #2725: one read per stored game set, apart from the per-query answers
-  let seasonGames = { at: 0, ids: new Set() };
+  // READ ON FROM THE LAST ENTRY SEEN, NOT FROM THE START (kanban #2859, profiled on testnet4 seat 7 2026-11-15: the whole read - every
+  // round row of 200k scanned for an entry, 1,568 contracts decoded - was ~1 s, every 60 s): each look reads only the entries stored
+  // since (by rowid) and decodes the contract of a round not seen yet; an entry whose round is not stored yet is looked at again next
+  // time. The whole read is done again every SEASON_GAMES_FULL_MS, so a game whose rounds all went drops out as before.
+  const SEASON_GAMES_FULL_MS = 15 * 60000;
+  let seasonGames = { at: 0, fullAt: 0, ids: new Set(), afterRowid: 0, rounds: new Set(), waiting: new Map() };
   const storedSeasonGames = () => {
     if (Date.now() - seasonGames.at <= SEASON_GAMES_KEEP_MS) return seasonGames.ids;
-    const ids = new Set();
+    const full = Date.now() - seasonGames.fullAt > SEASON_GAMES_FULL_MS;
+    const g = full ? { at: 0, fullAt: Date.now(), ids: new Set(), afterRowid: 0, rounds: new Set(), waiting: new Map() } : seasonGames;
+    const take = (rid, contract) => {
+      const k = toHex(new Uint8Array(rid));
+      if (g.rounds.has(k)) return;
+      if (contract == null) { g.waiting.set(k, rid); return; }
+      g.rounds.add(k); g.waiting.delete(k);
+      try { const c = decodeRoundContract(new Uint8Array(contract)); if (c.gameId instanceof Uint8Array) g.ids.add(toHex(c.gameId)); } catch { /* not one */ }
+    };
     try {
-      for (const r of round.db.prepare('SELECT r.contract FROM rounds r WHERE EXISTS (SELECT 1 FROM entries e WHERE e.round_id = r.round_id)').all()) {
-        try { const c = decodeRoundContract(new Uint8Array(r.contract)); if (c.gameId instanceof Uint8Array) ids.add(toHex(c.gameId)); } catch { /* not one */ }
+      const contractOf = round.db.prepare('SELECT contract FROM rounds WHERE round_id = ?');
+      for (const rid of [...g.waiting.values()]) { const r = contractOf.get(rid); if (r) take(rid, r.contract); }
+      for (const e of round.db.prepare('SELECT e.rowid AS rowid, e.round_id AS round_id, r.contract AS contract FROM entries e LEFT JOIN rounds r ON r.round_id = e.round_id WHERE e.rowid > ? ORDER BY e.rowid').iterate(g.afterRowid)) {
+        g.afterRowid = Number(e.rowid); take(e.round_id, e.contract);
       }
     } catch { /* none */ }
-    seasonGames = { at: Date.now(), ids };
-    return ids;
+    g.at = Date.now(); seasonGames = g;
+    return g.ids;
   };
   // A SEASON'S ANSWER: the board season() built, its rows as the round result shows them
   const seasonBody = (s, ids, w, { leftOut = 0, unchecked = [] } = {}) => {
@@ -4799,14 +4814,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // unused-round passes 3.3 s of it - decoding every stored contract - on top of the catch-up from its peers): 5 min after start
   let unusedAfter = 0, unusedIdleUntil = Date.now() + Number(process.env.ARENA_UNUSED_FIRST_MS || 300000);
   const unusedTally = { deleted: 0, rows: 0, passes: 0, lastAtMs: null, caughtUpAtMs: null };
+  // THE USED IDS KEPT FOR A SWEEP (kanban #2859: rebuilt on every pass they were ~37 % of testnet4 seat 7's CPU, 200,528 rounds): read
+  // when a sweep starts and again at most every UNUSED_USED_KEEP_MS; the marks made in between reach each pass through the store's
+  // temp triggers (readUsedRounds), so a round marked during the sweep is never deleted
+  const UNUSED_USED_KEEP_MS = 10 * 60000;
+  let unusedUsed = null;
   const unusedPass = () => {
     if (shuttingDown || process.env.ARENA_LEAN_PRUNE === '0' || Date.now() < unusedIdleUntil) return;
     try {
-      const r = pruneUnusedRounds({ db, nowMs: Number(round.now()), afterRowid: unusedAfter, batch: UNUSED_PASS,
+      if (unusedAfter === 0 || !unusedUsed || Date.now() - unusedUsed.builtMs > UNUSED_USED_KEEP_MS) unusedUsed = readUsedRounds(db);
+      const r = pruneUnusedRounds({ db, nowMs: Number(round.now()), afterRowid: unusedAfter, batch: UNUSED_PASS, used: unusedUsed,
         contractOf: (rid) => round.contractOf(new Uint8Array(rid)),
         onDeleted: (rid) => { round.forget(new Uint8Array(rid)); if (seating && seating.forget) seating.forget(toHex(new Uint8Array(rid))); } });
       unusedTally.deleted += r.deleted; unusedTally.rows += r.rows; unusedTally.passes += 1; unusedTally.lastAtMs = Date.now();
-      unusedAfter = r.done ? 0 : r.lastRowid;
+      unusedAfter = r.done ? 0 : r.lastRowid; unusedUsed = r.done ? null : r.used;
       if (r.done) { unusedIdleUntil = Date.now() + PRUNE_EVERY_MS; unusedTally.caughtUpAtMs = Date.now();
         console.log(`[lean] unused rounds: ${unusedTally.deleted} deleted (${unusedTally.rows} rows) in ${unusedTally.passes} passes; next look in an hour`); }
     } catch (e) { console.error(`[lean] unused rounds: ${e.message}`); }
