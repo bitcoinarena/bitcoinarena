@@ -17,6 +17,7 @@
 // kept with its bytes and its old outcome, never deleted, and COUNTING again when that block is back or the proposal is posted
 // again from a new block. Each move is a compare-and-set on the state it leaves, and is written to the store BEFORE this
 // seat's memory takes it: a write that fails leaves the proposal where it was.
+import { bondWeightedMedian } from '../../arena-protocol/src/census-median.js';
 import { decodeConfigProposalBody, proposalId, proposalStands, isRepeal, SCHEDULES, REPEAL_SCHEDULES } from '../../arena-protocol/src/ballot.js';
 import { depositOf } from '../../arena-protocol/src/ballot-chain.js';
 import { toHex, fromHex, taggedHash } from '../../arena-protocol/src/hash.js';
@@ -309,6 +310,16 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
         const me = xOnly(p.proposer);
         if (!census.some((e) => e && xOnly(e.pubkey) === me))
           return { ok: false, status: 422, why: `the proposer holds no active bond in the census at height ${dep.publishedAt} (27A.7.2)` };
+        // THE PRICE OF PROPOSING IS THE CENSUS'S MEDIAN (kanban #2741, #1489 r6-census-2; §27A.7.2 "proposal_deposit_sats is a median"): only the
+        // cap was checked, so a bonded node proposed for 1 sat each. The deposit must reach the bond-weighted median proposal_deposit_sats its
+        // census declares at the publication height (census-median.js; nodes declaring none do not count, none declaring: no floor) - held
+        // to the cap, so the two never ask for more than a deposit may be. A function of the chain, the same answer at every seat.
+        const median = bondWeightedMedian(census, 'proposalDepositSats');
+        if (median !== null) {
+          const cap = BigInt(lowestBondMinSatsFor(net)) / 100n, floor = median < cap ? median : cap;
+          if (BigInt(dep.depositSats) < floor)
+            return { ok: false, status: 422, why: `a deposit of ${dep.depositSats} sat is under the ${floor} sat the census at height ${dep.publishedAt} prices proposing at (its bond-weighted median proposal_deposit_sats, 27A.7.2)` };
+        }
       }
       // checked on a proposal that stands on its face and on the chain: refused by its own fault first, then by the deposit (#1489)
       const other = backedBy(depositHex, id, toHex(p.proposer));
