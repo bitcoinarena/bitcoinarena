@@ -15067,8 +15067,12 @@ async function postHandout(stake, nodes, { fetcher = fetch, needed: asked, grace
   const refused = answers.filter((a) => !a.ok).map((a) => a.why);
   // THE CLOSE ON THE SEATS' CLOCK (kanban #1892): the earliest any seat that took the handout puts it, in this page's Date.now() terms; null from seats
   // that do not say (older builds)
-  const closes = answers.filter((a) => a.ok && Number.isFinite(a.closeAtMs)).map((a) => a.closeAtMs);
-  const seatCloseAtMs = closes.length ? Math.min(...closes) : null;
+  // THE THRESHOLD'S CLOSE, NOT ONE SEAT'S (kanban #2668, #1489 r2-client-1): the earliest of all was taken, so one seat that took the handout and said
+  // x-entry-close-in-ms: -86400000 refused every paid head-to-head lock and set the seats' clock a day ahead for every later tap in the tab. A lock
+  // needs `needed` seats to take it: the close that counts is the one by which `needed` of the seats that said one still take it (the needed-th
+  // latest); with fewer such answers than needed, the earliest, as before
+  const closes = answers.filter((a) => a.ok && Number.isFinite(a.closeAtMs)).map((a) => a.closeAtMs).sort((x, y) => x - y);
+  const seatCloseAtMs = !closes.length ? null : closes.length >= needed ? closes[closes.length - needed] : closes[0];
   if (accepted.length < needed)
     return {
       ok: false, accepted: accepted.length, needed, refused, rest, posted, seatCloseAtMs,
@@ -21121,6 +21125,8 @@ const owedSiteOf = (n) => {
 };
 // `bonded` (kanban #2108, #2123): the node keys (hex) of a census this page checked, or null. Only an answer signed by its node's key
 // (settled-list.js) counts, and with `bonded` only one whose key that census bonds; the allowance is one per node key, not per site.
+// kanban #2653: how far a seat's signed /settled `since` may lie after the page's own clock (clock skew) and still answer its request
+const OWED_SINCE_SKEW_MS = 10 * 60 * 1000;
 async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fetcher = fetch, sinceMs = 0, known = [], knownBySeed = null, bonded = null } = {}) {
   // EVERY SAVED PHRASE AT ONCE (2026-10-07): each signer node's /settled is read once and matched against
   // every phrase's keys - 7 asks on 7 signer nodes, not 7 per phrase. One `seed` (with `known`) is the one-phrase scan as before.
@@ -21174,10 +21180,17 @@ async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fetcher =
     return good ? node : null;
   };
   // AT MOST OWED_SETTLED_MAX ROUNDS FROM ONE NODE KEY, NEWEST FIRST, EACH ID ONCE PER SEAT (kanban #1489, #1832, #1966, #2108)
+  // EVERY SIGNED ANSWER OF A KEY COUNTS, NOT THE FIRST (kanban #2653, bypass of #2108/#2123): the first signed answer of a key won and
+  // the key's answers at later URLs were dropped - so a stranger's URL listed first replayed an honest seat's own signed answer to
+  // `since=<far future>` (an empty list) and the seat's real list, with the round owed to this player, was never read. Now every
+  // valid signed answer of one key is merged (the union of their rounds, still one allowance per key), and an answer whose signed
+  // `since` lies after both the asked one and now (OWED_SINCE_SKEW_MS for clock skew) answers another request and is not read.
+  const sinceLimit = Math.max(since, Date.now()) + OWED_SINCE_SKEW_MS;
   const bySite = new Map();
   lists.forEach((got, n) => {
     const h = signerOf(got);
-    if (!h || bySite.has(h)) return;                         // unsigned, not bonded, or a key already read at another URL
+    if (!h) return;                                          // unsigned or not bonded
+    if (Number(got.since) > sinceLimit) return;              // kanban #2653: a signed `since` after the asked one is not this page's answer
     // the seat's newest entries in one pass, objects only (owedNewest, kanban #1772): no sort of a seat's whole list
     const all = owedNewest(got.rounds, Math.min(OWED_SETTLED_MAX, OWED_LIST_MAX));
     if (!bySite.has(h)) bySite.set(h, []);
@@ -29474,12 +29487,21 @@ async function fetchReserveKey({ federationId, nodes, needed = 5, fetcher = (u, 
         // key that seat's guardian seats agreed on at their threshold - every seat that knows the federation names it. Five must still agree.
         const f = ((await r.json()).federations || []).find((x) => x.federationId === fed && /^0[23][0-9a-f]{64}$/.test(String(x.key || x.reserveKey || '')));
         const k = f ? String(f.key || f.reserveKey) : null;
-        if (k) { said.set(k, (said.get(k) || 0) + 1); if (said.get(k) >= needed) done(); }
+        if (k) said.set(k, (said.get(k) || 0) + 1);
       } catch { /* a node that does not answer names nothing */ }
-    })().finally(() => { left -= 1; if (!left) done(); });
+    })().finally(() => {
+      left -= 1;
+      // NOT THE FIRST KEY TO REACH `needed` (kanban #2652): the nodes are URLs from a lobby link, and five extra paths of one stranger answering
+      // at once made five votes for the stranger's key before the real seats answered. Done early only when no other key - one named already
+      // or one still unheard - can reach `needed` with the answers still out; two keys that both reach it are refused below.
+      const top = [...said.values()].sort((a, b) => b - a);
+      if (!left || ((top[0] || 0) >= needed && (top[1] || 0) + left < needed)) done();
+    });
   });
   const best = [...said.entries()].sort((a, b) => b[1] - a[1])[0];
   if (!best) return { ok: false, why: `none of the round's ${asked.length} signer nodes names a reserve key for federation ${fed.slice(0, 8)}` };
+  const rival = [...said.entries()].find(([k, n]) => k !== best[0] && n >= needed);
+  if (rival) return { ok: false, why: `the round's signer nodes name two reserve keys, ${best[0].slice(0, 16)} and ${rival[0].slice(0, 16)}, each at least ${needed} times - the reserves are not paid to either` };
   if (best[1] < needed) return { ok: false, why: `only ${best[1]} of the round's signer nodes name reserve key ${best[0].slice(0, 16)}, and ${needed} must` };
   return { ok: true, key: fromHex(best[0]), agreeing: best[1], asked: asked.length };
 }
@@ -32796,7 +32818,8 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
  * cannot derive it - and, by the spec's "The client computes the committee itself" (RULED 2026-09-28), when ANY seat's committee
  * answer or seating certificate differs from the client's own computation: "the round is refused, the lobby says which node answered
  * what, and no share is sealed, no stake locked, no entry signed" (measured 2026-10-16 on live testnet4: one seat
- * forging its /committee was named and the join still dealt to the client's seven).
+ * forging its /committee was named and the join still dealt to the client's seven). Kanban #2643: against a certificate the client checked itself, an
+ * unsigned differing answer is named, not refusing, unless at least as many seats differ as agree.
  */
 async function clientSettlementSignerNodes(roundIdHex, contract, nodes, opts = {}) {
   return settlementSignerNodesFrom(await clientCommittee(roundIdHex, contract, nodes, opts));
@@ -32810,7 +32833,22 @@ function settlementSignerNodesFrom(got) {
     if (st && st.missing) throw new Error(`that round has no signer nodes yet: no certificate naming its ${role} signer nodes stands${st.refused.length ? ` (${st.refused[0]})` : ''} - nothing is entered (§5A.7)`);
   }
   const named = [], who = [];
-  for (const s of got.seats || []) if (s.agrees === false) { named.push(`${s.node} ${s.why}`); who.push(s.node); }
+  // AN UNSIGNED ANSWER AGAINST A CHECKED CERTIFICATE IS NAMED, IT DOES NOT CLOSE THE ROUND (kanban #2643, wf1489 r1 census-2): a seat's
+  // /committee list and a seating certificate that does not verify carry no signature - they prove nothing and risk no bond - so where
+  // this client holds a certificate it checked itself (every seated node's signature, score order, threshold), ONE seat answering junk
+  // refused every round for every client. Against such a certificate a differing seat is named (on `refused` and in the console) and the
+  // round stands, unless at least as many seats differ as agree; a role with no checked certificate is refused as before.
+  const certified = (role) => !!(got.seating && got.seating[role] && Array.isArray(got.seating[role].seated));
+  const contra = [];
+  for (const s of got.seats || []) {
+    if (s.agrees !== false) continue;
+    const differ = s.roles ? Object.entries(s.roles).filter(([, x]) => x && x.agrees === false).map(([r]) => r) : ['game', 'settlement'];
+    if (differ.length && differ.every(certified)) contra.push(s); else { named.push(`${s.node} ${s.why}`); who.push(s.node); }
+  }
+  const agreeing = (got.seats || []).filter((s) => s.agrees === true).length;
+  const outvoted = contra.length < agreeing;
+  if (!outvoted) for (const s of contra) { named.push(`${s.node} ${s.why}`); who.push(s.node); }
+  const noted = outvoted ? contra.map((s) => `${s.node} ${s.why} (unsigned, against a checked certificate)`) : [];
   // NOT A LIE, AN UNANSWERED READ (kanban #1036): the client has no certificate to hold the seats against, so nobody is named, the round is not closed, and the next try reads again
   if (who.length && ['game', 'settlement'].some((role) => got.seating && got.seating[role] && got.seating[role].unread)) {
     console.warn(`[arena] #1036 seating unread: ${named.join('; ')}`);
@@ -32818,8 +32856,9 @@ function settlementSignerNodesFrom(got) {
   }
   for (const role of ['game', 'settlement']) {
     const st = got.seating && got.seating[role];
-    for (const why of (st && Array.isArray(st.refused) ? st.refused : [])) named.push(`a ${role} seating certificate that does not match this client's draw - ${why}`);
+    for (const why of (st && Array.isArray(st.refused) ? st.refused : [])) (certified(role) ? noted : named).push(`a ${role} seating certificate that does not match this client's draw - ${why}`);
   }
+  if (noted.length) console.warn(`[arena] #2643 named, the checked certificate stands: ${noted.join('; ')}`);
   if (named.length) {
     // ONE LINE ON THE SCREEN (kanban #1036, the owner's phone: nine seats with two lists of seven ids each filled it and could not be read): who, in a few words; the rest on
     // the error's `detail` and in the console, as "the lobby says which node answered what" asks
@@ -32831,7 +32870,7 @@ function settlementSignerNodesFrom(got) {
     throw e;
   }
   return { signerNodes: got.committees.settlement, agreed: (got.seats || []).filter((s) => s.agrees).length,
-    refused: (got.censusRefused || []).map((x) => `${x.node}: ${x.why}`), derived: got };
+    refused: [...(got.censusRefused || []).map((x) => `${x.node}: ${x.why}`), ...noted], derived: got };
 }
 
 /**
@@ -38446,7 +38485,7 @@ function outcomeFinality(held, { windowMs, nowMs }) {
  * MAY AN ATTESTATION COME IN YET (§0A.7a slice 2): only once the round's entries have closed on the seat's clock, and only
  * for an outcome seen after that close - an outcome known while a pick could still be made is a pick to be copied.
  */
-function attestationTimely(a, { entryCloseMs, nowMs, terms = null, window = null }) {
+function attestationTimely(a, { entryCloseMs, nowMs, terms = null, window = null, event = false }) {
   // A MARKET ON A GRID IS OBSERVED AT ITS OWN WINDOW'S END (kanban #1489): its attestors sign observed_at = the window's end
   // (marketWindowOf), so an outcome observed at any other moment is the outcome of another window - one a seat listing the
   // round with a shifted close could pick after watching the price. `window` is marketWindowOf(contract, manifest).window.
@@ -38458,6 +38497,14 @@ function attestationTimely(a, { entryCloseMs, nowMs, terms = null, window = null
     const t = marketTimes({ entryCloseMs, terms });
     if (BigInt(a.observedAtMs) < t.resolveAtMs)
       return { ok: false, why: `that attestation says it was observed at ${new Date(Number(a.observedAtMs)).toISOString()}, before the market's resolution time ${new Date(Number(t.resolveAtMs)).toISOString()}` };
+    // AND NOT AFTER IT EITHER (kanban #2649): the market asks for the outcome AT its resolution time, and its attestors sign
+    // observed_at = that time (attestor.js, drawn-attestor.js: the window's end = entry close + resolveAfterCloseMs). An outcome
+    // observed later is the outcome of another window - whoever steers when the attestors sign could pick among ~10 min of them.
+    // The same check holds for value attestations (scalar.js reads them here too).
+    // A TEMPLATE'S EVENT (feature 5, `event`) is a real-world fact its attestors report once it happened, observed after its resolution
+    // time (market-template.test.js): that one keeps the lower bound only
+    if (!event && BigInt(a.observedAtMs) !== t.resolveAtMs)
+      return { ok: false, why: `that attestation says it was observed at ${new Date(Number(a.observedAtMs)).toISOString()}, after the market's resolution time ${new Date(Number(t.resolveAtMs)).toISOString()}: it is the outcome of another moment than the one the market asked for` };
     // AND NOT AFTER ITS DEADLINE (kanban #1151): at the deadline a market with no outcome is VOID and its stakes go back at
     // once; an attestation withheld until then and handed in late would turn it ATTESTED over locks already returned
     if (BigInt(nowMs) >= t.deadlineMs)
@@ -40556,6 +40603,11 @@ const h2hFromHex = (h) => Uint8Array.from(String(h).match(/../g) || [], (x) => p
  * void }. A certificate counts only if it stands against `committee` (hex keys, the round's seats the page dealt its stake to) under
  * `verify` (BIP-340); without a committee, only one at least two seats serve with the same entries (one seat on a one-seat list).
  */
+// THE CERTIFICATE'S THRESHOLD AS THE SEATS COUNT IT (arena-node lock-set-book.js #threshold): the committee table, else a majority of the
+// committee - a round seated by 6 (a 7-slot round with one seat gone) has no row in receiptsNeeded, and every reveal of such a protocol-28
+// table threw "no committee threshold for 6 slots" in the page, the house bot and tn4-rps-paid.mjs (kanban #2658, measured 2026-11-14 21:47Z)
+const lockSetThreshold = (n) => { try { return receiptsNeeded(n); } catch { return Math.floor(n / 2) + 1; } };
+
 async function lockSetOfSeats({ roundIdHex, nodes, committee = null, verify = null, entryCloseMs, fetcher = fetch, timeoutMs = H2H_SEAT_MS }) {
   const said = await Promise.all(nodes.map(async (node) => {
     try {
@@ -40574,7 +40626,7 @@ async function lockSetOfSeats({ roundIdHex, nodes, committee = null, verify = nu
   for (const x of answered) {
     if (!x.certificate || !/^[0-9a-f]+$/.test(String(x.certificate))) continue;
     if (committee && committee.length && typeof verify === 'function') {
-      const st = lockSetCertificateStands(h2hFromHex(x.certificate), { roundId: h2hFromHex(roundIdHex), committee, threshold: receiptsNeeded(committee.length),
+      const st = lockSetCertificateStands(h2hFromHex(x.certificate), { roundId: h2hFromHex(roundIdHex), committee, threshold: lockSetThreshold(committee.length),
         entryCloseMs: BigInt(entryCloseMs), verify });
       if (st.ok) { certified = { entries: st.entries, atMs: st.atMs }; break; }
     } else if (Array.isArray(x.entries)) {
@@ -41466,7 +41518,9 @@ function zapReceiptTemplate({ request, description, invoice, preimage = null, pa
  * comment, event, address, paidAtS }` - what a board counts - or why not. A preimage, when there is one, must hash to the
  * invoice's payment hash.
  */
-function zapReceiptStands(receipt, { nostrPubkey, lnurl = null, verify } = {}) {
+// `recipient` (kanban #2692, #1489 r3-nostr-3): the player whose zaps are counted - a receipt for another recipient (a relay answering BOB's
+// query with ALICE's genuine receipts from the same Lightning-address server) does not stand for this one
+function zapReceiptStands(receipt, { nostrPubkey, lnurl = null, verify, recipient = null } = {}) {
   if (!receipt || receipt.kind !== ZAP_RECEIPT_KIND) return { ok: false, why: `a zap receipt is a kind ${ZAP_RECEIPT_KIND} event` };
   if (nostrPubkey && receipt.pubkey !== nostrPubkey)
     return { ok: false, why: `the receipt is signed by ${String(receipt.pubkey).slice(0, 16)}, not the recipient's server ${String(nostrPubkey).slice(0, 16)}` };
@@ -41479,6 +41533,7 @@ function zapReceiptStands(receipt, { nostrPubkey, lnurl = null, verify } = {}) {
   if (!stands.ok) return { ok: false, why: stands.why };
   if (stands.amountMsat === null) return { ok: false, why: 'the zap request names no amount, so the receipt cannot be counted' };
   if (zapTagValue(receipt, 'p') !== stands.recipient) return { ok: false, why: 'the receipt is for another recipient than its request' };
+  if (recipient && String(stands.recipient).toLowerCase() !== String(recipient).toLowerCase()) return { ok: false, why: 'the receipt is for another recipient than the one counted' };
   const paid = zapInvoiceStands({ invoice: zapTagValue(receipt, 'bolt11'), amountMsat: stands.amountMsat, description });
   if (!paid.ok) return { ok: false, why: paid.why };
   if (lnurl) {
@@ -41657,7 +41712,8 @@ async function zapsReceived(recipient, { relays = [], nostrPubkey = null, lnurl 
   const reads = await Promise.all(relays.map((r) => relayRead(r, { kinds: [ZAP_RECEIPT_KIND], '#p': [recipient], limit: 500 }, { curve, timeoutMs, WebSocketImpl })));
   const byId = new Map();
   for (const e of reads.flat()) byId.set(e.id, e);
-  return zapTotals([...byId.values()], { nostrPubkey, lnurl, verify: (sig, msg, key) => curve.verify(sig, msg, key) });
+  // kanban #2692: only receipts for THIS recipient count - a relay may answer the #p query with anyone's receipts
+  return zapTotals([...byId.values()], { nostrPubkey, lnurl, recipient, verify: (sig, msg, key) => curve.verify(sig, msg, key) });
 }
 
 /** "21 sat" / "1,000 sat": a zap's amount as the page shows it. */

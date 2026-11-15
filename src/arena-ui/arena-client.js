@@ -41518,7 +41518,9 @@ function zapReceiptTemplate({ request, description, invoice, preimage = null, pa
  * comment, event, address, paidAtS }` - what a board counts - or why not. A preimage, when there is one, must hash to the
  * invoice's payment hash.
  */
-function zapReceiptStands(receipt, { nostrPubkey, lnurl = null, verify } = {}) {
+// `recipient` (kanban #2692, #1489 r3-nostr-3): the player whose zaps are counted - a receipt for another recipient (a relay answering BOB's
+// query with ALICE's genuine receipts from the same Lightning-address server) does not stand for this one
+function zapReceiptStands(receipt, { nostrPubkey, lnurl = null, verify, recipient = null } = {}) {
   if (!receipt || receipt.kind !== ZAP_RECEIPT_KIND) return { ok: false, why: `a zap receipt is a kind ${ZAP_RECEIPT_KIND} event` };
   if (nostrPubkey && receipt.pubkey !== nostrPubkey)
     return { ok: false, why: `the receipt is signed by ${String(receipt.pubkey).slice(0, 16)}, not the recipient's server ${String(nostrPubkey).slice(0, 16)}` };
@@ -41531,6 +41533,7 @@ function zapReceiptStands(receipt, { nostrPubkey, lnurl = null, verify } = {}) {
   if (!stands.ok) return { ok: false, why: stands.why };
   if (stands.amountMsat === null) return { ok: false, why: 'the zap request names no amount, so the receipt cannot be counted' };
   if (zapTagValue(receipt, 'p') !== stands.recipient) return { ok: false, why: 'the receipt is for another recipient than its request' };
+  if (recipient && String(stands.recipient).toLowerCase() !== String(recipient).toLowerCase()) return { ok: false, why: 'the receipt is for another recipient than the one counted' };
   const paid = zapInvoiceStands({ invoice: zapTagValue(receipt, 'bolt11'), amountMsat: stands.amountMsat, description });
   if (!paid.ok) return { ok: false, why: paid.why };
   if (lnurl) {
@@ -41709,7 +41712,8 @@ async function zapsReceived(recipient, { relays = [], nostrPubkey = null, lnurl 
   const reads = await Promise.all(relays.map((r) => relayRead(r, { kinds: [ZAP_RECEIPT_KIND], '#p': [recipient], limit: 500 }, { curve, timeoutMs, WebSocketImpl })));
   const byId = new Map();
   for (const e of reads.flat()) byId.set(e.id, e);
-  return zapTotals([...byId.values()], { nostrPubkey, lnurl, verify: (sig, msg, key) => curve.verify(sig, msg, key) });
+  // kanban #2692: only receipts for THIS recipient count - a relay may answer the #p query with anyone's receipts
+  return zapTotals([...byId.values()], { nostrPubkey, lnurl, recipient, verify: (sig, msg, key) => curve.verify(sig, msg, key) });
 }
 
 /** "21 sat" / "1,000 sat": a zap's amount as the page shows it. */

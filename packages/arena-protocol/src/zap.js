@@ -148,7 +148,9 @@ export function zapReceiptTemplate({ request, description, invoice, preimage = n
  * comment, event, address, paidAtS }` - what a board counts - or why not. A preimage, when there is one, must hash to the
  * invoice's payment hash.
  */
-export function zapReceiptStands(receipt, { nostrPubkey, lnurl = null, verify } = {}) {
+// `recipient` (kanban #2692, #1489 r3-nostr-3): the player whose zaps are counted - a receipt for another recipient (a relay answering BOB's
+// query with ALICE's genuine receipts from the same Lightning-address server) does not stand for this one
+export function zapReceiptStands(receipt, { nostrPubkey, lnurl = null, verify, recipient = null } = {}) {
   if (!receipt || receipt.kind !== ZAP_RECEIPT_KIND) return { ok: false, why: `a zap receipt is a kind ${ZAP_RECEIPT_KIND} event` };
   if (nostrPubkey && receipt.pubkey !== nostrPubkey)
     return { ok: false, why: `the receipt is signed by ${String(receipt.pubkey).slice(0, 16)}, not the recipient's server ${String(nostrPubkey).slice(0, 16)}` };
@@ -161,6 +163,7 @@ export function zapReceiptStands(receipt, { nostrPubkey, lnurl = null, verify } 
   if (!stands.ok) return { ok: false, why: stands.why };
   if (stands.amountMsat === null) return { ok: false, why: 'the zap request names no amount, so the receipt cannot be counted' };
   if (zapTagValue(receipt, 'p') !== stands.recipient) return { ok: false, why: 'the receipt is for another recipient than its request' };
+  if (recipient && String(stands.recipient).toLowerCase() !== String(recipient).toLowerCase()) return { ok: false, why: 'the receipt is for another recipient than the one counted' };
   const paid = zapInvoiceStands({ invoice: zapTagValue(receipt, 'bolt11'), amountMsat: stands.amountMsat, description });
   if (!paid.ok) return { ok: false, why: paid.why };
   if (lnurl) {
