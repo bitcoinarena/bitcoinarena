@@ -1603,6 +1603,23 @@ export class Round {
    * made the next verifier's problem out of its own.
    */
   handOver(roundIdBytes, entryIdBytes) {
+    // BUILT ONCE PER CHAIN, NOT PER ASK (kanban #2743, #1489 r6-play-12): GET /transcript is public, and a run cut into one-tick batches
+    // (10,800 rows) cost a whole decode, check, encode and hash per request - 132 ms of the seat's thread each, 40 asks 2.8 s. The answer is
+    // kept per entry with the chain's length and its head batch's id (the batches are hash-chained, so the head's id names the whole
+    // chain); a chain that grew or was taken back and written again is built again.
+    const key = `${toHex(roundIdBytes)}:${toHex(entryIdBytes)}`;
+    const head = this.db.prepare('SELECT batch_id FROM batches WHERE round_id = ? AND entry_id = ? ORDER BY seq DESC LIMIT 1').get(roundIdBytes, entryIdBytes);
+    const now = { n: this.db.prepare('SELECT COUNT(*) AS n FROM batches WHERE round_id = ? AND entry_id = ?').get(roundIdBytes, entryIdBytes).n, last: head ? toHex(new Uint8Array(head.batch_id)) : '' };
+    if (!this.handedOver) this.handedOver = new Map();
+    const kept = this.handedOver.get(key);
+    if (kept && kept.n === now.n && kept.last === now.last) return kept.out;
+    const out = this.#handOverBuilt(roundIdBytes, entryIdBytes);
+    this.handedOver.delete(key); this.handedOver.set(key, { n: now.n, last: now.last, out });
+    if (this.handedOver.size > 256) this.handedOver.delete(this.handedOver.keys().next().value);
+    return out;
+  }
+
+  #handOverBuilt(roundIdBytes, entryIdBytes) {
     const rows = this.db.prepare(
       'SELECT bytes FROM batches WHERE round_id = ? AND entry_id = ? ORDER BY seq')
       .all(roundIdBytes, entryIdBytes);
