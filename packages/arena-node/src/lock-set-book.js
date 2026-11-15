@@ -40,7 +40,21 @@ export const LOCK_SET_RETURN_AFTER_MS = 2000 + LOCK_SET_PEER_MS;
  * signature or certificate is taken while none is held, and VOID is said only from then (before it the set is pending): VOID is never taken back.
  */
 export const LOCK_SET_FINAL_AFTER_MS = 2000;
-const lsVerify = (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } };
+// A SIGNATURE CHECKED ONCE (kanban #2864, the owner 2026-11-15: "fuer den User muss alles snappy sein"): a steady seat's profile had lsVerify at ~9 %
+// of the seat (~20 % of its busy time) - every pull, push and certificate checks the same few signatures again. The answer for (sig, msg, key)
+// is kept; true and false alike (the same bytes give the same answer), at most LS_VERIFIED_MOST entries, the oldest dropped first.
+const LS_VERIFIED_MOST = 20000;
+const lsVerified = new Map();
+const lsHex = (b) => Buffer.from(b).toString('hex');
+const lsVerify = (sig, msg, key) => {
+  let k;
+  try { k = lsHex(sig) + lsHex(msg) + lsHex(key); } catch { return false; }
+  const had = lsVerified.get(k); if (had !== undefined) return had;
+  let ok; try { ok = schnorr.verify(sig, msg, key); } catch { ok = false; }
+  lsVerified.set(k, ok); if (lsVerified.size > LS_VERIFIED_MOST) lsVerified.delete(lsVerified.keys().next().value);
+  return ok;
+};
+export const lsVerifyForTest = lsVerify;   // kanban #2864
 
 export class LockSetBook {
   /**
