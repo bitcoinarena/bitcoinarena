@@ -55,7 +55,7 @@ test('#2623 link codes: one use, 24 hours, one key per account; reads stored wit
   assert.equal(s.flagsOf(K(1), { nowMs: t0 + 20 }).telegram, false, 'a failed read is no bonus');
 });
 
-test('#2623 the pot: 100,000 sat a season, an approval past it waits; the node bounty only for the first 3 nodes of a season', () => {
+test('#2623 #2787 the pot: 100,000 sat a season, past it no bounty; the node bounty only for the first 3 nodes of a season', () => {
   const s = openBountySeason(':memory:', { startMs: 0 });
   const now = 10;
   let n = 0;
@@ -65,15 +65,15 @@ test('#2623 the pot: 100,000 sat a season, an approval past it waits; the node b
   for (let i = 0; i < 7; i++) { const r = rep(++n, K(3)); const p = s.plan(r, { level: 'critical', nowMs: now }); assert.equal(p.fits, true); s.commit(r, p, { nowMs: now }); }
   assert.equal(s.pot(2).usedSats, 87500);
   const big = rep(++n, K(3)); const pb = s.plan(big, { level: 'critical', nowMs: now }); s.commit(big, pb, { nowMs: now });
+  // past the pot: no bounty, nothing waits for the next season (kanban #2787, the owner 2026-11-15: "wenn der Pot voll ist, ist er voll")
   const over = rep(++n, K(4)); const po = s.plan(over, { level: 'low', nowMs: now });
-  assert.equal(po.waits, true, 'the pot is empty: the report waits');
-  s.wait(over, po, { nowMs: now });
-  assert.equal(s.pot(2).waiting.n, 1); assert.equal(s.approval(over.id).state, 'waiting');
+  assert.equal(po.waits, false); assert.equal(po.noBounty, true, 'the pot is used up: no bounty');
+  assert.equal(s.pot(2).waiting.n, 0);
   s.record(K(4), 'x', { member: true, nowMs: SEASON_MS + 4 });   // a fresh read in the next season
-  const next = s.plan(over, { level: 'low', nowMs: SEASON_MS + 5 });
-  assert.equal(next.season, 3); assert.equal(next.fits, true, 'the next season takes it');
-  s.commit(over, next, { nowMs: SEASON_MS + 5 });
-  assert.equal(s.approval(over.id).state, 'approved'); assert.equal(s.pot(3).usedSats, 1250);
+  const fresh = rep(++n, K(4)); const next = s.plan(fresh, { level: 'low', nowMs: SEASON_MS + 5 });
+  assert.equal(next.season, 3); assert.equal(next.fits, true, 'the next season has its own pot');
+  s.commit(fresh, next, { nowMs: SEASON_MS + 5 });
+  assert.equal(s.approval(fresh.id).state, 'approved'); assert.equal(s.pot(3).usedSats, 1250);
   for (let i = 0; i < 3; i++) { const r = rep(++n, K(5 + i)); const p = s.plan(r, { level: 'node', nowMs: SEASON_MS + 6 }); assert.equal(p.sats, 10000); s.commit(r, p, { nowMs: SEASON_MS + 6 }); }
   const fourth = s.plan(rep(++n, K(9)), { level: 'node', nowMs: SEASON_MS + 7 });
   assert.equal(fourth.ok, false); assert.match(fourth.why, /first 3 nodes/);
