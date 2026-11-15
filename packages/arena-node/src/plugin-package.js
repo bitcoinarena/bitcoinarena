@@ -114,7 +114,7 @@ export async function registrationFromPackage(at, pkg, { title = null, within = 
   const w = packageWindow(pkg.ancestors);
   return { name: manifest.gameName, title: typeof title === 'string' && title ? title.slice(0, 80) : manifest.gameName, manifest, gameId: gameIdOf(manifest), cores, info: pkg.info || null,
     ancestors: w.window.map((h) => decodeManifest(fromHex(h))), ancestorCut: typeof w.cut === 'string' ? w.cut : null,
-    donationSet: pkg.donationSet.map((r) => ({ recipientPk: fromHex(r.recipientPk), shareBps: r.shareBps, label: r.label })),
+    donationSet: pkg.donationSet.map((r) => ({ recipientPk: fromHex(r.recipientPk), shareBps: r.shareBps, label: String(r.label || '') })),
     clientUrls: (pkg.clients || []).map((k) => pathToFileURL(join(at, `client-${k.hash}.html`)).href) };
 }
 
