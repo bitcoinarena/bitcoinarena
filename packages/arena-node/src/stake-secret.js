@@ -44,6 +44,12 @@ import { marketStateOf, attestedTable } from './game-market.js';
 import { isScalar } from '../../arena-protocol/src/manifest.js';
 import { pluginForRound } from './plugins.js';
 import { askPeers } from './peer-ask.js';
+import { textUpTo, binaryUpTo } from './peer-read.js';
+// EVERY PEER ANSWER HERE IS READ UP TO A BOUND (kanban #2728, #1489 r5-gossip-2): a sealed share, a commitment or a share is ~100 bytes and a
+// refusal one line, but they were read whole (arrayBuffer / text), bounded only in time - one seat answered GET /share with 64 MiB and every
+// honest seat opening a stake buffered it, per open. Now PEER_SMALL_BYTES each, the stream cancelled past it (over it is a refusal).
+const PEER_SMALL_BYTES = 64 * 1024;
+const whyUpTo = async (r) => (r.body === undefined && typeof r.text === 'function' ? r.text() : textUpTo(r, PEER_SMALL_BYTES));
 
 /** signer node u16, the answering node's one-time key, and the share sealed to the asker. */
 // HOW LONG ONE SEAT IS WAITED FOR ITS SHARE (kanban #1061). The peers are asked in turn, so two hung seats cost twice this, inside the POST bound of whoever is waiting for this seat.
@@ -346,7 +352,7 @@ export class StakeSecrets {
           + `&signer node=${toHex(this.round.pubkey)}${proven ? '&proof=1' : ''}`;
         const [asked] = await askPeers([peer], async (_, signal) => {
           const got = await this.fetch(url, { signal });
-          return got.ok ? { raw: new Uint8Array(await got.arrayBuffer()) } : { refusal: await got.text() };
+          return got.ok ? { raw: new Uint8Array(await binaryUpTo(got, PEER_SMALL_BYTES)) } : { refusal: await whyUpTo(got) };
         }, { boundMs: this.shareAskMs });
         if (asked.error) throw asked.error;
         if (!asked.value.raw) { refused++; why.push(`${peer}: ${asked.value.refusal}`); continue; }
