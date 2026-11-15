@@ -120,7 +120,10 @@ if (S2) { try { const a = await import('../src/bounty-armada.js'); const v = a.a
     const r = await v({ userId: pk }); return { userId: pk, username: a.bech32Encode('npub', Buffer.from(pk, 'hex')).slice(0, 20) + '…', member: r.member, why: r.why }; }; } } catch (e) { console.log(`${new Date().toISOString()} armada check off: ${String(e.message).slice(0, 80)}`); } }
 // the user account reader is the Telegram check first (the owner 2026-11-14); a read it cannot make falls back to the bot's getChatMember by id
 if (S2_USERBOT) { const bot = S2_VERIFY.telegram;
-  S2_VERIFY.telegram = async (l) => { const u = l.username ? await S2_USERBOT(l.username).catch(() => null) : null;
+  S2_VERIFY.telegram = async (l) => { let u = l.username ? await S2_USERBOT(l.username).catch(() => null) : null;
+    // THE ACCOUNT FOUND MUST BE THE LINKED ONE (kanban #2665, #1489 r2-faucet-2): the list is searched by the link's stored name, and an account
+    // with no @username whose first name is a real member's name was counted as that member - the found account's id is held against the link's
+    if (u && u.member === true && u.userId !== undefined && u.userId !== null && String(u.userId) !== String(l.userId)) u = { member: null, why: 'the member list names another account by that name' };
     if (u && (u.member === true || (u.member === false && !bot))) return { member: u.member, why: u.why };
     // a name not in the list may have changed: the stable id decides
     return bot ? bot(l) : { member: u ? u.member : null, why: u ? u.why : 'no reader' }; }; }
