@@ -602,7 +602,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     if (!v.ok) {
       badPresents.add(toHex(bytes));
       if (badPresents.size > BAD_PRESENTS_KEPT) badPresents.delete(badPresents.values().next().value);
-      return v;
+      return { ...v, refusedVerify: true };
     }
     const { roundId, role, nodePubkey } = v.present;
     if (leftNode(toHex(nodePubkey))) return { ok: false, why: 'that node\'s owner took it out of the seating (emergency departure, §23A.5a)' };
@@ -1539,13 +1539,22 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     }
   }
 
+  const BAD_VERIFIES_PER_BATCH = 8;
   /** THE BATCH DOORS' SIDE. POST /presents: the PRESENTs of one body, each taken as POST /present takes it. */
   function takePresents(bytes) {
     if (!bytes.length || bytes.length % PRESENT_BYTES !== 0) return { ok: false, why: `a batch of PRESENTs is a whole number of ${PRESENT_BYTES}-byte PRESENTs` };
     // AT MOST AS MANY AS POST /presence takes (kanban #1271): a batch is a round's seating, never more than a few hundred
     if (bytes.length / PRESENT_BYTES > MAX_PRESENTS_PER_BATCH) return { ok: false, status: 413, why: `a batch holds at most ${MAX_PRESENTS_PER_BATCH} PRESENTs` };
-    let taken = 0; const refused = []; const once = new Set();   // one PRESENT per (round, role, node) in one body (kanban #1565)
-    for (let i = 0; i < bytes.length; i += PRESENT_BYTES) { const r = takePresent(bytes.subarray(i, i + PRESENT_BYTES), { once }); if (r.ok) taken++; else refused.push(r.why); }
+    let taken = 0, failed = 0; const refused = []; const once = new Set();   // one PRESENT per (round, role, node) in one body (kanban #1565)
+    for (let i = 0; i < bytes.length; i += PRESENT_BYTES) {
+      const r = takePresent(bytes.subarray(i, i + PRESENT_BYTES), { once });
+      if (r.ok) taken++; else refused.push(r.why);
+      // A BODY OF JUNK SIGNATURES STOPS EARLY (kanban #2699, #1489 r4-census-2): before a round's seating window nothing is held, so 4,096
+      // distinct PRESENTs with random signatures passed every pre-check and cost 4,096 BIP-340 verifies (2.7 s of the event loop) per stranger's
+      // POST. An honest batch is a seat's own signed PRESENTs: after BAD_VERIFIES_PER_BATCH that do not verify, the rest is not read.
+      if (r.refusedVerify && ++failed >= BAD_VERIFIES_PER_BATCH)
+        return { ok: false, status: 422, taken, why: `${failed} PRESENTs of that batch do not verify: the rest of it is not read`, refused: refused.slice(0, 8) };
+    }
     return { ok: true, taken, refused: refused.slice(0, 8) };
   }
   /** GET /seating-batch: for each named round, the PRESENTs held, this node's seating signatures and the certificates. */
