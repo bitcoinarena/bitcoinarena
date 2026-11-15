@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// KANBAN #2787 (the owner 2026-11-15): from Season 3 on, once a season's pot is used up there is no bounty at all - nothing carries over to the next
-// season; Season 2 keeps its rule (past its pot a report waits for Season 3). The faucet answers noBounty and never records such a report as waiting.
+// KANBAN #2787 (the owner 2026-11-15: "wenn der Pot voll ist, ist er voll"): once a season's pot is used up there is no bounty at all - nothing carries
+// over to the next season, Season 2 included. The faucet answers noBounty and never records such a report as waiting.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -10,14 +10,15 @@ import { openBountySeason, SEASON_MS, NO_CARRY_FROM_SEASON } from '../src/bounty
 const K = (n) => String(n).repeat(64).slice(0, 64);
 const rep = (n, pubkey = K(1)) => ({ id: String(n).padStart(64, '0'), pubkey });
 
-test('#2787 Season 2 past its pot: waits; Season 3 past its pot: no bounty, not waiting', () => {
-  assert.equal(NO_CARRY_FROM_SEASON, 3);
+test('#2787 past a season\'s pot (Season 2 and later): no bounty, not waiting', () => {
+  assert.equal(NO_CARRY_FROM_SEASON, 2);
   const s = openBountySeason(':memory:', { startMs: 0, potSats: 3000 });
   let n = 0;
-  // Season 2: 25 % without a human proof, so a critical is 2,500; the second one does not fit and waits (Season 2's rule)
+  // Season 2: 25 % without a human proof, so a critical is 2,500; the second one does not fit: no bounty, not waiting
   const a = rep(++n); const pa = s.plan(a, { level: 'critical', nowMs: 10 }); assert.equal(pa.fits, true); s.commit(a, pa, { nowMs: 10 });
   const b = rep(++n); const pb = s.plan(b, { level: 'critical', nowMs: 11 });
-  assert.equal(pb.season, 2); assert.equal(pb.waits, true); assert.equal(pb.noBounty, undefined);
+  assert.equal(pb.season, 2); assert.equal(pb.waits, false); assert.equal(pb.noBounty, true);
+  assert.match(pb.why, /^Season 2's pot is used up \(500 sat left, this report is 2500\): no bounty$/);
   // Season 3: past the pot no bounty, no waiting
   const t3 = SEASON_MS + 10;
   const c = rep(++n); const pc = s.plan(c, { level: 'critical', nowMs: t3 }); assert.equal(pc.season, 3); assert.equal(pc.fits, true); s.commit(c, pc, { nowMs: t3 });

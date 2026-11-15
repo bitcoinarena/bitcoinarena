@@ -136,7 +136,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     <section class="card" id="budget"><h3>Season pot</h3>
       <div class="pot"><b id="pot-used">&hellip;</b> <span>/ 100,000 sats</span></div>
       <div class="bar"><i id="pot-bar"></i></div>
-      <p class="note">100,000 sats a season for reports, bonuses and nodes. A season runs one week. In Season 2, when the pot is empty, new reports wait for Season 3. <b>From Season 3 on, once a season's pot is used up there is no bounty</b>: reports sent then are not paid, and nothing carries over to the next season.</p>
+      <p class="note">100,000 sats a season for reports, bonuses and nodes. A season runs one week. When the pot is used up, there are no more bounties that season - nothing carries over to the next one.</p>
     </section>
     <section class="card" id="draw"><h3>Season draw: 50,000 for the top 5</h3>
       <ol class="podium"><li><b>1</b>20,000</li><li><b>2</b>12,000</li><li><b>3</b>8,000</li><li><b>4</b>6,000</li><li><b>5</b>4,000</li></ol>
@@ -152,7 +152,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       <li id="node-bounty">Run a node for a day: 10,000 sats, the first 3 nodes a season.</li>
       <li id="no-game-results">Winning a round is never paid. Test sats have no value.</li>
       <li>Draw: one confirmed report this season and a member of Telegram, Discord or Armada; one entry per person. Seed: the first Bitcoin block after Season 2 ends (2026-11-21 07:12 UTC). <a href="draw.mjs">draw.mjs</a></li>
-      <li id="no-carry">The pot is 100,000 sats a season (a season runs one week). Season 2: when it is empty, reports wait for Season 3. From Season 3 on: when a season's pot is used up there is no bounty, and nothing carries over to the next season.</li>
+      <li id="no-carry">The pot is 100,000 sats a season (a season runs one week). When it is used up, there are no more bounties that season - nothing carries over to the next one.</li>
       <li>We check every report and decide its level. Our decision is final.</li>
     </ul>
   </details>
