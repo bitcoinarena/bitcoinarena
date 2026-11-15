@@ -39,6 +39,8 @@ import { answersUpTo, binaryUpTo, textUpTo } from './peer-read.js';
 // answersUpTo (PEER_ANSWER_BYTES, 8 MiB: a send plan, a kept settlement), and the FROST answers - one encoded commitment, one share - and
 // a refusal's text are read up to PEER_FROST_BYTES.
 export const PEER_FROST_BYTES = 64 * 1024;
+/** kanban #2737: how long a settlement summary that did not rebuild is not rebuilt again for a reader */
+const SUMMARY_MISS_MS = 10 * 60000;
 // a refusal's text, up to the bound (a stand-in answer with no body stream, a test's, is read as it offers itself)
 const whyUpTo = async (r) => (r.body === undefined && typeof r.text === 'function' ? r.text() : textUpTo(r, PEER_FROST_BYTES));
 import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
@@ -241,6 +243,7 @@ export class LockSettlement {
     this.fetcher = answersUpTo(fetcher);
     this.built = new Map();          // round id hex -> the settlement this signer node rebuilt
     this.summaries = new Map();      // round id hex -> what its settlement moved, rebuilt after a restart
+    this.summaryMisses = new Map();  // round id hex -> when its rebuild last did not match its kept moves (kanban #2737)
     this.byPlan = new Map();         // round id hex -> { fp, built }: the last build and the plan it was built for
     this.planCertificates = new Map(); // round id hex [:late entry hex] -> { planId, certificate } the seats signed
     this.planRetries = new Map();    // round id hex -> how often a peer refused the send plan
@@ -1268,10 +1271,17 @@ export class LockSettlement {
     if (now) return now;
     const moves = this.round.lockSettlementMoves(roundIdBytes);
     if (!moves) return null;
+    // A REBUILD THAT DID NOT MATCH IS NOT TRIED AGAIN ON EVERY READ (kanban #2737, #1489 r6-settle-2): GET /settled and /lock-settlement are
+    // public, and a round whose plan does not rebuild to its kept moves (ACCEPTED on another asker's txid, a game version no longer hosted,
+    // any refusal of planOf) was rebuilt whole on every read - up to 500 plans per stranger's GET. Its miss is kept SUMMARY_MISS_MS.
+    const key = toHex(roundIdBytes), missed = this.summaryMisses.get(key);
+    if (missed !== undefined && Date.now() - missed < SUMMARY_MISS_MS) return null;
+    const miss = () => { this.summaryMisses.delete(key); this.summaryMisses.set(key, Date.now()); if (this.summaryMisses.size > 4096) this.summaryMisses.delete(this.summaryMisses.keys().next().value); return null; };
     let got;
-    try { got = await this.planOf(roundIdBytes, { withSends: true }); } catch { return null; }
-    if (!got || !got.ok) return null;
-    if (got.plan.claims.length !== moves.claims.length || got.plan.payouts.length !== moves.payouts) return null;
+    try { got = await this.planOf(roundIdBytes, { withSends: true }); } catch { return miss(); }
+    if (!got || !got.ok) return miss();
+    if (got.plan.claims.length !== moves.claims.length || got.plan.payouts.length !== moves.payouts) return miss();
+    this.summaryMisses.delete(key);
     const s = planSummary(moves.txid, got.plan);
     this.summaries.set(toHex(roundIdBytes), s);
     if (this.summaries.size > 4096) this.summaries.delete(this.summaries.keys().next().value);
