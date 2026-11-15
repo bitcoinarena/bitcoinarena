@@ -18,7 +18,7 @@
 // again from a new block. Each move is a compare-and-set on the state it leaves, and is written to the store BEFORE this
 // seat's memory takes it: a write that fails leaves the proposal where it was.
 import { bondWeightedMedian } from '../../arena-protocol/src/census-median.js';
-import { decodeConfigProposalBody, proposalId, proposalStands, isRepeal, SCHEDULES, REPEAL_SCHEDULES } from '../../arena-protocol/src/ballot.js';
+import { decodeConfigProposalBody, proposalId, proposalStands, isRepeal, SCHEDULES, REPEAL_SCHEDULES, encodeConfigProposalBody, configHashOf, proposalBodyId } from '../../arena-protocol/src/ballot.js';
 import { depositOf } from '../../arena-protocol/src/ballot-chain.js';
 import { toHex, fromHex, taggedHash } from '../../arena-protocol/src/hash.js';
 
@@ -60,7 +60,7 @@ export const stateOf = (r) => (r && S[r.state] ? r.state : r && r.orphaned ? S.O
 
 export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsFor, verify, store, schedule = SCHEDULES.mainnet, scheduleFor = null,
   repealSchedule = REPEAL_SCHEDULES.mainnet, repealScheduleFor = null, historyFor = null, censusAt = null, tipHeight = null, blockHashAt = null, bindHeightFor = null,
-  seenSigner = null, keyHeightFor = null }) {
+  seenSigner = null, keyHeightFor = null, blockHeightOf = null }) {
   let tipOf = typeof tipHeight === 'function' ? tipHeight : null;
   /** BOUND: deposited at or above its network's BALLOT_BIND_HEIGHT (kanban #2125); below it, or with no gate given, the old reading. */
   const isBound = (net, height) => {
@@ -239,6 +239,23 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
       if (was && (stateOf(was) !== S.ORPHANED || was.blockHash === String(blockHash).toLowerCase())) return { ok: true, status: 200, ...was, already: true };
       const net = toHex(p.networkId);
       const depositHex = toHex(p.depositTxid);
+      // ITS FACE AND ITS PROPOSER BEFORE THE CHAIN IS READ (kanban #2670, #1489 r2-census-3): confirmedTx loads the whole block the deposit is
+      // named in (getrawtransaction with a block hash), and it ran before the signature and the proposer's bond were checked - 50 junk-signed
+      // proposals naming a large block were 50 block reads, and in parallel they filled bitcoind's work queue for the tally, census and
+      // settlement. Now what needs no chain is checked first (proposalStands' face: its encoding, config_hash = H(config), the proposer's
+      // signature), then the proposer's bond in the census at the named block's height (its header - the publication height, as below);
+      // only then is the block read.
+      { try { encodeConfigProposalBody(p); } catch (e) { return { ok: false, status: 422, why: e.message }; }
+        if (toHex(p.configHash) !== toHex(configHashOf(p.config))) return { ok: false, status: 422, why: 'config_hash is not the hash of the config the proposal carries (27A.7.1)' };
+        if (typeof verify !== 'function' || !verify(p.signature, proposalBodyId(p), p.proposer)) return { ok: false, status: 422, why: 'the proposal is not signed by the node it names as proposer' };
+        if (typeof blockHeightOf === 'function' && typeof censusAt === 'function') {
+          let h = null; try { h = await blockHeightOf(String(blockHash).toLowerCase()); } catch { h = null; }
+          if (Number.isInteger(h) && h >= 0) {
+            let census = null; try { census = await censusAt(net, h); } catch { census = null; }
+            if (Array.isArray(census) && !census.some((e) => e && xOnly(e.pubkey) === xOnly(p.proposer)))
+              return { ok: false, status: 422, why: `the proposer holds no active bond in the census at height ${h} (27A.7.2)` };
+          }
+        } }
       const tx = await confirmedTx(toHex(Uint8Array.from(p.depositTxid).reverse()), String(blockHash).toLowerCase());
       if (!tx) return { ok: false, status: 422, why: 'that block of this seat\'s chain does not hold the deposit the proposal names' };
       // the network's donation set IN FORCE AT THE DEPOSIT'S HEIGHT (27A.4): the set the deposit had to pay

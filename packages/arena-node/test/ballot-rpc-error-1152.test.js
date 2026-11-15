@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { createBallotTally } from '../src/ballot-tally.js';
 import { createProposals } from '../src/proposals.js';
-import { encodeConfigProposalBody, proposalBodyId, proposalId, encodeVote, voteMessage, CLASS, CHOICE } from '../../arena-protocol/src/ballot.js';
+import { encodeConfigProposalBody, proposalBodyId, proposalId, encodeVote, voteMessage, configHashOf, CLASS, CHOICE } from '../../arena-protocol/src/ballot.js';
 import { BALLOT_GENESIS } from '../../arena-protocol/src/ballot-chain.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 
@@ -132,7 +132,8 @@ test('#1152 a real reorg under the publication ORPHANS a passed proposal (bytes 
 });
 
 test('#1152 the peer pull: a seat that never heard of a proposal takes it from a peer\'s GET /proposals, checked by add as if posted', async () => {
-  const k = kept({ publishedAt: 300 });
+  // kanban #2670: a proposal true on its face (config_hash = H(config), signed) - add() checks that before it reads the chain
+  const k = kept({ publishedAt: 300, configHash: configHashOf(Uint8Array.of(2)) });
   const BLOCK = 'ab'.repeat(32);
   const asked = [];
   // add() needs the deposit in the named block of THIS seat's chain; the fake answers only for BLOCK
