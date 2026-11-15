@@ -208,9 +208,15 @@ export function badgesEarned({ game, rounds, nowMs } = {}, catalogue = BADGES) {
       for (const e of r.entries) if (e && !asIdentity([e], lower(e.player))) bare.add(lower(e.player));
     }
     const scope = `${name}@${new Date(week.fromMs).toISOString().slice(0, 10)}`;
-    for (const row of s.rows) {
-      if (row.rank > b.top || bare.has(row.player)) continue;
-      awards.push({ index, d: b.d, player: row.player, game: name, scope, evidence: { window: { fromMs: week.fromMs, toMs: week.toMs }, rank: row.rank } });
+    // A TIE IS ONE PLACE (kanban #2703, #1489 r4-settle-1): season() breaks a tie on net, wins and best score by the raw identity key, which a
+    // player mints - a key ground to start 0x0000 took the top-3 badge on every tie at the line, every week. Rows tied on those three share the
+    // place of the first of them (as leaderboardWinners splits a tie): a tied group that starts at or above the line is awarded whole.
+    const same = (x, y) => x.netMsat === y.netMsat && x.wins === y.wins && x.bestScore === y.bestScore;
+    let place = 0;
+    for (const [i, row] of s.rows.entries()) {
+      if (i === 0 || !same(row, s.rows[i - 1])) place = row.rank;
+      if (place > b.top || bare.has(row.player)) continue;
+      awards.push({ index, d: b.d, player: row.player, game: name, scope, evidence: { window: { fromMs: week.fromMs, toMs: week.toMs }, rank: place } });
     }
   }
 
