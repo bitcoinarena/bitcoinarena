@@ -272,7 +272,7 @@
       "name": "ahead",
       "in": "query",
       "required": false,
-      "description": "Only rounds starting within this many ms, or hours with an h suffix (e.g. 72h).",
+      "description": "Only rounds starting within this many ms, or hours with an h suffix (e.g. 72h). At most 120h.",
       "schema": {
        "type": "string"
       },
@@ -282,7 +282,7 @@
       "name": "next",
       "in": "query",
       "required": false,
-      "description": "At most this many upcoming rounds per series.",
+      "description": "At most this many upcoming rounds per series. At most 64.",
       "schema": {
        "type": "integer"
       },
@@ -9837,7 +9837,7 @@
       "name": "ahead",
       "in": "query",
       "required": false,
-      "description": "Only rounds starting within this many ms, or hours with an h suffix (e.g. 72h).",
+      "description": "Only rounds starting within this many ms, or hours with an h suffix (e.g. 72h). At most 120h.",
       "schema": {
        "type": "string"
       },
@@ -9847,7 +9847,7 @@
       "name": "next",
       "in": "query",
       "required": false,
-      "description": "At most this many upcoming rounds per series. With neither next nor ahead the node lists the next 8 of each series (kanban #742).",
+      "description": "At most this many upcoming rounds per series. With neither next nor ahead the node lists the next 8 of each series (kanban #742). At most 64.",
       "schema": {
        "type": "integer"
       },
