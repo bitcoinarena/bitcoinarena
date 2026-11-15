@@ -102,6 +102,13 @@ const spansOf = (history) => (history || []).map((h, i) => ({ ...h, until: i + 1
  *
  * `history`: liveConfig's, computed over every passed proposal (with no height cut), so a config that is not live YET is
  * refused for the rounds created before its activation too.
+ *
+ * `siblings` (kanban #2747, #1489 r7-census-b1): the configs installed with the round's core (core.configs' keys, hex), when the
+ * seat knows the core. A core may be installed with a config the ballot never named beside one it did - the truck core plays
+ * 2170f250 (the genesis) and the older v3 f51759b6. Such a sibling is governed too from the first activation after the ballot's
+ * first config of this core: a round created at or after that height names the config live then, as every governed
+ * round does, so a round creator cannot step around a passed proposal by naming the core's other config. Before that
+ * activation (and while no proposal has passed) the sibling is served exactly as before.
  */
 /** WHERE THE LIST OF MARKET SOURCES STARTS (kanban #921): a chain of its own, so a list never becomes a game's config. */
 export const SOURCES_GENESIS = Object.freeze((() => { const config = encodeSourceList(SOURCE_ENTRIES); return { configHash: configHashOf(config), config }; })());
@@ -110,12 +117,22 @@ const sourcesLiveAt = ({ passed = [], height }) => { const l = liveConfig({ gene
 export const hostsLiveAt = (o) => decodeHostList(sourcesLiveAt(o));
 export const entriesLiveAt = (o) => decodeSourceList(sourcesLiveAt(o));
 
-export function configServesRound({ configHash, height, history }) {
+export function configServesRound({ configHash, height, history, siblings = null }) {
   if (!(configHash instanceof Uint8Array) || configHash.length !== 32) return { ok: false, governed: false, why: 'that round names no 32-byte config' };
   const want = toHex(configHash);
   const spans = spansOf(history);
   const mine = spans.filter((s) => toHex(s.configHash) === want);
-  if (!mine.length) return { ok: true, governed: false };
+  if (!mine.length) {
+    const sib = siblings ? new Set([...siblings].map(String)) : null;
+    const first = sib ? spans.findIndex((s) => sib.has(toHex(s.configHash))) : -1;
+    const cut = first >= 0 ? spans[first + 1] : undefined;   // the first activation after this core's first governed config
+    if (!cut || !(height >= cut.since)) return { ok: true, governed: false };
+    const live = spans.find((s) => s.since <= height && height < s.until);
+    return { ok: false, governed: true, live: live ? live.configHash : null,
+      why: `that round, created at census height ${height}, names config ${want.slice(0, 16)} on a core the ballot governs: its first activation `
+        + `after this core's config was at ${cut.since}, and the config live at ${height} is ${live ? toHex(live.configHash).slice(0, 16) : '(none)'} - `
+        + 'a round created after an activation names the config live then (27A.7.5)' };
+  }
   if (mine.some((s) => s.since <= height && height < s.until)) return { ok: true, governed: true };
   const live = spans.find((s) => s.since <= height && height < s.until);
   const when = mine.map((s) => (s.until === Infinity ? `from ${s.since}` : `${s.since} to ${s.until - 1}`)).join(', ');
@@ -129,8 +146,8 @@ export function configServesRound({ configHash, height, history }) {
  * ballot never named stays the creator's choice), else the config the ballot made live at that height - so a round created
  * after an activation names the new hash, and nobody types it.
  */
-export function configForNewRound({ wanted, height, history }) {
-  const got = configServesRound({ configHash: wanted, height, history });
+export function configForNewRound({ wanted, height, history, siblings = null }) {
+  const got = configServesRound({ configHash: wanted, height, history, siblings });
   if (got.ok) return wanted;
   return got.live || wanted;
 }
