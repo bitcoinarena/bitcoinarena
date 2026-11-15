@@ -28,7 +28,7 @@ import { readFileSync, writeFileSync, appendFileSync, renameSync } from 'node:fs
 import { execFile } from 'node:child_process';
 import { nodeBountyCheck } from '../src/node-bounty-check.js';
 import { seatPublicFetch } from '../src/public-fetch.js';
-import { openBountySeason, cleanOpenIssues, seasonEndMs, NO_CARRY_FROM_SEASON, LEVEL_SATS } from '../src/bounty-season.js';
+import { openBountySeason, cleanOpenIssues, seasonEndMs, NO_CARRY_FROM_SEASON, LEVEL_SATS, BOT_PCT } from '../src/bounty-season.js';
 import { verifiersFromEnv } from '../src/bounty-verify.js';
 import { readJsonBounded } from '../src/lnurl-read.js';   // kanban #2517
 import { openFeedbackStore, networkPlayers, imageKind, SHOT_MOST, SHOT_UNCLAIMED_MS, REWARD_LEVELS, NODE_BOUNTY_BASE_SATS, lnAddressWorks, lnAddressUrl, lnAddressInvoice, reportAddress } from '../src/feedback-store.js';
@@ -908,7 +908,7 @@ createServer((req, res) => {
   if (S2 && path === '/feedback/season' && req.method === 'GET') { const p = S2.pot(S2.seasonNow(Date.now()));
     // usedUp (kanban #2787): from Season 3 on, a pot that cannot take even the smallest payout (a useful note at 25 %) means no bounty this season
     return send(200, { season: p.season, potSats: p.potSats, usedSats: p.usedSats, leftSats: p.leftSats, nodes: p.nodes, nodesMost: p.nodesMost,
-      usedUp: p.season >= NO_CARRY_FROM_SEASON && p.leftSats < Math.floor(LEVEL_SATS.useful / 4), nextSeasonMs: seasonEndMs(p.season, S2_START_MS),
+      usedUp: p.season >= NO_CARRY_FROM_SEASON && p.leftSats < Math.floor((LEVEL_SATS.useful * BOT_PCT) / 100), nextSeasonMs: seasonEndMs(p.season, S2_START_MS),
       // kanban #2789: this season's reports still waiting for review (a number only), for the stage pot banner from 98 %
       pendingNew: FEEDBACK.countNew(seasonEndMs(p.season - 1, S2_START_MS) ?? 0) }); }
   if (S2 && (path === '/feedback/link' || path === '/feedback/verify')) {

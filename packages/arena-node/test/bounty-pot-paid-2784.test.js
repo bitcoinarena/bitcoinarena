@@ -25,13 +25,13 @@ test('#2784 the pot: paid amounts plus the current rule, not the stored 50 % app
   for (const lv of paidRows) { const r = rep(++n); s.commit(r, old(lv), { nowMs: 10 }); paid.set(r.id, OLD_HALF[lv] / 2); }
   for (const lv of unpaid) s.commit(rep(++n), old(lv), { nowMs: 10 });
   const p = s.pot(2);
-  assert.equal(p.usedSats, 5875, 'paid 4,875 + payable 1,000');
-  assert.equal(p.leftSats, 94125);
+  assert.equal(p.usedSats, 5475, 'paid 4,875 (at 25 %) + payable 600 (15 %, the owner 2026-11-15)');
+  assert.equal(p.leftSats, 94525);
   // without the payment record the current rule alone gives the same here, and a full approval still counts in full
   const s2 = openBountySeason(':memory:', { startMs: 0 });
   s2.commit(rep(1), old('high'), { nowMs: 10 });
   s2.commit(rep(2), { season: 2, level: 'high', codeOnly: false, followUp: false, baseSats: 5000, bonusPct: 20, sats: 6000, flags: { x: true } }, { nowMs: 10 });
-  assert.equal(s2.pot(2).usedSats, 1250 + 6000);
+  assert.equal(s2.pot(2).usedSats, 750 + 6000);
 });
 
 test('#2784 the report store says what was paid, and the faucet hands it to the pot', async () => {

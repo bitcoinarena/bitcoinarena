@@ -38,6 +38,8 @@ export function bonusPct(flags = {}) {
 // (Telegram, Discord or Armada membership, or follows on X); else - a code-only report, or a player with no verified account (a bot) - 25 %.
 // kanban #2788 (the owner 2026-11-15: "Um human zu beweisen benoetigen wir einen Twitter [account]"): only a verified X account proves a human now;
 // Telegram, Discord and Armada stay a bonus.
+// WHAT A BOT GETS (kanban #2784, the owner 2026-11-15: "Setze die Bot-Bounties nur auf 15 % jetzt"): was 25 %
+export const BOT_PCT = 15;
 export const HUMAN_FLAGS = Object.freeze(['x']);
 export function seasonPayout({ level, codeOnly = false, followUp = false, flags = {}, played = true } = {}) {
   const lv = String(level || '').toLowerCase();
@@ -46,7 +48,7 @@ export function seasonPayout({ level, codeOnly = false, followUp = false, flags 
   let base = followUp ? FOLLOW_UP_SATS : LEVEL_SATS[lv];
   const human = HUMAN_FLAGS.some((k) => !!(flags && flags[k]));
   const full = !codeOnly && !!played && human;
-  if (!full) base = Math.floor(base / 4);   // 25 % (kanban #2784)
+  if (!full) base = Math.floor((base * BOT_PCT) / 100);   // a bot's share (kanban #2784: 25 %, the owner 2026-11-15 later: 15 %)
   const pct = bonusPct(flags);
   // `codeOnly` on the answer (and the approval's code_only) says "paid at 25 %": a payable() read again then never rises to the full level
   return { ok: true, level: lv, baseSats: base, bonusPct: pct, sats: Math.floor(base * (100 + pct) / 100), codeOnly: !full, followUp: !!followUp,
