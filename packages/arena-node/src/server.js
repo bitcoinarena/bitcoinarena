@@ -5864,7 +5864,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           if (stakeF && !round.stakeLock(eid)) { const g = await takeStakeLock(eid, stakeF); if (!g.ok) { why = `its stake lock: ${g.why}`; if (ownFault(g, stakeF)) mine = why; } }
           if (feeF && round.feeLock && !round.feeLock(eid)) { const g = await takeFeeLock(eid, feeF); if (!g.ok) { why = `its fee lock: ${g.why}`; if (ownFault(g, feeF)) mine = why; } }
         } catch (e) { why = e.message; mine = why; }
-        if (!why) break;
+        // DONE ONLY ONCE THIS SEAT HOLDS ITS LOCKS (kanban #2667, #1489 r2-gossip-1): one peer answering {} (200, no stake, no fee) left `why` null and
+        // ended the loop, so the honest peers' locks were never read and the entry passed this seat's door unlocked (VOID 0 here, DELIVERED at the
+        // threshold, no settlement plan). An answer that leaves a lock missing moves on to the next peer
+        if (!why && round.stakeLock(eid) && (!round.feeLock || round.feeLock(eid) || !answers.some((a) => a && a.fee))) break;
       }
       if (!why && vouchedMs !== null && round.keepLockTimes) round.keepLockTimes(eid, vouchedMs);   // kanban #1783: seated as the seats that took it in time seat it
       // A LOCK NO THRESHOLD OF SEATS CLAIMS IS NO REASON TO WAIT (kanban #1823, audit #1489 r6-h2h-3): the last failing answer was the wait, so for an entry
