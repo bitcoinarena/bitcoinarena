@@ -677,6 +677,25 @@ export function playerBalance({ entry, best, won, settled, nobodyWon, minScore }
   return { result: 'lost', netMsat: String(-BigInt(entry.stakeMsat)) };
 }
 
+/** kanban #2783: the most rounds of one series one GET /rounds names, and the furthest its `ahead` reaches (120 h). */
+export const LISTING_NEXT_MAX = 64;
+export const LISTING_AHEAD_MAX_MS = 120n * 3600000n;
+/**
+ * WHAT A GET /rounds LISTS (kanban #2783, feedback #082: next=10000 or ahead=8760h held a seat over 30 s - every kept row is signed and its
+ * committees asked): `aheadMs` (null: no `ahead`) at most LISTING_AHEAD_MAX_MS - the 72 h a series is held, with room - and `perSeries` (null:
+ * every round) at most LISTING_NEXT_MAX. A bare listing keeps `bareNext` a series (#742). Larger values read as the bound, malformed ones as not
+ * given (a huge or malformed `ahead` threw before). The full listing - `all=1`, or `ahead` alone - stays what it was: every held round, its rows
+ * signed once a window and shared by every ask in that window, built in slices so the seat keeps answering (rounds-listing-yields).
+ */
+export function listingBounds(params, bareNext = 8) {
+  const aheadRaw = params.get('ahead'), nextRaw = params.get('next');
+  const asked = aheadRaw === null ? null : /^\d{1,15}h$/.test(aheadRaw) ? BigInt(aheadRaw.slice(0, -1)) * 3600000n : /^\d{1,18}$/.test(aheadRaw) ? BigInt(aheadRaw) : null;
+  const aheadMs = asked === null ? null : asked > LISTING_AHEAD_MAX_MS ? LISTING_AHEAD_MAX_MS : asked;
+  const bare = nextRaw === null && aheadRaw === null && params.get('all') !== '1';
+  const perSeries = bare ? bareNext : nextRaw !== null && /^\d+$/.test(nextRaw) ? Math.min(LISTING_NEXT_MAX, Number(nextRaw.slice(0, 6))) : null;
+  return { aheadMs, perSeries };
+}
+
 export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FUNDED, seatingOn = null, h2hHandoutLeadMs = 0,
   // THE NEWEST RELEASE'S READER (release-latest.js), for a test; none given, the Arena site's, checked with the installer's release key
   latestRelease: givenLatestRelease = null,
@@ -9139,8 +9158,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // end as ISO-8601 UTC and its committees as the census and the beacon draw them (Roster.committeeFor, the
     // same sortition a client recomputes), or `drawn: false` and why. `ahead` (ms, or e.g. `72h`) narrows it to
     // the rounds starting that soon; unnamed, nothing is left out. A lobby filters by its own clock.
+    // NEXT AND AHEAD ARE BOUNDED (kanban #2783, feedback #082): listingBounds.
     const aheadRaw = url.searchParams.get('ahead');
-    const aheadMs = aheadRaw === null ? null : /^\d+h$/.test(aheadRaw) ? BigInt(aheadRaw.slice(0, -1)) * 3600000n : BigInt(aheadRaw);
+    const { aheadMs, perSeries } = listingBounds(url.searchParams, LISTING_BARE_NEXT);
     const iso = (ms) => new Date(Number(ms)).toISOString();
     // `next` (a count): AT MOST THAT MANY UPCOMING ROUNDS OF EACH SERIES, the soonest (2026-09-30, measured on testnet4:
     // with series 8172fffd written beside 3cfbe516, GET /rounds listed 1155 rounds, 970 KB, in 63 s - every row signed and
@@ -9150,8 +9170,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // A BARE GET /rounds LISTS THE NEXT 8 OF EACH SERIES (kanban #742, 2026-10-29 ~20:40Z "Fix rounds endpoint": at grid density -
     // the RPS grids' 10,800 rounds a day, 72 h of them held - a listing with neither `next` nor `ahead` signed every row and did not answer
     // in 90 s on any test host seat, while `next=1&ahead=50h` answered in 3-6 s). `all=1` asks for everything, as before.
-    const bare = nextRaw === null && aheadRaw === null && url.searchParams.get('all') !== '1';
-    const perSeries = bare ? LISTING_BARE_NEXT : nextRaw !== null && /^\d+$/.test(nextRaw) ? Number(nextRaw) : null;
+    // (the bounds and the bare listing's 8: listingBounds, kanban #2783)
     const candidates = [];
     // ONE DECODED CONTRACT PER ROUND FOR THE SWEEPS AND THIS LISTING ALIKE (NODE-OPT-1648): a decoded contract is ~7 KB
     // of heap, ~20 MB for the ~2,950 rounds a testnet4 seat holds, and this listing kept a second copy of each. The

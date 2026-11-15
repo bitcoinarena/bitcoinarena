@@ -2692,7 +2692,7 @@
  {
   "method": "GET",
   "path": "/rounds",
-  "params": "query ahead (ms or Nh, optional), next (per-series count, optional; 8 when neither is given), all (1: every announced round)",
+  "params": "query ahead (ms or Nh, optional), next (per-series count, optional; 8 when neither is given), all (1: every announced round) Bounds (kanban #2783): `next` at most 64 a series, `ahead` at most 120h (a larger value is read as the bound, a malformed one as not given).",
   "auth": "none",
   "returns": "200 JSON {node, nowMs, rounds:[{id, phase, entryOpen, game, event? {question, outcomes, resolveAtMs}, outcome, startTime, endTime, committee, stakeMsat, free (development rounds only), wallet, joined, playing, watching, names, needed, signerNodes, sig, ...}], games}",
   "purpose": "Lobby listing of announced rounds this node holds, each row signed by the node.",
@@ -2704,14 +2704,14 @@
     "name": "ahead",
     "required": false,
     "type": "string",
-    "description": "Only rounds starting within this many ms, or hours with an h suffix (e.g. 72h).",
+    "description": "Only rounds starting within this many ms, or hours with an h suffix (e.g. 72h). At most 120h.",
     "example": "72h"
    },
    {
     "name": "next",
     "required": false,
     "type": "integer",
-    "description": "At most this many upcoming rounds per series. With neither next nor ahead the node lists the next 8 of each series (kanban #742).",
+    "description": "At most this many upcoming rounds per series. With neither next nor ahead the node lists the next 8 of each series (kanban #742). At most 64.",
     "example": 8
    },
    {
@@ -2743,7 +2743,7 @@
  {
   "method": "GET",
   "path": "/api/rounds",
-  "params": "query ahead, next (as /rounds)",
+  "params": "query ahead, next (as /rounds) Bounds (kanban #2783): `next` at most 64 a series, `ahead` at most 120h (a larger value is read as the bound, a malformed one as not given).",
   "auth": "none",
   "returns": "200 JSON {node, nowMs, upcoming[] (rows as /rounds, with event for a template round), finished[] (up to 200), games}",
   "purpose": "Upcoming and finished rounds of hosted games, with times, committee, game and outcome.",
@@ -2755,14 +2755,14 @@
     "name": "ahead",
     "required": false,
     "type": "string",
-    "description": "Only rounds starting within this many ms, or hours with an h suffix (e.g. 72h).",
+    "description": "Only rounds starting within this many ms, or hours with an h suffix (e.g. 72h). At most 120h.",
     "example": "72h"
    },
    {
     "name": "next",
     "required": false,
     "type": "integer",
-    "description": "At most this many upcoming rounds per series.",
+    "description": "At most this many upcoming rounds per series. At most 64.",
     "example": 8
    }
   ],
