@@ -30,7 +30,10 @@ export const DEPTH_MODULE = 'arena:depth';
 const RESERVED = '__arena$';
 
 const IMPORT = `import{e as ${RESERVED}e,x as ${RESERVED}x,c as ${RESERVED}c}from'${DEPTH_MODULE}';`;
-const ENTER = `${RESERVED}e();try{`, LEAVE = `}finally{${RESERVED}x();}`;
+// kanban #2731 (#1489 r5-hosting-4): what leaves a core function by a throw asks the count too - an overflow raised in a builtin the
+// function called (String() of a deep array) and taken by a promise's rejection handler passed no catch clause and was never made sticky;
+// it now turns sticky as it leaves the first function of the core's it passes through, before any handler can read it
+const ENTER = `${RESERVED}e();try{`, LEAVE = `}catch(${RESERVED}u){${RESERVED}c(${RESERVED}u);throw ${RESERVED}u;}finally{${RESERVED}x();}`;
 
 /** The core file `text` with its depth counted; throws when it cannot be read or names what the count uses. */
 export function instrumentCore(text, rel = 'core') {
