@@ -28,6 +28,12 @@ import { lightningAddressEndpoint, payRequestStands, callbackFor, invoiceAnswers
 import { sendableInvoiceMsat, lowestLiveGateway, sendPlanStands, proposedExpiration } from '../../arena-protocol/src/winnings-send.js';
 import { signShare340, aggregate340, nonceGenerate340 } from '../../arena-protocol/src/frost-bip340.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
+import { textUpTo, binaryUpTo } from './peer-read.js';
+// EVERY PEER ANSWER HERE IS READ UP TO A BOUND (kanban #2728, #1489 r5-gossip-2): a sealed share, a commitment or a share is ~100 bytes and a
+// refusal one line, but they were read whole (arrayBuffer / text), bounded only in time - one seat answered GET /share with 64 MiB and every
+// honest seat opening a stake buffered it, per open. Now PEER_SMALL_BYTES each, the stream cancelled past it (over it is a refusal).
+const PEER_SMALL_BYTES = 64 * 1024;
+const whyUpTo = async (r) => (r.body === undefined && typeof r.text === 'function' ? r.text() : textUpTo(r, PEER_SMALL_BYTES));
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { encodeCommitments, decodeCommitments, decodeShare, commitmentListRefusal, decodePeerCommitment, peerCommitmentRefusal, leftOffLast, committedIds } from './pool-wire.js';
 import { largestPayoutMsat, lnv2FeeMsat } from '../../arena-protocol/src/lock-settlement.js';
@@ -539,7 +545,7 @@ export class WinningsSend {
     const headers = sendPlanAskHeaders(this.round, { kind: PLAN_ASK.RESEND, roundId: roundIdBytes, lateEntryId: this.round.lateEntryId || null, body });
     const asked = await askPeers(this.peersFor(roundIdBytes), async (base, signal) => {
       const r = await this.fetcher(`${base}/resend-sends?round=${toHex(roundIdBytes)}${this.scopeParam}`, { method: 'POST', body, headers, signal });
-      return r.ok ? null : (await r.text()).trim();
+      return r.ok ? null : String(await whyUpTo(r)).trim();
     }, { boundMs: this.peerAskMs });
     return asked.filter((x) => !('value' in x) || x.value !== null).map((x) => `${x.peer}: ${'value' in x ? x.value : x.error.message}`);
   }
@@ -744,7 +750,7 @@ export class WinningsSend {
       }
       const asked = await askPeers(this.peersFor(roundIdBytes), async (base, signal) => {
         const r = await this.fetcher(`${base}/send-commit?${cq}`, { method: 'POST', headers, signal });
-        return r.ok ? { commitment: decodePeerCommitment(new Uint8Array(await r.arrayBuffer())) } : null;   // its nonces are points, or it is refused (kanban #2331, #2345)
+        return r.ok ? { commitment: decodePeerCommitment(new Uint8Array(await binaryUpTo(r, PEER_SMALL_BYTES))) } : null;   // its nonces are points, or it is refused (kanban #2331, #2345)
       }, { boundMs: this.peerAskMs, graceMs: this.peerGraceMs, enough: built.needed - 1, counts: (x) => !!(x && x.commitment) });
       const signers = [{ base: null, commitment: own.commitment }];
       // A COMMITMENT UNDER ANOTHER SIGNER'S ID IS NOT LISTED (kanban #2402, #2471, as settlement.js #peerCommitments); one under an id a peer holds is
@@ -883,8 +889,8 @@ export class WinningsSend {
     const peers = signers.filter((x) => x.base !== null);
     const asked = await askPeers(peers.map((x) => x.base), async (base, signal) => {
       const r = await this.fetcher(`${base}/send-share?${q}`, { method: 'POST', body, headers, signal });
-      if (!r.ok) return { status: r.status, why: (await r.text()).trim() };
-      return { share: decodeShare(new Uint8Array(await r.arrayBuffer())) };
+      if (!r.ok) return { status: r.status, why: String(await whyUpTo(r)).trim() };
+      return { share: decodeShare(new Uint8Array(await binaryUpTo(r, PEER_SMALL_BYTES))) };
     }, { boundMs: this.peerAskMs });
     // A PAIR SPENT ON ANOTHER LIST (kanban #2011, the forfeit's #1699): `poisoned`, and the seat refusing is not at fault
     const failed = sharesRefused(asked, `${kind} share`);
