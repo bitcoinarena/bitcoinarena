@@ -15810,6 +15810,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // why no picture could be delivered however well it could be produced.
   const watching = new Map();
   let shed = 0;
+  // WATCHERS OF ONE ENTRY ARE BOUNDED (kanban #2796, audit #1489 r20-play-1): `watch` names a public entry id and proves
+  // nothing, and every socket that said it was added - measured, 200 stranger sockets watching as one entry cost an honest
+  // 6-tick batch 200 picture sets on this thread. A socket that has published a batch this seat took for that entry (signed
+  // by its session key) has shown it is the player, and holds one of WATCH_OWNER_SOCKETS (a reconnect may overlap the old
+  // socket); anybody else holds one of WATCH_STRANGER_SOCKETS and the next is refused by name. A refused watch is kept on its
+  // socket and taken as the owner's the moment that socket publishes for the entry, so strangers holding the slots first
+  // cannot keep the player from its pictures.
+  const WATCH_OWNER_SOCKETS = 4;
+  const WATCH_STRANGER_SOCKETS = 2;
+  const watchersOf = (entryHex, except) => {
+    let owner = 0, stranger = 0;
+    for (const [s, w] of watching) {
+      if (s === except || s.readyState !== s.OPEN || hexOf(w.entryId) !== entryHex) continue;
+      if (w.owner) owner++; else stranger++;
+    }
+    return { owner, stranger };
+  };
 
   /**
    * What one subscriber has not been shown yet, marked as shown.
@@ -15817,9 +15834,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
    * ALREADY SEEN AT THAT TICK IS NOT NEWS: a subscriber gets a picture when
    * there is a new one, not once per batch anybody publishes.
    */
-  const freshFor = (who, { mark = true } = {}) => {
+  const freshFor = (who, { mark = true, frames = null } = {}) => {
     const out = [];
-    for (const frame of ghosts.setFor(who.roundId, who.entryId)) {
+    for (const frame of frames || ghosts.setFor(who.roundId, who.entryId)) {
       const at = `${hexOf(frame.entryId)}:${frame.tick}`;
       if (who.shown.get(hexOf(frame.entryId)) === at) continue;
       // MARKING IS THE SENDER'S JOB, not the asking's. A subscriber too far
@@ -15846,6 +15863,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
    */
   const showRound = (roundIdBytes) => {
     let sent = 0;
+    // ONE PICTURE SET PER VIEWER ENTRY PER PUSH (kanban #2796): sockets watching as the same entry are shown the same set,
+    // so it is made once and shared rather than once per socket.
+    const sets = new Map();
+    const setOf = (who) => {
+      const k = hexOf(who.entryId);
+      if (!sets.has(k)) sets.set(k, ghosts.setFor(who.roundId, who.entryId));
+      return sets.get(k);
+    };
     for (const [sock, who] of watching) {
       if (hexOf(who.roundId) !== hexOf(roundIdBytes)) continue;
       if (sock.readyState !== sock.OPEN) continue;
@@ -15858,10 +15883,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // player who fell behind while somebody else was driving, and that
         // somebody then stopped, never saw them at all until they moved
         // again.
-        shed += freshFor(who, { mark: false }).length;
+        shed += freshFor(who, { mark: false, frames: setOf(who) }).length;
         continue;
       }
-      for (const frame of freshFor(who)) { sock.send(frame.bytes); sent++; }
+      for (const frame of freshFor(who, { frames: setOf(who) })) { sock.send(frame.bytes); sent++; }
     }
     return sent;
   };
@@ -15918,6 +15943,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
   wss.on('connection', (sock) => {
     sock.on('close', () => watching.delete(sock));
+    // the entries this socket has published a taken batch for, and a watch refused for want of a slot (kanban #2796)
+    const ownerOf = new Set();
+    let parked = null;
     // A FRAME OVER THE CAP IS AN ERROR EVENT, not a message, and an
     // unhandled one takes the process down - measured: sending
     // MAX_FRAME_BYTES + 1 threw `RangeError: Max payload size exceeded` out
@@ -15954,11 +15982,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             const already = watching.get(sock);
             if (already && hexOf(already.entryId) !== hexOf(entryId))
               return sock.send('error this connection is already watching as another entry');
+            const owner = ownerOf.has(hexOf(entryId));
+            if (!already) {
+              const n = watchersOf(hexOf(entryId), sock);
+              if (owner ? n.owner >= WATCH_OWNER_SOCKETS : n.stranger >= WATCH_STRANGER_SOCKETS) {
+                parked = { roundId: new Uint8Array(roundId), entryId: new Uint8Array(entryId) };
+                return sock.send(`error too many watchers of that entry: ${owner ? WATCH_OWNER_SOCKETS : WATCH_STRANGER_SOCKETS} already (the entry's own socket is taken once it publishes)`);
+              }
+            }
 
             const who = {
               roundId: new Uint8Array(roundId),
               entryId: new Uint8Array(entryId),
               shown: (already && already.shown) || new Map(),
+              owner: owner || Boolean(already && already.owner),
             };
             watching.set(sock, who);
 
@@ -16097,6 +16134,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (took > 0) {
           try {
             const landed = splitSignedBatch(bytes).batch;
+            // THIS SOCKET IS THE ENTRY'S OWN (kanban #2796): its batch was signed by the entry's session key and taken
+            const ek = hexOf(landed.entryId);
+            ownerOf.add(ek);
+            const mine = watching.get(sock);
+            if (mine && !mine.owner && hexOf(mine.entryId) === ek && watchersOf(ek, sock).owner < WATCH_OWNER_SOCKETS) mine.owner = true;
+            if (!mine && parked && hexOf(parked.entryId) === ek && watchersOf(ek, sock).owner < WATCH_OWNER_SOCKETS) {
+              watching.set(sock, { roundId: parked.roundId, entryId: parked.entryId, shown: new Map(), owner: true });
+              parked = null;
+            }
             showSoon(landed.roundId, landed.entryId);
           } catch (e) { console.error(`[ghosts] ${e.message}`); }
         }
