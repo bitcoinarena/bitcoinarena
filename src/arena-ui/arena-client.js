@@ -12434,6 +12434,22 @@ const KNOWN_GOOD_GAMES = Object.freeze({
     periodMs: '900000',
     requiredProtocolVersion: 2,
   }),
+  // UP/DOWN VERSION 25 (kanban #2836, feedback #084): version 24 in every term, with a client that quotes a market buy at the book's best
+  // ask and promises no payout without one
+  'b928c7702f287261fadedc5e2dd5bea8180e423a62caf331a29391f8f353d01b': Object.freeze({
+    name: 'btc-updown-15m',
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze([]),
+      threshold: 0, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']), attestDraw: Object.freeze({ count: 7, threshold: 5 }) }),
+    fee: Object.freeze({ nodeBps: 40, donationBps: 60 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+    periodMs: '900000',
+    requiredProtocolVersion: 2,
+  }),
   'bb29d4291673b4bd019216bc8da4d749ef3996e6184aa5d1f68a4feea3b0ed8c': Object.freeze({
     name: 'nextblock',
     cores: Object.freeze({
