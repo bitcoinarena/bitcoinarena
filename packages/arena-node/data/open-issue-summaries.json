@@ -586,5 +586,157 @@
  "2778": {
   "text": "Other: the build label beside the wallet is unexplained, so new players read it as an error",
   "kind": "bug"
+ },
+ "2791": {
+  "text": "Other: a plugin trial can accept a spinning decide adapter",
+  "kind": "bug"
+ },
+ "2792": {
+  "text": "Committees and bonds: a proposal read rebuilds the census on every request",
+  "kind": "bug"
+ },
+ "2793": {
+  "text": "Node software: a bandwidth probe reads a peer answer with no size limit",
+  "kind": "bug"
+ },
+ "2794": {
+  "text": "Other: a fee forfeit can miss its lock",
+  "kind": "bug"
+ },
+ "2795": {
+  "text": "Settlement: a website key can block a whole settlement",
+  "kind": "bug"
+ },
+ "2796": {
+  "text": "Other: unlimited watchers can multiply picture work",
+  "kind": "bug"
+ },
+ "2797": {
+  "text": "Other: an approved donation set can be undone",
+  "kind": "bug"
+ },
+ "2798": {
+  "text": "Node software: one unsigned void can skip a head-to-head reveal",
+  "kind": "bug"
+ },
+ "2799": {
+  "text": "Other: unsigned feedback can name any key as a founding tester",
+  "kind": "bug"
+ },
+ "2800": {
+  "text": "Other: played-round counts can still be faked",
+  "kind": "bug"
+ },
+ "2801": {
+  "text": "Committees and bonds: a census read rebuilds a tree for every entry and can stall",
+  "kind": "bug"
+ },
+ "2802": {
+  "text": "Node software: a client reads item and donation answers with no size limit",
+  "kind": "bug"
+ },
+ "2803": {
+  "text": "Other: a made-up donation can be booked as collected",
+  "kind": "bug"
+ },
+ "2804": {
+  "text": "Node software: a bad mark receipt can make a transcript impossible to build",
+  "kind": "bug"
+ },
+ "2805": {
+  "text": "Node software: an empty signed batch can stop every seat from signing the run",
+  "kind": "bug"
+ },
+ "2806": {
+  "text": "Other: a served read re-checks old finals, and purchases fan that out",
+  "kind": "bug"
+ },
+ "2807": {
+  "text": "Node software: a plugin trial can leave a hosted package untried and block a seat when a round opens",
+  "kind": "bug"
+ },
+ "2808": {
+  "text": "Node software: the trial and the seat can still disagree",
+  "kind": "bug"
+ },
+ "2809": {
+  "text": "Other: a donation gift can free outputs for reuse",
+  "kind": "bug"
+ },
+ "2810": {
+  "text": "Other: an unsigned manifest can show up as a hosted game update",
+  "kind": "bug"
+ },
+ "2811": {
+  "text": "Other: duplicate series entries can starve real series of their share",
+  "kind": "bug"
+ },
+ "2812": {
+  "text": "Node software: a padded donation-ballot answer can stall every pulling seat",
+  "kind": "bug"
+ },
+ "2813": {
+  "text": "Node software: an unsigned seating index can beat honest seats",
+  "kind": "bug"
+ },
+ "2814": {
+  "text": "Other: one network can use up the day's screenshot allowance",
+  "kind": "bug"
+ },
+ "2815": {
+  "text": "Faucet and feedback: one network can take the whole day's faucet share",
+  "kind": "bug"
+ },
+ "2816": {
+  "text": "Other: a paid join reads donation answers with no size limit",
+  "kind": "bug"
+ },
+ "2817": {
+  "text": "Node software: reading old lock certificates can let a stranger stall a seat",
+  "kind": "bug"
+ },
+ "2818": {
+  "text": "Faucet and feedback: a played-round check can trust one seat",
+  "kind": "bug"
+ },
+ "2819": {
+  "text": "Node software: a batch certificate can stall a seat on too many sells",
+  "kind": "bug"
+ },
+ "2820": {
+  "text": "Other: peer round answers can be kept without an identity check",
+  "kind": "bug"
+ },
+ "2821": {
+  "text": "Committees and bonds: a census read waits on each silent seat in turn",
+  "kind": "bug"
+ },
+ "2822": {
+  "text": "Other: forged lock signatures force many checks per request",
+  "kind": "bug"
+ },
+ "2823": {
+  "text": "Node software: many plugin configs can block a seat at install and every start",
+  "kind": "bug"
+ },
+ "2824": {
+  "text": "Node software: a store package with very many cores can block a seat",
+  "kind": "bug"
+ },
+ "2825": {
+  "text": "Settlement: fee rounding can leave a market round unable to settle",
+  "kind": "bug"
+ },
+ "2826": {
+  "text": "Other: run ticks are not bound to the round clock",
+  "kind": "bug"
+ },
+ "2827": {
+  "text": "Faucet and feedback: the daily welcome pot can still be emptied from more than one network",
+  "kind": "bug"
+ },
+ "2828": {
+  "text": "Node software: a padded transaction answer can exhaust the explorer's memory",
+  "kind": "bug"
  }
 }
