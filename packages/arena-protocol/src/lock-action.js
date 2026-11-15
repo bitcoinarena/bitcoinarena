@@ -140,13 +140,15 @@ export function lockActions({ roundId, entries, minScore = 0, payoutShares = nul
   });
 
   const remainderMsat = remainder ? poolMsat : 0n;
-  if (rows.length && poolMsat !== sharesMsat + remainderMsat)
+  // a protocol-31 tie's odd msat (payout.js evenTieShares, kanban #2687): the reserves', handed to no player
+  const reserveMsat = remainder ? 0n : (table.reserveMsat || 0n);
+  if (rows.length && poolMsat !== sharesMsat + remainderMsat + reserveMsat)
     throw new Error(
       `the operator would keep ${poolMsat - sharesMsat} msat: a pool of ${poolMsat} `
       + `against ${sharesMsat} handed out`);
 
   return {
-    actions, poolMsat, refundedMsat, sharesMsat, remainderMsat, table,
+    actions, poolMsat, refundedMsat, sharesMsat, remainderMsat, reserveMsat, table,
     settledMsat: poolMsat, paidMsat: sharesMsat,
   };
 }
