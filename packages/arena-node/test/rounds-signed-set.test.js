@@ -100,7 +100,7 @@ test('rows are signed when a listing asks, once a window: nothing unasked, next=
     const later = await ask('?next=1');
     assert.equal(BigInt(later.body.nowMs), BigInt(next.body.nowMs) + 45000n, 'the new window does not carry the new time');
     assert.equal(s.listingSignatures(), before, 'the first ask of the new window signed rows while it waited');
-    assert.ok(before <= windowRows + 1 + windowRows + 8, `the new window signed ${before - windowRows - 1} rows - more than the bounded set`);
+    assert.ok(before - windowRows - 1 <= 1200, `the new window signed ${before - windowRows - 1} rows - more than a window holds (1,200: what the last window was asked for)`);
     assert.ok(pageChecks(later.body));
     // the signatures checked last, every request made: checking 2,880 rows outlasts the test server's keep-alive
     assert.ok(pageChecks(full.body), 'a row of the full listing does not check the page\'s way');
