@@ -1084,7 +1084,7 @@ createServer((req, res) => {
   if (S2 && path === '/feedback/season' && req.method === 'GET') { const p = S2.pot(S2.seasonNow(Date.now()));
     // usedUp (kanban #2787): from Season 3 on, a pot that cannot take even the smallest payout (a useful note at 25 %) means no bounty this season
     return send(200, { season: p.season, potSats: p.potSats, usedSats: p.usedSats, leftSats: p.leftSats, nodes: p.nodes, nodesMost: p.nodesMost,
-      usedUp: p.season >= NO_CARRY_FROM_SEASON && p.leftSats < Math.floor(LEVEL_SATS.useful / 4) }); }
+      usedUp: p.season >= NO_CARRY_FROM_SEASON && p.leftSats < Math.floor(LEVEL_SATS.useful / 4), nextSeasonMs: seasonEndMs(p.season, S2_START_MS) }); }
   if (S2 && (path === '/feedback/link' || path === '/feedback/verify' || path === '/feedback/social')) {
     if (req.method === 'OPTIONS') { res.writeHead(204, { ...cors, 'access-control-allow-methods': 'POST', 'access-control-allow-headers': 'authorization, content-type', 'access-control-max-age': '86400' }); return res.end(); }
     if (req.method !== 'POST') return send(405, { ok: false, why: 'POST' });
