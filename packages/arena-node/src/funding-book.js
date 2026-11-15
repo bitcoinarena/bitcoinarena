@@ -20,6 +20,7 @@ import { feeProposalStands, feeProposalOutcome, FEES, FEES_TODAY, donationChange
 import { leaderboardVotePeriod, leaderboardPasses } from '../../arena-protocol/src/leaderboard-payout.js';
 
 export const FUNDING_SQL = `CREATE TABLE IF NOT EXISTS funding_items (id TEXT PRIMARY KEY, kind TEXT NOT NULL, proposal TEXT NOT NULL, hex TEXT NOT NULL, at_ms INTEGER NOT NULL);
+  CREATE INDEX IF NOT EXISTS funding_items_kind_proposal ON funding_items (kind, proposal);   -- kanban #2722: the unsignalled count, per add
   CREATE TABLE IF NOT EXISTS funding_signal_ends (proposal TEXT PRIMARY KEY, seen_ms INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS funding_outcomes (proposal TEXT PRIMARY KEY, outcome TEXT NOT NULL, decided_ms INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS funding_vote_census (proposal TEXT PRIMARY KEY, height INTEGER NOT NULL, census TEXT NOT NULL, hash TEXT, legacy INTEGER NOT NULL DEFAULT 0);
@@ -81,6 +82,13 @@ export function heldBeforeCounts({ own, before, after, census }) {
  */
 export const FUNDING_PER_AUTHOR_MAX = 32;
 export const FUNDING_COMMENTS_PER_AUTHOR_MAX = 32;
+/**
+ * AND A FEW HUNDRED NOBODY BONDED HAS SIGNALLED, OF EACH KIND, IN ALL (kanban #2722, #1489 r5-census-12, a bypass of #2522): anyone may author a
+ * proposal (ruled 2026-10-17), and keys are free - one stranger signing each with a fresh key had all 2000 kept, forwarded to every seat and
+ * re-verified on every list (1.5 s of the thread). A seat now keeps at most FUNDING_UNSIGNALED_MAX proposals of one kind that no bonded node has
+ * signalled yet; past it a new one is refused (429, never forwarded) until a kept one is signalled. A proposal a node signalled is not counted.
+ */
+export const FUNDING_UNSIGNALED_MAX = 256;
 
 /** A payment's id: the proposal's own for a single payment (rule 5), else one per tranche. */
 export const trancheIdOf = (pid, k, of) => (of === 1 ? pid : createHash('sha256').update(`ARENA/v1/FundingTranche:${pid}:${k}`).digest('hex'));
@@ -680,6 +688,9 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       if (kind === 'proposal' || kind === 'fee' || kind === 'leaderboard') {
         const n = db.prepare('SELECT COUNT(*) AS n FROM funding_items WHERE kind = ? AND substr(hex, 71, 64) = ?').get(kind, toHex(r.obj.author)).n;
         if (n >= FUNDING_PER_AUTHOR_MAX) return { ok: false, status: 429, why: `this seat keeps at most ${FUNDING_PER_AUTHOR_MAX} ${kind} proposals of one author` };
+        // kanban #2722: and at most FUNDING_UNSIGNALED_MAX of the kind that no node has signalled yet
+        const waiting = db.prepare("SELECT COUNT(*) AS n FROM funding_items p WHERE p.kind = ? AND NOT EXISTS (SELECT 1 FROM funding_items s WHERE s.kind = 'signal' AND s.proposal = p.id)").get(kind).n;
+        if (waiting >= FUNDING_UNSIGNALED_MAX) return { ok: false, status: 429, why: `this seat holds ${FUNDING_UNSIGNALED_MAX} ${kind} proposals no node has signalled yet: try again once one is` };
       } else if (kind === 'comment') {
         const n = db.prepare("SELECT COUNT(*) AS n FROM funding_items WHERE kind = 'comment' AND proposal = ? AND substr(hex, 135, 64) = ?").get(toHex(r.obj.proposalId), toHex(r.obj.author)).n;
         if (n >= FUNDING_COMMENTS_PER_AUTHOR_MAX) return { ok: false, status: 429, why: `this seat keeps at most ${FUNDING_COMMENTS_PER_AUTHOR_MAX} comments of one author on one proposal` };
