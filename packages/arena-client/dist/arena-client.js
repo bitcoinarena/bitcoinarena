@@ -11592,7 +11592,28 @@ function lockMatchesEntry({ lock, entry, kind, claimPk, height, expiryBlocks = S
   if (!lock || !entry) return { ok: false, why: 'there is no lock or no entry to compare' };
   if (!Number.isInteger(height) || height < 0)
     return { ok: false, why: 'there is no federation height, so nothing says the expiry is far enough' };
+  const fields = lockFieldsMatchEntry({ lock, entry, kind, claimPk, expiryBlocks });
+  if (!fields.ok) return fields;
+  const lockHeight = lock.expiration - expiryBlocks;
+  if (lockHeight < height - STAKE_LOCK_FRESHNESS_BLOCKS)
+    return {
+      ok: false,
+      why: `that ${kind} lock's lock height ${lockHeight} (its expiration ${lock.expiration} less the round's ${expiryBlocks} blocks) `
+        + `is more than ${STAKE_LOCK_FRESHNESS_BLOCKS} blocks below the height ${height} it is verified at: `
+        + 'a loser could refund before settlement',
+    };
+  return { ok: true };
+}
 
+/**
+ * EVERY CHECK OF lockMatchesEntry THAT NEEDS NO FEDERATION HEIGHT (kanban #2752, #1489 r7-entry-2): the image, the amount, the claim and
+ * refund keys and an expiration at all. A seat runs it before it asks the federation anything, so a hand-over whose fields can never
+ * be the entry's lock costs no federation question - a stranger who knows only a public entry id could otherwise fill the seat's one
+ * federation lane with junk /lock posts.
+ */
+function lockFieldsMatchEntry({ lock, entry, kind, claimPk, expiryBlocks = STAKE_EXPIRY_BLOCKS } = {}) {
+  if (kind !== 'stake' && kind !== 'fee') return { ok: false, why: 'a lock is a stake lock or a fee lock' };
+  if (!lock || !entry) return { ok: false, why: 'there is no lock or no entry to compare' };
   const image = lock.paymentImage || {};
   if (kind === 'stake') {
     if (!(entry.stakePoint instanceof Uint8Array) || entry.stakePoint.every((b) => b === 0))
@@ -11620,14 +11641,6 @@ function lockMatchesEntry({ lock, entry, kind, claimPk, height, expiryBlocks = S
     return { ok: false, why: `that ${kind} lock's refund_pk is not the entry's player key` };
   if (!Number.isInteger(lock.expiration)) return { ok: false, why: `that ${kind} lock names no expiration height` };
   if (!Number.isInteger(expiryBlocks) || expiryBlocks < 1) return { ok: false, why: 'the round names no stake_expiry_blocks to check the lock against' };
-  const lockHeight = lock.expiration - expiryBlocks;
-  if (lockHeight < height - STAKE_LOCK_FRESHNESS_BLOCKS)
-    return {
-      ok: false,
-      why: `that ${kind} lock's lock height ${lockHeight} (its expiration ${lock.expiration} less the round's ${expiryBlocks} blocks) `
-        + `is more than ${STAKE_LOCK_FRESHNESS_BLOCKS} blocks below the height ${height} it is verified at: `
-        + 'a loser could refund before settlement',
-    };
   return { ok: true };
 }
 
@@ -12408,6 +12421,22 @@ const KNOWN_GOOD_GAMES = Object.freeze({
   }),
   // UP/DOWN VERSION 24 (kanban #630): no attestor keys - each round's 7 are drawn from its census, 5 decide; protocol 2, as version 23
   '8e47d27fd39597cfa6e29412efa450a994f013b5db8d553ce55304da000cb3ca': Object.freeze({
+    name: 'btc-updown-15m',
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze([]),
+      threshold: 0, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']), attestDraw: Object.freeze({ count: 7, threshold: 5 }) }),
+    fee: Object.freeze({ nodeBps: 40, donationBps: 60 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+    periodMs: '900000',
+    requiredProtocolVersion: 2,
+  }),
+  // UP/DOWN VERSION 25 (kanban #2836, feedback #084): version 24 in every term, with a client that quotes a market buy at the book's best
+  // ask and promises no payout without one
+  'b928c7702f287261fadedc5e2dd5bea8180e423a62caf331a29391f8f353d01b': Object.freeze({
     name: 'btc-updown-15m',
     cores: Object.freeze({
 
@@ -17658,7 +17687,12 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
   let frontendGross = 0n;
   for (const [k, siteMsat] of sites.shares) {
     const payoutPk = fromHex(k);
-    const got = largestPayoutMsat(fees, (siteMsat * spendable) / poolMsat);
+    // kanban #2795: a website's line is capped at what is left of the nodes' part after the publisher's fee back and the
+    // websites before it - in a small round the publisher can take all of it, and an uncapped website line then made the fee
+    // lines come to more than the fee locks hold, refusing the whole round's one settlement (the winner's payout with it).
+    const left = nodePartMsat - publisherGross - frontendGross;
+    const share = (siteMsat * spendable) / poolMsat;
+    const got = left > 0n ? largestPayoutMsat(fees, share < left ? share : left) : 0n;
     if (got === 0n) { unpaid.push({ pubkey: payoutPk.subarray(1), owedMsat: siteMsat, why: 'the website\'s share does not pay its own output fee' }); continue; }
     frontendGross += got + lnv2FeeMsat(fees, got);
     payouts.push({ pubkey: payoutPk.subarray(1), payoutPk, owedMsat: siteMsat, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: 'frontend' });
@@ -20697,9 +20731,13 @@ async function redeemPayout({ round, roundId, invite, seed, curve, LockClient, s
   // ALREADY SPENT: the guardians hold no contract there any more, and only this key could
   // spend it - collected before (a reload mid-collect, another tab). Final, and said so;
   // measured before: "waiting ... undefined" for ever, and the stake never asked.
-  const spent = said.accepted !== true && (said.stored_before === null || said.stored_before === undefined);
+  // kanban #2748: below the threshold (s.short) nothing at the outpoint is no proof it was spent - one seat may have named a made-up
+  // txid - so it is not final: the page asks again, and collects once the seats' agreed settlement stands
+  const spent = said.accepted !== true && (said.stored_before === null || said.stored_before === undefined) && !s.short;
   const got = { ok: said.accepted === true, final: said.accepted === true || spent, spent, txid: s.txid, outIdx: at, amountMsat: BigInt(p.msat), from: s.from,
-    ...said, why: said.accepted === true ? undefined : spent ? 'the payout contract is already spent - by this seed\'s key, the only key that can' : (said.error || 'the federation did not accept the refund') };
+    ...said, why: said.accepted === true ? undefined : spent ? 'the payout contract is already spent - by this seed\'s key, the only key that can'
+      : s.short && (said.stored_before === null || said.stored_before === undefined) ? `only ${s.agreeing} of the ${s.needed} signer nodes needed name this settlement yet, and its payout is not at its outpoint: waiting for them`
+      : (said.error || 'the federation did not accept the refund') };
   if (got.ok && storage) {
     try { storage.setItem(noted, JSON.stringify({ ...got, amountMsat: String(got.amountMsat) })); } catch { /* unkept: a reload asks again */ }
   }
@@ -21780,7 +21818,12 @@ async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = fetch, c
     const at = s.moved.payouts.findIndex((x) => isQualifierTo(x, mine));
     if (at < 0) payout = { state: 'none' };
     // ALREADY SPENT - only this key can: collected before (another tab, an earlier build's timer).
-    else payout = { state: await held(s.txid, at) ? 'owed' : 'gone', msat: BigInt(s.moved.payouts[at].msat) };
+    // A SHORT SETTLEMENT IS NO PROOF OF "GONE" (kanban #2748, #1489 r7-client-1): one seat's ACCEPTED answer naming a made-up txid that pays
+    // this key (settlementOf's `short`, below the threshold) found nothing at its outpoint, read 'gone', and the record closed as final -
+    // the real settlement the honest seats then accepted was never collected. Below the threshold an outpoint that holds nothing waits.
+    else if (await held(s.txid, at)) payout = { state: 'owed', msat: BigInt(s.moved.payouts[at].msat) };
+    else if (s.short) payout = { state: 'waiting', why: `only ${s.agreeing} of the ${s.needed} signer nodes needed name this settlement yet, and its payout is not at its outpoint` };
+    else payout = { state: 'gone', msat: BigInt(s.moved.payouts[at].msat) };
   }
   let stake;
   let lockAnswers = null;
@@ -22022,6 +22065,23 @@ function collectBrought(got) {
   const r = got && got.refund;
   if (r && Array.isArray(r.locks)) for (const e of r.locks) if (e.state === 'refunded') t += broughtOf(e.amountMsat, e.balance_before, e.balance_after);
   return t;
+}
+
+/**
+ * ONE KEPT RECORD'S LOOK AND COLLECT, BOUNDED (kanban #2785, playtest #1481 2026-11-11, round 30da9cec): the page's collect pass awaited each record's
+ * look and collect with no bound, and one step that never returned (the round wallet's join while the federation's config would not download)
+ * held the pass for the tab's life - "collect loop: still on its last look, started 18:44:27Z - a step has not returned" - so no other record,
+ * and no expired lock's refund, was looked at again until a reload. Each record now gets COLLECT_RECORD_MS: past it the pass goes on to the
+ * next record and the late step is left to finish on its own (the federation spends a lock once, so a later look reads it gone). Rejects with
+ * `late: true`; the work's own answer or error otherwise.
+ */
+const COLLECT_RECORD_MS = 120000;
+function collectWithin(work, ms = COLLECT_RECORD_MS, what = 'this record') {
+  let timer;
+  const late = new Promise((_, no) => { timer = setTimeout(() => no(Object.assign(new Error(`${what}: no answer in ${Math.round(ms / 1000)} s - looked at again on a later pass`), { late: true })), ms); });
+  const run = Promise.resolve().then(work);
+  run.catch(() => { /* answered after the bound: the pass went on without it */ });
+  return Promise.race([run, late]).finally(() => clearTimeout(timer));
 }
 
 async function collectIntoPlayerWallet({ look, round, roundId, invite, seed, curve, LockClient, storage, nodes, fetcher, order = 0 } = {}) {
@@ -26337,6 +26397,28 @@ function movedKey(storage, key) {
 
 
 
+// A SEAT'S ROTATIONS, READ AND CHECKED UP TO A BOUND (kanban #2669, #1489 r2-client-2): GET /donation-rotations was read whole and every distinct
+// body:signature it listed was checked against the recovery key (an Ed25519 verify each) before any set check - one seat listing 20,000 junk
+// rotations made 20,000 checks on every paid join and order of every round it sat on. Now its answer is read up to ROTATIONS_ANSWER_MAX bytes,
+// only its first ROTATIONS_PER_SEAT rotations count, and a rotation is checked only when it is this round's network's and in force at its census
+// height (authorityAt would refuse any other unchecked)
+const ROTATIONS_ANSWER_MAX = 64 * 1024, ROTATIONS_PER_SEAT = 16;
+async function rotationBytesUpTo(r, max) {   // as committee.js bytesUpTo (kanban #2740): chunk by chunk, the stream cancelled past `max`
+  const said = Number(r.headers && typeof r.headers.get === 'function' ? r.headers.get('content-length') : NaN);
+  if (Number.isFinite(said) && said > max) { try { await r.body?.cancel(); } catch { /* gone */ } throw new Error(`its answer is ${said} bytes, more than ${max}`); }
+  const reader = r.body && typeof r.body.getReader === 'function' ? r.body.getReader() : null;
+  if (!reader) {
+    if (typeof r.arrayBuffer !== 'function' && typeof r.json === 'function') return new TextEncoder().encode(JSON.stringify(await r.json()));   // a test's stand-in answer
+    const b = new Uint8Array(await r.arrayBuffer()); if (b.length > max) throw new Error(`its answer is more than ${max} bytes`); return b;
+  }
+  const parts = []; let n = 0;
+  try {
+    for (;;) { const { done, value } = await reader.read(); if (done) break; n += value.byteLength; if (n > max) throw new Error(`its answer is more than ${max} bytes`); parts.push(value); }
+  } catch (e) { try { await reader.cancel(); } catch { /* gone */ } throw e; }
+  const all = new Uint8Array(n); let at = 0; for (const p of parts) { all.set(p, at); at += p.byteLength; }
+  return all;
+}
+
 /**
  * WHAT THIS TAB HAS ALREADY ASKED ITS WALLET TO DONATE, per round and player
  * key, share by share (M3.2 6e). Measured before: the page's once-only flag
@@ -26581,7 +26663,9 @@ async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verif
       let rotations = [];
       try {
         const rr = await donationWithinMs(fetcher(`${base}/donation-rotations?round=${rid}`), DONATION_ANSWER_MS);   // bounded too: a set read, then a hung rotations read, held a join 38 s+ (04:11Z)
-        if (rr.status === 200) rotations = (await rr.json()).rotations || [];
+        if (rr.status === 200) { const j = JSON.parse(new TextDecoder().decode(await rotationBytesUpTo(rr, ROTATIONS_ANSWER_MAX)));   // kanban #2669: bounded
+          rotations = Array.isArray(j && j.rotations) ? j.rotations.slice(0, ROTATIONS_PER_SEAT) : []; }
+        else { try { await rr.body?.cancel(); } catch { /* gone */ } }
       } catch { rotations = []; }
       return { node: base, bytes, rotations };
     // A READ THAT NEVER GOT AN ANSWER (kanban #803: "Load failed" on a phone) is a node that did not answer, as one past ANSWER_MS is
@@ -26590,8 +26674,11 @@ async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verif
   // EVERY SIGNER NODE'S ROTATIONS, EACH CHECKED HERE against the network's recovery
   // key: a signer node that hides a rotation cannot hide it from the other signer nodes.
   const offered = new Map();
-  for (const a of answers) for (const r of a.rotations || []) {
-    try { offered.set(`${r.body}:${r.signature}`, { ...decodeAuthorityRotation(fromHex(String(r.body))), signature: fromHex(String(r.signature)) }); }
+  for (const a of answers) for (const r of (a.rotations || []).slice(0, ROTATIONS_PER_SEAT)) {
+    try { const rot = decodeAuthorityRotation(fromHex(String(r.body)));
+      // (kanban #2669) another network's, or one not in force at the round's census height, is never checked: authorityAt refuses it anyway
+      if (toHex(rot.networkId) !== toHex(round.networkId) || !Number.isInteger(rot.validFrom) || rot.validFrom > round.censusHeight) continue;
+      offered.set(`${r.body}:${r.signature}`, { ...rot, signature: fromHex(String(r.signature)) }); }
     catch { /* not a rotation: nothing to apply */ }
   }
   const rotations = [...offered.values()];
@@ -26815,6 +26902,26 @@ async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verif
 
 // ONE NODE'S GET /receipts ANSWER, AT MOST (kanban #2554): the seat's own cap on a peer body (#1550)
 const RECEIPTS_MAX_BYTES = 16 * 1024 * 1024;
+// EVERY PEER READ OF A RESUME IS BOUNDED TOO (kanban #2720, #1489 r5-play-1): a mark list (GET /checkpoints), a transcript and its batch
+// signatures were read whole with arrayBuffer() - one committee seat answering the player's own marks 20,000 times (9 MB) made 40,003
+// session-key checks and held a reload 2 s (about 22 s per 100 MB), long enough to end the run as a stall. Each is read up to its cap
+// (the stream cancelled past it); a mark list's copies cost no check, records of another round or entry none, and the loop yields.
+const CHECKPOINTS_MAX_BYTES = 2 * 1024 * 1024, TRANSCRIPT_MAX_BYTES = 16 * 1024 * 1024, BATCH_SIGS_MAX_BYTES = 1024 * 1024;
+async function bytesCapped(r, max) {
+  const said = Number(r.headers && r.headers.get ? r.headers.get('content-length') : NaN);
+  if (Number.isFinite(said) && said > max) { try { await r.body?.cancel(); } catch { /* gone */ } throw new Error(`${said} bytes is more than ${max}`); }
+  if (!r.body || typeof r.body.getReader !== 'function') { const b = new Uint8Array(await r.arrayBuffer()); if (b.length > max) throw new Error(`${b.length} bytes is more than ${max}`); return b; }
+  const reader = r.body.getReader(); const parts = []; let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.byteLength;
+    if (n > max) { try { await reader.cancel(); } catch { /* gone */ } throw new Error(`more than ${max} bytes`); }
+    parts.push(value);
+  }
+  const out = new Uint8Array(n); let at = 0; for (const p of parts) { out.set(p, at); at += p.byteLength; }
+  return out;
+}
 // THE PLAYER'S DONATION (M3.2 6e): the split, the failure rule, the LNURL checks.
 
 
@@ -28716,12 +28823,12 @@ class Client {
         const q = `round=${toHex(roundId)}&entry=${toHex(entryId)}`;
         const r = await readWithOneRetry(fetch, `${base}/transcript?${q}`);
         if (!r.ok) return null;
-        const pt = decodeTranscript(new Uint8Array(await r.arrayBuffer()));
+        const pt = decodeTranscript(await bytesCapped(r, TRANSCRIPT_MAX_BYTES));   // kanban #2720: bounded
         if (pt.batches.length <= n || toHex(pt.roundId) !== toHex(roundId) || toHex(pt.entryId) !== toHex(entryId)) return null;
         if (!checkTranscript(pt).ok) return null;
         const s = await readWithOneRetry(fetch, `${base}/batch-signatures?${q}`);
         if (!s.ok) return null;
-        const sigs = new Uint8Array(await s.arrayBuffer());
+        const sigs = await bytesCapped(s, BATCH_SIGS_MAX_BYTES);   // kanban #2720: bounded
         const W = SIGNED_BATCH_SIGNATURE_BYTES;
         const k = pt.batches.length - 1;
         if (sigs.length < (k + 1) * W) return null;
@@ -28812,11 +28919,19 @@ class Client {
       const withheld = new Set();   // signed marks a peer lists and the home list leaves out
       const readList = async (base, home) => {
         const r = await readWithOneRetry(fetch, `${base}/checkpoints?round=${toHex(roundId)}&entry=${toHex(entryId)}`);
-        const b = new Uint8Array(await r.arrayBuffer());
-        if (!r.ok || b.length % SIGNED_CHECKPOINT_BYTES !== 0) return;
-        for (let at = 0; at < b.length; at += SIGNED_CHECKPOINT_BYTES) {
-          const { body, signature } = splitSigned(b.subarray(at, at + SIGNED_CHECKPOINT_BYTES));
+        if (!r.ok) { try { await r.body?.cancel(); } catch { /* gone */ } return; }
+        const b = await bytesCapped(r, CHECKPOINTS_MAX_BYTES);   // kanban #2720: bounded
+        if (b.length % SIGNED_CHECKPOINT_BYTES !== 0) return;
+        const seen = new Set();   // kanban #2720: a copy of a record already read costs no check
+        for (let at = 0, n = 0; at < b.length; at += SIGNED_CHECKPOINT_BYTES, n += 1) {
+          if (n > 0 && n % 64 === 0) await new Promise((ok) => setTimeout(ok, 0));
+          const rec = b.subarray(at, at + SIGNED_CHECKPOINT_BYTES);
+          const k = toHex(rec);
+          if (seen.has(k)) continue;
+          seen.add(k);
+          const { body, signature } = splitSigned(rec);
           const m = decodeCheckpoint(body);
+          if (toHex(m.roundId) !== toHex(roundId) || toHex(m.entryId) !== toHex(entryId)) continue;   // another round's or entry's: no check
           const id = checkpointId(m);
           if (!entry || !(await this.verifySession(signature, id, entry.sessionPubkey))) continue;   // not this player's
           ticks.set(toHex(id), m.tick);
@@ -40759,6 +40874,7 @@ const H2H_SEAT_ASK_MS = H2H_SEAT_MS;
 // before the round's committee has certified, at its threshold, the set of entries whose stake it saw locked before the close - and the
 // page reveals only once it has seen that certificate itself. Without one by the close + 3 s the round is VOID: every stake comes back.
 const H2H_LOCK_SET_POLL_MS = 150;
+const H2H_REVEAL_WAIT_MS = 25000;   // kanban #2861: was 6 s
 const h2hFromHex = (h) => Uint8Array.from(String(h).match(/../g) || [], (x) => parseInt(x, 16));
 
 /**
@@ -40813,7 +40929,10 @@ async function lockSetOfSeats({ roundIdHex, nodes, committee = null, verify = nu
  */
 async function revealWhenCertified({ roundIdHex, entryIdHex, move, salt, nodes, identity = null, committee = null, verify = null, entryCloseMs,
   fetcher = fetch, now = () => Date.now(), timeoutMs = H2H_SEAT_MS, onWait = null, sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)) }) {
-  const giveUpAt = Number(entryCloseMs) + LOCK_SET_WINDOW_MS + 6000;
+  // HOW LONG A PAGE WAITS FOR BUSY SEATS (kanban #2861, the owner's playtest 2026-11-15: at load ~43 the certificate came ~15 s after the close; the
+  // page gave up at close + 9 s and showed "Not revealed - you lose" while the opponent revealed): a seat's VOID after the window still ends the
+  // wait at once; with none, a late certificate opens the reveal up to close + LOCK_SET_WINDOW_MS + H2H_REVEAL_WAIT_MS
+  const giveUpAt = Number(entryCloseMs) + LOCK_SET_WINDOW_MS + H2H_REVEAL_WAIT_MS;
   for (;;) {
     const got = await lockSetOfSeats({ roundIdHex, nodes, committee, verify, entryCloseMs, fetcher, timeoutMs });
     if (got.required === false) return { seats: await revealMove({ entryIdHex, move, salt, nodes, identity, fetcher, timeoutMs }), certified: null };
@@ -40821,7 +40940,12 @@ async function revealWhenCertified({ roundIdHex, entryIdHex, move, salt, nodes, 
       if (!got.certified.entries.includes(String(entryIdHex))) return { seats: [], notCertified: true, why: 'your entry is not in the round\'s certified lock set: it is not played, its stake comes back' };
       return { seats: await revealMove({ entryIdHex, move, salt, nodes, identity, fetcher, timeoutMs }), certified: got.certified };
     }
-    if (got.void || now() > giveUpAt) return { seats: [], void: true, why: 'the round\'s lock set was not certified by its close + 3 s: the round is VOID, every stake comes back' };
+    // ONE SEAT'S VOID IS NOT FINAL (kanban #2798, #1489 r21-h2h-1): `void` is any seat's unsigned word, and a seat that said it on the first
+    // poll - while the honest seats were still certifying - made the page skip its reveal and forfeit a round the others played. Before the
+    // seats' own certifying window has passed the page keeps asking; a certificate it checked wins whenever it comes, and it gives up only
+    // after the window (the seats void a set they could not certify by then) or past its own deadline
+    const windowOver = now() > Number(entryCloseMs) + LOCK_SET_WINDOW_MS;
+    if ((got.void && windowOver) || now() > giveUpAt) return { seats: [], void: true, why: 'the round\'s lock set was not certified by its close + 3 s: the round is VOID, every stake comes back' };
     if (onWait) { try { onWait('certifying'); } catch { /* the page's own */ } }
     await sleep(H2H_LOCK_SET_POLL_MS);
   }
@@ -41950,7 +42074,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          invoiceQrSvg: invoiceQrSvg,
          warmLockQuotes: warmLockQuotes,
          refundKept: refundKept, refundLine: refundLine,
-         lookOwed: lookOwed, owedToLine: owedToLine, collectOwed: collectOwed, collectAndWithdraw: collectAndWithdraw, findOwedRounds: findOwedRounds,
+         lookOwed: lookOwed, collectWithin: collectWithin, COLLECT_RECORD_MS: COLLECT_RECORD_MS, owedToLine: owedToLine, collectOwed: collectOwed, collectAndWithdraw: collectAndWithdraw, findOwedRounds: findOwedRounds,
          lobbyQuery: lobbyQuery, fetchLobby: fetchLobby, lobbyLine: lobbyLine, lobbyJoinSearch: lobbyJoinSearch,
          fetchGames: fetchGames, oneTilePerGame: oneTilePerGame, checkedGameInfoOfTile: checkedGameInfoOfTile, checkedGameInfo: checkedGameInfo, rowsOfGame: rowsOfGame, gameClientFile: gameClientFile,
          censusEndpoints: censusEndpoints, mergeNodes: mergeNodes,

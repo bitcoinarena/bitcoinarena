@@ -141,6 +141,7 @@ export const H2H_SEAT_ASK_MS = H2H_SEAT_MS;
 // before the round's committee has certified, at its threshold, the set of entries whose stake it saw locked before the close - and the
 // page reveals only once it has seen that certificate itself. Without one by the close + 3 s the round is VOID: every stake comes back.
 export const H2H_LOCK_SET_POLL_MS = 150;
+export const H2H_REVEAL_WAIT_MS = 25000;   // kanban #2861: was 6 s
 const h2hFromHex = (h) => Uint8Array.from(String(h).match(/../g) || [], (x) => parseInt(x, 16));
 
 /**
@@ -195,7 +196,10 @@ export async function lockSetOfSeats({ roundIdHex, nodes, committee = null, veri
  */
 export async function revealWhenCertified({ roundIdHex, entryIdHex, move, salt, nodes, identity = null, committee = null, verify = null, entryCloseMs,
   fetcher = fetch, now = () => Date.now(), timeoutMs = H2H_SEAT_MS, onWait = null, sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)) }) {
-  const giveUpAt = Number(entryCloseMs) + LOCK_SET_WINDOW_MS + 6000;
+  // HOW LONG A PAGE WAITS FOR BUSY SEATS (kanban #2861, the owner's playtest 2026-11-15: at load ~43 the certificate came ~15 s after the close; the
+  // page gave up at close + 9 s and showed "Not revealed - you lose" while the opponent revealed): a seat's VOID after the window still ends the
+  // wait at once; with none, a late certificate opens the reveal up to close + LOCK_SET_WINDOW_MS + H2H_REVEAL_WAIT_MS
+  const giveUpAt = Number(entryCloseMs) + LOCK_SET_WINDOW_MS + H2H_REVEAL_WAIT_MS;
   for (;;) {
     const got = await lockSetOfSeats({ roundIdHex, nodes, committee, verify, entryCloseMs, fetcher, timeoutMs });
     if (got.required === false) return { seats: await revealMove({ entryIdHex, move, salt, nodes, identity, fetcher, timeoutMs }), certified: null };

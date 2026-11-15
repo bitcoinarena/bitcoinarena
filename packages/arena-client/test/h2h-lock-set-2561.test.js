@@ -78,3 +78,15 @@ test('a certificate signed by the round\'s seats opens the reveal - after it, no
   assert.equal(out.reveals.length, 0);
   assert.equal(not.notCertified, true);
 });
+
+// kanban #2861 (the owner's playtest 2026-11-15, live UI 678, round 12007520 at load ~43): both played Scissors, the bot revealed ~15 s after the close,
+// the page gave up at close + 9 s and showed "Not revealed - you lose". With no seat saying VOID, a certificate that comes late (busy seats) still
+// opens the reveal up to close + LOCK_SET_WINDOW_MS + H2H_REVEAL_WAIT_MS.
+test('#2861 busy seats: a certificate 15 s after the close still opens the reveal', async () => {
+  const good = certOf([MINE, THEIRS]);
+  let t = CLOSE;
+  const f = seats(() => (t > CLOSE + 15000 ? { required: true, certificate: good } : { required: true, certificate: null }));
+  const got = await go(f, { now: () => (t += 500) });
+  assert.equal(f.reveals.length, 3, 'revealed once the late certificate came');
+  assert.ok(got.certified && !got.void);
+});
