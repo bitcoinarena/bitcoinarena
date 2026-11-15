@@ -25,6 +25,8 @@ const trialLingers = () => {
   if (!n) trialNames.clear();
   return n;
 };
+/** How many trial threads still linger (kanban #2711: loadInstalled waits for them before it checks a package again). */
+export const trialThreadsLingering = () => trialLingers();
 
 export function trialRun(source, manifest, { ms = TRIAL_MS, name = 'plugin trial' } = {}) {
   if (manifest.resultType !== RESULT_TYPE.HEAD_TO_HEAD) return { ok: true, cases: 0, why: 'no decide adapter to run (not a head-to-head game)' };
