@@ -10,7 +10,7 @@
 //   - and every core's source passes the scan: no module loading, no network, no file system, no process, no eval.
 // A decide adapter is pure: it takes the revealed moves and answers verdicts. Replayed games' wasm cores are not packaged
 // here (their cores are installed with their engine); attested markets have no core and package their manifest and client.
-import { sandboxChecked } from './core-sandbox.js';
+import { sandboxChecked, lingeringCores } from './core-sandbox.js';
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -121,6 +121,7 @@ export async function registrationFromPackage(at, pkg, { title = null, within = 
  * THE INSTALLED GAMES AS REGISTRATIONS (main.js at start): each package checked again before it is loaded; a removed one
  * (its directory renamed .removed-…) is not. Answers { registrations, refused: [{ dir, why }] }.
  */
+const INSTALLED_RETRIES = 3, LINGER_WAIT_MS = 15000, TRIAL_THREAD = 'plugin trial';   // kanban #2711: plugin-trial.js TRIAL_NAME
 export async function loadInstalled(dir, { verify }) {
   const registrations = [], refused = [];
   if (!dir || !existsSync(dir)) return { registrations, refused };
@@ -129,7 +130,16 @@ export async function loadInstalled(dir, { verify }) {
     const at = join(dir, id);
     let pkg;
     try { pkg = JSON.parse(readFileSync(join(at, 'package.json'), 'utf8')); } catch (e) { refused.push({ dir: at, why: e.message }); continue; }
-    const v = verifyPackage(pkg, { verify, want: id });
+    let v = verifyPackage(pkg, { verify, want: id });
+    // "NO VERDICT YET" IS NOT A REFUSAL (kanban #2711, #1489 r4-hosting-7): one package's trial that overran inside an uninterruptible
+    // builtin leaves its thread lingering, and every package checked after it got { retry } - refused for the life of the process, so one
+    // slow (or ground-to-sort-first) package dropped every installed game after it at each start. Now the start waits for the lingering
+    // trial thread to end (bounded) and checks that package again.
+    for (let tries = 0; !v.ok && v.retry && tries < INSTALLED_RETRIES; tries++) {
+      const until = Date.now() + LINGER_WAIT_MS;
+      while (lingeringCores(TRIAL_THREAD) > 0 && Date.now() < until) await new Promise((ok) => setTimeout(ok, 50));
+      v = verifyPackage(pkg, { verify, want: id });
+    }
     if (!v.ok) { refused.push({ dir: at, why: v.why }); continue; }
     // the title this seat wrote itself (kanban #1541, #1716, #1780): never package.json's, which an older build kept as a seat relayed it
     try { registrations.push(await registrationFromPackage(at, pkg, { title: seatTitleAt(at) })); } catch (e) { refused.push({ dir: at, why: e.message }); }
