@@ -3982,7 +3982,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (claimKeyFor) return claimKeyFor(rid);
       const r = round.get(rid);
       const held = r ? dkg.signerNodeFor(decodeRoundContract(new Uint8Array(r.contract)).nodes) : null;
-      return held && held.ok ? held.pool.groupPublicKey : null;
+      if (held && held.ok) return held.pool.groupPublicKey;
+      // ASKED FOR A KEY THIS SIGNER NODE DOES NOT HOLD, IT MAKES IT AGAIN (kanban #2869, measured 2026-11-15 23:46Z, round ac3f97a3: old-Mac seats 4
+      // and 5 refused a market order's locks with "this signer node holds no claim key for that round" - their run had ended "no key after 30
+      // runs" while seats of the committee restarted (22:00-22:28Z), and nothing ran it again: seating, assignment and POST /round come once).
+      // The lock and fee-lock checks ask here, so an order that meets a missing key starts its run; the player's lock is posted again for 30 s.
+      // makeClaimKey makes nothing for a committee this node is not on, nothing it holds, and runs one committee once at a time; after a run
+      // gave up, at most one new run a minute (CLAIM_KEY_AGAIN_MS).
+      if (r) claimKeyAgain(rid);
+      return null;
     } catch { return null; }
   }
 
@@ -4132,6 +4140,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (!wantedTables.has(a)) { wantedTables.add(a); console.log(`[claim-key] table ${a.slice(0, 16)}: a fellow signer node makes its key - made here too`); }
     makeClaimKey(found.rid);
   }
+  // kanban #2869: a key whose run gave up is run again on the next ask, at most once a CLAIM_KEY_AGAIN_MS per committee
+  const claimKeyGaveUp = new Map();   // epoch hex -> when its last run gave up
+  const CLAIM_KEY_AGAIN_MS = Number(process.env.ARENA_CLAIM_KEY_AGAIN_MS || 60000);
+  function claimKeyAgain(rid) {
+    try {
+      const row = round.get(rid);
+      if (!row || claimKeyFor || !dkg.canDeal) return;
+      const where = dkg.epochFor(decodeRoundContract(new Uint8Array(row.contract)).nodes);
+      if (!where.ok) return;
+      const key = toHex(where.epochId);
+      if (claimKeyRuns.has(key) || Date.now() - (claimKeyGaveUp.get(key) || 0) < CLAIM_KEY_AGAIN_MS) return;
+      console.log(`[claim-key] ${key.slice(0, 16)}: asked for and not held - made again`);
+      makeClaimKey(rid);
+    } catch { /* the next ask */ }
+  }
   function makeClaimKey(rid) {
     if (claimKeyFor || !dkg.canDeal) return;
     const row = round.get(rid);
@@ -4173,7 +4196,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       if (tries >= CLAIM_KEY_MIN_TRIES && Date.now() >= Number(contract.entryCloseMs)) {
         claimKeyRuns.delete(key);
-        console.error(`[claim-key] ${key.slice(0, 16)}: no key after ${tries} runs - ${said && said.why}`);
+        claimKeyGaveUp.set(key, Date.now());
+        if (claimKeyGaveUp.size > 4096) claimKeyGaveUp.delete(claimKeyGaveUp.keys().next().value);
+        console.error(`[claim-key] ${key.slice(0, 16)}: no key after ${tries} runs - ${said && said.why} (made again when it is asked for, kanban #2869)`);
         return;
       }
       ({ waitMs, had } = runAgainIn(said, { waitMs, had, everyMs: CLAIM_KEY_EVERY_MS, maxMs: CLAIM_KEY_MAX_WAIT_MS }));
