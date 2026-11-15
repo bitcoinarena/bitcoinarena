@@ -614,7 +614,7 @@ const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 24, 25, 26, 27, 28, 29]);
+const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 24, 25, 26, 27, 28, 29, 30]);
 /**
  * THE VERSION THAT RUNS THE CENSUS KEY'S DAEMON (5A.3B, RULED 2026-11-02, kanban #1048 answer 2). A node that does not speak it cannot deal or sign, so a share given to it counts against
  * the threshold and nobody can use it: a node whose advertisement does not list this version is out of the key's census, in T and the shares alike. It is above BOND_SUM_VERSION, so
@@ -747,6 +747,15 @@ const LOCK_SET_VERSION = 28;
 const TIE_SALT_VERSION = 29;
 /** Whether a round of protocol version `v` breaks score ties by H(round_id || pubkey) (kanban #1614). */
 const saltsTies = (v) => Number.isInteger(v) && v >= TIE_SALT_VERSION;
+/**
+ * 2026.0.30 - EVERY BOND COUNTS IN THE BOND_MIN MEDIAN (kanban #2686, audit #1489 r3-census-1; the owner 2026-11-14 "ja"). Below this version
+ * census-median.js leaves out every node that declares nothing (the installer's adverts declare nothing), so one declaring seat was the
+ * whole median and, after notice_period, every seat refused every new round naming less. From 30 a node that declares no bond_min counts
+ * at its network's BOND_MIN_DEFAULT_SATS with its whole bond. Rounds below 30 keep the old median byte for byte.
+ */
+const BOND_MEDIAN_ALL_VERSION = 30;
+/** Whether a round of protocol version `v` counts every census bond in the bond_min median (kanban #2686). */
+const mediansAllBonds = (v) => Number.isInteger(v) && v >= BOND_MEDIAN_ALL_VERSION;
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (RULED 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -3407,10 +3416,13 @@ function decodeInputBatch(bytes) {
   } catch { throw new Error('trailing bytes after the batch'); }
   if (!b.attests.length) delete b.attests;
   // each room joins the load at its tick; a room with no load there is not a batch this encoder writes
+  // ONE PASS, NOT ROOMS x LOADS (kanban #2707, audit #1489 r4-play-4): a frame of 65,535 loads with a room each joined in ~4.3e9 steps
+  let loadAt = null;
   for (const [at, room] of rooms) {
-    const l = b.loads.filter((x) => x[0] === at);
-    if (l.length !== 1 || l[0].length > 3) throw new Error('a room names no single load at its tick');
-    l[0].push(room);
+    if (!loadAt) { loadAt = new Map(); for (const x of b.loads) loadAt.set(x[0], loadAt.has(x[0]) ? null : x); }
+    const l = loadAt.get(at);
+    if (!l || l.length > 3) throw new Error('a room names no single load at its tick');
+    l.push(room);
   }
   if (b.tapes.length > 1) throw new Error('a batch carries at most one tape');
   // one encoding per batch: empty optional tails are written as none
@@ -17940,6 +17952,29 @@ const BALLOT_BIND_HEIGHT = Object.freeze({ regtest: 0, testnet4: 161400, mainnet
 const ballotBindHeight = (network) => (Object.prototype.hasOwnProperty.call(BALLOT_BIND_HEIGHT, network) ? BALLOT_BIND_HEIGHT[network] : BALLOT_BIND_HEIGHT.mainnet);
 
 /**
+ * THE KEYED VOTE (ruled 2026-11-14, kanban #2671, audit #1489 r2-census-1): a bound vote did not name its bond, so every vote - junk
+ * included - was tried against every census key: a stranger filling one block of a proposal's phase with 10,000 vote outputs cost each
+ * seat 10,000 x census BIP-340 checks on its thread. The keyed vote names its bond by the first VOTE_KEY_PREFIX bytes of the bond's
+ * x-only key, so a vote is looked up in the census once and checked once against the key(s) it names (one; two only if two census keys
+ * share those bytes). Its payload, 80 bytes, the OP_RETURN limit: "ARN" 'K', proposal_id[0:4], choice, seq (u32 BE), key[0:3], the
+ * signature over H(proposal_id || choice || seq), as the bound vote's. The id prefix gives up three more bytes for the key (the prefix only
+ * finds the proposal; the signature covers the whole id). Read under the binding rules (highest seq wins, twins), keyed votes only.
+ */
+const VOTE_KEYED_MARKER = Uint8Array.from([0x41, 0x52, 0x4e, 0x4b]);  // "ARN" 'K'
+const VOTE_KEYED_PREFIX = 4;
+const VOTE_KEY_PREFIX = 3;
+const VOTE_KEYED_BYTES = 4 + VOTE_KEYED_PREFIX + 1 + 4 + VOTE_KEY_PREFIX + 64;   // 80
+/**
+ * THE GATE OF THE KEYED VOTE (kanban #2671): a config proposal published at or above its network's height takes keyed votes only; below
+ * it the reading it had (bound or not) byte for byte. regtest from 0, mainnet from its first block, testnet4 at 162 000 (tip 161 295 on
+ * 2026-11-14: about five days for the seat roll that carries it).
+ */
+const BALLOT_KEY_HEIGHT = Object.freeze({ regtest: 0, testnet4: 162000, mainnet: 0 });
+const ballotKeyHeight = (network) => (Object.prototype.hasOwnProperty.call(BALLOT_KEY_HEIGHT, network) ? BALLOT_KEY_HEIGHT[network] : BALLOT_KEY_HEIGHT.mainnet);
+/** The x-only bond key (32 bytes, or 33 with its parity byte) as the keyed vote names it: its first VOTE_KEY_PREFIX bytes, hex. */
+const voteKeyPrefixOf = (key) => { const k = key instanceof Uint8Array ? key : fromHex(String(key)); return toHex((k.length === 33 ? k.subarray(1) : k).subarray(0, VOTE_KEY_PREFIX)); };
+
+/**
  * THE HASH A CONFIG IS NAMED BY (§27A.7.1): "config_hash = H(canonical(game_config))" - the tagged hash of the config's bytes,
  * the hash every config of the network is named by (nextblock config/game-config.js TAG_GAME_CONFIG; the ballot's genesis
  * 2170f250 is exactly this over its bytes, ballot-genesis.test.js). A proposal carries the FULL config and the hash it names,
@@ -18035,10 +18070,18 @@ const voteMessage = (id, choice, seq = null) => (seq === null || seq === undefin
  * THE OP_RETURN PAYLOAD (§27A.7.3): "ARN" 'V', proposal_id[0:8], choice, the bond key's signature - 77 bytes; with `seq`, the
  * bound vote: "ARN" 'V', proposal_id[0:7], choice, seq, signature - 80 bytes.
  */
-function encodeVote({ proposalId: id, choice, signature, seq = null }) {
+function encodeVote({ proposalId: id, choice, signature, seq = null, bondKey = null }) {
   if (!isVoteBytes32(id)) throw new Error('a vote names a 32-byte proposal id');
   if (!Object.values(CHOICE).includes(choice)) throw new Error('a vote is YES, NO or ABSTAIN');
   if (!(signature instanceof Uint8Array) || signature.length !== 64) throw new Error('a vote carries a 64-byte signature');
+  // kanban #2671: naming the bond key makes the keyed vote (a seq is required with it)
+  if (bondKey !== null && bondKey !== undefined) {
+    if (!isSeq(seq)) throw new Error('a keyed vote carries a u32 seq');
+    const out = new Uint8Array(VOTE_KEYED_BYTES);
+    out.set(VOTE_KEYED_MARKER, 0); out.set(id.subarray(0, VOTE_KEYED_PREFIX), 4); out[8] = choice; out.set(u32be(seq), 9);
+    out.set(fromHex(voteKeyPrefixOf(bondKey)), 13); out.set(signature, 16);
+    return out;
+  }
   if (seq !== null && seq !== undefined) {
     if (!isSeq(seq)) throw new Error('a bound vote\'s seq is a u32');
     const out = new Uint8Array(VOTE_BOUND_BYTES);
@@ -18052,6 +18095,12 @@ function encodeVote({ proposalId: id, choice, signature, seq = null }) {
 /** Either format: { idPrefix, choice, signature, seq, bound } - `seq` null and `bound` false for the 77-byte vote - or null. */
 function decodeVote(payload) {
   if (!(payload instanceof Uint8Array) || (payload.length !== VOTE_BYTES && payload.length !== VOTE_BOUND_BYTES)) return null;
+  // kanban #2671: the keyed vote, told apart by its marker ("ARN" 'K')
+  if (payload.length === VOTE_KEYED_BYTES && VOTE_KEYED_MARKER.every((b, i) => payload[i] === b)) {
+    if (!Object.values(CHOICE).includes(payload[8])) return null;
+    const seq = ((payload[9] << 24) | (payload[10] << 16) | (payload[11] << 8) | payload[12]) >>> 0;
+    return { idPrefix: payload.slice(4, 8), choice: payload[8], seq, keyPrefix: payload.slice(13, 16), signature: payload.slice(16), bound: true, keyed: true };
+  }
   if (VOTE_MARKER.some((b, i) => payload[i] !== b)) return null;
   if (payload.length === VOTE_BOUND_BYTES) {
     if (!Object.values(CHOICE).includes(payload[11])) return null;
@@ -18070,23 +18119,32 @@ function decodeVote(payload) {
  * counts as ABSTAIN (it signed both). Answers outpoint -> { choice, seq, height, txid, weight }; height / txid are of the first
  * such vote by (height, txid). Shared by the ballot's tally and the funding count (funding.js).
  */
+/** kanban #2671: the census bonds by the VOTE_KEY_PREFIX bytes of their x-only key - what a keyed vote is looked up in. */
+function censusByKeyPrefix(census) {
+  const m = new Map();
+  for (const b of census || []) { let k; try { k = voteKeyPrefixOf(b.pubkey); } catch { continue; } if (!m.has(k)) m.set(k, []); m.get(k).push(b); }
+  return m;
+}
+
 // TWINS (ruling #2591 (c), kanban #2607): a bound proposal is its deposit's commitment (proposer key + body hash), so the same body
 // re-signed on the same deposit - another proposal_id - is the SAME proposal. `twins`: the ids of the other signatures over it; a
 // vote signed under any of them counts for this one, and the seq rule below runs across all of them (highest seq wins, equal seq
 // with a different choice = ABSTAIN), whichever id each vote names.
-function boundVotes({ proposalId: id, census, votes, from, until, verify, weightOf, twins = [] }) {
+// KEYED (kanban #2671): only keyed votes, each checked against the census bonds whose key it names - a lookup, never a scan
+function boundVotes({ proposalId: id, census, votes, from, until, verify, weightOf, twins = [], keyed = false }) {
   const ids = [id, ...(twins || []).filter((t) => t instanceof Uint8Array && t.length === 32 && toHex(t) !== toHex(id))];
-  const prefixes = ids.map((x) => toHex(x.subarray(0, VOTE_BOUND_PREFIX)));
+  const prefixes = ids.map((x) => toHex(x.subarray(0, keyed ? VOTE_KEYED_PREFIX : VOTE_BOUND_PREFIX)));
+  const byKey = keyed ? censusByKeyPrefix(census) : null;
   const best = new Map();                            // outpoint -> { seq, choice, conflicted, height, txid, weight }
   for (const v of votes || []) {
     if (!(v?.payload instanceof Uint8Array)) continue;
     const d = decodeVote(v.payload);
-    if (!d || !d.bound) continue;
+    if (!d || !d.bound || !!d.keyed !== !!keyed) continue;
     const named = ids.filter((_, i) => prefixes[i] === toHex(d.idPrefix));
     if (!named.length) continue;
     if (!(v.height >= from && v.height < until)) continue;
     const msgs = named.map((x) => voteMessage(x, d.choice, d.seq));
-    for (const b of census || []) {
+    for (const b of keyed ? byKey.get(toHex(d.keyPrefix)) || [] : census || []) {
       let good = false;
       for (const msg of msgs) { try { good = !!verify(d.signature, msg, b.pubkey); } catch { good = false; } if (good) break; }
       if (!good) continue;
@@ -18176,7 +18234,7 @@ function lastVotes({ proposalId: id, census, votes, from, until, verify, weightO
  * A replayed vote counts once, at its first occurrence (kanban #1489): see lastVotes. The vote bytes and their signature are
  * unchanged; a bond that changes its mind signs anew (BIP-340 with fresh aux randomness gives new bytes).
  */
-function tally({ proposal, standing, census: all, votes, verify, ageBlocks = null, bound = false }) {
+function tally({ proposal, standing, census: all, votes, verify, ageBlocks = null, bound = false, keyed = false }) {
   const id = standing.id;
   // A MONEY VOTE COUNTS ONLY BONDS OF RULE 1'S AGE (kanban #1335): at least `ageBlocks` old at the proposal's publication, so rented capital
   // does not set the fee - for the votes and for "all eligible capital" alike. A bond with no height is not counted.
@@ -18185,8 +18243,8 @@ function tally({ proposal, standing, census: all, votes, verify, ageBlocks = nul
   // `bound` (kanban #2125/#2562): the proposal is read under the binding (its deposit at or above BALLOT_BIND_HEIGHT): highest seq wins;
   // below it the last vote by height with the replay guard (lastVotes, kanban #1489 / #1734)
   // `standing.twins`: the ids of its twins (ruling #2591 (c), kanban #2607), whose votes count for it - bound only
-  const latest = bound
-    ? boundVotes({ proposalId: id, census, votes, from: standing.votingFrom, until: standing.votingUntil, verify, weightOf: (b) => BigInt(b.bondSats), twins: standing.twins || [] })
+  const latest = bound || keyed
+    ? boundVotes({ proposalId: id, census, votes, from: standing.votingFrom, until: standing.votingUntil, verify, weightOf: (b) => BigInt(b.bondSats), twins: standing.twins || [], keyed })
     : lastVotes({ proposalId: id, census, votes, from: standing.votingFrom, until: standing.votingUntil, verify, weightOf: (b) => BigInt(b.bondSats) });
   const total = (census || []).reduce((a, b) => a + BigInt(b.bondSats), 0n);
   let yes = 0n, no = 0n, abstain = 0n;
@@ -19415,8 +19473,12 @@ async function postHandout(stake, nodes, { fetcher = fetch, needed: asked, grace
   const refused = answers.filter((a) => !a.ok).map((a) => a.why);
   // THE CLOSE ON THE SEATS' CLOCK (kanban #1892): the earliest any seat that took the handout puts it, in this page's Date.now() terms; null from seats
   // that do not say (older builds)
-  const closes = answers.filter((a) => a.ok && Number.isFinite(a.closeAtMs)).map((a) => a.closeAtMs);
-  const seatCloseAtMs = closes.length ? Math.min(...closes) : null;
+  // THE THRESHOLD'S CLOSE, NOT ONE SEAT'S (kanban #2668, #1489 r2-client-1): the earliest of all was taken, so one seat that took the handout and said
+  // x-entry-close-in-ms: -86400000 refused every paid head-to-head lock and set the seats' clock a day ahead for every later tap in the tab. A lock
+  // needs `needed` seats to take it: the close that counts is the one by which `needed` of the seats that said one still take it (the needed-th
+  // latest); with fewer such answers than needed, the earliest, as before
+  const closes = answers.filter((a) => a.ok && Number.isFinite(a.closeAtMs)).map((a) => a.closeAtMs).sort((x, y) => x - y);
+  const seatCloseAtMs = !closes.length ? null : closes.length >= needed ? closes[closes.length - needed] : closes[0];
   if (accepted.length < needed)
     return {
       ok: false, accepted: accepted.length, needed, refused, rest, posted, seatCloseAtMs,
@@ -25870,6 +25932,8 @@ const owedSiteOf = (n) => {
 };
 // `bonded` (kanban #2108, #2123): the node keys (hex) of a census this page checked, or null. Only an answer signed by its node's key
 // (settled-list.js) counts, and with `bonded` only one whose key that census bonds; the allowance is one per node key, not per site.
+// kanban #2653: how far a seat's signed /settled `since` may lie after the page's own clock (clock skew) and still answer its request
+const OWED_SINCE_SKEW_MS = 10 * 60 * 1000;
 async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fetcher = fetch, sinceMs = 0, known = [], knownBySeed = null, bonded = null } = {}) {
   // EVERY SAVED PHRASE AT ONCE (2026-10-07): each signer node's /settled is read once and matched against
   // every phrase's keys - 7 asks on 7 signer nodes, not 7 per phrase. One `seed` (with `known`) is the one-phrase scan as before.
@@ -25923,10 +25987,17 @@ async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fetcher =
     return good ? node : null;
   };
   // AT MOST OWED_SETTLED_MAX ROUNDS FROM ONE NODE KEY, NEWEST FIRST, EACH ID ONCE PER SEAT (kanban #1489, #1832, #1966, #2108)
+  // EVERY SIGNED ANSWER OF A KEY COUNTS, NOT THE FIRST (kanban #2653, bypass of #2108/#2123): the first signed answer of a key won and
+  // the key's answers at later URLs were dropped - so a stranger's URL listed first replayed an honest seat's own signed answer to
+  // `since=<far future>` (an empty list) and the seat's real list, with the round owed to this player, was never read. Now every
+  // valid signed answer of one key is merged (the union of their rounds, still one allowance per key), and an answer whose signed
+  // `since` lies after both the asked one and now (OWED_SINCE_SKEW_MS for clock skew) answers another request and is not read.
+  const sinceLimit = Math.max(since, Date.now()) + OWED_SINCE_SKEW_MS;
   const bySite = new Map();
   lists.forEach((got, n) => {
     const h = signerOf(got);
-    if (!h || bySite.has(h)) return;                         // unsigned, not bonded, or a key already read at another URL
+    if (!h) return;                                          // unsigned or not bonded
+    if (Number(got.since) > sinceLimit) return;              // kanban #2653: a signed `since` after the asked one is not this page's answer
     // the seat's newest entries in one pass, objects only (owedNewest, kanban #1772): no sort of a seat's whole list
     const all = owedNewest(got.rounds, OWED_SETTLED_MAX);
     if (!bySite.has(h)) bySite.set(h, []);
@@ -34049,12 +34120,21 @@ async function fetchReserveKey({ federationId, nodes, needed = 5, fetcher = (u, 
         // key that seat's guardian seats agreed on at their threshold - every seat that knows the federation names it. Five must still agree.
         const f = ((await r.json()).federations || []).find((x) => x.federationId === fed && /^0[23][0-9a-f]{64}$/.test(String(x.key || x.reserveKey || '')));
         const k = f ? String(f.key || f.reserveKey) : null;
-        if (k) { said.set(k, (said.get(k) || 0) + 1); if (said.get(k) >= needed) done(); }
+        if (k) said.set(k, (said.get(k) || 0) + 1);
       } catch { /* a node that does not answer names nothing */ }
-    })().finally(() => { left -= 1; if (!left) done(); });
+    })().finally(() => {
+      left -= 1;
+      // NOT THE FIRST KEY TO REACH `needed` (kanban #2652): the nodes are URLs from a lobby link, and five extra paths of one stranger answering
+      // at once made five votes for the stranger's key before the real seats answered. Done early only when no other key - one named already
+      // or one still unheard - can reach `needed` with the answers still out; two keys that both reach it are refused below.
+      const top = [...said.values()].sort((a, b) => b - a);
+      if (!left || ((top[0] || 0) >= needed && (top[1] || 0) + left < needed)) done();
+    });
   });
   const best = [...said.entries()].sort((a, b) => b[1] - a[1])[0];
   if (!best) return { ok: false, why: `none of the round's ${asked.length} signer nodes names a reserve key for federation ${fed.slice(0, 8)}` };
+  const rival = [...said.entries()].find(([k, n]) => k !== best[0] && n >= needed);
+  if (rival) return { ok: false, why: `the round's signer nodes name two reserve keys, ${best[0].slice(0, 16)} and ${rival[0].slice(0, 16)}, each at least ${needed} times - the reserves are not paid to either` };
   if (best[1] < needed) return { ok: false, why: `only ${best[1]} of the round's signer nodes name reserve key ${best[0].slice(0, 16)}, and ${needed} must` };
   return { ok: true, key: fromHex(best[0]), agreeing: best[1], asked: asked.length };
 }
@@ -36977,7 +37057,8 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
  * cannot derive it - and, by the spec's "The client computes the committee itself" (RULED 2026-09-28), when ANY seat's committee
  * answer or seating certificate differs from the client's own computation: "the round is refused, the lobby says which node answered
  * what, and no share is sealed, no stake locked, no entry signed" (measured 2026-10-16 on live testnet4: one seat
- * forging its /committee was named and the join still dealt to the client's seven).
+ * forging its /committee was named and the join still dealt to the client's seven). Kanban #2643: against a certificate the client checked itself, an
+ * unsigned differing answer is named, not refusing, unless at least as many seats differ as agree.
  */
 async function clientSettlementSignerNodes(roundIdHex, contract, nodes, opts = {}) {
   return settlementSignerNodesFrom(await clientCommittee(roundIdHex, contract, nodes, opts));
@@ -36991,7 +37072,22 @@ function settlementSignerNodesFrom(got) {
     if (st && st.missing) throw new Error(`that round has no signer nodes yet: no certificate naming its ${role} signer nodes stands${st.refused.length ? ` (${st.refused[0]})` : ''} - nothing is entered (§5A.7)`);
   }
   const named = [], who = [];
-  for (const s of got.seats || []) if (s.agrees === false) { named.push(`${s.node} ${s.why}`); who.push(s.node); }
+  // AN UNSIGNED ANSWER AGAINST A CHECKED CERTIFICATE IS NAMED, IT DOES NOT CLOSE THE ROUND (kanban #2643, wf1489 r1 census-2): a seat's
+  // /committee list and a seating certificate that does not verify carry no signature - they prove nothing and risk no bond - so where
+  // this client holds a certificate it checked itself (every seated node's signature, score order, threshold), ONE seat answering junk
+  // refused every round for every client. Against such a certificate a differing seat is named (on `refused` and in the console) and the
+  // round stands, unless at least as many seats differ as agree; a role with no checked certificate is refused as before.
+  const certified = (role) => !!(got.seating && got.seating[role] && Array.isArray(got.seating[role].seated));
+  const contra = [];
+  for (const s of got.seats || []) {
+    if (s.agrees !== false) continue;
+    const differ = s.roles ? Object.entries(s.roles).filter(([, x]) => x && x.agrees === false).map(([r]) => r) : ['game', 'settlement'];
+    if (differ.length && differ.every(certified)) contra.push(s); else { named.push(`${s.node} ${s.why}`); who.push(s.node); }
+  }
+  const agreeing = (got.seats || []).filter((s) => s.agrees === true).length;
+  const outvoted = contra.length < agreeing;
+  if (!outvoted) for (const s of contra) { named.push(`${s.node} ${s.why}`); who.push(s.node); }
+  const noted = outvoted ? contra.map((s) => `${s.node} ${s.why} (unsigned, against a checked certificate)`) : [];
   // NOT A LIE, AN UNANSWERED READ (kanban #1036): the client has no certificate to hold the seats against, so nobody is named, the round is not closed, and the next try reads again
   if (who.length && ['game', 'settlement'].some((role) => got.seating && got.seating[role] && got.seating[role].unread)) {
     console.warn(`[arena] #1036 seating unread: ${named.join('; ')}`);
@@ -36999,8 +37095,9 @@ function settlementSignerNodesFrom(got) {
   }
   for (const role of ['game', 'settlement']) {
     const st = got.seating && got.seating[role];
-    for (const why of (st && Array.isArray(st.refused) ? st.refused : [])) named.push(`a ${role} seating certificate that does not match this client's draw - ${why}`);
+    for (const why of (st && Array.isArray(st.refused) ? st.refused : [])) (certified(role) ? noted : named).push(`a ${role} seating certificate that does not match this client's draw - ${why}`);
   }
+  if (noted.length) console.warn(`[arena] #2643 named, the checked certificate stands: ${noted.join('; ')}`);
   if (named.length) {
     // ONE LINE ON THE SCREEN (kanban #1036, the owner's phone: nine seats with two lists of seven ids each filled it and could not be read): who, in a few words; the rest on
     // the error's `detail` and in the console, as "the lobby says which node answered what" asks
@@ -37012,7 +37109,7 @@ function settlementSignerNodesFrom(got) {
     throw e;
   }
   return { signerNodes: got.committees.settlement, agreed: (got.seats || []).filter((s) => s.agrees).length,
-    refused: (got.censusRefused || []).map((x) => `${x.node}: ${x.why}`), derived: got };
+    refused: [...(got.censusRefused || []).map((x) => `${x.node}: ${x.why}`), ...noted], derived: got };
 }
 
 /**
@@ -43406,7 +43503,7 @@ function outcomeFinality(held, { windowMs, nowMs }) {
  * MAY AN ATTESTATION COME IN YET (§0A.7a slice 2): only once the round's entries have closed on the seat's clock, and only
  * for an outcome seen after that close - an outcome known while a pick could still be made is a pick to be copied.
  */
-function attestationTimely(a, { entryCloseMs, nowMs, terms = null, window = null }) {
+function attestationTimely(a, { entryCloseMs, nowMs, terms = null, window = null, event = false }) {
   // A MARKET ON A GRID IS OBSERVED AT ITS OWN WINDOW'S END (kanban #1489): its attestors sign observed_at = the window's end
   // (marketWindowOf), so an outcome observed at any other moment is the outcome of another window - one a seat listing the
   // round with a shifted close could pick after watching the price. `window` is marketWindowOf(contract, manifest).window.
@@ -43418,6 +43515,14 @@ function attestationTimely(a, { entryCloseMs, nowMs, terms = null, window = null
     const t = marketTimes({ entryCloseMs, terms });
     if (BigInt(a.observedAtMs) < t.resolveAtMs)
       return { ok: false, why: `that attestation says it was observed at ${new Date(Number(a.observedAtMs)).toISOString()}, before the market's resolution time ${new Date(Number(t.resolveAtMs)).toISOString()}` };
+    // AND NOT AFTER IT EITHER (kanban #2649): the market asks for the outcome AT its resolution time, and its attestors sign
+    // observed_at = that time (attestor.js, drawn-attestor.js: the window's end = entry close + resolveAfterCloseMs). An outcome
+    // observed later is the outcome of another window - whoever steers when the attestors sign could pick among ~10 min of them.
+    // The same check holds for value attestations (scalar.js reads them here too).
+    // A TEMPLATE'S EVENT (feature 5, `event`) is a real-world fact its attestors report once it happened, observed after its resolution
+    // time (market-template.test.js): that one keeps the lower bound only
+    if (!event && BigInt(a.observedAtMs) !== t.resolveAtMs)
+      return { ok: false, why: `that attestation says it was observed at ${new Date(Number(a.observedAtMs)).toISOString()}, after the market's resolution time ${new Date(Number(t.resolveAtMs)).toISOString()}: it is the outcome of another moment than the one the market asked for` };
     // AND NOT AFTER ITS DEADLINE (kanban #1151): at the deadline a market with no outcome is VOID and its stakes go back at
     // once; an attestation withheld until then and handed in late would turn it ATTESTED over locks already returned
     if (BigInt(nowMs) >= t.deadlineMs)
@@ -45073,6 +45178,11 @@ const h2hFromHex = (h) => Uint8Array.from(String(h).match(/../g) || [], (x) => p
  * void }. A certificate counts only if it stands against `committee` (hex keys, the round's seats the page dealt its stake to) under
  * `verify` (BIP-340); without a committee, only one at least two seats serve with the same entries (one seat on a one-seat list).
  */
+// THE CERTIFICATE'S THRESHOLD AS THE SEATS COUNT IT (arena-node lock-set-book.js #threshold): the committee table, else a majority of the
+// committee - a round seated by 6 (a 7-slot round with one seat gone) has no row in receiptsNeeded, and every reveal of such a protocol-28
+// table threw "no committee threshold for 6 slots" in the page, the house bot and tn4-rps-paid.mjs (kanban #2658, measured 2026-11-14 21:47Z)
+const lockSetThreshold = (n) => { try { return receiptsNeeded(n); } catch { return Math.floor(n / 2) + 1; } };
+
 async function lockSetOfSeats({ roundIdHex, nodes, committee = null, verify = null, entryCloseMs, fetcher = fetch, timeoutMs = H2H_SEAT_ASK_MS }) {
   const said = await Promise.all(nodes.map(async (node) => {
     try {
@@ -45093,7 +45203,7 @@ async function lockSetOfSeats({ roundIdHex, nodes, committee = null, verify = nu
   for (const x of answered) {
     if (!x.certificate || !/^[0-9a-f]+$/.test(String(x.certificate))) continue;
     if (committee && committee.length && typeof verify === 'function') {
-      const st = lockSetCertificateStands(h2hFromHex(x.certificate), { roundId: h2hFromHex(roundIdHex), committee, threshold: receiptsNeeded(committee.length),
+      const st = lockSetCertificateStands(h2hFromHex(x.certificate), { roundId: h2hFromHex(roundIdHex), committee, threshold: lockSetThreshold(committee.length),
         entryCloseMs: BigInt(entryCloseMs), verify });
       if (st.ok) { certified = { entries: st.entries, atMs: st.atMs }; break; }
     } else if (Array.isArray(x.entries)) {
@@ -45982,7 +46092,9 @@ function zapReceiptTemplate({ request, description, invoice, preimage = null, pa
  * comment, event, address, paidAtS }` - what a board counts - or why not. A preimage, when there is one, must hash to the
  * invoice's payment hash.
  */
-function zapReceiptStands(receipt, { nostrPubkey, lnurl = null, verify } = {}) {
+// `recipient` (kanban #2692, #1489 r3-nostr-3): the player whose zaps are counted - a receipt for another recipient (a relay answering BOB's
+// query with ALICE's genuine receipts from the same Lightning-address server) does not stand for this one
+function zapReceiptStands(receipt, { nostrPubkey, lnurl = null, verify, recipient = null } = {}) {
   if (!receipt || receipt.kind !== ZAP_RECEIPT_KIND) return { ok: false, why: `a zap receipt is a kind ${ZAP_RECEIPT_KIND} event` };
   if (nostrPubkey && receipt.pubkey !== nostrPubkey)
     return { ok: false, why: `the receipt is signed by ${String(receipt.pubkey).slice(0, 16)}, not the recipient's server ${String(nostrPubkey).slice(0, 16)}` };
@@ -45995,6 +46107,7 @@ function zapReceiptStands(receipt, { nostrPubkey, lnurl = null, verify } = {}) {
   if (!stands.ok) return { ok: false, why: stands.why };
   if (stands.amountMsat === null) return { ok: false, why: 'the zap request names no amount, so the receipt cannot be counted' };
   if (zapTagValue(receipt, 'p') !== stands.recipient) return { ok: false, why: 'the receipt is for another recipient than its request' };
+  if (recipient && String(stands.recipient).toLowerCase() !== String(recipient).toLowerCase()) return { ok: false, why: 'the receipt is for another recipient than the one counted' };
   const paid = zapInvoiceStands({ invoice: zapTagValue(receipt, 'bolt11'), amountMsat: stands.amountMsat, description });
   if (!paid.ok) return { ok: false, why: paid.why };
   if (lnurl) {
@@ -46173,7 +46286,8 @@ async function zapsReceived(recipient, { relays = [], nostrPubkey = null, lnurl 
   const reads = await Promise.all(relays.map((r) => relayRead(r, { kinds: [ZAP_RECEIPT_KIND], '#p': [recipient], limit: 500 }, { curve, timeoutMs, WebSocketImpl })));
   const byId = new Map();
   for (const e of reads.flat()) byId.set(e.id, e);
-  return zapTotals([...byId.values()], { nostrPubkey, lnurl, verify: (sig, msg, key) => curve.verify(sig, msg, key) });
+  // kanban #2692: only receipts for THIS recipient count - a relay may answer the #p query with anyone's receipts
+  return zapTotals([...byId.values()], { nostrPubkey, lnurl, recipient, verify: (sig, msg, key) => curve.verify(sig, msg, key) });
 }
 
 /** "21 sat" / "1,000 sat": a zap's amount as the page shows it. */

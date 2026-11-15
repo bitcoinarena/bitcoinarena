@@ -145,7 +145,8 @@ export async function zapsReceived(recipient, { relays = [], nostrPubkey = null,
   const reads = await Promise.all(relays.map((r) => relayRead(r, { kinds: [ZAP_RECEIPT_KIND], '#p': [recipient], limit: 500 }, { curve, timeoutMs, WebSocketImpl })));
   const byId = new Map();
   for (const e of reads.flat()) byId.set(e.id, e);
-  return zapTotals([...byId.values()], { nostrPubkey, lnurl, verify: (sig, msg, key) => curve.verify(sig, msg, key) });
+  // kanban #2692: only receipts for THIS recipient count - a relay may answer the #p query with anyone's receipts
+  return zapTotals([...byId.values()], { nostrPubkey, lnurl, recipient, verify: (sig, msg, key) => curve.verify(sig, msg, key) });
 }
 
 /** "21 sat" / "1,000 sat": a zap's amount as the page shows it. */
