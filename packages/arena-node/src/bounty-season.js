@@ -144,6 +144,8 @@ export function openBountySeason(path = ':memory:', { startMs = null, potSats = 
   const db = new DatabaseSync(path);
   db.exec(`PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000;
     CREATE TABLE IF NOT EXISTS link_codes (code TEXT PRIMARY KEY, pubkey TEXT NOT NULL, made_ms INTEGER NOT NULL, used_ms INTEGER, platform TEXT, user_id TEXT);
+    CREATE INDEX IF NOT EXISTS link_codes_by_key ON link_codes (pubkey, made_ms);
+    CREATE INDEX IF NOT EXISTS link_codes_by_age ON link_codes (made_ms);
     CREATE TABLE IF NOT EXISTS links (pubkey TEXT NOT NULL, platform TEXT NOT NULL, user_id TEXT NOT NULL, username TEXT, linked_ms INTEGER NOT NULL,
       member INTEGER, checked_ms INTEGER, why TEXT, PRIMARY KEY (pubkey, platform));
     CREATE TABLE IF NOT EXISTS tg_seen (username TEXT PRIMARY KEY, user_id TEXT NOT NULL, seen_ms INTEGER NOT NULL);
@@ -166,6 +168,9 @@ export function openBountySeason(path = ':memory:', { startMs = null, potSats = 
       const last = db.prepare('SELECT code, made_ms FROM link_codes WHERE pubkey = ? AND used_ms IS NULL AND made_ms > ? ORDER BY made_ms DESC LIMIT 1').get(pubkey, nowMs - LINK_CODE_MS);
       return { ok: true, code: last.code, expiresMs: last.made_ms + LINK_CODE_MS, again: true };
     }
+    // A CODE NOBODY USED IS GONE ONCE IT EXPIRED (kanban #2666, #1489 r2-faucet-1): fresh keys made a row each, kept for good; now the unused
+    // expired ones go with each new code (read by link_codes_by_age), and a key's open codes are counted through link_codes_by_key, not a scan
+    db.prepare('DELETE FROM link_codes WHERE used_ms IS NULL AND made_ms <= ?').run(nowMs - LINK_CODE_MS);
     const code = newLinkCode();
     db.prepare('INSERT INTO link_codes (code, pubkey, made_ms) VALUES (?, ?, ?)').run(code, pubkey, nowMs);
     return { ok: true, code, expiresMs: nowMs + LINK_CODE_MS };

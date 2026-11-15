@@ -157,6 +157,8 @@ const S2_LEVEL_BY_SATS = { 500: 'useful', 1000: 'low', 2000: 'medium', 5000: 'hi
 const S2_BASES = String(env.FAUCET_BOUNTY_S2_BASES || 'https://testnet-stage.bitcoinarena.io/api/faucet/feedback').split(',').map((x) => x.trim().replace(/\/+$/, '')).filter(Boolean);
 const S2_VERIFY_ASKS = new Map();   // pubkey -> last /feedback/verify (one a minute)
 const S2_VERIFY_GAP_MS = 60000;
+const S2_LINK_ASKS = new Map(), S2_LINK_HOUR = { hour: -1, n: 0 };   // kanban #2666: ipKey -> link codes asked this hour; all of them
+const S2_LINK_PER_CALLER_HOUR = 20, S2_LINK_PER_HOUR = 600;
 const S2_KEY_PLATFORMS = (only) => Object.fromEntries(Object.entries(S2_VERIFY).filter(([k]) => !only || only.includes(k)));
 // THE SCREENSHOTS (the owner 2026-11-07): a folder beside the store, one file per image under its SHA-256
 const SHOTS = env.FAUCET_FEEDBACK_SHOTS || (env.FAUCET_FEEDBACK_DB ? `${env.FAUCET_FEEDBACK_DB}.shots` : null);
@@ -1092,7 +1094,15 @@ createServer((req, res) => {
       });
       return undefined;
     }
-    if (path === '/feedback/link') { const c = S2.makeCode(who); return send(200, { ...c, links: S2.links(who).map(({ userId, ...l }) => l), flags: S2.flagsOf(who) }); }
+    // LINK CODES PER CALLER AND IN ALL, AN HOUR (kanban #2666, #1489 r2-faucet-1): a key costs nothing, so one caller signing in with a fresh key
+    // per request made a code (a row) each - 400 in 1.2 s, none refused. Counted by the caller's ipKey (an IPv6 /64 is one) and for every caller
+    if (path === '/feedback/link') { const hour = Math.floor(Date.now() / 3600000), k = ipKey(ipOf(req)) || String(ipOf(req) || '');
+      if (S2_LINK_HOUR.hour !== hour) { S2_LINK_HOUR.hour = hour; S2_LINK_HOUR.n = 0; S2_LINK_ASKS.clear(); }
+      const mine = S2_LINK_ASKS.get(k) || 0;
+      if (mine >= S2_LINK_PER_CALLER_HOUR) return send(429, { ok: false, why: 'too many link codes from this address this hour - try again later' });
+      if (S2_LINK_HOUR.n >= S2_LINK_PER_HOUR) return send(429, { ok: false, why: 'too many link codes this hour - try again later' });
+      S2_LINK_ASKS.set(k, mine + 1); S2_LINK_HOUR.n += 1; if (S2_LINK_ASKS.size > 5000) S2_LINK_ASKS.delete(S2_LINK_ASKS.keys().next().value);
+      const c = S2.makeCode(who); return send(200, { ...c, links: S2.links(who).map(({ userId, ...l }) => l), flags: S2.flagsOf(who) }); }
     const lastAsk = S2_VERIFY_ASKS.get(who) || 0;
     if (Date.now() - lastAsk < S2_VERIFY_GAP_MS) return send(429, { ok: false, why: 'one check a minute' });
     if (!s2LiveSlot()) return send(429, { ok: false, why: 'too many checks right now - try again in a minute' });   // kanban #2646
