@@ -36,7 +36,7 @@ async function telegramLoop(S2, verifiers, token) {
       for (const x of (u && u.result) || []) {
         offset = x.update_id + 1;
         const m = x.message; if (!m || !m.from || m.from.is_bot || typeof m.text !== 'string' || !/^\/link(@\w+)?\b/i.test(m.text.trim())) continue;
-        const out = await linkFromText(S2, verifiers, { platform: 'telegram', userId: String(m.from.id), username: m.from.username ? `@${m.from.username}` : (m.from.first_name || String(m.from.id)), text: m.text });
+        const out = await linkFromText(S2, verifiers, { platform: 'telegram', userId: String(m.from.id), username: m.from.username ? `@${m.from.username}` : String(m.from.id)   /* never a first name: anyone may take a member's name as theirs (kanban #2665) */, text: m.text });
         const reply = out ? out.reply : 'Send /link followed by the code from My feedback, like /link BA-ABCD2345.';
         await api('sendMessage', { chat_id: m.chat.id, text: reply, reply_to_message_id: m.message_id }).catch(() => null);
         log('telegram', out ? (out.ok ? 'linked' : 'refused') : 'no code');
