@@ -118,7 +118,11 @@ export function cleanOpenIssues(o) {
 
 // `paidOf(reportId)` (kanban #2784 pot): the sats actually paid for a report (its paid reward), null when not paid - the faucet passes the report
 // store's; without it every approval counts by the current rule.
-export function openBountySeason(path = ':memory:', { startMs = null, potSats = SEASON_POT_SATS, paidOf = null } = {}) {
+// `pots` (kanban #2784, the owner 2026-11-15: "Season 2 pot = 120,000"): a pot per season, { 2: 120000 }; a season not named has `potSats`.
+// `drawPrizes`: the season draw's prize, its own figure beside the pot ({ 2: 50000 }), never counted in it.
+export function openBountySeason(path = ':memory:', { startMs = null, potSats = SEASON_POT_SATS, pots = {}, drawPrizes = {}, paidOf = null } = {}) {
+  const potOf = (season) => (Number.isInteger(Number(pots && pots[season])) && Number(pots[season]) > 0 ? Number(pots[season]) : potSats);
+  const drawPrizeOf = (season) => (Number.isInteger(Number(drawPrizes && drawPrizes[season])) && Number(drawPrizes[season]) > 0 ? Number(drawPrizes[season]) : null);
   const db = new DatabaseSync(path);
   db.exec(`PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000;
     CREATE TABLE IF NOT EXISTS link_codes (code TEXT PRIMARY KEY, pubkey TEXT NOT NULL, made_ms INTEGER NOT NULL, used_ms INTEGER, platform TEXT, user_id TEXT);
@@ -220,7 +224,8 @@ export function openBountySeason(path = ':memory:', { startMs = null, potSats = 
     }
     const waiting = db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(sats), 0) AS s FROM approvals WHERE state = 'waiting'`).get();
     const nodes = db.prepare(`SELECT COUNT(*) AS n FROM approvals WHERE season = ? AND state = 'approved' AND level = 'node'`).get(s).n;
-    return { season: s, potSats: potSats, usedSats: used, leftSats: potSats - used, nodes, nodesMost: NODES_PER_SEASON, waiting: { n: waiting.n, sats: waiting.s } };
+    const pot = potOf(s);
+    return { season: s, potSats: pot, usedSats: used, leftSats: pot - used, drawPrizeSats: drawPrizeOf(s), nodes, nodesMost: NODES_PER_SEASON, waiting: { n: waiting.n, sats: waiting.s } };
   }
 
   /**

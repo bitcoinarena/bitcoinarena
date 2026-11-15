@@ -40,3 +40,12 @@ test('#2784 the report store says what was paid, and the faucet hands it to the 
   const src = readFileSync(new URL('../tools/faucet.mjs', import.meta.url), 'utf8');
   assert.match(src, /paidOf: \(id\) => FEEDBACK\.paidSatsOf\(id\)/);
 });
+
+test('#2784 a pot per season (Season 2 120,000) and the draw prize as its own figure', async () => {
+  const s = openBountySeason(':memory:', { startMs: 0, pots: { 2: 120000 }, drawPrizes: { 2: 50000 } });
+  const p2 = s.pot(2); assert.deepEqual([p2.potSats, p2.leftSats, p2.drawPrizeSats], [120000, 120000, 50000]);
+  const p3 = s.pot(3); assert.deepEqual([p3.potSats, p3.drawPrizeSats], [100000, null], 'Season 3 unchanged');
+  const src = readFileSync(new URL('../tools/faucet.mjs', import.meta.url), 'utf8');
+  assert.match(src, /pots: seasonFigures\(env\.FAUCET_BOUNTY_POTS\), drawPrizes: seasonFigures\(env\.FAUCET_BOUNTY_DRAW_PRIZES\)/);
+  assert.match(src, /drawPrizeSats: p\.drawPrizeSats/);
+});
