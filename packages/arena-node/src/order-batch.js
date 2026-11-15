@@ -502,6 +502,20 @@ export class OrderBook {
     return null;
   }
 
+  /** The same id with no item's signature checked (kanban #2819): only to check the leader's signature first; #recordId still checks every item. */
+  #recordIdUnchecked(roundIdBytes, record) {
+    try {
+      const ids = [...record.orders];
+      for (const c of record.cancels || []) { if (!c || !isHex(String(c.entry), 32)) return refuse('a cancel is { entry, signature }', 400); ids.push(toHex(cancelId({ roundId: roundIdBytes, entryId: fromHex(String(c.entry)) }))); }
+      for (const x of record.sells || []) {
+        if (!x || !isHex(String(x.entry), 32) || !/^[0-9]{1,20}$/.test(String(x.price)) || !/^[0-9]{1,20}$/.test(String(x.sharesMsat)) || !/^[0-9]{1,20}$/.test(String(x.nonce)))
+          return refuse('a sell is { entry, outcome, price, sharesMsat, nonce, signature }', 400);
+        ids.push(toHex(sellId({ roundId: roundIdBytes, entryId: fromHex(String(x.entry)), outcome: x.outcome, price: BigInt(x.price), sharesMsat: BigInt(x.sharesMsat), nonce: BigInt(x.nonce) })));
+      }
+      return { ok: true, id: toHex(bookBatchId({ roundId: roundIdBytes, k: BigInt(record.k), orderIds: ids })) };
+    } catch (e) { return refuse(e.message, 400); }
+  }
+
   /** The id of a batch record: its orders, cancels and sells, by their ids. */
   #recordId(roundIdBytes, record) {
     const ids = [...record.orders];
@@ -648,7 +662,16 @@ export class OrderBook {
     } else for (const id of record.orders) { const o = this.#orderEntry(roundIdBytes, id); if (!o.ok && !o.undecodable) return o; }
     // kanban #1722, #1791: no more sells than an honest leader takes (MAX_PROPOSAL_SELLS of each seat's proposal, MAX_UNBATCHED_SELLS of
     // one order from each) - counted before a signature is checked, so a leader's flood costs a follower nothing
-    if (!importing) { const big = this.#recordTooBig(m, record); if (big) return big; }
+    // AND A CERTIFIED ONE TOO (kanban #2819, #1489 r23-entry-1): POST /batch-certificate and a seat's /book-certificates answer reach here
+    // importing, with no auth, and #recordId verified every sell (entry decode + Ed25519) before the leader's signature - 4,000 junk sells
+    // held the seat 2.4 s before the 403, ~17 s a post under the body limit. An honest leader's record never carries more (lead() takes at
+    // most this), so it is counted before any signature, as a proposal is
+    { const big = this.#recordTooBig(m, record); if (big) return big; }
+    // THE LEADER'S SIGNATURE BEFORE ANY SELL OR CANCEL IS VERIFIED (kanban #2819): the record's id is the hash of its items' ids, which need no
+    // signature check - a record its leader did not sign is refused for one Schnorr verify, whatever it carries
+    { const pre = this.#recordIdUnchecked(roundIdBytes, record);
+      if (!pre.ok) return pre;
+      if (!isHex(String(record.leaderSig), 64) || !verifySchnorr(fromHex(String(record.leaderSig)), fromHex(pre.id), fromHex(leader))) return refuse('that batch is not signed by its leader', 403); }
     const rec = this.#recordId(roundIdBytes, record);
     if (!rec.ok) return rec;
     if (!isHex(String(record.leaderSig), 64) || !verifySchnorr(fromHex(String(record.leaderSig)), fromHex(rec.id), fromHex(leader))) return refuse('that batch is not signed by its leader', 403);
