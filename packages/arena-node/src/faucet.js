@@ -61,6 +61,7 @@ export const PLAYER_TOPUP_OLD_INVOICE_SATS = 250;
 export const PLAYER_WELCOME_OLD_INVOICE_SATS = 500;
 export const PLAYER_TOPUPS_PER_DAY = 50;         // one account (kanban #1088: was 3; #1397 the owner 2026-11-09 "Set the limits much higher": was 5)
 export const PLAYER_PER_IP_PER_DAY = 200;        // one address, a household or a meetup behind it (#1397: was 10)
+export const PLAYER_NET_SHARE = 2;               // kanban #2757: one IPv6 /48 or IPv4 /24 takes at most half of the players' day
 export const PLAYER_DAY_CAP_SATS = 10000000;     // all players of one UTC day (kanban #1391: 333 welcomes of 3,000; #1397: 3,333)
 // ONE PERSON CANNOT TAKE THE DAY IN MINUTES (audit 5, kanban #1405): an IPv6 caller holds a whole /64 - every address of it is one household
 // (ipKey), and all players together take at most PLAYER_HOUR_CAP_SATS an hour, so the day's 10M last at least 5 hours whoever asks
@@ -105,6 +106,12 @@ export function playerGrantDecide({ kind, account, ip = null, invoiceSats, nowMs
   if (paid.filter((p) => p.atMs > nowMs - HOUR_MS).reduce((n, p) => n + p.sats, 0) + granted.invoiceSats > PLAYER_HOUR_CAP_SATS) return { ok: false, why: 'the faucet gave all it gives this hour: try again in a little while' };
   const key = ipKey(ip);
   if (key && today.filter((p) => ipKey(p.ip) === key).length >= PLAYER_PER_IP_PER_DAY) return { ok: false, why: 'this address took all it can today: try again tomorrow' };
+  // ONE NETWORK, AT MOST ITS SHARE OF THE DAY (kanban #2757, #1489 r7-faucet-1; as faucetDecide since #2539): accounts cost nothing, so welcomes asked
+  // from 17 /64s of one home /56 (or 17 addresses of one /24) under the hour cap took 9,999,000 of the day's 10,000,000 sat in 5.5 hours, and every
+  // honest new player was refused until midnight. One IPv6 /48 or one IPv4 /24 takes at most 1/PLAYER_NET_SHARE of the day's sats
+  const net = net48(key) || net24(key);
+  if (net && today.filter((p) => { const k = ipKey(p.ip); return (net48(k) || net24(k)) === net; }).reduce((n, p) => n + p.sats, 0) + granted.invoiceSats > Math.floor(PLAYER_DAY_CAP_SATS / PLAYER_NET_SHARE))
+    return { ok: false, why: 'this network took its share of today\'s welcome sats: try again tomorrow' };
   if (kind === 'welcome' && paid.some((p) => p.account === account && p.kind === 'welcome')) return { ok: false, why: 'this account already has its welcome sats' };
   // AN UNSURE PAYMENT IS NOT A FREE ONE (state audit 2026-11-12, kanban #1628): a grant whose payer timed out is taken off `players` and parked in
   // `unsure` until the sweep reads its final word - and lnd may still pay it. Asked again meanwhile (a new invoice), the account was paid at once and
