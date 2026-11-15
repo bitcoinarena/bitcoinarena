@@ -272,13 +272,23 @@ export class PriceFeed {
     const now = this.now();
     const at = grid(now);
     if (this.readings.has(at)) return this.readings.get(at).cents;
-    let got = null;
-    try { got = await this.readPrice(); } catch { got = null; }
+    let got = null, failed = null;
+    try { got = await this.readPrice(); } catch (e) { got = null; failed = `the read failed: ${e && e.message ? e.message : e}`; }
     // a reader may answer cents (read now) or { cents, atMs } (the price's own time, the exchange ticker's last trade)
     const r = Number.isInteger(got) ? { cents: got, atMs: now } : got && Number.isInteger(got.cents) ? { cents: got.cents, atMs: Number(got.atMs) } : null;
     // a price already older than one period when it is read is no reading (interim C)
     const c = r && r.cents > 0 && Number.isFinite(r.atMs) && now - r.atMs <= EVERY ? r.cents : null;
     if (c !== null) this.readings.set(at, { cents: c, atMs: Math.min(r.atMs, now) });
+    // WHY A MOMENT HAS NO READING, SAID (kanban #2780): every seat's read failed together for hours on 11-14 (no reading of its own, none heard,
+    // no sample for any round) and nothing said why - the read dropped it silently. A failed or stale read is counted by its reason and logged
+    // at most once a minute: the reason, how many moments since the last line, and the trade's age when the ticker was stale.
+    else {
+      const why = failed || (!r ? 'the reader answered no price' : !(r.cents > 0) ? `the reader answered ${r.cents} cents`
+        : !Number.isFinite(r.atMs) ? 'the reader answered no trade time' : `the last trade was ${Math.round((now - r.atMs) / 100) / 10} s old (a reading is at most ${EVERY / 1000} s old, interim C)`);
+      const m = this.readMisses || (this.readMisses = { n: 0, at: 0, why: null });
+      m.n += 1; m.why = why;
+      if (now - m.at >= 60000) { this.log(`[prices] no reading at ${new Date(at).toISOString()}: ${why} (${m.n} moment(s) without one since the last line)`); m.n = 0; m.at = now; }
+    }
     for (const k of [...this.readings.keys()].sort((a, b) => a - b).slice(0, Math.max(0, this.readings.size - 128))) this.readings.delete(k);
     return c;
   }
