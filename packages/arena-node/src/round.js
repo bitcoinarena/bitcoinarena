@@ -380,10 +380,14 @@ export class Round {
    */
   holdsReceipt(bytes) {
     if (!(bytes instanceof Uint8Array) || bytes.length !== SIGNED_RECEIPT_BYTES) return false;
-    let r;
-    try { r = decodeCheckpointReceipt(splitSignedReceipt(bytes).body); } catch { return false; }
+    let r, body;
+    try { body = splitSignedReceipt(bytes).body; r = decodeCheckpointReceipt(body); } catch { return false; }
     const row = this.db.prepare('SELECT bytes FROM receipts WHERE checkpoint_id = ? AND node_pubkey = ?').get(r.checkpointId, r.nodePubkey);
-    return !!row && Buffer.from(row.bytes).equals(Buffer.from(bytes));
+    // THE SAME RECEIPT RE-SIGNED IS THE SAME RECEIPT (kanban #2742, #1489 r6-play-11): BIP-340 takes fresh aux randomness, so a seat re-signing
+    // its own receipt body made new bytes each time - not held by a byte compare, and every copy queued a whole-run replay (20 copies, 20
+    // replays, 0 results). The body (one node's word on one checkpoint) is compared; its signature adds nothing a held one did not.
+    if (!row) return false;
+    try { return Buffer.from(splitSignedReceipt(new Uint8Array(row.bytes)).body).equals(Buffer.from(body)); } catch { return false; }
   }
 
   takeReceipt(bytes) {
