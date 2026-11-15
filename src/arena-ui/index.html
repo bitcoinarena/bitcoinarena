@@ -3417,6 +3417,10 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       // A CLIENT FILE REFUSED BY ITS PIN IS THE REASON (kanban #569, measured on preview 92bd57a6 with a wrong wasm pin: Unity, its wasm
       // stream ended in the page's error, tried again and aborted with "expected magic word 00 61 73 6d" - the page says why instead)
       if (window.ARENA_CLIENT_REFUSED) message = 'This game\'s client is not the one the Arena pinned, so it does not start: ' + window.ARENA_CLIENT_REFUSED;
+      // NO WEBGL, AND WHAT TO DO (kanban #2764, feedback #063): Unity's own words were all the player got - "Your browser does not support WebGL."
+      else if (/does not support WebGL/i.test(String(message || ''))) message = 'Next Block needs WebGL, and this browser has it switched off or does not offer it. '
+        + 'Turn on hardware acceleration in the browser\'s settings (Chrome: Settings - System - "Use graphics acceleration when available"), update the browser, '
+        + 'or open the page in a current Chrome or Firefox. Rock Paper Scissors and Bitcoin Up or Down play without WebGL - go back to the games to play them.';
       window.ArenaText.say(err, message);
       err.classList.add('show');
       window.ArenaText.say(stage, 'Could not start');
