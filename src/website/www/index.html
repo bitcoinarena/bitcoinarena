@@ -276,6 +276,53 @@
     .cta { margin-top: 18px; }
   }
   @media (max-width: 480px) { .cta { gap: 10px 8px; } .cta .btn { padding: 10px 13px; font-size: 15px; } }
+  /* UNSLOP (2026-11-15, direction approved by the owner: exact, after-dark, sporting; a floodlit stadium beside a ledger; one orange accent;
+     the 5-of-7 tally as the one signature). Overrides only - the rules above stay as they were. */
+  h1, h2, h3, .brand { font-weight: 600; }
+  .brand i { font-weight: 600; }
+  h1.big { font-weight: 600; letter-spacing: -0.025em; }
+  section h2 { font-weight: 600; }
+  .btn { font-weight: 500; transition: background-color .15s ease-out, border-color .15s ease-out, color .15s ease-out; }
+  a:focus-visible, .btn:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  /* spacing on the 4 px grid */
+  .actions { margin-top: 24px; gap: 12px 12px; }
+  header.intro { min-height: min(72svh, 600px); padding: 80px 0 64px; }
+  header.intro .where { margin-top: 20px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 14px; }
+  header.intro .where a { color: var(--soft); }
+  .games { gap: 32px; margin-top: 32px; }
+  .game .kind { margin: 16px 0 4px; }
+  .game .count { margin: 0 0 16px; }
+  .rows { margin-top: 24px; }
+  .more { margin-top: 20px; font-weight: 500; }
+  .after { margin-top: 24px; }
+  .split { margin-top: 24px; }
+  .note { margin-top: 16px; }
+  .tabs { margin-top: 24px; gap: 8px; }
+  .media { gap: 48px; }
+  @media (max-width: 860px) { .media { gap: 24px; } .tn, .dl { gap: 24px; } }
+  /* the mark above each heading stays (the owner 11-06: sections must read apart), quiet instead of a second orange */
+  section h2::before { width: 32px; height: 2px; background: var(--dim); opacity: .5; margin-bottom: 20px; }
+  /* labels in sentence case, no tracking */
+  .split .tag { text-transform: none; letter-spacing: 0; font-size: 12px; }
+  /* the protocol reserves as a scoreboard: flat panel, one hairline, mono figure */
+  .reserves { border-radius: 4px; border: 1px solid var(--line); background: var(--panel); }
+  .reserves .kicker { color: var(--dim); font-size: 14px; font-weight: 500; letter-spacing: 0; text-transform: none; }
+  .r-total { font: 500 clamp(40px, 7vw, 64px)/1 var(--mono); letter-spacing: -0.02em; }
+  .r-total small { font-family: var(--sans); color: var(--dim); }
+  .r-line { font-family: var(--mono); font-size: 13px; color: var(--dim); }
+  .r-link { color: var(--text); font-weight: 500; text-decoration-color: rgba(247,147,26,.6); }
+  .r-link:hover { color: var(--accent); }
+  /* the signature: 5 of 7, five lit */
+  .tally { display: inline-flex; gap: 3px; vertical-align: 1px; margin-right: 4px; }
+  .tally i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+  .tally i:nth-child(n+6) { background: none; box-shadow: inset 0 0 0 1px var(--dim); }
+  td .tally { margin: 0 0 0 4px; }
+  header.intro .where { gap: 4px 0; }
+  header.intro .where .w { white-space: nowrap; }
+  header.intro .where .w + .w::before { content: "·"; margin: 0 8px; color: var(--dim); }
+  @media (max-width: 860px) { header.intro { min-height: 0; padding: 0 0 40px; } }
+  @media (max-width: 560px) { header.intro .where { flex-direction: column; align-items: flex-start; } header.intro .where .w + .w::before { display: none; } }
+  @media (max-width: 480px) { nav.top .app { padding: 6px 10px; font-size: 14px; } }
 </style>
 <script id="arena-ref-source">/* THE SOURCE OF A VISIT (kanban #1458, the owner 2026-11-11: "Make sure Stacker News is recognised through the referrer and the utm is set correctly, without us having to add it"): the same script inline on bitcoinarena.io, testnet. and docs., before the stats script reads the address. A link's own utm_ always wins. Without one, the referrer's host names the source (the map below), put into the address as utm_source/utm_medium so Umami counts it as if the link had carried it. The visit's first source is kept in this tab (sessionStorage, the source name only) and added to links to the other bitcoinarena.io hosts, so a visitor who goes on to the game keeps it. Stacker News sends no referrer on post links (rel="noreferrer", measured 2026-11-11): its links need their own utm. */(function(){try{
 var M=[[/(^|\.)stacker\.news$/,'stacker-news','community'],[/(^|\.)(x\.com|twitter\.com|t\.co)$/,'x','social'],[/(^|\.)(primal\.net|njump\.me|nostr\.com|iris\.to|coracle\.social|snort\.social|jumble\.social|yakihonne\.com|damus\.io|habla\.news|nostrudel\.ninja)$/,'nostr','social'],[/(^|\.)armada\.buzz$/,'armada','community'],[/(^|\.)reddit\.com$/,'reddit','social'],[/(^|\.)bitcointalk\.org$/,'bitcointalk','forum'],[/(^|\.)github\.com$/,'github','referral'],[/(^|\.)discord\.com$/,'discord','community'],[/(^|\.)(t\.me|telegram\.org)$/,'telegram','community'],[/^news\.ycombinator\.com$/,'hackernews','forum']];
@@ -303,14 +350,13 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
 <header class="intro" id="top">
   <div class="bg"><img src="/img/hero-arena.webp" srcset="/img/hero-arena-800.webp 800w, /img/hero-arena.webp 1600w" sizes="100vw" alt="The Bitcoin Arena rising over a skyline of price candles, the road to the next block below" width="1600" height="900" fetchpriority="high"></div>
   <div class="wrap"><div class="copy">
-    <h1 class="big">Play for sats.<br><span class="accent">Settle on Bitcoin.</span></h1>
+    <h1 class="big">Play for sats<br><span class="accent">Settle on Bitcoin</span></h1>
     <p class="facts">Games and markets on a federated network: many independent nodes, no single owner.</p>
     <div class="actions cta">
       <a class="btn primary" href="https://testnet.bitcoinarena.io/" data-umami-event="site-play">Play on Testnet</a>
-      <span class="stack"><a class="btn" href="https://github.com/bitcoinarena/bitcoinarena/releases/latest" data-umami-event="site-run-node">Run a node</a><small class="ver" data-arena-release-version></small></span>
-      <a class="btn" href="https://docs.bitcoinarena.io/" data-umami-event="site-docs">Docs</a>
+      <a class="btn" href="https://github.com/bitcoinarena/bitcoinarena/releases/latest" data-umami-event="site-run-node">Run a node <span class="v" data-arena-release-version></span></a>
     </div>
-    <p class="where">Free test sats, no sign-up.</p>
+    <p class="where"><span class="w"><span class="tally" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>5 of 7 nodes sign each result</span><span class="w">Free test sats, no sign-up</span><a class="w" href="https://docs.bitcoinarena.io/" data-umami-event="site-docs">Read the docs</a></p>
   </div></div>
 </header>
 
@@ -324,7 +370,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       <h3>Tick Tock, Next Block</h3>
       <p>Haul mempool transactions to the miners. The best run takes the pot.</p>
       <p class="count"><b data-total="nextblock">–</b> rounds settled since <span data-since>launch</span></p>
-      <a class="btn primary" href="https://testnet.bitcoinarena.io/?game=nextblock" data-umami-event="site-play" data-umami-event-game="nextblock">Play Tick Tock</a>
+      <a class="btn" href="https://testnet.bitcoinarena.io/?game=nextblock" data-umami-event="site-play" data-umami-event-game="nextblock">Play Tick Tock</a>
     </article>
     <article class="game">
       <img src="/media/rps-v2.jpg" alt="Rock Paper Scissors in play: pick rock, paper or scissors, eight seconds on the clock" width="960" height="540">
@@ -332,7 +378,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       <h3>Rock Paper Scissors</h3>
       <p>Hidden moves, then reveal. The winner takes the pot, a draw returns both stakes.</p>
       <p class="count"><b data-total="rock-paper-scissors">–</b> rounds settled since <span data-since>launch</span></p>
-      <a class="btn primary" href="https://testnet.bitcoinarena.io/?game=rock-paper-scissors" data-umami-event="site-play" data-umami-event-game="rock-paper-scissors">Play Rock Paper Scissors</a>
+      <a class="btn" href="https://testnet.bitcoinarena.io/?game=rock-paper-scissors" data-umami-event="site-play" data-umami-event-game="rock-paper-scissors">Play Rock Paper Scissors</a>
     </article>
     <article class="game">
       <img src="/media/updown-v4.jpg" alt="Bitcoin Up or Down: the price line against the price to beat, Up 71 %, Down 29 %, 9:30 left" width="960" height="540">
@@ -340,7 +386,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       <h3>Bitcoin Up or Down</h3>
       <p>Higher or lower in 15 minutes? The winning side shares the pot.</p>
       <p class="count"><b data-total="btc-updown-15m">–</b> rounds settled since <span data-since>launch</span></p>
-      <a class="btn primary" href="https://testnet.bitcoinarena.io/?game=btc-updown-15m" data-umami-event="site-play" data-umami-event-game="btc-updown-15m">Play Up or Down</a>
+      <a class="btn" href="https://testnet.bitcoinarena.io/?game=btc-updown-15m" data-umami-event="site-play" data-umami-event-game="btc-updown-15m">Play Up or Down</a>
     </article>
   </div>
 </div></section>
@@ -362,7 +408,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     <tbody>
       <tr><th scope="row">Deposit</th><td>Pay a Lightning invoice. The sats arrive as federation e-cash in your browser wallet.</td></tr>
       <tr><th scope="row">Stake</th><td>Join a round. Your stake is locked in the federation.</td></tr>
-      <tr><th scope="row">Verify</th><td>The round&rsquo;s nodes replay it. 5 of 7 must sign the same result.</td></tr>
+      <tr><th scope="row">Verify</th><td>The round&rsquo;s nodes replay it. 5 of 7 must sign the same result. <span class="tally" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span></td></tr>
       <tr><th scope="row">Win</th><td>Winnings land in your wallet. Withdraw over Lightning.</td></tr>
     </tbody>
   </table>
