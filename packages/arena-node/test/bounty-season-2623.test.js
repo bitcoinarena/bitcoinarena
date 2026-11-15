@@ -12,17 +12,20 @@ import { linkFromText } from '../tools/bounty-link-bot.mjs';
 const K = (n) => String(n).repeat(64).slice(0, 64);
 const rep = (n, pubkey = K(1)) => ({ id: String(n).padStart(64, '0'), pubkey });
 
-test('#2623 #2641 the payout: level, half for code-only, 1,000 for a follow-up, bonus X +20 / Nostr +20 / 2 of 3 communities +20, node 10,000 flat', () => {
+test('#2623 #2641 #2784 the payout: the full level only for a played round by a proven human (a verified Telegram, Discord, Armada or X account), else 25 %; 1,000 for a follow-up; bonus X +20 / Nostr +20 / 2 of 3 communities +20; node 10,000 flat', () => {
   assert.equal(bonusPct({}), 0); assert.equal(bonusPct({ telegram: true }), 0); assert.equal(bonusPct({ discord: true }), 0);
   assert.equal(bonusPct({ x: true }), 20); assert.equal(bonusPct({ telegram: true, discord: true, x: true }), 40);
   assert.equal(seasonPayout({ level: 'high', flags: { telegram: true, armada: true, x: true, nostr: true } }).sats, 8000, 'the page: "a high bug then pays 8,000"');
-  assert.equal(seasonPayout({ level: 'high' }).sats, 5000);
-  assert.equal(seasonPayout({ level: 'high', codeOnly: true }).sats, 2500);
-  assert.equal(seasonPayout({ level: 'critical', codeOnly: true, flags: { discord: true } }).sats, 5000, 'one community alone: no bonus');
-  assert.equal(seasonPayout({ level: 'critical', codeOnly: true, flags: { discord: true, armada: true } }).sats, 6000);
-  assert.equal(seasonPayout({ level: 'high', followUp: true }).sats, 1000);
+  assert.equal(seasonPayout({ level: 'high' }).sats, 1250, 'played, no verified account: counts as a bot, 25 %');
+  assert.equal(seasonPayout({ level: 'high', flags: { telegram: true } }).sats, 5000, 'played and one verified account: the full level');
+  assert.equal(seasonPayout({ level: 'high', flags: { telegram: true }, played: false }).sats, 1250, 'a human who played no round: 25 %');
+  assert.equal(seasonPayout({ level: 'high', flags: { nostr: true } }).sats, Math.floor(1250 * 1.2), 'a Nostr follow is a bonus, not proof of a human');
+  assert.equal(seasonPayout({ level: 'high', codeOnly: true }).sats, 1250);
+  assert.equal(seasonPayout({ level: 'critical', codeOnly: true, flags: { discord: true } }).sats, 2500, 'one community alone: no bonus');
+  assert.equal(seasonPayout({ level: 'critical', codeOnly: true, flags: { discord: true, armada: true } }).sats, 3000);
+  assert.equal(seasonPayout({ level: 'high', followUp: true }).sats, 250);
   assert.equal(seasonPayout({ level: 'medium', followUp: true, flags: { x: true } }).sats, 1200);
-  assert.equal(seasonPayout({ level: 'useful', codeOnly: true }).sats, 250);
+  assert.equal(seasonPayout({ level: 'useful', codeOnly: true }).sats, 125);
   assert.deepEqual(seasonPayout({ level: 'node', codeOnly: true, flags: { telegram: true, x: true } }).sats, 10000);
   assert.equal(seasonPayout({ level: 'huge' }).ok, false);
   assert.equal(seasonAt(5, null), 2); assert.equal(seasonAt(1000, 2000), 2); assert.equal(seasonAt(2000 + SEASON_MS, 2000), 3);
@@ -50,10 +53,12 @@ test('#2623 link codes: one use, 24 hours, one key per account; reads stored wit
   assert.equal(s.flagsOf(K(1), { nowMs: t0 + 20 }).telegram, false, 'a failed read is no bonus');
 });
 
-test('#2623 the pot: 100,000 sat a season, an approval past it waits; the node bounty only for the first 3 nodes of a season', () => {
+test('#2623 the pot: 100,000 sat a season, an approval past it waits; the node bounty only for the first 3 nodes of a season', async () => {
   const s = openBountySeason(':memory:', { startMs: 0 });
   const now = 10;
   let n = 0;
+  // the reporters are proven humans (kanban #2784: otherwise every report pays 25 %)
+  for (const [k, id] of [[K(3), '33'], [K(4), '44']]) { const c = s.makeCode(k, { nowMs: now }); s.redeem(c.code, { platform: 'telegram', userId: id, nowMs: now }); await s.verify(k, { telegram: async () => ({ member: true }) }, { nowMs: () => now }); }
   for (let i = 0; i < 9; i++) { const r = rep(++n, K(3)); const p = s.plan(r, { level: 'critical', nowMs: now }); assert.equal(p.fits, true); s.commit(r, p, { nowMs: now }); }
   assert.equal(s.pot(2).usedSats, 90000);
   const big = rep(++n, K(3)); const pb = s.plan(big, { level: 'critical', nowMs: now }); s.commit(big, pb, { nowMs: now });
@@ -61,6 +66,7 @@ test('#2623 the pot: 100,000 sat a season, an approval past it waits; the node b
   assert.equal(po.waits, true, 'the pot is empty: the report waits');
   s.wait(over, po, { nowMs: now });
   assert.equal(s.pot(2).waiting.n, 1); assert.equal(s.approval(over.id).state, 'waiting');
+  await s.verify(K(4), { telegram: async () => ({ member: true }) }, { nowMs: () => SEASON_MS + 4 });   // a fresh read in the next season (a day old does not count)
   const next = s.plan(over, { level: 'low', nowMs: SEASON_MS + 5 });
   assert.equal(next.season, 3); assert.equal(next.fits, true, 'the next season takes it');
   s.commit(over, next, { nowMs: SEASON_MS + 5 });
