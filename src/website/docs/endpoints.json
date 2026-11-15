@@ -30,10 +30,34 @@
   "params": "none",
   "auth": "none",
   "returns": "200 JSON {guardian:true, endpoint} or {guardian:false}",
-  "purpose": "Says whether this node runs a federation guardian and its public endpoint.",
+  "purpose": "Says whether this node runs a federation guardian and its public endpoint. Behind a gateway that maps <prefix>/guardian to the guardian's own API (testnet4 federation A: tn4.bitcoin-arena.io/guardian-N/guardian is the guardian websocket), use GET /guardian-info, which answers the same.",
   "audience": "operator/monitoring",
-  "line": 3451,
+  "line": 8116,
   "summary": "Whether this node is a guardian",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{guardian:true, endpoint} or {guardian:false}."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/guardian-info",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 JSON {guardian:true, endpoint} or {guardian:false}",
+  "purpose": "The same answer as GET /guardian, at a path no gateway maps to the guardian itself: on testnet4 federation A seats GET <seat>/guardian reaches the guardian's websocket API (405), GET <seat>/guardian-info reaches the seat.",
+  "audience": "operator/monitoring",
+  "line": 8116,
+  "summary": "Whether this node is a guardian (same as GET /guardian)",
   "query": [],
   "body": null,
   "responses": [
@@ -11516,7 +11540,11 @@
   "line": 7990,
   "summary": "Departure notice anchor",
   "query": [],
-  "body": "JSON { departure?, post?, txid?, sinceHeight? }",
+  "body": {
+   "contentType": "application/json",
+   "description": "JSON { departure?, post?, txid?, sinceHeight? }",
+   "required": true
+  },
   "responses": [
    {
     "status": "200",
@@ -11537,7 +11565,7 @@
   "auth": "none",
   "returns": "200 JSON entry bytes and claims, or 404",
   "purpose": "The entry this seat took first naming a lock outpoint, with the player's claims it holds (kanban #1692, #1758, #1897).",
-  "audience": "seat",
+  "audience": "node-to-node",
   "line": 10099,
   "summary": "Lock namer",
   "query": [
@@ -11583,7 +11611,11 @@
     "description": "entry"
    }
   ],
-  "body": "64-byte signature (POST)",
+  "body": {
+   "contentType": "application/octet-stream",
+   "description": "64-byte signature (POST)",
+   "required": false
+  },
   "responses": [
    {
     "status": "200",

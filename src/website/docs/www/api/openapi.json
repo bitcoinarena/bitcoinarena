@@ -2,7 +2,7 @@
  "openapi": "3.0.3",
  "info": {
   "title": "Bitcoin Arena node API",
-  "version": "2026-11-11",
+  "version": "2026-11-15",
   "description": "Every request a Bitcoin Arena node (`arena-node`) answers, generated from `packages/arena-node/src/server.js` by `src/website/docs/gen-docs.py`. Concepts and guides: https://docs.bitcoinarena.io/"
  },
  "servers": [
@@ -582,6 +582,40 @@
       "description": "Malformed id or request.",
       "content": {
        "text/plain": {}
+      }
+     }
+    }
+   }
+  },
+  "/batch-signatures": {
+   "get": {
+    "tags": [
+     "Players"
+    ],
+    "summary": "Batch signatures",
+    "description": "Each batch's session-key signature in the order GET /transcript serves, zeros where the seat took it bare (kanban #1567, feedback #013).\n\nAccess: none\n\nReturns: 200 bytes, 64 per batch in transcript order\n\nSource: `packages/arena-node/src/server.js` line 10327.",
+    "operationId": "get_batch_signatures",
+    "parameters": [
+     {
+      "name": "round",
+      "in": "query",
+      "required": true,
+      "description": "round",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "64 bytes per batch.",
+      "content": {
+       "application/octet-stream": {
+        "schema": {
+         "type": "string",
+         "format": "binary"
+        }
+       }
       }
      }
     }
@@ -3825,7 +3859,7 @@
      "Operators"
     ],
     "summary": "Whether this node is a guardian",
-    "description": "Says whether this node runs a federation guardian and its public endpoint.\n\nAccess: none\n\nReturns: 200 JSON {guardian:true, endpoint} or {guardian:false}\n\nSource: `packages/arena-node/src/server.js` line 3451.",
+    "description": "Says whether this node runs a federation guardian and its public endpoint. Behind a gateway that maps <prefix>/guardian to the guardian's own API (testnet4 federation A: tn4.bitcoin-arena.io/guardian-N/guardian is the guardian websocket), use GET /guardian-info, which answers the same.\n\nAccess: none\n\nReturns: 200 JSON {guardian:true, endpoint} or {guardian:false}\n\nSource: `packages/arena-node/src/server.js` line 8116.",
     "operationId": "get_guardian",
     "responses": {
      "200": {
@@ -3867,6 +3901,24 @@
       "description": "None, with the reason.",
       "content": {
        "text/plain": {}
+      }
+     }
+    }
+   }
+  },
+  "/guardian-info": {
+   "get": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "Whether this node is a guardian (same as GET /guardian)",
+    "description": "The same answer as GET /guardian, at a path no gateway maps to the guardian itself: on testnet4 federation A seats GET <seat>/guardian reaches the guardian's websocket API (405), GET <seat>/guardian-info reaches the seat.\n\nAccess: none\n\nReturns: 200 JSON {guardian:true, endpoint} or {guardian:false}\n\nSource: `packages/arena-node/src/server.js` line 8116.",
+    "operationId": "get_guardian_info",
+    "responses": {
+     "200": {
+      "description": "{guardian:true, endpoint} or {guardian:false}.",
+      "content": {
+       "application/json": {}
       }
      }
     }
@@ -4649,6 +4701,41 @@
      }
     },
     "x-changes-state": true
+   }
+  },
+  "/lock-namer": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "Lock namer",
+    "description": "The entry this seat took first naming a lock outpoint, with the player's claims it holds (kanban #1692, #1758, #1897).\n\nAccess: none\n\nReturns: 200 JSON entry bytes and claims, or 404\n\nSource: `packages/arena-node/src/server.js` line 10099.",
+    "operationId": "get_lock_namer",
+    "parameters": [
+     {
+      "name": "outpoint",
+      "in": "query",
+      "required": true,
+      "description": "outpoint",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "The entry's bytes and claims.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "404": {
+      "description": "No entry names that lock here.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
    }
   },
   "/lock-settlement": {
@@ -5767,6 +5854,34 @@
      },
      "502": {
       "description": "The provider service did not answer or failed.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
+  "/owner/departure-anchor": {
+   "post": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "[signed] Departure notice anchor",
+    "description": "Anchors a guardian's departure notice on chain: plan, fund from the node wallet (post), or follow an owner-sent txid (kanban #2610).\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner\n\nReturns: 200 JSON plan or anchor state\n\nSource: `packages/arena-node/src/server.js` line 7990.",
+    "operationId": "post_owner_departure_anchor",
+    "requestBody": {
+     "required": true,
+     "description": "JSON { departure?, post?, txid?, sinceHeight? }",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "The plan or the anchor's state.",
       "content": {
        "application/json": {}
       }
