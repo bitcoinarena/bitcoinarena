@@ -504,6 +504,8 @@ if (url) {
           return { raw: fromHex(String(hex)), height: Number(head.height) };
         } catch { return null; }
       },
+      // a block's height from its header alone (kanban #2670: POST /proposal checks the proposer's bond there before the block is read)
+      blockHeightOf: async (blockHash) => { try { const head = await call('getblockheader', [blockHash]); return head && Number(head.confirmations) >= 1 ? Number(head.height) : null; } catch { return null; } },
       lowestBondMinSats: BigInt(process.env.ARENA_LOWEST_BOND_MIN_SATS || 50000),
       // AND THE TALLY'S READS OF THIS SEAT'S OWN CHAIN (ballot-tally.js, §27A.7.3): the tip; the vote outputs of one block, read
       // raw and kept as votes only (the tally asks each height once); and the bonds
