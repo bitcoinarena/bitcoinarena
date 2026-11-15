@@ -35,7 +35,7 @@ test('wf1489-sm1-page-3: a round\'s record of the second phrase is looked at wit
   store.set(lockDbOf(P2) + 'notes', 'e-cash of phrase 2 in round cdcd');
   store.set(lockDbOf(P1) + 'notes', '');
   const opened = [];
-  const ARENACLIENT = { toHex, fromHex,
+  const ARENACLIENT = { toHex, fromHex, collectWithin: PL.collectWithin, COLLECT_RECORD_MS: PL.COLLECT_RECORD_MS,
     tabLockWallet: async (a) => { opened.push(toHex(a.seed).slice(0, 4)); const hex = toHex(a.seed);
       return { seedHex: hex, lockStatus: async () => '{"stored":null}', withdrawableMsat: async () => String(inWallet.get(hex)) }; },
     // a round whose payout and stake are settled and gone: what lookOwed answers there, its tab balance read from the client it is handed

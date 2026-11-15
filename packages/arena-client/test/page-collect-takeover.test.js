@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { pageFunction } from './page-script.js';
+import { collectWithin, COLLECT_RECORD_MS } from '../src/page-lock.js';   // kanban #2785: the page bounds each record
 
 const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
 const HTML = readFileSync(PAGE, 'utf8');
@@ -16,7 +17,7 @@ const PAYOUT = cut('    let payoutAskingSince = 0;', '\n      payoutAsking = fal
 function page(records, lookRound) {
   const collectFailed = new Map(), collectHeld = new Set();
   const window = { sessionStorage: { getItem: () => null } };
-  const ARENACLIENT = { savedCollects: () => records, roundLocks: () => true, owedToLine: () => 'line', toHex: () => 'ab'.repeat(32), markCollectDone: () => {}, collectIntoPlayerWallet: async () => ({ collected: false }) };
+  const ARENACLIENT = { collectWithin, COLLECT_RECORD_MS, savedCollects: () => records, roundLocks: () => true, owedToLine: () => 'line', toHex: () => 'ab'.repeat(32), markCollectDone: () => {}, collectIntoPlayerWallet: async () => ({ collected: false }) };
   const vault = () => ({ length: 0, key: () => null, getItem: () => null, setItem: () => {}, removeItem: () => {} });
   const fns = pageFunction(PAGE, ['window', 'document', 'vault', 'ARENACLIENT', 'lookRound', 'roundAsk', 'newestKept', 'collectSeed', 'collectNote', 'lookSaid',
     'paintWallet', 'paintHistory', 'paintMoney', 'payoutAsking', 'fetch', 'keptRecords', 'withRecordPhrase', 'collectFailed', 'collectHeld', 'performance'], [PAYOUT], 'return { lookThePayout };')(

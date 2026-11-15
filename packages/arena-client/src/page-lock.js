@@ -3814,6 +3814,23 @@ export function collectBrought(got) {
   return t;
 }
 
+/**
+ * ONE KEPT RECORD'S LOOK AND COLLECT, BOUNDED (kanban #2785, playtest #1481 2026-11-11, round 30da9cec): the page's collect pass awaited each record's
+ * look and collect with no bound, and one step that never returned (the round wallet's join while the federation's config would not download)
+ * held the pass for the tab's life - "collect loop: still on its last look, started 18:44:27Z - a step has not returned" - so no other record,
+ * and no expired lock's refund, was looked at again until a reload. Each record now gets COLLECT_RECORD_MS: past it the pass goes on to the
+ * next record and the late step is left to finish on its own (the federation spends a lock once, so a later look reads it gone). Rejects with
+ * `late: true`; the work's own answer or error otherwise.
+ */
+export const COLLECT_RECORD_MS = 120000;
+export function collectWithin(work, ms = COLLECT_RECORD_MS, what = 'this record') {
+  let timer;
+  const late = new Promise((_, no) => { timer = setTimeout(() => no(Object.assign(new Error(`${what}: no answer in ${Math.round(ms / 1000)} s - looked at again on a later pass`), { late: true })), ms); });
+  const run = Promise.resolve().then(work);
+  run.catch(() => { /* answered after the bound: the pass went on without it */ });
+  return Promise.race([run, late]).finally(() => clearTimeout(timer));
+}
+
 export async function collectIntoPlayerWallet({ look, round, roundId, invite, seed, curve, LockClient, storage, nodes, fetcher, order = 0 } = {}) {
   if (!look || !(look.payoutMsat > 0n || look.stakeMsat > 0n || look.refundMsat > 0n)) return { collected: false, creditedMsat: 0n };
   const client = await playerWallet({ round, invite, seed, LockClient, storage });
