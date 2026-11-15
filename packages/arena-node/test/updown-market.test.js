@@ -3,6 +3,7 @@
 // THE TEST UP/DOWN MARKET AT THE SEATS (2026-10-09): rounds on the market's own 15-minute clock, locks
 // sized to outlive a whole round, locked orders resolved by the attestors' core and settled to the msat; a deadline missed
 // voids and returns every lock; two attestations naming different outcomes - disputed - void too.
+import { DEADLINE_VOID_GRACE_MS } from '../src/game-market.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { lockRound, openLockRound, lockAndPlay, closeRound, standing } from './lock-round-fixture.js';
@@ -127,7 +128,7 @@ test('the Up/Down market: its 15-minute clock, locks that outlive a round (144 r
     skipTo(windowOpen(r2));
     const e2 = await lockAndPlay(r2, player(3), { noMarks: true, pick: YES, order: { price: 50000n } });
     const before2 = await back(r2, e2);
-    skipTo(Number(r2.c.entryCloseMs) + 600000 + 1000);
+    skipTo(Number(r2.c.entryCloseMs) + 600000 + DEADLINE_VOID_GRACE_MS + 1000);  // kanban #2753: a deadline VOID is persisted once the hand-on grace ends
     await closeRound(r2, { window: false });
     const held2 = await r2.a.settlements.settle(r2.rid);
     facts.deadline = { before: before2.slice(0, 90), state: held2.state, why: (held2.why || '').slice(0, 120), back: [await back(r2, e2), await back(r2, e2, '&lock=fee')] };

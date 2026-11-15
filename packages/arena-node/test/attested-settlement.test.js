@@ -10,6 +10,7 @@
 //   - nobody right: only the fee locks are claimed;
 //   - no attestation at all: nothing is claimed;
 //   - a contradiction after the settlement is held as proof and undoes nothing: the round stays FINAL (kanban #1151).
+import { DEADLINE_VOID_GRACE_MS } from '../src/game-market.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { lockRound, openLockRound, lockAndPlay, closeRound, standing } from './lock-round-fixture.js';
@@ -223,7 +224,7 @@ test('a market with terms and no outcome by its deadline: VOID, nothing claimed,
     skipTo(deadlineMs - 1000);
     const before = await w.a.settlements.settle(w.rid);
     const backBefore = await fetch(`http://127.0.0.1:${w.a.port}/forfeit?round=${toHex(w.rid)}&entry=${toHex(played[0].eid)}`).then((r) => r.status);
-    skipTo(deadlineMs + 1000);
+    skipTo(deadlineMs + DEADLINE_VOID_GRACE_MS + 1000);  // kanban #2753: a deadline VOID is persisted once the hand-on grace ends
     const after = await w.a.settlements.settle(w.rid);
     const back = await Promise.all(played.map((e) => fetch(`http://127.0.0.1:${w.a.port}/forfeit?round=${toHex(w.rid)}&entry=${toHex(e.eid)}`).then((r) => r.status)));
     console.log('  DEADLINE:', JSON.stringify({ before: before.state, backBefore, after: after.state, why: after.why, back }));

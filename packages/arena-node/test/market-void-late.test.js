@@ -10,7 +10,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { gameMarkets, heldOutcomes, marketVoidOf } from '../src/game-market.js';
+import { gameMarkets, heldOutcomes, marketVoidOf, DEADLINE_VOID_GRACE_MS } from '../src/game-market.js';
 import { LockSettlement } from '../src/settlement.js';
 import { Round } from '../src/round.js';
 import { openStore } from '../src/store.js';
@@ -98,7 +98,7 @@ test('#1151 the scenario, a market on a game: VOID at its deadline, the stakes b
   const { round, clock, markets } = seatStore();
   const { view, settlement } = withEntries(round);
   // NO RESULT BY THE DEADLINE: VOID, the return door's reading opens (forfeit.js #marketRefund reads marketVoidOf's state)
-  clock.ms = DEADLINE + 1000;
+  clock.ms = DEADLINE + DEADLINE_VOID_GRACE_MS + 1000;  // kanban #2753: a deadline VOID is persisted once the hand-on grace ends
   const voidAt = await settlement.settle(RID);
   const door = marketVoidOf(view, RID, { contract: M, manifest: MARKET.registration.manifest, nowMs: clock.ms });
   assert.equal(voidAt.state, 'VOID');
@@ -138,7 +138,7 @@ test('#1151 the scenario at two seats: VOID at the deadline, every stake back by
     await closeRound(w, { window: false });
     const deadlineMs = Number(w.c.entryCloseMs) + 120000;
     const forfeit = (d, e) => fetch(`http://127.0.0.1:${d.port}/forfeit?round=${toHex(w.rid)}&entry=${toHex(e.eid)}`).then((r) => r.status);
-    skipTo(deadlineMs + 1000);
+    skipTo(deadlineMs + DEADLINE_VOID_GRACE_MS + 1000);  // kanban #2753: a deadline VOID is persisted once the hand-on grace ends
     const atDeadline = await w.a.settlements.settle(w.rid);
     const back = await Promise.all(played.map((e) => forfeit(w.a, e)));
     // THE ATTESTATION, VALID (2 of 3, observed after the resolution time), WITHHELD UNTIL THE STAKES WENT BACK

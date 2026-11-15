@@ -12,7 +12,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { heldOutcomes, marketVoidOf, VALUE_HELD_OUTCOME } from '../src/game-market.js';
+import { heldOutcomes, marketVoidOf, VALUE_HELD_OUTCOME, DEADLINE_VOID_GRACE_MS } from '../src/game-market.js';
 import { LockSettlement } from '../src/settlement.js';
 import { StakeSecrets } from '../src/stake-secret.js';
 import { Forfeit } from '../src/forfeit.js';
@@ -176,7 +176,7 @@ test('two values are DISPUTED and VOID; no value by the deadline is VOID', async
   const open = await settlement.settle(rid);
   assert.equal(open.state, 'HELD');
   // NO VALUE BY THE DEADLINE: entry close + 600 s + 1 h
-  clock.ms = Number(RESOLVE_AT + TERMS.deadlineAfterResolveMs);
+  clock.ms = Number(RESOLVE_AT + TERMS.deadlineAfterResolveMs) + DEADLINE_VOID_GRACE_MS;  // kanban #2753: a deadline VOID is persisted once the hand-on grace ends
   const late = await settlement.settle(rid);
   assert.equal(late.state, 'VOID');
   assert.match(late.why, /no outcome was attested by the market's deadline/);
