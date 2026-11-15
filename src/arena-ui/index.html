@@ -327,8 +327,9 @@
     body.arena-own-client #arena-fps { display: none; }
     /* THE FOOT IN ONE ROW (2026-10-17): the UI line, the links and Donate, 30 px. The strip of settlement facts and fees above it is gone
        (2026-10-30, iPhone: it covered the Rock / Paper / Scissors options); the fees stay in the docs.
-       The line ends 16 px left of the links (#753: the links' left edge is 100 + 4 x 24 + 3 x 6 = 214 px from the right) */
-    html body.arena-own-client #arena-build { height: calc(30px + min(env(safe-area-inset-bottom, 0px), 4px)); line-height: 30px; padding-right: 230px; font-size: 10px; }
+       The line ends 16 px left of the links (#753). FIVE LINKS NOW (kanban #2763, feedback #062/#067: X, Discord, Telegram, GitHub, Nostr - the
+       X icon sat on "UI 668" at 1280x900): their left edge is 100 + 5 x 24 + 4 x 6 = 244 px from the right, the line ends at 260 */
+    html body.arena-own-client #arena-build { height: calc(30px + min(env(safe-area-inset-bottom, 0px), 4px)); line-height: 30px; padding-right: 260px; font-size: 10px; }
     html body.arena-own-client #arena-client { height: calc(100% - 41px - 30px - env(safe-area-inset-top, 0px) - min(env(safe-area-inset-bottom, 0px), 4px)); }
     /* THE BAR MOVES ON THE COMPOSITOR TOO (2026-10-16: "after a few seconds, it gets also filled from around
        where the 90% progress would be ... the 100% progress is now reached at around half of the progress bar"). Measured by
@@ -1025,7 +1026,7 @@
     #arena-foot-topup:disabled { opacity: .6; cursor: default; }
     body.arena-topup-on #arena-donate-go { right: 104px !important; }
     body.arena-topup-on #arena-social { right: 198px !important; }
-    html body.arena-topup-on #arena-build { padding-right: 330px !important; }
+    html body.arena-topup-on #arena-build { padding-right: 358px !important; }   /* kanban #2763: five links at right 198 - 198 + 144 + 16 */
     @media (max-width: 599px) {
       body.arena-topup-on #arena-social { display: none !important; }
       body.arena-topup-on #arena-donate-go { right: 102px !important; padding: 0 9px !important; font-size: 0 !important; }
