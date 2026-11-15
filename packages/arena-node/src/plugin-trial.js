@@ -44,13 +44,16 @@ function trialCases(box, manifest, left) {
   for (let players = 2; players <= maxPlayers; players++) {
     const total = moves ** players;
     for (let n = 0; n < total && cases < MAX_CASES; n++) {
-      const list = Array.from({ length: players }, (_, i) => ({ key: 'p' + i, move: Math.floor(n / moves ** i) % moves }));
+      // THE SEAT'S CALL SHAPE (kanban #2674): verify.js decides with each entry's 64-hex id as the key and the installed config
+      // ({} - a package's configs are signed hashes with no body), so the trial does too: an adapter that spins only when handed a
+      // config, or a seat-shaped key, is run on that branch here and refused, not first at the seat's close
+      const list = Array.from({ length: players }, (_, i) => ({ key: (0xa0 + i).toString(16).repeat(32), move: Math.floor(n / moves ** i) % moves }));
       let a, b;
       try {
         if (left() <= 0) throw new Error(`the trial did not finish within ${TRIAL_MS} ms`);
-        a = JSON.stringify(box.call('decide', { moves: list }, left()));
+        a = JSON.stringify(box.call('decide', { moves: list, config: {} }, left()));
         if (left() <= 0) throw new Error(`the trial did not finish within ${TRIAL_MS} ms`);
-        b = JSON.stringify(box.call('decide', { moves: list }, left()));
+        b = JSON.stringify(box.call('decide', { moves: list, config: {} }, left()));
       } catch (e) { return { ok: false, cases, why: `it fails on ${JSON.stringify(list.map((m) => m.move))}: ${String(e.message).slice(0, 300)}` }; }
       if (a !== b) return { ok: false, cases, why: `it answers ${JSON.stringify(list.map((m) => m.move))} differently twice` };
       let v; try { v = JSON.parse(a); } catch { v = null; }
