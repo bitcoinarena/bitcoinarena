@@ -28,7 +28,7 @@ import { readFileSync, writeFileSync, appendFileSync, renameSync } from 'node:fs
 import { execFile } from 'node:child_process';
 import { nodeBountyCheck } from '../src/node-bounty-check.js';
 import { seatPublicFetch } from '../src/public-fetch.js';
-import { openBountySeason, cleanOpenIssues, seasonEndMs } from '../src/bounty-season.js';
+import { openBountySeason, cleanOpenIssues, seasonEndMs, NO_CARRY_FROM_SEASON, LEVEL_SATS } from '../src/bounty-season.js';
 import { verifiersFromEnv } from '../src/bounty-verify.js';
 import { socialCheck, resolversFromEnv } from '../src/bounty-social.js';   // kanban #2641
 import { userbotFromEnv } from '../src/telegram-userbot.js';   // kanban #2641
@@ -748,7 +748,7 @@ if (S2) setInterval(() => { if (!S2_STARTED() || !bountyOn()) return;
       if (a.level !== 'node') await S2.verify(r.pubkey, S2_VERIFY, { cause: 'season2-start' });
       const p = S2.plan(r, { level: a.level, codeOnly: a.codeOnly, followUp: a.followUp, played: !!PLAYED.played(r.pubkey) });
       if (!p.ok) continue;
-      if (p.waits) { if (p.season !== a.season) S2.wait(r, p, { by: 'season2' }); continue; }
+      if (p.waits || p.noBounty) { if (p.waits && p.season !== a.season) S2.wait(r, p, { by: 'season2' }); continue; }   // a Season 2 waiter keeps waiting (#2787: Season 2 keeps its rule)
       const out = s2Approve(r, p, 'season2');
       console.log(`${new Date().toISOString()} season 2: ${r.label || r.id.slice(0, 12)} ${out.ok ? `approved ${p.sats} sat` : `not approved: ${out.why}`}`);
     }
@@ -911,6 +911,8 @@ createServer((req, res) => {
             await PLAYED.fresh().catch(() => 0);   // kanban #2784: the full level only for a reporter who played a round (and is proven human)
             const p = S2.plan(r, { level, codeOnly: b.codeOnly === true, followUp: b.followUp === true, played: !!PLAYED.played(r.pubkey) });
             if (!p.ok) return send(200, p);
+            // kanban #2787: from Season 3 on a used-up pot is no bounty - nothing waits; a line on the report's log says why
+            if (p.noBounty) { FEEDBACK.remark(r.id, p.why, { by }); return send(200, { ok: false, noBounty: true, why: p.why, pot: p.pot }); }
             if (p.waits) return send(200, { ok: false, waits: true, why: `Season ${p.season}'s pot has ${p.pot.leftSats} sat left and this report is ${p.sats}: it waits for the next season`, season2: S2.wait(r, p, { by }) });
             return send(200, s2Approve(r, p, by));
           }
@@ -1079,7 +1081,9 @@ createServer((req, res) => {
     return send(200, cleanOpenIssues(o));
   }
   if (S2 && path === '/feedback/season' && req.method === 'GET') { const p = S2.pot(S2.seasonNow(Date.now()));
-    return send(200, { season: p.season, potSats: p.potSats, usedSats: p.usedSats, leftSats: p.leftSats, nodes: p.nodes, nodesMost: p.nodesMost }); }
+    // usedUp (kanban #2787): from Season 3 on, a pot that cannot take even the smallest payout (a useful note at 25 %) means no bounty this season
+    return send(200, { season: p.season, potSats: p.potSats, usedSats: p.usedSats, leftSats: p.leftSats, nodes: p.nodes, nodesMost: p.nodesMost,
+      usedUp: p.season >= NO_CARRY_FROM_SEASON && p.leftSats < Math.floor(LEVEL_SATS.useful / 4) }); }
   if (S2 && (path === '/feedback/link' || path === '/feedback/verify' || path === '/feedback/social')) {
     if (req.method === 'OPTIONS') { res.writeHead(204, { ...cors, 'access-control-allow-methods': 'POST', 'access-control-allow-headers': 'authorization, content-type', 'access-control-max-age': '86400' }); return res.end(); }
     if (req.method !== 'POST') return send(405, { ok: false, why: 'POST' });
