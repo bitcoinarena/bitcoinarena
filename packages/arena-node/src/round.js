@@ -221,6 +221,9 @@ export function refusedLockOwnId(handoutIdBytes, outpoint) {
 const bareRefusedRow = (r) => !r.of_handout || Buffer.from(r.of_handout).equals(Buffer.from(r.handout_id));
 const ownIdOfRow = (r) => (bareRefusedRow(r) ? refusedLockOwnId(new Uint8Array(r.handout_id), r.outpoint) : new Uint8Array(r.handout_id));
 
+/** A transcript's batch list is a u16 (kanban #2805). */
+const MAX_TRANSCRIPT_BATCHES = 65535;
+
 export class Round {
   /** How long openHeld trusts its last count of the open rows when this store wrote none (kanban #786). */
   static OPEN_HELD_MS = 250;
@@ -1202,6 +1205,18 @@ export class Round {
       if (at[0] !== next)
         throw new Error(`expected tick ${next}, got ${at[0]}`);
     }
+    // NO TICKLESS BATCH ONCE THE RUN HAS TICKS, AND NO MORE BATCHES THAN A TRANSCRIPT CAN CARRY (kanban #2805, #1489 r21-play-1): checkTranscript
+    // takes a batch of no ticks only before the first ticked one ("expected tick N, got undefined" after it), so one empty signed batch
+    // after the first stored a link no seat could build a transcript over - no seat could replay or sign the run, a player's way to block
+    // the result of a losing run. And a transcript's batch list is a u16: past 65,535 batches it cannot be encoded at all.
+    if (!seen) {
+      if (!at.length && this.db.prepare('SELECT 1 FROM ticks WHERE round_id = ? AND entry_id = ? LIMIT 1').get(b.roundId, b.entryId))
+        throw new Error(`a batch of no ticks after the run's first ticks cannot be carried in its transcript: send it with the batch that reaches tick ${this.nextTick(b.roundId, b.entryId)}`);
+      const held = this.db.prepare('SELECT COUNT(*) n FROM batches WHERE round_id = ? AND entry_id = ?').get(b.roundId, b.entryId);
+      if (held && Number(held.n) >= MAX_TRANSCRIPT_BATCHES)
+        throw new Error(`a run's transcript carries at most ${MAX_TRANSCRIPT_BATCHES} batches`);
+    }
+
 
     // AND THE LOAD IS ONE AN HONEST BED COULD HAVE DECLARED (kanban #1488): a room the parcels make, a fee for each of
     // them, no more than 20 BTC, at a tick this batch carries and before the truck was ever driven (load-checks.js).
@@ -1525,6 +1540,26 @@ export class Round {
         'SELECT 1 k FROM batches WHERE round_id = ? AND entry_id = ? AND batch_id = ?')
         .get(c.roundId, c.entryId, c.inputChainHash);
       if (!known) throw new Error('the checkpoint names inputs this node has not seen');
+    }
+
+    // AND THE INPUTS NEVER GO BACK (kanban #2804, #1489 r21-play-2): the head above was checked only for being known, and GENESIS not at
+    // all - a mark naming GENESIS (or an earlier batch) after a mark that named a later one was receipted, and the transcript every seat
+    // then builds is refused by checkTranscript ("the mark commits to earlier inputs than the one before it"): no seat could replay or sign
+    // the run, a player's way to block the result of a losing run. The same rule at the door: refused and kept as offered.
+    if (head.tick !== null) {
+      const parentRow = this.db.prepare('SELECT bytes FROM checkpoints WHERE round_id = ? AND entry_id = ? AND tick = ?').get(c.roundId, c.entryId, head.tick);
+      if (parentRow) {
+        const parent = decodeCheckpoint(splitSigned(new Uint8Array(parentRow.bytes)).body);
+        const posOf = (h) => {
+          if (same(h, GENESIS)) return -1;
+          const r = this.db.prepare('SELECT seq FROM batches WHERE round_id = ? AND entry_id = ? AND batch_id = ?').get(c.roundId, c.entryId, h);
+          return r ? Number(r.seq) : -1;
+        };
+        if (posOf(c.inputChainHash) < posOf(parent.inputChainHash)) {
+          this.keepOffered(c, id, bytes);
+          throw new Error('the checkpoint commits to earlier inputs than the mark before it');
+        }
+      }
     }
 
     // AND THE NODE HOLDS EVERY INPUT THAT STATE CAME FROM.
