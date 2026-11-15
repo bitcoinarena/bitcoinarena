@@ -109,7 +109,12 @@ export const DUTY_TEMPLATE = Object.freeze({ protocolVersion: 3, configHash: new
   custody: 'FEDERATION', stakeExpiryBlocks: 144, slashMinimumServed: 20, slashRemainder: 'SPLIT', censusConfirmations: 6, randomnessRule: 'bitcoin-block-hash',
   publicationRelays: [], gameVerifySlots: 7, settlementSlots: 7, stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: 4920, exposureReference: 1000,
   corridorHalfWidth: 40, spawnFreeRadius: 20, timeFloor: 30, timeCeil: 150, minScore: 0, rankNumerator: 3, rankDenominator: 4, nodes: [] });
-const RPS_TICKS = { blockTicks: 600, startDeadlineTicks: 300 };
+// AN RPS ROUND'S TIMING (kanban #2864, the owner 2026-11-15: "8s runden und dann 5-10s aufdecken"): a head-to-head round has no run, and its end - the
+// reveal deadline and the earliest settlement - is its entry close + 2 x startDeadlineTicks + blockTicks (first-mark.js roundEndMs): 600 + 2 x 300 ticks
+// was 20 s after the close; 301 + 2 x 150 is 10.015 s, just over the protocol's least head-to-head reveal window (manifest.js H2H_REVEAL_MIN_MS, which
+// round.js holds a round to: 300 + 2 x 150 would be 9,998 ms and refused). No core is asked
+// (round.js: a head-to-head round's run length is not checked against a core). ARENA_RPS_BLOCK_TICKS / ARENA_RPS_START_TICKS change it.
+export const RPS_TICKS = Object.freeze({ blockTicks: Number(process.env.ARENA_RPS_BLOCK_TICKS) || 301, startDeadlineTicks: Number(process.env.ARENA_RPS_START_TICKS) || 150 });
 
 /**
  * THE PROTOCOL AN APP'S DAYS ARE RAISED TO (kanban #1486): ARENA_DUTY_PROTOCOL_<APP> (RPS, NEXTBLOCK, UPDOWN) names the lowest version this
