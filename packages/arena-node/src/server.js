@@ -13413,7 +13413,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // missed it mid-join, a lock-first client), the first A0 match was the stranger's: the player's stake was refused there (its refund key not
         // that handout player's), or kept under the forged handout's id alone, which no other seat holds. A handout stands for the lock when its A0
         // is the image (a stake) and its player's refund key is the lock's (stake and fee); the refund key is refused only when none does.
-        const matches = []; let a0Seen = false;
+        const matches = []; let a0Seen = false; let feeTries = 0;
         const feeId = (h) => sha256(new Uint8Array([...h.id, ...new TextEncoder().encode('fee')]));
         const txHex = toHex(outpoint.txid);
         for (const h of round.handoutsOf(rid)) {
@@ -13424,7 +13424,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             // A FEE LOCK IS THE TRY'S IT WAS LOCKED WITH (kanban #1945): the handout whose kept stake lock is an output of its own lock transaction first
             const stakeKept = round.refusedLock(h.id);
             const m = { id: feeId(h), handout: d };
-            if (stakeKept && String(stakeKept.outpoint).split(':')[0] === txHex) matches.unshift(m); else matches.push(m);
+            if (stakeKept && String(stakeKept.outpoint).split(':')[0] === txHex) { matches.unshift(m); feeTries++; } else matches.push(m);
           }
         }
         if (!matches.length && a0Seen) return text(res, 409, 'that lock\'s refund key is not the handout player\'s: it returns to nobody this round dealt');
@@ -13432,7 +13432,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           ? 'this signer node holds no handout for that round whose player that fee lock refunds to: no fee of that round'
           : 'this signer node holds no handout for that round whose A0 is the lock\'s image: no stake of that round');
         // a fee lock stays the one handout's it was locked with (#1945); a stake lock is kept against every handout that names it (below)
-        if (image.kind === 'hash') matches.splice(1);
+        // A FEE LOCK KEPT UNDER EVERY HANDOUT WHOSE KEPT STAKE IS OF ITS TRANSACTION (kanban #2794, the fee-lock variant of #2390/#2442): since
+        // #2390 the stake is kept under a forged handout's alias too (A0 and the player's key copied, cut to open at one seat), so that forged
+        // handout also "kept a stake of this txid"; taken after the player's, it went to the front here, splice(1) kept the fee under its id
+        // alone, every other seat kept it under the player's - the fee's forfeit gathered 1 of 2 and the fee waited for its expiry. Now the
+        // fee is kept under each such handout's fee id (the aliases below, at most 8), so the player's own id names it at every seat as well;
+        // with no such handout it stays the first one's, as #1945 had it.
+        if (image.kind === 'hash') matches.splice(Math.max(1, feeTries));
         const held = matches[0];
         const players = new Set(matches.map((x) => toHex(x.handout.playerPubkey)));
         // ENTERED = AN ENTRY THIS SEAT HOLDS A STAKE FOR (kanban #1582, state audit 2026-11-12): the /entry door takes an entry before
