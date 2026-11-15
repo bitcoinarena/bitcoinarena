@@ -30,10 +30,34 @@
   "params": "none",
   "auth": "none",
   "returns": "200 JSON {guardian:true, endpoint} or {guardian:false}",
-  "purpose": "Says whether this node runs a federation guardian and its public endpoint.",
+  "purpose": "Says whether this node runs a federation guardian and its public endpoint. Behind a gateway that maps <prefix>/guardian to the guardian's own API (testnet4 federation A: tn4.bitcoin-arena.io/guardian-N/guardian is the guardian websocket), use GET /guardian-info, which answers the same.",
   "audience": "operator/monitoring",
-  "line": 3451,
+  "line": 9380,
   "summary": "Whether this node is a guardian",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{guardian:true, endpoint} or {guardian:false}."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/guardian-info",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 JSON {guardian:true, endpoint} or {guardian:false}",
+  "purpose": "The same answer as GET /guardian, at a path no gateway maps to the guardian itself: on testnet4 federation A seats GET <seat>/guardian reaches the guardian's websocket API (405), GET <seat>/guardian-info reaches the seat.",
+  "audience": "operator/monitoring",
+  "line": 9380,
+  "summary": "Whether this node is a guardian (same as GET /guardian)",
   "query": [],
   "body": null,
   "responses": [
@@ -14239,7 +14263,7 @@
   "auth": "none",
   "returns": "200 JSON {node, alarms: [{federation, kind, height, session | txid, seenAtMs}]}",
   "purpose": "The marks of theft this seat saw in federations' signed histories (inflation, or a reserve spend with no signed peg-out); a federation with one takes no deposits.",
-  "audience": "player/monitoring",
+  "audience": "player/page",
   "line": 11327,
   "summary": "Reserve alarms this seat holds",
   "query": [],
@@ -14267,7 +14291,11 @@
   "line": 9515,
   "summary": "Departure notice anchor",
   "query": [],
-  "body": "JSON { departure?, post?, txid?, sinceHeight? }",
+  "body": {
+   "contentType": "application/json",
+   "description": "JSON { departure?, post?, txid?, sinceHeight? }",
+   "required": true
+  },
   "responses": [
    {
     "status": "200",
@@ -14292,7 +14320,11 @@
   "line": 9066,
   "summary": "Operator fee signal",
   "query": [],
-  "body": "JSON (POST)",
+  "body": {
+   "contentType": "application/json",
+   "description": "JSON (POST)",
+   "required": true
+  },
   "responses": [
    {
     "status": "200",
@@ -14313,7 +14345,7 @@
   "auth": "none",
   "returns": "200 JSON; 4xx with a reason",
   "purpose": "The entry this seat took first naming a lock outpoint, with the player's claims it holds (kanban #1692, #1758, #1897).",
-  "audience": "seat",
+  "audience": "node-to-node",
   "line": 11782,
   "summary": "Lock namer",
   "query": [
@@ -14354,7 +14386,11 @@
     "description": "entry"
    }
   ],
-  "body": "64-byte signature (POST)",
+  "body": {
+   "contentType": "application/octet-stream",
+   "description": "64-byte signature (POST)",
+   "required": true
+  },
   "responses": [
    {
     "status": "200",
@@ -14472,7 +14508,11 @@
   "line": 13559,
   "summary": "Contribution end",
   "query": [],
-  "body": "hex body || 64-byte signature (POST)",
+  "body": {
+   "contentType": "application/octet-stream",
+   "description": "hex body || 64-byte signature (POST)",
+   "required": true
+  },
   "responses": [
    {
     "status": "200",
@@ -14493,11 +14533,15 @@
   "auth": "signed",
   "returns": "200 JSON; 4xx with a reason",
   "purpose": "A guardian's own signed view in a halt, taken when the held record binds its signer to that guardian (kanban #1319).",
-  "audience": "seat",
+  "audience": "node-to-node",
   "line": 14144,
   "summary": "Guardian halt observations",
   "query": [],
-  "body": "signed observation",
+  "body": {
+   "contentType": "application/octet-stream",
+   "description": "signed observation",
+   "required": true
+  },
   "responses": [
    {
     "status": "200",
@@ -14518,11 +14562,15 @@
   "auth": "signed",
   "returns": "200 JSON; 4xx with a reason",
   "purpose": "A head-to-head audit: its bytes and the auditor's signature, taken once before the round's short window closed (§13A.1, kanban #1412).",
-  "audience": "seat",
+  "audience": "node-to-node",
   "line": 14603,
   "summary": "Head-to-head audit",
   "query": [],
-  "body": "audit bytes + signature",
+  "body": {
+   "contentType": "application/octet-stream",
+   "description": "audit bytes + signature",
+   "required": true
+  },
   "responses": [
    {
     "status": "200",

@@ -2,7 +2,7 @@
  "openapi": "3.0.3",
  "info": {
   "title": "Bitcoin Arena node API",
-  "version": "2026-11-03",
+  "version": "2026-11-15",
   "description": "Every request a Bitcoin Arena node (`arena-node`) answers, generated from `packages/arena-node/src/server.js` by `src/website/docs/gen-docs.py`. Concepts and guides: https://docs.bitcoinarena.io/"
  },
  "servers": [
@@ -838,6 +838,35 @@
       "description": "Malformed id or request.",
       "content": {
        "text/plain": {}
+      }
+     }
+    }
+   }
+  },
+  "/batch-signatures": {
+   "get": {
+    "tags": [
+     "Players"
+    ],
+    "summary": "Batch signatures",
+    "description": "Each batch's session-key signature in transcript order, zeros where the seat took it bare (kanban #1567, feedback #013).\n\nAccess: none\n\nReturns: 200 JSON; 4xx with a reason\n\nSource: `packages/arena-node/src/server.js` line 12010.",
+    "operationId": "get_batch_signatures",
+    "parameters": [
+     {
+      "name": "round",
+      "in": "query",
+      "required": true,
+      "description": "round",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Batch signatures",
+      "content": {
+       "application/json": {}
       }
      }
     }
@@ -2186,6 +2215,35 @@
       "description": "This seat counts no ballot.",
       "content": {
        "text/plain": {}
+      }
+     }
+    }
+   }
+  },
+  "/contribution-shares": {
+   "get": {
+    "tags": [
+     "Players"
+    ],
+    "summary": "Contribution shares",
+    "description": "Each contribution agreement's share for a round at its census height, from this seat's book of counted rounds (\u00a727A.4.2, kanban #1346).\n\nAccess: none\n\nReturns: 200 JSON; 4xx with a reason\n\nSource: `packages/arena-node/src/server.js` line 13518.",
+    "operationId": "get_contribution_shares",
+    "parameters": [
+     {
+      "name": "round",
+      "in": "query",
+      "required": true,
+      "description": "round",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Contribution shares",
+      "content": {
+       "application/json": {}
       }
      }
     }
@@ -4275,6 +4333,41 @@
     "x-changes-state": true
    }
   },
+  "/funding-items": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "A proposal's signals and fee approvals",
+    "description": "The signals and fee approvals this seat holds for one funding proposal, as signed, each with when this seat first held it (atMs). A seat pulls them from every network seat it reaches before it decides a fee proposal or a signal, so every seat decides on the same set (kanban #1231, #1279).\n\nAccess: none\n\nReturns: 200 JSON {proposal, items[{kind, hex, atMs}]}; 400\n\nSource: `packages/arena-node/src/server.js` line 10118.",
+    "operationId": "get_funding_items",
+    "parameters": [
+     {
+      "name": "proposal",
+      "in": "query",
+      "required": true,
+      "description": "Proposal id, 64 hex (32 bytes).",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "{proposal, items: [{kind: signal|fee-approval, hex: the signed record, atMs}]}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "No proposal id, or not 64 hex.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
+   }
+  },
   "/game-donation-set": {
    "get": {
     "tags": [
@@ -4630,7 +4723,7 @@
      "Operators"
     ],
     "summary": "Whether this node is a guardian",
-    "description": "Says whether this node runs a federation guardian and its public endpoint.\n\nAccess: none\n\nReturns: 200 JSON {guardian:true, endpoint} or {guardian:false}\n\nSource: `packages/arena-node/src/server.js` line 3451.",
+    "description": "Says whether this node runs a federation guardian and its public endpoint. Behind a gateway that maps <prefix>/guardian to the guardian's own API (testnet4 federation A: tn4.bitcoin-arena.io/guardian-N/guardian is the guardian websocket), use GET /guardian-info, which answers the same.\n\nAccess: none\n\nReturns: 200 JSON {guardian:true, endpoint} or {guardian:false}\n\nSource: `packages/arena-node/src/server.js` line 9380.",
     "operationId": "get_guardian",
     "responses": {
      "200": {
@@ -4672,6 +4765,115 @@
       "description": "None, with the reason.",
       "content": {
        "text/plain": {}
+      }
+     }
+    }
+   }
+  },
+  "/guardian-halt-observations": {
+   "post": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "Guardian halt observations",
+    "description": "A guardian's own signed view in a halt, taken when the held record binds its signer to that guardian (kanban #1319).\n\n**Changes state on the node:** this page does not send it.\n\nAccess: signed\n\nReturns: 200 JSON; 4xx with a reason\n\nSource: `packages/arena-node/src/server.js` line 14144.",
+    "operationId": "post_guardian_halt_observations",
+    "requestBody": {
+     "required": true,
+     "description": "signed observation",
+     "content": {
+      "application/octet-stream": {
+       "schema": {
+        "type": "string",
+        "format": "binary"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Guardian halt observations",
+      "content": {
+       "application/json": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
+  "/guardian-info": {
+   "get": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "Whether this node is a guardian (same as GET /guardian)",
+    "description": "The same answer as GET /guardian, at a path no gateway maps to the guardian itself: on testnet4 federation A seats GET <seat>/guardian reaches the guardian's websocket API (405), GET <seat>/guardian-info reaches the seat.\n\nAccess: none\n\nReturns: 200 JSON {guardian:true, endpoint} or {guardian:false}\n\nSource: `packages/arena-node/src/server.js` line 9380.",
+    "operationId": "get_guardian_info",
+    "responses": {
+     "200": {
+      "description": "{guardian:true, endpoint} or {guardian:false}.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
+  "/h2h-audit": {
+   "post": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "Head-to-head audit",
+    "description": "A head-to-head audit: its bytes and the auditor's signature, taken once before the round's short window closed (\u00a713A.1, kanban #1412).\n\n**Changes state on the node:** this page does not send it.\n\nAccess: signed\n\nReturns: 200 JSON; 4xx with a reason\n\nSource: `packages/arena-node/src/server.js` line 14603.",
+    "operationId": "post_h2h_audit",
+    "requestBody": {
+     "required": true,
+     "description": "audit bytes + signature",
+     "content": {
+      "application/octet-stream": {
+       "schema": {
+        "type": "string",
+        "format": "binary"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Head-to-head audit",
+      "content": {
+       "application/json": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
+  "/h2h-audits": {
+   "get": {
+    "tags": [
+     "Players"
+    ],
+    "summary": "Head-to-head audits",
+    "description": "The head-to-head audits this seat holds for a round (\u00a713A.1, kanban #1412).\n\nAccess: none\n\nReturns: 200 JSON; 4xx with a reason\n\nSource: `packages/arena-node/src/server.js` line 14623.",
+    "operationId": "get_h2h_audits",
+    "parameters": [
+     {
+      "name": "round",
+      "in": "query",
+      "required": true,
+      "description": "round",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Head-to-head audits",
+      "content": {
+       "application/json": {}
       }
      }
     }
@@ -5425,6 +5627,48 @@
     }
    }
   },
+  "/leaderboard-winners": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "Leaderboard payout winners",
+    "description": "A leaderboard payout's winners at this seat: its own frozen read of the season's signed accounts, or the list it planned for, with every signed account it stands on. The coordinator merges the guardians' records into its plan; a co-signer checks a plan's rounds against them (kanban #1153).\n\nAccess: none\n\nReturns: 200 JSON {ok, proposal, state (OPEN|FROZEN|PLANNED), winnersId, winners:[{player, payoutPk, msat, places}], pairs:[[roundId, accountId]], evidence:[{roundId, accountId, contract, round, sigs:[{node, sig}]}]}; 400; 501 on a node that pays no reserves\n\nSource: `packages/arena-node/src/server.js` line 0.",
+    "operationId": "get_leaderboard_winners",
+    "parameters": [
+     {
+      "name": "proposal",
+      "in": "query",
+      "required": true,
+      "description": "The leaderboard payout id, 64 hex.",
+      "schema": {
+       "type": "string"
+      },
+      "example": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "{ok, proposal, state, winnersId, winners, pairs, evidence}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "No proposal id, or not 64 hex.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "501": {
+      "description": "This node pays no reserves.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
   "/liquidations": {
    "get": {
     "tags": [
@@ -5672,6 +5916,35 @@
      }
     },
     "x-changes-state": true
+   }
+  },
+  "/lock-namer": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "Lock namer",
+    "description": "The entry this seat took first naming a lock outpoint, with the player's claims it holds (kanban #1692, #1758, #1897).\n\nAccess: none\n\nReturns: 200 JSON; 4xx with a reason\n\nSource: `packages/arena-node/src/server.js` line 11782.",
+    "operationId": "get_lock_namer",
+    "parameters": [
+     {
+      "name": "outpoint",
+      "in": "query",
+      "required": true,
+      "description": "outpoint",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Lock namer",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
    }
   },
   "/lock-settlement": {
@@ -6908,6 +7181,34 @@
      },
      "502": {
       "description": "The provider service did not answer or failed.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
+  "/owner/departure-anchor": {
+   "post": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "[signed] Departure notice anchor",
+    "description": "Anchors a guardian's departure notice on chain: plan, fund from the node wallet, or follow an owner-sent txid (kanban #2610).\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner\n\nReturns: 200 JSON; 4xx with a reason\n\nSource: `packages/arena-node/src/server.js` line 9515.",
+    "operationId": "post_owner_departure_anchor",
+    "requestBody": {
+     "required": true,
+     "description": "JSON { departure?, post?, txid?, sinceHeight? }",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Departure notice anchor",
       "content": {
        "application/json": {}
       }
@@ -10512,7 +10813,7 @@
     "operationId": "post_price_sign",
     "requestBody": {
      "required": true,
-     "description": "{round, kind:\"sample\", k, priceCents, leaderSig} or {round, kind:\"tape\", prices[], leaderSig}.",
+     "description": "{round, kind:\"sample\", k, priceCents} or {round, kind:\"tape\", prices[]}.",
      "content": {
       "application/json": {
        "schema": {}
@@ -11340,6 +11641,24 @@
     "x-changes-state": true
    }
   },
+  "/reserve-alarms": {
+   "get": {
+    "tags": [
+     "Players"
+    ],
+    "summary": "Reserve alarms this seat holds",
+    "description": "The marks of theft this seat saw in federations' signed histories (inflation, or a reserve spend with no signed peg-out); a federation with one takes no deposits.\n\nAccess: none\n\nReturns: 200 JSON {node, alarms: [{federation, kind, height, session | txid, seenAtMs}]}\n\nSource: `packages/arena-node/src/server.js` line 11327.",
+    "operationId": "get_reserve_alarms",
+    "responses": {
+     "200": {
+      "description": "{node, alarms}.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
   "/reserve-payout/commit": {
    "post": {
     "tags": [
@@ -12040,7 +12359,7 @@
       "name": "scope",
       "in": "query",
       "required": false,
-      "description": "network: ask every seat this node knows for its rounds (GET /season-rounds) and merge them with its own. A round counts only when 3 distinct seats hand in byte-identical accounts of it, so no single seat can forge a row. Omitted: this node's own rounds.",
+      "description": "network: ask every seat this node knows for its rounds (GET /season-rounds) and merge them with its own. A round counts only when 3 distinct seats hand in byte-identical accounts of it, so no single seat can forge a row. Omitted: this node's own rounds. The leaderboard payouts and the weekly badge do not count on agreement: they count signed accounts only (kanban #1153).",
       "schema": {
        "type": "string"
       },
@@ -12081,7 +12400,7 @@
      "Players"
     ],
     "summary": "Leaderboard rounds held by this node",
-    "description": "The rounds this node's own leaderboard is built from: FINAL results and the amounts its ACCEPTED settlements paid. Another node merges them into its network leaderboard. The weekly top-3 badge merges on the round keys too.\n\nAccess: none\n\nReturns: 200 JSON {node, game {ids}, days, fromMs, toMs, roundKeys: true, rounds:[{roundId, gameId, startMs, void, entries:[{player, name, stakeMsat, payoutMsat, outcome, score, roundKey}]}]} - msat and startMs as decimal strings, payoutMsat null while not settled here, roundKey the key the entry joined under (cache 30 s); 400/404\n\nSource: `packages/arena-node/src/server.js` line 4440.",
+    "description": "The rounds this node's own leaderboard is built from: FINAL results and the amounts its ACCEPTED settlements paid. Another node merges them into its network leaderboard. A leaderboard payout and the weekly top-3 badge count a round only when the threshold of the round's own draw (5 of 7) signed the same account of it, its contract checked by id (kanban #1153).\n\nAccess: none\n\nReturns: 200 JSON {node, game {ids}, days, fromMs, toMs, roundKeys: true, signed: true, rounds:[{roundId, gameId, startMs, void, entries:[{player, name, stakeMsat, payoutMsat, outcome, score, roundKey}], contract, sigs:[{node, sig}]}]} - msat and startMs as decimal strings, payoutMsat null while not settled here, roundKey the key the entry joined under, contract the round contract (hex), sigs this seat's BIP-340 signature over the round's account once every entry is settled here (empty before) (cache 30 s); 400/404\n\nSource: `packages/arena-node/src/server.js` line 4440.",
     "operationId": "get_season_rounds",
     "parameters": [
      {
@@ -12107,7 +12426,7 @@
     ],
     "responses": {
      "200": {
-      "description": "{node, game:{ids}, days, fromMs, toMs, roundKeys: true, rounds:[{roundId, gameId, startMs, void, entries:[{player, name, stakeMsat, payoutMsat, outcome, score, roundKey}]}]} (cache 30 s).",
+      "description": "{node, game:{ids}, days, fromMs, toMs, roundKeys: true, signed: true, rounds:[{roundId, gameId, startMs, void, entries:[{player, name, stakeMsat, payoutMsat, outcome, score, roundKey}], contract, sigs:[{node, sig}]}]} (cache 30 s).",
       "content": {
        "application/json": {}
       }
@@ -12527,6 +12846,35 @@
      }
     },
     "x-changes-state": true
+   }
+  },
+  "/send-refunds": {
+   "get": {
+    "tags": [
+     "Players"
+    ],
+    "summary": "Send refunds",
+    "description": "The presigned refunds (c) of a protocol-27 settlement this seat holds for each send to a qualifier (kanban #1044 B1, ruling #1134).\n\nAccess: none\n\nReturns: 200 JSON; 4xx with a reason\n\nSource: `packages/arena-node/src/server.js` line 12885.",
+    "operationId": "get_send_refunds",
+    "parameters": [
+     {
+      "name": "scope",
+      "in": "query",
+      "required": true,
+      "description": "scope",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Send refunds",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
    }
   },
   "/send-share": {

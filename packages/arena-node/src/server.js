@@ -9374,7 +9374,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (stageAsked.size > 16) stageAsked.delete(stageAsked.keys().next().value);
         return answer(body);
       }
-      if (req.method === 'GET' && url.pathname === '/guardian') {
+      // WHETHER THIS NODE IS A GUARDIAN - also at /guardian-info (kanban #2779, feedback #081): behind a gateway that maps <prefix>/guardian
+      // to the guardian's own API - the testnet4 federation A seats, where https://tn4.bitcoin-arena.io/guardian-N/guardian is the guardian
+      // websocket - GET /guardian never reaches the seat.
+      if (req.method === 'GET' && (url.pathname === '/guardian' || url.pathname === '/guardian-info')) {
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify(guardian ? { guardian: true, endpoint: guardian.endpoint, ...(guardianNext ? { next: guardianNext.endpoint } : {}) } : { guardian: false }));
       }
