@@ -240,7 +240,7 @@ import { transcriptBytesHash, SIGNED_POSTING_BYTES, decodeTranscriptPosting, spl
 import { decodeTranscript, checkTranscript, transcriptHash as hashOfTranscriptObj } from '../../arena-protocol/src/transcript.js';   // the relay door's check (kanban #1532, #2242)
 import { federationIsBonded } from '../../arena-protocol/src/federation.js';
 import { hostedPlugins, pluginForRound, advertisedAppsCheck } from './plugins.js';
-import { gameMarkets, gameMarketSweep, heldOutcomes, gameVoidOf, gameEvidenceOf, attestedTable, marketFinalityOf, marketStateOf, marketDeadlineOf, VALUE_HELD_OUTCOME } from './game-market.js';
+import { gameMarkets, gameMarketSweep, heldOutcomes, gameVoidOf, gameEvidenceOf, attestedTable, marketFinalityOf, marketStateOf, marketDeadlineOf, VALUE_HELD_OUTCOME, DEADLINE_VOID_GRACE_MS } from './game-market.js';
 import { isHeadToHead, marketOfRound, isGameMarket, isScalar, isDrawnAttest, GAME_MARKET_REFUND } from '../../arena-protocol/src/manifest.js';
 import { decodeValueAttestation, valueAttestationStands, valueAttestationBodyId, isValueAttestationBytes } from '../../arena-protocol/src/scalar.js';
 import { encodeManifest, decodeManifest, gameIdOf, manifestStands, RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
@@ -508,7 +508,8 @@ export const GHOST_BACKLOG_BYTES = 262144;
 // landing at one seat just before the deadline reaches the next one after it, and a seat restarting at that moment is reached later still.
 // Up to this long after the deadline a seat takes one that a settlement peer proves it held before it (its GET /outcome), filed at that
 // peer's time; the seat that took it keeps handing it on until then. A seat whose VOID is already persisted keeps it (#1151).
-export const ATTEST_HANDON_GRACE_MS = 30000;
+// (kanban #2753) one constant with game-market.js DEADLINE_VOID_GRACE_MS: a deadline VOID is not persisted inside it
+export const ATTEST_HANDON_GRACE_MS = DEADLINE_VOID_GRACE_MS;
 // ANOTHER SEAT'S ANSWER IS READ ONLY UP TO A BOUND (kanban #1553): a game package (GET /plugin) is its manifest, chain, cores and
 // clients - a few hundred kB to a few MB for the real apps - and a GET /games listing far less. r.json() took any length: a seat
 // streaming hundreds of MB inside the timeout was buffered and parsed whole on this seat's main thread, on every automatic-update
