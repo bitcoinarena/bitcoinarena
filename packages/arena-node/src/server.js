@@ -1040,7 +1040,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // the deadline, or null.
   const outcomeTakenByPeer = async (target, a, valued, { contract: c, deadlineMs }) => {
     const W = BigInt(c.objectionWindowMs), D = BigInt(deadlineMs);
-    const said = await Promise.all(winningsPeers(target).map(async (peer) => {
+    const peers = winningsPeers(target);
+    // NOT ON ONE PEER'S WORD (kanban #2680, #1489 r3-attest-1): a peer's GET /outcome is unsigned JSON, so one lying settlement seat answered
+    // "ATTESTED before the deadline" and an honest seat took a late attestation backdated - ATTESTED where the market was VOID, spread on by
+    // hand-on to the whole committee. Now as many distinct peers as can be faulty plus one must say so (n - threshold + 1 of the committee:
+    // 3 of 7; 1 of a 2-seat committee, which tolerates none): at least one of them is honest, and the time taken is the k-th earliest.
+    const n = peers.length + 1;
+    let faulty; try { faulty = n - roundThreshold(n); } catch { faulty = Math.floor((n - 1) / 3); }
+    const need = Math.max(1, faulty + 1);
+    const said = await Promise.all(peers.map(async (peer) => {
       try {
         const r = await fetch(`${String(peer).replace(/\/+$/, '')}/outcome?round=${toHex(target)}`, { signal: AbortSignal.timeout(2000) });
         const o = r.ok ? JSON.parse(await readTextCapped(r, LISTING_ANSWER_MAX_BYTES)) : null;
@@ -1050,9 +1058,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return first < D ? first : null;
       } catch { return null; }
     }));
-    const took = said.filter((x) => x !== null);
-    if (!took.length) return null;
-    const first = took.reduce((m, x) => (x > m ? x : m));     // the latest proving peer's time: no one peer pulls it earlier
+    // one answer per peer endpoint (a peer listed twice counts once)
+    const byPeer = new Map(); peers.forEach((p, i) => { const k = String(p).replace(/\/+$/, ''); if (said[i] !== null && !byPeer.has(k)) byPeer.set(k, said[i]); });
+    const took = [...byPeer.values()].sort((x, y) => (x < y ? -1 : x > y ? 1 : 0));
+    if (took.length < need) return null;
+    const first = took[need - 1];     // the need-th earliest: no faulty peers alone pull it earlier
     const floor = D - BigInt(ATTEST_HANDON_GRACE_MS);
     return first < floor ? floor : first;
   };
