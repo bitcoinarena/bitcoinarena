@@ -21,6 +21,7 @@ import { feeProposalStands, feeProposalOutcome, feesAt as feesAtOf, FEES, FEES_T
 import { leaderboardVotePeriod, leaderboardPasses } from '../../arena-protocol/src/leaderboard-payout.js';
 
 export const FUNDING_SQL = `CREATE TABLE IF NOT EXISTS funding_items (id TEXT PRIMARY KEY, kind TEXT NOT NULL, proposal TEXT NOT NULL, hex TEXT NOT NULL, at_ms INTEGER NOT NULL);
+  CREATE INDEX IF NOT EXISTS funding_items_kind_proposal ON funding_items (kind, proposal);   -- kanban #2722: the unsignalled count, per add
   CREATE TABLE IF NOT EXISTS funding_signal_ends (proposal TEXT PRIMARY KEY, seen_ms INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS funding_outcomes (proposal TEXT PRIMARY KEY, outcome TEXT NOT NULL, decided_ms INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS funding_vote_census (proposal TEXT PRIMARY KEY, height INTEGER NOT NULL, census TEXT NOT NULL, hash TEXT, legacy INTEGER NOT NULL DEFAULT 0);
@@ -105,6 +106,8 @@ export function fundingPaymentStep(row, ev) {
 // developers' keys (32-byte x-only hex) of that network, or null when this seat cannot tell yet. Once its vote is decided a fee
 // proposal is decided whole (feeProposalOutcome) against the fees in force before its activation; feesAt(height) answers the set
 // in force at a height - what a round of that census height settles with.
+/** kanban #2722: the unsignalled proposals of one kind a seat keeps, whatever the author keys */
+export const FUNDING_UNSIGNALED_MAX = 256;
 export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedule = FUNDING_SCHEDULES.spec, log = () => {}, now = () => Date.now(),
   voteChain = null, maxBlocksPerPass = 64, seasonedNodes = null, devKeysOf = null, pull = null, feeChainFrom = () => null, endTimeAt = null, bindHeightFor = null }) {
   db.exec(FUNDING_SQL);
@@ -689,6 +692,13 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
           else db.prepare('UPDATE funding_items SET at_ms = ? WHERE id = ? AND at_ms > ?').run(atMs, id, atMs);
         }
         return { ok: true, fresh: false, id };
+      }
+      // AT MOST FUNDING_UNSIGNALED_MAX PROPOSALS OF A KIND NO BONDED NODE HAS SIGNALLED (kanban #2722, #1489 r5-census-12): anyone may author one
+      // (ruled 2026-10-17) and keys are free - one stranger signing each with a fresh key had all 2000 kept, forwarded to every seat and
+      // re-verified on every list. Past the bound a new one is refused (429, never forwarded) until a kept one is signalled.
+      if (kind === 'proposal' || kind === 'fee' || kind === 'leaderboard') {
+        const waiting = db.prepare("SELECT COUNT(*) AS n FROM funding_items p WHERE p.kind = ? AND NOT EXISTS (SELECT 1 FROM funding_items s WHERE s.kind = 'signal' AND s.proposal = p.id)").get(kind).n;
+        if (waiting >= FUNDING_UNSIGNALED_MAX) return { ok: false, status: 429, why: `this seat holds ${FUNDING_UNSIGNALED_MAX} ${kind} proposals no node has signalled yet: try again once one is` };
       }
       const height = await Promise.resolve(tip()).catch(() => null);
       // A PLAYER'S NAME (PIP, player-name.js): the newest per player is kept, the one it replaces dropped; one dated
