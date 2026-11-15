@@ -51,7 +51,7 @@ for (const early of [false, true]) test(`#1489-r7-faucet-3 a Week 2 bonus lost b
     assert.equal(sent.ok, true, JSON.stringify(sent));
     // at approval: a member of Telegram and Discord and an X follower (links read live and fresh) -> +50 %
     { const s = openBountySeason(s2db);
-      for (const [p, id] of [['telegram', '701'], ['discord', '702'], ['x', '703']]) { assert.equal(s.claimName(eve.pubkey, p, { userId: id, username: `eve-${p}` }).ok, true); s.record(eve.pubkey, p, { member: true }); }
+      for (const [p, id] of [['telegram', '701'], ['discord', '702'], ['x', '703']]) { assert.equal(s.redeem(s.makeCode(eve.pubkey).code, { platform: p, userId: id, username: `eve-${p}` }).ok, true); /* (2.0: linked by a code) */ s.record(eve.pubkey, p, { member: true }); }
       s.close(); }
     const a = await act({ action: 'approve', id: ev.id, severity: 'high', season2: true });
     assert.equal(a.ok, true, JSON.stringify(a));
