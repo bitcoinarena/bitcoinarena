@@ -614,7 +614,7 @@ const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 27, 28, 29, 30]);
+const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 27, 28, 29, 30, 31]);
 /** The last BLWP/v1 tags become ARENA/v1 at one point per network (tag-switch.js, kanban #525). */
 const TAG_SWITCH_VERSION = 18;
 /** A node's bond outputs count as their sum: the round's floor is applied to it (census.js nodeBonds, kanban #544). */
@@ -657,6 +657,16 @@ const saltsTies = (v) => Number.isInteger(v) && v >= TIE_SALT_VERSION;
 const BOND_MEDIAN_ALL_VERSION = 30;
 /** Whether a round of protocol version `v` counts every census bond in the bond_min median (kanban #2686). */
 const mediansAllBonds = (v) => Number.isInteger(v) && v >= BOND_MEDIAN_ALL_VERSION;
+/**
+ * 2026.0.31 - A TIE AT A PAID PLACE IS SPLIT EVENLY (kanban #2687, audit #1489 r3-settle-11; spec ruling #2776, 2026-11-15). From 29 a tie
+ * went by H(round_id || pubkey), but the round id is public before a player's key is fixed: a client that ground 32 keys per round won the
+ * tie - the whole loser pool with one paying rank - in 24 rounds of 24. From 31 entries tied at a paid place share the sum of the places
+ * they occupy, equally; no order among them is computed, and the odd msat of that division goes to the protocol reserves. Rounds below
+ * 31 keep #1614's order byte for byte.
+ */
+const TIE_SPLIT_VERSION = 31;
+/** Whether a round of protocol version `v` splits a tie at a paid place evenly (kanban #2687). */
+const splitsTies = (v) => Number.isInteger(v) && v >= TIE_SPLIT_VERSION;
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (RULED 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -4368,6 +4378,22 @@ function computePayoutTable({ roundId, entries, minScore = 0, payoutShares = nul
     .map((w, i) => w * net.get(qualifiers[i]));
   const total = weights.reduce((s, w) => s + w, 0n);
 
+  // A TIE AT A PAID PLACE IS ONE SHARE, SPLIT EVENLY (kanban #2687, ruling #2776, protocol 31): see evenTieShares below
+  let reserveMsat = 0n;
+  if (splitsTies(protocolVersion)) {
+    const even = evenTieShares({ roundId, qualifiers, k, pool, net, split, payoutShares });
+    if (even) {
+      for (const [e, share] of even.shares) payouts.set(e, payouts.get(e) + share);
+      reserveMsat = even.reserveMsat;
+      const paid31 = [...payouts.values()].reduce((s, v) => s + v, 0n);
+      const staked31 = settling.reduce((s, e) => s + net.get(e), 0n);
+      if (qualifiers.length > 0 && paid31 + reserveMsat !== staked31)
+        throw new Error(`payout invariant broken: paid ${paid31} and ${reserveMsat} to the reserves against staked ${staked31}`);
+      return { pool, qualifiers: qualifiers.length, payingRanks: even.payingRanks, settling, activated, reserveMsat,
+        table: activated.map((e) => ({ pubkey: e.pubkey, amountMsat: payouts.get(e) })) };
+    }
+  }
+
   let handed = 0n;
   if (total > 0n && pool > 0n) {
     for (let i = 0; i < k; i++) {
@@ -4403,8 +4429,65 @@ function computePayoutTable({ roundId, entries, minScore = 0, payoutShares = nul
     payingRanks: k,
     settling,
     activated,
+    reserveMsat: 0n,
     table: activated.map((e) => ({ pubkey: e.pubkey, amountMsat: payouts.get(e) })),
   };
+}
+
+/**
+ * THE PAID PLACES WITH TIES SPLIT EVENLY (protocol 31, kanban #2687, ruling #2776): `qualifiers` in place order (score first). Entries tied on
+ * score are one group; a group that reaches a paid place (one of the first `k`) occupies its places p..p+n-1 and shares the sum of their weights -
+ * the places past k weigh nothing - EQUALLY: no order among its members is ever computed. 22A's net weighting is kept order-free: a place's
+ * weight times its occupant's net stake for an untied place, and for a group the mean of its places' weights times the sum of its members'
+ * nets. Each untied place's and each group's share is floored; a group's share is divided by its size and the odd msat of that division goes
+ * to the protocol reserves; what the floors leave goes as before by H(round_id || pubkey), over the untied paid places only (to the reserves
+ * when every paid place is in a tie). Answers null when no paid place is tied (the table is then exactly the protocol-29 one).
+ */
+function evenTieShares({ roundId, qualifiers, k, pool, net, split, payoutShares }) {
+  if (k === 0 || pool <= 0n) return null;
+  const groups = [];
+  for (let i = 0; i < qualifiers.length;) {
+    let j = i + 1;
+    while (j < qualifiers.length && qualifiers[j].score === qualifiers[i].score) j++;
+    if (i < k) groups.push({ from: i, members: qualifiers.slice(i, j) });
+    i = j;
+  }
+  if (!groups.some((g) => g.members.length > 1)) return null;
+  const placeW = split ? payoutShares.slice(0, k).map((s) => BigInt(s)) : rankWeights(k);
+  const wAt = (p) => (p < k ? placeW[p] : 0n);
+  // weights over a common scale L (the least common multiple of the group sizes), so a group's mean place weight stays whole
+  const gcd = (a, b) => (b === 0n ? a : gcd(b, a % b));
+  const L = groups.reduce((l, g) => { const n = BigInt(g.members.length); return (l * n) / gcd(l, n); }, 1n);
+  const units = groups.map((g) => {
+    const n = BigInt(g.members.length);
+    let sumW = 0n; for (let p = g.from; p < g.from + g.members.length; p++) sumW += wAt(p);
+    const nets = g.members.reduce((s, e) => s + net.get(e), 0n);
+    return { g, n, weight: (sumW * (L / n)) * nets };
+  });
+  const total = units.reduce((s, u) => s + u.weight, 0n);
+  if (total <= 0n) return null;
+  const shares = new Map();
+  let handed = 0n, reserveMsat = 0n;
+  const untied = [];
+  for (const u of units) {
+    const share = (pool * u.weight) / total;
+    handed += share;
+    if (u.n === 1n) { shares.set(u.g.members[0], share); untied.push(u.g.members[0]); continue; }
+    const each = share / u.n;
+    for (const e of u.g.members) shares.set(e, each);
+    reserveMsat += share - each * u.n;   // the odd msat of the tie's division: the reserves', no player's
+  }
+  let left = pool - handed;
+  if (left > 0n) {
+    const paidUntied = untied.filter((e) => wAt(qualifiers.indexOf(e)) > 0n);
+    if (!paidUntied.length) { reserveMsat += left; left = 0n; }
+    else {
+      const order = remainderOrder(roundId, paidUntied);
+      for (let i = 0; left > 0n; i = (i + 1) % order.length) { shares.set(order[i], shares.get(order[i]) + 1n); left -= 1n; }
+    }
+  }
+  const payingRanks = Math.max(k, ...groups.map((g) => g.from + g.members.length));
+  return { shares, reserveMsat, payingRanks };
 }
 
 /**
@@ -16688,13 +16771,15 @@ function lockActions({ roundId, entries, minScore = 0, payoutShares = null, prot
   });
 
   const remainderMsat = remainder ? poolMsat : 0n;
-  if (rows.length && poolMsat !== sharesMsat + remainderMsat)
+  // a protocol-31 tie's odd msat (payout.js evenTieShares, kanban #2687): the reserves', handed to no player
+  const reserveMsat = remainder ? 0n : (table.reserveMsat || 0n);
+  if (rows.length && poolMsat !== sharesMsat + remainderMsat + reserveMsat)
     throw new Error(
       `the operator would keep ${poolMsat - sharesMsat} msat: a pool of ${poolMsat} `
       + `against ${sharesMsat} handed out`);
 
   return {
-    actions, poolMsat, refundedMsat, sharesMsat, remainderMsat, table,
+    actions, poolMsat, refundedMsat, sharesMsat, remainderMsat, reserveMsat, table,
     settledMsat: poolMsat, paidMsat: sharesMsat,
   };
 }
@@ -17025,8 +17110,10 @@ function lockSettlement({ roundId, entries, minScore = 0, locks, fees, feeLocks 
   const owed = winnings({ table: h.table.table, stakes: h.table.activated });
   if (!owed.ok) return refuse(owed.why);
   const poolMsat = claims.reduce((s, c) => s + c.amountMsat, 0n);
-  if (owed.owedMsat !== poolMsat)
-    return refuse(`the table hands out ${owed.owedMsat} msat and the claimed locks hold ${poolMsat}`);
+  // A PROTOCOL-31 TIE'S ODD MSAT IS THE RESERVES' (kanban #2687, ruling #2776): the table hands it to no player
+  const tieReserveMsat = h.reserveMsat || 0n;
+  if (owed.owedMsat + tieReserveMsat !== poolMsat)
+    return refuse(`the table hands out ${owed.owedMsat} msat${tieReserveMsat ? ` and ${tieReserveMsat} to the reserves` : ''} and the claimed locks hold ${poolMsat}`);
   for (const row of owed.rows) {
     const e = h.table.activated.find((x) => toHex(x.pubkey) === toHex(row.pubkey));
     if (!e || !lockOf(e)) return refuse(`a qualifier's stake lock was never verified, so there is no key to pay: ${toHex(row.pubkey).slice(0, 16)}`);
@@ -17039,7 +17126,18 @@ function lockSettlement({ roundId, entries, minScore = 0, locks, fees, feeLocks 
   const pooled = [];
   let paying = [...owed.rows];
   const inputFeesMsat = claims.reduce((s, c) => s + lnv2FeeMsat(fees, c.amountMsat), 0n);
-  const spendableMsat = poolMsat - inputFeesMsat;
+  // the tie's odd msat joins the reserves' line of the fee part when there is one (a protocol-27 game round's); with none it is no output
+  // and stays with the guardians as fee, as the floors' leftovers do - never with a player
+  let spendableMsat = poolMsat - inputFeesMsat;
+  if (tieReserveMsat > 0n) {
+    // never part of what the players' payouts split; it joins the reserves' line (its output fee rising with it, if at all, out of the same msat)
+    spendableMsat -= tieReserveMsat;
+    const line = feePart.payouts.find((p) => p.kind === 'reserve');
+    if (line) {
+      const msat = largestPayoutMsat(fees, line.msat + line.feeMsat + tieReserveMsat);
+      if (msat >= line.msat) { line.msat = msat; line.feeMsat = lnv2FeeMsat(fees, msat); line.owedMsat += tieReserveMsat; line.tieMsat = tieReserveMsat; }
+    }
+  }
   const unpaid = [...pooled];
   // A WALK-AWAY IS NEVER A REFUND (RULED 2026-09-30): with nobody to send the winnings to, the other losers' locks
   // expire back - and a walk-away's is claimed all the same, into the remainder split.
@@ -40135,6 +40233,19 @@ function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() }) {
       continue;
     }
     if (o.state === 'VOID') {
+      // A SEAT'S BARE "VOID" IS NOT THE RESULT BEFORE THE RULE ALLOWS IT (kanban #2719, #1489 r5-attest-1): an attested market is VOID only by its
+      // deadline (attested.js marketVoided; a contradiction is DISPUTED), and the answer carries no evidence - one seat answering VOID (with
+      // the pick's row, so market-page.js kept it) turned a winner's line into "every stake comes back". The page checks the deadline on its
+      // own clock: entry close + the terms' resolution delay + deadline; before it, or for a market with no deadline, it is unverified.
+      if (!p.market.gameSource) {
+        const t = p.market.terms;
+        const deadline = t && t.resolveAfterCloseMs != null && t.deadlineAfterResolveMs != null
+          ? Number(p.entryCloseMs) + Number(t.resolveAfterCloseMs) + Number(t.deadlineAfterResolveMs) : null;
+        if (deadline === null || nowMs < deadline) {
+          lines.push({ ...at('unverified'), text: `${head}: a signer node says VOID - UNVERIFIED (${deadline === null ? 'this market has no deadline that could void it' : `its deadline is in ${left(deadline - nowMs)}`})` });
+          continue;
+        }
+      }
       lines.push({ ...at('void'), text: `${head}: VOID - ${o.why || 'its source round refunds it'} · every stake comes back` });
       continue;
     }

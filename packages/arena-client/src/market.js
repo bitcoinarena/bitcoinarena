@@ -540,6 +540,19 @@ export function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() })
       continue;
     }
     if (o.state === 'VOID') {
+      // A SEAT'S BARE "VOID" IS NOT THE RESULT BEFORE THE RULE ALLOWS IT (kanban #2719, #1489 r5-attest-1): an attested market is VOID only by its
+      // deadline (attested.js marketVoided; a contradiction is DISPUTED), and the answer carries no evidence - one seat answering VOID (with
+      // the pick's row, so market-page.js kept it) turned a winner's line into "every stake comes back". The page checks the deadline on its
+      // own clock: entry close + the terms' resolution delay + deadline; before it, or for a market with no deadline, it is unverified.
+      if (!p.market.gameSource) {
+        const t = p.market.terms;
+        const deadline = t && t.resolveAfterCloseMs != null && t.deadlineAfterResolveMs != null
+          ? Number(p.entryCloseMs) + Number(t.resolveAfterCloseMs) + Number(t.deadlineAfterResolveMs) : null;
+        if (deadline === null || nowMs < deadline) {
+          lines.push({ ...at('unverified'), text: `${head}: a signer node says VOID - UNVERIFIED (${deadline === null ? 'this market has no deadline that could void it' : `its deadline is in ${left(deadline - nowMs)}`})` });
+          continue;
+        }
+      }
       lines.push({ ...at('void'), text: `${head}: VOID - ${o.why || 'its source round refunds it'} · every stake comes back` });
       continue;
     }
