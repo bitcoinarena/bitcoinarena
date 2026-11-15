@@ -665,6 +665,8 @@ function takeEcash(federation, msat) {
   for (const f of names) {
     const to = pathJoin(shelf, 'taken', f);
     try { renameSync(pathJoin(shelf, f), to); } catch { continue; }   // another take had it
+    // THE TAKE'S OWN TIME ON THE FILE (kanban #2768): a rename keeps the mint time; the start scan puts back only a note taken minutes ago
+    try { const at = new Date(); utimesSync(to, at, at); } catch { /* the scan then leaves it taken */ }
     try { const n = JSON.parse(readFileSync(to, 'utf8')); if (String(n.msat) === String(msat) && n.ecash) return { ecash: String(n.ecash), file: to }; } catch { /* a broken file: the next */ }
   }
   return null;
@@ -674,6 +676,8 @@ function takeEcash(federation, msat) {
 // BY THE NOTE, NOT ITS PATH (kanban #2180, #2263): a row names its note by `hash` (sha256 of the note's ecash, on every e-cash row since #1381) -
 // the 11-09..11-10 rows (before #1419) carry no noteFile, and a noteFile is the pool path the faucet had then (a symlink, a moved mount or a relative
 // FAUCET_ECASH_POOL names the same pool another way). A note stays in taken/ when its hash is booked, or its federation/taken/file matches a noteFile
+const RESHELVE_MS = 15 * 60000;   // kanban #2768: a stranded take is put back only this soon after it was taken
+let reshelfOld = 0;
 if (ECASH_POOL) { try { const b = JSON.parse(readFileSync(env.FAUCET_BOOK, 'utf8'));
   const rows = [...(b.players || []), ...(b.unsure || [])].filter((x) => x && x.ecash);
   const hashes = new Set(rows.map((x) => String(x.hash || '')).filter(Boolean));
@@ -684,7 +688,13 @@ if (ECASH_POOL) { try { const b = JSON.parse(readFileSync(env.FAUCET_BOOK, 'utf8
       if (!f.endsWith('.json') || named.has(`${fed}/taken/${f}`)) continue;
       let h = null; try { const n = JSON.parse(readFileSync(pathJoin(t, f), 'utf8')); if (n.ecash) h = createHash('sha256').update(String(n.ecash)).digest('hex'); } catch { /* unreadable: matched by name only */ }
       if (h && hashes.has(h)) continue;
+      // ONLY A NOTE TAKEN JUST BEFORE THIS START (kanban #2768): the scan is for a faucet killed between the take and the book write - seconds.
+      // A note taken long ago that no row names was handed out under a row the book no longer holds (72 welcomes of 11-09/11-10 are in the log
+      // and not in the book): put back on 11-12, each was handed out again and the player's wallet was told Rejected (the notes were spent).
+      let takenMs = 0; try { takenMs = statSync(pathJoin(t, f)).mtimeMs; } catch { takenMs = 0; }
+      if (!(Date.now() - takenMs <= RESHELVE_MS)) { reshelfOld++; continue; }
       try { renameSync(pathJoin(t, f), pathJoin(ECASH_POOL, fed, f)); console.log(`${new Date().toISOString()} e-cash note ${f} back on the shelf: no welcome booked it`); } catch { /* next start */ } } }
+  if (reshelfOld) console.log(`${new Date().toISOString()} ${reshelfOld} e-cash note(s) in taken/ named by no welcome and taken more than ${RESHELVE_MS / 60000} min ago: left there (handed out under a row the book no longer holds)`);
 } catch { /* no book yet, or it does not read: nothing is put back */ } }
 function grantEcash(ask) {
   const book = readBook();
