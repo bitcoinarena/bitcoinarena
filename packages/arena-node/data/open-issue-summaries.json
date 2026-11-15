@@ -738,5 +738,117 @@
  "2828": {
   "text": "Node software: a padded transaction answer can exhaust the explorer's memory",
   "kind": "bug"
+ },
+ "2831": {
+  "text": "Committees and bonds: a stranger can use up the shared proposal read and lock bonded proposers out",
+  "kind": "bug"
+ },
+ "2832": {
+  "text": "Node software: one seat can split a head-to-head verdict by withholding reveals",
+  "kind": "bug"
+ },
+ "2833": {
+  "text": "Federation: a forged copy can mark a waiting gift as spent",
+  "kind": "bug"
+ },
+ "2834": {
+  "text": "Node software: strangers can fill the held-aside slots and lock honest players out",
+  "kind": "bug"
+ },
+ "2835": {
+  "text": "Other: a stranger entry can block signing for a paid round",
+  "kind": "bug"
+ },
+ "2836": {
+  "text": "Other: Up or Down can quote a side that is not offered and show a placeholder as a price",
+  "kind": "bug"
+ },
+ "2837": {
+  "text": "Other: nested default values can bypass the depth limit",
+  "kind": "bug"
+ },
+ "2838": {
+  "text": "Node software: a stranger can void a live run at a seat that missed the first mark",
+  "kind": "bug"
+ },
+ "2839": {
+  "text": "Other: idle relay subscriptions can exhaust memory",
+  "kind": "bug"
+ },
+ "2840": {
+  "text": "Committees and bonds: a peer proposal pull skips the census-read budget",
+  "kind": "bug"
+ },
+ "2841": {
+  "text": "Lightning payouts: open places can be filled by washed stake",
+  "kind": "bug"
+ },
+ "2842": {
+  "text": "Faucet and feedback: a round can be marked tapped without a real tap",
+  "kind": "bug"
+ },
+ "2843": {
+  "text": "Node software: a held cancel can open from one seat's unchecked listing",
+  "kind": "bug"
+ },
+ "2844": {
+  "text": "Node software: a trial can be told apart from a seat by its first decide",
+  "kind": "bug"
+ },
+ "2845": {
+  "text": "Other: a network update can overwrite an owner's package and drop their series",
+  "kind": "bug"
+ },
+ "2846": {
+  "text": "Node software: an e-cash exchange reads seat offers and answers with no size limit",
+  "kind": "bug"
+ },
+ "2847": {
+  "text": "Other: the next stranger write can evict a newcomer's profile slot",
+  "kind": "bug"
+ },
+ "2848": {
+  "text": "Other: a gift server that already has receipts can still be refused as full",
+  "kind": "bug"
+ },
+ "2849": {
+  "text": "Next Block game: an out-of-range throttle can cancel the damage slowdown",
+  "kind": "bug"
+ },
+ "2850": {
+  "text": "Committees and bonds: the node minimum counts bond rows, not distinct nodes",
+  "kind": "bug"
+ },
+ "2851": {
+  "text": "Node software: the store can keep one seat's unchecked game info and hide the signed info",
+  "kind": "bug"
+ },
+ "2852": {
+  "text": "Other: a builtin handler can hide a stack overflow from the sticky check",
+  "kind": "bug"
+ },
+ "2853": {
+  "text": "Other: a series publication can be reimbursed the wrong number of times",
+  "kind": "bug"
+ },
+ "2854": {
+  "text": "Other: a forfeit listing can skip the proof-pull gate and fan out to peers",
+  "kind": "bug"
+ },
+ "2855": {
+  "text": "Committees and bonds: unbonded node facts pile up while the census is unread",
+  "kind": "bug"
+ },
+ "2856": {
+  "text": "Node software: an address announcement can make seats dial a private service",
+  "kind": "bug"
+ },
+ "2857": {
+  "text": "Faucet and feedback: a faucet amount check can miss a smaller unit",
+  "kind": "bug"
+ },
+ "2858": {
+  "text": "Other: a stranger can erase a new player's only seed",
+  "kind": "bug"
  }
 }
