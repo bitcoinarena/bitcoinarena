@@ -674,7 +674,8 @@ async function sendPlayed(env, now = Date.now(), post = fetch) {
     ORDER BY t.stored_ms LIMIT ?`).bind(PLAYED_FROM_MS, now - UMAMI_DELAY_MS, UMAMI_PER_RUN).all()).results) || [];
   let sent = 0; const roundsNow = new Set();
   const tell = async (name, game, ms) => {
-    const r = await post(env.UMAMI_SEND_URL || UMAMI_SEND_URL, { method: 'POST', headers: { 'content-type': 'application/json', 'user-agent': 'Mozilla/5.0 (compatible; arena-explorer)' },
+    // (kanban #2754) the stats Worker passes a played-* event on only with the secret both Workers hold
+    const r = await post(env.UMAMI_SEND_URL || UMAMI_SEND_URL, { method: 'POST', headers: { 'content-type': 'application/json', 'user-agent': 'Mozilla/5.0 (compatible; arena-explorer)', ...(env.PLAYED_TOKEN ? { 'x-arena-played': env.PLAYED_TOKEN } : {}) },
       body: JSON.stringify({ type: 'event', payload: { website: env.UMAMI_SITE || UMAMI_SITE, hostname: UMAMI_HOST, url: '/played/' + game, name, data: { game }, timestamp: Math.floor(Number(ms) / 1000) } }) });
     if (!r.ok) throw new Error(`umami ${r.status}`);
     sent++;
