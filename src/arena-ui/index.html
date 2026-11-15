@@ -5423,7 +5423,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         await orderClear();
         try {
           // ANOTHER KEPT PHRASE'S RECORD: looked at and collected only while this tab holds that phrase (withRecordPhrase)
-          const res = await withRecordPhrase(older, async () => {
+          // BOUNDED (kanban #2785, playtest #1481): a step that never returns holds this record COLLECT_RECORD_MS at most, never the whole pass
+          const res = await ARENACLIENT.collectWithin(() => withRecordPhrase(older, async () => {
           const { look: lo, held: ho, LockClient: lco } = await lookRound(older);
           if (!ho) collectNote(older.roundIdHex.slice(0, 8), 'older round: its wallet is held by another tab of this browser');
           if (lo) collectNote(older.roundIdHex.slice(0, 8), 'older round: ' + lookSaid(lo));
@@ -5444,16 +5445,20 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             collectNote(older.roundIdHex.slice(0, 8) + (older.order ? '.o' + older.order : ''), 'older round MARKED DONE: ' + ARENACLIENT.owedToLine(lo) + ' <- ' + lookSaid(lo));
           }
           return true;
-          });
+          }), ARENACLIENT.COLLECT_RECORD_MS, 'round ' + older.roundIdHex.slice(0, 8));
           if (res === null) { collectHeld.add(older.roundIdHex); collectNote(older.roundIdHex.slice(0, 8), 'kept phrase ' + ARENACLIENT.toHex(older.seed).slice(0, 8) + ' is held by another tab: collected there, or here once it is free'); }
           else { collectHeld.delete(older.roundIdHex); collectFailed.delete(older.roundIdHex); }
-        } catch (e) { collectFailed.set(older.roundIdHex, e.message); collectHeld.delete(older.roundIdHex); console.error('[arena] owed (round ' + older.roundIdHex.slice(0, 8) + '): ' + e.message); }
+        } catch (e) {
+          collectFailed.set(older.roundIdHex, e.message); collectHeld.delete(older.roundIdHex); console.error('[arena] owed (round ' + older.roundIdHex.slice(0, 8) + '): ' + e.message);
+          // a record that did not answer waits 10 min before its next look, so the records after it are reached first (kanban #2785)
+          if (e && e.late) { pauseOf.set(backKey(older), { ms: 600000, until: Date.now() + 600000 }); collectNote(older.roundIdHex.slice(0, 8), 'older round: ' + e.message); }
+        }
       }
       if (rescanWanted) { payoutAsking = false; payoutAskingSince = 0; return; }
       try {
         // THE NEWEST RECORD MAY BE ANOTHER KEPT PHRASE'S: the whole look and collect runs while this tab holds
         // that phrase (withRecordPhrase), into that seed's own wallet (roundAsk hands it r.seed)
-        const newestDone = await withRecordPhrase(newest, async () => {
+        const newestDone = await ARENACLIENT.collectWithin(() => withRecordPhrase(newest, async () => {
         const { look, held, LockClient: lcn } = await lookRound(newest);
         // OPEN IN ANOTHER TAB OF THIS BROWSER: that tab looks and withdraws; this one says so.
         window.ARENA_ELSEWHERE = held ? null : newest.roundIdHex;
@@ -5484,10 +5489,13 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           collectNote(newest.roundIdHex.slice(0, 8) + (newest.order ? '.o' + newest.order : ''), 'newest round MARKED DONE: ' + line + ' <- ' + lookSaid(look));
         }
         return true;
-        });
+        }), ARENACLIENT.COLLECT_RECORD_MS, 'round ' + newest.roundIdHex.slice(0, 8));
         if (newestDone === null) { collectHeld.add(newest.roundIdHex); collectNote(newest.roundIdHex.slice(0, 8), 'kept phrase ' + ARENACLIENT.toHex(newest.seed).slice(0, 8) + ' is held by another tab: collected there, or here once it is free'); }
         else { collectHeld.delete(newest.roundIdHex); collectFailed.delete(newest.roundIdHex); }
-      } catch (e) { if (newest) { collectFailed.set(newest.roundIdHex, e.message); collectHeld.delete(newest.roundIdHex); } console.error('[arena] owed: ' + e.message); }
+      } catch (e) {
+        if (newest) { collectFailed.set(newest.roundIdHex, e.message); collectHeld.delete(newest.roundIdHex); } console.error('[arena] owed: ' + e.message);
+        if (newest && e && e.late) collectNote(newest.roundIdHex.slice(0, 8), 'newest round: ' + e.message);
+      }
       payoutAsking = false; payoutAskingSince = 0;
       paintWallet();
     }
@@ -5518,7 +5526,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           const r = recs[i], name = 'Round ' + r.roundIdHex.slice(0, 8) + (r.order ? ', order ' + r.order : '');
           onStep({ pct: Math.max(1, Math.floor((100 * i) / recs.length)), line: 'Rescanning… ' + (i + 1) + ' of ' + recs.length + ': ' + name });
           try {
-            const res = await withRecordPhrase(r, async () => {
+            const res = await ARENACLIENT.collectWithin(() => withRecordPhrase(r, async () => {   // kanban #2785: bounded, the Rescan goes on to the next record
               let { look, LockClient } = await lookRound(r);
               // HELD BY ANOTHER TAB OF THIS BROWSER (kanban #593, the owner's rescan 15:27Z: all 11 orders "open in another tab",
               // nothing looked at, 8464c5fd's 100 sat still in the federation): looked at without the round's own wallet - the
@@ -5551,7 +5559,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
                   ? 'back to your key from block ' + look.stake.expiration : String(look.stake.why || 'its round has not decided yet').slice(0, 120)) });
               }
               return true;
-            });
+            }), ARENACLIENT.COLLECT_RECORD_MS, name);
             if (res === null) rows.push({ key: backKey(r), text: name + ': its phrase is open in another tab of this browser' });
           } catch (e) { rows.push({ key: backKey(r), text: name + ': ' + String(e && e.message || e).slice(0, 120) }); }
         }
