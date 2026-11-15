@@ -82,13 +82,39 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
   .gbadge { font-size: 12px; font-weight: 800; padding: 2px 9px; border-radius: 999px; background: linear-gradient(135deg, #f7931a, #f0388a); color: #0d1117; }
   .joins { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; } .join { display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px 5px 5px; border-radius: 999px; background: var(--panel); border: 1px solid var(--line); color: var(--text); text-decoration: none; font-size: 14px; font-weight: 600; } .join:hover { border-color: var(--btc); } .join .ic { width: 26px; height: 26px; }
   table { font-size: 14px; } @media (max-width: 480px) { body { padding: 20px 14px 48px; } .hero { padding: 20px 16px; } th, td { padding: 8px; } }
+  .pot-banner { margin: 0 0 18px; padding: 12px 14px; border-radius: 10px; font-weight: 600; line-height: 1.45; }
+  .pot-banner.warn { color: #f5d77a; border: 1px solid rgba(210,153,34,.7); background: rgba(210,153,34,.14); }
+  .pot-banner.full { color: #ffb4ae; border: 1px solid rgba(248,81,73,.7); background: rgba(248,81,73,.14); }
 </style>
 <link rel="me" href="https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2">
+<script>
+/* kanban #2789 (the owner 2026-11-15, stage only): the pot warning, one function for the stage /bounty/ page and the stage Feedback form (inlined by
+   pot-banner.py; tested by packages/arena-node/test/stage-pot-banner-2789.test.js). `s` is GET /feedback/season's answer. Answers null (no banner),
+   or { level: 'warn' | 'full', lines: [text, ...] }:
+   - 100 % (usedUp): red, the used-up text (kanban #2787);
+   - from 98 %: yellow, the sats left and when the next season starts, and how many of this season's reports still wait for review;
+   - from 90 %: yellow, the sats left and when the next season starts. */
+function arenaPotBanner(s) {
+  if (!s || !(Number(s.potSats) > 0)) return null;
+  var pot = Number(s.potSats), used = Number(s.usedSats) || 0, left = Math.max(0, Number.isFinite(Number(s.leftSats)) ? Number(s.leftSats) : pot - used);
+  // the next season by its name, not a date (the owner 2026-11-15: "... nothing is paid until Season <current+1> starts.")
+  var until = Number.isInteger(Number(s.season)) && Number(s.season) > 0 ? 'Season ' + (Number(s.season) + 1) + ' starts' : 'the next season starts';
+  var fmt = function (n) { return Number(n).toLocaleString('en-US'); };
+  if (s.usedUp === true) return { level: 'full', lines: ["This season's bounty pot is used up. Reports are still welcome, but nothing is paid until " + until + '.'] };
+  var pct = used / pot;
+  if (pct < 0.9) return null;
+  var lines = ['Only ' + fmt(left) + " sats left in this season's pot - once it is used up, nothing is paid until " + until + '.'];
+  var waiting = Number(s.pendingNew);
+  if (pct >= 0.98 && Number.isInteger(waiting) && waiting > 0) lines.push(fmt(waiting) + ' other report' + (waiting === 1 ? ' is' : 's are') + ' still waiting for review, so the pot is probably full.');
+  return { level: 'warn', lines: lines };
+}
+</script>
 </head>
 <body>
 <!-- ONE HEADER FOR EVERY PAGE (kanban #1457, the owner 2026-11-11: "Der Header muss überall gleich aussehen"): the start page's header, drawn by site-chrome.js -->
 <script src="https://testnet.bitcoinarena.io/site-chrome.js" data-foot="none"></script>
 <main>
+  <div id="pot-banner" role="status" hidden></div>
   <section class="hero">
     <div class="tag">Bug bounty &middot; Season 2</div>
     <h1>Find bugs. Earn sats.</h1>
@@ -168,6 +194,9 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       fetch('/api/faucet/feedback/season').then(function (r) { if (!r.ok) throw 0; return r.json(); }).then(function (s) {
         document.getElementById('pot-used').textContent = fmt(s.usedSats);
         document.getElementById('pot-bar').style.width = Math.min(100, Math.round(100 * s.usedSats / s.potSats)) + '%';
+        /* kanban #2789: the pot warning on top */
+        var ban = typeof arenaPotBanner === 'function' ? arenaPotBanner(s) : null, box = document.getElementById('pot-banner');
+        if (ban && box) { box.className = 'pot-banner ' + ban.level; box.replaceChildren(); ban.lines.forEach(function (l) { var d = document.createElement('div'); d.textContent = l; box.appendChild(d); }); box.hidden = false; }
         
       }).catch(function () { document.getElementById('pot-used').textContent = '?'; });
       // the list at once: this browser's last copy, else the one built into the page; then the edge's (kanban #2641)

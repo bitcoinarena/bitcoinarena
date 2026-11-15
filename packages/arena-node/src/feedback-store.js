@@ -485,6 +485,8 @@ export function openFeedbackStore(path = ':memory:') {
     });
   }
 
+  /** HOW MANY REPORTS STILL WAIT FOR REVIEW (kanban #2789, the stage pot banner): reports in state new received at or after `sinceMs` - a number only. */
+  function countNew(sinceMs = 0) { return Number(db.prepare("SELECT COUNT(*) AS n FROM reports WHERE state = 'new' AND received_ms >= ?").get(Number(sinceMs) || 0).n); }
   /** THE SATS PAID FOR A REPORT (kanban #2784, the Season 2 pot): its reward's amount when that reward is paid, else null. */
   function paidSatsOf(id) { const w = db.prepare("SELECT amount_sats FROM rewards WHERE report = ? AND state = 'paid'").get(String(id)); return w ? Number(w.amount_sats) : null; }
 
@@ -732,7 +734,7 @@ export function openFeedbackStore(path = ':memory:') {
       takenBy: taken ? { id: taken.id, label: feedbackLabel(taken.number), sameNode: !!(taken.node && String(taken.node) === String(report.node)) } : null,
       full: !mine && !taken && held.length >= NODE_BOUNTY_MOST };
   }
-  return { take, mine, dupSnapshot, dupLink, move, approve, list, shotsInUse, note, remark, moves, budget, paidLog, csv, nodeBountyFor, createReward, voidReward, paidSatsOf, withdrawRequest, lnurlOf, claim, settle, rewards, payToAddress, addressOf, reward: (k1) => rewardRow(rewardOf.get(String(k1))), report: (id) => row(get.get(String(id))), close: () => db.close(), eventId };
+  return { take, mine, dupSnapshot, dupLink, move, approve, list, shotsInUse, note, remark, moves, budget, paidLog, csv, nodeBountyFor, createReward, voidReward, paidSatsOf, countNew, withdrawRequest, lnurlOf, claim, settle, rewards, payToAddress, addressOf, reward: (k1) => rewardRow(rewardOf.get(String(k1))), report: (id) => row(get.get(String(id))), close: () => db.close(), eventId };
 }
 
 /** The most of one seat's GET /season?scope=network answer the faucet reads (kanban #2517). */
