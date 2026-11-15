@@ -173,6 +173,7 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
   // and read from the set alone, so every seat that holds two of them answers the same. Another proposer naming a kept deposit
   // is still refused by name (the deposit is not his).
   const SAME_DEPOSIT_KEPT = 8;
+  const PROPOSAL_CONFIG_MAX = 4096;   // kanban #2723
   const backedBy = (depositHex, id, proposerHex = null) => [...held.values()].find((r) => r.id !== id && depositTxidOf(r) === depositHex
     && (proposerHex === null || String(r.proposer || '').toLowerCase() !== proposerHex)) || null;
   const sameDeposit = (depositHex, id) => [...held.values()].filter((r) => r.id !== id && depositTxidOf(r) === depositHex);
@@ -235,6 +236,11 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
       let p;
       try { p = { ...decodeConfigProposalBody(bytes.subarray(0, bytes.length - 64)), signature: bytes.slice(bytes.length - 64) }; }
       catch (e) { return { ok: false, status: 400, why: `that is no config proposal: ${e.message}` }; }
+      // A CONFIG IS A GAME'S CONFIG, NOT 64 KiB (kanban #2723, #1489 r5-census-11): a proposal carries its config whole (a u16 vec), and one
+      // bonded seat posting ~33 proposals with 64 KiB configs pushed every seat's GET /proposals past the 4 MiB a peer listing is read to -
+      // no seat could pull any proposal (nor its #2432 sightings) from any other, for good. The game configs are under 100 bytes (the
+      // genesis 74); a proposal's config is at most PROPOSAL_CONFIG_MAX bytes - a rule of the bytes alone, the same answer at every seat.
+      if (p.config && p.config.length > PROPOSAL_CONFIG_MAX) return { ok: false, status: 422, why: `its config is ${p.config.length} bytes; a proposal carries at most ${PROPOSAL_CONFIG_MAX}` };
       const id = toHex(proposalId(p));
       // KEPT ALREADY - unless orphaned and named from another block: then it is checked again, and taken from that block
       const was = held.get(id);
