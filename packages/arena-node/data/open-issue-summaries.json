@@ -563,12 +563,28 @@
   "text": "chain: one header source can push fake headers",
   "kind": "bug"
  },
+ "2763": {
+  "text": "Other: the footer X icon covers the build label",
+  "kind": "bug"
+ },
+ "2764": {
+  "text": "Next Block game: without WebGL the game only says it is unsupported, with no next step",
+  "kind": "bug"
+ },
+ "2765": {
+  "text": "Node software: the page keeps saying it is finding nodes after the chooser has filled",
+  "kind": "bug"
+ },
  "2767": {
   "text": "federation: donor funds can follow a wrong record",
   "kind": "bug"
  },
  "2774": {
   "text": "Node software: duty nodes can pay for work that was not due",
+  "kind": "bug"
+ },
+ "2778": {
+  "text": "Other: the build label beside the wallet is unexplained, so new players read it as an error",
   "kind": "bug"
  }
 }
