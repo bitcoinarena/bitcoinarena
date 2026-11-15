@@ -2643,9 +2643,13 @@ export async function redeemPayout({ round, roundId, invite, seed, curve, LockCl
   // ALREADY SPENT: the guardians hold no contract there any more, and only this key could
   // spend it - collected before (a reload mid-collect, another tab). Final, and said so;
   // measured before: "waiting ... undefined" for ever, and the stake never asked.
-  const spent = said.accepted !== true && (said.stored_before === null || said.stored_before === undefined);
+  // kanban #2748: below the threshold (s.short) nothing at the outpoint is no proof it was spent - one seat may have named a made-up
+  // txid - so it is not final: the page asks again, and collects once the seats' agreed settlement stands
+  const spent = said.accepted !== true && (said.stored_before === null || said.stored_before === undefined) && !s.short;
   const got = { ok: said.accepted === true, final: said.accepted === true || spent, spent, txid: s.txid, outIdx: at, amountMsat: BigInt(p.msat), from: s.from,
-    ...said, why: said.accepted === true ? undefined : spent ? 'the payout contract is already spent - by this seed\'s key, the only key that can' : (said.error || 'the federation did not accept the refund') };
+    ...said, why: said.accepted === true ? undefined : spent ? 'the payout contract is already spent - by this seed\'s key, the only key that can'
+      : s.short && (said.stored_before === null || said.stored_before === undefined) ? `only ${s.agreeing} of the ${s.needed} signer nodes needed name this settlement yet, and its payout is not at its outpoint: waiting for them`
+      : (said.error || 'the federation did not accept the refund') };
   if (got.ok && storage) {
     try { storage.setItem(noted, JSON.stringify({ ...got, amountMsat: String(got.amountMsat) })); } catch { /* unkept: a reload asks again */ }
   }
@@ -3606,7 +3610,12 @@ export async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = f
     const at = s.moved.payouts.findIndex((x) => isQualifierTo(x, mine));
     if (at < 0) payout = { state: 'none' };
     // ALREADY SPENT - only this key can: collected before (another tab, an earlier build's timer).
-    else payout = { state: await held(s.txid, at) ? 'owed' : 'gone', msat: BigInt(s.moved.payouts[at].msat) };
+    // A SHORT SETTLEMENT IS NO PROOF OF "GONE" (kanban #2748, #1489 r7-client-1): one seat's ACCEPTED answer naming a made-up txid that pays
+    // this key (settlementOf's `short`, below the threshold) found nothing at its outpoint, read 'gone', and the record closed as final -
+    // the real settlement the honest seats then accepted was never collected. Below the threshold an outpoint that holds nothing waits.
+    else if (await held(s.txid, at)) payout = { state: 'owed', msat: BigInt(s.moved.payouts[at].msat) };
+    else if (s.short) payout = { state: 'waiting', why: `only ${s.agreeing} of the ${s.needed} signer nodes needed name this settlement yet, and its payout is not at its outpoint` };
+    else payout = { state: 'gone', msat: BigInt(s.moved.payouts[at].msat) };
   }
   let stake;
   let lockAnswers = null;
