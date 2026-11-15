@@ -7848,12 +7848,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // window does not hold is not listed (it comes with the next window), and a row whose facts changed (a join, its committee time passed) is
   // served with the facts its signature covers and handed to the background, which signs it again within a second. `all=1` and `ahead`
   // alone list what the window holds. A seat nobody lists builds nothing: builds stop LISTING_IDLE_MS after the last listing.
-  const LISTING_BUILD_PER_SERIES = 72;
-  const LISTING_BUILD_SOON_MS = 20n * 60000n;
-  const LISTING_BUILD_MAX_ROWS = 5000;
+  // AND ONLY WHAT WAS ASKED, ONLY WHILE IT IS ASKED (kanban #2790, live audit9c 2026-11-15: the fixed set - 72 a series and the next 20 min -
+  // was ~1,600 of 11,300 rows, 14-16 s of signing every 45 s on every seat whether anyone listed or not, a third of a core each, Beelink load
+  // 29). A window now holds the rows the window before it was asked for (each request's cut, whether that window held the row or not), at
+  // most LISTING_BUILD_MAX_ROWS, soonest first; the first window after a start or a quiet spell holds a bare listing's (the next
+  // LISTING_BARE_NEXT a series and every round starting within LISTING_BUILD_SOON_MS). A window nobody asked is not followed by a build: the
+  // next ask builds one (waited for at most LISTING_FIRST_WAIT_MS) and the old window is served meanwhile while it is inside the page's skew.
+  // A row signature covers its window's time (lobby-listing.js, the page's 60 s skew), so a window's rows are signed again - only those.
+  const LISTING_BUILD_SOON_MS = 15n * 60000n;
+  const LISTING_BUILD_MAX_ROWS = 1200;
   const LISTING_LEAD_MIN_MS = 15000;
   const LISTING_LEAD_MAX_MS = 40000;
-  const LISTING_IDLE_MS = 120000;
   let signedSet = null;                           // the served window: { atMs: bigint, rows: Map<id hex, scan row>, sigs: Map<id, {key, sig, facts}>, committees: Map }
   let nextSet = null;                             // { set, ready } - the window being built, or built and waiting for its time
   let lastBuildMs = 0, listingAskedAt = 0;
@@ -7867,7 +7872,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       for (const id of committeeDrawn.keys()) if (!held.has(id)) committeeDrawn.delete(id); }
     signedSet = to; dirtyRows.clear();
   };
-  const newWindow = (atMs) => ({ atMs, rows: new Map(), sigs: new Map(), committees: new Map(), signing: new Map(), signed: 0 });
+  const newWindow = (atMs) => ({ atMs, rows: new Map(), sigs: new Map(), committees: new Map(), signing: new Map(), signed: 0, asked: new Map() });
+  // a request's cut, remembered for the next window (kanban #2790): at most LISTING_BUILD_MAX_ROWS rows, the first asked
+  const noteAsked = (set, id, x) => { if (!set.asked.has(id) && set.asked.size < LISTING_BUILD_MAX_ROWS) set.asked.set(id, x); };
   // THE SIGNATURES IN ONE LONG-LIVED WORKER, not on this loop (listing-sign.js)
   const signer = listingSigner(round.identity.secret);
   const rowFacts = (rid, c, nowMs) => {
@@ -7964,7 +7971,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return kept;
   };
   // ONE WINDOW, BUILT (kanban #2790): its fixed row set at `atMs`, their facts at that time, committees drawn and every row signed
-  const buildWindow = async (atMs) => {
+  const buildWindow = async (atMs, wanted = null) => {
     const t0 = performance.now();
     let sliceAt = t0;
     const yieldIfLong = async () => { if (performance.now() - sliceAt < LISTING_SLICE_MS) return; await new Promise((r) => setImmediate(r)); sliceAt = performance.now(); };
@@ -7972,8 +7979,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     set.closeSeq = round.closeSeq;   // a round closed after this is dropped by the requests (kanban #791, #2790)
     const live = [];
     for (const x of await openScan(atMs, yieldIfLong)) if (atMs < x.endMs) live.push(x);
-    const picked = new Set(cutPerSeries(live.slice(), LISTING_BUILD_PER_SERIES, atMs));
-    for (const x of live) if (x.c.startTimeMs <= atMs + LISTING_BUILD_SOON_MS) picked.add(x);
+    let picked;
+    if (wanted && wanted.size) {
+      const still = new Set(live.map((x) => toHex(x.held.roundId)));
+      picked = new Set([...wanted].filter(([id]) => still.has(id)).map(([, x]) => x));
+    } else {
+      picked = new Set(cutPerSeries(live.slice(), LISTING_BARE_NEXT, atMs));
+      for (const x of live) if (x.c.startTimeMs <= atMs + LISTING_BUILD_SOON_MS) picked.add(x);
+    }
     const chosen = [...picked].sort((x, y) => (x.c.startTimeMs < y.c.startTimeMs ? -1 : x.c.startTimeMs > y.c.startTimeMs ? 1 : 0)).slice(0, LISTING_BUILD_MAX_ROWS);
     const rows = [];
     for (const x of chosen) {
@@ -7988,10 +8001,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     console.log(`[listing] window ${atMs} built in ${Math.round(lastBuildMs)} ms: ${rows.length} row(s) of ${live.length} listed`);
     return set;
   };
-  const startBuild = (atMs) => {
+  const startBuild = (atMs, wanted = null) => {
     const job = { set: null, ready: false, atMs };
     nextSet = job;
-    job.done = buildWindow(atMs).then((set) => { if (nextSet === job) { job.set = set; job.ready = true; listingBuilt += 1; } return set; },
+    job.done = buildWindow(atMs, wanted).then((set) => { if (nextSet === job) { job.set = set; job.ready = true; listingBuilt += 1; } return set; },
       (e) => { if (nextSet === job) nextSet = null; console.log(`[listing] the window was not built: ${e && e.message}`); return null; });
     return job;
   };
@@ -8003,10 +8016,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (signedSet && now - signedSet.atMs > SIGN_EVERY_MS + 5000n) console.log(`[listing] window ${nextSet.atMs} served ${Number(now - nextSet.atMs) / 1000} s after its time: its build took ${Math.round(lastBuildMs)} ms`);
       turnWindow(nextSet.set, now); nextSet = null;
     }
-    const idle = Date.now() - listingAskedAt > LISTING_IDLE_MS;
-    if (!nextSet && signedSet && !idle) {
+    // the next window only after one that was asked, with what it was asked for
+    if (!nextSet && signedSet && signedSet.asked.size) {
       const lead = BigInt(Math.round(Math.min(LISTING_LEAD_MAX_MS, Math.max(LISTING_LEAD_MIN_MS, lastBuildMs * 1.5 + 2000))));
-      if (now >= signedSet.atMs + SIGN_EVERY_MS - lead) startBuild(signedSet.atMs + SIGN_EVERY_MS > now ? signedSet.atMs + SIGN_EVERY_MS : now);
+      if (now >= signedSet.atMs + SIGN_EVERY_MS - lead) startBuild(signedSet.atMs + SIGN_EVERY_MS > now ? signedSet.atMs + SIGN_EVERY_MS : now, signedSet.asked);
     }
     if (dirtyRows.size && signedSet && !dirtySigning) {
       const set = signedSet, rows = [];
@@ -8029,7 +8042,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // NO WINDOW YET (a seat start) OR IDLE (no build running and the served one past a page's skew): one build now, waited for (bounded);
     // a build already running is not waited for - the old window is served until it is ready
     if (!signedSet || (!nextSet && now - signedSet.atMs >= SIGN_EVERY_MS + 15000n)) {
-      if (!nextSet) startBuild(now);
+      if (!nextSet) startBuild(now, signedSet ? signedSet.asked : null);
       const job = nextSet;
       await Promise.race([job.done, new Promise((r) => setTimeout(r, LISTING_FIRST_WAIT_MS))]);
       if (job.ready && (!signedSet || job.set.atMs > signedSet.atMs) && BigInt(round.now()) >= job.atMs) { turnWindow(job.set, BigInt(round.now())); if (nextSet === job) nextSet = null; }
@@ -8093,7 +8106,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       closedNow = typeof round.closedSince === 'function' ? round.closedSince(set.closeSeq) : null;
       if (!closedNow) { const open = new Set(); for (const rid of openHeld()) open.add(toHex(rid)); closedNow = { has: (id) => !open.has(id) }; }
     }
-    for (const x of set.rows.values()) {
+    for (const x of await openScan(nowMs, yieldIfLong)) {
       if (nowMs >= x.endMs) continue;   // over: announced no longer
       if (closedNow && closedNow.has(round.hexOf ? round.hexOf(x.held.roundId) : toHex(x.held.roundId))) continue;
       if (aheadMs !== null && x.c.startTimeMs > nowMs + aheadMs) continue;
@@ -8122,6 +8135,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // again, and listed meanwhile as it was signed - nothing is signed while the asker waits
     const signedRows = [];
     for (const r of rows) {
+      noteAsked(set, r.id, { held: r.held, c: r.c, endMs: r.endMs });   // the next window holds what this one was asked for (kanban #2790)
       const kept = set.sigs.get(r.id);
       if (!kept) continue;
       if (kept.key !== factsKey(r.facts)) dirtyRows.add(r.id);

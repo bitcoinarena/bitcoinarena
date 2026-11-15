@@ -67,7 +67,7 @@ test('#2790 a request signs nothing: the window is built in the background, all=
     const b0 = built();
     for (let i = 0; i < 160 && built() <= b0; i++) await delay(250);
     const grew = signs() - held;
-    assert.ok(grew <= held + 64, `after all=1 the next window signed ${grew} rows (the first window held ${held})`);
+    assert.ok(grew <= 1200, `after all=1 the next window signed ${grew} rows: more than a window holds (1,200)`);
     clock = NOW + 45000;
     await delay(5100);   // past the 5 s a small listing is kept in real time (server.js /rounds)
     const before = signs();
@@ -96,6 +96,21 @@ test('#2790 a request signs nothing: the window is built in the background, all=
     assert.equal(row2.joined, 1, 'the changed row still shows its old count');
     assert.notEqual(row2.sig, pick.sig);
     assert.ok(pageChecks(now2.body));
+    // A WINDOW NOBODY ASKED IS NOT FOLLOWED BY A BUILD (kanban #2790, live audit9c: every seat signed ~1,600 rows every 45 s, asked or not)
+    clock = NOW + 90000;   // window 2 was asked: window 3 is built
+    const b3 = built();
+    for (let i = 0; i < 160 && built() <= b3; i++) await delay(250);
+    assert.equal(built(), b3 + 1, 'the window after an asked one was not built');
+    const quiet = signs();
+    clock = NOW + 135000;  // window 3 was asked by nobody
+    await delay(4000);
+    assert.equal(signs(), quiet, `a window nobody asked was followed by a build of ${signs() - quiet} signatures`);
+    clock = NOW + 180000;
+    await delay(3000);
+    assert.equal(signs(), quiet, 'a quiet seat signs on');
+    // and the next ask builds one and is answered from it
+    const back = await ask('?next=8&probe=e');
+    assert.ok(back.body.rounds.length > 0 && pageChecks(back.body), 'the first ask after a quiet spell got no rows that check');
     console.log('  FACTS:', JSON.stringify({ held, all: all.body.rounds.length, grew, firstMs: Math.round(lobby.ms), newWindowMs: asks.map((a) => Math.round(a.ms)) }));
   } finally { await s.close(); }
 });
