@@ -217,7 +217,7 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
         const hash = String(x).toLowerCase();
         if (hash === p.blockHash || seen.get(h) === hash) continue;
         let got = null;
-        try { got = await proposals.add({ proposal: p.proposal, blockHash: hash }); } catch { got = null; }
+        try { got = await proposals.add({ proposal: p.proposal, blockHash: hash }, { own: true }); } catch { got = null; }
         if (!got || got.status === 503) break;                 // not answerable yet: asked again next pass
         seen.set(h, hash);
         if (got.ok && got.status === 201) {

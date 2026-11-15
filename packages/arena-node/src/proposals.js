@@ -229,8 +229,19 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
     const out = census.slice(); out.ownBranch = !!own;
     return out;
   }
+  // kanban #2792: the new (network, height) keys the POST /proposal pre-check may derive a census for, per minute
+  const DOOR_CENSUS_KEYS = 4, DOOR_CENSUS_WINDOW_MS = 60000;
+  let doorWindow = { from: 0, keys: new Set() };
+  const doorCensusKey = (key) => {
+    const now = Date.now();
+    if (now - doorWindow.from >= DOOR_CENSUS_WINDOW_MS) doorWindow = { from: now, keys: new Set() };
+    if (doorWindow.keys.has(key)) return true;
+    if (doorWindow.keys.size >= DOOR_CENSUS_KEYS) return false;
+    doorWindow.keys.add(key);
+    return true;
+  };
   const api = {
-    async add({ proposal: hex, blockHash }) {
+    async add({ proposal: hex, blockHash } = {}, { own = false } = {}) {
       if (!/^[0-9a-f]+$/i.test(String(hex || '')) || String(hex).length < 130) return { ok: false, status: 400, why: 'a proposal is the hex of its body and its 64-byte signature' };
       if (!/^[0-9a-f]{64}$/i.test(String(blockHash || ''))) return { ok: false, status: 400, why: 'name the block its deposit confirmed in (blockHash, 64 hex)' };
       const bytes = fromHex(String(hex).toLowerCase());
@@ -260,6 +271,15 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
         if (typeof blockHeightOf === 'function' && typeof censusAt === 'function') {
           let h = null; try { h = await blockHeightOf(String(blockHash).toLowerCase()); } catch { h = null; }
           if (Number.isInteger(h) && h >= 0) {
+            // A NETWORK THIS SEAT KEEPS NO DONATION SET FOR, AND A BUDGET OF CENSUS READS (kanban #2792, #1489 r20-census-1): the pre-check
+            // derived a census (a 2016-block walk and a census_kept row kept 3 days) at the network and height the poster picks - any 32-byte
+            // network_id, any real block hash, a fresh key, no auth: one derivation per request. A network with no donation set in force at
+            // that height is refused before any census (the deposit check below refuses it anyway); and the door starts at most
+            // DOOR_CENSUS_KEYS new (network, height) census reads a minute (#1818 / #2270 for the guardian doors) - over it, 503 (ask
+            // again). The pull and the tally's re-post (`own`) are this seat's own passes and are not held to it.
+            let known = null; try { known = recipientsFor(net, h); } catch { known = null; }
+            if (!known) return { ok: false, status: 422, why: `this seat knows no donation set in force for that network at height ${h}` };
+            if (!own && !doorCensusKey(`${net}:${h}`)) return { ok: false, status: 503, why: 'this seat reads only a few new censuses a minute for posted proposals: ask again shortly' };
             let census = null; try { census = await censusAt(net, h); } catch { census = null; }
             if (Array.isArray(census) && !census.some((e) => e && xOnly(e.pubkey) === xOnly(p.proposer)))
               return { ok: false, status: 422, why: `the proposer holds no active bond in the census at height ${h} (27A.7.2)` };
@@ -570,7 +590,7 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
         // kept here: only its signed sightings are news (kanban #2432) - who listed it proves nothing
         if (mine && stateOf(mine) !== S.ORPHANED) { if (isLate(mine)) { try { await api.vouch(mine.id, r); } catch { /* the next pull */ } } continue; }
         try {
-          const got = await api.add({ proposal: r.proposal, blockHash: r.blockHash });
+          const got = await api.add({ proposal: r.proposal, blockHash: r.blockHash }, { own: true });
           if (got.ok && got.status === 201) took++;
           if (got.ok && isLate(held.get(got.id))) await api.vouch(got.id, r);
         } catch { /* not one */ }
