@@ -353,17 +353,28 @@ export function openFeedbackStore(path = ':memory:') {
 
   /** THE LINK FOR AN ACCEPTED REPORT: made once (asked again, the same k1). `network` the payout network ('testnet4' in phase 1). */
   function createReward(...a) { return immediately(() => createRewardNow(...a)); }   // one transaction (kanban #2020)
-  function createRewardNow(id, { network = 'testnet4', comment = null, nowMs = Date.now(), by = null } = {}) {
+  // `capSats` (kanban #2756, #1489 r7-faucet-3): the most the reward pays - a Season 2 approval's payable amount, read again right before
+  // (bounty-season.js payable: a community bonus lost since the approval is not paid). A new link is made for the lower of it and the
+  // approved amount; an open link not yet paid is lowered to it. null: the approved amount, as before.
+  function createRewardNow(id, { network = 'testnet4', comment = null, nowMs = Date.now(), by = null, capSats = null } = {}) {
     const r = get.get(String(id));
     if (!r) return { ok: false, why: 'no such report' };
+    const cap = Number.isInteger(capSats) && capSats >= 0 ? capSats : null;
+    const lowered = (k1, from) => { if (cap === null || !(from > cap)) return;
+      if (db.prepare("UPDATE rewards SET amount_sats = ? WHERE k1 = ? AND state = 'open'").run(cap, k1).changes === 1)
+        db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, r.state, nowMs, by, `reward lowered from ${from} to ${cap} sat at payout (the bonus read again)`); };
     const said = comment === null || comment === undefined ? null : String(comment).replace(/\s+/g, ' ').trim().slice(0, COMMENT_MOST) || null;
     const had = db.prepare('SELECT * FROM rewards WHERE report = ?').get(r.id);
     if (had) { if (said !== null && had.state === 'open') db.prepare("UPDATE rewards SET comment = ? WHERE k1 = ? AND state = 'open'").run(said, had.k1);
+      lowered(had.k1, had.amount_sats);
       return { ok: true, reward: rewardRow(rewardOf.get(had.k1)), made: false }; }
     if (r.state !== STATES.ACCEPTED || !(r.amount_sats > 0)) return { ok: false, why: 'only an approved report with its amount gets a reward link' };
+    const sats = cap === null ? r.amount_sats : Math.min(r.amount_sats, cap);
+    if (!(sats > 0)) return { ok: false, why: 'the amount payable now is 0 sat: no reward link' };
     const k1 = randomBytes(32).toString('hex');
-    db.prepare('INSERT INTO rewards (k1, report, pubkey, amount_sats, network, created_ms, comment) VALUES (?, ?, ?, ?, ?, ?, ?)').run(k1, r.id, r.pubkey, r.amount_sats, String(network), nowMs, said);
-    db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, r.state, nowMs, by, `reward link made, ${r.amount_sats} sat on ${network}`);
+    db.prepare('INSERT INTO rewards (k1, report, pubkey, amount_sats, network, created_ms, comment) VALUES (?, ?, ?, ?, ?, ?, ?)').run(k1, r.id, r.pubkey, sats, String(network), nowMs, said);
+    db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, r.state, nowMs, by,
+      `reward link made, ${sats} sat on ${network}${sats < r.amount_sats ? ` (approved ${r.amount_sats}; the bonus read again at payout)` : ''}`);
     return { ok: true, reward: rewardRow(rewardOf.get(k1)), made: true };
   }
 

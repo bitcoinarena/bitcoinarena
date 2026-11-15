@@ -756,7 +756,7 @@ createServer((req, res) => {
         }
         if (b.action === 'reject') return send(200, FEEDBACK.move(b.id, 'rejected', { reason: b.reason, by }));
         if (b.action === 'duplicate') return send(200, FEEDBACK.move(b.id, 'duplicate', { duplicateOf: b.of, by }));
-        if (b.action === 'reward') { const w = FEEDBACK.createReward(b.id, { network: BOUNTY_NETWORK, comment: b.comment ?? null, by });
+        const rewardAct = (b, by, capSats) => { const w = FEEDBACK.createReward(b.id, { network: BOUNTY_NETWORK, comment: b.comment ?? null, by, capSats });
           if (!w.ok) return send(200, w);
           const lnurl = FEEDBACK.lnurlOf(w.reward.k1, { base: PUBLIC_BASE });
           // STRAIGHT TO THE REPORT'S LIGHTNING ADDRESS, WITH THE COMMENT (kanban #1474): when it names one and the admin did not ask for the link only; the
@@ -765,7 +765,16 @@ createServer((req, res) => {
           if (!BOUNTY_PAYER || !bountyOn()) return send(200, { ...w, lnurl, paid: { ok: false, why: 'rewards are off' } });
           return oneBounty(() => FEEDBACK.payToAddress(w.reward.k1, { invoiceFor: (a, sats, c) => lnAddressInvoice(a, sats, c), decode: bountyDecode, pay: bountyPay, network: BOUNTY_NETWORK }))
             .then((paid) => send(200, { ...w, reward: paid.reward || w.reward, lnurl: paid.ok ? null : lnurl, paid }), (e) => send(200, { ...w, lnurl, paid: { ok: false, why: e.message } })); }
+        // A SEASON 2 REWARD PAYS WHAT IS PAYABLE NOW (kanban #2756, #1489 r7-faucet-3; the owner 2026-11-14, #2641): the reporter's links read again
+        // and S2.payable's amount - a community bonus lost since the approval is not paid - caps the link and the address payout
+        if (b.action === 'reward') return (async () => {
+          let capSats = null;
+          const rep = S2 ? FEEDBACK.report(b.id) : null;
+          if (rep && S2.approval && S2.approval(rep.id)) { await S2.verify(rep.pubkey, S2_VERIFY, { cause: 'payout' }); const p = S2.payable(rep.id); if (p && p.ok) capSats = p.payableSats; }
+          return rewardAct(b, by, capSats);
+        })().catch((e) => send(200, { ok: false, why: e.message }));
         if (b.action === 'note') return send(200, FEEDBACK.note(b.id, { ticket: b.ticket, severity: b.severity, by }));
+
         // SEASON 2 (kanban #2623): read a reporter's links live; before paying, the amount with the bonus read again; the draw's entries, read again
         if (S2 && b.action === 'verify') { const r = b.id ? FEEDBACK.report(b.id) : null; const k = r ? r.pubkey : String(b.pubkey || '');
           if (!/^[0-9a-f]{64}$/.test(k)) return send(200, { ok: false, why: 'no such report or key' });
