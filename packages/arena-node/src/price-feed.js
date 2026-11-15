@@ -604,7 +604,7 @@ export class PriceFeed {
   async beat() {
     await this.read();
     const now = this.now();
-    const out = [];
+    const out = [], fives = [];
     for (const r of this.#openPriceRounds()) {
       const contract = r.contract;
       const start = Number(contract.startTimeMs);
@@ -612,12 +612,14 @@ export class PriceFeed {
       const rh = toHex(r.roundId);
       const n = contract.nodes.length;
       const me = toHex(this.round.identity.pubkey || this.round.pubkey);
-      if (mediansPrices(contract)) { out.push(...await this.#beat5(r.roundId, contract, now, me)); continue; }
+      // protocol 5: every round's readings at once (kanban #2780: one after another, the posts of many rounds made the beat run past its mark)
+      if (mediansPrices(contract)) { fives.push(this.#beat5(r.roundId, contract, now, me).catch((e) => [['error', refuse(e.message)]])); continue; }
       if (!this.tapes.has(rh) && toHex(contract.nodes[0]) === me) out.push(['tape', await this.leadTape(r.roundId).catch((e) => refuse(e.message))]);
       const k = Math.floor((now - start) / EVERY) + 1;   // the next sample: one period ahead of its tick
       const m = this.samples.get(rh);
       if (!(m && m.has(k)) && toHex(contract.nodes[k % n]) === me) out.push([k, await this.leadSample(r.roundId, k).catch((e) => refuse(e.message))]);
     }
+    for (const got of await Promise.all(fives)) out.push(...got);
     return out;
   }
 
@@ -1040,7 +1042,16 @@ export class PriceFeed {
     };
     if (!this.mine.has(`${rh}:tape`) && now <= start + SIGN_SLACK_MS * 4) out.push(['tape', await send(this.ownTapeReading(rid)).catch((e) => refuse(e.message))]);
     const k = Math.floor((now - start) / EVERY) + 1;
-    if (k <= closeSampleK(Number(contract.blockTicks)) && !this.mine.has(`${rh}:${k}`)) out.push([k, await send(this.ownReading(rid, k)).catch((e) => refuse(e.message))]);
+    // AND THE SAMPLES A LATE BEAT PASSED OVER (kanban #2780): a beat is set for the next 5 s mark only once the last one ended, and one that
+    // ran past a mark (a slow read, the posts of many rounds) skipped that mark's sample for good - measured 11-15 09:00Z on rounds whose 7
+    // seats are all ours: 9 and 10 of 17 samples attested, k 5, 6, 9, 13-16 missing. The two before this one are read too while their moment
+    // is still signable (ownReading: within SIGN_SLACK_MS); each is posted once (`mine`)
+    const closeK = closeSampleK(Number(contract.blockTicks));
+    for (const j of [k - 2, k - 1, k]) {
+      if (j < 0 || j > closeK || this.mine.has(`${rh}:${j}`)) continue;
+      const got = await send(this.ownReading(rid, j)).catch((e) => refuse(e.message));
+      if (j === k || got.ok) out.push([j, got]);   // a caught-up one that is no longer signable says nothing
+    }
     return out;
   }
 }
