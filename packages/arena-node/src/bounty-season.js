@@ -41,11 +41,12 @@ export function bonusPct(flags = {}) {
 
 /**
  * WHAT ONE APPROVAL PAYS, by the Season 2 rules: the level's sats (a follow-up 1,000) in full only when the reporter played a round AND is proven
- * human - at least one verified social account (Telegram, Discord or Armada membership, or follows on X); everything else - a code-only finding (no
- * played round) or a player with no verified account (counts as a bot) - pays 25 % (kanban #2784, the owner 2026-11-15; code-only was half). Then the
- * community bonus on top. A node bounty is 10,000 flat (it is not a report: no bonus, no half).
+ * human - a linked, verified X (Twitter) account (kanban #2788, the owner 2026-11-15: "Um human zu beweisen benoetigen wir einen Twitter"; Telegram,
+ * Discord and Armada no longer prove it, they stay a bonus); everything else - a code-only finding (no played round) or a player with no verified X
+ * account (counts as a bot) - pays 25 % (kanban #2784; code-only was half). Then the community bonus on top. A node bounty is 10,000 flat (it is not a
+ * report: no bonus, no half).
  */
-export const HUMAN_FLAGS = Object.freeze(['telegram', 'discord', 'armada', 'x']);
+export const HUMAN_FLAGS = Object.freeze(['x']);
 export function seasonPayout({ level, codeOnly = false, followUp = false, flags = {}, played = true } = {}) {
   const lv = String(level || '').toLowerCase();
   if (lv === 'node') return { ok: true, level: 'node', baseSats: NODE_SATS, bonusPct: 0, sats: NODE_SATS };
@@ -336,7 +337,7 @@ export function openBountySeason(path = ':memory:', { startMs = null, potSats = 
     const now = a.level === 'node' ? {} : flagsOf(a.pubkey, { nowMs });
     const NAMES = { x: 'X', telegram: 'Telegram', discord: 'Discord', armada: 'Armada' };
     const lost = PLATFORMS.filter((k) => a.flags && a.flags[k] === true && now[k] !== true);
-    const why = sats < a.sats ? `left ${lost.map((k) => NAMES[k]).join(', ') || 'a community'}: -${a.bonusPct - p.bonusPct} %` : null;
+    const why = sats < a.sats ? `left ${lost.map((k) => NAMES[k]).join(', ') || 'a community'}: -${a.bonusPct - p.bonusPct} %${!a.codeOnly && p.quarter ? ', no verified X account: 25 %' : ''}` : null;   // kanban #2788: X proves a human
     db.prepare('UPDATE approvals SET payable_sats = ?, payable_ms = ?, payable_why = ? WHERE report = ?').run(sats, nowMs, why, a.report);
     return { ok: true, report: a.report, approvedSats: a.sats, payableSats: sats, bonusPct: Math.min(p.bonusPct, a.bonusPct), flags: now, lost, why };
   }

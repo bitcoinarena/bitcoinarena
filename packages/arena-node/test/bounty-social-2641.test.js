@@ -23,7 +23,8 @@ test('#2641 bonusPct: every combination of X, Nostr, Telegram, Discord, Armada (
   }
   assert.equal(bonusPct({ x: 'yes', telegram: 1, discord: 1 }), 0, 'only true counts');
   assert.equal(seasonPayout({ level: 'high', flags: { x: true, nostr: true, telegram: true, discord: true, armada: true } }).sats, 8000, 'at most +60 %');
-  assert.equal(seasonPayout({ level: 'medium', flags: { discord: true, armada: true } }).sats, 2400);
+  assert.equal(seasonPayout({ level: 'medium', flags: { discord: true, armada: true } }).sats, 600, 'no X: not proven human, 25 % (kanban #2788) +20 %');
+  assert.equal(seasonPayout({ level: 'medium', flags: { x: true, discord: true, armada: true } }).sats, 2800);
 });
 
 const jsonRes = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -178,7 +179,8 @@ test('#2641 payout: approved at +40 %, left one of the two communities, +20 % pa
   assert.equal(s.payable(r1.id).payableSats, 7000); assert.equal(s.approval(r1.id).payableWhy, null);
   // a read that fails is no member
   await s.verify(K(1), { x: async () => { throw new Error('x down'); }, telegram: async () => ({ member: null, why: 'telegram 502' }) });
-  const p3 = s.payable(r1.id); assert.equal(p3.payableSats, 5000); assert.match(p3.why, /^left (X, Telegram|Telegram, X): -40 %$/);
+  // without X the reporter is no longer a proven human: 25 % (kanban #2788)
+  const p3 = s.payable(r1.id); assert.equal(p3.payableSats, 1250); assert.match(p3.why, /^left (X, Telegram|Telegram, X): -40 %, no verified X account: 25 %$/);
 });
 
 test('#2641 the browser store: validated names kept per key, failed ones dropped, unreadable checks keep what was kept, storage errors tolerated', () => {
