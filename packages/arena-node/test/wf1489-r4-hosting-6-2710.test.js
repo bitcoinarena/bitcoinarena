@@ -24,15 +24,14 @@ const coreOf = (src) => {
   const file = join(d, 'core.js'); writeFileSync(file, src);
   return { name: 'slowmeta', hash: createHash('sha256').update(src).digest('hex'), url: pathToFileURL(file).href };
 };
-// an honest decide adapter whose meta takes a moment (its name getter does some work): well inside ASK_MS on an idle seat
-const SRC = `const work = () => { let x = 0; for (let i = 0; i < 40000000; i++) x = (x + i) | 0; return x; };
-export const DECIDE = Object.freeze({ get name() { work(); return 'slow-meta'; },
-  decide: (moves) => Object.fromEntries(moves.map((m) => [m.key, 'DRAW'])) });`;
+// an honest decide adapter (since kanban #2730 a DECIDE's fields are read at load, so no core code runs in the meta ask itself: a busy
+// moment is what makes it miss its deadline - stood in for here by an ask with no time at all)
+const SRC = `export const DECIDE = Object.freeze({ name: 'slow-meta', decide: (moves) => Object.fromEntries(moves.map((m) => [m.key, 'DRAW'])) });`;
 
 test('a meta ask that only ran out of time on a busy moment is not kept as a refusal', () => {
   const core = coreOf(SRC);
   // the busy moment: the meta ask misses its deadline (a short askMs stands in for a starved thread)
-  assert.throws(() => sandboxFor(core, { askMs: 5 }), /did not stop within \d+ ms \(meta\)/);
+  assert.throws(() => sandboxFor(core, { askMs: 0 }), /did not stop within \d+ ms \(meta\)/);
   // the seat is idle again, and the idle sweep has run: the same core, asked as verify.js asks it
   endIdleCores(0);
   let box = null, why = null;
