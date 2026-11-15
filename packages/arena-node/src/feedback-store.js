@@ -85,6 +85,28 @@ export const scrubKeys = (t) => {
   }
   return s;
 };
+// A SEED SPLIT OVER THE FORM'S BOXES IS ONE SEED (kanban #2676, #1489 r2-nostr-12, a way round #1472): seedRunSpans counts one unbroken run of 12
+// words, and each box was scrubbed alone - six words in "what happened", six in "what you expected" were two short runs, kept in the row, in the
+// kept event (its JSON has the key "expected" between them) and in the chat post ("Expected:" between them). The boxes are now read as one text,
+// joined by a space, and a run found across them is removed from each box it stands in; the form's own labels ("Expected:", "Bounty address:")
+// do not break a run in a text built from the boxes.
+const FORM_LABELS = /\b(?:Expected|Bounty address):/g;
+const cutSpans = (t, spans) => { let s = t; for (const [a, b] of [...spans].sort((x, y) => y[0] - x[0])) s = s.slice(0, a) + '[removed]' + s.slice(b); return s; };
+/** `fields` scrubbed as one text (kanban #2676): each a string; answers them in the same order, every seed run across them removed, then scrubKeys. */
+export function scrubFields(fields) {
+  const parts = fields.map((f) => String(f ?? ''));
+  const joined = parts.join(' ');
+  const spans = seedRunSpans(joined.replace(FORM_LABELS, (m) => ' '.repeat(m.length)));
+  let at = 0;
+  return parts.map((f) => {
+    const from = at, to = at + f.length; at = to + 1;
+    const mine = spans.filter(([a, b]) => a < to && b > from).map(([a, b]) => [Math.max(a, from) - from, Math.min(b, to) - from]);
+    return scrubKeys(cutSpans(f, mine));
+  });
+}
+/** A text built from the form's boxes (the chat post): a seed run across its labels is removed too (kanban #2676). */
+export const scrubAcrossLabels = (t) => { const s = String(t ?? ''); return scrubKeys(cutSpans(s, seedRunSpans(s.replace(FORM_LABELS, (m) => ' '.repeat(m.length))))); };
+const stringsOf = (v, out = [], depth = 0) => { if (typeof v === 'string') out.push(v); else if (v && typeof v === 'object' && depth <= DEEP_MOST) for (const x of Object.values(v)) stringsOf(x, out, depth + 1); return out; };
 // WHAT IS KEPT OF THE SIGNED EVENT (kanban #1737, #1799, #1843, #1858): the event as kept had its raw content - the seed the columns had lost stayed on
 // disk in `event`, and `debug` was scrubbed only when read. The kept copy now holds every string of the content scrubbed (happened, expected, debug,
 // anything else) and every tag value scrubbed but the hex ones the store reads (node, screenshot, round, p, e). Its id and sig stay for reference: the
@@ -109,7 +131,9 @@ export function keptEvent(e) {
   const tags = (Array.isArray(e.tags) ? e.tags : []).filter((t) => Array.isArray(t) && KEPT_TAGS.has(t[0]))
     .map((t) => t.map((x, i) => (i === 0 || typeof x !== 'string' || hexTagValue(t, x, i) ? x : scrubKeys(x))));
   const kept = { id: e.id, pubkey: e.pubkey, created_at: e.created_at, kind: e.kind, tags, content, sig: e.sig };
-  if (!seedRunSpans(JSON.stringify([kept.tags, kept.content])).length) return kept;
+  // (kanban #2676) and the content's strings read as one text, with no JSON key between them
+  let joined = ''; try { joined = stringsOf(JSON.parse(content)).join(' '); } catch { joined = String(content); }
+  if (!seedRunSpans(JSON.stringify([kept.tags, kept.content])).length && !seedRunSpans(joined).length) return kept;
   const plain = tags.filter((t) => hexTagValue(t, t[1], 1) || (STRICT_TAG[t[0]] && typeof t[1] === 'string' && STRICT_TAG[t[0]].test(t[1]))).map((t) => [t[0], t[1]]);
   return { ...kept, tags: plain, content: JSON.stringify({ removed: 'a seed phrase was found in this report: its content is not kept' }) };
 }
@@ -226,8 +250,10 @@ export function openFeedbackStore(path = ':memory:') {
     if (!FEEDBACK_TYPES.includes(type)) return { ok: false, why: `a report is one of ${FEEDBACK_TYPES.join(', ')}` };
     let body;
     try { body = JSON.parse(e.content); } catch { return { ok: false, why: 'a report\'s content is { happened, expected }' }; }
-    const happened = scrubKeys(String((body && body.happened) || '').trim()).slice(0, TEXT_MOST);
-    const expected = scrubKeys(String((body && body.expected) || '').trim()).slice(0, TEXT_MOST);
+    // (kanban #2676) the two boxes scrubbed as one text: a seed split over them is one seed
+    const [happenedAll, expectedAll] = scrubFields([String((body && body.happened) || '').trim(), String((body && body.expected) || '').trim()]);
+    const happened = happenedAll.slice(0, TEXT_MOST);
+    const expected = expectedAll.slice(0, TEXT_MOST);
     if (happened.length < TEXT_LEAST) return { ok: false, why: `say what happened in at least ${TEXT_LEAST} characters (${happened.length} so far)` };
     const source = tag(e, 'source') || 'frontend';
     if (!FEEDBACK_SOURCES.includes(source)) return { ok: false, why: `a report comes from ${FEEDBACK_SOURCES.join(' or ')}` };

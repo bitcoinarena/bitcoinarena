@@ -155,11 +155,11 @@ const net32 = (key) => (key && key.endsWith('::/64') ? `${key.split(':').slice(0
 // an IPv4 key as its /24; anything else has none
 const net24 = (key) => (key && /^\d{1,3}(\.\d{1,3}){3}$/.test(key) ? `${key.split('.').slice(0, 3).join('.')}.0/24` : null);
 // the same seed scrubber as the feedback store (kanban #1472)
-import { scrubKeys } from './feedback-store.js';
+import { scrubKeys, scrubAcrossLabels } from './feedback-store.js';
 // `signed`: a signed report (#1342) - counted against FEEDBACK_SIGNED_PER_DAY with the other signed ones; the log's entries say `signed: true` for those.
 // The address and network bounds count every report, signed or not.
 export function feedbackDecide({ text, ip = null, build = '', game = '', round = '', player = null, signed = false, nowMs = Date.now() }, log) {
-  const clean = scrubKeys(String(text || '').trim()).slice(0, FEEDBACK_MOST);
+  const clean = scrubAcrossLabels(String(text || '').trim()).slice(0, FEEDBACK_MOST);   // kanban #2676: a seed across the form's labels too
   if (clean.length < 3) return { ok: false, why: 'say what happened' };
   const day = Math.floor(nowMs / DAY_MS), all = log.filter((x) => Math.floor(x.atMs / DAY_MS) === day);
   // THE DAY'S COUNT OF ITS OWN KIND (kanban #2158, #2226): unsigned junk from anywhere no longer closes the door to signed bounty reports
