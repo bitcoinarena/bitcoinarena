@@ -65,6 +65,26 @@ import { readWithOneRetry } from './reread.js';
 import { NO_SHARES } from '../../arena-protocol/src/handout.js';
 import { entryFeeMsat } from '../../arena-protocol/src/fee.js';
 import { netStakeMsat } from '../../arena-protocol/src/payout.js';
+// EVERY PEER READ OF A RESUME IS BOUNDED TOO (kanban #2720, #1489 r5-play-1): a mark list (GET /checkpoints), a transcript and its batch
+// signatures were read whole with arrayBuffer() - one committee seat answering the player's own marks 20,000 times (9 MB) made 40,003
+// session-key checks and held a reload 2 s (about 22 s per 100 MB), long enough to end the run as a stall. Each is read up to its cap
+// (the stream cancelled past it); a mark list's copies cost no check, records of another round or entry none, and the loop yields.
+const CHECKPOINTS_MAX_BYTES = 2 * 1024 * 1024, TRANSCRIPT_MAX_BYTES = 16 * 1024 * 1024, BATCH_SIGS_MAX_BYTES = 1024 * 1024;
+async function bytesCapped(r, max) {
+  const said = Number(r.headers && r.headers.get ? r.headers.get('content-length') : NaN);
+  if (Number.isFinite(said) && said > max) { try { await r.body?.cancel(); } catch { /* gone */ } throw new Error(`${said} bytes is more than ${max}`); }
+  if (!r.body || typeof r.body.getReader !== 'function') { const b = new Uint8Array(await r.arrayBuffer()); if (b.length > max) throw new Error(`${b.length} bytes is more than ${max}`); return b; }
+  const reader = r.body.getReader(); const parts = []; let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.byteLength;
+    if (n > max) { try { await reader.cancel(); } catch { /* gone */ } throw new Error(`more than ${max} bytes`); }
+    parts.push(value);
+  }
+  const out = new Uint8Array(n); let at = 0; for (const p of parts) { out.set(p, at); at += p.byteLength; }
+  return out;
+}
 // THE PLAYER'S DONATION (M3.2 6e): the split, the failure rule, the LNURL checks.
 import { donationSetMatchesRound, splitDonation, donationAfterFailures, donationSetPaysKeys } from '../../arena-protocol/src/donation.js';
 import { donationKeysForNetworkId } from '../../arena-protocol/src/donation-keys.js';
@@ -1884,12 +1904,12 @@ export class Client {
         const q = `round=${toHex(roundId)}&entry=${toHex(entryId)}`;
         const r = await readWithOneRetry(fetch, `${base}/transcript?${q}`);
         if (!r.ok) return null;
-        const pt = decodeTranscript(new Uint8Array(await r.arrayBuffer()));
+        const pt = decodeTranscript(await bytesCapped(r, TRANSCRIPT_MAX_BYTES));   // kanban #2720: bounded
         if (pt.batches.length <= n || toHex(pt.roundId) !== toHex(roundId) || toHex(pt.entryId) !== toHex(entryId)) return null;
         if (!checkTranscript(pt).ok) return null;
         const s = await readWithOneRetry(fetch, `${base}/batch-signatures?${q}`);
         if (!s.ok) return null;
-        const sigs = new Uint8Array(await s.arrayBuffer());
+        const sigs = await bytesCapped(s, BATCH_SIGS_MAX_BYTES);   // kanban #2720: bounded
         const W = SIGNED_BATCH_SIGNATURE_BYTES;
         const k = pt.batches.length - 1;
         if (sigs.length < (k + 1) * W) return null;
@@ -1980,11 +2000,19 @@ export class Client {
       const withheld = new Set();   // signed marks a peer lists and the home list leaves out
       const readList = async (base, home) => {
         const r = await readWithOneRetry(fetch, `${base}/checkpoints?round=${toHex(roundId)}&entry=${toHex(entryId)}`);
-        const b = new Uint8Array(await r.arrayBuffer());
-        if (!r.ok || b.length % SIGNED_CHECKPOINT_BYTES !== 0) return;
-        for (let at = 0; at < b.length; at += SIGNED_CHECKPOINT_BYTES) {
-          const { body, signature } = splitSigned(b.subarray(at, at + SIGNED_CHECKPOINT_BYTES));
+        if (!r.ok) { try { await r.body?.cancel(); } catch { /* gone */ } return; }
+        const b = await bytesCapped(r, CHECKPOINTS_MAX_BYTES);   // kanban #2720: bounded
+        if (b.length % SIGNED_CHECKPOINT_BYTES !== 0) return;
+        const seen = new Set();   // kanban #2720: a copy of a record already read costs no check
+        for (let at = 0, n = 0; at < b.length; at += SIGNED_CHECKPOINT_BYTES, n += 1) {
+          if (n > 0 && n % 64 === 0) await new Promise((ok) => setTimeout(ok, 0));
+          const rec = b.subarray(at, at + SIGNED_CHECKPOINT_BYTES);
+          const k = toHex(rec);
+          if (seen.has(k)) continue;
+          seen.add(k);
+          const { body, signature } = splitSigned(rec);
           const m = decodeCheckpoint(body);
+          if (toHex(m.roundId) !== toHex(roundId) || toHex(m.entryId) !== toHex(entryId)) continue;   // another round's or entry's: no check
           const id = checkpointId(m);
           if (!entry || !(await this.verifySession(signature, id, entry.sessionPubkey))) continue;   // not this player's
           ticks.set(toHex(id), m.tick);
