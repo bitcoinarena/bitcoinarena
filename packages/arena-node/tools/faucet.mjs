@@ -1145,11 +1145,14 @@ createServer((req, res) => {
       return res.end(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex, nofollow"><title>Ticket #${x.ticket}</title>
 <style>body{margin:0;background:#0d1117;color:#e6edf3;font:16px/1.5 system-ui,sans-serif;padding:28px 16px}main{max-width:720px;margin:0 auto}h1{font-size:22px;margin:0 0 6px}p.d{color:#8b949e;font-size:14px;margin:0 0 18px}pre{white-space:pre-wrap;word-break:break-word;background:#161b22;border:1px solid #30363d;border-radius:10px;padding:14px;font:14px/1.5 ui-monospace,monospace}</style></head>
 <body><main><h1>Ticket #${x.ticket}: ${esc(x.title)}</h1><p class="d">The ticket your report matched, as it read on ${new Date(x.madeMs).toISOString().slice(0, 10)}. This link is only for you.</p><pre>${esc(x.body)}</pre></main></body></html>`); } }
-  // THE PUBLIC PAYOUT LOG (kanban #2619): what bitcoinarena.io/bounty/ lists - Season 1, sorted by report, each with its time (UTC)
+  // THE PUBLIC PAYOUT LOG (kanban #2619): what bitcoinarena.io/bounty/ lists, sorted by report, each with its time (UTC) and its own season
+  // (kanban #2868, feedback #091/#092: it was 'Season 1' for every row, so the page's Season 1 sum took in the Season 2 payouts): a report with a
+  // Season 2 book approval is paid from that approval's season, every other one from Season 1's budget
   if (path === '/feedback/paid-log' && req.method === 'GET') {
     let rows = []; try { rows = FEEDBACK ? FEEDBACK.paidLog() : []; } catch { rows = []; }
     const at = (ms) => (ms ? new Date(ms).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : '');
-    return send(200, rows.map((x) => ({ season: 'Season 1', date: at(x.paidMs), reason: `Feedback #${String(x.number).padStart(3, '0')}${x.severity ? ` (${x.severity})` : ''}`, channel: 'bug bounty', sats: x.sats })));
+    const seasonOf = (id) => { try { const a = S2 ? S2.approval(id) : null; return a && Number.isInteger(a.season) && a.season > 0 ? a.season : 1; } catch { return 1; } };
+    return send(200, rows.map((x) => ({ season: `Season ${seasonOf(x.id)}`, date: at(x.paidMs), reason: `Feedback #${String(x.number).padStart(3, '0')}${x.severity ? ` (${x.severity})` : ''}`, channel: 'bug bounty', sats: x.sats })));
   }
   if (path === '/feedback/rewards' && req.method === 'GET') {
     // the amounts only toward the private page's origin (the owner 2026-11-07: "Den bounty Funktion ausmachen bis ich es sage und nur auf einer privaten URL aktivieren")
