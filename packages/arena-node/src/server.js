@@ -2061,7 +2061,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // governed here and is served as before; with no proposal passed the history holds the genesis alone, and nothing changes.
   const configRefusal = (contract) => {
     if (!ballotTally || !contract || !(contract.networkId instanceof Uint8Array)) return null;
-    const got = configServesRound({ configHash: contract.configHash, height: contract.censusHeight, history: ballotTally.spans(toHex(contract.networkId)) });
+    // kanban #2747: the round's core's other configs are governed with it from the first activation off them
+    const f = pluginForRound(contract, hosted);
+    const siblings = f.ok && f.core && f.core.configs instanceof Map ? [...f.core.configs.keys()] : null;
+    const got = configServesRound({ configHash: contract.configHash, height: contract.censusHeight, history: ballotTally.spans(toHex(contract.networkId)), siblings });
     return got.ok ? null : got.why;
   };
   // WHAT A PLAYER'S DONATION IN THIS ROUND PAYS (§0A.8): half to the network's set - the protocol devs - and
