@@ -50,3 +50,22 @@ test('#2786 faucet: the admin has void-reward, and My feedback gives an lnurl on
   const mine = src.slice(src.indexOf("if (path === '/feedback/mine')"), src.indexOf("if (path === '/feedback')"));
   assert.match(mine, /lnurl: w\.state !== 'open' \? null : FEEDBACK\.lnurlOf/);
 });
+
+test('#2786 a withdrawn link of an approved report is made again once, at the amount payable now; the old LNURL stays dead', async () => {
+  const s = openFeedbackStore();
+  const id = approved(s, key(7), null, 1000);
+  const w = s.createReward(id, { network: 'mainnet' });
+  assert.equal(s.voidReward(id).ok, true);
+  const again = s.createReward(id, { network: 'mainnet', capSats: 150, comment: 'Season 2: 15 %' });
+  assert.equal(again.ok, true, again.why); assert.equal(again.made, true);
+  assert.notEqual(again.reward.k1, w.reward.k1);
+  assert.deepEqual([again.reward.state, again.reward.amountSats, again.reward.comment], ['open', 150, 'Season 2: 15 %']);
+  assert.equal(s.withdrawRequest(w.reward.k1, { base: 'https://x' }).status, 'ERROR', 'the old k1 is gone');
+  assert.equal(s.withdrawRequest(again.reward.k1, { base: 'https://x' }).tag, 'withdrawRequest');
+  const third = s.createReward(id, { network: 'mainnet', capSats: 150 });
+  assert.equal(third.made, false); assert.equal(third.reward.k1, again.reward.k1, 'a second call makes nothing new');
+  assert.ok(s.moves(id).some((m) => /reward link made again after its withdrawal, 150 sat on mainnet/.test(m.note || '')));
+});
+  assert.equal(s.move(id2, 'rejected', { reason: 'no' }).ok, true);
+  const r2 = s.createReward(id2, { network: 'mainnet' }); assert.notEqual(r2.made, true);
+});

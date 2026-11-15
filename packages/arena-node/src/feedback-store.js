@@ -456,6 +456,18 @@ export function openFeedbackStore(path = ':memory:') {
       lowered(k1, had.amount_sats);
       return { ok: true, reward: rewardRow(rewardOf.get(k1)), made: true };
     }
+    // A WITHDRAWN LINK IS MADE AGAIN (kanban #2786 follow-up, the owner 2026-11-15 "um 17:55 zahlst du die verbleibenden 1800"): the void row (one per
+    // report) gets a new k1 and the amount payable now, open again in one compare-and-set from void; the old LNURL stays dead (its k1 is gone)
+    if (had && had.state === 'void' && r.state === STATES.ACCEPTED && r.amount_sats > 0) {
+      const sats = cap === null ? r.amount_sats : Math.min(r.amount_sats, cap);
+      if (!(sats > 0)) return { ok: false, why: 'the amount payable now is 0 sat: no reward link' };
+      const k1 = randomBytes(32).toString('hex');
+      if (db.prepare("UPDATE rewards SET k1 = ?, state = 'open', amount_sats = ?, network = ?, created_ms = ?, invoice = NULL, payment_hash = NULL, tried_ms = NULL, paid_ms = NULL, why = NULL, address = NULL, payer = NULL, comment = ? WHERE k1 = ? AND state = 'void'")
+        .run(k1, sats, String(network), nowMs, said, had.k1).changes !== 1) return { ok: false, why: 'its reward changed meanwhile: try again' };
+      db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, r.state, nowMs, by,
+        `reward link made again after its withdrawal, ${sats} sat on ${network} (the withdrawn ${had.amount_sats} sat link stays dead)`);
+      return { ok: true, reward: rewardRow(rewardOf.get(k1)), made: true };
+    }
     if (had) { if (said !== null && had.state === 'open') db.prepare("UPDATE rewards SET comment = ? WHERE k1 = ? AND state = 'open'").run(said, had.k1);
       lowered(had.k1, had.amount_sats);
       return { ok: true, reward: rewardRow(rewardOf.get(had.k1)), made: false }; }
