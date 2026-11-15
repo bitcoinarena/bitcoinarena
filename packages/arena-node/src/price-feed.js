@@ -576,9 +576,9 @@ export class PriceFeed {
   /**
    * THE OPEN PRICE ROUNDS, EACH CONTRACT DECODED ONCE (2026-10-15: "Do everything you can to lower the load"; profiled on
    * a testnet4 seat: the beat was 13.8 % of its main thread - every 5 s it read every open round's contract out of the store and
-   * decoded it twice, the 8 s grids' thousands of rounds, to find the few that play against the price). A round's contract never
+   * decoded it twice, the 8 s grids' thousands of rounds, to find the few that play against the price). Whether a round plays against the price never
    * changes: the open ids are read (no contract), a round seen for the first time is decoded once and remembered as a price round
-   * or not, and a round no longer open is forgotten. And the list itself is read again only once a round opened, closed or had its
+   * or not (its contract itself is the store's kept one, which a v2 seat write-in replaces - kanban #2780), and a round no longer open is forgotten. And the list itself is read again only once a round opened, closed or had its
    * contract changed (round.openSeq; kanban #576, profiled 2026-10-21 23:1xZ on a test host seat: reading the ~4,560 open ids every
    * beat was 6.7 % of its main thread, a fifth of its busy time, while the open set had not moved).
    */
@@ -600,7 +600,13 @@ export class PriceFeed {
         try { if (shared) contract = this.round.contractOf(id); else { const row = this.round.get(id); if (row) contract = decodeRoundContract(new Uint8Array(row.contract)); } } catch { contract = null; }
         this.kept.set(rh, contract && this.priceRound(contract) ? contract : null);
       }
-      const c = this.kept.get(rh);
+      // THE CONTRACT AS THE STORE HOLDS IT NOW (kanban #2780, live 2026-11-15): a v2 round's `nodes` are written in by seatDrawFree - the draw's
+      // first seats, then the certified seated set - and the store lets go of its decoded copy then (and bumps openSeq). This list kept its own
+      // first copy for the round's life, so after a reseat the beat signed readings for rounds this seat had left ("a reading is signed by a key
+      // of the round's committee", refused at its own door) and read nothing for the rounds it was seated into: every seat's own readings fell
+      // to 0 within hours, the feed with them, until a restart. Which rounds play against the price is kept; the contract is the store's.
+      let c = this.kept.get(rh);
+      if (c && shared) { try { c = this.round.contractOf(id) || null; } catch { c = null; } }
       if (c) out.push({ roundId: id, contract: c });
     }
     for (const rh of this.kept.keys()) if (!open.has(rh)) this.kept.delete(rh);
