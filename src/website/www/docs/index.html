@@ -506,6 +506,7 @@ node packages/arena-node/tools/devnet.mjs replay</pre>
     <li>by the arbitration set alone, only with a proof of cheating (see <a href="#cheat">When a node cheats</a>).</li>
   </ul>
   <p>A bond past its lock time still counts until you spend it. The bond's transaction also carries your node's advertisement (roles, address, games), so anyone can find every node on Bitcoin. Changing roles or games is an update, not a new bond.</p>
+  <p><b>The minimum bond</b> is the network's <code>bond_min</code>: the bond-weighted median of the values the bonded nodes declare in their advertisements, where a node that declares none counts at the default - 50,000 sat on testnet4 (and on mainnet today). A bond below it gets no seat.</p>
   </details>
 
   <h3 id="census">The census</h3>
@@ -591,13 +592,13 @@ node packages/arena-node/tools/devnet.mjs replay</pre>
     <div class="run4-s"><span class="run4-n">2</span><span class="run4-i" aria-hidden="true">🧭</span><h4>Follow the setup</h4>
       <p>Open <b>Bitcoin Arena</b>. Your browser shows the setup.</p></div>
     <div class="run4-s"><span class="run4-n">3</span><span class="run4-i" aria-hidden="true">🔒</span><h4>Bond 50,000 sat</h4>
-      <p>The setup can get free testnet4 coins. The bond is locked for a while, then yours again.</p></div>
+      <p>The setup can get free testnet4 coins. The bond is locked for a while, then yours again. 50,000 sat is testnet4's minimum bond.</p></div>
     <div class="run4-s"><span class="run4-n">4</span><span class="run4-i" aria-hidden="true">📊</span><h4>Watch it earn</h4>
       <p>Your owner page shows what your node does and earns.</p></div>
   </div>
   <h4>The setup, step by step</h4>
   <div class="run-steps">
-    <div><b>Bitcoin</b><span>your own Bitcoin Core, a public server, or installed for you</span></div>
+    <div><b>Bitcoin</b><span>your own Bitcoin Core, a public Electrum server (verify and settle), or installed for you</span></div>
     <div><b>Roles</b><span>verify and settle are on; custody and liquidity on purpose</span></div>
     <div><b>Seed</b><span>24 words, shown once: your wallet and your owner login</span></div>
     <div><b>Owner</b><span>your 24 words or your Nostr key</span></div>
@@ -609,7 +610,7 @@ node packages/arena-node/tools/devnet.mjs replay</pre>
   <details class="more"><summary>Every step in detail</summary>
   <ol class="steps">
     <li><b>Bitcoin</b><p>Your own Bitcoin Core, an Electrum server from the list, or <b>Install Bitcoin Core for me</b> (Bitcoin Core 31.1 as a service). Disk: mainnet about 950 GB (20 GB pruned), testnet4 about 25 GB (6 GB pruned). Setup goes on once testnet4 is synced.</p></li>
-    <li><b>Roles</b><p>Custody and liquidity need your own Bitcoin Core (not Electrum), LND and coins.</p></li>
+    <li><b>Roles</b><p>Verify and settle run on a public Electrum server (no Bitcoin Core needed). Custody and liquidity need your own Bitcoin Core (not Electrum), LND and coins.</p></li>
     <li><b>Seed</b><p>24 words, shown once. Write them down: they are your wallet and your owner login.</p></li>
     <li><b>Owner</b><p>Your 24 words or your Nostr key.</p></li>
     <li><b>Reach</b><p><b>Direct</b> on port 8470, a <b>Cloudflare tunnel</b> on your own free account, <b>Tailscale Funnel</b>, a <b>workers.dev</b> name, or a <b>temporary tunnel</b> whose name changes on restart. Setup tests direct first and picks for you. It never opens a port on your router.</p></li>
