@@ -3526,6 +3526,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     },
     // out of every seating once its owner's emergency leave request is held here (§23A.5a)
     leftNode: (hex) => !!absences.emergencyFor(hex),
+    // A FEED GAME'S ROUND IS SERVED ONLY WITH THE FEED (kanban #2780, ruling #2781 (c)): a sample needs readings of 5 of the round's 7 seats,
+    // and a seated node that signs none takes a place one that does could hold - so without the feed this node signs no PRESENT for it
+    servesRound: (c) => { try { return !!priceFeed || !c || !priceRound(c); } catch { return true; } },
     sign: (digest) => schnorr.sign(digest, round.identity.secret),
     verify: verifySchnorrKept,   // kept per (sig, msg, key): a PRESENT refused once is not checked again (kanban #587)
     log: (m) => console.log(m), windowOf: marketWindowFor,

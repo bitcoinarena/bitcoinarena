@@ -82,7 +82,9 @@ function leavesFor(rank, p, q) {
 const joinBytes = (list) => { const out = new Uint8Array(list.reduce((n, x) => n + x.length, 0)); let at = 0; for (const x of list) { out.set(x, at); at += x.length; } return out; };
 
 export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, nowMs = () => Date.now(), log = () => {}, windowOf = () => null,
-  onSeated = () => {}, leftNode = () => false, contractOf = () => null, endpointOf = null }) {
+  onSeated = () => {}, leftNode = () => false, contractOf = () => null, endpointOf = null, servesRound = () => true }) {
+  // `servesRound(contract)` (kanban #2780, ruling #2781 (c)): whether this node can serve the round - a node that hosts a price game but runs
+  // no price feed signs no PRESENT for its rounds, so the seating passes it over and a reserve takes the place, as for any absent node
   // `leftNode(nodeHex)`: the node's owner took it out of every seating with the emergency key (§23A.5a, protocol 17) - its PRESENT is
   // not counted, and this node signs none once it holds its own request
   const db = round.db;
@@ -726,6 +728,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       const outbox = new Map();
       for (const w of work) {
         if (w.closed || !w.amDrawn || leftNode(me)) continue;
+        { let serves = true; try { serves = servesRound(w.t.contract) !== false; } catch { serves = true; } if (!serves) continue; }   // kanban #2780
         if (db.prepare('SELECT 1 FROM seat_presents WHERE round_id = ? AND role = ? AND node = ?').get(w.t.rid, w.role, me)) continue;
         const p = signPresent({ roundId: w.t.rid, role: w.role, nodePubkey: round.pubkey }, sign);
         takePresent(p);
