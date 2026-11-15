@@ -397,7 +397,7 @@ export function openFeedbackStore(path = ':memory:') {
       const sats = cap === null ? r.amount_sats : Math.min(r.amount_sats, cap);
       if (!(sats > 0)) return { ok: false, why: 'the amount payable now is 0 sat: no reward link' };
       const k1 = randomBytes(32).toString('hex');
-      if (db.prepare("UPDATE rewards SET k1 = ?, state = 'open', amount_sats = ?, network = ?, created_ms = ?, invoice = NULL, payment_hash = NULL, tried_ms = NULL, paid_ms = NULL, why = NULL, address = NULL, payer = NULL, comment = ? WHERE k1 = ? AND state = 'void'")
+      if (db.prepare("UPDATE rewards SET k1 = ?, state = 'open', amount_sats = ?, network = ?, created_ms = ?, invoice = NULL, payment_hash = NULL, tried_ms = NULL, paid_ms = NULL, why = NULL, address = NULL, comment = ? WHERE k1 = ? AND state = 'void'")
         .run(k1, sats, String(network), nowMs, said, had.k1).changes !== 1) return { ok: false, why: 'its reward changed meanwhile: try again' };
       db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, r.state, nowMs, by,
         `reward link made again after its withdrawal, ${sats} sat on ${network} (the withdrawn ${had.amount_sats} sat link stays dead)`);
