@@ -104,6 +104,24 @@ function merge(id, answers, readMs = null) {
     storedFirst: stored[Math.min(AGREE, stored.length) - 1] || null, seats };
 }
 
+// A LIVE READ OF THE SEATS IS BOUNDED (kanban #2697, #1489 r4-faucet-11): an id D1 does not hold - or any id with ?fresh - asked all 14 seats at
+// once, every time: a stranger's loop of made-up ids was 14 seat reads a request, without limit. Now each caller (ipKey: an address, an IPv6 /64)
+// gets LIVE_READS_PER_MIN live reads a minute, and an id no seat held is not asked again for MISS_KEEP_MS; past either the answer is what D1
+// holds (404: not found yet). Kept in this isolate (a bound per isolate, as the seats' own doors are per process).
+const LIVE_READS_PER_MIN = 5, MISS_KEEP_MS = 60000, LIVE_KEYS_MOST = 10000;
+const liveReads = new Map(), missed = new Map();
+const trim = (m) => { if (m.size > LIVE_KEYS_MOST) for (const k of [...m.keys()].slice(0, m.size - LIVE_KEYS_MOST)) m.delete(k); };
+function mayReadLive(caller, id, now = Date.now()) {
+  const miss = missed.get(id); if (miss && now - miss < MISS_KEEP_MS) return false;
+  const k = caller || 'unknown', r = liveReads.get(k);
+  const fresh = !r || now - r.at >= 60000 ? { at: now, n: 0 } : r;
+  if (fresh.n >= LIVE_READS_PER_MIN) return false;
+  fresh.n += 1; liveReads.delete(k); liveReads.set(k, fresh); trim(liveReads);
+  return true;
+}
+const notedMiss = (tx, now = Date.now()) => { if (tx && !tx.found) { missed.delete(tx.id); missed.set(tx.id, now); trim(missed); } return tx; };
+const notFoundYet = (id) => ({ id, found: false, readAt: new Date().toISOString(), why: 'not found yet (live reads of the seats are bounded: try again in a minute)' });
+
 /** Every seat's view of one transaction, asked now - only for one the minute's read has not stored yet. */
 async function readTx(id) {
   const t0 = Date.now();
@@ -904,7 +922,7 @@ async function recentTotal(env, q, where, binds, now = Date.now()) {
   return n;
 }
 
-async function txOf(env, ctx, id) {
+async function txOf(env, ctx, id, caller = null) {
   // by its id, or a gift's or purchase's by its federation transaction - what the wallet history names (kanban #682)
   // AN ORDER'S ID SHOWS THE ORDER (kanban #2201, #1599, #1489 a44): two agreeing seats could list a gift with a fresh id whose federation
   // txid is a real order's entry id (or a gift row holding the order's id itself, until the minute reads the order), and until D1 held
@@ -921,7 +939,8 @@ async function txOf(env, ctx, id) {
     return { ...JSON.parse(row.json), cached: true };
   }
   const row = own || alias;
-  const tx = await readTx(id);
+  if (!mayReadLive(caller, id)) return row ? { ...JSON.parse(row.json), cached: true } : notFoundYet(id);   // kanban #2697
+  const tx = notedMiss(await readTx(id));
   if (tx.found && !(row && support(tx) <= supportOf(row.json))) { const w = await keep(env, tx, null); if (w) ctx.waitUntil(w.run()); return tx; }
   if (row) return { ...JSON.parse(row.json), cached: true };
   return tx;
@@ -965,11 +984,12 @@ export default {
     if (url.pathname === '/metrics' || url.pathname === '/metrics/') return inline(env, request, { metrics: await metrics(env), played: await played(env).catch(() => null) });
     const m = /^\/api\/tx\/([0-9a-f]{64})$/.exec(url.pathname);
     if (m) {
-      const tx = url.searchParams.has('fresh') ? await readTx(m[1]) : await txOf(env, ctx, m[1]);
+      const caller = callerIp(request);
+      const tx = url.searchParams.has('fresh') ? (mayReadLive(caller, m[1]) ? notedMiss(await readTx(m[1])) : await txOf(env, ctx, m[1], caller)) : await txOf(env, ctx, m[1], caller);
       return json(tx, { status: tx.found ? 200 : 404 });
     }
     const p = /^\/tx\/([0-9a-f]{64})\/?$/.exec(url.pathname);
-    if (p) return inline(env, request, { tx: await txOf(env, ctx, p[1]) });
+    if (p) return inline(env, request, { tx: await txOf(env, ctx, p[1], callerIp(request)) });
     if (url.pathname === '/' || url.pathname === '/index.html') return inline(env, request, { recent: await recent(env, url.searchParams) });
     return env.ASSETS.fetch(request);
   },
