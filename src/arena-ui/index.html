@@ -7815,12 +7815,16 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           }
           el.classList.add('show');
           document.body.classList.add('arena-picking');
+          // THE LINE UNDER THE CHOOSER SAYS WHAT IS ASKED NOW (kanban #2765, feedback #066): "Finding the nodes …" stayed for as long as the player
+          // looked at the games, the nodes long found; it is not a loading line, so the stall watch leaves it alone, and the choice puts the step back
+          { const line = document.getElementById('stage'); if (line && line.textContent === 'Finding the nodes …') window.ArenaText.say(line, 'Choose a game'); }
           // SETTINGS BEFORE A GAME IS CHOSEN names Bitcoin Arena, not Next Block (the chosen game's name replaces it after)
           { const small = document.querySelector('#arena-settings .settings-head h2 small'); if (small) window.ArenaText.say(small, 'Bitcoin Arena'); }
           console.log('[arena] choose a game: ' + got.games.map((g) => g.name).join(' / '));
         });
         el.classList.remove('show');
         document.body.classList.remove('arena-picking');
+        { const line = document.getElementById('stage'); if (line && line.textContent === 'Choose a game') window.ArenaText.say(line, 'Finding the nodes …'); }   // kanban #2765
         // THE GAME'S NAME IN THE LINK, its id only when two listed games share the name: the loading screen
         // reads the name before anything loads, and a reload shows this game's splash, not Next Block's
         // (kanban #1132: the versions of one game are one tile, so the name is unique among the tiles; counting every version put a version's
