@@ -35,7 +35,9 @@ export function bonusPct(flags = {}) {
  */
 // kanban #2784 (the owner 2026-11-15): the full level only when the reporter played a round AND is proven human - at least one verified social account
 // (Telegram, Discord or Armada membership, or follows on X); else - a code-only report, or a player with no verified account (a bot) - 25 %.
-export const HUMAN_FLAGS = Object.freeze(['telegram', 'discord', 'armada', 'x']);
+// kanban #2788 (the owner 2026-11-15: "Um human zu beweisen benoetigen wir einen Twitter [account]"): only a verified X account proves a human now;
+// Telegram, Discord and Armada stay a bonus.
+export const HUMAN_FLAGS = Object.freeze(['x']);
 export function seasonPayout({ level, codeOnly = false, followUp = false, flags = {}, played = true } = {}) {
   const lv = String(level || '').toLowerCase();
   if (lv === 'node') return { ok: true, level: 'node', baseSats: NODE_SATS, bonusPct: 0, sats: NODE_SATS };

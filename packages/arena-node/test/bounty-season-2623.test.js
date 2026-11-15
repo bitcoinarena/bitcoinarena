@@ -12,12 +12,16 @@ import { linkFromText } from '../tools/bounty-link-bot.mjs';
 const K = (n) => String(n).repeat(64).slice(0, 64);
 const rep = (n, pubkey = K(1)) => ({ id: String(n).padStart(64, '0'), pubkey });
 
-test('#2623 #2784 the payout: the full level only for a played round by a proven human (a verified Telegram, Discord, Armada or X account), else 25 %; 1,000 for a follow-up; bonus +50 / +25 / +75 %; node 10,000 flat', () => {
+test('#2623 #2784 the payout: the full level only for a played round by a proven human (a verified X account only - kanban #2788), else 25 %; 1,000 for a follow-up; bonus +50 / +25 / +75 %; node 10,000 flat', () => {
   assert.equal(bonusPct({}), 0); assert.equal(bonusPct({ telegram: true }), 50); assert.equal(bonusPct({ discord: true }), 50);
   assert.equal(bonusPct({ x: true }), 25); assert.equal(bonusPct({ telegram: true, discord: true, x: true }), 75);
   assert.equal(seasonPayout({ level: 'high', flags: { telegram: true, x: true } }).sats, 8750, 'the page: "a high bug then pays 8,750"');
   assert.equal(seasonPayout({ level: 'high' }).sats, 1250, 'played, no verified account: counts as a bot, 25 %');
-  assert.equal(seasonPayout({ level: 'high', flags: { armada: true } }).sats, 5000, 'played and one verified account: the full level');
+  assert.equal(seasonPayout({ level: 'high', flags: { x: true } }).sats, 6250, 'played and a verified X account: the full level (+25 % X bonus)');
+  // kanban #2788 (the owner 2026-11-15): only X proves a human; Telegram, Discord and Armada stay a bonus
+  for (const f of [{ telegram: true }, { discord: true }, { armada: true }, { telegram: true, discord: true, armada: true }]) {
+    const p = seasonPayout({ level: 'high', flags: f });
+    assert.equal(p.human, false, JSON.stringify(f)); assert.equal(p.quarter, true, JSON.stringify(f)); assert.equal(p.baseSats, 1250, JSON.stringify(f)); }
   assert.equal(seasonPayout({ level: 'high', flags: { telegram: true }, played: false }).sats, 1875, 'a human who played no round: 25 % (+50 %)');
   assert.equal(seasonPayout({ level: 'high', codeOnly: true }).sats, 1250);
   assert.equal(seasonPayout({ level: 'critical', codeOnly: true, flags: { discord: true } }).sats, 3750);
