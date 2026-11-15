@@ -9,6 +9,7 @@ import { randomBytes } from 'node:crypto';
 
 export const SEASON_POT_SATS = 100000;
 export const SEASON_MS = 7 * 24 * 3600 * 1000;
+export const NO_CARRY_FROM_SEASON = 3;   // kanban #2787: from this season on a used-up pot means no bounty, nothing waits
 export const FIRST_SEASON = 2;
 export const FOLLOW_UP_SATS = 1000;
 export const NODE_SATS = 10000;
@@ -220,6 +221,10 @@ export function openBountySeason(path = ':memory:', { startMs = null, potSats = 
     const now = pot(season);
     if (p.level === 'node' && now.nodes >= NODES_PER_SEASON) return { ok: false, why: `the node bounty is for the first ${NODES_PER_SEASON} nodes of a season: all are taken in Season ${season}` };
     const fits = p.sats <= now.leftSats;
+    // NO CARRY-OVER FROM SEASON 3 ON (kanban #2787, the owner 2026-11-15): once a season's pot is used up there is no bounty at all - the report does not
+    // wait for the next season. Season 2 keeps its rule (past its pot a report waits for Season 3).
+    if (!fits && season >= NO_CARRY_FROM_SEASON) return { ok: true, fits: false, waits: false, noBounty: true, season, flags, ...p, pot: now,
+      why: `Season ${season}'s pot is used up (${now.leftSats} sat left, this report is ${p.sats}): no bounty` };
     return { ok: true, fits, waits: !fits, season, flags, ...p, pot: now };
   }
   function keep(report, p, state, { by = null, nowMs = Date.now() } = {}) {
