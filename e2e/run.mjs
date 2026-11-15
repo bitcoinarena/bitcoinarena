@@ -10,9 +10,12 @@
 //     node e2e/run.mjs [--up] [--liquidity] [--only id,id|area] [--skip id,...]
 //
 //   --up         `devnet.mjs up` first (a no-op for parts already running)  --liquidity  `devnet.mjs liquidity` (channels, gateway e-cash, LNURL)
+//   --live       only the flows marked `live` (flows/testnet-smoke.mjs): the live testnet page at E2E_LIVE_URL, no devnet and no page served here;
+//                without it those flows never run (kanban #2642)
 //   E2E_PAGE_PORT  where the page is served (default base + 9): with brotli .unityweb sent as content-encoding br, as the live site sends them
 //   E2E_FAUCET_PORT the faucet service of tools/faucet.mjs the page's /api/faucet is proxied to (default base + 15; flows/faucet.mjs uses it to + 3)
-// Regtest only. Nothing here reaches a live seat, the live page, the live faucet or a wallet with real money.
+// Regtest only, but for --live (read-mostly smoke of the live testnet page: new wallets from our own, marked address; testnet sats). Nothing here
+// reaches a wallet with real money.
 import { spawnSync } from 'node:child_process';
 import { readdirSync, writeFileSync, mkdirSync, readFileSync, existsSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
@@ -53,6 +56,8 @@ function devnetCmd(cmd, ms) {
 
 async function main() {
   const t0 = Date.now();
+  const LIVE = args.includes('--live');
+  if (LIVE) return runFlows({ t0, live: true, dn: null, page: null, pageUrl: null, lobbyUrl: null });
   if (args.includes('--up')) devnetCmd(['up'], 1200000);
   if (args.includes('--liquidity')) devnetCmd(['liquidity'], 1200000);
   const dn = devnetOf({ dir: DEVNET_DIR, base: BASE, btcBin: env.BITCOIN_BIN, lndBin: env.LND_BIN, fedBin: env.FEDIMINT_BIN });
@@ -64,15 +69,19 @@ async function main() {
   const page = await servePage(pageDir, PAGE_PORT, { faucet: `http://127.0.0.1:${FAUCET_PORT}`, anchor: dn.cli('getblockhash', '0') });
   const pageUrl = `http://127.0.0.1:${PAGE_PORT}`;
   const lobbyUrl = st.lobbyUrl.replace(/^https?:\/\/[^/?]+/, pageUrl);
+  return runFlows({ t0, live: false, dn, page, pageUrl, lobbyUrl });
+}
+
+async function runFlows({ t0, live, dn, page, pageUrl, lobbyUrl }) {
   // THE FLOWS
   const only = (opt('only') || '').split(',').filter(Boolean), skipIds = (opt('skip') || '').split(',').filter(Boolean);
   const modules = readdirSync(join(HERE, 'flows')).filter((f) => f.endsWith('.mjs')).sort();
   const all = [];
   for (const f of modules) for (const fl of (await import(pathToFileURL(join(HERE, 'flows', f)).href)).flows) all.push({ ...fl, module: f });
-  const chosen = all.filter((f) => (!only.length || only.some((o) => f.id === o || f.area === o || f.id.startsWith(`${o}.`))) && !skipIds.includes(f.id));
+  const chosen = all.filter((f) => !!f.live === live && (!only.length || only.some((o) => f.id === o || f.area === o || f.id.startsWith(`${o}.`))) && !skipIds.includes(f.id));
   // money first, then reach (the order the ticket asks for)
   chosen.sort((a, b) => (b.money - a.money) || (b.reach - a.reach) || (a.order ?? 50) - (b.order ?? 50));
-  say({ flows: chosen.length, of: all.length, page: pageUrl, devnet: DEVNET_DIR });
+  say({ flows: chosen.length, of: all.length, page: live ? (env.E2E_LIVE_URL || 'https://testnet.bitcoinarena.io/') : pageUrl, devnet: live ? null : DEVNET_DIR });
   const shared = {};   // what one flow leaves for another (a funded wallet's words, a settled round)
   const results = [];
   const chromes = [];
@@ -108,7 +117,7 @@ async function main() {
     writeReport(results, t0, false);
   }
   writeReport(results, t0, true);
-  page.close();
+  if (page) page.close();
   return results;
 }
 
