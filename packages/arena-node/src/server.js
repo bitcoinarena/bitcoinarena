@@ -3949,6 +3949,25 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
   /** POST /proof-pull's pulls running now, by round:entry (kanban #1632). */
   const proofPullsInFlight = new Map();
+  // ONE PULL PER ENTRY, FOR EVERY DOOR THAT PULLS (kanban #2744, #1489 r6-play-13): GET /share pulled the first-mark proof itself on every
+  // stranger's ask (proof=1, or any entry with no result yet) - 40 parallel asks were 40 rounds of /late-first-mark, /entry-void and
+  // /equivocation reads at every peer, plus their signature checks. Both doors now join the pull in flight, and a pull that found no proof is
+  // not run again for that entry for PROOF_MISS_MS. Only an entry this seat holds is pulled for.
+  const PROOF_MISS_MS = 10000;
+  const proofMissedAt = new Map();
+  const pullProofOnce = (ridBytes, eidBytes) => {
+    const key = `${toHex(ridBytes)}:${toHex(eidBytes)}`;
+    const missed = proofMissedAt.get(key);
+    if (missed !== undefined && Date.now() - missed < PROOF_MISS_MS) return Promise.resolve(false);
+    let pull = proofPullsInFlight.get(key);
+    if (!pull) {
+      pull = verifier.pullFirstMarkProof(new Uint8Array(ridBytes), new Uint8Array(eidBytes))
+        .then((proven) => { if (!proven) { proofMissedAt.delete(key); proofMissedAt.set(key, Date.now()); if (proofMissedAt.size > 4096) proofMissedAt.delete(proofMissedAt.keys().next().value); } return proven; })
+        .finally(() => proofPullsInFlight.delete(key));
+      proofPullsInFlight.set(key, pull);
+    }
+    return pull;
+  };
   const verifier = new Verifier(round, {
     plugins: hosted,
     conflictsFor,
@@ -12391,13 +12410,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!round.entry(new Uint8Array(eid))) return text(res, 404, 'this signer node holds no such entry');
         // ONE PULL IN FLIGHT PER ENTRY (kanban #1632): a stranger's repeated asks for one entry join the pull already
         // running instead of each starting its own round of peer reads and signature checks
-        const key = `${rid.toString('hex')}:${eid.toString('hex')}`;
-        let pull = proofPullsInFlight.get(key);
-        if (!pull) {
-          pull = verifier.pullFirstMarkProof(new Uint8Array(rid), new Uint8Array(eid)).finally(() => proofPullsInFlight.delete(key));
-          proofPullsInFlight.set(key, pull);
-        }
-        const proven = await pull;
+        const proven = await pullProofOnce(new Uint8Array(rid), new Uint8Array(eid));   // kanban #2744: one pull per entry, a miss kept a moment
         return text(res, 200, proven ? 'proven' : 'no proof');
       }
 
@@ -12568,7 +12581,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // `proof=1`: the asker holds a proof of two first marks - pulled even over a
         // result this signer node signed (measured: a signer node that had signed FAILED refused).
         if (!said.ok && (url.searchParams.get('proof') === '1' || !round.results(ask.roundId, ask.entryId).length)
-          && await verifier.pullFirstMarkProof(ask.roundId, ask.entryId)) said = await stakeSecrets.answer(ask);
+          && round.entry(ask.entryId) && await pullProofOnce(ask.roundId, ask.entryId)) said = await stakeSecrets.answer(ask);   // kanban #2744
         // A SIGNER NODE HOLDING THE PROOF GATHERS TOO, while the signer nodes are up (M3.3-34):
         // measured before on 5 of 7 - signer nodes that learned the proof here, when
         // asked, never gathered; with the two signer nodes that had gathered down, the
