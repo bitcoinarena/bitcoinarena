@@ -1810,6 +1810,22 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return { ok: true, ids, w };
   };
   const keepSeason = (q, kept) => { seasonKept.set(q, kept); if (seasonKept.size > 32) seasonKept.delete(seasonKept.keys().next().value); };
+  // THE GAMES THIS STORE HOLDS ROUNDS OF, WITH ENTRIES (kanban #2725): an id outside it reads nothing, so it is dropped before a season
+  // query's cache key - read again at most every SEASON_GAMES_KEEP_MS (one decode of every joined round's game id)
+  const SEASON_GAMES_KEEP_MS = 60000;
+  const seasonRaw = new Map();   // kanban #2725: one read per stored game set, apart from the per-query answers
+  let seasonGames = { at: 0, ids: new Set() };
+  const storedSeasonGames = () => {
+    if (Date.now() - seasonGames.at <= SEASON_GAMES_KEEP_MS) return seasonGames.ids;
+    const ids = new Set();
+    try {
+      for (const r of round.db.prepare('SELECT r.contract FROM rounds r WHERE EXISTS (SELECT 1 FROM entries e WHERE e.round_id = r.round_id)').all()) {
+        try { const c = decodeRoundContract(new Uint8Array(r.contract)); if (c.gameId instanceof Uint8Array) ids.add(toHex(c.gameId)); } catch { /* not one */ }
+      }
+    } catch { /* none */ }
+    seasonGames = { at: Date.now(), ids };
+    return ids;
+  };
   // A SEASON'S ANSWER: the board season() built, its rows as the round result shows them
   const seasonBody = (s, ids, w, { leftOut = 0, unchecked = [] } = {}) => {
     const hostedAs = ids.map((id) => hosted.get(id)).find(Boolean);
@@ -11477,7 +11493,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         } else {
           kept = seasonKept.get(q);
           if (!kept || Date.now() - kept.at > SEASON_KEEP_MS) {
-            const read = seasonRounds(round, { games: new Set(ids), fromMs: w.fromMs, toMs: w.toMs, isMarket: (c) => !!attestedOf(c) });
+            // kanban #2725: the store is read once per stored game set over SEASON_DAYS_MAX (ids it holds no round of read nothing); a
+            // window is a filter of that read - a made-up id or another days= no longer costs a whole-store read each
+            const stored = storedSeasonGames(), held = ids.filter((id) => stored.has(id));
+            const rq = `raw|${held.join(',')}|${SEASON_DAYS_MAX}`;
+            let raw = seasonRaw.get(rq);
+            if (!raw || Date.now() - raw.at > SEASON_KEEP_MS) {
+              const wMax = seasonWindow({ nowMs: Date.now(), days: SEASON_DAYS_MAX });
+              raw = { at: Date.now(), read: held.length ? seasonRounds(round, { games: new Set(held), fromMs: wMax.fromMs, toMs: wMax.toMs, isMarket: (c) => !!attestedOf(c) }) : [] };
+              seasonRaw.set(rq, raw); if (seasonRaw.size > 8) seasonRaw.delete(seasonRaw.keys().next().value);
+            }
+            const read = raw.read.filter((r) => r.startMs >= BigInt(w.fromMs) && r.startMs < BigInt(w.toMs));
             const s = season(read, { games: ids, fromMs: w.fromMs, toMs: w.toMs });
             if (!s.ok) return text(res, 500, `that season could not be built: ${s.why}`);
             kept = { at: Date.now(), json: JSON.stringify(seasonBody(s, ids, w)) };
@@ -11496,31 +11522,40 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'GET' && url.pathname === '/season-rounds') {
         const asked = seasonQuery(url, { list: true });
         if (!asked.ok) return text(res, asked.status, asked.why);
-        const { ids, w } = asked;
-        const q = `rounds|${ids.join(',')}|${w.days}`;
+        const { w } = asked;
+        // ONE READ PER GAME SET, WHATEVER THE QUERY'S SPELLING (kanban #2725, #1489 r5-settle-3): the 30 s cache was keyed by the asked ids and
+        // days, so a stranger adding a fresh random id (or another days=) to every request missed it each time - a whole-store read, every
+        // contract decoded and every account signed, ~180 ms of the thread per request. Ids no round of this store names are dropped before
+        // the key (storedSeasonGames, read again every SEASON_GAMES_KEEP_MS), and the store is read once over SEASON_DAYS_MAX for a set: a
+        // shorter days= is that read's rounds started inside its window.
+        const stored = storedSeasonGames();
+        const ids = asked.ids.filter((id) => stored.has(id));
+        const q = `rounds|${ids.join(',')}|${SEASON_DAYS_MAX}`;
         const paged = url.searchParams.get('page') === '1';
         const after = String(url.searchParams.get('after') || '').toLowerCase();
         if (paged && after !== '' && !/^[0-9a-f]{64}$/.test(after)) return text(res, 400, 'a page of a season\'s rounds starts after a round id in hex');
-        let kept = seasonKept.get(q);
+        let kept = seasonRaw.get(q);
         if (!kept || Date.now() - kept.at > SEASON_KEEP_MS) {
-          const read = seasonRounds(round, { games: new Set(ids), fromMs: w.fromMs, toMs: w.toMs, isMarket: (c) => !!attestedOf(c) });
+          const wMax = seasonWindow({ nowMs: Date.now(), days: SEASON_DAYS_MAX });
+          const read = ids.length ? seasonRounds(round, { games: new Set(ids), fromMs: wMax.fromMs, toMs: wMax.toMs, isMarket: (c) => !!attestedOf(c) }) : [];
           // SIGNED (kanban #1153): each round's contract and this seat's signature over its settled account - what a payout and a badge count on
           const rounds = signedSeasonRoundsJson(round, read, signSeason);
-          const head = { node: toHex(round.pubkey), game: { ids }, days: w.days, fromMs: w.fromMs, toMs: w.toMs, roundKeys: true, signed: true };
-          // PAGES (kanban #2273): the same rounds in round-id order, each one's JSON once, so a page is a slice by bytes
-          const byId = rounds.map((x) => ({ id: String(x.roundId), json: JSON.stringify(x) })).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-          kept = { at: Date.now(), json: JSON.stringify({ ...head, rounds }), head, byId };
-          keepSeason(q, kept);
+          // PAGES (kanban #2273): the same rounds in round-id order, each one's JSON once, so a page is a slice by bytes; each with its start, so
+          // a shorter window is a filter of this one read (kanban #2725)
+          const all = rounds.map((x) => ({ id: String(x.roundId), startMs: Number(x.startMs), json: JSON.stringify(x) })).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+          kept = { at: Date.now(), all };
+          seasonRaw.set(q, kept); if (seasonRaw.size > 8) seasonRaw.delete(seasonRaw.keys().next().value);
         }
+        const head = { node: toHex(round.pubkey), game: { ids }, days: w.days, fromMs: w.fromMs, toMs: w.toMs, roundKeys: true, signed: true };
+        const byId = kept.all.filter((x) => x.startMs >= w.fromMs && x.startMs < w.toMs);
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=30', ...CORS });
-        if (!paged) return res.end(kept.json);
-        const byId = kept.byId;
+        if (!paged) { const headJson = JSON.stringify(head); return res.end(`${headJson.slice(0, -1)},"rounds":[${byId.map((x) => x.json).join(',')}]}`); }
         let lo = 0, hi = byId.length;
         while (lo < hi) { const m = (lo + hi) >> 1; if (byId[m].id <= after) lo = m + 1; else hi = m; }
         const part = []; let size = 0, k = lo;
         while (k < byId.length && (part.length === 0 || size + byId[k].json.length + 1 <= SEASON_ROUNDS_PAGE_BYTES)) { size += byId[k].json.length + 1; part.push(byId[k].json); k++; }
         const next = k < byId.length && part.length ? byId[k - 1].id : null;
-        const headJson = JSON.stringify({ ...kept.head, next });
+        const headJson = JSON.stringify({ ...head, next });
         return res.end(`${headJson.slice(0, -1)},"rounds":[${part.join(',')}]}`);
       }
 
