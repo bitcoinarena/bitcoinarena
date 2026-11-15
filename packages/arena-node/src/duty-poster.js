@@ -287,7 +287,7 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
     const census = await censusFor({ ...contract, ...kind.fields });
     const built = buildGrid({ contract, kind, ...opts, censusRootFor: () => census.root, censusEntries: () => census.entries,
       blockTicksAt: null });
-    const sent = await publishGridTx({ outs: built.outs, rpc: walletCall(wallet.wallet), feeRate: opts.feeRate, dry: env.ARENA_GRID_DRY === '1' });
+    const sent = await publishGridTx({ outs: built.outs, rpc: walletCall(wallet.wallet), feeRate: opts.feeRate, dry: env.ARENA_GRID_DRY === '1' || opts.dry === true });   // kanban #2864: the operator's one grid, tried dry first
     if (sent.dry) return { ok: false, dry: true, accepted: sent.accepted, reject: sent.reject, bytes: sent.vsize, feeSat: String(sent.fee), series: built.ids.map(toHex), rounds: built.rounds };
     // NAMED FUNDED HERE, AND IN THE FUNDED FILE THIS MACHINE'S SEATS SHARE (as the runner named them), before any seat is asked
     for (const id of built.ids) {
@@ -457,6 +457,19 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
     },
     stop() { if (timer) clearInterval(timer); if (this._t0) clearTimeout(this._t0); timer = null; },
     pass, status,
+    // THE OPERATOR'S ONE EMERGENCY GRID (kanban #2864): the day duty's own publishing for `slot`'s target day, of the version `gameIdHex` only;
+    // the day's templates read first (as a pass does). `dry`: built and checked by the wallet, nothing sent. Server door: POST /duty/emergency-once
+    async postOnce({ game, slot, gameIdHex = null, dry = false } = {}) {
+      if (!seat) return { ok: false, why: 'the poster is not attached yet' };
+      if (!apps.includes(game)) return { ok: false, why: `this node's poster runs no ${game}` };
+      wallet = await readWallet();
+      if (!networkIdHex()) return { ok: false, why: 'this node knows no network yet' };
+      await readDevs();
+      if (!devOf[game]) return { ok: false, why: `this node hosts no ${game}` };
+      const gb = gridBaseOf();
+      templates.set(game, dayTemplate({ held: seat.heldTemplates(), family: await familyOf(game, gb), networkId: fromHex(networkIdHex()), game, ownRelay: seat.endpoint ? reach(seat.endpoint) : self() }));
+      try { return await engineFor(game, gb, 'primary').publishOnce({ slot, gameIdHex, dry }); } catch (e) { return { ok: false, why: e.message }; }
+    },
     // for the tests: one pass at once
     get engines() { return engines; },
   };

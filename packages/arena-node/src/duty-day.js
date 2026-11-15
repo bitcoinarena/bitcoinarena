@@ -334,6 +334,9 @@ export function createDayDuty(o) {
     const { startMs, endMs } = targetDay(slot);
     const base = await gridBase(game, slot, backup ? { depth: DUTY_BACKUP_CENSUS_DEPTH } : {});
     if (!base.ok) throw new Error(`nothing published: ${base.why}`);
+    // THE OPERATOR'S ONE GRID (publishOnce, kanban #2864): only of the version named
+    if (emergency && emergency.wantGameIdHex && String(base.id || '').toLowerCase() !== emergency.wantGameIdHex)
+      throw new Error(`the newest version the census can draw is ${String(base.id || '-').slice(0, 16)} (v${base.version}), not ${emergency.wantGameIdHex.slice(0, 16)}: nothing posted`);
     const shape = guard.dayShape(game, base.periodMs);
     // AN EMERGENCY GRID'S TIMES from the tip's median now (emergencyPlan), the day's own from its timeline
     const plan = emergency ? guard.emergencyPlan({ nowMs: now(), mtpMs: emergency.mtpMs, day: { startMs, endMs }, shape, committeeLeadMs: emergency.committeeLeadMs, seedWaitMs: emergency.seedWaitMs }) : null;
@@ -343,10 +346,12 @@ export function createDayDuty(o) {
     const per = (extra) => postFeds.map((f) => ({ donationSetId: base.donationSetId, federationId: fromHex(f), ...extra }));
     const kind = { ...creator, fields: { ...base.fields, ...extraFields(game), censusHeight: base.censusHeight }, tableFields: game === 'rps' ? [...per({}), ...per({})] : per({}), stakeMsat, mustDraw: true,
       base, ...(game === 'updown' ? { stakeExpiryFor: (t) => { const n = marketExpiryBlocks(t, base.marketTerms); if (!n.ok) throw new Error(n.why); return n.blocks; } } : {}) };
-    const got = await openGrid(kind, { feeRate, maxFeeRate, committeeTimeMs: BigInt(times.committeeMs), extraOutputs: [marker], waitBeacon: false,
+    const got = await openGrid(kind, { feeRate, maxFeeRate, committeeTimeMs: BigInt(times.committeeMs), extraOutputs: [marker], waitBeacon: false, dry: !!(emergency && emergency.dry),
       slots: times.slots, windowMs: BigInt(shape.periodMs), entryAfterStartMs: BigInt(shape.entryAfterStartMs), firstCloseMs: BigInt(times.firstStartMs + shape.entryAfterStartMs) });
     if (got.dry) { say({ dutyDay: 'grid dry', item, slot, emergency: !!plan, version: base.version, accepted: got.accepted, reject: got.reject, rounds: got.rounds, bytes: got.bytes, feeSat: got.feeSat,
-      series: (got.series || []).length, firstStart: got.firstStart, lastClose: got.lastClose, committeeTime: got.committeeTime }); return null; }
+      series: (got.series || []).length, firstStart: got.firstStart, lastClose: got.lastClose, committeeTime: got.committeeTime });
+      return emergency && emergency.dry ? { dry: true, version: base.version, gameId: base.id, accepted: got.accepted, reject: got.reject, rounds: got.rounds, bytes: got.bytes, feeSat: got.feeSat,
+        series: got.series, committeeMs: times.committeeMs, firstStartMs: times.firstStartMs, slots: times.slots, censusHeight: base.censusHeight, fields: { blockTicks: kind.fields.blockTicks, startDeadlineTicks: kind.fields.startDeadlineTicks } } : null; }
     if (!got.ok) throw new Error(got.why || 'the grid was not published');
     const n = plan ? keptOf(slot).filter((k) => k.emergency).length + 1 : 0;
     const k = { file: plan ? join(dir, `${item}-${slot}-e${n}.json`) : fileOf(slot), item, slot, target: new Date(startMs).toISOString(), txid: got.txid, series: got.series, lines: got.lines,
@@ -739,5 +744,20 @@ export function createDayDuty(o) {
   };
   // for the tests: the public sends still running
   const settled = () => Promise.all([...sending]);
-  return { look, state: () => seen, item, tag, emergencyTag, game, role, settled };
+  // ONE EMERGENCY GRID BY THE OPERATOR'S HAND (kanban #2864, the owner 2026-11-15: "Fuer Morgen posten"): the duty's own emergency publishing for
+  // the day `slot` posts (its target day), once, of the version `gameIdHex` names - refused if the newest version the census can draw is another.
+  // `dry`: the grid is built and checked by the wallet (testmempoolaccept), nothing sent. Never from a backup engine.
+  const publishOnce = async ({ slot, gameIdHex = null, dry = false } = {}) => {
+    if (backup) return { ok: false, why: 'a backup engine posts no emergency grid' };
+    if (!Number.isInteger(slot)) return { ok: false, why: 'name the slot whose target day is posted' };
+    const view = await chain.view();
+    if (!view || !view.blocks || !view.blocks.length) return { ok: false, why: 'no chain view yet' };
+    const headers = view.blocks.map((b) => b.header);
+    const mtpMs = (medianTimePast(headers, view.firstHeight, view.firstHeight + view.blocks.length - 1) || 0) * 1000;
+    const how = { mtpMs, committeeLeadMs: emergencyCommitteeLeadMs, seedWaitMs, dry: !!dry, wantGameIdHex: gameIdHex ? String(gameIdHex).toLowerCase() : null };
+    const k = await publish(slot, how);
+    return k && k.dry ? { ok: true, dry: true, ...k } : k ? { ok: true, txid: k.txid, series: k.series, target: k.target, firstStartMs: k.firstStartMs, committeeMs: k.committeeMs, gameId: k.gameId, version: k.version }
+      : { ok: false, why: 'nothing published' };
+  };
+  return { look, state: () => seen, item, tag, emergencyTag, game, role, settled, publishOnce };
 }

@@ -79,7 +79,7 @@ import { createAdvertSelf, firstCheckDelayMs } from './advert-self.js';
 import { paysBondMarker } from '../../arena-protocol/src/chain.js';
 import { createServer, request as httpRequest } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
-import { randomBytes, createPublicKey, verify as ecdsaVerify } from 'node:crypto';
+import { randomBytes, createPublicKey, verify as ecdsaVerify, timingSafeEqual } from 'node:crypto';
 import { displayNameFromKey } from '../../arena-protocol/src/display-name.js';
 import { donationsReadMessage, DONATIONS_READ_WINDOW_MS, SECP256K1_SPKI_PREFIX } from '../../arena-protocol/src/donations-read.js';
 import { WebSocketServer } from 'ws';
@@ -8340,6 +8340,25 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       // WHO POSTS THE ROUNDS, AS THIS NODE SEES IT (kanban #702): the day's duty order (top 3), who posted each day and whether a fallback
       // did, this node's own postings, whether its wallet can pay, its last error - from what its poster last looked at (cheap, no chain read)
+      // THE OPERATOR'S ONE EMERGENCY GRID (kanban #2864, the owner 2026-11-15: "Fuer Morgen posten"): POST /duty/emergency-once { game, slot, gameId, dry }
+      // runs the round poster's own emergency publishing once - the day `slot` posts, of the version `gameId` names only. Off unless
+      // ARENA_DUTY_ONCE_FILE names a file holding the secret, which the request carries in x-duty-once; a sent grid writes <file>.done and
+      // every later send is refused (a dry run - built and checked by the wallet, nothing sent - may be asked again)
+      if (req.method === 'POST' && url.pathname === '/duty/emergency-once') {
+        const f = process.env.ARENA_DUTY_ONCE_FILE;
+        if (!f || !duty || typeof duty.postOnce !== 'function') return claimJson(404, { ok: false, why: 'no such door' });
+        let secret = ''; try { secret = readFileSync(f, 'utf8').trim(); } catch { secret = ''; }
+        const said = String(req.headers['x-duty-once'] || '');
+        if (secret.length < 32 || said.length !== secret.length || !timingSafeEqual(Buffer.from(said), Buffer.from(secret))) return claimJson(403, { ok: false, why: 'not allowed' });
+        let b; try { b = JSON.parse(Buffer.from(await read(req)).toString('utf8') || '{}'); } catch { return claimJson(400, { ok: false, why: 'a JSON body { game, slot, gameId, dry }' }); }
+        const dry = b.dry === true, done = `${f}.done`;
+        if (!dry && existsSync(done)) return claimJson(409, { ok: false, why: `already sent once: ${readFileSync(done, 'utf8').slice(0, 300)}` });
+        if (!/^[0-9a-f]{64}$/.test(String(b.gameId || ''))) return claimJson(400, { ok: false, why: 'name the version: gameId (hex)' });
+        const out = await duty.postOnce({ game: String(b.game || ''), slot: Number(b.slot), gameIdHex: String(b.gameId), dry });
+        if (!dry && out && out.ok && out.txid) { try { writeFileSync(done, JSON.stringify({ txid: out.txid, at: new Date().toISOString() })); } catch { /* the journal has it */ } }
+        console.log(`[duty] #2864 emergency-once ${dry ? 'DRY' : 'SENT'}: ${JSON.stringify(out, (k, v) => (typeof v === 'bigint' ? String(v) : v)).slice(0, 600)}`);
+        return claimJson(out && out.ok ? 200 : 409, JSON.parse(JSON.stringify(out || { ok: false }, (k, v) => (typeof v === 'bigint' ? String(v) : v instanceof Uint8Array ? toHex(v) : v))));
+      }
       if (req.method === 'GET' && url.pathname === '/duty') {
         if (!duty) return claimJson(404, { ok: false, why: 'this node runs no round poster' });
         return claimJson(200, duty.status());

@@ -386,7 +386,7 @@ test('the day\'s template is the last one this node holds of the app, else the b
   const t = dayTemplate({ held, family: new Set([GID]), networkId: NETWORK_ID_TESTNET4, game: 'rps' });
   assert.equal(t.from, 'held'); assert.equal(t.contract.protocolVersion, 16); assert.equal(t.contract.creatorPubkey, undefined); assert.equal(t.contract.censusRoot, undefined);
   const b = dayTemplate({ held: [], family: new Set(), networkId: NETWORK_ID_TESTNET4, game: 'rps', ownRelay: 'https://n.example' });
-  assert.equal(b.from, 'built-in'); assert.equal(b.contract.blockTicks, 600); assert.deepEqual(b.contract.publicationRelays, ['https://n.example']);
+  assert.equal(b.from, 'built-in'); assert.equal(b.contract.blockTicks, 301);   // kanban #2864: an RPS round ends 10 s after its close (was 600) assert.deepEqual(b.contract.publicationRelays, ['https://n.example']);
   assert.equal(DUTY_TEMPLATE.stakeMsat, 100000n);
   void catalogOf;
 });
