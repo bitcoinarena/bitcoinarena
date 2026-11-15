@@ -145,6 +145,57 @@
   /* THE LATEST RELEASE'S NUMBER (kanban #753): not in this file; https://bitcoinarena.io/js/release-latest.js writes it from the update
      channel every release publishes (testnet.bitcoinarena.io/release/latest.json) */
   .relv:not(:empty)::before { content: " "; }
+  /* UNSLOP (2026-11-15, the direction the owner approved: exact, after-dark, sporting; one orange accent; the 5-of-7 tally as the signature;
+     the same craft as the homepage). Overrides only. */
+  a { color: var(--text); text-decoration: underline; text-decoration-color: rgba(246,236,228,.3); text-underline-offset: 3px; }
+  a:hover { color: var(--btc); text-decoration-color: currentColor; }
+  aside a, a.box.link, .playcard, details.sec > summary a { text-decoration: none; }
+  aside a.on { color: var(--btc); }
+  a:focus-visible, button:focus-visible, summary:focus-visible { outline: 2px solid var(--btc); outline-offset: 2px; border-radius: 4px; }
+  h1, h2, h3, h4, .box h4, .run4-s h4, .playcard b, ol.steps > li > b { font-weight: 500; }
+  h1 { letter-spacing: -0.025em; }
+  details.sec > summary h2 { color: var(--text); }
+  details.sec > summary:hover h2 { color: var(--btc); }
+  details.sec > summary::after { border-width: 0 2px 2px 0; border-color: var(--dim); transition: transform .2s ease-out; }
+  details.sec > summary:hover::after { border-color: var(--btc); }
+  summary, details.more > summary { color: var(--text); font-weight: 500; }
+  summary:hover { color: var(--btc); }
+  /* the four tags under the title become one quiet line */
+  .pills { gap: 4px 0; margin: 16px 0 8px; }
+  .pill { padding: 0; border: 0; border-radius: 0; background: none; font: 400 14px "JetBrains Mono", ui-monospace, monospace; color: var(--dim); }
+  .pill + .pill::before { content: "·"; margin: 0 10px; color: var(--line); }
+  /* sentence case, no tracking */
+  aside b { font: 500 13px Inter, system-ui, sans-serif; letter-spacing: 0; text-transform: none; margin: 24px 0 4px; }
+  .role dt, .tbl.api td[data-l]::before { text-transform: none; letter-spacing: 0; font-size: 12px; }
+  /* one radius family: 4 for controls and tags, 8 for cards and panels */
+  .folds button, .run4-os span, .role .rpill, .navbtn { border-radius: 4px; }
+  .box, .run4-s, .npc, .nps, .npj, .npt, .role, .run-steps div, .flow div, .tbl, pre, .shot img, main details:not(.sec):not(:has(.tbl)), .tbl.api tr { border-radius: 8px; }
+  .npways span, .role .chips span, :not(pre) > code, .m { border-radius: 4px; }
+  .note { border-left: 2px solid var(--btc); background: var(--panel); border-radius: 0 8px 8px 0; }
+  .folds button { font-weight: 500; }
+  /* highlighted cards: an orange hairline, no inner ring */
+  .npc.hl, .nps.hl { box-shadow: none; }
+  /* one accent: the node-role shares, step numbers and figures in text colors */
+  .npj.v em, .npj.s em, .npj.c em, .npj.l em { color: var(--text); }
+  .npj em, .nduty .npt b { font-weight: 500; font-family: "JetBrains Mono", ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+  .nduty .npt b { color: var(--text); }
+  ol.steps > li::before { color: var(--text); font-weight: 500; border-radius: 4px; }
+  .flow div::before { background: none; box-shadow: inset 0 0 0 1px var(--line); color: var(--text); border-radius: 4px; font-weight: 500; }
+  .run4-n { background: none; box-shadow: inset 0 0 0 1px var(--line); color: var(--dim); font-weight: 500; border-radius: 4px; }
+  aside .gl { color: var(--text); }
+  .npic .npa { color: var(--dim); font-weight: 400; }
+  /* the play card: a flat panel with one orange button */
+  .playcard { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+  .playcard:hover { border-color: rgba(247,147,26,.6); }
+  .playcard span { color: var(--dim); }
+  .playcard i { background: var(--btc); border-radius: 4px; font-weight: 500; transition: background-color .15s ease-out; }
+  .playcard:hover i { background: #ffa53d; }
+  /* the signature: 5 of 7, five lit */
+  .tally { display: inline-flex; gap: 3px; margin: 2px 0 6px; }
+  .tally i { width: 7px; height: 7px; border-radius: 50%; background: var(--btc); }
+  .tally i:nth-child(n+6) { background: none; box-shadow: inset 0 0 0 1px var(--dim); }
+  .nps .ndots { letter-spacing: 2px; }
+  @media (max-width: 560px) { .pills { gap: 4px 16px; } .pill + .pill::before { display: none; } }
 </style>
   <script id="arena-ref-source">/* THE SOURCE OF A VISIT (kanban #1458, the owner 2026-11-11: "Make sure Stacker News is recognised through the referrer and the utm is set correctly, without us having to add it"): the same script inline on bitcoinarena.io, testnet. and docs., before the stats script reads the address. A link's own utm_ always wins. Without one, the referrer's host names the source (the map below), put into the address as utm_source/utm_medium so Umami counts it as if the link had carried it. The visit's first source is kept in this tab (sessionStorage, the source name only) and added to links to the other bitcoinarena.io hosts, so a visitor who goes on to the game keeps it. Stacker News sends no referrer on post links (rel="noreferrer", measured 2026-11-11): its links need their own utm. */(function(){try{
 var M=[[/(^|\.)stacker\.news$/,'stacker-news','community'],[/(^|\.)(x\.com|twitter\.com|t\.co)$/,'x','social'],[/(^|\.)(primal\.net|njump\.me|nostr\.com|iris\.to|coracle\.social|snort\.social|jumble\.social|yakihonne\.com|damus\.io|habla\.news|nostrudel\.ninja)$/,'nostr','social'],[/(^|\.)armada\.buzz$/,'armada','community'],[/(^|\.)reddit\.com$/,'reddit','social'],[/(^|\.)bitcointalk\.org$/,'bitcointalk','forum'],[/(^|\.)github\.com$/,'github','referral'],[/(^|\.)discord\.com$/,'discord','community'],[/(^|\.)(t\.me|telegram\.org)$/,'telegram','community'],[/^news\.ycombinator\.com$/,'hackernews','forum']];
@@ -442,15 +493,15 @@ node packages/arena-node/tools/devnet.mjs replay</pre>
   <!-- WHAT A NODE DOES IN PICTURES (kanban #812, 2026-10-30: "What a node does is also a wall of text. Replace it with self explaining
        images"): each part a picture and a line; the text it replaced kept, folded under Details -->
   <div class="npic nflow" role="img" aria-label="A player's stake goes into a round; a committee of 7 nodes checks it, 5 must agree; the winners are paid">
-    <div class="npc"><span class="npi">🎮</span><b>A player plays</b><small>stake locked</small></div><span class="npa">→</span>
-    <div class="npc hl"><span class="npi">🛡️</span><b>7 nodes check</b><small>5 must agree</small></div><span class="npa">→</span>
-    <div class="npc"><span class="npi">🏆</span><b>Winners paid</b><small>signed by the nodes</small></div>
+    <div class="npc"><b>A player plays</b><small>stake locked</small></div><span class="npa">→</span>
+    <div class="npc hl"><span class="tally" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><b>7 nodes check</b><small>5 must agree</small></div><span class="npa">→</span>
+    <div class="npc"><b>Winners paid</b><small>signed by the nodes</small></div>
   </div>
   <div class="npic njobs" role="img" aria-label="Your node's four jobs, each earning 1 percent of every paid round: verify, settle, custody, liquidity">
-    <div class="npj v"><span class="npi">🎮</span><b>Verify</b><small>replays the game</small><em>1 %</em></div>
-    <div class="npj s"><span class="npi">✍️</span><b>Settle</b><small>signs the payouts</small><em>1 %</em></div>
-    <div class="npj c"><span class="npi">🏦</span><b>Custody</b><small>holds a key of the money</small><em>1 %</em></div>
-    <div class="npj l"><span class="npi">💧</span><b>Liquidity</b><small>opens channels for new nodes</small><em>1 %</em></div>
+    <div class="npj v"><b>Verify</b><small>replays the game</small><em>1 %</em></div>
+    <div class="npj s"><b>Settle</b><small>signs the payouts</small><em>1 %</em></div>
+    <div class="npj c"><b>Custody</b><small>holds a key of the money</small><em>1 %</em></div>
+    <div class="npj l"><b>Liquidity</b><small>opens channels for new nodes</small><em>1 %</em></div>
   </div>
   <p class="ncap">4 % of every paid round goes to the nodes that did the work. Every node checks the others: see <a href="#cheat">When a node cheats</a>.</p>
   <details class="more"><summary>Details</summary>
@@ -461,7 +512,7 @@ node packages/arena-node/tools/devnet.mjs replay</pre>
 
   <h3 id="liquidity">Liquidity providers</h3>
   <div class="npic nflow" role="img" aria-label="A liquidity provider opens a channel of 100,000 sat to a new node, so the new node can take deposits">
-    <div class="npc"><span class="npi">💧</span><b>Provider</b><small>500,000 sat or more</small></div><span class="npa nlbl">⇢ 100,000 sat ⇢</span>
+    <div class="npc"><b>Provider</b><small>500,000 sat or more</small></div><span class="npa nlbl">⇢ 100,000 sat ⇢</span>
     <div class="npc hl"><span class="npi">🆕</span><b>New node</b><small>can take deposits</small></div>
   </div>
   <details class="more"><summary>Details</summary>
@@ -487,8 +538,8 @@ node packages/arena-node/tools/devnet.mjs replay</pre>
 
   <h3 id="bond">Bond and advertisement</h3>
   <div class="npic nflow" role="img" aria-label="A bond of 50,000 sat is locked on Bitcoin. It comes back to you after its lock time, together with the arbitration set any time, and is only taken with a proof of cheating">
-    <div class="npc hl"><span class="npi">🔒</span><b>Bond</b><small>50,000 sat on Bitcoin</small></div><span class="npa">→</span>
-    <div class="npways"><span>⏳ <b>back to you</b> after its lock time</span><span>🤝 <b>back early</b> together with the arbitration set</span><span>⚖️ <b>taken</b> only with a proof of cheating</span></div>
+    <div class="npc hl"><b>Bond</b><small>50,000 sat on Bitcoin</small></div><span class="npa">→</span>
+    <div class="npways"><span><b>back to you</b> after its lock time</span><span><b>back early</b> together with the arbitration set</span><span><b>taken</b> only with a proof of cheating</span></div>
   </div>
   <details class="more"><summary>Details</summary>
 
@@ -504,9 +555,9 @@ node packages/arena-node/tools/devnet.mjs replay</pre>
 
   <h3 id="census">The census</h3>
   <div class="npic nflow" role="img" aria-label="Bonds confirmed on Bitcoin make up the census; every node reads the same census and draws the same committees">
-    <div class="npc"><span class="npi">⛓️</span><b>Bonds on Bitcoin</b><small>confirmed, old enough</small></div><span class="npa">→</span>
-    <div class="npc hl"><span class="npi">📋</span><b>The census</b><small>the same on every node</small></div><span class="npa">→</span>
-    <div class="npc"><span class="npi">🎲</span><b>The draw</b><small>every round's committee</small></div>
+    <div class="npc"><b>Bonds on Bitcoin</b><small>confirmed, old enough</small></div><span class="npa">→</span>
+    <div class="npc hl"><b>The census</b><small>the same on every node</small></div><span class="npa">→</span>
+    <div class="npc"><b>The draw</b><small>every round's committee</small></div>
   </div>
   <details class="more"><summary>Details</summary>
 
@@ -535,37 +586,37 @@ node packages/arena-node/tools/devnet.mjs replay</pre>
   <p>You pick roles in the installer and can change them on the owner page. Each earns 1 % of every paid round. <b>Game / verify</b> and <b>Settlement</b> are on by default; <b>Custody</b> and <b>Liquidity</b> need Lightning and coins.</p>
   <div class="roles" role="list">
     <div class="role" role="listitem">
-      <span class="ri">🎮</span><h3>Game / verify</h3><span class="rpill">on by default · 1 % of each round</span>
+      <h3>Game / verify</h3><span class="rpill">on by default · 1 % of each round</span>
       <span class="rdo">Replays and signs rounds</span>
-      <div class="chips"><span>🔒 bond</span><span>🌐 https address</span><span>💽 2 GB</span><span>⚙️ 1 CPU core</span></div>
+      <div class="chips"><span>bond</span><span>https address</span><span>2 GB</span><span>1 CPU core</span></div>
       <dl><dt>What it does</dt><dd>Replays each round it sits on and signs who won. For a market it signs the outcome.</dd>
       <dt>Earns</dt><dd>1 % of each round, shared by its 7 seated nodes.</dd></dl>
     </div>
     <div class="role" role="listitem">
-      <span class="ri">✍️</span><h3>Settlement</h3><span class="rpill">on by default · 1 % of each round</span>
+      <h3>Settlement</h3><span class="rpill">on by default · 1 % of each round</span>
       <span class="rdo">Pays the winners out</span>
-      <div class="chips"><span>🔒 bond</span><span>🌐 https address</span><span>⏱️ online until paid</span></div>
+      <div class="chips"><span>bond</span><span>https address</span><span>online until paid</span></div>
       <dl><dt>What it does</dt><dd>Signs the payout to the winners, or the refund if a round fails.</dd>
       <dt>Earns</dt><dd>1 % of each round, shared by its 7 seated nodes.</dd></dl>
     </div>
     <div class="role" role="listitem">
-      <span class="ri">🏦</span><h3>Custody</h3><span class="rpill opt">opt-in · needs coins + LND</span>
+      <h3>Custody</h3><span class="rpill opt">opt-in · needs coins + LND</span>
       <span class="rdo">Holds the players' bitcoin</span>
-      <div class="chips"><span>₿ own Bitcoin Core</span><span>⚡ LND</span><span>🚪 port 9735</span><span>💽 +1 GB</span></div>
+      <div class="chips"><span>own Bitcoin Core</span><span>LND</span><span>port 9735</span><span>+1 GB</span></div>
       <dl><dt>What it does</dt><dd>Your node becomes a guardian. Money moves only when two thirds of the guardians agree.</dd>
       <dt>Earns</dt><dd>1 % of each round of your federation: guardians share &#8532;, gateways &#8531;.</dd></dl>
     </div>
     <div class="role sub" role="listitem">
-      <span class="ri">⚡</span><h3>Gateway</h3><span class="rpill">part of custody</span>
+      <h3>Gateway</h3><span class="rpill">part of custody</span>
       <span class="rdo">Moves Lightning in and out</span>
-      <div class="chips"><span>⚡ LND</span><span>💰 channel coins</span></div>
+      <div class="chips"><span>LND</span><span>channel coins</span></div>
       <dl><dt>What it does</dt><dd>Turns Lightning payments into the federation's coins and back. 2 per federation, drawn daily.</dd>
       <dt>Earns</dt><dd>&#8531; of the custody 1 % of its federation.</dd></dl>
     </div>
     <div class="role" role="listitem">
-      <span class="ri">💧</span><h3>Liquidity provider</h3><span class="rpill opt">opt-in · needs coins + LND</span>
+      <h3>Liquidity provider</h3><span class="rpill opt">opt-in · needs coins + LND</span>
       <span class="rdo">Gives new nodes incoming Lightning</span>
-      <div class="chips"><span>₿ own Bitcoin Core</span><span>⚡ LND</span><span>💰 500,000 sat</span></div>
+      <div class="chips"><span>own Bitcoin Core</span><span>LND</span><span>500,000 sat</span></div>
       <dl><dt>What it does</dt><dd>Opens 100,000 sat channels to new nodes so they can take deposits.</dd>
       <dt>Earns</dt><dd>1 % of each round, shared by weight: more coins, bigger share.</dd></dl>
     </div>
@@ -579,12 +630,12 @@ node packages/arena-node/tools/devnet.mjs replay</pre>
   <div class="run4" id="installer">
     <div class="run4-s"><span class="run4-n">1</span><span class="run4-i" aria-hidden="true">⬇️</span><h4>Download</h4>
       <p><a href="https://github.com/bitcoinarena/bitcoinarena/releases/latest">The latest release<span class="relv" data-arena-release-version></span></a> for your computer:</p>
-      <p class="run4-os"><span>🪟 Windows <code>.exe</code></span><span>🍎 macOS <code>.dmg</code></span><span>🐧 Linux <code>.deb</code></span></p></div>
-    <div class="run4-s"><span class="run4-n">2</span><span class="run4-i" aria-hidden="true">🧭</span><h4>Follow the setup</h4>
+      <p class="run4-os"><span>Windows <code>.exe</code></span><span>macOS <code>.dmg</code></span><span>Linux <code>.deb</code></span></p></div>
+    <div class="run4-s"><span class="run4-n">2</span><h4>Follow the setup</h4>
       <p>Open <b>Bitcoin Arena</b>. Your browser shows the setup.</p></div>
-    <div class="run4-s"><span class="run4-n">3</span><span class="run4-i" aria-hidden="true">🔒</span><h4>Bond 50,000 sat</h4>
+    <div class="run4-s"><span class="run4-n">3</span><h4>Bond 50,000 sat</h4>
       <p>The setup can get free testnet4 coins. The bond is locked for a while, then yours again. 50,000 sat is testnet4's minimum bond.</p></div>
-    <div class="run4-s"><span class="run4-n">4</span><span class="run4-i" aria-hidden="true">📊</span><h4>Watch it earn</h4>
+    <div class="run4-s"><span class="run4-n">4</span><h4>Watch it earn</h4>
       <p>Your owner page shows what your node does and earns.</p></div>
   </div>
   <h4>The setup, step by step</h4>
@@ -653,11 +704,11 @@ node packages/nextblock/bin/node.mjs 31221 node.db</pre>
        ownerpage and how to access it") -->
   <p class="lead">Your node's <b>owner page</b> shows whether it runs, what it earns, its roles, bond, uptime, services and updates.</p>
   <div class="run4">
-    <div class="run4-s"><span class="run4-i" aria-hidden="true">🖥️</span><h4>From the app</h4>
+    <div class="run4-s"><h4>From the app</h4>
       <p>Open <b>Bitcoin Arena</b> on your node's computer and click <b>Owner page</b>.</p></div>
-    <div class="run4-s"><span class="run4-i" aria-hidden="true">🌐</span><h4>From any browser</h4>
+    <div class="run4-s"><h4>From any browser</h4>
       <p><a href="https://testnet.bitcoinarena.io/owner/">testnet.bitcoinarena.io/owner</a>. Bookmark it.</p></div>
-    <div class="run4-s"><span class="run4-i" aria-hidden="true">🔑</span><h4>Sign in</h4>
+    <div class="run4-s"><h4>Sign in</h4>
       <p>With your <b>24 words</b> or your <b>Nostr key</b>. Your key never leaves the browser.</p></div>
   </div>
   <figure class="shot"><img src="img/run-node-owner.png" alt="The owner page: your node at a glance and its uptime as tiles" loading="lazy" width="1440" height="1100">
