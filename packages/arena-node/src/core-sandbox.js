@@ -361,7 +361,9 @@ export function sandboxFor(core, options) {
     catch (e) {
       // ...BUT A LOAD THAT ONLY RAN OUT OF TIME is not cached (kanban #1586): a busy node can miss LOAD_MS once, and a refusal kept
       // for the thread's life left every later close of that game - a head-to-head decide's retry too - failing until a restart
-      if (/did not stop within \d+ ms \(loading\)/.test(e.message)) throw e;
+      // kanban #2710 (#1489 r4-hosting-6): nor one whose META ASK ran out of time - a seat busy at a core's first load (at start, or the
+      // first ask after an idle sweep) missed ASK_MS there and the game was refused until a restart: every round of it unsigned
+      if (/did not stop within \d+ ms \((loading|meta)\)/.test(e.message)) throw e;
       s = { refused: e.message };
     }
     cache.set(key, s);
