@@ -204,7 +204,12 @@ export async function revealWhenCertified({ roundIdHex, entryIdHex, move, salt, 
       if (!got.certified.entries.includes(String(entryIdHex))) return { seats: [], notCertified: true, why: 'your entry is not in the round\'s certified lock set: it is not played, its stake comes back' };
       return { seats: await revealMove({ entryIdHex, move, salt, nodes, identity, fetcher, timeoutMs }), certified: got.certified };
     }
-    if (got.void || now() > giveUpAt) return { seats: [], void: true, why: 'the round\'s lock set was not certified by its close + 3 s: the round is VOID, every stake comes back' };
+    // ONE SEAT'S VOID IS NOT FINAL (kanban #2798, #1489 r21-h2h-1): `void` is any seat's unsigned word, and a seat that said it on the first
+    // poll - while the honest seats were still certifying - made the page skip its reveal and forfeit a round the others played. Before the
+    // seats' own certifying window has passed the page keeps asking; a certificate it checked wins whenever it comes, and it gives up only
+    // after the window (the seats void a set they could not certify by then) or past its own deadline
+    const windowOver = now() > Number(entryCloseMs) + LOCK_SET_WINDOW_MS;
+    if ((got.void && windowOver) || now() > giveUpAt) return { seats: [], void: true, why: 'the round\'s lock set was not certified by its close + 3 s: the round is VOID, every stake comes back' };
     if (onWait) { try { onWait('certifying'); } catch { /* the page's own */ } }
     await sleep(H2H_LOCK_SET_POLL_MS);
   }
