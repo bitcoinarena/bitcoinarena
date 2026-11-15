@@ -102,6 +102,22 @@ export const donationContractFields = ({ recipientPk, amountMsat, image = new Ui
 });
 
 /**
+ * ANOTHER ENTRY'S CLAIM ON AN OUTPUT, AS THIS SEAT CAN CHECK IT (kanban #2662, #1489 r2-settle-1; outside feedback #057): a row kept at an outpoint
+ * blocks an entry only when the entry it names is held here and names that outpoint among its own donation outpoints. A row another seat listed
+ * under a made-up entry (GET /reserves?all=1, taken by reservePeerPass after the federation confirmed the contract, not whose it is) refused the
+ * real entry's lock at every seat that took it first - one seat stopped honest stakes. Such a row is no claim: the entry that names the outpoint
+ * takes it over (putDonationOutputs replaces it).
+ */
+export function outputClaimedByAnother(round, taken, entryIdBytes, outpoint) {
+  if (!taken || Buffer.from(taken.entryId).equals(Buffer.from(entryIdBytes))) return false;
+  let other = null;
+  try { const bytes = round.entry ? round.entry(taken.entryId) : null; other = bytes ? decodeEntryContract(bytes) : null; } catch { other = null; }
+  if (!other) return false;
+  const same = (o) => o && Buffer.from(o.txid).equals(Buffer.from(outpoint.txid)) && BigInt(o.outIdx) === BigInt(outpoint.outIdx);
+  return (other.donationOutpoints || []).some(same) || same(other.stakeLockOutpoint) || same(other.feeLockOutpoint);
+}
+
+/**
  * THE ENTRY'S DONATION OUTPUTS, CHECKED WITH THE FEDERATION (2026-10-03): for a round whose set pays keys, every
  * output `donationOutputsExpected` pairs - the federation holds, at that outpoint, the payout contract to that key for
  * exactly that share - and none already pays for another entry. Answers the rows to keep, or why the entry's donation
@@ -119,7 +135,7 @@ export async function verifyDonationOutputs({ round, port, entry, entryIdBytes, 
   const rows = [];
   for (const o of want.outputs) {
     const taken = round.donationOutputAt ? round.donationOutputAt(o.outpoint) : null;
-    if (taken && !Buffer.from(taken.entryId).equals(Buffer.from(entryIdBytes)))
+    if (outputClaimedByAnother(round, taken, entryIdBytes, o.outpoint))   // kanban #2662: only a held entry that names the outpoint
       return { ok: false, why: 'that donation output already pays for another entry: one output is one entry\'s' };
     // EITHER THE ENTRY'S OWN PLAYER KEY AS THE IMAGE, OR ZEROS (pages already out); any other image is not this entry's
     const sender = entry.playerPubkey instanceof Uint8Array && entry.playerPubkey.length === 32 ? entry.playerPubkey : null;
@@ -581,7 +597,7 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
     // are kept only now, after every re-check passed: a hand-over refused here keeps nothing.
     for (const r of donated.rows) {
       const held = round.donationOutputAt ? round.donationOutputAt(r.outpoint) : null;
-      if (held && !Buffer.from(held.entryId).equals(Buffer.from(entryIdBytes)))
+      if (outputClaimedByAnother(round, held, entryIdBytes, r.outpoint))   // kanban #2662
         return { ok: false, why: 'that donation output already pays for another entry: one output is one entry\'s' };
     }
     if (otherStakedUnderKey(round, entry, entryIdBytes, 'stake', { yieldNow: true }))   // last: it may let another entry's rows go (kanban #2477)
