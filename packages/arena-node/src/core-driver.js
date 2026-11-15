@@ -10,7 +10,19 @@
 import * as M from 'arena:core';
 
 const A = M.CORE || null;
-const D = M.DECIDE || null;
+// A DECIDE ADAPTER IS READ ONCE, AT LOAD, ON EVERY THREAD ALIKE (kanban #2730, #1489 r5-hosting-1): meta read D.name on the trial's kept
+// thread before its decides, and the seat runs each decide on a fresh thread with no meta first - an adapter whose `name` getter set a flag its
+// decide read answered good verdicts in the trial and nothing at the seat. Now its name and its decide function are taken here, when the
+// module loads, on whichever thread that is - a getter (or a Proxy's trap) runs at the same point on the trial's thread and the seat's - and
+// meta and decide only read what was taken. One that cannot be read is no adapter.
+const D0 = M.DECIDE || null;
+let D = null;
+try {
+  if (D0 && (typeof D0 === 'object' || typeof D0 === 'function')) {
+    const name = D0.name, fn = D0.decide;
+    D = { name: typeof name === 'string' ? name : name == null ? null : String(name), decide: typeof fn === 'function' ? (moves, config) => fn.call(D0, moves, config) : null };
+  }
+} catch { D = null; }
 const states = new Map();
 let nextId = 1;
 
