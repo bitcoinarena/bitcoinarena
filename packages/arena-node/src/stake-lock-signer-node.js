@@ -27,7 +27,7 @@
 // crates). The fee lock is not checked here: its claim hash and the §22A node
 // slots wait on a ruling (PRIORITIES).
 import { decodeEntryContract, decodeRoundContract, entryFederation } from '../../arena-protocol/src/contracts.js';
-import { lockMatchesEntry, lockFieldsFromJson, lockFieldsToJson } from '../../arena-protocol/src/stake-lock.js';
+import { lockMatchesEntry, lockFieldsMatchEntry, lockFieldsFromJson, lockFieldsToJson } from '../../arena-protocol/src/stake-lock.js';
 import { STAKE_EXPIRY_BLOCKS } from '../../arena-protocol/src/constants.js';
 import { feeLockPays } from '../../arena-protocol/src/lock-settlement.js';
 import { donationOutputsExpected } from '../../arena-protocol/src/donation.js';
@@ -411,6 +411,9 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
   if (otherStakedUnderKey(round, entry, entryIdBytes, 'stake'))
     return { ok: false, why: 'another entry of that player key is already staked in this round: one player key stakes one entry' };
   { const back = returnedHere(round, outpoint); if (back) return { ok: false, why: back }; }
+  // FIELDS THAT CAN NEVER BE THE ENTRY'S LOCK COST NO FEDERATION QUESTION (kanban #2752, #1489 r7-entry-2): checked here, before the
+  // federation is asked (the height check alone waits for its answer, in lockMatchesEntry below)
+  if (claimPk instanceof Uint8Array) { const pre = lockFieldsMatchEntry({ lock: fields, entry, kind: 'stake', claimPk, expiryBlocks: contract.stakeExpiryBlocks }); if (!pre.ok) return pre; }
 
   // THE FEDERATION'S WORD AND THE CONTRACT'S ID ASKED TOGETHER (2026-10-02: "stake/fee verification of 5 of 7
   // confirmations must also be much faster"): two stock-client runs, one after the other before.
@@ -510,6 +513,8 @@ export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk
   if (otherStakedUnderKey(round, entry, entryIdBytes, 'fee'))
     return { ok: false, why: 'another entry of that player key already has a fee lock in this round: one player key, one fee lock (kanban #1215)' };
   { const back = returnedHere(round, outpoint); if (back) return { ok: false, why: back }; }
+  // (kanban #2752) fields that can never be the entry's fee lock cost no federation question
+  if (claimPk instanceof Uint8Array) { const pre = lockFieldsMatchEntry({ lock: fields, entry, kind: 'fee', claimPk, expiryBlocks: contract.stakeExpiryBlocks }); if (!pre.ok) return pre; }
   let [st, id, feeNamers] = await Promise.all([port.status(outpoint), contractIdOfFields(port, fields), askNamers(namersAtPeers, entry, 'fee', outpoint)]);
   if (namedFirstByAnother(round, entry, entryIdBytes, 'fee', outpoint, feeNamers)) return { ok: false, why: feeNamedFirstWhy };
   if (!st || !st.stored) return { ok: false, why: 'the federation holds no lock at the entry\'s fee_lock_outpoint' };
