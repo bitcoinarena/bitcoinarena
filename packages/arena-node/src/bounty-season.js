@@ -337,13 +337,18 @@ export function openBountySeason(path = ':memory:', { startMs = null, potSats = 
    */
   function drawEntries(season, { nowMs = Date.now() } = {}) {
     const keys = db.prepare(`SELECT DISTINCT pubkey FROM approvals WHERE season = ? AND state = 'approved' AND level <> 'node'`).all(Number(season)).map((x) => x.pubkey);
-    const out = [];
+    const picks = [];
     for (const k of keys) {
       const f = flagsOf(k, { nowMs });
       const ls = linksOf(k);
       const pick = COMMUNITIES.map((p) => f[p] && ls.find((l) => l.platform === p)).find(Boolean) || null;
-      if (pick) out.push(`${pick.platform}:${pick.username || pick.userId}`);
+      if (pick) picks.push({ name: `${pick.platform}:${pick.username || pick.userId}`, id: `${pick.platform}:${pick.userId || k}`, key: k });
     }
+    // ONE ENTRY PER KEY, NEVER MERGED BY A NAME (kanban #2684, #1489 r3-faucet-2): a username is text another account can show too (an old link
+    // under a Telegram first name, a name given up and taken), and two keys under one name collapsed into ONE entry here and in bounty-draw.mjs -
+    // the honest reporter's place was gone. A name two keys share is told apart by the account id behind it (`#<id>`, which nobody chooses).
+    const count = new Map(); for (const x of picks) count.set(x.name, (count.get(x.name) || 0) + 1);
+    const out = picks.map((x) => (count.get(x.name) > 1 ? `${x.name}#${x.id.slice(x.id.indexOf(':') + 1)}` : x.name));
     return [...new Set(out)].sort();
   }
   const keysOfSeason = (season) => db.prepare(`SELECT DISTINCT pubkey FROM approvals WHERE season = ? AND state = 'approved'`).all(Number(season)).map((x) => x.pubkey);
