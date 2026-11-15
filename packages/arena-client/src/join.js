@@ -390,8 +390,12 @@ export async function postHandout(stake, nodes, { fetcher = fetch, needed: asked
   const refused = answers.filter((a) => !a.ok).map((a) => a.why);
   // THE CLOSE ON THE SEATS' CLOCK (kanban #1892): the earliest any seat that took the handout puts it, in this page's Date.now() terms; null from seats
   // that do not say (older builds)
-  const closes = answers.filter((a) => a.ok && Number.isFinite(a.closeAtMs)).map((a) => a.closeAtMs);
-  const seatCloseAtMs = closes.length ? Math.min(...closes) : null;
+  // THE THRESHOLD'S CLOSE, NOT ONE SEAT'S (kanban #2668, #1489 r2-client-1): the earliest of all was taken, so one seat that took the handout and said
+  // x-entry-close-in-ms: -86400000 refused every paid head-to-head lock and set the seats' clock a day ahead for every later tap in the tab. A lock
+  // needs `needed` seats to take it: the close that counts is the one by which `needed` of the seats that said one still take it (the needed-th
+  // latest); with fewer such answers than needed, the earliest, as before
+  const closes = answers.filter((a) => a.ok && Number.isFinite(a.closeAtMs)).map((a) => a.closeAtMs).sort((x, y) => x - y);
+  const seatCloseAtMs = !closes.length ? null : closes.length >= needed ? closes[closes.length - needed] : closes[0];
   if (accepted.length < needed)
     return {
       ok: false, accepted: accepted.length, needed, refused, rest, posted, seatCloseAtMs,
