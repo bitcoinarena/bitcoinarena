@@ -1,0 +1,91 @@
+{
+ "suite": "bitcoin-arena live paid rounds, testnet4 (kanban #2642)",
+ "started": "2026-11-14T20:06:15.084Z",
+ "games": {
+  "updown": {
+   "pass": true,
+   "exit": null,
+   "orders": [
+    {
+     "round": "2f61533142926a5b",
+     "side": "Up",
+     "priceCents": 80,
+     "stakeMsat": "80810",
+     "took": 5
+    },
+    {
+     "round": "7794eef572a1a6e2",
+     "side": "Up",
+     "priceCents": 83,
+     "stakeMsat": "83840",
+     "took": 5
+    },
+    {
+     "round": "68aa773b35b7b760",
+     "side": "Up",
+     "priceCents": 53,
+     "stakeMsat": "53537",
+     "took": 5
+    },
+    {
+     "round": "e8c7cd6b67e32a72",
+     "side": "Up",
+     "priceCents": 53,
+     "stakeMsat": "53537",
+     "took": 5
+    }
+   ],
+   "collected": [
+    {
+     "round": "2f61533142926a5b",
+     "payoutMsat": "3683",
+     "stakeMsat": "0",
+     "refundMsat": "0",
+     "creditedMsat": "3683"
+    }
+   ],
+   "last": [
+    {
+     "step": "quote"
+    },
+    {
+     "step": "quote"
+    },
+    {
+     "step": "quote"
+    }
+   ],
+   "stepsAtSeconds": {
+    "wallet open": 4,
+    "quote": 6,
+    "deposit step": 12,
+    "deposit": 87,
+    "order": 93,
+    "no open window": 485,
+    "collected": 1329,
+    "rounds": 1439
+   },
+   "seconds": 1502
+  },
+  "rps": {
+   "pass": false,
+   "exit": 1,
+   "round": "54470ee29ce09c08",
+   "last": [],
+   "stepsAtSeconds": {
+    "rps version": 32,
+    "round passed": 76,
+    "round": 77,
+    "waiting for the seating": 77,
+    "seated": 133,
+    "claim key": 134,
+    "joined": 190,
+    "deposit": 218,
+    "locked": 225,
+    "fee locked": 225,
+    "stopped": 514
+   },
+   "seconds": 514
+  }
+ }
+}
