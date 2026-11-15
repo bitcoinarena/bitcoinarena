@@ -130,7 +130,8 @@ for (const version of [5, 4]) {
       if (version >= 5) for (const x of ends) assert.equal(x.readings.length, 7, `all seven readings of end ${x.k}`);
     }
     // B, open, still serves every sample it holds to a page
-    assert.deepEqual(seat.list(B.rh).samples.map((x) => x.k), [0, 3, kClose]);
+    // (kanban #2780: from protocol 5 the beat of k 3 also signs the samples before it that are still signable - here k 1)
+    assert.deepEqual(seat.list(B.rh).samples.map((x) => x.k), version >= 5 ? [0, 1, 3, kClose] : [0, 3, kClose]);
     // a peer short of A's ends gets them from this seat alone (the others do not answer), after the let-go
     const peer = net.seats[3];
     for (const m of MAPS) peer[m].clear();
