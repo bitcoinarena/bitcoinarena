@@ -107,9 +107,12 @@ function dayLimitNote(x) { if (!DAY_LIMITS_FILE) return; try { appendFileSync(DA
 // when the same event comes back; any other resend of a kept event answers the first result, with no new slot and no chat post
 const UNPOSTED = new Set();
 // THE REPORTS KEPT FOR REVIEW (kanban #1342): one SQLite file beside the book; none when FAUCET_FEEDBACK_DB is not set
+// A FIGURE PER SEASON from the environment (kanban #2784): '2:120000,3:100000' -> { 2: 120000, 3: 100000 }
+function seasonFigures(text) { const o = {}; for (const part of String(text || '').split(',')) { const m = /^\s*(\d+)\s*:\s*(\d+)\s*$/.exec(part); if (m) o[Number(m[1])] = Number(m[2]); } return o; }
 const FEEDBACK = env.FAUCET_FEEDBACK_DB ? openFeedbackStore(env.FAUCET_FEEDBACK_DB) : null;
 // BUG BOUNTY SEASON 2 (kanban #2623): its own file, so Season 1's feedback.db, /bounty and the paid log stay as they are; off when not named
 const S2 = FEEDBACK && env.FAUCET_BOUNTY_S2_DB ? openBountySeason(env.FAUCET_BOUNTY_S2_DB, { startMs: env.FAUCET_BOUNTY_S2_START ? Date.parse(env.FAUCET_BOUNTY_S2_START) : null,
+  pots: seasonFigures(env.FAUCET_BOUNTY_POTS), drawPrizes: seasonFigures(env.FAUCET_BOUNTY_DRAW_PRIZES),   // kanban #2784: '2:120000', '2:50000'
   paidOf: (id) => FEEDBACK.paidSatsOf(id) }) : null;   // kanban #2784: the pot counts what was paid
 const S2_VERIFY = verifiersFromEnv(env);
 // WEEK 2'S SOCIAL SCREEN (kanban #2641): names typed per platform, read live. Telegram through the user account reader when it is logged in (else the
@@ -1083,7 +1086,7 @@ createServer((req, res) => {
   }
   if (S2 && path === '/feedback/season' && req.method === 'GET') { const p = S2.pot(S2.seasonNow(Date.now()));
     // usedUp (kanban #2787): from Season 3 on, a pot that cannot take even the smallest payout (a useful note at 25 %) means no bounty this season
-    return send(200, { season: p.season, potSats: p.potSats, usedSats: p.usedSats, leftSats: p.leftSats, nodes: p.nodes, nodesMost: p.nodesMost,
+    return send(200, { season: p.season, potSats: p.potSats, usedSats: p.usedSats, leftSats: p.leftSats, drawPrizeSats: p.drawPrizeSats, nodes: p.nodes, nodesMost: p.nodesMost,
       usedUp: p.season >= NO_CARRY_FROM_SEASON && p.leftSats < Math.floor((LEVEL_SATS.useful * BOT_PCT) / 100), nextSeasonMs: seasonEndMs(p.season, S2_START_MS),
       // kanban #2789: this season's reports still waiting for review (a number only), for the stage pot banner from 98 %
       pendingNew: FEEDBACK.countNew(seasonEndMs(p.season - 1, S2_START_MS) ?? 0) }); }

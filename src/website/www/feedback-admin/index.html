@@ -139,7 +139,9 @@
       // THE SEASON'S POT AS IT REALLY STANDS (kanban #2784, the owner 2026-11-15: "zeig das auch korrekt an"): paid, else payable under the current rule
       if (w.pot && Number(w.pot.potSats) > 0) { $('stats').querySelectorAll('.stat.pot').forEach((x) => x.remove());
         const st = el('div', { cls: 'stat pot' }, el('b', { text: `${sats(w.pot.usedSats)} used · ${sats(w.pot.leftSats)} left` }), el('span', { text: `Season ${w.pot.season} pot of ${sats(w.pot.potSats)} (paid, else payable now)` }));
-        $('stats').prepend(st); } } }
+        $('stats').prepend(st);
+        // THE DRAW PRIZE, ITS OWN FIGURE (kanban #2784, the owner 2026-11-15): not part of the bounty pot
+        if (Number(w.pot.drawPrizeSats) > 0) { const dp = el('div', { cls: 'stat pot' }, el('b', { text: sats(w.pot.drawPrizeSats) }), el('span', { text: `Draw prize, Season ${w.pot.season} (apart from the pot)` })); st.after(dp); } } } }
     catch { WEEK2 = new Set(j.reports.filter((r) => r.season2 && r.season2.approval).map((r) => r.id)); }
     const wantWeek = Number($('f-week').value) || 0, showWeek = $('f-showweek').checked;
     const tb = $('rows'); tb.replaceChildren();

@@ -160,11 +160,11 @@ function arenaPotBanner(s) {
 
   <div class="duo">
     <section class="card" id="budget"><h3>Season pot</h3>
-      <div class="pot"><b id="pot-used">&hellip;</b> <span>/ 100,000 sats</span></div>
+      <div class="pot"><b id="pot-used">&hellip;</b> <span>/ <span id="pot-size">120,000</span> sats</span></div>
       <div class="bar"><i id="pot-bar"></i></div>
-      <p class="note">100,000 sats a season for reports, bonuses and nodes. A season runs one week. When the pot is used up, there are no more bounties that season - nothing carries over to the next one.</p>
+      <p class="note">Season 2: 120,000 sats for reports, bonuses and nodes (100,000 a season from Season 3). A season runs one week. When the pot is used up, there are no more bounties that season - nothing carries over to the next one.</p>
     </section>
-    <section class="card" id="draw"><h3>Season draw: 50,000 for the top 5</h3>
+    <section class="card" id="draw"><h3>Draw prize 50,000 sat: the top 5</h3>
       <ol class="podium"><li><b>1</b>20,000</li><li><b>2</b>12,000</li><li><b>3</b>8,000</li><li><b>4</b>6,000</li><li><b>5</b>4,000</li></ol>
       <p class="note">At the end of the season we draw five winners among reporters who are members of Telegram, Discord or Armada. The seed is a Bitcoin block, so anyone can check it.</p>
     </section>
@@ -178,7 +178,7 @@ function arenaPotBanner(s) {
       <li id="node-bounty">Run a node for a day: 10,000 sats, the first 3 nodes a season.</li>
       <li id="no-game-results">Winning a round is never paid. Test sats have no value.</li>
       <li>Draw: one confirmed report this season and a member of Telegram, Discord or Armada; one entry per person. Seed: the first Bitcoin block after Season 2 ends (2026-11-21 07:12 UTC). <a href="draw.mjs">draw.mjs</a></li>
-      <li id="no-carry">The pot is 100,000 sats a season (a season runs one week). When it is used up, there are no more bounties that season - nothing carries over to the next one.</li>
+      <li id="no-carry">The pot is 120,000 sats in Season 2 (100,000 a season from Season 3; a season runs one week). The draw prize, 50,000 sat, is apart from it. When it is used up, there are no more bounties that season - nothing carries over to the next one.</li>
       <li>We check every report and decide its level. Our decision is final.</li>
     </ul>
   </details>
@@ -193,6 +193,8 @@ function arenaPotBanner(s) {
       var fmt = function (n) { return Number(n).toLocaleString('en-US'); };
       fetch('/api/faucet/feedback/season').then(function (r) { if (!r.ok) throw 0; return r.json(); }).then(function (s) {
         document.getElementById('pot-used').textContent = fmt(s.usedSats);
+        /* kanban #2784: the pot's size from the faucet (Season 2: 120,000) */
+        if (s.potSats) { var ps = document.getElementById('pot-size'); if (ps) ps.textContent = fmt(s.potSats); }
         document.getElementById('pot-bar').style.width = Math.min(100, Math.round(100 * s.usedSats / s.potSats)) + '%';
         /* kanban #2789: the pot warning on top */
         var ban = typeof arenaPotBanner === 'function' ? arenaPotBanner(s) : null, box = document.getElementById('pot-banner');
