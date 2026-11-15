@@ -89,9 +89,13 @@ test('rows are signed when a listing asks, once a window: nothing unasked, next=
     // and the real seconds with it: a small listing is kept 5 s of real time (server.js /rounds), and on a quick machine the
     // asks above take less than that (measured on the test host 2026-10-13 22:50Z: the kept next=1 came back, red every run)
     await new Promise((r) => setTimeout(r, 5100));
+    // THE NEW WINDOW WAS BUILT AHEAD (kanban #2790): the timer signed the rows the old window was asked for, at the new time, before
+    // this ask - which signs nothing; the build signed no row the old window was not asked for
+    const before = s.listingSignatures();
     const later = await ask('?next=1');
     assert.equal(BigInt(later.body.nowMs), BigInt(next.body.nowMs) + 45000n, 'the new window does not carry the new time');
-    assert.equal(s.listingSignatures(), rows + 1 + later.body.rounds.length, 'a new window signed more than it was asked');
+    assert.equal(s.listingSignatures(), before, 'the first ask of the new window signed rows while it waited');
+    assert.ok(before <= rows + 1 + rows, `the window built ahead signed ${before - rows - 1} rows - more than the old window was asked for`);
     assert.ok(pageChecks(later.body));
     // the signatures checked last, every request made: checking 2,880 rows outlasts the test server's keep-alive
     assert.ok(pageChecks(full.body), 'a row of the full listing does not check the page\'s way');
