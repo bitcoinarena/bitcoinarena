@@ -66,6 +66,3 @@ test('#2786 a withdrawn link of an approved report is made again once, at the am
   assert.equal(third.made, false); assert.equal(third.reward.k1, again.reward.k1, 'a second call makes nothing new');
   assert.ok(s.moves(id).some((m) => /reward link made again after its withdrawal, 150 sat on mainnet/.test(m.note || '')));
 });
-  assert.equal(s.move(id2, 'rejected', { reason: 'no' }).ok, true);
-  const r2 = s.createReward(id2, { network: 'mainnet' }); assert.notEqual(r2.made, true);
-});
