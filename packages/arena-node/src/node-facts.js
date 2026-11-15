@@ -57,6 +57,29 @@ export function osName({ osApi = os, read = readFileSync } = {}) {
   return `${osApi.type()} ${osApi.release()}`.slice(0, 48);
 }
 
+/** Room past PROBE_BYTES a peer's said Content-Length may name before its probe is refused unread (kanban #2793). */
+export const PROBE_SLACK_BYTES = 65536;
+/**
+ * THE PROBE, COUNTED AND NEVER HELD (kanban #2793): a peer among the first three answered GET /node-facts/probe with an endless stream and r.arrayBuffer() buffered all of it
+ * for the 30 s the read was allowed - hundreds of MB to GB, again after every restart since a failed reading is not kept. Now a said Content-Length above
+ * PROBE_BYTES + PROBE_SLACK_BYTES is refused before reading, and the body is read chunk by chunk, counted, not kept, and cancelled once PROBE_BYTES have come.
+ */
+async function probeBytes(r) {
+  const said = Number(r.headers?.get?.('content-length'));
+  if (said > PROBE_BYTES + PROBE_SLACK_BYTES) { try { await r.body?.cancel(); } catch { /* dropped */ } throw new Error(`its probe is ${said} bytes`); }
+  if (r.body === undefined && typeof r.arrayBuffer === 'function') return (await r.arrayBuffer()).byteLength; // an injected stand-in with no stream
+  if (!r.body) return 0;
+  const reader = r.body.getReader();
+  let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.byteLength;
+    if (n >= PROBE_BYTES) { reader.cancel().catch(() => {}); break; }
+  }
+  return n;
+}
+
 /** The download speed from a few peers, Mbit/s, the middle reading; null with none answering. */
 export async function measureBandwidth(peers, { fetcher = fetch, nowMs = () => Date.now(), most = 3 } = {}) {
   const got = [];
@@ -65,7 +88,7 @@ export async function measureBandwidth(peers, { fetcher = fetch, nowMs = () => D
       const t = nowMs();
       const r = await fetcher(`${base}/node-facts/probe`, { signal: AbortSignal.timeout(30000) });
       if (!r.ok) continue;
-      const bytes = (await r.arrayBuffer()).byteLength;
+      const bytes = await probeBytes(r);
       const ms = nowMs() - t;
       if (bytes >= PROBE_BYTES && ms > 0) got.push(Math.round((bytes * 8) / (ms * 1000) * 10) / 10);
     } catch { /* that peer next time */ }
