@@ -102,3 +102,41 @@ test('a contract this seat cannot read goes a week after it was stored, unless s
   const left = db.prepare('SELECT round_id FROM rounds ORDER BY rowid').all().map((x) => Buffer.from(x.round_id)[0]);
   assert.deepEqual(left, [2, 3], 'round 2 (stored a day ago) and round 3 (entered) stay');
 });
+
+// kanban #2859 (testnet4 seat 7, 2026-11-15: the used ids rebuilt on every 10 s pass were ~37 % of the seat's CPU)
+test('the used ids are read once for a sweep, not per pass; a round marked during the sweep is never deleted', async () => {
+  const { pruneUnusedRounds, readUsedRounds, usedMarkerTables } = await import('../src/transcript-prune.js');
+  const db = openStore(':memory:');
+  const prepare = db.prepare.bind(db);
+  let scans = 0;
+  db.prepare = (sql) => { if (/^SELECT DISTINCT round_id FROM /.test(sql)) scans += 1; return prepare(sql); };
+  const id = (n) => Buffer.alloc(32, n);
+  for (let n = 1; n <= 9; n++) db.prepare('INSERT INTO rounds (round_id, contract, opened_ms) VALUES (?, ?, 0)').run(id(n), Buffer.from([n]));
+  db.prepare('INSERT INTO entries (entry_id, round_id, contract, joined_ms) VALUES (?, ?, ?, 0)').run(id(50), id(1), Buffer.from([1]));
+  const goesAt = () => 1000;
+  const tables = usedMarkerTables(db).length;
+  let used = readUsedRounds(db);
+  assert.equal(scans, tables, 'one scan of each marker table');
+  // marks made after the read: an entry (insert), a result (insert), and an entry moved onto round 6 (update of round_id)
+  db.prepare('INSERT INTO entries (entry_id, round_id, contract, joined_ms) VALUES (?, ?, ?, 0)').run(id(51), id(2), Buffer.from([2]));
+  db.prepare('INSERT INTO results (round_id, entry_id, node_pubkey, result_id, bytes, seen_ms) VALUES (?, ?, ?, ?, ?, 0)').run(id(4), id(51), id(60), id(61), Buffer.from([0]));
+  db.prepare('INSERT INTO entries (entry_id, round_id, contract, joined_ms) VALUES (?, ?, ?, 0)').run(id(52), id(1), Buffer.from([1]));
+  db.prepare('UPDATE entries SET round_id = ? WHERE entry_id = ?').run(id(6), id(52));
+  const left = () => db.prepare('SELECT round_id FROM rounds ORDER BY rowid').all().map((x) => Buffer.from(x.round_id)[0]);
+  let after = 0;
+  for (let pass = 0; pass < 3; pass++) {
+    if (pass === 1) db.prepare('INSERT INTO entries (entry_id, round_id, contract, joined_ms) VALUES (?, ?, ?, 0)').run(id(53), id(8), Buffer.from([8]));
+    const r = pruneUnusedRounds({ db, nowMs: 2000, batch: 3, afterRowid: after, goesAt, used });
+    used = r.used; after = r.lastRowid;
+  }
+  assert.equal(scans, tables, 'three passes with the kept ids: no marker table scanned again');
+  assert.deepEqual(left(), [1, 2, 4, 6, 8], 'every round marked before or during the sweep stays; 3, 5, 7, 9 go');
+  // A MARKER TABLE ADDED DURING THE SWEEP: the kept ids no longer cover it, so the pass reads them anew
+  db.exec('CREATE TABLE late_marks (round_id BLOB)');
+  db.prepare('INSERT INTO rounds (round_id, contract, opened_ms) VALUES (?, ?, 0)').run(id(10), Buffer.from([10]));
+  db.prepare('INSERT INTO late_marks (round_id) VALUES (?)').run(id(10));
+  const r = pruneUnusedRounds({ db, nowMs: 2000, afterRowid: 0, goesAt, used });
+  assert.equal(r.deleted, 0);
+  assert.ok(left().includes(10), 'the round marked in the new table stays');
+  assert.equal(scans, tables + tables + 1, 'read anew once, the new table with them');
+});
