@@ -1,0 +1,39 @@
+#!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// A STAND-IN FOR THE FORK'S gateway-cli, for the e2e suite (kanban #2642) on a machine whose release carries gatewayd but no gateway-cli
+// (the darwin-arm64 release's runtime/custody/). It speaks gatewayd's own HTTP API as fedimint-gateway-client does (bearer password,
+// JSON, the /v1 routes of fedimint-gateway-common) for the commands devnet.mjs and testnet4-gateway.sh use:
+//   create-password-hash <pw>   info   get-balances   connect-fed <invite>   ecash pegin --federation-id <id>
+//   ecash pegin-recheck --address <a> --federation-id <id>   lightning get-ln-onchain-address   (more: --raw <METHOD> <route> [json])
+import { createRequire } from 'node:module';
+const a = process.argv.slice(2);
+let address = null, password = null;
+for (let i = 0; i < a.length;) {
+  if (a[i] === '--address') { address = a[i + 1]; a.splice(i, 2); } else if (a[i] === '--rpcpassword') { password = a[i + 1]; a.splice(i, 2); } else i++;
+}
+const flag = (n) => { const i = a.indexOf(`--${n}`); return i >= 0 ? a[i + 1] : undefined; };
+const out = (v) => { process.stdout.write(JSON.stringify(v, null, 2) + '\n'); };
+async function call(method, route, body) {
+  const r = await fetch(new URL(`/v1${route}`, address), { method, headers: { ...(password ? { authorization: `Bearer ${password}` } : {}), ...(body ? { 'content-type': 'application/json' } : {}) },
+    body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(110000) });
+  const t = await r.text();
+  if (r.status !== 200) { process.stderr.write(`gateway-cli shim: ${method} ${route}: ${r.status} ${t.slice(0, 300)}\n`); process.exit(1); }
+  return t ? JSON.parse(t) : null;
+}
+const [c0, c1] = a;
+try {
+  if (c0 === 'create-password-hash') {
+    const req = createRequire(process.env.E2E_DEPS ? `${process.env.E2E_DEPS}/` : import.meta.url);
+    const bcrypt = req('bcryptjs');
+    out(bcrypt.hashSync(a[1], Number(flag('cost') || 10)));
+  } else if (!address) { process.stderr.write('gateway-cli shim: --address is needed\n'); process.exit(2); }
+  else if (c0 === 'info') out(await call('GET', '/info'));
+  else if (c0 === 'get-balances') out(await call('GET', '/balances'));
+  else if (c0 === 'connect-fed') out(await call('POST', '/connect_fed', { invite_code: a[1], use_tor: null, recover: null }));
+  else if (c0 === 'ecash' && c1 === 'pegin') out({ address: await call('POST', '/address', { federation_id: flag('federation-id') }) });
+  else if (c0 === 'ecash' && c1 === 'pegin-recheck') out(await call('POST', '/address_recheck', { address: flag('address'), federation_id: flag('federation-id') }));
+  else if (c0 === 'lightning' && c1 === 'get-ln-onchain-address') out({ address: await call('GET', '/get_ln_onchain_address') });
+  else if (c0 === '--raw') out(await call(a[1], a[2], a[3] ? JSON.parse(a[3]) : undefined));
+  else { process.stderr.write(`gateway-cli shim: ${a.join(' ')} is not one of the commands this stand-in speaks\n`); process.exit(2); }
+} catch (e) { process.stderr.write(`gateway-cli shim: ${e.message}\n`); process.exit(1); }
