@@ -8390,7 +8390,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       doorCount(req, url);
       if (req.method === 'GET' && DOOR_CACHE.has(url.pathname)) {
         const k = url.pathname + url.search, hit = doorCache.get(k);
-        if (hit && Date.now() - hit.at < DOOR_CACHE_MS) { doorCacheHits++; res.writeHead(hit.status, hit.headers); return res.end(hit.body); }
+        if (hit && Date.now() - hit.at < (DOOR_SLOW_CACHE.has(url.pathname) ? DOOR_SLOW_CACHE_MS : DOOR_CACHE_MS)) { doorCacheHits++; res.writeHead(hit.status, hit.headers); return res.end(hit.body); }
         const chunks = [], wh = res.writeHead.bind(res), we = res.end.bind(res); let status = 200, headers = {};
         res.writeHead = (st, h, h2) => { status = st; headers = (typeof h === 'object' && h) || (typeof h2 === 'object' && h2) || {}; return wh(st, h, h2); };
         res.end = (b, ...rest) => { if (b !== undefined && typeof b !== 'function') chunks.push(Buffer.isBuffer(b) ? b : Buffer.from(String(b)));
@@ -8408,8 +8408,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   });
 
   // kanban #2901: the door counters and the short answer cache (see the dispatch above)
-  const DOOR_CACHE = new Set(['/seating-batch', '/dkg-agreement', '/lock-namer'])   // not /book-certificates: a fresh certificate must be read at once (book-sync);
+  const DOOR_CACHE = new Set(['/seating-batch', '/dkg-agreement', '/lock-namer', '/season-rounds', '/census'])   // not /book-certificates: a fresh certificate must be read at once (book-sync);
   const DOOR_CACHE_MS = Number(process.env.ARENA_DOOR_CACHE_MS || 500);
+  // kanban #2910 (measured 2026-11-16 ~19:45Z): GET /season-rounds (peers read 90 days of a game's season, paged) and GET /census (a round's census
+  // evidence) held a seat's loop 1-3.2 s each, so a bot's handout reached that seat 3 s late and the round voided. Peers ask the same query again and
+  // again: these two are answered from an answer at most DOOR_SLOW_CACHE_MS old.
+  const DOOR_SLOW_CACHE = new Set(['/season-rounds', '/census']);
+  const DOOR_SLOW_CACHE_MS = Number(process.env.ARENA_DOOR_SLOW_CACHE_MS || 60000);
   const doorCache = new Map();
   let doorCacheHits = 0;
   const doorCounts = new Map();
