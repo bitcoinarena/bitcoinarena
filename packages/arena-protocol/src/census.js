@@ -179,7 +179,17 @@ export function eligibleFor(e, contract, role) {
 
 export function meetsCensusMinimum(entries, contract, role) {
   const { network, minimum } = censusMinimumFor(contract);
-  const have = (entries || []).filter((e) => eligibleFor(e, contract, role)).length;
+  // DISTINCT NODE KEYS AT OR ABOVE THE ROUND'S FLOOR, NOT ROWS (kanban #2850, #1489 r26-census-1): protocol 19 keeps every bond output as its own
+  // row, so one key with several outputs (or a row below bond_min) met census_min_nodes alone and selectCommittee then drew a committee of one key.
+  // The rows are merged by key first - summed under protocol 19, each row on its own before - and only keys at the round's bond_min count.
+  const floor = contract && typeof contract.bondMinSats === 'bigint' ? contract.bondMinSats : null;
+  const byKey = new Map();
+  for (const e of (entries || []).filter((x) => eligibleFor(x, contract, role))) {
+    if (!e || !(e.pubkey || (e.advert && e.advert.nodePubkey))) continue;
+    const k = nodeKeyOf(e).split('|')[0], b = BigInt(e.bondSats || 0);
+    byKey.set(k, sumsBonds(contract) ? (byKey.get(k) || 0n) + b : ((byKey.get(k) || 0n) > b ? byKey.get(k) : b));
+  }
+  const have = [...byKey.values()].filter((b) => floor === null || b >= floor).length;
   // FOR GAME/VERIFY ONLY THE NODES HOSTING THE ROUND'S GAME COUNT (§0A.4): a game too few nodes host has no
   // paying rounds, and says why
   if (have < minimum && poolOfRole(role) === GAME_VERIFY)
