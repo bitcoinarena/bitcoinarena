@@ -679,7 +679,7 @@ createServer((req, res) => {
     if (!isAdmin(req)) return send(403, { ok: false, why: 'not the admin code' });
     const q = new URL(req.url, 'http://x').searchParams;
     const withReward = (r, ours) => { const w = FEEDBACK.rewards({ pubkey: r.pubkey }).find((x) => x.report === r.id);
-      return { ...r, lnAddress: FEEDBACK.addressOf(r.id), ours: ours.has(r.pubkey), played: PLAYED.played(r.pubkey), rounds: PLAYED.history ? PLAYED.history(r.pubkey) : null, nodeBounty: FEEDBACK.nodeBountyFor(r), season2: S2 ? { approval: S2.approval(r.id), links: S2.links(r.pubkey), flags: S2.flagsOf(r.pubkey) } : null, reward: w ? { ...w, lnurl: w.state === 'paid' ? null : FEEDBACK.lnurlOf(w.k1, { base: PUBLIC_BASE }), page: `${PUBLIC_BASE}/lnurlw/${w.k1}` } : null }; };
+      return { ...r, lnAddress: FEEDBACK.addressOf(r.id), ours: ours.has(r.pubkey), played: PLAYED.played(r.pubkey), rounds: PLAYED.history ? PLAYED.history(r.pubkey) : null, nodeBounty: FEEDBACK.nodeBountyFor(r), season2: S2 ? { approval: S2.approval(r.id), links: S2.links(r.pubkey), flags: S2.flagsOf(r.pubkey) } : null, realUser: S2 && S2.realUserOf ? S2.realUserOf(r.pubkey) : null, reward: w ? { ...w, lnurl: w.state === 'paid' ? null : FEEDBACK.lnurlOf(w.k1, { base: PUBLIC_BASE }), page: `${PUBLIC_BASE}/lnurlw/${w.k1}` } : null }; };
     if (path === '/feedback/admin/list' && req.method === 'GET') {
       PLAYED.fresh().catch(() => 0).then(() => { const ours = ourKeys();
         send(200, { ok: true, reports: FEEDBACK.list({ state: q.get('state'), type: q.get('type'), game: q.get('game'), pubkey: q.get('pubkey'), source: q.get('source') }).map((r) => withReward(r, ours)), budget: { ...FEEDBACK.budget({ rules: RULES }), network: BOUNTY_NETWORK },   // the payout network, for the admin's wording (kanban #1450)
@@ -790,6 +790,13 @@ createServer((req, res) => {
         // WITHDRAW AN OPEN REWARD LINK (kanban #2786): open -> void, its LNURL refuses; a paid or paying link stays
         if (b.action === 'void-reward') return send(200, FEEDBACK.voidReward(b.id, { why: b.why ?? null, by }));
         if (b.action === 'note') return send(200, FEEDBACK.note(b.id, { ticket: b.ticket, severity: b.severity, by }));
+        // kanban #2875: the owner's "real user" mark on the report's key (or a named key), set or cleared; no payout share changes with it
+        if (b.action === 'real-user' || b.action === 'real-user-clear') {
+          if (!S2 || !S2.markRealUser) return send(503, { ok: false, why: 'no Season 2 book here' });
+          const key = b.pubkey ? String(b.pubkey).toLowerCase() : (FEEDBACK.report(b.id) || {}).pubkey;
+          if (!key) return send(404, { ok: false, why: 'no such report' });
+          return send(200, b.action === 'real-user' ? S2.markRealUser(key, { name: b.name, note: b.note, by }) : S2.clearRealUser(key, { by }));
+        }
 
         // SEASON 2 (kanban #2623): read a reporter's links live; before paying, the amount with the bonus read again; the draw's entries, read again
         if (S2 && b.action === 'verify') { const r = b.id ? FEEDBACK.report(b.id) : null; const k = r ? r.pubkey : String(b.pubkey || '');
