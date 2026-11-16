@@ -193,7 +193,10 @@ async fetch(request, env, ctx) {
   // those pages only; the faucet takes a NIP-98 sign-in for https://bitcoinarena.io/api/faucet/feedback/<door> (FAUCET_BOUNTY_S2_BASES)
   const S2_DOORS = { '/api/faucet/feedback/link': 'POST', '/api/faucet/feedback/verify': 'POST', '/api/faucet/feedback/social': 'POST', '/api/faucet/feedback/season': 'GET', '/api/faucet/feedback/open-issues': 'GET' };
   const s2Origin = request.headers.get('origin') || '';
+  // kanban #2877: a node's own owner page (its own address, any origin) signs in at the three POST doors too - each takes only a NIP-98 sign-in by
+  // the caller's own key, no cookie and no secret of the browser, so any origin may ask them; the GET doors stay as they were
   const s2Cors = /^https:\/\/(testnet|testnet-stage)\.bitcoinarena\.io$|^https:\/\/([a-z0-9-]+\.)?bitcoin-arena-site\.pages\.dev$/.test(s2Origin)
+    || (s2Origin && S2_DOORS[url.pathname] === 'POST')
     ? { 'access-control-allow-origin': s2Origin, vary: 'origin' } : {};
   if (S2_DOORS[url.pathname] && request.method === 'OPTIONS') return new Response(null, { status: 204, headers: { ...s2Cors, 'access-control-allow-methods': S2_DOORS[url.pathname], 'access-control-allow-headers': 'authorization, content-type', 'access-control-max-age': '86400' } });
   if (S2_DOORS[url.pathname] === 'POST' && env.FAUCET_ORIGIN) {
