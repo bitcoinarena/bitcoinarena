@@ -12,7 +12,7 @@
  *
  * WALLETS: DIR/wallet-<federation>.json, kept across runs. DIR/keys.jsonl: each entry's player key and locks, as tn4-rps-paid's KEYS_FILE, for tn4-collect.mjs.
  */
-import { readFileSync, writeFileSync, appendFileSync, copyFileSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, appendFileSync, copyFileSync, existsSync, mkdirSync, renameSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes, randomInt } from 'node:crypto';
@@ -68,6 +68,7 @@ const { LockClient } = wasm;
 
 // ONE WALLET PER FEDERATION, its secret and notes on disk: a restart keeps the money
 const wallets = new Map();
+const ROTATE_ENTRIES = Number(env.ROTATE_ENTRIES || 8000);   // kanban #2910
 for (const file of String(env.INVITES || '').split(',').filter(Boolean)) {
   const invite = readFileSync(file, 'utf8').replace(/["\s]/g, '');
   const fed = String(LockClient.federationIdOf(invite)).toLowerCase();
@@ -83,6 +84,14 @@ for (const file of String(env.INVITES || '').split(',').filter(Boolean)) {
   const lc = await LockClient.join(invite, LockClient.federationIdOf(invite), kept.secret, store);
   flushNow();
   wallets.set(fed, { lc, rule: JSON.parse(await lc.feeRule()) });
+  // A WALLET THAT GROWS TOO BIG IS ROTATED (kanban #2910, the owner 2026-11-16 "die Wallet-Migration regelmaessig, so dass es nicht mehr auftritt"): its
+  // store grew to 42,418 entries (46 MB) and slowed every lock to ~10 s. Past ROTATE_ENTRIES the file is renamed (never deleted) and the bot exits:
+  // its loop starts it again on a fresh wallet, which tops itself up from the faucet; what was left in the old one stays in the renamed file.
+  setInterval(() => {
+    if (held.size <= ROTATE_ENTRIES || busy) return;
+    try { flushNow(); renameSync(path, path + '.rotated-' + new Date().toISOString().replace(/[:.]/g, '')); } catch (e) { log({ step: 'rotate failed', why: e.message }); return; }
+    log({ step: 'wallet rotated', federation: fed.slice(0, 8), entries: held.size }); setTimeout(() => process.exit(0), 500);
+  }, 600000).unref();
   log({ step: 'wallet', federation: fed.slice(0, 8), balanceMsat: String(await lc.balanceMsat()) });
 }
 
