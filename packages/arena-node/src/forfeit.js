@@ -32,7 +32,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
-import { isQualifier, FORFEIT as FORFEIT_OUTCOME } from '../../arena-protocol/src/payout.js';
+import { isQualifier, FORFEIT as FORFEIT_OUTCOME, VOID as VOID_OUTCOME } from '../../arena-protocol/src/payout.js';
 import { signShare340, aggregate340, nonceGenerate340, verifyShare340 } from '../../arena-protocol/src/frost-bip340.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { lockFieldsFromJson } from '../../arena-protocol/src/stake-lock.js';
@@ -194,6 +194,8 @@ export class Forfeit {
           const out = this.#outsideTheSeats(roundIdBytes, entryIdBytes, contract, fl);
           if (out.ok) back = out;
         }
+        // kanban #2872: a final-VOID head-to-head round's fee lock back with its stake - no round was played, no fee earned (§23.2, §0A.7)
+        if (!back.ok) { const v = this.h2hVoidReturn(roundIdBytes, entryIdBytes, contract); if (v.ok) back = v; }
         if (!back.ok)
           return refuse('a fee lock comes back at once only for a cancelled order or a refunded market (or with a protocol-27 entry\'s voided stake): '
             + `this one is claimed at resolution, or expires back to its player${back.why ? ` (${back.why})` : ''}`);
@@ -299,7 +301,9 @@ export class Forfeit {
       if (!outside && !mine) return refuse('this signer node signed no result for that run, so it forfeits nothing');
       const result = outside ? null : decodePlayerResult(splitSignedResult(mine.bytes).body);
       if (!outside && !isQualifier(result, contract.minScore)) {
-        const back = this.nobodyWonReturn(roundIdBytes, entryIdBytes, lock, result);
+        // kanban #2872: a final-VOID head-to-head round's stake back at once (§23.2 VOID: "forfeit at once"), not after its settlement
+        const v = this.h2hVoidReturn(roundIdBytes, entryIdBytes, contract);
+        const back = v.ok ? v : this.nobodyWonReturn(roundIdBytes, entryIdBytes, lock, result);
         if (!back.ok)
           return refuse(`that run is ${result.outcome} with score ${result.score} and this round's minimum is `
             + `${contract.minScore}: not a qualifier, so its stake lock is not forfeited (${back.why})`);
@@ -379,6 +383,36 @@ export class Forfeit {
    * its claims, and no entry of the round still inside a window that could change who won - the lock is forfeited back
    * to its refund key now. A forfeit can only return money to its owner; a walk-away (FORFEIT) is never a refund.
    */
+  /**
+   * A FINAL-VOID HEAD-TO-HEAD ROUND (kanban #2872, ruled 2026-11-16: §23.2's VOID row "forfeit at once; if nobody acts, the lock expires" -
+   * already the rule; §0A.7 "nobody was played against: every entry VOID, its stake back"). Feedback #101: an RPS round whose opponent missed the
+   * certified lock set was signed VOID for every entry, its settlement claimed nothing, and the player's stake waited 144 blocks for its expiry.
+   * On THIS signer node's own record: a paying head-to-head game, this entry's result FINAL here with outcome VOID, and every entry of the round
+   * FINAL here and not a qualifier (the round VOID, nobody won) - then the stake and fee locks go back now. An entry VOID only by §13C's
+   * no-quorum on this seat's clock is not a final-VOID round and is not covered. The lock's fate (#1184) is still read in #signable: a lock this
+   * seat committed to claiming is never returned.
+   */
+  h2hVoidReturn(roundIdBytes, entryIdBytes, contract) {
+    if (!contract || contract.stakeMsat === 0n || !this.round.plugins) return { ok: false };
+    const g = pluginForRound(contract, this.round.plugins);
+    if (!g.ok || !g.headToHead) return { ok: false };
+    const own = (eid) => { const st = resultFinality(this.round, roundIdBytes, eid);
+      if (st.state !== FINAL) return null;
+      const mine = this.round.results(roundIdBytes, eid).find((r) => toHex(r.nodePubkey) === toHex(this.round.pubkey));
+      if (!mine) return null;
+      try { return decodePlayerResult(splitSignedResult(mine.bytes).body); } catch { return null; } };
+    const me = own(entryIdBytes);
+    if (!me || me.outcome !== VOID_OUTCOME) return { ok: false, why: 'its result is not FINAL VOID here' };
+    for (const e of this.round.entriesOf(roundIdBytes)) {
+      const r = own(e.entryId);
+      if (!r) { const st = resultFinality(this.round, roundIdBytes, e.entryId).state;
+        if (st === SUSPENDED || st === PROVISIONALLY_FINAL) return { ok: false, why: 'an entry of the round is still inside its window' };
+        continue; }
+      if (r.outcome !== VOID_OUTCOME || isQualifier(r, contract.minScore)) return { ok: false, why: 'the round is not VOID: an entry of it has a verdict' };
+    }
+    return { ok: true };
+  }
+
   nobodyWonReturn(roundIdBytes, entryIdBytes, lock, result) {
     if (result.outcome === FORFEIT_OUTCOME) return { ok: false, why: 'a walk-away is never a refund' };
     if (this.#settled(roundIdBytes) !== 'ACCEPTED') return { ok: false, why: 'the round\'s settlement is not ACCEPTED at this signer node' };
