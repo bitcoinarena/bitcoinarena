@@ -40392,10 +40392,23 @@ async function collectZaps({ storage, keep = storage, random, curve, clients, se
   let asked = 0;
   for (const [outpoint, byVersion] of found) {
     if (seen.has(outpoint)) continue;
-    const versions = [...byVersion.values()].sort((a, b) => b.seats.size - a.seats.size).map((v) => v.d);
+    // a version in a federation this tab holds no wallet in is looked at first (it waits, asking nothing), so a spent answer elsewhere never files
+    // the outpoint ahead of it (kanban #2833)
+    const noWallet = (d) => { const c = clients && clients.get ? clients.get(String(d.federationId).toLowerCase()) : null; return !c || typeof c.refund !== 'function' ? 0 : 1; };
+    const versions = [...byVersion.values()].sort((a, b) => noWallet(a.d) - noWallet(b.d) || b.seats.size - a.seats.size).map((v) => v.d);
     const tried = [], waits = [];
     let settled = false;
     for (const d of versions) {
+      // A SPENT ANSWER FROM ONE FEDERATION DOES NOT FILE AN OUTPOINT ANOTHER VERSION NAMES IN A FEDERATION NOT YET ASKED (kanban #2833, #1489
+      // r24-client-1): one seat listed a real zap's outpoint under a federation this tab holds a wallet in; the refund there found no contract
+      // ("spent") and the outpoint was filed for good, so the real zap - in a federation the tab had no wallet in yet - was never collected.
+      // While a version in another federation is waiting (no wallet open, or no budget left this pass), a spent answer elsewhere settles nothing.
+      if (waits.some((w) => String(w.federationId).toLowerCase() !== String(d.federationId).toLowerCase())) {
+        const r0 = await collectOne(d);
+        if (r0 === 'collected') { accepted.set(outpoint, d); seen.add(outpoint); keepSeen(); collecting.delete(outpoint); try { keepCollecting(); } catch { /* seen */ } settled = true; break; }
+        if (r0 === 'waiting') waits.push(d); else if (r0 && r0.why !== undefined) tried.push(r0);
+        continue;
+      }
       const r = await collectOne(d);
       if (r === 'waiting') { waits.push(d); continue; }
       if (r === 'skip') continue;
