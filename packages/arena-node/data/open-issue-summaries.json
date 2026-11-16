@@ -850,5 +850,17 @@
  "2858": {
   "text": "Other: a stranger can erase a new player's only seed",
   "kind": "bug"
+ },
+ "2880": {
+  "text": "Settlement: one key's season share can be booked more than once",
+  "kind": "bug"
+ },
+ "2881": {
+  "text": "Other: the explorer can keep finished orders marked pending",
+  "kind": "bug"
+ },
+ "2889": {
+  "text": "Node software: round-card labels go unexplained and a countdown can look like an error",
+  "kind": "bug"
  }
 }
