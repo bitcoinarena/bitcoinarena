@@ -862,5 +862,17 @@
  "2889": {
   "text": "Node software: round-card labels go unexplained and a countdown can look like an error",
   "kind": "bug"
+ },
+ "2906": {
+  "text": "BTC Up/Down game: the page keeps asking every seat about an order that cannot form a book claim",
+  "kind": "bug"
+ },
+ "2907": {
+  "text": "Other: a pinned-apps check fails when an optional sample app cannot be read",
+  "kind": "bug"
+ },
+ "2908": {
+  "text": "BTC Up/Down game: the amount stepper can drop some stakes to the minimum",
+  "kind": "bug"
  }
 }
