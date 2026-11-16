@@ -210,7 +210,10 @@ export function opponentWant(wants, round, nowMs = Date.now(), tap = null, who =
   if (!wants.has(round) && wants.size >= OPPONENT_WANTS_MOST && !opponentEvict(wants, who ? opponentNet(who) : `round:${round}`)) return { ok: false, why: 'too many tables just now' };
   const by = wants.get(round)?.by || new Set();
   if (who) by.add(who);
-  wants.set(round, { at: nowMs, tapped: tapSigned(round, tap) || wants.get(round)?.tapped === true, by });
+  // kanban #2901: the signed tap's key is kept (only a key whose signature over this round verified), so the bot can come at once for a key it
+  // already saw play - a key is public; the bot still stakes for a known key only (rps-opponent.mjs KNOWN)
+  const signed = tapSigned(round, tap), was = wants.get(round);
+  wants.set(round, { at: nowMs, tapped: signed || was?.tapped === true, tapKey: signed ? String(tap.key) : (was?.tapKey || null), by });
   return { ok: true };
 }
 // ONE NETWORK, NOT ONE ADDRESS (kanban #1718, #1781): an IPv6 caller is keyed by its /64, and any home line holds a /56 (256 /64s), so the cap of 2
@@ -244,5 +247,5 @@ function opponentEvict(wants, newNet) {
 export const opponentWants = (wants, nowMs = Date.now()) => {
   const live = [...wants].filter(([, x]) => nowMs - x.at <= OPPONENT_WANT_MS).sort((a, b) => b[1].at - a[1].at), seen = new Map();
   const ranked = live.map(([round, x]) => { const nets = netsOf(round, x); const rank = Math.min(...nets.map((n) => seen.get(n) || 0)); for (const n of nets) seen.set(n, (seen.get(n) || 0) + 1); return { round, x, rank }; });
-  return ranked.sort((a, b) => a.rank - b.rank || b.x.at - a.x.at).map(({ round, x }) => ({ round, agoMs: nowMs - x.at, tapped: x.tapped }));
+  return ranked.sort((a, b) => a.rank - b.rank || b.x.at - a.x.at).map(({ round, x }) => ({ round, agoMs: nowMs - x.at, tapped: x.tapped, tapKey: x.tapKey || null }));
 };

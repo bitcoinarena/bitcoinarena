@@ -79,6 +79,8 @@ export class LockSetBook {
 
   /** Whether anything of a round's set was asked, taken or made here yet (kanban #2901): a seat with no entry of the round steps it only from then. */
   touched(rid) { return this.rooms.has(toHex(rid)); }
+  /** Whether a view held here names an entry (kanban #2901 b): an empty round's set is worth no signature, whoever asks. */
+  heardEntries(rid) { const r = this.rooms.get(toHex(rid)); if (!r) return false; for (const v of r.views.values()) if (v && v.entries && v.entries.length) return true; return false; }
 
   #room(ridHex) {
     let r = this.rooms.get(ridHex);

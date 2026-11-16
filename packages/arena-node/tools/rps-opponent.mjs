@@ -47,6 +47,10 @@ const DIR = env.DIR, NAME = 'Test bot';
 // MIN_LEFT_MS (kanban #2043): the seats take a head-to-head handout only with more than ceil(h2hHandoutLeadMs * 1.5) left (node-start.js 2700 ms, so 4.05 s),
 // so an entry started with less could never be taken - it is not started
 const MOST_PER_HOUR = Number(env.MOST_PER_HOUR || 400), MIN_LEFT_MS = Number(env.MIN_LEFT_MS || 4050);
+// THE BOT'S LEAD FROM ITS TYPICAL LOCK, NOT ITS SLOWEST (kanban #2901, measured 2026-11-16 14:09-14:17Z: one 18.6 s lock while a seat restarted
+// made the max-based lead 19.4 s and the bot skipped the next rounds of known players with 9.7-15 s left): the median of its last locks + 1.5 s,
+// at least 4 s and at most 10 s
+const botLeadMs = (seen = []) => { const v = [...seen].sort((x, y) => x - y); const m = v.length ? v[Math.floor(v.length / 2)] : 0; return Math.max(4000, Math.min(10000, m + 1500)); };
 const lockMsSeen = [];   // the bot's last locks' times (kanban #2043): its lead before a lock is the page's rule over them (h2h-order.mjs h2hLeadMs)
 const log = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o }, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
 const rand = (n) => new Uint8Array(randomBytes(n));
@@ -142,7 +146,7 @@ async function enter(c, rid, ready) {
   // fee lock only once `needed` seats took it and the time left on the seats' clock (their 201s' x-entry-close-in-ms) still covers the lock and the entry
   // (h2hLockRefusal, the page's lead). Before, the bot locked first: with 0.9-4.05 s left it spent the developers' and reserves' parts, then every seat refused
   // the handout 409 and the entry with it. A refused or late handout now leaves nothing locked.
-  const order = await handoutThenLock({ body: encodeHandout(dealt.handout), needed, nodes, entryCloseMs: c.entryCloseMs, leadMs: h2hLeadMs(lockMsSeen), waitMs: POST_MS,
+  const order = await handoutThenLock({ body: encodeHandout(dealt.handout), needed, nodes, entryCloseMs: c.entryCloseMs, leadMs: botLeadMs(lockMsSeen), waitMs: POST_MS,
     lock: async () => {
       const t = Date.now();
       // SUBMITTED, NOT WAITED FOR (as market-bot.mjs, kanban #601): the guardians' agreement took over 30 s from the test host, in an 8 s round. The entry goes in at once, its locks after it
@@ -224,6 +228,10 @@ async function enter(c, rid, ready) {
 // A TABLE IS WATCHED WHILE THE PAGE SAYS SOMEBODY IS AT IT: the bot says it is there (free) and reads the claim key ahead, and enters when the player taps. Measured 2026-11-01: entering
 // every 8 s round while somebody looked would lock 100 sat a round for a day, and an entry lands about 4 s after its tap, so one that waited to see the player's entry had no time left.
 const seen = new Map();      // round hex -> { c, rid, told, entered }
+// KNOWN PLAYERS (kanban #2901): keys whose stake lock a seat verified in an earlier round
+const KNOWN_FILE = env.KNOWN_FILE || join(process.env.HOME || '.', 'm808/bot926/opp/known-players.json');
+const KNOWN = new Set((() => { try { return JSON.parse(readFileSync(KNOWN_FILE, 'utf8')); } catch { return []; } })());
+const knownAdd = (key) => { if (!/^[0-9a-f]{64}$/.test(key) || KNOWN.has(key)) return; KNOWN.add(key); try { writeFileSync(KNOWN_FILE, JSON.stringify([...KNOWN])); } catch {} log({ step: 'known player', key: key.slice(0, 8), known: KNOWN.size }); };
 const botKeys = new Set();    // the player keys this bot entered with (kanban #2842): never a reason to enter
 const hour = [];
 let busy = false;
@@ -288,6 +296,9 @@ const pass = async () => {
     // A TAP IS A HINT (kanban #2842, ruling 2026-11-16 (a)): it only puts the table on this list; the bot stakes on the seats' own fact - a seat
     // holding a VERIFIED stake lock of one non-bot entry (GET /order-locks: stakeVerifiedMs), with BOT_LEAD_MS before the close (opponent-trigger.js).
     // Read beside the loop so it never holds up another table; the first seat that answers is enough
+    // A KNOWN PLAYER'S TAP BRINGS THE BOT AT ONCE (kanban #2901): the faucet now passes the signed tap's key; a key the bot saw play before
+    // (its lock verified at a seat) gets the bot on the tap, 2-4 s before its entry reaches the seats - a fresh key's tap still waits (#2842)
+    if (w.tapped && w.tapKey && KNOWN.has(String(w.tapKey)) && left >= Math.max(MIN_LEFT_MS, botLeadMs(lockMsSeen) + 1000)) { go(w, k, 'a known player tapped'); continue; }
     if (k.asking) continue;
     k.asking = true;
     Promise.any(nodes.slice(0, 5).map(async (n) => {
@@ -301,10 +312,17 @@ const pass = async () => {
     }))
       .then(({ entries, locks }) => {
         if (k.entered || busy) return;
+        // A KNOWN PLAYER GETS THE BOT AT ONCE (kanban #2901, the owner 2026-11-16 ~14:10Z "ja"): a key whose stake lock a seat has verified before is
+        // learnt (kept in KNOWN_FILE); its next entry brings the bot straight away, without waiting for this round's lock to be verified - a fresh
+        // key still needs a verified lock (#2842), so a stranger's free tap never sends the bot to an empty table
+        for (const e of entries) if (e.player && locks.has(e.entry) && !botKeys.has(String(e.player))) knownAdd(String(e.player));
+        if (w.tapKey && entries.some((e) => locks.has(e.entry) && !botKeys.has(String(e.player || '')))) knownAdd(String(w.tapKey));   // kanban #2901: the tapping key played
+        const others = entries.filter((e) => e && e.entry && !botKeys.has(String(e.player || '')));
+        if (others.length === 1 && KNOWN.has(String(others[0].player || '')) && Number(k.c.entryCloseMs) - Date.now() >= MIN_LEFT_MS) { go(w, k, 'a known player entered'); return; }
         // WHAT THE BOT ITSELF NEEDS, NOT A FIXED 12 S (kanban #2901, the owner's playtest 2026-11-16 12:49Z, round 1dc93d0e: his lock was verified 7.9 s
         // before the close and the bot stayed out "under the 12000 ms lead"): the 12 s lead is the page's to give (it offers a round only with
         // H2H_OPPONENT_LEAD_MS left); the bot joins whenever its own handout, lock and entry still fit - its slowest recent lock + 1.5 s, at least 4 s
-        const need = Math.max(MIN_LEFT_MS, h2hLeadMs(lockMsSeen) + 1000);
+        const need = Math.max(MIN_LEFT_MS, botLeadMs(lockMsSeen) + 1000);
         const d = botMayEnter({ entries, locks, botKeys, closeMs: Number(k.c.entryCloseMs), nowMs: Date.now(), leadMs: 0, minLeftMs: need });
         if (d.go) go(w, k, w.tapped ? 'a player locked (tapped)' : 'a player locked');
         else if (k.said !== d.why) { k.said = d.why; log({ step: 'not entered', round: w.round.slice(0, 8), tapped: !!w.tapped, why: d.why }); }
