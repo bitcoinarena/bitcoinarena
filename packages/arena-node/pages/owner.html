@@ -691,8 +691,8 @@ async function nodeFeedbackPanel() {
 // one-time link code for the bots, all at the faucet's Season 2 doors (POST /feedback/social, /link, /verify) with a NIP-98 sign-in by the owner key
 // that signs this page's reports (the report key the bounty pays). The rules beside it, with the node bounty's rule from 2026-11-16 07:06 UTC (#2876).
 const S2_ROWS = [
-  { p: 'x', name: 'X', ph: '@yourname on X', join: 'https://x.com/bitcoinarena_io', joinText: 'Follow @bitcoinarena_io' },
-  { p: 'telegram', name: 'Telegram', ph: '@yourname on Telegram', join: 'https://t.me/+KihHE8JhcVM3NDVi', joinText: 'Join the group' },
+  { p: 'x', name: 'X', ph: 'yourname on X', join: 'https://x.com/bitcoinarena_io', joinText: 'Follow @bitcoinarena_io' },
+  { p: 'telegram', name: 'Telegram', ph: 'yourname on Telegram', join: 'https://t.me/+KihHE8JhcVM3NDVi', joinText: 'Join the group' },
   { p: 'discord', name: 'Discord', ph: 'Discord username', join: 'https://discord.gg/9zZbASZyue', joinText: 'Join the server' },
   { p: 'nostr', name: 'Nostr', ph: 'Nostr npub1… or name@domain', join: 'https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2', joinText: 'Follow on Nostr' },
   { p: 'armada', name: 'Armada', ph: 'Armada npub1… or name@domain', join: 'https://armada.buzz/', joinText: 'Join the community' },
@@ -710,7 +710,7 @@ function nodeSocialPanel(box, el) {
   const wrap = el('div', { cls: 'fbn-social', id: 'fbn-social' });
   const head = el('div', { cls: 'fbn-s-head' }, el('b', { text: 'Season 2: prove you are human, earn the community bonus' }), el('span', { cls: 'sub', text: ' optional' }));
   const rules = el('ul', { cls: 'sub fbn-s-rules' },
-    el('li', { text: 'Humans 100 %, bots 15 %: play at least one round and link your X account. Without both, a report counts as a bot report and gets 15 %.' }),
+    el('li', { text: 'Humans 100 %, bots 15 %: a linked, verified X account proves you are human. Without one, a report counts as a bot report and gets 15 %.' }),
     el('li', { text: 'Community bonus: +20 % for following on X, +20 % on Nostr, +20 % for any two of Telegram, Discord and Armada (at most +60 %).' }),
     el('li', { text: 'From 16 Nov 2026 07:06 UTC the 10,000 sat node bounty is only for humans with a linked X account. Node reports from bots are rewarded like any other feedback.' }),
     el('li', {}, el('span', { text: 'All rules: ' }), el('a', { href: 'https://bitcoinarena.io/bounty/#rules', target: '_blank', rel: 'noopener noreferrer', text: 'bitcoinarena.io/bounty' })));
@@ -718,6 +718,7 @@ function nodeSocialPanel(box, el) {
   const rows = el('div', { cls: 'fbn-s-rows' });
   for (const r of S2_ROWS) {
     const input = el('input', { type: 'text', maxlength: '100', autocomplete: 'off', spellcheck: 'false', placeholder: r.ph, 'aria-label': r.name + ' username' });
+    input.addEventListener('input', () => { const v = input.value.replace(/^\s*@+/, ''); if (v !== input.value) input.value = v; });   // kanban #2873: no leading @
     const chip = el('span', { cls: 'fbn-s-chip', text: 'not checked' });
     rows.append(el('div', { cls: 'fbn-s-row' }, el('span', { cls: 'fbn-s-name', text: r.name }), input, chip,
       el('a', { href: r.join, target: '_blank', rel: 'noopener noreferrer', cls: 'fbn-s-join', text: r.joinText })));
@@ -741,7 +742,7 @@ function nodeSocialPanel(box, el) {
     const n = j && Number.isFinite(j.bonusPct) ? j.bonusPct : 0;
     bonus.textContent = 'Social bonus: +' + n + ' %';
     const x = j && j.flags && j.flags.x === true;
-    human.textContent = x ? 'X linked and verified: with a played round your reports count as human (100 %).' : 'No verified X account yet: your reports count as bot reports (15 %).';
+    human.textContent = x ? 'X linked and verified: your reports count as human (100 %).' : 'No verified X account yet: your reports count as bot reports (15 %).';
   };
   check.onclick = async () => {
     const asked = {}; for (const [p, f] of Object.entries(fields)) if (f.input.value.trim()) asked[p] = f.input.value.trim();

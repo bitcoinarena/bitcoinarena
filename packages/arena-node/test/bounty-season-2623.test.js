@@ -23,6 +23,8 @@ test('#2623 #2784 the payout: the full level only for a played round by a proven
     const p = seasonPayout({ level: 'high', flags: f });
     assert.equal(p.human, false, JSON.stringify(f)); assert.equal(p.quarter, true, JSON.stringify(f)); assert.equal(p.baseSats, 750, JSON.stringify(f)); }
   assert.equal(seasonPayout({ level: 'high', flags: { telegram: true }, played: false }).sats, 1125, 'a human who played no round: 15 % (+50 %)');
+  // kanban #2904 (the owner 2026-11-16 ~14:10Z: "Ein bestaetigtes X-Konto reicht"): a verified X account without a played round is paid the full level
+  assert.equal(seasonPayout({ level: 'high', flags: { x: true }, played: false }).quarter, false, 'a verified X account, no played round: the full level');
   assert.equal(seasonPayout({ level: 'high', codeOnly: true }).sats, 750);
   assert.equal(seasonPayout({ level: 'critical', codeOnly: true, flags: { discord: true } }).sats, 2250);
   assert.equal(seasonPayout({ level: 'high', followUp: true }).sats, 150);

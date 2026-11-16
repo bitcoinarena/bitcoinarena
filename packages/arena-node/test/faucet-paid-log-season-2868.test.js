@@ -42,8 +42,8 @@ test('#2868 the paid log names each payout\'s own season, and no report id', asy
   } finally { faucet.kill(); if (err.trim()) console.log('  stderr:', err.slice(0, 400)); }
 });
 
-test('#2868 (feedback #090) Season 2: the full level only for a played round by a verified X account', () => {
+test('#2868 (feedback #090) Season 2: the full level for a verified X account (#2904: a played round no longer needed)', () => {
   assert.equal(seasonPayout({ level: 'high', played: true, flags: { x: true } }).baseSats, 5000);
-  assert.equal(seasonPayout({ level: 'high', played: false, flags: { x: true } }).baseSats, Math.floor(5000 * BOT_PCT / 100));
+  assert.equal(seasonPayout({ level: 'high', played: false, flags: { x: true } }).baseSats, 5000);
   assert.equal(seasonPayout({ level: 'high', played: true, flags: {} }).baseSats, Math.floor(5000 * BOT_PCT / 100));
 });
