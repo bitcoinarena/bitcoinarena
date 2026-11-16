@@ -3217,7 +3217,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     peersFor: (rid) => committeePeers(rid, 'settlement', { orElse: dkg.peers || [] }).peers,
     onVoid: (rid, eid) => pushVoid(rid, eid),
     // Before a Void lock is refunded: the other signer nodes' proof of two first marks.
-    pullProof: (rid, eid) => verifier.pullFirstMarkProofReach(rid, eid),
+    // kanban #2854 (#1489 r26-entry-1): through the same gate as GET /share and POST /proof-pull (#2744) - one pull in flight per entry,
+    // an unproven answer kept for PROOF_MISS_MS - so a stranger repeating GET /forfeit no longer starts a peer pull per request
+    pullProof: (rid, eid) => pullProofReachOnce(rid, eid),
     // THE CERTIFIED LOCK SET (kanban #2561, §17A): a lock outside this seat's certificate, or any lock once the round is VOID for want of one
     // (none held here past close + the window, and none pulled from the peers now - the decide's own rule, verify.js #headToHeadClose)
     // (lock-set-book.js lockOut; a lock outside the set only once no second certificate can contest it - kanban #2585)
@@ -4036,6 +4038,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // not run again for that entry for PROOF_MISS_MS. Only an entry this seat holds is pulled for.
   const PROOF_MISS_MS = 10000;
   const proofMissedAt = new Map();
+  // kanban #2854: the forfeit door's pull (with its reach report), gated as pullProofOnce
+  const proofReachKept = new Map(), proofReachInFlight = new Map();
+  const pullProofReachOnce = (ridBytes, eidBytes) => {
+    const key = `${toHex(ridBytes)}:${toHex(eidBytes)}`;
+    const kept = proofReachKept.get(key);
+    if (kept && Date.now() - kept.at < PROOF_MISS_MS) return Promise.resolve(kept.answer);
+    let pull = proofReachInFlight.get(key);
+    if (!pull) {
+      pull = verifier.pullFirstMarkProofReach(new Uint8Array(ridBytes), new Uint8Array(eidBytes))
+        .then((answer) => { if (answer && !answer.proven) { proofReachKept.delete(key); proofReachKept.set(key, { at: Date.now(), answer }); if (proofReachKept.size > 4096) proofReachKept.delete(proofReachKept.keys().next().value); } return answer; })
+        .finally(() => proofReachInFlight.delete(key));
+      proofReachInFlight.set(key, pull);
+    }
+    return pull;
+  };
   const pullProofOnce = (ridBytes, eidBytes) => {
     const key = `${toHex(ridBytes)}:${toHex(eidBytes)}`;
     const missed = proofMissedAt.get(key);
