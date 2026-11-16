@@ -332,6 +332,7 @@ import { reserveFigures, verifyPeerReserveRow, slashReserveRows, RESERVES_LAST }
 import { createFundingBook } from './funding-book.js';
 import { LB_SCOPE } from '../../arena-protocol/src/leaderboard-payout.js';
 import { leaderboardWindow, leaderboardWinners } from '../../arena-protocol/src/leaderboard-winners.js';
+import { PLACE_AGE_LOOKBACK_DAYS } from '../../arena-protocol/src/place-eligibility.js';   // kanban #2841
 import { FEES, FEES_TODAY, roundSplitBps, ROUND_TOTAL_MAX_BPS, MARKET_TOTAL_MAX_BPS, ITEM_TOTAL_PCT, encodeFeeApproval, feeApprovalId } from '../../arena-protocol/src/fee-proposal.js';
 import { createReservePayouts, lnurlClient, heldBeforeOwnPayment, reserveRowsOfNetwork } from './reserve-payout.js';
 import { askerOrder } from './payout.js';
@@ -2699,7 +2700,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return { ok: true, games: ids, fromMs: w.fromMs, toMs: w.toMs, days: w.days, top: p.top, amountMsat: p.amountSats * 1000n, splitBps: p.splitBps };
   };
   const winnersBook = round.db ? createWinnersBook({ db: round.db, paramsOf: leaderboardSeasonOf, seatsOf: seasonSeatsOf, verify: (s, m, k) => schnorr.verify(s, m, k),
-    collect: async (id, p) => (await seasonAccounts(p.games, p, { keyed: true, signed: true, days: Math.min(SEASON_DAYS_MAX, Math.ceil((Date.now() - p.fromMs) / DAY_MS) + 1) })).bySeat,
+    // AND PLACE_AGE_LOOKBACK_DAYS BEFORE THE WINDOW (kanban #2841): a place needs an identity whose first paid round lies before the week
+    collect: async (id, p) => (await seasonAccounts(p.games, p, { keyed: true, signed: true, days: Math.min(SEASON_DAYS_MAX, Math.ceil((Date.now() - p.fromMs) / DAY_MS) + 1 + PLACE_AGE_LOOKBACK_DAYS) })).bySeat,
     log: (l) => console.log(l) }) : null;
   const reservePayouts = round.db ? createReservePayouts({ db: round.db, me: toHex(round.pubkey), curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)),
     leaderboards: leaderboardsDue, winners: winnersBook,
@@ -6185,7 +6187,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const badges = nostrBadges({ db: round.db, secret: round.identity.secret, on: nostrBadgesOn, relays: nostrPublish, roundOf: badgeRoundOf,
     settled: (ridHex) => stateOf(round, fromHex(ridHex)) === 'ACCEPTED', apps: hostedApps, imageBase: badgeImageBase,
     accountsOf: (g, w) => seasonAccounts(g.ids, w, { keyed: true, signed: true,
-      days: Math.min(SEASON_DAYS_MAX, Math.ceil((Date.now() - w.fromMs) / DAY_MS) + 1) }),
+      days: Math.min(SEASON_DAYS_MAX, Math.ceil((Date.now() - w.fromMs) / DAY_MS) + 1 + PLACE_AGE_LOOKBACK_DAYS) }),   // kanban #2841: the age rule reads before the week
     seatsOf: seasonSeatsOf, verify: (s, m, k) => schnorr.verify(s, m, k),   // the board badge counts signed accounts only (kanban #1153)
     perMinute: nostrPerMinute, tickMs: nostrBadgesTickMs });
   badges.start();

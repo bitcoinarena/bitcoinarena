@@ -23,6 +23,7 @@
 // nothing. (A lobby record's identity is the round key's claim, season.js SEASON_UNCHECKED says: a player can add its own
 // results to an identity and can take none away - so the most a false claim does is hand somebody else a badge it won.)
 import { season, DAY_MS } from './season.js';
+import { placeStanding, placeOrder } from './place-eligibility.js';   // kanban #2841
 import { DELIVERED } from './payout.js';
 
 /** The catalogue's version: a changed rule is a NEW badge with a new `d`, never an old `d` that now means something else. */
@@ -211,10 +212,13 @@ export function badgesEarned({ game, rounds, nowMs } = {}, catalogue = BADGES) {
     // A TIE IS ONE PLACE (kanban #2703, #1489 r4-settle-1): season() breaks a tie on net, wins and best score by the raw identity key, which a
     // player mints - a key ground to start 0x0000 took the top-3 badge on every tie at the line, every week. Rows tied on those three share the
     // place of the first of them (as leaderboardWinners splits a tie): a tied group that starts at or above the line is awarded whole.
-    const same = (x, y) => x.netMsat === y.netMsat && x.wins === y.wins && x.bestScore === y.bestScore;
+    // WHO MAY TAKE A PLACE (kanban #2841, ruling 2026-11-16, place-eligibility.js - the leaderboard payout's rule): a proven identity older than
+    // the week with at least 3 distinct opponents older than the week, placed by the P&L of its rounds against older opponents only. A tie on that
+    // P&L is one place (#2703), the place of the first of the tied group; a group that starts at or above the line is awarded whole.
+    const placed = placeOrder(placeStanding({ rounds, games: ids, fromMs: week.fromMs, toMs: week.toMs }), { positiveOnly: false });
     let place = 0;
-    for (const [i, row] of s.rows.entries()) {
-      if (i === 0 || !same(row, s.rows[i - 1])) place = row.rank;
+    for (const [i, row] of placed.entries()) {
+      if (i === 0 || row.netMsat !== placed[i - 1].netMsat) place = i + 1;
       if (place > b.top || bare.has(row.player)) continue;
       awards.push({ index, d: b.d, player: row.player, game: name, scope, evidence: { window: { fromMs: week.fromMs, toMs: week.toMs }, rank: place } });
     }

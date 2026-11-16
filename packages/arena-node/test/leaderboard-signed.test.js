@@ -29,7 +29,10 @@ const T0 = Date.UTC(2026, 9, 10);
 const S = 100000n;
 const en = (player, payoutMsat, roundKey) => ({ player, roundKey, name: null, stakeMsat: S, payoutMsat, outcome: payoutMsat > S ? DELIVERED : FAILED, score: 1 });
 const [A, B, C, D, X] = [0x0a, 0x0b, 0x0c, 0x0d, 0x0e].map(h);
-const R1 = contractRound({ gameId: GAME, startMs: T0 + 3600000, n: 1, entries: [en(A, 3n * S, h(0xa1)), en(B, 0n, h(0xb1)), en(C, 0n, h(0xc1))] });
+const R1 = contractRound({ gameId: GAME, startMs: T0 + 3600000, n: 1, entries: [en(A, 3n * S, h(0xa1)), en(B, 0n, h(0xb1)), en(C, 0n, h(0xc1)), en(D, S, h(0xd1))] });
+// kanban #2841: a place needs an identity older than the week with 3 older opponents - A, B, C and D played a paid round the day before;
+// A's one entry of the week paid 10 % of S in fees, so its place is capped at 10 x 10,000 = 100,000 msat
+const R0 = contractRound({ gameId: GAME, startMs: T0 - 86400000, n: 5, entries: [en(A, 90000n, h(0xa0)), en(B, 90000n, h(0xb0)), en(C, 90000n, h(0xc0)), en(D, 90000n, h(0xd0))] });
 const R2 = contractRound({ gameId: GAME, startMs: T0 + 7200000, n: 2, entries: [en(C, 2n * S, h(0xc2)), en(D, 0n, h(0xd2))] });
 const R3 = contractRound({ gameId: GAME, startMs: T0 + 8000000, n: 4, entries: [en(D, 9n * S, h(0xd4)), en(B, 0n, h(0xb4))] });
 const FAKE = contractRound({ gameId: GAME, startMs: T0 + 9000000, n: 3, entries: [en(X, 900n * S, h(0xe1)), en(D, 0n, h(0xd3))] });
@@ -100,28 +103,27 @@ const keyOf = (p) => toHex(refundKeyOf(fromHex(p)));
 test('the scenario, old rule: three colluding seats\' identical invented rounds put X first in the payout', () => {
   // EXACTLY WHAT server.js leaderboardWinnersOf DID: every seat's accounts merged by SEASON_NETWORK_AGREE identical, then the top 3
   const unsigned = (rounds) => rounds.map(({ contract, sigs, ...r }) => r);
-  const bySeat = new Map([['me', unsigned(seatAnswer(1, [R1, R2]))], ...COLLUDERS([R1, R2]).map(([k, v]) => [k, unsigned(v)])]);
+  const bySeat = new Map([['me', unsigned(seatAnswer(1, [R0, R1, R2]))], ...COLLUDERS([R0, R1, R2]).map(([k, v]) => [k, unsigned(v)])]);
   const m = mergeSeasonAccounts(bySeat, { agree: SEASON_NETWORK_AGREE, keys: true });
-  const w = leaderboardWinners({ ...SEASON, rounds: m.rounds });
-  // only identities that won money are paid (kanban #2656): C nets 0 and is not
-  assert.deepEqual(w.winners.map((x) => x.player), [X, A], 'X, who played no round, takes place 1');
+  // the old merge counts the invented round (since #2841 X, whose first paid round is inside the week, takes no place either way)
+  assert.ok(m.rounds.some((r) => r.roundId === FAKE.roundId), 'the old rule counts the colluders\' invented round');
 });
 
 test('the scenario, new rule: the colluders\' invented round is not counted, X is paid nothing, the honest top 3 are paid', async () => {
-  const w = world(() => [...HONEST([R1, R2]), ...COLLUDERS([R1, R2])]);
+  const w = world(() => [...HONEST([R0, R1, R2]), ...COLLUDERS([R0, R1, R2])]);
   const out = await w.seats[0].api.round({ height: 600 });
   const r = out.find((x) => x.id === LB);
   assert.deepEqual([r.ok, r.state], [true, PAYOUT.PAID], r.why);
   assert.equal(w.fed.submits.length, 1);
   // A +2S, C 0, B and D -S: only A won money; places 2 and 3 stay in the reserves (kanban #2656)
-  assert.deepEqual(paidTo(w), [[keyOf(A), '1000000']]);
+  assert.deepEqual(paidTo(w), [[keyOf(A), '100000']]);   // kanban #2841: capped at 10x its week's entry fees; the rest stays in the reserves
   assert.ok(!paidTo(w).some(([k]) => k === keyOf(X)), 'X is paid nothing');
   const own = w.seats[0].book.recordOf(LB);
-  assert.equal(own.pairs.length, 2, 'two signed rounds, the invented one not among them');
+  assert.equal(own.pairs.length, 3, 'three signed rounds (the one before the week too), the invented one not among them');
 });
 
 test('nothing irreversible before its state is persisted: at the transaction every signer holds the same winners list PLANNED', async () => {
-  const w = world(() => [...HONEST([R1, R2]), ...COLLUDERS([R1, R2])]);
+  const w = world(() => [...HONEST([R0, R1, R2]), ...COLLUDERS([R0, R1, R2])]);
   await w.seats[0].api.round({ height: 600 });
   assert.equal(w.fed.atSubmit.length, 1);
   const at = w.fed.atSubmit[0];
@@ -134,15 +136,15 @@ test('nothing irreversible before its state is persisted: at the transaction eve
 });
 
 test('frozen once: a round signed after the freeze changes no list; the seats are not asked again', async () => {
-  let rounds = [R1, R2];
+  let rounds = [R0, R1, R2];
   const w = world(() => HONEST(rounds));
   for (const s of w.seats) assert.equal((await s.book.freeze(LB)).ok, true);
-  rounds = [R1, R2, R3];                         // D's big win of R3, signed by five of its seats, arrives after every seat froze
+  rounds = [R0, R1, R2, R3];                         // D's big win of R3, signed by five of its seats, arrives after every seat froze
   await w.seats[0].api.round({ height: 600 });
   assert.deepEqual(paidTo(w).map(([k]) => k), [keyOf(A)], 'R3 is not on the list (D, who nets +7S with it, is not paid)');
   assert.ok(w.seats.every((s) => s.collects === 1), 'each seat read the season once');
   // before the window has closed FREEZE_GRACE_MS ago, nothing is read at all
-  const early = world(() => HONEST([R1, R2]), { clock: { now: DUE_MS - 1 } });
+  const early = world(() => HONEST([R0, R1, R2]), { clock: { now: DUE_MS - 1 } });
   const f = await early.seats[0].book.freeze(LB);
   assert.equal(f.ok, false);
   assert.match(f.why, /read 135 min after/);
@@ -151,23 +153,23 @@ test('frozen once: a round signed after the freeze changes no list; the seats ar
 
 test('the same list at every co-signer: a seat that missed a round takes it from the plan\'s evidence; a plan that leaves out a round is refused', async () => {
   // seat 3 (NODE_KEYS[3]) heard only three of R2's seats: R2 does not stand in its own read
-  const view = (i) => (i === 3 ? [...HONEST([R1, R2], [1, 2, 3]), ...HONEST([R1], [4, 5])] : HONEST([R1, R2]));
+  const view = (i) => (i === 3 ? [...HONEST([R0, R1, R2], [1, 2, 3]), ...HONEST([R0, R1], [4, 5])] : HONEST([R0, R1, R2]));
   const w = world(view);
   await w.seats[3].book.freeze(LB);
-  assert.equal(w.seats[3].book.recordOf(LB).pairs.length, 1, 'R2 is not in seat 3\'s frozen read');
+  assert.equal(w.seats[3].book.recordOf(LB).pairs.length, 2, 'R2 is not in seat 3\'s frozen read (R0 and R1 are)');
   await w.seats[0].api.round({ height: 600 });
   await w.deliver();
   assert.equal(w.fed.submits.length, 1);
   const lists = w.seats.map((s) => s.book.recordOf(LB));
   assert.ok(lists.every((x) => x.state === WINNERS.PLANNED), lists.map((x) => x.state).join());
   assert.equal(new Set(lists.map((x) => x.winnersId)).size, 1, 'all seven hold the same list');
-  assert.equal(lists[3].pairs.length, 2, 'seat 3 took R2 on the evidence it checked');
+  assert.equal(lists[3].pairs.length, 3, 'seat 3 took R2 on the evidence it checked');
 
   // A COORDINATOR THAT LEAVES R2 OUT (to move B and D up): a seat whose own read counts R2 refuses it
-  const v = world(() => HONEST([R1, R2]));
+  const v = world(() => HONEST([R0, R1, R2]));
   const plan = (await v.seats[1].book.freeze(LB)).record;
   assert.equal(plan.state, WINNERS.FROZEN);
-  const onlyR1 = await createWinnersBook({ db: openStore(':memory:'), paramsOf: async () => ({ ok: true, ...SEASON }), collect: async () => new Map(HONEST([R1])),
+  const onlyR1 = await createWinnersBook({ db: openStore(':memory:'), paramsOf: async () => ({ ok: true, ...SEASON }), collect: async () => new Map(HONEST([R0, R1])),
     seatsOf: DRAW, verify, now: () => DUE_MS }).union(LB, []);
   const st = await v.seats[1].book.check(LB, { winners: onlyR1.winners, rounds: onlyR1.pairs, winnersId: onlyR1.winnersId });
   assert.equal(st.ok, false);

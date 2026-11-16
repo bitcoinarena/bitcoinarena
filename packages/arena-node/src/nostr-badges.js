@@ -50,6 +50,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { eventId } from './nostr-relay.js';
 import { acceptedNotIn, publishPass } from './nostr-results.js';
 import { BADGES, BADGES_VERSION, badgesEarned, checkCatalogue, lastClosedWeek } from '../../arena-protocol/src/badges.js';
+import { PLACE_AGE_LOOKBACK_DAYS } from '../../arena-protocol/src/place-eligibility.js';   // kanban #2841
 import { seasonRoundsToJson, seasonRoundsFromJson, mergeSignedSeasonAccounts, SEASON_NETWORK_AGREE } from '../../arena-protocol/src/season.js';
 
 export const BADGE_DEFINITION_KIND = 30009;
@@ -298,7 +299,8 @@ export function nostrBadges({ db, secret, on = false, relays = [], roundOf, sett
       if (stopped) break;                          // stopped while the seats were asked: the store may be closing
       // EACH SEAT'S ROUNDS OF THE WEEK ONLY: another seat was asked for whole days back from its own clock, which reaches past
       // the week at both ends. A round with no readable start is handed on, for the merge to name.
-      const from = BigInt(week.fromMs), to = BigInt(week.toMs);
+      // AND THE PLACE RULE'S LOOKBACK (kanban #2841): an identity's age is read from its rounds before the week; the board itself is the week's
+      const from = BigInt(week.fromMs) - BigInt(PLACE_AGE_LOOKBACK_DAYS) * 86400000n, to = BigInt(week.toMs);
       const inWeek = (r) => {
         const t = !r ? null : typeof r.startMs === 'bigint' ? r.startMs : Number.isSafeInteger(r.startMs) ? BigInt(r.startMs) : null;
         return t === null || (t >= from && t < to);
