@@ -368,6 +368,11 @@ export function openBountySeason(path = ':memory:', { startMs = null, s2EndMs = 
    * BEFORE PAYOUT: the bonus read again from flags just verified. The payable amount never rises above the approved one (a bonus lost since is taken
    * off; one gained since waits for the next report). Stored on the approval with its time; nothing is paid here.
    */
+  /** A REPORT REJECTED OR MARKED DUPLICATE TAKES ITS APPROVAL BACK (kanban #2904): approved or waiting -> rejected, nothing payable; answers whether one moved. */
+  function voidApproval(id, { why = 'the report was rejected', nowMs = Date.now() } = {}) {
+    return db.prepare("UPDATE approvals SET state = 'rejected', payable_sats = 0, payable_ms = ?, payable_why = ? WHERE report = ? AND state IN ('approved', 'waiting')")
+      .run(nowMs, String(why).slice(0, 200), String(id)).changes === 1;
+  }
   function payable(id, { nowMs = Date.now() } = {}) {
     const a = approval(id);
     if (!a || a.state !== 'approved') return { ok: false, why: 'no Season 2 approval for that report' };
@@ -440,6 +445,6 @@ export function openBountySeason(path = ':memory:', { startMs = null, s2EndMs = 
     return c ? { ok: true } : { ok: false, why: 'that key carries no real-user mark' };
   };
 
-  return { makeCode, redeem, claimName, seeTelegram, telegramIdOf, links: linksOf, record, verify, flagsOf, pot, plan, commit, wait, approval, approvals, payable, drawEntries, keysOfSeason,
+  return { makeCode, redeem, claimName, seeTelegram, telegramIdOf, links: linksOf, record, verify, flagsOf, pot, plan, commit, wait, approval, approvals, payable, voidApproval, drawEntries, keysOfSeason,
     seasonNow, realUserOf, markRealUser, clearRealUser, playedMarkOf, markPlayed, clearPlayed, close: () => db.close() };
 }

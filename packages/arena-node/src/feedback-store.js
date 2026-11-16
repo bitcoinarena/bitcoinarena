@@ -361,14 +361,16 @@ export function openFeedbackStore(path = ':memory:') {
     // an open link is voided (compare-and-set from open); one being paid or paid keeps the report as it is
     // the void, the report's move and its log line in one transaction (kanban #1984): never a void link beside a report still accepted
     const refused = inTx(() => {
-      if (to === STATES.REJECTED) {
+      if (to === STATES.REJECTED || to === STATES.DUPLICATE) {
         const w = db.prepare('SELECT * FROM rewards WHERE report = ?').get(r.id);
         if (w && w.state !== 'open' && w.state !== 'void') return `its reward is ${w.state === 'paid' ? 'paid' : 'being paid'}: a paid report stays as it is`;
         if (w && w.state === 'open' && db.prepare("UPDATE rewards SET state = 'void', why = 'the report was rejected' WHERE k1 = ? AND state = 'open'").run(w.k1).changes !== 1)
           return 'its reward is being paid: try again in a minute';
       }
-      db.prepare('UPDATE reports SET state = ?, reason = ?, duplicate_of = ?, changed_ms = ? WHERE id = ? AND state = ?')
-        .run(to, to === STATES.REJECTED ? String(reason).trim().slice(0, 500) : r.reason, to === STATES.DUPLICATE ? dupId : r.duplicate_of, nowMs, r.id, r.state);
+      // A REJECTED OR DUPLICATE REPORT HOLDS NO AMOUNT (kanban #2904: eight rejected reports still read "1,200 sat approved"): cleared in the same move
+      const noMoney = to === STATES.REJECTED || to === STATES.DUPLICATE;
+      db.prepare('UPDATE reports SET state = ?, reason = ?, duplicate_of = ?, amount_sats = ?, changed_ms = ? WHERE id = ? AND state = ?')
+        .run(to, to === STATES.REJECTED ? String(reason).trim().slice(0, 500) : r.reason, to === STATES.DUPLICATE ? dupId : r.duplicate_of, noMoney ? null : r.amount_sats, nowMs, r.id, r.state);
       db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, to, nowMs, by, reason || duplicateOf || null);
       return null;
     });
@@ -442,6 +444,8 @@ export function openFeedbackStore(path = ':memory:') {
       if (db.prepare("UPDATE rewards SET amount_sats = ? WHERE k1 = ? AND state = 'open'").run(cap, k1).changes === 1)
         db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, r.state, nowMs, by, `reward lowered from ${from} to ${cap} sat at payout (the bonus read again)`); };
     const said = comment === null || comment === undefined ? null : String(comment).replace(/\s+/g, ' ').trim().slice(0, COMMENT_MOST) || null;
+    // NEVER A REWARD FOR A REJECTED OR DUPLICATE REPORT (kanban #2904): whatever link or amount it still names
+    if (r.state === STATES.REJECTED || r.state === STATES.DUPLICATE) return { ok: false, why: `a ${r.state} report gets no reward` };
     let had = db.prepare('SELECT * FROM rewards WHERE report = ?').get(r.id);
     // AN OPEN LINK OF ANOTHER NETWORK IS MADE AGAIN ON THIS ONE (kanban #2452, state audit 2026-11-12 SM-21 x SM-22, after #1784): a testnet4 link left
     // open by the payout switch (2026-11-11) was refused by every payer and answered again here, so its approved report stayed accepted for good - and a
@@ -652,6 +656,7 @@ export function openFeedbackStore(path = ':memory:') {
     if (!w) return { ok: false, why: 'no such reward' };
     if (!onNetwork(w, network)) return { ok: false, why: otherNetwork(w) };   // kanban #1784
     if (w.state !== 'open') return { ok: false, why: w.state === 'paid' ? 'this reward is paid' : w.state === 'void' ? 'this reward was withdrawn' : 'this reward is being paid' };
+    { const rep = get.get(w.report); if (!rep || rep.state === STATES.REJECTED || rep.state === STATES.DUPLICATE) return { ok: false, why: `a ${rep ? rep.state : 'missing'} report is not paid` }; }   // kanban #2904
     const address = addressOf(w.report);
     if (!address) return { ok: false, why: 'the report names no Lightning address: send its withdraw link instead' };
     let inv; try { inv = await invoiceFor(address, w.amount_sats, w.comment || ''); } catch (e) { inv = { ok: false, why: e.message }; }

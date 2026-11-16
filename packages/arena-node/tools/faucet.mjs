@@ -954,11 +954,13 @@ createServer((req, res) => {
           return send(200, s1);
         }
         // A DUPLICATE OF A KNOWN TICKET (kanban #2745): with dupTicket, the ticket's title and description go behind a secret link for the reporter
-        if (b.action === 'reject') { const out = FEEDBACK.move(b.id, 'rejected', { reason: b.reason, by });
+        // kanban #2904: a rejection or a duplicate takes the Season 2 approval back in the same step (the report's amount is cleared by the move)
+        const voidS2 = (out, why) => { if (out.ok && S2 && S2.voidApproval) out.approvalVoided = S2.voidApproval(b.id, { why }); return out; };
+        if (b.action === 'reject') { const out = voidS2(FEEDBACK.move(b.id, 'rejected', { reason: b.reason, by }), 'the report was rejected');
           if (!out.ok || b.dupTicket == null) return send(200, out);
           return dupFromTicket(b.id, b.dupTicket).then((d) => send(200, { ...out, dupLink: d }), () => send(200, { ...out, dupLink: { ok: false, why: 'the ticket could not be read' } })); }
         if (b.action === 'dup-link') return dupFromTicket(b.id, b.ticket).then((d) => send(200, d), () => send(200, { ok: false, why: 'the ticket could not be read' }));
-        if (b.action === 'duplicate') return send(200, FEEDBACK.move(b.id, 'duplicate', { duplicateOf: b.of, by }));
+        if (b.action === 'duplicate') return send(200, voidS2(FEEDBACK.move(b.id, 'duplicate', { duplicateOf: b.of, by }), 'the report is a duplicate'));
         const rewardAct = (b, by, capSats) => { const w = FEEDBACK.createReward(b.id, { network: BOUNTY_NETWORK, comment: b.comment ?? null, by, capSats });
           if (!w.ok) return send(200, w);
           const lnurl = FEEDBACK.lnurlOf(w.reward.k1, { base: PUBLIC_BASE });
@@ -973,6 +975,7 @@ createServer((req, res) => {
         if (b.action === 'reward') return (async () => {
           let capSats = null;
           const rep = S2 ? FEEDBACK.report(b.id) : null;
+          { const r0 = FEEDBACK.report(b.id); if (r0 && (r0.state === 'rejected' || r0.state === 'duplicate')) return send(200, { ok: false, why: `a ${r0.state} report gets no reward` }); }   // kanban #2904
           if (rep && S2.approval && S2.approval(rep.id)) { await S2.verify(rep.pubkey, S2_VERIFY, { cause: 'payout' }); const p = S2.payable(rep.id); if (p && p.ok) capSats = p.payableSats; }
           return rewardAct(b, by, capSats);
         })().catch((e) => send(200, { ok: false, why: e.message }));
