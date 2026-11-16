@@ -3843,6 +3843,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const now = Number(round.now());
     for (const x of lockSetPlan.values()) {
       if (!x || now < x.close || now > x.close + LOCK_SET_WINDOW_MS + 2000) continue;
+      // NO LOCK-SET WORK FOR A ROUND NOBODY ENTERED HERE (kanban #2901, measured 2026-11-16: the 8 Beelink seats' main threads at ~100 %, ~80 lock-set
+      // rounds a minute per seat, nearly all with 0 entries; a paid player's handout took 15-23 s): a round this seat holds no handout and no entry
+      // for at its close is not stepped by this timer. It still takes part the moment a peer that has one asks (GET /lock-set steps it, POST /lock-set
+      // takes the peer's view): a seat with an entry pulls every peer each LOCK_SET_PULL_MS, so its view, signature and certificate are made as before.
+      // A round nobody entered anywhere gets no certificate and is VOID at the close + the window, as a certified empty set made it before.
+      if (x.work === undefined) { try { x.work = round.handoutCount(x.rid) > 0 || round.entriesOf(x.rid).length > 0; } catch { x.work = true; } }
+      if (!x.work && !lockSets.certified(x.rid) && !lockSets.touched(x.rid)) continue;
       lockSets.step(x.rid).catch((e) => console.error(`[lock-set] ${toHex(x.rid).slice(0, 16)}: ${e.message}`));
     }
   };
