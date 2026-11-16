@@ -114,8 +114,8 @@ try {
     if (s) {
       if (s.them !== null && s.them !== undefined) them = Math.max(them ?? 0, s.them);
       if (s.alone) alone = true;
-      if (s.v && !firstVerdict) firstVerdict = { word: s.v.word, at: s.v.at };
-      if (/Signed by the seats/.test(s.signed) && s.last === 'result' && s.v) { signed = { word: s.v.word, at: Date.now() }; break; }
+      if (s.v && s.v.at >= close && !firstVerdict) firstVerdict = { word: s.v.word, at: s.v.at }; // not an older round's banner
+      if (/Signed by the seats/.test(s.signed) && s.last === 'result' && s.v && s.v.at >= close) { signed = { word: s.v.word, at: Date.now() }; break; }
     }
     const pv = seen(payRe);
     if (pv && !payAt) payAt = Date.parse(pv.slice(0, 24));
