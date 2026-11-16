@@ -1630,7 +1630,14 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     }, true);
   </script>
 <link rel="me" href="https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2">
-<style>/* kanban #1456 (the owner 2026-11-11): the stadium on the wallet screen, above "Your wallet" */ .ws-box::before { content: ""; display: block; height: 40px; margin: 0 0 14px; background: no-repeat left center / auto 40px; background-image: image-set(url("arena-mark-80.webp") 2x, url("arena-mark-120.webp") 3x); }</style>
+<style>/* kanban #1456 (the owner 2026-11-11): the stadium on the wallet screen, above "Your wallet" */ .ws-box::before { content: ""; display: block; height: 40px; margin: 0 0 14px; background: no-repeat left center / auto 40px; background-image: image-set(url("arena-mark-80.webp") 2x, url("arena-mark-120.webp") 3x); }
+    /* kanban #2883 (feedback #105, fold-in of #2763): at phone width the UI stamp sat on the Feedback link (390 px: stamp 100-136, Feedback 52-109)
+       and the social icons ran over it at 320 px - below 440 px the icons row is not shown and the stamp sits beside the donate button */
+    @media (max-width: 440px) {
+      html body:not(.arena-topup-on) #arena-social { display: none !important; }
+      html body:not(.arena-topup-on) #arena-build { padding-right: 96px !important; }
+    }
+</style>
 </head>
 <body>
   <!-- §24B: the wallet's own line, in the LOBBY and never over the drive. `arena-money` is hidden while a
