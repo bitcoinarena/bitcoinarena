@@ -557,10 +557,23 @@ export function openFeedbackStore(path = ':memory:') {
     return out;
   }
   /** THE ADDRESS A REPORT ASKED TO BE PAID AT (reportAddress below): null when it named none. */
+  // OWNER-SET PAY ADDRESS (the owner 2026-11-16 "Trage die Lightning-Adresse in alle seine Reports ein"): an address the owner entered for a player key,
+  // used only when the signed report itself names none; the signed report's own address always wins. Set by hand in owner_addresses (pubkey, address, why, at_ms).
+  db.exec(`CREATE TABLE IF NOT EXISTS owner_addresses (pubkey TEXT PRIMARY KEY, address TEXT NOT NULL, why TEXT, at_ms INTEGER NOT NULL)`);
+  const ownerAddr = db.prepare('SELECT address FROM owner_addresses WHERE pubkey = ?');
+  /** The owner sets (or, with null, clears) a key's pay address (kanban #2904); only a well-formed Lightning address or LNURL is kept. */
+  function ownerAddress(pubkey, address, { why = null, nowMs = Date.now() } = {}) {
+    const k = String(pubkey).toLowerCase(); if (!/^[0-9a-f]{64}$/.test(k)) return { ok: false, why: 'a player key is 64 hex characters' };
+    if (address === null) { db.prepare('DELETE FROM owner_addresses WHERE pubkey = ?').run(k); return { ok: true, cleared: true }; }
+    const a = addressShape(String(address).trim()); if (!a) return { ok: false, why: 'not a Lightning address or LNURL' };
+    db.prepare('INSERT INTO owner_addresses (pubkey, address, why, at_ms) VALUES (?, ?, ?, ?) ON CONFLICT(pubkey) DO UPDATE SET address = excluded.address, why = excluded.why, at_ms = excluded.at_ms').run(k, a, why, nowMs);
+    return { ok: true, address: a };
+  }
   function addressOf(id) {
     const r = get.get(String(id)); if (!r) return null;
     let e = null; try { e = JSON.parse(r.event); } catch { e = null; }
-    return reportAddress(e);
+    const own = reportAddress(e); if (own) return own;
+    const o = ownerAddr.get(String(r.pubkey)); return o ? addressShape(String(o.address).trim()) : null;
   }
   /**
    * PAID STRAIGHT TO THE REPORT'S LIGHTNING ADDRESS (kanban #1474, the owner 2026-11-11: "Do we have a function to give a comment when we pay?" - "1, ja. Und zeig es
@@ -668,7 +681,7 @@ export function openFeedbackStore(path = ':memory:') {
       takenBy: taken ? { id: taken.id, label: feedbackLabel(taken.number), sameNode: !!(taken.node && String(taken.node) === String(report.node)) } : null,
       full: !mine && !taken && held.length >= NODE_BOUNTY_MOST };
   }
-  return { take, mine, move, approve, list, shotsInUse, note, remark, moves, budget, paidLog, csv, nodeBountyFor, createReward, voidReward, paidSatsOf, countNew, withdrawRequest, lnurlOf, claim, settle, rewards, payToAddress, addressOf, reward: (k1) => rewardRow(rewardOf.get(String(k1))), report: (id) => row(get.get(String(id))), close: () => db.close(), eventId };
+  return { take, mine, move, approve, list, shotsInUse, note, remark, moves, budget, paidLog, csv, nodeBountyFor, createReward, voidReward, paidSatsOf, countNew, withdrawRequest, lnurlOf, claim, settle, rewards, payToAddress, addressOf, ownerAddress, reward: (k1) => rewardRow(rewardOf.get(String(k1))), report: (id) => row(get.get(String(id))), close: () => db.close(), eventId };
 }
 
 /** The most of one seat's GET /season?scope=network answer the faucet reads (kanban #2517). */
