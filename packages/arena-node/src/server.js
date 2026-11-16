@@ -2282,8 +2282,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // KEPT WITH ITS EPOCH (kanban #803, reserve-key-cache.js): a key kept for an earlier set of guardian seats is not the federation's key now
   const reserveKeys = reserveKeyCache();
   const reserveEpochOf = (fedHex, g = reserveGuardians()[fedHex]) => (g ? toHex(reserveEpochId(fromHex(fedHex), sortedKeys(g.members))) : null);
+  // WHY A RESERVE KEY WAS NOT FOUND, said once a minute per federation (kanban #2869: after the 2026-11-15 restarts the old-Mac seats named no
+  // key for federation A for hours - every market and fee-lock settlement there refused - while the seven guardian seats served one key)
+  const reserveMissSaid = new Map();
+  const reserveMiss = (fedHex, why) => { const now = Date.now(); if (now - (reserveMissSaid.get(fedHex) || 0) < 60000) return null;
+    reserveMissSaid.set(fedHex, now); if (reserveMissSaid.size > 256) reserveMissSaid.delete(reserveMissSaid.keys().next().value);
+    console.log(`[reserves] ${fedHex.slice(0, 8)}: no reserve key - ${why}`); return null; };
   const reserveKeyFor = async (fedHex) => {
     const g = reserveGuardians()[fedHex];
+    if (!g) return reserveMiss(fedHex, `the census this seat reads names no guardian seats for it (federations named: ${Object.keys(reserveGuardians()).map((f) => f.slice(0, 8)).join(', ') || 'none'})`);
     // A FEDERATION WITH NO GUARDIAN SEATS HAS NO RESERVE KEY (kanban #803, measured 2026-10-30 10:0xZ: test host seat 4 still named 02533d74…
     // for federation A while its GET /reserves listed 0 members - the key kept from before A's members fell under the bond floor; with no
     // members there is no epoch, and a key without an epoch was answered as kept)
@@ -2303,7 +2310,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (f) said.set(f.key, (said.get(f.key) || 0) + 1);
     } catch { /* a seat that does not answer names nothing */ } }));
     const best = [...said.entries()].sort((a, b) => b[1] - a[1])[0];
-    if (!best || best[1] < needed) return null;
+    if (!best || best[1] < needed) return reserveMiss(fedHex, `${best ? best[1] : 0} of ${g.peers.length} guardian seats asked named one key (${needed} needed): ${g.peers.slice(0, 3).join(' ')}${g.peers.length > 3 ? ' …' : ''}`);
     return reserveKeys.setFor(fedHex, epoch, fromHex(best[0]));
   };
   const reserveRound = async () => {
