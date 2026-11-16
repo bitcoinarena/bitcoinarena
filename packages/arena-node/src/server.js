@@ -6890,7 +6890,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const budget = Number(closeMs) - Number(round.now()) - CANCEL_HELD_ASK_MARGIN_MS;
     if (!(budget > 0) || !peers.length) return resolve(false);
     const stop = new AbortController();
-    let open = peers.length, settled = false;
+    // F + 1 SEATS, NOT THE FIRST ONE (kanban #2843, #1489 r25-gossip-1): one colluding seat listed a cancel id it never took at its player door,
+    // and honest seats asked inside the margin took the player's late cancel on its word alone - 3 of 6 honest seats took it, 3 refused, the
+    // market split in two tables. The cancel now counts as held only when f + 1 of the round's seats list it (f = floor((n - 1) / 3), never fewer
+    // than two peers on a committee of three or more), so at least one honest seat took it in time.
+    const need = peers.length >= 2 ? Math.max(2, Math.floor(peers.length / 3) + 1) : 1;
+    let open = peers.length, settled = false, listed = 0;
     const finish = (v) => { if (settled) return; settled = true; clearTimeout(timer); stop.abort(); resolve(v); };
     const timer = setTimeout(() => finish(false), Math.min(2000, budget));
     for (const peer of peers) {
@@ -6898,7 +6903,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         try {
           const r = await fetch(`${String(peer).replace(/\/+$/, '')}/cancels?round=${toHex(roundId)}`, { signal: stop.signal });
           const body = r.ok ? await seatJson(r, SEAT_LISTING_BYTES) : (await dropSeatBody(r), null);   // kanban #1900
-          if (body && Array.isArray(body.cancels) && body.cancels.some((x) => x && x.entry === want)) finish(true);
+          if (body && Array.isArray(body.cancels) && body.cancels.some((x) => x && x.entry === want) && ++listed >= need) finish(true);
         } catch { /* no answer is a no */ }
         open -= 1;
         if (open === 0) finish(false);
