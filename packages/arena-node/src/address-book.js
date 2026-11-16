@@ -6,6 +6,28 @@
 // This seat's own: signed whenever the address it names itself (ARENA_WSS_<port>) is not the one it last announced, and pushed to
 // every census node's seat once in a while (announceOwn), so a node whose census endpoint went stale is found again at once.
 import { checkAddressAnnouncement, newerAnnouncement, signAddressAnnouncement, endpointOf } from '../../arena-protocol/src/address-announcement.js';
+import { internalAddress } from './public-fetch.js';
+import { isIP } from 'node:net';
+
+/**
+ * WHERE A SEAT MAY DIAL A PEER (kanban #2856, #1489 r26-gossip-1): a census node signed an announcement for its own key naming the honest seat's
+ * own loopback service ('http://127.0.0.1:18777/lnurlp/tips/cb?amount=1000&x=') and every seat sent `${endpoint}/<door>` there - a host, port and
+ * path the attacker picked, the door swallowed by the query. A peer endpoint is an origin with at most one path segment, no query, fragment or
+ * user info; a loopback, private, link-local, CGNAT or ULA IP literal or a localhost name is refused unless this node runs local seats (`localOk`:
+ * a regtest chain, ARENA_LOCAL_SEATS=1 - a devnet's seats sit on 127.0.0.1). Live seats announce public names (tunnels, *.ts.net) and are routed
+ * to their private addresses by ARENA_ROUTE_MAP after the check. Answers why not, or null.
+ */
+export function peerEndpointRefusal(endpoint, { localOk = false } = {}) {
+  let u; try { u = new URL(String(endpoint)); } catch { return 'not a URL'; }
+  if (!['http:', 'https:', 'ws:', 'wss:'].includes(u.protocol)) return 'not an http(s) or ws(s) endpoint';
+  if (u.username || u.password) return 'an endpoint carries no user info';
+  if (u.search || u.hash || String(endpoint).includes('?') || String(endpoint).includes('#')) return 'an endpoint carries no query or fragment';
+  if (u.pathname.replace(/\/+$/, '').split('/').filter(Boolean).length > 1) return 'an endpoint is an origin with at most one path segment';
+  const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
+  const local = (isIP(host) ? internalAddress(host) : /^\d+$|^0x/i.test(host)) || host === 'localhost' || host.endsWith('.localhost');
+  if (local && !localOk) return 'an endpoint on a loopback or private address';
+  return null;
+}
 
 // BOUNDED, AND ONLY CENSUS NODES (kanban #1533, wf1489 round 2: one peer's GET /address-announcements listing 2000 self-signed keys
 // with 4 KB endpoints added 2000 rows, 8.5 MB, to every seat that pulled it, and each served them all again). An endpoint longer than
@@ -22,7 +44,8 @@ export const ADDRESS_BOOK_MAX = 4096;
 // by that key (list({ node }), GET /address-announcements?node=<key>). Once the census names the node it moves into the book.
 export const ADDRESS_PENDING_MAX = 256;
 
-export function createAddressBook({ db, verify, nowMs = () => Date.now(), isCensusNode = () => null, censusKeys = null, ownKey = null }) {
+export function createAddressBook({ db, verify, nowMs = () => Date.now(), isCensusNode = () => null, censusKeys = null, ownKey = null, localOk = false }) {
+  const localNow = () => (typeof localOk === 'function' ? !!localOk() : !!localOk);   // kanban #2856
   db.exec('CREATE TABLE IF NOT EXISTS address_announcements (node TEXT PRIMARY KEY, body TEXT NOT NULL)');
   // THE BOUNDS HOLD FOR WHAT IS HELD, NOT ONLY AT THE DOOR (kanban #1712, #1778, wf1489 refute of #1533): an announcement taken while
   // no census was read yet (isCensusNode -> null, the first minute after a start) stayed in the book and was served, counted and used
@@ -45,6 +68,7 @@ export function createAddressBook({ db, verify, nowMs = () => Date.now(), isCens
       const a = JSON.parse(body);
       if (!checkAddressAnnouncement(a, { verify, nowMs: nowMs() }).ok) return null;
       if (String(a.endpoint).length > ADDRESS_ENDPOINT_MAX) return null;
+      if (peerEndpointRefusal(a.endpoint, { localOk: localNow() })) return null;   // kanban #2856: a row stored before the check is not dialed
       return { node: a.node, endpoint: a.endpoint, atMs: a.atMs, sig: a.sig };
     } catch { return null; }
   };
@@ -131,6 +155,7 @@ export function createAddressBook({ db, verify, nowMs = () => Date.now(), isCens
     const c = checkAddressAnnouncement(a, { verify, nowMs: nowMs() });
     if (!c.ok) return { ok: false, why: c.why };
     if (String(a.endpoint).length > ADDRESS_ENDPOINT_MAX) return { ok: false, status: 400, why: `an endpoint of at most ${ADDRESS_ENDPOINT_MAX} characters` };
+    { const no = peerEndpointRefusal(a.endpoint, { localOk: localNow() }); if (no) return { ok: false, status: 400, why: no }; }   // kanban #2856
     if (!self && a.node !== me && isCensusNode(a.node) === false) {
       // kanban #2066: held for a lookup by its key only (bounded, the least recently announced goes first)
       const clean = { node: a.node, endpoint: a.endpoint, atMs: a.atMs, sig: a.sig };
@@ -166,7 +191,9 @@ export function createAddressBook({ db, verify, nowMs = () => Date.now(), isCens
     if (k && !map.has(k) && pending.has(k)) out.push(pending.get(k));
     return out;
   }
-  return { take, own, prune, map: () => { prune(); return map; }, list, endpointOf: (entry) => endpointOf(entry, held) };
+  // kanban #2856: the census advert's endpoint is held to the same rule - a node's bond may commit a loopback endpoint as well
+  const okOrNull = (u) => (u && !peerEndpointRefusal(u, { localOk: localNow() }) ? u : null);
+  return { take, own, prune, map: () => { prune(); return map; }, list, endpointOf: (entry) => okOrNull(endpointOf(entry, held)) };
 }
 
 /** Push this node's announcement to every census node's seat at the address it is found at; answers how many took it. */

@@ -1295,7 +1295,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // kanban #1533: POST /address-announcement takes only a node of the census last read for addresses (none read yet: bounded by the book)
   let addressCensus = null;
   const addressBook = createAddressBook({ db, verify: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } },
-    isCensusNode: (hex) => (addressCensus ? addressCensus.has(String(hex)) : null), censusKeys: () => addressCensus, ownKey: (() => { try { return toHex(round.pubkey); } catch { return null; } })() });   // kanban #1712: its own kept outside the census
+    isCensusNode: (hex) => (addressCensus ? addressCensus.has(String(hex)) : null), censusKeys: () => addressCensus, ownKey: (() => { try { return toHex(round.pubkey); } catch { return null; } })(),
+    // kanban #2856: a peer on a loopback / private address only where this node runs local seats - no public chain (a regtest chain, a node with
+    // no chain named: the test harnesses), or ARENA_LOCAL_SEATS=1; a testnet4 seat dials public names only (ARENA_ROUTE_MAP routes them after)
+    localOk: () => process.env.ARENA_LOCAL_SEATS === '1' || !chain || chain === 'bitcoin-regtest' });   // kanban #1712: its own kept outside the census
   // EVERY COMMITTEE PEER AT ITS ANNOUNCED ADDRESS FIRST (kanban #757): roster.js endpointsOf with the address book's resolver -
   // a node whose quick tunnel restarted is dialed where its signed announcement says, not at its bond's dead endpoint
   const peerEndpointsOf = (committee, selfPubkey) => endpointsOf(committee, selfPubkey, addressBook.endpointOf);
