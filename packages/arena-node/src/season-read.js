@@ -112,6 +112,10 @@ function entriesOf(round, rid, contract, { paid, market }) {
   const all = paid ? round.entriesOf(rid).filter(({ entryId }) => { const l = typeof round.stakeLock === 'function' ? round.stakeLock(entryId) : null; return !!(l && l.fields); })
     : round.entriesOf(rid);
   const perKey = new Map(); for (const { entry } of all) { const k = hex(entry.playerPubkey); perKey.set(k, (perKey.get(k) || 0) + 1); }
+  // A KEY'S SHARE ONCE PER ROUND (feedback #109): the settlement pays its shares per key, and a key may hold several entries of one paid round (a
+  // fresh session key each) - the whole share was added to every entry of the key, and the season summed them: two winning entries booked
+  // 372,000 msat for a round that paid 282,000. The share now goes with the key's first entry only (the entries' own locks stay per entry)
+  const shareBooked = new Set();
   return all.map(({ entryId, entry }) => {
     const key = hex(entry.playerPubkey);
     const proven = typeof round.identityOf === 'function' ? round.identityOf(entryId) : null;
@@ -142,7 +146,9 @@ function entriesOf(round, rid, contract, { paid, market }) {
     const late = typeof round.lateLockSettlement === 'function' ? round.lateLockSettlement(rid, entryId) : null;
     if (late && late.state !== ACCEPTED) return base;
     const taken = claimed.has(lock.outpoint) || !!late;
-    return { ...base, payoutMsat: (taken ? 0n : BigInt(String(lock.fields.amountMsat))) + (shares.get(key) || 0n) };
+    const share = shareBooked.has(key) ? 0n : (shares.get(key) || 0n);
+    shareBooked.add(key);
+    return { ...base, payoutMsat: (taken ? 0n : BigInt(String(lock.fields.amountMsat))) + share };
   });
 }
 
