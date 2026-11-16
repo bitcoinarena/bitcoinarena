@@ -18,6 +18,7 @@ python3 "$HERE/join-icons.py" "$T/out.html"
 python3 "$HERE/season-words.py" "$T/out.html"
 python3 "$HERE/nostr-wide.py" "$T/out.html" "$REPO/packages/arena-node/src/bounty-social-store.js"
 python3 "$HERE/no-at.py" "$T/out.html"   # kanban #2873: no leading @ in the social name fields
+python3 "$HERE/bonus-human.py" "$T/out.html"   # kanban #2904: the social bonus for humans only
 python3 "$HERE/groups.py" "$T/out.html"
 python3 "$HERE/summary.py" "$T/out.html"
 python3 "$HERE/budget-top.py" "$T/out.html"

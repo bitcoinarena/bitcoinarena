@@ -22,14 +22,17 @@ test('#2623 #2641 #2784 the payout: the full level only for a played round by a 
   assert.equal(seasonPayout({ level: 'high', flags: { x: true }, played: false }).sats, 6000, 'a verified X account, no played round: the full level (+20 %)');
   assert.equal(seasonPayout({ level: 'low', flags: { x: true }, played: false }).sats, 1200, 'low + X, not played: 1,200');
   assert.equal(seasonPayout({ level: 'low', played: false }).sats, 150, 'low, no X: the bot share');
+  // kanban #2904 (the owner 2026-11-16: "Die Boni gelten nur, wenn es ein Mensch ist"): the social bonus only for a human
+  assert.equal(seasonPayout({ level: 'low', flags: { armada: true, nostr: true } }).sats, 150, 'a bot with Armada + Nostr: 15 % flat, no bonus');
+  assert.equal(seasonPayout({ level: 'low', flags: { x: true, telegram: true, discord: true } }).sats, 1400, 'a human (X) with 2 communities: 100 % + 40 %');
   // kanban #2788 (the owner 2026-11-15): only X proves a human; Telegram, Discord and Armada stay a bonus
   for (const f of [{ telegram: true }, { discord: true }, { armada: true }, { telegram: true, discord: true, armada: true }, { nostr: true }]) {
     const p = seasonPayout({ level: 'high', flags: f });
     assert.equal(p.human, false, JSON.stringify(f)); assert.equal(p.quarter, true, JSON.stringify(f)); assert.equal(p.baseSats, 750, JSON.stringify(f)); }
-  assert.equal(seasonPayout({ level: 'high', flags: { nostr: true } }).sats, Math.floor(750 * 1.2), 'a Nostr follow is a bonus, not proof of a human');
+  assert.equal(seasonPayout({ level: 'high', flags: { nostr: true } }).sats, 750, 'a Nostr follow is no proof of a human, and a bot gets no bonus (kanban #2904)');
   assert.equal(seasonPayout({ level: 'high', codeOnly: true }).sats, 750);
   assert.equal(seasonPayout({ level: 'critical', codeOnly: true, flags: { discord: true } }).sats, 1500, 'one community alone: no bonus');
-  assert.equal(seasonPayout({ level: 'critical', codeOnly: true, flags: { discord: true, armada: true } }).sats, 1800);
+  assert.equal(seasonPayout({ level: 'critical', codeOnly: true, flags: { discord: true, armada: true } }).sats, 1500, 'a bot share gets no community bonus (kanban #2904)');
   assert.equal(seasonPayout({ level: 'high', followUp: true }).sats, 150);
   assert.equal(seasonPayout({ level: 'medium', followUp: true, flags: { x: true } }).sats, 1200);
   assert.equal(seasonPayout({ level: 'useful', codeOnly: true }).sats, 75);
