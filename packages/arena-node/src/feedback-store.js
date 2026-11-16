@@ -766,6 +766,13 @@ export function networkPlayers({ seats, games, days = 90, keepMs = 10 * 60 * 100
   // EACH GAME'S PLAYERS AS LAST READ (kanban #2565, measured 2026-11-12: a refresh while no seat answered - one restarting, the rest slow
   // under load - emptied the list and every reward was refused "not finished a round" for 10 min): a game no seat answers keeps its last list
   const lastOf = new Map();   // game -> Map(player -> rounds)
+  // WHO ENTERED A PAID ROUND, WHATEVER IT CAME TO (kanban #2875, the owner 2026-11-16): the season rows count no VOID round and no refunded entry, so a
+  // player whose paid rounds all went void read "never played". Each seat's season answer carries `entered` (unsigned, from that seat's own store:
+  // the players with a locked entry in a paid round); a seat holds only its committees' rounds, so every seat's own season is read for it (each
+  // seat keeps that answer cached). Kept per seat and game like the rows: a seat that does not answer keeps its last list
+  const enteredLast = new Map();   // `${seat}|${game}` -> Set(player)
+  const keyOk = (k) => /^[0-9a-f]{64}$/i.test(String(k || ''));
+  let entered = new Set();
   async function refresh() {
     const next = new Set(), counts = new Map();
     // ONE SEAT'S NETWORK VIEW PER GAME, THE GAMES AT ONCE (kanban #1484, the owner 2026-11-11: "Is VERY slow, speed it up"): scope=network is the whole network's
@@ -782,10 +789,21 @@ export function networkPlayers({ seats, games, days = 90, keepMs = 10 * 60 * 100
           for (const row of b.rows || []) if (Number(row.rounds) > 0 && /^[0-9a-f]{64}$/i.test(String(row.player || ''))) {
             const k = String(row.player).toLowerCase(); read.set(k, (read.get(k) || 0) + Number(row.rounds)); }
           lastOf.set(g, read);
+          if (Array.isArray(b.entered)) enteredLast.set(`network|${g}`, new Set(b.entered.filter(keyOk).map((k) => String(k).toLowerCase())));
           return;
         } catch { /* that seat does not answer: the next one */ }
       }
     }));
+    await Promise.all(seats.flatMap((seat) => games.map(async (g) => {
+      try {
+        const r = await fetcher(`${String(seat).replace(/\/$/, '')}/season?game=${encodeURIComponent(g)}&days=${days}`, { signal: AbortSignal.timeout(20000), redirect: 'error' });
+        if (!r.ok) return;
+        const b = await readJsonBounded(r, NETWORK_SEASON_MAX_BYTES);
+        if (Array.isArray(b.entered)) enteredLast.set(`${seat}|${g}`, new Set(b.entered.filter(keyOk).map((k) => String(k).toLowerCase())));
+      } catch { /* that seat does not answer: its last list stays */ }
+    })));
+    const ent = new Set(); for (const s of enteredLast.values()) for (const k of s) ent.add(k);
+    entered = ent;
     for (const g of games) for (const [k, n] of lastOf.get(g) || []) {
       next.add(k); const m = counts.get(k) || {}; m[g] = (m[g] || 0) + n; counts.set(k, m); }
     keys = next; perGame = counts; at = Date.now();
@@ -793,7 +811,7 @@ export function networkPlayers({ seats, games, days = 90, keepMs = 10 * 60 * 100
   }
   return {
     refresh,
-    played: (pubkey) => keys.has(String(pubkey || '').toLowerCase()),
+    played: (pubkey) => keys.has(String(pubkey || '').toLowerCase()) || entered.has(String(pubkey || '').toLowerCase()),
     // { rounds, games: [[game, rounds], ...] } in the network season of `days`, the most played first; none: rounds 0
     history: (pubkey) => { const m = perGame.get(String(pubkey || '').toLowerCase()) || {}; const games = Object.entries(m).sort((a, b) => b[1] - a[1]);
       return { rounds: games.reduce((t, [, n]) => t + n, 0), games, days }; },
