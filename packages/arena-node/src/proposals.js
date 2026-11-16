@@ -222,13 +222,17 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
   }
   // kanban #2792: the new (network, height) keys the POST /proposal pre-check may derive a census for, per minute
   const DOOR_CENSUS_KEYS = 4, DOOR_CENSUS_WINDOW_MS = 60000;
-  let doorWindow = { from: 0, keys: new Set() };
-  const doorCensusKey = (key) => {
+  // kanban #2840 (#1489 r25-census-1): a peer's listing pulled into add() is outside input too - one seat listing 256 junk records under fresh keys
+  // at 256 heights made every honest seat's pull start 256 census derivations. The pull has a window of its own, the door's size, so it cannot
+  // shut the door either; proposers bonded in the census held now pass both (#2831); the tally's own re-post (`own: true`) is not held to it.
+  const windows = { door: { from: 0, keys: new Set() }, peer: { from: 0, keys: new Set() } };
+  const doorCensusKey = (key, which = 'door') => {
     const now = Date.now();
-    if (now - doorWindow.from >= DOOR_CENSUS_WINDOW_MS) doorWindow = { from: now, keys: new Set() };
-    if (doorWindow.keys.has(key)) return true;
-    if (doorWindow.keys.size >= DOOR_CENSUS_KEYS) return false;
-    doorWindow.keys.add(key);
+    if (now - windows[which].from >= DOOR_CENSUS_WINDOW_MS) windows[which] = { from: now, keys: new Set() };
+    const w = windows[which];
+    if (w.keys.has(key)) return true;
+    if (w.keys.size >= DOOR_CENSUS_KEYS) return false;
+    w.keys.add(key);
     return true;
   };
   const api = {
@@ -275,7 +279,7 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
             // census (no derivation), names the bonded node keys; only posters it does not name share the DOOR_CENSUS_KEYS window
             let bondedHere = false;
             if (typeof censusNow === 'function') { try { const now = censusNow(); bondedHere = Array.isArray(now) && now.some((e) => e && xOnly(e.pubkey) === xOnly(p.proposer)); } catch { bondedHere = false; } }
-            if (!own && !bondedHere && !doorCensusKey(`${net}:${h}`)) return { ok: false, status: 503, why: 'this seat reads only a few new censuses a minute for posted proposals: ask again shortly' };
+            if ((!own || own === 'peer') && !bondedHere && !doorCensusKey(`${net}:${h}`, own === 'peer' ? 'peer' : 'door')) return { ok: false, status: 503, why: 'this seat reads only a few new censuses a minute for posted proposals: ask again shortly' };
             let census = null; try { census = await censusAt(net, h); } catch { census = null; }
             if (Array.isArray(census) && !census.some((e) => e && xOnly(e.pubkey) === xOnly(p.proposer)))
               return { ok: false, status: 422, why: `the proposer holds no active bond in the census at height ${h} (27A.7.2)` };
@@ -565,7 +569,7 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
         // kept here: only its signed sightings are news (kanban #2432) - who listed it proves nothing
         if (mine && stateOf(mine) !== S.ORPHANED) { if (isLate(mine)) { try { await api.vouch(mine.id, r); } catch { /* the next pull */ } } continue; }
         try {
-          const got = await api.add({ proposal: r.proposal, blockHash: r.blockHash }, { own: true });
+          const got = await api.add({ proposal: r.proposal, blockHash: r.blockHash }, { own: 'peer' });   // kanban #2840
           if (got.ok && got.status === 201) took++;
           if (got.ok && isLate(held.get(got.id))) await api.vouch(got.id, r);
         } catch { /* not one */ }
