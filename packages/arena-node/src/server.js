@@ -10743,7 +10743,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           // an entry carries no signature of its player, so copies naming the handout player's own key could still take the point's
           // PENDING_PER_POINT slots first. The page and the bot lock before they post the entry (kanban #1596): when the slots are full the
           // federation is asked once for this entry, and the one it holds the lock of is entered past the cap here, as POST /lock would enter it
-          if (holdWhy === PENDING_POINT_FULL && await stakeLockHeldAtEntry(contract)) joined = round.enter(contract, { stakeLockHeld: true });
+          // AND A FULL HELD-ASIDE MAP DOES TOO (kanban #2834, wf1489 r24 entry-1: strangers' free lockless entries filled the seat-wide map to
+          // PENDING_MAX and every honest locked entry was refused, its lock 404): any refusal to hold aside asks the federation once for this entry
+          if (holdWhy !== null && await stakeLockHeldAtEntry(contract)) joined = round.enter(contract, { stakeLockHeld: true });
           else {
             if (holdWhy !== null) throw e;
             steps.named(toHex(idOfEntry(contract))).at('held aside for its lock');
