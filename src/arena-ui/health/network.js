@@ -763,7 +763,16 @@ export function makeHealth({ H, $, window = {} }) {
   // network's band (the lowest-load OPEN federation's: new deposits go there) with the installer's minimum bond
   function paintCapacity(cap, feds = []) {
     if (cap && cap.body) window.ARENA_HEALTH_CAPACITY = cap.body;
-    H.draw($('capacity'), 'capacity', { view: H.capacityView(cap && cap.body, feds, fedNoOf) });
+    // NOT A FEDERATION THAT IS TEMPORARILY UNAVAILABLE (feedback #104): the seats' lowest-load OPEN federation can be one with no reserve key yet,
+    // where paid rounds are paused - the card named it "the lowest-load OPEN federation" while the federations table said it was unavailable.
+    // The network line is read from the OPEN federations that are available here (the seats' own bands kept)
+    let body = cap && cap.body;
+    if (body && body.network && Array.isArray(body.federations) && UNAVAILABLE.has(body.network.lowestFederation)) {
+      const open = body.federations.filter((f) => f.status === 'OPEN' && typeof f.load === 'number' && !UNAVAILABLE.has(f.federation));
+      const lowest = open.length ? open.reduce((x, y) => (y.load < x.load ? y : x)) : null;
+      body = { ...body, network: { ...body.network, lowestFederation: lowest ? lowest.federation : null, lowestLoad: lowest ? lowest.load : null, band: lowest ? lowest.band : body.network.band } };
+    }
+    H.draw($('capacity'), 'capacity', { view: H.capacityView(body, feds, fedNoOf) });
   }
 
   function paintFeds(list) {

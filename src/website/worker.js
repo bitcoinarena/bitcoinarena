@@ -179,7 +179,10 @@ async fetch(request, env, ctx) {
   // SN.BITCOINARENA.IO (kanban #1458, the owner 2026-11-11: "If we can't track the referrer refer to sn.bitcoinarena.io so we can track it" - "to the website"): Stacker
   // News links strip the referrer (rel="noreferrer"), so a post links here and the visit lands on the website with the /sn campaign; a path is kept
   if (url.hostname === 'sn.bitcoinarena.io' || url.hostname === 'sn.bitcoin-arena.io') {
-    const to = new URL(url.pathname + url.search, 'https://bitcoinarena.io');
+    // ONLY ON OUR OWN SITE (feedback #109): a path beginning '//' is a protocol-relative URL, so '//example.com/' sent the visit to example.com -
+    // the path's leading slashes are folded to one and the host is checked
+    let to = new URL(url.pathname.replace(/^\/+/, '/') + url.search, 'https://bitcoinarena.io');
+    if (to.hostname !== 'bitcoinarena.io') to = new URL('https://bitcoinarena.io/');
     if (!to.searchParams.has('utm_source')) for (const [k, v] of new URLSearchParams(CHANNEL_LINKS['/sn'])) to.searchParams.set(k, v);
     return Response.redirect(to.toString(), 302);
   }
