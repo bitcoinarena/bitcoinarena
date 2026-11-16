@@ -81,7 +81,7 @@
       <div id="say" role="status"></div>
       <div class="scroll"><table><thead><tr><th>Received</th><th>From</th><th>Category</th><th>State</th><th class="hide-s">Game</th><th>What happened</th><th>Player</th><th>Reward</th></tr></thead><tbody id="rows"></tbody></table></div>
     </div>
-    <dialog id="dlg" aria-label="Report"><div class="dlg-bar"><span class="dim" id="dlg-pos"></span><button id="dlg-prev" title="previous report (←)">‹ Prev</button><button id="dlg-next" title="next report (→)">Next ›</button><button id="dlg-x" title="close (Esc)" aria-label="close">✕</button></div><div class="panel" id="detail" hidden></div></dialog>
+    <dialog id="dlg" aria-label="Report"><div class="dlg-bar"><span class="dim" id="dlg-pos"></span><span id="dlg-say" role="status"></span><button id="dlg-prev" title="previous report (←)">‹ Prev</button><button id="dlg-next" title="next report (→)">Next ›</button><button id="dlg-x" title="close (Esc)" aria-label="close">✕</button></div><div class="panel" id="detail" hidden></div></dialog>
   </div>
 </main>
 <script>
@@ -111,7 +111,8 @@ const SOCIAL_SVG = {"x": "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusa
   { const m = /(?:^|[#&])code=([^&]+)/.exec(location.hash || '');
     if (m) { try { code = decodeURIComponent(m[1]).trim(); localStorage.setItem('arena.feedback.admin', code); } catch { /* this tab only */ }
       history.replaceState(history.state, '', location.pathname + location.search); } }
-  const say = (t, bad = false) => { $('say').textContent = t; $('say').className = bad ? 'bad' : 'dim'; };
+  // kanban #2904: what an action answers is said in the open modal too - behind it the list's line was out of sight ("Mark as real user does nothing")
+  const say = (t, bad = false) => { for (const id of ['say', 'dlg-say']) { const x = $(id); if (x) { x.textContent = t; x.className = bad ? 'bad' : 'dim'; } } };
   async function call(path, body) {
     const r = await fetch(`${API}/${path}`, body ? { method: 'POST', headers: { 'content-type': 'application/json', 'x-arena-admin': code }, body: JSON.stringify(body) } : { headers: { 'x-arena-admin': code } });
     if (r.status === 403) { show(false); throw new Error('not the admin code'); }
@@ -307,7 +308,7 @@ const SOCIAL_SVG = {"x": "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusa
     if (r.reward) d.append(el('div', {}, el('b', { text: `Season ${weekOf(r, WEEK2, S1_END)} reward ${sats(r.reward.amountSats)} (${r.reward.network}) · ${r.reward.state}${r.reward.address ? ` · to ${r.reward.address}` : ''}` }),
       r.reward.comment ? el('div', { cls: 'dim', text: `Comment: ${r.reward.comment}` }) : null, r.reward.why && r.reward.state !== 'paid' ? el('div', { cls: 'warn', text: r.reward.why }) : null,
       r.reward.lnurl ? el('div', {}, el('code', { text: r.reward.lnurl })) : null));
-    const act = async (body, ok) => { let a; try { a = await call('act', { id: r.id, ...body }); } catch (e) { return say(e.message, true); } if (!a.ok) return say(a.why, true); say(ok); await load(); await open(r.id); };
+    const act = async (body, ok) => { let a; try { a = await call('act', { id: r.id, ...body }); } catch (e) { return say(e.message, true); } if (!a.ok) return say(a.why, true); say(ok); await load(); await open(r.id); say(ok); };
     const amount = el('input', { type: 'number', min: '100', step: '100', placeholder: 'sat', size: '8' });
     // "node" first and pre-filled only when this report gets the one-time bounty (kanban #1453); a node report without one starts at a normal level
     const nodeLevel = r.source === 'node' && (!r.nodeBounty || r.nodeBounty.first);
@@ -320,7 +321,7 @@ const SOCIAL_SVG = {"x": "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusa
     const ticket = el('input', { placeholder: '#ticket', size: '8' });
     const btn = (label, fn, go = false) => { const b = el('button', { text: label, ...(go ? { cls: 'go' } : {}) }); b.addEventListener('click', fn); return b; };
     // THE OWNER'S "REAL USER" MARK (kanban #2875): shown on every report of this key; set or cleared here. It changes no payout share.
-    { const ru = r.realUser, nm = el('input', { size: '24', maxlength: '80', placeholder: 'player name', value: ru ? ru.name : '' }), note = el('input', { size: '32', maxlength: '200', placeholder: 'note (X, Telegram ...)', value: (ru && ru.note) || '' });
+    { const ru = r.realUser, nm = el('input', { size: '24', maxlength: '80', placeholder: 'player name (needed)', value: ru ? ru.name : ((((r.season2 && r.season2.links) || []).find((l) => l && l.platform === 'x' && l.username) || {}).username || '') }), note = el('input', { size: '32', maxlength: '200', placeholder: 'note (X, Telegram ...)', value: (ru && ru.note) || '' });
       d.append(el('h2', { text: 'Real user (owner)' }),
         ru ? el('div', {}, el('span', { cls: 'nb-badge ok', text: `real user (owner): ${ru.name}` }), el('span', { cls: 'dim', text: ` set ${new Date(ru.setMs).toISOString().slice(0, 16).replace('T', ' ')} UTC${ru.setBy ? ` by ${ru.setBy}` : ''}${ru.note ? ` - ${ru.note}` : ''}` })) : el('div', { cls: 'dim', text: 'This key carries no real-user mark.' }),
         el('div', { cls: 'row' }, nm, note, btn(ru ? 'Update mark' : 'Mark as real user', () => act({ action: 'real-user', name: nm.value, note: note.value }, 'Marked as real user')),
