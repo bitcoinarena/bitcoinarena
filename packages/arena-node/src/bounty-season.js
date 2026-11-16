@@ -65,7 +65,7 @@ export function seasonPayout({ level, codeOnly = false, followUp = false, flags 
   if (!Object.hasOwn(LEVEL_SATS, lv)) return { ok: false, why: 'a level is useful, low, medium, high, critical or node' };
   let base = followUp ? FOLLOW_UP_SATS : LEVEL_SATS[lv];
   const human = HUMAN_FLAGS.some((k) => !!(flags && flags[k]));
-  const full = !codeOnly && !!played && human;
+  const full = !codeOnly && human;   // the owner 2026-11-16 ~14:10Z: "Ein bestaetigtes X-Konto reicht" - a verified X makes a human; a played round is no longer needed
   if (!full) base = Math.floor((base * BOT_PCT) / 100);   // a bot's share (kanban #2784: 25 %, the owner 2026-11-15 later: 15 %)
   const pct = bonusPct(flags);
   // `codeOnly` on the answer (and the approval's code_only) says "paid at the bot share": a payable() read again then never rises to the full level

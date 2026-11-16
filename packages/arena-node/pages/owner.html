@@ -702,7 +702,7 @@ function nodeSocialPanel(box, el) {
   const wrap = el('div', { cls: 'fbn-social', id: 'fbn-social' });
   const head = el('div', { cls: 'fbn-s-head' }, el('b', { text: 'Season 2: prove you are human, earn the community bonus' }), el('span', { cls: 'sub', text: ' optional' }));
   const rules = el('ul', { cls: 'sub fbn-s-rules' },
-    el('li', { text: 'Humans 100 %, bots 15 %: play at least one round and link your X account. Without both, a report counts as a bot report and gets 15 %.' }),
+    el('li', { text: 'Humans 100 %, bots 15 %: a linked, verified X account proves you are human. Without one, a report counts as a bot report and gets 15 %.' }),
     el('li', { text: 'Community bonus: +20 % for following on X, +20 % on Nostr, +20 % for any two of Telegram, Discord and Armada (at most +60 %).' }),
     el('li', { text: 'From 16 Nov 2026 07:06 UTC the 10,000 sat node bounty is only for humans with a linked X account. Node reports from bots are rewarded like any other feedback.' }),
     el('li', {}, el('span', { text: 'All rules: ' }), el('a', { href: 'https://bitcoinarena.io/bounty/#rules', target: '_blank', rel: 'noopener noreferrer', text: 'bitcoinarena.io/bounty' })));
@@ -733,7 +733,7 @@ function nodeSocialPanel(box, el) {
     const n = j && Number.isFinite(j.bonusPct) ? j.bonusPct : 0;
     bonus.textContent = 'Social bonus: +' + n + ' %';
     const x = j && j.flags && j.flags.x === true;
-    human.textContent = x ? 'X linked and verified: with a played round your reports count as human (100 %).' : 'No verified X account yet: your reports count as bot reports (15 %).';
+    human.textContent = x ? 'X linked and verified: your reports count as human (100 %).' : 'No verified X account yet: your reports count as bot reports (15 %).';
   };
   check.onclick = async () => {
     const asked = {}; for (const [p, f] of Object.entries(fields)) if (f.input.value.trim()) asked[p] = f.input.value.trim();

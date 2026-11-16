@@ -18,7 +18,10 @@ test('#2623 #2641 #2784 the payout: the full level only for a played round by a 
   assert.equal(seasonPayout({ level: 'high', flags: { telegram: true, armada: true, x: true, nostr: true } }).sats, 8000, 'the page: "a high bug then pays 8,000"');
   assert.equal(seasonPayout({ level: 'high' }).sats, 750, 'played, no verified account: counts as a bot, 15 %');
   assert.equal(seasonPayout({ level: 'high', flags: { x: true } }).sats, 6000, 'played and a verified X account: the full level (+20 % X bonus)');
-  assert.equal(seasonPayout({ level: 'high', flags: { x: true }, played: false }).sats, 900, 'a human who played no round: 15 % (+20 %)');
+  // kanban #2904 (the owner 2026-11-16 ~14:10Z: "Ein bestaetigtes X-Konto reicht"): a verified X account alone is human - no played round needed
+  assert.equal(seasonPayout({ level: 'high', flags: { x: true }, played: false }).sats, 6000, 'a verified X account, no played round: the full level (+20 %)');
+  assert.equal(seasonPayout({ level: 'low', flags: { x: true }, played: false }).sats, 1200, 'low + X, not played: 1,200');
+  assert.equal(seasonPayout({ level: 'low', played: false }).sats, 150, 'low, no X: the bot share');
   // kanban #2788 (the owner 2026-11-15): only X proves a human; Telegram, Discord and Armada stay a bonus
   for (const f of [{ telegram: true }, { discord: true }, { armada: true }, { telegram: true, discord: true, armada: true }, { nostr: true }]) {
     const p = seasonPayout({ level: 'high', flags: f });
