@@ -23,6 +23,12 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 
 export const RELAY_KINDS = Object.freeze([0, 10002, 30078, 24133, 22242, 13194, 23194, 23195, 30762, 30009, 8, 9735]);   // + NIP-47 (wallet connect), + round results and NIP-58 badges, + NIP-57 zap receipts
 const MAX_EVENT_BYTES = 64 * 1024, MAX_SUBS = 20, MAX_FILTERS = 10, MAX_LIMIT = 500, FUTURE_S = 900;
+// WHAT KEPT SUBSCRIPTIONS MAY HOLD (kanban #2839, #1489 r24-nostr-2): a socket's 20 REQs of 10 filters with ~1,600 tag values each stayed compiled
+// for the socket's life - 12.9 MB of heap per idle socket, nothing bounding the total. Each kept subscription is charged its values (ids,
+// authors, kinds and tag values); a socket holds at most SUB_VALUES_PER_SOCKET, the relay at most SUB_VALUES_TOTAL; past either a REQ is CLOSED.
+const SUB_VALUES_PER_SOCKET = 4000, SUB_VALUES_TOTAL = 400000;
+const valuesOf = (compiled) => compiled.reduce((t, c) => t + (c.ids ? c.ids.size : 0) + (c.authors ? c.authors.size : 0) + (c.kinds ? c.kinds.size : 0)
+  + c.tags.reduce((u, [, v]) => u + v.size, 0) + 1, 0);
 // THE RELAY IS NOT ANYBODY'S DISK (kanban #1513, #1489 r1-nostr-3): the only limit was 60 messages per 10 s per socket, and sockets
 // are free, so one fresh key kept any number of events (kind 8, 9735, or 30078/30762/30009 under new `d`s, up to 64 KB each). Now:
 //   - per author at most AUTHOR_EVENTS events and AUTHOR_BYTES bytes; a new one past that pushes out that author's OWN oldest
@@ -302,6 +308,7 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   const keepList = (Array.isArray(keep) ? keep : [...(keep || [])]).map((k) => String(k).toLowerCase()).filter((k) => HEX64.test(k));
   const keepJson = JSON.stringify(keepList), keepSet = new Set(keepList);
   const clients = new Set();
+  let subValuesHeld = 0;   // kanban #2839: the values all kept subscriptions hold
   const info = { name, description, supported_nips: [1, 11, 42, 46, 47, 57, 58, 65, 78], software: 'arena-node/nostr-relay', version: '1',
     limitation: { max_message_length: MAX_EVENT_BYTES, max_subscriptions: MAX_SUBS, max_filters: MAX_FILTERS, max_limit: MAX_LIMIT }, kinds };
   const server = createServer((req, res) => {
@@ -571,7 +578,9 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   };
   wss.on('connection', (ws) => {
     const subs = new Map();
-    const c = { ws, subs };
+    const c = { ws, subs, held: 0 };
+    // kanban #2839: every change of a kept subscription goes through these two, so the charges are given back on CLOSE, a cut and the close
+    const dropSub = (sid) => { const had = subs.get(sid); if (!had) return; subs.delete(sid); c.held -= had.charge || 0; subValuesHeld -= had.charge || 0; };
     clients.add(c);
     let budget = 60, pings = PINGS, refill = setInterval(() => { budget = Math.min(60, budget + 20); pings = PINGS; }, 10000);
     const send = (m) => {   // kanban #1717: no message is queued for a client already HARD_SLOW_BYTES behind
@@ -588,7 +597,7 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
       queued += d.length + 2;
       if (queued > lim.totalSlowBytes) shed();
     });
-    ws.on('close', () => { clients.delete(c); clearInterval(refill); });
+    ws.on('close', () => { clients.delete(c); clearInterval(refill); for (const sid of [...subs.keys()]) dropSub(sid); });
     // kanban #1470, #1726, #1796, #1833: a frame ws itself refuses (over maxPayload, a text frame that is not UTF-8, a reserved bit set, a bad
     // opcode) never reaches 'message' - ws emits 'error' on this socket and closes it. Without a listener the EventEmitter throws and the relay
     // process ends for every player; with one, only this socket goes.
@@ -686,19 +695,25 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
         if (!filters.length || filters.length > MAX_FILTERS) return send(['CLOSED', sid, `invalid: 1 to ${MAX_FILTERS} filters`]);
         { const bad = filters.map(filterRefusal).find(Boolean); if (bad) return send(['CLOSED', sid, `invalid: ${bad}`]); }   // kanban #1470
         if (!subs.has(sid) && subs.size >= MAX_SUBS) return send(['CLOSED', sid, `blocked: at most ${MAX_SUBS} subscriptions`]);
-        subs.set(sid, filters.map(compileFilter));   // kanban #1752: Sets, built once
+        { const compiled = filters.map(compileFilter);   // kanban #1752: Sets, built once
+          const charge = valuesOf(compiled), was = subs.has(sid) ? (subs.get(sid).charge || 0) : 0;
+          if (c.held - was + charge > SUB_VALUES_PER_SOCKET || subValuesHeld - was + charge > SUB_VALUES_TOTAL) {
+            dropSub(sid);
+            return send(['CLOSED', sid, `blocked: too many subscription values (at most ${SUB_VALUES_PER_SOCKET} per connection)`]);
+          }
+          dropSub(sid); compiled.charge = charge; subs.set(sid, compiled); c.held += charge; subValuesHeld += charge; }
         const found = stored(filters);
         for (const e of found) {
           if (ws.readyState !== 1) return undefined;
           // kanban #1717: the stored answer stops once this socket's unsent backlog passes SLOW_BYTES; the subscription ends
-          if (ws.bufferedAmount > SLOW_BYTES) { subs.delete(sid); return send(['CLOSED', sid, 'error: too slow, the answer was cut; ask again with a smaller limit']); }
+          if (ws.bufferedAmount > SLOW_BYTES) { dropSub(sid); return send(['CLOSED', sid, 'error: too slow, the answer was cut; ask again with a smaller limit']); }
           queue(c, JSON.stringify(['EVENT', sid, e]));   // kanban #1904: counted toward the relay-wide backlog (may drop this client)
         }
         // kanban #2275: a walk that ran out of its budget says so - the answer may miss older matches
         if (found.broad) send(['NOTICE', `error: filter too broad, this REQ examined ${SCAN_ROWS} rows and some of its filters may miss older matches; narrow them (since/until, fewer values)`]);
         return send(['EOSE', sid]);
       }
-      if (m[0] === 'CLOSE') { subs.delete(String(m[1] || '')); return undefined; }
+      if (m[0] === 'CLOSE') { dropSub(String(m[1] || '')); return undefined; }
       return send(['NOTICE', `unknown message ${String(m[0]).slice(0, 20)}`]);
     };
   });
