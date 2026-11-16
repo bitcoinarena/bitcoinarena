@@ -5,7 +5,7 @@
 // membership reads, the draw's entries, the live verifiers' answers and the public open-issues list (areas and ticket numbers only).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { openBountySeason, seasonPayout, bonusPct, seasonAt, SEASON_MS, openIssueAreas, cleanOpenIssues, CHECK_FRESH_MS, LINK_CODE_MS } from '../src/bounty-season.js';
+import { openBountySeason, seasonPayout, bonusPct, seasonAt, SEASON_MS, openIssueAreas, cleanOpenIssues, CHECK_FRESH_MS, LINK_CODE_MS, NODE_BOT_EXCLUDED_FROM_MS } from '../src/bounty-season.js';
 import { telegramVerifier, discordVerifier, xVerifier, postsOf } from '../src/bounty-verify.js';
 import { linkFromText } from '../tools/bounty-link-bot.mjs';
 
@@ -130,4 +130,32 @@ test('#2623 the open-issues list names areas and ticket numbers, never a ticket\
   assert.deepEqual(o.areas, [{ area: 'Committees and bonds', tickets: ['#2564'] }, { area: 'Slashing', tickets: ['#1155'] }]);
   assert.doesNotMatch(JSON.stringify(o), /FROST|derives|secret/);
   assert.deepEqual(cleanOpenIssues({ updated: 'x', areas: [{ area: 'Evil<script>', tickets: ['#1', 'drop'] }] }).areas, [{ area: 'Evilscript', tickets: ['#1'] }]);
+});
+
+// kanban #2876 (the owner 2026-11-16 ~07:06Z): from 2026-11-16T07:06:38Z a node report from a reporter who is not proven human (a played round AND a
+// verified X account) gets no flat 10,000 sat node bounty - approved as ordinary feedback at its level instead; one received before keeps the old rule
+test('#2876 the node bounty after the cutoff only for a proven human; a bot\'s node report is refused as node and takes an ordinary level', async () => {
+  const T = NODE_BOT_EXCLUDED_FROM_MS;
+  // the rule itself
+  assert.equal(seasonPayout({ level: 'node', receivedMs: T - 1 }).sats, 10000, 'before the cutoff: the old rule');
+  const bot = seasonPayout({ level: 'node', receivedMs: T, flags: { telegram: true, discord: true } });
+  assert.equal(bot.ok, false); assert.equal(bot.nodeNotHuman, true); assert.match(bot.why, /07:06 UTC.*ordinary feedback/);
+  assert.equal(seasonPayout({ level: 'node', receivedMs: T, flags: { x: true }, played: false }).ok, false, 'X but no played round: not proven');
+  assert.equal(seasonPayout({ level: 'node', receivedMs: T, flags: { x: true } }).sats, 10000, 'played and a verified X account: the node bounty');
+  assert.equal(seasonPayout({ level: 'node' }).sats, 10000, 'an approval read again (no receivedMs) keeps its node amount');
+  // plan(): the report's own receivedMs and its reporter's verified links
+  const s = openBountySeason(':memory:', { startMs: T - 1000 });
+  const now = T + 60000;
+  const old = { id: '1'.repeat(64), pubkey: K(3), receivedMs: T - 1 }, botNew = { id: '2'.repeat(64), pubkey: K(4), receivedMs: T }, human = { id: '3'.repeat(64), pubkey: K(5), receivedMs: T + 5 };
+  const c = s.makeCode(K(5), { nowMs: now }); assert.equal(s.redeem(c.code, { platform: 'x', userId: '55', username: '@h', nowMs: now }).ok, true);
+  await s.verify(K(5), { x: async () => ({ member: true }) }, { nowMs: () => now });
+  const pOld = s.plan(old, { level: 'node', nowMs: now }), pBot = s.plan(botNew, { level: 'node', nowMs: now }), pHuman = s.plan(human, { level: 'node', nowMs: now });
+  const pBotPlayedNot = s.plan(human, { level: 'node', played: false, nowMs: now });
+  const pBotHigh = s.plan(botNew, { level: 'high', nowMs: now });
+  console.log('  FACTS #2876:', JSON.stringify({ old: pOld.sats, bot: [pBot.ok, pBot.why], human: pHuman.sats, humanNoRound: pBotPlayedNot.ok, botHigh: pBotHigh.sats }));
+  assert.equal(pOld.sats, 10000);
+  assert.equal(pBot.ok, false); assert.equal(pBot.nodeNotHuman, true);
+  assert.equal(pHuman.sats, 10000);
+  assert.equal(pBotPlayedNot.ok, false);
+  assert.equal(pBotHigh.sats, 750, 'the same bot report as ordinary feedback: high at the bot share');
 });

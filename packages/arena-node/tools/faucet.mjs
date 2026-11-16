@@ -599,7 +599,7 @@ if (S2) setInterval(() => { if (!S2_STARTED() || !bountyOn()) return;
     for (const a of S2.approvals({ state: 'waiting' })) {
       const r = FEEDBACK.report(a.report);
       if (!r || r.state !== 'new') continue;
-      if (a.level !== 'node') await S2.verify(r.pubkey, S2_VERIFY, { cause: 'season2-start' });
+      await S2.verify(r.pubkey, S2_VERIFY, { cause: 'season2-start' });   // kanban #2876: a node report too
       const p = S2.plan(r, { level: a.level, codeOnly: a.codeOnly, followUp: a.followUp, played: playedFor(r) });
       if (!p.ok) continue;
       if (p.waits || p.noBounty) { if (p.waits && p.season !== a.season) S2.wait(r, p, { by: 'season2' }); continue; }   // a Season 2 waiter keeps waiting (#2787: Season 2 keeps its rule)
@@ -745,7 +745,7 @@ createServer((req, res) => {
             if (!r) return send(200, { ok: false, why: 'no such report' });
             if (r.state !== 'new') return send(200, { ok: false, why: `a ${r.state} report is not approved for money` });
             const level = String(b.severity || '').toLowerCase();
-            if (level !== 'node') await S2.verify(r.pubkey, S2_VERIFY, { cause: 'approve' });
+            await S2.verify(r.pubkey, S2_VERIFY, { cause: 'approve' });   // kanban #2876: a node report too - its bounty needs a proven human now
             await PLAYED.fresh().catch(() => 0);   // kanban #2784: the full level only for a reporter who played a round (and is proven human)
             const p = S2.plan(r, { level, codeOnly: b.codeOnly === true, followUp: b.followUp === true, played: playedFor(r) });
             if (!p.ok) return send(200, p);

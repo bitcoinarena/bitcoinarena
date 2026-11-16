@@ -171,6 +171,8 @@
         const u = URL.createObjectURL(b); box.append(el('a', { href: u, target: '_blank', rel: 'noopener' }, el('img', { src: u, alt: 'screenshot of the report', style: 'max-width:100%;max-height:420px;border:1px solid #30363d;border-radius:8px' }))); }); }
     // A NODE REPORT'S BOUNTY CHECKLIST (kanban #1342, the owner 2026-11-08): read live from the seats (about 30 s); approve at level "node" goes through only when it passes
     if (r.source === 'node' && r.node) { const box = el('div', {}, el('h2', { text: 'Node bounty checklist' }), el('div', { cls: 'dim', text: 'reading the seats …' })); d.append(box);
+      // kanban #2876: received from 2026-11-16 07:06:38 UTC the node bounty needs a proven human; the faucet refuses it otherwise and says why
+      if (Number(r.receivedMs) >= 1794812798412) d.append(el('div', { cls: 'warn', text: 'Received after 16 Nov 2026 07:06 UTC: the 10,000 sat node bounty only for a proven human (a played round and a verified X account). A bot\'s node report: approve it as ordinary feedback at its level.' }));
       call(`node-check/${r.id}`).then((c) => { box.replaceChildren(el('h2', { text: 'Node bounty checklist' }));
         if (!c || !Array.isArray(c.checks)) return box.append(el('div', { cls: 'bad', text: (c && c.why) || 'not read' }));
         // THE REQUIREMENTS AS NUMBERS (the owner 2026-11-10: "wie lange der online ist und wieviel runden er erfolgreich gehostet hat"): days served of the last 7,
