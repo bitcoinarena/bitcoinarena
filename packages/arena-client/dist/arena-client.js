@@ -39539,6 +39539,30 @@ async function receiveKeptEcash({ storage, key, rec, receive, field = 'ecash', a
 }
 
 // THE EXCHANGE (kanban #614): the seat's side is ecash-exchange.js; a retry with the same notes is answered the same, never paid twice
+// A SEAT'S ANSWER IS READ ONLY UP TO A BOUND (kanban #2846, #1489 r25-client-1): GET /exchange's offer and POST /exchange's answer were read with
+// r.json() - one listed seat answering 256 MB was pulled into the page's memory and parsed on every cross-federation exchange (a phone tab froze
+// during a paid join). An offer is read up to EXCHANGE_OFFER_BYTES, an e-cash answer up to EXCHANGE_ANSWER_BYTES; past it the seat is passed by.
+const EXCHANGE_OFFER_BYTES = 64 * 1024, EXCHANGE_ANSWER_BYTES = 4 * 1024 * 1024;
+async function readJsonCapped(r, maxBytes) {
+  const len = Number(r.headers && typeof r.headers.get === 'function' ? r.headers.get('content-length') : NaN);
+  if (Number.isFinite(len) && len > maxBytes) { try { await r.body?.cancel(); } catch { /* gone already */ } throw new Error(`its answer of ${len} bytes is over ${maxBytes}`); }
+  if (!r.body || typeof r.body.getReader !== 'function') {
+    if (typeof r.json === 'function') return r.json();      // a stand-in fetch with no body stream (tests)
+    const t = await r.text(); if (t.length > maxBytes) throw new Error(`its answer is over ${maxBytes} bytes`); return JSON.parse(t);
+  }
+  const reader = r.body.getReader(), parts = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) { try { await reader.cancel(); } catch { /* gone already */ } throw new Error(`its answer is over ${maxBytes} bytes`); }
+    parts.push(value);
+  }
+  const all = new Uint8Array(total); let at = 0;
+  for (const p of parts) { all.set(p, at); at += p.byteLength; }
+  return JSON.parse(new TextDecoder().decode(all));
+}
 async function askSeat({ seat, rec, fetcher, timeoutMs }) {
   let r;
   try {
@@ -39546,7 +39570,7 @@ async function askSeat({ seat, rec, fetcher, timeoutMs }) {
       body: JSON.stringify({ from: rec.from, to: rec.to, ecash: rec.ecash, amountMsat: String(rec.msat) }) });
   } catch (e) { return { silent: e && e.message ? e.message : String(e) }; }
   if (r.ok) {
-    let a = null; try { a = await r.json(); } catch { a = null; }
+    let a = null; try { a = await readJsonCapped(r, EXCHANGE_ANSWER_BYTES); } catch { a = null; }
     return a && typeof a.ecash === 'string' && a.ecash ? { answer: a } : { silent: 'the seat answered no e-cash' };
   }
   let body = ''; try { body = (await r.text()).trim().slice(0, 160); } catch { body = ''; }
@@ -39623,7 +39647,7 @@ async function exchangeEcashInto({ storage, from, to, needMsat, seats, walletFro
     try {
       const r = await fetcher(String(seat).replace(/\/+$/, '') + '/exchange?federations=' + to, { signal: AbortSignal.timeout(offerTimeoutMs) });
       if (!r.ok) return false;
-      const o = await r.json();
+      const o = await readJsonCapped(r, EXCHANGE_OFFER_BYTES);   // kanban #2846
       return BigInt((o && o.holds && o.holds[to]) || 0) >= need && BigInt((o && o.maxMsat) || 0) >= need;
     } catch { return false; /* not this seat */ }
   }));
