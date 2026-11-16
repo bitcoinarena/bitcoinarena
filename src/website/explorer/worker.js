@@ -772,6 +772,25 @@ async function poll(env) {
   if (Math.floor(Date.now() / 60000) % 60 === 7 || !(await stateGet(env, 'reserve-history')))
     await readReserveHistory(env).catch((e) => console.log(JSON.stringify({ reserveHistoryError: String(e && e.message ? e.message : e) })));
   await backfill(env).catch((e) => console.log(JSON.stringify({ backfillError: String(e && e.message ? e.message : e) })));
+  // every tenth minute: orders still read "pending" past the read-back window (kanban #2881, feedback #103 - 43 of the latest 200, up to
+  // 377 h old: past READ_BACK_MS a row was never read again, so a round that ended without a settlement stayed pending for good)
+  if (Math.floor(Date.now() / 60000) % 10 === 3)
+    await recheckPending(env).catch((e) => console.log(JSON.stringify({ recheckError: String(e && e.message ? e.message : e) })));
+}
+
+/** Up to RECHECK_ROWS orders older than the read-back window whose result is still pending, least recently updated first, read again. */
+const RECHECK_ROWS = 10;
+async function recheckPending(env) {
+  const { results } = await env.DB.prepare(`SELECT id, hash FROM txs WHERE kind = 'order' AND stored_ms < ? AND json_extract(json, '$.result.state') = 'pending'
+    ORDER BY updated_ms ASC LIMIT ?`).bind(Date.now() - READ_BACK_MS, RECHECK_ROWS).all();
+  let changed = 0;
+  for (const r of results || []) {
+    const tx = await readTx(r.id);
+    if (!tx || !tx.found || (tx.kind && tx.kind !== 'order')) { await env.DB.prepare('UPDATE txs SET updated_ms = ? WHERE id = ?').bind(Date.now(), r.id).run(); continue; }
+    const w = await keep(env, tx, r.hash);
+    if (w) { await w.run(); changed++; } else await env.DB.prepare('UPDATE txs SET updated_ms = ? WHERE id = ?').bind(Date.now(), r.id).run();
+  }
+  console.log(JSON.stringify({ recheck: { rows: (results || []).length, changed } }));
 }
 
 /** Every seat's transactions stored from `since` (at most `limit` each, those before `before` when it is given), merged into D1. */

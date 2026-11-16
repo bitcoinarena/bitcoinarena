@@ -282,7 +282,7 @@ import { paymentIdsOf } from './funding-book.js';
 import { moveTargets } from './reserve-move.js';
 import { FUNDING_SCHEDULES, activeNodesBefore, activeInWeeks, capStands, encodeFundingProposal, fundingProposalId, encodeFundingSignal, fundingSignalId, encodeFundingComment, fundingCommentId } from '../../arena-protocol/src/funding.js';
 import { RESERVES_VERSION as ITEM_RESERVES_FROM } from '../../arena-protocol/src/constants.js';
-import { Forfeit } from './forfeit.js';
+import { Forfeit, lockFateOf, LOCK_FATE } from './forfeit.js';
 import { LockSettlement, locksStake, SUBMITTING } from './settlement.js';
 import { decodeCommitments, encodeCommitments, encodeShare, COMMITMENT_BYTES, MOST_COMMITMENTS } from './pool-wire.js';
 import { setTagNetwork } from '../../arena-protocol/src/tag-switch.js';
@@ -11027,7 +11027,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
               if (bk.cancelled || fin.final) return { state: 'unfilled', stakeMsat: String(stake), feeMsat: String(fee), netMsat: '0', why: bk.cancelled ? 'cancelled before it filled' : 'never filled: its locks come back whole' };
             }
           } catch { /* read as before */ }
-          if (!settled || settled.state !== 'ACCEPTED') return { state: 'pending', stakeMsat: String(stake), feeMsat: String(fee) };
+          // NO SETTLEMENT IS NOT ALWAYS PENDING (kanban #2881, feedback #103: 43 of the explorer's latest 200 orders read "Pending", up to 377 h
+          // old): a round nobody settles still ends - its stake lock forfeited back here (a void round, a refused or outside lock: RETURNING), or
+          // this entry FINAL VOID here: refunded
+          if (!settled || settled.state !== 'ACCEPTED') {
+            const lockAt0 = op(en.stakeLockOutpoint);
+            const fate = lockAt0 ? lockFateOf(round, en.roundId, lockAt0) : null;
+            let voidHere = false;
+            try { const st = resultFinality(round, en.roundId, fromHex(idHex)); if (st.state === 'VOID') voidHere = true;
+              else if (st.state === 'FINAL') { const mine = round.results(en.roundId, fromHex(idHex)).find((r) => toHex(r.nodePubkey) === toHex(round.pubkey));
+                if (mine && decodePlayerResult(splitSignedResult(mine.bytes).body).outcome === 'VOID') voidHere = true; } } catch { /* not read */ }
+            if (fate === LOCK_FATE.RETURNING || voidHere) return { state: 'refunded', stakeMsat: String(stake), feeMsat: String(fee), payoutMsat: '0', netMsat: '0', why: 'void or returned: the stake comes back to the player' };
+            return { state: 'pending', stakeMsat: String(stake), feeMsat: String(fee) };
+          }
           const moves = round.lockSettlementMoves ? round.lockSettlementMoves(en.roundId) : null;
           const claimed = moves && Array.isArray(moves.claims) ? new Set(moves.claims) : null;
           const lockAt = op(en.stakeLockOutpoint);
