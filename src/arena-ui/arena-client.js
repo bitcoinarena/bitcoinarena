@@ -8505,7 +8505,17 @@ function eligibleFor(e, contract, role) {
 
 function meetsCensusMinimum(entries, contract, role) {
   const { network, minimum } = censusMinimumFor(contract);
-  const have = (entries || []).filter((e) => eligibleFor(e, contract, role)).length;
+  // DISTINCT NODE KEYS AT OR ABOVE THE ROUND'S FLOOR, NOT ROWS (kanban #2850, #1489 r26-census-1): protocol 19 keeps every bond output as its own
+  // row, so one key with several outputs (or a row below bond_min) met census_min_nodes alone and selectCommittee then drew a committee of one key.
+  // The rows are merged by key first - summed under protocol 19, each row on its own before - and only keys at the round's bond_min count.
+  const floor = contract && typeof contract.bondMinSats === 'bigint' ? contract.bondMinSats : null;
+  const byKey = new Map();
+  for (const e of (entries || []).filter((x) => eligibleFor(x, contract, role))) {
+    if (!e || !(e.pubkey || (e.advert && e.advert.nodePubkey))) continue;
+    const k = nodeKeyOf(e).split('|')[0], b = BigInt(e.bondSats || 0);
+    byKey.set(k, sumsBonds(contract) ? (byKey.get(k) || 0n) + b : ((byKey.get(k) || 0n) > b ? byKey.get(k) : b));
+  }
+  const have = [...byKey.values()].filter((b) => floor === null || b >= floor).length;
   // FOR GAME/VERIFY ONLY THE NODES HOSTING THE ROUND'S GAME COUNT (§0A.4): a game too few nodes host has no
   // paying rounds, and says why
   if (have < minimum && poolOfRole(role) === GAME_VERIFY)
@@ -41183,7 +41193,13 @@ async function fetchGames({ nodes, fetcher = fetch, answerMs = GAMES_ANSWER_MS, 
       if (got.nodeKeys.has(key)) continue;
       got.nodeKeys.add(key);
       got.nodes.push(node);
-      if (!got.info && g.info && typeof g.info === 'object') got.info = g.info;
+      // EVERY SEAT'S INFO IS KEPT, NOT THE FIRST ONLY (kanban #2851, #1489 r26-hosting-2): one seat answering first with a made-up `info` held
+      // the tile's info for good and the developer's signed one, served by the other seats, was never checked; checkedGameInfo now tries each
+      if (g.info && typeof g.info === 'object') {
+        if (!got.infos) Object.defineProperty(got, 'infos', { value: [], enumerable: false });
+        if (got.infos.length < 8 && !got.infos.some((x) => JSON.stringify(x) === JSON.stringify(g.info))) got.infos.push(g.info);
+        if (!got.info) got.info = g.info;
+      }
       if (g.live && typeof g.live === 'object') {
         got.live.rounds = Math.max(got.live.rounds, Number(g.live.rounds) || 0);
         got.live.players = Math.max(got.live.players, Number(g.live.players) || 0);
@@ -41274,6 +41290,12 @@ async function gameClientFile({ game, url, digest, fetcher = fetch }) {
  * them - `verifyEd25519(sig, msg, pub)` may be async (the browser's). Anything else answers null and is not shown.
  */
 async function checkedGameInfo(game, verifyEd25519) {
+  // kanban #2851: each info the seats handed, the first one the developer key signed
+  for (const other of (game && Array.isArray(game.infos) ? game.infos : [])) {
+    if (other === game.info) continue;
+    const got = await checkedGameInfo({ ...game, info: other, infos: undefined }, verifyEd25519);
+    if (got) return got;
+  }
   const info = game && game.info;
   if (!info || typeof info.description !== 'string' || typeof verifyEd25519 !== 'function') return null;
   let digest, sig;

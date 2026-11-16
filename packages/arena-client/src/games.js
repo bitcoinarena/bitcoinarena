@@ -93,7 +93,13 @@ export async function fetchGames({ nodes, fetcher = fetch, answerMs = GAMES_ANSW
       if (got.nodeKeys.has(key)) continue;
       got.nodeKeys.add(key);
       got.nodes.push(node);
-      if (!got.info && g.info && typeof g.info === 'object') got.info = g.info;
+      // EVERY SEAT'S INFO IS KEPT, NOT THE FIRST ONLY (kanban #2851, #1489 r26-hosting-2): one seat answering first with a made-up `info` held
+      // the tile's info for good and the developer's signed one, served by the other seats, was never checked; checkedGameInfo now tries each
+      if (g.info && typeof g.info === 'object') {
+        if (!got.infos) Object.defineProperty(got, 'infos', { value: [], enumerable: false });
+        if (got.infos.length < 8 && !got.infos.some((x) => JSON.stringify(x) === JSON.stringify(g.info))) got.infos.push(g.info);
+        if (!got.info) got.info = g.info;
+      }
       if (g.live && typeof g.live === 'object') {
         got.live.rounds = Math.max(got.live.rounds, Number(g.live.rounds) || 0);
         got.live.players = Math.max(got.live.players, Number(g.live.players) || 0);
@@ -184,6 +190,12 @@ export async function gameClientFile({ game, url, digest, fetcher = fetch }) {
  * them - `verifyEd25519(sig, msg, pub)` may be async (the browser's). Anything else answers null and is not shown.
  */
 export async function checkedGameInfo(game, verifyEd25519) {
+  // kanban #2851: each info the seats handed, the first one the developer key signed
+  for (const other of (game && Array.isArray(game.infos) ? game.infos : [])) {
+    if (other === game.info) continue;
+    const got = await checkedGameInfo({ ...game, info: other, infos: undefined }, verifyEd25519);
+    if (got) return got;
+  }
   const info = game && game.info;
   if (!info || typeof info.description !== 'string' || typeof verifyEd25519 !== 'function') return null;
   let digest, sig;
