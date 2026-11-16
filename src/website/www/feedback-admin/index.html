@@ -76,7 +76,7 @@
         <select id="f-week" aria-label="Season"><option value="">every season</option><option value="1">Season 1</option><option value="2">Season 2</option></select>
         <label class="dim"><input type="checkbox" id="f-showweek"> show season</label>
         <input id="f-game" placeholder="game" size="14"><input id="f-key" placeholder="player key (hex)" size="20">
-        <button id="reload">Show</button><button id="csv">Export CSV</button><button id="logout">Forget code</button>
+        <button id="reload" title="read the list again">Refresh</button><button id="csv">Export CSV</button><button id="logout">Forget code</button>
       </div>
       <div id="say" role="status"></div>
       <div class="scroll"><table><thead><tr><th>Received</th><th>From</th><th>Category</th><th>State</th><th class="hide-s">Game</th><th>What happened</th><th>Player</th><th>Reward</th></tr></thead><tbody id="rows"></tbody></table></div>
@@ -143,16 +143,17 @@ const SOCIAL_SVG = {"x": "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusa
   let LOADS = 0;
   async function load() {
     const me = ++LOADS;
-    const q = new URLSearchParams(); for (const [k, id] of [['state', 'f-state'], ['type', 'f-type'], ['source', 'f-source'], ['game', 'f-game'], ['pubkey', 'f-key']]) if ($(id).value.trim()) q.set(k, $(id).value.trim());
+    // ONE READ OF THE WHOLE LIST (kanban #2904, the owner 2026-11-16: "applying a filter takes far too long"): every filter, count and the modal work on it here
     // the old rows go at once (kanban #2904: a slow read left the last list on screen under the new filter, read as "the filter does nothing")
     say('Reading…'); $('rows').replaceChildren();
     if ($('app').hidden) { $('login').hidden = true; $('loginsay').textContent = ''; $('wait').hidden = false; }
-    let j; try { j = await call(`list?${q}`); } catch (e) { return me === LOADS ? fail(e.message) : undefined; }
+    const t0 = performance.now(); const seasonRead = call('season').catch(() => null);
+    let j; try { j = await call('list?lite=1'); } catch (e) { return me === LOADS ? fail(e.message) : undefined; }
     if (me !== LOADS) return;
     if (!j.ok) return fail(j.why || 'not read');
     show(true); budget(j.budget); if (Array.isArray(j.levels)) LEVELS = j.levels;
     // WHICH REPORTS ARE WEEK 2 (kanban #2639): the season file's approvals, waiting included, and the end of Week 1; read with the list
-    try { const w = await call('season'); if (w && w.ok) { WEEK2 = new Set([...(w.approvals || []), ...(w.waiting || [])].map((a) => a.report)); S1_END = Number.isFinite(w.s1EndMs) ? w.s1EndMs : null;
+    try { const w = await seasonRead; if (w && w.ok) { WEEK2 = new Set([...(w.approvals || []), ...(w.waiting || [])].map((a) => a.report)); S1_END = Number.isFinite(w.s1EndMs) ? w.s1EndMs : null;
       // THE SEASON'S POT AS IT REALLY STANDS (kanban #2784, the owner 2026-11-15: "zeig das auch korrekt an"): paid, else payable under the current rule
       if (w.pot && Number(w.pot.potSats) > 0) { $('stats').querySelectorAll('.stat.pot').forEach((x) => x.remove());
         const st = el('div', { cls: 'stat pot' }, el('b', { text: `${sats(w.pot.usedSats)} used · ${sats(w.pot.leftSats)} left` }), el('span', { text: `Season ${w.pot.season} pot of ${sats(w.pot.potSats)} (paid, else payable now)` }));
@@ -161,6 +162,15 @@ const SOCIAL_SVG = {"x": "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusa
         if (Number(w.pot.drawPrizeSats) > 0) { const dp = el('div', { cls: 'stat pot' }, el('b', { text: sats(w.pot.drawPrizeSats) }), el('span', { text: `Draw prize, Season ${w.pot.season} (apart from the pot)` })); st.after(dp); } } } }
     catch { WEEK2 = new Set(j.reports.filter((r) => r.season2 && r.season2.approval).map((r) => r.id)); }
     if (me !== LOADS) return;
+    ALL = j.reports; READ_MS = Math.round(performance.now() - t0); render();
+  }
+  // THE FILTERS, HERE AND AT ONCE (kanban #2904): state, category, source, season, human/bot, game and player key over the list read once
+  let ALL = [], READ_MS = 0;
+  function render() {
+    const t0 = performance.now();
+    const fState = $('f-state').value, fType = $('f-type').value, fSource = $('f-source').value, fGame = $('f-game').value.trim().toLowerCase(), fKey = $('f-key').value.trim().toLowerCase();
+    const j = { reports: ALL.filter((r) => (!fState || r.state === fState) && (!fType || r.type === fType) && (!fSource || (r.source || 'frontend') === fSource)
+      && (!fGame || String(r.game || '').toLowerCase().includes(fGame)) && (!fKey || String(r.pubkey).startsWith(fKey))) };
     const wantWeek = Number($('f-week').value) || 0, showWeek = $('f-showweek').checked;
     const tb = $('rows'); tb.replaceChildren();
     let shown = 0, humans = 0; const wantWho = $('f-who').value; SHOWN = [];
@@ -193,7 +203,8 @@ const SOCIAL_SVG = {"x": "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusa
       tr.addEventListener('click', () => open(r.id));
       tb.append(tr);
     }
-    say(`${shown} report${shown === 1 ? '' : 's'}${wantWeek ? ` in Season ${wantWeek}` : ''} · ${humans} human, ${shown - humans} bot`);
+    say(`${shown} report${shown === 1 ? '' : 's'}${wantWeek ? ` in Season ${wantWeek}` : ''} · ${humans} human, ${shown - humans} bot · of ${ALL.length} read in ${READ_MS} ms`);
+    window.ARENA_ADMIN_RENDER_MS = Math.round(performance.now() - t0);
   }
   // kanban #2878 (the owner 2026-11-16): the platforms this reporter key has linked, as the bounty page's icons; the handle as the tooltip, nothing for the rest.
   // A link whose membership read is not verified is shown dimmed
@@ -245,7 +256,10 @@ const SOCIAL_SVG = {"x": "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusa
     return box;
   }
   async function open(id) {
+    // the newest asked report wins, and a quick ← / → steps from it while the one before is still being read (kanban #2904)
+    OPEN = id; const asked = id;
     let j; try { j = await call(`report/${id}`); } catch (e) { return say(e.message, true); }
+    if (OPEN !== asked) return;
     if (!j.ok) return say(j.why, true);
     const r = j.report, d = $('detail'); d.hidden = false; d.replaceChildren();
     OPEN = id; const at = SHOWN.indexOf(id); $('dlg-pos').textContent = at >= 0 ? `${at + 1} of ${SHOWN.length}` : '';
@@ -353,10 +367,11 @@ const SOCIAL_SVG = {"x": "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusa
     if (e.key === 'ArrowLeft') { e.preventDefault(); step(-1); } else if (e.key === 'ArrowRight') { e.preventDefault(); step(1); } });
   $('enter').addEventListener('click', () => { code = $('code').value.trim(); try { localStorage.setItem('arena.feedback.admin', code); } catch { /* this tab only */ } load(); });
   $('reload').addEventListener('click', load);
-  $('f-week').addEventListener('change', load);
-  $('f-who').addEventListener('change', load);
-  for (const id of ['f-state', 'f-type', 'f-source']) $(id).addEventListener('change', load);
-  $('f-showweek').addEventListener('change', () => { try { localStorage.setItem('arena.feedback.admin.showweek', $('f-showweek').checked ? '1' : '0'); } catch { /* this visit */ } load(); });
+  $('f-week').addEventListener('change', render);
+  $('f-who').addEventListener('change', render);
+  for (const id of ['f-state', 'f-type', 'f-source']) $(id).addEventListener('change', render);
+  for (const id of ['f-game', 'f-key']) $(id).addEventListener('input', render);
+  $('f-showweek').addEventListener('change', () => { try { localStorage.setItem('arena.feedback.admin.showweek', $('f-showweek').checked ? '1' : '0'); } catch { /* this visit */ } render(); });
   $('logout').addEventListener('click', () => { code = ''; try { localStorage.removeItem('arena.feedback.admin'); } catch { /* none */ } show(false); });
   $('csv').addEventListener('click', async () => { const r = await fetch(`${API}/export.csv`, { headers: { 'x-arena-admin': code } }); if (!r.ok) return say('not read', true);
     const a = el('a', { href: URL.createObjectURL(await r.blob()), download: 'arena-feedback.csv' }); document.body.append(a); a.click(); a.remove(); });
