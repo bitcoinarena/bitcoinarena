@@ -394,7 +394,25 @@ export function openBountySeason(path = ':memory:', { startMs = null, s2EndMs = 
     return [...new Set(out)].sort();
   }
   const keysOfSeason = (season) => db.prepare(`SELECT DISTINCT pubkey FROM approvals WHERE season = ? AND state = 'approved'`).all(Number(season)).map((x) => x.pubkey);
+  // THE OWNER'S "REAL USER" MARK (kanban #2875, the owner 2026-11-16): per reporter key, the player's name, who set it and when - shown on every
+  // report of that key in the admin page; it changes no payout share (that would be asked first). Cleared marks stay as rows with cleared_ms.
+  db.exec('CREATE TABLE IF NOT EXISTS real_users (pubkey TEXT PRIMARY KEY, name TEXT NOT NULL, note TEXT, set_by TEXT, set_ms INTEGER NOT NULL, cleared_ms INTEGER, cleared_by TEXT)');
+  const realUserOf = (pubkey) => { const r = db.prepare('SELECT * FROM real_users WHERE pubkey = ? AND cleared_ms IS NULL').get(String(pubkey).toLowerCase());
+    return r ? { pubkey: r.pubkey, name: r.name, note: r.note || null, setBy: r.set_by || null, setMs: Number(r.set_ms) } : null; };
+  const markRealUser = (pubkey, { name, note = null, by = null, nowMs = Date.now() } = {}) => {
+    const k = String(pubkey || '').toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(k)) return { ok: false, why: 'a reporter key is 64 hex' };
+    const n = String(name || '').trim();
+    if (!n || n.length > 80) return { ok: false, why: 'name the player (1-80 characters)' };
+    db.prepare('INSERT OR REPLACE INTO real_users (pubkey, name, note, set_by, set_ms, cleared_ms, cleared_by) VALUES (?, ?, ?, ?, ?, NULL, NULL)').run(k, n, note ? String(note).slice(0, 200) : null, by ? String(by).slice(0, 80) : null, nowMs);
+    return { ok: true, realUser: realUserOf(k) };
+  };
+  const clearRealUser = (pubkey, { by = null, nowMs = Date.now() } = {}) => {
+    const k = String(pubkey || '').toLowerCase();
+    const c = db.prepare('UPDATE real_users SET cleared_ms = ?, cleared_by = ? WHERE pubkey = ? AND cleared_ms IS NULL').run(nowMs, by ? String(by).slice(0, 80) : null, k).changes;
+    return c ? { ok: true } : { ok: false, why: 'that key carries no real-user mark' };
+  };
 
   return { makeCode, redeem, claimName, seeTelegram, telegramIdOf, links: linksOf, record, verify, flagsOf, pot, plan, commit, wait, approval, approvals, payable, drawEntries, keysOfSeason,
-    seasonNow, close: () => db.close() };
+    seasonNow, realUserOf, markRealUser, clearRealUser, close: () => db.close() };
 }
