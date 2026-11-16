@@ -669,6 +669,10 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
                     if (h && (over || keepSet.has(e.pubkey))) victim = oldestIn.get(h.pubkey, P, e.id);   // a kept author's write takes from the largest other (#2146)
                   }
                   if (!victim && P !== 1) victim = oldestIn.get(e.pubkey, P, e.id);   // 3. (a state event, or a seed)
+                  // 3b. AN AUTHOR WITH A LOG OF ITS OWN ROLLS ITS OLDEST OUT (kanban #2848, #1489 r25-nostr-1): after a one-event-per-fresh-key flood the
+                  // zap server (many 9735 receipts) found no larger holder and every new receipt was refused "relay is full" for good; a log writer
+                  // holding two or more of that pool now gives its own oldest back for the new one - its history shortens, its new events go in
+                  if (!victim && P === 1 && (holderUse.get(e.pubkey, P) || { n: 0 }).n >= 2) victim = oldestIn.get(e.pubkey, P, e.id);
                   if (!victim) { verdict = 'full'; break; }   // 4.
                   dropId.run(victim.id);
                 }
