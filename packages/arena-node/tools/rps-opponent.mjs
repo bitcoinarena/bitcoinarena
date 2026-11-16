@@ -249,6 +249,7 @@ const go = (w, k, step) => {
   while (hour.length && now - hour[0] > 3600000) hour.shift();
   if (hour.length >= MOST_PER_HOUR) { log({ step: 'hourly limit' }); return; }
   k.entered = true; hour.push(now); busy = true;
+  sayHere(w.round, k);   // kanban #2901: said only now, as it enters
   log({ step, round: w.round.slice(0, 8), leftMs: Number(k.c.entryCloseMs) - now });
   enter(k.c, k.rid, k.claim).then((r) => { if (!r.ok) log({ step: 'entry not made', round: w.round.slice(0, 8), why: String(r.why || 'too few seats took it').slice(0, 200) }); }, (e) => log({ step: 'entry failed', round: w.round.slice(0, 8), why: String(e.message).slice(0, 200) })).finally(() => { busy = false; if (env.ONCE) setTimeout(() => process.exit(0), 40000); });
 };
@@ -261,7 +262,8 @@ const sayAtTables = () => {
   for (const [round, k] of seen) {
     const until = tables.get(tableOf(k.c));
     // AGAIN EVERY 2 S, AS A PAGE DOES: a seat forgets who is at a table in seconds, and a word said before the round began was gone by its first seconds ("You are alone" from 0:10 to 0:07)
-    if (until && until > now && Number(k.c.entryCloseMs) > now && Number(k.c.entryCloseMs) - now < 20000) sayHere(round, k, true);
+    // only a table the bot entered (kanban #2901, the owner's playtest 12:5xZ: "Test bot" stood at his table, its hand '?', and it never staked)
+    if (k.entered && until && until > now && Number(k.c.entryCloseMs) > now && Number(k.c.entryCloseMs) - now < 20000) sayHere(round, k, true);
   }
 };
 setInterval(sayAtTables, 2000);
@@ -281,7 +283,7 @@ const pass = async () => {
     if (left <= 0 || k.entered) continue;
     real++;
     tables.set(tableOf(k.c), Date.now() + 40000);
-    sayHere(w.round, k);
+    // NOT AT THE TABLE BEFORE IT STAKES (kanban #2901): its presence is said by go(), once it enters - a player never sees the bot seated in a round it stays out of
     if (busy || left < MIN_LEFT_MS) continue;
     // A TAP IS A HINT (kanban #2842, ruling 2026-11-16 (a)): it only puts the table on this list; the bot stakes on the seats' own fact - a seat
     // holding a VERIFIED stake lock of one non-bot entry (GET /order-locks: stakeVerifiedMs), with BOT_LEAD_MS before the close (opponent-trigger.js).
@@ -299,7 +301,11 @@ const pass = async () => {
     }))
       .then(({ entries, locks }) => {
         if (k.entered || busy) return;
-        const d = botMayEnter({ entries, locks, botKeys, closeMs: Number(k.c.entryCloseMs), nowMs: Date.now(), leadMs: BOT_LEAD_MS, minLeftMs: MIN_LEFT_MS });
+        // WHAT THE BOT ITSELF NEEDS, NOT A FIXED 12 S (kanban #2901, the owner's playtest 2026-11-16 12:49Z, round 1dc93d0e: his lock was verified 7.9 s
+        // before the close and the bot stayed out "under the 12000 ms lead"): the 12 s lead is the page's to give (it offers a round only with
+        // H2H_OPPONENT_LEAD_MS left); the bot joins whenever its own handout, lock and entry still fit - its slowest recent lock + 1.5 s, at least 4 s
+        const need = Math.max(MIN_LEFT_MS, h2hLeadMs(lockMsSeen) + 1000);
+        const d = botMayEnter({ entries, locks, botKeys, closeMs: Number(k.c.entryCloseMs), nowMs: Date.now(), leadMs: 0, minLeftMs: need });
         if (d.go) go(w, k, w.tapped ? 'a player locked (tapped)' : 'a player locked');
         else if (k.said !== d.why) { k.said = d.why; log({ step: 'not entered', round: w.round.slice(0, 8), tapped: !!w.tapped, why: d.why }); }
       }, () => {}).finally(() => { k.asking = false; });
