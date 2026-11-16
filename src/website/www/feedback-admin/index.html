@@ -36,6 +36,7 @@
 .nb-days{display:flex;gap:4px;margin:4px 0 8px}.nb-day{width:18px;height:18px;border-radius:4px;background:#30363d}.nb-day.on{background:#3fb950}
 .nb-badges{display:flex;gap:6px;flex-wrap:wrap;margin:4px 0}.nb-badge{border-radius:999px;padding:3px 10px;font-size:12.5px;border:1px solid #30363d}.nb-badge.ok{color:#3fb950;border-color:#2ea04366}.nb-badge.no{color:#f85149;border-color:#f8514966}
   .nb-first{margin:10px 0;padding:10px 12px;border-radius:10px;background:rgba(63,185,80,.14);color:#3fb950;font-weight:700}
+.who-ic{display:inline-flex;width:18px;height:18px;cursor:help;margin-top:3px}.who-ic svg{width:18px;height:18px}.who-ic.human{color:#3fb950}.who-ic.bot{color:#8b949e}
 .soc-icons{display:flex;gap:5px;margin-top:3px}.soc-ic{display:inline-flex;width:16px;height:16px;cursor:help}.soc-ic svg{width:16px;height:16px}.soc-ic.off{opacity:.35}
 </style>
 </head>
@@ -128,7 +129,7 @@ const SOCIAL_SVG = {"x": "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusa
     for (const r of j.reports) {
       const who = el('td', {}, el('code', { text: `${r.pubkey.slice(0, 12)}…` }), el('div', { cls: r.ours ? 'warn' : r.played ? 'dim' : 'bad', text: r.ours ? 'ours' : r.played ? 'has played before' : 'never finished a round' }),
         // kanban #2875: the owner's "real user" mark on this key
-        r.realUser ? el('div', {}, el('span', { cls: 'nb-badge ok', text: `real user (owner): ${r.realUser.name}` })) : null,
+        humanIcon(r),
         r.playedMark ? el('div', {}, el('span', { cls: 'nb-badge ok', text: 'played (owner)' })) : null,
         socialIcons(r),
         // HOW MUCH AND WHAT (the owner 2026-11-10: "wieviel runden der spieler gemacht hat und welche apps er genutzt hat")
@@ -151,6 +152,21 @@ const SOCIAL_SVG = {"x": "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusa
   }
   // kanban #2878 (the owner 2026-11-16): the platforms this reporter key has linked, as the bounty page's icons; the handle as the tooltip, nothing for the rest.
   // A link whose membership read is not verified is shown dimmed
+  // kanban #2875 (the owner 2026-11-16): one compact mark per reporter instead of the long "real user (owner)" tag - a person for a human (the owner's
+  // real-user mark, or a played round (or the owner's played mark) AND a verified X account), a robot for everyone else; the tooltip says why
+  function humanIcon(r) {
+    const x = !!(r.season2 && r.season2.flags && r.season2.flags.x === true);
+    const played = !!(r.played || r.playedMark);
+    const human = !!r.realUser || (played && x);
+    const why = r.realUser ? `Human: the owner's real-user mark${r.realUser.name ? ` (${r.realUser.name})` : ''}`
+      : human ? `Human: ${r.playedMark && !r.played ? 'played (owner mark)' : 'played a round'} and a verified X account`
+      : `Bot rule (15 %): ${played ? 'played' : 'no played round'}, ${x ? 'verified X' : 'no verified X account'}`;
+    const s = el('span', { cls: `who-ic ${human ? 'human' : 'bot'}`, title: why, 'aria-label': why });
+    s.innerHTML = human
+      ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm0 2c-4.4 0-8 2.2-8 5v1h16v-1c0-2.8-3.6-5-8-5z"/></svg>'
+      : '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M11 2h2v3h4a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V8a3 3 0 0 1 3-3h4zM9 10.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm6 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zM8 16v1.5h8V16zM1 10h2v5H1zm20 0h2v5h-2z"/></svg>';
+    return el('div', {}, s);
+  }
   function socialIcons(r) {
     const links = (r.season2 && Array.isArray(r.season2.links)) ? r.season2.links : [];
     const by = new Map(); for (const l of links) if (l && SOCIAL_SVG[l.platform] && (!by.has(l.platform) || l.member === true)) by.set(l.platform, l);
