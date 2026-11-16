@@ -42,8 +42,33 @@ export function trialRun(source, manifest, { ms = TRIAL_MS, name = 'plugin trial
   // tell the trial from the seat by its module's identifier
   try { box = loadCore({ files: new Map([[SINGLE_ENTRY, String(source)]]), entry: SINGLE_ENTRY }, { name, loadMs: ms, askMs: ms, until, liveCap: ARRAY_BUDGET, oneThread: true }); }   // kanban #1538: kept arrays refused at the budget; #1719: `until` - load and meta share the trial's one deadline
   catch (e) { return { ok: false, cases: 0, why: `it does not load in the sandbox: ${String(e.message).slice(0, 300)}` }; }   // kanban #2165: bounded
-  try { return trialCases(box, manifest, left); } finally { box.end(); }
+  let kept;
+  try { kept = trialCases(box, manifest, left); } finally { box.end(); }
+  if (!kept.ok) return kept;
+  // A FIRST CALL ON A FRESH THREAD, AS THE SEAT MAKES IT (kanban #2844, #1489 r25-hosting-3): the trial ran every case on one kept thread in a
+  // fixed order, so the first decide was always all zeros; an adapter counting its calls answered that one right and every later one right,
+  // and gave {} (or spun) on a first call with any other move - which is every close at a seat (verify.js decides on a fresh thread). Now
+  // FRESH_FIRST_CASES random move sets (at least one with a non-zero move) are each decided as the first call of a fresh core thread.
+  for (let i = 0; i < FRESH_FIRST_CASES; i++) {
+    const players = 2 + Math.floor(Math.random() * Math.max(1, Math.min(manifest.players, 4) - 1));
+    const set = Array.from({ length: players }, () => Math.floor(Math.random() * manifest.moveCount));
+    if (i === 0 && manifest.moveCount > 1 && set.every((m) => m === 0)) set[set.length - 1] = 1;
+    const list = set.map((move) => ({ key: randomBytes(32).toString('hex'), move }));
+    let fresh;
+    try {
+      if (left() <= 0) return { ok: false, cases: kept.cases, why: `the trial did not finish within ${TRIAL_MS} ms` };
+      fresh = loadCore({ files: new Map([[SINGLE_ENTRY, String(source)]]), entry: SINGLE_ENTRY }, { name, loadMs: left(), askMs: left(), until, liveCap: ARRAY_BUDGET, oneThread: true });
+    } catch (e) { return { ok: false, cases: kept.cases, why: `it does not load again in the sandbox: ${String(e.message).slice(0, 300)}` }; }
+    try {
+      let v; try { v = JSON.parse(JSON.stringify(fresh.call('decide', { moves: list, config: {} }, left()))); } catch (e) { return { ok: false, cases: kept.cases, why: `on a fresh thread it fails on ${JSON.stringify(set)}: ${String(e.message).slice(0, 300)}` }; }
+      const keys = v && typeof v === 'object' ? Object.keys(v).sort() : [];
+      if (keys.join(',') !== list.map((m) => m.key).sort().join(',') || !keys.every((k) => VERDICTS.has(v[k])))
+        return { ok: false, cases: kept.cases, why: `on a fresh thread it does not answer each player with WIN, DRAW or LOSS on ${JSON.stringify(set)}` };
+    } finally { fresh.end(); }
+  }
+  return kept;
 }
+export const FRESH_FIRST_CASES = 4;
 
 // kanban #2165, #2232, #2304: the refusal carries at most 300 characters of the core's text (the seat logs it and answers it
 // in the 422), as server.js cuts a peer's error
