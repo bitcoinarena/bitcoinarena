@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>Feedback review &middot; Bounty Season 1</title>
+<title>Feedback review &middot; Bug bounty by week</title>
 <!-- kanban #1342 section 4: the owner's review list of player feedback. Every call carries the admin code (x-arena-admin), checked by the faucet
      against its hash; the code is kept in this browser only. A player's words are a stranger's text: only ever set with textContent. -->
 <style>
@@ -36,8 +36,14 @@
 .nb-days{display:flex;gap:4px;margin:4px 0 8px}.nb-day{width:18px;height:18px;border-radius:4px;background:#30363d}.nb-day.on{background:#3fb950}
 .nb-badges{display:flex;gap:6px;flex-wrap:wrap;margin:4px 0}.nb-badge{border-radius:999px;padding:3px 10px;font-size:12.5px;border:1px solid #30363d}.nb-badge.ok{color:#3fb950;border-color:#2ea04366}.nb-badge.no{color:#f85149;border-color:#f8514966}
   .nb-first{margin:10px 0;padding:10px 12px;border-radius:10px;background:rgba(63,185,80,.14);color:#3fb950;font-weight:700}
-.who-ic{display:inline-flex;width:18px;height:18px;cursor:help;margin-top:3px}.who-ic svg{width:18px;height:18px}.who-ic.human{color:#3fb950}.who-ic.bot{color:#8b949e}
+.who-ic{display:inline-flex;width:18px;height:18px;cursor:help;margin-top:3px}.who-ic svg{width:18px;height:18px}.who-ic.human{color:#3fb950}.who-ic.bot{color:#8b949e}.who-row{display:flex;gap:6px;align-items:center}.play-ic{display:inline-flex;width:18px;height:18px;cursor:help;margin-top:3px}.play-ic svg{width:18px;height:18px}.play-ic.yes{color:#3fb950}.play-ic.no{color:#8b949e}
 .soc-icons{display:flex;gap:5px;margin-top:3px}.soc-ic{display:inline-flex;width:16px;height:16px;cursor:help}.soc-ic svg{width:16px;height:16px}.soc-ic.off{opacity:.35}
+  /* kanban #2904 (the owner 2026-11-16: "Sie sollen in einem Modal oeffnen ... Es sind nun zu viele Tickets"): a report opens over the list */
+  dialog#dlg { width: min(960px, calc(100vw - 24px)); max-height: calc(100vh - 32px); padding: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--text); }
+  dialog#dlg::backdrop { background: rgba(0, 0, 0, .6); }
+  #dlg .dlg-bar { position: sticky; top: 0; z-index: 1; display: flex; gap: 8px; align-items: center; justify-content: flex-end; padding: 8px 10px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  #dlg .dlg-bar .dim { margin-right: auto; }
+  #dlg #detail { border: 0; margin: 0; }
 </style>
 </head>
 <body>
@@ -45,7 +51,7 @@
 <script src="https://testnet.bitcoinarena.io/site-chrome.js" data-foot="none">
 </script>
 <main>
-  <h1>Feedback review &middot; Bounty Season 1</h1>
+  <h1>Feedback review &middot; Bug bounty by week</h1>
   <p class="sub" data-payouts>Player reports, the reward rules and the payouts. Nothing is paid without an approval here.</p>
 
   <div class="panel" id="login">
@@ -66,13 +72,16 @@
         <select id="f-state"><option value="">every state</option><option>new</option><option>accepted</option><option>rejected</option><option>duplicate</option><option>paid</option></select>
         <select id="f-type"><option value="">every category</option><option>bug</option><option>improvement</option></select>
         <select id="f-source"><option value="">frontend and node</option><option value="frontend">frontend</option><option value="node">node</option></select>
+        <select id="f-who" aria-label="Human or bot"><option value="">humans and bots</option><option value="human">human</option><option value="bot">bot</option></select>
+        <select id="f-week" aria-label="Season"><option value="">every season</option><option value="1">Season 1</option><option value="2">Season 2</option></select>
+        <label class="dim"><input type="checkbox" id="f-showweek"> show season</label>
         <input id="f-game" placeholder="game" size="14"><input id="f-key" placeholder="player key (hex)" size="20">
         <button id="reload">Show</button><button id="csv">Export CSV</button><button id="logout">Forget code</button>
       </div>
       <div id="say" role="status"></div>
       <div class="scroll"><table><thead><tr><th>Received</th><th>From</th><th>Category</th><th>State</th><th class="hide-s">Game</th><th>What happened</th><th>Player</th><th>Reward</th></tr></thead><tbody id="rows"></tbody></table></div>
     </div>
-    <div class="panel" id="detail" hidden></div>
+    <dialog id="dlg" aria-label="Report"><div class="dlg-bar"><span class="dim" id="dlg-pos"></span><button id="dlg-prev" title="previous report (←)">‹ Prev</button><button id="dlg-next" title="next report (→)">Next ›</button><button id="dlg-x" title="close (Esc)" aria-label="close">✕</button></div><div class="panel" id="detail" hidden></div></dialog>
   </div>
 </main>
 <script>
@@ -83,6 +92,17 @@ const SOCIAL_SVG = {"x": "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusa
   let LEVELS = [];
   const $ = (id) => document.getElementById(id);
   const el = (tag, props = {}, ...kids) => { const e = document.createElement(tag); for (const [k, v] of Object.entries(props)) { if (k === 'text') e.textContent = v; else if (k === 'cls') e.className = v; else e.setAttribute(k, v); } for (const c of kids) if (c) e.append(c); return e; };
+  /* WEEK-OF */
+  // THE WEEK OF A REPORT (kanban #2639): Week 2 when the season file lists it (approved or waiting), or it came at or after the end of Week 1 and is
+  // still new; every other report is Week 1
+  function weekOf(r, listed, s1EndMs) {
+    if (listed && listed.has(r.id)) return 2;
+    if (Number.isFinite(s1EndMs) && r.state === 'new' && Number(r.receivedMs) >= s1EndMs) return 2;
+    return 1;
+  }
+  /* /WEEK-OF */
+  let WEEK2 = new Set(), S1_END = null;
+  try { $('f-showweek').checked = localStorage.getItem('arena.feedback.admin.showweek') === '1'; } catch { /* off */ }
   const sats = (n) => `${Number(n || 0).toLocaleString('en')} sat`;
   const when = (ms) => (ms ? new Date(ms).toISOString().slice(0, 16).replace('T', ' ') : '');
   let code = ''; try { code = localStorage.getItem('arena.feedback.admin') || ''; } catch { code = ''; }
@@ -107,9 +127,9 @@ const SOCIAL_SVG = {"x": "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusa
     // EVERYTHING THIS WEEK APPROVED, IN ONE FIGURE (the owner 2026-11-12: "die bug bounties haben erst gestern begonnen und es war alles die selbe
     // Woche. Es muss deckungsgleich sein"): the week's figure counts every approval of the last 7 days - with this week's whole history it equals
     // "approved in all". The critical and node part is named under it: by the rule it never blocks another approval (outside the budget)
-    const weekAll = Number(b.weekApprovedSats || 0);   // every approval of the week, critical and node ones too (feedback-store budget)
-    s.append(stat('approved this week' + (Number(b.weekOutsideBudgetSats) > 0 ? ` (${sats(b.weekOutsideBudgetSats)} of it critical: outside the budget)` : ''), `${sats(weekAll)} of ${sats(b.weeklyBudgetSats)}`),
-      stat('approved in Season 1', sats(b.allApprovedSats)), stat('paid in Season 1', sats(b.paidSats)),
+    const weekAll = Number(b.weekPaidSats ?? b.weekApprovedSats ?? 0);   // paid this week (the owner 2026-11-12: "Das ist was diese Woche ausgezahlt wurde")
+    s.append(stat('paid in the last 7 days', `${sats(weekAll)} of ${sats(b.weeklyBudgetSats)}`),
+      stat('approved, all weeks', sats(b.allApprovedSats)), stat('paid, all weeks', sats(b.paidSats)),
       stat('links not yet claimed', `${b.openRewards.n} · ${sats(b.openRewards.s)}`),
       // kanban #2287: links being paid on their own line (void links are in neither)
       ...(b.payingRewards && b.payingRewards.n ? [stat('links being paid', `${b.payingRewards.n} · ${sats(b.payingRewards.s)}`)] : []), stat('new reports', String((b.counts && b.counts.new) || 0)));
@@ -118,19 +138,42 @@ const SOCIAL_SVG = {"x": "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusa
     $('weektext').textContent = (b.network === 'mainnet' ? 'Mainnet sats: real money, paid over Lightning from the bounty wallet.' : 'Testnet sats, no value.') + ' The weekly budget and the per-player limit are the faucet\'s reward rules.';
     const sub = document.querySelector('p.sub[data-payouts]'); if (sub) sub.textContent = `Player reports, the reward rules and the ${b.network === 'mainnet' ? 'mainnet Lightning' : 'testnet'} payouts. Nothing is paid without an approval here.`;
   }
+  // ONLY THE NEWEST READ DRAWS (kanban #2904, the owner's screenshot 2026-11-16: state "accepted" + Season 2 listed "new" reports): picking the season
+  // starts a read at once, Show another - the older one, answered later, drew its unfiltered list over the filtered one
+  let LOADS = 0;
   async function load() {
+    const me = ++LOADS;
     const q = new URLSearchParams(); for (const [k, id] of [['state', 'f-state'], ['type', 'f-type'], ['source', 'f-source'], ['game', 'f-game'], ['pubkey', 'f-key']]) if ($(id).value.trim()) q.set(k, $(id).value.trim());
-    say('Reading…');
+    // the old rows go at once (kanban #2904: a slow read left the last list on screen under the new filter, read as "the filter does nothing")
+    say('Reading…'); $('rows').replaceChildren();
     if ($('app').hidden) { $('login').hidden = true; $('loginsay').textContent = ''; $('wait').hidden = false; }
-    let j; try { j = await call(`list?${q}`); } catch (e) { return fail(e.message); }
+    let j; try { j = await call(`list?${q}`); } catch (e) { return me === LOADS ? fail(e.message) : undefined; }
+    if (me !== LOADS) return;
     if (!j.ok) return fail(j.why || 'not read');
     show(true); budget(j.budget); if (Array.isArray(j.levels)) LEVELS = j.levels;
+    // WHICH REPORTS ARE WEEK 2 (kanban #2639): the season file's approvals, waiting included, and the end of Week 1; read with the list
+    try { const w = await call('season'); if (w && w.ok) { WEEK2 = new Set([...(w.approvals || []), ...(w.waiting || [])].map((a) => a.report)); S1_END = Number.isFinite(w.s1EndMs) ? w.s1EndMs : null;
+      // THE SEASON'S POT AS IT REALLY STANDS (kanban #2784, the owner 2026-11-15: "zeig das auch korrekt an"): paid, else payable under the current rule
+      if (w.pot && Number(w.pot.potSats) > 0) { $('stats').querySelectorAll('.stat.pot').forEach((x) => x.remove());
+        const st = el('div', { cls: 'stat pot' }, el('b', { text: `${sats(w.pot.usedSats)} used · ${sats(w.pot.leftSats)} left` }), el('span', { text: `Season ${w.pot.season} pot of ${sats(w.pot.potSats)} (paid, else payable now)` }));
+        $('stats').prepend(st);
+        // THE DRAW PRIZE, ITS OWN FIGURE (kanban #2784, the owner 2026-11-15): not part of the bounty pot
+        if (Number(w.pot.drawPrizeSats) > 0) { const dp = el('div', { cls: 'stat pot' }, el('b', { text: sats(w.pot.drawPrizeSats) }), el('span', { text: `Draw prize, Season ${w.pot.season} (apart from the pot)` })); st.after(dp); } } } }
+    catch { WEEK2 = new Set(j.reports.filter((r) => r.season2 && r.season2.approval).map((r) => r.id)); }
+    if (me !== LOADS) return;
+    const wantWeek = Number($('f-week').value) || 0, showWeek = $('f-showweek').checked;
     const tb = $('rows'); tb.replaceChildren();
+    let shown = 0, humans = 0; const wantWho = $('f-who').value; SHOWN = [];
     for (const r of j.reports) {
-      const who = el('td', {}, el('code', { text: `${r.pubkey.slice(0, 12)}…` }), el('div', { cls: r.ours ? 'warn' : r.played ? 'dim' : 'bad', text: r.ours ? 'ours' : r.played ? 'has played before' : 'never finished a round' }),
-        // kanban #2875: the owner's "real user" mark on this key
-        humanIcon(r),
-        r.playedMark ? el('div', {}, el('span', { cls: 'nb-badge ok', text: 'played (owner)' })) : null,
+      const wk = weekOf(r, WEEK2, S1_END);
+      if (wantWeek && wk !== wantWeek) continue;
+      const hum = isHuman(r);
+      if (wantWho && (wantWho === 'human') !== hum) continue;
+      shown++; if (hum) humans++; SHOWN.push(r.id);
+      const who = el('td', {}, el('code', { text: `${r.pubkey.slice(0, 12)}…` }), r.ours ? el('div', { cls: 'warn', text: 'ours' }) : null,
+        // kanban #2875: the owner's "real user" mark on this key; kanban #2904: beside it whether the reporter played (replaces the pill and the red text)
+        el('div', { cls: 'who-row' }, humanIcon(r), playedIcon(r)),
+        // the owner's played mark is said in the icon's tooltip and the report, no pill here (kanban #2904, the owner 2026-11-16)
         socialIcons(r),
         // HOW MUCH AND WHAT (the owner 2026-11-10: "wieviel runden der spieler gemacht hat und welche apps er genutzt hat")
         r.rounds && r.rounds.rounds ? el('div', { cls: 'dim', text: `${r.rounds.rounds} rounds · ${r.rounds.games.map(([g, n]) => `${g} ${n}`).join(', ')}` }) : null);
@@ -139,33 +182,56 @@ const SOCIAL_SVG = {"x": "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusa
       const nbFirst = r.nodeBounty && r.nodeBounty.first && r.state === 'new';
       const from = el('td', {}, el('span', { cls: `tag ${r.source === 'node' ? 's-accepted' : 's-new'}`, text: r.source === 'node' ? 'node' : 'frontend' }), r.node ? el('div', {}, el('code', { text: `${r.node.slice(0, 10)}…` })) : null,
         nbFirst ? el('div', {}, el('span', { cls: 'tag s-paid', text: `+${sats(r.nodeBounty.sats)} first node feedback` })) : null);
-      const tr = el('tr', { cls: 'pick' }, el('td', {}, el('b', { text: r.label || '' }), el('div', { cls: 'dim', text: when(r.receivedMs) })), from,
+      const tr = el('tr', { cls: 'pick' }, el('td', {}, el('b', { text: r.label || '' }), el('div', { cls: 'dim', text: when(r.receivedMs) }), showWeek ? el('div', {}, el('span', { cls: `tag ${wk === 2 ? 's-accepted' : 's-new'}`, text: `Season ${wk}` })) : null), from,
         // its number (kanban #1413) heads the first cell; CATEGORY AND STATE are their own cells (the owner 2026-11-10: "The table is off" - a comment
         // written into this line hid both, so every later cell sat two columns left: the text under State, the player under Game)
         el('td', { text: r.type + (r.screenshot ? ' 🖼' : '') }), el('td', {}, el('span', { cls: `tag s-${r.state}`, text: r.state })),
         el('td', { cls: 'hide-s', text: r.game || '' }), el('td', { text: r.happened.length > 140 ? `${r.happened.slice(0, 140)}…` : r.happened }), who,
-        el('td', { text: r.reward ? `${sats(r.reward.amountSats)} · ${r.reward.state} · Season 1` : r.amountSats ? `${sats(r.amountSats)} approved · Season 1` : '' }));
+        // kanban #2904: a rejected or duplicate report shows no amount and never "approved" (its approval is void); a void link says it was withdrawn
+        el('td', { text: (r.state === 'rejected' || r.state === 'duplicate') ? (r.reward && r.reward.state === 'paid' ? `${sats(r.reward.amountSats)} · paid · Season ${wk}` : '')
+          : r.reward ? `${sats(r.reward.amountSats)} · ${r.reward.state === 'void' ? 'withdrawn' : r.reward.state} · Season ${wk}` : r.amountSats && r.state === 'accepted' ? `${sats(r.amountSats)} approved · Season ${wk}` : '' }));
       tr.addEventListener('click', () => open(r.id));
       tb.append(tr);
     }
-    say(`${j.reports.length} report${j.reports.length === 1 ? '' : 's'}`);
+    say(`${shown} report${shown === 1 ? '' : 's'}${wantWeek ? ` in Season ${wantWeek}` : ''} · ${humans} human, ${shown - humans} bot`);
   }
   // kanban #2878 (the owner 2026-11-16): the platforms this reporter key has linked, as the bounty page's icons; the handle as the tooltip, nothing for the rest.
   // A link whose membership read is not verified is shown dimmed
   // kanban #2875 (the owner 2026-11-16): one compact mark per reporter instead of the long "real user (owner)" tag - a person for a human (the owner's
   // real-user mark, or a played round (or the owner's played mark) AND a verified X account), a robot for everyone else; the tooltip says why
+  // the one rule for the icon and the filter (kanban #2904)
+  function isHuman(r) { const x = !!(r.season2 && r.season2.flags && r.season2.flags.x === true); return !!r.realUser || (!!(r.played || r.playedMark) && x); }
   function humanIcon(r) {
     const x = !!(r.season2 && r.season2.flags && r.season2.flags.x === true);
     const played = !!(r.played || r.playedMark);
-    const human = !!r.realUser || (played && x);
+    const human = isHuman(r);
     const why = r.realUser ? `Human: the owner's real-user mark${r.realUser.name ? ` (${r.realUser.name})` : ''}`
       : human ? `Human: ${r.playedMark && !r.played ? 'played (owner mark)' : 'played a round'} and a verified X account`
-      : `Bot rule (15 %): ${played ? 'played' : 'no played round'}, ${x ? 'verified X' : 'no verified X account'}`;
+      : `Bot rule (15 %): ${played ? (r.playedMark && !r.played ? 'played (owner mark)' : 'played') : 'no played round'}, ${x ? 'verified X' : 'no verified X account'}`;
     const s = el('span', { cls: `who-ic ${human ? 'human' : 'bot'}`, title: why, 'aria-label': why });
     s.innerHTML = human
       ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm0 2c-4.4 0-8 2.2-8 5v1h16v-1c0-2.8-3.6-5-8-5z"/></svg>'
       : '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M11 2h2v3h4a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V8a3 3 0 0 1 3-3h4zM9 10.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm6 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zM8 16v1.5h8V16zM1 10h2v5H1zm20 0h2v5h-2z"/></svg>';
+    // kanban #2904 (the owner 2026-11-16): a human with a linked X account - hover names the handle, a click opens the profile in a new tab (never the row)
+    const xl = human && r.season2 && Array.isArray(r.season2.links) ? r.season2.links.find((l) => l && l.platform === 'x' && l.username) : null;
+    const handle = xl ? String(xl.username).replace(/^@/, '') : '';
+    if (/^[A-Za-z0-9_]{1,15}$/.test(handle)) {
+      const a = el('a', { href: `https://x.com/${handle}`, target: '_blank', rel: 'noopener noreferrer', title: `X: @${handle} · ${why}`, cls: 'who-x' });
+      s.setAttribute('title', `X: @${handle} · ${why}`); a.append(s); a.addEventListener('click', (e) => e.stopPropagation());
+      return el('div', {}, a);
+    }
     return el('div', {}, s);
+  }
+  // kanban #2904 (the owner 2026-11-16): a gamepad - green when the reporter played (a finished round on the seats, or the owner's played mark), grey and
+  // struck through when not; the tooltip says how it was decided
+  function playedIcon(r) {
+    const yes = !!(r.played || r.playedMark);
+    const why = r.played ? `Played: ${r.rounds && r.rounds.rounds ? `${r.rounds.rounds} round${r.rounds.rounds === 1 ? '' : 's'} on the seats` : 'a finished round on the seats'}${r.playedMark ? ', and the owner\'s played mark' : ''}`
+      : r.playedMark ? `Played: the owner's played mark${r.playedMark.setMs ? `, set ${new Date(r.playedMark.setMs).toISOString().slice(0, 10)}` : ''}` : 'Not played: no finished round on the seats and no owner mark';
+    const s = el('span', { cls: `play-ic ${yes ? 'yes' : 'no'}`, title: why, 'aria-label': why });
+    s.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7 7h10a5 5 0 0 1 4.9 6l-.7 3.5A2.5 2.5 0 0 1 17 18l-2.5-2.5h-5L7 18a2.5 2.5 0 0 1-4.2-1.5L2.1 13A5 5 0 0 1 7 7zm0 3v1.5H5.5V13H7v1.5h1.5V13H10v-1.5H8.5V10zm9.5 1a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm-2 1.5a1 1 0 1 0 0 2 1 1 0 0 0 0-2z"/>'
+      + (yes ? '' : '<path d="M3 3l18 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>') + '</svg>';
+    return s;
   }
   function socialIcons(r) {
     const links = (r.season2 && Array.isArray(r.season2.links)) ? r.season2.links : [];
@@ -182,6 +248,9 @@ const SOCIAL_SVG = {"x": "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusa
     let j; try { j = await call(`report/${id}`); } catch (e) { return say(e.message, true); }
     if (!j.ok) return say(j.why, true);
     const r = j.report, d = $('detail'); d.hidden = false; d.replaceChildren();
+    OPEN = id; const at = SHOWN.indexOf(id); $('dlg-pos').textContent = at >= 0 ? `${at + 1} of ${SHOWN.length}` : '';
+    $('dlg-prev').disabled = !(at > 0); $('dlg-next').disabled = !(at >= 0 && at < SHOWN.length - 1);
+    if (!$('dlg').open) $('dlg').showModal();
     const add = d.append.bind(d); d.append = (...k) => add(...k.filter(Boolean));   // an optional part left out is nothing, never the text "null"
     d.append(el('h2', { text: `${r.label ? `${r.label} · ` : ''}${r.type} · ${r.state}${r.severity ? ` · ${r.severity}` : ''}${r.ticket ? ` · ${r.ticket}` : ''}` }),
       el('div', { cls: 'dim', text: `Received ${when(r.receivedMs)} · from the ${r.source === 'node' ? 'node' : 'frontend'} · game ${r.game || 'none'} · round ${r.round || 'none'} · build ${r.build || 'none'}` }),
@@ -221,7 +290,7 @@ const SOCIAL_SVG = {"x": "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusa
       }, (e) => box.replaceChildren(el('h2', { text: 'Node bounty checklist' }), el('div', { cls: 'bad', text: e.message }))); }
     if (r.reason) d.append(el('div', { cls: 'bad', text: `Rejected: ${r.reason}` }));
     if (r.duplicateOf) d.append(el('div', { cls: 'dim', text: `Duplicate of ${r.duplicateOf.slice(0, 16)}…` }));
-    if (r.reward) d.append(el('div', {}, el('b', { text: `Season 1 reward ${sats(r.reward.amountSats)} (${r.reward.network}) · ${r.reward.state}${r.reward.address ? ` · to ${r.reward.address}` : ''}` }),
+    if (r.reward) d.append(el('div', {}, el('b', { text: `Season ${weekOf(r, WEEK2, S1_END)} reward ${sats(r.reward.amountSats)} (${r.reward.network}) · ${r.reward.state}${r.reward.address ? ` · to ${r.reward.address}` : ''}` }),
       r.reward.comment ? el('div', { cls: 'dim', text: `Comment: ${r.reward.comment}` }) : null, r.reward.why && r.reward.state !== 'paid' ? el('div', { cls: 'warn', text: r.reward.why }) : null,
       r.reward.lnurl ? el('div', {}, el('code', { text: r.reward.lnurl })) : null));
     const act = async (body, ok) => { let a; try { a = await call('act', { id: r.id, ...body }); } catch (e) { return say(e.message, true); } if (!a.ok) return say(a.why, true); say(ok); await load(); await open(r.id); };
@@ -270,10 +339,24 @@ const SOCIAL_SVG = {"x": "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusa
     d.append(el('div', { cls: 'row' }, ticket, btn('Link ticket', () => act({ action: 'note', ticket: ticket.value.trim() }, 'Ticket linked'))));
     d.append(el('h2', { text: 'History' }), ...j.moves.map((m) => el('div', { cls: 'dim', text: `${when(m.atMs)} · ${m.from} → ${m.to}${m.by ? ` · ${m.by}` : ''}${m.note ? ` · ${m.note}` : ''}` })));
     if (j.earlier.length) d.append(el('h2', { text: `Earlier reports by this player (${j.earlier.length})` }), ...j.earlier.map((x) => el('div', { cls: 'dim', text: `${when(x.receivedMs)} · ${x.state} · ${x.happened.slice(0, 100)}` })));
-    d.scrollIntoView({ behavior: 'smooth' });
+    $('dlg').scrollTop = 0;
   }
+  // THE MODAL (kanban #2904): X, Esc (the dialog's own cancel) or a click on the dim backdrop closes it; ← / → step through the list as filtered
+  let SHOWN = [], OPEN = null;
+  const step = (k) => { const at = SHOWN.indexOf(OPEN); const to = SHOWN[at + k]; if (at >= 0 && to) open(to); };
+  $('dlg-x').addEventListener('click', () => $('dlg').close());
+  $('dlg-prev').addEventListener('click', () => step(-1));
+  $('dlg-next').addEventListener('click', () => step(1));
+  $('dlg').addEventListener('click', (e) => { if (e.target === $('dlg')) $('dlg').close(); });
+  $('dlg').addEventListener('close', () => { OPEN = null; });
+  document.addEventListener('keydown', (e) => { if (!$('dlg').open || /^(INPUT|TEXTAREA|SELECT)$/.test((e.target && e.target.tagName) || '')) return;
+    if (e.key === 'ArrowLeft') { e.preventDefault(); step(-1); } else if (e.key === 'ArrowRight') { e.preventDefault(); step(1); } });
   $('enter').addEventListener('click', () => { code = $('code').value.trim(); try { localStorage.setItem('arena.feedback.admin', code); } catch { /* this tab only */ } load(); });
   $('reload').addEventListener('click', load);
+  $('f-week').addEventListener('change', load);
+  $('f-who').addEventListener('change', load);
+  for (const id of ['f-state', 'f-type', 'f-source']) $(id).addEventListener('change', load);
+  $('f-showweek').addEventListener('change', () => { try { localStorage.setItem('arena.feedback.admin.showweek', $('f-showweek').checked ? '1' : '0'); } catch { /* this visit */ } load(); });
   $('logout').addEventListener('click', () => { code = ''; try { localStorage.removeItem('arena.feedback.admin'); } catch { /* none */ } show(false); });
   $('csv').addEventListener('click', async () => { const r = await fetch(`${API}/export.csv`, { headers: { 'x-arena-admin': code } }); if (!r.ok) return say('not read', true);
     const a = el('a', { href: URL.createObjectURL(await r.blob()), download: 'arena-feedback.csv' }); document.body.append(a); a.click(); a.remove(); });
