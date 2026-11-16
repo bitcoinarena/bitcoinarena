@@ -97,6 +97,10 @@ export function signFacts({ node, atMs, facts, sign }) {
   return { record, signature: toHex(sign(factsDigest(record))) };
 }
 
+// RECORDS TAKEN WHILE THE CENSUS IS UNREAD (kanban #2855, #1489 r26-gossip-2): isBonded answers null in a seat's first minute or while no census
+// reads, and offer() took every self-signed record from fresh keys - one row each, kept and served for good. Now: GET /node-facts lists only the
+// keys the read census does not refuse, and while it is unread at most FACTS_UNKNOWN_MOST rows are held (a bonded node is always taken)
+export const FACTS_UNKNOWN_MOST = 2000;
 /** The seat's book of what nodes said. `isBonded(hex)`: true, false, or null while unknown (taken: a seat that reads no census yet refuses nobody). */
 export function createNodeFactsBook({ db, verify, isBonded = () => null, nowMs = () => Date.now() }) {
   db.exec('CREATE TABLE IF NOT EXISTS node_facts (node TEXT PRIMARY KEY, at_ms INTEGER NOT NULL, said TEXT NOT NULL, seen_ms INTEGER NOT NULL)');
@@ -116,7 +120,10 @@ export function createNodeFactsBook({ db, verify, isBonded = () => null, nowMs =
     const text = JSON.stringify(said);
     if (text.length > FACTS_MOST_BYTES) return { ok: false, why: 'that record is too large' };
     if (r.atMs > nowMs() + FACTS_AHEAD_MS) return { ok: false, why: 'that record is dated in the future' };
-    if (isBonded(r.node) === false) return { ok: false, why: 'that node holds no bond' };
+    const bonded = isBonded(r.node);
+    if (bonded === false) return { ok: false, why: 'that node holds no bond' };
+    if (bonded !== true && !db.prepare('SELECT 1 FROM node_facts WHERE node = ?').get(r.node)
+      && db.prepare('SELECT COUNT(*) AS n FROM node_facts').get().n >= FACTS_UNKNOWN_MOST) return { ok: false, why: 'the census is not read yet: try again later' };   // kanban #2855
     const had = db.prepare('SELECT at_ms FROM node_facts WHERE node = ?').get(r.node);
     if (had && had.at_ms >= r.atMs) return { ok: true, kept: false };
     let good = false;
@@ -126,6 +133,8 @@ export function createNodeFactsBook({ db, verify, isBonded = () => null, nowMs =
     return { ok: true, kept: true };
   }
   /** Every record held, newest first, each with its age: a node's last word stays here after it went offline. */
-  const list = () => db.prepare('SELECT said, at_ms FROM node_facts ORDER BY at_ms DESC').all().map((x) => ({ ...JSON.parse(x.said), ageS: Math.round((nowMs() - Number(x.at_ms)) / 1000) }));
+  // kanban #2855: a key the read census refuses (no bond) is not served, nor passed on
+  const list = () => db.prepare('SELECT node, said, at_ms FROM node_facts ORDER BY at_ms DESC').all().filter((x) => isBonded(String(x.node)) !== false)
+    .map((x) => ({ ...JSON.parse(x.said), ageS: Math.round((nowMs() - Number(x.at_ms)) / 1000) }));
   return { offer, list, once };
 }
