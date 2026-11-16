@@ -3014,6 +3014,28 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       evidence: late.evidence, why: `this signer node was offered the on-time first mark only after the start deadline had passed; ${d.why}`, learned });
     return round.entryVoid(c.entryId);
   }
+  // kanban #2838: every receipt of the first mark this seat can see - its foreign_receipts of the mark's id and each peer's GET /receipts of the
+  // entry (bounded in time and bytes) - so a Void is never decided on the caller's choice of receipts
+  async function receiptsKnownOf(c) {
+    const id = toHex(checkpointId(c)), out = [];
+    try { for (const r of round.foreignReceipts()) if (toHex(r.checkpointId) === id) out.push(r.bytes); } catch { /* none held */ }
+    let peers = [];
+    try { peers = verifier && typeof verifier.peersOf === 'function' ? verifier.peersOf(c.roundId) : []; } catch { peers = []; }
+    await Promise.all(peers.slice(0, 16).map(async (peer) => {
+      try {
+        const r = await fetch(`${String(peer).replace(/\/+$/, '')}/receipts?round=${toHex(c.roundId)}&entry=${toHex(c.entryId)}`, { signal: AbortSignal.timeout(4000) });
+        if (!r.ok) return;
+        const max = 64 * SIGNED_RECEIPT_BYTES, parts = []; let total = 0;
+        if (!r.body) return;
+        const reader = r.body.getReader();
+        for (;;) { const { done, value } = await reader.read(); if (done) break; total += value.byteLength;
+          if (total > max) { try { await reader.cancel(); } catch { /* gone */ } return; } parts.push(value); }
+        const buf = new Uint8Array(Buffer.concat(parts, total));
+        for (let i = 0; i + SIGNED_RECEIPT_BYTES <= buf.length; i += SIGNED_RECEIPT_BYTES) out.push(buf.slice(i, i + SIGNED_RECEIPT_BYTES));
+      } catch { /* a peer that does not answer adds none */ }
+    }));
+    return out;
+  }
   /** The receipts a Void signer node handed over: its own, and every one it holds of the mark. */
   const receiptsGiven = (got) => [got.receipt, ...(Array.isArray(got.receipts) ? got.receipts : [])]
     .filter(Boolean).flatMap((r) => { try { return [fromHex(String(r))]; } catch { return []; } });
@@ -9874,7 +9896,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!round.holdsMark(checkpointId(c))) {
           const late = lateEvidenceHere(c, got.entryVoid, got.receipt ? fromHex(String(got.receipt)) : null);
           if (late) {
-            const v = voidHere(c, bytes, late, receiptsGiven(got), got.ask === 'forfeit' ? 'forfeit-ask' : 'forward');
+            // NOT ON THE CALLER'S COUNT OF RECEIPTS (kanban #2838, #1489 r24-play-1): a stranger handed a seat that missed the first mark only 4 of
+            // the 5 public receipts plus a later public mark, and the seat recorded ENTRY_VOID for a run the committee carried live. The receipts this
+            // seat holds of the mark and the ones its peers serve at GET /receipts are counted with the given ones before any Void is recorded.
+            const v = voidHere(c, bytes, late, [...receiptsGiven(got), ...(await receiptsKnownOf(c))], got.ask === 'forfeit' ? 'forfeit-ask' : 'forward');
             if (v) return answer(409, { entryVoid: true, why: v.why });
           } else if (got.entryVoid) return answer(409, { why: 'that ENTRY_VOID claim does not verify at this signer node' });
         }
