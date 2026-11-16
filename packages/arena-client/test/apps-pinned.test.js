@@ -21,8 +21,10 @@ const walk = (dir, at = '') => readdirSync(join(dir, at), { withFileTypes: true 
 });
 
 for (const [name, app] of Object.entries(lock.apps)) {
-  test(`${name}: ${app.copy} is the app at ${app.commit.slice(0, 12)}, and this repository tracks none of it`, () => {
+  test(`${name}: ${app.copy} is the app at ${app.commit.slice(0, 12)}, and this repository tracks none of it`, (t) => {
     const dir = join(ROOT, '.apps', name);
+    // an optional app this machine cannot read is skipped by tools/fetch-apps.mjs (kanban #1006), so it is skipped here too
+    if (app.optional && !existsSync(join(dir, '.git'))) return t.skip(`${name} is optional and not checked out here`);
     assert.ok(existsSync(join(dir, '.git')), `no checkout of ${name}: run node tools/fetch-apps.mjs`);
     assert.equal(lines(dir, 'rev-parse', 'HEAD')[0], app.commit, `${name} is not checked out at the pinned commit: run node tools/fetch-apps.mjs`);
     assert.deepEqual(lines(ROOT, 'ls-files', '--', app.copy), [], `${app.copy} is not tracked here: the app's repository is its only source`);
