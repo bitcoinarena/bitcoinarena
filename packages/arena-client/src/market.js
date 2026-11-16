@@ -26,6 +26,7 @@ import { encodeEntryContract, entryId, decodeEntryContract } from '../../arena-p
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { handLock, postLockClaim } from './page-lock.js';
 import { cancelId, sellId, PRICE_SCALE } from '../../arena-protocol/src/order-book.js';
+import { bookSettlement } from '../../arena-protocol/src/book-ledger.js';
 
 const sats = (msat) => (Number(BigInt(msat)) / 1000).toLocaleString('en-US', { maximumFractionDigits: 3 });
 
@@ -579,6 +580,15 @@ export function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() })
       continue;
     }
     const mine = rebuilt.row;
+    // AN ORDER BOOK'S ORDER IS PAID BY THE BOOK, NOT BY THE PARI-MUTUEL TABLE (kanban #2902, feedback #140): an Up/Down round settles
+    // by book-ledger bookSettlement - its shares at the outcome, less what its sells owe, plus its unspent budget - so its result and
+    // its gain or loss are the book's (`p.bookClaim`, bookClaimOf over the seats' books, read by the page once the outcome is verified).
+    // The table above still decides that the outcome is verified; with sells the pick's side alone no longer says won or lost
+    if (!p.market.scalar && p.bookClaim && BigInt(p.stakeMsat) > 0n) {
+      const put = BigInt(p.stakeMsat), out = BigInt(p.bookClaim.outMsat);
+      lines.push({ ...at('settled', { payoutMsat: String(out), netMsat: String(put) }), text: `${head}: ${signed} · the book pays ${sats(out)} of your ${sats(put)} sats · ${out >= put ? `+${sats(out - put)}` : `-${sats(put - out)}`}${o.final ? '' : ' (final after the objection window)'}` });
+      continue;
+    }
     const won = mine.won;
     const net = mine.netMsat;
     const pay = mine.payoutMsat;
@@ -594,6 +604,38 @@ export function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() })
     else lines.push({ ...at('lost', { lostMsat: String(net) }), text: `${head}: ${signed} · you lost ${sats(net)} sats` });
   }
   return lines;
+}
+
+/**
+ * WHAT AN ORDER BOOK PAYS ONE ORDER (kanban #2902, feedback #140): `books` the seats' GET /book answers for the round, `outcome` the
+ * verified outcome (0 / 1), `entryIdHex` the order and `stakeMsat` its whole lock (N + F). Each answer's positions settled by the
+ * protocol's own bookSettlement; the order's gain is its winnings less its buys' cost and fee and its sells' debt and fee (an
+ * answer carries no N or F - they only add the unspent budget back, which is no gain). Only an answer at least two seats gave,
+ * byte for byte, and the most often given, counts: { outMsat, gainMsat } (outMsat = stake + gain), or null.
+ */
+export function bookClaimOf({ books, outcome, entryIdHex, stakeMsat }) {
+  if (outcome !== 0 && outcome !== 1) return null;
+  const said = new Map();
+  for (const b of books || []) {
+    const rows = b && Array.isArray(b.positions) ? b.positions : null;
+    if (!rows || !rows.some((x) => x && x.entry === entryIdHex)) continue;
+    const key = JSON.stringify(rows);
+    said.set(key, (said.get(key) || 0) + 1);
+  }
+  const [best] = [...said.entries()].sort((a, b) => b[1] - a[1]);
+  if (!best || best[1] < 2 || [...said.values()].filter((n) => n === best[1]).length > 1) return null;
+  try {
+    const positions = new Map(JSON.parse(best[0]).map((x) => {
+      const cost = BigInt(x.cost), buyFee = BigInt(x.buyFee || 0);
+      return [x.entry, { entry: x.entry, outcome: Number(x.outcome), N: cost, F: buyFee, cost, buyFee, shares: x.shares.map((v) => BigInt(v)),
+        sellDebt: BigInt(x.sellDebt || 0), sellFee: BigInt(x.sellFee || 0) }];
+    }));
+    const row = bookSettlement({ positions, outcome }).claimed.find((r) => r.entry === entryIdHex);
+    if (!row) return null;
+    const me = positions.get(entryIdHex);
+    const gain = row.outMsat - me.cost - me.buyFee;
+    return { outMsat: String(BigInt(stakeMsat) + gain), gainMsat: String(gain) };
+  } catch { return null; }
 }
 
 // AN ORDER'S OWN MESSAGES: what its session key signs to cancel it, or to sell its shares back, before the
