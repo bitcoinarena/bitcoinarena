@@ -60,7 +60,7 @@ export const stateOf = (r) => (r && S[r.state] ? r.state : r && r.orphaned ? S.O
 
 export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsFor, verify, store, schedule = SCHEDULES.mainnet, scheduleFor = null,
   repealSchedule = REPEAL_SCHEDULES.mainnet, repealScheduleFor = null, historyFor = null, censusAt = null, tipHeight = null, blockHashAt = null, bindHeightFor = null,
-  seenSigner = null, keyHeightFor = null, blockHeightOf = null }) {
+  seenSigner = null, keyHeightFor = null, blockHeightOf = null, censusNow = null }) {
   let tipOf = typeof tipHeight === 'function' ? tipHeight : null;
   /** BOUND: deposited at or above its network's BALLOT_BIND_HEIGHT (kanban #2125); below it, or with no gate given, the old reading. */
   const isBound = (net, height) => {
@@ -270,7 +270,12 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
             // again). The pull and the tally's re-post (`own`) are this seat's own passes and are not held to it.
             let known = null; try { known = recipientsFor(net, h); } catch { known = null; }
             if (!known) return { ok: false, status: 422, why: `this seat knows no donation set in force for that network at height ${h}` };
-            if (!own && !doorCensusKey(`${net}:${h}`)) return { ok: false, status: 503, why: 'this seat reads only a few new censuses a minute for posted proposals: ask again shortly' };
+            // A PROPOSER BONDED IN THE CENSUS THIS SEAT ALREADY HOLDS IS NOT HELD TO THE BUDGET (kanban #2831, #1489 r24-census-1: the budget was one
+            // window for every poster, and 4 unbonded stranger posts a minute shut out each bonded proposer with 503): `censusNow()`, the seat's current
+            // census (no derivation), names the bonded node keys; only posters it does not name share the DOOR_CENSUS_KEYS window
+            let bondedHere = false;
+            if (typeof censusNow === 'function') { try { const now = censusNow(); bondedHere = Array.isArray(now) && now.some((e) => e && xOnly(e.pubkey) === xOnly(p.proposer)); } catch { bondedHere = false; } }
+            if (!own && !bondedHere && !doorCensusKey(`${net}:${h}`)) return { ok: false, status: 503, why: 'this seat reads only a few new censuses a minute for posted proposals: ask again shortly' };
             let census = null; try { census = await censusAt(net, h); } catch { census = null; }
             if (Array.isArray(census) && !census.some((e) => e && xOnly(e.pubkey) === xOnly(p.proposer)))
               return { ok: false, status: 422, why: `the proposer holds no active bond in the census at height ${h} (27A.7.2)` };
