@@ -7655,6 +7655,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (update) {
       const u = checkNetworkUpdate({ networkId: network, chain, topSerial: topSerialOf(network) }, v);
       if (!u.ok) return { ...plain(v), ok: false, status: 422, why: u.why };
+      // AN AUTOMATIC UPDATE NEVER DROPS A SERIES THE OWNER HOLDS (kanban #2845, #1489 r25-hosting-2): any one network seat served a package of the
+      // same network and serial with no series; the sweep wrote it over the kept one, and after the next restart the owner's series were gone. An
+      // automatic update must carry every series the owner named; the owner's own update decides for itself.
+      if (auto) {
+        const carried = new Set(v.series.map((t) => toHex(seriesId(t))));
+        const lost = [...(networksHeld.get(network)?.ownerSeries || [])].filter((id) => !carried.has(id));
+        if (lost.length) return { ...plain(v), ok: false, status: 422, why: `that package drops ${lost.length} series this seat's owner holds (${lost[0].slice(0, 16)}...): an automatic update keeps them` };
+      }
     }
     mkdirSync(joinPath(networksDir, network), { recursive: true });
     writeFileSync(joinPath(networksDir, network, 'package.json'), JSON.stringify(pkg));
