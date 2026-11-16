@@ -377,3 +377,20 @@ test('#1342 the faucet asks the bounty address of a signed and of an unsigned re
   assert.ok(src.includes("if (!b0.event) { const m = /\\nBounty address: (\\S+)/.exec(String(b0.text || '')); if (m) { const w = await lnAddressWorks(m[1]);"), 'unsigned');
   assert.ok(src.indexOf('if (!b0.event) { const m =') < src.indexOf("const key = readFileSync(env.FAUCET_CHAT_TOKEN_FILE, 'utf8').trim();"), 'before the chat post');
 });
+
+// kanban #2875: a player whose paid rounds all went VOID is in no season row; the seats' `entered` lists count him as played
+test('#2875 networkPlayers: a key in any seat\'s `entered` list has played; the rows and the history are unchanged', async () => {
+  const A = 'a1'.repeat(32), V = 'e5'.repeat(32), W = 'f6'.repeat(32), J = 'junk';
+  const asked = [];
+  const fetcher = async (url) => { asked.push(url); const u = new URL(url);
+    if (u.searchParams.get('scope') === 'network') return new Response(JSON.stringify({ rows: [{ player: A, rounds: 2 }], entered: [A, J] }), { status: 200 });
+    if (u.host === 'seat2.example' && u.searchParams.get('game') === 'nextblock') return new Response(JSON.stringify({ rows: [], entered: [V.toUpperCase()] }), { status: 200 });
+    if (u.host === 'seat3.example') throw new Error('down');
+    return new Response(JSON.stringify({ rows: [] }), { status: 200 }); };
+  const np = networkPlayers({ seats: ['https://seat1.example', 'https://seat2.example', 'https://seat3.example'], games: ['rock-paper-scissors', 'nextblock'], fetcher });
+  await np.fresh();
+  console.log('  FACTS #2875 played:', JSON.stringify({ A: np.played(A), V: np.played(V), W: np.played(W), asked: asked.length }));
+  assert.deepEqual([np.played(A), np.played(V), np.played(W), np.played(J)], [true, true, false, false]);
+  assert.equal(np.history(V).rounds, 0, 'an entry that counted in no row adds no round');
+  assert.ok(asked.includes('https://seat2.example/season?game=nextblock&days=90'));
+});

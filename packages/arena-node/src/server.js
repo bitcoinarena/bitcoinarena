@@ -11774,6 +11774,22 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // merged with this seat's own by protocol mergeSeasonAccounts: a round counts only when SEASON_NETWORK_AGREE (3)
       // distinct seats, this one included, handed in byte-identical accounts of it, so no one seat can forge a row. A seat
       // that does not answer within SEASON_PEER_TIMEOUT_MS is missing, not an error. Kept 30 s per query too.
+      // kanban #2875: the players with a locked entry in a paid round among season rounds `read` (any outcome, VOID and refunded too), sorted
+      const enteredOf = (read) => { const k = new Set();
+        for (const r of read) for (const e of r.entries || []) if (e && e.player && BigInt(e.stakeMsat || 0) > 0n) k.add(String(e.player));
+        return [...k].sort(); };
+      // kanban #2875: this seat's own season rounds of `ids` in window `w` (the raw read the seat's own /season keeps)
+      const seasonReadLocal = (ids, w) => {
+        const stored = storedSeasonGames(), held = ids.filter((id) => stored.has(id));
+        const rq = `raw|${held.join(',')}|${SEASON_DAYS_MAX}`;
+        let raw = seasonRaw.get(rq);
+        if (!raw || Date.now() - raw.at > SEASON_KEEP_MS) {
+          const wMax = seasonWindow({ nowMs: Date.now(), days: SEASON_DAYS_MAX });
+          raw = { at: Date.now(), read: held.length ? seasonRounds(round, { games: new Set(held), fromMs: wMax.fromMs, toMs: wMax.toMs, isMarket: (c) => !!attestedOf(c) }) : [] };
+          seasonRaw.set(rq, raw); if (seasonRaw.size > 32) seasonRaw.delete(seasonRaw.keys().next().value);
+        }
+        return raw.read.filter((r) => r.startMs >= BigInt(w.fromMs) && r.startMs < BigInt(w.toMs));
+      };
       if (req.method === 'GET' && url.pathname === '/season') {
         const asked = seasonQuery(url);
         if (!asked.ok) return text(res, asked.status, asked.why);
@@ -11784,23 +11800,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let kept;
         if (scope === 'network') {
           try { kept = await seasonNetworkNow(ids, w); } catch (e) { return text(res, 500, `that season could not be built: ${e.message}`); }
+          // WHO ENTERED A PAID ROUND, WHATEVER IT CAME TO (kanban #2875, the owner 2026-11-16): the season counts no VOID round and no refunded entry
+          // (§18) - it is the signed leaderboard and badge account - so a player whose paid rounds were refused or void was "never played" for the
+          // feedback bounty. Beside the account, unsigned and from this seat's own store: `entered`, the players with a locked entry in a paid
+          // round of these games in the window (any outcome). The accounts are unchanged.
+          try {
+            const body = JSON.parse(kept.json); body.entered = enteredOf(seasonReadLocal(ids, w));
+            kept = { ...kept, json: JSON.stringify(body) };
+          } catch { /* the account alone, as before */ }
         } else {
           kept = seasonKept.get(q);
           if (!kept || Date.now() - kept.at > SEASON_KEEP_MS) {
             // kanban #2725: the store is read once per stored game set over SEASON_DAYS_MAX (ids it holds no round of read nothing); a
             // window is a filter of that read - a made-up id or another days= no longer costs a whole-store read each
-            const stored = storedSeasonGames(), held = ids.filter((id) => stored.has(id));
-            const rq = `raw|${held.join(',')}|${SEASON_DAYS_MAX}`;
-            let raw = seasonRaw.get(rq);
-            if (!raw || Date.now() - raw.at > SEASON_KEEP_MS) {
-              const wMax = seasonWindow({ nowMs: Date.now(), days: SEASON_DAYS_MAX });
-              raw = { at: Date.now(), read: held.length ? seasonRounds(round, { games: new Set(held), fromMs: wMax.fromMs, toMs: wMax.toMs, isMarket: (c) => !!attestedOf(c) }) : [] };
-              seasonRaw.set(rq, raw); if (seasonRaw.size > 32) seasonRaw.delete(seasonRaw.keys().next().value);
-            }
-            const read = raw.read.filter((r) => r.startMs >= BigInt(w.fromMs) && r.startMs < BigInt(w.toMs));
+            const read = seasonReadLocal(ids, w);
             const s = season(read, { games: ids, fromMs: w.fromMs, toMs: w.toMs });
             if (!s.ok) return text(res, 500, `that season could not be built: ${s.why}`);
-            kept = { at: Date.now(), json: JSON.stringify(seasonBody(s, ids, w)) };
+            kept = { at: Date.now(), json: JSON.stringify({ ...seasonBody(s, ids, w), entered: enteredOf(read) }) };   // kanban #2875: see below
             keepSeason(q, kept);
           }
         }

@@ -348,3 +348,27 @@ test('the games this store holds rounds of are read on from the last entry: a ne
     assert.equal(await rounds(b32(0x77)), 1, 'the old game still counted');
   } finally { Date.now = realNow; await d.close(); }
 });
+
+// kanban #2875 (the owner 2026-11-16): a player whose paid rounds went VOID or were refunded is in no season row, and the feedback bounty read him
+// as "never played". Beside the account, unsigned: `entered`, everyone with a locked entry in a paid round of the window, whatever it came to
+test('#2875 GET /season and ?scope=network carry `entered`: a locked entry in a paid round of any outcome; a free or lockless one is not', async () => {
+  const d = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, peers: [], ...opts });
+  try {
+    const now = Date.now();
+    const { P2, P3, P4, P5 } = seed(d.round, now);
+    const P6 = b32(0x56), P7 = b32(0x57), P8 = b32(0x58);
+    // 6 - PAID, it went VOID (no result, no settlement): P6's lock was refunded; P7 posted an entry with no lock
+    writeRound(d.round, 6, [{ key: P6, outcome: 'FAILED', score: 0, sigs: 0, lock: true }, { key: P7, outcome: 'FAILED', score: 0, sigs: 0 }],
+      { startMs: now - 4 * HOUR });
+    // 7 - PAID but ten days ago: outside the week
+    writeRound(d.round, 7, [{ key: P8, outcome: 'DELIVERED', score: 1, lock: true }], { startMs: now - 10 * DAY_MS });
+    const own = await (await fetch(`http://127.0.0.1:${d.port}/season?game=nextblock`)).json();
+    const net = await (await fetch(`http://127.0.0.1:${d.port}/season?game=nextblock&scope=network`)).json();
+    console.log('  FACTS #2875 entered:', JSON.stringify({ own: own.entered, net: net.entered, rows: own.rows.length }));
+    const want = [toHex(I1), toHex(P2), toHex(P5), toHex(P6)].sort();
+    assert.deepEqual(own.entered, want);
+    assert.deepEqual(net.entered, want);
+    for (const k of [P3, P4, P7, P8]) assert.ok(!own.entered.includes(toHex(k)), toHex(k));
+    assert.ok(!own.rows.some((x) => x.player === toHex(P6)), 'the VOID round is still in no row');
+  } finally { await d.close(); }
+});
