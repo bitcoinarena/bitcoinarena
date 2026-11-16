@@ -1403,6 +1403,22 @@ export function openStore(path = ':memory:') {
   // the prune's deletes included) and recounted once here at open. Per entry, round and accused node the sums stay queries over an
   // index, each bounded by its own cap; relayed_accused (slash rows only) serves the per-accused-node cap over all rounds.
   db.exec('CREATE INDEX IF NOT EXISTS relayed_accused ON relayed (accused) WHERE accused IS NOT NULL');
+  // THE LOOKUPS A SEAT MAKES EVERY ROUND, BY INDEX (kanban #2901, measured 2026-11-16 on seat 1: handoutCount alone ~20 % of the seat's CPU, a
+  // full scan of handouts per call; stake_locks, fee_locks, batches, rounds by time and the rest scanned 4,000-275,000 rows each; with these the
+  // seat went from ~1.5 % to ~65 % idle). Each one alone, so a table another module creates later is indexed on the next open.
+  for (const sql of [
+    'CREATE INDEX IF NOT EXISTS handouts_by_round ON handouts (round_id)',
+    'CREATE INDEX IF NOT EXISTS stake_locks_by_round ON stake_locks (round_id)',
+    'CREATE INDEX IF NOT EXISTS stake_locks_by_outpoint ON stake_locks (outpoint)',
+    'CREATE INDEX IF NOT EXISTS fee_locks_by_outpoint ON fee_locks (outpoint)',
+    'CREATE INDEX IF NOT EXISTS batches_by_entry_seq ON batches (entry_id, seq)',
+    'CREATE INDEX IF NOT EXISTS rounds_by_opened ON rounds (opened_ms)',
+    'CREATE INDEX IF NOT EXISTS entries_by_joined ON entries (joined_ms)',
+    'CREATE INDEX IF NOT EXISTS final_sigs_by_seen ON final_sigs (seen_ms)',
+    'CREATE INDEX IF NOT EXISTS market_orders_by_received ON market_orders (received_ms)',
+    'CREATE INDEX IF NOT EXISTS tx_steps_by_at ON tx_steps (at_ms)',
+    'CREATE INDEX IF NOT EXISTS tx_round_events_by_at ON tx_round_events (at_ms)',
+  ]) { try { db.exec(sql); } catch { /* that table is not in this store (yet) */ } }
   db.exec('CREATE TABLE IF NOT EXISTS relayed_tally (k TEXT PRIMARY KEY, n INTEGER NOT NULL)');
   const rowCost = (t) => `(LENGTH(${t}.bytes) + ${RELAY_ROW_COST})`;
   const tallyOf = (t) => ({
