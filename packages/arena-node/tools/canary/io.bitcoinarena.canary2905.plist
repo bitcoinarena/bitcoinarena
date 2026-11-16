@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- kanban #2905: the live canary on the MacBook, a pass every 30 min. Install: cp to ~/Library/LaunchAgents/, then
+     launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.bitcoinarena.canary2905.plist
+     Stop: launchctl bootout gui/$(id -u)/io.bitcoinarena.canary2905 -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>io.bitcoinarena.canary2905</string>
+  <key>ProgramArguments</key><array><string>/bin/bash</string><string>/Users/user/arena-canary/canary-run.sh</string></array>
+  <key>StartInterval</key><integer>1800</integer>
+  <key>RunAtLoad</key><true/>
+  <key>StandardOutPath</key><string>/Users/user/arena-canary/launchd.out</string>
+  <key>StandardErrorPath</key><string>/Users/user/arena-canary/launchd.out</string>
+  <key>ProcessType</key><string>Background</string>
+</dict>
+</plist>
