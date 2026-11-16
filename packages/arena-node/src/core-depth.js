@@ -75,6 +75,13 @@ export function instrumentCore(text, rel = 'core') {
         // a field's initializer runs as a function of its own (an implicit constructor recursing through `new` is counted here)
         if (node.value) { add(node.value.start, OPEN(depth), `(()=>{${ENTER}return (`); add(node.value.end, CLOSE(depth), `);${LEAVE}})()`); }
         break;
+      case 'AssignmentPattern':
+        // A DEFAULT VALUE RUNS BEFORE THE BODY'S COUNT (kanban #2837, #1489 r24-hosting-1): function f(k, d = k > 0 ? 1 + f(k - 1) : 0) nested
+        // through its parameter defaults uncounted, past DEPTH_MAX into V8's own overflow, whose depth moves with tier-up. Every default value
+        // (a parameter's, a destructuring pattern's) is now counted as a function of its own, as a class field's initializer is - an arrow, so
+        // `this` and `arguments` read as before
+        if (node.right) { add(node.right.start, OPEN(depth), `(()=>{${ENTER}return (`); add(node.right.end, CLOSE(depth), `);${LEAVE}})()`); }
+        break;
       case 'CatchClause':
         // a caught error asks the count first: past a stack overflow (sticky) it is thrown on
         if (!node.param) add(node.body.start, OPEN(depth), `(${RESERVED}t)`);
