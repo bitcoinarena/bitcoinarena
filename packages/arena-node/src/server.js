@@ -3851,7 +3851,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // takes the peer's view): a seat with an entry pulls every peer each LOCK_SET_PULL_MS, so its view, signature and certificate are made as before.
       // A round nobody entered anywhere gets no certificate and is VOID at the close + the window, as a certified empty set made it before.
       if (x.work === undefined) { try { x.work = round.handoutCount(x.rid) > 0 || round.entriesOf(x.rid).length > 0; } catch { x.work = true; } }
-      if (!x.work && !lockSets.certified(x.rid) && !lockSets.touched(x.rid)) continue;
+      // kanban #2901 b (the owner 2026-11-16 "fixe das"): a peer's ask alone is not work - nodes not yet on this build ask about every round, so
+      // 'touched' kept every seat signing empty sets. Stepped only when this seat holds a handout/entry, a certificate, or a view naming an entry.
+      if (!x.work && !lockSets.certified(x.rid) && !lockSets.heardEntries(x.rid)) continue;
       lockSets.step(x.rid).catch((e) => console.error(`[lock-set] ${toHex(x.rid).slice(0, 16)}: ${e.message}`));
     }
   };
@@ -11708,7 +11710,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           res.writeHead(200, { 'content-type': 'application/json', ...CORS });
           return res.end(JSON.stringify(got));
         }
-        if (lockSetRound(rid)) lockSets.step(rid).catch(() => {});
+        // kanban #2901 b: a pull steps the set only where there is something to sign (an entry or handout here, or a view naming an entry)
+        let work = false; try { work = round.handoutCount(rid) > 0 || round.entriesOf(rid).length > 0; } catch { work = true; }
+        if (lockSetRound(rid) && (work || lockSets.certified(rid) || lockSets.heardEntries(rid))) lockSets.step(rid).catch(() => {});
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
         return res.end(JSON.stringify(lockSets.state(rid)));
       }
