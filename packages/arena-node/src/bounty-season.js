@@ -51,8 +51,16 @@ export function bonusPct(flags = {}) {
 // played round by a verified X account (was 25 %)
 export const BOT_PCT = 15;
 export const HUMAN_FLAGS = Object.freeze(['x']);
-export function seasonPayout({ level, codeOnly = false, followUp = false, flags = {}, played = true } = {}) {
+// NO NODE BOUNTY FOR A BOT (kanban #2876, the owner 2026-11-16 ~07:06Z: "Ab sofort, mit Timestamp jetzt in der Bounty definieren: Bots sind ausgenommen von
+// dem 10k sat Bonus, es zaehlt nur das eigentliche Feedback"): a node report received from 2026-11-16T07:06:38Z on whose reporter is not proven human (a
+// played round - the owner's played mark counts - AND a verified X account) gets no flat node bounty; it is approved as ordinary feedback at its level
+// (the bot share, the bonus as usual). A report received before keeps the old rule.
+export const NODE_BOT_EXCLUDED_FROM_MS = 1794812798412;
+export const NODE_BOT_EXCLUDED_WHY = 'From 16 Nov 2026 07:06 UTC the 10,000 sat node bounty is only for proven humans (a played round and a linked X account): approve this node report as ordinary feedback at its level';
+export function seasonPayout({ level, codeOnly = false, followUp = false, flags = {}, played = true, receivedMs = null } = {}) {
   const lv = String(level || '').toLowerCase();
+  if (lv === 'node' && Number.isFinite(receivedMs) && receivedMs >= NODE_BOT_EXCLUDED_FROM_MS && !(!!played && HUMAN_FLAGS.some((k) => !!(flags && flags[k]))))
+    return { ok: false, nodeNotHuman: true, why: NODE_BOT_EXCLUDED_WHY };
   if (lv === 'node') return { ok: true, level: 'node', baseSats: NODE_SATS, bonusPct: 0, sats: NODE_SATS };
   if (!Object.hasOwn(LEVEL_SATS, lv)) return { ok: false, why: 'a level is useful, low, medium, high, critical or node' };
   let base = followUp ? FOLLOW_UP_SATS : LEVEL_SATS[lv];
@@ -320,7 +328,12 @@ export function openBountySeason(path = ':memory:', { startMs = null, s2EndMs = 
     if (!report || !report.id) return { ok: false, why: 'no such report' };
     const had = db.prepare('SELECT * FROM approvals WHERE report = ?').get(report.id);
     if (had && had.state === 'approved') return { ok: false, why: 'that report has its Season 2 approval' };
-    const flags = String(level).toLowerCase() === 'node' ? {} : flagsOf(report.pubkey, { nowMs });
+    const isNode = String(level).toLowerCase() === 'node';
+    // kanban #2876: a node report received from NODE_BOT_EXCLUDED_FROM_MS is read against its reporter's flags too (proven human or not)
+    const rec = Number(report.receivedMs);
+    const nodeRule = isNode && Number.isFinite(rec) && rec >= NODE_BOT_EXCLUDED_FROM_MS;
+    if (nodeRule) { const n = seasonPayout({ level, flags: flagsOf(report.pubkey, { nowMs }), played, receivedMs: rec }); if (!n.ok) return n; }
+    const flags = isNode ? {} : flagsOf(report.pubkey, { nowMs });
     const p = seasonPayout({ level, codeOnly, followUp, flags, played });
     if (!p.ok) return p;
     const season = seasonNow(nowMs);
