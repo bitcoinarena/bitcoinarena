@@ -77,6 +77,9 @@ export class LockSetBook {
     this.returnPulls = new Map();
   }
 
+  /** Whether anything of a round's set was asked, taken or made here yet (kanban #2901): a seat with no entry of the round steps it only from then. */
+  touched(rid) { return this.rooms.has(toHex(rid)); }
+
   #room(ridHex) {
     let r = this.rooms.get(ridHex);
     if (!r) {
