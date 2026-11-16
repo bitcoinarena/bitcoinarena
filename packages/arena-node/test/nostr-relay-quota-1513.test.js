@@ -36,12 +36,13 @@ test('#1513: an author past its quota loses its own oldest, others keep theirs; 
     // 8 kept; 4 more from c fill the relay to 12, the 13th is refused
     for (let i = 0; i < 4; i++) assert.equal((await ask(ws, ['EVENT', ev(c, i, t0 + 200 + i)], (m) => m[0] === 'OK'))[0][2], true);
     const full = await ask(ws, ['EVENT', ev(c, 9, t0 + 300)], (m) => m[0] === 'OK');
-    assert.equal(full[0][2], false);
-    assert.match(full[0][3], /relay is full/);
+    // kanban #2848: a full relay no longer refuses a log writer holding two or more events - it gives its own oldest back; nobody else loses one
+    assert.equal(full[0][2], true, JSON.stringify(full[0]));
+    assert.equal(kept(a).length, 5); assert.equal(kept(b).length, 3); assert.equal(kept(c).length, 4);
     // REQs by author, kind, since/until, #p
     const req = async (f) => (await ask(ws, ['REQ', 's' + Math.random(), f], (m) => m[0] === 'EOSE')).filter((m) => m[0] === 'EVENT').map((m) => m[2]);
     assert.equal((await req({ authors: [b.pub] })).length, 3);
-    assert.equal((await req({ kinds: [8], since: t0 + 200 })).length, 4);
+    assert.equal((await req({ kinds: [8], since: t0 + 200 })).length, 4);   // c's 1, 2, 3 and 9 (its 0 rolled out, kanban #2848)
     assert.equal((await req({ kinds: [8], until: t0 + 2, limit: 2 })).length, 2);
     assert.equal((await req({ '#p': [a.pub] })).length, 5);
     assert.equal((await req({ ids: [kept(a)[0].id] })).length, 1);
