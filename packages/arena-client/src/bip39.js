@@ -70,8 +70,15 @@ export function seedFromPhrase(phrase) {
 export function seedHexFromInput(text) {
   const t = String(text == null ? '' : text).trim();
   if (/^[0-9a-fA-F]{64}$/.test(t)) return { ok: true, hex: t.toLowerCase(), from: 'hex' };
+  // A PLAIN SENTENCE FOR WHAT WAS TYPED (kanban #2884, feedback #106): "hello world" read "a phrase is 24 words and that is 2 (24 words, or the
+  // 64 hex digits)" - the bracket repeated the message - and 64 characters that are not hex were counted as "1 word"
+  if (!t) return { ok: false, why: 'Enter your 24 words, or your 64-digit hex seed' };
+  if (!/\s/.test(t) && t.length >= 32) return { ok: false, why: `A hex seed is 64 digits 0-9 and a-f${/^[0-9a-fA-F]+$/.test(t) ? ` (you entered ${t.length})` : ' only'}` };
   const got = seedFromPhrase(t);
-  if (!got.ok) return { ok: false, why: `${got.why} (24 words, or the 64 hex digits)` };
+  if (!got.ok) {
+    const n = t.split(/\s+/).filter(Boolean).length;
+    return { ok: false, why: n !== PHRASE_WORDS ? `Enter your 24 words (you entered ${n})` : got.why.replace(/^./, (c) => c.toUpperCase()) };
+  }
   let hex = '';
   for (const b of got.seed) hex += b.toString(16).padStart(2, '0');
   return { ok: true, hex, from: 'words' };

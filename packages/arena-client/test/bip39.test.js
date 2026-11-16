@@ -98,3 +98,12 @@ test('what the player types - the 24 words or the 64 hex - becomes the same seed
   assert.match(wrong.why, /does not check out/);
   assert.match(seedHexFromInput('abandon art').why, /24 words/);
 });
+
+// kanban #2884 (feedback #106): the restore screen's refusal says what was typed, plainly
+test('#2884 restore refusals: empty, a word count, a non-hex 64-character string', () => {
+  assert.equal(seedHexFromInput('').why, 'Enter your 24 words, or your 64-digit hex seed');
+  assert.equal(seedHexFromInput('hello world').why, 'Enter your 24 words (you entered 2)');
+  assert.equal(seedHexFromInput('z'.repeat(64)).why, 'A hex seed is 64 digits 0-9 and a-f only');
+  assert.equal(seedHexFromInput('ab'.repeat(20)).why, 'A hex seed is 64 digits 0-9 and a-f (you entered 40)');
+  assert.ok(!/\(24 words, or the 64 hex digits\)/.test(seedHexFromInput('abandon art').why));
+});
