@@ -10232,11 +10232,18 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           };
           while (window.ARENA_JOIN === moving && Date.now() - t0 < JOIN_MOVE_WAIT_MS && hereMsat() < needMsat) {
             const prep = window.ARENA_PREPARE_FUNDS;
-            if (plan.coveredBy === 'swap' && !(prep && prep.busy) && !window.ARENA_JOIN_MOVING && Date.now() - asked > 3000) {
+            // the plan read again each pass: a merge that lands in another federation (measured: a new wallet merging the old one's 4dc88be7 sats
+            // into 4dc88be7 while the round is in 337ae01a) leaves a swap to make
+            let mode = plan.coveredBy;
+            try { const parts = (window.ARENA_WALLET_BALANCE && window.ARENA_WALLET_BALANCE.parts) || []; if (parts.length && ARENACLIENT.joinFundingPlan) mode = ARENACLIENT.joinFundingPlan({ parts, roundFederation: fedHex, needMsat }).coveredBy; } catch { mode = plan.coveredBy; }
+            if (mode === 'swap' && !(prep && prep.busy) && !window.ARENA_JOIN_MOVING && Date.now() - asked > 3000) {
               asked = Date.now();
               // the first ask sends the exchange; a later one only asks the kept one again (a seat that took the notes and has not answered yet)
               // a move ahead the lobby made in the last 15 s (ARENA_PREPARE_FUNDS) is this one's: it is asked again, not sent a second time (measured on the preview)
-              const first = !moving.sent && !(prep && prep.lastMs && Date.now() - prep.lastMs < 15000);
+              // nor while an exchange of this browser is still on its way (kept under ECASH_EXCHANGE_PREFIX until it lands: measured, a seat answered 503 and
+              // the sats came 20 s later - a second exchange then moved the stake twice)
+              const pending = (() => { try { const v = window.ARENA_BROWSER_STORE(); return Object.keys(v).some((k) => k.startsWith(ARENACLIENT.ECASH_EXCHANGE_PREFIX)); } catch { return false; } })();
+              const first = !moving.sent && !pending && !(prep && prep.lastMs && Date.now() - prep.lastMs < 15000);
               window.ARENA_JOIN_MOVING = exchange(!first).then((x) => {
                 if (first && x && (x.ok || /not answered/.test(String(x.why || '')))) moving.sent = true;
                 if (first) console.log('[arena] join ' + String(id).slice(0, 16) + ': #2909 exchange into ' + fedHex.slice(0, 8) + ': '

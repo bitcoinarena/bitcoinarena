@@ -20,7 +20,7 @@ const helperSrc = (() => {
   return PAGE.slice(a, b);
 })();
 const build = (win) => new Function('window', 'ARENACLIENT', 'ORDER_CUTOFF_MS', 'crypto', 'fetch', 'console', `${helperSrc}\nreturn { joinAfterMove, JOIN_MOVE_WAIT_MS };`)(
-  win, { toHex, tabSeed: () => new Uint8Array(32), rememberedInvite: () => 'fed1invite', presenceProofFor: () => null }, 3000, { getRandomValues: (x) => x }, async () => ({}), { log() {}, warn() {} });
+  win, { toHex, ECASH_EXCHANGE_PREFIX: 'arena.ecash.exchange.', joinFundingPlan: ({ parts, roundFederation }) => { const here = parts.find((p) => p.federation === roundFederation); return { coveredBy: here && here.sats >= 100 ? 'here' : 'swap' }; }, tabSeed: () => new Uint8Array(32), rememberedInvite: () => 'fed1invite', presenceProofFor: () => null }, 3000, { getRandomValues: (x) => x }, async () => ({}), { log() {}, warn() {} });
 
 const row = (id, fed, closeInMs) => ({ id, joinable: true, free: false, entryCloseMs: Date.now() + closeInMs,
   contract: { federationId: hexToBytes(fed), stakeMsat: 100000n, gameId: hexToBytes('ab'.repeat(32)) } });
@@ -94,4 +94,25 @@ test('#2909: a move ahead the lobby just made is not sent a second time - the ta
   assert.ok(await waitFor(() => win.joins.length === 1));
   assert.equal(win.joins[0].id, 'r1');
   assert.equal(calls.filter((c) => !c.resumeOnly).length, 0, 'no second exchange');
+});
+
+test('#2909: an exchange of this browser still on its way (a seat took the notes, answered 503): asked again, never sent a second time', async () => {
+  const { win, calls } = standIn();
+  win.ARENA_BROWSER_STORE = () => ({ 'arena.ecash.exchange.x': '{}' });
+  setTimeout(() => { win.ARENA_WALLET_BALANCE = { parts: [{ federation: FED_A, sats: 105 }, { federation: FED_B, sats: 2895 }] }; }, 3500);
+  const { joinAfterMove } = build(win);
+  const r = win.ARENA_LOBBY_ROWS[0];
+  joinAfterMove({ id: 'r1', r: { raw: { contract: r.contract }, stakeSats: 100 }, fedHex: FED_A, needMsat: 100000n, plan: { coveredBy: 'swap', ownHere: 0 }, holdUntilMs: 0, link: false, answer });
+  assert.ok(await waitFor(() => win.joins.length === 1));
+  assert.equal(calls.filter((c) => !c.resumeOnly).length, 0, 'no second exchange');
+  assert.ok(calls.filter((c) => c.resumeOnly).length >= 1, 'the kept one asked again');
+});
+
+test('#2909: a tap that found a merge going: when the merge lands in the OTHER federation, the swap is made and the round joined', async () => {
+  const { win, calls } = standIn();
+  const { joinAfterMove } = build(win);
+  const r = win.ARENA_LOBBY_ROWS[0];
+  joinAfterMove({ id: 'r1', r: { raw: { contract: r.contract }, stakeSats: 100 }, fedHex: FED_A, needMsat: 100000n, plan: { coveredBy: 'merge', ownHere: 0 }, holdUntilMs: 0, link: false, answer });
+  assert.ok(await waitFor(() => win.joins.length === 1));
+  assert.equal(calls.filter((c) => !c.resumeOnly).length, 1, 'the swap made once the merge was no longer the way');
 });
