@@ -68,6 +68,18 @@ const eventSize = (e, json, rows) => Buffer.byteLength(json) + EVENT_ROW_BYTES +
 // So no stranger can shut the relay to anybody else: what free keys add is taken back from the largest holders first, which are theirs.
 // Who holds what (per author and pool) is kept by triggers in temporary tables, rebuilt from the store at every start.
 const LOG_SHARE = 0.5;
+// AUTHORS WITH STANDING ARE NEVER EVICTED, AND A FRESH KEY PAYS FOR ITS WRITE WHILE A POOL IS NEARLY FULL (kanban #2847, ruling 2026-11-16; finding
+// wf1489-r25-nostr-1: #2677 evicted the NEWEST single-event holder, so a newcomer's profile lived only until the next stranger's fresh-key write).
+// Standing: a key that signed an identity proof for a counted round (`standing`: the identities the seats' season counts, read on the host) or
+// whose seed (30078) this relay has kept STANDING_SEED_MS (7 days) or more; the seats' node keys (`keep`) too. Outside the seed pool (#2858
+// stands there) room is made only from authors WITHOUT standing, oldest-arrived event first; with none left the write is refused. And an author
+// this relay has never kept an event from must carry NIP-13 proof of work while the pool it writes to is over POW_FILL (90 %) full: difficulty
+// POW_BASE (20) leading zero bits of its id, 2 more for every further 1 % of fill, at most POW_MAX (28); refused as 'pow: difficulty N required'.
+export const STANDING_SEED_MS = 7 * 86400000, POW_FILL = 0.9, POW_BASE = 20, POW_MAX = 28;
+/** The difficulty an unseen author needs at a pool's fill (0..1), or 0 below POW_FILL. */
+export const powRequired = (fill, { powFill = POW_FILL, powBase = POW_BASE, powMax = POW_MAX } = {}) => (fill > powFill ? Math.min(powMax, powBase + 2 * Math.floor((fill - powFill) * 100 + 1e-9)) : 0);
+/** NIP-13: the leading zero bits of an event id (hex). */
+export const leadingZeroBits = (idHex) => { let n = 0; for (const ch of String(idHex)) { const v = parseInt(ch, 16); if (v === 0) { n += 4; continue; } n += Math.clz32(v) - 28; break; } return n; };
 // THE ENCRYPTED SEEDS HAVE A QUOTA OF THEIR OWN (kanban #2393, #1489 a44-refute-20-s2; the owner 2026-11-14): keys are free, so strangers
 // filled the total with one kind 30078 under each fresh key - one event a key, so nobody held more than anybody and fair share had nothing
 // to take - and every node's next signed round result (30762, never sent again) was refused 'blocked: the relay is full'. Kind 30078 (NIP-78
@@ -197,7 +209,7 @@ export function matchesCompiled(c, e, tagSets) {
  * THE RELAY: `{ port, host, dbPath }` ('' or ':memory:' keeps nothing on disk). Answers { port, close(), events() }.
  */
 export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memory:', kinds = RELAY_KINDS, name = 'Bitcoin Arena relay',
-  limits = {}, keep = [], description = 'The game\'s own relay: profiles, relay lists, encrypted game seeds (NIP-78), remote signing (NIP-46), wallet connect (NIP-47), the nodes\' signed round results (kind 30762) and their badges (NIP-58: kinds 30009 and 8), and zap receipts (NIP-57: kind 9735). Nothing else is kept.' } = {}) {
+  limits = {}, keep = [], standing = () => [], now = () => Date.now(), pow = false, description = 'The game\'s own relay: profiles, relay lists, encrypted game seeds (NIP-78), remote signing (NIP-46), wallet connect (NIP-47), the nodes\' signed round results (kind 30762) and their badges (NIP-58: kinds 30009 and 8), and zap receipts (NIP-57: kind 9735). Nothing else is kept.' } = {}) {
   const db = new DatabaseSync(dbPath || ':memory:');
   db.exec(`CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, pubkey TEXT, kind INTEGER, created_at INTEGER, d TEXT, json TEXT);
     CREATE INDEX IF NOT EXISTS ev_author ON events (pubkey, kind, d);
@@ -252,6 +264,10 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   putTag = db.prepare(PUT_TAG);
   // kanban #1704: a store written before has no `size`; it is added and filled once, each row's size as a new event's is counted
   if (!db.prepare('PRAGMA table_info(events)').all().some((c) => c.name === 'size')) db.exec('ALTER TABLE events ADD COLUMN size INTEGER');
+  // kanban #2847: when this relay kept each event (its own clock, not the author's created_at), and every author it ever kept an event from
+  if (!db.prepare('PRAGMA table_info(events)').all().some((c) => c.name === 'kept_ms')) db.exec('ALTER TABLE events ADD COLUMN kept_ms INTEGER');
+  db.exec(`CREATE TABLE IF NOT EXISTS seen_authors (pubkey TEXT PRIMARY KEY);
+    INSERT OR IGNORE INTO seen_authors (pubkey) SELECT DISTINCT pubkey FROM events;`);
   const unsized = db.prepare('SELECT id, json FROM events WHERE size IS NULL').all();
   if (unsized.length) {
     const setSize = db.prepare('UPDATE events SET size = ? WHERE id = ?');
@@ -284,7 +300,7 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   const largest = { n: db.prepare('SELECT pubkey, n, b FROM holders WHERE pool = ? AND pubkey != ? AND pubkey NOT IN (SELECT value FROM json_each(?)) ORDER BY n DESC, first DESC LIMIT 1'),
     b: db.prepare('SELECT pubkey, n, b FROM holders WHERE pool = ? AND pubkey != ? AND pubkey NOT IN (SELECT value FROM json_each(?)) ORDER BY b DESC, first DESC LIMIT 1') };
   const oldestIn = db.prepare(`SELECT id FROM events WHERE pubkey = ? AND ${POOL_SQL('kind')} = ? AND id != ? ORDER BY created_at ASC, id DESC LIMIT 1`);
-  const put = db.prepare('INSERT OR IGNORE INTO events (id, pubkey, kind, created_at, d, json, size) VALUES (?, ?, ?, ?, ?, ?, ?)');
+  const put = db.prepare('INSERT OR IGNORE INTO events (id, pubkey, kind, created_at, d, json, size, kept_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
   const newest = db.prepare('SELECT id, created_at FROM events WHERE pubkey = ? AND kind = ? AND d = ? ORDER BY created_at DESC, id ASC LIMIT 1');
   const drop = db.prepare('DELETE FROM events WHERE pubkey = ? AND kind = ? AND d = ? AND id != ?');
   const all = db.prepare('SELECT json FROM events ORDER BY created_at DESC');
@@ -307,6 +323,15 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   // largest holder that gives back for another author's write; it still rolls out its own oldest (step 3, its quota).
   const keepList = (Array.isArray(keep) ? keep : [...(keep || [])]).map((k) => String(k).toLowerCase()).filter((k) => HEX64.test(k));
   const keepJson = JSON.stringify(keepList), keepSet = new Set(keepList);
+  // kanban #2847: standing - the kept node keys, the counted identities (`standing()`, read again each call), a seed kept 7 days here
+  const seedKept = db.prepare(`SELECT 1 AS x FROM events WHERE pubkey = ? AND kind = ${SEED_KIND} AND COALESCE(kept_ms, created_at * 1000) <= ? LIMIT 1`);
+  const identities = () => { try { const v = typeof standing === 'function' ? standing() : standing; return new Set([...(v || [])].map((k) => String(k).toLowerCase())); } catch { return new Set(); } };
+  const hasStanding = (pubkey, ids = identities()) => keepSet.has(pubkey) || ids.has(pubkey) || !!seedKept.get(pubkey, now() - STANDING_SEED_MS);
+  const seenAuthor = db.prepare('SELECT 1 AS x FROM seen_authors WHERE pubkey = ?');
+  const markSeen = db.prepare('INSERT OR IGNORE INTO seen_authors (pubkey) VALUES (?)');
+  // the oldest-arrived event of an author without standing in a pool (never the writer's)
+  const oldestUnstanding = db.prepare(`SELECT id FROM events WHERE ${POOL_SQL('kind')} = ? AND pubkey != ? AND pubkey NOT IN (SELECT value FROM json_each(?))
+    AND pubkey NOT IN (SELECT pubkey FROM events WHERE kind = ${SEED_KIND} AND COALESCE(kept_ms, created_at * 1000) <= ?) ORDER BY rowid ASC LIMIT 1`);
   const clients = new Set();
   let subValuesHeld = 0;   // kanban #2839: the values all kept subscriptions hold
   const info = { name, description, supported_nips: [1, 11, 42, 46, 47, 57, 58, 65, 78], software: 'arena-node/nostr-relay', version: '1',
@@ -630,10 +655,21 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
             // refused. kanban #1811: all of it is one transaction (one write, not one per tag row), rolled back when it is refused.
             const seed = poolOf(e.kind) === SEED_POOL, useOf = () => (seed ? seedUse : totalUse).get();   // kanban #2393: the seeds' own quota
             const before = { ...useOf() };
+            // kanban #2847: who may be evicted (standing), and the proof of work an unseen author pays while its pool is nearly full
+            const ids = identities();
+            const standingJson = JSON.stringify([...new Set([...keepList, ...ids])]);
+            // `pow` (kanban #2847): on in the relay the host runs (tools/nostr-relay.mjs, ARENA_RELAY_POW=0 turns it off); a library caller asks for it
+            if (pow && !seenAuthor.get(e.pubkey) && !hasStanding(e.pubkey, ids)) {
+              const fill = Math.max(before.n / (seed ? lim.seedEvents : lim.totalEvents), before.b / (seed ? lim.seedBytes : lim.totalBytes));
+              const need = powRequired(fill, lim);   // lim.powFill / powBase / powMax: the defaults above unless a test sets them
+              const target = Number(((e.tags || []).find((t) => Array.isArray(t) && t[0] === 'nonce') || [])[2]);
+              if (need && (leadingZeroBits(e.id) < need || (Number.isFinite(target) && target < need)))
+                return send(['OK', e.id, false, `pow: difficulty ${need} required`]);
+            }
             let verdict = 'kept';
             db.exec('BEGIN');
             try {
-              if (put.run(e.id, e.pubkey, e.kind, e.created_at, d, json, eventSize(e, json, rows)).changes) tagRows(e);   // kanban #1543: its tags indexed with it
+              if (put.run(e.id, e.pubkey, e.kind, e.created_at, d, json, eventSize(e, json, rows), now()).changes) tagRows(e);   // kanban #1543: its tags indexed with it
               if (isReplaceable(e.kind) || isParam(e.kind)) drop.run(e.pubkey, e.kind, d, e.id);
               let use = authorUse.get(e.pubkey);
               while (use.n > 1 && (use.n > lim.authorEvents || use.b > lim.authorBytes)) {
@@ -655,8 +691,12 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
                   const share = (pool) => (dim === 'n' ? lim.totalEvents : lim.totalBytes) * (pool === 1 ? lim.logShare : 1 - lim.logShare);
                   let victim = null;
                   const q = seed ? null : poolUse.get(Q);   // 1. never across the seeds' quota
-                  if (q && q[dim] > share(Q)) { const h = largest[dim].get(Q, '', keepJson); if (h) victim = oldestIn.get(h.pubkey, Q, e.id); }   // 1.
-                  if (!victim) {   // 2.
+                  // 1. the other pool over its share gives back: its oldest-arrived event of an author without standing (kanban #2847)
+                  if (q && q[dim] > share(Q)) victim = oldestUnstanding.get(Q, e.pubkey, standingJson, now() - STANDING_SEED_MS);
+                  // 2. OUTSIDE THE SEED POOL (kanban #2847): the pool's oldest-arrived event of an author without standing - never the newest (the
+                  // newcomer rule of #2677 let the next stranger erase it), never an author with standing; none: step 3, else refused
+                  if (!victim && !seed) victim = oldestUnstanding.get(P, e.pubkey, standingJson, now() - STANDING_SEED_MS);
+                  if (!victim && seed) {   // 2. (the seed pool, as #2858 left it)
                     const mine = holderUse.get(e.pubkey, P) || { n: 0, b: 0 }, h = largest[dim].get(P, e.pubkey, keepJson);
                     // THE ONE-EVENT-PER-KEY MASS (kanban #2677, #1489 r2-nostr-11): strangers filled the total with ONE event under each fresh key,
                     // so nobody held more than a new player's first profile or the zap server's next receipt and both were refused for good. When the
@@ -677,7 +717,7 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
                   dropId.run(victim.id);
                 }
               }
-              if (verdict === 'kept') db.exec('COMMIT'); else db.exec('ROLLBACK');
+              if (verdict === 'kept') { markSeen.run(e.pubkey); db.exec('COMMIT'); } else db.exec('ROLLBACK');
             } catch (err) {
               // kanban #1960, #1994, #2009: a throw in the store step rolls all of it back and is answered - never thrown out of the socket's handler
               try { db.exec('ROLLBACK'); } catch { /* none open */ }

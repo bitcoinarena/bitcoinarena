@@ -33,7 +33,7 @@ test('#1489-r25-nostr-1 a zap server that already holds two receipts still gets 
 });
 
 // kanban #2847: waits for a ruling (refuse newcomers under a flood, or keep #2677's newest-out rule); kept as a todo until then
-test('#1489-r25-nostr-1b a new player\'s profile let in by #2677 is not evicted by the stranger\'s next one-event write', { todo: 'kanban #2847: needs a ruling' }, async () => {
+test('#1489-r25-nostr-1b a new player\'s profile let in by #2677 is not evicted by the stranger\'s next one-event write', { todo: 'kanban #2847: ruled - the newcomer now pays proof of work on a full relay; covered by relay-standing-pow-2847.test.js' }, async () => {
   const r = await startRelay({ port: 0, limits: { totalEvents: 40 } });
   const socks = [];
   try {
