@@ -577,6 +577,12 @@ function unsureWelcome(book, ask) {
 // none - an unsure top-up counted twice toward PLAYER_TOPUPS_PER_DAY refused an account's last top-up of the day
 const withUnsure = (book) => ({ ...book, players: [...(book.players || []), ...(book.unsure || []).map(({ payers, removedMs, ...row }) => row)], unsure: [] });
 
+// WHOLE SATS ONLY AT THE PLAYERS' AND THE REFILL DOOR (kanban #2857, #1489 r26-faucet-1): lnd's num_satoshis is the invoice's msat cut down to whole
+// sats and payinvoice pays the msat - #2589 held the bounty payout to num_msat, but grant() and /refill still decided on num_satoshis, so a welcome
+// invoice for 3,000,999 msat passed "exactly 3000" and was paid in full. An invoice whose msat is not a whole number of sats is refused here
+const wholeSatsOf = (inv) => { const m = inv && inv.num_msat !== undefined && inv.num_msat !== null && inv.num_msat !== '' ? String(inv.num_msat) : null;
+  if (m === null) return Number(inv && inv.num_satoshis);
+  return /^\d+$/.test(m) && BigInt(m) % 1000n === 0n && BigInt(m) / 1000n === BigInt(String(Number(inv.num_satoshis) || 0)) ? Number(inv.num_satoshis) : null; };
 async function grant(ask) {
   if (!/^lntb[0-9a-z]{20,1500}$/.test(String(ask.invoice || ''))) return { ok: false, why: 'that is not a testnet invoice' };
   const read = await lncli(PAYERS[0], ['decodepayreq', ask.invoice]);
@@ -589,7 +595,8 @@ async function grant(ask) {
   // FAIL CLOSED WHEN `unsure` IS FULL (kanban #2132): an invoice grant may end in `unsure`, and no unsure row is ever dropped for room - so while it
   // holds UNSURE_CAP rows no new invoice grant is paid (the sweep empties it as payers give their final word); a pool note adds no unsure row
   if ((book.unsure || []).length >= UNSURE_CAP) return { ok: false, why: 'the faucet is checking earlier payments: try again in a few minutes' };
-  const d = playerGrantDecide({ kind: ask.kind, account: ask.account, ip: ask.ip, invoiceSats: Number(inv.num_satoshis) }, withUnsure(book));
+  if (wholeSatsOf(inv) === null) return { ok: false, why: 'the invoice must be for whole sats' };   // kanban #2857
+  const d = playerGrantDecide({ kind: ask.kind, account: ask.account, ip: ask.ip, invoiceSats: wholeSatsOf(inv) }, withUnsure(book));
   if (!d.ok) return d;
   // (after the account's own answers, so an honest repeat still hears "already has its welcome")
   // A HASH ALREADY BOOKED IS NOT A NEW GRANT (kanban #2473, #2505, refute of #1834/#1835): the hash is the invoice's own payment_hash, which its maker
@@ -801,7 +808,9 @@ createServer((req, res) => {
         if (!/^lntb[0-9a-z]{20,1500}$/.test(String(b.invoice || ''))) return send(200, { ok: false, why: 'that is not a testnet invoice' });
         const read = await lncli(PAYERS[0], ['decodepayreq', b.invoice]);
         if (!read.ok) return send(200, { ok: false, why: 'that invoice cannot be read' });
-        const inv = JSON.parse(read.out), book = readBook(), d = refillDecide({ invoiceSats: Number(inv.num_satoshis) }, book);
+        const inv = JSON.parse(read.out);
+        if (wholeSatsOf(inv) === null) return send(200, { ok: false, why: 'the invoice must be for whole sats' });   // kanban #2857
+        const book = readBook(), d = refillDecide({ invoiceSats: wholeSatsOf(inv) }, book);
         if (!d.ok) return send(200, d);
         // BOOKED PENDING BEFORE ANY PAYINVOICE (kanban #2130, a44 refute of #1627 at the second door): the refill's row was booked plain and only an
         // in-memory 120 s timer took a failed one out - a faucet killed inside payinvoice (or before that timer ran) kept a refill that never moved a
