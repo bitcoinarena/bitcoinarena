@@ -5903,7 +5903,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     // them, a seat that refused has them taken back before another seat is handed new ones, and the record is dropped only once what came
     // back was received at the agreed amount (ecash-transfer.js). A seat that took them and did not answer is asked again, the same seat
     // with the same notes (it answers a retry the same, never pays twice - ecash-exchange.js).
-    window.ARENA_EXCHANGE_INTO = async ({ to, toInvite, needMsat, nodes, seed, LockClient, onStep = () => {} }) => {
+    window.ARENA_EXCHANGE_INTO = async ({ to, toInvite, needMsat, nodes, seed, LockClient, onStep = () => {}, resumeOnly = false }) => {
       const t0 = Date.now();
       const vault = () => window.ARENA_BROWSER_STORE();
       const openW = async (fid, invite) => (window.ARENA_WALLETS && window.ARENA_WALLETS.get(fid))
@@ -5939,6 +5939,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           } });
         for (const r of said) console.log(`[arena] exchange kept since ${r.key.slice(21)}: ${r.ok ? `${r.msat} msat received` : r.why}`);
       }
+      // kanban #2909: a join waiting on its exchange asks the kept one again - it never sends a second one while the first is on its way
+      if (resumeOnly) { if (window.ARENA_SUM_BALANCES) window.ARENA_SUM_BALANCES(); return { ok: false, resumed: keptKeys.length, ms: Date.now() - t0, why: 'resumed only' }; }
       const spendable = (p) => BigInt(Math.max(0, Number(p.sats) - Number(p.merging || 0) - Number(p.arriving || 0))) * 1000n;
       const parts = ((window.ARENA_WALLET_BALANCE && window.ARENA_WALLET_BALANCE.parts) || []).filter((p) => /^[0-9a-f]{64}$/.test(p.federation) && p.federation !== to);
       const src = parts.filter((p) => spendable(p) >= needMsat).sort((x, y) => (spendable(y) > spendable(x) ? 1 : -1))[0];
@@ -5965,6 +5967,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     window.ARENA_PREPARE_FUNDS = async () => {
       const st = window.ARENA_PREPARE_FUNDS;
       if (st.busy || Date.now() - (st.lastMs || 0) < 60000 || Date.now() < (window.ARENA_ORDER_BUSY_UNTIL || 0)) return;
+      // kanban #2909: a tap is moving its own stake in (joinAfterMove) - no second move beside it
+      if (window.ARENA_JOIN_MOVING || (window.ARENA_JOIN && window.ARENA_JOIN.moving && window.ARENA_JOIN.state === 'joining')) return;
       if (!window.sessionStorage.getItem('arena.player.seed')) return;
       const fedOf = (r) => { const c = r.contract || (r.raw && r.raw.contract); return c && c.federationId instanceof Uint8Array ? ARENACLIENT.toHex(c.federationId) : null; };
       const rows = (window.ARENA_LOBBY_ROWS || []).filter((r) => !r.free && r.joinable && fedOf(r) && Number((r.contract || r.raw.contract).stakeMsat || 0) > 0)
@@ -10203,6 +10207,80 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           } });
         return join;
       }
+      // kanban #2909: the move before a paid join (see join's "THE SATS ARE MOVED FIRST")
+      const JOIN_MOVE_WAIT_MS = 45000;
+      const joinAfterMove = ({ id, r, fedHex, needMsat, plan, holdUntilMs, link, answer }) => {
+        const chosen = window.ARENA_HIDDEN_CHOSEN && window.ARENA_HIDDEN_CHOSEN.round === id ? { ...window.ARENA_HIDDEN_CHOSEN } : null;
+        const contract = r.raw.contract, gameHex = contract.gameId ? ARENACLIENT.toHex(contract.gameId) : null, stakeMsat = BigInt(contract.stakeMsat || 0n);
+        const moving = window.ARENA_JOIN = { state: 'joining', why: '', round: id, kindKnown: false, finding: true, moving: true, free: false, stakeSats: Number(r.stakeSats) || 0,
+          stage: plan.coveredBy === 'merge' ? 'your sats are being moved into this game\'s federation - joining once they are there'
+            : 'moving your sats into this game\'s federation (' + fedHex.slice(0, 8) + ') first - joining once they are there' };
+        const t0 = Date.now(), sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
+        const hereMsat = () => { const p = ((window.ARENA_WALLET_BALANCE && window.ARENA_WALLET_BALANCE.parts) || []).find((x) => String(x.federation).toLowerCase() === fedHex);
+          return p ? BigInt(Math.max(0, Number(p.sats) - Number(p.merging || 0) - Number(p.arriving || 0))) * 1000n : 0n; };
+        console.log('[arena] join ' + String(id).slice(0, 16) + ': #2909 ' + (plan.coveredBy === 'merge' ? 'waiting for the merge into ' : 'moving the stake into ') + fedHex.slice(0, 8) + ' first ('
+          + plan.ownHere + ' sat there, ' + Number(needMsat / 1000n) + ' sat needed)');
+        (async () => {
+          let asked = 0, lastSum = 0;
+          const exchange = async (resumeOnly) => {
+            const wasm = await window.ARENA_LOCK_WASM(); await wasm.default();
+            const seed = ARENACLIENT.tabSeed({ storage: window.sessionStorage, random: (n) => crypto.getRandomValues(new Uint8Array(n)) });
+            const toInvite = ARENACLIENT.rememberedInvite ? ARENACLIENT.rememberedInvite(window.ARENA_BROWSER_STORE(), fedHex) : null;
+            const want = needMsat + needMsat / 20n - hereMsat();   // the stake and 5 % for the fees, as the move ahead takes
+            return window.ARENA_EXCHANGE_INTO({ to: fedHex, toInvite, needMsat: want > 0n ? want : needMsat / 20n + 1000n, nodes: window.ARENA_ROW_NODES ? window.ARENA_ROW_NODES(id) : [],
+              seed, LockClient: wasm.LockClient, resumeOnly, onStep: (st) => { if (window.ARENA_JOIN === moving) moving.stage = st; } });
+          };
+          while (window.ARENA_JOIN === moving && Date.now() - t0 < JOIN_MOVE_WAIT_MS && hereMsat() < needMsat) {
+            const prep = window.ARENA_PREPARE_FUNDS;
+            if (plan.coveredBy === 'swap' && !(prep && prep.busy) && !window.ARENA_JOIN_MOVING && Date.now() - asked > 3000) {
+              asked = Date.now();
+              // the first ask sends the exchange; a later one only asks the kept one again (a seat that took the notes and has not answered yet)
+              // a move ahead the lobby made in the last 15 s (ARENA_PREPARE_FUNDS) is this one's: it is asked again, not sent a second time (measured on the preview)
+              const first = !moving.sent && !(prep && prep.lastMs && Date.now() - prep.lastMs < 15000);
+              window.ARENA_JOIN_MOVING = exchange(!first).then((x) => {
+                if (first && x && (x.ok || /not answered/.test(String(x.why || '')))) moving.sent = true;
+                if (first) console.log('[arena] join ' + String(id).slice(0, 16) + ': #2909 exchange into ' + fedHex.slice(0, 8) + ': '
+                  + (x && x.ok ? x.msat + ' msat from ' + String(x.from).slice(0, 8) + ' in ' + x.ms + ' ms' : (x && x.why) || 'no answer'));
+              }).catch((e) => console.warn('[arena] join #2909 exchange: ' + e.message)).finally(() => { window.ARENA_JOIN_MOVING = null; });
+            }
+            if (Date.now() - lastSum > 1500) { lastSum = Date.now(); if (window.ARENA_SUM_BALANCES) window.ARENA_SUM_BALANCES(); else if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE(); }
+            await sleep(400);
+          }
+          if (window.ARENA_JOIN !== moving) return;   // another tap took over
+          if (hereMsat() < needMsat) {
+            moving.state = 'refused'; moving.stage = ''; moving.moving = false;
+            moving.why = 'your sats did not reach this game\'s federation (' + fedHex.slice(0, 8) + ') in ' + Math.round(JOIN_MOVE_WAIT_MS / 1000) + ' s - move them over with Move (Settings, under your balance), then play';
+            answer(false, 'not-funded-here', { coveredBy: plan.coveredBy, ownHere: plan.ownHere, waitedMs: Date.now() - t0 });
+            return;
+          }
+          // the tapped round while its lead holds, else the soonest round of the same game, stake and federation that still has it
+          const leadOf = (row) => (window.ARENA_H2H_LEAD_MS && chosen ? window.ARENA_H2H_LEAD_MS() + 1500 : ORDER_CUTOFF_MS);
+          const fedOf = (x) => { const c = x && (x.contract || (x.raw && x.raw.contract)); return c && c.federationId ? ARENACLIENT.toHex(c.federationId).toLowerCase() : null; };
+          const ok = (x) => x && x.joinable && !x.free && Number(x.entryCloseMs || 0) - (Date.now() + (window.ARENA_SEAT_AHEAD_MS || 0)) >= leadOf(x);
+          const rows = window.ARENA_LOBBY_ROWS || [];
+          let target = rows.find((x) => x.id === id && ok(x)) || null;
+          if (!target) {
+            target = rows.filter((x) => ok(x) && fedOf(x) === fedHex && (() => { const c = x.contract || x.raw.contract;
+              return BigInt(c.stakeMsat || 0n) === stakeMsat && (!gameHex || (c.gameId && ARENACLIENT.toHex(c.gameId) === gameHex)); })())
+              .sort((a, b) => Number(a.entryCloseMs || 0) - Number(b.entryCloseMs || 0))[0] || null;
+          }
+          console.log('[arena] join ' + String(id).slice(0, 16) + ': #2909 ' + Number(hereMsat() / 1000n) + ' sat in ' + fedHex.slice(0, 8) + ' after ' + (Date.now() - t0) + ' ms - '
+            + (target ? (target.id === id ? 'joining the tapped round' : 'joining the next round ' + String(target.id).slice(0, 16)) : 'no round with its lead left'));
+          if (!target) {
+            moving.state = 'refused'; moving.stage = ''; moving.moving = false; moving.why = 'your sats are now in this game\'s federation - tap again for the next round';
+            return;
+          }
+          if (chosen) {
+            window.ARENA_HIDDEN_CHOSEN = { round: target.id, move: chosen.move };
+            // the opponent is told of the tap again, for the round it now goes into (as hide() tells it at the tap)
+            if (target.id !== id && window.ARENA_OPPONENT_URL && window.ARENA_BOTS_ON && window.ARENA_BOTS_ON()) { let tap = null;
+              try { tap = ARENACLIENT.presenceProofFor({ roundIdHex: target.id, storage: window.sessionStorage, random: (n) => crypto.getRandomValues(new Uint8Array(n)), curve: window.ARENA_CURVE }); } catch (e) { tap = null; }
+              fetch(window.ARENA_OPPONENT_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(tap ? { round: target.id, tap } : { round: target.id }), keepalive: true }).catch(() => {}); }
+          }
+          window.ARENA_LOBBY_ACT.join(target.id, { holdUntilMs, next: false, link, moved: true });
+        })().catch((e) => { if (window.ARENA_JOIN === moving) { moving.state = 'refused'; moving.stage = ''; moving.why = 'the move into this game\'s federation failed: ' + e.message; } });
+        return answer(true, 'moving-funds', { coveredBy: plan.coveredBy, ownHere: plan.ownHere });
+      };
       window.ARENA_LOBBY_ACT = {
         // PLAY: the round's own link, so the round is joined by exactly the path a
         // shared round link takes - IN THIS PAGE (2026-09-13 07:11: "after
@@ -10212,7 +10290,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         // the address becomes the round's link (with `play=1`, so a reload still
         // starts the round), the round is joined by the same code a round link
         // runs, and Unity starts the round when ARENA_JOIN says joined.
-        join(id, { holdUntilMs = 0, next = false, link = false } = {}) {
+        join(id, { holdUntilMs = 0, next = false, link = false, moved = false } = {}) {
           // EVERY ANSWER CARRIES ITS REASON (2026-10-03: two PLAY clicks answered false before any join, cause
           // unnamed): window.ARENA_JOIN_ANSWER { ok, why, at, round, ... } and one line; Unity still gets true or false.
           const answer = (ok, why, more) => {
@@ -10317,6 +10395,14 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             const parts = window.ARENA_WALLET_BALANCE.parts, fedHex = ARENACLIENT.toHex(r.raw.contract.federationId).toLowerCase();
             const needMsat = BigInt(r.raw.contract.stakeMsat || 0n);
             const plan = ARENACLIENT.joinFundingPlan({ parts, roundFederation: fedHex, needMsat });
+            // THE SATS ARE MOVED FIRST, THEN THE ROUND IS JOINED (kanban #2909, 2026-11-16: a paid Rock Paper Scissors tap with every sat in the other
+            // federation was refused - "Move them over with Move" - and the first press was lost, while the page moved them by itself seconds later): the tap
+            // now starts the exchange (or waits for the one going, ARENA_PREPARE_FUNDS, or a merge into this federation) and joins once the sats are
+            // spendable here - the tapped round if its lead still holds, else the next round of the same game, stake and federation, with the same move.
+            // Refused as before only when nothing arrives within JOIN_MOVE_WAIT_MS, or the page has no exchange.
+            if (needMsat > 0n && (plan.coveredBy === 'swap' || plan.coveredBy === 'merge') && !moved && !next && window.ARENA_EXCHANGE_INTO && window.ARENA_LOCK_WASM) {
+              return joinAfterMove({ id, r, fedHex, needMsat, plan, holdUntilMs, link, answer });
+            }
             if (needMsat > 0n && (plan.coveredBy === 'swap' || plan.coveredBy === 'merge')) {
               const sat = (n) => Number(n).toLocaleString('en-US');
               const others = parts.filter((p) => String(p.federation).toLowerCase().slice(0, 16) !== fedHex.slice(0, 16) && Number(p.sats) > 0);
