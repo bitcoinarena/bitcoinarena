@@ -39,6 +39,7 @@ import { matchProofId, presenceId } from '../../arena-protocol/src/match.js';
 import { encodeLobbyName, lobbyNameId } from '../../arena-protocol/src/lobby-name.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { lockClaimDigest } from '../../arena-protocol/src/lock-claim.js';
+import { botMayEnter, BOT_LEAD_MS } from '../src/opponent-trigger.js';   // kanban #2842: it stakes only on a verified stake lock
 
 const env = process.env;
 const nodes = String(env.NODES || '').split(',').map((u) => u.trim().replace(/\/+$/, '')).filter(Boolean);
@@ -130,6 +131,7 @@ async function enter(c, rid, ready) {
   // NOT UNDER THE SEATS' KEPT LEAD (kanban #2043): a handout posted with less than ceil(h2hHandoutLeadMs * 1.5) left is refused by every seat
   if (Number(c.entryCloseMs) - Date.now() < 4050) return { ok: false, why: 'too late to enter' };
   const me = evenPlayer();
+  botKeys.add(toHex(me.pubkey));   // kanban #2842: its own entries never count as a player
   const s = { p: scalar(), player: me.pubkey };
   s.point = feldmanGroup.pointFromScalar(scalarFrom32(s.p) % FIELD);
   const needed = receiptsNeeded(c.settlementSlots ?? c.gameVerifySlots);
@@ -222,6 +224,7 @@ async function enter(c, rid, ready) {
 // A TABLE IS WATCHED WHILE THE PAGE SAYS SOMEBODY IS AT IT: the bot says it is there (free) and reads the claim key ahead, and enters when the player taps. Measured 2026-11-01: entering
 // every 8 s round while somebody looked would lock 100 sat a round for a day, and an entry lands about 4 s after its tap, so one that waited to see the player's entry had no time left.
 const seen = new Map();      // round hex -> { c, rid, told, entered }
+const botKeys = new Set();    // the player keys this bot entered with (kanban #2842): never a reason to enter
 const hour = [];
 let busy = false;
 const contractOf = async (round) => {
@@ -280,12 +283,26 @@ const pass = async () => {
     tables.set(tableOf(k.c), Date.now() + 40000);
     sayHere(w.round, k);
     if (busy || left < MIN_LEFT_MS) continue;
-    if (w.tapped) { go(w, k, 'a player tapped'); continue; }
-    // A PAGE THAT SAID NO TAP, OR A TAP THE DOOR LOST: the entry itself, read beside the loop so it never holds up a tap at another table. The first seat that holds it is enough
+    // A TAP IS A HINT (kanban #2842, ruling 2026-11-16 (a)): it only puts the table on this list; the bot stakes on the seats' own fact - a seat
+    // holding a VERIFIED stake lock of one non-bot entry (GET /order-locks: stakeVerifiedMs), with BOT_LEAD_MS before the close (opponent-trigger.js).
+    // Read beside the loop so it never holds up another table; the first seat that answers is enough
     if (k.asking) continue;
     k.asking = true;
-    Promise.any(nodes.slice(0, 5).map(async (n) => { const r = await fetch(`${n}/api/round-result?round=${w.round}`, { signal: AbortSignal.timeout(2500) }); const j = await r.json(); const m = ((j && j.players) || []).length; if (!m) throw new Error('none'); return m; }))
-      .then((m) => { if (m === 1 && !k.entered && !busy) go(w, k, 'a player paid'); }, () => {}).finally(() => { k.asking = false; });
+    Promise.any(nodes.slice(0, 5).map(async (n) => {
+      const j = await (await fetch(`${n}/api/round-result?round=${w.round}`, { signal: AbortSignal.timeout(2500) })).json();
+      const entries = ((j && j.players) || []).filter((p) => BigInt(p.stakeMsat || 0) > 0n).map((p) => ({ entry: p.entry, player: p.player }));
+      if (!entries.length) throw new Error('none');
+      const locks = new Map();
+      await Promise.all(entries.map(async (e) => { const r = await fetch(`${n}/order-locks?entry=${e.entry}`, { signal: AbortSignal.timeout(2500) });
+        if (r.ok) { const o = await r.json(); if (o && o.stake && Number.isFinite(Number(o.stakeVerifiedMs))) locks.set(e.entry, Number(o.stakeVerifiedMs)); } }));
+      return { entries, locks };
+    }))
+      .then(({ entries, locks }) => {
+        if (k.entered || busy) return;
+        const d = botMayEnter({ entries, locks, botKeys, closeMs: Number(k.c.entryCloseMs), nowMs: Date.now(), leadMs: BOT_LEAD_MS, minLeftMs: MIN_LEFT_MS });
+        if (d.go) go(w, k, w.tapped ? 'a player locked (tapped)' : 'a player locked');
+        else if (k.said !== d.why) { k.said = d.why; log({ step: 'not entered', round: w.round.slice(0, 8), tapped: !!w.tapped, why: d.why }); }
+      }, () => {}).finally(() => { k.asking = false; });
   }
   if (seen.size > 2048) seen.clear();
 };
