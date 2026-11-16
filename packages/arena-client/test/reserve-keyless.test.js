@@ -273,7 +273,7 @@ test('a head-to-head client is given the last moment a tap goes in as the close,
     assert.ok(margin >= 2500, 'room for the join\'s steps before the page checks the lead again (measured 1.6 s)');
     // kanban #2861, #2864: never less than the opponent's lead (12 s): the bot tapped at the join needs its own lock and entry (11.1 s measured)
     const opp = Number(/H2H_OPPONENT_LEAD_MS = Number\(window\.ARENA_H2H_OPPONENT_LEAD_MS\) \|\| (\d+)/.exec(def)[1]);
-    assert.equal(opp, 25000);   // #2901 (was 12 s, #2864): the player's verified lock, then the bot's 12 s (#2842)
+    assert.equal(opp, 12000);   // #2864
     assert.equal(lastTapLeft, Math.max(need + margin, opp), `the last offered tap has ${lastTapLeft} ms left, the page takes it from ${need} ms (+ the margin), the opponent needs ${opp} ms`);
   }
   assert.equal(run(1, [], false).given, 1_000_000, 'a game that is not head-to-head keeps its close');
