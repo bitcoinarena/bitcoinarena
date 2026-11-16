@@ -683,8 +683,8 @@ async function nodeFeedbackPanel() {
 // one-time link code for the bots, all at the faucet's Season 2 doors (POST /feedback/social, /link, /verify) with a NIP-98 sign-in by the owner key
 // that signs this page's reports (the report key the bounty pays). The rules beside it, with the node bounty's rule from 2026-11-16 07:06 UTC (#2876).
 const S2_ROWS = [
-  { p: 'x', name: 'X', ph: '@yourname on X', join: 'https://x.com/bitcoinarena_io', joinText: 'Follow @bitcoinarena_io' },
-  { p: 'telegram', name: 'Telegram', ph: '@yourname on Telegram', join: 'https://t.me/+KihHE8JhcVM3NDVi', joinText: 'Join the group' },
+  { p: 'x', name: 'X', ph: 'yourname on X', join: 'https://x.com/bitcoinarena_io', joinText: 'Follow @bitcoinarena_io' },
+  { p: 'telegram', name: 'Telegram', ph: 'yourname on Telegram', join: 'https://t.me/+KihHE8JhcVM3NDVi', joinText: 'Join the group' },
   { p: 'discord', name: 'Discord', ph: 'Discord username', join: 'https://discord.gg/9zZbASZyue', joinText: 'Join the server' },
   { p: 'nostr', name: 'Nostr', ph: 'Nostr npub1… or name@domain', join: 'https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2', joinText: 'Follow on Nostr' },
   { p: 'armada', name: 'Armada', ph: 'Armada npub1… or name@domain', join: 'https://armada.buzz/', joinText: 'Join the community' },
@@ -710,6 +710,7 @@ function nodeSocialPanel(box, el) {
   const rows = el('div', { cls: 'fbn-s-rows' });
   for (const r of S2_ROWS) {
     const input = el('input', { type: 'text', maxlength: '100', autocomplete: 'off', spellcheck: 'false', placeholder: r.ph, 'aria-label': r.name + ' username' });
+    input.addEventListener('input', () => { const v = input.value.replace(/^\s*@+/, ''); if (v !== input.value) input.value = v; });   // kanban #2873: no leading @
     const chip = el('span', { cls: 'fbn-s-chip', text: 'not checked' });
     rows.append(el('div', { cls: 'fbn-s-row' }, el('span', { cls: 'fbn-s-name', text: r.name }), input, chip,
       el('a', { href: r.join, target: '_blank', rel: 'noopener noreferrer', cls: 'fbn-s-join', text: r.joinText })));
