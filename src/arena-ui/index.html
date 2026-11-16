@@ -8041,7 +8041,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       // of the countdown was refused. The close it is given is moved earlier by what the tap needs beyond those 1.5 s, plus 2.5 s for the join's own
       // steps before the page checks the lead again after the claim key (measured live on UI 640: 1.6 s, then refused with 5.0 s left at a 1 s margin): its countdown ends when a tap stops counting, and it offers the next round from there. The seats, the
       // hidden move's record and the reveal keep the real close.
-      const H2H_CLIENT_CLOSING_MS = 1500, H2H_TAP_MARGIN_MS = 2500, H2H_OPPONENT_LEAD_MS = Number(window.ARENA_H2H_OPPONENT_LEAD_MS) || 12000;   // #2864: 25 s -> 12 s (the bot's lock and entry: 2.7-4.8 s measured 18:00-18:22Z, 11 s at load ~43)   // kanban #2861
+      const H2H_CLIENT_CLOSING_MS = 1500, H2H_TAP_MARGIN_MS = 2500, H2H_OPPONENT_LEAD_MS = Number(window.ARENA_H2H_OPPONENT_LEAD_MS) || 25000;   // #2901: 12 s -> 25 s again: since #2842 the bot stakes only on the player's VERIFIED lock (3-12 s after the entry, 11.7 s measured 2026-11-16) and needs 12 s after it; #2864: 25 s -> 12 s (the bot's lock and entry: 2.7-4.8 s measured 18:00-18:22Z, 11 s at load ~43)   // kanban #2861
       const pickCloseMs = (r, closeMs) => {
         if (game.manifest.resultType !== 3 || !Number.isFinite(closeMs)) return closeMs;
         const need = !r.free && typeof window.ARENA_H2H_LEAD_MS === 'function' ? window.ARENA_H2H_LEAD_MS() + 1500 : Number(window.ARENA_ORDER_CUTOFF_MS || 3000);
