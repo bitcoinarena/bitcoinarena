@@ -8408,12 +8408,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   });
 
   // kanban #2901: the door counters and the short answer cache (see the dispatch above)
-  const DOOR_CACHE = new Set(['/seating-batch', '/dkg-agreement', '/lock-namer', '/season-rounds', '/census'])   // not /book-certificates: a fresh certificate must be read at once (book-sync);
+  const DOOR_CACHE = new Set(['/seating-batch', '/dkg-agreement', '/lock-namer', '/season-rounds', '/census', '/served'])   // not /book-certificates: a fresh certificate must be read at once (book-sync);
   const DOOR_CACHE_MS = Number(process.env.ARENA_DOOR_CACHE_MS || 500);
   // kanban #2910 (measured 2026-11-16 ~19:45Z): GET /season-rounds (peers read 90 days of a game's season, paged) and GET /census (a round's census
   // evidence) held a seat's loop 1-3.2 s each, so a bot's handout reached that seat 3 s late and the round voided. Peers ask the same query again and
   // again: these two are answered from an answer at most DOOR_SLOW_CACHE_MS old.
-  const DOOR_SLOW_CACHE = new Set(['/season-rounds', '/census']);
+  // kanban #2912 (measured 2026-11-17 ~00:30Z, feedback #176 "Large truck charged 500 sat, never delivered"): an item purchase is posted to every
+  // seat at once and each asks every other seat GET /served for the same window - one seat answered one caller in 1.3 s but 14 at once in 10.6 s
+  // (median) to 21 s, past the seats' 8 s wait, so each seat merged a different subset, its served root differed from the page's and the paid
+  // purchase was refused (422 "the purchase paid the served list ..."). The answer is synchronous, so the first caller's answer is kept before the
+  // next is read: the same query is computed once and handed to every seat asking within DOOR_SLOW_CACHE_MS.
+  const DOOR_SLOW_CACHE = new Set(['/season-rounds', '/census', '/served']);
   const DOOR_SLOW_CACHE_MS = Number(process.env.ARENA_DOOR_SLOW_CACHE_MS || 60000);
   const doorCache = new Map();
   let doorCacheHits = 0;
