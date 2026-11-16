@@ -106,7 +106,12 @@ function entriesOf(round, rid, contract, { paid, market }) {
   // A ROUND KEY TWO ENTRIES NAME BOOKS NEITHER BY ITS RECORD (kanban #2690, #1489 r3-h2h-2): an entry carries no signature of its player key, so a
   // stranger posted his own entry under an honest player's public round key and her consented record booked HIS forfeit to her identity. The record
   // books an entry only when it is the round's one entry of that key; a reveal's own proof (the identity over round AND entry) still books its entry.
-  const all = round.entriesOf(rid);
+  // A PAID ROUND'S ENTRIES ARE ITS LOCKED ONES (kanban #2835, #1489 r24-settle-1): a stranger's lockless entry under made-up keys (kept under the
+  // lockless cap and relayed to every seat) had no stake lock, read as payoutMsat null, and every seat refused to sign the round's season account -
+  // the round never counted for the leaderboard payout or the board badge. An entry with no stake lock held here takes no seat and pays nothing:
+  // it is left out of a paid round's account (and of perKey, so an unsigned copy under a victim's key no longer strips her identity)
+  const all = paid ? round.entriesOf(rid).filter(({ entryId }) => { const l = typeof round.stakeLock === 'function' ? round.stakeLock(entryId) : null; return !!(l && l.fields); })
+    : round.entriesOf(rid);
   const perKey = new Map(); for (const { entry } of all) { const k = hex(entry.playerPubkey); perKey.set(k, (perKey.get(k) || 0) + 1); }
   return all.map(({ entryId, entry }) => {
     const key = hex(entry.playerPubkey);
