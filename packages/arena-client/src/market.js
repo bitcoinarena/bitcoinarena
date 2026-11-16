@@ -554,11 +554,13 @@ export function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() })
           continue;
         }
       }
-      lines.push({ ...at('void'), text: `${head}: VOID - ${o.why || 'its source round refunds it'} · every stake comes back` });
+      // A VOID SHOWN IS DECIDED (kanban #2903, feedback #147): past its deadline or a source round's refund - the row is final, not pending for good
+      lines.push({ ...at('void', { final: true }), text: `${head}: VOID - ${o.why || 'its source round refunds it'} · every stake comes back` });
       continue;
     }
     if (o.state === 'DISPUTED') {
-      lines.push({ ...at('disputed'), text: `${head}: the attestors contradicted themselves, nothing is paid; your stake comes back at expiry` });
+      // a contradiction is decided too: nothing is paid, every stake comes back at expiry - final (kanban #2903)
+      lines.push({ ...at('disputed', { final: true }), text: `${head}: the attestors contradicted themselves, nothing is paid; your stake comes back at expiry` });
       continue;
     }
     const check = o.check || { verified: false, why: 'not checked yet' };
