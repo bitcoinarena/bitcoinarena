@@ -56,10 +56,10 @@ export const HUMAN_FLAGS = Object.freeze(['x']);
 // played round - the owner's played mark counts - AND a verified X account) gets no flat node bounty; it is approved as ordinary feedback at its level
 // (the bot share, the bonus as usual). A report received before keeps the old rule.
 export const NODE_BOT_EXCLUDED_FROM_MS = 1794812798412;
-export const NODE_BOT_EXCLUDED_WHY = 'From 16 Nov 2026 07:06 UTC the 10,000 sat node bounty is only for proven humans (a played round and a linked X account): approve this node report as ordinary feedback at its level';
+export const NODE_BOT_EXCLUDED_WHY = 'From 16 Nov 2026 07:06 UTC the 10,000 sat node bounty is only for humans with a linked X account: approve this node report as ordinary feedback at its level';
 export function seasonPayout({ level, codeOnly = false, followUp = false, flags = {}, played = true, receivedMs = null } = {}) {
   const lv = String(level || '').toLowerCase();
-  if (lv === 'node' && Number.isFinite(receivedMs) && receivedMs >= NODE_BOT_EXCLUDED_FROM_MS && !(!!played && HUMAN_FLAGS.some((k) => !!(flags && flags[k]))))
+  if (lv === 'node' && Number.isFinite(receivedMs) && receivedMs >= NODE_BOT_EXCLUDED_FROM_MS && !HUMAN_FLAGS.some((k) => !!(flags && flags[k])))   // the owner 2026-11-16 ~14:00Z: no played round needed (a node session cannot play) - a linked X only
     return { ok: false, nodeNotHuman: true, why: NODE_BOT_EXCLUDED_WHY };
   if (lv === 'node') return { ok: true, level: 'node', baseSats: NODE_SATS, bonusPct: 0, sats: NODE_SATS };
   if (!Object.hasOwn(LEVEL_SATS, lv)) return { ok: false, why: 'a level is useful, low, medium, high, critical or node' };

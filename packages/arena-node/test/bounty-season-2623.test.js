@@ -135,15 +135,16 @@ test('#2623 the open-issues list names areas and ticket numbers, never a ticket\
     [{ area: 'Evilscript', tickets: ['#1'], items: [{ id: '#1', text: 'a bbad/b line' }] }]);
 });
 
-// kanban #2876 (the owner 2026-11-16 ~07:06Z): from 2026-11-16T07:06:38Z a node report from a reporter who is not proven human (a played round AND a
-// verified X account) gets no flat 10,000 sat node bounty - approved as ordinary feedback at its level instead; one received before keeps the old rule
+// kanban #2876 (the owner 2026-11-16 ~07:06Z; ~14:00Z: "a node session cannot play a round" - no played round needed): from 2026-11-16T07:06:38Z a node
+// report from a reporter without a linked X account gets no flat 10,000 sat node bounty - approved as ordinary feedback at its level instead; one received before keeps the old rule
 test('#2876 the node bounty after the cutoff only for a proven human; a bot\'s node report is refused as node and takes an ordinary level', async () => {
   const T = NODE_BOT_EXCLUDED_FROM_MS;
   // the rule itself
   assert.equal(seasonPayout({ level: 'node', receivedMs: T - 1 }).sats, 10000, 'before the cutoff: the old rule');
   const bot = seasonPayout({ level: 'node', receivedMs: T, flags: { telegram: true, discord: true } });
   assert.equal(bot.ok, false); assert.equal(bot.nodeNotHuman, true); assert.match(bot.why, /07:06 UTC.*ordinary feedback/);
-  assert.equal(seasonPayout({ level: 'node', receivedMs: T, flags: { x: true }, played: false }).ok, false, 'X but no played round: not proven');
+  assert.equal(seasonPayout({ level: 'node', receivedMs: T, flags: { x: true }, played: false }).sats, 10000, 'a linked X account, no played round: the node bounty (a node session cannot play)');
+  assert.match(bot.why, /only for humans with a linked X account/);
   assert.equal(seasonPayout({ level: 'node', receivedMs: T, flags: { x: true } }).sats, 10000, 'played and a verified X account: the node bounty');
   assert.equal(seasonPayout({ level: 'node' }).sats, 10000, 'an approval read again (no receivedMs) keeps its node amount');
   // plan(): the report's own receivedMs and its reporter's verified links
@@ -159,7 +160,7 @@ test('#2876 the node bounty after the cutoff only for a proven human; a bot\'s n
   assert.equal(pOld.sats, 10000);
   assert.equal(pBot.ok, false); assert.equal(pBot.nodeNotHuman, true);
   assert.equal(pHuman.sats, 10000);
-  assert.equal(pBotPlayedNot.ok, false);
+  assert.equal(pBotPlayedNot.sats, 10000, 'no played round, a linked X: the node bounty');
   assert.equal(pBotHigh.sats, 750, 'the same bot report as ordinary feedback: high at the bot share');
   // an existing node approval (received before the cutoff, approved) stays payable at 10,000 after it
   s.commit(old, pOld, { nowMs: now });

@@ -679,7 +679,7 @@ async function nodeFeedbackPanel() {
   };
 }
 // THE SEASON 2 SOCIAL PANEL (kanban #2877): the game page's Feedback has it (ARENA_SOCIAL_PANEL), the node's did not - a node owner could not prove
-// himself human (a played round and a linked X account) nor earn the community bonus. Usernames checked live, the stored links and the bonus, a
+// himself human (a linked X account; for the node bounty from 16 Nov 07:06 UTC an X account alone) nor earn the community bonus. Usernames checked live, the stored links and the bonus, a
 // one-time link code for the bots, all at the faucet's Season 2 doors (POST /feedback/social, /link, /verify) with a NIP-98 sign-in by the owner key
 // that signs this page's reports (the report key the bounty pays). The rules beside it, with the node bounty's rule from 2026-11-16 07:06 UTC (#2876).
 const S2_ROWS = [
@@ -704,7 +704,7 @@ function nodeSocialPanel(box, el) {
   const rules = el('ul', { cls: 'sub fbn-s-rules' },
     el('li', { text: 'Humans 100 %, bots 15 %: play at least one round and link your X account. Without both, a report counts as a bot report and gets 15 %.' }),
     el('li', { text: 'Community bonus: +20 % for following on X, +20 % on Nostr, +20 % for any two of Telegram, Discord and Armada (at most +60 %).' }),
-    el('li', { text: 'From 16 Nov 2026 07:06 UTC: the 10,000 sat node bounty is only for proven humans (a played round and a linked X account). Node reports from bots are rewarded like any other feedback.' }),
+    el('li', { text: 'From 16 Nov 2026 07:06 UTC the 10,000 sat node bounty is only for humans with a linked X account. Node reports from bots are rewarded like any other feedback.' }),
     el('li', {}, el('span', { text: 'All rules: ' }), el('a', { href: 'https://bitcoinarena.io/bounty/#rules', target: '_blank', rel: 'noopener noreferrer', text: 'bitcoinarena.io/bounty' })));
   const fields = {};
   const rows = el('div', { cls: 'fbn-s-rows' });
