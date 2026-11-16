@@ -2,28 +2,28 @@
  "app": "nextblock",
  "title": "Tick Tock, Next Block",
  "repo": "bitcoinarena/arena-app-next-block",
- "release": "webgl-nextblock-0.0.51",
- "build": "nextblock-0.0.51",
- "productVersion": "0.0.51",
+ "release": "webgl-nextblock-0.0.54",
+ "build": "nextblock-0.0.54",
+ "productVersion": "0.0.54",
  "files": {
-  "Build/nextblock-0.0.51-astc.data.unityweb": {
-   "sha256": "c1249b7c7e2e2f4fedb7c9d9f36a59e8f77b975608c9a6c2854bc61547a09abd",
-   "unpackedSha256": "acd1fa97821f4f2a31b9c68eea2899d236cc91ede2010102ae2028349d82fce0"
+  "Build/nextblock-0.0.54-astc.data.unityweb": {
+   "sha256": "dfeca98cc08918f36e0f802734524898888cdeb74ff5725bbc1bf0f616455a25",
+   "unpackedSha256": "906bd20fe01846df43c990a7e6265dad4976e1f5e640ae1a6ad33cd59ac658ca"
   },
-  "Build/nextblock-0.0.51.data.unityweb": {
-   "sha256": "13640bc9776bd63ee18fca721085124ce5359e29a652bb7f22b25d388eff7e1b",
-   "unpackedSha256": "94e6d8b6cd92bbf810d5737b730fa331aa58b70203bd75fadb719f6a2b6923c9"
+  "Build/nextblock-0.0.54.data.unityweb": {
+   "sha256": "f0fdb9b4c5684ac88caba33a2cd006741f2a16b5f4db25b07647152009ccb398",
+   "unpackedSha256": "da3504bf3fc9e59d84b60416a37f8f984a783394570c78b745249e3fb570db31"
   },
-  "Build/nextblock-0.0.51.framework.js.unityweb": {
+  "Build/nextblock-0.0.54.framework.js.unityweb": {
    "sha256": "f9d330a94565e231799b62ce12e3bffe202aa63415315b8e4739f8aced602c91",
    "unpackedSha256": "44f76e28b4bca2b215b5e08859e039d1f35dd60ada49301614cbff41e896ce64"
   },
-  "Build/nextblock-0.0.51.loader.js": {
-   "sha256": "75dc6d495b53d62e805599aab978caf18d34a86941c8752e7ab56013f67f6db3"
+  "Build/nextblock-0.0.54.loader.js": {
+   "sha256": "7941fbb2ca65307c42a4924091090591f24747a5f5c40a0a36d876465a134e4a"
   },
-  "Build/nextblock-0.0.51.wasm.unityweb": {
-   "sha256": "e791bfecd7654da618694dbe00503415c22f1f5b4773331177a8fa771d7642d0",
-   "unpackedSha256": "8091ba6357d4f1b1320b9e0f24a96aec9694395ef97d68871c6476ea3ad9c20e"
+  "Build/nextblock-0.0.54.wasm.unityweb": {
+   "sha256": "1f8703a0ff7476c8909d8c0394a123fa703e172d16273c835fd11887dfde7a28",
+   "unpackedSha256": "ef762b62b341a3772302acce565c2cd2ad56a16e046cdc79043fa4f3f41c15b9"
   },
   "ServerData/WebGL/highdetail_assets_model_bomb_76cf255f615633e4e88ca906854f1d1c.bundle": {
    "sha256": "9b128897d661a773ce0eb50832edcbe19a96cff6bdd539e8c7c8f121ffad237f"
@@ -110,10 +110,10 @@
    "sha256": "0dd9706aad9bc192bd7a73ca3986a27ea60b03478dbf38dcc5bed709d4129823"
   },
   "build.txt": {
-   "sha256": "a4a2d86fc23b5bef7ff62b8f8ab62127d8f3024a68dbc804b9830303483b00f2"
+   "sha256": "dbb8427590696d33c1f42664a821ea7a8cd01bfe256ebbcc7fee331571391ca4"
   },
   "textures.json": {
-   "sha256": "321efedf6d59b395ad495f25dc6489649b5918ba95781c484287e218fabd8648"
+   "sha256": "5d5e23a2d772c8bf036fcef3ed84c132dba85c672fac4b6fe6eff1947d445fca"
   }
  }
 }
