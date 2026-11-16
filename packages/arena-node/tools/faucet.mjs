@@ -454,6 +454,8 @@ async function nodeCheckNow(node, npub) {
   return nodeBountyCheck({ node, npub, seats, fetchJson: fetchJson1342, excluded, teamHosts, censusSeats: bases });
 }
 const PLAYED = networkPlayers({ seats: String(env.FAUCET_SEASON_SEATS || '').split(',').filter(Boolean), games: String(env.FAUCET_SEASON_GAMES || 'rock-paper-scissors,nextblock,btc-updown').split(',').filter(Boolean) });
+// kanban #2875: the owner's played mark on a report counts as played for the Season 2 amount, else the network check
+const playedFor = (r) => !!(r && S2 && S2.playedMarkOf && S2.playedMarkOf(r.id)) || !!PLAYED.played(r && r.pubkey);
 PLAYED.fresh().catch(() => 0);   // kanban #1484: the list is read at start, so the admin page never waits for it
 // ONE SETTLE PASS AT A TIME (kanban #1571): a pass waits up to 20 s a paying row on lncli, so passes overlapped and decided on stale rows
 let settling = false;
@@ -752,7 +754,7 @@ if (S2) setInterval(() => { if (!S2_STARTED() || !bountyOn()) return;
       const r = FEEDBACK.report(a.report);
       if (!r || r.state !== 'new') continue;
       if (a.level !== 'node') await S2.verify(r.pubkey, S2_VERIFY, { cause: 'season2-start' });
-      const p = S2.plan(r, { level: a.level, codeOnly: a.codeOnly, followUp: a.followUp, played: !!PLAYED.played(r.pubkey) });
+      const p = S2.plan(r, { level: a.level, codeOnly: a.codeOnly, followUp: a.followUp, played: playedFor(r) });
       if (!p.ok) continue;
       if (p.waits || p.noBounty) { if (p.waits && p.season !== a.season) S2.wait(r, p, { by: 'season2' }); continue; }   // a Season 2 waiter keeps waiting (#2787: Season 2 keeps its rule)
       const out = s2Approve(r, p, 'season2');
@@ -849,7 +851,7 @@ createServer((req, res) => {
     if (!isAdmin(req)) return send(403, { ok: false, why: 'not the admin code' });
     const q = new URL(req.url, 'http://x').searchParams;
     const withReward = (r, ours) => { const w = FEEDBACK.rewards({ pubkey: r.pubkey }).find((x) => x.report === r.id);
-      return { ...r, lnAddress: FEEDBACK.addressOf(r.id), ours: ours.has(r.pubkey), played: PLAYED.played(r.pubkey), rounds: PLAYED.history ? PLAYED.history(r.pubkey) : null, nodeBounty: FEEDBACK.nodeBountyFor(r), season2: S2 ? { approval: S2.approval(r.id), links: S2.links(r.pubkey), flags: S2.flagsOf(r.pubkey) } : null, realUser: S2 && S2.realUserOf ? S2.realUserOf(r.pubkey) : null, reward: w ? { ...w, lnurl: w.state === 'paid' ? null : FEEDBACK.lnurlOf(w.k1, { base: PUBLIC_BASE }), page: `${PUBLIC_BASE}/lnurlw/${w.k1}` } : null }; };
+      return { ...r, lnAddress: FEEDBACK.addressOf(r.id), ours: ours.has(r.pubkey), played: PLAYED.played(r.pubkey), rounds: PLAYED.history ? PLAYED.history(r.pubkey) : null, nodeBounty: FEEDBACK.nodeBountyFor(r), season2: S2 ? { approval: S2.approval(r.id), links: S2.links(r.pubkey), flags: S2.flagsOf(r.pubkey) } : null, realUser: S2 && S2.realUserOf ? S2.realUserOf(r.pubkey) : null, playedMark: S2 && S2.playedMarkOf ? S2.playedMarkOf(r.id) : null, reward: w ? { ...w, lnurl: w.state === 'paid' ? null : FEEDBACK.lnurlOf(w.k1, { base: PUBLIC_BASE }), page: `${PUBLIC_BASE}/lnurlw/${w.k1}` } : null }; };
     if (path === '/feedback/admin/list' && req.method === 'GET') {
       PLAYED.fresh().catch(() => 0).then(() => { const ours = ourKeys();
         send(200, { ok: true, reports: FEEDBACK.list({ state: q.get('state'), type: q.get('type'), game: q.get('game'), pubkey: q.get('pubkey'), source: q.get('source') }).map((r) => withReward(r, ours)), budget: { ...FEEDBACK.budget({ rules: RULES }), network: BOUNTY_NETWORK },   // the payout network, for the admin's wording (kanban #1450)
@@ -915,7 +917,7 @@ createServer((req, res) => {
             const level = String(b.severity || '').toLowerCase();
             if (level !== 'node') await S2.verify(r.pubkey, S2_VERIFY, { cause: 'approve' });
             await PLAYED.fresh().catch(() => 0);   // kanban #2784: the full level only for a reporter who played a round (and is proven human)
-            const p = S2.plan(r, { level, codeOnly: b.codeOnly === true, followUp: b.followUp === true, played: !!PLAYED.played(r.pubkey) });
+            const p = S2.plan(r, { level, codeOnly: b.codeOnly === true, followUp: b.followUp === true, played: playedFor(r) });
             if (!p.ok) return send(200, p);
             // kanban #2787: from Season 3 on a used-up pot is no bounty - nothing waits; a line on the report's log says why
             if (p.noBounty) { FEEDBACK.remark(r.id, p.why, { by }); return send(200, { ok: false, noBounty: true, why: p.why, pot: p.pot }); }
@@ -934,7 +936,7 @@ createServer((req, res) => {
           if (late || (!s1.ok && S2 && /this week's budget/.test(String(s1.why || '')))) {
             const r = FEEDBACK.report(b.id);
             const level = String(b.severity || '').toLowerCase() || S2_LEVEL_BY_SATS[Number(b.amountSats)] || '';
-            const p = r ? S2.plan(r, { level, codeOnly: b.codeOnly === true, followUp: b.followUp === true, played: !!PLAYED.played(r.pubkey) }) : { ok: false };
+            const p = r ? S2.plan(r, { level, codeOnly: b.codeOnly === true, followUp: b.followUp === true, played: playedFor(r) }) : { ok: false };
             if (!p.ok) return send(200, s1);
             const waiting = S2.wait(r, p, { by });
             FEEDBACK.remark(r.id, late ? 'received after Season 1 ended: Season 2 rules' : `moved to Season 2: the Season 1 budget is used up; approved by the Season 2 rules${S2_START_DAY ? ` once Season 2 starts (${S2_START_DAY})` : ''}`, { by });
@@ -969,6 +971,12 @@ createServer((req, res) => {
         if (b.action === 'void-reward') return send(200, FEEDBACK.voidReward(b.id, { why: b.why ?? null, by }));
         if (b.action === 'note') return send(200, FEEDBACK.note(b.id, { ticket: b.ticket, severity: b.severity, by }));
         // kanban #2875: the owner's "real user" mark on the report's key (or a named key), set or cleared; no payout share changes with it
+        // kanban #2875: the owner's "played" mark on one report - the Season 2 amount then counts it as played
+        if (b.action === 'played-mark' || b.action === 'played-mark-clear') {
+          if (!S2 || !S2.markPlayed) return send(503, { ok: false, why: 'no Season 2 book here' });
+          if (!FEEDBACK.report(b.id)) return send(404, { ok: false, why: 'no such report' });
+          return send(200, b.action === 'played-mark' ? S2.markPlayed(b.id, { by }) : S2.clearPlayed(b.id, { by }));
+        }
         if (b.action === 'real-user' || b.action === 'real-user-clear') {
           if (!S2 || !S2.markRealUser) return send(503, { ok: false, why: 'no Season 2 book here' });
           const key = b.pubkey ? String(b.pubkey).toLowerCase() : (FEEDBACK.report(b.id) || {}).pubkey;

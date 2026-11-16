@@ -26,3 +26,16 @@ test('#2875 a real-user mark is set with a name, read back, survives a reopen, a
   assert.equal(s.clearRealUser(k).ok, false, 'nothing left to clear');
   s.close();
 });
+
+test('#2875 a played mark is set per report, read back, and cleared', () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'played-2875-')), 's2.db');
+  const id = 'ab'.repeat(32);
+  const s = openBountySeason(file);
+  assert.equal(s.playedMarkOf(id), null);
+  assert.equal(s.markPlayed('x').ok, false);
+  assert.equal(s.markPlayed(id, { by: 'owner', nowMs: 5 }).ok, true);
+  assert.deepEqual(s.playedMarkOf(id), { setBy: 'owner', setMs: 5 });
+  assert.equal(s.clearPlayed(id).ok, true);
+  assert.equal(s.playedMarkOf(id), null);
+  s.close();
+});
