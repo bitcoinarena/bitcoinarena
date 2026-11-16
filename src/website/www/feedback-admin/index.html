@@ -126,6 +126,7 @@
       const who = el('td', {}, el('code', { text: `${r.pubkey.slice(0, 12)}…` }), el('div', { cls: r.ours ? 'warn' : r.played ? 'dim' : 'bad', text: r.ours ? 'ours' : r.played ? 'has played before' : 'never finished a round' }),
         // kanban #2875: the owner's "real user" mark on this key
         r.realUser ? el('div', {}, el('span', { cls: 'nb-badge ok', text: `real user (owner): ${r.realUser.name}` })) : null,
+        r.playedMark ? el('div', {}, el('span', { cls: 'nb-badge ok', text: 'played (owner)' })) : null,
         // HOW MUCH AND WHAT (the owner 2026-11-10: "wieviel runden der spieler gemacht hat und welche apps er genutzt hat")
         r.rounds && r.rounds.rounds ? el('div', { cls: 'dim', text: `${r.rounds.rounds} rounds · ${r.rounds.games.map(([g, n]) => `${g} ${n}`).join(', ')}` }) : null);
       // FRONTEND OR NODE (the owner 2026-11-07: "in der admin ui wird angezeigt ob es frontend oder node war")
@@ -205,7 +206,10 @@
       d.append(el('h2', { text: 'Real user (owner)' }),
         ru ? el('div', {}, el('span', { cls: 'nb-badge ok', text: `real user (owner): ${ru.name}` }), el('span', { cls: 'dim', text: ` set ${new Date(ru.setMs).toISOString().slice(0, 16).replace('T', ' ')} UTC${ru.setBy ? ` by ${ru.setBy}` : ''}${ru.note ? ` - ${ru.note}` : ''}` })) : el('div', { cls: 'dim', text: 'This key carries no real-user mark.' }),
         el('div', { cls: 'row' }, nm, note, btn(ru ? 'Update mark' : 'Mark as real user', () => act({ action: 'real-user', name: nm.value, note: note.value }, 'Marked as real user')),
-          ru ? btn('Clear mark', () => act({ action: 'real-user-clear' }, 'Mark cleared')) : null)); }
+          ru ? btn('Clear mark', () => act({ action: 'real-user-clear' }, 'Mark cleared')) : null));
+      // kanban #2875: the owner's "played" mark on this report - the Season 2 amount counts it as played, whatever the network check says
+      d.append(el('div', { cls: 'row' }, el('span', { cls: r.playedMark ? 'nb-badge ok' : 'dim', text: r.playedMark ? `played (owner), set ${new Date(r.playedMark.setMs).toISOString().slice(0, 16).replace('T', ' ')} UTC` : `Network played check: ${r.played ? 'played' : 'not played'}` }),
+        r.playedMark ? btn('Clear played mark', () => act({ action: 'played-mark-clear' }, 'Played mark cleared')) : btn('Mark this report as played', () => act({ action: 'played-mark' }, 'Marked as played')))); }
     if (r.state === 'new') {
       d.append(el('h2', { text: 'Decide' }),
         el('div', { cls: 'row' }, amount, sev, el('label', {}, crit, el('span', { text: ' critical, above the bands' })), btn('Approve', () => act({ action: 'approve', amountSats: amount.value.trim() ? Number(amount.value) : null, severity: sev.value, critical: crit.checked }, 'Approved'), true)),

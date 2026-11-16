@@ -315,6 +315,20 @@ export function openBountySeason(path = ':memory:', { startMs = null, potSats = 
     db.prepare('INSERT OR REPLACE INTO real_users (pubkey, name, note, set_by, set_ms, cleared_ms, cleared_by) VALUES (?, ?, ?, ?, ?, NULL, NULL)').run(k, n, note ? String(note).slice(0, 200) : null, by ? String(by).slice(0, 80) : null, nowMs);
     return { ok: true, realUser: realUserOf(k) };
   };
+  // THE OWNER'S "PLAYED" MARK PER REPORT (kanban #2875, the owner 2026-11-16: "da wo er Fehler gefunden hat, die die Runde betreffen, hat er sie gespielt,
+  // trage das ein"): a report the owner says was found while playing counts as played for the Season 2 amount, whatever the network check says
+  db.exec('CREATE TABLE IF NOT EXISTS played_marks (report TEXT PRIMARY KEY, set_by TEXT, set_ms INTEGER NOT NULL, cleared_ms INTEGER, cleared_by TEXT)');
+  const playedMarkOf = (report) => { const r = db.prepare('SELECT * FROM played_marks WHERE report = ? AND cleared_ms IS NULL').get(String(report));
+    return r ? { setBy: r.set_by || null, setMs: Number(r.set_ms) } : null; };
+  const markPlayed = (report, { by = null, nowMs = Date.now() } = {}) => {
+    if (!/^[0-9a-f]{64}$/i.test(String(report || ''))) return { ok: false, why: 'a report id is 64 hex' };
+    db.prepare('INSERT OR REPLACE INTO played_marks (report, set_by, set_ms, cleared_ms, cleared_by) VALUES (?, ?, ?, NULL, NULL)').run(String(report).toLowerCase(), by ? String(by).slice(0, 80) : null, nowMs);
+    return { ok: true, played: playedMarkOf(String(report).toLowerCase()) };
+  };
+  const clearPlayed = (report, { by = null, nowMs = Date.now() } = {}) => {
+    const c = db.prepare('UPDATE played_marks SET cleared_ms = ?, cleared_by = ? WHERE report = ? AND cleared_ms IS NULL').run(nowMs, by ? String(by).slice(0, 80) : null, String(report).toLowerCase()).changes;
+    return c ? { ok: true } : { ok: false, why: 'that report carries no played mark' };
+  };
   const clearRealUser = (pubkey, { by = null, nowMs = Date.now() } = {}) => {
     const k = String(pubkey || '').toLowerCase();
     const c = db.prepare('UPDATE real_users SET cleared_ms = ?, cleared_by = ? WHERE pubkey = ? AND cleared_ms IS NULL').run(nowMs, by ? String(by).slice(0, 80) : null, k).changes;
@@ -323,5 +337,5 @@ export function openBountySeason(path = ':memory:', { startMs = null, potSats = 
 
 
   return { makeCode, redeem, links: linksOf, record, verify, flagsOf, pot, plan, commit, wait, approval, approvals, payable, drawEntries, keysOfSeason,
-    seasonNow, realUserOf, markRealUser, clearRealUser, close: () => db.close() };
+    seasonNow, realUserOf, markRealUser, clearRealUser, playedMarkOf, markPlayed, clearPlayed, close: () => db.close() };
 }
