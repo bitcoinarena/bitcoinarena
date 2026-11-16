@@ -22,11 +22,14 @@ test('#2623 #2784 the payout: the full level only for a played round by a proven
   for (const f of [{ telegram: true }, { discord: true }, { armada: true }, { telegram: true, discord: true, armada: true }]) {
     const p = seasonPayout({ level: 'high', flags: f });
     assert.equal(p.human, false, JSON.stringify(f)); assert.equal(p.quarter, true, JSON.stringify(f)); assert.equal(p.baseSats, 750, JSON.stringify(f)); }
-  assert.equal(seasonPayout({ level: 'high', flags: { telegram: true }, played: false }).sats, 1125, 'a human who played no round: 15 % (+50 %)');
+  assert.equal(seasonPayout({ level: 'high', flags: { telegram: true }, played: false }).sats, 750, 'no verified X: a bot, 15 % and no bonus (kanban #2904)');
   // kanban #2904 (the owner 2026-11-16 ~14:10Z: "Ein bestaetigtes X-Konto reicht"): a verified X account without a played round is paid the full level
   assert.equal(seasonPayout({ level: 'high', flags: { x: true }, played: false }).quarter, false, 'a verified X account, no played round: the full level');
+  // kanban #2904 (the owner 2026-11-16: "Die Boni gelten nur, wenn es ein Mensch ist"): no bonus for a bot
+  { const bot = seasonPayout({ level: 'low', flags: { armada: true, nostr: true } }); if (!bot.human) assert.equal(bot.bonusPct, 0, 'a bot gets no bonus'); }
+  assert.ok(seasonPayout({ level: 'low', flags: { x: true, telegram: true, discord: true } }).bonusPct > 0, 'a human keeps the bonus');
   assert.equal(seasonPayout({ level: 'high', codeOnly: true }).sats, 750);
-  assert.equal(seasonPayout({ level: 'critical', codeOnly: true, flags: { discord: true } }).sats, 2250);
+  assert.equal(seasonPayout({ level: 'critical', codeOnly: true, flags: { discord: true } }).sats, 1500, 'a bot share gets no bonus (kanban #2904)');
   assert.equal(seasonPayout({ level: 'high', followUp: true }).sats, 150);
   assert.equal(seasonPayout({ level: 'medium', followUp: true, flags: { x: true } }).sats, 1250);
   assert.equal(seasonPayout({ level: 'useful', codeOnly: true }).sats, 75);

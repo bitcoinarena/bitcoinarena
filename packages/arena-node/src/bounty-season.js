@@ -57,7 +57,7 @@ export function seasonPayout({ level, codeOnly = false, followUp = false, flags 
   const human = HUMAN_FLAGS.some((k) => !!(flags && flags[k]));
   const full = !codeOnly && human;   // the owner 2026-11-16 ~14:10Z: "Ein bestaetigtes X-Konto reicht" - a verified X makes a human; a played round is no longer needed
   if (!full) base = Math.floor((base * BOT_PCT) / 100);   // a bot's share (kanban #2784: 25 %, the owner 2026-11-15 later: 15 %)
-  const pct = bonusPct(flags);
+  const pct = human ? bonusPct(flags) : 0;   // the owner 2026-11-16: the social bonus is for humans only (a verified X); a bot gets its 15 % and no bonus (kanban #2904)
   // `codeOnly` on the answer (and the approval's code_only) says "paid at 25 %": a payable() read again then never rises to the full level
   return { ok: true, level: lv, baseSats: base, bonusPct: pct, sats: Math.floor(base * (100 + pct) / 100), codeOnly: !full, followUp: !!followUp,
     played: !codeOnly && !!played, human, quarter: !full };
