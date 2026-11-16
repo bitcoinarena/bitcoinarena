@@ -161,4 +161,8 @@ test('#2876 the node bounty after the cutoff only for a proven human; a bot\'s n
   assert.equal(pHuman.sats, 10000);
   assert.equal(pBotPlayedNot.ok, false);
   assert.equal(pBotHigh.sats, 750, 'the same bot report as ordinary feedback: high at the bot share');
+  // an existing node approval (received before the cutoff, approved) stays payable at 10,000 after it
+  s.commit(old, pOld, { nowMs: now });
+  const pay = s.payable(old.id, { nowMs: now + 1000 });
+  assert.equal(pay.ok, true); assert.equal(pay.payableSats, 10000, 'an approved node bounty stays payable');
 });
