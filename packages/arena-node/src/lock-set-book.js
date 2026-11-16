@@ -25,7 +25,7 @@ import {
 const HEX64 = /^[0-9a-f]{64}$/;
 const HEX128 = /^[0-9a-f]{128}$/;
 /** How often a seat pulls its peers while a round's set is open, and how long it waits for one peer. */
-export const LOCK_SET_PULL_MS = 150;
+export const LOCK_SET_PULL_MS = Number(process.env.ARENA_LOCK_SET_PULL_MS || 400);   // kanban #2901: was 150 - 798 pulls in 30 s on one seat; pushes carry the fast path
 export const LOCK_SET_PEER_MS = 2500;
 /**
  * WHEN A LOCK OUTSIDE THE CERTIFICATE GOES BACK (kanban #2585): not before the close + LOCK_SET_WINDOW_MS + this. A seat steps a round's set until

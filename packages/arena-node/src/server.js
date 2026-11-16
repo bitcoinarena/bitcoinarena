@@ -3841,7 +3841,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const lockSetPass = () => {
     if (shuttingDown || !headToHeadReady) return;
     // read again every LOCK_SET_PLAN_MS, and at once when this store opened a round since (round.openSeq): a round opened just before its close is planned
-    if (Date.now() - lockSetPlanAt >= LOCK_SET_PLAN_MS || Number(round.openSeq || 0) !== lockSetPlanSeq) lockSetReplan();
+    // kanban #2901: a newly opened round replans at most once a second (rounds open ahead of their close; the read is ~11,000 open rounds)
+    if (Date.now() - lockSetPlanAt >= LOCK_SET_PLAN_MS || (Number(round.openSeq || 0) !== lockSetPlanSeq && Date.now() - lockSetPlanAt >= 1000)) lockSetReplan();
     const now = Number(round.now());
     for (const x of lockSetPlan.values()) {
       if (!x || now < x.close || now > x.close + LOCK_SET_WINDOW_MS + 2000) continue;
@@ -8382,6 +8383,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       // EVERY DOOR IS TIMED, so a stall inside one has a name (2026-09-17 19:15, the ghost lag: 32 of the 34
       // stalls left on the Daily had no phase name at all). The label is the path, never the query, which carries ids.
+      // THE HOT DOORS COUNTED AND THEIR REPEATS ANSWERED ONCE (kanban #2901, measured 2026-11-16 on seat 1 with tcpdump, 30 s: ~83 requests/s -
+      // GET /lock-set 798, /seating-batch 457 (one query 233 times), /book-certificates 308, /lock-namer 112, /dkg-agreement 88 (one query 73
+      // times)): every door is counted per caller and the top logged once a minute ([doors]); a GET of DOOR_CACHE's doors with the same query is
+      // answered from the answer made at most DOOR_CACHE_MS before (peers poll them; half a second old is what a poll sees anyway)
+      doorCount(req, url);
+      if (req.method === 'GET' && DOOR_CACHE.has(url.pathname)) {
+        const k = url.pathname + url.search, hit = doorCache.get(k);
+        if (hit && Date.now() - hit.at < DOOR_CACHE_MS) { doorCacheHits++; res.writeHead(hit.status, hit.headers); return res.end(hit.body); }
+        const chunks = [], wh = res.writeHead.bind(res), we = res.end.bind(res); let status = 200, headers = {};
+        res.writeHead = (st, h, h2) => { status = st; headers = (typeof h === 'object' && h) || (typeof h2 === 'object' && h2) || {}; return wh(st, h, h2); };
+        res.end = (b, ...rest) => { if (b !== undefined && typeof b !== 'function') chunks.push(Buffer.isBuffer(b) ? b : Buffer.from(String(b)));
+          if (status === 200) { doorCache.set(k, { at: Date.now(), status, headers, body: Buffer.concat(chunks) }); if (doorCache.size > 2048) doorCache.delete(doorCache.keys().next().value); }
+          return we(b, ...rest); };
+      }
       return await timed(`door ${req.method} ${url.pathname}`, () => served(req, res, url), { over: 200 });
     } catch (e) {
       // The message is the reason - "the round is closed", "no such entry" -
@@ -8392,6 +8407,25 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
   });
 
+  // kanban #2901: the door counters and the short answer cache (see the dispatch above)
+  const DOOR_CACHE = new Set(['/seating-batch', '/dkg-agreement', '/lock-namer'])   // not /book-certificates: a fresh certificate must be read at once (book-sync);
+  const DOOR_CACHE_MS = Number(process.env.ARENA_DOOR_CACHE_MS || 500);
+  const doorCache = new Map();
+  let doorCacheHits = 0;
+  const doorCounts = new Map();
+  const doorCount = (req, url) => {
+    let who = String((req.socket && req.socket.remoteAddress) || '').replace(/^::ffff:/, '');
+    const k = `${req.method} ${url.pathname} ${who}`;
+    doorCounts.set(k, (doorCounts.get(k) || 0) + 1);
+  };
+  const doorCountTimer = setInterval(() => {
+    if (!doorCounts.size) return;
+    const top = [...doorCounts].sort((x, y) => y[1] - x[1]).slice(0, 8).map(([k, n]) => `${k} ${n}`).join(' | ');
+    let all = 0; for (const n of doorCounts.values()) all += n;
+    console.log(`[doors] ${all} in 60 s, ${doorCacheHits} from the short cache: ${top}`);
+    doorCounts.clear(); doorCacheHits = 0;
+  }, 60000);
+  if (doorCountTimer.unref) doorCountTimer.unref();
   const served = async (req, res, url) => {
     {
 
