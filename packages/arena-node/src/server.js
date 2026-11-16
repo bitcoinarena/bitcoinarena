@@ -2280,7 +2280,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // A FEDERATION'S RESERVE KEY, FOR AN ENTRY TO PAY: this seat's own when it guards the federation; else
   // the key its guardian seats serve at GET /reserves, taken only when at least the threshold of them name the same one. Kept.
   // KEPT WITH ITS EPOCH (kanban #803, reserve-key-cache.js): a key kept for an earlier set of guardian seats is not the federation's key now
-  const reserveKeys = reserveKeyCache();
+  // kept in the seat's own store, so a restart does not have to find the key again (kanban #2869)
+  const reserveKeys = reserveKeyCache({ store: (() => {
+    try {
+      round.db.exec('CREATE TABLE IF NOT EXISTS reserve_keys_kept (fed TEXT PRIMARY KEY, epoch TEXT, key BLOB NOT NULL)');
+      const all = round.db.prepare('SELECT fed, epoch, key FROM reserve_keys_kept'), put = round.db.prepare('INSERT OR REPLACE INTO reserve_keys_kept (fed, epoch, key) VALUES (?, ?, ?)'),
+        drop = round.db.prepare('DELETE FROM reserve_keys_kept WHERE fed = ?');
+      return { load: () => all.all().map((r) => ({ fed: r.fed, epoch: r.epoch, key: new Uint8Array(r.key) })),
+        save: (fed, epoch, key) => { if (key) put.run(fed, epoch, Buffer.from(key)); else drop.run(fed); } };
+    } catch { return null; }
+  })() });
   const reserveEpochOf = (fedHex, g = reserveGuardians()[fedHex]) => (g ? toHex(reserveEpochId(fromHex(fedHex), sortedKeys(g.members))) : null);
   // WHY A RESERVE KEY WAS NOT FOUND, said once a minute per federation (kanban #2869: after the 2026-11-15 restarts the old-Mac seats named no
   // key for federation A for hours - every market and fee-lock settlement there refused - while the seven guardian seats served one key)
@@ -2303,14 +2312,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (needed === null) return null;
     const own = reserveDkgOf(fedHex).signerNodeFor(nodes);
     if (own.ok) return reserveKeys.setFor(fedHex, epoch, own.pool.groupPublicKey);
-    const said = new Map();
+    const said = new Map(), missed = [];
     await Promise.all(g.peers.map(async (u) => { try {
       const r = await readJsonCapped(await fetch(`${u}/reserves`, { signal: AbortSignal.timeout(8000) }), PEER_STATE_ANSWER_MAX_BYTES);
       const f = (r.federations || []).find((x) => x.federationId === fedHex && x.key);
       if (f) said.set(f.key, (said.get(f.key) || 0) + 1);
-    } catch { /* a seat that does not answer names nothing */ } }));
+      else missed.push(`${u.split('/').pop()}: ${(r.federations || []).length} federation(s), none ${fedHex.slice(0, 8)} with a key`);
+    } catch (e) { missed.push(`${u.split('/').pop()}: ${String((e && (e.cause && e.cause.message)) || (e && e.message) || e).slice(0, 80)}`); } }));
     const best = [...said.entries()].sort((a, b) => b[1] - a[1])[0];
-    if (!best || best[1] < needed) return reserveMiss(fedHex, `${best ? best[1] : 0} of ${g.peers.length} guardian seats asked named one key (${needed} needed): ${g.peers.slice(0, 3).join(' ')}${g.peers.length > 3 ? ' …' : ''}`);
+    if (!best || best[1] < needed) return reserveMiss(fedHex, `${best ? best[1] : 0} of ${g.peers.length} guardian seats asked named one key (${needed} needed): ${g.peers.slice(0, 3).join(' ')}${g.peers.length > 3 ? ' …' : ''}; ${missed.slice(0, 3).join('; ')}`);
     return reserveKeys.setFor(fedHex, epoch, fromHex(best[0]));
   };
   const reserveRound = async () => {
