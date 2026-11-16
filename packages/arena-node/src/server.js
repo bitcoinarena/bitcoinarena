@@ -14031,6 +14031,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!pub) return text(res, 409, 'this seat\'s chain holds no confirmed publication of that series yet');
         const tx = fromHex(String(j.tx).toLowerCase());
         if (toHex(parseTransaction(tx).txid) !== toHex(pub.tx.txid)) return text(res, 409, 'that is not the series\' first confirmed publication');
+        // ONE PUBLICATION TRANSACTION, ONE SERIES (kanban #2853, #1489 r26-settle-1): a transaction carrying more than one series publication
+        // output is reimbursed for none - the same answer at every seat, whatever order the posts come in
+        { const want = seriesPublicationOutput(sid).script, mark = want.subarray(0, 6);
+          let n = 0;
+          try { for (const o of parseTransaction(tx).outputs || []) { const s = o.script || o.scriptPubKey; if (s instanceof Uint8Array && s.length === want.length && s.subarray(0, 6).every((b, j) => b === mark[j])) n++; } } catch { n = 0; }
+          if (n > 1) return text(res, 422, `that transaction publishes ${n} series: one publication transaction is reimbursed for one series only, and one carrying more for none`); }
         const fee = publicationFee(tx, j.parents.map((h) => fromHex(String(h).toLowerCase())));
         if (!fee.ok) return text(res, 422, fee.why);
         round.putSeriesPublication(sid, { txid: toHex(pub.tx.txid), feeSats: fee.feeSats });
