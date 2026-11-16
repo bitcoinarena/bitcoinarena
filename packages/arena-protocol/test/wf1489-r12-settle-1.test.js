@@ -18,18 +18,20 @@ const GAME = h(0x9a);
 const T0 = Date.UTC(2026, 9, 10);
 const S = 100000n;
 const en = (player, payoutMsat, roundKey) => ({ player, roundKey, name: null, stakeMsat: S, payoutMsat, outcome: payoutMsat > S ? DELIVERED : FAILED, score: 1 });
-const [A, B, C] = [0x0a, 0x0b, 0x0c].map(h);
-const R1 = contractRound({ gameId: GAME, startMs: T0 + 3600000, n: 1, entries: [en(A, 3n * S, h(0xa1)), en(B, 0n, h(0xb1)), en(C, 0n, h(0xc1))] });
-const DRAW = drawOf(new Map([[R1.roundId, [1, 2, 3, 4, 5, 6, 7, 8, 9]]]));
+const [A, B, C, D] = [0x0a, 0x0b, 0x0c, 0x0d].map(h);
+const R1 = contractRound({ gameId: GAME, startMs: T0 + 3600000, n: 1, entries: [en(A, 4n * S, h(0xa1)), en(B, 0n, h(0xb1)), en(C, 0n, h(0xc1)), en(D, 0n, h(0xd1))] });
+// kanban #2841: a place needs an identity older than the week with 3 older opponents - all four played a paid round the day before
+const R0 = contractRound({ gameId: GAME, startMs: T0 - 86400000, n: 2, entries: [en(A, 90000n, h(0xa0)), en(B, 90000n, h(0xb0)), en(C, 90000n, h(0xc0)), en(D, 90000n, h(0xd0))] });
+const DRAW = drawOf(new Map([[R1.roundId, [1, 2, 3, 4, 5, 6, 7, 8, 9]], [R0.roundId, [1, 2, 3, 4, 5, 6, 7, 8, 9]]]));
 const WINDOW = { games: [GAME], fromMs: T0, toMs: T0 + 7 * 86400000, top: 1, amountMsat: 1000000n };
 
 test('a copy of a signed round with the winner marked bot, signed by nobody, does not take the winner off the payout', () => {
-  const honest = [1, 2, 3, 4, 5].map((n) => seatAnswer(n, [R1]));
-  const forged = [{ ...honest[0][0], entries: honest[0][0].entries.map((e) => (e.player === A ? { ...e, bot: true } : e)), sigs: [] }];
+  const honest = [1, 2, 3, 4, 5].map((n) => seatAnswer(n, [R0, R1]));
+  const forged = [{ ...honest[0][1], entries: honest[0][1].entries.map((e) => (e.player === A ? { ...e, bot: true } : e)), sigs: [] }];
   const clean = mergeSignedSeasonAccounts(honest, { seatsOf: DRAW, verify });
   assert.equal(leaderboardWinners({ ...WINDOW, rounds: clean.rounds }).winners[0].player, A, 'honest board: A wins');
   const m = mergeSignedSeasonAccounts([forged, ...honest], { seatsOf: DRAW, verify });
   assert.equal(m.ok, true);
   const w = leaderboardWinners({ ...WINDOW, rounds: m.rounds });
-  assert.equal(w.winners[0] && w.winners[0].player, A, `A signed winner by 5 seats must stay first; got ${JSON.stringify(w.winners.map((x) => x.player.slice(0, 4)))}, A's merged bot mark ${m.rounds[0].entries.find((e) => e.player === A).bot}`);
+  assert.equal(w.winners[0] && w.winners[0].player, A, `A signed winner by 5 seats must stay first; got ${JSON.stringify(w.winners.map((x) => x.player.slice(0, 4)))}, A's merged bot mark ${m.rounds.find((r) => r.roundId === R1.roundId || r.id === R1.roundId)?.entries.find((e) => e.player === A)?.bot}`);
 });

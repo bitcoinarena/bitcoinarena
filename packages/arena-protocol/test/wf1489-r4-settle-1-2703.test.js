@@ -28,7 +28,9 @@ test('a tie at the top-3 line of the weekly board is not decided by the raw iden
   const L1 = h(0x31), L2 = h(0x52), L3 = h(0x63); // three honest players who lose exactly as the grinder does
   // one round: W wins the whole pool; GRINDER, L1, L2, L3 each lose the same stake with the same FAILED score
   const rounds = [{ roundId: h(0x11), gameId: GAME, startMs: BigInt(T0 + 3600000), entries: [
-    e(W, DELIVERED, 500, S * 5n), e(GRINDER, FAILED, 10, 0n), e(L1, FAILED, 10, 0n), e(L2, FAILED, 10, 0n), e(L3, FAILED, 10, 0n)] }];
+    e(W, DELIVERED, 500, S * 5n), e(GRINDER, FAILED, 10, 0n), e(L1, FAILED, 10, 0n), e(L2, FAILED, 10, 0n), e(L3, FAILED, 10, 0n)] },
+    // kanban #2841: all five played a paid round before the week, so each is an identity older than the week with 4 older opponents
+    { roundId: h(0x10), gameId: GAME, startMs: BigInt(T0 - 86400000), entries: [W, GRINDER, L1, L2, L3].map((p) => e(p, FAILED, 1, S * 9n / 10n)) }];
   const top = BADGES.filter((b) => b.rule === 'season-top');
   const got = badgesEarned({ game: NB, rounds, nowMs: T0 + WEEK_MS + 1 }, top);
   assert.ok(got.ok, got.why);
