@@ -1637,6 +1637,34 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       html body:not(.arena-topup-on) #arena-social { display: none !important; }
       html body:not(.arena-topup-on) #arena-build { padding-right: 96px !important; }
     }
+
+    /* kanban #2894 (feedback #122): Settings scrolled UNDER the header and showed through it between its buttons (measured at 443 px:
+       139 points of the bar's row on a settings card). A strip of Settings' own colour sits behind the header while Settings is up */
+    body:not(.arena-clean):has(#arena-settings:not([style*="none"]))::before,
+    body:not(.arena-clean):has(#arena-settings-advanced:not([style*="none"]))::before { content: ''; position: fixed; left: 0; right: 0; top: 0;
+      height: calc(42px + env(safe-area-inset-top, 0px)); background: #0b0e12; z-index: 59; pointer-events: none; }
+    /* kanban #2893 (feedback #121): the Leaderboard and the Shop filled a phone's screen with their content in its top quarter (443x960:
+       632 and 746 px of empty sheet below it). Each is a card sized to its content over the dimmed game; a tap beside it closes it */
+    #arena-season, #arena-shop { align-items: flex-start; background: rgba(6, 8, 11, 0.82); }
+    #arena-season .box, #arena-shop .box { box-sizing: border-box; padding: 16px; border-radius: 12px; border: 1px solid #2f3b49;
+      background: linear-gradient(180deg, #161c24, #11161c); box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5); }
+    #arena-season .sheet-close, #arena-shop .sheet-close { top: 12px; right: 12px; }
+    /* kanban #2887 (feedback #112): a round's own screens hide the header (no balance over the game, §24B) and so its way out; PLAY had no
+       exit at all (SPECTATE has EXIT). LEAVE stands where the header's back arrow was, while a run of a round this tab joined is up */
+    #arena-leave-run { display: none; position: fixed; top: calc(4px + env(safe-area-inset-top, 0px)); left: 8px; z-index: 61; height: 32px; padding: 0 12px;
+      box-sizing: border-box; border-radius: 6px; border: 1px solid #3a4452; background: rgba(22, 27, 34, 0.94); color: #e8eaed;
+      font: 600 13px/1 system-ui, sans-serif; cursor: pointer; }
+    body.arena-run-leavable:not(.arena-clean) #arena-leave-run { display: inline-flex; align-items: center; gap: 6px; }
+    #arena-leave-run:hover, #arena-leave-run:focus-visible { color: #f7931a; border-color: #f7931a; outline: none; }
+    #arena-leave-ask { display: none; position: fixed; top: calc(42px + env(safe-area-inset-top, 0px)); left: 8px; right: 8px; max-width: 420px; z-index: 61;
+      padding: 12px 14px; box-sizing: border-box; border-radius: 10px; border: 1px solid #f7931a; background: rgba(13, 16, 20, 0.97); color: #e8eaed;
+      font: 14px/1.4 system-ui, sans-serif; }
+    #arena-leave-ask.show { display: block; }
+    #arena-leave-ask .row { display: flex; gap: 8px; margin-top: 10px; }
+    #arena-leave-ask button { height: 34px; padding: 0 14px; border-radius: 6px; border: 1px solid #3a4452; background: #1e2833; color: #e8eaed; font: 600 14px/1 system-ui, sans-serif; cursor: pointer; }
+    #arena-leave-ask button.go { background: #f7931a; border-color: #f7931a; color: #1a1000; }
+    /* kanban #2898 (feedback #131): a round's result in the green line, with its close button */
+    #arena-money-ok.result { white-space: normal; }
 </style>
 </head>
 <body>
@@ -5443,6 +5471,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           const co = await ARENACLIENT.collectIntoPlayerWallet({ look: lo, ...roundAsk(older, lco) });
           if (co.collected) {
             console.log('[arena] owed (round ' + older.roundIdHex.slice(0, 8) + (older.order ? ' order ' + older.order : '') + '), collected into the player wallet: ' + co.creditedMsat + ' msat');
+            if (window.ARENA_ROUND_RESULT) window.ARENA_ROUND_RESULT(older, lo, co.creditedMsat);   // kanban #2898
             // DONE ONLY WHEN EVERY PART IS (kanban #1163): a payout collected with the stake still in its lock stays open, looked at again
             if (ARENACLIENT.markCollectDone(vault(), older.roundIdHex, { payout: ARENACLIENT.owedToLine(lo), stake: null }, older.seed, older.order || 0, { look: lo, co })) stakeBack.delete(backKey(older));
             else collectNote(older.roundIdHex.slice(0, 8) + (older.order ? '.o' + older.order : ''), 'older round collected in part, still open: ' + ARENACLIENT.collectState(lo, co).why);
@@ -5451,6 +5480,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           } else if (lo.final && lo.inTabMsat === 0n && ARENACLIENT.markCollectDone(vault(), older.roundIdHex, { payout: ARENACLIENT.owedToLine(lo), stake: null }, older.seed, older.order || 0, { look: lo })) {
             stakeBack.delete(backKey(older));
             collectNote(older.roundIdHex.slice(0, 8) + (older.order ? '.o' + older.order : ''), 'older round MARKED DONE: ' + ARENACLIENT.owedToLine(lo) + ' <- ' + lookSaid(lo));
+            if (window.ARENA_ROUND_RESULT) window.ARENA_ROUND_RESULT(older, lo, 0n);   // kanban #2898: a lost run is said too
           }
           return true;
           }), ARENACLIENT.COLLECT_RECORD_MS, 'round ' + older.roundIdHex.slice(0, 8));
@@ -5481,6 +5511,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           const c = await ARENACLIENT.collectIntoPlayerWallet({ look, ...roundAsk(newest, lcn) });
           if (c.collected) {
             console.log('[arena] owed (round ' + newest.roundIdHex.slice(0, 8) + (newest.order ? ' order ' + newest.order : '') + '), collected into the player wallet: ' + c.creditedMsat + ' msat');
+            if (window.ARENA_ROUND_RESULT) window.ARENA_ROUND_RESULT(newest, look, c.creditedMsat);   // kanban #2898
             // DONE ONLY WHEN EVERY PART IS (kanban #1163)
             if (ARENACLIENT.markCollectDone(vault(), newest.roundIdHex, { payout: ARENACLIENT.owedToLine(look), stake: null }, newest.seed, newest.order || 0, { look, co: c })) stakeBack.delete(backKey(newest));
             else collectNote(newest.roundIdHex.slice(0, 8) + (newest.order ? '.o' + newest.order : ''), 'newest round collected in part, still open: ' + ARENACLIENT.collectState(look, c).why);
@@ -5495,6 +5526,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           if (ARENACLIENT.markCollectDone(vault(), newest.roundIdHex, { payout: line, stake: null }, newest.seed, newest.order || 0, { look })) stakeBack.delete(backKey(newest));
           console.log('[arena] owed: ' + line);
           collectNote(newest.roundIdHex.slice(0, 8) + (newest.order ? '.o' + newest.order : ''), 'newest round MARKED DONE: ' + line + ' <- ' + lookSaid(look));
+          if (window.ARENA_ROUND_RESULT) window.ARENA_ROUND_RESULT(newest, look, 0n);   // kanban #2898: a lost run is said too
         }
         return true;
         }), ARENACLIENT.COLLECT_RECORD_MS, 'round ' + newest.roundIdHex.slice(0, 8));
@@ -6977,7 +7009,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           // lobby panel's top-right corner): the strip between the top bar and the panel, at the left, clear of both
           const Lb = window.ARENA_UNITY_LOBBY, bar = document.getElementById('arena-money');
           if (W <= 560 && Lb && Lb.showing && bar) {
-            top = bar.getBoundingClientRect().bottom + 6;
+            { const bb = bar.getBoundingClientRect().bottom; top = (bb > 0 ? bb : 40) + 6; }   // a hidden header (bottom 0) counts as its 40 px (kanban #2894)
             go.style.top = Math.round(top) + 'px'; go.style.right = 'auto'; go.style.left = '8px';
           }
           geo = { btnBottom: top + bh, right: W - (r.left + c.right * sx), pads: c.pads !== 0, padTop, m: c.m * sy,
@@ -7042,7 +7074,9 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         let lobbyWas = '';
         setInterval(() => {
           const L = window.ARENA_UNITY_LOBBY;
-          const now = L && L.showing ? JSON.stringify([L.balance, (L.rows || []).map((r) => r && r.rect)]) : 'off';
+          // AND WHEN THE HEADER COMES BACK (kanban #2894, feedback #122: placed while a run hid the header, the button stayed at 6 px on its back arrow)
+          const barNow = document.getElementById('arena-money');
+          const now = (L && L.showing ? JSON.stringify([L.balance, (L.rows || []).map((r) => r && r.rect)]) : 'off') + '|' + (barNow ? Math.round(barNow.getBoundingClientRect().bottom) : 0);
           if (now !== lobbyWas) { lobbyWas = now; try { window.ARENA_PLACE_CONSOLE(); } catch { /* placed on the next slot */ } }
         }, 300);
       }
@@ -11212,5 +11246,80 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     show(); setInterval(show, 60000);
   })();
 </script>
+  <!-- kanban #2887 (feedback #112): the way out of a run, and what leaving means -->
+  <button id="arena-leave-run" type="button" title="Leave this round"><span aria-hidden="true">&larr;</span>Leave</button>
+  <div id="arena-leave-ask" role="dialog" aria-modal="false" aria-labelledby="arena-leave-ask-t"><b id="arena-leave-ask-t">Leave this round?</b>
+    <div>Your run stops here. Leaving is a walk-away: your stake stays in the round and is not refunded, and you cannot come back into this run.</div>
+    <div class="row"><button type="button" class="go" id="arena-leave-yes">Leave the round</button><button type="button" id="arena-leave-no">Keep playing</button></div></div>
+  <script>
+    // kanban #2887: LEAVE while a round this tab joined is on screen without the header (the cargo panel, the drive), not over the result
+    // card's own "exit game" box, not in SPECTATE (EXIT is there) and not over the loading screen
+    (function () {
+      const go = document.getElementById('arena-leave-run'), ask = document.getElementById('arena-leave-ask');
+      if (!go || !ask) return;
+      const leavable = () => {
+        const bar = document.getElementById('arena-money'), next = document.getElementById('arena-next');
+        const barHidden = !bar || getComputedStyle(bar).display === 'none';
+        const nextUp = !!(next && getComputedStyle(next).display !== 'none' && next.getBoundingClientRect().height > 0);
+        return !!(window.ARENA_ROUND && window.unityInstance && barHidden && !nextUp && !document.getElementById('boot'));
+      };
+      setInterval(() => { const on = leavable(); document.body.classList.toggle('arena-run-leavable', on); if (!on) ask.classList.remove('show'); }, 400);
+      go.addEventListener('click', () => ask.classList.toggle('show'));
+      document.getElementById('arena-leave-no').addEventListener('click', () => ask.classList.remove('show'));
+      document.getElementById('arena-leave-yes').addEventListener('click', () => {
+        // no next round either (as "exit game"), and the address without the round: the page opens on this game's lobby
+        window.ARENA_CONTINUE = false;
+        console.log('[arena] leave: the player left round ' + String(window.ARENA_ROUND && window.ARENA_ROUND.id || '').slice(0, 16) + ' during the run (walk-away)');
+        const q = new URLSearchParams(location.search.replace(/^\?/, '')); q.delete('round'); q.delete('play');
+        location.assign(location.pathname + (q.toString() ? '?' + q.toString() : ''));
+      });
+    })();
+    // kanban #2893: a tap on the dimmed game beside the Leaderboard's or the Shop's card closes it, as its Close does
+    for (const id of ['arena-season', 'arena-shop']) {
+      const sheet = document.getElementById(id);
+      if (sheet) sheet.addEventListener('click', (e) => { if (e.target === sheet) { const c = sheet.querySelector('.sheet-close'); if (c) c.click(); } });
+    }
+    // kanban #2898 (feedback #131: "the balance changed silently"): EVERY PAID ROUND'S RESULT, SAID ONCE - what came into the wallet from it
+    // (a payout, the stake back, a lock back after its expiry) and why, or that the run lost its stake to the round's pool. In the green line
+    // the deposits use, on every screen, until closed (60 s)
+    (function () {
+      const said = new Set();
+      try { for (const k of JSON.parse(localStorage.getItem('arena.result.said') || '[]')) said.add(k); } catch { /* none kept */ }
+      const sats = (msat) => { try { return (BigInt(msat || 0) / 1000n).toLocaleString('en-US') + ' sat'; } catch { return '? sat'; } };
+      const big = (v) => { try { return BigInt(v || 0); } catch { return 0n; } };
+      window.ARENA_ROUND_RESULT_LINE = (look, creditedMsat) => {
+        if (!look) return '';
+        const pay = big(look.payoutMsat), stake = big(look.stakeMsat), refund = big(look.refundMsat), got = big(creditedMsat);
+        const st = look.stake || {}, po = look.payout || {};
+        let what;
+        if (pay > 0n) what = 'You won: ' + sats(pay) + ' payout' + (stake > 0n ? ' and your ' + sats(stake) + ' stake back' : '');
+        else if (stake > 0n && st.refused) what = 'Your entry was not taken: your ' + sats(stake) + ' stake came back';
+        else if (stake > 0n) what = 'No payout this round: your ' + sats(stake) + ' stake came back';
+        else if (refund > 0n) what = 'Your ' + sats(refund) + ' lock came back after its expiry';
+        else if (look.final && st.state === 'lost' && (!po.state || po.state === 'none')) what = 'You lost this round: no payout, the stake went to the round\u2019s pool';
+        else return '';
+        return what + (got > 0n ? ' \u00b7 +' + sats(got) + ' into your wallet' : '');
+      };
+      window.ARENA_ROUND_RESULT = (rec, look, creditedMsat) => {
+        try {
+          if (!rec || !rec.own || !look) return;
+          const line = window.ARENA_ROUND_RESULT_LINE(look, creditedMsat);
+          if (!line) return;
+          const key = rec.roundIdHex.slice(0, 16) + '.' + (rec.order || 0) + '.' + String(creditedMsat || 0);
+          if (said.has(key)) return;
+          said.add(key);
+          try { localStorage.setItem('arena.result.said', JSON.stringify([...said].slice(-60))); } catch { /* said again after a reload */ }
+          const el = document.getElementById('arena-money-ok'); if (!el) return;
+          el.textContent = 'Round ' + rec.roundIdHex.slice(0, 8) + ': ' + line;
+          el.classList.add('show', 'result');
+          const x = document.createElement('button'); x.type = 'button'; x.className = 'x'; x.setAttribute('aria-label', 'Close'); x.textContent = '\u00d7'; el.appendChild(x);
+          clearTimeout(window.ARENA_ROUND_RESULT_T);
+          const close = () => { clearTimeout(window.ARENA_ROUND_RESULT_T); el.classList.remove('show', 'result'); };
+          el.onclick = close; window.ARENA_ROUND_RESULT_T = setTimeout(close, 60000);
+          console.log('[arena] round result ' + rec.roundIdHex.slice(0, 8) + ': ' + line);
+        } catch (e) { console.error('[arena] round result: ' + (e && e.message || e)); }
+      };
+    })();
+  </script>
 </body>
 </html>
