@@ -514,7 +514,11 @@ export async function collectLiquidationPayouts({ listed, seed, curve, clientFor
       if (said.accepted === true || spent) { try { put(storage, note, JSON.stringify({ msat: p.msat, at: Date.now(), ...(spent ? { spent: true } : {}) })); noted = true; } catch { /* unkept: the next pass finds it spent */ } }
       out.push({ ...p, ok: said.accepted === true || spent, ...(spent ? { kept: true, spent: true } : {}), ...(said.accepted === true && !noted ? { unnoted: true } : {}),
         why: said.accepted === true ? null : spent ? 'the payout contract is already spent - by this seed\'s key, the only key that can' : (said.error || 'the federation did not accept the refund') });
-      if (!(said.accepted === true || spent)) failed();   // a failed claim costs a slot (#2328)
+      // a failed claim costs a slot (#2328), and so does a "spent" answer (kanban #2915, regression of #2264 by #2320): the wallet answers
+      // stored_before null for ANY outpoint it holds no contract at, so a door padding its list with junk txids naming this seed's key
+      // was all "spent", cost no slot, and the page made one refund call - and wrote one note - per row (20000 for 20000). Only an
+      // accepted refund, real money paid to this key, is free.
+      if (said.accepted !== true) failed();
     } catch (e) { failed(); out.push({ ...p, ok: false, why: e.message }); }
   }
   return out;

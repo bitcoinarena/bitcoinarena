@@ -5,13 +5,14 @@
 // name a purchase, so the item the player paid for never shows and never plays. Safe: the record reaches the other seats too.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { pointKey } from '../../arena-protocol/test/point-key-fixture.js';
 import { schnorr } from '../../arena-node/node_modules/@noble/curves/secp256k1.js';
 import { buyItem } from '../src/item-buy.js';
 import { signFinalSig } from '../../arena-protocol/src/final-sig.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
-const pk33 = (n) => Uint8Array.from([0x02, ...b32(n)]);
+const pk33 = (n) => pointKey(0x02, n);   // kanban #1675: fixture keys are curve points (#2915)
 const verify = (s, m, k) => schnorr.verify(s, m, k);
 const NOW = 1792090683000;
 const NODES = [b32(0x31), b32(0x32), b32(0x33)];
@@ -35,7 +36,7 @@ test('a paid item record is not left with the one seat that says 200 first (it r
     throw new Error(`no such door ${url}`);
   };
   const r = await buyItem({ manifest: MANIFEST, itemId: 'large-truck', networkSet: NET, gameSet: NET, wallet, federationId: 'fe'.repeat(32),
-    player, seats: ['https://evil', 'https://s2', 'https://s3'], fetch, verify, nowMs: () => NOW });
+    player, seats: ['https://evil', 'https://s2', 'https://s3'], fetch, verify, nowMs: () => NOW, bondedKeys: NODE_KEYS.map(toHex) });   // kanban #1896, #2915
   assert.equal(r.ok, true, r.why);
   // the evil seat said 200 and dropped the record: unless another seat holds it, the purchase never reaches the two GET /items needs
   assert.ok(postedTo.filter((h) => h !== 'evil').length >= 1, `the paid record went only to ${JSON.stringify(postedTo)} - one lying seat buries the purchase`);

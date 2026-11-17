@@ -7,6 +7,7 @@
 // Safe: one seat's answer is bounded - at most a fixed number of its games is decoded and checked.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { GAMES_PER_SEAT } from '../src/games.js';
 import { fetchGames } from '../src/games.js';
 import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
 import { encodeManifest, gameIdOf } from '../../arena-protocol/src/manifest.js';
@@ -26,5 +27,6 @@ test('one seat listing thousands of made-up games costs the page a bounded numbe
     throw new Error('no such node');
   };
   const got = await fetchGames({ nodes: ['http://honest1', 'http://honest2', 'http://liar'], fetcher, verify });
-  assert.ok(verifies <= 64, `one seat's /games answer cost ${verifies} developer-signature checks (and ${got.refused.length} refusals kept) in one games read`);
+  // GAMES_PER_SEAT is 256 since b052c1235 (feedback #064: every live seat lists 41 versions, the cap of 32 cut the newest) - bounded by it (#2915)
+  assert.ok(verifies <= GAMES_PER_SEAT + 2, `one seat's /games answer cost ${verifies} developer-signature checks (and ${got.refused.length} refusals kept) in one games read`);
 });
