@@ -606,7 +606,7 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
   }),
   // UP/DOWN VERSION 25 (kanban #2836, feedback #084): version 24 in every term, with a client that quotes a market buy at the book's best
   // ask and promises no payout without one
-  'b928c7702f287261fadedc5e2dd5bea8180e423a62caf331a29391f8f353d01b': Object.freeze({
+  '96bb21b374ffe44bc8bc873aaf4fa09e228fb6d94fcc2200fe19943650c8c59c': Object.freeze({
     name: 'btc-updown-15m',
     cores: Object.freeze({
 

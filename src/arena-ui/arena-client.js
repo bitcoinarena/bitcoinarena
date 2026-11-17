@@ -764,6 +764,10 @@ const mediansAllBonds = (v) => Number.isInteger(v) && v >= BOND_MEDIAN_ALL_VERSI
  * 31 keep #1614's order byte for byte.
  */
 const TIE_SPLIT_VERSION = 31;
+/** THE CERTIFIED REVEAL SET (kanban #2832, ruling 2026-11-16 (a)): a paying head-to-head round of this version decides its verdict from the
+ * reveal set its committee certified after a gather, never from what each seat happened to fetch. PREPARED: not in SUPPORTED_PROTOCOL_VERSIONS
+ * until the seats that serve it roll; its own protocol height, older rounds keep today's rule. */
+const REVEAL_SET_VERSION = 32;
 /** Whether a round of protocol version `v` splits a tie at a paid place evenly (kanban #2687). */
 const splitsTies = (v) => Number.isInteger(v) && v >= TIE_SPLIT_VERSION;
 /**
@@ -1218,6 +1222,10 @@ const TYPE_SIGNED_INPUT_BATCH = 0x4e;
  * 0x50 and 0x51 are used on neither line (1.9 ends at 0x36, 2.0 at 0x4e). */
 const TYPE_LOCK_SET = 0x50;
 const TYPE_LOCK_SET_CERTIFICATE = 0x51;
+/** THE CERTIFIED REVEAL SET OF A HEAD-TO-HEAD ROUND (kanban #2832, ruling 2026-11-16 (a); reveal-set.js): the twin of the lock set. 0x52, 0x53 are
+ * used on neither line. Written at REVEAL_SET_VERSION, which no build speaks yet (it is not in SUPPORTED_PROTOCOL_VERSIONS): prepared, not rolled. */
+const TYPE_REVEAL_SET = 0x52;
+const TYPE_REVEAL_SET_CERTIFICATE = 0x53;
 // A GUARDIAN'S COPY OF A HALTED FEDERATION'S SPENT-NOTE SET (§23A.5 liquidation step 1); 0x23 is the
 // ballot's, 0x24 and 0x25 absence and departure
 const TYPE_SPENT_SET = 0x26;
@@ -1450,6 +1458,9 @@ const TAG = {
   lockSet: 'ARENA/v1/LockSet',
   lockSetSignature: 'ARENA/v1/LockSetSignature',
   lockSetView: 'ARENA/v1/LockSetView',
+  // THE CERTIFIED REVEAL SET (kanban #2832): the set's id and a seat's signature over (set id, its time)
+  revealSet: 'ARENA/v1/RevealSet',
+  revealSetSignature: 'ARENA/v1/RevealSetSignature',
   matchProof: 'ARENA/v1/MatchProof',
   matchRecord: 'ARENA/v1/MatchRecord',
   presence: 'ARENA/v1/Presence',
@@ -11841,7 +11852,7 @@ const KNOWN_GOOD_GAMES = Object.freeze({
   }),
   // UP/DOWN VERSION 25 (kanban #2836, feedback #084): version 24 in every term, with a client that quotes a market buy at the book's best
   // ask and promises no payout without one
-  'b928c7702f287261fadedc5e2dd5bea8180e423a62caf331a29391f8f353d01b': Object.freeze({
+  '96bb21b374ffe44bc8bc873aaf4fa09e228fb6d94fcc2200fe19943650c8c59c': Object.freeze({
     name: 'btc-updown-15m',
     cores: Object.freeze({
 
@@ -39329,7 +39340,11 @@ async function collectLiquidationPayouts({ listed, seed, curve, clientFor, stora
       if (said.accepted === true || spent) { try { put(storage, note, JSON.stringify({ msat: p.msat, at: Date.now(), ...(spent ? { spent: true } : {}) })); noted = true; } catch { /* unkept: the next pass finds it spent */ } }
       out.push({ ...p, ok: said.accepted === true || spent, ...(spent ? { kept: true, spent: true } : {}), ...(said.accepted === true && !noted ? { unnoted: true } : {}),
         why: said.accepted === true ? null : spent ? 'the payout contract is already spent - by this seed\'s key, the only key that can' : (said.error || 'the federation did not accept the refund') });
-      if (!(said.accepted === true || spent)) failed();   // a failed claim costs a slot (#2328)
+      // a failed claim costs a slot (#2328), and so does a "spent" answer (kanban #2915, regression of #2264 by #2320): the wallet answers
+      // stored_before null for ANY outpoint it holds no contract at, so a door padding its list with junk txids naming this seed's key
+      // was all "spent", cost no slot, and the page made one refund call - and wrote one note - per row (20000 for 20000). Only an
+      // accepted refund, real money paid to this key, is free.
+      if (said.accepted !== true) failed();
     } catch (e) { failed(); out.push({ ...p, ok: false, why: e.message }); }
   }
   return out;
