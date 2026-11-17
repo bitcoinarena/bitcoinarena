@@ -1,15 +1,18 @@
 [
  {
   "name": "nos2x",
-  "version": "2.5.1",
+  "version": "2.5.2",
   "kind": "Browser extension",
   "date": "2026-11-17",
   "testedBy": null,
-  "how": "manual",
+  "how": "automatic",
   "url": "https://github.com/fiatjaf/nos2x",
   "platform": "Chrome",
   "checks": {
-   "login": "ok"
+   "login": "ok",
+   "seed": "ok",
+   "decrypt": "ok",
+   "sign": "ok"
   },
   "result": "works"
  },
@@ -19,11 +22,14 @@
   "kind": "Browser extension",
   "date": "2026-11-17",
   "testedBy": null,
-  "how": "manual",
+  "how": "automatic",
   "url": "https://sidecar.top/",
   "platform": "Chrome, Firefox",
   "checks": {
-   "login": "ok"
+   "login": "ok",
+   "seed": "ok",
+   "decrypt": "ok",
+   "sign": "ok"
   },
   "result": "works"
  },

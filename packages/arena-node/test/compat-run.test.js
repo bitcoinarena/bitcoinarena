@@ -105,6 +105,13 @@ test('an NWC wallet that cannot make invoices: withdrawals would fail, and the c
   assert.match(checks.make_invoice, /^NOT_IMPLEMENTED: no/);
 });
 
+test('the weekly payment is never sent when the wallet cannot make an invoice for its refund', async () => {
+  const wallet = fakeWallet({ fail: { make_invoice: 'NOT_IMPLEMENTED' } });
+  const checks = await checkNwc(wallet.link, { pay: 'lnbc10n1ours', requireReturnInvoice: true, ms: 8000 });
+  assert.match(checks.pay_invoice, /^skipped: no valid invoice/);
+  assert.deepEqual(wallet.paid, []);
+});
+
 // --- the version, from a Chrome Web Store package (CRX3 whose zip puts the sizes after the data, as the store's do) ---
 function crx(files) {
   const locals = [], central = [];

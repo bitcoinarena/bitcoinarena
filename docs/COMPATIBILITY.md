@@ -20,7 +20,7 @@ Use dedicated test accounts and pair signers once with the requested calls allow
 
 For a remote app with published releases, supply `<connection-field>_VERSION` with the installed version. The latest available release alone cannot prove what the paired app runs. Without the installed version the row says `unknown`; hosted services use `hosted`, and an unversioned self-hosted service uses `self-hosted`. Update the version field when upgrading the paired app.
 
-For the weekly Sunday payment check, set the separate `COMPAT_PAY_WALLET` repository secret to our receiving NWC wallet. Each product pays its 1 sat invoice, then our wallet pays the product's 1 sat invoice back. Both wallets may incur routing fees; these are not refunded. A missing receiving wallet or failed return payment produces a failure for triage. Manual workflow runs only pay when the `pay` input is selected. This workflow does not provision or fund accounts.
+For the weekly Sunday payment check, set the separate `COMPAT_PAY_WALLET` repository secret to our receiving NWC wallet. Each product pays its 1 sat invoice, then our wallet pays the product's 1 sat invoice back. Both wallets may incur routing fees; these are not refunded. A missing receiving wallet or failed return payment produces a failure for triage. A product that cannot create its return invoice is never charged. Manual workflow runs only pay when the `pay` input is selected. This workflow does not provision or fund accounts.
 
 Missing pairings are explicitly skipped. Manual products generate reminders when the published version differs from the last tested version. A failed test retains the previous public row and opens or updates one triage issue in **our** repository. It never opens an upstream issue. Diagnose first; our bugs get a kanban ticket, and suspected product bugs go to the team before any upstream report.
 
@@ -40,4 +40,12 @@ The runner writes passing changes into the working tree's `results.json`. Supply
 
 ## Browser and mobile coverage
 
-Browser automation is tracked by #2951. Products without a tested setup adapter remain manual and produce release reminders. Amber in an Android emulator remains the unassigned backlog idea #2952; Clave needs a real iPhone and stays manual.
+The nos2x and Sidecar adapters (#2951) download the actual Chrome Web Store package, load it in Chromium with a fresh test key, allow the testnet site in extension storage, and drive the real Login with Nostr → Browser extension flow. Each waits for the restored wallet after reload, then verifies the signed encrypted seed read back from our relay, decrypts it through the extension and verifies an auth signature. The row records the version of the downloaded package. Profiles and test keys are deleted after each run; browser subprocesses do not receive pairing secrets or the GitHub token. Successful public testnet checks of nos2x 2.5.2 and Sidecar 1.17.2 are included in the results.
+
+Install Chromium with `npx playwright install --with-deps chromium` from `packages/arena-node`. For a locally installed unbranded Chromium, set `COMPAT_CHROMIUM` to its executable. A local integration check also runs the actual extension, our bundled login component and Nostr library on a temporary HTTP server and relay, including the post-login reload:
+
+```sh
+COMPAT_EXTENSION_PACKAGE=/absolute/path/to/nos2x.crx node --test --test-timeout=120000 test/compat-extension.test.js
+```
+
+Set `COMPAT_EXTENSION_ADAPTER=sidecar` to check Sidecar with its own package. The optional integration test is skipped without that package path. The scheduled run exercises the real public testnet login. Sidecar initializes its own encrypted keystore and imports the disposable key through the extension’s own functions; nos2x uses its documented storage shape. Alby has an encrypted account/password onboarding flow and still needs a tested setup adapter (unassigned backlog #2956). Keys.band 1.7.0’s shipped provider exposes NIP-04 but no NIP-44, which our login requires; no upstream issue has been filed. Those two remain manual, with release reminders for any previously tested version and explicit skip reasons otherwise. Amber in an Android emulator remains the unassigned backlog idea #2952; Clave needs a real iPhone and stays manual.
