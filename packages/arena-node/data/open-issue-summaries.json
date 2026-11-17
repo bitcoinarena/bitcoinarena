@@ -886,5 +886,113 @@
  "2913": {
   "text": "Other: a paid round can show a paid amount that does not match its locks, and call a fee lock returned stake",
   "kind": "bug"
+ },
+ "2921": {
+  "text": "Other: liquidity weight can follow a provider's own unproven channel claim",
+  "kind": "bug"
+ },
+ "2922": {
+  "text": "BTC Up/Down game: only the first seat's outcome is checked, so one unverifiable seat blocks the result",
+  "kind": "bug"
+ },
+ "2923": {
+  "text": "Committees and bonds: the stake ceiling counts bond rows instead of node keys",
+  "kind": "bug"
+ },
+ "2924": {
+  "text": "Other: an order-book update can lose unsold shares and a resting buy's budget",
+  "kind": "bug"
+ },
+ "2925": {
+  "text": "Lightning payouts: a claimed reserve payout can be trusted with no federation check",
+  "kind": "bug"
+ },
+ "2926": {
+  "text": "Slashing: a liquidation claim from an earlier halt can count in a later one",
+  "kind": "bug"
+ },
+ "2927": {
+  "text": "Other: one input batch can be accepted twice if its parts are reordered",
+  "kind": "bug"
+ },
+ "2928": {
+  "text": "Website: no space between the key line and the delete button",
+  "kind": "bug"
+ },
+ "2929": {
+  "text": "BTC Up/Down game: quotes can ignore ask depth, and a sell can lack a no-buyer guard",
+  "kind": "bug"
+ },
+ "2930": {
+  "text": "Rock Paper Scissors game: a carried move and its verdict can be accepted unchecked",
+  "kind": "bug"
+ },
+ "2931": {
+  "text": "Node software: fee proposals for the same height can be ordered differently per seat",
+  "kind": "bug"
+ },
+ "2932": {
+  "text": "Node software: a spent set kept only in memory can be signed unread",
+  "kind": "bug"
+ },
+ "2933": {
+  "text": "Rock Paper Scissors game: a paid mark can look like a payment, and score or round state can mix rounds",
+  "kind": "bug"
+ },
+ "2934": {
+  "text": "Other: a late claim and a remainder split can be applied out of order",
+  "kind": "bug"
+ },
+ "2935": {
+  "text": "Other: a dashboard handoff can replace a stored owner key",
+  "kind": "bug"
+ },
+ "2936": {
+  "text": "Other: an arbiter remainder can skip donation vesting, and a fallback price can look new",
+  "kind": "bug"
+ },
+ "2937": {
+  "text": "Committees and bonds: one seat can serve another's bond proof, so its own bond stays unproven",
+  "kind": "bug"
+ },
+ "2938": {
+  "text": "Node software: a compatibility check cannot run from a clean install, a dependency is missing",
+  "kind": "bug"
+ },
+ "2939": {
+  "text": "Other: a compatibility row with no checks is listed as working",
+  "kind": "bug"
+ },
+ "2940": {
+  "text": "Next Block game: a paid run can continue without saying the stake is charged again",
+  "kind": "bug"
+ },
+ "2941": {
+  "text": "Rock Paper Scissors game: an unplayed round's stake returns after the page already says so",
+  "kind": "bug"
+ },
+ "2942": {
+  "text": "Lightning payouts: a faucet top-up fails when the deposit invoice belongs to the same node",
+  "kind": "bug"
+ },
+ "2943": {
+  "text": "Next Block game: cargo never counts while the run does not reach the signer nodes",
+  "kind": "bug"
+ },
+ "2944": {
+  "text": "Federation: one record can be held by a single seat, so seats disagree on the list",
+  "kind": "bug"
+ },
+ "2945": {
+  "text": "Settlement: seats can disagree whether a round failed or was voided",
+  "kind": "bug"
+ },
+ "2946": {
+  "text": "Website: an account-delete check fails on login, and the fault is the test not the page",
+  "kind": "bug"
+ },
+ "2947": {
+  "text": "Other: a join can fail after the lock, a void refund can be short, and a deposit can exceed its cap",
+  "kind": "bug"
  }
 }
