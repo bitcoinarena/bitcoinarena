@@ -11,7 +11,7 @@
   ];
   var NIP = { 'Browser extension': 'NIP-07', 'Remote signer': 'NIP-46', 'NWC wallet': 'NIP-47' };
   var CHECKED = {
-    login: 'logged in to the Arena', seed: 'wallet seed sealed with NIP-44', sign: 'requests signed',
+    login: 'logged in to the Arena', seed: 'wallet seed sealed with NIP-44', sign: 'requests signed', decrypt: 'wallet seed decrypted with NIP-44',
     connect: 'connected', get_public_key: 'key read', 'sign_event 27235': 'requests signed (NIP-98)',
     'sign_event 30078': 'wallet seed event signed', 'nip44 to self': 'NIP-44 encryption',
     get_info: 'wallet info', get_balance: 'balance read', make_invoice: 'withdrawal invoice made', pay_invoice: 'deposit paid'

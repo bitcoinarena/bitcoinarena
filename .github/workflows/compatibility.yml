@@ -36,6 +36,9 @@ jobs:
       - name: Check the runner before contacting products
         working-directory: packages/arena-node
         run: node --test --test-timeout=60000 test/compat-check.test.js test/compat-run.test.js test/compat-publish.test.js
+      - name: Chromium with extension support
+        working-directory: packages/arena-node
+        run: npx playwright install --with-deps chromium
       - name: Check configured products and published versions
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -48,6 +51,8 @@ jobs:
           if [ "$REQUEST_PAY" = true ] || { [ "$EVENT_NAME" = schedule ] && [ "$(date -u +%u)" = 7 ]; }; then args+=(--pay); fi
           node packages/arena-node/tools/compat-run.mjs --out=compat-report "${args[@]}"
           cat compat-report/report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Validate the resulting public data
+        run: node --test packages/arena-client/test/compatibility-page.test.js
       - name: Keep the report
         if: always()
         uses: actions/upload-artifact@v4
