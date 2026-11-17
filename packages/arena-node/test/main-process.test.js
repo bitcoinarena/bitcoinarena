@@ -169,12 +169,18 @@ async function fakeBitcoind(view, cookie) {
   fake.failHeaders = false;
   const srv = createServer((req, res) => { let body = ''; req.on('data', (d) => { body += d; }).on('end', () => {
     const authed = req.headers.authorization === `Basic ${Buffer.from(cookie).toString('base64')}`;
-    const { id, method, params = [] } = JSON.parse(body);
-    calls.push({ method, params, authed, atMs: Date.now() });
-    if (!authed) { res.writeHead(401); return res.end(); }
+    if (!authed) { calls.push({ method: null, params: [], authed, atMs: Date.now() }); res.writeHead(401); return res.end(); }
+    // A BATCH (JSON-RPC, as bitcoind takes it): the node reads its chain views in batches since #1968 (chain-rpc.js call.batch) -
+    // each call answered as one, in one array (kanban #2915: this fake took single calls only, so no view was ever read)
+    const parsed = JSON.parse(body);
+    if (Array.isArray(parsed)) return res.end(JSON.stringify(parsed.map((one) => answerOne(one))));
+    return res.end(JSON.stringify(answerOne(parsed)));
+  }); });
+  function answerOne({ id, method, params = [] }) {
+    calls.push({ method, params, authed: true, atMs: Date.now() });
     if ((method === 'getblock' && fake.failBlocks) || (method === 'getblockheader' && fake.failHeaders)) {
       calls[calls.length - 1].failed = true;
-      return res.end(JSON.stringify({ id, result: null, error: { code: -1, message: `the fake fails ${method === 'getblock' ? 'block' : 'header'} reads` } }));
+      return { id, result: null, error: { code: -1, message: `the fake fails ${method === 'getblock' ? 'block' : 'header'} reads` } };
     }
     const at = (hash) => byHash.get(String(hash));
     const result = {
@@ -185,8 +191,8 @@ async function fakeBitcoind(view, cookie) {
       getblockheader: () => (params[1] === false ? toHex(at(params[0]).b.header)
         : { hash: params[0], height: at(params[0]).h, mediantime: medianTimePast(view.blocks.map((x) => x.header), 0, at(params[0]).h) }),
     }[method];
-    res.end(JSON.stringify(result ? { id, error: null, result: result() } : { id, result: null, error: { code: -32601, message: `no ${method}` } }));
-  }); });
+    return result ? { id, error: null, result: result() } : { id, result: null, error: { code: -32601, message: `no ${method}` } };
+  }
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   return Object.assign(fake, { url: `http://127.0.0.1:${srv.address().port}`, calls, close: () => new Promise((r) => srv.close(r)) });
 }
