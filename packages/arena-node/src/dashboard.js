@@ -265,8 +265,12 @@ load();setInterval(()=>{if(!document.hidden)load()},60000);
 // window, never in a URL - and keeps it where the owner page reads it (owner.html STORE / NSTORE, per node address), so it opens logged in
 if(location.hash==='#owner-handoff'&&window.opener){const base=location.pathname.replace(/\\/[Dd]ashboard\\/?$/,'');
 addEventListener('message',(e)=>{const d=e.data;if(e.source!==window.opener||!d||d.type!=='arena-owner-key')return;
-try{if(d.kind==='seed'&&/^[0-9a-f]{64}$/.test(d.seed))localStorage.setItem('arena-owner-seed:'+base,d.seed);
-else if(d.kind==='nsec'&&/^[0-9a-f]{64}$/.test(d.secret))localStorage.setItem('arena-owner-nostr:'+base,JSON.stringify({how:'nsec',secret:d.secret}))}catch{}
+// ONLY FROM THE INSTALLER ON THIS MACHINE, AND NEVER OVER A KEY ALREADY KEPT (kanban #2935, feedback #264 - the owner page's guards of #1433): any
+// site that opened this page with #owner-handoff could replace the owner keys this browser keeps
+if(!/^http:\\/\\/(127\\.0\\.0\\.1|localhost|\\[::1\\])(:\\d+)?$/.test(String(e.origin||'')))return;
+const keep=(k,v)=>{if(!localStorage.getItem(k))localStorage.setItem(k,v)};
+try{if(d.kind==='seed'&&/^[0-9a-f]{64}$/.test(d.seed))keep('arena-owner-seed:'+base,d.seed);
+else if(d.kind==='nsec'&&/^[0-9a-f]{64}$/.test(d.secret))keep('arena-owner-nostr:'+base,JSON.stringify({how:'nsec',secret:d.secret}))}catch{}
 history.replaceState(null,'',location.pathname+location.search)});
 window.opener.postMessage({type:'arena-owner-ready'},'*')}
 // THE RELEASE IN THE FOOTER (kanban #662), the release alone, no build commit (#753, 2026-10-28: "I want UI xxx still there"):
