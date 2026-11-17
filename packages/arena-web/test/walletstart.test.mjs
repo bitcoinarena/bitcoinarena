@@ -55,6 +55,8 @@ test('a Nostr way in: the page\'s login with the signer, each step said with a r
   await no.attempt('nsec', () => no.props.nostr.nsec('x'));
   assert.match(html(no), /<div class="ws-why">that is not an nsec<\/div>/);
   assert.equal(no.state.working, false, 'the buttons are back');
+  // kanban #2917: under the error, the list of signers we tested, in a new tab
+  assert.match(html(no), /<div class="ws-why">that is not an nsec<\/div><p class="ws-note"[^>]*><a href="https:\/\/bitcoinarena\.io\/compatibility\/#login" target="_blank" rel="noopener"[^>]*>Which signers work\? The ones we tested<\/a><\/p>/);
 });
 
 test('a new account: the key shown, Continue only once it is saved, the name published, then the page\'s login as new', async () => {

@@ -93,6 +93,9 @@ test('a connected wallet: its balance against the invoice, the button off when s
   assert.equal(satNum(1234567n), '1,234.567'); assert.equal(satNum(5000n), '5');
   const none = mount({ offer: offerOf().o });
   assert.match(html(none), />Connect my wallet to pay in one tap \(Nostr Wallet Connect\)<\/button>/);
+  // kanban #2917: before a wallet is connected, the list of wallets we tested; not once one is
+  assert.match(html(none), /<a class="dep-nwc-tested" href="https:\/\/bitcoinarena\.io\/compatibility\/#pay" target="_blank" rel="noopener"[^>]*>Which wallets work\? The ones we tested<\/a>/);
+  assert.doesNotMatch(html(m), /dep-nwc-tested/);
   assert.doesNotMatch(html(none), /dep-webln-pay/);
 });
 

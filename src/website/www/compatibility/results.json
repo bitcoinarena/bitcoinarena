@@ -1,1 +1,58 @@
-[]
+[
+ {
+  "name": "nos2x",
+  "version": "2.5.1",
+  "kind": "Browser extension",
+  "date": "2026-11-17",
+  "testedBy": null,
+  "how": "manual",
+  "url": "https://github.com/fiatjaf/nos2x",
+  "platform": "Chrome",
+  "checks": {
+   "login": "ok"
+  },
+  "result": "works"
+ },
+ {
+  "name": "Sidecar",
+  "version": "1.17.2",
+  "kind": "Browser extension",
+  "date": "2026-11-17",
+  "testedBy": null,
+  "how": "manual",
+  "url": "https://sidecar.top/",
+  "platform": "Chrome, Firefox",
+  "checks": {
+   "login": "ok"
+  },
+  "result": "works"
+ },
+ {
+  "name": "Amber",
+  "version": "6.6.9",
+  "kind": "Remote signer",
+  "date": "2026-11-17",
+  "testedBy": null,
+  "how": "manual",
+  "url": "https://github.com/greenart7c3/Amber",
+  "platform": "Android",
+  "checks": {
+   "login": "ok"
+  },
+  "result": "works"
+ },
+ {
+  "name": "Clave",
+  "version": "1.0",
+  "kind": "Remote signer",
+  "date": "2026-11-17",
+  "testedBy": null,
+  "how": "manual",
+  "url": "https://github.com/dmnyc/clave",
+  "platform": "iOS",
+  "checks": {
+   "login": "ok"
+  },
+  "result": "works"
+ }
+]

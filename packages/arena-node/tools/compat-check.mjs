@@ -10,8 +10,12 @@
  *
  * NWC asks get_info, get_balance and make_invoice; with PAY=<bolt11> it pays that invoice too. A signer is asked connect, get_public_key, sign_event for the two
  * kinds the page signs (27235 HTTP auth, 30078 the wallet's seed event) and a NIP-44 round trip to the user's own key, which is how the seed event is sealed.
- * A browser extension (NIP-07) has no remote door, so it is checked by hand in the page and its row written with `manual`:
+ * A browser extension (NIP-07) has no remote door, so it is checked by hand in the page and its row written with `manual`; so is a phone
+ * signer tested by hand through the page's QR or bunker link (KIND=signer, kanban #2917):
  *   NAME=... VERSION=... CHECKS='login=ok,seed=ok,sign=ok' node tools/compat-check.mjs manual nip-07
+ *   NAME=... VERSION=... KIND=signer CHECKS='login=ok' node tools/compat-check.mjs manual nip-46
+ * Every mode takes URL= (the product's own site, linked on the page), PLATFORM= (Chrome, Firefox, Android, iOS...) and DATE= (YYYY-MM-DD, when
+ * the test was not today).
  * It never prints a connection secret. The link is a password: pass it from your own shell, and revoke it after.
  */
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
@@ -25,9 +29,12 @@ const unhex = (h) => Uint8Array.from(h.match(/../g).map((x) => parseInt(x, 16)))
 const timed = (p, ms, what) => Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error(`${what}: no answer in ${ms / 1000} s`)), ms))]);
 
 /** One row from the checks: ok only when every one passed, and never with nothing checked (kanban #2939). */
-export function resultRow({ name, version, kind, checks, testedBy = null, date = new Date().toISOString().slice(0, 10) }) {
+export function resultRow({ name, version, kind, checks, testedBy = null, date = new Date().toISOString().slice(0, 10), url = null, platform = null, how = 'automatic' }) {
   const said = Object.values(checks || {});
-  return { name: String(name), version: String(version), kind, date, testedBy, checks, result: said.length && said.every((c) => c === 'ok') ? 'works' : 'problems' };
+  if (url !== null && !/^https:\/\/[^\s"<>]+$/.test(String(url))) throw new Error('URL: the product\'s https:// address');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date))) throw new Error('DATE: YYYY-MM-DD');
+  return { name: String(name), version: String(version), kind, date: String(date), testedBy, how, url, platform: platform === null ? null : String(platform), checks,
+    result: said.length && said.every((c) => c === 'ok') ? 'works' : 'problems' };
 }
 
 /** The list with one row put in: a product and kind has one row, the newest. */
@@ -96,9 +103,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   if (mode === 'nwc') { kind = 'NWC wallet'; checks = await checkNwc(link, { pay: env.PAY || null }); }
   else if (mode === 'signer') { kind = 'Remote signer'; checks = await checkSigner(link); }
   else if (mode === 'manual' && !String(env.CHECKS || '').trim()) { console.error('manual: CHECKS=\'login=ok,...\' - what was checked by hand'); process.exit(2); }
-  else if (mode === 'manual') { kind = 'Browser extension'; checks = Object.fromEntries(String(env.CHECKS || '').split(',').filter(Boolean).map((x) => x.split('='))); }
+  else if (mode === 'manual') { kind = env.KIND === 'signer' ? 'Remote signer' : 'Browser extension'; checks = Object.fromEntries(String(env.CHECKS || '').split(',').filter(Boolean).map((x) => x.split('='))); }
   else { console.error('nwc, signer or manual'); process.exit(2); }
-  const row = resultRow({ name: env.NAME, version: env.VERSION, kind, checks, testedBy: env.TESTED_BY || null });
+  const row = resultRow({ name: env.NAME, version: env.VERSION, kind, checks, testedBy: env.TESTED_BY || null, url: env.URL || null, platform: env.PLATFORM || null,
+    how: mode === 'manual' ? 'manual' : 'automatic', ...(env.DATE ? { date: env.DATE } : {}) });
   console.log(JSON.stringify(row));
   if (env.WRITE) { const list = existsSync(env.WRITE) ? JSON.parse(readFileSync(env.WRITE, 'utf8')) : []; writeFileSync(env.WRITE, `${JSON.stringify(withRow(list, row), null, 1)}\n`); }
   process.exit(row.result === 'works' ? 0 : 1);
