@@ -13,7 +13,7 @@ export async function publishIssues(report, { list, create, update }) {
     for (const row of rows) {
       const key = createHash('sha256').update(`${type}:${row.kind}:${row.name}`).digest('hex').slice(0, 20);
       const marker = `<!-- arena-compat:${key} -->`;
-      const detail = type === 'failure' ? JSON.stringify(row.failing, null, 2) : row.why;
+      const detail = type === 'failure' ? JSON.stringify({ version: row.version, failing: row.failing }) : row.why;
       const fingerprint = `<!-- detail:${createHash('sha256').update(detail).digest('hex')} -->`;
       const existing = issues.find((i) => i.body?.includes(marker));
       const body = `${marker}\n${fingerprint}\n\n${type === 'failure'
