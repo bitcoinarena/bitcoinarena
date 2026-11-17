@@ -30,6 +30,7 @@ import {
   TYPE_CONFIG_PROPOSAL, TYPE_ABSENCE_ATTESTATION, TYPE_DEPARTURE_NOTICE, TYPE_EMERGENCY_DEPARTURE, TYPE_SPENT_SET, TYPE_ROUND_RESULT, TYPE_RESULT_FRONT, TYPE_HALT_OBSERVATION,
   TYPE_VALUE_ATTESTATION, TYPE_DONATION_PROPOSAL, TYPE_DONATION_APPROVAL, TYPE_DONATION_SET_KEYS_VESTING,
   TYPE_SIGNED_INPUT_BATCH, TYPE_AUDIT, TYPE_AUDIT_SLASH_PROOF, TYPE_FRAUD_PROOF, TYPE_RELEASE_EVIDENCE, TYPE_ABANDONED_PROOF, TYPE_THEFT_PROOF, TYPE_SEATING_SEEN, TYPE_HEARTBEAT, TYPE_HEARTBEAT_HEARD,
+  TYPE_LOCK_SET, TYPE_LOCK_SET_CERTIFICATE, TYPE_REVEAL_SET, TYPE_REVEAL_SET_CERTIFICATE,
 } from './constants.js';
 
 /**
@@ -146,6 +147,13 @@ export const FRAMES = new Map([
   [TYPE_DONATION_APPROVAL, { name: 'DonationApproval', authority: true }],
   // a donation set of keys whose entries vest day by day (§27A.4.1): who the donations pay, and how that moves
   [TYPE_DONATION_SET_KEYS_VESTING, { name: 'DonationSetKeysVesting', authority: true }],
+
+  // A HEAD-TO-HEAD ROUND'S LOCK SET AND ITS CERTIFICATE (kanban #2561) and THE CERTIFIED REVEAL SET (kanban #2832): declared and never
+  // entered here (frames.test, release 2026.1.9.28 #2915). They decide which entries a round plays and whose reveal counts: authority.
+  [TYPE_LOCK_SET, { name: 'LockSet', authority: true }],
+  [TYPE_LOCK_SET_CERTIFICATE, { name: 'LockSetCertificate', authority: true }],
+  [TYPE_REVEAL_SET, { name: 'RevealSet', authority: true }],
+  [TYPE_REVEAL_SET_CERTIFICATE, { name: 'RevealSetCertificate', authority: true }],
 
   // THE ONLY ONE. 0.9's ghost: something to look at, and nothing else.
   [TYPE_GHOST, { name: 'Ghost', authority: false }],

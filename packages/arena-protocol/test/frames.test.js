@@ -79,7 +79,7 @@ test('one type carries no authority, and it is the ghost', () => {
   // 66 since the complete fraud proof and the record against a release (§5A.3B, kanban #1065, #1077): what a slashing transaction commits to, and whether a release is judged
   // 67 since the theft proof (§23A, ruling #1106): a federation's mark of theft against a guardian it lists - it decides that a census key starts that guardian's bond
   // 68 since the signed input batch (kanban #1503): the only form a player's batch is taken in - it writes ticks and loads.
-  assert.equal(FRAMES.size, 68, 'a type was added without saying what it decides');
+  assert.equal(FRAMES.size, 72,   /* +4: lock set, reveal set and their certificates (#2915) */ 'a type was added without saying what it decides');
 });
 
 /**
