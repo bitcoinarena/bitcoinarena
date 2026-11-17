@@ -101,3 +101,16 @@ test('the referral link: the link, Copy, what it earned, the answer; none before
   assert.doesNotMatch(h, /arena-referral-copy/);
   assert.match(h, /Open or create your wallet first\./);
 });
+
+// kanban #2928: the page's CSS spaces the account card by id (the key line 12px above the Delete button); the card carries every id it names
+test('the account card carries the ids the page CSS spaces it by', async () => {
+  const { readFileSync } = await import('node:fs');
+  const page = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
+  assert.match(page, /#arena-set-account #arena-acct-who \{ margin: 0 0 12px; \}/);
+  const a = live(AccountCard, { who: 'This wallet\'s key is its 24 words, kept in this browser.', holds: () => '', onDelete: () => ({ ok: true }) });
+  assert.match(html(a), /<div class="muted" id="arena-acct-who">This wallet&#x27;s key is its 24 words, kept in this browser\.<\/div><button id="arena-acct-delete"/);
+  const before = html(a);
+  a.ask();
+  const h = before + html(a);   // Delete shows before the ask, the confirm after it
+  for (const id of new Set([...page.matchAll(/#arena-set-account #(arena-acct-[a-z]+)/g)].map((m) => m[1]))) assert.ok(h.includes(`id="${id}"`), id);
+});

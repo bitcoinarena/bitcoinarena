@@ -87,11 +87,11 @@ export class AccountCard extends React.Component {
     const { asking, holds, saved, why } = this.state;
     return (<>
       <h3>Account</h3>
-      <div className="muted">{this.props.who}</div>
+      <div className="muted" id="arena-acct-who">{this.props.who}</div>
       {asking ? null : <button id="arena-acct-delete" type="button" className="danger" onClick={() => this.ask()}>Delete this account from this browser</button>}
       <div className="risk" id="arena-acct-risk">Deleting removes this wallet from this browser. Without your 24 words or your Nostr key, the money in it is lost for good.</div>
       {asking ? (
-        <div>
+        <div id="arena-acct-confirm">
           {holds ? <div className="risk">{holds}</div> : null}
           <label className="muted" style={{ display: 'flex', gap: 8, alignItems: 'flex-start', margin: '8px 0' }}>
             <input type="checkbox" style={{ width: 'auto', margin: '2px 0 0' }} checked={saved} onChange={(e) => this.setState({ saved: e.target.checked })} />
@@ -101,7 +101,7 @@ export class AccountCard extends React.Component {
             <button type="button" onClick={() => this.setState({ asking: false })}>Cancel</button>
           </div>
         </div>) : null}
-      <div className="muted">{why}</div>
+      <div className="muted" id="arena-acct-why">{why}</div>
     </>);
   }
 }
