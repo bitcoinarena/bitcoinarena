@@ -41,13 +41,14 @@ export async function publishWithPow(pool, relays, ev, signer, { onMining = () =
   return took;
 }
 import { sha256 } from '@noble/hashes/sha2.js';
+import { ARENA_RELAY } from '../../arena-protocol/src/nostr-relays.js';
 
 export const SEED_KIND = 30078;
 export const SEED_D = 'bitcoin-arena/seed';
 // OURS FIRST, then three public relays that keep app data and pass NIP-46 messages (measured from the test host 2026-10-10; relay.damus.io answers 520/521 since, kanban #854)
-export const NOSTR_RELAYS = Object.freeze(['wss://relay.bitcoin-arena.io', 'wss://relay.snort.social', 'wss://nos.lol', 'wss://relay.primal.net']);
+export const NOSTR_RELAYS = Object.freeze([ARENA_RELAY, 'wss://relay.snort.social', 'wss://nos.lol', 'wss://relay.primal.net']);
 // a remote signer listens on these unless its bunker:// link names its own (nsec.app's relay is where most bunkers sit)
-export const SIGNER_RELAYS = Object.freeze(['wss://relay.bitcoin-arena.io', 'wss://relay.nsec.app', 'wss://relay.snort.social']);
+export const SIGNER_RELAYS = Object.freeze([ARENA_RELAY, 'wss://relay.nsec.app', 'wss://relay.snort.social']);
 
 const hex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 const unhex = (h) => Uint8Array.from(String(h).match(/../g) || [], (x) => parseInt(x, 16));

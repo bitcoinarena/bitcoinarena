@@ -18,6 +18,7 @@ import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { zapRequestStands, zapReceiptTemplate, ZAP_COMMENT_MAX } from '../../arena-protocol/src/zap.js';
+import { relaySet } from '../../arena-protocol/src/nostr-relays.js';
 import { lnurlFor } from '../../arena-protocol/src/bech32.js';
 import { eventId } from './nostr-relay.js';
 import { askerAddress } from './reach-check.js';
@@ -341,7 +342,7 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
   };
   const enqueuePublish = (receipt, relays) => {
     if (typeof publish !== 'function') return;
-    const named = [...new Set(relays.map(String))];
+    const named = relaySet(relays);   // a request naming both hosts of the game's relay sends to it once (kanban #2916)
     owed.set(receipt.id, { receipt, relays: named });
     for (const relay of named) push({ receipt, relay, tries: 0 });
     saveSoon();
