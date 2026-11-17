@@ -1,0 +1,80 @@
+name: compatibility
+
+on:
+  schedule:
+    - cron: '23 3 * * *'
+  workflow_dispatch:
+    inputs:
+      pay:
+        description: 'Also pay 1 sat per configured NWC wallet and return it (plus routing fees)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: compatibility
+  cancel-in-progress: false
+
+jobs:
+  nightly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install the compatibility tools
+        working-directory: packages/arena-node
+        run: |
+          rm -f node_modules
+          npm install --no-audit --no-fund --no-package-lock
+      - name: Check the runner before contacting products
+        working-directory: packages/arena-node
+        run: node --test --test-timeout=60000 test/compat-check.test.js test/compat-run.test.js test/compat-publish.test.js
+      - name: Check configured products and published versions
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          COMPAT_SECRETS: ${{ secrets.COMPAT_SECRETS }}
+          COMPAT_PAY_WALLET: ${{ secrets.COMPAT_PAY_WALLET }}
+          REQUEST_PAY: ${{ inputs.pay }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          args=()
+          if [ "$REQUEST_PAY" = true ] || { [ "$EVENT_NAME" = schedule ] && [ "$(date -u +%u)" = 7 ]; }; then args+=(--pay); fi
+          node packages/arena-node/tools/compat-run.mjs --out=compat-report "${args[@]}"
+          cat compat-report/report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Keep the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compatibility-report
+          path: compat-report/
+          retention-days: 30
+      - name: Open triage issues in this repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node packages/arena-node/tools/compat-publish.mjs compat-report/report.json
+      - name: Propose passing results
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git diff --quiet -- src/website/www/compatibility/results.json; then exit 0; fi
+          branch=automation/compatibility-results
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch origin "$branch:refs/remotes/origin/$branch" || true
+          git switch -c "$branch"
+          git add src/website/www/compatibility/results.json
+          git commit -m 'Refresh passing compatibility results'
+          git push --force-with-lease origin "$branch"
+          pr=$(gh pr list --head "$branch" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$pr" ]; then
+            gh pr edit "$pr" --body-file compat-report/report.md
+          else
+            gh pr create --head "$branch" --title 'Refresh passing compatibility results' --body-file compat-report/report.md
+          fi

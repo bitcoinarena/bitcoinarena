@@ -68,23 +68,24 @@ export async function nwcAsk({ wallet, relay, secret }, pool, method, params = {
   return a.result;
 }
 
-export async function checkNwc(link, { pay = null } = {}) {
+/** The wallet's NIP-47 calls. `kept.invoice` gets the 1 sat invoice the wallet made, so a payment to us can be paid back (kanban #2950). */
+export async function checkNwc(link, { pay = null, kept = {}, ms = 20000 } = {}) {
   const c = parseNwc(link), pool = new SimplePool(), checks = {};
-  const one = async (name, method, params, ok) => { try { const r = await nwcAsk(c, pool, method, params); checks[name] = ok(r) ? 'ok' : 'odd answer'; } catch (e) { checks[name] = String(e?.message ?? e).slice(0, 120); } };
+  const one = async (name, method, params, ok) => { try { const r = await nwcAsk(c, pool, method, params, ms); checks[name] = ok(r) ? 'ok' : 'odd answer'; } catch (e) { checks[name] = String(e?.message ?? e).slice(0, 120); } };
   await one('get_info', 'get_info', {}, (r) => !!r);
   await one('get_balance', 'get_balance', {}, (r) => Number.isFinite(Number(r.balance)));
-  await one('make_invoice', 'make_invoice', { amount: 1000, description: 'Bitcoin Arena compatibility check' }, (r) => /^ln/.test(String(r.invoice)));
+  await one('make_invoice', 'make_invoice', { amount: 1000, description: 'Bitcoin Arena compatibility check' }, (r) => { kept.invoice = String(r.invoice); return /^ln/.test(kept.invoice); });
   if (pay) await one('pay_invoice', 'pay_invoice', { invoice: pay }, (r) => /^[0-9a-f]{64}$/.test(String(r.preimage)));
   pool.close([c.relay]);
   return checks;
 }
 
-export async function checkSigner(link) {
+export async function checkSigner(link, { ms = 60000 } = {}) {
   const bp = await parseBunkerInput(link);
   if (!bp) throw new Error('that is not a bunker:// link');
   const pool = new SimplePool(), checks = {};
   const signer = BunkerSigner.fromBunker(generateSecretKey(), bp, { pool });
-  const step = async (name, run) => { try { checks[name] = (await timed(run(), 60000, name)) ? 'ok' : 'odd answer'; } catch (e) { checks[name] = String(e?.message ?? e).slice(0, 120); } };
+  const step = async (name, run) => { try { checks[name] = (await timed(run(), ms, name)) ? 'ok' : 'odd answer'; } catch (e) { checks[name] = String(e?.message ?? e).slice(0, 120); } };
   let me = null;
   await step('connect', async () => { await signer.connect(); return true; });
   await step('get_public_key', async () => { me = await signer.getPublicKey(); return /^[0-9a-f]{64}$/.test(me); });
