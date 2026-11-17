@@ -19117,9 +19117,16 @@ function feeProposalOutcome({ proposal, current = FEES_TODAY, signal, tally, app
 }
 
 /** THE FEES IN FORCE AT A HEIGHT: the latest accepted set whose activation height is at or below it, else `base`. */
+// A TIE AT ONE ACTIVATION HEIGHT IS NEVER WON BY ARRAY ORDER (kanban #2931, feedback #243): two sets accepted for one height were taken by
+// the order a caller held them in. The seats fold proposals in activation order with ties by proposal id (funding-book.js feeFold, #2313), so
+// the set in force at a tied height is the one with the higher proposal id (hex); an entry without an id loses a tie to one with an id.
+const proposalKey = (a) => { const p = a && a.proposal; return typeof p === 'string' ? p.toLowerCase() : p instanceof Uint8Array ? [...p].map((v) => v.toString(16).padStart(2, '0')).join('') : ''; };
 function feesAt({ height, accepted = [], base = FEES_TODAY }) {
   let at = null;
-  for (const a of accepted) if (a && a.accepted !== false && Number.isInteger(a.activationHeight) && a.activationHeight <= height && (!at || a.activationHeight >= at.activationHeight)) at = a;
+  for (const a of accepted) {
+    if (!a || a.accepted === false || !Number.isInteger(a.activationHeight) || a.activationHeight > height) continue;
+    if (!at || a.activationHeight > at.activationHeight || (a.activationHeight === at.activationHeight && proposalKey(a) > proposalKey(at))) at = a;
+  }
   return at ? at.fees : base;
 }
 
