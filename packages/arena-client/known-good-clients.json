@@ -657,6 +657,11 @@
     "core-8cbc74b2.js": [
      "35889f637daf8f829118d751f65e626bfe58464d8a3903e6780e62833b8d9aec"
     ]
+   },
+   "pinnedV8": {
+    "core-7d197042.js": [
+     "0e9d8570c716c246dea5f7ddd6a1248abd2e72b9777fb4a9d187edd1a50cd473"
+    ]
    }
   }
  },
