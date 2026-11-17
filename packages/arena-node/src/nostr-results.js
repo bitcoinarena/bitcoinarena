@@ -23,6 +23,7 @@
 import WebSocket from 'ws';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { eventId } from './nostr-relay.js';
+import { relaySet } from '../../arena-protocol/src/nostr-relays.js';
 
 export const RESULT_KIND = 30762;
 export const RESULT_D_PREFIX = 'arena:result:';
@@ -81,9 +82,12 @@ export function buildResultEvent({ result, secret }) {
   return { id: e.id, pubkey: e.pubkey, created_at: e.created_at, kind: e.kind, tags: e.tags, content: e.content, sig: e.sig };
 }
 
-/** The relays named in ARENA_NOSTR_PUBLISH (comma list), wss:// - or ws:// for a relay on the same machine; none: publishing is off. */
+/**
+ * The relays named in ARENA_NOSTR_PUBLISH (comma list), wss:// - or ws:// for a relay on the same machine; none: publishing is off.
+ * A saved config that still names the game's relay by its old host (relay.bitcoin-arena.io, kanban #2916) gets the new name, once.
+ */
 export const publishRelays = (v = process.env.ARENA_NOSTR_PUBLISH || '') =>
-  [...new Set(String(v).split(',').map((u) => u.trim()).filter((u) => /^wss?:\/\/[^\s]+$/.test(u)))];
+  relaySet(String(v).split(',').map((u) => u.trim()).filter((u) => /^wss?:\/\/[^\s]+$/.test(u)));
 
 /**
  * THE ROUNDS WHOSE SETTLEMENT THIS NODE HOLDS ACCEPTED SINCE `sinceMs` AND HAS NO EVENT FOR YET: a round in one federation by its
