@@ -1010,5 +1010,17 @@
  "2960": {
   "text": "Node software: a long season board stays empty while the shorter board inside it still counts rounds",
   "kind": "bug"
+ },
+ "2966": {
+  "text": "Federation: deposit text can show twice with a stale code, a list can repeat rows, and a seat can keep an old record",
+  "kind": "bug"
+ },
+ "2969": {
+  "text": "Lightning payouts: empty withdraw says nothing, another tab shows the start screen, early withdraw blames the gateways",
+  "kind": "bug"
+ },
+ "2970": {
+  "text": "Node software: a season board can name a different node total each read, and a longer window keeps the shorter header",
+  "kind": "bug"
  }
 }
