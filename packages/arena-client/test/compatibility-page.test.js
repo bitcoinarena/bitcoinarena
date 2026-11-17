@@ -63,16 +63,22 @@ test('the page draws names as text, links only https addresses, and says when a 
   assert.match(text(boxes.next), /Later.*Not tested yet/);
 });
 
-test('the shipped data: Amber, nos2x, Sidecar and Clave work (tested by hand 2026-11-17); every planned product has a kind the page knows and an https address', () => {
+test('the shipped data supports manual and automatic results as the tested catalog grows (kanban #2955)', () => {
   const C = load();
   const d = C.sections(RESULTS, PLANNED);
-  assert.deepEqual(d.groups[0].rows.map((r) => r.name), ['Amber', 'Clave', 'nos2x', 'Sidecar']);
-  for (const r of RESULTS) assert.equal(r.how, 'manual', r.name);
+  for (const name of ['Amber', 'Clave', 'nos2x', 'Sidecar']) assert.ok(d.groups[0].rows.some((r) => r.name === name), name);
+  for (const r of RESULTS) {
+    assert.ok(['manual', 'automatic'].includes(r.how), r.name);
+    assert.equal(r.result, 'works', r.name);
+    assert.ok(Object.keys(r.checks || {}).length > 0, r.name);
+    assert.ok(Object.values(r.checks).every((c) => c === 'ok'), r.name);
+  }
   for (const p of PLANNED) {
     assert.ok(['Browser extension', 'Remote signer', 'NWC wallet'].includes(p.kind), p.name);
     assert.match(p.url, /^https:\/\//, p.name);
   }
-  assert.ok(d.next.length >= 8, 'the remaining products stay listed as next to test');
+  const listed = [...d.next, ...d.groups.flatMap((g) => g.rows)];
+  for (const p of PLANNED) assert.equal(listed.filter((r) => r.name === p.name && r.kind === p.kind).length, 1, p.name + ' appears once, working or next to test');
 });
 
 test('the page loads list.js and has the three groups; the old hard-coded table is gone', () => {
