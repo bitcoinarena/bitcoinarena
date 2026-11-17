@@ -3,6 +3,8 @@
 // THE COMPATIBILITY LIST (kanban #926 item 10): a row says "works" only when every check passed, and a product has one row.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { resultRow, withRow, parseNwc } from '../tools/compat-check.mjs';
 
 test('one check that failed is not a working product', () => {
@@ -19,4 +21,15 @@ test('a new test of a product replaces its row, and the list keeps its order', (
 
 test('a link that is not a wallet connection is refused', () => {
   assert.throws(() => parseNwc('https://example.com/'));
+});
+
+test('nothing checked is never a working product (kanban #2939)', () => {
+  assert.equal(resultRow({ name: 'A', version: '1', kind: 'Browser extension', checks: {} }).result, 'problems');
+});
+
+test('manual mode without CHECKS writes no row (kanban #2939)', () => {
+  const run = spawnSync(process.execPath, [fileURLToPath(new URL('../tools/compat-check.mjs', import.meta.url)), 'manual', 'nip-07'], { env: { ...process.env, NAME: 'A', VERSION: '1', CHECKS: '' }, encoding: 'utf8' });
+  assert.equal(run.status, 2);
+  assert.match(run.stderr, /CHECKS/);
+  assert.equal(run.stdout, '');
 });
