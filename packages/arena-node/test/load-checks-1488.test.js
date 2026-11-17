@@ -112,7 +112,8 @@ test('Hexbox 2: drive empty, then declare a bed before the gate - refused', () =
   const s2 = seat();
   assert.throws(() => s2.send(100, (t) => (t >= 10 ? DRIVE : HELD), [[50, 16334, 141, 369618]]), /driven at tick 10/);
   assert.equal(s2.send(100, (t) => (t >= 10 ? DRIVE : HELD)), 100);
-  assert.throws(() => s2.send(0, () => DRIVE, [[100, 16334, 141, 369618]]), /comes after the truck was driven/);
+  // a batch of no ticks after the run's first ticks is refused whole since #2804/#2805 - before the bed rule is even asked (#2915)
+  assert.throws(() => s2.send(0, () => DRIVE, [[100, 16334, 141, 369618]]), /comes after the truck was driven|a batch of no ticks after the run's first ticks/);
   assert.deepEqual(stored(), [[0, 0, 0, 0]]);
 });
 
