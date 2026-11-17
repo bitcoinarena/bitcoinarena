@@ -146,9 +146,16 @@ test('#2410 refusal path: a home seat that cut its chain back to a prefix of the
 
     assert.equal(forks(client.signedFrames.values()), 0, 'the client never signs a second batch on a head it already built on');
     assert.ok(client.nextTick >= 60, `the client did not rewind to tick ${client.nextTick} (the seat cut to ${cut})`);
-    assert.ok(client.nodeFault, 'the home seat is named at fault');
-    assert.match(client.nodeFault.why, /shorter|published/);
-    assert.equal(client.ended, true, 'the run does not go on through a seat that dropped the player\'s inputs');
+    if (client.homeRefusals) {
+      // ONE HOME SEAT DOES NOT GATE PUBLISHING (kanban #2515, after #2410; #2915): its refusal went to the other seats, which carried
+      // the batch - the run goes on and the honest peer holds every tick the player signed
+      assert.equal(ticksAt(b, rid, eid).length, 90, 'the honest peer holds all 90 of the player\'s ticks');
+      assert.ok(!client.ended || client.nodeFault, 'a run that ends names the seat at fault');
+    } else {
+      assert.ok(client.nodeFault, 'the home seat is named at fault');
+      assert.match(client.nodeFault.why, /shorter|published/);
+      assert.equal(client.ended, true, 'the run does not go on through a seat that dropped the player\'s inputs');
+    }
     assert.ok(ticksAt(b, rid, eid).length >= 60, 'and the honest peer keeps what the player published');
   } finally { client.close(); await a.close(); await b.close(); }
 });
