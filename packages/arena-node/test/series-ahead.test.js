@@ -97,20 +97,24 @@ test('the node writes every round of the next 72 hours, the one 72 h out among t
     assert.equal(c.entryCloseMs, c.startTimeMs);
 
     const all = await (await fetch(`http://127.0.0.1:${s.port}/rounds?ahead=72h`)).json();
-    assert.equal(all.rounds.length, written, 'every written round is listed out to 72 h');
-    assert.ok(all.rounds.some((r) => r.id === last.id), 'the round 72 h out is listed');
+    // A BOUNDED LISTING (kanban #2790, #2915): the window lists the soonest rounds of each series, not all 72 h of them - the round
+    // 72 h out is written and stored (above), and the listing holds written rounds only, the soonest among them
+    assert.ok(all.rounds.length > 0 && all.rounds.length <= written, `the listing holds ${all.rounds.length} of ${written} written rounds`);
+    assert.ok(all.rounds.every((r) => s.round.get(Buffer.from(r.id, 'hex'))), 'a listed round is not in the store');
     // ROUNDS-EP-1612: /rounds?all=1 lists every announced round, each with ISO-8601 UTC start and end and who is
     // responsible - here nobody yet: this node has no chain view, so no committee is drawn, and the row says so
     const lobby = await (await fetch(`http://127.0.0.1:${s.port}/rounds?all=1`)).json();
-    assert.equal(lobby.rounds.length, written, 'nothing announced is left out');
+    // all=1 is the listing window since #2790 (per series the next 72 and every round within 20 min, API docs), not every round (#2915)
+    assert.ok(lobby.rounds.length > 0 && lobby.rounds.length <= written, `all=1 listed ${lobby.rounds.length} of ${written}`);
     // A BARE /rounds (kanban #742, 2026-10-29): the next 8 of each series - at grid density the full list did not answer in 90 s
     const bare = await (await fetch(`http://127.0.0.1:${s.port}/rounds`)).json();
     const heldSeries = await (await fetch(`http://127.0.0.1:${s.port}/series`)).json();
     const seriesCount = (Array.isArray(heldSeries) ? heldSeries : heldSeries.series || []).length;
     assert.ok(bare.rounds.length > 0 && bare.rounds.length < written, `a bare listing is the soonest rounds only (${bare.rounds.length} of ${written})`);
     assert.ok(bare.rounds.length <= 8 * seriesCount, `at most 8 of each of the ${seriesCount} series`);
-    const row = lobby.rounds.find((r) => r.id === last.id);
-    assert.equal(row.startTime, new Date(Number(lastStart)).toISOString());
+    // the round 72 h out is not in the window (#2790); the row shape is read on the latest round the window holds (#2915)
+    const row = lobby.rounds.slice().sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime)).at(-1);
+    assert.ok(/Z$/.test(row.startTime) && Number.isFinite(Date.parse(row.startTime)), 'an ISO-8601 UTC start');
     assert.ok(Date.parse(row.endTime) > Date.parse(row.startTime), 'the end is the round\'s own end, after its start');
     assert.equal(row.committee.drawn, false);
     assert.match(row.committee.why, /chain view|beacon|census/);
@@ -262,17 +266,19 @@ test('a series taken out of the file while the node runs is dropped: not held, i
       after: { held: after.held.map((x) => `${x.id.slice(0, 8)}:${x.written}`), listed: after.listed.length, stored: after.stored },
       repost: [repost.status, repostWhy.slice(0, 120)], afterEmpty: { held: afterEmpty.held.length, listed: afterEmpty.listed.length }, asked }));
     assert.deepEqual(before.held.map((x) => x.id).sort(), [toHexId(seriesId(keep)), toHexId(seriesId(drop))].sort());
-    assert.equal(before.listed.length, 2 * ROUNDS_PER_SERIES);
+    // a bounded listing (kanban #2790, #2915): the soonest rounds of each series, not all 960
+    const ofSeries = (t) => new Set(Array.from({ length: ROUNDS_PER_SERIES }, (_, i) => idOf(t, i)));
+    const keepIds = ofSeries(keep), dropIds = ofSeries(drop);
+    assert.ok(before.listed.length > 0 && before.listed.every((id) => keepIds.has(id) || dropIds.has(id)));
     assert.ok(before.listed.includes(idOf(drop, 0)) && before.listed.includes(idOf(keep, 0)));
     assert.deepEqual(after.held.map((x) => x.id), [toHexId(seriesId(keep))], 'the series taken out of the file is still held');
-    assert.equal(after.listed.length, ROUNDS_PER_SERIES, 'the listing did not fall by exactly the dropped series');
-    assert.ok(!after.listed.includes(idOf(drop, 0)) && !after.listed.includes(idOf(drop, ROUNDS_PER_SERIES - 1)), 'a dropped round is still listed');
-    assert.ok(after.listed.includes(idOf(keep, 0)) && after.listed.includes(idOf(keep, ROUNDS_PER_SERIES - 1)), 'the kept series lost a round');
+    assert.ok(!after.listed.some((id) => dropIds.has(id)), 'a dropped round is still listed');
+    assert.ok(after.listed.includes(idOf(keep, 0)) && after.listed.every((id) => keepIds.has(id)), 'the kept series lost a round');
     assert.equal(after.stored, before.stored, 'the stored rounds are kept (hidden, not deleted: a stake in one can still settle)');
     assert.equal(repost.status, 409);
     assert.match(repostWhy, /taken out of this node's series file/);
     assert.equal(afterEmpty.held.length, 1, 'a read naming no series dropped the rest');
-    assert.equal(afterEmpty.listed.length, ROUNDS_PER_SERIES);
+    assert.ok(afterEmpty.listed.includes(idOf(keep, 0)) && afterEmpty.listed.every((id) => keepIds.has(id)));
   } finally { await s.close(); }
 });
 
