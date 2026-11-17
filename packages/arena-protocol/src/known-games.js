@@ -613,6 +613,19 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
     sharedWorld: Object.freeze([]),
     gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
   }),
+  '6bd6c0d1dbbd3a082c509576c6cc8b7d5e1cd3c9d7a739f12875101727aa6459': Object.freeze({
+    name: 'rock-paper-scissors',
+    //: manifest version 12, parent 71036e7a - version 11 in every term but its client: a move from a round the player was alone in is never entered again, no reveal before the result shows every player in, a move outside 0-2 never decides (kanban #2930, feedback #242/#248/#249)
+    requiredProtocolVersion: 2,
+    // ONE COMMITTEE AND ONE KEY PER TABLE (2026-10-13 ~21:10Z, pick (c)): a table's rounds - one grid series -
+    // are drawn and seated once, by the table's first round, and every 8 s round after plays on that committee's claim key
+    seatsPerTable: true,
+    cores: Object.freeze({
+      'f86afd62734989cca3004021d00879af5d57008958908ca28973100625d7f031': Object.freeze(['0d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172']),
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+  }),
   'b8b88e233baac6671c8ac6da8193f816d7f552423a3888b184018b7b49839651': Object.freeze({
     name: 'nextblock',
     // 2026.0.3: manifest version 3, parent c693585b, sells the larger truck (core f0cc7b7b), protocol 10 - added by hand
@@ -684,7 +697,7 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
   }),
   // UP/DOWN VERSION 25 (kanban #2836, feedback #084; re-signed for #2908's amount stepper, never rolled before): version 24 in every term, with a client that quotes a market buy at the book's best
   // ask and promises no payout without one
-  '96bb21b374ffe44bc8bc873aaf4fa09e228fb6d94fcc2200fe19943650c8c59c': Object.freeze({
+  '30d66419115bf8c72cbf651de809212859f28448e632c55ca0d1762d29338946': Object.freeze({
     name: 'btc-updown-15m',
     cores: Object.freeze({
 
