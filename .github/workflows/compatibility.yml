@@ -32,7 +32,7 @@ jobs:
         working-directory: packages/arena-node
         run: |
           rm -f node_modules
-          npm install --no-audit --no-fund --no-package-lock
+          npm ci --no-audit --no-fund
       - name: Check the runner before contacting products
         working-directory: packages/arena-node
         run: node --test --test-timeout=60000 test/compat-check.test.js test/compat-run.test.js test/compat-publish.test.js
