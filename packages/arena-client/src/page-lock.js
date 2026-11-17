@@ -874,7 +874,13 @@ export async function invoiceThroughGateways(client, amountMsat, order = [], { t
       return { ...got, gateway, tried };
     } catch (e) { tried.push({ gateway, why: String((e && e.message) || e), ms: nowMs() - t0 }); }
   }
-  throw new Error(`no gateway made a deposit invoice: ${tried.map((t) => `${t.gateway || 'the federation\'s pick'} (${t.why})`).join('; ')}`);
+  // NO GATEWAY ADDRESS IN WHAT THE PLAYER READS (kanban #2959, feedback #299): the message named every gateway tried with its address, a private
+  // tailnet host among them; the player now reads one plain sentence, and the gateways with their answers ride on the error (e.tried) for the log
+  const tooSmall = tried.length > 0 && tried.some((t) => /too small to cover fees/i.test(t.why));
+  const e = new Error(tooSmall ? 'That amount is too small to cover the Lightning gateway fees - deposit a few sat more.'
+    : `No Lightning gateway could make a deposit invoice right now (${tried.length} tried) - try again in a minute.`);
+  e.tried = tried;
+  throw e;
 }
 /**
  * WATCH ONE INVOICE AND FAIL OVER: `d` ({ invoice, operation, gateway }) is awaited; when it ends Expired or Failure, or
