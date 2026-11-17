@@ -8,6 +8,7 @@
 import React from 'react';
 
 const QUESTIONS = 'https://armada.buzz/invite/naddr1qvzqqqyzz5pzpt3qdj9s02tf33v6t5epfuxgk90eklx42cg2ftatwmuzznkww6anqqqqf5522e#BAEU9DouYIxVptZrIZWPrgMF';
+const TESTED_SIGNERS = 'https://bitcoinarena.io/compatibility/#login';
 
 export class WalletStart extends React.Component {
   constructor(props) {
@@ -103,6 +104,8 @@ export class WalletStart extends React.Component {
             <button type="button" disabled={off} onClick={() => this.attempt('nsec', () => this.props.nostr.nsec(this.state.nsec))}>Log in with my nsec</button>
             <button type="button" disabled={off} onClick={() => this.newAccount()}>New to Nostr? Create an account</button>
             <div className="ws-why">{why}</div>
+            {/* THE SIGNERS WE TESTED (kanban #2917): the public list, for a player whose signer does not answer */}
+            <p className="ws-note" style={{ textAlign: 'center', margin: '4px 0 0' }}><a href={TESTED_SIGNERS} target="_blank" rel="noopener" style={{ color: '#c9a8ff' }}>Which signers work? The ones we tested</a></p>
             <button type="button" className="link" onClick={() => { this.say(''); this.setState({ qr: null }); this.pane('main'); }}>Back</button>
           </div>) : null}
         {pane === 'newacct' && fresh ? (
