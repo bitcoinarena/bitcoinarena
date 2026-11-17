@@ -70,7 +70,8 @@ test('one type carries no authority, and it is the ghost', () => {
   // leaderboard payout were entered (2026-10-19): declared without an entry, bearsAuthority refused them as unknown
   // 53 since the owner's emergency leave request (protocol 17, §23A.5a): it takes a node out of the seating - an authority.
   // 54 since the signed input batch (kanban #1503): the only form a player's batch is taken in - it writes ticks and loads.
-  assert.equal(FRAMES.size, 54, 'a type was added without saying what it decides');
+  // 58 since the lock set and its certificate (kanban #2561) and the prepared reveal set and its certificate (kanban #2832) were entered (#2915)
+  assert.equal(FRAMES.size, 58, 'a type was added without saying what it decides');
 });
 
 /**

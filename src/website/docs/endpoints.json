@@ -10243,6 +10243,34 @@
  },
  {
   "method": "POST",
+  "path": "/duty/emergency-once",
+  "params": "JSON {game, slot, gameId, dry}; header x-duty-once (the secret in ARENA_DUTY_ONCE_FILE)",
+  "auth": "operator secret (x-duty-once)",
+  "returns": "200 JSON {ok, ...} the emergency grid built (dry) or sent; 404 when ARENA_DUTY_ONCE_FILE is not set; refused once <file>.done exists",
+  "purpose": "The operator's one emergency grid (kanban #2864): runs the round poster's emergency publishing once for the day `slot` posts, of the version `gameId` names only. A dry run builds and checks it without sending.",
+  "audience": "operator",
+  "summary": "Post one emergency grid",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "The duty as this node sees it."
+   },
+   {
+    "status": "404",
+    "contentType": "application/json",
+    "description": "{ok:false, why:\"this node runs no round poster\"}."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
   "path": "/expected",
   "params": "none",
   "auth": "none",

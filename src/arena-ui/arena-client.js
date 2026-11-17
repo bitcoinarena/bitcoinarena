@@ -665,6 +665,10 @@ const mediansAllBonds = (v) => Number.isInteger(v) && v >= BOND_MEDIAN_ALL_VERSI
  * 31 keep #1614's order byte for byte.
  */
 const TIE_SPLIT_VERSION = 31;
+/** THE CERTIFIED REVEAL SET (kanban #2832, ruling 2026-11-16 (a)): a paying head-to-head round of this version decides its verdict from the
+ * reveal set its committee certified after a gather, never from what each seat happened to fetch. PREPARED: not in SUPPORTED_PROTOCOL_VERSIONS
+ * until the seats that serve it roll; its own protocol height, older rounds keep today's rule. */
+const REVEAL_SET_VERSION = 32;
 /** Whether a round of protocol version `v` splits a tie at a paid place evenly (kanban #2687). */
 const splitsTies = (v) => Number.isInteger(v) && v >= TIE_SPLIT_VERSION;
 /**
@@ -1005,6 +1009,10 @@ const TYPE_SIGNED_INPUT_BATCH = 0x36;
  * 0x50 and 0x51 are used on neither line (1.9 ends at 0x36, 2.0 at 0x4e). */
 const TYPE_LOCK_SET = 0x50;
 const TYPE_LOCK_SET_CERTIFICATE = 0x51;
+/** THE CERTIFIED REVEAL SET OF A HEAD-TO-HEAD ROUND (kanban #2832, ruling 2026-11-16 (a); reveal-set.js): the twin of the lock set. 0x52, 0x53 are
+ * used on neither line. Written at REVEAL_SET_VERSION, which no build speaks yet (it is not in SUPPORTED_PROTOCOL_VERSIONS): prepared, not rolled. */
+const TYPE_REVEAL_SET = 0x52;
+const TYPE_REVEAL_SET_CERTIFICATE = 0x53;
 // A GUARDIAN'S COPY OF A HALTED FEDERATION'S SPENT-NOTE SET (§23A.5 liquidation step 1); 0x23 is the
 // ballot's, 0x24 and 0x25 absence and departure
 const TYPE_SPENT_SET = 0x26;
@@ -1202,6 +1210,9 @@ const TAG = {
   lockSet: 'ARENA/v1/LockSet',
   lockSetSignature: 'ARENA/v1/LockSetSignature',
   lockSetView: 'ARENA/v1/LockSetView',
+  // THE CERTIFIED REVEAL SET (kanban #2832): the set's id and a seat's signature over (set id, its time)
+  revealSet: 'ARENA/v1/RevealSet',
+  revealSetSignature: 'ARENA/v1/RevealSetSignature',
   matchProof: 'ARENA/v1/MatchProof',
   matchRecord: 'ARENA/v1/MatchRecord',
   presence: 'ARENA/v1/Presence',
@@ -42602,7 +42613,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          yourBadgesLine: yourBadgesLine, badgeGlyph: badgeGlyph, badgeImagePath: badgeImagePath, badgesPath: badgesPath,
          sendZap: sendZap, zapTarget: zapTarget, zapsReceived: zapsReceived, playerLightningAddress: playerLightningAddress,
          zapProfileEvent: zapProfileEvent, zapSatLine: zapSatLine, ZAP_CHOICES_SAT: ZAP_CHOICES_SAT, identitySignEvent: identitySignEvent,
-         shopOf: shopOf, buyItem: buyItem, itemTermsOf: itemTermsOf, itemShareOn: itemShareOn, itemPriceOn: itemPriceOn, itemPriceFor: itemPriceFor, ITEM_DEV_SHARES: ITEM_DEV_SHARES, ITEM_DEV_SHARE_DEFAULT: ITEM_DEV_SHARE_DEFAULT, ownedItems: ownedItems, itemsKeyFor: itemsKeyFor, entryItemsFor: entryItemsFor,
+         shopOf: shopOf, buyItem: buyItem, resendPaidRecords: resendPaidRecords, itemTermsOf: itemTermsOf, itemShareOn: itemShareOn, itemPriceOn: itemPriceOn, itemPriceFor: itemPriceFor, ITEM_DEV_SHARES: ITEM_DEV_SHARES, ITEM_DEV_SHARE_DEFAULT: ITEM_DEV_SHARE_DEFAULT, ownedItems: ownedItems, itemsKeyFor: itemsKeyFor, entryItemsFor: entryItemsFor,
          entryUnlocks: entryUnlocks, itemUnlocksOf: itemUnlocksOf,
          entryBreakdown: entryBreakdown, pendingWindowLine: pendingWindowLine, savedLockExpiration: savedLockExpiration,
          toHex: toHex, fromHex: fromHex };
