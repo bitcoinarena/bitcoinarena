@@ -20,7 +20,9 @@ const manifestOf = (name, version, extra = {}) => ({ gameName: name, version, ga
 // a catalog as catalogOf builds it, from listings whose "manifest" is the id it decodes to
 const catalogFrom = (games) => catalogOf([{ games: games.map((g) => ({ id: g.id, manifest: g.id })) }],
   { decode: (bytes) => games.find((g) => g.id === toHex(bytes)).m, idOf: (m) => fromHex(games.find((g) => g.m === m).id), signed: () => true });   // test manifests carry no signature (#2774)
-const entry = (hosts, roles = ['game', 'verify', 'settlement']) => ({ roles, hostedGames: hosts.map(fromHex) });
+// each row its own node key: since #2850 the census minimum counts distinct keys, and rows with none were one key (#2915)
+let entryKey = 0;
+const entry = (hosts, roles = ['game', 'verify', 'settlement']) => ({ roles, hostedGames: hosts.map(fromHex), pubkey: new Uint8Array(32).fill(++entryKey & 0xff) });
 const contract = { networkId: NETWORK_ID_TESTNET4 };
 
 test('the newest version whose census game nodes can draw a committee: v24 hosted by 3 is posted, not v13 (10-26 grid)', () => {

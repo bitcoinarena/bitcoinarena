@@ -162,7 +162,8 @@ test('the newest version the census can draw is posted (v24 over v13), on the ce
   const v = (n) => ({ id: String(n).padStart(2, '0').repeat(32), m: { gameName: 'nextblock', version: n, gameDevPubkey: fromHex(DEV), requiredProtocolVersion: 2,
     cores: [{ hash: 'cc'.repeat(32), configs: [] }] } });
   const games = [v(13), v(24)];
-  const entry = (hosts) => ({ roles: ['game', 'verify', 'settlement'], hostedGames: hosts.map((g) => fromHex(g.id)) });
+  let k = 0;   // each row its own node key: the census minimum counts distinct keys since #2850 (#2915)
+  const entry = (hosts) => ({ roles: ['game', 'verify', 'settlement'], hostedGames: hosts.map((g) => fromHex(g.id)), pubkey: new Uint8Array(32).fill(++k) });
   const seats = ['http://s1', 'http://s2', 'http://s3'];
   const gb = createGridBase({ chainCall: async (m) => (m === 'getblockcount' ? 2000 : censusHash),
     censusEntriesAt: async () => [entry(games), entry(games), entry([games[1]])], contractAt: () => ({ networkId: NETWORK_ID_TESTNET4 }),
