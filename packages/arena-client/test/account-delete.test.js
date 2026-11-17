@@ -54,10 +54,11 @@ function page({ live = false } = {}) {
   const L = store(), S = store(), local = store();
   L.setItem('arena.seeds', JSON.stringify([{ hex: A, from: 'minted', at: 1 }, { hex: B, from: 'minted', at: 2 }]));
   L.setItem('arena.seed.held.' + A.slice(0, 16), '{"tab":"t","at":1}');
-  L.setItem('arena.nostr', '{"npub":"npub1x"}'); local.setItem('arena.nostr', '{"npub":"npub1x"}');
+  L.setItem('arena.nostr', '{"npub":"npub1x"}'); local.setItem('arena.nostr', '{"npub":"npub1x"}'); local.setItem('arena.nwc', 'nostr+walletconnect://x');
   S.setItem('arena.player.seed', A); S.setItem('arena.player.seed.from', 'imported');
   const forgot = [];
-  const window = { ARENA_UNITY_LOBBY: { showing: !live } };
+  // kanban #2946: the page clears the browser's Nostr login and its wallet connection through ARENA_BROWSER_STORE (its localStorage)
+  const window = { ARENA_UNITY_LOBBY: { showing: !live }, ARENA_BROWSER_STORE: () => local };
   const fn = pageFunction(PAGE, ['window', 'vault', 'sessionStorage', 'localStorage', 'ARENACLIENT', 'console'], ACTION, 'return window.ARENA_DELETE_ACCOUNT;');
   const del = fn(window, () => L, S, local, { forgetPhrase: (s, h) => { forgot.push(h); return 5; } }, { log: () => {} });
   return { del, L, S, local, forgot };
@@ -72,10 +73,12 @@ test('delete: this tab\'s phrase, its wallets and the Nostr login are forgotten;
   assert.deepEqual(JSON.parse(p.L.getItem('arena.seeds')).map((x) => x.hex), [B], 'only this tab\'s phrase leaves the kept list');
   assert.equal(p.L.getItem('arena.seed.held.' + A.slice(0, 16)), null);
   assert.deepEqual([p.L.getItem('arena.nostr'), p.local.getItem('arena.nostr')], [null, null], 'the Nostr login is forgotten');
+  assert.equal(p.local.getItem('arena.nwc'), null, 'and the wallet it connected');
   const q = page({ live: true });
   assert.deepEqual(q.del(), { ok: false, why: 'A round is running in this tab - finish it first.' });
   assert.equal(q.S.getItem('arena.player.seed'), A, 'nothing removed during a run');
   assert.deepEqual(q.forgot, []);
+  assert.equal(q.local.getItem('arena.nostr'), '{"npub":"npub1x"}', 'the Nostr login stays during a run');
 });
 
 test('the Account card asks before it deletes: the balance said, "I have my 24 words or my Nostr key" ticked first', () => {
