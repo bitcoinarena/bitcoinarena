@@ -43,16 +43,18 @@ test('four agreeing, or no answers: no number, and it says why', async () => {
 });
 
 test('the panel sits under the fees on bitcoinarena.io, and the games screen carries no reserves box and no footer home link', () => {
-  const fees = HTML.indexOf('<section id="split"'), panel = HTML.indexOf('id="reserves"'), next = HTML.indexOf('<section id="build"');
+  const fees = HTML.indexOf('<section id="split"'), panel = HTML.indexOf('id="reserves"'), next = HTML.indexOf('</section>', fees);
   assert.ok(fees > 0 && panel > fees && panel < next, 'the reserves panel is inside the fees section');
-  assert.ok(HTML.includes('<script src="js/reserves.js" defer></script>'));
+  assert.ok(HTML.includes('<script src="/js/reserves.js" defer></script>'));
   assert.equal(GAMES.includes('class="reserves"'), false, 'no reserves box on the games screen');
   assert.equal(/more-sep"> · <\/span><a href="https:\/\/bitcoinarena.io\/">/.test(GAMES), false, 'no "← bitcoinarena.io" in the footer links');
 });
 
 test('the website and the docs say the current split, the reserves and that anyone may propose a payout', () => {
   const DOCS = readFileSync(new URL('../../../src/website/docs/www/index.html', import.meta.url), 'utf8');
-  assert.match(HTML, /aria-label="A paid stake: 90 % in play, 4 % node fee, 2 % game developer, 2 % protocol developers, 2 % protocol reserves"/);
+  const games = HTML.slice(HTML.indexOf('<div class="tabpanel" id="split-games"'), HTML.indexOf('<div class="tabpanel" id="split-markets"'));
+  for (const [percent, label] of [['90', 'The pot'], ['4', 'Nodes'], ['2', 'Game developer'], ['2', 'Protocol developers'], ['2', 'Protocol reserves']])
+    assert.match(games, new RegExp(`<td class="p">${percent} %</td><td><span class="what">${label}`));
   assert.match(HTML, /<b>Anyone<\/b> can propose a payout/);
   for (const id of ['money', 'reserves', 'proposals']) assert.ok(DOCS.includes(`id="${id}"`), `docs section #${id}`);
   assert.match(DOCS, /<b>Anyone can propose a payout<\/b>/);
@@ -70,7 +72,7 @@ test('the website names only the current configuration; the proposals forum is i
   assert.ok(HTML.includes('<a class="keep" href="https://testnet.bitcoinarena.io/proposals/">Proposals</a>'))
   //: on a phone the menu keeps Proposals and Docs beside Play - only the section links are hidden
   assert.ok(HTML.includes('<a class="keep" href="https://docs.bitcoinarena.io/">Docs</a>'));
-  assert.match(HTML, /@media \(max-width: 860px\) \{ nav \.links a:not\(\.keep\) \{ display: none; \}/);
+  assert.match(HTML, /@media \(max-width: 1140px\) \{ nav\.top \.links a:not\(\.keep\)\s*\{\s*display: none;/);
   assert.ok(!/nav \.links \{ display: none; \}/.test(HTML), 'the phone menu hides every link again');
   const FORUM = readFileSync(new URL('../../../src/arena-ui/proposals/index.html', import.meta.url), 'utf8');
   const JS = readFileSync(new URL('../../../src/arena-ui/proposals/forum.js', import.meta.url), 'utf8');
