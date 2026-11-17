@@ -185,7 +185,7 @@ test('finalityOf is an option only of server.js and settlement.js, each defaulti
   assert.match(verify, /import \{ resultFinality as finalityOf(, chainIndex)?(, resultWindow)? \} from '\.\/finality\.js';/);
   assert.equal(/finalityOf\s*[:=]/.test(verify), false, 'verify.js takes or passes a finalityOf of its own');
   assert.match(server, /\n  finalityOf = resultFinality,\n/);
-  assert.match(settlement, /finalityOf = resultFinality \} = \{\}\) \{/);
+  assert.match(settlement, /finalityOf = resultFinality[,\s][^}]*\} = \{\}\) \{/);   // another option may follow it (publicationPull, #2638; #2915)
   assert.equal((server.match(/finalityOf/g) || []).length, 3, 'server.js names finalityOf beyond its default, the settle pass and the LockSettlement it makes');
   assert.equal(readFileSync(new URL('main.js', dir), 'utf8').includes('finalityOf'), false);
 });

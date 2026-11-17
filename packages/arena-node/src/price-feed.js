@@ -517,7 +517,8 @@ export class PriceFeed {
     if (!this.#held(roundHex, 0) || !this.#held(roundHex, kClose)) {
       let asking = this.endsInFlight.get(roundHex);
       if (!asking && !(this.now() - (this.endsAsked.get(roundHex) ?? -Infinity) < ASK_ENDS_EVERY_MS)) {
-        this.endsAsked.set(roundHex, this.now());
+        // NOT marked here (kanban #2915): #fetchEnds marks endsAsked itself (#2278) and returns at once when it is marked - marking it
+        // before the call made every ends ask a no-op, so a seat that lost its ends (a restart, a pruned db) never fetched them again
         asking = this.#fetchEnds(rid, [0, kClose]).finally(() => this.endsInFlight.delete(roundHex));
         this.endsInFlight.set(roundHex, asking);
       }
