@@ -7820,7 +7820,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           await new Promise((r) => setTimeout(r, 1500));
         }
       }
-      if (!got) {
+      if (!got || !(got.games && got.games.length)) {   // no answer, or answers that name no game (refused or empty): the same way out
         const st = document.getElementById('stage');
         if (st) {
           window.ArenaText.say(st, 'The game\'s nodes did not answer. ');
