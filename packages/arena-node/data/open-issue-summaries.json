@@ -882,5 +882,9 @@
  "2912": {
   "text": "Node software: a shop purchase can be paid and then not recorded",
   "kind": "bug"
+ },
+ "2913": {
+  "text": "Other: a paid round can show a paid amount that does not match its locks, and call a fee lock returned stake",
+  "kind": "bug"
  }
 }
