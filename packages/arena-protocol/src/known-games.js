@@ -707,4 +707,14 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
     gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
     requiredProtocolVersion: 11,
   }),
+  // NEXT BLOCK VERSION 8 (kanban #2911, feedback #191): version 7 with core 7d197042 - the score's apron left forward from any door
+  'b6f824f777b069a02c56569162440ca935f780b2aef21038c939e24be7d668a6': Object.freeze({
+    name: 'nextblock',
+    cores: Object.freeze({
+      '7d1970426bc7146ef2cddcf2d4ad1aa1e53647a9dbef3bc1cfc319aae161fca7': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
+    }),
+    sharedWorld: Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d']),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    requiredProtocolVersion: 11,
+  }),
 });
