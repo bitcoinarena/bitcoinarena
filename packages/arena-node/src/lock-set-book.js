@@ -437,6 +437,15 @@ export class LockSetBook {
    */
   async settle(rid) {
     if (!this.certified(rid)) await this.pull(rid);
+    // WHILE THE WINDOW IS OPEN, ASKED AGAIN (kanban #2914, measured 2026-11-17: in 7 of 64 two-entry RPS rounds some seats certified the set and
+    // others signed every entry VOID - round 2efed1ea certified at seats 4-7 at close + 1.3 s, VOID at seats 1-3, no common result): a seat that
+    // closed at the entry close pulled its peers once while they were still signing, found no certificate and kept VOID for good. Now, past the
+    // close and until the window and its final 2 s are over (voidNow), the peers are asked again every LOCK_SET_PULL_MS.
+    const c = this.roundOf(rid);
+    while (c && !this.certified(rid) && !this.conflicted(rid) && this.#now() >= Number(c.entryCloseMs) && !this.voidNow(rid, c)) {
+      await new Promise((ok) => setTimeout(ok, LOCK_SET_PULL_MS));
+      await this.pull(rid);
+    }
     return this.conflicted(rid) ? null : this.certified(rid);
   }
 }
