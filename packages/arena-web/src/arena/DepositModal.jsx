@@ -276,6 +276,8 @@ export class DepositModal extends React.Component {
           <input ref={this.link} type="text" autoComplete="off" spellCheck={false} placeholder={'nostr+walletconnect://… from your wallet\'s "connect an app"'}
             style={{ display: s.linkShown ? undefined : 'none', font: '13px ui-monospace,monospace', padding: '9px', borderRadius: '9px', border: '1px solid #3a4655', background: '#0b0f14', color: '#e8eaed' }} />
           <div style={{ fontSize: '12.5px', color: '#a9b3c1' }}>{note}</div>
+          {/* THE WALLETS WE TESTED (kanban #2917): shown until a wallet is connected */}
+          {!s.nwcUri ? <a className="dep-nwc-tested" href="https://bitcoinarena.io/compatibility/#pay" target="_blank" rel="noopener" style={{ fontSize: '12.5px', color: '#c9a8ff' }}>Which wallets work? The ones we tested</a> : null}
           {webln ? <button type="button" className="dep-webln-pay" disabled={!s.invoice || s.weblnBusy} onClick={() => this.payWebln()}
             style={{ font: '600 15px system-ui,sans-serif', padding: '11px', borderRadius: '10px', border: '1px solid #f7931a', background: '#3a2a12', color: '#fff3e0', cursor: 'pointer' }}>Pay with my browser wallet (WebLN)</button> : null}
         </div>
