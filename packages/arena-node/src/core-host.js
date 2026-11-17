@@ -319,6 +319,17 @@ const LOCKDOWN = `'use strict';
   // the script's value, handed only to this thread and kept on no global: the core never reaches it
   // kanban #2220, #2476: the core's call depth (core-depth.js), counted in its own realm
   const depth = ${DEPTH_LOCKDOWN};
+  // AN OVERFLOW HANDED TO A REJECTION HANDLER IS STICKY TOO (kanban #2852, #1489 r26-hosting-1): String or JSON.stringify run as a promise
+  // job itself (Promise.resolve(deep).then(String)), so no function of the core's was on the stack when the builtin overflowed and nothing
+  // the core wrote caught it - the RangeError reached the next rejection handler as a plain ARGUMENT and the core branched on where the
+  // machine's stack ran out. Every rejection handler (then's second argument; catch, finally, the combinators and a promise resolved with a
+  // promise all call then) asks the count first: past an overflow it is sticky and thrown on instead of handed over. Anything else passes
+  // untouched. (Replacing then breaks V8's then protector for this thread: a promise of the node's own realm - import()'s refusal - then
+  // settles through the node's microtask queue, between two calls; each call drains the core's queue first, below.)
+  { const then0 = Promise.prototype.then, applyP = Reflect.apply;
+    const guard = (f) => (typeof f === 'function' ? function (r) { depth.c(r); return applyP(f, this, [r]); } : f);
+    Object.defineProperty(Promise.prototype, 'then', { value: { then(a, b) { return applyP(then0, this, [a, guard(b)]); } }.then,
+      writable: false, configurable: false, enumerable: false }); }
   return Object.freeze({ begin() { used = 0; depth.begin(); }, over: () => (over !== null ? over : depth.over()), used: () => used,
     bound: () => (count > ${TRACK_MAX} ? Infinity : base + since), exact, depth });
 })();`;
@@ -348,6 +359,8 @@ markFrom();
 // compiled once, run in every context: the lockdown, the call, and a code cache of each module's source
 const LOCKDOWN_SCRIPT = new vm.Script(LOCKDOWN, { filename: 'arena:lockdown' });
 const CALL_SCRIPT = new vm.Script('__arenaCall(__arenaOp, __arenaIn)', { filename: 'arena:call' });
+// kanban #2852: an empty script, so the jobs the node's realm queued for the core between two calls (import()'s refusal) run as the call begins
+const DRAIN_SCRIPT = new vm.Script('0', { filename: 'arena:drain' });
 const codeCache = new Map();
 
 /** ONE CONTEXT, LOADED FROM THE CORE'S FILES: the lockdown, the core's modules and the driver evaluated in it. Answers
@@ -416,6 +429,8 @@ function build() {
   Object.defineProperty(context, '__arenaCall', { value: driver.namespace.call, writable: false, configurable: false, enumerable: false });
   const run = (op, json) => {
     budget.begin();
+    DRAIN_SCRIPT.runInContext(context);
+    if (budget.over() !== null) throw new Error(budget.over());
     context.__arenaOp = op; context.__arenaIn = json;
     const out = CALL_SCRIPT.runInContext(context);
     if (budget.over() !== null) throw new Error(budget.over());
