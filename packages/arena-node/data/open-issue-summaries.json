@@ -994,5 +994,21 @@
  "2947": {
   "text": "Other: a join can fail after the lock, a void refund can be short, and a deposit can exceed its cap",
   "kind": "bug"
+ },
+ "2953": {
+  "text": "Website: a compatibility check shows a refusing signer as blank, and the refusal reason is lost",
+  "kind": "bug"
+ },
+ "2955": {
+  "text": "Website: the compatibility page test rejects automatic results from the nightly run",
+  "kind": "bug"
+ },
+ "2959": {
+  "text": "Federation: deposit errors can show internal names; move amounts, lobby text, counts, and the client log can be wrong",
+  "kind": "bug"
+ },
+ "2960": {
+  "text": "Node software: a long season board stays empty while the shorter board inside it still counts rounds",
+  "kind": "bug"
  }
 }
