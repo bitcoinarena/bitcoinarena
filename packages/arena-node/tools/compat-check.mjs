@@ -24,9 +24,10 @@ import { BunkerSigner, parseBunkerInput } from 'nostr-tools/nip46';
 const unhex = (h) => Uint8Array.from(h.match(/../g).map((x) => parseInt(x, 16)));
 const timed = (p, ms, what) => Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error(`${what}: no answer in ${ms / 1000} s`)), ms))]);
 
-/** One row from the checks: ok only when every one passed. */
+/** One row from the checks: ok only when every one passed, and never with nothing checked (kanban #2939). */
 export function resultRow({ name, version, kind, checks, testedBy = null, date = new Date().toISOString().slice(0, 10) }) {
-  return { name: String(name), version: String(version), kind, date, testedBy, checks, result: Object.values(checks).every((c) => c === 'ok') ? 'works' : 'problems' };
+  const said = Object.values(checks || {});
+  return { name: String(name), version: String(version), kind, date, testedBy, checks, result: said.length && said.every((c) => c === 'ok') ? 'works' : 'problems' };
 }
 
 /** The list with one row put in: a product and kind has one row, the newest. */
@@ -94,6 +95,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   let kind, checks;
   if (mode === 'nwc') { kind = 'NWC wallet'; checks = await checkNwc(link, { pay: env.PAY || null }); }
   else if (mode === 'signer') { kind = 'Remote signer'; checks = await checkSigner(link); }
+  else if (mode === 'manual' && !String(env.CHECKS || '').trim()) { console.error('manual: CHECKS=\'login=ok,...\' - what was checked by hand'); process.exit(2); }
   else if (mode === 'manual') { kind = 'Browser extension'; checks = Object.fromEntries(String(env.CHECKS || '').split(',').filter(Boolean).map((x) => x.split('='))); }
   else { console.error('nwc, signer or manual'); process.exit(2); }
   const row = resultRow({ name: env.NAME, version: env.VERSION, kind, checks, testedBy: env.TESTED_BY || null });
