@@ -2446,6 +2446,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       return new Set(c.entries.map((e) => toHex(e.pubkey).toLowerCase()));
     } catch { return null; }
   };
+  // kanban #2912: the distinct censuses (as node key sets) of this seat's newest rounds, newest first - at most `most` of them
+  const recentCensusKeySets = (most = 6) => {
+    const out = [], seen = new Set();
+    try {
+      for (const row of round.db.prepare('SELECT contract FROM rounds ORDER BY rowid DESC LIMIT 400').all()) {
+        if (out.length >= most) break;
+        let c; try { c = roster.censusFor(roundIdOf(decodeRoundContract(new Uint8Array(row.contract)))); } catch { continue; }
+        if (!c || !c.ok || !Array.isArray(c.entries) || !c.entries.length) continue;
+        const keys = new Set(c.entries.map((e) => toHex(e.pubkey).toLowerCase())), sig = [...keys].sort().join();
+        if (!seen.has(sig)) { seen.add(sig); out.push(keys); }
+      }
+    } catch { /* no rounds readable: none */ }
+    return out;
+  };
   const servedRoundsBetween = async (from, to) => {
     const held = [round.finalSigsBetween(from, to).map((r) => ({ ...r, committee: round.signerNodes(r.roundId) }))];
     let seats = []; try { seats = networkSeats(); } catch { seats = []; }
@@ -10555,7 +10569,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             held[i + 1] = (a.held || []).slice(0, SERVED_HELD_MAX).map((x) => ({ roundId: fromHex(x.roundId), committee: x.committee.map(fromHex), finals: x.finals.map(fromHex) }));
           } catch { /* a seat that does not answer adds nothing */ }
         }));
-        const merged = servedNodes({ rounds: mergeServedRounds(held.filter(Boolean), { bonded: bondedNodeKeys() }).rounds, fromMs: from, toMs: to, verify: (sg, m, k) => schnorr.verify(sg, m, k) });   // kanban #2739
+        // THE CENSUS THE PAGE FILTERED BY (kanban #2912, retest 2026-11-17 01:04Z: all 14 seats answered the same 422 "paid the served list c31e1fc7,
+        // the one read here is a57d6631" after the 500 sat had gone out): the page counts a committee by the keys of the newest census it checked
+        // (committee.js newestCheckedCensus), this seat by the census of the newest round it inserted - listed rounds carry different censuses
+        // (20 entries at 161585/161738, 16 at 161742), so the two filters named different nodes. The seat's own pick stands; when its root is not
+        // the record's, the censuses of its recent rounds are tried (every one a census this seat checked itself) and the one that gives the
+        // record's root is taken. Each FINAL's signature is checked once across the tries.
+        const heldIn = held.filter(Boolean), sigSeen = new Map();
+        const verifyOnce = (sg, m, k) => { const key = `${toHex(sg)}:${toHex(m)}:${toHex(k)}`; if (!sigSeen.has(key)) sigSeen.set(key, schnorr.verify(sg, m, k)); return sigSeen.get(key); };
+        const mergedBy = (bonded) => servedNodes({ rounds: mergeServedRounds(heldIn, { bonded }).rounds, fromMs: from, toMs: to, verify: verifyOnce });
+        let merged = mergedBy(bondedNodeKeys());   // kanban #2739
+        if (merged.root !== toHex(p.servedRoot)) for (const keys of recentCensusKeySets()) { const m = mergedBy(keys); if (m.root === toHex(p.servedRoot)) { merged = m; break; } }
         const got = await keepItemPurchase({ p, manifest: game.manifest, networkSet: vestedShares(forced.recipients, height), gameSet: game.donationSet,
           served: { fromMs: merged.fromMs, toMs: merged.toMs, nodes: merged.nodes, root: merged.root }, port: await portOfFederation(p.federationId), db: round.db,
           verify: (sg, m, k) => schnorr.verify(sg, m, k), reserveKey: itemReserveKey, keepReserve: (row) => round.putDonationOutputs([row]), keepDonations: (rows) => round.putDonationOutputs(rows), fees: feesAtHeight(height),
