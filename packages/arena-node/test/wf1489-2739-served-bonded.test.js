@@ -51,7 +51,9 @@ test('one seat\'s invented round of a made-up key does not make the seats\' serv
   // kanban #2739: the seat now merges with the node keys of the census of its newest round as `bonded` (server.js bondedNodeKeys) - here
   // the same three honest seats the page checked - at both merges (POST /item-purchase and the funding signal's servedRoundsBetween)
   const src = readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
-  assert.equal((src.match(/mergeServedRounds\(held\.filter\(Boolean\), \{ bonded: bondedNodeKeys\(\) \}\)/g) || []).length, 2, 'both seat merges pass the census node keys as bonded');
+  // kanban #2912: the purchase merge runs through mergedBy (its own census first, then its recent rounds' censuses for the record's root)
+  assert.equal((src.match(/mergeServedRounds\(held\.filter\(Boolean\), \{ bonded: bondedNodeKeys\(\) \}\)|mergedBy\(bondedNodeKeys\(\)\)/g) || []).length, 2, 'both seat merges pass the census node keys as bonded');
+  assert.match(src, /const mergedBy = \(bonded\) => servedNodes\(\{ rounds: mergeServedRounds\(heldIn, \{ bonded \}\)/, 'the purchase merge filters by a census (#2912)');
   const seat = servedNodes({ rounds: mergeServedRounds(held.filter(Boolean), { bonded: new Set(bondedKeys) }).rounds, fromMs, toMs, verify });
   console.log(`  page root ${page.served.root.slice(0, 16)} (${page.served.nodes.length} nodes), seat root ${seat.root.slice(0, 16)} (${seat.nodes.length} nodes: ${seat.nodes.map((n) => n.key.slice(0, 8)).join(' ')})`);
   assert.ok(!seat.nodes.some((n) => n.key === toHex(madeUpKey)), 'the seat counts a key no census bonds, named by one seat alone, as a served node');
