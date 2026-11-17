@@ -6,6 +6,7 @@
 // This module only computes and records: paying stays the separate manual step it was (it never calls a wallet).
 import { DatabaseSync } from 'node:sqlite';
 import { randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';   // kanban #2958: the bot handle list
 
 export const SEASON_POT_SATS = 100000;
 export const SEASON_MS = 7 * 24 * 3600 * 1000;
@@ -211,10 +212,16 @@ export function openBountySeason(path = ':memory:', { startMs = null, potSats = 
     return flagsOf(pubkey, { nowMs: nowMs() });
   }
 
+  const botXHandles = () => { try { const f = process.env.FAUCET_BOT_X_HANDLES; return new Set(f ? readFileSync(f, 'utf8').split('\n').map((l) => l.trim().replace(/^@/, '').toLowerCase()).filter((l) => l && !l.startsWith('#')) : []); } catch { return new Set(); } };
   /** THE STORED FLAGS of a key: a platform counts when its last read said member and is fresh (CHECK_FRESH_MS). */
   function flagsOf(pubkey, { nowMs = Date.now() } = {}) {
     const f = { telegram: false, discord: false, x: false };
-    for (const l of linksOf(pubkey)) if (l.member === true && l.checkedMs != null && nowMs - l.checkedMs <= CHECK_FRESH_MS) f[l.platform] = true;
+    const links = linksOf(pubkey);
+    // A KNOWN AI BOT IS A BOT, WHATEVER IT LINKS (kanban #2958, the owner 2026-11-17 on x.com/damaidams: "Alle tickets mit diesem handle als bot
+    // markieren, auch in Zukunft"): a key that links an X handle on the bot list (FAUCET_BOT_X_HANDLES file, read on every call) gets no flag -
+    // not human, no social bonus - for every report, past and future
+    if (links.some((l) => l.platform === 'x' && botXHandles().has(String(l.username || '').replace(/^@/, '').toLowerCase()))) return { ...f, bot: true };
+    for (const l of links) if (l.member === true && l.checkedMs != null && nowMs - l.checkedMs <= CHECK_FRESH_MS) f[l.platform] = true;
     return f;
   }
 
