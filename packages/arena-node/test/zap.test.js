@@ -160,7 +160,7 @@ test('a receipt goes to the game\'s relay once when the signed request names bot
   // another client's request, signed as it is: the old host and the new one, side by side
   const t = zapRequestTemplate({ recipient: to.pubkey, amountMsat: 21000n, relays: [RELAY] });
   t.tags[0] = ['relays', 'wss://relay.bitcoin-arena.io', 'wss://relay.bitcoinarena.io', RELAY];
-  const request = signNostr(t, { secret: payer.secret, curve, nowS: 1790000000 });
+  const request = signNostr(t, { secret: payer.secret, curve, nowS: Math.floor(Date.now() / 1000) });   // signed now: the callback takes only a fresh request (kanban #2455)
   const said = await (await fetch(`http://127.0.0.1:${z.port}/lnurlp/bob/cb?amount=21000&nostr=${encodeURIComponent(JSON.stringify(request))}`)).json();
   assert.ok(said.pr, JSON.stringify(said));
   ln.payByRequest(said.pr);
