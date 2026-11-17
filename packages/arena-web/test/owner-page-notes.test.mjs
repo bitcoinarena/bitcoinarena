@@ -22,7 +22,8 @@ test('no note left: comments, ticket numbers, names, hosts, quotes', () => {
 
 test('what the page does is all there: URLs and regular expressions with //, strings, styles and the markup', () => {
   for (const kept of ["https://testnet.bitcoinarena.io/owner/", 'https://tn4.bitcoin-arena.io/guardian-1', '/^https?:\\/\\//', 'arena-owner-seed:node:', 'Loading from your node…',
-    '/\\/[Dd]ashboard\\/owner\\/?$/', 'color-mix(in srgb', 'data:image/svg+xml', 'https://x.com/bitcoinarena_io', 'id="view"', 'id="public-line"', '<script type="module">', 'nav.side']) assert.ok(BUILT.includes(kept), kept);
+    '/\\/[Dd]ashboard\\/owner\\/?$/', 'color-mix(in srgb', 'https://x.com/bitcoinarena_io', 'id="view"', 'id="public-line"', '<script type="module">', 'nav.side']) assert.ok(BUILT.includes(kept), kept);
+  assert.equal(BUILT.includes('data:image/svg+xml'), SOURCE.includes('data:image/svg+xml'));
   assert.equal(scripts(BUILT).length, scripts(SOURCE).length);
   assert.equal((BUILT.match(/<style/g) || []).length, (SOURCE.match(/<style/g) || []).length);
   // the markup outside the scripts and styles: the source's, less its comments

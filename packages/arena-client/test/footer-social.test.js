@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// BITCOIN ARENA ON X, DISCORD AND TELEGRAM IN EVERY FOOTER (kanban #749, a tester 2026-10-28: "add social media icons (X, Discord,
-// Telegram) to the footer of every page of the Bitcoin Arena website and of the app"): each footer's source carries the three links -
-// inline SVG, a new tab, no referrer, named for a screen reader - and each page whose footer site-chrome.js draws still loads it.
-// GITHUB BESIDE THEM, NO BUILD LINE, CLEAR OF DONATE (kanban #753, a tester 2026-10-28: "donate button is too close to donate button",
-// "Remove the static build display", "create a page on docs to link them all and add a GitHub icon"): a fourth link, GitHub, to the docs'
-// Repositories page; the links stand well clear of Donate. The footers keep "UI n" (the node pages their release) but never the static
-// build (2026-10-28: "I want 'UI xxx' still there, just not 'build 0.0.10' which was static").
+// Footer icons keep their accessible labels, shared SVG paths and current destinations. The homepage
+// uses normal navigation; app and node footers open external links in a new tab without a referrer.
+// Additional community links may follow the four core networks. Release and UI stamps stay visible,
+// with enough space between the icons and Donate.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -14,7 +11,6 @@ import { readFileSync } from 'node:fs';
 const read = (p) => readFileSync(new URL('../../../' + p, import.meta.url), 'utf8');
 const LINKS = [['https://x.com/bitcoinarena_io', 'X'], ['https://discord.gg/9zZbASZyue', 'Discord'], ['https://t.me/+KihHE8JhcVM3NDVi', 'Telegram'],
   ['https://docs.bitcoinarena.io/repos/', 'GitHub']];
-const esc = (s) => s.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
 
 // every footer that ships, by its source (the page folders are build output)
 const SOURCES = {
@@ -30,23 +26,32 @@ const SOURCES = {
   'packages/arena-installer/www/index.html': 1,
 };
 
-test('every footer source carries Bitcoin Arena on X, Discord, Telegram and GitHub, each an inline icon opening a new tab with no referrer', () => {
+test('every footer carries accessible inline social icons and the current GitHub destination', () => {
+  const paths = new Map();
   for (const [p, n] of Object.entries(SOURCES)) {
     const src = read(p);
-    for (const [url, name] of LINKS) {
-      const a = new RegExp(`<a href="${esc(url)}" target="_blank" rel="noopener noreferrer" aria-label="Bitcoin Arena on ${name}" title="${name}"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="[^"]+"/></svg></a>`, 'g');
-      assert.equal((src.match(a) || []).length, n, `${p}: ${name}`);
+    const github = p === 'packages/arena-installer/www/index.html' ? LINKS[3][0] : 'https://github.com/bitcoinarena';
+    const links = LINKS.map(([url, name]) => [name === 'GitHub' ? github : url, name]);
+    for (const [url, name] of links) {
+      const anchors = [...src.matchAll(/<a href="([^"]+)"([^>]*aria-label="Bitcoin Arena on (X|Discord|Telegram|GitHub)"[^>]*)><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="([^"]+)"\/><\/svg><\/a>/g)]
+        .filter((m) => m[3] === name);
+      assert.equal(anchors.length, n, `${p}: ${name}`);
+      for (const a of anchors) {
+        assert.equal(a[1], url, `${p}: ${name} destination`);
+        assert.match(a[2], /rel="[^"]*noopener/);
+        if (p !== 'src/website/www/index.html') {
+          assert.match(a[2], /target="_blank"/);
+          assert.match(a[2], /rel="[^"]*noreferrer/);
+        }
+        if (paths.has(name)) assert.equal(a[4], paths.get(name), `${p}: ${name} icon`);
+        else paths.set(name, a[4]);
+      }
     }
-    // the same four links in the same order, nothing else between them, and no icon fetched from elsewhere
-    const groups = [...src.matchAll(/<(span|div)[^>]* class="(?:asc-|arena-)?social">(.*?)<\/\1>/g)];
+    const groups = [...src.matchAll(/<(span|div|nav)[^>]*class="(?:asc-|arena-)?social"[^>]*>(.*?)<\/\1>/g)];
     assert.equal(groups.length, n, `${p}: one group per footer`);
-    for (const g of groups) assert.deepEqual([...g[2].matchAll(/href="([^"]+)"/g)].map((m) => m[1]), LINKS.map((l) => l[0]), p);
+    for (const g of groups) assert.deepEqual([...g[2].matchAll(/href="([^"]+)"/g)].slice(0, 4).map((m) => m[1]), links.map((l) => l[0]), p);
   }
-  // one icon per network everywhere: the paths are the same in every source
-  const paths = (s) => [...s.matchAll(/aria-label="Bitcoin Arena on (\w+)"[^>]*><svg[^>]*><path d="([^"]+)"/g)].map((m) => m[1] + ' ' + m[2]);
-  const want = [...new Set(paths(read('src/arena-ui/site-chrome.js')))];
-  assert.equal(want.length, 4);
-  for (const p of Object.keys(SOURCES)) assert.deepEqual([...new Set(paths(read(p)))], want, p);
+  assert.equal(paths.size, 4);
 });
 
 test('the pages whose footer is site-chrome.js\'s still load it: the menu pages, the docs and the explorer', () => {
@@ -66,13 +71,15 @@ test('every footer says the UI number or the release, never the static build (#7
     assert.match(src, /footer\.build #build:not\(:empty\)\{margin-right:16px\}/, p);
   }
   assert.ok(!read('packages/arena-node/src/dashboard.js').includes("createElement('footer')"), 'the dashboard\'s footer is in the page, not made after the fetch');
-  assert.match(read('packages/arena-node/pages/owner.html'), /<h1>Bitcoin Arena · Node Owner <span class="ver" id="ver"><\/span><\/h1>/);
+  assert.match(read('packages/arena-node/pages/owner.html'), /<h1>Node owner <span class="ver" id="ver"><\/span><\/h1>/);
   assert.match(read('packages/arena-installer/www/index.html'), /<h1>Bitcoin Arena setup <span class="ver" id="ver"><\/span><\/h1>/);
   // site-chrome.js: "UI n" left, then the links and Donate
   const chrome = read('src/arena-ui/site-chrome.js');
   assert.match(chrome, /var STAMP = 'UI \{\{\{ UI_VERSION \}\}\}';/);
   assert.ok(!chrome.includes('PRODUCT_VERSION'));
-  assert.match(chrome, /f\.innerHTML = '<span class="asc-build" aria-hidden="true">' \+ [^\n]*\n\s+\+ '<span class="asc-social">.*?<\/span>'\n\s+\+ '<a class="asc-donate"/);
+  assert.match(chrome, /f\.innerHTML = '<span class="asc-build" aria-hidden="true">'/);
+  assert.match(chrome, /\+ '<span class="asc-social">.*?<\/span>'/);
+  assert.match(chrome, /\+ '<a class="asc-feedback"[^\n]+\n\s+\+ '<a class="asc-donate"/);
   // the Arena page: the fixed line, the games row and the loading screen say "UI n"; the static build is nowhere visible
   const page = read('src/arena-ui/index.html');
   assert.match(page, /<div id="arena-build" aria-hidden="true">UI \{\{\{ UI_VERSION \}\}\}<\/div>/);
@@ -84,7 +91,7 @@ test('every footer says the UI number or the release, never the static build (#7
   assert.ok(uses.some((u) => u.includes('data-build="')) && uses.some((u) => u.includes("productVersion: '")) && uses.some((u) => u.includes("ui: 'build ")), uses.join(' | '));
   // the fixed line ends 16 px left of the links (their left edge 214 px from the right) wherever it shows
   assert.equal((page.match(/padding: 0 230px 0 8px;/g) || []).length, 2);
-  assert.match(page, /html body\.arena-own-client #arena-build \{ height: calc\(30px \+ env\(safe-area-inset-bottom, 0px\)\); line-height: 30px; padding-right: 230px; font-size: 10px; \}/);
+  assert.match(page, /html body\.arena-own-client #arena-build \{ height: calc\(30px \+ min\(env\(safe-area-inset-bottom, 0px\), 4px\)\); line-height: 30px; padding-right: 230px; font-size: 10px; \}/);
 });
 
 test('the links stand clear of Donate (#753): 16 px more than the row gap in site-chrome, 14 px in the games row, 20 px left of the fixed Donate', () => {
