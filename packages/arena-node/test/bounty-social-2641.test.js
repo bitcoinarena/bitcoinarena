@@ -23,7 +23,7 @@ test('#2641 bonusPct: every combination of X, Nostr, Telegram, Discord, Armada (
   }
   assert.equal(bonusPct({ x: 'yes', telegram: 1, discord: 1 }), 0, 'only true counts');
   assert.equal(seasonPayout({ level: 'high', flags: { x: true, nostr: true, telegram: true, discord: true, armada: true } }).sats, 8000, 'at most +60 %');
-  assert.equal(seasonPayout({ level: 'medium', flags: { discord: true, armada: true } }).sats, 360, 'no X: not proven human, 15 % (kanban #2788, #2784) +20 %');
+  assert.equal(seasonPayout({ level: 'medium', flags: { discord: true, armada: true } }).sats, 300, 'no X: not proven human, 15 % (kanban #2788, #2784) and no bonus (the owner 2026-11-16: the bonus is for humans only; #2915)');
   assert.equal(seasonPayout({ level: 'medium', flags: { x: true, discord: true, armada: true } }).sats, 2800);
 });
 

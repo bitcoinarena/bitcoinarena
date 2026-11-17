@@ -7,6 +7,7 @@
 // claimed and comes back with its stake. Below 27 every byte and every payout is as before.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { pointKey } from './point-key-fixture.js';
 import { lockSettlement, lateLockSettlement, feeLockPays, RESERVE_LATER_PK } from '../src/lock-settlement.js';
 import { splitByFederation } from '../src/federation-settlement.js';
 import { giftsInFeeLock, giftsFeeBps, giftsEntryExpected, entryFeeBpsForRound, entryPaysReserves, entryGiftsInFee, roundSplit,
@@ -22,7 +23,7 @@ import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const pk = (n) => { const k = new Uint8Array(32); k[0] = n; k[31] = n; return k; };
-const key33 = (p, n) => Uint8Array.of(p, ...new Uint8Array(32).fill(n));
+const key33 = (p, n) => pointKey(p, n);   // kanban #1675: keys are curve points (#2915)
 const RID = b32(0x5f);
 const NO_FEES = { ppm: 0n, baseMsat: 0n };
 const STAKE = 100000n;
