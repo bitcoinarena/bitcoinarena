@@ -20,7 +20,8 @@
  * No secret is ever printed or written.
  */
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { inflateRawSync } from 'node:zlib';
+import { manifestFromCrx, crxUrl } from './compat-package.mjs';
+export { manifestFromCrx, crxUrl } from './compat-package.mjs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resultRow, withRow, checkNwc, checkSigner, parseNwc, nwcAsk } from './compat-check.mjs';
@@ -28,30 +29,6 @@ import { resultRow, withRow, checkNwc, checkSigner, parseNwc, nwcAsk } from './c
 const SITE = fileURLToPath(new URL('../../../src/website/www/compatibility/', import.meta.url));
 export const REFRESH_DAYS = 30;
 const TIMEOUT = 20000;
-
-/** The manifest.json of a Chrome Web Store package (CRX3: "Cr24", version, header length, header, then a zip), read through the zip's
- *  central directory, since the store's zips put the sizes after the data. */
-export function manifestFromCrx(buf) {
-  const b = Buffer.from(buf);
-  if (b.toString('latin1', 0, 4) !== 'Cr24') throw new Error('not a Chrome extension package');
-  const zip = b.subarray(12 + b.readUInt32LE(8));
-  let end = -1;
-  for (let i = zip.length - 22; i >= Math.max(0, zip.length - 22 - 65535); i--) if (zip.readUInt32LE(i) === 0x06054b50) { end = i; break; }
-  if (end < 0) throw new Error('the package is not a readable zip');
-  const count = zip.readUInt16LE(end + 10);
-  for (let n = 0, i = zip.readUInt32LE(end + 16); n < count && zip.readUInt32LE(i) === 0x02014b50; n++) {
-    const method = zip.readUInt16LE(i + 10), size = zip.readUInt32LE(i + 20), nameLen = zip.readUInt16LE(i + 28);
-    const name = zip.toString('utf8', i + 46, i + 46 + nameLen), local = zip.readUInt32LE(i + 42);
-    if (name === 'manifest.json') {
-      const start = local + 30 + zip.readUInt16LE(local + 26) + zip.readUInt16LE(local + 28), data = zip.subarray(start, start + size);
-      return JSON.parse((method === 8 ? inflateRawSync(data) : data).toString('utf8').replace(/^\uFEFF/, ''));
-    }
-    i += 46 + nameLen + zip.readUInt16LE(i + 30) + zip.readUInt16LE(i + 32);
-  }
-  throw new Error('no manifest.json in the package');
-}
-
-export const crxUrl = (id) => `https://clients2.google.com/service/update2/crx?response=redirect&prodversion=155.0&acceptformat=crx2,crx3&x=id%3D${id}%26uc`;
 
 /** The newest published version of a product, or its fixed label ("hosted"), or null when it is not published anywhere we read. */
 export async function latestVersion(p, { fetcher = fetch, githubToken = null } = {}) {
@@ -78,11 +55,11 @@ export async function latestVersion(p, { fetcher = fetch, githubToken = null } =
 export function plan(p, row, latest, { secrets, extension }) {
   if (p.check === 'manual') {
     if (row && latest && latest !== row.version) return { act: 'remind', why: `version ${latest} is out; ${row.version} was tested by hand on ${row.date}` };
-    return { act: 'skip', why: row ? `tested by hand, ${row.version} is still the newest` : 'tested by hand only, not tested yet' };
+    return { act: 'skip', why: row ? (latest ? `tested by hand, ${row.version} is still the newest` : 'tested by hand; newest version could not be determined') : 'tested by hand only, not tested yet' };
   }
   if (p.check === 'extension' && !p.adapter) {
     if (row && latest && latest !== row.version) return { act: 'remind', why: `version ${latest} is out; browser setup is manual for this product` };
-    return { act: 'skip', why: 'browser setup is manual for this product' };
+    return { act: 'skip', why: p.manualReason || 'browser setup is manual for this product' };
   }
   if (p.check === 'extension') return extension ? { act: 'run' } : { act: 'skip', why: 'no extension runner here (kanban #2951)' };
   if (p.check === 'signer' || p.check === 'nwc') return secrets[p.secret] ? { act: 'run' } : { act: 'skip', why: `no pairing: the secret ${p.secret} is not set` };
@@ -135,7 +112,7 @@ export async function run({ products, results, secrets = {}, today = new Date().
         let round = null;
         if (pay && !payWallet) throw new Error('payment requested but COMPAT_PAY_WALLET is not configured');
         if (pay) round = await payWallet();
-        out = { checks: await checkers.nwc(secrets[p.secret], { pay: round ? round.invoice : null, kept }) };
+        out = { checks: await checkers.nwc(secrets[p.secret], { pay: round ? round.invoice : null, kept, requireReturnInvoice: !!round }) };
         if (round && out.checks.pay_invoice === 'ok' && kept.invoice) {
           try { await round.payBack(kept.invoice); out.paidBack = true; } catch (e) { out.paidBack = false; out.payBackWhy = clean(e); }
         }
@@ -175,7 +152,7 @@ export function reportMarkdown(r) {
   return lines.join('\n');
 }
 
-/** The secrets: COMPAT_SECRETS (the workflow's toJSON(secrets)) plus the environment's own COMPAT_* variables. */
+/** The secrets: COMPAT_SECRETS JSON plus the environment's own COMPAT_* variables. */
 export function secretsFrom(env) {
   let all = {};
   try { all = JSON.parse(env.COMPAT_SECRETS || '{}') || {}; } catch { all = {}; }
@@ -190,10 +167,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const results = existsSync(resultsFile) ? JSON.parse(readFileSync(resultsFile, 'utf8')) : [];
   const secrets = secretsFrom(process.env);
   let extension = null;
-  if (!process.argv.includes('--no-extensions')) {
-    try { extension = (await import('./compat-extension.mjs')).checkExtension; } catch (e) {
-      if (e.code !== 'ERR_MODULE_NOT_FOUND') throw e;
-    }
+  const extensionModule = new URL('./compat-extension.mjs', import.meta.url);
+  if (!process.argv.includes('--no-extensions') && existsSync(extensionModule)) {
+    extension = (await import(extensionModule.href)).checkExtension;
   }
   const { SimplePool } = await import('nostr-tools/pool');
   const pool = new SimplePool();
