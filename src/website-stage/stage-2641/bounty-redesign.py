@@ -47,7 +47,7 @@ main = f'''  <section class="hero">
     <div class="chip-row"><span class="chip">{ico("x", "X")} follow @bitcoinarena_io</span><span class="plus">+25 %</span></div>
     <div class="chip-row"><span class="chip">{ico("telegram", "Telegram")}{ico("discord", "Discord")}{ico("armada", "Armada")} member of any 2</span><span class="plus">+25 %</span></div>
   </div>
-  <p class="note">Both give +50 %, so a high bug pays 7,500. Type your names in the Feedback form and press Check. We check again before we pay; if you left, that part drops. Join: <a href="https://x.com/bitcoinarena_io" rel="noopener">X</a> &middot; <a href="https://t.me/+KihHE8JhcVM3NDVi" rel="noopener">Telegram</a> &middot; <a href="https://discord.gg/9zZbASZyue" rel="noopener">Discord</a> &middot; <a href="https://armada.buzz/" rel="noopener">Armada</a></p>
+  <p class="note">Both give +50 %, so a high bug pays 7,500. Type your names in the Feedback form and press Check. We check again before we pay; if you left, that part drops. Join: <a href="https://x.com/bitcoinarena_io" rel="noopener">X</a> &middot; <a href="https://t.me/bitcoinarena_io" rel="noopener">Telegram</a> &middot; <a href="https://discord.gg/9zZbASZyue" rel="noopener">Discord</a> &middot; <a href="https://armada.buzz/" rel="noopener">Armada</a></p>
 
   <div class="duo">
     <section class="card" id="budget"><h3>This week's pot{rl("budget")}</h3>

@@ -113,7 +113,7 @@
 +      const armadaHref = (document.getElementById('arena-foot-armada') || {}).href || 'https://armada.buzz/';
 +      const ROWS = [
 +        { p: 'x', name: 'X', ph: '@yourname on X', join: 'https://x.com/bitcoinarena_io', joinText: 'Follow @bitcoinarena_io', no: 'not following' },
-+        { p: 'telegram', name: 'Telegram', ph: '@yourname on Telegram', join: 'https://t.me/+KihHE8JhcVM3NDVi', joinText: 'Join the group', no: 'not a member' },
++        { p: 'telegram', name: 'Telegram', ph: '@yourname on Telegram', join: 'https://t.me/bitcoinarena_io', joinText: 'Join the group', no: 'not a member' },
 +        { p: 'discord', name: 'Discord', ph: 'Discord username', join: 'https://discord.gg/9zZbASZyue', joinText: 'Join the server', no: 'not a member' },
 +        { p: 'armada', name: 'Armada', ph: 'Armada npub1… or name@domain', join: armadaHref, joinText: 'Join the community', no: 'not a member' },
 +      ];
@@ -224,7 +224,7 @@
        const shrink = (file) => new Promise((ok, no) => {
          if (file.size <= 1400000) return ok(file);
 @@ -1915,7 +2100,7 @@
-           icon('Telegram', 'https://t.me/+KihHE8JhcVM3NDVi'), icon('Nostr', 'https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2')));
+           icon('Telegram', 'https://t.me/bitcoinarena_io'), icon('Nostr', 'https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2')));
        off.onclick = () => d.remove();
        send.onclick = async () => {
 -        if (t.value.trim().length < 50) { recount(); return; }
@@ -279,7 +279,7 @@
 +        linkBtn.onclick = async () => { out.textContent = 'Making a code …';
 +          try { const j = await post('link'); if (!j.ok) throw new Error(j.why || 'no code');
 +            out.replaceChildren(el('div', { text: 'Your code: ' + j.code + ' (24 hours, once). Post it in one of these:' }),
-+              el('div', { text: 'Telegram: send /link ' + j.code + ' to @BitcoinArenaBot or in our group' }), el('a', { href: 'https://t.me/+KihHE8JhcVM3NDVi', target: '_blank', rel: 'noopener', text: 'Join the Telegram group' }),
++              el('div', { text: 'Telegram: send /link ' + j.code + ' to @BitcoinArenaBot or in our group' }), el('a', { href: 'https://t.me/bitcoinarena_io', target: '_blank', rel: 'noopener', text: 'Join the Telegram group' }),
 +              el('div', { text: 'Discord: type /link code:' + j.code + ' in our server, or DM it to ArenaBot' }), el('a', { href: 'https://discord.gg/9zZbASZyue', target: '_blank', rel: 'noopener', text: 'Join the Discord server' }),
 +              el('div', { text: 'X: post "@bitcoinarena_io ' + j.code + '" from your account, and follow @bitcoinarena_io' }),
 +              el('div', { text: status(j) })); } catch (e) { out.textContent = (e && e.message) || 'no code'; } };

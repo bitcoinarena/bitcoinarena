@@ -12,7 +12,7 @@ new = ('  <div class="bonus">\n'
   + card('x', 'https://x.com/bitcoinarena_io', 'Follow @bitcoinarena_io on X', '+20 %') + '\n'
   + card('nostr', 'https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2', 'Follow Bitcoin Arena on Nostr', '+20 %') + '\n    </div>\n'
   '    <div class="bgroup b-community"><div class="bhead"><b>Community · join</b><span class="gbadge">any 2: +20 %</span></div>\n'
-  + card('telegram', 'https://t.me/+KihHE8JhcVM3NDVi', 'Join our Telegram group', '') + '\n'
+  + card('telegram', 'https://t.me/bitcoinarena_io', 'Join our Telegram group', '') + '\n'
   + card('discord', 'https://discord.gg/9zZbASZyue', 'Join our Discord server', '') + '\n'
   + card('armada', armada, 'Join our Armada community', '') + '\n    </div>\n  </div>\n')
 i = s.index('  <div class="bonus">'); j = s.index('\n  </div>\n', s.index('b-community', i)) + len('\n  </div>\n')
