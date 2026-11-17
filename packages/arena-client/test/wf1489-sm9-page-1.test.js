@@ -51,7 +51,7 @@ const mem = () => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.
 test('an item paid whose record no seat kept is not paid again when the player presses Buy once more', async () => {
   const s = seats(); const w = wallet();
   const ask = { manifest: MANIFEST, itemId: 'large-truck', networkSet: NET, gameSet: NET, wallet: w, federationId: 'fe'.repeat(32), player,
-    seats: ['https://s1', 'https://s2'], fetch: s.fetch, verify, nowMs: () => NOW };
+    seats: ['https://s1', 'https://s2'], fetch: s.fetch, verify, nowMs: () => NOW, bondedKeys: NODE_KEYS.map(toHex) };   // the census the page checked (kanban #1896, #2915)
   const first = await buyItem(ask);
   assert.deepEqual([first.ok, first.step], [false, 'record'], 'paid, the record not kept');
   assert.equal(w.payments, 1);
