@@ -70,7 +70,7 @@ export async function nwcAsk({ wallet, relay, secret }, pool, method, params = {
 
 export async function checkNwc(link, { pay = null } = {}) {
   const c = parseNwc(link), pool = new SimplePool(), checks = {};
-  const one = async (name, method, params, ok) => { try { const r = await nwcAsk(c, pool, method, params); checks[name] = ok(r) ? 'ok' : 'odd answer'; } catch (e) { checks[name] = String(e.message).slice(0, 120); } };
+  const one = async (name, method, params, ok) => { try { const r = await nwcAsk(c, pool, method, params); checks[name] = ok(r) ? 'ok' : 'odd answer'; } catch (e) { checks[name] = String(e?.message ?? e).slice(0, 120); } };
   await one('get_info', 'get_info', {}, (r) => !!r);
   await one('get_balance', 'get_balance', {}, (r) => Number.isFinite(Number(r.balance)));
   await one('make_invoice', 'make_invoice', { amount: 1000, description: 'Bitcoin Arena compatibility check' }, (r) => /^ln/.test(String(r.invoice)));
@@ -84,7 +84,7 @@ export async function checkSigner(link) {
   if (!bp) throw new Error('that is not a bunker:// link');
   const pool = new SimplePool(), checks = {};
   const signer = BunkerSigner.fromBunker(generateSecretKey(), bp, { pool });
-  const step = async (name, run) => { try { checks[name] = (await timed(run(), 60000, name)) ? 'ok' : 'odd answer'; } catch (e) { checks[name] = String(e.message).slice(0, 120); } };
+  const step = async (name, run) => { try { checks[name] = (await timed(run(), 60000, name)) ? 'ok' : 'odd answer'; } catch (e) { checks[name] = String(e?.message ?? e).slice(0, 120); } };
   let me = null;
   await step('connect', async () => { await signer.connect(); return true; });
   await step('get_public_key', async () => { me = await signer.getPublicKey(); return /^[0-9a-f]{64}$/.test(me); });
