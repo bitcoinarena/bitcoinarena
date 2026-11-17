@@ -142,3 +142,36 @@ test('the foot\'s "Get 300 sats" opens the window on the faucet: its invoice onl
   const none = await run(() => ({ faucetNow: true }));
   assert.deepEqual(none.invoices, [1000n]);
 });
+
+test('#2947 Custom: a sign, a decimal point or a letter is refused - never read as another amount', async () => {
+  const { o, asked } = offerOf();
+  const m = mount({ offer: o });
+  m.choose(o.choices[2]);
+  for (const t of ['-100', '1.5', '100abc']) {
+    m.typed(t);
+    assert.equal(m.state.amount, 'Enter a whole number of sat (digits only).', t);
+    assert.equal(m.state.invoice, null, t);
+  }
+  m.typed('1,000');
+  assert.equal(m.state.amount, 'Pay 1,000 sat from any Lightning wallet to top up your player wallet.');
+  await wait(600);
+  assert.deepEqual(asked, [101000n, 1000000n]);
+  m.componentWillUnmount();
+});
+
+test('#2947 Custom: more than the federation can take is refused with its room', async () => {
+  const { o, asked } = offerOf();
+  o.maxSat = 135743;
+  const m = mount({ offer: o });
+  m.choose(o.choices[2]);
+  m.typed('999999999');
+  assert.equal(m.state.amount, 'At most 135,743 sat fit into this federation now.');
+  await wait(600);
+  assert.deepEqual(asked, [101000n]);
+  m.typed('135743');
+  await wait(600);
+  assert.deepEqual(asked, [101000n, 135743000n]);
+  o.maxSat = 0; m.typed('5');
+  assert.equal(m.state.amount, 'This federation takes no deposit now: it is full.');
+  m.componentWillUnmount();
+});

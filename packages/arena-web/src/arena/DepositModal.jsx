@@ -24,6 +24,18 @@ export const restWords = (o) => (restPay(o) > o.restMsat
   ? `This round needs ${satNum(o.restMsat)} more sat for fees. The smallest Lightning deposit is ${satNum(restPay(o))} sat. Pay ${satNum(restPay(o))} sat to join.`
   : `This round needs ${satNum(o.restMsat)} more sat for fees. Pay the rest to join.`);
 const hasRest = (o) => o.restMsat !== null && o.restMsat !== undefined;
+// The room left in the federation a deposit goes into (kanban #2947): the offer's maxSat when it names one, else the page's own pick
+// (ARENA_DEPOSIT_FEDERATION) read against its verified statuses (ARENA_FED_LOADS: exposure cap less signed reserve); null when unknown.
+const roomSat = (o) => {
+  if (o && typeof o.maxSat === 'number') return Math.max(0, Math.floor(o.maxSat));
+  try {
+    const w = typeof window === 'undefined' ? null : window;
+    const fid = w && w.ARENA_DEPOSIT_FEDERATION && w.ARENA_DEPOSIT_FEDERATION.federation;
+    const st = fid && w.ARENA_FED_LOADS && w.ARENA_FED_LOADS.get ? w.ARENA_FED_LOADS.get(String(fid).toLowerCase()) : null;
+    if (!st || st.exposureCapSats === undefined || st.reserveSats === undefined) return null;
+    return Math.max(0, Number(st.exposureCapSats) - Number(st.reserveSats));
+  } catch { return null; }
+};
 
 export class DepositModal extends React.Component {
   constructor(props) {
@@ -124,7 +136,23 @@ export class DepositModal extends React.Component {
   typed(text) {
     clearTimeout(this.typeTimer); this.timers.delete(this.typeTimer);
     this.setState({ typed: text });
-    const sat = parseInt(String(text).replace(/[^0-9]/g, ''), 10);
+    // A PLAIN WHOLE AMOUNT, AND ONLY WHAT THE FEDERATION CAN TAKE (kanban #2947, feedback #285): every non-digit was dropped, so "-100" asked an
+    // invoice for 100 sat, and 999,999,999 one far above the federation's room. Digits with thousands separators (, space ' _) are read; a sign, a
+    // decimal point or a letter is refused; above the deposit federation's room (its exposure cap less its signed reserve) is refused with the room.
+    const raw = String(text).trim();
+    if (raw && !/^[0-9][0-9,' _]*$/.test(raw)) {
+      this.token++;
+      this.setState({ invoice: null, invoiceText: '', amount: 'Enter a whole number of sat (digits only).', qr: null, hold: 'The QR code appears as soon as you enter an amount', want: null });
+      return this.status(0, 'Enter a whole number of sat (digits only).', '');
+    }
+    const sat = parseInt(raw.replace(/[^0-9]/g, ''), 10);
+    const room = roomSat(this.props.offer);
+    if (sat > 0 && room !== null && sat > room) {
+      this.token++;
+      const words = room > 0 ? `At most ${room.toLocaleString('en-US')} sat fit into this federation now.` : 'This federation takes no deposit now: it is full.';
+      this.setState({ invoice: null, invoiceText: '', amount: words, qr: null, hold: 'The QR code appears as soon as you enter an amount', want: null });
+      return this.status(0, words, '');
+    }
     if (!(sat > 0)) {
       this.token++;
       this.setState({ invoice: null, invoiceText: '', amount: 'Enter an amount in sat.', qr: null, hold: 'The QR code appears as soon as you enter an amount', want: null });
