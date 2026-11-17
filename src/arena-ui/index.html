@@ -8004,7 +8004,10 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       // A game's site, or a link naming a game, asks again with a longer wait each time for about a minute, saying so; the bare
       // root asks twice (with no game named, Next Block's page is the fallback, as before).
       const named0 = new URLSearchParams(location.search.replace(/^\?/, '')).get('game') || window.ARENA_SITE_GAME;
-      const waits = named0 && named0 !== 'nextblock' ? [2500, 4000, 6000, 8000, 8000, 8000, 8000, 8000] : [2500, 5000];
+      // THE ROOT ASKS AS LONG AS A NAMED GAME (kanban #2957, feedback #296): two tries left the bare root on "try 2 of 2" for good when the
+      // seats were slow; every page now asks for about a minute, and after the last try the stage says so with a Try again button
+      void named0;
+      const waits = [2500, 4000, 6000, 8000, 8000, 8000, 8000, 8000];
       for (let i = 0; i < waits.length; i++) {
         try { got = await ARENACLIENT.fetchGames({ nodes, answerMs: waits[i] }); } catch (e) { console.warn('[arena] games: ' + e.message); got = null; }
         if (got && got.games && got.games.length) break;
@@ -8015,7 +8018,16 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           await new Promise((r) => setTimeout(r, 1500));
         }
       }
-      if (!got) return null;
+      if (!got) {
+        const st = document.getElementById('stage');
+        if (st) {
+          window.ArenaText.say(st, 'The game\'s nodes did not answer. ');
+          const again = document.createElement('button'); again.type = 'button'; again.className = 'arena-try-again'; again.textContent = 'Try again';
+          again.addEventListener('click', () => location.reload()); st.appendChild(again);
+        }
+        console.log('[arena] no games answered after ' + waits.length + ' tries - Try again offered');
+        return null;
+      }
       // THE WALLET FROM HERE, BEFORE THE PICK (the games screen shows the balance) - the games are read already
       if (got.games && got.games.length && window.ARENA_OPEN_WALLET_EARLY) window.ARENA_OPEN_WALLET_EARLY(window.ARENA_LEDGER_LOBBY);
       console.log('[arena] games of ' + nodes.length + ' node(s): ' + got.games.map((g) => g.name).join(', ') + ' in ' + (Date.now() - t0) + ' ms');
