@@ -16,6 +16,7 @@
 import { decodeBolt11 } from './bolt11.js';
 import { sha256, toHex } from './hash.js';
 import { lnurlFor } from './bech32.js';
+import { relaySet } from './nostr-relays.js';
 
 export const ZAP_REQUEST_KIND = 9734;
 export const ZAP_RECEIPT_KIND = 9735;
@@ -69,7 +70,7 @@ export function zapRequestTemplate({ recipient, amountMsat, relays = [], payRequ
   if (typeof amountMsat !== 'bigint' || amountMsat < 1000n) throw new Error('a zap is at least 1 sat, in msat as a bigint');
   const message = String(comment || '');
   if (message.length > ZAP_COMMENT_MAX) throw new Error(`a zap's message is at most ${ZAP_COMMENT_MAX} characters`);
-  const named = [...new Set(relays.map(String))];
+  const named = relaySet(relays);   // the game's relay once, under its current name (kanban #2916)
   if (!named.length || named.length > ZAP_RELAYS_MAX || !named.every((r) => /^wss?:\/\/\S+$/.test(r)))
     throw new Error(`a zap names 1 to ${ZAP_RELAYS_MAX} relays (wss://) its receipt is published to`);
   const tags = [['relays', ...named], ['amount', String(amountMsat)]];

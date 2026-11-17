@@ -7309,7 +7309,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     (function zaps() {
       const box = document.getElementById('arena-zap');
       if (!box || !ARENACLIENT.sendZap) return;
-      const RELAYS = window.ARENA_ZAP_RELAYS || ['wss://relay.bitcoin-arena.io'];
+      const RELAYS = window.ARENA_ZAP_RELAYS || ['wss://relay.bitcoinarena.io'];
       // THE BOX IN REACT (kanban #564; the page's bundle, window.ArenaZap): drawn from `v` at every change, its taps handed back here
       const CHOICES = (ARENACLIENT.ZAP_CHOICES_SAT || [21, 100, 1000]).map((sat) => BigInt(sat) * 1000n);
       const v = { title: 'Zap', to: '', showMsg: false, msg: '', goLabel: 'Zap', goDisabled: true, st: '', stKind: '' };

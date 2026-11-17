@@ -59,8 +59,11 @@ test('the event: canonical content, its tags, the id NIP-01\'s hash, a BIP-340 s
   assert.deepEqual(m.outcome, { index: 1, label: 'UP' });
   assert.equal(m.entries[0].pick, 1);
   assert.throws(() => resultContent({ ...r, round: 'xyz' }), /64 hex/);
-  assert.deepEqual(publishRelays(' wss://relay.bitcoin-arena.io, https://no, ws://127.0.0.1:7777,wss://relay.bitcoin-arena.io'),
-    ['wss://relay.bitcoin-arena.io', 'ws://127.0.0.1:7777']);
+  assert.deepEqual(publishRelays(' wss://relay.bitcoinarena.io, https://no, ws://127.0.0.1:7777,wss://relay.bitcoinarena.io'),
+    ['wss://relay.bitcoinarena.io', 'ws://127.0.0.1:7777']);
+  // kanban #2916: a saved config with the relay's old host publishes there under the new name, and once when both are named
+  assert.deepEqual(publishRelays('wss://relay.bitcoin-arena.io,ws://127.0.0.1:7777,wss://relay.bitcoinarena.io'),
+    ['wss://relay.bitcoinarena.io', 'ws://127.0.0.1:7777']);
   assert.deepEqual(publishRelays(''), [], 'off by default');
 });
 

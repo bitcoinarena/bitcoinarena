@@ -39891,6 +39891,25 @@ function badgeBook({ nodes = [], game, fetch, via = (u) => u, timeout, answerMs 
   };
 }
 
+// ---- arena-protocol/src/nostr-relays.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// THE GAME'S OWN NOSTR RELAY (kanban #2916): wss://relay.bitcoinarena.io. #937 moved the site to bitcoinarena.io; the relay kept
+// its old name wss://relay.bitcoin-arena.io until #2916. The old host stays up as an ALIAS of the same relay: a WebSocket client
+// does not follow an HTTP redirect, and events already signed (NIP-65 relay lists, badge awards, zap requests) name the old URL
+// and cannot be signed again. So a list may name both - they are one relay, counted once, under the new name.
+
+const ARENA_RELAY = 'wss://relay.bitcoinarena.io';
+const ARENA_RELAY_OLD = 'wss://relay.bitcoin-arena.io';
+
+const OLD_HOST = /^(wss?:\/\/)relay\.bitcoin-arena\.io(?=[:/?#]|$)/i;
+
+/** One relay URL under its current name: the old host of the game's relay becomes the new one; any other URL is left as it is. */
+const canonicalRelay = (url) => String(url).replace(OLD_HOST, (_, scheme) => `${scheme}relay.bitcoinarena.io`);
+
+/** A relay list without repeats, the game's relay under its current name, in the order first named. */
+const relaySet = (urls) => [...new Set([...urls].map(canonicalRelay))];
+
 // ---- arena-protocol/src/zap.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -39907,6 +39926,7 @@ function badgeBook({ nodes = [], game, fetch, via = (u) => u, timeout, answerMs 
  * No money path of the game changes: a zap is the payer's own wallet (NWC) paying the recipient's own Lightning address.
  * These are the decisions; the fetching, signing and paying are the client's and the server's.
  */
+
 
 
 
@@ -39962,7 +39982,7 @@ function zapRequestTemplate({ recipient, amountMsat, relays = [], payRequestUrl 
   if (typeof amountMsat !== 'bigint' || amountMsat < 1000n) throw new Error('a zap is at least 1 sat, in msat as a bigint');
   const message = String(comment || '');
   if (message.length > ZAP_COMMENT_MAX) throw new Error(`a zap's message is at most ${ZAP_COMMENT_MAX} characters`);
-  const named = [...new Set(relays.map(String))];
+  const named = relaySet(relays);   // the game's relay once, under its current name (kanban #2916)
   if (!named.length || named.length > ZAP_RELAYS_MAX || !named.every((r) => /^wss?:\/\/\S+$/.test(r)))
     throw new Error(`a zap names 1 to ${ZAP_RELAYS_MAX} relays (wss://) its receipt is published to`);
   const tags = [['relays', ...named], ['amount', String(amountMsat)]];
