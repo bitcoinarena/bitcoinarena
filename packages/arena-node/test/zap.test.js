@@ -150,6 +150,26 @@ test('the zap address answers a zap pay request, invoices under the request\'s h
   await z2.close();
 });
 
+test('a receipt goes to the game\'s relay once when the signed request names both its hosts (kanban #2916)', async () => {
+  const ln = fakeLightning();
+  const server = keyPair();
+  const sent = [];
+  const z = await serveZapAddresses({ port: 0, publicHost: 'zap.example', names: ['bob'], secret: server.secret, curve, invoice: ln.invoice,
+    lookup: ln.lookup, publish: async (e, relays) => sent.push(...relays), watchMs: 50 });
+  const payer = keyPair(); const to = keyPair();
+  // another client's request, signed as it is: the old host and the new one, side by side
+  const t = zapRequestTemplate({ recipient: to.pubkey, amountMsat: 21000n, relays: [RELAY] });
+  t.tags[0] = ['relays', 'wss://relay.bitcoin-arena.io', 'wss://relay.bitcoinarena.io', RELAY];
+  const request = signNostr(t, { secret: payer.secret, curve, nowS: 1790000000 });
+  const said = await (await fetch(`http://127.0.0.1:${z.port}/lnurlp/bob/cb?amount=21000&nostr=${encodeURIComponent(JSON.stringify(request))}`)).json();
+  assert.ok(said.pr, JSON.stringify(said));
+  ln.payByRequest(said.pr);
+  for (let i = 0; i < 100 && sent.length < 2; i++) await new Promise((r) => setTimeout(r, 20));
+  await new Promise((r) => setTimeout(r, 100));
+  assert.deepEqual(sent.sort(), [RELAY, 'wss://relay.bitcoinarena.io'].sort());
+  await z.close();
+});
+
 test('the page zaps a player from its own wallet, and reads the receipt and the player\'s address back from the relay', async () => {
   const ln = fakeLightning();
   const server = keyPair();

@@ -20,6 +20,7 @@ import { eventId } from '../src/nostr-relay.js';
 import { RELAY_FRAME_MAX } from '../src/nostr-results.js';
 import WebSocket from 'ws';   // kanban #2693: the ws client, which bounds a frame (maxPayload) - the global one does not
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { ARENA_RELAY, relaySet } from '../../arena-protocol/src/nostr-relays.js';
 
 export const FOUNDING_BADGE = Object.freeze({ d: 'arena-founding-tester', name: 'Founding Tester',
   description: 'Finished a round of Bitcoin Arena on testnet4 and gave feedback.', image: '/img/founding-tester.svg' });
@@ -27,7 +28,7 @@ export const NIP05 = 'badges@bitcoinarena.io';
 const IMAGE_BASE = 'https://bitcoinarena.io';
 /** The definition's date: fixed, so the same key gives the same event. */
 const DEFINED_AT_S = Math.floor(Date.UTC(2026, 10, 2) / 1000);
-export const DEFAULT_RELAYS = ['wss://relay.bitcoin-arena.io', 'wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.primal.net'];
+export const DEFAULT_RELAYS = [ARENA_RELAY, 'wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.primal.net'];
 
 /** Who is due: a key that gave feedback, finished a round, and holds no award yet, in the order feedback came. */
 export function dueKeys({ feedback, boards, awarded = {} }) {
@@ -70,7 +71,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const secret = fromHex(readFileSync(env.BADGE_KEY_FILE, 'utf8').trim());
   const pubkey = toHex(schnorr.getPublicKey(secret));
   const stateFile = env.FOUNDING_STATE, relays = String(env.RELAYS || '').split(',').filter(Boolean);
-  const to = relays.length ? relays : DEFAULT_RELAYS;
+  const to = relaySet(relays.length ? relays : DEFAULT_RELAYS);
   const dry = !!env.DRY;
   const state = stateFile && existsSync(stateFile) ? JSON.parse(readFileSync(stateFile, 'utf8')) : { awarded: {} };
   const keep = () => { if (dry || !stateFile) return; writeFileSync(`${stateFile}.new`, `${JSON.stringify(state, null, 1)}\n`); renameSync(`${stateFile}.new`, stateFile); };
