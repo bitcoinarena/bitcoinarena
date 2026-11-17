@@ -33,3 +33,19 @@ test('manual mode without CHECKS writes no row (kanban #2939)', () => {
   assert.match(run.stderr, /CHECKS/);
   assert.equal(run.stdout, '');
 });
+
+test('a row carries the product address, platform, date and how it was tested (kanban #2917); a bad address or date is refused', () => {
+  const r = resultRow({ name: 'Amber', version: '6.6.9', kind: 'Remote signer', checks: { login: 'ok' }, url: 'https://example.com/amber', platform: 'Android', how: 'manual', date: '2026-11-16' });
+  assert.deepEqual([r.url, r.platform, r.how, r.date, r.result], ['https://example.com/amber', 'Android', 'manual', '2026-11-16', 'works']);
+  assert.equal(resultRow({ name: 'A', version: '1', kind: 'NWC wallet', checks: { x: 'ok' } }).how, 'automatic');
+  assert.throws(() => resultRow({ name: 'A', version: '1', kind: 'NWC wallet', checks: { x: 'ok' }, url: 'javascript:alert(1)' }), /URL/);
+  assert.throws(() => resultRow({ name: 'A', version: '1', kind: 'NWC wallet', checks: { x: 'ok' }, date: '17.11.2026' }), /DATE/);
+});
+
+test('manual mode with KIND=signer writes a remote signer row (kanban #2917)', () => {
+  const run = spawnSync(process.execPath, [fileURLToPath(new URL('../tools/compat-check.mjs', import.meta.url)), 'manual', 'nip-46'],
+    { env: { ...process.env, NAME: 'Clave', VERSION: '1.0', KIND: 'signer', CHECKS: 'login=ok', PLATFORM: 'iOS', DATE: '2026-11-17' }, encoding: 'utf8' });
+  assert.equal(run.status, 0, run.stderr);
+  const row = JSON.parse(run.stdout);
+  assert.deepEqual([row.kind, row.how, row.platform, row.date, row.result], ['Remote signer', 'manual', 'iOS', '2026-11-17', 'works']);
+});

@@ -1,0 +1,16 @@
+[
+ { "name": "Alby", "kind": "Browser extension", "platform": "Chrome, Firefox", "url": "https://getalby.com/" },
+ { "name": "Keys.band", "kind": "Browser extension", "platform": "Chrome, Firefox", "url": "https://keys.band/" },
+ { "name": "nsec.app", "kind": "Remote signer", "platform": "Web", "url": "https://github.com/nostrband/noauth" },
+ { "name": "nsecBunker", "kind": "Remote signer", "platform": "Server", "url": "https://github.com/kind-0/nsecbunkerd" },
+ { "name": "Aegis", "kind": "Remote signer", "platform": "iOS, Android", "url": "https://github.com/ZharlieW/Aegis" },
+ { "name": "Nowser", "kind": "Remote signer", "platform": "Android, iOS, desktop", "url": "https://github.com/haorendashu/nowser" },
+ { "name": "Alby Hub", "kind": "NWC wallet", "platform": "Web, desktop", "url": "https://albyhub.com/" },
+ { "name": "Coinos", "kind": "NWC wallet", "platform": "Web", "url": "https://coinos.io/" },
+ { "name": "Primal", "kind": "NWC wallet", "platform": "Android, iOS, web", "url": "https://primal.net/" },
+ { "name": "Zeus", "kind": "NWC wallet", "platform": "Android, iOS", "url": "https://zeusln.com/" },
+ { "name": "Minibits", "kind": "NWC wallet", "platform": "Android", "url": "https://www.minibits.cash/" },
+ { "name": "LNbits", "kind": "NWC wallet", "platform": "Server", "url": "https://lnbits.com/" },
+ { "name": "Rizful", "kind": "NWC wallet", "platform": "Web", "url": "https://rizful.com/" },
+ { "name": "YakiHonne", "kind": "NWC wallet", "platform": "Android, iOS, web", "url": "https://yakihonne.com/" }
+]
