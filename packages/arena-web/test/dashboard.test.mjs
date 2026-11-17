@@ -105,10 +105,10 @@ test('the notes (hyphens kept), every host row, the capacity plea and the liquid
   const notes = { guardian: 'the guardian third', lightning: 'this node hosts LND lnd-testnet4', gateway: 'this node pays no gateway' };
   const h = renderToStaticMarkup(React.createElement(DashboardPage, { data: { ...D, hosts, notes, capacity: { level: 'bad', says: 'this node is full' },
     liquidity: { freeSats: '300000', channels: [{ capacitySats: '100000' }], depositAddress: 'tb1qexample' } } }));
-  assert.equal(keep('lnd-testnet4'), 'test-host\u2011testnet4');
+  assert.equal(keep('lnd-testnet4'), 'lnd\u2011testnet4');
   // three short rows, the node's sentence as each row's tooltip (2026-10-26: "This is also a wall of text")
   // one slim line (2026-10-26: "Money Notes looks like a space waster, re arrange it to be more space efficient")
-  assert.match(h, /<div class="note-strip" id="money-notes"><span title="the guardian third"><b>Guardian fees<\/b> none until it guards a federation<\/span><span title="this node hosts LND lnd-testnet4"><b>Lightning<\/b> LND test-host‑testnet4<\/span><span title="this node pays no gateway"><b>Gateway<\/b> gw‑a · no cost<\/span><\/div>/);
+  assert.match(h, /<div class="note-strip" id="money-notes"><span title="the guardian third"><b>Guardian fees<\/b> none until it guards a federation<\/span><span title="this node hosts LND lnd-testnet4"><b>Lightning<\/b> LND lnd‑testnet4<\/span><span title="this node pays no gateway"><b>Gateway<\/b> gw‑a · no cost<\/span><\/div>/);
   assert.doesNotMatch(h, /<h3>Notes<\/h3>/);
   assert.match(h, /<h3>Hosts<\/h3>/);
   for (const [k, v] of [['Node key', '0274e26122c7b8fc…'], ['Fees its payments paid', '8 sat · 2 payments'], ['E-cash in blwp-testnet4', '249000 sat'], ['Lightning balance', '1082087 sat'],
