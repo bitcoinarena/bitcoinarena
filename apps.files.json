@@ -2,7 +2,7 @@
   "about": "What a node downloads of each app at its pinned commit (kanban #575): every file with its SHA-256. Written by tools/pin-apps.mjs from the apps' checkouts; never by hand.",
   "apps": {
     "arena-app-next-block": {
-      "commit": "16f465a8cb66aca314645c257a61e7a23108d633",
+      "commit": "cabd78726d3a05d42d8211d0c9a88119fb42f3f8",
       "files": {
         "README.md": "7fc7113426fb4d9d22e36b8000a3693e669f40de4e020c5fb1bf89014dafc482",
         "app.json": "d00b5867765dbf6d73aa5e17fd93a400d33af4847ab100b5a7bbe3886e11bbdb",
