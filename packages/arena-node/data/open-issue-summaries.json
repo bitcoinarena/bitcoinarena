@@ -1046,5 +1046,113 @@
  "2979": {
   "text": "Committees and bonds: a join can fail when the advert is off this committee, and signers can stay silent",
   "kind": "bug"
+ },
+ "2980": {
+  "text": "Node software: one seat can hold every other close, so a losing run ends void",
+  "kind": "bug"
+ },
+ "2981": {
+  "text": "Website: a door listing can keep a full copy per request and fill seat memory",
+  "kind": "bug"
+ },
+ "2982": {
+  "text": "Node software: one seat can displace an honest seat's vote",
+  "kind": "bug"
+ },
+ "2983": {
+  "text": "Federation: round fees can pay only guardians",
+  "kind": "bug"
+ },
+ "2984": {
+  "text": "Website: a head-to-head page can take one seat's void as final while others still certify",
+  "kind": "bug"
+ },
+ "2985": {
+  "text": "Other: an explorer listing can scan every transaction on each request",
+  "kind": "bug"
+ },
+ "2986": {
+  "text": "Other: a player can be pushed out of a lock list with no forfeit",
+  "kind": "bug"
+ },
+ "2987": {
+  "text": "Other: a stranger can fill the relay with keys that cannot be evicted",
+  "kind": "bug"
+ },
+ "2988": {
+  "text": "Other: a skipped relay check can erase newcomer profiles",
+  "kind": "bug"
+ },
+ "2989": {
+  "text": "Other: a replayed zap callback can stall the zap server",
+  "kind": "bug"
+ },
+ "2990": {
+  "text": "Node software: a relaying seat can make a genuine update be refused",
+  "kind": "bug"
+ },
+ "2991": {
+  "text": "Slashing: a liquidation fix does not cover the live game",
+  "kind": "bug"
+ },
+ "2992": {
+  "text": "Federation: seats can disagree on who is seated for fees",
+  "kind": "bug"
+ },
+ "2993": {
+  "text": "Federation: the website share of a round can stay at the default",
+  "kind": "bug"
+ },
+ "2994": {
+  "text": "Committees and bonds: an unproven bond can drop a node from the census",
+  "kind": "bug"
+ },
+ "2995": {
+  "text": "Other: one stranger can use up every link code",
+  "kind": "bug"
+ },
+ "2996": {
+  "text": "Other: one stranger can make every social check fail",
+  "kind": "bug"
+ },
+ "2997": {
+  "text": "Faucet and feedback: a follow lookup can skip the team-host refusal",
+  "kind": "bug"
+ },
+ "2998": {
+  "text": "Other: idle connections can block social login for everyone",
+  "kind": "bug"
+ },
+ "2999": {
+  "text": "Other: a flood of guestbook entries can drop every earlier member",
+  "kind": "bug"
+ },
+ "3000": {
+  "text": "Other: one relay can erase a social follow before it is checked",
+  "kind": "bug"
+ },
+ "3001": {
+  "text": "Settlement: an oversized relay read-back can stall settlement",
+  "kind": "bug"
+ },
+ "3002": {
+  "text": "Node software: one home seat can end an honest run",
+  "kind": "bug"
+ },
+ "3003": {
+  "text": "Other: a copied link code can attach the wrong social account",
+  "kind": "bug"
+ },
+ "3004": {
+  "text": "Other: a full relay can stall on every write",
+  "kind": "bug"
+ },
+ "3005": {
+  "text": "Faucet and feedback: a failed top-up can still lower the balance, and a rescan does not restore all of it",
+  "kind": "bug"
+ },
+ "3006": {
+  "text": "Node software: old round funds can stay invisible, and a rescan cannot bring them back",
+  "kind": "bug"
  }
 }
