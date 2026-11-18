@@ -950,6 +950,10 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
 
   // one gather pass (gatherAll starts it): kanban #2370 - never two at once, and the public door's no more often than GATHER_FRESH_MS
   const passes = { running: null, last: null, doneAt: 0 };
+  // ONLY WHAT A CENSUS STILL NAMES IS SERVED (kanban #2977, feedback #325): restore() keeps a saved record that stood against the census at its
+  // own height, so after a restart a seat served a federation no current census names (fed2-1: e45f06ef, OPEN at 158964, reserve 0) and the
+  // page was offered an OPEN federation the rest of the network did not list. The last gather pass that read a census names the set served.
+  let censusNamed = null;
   async function gatherPass(inviteFederationId) {
     await chainAhead();
     const b = basis();
@@ -958,6 +962,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     const cb = chainBasis(null);
     const feds = new Map();
     for (const x of [b, cb]) if (x && x.ok) for (const f of federationsOf(x.census)) if (!feds.has(toHex(f))) feds.set(toHex(f), f);
+    if ((b && b.ok) || (cb && cb.ok)) censusNamed = new Set(feds.keys());
     if (!feds.size) return [b.ok ? { ok: false, why: 'no census this seat reads names a federation' } : b];
     const out = [];
     const pass = { kept: new Map(), byBase: new Map() };   // the chain census reads of this whole pass (kanban #2339)
@@ -990,9 +995,10 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     /** WHAT GET /federations SERVES (kanban #2613): every kept record, and beside it a newer, less restrictive one this seat judged without
      * the config keys and did not keep - so a client reads both words. One row more per such federation; list() stays one row each. */
     served() {
-      const out = api.list();
+      const named = (f) => !censusNamed || censusNamed.has(String(f).toLowerCase());
+      const out = api.list().filter((x) => named(x.federation));
       for (const [federation, a] of [...holding].map(([f, h]) => [f, { ...h, held: true }]).concat([...beside])) {
-        if (!kept.has(federation) || out.some((x) => x.federation === federation && x.record === toHex(a.bytes))) continue;
+        if (!kept.has(federation) || !named(federation) || out.some((x) => x.federation === federation && x.record === toHex(a.bytes))) continue;
         out.push({ federation, status: a.status, height: a.height, signers: a.signers, record: toHex(a.bytes), ...(a.held ? { held: true } : { beside: true }),
           ...(a.record ? { reserveSats: String(a.record.reserveSats), exposureCapSats: String(a.record.exposureCapSats),
             load: a.record.exposureCapSats > 0n ? Number((a.record.reserveSats * 10000n) / a.record.exposureCapSats) / 10000 : null } : {}) });
