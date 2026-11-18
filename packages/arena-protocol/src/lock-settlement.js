@@ -106,7 +106,7 @@ export function settlementNonce(roundId) {
 export function lockSettlement({ roundId, entries, minScore = 0, locks, fees, feeLocks = new Map(), signerNodes = null, contract = null,
   sends = new Map(), addressed = null, requireSends = false, donationSet = null, payoutShares = null, feeBps = undefined, websitePct = undefined, gifts = null }) {
   // `feeBps` / `websitePct`: the fees in force at the round (fee-proposal.js) - a version-11 round's node fee and the
-  // website's share of it; unset, today's (4 % and 20 %)
+  // website's share of it; unset, today's (4 % and 10 %; 20 % until 2026-10-25, kanban #675)
   // `gifts`: a protocol-27 game round's { recipients, reserveKey, split } - its fee locks hold the developers' and the reserves' parts too
   // (kanban #1486), paid here for the counted entries (feeSettlement)
   if (!(locks instanceof Map)) return refuse('the verified stake locks are a Map by player key');
@@ -693,7 +693,7 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
       payouts.push({ pubkey: pub.payoutPk.subarray(1), payoutPk: pub.payoutPk, owedMsat: pub.msat, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: 'publisher' });
     } else unpaid.push({ pubkey: pub.payoutPk.subarray(1), owedMsat: pub.msat, why: 'the publisher\'s fee back does not pay its own output fee' });
   }
-  // THE WEBSITE THAT BROUGHT AN ENTRY (2026.0.9RULED path (a)): 20% of the nodes' fee on the stakes it brought,
+  // THE WEBSITE THAT BROUGHT AN ENTRY (2026.0.9RULED path (a)): websitePct (today 10%, 20% until 2026-10-25) of the nodes' fee on the stakes it brought,
   // one line per website key, off the top of the NODES' part - never the donation's, never the player's (its stake and fee locks
   // are what they were) - scaled to what the claimed locks pay as the nodes' shares are. The nodes share the rest.
   const sites = frontendShares({ entries: counted, fee: table.fee, gross: table.gross, ...(websitePct !== undefined ? { pct: BigInt(websitePct) } : {}) });
@@ -714,7 +714,7 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
   for (const [key, msat] of owed) {
     const guardianPk = key.startsWith('payout:') ? fromHex(key.slice(7)) : null;
     const pubkey = guardianPk ? guardianPk.subarray(1) : fromHex(key);
-    // what this node is owed once the websites' 20% is taken from the nodes' fee (its table share, scaled down by their total)
+    // what this node is owed once the websites' share (websitePct, today 10%) is taken from the nodes' fee (its table share, scaled down by their total)
     const owedMsat = sites.totalMsat ? (msat * (table.fee - sites.totalMsat)) / table.fee : msat;
     const got = largestPayoutMsat(fees, publisherGross || frontendGross ? (msat * nodesSpendable) / table.fee : (msat * spendable) / poolMsat);
     if (got === 0n) { unpaid.push({ pubkey, owedMsat, why: 'its fee share does not pay its own output fee' }); continue; }
@@ -802,7 +802,7 @@ export function bookLockSettlement({ roundId, table, entries, locks, feeLocks, f
   const reserveMsat = reserveBps > 0 && total > 0 ? (table.feesDueMsat * BigInt(reserveBps)) / BigInt(total) : 0n;
   if (reserveMsat > 0n && !(reserveKey instanceof Uint8Array && reserveKey.length === 33)) return refuse('this market pays the protocol reserve, and no reserve key is known for its federation');
   const giftMsat = table.feesDueMsat - nodesMsat - reserveMsat;
-  // THE WEBSITE THAT BROUGHT AN ORDER (2026.0.9, comment 2295, path (a)): 20% of the nodes' part of the fee each claimed
+  // THE WEBSITE THAT BROUGHT AN ORDER (2026.0.9, comment 2295, path (a)): websitePct (today 10%) of the nodes' part of the fee each claimed
   // row paid, to the payout key its entry signed - taken out of the nodes' part, never the donation's or a player's (fee.js
   // frontendBookShares). Its lines go before the seats'.
   const sites = frontendBookShares({ rows: table.claimed, entries: byId, nodeBps, donationBps, ...(websitePct !== undefined ? { pct: BigInt(websitePct) } : {}) });
