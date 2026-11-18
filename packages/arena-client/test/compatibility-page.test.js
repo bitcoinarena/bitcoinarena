@@ -66,12 +66,13 @@ test('the page draws names as text, links only https addresses, and says when a 
 test('the shipped data supports manual and automatic results as the tested catalog grows (kanban #2955)', () => {
   const C = load();
   const d = C.sections(RESULTS, PLANNED);
-  for (const name of ['Amber', 'Clave', 'nos2x', 'Sidecar']) assert.ok(d.groups[0].rows.some((r) => r.name === name), name);
   for (const r of RESULTS) {
     assert.ok(['manual', 'automatic'].includes(r.how), r.name);
-    assert.equal(r.result, 'works', r.name);
     assert.ok(Object.keys(r.checks || {}).length > 0, r.name);
-    assert.ok(Object.values(r.checks).every((c) => c === 'ok'), r.name);
+    // #2971: a row says "works" exactly when every check is ok; only those rows are listed as working
+    const allOk = Object.values(r.checks).every((c) => c === 'ok');
+    assert.equal(r.result, allOk ? 'works' : 'problems', r.name);
+    assert.equal(d.groups.some((g) => g.rows.some((x) => x.name === r.name && x.kind === r.kind)), allOk, r.name);
   }
   for (const p of PLANNED) {
     assert.ok(['Browser extension', 'Remote signer', 'NWC wallet'].includes(p.kind), p.name);
