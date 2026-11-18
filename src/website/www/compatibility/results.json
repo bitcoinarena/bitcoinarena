@@ -28,9 +28,10 @@
   "checks": {
    "login": "ok",
    "seed": "ok",
-   "browser": "decrypt seed: extension did not answer in 30 s"
+   "decrypt": "ok",
+   "sign": "ok"
   },
-  "result": "problems"
+  "result": "works"
  },
  {
   "name": "Amber",
