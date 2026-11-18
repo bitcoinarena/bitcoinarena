@@ -1022,5 +1022,9 @@
  "2970": {
   "text": "Node software: a season board can name a different node total each read, and a longer window keeps the shorter header",
   "kind": "bug"
+ },
+ "2971": {
+  "text": "Website: a compatibility row can say a sidecar works while its checks still fail",
+  "kind": "bug"
  }
 }
