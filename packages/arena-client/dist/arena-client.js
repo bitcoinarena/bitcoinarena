@@ -2783,7 +2783,7 @@ function encodeEntryContract(e) {
     w.u8(OPERATOR_MARKER);
     w.bytes32(e.operatorId);
   }
-  // THE WEBSITE THAT BROUGHT THIS ENTRY (2026.0.9): its 33-byte payout key, paid 20% of the nodes' fee on this
+  // THE WEBSITE THAT BROUGHT THIS ENTRY (2026.0.9): its 33-byte payout key, paid websitePct (today 10%; 20% until 2026-10-25) of the nodes' fee on this
   // stake at settlement (fee.js frontendShares). In the signed bytes, so no seat can swap it. WRITTEN ONLY WHEN IT NAMES ONE, last
   // of all, after its own marker: every other entry keeps exactly its bytes and its id.
   if (e.frontendPk !== undefined && e.frontendPk !== null) {
@@ -9720,7 +9720,7 @@ function nodeFeeTable({ contract, entries, pools, eligible, feeBps = NODE_FEE_BP
  * THE WEBSITE THAT BROUGHT AN ENTRY IS PAID 10% OF THE NODES' FEE ON IT (20% until 2026-10-25, kanban #675: "improve on referrer
  * program, reduce fee to 10%"; no website had been paid by then) (2026.0.9, roadmap item 7; RULED the owner
  * 2026-10-15, path (a): "Take it out of the nodes' 5% fee, 20% of that fee, so nodes earn less ... The player's stake is not increased
- * by this fee"). Per website payout key (hex, 33 bytes): `fee` x 20% x the stakes it brought / `gross` - the nodes' fee table's own
+ * by this fee"). Per website payout key (hex, 33 bytes): `fee` x FRONTEND_FEE_PERCENT x the stakes it brought / `gross` - the nodes' fee table's own
  * fee and gross - floored; the nodes share what is left of their fee. Refunded entries bring nothing. Answers
  * { shares: Map key -> msat (keys in ascending order), totalMsat }.
  */
@@ -9743,9 +9743,9 @@ function frontendShares({ entries, fee, gross, pct = FRONTEND_FEE_PERCENT }) {
 }
 
 /**
- * THE SAME 20% ON AN ORDER BOOK (comment 2295): a book's fees are what each claimed row paid (bookSettlement's
+ * THE SAME SHARE ON AN ORDER BOOK (comment 2295; 10% today, 20% until 2026-10-25): a book's fees are what each claimed row paid (bookSettlement's
  * `buyFeeMsat + sellFeeMsat`), of which the nodes' part is `nodeBps / (nodeBps + donationBps)`. For each row whose entry names
- * a website (`entries`: entry id hex -> { frontendPk }), 20% of that row's nodes' part, floored, goes to the website; the msat a
+ * a website (`entries`: entry id hex -> { frontendPk }), FRONTEND_FEE_PERCENT (10%) of that row's nodes' part, floored, goes to the website; the msat a
  * floor leaves stays with the nodes. The donation's part is never touched. Answers { shares: Map key -> msat (ascending keys),
  * totalMsat }.
  */
@@ -21879,7 +21879,7 @@ function settlementNonce(roundId) {
 function lockSettlement({ roundId, entries, minScore = 0, locks, fees, feeLocks = new Map(), signerNodes = null, contract = null,
   sends = new Map(), addressed = null, requireSends = false, donationSet = null, payoutShares = null, feeBps = undefined, websitePct = undefined, fallback = null, gifts = null }) {
   // `feeBps` / `websitePct`: the fees in force at the round (fee-proposal.js) - a version-11 round's node fee and the
-  // website's share of it; unset, today's (4 % and 20 %)
+  // website's share of it; unset, today's (4 % and 10 %; 20 % until 2026-10-25, kanban #675)
   // `gifts`: a protocol-27 game round's { recipients, reserveKey, split } - its fee locks hold the developers' and the reserves' parts too
   // (kanban #1486), paid here for the counted entries (feeSettlement)
   if (!(locks instanceof Map)) return refuse('the verified stake locks are a Map by player key');
@@ -22477,7 +22477,7 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
       payouts.push({ pubkey: pub.payoutPk.subarray(1), payoutPk: pub.payoutPk, owedMsat: pub.msat, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: 'publisher' });
     } else unpaid.push({ pubkey: pub.payoutPk.subarray(1), owedMsat: pub.msat, why: 'the publisher\'s fee back does not pay its own output fee' });
   }
-  // THE WEBSITE THAT BROUGHT AN ENTRY (2026.0.9RULED path (a)): 20% of the nodes' fee on the stakes it brought,
+  // THE WEBSITE THAT BROUGHT AN ENTRY (2026.0.9RULED path (a)): websitePct (today 10%, 20% until 2026-10-25) of the nodes' fee on the stakes it brought,
   // one line per website key, off the top of the NODES' part - never the donation's, never the player's (its stake and fee locks
   // are what they were) - scaled to what the claimed locks pay as the nodes' shares are. The nodes share the rest.
   const sites = frontendShares({ entries: counted, fee: table.fee, gross: table.gross, ...(websitePct !== undefined ? { pct: BigInt(websitePct) } : {}) });
@@ -22529,7 +22529,7 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
     const reservePk = key.startsWith('reserve:') ? fromHex(key.slice(8)) : null;
     const guardianPk = key.startsWith('payout:') ? fromHex(key.slice(7)) : reservePk;
     const pubkey = guardianPk ? guardianPk.subarray(1) : fromHex(key);
-    // what this node is owed once the websites' 20% is taken from the nodes' fee (its table share, scaled down by their total)
+    // what this node is owed once the websites' share (websitePct, today 10%) is taken from the nodes' fee (its table share, scaled down by their total)
     const afterSites = sites.totalMsat ? (msat * (table.fee - sites.totalMsat)) / table.fee : msat;
     const owedMsat = auditorBps ? (afterSites * (10000n - auditorBps)) / 10000n : afterSites;
     const got = largestPayoutMsat(fees, publisherGross || frontendGross || auditorGross ? (msat * nodesSpendable) / table.fee : (msat * spendable) / poolMsat);
@@ -22619,7 +22619,7 @@ function bookLockSettlement({ roundId, table, entries, locks, feeLocks, fees, co
   const reserveMsat = reserveBps > 0 && total > 0 ? (table.feesDueMsat * BigInt(reserveBps)) / BigInt(total) : 0n;
   if (reserveMsat > 0n && !(reserveKey instanceof Uint8Array && reserveKey.length === 33)) return refuse('this market pays the protocol reserve, and no reserve key is known for its federation');
   const giftMsat = table.feesDueMsat - nodesMsat - reserveMsat;
-  // THE WEBSITE THAT BROUGHT AN ORDER (2026.0.9, comment 2295, path (a)): 20% of the nodes' part of the fee each claimed
+  // THE WEBSITE THAT BROUGHT AN ORDER (2026.0.9, comment 2295, path (a)): websitePct (today 10%) of the nodes' part of the fee each claimed
   // row paid, to the payout key its entry signed - taken out of the nodes' part, never the donation's or a player's (fee.js
   // frontendBookShares). Its lines go before the seats'.
   const sites = frontendBookShares({ rows: table.claimed, entries: byId, nodeBps, donationBps, ...(websitePct !== undefined ? { pct: BigInt(websitePct) } : {}) });
@@ -26477,6 +26477,15 @@ async function expiredBack(client, locks) {
   return { state: 'owed', how: 'refund', msat: back.reduce((t, l) => t + BigInt(l.fields.amountMsat), 0n), locks: back };
 }
 
+// A STAKE NO FORFEIT CAME FOR, WITH WHEN IT COMES BACK ANYWAY (kanban #3006, feedback #346: "180 sat still waiting - no signer node gave
+// a forfeit of this lock", shown nowhere in the wallet and with no word of when): the locks go back to the player's key at their
+// expiry (§23.2 default path, expiredBack), so the waiting answer carries the latest expiry of them - the Rescan line and the pending
+// chip say it, instead of a wait with no end.
+function waitingForfeit(locks, msat, why) {
+  const at = (locks || []).map((l) => Number(l && l.fields && l.fields.expiration)).filter((x) => Number.isInteger(x) && x > 0);
+  return { state: 'waiting', how: 'forfeit', refused: true, msat, why, ...(at.length ? { expiration: Math.max(...at) } : {}) };
+}
+
 async function refusedReturn({ roundId, playerPubkey, locks, nodes, fetcher, client, handoutBody = null, curve = null, contractIdOf = null }) {
   const still = [];
   for (const lock of (locks || []).filter((l) => l && l.outpoint)) {
@@ -26506,7 +26515,7 @@ async function refusedReturn({ roundId, playerPubkey, locks, nodes, fetcher, cli
   // every version the seats name for each outpoint (kanban #1273): a changed one listed first does not stand in for the real one
   const versions = still.map((l) => named.filter((n) => at(n) === at(l))).filter((v) => v.length);
   const found = versions.map((v) => v[0]);
-  if (!found.length) return (await expiredBack(client, still)) || { state: 'waiting', how: 'forfeit', refused: true, msat, why: 'handed to the signer nodes, and none names it yet' };
+  if (!found.length) return (await expiredBack(client, still)) || waitingForfeit(still, msat, 'handed to the signer nodes, and none names it yet');
   for (const v of versions) {
     let f = null;
     for (const l of v) {
@@ -26514,7 +26523,7 @@ async function refusedReturn({ roundId, playerPubkey, locks, nodes, fetcher, cli
         check: forfeitCheck({ curve, fields: l.fields, storedId: await storedIdAt(client, l), contractIdOf }) });
       if (f.ok) break;
     }
-    if (!f.ok) return (await expiredBack(client, still)) || { state: 'waiting', how: 'forfeit', refused: true, msat, why: f.why };
+    if (!f.ok) return (await expiredBack(client, still)) || waitingForfeit(still, msat, f.why);
   }
   const owed = found.reduce((t, l) => t + BigInt(l.fields.amountMsat), 0n);
   return { state: 'owed', how: 'forfeit', refused: true, msat: owed };
