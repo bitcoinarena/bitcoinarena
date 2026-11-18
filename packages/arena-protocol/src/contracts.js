@@ -706,7 +706,7 @@ export function encodeEntryContract(e) {
     w.u8(OPERATOR_MARKER);
     w.bytes32(e.operatorId);
   }
-  // THE WEBSITE THAT BROUGHT THIS ENTRY (2026.0.9): its 33-byte payout key, paid 20% of the nodes' fee on this
+  // THE WEBSITE THAT BROUGHT THIS ENTRY (2026.0.9): its 33-byte payout key, paid websitePct (today 10%; 20% until 2026-10-25) of the nodes' fee on this
   // stake at settlement (fee.js frontendShares). In the signed bytes, so no seat can swap it. WRITTEN ONLY WHEN IT NAMES ONE, last
   // of all, after its own marker: every other entry keeps exactly its bytes and its id.
   if (e.frontendPk !== undefined && e.frontendPk !== null) {

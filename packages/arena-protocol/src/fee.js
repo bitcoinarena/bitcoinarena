@@ -217,7 +217,7 @@ export function nodeFeeTable({ contract, entries, pools, eligible, feeBps = NODE
  * THE WEBSITE THAT BROUGHT AN ENTRY IS PAID 10% OF THE NODES' FEE ON IT (20% until 2026-10-25, kanban #675: "improve on referrer
  * program, reduce fee to 10%"; no website had been paid by then) (2026.0.9, roadmap item 7; RULED the owner
  * 2026-10-15, path (a): "Take it out of the nodes' 5% fee, 20% of that fee, so nodes earn less ... The player's stake is not increased
- * by this fee"). Per website payout key (hex, 33 bytes): `fee` x 20% x the stakes it brought / `gross` - the nodes' fee table's own
+ * by this fee"). Per website payout key (hex, 33 bytes): `fee` x FRONTEND_FEE_PERCENT x the stakes it brought / `gross` - the nodes' fee table's own
  * fee and gross - floored; the nodes share what is left of their fee. Refunded entries bring nothing. Answers
  * { shares: Map key -> msat (keys in ascending order), totalMsat }.
  */
@@ -240,9 +240,9 @@ export function frontendShares({ entries, fee, gross, pct = FRONTEND_FEE_PERCENT
 }
 
 /**
- * THE SAME 20% ON AN ORDER BOOK (comment 2295): a book's fees are what each claimed row paid (bookSettlement's
+ * THE SAME SHARE ON AN ORDER BOOK (comment 2295; 10% today, 20% until 2026-10-25): a book's fees are what each claimed row paid (bookSettlement's
  * `buyFeeMsat + sellFeeMsat`), of which the nodes' part is `nodeBps / (nodeBps + donationBps)`. For each row whose entry names
- * a website (`entries`: entry id hex -> { frontendPk }), 20% of that row's nodes' part, floored, goes to the website; the msat a
+ * a website (`entries`: entry id hex -> { frontendPk }), FRONTEND_FEE_PERCENT (10%) of that row's nodes' part, floored, goes to the website; the msat a
  * floor leaves stays with the nodes. The donation's part is never touched. Answers { shares: Map key -> msat (ascending keys),
  * totalMsat }.
  */
