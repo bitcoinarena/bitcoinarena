@@ -12,7 +12,6 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
   issues: write
 
 concurrency:
@@ -64,22 +63,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: node packages/arena-node/tools/compat-publish.mjs compat-report/report.json
-      - name: Propose passing results
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Put the measured results on main
+        # #2971 (owner 11-18): the page follows the checks by itself - no PR, no manual merge. The Beelink deploys main's
+        # results.json to bitcoinarena.io within the hour (arena-compat-deploy timer).
         run: |
           if git diff --quiet -- src/website/www/compatibility/results.json; then exit 0; fi
-          branch=automation/compatibility-results
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git fetch origin "$branch:refs/remotes/origin/$branch" || true
-          git switch -c "$branch"
           git add src/website/www/compatibility/results.json
-          git commit -m 'Refresh passing compatibility results'
-          git push --force-with-lease origin "$branch"
-          pr=$(gh pr list --head "$branch" --state open --json number --jq '.[0].number // empty')
-          if [ -n "$pr" ]; then
-            gh pr edit "$pr" --body-file compat-report/report.md
-          else
-            gh pr create --head "$branch" --title 'Refresh passing compatibility results' --body-file compat-report/report.md
-          fi
+          git commit -m 'Compatibility results from the nightly check'
+          for i in 1 2 3; do git pull --rebase origin main && git push origin HEAD:main && exit 0; sleep 5; done
+          exit 1

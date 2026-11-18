@@ -20,7 +20,7 @@
   "name": "Sidecar",
   "version": "1.17.2",
   "kind": "Browser extension",
-  "date": "2026-11-17",
+  "date": "2026-11-18",
   "testedBy": null,
   "how": "automatic",
   "url": "https://sidecar.top/",
@@ -28,10 +28,9 @@
   "checks": {
    "login": "ok",
    "seed": "ok",
-   "decrypt": "ok",
-   "sign": "ok"
+   "browser": "decrypt seed: extension did not answer in 30 s"
   },
-  "result": "works"
+  "result": "problems"
  },
  {
   "name": "Amber",
