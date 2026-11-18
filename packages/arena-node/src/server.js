@@ -2303,6 +2303,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const reserveMiss = (fedHex, why) => { const now = Date.now(); if (now - (reserveMissSaid.get(fedHex) || 0) < 60000) return null;
     reserveMissSaid.set(fedHex, now); if (reserveMissSaid.size > 256) reserveMissSaid.delete(reserveMissSaid.keys().next().value);
     console.log(`[reserves] ${fedHex.slice(0, 8)}: no reserve key - ${why}`); return null; };
+  const reserveRechecked = new Map();   // kanban #2978: fed hex -> when its kept key was last asked of its guardian seats
+  const RESERVE_RECHECK_MS = Number(process.env.ARENA_RESERVE_RECHECK_MS || 600000);
   const reserveKeyFor = async (fedHex) => {
     const g = reserveGuardians()[fedHex];
     if (!g) return reserveMiss(fedHex, `the census this seat reads names no guardian seats for it (federations named: ${Object.keys(reserveGuardians()).map((f) => f.slice(0, 8)).join(', ') || 'none'})`);
@@ -2312,12 +2314,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (!g) return null;
     const epoch = reserveEpochOf(fedHex, g);
     const kept = reserveKeys.getFor(fedHex, epoch);
-    if (kept) return kept;
+    // A KEPT KEY IS ASKED AGAIN NOW AND THEN (kanban #2978, feedback #330): guardian-1 and fed2-7 kept 02efa760… for 4dc88be7 while its guardian
+    // seats had moved to 02ef0576… under the same epoch (same members) - a kept key was never read again, so for weeks those two seats counted
+    // and paid reserve payments to the old key. A key this seat holds no share of is asked from the guardian seats every RESERVE_RECHECK_MS;
+    // it is replaced only when `needed` of them name another one, and kept as it is when they cannot be read
+    if (kept && Date.now() - (reserveRechecked.get(fedHex) || 0) < RESERVE_RECHECK_MS) return kept;
     if (!g) return null;
     const nodes = sortedKeys(g.members); const needed = reserveNeeded(nodes.length);
-    if (needed === null) return null;
+    if (needed === null) return kept || null;
     const own = reserveDkgOf(fedHex).signerNodeFor(nodes);
-    if (own.ok) return reserveKeys.setFor(fedHex, epoch, own.pool.groupPublicKey);
+    if (own.ok) return kept || reserveKeys.setFor(fedHex, epoch, own.pool.groupPublicKey);
+    reserveRechecked.set(fedHex, Date.now());
     const said = new Map(), missed = [];
     await Promise.all(g.peers.map(async (u) => { try {
       const r = await readJsonCapped(await fetch(`${u}/reserves`, { signal: AbortSignal.timeout(8000) }), PEER_STATE_ANSWER_MAX_BYTES);
@@ -2326,6 +2333,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       else missed.push(`${u.split('/').pop()}: ${(r.federations || []).length} federation(s), none ${fedHex.slice(0, 8)} with a key`);
     } catch (e) { missed.push(`${u.split('/').pop()}: ${String((e && (e.cause && e.cause.message)) || (e && e.message) || e).slice(0, 80)}`); } }));
     const best = [...said.entries()].sort((a, b) => b[1] - a[1])[0];
+    if (kept && (!best || best[1] < needed || best[0] === toHex(kept))) return kept;
+    if (kept) console.log(`[reserves] ${fedHex.slice(0, 8)}: kept key ${toHex(kept).slice(0, 12)} replaced by ${best[0].slice(0, 12)} - ${best[1]} guardian seats name it (kanban #2978)`);
     if (!best || best[1] < needed) return reserveMiss(fedHex, `${best ? best[1] : 0} of ${g.peers.length} guardian seats asked named one key (${needed} needed): ${g.peers.slice(0, 3).join(' ')}${g.peers.length > 3 ? ' …' : ''}; ${missed.slice(0, 3).join('; ')}`);
     return reserveKeys.setFor(fedHex, epoch, fromHex(best[0]));
   };
