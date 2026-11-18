@@ -3270,6 +3270,15 @@ async function expiredBack(client, locks) {
   return { state: 'owed', how: 'refund', msat: back.reduce((t, l) => t + BigInt(l.fields.amountMsat), 0n), locks: back };
 }
 
+// A STAKE NO FORFEIT CAME FOR, WITH WHEN IT COMES BACK ANYWAY (kanban #3006, feedback #346: "180 sat still waiting - no signer node gave
+// a forfeit of this lock", shown nowhere in the wallet and with no word of when): the locks go back to the player's key at their
+// expiry (§23.2 default path, expiredBack), so the waiting answer carries the latest expiry of them - the Rescan line and the pending
+// chip say it, instead of a wait with no end.
+export function waitingForfeit(locks, msat, why) {
+  const at = (locks || []).map((l) => Number(l && l.fields && l.fields.expiration)).filter((x) => Number.isInteger(x) && x > 0);
+  return { state: 'waiting', how: 'forfeit', refused: true, msat, why, ...(at.length ? { expiration: Math.max(...at) } : {}) };
+}
+
 async function refusedReturn({ roundId, playerPubkey, locks, nodes, fetcher, client, handoutBody = null, curve = null, contractIdOf = null }) {
   const still = [];
   for (const lock of (locks || []).filter((l) => l && l.outpoint)) {
@@ -3294,7 +3303,7 @@ async function refusedReturn({ roundId, playerPubkey, locks, nodes, fetcher, cli
   // every version the seats name for each outpoint (kanban #1273): a changed one listed first does not stand in for the real one
   const versions = still.map((l) => named.filter((n) => at(n) === at(l))).filter((v) => v.length);
   const found = versions.map((v) => v[0]);
-  if (!found.length) return (await expiredBack(client, still)) || { state: 'waiting', how: 'forfeit', refused: true, msat, why: 'handed to the signer nodes, and none names it yet' };
+  if (!found.length) return (await expiredBack(client, still)) || waitingForfeit(still, msat, 'handed to the signer nodes, and none names it yet');
   for (const v of versions) {
     let f = null;
     for (const l of v) {
@@ -3302,7 +3311,7 @@ async function refusedReturn({ roundId, playerPubkey, locks, nodes, fetcher, cli
         check: forfeitCheck({ curve, fields: l.fields, storedId: await storedIdAt(client, l), contractIdOf }) });
       if (f.ok) break;
     }
-    if (!f.ok) return (await expiredBack(client, still)) || { state: 'waiting', how: 'forfeit', refused: true, msat, why: f.why };
+    if (!f.ok) return (await expiredBack(client, still)) || waitingForfeit(still, msat, f.why);
   }
   const owed = found.reduce((t, l) => t + BigInt(l.fields.amountMsat), 0n);
   return { state: 'owed', how: 'forfeit', refused: true, msat: owed };
