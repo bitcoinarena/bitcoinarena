@@ -2,7 +2,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE NIGHTLY COMPATIBILITY RUN (kanban #2950): compat-check's real NIP-46 and NIP-47 calls against a fake bunker and a fake NWC wallet on a
 // local relay, the version read from a Chrome Web Store package, and one night's decisions: a working product gets its row, a failing
-// one keeps its old row and is reported, a manual product with a newer version is a reminder, nothing is written twice for the same result.
+// one gets its failing row at once (kanban #2971) and is reported, a manual product with a newer version is a reminder, nothing is written twice for the same result.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { deflateRawSync } from 'node:zlib';
@@ -163,7 +163,7 @@ test('a working row is written once, not every night: again after a version chan
   assert.equal(worthWriting(null, row, '2026-11-17'), true);
 });
 
-test('one night, end to end: a signer and a wallet that work get rows, a wallet that fails keeps its old row, a manual product with a newer version is a reminder, the 1 sat is paid back', async () => {
+test('one night, end to end: a signer and a wallet that work get rows, a wallet that fails gets its failing row (#2971), a manual product with a newer version is a reminder, the 1 sat is paid back', async () => {
   const good = fakeWallet(), bad = fakeWallet({ fail: { pay_invoice: 'INSUFFICIENT_BALANCE' } });
   const products = [
     { name: 'Bunk', kind: 'Remote signer', check: 'signer', secret: 'COMPAT_BUNK', url: 'https://bunk.example/', platform: 'Server', version: 'self-hosted' },
@@ -188,18 +188,21 @@ test('one night, end to end: a signer and a wallet that work get rows, a wallet 
   let nightResults = results;
   const { results: out, report } = await night();
   assert.deepEqual(report.works.map((w) => [w.name, w.written]), [['Bunk', true], ['GoodW', true]]);
-  assert.deepEqual(report.failed.map((f) => [f.name, Object.keys(f.failing), f.keptRow]), [['BadW', ['pay_invoice'], true]]);
+  assert.deepEqual(report.failed.map((f) => [f.name, Object.keys(f.failing), f.written, f.hadRow]), [['BadW', ['pay_invoice'], true, true]]);
   assert.deepEqual(report.reminders.map((r) => [r.name, r.latest, r.tested]), [['Amber', '6.7.0', '6.6.9']]);
   assert.deepEqual(report.skipped.map((s) => s.name), ['NoPair', 'nos2x']);
   const bunk = out.find((r) => r.name === 'Bunk');
   assert.deepEqual([bunk.how, bunk.version, bunk.date, bunk.result, bunk.url, bunk.platform], ['automatic', 'self-hosted', '2026-11-18', 'works', 'https://bunk.example/', 'Server']);
-  assert.deepEqual(out.find((r) => r.name === 'BadW'), results[0], 'a failing product keeps its old row');
+  const badW = out.find((r) => r.name === 'BadW');
+  assert.deepEqual([badW.result, badW.how, badW.date, Object.keys(badW.checks).filter((k) => badW.checks[k] !== 'ok')], ['problems', 'automatic', '2026-11-18', ['pay_invoice']],
+    'a failing product loses its "works" at once: the page follows the check (kanban #2971)');
   assert.deepEqual(out.find((r) => r.name === 'Amber'), results[1], 'a manual row is not touched');
   assert.deepEqual(payBacks, [`lnbc10n1fake${new URL(good.link).hostname.slice(0, 8)}`], 'our wallet pays the working wallet\'s own invoice back');
   // the next night, the same results: nothing new to write
   nightResults = out;
   const again = await night();
   assert.deepEqual(again.report.works.map((w) => w.written), [false, false]);
+  assert.deepEqual(again.report.failed.map((f) => f.written), [false], 'the same failure is not written again every night');
   assert.deepEqual(again.results, out);
   // the report: failures first, pipes in an answer do not break the table, no secret in it
   const md = reportMarkdown(report);
@@ -227,6 +230,7 @@ test('a failed return payment or missing receiving wallet is reported, and secre
   const missing = await run(opts);
   assert.match(missing.report.failed[0].failing.run, /COMPAT_PAY_WALLET/);
   const refund = await run({ ...opts, payWallet: async () => ({ invoice: 'ours', payBack: async () => { throw 'failed private-pairing'; } }) });
-  assert.deepEqual(refund.results, []);
+  assert.deepEqual(refund.results.map((r) => [r.name, r.result, r.checks.pay_back]), [['W', 'problems', 'failed [redacted]']], 'the failing row is written (#2971), without the secret');
+  assert.ok(!JSON.stringify(refund.results).includes('private-pairing'));
   assert.equal(refund.report.failed[0].failing.pay_back, 'failed [redacted]');
 });

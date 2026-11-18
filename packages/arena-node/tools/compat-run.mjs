@@ -14,9 +14,10 @@
  *   - check "extension": the browser extension logs in to the real page (#2951; skipped until a runner is given);
  *   - check "manual": nothing runs; a newer version than the one tested by hand is a re-test reminder.
  * A product that works gets its row in results.json (how: automatic) when it has none, the version changed, the row was manual or
- * failing, or the row is older than REFRESH_DAYS. A product that fails KEEPS its old row: the run never takes a product off the page;
- * it reports the failure (report.json, report.md in --out) and a person decides (a bug on our side: our ticket; in the product:
- * the team is told before anything goes on its GitHub). .github/workflows/compatibility.yml turns the report into a PR and issues.
+ * failing, or the row is older than REFRESH_DAYS. A product that fails gets its failing row (result "problems") at once, so the page
+ * never says "works" for a product whose check fails (owner 11-18, kanban #2971: the page follows the checks by itself); the failure
+ * is also reported (report.json, report.md in --out) for triage (a bug on our side: our ticket; in the product: the team is told
+ * before anything goes on its GitHub). .github/workflows/compatibility.yml commits results.json to main and opens the issues.
  * No secret is ever printed or written.
  */
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
@@ -75,6 +76,12 @@ export function worthWriting(old, row, today) {
     || daysBetween(old.date, today) >= REFRESH_DAYS;
 }
 
+/** Whether a failing row replaces the old one: always over a working row; otherwise only when the version or what fails changed. */
+export function failureWorthWriting(old, row) {
+  return !old || old.result === 'works' || old.how !== 'automatic' || old.version !== row.version
+    || JSON.stringify(old.checks || {}) !== JSON.stringify(row.checks || {});
+}
+
 /** 1 sat from the wallet to us and back: our wallet makes the invoice the product pays, then pays the product's own invoice. */
 async function payRound(ourLink, { pool }) {
   const ours = parseNwc(ourLink);
@@ -129,7 +136,9 @@ export async function run({ products, results, secrets = {}, today = new Date().
       report.works.push({ ...base, version, written: write, ...(out.paidBack === false ? { payBackWhy: out.payBackWhy } : {}) });
     } else {
       const failing = Object.fromEntries(Object.entries(row.checks).filter(([, v]) => v !== 'ok'));
-      report.failed.push({ ...base, version, failing, keptRow: !!old });
+      const write = failureWorthWriting(old, row);
+      if (write) list = withRow(list, row);
+      report.failed.push({ ...base, version, failing, written: write, hadRow: !!old });
     }
   }
   return { results: list, report };
