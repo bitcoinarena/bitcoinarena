@@ -159,7 +159,7 @@ import { createEndpointsOf, createGuardianKeysOf, federationOfDir, configInvite,
 import { createTrustedGuardianKeys } from '../../arena-protocol/src/trusted-guardian-keys.js';
 import { execFile as execFileCb } from 'node:child_process';
 import { createLiquidations } from './liquidations.js';
-import { createHalts, wsSessionCount } from './halts.js';
+import { createHalts, wsSessionCount, silentFederation } from './halts.js';
 import { reserveMembersOf } from './reserve-members.js';
 import { createSettleBackoff, refusedForGood, REFUSAL } from './settle-backoff.js';
 import { produceSpentSet, publishSpentSet } from './spent-set-producer.js';
@@ -13371,7 +13371,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const drainPools = Object.fromEntries([...new Set(listed.map((f) => f.successor).filter(Boolean))]
           .map((succ) => [succ, fedRecords.predecessorGuardians(succ).map((k) => toHex(k))]));
         // the kept records, and beside one a newer less restrictive record judged without keys (kanban #2613): the kept one first
-        return res.end(JSON.stringify({ node: toHex(round.pubkey), federations: typeof fedRecords.served === 'function' ? fedRecords.served() : listed, drainPools }));
+        let rows = typeof fedRecords.served === 'function' ? fedRecords.served() : listed;
+        // kanban #2977: a federation silent for more than SILENT_BLOCKS is not offered as OPEN
+        if (halts && typeof chainTip === 'function') {
+          let tip = NaN; try { tip = Number(await chainTip()); } catch { tip = NaN; }
+          rows = rows.filter((f) => !(f.status === 'OPEN' && silentFederation(halts.seen(String(f.federation).toLowerCase()), tip)));
+        }
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), federations: rows, drainPools }));
       }
       // A SEAT'S HALT OBSERVATIONS (§23A.5 "How a halt is proven"): a peer's signed one taken, and those held served
       if (req.method === 'POST' && url.pathname === '/halt-observations') {
