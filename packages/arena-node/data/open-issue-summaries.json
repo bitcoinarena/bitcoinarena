@@ -1026,5 +1026,25 @@
  "2971": {
   "text": "Website: a compatibility row can say a sidecar works while its checks still fail",
   "kind": "bug"
+ },
+ "2973": {
+  "text": "Node software: this week's listed payout amounts can be wrong",
+  "kind": "bug"
+ },
+ "2974": {
+  "text": "Federation: some seats still serve an older game list than the others",
+  "kind": "bug"
+ },
+ "2975": {
+  "text": "Next Block game: the price tape can go negative",
+  "kind": "bug"
+ },
+ "2978": {
+  "text": "Federation: seats can disagree on the reserve total for the same period",
+  "kind": "bug"
+ },
+ "2979": {
+  "text": "Committees and bonds: a join can fail when the advert is off this committee, and signers can stay silent",
+  "kind": "bug"
  }
 }
