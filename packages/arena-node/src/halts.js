@@ -47,6 +47,17 @@ export const sessionReading = (sessions, nominal) => kthHighest(sessions, faults
 
 /** The clock's rule version kept with it: a view stored before (the highest single answer) is read again from the next reading. */
 export const CLOCK_RULE = 2;
+
+/**
+ * A FEDERATION THAT WENT SILENT IS NOT OFFERED AS OPEN (kanban #2977, feedback #325, owner 2026-11-18 "1"): e45f06ef's guardians stopped at
+ * session 446 (height ~158975); fed2-1 still served its last kept record - OPEN, reserve 0, load 0, the lowest load a page deposits into -
+ * while no halt was proven. A federation whose newest heard session began more than SILENT_BLOCKS below the tip is silent: GET /federations
+ * leaves its OPEN row out (the record stays kept; halts and liquidations read it as before). `seen` is seen(fid), `tip` the chain tip.
+ */
+export const SILENT_BLOCKS = 144;
+export function silentFederation(seen, tip, blocks = SILENT_BLOCKS) {
+  return !!seen && seen.heard !== false && Number.isInteger(seen.firstHeight) && Number.isFinite(tip) && tip - seen.firstHeight > blocks;
+}
 /**
  * THE CLOCK'S ONE TRANSITION (kanban #1158). `was` { session, firstHeight, heard, rule } or null; `reading` this pass's sessionReading or
  * null; `peerSessions` the sessions of the peers' signed observations held; `need` the halt quorum of this seat's census; `tip`.
