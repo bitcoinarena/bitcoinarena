@@ -5124,7 +5124,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     const orderKeyOf = (r) => String(r.roundIdHex).toLowerCase() + ':' + (Number(r.order) || 0);
     function refundOrderKeys() {
       let picks = []; try { picks = JSON.parse(window.sessionStorage.getItem('arena.market.picks') || '[]'); } catch { picks = []; }
-      let refund = new Set(); try { refund = new Set((window.ARENA_MARKET_LINES ? window.ARENA_MARKET_LINES() : []).filter((l) => l && (l.state === 'refunded' || l.state === 'refund in transit')).map((l) => l.entry)); } catch { /* no lines yet */ }
+      let refund = new Set(); try { refund = new Set((window.ARENA_MARKET_LINES ? window.ARENA_MARKET_LINES() : []).filter((l) => l && (l.state === 'refunded' || l.state === 'refund in transit' || l.state === 'void')).map((l) => l.entry)); } catch { /* no lines yet */ }
       return new Set(picks.filter((p) => p && p.roundIdHex && (p.unfilled || refund.has(p.entryIdHex))).map((p) => String(p.roundIdHex).toLowerCase() + ':' + (Number(p.order && p.order.index) || 0)));
     }
     const unfilledPickKeys = () => [...refundOrderKeys()];

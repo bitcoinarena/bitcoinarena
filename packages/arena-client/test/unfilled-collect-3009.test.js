@@ -17,3 +17,14 @@ test('#3009: a collect pass takes the unmatched orders first, the rest in their 
   assert.deepEqual(out.map((r) => `${r.roundIdHex}:${r.order}`), ['bb:0', 'cc:1', 'AA:0', 'cc:0']);
   assert.deepEqual(collectOrder(recs).map((r) => r.roundIdHex), ['AA', 'bb', 'cc', 'cc'], 'none unmatched: the order is unchanged');
 });
+
+test('#3009: a VOID market line is in transit until this browser credited the stake', async () => {
+  const { marketLines } = await import('../src/market.js');
+  const market = { name: 'm', outcomes: ['Up', 'Down'], terms: null, gameSource: true };
+  const p = { roundIdHex: 'aa'.repeat(32), entryIdHex: 'bb'.repeat(32), pick: 0, stakeMsat: '99000', entryCloseMs: '1', market };
+  const outcomes = new Map([[p.roundIdHex, { state: 'VOID', why: 'no outcome was attested by the market deadline' }]]);
+  const [transit] = marketLines({ picks: [{ ...p, stakeBack: false }], outcomes, nowMs: 10 });
+  assert.deepEqual([transit.state, transit.final], ['refund in transit', false]);
+  const [credited] = marketLines({ picks: [{ ...p, stakeBack: true }], outcomes, nowMs: 10 });
+  assert.deepEqual([credited.state, credited.final], ['void', true]);
+});

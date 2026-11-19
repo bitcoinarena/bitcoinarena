@@ -40916,6 +40916,8 @@ function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() }) {
         }
       }
       // A VOID SHOWN IS DECIDED (kanban #2903, feedback #147): past its deadline or a source round's refund - the row is final, not pending for good
+      // kanban #3009: a VOID round's stake is in transit too until this browser credited it (measured: round 7758c770 VOID, one stake back, one not)
+      if (p.stakeBack === false) { lines.push(refundRow(p.stakeMsat, `${head}: VOID - ${o.why || 'its source round refunds it'}`)); continue; }
       lines.push({ ...at('void', { final: true }), text: `${head}: VOID - ${o.why || 'its source round refunds it'} · every stake comes back` });
       continue;
     }
