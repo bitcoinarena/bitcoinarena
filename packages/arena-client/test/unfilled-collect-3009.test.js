@@ -6,13 +6,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { collectState, collectOrder } from '../src/page-lock.js';
 
-test('#3009: a stake back by its forfeit closes the record - there is no payout to wait for', () => {
+test('#3009: collectState does not close a record on a forfeit stake alone - a winner\'s stake comes back by forfeit too and its payout is still owed', () => {
   const look = { payout: { state: 'waiting', why: 'no signer node holds an accepted settlement of this round yet' }, stake: { state: 'owed', how: 'forfeit', msat: 99000n }, inTabMsat: 0n };
-  assert.equal(collectState(look, null).state, 'open', 'before the collect credited it: open');
-  assert.equal(collectState(look, { got: { stake: { ok: true } } }).state, 'done', 'after the collect credited the stake: done');
-  // a stake owed by settlement (a counted entry) still waits for its payout
-  const counted = { payout: { state: 'waiting' }, stake: { state: 'owed', how: 'settlement', msat: 99000n }, inTabMsat: 0n };
-  assert.equal(collectState(counted, { got: { stake: { ok: true } } }).state, 'open');
+  assert.equal(collectState(look, { got: { stake: { ok: true } } }).state, 'open', 'the page closes a refund-only order itself (index.html refundOrderKeys), never collectState on the forfeit');
 });
 
 test('#3009: a collect pass takes the unmatched orders first, the rest in their kept order', () => {

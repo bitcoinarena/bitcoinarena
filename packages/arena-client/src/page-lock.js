@@ -2976,11 +2976,7 @@ export function collectState(look, co = null) {
   const ok = (x) => !!(x && (x.ok || x.final));
   const stakeDone = STAKE_TERMINAL.has(look.stake.state)
     || (look.stake.state === 'owed' && (look.stake.how === 'refund' ? ok(got.refund) : ok(got.stake)));
-  // A STAKE BACK BY ITS FORFEIT HAS NO PAYOUT TO WAIT FOR (kanban #3009, feedback #347: an Up/Down order that matched nobody stayed "collected in
-  // part, still open: payout waiting (no signer node holds an accepted settlement)" for good - a market where no order filled never settles): the
-  // seats forfeit a lock only for an entry they did not count (§23.2 REFUSED, an unfilled order), and an entry not counted is paid nothing
-  const forfeitBack = look.stake.how === 'forfeit' && stakeDone;
-  const payoutDone = PAYOUT_TERMINAL.has(look.payout.state) || (look.payout.state === 'owed' && ok(got.payout)) || forfeitBack;
+  const payoutDone = PAYOUT_TERMINAL.has(look.payout.state) || (look.payout.state === 'owed' && ok(got.payout));
   // A KEPT FEE LOCK STILL STORED AFTER THE COLLECT (kanban #2149, #2215): the look before the collect said the stake alone was owed, and the
   // collect brought it back while the order's fee lock stayed in the federation - never done on that look; the next look owes the fee
   if (got.feeHeld) return { state: 'open', why: 'this tab\'s fee lock is still in the federation' };

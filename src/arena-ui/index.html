@@ -5119,12 +5119,15 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     // EVERY SAVED PHRASE'S RECORDS (ruled 2026-10-07): a closed tab's round pays into the wallet of the
     // seed that joined it; a later tab collects it whatever phrase it took itself. Records of a seed no saved phrase holds
     // are named uncollectable and paid into no other wallet.
-    // THE ORDERS OF THIS TAB THAT MATCHED NOBODY, as `${round}:${order}` (kanban #3009): the market page marks a kept pick `unfilled` once the
-    // book shows it held no shares at the close
-    function unfilledPickKeys() {
+    // THE ORDERS OF THIS TAB WHOSE WHOLE STAKE COMES BACK, as `${round}:${order}` (kanban #3009): a kept pick the market page marked `unfilled`, or one
+    // whose market line is a refund (nobody picked it / nobody took the other side)
+    const orderKeyOf = (r) => String(r.roundIdHex).toLowerCase() + ':' + (Number(r.order) || 0);
+    function refundOrderKeys() {
       let picks = []; try { picks = JSON.parse(window.sessionStorage.getItem('arena.market.picks') || '[]'); } catch { picks = []; }
-      return picks.filter((p) => p && p.unfilled && p.roundIdHex).map((p) => String(p.roundIdHex).toLowerCase() + ':' + (Number(p.order && p.order.index) || 0));
+      let refund = new Set(); try { refund = new Set((window.ARENA_MARKET_LINES ? window.ARENA_MARKET_LINES() : []).filter((l) => l && (l.state === 'refunded' || l.state === 'refund in transit')).map((l) => l.entry)); } catch { /* no lines yet */ }
+      return new Set(picks.filter((p) => p && p.roundIdHex && (p.unfilled || refund.has(p.entryIdHex))).map((p) => String(p.roundIdHex).toLowerCase() + ':' + (Number(p.order && p.order.index) || 0)));
     }
+    const unfilledPickKeys = () => [...refundOrderKeys()];
     // IS THE STAKE OF THIS ORDER IN THE WALLET YET (kanban #3009): true once this browser's collect record of it is done, false while it is
     // open, undefined when this browser keeps no record of it (another device: the row cannot tell, and says what it said before)
     window.ARENA_STAKE_CREDITED = (roundIdHex, order = 0) => {
@@ -5494,9 +5497,22 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             if (window.ARENA_ROUND_RESULT) window.ARENA_ROUND_RESULT(older, lo, co.creditedMsat);   // kanban #2898
             // DONE ONLY WHEN EVERY PART IS (kanban #1163): a payout collected with the stake still in its lock stays open, looked at again
             if (ARENACLIENT.markCollectDone(vault(), older.roundIdHex, { payout: ARENACLIENT.owedToLine(lo), stake: null }, older.seed, older.order || 0, { look: lo, co })) stakeBack.delete(backKey(older));
+            // AN ORDER WHOSE WHOLE STAKE IS ITS REFUND IS DONE ONCE THAT STAKE IS CREDITED (kanban #3009, feedback #347): its market line says it matched
+            // nobody (or nobody took the other side), so no payout will ever come - the record no longer waits for a settlement that never runs.
+            // Only these orders: a winner's stake comes back by forfeit too, and its record waits for its payout as before
+            else if (refundOrderKeys().has(orderKeyOf(older)) && co.got && co.got.stake && (co.got.stake.ok || co.got.stake.final)
+              && ARENACLIENT.markCollectDone(vault(), older.roundIdHex, { payout: 'none: the order matched nobody', stake: ARENACLIENT.owedToLine(lo), tabMsat: '0' }, older.seed, older.order || 0)) {
+              stakeBack.delete(backKey(older));
+              collectNote(older.roundIdHex.slice(0, 8) + (older.order ? '.o' + older.order : ''), 'older round MARKED DONE: its stake was its whole refund (#3009)');
+            }
             else collectNote(older.roundIdHex.slice(0, 8) + (older.order ? '.o' + older.order : ''), 'older round collected in part, still open: ' + ARENACLIENT.collectState(lo, co).why);
             if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE();
             paintHistory();
+          } else if (refundOrderKeys().has(orderKeyOf(older)) && lo.stake && lo.stake.state === 'collected' && (lo.inTabMsat === undefined || lo.inTabMsat === 0n)
+            && ARENACLIENT.markCollectDone(vault(), older.roundIdHex, { payout: 'none: the order matched nobody', stake: ARENACLIENT.owedToLine(lo), tabMsat: '0' }, older.seed, older.order || 0)) {
+            // kanban #3009: a refund-only order whose stake was credited earlier (a reload reopened its record): done, no payout to wait for
+            stakeBack.delete(backKey(older));
+            collectNote(older.roundIdHex.slice(0, 8) + (older.order ? '.o' + older.order : ''), 'older round MARKED DONE: its stake was its whole refund, credited before (#3009)');
           } else if (lo.final && lo.inTabMsat === 0n && ARENACLIENT.markCollectDone(vault(), older.roundIdHex, { payout: ARENACLIENT.owedToLine(lo), stake: null }, older.seed, older.order || 0, { look: lo })) {
             stakeBack.delete(backKey(older));
             collectNote(older.roundIdHex.slice(0, 8) + (older.order ? '.o' + older.order : ''), 'older round MARKED DONE: ' + ARENACLIENT.owedToLine(lo) + ' <- ' + lookSaid(lo));
