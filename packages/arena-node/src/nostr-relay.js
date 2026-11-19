@@ -266,6 +266,10 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   if (!db.prepare('PRAGMA table_info(events)').all().some((c) => c.name === 'size')) db.exec('ALTER TABLE events ADD COLUMN size INTEGER');
   // kanban #2847: when this relay kept each event (its own clock, not the author's created_at), and every author it ever kept an event from
   if (!db.prepare('PRAGMA table_info(events)').all().some((c) => c.name === 'kept_ms')) db.exec('ALTER TABLE events ADD COLUMN kept_ms INTEGER');
+  // kanban #3004 (audit nostr r3 #1): making room walks a pool's events in arrival order; without an index on the pool every walk read past
+  // all kept seeds (pool 2, stored first) before the first state or log event. The expression is POOL_SQL('kind') exactly, so the planner
+  // uses it for `${POOL_SQL('kind')} = ? ... ORDER BY rowid`
+  db.exec(`CREATE INDEX IF NOT EXISTS ev_pool ON events (${POOL_SQL('kind')})`);
   db.exec(`CREATE TABLE IF NOT EXISTS seen_authors (pubkey TEXT PRIMARY KEY);
     INSERT OR IGNORE INTO seen_authors (pubkey) SELECT DISTINCT pubkey FROM events;`);
   const unsized = db.prepare('SELECT id, json FROM events WHERE size IS NULL').all();
@@ -331,7 +335,9 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   const markSeen = db.prepare('INSERT OR IGNORE INTO seen_authors (pubkey) VALUES (?)');
   // the oldest-arrived event of an author without standing in a pool (never the writer's)
   const oldestUnstanding = db.prepare(`SELECT id FROM events WHERE ${POOL_SQL('kind')} = ? AND pubkey != ? AND pubkey NOT IN (SELECT value FROM json_each(?))
-    AND pubkey NOT IN (SELECT pubkey FROM events WHERE kind = ${SEED_KIND} AND COALESCE(kept_ms, created_at * 1000) <= ?) ORDER BY rowid ASC LIMIT 1`);
+    AND NOT EXISTS (SELECT 1 FROM events s WHERE s.pubkey = events.pubkey AND s.kind = ${SEED_KIND} AND COALESCE(s.kept_ms, s.created_at * 1000) <= ?) ORDER BY rowid ASC LIMIT 1`);
+  // kanban #3004 (audit nostr r3 #1): the standing check is asked per candidate through ev_author (pubkey, kind, d) - the NOT IN read every kept seed
+  // (kept_ms has no index) on every call, so 90,000 parked free seeds made each write into a full pool ~20x slower on the relay's one loop
   const clients = new Set();
   let subValuesHeld = 0;   // kanban #2839: the values all kept subscriptions hold
   const info = { name, description, supported_nips: [1, 11, 42, 46, 47, 57, 58, 65, 78], software: 'arena-node/nostr-relay', version: '1',
