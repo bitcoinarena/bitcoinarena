@@ -1294,5 +1294,9 @@
  "3043": {
   "text": "Committees and bonds: one padded bond answer can stop the health page updating",
   "kind": "bug"
+ },
+ "3044": {
+  "text": "Other: many connections can stall social login during signature checks",
+  "kind": "bug"
  }
 }
