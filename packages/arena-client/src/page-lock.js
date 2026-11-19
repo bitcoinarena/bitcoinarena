@@ -2799,6 +2799,15 @@ export function collectLines(records = [], { failed = new Map(), held = new Set(
  * part's own state: the payout none, gone or collected (or owed and its redeem final); the stake gone, none or collected (or owed and its
  * redeem or refund final); and this tab's round wallet empty. Anything else is open, and the record is looked at again.
  */
+/**
+ * THE ORDER A COLLECT PASS LOOKS AT ITS RECORDS (kanban #3009, feedback #347): the records of orders that matched nobody first - their whole stake
+ * is owed back the moment the window closed - then the rest in their kept order. `unfilled`: a Set of `${roundIdHex}:${order}` keys.
+ */
+export function collectOrder(records, unfilled = new Set()) {
+  const key = (r) => `${String(r.roundIdHex).toLowerCase()}:${Number(r.order) || 0}`;
+  return [...(records || [])].map((r, i) => ({ r, i, u: unfilled.has(key(r)) ? 0 : 1 })).sort((a, b) => a.u - b.u || a.i - b.i).map((x) => x.r);
+}
+
 export const COLLECT_STATES = Object.freeze({ OPEN: 'open', DONE: 'done' });
 const PAYOUT_TERMINAL = new Set(['none', 'gone', 'collected']);
 const STAKE_TERMINAL = new Set(['gone', 'none', 'collected']);

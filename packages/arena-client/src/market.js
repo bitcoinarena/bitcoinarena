@@ -481,6 +481,10 @@ export function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() })
       // WHEN THE RESULT IS FINAL (2026-10-17: "show there if it's still pending (10 minute delay)"): the seats'
       // finality of an attested outcome and its time, so a client counts the objection window down on every result, won or lost
       ...(o && o.state === 'ATTESTED' ? { final: !!o.final, finalAtMs: Number(o.finalAtMs) || null } : {}), ...more });
+    // A REFUND IS IN TRANSIT UNTIL THIS BROWSER CREDITED IT (kanban #3009): `stakeBack` false - the order's collect record still open
+    const refundRow = (msat, said) => (p.stakeBack === false
+      ? { ...at('refund in transit', { backMsat: String(msat), final: false, finalAtMs: null }), text: `${said}: its ${sats(msat)} sats are on their way back - in your wallet once this page collects them` }
+      : null);
     if (nowMs < Number(p.entryCloseMs)) {
       lines.push({ ...at('open'), text: `${p.market.name}: you picked '${label}' · ${sats(p.stakeMsat)} sats · closes in ${left(Number(p.entryCloseMs) - nowMs)}` });
       continue;
@@ -493,6 +497,8 @@ export function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() })
       continue;
     }
     if (o.state === 'VOID') {
+      // kanban #3009: a VOID round's stake is in transit too until this browser credited it
+      if (p.stakeBack === false) { lines.push(refundRow(p.stakeMsat, `${head}: VOID - ${o.why || 'its source round refunds it'}`)); continue; }
       lines.push({ ...at('void'), text: `${head}: VOID - ${o.why || 'its source round refunds it'} · every stake comes back` });
       continue;
     }
@@ -514,6 +520,10 @@ export function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() })
     // AN ORDER THAT MATCHED NOBODY (measured 2026-10-17: two 14:00 orders held 0 shares and 0 cost in their round's
     // book on every seat, and the settlement table - filled positions only - had no row for them, so they stayed "waiting"): the page
     // read its position from the book after the close (`unfilled`); its stake comes back whole
+    // NOT REFUNDED BEFORE IT IS IN THE WALLET (kanban #3009, feedback #347: "refunded ±0 final" 30 min while the 100 sat were still at the seats;
+    // measured 2026-11-19: the row said refunded at 06:04Z, the collect credited the stake at 06:06Z): `stakeBack` false - this browser's collect
+    // record of the order is still open - says the refund is on its way, not final; true (credited) or unknown (no record here) as before
+    if (!row && p.unfilled && p.stakeBack === false) { lines.push(refundRow(p.stakeMsat, `${head}: ${signed} · your order matched nobody`)); continue; }
     if (!row && p.unfilled) { lines.push({ ...at('refunded', { backMsat: String(p.stakeMsat) }), text: `${head}: ${signed} · your order matched nobody: its ${sats(p.stakeMsat)} sats come back whole` }); continue; }
     if (!row) { lines.push({ ...at('unknown'), text: `${head}: ${signed} · your pick is not in the signer nodes' table` }); continue; }
     // WON OR LOST IS THE VERIFIED OUTCOME'S, NOT A SEAT'S TABLE (kanban #1615): `check` is what this page verified, `o.table`
@@ -528,9 +538,11 @@ export function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() })
     const pay = BigInt(row.payoutMsat);
     // A FREE ROUND: nothing staked, so the pick was right or wrong and nothing more
     if (BigInt(p.stakeMsat) === 0n) lines.push({ ...at(row.won ? 'right' : 'wrong'), text: `${head}: ${signed} · ${row.won ? 'your pick was right' : 'your pick was wrong'} (free round)` });
+    else if (o.table.refunded && p.stakeBack === false) lines.push(refundRow(net, `${head}: ${signed} · nobody picked it`));
     else if (o.table.refunded) lines.push({ ...at('refunded', { backMsat: String(net) }), text: `${head}: ${signed} · nobody picked it: your ${sats(net)} sats come back` });
     // NOBODY ON THE OTHER SIDE (measured live 2026-10-13: the first paid Up/Down window, one order alone, read "you won
     // 0 sats" while the seats claimed nothing - an order nobody took the other side of fills nothing, and its lock comes back whole)
+    else if (!p.market.scalar && row.won && BigInt(o.table.losingPoolMsat || 0) === 0n && p.stakeBack === false) lines.push(refundRow(row.stakeMsat || p.stakeMsat, `${head}: ${signed} · nobody took the other side`));
     else if (!p.market.scalar && row.won && BigInt(o.table.losingPoolMsat || 0) === 0n) lines.push({ ...at('refunded', { backMsat: String(row.stakeMsat || p.stakeMsat) }), text: `${head}: ${signed} · nobody took the other side: your ${sats(row.stakeMsat || p.stakeMsat)} sats come back whole when the lock expires` });
     // A SCALAR SIDE IS PAID ITS SHARE, not all or nothing: what came back, and the gain or the loss
     else if (p.market.scalar) lines.push({ ...at('settled', { payoutMsat: String(pay), netMsat: String(net) }), text: `${head}: ${signed} · '${label}' gets ${sats(pay)} of your ${sats(net)} sats · ${pay >= net ? `+${sats(pay - net)}` : `-${sats(net - pay)}`}${o.final ? '' : ' (final after the objection window)'}` });
