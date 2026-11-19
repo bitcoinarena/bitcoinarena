@@ -1162,5 +1162,137 @@
  "3010": {
   "text": "Rock Paper Scissors game: taps with time still left can be refused as too late",
   "kind": "bug"
+ },
+ "3011": {
+  "text": "Committees and bonds: one census seat's oversized refusal can fill memory",
+  "kind": "bug"
+ },
+ "3012": {
+  "text": "Federation: one seat's oversized refusal can fill a halted guardian's memory",
+  "kind": "bug"
+ },
+ "3013": {
+  "text": "Website: one seat can leave an honest page stuck on a forfeit",
+  "kind": "bug"
+ },
+ "3014": {
+  "text": "BTC Up/Down game: one seat can close a won order as a refund",
+  "kind": "bug"
+ },
+ "3015": {
+  "text": "Node software: a head-to-head reveal can stick at one seat and never reach the others",
+  "kind": "bug"
+ },
+ "3016": {
+  "text": "Lightning payouts: a seat can endorse a stranger's bond advert",
+  "kind": "bug"
+ },
+ "3017": {
+  "text": "Federation: an update from one seat can replace the held invite",
+  "kind": "bug"
+ },
+ "3018": {
+  "text": "Website: filler posts can still take a copied social link",
+  "kind": "bug"
+ },
+ "3019": {
+  "text": "Node software: one seat can turn a verified win into a refund",
+  "kind": "bug"
+ },
+ "3020": {
+  "text": "Federation: one guardian can make seats disagree on fees",
+  "kind": "bug"
+ },
+ "3021": {
+  "text": "Other: a full relay still checks every standing row on each write",
+  "kind": "bug"
+ },
+ "3022": {
+  "text": "Node software: one seat's refusal can block replay of a certified order",
+  "kind": "bug"
+ },
+ "3023": {
+  "text": "BTC Up/Down game: one seat can set the market's order limits",
+  "kind": "bug"
+ },
+ "3024": {
+  "text": "Other: junk approvals can push a real vote out of early parking",
+  "kind": "bug"
+ },
+ "3025": {
+  "text": "Node software: one slow seat can delay every head-to-head reveal",
+  "kind": "bug"
+ },
+ "3026": {
+  "text": "Federation: one seat can send federation funds the wrong way during an update",
+  "kind": "bug"
+ },
+ "3027": {
+  "text": "Other: a copied code redeemed in chat first can block the social link",
+  "kind": "bug"
+ },
+ "3028": {
+  "text": "Other: extra receipts can void someone else's live run",
+  "kind": "bug"
+ },
+ "3029": {
+  "text": "Node software: one seat can steer deposits and swaps",
+  "kind": "bug"
+ },
+ "3030": {
+  "text": "Website: one login relay can hang the page on an uncapped puzzle",
+  "kind": "bug"
+ },
+ "3031": {
+  "text": "Node software: a founding draw can give an operator's seat to a stranger",
+  "kind": "bug"
+ },
+ "3032": {
+  "text": "Lightning payouts: a listed bot can be treated as unmarked and paid in full",
+  "kind": "bug"
+ },
+ "3033": {
+  "text": "Settlement: one seat's junk price vote can stay in the batch",
+  "kind": "bug"
+ },
+ "3034": {
+  "text": "Other: free-round identities can hold relay standing that cannot be removed",
+  "kind": "bug"
+ },
+ "3035": {
+  "text": "Next Block game: play joins a closing round instead of the one shown, and says it is too late",
+  "kind": "bug"
+ },
+ "3036": {
+  "text": "Node software: a home seat can still withhold peer batches after a missing-stake or short answer",
+  "kind": "bug"
+ },
+ "3037": {
+  "text": "Committees and bonds: a seat can be credited for a round that was not real",
+  "kind": "bug"
+ },
+ "3038": {
+  "text": "Federation: a settlement read rebuilds a round plan every time",
+  "kind": "bug"
+ },
+ "3039": {
+  "text": "Website: one seat's lock answer can stop a certified order from replaying",
+  "kind": "bug"
+ },
+ "3040": {
+  "text": "Committees and bonds: a capped sighting list can freeze the ballot",
+  "kind": "bug"
+ },
+ "3041": {
+  "text": "BTC Up/Down game: one seat can move a round's time window",
+  "kind": "bug"
+ },
+ "3042": {
+  "text": "Other: a plugin trial can skip a decision when a larger set is the first call",
+  "kind": "bug"
+ },
+ "3043": {
+  "text": "Committees and bonds: one padded bond answer can stop the health page updating",
+  "kind": "bug"
  }
 }
