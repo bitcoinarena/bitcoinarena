@@ -21179,6 +21179,15 @@ function collectLines(records = [], { failed = new Map(), held = new Set() } = {
  * part's own state: the payout none, gone or collected (or owed and its redeem final); the stake gone, none or collected (or owed and its
  * redeem or refund final); and this tab's round wallet empty. Anything else is open, and the record is looked at again.
  */
+/**
+ * THE ORDER A COLLECT PASS LOOKS AT ITS RECORDS (kanban #3009, feedback #347): the records of orders that matched nobody first - their whole stake
+ * is owed back the moment the window closed - then the rest in their kept order. `unfilled`: a Set of `${roundIdHex}:${order}` keys.
+ */
+function collectOrder(records, unfilled = new Set()) {
+  const key = (r) => `${String(r.roundIdHex).toLowerCase()}:${Number(r.order) || 0}`;
+  return [...(records || [])].map((r, i) => ({ r, i, u: unfilled.has(key(r)) ? 0 : 1 })).sort((a, b) => a.u - b.u || a.i - b.i).map((x) => x.r);
+}
+
 const COLLECT_STATES = Object.freeze({ OPEN: 'open', DONE: 'done' });
 const PAYOUT_TERMINAL = new Set(['none', 'gone', 'collected']);
 const STAKE_TERMINAL = new Set(['gone', 'none', 'collected']);
@@ -21186,9 +21195,13 @@ function collectState(look, co = null) {
   if (!look || !look.payout || !look.stake) return { state: 'open', why: 'not looked at' };
   const got = (co && co.got) || {};
   const ok = (x) => !!(x && (x.ok || x.final));
-  const payoutDone = PAYOUT_TERMINAL.has(look.payout.state) || (look.payout.state === 'owed' && ok(got.payout));
   const stakeDone = STAKE_TERMINAL.has(look.stake.state)
     || (look.stake.state === 'owed' && (look.stake.how === 'refund' ? ok(got.refund) : ok(got.stake)));
+  // A STAKE BACK BY ITS FORFEIT HAS NO PAYOUT TO WAIT FOR (kanban #3009, feedback #347: an Up/Down order that matched nobody stayed "collected in
+  // part, still open: payout waiting (no signer node holds an accepted settlement)" for good - a market where no order filled never settles): the
+  // seats forfeit a lock only for an entry they did not count (§23.2 REFUSED, an unfilled order), and an entry not counted is paid nothing
+  const forfeitBack = look.stake.how === 'forfeit' && stakeDone;
+  const payoutDone = PAYOUT_TERMINAL.has(look.payout.state) || (look.payout.state === 'owed' && ok(got.payout)) || forfeitBack;
   // A KEPT FEE LOCK STILL STORED AFTER THE COLLECT (kanban #2149, #2215): the look before the collect said the stake alone was owed, and the
   // collect brought it back while the order's fee lock stayed in the federation - never done on that look; the next look owes the fee
   if (got.feeHeld) return { state: 'open', why: 'this tab\'s fee lock is still in the federation' };
@@ -40925,6 +40938,10 @@ function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() }) {
     // AN ORDER THAT MATCHED NOBODY (measured 2026-10-17: two 14:00 orders held 0 shares and 0 cost in their round's
     // book on every seat, and the settlement table - filled positions only - had no row for them, so they stayed "waiting"): the page
     // read its position from the book after the close (`unfilled`); its stake comes back whole
+    // NOT REFUNDED BEFORE IT IS IN THE WALLET (kanban #3009, feedback #347: "refunded ±0 final" 30 min while the 100 sat were still at the seats;
+    // measured 2026-11-19: the row said refunded at 06:04Z, the collect credited the stake at 06:06Z): `stakeBack` false - this browser's collect
+    // record of the order is still open - says the refund is on its way, not final; true (credited) or unknown (no record here) as before
+    if (!row && p.unfilled && p.stakeBack === false) { lines.push({ ...at('refund in transit', { backMsat: String(p.stakeMsat), final: false, finalAtMs: null }), text: `${head}: ${signed} · your order matched nobody: its ${sats(p.stakeMsat)} sats are on their way back - in your wallet once this page collects them` }); continue; }
     if (!row && p.unfilled) { lines.push({ ...at('refunded', { backMsat: String(p.stakeMsat) }), text: `${head}: ${signed} · your order matched nobody: its ${sats(p.stakeMsat)} sats come back whole` }); continue; }
     if (!row) { lines.push({ ...at('unknown'), text: `${head}: ${signed} · your pick is not in the signer nodes' table` }); continue; }
     // WON OR LOST, AND HOW MUCH, IS THE VERIFIED OUTCOME'S, NOT A SEAT'S TABLE (kanban #1615; #2153, #2221, #2299, #2354): `check` is
