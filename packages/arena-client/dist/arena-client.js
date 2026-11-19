@@ -36956,16 +36956,8 @@ async function evidenceFor(roundIdHex, contract, nodes, { fetcher, skip = new Se
       const r = await readWithOneRetry(fetcher, `${baseOf(u)}/census?round=${roundIdHex}`);
       if (!r.ok) { refused.push(`${u}: ${r.status}`); return; }
       const j = await jsonUpTo(r, CENSUS_ANSWER_MAX);   // kanban #2740: bounded
-<<<<<<< ours
-      if (!j || !Array.isArray(j.entries)) { refused.push(`${u}: no entries`); continue; }
-=======
       if (!j || !Array.isArray(j.entries)) { refused.push(`${u}: no entries`); return; }
-      // A PROVIDER LISTING ONE BOND TWICE IS REFUSED ON ITS OWN, before the union (kanban #2160, #2228, #2301): in the union its repeat
-      // made the census uncommittable and its honest co-provider was skipped with it - on three seats the join was refused
-      const twice = repeatedBondIn(j.entries);
-      if (twice) { refused.push(`${u}: lists one bond twice`); return; }
       if (got.length >= providers || roots.has(root)) return;
->>>>>>> theirs
       // the nodes this seat left out for their protocol version: shown, never counted
       if (Array.isArray(j.tooOld)) keptTooOld.set(key, j.tooOld.filter((x) => x && /^[0-9a-f]{64}$/.test(String(x.node))));
       roots.add(root); got.push({ from: u, entries: j.entries });
