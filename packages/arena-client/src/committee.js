@@ -171,24 +171,48 @@ export const CENSUS_PROVIDERS_TO_LOCK = 2;
  * One provider alone answers { ok: false, lookOnly: true }. Not yet here: §25.1's completeness from BIP158 filters since a census checkpoint
  * (no filter source in the browser yet).
  */
-async function evidenceFor(roundIdHex, contract, nodes, { fetcher, skip = new Set(), providers = CENSUS_PROVIDERS_TO_LOCK }) {
+export async function evidenceFor(roundIdHex, contract, nodes, { fetcher, skip = new Set(), providers = CENSUS_PROVIDERS_TO_LOCK }) {
   const key = toHex(contract.censusRoot);
   if (keptCensus.has(key) && !skip.size) return { ok: true, entries: keptCensus.get(key), from: 'kept' };
+  // EVERY SEAT ASKED AT ONCE, THE FIRST `providers` DISTINCT ONES THAT HAND A USABLE CENSUS TAKEN (kanban #3010, feedback #348: an RPS tap with 7-9 s on the
+  // timer was "too late"; measured live 2026-11-19 05:42Z, one tap's seat wait was 5.7 s while guardian-2/-3/-4 and fed2-7 answered "signal timed
+  // out" over tn4): the seats were asked one after another, each read allowed READ_MS, so a slow seat early in the list held the tap until it answered.
+  // The set required is unchanged - `providers` distinct seats, each list checked as before; only the order of asking is: all at once, the slow tail
+  // not waited for once enough have answered.
   const refused = [], got = [], roots = new Set();
-  for (const u of nodes) {
-    if (skip.has(u) || got.length >= providers) continue;
+  const asked = [];
+  const ask = async (u) => {
     const root = String(baseOf(u)).toLowerCase();
-    if (roots.has(root)) continue;
     try {
       const r = await readWithOneRetry(fetcher, `${baseOf(u)}/census?round=${roundIdHex}`);
-      if (!r.ok) { refused.push(`${u}: ${r.status}`); continue; }
+      if (!r.ok) { refused.push(`${u}: ${r.status}`); return; }
       const j = await jsonUpTo(r, CENSUS_ANSWER_MAX);   // kanban #2740: bounded
+<<<<<<< ours
       if (!j || !Array.isArray(j.entries)) { refused.push(`${u}: no entries`); continue; }
+=======
+      if (!j || !Array.isArray(j.entries)) { refused.push(`${u}: no entries`); return; }
+      // A PROVIDER LISTING ONE BOND TWICE IS REFUSED ON ITS OWN, before the union (kanban #2160, #2228, #2301): in the union its repeat
+      // made the census uncommittable and its honest co-provider was skipped with it - on three seats the join was refused
+      const twice = repeatedBondIn(j.entries);
+      if (twice) { refused.push(`${u}: lists one bond twice`); return; }
+      if (got.length >= providers || roots.has(root)) return;
+>>>>>>> theirs
       // the nodes this seat left out for their protocol version: shown, never counted
       if (Array.isArray(j.tooOld)) keptTooOld.set(key, j.tooOld.filter((x) => x && /^[0-9a-f]{64}$/.test(String(x.node))));
       roots.add(root); got.push({ from: u, entries: j.entries });
     } catch (e) { refused.push(`${u}: ${e.message}`); }
+  };
+  const seen = new Set();
+  for (const u of nodes) {
+    const root = String(baseOf(u)).toLowerCase();
+    if (skip.has(u) || seen.has(root)) continue;
+    seen.add(root); asked.push(ask(u));
   }
+  await new Promise((resolve) => {
+    let left = asked.length;
+    if (!left) return resolve();
+    for (const a of asked) a.then(() => { left--; if (got.length >= providers || left === 0) resolve(); });
+  });
   if (!got.length) return { ok: false, why: `no node handed over the census: ${refused.join('; ')}` };
   if (got.length < providers) return { ok: false, lookOnly: true, from: got[0].from, entries: got[0].entries, refused,
     why: `only ${got.length} provider handed over the census - a bond list one provider serves alone is enough to look, not to lock (${refused.join('; ') || 'no other answered'})` };
