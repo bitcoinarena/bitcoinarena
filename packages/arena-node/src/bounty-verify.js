@@ -164,7 +164,11 @@ export function postsOf(body) {
     for (const v of Array.isArray(o) ? o : Object.values(o)) walk(v, depth + 1);
   };
   walk(body, 0);
-  return out;
+  // OLDEST FIRST (kanban #3003, audit faucet r3 #1): a Latest search lists the newest post first, and the link bot redeems in this order - a
+  // stranger who copied a reporter's public BA- code seconds later was redeemed first and his X account linked to the reporter's key. X post
+  // ids are time-ordered (snowflakes), so the first poster of a code is redeemed first and the copy gets "that code was used already"
+  const n = (id) => { try { return BigInt(id); } catch { return 0n; } };
+  return out.sort((a, b) => (n(a.id) < n(b.id) ? -1 : n(a.id) > n(b.id) ? 1 : 0));
 }
 
 /** The verifiers the faucet runs, from the secret files (FAUCET_BOUNTY_TG_TOKEN_FILE ...); a platform whose files are missing has none. */
