@@ -117,6 +117,17 @@ const whereOf = new WeakMap();                 // chain view -> its txid index (
 
 /** A chain view's transactions by txid, indexed once per view object (censusFor). */
 const TXIDS_OF_VIEW = new WeakMap();
+// A block's transactions by txid, read once per block object (kanban #3010): kept with the block, so every view that holds it shares one map
+const TXIDS_OF_BLOCK = new WeakMap();
+function txidsOfBlock(block) {
+  let m = TXIDS_OF_BLOCK.get(block);
+  if (!m) {
+    m = new Map();
+    for (const raw of block.transactions || []) { try { m.set(toHex(parseTransaction(raw).txid), raw); } catch { /* not one */ } }
+    TXIDS_OF_BLOCK.set(block, m);
+  }
+  return m;
+}
 // A CENSUS THAT DID NOT MATCH ITS ROUND'S ROOT, kept with the view it was derived from (2026-10-25, measured on testnet4: the
 // day's rounds posted on a branch the chain left named roots the public chain does not give; every listing derived their
 // series' census again, each a few seconds of curve math, and all seven test host seats sat at 100 % CPU with full accept queues).
@@ -176,21 +187,34 @@ export function censusOfView(view, contract, { network = networkOf(contract.netw
   // THE VIEW'S TRANSACTIONS BY TXID, ONCE PER VIEW (2026-10-03, measured: a restarted seat held its loop 3-8 s per
   // assignment - every series' census parsed every transaction of the same ~2,080-block view again). Kept with the view
   // object itself, so a new view is indexed afresh and an old one is let go with it.
-  let byTxid = TXIDS_OF_VIEW.get(view);
-  if (!byTxid) {
-    byTxid = new Map();
-    for (const block of view.blocks) {
-      for (const raw of block.transactions || []) {
-        try { byTxid.set(toHex(parseTransaction(raw).txid), raw); } catch { /* not one */ }
-      }
+  // ONLY THE BLOCK AN ENTRY NAMES IS READ (kanban #3010, measured 2026-11-19 on testnet4 seat 7's heap snapshot: TXIDS_OF_VIEW held 729 MB of
+  // its 1,463 MB live heap - every transaction of the ~2,080-block view keyed by a 64-character hex txid - and with it the seat sat at its
+  // 2 GB limit, every full GC ~1 s, the tn4 timeouts of #3010): a census resolves only its scanned bond entries, and each entry carries the
+  // height it was created at, so its transaction is looked up in that one block. A block's txids are kept with the block (shared by every
+  // view that holds it); a view without heights, or an entry not found there, falls back to reading every block once, as before.
+  const blockAt = (h) => {
+    const first = Number(view.firstHeight);
+    const i = Number(h) - first;
+    return Number.isInteger(i) && i >= 0 && i < view.blocks.length ? view.blocks[i] : null;
+  };
+  let byTxid = null;
+  const everyTx = () => {
+    if (byTxid) return byTxid;
+    byTxid = TXIDS_OF_VIEW.get(view);
+    if (!byTxid) {
+      byTxid = new Map();
+      for (const block of view.blocks) for (const [hex, raw] of txidsOfBlock(block)) byTxid.set(hex, raw);
+      TXIDS_OF_VIEW.set(view, byTxid);
     }
-    TXIDS_OF_VIEW.set(view, byTxid);
-  }
+    return byTxid;
+  };
   return deriveCensus(readFrom, {
     contract,
     bond: bondSetFor(network),
     resolve: (e) => {
-      const raw = byTxid.get(toHex(e.txid));
+      const want = toHex(e.txid);
+      const block = e.height !== undefined ? blockAt(e.height) : null;
+      const raw = (block && txidsOfBlock(block).get(want)) || everyTx().get(want);
       return raw ? { transaction: raw } : null;
     },
     // THE NEWEST ADVERTISEMENT UPDATE (§5A.2), each checked against its bond's own node key
