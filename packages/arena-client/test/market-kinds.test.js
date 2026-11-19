@@ -156,6 +156,12 @@ test('a market on a game is believed only from its source round\'s result, signe
   const [unfilled] = marketLines({ picks: [{ ...pick, unfilled: true }], outcomes: new Map([[rid, { state: 'ATTESTED', label: 'BULLS', final: true, finalAtMs: '1', table: noRow, check: ok }]]), nowMs: Number(S) });
   assert.deepEqual([unfilled.state, unfilled.backMsat, unfilled.final], ['refunded', String(pick.stakeMsat), true]);
   assert.match(unfilled.text, /your order matched nobody: its .* sats come back whole$/);
+  //: kanban #3009 (feedback #347): before this browser's collect credited the stake, the row is not refunded and not final - the refund is in transit
+  const [transit] = marketLines({ picks: [{ ...pick, unfilled: true, stakeBack: false }], outcomes: new Map([[rid, { state: 'ATTESTED', label: 'BULLS', final: true, finalAtMs: '1', table: noRow, check: ok }]]), nowMs: Number(S) });
+  assert.deepEqual([transit.state, transit.final, transit.finalAtMs], ['refund in transit', false, null]);
+  assert.match(transit.text, /on their way back - in your wallet once this page collects them$/);
+  const [credited] = marketLines({ picks: [{ ...pick, unfilled: true, stakeBack: true }], outcomes: new Map([[rid, { state: 'ATTESTED', label: 'BULLS', final: true, finalAtMs: '1', table: noRow, check: ok }]]), nowMs: Number(S) });
+  assert.deepEqual([credited.state, credited.final], ['refunded', true]);
   const [open] = marketLines({ picks: [pick], outcomes: new Map(), nowMs: Number(S) });
   assert.equal(open.final, undefined);
   assert.match(open.text, new RegExp(`waiting for source round ${toHex(SOURCE_ID).slice(0, 8)}'s signed result$`));

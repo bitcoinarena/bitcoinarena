@@ -5119,6 +5119,21 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     // EVERY SAVED PHRASE'S RECORDS (ruled 2026-10-07): a closed tab's round pays into the wallet of the
     // seed that joined it; a later tab collects it whatever phrase it took itself. Records of a seed no saved phrase holds
     // are named uncollectable and paid into no other wallet.
+    // THE ORDERS OF THIS TAB THAT MATCHED NOBODY, as `${round}:${order}` (kanban #3009): the market page marks a kept pick `unfilled` once the
+    // book shows it held no shares at the close
+    function unfilledPickKeys() {
+      let picks = []; try { picks = JSON.parse(window.sessionStorage.getItem('arena.market.picks') || '[]'); } catch { picks = []; }
+      return picks.filter((p) => p && p.unfilled && p.roundIdHex).map((p) => String(p.roundIdHex).toLowerCase() + ':' + (Number(p.order && p.order.index) || 0));
+    }
+    // IS THE STAKE OF THIS ORDER IN THE WALLET YET (kanban #3009): true once this browser's collect record of it is done, false while it is
+    // open, undefined when this browser keeps no record of it (another device: the row cannot tell, and says what it said before)
+    window.ARENA_STAKE_CREDITED = (roundIdHex, order = 0) => {
+      try {
+        const id = String(roundIdHex).toLowerCase(), o = Number(order) || 0;
+        const rs = keptRecords().collectable.filter((r) => String(r.roundIdHex).toLowerCase() === id && (Number(r.order) || 0) === o);
+        return rs.length ? rs.every((r) => !!r.done) : undefined;
+      } catch { return undefined; }
+    };
     function keptRecords() {
       // (kanban #2104: a record kept with another federation's invite gets its round's own, from the federations this page read)
       return ARENACLIENT.recordsToCollect ? ARENACLIENT.recordsToCollect(vault(), { tabSeed: collectSeed(), loads: window.ARENA_FED_LOADS })
@@ -5455,7 +5470,10 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       // pass asked every seat about every open record, 409 after 409): 30 s after a look that found nothing owed, doubling to 10 min;
       // a record with something owed, or never looked at, at once
       const pauseOf = lookThePayout.pause || (lookThePayout.pause = new Map());
-      for (const older of keptRecords().collectable
+      // AN ORDER THAT MATCHED NOBODY FIRST (kanban #3009, feedback #347): its whole stake is owed back once the window closed, so it is not
+      // left behind the other records of the pass (measured: credited ~60 s after the page loaded)
+      const unfilledKeys = new Set(unfilledPickKeys());
+      for (const older of (ARENACLIENT.collectOrder ? ARENACLIENT.collectOrder(keptRecords().collectable, unfilledKeys) : keptRecords().collectable)
         .filter((r) => ARENACLIENT.roundLocks(r.round) && !r.done && backKey(r) !== backKey(newest) && !((pauseOf.get(backKey(r)) || {}).until > Date.now()))) {
         if (rescanWanted) break;
         await orderClear();

@@ -577,6 +577,10 @@ export function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() })
     // AN ORDER THAT MATCHED NOBODY (measured 2026-10-17: two 14:00 orders held 0 shares and 0 cost in their round's
     // book on every seat, and the settlement table - filled positions only - had no row for them, so they stayed "waiting"): the page
     // read its position from the book after the close (`unfilled`); its stake comes back whole
+    // NOT REFUNDED BEFORE IT IS IN THE WALLET (kanban #3009, feedback #347: "refunded ±0 final" 30 min while the 100 sat were still at the seats;
+    // measured 2026-11-19: the row said refunded at 06:04Z, the collect credited the stake at 06:06Z): `stakeBack` false - this browser's collect
+    // record of the order is still open - says the refund is on its way, not final; true (credited) or unknown (no record here) as before
+    if (!row && p.unfilled && p.stakeBack === false) { lines.push({ ...at('refund in transit', { backMsat: String(p.stakeMsat), final: false, finalAtMs: null }), text: `${head}: ${signed} · your order matched nobody: its ${sats(p.stakeMsat)} sats are on their way back - in your wallet once this page collects them` }); continue; }
     if (!row && p.unfilled) { lines.push({ ...at('refunded', { backMsat: String(p.stakeMsat) }), text: `${head}: ${signed} · your order matched nobody: its ${sats(p.stakeMsat)} sats come back whole` }); continue; }
     if (!row) { lines.push({ ...at('unknown'), text: `${head}: ${signed} · your pick is not in the signer nodes' table` }); continue; }
     // WON OR LOST, AND HOW MUCH, IS THE VERIFIED OUTCOME'S, NOT A SEAT'S TABLE (kanban #1615; #2153, #2221, #2299, #2354): `check` is

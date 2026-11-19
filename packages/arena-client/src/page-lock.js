@@ -2958,6 +2958,15 @@ export function collectLines(records = [], { failed = new Map(), held = new Set(
  * part's own state: the payout none, gone or collected (or owed and its redeem final); the stake gone, none or collected (or owed and its
  * redeem or refund final); and this tab's round wallet empty. Anything else is open, and the record is looked at again.
  */
+/**
+ * THE ORDER A COLLECT PASS LOOKS AT ITS RECORDS (kanban #3009, feedback #347): the records of orders that matched nobody first - their whole stake
+ * is owed back the moment the window closed - then the rest in their kept order. `unfilled`: a Set of `${roundIdHex}:${order}` keys.
+ */
+export function collectOrder(records, unfilled = new Set()) {
+  const key = (r) => `${String(r.roundIdHex).toLowerCase()}:${Number(r.order) || 0}`;
+  return [...(records || [])].map((r, i) => ({ r, i, u: unfilled.has(key(r)) ? 0 : 1 })).sort((a, b) => a.u - b.u || a.i - b.i).map((x) => x.r);
+}
+
 export const COLLECT_STATES = Object.freeze({ OPEN: 'open', DONE: 'done' });
 const PAYOUT_TERMINAL = new Set(['none', 'gone', 'collected']);
 const STAKE_TERMINAL = new Set(['gone', 'none', 'collected']);
@@ -2965,9 +2974,13 @@ export function collectState(look, co = null) {
   if (!look || !look.payout || !look.stake) return { state: 'open', why: 'not looked at' };
   const got = (co && co.got) || {};
   const ok = (x) => !!(x && (x.ok || x.final));
-  const payoutDone = PAYOUT_TERMINAL.has(look.payout.state) || (look.payout.state === 'owed' && ok(got.payout));
   const stakeDone = STAKE_TERMINAL.has(look.stake.state)
     || (look.stake.state === 'owed' && (look.stake.how === 'refund' ? ok(got.refund) : ok(got.stake)));
+  // A STAKE BACK BY ITS FORFEIT HAS NO PAYOUT TO WAIT FOR (kanban #3009, feedback #347: an Up/Down order that matched nobody stayed "collected in
+  // part, still open: payout waiting (no signer node holds an accepted settlement)" for good - a market where no order filled never settles): the
+  // seats forfeit a lock only for an entry they did not count (§23.2 REFUSED, an unfilled order), and an entry not counted is paid nothing
+  const forfeitBack = look.stake.how === 'forfeit' && stakeDone;
+  const payoutDone = PAYOUT_TERMINAL.has(look.payout.state) || (look.payout.state === 'owed' && ok(got.payout)) || forfeitBack;
   // A KEPT FEE LOCK STILL STORED AFTER THE COLLECT (kanban #2149, #2215): the look before the collect said the stake alone was owed, and the
   // collect brought it back while the order's fee lock stayed in the federation - never done on that look; the next look owes the fee
   if (got.feeHeld) return { state: 'open', why: 'this tab\'s fee lock is still in the federation' };
