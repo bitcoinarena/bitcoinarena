@@ -5128,6 +5128,15 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       return new Set(picks.filter((p) => p && p.roundIdHex && (p.unfilled || refund.has(p.entryIdHex))).map((p) => String(p.roundIdHex).toLowerCase() + ':' + (Number(p.order && p.order.index) || 0)));
     }
     const unfilledPickKeys = () => [...refundOrderKeys()];
+    // A REFUND-ONLY ORDER'S RECORD IS DONE ONCE ITS STAKE IS CREDITED (kanban #3009): its line is a refund or VOID, so no payout will come.
+    // `credited`: this pass's collect brought the stake back, or the look reads it collected before. Answers whether it closed the record.
+    function closeRefundOnly(rec, look, credited) {
+      if (!credited || !refundOrderKeys().has(orderKeyOf(rec)) || !(look.inTabMsat === undefined || look.inTabMsat === null || look.inTabMsat === 0n)) return false;
+      if (!ARENACLIENT.markCollectDone(vault(), rec.roundIdHex, { payout: 'none: the order is refunded whole', stake: ARENACLIENT.owedToLine(look), tabMsat: '0' }, rec.seed, rec.order || 0)) return false;
+      stakeBack.delete(backKey(rec));
+      collectNote(rec.roundIdHex.slice(0, 8) + (rec.order ? '.o' + rec.order : ''), 'MARKED DONE: its stake was its whole refund (#3009)');
+      return true;
+    }
     // IS THE STAKE OF THIS ORDER IN THE WALLET YET (kanban #3009): true once this browser's collect record of it is done, false while it is
     // open, undefined when this browser keeps no record of it (another device: the row cannot tell, and says what it said before)
     window.ARENA_STAKE_CREDITED = (roundIdHex, order = 0) => {
@@ -5550,6 +5559,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             if (window.ARENA_ROUND_RESULT) window.ARENA_ROUND_RESULT(newest, look, c.creditedMsat);   // kanban #2898
             // DONE ONLY WHEN EVERY PART IS (kanban #1163)
             if (ARENACLIENT.markCollectDone(vault(), newest.roundIdHex, { payout: ARENACLIENT.owedToLine(look), stake: null }, newest.seed, newest.order || 0, { look, co: c })) stakeBack.delete(backKey(newest));
+            else if (closeRefundOnly(newest, look, !!(c.got && c.got.stake && (c.got.stake.ok || c.got.stake.final)))) { /* kanban #3009 */ }
             else collectNote(newest.roundIdHex.slice(0, 8) + (newest.order ? '.o' + newest.order : ''), 'newest round collected in part, still open: ' + ARENACLIENT.collectState(look, c).why);
             if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE();
             paintHistory();
@@ -5557,6 +5567,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         }
         if (!look) { /* looked at in the other tab */ }
         else if (newest.done) window.ARENA_COLLECT_LINE = [newest.done.payout, newest.done.stake].filter(Boolean).join(' · ');
+        else if (look.stake && look.stake.state === 'collected' && closeRefundOnly(newest, look, true)) { /* kanban #3009: a refund-only order credited before */ }
         else if (look.final && look.inTabMsat === 0n) {
           const line = ARENACLIENT.owedToLine(look);
           if (ARENACLIENT.markCollectDone(vault(), newest.roundIdHex, { payout: line, stake: null }, newest.seed, newest.order || 0, { look })) stakeBack.delete(backKey(newest));
