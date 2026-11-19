@@ -1154,5 +1154,13 @@
  "3006": {
   "text": "Node software: old round funds can stay invisible, and a rescan cannot bring them back",
   "kind": "bug"
+ },
+ "3009": {
+  "text": "Settlement: an unmatched up/down order can finish without its stake coming back",
+  "kind": "bug"
+ },
+ "3010": {
+  "text": "Rock Paper Scissors game: taps with time still left can be refused as too late",
+  "kind": "bug"
  }
 }
