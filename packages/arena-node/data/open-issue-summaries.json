@@ -1298,5 +1298,113 @@
  "3044": {
   "text": "Other: many connections can stall social login during signature checks",
   "kind": "bug"
+ },
+ "3045": {
+  "text": "Other: replaying a voided entry re-asks every peer for receipts",
+  "kind": "bug"
+ },
+ "3046": {
+  "text": "Federation: one census seat can set a halted federation's proven halt",
+  "kind": "bug"
+ },
+ "3047": {
+  "text": "Node software: a paying entry with no handout can leave the winner unpaid",
+  "kind": "bug"
+ },
+ "3048": {
+  "text": "Settlement: one bad request can stop the attestor and void up/down rounds",
+  "kind": "bug"
+ },
+ "3049": {
+  "text": "Settlement: the attestor can sign an up/down outcome from a reading before the window ends",
+  "kind": "bug"
+ },
+ "3050": {
+  "text": "Node software: refused junk can fill a seat's memory",
+  "kind": "bug"
+ },
+ "3051": {
+  "text": "Node software: one network read can stall the seat on unbounded checks",
+  "kind": "bug"
+ },
+ "3052": {
+  "text": "Node software: expanding a large package on the main thread can freeze the seat",
+  "kind": "bug"
+ },
+ "3053": {
+  "text": "Website: one silent seat can freeze the pending line until reload",
+  "kind": "bug"
+ },
+ "3054": {
+  "text": "Lightning payouts: a partial name record can drop a player's season rounds",
+  "kind": "bug"
+ },
+ "3055": {
+  "text": "Other: a spoofed client address can evict a player from a head-to-head table",
+  "kind": "bug"
+ },
+ "3056": {
+  "text": "Other: a season draw place can be chosen after the seed is public",
+  "kind": "bug"
+ },
+ "3057": {
+  "text": "Other: public replay reads rebuild a whole run on every request",
+  "kind": "bug"
+ },
+ "3058": {
+  "text": "Node software: one batch leader can leave an order batch certified at some seats and void at others",
+  "kind": "bug"
+ },
+ "3059": {
+  "text": "Node software: a stranger can flush a new node's address announcement from every seat",
+  "kind": "bug"
+ },
+ "3060": {
+  "text": "Node software: one silent seat can keep a refused round's stake stuck",
+  "kind": "bug"
+ },
+ "3061": {
+  "text": "Other: each relay event copies the whole standing set, so writes grow with identities",
+  "kind": "bug"
+ },
+ "3062": {
+  "text": "Federation: an open guardian dial can keep every stranger message with no bound",
+  "kind": "bug"
+ },
+ "3063": {
+  "text": "Settlement: each encoding of one attestation can start another hand-on duty",
+  "kind": "bug"
+ },
+ "3064": {
+  "text": "Slashing: one seat's made-up federation can move the page's chain tip",
+  "kind": "bug"
+ },
+ "3065": {
+  "text": "Other: a deeply wrapped overflow is not sticky, so a core can see the engine overflow",
+  "kind": "bug"
+ },
+ "3066": {
+  "text": "Other: a nostr round result can book one key's share on every entry",
+  "kind": "bug"
+ },
+ "3067": {
+  "text": "Node software: compiling a large package out of memory can crash the whole seat",
+  "kind": "bug"
+ },
+ "3068": {
+  "text": "Committees and bonds: a bond after an update can advertise the old game list and miss new draws",
+  "kind": "bug"
+ },
+ "3069": {
+  "text": "Faucet and feedback: the node bounty never counts market committees, so an up/down-only node cannot qualify",
+  "kind": "bug"
+ },
+ "3070": {
+  "text": "Node software: an installer node keeps logging a missing-wallet duty failure",
+  "kind": "bug"
+ },
+ "3071": {
+  "text": "Node software: the full node and client test suites on main still need triage",
+  "kind": "bug"
  }
 }
