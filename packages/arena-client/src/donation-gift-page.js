@@ -71,7 +71,11 @@ async function finishGift({ rec, keptKey, storage, wallet, federationId, donor, 
   if (!rec.body) {
     if (rec.federationId !== federationId) return no('record', `an earlier gift was paid (transaction ${txid}) from federation ${rec.federationId.slice(0, 8)}: open that federation's wallet to finish its record, nothing is paid again`);
     let accepted;
-    try { accepted = JSON.parse(await wallet.lockAccepted(JSON.stringify(rec.submitted))); } catch (e) { return no('record', `paid (transaction ${txid}), its acceptance not read yet (${String(e && e.message || e)}): pressed again, it is read again, never paid again`); }
+    try { accepted = JSON.parse(await wallet.lockAccepted(JSON.stringify(rec.submitted))); } catch (e) {
+      // REFUSED BY THE GUARDIANS IS NOT PAID (kanban #3081, as item-buy.js finishPurchase): the record is dropped, the next press gives anew
+      const why = String((e && e.message) || e);
+      if (/did not accept the lock transaction/i.test(why)) { paidRecordDrop(storage, keptKey); return no('payment', `not paid: the federation refused the payment (${why.replace(/^.*did not accept the lock transaction:\s*/i, '').slice(0, 160)}) - send it again`); }
+      return no('record', `paid (transaction ${txid}), its acceptance not read yet (${String(e && e.message || e)}): pressed again, it is read again, never paid again`); }
     const held = accepted.donations || [];
     if (held.length !== rec.outputs || !held.every((d) => d.ids_match)) return no('payment', 'the federation does not hold the outputs as they were built');
     const totalMsat = BigInt(rec.sat) * 1000n;
