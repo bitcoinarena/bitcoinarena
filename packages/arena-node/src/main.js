@@ -362,12 +362,15 @@ if (url) {
       // blocksOver names the hash each block came under; the census height's must be the key's, whatever the cache holds
       if (census.ok) {
         let same = false;
-        try {
-          const at = viewRead && viewRead.blocks ? height - viewRead.firstHeight : -1;
-          const atHeight = at >= 0 ? viewRead.blocks[at] : undefined;
-          const atHash = at >= 0 && Array.isArray(viewRead.hashes) ? viewRead.hashes[at] : undefined;
-          same = atHeight !== undefined && atHash === hash && String(await call('getblockhash', [height])) === hash;
-        } catch { same = false; }
+        const at = viewRead && viewRead.blocks ? height - viewRead.firstHeight : -1;
+        const atHeight = at >= 0 ? viewRead.blocks[at] : undefined;
+        const atHash = at >= 0 && Array.isArray(viewRead.hashes) ? viewRead.hashes[at] : undefined;
+        // A FAILED READ IS NOT A REORG (kanban #3084, feedback #364): the last getblockhash failing (an Electrum bridge closing its idle
+        // connection) was told as "the chain reorganised"; it is asked once more, and a read that still fails says so
+        let tipHash = null, readWhy = null;
+        for (let tries = 0; tries < 2 && tipHash === null; tries++) { try { tipHash = String(await call('getblockhash', [height])); } catch (e) { readWhy = String((e && e.message) || e).slice(0, 160); } }
+        if (tipHash === null) return { ok: false, why: `the census height's block hash could not be read (${readWhy}): read again` };
+        same = atHeight !== undefined && atHash === hash && tipHash === hash;
         if (!same) return { ok: false, why: 'the chain reorganised during this census read: read again' };
       }
       if (census.ok) {
