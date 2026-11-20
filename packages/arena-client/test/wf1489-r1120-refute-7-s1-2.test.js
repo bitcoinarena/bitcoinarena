@@ -8,7 +8,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { recordReceived, ledgerRows } from '../src/page-lock.js';
+// kanban #3111: the page block runs against the BUILT bundle the page loads, not the module (a stale bundle fails here)
+import { recordReceived, ledgerRows } from './bundle-shim-3087.mjs';
 
 test('#3087 refute: the reissued sat get their row while another output is still being issued', async () => {
   const page = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
