@@ -8589,7 +8589,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const e = entries.find((x) => toHex(x.pubkey) === node);
           if (!e || !e.advert || !e.advert.endpoint) continue;
           try {
-            const r = await fetch(`${String(addressBook.endpointOf(e) || e.advert.endpoint).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '')}/gateway-seating?federation=${fid}&epoch=${ep}`, { signal: AbortSignal.timeout(10000) });
+            const peerAt = addressBook.endpointOf(e); if (!peerAt) continue;   // kanban #3082: a refused endpoint is not dialed
+            const r = await fetch(`${String(peerAt).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '')}/gateway-seating?federation=${fid}&epoch=${ep}`, { signal: AbortSignal.timeout(10000) });
             if (r.status === 200) signed.push(await r.json());
           } catch { /* that guardian's signature is missing this time */ }
         }
@@ -8608,7 +8609,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const epoch = seatingEpochAt(await chainTip());
       const now = fedRecords.censusNow ? fedRecords.censusNow() : { ok: false };
       const entries = now.ok ? now.entries : [];
-      const endpointOf = (node) => { const e = entries.find((x) => toHex(x.pubkey) === node); return e && e.advert && e.advert.endpoint ? String(addressBook.endpointOf(e) || e.advert.endpoint).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '') : null; };
+      const endpointOf = (node) => { const e = entries.find((x) => toHex(x.pubkey) === node); const peerAt = e && e.advert && e.advert.endpoint ? addressBook.endpointOf(e) : null; return peerAt ? String(peerAt).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '') : null; };
       const me = toHex(round.pubkey);
       for (const { federation: fid } of fedRecords.list()) {
         const rec = fedRecords.recordOf(fid);
@@ -9752,7 +9753,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const epoch = Math.floor(tip / GATEWAY_EPOCH_BLOCKS), set = heldSetOf(fid, epoch);
         if (!set) return claimJson(404, { ok: false, why: 'this seat holds no record of that federation' });
         const census = fedRecords.censusNewest && fedRecords.censusNewest().length ? fedRecords.censusNewest() : ((fedRecords.censusNow ? fedRecords.censusNow() : {}).entries || []);
-        const guardians = set.seated.map((node) => { const e = census.find((x) => toHex(x.pubkey) === node); const ep = e && e.advert ? addressBook.endpointOf(e) || e.advert.endpoint : null;
+        const guardians = set.seated.map((node) => { const e = census.find((x) => toHex(x.pubkey) === node); const ep = e && e.advert ? addressBook.endpointOf(e) : null;   // kanban #3082: a refused endpoint is none
           return { node, url: ep ? String(ep).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '') : null }; });
         return claimJson(200, { ok: true, federationId: fid, tip, epoch, proofHeight: heldProofHeight(epoch), window: heldReadWindow(epoch), open: heldWindowOpen(epoch, tip),
           claimPk: HELD_CLAIM_PK, minBlocksLeft: HELD_MIN_BLOCKS_LEFT, threshold: set.threshold, guardians });
@@ -12927,7 +12928,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const c = roster.committeeFor(id, role);
           if (!c.ok) continue;
           for (const e of c.committee) if (e && e.advert && e.advert.endpoint)
-            found.add(String(addressBook.endpointOf(e) || e.advert.endpoint).replace(/^wss?:/, 'https:').replace(/\/+$/, ''));
+            { const peerAt = addressBook.endpointOf(e); if (peerAt) found.add(String(peerAt).replace(/^wss?:/, 'https:').replace(/\/+$/, '')); }   // kanban #3082
         }
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ stable: replayPublic, endpoints: [...found] }));
