@@ -7788,7 +7788,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         if (!w) return { ok: false, why: 'no federation of your wallet holds ' + sat.toLocaleString('en-US') + ' sat' };
         say('Paying ' + ARENACLIENT.zapSatLine(choice) + ' \u2026');
         const got = await ARENACLIENT.zapPlayer({ player: ARENACLIENT.fromHex(mine.recipient), sat, wallet: w.c, federationId: w.fid, storage: vault(),
-          donor: { pubkey: key.pubkey, sign: key.sign }, seats: zapSeats(), fetch: (u, o) => fetch(u, o) }).catch((e) => ({ ok: false, step: 'page', why: e.message }));
+          donor: { pubkey: key.pubkey, sign: key.sign }, seats: zapSeats(), fetch: (u, o) => fetch(u, o), wallets: window.ARENA_WALLETS || null }).catch((e) => ({ ok: false, step: 'page', why: e.message }));
         if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE();
         return got.ok ? { ok: true, zapped: true, txid: got.txid } : { ok: false, why: (got.step ? got.step + ': ' : '') + got.why };
       }
@@ -11027,7 +11027,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       if (!bondedKeys) return { ok: false, step: 'served', why: 'this page could not check the network\'s census, so it cannot tell which keys served a round' };
       return ARENACLIENT.buyItem({ manifest: shop.game.manifest, itemId: it.id, networkSet: ds.target.network, gameSet: ds.target.game, wallet, federationId, devsPct,
         player: { pubkey: key.pubkey, sign: key.sign }, seats: shop.game.nodes || [], fetch: (u, o) => fetch(u, o), storage: vault(),
-        verify: (sg, m, k) => window.ARENA_CURVE.verify(sg, m, k), bondedKeys });
+        verify: (sg, m, k) => window.ARENA_CURVE.verify(sg, m, k), bondedKeys,
+        wallets: window.ARENA_WALLETS || null });   // kanban #3116: a kept payment is finished by its own federation's wallet, whatever this press pays from
     }
     // DONATE TO THE DEVELOPERS (2026-10-17: "donate to developer, a popup opens with an amount to choose from
     // 100, 500, 1000, 5000 satoshis or custom"; "B e cash"; Tick Tock's countdown box, the other games, the main testnet UI's footer):
@@ -11260,7 +11261,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           const w = wallets.find((x) => x.msat >= BigInt(sat) * 1000n);
           if (!w) return { ok: false, tell: 'No federation of your wallet holds ' + sat.toLocaleString('en-US') + ' sat.' };
           const got = await ARENACLIENT.giftDonation({ game: sets.game, recipients: sets.set, networkSet: sets.game ? sets.networkSet : null, origin, sat, wallet: w.c, federationId: w.fid, storage: vault(),
-            donor: { pubkey: key.pubkey, sign: key.sign }, seats: sets.seats, fetch: (u, o) => fetch(u, o) }).catch((e) => ({ ok: false, step: 'page', why: e.message }));
+            donor: { pubkey: key.pubkey, sign: key.sign }, seats: sets.seats, fetch: (u, o) => fetch(u, o), wallets: window.ARENA_WALLETS || null }).catch((e) => ({ ok: false, step: 'page', why: e.message }));
           window.ARENA_DONATE_LAST = got;
           console.log('[arena] donation ' + (got.ok ? sat + ' sat, transaction ' + got.txid + ', ' + got.outputs + ' outputs, kept by ' + got.keptBy : 'refused (' + got.step + '): ' + got.why));
           if (got.ok && window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE();

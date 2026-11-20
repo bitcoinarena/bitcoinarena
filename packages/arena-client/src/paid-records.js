@@ -49,6 +49,58 @@ export function paidRecordDropIf(storage, key, rec) {
     : !now.submitted && (rec.mark ? now.mark === rec.mark : !now.mark && now.boughtAtMs === rec.boughtAtMs && now.atMs === rec.atMs);
   if (same) paidRecordDrop(storage, key);
 }
+/**
+ * WRITTEN ONLY OVER ITS OWN RECORD (kanban #3116, #3117, refute of #3081 / #3105 - the twin of paidRecordDropIf): every put after the
+ * write-ahead reads the key again. Tab A's paySubmit answered late; meanwhile tab B dropped A's unanswered write-ahead and the player paid
+ * T2 under the same key. A's put then wrote T1 over T2, the guardians refused T1, and A's drop-if matched its own T1: T2's paid record
+ * was gone and the next press paid again. Now the record is written where it stands only while the key holds nothing, this record's
+ * write-ahead (its mark) or the same submitted txid; when another payment holds the key, this one is kept beside it under
+ * `<key>.<its mark>` (paidRecordKeys and paidRecordFind read both). Answers the key the record is kept under; throws as paidRecordPut.
+ */
+const ALT_SUFFIX = /^[0-9a-f]{24}$/;
+export function paidRecordPutIf(storage, key, rec) {
+  const now = paidRecordGet(storage, key);
+  // a submitted record there is this one only by its txid; an unanswered write-ahead only by its mark
+  const mine = !now || (now.submitted ? !!(rec.submitted && now.submitted.txid === rec.submitted.txid) : (rec.mark ? now.mark === rec.mark : !now.mark));
+  if (mine) { paidRecordPut(storage, key, rec); return key; }
+  if (!rec.mark) rec.mark = paidRecordMark();
+  const beside = `${key}.${rec.mark}`;
+  paidRecordPut(storage, beside, rec);
+  return beside;
+}
+/**
+ * THE KEPT RECORD OF ONE PURCHASE (ONE GIFT) (kanban #3117): the key's own record when it was submitted, else one kept beside it
+ * (paidRecordPutIf) that was, else the key's unanswered write-ahead. Answers { key, rec } or null.
+ */
+export function paidRecordFind(storage, key) {
+  const own = paidRecordGet(storage, key);
+  if (own && own.submitted) return { key, rec: own };
+  for (const k of paidRecordKeys(storage)) {
+    if (!k.startsWith(`${key}.`) || !ALT_SUFFIX.test(k.slice(key.length + 1))) continue;
+    const rec = paidRecordGet(storage, k);
+    if (rec && rec.submitted) return { key: k, rec };
+  }
+  return own ? { key, rec: own } : null;
+}
+/**
+ * THE WALLET OF A KEPT RECORD'S OWN FEDERATION (kanban #3116, refute of #3081): a payment T1 from F1 is finished - its acceptance or the
+ * guardians' refusal read - only by F1's wallet. The page hands the first federation holding the price (buy) or the richest (a gift);
+ * once T1 was refused (its notes spent in another tab, F1 short) that was F2, and every press answered "paid from F1, nothing is paid
+ * again" forever. `walletOf(fid)` or `wallets` (the page's ARENA_WALLETS map, fid -> lock client) names F1's wallet whatever its
+ * balance. Answers the client or null.
+ */
+export function paidRecordWallet({ walletOf = null, wallets = null } = {}, fid) {
+  const want = String(fid || '').toLowerCase();
+  if (!want) return null;
+  try {
+    if (typeof walletOf === 'function') { const w = walletOf(fid); if (w) return w; }
+    if (wallets && typeof wallets.get === 'function') {
+      const w = wallets.get(fid); if (w) return w;
+      for (const [k, c] of wallets) if (String(k).toLowerCase() === want) return c;
+    }
+  } catch { /* none */ }
+  return null;
+}
 /** Every kept paid record's key in `storage`. */
 export function paidRecordKeys(storage) {
   const st = paidRecordStore(storage); const keys = [];
