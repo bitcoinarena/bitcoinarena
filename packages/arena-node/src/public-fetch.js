@@ -19,6 +19,7 @@ import { isIP, BlockList } from 'node:net';
 import { request as httpsRequest } from 'node:https';
 import { request as httpRequest } from 'node:http';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
+import { localHostName } from '../../arena-client/src/node-discovery.js';   // kanban #3124: one rule for the seat, the page and this file
 
 const INTERNAL = new BlockList();
 for (const [a, p] of [['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16], ['172.16.0.0', 12], ['192.0.0.0', 24],
@@ -210,7 +211,7 @@ const LOCAL_SUFFIX = /(^|\.)(localhost|local|internal|lan|home|arpa|localdomain|
 export function internalByName(hostname) {
   const host = String(hostname || '').toLowerCase().replace(/\.$/, '');
   return !host || /^\[|^\d+(\.\d+){3}$|^\d+$|^0x/i.test(host) || !host.includes('.') || isIP(host) !== 0 || LOCAL_SUFFIX.test(host)
-    || /(^|[.-])\d{1,3}([.-]\d{1,3}){3}([.-]|$)/.test(host);
+    || /(^|[.-])\d{1,3}([.-]\d{1,3}){3}([.-]|$)/.test(host) || localHostName(host);   // kanban #3124: never less than the seat's and the page's rule
 }
 
 /** The origin-free "host[:port]" a URL names, lower case, for the operator's own list of local LNURL hosts. */

@@ -43,11 +43,12 @@ const T0 = 1_800_000_000_000;
 const DEAD = 'wss://cups-grades-observation-card.trycloudflare.com';
 const LIVE = 'https://top-linda-jose-visibility.trycloudflare.com';
 
+// kanban #3124: dotted names (a single-label host is a LAN name every seat now refuses as a peer endpoint)
 test('endpointsOf: a fresh announcement beats a stale advert, a forged one is ignored, no announcement keeps the advert', () => {
   const me = keyOf(1), x = keyOf(2), y = keyOf(3), z = keyOf(4);
-  const committee = [me, x, y, z].map((k, i) => ({ pubkey: k.pubkey, advert: { endpoint: i === 1 ? DEAD : `ws://seat-${i}:1/`, timestamp: BigInt(T0 - 1000) } }));
+  const committee = [me, x, y, z].map((k, i) => ({ pubkey: k.pubkey, advert: { endpoint: i === 1 ? DEAD : `ws://seat-${i}.example:1/`, timestamp: BigInt(T0 - 1000) } }));
   const book = createAddressBook({ db: new DatabaseSync(':memory:'), verify, nowMs: () => T0 });
-  const asBefore = ['https://cups-grades-observation-card.trycloudflare.com', 'http://seat-2:1', 'http://seat-3:1'];
+  const asBefore = ['https://cups-grades-observation-card.trycloudflare.com', 'http://seat-2.example:1', 'http://seat-3.example:1'];
   assert.deepEqual(endpointsOf(committee, me.pubkey, book.endpointOf), asBefore, 'no announcement: the advert endpoint, ws -> http, self left out');
   assert.equal(book.take(signAddressAnnouncement({ node: x.hex, endpoint: LIVE, atMs: T0 }, (d) => schnorr.sign(d, x.secret))).kept, true);
   // forged: y's announcement signed by z's key; x's signature with its endpoint swapped
@@ -55,13 +56,13 @@ test('endpointsOf: a fresh announcement beats a stale advert, a forged one is ig
   assert.equal(book.take(forged).ok, false, 'a forged announcement is not kept');
   const bent = { ...signAddressAnnouncement({ node: x.hex, endpoint: LIVE, atMs: T0 + 1 }, (d) => schnorr.sign(d, x.secret)), endpoint: 'https://evil.example' };
   assert.equal(book.take(bent).ok, false, 'an endpoint swapped under a good signature is not kept');
-  assert.deepEqual(endpointsOf(committee, me.pubkey, book.endpointOf), [LIVE, 'http://seat-2:1', 'http://seat-3:1'], 'x at its announced address; y still at its advert');
+  assert.deepEqual(endpointsOf(committee, me.pubkey, book.endpointOf), [LIVE, 'http://seat-2.example:1', 'http://seat-3.example:1'], 'x at its announced address; y still at its advert');
   assert.deepEqual(endpointsOf(committee, me.pubkey), asBefore, 'without a resolver: exactly as before');
   assert.deepEqual(endpointsOf(committee, me.pubkey, () => { throw new Error('x'); }), asBefore, 'a resolver that throws: the advert');
 });
 
 test('the seating agent asks a drawn node whose advert went stale at its announced address', async () => {
-  const nodes = Array.from({ length: 9 }, (_, i) => ({ ...keyOf(i + 1), endpoint: `http://seat-${i}` }));
+  const nodes = Array.from({ length: 9 }, (_, i) => ({ ...keyOf(i + 1), endpoint: `http://seat-${i}.example` }));
   const START = 60500n;
   const NOW = Number(START) - 150000;            // inside the PRESENT window
   const db = new DatabaseSync(':memory:');
@@ -72,11 +73,11 @@ test('the seating agent asks a drawn node whose advert went stale at its announc
   db.prepare('INSERT INTO rounds (round_id, contract) VALUES (?, ?)').run(rid, bytes);
   const me = nodes[0];
   const round = { db, pubkey: me.pubkey, get: (id) => (toHex(id) === toHex(rid) ? { contract: bytes } : null) };
-  // node 3's advert names a host that is gone and it announced http://seat-3; node 4 has only a forged announcement
-  const drawn = nodes.map((n, i) => ({ pubkey: n.pubkey, advert: { endpoint: i === 3 ? 'http://dead-3' : n.endpoint, timestamp: 0n } }));
+  // node 3's advert names a host that is gone and it announced http://seat-3.example; node 4 has only a forged announcement
+  const drawn = nodes.map((n, i) => ({ pubkey: n.pubkey, advert: { endpoint: i === 3 ? 'http://dead-3.example' : n.endpoint, timestamp: 0n } }));
   const book = createAddressBook({ db: new DatabaseSync(':memory:'), verify, nowMs: () => T0 });
-  assert.equal(book.take(signAddressAnnouncement({ node: nodes[3].hex, endpoint: 'http://seat-3', atMs: T0 }, (d) => schnorr.sign(d, nodes[3].secret))).kept, true);
-  assert.equal(book.take(signAddressAnnouncement({ node: nodes[4].hex, endpoint: 'http://evil-4', atMs: T0 }, (d) => schnorr.sign(d, nodes[5].secret))).ok, false);
+  assert.equal(book.take(signAddressAnnouncement({ node: nodes[3].hex, endpoint: 'http://seat-3.example', atMs: T0 }, (d) => schnorr.sign(d, nodes[3].secret))).kept, true);
+  assert.equal(book.take(signAddressAnnouncement({ node: nodes[4].hex, endpoint: 'http://evil-4.example', atMs: T0 }, (d) => schnorr.sign(d, nodes[5].secret))).ok, false);
   const roster = { committeeFor: () => ({ ok: true, drawn }) };
   const asked = [];
   const fetcher = async (url, init = {}) => {
@@ -99,12 +100,12 @@ test('the seating agent asks a drawn node whose advert went stale at its announc
   };
   const before = await run(null);
   // (the first request to it fails, and the node rests from then on - kanban #791 - so its batch read is not sent in the same tick)
-  assert.ok(before.dialed.some((a) => a.includes('//dead-3/')), 'without the book: the dead advert is dialed (the bug)');
+  assert.ok(before.dialed.some((a) => a.includes('//dead-3.example/')), 'without the book: the dead advert is dialed (the bug)');
   assert.equal(before.agent.presentsOf(rid).filter((p) => p.role === 'game').length, 8, 'node 3\'s PRESENT is missing');
   const after = await run(book.endpointOf);
-  assert.ok(after.batches.includes('GET http://seat-3/seating-batch'), `the announced address is dialed: ${after.batches}`);
+  assert.ok(after.batches.includes('GET http://seat-3.example/seating-batch'), `the announced address is dialed: ${after.batches}`);
   assert.ok(!after.batches.some((a) => a.includes('dead-3')), 'the dead advert is not dialed');
-  assert.ok(after.batches.includes('GET http://seat-4/seating-batch') && !after.batches.some((a) => a.includes('evil-4')), 'a forged announcement is ignored');
+  assert.ok(after.batches.includes('GET http://seat-4.example/seating-batch') && !after.batches.some((a) => a.includes('evil-4')), 'a forged announcement is ignored');
   assert.equal(after.agent.presentsOf(rid).filter((p) => p.role === 'game').length, 9, 'all 9 game PRESENTs held');
 });
 
