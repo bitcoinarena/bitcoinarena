@@ -18,7 +18,7 @@
 //                                         after (#2083); a seating that seats a withholder this node left is refused (#2083)
 //
 // The roster asks `seatedFor` and seats the certificate's nodes; before one stands, the draw's first slots (Roster).
-import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { decodeRoundContract, seriesRoundIdOf } from '../../arena-protocol/src/contracts.js';
 import { slotsForRole } from '../../arena-protocol/src/sortition.js';
 import { signPresent, verifyPresent, decodePresent, seatedFrom, signSeating, seatingId, encodeSeatingCertificate, verifySeating,
@@ -513,6 +513,10 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
   const badPresents = new Set();
   const BAD_PRESENTS_KEPT = 8192;
   function takePresent(bytes, { afterClose = false, once = null } = {}) {
+    // A PRESENT IS PRESENT_BYTES, AND A REFUSED ONE IS REMEMBERED BY ITS DIGEST (kanban #3050, audit census r4-1-1): measured, 48 junk 1 MiB
+    // POST /present bodies left 97 MiB held - each refused body's whole hex went into badPresents (8192 kept). Any other length is refused
+    // here, before anything is read or kept, whatever brought it (POST /present, a peer's /seating-batch answer).
+    if (!(bytes instanceof Uint8Array) || bytes.length !== PRESENT_BYTES) return { ok: false, why: `a PRESENT is ${PRESENT_BYTES} bytes` };
     // ONE HELD ALREADY, byte for byte, is not checked again (every batch answer repeats a round's PRESENTs,
     // and verifying each at each tick was thousands of signature checks per tick at grid density)
     try {
@@ -525,7 +529,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       // ONE PRESENT PER (round, role, node) IN ONE ANSWER OR ONE POST /presents BODY (kanban #1565): a seat's answer or a stranger's body
       // carried thousands of PRESENTs naming one drawn key with junk signatures, each a BIP-340 check; now one each at most
       if (once) { const k = `${toHex(d.roundId)}|${d.role}|${toHex(d.nodePubkey)}`; if (once.has(k)) return { ok: false, why: 'one PRESENT per node and role in one batch' }; once.add(k); }
-      if (badPresents.has(toHex(bytes))) return { ok: false, why: 'that PRESENT\'s signature was refused already' };
+      if (badPresents.has(toHex(sha256(bytes)))) return { ok: false, why: 'that PRESENT\'s signature was refused already' };
       // A ROUND WHOSE SEATING HAS CLOSED takes no PRESENT, and is refused before the signature is checked (kanban #587, measured
       // 2026-10-23 13:2xZ: seat 7 spent 41 % of a core on verifyPresent while idle - PRESENTs of closed rounds, refused after the
       // check and so never kept, checked again on every tick from every peer that sent them)
@@ -541,7 +545,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     } catch { /* not decodable: verifyPresent says why */ }
     const v = verifyPresent(bytes, { verify });
     if (!v.ok) {
-      badPresents.add(toHex(bytes));
+      badPresents.add(toHex(sha256(bytes)));
       if (badPresents.size > BAD_PRESENTS_KEPT) badPresents.delete(badPresents.values().next().value);
       return { ...v, refusedVerify: true };
     }
