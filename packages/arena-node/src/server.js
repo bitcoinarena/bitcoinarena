@@ -11470,8 +11470,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         for (const role of ['game', 'settlement']) {
           const c = roster.committeeFor(id, role);
           if (!c.ok) continue;
-          for (const e of c.committee) if (e && e.advert && e.advert.endpoint)
-            found.add(String(addressBook.endpointOf(e) || e.advert.endpoint).replace(/^wss?:/, 'https:').replace(/\/+$/, ''));
+          for (const e of c.committee) if (e && e.advert && e.advert.endpoint) {
+            const peerAt = addressBook.endpointOf(e);   // kanban #3082: an endpoint the book refuses is not handed to the page either
+            if (peerAt) found.add(String(peerAt).replace(/^wss?:/, 'https:').replace(/\/+$/, ''));
+          }
         }
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ stable: replayPublic, endpoints: [...found] }));
