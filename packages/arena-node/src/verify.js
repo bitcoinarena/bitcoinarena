@@ -640,7 +640,7 @@ export class Verifier {
     // end the window; the settlement's combine does. Only this case; every other stopped run is signed as ever.
     // ONE CHECK, WHATEVER THE REPLAY SAID (ruled 2026-09-24): a DELIVERED signature is over the transcript that holds
     // the final mark, so a node short the mark - its inputs short or whole - does not sign until it has it.
-    const held = await this.#holdBack(roundIdBytes, entryId, entry);
+    const held = await this.#holdBack(roundIdBytes, entryId, entry, answer);
     if (held && !held.signStopped) return held;
     // THE COMBINE CAME FIRST while this node still lacked the final mark: the stopped transcript is signed - never a
     // DELIVERED over a transcript without the mark (ruled 2026-09-23/24).
@@ -656,9 +656,25 @@ export class Verifier {
     // a run it lost (§15: closing the browser does not escape a losing stake).
     const pendingFinal = answer.outcome === 'DELIVERED' ? this.round.pendingFinalMark(roundIdBytes, entryId) : null;
     if (pendingFinal) {
-      if (!(await this.#combined(roundIdBytes)))
-        return { entryId, stored: false, waiting: true, heldBack: true,
-          why: `holding back the close: the run's final mark at tick ${pendingFinal.tick} is carried by ${pendingFinal.receipts} of the ${pendingFinal.need} it needs` };
+      // THIS HOLD HAS AN END THE PLAYER CANNOT MOVE TOO (kanban #3212, #1489 refute of #2980 s2-2): the player sent its last mark to this seat
+      // only and stopped; the settlement never combines while the run is not final, so this seat held its DELIVERED close for good (240+
+      // attempts measured) while the peer signed the stopped transcript. A peer whose inputs are whole now takes the mark from here
+      // (#holdBack); a peer short of them signs the stopped transcript HELD_FINAL_ASK_MS after its hold began. Twice that long after this
+      // seat first saw its hold (round clock or this process's clock, never past half the round's objection window), the mark still not
+      // carried, this seat signs that same stopped transcript - at its last carried mark, never a DELIVERED without the mark's receipts.
+      const k = `${hex(roundIdBytes)}:${hex(entryId)}`;
+      if (!this.pendingSeen) this.pendingSeen = new Map();
+      if (!this.pendingSeen.has(k)) this.pendingSeen.set(k, { round: this.round.now(), here: Date.now() });
+      if (!(await this.#combined(roundIdBytes))) {
+        const seen = this.pendingSeen.get(k);
+        if (this.round.now() - seen.round <= 2 * this.#heldLimit(roundIdBytes) && Date.now() - seen.here <= 2 * this.#heldLimit(roundIdBytes))
+          return { entryId, stored: false, waiting: true, heldBack: true,
+            why: `holding back the close: the run's final mark at tick ${pendingFinal.tick} is carried by ${pendingFinal.receipts} of the ${pendingFinal.need} it needs` };
+        this.pendingSeen.delete(k);
+        const stoppedAt = await this.#atLastMark(roundIdBytes, entryId, entry, { ...answer, outcome: null }, canonical, options);
+        return this.#sign({ roundIdBytes, entryId, entry, contract, answer: stoppedAt, transcript: canonical, stopped: true });
+      }
+      this.pendingSeen.delete(k);
     }
     const scored = answer.outcome === null
       ? await this.#atLastMark(roundIdBytes, entryId, entry, answer, canonical, options) : answer;
@@ -717,7 +733,14 @@ export class Verifier {
    * its batches and it, feed first, until the run can be replayed whole. Not once the settlement is combined: then the
    * stopped transcript is signed and the doors shut. Answers the held answer, or null to sign as ever.
    */
-  async #holdBack(roundIdBytes, entryId, entry) {
+  /** How long a close is held for a final mark (kanban #2980): HELD_FINAL_ASK_MS, never past a quarter of the round's objection window. */
+  #heldLimit(roundIdBytes) {
+    let limit = HELD_FINAL_ASK_MS;
+    try { const w = Number(decodeRoundContract(new Uint8Array(this.round.get(roundIdBytes).contract)).objectionWindowMs); if (w > 0) limit = Math.min(limit, w / 4); } catch { /* the default */ }
+    return limit;
+  }
+
+  async #holdBack(roundIdBytes, entryId, entry, answer = null) {
     if (await this.#combined(roundIdBytes)) {
       const kept = this.round.heldFinalAsk(entryId);
       if (!kept) return null;
@@ -740,6 +763,23 @@ export class Verifier {
       this.round.dropHeldFinalAsk(entryId);
       return null;
     }
+    // THE MARK AT A PEER, THE INPUTS WHOLE HERE, THE RUN DELIVERED (kanban #3213, #1489 refute of #2980 s2-3): this seat does not wait for
+    // the player to send the mark again - the peer's copy is the player's own mark (signed under the session key, chained onto a mark held
+    // here, checked by #peerFinalMark and again by the checkpoint door, which takes after the close only this held mark). Measured before:
+    // an honest winner whose connection to this seat dropped at its last mark and came back 7 s later was signed FAILED here at the 5 s
+    // bound and its resent mark refused ('the round is closed'), while the peer held its DELIVERED close for good - the run never final.
+    // Taken here, this seat's receipt reaches the peer on its next pull, and both seats sign DELIVERED over the transcript with the mark.
+    // A DELIVERED run only, as the peer's own hold (pendingFinal): a run that is not delivered is signed stopped at the peer at its close.
+    if (!markHere && have >= ask.tick && answer && answer.ok && answer.outcome === 'DELIVERED') {
+      try {
+        this.round.checkpoint(new Uint8Array(ask.mark));
+        this.round.dropHeldFinalAsk(entryId);
+        if (this.holdSeen) this.holdSeen.delete(hex(entryId));
+        console.log(`[close] ${hex(entryId).slice(0, 16)}: took the run's final mark at tick ${ask.tick} from a peer (inputs whole here)`);
+        // the close is read again with the mark in: its receipts pulled, the transcript carried with it
+        return { entryId, stored: false, waiting: true, heldBack: true, why: `took the run's final mark at tick ${ask.tick} from a peer: the close is read again with it` };
+      } catch (e) { console.log(`[close] ${hex(entryId).slice(0, 16)}: the peer's final mark was not taken: ${e.message}`); }
+    }
     // THE HOLD HAS AN END THE PLAYER CANNOT MOVE (kanban #2980, audit play r1-1, measured 2 of 2 on 2026-11-19: a player sent its last mark to
     // seat A only and stopped; seat B held its close for that mark, which only the player could feed it, until the settlement combined - and
     // the settlement does not combine while a run is not final, so B never signed: A alone decided the run VOID past final_after, a loser's
@@ -747,8 +787,7 @@ export class Verifier {
     // for: the stopped transcript is signed, as at the combine.
     // on the round's clock from the stored hold, and on this process's own clock from the first time it saw the hold (a seat's watch runs on it);
     // never past a quarter of the round's own objection window, so the seats' results still meet inside the windows the round names
-    let limit = HELD_FINAL_ASK_MS;
-    try { const w = Number(decodeRoundContract(new Uint8Array(this.round.get(roundIdBytes).contract)).objectionWindowMs); if (w > 0) limit = Math.min(limit, w / 4); } catch { /* the default */ }
+    const limit = this.#heldLimit(roundIdBytes);
     const k = hex(entryId);
     if (!this.holdSeen) this.holdSeen = new Map();
     if (!this.holdSeen.has(k)) this.holdSeen.set(k, Date.now());
