@@ -402,7 +402,7 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
       const json = (status, body) => { res.writeHead(status, { 'content-type': 'application/json', ...OPEN }); res.end(JSON.stringify(body)); };
       const refuse = (reason) => { refused.push(reason); if (refused.length > ZAP_REFUSED_KEPT) refused.splice(0, refused.length - ZAP_REFUSED_KEPT); return json(200, { status: 'ERROR', reason }); };
       if (req.method === 'OPTIONS') { res.writeHead(204, { ...OPEN, 'access-control-allow-methods': 'GET' }); return res.end(); }
-      const u = new URL(req.url, 'http://local');
+      let u; try { u = new URL(req.url, 'http://local'); } catch { return json(400, { status: 'ERROR', reason: 'that request target is no URL' }); }   // kanban #3048: `GET //[` ended the process
       const m = u.pathname.match(/^(?:\/\.well-known)?\/lnurlp\/([a-z0-9._-]+)(\/cb)?$/);
       if (req.method !== 'GET' || !m || !names.includes(m[1])) return json(404, { status: 'ERROR', reason: 'no such address here' });
       const name = m[1];

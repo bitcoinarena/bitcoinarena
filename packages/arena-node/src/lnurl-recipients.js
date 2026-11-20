@@ -42,7 +42,7 @@ export function serveDonationRecipients({ host = '127.0.0.1', port = TEST_RECIPI
       const json = (status, body) => { res.writeHead(status, { 'content-type': 'application/json', ...OPEN }); res.end(JSON.stringify(body)); };
       const refuse = (reason) => { refused.push(reason); return json(200, { status: 'ERROR', reason }); };
       if (req.method === 'OPTIONS') { res.writeHead(204, { ...OPEN, 'access-control-allow-methods': 'GET' }); return res.end(); }
-      const u = new URL(req.url, 'http://local');
+      let u; try { u = new URL(req.url, 'http://local'); } catch { return json(400, { status: 'ERROR', reason: 'that request target is no URL' }); }   // kanban #3048: `GET //[` ended the process
       const m = u.pathname.match(/^\/lnurlp\/([a-z0-9-]+)(\/cb)?$/);
       if (req.method !== 'GET' || !m || !names.includes(m[1])) return json(404, { status: 'ERROR', reason: 'no such recipient here' });
       const name = m[1];
