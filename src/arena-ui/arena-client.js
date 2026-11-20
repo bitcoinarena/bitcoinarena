@@ -7169,17 +7169,34 @@ function newestUpdates(view, entries, { atHeight, network = 'regtest', verify, s
   for (const e of entries) {
     const pk = e.pubkey || (e.advert && e.advert.nodePubkey);
     if (signedOwn && !signedOwn.has(`${Array.from(e.txid).join(',')}:${e.vout}`)) continue;
-    if (pk && Number.isInteger(e.height)) events.push({ height: e.height, position: -1, ts: tsOf(e.advert), node: nodeOf(pk) });
+    if (pk && Number.isInteger(e.height)) events.push({ height: e.height, position: -1, ts: tsOf(e.advert), node: nodeOf(pk), own: `${Array.from(e.txid).join(',')}:${e.vout}` });
   }
   events.sort((a, b) => (a.height - b.height) || (a.position - b.position));
   const newest = new Map();   // node key -> the newest timestamp of its bodies so far
+  // THE SAME RULE FOR A CREATION BODY THAT DECIDES (kanban #3142, refute of #2994): `found.freshOwn` is the set of outputs whose creation
+  // body was strictly newer than every body of its node key in an EARLIER block (creation bodies and counted updates) - census.js
+  // newestPerNode lets only those decide for the node's other outputs. Measured before: a stranger's 330-sat bond to bondOutputKey(victim)
+  // whose creation body was a body the victim once signed (an old step-out, or its own creation body) verified, and so decided for every
+  // output by height alone - the victim, back in since, was stepped out again, or a stepped-out victim was put back in. Creation bodies in
+  // one block are each compared against the blocks before, so two of the node's own bonds in one block stand side by side as before.
+  const freshOwn = new Set();
+  const atBlockStart = new Map();   // node key -> its newest timestamp before this block (for the creation bodies at position -1)
+  let blockHeight = null;
   for (const ev of events) {
     const had = newest.has(ev.node) ? newest.get(ev.node) : null;
-    if (!ev.update) { if (ev.ts !== null && (had === null || ev.ts > had)) newest.set(ev.node, ev.ts); continue; }
+    if (ev.height !== blockHeight) { blockHeight = ev.height; atBlockStart.clear(); }
+    if (!ev.update) {
+      if (!atBlockStart.has(ev.node)) atBlockStart.set(ev.node, had);
+      const before = atBlockStart.get(ev.node);
+      if (ev.ts !== null && (before === null || ev.ts > before)) freshOwn.add(ev.own);
+      if (ev.ts !== null && (had === null || ev.ts > had)) newest.set(ev.node, ev.ts);
+      continue;
+    }
     if (ev.ts === null || (had !== null && ev.ts <= had)) continue;   // kanban #2426: not newer than a body before it - a replay
     newest.set(ev.node, ev.ts);
     found.set(ev.key, ev.update);
   }
+  found.freshOwn = freshOwn;
   return found;
 }
 
@@ -9695,13 +9712,18 @@ function floorOnSums(eligible, contract) {
 // creation body verifies under the node key it names; an update is always signed. Measured before: a stranger's 330-sat output to
 // bondOutputKey(victim), committing an UNSIGNED body {serving: false}, was in a later block than the victim's bond and so decided for every
 // output of the node - the victim stepped out. Without `signedOwn` every body counts as signed, as before.
+// A REPLAYED SIGNED BODY DECIDES NOTHING EITHER (kanban #3142, refute of #2994; the #2426 timestamp rule): an output's own body ranks with the
+// signed ones only when it is in `updates.freshOwn` (advert-update.js newestUpdates) - strictly newer than every body of the node in an
+// earlier block. Every signed body is public, so a stranger's dust bond to the node's key could carry one; a replay is never newer than
+// what it copies. Without `freshOwn` (an updates map built by hand) every signed body ranks, as before.
 function newestPerNode(eligible, updates, signedOwn = null) {
   const best = new Map();
+  const fresh = updates && updates.freshOwn instanceof Set ? updates.freshOwn : null;
   for (const e of eligible) {
     const key = `${Array.from(e.txid).join(',')}:${e.vout}`;
     const u = updates.get(key);
     const c = u ? { u, height: u.height, pos: Number.isInteger(u.position) ? u.position : 0, tie: bondHexOf(u.txid), signed: true }
-      : { own: e, height: e.height, pos: -1, tie: bondHexOf(e.txid), signed: !signedOwn || signedOwn.has(key) };
+      : { own: e, height: e.height, pos: -1, tie: bondHexOf(e.txid), signed: (!signedOwn || signedOwn.has(key)) && (!fresh || fresh.has(key)) };
     const k = nodeKeyOf(e), b = best.get(k);
     if (b && c.signed !== b.signed) { if (c.signed) best.set(k, c); continue; }
     if (!b || c.height > b.height || (c.height === b.height && (c.pos > b.pos || (c.pos === b.pos && c.tie > b.tie)))) best.set(k, c);

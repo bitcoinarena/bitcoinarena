@@ -139,16 +139,33 @@ export function newestUpdates(view, entries, { atHeight, network = 'regtest', ve
   for (const e of entries) {
     const pk = e.pubkey || (e.advert && e.advert.nodePubkey);
     if (signedOwn && !signedOwn.has(`${Array.from(e.txid).join(',')}:${e.vout}`)) continue;
-    if (pk && Number.isInteger(e.height)) events.push({ height: e.height, position: -1, ts: tsOf(e.advert), node: nodeOf(pk) });
+    if (pk && Number.isInteger(e.height)) events.push({ height: e.height, position: -1, ts: tsOf(e.advert), node: nodeOf(pk), own: `${Array.from(e.txid).join(',')}:${e.vout}` });
   }
   events.sort((a, b) => (a.height - b.height) || (a.position - b.position));
   const newest = new Map();   // node key -> the newest timestamp of its bodies so far
+  // THE SAME RULE FOR A CREATION BODY THAT DECIDES (kanban #3142, refute of #2994): `found.freshOwn` is the set of outputs whose creation
+  // body was strictly newer than every body of its node key in an EARLIER block (creation bodies and counted updates) - census.js
+  // newestPerNode lets only those decide for the node's other outputs. Measured before: a stranger's 330-sat bond to bondOutputKey(victim)
+  // whose creation body was a body the victim once signed (an old step-out, or its own creation body) verified, and so decided for every
+  // output by height alone - the victim, back in since, was stepped out again, or a stepped-out victim was put back in. Creation bodies in
+  // one block are each compared against the blocks before, so two of the node's own bonds in one block stand side by side as before.
+  const freshOwn = new Set();
+  const atBlockStart = new Map();   // node key -> its newest timestamp before this block (for the creation bodies at position -1)
+  let blockHeight = null;
   for (const ev of events) {
     const had = newest.has(ev.node) ? newest.get(ev.node) : null;
-    if (!ev.update) { if (ev.ts !== null && (had === null || ev.ts > had)) newest.set(ev.node, ev.ts); continue; }
+    if (ev.height !== blockHeight) { blockHeight = ev.height; atBlockStart.clear(); }
+    if (!ev.update) {
+      if (!atBlockStart.has(ev.node)) atBlockStart.set(ev.node, had);
+      const before = atBlockStart.get(ev.node);
+      if (ev.ts !== null && (before === null || ev.ts > before)) freshOwn.add(ev.own);
+      if (ev.ts !== null && (had === null || ev.ts > had)) newest.set(ev.node, ev.ts);
+      continue;
+    }
     if (ev.ts === null || (had !== null && ev.ts <= had)) continue;   // kanban #2426: not newer than a body before it - a replay
     newest.set(ev.node, ev.ts);
     found.set(ev.key, ev.update);
   }
+  found.freshOwn = freshOwn;
   return found;
 }
