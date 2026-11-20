@@ -40,7 +40,7 @@ test('a provider that answers on one pass and not the next cannot make two seats
     return null;
   };
   const fedRecords = { list: () => [{ federation: fid }], recordOf: () => ({ record: { threshold: 3 } }), seatedGuardians: () => guardians.map((g) => g.pubkey), censusNow: () => ({ ok: true, entries }) };
-  for (const s of seats) s.pass = makeGather(async () => 144 * 1091 + 5, 144, fedRecords, { endpointOf: () => null }, toHex, { pubkey: s.g.pubkey, identity: { secret: s.g.secret } },
+  for (const s of seats) s.pass = makeGather(async () => 144 * 1091 + 5, 144, fedRecords, { endpointOf: (e) => e.advert.endpoint }, toHex, { pubkey: s.g.pubkey, identity: { secret: s.g.secret } },
     s.standing, s.own, getJson, () => ({ ok: true }), () => ({ ok: true }), verify, undefined, null, null, liquiditySeatingFrom, () => {},
     signLiquiditySeating, standingLiquiditySeating, schnorr, () => {});
   const [A, B, C, D] = seats;

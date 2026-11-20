@@ -104,7 +104,9 @@ export function endpointsOf(committee, selfPubkey, endpointOf = null) {
     if (!e || !e.advert || !e.advert.endpoint) continue;
     if (self && toHex(e.pubkey) === self) continue;
     let at = e.advert.endpoint;
-    if (endpointOf) { try { at = endpointOf(e) || at; } catch { /* the advert endpoint */ } }
+    // KANBAN #3082 (feedback #361, a gap in #2856): the address book answers null for an endpoint it refuses (a loopback or private address
+    // a bond commits) - that is no dial, not a fall back to the same raw advert endpoint
+    if (endpointOf) { let r; try { r = endpointOf(e); } catch { r = at; /* a resolver that throws: the advert, as before */ } if (!r) continue; at = r; }
     found.add(String(at).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, ''));
   }
   return [...found];
