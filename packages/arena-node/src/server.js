@@ -15013,7 +15013,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return json(res, k.equivocation ? 200 : 201, k);
       }
       if (seating && req.method === 'POST' && url.pathname === '/present') {
-        const r = seating.takePresent(await read(req));
+        // kanban #3050: one PRESENT is PRESENT_BYTES - a longer body is refused at the door (413), as /presents bounds its multiple
+        let body; try { body = await read(req, PRESENT_BYTES); } catch (e) { return text(res, e && e.tooLarge ? 413 : 400, e && e.message || 'no body'); }
+        const r = seating.takePresent(body);
         return r.ok ? text(res, 201, 'present kept') : text(res, 409, r.why);
       }
       // THE BATCH DOORS: many PRESENTs in one body, and one read of many rounds' seating state - the same
