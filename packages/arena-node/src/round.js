@@ -94,6 +94,8 @@ const contractFacts = new Map();
 const NEXTBLOCK_GAME_HEXES = new Set(Object.entries(KNOWN_GOOD_GAMES).filter(([, g]) => g && g.name === 'nextblock').map(([id]) => id));
 // AND EVERY NEXT BLOCK VERSION THIS SEAT HOSTS (kanban #2991, measured on the live tree 2026-11-20: its known-games.js did not list v8
 // b6f824f7, the version it hosts): server.js names its hosted games here at start and at every install or update
+/** The Next Block game ids a staked round refuses practice ticks for (read by tests and the seat's checks). */
+export const nextblockGameIds = () => [...NEXTBLOCK_GAME_HEXES].sort();
 export function noteNextblockGames(hosted) {
   for (const [id, g] of hosted || []) {
     if (g && (g.name === 'nextblock' || (g.manifest && g.manifest.gameName === 'nextblock'))) NEXTBLOCK_GAME_HEXES.add(String(id).toLowerCase());
