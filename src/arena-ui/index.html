@@ -6642,7 +6642,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       const gameTitleOf = (n) => { const g = (window.ARENA_GAMES_FULL || []).find((x) => x.name === n || (x.manifest && x.manifest.gameName === n)); return (g && (g.title || (g.manifest && g.manifest.title))) || n; };
       const WHAT = (r, sat) => r.kind === 'deposit' ? 'Deposit' : r.kind === 'winnings' ? `Winnings${r.round ? ' \u00b7 round ' + String(r.round).slice(0, 8) : ''}` : r.kind === 'donation' ? (String(r.to || '').startsWith('player:') ? 'Zap' : `Donation${r.round ? ' \u00b7 round ' + String(r.round).slice(0, 8) : String(r.to || '').startsWith('app:') ? ' \u00b7 ' + gameTitleOf(String(r.to).slice(4)) + ' developers' : r.to === 'network' ? ' \u00b7 protocol developers' : ''}`)
           // WHAT CAME IN TO THIS PLAYER'S KEY (kanban #681): 10 % of the nodes' fee on an entry its referral link brought; a zap from another player
-          : r.kind === 'referral' ? `Referral${r.round ? ' \u00b7 round ' + String(r.round).slice(0, 8) : ''}` : r.kind === 'zap-in' ? 'Zap received' : r.kind === 'returned' ? 'Returned \u00b7 fetched back from the federation'
+          : r.kind === 'referral' ? `Referral${r.round ? ' \u00b7 round ' + String(r.round).slice(0, 8) : ''}` : r.kind === 'zap-in' ? 'Zap received' : r.kind === 'returned' ? 'Returned \u00b7 fetched back from the federation' + (r.fetchedMsat ? ' (' + sat(r.fetchedMsat) + ' fetched back, ' + sat(String(BigInt(r.fetchedMsat) - BigInt(r.msat || 0))) + ' of it already in this history)' : '')
           // WHAT CAME BACK OF HOW MUCH (kanban #1481, the owner 2026-11-11: "Dass 90 von 100 sats zurück kommen ist gewollt, weil das sind die Fees. Aber wir müssen es besser
           // darstellen"): the round's stake row says what went in; what is missing is the round's fee, kept for a round that was played
           : r.kind === 'refund' ? (() => { const st = (typeof rows !== 'undefined' ? rows : []).find((x) => x.kind === 'stake' && x.round === r.round);
@@ -9210,7 +9210,17 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
                 // kanban #3098: written now, as the reissue is committed (its output machine is in the wallet's own db and lands by itself),
                 // not from the poll below - that poll ends with the page and waits on the WHOLE issuing amount, so a stake's change still in
                 // issuance or a reload left the sat in the balance with no row, ever. One row per set of ended transactions (stable id).
-                try { ARENACLIENT.recordReceived(vault(), c[0], { kind: 'returned', msat: got.reissuingMsat, outpoint: got.stuckTxids ? 'reissue:' + got.stuckTxids : null }); } catch { /* no row, the money is not touched */ }
+                // kanban #3139: the row books only what the history lacks to agree with the wallet (held + being issued, the reissue
+                // included - at least the reissue just committed, should the issuing read lag it) - a stake's change the history never
+                // took off is fetched back, not added again. kanban #3138: a row the full browser refuses is owed, and the next read of
+                // the history writes it (recordReturned, page-lock.js).
+                let walletMsat = null;
+                try {
+                  const held = typeof c[1].balanceMsat === 'function' ? BigInt(await c[1].balanceMsat()) : 0n;
+                  const issuing = BigInt(await c[1].issuingMsat()), back = BigInt(got.reissuingMsat);
+                  walletMsat = String(held + (issuing > back ? issuing : back));
+                } catch { walletMsat = null; }
+                try { ARENACLIENT.recordReceived(vault(), c[0], { kind: 'returned', msat: got.reissuingMsat, outpoint: got.stuckTxids ? 'reissue:' + got.stuckTxids : null, walletMsat }); } catch { /* no row, the money is not touched */ }
                 window.ARENA_NOTE_ARRIVING(f, 'the wallet is fetching these sat back from the federation', 60000);
                 for (let i = 0; i < 45; i++) { await new Promise((r) => setTimeout(r, 2000)); if (BigInt(await c[1].issuingMsat()) === 0n) { window.ARENA_MONEY_ALERT.credited(got.reissuingMsat); break; } }
               }

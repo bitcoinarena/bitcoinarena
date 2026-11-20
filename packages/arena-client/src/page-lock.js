@@ -1340,11 +1340,62 @@ export function recordDonation(storage, federationId, { msat, round, txid = null
 }
 /** WHAT CAME IN TO THIS PLAYER'S KEY, a history row once collected (kanban #681): 'referral' - 10 % of the nodes' fee on an entry its
  *  referral link brought, `round` the round that paid it - or 'zap-in', a zap from another player. `outpoint` is the payout collected. */
-export function recordReceived(storage, federationId, { kind, msat, round = null, outpoint = null }) {
+export function recordReceived(storage, federationId, { kind, msat, round = null, outpoint = null, walletMsat = null }) {
   // 'returned' (kanban #3087, feedback #368): sat the wallet fetched back from the federation (Rescan's reissue, a lost deposit found and claimed)
   if (kind !== 'referral' && kind !== 'zap-in' && kind !== 'returned') return;
+  if (kind === 'returned') return recordReturned(storage, federationId, { msat, outpoint, walletMsat });
   // kanban #2319: one row per collected outpoint (content id 'zap-<outpoint>'): two tabs, or a pass that books what an unfinished one began, write it once
   ledgerAppend(storage, federationId, { kind, msat: String(msat), round: round ? String(round) : null, ...(outpoint ? { outpoint: String(outpoint) } : {}) }, outpoint ? `zap-${outpoint}` : null);
+}
+/** The kinds the history adds (the wallet screen draws them as plus rows); every other kind takes off. */
+const LEDGER_PLUS = new Set(['deposit', 'winnings', 'refund', 'returned', 'slash-payout', 'moved-in', 'swapped-in', 'referral', 'zap-in']);
+/** What this federation's history adds up to, in msat: its plus rows less every other row. */
+export function ledgerNetMsat(storage, federationId) {
+  let n = 0n;
+  for (const r of ledgerRowsKept(storage, federationId)) { try { n += (LEDGER_PLUS.has(r.kind) ? 1n : -1n) * BigInt(r.msat || 0); } catch { /* a row with no amount */ } }
+  return n;
+}
+/**
+ * SAT FETCHED BACK FROM THE FEDERATION, A HISTORY ROW (kanban #3087, feedback #368; refute s4 of #1489: #3138, #3139).
+ * #3139: what Rescan reissues is notes the history mostly never took off - a stake's change (the stake row books only the stake, not the
+ * notes that went in) or the inputs of a transaction the federation never knew (its stake row took off sat that never left). The whole
+ * reissue as a plus row counted that change a second time (deposit +1000, stake -100, returned +900 = 1800 while the wallet holds 900).
+ * With `walletMsat` (what the wallet holds and is being issued, the reissue included) the row books only what the history lacks to
+ * agree with the wallet, at most the reissue and never below 0 - the change counted already books 0, an unknown stake's inputs book back
+ * that stake - and keeps the whole reissue as `fetchedMsat`, which the history names. Without `walletMsat` the whole reissue (as before).
+ * #3138: the row goes through putRoomy (the page's storage relief, and its storage-full alert when still refused). A full browser - the
+ * very state behind #910 - refused the one setItem and the row was lost for good: the reissue was already committed in the wallet, the
+ * next page saw no stuck transaction and wrote nothing, the sat came in with no row (the #368 report). A refused row is now OWED: kept
+ * and written by the next read of this federation's history (ledgerRows, which the wallet screen draws from) once the browser has room.
+ * Answers whether the row is held.
+ */
+const ledgerOwed = new Map();   // ledger key -> { fed, row }: rows the browser refused, written by the next ledgerRows with room
+export function recordReturned(storage, federationId, { msat, outpoint = null, walletMsat = null }) {
+  if (!storage || !fedHexOf(federationId)) return false;
+  const fetched = BigInt(msat);
+  // a store that cannot list its keys keeps the one list (ledgerAppend's own path), the whole reissue as before
+  if (typeof storage.key !== 'function') return ledgerAppend(storage, federationId, { kind: 'returned', msat: String(fetched), round: null, ...(outpoint ? { outpoint: String(outpoint) } : {}) }, outpoint ? `zap-${outpoint}` : null);
+  const id = outpoint ? `zap-${String(outpoint).toLowerCase().replace(/[^0-9a-z_-]/g, '')}` : ledgerRowId();
+  const key = `${ledgerKey(federationId)}.${id}`;
+  if (ledgerOwed.has(key)) return writeOwed(storage, key);
+  try { if (outpoint && storage.getItem(key) !== null) return true; } catch { /* unreadable: written below */ }
+  let book = fetched;
+  if (walletMsat !== null && walletMsat !== undefined) {
+    const lack = BigInt(walletMsat) - ledgerNetMsat(storage, federationId);
+    book = lack < 0n ? 0n : lack > fetched ? fetched : lack;
+  }
+  const row = { atMs: Date.now(), kind: 'returned', msat: String(book), round: null, ...(outpoint ? { outpoint: String(outpoint) } : {}), ...(book !== fetched ? { fetchedMsat: String(fetched) } : {}) };
+  ledgerOwed.set(key, { fed: fedHexOf(federationId), row });
+  return writeOwed(storage, key);
+}
+function writeOwed(storage, key) {
+  const o = ledgerOwed.get(key);
+  if (!o) return true;
+  try {
+    if (storage.getItem(key) === null) putRoomy(storage, key, JSON.stringify([o.row]));
+    ledgerOwed.delete(key);
+    return true;
+  } catch { return false; /* still refused: owed, the next read of the history writes it */ }
 }
 /** The rest: the smallest whole sat whose whole notes cover what the wallet is short. */
 export function restOfFeesMsat(shortMsat) {
@@ -1734,6 +1785,12 @@ const LEDGER_ROW_RE = /^arena\.ledger\.([0-9a-f]{64})(?:\.([0-9a-z_-]+))?$/i;
 export const ledgerFedOfKey = (k) => { const m = LEDGER_ROW_RE.exec(String(k || '')); return m ? m[1].toLowerCase() : null; };
 /** This federation's rows, oldest first, as kept: the old list as it was, then each row of its own key by its time. */
 export function ledgerRows(storage, federationId) {
+  if (!storage) return [];
+  // kanban #3138: a row the browser refused is written first, now that it may have room
+  if (ledgerOwed.size && typeof storage.key === 'function') for (const [k, o] of [...ledgerOwed]) if (o.fed === fedHexOf(federationId)) writeOwed(storage, k);
+  return ledgerRowsKept(storage, federationId);
+}
+function ledgerRowsKept(storage, federationId) {
   if (!storage) return [];
   const base = ledgerKey(federationId);
   let rows = [];
