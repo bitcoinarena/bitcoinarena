@@ -287,6 +287,20 @@ export const ENTRY_BACKOFF_MAX_MS = 60000;
  * they are kept apart from the first place they could be confused.
  */
 const CLOSED = 'closed: ';
+// THE LINK WORD IS THIS CLIENT'S OWN (kanban #3167, wf1489 r1120b refute 12-1): a seat that answered 'closed: ...' as text on
+// an open socket had its batch held and asked again for the rest of the run - no resume ran, the socket never closed - and the
+// peers never got it. Only this client's own close handler and no-socket paths say CLOSED; a node's text that starts with it is
+// that node's refusal and reaches the callers as one.
+const nodeSaid = (text) => (text.startsWith(CLOSED) ? `error ${text}` : text);
+
+/**
+ * HOW LONG A BATCH WAITS FOR ITS NODE'S ANSWER (kanban #3170, #3172, wf1489 r1120b refute 12-2/12-3): a home seat that kept
+ * the socket open and stayed silent on a batch - or answered it with a frame the message handler routes away from the answer
+ * queue, a TYPE_GHOST-led one - left that batch's waiter in `said` for good, publishing never settled and the peers stayed
+ * at the ticks before it. A node answers a batch in milliseconds; one that has not in this long has refused it, and the
+ * batch goes to the peers as any refusal does (#2515).
+ */
+export const BATCH_ANSWER_MS = 5000;
 
 /** How long `finish` waits for the held ticks to go out before it ends the run anyway. */
 const FINISH_WAIT_MS = 300;
@@ -572,6 +586,8 @@ export class Client {
     this.publishing = null;
     this.marking = null;
     this.said = [];
+    this.batchAnswerMs = BATCH_ANSWER_MS;
+    this.batchesUnanswered = 0;   // batches the home node did not answer within batchAnswerMs (kanban #3170, #3172)
 
     // WHAT ARRIVES UNASKED. A GHOSTS frame is not an answer to anything: the
     // node pushes it when somebody else's truck moves, so it cannot go into
@@ -750,7 +766,7 @@ export class Client {
       sock.binaryType = 'arraybuffer';
       sock.addEventListener('message', (e) => {
         const waiting = link.said.shift();
-        if (waiting) waiting(typeof e.data === 'string' ? e.data : new Uint8Array(e.data));
+        if (waiting) waiting(typeof e.data === 'string' ? nodeSaid(e.data) : new Uint8Array(e.data));
       });
       sock.addEventListener('open', () => { link.sock = sock; link.opening = null; resolve(link); });
       sock.addEventListener('error', () => { link.opening = null; resolve(link); });
@@ -1044,7 +1060,7 @@ export class Client {
           return undefined;
         }
         const waiting = this.said.shift();
-        if (waiting) waiting(e.data);
+        if (waiting) waiting(nodeSaid(e.data));
         return undefined;
       });
       sock.addEventListener('open', () => {
@@ -1209,6 +1225,31 @@ export class Client {
     if (!this.sock || this.sock.readyState !== 1)
       return Promise.resolve('error there is no socket');
     return new Promise((r) => { this.said.push(r); this.sock.send(message); });
+  }
+
+  /**
+   * `send`, answered within `ms` (kanban #3170, #3172): the answer, the close word, or - when neither came in time - a
+   * refusal naming the silence. The waiter that timed out is taken out of `said`, so the answers to what was sent after it
+   * (the marks that share this socket) still go to their own sends. A node that answers the batch later still would shift
+   * them by one; an honest seat answers in milliseconds, so a seat this far behind is one whose answers already decide
+   * nothing alone - every batch that times out goes to the peers, and a mark whose answer is not a receipt is refused.
+   */
+  #sendWithin(message, ms) {
+    if (!this.sock || this.sock.readyState !== 1) return this.send(message);
+    return new Promise((r) => {
+      let done = false;
+      const waiter = (a) => { if (done) return; done = true; clearTimeout(timer); r(a); };
+      const timer = setTimeout(() => {
+        if (done) return;
+        done = true;
+        const i = this.said.indexOf(waiter);
+        if (i >= 0) this.said.splice(i, 1);
+        this.batchesUnanswered++;
+        r(`error the node did not answer the batch within ${ms} ms`);
+      }, ms);
+      this.said.push(waiter);
+      this.sock.send(message);
+    });
   }
 
   /**
@@ -1427,7 +1468,7 @@ export class Client {
     const bytes = await signBatch(b, this.sign);
     // KEPT BEFORE IT GOES OUT (kanban #1567): a batch the node took whose answer was lost is still this client's own
     this.signedFrames.set(toHex(batchId(b)), bytes);
-    const answer = await this.send(bytes);
+    const answer = await this.#sendWithin(bytes, this.batchAnswerMs);
 
     // The node answers how many ticks were NEW. A refusal is a named string
     // and the chain must not move on one, the same rule the marks follow.
@@ -1443,8 +1484,12 @@ export class Client {
       // with 'error stake not seen: ...' for a stake it had already counted, or with a binary frame, kept the honest peer at 60 of 120
       // ticks - the words held and asked again for the rest of the run, or the run ended). A binary answer is a refusal, and so is
       // 'stake not seen' once that seat has taken a batch of this run: the stake it counted then is no stake still on its way.
-      const stakeWait = typeof answer === 'string' && answer.startsWith(`error ${STAKE_NOT_SEEN}`);
-      if ((typeof answer !== 'string' || (!answer.startsWith(CLOSED) && (!stakeWait || this.published.length > 0)))
+      // AND A STAKE WAIT FROM THE FIRST BATCH ON IS OFFERED TO THE PEERS TOO (kanban #3177, wf1489 r1120b refute 12-4): a home
+      // seat that answered 'stake not seen' to every batch of the run, for a stake the other seats had counted, kept every tick
+      // from them (0 of 120 after 360 waits) - the published.length gate read its first answer as a stake still on its way.
+      // The peers' own stake view decides: enough of them take the batch and it is published; they answer 'stake not seen'
+      // too and it stays the wait it was.
+      if ((typeof answer !== 'string' || !answer.startsWith(CLOSED))
           && this.peers.length && !(await this.#homeForged(roundId, entryId))
           && await this.#carriedByPeers(bytes, b.firstTick + ticks.length)) {
         this.batchHead = batchId(b);
