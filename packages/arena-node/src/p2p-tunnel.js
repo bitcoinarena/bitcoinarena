@@ -20,6 +20,7 @@
 import { createServer, connect as netConnect } from 'node:net';
 import { createHash } from 'node:crypto';
 import { WebSocket, createWebSocketStream } from 'ws';
+import { messageBudget } from './body-budget.js';
 
 /** The range the tunnel's ports are drawn from: below the ephemeral range, clear of the live guardian ports (32221-35281). */
 export const P2P_TUNNEL_BASE = 20000, P2P_TUNNEL_SPAN = 10000;
@@ -107,37 +108,62 @@ export function guardianApiOverrides({ apiEndpoints, ownName = null, seatRoot, o
 // RELAY_HELD_BYTES, ALL relays together at most RELAY_HELD_TOTAL (the relay whose message would pass it is closed); and once open a side
 // whose peer does not read is PAUSED at RELAY_HIGH_WATER (its socket stops being read, so the sender's bytes wait in its own buffers, not in
 // the seat), resumed when the queue has gone out; RELAY_BUFFERED_BYTES stays the hard ceiling that ends the relay.
+// AND WHAT THE CENSUS NODE SENDS, AND A RESERVE FOR EVERYONE ELSE (kanban #3188, #3189, #3190, refute r1120b-3-s2 of #3062): measured, the bounds
+// counted only what a STRANGER sent. The dialled socket took one message of up to 64 MiB, watched by no budget and with no time limit: a census
+// node that sent a 60 MiB frame's header and 40 MiB of it held 40 MiB per relay (3 relays, 120 MiB, all open); RELAY_BUFFERED_BYTES was
+// checked before a send, so one 48 MiB answer to a client that does not read sat unsent in each relay (144 MiB over 3); and two stranger
+// relays to a dead census node filled RELAY_HELD_TOTAL for 15 s at a time, so every honest client's first request to any other guardian that
+// was not open within a moment closed that relay (0 of 3 answered). Now the dial takes messages of at most RELAY_UP_MESSAGE_MOST, its
+// unfinished bytes count against UP_MESSAGES (body-budget.js messageBudget: RELAY_UP_BUDGET over all relays, one census node at most half,
+// a message unfinished for RELAY_OPEN_MS not waited for); a send that would take a side past RELAY_BUFFERED_BYTES ends the relay before it
+// is queued; and a relay that holds little (RELAY_HELD_SMALL) while the shared budget is full is held from RELAY_HELD_RESERVE, where one
+// census node takes at most a quarter and one address at most half - a dead node's relays cannot shut the others out.
 export const RELAY_OPEN_MS = 15000;
 export const RELAY_HELD_BYTES = 4 * 1024 * 1024;
 export const RELAY_HELD_TOTAL = 8 * 1024 * 1024;
 export const RELAY_HELD_MESSAGES = 1024;
 export const RELAY_HELD_OVERHEAD = 64;
+export const RELAY_HELD_RESERVE = 1024 * 1024;
+export const RELAY_HELD_SMALL = 64 * 1024;
 export const RELAY_HIGH_WATER = 1024 * 1024;
 export const RELAY_BUFFERED_BYTES = 16 * 1024 * 1024;
-/** The budget all relays' held messages share (kanban #3143): `held` bytes charged now. */
-export const relayHeldBudget = (total = RELAY_HELD_TOTAL) => ({ total, held: 0 });
+export const RELAY_UP_MESSAGE_MOST = Number(process.env.ARENA_RELAY_UP_MESSAGE_MOST) > 0 ? Number(process.env.ARENA_RELAY_UP_MESSAGE_MOST) : 8 * 1024 * 1024;
+export const RELAY_UP_BUDGET = Math.max(2 * RELAY_UP_MESSAGE_MOST, Number(process.env.ARENA_RELAY_UP_BUDGET) > 0 ? Number(process.env.ARENA_RELAY_UP_BUDGET) : 16 * 1024 * 1024);
+/** The budget all relays' held messages share (kanban #3143): `held` bytes charged now; `spare` of `reserve` for relays that hold little (#3190). */
+export const relayHeldBudget = (total = RELAY_HELD_TOTAL, reserve = RELAY_HELD_RESERVE) => ({ total, held: 0, reserve, spare: 0, spareBy: new Map() });
 const SHARED_HELD = relayHeldBudget();
-export function carryApi(ws, root, { openWs = (url) => new WebSocket(url, { maxPayload: 64 * 1024 * 1024, handshakeTimeout: RELAY_OPEN_MS }), keepAliveMs = P2P_KEEPALIVE_MS, path = '/guardian',
+/** The unfinished messages of every relay's dialled socket (kanban #3188): one census node (its root) at most half. */
+export const relayUpBudget = (total = RELAY_UP_BUDGET) => messageBudget({ total, perAddress: Math.floor(total / 2), reserve: Math.max(1024 * 1024, Math.floor(total / 8)), messageMs: RELAY_OPEN_MS });
+const UP_MESSAGES = relayUpBudget();
+const relayDial = (url) => new WebSocket(url, { maxPayload: RELAY_UP_MESSAGE_MOST, handshakeTimeout: RELAY_OPEN_MS });
+const addTo = (m, k, n) => { const v = (m.get(k) || 0) + n; if (v > 0) m.set(k, v); else m.delete(k); };
+export function carryApi(ws, root, { openWs = relayDial, keepAliveMs = P2P_KEEPALIVE_MS, path = '/guardian',
   openMs = RELAY_OPEN_MS, heldBytes = RELAY_HELD_BYTES, heldMessages = RELAY_HELD_MESSAGES, budget = SHARED_HELD, highWater = RELAY_HIGH_WATER,
-  bufferedBytes = RELAY_BUFFERED_BYTES } = {}) {
+  bufferedBytes = RELAY_BUFFERED_BYTES, upMessages = UP_MESSAGES, address = ws && ws._socket ? ws._socket.remoteAddress : '' } = {}) {
   const up = openWs(`${root}${path}`);
   let held = [];
-  let heldSize = 0;
+  let heldSize = 0, inMain = 0, inSpare = 0;
   let ended = false;
-  const release = () => { budget.held -= heldSize; heldSize = 0; held = []; };
+  if (!budget.spareBy) budget.spareBy = new Map();
+  const who = `a:${String(address || '').replace(/^::ffff:/, '')}`, node = `n:${root}`;
+  const release = () => {
+    budget.held -= inMain; budget.spare = (budget.spare || 0) - inSpare; addTo(budget.spareBy, who, -inSpare); addTo(budget.spareBy, node, -inSpare);
+    inMain = 0; inSpare = 0; heldSize = 0; held = [];
+  };
   const stopDown = keepAlive(ws, keepAliveMs);
   let opening = setTimeout(() => done(), openMs);
   if (opening.unref) opening.unref();
   const done = () => {
     if (opening) { clearTimeout(opening); opening = null; }
     if (!ended) { ended = true; release(); }
-    stopDown(); try { up.close(); } catch { /* gone */ } try { ws.close(); } catch { /* gone */ }
+    // an OPEN dialled socket is ended outright (kanban #3188): closing it would keep parsing an unfinished message until the close frame
+    stopDown(); try { if (up.readyState === 1 && typeof up.terminate === 'function') up.terminate(); else up.close(); } catch { /* gone */ } try { ws.close(); } catch { /* gone */ }
   };
   const sizeOf = (m) => (m && typeof m.length === 'number' ? m.length : Array.isArray(m) ? m.reduce((n, b) => n + b.length, 0) : 0);
   // BACKPRESSURE: `from`'s socket is not read while `to` holds more than highWater unsent; the send that empties it resumes it
   const paused = new Set();
   const carry = (from, to, m, binary) => {
-    if ((to.bufferedAmount || 0) > bufferedBytes) { done(); return; }
+    if ((to.bufferedAmount || 0) + sizeOf(m) > bufferedBytes) { done(); return; }   // kanban #3189: with this message, not before it
     to.send(m, { binary }, () => {
       if (paused.has(from) && (to.bufferedAmount || 0) <= highWater / 2) { paused.delete(from); try { from.resume(); } catch { /* gone */ } }
     });
@@ -147,13 +173,21 @@ export function carryApi(ws, root, { openWs = (url) => new WebSocket(url, { maxP
     if (ended) return;
     if (up.readyState === 1) { carry(ws, up, m, binary); return; }
     const n = sizeOf(m) + RELAY_HELD_OVERHEAD;
-    if (held.length >= heldMessages || heldSize + n > heldBytes || budget.held + n > budget.total) { done(); return; }
-    heldSize += n; budget.held += n;
+    if (held.length >= heldMessages || heldSize + n > heldBytes) { done(); return; }
+    const reserve = budget.reserve || 0;
+    if (budget.held + n <= budget.total) { budget.held += n; inMain += n; }
+    else if (heldSize + n <= RELAY_HELD_SMALL && (budget.spare || 0) + n <= reserve && (budget.spareBy.get(who) || 0) + n <= Math.floor(reserve / 2)
+      && (budget.spareBy.get(node) || 0) + n <= Math.floor(reserve / 4)) {
+      budget.spare = (budget.spare || 0) + n; inSpare += n; addTo(budget.spareBy, who, n); addTo(budget.spareBy, node, n);   // kanban #3190
+    } else { done(); return; }
+    heldSize += n;
     held.push([m, binary]);
   });
   up.on('open', () => {
     if (opening) { clearTimeout(opening); opening = null; }
     if (ended) return;
+    // kanban #3188: the census node's unfinished messages are budgeted too - while `up` parses them (a refused frame closes it, and ws drops the rest)
+    if (upMessages && up._socket) upMessages.watch(up, up._socket, root, { live: () => up.readyState === 1 });
     keepAlive(up, keepAliveMs);
     const out = held; release();
     for (const [m, binary] of out) carry(ws, up, m, binary);
