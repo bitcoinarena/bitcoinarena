@@ -28,7 +28,9 @@ const HASH = /^[0-9a-f]{64}$/;
 export function createChainApi({ call = rpc } = {}) {
   return http.createServer(async (req, res) => {
     const send = (status, body, type = 'application/json') => { res.writeHead(status, { 'content-type': type, 'access-control-allow-origin': '*', 'cache-control': 'no-store' }); res.end(body); };
-    const parts = new URL(req.url, 'http://x').pathname.split('/').filter(Boolean);
+    // kanban #3151 (refute of #3048): a request target that is no URL (`GET //[`) threw here in the async handler - an unhandled
+    // rejection that ended the daemon, and installer nodes lost their first block API until a restart. Answered 400 now.
+    let parts; try { parts = new URL(req.url, 'http://x').pathname.split('/').filter(Boolean); } catch { return send(400, JSON.stringify({ error: 'that request target is no URL' })); }
     if (req.method !== 'GET') return send(405, JSON.stringify({ error: 'GET only' }));
     try {
       if (parts.length === 3 && parts[0] === 'blocks' && parts[1] === 'tip' && parts[2] === 'height') return send(200, String(await call('getblockcount')), 'text/plain');
@@ -48,5 +50,8 @@ export function createChainApi({ call = rpc } = {}) {
 }
 
 if (process.argv[1] && process.argv[1].endsWith('chain-api.mjs') && port) {
+  // NO REQUEST ENDS THE BLOCK API (kanban #3151, as the faucet's #2284 and the attestor's #3048): a last guard logs what escapes a handler
+  process.on('uncaughtException', (e) => { console.error(`[chain-api] uncaught, kept running: ${String((e && e.stack) || e).slice(0, 2000)}`); });
+  process.on('unhandledRejection', (e) => { console.error(`[chain-api] unhandled rejection, kept running: ${String((e && e.stack) || e).slice(0, 2000)}`); });
   createChainApi().listen(port, '127.0.0.1', () => console.log(`[chain-api] testnet4 blocks on 127.0.0.1:${port} from ${rpcUrl}`));
 }

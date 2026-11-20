@@ -1538,7 +1538,8 @@ const typeOf = (file) => {
 export function servePage(build, { host = '127.0.0.1', port = 8000 } = {}) {
   return new Promise((ok, no) => {
     const s = createServer((req, res) => {
-      let path = decodeURIComponent(req.url.split('?')[0]);
+      // kanban #3151: a bad escape (`GET /%`) threw URIError here and ended the page server - answered 400
+      let path; try { path = decodeURIComponent(req.url.split('?')[0]); } catch { res.writeHead(400); return res.end('that request target is no path'); }
       if (path === '/') path = '/index.html';
       // No climbing out of the build directory, even from a local page.
       const file = join(build, normalize(path).replace(/^(\.\.[/\\])+/, ''));
