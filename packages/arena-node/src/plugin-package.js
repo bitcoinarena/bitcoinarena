@@ -19,7 +19,7 @@ import { coreTree, coreRelPath } from './core-hash.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { decodeManifest, encodeManifest, gameIdOf } from '../../arena-protocol/src/manifest.js';
 import { gameInfoJson } from '../../arena-protocol/src/game-info.js';
-import { checkPackage, packageWindow } from './plugin-check.js';
+import { checkPackage, packageWindow, TREE_ENTRY } from './plugin-check.js';
 import { trialRun, TRIAL_MS, trialThreadsLingering } from './plugin-trial.js';
 /** THE FIRST LOAD OF EACH OF AN ADOPTED PACKAGE'S CORES (kanban #2058, #2078): no longer than the trial that passed it, load and meta ask together. */
 export const REGISTER_MS = TRIAL_MS;
@@ -41,7 +41,10 @@ export function packageOf(game, { ancestors = [], cut = null } = {}) {
       // A TREE CORE (kanban #3085, feedback #367): every file below its root and its entry, so a peer checks it by its tree hash
       const root = String(core.root).startsWith('file:') ? fileURLToPath(core.root) : String(core.root);
       const { files } = coreTree(root);
-      cores.push({ hash, name: core.name || '', configs: [...(core.configs ? core.configs.keys() : [])], entry: coreRelPath(root, fileURLToPath(core.url)),
+      // kanban #3097, #3099: a tree core is packaged only when it runs from TREE_ENTRY (the one entry checkPackage takes, so the tree hash signs it)
+      const entry = coreRelPath(root, fileURLToPath(core.url));
+      if (entry !== TREE_ENTRY) return null;
+      cores.push({ hash, name: core.name || '', configs: [...(core.configs ? core.configs.keys() : [])], entry,
         files: [...files].map(([path, bytes]) => ({ path, body: b64(bytes) })) });
       continue;
     }
@@ -117,7 +120,9 @@ export async function registrationFromPackage(at, pkg, { title = null, within = 
   const cores = new Map();
   for (const c of pkg.cores) {
     const tree = Array.isArray(c.files);
-    const file = tree ? join(at, coreDirOf(c.hash), ...String(c.entry).split('/')) : join(at, coreFileOf(c.hash));
+    // kanban #3097, #3099: a tree core loads from TREE_ENTRY only (checkPackage refused any other entry; a package.json kept on disk is not trusted)
+    if (tree && c.entry !== TREE_ENTRY) throw new Error(`core ${c.hash.slice(0, 16)} runs from its ${TREE_ENTRY}, not ${String(c.entry).slice(0, 64)}`);
+    const file = tree ? join(at, coreDirOf(c.hash), TREE_ENTRY) : join(at, coreFileOf(c.hash));
     if (tree) { if (coreTree(join(at, coreDirOf(c.hash))).hash !== c.hash) throw new Error(`core ${c.hash.slice(0, 16)} changed on disk`); }
     else if (sha(readFileSync(file)) !== c.hash) throw new Error(`core ${c.hash.slice(0, 16)} changed on disk`);
     // NEVER IMPORTED INTO THIS THREAD (§0A.6): loaded into its sandbox from the bytes just checked

@@ -24,6 +24,8 @@ const shaHex = (b) => toHex(sha256(b));
 // exact rule recomputed from the bytes in memory (isomorphic: the owner page runs this too).
 export const TREE_LIMITS = Object.freeze({ files: 256, pathBytes: 256, fileBytes: 2 * 1024 * 1024, treeBytes: 8 * 1024 * 1024 });
 const TREE_PATH = /^[A-Za-z0-9._/-]+$/;
+/** The one file a tree core runs from (kanban #3097, #3099): Next Block's frozen/<hash>/adapter.js; fixed, so the tree hash signs it. */
+export const TREE_ENTRY = 'adapter.js';
 /** Why a tree file's path is refused, or null: relative with "/", only [A-Za-z0-9._/-], ends in .js, no "", "." or ".." segment. */
 export function treePathRefusal(path) {
   const p = String(path);
@@ -71,29 +73,113 @@ export function treeResolve(from, spec) {
  */
 /**
  * THE SOURCE WITH ITS COMMENTS BLANKED (kanban #3085): every comment character turned to a space, newlines kept (line numbers stay), strings,
- * template literals (with their ${...} code, nested) and regex literals left as they are. A regex literal is told from a division by the
- * last significant character before the slash (the usual rule); a mistaken guess only changes what this lint reads, never what runs.
+ * template literals (with their ${...} code, nested) and regex literals left as they are.
+ * ONLY WHAT IS SURELY A COMMENT IS BLANKED (kanban #3100, #1489 r1120-refute-5-2): a slash after `)` was guessed a division, so in
+ * `if (1) /[/*]/.test('')` the regex's "/*" was read as a comment start and every line up to a later "*" "/" was blanked - code the one-file
+ * scan refuses (globalThis, Reflect) passed the tree scan. The lexer now follows every reading it cannot rule out at once: a slash is a regex
+ * or a division by the token before it, exactly where the grammar decides (after `)`: the regex reading only when the `(` followed
+ * if / while / for / with), and where it cannot tell (after `}`, `++` / `--`, `of`, a `)` of `await (`), both readings are lexed side by side.
+ * A character is blanked only when every live reading has it inside a comment; a line comment ends at every JS line terminator (\n \r
+ * U+2028 U+2029), a string only at \n \r. More readings than STATES_MOST: nothing further in the file is blanked (more findings, never fewer).
  */
+const STATES_MOST = 64, DEPTH_KEPT = 64;   // readings followed at once; paren kinds and template nestings kept (deeper parens: either reading)
+const STR_END = '\u0001', RE_END = '\u0002';   // not word chars: a string's or a regex's end as `last`
+const LINE_END = (c) => c === '\n' || c === '\r' || c === '\u2028' || c === '\u2029';
+const WORD = /[A-Za-z0-9_$\u0080-\uffff]/;
+const SPACE = /\s/;
+const KW_REGEX = new Set(['return', 'typeof', 'instanceof', 'in', 'new', 'delete', 'void', 'throw', 'case', 'do', 'else', 'yield', 'await', 'default', 'extends']);
+const KW_CTRL = new Set(['if', 'while', 'for', 'with']);
 export function blankComments(src) {
-  const out = src.split(''); const n = src.length;
-  const blank = (i) => { if (out[i] !== '\n') out[i] = ' '; };
-  let i = 0, last = '';
-  const stack = [];   // template nesting: each entry counts open braces inside a ${...}
-  const regexCan = () => !last || /[(,=:[!&|?{};+\-*%<>~^]/.test(last) || /\b(return|typeof|instanceof|in|of|new|delete|void|throw|case|do|else|yield|await)$/.test(src.slice(Math.max(0, i - 12), i).trimEnd());
-  while (i < n) {
+  const n = src.length, out = src.split('');
+  // a reading: m mode (c code, l line comment, bs/b/be block comment start/inside/end, s string, t template text, tb the "{" of "${", r regex),
+  // q its quote, e an escape pending, k in a regex class, ts template nesting (open braces in each ${...}), ps paren kinds ("r" regex after,
+  // "d" division, "f" either), last the last significant char (STR_END, RE_END, "`" template end, ")" with pk its paren's kind),
+  // w the word that char ends (identifier or number), bw the char before that word, pp the char before last
+  let states = [{ m: 'c', q: '', e: 0, k: 0, ts: [], ps: '', last: '', pk: '', w: '', bw: '', pp: '', inw: 0, nl: 0, pd: 0 }];
+  const clone = (s) => ({ ...s, ts: [...s.ts] });
+  const key = (s) => `${s.m}${s.q}${s.e}${s.k}|${s.ts.join(',')}|${s.pd}${s.ps}|${s.last}${s.pk}|${s.w}|${s.bw}${s.pp}${s.inw}${s.nl}`;
+  // what a slash in code starts in this reading: 'r' regex, 'd' division, 'f' either
+  const slashIs = (s) => {
+    const l = s.last;
+    if (!l) return 'r';
+    // a word: a keyword that takes an expression -> regex; a property name or another word -> division, unless a line ended since (a
+    // `break label` / `continue label` / `debugger` ended by ASI: the slash then starts a statement) - then both
+    if (s.w && WORD.test(l)) { if (s.bw === '.') return 'd'; if (s.w === 'of') return 'f'; return KW_REGEX.has(s.w) ? 'r' : s.nl ? 'f' : 'd'; }
+    if (l === ')') return s.pk || 'd';
+    if (l === ']' || l === STR_END || l === RE_END || l === '`' || l === '.') return 'd';
+    if (l === '}') return 'f';
+    if ((l === '+' || l === '-') && s.pp === l) return 'f';
+    return 'r';
+  };
+  const sig = (s, c) => { s.pp = s.last; s.last = c; if (!WORD.test(c)) { s.w = ''; } s.inw = 0; s.pk = ''; s.nl = 0; };
+  // an escape takes the next char, and a CR LF line continuation whole
+  const esc = (s, c, d) => { s.e = c === '\r' && d === '\n' ? 1 : 0; };
+  for (let i = 0; i < n; i++) {
     const c = src[i], d = src[i + 1];
-    if (c === '/' && d === '/') { while (i < n && src[i] !== '\n') blank(i++); continue; }
-    if (c === '/' && d === '*') { blank(i++); blank(i++); while (i < n && !(src[i] === '*' && src[i + 1] === '/')) blank(i++); if (i < n) { blank(i++); blank(i++); } continue; }
-    if (c === '"' || c === "'") { i++; while (i < n && src[i] !== c && src[i] !== '\n') i += src[i] === '\\' ? 2 : 1; i++; last = c; continue; }
-    if (c === '`') { i++; for (;;) { if (i >= n) break; if (src[i] === '\\') { i += 2; continue; } if (src[i] === '`') { i++; break; } if (src[i] === '$' && src[i + 1] === '{') { i += 2; stack.push(0); break; } i++; } last = '`'; continue; }
-    if (stack.length && c === '{') { stack[stack.length - 1]++; i++; last = c; continue; }
-    if (stack.length && c === '}') {
-      if (stack[stack.length - 1] === 0) { stack.pop(); i++; for (;;) { if (i >= n) break; if (src[i] === '\\') { i += 2; continue; } if (src[i] === '`') { i++; break; } if (src[i] === '$' && src[i + 1] === '{') { i += 2; stack.push(0); break; } i++; } last = '`'; continue; }
-      stack[stack.length - 1]--; i++; last = c; continue;
+    let allComment = true; const next = [];
+    for (const s of states) {
+      let comment = false;
+      if (LINE_END(c) && s.m !== 's' && s.m !== 't' && s.m !== 'r') s.nl = 1;
+      switch (s.m) {
+        case 'l': if (LINE_END(c)) s.m = 'c'; else comment = true; break;
+        case 'bs': comment = true; s.m = 'b'; break;
+        case 'b': comment = true; if (c === '*' && d === '/') s.m = 'be'; break;
+        case 'be': comment = true; s.m = 'c'; break;
+        case 's':
+          if (s.e) esc(s, c, d); else if (c === '\\') s.e = 1;
+          else if (c === s.q) { s.m = 'c'; sig(s, STR_END); } else if (c === '\n' || c === '\r') s.m = 'c';
+          break;
+        case 't':
+          if (s.e) esc(s, c, d); else if (c === '\\') s.e = 1;
+          else if (c === '`') { s.m = 'c'; sig(s, '`'); } else if (c === '$' && d === '{') { s.m = 'tb'; s.ts.push(0); }
+          break;
+        case 'tb': s.m = 'c'; s.pp = s.last; s.last = '{'; s.w = ''; s.inw = 0; break;
+        case 'r':
+          if (s.e) esc(s, c, d); else if (c === '\\') s.e = 1;
+          else if (c === '[') s.k = 1; else if (c === ']') s.k = 0;
+          else if (c === '/' && !s.k) { s.m = 'c'; s.k = 0; sig(s, RE_END); } else if (LINE_END(c)) { s.m = 'c'; s.k = 0; }
+          break;
+        default: {   // code
+          if (SPACE.test(c)) { s.inw = 0; break; }
+          if (c === '/' && d === '/') { s.m = 'l'; comment = true; break; }
+          if (c === '/' && d === '*') { s.m = 'bs'; comment = true; break; }
+          if (c === '/') {
+            const is = slashIs(s);
+            if (is === 'f') { const r = clone(s); r.m = 'r'; r.e = 0; r.k = 0; r.nl = 0; next.push(r); sig(s, '/'); }
+            else if (is === 'r') { s.m = 'r'; s.e = 0; s.k = 0; }
+            else sig(s, '/');
+            break;
+          }
+          if (c === '"' || c === "'") { s.m = 's'; s.q = c; s.e = 0; break; }
+          if (c === '`') { s.m = 't'; s.e = 0; break; }
+          if (c === '{') { if (s.ts.length) s.ts[s.ts.length - 1]++; sig(s, '{'); break; }
+          if (c === '}') {
+            if (s.ts.length && s.ts[s.ts.length - 1] === 0) { s.ts.pop(); s.m = 't'; s.e = 0; break; }
+            if (s.ts.length) s.ts[s.ts.length - 1]--;
+            sig(s, '}'); break;
+          }
+          if (c === '(') {
+            const ctrl = s.w && WORD.test(s.last) && s.bw !== '.' ? (KW_CTRL.has(s.w) ? 'r' : s.w === 'await' ? 'f' : 'd') : 'd';
+            s.pd++; s.ps = (s.ps + ctrl).slice(-DEPTH_KEPT); sig(s, '('); break;
+          }
+          if (c === ')') { const k = s.ps ? s.ps.slice(-1) : s.pd > 0 ? 'f' : 'd'; s.ps = s.ps.slice(0, -1); if (s.pd > 0) s.pd--; sig(s, ')'); s.pk = k; break; }
+          if (WORD.test(c)) {
+            if (s.inw && s.w) s.w = s.w.length < 12 ? s.w + c : '~long'; else { s.bw = s.last; s.w = c; }
+            s.pp = s.last; s.last = c; s.inw = 1; s.pk = ''; s.nl = 0; break;
+          }
+          sig(s, c);
+        }
+      }
+      if (!comment) allComment = false;
     }
-    if (c === '/' && regexCan()) { i++; let cls = false; while (i < n && src[i] !== '\n') { if (src[i] === '\\') { i += 2; continue; } if (src[i] === '[') cls = true; else if (src[i] === ']') cls = false; else if (src[i] === '/' && !cls) break; i++; } i++; while (i < n && /[a-z]/i.test(src[i])) i++; last = '/'; continue; }
-    if (!/\s/.test(c)) last = c;
-    i++;
+    for (const r of next) { r.m === 'r' && (allComment = false); states.push(r); }
+    if (allComment && c !== '\n') out[i] = ' ';
+    // BOUNDED WORK PER CHARACTER: at most STATES_MOST readings, each keyed in O(DEPTH_KEPT); a deeper template nesting stops the blanking
+    if (states.some((s) => s.ts.length > DEPTH_KEPT)) return out.slice(0, i + 1).join('') + src.slice(i + 1);
+    if (states.length > 1) {
+      const seen = new Set(); states = states.filter((s) => { const k = key(s); if (seen.has(k)) return false; seen.add(k); return true; });
+      if (states.length > STATES_MOST) return out.slice(0, i + 1).join('') + src.slice(i + 1);
+    }
   }
   return out.join('');
 }
@@ -131,6 +217,11 @@ export function treeFilesOf(c) {
     files.push({ path: f.path, bytes });
   }
   if (typeof c.entry !== 'string' || !seen.has(c.entry)) return { ok: false, why: 'its entry is not one of its files' };
+  // ITS ENTRY IS SIGNED BECAUSE IT IS FIXED (kanban #3097, #3099, #1489 r1120-refute-5): the manifest names only the tree hash, which covers
+  // each file's path and bytes but not which file is the entry - a relaying seat could hand the genuine signed tree with a helper file as
+  // its entry (the trial refused, and autoUpdate kept that verdict on the game id 24 h) or another DECIDE file of the tree (other code run
+  // under the same game id). A tree core runs from TREE_ENTRY, a path the tree hash covers, and nothing else.
+  if (c.entry !== TREE_ENTRY) return { ok: false, why: `a tree core runs from its ${TREE_ENTRY}, not from ${String(c.entry).slice(0, 64)}` };
   return { ok: true, files };
 }
 
