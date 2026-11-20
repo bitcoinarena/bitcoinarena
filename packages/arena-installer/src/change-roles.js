@@ -118,7 +118,7 @@ export async function refreshHostedGames({ home, release, post = false, chainKit
   const st = state || nodeState(home);
   await resumeOpen(st, { chainKit });   // kanban #1165
   const s = st.read();
-  const { appsIn, chosenApps, hostedGameIdsOf } = await import('./apps.js');
+  const { appsIn, chosenApps, hostedGameIdsOf, releaseGamesBeforeBond } = await import('./apps.js');
   const apps = appsIn(release);
   const now = await hostedGameIdsOf(release, chosenApps(s, apps), apps);
   // NO BOND YET: THE GAMES ARE STILL WRITTEN DOWN (kanban #3068, measured 2026-11-20 on a live installer node: updated 1.9.27 -> 1.9.28 before
@@ -126,7 +126,7 @@ export async function refreshHostedGames({ home, release, post = false, chainKit
   // advertised 35 games without rock-paper-scissors v6-v11 and nextblock v7, so the node was never drawn for them). Nothing on chain - the
   // bond, when it is posted, names these.
   if (!s.bond || !s.bond.txid) {
-    if (now.length && JSON.stringify([...new Set(s.hostedGames || [])].sort()) !== JSON.stringify([...new Set(now)].sort())) st.save({ hostedGames: now });
+    await releaseGamesBeforeBond(st, release);   // kanban #3089: the same write the first bond makes (add-bond.js firstBondOnNode)
     return { ok: false, why: 'no bond yet: its advertisement will name the games when it is posted', ...(now.length ? { hostedGames: now.length } : {}) };
   }
   if (!now.length) return { ok: false, why: 'this release hosts no game of the node\'s apps' };

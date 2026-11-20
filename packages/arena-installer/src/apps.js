@@ -56,3 +56,21 @@ export async function hostedGameIdsOf(release, chosenIds, apps = appsIn(release)
   if (!regs.length) return [];
   return [...hostedPlugins(regs, { log: () => {} }).keys()].sort();
 }
+
+/**
+ * THE RELEASE'S GAMES WRITTEN DOWN BEFORE A NODE'S FIRST BOND (kanban #3068, #3089): a node with no bond yet has nothing on chain to
+ * correct, so its state.hostedGames is simply set to what `release` hosts for its chosen apps - the bond, when it is built, names
+ * these. Called by the updater (change-roles.js refreshHostedGames) AND where the first bond is built (add-bond.js firstBondOnNode):
+ * the updater that moves a node into a release is the PREVIOUS release's code, so a node updated by an older updater (whose refresh
+ * returned "no bond yet" without writing anything) would otherwise bond with the install-time list. A bonded node is left alone: its
+ * list is what its advertisement names on chain, and refreshHostedGames posts the update. Answers the release's game ids ([] when it
+ * hosts none of the node's apps or the node is bonded).
+ */
+export async function releaseGamesBeforeBond(st, release) {
+  const s = st.read();
+  if (s.bond && s.bond.txid) return [];
+  const apps = appsIn(release);
+  const now = await hostedGameIdsOf(release, chosenApps(s, apps), apps);
+  if (now.length && JSON.stringify([...new Set(s.hostedGames || [])].sort()) !== JSON.stringify([...new Set(now)].sort())) st.save({ hostedGames: now });
+  return now;
+}
