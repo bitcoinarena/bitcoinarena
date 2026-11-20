@@ -5378,12 +5378,17 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       const events = [...rows.values()];
       if (!events.length) return;
       const liq = [...new Set(events.map((ev) => String(ev.event.federation).toLowerCase()))].map((federation) => ({ federation }));
-      // THE CHAIN TIP THE CLAIM WINDOW IS READ AGAINST: the explorer's tip; without it the LOWEST federation record height the page read, none,
-      // and nothing is handed over. MEASURED (kanban #3064, audit client r4-3-1): the largest record height was the tip, and one bonded seat's
-      // record of a made-up one-guardian federation at censusHeight + 1008 put it 988 blocks past the real tip - presentNotes answered 'the
-      // claims closed' for the whole testnet4 window. A record height is a census height a seat signs up to the slack, not a chain tip; the
-      // lowest one can only make the page early, and the door checks the window
-      const tip = (() => { const t = typeof pendingTip === 'function' ? Number(pendingTip().tipHeight) || 0 : 0; if (t > 0) return t; const hs = [...(window.ARENA_FED_LOADS instanceof Map ? window.ARENA_FED_LOADS.values() : [])].map((x) => Number(x && x.height) || 0).filter((h) => h > 0); return hs.length ? Math.min(...hs) : null; })();
+      // THE CHAIN TIP THE CLAIM WINDOW IS READ AGAINST: the explorer's tip, READ HERE AND WAITED FOR (8 s at most); without it the LOWEST
+      // record height of the LIQUIDATED federations themselves (records their own guardians signed), none, and nothing is handed over.
+      // MEASURED (kanban #3064, audit client r4-3-1): the largest record height was the tip, and one bonded seat's record of a made-up
+      // one-guardian federation at censusHeight + 1008 put it 988 blocks past the real tip - presentNotes answered 'the claims closed'.
+      // MEASURED (kanban #3144, wf1489 refute r1120b-2-1): the fix then took the lowest height of EVERY listed record, and pendingTip()
+      // answers null on its first call (the page's load) and for good with the explorer off or unreachable: the same seat's record at
+      // height 1 made the tip 1 and presentNotes answered 'claims open at <halt+12>' - the window held shut, the attack pointed downward.
+      // Only a federation an arbitration set's signed liquidation names (liq) gives a height now; a seat's record of its own federation
+      // moves nothing. A record height is a census height a seat signs up to the slack, not a chain tip; the door checks the window
+      if (typeof pendingTipNow === 'function') await pendingTipNow();
+      const tip = (() => { const t = typeof pendingTip === 'function' ? Number(pendingTip().tipHeight) || 0 : 0; if (t > 0) return t; const named = new Set(liq.map((x) => String(x.federation).toLowerCase())); const hs = [...(window.ARENA_FED_LOADS instanceof Map ? window.ARENA_FED_LOADS.entries() : [])].filter(([k, x]) => named.has(String((x && x.federation) || k).toLowerCase())).map(([, x]) => Number(x && x.height) || 0).filter((h) => h > 0); return hs.length ? Math.min(...hs) : null; })();
       // ANY DEVICE (kanban #1093 part 9, the owner 2026-11-03: "Notes are recovered from the 24 words on any device ... so 'any device, any
       // time within' the window is the whole requirement"): a browser restored from the words has no ledger, so every federation being
       // liquidated is opened from this seed once; one found empty is not opened again in this browser
@@ -7350,10 +7355,13 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         pendingChain.atMs = Date.now();
         let said = null; try { said = window.ARENA_BROWSER_STORE().getItem('arena.explorer'); } catch { /* the default */ }
         const base = ARENACLIENT.explorerBaseFor ? ARENACLIENT.explorerBaseFor('testnet4', said) : null;
-        if (base) fetch(base + '/blocks/tip/height', { signal: AbortSignal.timeout(8000) }).then((r) => r.text()).then((t) => { if (/^\d+$/.test(t.trim())) pendingChain.tipHeight = Number(t); }).catch(() => {});
+        pendingChain.read = base ? fetch(base + '/blocks/tip/height', { signal: AbortSignal.timeout(8000) }).then((r) => r.text()).then((t) => { if (/^\d+$/.test(t.trim())) pendingChain.tipHeight = Number(t); }).catch(() => {}) : null;
       }
       return { tipHeight: pendingChain.tipHeight, secondsPerBlock: pendingChain.secondsPerBlock };
     }
+    // kanban #3144: the same read, waited for - claimLiquidations judges the claim window at the explorer's tip, not at null on the page's
+    // first call (pendingTip's fetch is async, so its first answer is always null)
+    async function pendingTipNow() { pendingTip(); if (pendingChain.read) await pendingChain.read; return pendingTip(); }
     setInterval(lookThePending, 2000);
 
     // ---------------------------------------------------------------- Unity's loader: Tick Tock's page part, packages/nextblock/page/unity-page.js (kanban #521)
