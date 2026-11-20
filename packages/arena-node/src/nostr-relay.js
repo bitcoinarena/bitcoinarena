@@ -118,6 +118,10 @@ export const eventId = (e) => createHash('sha256').update(JSON.stringify([0, e.p
 /** Whether an event is well formed, its id its own, its signature its author's: null, or why not. */
 /** kanban #3044: the relay-wide signature budget (about 1.2 ms a check: a burst holds the loop ~0.25 s at most), and refused pairs kept */
 export const VERIFY_BURST = 200, VERIFY_PER_S = 200, REFUSED_SIGS_KEPT = 4096;
+/** kanban #3145 (#1489 r1120b-refute-10): the two reserves only a socket with no bad signature reaches once the shared budget is empty -
+ *  one for authors with standing here (`keep`, an author already seen), one for everyone else - and the bad signatures one socket may
+ *  send before it is closed */
+export const VERIFY_STANDING_BURST = 50, VERIFY_STANDING_PER_S = 50, VERIFY_CLEAN_BURST = 50, VERIFY_CLEAN_PER_S = 50, BAD_SIGS_PER_SOCKET = 4;
 export function eventRefusal(e, { kinds = RELAY_KINDS, nowS = Math.floor(Date.now() / 1000), checkSig = true } = {}) {
   if (!e || typeof e !== 'object') return 'invalid: not an event';
   if (!HEX64.test(e.id || '') || !HEX64.test(e.pubkey || '') || !HEX128.test(e.sig || '')) return 'invalid: id, pubkey or sig';
@@ -332,8 +336,27 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   // an EVENT is answered 'rate-limited' before its signature is read, so the loop is never held longer than one burst.
   const refusedSigs = new Set();
   const lim = { authorEvents: AUTHOR_EVENTS, authorBytes: AUTHOR_BYTES, totalEvents: TOTAL_EVENTS, totalBytes: TOTAL_BYTES, logShare: LOG_SHARE, totalSlowBytes: TOTAL_SLOW_BYTES,
-    seedEvents: SEED_EVENTS, seedBytes: SEED_BYTES, verifyBurst: VERIFY_BURST, verifyPerS: VERIFY_PER_S, ...limits };
-  const verifyBucket = { left: lim.verifyBurst, at: Date.now() };
+    seedEvents: SEED_EVENTS, seedBytes: SEED_BYTES, verifyBurst: VERIFY_BURST, verifyPerS: VERIFY_PER_S,
+    verifyStandingBurst: VERIFY_STANDING_BURST, verifyStandingPerS: VERIFY_STANDING_PER_S, verifyCleanBurst: VERIFY_CLEAN_BURST, verifyCleanPerS: VERIFY_CLEAN_PER_S,
+    badSigsPerSocket: BAD_SIGS_PER_SOCKET, ...limits };
+  // ONE SHARED BUDGET DOES NOT DECIDE WHO IS REFUSED (kanban #3145, #1489 r1120b-refute-10 of #3044): junk frames made distinct (a counter in
+  // `content`: a fresh id, so never in refusedSigs) over 300 free sockets kept the one bucket empty, and every honest EVENT - a seat's signed
+  // 30762 round result, a player's profile - was answered 'rate-limited' for as long as the flood lasted. Now the shared bucket is spent
+  // first; past it, only a socket that has sent no bad signature reaches a reserve (its own for `keep` and seen authors, one for the rest),
+  // and a socket is closed after lim.badSigsPerSocket bad signatures. A flood's sockets go dirty on their first junk frame and keep only the
+  // shared bucket (then are closed); an honest writer's socket stays clean and is checked from its reserve. The CPU bound stays: at most
+  // verifyPerS + both reserves' rates checks a second.
+  const mkBucket = (burst, perS) => ({ left: lim[burst], at: Date.now(), burst, perS });   // names of `lim` fields: a test may set them
+  const take = (k) => {   // one token, or false
+    const t = Date.now();
+    k.left = Math.min(lim[k.burst], k.left + ((t - k.at) * lim[k.perS]) / 1000); k.at = t;
+    if (k.left < 1) return false;
+    k.left -= 1;
+    return true;
+  };
+  const verifyBucket = mkBucket('verifyBurst', 'verifyPerS');
+  const standingBucket = mkBucket('verifyStandingBurst', 'verifyStandingPerS');
+  const cleanBucket = mkBucket('verifyCleanBurst', 'verifyCleanPerS');
   // MAKING ROOM IS NOT A WAY TO DELETE A NODE'S RESULTS (kanban #2146, #2214; #1489 a44-refute-24): keys are free - strangers who fill the
   // total with one event a key leave the NODE the largest holder, and then every stranger 30078 under a fresh key and `d` took one of the
   // node's kept, signed round results. An author in `keep` (the seats' node keys: ARENA_RELAY_KEEP for tools/nostr-relay.mjs) is never the
@@ -622,7 +645,7 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   };
   wss.on('connection', (ws) => {
     const subs = new Map();
-    const c = { ws, subs, held: 0 };
+    const c = { ws, subs, held: 0, badSigs: 0 };   // kanban #3145: badSigs, this socket's refused signatures
     // kanban #2839: every change of a kept subscription goes through these two, so the charges are given back on CLOSE, a cut and the close
     const dropSub = (sid) => { const had = subs.get(sid); if (!had) return; subs.delete(sid); c.held -= had.charge || 0; subValuesHeld -= had.charge || 0; };
     c.dropSub = dropSub;
@@ -658,15 +681,18 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
         if (JSON.stringify(e || null).length > MAX_EVENT_BYTES) return send(['OK', e && e.id, false, 'invalid: event too large']);
         const shape = eventRefusal(e, { kinds, checkSig: false });
         if (shape) return send(['OK', e && e.id, false, shape]);
-        { // kanban #3044: the signature, inside the relay-wide budget
+        { // kanban #3044: the signature, inside the relay-wide budget; kanban #3145: a clean socket's reserves past it, a dirty socket closed
           const key = `${e.id}:${e.sig}`;
-          if (refusedSigs.has(key)) return send(['OK', e.id, false, 'invalid: the signature is not its author\'s']);
-          const t = Date.now();
-          verifyBucket.left = Math.min(lim.verifyBurst, verifyBucket.left + ((t - verifyBucket.at) * lim.verifyPerS) / 1000); verifyBucket.at = t;
-          if (verifyBucket.left < 1) return send(['OK', e.id, false, 'rate-limited: the relay is checking too many signatures, try again shortly']);
-          verifyBucket.left -= 1;
+          const bad = (why) => {
+            send(['OK', e.id, false, why]);
+            if (++c.badSigs >= lim.badSigsPerSocket) { send(['NOTICE', 'error: too many bad signatures, the relay closed this connection']); clients.delete(c); ws.terminate(); }
+          };
+          if (refusedSigs.has(key)) return bad('invalid: the signature is not its author\'s');
+          const ok = take(verifyBucket)
+            || (c.badSigs === 0 && (keepSet.has(e.pubkey) || !!seenAuthor.get(e.pubkey) ? take(standingBucket) : take(cleanBucket)));
+          if (!ok) return send(['OK', e.id, false, 'rate-limited: the relay is checking too many signatures, try again shortly']);
           const why = sigRefusal(e);
-          if (why) { refusedSigs.add(key); if (refusedSigs.size > REFUSED_SIGS_KEPT) refusedSigs.delete(refusedSigs.values().next().value); return send(['OK', e.id, false, why]); }
+          if (why) { refusedSigs.add(key); if (refusedSigs.size > REFUSED_SIGS_KEPT) refusedSigs.delete(refusedSigs.values().next().value); return bad(why); }
         }
         if (!isEphemeral(e.kind)) {
           const d = isParam(e.kind) ? dTag(e) : '';
