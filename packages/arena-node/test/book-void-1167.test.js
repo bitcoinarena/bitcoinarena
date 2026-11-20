@@ -8,8 +8,8 @@
 //   B. ANY ROUND, ANY k: the same ask for a round id no seat holds, and for batch 5 (its cutoff in 1970). Before the fix each wrote a
 //      decline row - the table grew without bound.
 //   C. A ROUND SEAT WITH THE LEADER'S SET asks before the next batch's cutoff (the set still on its way): refused, so it cannot race it.
-//   D. THE REAL VOID STILL WORKS: a leader's set signed by two seats only; the next leader's lead(), at the next cutoff, asks every seat
-//      (its own signed ask), four decline, the batch is VOID everywhere, and its order trades in that next batch.
+//   D. THE REAL VOID STILL WORKS: a leader's set signed by one other seat only; the next leader's lead(), at the next cutoff, asks every seat
+//      (its own signed ask), five decline (#3194: a void needs `needed`), the batch is VOID everywhere, and its order trades in that next batch.
 // The facts are printed first (MEASURED), then checked - so the same file run on the old source prints what it did.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -78,7 +78,9 @@ test('kanban #1167: a seat declines a batch only on a round seat\'s signed ask, 
     const ids = [toHex(R.eid), toHex(S.eid)].sort();
     const id = bookBatchId({ roundId: w.rid, k: BigInt(kD), orderIds: ids });
     const record = { k: String(kD), orders: ids, cancels: [], sells: [], leader: toHex(L.round.pubkey), leaderSig: toHex(schnorr.sign(id, L.round.identity.secret)) };
-    const two = w.nodes.filter((d) => d !== L).slice(0, 2);
+    // (kanban #3194, #3203: a void needs `needed` seats that cannot sign k's set, and a set already signed by n - needed + 1 seats goes
+    // to the others to sign late - so the set here reaches ONE other seat: five seats decline it and the void is still what decides it)
+    const two = w.nodes.filter((d) => d !== L).slice(0, 1);
     const signedBy = [L, ...two];
     for (const d of signedBy) {
       const r = await fetch(`${base(d)}/batch?round=${rid}`, { method: 'POST', body: JSON.stringify(record) });
@@ -123,7 +125,7 @@ test('kanban #1167: a seat declines a batch only on a round seat\'s signed ask, 
     assert.deepEqual(facts.C.statesAfter.sort(), ['ABSENT', 'SIGNED']);
     // D: void at the next cutoff, everywhere, and its orders trade in that batch
     assert.deepEqual(facts.D.decided.map((d) => [Number(d.k), d.state]), [[kD, 'VOID']]);
-    assert.ok(facts.D.decided[0].declined >= w.nodes.length - w.needed + 1);
+    assert.ok(facts.D.decided[0].declined >= w.needed);   // kanban #3194
     assert.deepEqual(facts.D.statesKD, ['VOID']);
     assert.equal(facts.D.certified, true);
     assert.equal(facts.D.tradedR, true, 'the void batch\'s order did not trade in the next batch');
