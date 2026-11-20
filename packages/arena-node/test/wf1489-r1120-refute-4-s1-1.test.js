@@ -31,12 +31,16 @@ const run = (held) => nodeBountyCheck({ census: CENSUS, censusSeats: ['https://s
   fetchJson: async (url) => (url.endsWith('/owner') ? { node: NODE, claimed: false } : { held: dayOf(url) === 1 ? held : [] }) });
 const c = (r, k) => r.checks.find((x) => x.key === k);
 
-test('#1489 r1120-4 (a): a node seated on 3 market rounds whose attestors were drawn apart from it still reads 0 signed', async () => {
+// KANBAN #3110 (refute r1120-4-s2-2): a committee seat that was not drawn as attestor is counted as a COMMITTEE (3 here, drawn into committees),
+// not as a signed round - the only thing 855ddc14e read for it was the standing attestation in the node's own door, which any offline node copies
+// in at check time. Its signed rounds come from the market rounds it IS drawn on (r1120-4 (b), wf1489-fix-r1120-refute-4-s2).
+test('#1489 r1120-4 (a): a node seated on 3 market rounds whose attestors were drawn apart from it is counted on 3 committees', async () => {
   // what a seat's /served?finals=1 hands over for a btc-updown round: committee = signer_nodes, attestation = the 5 drawn attestors' combine
   const held = [0, 1, 2].map((x) => ({ roundId: rid(1, x * 8), committee: [NODE, SEAT1K, W1K, W2K], finals: [], attestations: [att(rid(1, x * 8), ATTESTORS)] }));
   const r = await run(held);
   console.log('  MEASURED r1120-4 (a):', c(r, 'committees').says, 'passes:', r.passes);
-  assert.equal(c(r, 'committees').ok, true, `a node that sat on market committees is not counted: ${c(r, 'committees').says}`);
+  assert.match(c(r, 'committees').says, /^3 committees, 0 signed/, `a node that sat on market committees is not counted: ${c(r, 'committees').says}`);
+  assert.equal(c(r, 'census').ok, true, c(r, 'census').says);
 });
 
 test('#1489 r1120-4 (b): a node that attested a market round (its signature in the kept attestation) but is not on its committee is never counted', async () => {
