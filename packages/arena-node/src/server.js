@@ -8448,12 +8448,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // answered from the answer made at most DOOR_CACHE_MS before (peers poll them; half a second old is what a poll sees anyway)
       doorCount(req, url);
       if (req.method === 'GET' && DOOR_CACHE.has(url.pathname)) {
-        const k = url.pathname + url.search, hit = doorCache.get(k);
+        const k = doorCacheKey(url), hit = doorCache.get(k);
         if (hit && Date.now() - hit.at < (DOOR_SLOW_CACHE.has(url.pathname) ? DOOR_SLOW_CACHE_MS : DOOR_CACHE_MS)) { doorCacheHits++; res.writeHead(hit.status, hit.headers); return res.end(hit.body); }
         const chunks = [], wh = res.writeHead.bind(res), we = res.end.bind(res); let status = 200, headers = {};
         res.writeHead = (st, h, h2) => { status = st; headers = (typeof h === 'object' && h) || (typeof h2 === 'object' && h2) || {}; return wh(st, h, h2); };
         res.end = (b, ...rest) => { if (b !== undefined && typeof b !== 'function') chunks.push(Buffer.isBuffer(b) ? b : Buffer.from(String(b)));
-          if (status === 200) { doorCache.set(k, { at: Date.now(), status, headers, body: Buffer.concat(chunks) }); if (doorCache.size > 2048) doorCache.delete(doorCache.keys().next().value); }
+          if (status === 200) {
+            const body = Buffer.concat(chunks);
+            if (body.length <= DOOR_CACHE_BODY_MOST) {   // kanban #2981: bounded by bytes too, the oldest out first
+              const had = doorCache.get(k); if (had) { doorCacheBytes -= had.body.length; doorCache.delete(k); }
+              doorCache.set(k, { at: Date.now(), status, headers, body }); doorCacheBytes += body.length;
+              while (doorCache.size && (doorCache.size > 2048 || doorCacheBytes > DOOR_CACHE_BYTES)) { const o = doorCache.keys().next().value; doorCacheBytes -= doorCache.get(o).body.length; doorCache.delete(o); }
+            }
+          }
           return we(b, ...rest); };
       }
       return await timed(`door ${req.method} ${url.pathname}`, () => served(req, res, url), { over: 200 });
@@ -8481,6 +8488,25 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const DOOR_SLOW_CACHE_MS = Number(process.env.ARENA_DOOR_SLOW_CACHE_MS || 60000);
   const doorCache = new Map();
   let doorCacheHits = 0;
+  // THE KEY IS WHAT THE DOOR READS, NOT THE QUERY TEXT (kanban #2981, audit gossip r1-1, measured 2026-11-19: 300 GET /season-rounds of one
+  // 3.79 MB answer with a junk &x=<n> each grew the seat by 1191 MB in ~5 s - a full copy per query text, up to 2048 for 60 s). A cached door's
+  // key keeps only the parameters it reads, sorted, a game list in its sorted order; and the cache holds at most DOOR_CACHE_BYTES in all,
+  // an answer over DOOR_CACHE_BODY_MOST not at all.
+  const DOOR_CACHE_PARAMS = { '/season-rounds': ['game', 'days', 'after', 'page'], '/census': ['round', 'creator'],
+    '/served': ['from', 'to', 'finals', 'count', 'height', 'label', 'n'] };
+  const DOOR_CACHE_BYTES = 64 * 1048576, DOOR_CACHE_BODY_MOST = 16 * 1048576;
+  let doorCacheBytes = 0;
+  const doorCacheKey = (url) => {
+    const keep = DOOR_CACHE_PARAMS[url.pathname];
+    if (!keep) return url.pathname + url.search;
+    const parts = [];
+    for (const name of keep) for (const v of url.searchParams.getAll(name).slice(0, 1)) {
+      const ids = name === 'game' ? String(v).trim().toLowerCase().split(',').map((x) => x.trim()) : null;
+      const val = ids && ids.length > 1 && ids.every((x) => /^[0-9a-f]{64}$/.test(x)) ? ids.sort().join(',') : String(v);
+      parts.push(`${name}=${encodeURIComponent(val)}`);
+    }
+    return `${url.pathname}?${parts.join('&')}`;
+  };
   const doorCounts = new Map();
   const doorCount = (req, url) => {
     let who = String((req.socket && req.socket.remoteAddress) || '').replace(/^::ffff:/, '');
