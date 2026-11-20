@@ -42036,14 +42036,18 @@ async function revealWhenCertified({ roundIdHex, entryIdHex, move, salt, nodes, 
       // committee's (lockSetThreshold(committee.length), at most the hosts the page can ask) or else a threshold of the hosts, and every
       // answer but a final one (a reveal taken, or a refusal that will not change: not in the lock set, a reveal that does not stand) is
       // asked again every poll until the threshold holds or the reveal's deadline passes.
-      const { listed, hosts } = seatsByHost(nodes);
-      const need = Math.min(hosts.length, committee && committee.length ? lockSetThreshold(committee.length) : lockSetThreshold(hosts.length));
+      // NO HOLDER COUNT DECIDES WHEN TO STOP (kanban #3204, #3210, refute of #3154): counting holders per hostname capped the threshold at the
+      // hosts, and the live seats all sit on one tunnel host (tn4.bitcoin-arena.io/guardian-1..7) - need was 1, the first seat a signature
+      // ahead ended the loop and the six that said "not certified yet" were never posted again; and a stranger's keyless box under five DNS
+      // names in the link filled a threshold of five "hosts" on the first post. A 201 from an address proves nothing about who holds the move,
+      // so it is no reason to stop asking a seat whose answer is not final: every listed seat (each address once, seatsByHost #2709) is posted
+      // again every poll until each one has given a final answer (a reveal taken, or a refusal that will not change) or the reveal's deadline
+      // passes.
+      const { listed } = seatsByHost(nodes);
       let seats = await revealMove({ entryIdHex, move, salt, nodes: listed, identity, fetcher, timeoutMs });
-      const took = (x) => x.status === 200 || x.status === 201;
-      const holders = () => new Set(seats.filter(took).map((x) => h2hHostKey(x.node))).size;
       const askAgain = (x) => x.status === 0 || x.status === 404 || x.status === 408 || x.status === 425 || x.status === 429 || x.status >= 500
         || (x.status === 409 && /not certified yet|ask again|try again/i.test(String(x.why || '')));
-      while (holders() < need && now() <= giveUpAt) {
+      while (now() <= giveUpAt) {
         const again = seats.filter(askAgain);
         if (!again.length) break;
         await sleep(H2H_LOCK_SET_POLL_MS);
