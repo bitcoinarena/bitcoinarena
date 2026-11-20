@@ -6,6 +6,7 @@
 // guardians answer the same sum - one guardian cannot move the number. The reserve is the federation's own coins: the
 // spendable UTXOs and its change not yet confirmed or signed; peg-outs on their way out are not.
 import { parseRoutes, routed } from './fetch-routes.js';
+import { guardianEndpointRefusal } from './address-book.js';   // kanban #3134
 
 const sumOf = (list) => (list || []).reduce((t, u) => t + BigInt(u.amount || 0), 0n);
 export const reserveOfSummary = (s) => sumOf(s.spendable_utxos) + sumOf(s.unconfirmed_change_utxos) + sumOf(s.unsigned_change_utxos);
@@ -39,8 +40,21 @@ export function routedEndpoint(endpoint, { overrides = OVERRIDES, routes = ROUTE
   return to === asHttp ? endpoint : to.replace(/^https:\/\//, 'wss://').replace(/^http:\/\//, 'ws://');
 }
 
-async function askOne(endpoint, { timeoutMs, moduleId, WS }) {
-  endpoint = routedEndpoint(endpoint);
+// A GUARDIAN ENDPOINT IS OPENED ONLY WHERE THE SEAT'S RULE TAKES IT (kanban #3134): one the operator rewrote (an override or a route) is
+// the operator's choice and is opened as rewritten; any other is held to guardianEndpointRefusal first - a bond's guardianEndpoint on the
+// seat's own loopback, with a path and query the bond holder chose, is not opened. Answers the URL to open, or null.
+export function guardianDialAt(endpoint, { localOk = false, overrides = OVERRIDES, routes = ROUTES } = {}) {
+  const raw = String(endpoint || '');
+  if (!raw) return null;
+  const to = routedEndpoint(raw, { overrides, routes });
+  if (to !== raw) return to;
+  return guardianEndpointRefusal(raw, { localOk }) ? null : raw;
+}
+
+async function askOne(endpoint, { timeoutMs, moduleId, WS, localOk = false }) {
+  const at = guardianDialAt(endpoint, { localOk });   // kanban #3134
+  if (!at) return { ok: false, why: `not opened: ${guardianEndpointRefusal(endpoint, { localOk })}` };
+  endpoint = at;
   return new Promise((done) => {
     let ws; const finish = (v) => { try { ws && ws.close(); } catch { /* closed */ } done(v); };
     const timer = setTimeout(() => finish({ ok: false, why: 'no answer in time' }), timeoutMs);
@@ -70,12 +84,12 @@ async function askOne(endpoint, { timeoutMs, moduleId, WS }) {
 // gatherer in 8.07 s - past the gatherer's own 8 s - and the successor's record never got more than 1 of the 5 signatures it needs)
 // guardians agree on the sum and, for walletv2, on the output that holds it
 const keyOf = (s) => `${s.reserveSats}|${s.outpoint || ''}`;
-export async function readReserve({ endpoints, threshold, timeoutMs = 8000, moduleId = null, WS = globalThis.WebSocket }) {
+export async function readReserve({ endpoints, threshold, timeoutMs = 8000, moduleId = null, WS = globalThis.WebSocket, localOk = false }) {
   const said = await new Promise((done) => {
     const got = new Array(endpoints.length).fill(null), counts = new Map();
     let left = endpoints.length;
     if (!left) { done(got); return; }
-    endpoints.forEach((e, i) => askOne(e, { timeoutMs, moduleId, WS }).then((s) => {
+    endpoints.forEach((e, i) => askOne(e, { timeoutMs, moduleId, WS, localOk }).then((s) => {
       got[i] = s; left--;
       if (s.ok) { const k = keyOf(s); counts.set(k, (counts.get(k) || 0) + 1); if (counts.get(k) >= threshold) { done(got.filter(Boolean)); return; } }
       if (!left) done(got);

@@ -9,6 +9,7 @@ import { checkAddressAnnouncement, newerAnnouncement, signAddressAnnouncement, e
 import { internalAddress } from './public-fetch.js';
 import { isIP } from 'node:net';
 import { localHostName } from '../../arena-client/src/node-discovery.js';   // kanban #3124: the page's and public-fetch's rule, one copy
+import './dial-guard.js';   // kanban #3133: a peer's name is checked again where it resolves, when the connection is made
 
 /**
  * WHERE A SEAT MAY DIAL A PEER (kanban #2856, #1489 r26-gossip-1): a census node signed an announcement for its own key naming the honest seat's
@@ -30,6 +31,22 @@ export function peerEndpointRefusal(endpoint, { localOk = false } = {}) {
   const local = (isIP(host) ? internalAddress(host) : /^\d+$|^0x/i.test(host)) || host === 'localhost' || host.endsWith('.localhost') || localHostName(host);
   if (local && !localOk) return 'an endpoint on a loopback or private address';
   return null;
+}
+
+/**
+ * WHERE A SEAT MAY OPEN A GUARDIAN'S API (kanban #3134, wf1489 refute of #3082): a bond commits a second endpoint, `guardianEndpoint` (advert.js
+ * asks only ws(s)://\S+), and the reserve read (federation-reserve.js) and the halt watch (halts.js) opened it raw - a guardian committing
+ * 'ws://127.0.0.1:18777/lnurlp/tips/cb?amount=1000&x=' made every seat that signed or gathered its federation's record send that GET (the
+ * WebSocket upgrade) to its own loopback service. A guardian endpoint is a ws(s) URL with no query, fragment or user info, on a host the
+ * peer rule takes (no loopback / private literal or local-only name unless `localOk`); unlike a seat endpoint it may carry a path (guardians
+ * sit behind one host at /guardian-N, /fed2-N/guardian-next). Answers why not, or null.
+ */
+export function guardianEndpointRefusal(endpoint, { localOk = false } = {}) {
+  let u; try { u = new URL(String(endpoint)); } catch { return 'not a URL'; }
+  if (!['ws:', 'wss:'].includes(u.protocol)) return 'not a ws(s) endpoint';
+  if (u.username || u.password) return 'an endpoint carries no user info';
+  if (u.search || u.hash || String(endpoint).includes('?') || String(endpoint).includes('#')) return 'an endpoint carries no query or fragment';
+  return peerEndpointRefusal(`${u.protocol}//${u.host}`, { localOk });
 }
 
 // BOUNDED, AND ONLY CENSUS NODES (kanban #1533, wf1489 round 2: one peer's GET /address-announcements listing 2000 self-signed keys
