@@ -10775,7 +10775,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
               const k = toHex(a.roundId);
               const e = byId.get(k) || { roundId: k, committee: round.signerNodes(a.roundId).map(toHex), finals: [] };
               e.attestations = a.attestations.map(toHex);
-              if (e.committee.length) byId.set(k, e);
+              // KANBAN #3094, #3096: the keys that sign a market round's attestation are its 7 drawn attestors (their own seed), not its
+              // committee - listed beside it, so a reader counts a drawn attestor's signature and only the drawn keys' signatures
+              try { const d = roster.attestorsFor(new Uint8Array(a.roundId)); if (d && d.ok) e.attestors = d.attestors.map((x) => toHex(x.pubkey)); } catch { /* not drawn: none listed */ }
+              if (e.committee.length || e.attestors) byId.set(k, e);
             }
           } catch { /* a seat with no attestation table answers its FINALs alone */ }
           held = [...byId.values()];
