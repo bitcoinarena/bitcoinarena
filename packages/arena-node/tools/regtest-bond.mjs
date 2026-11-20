@@ -223,7 +223,7 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
     for (const u of unspent) {
       const tx = parseTransaction(fromHex(cli('getrawtransaction', u.txid, 'false', cli('getblockhash', String(u.height)))));
       const commitments = commitmentsOf(tx);
-      let advert = null, advertSignature = null;
+      let advert = null, advertSignature = null, advertIdBytes = null;
       let ancestor = false;
       for (const item of witnessRunsOf(tx)) {
         try {
@@ -232,8 +232,9 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
           // a bond of this network, or one the BLWP network posted (ancestor.js): read by its own layout and id
           let a = null;
           try { a = decodeAdvert(signed.body); if (!commits(advertId(a))) a = null; } catch { a = null; }
-          if (!a && commits(ancestorAdvertId(signed.body))) { a = decodeAncestorAdvert(signed.body); ancestor = true; }
-          if (a) { advert = a; advertSignature = signed.signature; break; }
+          let id = a ? advertId(a) : null;
+          if (!a && commits(ancestorAdvertId(signed.body))) { a = decodeAncestorAdvert(signed.body); ancestor = true; id = ancestorAdvertId(signed.body); }
+          if (a) { advert = a; advertSignature = signed.signature; advertIdBytes = id; break; }
         } catch { /* not a signed body */ }
       }
       if (!advert || toHex(advert.nodePubkey) !== toHex(nodeKey)) continue;
@@ -243,8 +244,14 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
       if (!maturity.ok) continue;
       if (u.byMarker ? toHex(keyOfAdvert(advert, maturity.maturity).outputKey) !== u.scriptPubKey.slice(4)
         : advert.bondScriptTemplateVersion !== 1) continue;
+      // DID THE NODE SIGN THIS BODY (kanban #3016, audit census r1-1, measured 2026-11-19): anyone can pay a bond output to a node's key and
+      // commit an UNSIGNED body copying its advertisement with another payout key and endpoint and a newer timestamp; it was read as the
+      // node's advertisement in force, and the seat's own advert check, Add to bond and roles change signed it as the node's. `signed`
+      // says whether the creation body verifies under the node key (zero key or signature never does); inForceOf reads only signed ones.
+      let signedBody = false;
+      try { signedBody = !!advertSignature && advertSignature.some((x) => x !== 0) && !!advertIdBytes && schnorr.verify(advertSignature, advertIdBytes, nodeKey); } catch { signedBody = false; }
       const newer = newestUpdateOf({ txid: fromHex(u.txid).reverse(), vout: u.vout, height: u.height, nodePubkey: nodeKey, advert });
-      out.push({ txid: u.txid, vout: u.vout, height: u.height, sats: Math.round(u.amount * 1e8), maturity: maturity.maturity,
+      out.push({ txid: u.txid, vout: u.vout, height: u.height, sats: Math.round(u.amount * 1e8), maturity: maturity.maturity, signed: signedBody,
         advert: newer ? newer.advert : advert, bondAdvert: advert, bondSignature: advertSignature, ...(ancestor ? { ancestor: true } : {}),
         ...(newer ? { updatedBy: { txid: newer.txidHex, height: newer.height } } : {}) });
     }
