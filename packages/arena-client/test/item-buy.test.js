@@ -83,6 +83,20 @@ test('refused by step: an item not sold, a payment that fails, a record no seat 
   assert.ok(r.retry && r.purchaseId, 'the record to hand again');
 });
 
+// KANBAN #3081 (feedback #360): a payment the guardians refuse (its input already spent - another tab merged those notes) is not paid: the record
+// is dropped and the next press pays anew; before, it was kept as "paid, acceptance not read yet" and handed again forever
+test('#3081 refused by the guardians: not paid, the kept record dropped, the next press buys', async () => {
+  const { fetch, posted } = seatsWith();
+  const kept = new Map(), storage = { getItem: (k) => kept.get(k) ?? null, setItem: (k, v) => kept.set(k, String(v)), removeItem: (k) => kept.delete(k) };
+  const base = { manifest: MANIFEST, networkSet: NET, gameSet: NET, federationId: 'fe'.repeat(32), player, seats: ['https://s1'], fetch, verify, nowMs: () => NOW, bondedKeys: NODE_KEYS.map(toHex), storage };
+  const refusing = { ...walletPaying(), lockAccepted: async () => { throw new Error('the guardians did not accept the lock transaction: The transaction had an invalid input: 2-The note is already spent'); } };
+  const r = await buyItem({ ...base, itemId: 'large-truck', wallet: refusing });
+  assert.deepEqual([r.ok, r.step], [false, 'payment']); assert.match(r.why, /not paid: the federation refused the payment \(The transaction had an invalid input/);
+  assert.equal(kept.size, 0, 'nothing kept as paid');
+  const again = await buyItem({ ...base, itemId: 'large-truck', wallet: walletPaying() });
+  assert.equal(again.ok, true, again.why); assert.equal(posted.length, 1);
+});
+
 // THE ITEMS IN A RUN: one items key in every round, its proof per entry, the shop of a game, the unlocks a run starts with
 const CURVE = { pointX: (sk) => schnorr.getPublicKey(sk), signSchnorr: (m, sk) => schnorr.sign(m, sk) };
 
