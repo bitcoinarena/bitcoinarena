@@ -426,7 +426,12 @@ http.createServer((req, res) => {
       markets: { ids: [...marketIds], latest: versions.at(-1) || null, versions, readAt: marketsReadMs ? new Date(marketsReadMs).toISOString() : null } }));
   }
   res.writeHead(404); res.end();
-}).listen(PORT, '0.0.0.0', () => log({ step: 'up', port: PORT, mode: MODE, key: toHex(attestor.pubkey), sources: SOURCES, gameIds: GAME_IDS, readingsFromDisk: samplesFromDisk, seats: SEATS, peers: PEERS }));
+})
+  // kanban #3173/#3180 (refute of #3048): a listen that fails (EADDRINUSE on a restart whose port is still held, EACCES) ends the daemon
+  // with exit 1 here, before the last guard above can swallow it - else it ran on with no /attestation and no /status, and its supervisor
+  // never restarted it. The guard stays for what escapes a request handler.
+  .on('error', (e) => { log({ step: 'http server failed, exiting', why: String((e && e.stack) || e).slice(0, 2000) }); process.exit(1); })
+  .listen(PORT, '0.0.0.0', () => log({ step: 'up', port: PORT, mode: MODE, key: toHex(attestor.pubkey), sources: SOURCES, gameIds: GAME_IDS, readingsFromDisk: samplesFromDisk, seats: SEATS, peers: PEERS }));
 
 await sample();
 setInterval(() => sample().catch((e) => log({ step: 'sample failed', why: e.message })), SAMPLE_MS);
