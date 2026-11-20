@@ -1478,13 +1478,18 @@ export function floorOnSums(eligible, contract) {
 // creation body verifies under the node key it names; an update is always signed. Measured before: a stranger's 330-sat output to
 // bondOutputKey(victim), committing an UNSIGNED body {serving: false}, was in a later block than the victim's bond and so decided for every
 // output of the node - the victim stepped out. Without `signedOwn` every body counts as signed, as before.
+// A REPLAYED SIGNED BODY DECIDES NOTHING EITHER (kanban #3142, refute of #2994; the #2426 timestamp rule): an output's own body ranks with the
+// signed ones only when it is in `updates.freshOwn` (advert-update.js newestUpdates) - strictly newer than every body of the node in an
+// earlier block. Every signed body is public, so a stranger's dust bond to the node's key could carry one; a replay is never newer than
+// what it copies. Without `freshOwn` (an updates map built by hand) every signed body ranks, as before.
 export function newestPerNode(eligible, updates, signedOwn = null) {
   const best = new Map();
+  const fresh = updates && updates.freshOwn instanceof Set ? updates.freshOwn : null;
   for (const e of eligible) {
     const key = `${Array.from(e.txid).join(',')}:${e.vout}`;
     const u = updates.get(key);
     const c = u ? { u, height: u.height, pos: Number.isInteger(u.position) ? u.position : 0, tie: bondHexOf(u.txid), signed: true }
-      : { own: e, height: e.height, pos: -1, tie: bondHexOf(e.txid), signed: !signedOwn || signedOwn.has(key) };
+      : { own: e, height: e.height, pos: -1, tie: bondHexOf(e.txid), signed: (!signedOwn || signedOwn.has(key)) && (!fresh || fresh.has(key)) };
     const k = nodeKeyOf(e), b = best.get(k);
     if (b && c.signed !== b.signed) { if (c.signed) best.set(k, c); continue; }
     if (!b || c.height > b.height || (c.height === b.height && (c.pos > b.pos || (c.pos === b.pos && c.tie > b.tie)))) best.set(k, c);
