@@ -15,7 +15,7 @@ const good = new Set();
 const final = (roundId, signerPubkey, ms, ok = true) => { const sig = rnd(64); if (ok) good.add(toHex(sig)); return joinSignedFinalSig(encodeFinalSig({ roundId, entryId: rnd(), runId: rnd(), signerPubkey, signedAtMs: BigInt(ms) }), sig); };
 const verify = (sg) => good.has(toHex(sg));
 
-test('1,500 real rounds, each held by its three seats, are all counted; a lone honest round too', () => {
+test('1,500 real rounds, each held by its three seats, are all counted; a lone one-key round only an answer names is not (#3037)', () => {
   const now = Date.now();
   const keys = [rnd(), rnd(), rnd()];
   const rounds = Array.from({ length: 1500 }, () => { const roundId = rnd(); return { roundId, committee: keys, finals: keys.map((k) => final(roundId, k, now - 5000)) }; });
@@ -24,9 +24,12 @@ test('1,500 real rounds, each held by its three seats, are all counted; a lone h
   const answers = [rounds.map((r) => ({ ...r })), rounds.map((r) => ({ ...r })), [...rounds.map((r) => ({ ...r })), lone]];
   const got = servedNodes({ rounds: mergeServedRounds(answers).rounds, fromMs: now - 86400000, toMs: now, verify });
   const by = new Map(got.nodes.map((n) => [n.key, n.rounds]));
-  assert.equal(got.rounds, 1501);
-  assert.equal(by.get(toHex(keys[0])), 1501);
+  // kanban #3037: a round of one key that only another seat's answer names is that node's own word (the invented-round attack of
+  // audit gossip r3-1), not a round - it is refused, and the 1,500 rounds signed by their committee all count
+  assert.equal(got.rounds, 1500);
+  assert.equal(by.get(toHex(keys[0])), 1500);
   assert.equal(by.get(toHex(keys[1])), 1500);
+  assert.ok(got.refused.some((r) => r.round === toHex(loneId) && /#3037/.test(r.why)));
 });
 
 test('one answer listing a round twice with its own committee is one vote: the committee two seats name stands', () => {
