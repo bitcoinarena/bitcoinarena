@@ -1422,5 +1422,409 @@
  "3086": {
   "text": "Lightning payouts: a won payout with no collect record stays uncollected",
   "kind": "bug"
+ },
+ "3088": {
+  "text": "Other: a refused purchase or gift can stay marked paid",
+  "kind": "bug"
+ },
+ "3089": {
+  "text": "Committees and bonds: a first bond after an older update can still name the old game list",
+  "kind": "bug"
+ },
+ "3090": {
+  "text": "Federation: a record lookup can still dial a refused guardian address",
+  "kind": "bug"
+ },
+ "3091": {
+  "text": "Federation: a record lookup can still dial a refused guardian address",
+  "kind": "bug"
+ },
+ "3092": {
+  "text": "Other: a refunded round's stake may not reappear after a rebuild",
+  "kind": "bug"
+ },
+ "3093": {
+  "text": "Committees and bonds: a duty post can dial census addresses the book already refused",
+  "kind": "bug"
+ },
+ "3094": {
+  "text": "Settlement: a market round still needs both overlaps to count as signed",
+  "kind": "bug"
+ },
+ "3095": {
+  "text": "Other: a claimed lost deposit can show twice in history",
+  "kind": "bug"
+ },
+ "3096": {
+  "text": "Faucet and feedback: a node bounty can count a seat's own witness",
+  "kind": "bug"
+ },
+ "3097": {
+  "text": "Node software: an unsigned relayed entry can stall an update",
+  "kind": "bug"
+ },
+ "3098": {
+  "text": "Other: a rescan reissue row can vanish if issuance overlaps a reload",
+  "kind": "bug"
+ },
+ "3099": {
+  "text": "Node software: an unsigned tree entry can let a seat run a different decision",
+  "kind": "bug"
+ },
+ "3100": {
+  "text": "Other: a tree scan can hide code after a comment is misread",
+  "kind": "bug"
+ },
+ "3101": {
+  "text": "Committees and bonds: a new first bond over a spent bond can keep the old game list",
+  "kind": "bug"
+ },
+ "3102": {
+  "text": "Node software: one hung standing seat can freeze the pending lookup",
+  "kind": "bug"
+ },
+ "3103": {
+  "text": "Other: a non-numeric pending amount can abort the pending lookup",
+  "kind": "bug"
+ },
+ "3104": {
+  "text": "Other: a round-keyed done set can drop other notes before a rebuild",
+  "kind": "bug"
+ },
+ "3105": {
+  "text": "Other: a late refusal in another tab can drop a newer paid record",
+  "kind": "bug"
+ },
+ "3106": {
+  "text": "Other: a refused rebuild write is never retried in the tab",
+  "kind": "bug"
+ },
+ "3107": {
+  "text": "Node software: a peer fetch can be steered onto the seat's own services",
+  "kind": "bug"
+ },
+ "3108": {
+  "text": "Committees and bonds: page discovery can keep and dial refused census addresses",
+  "kind": "bug"
+ },
+ "3109": {
+  "text": "Faucet and feedback: a node bounty can count witnesses that are not independent",
+  "kind": "bug"
+ },
+ "3110": {
+  "text": "Faucet and feedback: a node bounty can count a copied market attestation",
+  "kind": "bug"
+ },
+ "3111": {
+  "text": "Website: a rescan returned mark can miss its history row",
+  "kind": "bug"
+ },
+ "3112": {
+  "text": "Other: an early tree import can hide later imports from the scan",
+  "kind": "bug"
+ },
+ "3113": {
+  "text": "Other: a private-field check can drop a division reading",
+  "kind": "bug"
+ },
+ "3114": {
+  "text": "Committees and bonds: the installer wizard's first bond can still name a stale game list",
+  "kind": "bug"
+ },
+ "3115": {
+  "text": "Committees and bonds: the release branch still lacks the first-bond game-list fix",
+  "kind": "bug"
+ },
+ "3116": {
+  "text": "Federation: a refused payment can stay marked paid",
+  "kind": "bug"
+ },
+ "3117": {
+  "text": "Other: a late pay answer can overwrite another tab's paid record",
+  "kind": "bug"
+ },
+ "3118": {
+  "text": "Faucet and feedback: a market bounty can count a handed-over witness",
+  "kind": "bug"
+ },
+ "3119": {
+  "text": "Node software: a check-time close can mark an undrawn seat as signed",
+  "kind": "bug"
+ },
+ "3120": {
+  "text": "Faucet and feedback: a node bounty can count any signer when nothing was drawn",
+  "kind": "bug"
+ },
+ "3121": {
+  "text": "Other: a node-bounty own-witness fix is still missing on the main and release branches",
+  "kind": "bug"
+ },
+ "3122": {
+  "text": "Other: a pending note can be refused when storage is full, with no smaller fallback",
+  "kind": "bug"
+ },
+ "3123": {
+  "text": "Lightning payouts: an owed payout in another tab may never be rebuilt",
+  "kind": "bug"
+ },
+ "3124": {
+  "text": "Node software: the seat address book can accept local names",
+  "kind": "bug"
+ },
+ "3125": {
+  "text": "Website: a page round door can accept local addresses that discovery refuses",
+  "kind": "bug"
+ },
+ "3126": {
+  "text": "Other: a hashbang comment can hide globals from the tree scan",
+  "kind": "bug"
+ },
+ "3127": {
+  "text": "Other: a file and a directory with the same name can pass checks, then fail install",
+  "kind": "bug"
+ },
+ "3128": {
+  "text": "Committees and bonds: a first bond can name the old release's games while release state is stale",
+  "kind": "bug"
+ },
+ "3129": {
+  "text": "Website: the owner page can refuse honest tree packages",
+  "kind": "bug"
+ },
+ "3130": {
+  "text": "Other: rescan history corrections are still missing on the main and release branches",
+  "kind": "bug"
+ },
+ "3131": {
+  "text": "Faucet and feedback: a late drawn attestor can be left out of the node bounty",
+  "kind": "bug"
+ },
+ "3132": {
+  "text": "Lightning payouts: a payout rebuild can be blocked during a short grace",
+  "kind": "bug"
+ },
+ "3133": {
+  "text": "Other: a name that resolves locally can still be dialed",
+  "kind": "bug"
+ },
+ "3134": {
+  "text": "Federation: a reserve read can dial a guardian address without the usual checks",
+  "kind": "bug"
+ },
+ "3135": {
+  "text": "Slashing: a tree scan can stall the package check",
+  "kind": "bug"
+ },
+ "3136": {
+  "text": "Other: mixed-case library directories can pass the same-name package check",
+  "kind": "bug"
+ },
+ "3137": {
+  "text": "Other: an honest tree without semicolons can be refused by the plugin check",
+  "kind": "bug"
+ },
+ "3138": {
+  "text": "Other: a returned history row can be lost when the browser is full and never retried",
+  "kind": "bug"
+ },
+ "3139": {
+  "text": "Other: a rescan returned row can count the same balance twice",
+  "kind": "bug"
+ },
+ "3140": {
+  "text": "Other: a wallet balance can vanish after an empty reading",
+  "kind": "bug"
+ },
+ "3141": {
+  "text": "Other: a leader can void its own batch",
+  "kind": "bug"
+ },
+ "3142": {
+  "text": "Committees and bonds: an old bond record can still decide a census",
+  "kind": "bug"
+ },
+ "3143": {
+  "text": "Federation: a per-relay hold bound lets many relays pin a large amount",
+  "kind": "bug"
+ },
+ "3144": {
+  "text": "Node software: an early seat record can hold the claim window closed",
+  "kind": "bug"
+ },
+ "3145": {
+  "text": "Other: a shared relay signature budget can let junk crowd out honest events",
+  "kind": "bug"
+ },
+ "3146": {
+  "text": "Federation: an operator can still occupy a seat when two minimums match",
+  "kind": "bug"
+ },
+ "3147": {
+  "text": "Committees and bonds: one operator's two keys can form a committee alone and look served",
+  "kind": "bug"
+ },
+ "3148": {
+  "text": "Other: a donation set can stall while working through recipients",
+  "kind": "bug"
+ },
+ "3149": {
+  "text": "Federation: standing seating held only by seated guardians never travels",
+  "kind": "bug"
+ },
+ "3150": {
+  "text": "Other: a gateway hint can still lead both swap legs",
+  "kind": "bug"
+ },
+ "3151": {
+  "text": "Other: a chain read can still die on a malformed request",
+  "kind": "bug"
+ },
+ "3152": {
+  "text": "Committees and bonds: a bond lookup can reuse someone else's unsigned bond",
+  "kind": "bug"
+ },
+ "3153": {
+  "text": "Settlement: a text price from the first seat can ride an honest attestation group",
+  "kind": "bug"
+ },
+ "3154": {
+  "text": "Node software: one seat under many spellings can meet a reveal count",
+  "kind": "bug"
+ },
+ "3155": {
+  "text": "Other: empty messages can bypass a relay queue's size cap",
+  "kind": "bug"
+ },
+ "3156": {
+  "text": "Federation: a missing hold-back can let an operator's other node be drawn",
+  "kind": "bug"
+ },
+ "3157": {
+  "text": "Website: the seat and the page can disagree on a lone closed round's served root",
+  "kind": "bug"
+ },
+ "3158": {
+  "text": "Node software: a standing seating proof can be lost on restart",
+  "kind": "bug"
+ },
+ "3159": {
+  "text": "Website: seats with different readings can leave the page with no price sample",
+  "kind": "bug"
+ },
+ "3160": {
+  "text": "Other: one slow listed relay can delay every entry publish",
+  "kind": "bug"
+ },
+ "3161": {
+  "text": "Other: a head-to-head reveal retry can ignore a transient refusal",
+  "kind": "bug"
+ },
+ "3162": {
+  "text": "Committees and bonds: an open relay can buffer heavily toward a census node that is not reading",
+  "kind": "bug"
+ },
+ "3163": {
+  "text": "Other: one peer's junk signatures can crowd out a standing proof",
+  "kind": "bug"
+ },
+ "3164": {
+  "text": "Federation: an owner update re-fetch can let the source seat swap federation",
+  "kind": "bug"
+ },
+ "3165": {
+  "text": "Settlement: one seat can force an attestation tie and drop the tick price",
+  "kind": "bug"
+ },
+ "3166": {
+  "text": "Other: a refused fee lock can delay a refund",
+  "kind": "bug"
+ },
+ "3167": {
+  "text": "Website: a premature closed notice can stall a batch so peers never receive it",
+  "kind": "bug"
+ },
+ "3168": {
+  "text": "Federation: an auto update can replace a held invite with the source seat's guardian addresses",
+  "kind": "bug"
+ },
+ "3169": {
+  "text": "Other: a door cache cap can ignore how large its keys are",
+  "kind": "bug"
+ },
+ "3170": {
+  "text": "Settlement: a binary answer can leave a batch unsettled so publishing hangs",
+  "kind": "bug"
+ },
+ "3171": {
+  "text": "Node software: one signer's decline can void a certified batch at honest seats",
+  "kind": "bug"
+ },
+ "3172": {
+  "text": "Node software: a silent home seat can stall publishing with no end",
+  "kind": "bug"
+ },
+ "3173": {
+  "text": "Settlement: an attestor can look alive while its listener never started",
+  "kind": "bug"
+ },
+ "3174": {
+  "text": "Reserves: a relay reserve can be drained before signatures are checked",
+  "kind": "bug"
+ },
+ "3175": {
+  "text": "Node software: a seat that is not the leader can void a certified batch",
+  "kind": "bug"
+ },
+ "3176": {
+  "text": "Other: a donation set can bypass the network size cap",
+  "kind": "bug"
+ },
+ "3177": {
+  "text": "Other: a first-batch stake-not-seen notice never reaches peers",
+  "kind": "bug"
+ },
+ "3178": {
+  "text": "Committees and bonds: a re-bond can sign someone else's unsigned bond",
+  "kind": "bug"
+ },
+ "3179": {
+  "text": "Lightning payouts: an older payout step can still win after a newer one was withdrawn",
+  "kind": "bug"
+ },
+ "3180": {
+  "text": "Committees and bonds: a re-bond can sign someone else's unsigned bond",
+  "kind": "bug"
+ },
+ "3181": {
+  "text": "Other: a late final mark can lose an honest delivered run",
+  "kind": "bug"
+ },
+ "3182": {
+  "text": "Committees and bonds: unsigned dust on a bond key can break the advert check and the add",
+  "kind": "bug"
+ },
+ "3183": {
+  "text": "Federation: one guardian's own gateway can lead deposits",
+  "kind": "bug"
+ },
+ "3184": {
+  "text": "Other: an old payout notice can remove a player from a remaining output",
+  "kind": "bug"
+ },
+ "3185": {
+  "text": "Committees and bonds: a listed relay can hold each publish before committee peers are asked",
+  "kind": "bug"
+ },
+ "3186": {
+  "text": "Node software: a seat holding the final mark can stall a delivered close",
+  "kind": "bug"
+ },
+ "3187": {
+  "text": "Other: a head-to-head reveal can be met by seats that share one host",
+  "kind": "bug"
+ },
+ "3188": {
+  "text": "Other: an unfinished relay message can escape every size budget",
+  "kind": "bug"
  }
 }
