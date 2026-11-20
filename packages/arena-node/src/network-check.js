@@ -72,12 +72,26 @@ export function networkPackageOf({ chain, networkId, invite, sets = [], rotation
  * game. Answers { ok, why, id, chain, networkId, federationId, checks: [{ check, ok, detail }], sets, rotations, series }
  * with every check listed, passed or not - the page shows the whole report, and the first failing line is the `why`.
  */
-export function checkNetworkPackage(pkg, { verify, seatChain, hostsGame = () => true } = {}) {
+// AT MOST SO MANY ROTATIONS, DONATION SETS AND SERIES IN ONE PACKAGE, AND EACH SIGNATURE VERIFIED ONCE (kanban #3051, audit hosting r4-1-2):
+// measured, a peer's GET /network answer of 120 junk rotations and 120 junk sets held the seat's thread 16.6 s - every set's authorityAt
+// verified every rotation again, rotations x sets Ed25519 verifies, and a 16 MB package (PEER_PACKAGE_BYTES) holds ~25,000 of each. A real
+// network carries a handful; a longer list is refused before any verify, and a (signature, message, key) is verified once per check.
+export const NETWORK_PACKAGE_MAX_ITEMS = 64;
+export function checkNetworkPackage(pkg, { verify: verifyOnce, seatChain, hostsGame = () => true } = {}) {
+  const seen = new Map();
+  const verify = (sig, msg, key) => {
+    let k; try { k = `${toHex(sig)}:${toHex(msg)}:${toHex(key)}`; } catch { return verifyOnce(sig, msg, key); }
+    if (!seen.has(k)) seen.set(k, verifyOnce(sig, msg, key));
+    return seen.get(k);
+  };
   const checks = [];
   const add = (check, ok, detail = '') => { checks.push({ check, ok: !!ok, detail }); return !!ok; };
   const out = (extra = {}) => { const bad = checks.find((c) => !c.ok); return { ok: !bad, why: bad ? `${bad.check}: ${bad.detail || 'no'}` : null, checks, ...extra }; };
   if (!add('a network package of this store', !!pkg && pkg.format === NETWORK_FORMAT && pkg.manifest && typeof pkg.manifest === 'object', pkg && pkg.format !== NETWORK_FORMAT ? `not ${NETWORK_FORMAT}` : ''))
     return out();
+  for (const [what, list] of [['rotations', pkg.rotations], ['donation sets', pkg.donationSets], ['series', pkg.series]])
+    if (!add(`it carries at most ${NETWORK_PACKAGE_MAX_ITEMS} ${what}`, list == null || (Array.isArray(list) && list.length <= NETWORK_PACKAGE_MAX_ITEMS),
+      Array.isArray(list) ? `${list.length}` : 'not a list')) return out();
   const m = pkg.manifest;
   const id = networkPackageId(m);
   const who = { id, chain: m.chain, networkId: m.networkId, federationId: m.federationId };
