@@ -8408,7 +8408,11 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             return { ok, seats, id: sellIdHex };
           },
         }; })() : null,
-        state: () => ({ join: window.ARENA_JOIN || null, picks: (ARENACLIENT.marketLines && window.ARENA_MARKET_LINES) ? window.ARENA_MARKET_LINES() : [] }),
+        // KANBAN #3074 (feedback #350): a game client knows the states it was built with; 'refund in transit' (#3009) is new, so a client
+        // before it read the row as "waiting for the result". It is handed over as 'refunded' (the stake is coming back, not final yet: final
+        // false, inTransit true); the page's own lines keep the new state.
+        state: () => ({ join: window.ARENA_JOIN || null, picks: ((ARENACLIENT.marketLines && window.ARENA_MARKET_LINES) ? window.ARENA_MARKET_LINES() : [])
+          .map((l) => (l && l.state === 'refund in transit' ? { ...l, state: 'refunded', inTransit: true } : l)) }),
         back: () => { const q = new URLSearchParams(location.search.replace(/^\?/, '')); q.delete('game'); q.delete('round'); q.delete('play');
           location.search = q.toString(); },
       };
