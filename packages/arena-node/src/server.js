@@ -8530,7 +8530,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         res.end = (b, ...rest) => { if (b !== undefined && typeof b !== 'function') chunks.push(Buffer.isBuffer(b) ? b : Buffer.from(String(b)));
           if (status === 200) {
             const body = Buffer.concat(chunks);
-            // kanban #2981: bounded by bytes too, the oldest out first; kanban #3169: an entry's bytes are its key's and its body's, and a key
+            // kanban #2981: bounded by bytes too, the oldest out first; kanban #3169, #3200: an entry's bytes are its key's and its body's, and a key
             // over DOOR_CACHE_KEY_MOST is not cached at all (a stranger's long junk parameter re-encoded at 3x was held outside the bound)
             if (body.length <= DOOR_CACHE_BODY_MOST && k.length <= DOOR_CACHE_KEY_MOST) {
               const had = doorCache.get(k); if (had) { doorCacheBytes -= had.bytes; doorCache.delete(k); }
@@ -8572,7 +8572,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // an answer over DOOR_CACHE_BODY_MOST not at all.
   const DOOR_CACHE_PARAMS = { '/season-rounds': ['game', 'days', 'after', 'page'], '/census': ['round', 'creator'],
     '/served': ['from', 'to', 'finals', 'count', 'height', 'label', 'n'] };
-  // kanban #3169: the key counts toward DOOR_CACHE_BYTES, and a key longer than DOOR_CACHE_KEY_MOST is never cached (the longest honest one,
+  // kanban #3169, #3200: the key counts toward DOOR_CACHE_BYTES, and a key longer than DOOR_CACHE_KEY_MOST is never cached (the longest honest one,
   // GET /seating-batch of BATCH_ROUNDS = 64 round ids, is about 4.2 KB)
   const DOOR_CACHE_BYTES = 64 * 1048576, DOOR_CACHE_BODY_MOST = 16 * 1048576, DOOR_CACHE_KEY_MOST = 8192;
   let doorCacheBytes = 0;
