@@ -521,6 +521,14 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
   if (!port) return { ok: false, why: 'this node reaches no federation, so it cannot verify a stake lock' };
   const outpoint = entry.stakeLockOutpoint;
   if (!outpoint || zero(outpoint.txid)) return { ok: false, why: 'that entry names no stake lock outpoint' };
+  // A STAKE LOCK IS CLAIMED WITH THE P ITS SHARES OPEN (kanban #3047, audit entry r4-1 #1): measured, an entry with vssSharesRef all zero
+  // and a real stake point was taken at POST /entry, its lock verified here (201) and seen at every seat; when it lost, settlement could
+  // not open its P ("that entry published no shares") and refused the WHOLE round - the winner never paid, the loser's lock back at
+  // expiry. Every claim of a stake lock opens P (settlement.js), so a lock is counted only for an entry whose handout this seat holds.
+  if (!entry.vssSharesRef || entry.vssSharesRef.every((b) => b === 0))
+    return { ok: false, why: 'that entry published no shares, so no seat could open its stake point to claim the lock: a staked entry names its handout' };
+  if (typeof round.handout === 'function' && !round.handout(entry.vssSharesRef))
+    return { ok: false, why: 'this node accepted no handout for that entry, so it could not open its stake point to claim the lock: publish the handout first' };
   // ONE LOCK IS ONE ENTRY. A lock this signer node already counted for another entry
   // cannot stake a second: two signer nodes on one stake is one signer node played free.
   const taken = round.stakeLockAt ? round.stakeLockAt(outpoint) : null;
