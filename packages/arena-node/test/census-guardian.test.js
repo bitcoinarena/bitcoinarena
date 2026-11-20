@@ -78,7 +78,9 @@ test('an update of the honest bond at or below the census height replaces its ad
   assert.deepEqual(e.advert.guardianOf[0].guardianKey, newKey, 'the census names the updated guardian key');
   assert.equal(toHex(e.txid), toHex(honest.txid), 'the same bond');
   assert.equal(e.updatedBy.height, tipHeight);
-  assert.deepEqual(seen, [CHAIN.nodes.honest.pubkey], 'the update is checked against the bond\'s own node key');
+  // kanban #2994: the check is also asked of each bond's own creation body (a body its node did not sign decides nothing), each under its own key
+  assert.ok(seen.includes(CHAIN.nodes.honest.pubkey), 'the update is checked against the bond\'s own node key');
+  assert.ok(seen.every((k) => Object.values(CHAIN.nodes).some((n) => n.pubkey === k)), 'every check is under a bond\'s own node key');
   const refused = deriveCensus(longer, { contract: at, resolve, bond: BOND, verifyUpdate: () => false });
   const kept = refused.entries.find((x) => whoIs(x.pubkey) === 'honest');
   assert.equal(kept.advert.guardianCapable, true);

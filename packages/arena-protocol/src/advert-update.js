@@ -109,7 +109,10 @@ export async function checkAgainstBond(read, bond, verify) {
 // than every body of that node key before it in chain order: each of its bonds' creation bodies (at their heights) and every update that
 // counted. A replay is never newer than what it copies, so it counts nowhere.
 const tsOf = (a) => { try { return a && a.timestamp !== undefined && a.timestamp !== null ? BigInt(a.timestamp) : null; } catch { return null; } };
-export function newestUpdates(view, entries, { atHeight, network = 'regtest', verify, seen = null } = {}) {
+// `signedOwn` (kanban #2994): the outputs whose creation body the node signed (deriveCensus); a creation body outside it sets no timestamp -
+// measured before, a stranger's unsigned body with timestamp 2^62 on a dust output to the node's key made every later signed update "not
+// newer". Without it every creation body counts, as before.
+export function newestUpdates(view, entries, { atHeight, network = 'regtest', verify, seen = null, signedOwn = null } = {}) {
   const found = new Map();
   // NO LIST OF BONDS, NOTHING TO UPDATE: measured before, a missing list threw on entries.map.
   if (typeof verify !== 'function' || !view || !Array.isArray(view.blocks) || !Array.isArray(entries)) return found;
@@ -139,6 +142,7 @@ export function newestUpdates(view, entries, { atHeight, network = 'regtest', ve
   });
   for (const e of entries) {
     const pk = e.pubkey || (e.advert && e.advert.nodePubkey);
+    if (signedOwn && !signedOwn.has(`${Array.from(e.txid).join(',')}:${e.vout}`)) continue;
     if (pk && Number.isInteger(e.height)) events.push({ height: e.height, position: -1, ts: tsOf(e.advert), node: nodeOf(pk) });
   }
   events.sort((a, b) => (a.height - b.height) || (a.position - b.position));
