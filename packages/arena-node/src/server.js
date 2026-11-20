@@ -6582,7 +6582,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const e = entries.find((x) => toHex(x.pubkey) === node);
           if (!e || !e.advert || !e.advert.endpoint) continue;
           try {
-            const r = await fetch(`${String(addressBook.endpointOf(e) || e.advert.endpoint).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '')}/gateway-seating?federation=${fid}&epoch=${ep}`, { signal: AbortSignal.timeout(10000) });
+            const peerAt = addressBook.endpointOf(e); if (!peerAt) continue;   // kanban #3082: a refused endpoint is not dialed
+            const r = await fetch(`${String(peerAt).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '')}/gateway-seating?federation=${fid}&epoch=${ep}`, { signal: AbortSignal.timeout(10000) });
             if (r.status === 200) signed.push(await r.json());
           } catch { /* that guardian's signature is missing this time */ }
         }
@@ -6601,7 +6602,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const epoch = Math.floor(Number(await chainTip()) / GATEWAY_EPOCH_BLOCKS) - 1;
       const now = fedRecords.censusNow ? fedRecords.censusNow() : { ok: false };
       const entries = now.ok ? now.entries : [];
-      const endpointOf = (node) => { const e = entries.find((x) => toHex(x.pubkey) === node); return e && e.advert && e.advert.endpoint ? String(addressBook.endpointOf(e) || e.advert.endpoint).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '') : null; };
+      const endpointOf = (node) => { const e = entries.find((x) => toHex(x.pubkey) === node); const peerAt = e && e.advert && e.advert.endpoint ? addressBook.endpointOf(e) : null; return peerAt ? String(peerAt).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '') : null; };
       const me = toHex(round.pubkey);
       for (const { federation: fid } of fedRecords.list()) {
         const rec = fedRecords.recordOf(fid);
@@ -10296,7 +10297,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const c = roster.committeeFor(id, role);
           if (!c.ok) continue;
           for (const e of c.committee) if (e && e.advert && e.advert.endpoint)
-            found.add(String(addressBook.endpointOf(e) || e.advert.endpoint).replace(/^wss?:/, 'https:').replace(/\/+$/, ''));
+            { const peerAt = addressBook.endpointOf(e); if (peerAt) found.add(String(peerAt).replace(/^wss?:/, 'https:').replace(/\/+$/, '')); }   // kanban #3082
         }
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ stable: replayPublic, endpoints: [...found] }));

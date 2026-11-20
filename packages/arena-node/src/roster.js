@@ -104,7 +104,8 @@ export function endpointsOf(committee, selfPubkey, endpointOf = null) {
     if (!e || !e.advert || !e.advert.endpoint) continue;
     if (self && toHex(e.pubkey) === self) continue;
     let at = e.advert.endpoint;
-    if (endpointOf) { try { at = endpointOf(e) || at; } catch { /* the advert endpoint */ } }
+    // KANBAN #3082 (feedback #361, a gap in #2856): the address book answers null for an endpoint it refuses - that is no dial
+    if (endpointOf) { let r; try { r = endpointOf(e); } catch { r = at; /* a resolver that throws: the advert, as before */ } if (!r) continue; at = r; }
     found.add(String(at).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, ''));
   }
   return [...found];
