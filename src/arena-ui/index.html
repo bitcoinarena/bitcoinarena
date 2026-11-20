@@ -7251,71 +7251,122 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     // signer node, every 2 s, and a slow look overlapped the next). A round whose answer is not provisional is asked again
     // after 30 s; its last answer counts meanwhile. The state lives on the function (st: busy, seen = note key -> { at, said }).
     async function lookThePending() {
-      const st = lookThePending.st || (lookThePending.st = { busy: false, seen: new Map(), settledMs: 30000, unansweredMs: 10000 });
+      const st = lookThePending.st || (lookThePending.st = { busy: false, seen: new Map(), settledMs: 30000, unansweredMs: 10000, askMs: 8000, graceMs: 200 });
       if (st.busy) return;
       st.busy = true;
       try {
       let notes = [];
       try { const v = vault(); for (let i = 0; i < v.length; i++) { const k = v.key(i); if (k && k.startsWith('arena.pending.')) notes.push(k); } } catch { notes = []; }
       try { const mine = JSON.parse(window.sessionStorage.getItem('arena.pending.mine') || 'null'); if (Array.isArray(mine)) notes = notes.filter((k) => mine.includes(k)); } catch { /* every note */ }
-      const done = new Set((ARENACLIENT.savedCollects ? ARENACLIENT.savedCollects(vault(), { seed: typeof collectSeed === "function" ? collectSeed() : null }) : []).filter((r) => r.done).map((r) => r.roundIdHex));
+      // DONE IS THE NOTE'S OWN SEED'S AND ORDER'S (kanban #3104, refute of #3086): it was the tab's own seed's records keyed by round alone,
+      // so a second phrase's note (a reopened browser reads every note) or order 1 of a market round lost its note - and with it the
+      // rebuild below - once the tab's phrase's (or order 0's) collect of that round was done. Now a note goes only when the record of
+      // its own seed (n.seed; the tab's seed for a note from before #3086) and its own order is done.
+      const doneBy = new Map();
+      const isDone = (n) => {
+        const key = n.seed ? String(n.seed) : '';
+        if (!doneBy.has(key)) {
+          let seed = null;
+          try { seed = n.seed ? ARENACLIENT.fromHex(String(n.seed)) : (typeof collectSeed === 'function' ? collectSeed() : null); } catch { seed = null; }
+          let recs = []; try { recs = ARENACLIENT.savedCollects ? ARENACLIENT.savedCollects(vault(), { seed }) : []; } catch { recs = []; }
+          doneBy.set(key, new Set(recs.filter((r) => r.done).map((r) => r.roundIdHex + ':' + (Number(r.order) || 0))));
+        }
+        return doneBy.get(key).has(n.roundIdHex + ':' + (Number(n.order) || 0));
+      };
+      // EVERY SEAT ASKED WITH A DEADLINE (kanban #3102, refute of #3086): Promise.all over plain fetch waited for every signer node, so one
+      // seat that took the request and never answered (hostile or black-holed) kept this look open for good - st.busy stayed true, every
+      // later look returned at once, no record was rebuilt and the pending line froze (feedback #365's symptom). Now the look takes the
+      // answers it has once more than half the round's nodes answered and the rest had st.graceMs more, or at st.askMs at the latest; a
+      // seat not heard by then counts as no answer, and its request is aborted.
+      const ask = (nodes, entryIdHex) => new Promise((resolve) => {
+        const list = Array.isArray(nodes) ? nodes : [];
+        const out = list.map(() => null);
+        const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+        let over = false; let settled = 0; let heard = 0; let grace = null; let hard = null;
+        const finish = () => {
+          if (over) return; over = true;
+          clearTimeout(grace); clearTimeout(hard);
+          try { if (ctl) ctl.abort(); } catch { /* none */ }
+          resolve(out.slice());
+        };
+        hard = setTimeout(finish, st.askMs);
+        if (!list.length) { finish(); return; }
+        list.forEach((u, i) => {
+          Promise.resolve().then(() => fetch(String(u).replace(/\/$/, '') + '/standing?entry=' + entryIdHex, ctl ? { cache: 'no-store', signal: ctl.signal } : { cache: 'no-store' }))
+            .then((r) => (r.ok ? r.json() : null)).catch(() => null)
+            .then((x) => {
+              if (over) return;
+              out[i] = x || null; settled += 1; if (x) heard += 1;
+              if (settled === list.length) { finish(); return; }
+              if (heard * 2 > list.length && !grace) grace = setTimeout(finish, st.graceMs);
+            });
+        });
+      });
+      // A FIGURE IS DIGITS (kanban #3103, refute of #3086): seats run by a stranger answered pendingMsat 'x', it won the vote, and
+      // BigInt('x') threw out of the loop on every look - the notes after it were never rebuilt or counted. Anything but digits votes none.
+      const figOf = (x) => (x && x.kind === 'payout' && x.pendingMsat !== null && x.pendingMsat !== undefined && /^\d+$/.test(String(x.pendingMsat)) ? String(x.pendingMsat) : null);
       let total = 0n; let closeMs = null; let provisional = false; let closeRound = null;
       for (const k of notes) {
-        let n; try { n = JSON.parse(vault().getItem(k)); } catch { n = null; }
-        if (!n || done.has(n.roundIdHex)) { try { vault().removeItem(k); } catch { /* none */ } continue; }
-        const last = st.seen.get(k);
-        // asked again: a provisional answer at every look; a settled one after 30 s; a round no signer node answers for (an entry
-        // they never took) after 10 s - before, it was asked every 2 s for as long as its note was kept
-        // (unanswered: 10 s, then twice as long each time nobody answers again, at most 5 min - measured on live UI 160: one such note,
-        // its 14 signer nodes every 10 s, 238 GET /standing in 3 min)
-        const waitMs = !last ? 0 : last.said.some((x) => x && x.provisional) ? 0 : last.said.some((x) => x) ? st.settledMs
-          : Math.min(300000, st.unansweredMs * 2 ** Math.max(0, (last.misses || 1) - 1));
-        const said = last && Date.now() - last.at < waitMs
-          ? last.said
-          : await Promise.all((n.nodes || []).map((u) => fetch(String(u).replace(/\/$/, '') + '/standing?entry=' + n.entryIdHex, { cache: 'no-store' })
-            .then((r) => (r.ok ? r.json() : null)).catch(() => null)));
-        if (said !== (last && last.said)) st.seen.set(k, { at: Date.now(), said, misses: said.some((x) => x) ? 0 : ((last && last.misses) || 0) + 1 });
-        // WINNINGS MORE THAN HALF THE ANSWERING SEATS SAY (WINDOW-LIVE-1155, 2026-10-02: "If the payment becomes
-        // invalid, the pending line disappears"): every seat that answers votes - one with no figure, or with a refund (a
-        // VOID run's stake coming back, not winnings), votes for none. Measured before: four seats VOID, three still
-        // PROVISIONALLY_FINAL, and the line went from 192 to the 96 sat refund instead of away.
-        const answered = said.filter((x) => x);
-        const votes = new Map();
-        for (const x of answered) {
-          const fig = x.kind === 'payout' && x.pendingMsat !== null && x.pendingMsat !== undefined ? String(x.pendingMsat) : null;
-          votes.set(fig, (votes.get(fig) || 0) + 1);
-        }
-        const best = [...votes.entries()].sort((a, b) => b[1] - a[1])[0];
-        if (typeof collectNote === 'function') collectNote('pending ' + String(n.roundIdHex).slice(0, 8), answered.length + ' of ' + (n.nodes || []).length + ' signer nodes answered /standing; '
-          + [...votes.entries()].map(([f, c]) => (f === null ? 'none' : f + ' msat') + ' x' + c).join(', ')
-          + (answered[0] ? ' | ' + [answered[0].kind, answered[0].state, answered[0].outcome].filter(Boolean).join(' ') : ''));
-        // A PAYOUT OWED WITH NO RECORD TO COLLECT IT (kanban #3086, feedback #365, measured 2026-11-20: round 67bba1aa FINAL DELIVERED 180000 msat
-        // by 7 of 7 seats, "collect pending" for 7 h, never a collect line - the tab held no arena.collect record for it): the record is
-        // rebuilt from the note, once, and the collect loop takes it on its next look
-        // AND A STAKE OWED BACK (kanban #3092, refute of #3086): a refunded or VOID round (kind 'refund', every stake comes back) votes
-        // 'none' in the payout vote above, so the rebuild runs BEFORE that vote's continue: when more than half the answering seats name
-        // the entry decided - a payout with a non-zero figure, or a refund - the record is rebuilt, so the forfeit redeem or the expiry
-        // refund runs for that stake too
-        const decided = answered.filter((x) => x.kind === 'refund'
-          || (x.kind === 'payout' && x.pendingMsat !== null && x.pendingMsat !== undefined && String(x.pendingMsat) !== '0')).length;
-        if (decided * 2 > answered.length) try {
-          if (n.seed && n.round && n.invite && !st.rebuilt) st.rebuilt = new Set();
-          if (n.seed && n.round && n.invite && !st.rebuilt.has(k)) {
-            st.rebuilt.add(k);
-            const seedB = ARENACLIENT.fromHex(n.seed);
-            const has = ARENACLIENT.savedCollects(vault(), { seed: seedB }).some((r) => r.roundIdHex === n.roundIdHex && Number(r.order || 0) === Number(n.order || 0));
-            if (!has) {
-              const round = Object.assign({}, ARENACLIENT.decodeRoundContract(ARENACLIENT.fromHex(n.round)), { id: ARENACLIENT.fromHex(n.roundIdHex) });
-              const ok = ARENACLIENT.saveCollect(vault(), { roundIdHex: n.roundIdHex, round, invite: n.invite, nodes: n.nodes, seed: seedB, order: n.order || 0 });
-              if (typeof collectNote === 'function') collectNote('pending ' + String(n.roundIdHex).slice(0, 8), ok === false ? 'money owed, its collect record could not be written' : 'money owed (a payout or a stake back) and no collect record: rebuilt from the note');
-            }
+        // ONE NOTE CANNOT END THE LOOP (kanban #3103): whatever one note's answers do, the notes after it are still rebuilt and counted
+        try {
+          let n; try { n = JSON.parse(vault().getItem(k)); } catch { n = null; }
+          if (!n || isDone(n)) { try { vault().removeItem(k); } catch { /* none */ } continue; }
+          const last = st.seen.get(k);
+          // asked again: a provisional answer at every look; a settled one after 30 s; a round no signer node answers for (an entry
+          // they never took) after 10 s - before, it was asked every 2 s for as long as its note was kept
+          // (unanswered: 10 s, then twice as long each time nobody answers again, at most 5 min - measured on live UI 160: one such note,
+          // its 14 signer nodes every 10 s, 238 GET /standing in 3 min)
+          const waitMs = !last ? 0 : last.said.some((x) => x && x.provisional) ? 0 : last.said.some((x) => x) ? st.settledMs
+            : Math.min(300000, st.unansweredMs * 2 ** Math.max(0, (last.misses || 1) - 1));
+          const said = last && Date.now() - last.at < waitMs
+            ? last.said
+            : await ask(n.nodes, n.entryIdHex);
+          if (said !== (last && last.said)) st.seen.set(k, { at: Date.now(), said, misses: said.some((x) => x) ? 0 : ((last && last.misses) || 0) + 1 });
+          // WINNINGS MORE THAN HALF THE ANSWERING SEATS SAY (WINDOW-LIVE-1155, 2026-10-02: "If the payment becomes
+          // invalid, the pending line disappears"): every seat that answers votes - one with no figure, or with a refund (a
+          // VOID run's stake coming back, not winnings), votes for none. Measured before: four seats VOID, three still
+          // PROVISIONALLY_FINAL, and the line went from 192 to the 96 sat refund instead of away.
+          const answered = said.filter((x) => x);
+          const votes = new Map();
+          for (const x of answered) {
+            const fig = figOf(x);
+            votes.set(fig, (votes.get(fig) || 0) + 1);
           }
-        } catch (e) { if (typeof collectNote === 'function') collectNote('pending ' + String(n.roundIdHex).slice(0, 8), 'collect record not rebuilt: ' + String((e && e.message) || e).slice(0, 120)); }
-        if (!best || best[0] === null || best[0] === '0' || best[1] * 2 <= answered.length) continue;
-        total += BigInt(best[0]);
-        const one = said.find((x) => x && x.pendingMsat === best[0]);
-        if (one && one.windowCloseMs && (closeMs === null || Number(one.windowCloseMs) > closeMs)) { closeMs = Number(one.windowCloseMs); closeRound = n.roundIdHex; }
-        if (one && one.provisional) provisional = true;
+          const best = [...votes.entries()].sort((a, b) => b[1] - a[1])[0];
+          if (typeof collectNote === 'function') collectNote('pending ' + String(n.roundIdHex).slice(0, 8), answered.length + ' of ' + (n.nodes || []).length + ' signer nodes answered /standing; '
+            + [...votes.entries()].map(([f, c]) => (f === null ? 'none' : f + ' msat') + ' x' + c).join(', ')
+            + (answered[0] ? ' | ' + [answered[0].kind, answered[0].state, answered[0].outcome].filter(Boolean).join(' ') : ''));
+          // A PAYOUT OWED WITH NO RECORD TO COLLECT IT (kanban #3086, feedback #365, measured 2026-11-20: round 67bba1aa FINAL DELIVERED 180000 msat
+          // by 7 of 7 seats, "collect pending" for 7 h, never a collect line - the tab held no arena.collect record for it): the record is
+          // rebuilt from the note, once, and the collect loop takes it on its next look
+          // AND A STAKE OWED BACK (kanban #3092, refute of #3086): a refunded or VOID round (kind 'refund', every stake comes back) votes
+          // 'none' in the payout vote above, so the rebuild runs BEFORE that vote's continue: when more than half the answering seats name
+          // the entry decided - a payout with a non-zero figure, or a refund - the record is rebuilt, so the forfeit redeem or the expiry
+          // refund runs for that stake too
+          const decided = answered.filter((x) => x.kind === 'refund' || (figOf(x) !== null && !/^0+$/.test(figOf(x)))).length;
+          if (decided * 2 > answered.length) try {
+            if (n.seed && n.round && n.invite && !st.rebuilt) st.rebuilt = new Set();
+            // ONCE IT IS WRITTEN, NOT ONCE IT IS TRIED (kanban #3106, refute of #3086): the key was taken before the write, so a write
+            // refused for a full storage (feedback #365's cause) was never tried again in this tab; now a refused write or a throw leaves
+            // the key out and the next look tries again
+            if (n.seed && n.round && n.invite && !st.rebuilt.has(k)) {
+              const seedB = ARENACLIENT.fromHex(n.seed);
+              const has = ARENACLIENT.savedCollects(vault(), { seed: seedB }).some((r) => r.roundIdHex === n.roundIdHex && Number(r.order || 0) === Number(n.order || 0));
+              if (has) st.rebuilt.add(k);
+              else {
+                const round = Object.assign({}, ARENACLIENT.decodeRoundContract(ARENACLIENT.fromHex(n.round)), { id: ARENACLIENT.fromHex(n.roundIdHex) });
+                const ok = ARENACLIENT.saveCollect(vault(), { roundIdHex: n.roundIdHex, round, invite: n.invite, nodes: n.nodes, seed: seedB, order: n.order || 0 });
+                if (ok !== false) st.rebuilt.add(k);
+                if (typeof collectNote === 'function') collectNote('pending ' + String(n.roundIdHex).slice(0, 8), ok === false ? 'money owed, its collect record could not be written - tried again at the next look' : 'money owed (a payout or a stake back) and no collect record: rebuilt from the note');
+              }
+            }
+          } catch (e) { if (typeof collectNote === 'function') collectNote('pending ' + String(n.roundIdHex).slice(0, 8), 'collect record not rebuilt: ' + String((e && e.message) || e).slice(0, 120)); }
+          if (!best || best[0] === null || best[0] === '0' || best[1] * 2 <= answered.length) continue;
+          total += BigInt(best[0]);
+          const one = said.find((x) => figOf(x) === best[0]);
+          if (one && one.windowCloseMs && (closeMs === null || Number(one.windowCloseMs) > closeMs)) { closeMs = Number(one.windowCloseMs); closeRound = n.roundIdHex; }
+          if (one && one.provisional) provisional = true;
+        } catch (e) { if (typeof collectNote === 'function') collectNote('pending ' + String(k).slice(14, 22), 'note skipped this look: ' + String((e && e.message) || e).slice(0, 120)); }
       }
       // AND A STAKE OWED BACK ON A ROUND NOT DONE whose collect has not gone through (comment 583): on no other chip
       const doneOrders = new Set((ARENACLIENT.savedCollects ? ARENACLIENT.savedCollects(vault(), { seed: typeof collectSeed === "function" ? collectSeed() : null }) : []).filter((r) => r.done).map((r) => r.roundIdHex + ':' + (Number(r.order) || 0)));
