@@ -210,10 +210,22 @@ export async function revealWhenCertified({ roundIdHex, entryIdHex, move, salt, 
       // to the page first; every honest seat answered the one post 409 "not certified yet - ask again shortly", only that seat held the move,
       // and at the decide it served its reveals without it - the honest player FORFEIT). The seats that said so (or did not answer) are asked
       // again every poll until a threshold of seats hold the move or the reveal's deadline passes.
-      let seats = await revealMove({ entryIdHex, move, salt, nodes, identity, fetcher, timeoutMs });
+      // ONE HOST, ONE HOLDER; EVERY ANSWER THAT IS NOT FINAL IS ASKED AGAIN (kanban #3154, #3161, refute of #3015): the holders were counted per
+      // address against lockSetThreshold(addresses), so one seat named under eight spellings of its host ('http://s0', 'http://S0', 'http://s0.',
+      // 'http://s0/a' ...) filled the threshold by itself and the honest seats' "not certified yet" was never followed up; and only status 0 and
+      // that 409 were asked again, so an honest seat briefly busy (503 "try again", 429, or 404 before the entry reached it) was dropped. Now
+      // each address is posted once (seatsByHost, #2709), a host holds the move when any of its addresses took it, the threshold is the
+      // committee's (lockSetThreshold(committee.length), at most the hosts the page can ask) or else a threshold of the hosts, and every
+      // answer but a final one (a reveal taken, or a refusal that will not change: not in the lock set, a reveal that does not stand) is
+      // asked again every poll until the threshold holds or the reveal's deadline passes.
+      const { listed, hosts } = seatsByHost(nodes);
+      const need = Math.min(hosts.length, committee && committee.length ? lockSetThreshold(committee.length) : lockSetThreshold(hosts.length));
+      let seats = await revealMove({ entryIdHex, move, salt, nodes: listed, identity, fetcher, timeoutMs });
       const took = (x) => x.status === 200 || x.status === 201;
-      const askAgain = (x) => x.status === 0 || (x.status === 409 && /not certified yet|ask again/i.test(String(x.why || '')));
-      while (seats.filter(took).length < lockSetThreshold(seats.length) && now() <= giveUpAt) {
+      const holders = () => new Set(seats.filter(took).map((x) => h2hHostKey(x.node))).size;
+      const askAgain = (x) => x.status === 0 || x.status === 404 || x.status === 408 || x.status === 425 || x.status === 429 || x.status >= 500
+        || (x.status === 409 && /not certified yet|ask again|try again/i.test(String(x.why || '')));
+      while (holders() < need && now() <= giveUpAt) {
         const again = seats.filter(askAgain);
         if (!again.length) break;
         await sleep(H2H_LOCK_SET_POLL_MS);
