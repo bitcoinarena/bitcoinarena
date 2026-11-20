@@ -859,6 +859,16 @@ export async function seatedGatewaysOf(client) {
   const listed = new Set((await federationGateways(client)).map(gwKey));
   return l.filter(Boolean).map(String).filter((u) => listed.has(gwKey(u)));
 }
+// ONLY A NAMED GATEWAY THE FEDERATION ITSELF LISTS (kanban #3150, refute of #3029): the page's named gateways - window.ARENA_LEDGER_GATEWAYS,
+// read straight from the page URL's ?gateway= - led both legs of a swap, every deposit and the withdraw's preferred gateway unchecked, so a
+// crafted link https://<site>/?gateway=https://evil/ funded the pay leg's LNv2 contract to a gateway no federation lists. The #3029 rule now
+// holds for them too: a named gateway is kept only when `client`'s federation lists it (the lock client's own gateways(), from the guardians).
+/** `named` kept in order where `client`'s federation lists it (gwKey match); none when it lists none or cannot say. */
+export async function listedNamedGateways(client, named = []) {
+  if (!Array.isArray(named) || !named.length) return [];
+  const listed = new Set((await federationGateways(client)).map(gwKey));
+  return named.filter(Boolean).map(String).filter((u) => listed.has(gwKey(u)));
+}
 const listedOf = new WeakMap();
 /** The gateways the federation lists, as the lock client reads them (asked once per wallet); none when it cannot say. */
 export async function federationGateways(client) {
@@ -1073,7 +1083,7 @@ export function depositOffer({ client, stakeMsat, haveMsat = null, needMsat = nu
     const amount = BigInt(msat);
     if (amount <= 0n) throw new Error('a deposit is more than 0 sat');
     // ANY LISTED GATEWAY, THE NEXT AFTER A TIMEOUT: the lobby's first, then the federation's
-    const order = gatewayOrder([...await seatedGatewaysOf(client), depositGateway('', gateways)].filter(Boolean), await federationGateways(client));
+    const order = gatewayOrder([...await seatedGatewaysOf(client), depositGateway('', await listedNamedGateways(client, gateways))].filter(Boolean), await federationGateways(client));
     const got = await invoiceThroughGateways(client, amount, order);
     let settled = false;
     const shown = (x) => {
@@ -1548,7 +1558,7 @@ export async function fundPlayerWallet({ round, invite, seed, LockClient, storag
       ? { invoice_msat: String(stakeOf(round) > 0n ? stakeOf(round) : asked), credited_msat: String(asked), gateway: '' }
       : JSON.parse(await client.depositFor(String(asked)));
     // ANY LISTED GATEWAY, THE NEXT AFTER A TIMEOUT: the named first, then the federation's list
-    const order = gatewayOrder([...await seatedGatewaysOf(client), depositGateway(plan.gateway, gateways)].filter(Boolean), await federationGateways(client));
+    const order = gatewayOrder([...await seatedGatewaysOf(client), depositGateway(plan.gateway, await listedNamedGateways(client, gateways))].filter(Boolean), await federationGateways(client));
     const invoice = await invoiceThroughGateways(client, plan.invoice_msat, order);
     const d = { invoice: invoice.invoice, amountMsat: BigInt(plan.invoice_msat), creditsMsat: BigInt(plan.credited_msat), gateway: invoice.gateway, tried: invoice.tried };
     deposits.push(d);
@@ -3433,7 +3443,8 @@ export async function withdrawCollected({ client, invoiceFor, amountMsat = null,
   }
   onStep('withdrawing over Lightning');
   // the funded gateway preferred; the lock client never takes the gateway on the invoice's own node
-  const said = JSON.parse(await client.withdraw(inv.invoice, depositGateway('', gateways) || undefined));
+  // kanban #3150: only a named gateway the federation lists is preferred
+  const said = JSON.parse(await client.withdraw(inv.invoice, depositGateway('', await listedNamedGateways(client, gateways)) || undefined));
   const ok = said.state === 'Success';
   return { ok, final: ok, withdrawableMsat: withdrawable, invoiceMsat: said.invoice_msat == null ? null : BigInt(said.invoice_msat),
     state: said.state, gateway: said.gateway, balance_before: said.balance_before, balance_after: said.balance_after,
@@ -4368,7 +4379,9 @@ export async function swapForRound({ from, to, amountMsat, gateways = [], storag
   // kanban #2870 (Feedback #095): the seated ones really first, then the lobby's named (daily.json), then the list - the named led before, and after a
   // reboot their old quick-tunnel names cost a swap 39.6 s of timeouts before a live gateway was tried
   const seatedTo = await seatedGatewaysOf(to), seatedFrom = await seatedGatewaysOf(from);
-  const pairs = swapGatewayPairs([], gatewayOrder([...seatedTo, ...gateways], await federationGateways(to)), gatewayOrder([...seatedFrom, ...gateways], await federationGateways(from)));
+  // kanban #3150: the named gateways too only where that leg's federation lists them (a ?gateway= link led both legs before)
+  const namedTo = await listedNamedGateways(to, gateways), namedFrom = await listedNamedGateways(from, gateways);
+  const pairs = swapGatewayPairs([], gatewayOrder([...seatedTo, ...namedTo], await federationGateways(to)), gatewayOrder([...seatedFrom, ...namedFrom], await federationGateways(from)));
   const tried = [];
   let made = null, said = null;
   for (const [recv, pay] of pairs) {
