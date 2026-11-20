@@ -21,6 +21,21 @@ export function endpointRoot(endpoint) {
 // at most one path segment, no query, fragment or user info, and never a loopback / private / link-local / ULA literal or a local-only name
 // - unless the page itself is served from a local host (a devnet), where its nodes are local too.
 const ND_LOCAL_NAME = /(^|\.)(localhost|local|internal|lan|intranet|localdomain|home\.arpa)$/;
+// ONE RULE FOR THE SEAT, THE PAGE AND PUBLIC-FETCH (kanban #3124, #3125; wf1489 refute of #3107/#3108): the seat's peerEndpointRefusal
+// (arena-node address-book.js) refused IP literals and localhost only, so a bond committing 'http://127.0.0.1.nip.io:18777/lnurlp',
+// 'http://localtest.me:18777/lnurlp' or 'http://host.docker.internal:18777/x' was dialed by every seat on its own loopback or LAN. The
+// names below lead back to an address spelled inside them (public wildcard DNS made for exactly that), and a name carrying an internal
+// IPv4 address in dots or dashes ('10-0-0-1.example', '192.168.1.1.anything') is refused too. The seat and public-fetch now call this
+// function, so the copies cannot drift. NOT *.ts.net: live seats announce their tailnet names (public-fetch refuses them on its own).
+const ND_REBIND_NAME = /(^|\.)(nip\.io|sslip\.io|xip\.io|traefik\.me|localtest\.me|lvh\.me|vcap\.me|localhost\.direct|rbndr\.us|1u\.ms|localho\.st|local\.gd)$/;   // the last four: more public rebinding names
+function ndEmbeddedInternalV4(h) {
+  const parts = h.split(/[.-]/);
+  for (let i = 0; i + 4 <= parts.length; i++) {
+    const q = parts.slice(i, i + 4);
+    if (q.every((x) => /^\d{1,3}$/.test(x) && Number(x) <= 255) && ndInternalV4(q.map(Number).join('.'))) return true;
+  }
+  return false;
+}
 function ndInternalV4(h) {
   const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
   if (!m) return false;
@@ -43,13 +58,14 @@ function ndInternalV6(h) {
   return (w[0] & 0xfe00) === 0xfc00 || (w[0] & 0xffc0) === 0xfe80 || (w[0] & 0xffc0) === 0xfec0 || (w[0] & 0xff00) === 0xff00
     || (w[0] === 0x100 && w[1] === 0 && w[2] === 0 && w[3] === 0) || (w[0] === 0x2001 && w[1] === 0xdb8);
 }
-/** True for a loopback / private / link-local / ULA literal or a local-only name (localhost, *.local, *.lan, a bare single label ...). */
+/** True for a loopback / private / link-local / ULA literal, a local-only name (localhost, *.local, *.lan, a bare single label ...), a name made to
+ * resolve to the address it spells (*.nip.io, localtest.me ...) or one carrying an internal IPv4 address (kanban #3124). */
 export function localHostName(hostname) {
   const h = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '').replace(/%.*$/, '').replace(/\.$/, '');
   if (!h) return true;
   if (h.includes(':')) return ndInternalV6(h);
   if (/^[\d.]+$|^0x/i.test(h)) return !/^\d{1,3}(\.\d{1,3}){3}$/.test(h) || ndInternalV4(h);
-  return !h.includes('.') || ND_LOCAL_NAME.test(h);
+  return !h.includes('.') || ND_LOCAL_NAME.test(h) || ND_REBIND_NAME.test(h) || ndEmbeddedInternalV4(h);   // kanban #3124
 }
 /**
  * Why the page does not ask `endpoint` as a node, or null - the seats' peerEndpointRefusal, page side (kanban #3107, #3108). `localOk`:

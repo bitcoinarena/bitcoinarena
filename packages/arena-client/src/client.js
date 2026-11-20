@@ -366,7 +366,7 @@ export class Client {
    * the node's own fixtures talk to a process on localhost that has no bond
    * and never will - and a test that wants the real door calls this one.
    */
-  static async at(discovery, { core, sign, verify, verifySession, contract, roundIdGiven, stakeLock }) {
+  static async at(discovery, { core, sign, verify, verifySession, contract, roundIdGiven, stakeLock, localOk }) {
     if (!contract || !contract.nodes)
       throw new Error('no round contract, so there is no committee to check against');
 
@@ -409,7 +409,8 @@ export class Client {
     }
 
     // THE ANCHOR FOLLOWS THE ROUND'S NETWORK, read off the contract the round id was just checked against
-    const seen = await discover({ ...discovery, committee: contract.nodes, networkId: contract.networkId });
+    // kanban #3125: `localOk` - the caller's (the page: served from a local host), never the discovery's; see directory.js isSocketAddress
+    const seen = await discover({ ...discovery, committee: contract.nodes, networkId: contract.networkId, localOk });
     // WHICH PROVIDER, AND WHY (M3.3-27): `discover` hands back each provider's
     // own refusal, and the door used to drop it - the rehearsal's flake read
     // "only 1 of 2 providers gave a chain" and nothing more.

@@ -3780,7 +3780,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         const discovery = { headers: c.headers, bonds: c.bonds, committee: named.round.nodes,
           signedAdvert: d && d.signedAdvert ? ARENACLIENT.fromHex(d.signedAdvert) : undefined };
         ARENACLIENT.Client.at(discovery, { core: { hash: () => new Uint8Array(32) }, sign: async () => new Uint8Array(64),
-          contract: named.round, roundIdGiven: ARENACLIENT.fromHex(named.roundIdHex) })
+          contract: named.round, roundIdGiven: ARENACLIENT.fromHex(named.roundIdHex),
+          localOk: !!(ARENACLIENT.localHostName && ARENACLIENT.localHostName(location.hostname)) })   // kanban #3125: no loopback/LAN round door unless this page is local
           .then((client) => client.openRound(named.round))
           .then(() => console.log('[arena] warm: chain proved and the round opened at the node in ' + (Date.now() - t0) + ' ms'))
           .catch((e) => console.log('[arena] warm: the session reads were not done ahead (' + e.message + ')'));

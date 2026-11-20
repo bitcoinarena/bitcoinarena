@@ -8,6 +8,7 @@
 import { checkAddressAnnouncement, newerAnnouncement, signAddressAnnouncement, endpointOf } from '../../arena-protocol/src/address-announcement.js';
 import { internalAddress } from './public-fetch.js';
 import { isIP } from 'node:net';
+import { localHostName } from '../../arena-client/src/node-discovery.js';   // kanban #3124: the page's and public-fetch's rule, one copy
 
 /**
  * WHERE A SEAT MAY DIAL A PEER (kanban #2856, #1489 r26-gossip-1): a census node signed an announcement for its own key naming the honest seat's
@@ -24,7 +25,9 @@ export function peerEndpointRefusal(endpoint, { localOk = false } = {}) {
   if (u.search || u.hash || String(endpoint).includes('?') || String(endpoint).includes('#')) return 'an endpoint carries no query or fragment';
   if (u.pathname.replace(/\/+$/, '').split('/').filter(Boolean).length > 1) return 'an endpoint is an origin with at most one path segment';
   const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
-  const local = (isIP(host) ? internalAddress(host) : /^\d+$|^0x/i.test(host)) || host === 'localhost' || host.endsWith('.localhost');
+  // kanban #3124, #3125: also every name the page and public-fetch call local (a single label, *.local/.lan/.internal ..., *.nip.io,
+  // localtest.me ..., a name carrying an internal IPv4 address) - 'http://127.0.0.1.nip.io:18777/lnurlp' reached the seat's own loopback
+  const local = (isIP(host) ? internalAddress(host) : /^\d+$|^0x/i.test(host)) || host === 'localhost' || host.endsWith('.localhost') || localHostName(host);
   if (local && !localOk) return 'an endpoint on a loopback or private address';
   return null;
 }
