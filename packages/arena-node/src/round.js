@@ -3220,7 +3220,7 @@ export class Round {
 
   heldFinalAsk(entryIdBytes) {
     const r = this.db.prepare('SELECT * FROM held_final_ask WHERE entry_id = ?').get(Buffer.from(entryIdBytes));
-    return r ? { entryId: new Uint8Array(r.entry_id), roundId: new Uint8Array(r.round_id), mark: new Uint8Array(r.mark), tick: r.tick } : null;
+    return r ? { entryId: new Uint8Array(r.entry_id), roundId: new Uint8Array(r.round_id), mark: new Uint8Array(r.mark), tick: r.tick, heldMs: r.held_ms } : null;
   }
 
   dropHeldFinalAsk(entryIdBytes) {
