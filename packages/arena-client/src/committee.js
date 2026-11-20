@@ -17,6 +17,51 @@ import { networkOf } from '../../arena-protocol/src/constants.js';
 import { NETWORK_ID_TESTNET4, ARBITRATION_KEYS_TESTNET4, ARBITRATION_KEYS_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
 import { genesisFor, committeesStand } from '../../arena-protocol/src/genesis.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { parseTransaction } from '../../arena-protocol/src/tx.js';
+// KANBAN #3073 (feedback #349): the 1.9 census read guards (#2160/#2228/#2301 one bond listed twice, #2740 bounded answer), never ported to main
+const CENSUS_ANSWER_MAX = 4 * 1024 * 1024, COMMITTEE_ANSWER_MAX = 64 * 1024, SEATING_ANSWER_MAX = 256 * 1024;
+async function bytesUpTo(r, max) {
+  const said = Number(r.headers && typeof r.headers.get === 'function' ? r.headers.get('content-length') : NaN);
+  if (Number.isFinite(said) && said > max) { try { await r.body?.cancel(); } catch { /* gone */ } throw new Error(`its answer is ${said} bytes, more than ${max}`); }
+  const reader = r.body && typeof r.body.getReader === 'function' ? r.body.getReader() : null;
+  if (!reader) { const b = new Uint8Array(await r.arrayBuffer()); if (b.length > max) throw new Error(`its answer is more than ${max} bytes`); return b; }
+  const parts = []; let n = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      n += value.byteLength;
+      if (n > max) throw new Error(`its answer is more than ${max} bytes`);
+      parts.push(value);
+    }
+  } catch (e) { try { await reader.cancel(); } catch { /* gone */ } throw e; }
+  const all = new Uint8Array(n); let at = 0;
+  for (const p of parts) { all.set(p, at); at += p.byteLength; }
+  return all;
+}
+// a test's stand-in answer with no stream and no arrayBuffer is read by its own json()/text()
+const jsonUpTo = async (r, max) => (r.body === undefined && typeof r.arrayBuffer !== 'function' && typeof r.json === 'function' ? r.json() : JSON.parse(new TextDecoder().decode(await bytesUpTo(r, max))));
+const txidKeyOf = (t) => {
+  if (t === undefined || t === null) return '';
+  try { return toHex(parseTransaction(t instanceof Uint8Array ? t : fromHex(String(t))).txid); }
+  catch { return `raw:${typeof t === 'string' ? t.toLowerCase() : JSON.stringify(t)}`; }
+};
+// THE TRANSACTION FIRST (kanban #2500, #1489 a44-refute-48-s2): an entry carrying its transaction was keyed by the txid / vout fields the
+// provider wrote beside it whenever it wrote them, so one seat repeating a bond with made-up txid / vout fields slipped past the own-list
+// repeat check, the union threw 'duplicate outpoint' and the honest co-provider was skipped with it. An entry with a transaction is keyed
+// by that transaction (what the client derives the bond from); provider-written txid / vout key only an entry that carries none.
+const bondKeyOf = (e) => (e && e.transaction !== undefined
+  ? `t:${txidKeyOf(e.transaction)}:${e.reaffirm && typeof e.reaffirm === 'object' ? txidKeyOf(e.reaffirm.transaction) : ''}`
+  : e && e.txid !== undefined && e.vout !== undefined
+    ? `o:${Array.isArray(e.txid) || e.txid instanceof Uint8Array ? toHex(Uint8Array.from(e.txid)) : String(e.txid)}:${e.vout}`
+    : `j:${JSON.stringify(e)}`);
+/** The first bond one provider's own list holds twice, or null (kanban #2160, #2228, #2301). */
+const repeatedBondIn = (list) => {
+  const seen = new Set();
+  for (const e of list) { const k = bondKeyOf(e); if (seen.has(k)) return k; seen.add(k); }
+  return null;
+};
+
 import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
 import { seriesRoundIdOf } from '../../arena-protocol/src/contracts.js';
 import { agreedChain, httpProvider, headerSources } from './headers.js';
@@ -177,8 +222,12 @@ export async function evidenceFor(roundIdHex, contract, nodes, { fetcher, skip =
     try {
       const r = await readWithOneRetry(fetcher, `${baseOf(u)}/census?round=${roundIdHex}`);
       if (!r.ok) { refused.push(`${u}: ${r.status}`); return; }
-      const j = await r.json();
+      const j = await jsonUpTo(r, CENSUS_ANSWER_MAX);   // kanban #2740: bounded
       if (!j || !Array.isArray(j.entries)) { refused.push(`${u}: no entries`); return; }
+      // A PROVIDER LISTING ONE BOND TWICE IS REFUSED ON ITS OWN, before the union (kanban #2160, #2228, #2301): in the union its repeat
+      // made the census uncommittable and its honest co-provider was skipped with it - on three seats the join was refused
+      const twice = repeatedBondIn(j.entries);
+      if (twice) { refused.push(`${u}: lists one bond twice`); return; }
       if (got.length >= providers || roots.has(root)) return;
       // the nodes this seat left out for their protocol version: shown, never counted
       if (Array.isArray(j.tooOld)) keptTooOld.set(key, j.tooOld.filter((x) => x && /^[0-9a-f]{64}$/.test(String(x.node))));
@@ -206,11 +255,7 @@ export async function evidenceFor(roundIdHex, contract, nodes, { fetcher, skip =
  * ({ transaction, position, branch, update }), so a bond is its raw transaction there; an entry naming txid and vout is keyed by them (#1333:
  * keyed by txid:vout alone, the 18 live entries all became "undefined:undefined" - one entry, a root that never matched).
  */
-const bondKeyOf = (e) => (e && e.txid !== undefined && e.vout !== undefined
-  ? `o:${Array.isArray(e.txid) || e.txid instanceof Uint8Array ? toHex(Uint8Array.from(e.txid)) : String(e.txid)}:${e.vout}`
-  // A BOND'S HEX IS ONE KEY WHATEVER ITS CASE (kanban #1708): fromHex reads 'AB' and 'ab' alike, so one provider repeating a bond in upper
-  // case kept two copies in the union, censusRootOf threw 'duplicate outpoint' and the join was refused for good
-  : `t:${typeof e?.transaction === 'string' ? e.transaction.toLowerCase() : JSON.stringify(e)}`);
+// bondKeyOf: the 1.9 form above (kanban #3073) - a bond is its transaction's txid however its hex is spelled (#1708 case, #2160 ' 2' for '02')
 export function unionOfEntries(lists) {
   const byBond = new Map();
   for (const list of lists) for (const e of list || []) {
