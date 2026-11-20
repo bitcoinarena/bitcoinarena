@@ -28,6 +28,27 @@ export function paidRecordPut(storage, key, rec) { putRoomy(paidRecordStore(stor
 export function paidRecordDrop(storage, key) {
   try { const st = paidRecordStore(storage); if (typeof st.removeItem === 'function') st.removeItem(key); else st.setItem(key, ''); } catch { /* kept: handed again, a seat answers it the same */ }
 }
+/** A NEW WRITE-AHEAD'S OWN MARK (kanban #3105, refute of #3081): a random id, so the drop below can tell this record from another tab's. */
+export function paidRecordMark() {
+  const r = new Uint8Array(12);
+  try { globalThis.crypto.getRandomValues(r); } catch { for (let i = 0; i < r.length; i++) r[i] = Math.floor(Math.random() * 256); }
+  return [...r].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+/**
+ * DROPPED ONLY WHEN THE KEY STILL HOLDS THIS PAYMENT (kanban #3105, refute of #3081): two tabs of one player share the key of one purchase
+ * (one gift). Tab A awaited the guardians' refusal of payment T1 while tab B read the same refusal first, dropped it, was pressed again and
+ * paid T2 under the same key; A's late refusal then dropped T2's paid record (not yet kept by two seats), and the next press paid a third
+ * time. Every drop now reads the key again and drops only the record `rec` stands for: the same submitted txid, or - not submitted yet -
+ * the same write-ahead mark. Another payment kept there since stays.
+ */
+export function paidRecordDropIf(storage, key, rec) {
+  const now = paidRecordGet(storage, key);
+  if (!now || !rec) return;
+  const same = rec.submitted
+    ? !!(now.submitted && now.submitted.txid && now.submitted.txid === rec.submitted.txid)
+    : !now.submitted && (rec.mark ? now.mark === rec.mark : !now.mark && now.boughtAtMs === rec.boughtAtMs && now.atMs === rec.atMs);
+  if (same) paidRecordDrop(storage, key);
+}
 /** Every kept paid record's key in `storage`. */
 export function paidRecordKeys(storage) {
   const st = paidRecordStore(storage); const keys = [];
