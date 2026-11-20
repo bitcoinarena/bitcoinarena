@@ -88,7 +88,8 @@ test('the seated gateways first: a deposit asks its federation\'s seated gateway
   const asked = [];
   useSeatedGateways(async (fid) => { asked.push(fid); return fid === F ? ['https://seat-1', 'https://seat-2'] : []; });
   try {
-    const c = fakeClient({ 'https://seat-1': 'throw', 'https://seat-2': { end: 'Claimed', afterMs: 10 }, 'https://lobby': { end: 'Claimed' } }, ['https://fed-1', 'https://seat-2']);
+    // kanban #3029: a seated gateway is one the federation lists (the lock client's gateways()); one it does not list is not taken first
+    const c = fakeClient({ 'https://seat-1': 'throw', 'https://seat-2': { end: 'Claimed', afterMs: 10 }, 'https://lobby': { end: 'Claimed' } }, ['https://fed-1', 'https://seat-2', 'https://seat-1/']);
     assert.deepEqual(await seatedGatewaysOf(c), [], 'a client whose federation is not known asks no seats');
     noteClientFederation(c, F.toUpperCase());
     assert.deepEqual(await seatedGatewaysOf(c), ['https://seat-1', 'https://seat-2']);

@@ -838,7 +838,14 @@ export function gatewayUrlsOfView(view) {
 export async function seatedGatewaysOf(client) {
   const f = client && typeof client === 'object' ? federationOfClient.get(client) : null;
   if (!f || !seatedLookup) return [];
-  try { const l = await Promise.race([seatedLookup(f), new Promise((ok) => setTimeout(() => ok([]), 3000))]); return Array.isArray(l) ? l.filter(Boolean).map(String) : []; } catch { return []; }
+  let l; try { l = await Promise.race([seatedLookup(f), new Promise((ok) => setTimeout(() => ok([]), 3000))]); } catch { return []; }
+  if (!Array.isArray(l)) return [];
+  // ONLY A GATEWAY THE FEDERATION ITSELF LISTS (kanban #3029, audit client r2-1, measured 2026-11-19: the page took the first seat's unsigned
+  // GET /gateway-seats answer, so one non-guardian seat listed first put a gateway of its own first in every deposit and on both legs of a
+  // swap - the pay leg's LNv2 contract funded to it, held up to its expiry). A seated gateway is registered at its federation, so the lock
+  // client's own list (gateways(), read from the guardians) names it; a URL it does not name is not tried first, nor passed as `preferred`.
+  const listed = new Set((await federationGateways(client)).map(gwKey));
+  return l.filter(Boolean).map(String).filter((u) => listed.has(gwKey(u)));
 }
 const listedOf = new WeakMap();
 /** The gateways the federation lists, as the lock client reads them (asked once per wallet); none when it cannot say. */
