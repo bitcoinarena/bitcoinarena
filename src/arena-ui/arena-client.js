@@ -21909,8 +21909,14 @@ async function refusedReturn({ roundId, playerPubkey, locks, nodes, fetcher, cli
     await Promise.all([...new Set(nodes || [])].map((node) => seatPost(fetcher, `${String(node).replace(/\/+$/, '')}/handout`, { method: 'POST', body: handoutBody, ...shown }).catch(() => null)));   // kanban #3060
   }
   let kept = 0;
-  // every lock at once (kanban #3060): each seat's answer is bounded by SEAT_READ_MS, and the locks no longer add their bounds up
-  for (const h of await Promise.all(still.map((lock) => handRefusedLock({ roundId, lock, nodes, fetcher })))) kept += h.kept > 0 ? 1 : 0;
+  // the seats at once, the locks in order (kanban #3060, #3166): each seat's answer is bounded by SEAT_READ_MS and every seat is asked in
+  // parallel, but the stake (point) locks reach every seat before any fee (hash) lock - a seat keeps a refused fee lock beside the handout
+  // whose kept stake lock is of the same transaction (kanban #1945), and a fee that raced ahead of its stake at one seat was kept there
+  // under another try's fee id, so its forfeit never gathered and stake plus fee waited for the expiry. Two bounds at most, not one per lock.
+  const isStake = (l) => !!(l.fields && l.fields.paymentImage && l.fields.paymentImage.kind === 'point');
+  for (const batch of [still.filter(isStake), still.filter((l) => !isStake(l))]) {
+    for (const h of await Promise.all(batch.map((lock) => handRefusedLock({ roundId, lock, nodes, fetcher })))) kept += h.kept > 0 ? 1 : 0;
+  }
   if (!kept) return null;
   const msat = still.reduce((t, l) => t + BigInt(l.fields.amountMsat), 0n);
   const at = (l) => `${toHex(l.outpoint.txid)}:${l.outpoint.outIdx}`;
