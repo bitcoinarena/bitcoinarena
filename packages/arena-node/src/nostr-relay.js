@@ -612,6 +612,7 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
     const c = { ws, subs, held: 0 };
     // kanban #2839: every change of a kept subscription goes through these two, so the charges are given back on CLOSE, a cut and the close
     const dropSub = (sid) => { const had = subs.get(sid); if (!had) return; subs.delete(sid); c.held -= had.charge || 0; subValuesHeld -= had.charge || 0; };
+    c.dropSub = dropSub;
     clients.add(c);
     let budget = 60, pings = PINGS, refill = setInterval(() => { budget = Math.min(60, budget + 20); pings = PINGS; }, 10000);
     const send = (m) => {   // kanban #1717: no message is queued for a client already HARD_SLOW_BYTES behind
@@ -747,6 +748,17 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
         if (!subs.has(sid) && subs.size >= MAX_SUBS) return send(['CLOSED', sid, `blocked: at most ${MAX_SUBS} subscriptions`]);
         { const compiled = filters.map(compileFilter);   // kanban #1752: Sets, built once
           const charge = valuesOf(compiled), was = subs.has(sid) ? (subs.get(sid).charge || 0) : 0;
+          // THE HEAVIEST GIVE WAY, NOT THE NEWCOMER (kanban #2998, audit nostr r2-1, measured 2026-11-19: 100 idle sockets of one stranger, 20 REQs of
+          // 199 tag values each, held the relay-wide budget and every later REQ - a player's Nostr-login seed query - was CLOSED). When the relay's
+          // total is full, the largest subscription of the socket holding the most values is CLOSED to make room - only of a socket that holds more
+          // than this one would after the REQ, so a socket never pushes out one lighter than itself, and many heavy sockets cannot hold a light one out.
+          while (c.held - was + charge <= SUB_VALUES_PER_SOCKET && subValuesHeld - was + charge > SUB_VALUES_TOTAL) {
+            let o = null; for (const x of clients) if (x !== c && x.subs.size && (!o || x.held > o.held)) o = x;
+            if (!o || o.held <= c.held - was + charge) break;
+            let vs = null, vc = -1; for (const [k, v] of o.subs) if ((v.charge || 0) > vc) { vs = k; vc = v.charge || 0; }
+            o.dropSub(vs);
+            if (o.ws.readyState === 1) queue(o, JSON.stringify(['CLOSED', vs, 'blocked: the relay is full of subscription values: the heaviest give way first']));
+          }
           if (c.held - was + charge > SUB_VALUES_PER_SOCKET || subValuesHeld - was + charge > SUB_VALUES_TOTAL) {
             dropSub(sid);
             return send(['CLOSED', sid, `blocked: too many subscription values (at most ${SUB_VALUES_PER_SOCKET} per connection)`]);
