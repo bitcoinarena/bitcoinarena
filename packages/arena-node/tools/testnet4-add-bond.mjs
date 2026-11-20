@@ -76,6 +76,8 @@ if (censusAt !== null) {
 
 // THE ADDED OUTPUT: the seat's newest advertisement, a template-2 bond of SATS, its carrier funded by the bond wallet (not sent yet)
 const newest = inForceOf(bonds);   // the advertisement in force, as the census reads it (kanban #1836), not bonds[0]
+// null: only outputs the node never signed, a stranger's dust (kanban #3198, #3207, refute of #3016) - nothing of the node's to add to
+if (!newest) throw new Error(`node ${N} (${toHex(pubkey).slice(0, 8)}) has no confirmed bond its key signed to add to`);
 let fundingHex = null;
 // the versions it speaks: the newest advertisement's and this build's (protocol 19 counts the sum only for a node that speaks 19)
 const versions = [...new Set([...(newest.advert.protocolVersions || []), ...SUPPORTED_PROTOCOL_VERSIONS])].sort((a, b) => a - b);

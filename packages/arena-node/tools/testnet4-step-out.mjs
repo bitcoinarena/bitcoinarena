@@ -38,7 +38,7 @@ for (const store of stores) {
   const db = openStore(store);
   const { secret, pubkey } = nodeIdentity(db);
   db.close?.();
-  const bonds = rt.bondsOf(secret);
+  const bonds = rt.ownBondsOf(secret);   // only bonds the node signed (kanban #3178, #3182, #3198, #3207)
   if (!bonds.length) { say({ store, nodeKey: toHex(pubkey).slice(0, 16), skipped: 'no confirmed unspent bond' }); continue; }
   // THE BODY IN FORCE (kanban #1836): the update still goes on the largest output, but it starts from the node's newest advertisement
   // over all its outputs (inForceOf, as the census reads it), not the largest's own - an update since on another output is kept

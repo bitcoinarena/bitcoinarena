@@ -26,6 +26,7 @@ import { join } from 'node:path';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { regtest } from './regtest-bond.mjs';
 import { openStore, nodeIdentity } from '../src/store.js';
+import { inForceOf } from '../src/add-bond-wallet.js';
 import { bondSetFor } from '../src/curve.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
@@ -53,7 +54,7 @@ const nodes = NODES.map((n) => {
   const db = openStore(join(home, `node-${n}.db`));
   const { secret, pubkey } = nodeIdentity(db);
   db.close?.();
-  return { n, secret, pubkey, bonds: rt.bondsOf(secret) };
+  return { n, secret, pubkey, bonds: rt.ownBondsOf(secret) };   // only bonds the node signed (kanban #3178, #3182, #3198, #3207)
 });
 
 if (measure) {
@@ -89,11 +90,14 @@ if (!/^[0-9a-f]{64}$/.test(fundTxid || '') || !/^\d+$/.test(fundVout || ''))
 
 const plans = [];
 for (const x of nodes) {
-  if (!x.bonds.length) throw new Error(`node ${x.n} (${toHex(x.pubkey).slice(0, 8)}) has no confirmed unspent bond: nothing to move, and none is posted`);
-  const bond = x.bonds[0];
+  if (!x.bonds.length) throw new Error(`node ${x.n} (${toHex(x.pubkey).slice(0, 8)}) has no confirmed unspent bond its key signed: nothing to move, and none is posted`);
+  // THE BOND IN FORCE OF THE NODE'S OWN (kanban #3178, #3182, #3198, #3207, refute of #3016): never bonds[0] of every output paying the key - a stranger's
+  // unsigned dust bond mined later was that, and its body (his payout key) was signed here as the node's and his 330 sat moved
+  const bond = inForceOf(x.bonds);
+  if (!bond) throw new Error(`node ${x.n} (${toHex(x.pubkey).slice(0, 8)}) has no bond advertisement in force its key signed: nothing to move`);
   say({ node: x.n, nodeKey: toHex(x.pubkey).slice(0, 16), bond: `${bond.txid}:${bond.vout}`, bondHeight: bond.height, sats: bond.sats,
     template: bond.advert.bondScriptTemplateVersion, maturity: bond.maturity, ancestor: !!bond.ancestor, updatedBy: bond.updatedBy || null,
-    otherBonds: x.bonds.slice(1).map((b) => `${b.txid}:${b.vout}`) });
+    otherBonds: x.bonds.filter((b) => b !== bond).map((b) => `${b.txid}:${b.vout}`) });
   // A TEMPLATE-2 BOND THE CENSUS NEVER COUNTS is moved too (measured 2026-10-19: T2's four guardians' bonds confirmed at
   // 156669 with maturity 156807, "6 block(s) short of its confirmation 156669 plus 144" - so T2 was never named and had no record)
   const stands = maturityStands(bond.advert, bond.height, 'testnet4');

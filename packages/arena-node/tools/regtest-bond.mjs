@@ -206,6 +206,16 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
   }
 
   /**
+   * THE NODE'S OWN BONDS (kanban #3178, #3182, #3198, #3207, refute of #3016): bondsOf without every record whose creation body does not verify under
+   * the node key (`signed: false`) - a stranger's dust paid to the node's bond output key with an unsigned copy of its advertisement (his
+   * payout key). Every caller that SIGNS or MOVES a bond (re-bond, re-affirm, first-bond guard) reads only these: the output is spent by
+   * the node key and its body re-signed as the node's own. A signed update over a stranger's output does not make it the node's.
+   */
+  function ownBondsOf(nodeSecret) {
+    return bondsOf(nodeSecret).filter((b) => b && b.signed !== false);
+  }
+
+  /**
    * EVERY CONFIRMED UNSPENT BOND OF THIS NODE KEY, newest first, each with the advertisement it stands for now: the
    * newest signed update of it (§5A.2; 2026-09-28: "accept an updated advert and select the existing bond"),
    * else the one it committed to at creation (`bondAdvert` is always the latter).
@@ -564,6 +574,6 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
     return { blocks, firstHeight: from };
   }
 
-  return { regtestOwnerSecret, height, mine, bury, minable, waitForHeight, include, postBond, findBond, bondsOf, keyAt, keyOfAdvert, carrierFor, chunksOf, fund, payTo, prepareAdvertUpdate, postAdvertUpdate, presigCarrier, postBondPresig,
+  return { regtestOwnerSecret, height, mine, bury, minable, waitForHeight, include, postBond, findBond, bondsOf, ownBondsOf, keyAt, keyOfAdvert, carrierFor, chunksOf, fund, payTo, prepareAdvertUpdate, postAdvertUpdate, presigCarrier, postBondPresig,
     prepareReaffirmation, postReaffirmation, prepareRebond, postRebond, newestUpdateOf, blocksFrom, genesis: g };
 }
