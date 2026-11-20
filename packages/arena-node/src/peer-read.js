@@ -7,6 +7,8 @@
  * /games reader was left unbounded by #1540.
  */
 // 2.0 (kanban #1489 port of #1723): the same bounds as server.js LISTING_ANSWER_MAX_BYTES (4 MB) and PACKAGE_ANSWER_MAX_BYTES (16 MB)
+// kanban #3107, #3108: a peer's redirect is no answer
+import { noRedirect } from './fetch-routes.js';
 export const PEER_LISTING_BYTES = 4 * 1048576, PEER_LISTING_GAMES = 64, PEER_PACKAGE_BYTES = 16 * 1048576;
 // kanban #2018, #2052 (refute of #1540/#1723, the duty poster's other census reads): a seat's GET /rounds?next=1&ahead=50h - one open
 // round of each series and the few closing within 2 min, measured 600-900 KB on live seats - and the rows of it walked; a seat's GET
@@ -72,4 +74,7 @@ export function capAnswer(r, maxBytes = PEER_ANSWER_BYTES) {
   if (clone) own('clone', () => capAnswer(clone(), maxBytes));
   return r;
 }
-export const answersUpTo = (fetchFn, maxBytes = PEER_ANSWER_BYTES) => async (...a) => capAnswer(await fetchFn(...a), maxBytes);
+// kanban #3107, #3108: and a peer's answer is its own - a call that names no `redirect` is made with redirect: 'error' (fetch-routes.js
+// noRedirect), so a public endpoint the address book took cannot send this seat on to its own loopback or LAN service, whatever fetch
+// is underneath (the process's capped one, or Node's own where main.js did not install it)
+export const answersUpTo = (fetchFn, maxBytes = PEER_ANSWER_BYTES) => async (input, init, ...rest) => capAnswer(await fetchFn(input, noRedirect(init), ...rest), maxBytes);
