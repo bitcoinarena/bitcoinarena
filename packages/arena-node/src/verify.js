@@ -72,7 +72,7 @@ import { pluginForRound, hostedPlugins, itemUnlocksOf } from './plugins.js';
 const ATTESTED_NO_RUN = 'that round\'s game is attested: its result is its attestors\' outcome (GET /outcome), not a run - nothing of it is replayed';
 import { committeeSeedFromBeacon, beaconFromChain, beaconIsTheChains } from '../../arena-protocol/src/beacon.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { postTranscript, relayTargets } from './relay.js';
+import { postTranscript, relayTargets, RELAY_TIMEOUT_MS } from './relay.js';
 
 /**
  * WHAT A BEACON IS WORTH TO THIS NODE, worked out once per round.
@@ -2385,7 +2385,7 @@ export class Verifier {
       report.filed.push(who);
       for (const relay of relayTargets(contract.publicationRelays, this.peersOf(roundIdBytes))) {
         try {
-          const put = await fetch(`${String(relay).replace(/\/+$/, '')}/slash/${hex(id)}`, { method: 'PUT', body: complete });
+          const put = await fetch(`${String(relay).replace(/\/+$/, '')}/slash/${hex(id)}`, { method: 'PUT', body: complete, signal: AbortSignal.timeout(RELAY_TIMEOUT_MS) });   // kanban #3001: a relay's answer has a deadline
           if (put.ok) report.published += 1;
           else report.refused.push(`${relay}: kept no proof (${put.status})`);
         } catch (e) { report.refused.push(`${relay}: ${e.message}`); }
@@ -2450,7 +2450,7 @@ export class Verifier {
       report.filed.push(who);
       for (const relay of relayTargets(contract.publicationRelays, this.peersOf(roundIdBytes))) {
         try {
-          const put = await fetch(`${String(relay).replace(/\/+$/, '')}/slash/${hex(id)}`, { method: 'PUT', body: complete });
+          const put = await fetch(`${String(relay).replace(/\/+$/, '')}/slash/${hex(id)}`, { method: 'PUT', body: complete, signal: AbortSignal.timeout(RELAY_TIMEOUT_MS) });   // kanban #3001: a relay's answer has a deadline
           if (put.ok) report.published += 1;
           else report.refused.push(`${relay}: kept no proof (${put.status})`);
         } catch (e) { report.refused.push(`${relay}: ${e.message}`); }

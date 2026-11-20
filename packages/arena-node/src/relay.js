@@ -20,20 +20,40 @@ export const relayTargets = (listed, announced) => [...new Map([...(listed || []
  * PUT a transcript at each listed relay and read it back; only when none kept it, at the committee's announced addresses. A posting needs one
  * relay that holds the bytes. Answers { held: [relay], refused: [why] }.
  */
-export async function postTranscript({ listed, announced, path, bytes, fetcher = fetch, sameBytes }) {
-  const held = [], refused = [];
+// A RELAY'S ANSWER IS BOUNDED (kanban #3001, audit gossip r3-1, measured 2026-11-19): the read-back was read whole with no deadline - one relay
+// answering it with an endless body grew the seat's heap, one that sent headers and then nothing held publish, and settleTheStakes behind it,
+// for good; the relays were asked one after another, so a relay listed first held back the honest ones too. Each PUT and GET now has
+// `timeoutMs`, the read-back is read up to the transcript's size (+ RELAY_BACK_SLACK), and the relays of one pass are asked side by side.
+export const RELAY_TIMEOUT_MS = 15000, RELAY_BACK_SLACK = 1024;
+async function bytesWithin(r, maxBytes) {
+  if (!r.body || typeof r.body.getReader !== 'function') return new Uint8Array(await r.arrayBuffer());   // an injected stand-in
+  const reader = r.body.getReader(), parts = []; let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.byteLength;
+    if (n > maxBytes) { reader.cancel().catch(() => {}); throw new Error(`its read-back passed ${maxBytes} bytes`); }
+    parts.push(value);
+  }
+  const out = new Uint8Array(n); let at = 0;
+  for (const p of parts) { out.set(p, at); at += p.byteLength; }
+  return out;
+}
+export async function postTranscript({ listed, announced, path, bytes, fetcher = fetch, sameBytes, timeoutMs = RELAY_TIMEOUT_MS }) {
+  const refused = [];
   const post = async (relay) => {
     const at = `${base(relay)}${path}`;
     try {
-      const put = await fetcher(at, { method: 'PUT', body: bytes });
-      if (!put.ok) { refused.push(`${relay}: kept nothing (${put.status})`); return; }
-      const back = new Uint8Array(await (await fetcher(at)).arrayBuffer());
-      if (!sameBytes(back, bytes)) { refused.push(`${relay}: gave back other bytes`); return; }
-      held.push(relay);
-    } catch (e) { refused.push(`${relay}: ${e.message}`); }
+      const put = await fetcher(at, { method: 'PUT', body: bytes, signal: AbortSignal.timeout(timeoutMs) });
+      if (!put.ok) { refused.push(`${relay}: kept nothing (${put.status})`); return false; }
+      const back = await bytesWithin(await fetcher(at, { signal: AbortSignal.timeout(timeoutMs) }), bytes.length + RELAY_BACK_SLACK);
+      if (!sameBytes(back, bytes)) { refused.push(`${relay}: gave back other bytes`); return false; }
+      return true;
+    } catch (e) { refused.push(`${relay}: ${e.message}`); return false; }
   };
-  for (const relay of listed || []) await post(relay);
-  if (!held.length) for (const relay of relayTargets([], announced).filter((r) => !relayTargets(listed).includes(base(r)))) await post(relay);
+  const pass = async (relays) => { const ok = await Promise.all(relays.map(post)); return relays.filter((_, i) => ok[i]); };
+  let held = await pass(listed || []);
+  if (!held.length) held = await pass(relayTargets([], announced).filter((r) => !relayTargets(listed).includes(base(r))));
   return { held, refused };
 }
 
