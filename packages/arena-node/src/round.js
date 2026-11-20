@@ -236,6 +236,7 @@ export class Round {
   // kanban #1548: refused marks kept per entry (keepOffered) - the first 64, then at most 8 that contradict the chain.
   static OFFERED_KEEP = 64;
   static OFFERED_PROOF_KEEP = 8;
+  static REFUSED_IDS_KEEP = 4096;   // kanban #3013: refused mark ids kept per entry (32 bytes each)
   constructor(db, now = () => Date.now(), { plugins = [] } = {}) {
     this.db = db;
     this.now = now;
@@ -514,7 +515,8 @@ export class Round {
 
   /** kanban #2550: did this node refuse this mark itself as one that does not follow the chain head (kept in offered_marks)? */
   refusedOfferedMark(checkpointIdBytes) {
-    return !!this.db.prepare('SELECT 1 FROM offered_marks WHERE checkpoint_id = ? LIMIT 1').get(checkpointIdBytes);
+    return !!this.db.prepare('SELECT 1 FROM offered_marks WHERE checkpoint_id = ? LIMIT 1').get(checkpointIdBytes)
+      || !!this.db.prepare('SELECT 1 FROM refused_mark_ids WHERE checkpoint_id = ? LIMIT 1').get(checkpointIdBytes);   // kanban #3013
   }
 
   /**
@@ -2098,6 +2100,13 @@ export class Round {
     // of an entry are kept as before (one of them may pair with a mark the chain only takes later); past that only a mark
     // that already contradicts the stored chain (same tick, or a parent that has a child here) is kept, and only
     // OFFERED_PROOF_KEEP of those. The rest is refused without a write.
+    // THE REFUSAL IS REMEMBERED PAST THE CAP (kanban #3013, audit play r1-1, measured 2026-11-19: from the 73rd stale mark of a stuck page on,
+    // this seat refused and kept nothing; one seat listed that player-signed stale mark in its GET /checkpoints, the #2550 guard
+    // (refusedOfferedMark) did not find it, and this seat signed an honest stuck page FORFEIT 0). Only its id, at most REFUSED_IDS_KEEP an entry.
+    try {
+      const ids = this.db.prepare('SELECT COUNT(*) n FROM refused_mark_ids WHERE round_id = ? AND entry_id = ?').get(c.roundId, c.entryId).n;
+      if (ids < Round.REFUSED_IDS_KEEP) this.db.prepare('INSERT OR IGNORE INTO refused_mark_ids (checkpoint_id, round_id, entry_id) VALUES (?, ?, ?)').run(id, c.roundId, c.entryId);
+    } catch { /* an older store without the table: the capped record below as before */ }
     const held = this.db.prepare('SELECT COUNT(*) n FROM offered_marks WHERE round_id = ? AND entry_id = ?')
       .get(c.roundId, c.entryId).n;
     if (held >= Round.OFFERED_KEEP) {

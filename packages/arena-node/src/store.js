@@ -270,6 +270,15 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (round_id, entry_id, checkpoint_id)
     );
 
+    -- kanban #3013: the ids of marks this seat refused (stale head, tick back), past the offered_marks cap too - 32 bytes a mark,
+    -- at most Round.REFUSED_IDS_KEEP per entry - so the #2550 guard does not end where the evidence table's cap ends
+    CREATE TABLE IF NOT EXISTS refused_mark_ids (
+      checkpoint_id BLOB PRIMARY KEY,
+      round_id      BLOB NOT NULL,
+      entry_id      BLOB NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS refused_mark_ids_entry ON refused_mark_ids (round_id, entry_id);
+
     CREATE TABLE IF NOT EXISTS foreign_receipts (
       checkpoint_id BLOB NOT NULL,
       node_pubkey   BLOB NOT NULL,
