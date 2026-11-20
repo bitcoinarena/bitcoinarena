@@ -99,7 +99,7 @@ async function payRound(ourLink, { pool }) {
  * Returns the new results list and the report; writes nothing.
  */
 export async function run({ products, results, secrets = {}, today = new Date().toISOString().slice(0, 10), pay = false, only = null,
-  checkers = {}, versionOf = latestVersion, payWallet = null }) {
+  checkers = {}, versionOf = latestVersion, payWallet = null, releasesOnly = false }) {
   const report = { date: today, works: [], failed: [], reminders: [], skipped: [] };
   let list = results.slice();
   for (const p of products) {
@@ -107,6 +107,15 @@ export async function run({ products, results, secrets = {}, today = new Date().
     const old = list.find((r) => r.name === p.name && r.kind === p.kind) || null;
     let latest = null, versionWhy = null;
     try { latest = await versionOf(p); } catch (e) { versionWhy = String(e?.message ?? e).slice(0, 160); }
+    if (releasesOnly) {
+      let why;
+      const same = (a, b) => String(a).replace(/^v/, '') === String(b).replace(/^v/, '');
+      if (!Object.keys(p.versionFrom || {}).length) why = 'unversioned product: manual checks only';
+      else if (!latest) why = 'release version unavailable; no release-triggered check';
+      else if (old && same(old.version, latest)) why = `release ${latest} already checked`;
+      else if (['signer', 'nwc'].includes(p.check) && secrets[p.secret] && !same(secrets[`${p.secret}_VERSION`] || '', latest)) why = `upgrade the paired installation and its version to release ${latest} before checking`;
+      if (why) { report.skipped.push({ name: p.name, kind: p.kind, why, ...(versionWhy ? { versionWhy } : {}) }); continue; }
+    }
     const step = plan(p, old, latest, { secrets, extension: !!checkers.extension, amber: !!checkers.amber });
     const base = { name: p.name, kind: p.kind, ...(versionWhy ? { versionWhy } : {}) };
     if (step.act === 'skip') { report.skipped.push({ ...base, why: step.why }); continue; }
@@ -190,7 +199,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const { SimplePool } = await import('nostr-tools/pool');
   const pool = new SimplePool();
   const got = await run({
-    products, results, secrets, pay: process.argv.includes('--pay'), only: arg('only'),
+    products, results, secrets, pay: process.argv.includes('--pay'), only: arg('only'), releasesOnly: process.argv.includes('--releases-only'),
     checkers: { ...(amber ? { amber: () => amber() } : {}), signer: (l) => checkSigner(l), nwc: (l, o) => checkNwc(l, o), ...(extension ? { extension } : {}) },
     versionOf: (p) => latestVersion(p, { githubToken: process.env.GITHUB_TOKEN || null }),
     payWallet: secrets.COMPAT_PAY_WALLET ? () => payRound(secrets.COMPAT_PAY_WALLET, { pool }) : null,

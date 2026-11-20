@@ -93,12 +93,13 @@ export async function checkAmber({ serial = process.env.COMPAT_AMBER_SERIAL, adb
     }
     throw new Error(`missing UI label: ${label}`);
   };
-  const tap = async (label) => { await tapNode(await find(label)); await pause(400); };
+  const tap = async (label) => { await tapNode(await find(label)); await pause(1000); };
   try {
     if (apk && !(await command('install', '-r', apk)).includes('Success')) throw new Error('APK install failed');
     version = (await shell('dumpsys', 'package', PACKAGE)).match(/versionName=([^\s]+)/)?.[1];
     if (!version) throw new Error('online Amber is not installed');
     stage = 'onboard';
+    for (const setting of ['window_animation_scale', 'transition_animation_scale', 'animator_duration_scale']) await shell('settings', 'put', 'global', setting, '0');
     if (!(await shell('pm', 'clear', PACKAGE)).includes('Success')) throw new Error('could not clear test app');
     await shell('pm', 'grant', PACKAGE, 'android.permission.POST_NOTIFICATIONS');
     await shell('am', 'start', '-n', `${PACKAGE}/.MainActivity`);

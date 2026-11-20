@@ -38,7 +38,7 @@ jobs:
       - name: Chromium with extension support
         working-directory: packages/arena-node
         run: npx playwright install --with-deps chromium
-      - name: Check configured products and published versions
+      - name: Check newly released product versions
         env:
           GITHUB_TOKEN: ${{ github.token }}
           COMPAT_SECRETS: ${{ secrets.COMPAT_SECRETS }}
@@ -47,6 +47,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
         run: |
           args=()
+          if [ "$EVENT_NAME" = schedule ]; then args+=(--releases-only); fi
           if [ "$REQUEST_PAY" = true ] || { [ "$EVENT_NAME" = schedule ] && [ "$(date -u +%u)" = 7 ]; }; then args+=(--pay); fi
           node packages/arena-node/tools/compat-run.mjs --out=compat-report "${args[@]}"
           cat compat-report/report.md >> "$GITHUB_STEP_SUMMARY"
