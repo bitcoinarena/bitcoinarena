@@ -94,3 +94,12 @@ test('audit-play-r2-1: evidence - on core 7d197042 the practice word turns a wre
   assert.equal(shielded.outcome, 'DELIVERED');
 });
 
+
+// kanban #2991, measured on the live tree: its known-games.js did not list v8 - the hosted games are named to round.js as well
+test('#2991: a hosted Next Block version known-games does not list is covered once the seat names its hosted games', async () => {
+  const { noteNextblockGames, nextblockGameIds } = await import('../src/round.js');
+  const fresh = 'ab'.repeat(32), other = 'cd'.repeat(32);
+  noteNextblockGames(new Map([[fresh, { name: 'nextblock' }], [other, { name: 'rock-paper-scissors', manifest: { gameName: 'rock-paper-scissors' } }]]));
+  assert.ok(nextblockGameIds().includes(fresh));
+  assert.ok(!nextblockGameIds().includes(other));
+});

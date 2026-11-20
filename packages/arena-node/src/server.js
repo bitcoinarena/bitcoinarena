@@ -210,7 +210,7 @@ import { SIGNED_RESULT_BYTES, resultId, decodePlayerResult, splitSignedResult } 
 export const MAX_FRAME_BYTES = Math.max(
   MAX_SIGNED_INPUT_BATCH_BYTES, SIGNED_CHECKPOINT_BYTES, SIGNED_RECEIPT_BYTES);
 import { CLOSED, relayRowCost } from './store.js';
-import { Round, refusedLockOwnId, lockClaimHolds, LOCKLESS_CAP, LOCKLESS_HOLD_MS, TRANSCRIPT_BATCH_MAX_BYTES } from './round.js';
+import { Round, noteNextblockGames, refusedLockOwnId, lockClaimHolds, LOCKLESS_CAP, LOCKLESS_HOLD_MS, TRANSCRIPT_BATCH_MAX_BYTES } from './round.js';
 // kanban #2707: the largest signed batch frame the store could ever take - its type byte, the batch, its signature
 const SIGNED_BATCH_FRAME_MAX_BYTES = 1 + TRANSCRIPT_BATCH_MAX_BYTES + 64;
 import { Verifier, peerEntryVoid } from './verify.js';
@@ -895,6 +895,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE GAMES THIS NODE HOSTS (M3 R1), made once: the round store opens only rounds of them, and the door,
   // the replay and the ghosts resolve each round's game and core through the same registry.
   const hosted = hostedPlugins(plugins);
+  noteNextblockGames(hosted);   // kanban #2991: a staked round of any hosted Next Block version takes no practice ticks
   // GET /season's boards, kept per query: { at, json }, 32 at most
   const seasonKept = new Map();
   // KEPT A FEW MINUTES (kanban #2860, the owner's playtest 2026-11-15: RPS orders timed out at Beelink load ~28; a seat's profile had seasonRounds +
@@ -1535,6 +1536,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     let entry;
     try { entry = hostedPlugins([reg]).get(game); } catch (e) { return { ok: false, status: 422, checked: true, why: `kept, but it cannot be hosted: ${e.message}` }; }
     hosted.set(game, entry);
+    noteNextblockGames(new Map([[game, entry]]));   // kanban #2991
     if (replaces !== null) superseded.set(replaces, game);
     console.log(`[plugins] ${replaces ? `updated ${replaces.slice(0, 16)} to` : 'installed'} ${v.name} v${v.version} (${game.slice(0, 16)}) from ${from}: running now`);
     return { ...v, ok: true, game, from, installedAt: at, running: true, replaces };
