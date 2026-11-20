@@ -23,6 +23,7 @@ import { LATE_JOIN_LAST_ENTRY_MS, entryItemDigest } from '../../arena-protocol/s
 export const ENTRY_CLOSE_GRACE_MS = 15000n;
 import { LATE_JOIN_MS } from '../../arena-protocol/src/series.js';
 import { ticksForMs } from '../../arena-protocol/src/tick.js';
+import { KNOWN_GOOD_GAMES } from '../../arena-protocol/src/known-games.js';
 import { worldSecretFits } from '../../arena-protocol/src/seed.js';
 import { encodeTranscript, transcriptHash, checkTranscript, GENESIS } from '../../arena-protocol/src/transcript.js';
 import {
@@ -87,8 +88,10 @@ export const LOCKLESS_CAP = 'LOCKLESS_CAP';
 // see that it parses, and a tick batch decoded it again for its blockTicks - on every batch from every player. Kept by
 // the contract's bytes (a contract never changes), up to 8192; only these two answers leave, never the decoded object.
 const contractFacts = new Map();
-// THE NEXT BLOCK GAME ID (arena-installer bond.js NEXTBLOCK_GAME_ID): its core's fifth input word is the practice switch (kanban #2654)
-const NEXTBLOCK_GAME_HEX = '495516ae59539661062cd72fd8716afbb378bd386297ab09b20aba0a2cd44150';
+// EVERY NEXT BLOCK GAME ID (kanban #2991, gap in #2654/#2655): the truck core's fifth input word is the practice switch in every version, and
+// the refusals compared against manifest v1 (495516ae) alone - the live v8 (b6f824f7) took practice ticks and player-declared liquidations in
+// paid runs. Every known-good game named 'nextblock' now (a new version is added there before seats host it).
+const NEXTBLOCK_GAME_HEXES = new Set(Object.entries(KNOWN_GOOD_GAMES).filter(([, g]) => g && g.name === 'nextblock').map(([id]) => id));
 const factsOf = (contract) => {
   const key = Buffer.from(contract).toString('base64');
   let f = contractFacts.get(key);
@@ -97,7 +100,7 @@ const factsOf = (contract) => {
       const c = decodeRoundContract(new Uint8Array(contract));
       // kanban #2654: a staked Next Block round, where the truck core's practice word (input word 4) is a shield
       const staked = BigInt(c.stakeMsat || 0) > 0n;
-      f = { blockTicks: c.blockTicks, practiceRefused: staked && Buffer.from(c.gameId || []).toString('hex') === NEXTBLOCK_GAME_HEX };
+      f = { blockTicks: c.blockTicks, practiceRefused: staked && NEXTBLOCK_GAME_HEXES.has(Buffer.from(c.gameId || []).toString('hex')) };
     } catch { f = null; }
     contractFacts.set(key, f);
     if (contractFacts.size > 8192) contractFacts.delete(contractFacts.keys().next().value);
