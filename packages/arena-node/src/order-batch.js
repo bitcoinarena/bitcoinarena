@@ -925,9 +925,15 @@ export class OrderBook {
     }
     const enough = m.contract.nodes.length - m.needed + 1;
     // before any set's signature is verified: the decliners and every seat the sets name together must be able to reach `enough`
+    // K'S LEADER NEVER COUNTS AS A SEAT THAT CANNOT SIGN A SET (kanban #3141, refute of #3058): the leader left its own signature off the
+    // set it had certified at 4 honest seats, named a second set only it signed, and blockers() counted it as "signed another set": 3 of 7
+    // then met `enough` and the void was taken at three honest seats while three others held k CERTIFIED, the split #3058 closed for
+    // declines. The leader signed every set it handed out (each record carries its leaderSig), so neither its decline nor its signature
+    // on another set makes it a seat that cannot sign this one: it is left out of `named` and of every blockers() count.
+    const isLeader = (seat) => String(seat).toLowerCase() === leaderHex;
     const named = new Set(ok);
     for (const x of (Array.isArray(body.sets) ? body.sets : []).slice(0, m.seats.length + 1))
-      if (x && Array.isArray(x.sigs)) for (const s of x.sigs.slice(0, SIG_TRIES_PER_SEAT * m.seats.length)) if (s && m.seats.includes(s.seat)) named.add(s.seat);
+      if (x && Array.isArray(x.sigs)) for (const s of x.sigs.slice(0, SIG_TRIES_PER_SEAT * m.seats.length)) if (s && m.seats.includes(s.seat) && !isLeader(s.seat)) named.add(s.seat);
     if (named.size > ok.size && named.size < enough) return refuse(`${ok.size} seats declined batch ${k} and the sets name ${named.size - ok.size} more: it is void only once ${enough} cannot sign it`, 403);
     // the seats that signed each set of k, from `sets` (anything that does not read or verify is ignored)
     const signedBy = new Map();
@@ -944,7 +950,7 @@ export class OrderBook {
       // the seats that cannot sign set `id` (null: a set nobody here signed)
       const blockers = (id) => {
         const no = new Set(ok);
-        for (const [other, seats] of signedBy) if (other !== id) for (const s of seats) no.add(s);
+        for (const [other, seats] of signedBy) if (other !== id) for (const s of seats) if (!isLeader(s)) no.add(s);
         if (id !== null) for (const s of signedBy.get(id)) no.delete(s);
         return no.size;
       };
