@@ -54,7 +54,8 @@ import { stakePointIsTheHandouts } from '../../arena-protocol/src/contracts.js';
 import { lockClaimDigest, lockClaimKeyOf, LOCK_CLAIM_BYTES } from '../../arena-protocol/src/lock-claim.js';
 import { firstMarkOutcome, startDeadlineOf, roundEndMs } from '../../arena-protocol/src/first-mark.js';
 import { H2H_REVEAL_MIN_MS, marketOfRound } from '../../arena-protocol/src/manifest.js';
-import { marketWindowOf } from '../../arena-protocol/src/attested.js';
+import { marketWindowOf, decodeAttestation, encodeAttestation, attestationBodyId } from '../../arena-protocol/src/attested.js';
+import { isValueAttestationBytes, decodeValueAttestation, encodeValueAttestation, valueAttestationBodyId } from '../../arena-protocol/src/scalar.js';
 import { pluginForRound, hostedPlugins, runLengthFits } from './plugins.js';
 import { chainIndex } from './finality.js';
 import { withinTolerance } from '../../arena-protocol/src/window.js';
@@ -4216,10 +4217,46 @@ export class Round {
     return this.db.prepare("SELECT COUNT(*) AS n FROM donation_outputs WHERE round_id = ? AND contract_id LIKE 'settlement:%'").get(Buffer.from(roundIdBytes)).n;
   }
 
-  /** A standing outcome attestation of an attested round (§0A.7a), kept once by the id of its signed body. */
+  /**
+   * A standing outcome attestation of an attested round (§0A.7a), kept once by the id of its signed body. Answers whether the body is new.
+   * A LATER COPY OF THE SAME BODY ADDS ITS SIGNATURES (kanban #3131, #1489 r1120-4-s4, refute of #3069): the drawn seats combine on a
+   * fixed 10 s pass, so in every round the 5th seat in pass phase combines exactly 5 words and its copy is kept first everywhere; the 6th
+   * and 7th seats' fuller copy of the same body was ignored (INSERT OR IGNORE), and an honest drawn attestor late in that order never
+   * showed in any kept bytes (the node bounty read it "0 signed rounds" forever). Now a copy over a body already kept merges into the
+   * kept bytes: the kept signatures stay as they are, each key they lack is added (sorted by key, as combine writes them). Only a copy
+   * whose bytes encode exactly this body id is merged. The caller holds only what stood (server.js holdOutcome: attestationStands /
+   * valueAttestationStands check EVERY signature against the round's attestors), so the merged copy is signed by attestors alone, each
+   * once - it still stands. The body, its id, the round's outcome and the received time do not change.
+   */
   putOutcomeAttestation({ bodyId, roundId, outcome, observedAtMs, bytes, receivedMs = Date.now() }) {
-    return this.db.prepare('INSERT OR IGNORE INTO outcome_attestations (body_id, round_id, outcome, observed_ms, bytes, received_ms) VALUES (?, ?, ?, ?, ?, ?)')
+    const fresh = this.db.prepare('INSERT OR IGNORE INTO outcome_attestations (body_id, round_id, outcome, observed_ms, bytes, received_ms) VALUES (?, ?, ?, ?, ?, ?)')
       .run(Buffer.from(bodyId), Buffer.from(roundId), outcome, Number(observedAtMs), Buffer.from(bytes), receivedMs).changes === 1;
+    if (!fresh) this.mergeAttestationSignatures(bodyId, bytes);
+    return fresh;
+  }
+
+  /** kanban #3131: add the signatures of `bytes` (a copy over body `bodyId`) that the kept copy lacks. Answers how many were added. */
+  mergeAttestationSignatures(bodyId, bytes) {
+    const id = toHex(bodyId);
+    const row = this.db.prepare('SELECT bytes FROM outcome_attestations WHERE body_id = ?').get(Buffer.from(bodyId));
+    if (!row) return 0;
+    const read = (b) => {
+      try {
+        const u = new Uint8Array(b), valued = isValueAttestationBytes(u);
+        const a = valued ? decodeValueAttestation(u) : decodeAttestation(u);
+        return toHex(valued ? valueAttestationBodyId(a) : attestationBodyId(a)) === id ? { a, valued } : null;
+      } catch { return null; }
+    };
+    const kept = read(row.bytes), more = read(bytes);
+    if (!kept || !more || kept.valued !== more.valued) return 0;
+    const sigs = new Map(kept.a.signatures.map((s) => [toHex(s.key), s]));
+    let added = 0;
+    for (const s of more.a.signatures) { const k = toHex(s.key); if (!sigs.has(k)) { sigs.set(k, s); added++; } }
+    if (!added) return 0;
+    const signatures = [...sigs].sort((x, y) => (x[0] < y[0] ? -1 : 1)).map(([, s]) => s);
+    const merged = kept.valued ? encodeValueAttestation({ ...kept.a, signatures }) : encodeAttestation({ ...kept.a, signatures });
+    this.db.prepare('UPDATE outcome_attestations SET bytes = ? WHERE body_id = ?').run(Buffer.from(merged), Buffer.from(bodyId));
+    return added;
   }
 
   /**
