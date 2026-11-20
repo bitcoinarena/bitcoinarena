@@ -81,3 +81,24 @@ test('#3085: the trial runs a tree core from its entry; a tree whose entry impor
   const lacking = trialRun({ files: new Map([['adapter.js', adapter]]), entry: 'adapter.js' }, m);
   assert.equal(lacking.ok, false);
 });
+
+// the round trip (kanban #3085): a hosted tree core -> packageOf -> verifyPackage -> installPackage -> registrationFromPackage, which
+// loads the installed tree in the sandbox after checking its tree hash on disk
+test('#3085: a hosted tree core goes out as its tree, is checked, installed under core-<hash>/ and loads from there', async () => {
+  const { packageOf, verifyPackage, installPackage, registrationFromPackage } = await import('../src/plugin-package.js');
+  const { mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { pathToFileURL } = await import('node:url');
+  const g = testGame({ name: 'tree-game', cores: new Map([[TREE, { name: 'truck', hash: TREE, configs: new Map([[CFG, {}]]) }]]), runTicksMax: 100, dev: 'tree-dev' });
+  const hosted = { ...g, name: 'tree-game', title: 'tree-game', donationSet: testDonationSet('tree-dev'), clientUrls: [],
+    cores: new Map([[TREE, { name: 'truck', hash: TREE, root: pathToFileURL(ROOT + '/').href, url: pathToFileURL(join(ROOT, 'adapter.js')).href, configs: new Map([[CFG, {}]]) }]]) };
+  const pkg = packageOf(hosted);
+  assert.equal(pkg.cores[0].entry, 'adapter.js'); assert.equal(pkg.cores[0].files.length, 26); assert.equal(pkg.cores[0].source, undefined);
+  const v = verifyPackage(JSON.parse(JSON.stringify(pkg)), { verify: verifyEd25519, want: toHex(g.gameId) });
+  assert.equal(v.ok, true, v.why);
+  const at = installPackage(mkdtempSync(join(tmpdir(), 'tree-3085-')), pkg, toHex(g.gameId));
+  const reg = await registrationFromPackage(at, pkg);
+  const core = reg.cores.get(TREE);
+  console.log('  MEASURED #3085 round trip:', JSON.stringify({ files: pkg.cores[0].files.length, bytes: JSON.stringify(pkg).length, verified: v.ok, root: !!core.root }));
+  assert.ok(core.root && core.url.endsWith('/adapter.js'));
+});
