@@ -7423,9 +7423,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // THE PROOF IS THE VERIFIED SIGNATURES ON THE STANDING BODY, ONE PER GUARDIAN (kanban #3149, #3158, #3163, refute of #3020): a census
       // seat's junk named the seated guardians and pushed a real signature out of the served proof, and a seated guardian's seat was never
       // asked, and a restart lost the proof. Each signature is checked on its own (standingSeating at threshold 1) before it is kept.
-      const oneSig = (x, fid, ep, seatedHex) => { const one = standingSeating({ signed: [x], federationId: fid, epoch: ep, seated: seatedHex, threshold: 1, verify: schnorrVerify }); return one.ok ? JSON.stringify(one.seating) : null; };
+      // EVERY CHECK HERE IS TOTAL (kanban #3196, #3208, refute of #3020): a peer's answer with an own "toString" key made String() throw
+      // outside any try - the whole pass aborted, every pass, and the seat that asked that peer first never held the seating. A signature
+      // is only a plain object with a string guardian; anything that throws in the check is no signature; one bad answer costs nothing else.
+      const guardianOf = (x) => (x && typeof x === 'object' && !Array.isArray(x) && typeof x.guardian === 'string' ? x.guardian.toLowerCase() : null);
+      const stands = (a) => { try { return standingSeating(a); } catch { return { ok: false }; } };
+      const oneSig = (x, fid, ep, seatedHex) => { if (!guardianOf(x)) return null; const one = stands({ signed: [x], federationId: fid, epoch: ep, seated: seatedHex, threshold: 1, verify: schnorrVerify }); try { return one.ok ? JSON.stringify(one.seating) : null; } catch { return null; } };
       const proofOf = (signed, seating, fid, ep, seatedHex) => { const want = JSON.stringify(seating), seen = new Set(), out = [];
-        for (const x of signed) { const g = x && String(x.guardian).toLowerCase(); if (!g || seen.has(g) || oneSig(x, fid, ep, seatedHex) !== want) continue; seen.add(g); out.push(x); }
+        for (const x of signed) { const g = guardianOf(x); if (!g || seen.has(g) || oneSig(x, fid, ep, seatedHex) !== want) continue; seen.add(g); out.push(x); }
         return out; };
       for (const { federation: fid } of fedRecords.list()) for (const ep of [epoch, epoch - 1, epoch - 2, epoch - 3]) {
         const held = gatewaySeatings.get(`${fid}:${ep}`);
@@ -7441,10 +7446,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           try {
             const peerAt = addressBook.endpointOf(e); if (!peerAt) continue;   // kanban #3082: a refused endpoint is not dialed
             const r = await fetch(`${String(peerAt).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '')}/gateway-seating?federation=${fid}&epoch=${ep}`, { signal: AbortSignal.timeout(10000) });
-            if (r.status === 200) signed.push(await jsonUpTo(r, PEER_LISTING_BYTES));   // kanban #2636, #1469: capped
+            if (r.status === 200) { const x = await jsonUpTo(r, PEER_LISTING_BYTES); if (oneSig(x, fid, ep, seatedHex)) signed.push(x); }   // kanban #2636, #1469: capped; #3208: checked before it is kept
           } catch { /* that guardian's signature is missing this time */ }
         }
-        let st = standingSeating({ signed, federationId: fid, epoch: ep, seated: seatedHex, threshold: rec.record.threshold, verify: schnorrVerify });
+        let st = stands({ signed, federationId: fid, epoch: ep, seated: seatedHex, threshold: rec.record.threshold, verify: schnorrVerify });
         // THE STANDING SEATING TRAVELS WITH ITS SIGNATURES (kanban #3020, audit gossip r2-1, measured 2026-11-19: one seated guardian served its
         // signature to seat S1 only, at threshold - 1 honest signatures on one body; S1 held it standing, S2 none, on every pass - two fee tables
         // for every paid round of that epoch). A seat that holds a standing seating serves the guardians' signatures it stands on
@@ -7459,13 +7464,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             if (r.status !== 200) continue;
             const got = await jsonUpTo(r, PEER_LISTING_BYTES);
             // checked and kept one per guardian and body before any cut (kanban #3163: junk in front no longer pushes a real one out)
-            const have = new Set(signed.map((x) => x && `${String(x.guardian).toLowerCase()}|${oneSig(x, fid, ep, seatedHex)}`));
+            const have = new Set(signed.map((x) => `${guardianOf(x)}|${oneSig(x, fid, ep, seatedHex)}`));
             for (const x of (Array.isArray(got) ? got : [got]).slice(0, 4 * seatedHex.length)) {
-              const b = x && oneSig(x, fid, ep, seatedHex); const k = b && `${String(x.guardian).toLowerCase()}|${b}`;
+              const b = oneSig(x, fid, ep, seatedHex); const k = b && `${guardianOf(x)}|${b}`;
               if (k && !have.has(k)) { have.add(k); signed.push(x); }
             }
           } catch { continue; }
-          st = standingSeating({ signed, federationId: fid, epoch: ep, seated: seatedHex, threshold: rec.record.threshold, verify: schnorrVerify });
+          st = stands({ signed, federationId: fid, epoch: ep, seated: seatedHex, threshold: rec.record.threshold, verify: schnorrVerify });
           if (st.ok) break;
         }
         if (st.ok && held) {   // a seating held without its proof keeps its body; the proof is attached only when the same body stands again
@@ -7512,9 +7517,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // THE EPOCHS A ROUND STILL NAMES, NOT ONLY THIS ONE (kanban #803, measured 2026-11-01: a seat restarted after an epoch's boundary held no seating of the epoch before,
         // so it left the providers out of a round's fee table, built other settlement bytes than the seats that held it, and paid rounds in that federation never settled)
         // as the gateway seating (kanban #3149, #3158, #3163): each signature checked on its own, one per guardian, the proof kept in the row
-        const oneSig = (x, ep) => { const one = standingLiquiditySeating({ signed: [x], federationId: fid, epoch: ep, seated: seatedHex, threshold: 1, verify: schnorrVerify }); return one.ok ? JSON.stringify(one.seating) : null; };
+        // every check total, as the gateway seating's (kanban #3196, #3208): a malformed answer is no signature, never an aborted pass
+        const guardianOf = (x) => (x && typeof x === 'object' && !Array.isArray(x) && typeof x.guardian === 'string' ? x.guardian.toLowerCase() : null);
+        const stands = (a) => { try { return standingLiquiditySeating(a); } catch { return { ok: false }; } };
+        const oneSig = (x, ep) => { if (!guardianOf(x)) return null; const one = stands({ signed: [x], federationId: fid, epoch: ep, seated: seatedHex, threshold: 1, verify: schnorrVerify }); try { return one.ok ? JSON.stringify(one.seating) : null; } catch { return null; } };
         const proofOf = (signed, seating, ep) => { const want = JSON.stringify(seating), seen = new Set(), out = [];
-          for (const x of signed) { const g = x && String(x.guardian).toLowerCase(); if (!g || seen.has(g) || oneSig(x, ep) !== want) continue; seen.add(g); out.push(x); }
+          for (const x of signed) { const g = guardianOf(x); if (!g || seen.has(g) || oneSig(x, ep) !== want) continue; seen.add(g); out.push(x); }
           return out; };
         for (let ep = epoch; ep >= epoch - 3; ep--) {
           const held = liquiditySeatings.get(`${fid}:${ep}`)?.providers?.length ? liquiditySeatings.get(`${fid}:${ep}`) : null;
@@ -7523,9 +7531,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           for (const node of seatedHex) {
             if (node === me) continue;
             const ep2 = endpointOf(node); const s = ep2 && await getJson(`${ep2}/liquidity-seating?federation=${fid}&epoch=${ep}`);
-            if (s) signed.push(s);
+            if (s && oneSig(s, ep)) signed.push(s);   // kanban #3208: checked before it is kept
           }
-          let st = standingLiquiditySeating({ signed, federationId: fid, epoch: ep, seated: seatedHex, threshold: rec.record.threshold, verify: schnorrVerify });
+          let st = stands({ signed, federationId: fid, epoch: ep, seated: seatedHex, threshold: rec.record.threshold, verify: schnorrVerify });
           // THE STANDING LIST TRAVELS WITH ITS SIGNATURES (kanban #2992, audit gossip r2-1, measured 2026-11-18: one seated guardian served its
           // signature to S1 only; S1 held the list standing, S2 none - two fee tables for every paid round of that epoch): as the gateway seating
           for (const e of st.ok && st.seating.providers.length ? [] : entries) {
@@ -7533,12 +7541,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             if (node === me) continue;   // seated guardians asked too (kanban #3149)
             const ep2 = endpointOf(node); const got = ep2 && await getJson(`${ep2}/liquidity-seating?federation=${fid}&epoch=${ep}&standing=1`);
             if (!got) continue;
-            const have = new Set(signed.map((x) => x && `${String(x.guardian).toLowerCase()}|${oneSig(x, ep)}`));   // kanban #3163: checked before any cut
+            const have = new Set(signed.map((x) => `${guardianOf(x)}|${oneSig(x, ep)}`));   // kanban #3163: checked before any cut
             for (const x of (Array.isArray(got) ? got : [got]).slice(0, 4 * seatedHex.length)) {
-              const b = x && oneSig(x, ep); const k = b && `${String(x.guardian).toLowerCase()}|${b}`;
+              const b = oneSig(x, ep); const k = b && `${guardianOf(x)}|${b}`;
               if (k && !have.has(k)) { have.add(k); signed.push(x); }
             }
-            st = standingLiquiditySeating({ signed, federationId: fid, epoch: ep, seated: seatedHex, threshold: rec.record.threshold, verify: schnorrVerify });
+            st = stands({ signed, federationId: fid, epoch: ep, seated: seatedHex, threshold: rec.record.threshold, verify: schnorrVerify });
             if (st.ok && st.seating.providers.length) break;
           }
           if (st.ok && st.seating.providers.length && held) {
