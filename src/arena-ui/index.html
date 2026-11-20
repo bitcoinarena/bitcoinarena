@@ -2092,6 +2092,9 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     const errorsAsked = new Map();
     window.ARENA_ERROR_FEEDBACK = (text) => {
       const said = String(text || '').trim().slice(0, 600);
+      // A ROUND THAT IS NOT OPEN (YET) IS NO BUG (kanban #3075, feedback #351): the page's own answers for a round not ready, not open yet, no
+      // longer open, too late, or paid play paused are the normal life of a round - they never raise "Something went wrong: report it"
+      if (/not open yet|not ready on the game servers|no longer open|too late for this round|paused right now/i.test(said)) return;
       if (!said || !feedbackUrl() || document.getElementById('arena-feedback')) return;
       const at = errorsAsked.get(said); if (at && Date.now() - at < 600000) return; errorsAsked.set(said, Date.now());
       const old = document.getElementById('arena-error-feedback'); if (old) old.remove();
@@ -10070,7 +10073,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         if (!row) return 'this round is no longer open - tap again for the next one';
         if (Number(row.entryCloseMs) - Date.now() < ORDER_CUTOFF_MS) return 'too late for this round - tap again for the next one';
         if (row.seating && row.seating.state !== 'named') return 'this round is not ready on the game servers - tap again for the next one';
-        return 'this round is not open yet - the game servers are still getting it ready';
+        return 'this round is not open yet - the game servers are still getting it ready; nothing was paid, tap again in a moment';
       };
       // A BALANCE THAT CANNOT BE PLAYED SAYS SO (2026-10-30: "If it's unavailable to play because the funds are locked it should say so in a
       // message"): the tables of such a federation are not offered, so nothing else would tell the player why. Every game, lobby and table alike;
