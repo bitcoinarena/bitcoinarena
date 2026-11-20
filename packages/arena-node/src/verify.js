@@ -28,6 +28,8 @@ import { SIGNED_RECEIPT_BYTES, splitSignedReceipt, decodeCheckpointReceipt } fro
 
 // How many of one peer's /receipts records are taken before the loop is given back (kanban #1636).
 const RECEIPTS_PER_TURN = 64;
+// kanban #2980: how long a close is held back for a final mark a peer holds and this seat lacks (the player alone can feed it)
+export const HELD_FINAL_ASK_MS = Number(process.env.ARENA_HELD_FINAL_ASK_MS || 5000);
 import { resultFrom, signResult, verifiedFinal, runId } from './verdict.js';
 import { stoppedOutcome } from '../../arena-protocol/src/first-mark.js';
 import { noQuorumOutcome as noQuorumRule, FAILED, VOID } from '../../arena-protocol/src/payout.js';
@@ -733,9 +735,27 @@ export class Verifier {
     }
     // THE MARK IN, AND ITS INPUTS: the hold is done - the doors shut, and the run is signed over the transcript with it.
     const have = this.round.heldInputTicks(roundIdBytes, entryId);
-    if (this.round.holdsMark(checkpointId(decodeCheckpoint(splitSignedMark(ask.mark).body))) && have >= ask.tick) {
+    const markHere = this.round.holdsMark(checkpointId(decodeCheckpoint(splitSignedMark(ask.mark).body)));
+    if (markHere && have >= ask.tick) {
       this.round.dropHeldFinalAsk(entryId);
       return null;
+    }
+    // THE HOLD HAS AN END THE PLAYER CANNOT MOVE (kanban #2980, audit play r1-1, measured 2 of 2 on 2026-11-19: a player sent its last mark to
+    // seat A only and stopped; seat B held its close for that mark, which only the player could feed it, until the settlement combined - and
+    // the settlement does not combine while a run is not final, so B never signed: A alone decided the run VOID past final_after, a loser's
+    // refund, and on 5 of 7 every payout of the round stalled). HELD_FINAL_ASK_MS after the hold began, a mark still not here is not waited
+    // for: the stopped transcript is signed, as at the combine.
+    // on the round's clock from the stored hold, and on this process's own clock from the first time it saw the hold (a seat's watch runs on it);
+    // never past a quarter of the round's own objection window, so the seats' results still meet inside the windows the round names
+    let limit = HELD_FINAL_ASK_MS;
+    try { const w = Number(decodeRoundContract(new Uint8Array(this.round.get(roundIdBytes).contract)).objectionWindowMs); if (w > 0) limit = Math.min(limit, w / 4); } catch { /* the default */ }
+    const k = hex(entryId);
+    if (!this.holdSeen) this.holdSeen = new Map();
+    if (!this.holdSeen.has(k)) this.holdSeen.set(k, Date.now());
+    if ((Number.isFinite(Number(ask.heldMs)) && this.round.now() - Number(ask.heldMs) > limit) || Date.now() - this.holdSeen.get(k) > limit) {
+      this.holdSeen.delete(k);
+      this.round.dropHeldFinalAsk(entryId);
+      return markHere ? null : { signStopped: true };
     }
     return { entryId, stored: false, waiting: true, heldBack: true,
       why: `holding back the close: a peer holds the run's final mark at tick ${ask.tick}; this signer node holds inputs `
