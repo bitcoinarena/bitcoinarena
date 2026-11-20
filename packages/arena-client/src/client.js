@@ -1438,15 +1438,21 @@ export class Client {
       // same signed frame, after the ones before it, and if enough of them to carry a mark take it - every other seat
       // when the committee is smaller than that - it is published and the chain moves on. A batch the peers refuse too
       // is refused, and the resync below still decides.
-      if (typeof answer === 'string' && !answer.startsWith(CLOSED) && !answer.startsWith(`error ${STAKE_NOT_SEEN}`)
+      // NOT ONLY A TEXT REFUSAL (kanban #3036, audit play r3-1, measured 2026-11-19: a home seat that answered every batch from tick 60
+      // with 'error stake not seen: ...' for a stake it had already counted, or with a binary frame, kept the honest peer at 60 of 120
+      // ticks - the words held and asked again for the rest of the run, or the run ended). A binary answer is a refusal, and so is
+      // 'stake not seen' once that seat has taken a batch of this run: the stake it counted then is no stake still on its way.
+      const stakeWait = typeof answer === 'string' && answer.startsWith(`error ${STAKE_NOT_SEEN}`);
+      if ((typeof answer !== 'string' || (!answer.startsWith(CLOSED) && (!stakeWait || this.published.length > 0)))
           && this.peers.length && !(await this.#homeForged(roundId, entryId))
           && await this.#carriedByPeers(bytes, b.firstTick + ticks.length)) {
         this.batchHead = batchId(b);
         this.nextTick = b.firstTick + ticks.length;
         this.homeRefusals = (this.homeRefusals || 0) + 1;
-        this.homeRefusedWhy = answer;
+        const why = typeof answer === 'string' ? answer : 'the node answered the batch with a binary frame, not a tick count';
+        this.homeRefusedWhy = why;
         this.#wakeMarks();
-        return { batch: b, answer, accepted: ticks.length, homeRefused: answer };
+        return { batch: b, answer: why, accepted: ticks.length, homeRefused: why };
       }
       return { batch: b, answer };
     }
