@@ -124,10 +124,17 @@ export async function refreshHostedGames({ home, release, post = false, chainKit
   const st = state || nodeState(home);
   await resumeOpen(st, { chainKit });   // kanban #1165
   const s = st.read();
-  if (!s.bond || !s.bond.txid) return { ok: false, why: 'no bond yet: its advertisement will name the games when it is posted' };
   const { appsIn, chosenApps, hostedGameIdsOf } = await import('./apps.js');
   const apps = appsIn(release);
   const now = await hostedGameIdsOf(release, chosenApps(s, apps), apps);
+  // NO BOND YET: THE GAMES ARE STILL WRITTEN DOWN (kanban #3068, measured 2026-11-20 on a live installer node: updated 1.9.27 -> 1.9.28 before
+  // its bond, this returned early and state kept the install-time list; the bond posted later (add-bond.js buildBond takes state.hostedGames)
+  // advertised 35 games without rock-paper-scissors v6-v11 and nextblock v7, so the node was never drawn for them). Nothing on chain - the
+  // bond, when it is posted, names these.
+  if (!s.bond || !s.bond.txid) {
+    if (now.length && JSON.stringify([...new Set(s.hostedGames || [])].sort()) !== JSON.stringify([...new Set(now)].sort())) st.save({ hostedGames: now });
+    return { ok: false, why: 'no bond yet: its advertisement will name the games when it is posted', ...(now.length ? { hostedGames: now.length } : {}) };
+  }
   if (!now.length) return { ok: false, why: 'this release hosts no game of the node\'s apps' };
   const had = [...new Set(s.hostedGames && s.hostedGames.length ? s.hostedGames : [toHex(NEXTBLOCK_GAME_ID)])].sort();
   // AND THE NEWEST PROTOCOLS: an advertisement declares the protocol versions its release spoke when it was posted (state advertProtocols;
