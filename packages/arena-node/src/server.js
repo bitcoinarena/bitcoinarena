@@ -9555,8 +9555,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const got = servedNodes({ rounds, fromMs: from, toMs: to, verify: (sg, m, k) => schnorr.verify(sg, m, k) });
         // ?finals=1 hands over what it read: the rounds with their committees and the signed FINALs, so a reader merges every
         // seat's (protocol mergeServedRounds) - each seat holds only the rounds it sat on
-        const held = url.searchParams.get('finals') === '1'
-          ? rounds.map((r) => ({ roundId: toHex(r.roundId), committee: r.committee.map(toHex), finals: r.finals.map(toHex) })) : undefined;
+        // KANBAN #3069: a market round (btc-updown) never gets a FINAL - it settles on an attested outcome - so its committee's service is
+        // handed over as its kept attestations (each verified by the reader); a round with both carries both
+        let held;
+        if (url.searchParams.get('finals') === '1') {
+          const byId = new Map(rounds.map((r) => [toHex(r.roundId), { roundId: toHex(r.roundId), committee: r.committee.map(toHex), finals: r.finals.map(toHex) }]));
+          try {
+            for (const a of round.attestationsBetween(from, to)) {
+              const k = toHex(a.roundId);
+              const e = byId.get(k) || { roundId: k, committee: round.signerNodes(a.roundId).map(toHex), finals: [] };
+              e.attestations = a.attestations.map(toHex);
+              if (e.committee.length) byId.set(k, e);
+            }
+          } catch { /* a seat with no attestation table answers its FINALs alone */ }
+          held = [...byId.values()];
+        }
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ node: toHex(round.pubkey), fromMs: String(got.fromMs), toMs: String(got.toMs), rounds: got.rounds,
           root: got.root, nodes: got.nodes, refused: got.refused.length, held }));

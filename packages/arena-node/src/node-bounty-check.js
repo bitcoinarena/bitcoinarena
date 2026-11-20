@@ -13,6 +13,7 @@
 //               round with the same committee (kanban #2015, #2049: three cheap testnet4 bonds of one operator made a round up among themselves)
 // Answers { ok, node, checks: [{ key, label, ok, says }], passes } - `passes` only when every check holds. Team nodes are refused by `excluded`.
 import { splitSignedFinalSig, decodeFinalSig, finalSigId } from '../../arena-protocol/src/final-sig.js';
+import { decodeAttestation, attestationBodyId } from '../../arena-protocol/src/attested.js';
 import { SEASON_NETWORK_AGREE } from '../../arena-protocol/src/season.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -25,6 +26,15 @@ const DAY_MS = 24 * 3600 * 1000;
 // a held FINAL (hex of its signed bytes) -> its signer's node key hex, or null. KANBAN #1489: the FINAL counts only when it is about this round and
 // its BIP-340 signature verifies under its signerPubkey over finalSigId (what finality.js signs) - a FINAL "signed" with 64 zero bytes was taken,
 // and so was a bare 64-hex key; neither is a signature any more
+// KANBAN #3069: a market round's service is its outcome attestation - this node's key among its signatures, verified over the body id
+const attestedBy = (a, roundId, n) => {
+  try {
+    const x = decodeAttestation(fromHex(String(a).toLowerCase()));
+    if (toHex(x.roundId) !== String(roundId).toLowerCase()) return false;
+    const id = attestationBodyId(x);
+    return x.signatures.some((s) => toHex(s.key) === n && schnorr.verify(s.signature, id, s.key));
+  } catch { return false; }
+};
 const signerOf = (f, roundId) => {
   try {
     const bytes = fromHex(String(f).toLowerCase()), { body, signature } = splitSignedFinalSig(bytes), x = decodeFinalSig(body);
@@ -142,12 +152,13 @@ export async function nodeBountyCheck({ node, npub, seats, fetchJson, nowMs = Da
           // KANBAN #2015, #2049: the node is never its own witness - its door's FINALs are read, but the NODE_BOUNTY_AGREE are other nodes
           if (witness !== n) e.seats.add(witness);
           if (Array.isArray(r.finals)) e.finals.push(...r.finals);
+          if (Array.isArray(r.attestations)) (e.attestations || (e.attestations = [])).push(...r.attestations.slice(0, 16));
           rounds.set(key, e);
         }
       } catch { /* a seat that does not answer adds nothing */ }
     }));
     const mine = [...new Map([...rounds.entries()].filter(([k, r]) => r.seats.size >= NODE_BOUNTY_AGREE && confirmed.has(k)).map(([, r]) => [r.id, r])).values()];   // one round, counted once
-    return { from, committees: mine.length, signed: mine.filter((r) => r.finals.some((f) => signerOf(f, r.id) === n)).length };
+    return { from, committees: mine.length, signed: mine.filter((r) => r.finals.some((f) => signerOf(f, r.id) === n) || (r.attestations || []).some((a) => attestedBy(a, r.id, n))).length };
   }));
   const committees = perDay.reduce((t, x) => t + x.committees, 0), signed = perDay.reduce((t, x) => t + x.signed, 0);
   const daysOn = perDay.filter((x) => x.committees > 0).length;
