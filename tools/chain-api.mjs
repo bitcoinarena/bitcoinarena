@@ -53,5 +53,8 @@ if (process.argv[1] && process.argv[1].endsWith('chain-api.mjs') && port) {
   // NO REQUEST ENDS THE BLOCK API (kanban #3151, as the faucet's #2284 and the attestor's #3048): a last guard logs what escapes a handler
   process.on('uncaughtException', (e) => { console.error(`[chain-api] uncaught, kept running: ${String((e && e.stack) || e).slice(0, 2000)}`); });
   process.on('unhandledRejection', (e) => { console.error(`[chain-api] unhandled rejection, kept running: ${String((e && e.stack) || e).slice(0, 2000)}`); });
-  createChainApi().listen(port, '127.0.0.1', () => console.log(`[chain-api] testnet4 blocks on 127.0.0.1:${port} from ${rpcUrl}`));
+  // kanban #3173/#3180 (refute of #3151): a listen that fails (EADDRINUSE on a restart whose port is still held) ends it with exit 1, before
+  // the last guard can swallow it - else the loop ran empty and it exited 0, which Restart=on-failure takes for a clean stop
+  createChainApi().on('error', (e) => { console.error(`[chain-api] http server failed, exiting: ${String((e && e.stack) || e).slice(0, 2000)}`); process.exit(1); })
+    .listen(port, '127.0.0.1', () => console.log(`[chain-api] testnet4 blocks on 127.0.0.1:${port} from ${rpcUrl}`));
 }

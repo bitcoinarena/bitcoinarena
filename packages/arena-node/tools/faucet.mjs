@@ -1156,4 +1156,8 @@ createServer((req, res) => {
     one(() => pay({ address: ask.address, sats: ask.sats, ip: ipOf(req) }))
       .then((r) => send(200, r), (e) => { console.log(`${new Date().toISOString()} failed: ${e.message}`); send(500, { ok: false, why: `the faucet could not pay: ${e.message}` }); });
   });
-}).listen(port, '127.0.0.1', () => console.log(`faucet on 127.0.0.1:${port}`));
+})
+  // kanban #3173/#3180 (same hole as the attestor's and chain-api's): a listen that fails (EADDRINUSE on a restart whose port is still held)
+  // ends the faucet with exit 1, before the last guard (#2284) can swallow it and leave a process with no HTTP server
+  .on('error', (e) => { console.error(`${new Date().toISOString()} http server failed, exiting: ${(e && e.stack) || e}`); process.exit(1); })
+  .listen(port, '127.0.0.1', () => console.log(`faucet on 127.0.0.1:${port}`));
