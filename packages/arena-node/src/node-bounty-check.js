@@ -133,15 +133,22 @@ export async function nodeBountyCheck({ node, npub, seats, fetchJson, nowMs = Da
   //  KANBAN #3110: a COMMITTEE SEAT that was not drawn is a committee, not a signed round. 855ddc14e counted it signed when the outcome stood and
   //  the node's OWN door kept the same body - but a standing attestation is public (GET /outcome, every /served): an offline node copied it in
   //  at check time. No door hands over anything else a committee seat signs on a market round, so nothing of its own counts for it here.
-  const marketServed = (r, drawn) => {
-    const signedBy = new Map();
-    for (const atts of r.held.values()) {
-      const mine = new Set();
-      for (const a of atts) { const x = readAttestation(a, r.id, drawn && drawn.size ? drawn : null); if (x && x.keys.has(n)) mine.add(x.body); }
-      for (const b of mine) signedBy.set(b, (signedBy.get(b) || 0) + 1);
-    }
-    return [...signedBy.values()].some((c) => c >= NODE_BOUNTY_AGREE);
+  // KANBAN #3118, #3119, #3120, #3121 (refute of #3109/#3110 on 7bf303fad): the witnesses' copies were the evidence, and witnesses are other
+  // nodes - three bonded nodes of one operator that the draw seated beside its offline node handed over (a) an attestation that node signed
+  // at check time (only its signature and the round id were checked, never that the body is one the round stood on), (b) the same with no
+  // drawn list from the trusted seat (fail-open: any key counted, so an undrawn committee seat read signed), (c) a FINAL it signed at check
+  // time for a MARKET round (signerOf checks round id + signature only). Now the SERVICE ITSELF is read from the TRUSTED census seats alone:
+  //  - an attestation signature counts only in the bytes a trusted seat keeps (/served `attestations`: kept only after attestationStands,
+  //    server.js holdOutcome - one copy per body, the first that stood), by a key that trusted seat lists drawn (`attestors`). No trusted
+  //    drawn list: no attestation signature counts (fail closed);
+  //  - a FINAL counts only as a trusted seat holds it (a seat keeps a FINAL only signed within 5 s of its arrival - one signed at check time
+  //    and backdated is not kept), and never on a round a trusted seat lists as a market round (drawn attestors / attestations: no FINAL).
+  // The witnesses (NODE_BOUNTY_AGREE committee mates) still confirm the round; they no longer supply the evidence of service.
+  const marketServed = (r) => {
+    if (!r.drawn || !r.drawn.size || !r.drawn.has(n)) return false;
+    return r.trustedAtts.some((a) => { const x = readAttestation(a, r.id, r.drawn); return !!(x && x.keys.has(n)); });
   };
+  const finalServed = (r) => !r.market && r.trustedFinals.some((f) => signerOf(f, r.id) === n);
   // THE LAST `days` UTC DAYS: each seat's rounds of that day, merged by round id
   const today = Math.floor(nowMs / DAY_MS) * DAY_MS;
   // the days in parallel (measured 2026-11-08 on 17 seats: one after another took 120 s)
@@ -165,8 +172,13 @@ export async function nodeBountyCheck({ node, npub, seats, fetchJson, nowMs = Da
           const id = String(r && r.roundId).toLowerCase(), committee = (Array.isArray(r && r.committee) ? r.committee : []).map((k) => String(k).toLowerCase());
           if (!/^[0-9a-f]{64}$/.test(id) || !involved(r, id, committee)) continue;
           const key = `${id}:${[...committee].sort().join(',')}`;
-          if (!confirmed.has(key)) confirmed.set(key, new Set());
-          for (const k of attestorsOf(r)) if (/^[0-9a-f]{64}$/.test(k)) confirmed.get(key).add(k);
+          if (!confirmed.has(key)) confirmed.set(key, { drawn: new Set(), atts: [], finals: [], market: false });
+          const t = confirmed.get(key);
+          for (const k of attestorsOf(r)) if (/^[0-9a-f]{64}$/.test(k)) t.drawn.add(k);
+          // KANBAN #3118-#3121: what the trusted seat itself keeps for the round - the only evidence of service read below
+          if (Array.isArray(r.attestations)) t.atts.push(...r.attestations.slice(0, 16));
+          if (Array.isArray(r.finals)) t.finals.push(...r.finals.slice(0, 64));
+          if (Array.isArray(r.attestors) || (Array.isArray(r.attestations) && r.attestations.length)) t.market = true;
         }
         if (!there || !there.size) return;
         // the door's `node` names the witness, and only a node advertised at this address; with several there, `node` is required
@@ -198,12 +210,13 @@ export async function nodeBountyCheck({ node, npub, seats, fetchJson, nowMs = Da
     }));
     // KANBAN #3109: a drawn attestor off the committee is a witness only as the TRUSTED seats list it drawn - never by its own word
     for (const [k, r] of rounds) {
-      const drawn = confirmed.get(k);
+      const t = confirmed.get(k), drawn = t ? t.drawn : null;
       r.drawn = drawn || new Set();
+      r.trustedAtts = t ? t.atts : []; r.trustedFinals = t ? t.finals : []; r.market = !!(t && t.market);
       for (const [w, atts] of r.offCommittee) if (drawn && drawn.has(w) && !r.seats.has(w)) { r.seats.add(w); r.held.set(w, atts); }
     }
     const mine = [...new Map([...rounds.entries()].filter(([k, r]) => r.seats.size >= NODE_BOUNTY_AGREE && confirmed.has(k)).map(([, r]) => [r.id, r])).values()];   // one round, counted once
-    return { from, committees: mine.length, signed: mine.filter((r) => r.finals.some((f) => signerOf(f, r.id) === n) || marketServed(r, r.drawn)).length };
+    return { from, committees: mine.length, signed: mine.filter((r) => finalServed(r) || marketServed(r)).length };
   }));
   const committees = perDay.reduce((t, x) => t + x.committees, 0), signed = perDay.reduce((t, x) => t + x.signed, 0);
   const daysOn = perDay.filter((x) => x.committees > 0).length;
