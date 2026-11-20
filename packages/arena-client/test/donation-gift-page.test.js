@@ -68,3 +68,14 @@ test('a paid gift is a row of the wallet\'s history, with its transaction and to
     { kind: 'donation', msat: '21000', round: null, txid: TXID, to: 'network' }], 'the refused amount paid nothing and wrote nothing');
   assert.equal(ledgerHistory(ledgerRows(storage, fed)).length, 2, 'drawn as two rows');
 });
+
+// KANBAN #3081 (feedback #360, as the item purchase): a gift the guardians refuse is not paid - nothing kept as paid, no history row
+test('#3081 a gift the guardians refuse is not paid: the record is dropped', async () => {
+  const kept = new Map(), storage = { getItem: (k) => kept.get(k) ?? null, setItem: (k, v) => kept.set(k, v), removeItem: (k) => kept.delete(k) };
+  const fed = 'fe'.repeat(32), paid = [];
+  const refusing = { ...wallet(paid), lockAccepted: async () => { throw new Error('the guardians did not accept the lock transaction: The transaction had an invalid input: 2-The note is already spent'); } };
+  const r = await giftDonation({ recipients: SET, sat: 21, wallet: refusing, federationId: fed, donor, seats: ['https://s.example'], fetch: async () => new Response('{}', { status: 200 }), storage });
+  assert.equal(r.ok, false); assert.match(r.why, /not paid: the federation refused the payment/);
+  assert.deepEqual([...kept.keys()].filter((k) => !/ledger/i.test(k)), [], 'no paid record kept');
+  assert.equal(ledgerRows(storage, fed).length, 0, 'no history row for a refused payment');
+});
