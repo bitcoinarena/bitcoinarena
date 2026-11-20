@@ -8855,16 +8855,17 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           return hit ? (x.protocol + '//' + routes[hit] + path) : String(u).replace(/\/+$/, '');
         };
         window.ARENA_VIA_ALT = viaAlt;
+        const pageLocal = !!(ARENACLIENT.localHostName && ARENACLIENT.localHostName(location.hostname));   // kanban #3107/#3108: a devnet page served locally
         // THE KEPT ADDRESSES THROUGH THE SAME ROUTES (2026-10-14 07:42Z, a phone on 4G with UI 99: "28 nodes" on every game):
         // this merge ran before viaAlt was defined, so a phone's kept list - the seats' Funnel addresses - went in as they were,
         // beside daily.json's tn4 addresses; off the tailnet both answer, and each seat was counted twice
         try {
           const kept = JSON.parse(window.ARENA_BROWSER_STORE().getItem(NODES_KEY) || '[]');
-          if (Array.isArray(kept) && kept.length && ARENACLIENT.mergeNodes) { const m = ARENACLIENT.mergeNodes(list(), kept.map(viaAlt)); list().splice(0, list().length, ...m); }
+          if (Array.isArray(kept) && kept.length && ARENACLIENT.mergeNodes) { const m = ARENACLIENT.mergeNodes(list(), (ARENACLIENT.keptNodes ? ARENACLIENT.keptNodes(kept, { localOk: pageLocal }) : kept).map(viaAlt));   /* kanban #3107/#3108: a kept loopback/LAN/query endpoint is dropped */ list().splice(0, list().length, ...m); }
         } catch { /* storage blocked: the census adds them again */ }
         window.ARENA_LEARN_NODES = (entries) => {
           if (!ARENACLIENT.censusEndpoints || !ARENACLIENT.mergeNodes) return;
-          const found = ARENACLIENT.censusEndpoints(entries).map(viaAlt);
+          const found = ARENACLIENT.censusEndpoints(entries, { localOk: pageLocal }).map(viaAlt);   // kanban #3107/#3108: never a loopback/LAN/query endpoint unless this page is local (a devnet)
           if (!found.length) return;
           const before = list().length;
           const m = ARENACLIENT.mergeNodes(list(), found); list().splice(0, list().length, ...m);

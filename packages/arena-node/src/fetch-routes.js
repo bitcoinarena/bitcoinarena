@@ -28,6 +28,17 @@ export function routed(url, routes) {
   return s;
 }
 
+// A SEAT'S OWN FETCH FOLLOWS NO REDIRECT UNLESS ITS CALLER ASKS FOR ONE (kanban #3107, #3108; wf1489 refute of #2856/#3082/#3090/#3093):
+// the address book refuses a census endpoint on a loopback or private host, with a query or more than one path segment - but only the
+// URL as dialed was checked. A bonded node committed a PUBLIC endpoint the book takes and answered every door with a 302 to
+// http://127.0.0.1:18777/lnurlp/tips/cb?amount=1000&x=, and every honest seat that gathered federation records (and every other peer read
+// through this fetch: seating, claims, founding, the duty poster, pulls) followed it to its own loopback service, path and query the
+// attacker's. A seat's doors need no redirect (public-fetch.js), seats advertise https/wss, and the fixed services the seat reads (esplora,
+// the price feed, bitcoind, lnd) answer in place: a call that names no `redirect` is made with redirect: 'error' - a 3xx is no answer.
+// A caller that follows redirects by hand (public-fetch.js checkedFetch: 'manual') or knows its host redirects (app-fetch.js) says so.
+export const PEER_REDIRECT = 'error';
+export const noRedirect = (init) => (init && init.redirect ? init : { ...(init || {}), redirect: PEER_REDIRECT });
+
 /** A fetch that routes, caps the requests in flight per origin, and times out a request that brings no signal. */
 export function cappedFetch(inner, { routes = [], maxPerOrigin = 8, timeoutMs = 30000, dispatcher = null } = {}) {
   const lanes = new Map();   // lane -> { busy, waiting: [{ go, abort }] }
@@ -65,6 +76,7 @@ export function cappedFetch(inner, { routes = [], maxPerOrigin = 8, timeoutMs = 
   const f = async (input, init = {}) => {
     const called = typeof input === 'string' || input instanceof URL ? String(input) : input.url;
     const url = routed(called, routes);
+    init = noRedirect(init);   // kanban #3107, #3108
     let lane; try { lane = laneOf(called); } catch { return inner(input, init); }
     let host; try { host = new URL(url).hostname; } catch { host = null; }
     const gone = host && unresolved.get(host);
