@@ -103,7 +103,12 @@ export function inForceOf(bonds) {
   // is older than the newest the node signed - so of the outputs, only those whose advertisement carries the highest signed timestamp
   // are read (all, when a record carries none)
   const tsOf = (a) => { try { return a && a.timestamp !== undefined && a.timestamp !== null ? BigInt(a.timestamp) : null; } catch { return null; } };
-  const all = (bonds || []).filter(Boolean);
+  // A BODY THE NODE DID NOT SIGN IS NEVER IN FORCE HERE (kanban #3016, audit census r1-1): a record whose creation body does not verify under
+  // the node key (`signed: false`, regtest-bond bondsOf) and that no signed update replaced is left out while any other record stands - every
+  // update, re-bond and roles change is built on what inForceOf answers, and signed with the node key
+  const signedOf = (b) => !!b.updatedBy || b.signed !== false;
+  const any = (bonds || []).filter(Boolean);
+  const all = any.some(signedOf) ? any.filter(signedOf) : [];
   const stamps = all.map((b) => tsOf(b.advert));
   const top = stamps.every((t) => t !== null) && stamps.length ? stamps.reduce((m, t) => (t > m ? t : m)) : null;
   let best = null;
