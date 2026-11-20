@@ -688,11 +688,22 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
             if (++c.badSigs >= lim.badSigsPerSocket) { send(['NOTICE', 'error: too many bad signatures, the relay closed this connection']); clients.delete(c); ws.terminate(); }
           };
           if (refusedSigs.has(key)) return bad('invalid: the signature is not its author\'s');
-          const ok = take(verifyBucket)
-            || (c.badSigs === 0 && (keepSet.has(e.pubkey) || !!seenAuthor.get(e.pubkey) ? take(standingBucket) : take(cleanBucket)));
-          if (!ok) return send(['OK', e.id, false, 'rate-limited: the relay is checking too many signatures, try again shortly']);
+          // kanban #3174 (#1489 r1120b-refute-10-s2 of #3044/#3145): a reserve token is spent only by a GOOD signature. Before, a fresh
+          // socket's first frame always reached a reserve (c.badSigs is 0 until its signature is read) and kept the token when its signature
+          // was junk, and the reserve was picked by the sender-chosen e.pubkey: a stranger reconnecting with one junk frame bearing a seat's
+          // public `keep` key per socket drained the standing reserve, and the seat's signed 30762 round result was 'rate-limited' (plain junk
+          // drained the clean reserve the same way). Now a reserve token taken for a frame whose signature turns out bad is given back, so
+          // copying a seat's key or reconnecting draws nothing from what honest writers keep; that socket is dirty and reaches no reserve
+          // again (the shared bucket only, closed after lim.badSigsPerSocket). The checks junk makes on a reserve are at most one per
+          // connection the relay accepts; the shared bucket still bounds everything a dirty socket sends.
+          const shared = take(verifyBucket);
+          const reserve = !shared && c.badSigs === 0 ? (keepSet.has(e.pubkey) || !!seenAuthor.get(e.pubkey) ? standingBucket : cleanBucket) : null;
+          if (!shared && !(reserve && take(reserve))) return send(['OK', e.id, false, 'rate-limited: the relay is checking too many signatures, try again shortly']);
           const why = sigRefusal(e);
-          if (why) { refusedSigs.add(key); if (refusedSigs.size > REFUSED_SIGS_KEPT) refusedSigs.delete(refusedSigs.values().next().value); return bad(why); }
+          if (why) {
+            if (reserve) reserve.left = Math.min(lim[reserve.burst], reserve.left + 1);   // kanban #3174: junk never keeps a reserve token
+            refusedSigs.add(key); if (refusedSigs.size > REFUSED_SIGS_KEPT) refusedSigs.delete(refusedSigs.values().next().value); return bad(why);
+          }
         }
         if (!isEphemeral(e.kind)) {
           const d = isParam(e.kind) ? dTag(e) : '';
