@@ -48,4 +48,33 @@ Install Chromium with `npx playwright install --with-deps chromium` from `packag
 COMPAT_EXTENSION_PACKAGE=/absolute/path/to/nos2x.crx node --test --test-timeout=120000 test/compat-extension.test.js
 ```
 
-Set `COMPAT_EXTENSION_ADAPTER=sidecar` to check Sidecar with its own package. The optional integration test is skipped without that package path. The scheduled run exercises the real public testnet login. Sidecar initializes its own encrypted keystore and imports the disposable key through the extension’s own functions; nos2x uses its documented storage shape. Alby has an encrypted account/password onboarding flow and still needs a tested setup adapter (unassigned backlog #2956). Keys.band 1.7.0’s shipped provider exposes NIP-04 but no NIP-44, which our login requires; no upstream issue has been filed. Those two remain manual, with release reminders for any previously tested version and explicit skip reasons otherwise. Amber in an Android emulator remains the unassigned backlog idea #2952; Clave needs a real iPhone and stays manual.
+Set `COMPAT_EXTENSION_ADAPTER=sidecar` to check Sidecar with its own package. The optional integration test is skipped without that package path. The scheduled run exercises the real public testnet login. Sidecar initializes its own encrypted keystore and imports the disposable key through the extension’s own functions; nos2x uses its documented storage shape. Alby has an encrypted account/password onboarding flow and still needs a tested setup adapter (unassigned backlog #2956). Keys.band 1.7.0’s shipped provider exposes NIP-04 but no NIP-44, which our login requires; no upstream issue has been filed. Those two remain manual, with release reminders for any previously tested version and explicit skip reasons otherwise. Amber Android emulator automation is tracked in #2952; its adapter runs locally under the owner’s Linux user account (no GitHub runner provisioning). Clave remains manual pending the macOS/iPhone Simulator work planned separately in [#3072](https://beelink.tail1723e2.ts.net/kanban/task/3072). See [the Clave implementation plan](CLAVE-COMPATIBILITY-PLAN.md) for source evidence, sandbox APNs/NSE requirements and pending infrastructure decisions. A physical iPhone is not inherently required.
+
+## Amber on a local Android emulator (#2952)
+
+`compat-amber.mjs` checks the actual online Android APK through its UI and NIP-46. The SDK, JDK, APK and AVD live under the operator's user account; this change adds no GitHub runner, installation workflow or schedule. The catalog uses `check: android`. Without an explicitly selected emulator, the runner skips Amber and retains version reminders.
+
+Use a dedicated English-language AVD named **arena-compat-amber**, with Android API 35 and host loopback reachable as `10.0.2.2`. Start it before running the check and wait for `adb shell getprop sys.boot_completed` to return `1`. Serialize runs on that AVD. The adapter refuses physical device serials and other AVD names. It **clears Amber's app data before and after each check**; never put a personal key in this AVD.
+
+Install the online x86_64 APK from Amber's official release (not the offline variant), verifying its signed release manifest. The measured release is 6.6.9, SHA-256 `2de34e1b278dbad3a06064814b0503330ec95c4927013ca67208192cdf3ad93e`. APK upgrades remain an explicit local maintenance action. Optional `COMPAT_AMBER_APK=/path/to/verified.apk` installs that APK before checking; otherwise the adapter uses the installed online package. The public row records Android's installed `versionName`, even when GitHub's latest-release lookup fails.
+
+From the repository root, with the emulator running:
+
+```sh
+COMPAT_ADB=/path/to/android-sdk/platform-tools/adb \
+COMPAT_AMBER_SERIAL=emulator-5582 \
+node packages/arena-node/tools/compat-run.mjs --only=Amber --no-extensions --out=/tmp/amber-report
+```
+
+The adapter imports a fresh disposable key, creates a bunker connection using only an ephemeral loopback relay, and selects **I fully trust this application** for that test connection. It reads the real bunker URI from the UI and runs the existing verifier: connect, public key, signed kinds 27235 and 30078, and NIP-44 encryption/decryption to self. The relay forwards verified kind-24133 events; it does not implement a signer. No pairing secret is stored. Notification permission is granted to the test APK. Errors identify the failed stage and cleanup failure prevents a passing result. UI selectors match the released English UI; the unlabeled add-relay icon is located relative to its relay field. UI changes may require an adapter update.
+
+Transport, dispatch and missing-device checks run without Android. The optional integration test performs the entire real UI flow and destroys test app state:
+
+```sh
+cd packages/arena-node
+COMPAT_AMBER_INTEGRATION=1 COMPAT_ADB=/path/to/android-sdk/platform-tools/adb \
+COMPAT_AMBER_SERIAL=emulator-5582 \
+node --test --test-timeout=300000 test/compat-amber.test.js
+```
+
+Successful local runs write `results.json` through the existing runner; include measured changes in an implementation/results PR. No local run pushes, publishes or merges automatically. Stop the emulator when finished. Interrupted runs may leave disposable app state; the next run clears it before creating a new key.

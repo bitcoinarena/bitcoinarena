@@ -234,3 +234,17 @@ test('a failed return payment or missing receiving wallet is reported, and secre
   assert.ok(!JSON.stringify(refund.results).includes('private-pairing'));
   assert.equal(refund.report.failed[0].failing.pay_back, 'failed [redacted]');
 });
+
+test('Amber requires an explicitly selected local adapter and records installed version', async () => {
+  const product = { name: 'Amber', kind: 'Remote signer', platform: 'Android', check: 'android' };
+  assert.equal(plan(product, null, '99', { secrets: {} }).act, 'skip');
+  const out = await run({ products: [product], results: [], versionOf: async () => '99',
+    checkers: { amber: async () => ({ version: '6.6.9', checks: { connect: 'ok' } }) } });
+  assert.equal(out.report.works[0].version, '6.6.9');
+  assert.equal(out.results[0].how, 'automatic');
+});
+
+test('a signer answering for a different disposable key fails the identity check', async () => {
+  const checks = await checkSigner(fakeBunker(), { ms: 8000, expectedPubkey: getPublicKey(generateSecretKey()) });
+  assert.equal(checks.get_public_key, 'odd answer');
+});

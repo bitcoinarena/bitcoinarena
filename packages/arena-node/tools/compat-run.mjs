@@ -53,7 +53,12 @@ export async function latestVersion(p, { fetcher = fetch, githubToken = null } =
 }
 
 /** What to do with one product tonight: run it, remind a person, or skip it (and why). */
-export function plan(p, row, latest, { secrets, extension }) {
+export function plan(p, row, latest, { secrets, extension, amber }) {
+  if (p.check === 'android') {
+    if (amber) return { act: 'run' };
+    if (row && latest && latest !== row.version) return { act: 'remind', why: `version ${latest} is out; local Amber emulator is not configured here` };
+    return { act: 'skip', why: 'no dedicated Amber emulator selected (COMPAT_AMBER_SERIAL)' };
+  }
   if (p.check === 'manual') {
     if (row && latest && latest !== row.version) return { act: 'remind', why: `version ${latest} is out; ${row.version} was tested by hand on ${row.date}` };
     return { act: 'skip', why: row ? (latest ? `tested by hand, ${row.version} is still the newest` : 'tested by hand; newest version could not be determined') : 'tested by hand only, not tested yet' };
@@ -102,7 +107,7 @@ export async function run({ products, results, secrets = {}, today = new Date().
     const old = list.find((r) => r.name === p.name && r.kind === p.kind) || null;
     let latest = null, versionWhy = null;
     try { latest = await versionOf(p); } catch (e) { versionWhy = String(e?.message ?? e).slice(0, 160); }
-    const step = plan(p, old, latest, { secrets, extension: !!checkers.extension });
+    const step = plan(p, old, latest, { secrets, extension: !!checkers.extension, amber: !!checkers.amber });
     const base = { name: p.name, kind: p.kind, ...(versionWhy ? { versionWhy } : {}) };
     if (step.act === 'skip') { report.skipped.push({ ...base, why: step.why }); continue; }
     if (step.act === 'remind') { report.reminders.push({ ...base, why: step.why, latest, tested: old.version }); continue; }
@@ -113,7 +118,8 @@ export async function run({ products, results, secrets = {}, today = new Date().
       return text.replace(/(?:bunker|nostr\+walletconnect):\/\/[^\s]+/g, '[redacted pairing]').slice(0, 160);
     };
     try {
-      if (p.check === 'signer') out = { checks: await checkers.signer(secrets[p.secret]) };
+      if (p.check === 'android') out = await checkers.amber(p);
+      else if (p.check === 'signer') out = { checks: await checkers.signer(secrets[p.secret]) };
       else if (p.check === 'nwc') {
         const kept = {};
         let round = null;
@@ -180,11 +186,12 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   if (!process.argv.includes('--no-extensions') && existsSync(extensionModule)) {
     extension = (await import(extensionModule.href)).checkExtension;
   }
+  const amber = process.env.COMPAT_AMBER_SERIAL ? (await import('./compat-amber.mjs')).checkAmber : null;
   const { SimplePool } = await import('nostr-tools/pool');
   const pool = new SimplePool();
   const got = await run({
     products, results, secrets, pay: process.argv.includes('--pay'), only: arg('only'),
-    checkers: { signer: (l) => checkSigner(l), nwc: (l, o) => checkNwc(l, o), ...(extension ? { extension } : {}) },
+    checkers: { ...(amber ? { amber: () => amber() } : {}), signer: (l) => checkSigner(l), nwc: (l, o) => checkNwc(l, o), ...(extension ? { extension } : {}) },
     versionOf: (p) => latestVersion(p, { githubToken: process.env.GITHUB_TOKEN || null }),
     payWallet: secrets.COMPAT_PAY_WALLET ? () => payRound(secrets.COMPAT_PAY_WALLET, { pool }) : null,
   });
