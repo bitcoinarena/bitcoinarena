@@ -4587,7 +4587,17 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
               // payout the seats owe is collected even when this tab holds no collect record for the round (a refused save, another tab)
               let rec = {};
               try { rec = { invite: named.federation, seed: ARENACLIENT.toHex(seed), order: player.order || 0, round: ARENACLIENT.toHex(ARENACLIENT.encodeRoundContract(named.round)) }; } catch { rec = {}; }
-              vault().setItem(key, JSON.stringify({ roundIdHex: named.roundIdHex, entryIdHex: ARENACLIENT.toHex(eid), nodes: named.nodes, ...rec }));
+              // A FULL STORAGE KEEPS THE LINE AND THE MATERIAL (kanban #3122, refute of #3086): the note with the material is about as big as the
+              // collect record feedback #365's full storage refused, and a raw setItem was refused with it - no note, no line, nothing to rebuild
+              // from. Now it goes through putRoomy (tidy, then once more); refused still, the small note of before #3086 is kept (the line), and
+              // the material goes to this tab's sessionStorage (its own room), where lookThePending takes it and moves it into the note once room is back
+              const small = { roundIdHex: named.roundIdHex, entryIdHex: ARENACLIENT.toHex(eid), nodes: named.nodes };
+              const put = (k, v) => (ARENACLIENT.putRoomy ? ARENACLIENT.putRoomy(vault(), k, v) : vault().setItem(k, v));
+              try { put(key, JSON.stringify({ ...small, ...rec })); } catch (full) {
+                if (!rec.seed) throw full;
+                try { window.sessionStorage.setItem('arena.pending-material.' + key, JSON.stringify(rec)); } catch { /* the small note still keeps the line */ }
+                put(key, JSON.stringify(small));
+              }
               const mine = JSON.parse(window.sessionStorage.getItem('arena.pending.mine') || '[]');
               if (!mine.includes(key)) { mine.push(key); window.sessionStorage.setItem('arena.pending.mine', JSON.stringify(mine)); }
             } catch { /* no note, no line */ }
@@ -7164,7 +7174,12 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       try {
       let notes = [];
       try { const v = vault(); for (let i = 0; i < v.length; i++) { const k = v.key(i); if (k && k.startsWith('arena.pending.')) notes.push(k); } } catch { notes = []; }
-      try { const mine = JSON.parse(window.sessionStorage.getItem('arena.pending.mine') || 'null'); if (Array.isArray(mine)) notes = notes.filter((k) => mine.includes(k)); } catch { /* every note */ }
+      // THE MINE LIST NAMES THE LINE'S NOTES, NOT THE REBUILD'S (kanban #3123, refute of #3086): the notes were cut to this tab's own here, so
+      // a tab that wrote one note (sessionStorage outlives a reload) never looked at a closed tab's note - its owed payout with no record was
+      // never rebuilt while this tab lived. Now every note with its own material is looked at for the rebuild (which writes a record for
+      // that note's own seed and order only); only this tab's notes (every note, when it wrote none) count toward the pending line.
+      let mine = null;
+      try { const m = JSON.parse(window.sessionStorage.getItem('arena.pending.mine') || 'null'); if (Array.isArray(m)) mine = m; } catch { mine = null; }
       // DONE IS THE NOTE'S OWN SEED'S AND ORDER'S (kanban #3104, refute of #3086): it was the tab's own seed's records keyed by round alone,
       // so a second phrase's note (a reopened browser reads every note) or order 1 of a market round lost its note - and with it the
       // rebuild below - once the tab's phrase's (or order 0's) collect of that round was done. Now a note goes only when the record of
@@ -7217,7 +7232,25 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         // ONE NOTE CANNOT END THE LOOP (kanban #3103): whatever one note's answers do, the notes after it are still rebuilt and counted
         try {
           let n; try { n = JSON.parse(vault().getItem(k)); } catch { n = null; }
+          // THE MATERIAL A FULL STORAGE KEPT OUT OF THE NOTE (kanban #3122): this tab put it in its sessionStorage; it is taken from there,
+          // and moved into the note once the storage has room again (so another tab can rebuild from it too)
+          if (n && !n.seed) {
+            let rec = null; try { rec = JSON.parse(window.sessionStorage.getItem('arena.pending-material.' + k) || 'null'); } catch { rec = null; }
+            if (rec && rec.seed && rec.round && rec.invite) {
+              n = { ...n, ...rec };
+              try { if (ARENACLIENT.putRoomy) ARENACLIENT.putRoomy(vault(), k, JSON.stringify(n)); else vault().setItem(k, JSON.stringify(n)); } catch { /* still full: kept in this tab */ }
+            }
+          }
+          const isMine = !mine || mine.includes(k);
+          // another tab's note: only one that carries its own seed is read (a note from before #3086 names no seed, and is not this tab's to judge)
+          if (!isMine && !(n && n.seed && n.round && n.invite)) continue;
           if (!n || isDone(n)) { try { vault().removeItem(k); } catch { /* none */ } continue; }
+          // another tab's note whose record is there: nothing to rebuild, its seats are not asked
+          if (!isMine) {
+            let has = false;
+            try { has = ARENACLIENT.savedCollects(vault(), { seed: ARENACLIENT.fromHex(String(n.seed)) }).some((r) => r.roundIdHex === n.roundIdHex && Number(r.order || 0) === Number(n.order || 0)); } catch { has = false; }
+            if (has) continue;
+          }
           const last = st.seen.get(k);
           // asked again: a provisional answer at every look; a settled one after 30 s; a round no signer node answers for (an entry
           // they never took) after 10 s - before, it was asked every 2 s for as long as its note was kept
@@ -7268,6 +7301,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
               }
             }
           } catch (e) { if (typeof collectNote === 'function') collectNote('pending ' + String(n.roundIdHex).slice(0, 8), 'collect record not rebuilt: ' + String((e && e.message) || e).slice(0, 120)); }
+          if (!isMine) continue;
           if (!best || best[0] === null || best[0] === '0' || best[1] * 2 <= answered.length) continue;
           total += BigInt(best[0]);
           const one = said.find((x) => figOf(x) === best[0]);
