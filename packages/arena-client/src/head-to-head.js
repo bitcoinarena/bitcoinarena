@@ -205,7 +205,21 @@ export async function revealWhenCertified({ roundIdHex, entryIdHex, move, salt, 
     if (got.required === false) return { seats: await revealMove({ entryIdHex, move, salt, nodes, identity, fetcher, timeoutMs }), certified: null };
     if (got.certified) {
       if (!got.certified.entries.includes(String(entryIdHex))) return { seats: [], notCertified: true, why: 'your entry is not in the round\'s certified lock set: it is not played, its stake comes back' };
-      return { seats: await revealMove({ entryIdHex, move, salt, nodes, identity, fetcher, timeoutMs }), certified: got.certified };
+      // NOT DONE WHILE THE SEATS ASK AGAIN (kanban #3015, audit h2h r1-1, measured 2026-11-19: a seat one signature ahead served its certificate
+      // to the page first; every honest seat answered the one post 409 "not certified yet - ask again shortly", only that seat held the move,
+      // and at the decide it served its reveals without it - the honest player FORFEIT). The seats that said so (or did not answer) are asked
+      // again every poll until a threshold of seats hold the move or the reveal's deadline passes.
+      let seats = await revealMove({ entryIdHex, move, salt, nodes, identity, fetcher, timeoutMs });
+      const took = (x) => x.status === 200 || x.status === 201;
+      const askAgain = (x) => x.status === 0 || (x.status === 409 && /not certified yet|ask again/i.test(String(x.why || '')));
+      while (seats.filter(took).length < lockSetThreshold(seats.length) && now() <= giveUpAt) {
+        const again = seats.filter(askAgain);
+        if (!again.length) break;
+        await sleep(H2H_LOCK_SET_POLL_MS);
+        const more = await revealMove({ entryIdHex, move, salt, nodes: again.map((x) => x.node), identity, fetcher, timeoutMs });
+        seats = seats.map((x) => more.find((m) => m.node === x.node) || x);
+      }
+      return { seats, certified: got.certified };
     }
     // ONE SEAT'S VOID IS NOT FINAL (kanban #2798, #1489 r21-h2h-1): `void` is any seat's unsigned word, and a seat that said it on the first
     // poll - while the honest seats were still certifying - made the page skip its reveal and forfeit a round the others played. Before the
