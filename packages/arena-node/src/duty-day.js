@@ -726,9 +726,12 @@ export function createDayDuty(o) {
           : guard.dayDueCapped({ nowMs, slot, rank, posted, cap: rankCap });
         Object.assign(seen, { anchor, order, rank, posted, due });
         const said = `${slot} ${rank} ${posted} ${due}`;
-        if (said !== lastSaid) say({ dutyDay: due ? 'due' : posted ? 'posted' : 'not due', item, slot, target: new Date(targetDay(slot).startMs).toISOString(), anchor,
+        // ONCE PER CHANGE, NOT ONCE A MINUTE (kanban #3070, measured 2026-11-20 on an installer node: "DUE, CANNOT PAY" every minute): a pass
+        // that could not pay wrote `${said} nopay` as the last word, so the next pass found `said` new and said both lines again
+        const sameAsLast = said === lastSaid || `${said} nopay` === lastSaid;
+        if (!sameAsLast) say({ dutyDay: due ? 'due' : posted ? 'posted' : 'not due', item, slot, target: new Date(targetDay(slot).startMs).toISOString(), anchor,
           dutyNode: toHex(order[0] || new Uint8Array(32)).slice(0, 16), rank, rankCap, census: order.length });
-        lastSaid = said;
+        if (!sameAsLast) lastSaid = said;
         if (due && slot + 1 >= fromDay && !poolRead) seen.wouldPost.push({ app: game, slot, why: 'due, but the mempool could not be read: not posted this pass' });
         else if (due && slot + 1 >= fromDay) {
           const pay = await canPay();
