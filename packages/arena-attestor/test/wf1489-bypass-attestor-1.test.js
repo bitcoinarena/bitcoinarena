@@ -11,9 +11,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { verify } from 'node:crypto';
-import { attestWindow, combine } from '../src/attestor.js';
+import { attestWindow as attestWindowRead, combine } from '../src/attestor.js';
 import { decodeAttestation, attestationStands } from '../../arena-protocol/src/attested.js';
 import { UPDOWN, UPDOWN_ATTESTOR_KEYS } from '../../arena-node/test/plugins/updown/index.js';
+
+// kanban #3049: the daemon reads every 10 s and signs only a window it read - these fixtures name each price CHANGE, so the readings
+// between are filled in every 10 s from the first one to the window's end, the same prices in force (the same averages)
+const denseOf = (samples, window) => {
+  if (!samples.length) return samples;
+  const sorted = [...samples].sort((a, b) => (a.atMs < b.atMs ? -1 : a.atMs > b.atMs ? 1 : 0));
+  const out = [];
+  for (let i = 0; i < sorted.length; i++) {
+    const until = i + 1 < sorted.length ? sorted[i + 1].atMs : window.endMs;
+    for (let t = sorted[i].atMs; t < until; t += 10000n) out.push({ atMs: t, price: sorted[i].price });
+  }
+  return out;
+};
+const attestWindow = (o) => attestWindowRead({ ...o, samples: denseOf(o.samples, o.window) });
+
 
 const Q = 1791598500000n;
 const WINDOW = { startMs: Q, endMs: Q + 900000n };

@@ -363,7 +363,8 @@ const handleRound = async (r) => {
     const by = [...r.listedBy.keys()].find((seat) => (spent.get(seat) || 0) < SEAT_WORDS_PER_HOUR);
     if (by === undefined) return;
     roundMeta.set(r.id, { closeMs: c.closeMs, by });
-    const w = (MODE === 'value' ? attestValue : attestWindow)({ samples, roundId: fromHex(r.id), window, attestor });
+    // kanban #3049: a window counts only if read - three readings of this daemon's interval at most between two
+    const w = (MODE === 'value' ? attestValue : attestWindow)({ samples, roundId: fromHex(r.id), window, attestor, gapMs: BigInt(3 * SAMPLE_MS) });
     words.set(r.id, w.ok ? { ...w, closeMs: c.closeMs, from: c.from } : { none: w.why, closeMs: c.closeMs, from: c.from });
     log(w.ok ? { step: 'signed', round: r.id, from: c.from, window: { start: new Date(Number(window.startMs)).toISOString(), end: new Date(Number(window.endMs)).toISOString() },
       ...(MODE === 'value' ? { value: w.value } : { priceToBeat: w.priceToBeat, endPrice: w.endPrice, outcome: w.label }),
