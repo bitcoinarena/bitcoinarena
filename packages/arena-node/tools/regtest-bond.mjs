@@ -186,6 +186,11 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
     const covers = (have, want) => [...guards(want)].every((k) => guards(have).has(k));
     for (const b of bondsOf(nodeSecret)) {
       if (BigInt(b.sats) < BigInt(bondSats)) continue;
+      // ONLY A BOND THE NODE SIGNED IS ITS BOND (kanban #3152, refute of #3016): anyone can pay dust to the node's bond output key with an
+      // UNSIGNED copy of its advertisement (his payout key, a newer height). The runner takes the record's bondAdvert / bondSignature as the
+      // node's bond proof, lobby link (&advert=) and `adverts`, so a record whose creation body does not verify under the node key is never
+      // returned - not even with a signed update over it, since the proof is built from the creation body and its (zero) signature.
+      if (b.signed === false) continue;
       const { advert } = b;
       if (advert.endpoint !== endpoint || !!advert.guardianCapable !== !!guardianCapable
         || (advert.guardianEndpoint || '') !== (guardianEndpoint || '') || !covers(advert.guardianOf, guardianOf)) continue;
