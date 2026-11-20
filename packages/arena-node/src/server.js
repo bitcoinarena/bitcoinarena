@@ -7742,7 +7742,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     startSeriesTimer();
   };
   const topSerialOf = (nid) => { let top = -1n; for (const x of donationSets) if (toHex(x.networkId) === nid && x.serial > top) top = x.serial; return top; };
-  async function takeNetwork({ network, from, update = false, auto = false }) {
+  // `seen`: what the owner's page checked and the owner signed (kanban #3164, #3168): { id, federationId, invite } - each one named is
+  // held against the package this seat fetches itself, so a source seat cannot answer the page with one package and the seat with another
+  async function takeNetwork({ network, from, update = false, auto = false, seen = {} }) {
     if (!networksDir) return { ok: false, status: 409, why: 'this seat keeps no installed networks (no plugins directory)' };
     from = String(from || '').replace(/\/+$/, '');
     if (!/^[0-9a-f]{64}$/.test(network) || !/^https?:\/\//.test(from)) return { ok: false, status: 400, why: 'name a network id and the seat to take it from' };
@@ -7756,6 +7758,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const plain = (x) => ({ ...x, sets: undefined, rotations: undefined, series: undefined });
     if (!v.ok) { console.log(`[networks] refused ${network.slice(0, 16)} from ${from}: ${v.why}`); return { ...plain(v), status: 422 }; }
     if (v.networkId !== network) return { ...plain(v), ok: false, status: 422, why: `that package is network ${v.networkId.slice(0, 16)}, not ${network.slice(0, 16)}` };
+    // THE PACKAGE THE OWNER SAW IS THE ONE TAKEN (kanban #3164, #1489 r1120b refute 16 s2-1, measured 2026-11-21: the owner page fetched the source's
+    // GET /network, checked and showed it, the owner signed only { network, from }, and this function fetched again - the source answered the
+    // second ask with a package naming its own federation, and the seat's federation went DRAINING toward it, kept across restarts). Every
+    // field the owner signed must match what was fetched here; and a federation other than the held one - a succession - is taken only when
+    // the owner signed that federation id by name, never on a signed { network, from } alone.
+    const seenHex = (x) => (typeof x === 'string' ? x.toLowerCase() : null);
+    if (seenHex(seen.id) && seenHex(seen.id) !== v.id) return { ...plain(v), ok: false, status: 422, why: `that seat now hands package ${v.id.slice(0, 16)}, not the ${seenHex(seen.id).slice(0, 16)} the owner checked and signed: nothing taken` };
+    if (seenHex(seen.federationId) && seenHex(seen.federationId) !== v.federationId) return { ...plain(v), ok: false, status: 422, why: `that seat now hands a package naming federation ${String(v.federationId).slice(0, 16)}, not the ${seenHex(seen.federationId).slice(0, 16)} the owner checked and signed: nothing taken` };
+    if (typeof seen.invite === 'string' && seen.invite !== pkg.invite) return { ...plain(v), ok: false, status: 422, why: 'that seat now hands another federation invite than the one the owner checked and signed: nothing taken' };
+    const heldFedOf = networksHeld.get(network)?.report?.federationId;
+    if (update && !auto && heldFedOf && v.federationId !== heldFedOf && seenHex(seen.federationId) !== v.federationId) return { ...plain(v), ok: false, status: 422, why: `that package names federation ${String(v.federationId).slice(0, 16)}, this seat's is ${String(heldFedOf).slice(0, 16)}: a succession is taken only when the owner signs the successor federation id (args.federationId)` };
     if (drainingFeds.has(v.federationId)) return { ...plain(v), ok: false, status: 422, why: `its federation ${v.federationId.slice(0, 16)} is draining here (its successor is ${drainingFeds.get(v.federationId).successor.slice(0, 16)}): a package naming it is not taken` };
     if (update) {
       const u = checkNetworkUpdate({ networkId: network, chain, topSerial: topSerialOf(network) }, v);
@@ -7770,6 +7783,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // package taken here is the one compared: a succession is the owner's to take.
         const heldFed = networksHeld.get(network)?.report?.federationId;
         if (heldFed && v.federationId !== heldFed) return { ...plain(v), ok: false, status: 422, why: `that package names federation ${String(v.federationId).slice(0, 16)}, this seat's is ${String(heldFed).slice(0, 16)}: a succession is the owner's to take, not an automatic update's` };
+        // NOTHING NEW, NOTHING TAKEN; AND THE HELD INVITE STAYS (kanban #3168, #1489 r1120b refute 16 s2-2, measured 2026-11-21: one source seat
+        // served the held manifest with an invite naming the same federation id at its own guardian URLs and no `id` field - the sweep's
+        // same-package skip read the package's own claim, the package id does not hash the invite, and the held invite, what GET /network
+        // hands out and where this seat reads its federation's config, became the source's, kept in package.json across restarts). The
+        // package id is the one recomputed here; an automatic update never changes the invite - the guardian URLs are the owner's to change.
+        if (v.id === networksHeld.get(network)?.report?.id) return { ...plain(v), ok: false, status: 409, why: `that seat hands package ${v.id.slice(0, 16)}, the one held here: nothing new` };
+        const heldInvite = networksHeld.get(network)?.pkg?.invite;
+        if (typeof heldInvite === 'string' && heldInvite && pkg.invite !== heldInvite) return { ...plain(v), ok: false, status: 422, why: 'that package names another federation invite (guardian URLs) than the one held here: an automatic update keeps the owner\'s invite' };
         const carried = new Set(v.series.map((t) => toHex(seriesId(t))));
         const lost = [...(networksHeld.get(network)?.ownerSeries || [])].filter((id) => !carried.has(id));
         if (lost.length) return { ...plain(v), ok: false, status: 422, why: `that package drops ${lost.length} series this seat's owner holds (${lost[0].slice(0, 16)}...): an automatic update keeps them` };
@@ -9180,7 +9201,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const a = owner.authorize(body, action);
           if (!a.ok) return answer(a.status, a);
           const args = body.args || {};
-          const r = await takeNetwork({ network: String(args.network || '').toLowerCase(), from: String(args.from || ''), update: action === 'network-update' });
+          // what the owner's page checked, signed beside { network, from } (kanban #3164): held against the package fetched here
+          const seen = { id: args.id, federationId: args.federationId, invite: args.invite };
+          const r = await takeNetwork({ network: String(args.network || '').toLowerCase(), from: String(args.from || ''), update: action === 'network-update', seen });
           return answer(r.status || (r.ok ? 200 : 422), r);
         }
         if (url.pathname === '/owner/network/remove') {
