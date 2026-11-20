@@ -5367,8 +5367,12 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       const events = [...rows.values()];
       if (!events.length) return;
       const liq = [...new Set(events.map((ev) => String(ev.event.federation).toLowerCase()))].map((federation) => ({ federation }));
-      // THE CHAIN TIP THE CLAIM WINDOW IS READ AGAINST: the federations' heights the page read, else the explorer's tip; none, and nothing is handed over
-      const tip = (() => { const hs = [...(window.ARENA_FED_LOADS instanceof Map ? window.ARENA_FED_LOADS.values() : [])].map((x) => Number(x && x.height) || 0); const m = Math.max(0, ...hs); return m > 0 ? m : (typeof pendingTip === 'function' ? (pendingTip().tipHeight || null) : null); })();
+      // THE CHAIN TIP THE CLAIM WINDOW IS READ AGAINST: the explorer's tip; without it the LOWEST federation record height the page read, none,
+      // and nothing is handed over. MEASURED (kanban #3064, audit client r4-3-1): the largest record height was the tip, and one bonded seat's
+      // record of a made-up one-guardian federation at censusHeight + 1008 put it 988 blocks past the real tip - presentNotes answered 'the
+      // claims closed' for the whole testnet4 window. A record height is a census height a seat signs up to the slack, not a chain tip; the
+      // lowest one can only make the page early, and the door checks the window
+      const tip = (() => { const t = typeof pendingTip === 'function' ? Number(pendingTip().tipHeight) || 0 : 0; if (t > 0) return t; const hs = [...(window.ARENA_FED_LOADS instanceof Map ? window.ARENA_FED_LOADS.values() : [])].map((x) => Number(x && x.height) || 0).filter((h) => h > 0); return hs.length ? Math.min(...hs) : null; })();
       // ANY DEVICE (kanban #1093 part 9, the owner 2026-11-03: "Notes are recovered from the 24 words on any device ... so 'any device, any
       // time within' the window is the whole requirement"): a browser restored from the words has no ledger, so every federation being
       // liquidated is opened from this seed once; one found empty is not opened again in this browser
@@ -10097,7 +10101,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         const k = window.ARENA_RESERVES_READ, bal = window.ARENA_WALLET_BALANCE;
         // THE WALLET CODE STOPPED (a panic: its write refused for room, or worse): nothing it was asked answers any more, so an order would hang unsaid
         const line = window.ARENA_WALLET_STOPPED ? { text: window.ARENA_WALLET_STOPPED } : k && bal && ARENACLIENT.keylessFundsLine ? ARENACLIENT.keylessFundsLine({ parts: bal.parts, keyless: new Set([...k.keyless, ...(ARENACLIENT.inactiveFederations ? ARENACLIENT.inactiveFederations(window.ARENA_FED_LOADS) : [])]), expected: window.ARENA_RESERVE_EXPECTED || {},
-          tip: Math.max(0, ...[...(window.ARENA_FED_LOADS instanceof Map ? window.ARENA_FED_LOADS.values() : [])].map((x) => Number(x && x.height) || 0)) }) : null;
+          tip: (() => { const t = typeof pendingTip === 'function' ? Number(pendingTip().tipHeight) || 0 : 0; if (t > 0) return t; const hs = [...(window.ARENA_FED_LOADS instanceof Map ? window.ARENA_FED_LOADS.values() : [])].map((x) => Number(x && x.height) || 0).filter((h) => h > 0); return hs.length ? Math.min(...hs) : 0; })() }) : null;   // kanban #3064: the explorer's tip, not one seat's record height
         let el = document.getElementById('arena-funds-note');
         if (!line) { if (el) { if (!el.dataset.stopped) window.ARENA_FUNDS_NOTE_SAID = true; el.remove(); } return; }
         if (window.ARENA_WALLET_STOPPED ? window.ARENA_FUNDS_NOTE_CLOSED === line.text : window.ARENA_FUNDS_NOTE_SAID) { if (el) el.remove(); return; }

@@ -36,7 +36,8 @@ const run = async (events, store = new Map(), liquidations = []) => {
 test('a liquidation of a held federation: the wallet presented with this seed\'s key, the payouts collected in the federation they were paid in', async () => {
   const calls = await run([ev(FED), ev('cd'.repeat(32))]);
   assert.deepEqual(calls.filter((c) => c[0] === 'present').map((c) => c[1]), [FED, 'cd'.repeat(32)], 'every liquidating federation: a browser restored from the 24 words has no ledger (kanban #1093 part 9)');
-  assert.deepEqual(calls.filter((c) => c[0] === 'present')[0], ['present', FED, '02' + '11'.repeat(32), 'inv-a', 'testnet4', 121, 2, 'function'], 'the signed events, the chain, the tip and the page\'s signature check');
+  // kanban #3064: no explorer tip here, so the LOWEST record height the page read (120), not the largest one seat could set
+  assert.deepEqual(calls.filter((c) => c[0] === 'present')[0], ['present', FED, '02' + '11'.repeat(32), 'inv-a', 'testnet4', 120, 2, 'function'], 'the signed events, the chain, the tip and the page\'s signature check');
   assert.deepEqual(calls.filter((c) => c[0] === 'fetch').map((c) => c[1]), ['https://seat-1/liquidations', 'https://arb.example/liquidation-payouts']);
   assert.deepEqual(calls.filter((c) => c[0] === 'collect'), [['collect', 2, 'inv-safe']]);
   assert.ok(calls.includes('balance'));
