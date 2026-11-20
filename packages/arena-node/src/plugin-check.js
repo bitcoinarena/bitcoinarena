@@ -104,7 +104,8 @@ export function blankComments(src) {
     if (!l) return 'r';
     // a word: a keyword that takes an expression -> regex; a property name or another word -> division, unless a line ended since (a
     // `break label` / `continue label` / `debugger` ended by ASI: the slash then starts a statement) - then both
-    if (s.w && WORD.test(l)) { if (s.bw === '.') return 'd'; if (s.w === 'of') return 'f'; return KW_REGEX.has(s.w) ? 'r' : s.nl ? 'f' : 'd'; }
+    // (a word after '#' is a private name - `this.#in / 2` - a name like one after '.', never a keyword: kanban #3113, #1489 r1120-refute-5-s2)
+    if (s.w && WORD.test(l)) { if (s.bw === '.' || s.bw === '#') return 'd'; if (s.w === 'of') return 'f'; return KW_REGEX.has(s.w) ? 'r' : s.nl ? 'f' : 'd'; }
     if (l === ')') return s.pk || 'd';
     if (l === ']' || l === STR_END || l === RE_END || l === '`' || l === '.') return 'd';
     if (l === '}') return 'f';
@@ -159,7 +160,7 @@ export function blankComments(src) {
             sig(s, '}'); break;
           }
           if (c === '(') {
-            const ctrl = s.w && WORD.test(s.last) && s.bw !== '.' ? (KW_CTRL.has(s.w) ? 'r' : s.w === 'await' ? 'f' : 'd') : 'd';
+            const ctrl = s.w && WORD.test(s.last) && s.bw !== '.' && s.bw !== '#' ? (KW_CTRL.has(s.w) ? 'r' : s.w === 'await' ? 'f' : 'd') : 'd';
             s.pd++; s.ps = (s.ps + ctrl).slice(-DEPTH_KEPT); sig(s, '('); break;
           }
           if (c === ')') { const k = s.ps ? s.ps.slice(-1) : s.pd > 0 ? 'f' : 'd'; s.ps = s.ps.slice(0, -1); if (s.pd > 0) s.pd--; sig(s, ')'); s.pk = k; break; }
@@ -184,19 +185,37 @@ export function blankComments(src) {
   return out.join('');
 }
 
+// EVERY MODULE LOAD IN A TREE FILE IS EXEMPTED ON ITS OWN (kanban #3112, #1489 r1120-refute-5-s2): scanSource names only the first hit of a
+// rule, so one allowed `import { h } from './helper.js'` on line 1 hid an `await import('node:fs')`, a `require(...)` or an `import 'node:fs'`
+// further down from the tree scan. moduleLoadLines lists every line a load starts on (each rule pattern's hit and each `import ... from`
+// line, all in one pass each); a line is let through only when its whole statement is a static import from a file of the same tree.
+const MODULE_RULE = 'loads another module';
+function moduleLoadLines(text) {
+  const t = String(text), starts = [0];
+  for (let i = t.indexOf('\n'); i >= 0; i = t.indexOf('\n', i + 1)) starts.push(i + 1);
+  const lineOf = (index) => { let lo = 0, hi = starts.length - 1; while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (starts[mid] <= index) lo = mid; else hi = mid - 1; } return lo + 1; };
+  const out = new Set();
+  const re = new RegExp(SCAN_RULES.find(([r]) => r === MODULE_RULE)[1].source, 'gm');
+  for (let m; (m = re.exec(t));) { out.add(lineOf(m.index + Math.max(0, m[0].search(/\S/)))); if (m[0].length === 0) re.lastIndex++; }
+  for (const at of importFromAt(t, true)) out.add(lineOf(at));
+  return [...out].sort((a, b) => a - b);
+}
 export function scanTree(files) {
   const paths = new Set(files.map((f) => f.path)), left = [];
   for (const f of files) {
     const src = blankComments(utf8(f.bytes)), lines = src.split('\n');
+    // a line's statement (an import may span lines, up to its ';') is a static import/export ... from '<path>' landing on another tree file
+    const inTree = (line) => {
+      let stmt = '';
+      for (let i = line - 1; i < lines.length && i < line + 40; i++) { stmt += lines[i] + '\n'; if (lines[i].includes(';')) break; }
+      const m = /^\s*(?:import|export)\b[^;()]*?\bfrom\s*(['"])([^'"]+)\1\s*;?\s*$/.exec(stmt.trim().replace(/\s+/g, ' '));
+      if (!m || /\bimport\s*\(|\brequire\s*\(/.test(stmt)) return false;
+      const to = treeResolve(f.path, m[2]); return !!(to && paths.has(to));
+    };
     for (const x of scanSource(src)) {
-      if (x.rule === 'loads another module') {
-        // the statement from this line to its ';' (an import may span lines)
-        let stmt = '', i = x.line - 1;
-        for (; i < lines.length && i < x.line + 40; i++) { stmt += lines[i] + '\n'; if (lines[i].includes(';')) break; }
-        const m = /^\s*(?:import|export)\b[^;()]*?\bfrom\s*(['"])([^'"]+)\1\s*;?\s*$/.exec(stmt.trim().replace(/\s+/g, ' '));
-        if (m && !/\bimport\s*\(|\brequire\s*\(/.test(stmt)) { const to = treeResolve(f.path, m[2]); if (to && paths.has(to)) continue; }
-      }
-      left.push({ file: f.path, ...x });
+      if (x.rule !== MODULE_RULE) { left.push({ file: f.path, ...x }); continue; }
+      const line = moduleLoadLines(src).find((l) => !inTree(l));
+      if (line !== undefined) left.push({ file: f.path, rule: MODULE_RULE, line, text: (lines[line - 1] || '').trim().slice(0, 120) });
     }
   }
   return left;
@@ -244,7 +263,7 @@ export const SCAN_RULES = Object.freeze([
  * (kanban #2751): the next ';' and the next whole word `from` are known for every position from one scan back to front, so each import line
  * costs one look-up, not a scan to the end of the text.
  */
-export function importFromAt(text) {
+export function importFromAt(text, all = false) {   // all: every such line's index, in order (kanban #3112)
   const t = String(text), n = t.length;
   const word = (c) => /[A-Za-z0-9_$]/.test(c);
   const nextSemi = new Int32Array(n + 1), nextFrom = new Int32Array(n + 1);
@@ -253,16 +272,17 @@ export function importFromAt(text) {
     nextSemi[i] = t[i] === ';' ? i : nextSemi[i + 1];
     nextFrom[i] = t.startsWith('from', i) && (i === 0 || !word(t[i - 1])) && (i + 4 >= n || !word(t[i + 4])) ? i : nextFrom[i + 1];
   }
+  const found = [];
   for (let at = 0; at < n;) {
     const end = t.indexOf('\n', at), stop = end < 0 ? n : end;
     let i = at; while (i < stop && /\s/.test(t[i])) i++;
     if (t.startsWith('import', i) && i + 6 < n && /\s/.test(t[i + 6])) {
       const f = nextFrom[i + 7], s = nextSemi[i + 7];
-      if (f >= 0 && (s < 0 || f < s)) return i;
+      if (f >= 0 && (s < 0 || f < s)) { if (!all) return i; found.push(i); }
     }
     at = stop + 1;
   }
-  return -1;
+  return all ? found : -1;
 }
 export function scanSource(text) {
   const findings = [];
