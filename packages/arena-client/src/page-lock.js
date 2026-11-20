@@ -3461,12 +3461,26 @@ export async function refundKept({ round, roundId, seed, curve, client, storage,
  * /refused-lock to every signer node of the round. Each keeps it only on its own record - it refuses the round, the lock
  * stakes no entry there, its image is A0 of a handout it holds for the round. Answers how many kept it, and each one's word.
  */
+// A SEAT'S POST ANSWERED WITHIN SEAT_READ_MS, ITS BODY TOO, OR NOT AT ALL (kanban #3060, audit client r4-2-1): measured, one seat that took
+// POST /refused-lock (or the handout re-hand) and never answered held lookOwed for good - Promise.all waited on it, so the stake was never
+// owed back, not even by the player's own key after the lock's expiry. A seat silent past the bound is one that did not keep the lock.
+async function seatPost(fetcher, url, opts, ms = SEAT_READ_MS) {
+  let timer;
+  const late = new Promise((_, no) => { timer = setTimeout(() => no(new Error(`no answer within ${ms} ms`)), ms); });
+  try {
+    return await Promise.race([(async () => {
+      const r = await fetcher(url, { ...opts, signal: AbortSignal.timeout(ms) });
+      return { status: r.status, text: typeof r.text === 'function' ? String(await r.text()).slice(0, 4096) : '' };
+    })(), late]);
+  } finally { clearTimeout(timer); }
+}
+
 export async function handRefusedLock({ roundId, lock, nodes, fetcher = fetch } = {}) {
   const body = JSON.stringify({ outpoint: `${toHex(lock.outpoint.txid)}:${lock.outpoint.outIdx}`, fields: lockFieldsToJson(lock.fields) });
   const said = await Promise.all([...new Set(nodes || [])].map(async (node) => {
     try {
-      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/refused-lock?round=${toHex(roundId)}`, { method: 'POST', body });
-      return { node, status: r.status, why: (await r.text()).trim().slice(0, 160) };
+      const r = await seatPost(fetcher, `${String(node).replace(/\/+$/, '')}/refused-lock?round=${toHex(roundId)}`, { method: 'POST', body });
+      return { node, status: r.status, why: r.text.trim().slice(0, 160) };
     } catch (e) { return { node, status: 0, why: String(e && e.message || e).slice(0, 160) }; }
   }));
   return { kept: said.filter((x) => x.status === 201).length, said };
@@ -3512,6 +3526,9 @@ async function refusedReturn({ roundId, playerPubkey, locks, nodes, fetcher, cli
     if (st.stored) still.push(lock);
   }
   if (!still.length) return null;
+  // PAST ITS EXPIRY, THE PLAYER'S OWN KEY TAKES IT BACK BEFORE ANY SEAT IS ASKED (kanban #3060): the federation's read-only status decides it,
+  // so an expired lock never waits on a seat's answer (measured: one silent seat held this whole look)
+  { const back = await expiredBack(client, still); if (back) return back; }
   // THE STAKE'S HANDOUT HANDED AGAIN FIRST (kanban #593): a seat keeps the lock only against a handout it holds for the round,
   // and an order cut off mid-join (a seat restarting) may have reached a seat with its lock and without its handout. The tab
   // kept the handout's bytes with the lock; a seat that holds it already answers so
@@ -3523,10 +3540,11 @@ async function refusedReturn({ roundId, playerPubkey, locks, nodes, fetcher, cli
     HANDOUT_HANDED.add(handKey);
     const stake = still.find((l) => l.fields && l.fields.paymentImage && l.fields.paymentImage.kind === 'point');
     const shown = stake ? { headers: { 'x-arena-stake-lock': JSON.stringify({ outpoint: `${toHex(stake.outpoint.txid)}:${stake.outpoint.outIdx}`, fields: lockFieldsToJson(stake.fields) }) } } : {};
-    await Promise.all([...new Set(nodes || [])].map((node) => fetcher(`${String(node).replace(/\/+$/, '')}/handout`, { method: 'POST', body: handoutBody, ...shown }).catch(() => null)));
+    await Promise.all([...new Set(nodes || [])].map((node) => seatPost(fetcher, `${String(node).replace(/\/+$/, '')}/handout`, { method: 'POST', body: handoutBody, ...shown }).catch(() => null)));   // kanban #3060
   }
   let kept = 0;
-  for (const lock of still) kept += (await handRefusedLock({ roundId, lock, nodes, fetcher })).kept > 0 ? 1 : 0;
+  // every lock at once (kanban #3060): each seat's answer is bounded by SEAT_READ_MS, and the locks no longer add their bounds up
+  for (const h of await Promise.all(still.map((lock) => handRefusedLock({ roundId, lock, nodes, fetcher })))) kept += h.kept > 0 ? 1 : 0;
   if (!kept) return null;
   const msat = still.reduce((t, l) => t + BigInt(l.fields.amountMsat), 0n);
   const at = (l) => `${toHex(l.outpoint.txid)}:${l.outpoint.outIdx}`;
@@ -4089,8 +4107,8 @@ export async function postLockClaim({ node, entryId: eid, claimFor, fetcher = fe
   if (typeof claimFor !== 'function') return { node, status: 0, why: 'no claim' };
   try {
     const sig = claimFor(eid);
-    const r = await fetcher(`${String(node).replace(/\/+$/, '')}/lock-claim?entry=${toHex(eid)}`, { method: 'POST', body: sig });
-    return { node, status: r.status, why: r.status === 201 ? null : (await r.text()).trim() };
+    const r = await seatPost(fetcher, `${String(node).replace(/\/+$/, '')}/lock-claim?entry=${toHex(eid)}`, { method: 'POST', body: sig });   // kanban #3060: bounded
+    return { node, status: r.status, why: r.status === 201 ? null : r.text.trim() };
   } catch (e) { return { node, status: 0, why: e.message }; }
 }
 
