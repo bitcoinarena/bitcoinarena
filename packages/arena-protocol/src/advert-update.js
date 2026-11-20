@@ -118,7 +118,17 @@ export function newestUpdates(view, entries, { atHeight, network = 'regtest', ve
   if (typeof verify !== 'function' || !view || !Array.isArray(view.blocks) || !Array.isArray(entries)) return found;
   const want = new Map(entries.map((e) => [`${Array.from(e.txid).join(',')}:${e.vout}`, e]));
   const nodeOf = (k) => Array.from(k).join(',');
-  const events = [];   // { height, position, ts, node, key?, update? } - the bonds' own bodies at position -1
+  const events = [];   // { height, position, ts, node, key?, update?, seen? } - the bonds' own bodies at position -1
+  // EVERY BODY THE NODE SIGNED, NOT ONLY THOSE ON ITS ELIGIBLE OUTPUTS (kanban #3179, #3184; refute of #3142): the node's newest timestamp
+  // is the newest of every body of its key the view holds and the key signed - updates of an output that is spent, outside the census
+  // window or never a bond, and creation bodies of its spent or no longer eligible bonds. Those are `seen` events: they raise the node's
+  // newest timestamp and never count as an update or decide. Measured before: the node stepped out (ts 2000) and back in (ts 3000) on its
+  // first output A, withdrew A after its lock and kept its added output B (ts 1500) - the 3000 left the view of this rule, and a replay of
+  // the signed 2000 step-out, on a stranger's 330-sat bond to bondOutputKey(node) or as an update of B, counted as newer and stepped it out.
+  // A replay is never newer than the body it copies, and that body is now always read.
+  const nodes = new Set(entries.map((e) => e.pubkey || (e.advert && e.advert.nodePubkey)).filter((k) => k instanceof Uint8Array).map(nodeOf));
+  const ownKeys = new Set(entries.map((e) => `${Array.from(e.txid).join(',')}:${e.vout}`));
+  const signedBy = (signature, id, pk) => { try { return !!verify(signature, id, pk); } catch { return false; } };
   view.blocks.forEach((block, i) => {
     const height = view.firstHeight + i;
     if (height > atHeight) return;
@@ -126,15 +136,32 @@ export function newestUpdates(view, entries, { atHeight, network = 'regtest', ve
       const position = positionIn(block, i);   // a partial block's kept position (partial-view.js)
       let tx;
       try { tx = parseTransaction(raw); } catch { return; }
-      if (!commitmentsOf(tx).some((c) => readAdvertUpdatePayload(c))) return;
+      const commitments = commitmentsOf(tx);
+      if (!commitments.some((c) => readAdvertUpdatePayload(c))) {
+        // a creation body of the node's key on an output that is not an entry here (kanban #3179, #3184): history only
+        if (!nodes.size || !paysBondMarker(tx, network)) return;
+        for (const item of witnessRunsOf(tx)) {
+          let body, signature, advert, id;
+          try { ({ body, signature } = splitSignedAdvert(item)); advert = decodeAdvert(body); id = advertId(advert); } catch { continue; }
+          if (!commitments.some((c) => c.length === 32 && sameUpdateBytes(c, id))) continue;
+          if (!(advert.nodePubkey instanceof Uint8Array) || !nodes.has(nodeOf(advert.nodePubkey))) continue;
+          if (ownKeys.has(`${Array.from(tx.txid).join(',')}:${advert.bondVout}`)) continue;   // an entry's own body: its event below
+          if (!signedBy(signature, id, advert.nodePubkey)) continue;
+          events.push({ height, position, ts: tsOf(advert), node: nodeOf(advert.nodePubkey), seen: true });
+        }
+        return;
+      }
       const read = readAdvertUpdate(tx, { network });
       if (!read.ok) return;
       const key = `${Array.from(read.bondTxid).join(',')}:${read.bondVout}`;
       const e = want.get(key);
-      if (!e || !sameUpdateBytes(read.nodePubkey, e.pubkey) || height < e.height) return;
-      let signed = false;
-      try { signed = !!verify(read.signature, read.advertId, read.nodePubkey); } catch { signed = false; }
-      if (!signed) return;
+      if (!e || !sameUpdateBytes(read.nodePubkey, e.pubkey) || height < e.height) {
+        // an update of an output that is not this node's entry here (kanban #3179, #3184): history only
+        if (!nodes.has(nodeOf(read.nodePubkey)) || !signedBy(read.signature, read.advertId, read.nodePubkey)) return;
+        events.push({ height, position, ts: tsOf(read.advert), node: nodeOf(read.nodePubkey), seen: true });
+        return;
+      }
+      if (!signedBy(read.signature, read.advertId, read.nodePubkey)) return;
       if (seen) seen(e, read, height);
       events.push({ height, position, ts: tsOf(read.advert), node: nodeOf(read.nodePubkey), key,
         update: { advert: read.advert, advertId: read.advertId, txid: read.txid, height, position, raw } });
@@ -159,6 +186,11 @@ export function newestUpdates(view, entries, { atHeight, network = 'regtest', ve
   for (const ev of events) {
     const had = newest.has(ev.node) ? newest.get(ev.node) : null;
     if (ev.height !== blockHeight) { blockHeight = ev.height; atBlockStart.clear(); }
+    if (ev.seen) {   // kanban #3179, #3184: a signed body elsewhere raises the node's newest timestamp, nothing more
+      if (!atBlockStart.has(ev.node)) atBlockStart.set(ev.node, had);
+      if (ev.ts !== null && (had === null || ev.ts > had)) newest.set(ev.node, ev.ts);
+      continue;
+    }
     if (!ev.update) {
       if (!atBlockStart.has(ev.node)) atBlockStart.set(ev.node, had);
       const before = atBlockStart.get(ev.node);
