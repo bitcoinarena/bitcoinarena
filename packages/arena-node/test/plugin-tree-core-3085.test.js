@@ -43,3 +43,25 @@ test('#3085: a package carrying the v8 tree passes the tree checks; a changed by
   assert.match(pkgWith({ entry: 'adapter.js', files: asFiles(), source: 'eA==' }).why, /not a list of files/);
   assert.ok(TREE_LIMITS.files >= files.size);
 });
+
+// the tree scan (kanban #3085): a comment is not code, a relative import inside the tree is allowed - and nothing else is
+test('#3085: the tree scan still finds every real reach: import(), require, a bare or leaving import, process in code or in ${} of a template', async () => {
+  const { scanTree, blankComments } = await import('../src/plugin-check.js');
+  const T = (path, text) => ({ path, bytes: new TextEncoder().encode(text) });
+  const ok = [T('a.js', "import { x } from './b.js';\n// the window's global process\n/* process */ export const y = x / 2; // done\n"), T('b.js', "export const x = 1;\nconst r = /\\/\\/ not a comment/; export { r };\n")];
+  assert.deepEqual(scanTree(ok), [], 'comments and an in-tree import pass');
+  const bad = {
+    dynamicImport: [T('a.js', "export const f = () => import('./b.js');\n"), T('b.js', 'export const x = 1;\n')],
+    require: [T('a.js', "const fs = require('fs');\n")],
+    bare: [T('a.js', "import fs from 'fs';\n")],
+    leaves: [T('r/a.js', "import { x } from '../../out.js';\n")],
+    missing: [T('a.js', "import { x } from './nope.js';\n")],
+    process: [T('a.js', 'export const f = () => process.exit(1);\n')],
+    template: [T('a.js', 'export const t = `// ${process.exit(1)}`;\n')],
+    templateLine: [T('a.js', 'export const t = `\n// `; process.exit(1); `\n`;\n')],
+  };
+  const left = Object.fromEntries(Object.entries(bad).map(([k, f]) => [k, scanTree(f).length]));
+  console.log('  MEASURED #3085 tree scan findings:', JSON.stringify(left));
+  for (const [k, n] of Object.entries(left)) assert.ok(n > 0, `${k} must be found`);
+  assert.equal(blankComments('a // b\nc').split('\n').length, 2, 'line numbers kept');
+});

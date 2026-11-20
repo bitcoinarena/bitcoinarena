@@ -53,6 +53,69 @@ export function treeHashHex(files) {
   for (const x of parts) { all.set(x, at); at += x.length; }
   return shaHex(all);
 }
+/** Where a relative import from `from` lands inside the tree, or null when it leaves the tree or is not relative. */
+export function treeResolve(from, spec) {
+  if (!/^\.{1,2}\//.test(spec)) return null;
+  const parts = from.split('/').slice(0, -1);
+  for (const seg of spec.split('/')) { if (seg === '.' || seg === '') continue; if (seg === '..') { if (!parts.length) return null; parts.pop(); } else parts.push(seg); }
+  return parts.join('/');
+}
+/**
+ * A TREE'S SCAN (kanban #3085, measured on Next Block v8 7d197042: 21 "loads another module" - its files import one another - and 8 more
+ * findings, every one on a comment line: "window's", "C# process", "a global"). scanSource per file, with two exceptions and no other:
+ * - "loads another module" on a static import/export ... from '<relative path>' that resolves to another file of the same tree (an import()
+ *   or require(), a bare or absolute specifier, or a path leaving the tree is still refused);
+ * - the files are scanned with their comments blanked (blankComments): a word in a comment is not code. The sandbox still runs the tree
+ *   with no global, no import beyond its files and no process.
+ * Answers the findings left: [{ file, rule, line }].
+ */
+/**
+ * THE SOURCE WITH ITS COMMENTS BLANKED (kanban #3085): every comment character turned to a space, newlines kept (line numbers stay), strings,
+ * template literals (with their ${...} code, nested) and regex literals left as they are. A regex literal is told from a division by the
+ * last significant character before the slash (the usual rule); a mistaken guess only changes what this lint reads, never what runs.
+ */
+export function blankComments(src) {
+  const out = src.split(''); const n = src.length;
+  const blank = (i) => { if (out[i] !== '\n') out[i] = ' '; };
+  let i = 0, last = '';
+  const stack = [];   // template nesting: each entry counts open braces inside a ${...}
+  const regexCan = () => !last || /[(,=:[!&|?{};+\-*%<>~^]/.test(last) || /\b(return|typeof|instanceof|in|of|new|delete|void|throw|case|do|else|yield|await)$/.test(src.slice(Math.max(0, i - 12), i).trimEnd());
+  while (i < n) {
+    const c = src[i], d = src[i + 1];
+    if (c === '/' && d === '/') { while (i < n && src[i] !== '\n') blank(i++); continue; }
+    if (c === '/' && d === '*') { blank(i++); blank(i++); while (i < n && !(src[i] === '*' && src[i + 1] === '/')) blank(i++); if (i < n) { blank(i++); blank(i++); } continue; }
+    if (c === '"' || c === "'") { i++; while (i < n && src[i] !== c && src[i] !== '\n') i += src[i] === '\\' ? 2 : 1; i++; last = c; continue; }
+    if (c === '`') { i++; for (;;) { if (i >= n) break; if (src[i] === '\\') { i += 2; continue; } if (src[i] === '`') { i++; break; } if (src[i] === '$' && src[i + 1] === '{') { i += 2; stack.push(0); break; } i++; } last = '`'; continue; }
+    if (stack.length && c === '{') { stack[stack.length - 1]++; i++; last = c; continue; }
+    if (stack.length && c === '}') {
+      if (stack[stack.length - 1] === 0) { stack.pop(); i++; for (;;) { if (i >= n) break; if (src[i] === '\\') { i += 2; continue; } if (src[i] === '`') { i++; break; } if (src[i] === '$' && src[i + 1] === '{') { i += 2; stack.push(0); break; } i++; } last = '`'; continue; }
+      stack[stack.length - 1]--; i++; last = c; continue;
+    }
+    if (c === '/' && regexCan()) { i++; let cls = false; while (i < n && src[i] !== '\n') { if (src[i] === '\\') { i += 2; continue; } if (src[i] === '[') cls = true; else if (src[i] === ']') cls = false; else if (src[i] === '/' && !cls) break; i++; } i++; while (i < n && /[a-z]/i.test(src[i])) i++; last = '/'; continue; }
+    if (!/\s/.test(c)) last = c;
+    i++;
+  }
+  return out.join('');
+}
+
+export function scanTree(files) {
+  const paths = new Set(files.map((f) => f.path)), left = [];
+  for (const f of files) {
+    const src = blankComments(utf8(f.bytes)), lines = src.split('\n');
+    for (const x of scanSource(src)) {
+      if (x.rule === 'loads another module') {
+        // the statement from this line to its ';' (an import may span lines)
+        let stmt = '', i = x.line - 1;
+        for (; i < lines.length && i < x.line + 40; i++) { stmt += lines[i] + '\n'; if (lines[i].includes(';')) break; }
+        const m = /^\s*(?:import|export)\b[^;()]*?\bfrom\s*(['"])([^'"]+)\1\s*;?\s*$/.exec(stmt.trim().replace(/\s+/g, ' '));
+        if (m && !/\bimport\s*\(|\brequire\s*\(/.test(stmt)) { const to = treeResolve(f.path, m[2]); if (to && paths.has(to)) continue; }
+      }
+      left.push({ file: f.path, ...x });
+    }
+  }
+  return left;
+}
+
 /** A tree core entry's files decoded and checked against TREE_LIMITS and the path rule: { ok, files } or { ok: false, why }. */
 export function treeFilesOf(c) {
   if (!Array.isArray(c.files) || !c.files.length || c.files.length > TREE_LIMITS.files) return { ok: false, why: `a tree of 1 to ${TREE_LIMITS.files} files` };
@@ -236,7 +299,7 @@ export function checkPackage(pkg, { verify, want = null, parentOf = () => null }
       if (!add(`core ${String(c.hash).slice(0, 12)}… is the tree its manifest names`, th === c.hash && named.has(c.hash), `tree hash ${th.slice(0, 16)}…`))
         return out(`core ${String(c.hash).slice(0, 16)}: its files are not the tree its manifest names (tree hash ${th.slice(0, 16)})`, who);
       let found = 0;
-      for (const f of t.files) { for (const x of scanSource(utf8(f.bytes))) { findings.push({ core: String(c.hash).slice(0, 16), file: f.path, ...x }); found++; } }
+      for (const x of scanTree(t.files)) { findings.push({ core: String(c.hash).slice(0, 16), ...x }); found++; }
       add(`core ${String(c.hash).slice(0, 12)}… passes the scan`, !found, findings.filter((x) => x.core === String(c.hash).slice(0, 16)).map((x) => `${x.file}: ${x.rule} (line ${x.line})`).join('; '));
       continue;
     }
