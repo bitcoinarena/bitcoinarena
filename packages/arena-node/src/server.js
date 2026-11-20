@@ -216,7 +216,8 @@ const SIGNED_BATCH_FRAME_MAX_BYTES = 1 + TRANSCRIPT_BATCH_MAX_BYTES + 64;
 import { Verifier, peerEntryVoid } from './verify.js';
 import { Ghosts } from './ghosts.js';
 import { gameLive } from './game-live.js';
-import { readReserve } from './federation-reserve.js';
+import { readReserve, guardianDialAt } from './federation-reserve.js';
+import { setDialLocalOk } from './dial-guard.js';   // kanban #3133
 import { thresholdOf as thresholdOfFederation } from '../../arena-protocol/src/federation-record.js';
 import { Roster, endpointsOf, NO_CHAIN_VIEW_WHY, findSeriesPublication as findSeriesPublicationIndexed } from './roster.js';
 import { createSeriesPull, PULL_EVERY_MS } from './series-pull.js';
@@ -1296,11 +1297,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   { const n = round.clearPendingObjections(); if (n) console.log(`#1173 [objection] ${n} check(s) cut short by the restart dropped: those objections are taken again when sent again`); }
   // kanban #1533: POST /address-announcement takes only a node of the census last read for addresses (none read yet: bounded by the book)
   let addressCensus = null;
+  const seatsLocalOk = () => process.env.ARENA_LOCAL_SEATS === '1' || !chain || chain === 'bitcoin-regtest';
   const addressBook = createAddressBook({ db, verify: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } },
     isCensusNode: (hex) => (addressCensus ? addressCensus.has(String(hex)) : null), censusKeys: () => addressCensus, ownKey: (() => { try { return toHex(round.pubkey); } catch { return null; } })(),
     // kanban #2856: a peer on a loopback / private address only where this node runs local seats - no public chain (a regtest chain, a node with
     // no chain named: the test harnesses), or ARENA_LOCAL_SEATS=1; a testnet4 seat dials public names only (ARENA_ROUTE_MAP routes them after)
-    localOk: () => process.env.ARENA_LOCAL_SEATS === '1' || !chain || chain === 'bitcoin-regtest' });   // kanban #1712: its own kept outside the census
+    localOk: () => seatsLocalOk() });   // kanban #1712: its own kept outside the census
+  // kanban #3133: the same rule for where a name resolves, at every connection this process opens (dial-guard.js)
+  setDialLocalOk(seatsLocalOk);
   // EVERY COMMITTEE PEER AT ITS ANNOUNCED ADDRESS FIRST (kanban #757): roster.js endpointsOf with the address book's resolver -
   // a node whose quick tunnel restarted is dialed where its signed announcement says, not at its bond's dead endpoint
   const peerEndpointsOf = (committee, selfPubkey) => endpointsOf(committee, selfPubkey, addressBook.endpointOf);
@@ -6835,7 +6839,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const had = reserveKept.get(fidHex);
     if (had && Date.now() - had.at < 30000) return had.r;
     const endpoints = guardians.map((g) => g.endpoint).filter(Boolean);
-    const r = endpoints.length ? await readReserve({ endpoints, threshold: thresholdOfFederation(guardians.length) })
+    const r = endpoints.length ? await readReserve({ endpoints, threshold: thresholdOfFederation(guardians.length), localOk: seatsLocalOk() /* kanban #3134 */ })
       : { ok: false, why: 'the census names no guardian endpoint for that federation' };
     reserveKept.set(fidHex, { at: Date.now(), r });
     return r;
@@ -6946,7 +6950,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   halts = typeof chainTip === 'function' ? createHalts({ records: fedRecords, censusSeats: () => fedRecords.censusKeys(), clocks: fedClocks, verify: schnorrVerify,
     load: () => (haltsFile ? JSON.parse(readFileSync(haltsFile, 'utf8')) : []), save: (v) => { if (haltsFile) { try { writeFileSync(haltsFile, JSON.stringify(v)); } catch { /* kept in memory */ } } },
     sign: (h) => schnorr.sign(h, round.identity.secret), ownKey: round.pubkey, height: async () => Number(await chainTip()),
-    ask: (endpoint) => wsSessionCount(endpoint),
+    // kanban #3134: a record's guardian endpoint is the bond's guardianEndpoint - opened only where guardianDialAt takes it
+    ask: (endpoint) => (guardianDialAt(endpoint, { localOk: seatsLocalOk() }) ? wsSessionCount(endpoint) : Promise.reject(new Error('a guardian endpoint this seat does not open'))),
     // to every seat (everySeat: the round census's endpoints, the peers given, and the chain's newest census)
     post: async (o) => { await Promise.all(everySeat().map((u) => fetch(`${u}/halt-observations`, { method: 'POST', body: JSON.stringify(o),
       signal: AbortSignal.timeout(15000) }).catch(() => null))); },
