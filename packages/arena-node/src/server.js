@@ -8319,7 +8319,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   round.db.exec('CREATE TABLE IF NOT EXISTS gateway_seatings (federation TEXT NOT NULL, epoch INTEGER NOT NULL, kind TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY (federation, epoch, kind))');
   const keepSeating = (kind, fid, epoch, body) => { try { round.db.prepare('INSERT INTO gateway_seatings (federation, epoch, kind, body) VALUES (?, ?, ?, ?) ON CONFLICT(federation, epoch, kind) DO UPDATE SET body = excluded.body').run(String(fid), Number(epoch), kind, JSON.stringify(body)); } catch { /* kept in memory */ } };
   try {
-    for (const r of round.db.prepare('SELECT federation, epoch, kind, body FROM gateway_seatings').all()) ({ own: ownSeatings, liquidity: liquiditySeatings, 'liquidity-own': ownLiquiditySeatings }[r.kind] || gatewaySeatings).set(`${r.federation}:${r.epoch}`, JSON.parse(r.body));
+    for (const r of round.db.prepare('SELECT federation, epoch, kind, body FROM gateway_seatings').all()) {
+      let body = JSON.parse(r.body);
+      // kanban #3149: a standing seating's proof is kept in its row and comes back beside it (non-enumerable, as the gatherer sets it)
+      if ((r.kind === 'standing' || r.kind === 'liquidity') && body && Array.isArray(body.proof)) { const { proof, ...seating } = body; body = Object.defineProperty(seating, 'proof', { value: proof, enumerable: false, configurable: true }); }
+      ({ own: ownSeatings, liquidity: liquiditySeatings, 'liquidity-own': ownLiquiditySeatings }[r.kind] || gatewaySeatings).set(`${r.federation}:${r.epoch}`, body);
+    }
   } catch { /* none kept */ }
   // WHO JUDGES A HELD LOCK (§23A.3a, kanban #998): the record in force at the epoch's proof height; a seat that holds none that old, the one it holds
   const heldSetOf = (fid, epoch) => {
@@ -8588,8 +8593,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       const now = fedRecords.censusNow ? fedRecords.censusNow() : { ok: false };
       const entries = (fedRecords.censusNewest && fedRecords.censusNewest().length) ? fedRecords.censusNewest() : now.ok ? now.entries : [];
+      // THE PROOF IS THE VERIFIED SIGNATURES ON THE STANDING BODY, ONE PER GUARDIAN (kanban #3149, #3158, #3163, refute of #3020): a census
+      // seat's junk named the seated guardians and pushed a real signature out of the served proof, and a seated guardian's seat was never
+      // asked, and a restart lost the proof. Each signature is checked on its own (standingSeating at threshold 1) before it is kept.
+      const oneSig = (x, fid, ep, seatedHex) => { const one = standingSeating({ signed: [x], federationId: fid, epoch: ep, seated: seatedHex, threshold: 1, verify: schnorrVerify }); return one.ok ? JSON.stringify(one.seating) : null; };
+      const proofOf = (signed, seating, fid, ep, seatedHex) => { const want = JSON.stringify(seating), seen = new Set(), out = [];
+        for (const x of signed) { const g = x && String(x.guardian).toLowerCase(); if (!g || seen.has(g) || oneSig(x, fid, ep, seatedHex) !== want) continue; seen.add(g); out.push(x); }
+        return out; };
       for (const { federation: fid } of fedRecords.list()) for (const ep of [epoch, epoch - 1, epoch - 2, epoch - 3]) {
-        if (gatewaySeatings.has(`${fid}:${ep}`)) continue;
+        const held = gatewaySeatings.get(`${fid}:${ep}`);
+        if (held && Array.isArray(held.proof) && held.proof.length) continue;   // held without its proof (kept before #3149): its signatures are read again
         const rec = fedRecords.recordOf(fid);
         const seatedHex = (fedRecords.seatedGuardians(fid) || []).map((k) => toHex(k));
         if (!rec || !rec.record || !seatedHex.length) continue;
@@ -8617,18 +8630,26 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // (?standing=1); a seat whose own reads do not reach the threshold asks the other census seats for theirs and checks them as its own.
         for (const e of st.ok ? [] : entries) {
           const node = toHex(e.pubkey);
-          if (node === toHex(round.pubkey) || judgedHex.includes(node) || seatedHex.includes(node) || !e.advert || !e.advert.endpoint) continue;
+          // every census seat but this one, seated guardians too (kanban #3149: a guardian's plain read answers only its own signature)
+          if (node === toHex(round.pubkey) || !e.advert || !e.advert.endpoint) continue;
           try {
             const peerAt = addressBook.endpointOf(e); if (!peerAt) continue;
             const r = await fetch(`${String(peerAt).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '')}/gateway-seating?federation=${fid}&epoch=${ep}&standing=1`, { signal: AbortSignal.timeout(10000) });
             if (r.status !== 200) continue;
             const got = await jsonUpTo(r, PEER_LISTING_BYTES);
-            signed.push(...(Array.isArray(got) ? got : [got]).slice(0, judgedHex.length));
+            // checked and kept one per guardian and body before any cut (kanban #3163: junk in front no longer pushes a real one out)
+            const have = new Set(signed.map((x) => x && `${String(x.guardian).toLowerCase()}|${oneSig(x, fid, ep, judgedHex)}`));
+            for (const x of (Array.isArray(got) ? got : [got]).slice(0, 4 * judgedHex.length)) {
+              const b = x && oneSig(x, fid, ep, judgedHex); const k = b && `${String(x.guardian).toLowerCase()}|${b}`;
+              if (k && !have.has(k)) { have.add(k); signed.push(x); }
+            }
           } catch { continue; }
           st = standingSeating({ signed, federationId: fid, epoch: ep, seated: judgedHex, threshold: judged.record.threshold, verify: schnorrVerify });
           if (st.ok) break;
         }
-        if (st.ok) { Object.defineProperty(st.seating, 'proof', { value: signed.filter((x) => x && judgedHex.includes(String(x.guardian).toLowerCase())).slice(0, 2 * judgedHex.length), enumerable: false }); gatewaySeatings.set(`${fid}:${ep}`, st.seating); keepSeating('standing', fid, ep, st.seating); console.log(`[gateways] ${fid.slice(0, 12)} epoch ${ep}: seating stands, ${st.seating.seats.length} seat(s), ${st.signers} signer(s)`); }
+        if (st.ok && held) {   // a seating held without its proof keeps its body; the proof is attached only when the same body stands again
+          if (JSON.stringify(st.seating) === JSON.stringify(held)) { const proof = proofOf(signed, held, fid, ep, judgedHex); Object.defineProperty(held, 'proof', { value: proof, enumerable: false, configurable: true }); keepSeating('standing', fid, ep, { ...held, proof }); }
+        } else if (st.ok) { const proof = proofOf(signed, st.seating, fid, ep, judgedHex); Object.defineProperty(st.seating, 'proof', { value: proof, enumerable: false, configurable: true }); gatewaySeatings.set(`${fid}:${ep}`, st.seating); keepSeating('standing', fid, ep, { ...st.seating, proof }); console.log(`[gateways] ${fid.slice(0, 12)} epoch ${ep}: seating stands, ${st.seating.seats.length} seat(s), ${st.signers} signer(s)`); }
       }
       for (const m of [gatewaySeatings, ownSeatings]) for (const k of [...m.keys()]) if (Number(k.split(':')[1]) < epoch - 6) m.delete(k);
       try { round.db.prepare('DELETE FROM gateway_seatings WHERE epoch < ?').run(epoch - 6); } catch { /* the next pass */ }
@@ -8669,8 +8690,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         }
         // THE EPOCHS A ROUND STILL NAMES, NOT ONLY THIS ONE (kanban #803, measured 2026-11-01: a seat restarted after an epoch's boundary held no seating of the epoch before,
         // so it left the providers out of a round's fee table, built other settlement bytes than the seats that held it, and paid rounds in that federation never settled)
+        // as the gateway seating (kanban #3149, #3158, #3163): each signature checked on its own, one per guardian, the proof kept in the row
+        const oneSig = (x, ep) => { const one = standingLiquiditySeating({ signed: [x], federationId: fid, epoch: ep, seated: seatedHex, threshold: 1, verify: schnorrVerify }); return one.ok ? JSON.stringify(one.seating) : null; };
+        const proofOf = (signed, seating, ep) => { const want = JSON.stringify(seating), seen = new Set(), out = [];
+          for (const x of signed) { const g = x && String(x.guardian).toLowerCase(); if (!g || seen.has(g) || oneSig(x, ep) !== want) continue; seen.add(g); out.push(x); }
+          return out; };
         for (let ep = epoch; ep >= epoch - 3; ep--) {
-          if (liquiditySeatings.get(`${fid}:${ep}`)?.providers?.length) continue;   // an empty one is read again: it may be the seats that did not answer
+          const held = liquiditySeatings.get(`${fid}:${ep}`)?.providers?.length ? liquiditySeatings.get(`${fid}:${ep}`) : null;
+          if (held && Array.isArray(held.proof) && held.proof.length) continue;   // an empty one is read again: it may be the seats that did not answer; one held without its proof too
           const signed = ownLiquiditySeatings.has(`${fid}:${ep}`) ? [ownLiquiditySeatings.get(`${fid}:${ep}`)] : [];
           for (const node of seatedHex) {
             if (node === me) continue;
@@ -8682,14 +8709,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           // signature to S1 only; S1 held the list standing, S2 none - two fee tables for every paid round of that epoch): as the gateway seating
           for (const e of st.ok && st.seating.providers.length ? [] : entries) {
             const node = toHex(e.pubkey);
-            if (node === me || seatedHex.includes(node)) continue;
+            if (node === me) continue;   // seated guardians asked too (kanban #3149)
             const ep2 = endpointOf(node); const got = ep2 && await getJson(`${ep2}/liquidity-seating?federation=${fid}&epoch=${ep}&standing=1`);
             if (!got) continue;
-            signed.push(...(Array.isArray(got) ? got : [got]).slice(0, seatedHex.length));
+            const have = new Set(signed.map((x) => x && `${String(x.guardian).toLowerCase()}|${oneSig(x, ep)}`));   // kanban #3163: checked before any cut
+            for (const x of (Array.isArray(got) ? got : [got]).slice(0, 4 * seatedHex.length)) {
+              const b = x && oneSig(x, ep); const k = b && `${String(x.guardian).toLowerCase()}|${b}`;
+              if (k && !have.has(k)) { have.add(k); signed.push(x); }
+            }
             st = standingLiquiditySeating({ signed, federationId: fid, epoch: ep, seated: seatedHex, threshold: rec.record.threshold, verify: schnorrVerify });
             if (st.ok && st.seating.providers.length) break;
           }
-          if (st.ok && st.seating.providers.length) { Object.defineProperty(st.seating, 'proof', { value: signed.filter((x) => x && seatedHex.includes(String(x.guardian).toLowerCase())).slice(0, 2 * seatedHex.length), enumerable: false }); liquiditySeatings.set(`${fid}:${ep}`, st.seating); keepSeating('liquidity', fid, ep, st.seating); liquiditySaid(fid, ep, `stands: ${st.signers} of ${seatedHex.length} seated guardians signed`, 'stands'); }
+          if (st.ok && st.seating.providers.length && held) {
+            if (JSON.stringify(st.seating) === JSON.stringify(held)) { const proof = proofOf(signed, held, ep); Object.defineProperty(held, 'proof', { value: proof, enumerable: false, configurable: true }); keepSeating('liquidity', fid, ep, { ...held, proof }); }
+          } else if (st.ok && st.seating.providers.length) { const proof = proofOf(signed, st.seating, ep); Object.defineProperty(st.seating, 'proof', { value: proof, enumerable: false, configurable: true }); liquiditySeatings.set(`${fid}:${ep}`, st.seating); keepSeating('liquidity', fid, ep, { ...st.seating, proof }); liquiditySaid(fid, ep, `stands: ${st.signers} of ${seatedHex.length} seated guardians signed`, 'stands'); }
         }
         for (const k of [...liquiditySeatings.keys()]) if (Number(k.split(':')[1]) < epoch - 6) liquiditySeatings.delete(k);
         for (const k of [...ownLiquiditySeatings.keys()]) if (Number(k.split(':')[1]) < epoch - 6) ownLiquiditySeatings.delete(k);
