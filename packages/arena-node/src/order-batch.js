@@ -909,8 +909,14 @@ export class OrderBook {
     const declines = body.declines || [];
     if (declines.length > m.seats.length) return refuse(`that void carries ${declines.length} declines and the round has ${m.seats.length} seats`, 400);
     const ok = new Set(), tried = new Set();
+    // K'S LEADER'S DECLINE IS NEVER COUNTED (kanban #3058, audit entry r4-2-1): measured, the leader signed a set, had it certified at 5 of 7
+    // seats, then signed a decline of k itself and with two ABSENT seats' declines voided k at three other honest seats: CERTIFIED x3 and
+    // VOID x3, for good, no book any 5 seats share. A leader always signed the set it handed out (#askStands needs its leaderSig), so its
+    // decline is a contradiction, not a seat that cannot sign; without it a void's decliners meet every certificate quorum in an honest seat.
+    const leaderHex = toHex(this.leaderOf(m.contract, k)).toLowerCase();
     for (const d of declines) {
       if (!d || !isHex(d.seat, 32) || !isHex(d.signature, 64) || !m.seats.includes(d.seat) || ok.has(d.seat)) continue;
+      if (String(d.seat).toLowerCase() === leaderHex) continue;
       const pair = `${d.seat}:${d.signature}`;
       if (tried.has(pair)) continue;
       tried.add(pair);
