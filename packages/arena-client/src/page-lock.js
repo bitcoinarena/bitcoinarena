@@ -1334,7 +1334,8 @@ export function recordDonation(storage, federationId, { msat, round, txid = null
 /** WHAT CAME IN TO THIS PLAYER'S KEY, a history row once collected (kanban #681): 'referral' - 10 % of the nodes' fee on an entry its
  *  referral link brought, `round` the round that paid it - or 'zap-in', a zap from another player. `outpoint` is the payout collected. */
 export function recordReceived(storage, federationId, { kind, msat, round = null, outpoint = null }) {
-  if (kind !== 'referral' && kind !== 'zap-in') return;
+  // 'returned' (kanban #3087, feedback #368): sat the wallet fetched back from the federation (Rescan's reissue, a lost deposit found and claimed)
+  if (kind !== 'referral' && kind !== 'zap-in' && kind !== 'returned') return;
   // kanban #2319: one row per collected outpoint (content id 'zap-<outpoint>'): two tabs, or a pass that books what an unfinished one began, write it once
   ledgerAppend(storage, federationId, { kind, msat: String(msat), round: round ? String(round) : null, ...(outpoint ? { outpoint: String(outpoint) } : {}) }, outpoint ? `zap-${outpoint}` : null);
 }
