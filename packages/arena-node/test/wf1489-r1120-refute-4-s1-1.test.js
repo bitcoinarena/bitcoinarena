@@ -44,7 +44,9 @@ test('#1489 r1120-4 (a): a node seated on 3 market rounds whose attestors were d
 });
 
 test('#1489 r1120-4 (b): a node that attested a market round (its signature in the kept attestation) but is not on its committee is never counted', async () => {
-  const held = [{ roundId: rid(1), committee: [SEAT1K, W1K, W2K, 'dd'.repeat(32)], finals: [], attestations: [att(rid(1), [SECRET, ...ATTESTORS.slice(0, 4)])] }];
+  // KANBAN #3120: the trusted seat lists the drawn attestors (roster.attestorsFor) - with no drawn list no signature counts (fail closed)
+  const drawn = [NODE, ...ATTESTORS.map((s) => toHex(schnorr.getPublicKey(s)))];
+  const held = [{ roundId: rid(1), committee: [SEAT1K, W1K, W2K, 'dd'.repeat(32)], finals: [], attestors: drawn, attestations: [att(rid(1), [SECRET, ...ATTESTORS.slice(0, 4)])] }];
   const r = await run(held);
   console.log('  MEASURED r1120-4 (b):', c(r, 'committees').says, c(r, 'census').says);
   assert.equal(c(r, 'committees').ok, true, `the node's own attestation of a market round counts for nothing: ${c(r, 'committees').says}`);

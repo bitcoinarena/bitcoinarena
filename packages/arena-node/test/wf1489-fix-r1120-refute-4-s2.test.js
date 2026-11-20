@@ -31,7 +31,9 @@ const run = (trustedLists) => nodeBountyCheck({ census: CENSUS, censusSeats: ['h
     if (!url.includes('/served') || dayOf(url) !== 1) return { held: [] };
     const i = DU.findIndex((s) => url.startsWith(s));
     if (i >= 0) return { node: DK[i], held: [{ roundId: RID, committee: COMMITTEE, finals: [], attestors: DRAWN, attestations: [standing] }] };
-    if (url.startsWith('https://seat1.example')) return { held: [{ roundId: RID, committee: COMMITTEE, finals: [], ...(trustedLists ? { attestors: DRAWN } : {}), attestations: [] }] };
+    // KANBAN #3118-#3121: the trusted seat holds the standing attestation it lists the market round for (a real /served lists a market round
+    // only from the attestations it keeps) - the node's signature is read from that copy, the drawn attestors only confirm the round
+    if (url.startsWith('https://seat1.example')) return { held: [{ roundId: RID, committee: COMMITTEE, finals: [], ...(trustedLists ? { attestors: DRAWN } : {}), attestations: [standing] }] };
     return { held: [] };
   } });
 const says = (r) => r.checks.find((x) => x.key === 'committees').says;

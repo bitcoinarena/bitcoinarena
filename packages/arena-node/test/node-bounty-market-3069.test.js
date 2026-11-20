@@ -23,7 +23,8 @@ const seats = ['https://seat1.example', 'https://node.example', ...W];
 const fake = (signer) => async (url) => {
   if (url.endsWith('/owner')) return { node: NODE, claimed: false };
   const from = Number(new URL(url).searchParams.get('from')), d = Math.round((Math.floor(NOW / DAY) * DAY - from) / DAY);
-  return { held: d === 2 ? [{ roundId: rid(d), committee: [NODE, SEAT1K, W1K, W2K], finals: [], attestations: [att(d, signer)] }] : [] };
+  // KANBAN #3120: the seats list the round's drawn attestors (roster.attestorsFor) - with no drawn list no attestation signature counts (fail closed)
+  return { held: d === 2 ? [{ roundId: rid(d), committee: [NODE, SEAT1K, W1K, W2K], finals: [], attestors: [NODE], attestations: [att(d, signer)] }] : [] };
 };
 
 test('#3069: a market round the node attested counts as a signed committee round; another key\'s attestation does not', async () => {
