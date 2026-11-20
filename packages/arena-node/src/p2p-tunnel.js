@@ -95,14 +95,32 @@ export function guardianApiOverrides({ apiEndpoints, ownName = null, seatRoot, o
 }
 
 /** The relay: a websocket the seat accepted on /guardian-api/<name>, its messages carried both ways to `<root>/guardian`. */
-export function carryApi(ws, root, { openWs = (url) => new WebSocket(url, { maxPayload: 64 * 1024 * 1024 }), keepAliveMs = P2P_KEEPALIVE_MS, path = '/guardian' } = {}) {
+// BOUNDED WHILE THE GUARDIAN IS DIALLED, AND EITHER WAY ONCE IT IS OPEN (kanban #3062, audit gossip r4-3-1; a gap in #2075): measured, a
+// census node whose endpoint takes TCP and never answers the upgrade left `up` CONNECTING for good (ws has no handshake timeout), and a
+// stranger's whole messages went into `held` without limit - 48 MiB on one connection, still open after 1.5 s; #2075's budget counts only
+// unfinished messages. Now: the dial has a deadline (RELAY_OPEN_MS), `held` at most RELAY_HELD_BYTES, and a side whose peer does not read
+// (bufferedAmount past RELAY_BUFFERED_BYTES) ends the relay - a guardian's API message is far below each.
+export const RELAY_OPEN_MS = 15000;
+export const RELAY_HELD_BYTES = 8 * 1024 * 1024;
+export const RELAY_BUFFERED_BYTES = 64 * 1024 * 1024;
+export function carryApi(ws, root, { openWs = (url) => new WebSocket(url, { maxPayload: 64 * 1024 * 1024, handshakeTimeout: RELAY_OPEN_MS }), keepAliveMs = P2P_KEEPALIVE_MS, path = '/guardian',
+  openMs = RELAY_OPEN_MS, heldBytes = RELAY_HELD_BYTES, bufferedBytes = RELAY_BUFFERED_BYTES } = {}) {
   const up = openWs(`${root}${path}`);
   const held = [];
+  let heldSize = 0;
   const stopDown = keepAlive(ws, keepAliveMs);
-  const done = () => { stopDown(); try { up.close(); } catch { /* gone */ } try { ws.close(); } catch { /* gone */ } };
-  ws.on('message', (m, binary) => { if (up.readyState === 1) up.send(m, { binary }); else held.push([m, binary]); });
-  up.on('open', () => { keepAlive(up, keepAliveMs); for (const [m, binary] of held.splice(0)) up.send(m, { binary }); });
-  up.on('message', (m, binary) => { if (ws.readyState === 1) ws.send(m, { binary }); });
+  let opening = setTimeout(() => done(), openMs);
+  if (opening.unref) opening.unref();
+  const done = () => { if (opening) { clearTimeout(opening); opening = null; } stopDown(); try { up.close(); } catch { /* gone */ } try { ws.close(); } catch { /* gone */ } };
+  const sizeOf = (m) => (m && typeof m.length === 'number' ? m.length : Array.isArray(m) ? m.reduce((n, b) => n + b.length, 0) : 0);
+  ws.on('message', (m, binary) => {
+    if (up.readyState === 1) { if ((up.bufferedAmount || 0) > bufferedBytes) { done(); return; } up.send(m, { binary }); return; }
+    heldSize += sizeOf(m);
+    if (heldSize > heldBytes) { done(); return; }
+    held.push([m, binary]);
+  });
+  up.on('open', () => { if (opening) { clearTimeout(opening); opening = null; } keepAlive(up, keepAliveMs); for (const [m, binary] of held.splice(0)) up.send(m, { binary }); heldSize = 0; });
+  up.on('message', (m, binary) => { if (ws.readyState !== 1) return; if ((ws.bufferedAmount || 0) > bufferedBytes) { done(); return; } ws.send(m, { binary }); });
   up.on('close', done); up.on('error', done); ws.on('close', done); ws.on('error', done);
   return { close: done };
 }
@@ -119,7 +137,7 @@ export const tunnelRoot = (endpoint) => TUNNEL_HOSTS.reduce((u, [from, to]) => u
  * once in a while with the newest census entries - it opens a listener for a node that came in, points an open one at
  * a node's new endpoint, and closes one whose node left. `state()` what each port serves.
  */
-export function createP2pTunnels({ ownKey, host = '127.0.0.1', say = () => {}, openWs = (url) => new WebSocket(url, { maxPayload: 64 * 1024 * 1024 }),
+export function createP2pTunnels({ ownKey, host = '127.0.0.1', say = () => {}, openWs = (url) => new WebSocket(url, { maxPayload: 64 * 1024 * 1024, handshakeTimeout: RELAY_OPEN_MS }),   // kanban #3062: a dial has a deadline
   listen = createServer, keepAliveMs = P2P_KEEPALIVE_MS }) {
   const own = hexOf(ownKey);
   const ports = new Map();   // port -> { key, slot, root, server, state: 'listening' | 'shared' | 'opening', connections }
