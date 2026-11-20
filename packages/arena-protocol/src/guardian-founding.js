@@ -118,12 +118,17 @@ export function drawGuardians({ entries, seed, height, nominal, bondMinGuardian,
     if (candidateVersion !== null && !(a.protocolVersions || []).includes(candidateVersion)) continue;
     if (firstSeasonEnds !== null && !(Number.isInteger(a.bondMaturityHeight) && a.bondMaturityHeight > firstSeasonEnds)) continue;
     const op = String(a.operatorId || toHex(e.pubkey));
-    if (guardingOpen.has(op) || firstOps.has(op) || firstNodes.has(toHex(e.pubkey))) continue;
+    if (guardingOpen.has(op) || guardingOpen.has(toHex(e.pubkey)) || firstOps.has(op) || firstNodes.has(toHex(e.pubkey))) continue;
     nodeSats.set(nodeKey(op, e), (nodeSats.get(nodeKey(op, e)) || 0n) + BigInt(e.bondSats));
+    // THE OPERATOR'S SEAT GOES TO A NODE THAT HOLDS bond_min_guardian ITSELF (kanban #3031, audit census r3-1, measured 2026-11-19: the
+    // operator id is self-declared, so a stranger's node at the census minimum naming an honest operator's id with a ground-low bond
+    // outpoint became that operator's entry and was seated on its ticket and summed bond). Of an operator's nodes, the one with the
+    // lowest outpoint among those holding bond_min_guardian on their own stands; only when none does, the lowest of all (as before).
+    const own = BigInt(e.bondSats) >= bondMinGuardian;
     const had = byOp.get(op);
-    if (!had) { byOp.set(op, { entry: e, bondSats: BigInt(e.bondSats) }); continue; }
+    if (!had) { byOp.set(op, { entry: e, bondSats: BigInt(e.bondSats), own }); continue; }
     had.bondSats += BigInt(e.bondSats);
-    if (outpointOrder(e, had.entry) < 0) had.entry = e;
+    if ((own && !had.own) || (own === had.own && outpointOrder(e, had.entry) < 0)) { had.entry = e; had.own = own; }
   }
   const pool = [...byOp].filter(([, x]) => x.bondSats >= bondMinGuardian).map(([op, x]) => ({ ...x, op }));
   const missing = nominal - first.length;

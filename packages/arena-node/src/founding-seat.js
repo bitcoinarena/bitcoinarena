@@ -131,10 +131,19 @@ export function guardingOpenOf({ entries = [], held = [], except = null }) {
   // ONLY A NODE WITH A FREE SLOT (kanban #599): one that advertises its guardian-next (holdsBack)
   const full = new Set((held || []).filter((r) => r && typeof r.load === 'number' && r.load >= OVERLOADED).map((r) => lower(r.federation)));
   const status = new Map((held || []).filter(Boolean).map((r) => [lower(r.federation), full.has(lower(r.federation)) ? 'OVERLOADED' : r.status]));
+  // A CLAIM HOLDS BACK ITS OWN NODE, NOT A STRANGER'S OPERATOR (kanban #3031, audit census r3-1, measured 2026-11-19: a stranger's node
+  // whose advert named an honest operator's id and a federation no seat holds put that operator in this set, so it left the free pool of
+  // every founding and cohort count). The operator id is self-declared, so: a claim on a federation this seat holds a record of counts
+  // for the operator only when the record seats that node; a claim on one no seat holds holds back only the claiming node (its key in
+  // the set - the draw leaves out an entry whose key or operator is in it).
+  const records = new Map((held || []).filter((r) => r && r.record && Array.isArray(r.record.guardians)).map((r) => [lower(r.federation), r.record]));
   const ops = new Set();
   for (const e of entries || []) for (const g of (e && e.advert && e.advert.guardianOf) || []) {
-    const f = toHex(g.federationId);
-    if (f !== lower(except) && holdsBack(e, status.get(f))) ops.add(opOf(e));   // a draining one frees its guardians
+    const f = toHex(g.federationId), st = status.get(f);
+    if (f === lower(except) || !holdsBack(e, st)) continue;   // a draining one frees its guardians
+    const node = toHex(e.pubkey), rec = records.get(f);
+    if (st === undefined) ops.add(node);
+    else if (!rec || rec.guardians.some((x) => x && x.nodePubkey && toHex(x.nodePubkey) === node)) ops.add(opOf(e));
   }
   return ops;
 }
@@ -311,17 +320,18 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
       const ops = new Set(), bonds = new Map(), named = new Set();
       const version = candidateVersionAt(h);
       const speaks = (e) => version === null || ((e.advert && e.advert.protocolVersions) || []).includes(version);
+      // THE COHORT (protocol 2026.0.14): the same operators, held to bond_min_guardian, minus those guarding an OPEN federation
+      const guarding = guardingOpen ? guardingOpen({ entries, records: held, except: null }) : guardingOpenOf({ entries, held });
       for (const e of entries) {
         for (const g of (e && e.advert && e.advert.guardianOf) || []) named.add(toHex(g.federationId));
         const a = e && e.advert; if (!(a && a.guardianCapable === true && a.guardianEndpoint) || !speaks(e)) continue;
+        if (guarding.has(toHex(e.pubkey))) continue;   // kanban #3031: a node held back by its own claim adds nothing to its operator (as in the draw)
         const op = String(a.operatorId || toHex(e.pubkey)); ops.add(op); bonds.set(op, (bonds.get(op) || 0n) + BigInt(e.bondSats || 0));
       }
-      // THE COHORT (protocol 2026.0.14): the same operators, held to bond_min_guardian, minus those guarding an OPEN federation
-      const guarding = guardingOpen ? guardingOpen({ entries, records: held, except: null }) : guardingOpenOf({ entries, held });
       const freeOps = new Set([...bonds].filter(([op, sats]) => sats >= bondMinGuardian && !guarding.has(op)).map(([op]) => op));
       // and WHICH nodes those free operators run (kanban #585: the health page names the nodes the cohort counts, not only how many)
       const freeNodes = entries.filter((e) => e && e.advert && e.advert.guardianCapable === true && e.advert.guardianEndpoint && speaks(e)
-        && freeOps.has(String(e.advert.operatorId || toHex(e.pubkey)))).map((e) => toHex(e.pubkey));
+        && !guarding.has(toHex(e.pubkey)) && freeOps.has(String(e.advert.operatorId || toHex(e.pubkey)))).map((e) => toHex(e.pubkey));
       // THIS NODE: its operator, free or not, and if not, which of its operator's nodes guard what
       const own = entries.find((e) => e && toHex(e.pubkey) === toHex(ownKey));
       const ownOp = own && own.advert ? String(own.advert.operatorId || toHex(own.pubkey)) : null;
