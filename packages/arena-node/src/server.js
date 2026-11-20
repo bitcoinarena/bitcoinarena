@@ -8596,9 +8596,25 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             if (r.status === 200) signed.push(await r.json());
           } catch { /* that guardian's signature is missing this time */ }
         }
-        if (!signed.length) continue;
-        const st = standingSeating({ signed, federationId: fid, epoch: ep, seated: judgedHex, threshold: judged.record.threshold, verify: schnorrVerify });
-        if (st.ok) { gatewaySeatings.set(`${fid}:${ep}`, st.seating); keepSeating('standing', fid, ep, st.seating); console.log(`[gateways] ${fid.slice(0, 12)} epoch ${ep}: seating stands, ${st.seating.seats.length} seat(s), ${st.signers} signer(s)`); }
+        let st = standingSeating({ signed, federationId: fid, epoch: ep, seated: judgedHex, threshold: judged.record.threshold, verify: schnorrVerify });
+        // THE STANDING SEATING TRAVELS WITH ITS SIGNATURES (kanban #3020, audit gossip r2-1, measured 2026-11-19: one seated guardian served its
+        // signature to seat S1 only, at threshold - 1 honest signatures on one body; S1 held it standing, S2 none, on every pass - two fee tables
+        // for every paid round of that epoch). A seat that holds a standing seating serves the guardians' signatures it stands on
+        // (?standing=1); a seat whose own reads do not reach the threshold asks the other census seats for theirs and checks them as its own.
+        for (const e of st.ok ? [] : entries) {
+          const node = toHex(e.pubkey);
+          if (node === toHex(round.pubkey) || judgedHex.includes(node) || seatedHex.includes(node) || !e.advert || !e.advert.endpoint) continue;
+          try {
+            const peerAt = addressBook.endpointOf(e); if (!peerAt) continue;
+            const r = await fetch(`${String(peerAt).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '')}/gateway-seating?federation=${fid}&epoch=${ep}&standing=1`, { signal: AbortSignal.timeout(10000) });
+            if (r.status !== 200) continue;
+            const got = await jsonUpTo(r, PEER_LISTING_BYTES);
+            signed.push(...(Array.isArray(got) ? got : [got]).slice(0, judgedHex.length));
+          } catch { continue; }
+          st = standingSeating({ signed, federationId: fid, epoch: ep, seated: judgedHex, threshold: judged.record.threshold, verify: schnorrVerify });
+          if (st.ok) break;
+        }
+        if (st.ok) { Object.defineProperty(st.seating, 'proof', { value: signed.filter((x) => x && judgedHex.includes(String(x.guardian).toLowerCase())).slice(0, 2 * judgedHex.length), enumerable: false }); gatewaySeatings.set(`${fid}:${ep}`, st.seating); keepSeating('standing', fid, ep, st.seating); console.log(`[gateways] ${fid.slice(0, 12)} epoch ${ep}: seating stands, ${st.seating.seats.length} seat(s), ${st.signers} signer(s)`); }
       }
       for (const m of [gatewaySeatings, ownSeatings]) for (const k of [...m.keys()]) if (Number(k.split(':')[1]) < epoch - 6) m.delete(k);
       try { round.db.prepare('DELETE FROM gateway_seatings WHERE epoch < ?').run(epoch - 6); } catch { /* the next pass */ }
@@ -8647,8 +8663,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             const ep2 = endpointOf(node); const s = ep2 && await getJson(`${ep2}/liquidity-seating?federation=${fid}&epoch=${ep}`);
             if (s) signed.push(s);
           }
-          const st = standingLiquiditySeating({ signed, federationId: fid, epoch: ep, seated: seatedHex, threshold: rec.record.threshold, verify: schnorrVerify });
-          if (st.ok && st.seating.providers.length) { liquiditySeatings.set(`${fid}:${ep}`, st.seating); keepSeating('liquidity', fid, ep, st.seating); liquiditySaid(fid, ep, `stands: ${st.signers} of ${seatedHex.length} seated guardians signed`, 'stands'); }
+          let st = standingLiquiditySeating({ signed, federationId: fid, epoch: ep, seated: seatedHex, threshold: rec.record.threshold, verify: schnorrVerify });
+          // THE STANDING LIST TRAVELS WITH ITS SIGNATURES (kanban #2992, audit gossip r2-1, measured 2026-11-18: one seated guardian served its
+          // signature to S1 only; S1 held the list standing, S2 none - two fee tables for every paid round of that epoch): as the gateway seating
+          for (const e of st.ok && st.seating.providers.length ? [] : entries) {
+            const node = toHex(e.pubkey);
+            if (node === me || seatedHex.includes(node)) continue;
+            const ep2 = endpointOf(node); const got = ep2 && await getJson(`${ep2}/liquidity-seating?federation=${fid}&epoch=${ep}&standing=1`);
+            if (!got) continue;
+            signed.push(...(Array.isArray(got) ? got : [got]).slice(0, seatedHex.length));
+            st = standingLiquiditySeating({ signed, federationId: fid, epoch: ep, seated: seatedHex, threshold: rec.record.threshold, verify: schnorrVerify });
+            if (st.ok && st.seating.providers.length) break;
+          }
+          if (st.ok && st.seating.providers.length) { Object.defineProperty(st.seating, 'proof', { value: signed.filter((x) => x && seatedHex.includes(String(x.guardian).toLowerCase())).slice(0, 2 * seatedHex.length), enumerable: false }); liquiditySeatings.set(`${fid}:${ep}`, st.seating); keepSeating('liquidity', fid, ep, st.seating); liquiditySaid(fid, ep, `stands: ${st.signers} of ${seatedHex.length} seated guardians signed`, 'stands'); }
         }
         for (const k of [...liquiditySeatings.keys()]) if (Number(k.split(':')[1]) < epoch - 6) liquiditySeatings.delete(k);
         for (const k of [...ownLiquiditySeatings.keys()]) if (Number(k.split(':')[1]) < epoch - 6) ownLiquiditySeatings.delete(k);
@@ -9820,10 +9847,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       if (req.method === 'GET' && url.pathname === '/liquidity-seating') {
         const k = `${String(url.searchParams.get('federation') || '').toLowerCase()}:${Number(url.searchParams.get('epoch'))}`;
+        if (url.searchParams.get('standing') === '1') {   // kanban #2992: the guardians' signatures the standing liquidity seating held here stands on
+          const st = liquiditySeatings.get(k);
+          return st && st.proof ? claimJson(200, st.proof) : claimJson(404, { ok: false, why: 'this seat holds no standing liquidity seating with its signatures for that federation and epoch' });
+        }
         return ownLiquiditySeatings.has(k) ? claimJson(200, ownLiquiditySeatings.get(k)) : claimJson(404, { ok: false, why: 'this guardian signed no liquidity seating for that federation and epoch' });
       }
       if (req.method === 'GET' && url.pathname === '/gateway-seating') {
         const k = `${String(url.searchParams.get('federation') || '').toLowerCase()}:${Number(url.searchParams.get('epoch'))}`;
+        if (url.searchParams.get('standing') === '1') {   // kanban #3020: the guardians' signatures the standing seating held here stands on
+          const st = gatewaySeatings.get(k);
+          return st && st.proof ? claimJson(200, st.proof) : claimJson(404, { ok: false, why: 'this seat holds no standing seating with its signatures for that federation and epoch' });
+        }
         return ownSeatings.has(k) ? claimJson(200, ownSeatings.get(k)) : claimJson(404, { ok: false, why: 'this guardian signed no seating for that federation and epoch' });
       }
       if (req.method === 'GET' && url.pathname === '/gateway-seats') {
