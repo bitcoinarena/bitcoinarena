@@ -2739,6 +2739,21 @@ export class Round {
     return [...byRound.values()];
   }
 
+  /**
+   * EVERY OUTCOME ATTESTATION KEPT BETWEEN TWO TIMES, by round (kanban #3069): a market round settles on an attested outcome and never gets a
+   * FINAL, so the node bounty check reads its committee's service from these. -> [{ roundId, attestations: [bytes] }]
+   */
+  attestationsBetween(fromMs, toMs) {
+    const byRound = new Map();
+    for (const r of this.db.prepare('SELECT round_id, bytes FROM outcome_attestations WHERE received_ms >= ? AND received_ms < ? ORDER BY round_id')
+      .all(Number(fromMs), Number(toMs))) {
+      const k = toHex(r.round_id);
+      if (!byRound.has(k)) byRound.set(k, { roundId: new Uint8Array(r.round_id), attestations: [] });
+      byRound.get(k).attestations.push(new Uint8Array(r.bytes));
+    }
+    return [...byRound.values()];
+  }
+
   /** The FINAL signatures refused for their time (§13A rule 3), as evidence. */
   finalSigEvidence(roundIdBytes, entryIdBytes) {
     return this.db.prepare('SELECT signer_pubkey, bytes, seen_ms, why FROM final_sig_evidence WHERE round_id = ? AND entry_id = ? ORDER BY seen_ms')
