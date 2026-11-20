@@ -434,13 +434,17 @@ if (url) {
       // the old block's hash it was answered for three days once the chain went back to it. The census height is read again, and the
       // view's own block there must be the key's block (the one the cache holds under that hash; a view the index served names its
       // top hash, censusBlocks); otherwise nothing is kept: read again
+      // A FAILED READ IS NOT A REORG (kanban #3084, feedback #364): the census height's hash is asked up to twice; a read that still fails says so
+      let tipHash = null, readWhy = null;
+      if (census.ok) for (let tries = 0; tries < 2 && tipHash === null; tries++) { try { tipHash = String(await call('getblockhash', [height])); } catch (e) { readWhy = String((e && e.message) || e).slice(0, 160); } }
+      if (census.ok && tipHash === null) return { ok: false, why: `the census height's block hash could not be read (${readWhy}): read again` };
       if (census.ok) {
         let same = false;
         try {
           const atHeight = viewRead && viewRead.blocks ? viewRead.blocks[height - viewRead.firstHeight] : undefined;
           const keptBlock = blocksKept.get(hash);
           const viewsBlock = viewRead && typeof viewRead.topHash === 'string' ? viewRead.topHash === hash : (keptBlock === undefined || keptBlock === atHeight);
-          same = String(await call('getblockhash', [height])) === hash && atHeight !== undefined && viewsBlock;
+          same = tipHash === hash && atHeight !== undefined && viewsBlock;
         } catch { same = false; }
         if (!same) return { ok: false, why: 'the chain reorganised during this census read: read again' };
       }

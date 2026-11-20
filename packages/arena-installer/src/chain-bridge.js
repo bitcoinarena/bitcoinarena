@@ -251,6 +251,9 @@ export function createBridge({ electrum, fallbacks = [], home, esplora = ESPLORA
       res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(out));
     });
   });
+  // KANBAN #3084 (feedback #364): Node's 5 s keep-alive closed the seat's pooled connection between the census walk's reads, and the next
+  // call on it failed; the seat keeps its connections longer than that, so the bridge does too
+  server.keepAliveTimeout = 65000; server.headersTimeout = 66000;
   return {
     call, cookiePath,
     listen: (port) => new Promise((ok) => server.listen(port, '127.0.0.1', () => ok(server.address().port))),
