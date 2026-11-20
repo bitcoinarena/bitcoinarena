@@ -2856,7 +2856,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     // `feed: false` (or no door, or no answer within 3 polls) and the held price is applied as before. Every core this page
     // carries is wrapped once, so the round's core is too (ARENA_USE_CORE).
     (function () {
-      var P = window.ARENA_PRICES = { round: null, nodes: [], samples: new Map(), tape: null, tapeDone: false, active: false, applied: [], timer: null,
+      var P = window.ARENA_PRICES = { round: null, nodes: [], samples: new Map(), open: new Set(), tape: null, tapeDone: false, active: false, applied: [], timer: null,
         heard: true, feed: false, held: {}, misses: 0 };
       function hex2u8(h) { return Uint8Array.from((String(h).match(/../g) || []).map(function (x) { return parseInt(x, 16); })); }
       function sigsOf(list) { return (list || []).map(function (s) { return [hex2u8(s.key), hex2u8(s.signature)]; }); }
@@ -2909,6 +2909,10 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       async function poll() {
         if (!P.round) return;
         var since = 0; P.samples.forEach(function (v, k) { if (k >= since) since = k + 1; });
+        // NO TICK SKIPPED WHILE IT CAN STILL PLAY (kanban #3197, #3206, #3211): a tick the seats voted on but the page could not build
+        // yet is asked again from it, as long as the player's core has not passed it (a sample plays only at its own tick)
+        var cl = netClient(), at = cl ? (cl.offered | 0) : 0;
+        (P.open || new Set()).forEach(function (k) { if (k >= at && k < since && !P.samples.has(k)) since = k; });
         var need = Math.min(2, P.nodes.length);
         var said = await Promise.all(P.nodes.map(async function (n) {
           try {
@@ -2944,7 +2948,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         function isPrices(ps) { return Array.isArray(ps) && ps.length === 64 && ps.every(isCents); }
         function isHex(h, n) { return typeof h === 'string' && h.length === n && /^[0-9a-fA-F]+$/.test(h); }
         function median(vs) { var s = vs.slice().sort(function (a, b) { return a - b; }); return s[Math.floor((s.length - 1) / 2)]; }
-        // the readings (or legacy sigs) the agreeing seats serve, merged key by key; null when no reading of a key wins its vote
+        // the legacy sigs the agreeing seats serve, merged key by key (no median to hold them to; the readings are kept whole, setOf); null when no sig of a key wins its vote
         function mergeOf(list, field, tape) {
           var byKey = new Map(), order = [];
           list.forEach(function (x) {
@@ -2968,16 +2972,44 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           kept = kept.slice(0, MAX_SIGS).map(function (v) { return v.r; }).sort(function (a, b) { return a.key < b.key ? -1 : 1; });
           return kept.length ? kept : null;
         }
+        // WHOLE SETS, NOT A UNION OF PER-KEY WINNERS (kanban #3197, #3206, #3211, refute of #3153/#3159/#3165, measured 2026-11-21):
+        // merging the readings key by key broke two ways - one committee seat that signs its own reading twice (same cents, two valid
+        // signatures) and posts one copy to each half of the honest seats tied its key, the key was dropped, the readings left had
+        // another median and the tick (or the opening tape) was lost for good; and honest seats with DIFFERENT late readings (k6 late
+        // at some, k5 at others) each served a set that stands while the union of them had another median. Now the kept readings are
+        // ONE agreeing seat's whole set (valid entries, one a key, at most MAX_ATTEST_SIGS) whose median IS the voted price (each of the
+        // tape's 64 positions): the set most agreeing seats serve byte for byte, then the one whose readings the agreeing seats serve
+        // most often (so one seat's junk copies lose to the readings the others hold), then the lowest bytes - never none while one stands.
+        function setOf(list, price, tape) {
+          var cands = new Map(), seen = new Map();
+          list.forEach(function (x) {
+            var mine = new Map();
+            (Array.isArray(x.readings) ? x.readings : []).forEach(function (r) {
+              if (!r || !isHex(r.key, 64) || !isHex(r.signature, 128) || !(tape ? isPrices(r.prices) : isCents(r.priceCents))) return;
+              var k = r.key.toLowerCase(); if (mine.has(k)) return;
+              var c = { key: k, signature: r.signature.toLowerCase() }; if (tape) c.prices = r.prices.slice(); else c.priceCents = r.priceCents;
+              mine.set(k, c);
+            });
+            var rs = Array.from(mine.values()).sort(function (a, b) { return a.key < b.key ? -1 : 1; });
+            rs.forEach(function (c) { var vk = JSON.stringify(c); seen.set(vk, (seen.get(vk) || 0) + 1); });
+            if (!rs.length || rs.length > MAX_SIGS) return;
+            if (!(tape ? price.every(function (p, i) { return median(rs.map(function (r) { return r.prices[i]; })) === p; })
+              : median(rs.map(function (r) { return r.priceCents; })) === price)) return;
+            var sk = JSON.stringify(rs), v = cands.get(sk) || { n: 0, rs: rs, sk: sk }; v.n++; cands.set(sk, v);
+          });
+          var best = null;
+          cands.forEach(function (v) {
+            v.w = v.rs.reduce(function (a, c) { return a + (seen.get(JSON.stringify(c)) || 0); }, 0);
+            if (!best || v.n > best.n || (v.n === best.n && (v.w > best.w || (v.w === best.w && v.sk < best.sk)))) best = v;
+          });
+          return best ? best.rs : null;
+        }
         // the sample (tape) built from the voted price and the merged readings, or null when it cannot stand
         // protocol 5 plays the readings (the client takes them over the sigs); a seat serving the legacy sigs has them merged the same way
         function built(list, price, tape) {
           var out = tape ? { prices: price.slice() } : { priceCents: price };
           var withR = list.filter(function (x) { return Array.isArray(x.readings); }), withS = list.filter(function (x) { return Array.isArray(x.sigs); });
-          if (withR.length) {
-            var rs = mergeOf(withR, 'readings', tape);
-            if (rs && (tape ? price.every(function (p, i) { return median(rs.map(function (r) { return r.prices[i]; })) === p; })
-              : median(rs.map(function (r) { return r.priceCents; })) === price)) out.readings = rs;
-          }
+          if (withR.length) { var rs = setOf(withR, price, tape); if (rs) out.readings = rs; }
           if (withS.length) { var ss = mergeOf(withS, 'sigs', tape); if (ss) out.sigs = ss; }
           return out.readings || (out.sigs && !withR.length) ? out : null;
         }
@@ -2995,6 +3027,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           if (P.samples.has(tick)) return;
           var ranked = Array.from(m.values()).sort(function (a, b) { return b.n - a.n; });
           if (ranked[0].n >= need && (ranked.length === 1 || ranked[0].n > ranked[1].n)) { var x = built(ranked[0].as, ranked[0].price, false); if (x) P.samples.set(tick, x); }
+          if (P.samples.has(tick)) P.open.delete(tick); else P.open.add(tick);
         });
         if (!P.tape) {
           var tapes = new Map();
@@ -3008,7 +3041,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       // the join names the round and its seats; the samples are read every 2 s from then on
       P.watch = function (roundHex, nodes) {
         if (P.round === roundHex) return;
-        P.round = roundHex; P.nodes = (nodes || []).slice(); P.samples = new Map(); P.tape = null; P.tapeDone = false; P.active = false; P.applied = [];
+        P.round = roundHex; P.nodes = (nodes || []).slice(); P.samples = new Map(); P.open = new Set(); P.tape = null; P.tapeDone = false; P.active = false; P.applied = [];
         P.heard = false; P.feed = false; P.held = {}; P.misses = 0;
         if (P.timer) clearInterval(P.timer);
         poll(); P.timer = setInterval(poll, 2000);
