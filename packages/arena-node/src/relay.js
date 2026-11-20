@@ -24,7 +24,11 @@ export const relayTargets = (listed, announced) => [...new Map([...(listed || []
 // answering it with an endless body grew the seat's heap, one that sent headers and then nothing held publish, and settleTheStakes behind it,
 // for good; the relays were asked one after another, so a relay listed first held back the honest ones too. Each PUT and GET now has
 // `timeoutMs`, the read-back is read up to the transcript's size (+ RELAY_BACK_SLACK), and the relays of one pass are asked side by side.
-export const RELAY_TIMEOUT_MS = 15000, RELAY_BACK_SLACK = 1024;
+// ONE SLOW RELAY HOLDS NOBODY BACK (kanban #3160, refute of #3001): a pass waited for its slowest relay (Promise.all), and a relay
+// answering the PUT just inside the deadline and then nothing on the read-back cost ~2 x RELAY_TIMEOUT_MS per entry, which
+// settleTheStakes paid once per entry, one after another. A relay now has one deadline for its PUT and read-back together, and a
+// pass ends RELAY_GRACE_MS after the first relay held the bytes; a relay still busy then goes on alone within its own deadline.
+export const RELAY_TIMEOUT_MS = 15000, RELAY_BACK_SLACK = 1024, RELAY_GRACE_MS = 1000;
 async function bytesWithin(r, maxBytes) {
   if (!r.body || typeof r.body.getReader !== 'function') return new Uint8Array(await r.arrayBuffer());   // an injected stand-in
   const reader = r.body.getReader(), parts = []; let n = 0;
@@ -39,22 +43,34 @@ async function bytesWithin(r, maxBytes) {
   for (const p of parts) { out.set(p, at); at += p.byteLength; }
   return out;
 }
-export async function postTranscript({ listed, announced, path, bytes, fetcher = fetch, sameBytes, timeoutMs = RELAY_TIMEOUT_MS }) {
+export async function postTranscript({ listed, announced, path, bytes, fetcher = fetch, sameBytes, timeoutMs = RELAY_TIMEOUT_MS, graceMs = RELAY_GRACE_MS }) {
   const refused = [];
   const post = async (relay) => {
     const at = `${base(relay)}${path}`;
+    const signal = AbortSignal.timeout(timeoutMs);   // one deadline for the PUT and its read-back (kanban #3160)
     try {
-      const put = await fetcher(at, { method: 'PUT', body: bytes, signal: AbortSignal.timeout(timeoutMs) });
+      const put = await fetcher(at, { method: 'PUT', body: bytes, signal });
       if (!put.ok) { refused.push(`${relay}: kept nothing (${put.status})`); return false; }
-      const back = await bytesWithin(await fetcher(at, { signal: AbortSignal.timeout(timeoutMs) }), bytes.length + RELAY_BACK_SLACK);
+      const back = await bytesWithin(await fetcher(at, { signal }), bytes.length + RELAY_BACK_SLACK);
       if (!sameBytes(back, bytes)) { refused.push(`${relay}: gave back other bytes`); return false; }
       return true;
     } catch (e) { refused.push(`${relay}: ${e.message}`); return false; }
   };
-  const pass = async (relays) => { const ok = await Promise.all(relays.map(post)); return relays.filter((_, i) => ok[i]); };
+  // Side by side; done when every relay answered, or graceMs after the first one held the bytes (kanban #3160).
+  const pass = (relays) => new Promise((resolve) => {
+    if (!relays.length) { resolve([]); return; }
+    const ok = relays.map(() => false); let left = relays.length, grace = null, done = false;
+    const finish = () => { if (done) return; done = true; clearTimeout(grace); resolve(relays.filter((_, i) => ok[i])); };
+    relays.forEach((r, i) => post(r).then((held) => {
+      if (done) return;
+      ok[i] = held; left -= 1;
+      if (!left) finish();
+      else if (held && !grace) grace = setTimeout(finish, graceMs);
+    }));
+  });
   let held = await pass(listed || []);
   if (!held.length) held = await pass(relayTargets([], announced).filter((r) => !relayTargets(listed).includes(base(r))));
-  return { held, refused };
+  return { held, refused: [...refused] };
 }
 
 /** POST `body` to `path` at every relay. Answers { sent, failed: [why] } once every relay answered or timed out. */
