@@ -7195,16 +7195,36 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         }
         return doneBy.get(key).has(n.roundIdHex + ':' + (Number(n.order) || 0));
       };
+      // A FIGURE IS DIGITS (kanban #3103, refute of #3086): seats run by a stranger answered pendingMsat 'x', it won the vote, and
+      // BigInt('x') threw out of the loop on every look - the notes after it were never rebuilt or counted. Anything but digits votes none.
+      const figOf = (x) => (x && x.kind === 'payout' && x.pendingMsat !== null && x.pendingMsat !== undefined && /^\d+$/.test(String(x.pendingMsat)) ? String(x.pendingMsat) : null);
+      const isDecided = (x) => !!x && (x.kind === 'refund' || (figOf(x) !== null && !/^0+$/.test(figOf(x))));
+      // THE VOTE IS COUNTED AGAINST ALL THE ROUND'S NODES, NOT THE FIRST ANSWERS (kanban #3132, refute of #3102/#3086): the look stopped
+      // st.graceMs after more than half the nodes had answered, so two fast seats saying "not decided" plus the two fastest honest seats
+      // were 4 of 7 and the three honest seats 400-600 ms later were cut off: 2 decided of 4 is no majority, and the owed payout's record
+      // was never rebuilt (feedback #365's symptom with two faulty seats). Now the look stops early only once the answers so far fix both
+      // votes below whatever the rest say: one figure (or none) named by more than half of ALL the nodes, and decided or not decided by
+      // more than half of ALL the nodes. Otherwise it waits for every node, or st.askMs at the latest (a hung seat, #3102).
+      const outcomeFixed = (out, n) => {
+        const figs = new Map(); let dec = 0; let notDec = 0;
+        for (const x of out) {
+          if (!x) continue;
+          const f = figOf(x); figs.set(f, (figs.get(f) || 0) + 1);
+          if (isDecided(x)) dec += 1; else notDec += 1;
+        }
+        const figFixed = [...figs.values()].some((c) => c * 2 > n);
+        return figFixed && (dec * 2 > n || notDec * 2 > n);
+      };
       // EVERY SEAT ASKED WITH A DEADLINE (kanban #3102, refute of #3086): Promise.all over plain fetch waited for every signer node, so one
       // seat that took the request and never answered (hostile or black-holed) kept this look open for good - st.busy stayed true, every
       // later look returned at once, no record was rebuilt and the pending line froze (feedback #365's symptom). Now the look takes the
-      // answers it has once more than half the round's nodes answered and the rest had st.graceMs more, or at st.askMs at the latest; a
-      // seat not heard by then counts as no answer, and its request is aborted.
+      // answers it has once those answers fix the vote against all the round's nodes (outcomeFixed, kanban #3132) and the rest had
+      // st.graceMs more, or at st.askMs at the latest; a seat not heard by then counts as no answer, and its request is aborted.
       const ask = (nodes, entryIdHex) => new Promise((resolve) => {
         const list = Array.isArray(nodes) ? nodes : [];
         const out = list.map(() => null);
         const ctl = typeof AbortController === 'function' ? new AbortController() : null;
-        let over = false; let settled = 0; let heard = 0; let grace = null; let hard = null;
+        let over = false; let settled = 0; let grace = null; let hard = null;
         const finish = () => {
           if (over) return; over = true;
           clearTimeout(grace); clearTimeout(hard);
@@ -7218,15 +7238,12 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             .then((r) => (r.ok ? r.json() : null)).catch(() => null)
             .then((x) => {
               if (over) return;
-              out[i] = x || null; settled += 1; if (x) heard += 1;
+              out[i] = x || null; settled += 1;
               if (settled === list.length) { finish(); return; }
-              if (heard * 2 > list.length && !grace) grace = setTimeout(finish, st.graceMs);
+              if (!grace && outcomeFixed(out, list.length)) grace = setTimeout(finish, st.graceMs);
             });
         });
       });
-      // A FIGURE IS DIGITS (kanban #3103, refute of #3086): seats run by a stranger answered pendingMsat 'x', it won the vote, and
-      // BigInt('x') threw out of the loop on every look - the notes after it were never rebuilt or counted. Anything but digits votes none.
-      const figOf = (x) => (x && x.kind === 'payout' && x.pendingMsat !== null && x.pendingMsat !== undefined && /^\d+$/.test(String(x.pendingMsat)) ? String(x.pendingMsat) : null);
       let total = 0n; let closeMs = null; let provisional = false; let closeRound = null;
       for (const k of notes) {
         // ONE NOTE CANNOT END THE LOOP (kanban #3103): whatever one note's answers do, the notes after it are still rebuilt and counted
@@ -7283,7 +7300,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           // 'none' in the payout vote above, so the rebuild runs BEFORE that vote's continue: when more than half the answering seats name
           // the entry decided - a payout with a non-zero figure, or a refund - the record is rebuilt, so the forfeit redeem or the expiry
           // refund runs for that stake too
-          const decided = answered.filter((x) => x.kind === 'refund' || (figOf(x) !== null && !/^0+$/.test(figOf(x)))).length;
+          const decided = answered.filter(isDecided).length;
           if (decided * 2 > answered.length) try {
             if (n.seed && n.round && n.invite && !st.rebuilt) st.rebuilt = new Set();
             // ONCE IT IS WRITTEN, NOT ONCE IT IS TRIED (kanban #3106, refute of #3086): the key was taken before the write, so a write
