@@ -4571,7 +4571,11 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             // entry - pending 0 while all 7 signer nodes said 192000 msat. A tab that wrote none (a reopened browser) reads all.
             try {
               const key = 'arena.pending.' + named.roundIdHex + '.' + ARENACLIENT.toHex(eid);
-              vault().setItem(key, JSON.stringify({ roundIdHex: named.roundIdHex, entryIdHex: ARENACLIENT.toHex(eid), nodes: named.nodes }));
+              // KANBAN #3086 (feedback #365): the note also carries what a collect record needs (round contract, invite, seed, order), so a
+              // payout the seats owe is collected even when this tab holds no collect record for the round (a refused save, another tab)
+              let rec = {};
+              try { rec = { invite: named.federation, seed: ARENACLIENT.toHex(seed), order: player.order || 0, round: ARENACLIENT.toHex(ARENACLIENT.encodeRoundContract(named.round)) }; } catch { rec = {}; }
+              vault().setItem(key, JSON.stringify({ roundIdHex: named.roundIdHex, entryIdHex: ARENACLIENT.toHex(eid), nodes: named.nodes, ...rec }));
               const mine = JSON.parse(window.sessionStorage.getItem('arena.pending.mine') || '[]');
               if (!mine.includes(key)) { mine.push(key); window.sessionStorage.setItem('arena.pending.mine', JSON.stringify(mine)); }
             } catch { /* no note, no line */ }
@@ -7175,6 +7179,22 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           + [...votes.entries()].map(([f, c]) => (f === null ? 'none' : f + ' msat') + ' x' + c).join(', ')
           + (answered[0] ? ' | ' + [answered[0].kind, answered[0].state, answered[0].outcome].filter(Boolean).join(' ') : ''));
         if (!best || best[0] === null || best[0] === '0' || best[1] * 2 <= answered.length) continue;
+        // A PAYOUT OWED WITH NO RECORD TO COLLECT IT (kanban #3086, feedback #365, measured 2026-11-20: round 67bba1aa FINAL DELIVERED 180000 msat
+        // by 7 of 7 seats, "collect pending" for 7 h, never a collect line - the tab held no arena.collect record for it): the record is
+        // rebuilt from the note, once, and the collect loop takes it on its next look
+        try {
+          if (n.seed && n.round && n.invite && !st.rebuilt) st.rebuilt = new Set();
+          if (n.seed && n.round && n.invite && !st.rebuilt.has(k)) {
+            st.rebuilt.add(k);
+            const seedB = ARENACLIENT.fromHex(n.seed);
+            const has = ARENACLIENT.savedCollects(vault(), { seed: seedB }).some((r) => r.roundIdHex === n.roundIdHex && Number(r.order || 0) === Number(n.order || 0));
+            if (!has) {
+              const round = Object.assign({}, ARENACLIENT.decodeRoundContract(ARENACLIENT.fromHex(n.round)), { id: ARENACLIENT.fromHex(n.roundIdHex) });
+              const ok = ARENACLIENT.saveCollect(vault(), { roundIdHex: n.roundIdHex, round, invite: n.invite, nodes: n.nodes, seed: seedB, order: n.order || 0 });
+              if (typeof collectNote === 'function') collectNote('pending ' + String(n.roundIdHex).slice(0, 8), ok === false ? 'payout owed, its collect record could not be written' : 'payout owed and no collect record: rebuilt from the note');
+            }
+          }
+        } catch (e) { if (typeof collectNote === 'function') collectNote('pending ' + String(n.roundIdHex).slice(0, 8), 'collect record not rebuilt: ' + String((e && e.message) || e).slice(0, 120)); }
         total += BigInt(best[0]);
         const one = said.find((x) => x && x.pendingMsat === best[0]);
         if (one && one.windowCloseMs && (closeMs === null || Number(one.windowCloseMs) > closeMs)) { closeMs = Number(one.windowCloseMs); closeRound = n.roundIdHex; }
