@@ -231,6 +231,11 @@ async function firstBondOnNodeNow({ home, release, post = false, chainKit, state
   const { nodeState, guardianSetupOf } = await import('./state.js');
   const st = state || nodeState(home);
   let softwareHash; try { softwareHash = sha256(readFileSync(join(release, 'COMMIT'))); } catch { softwareHash = new Uint8Array(32); }
+  // THE FIRST BOND NAMES THIS RELEASE'S GAMES (kanban #3089, refute of #3068): the games were written down only by the updater's
+  // refreshHostedGames - and the updater that moved this node here is the previous release's code, which (1.9.28 and older) returned
+  // "no bond yet" without writing them. Read here, where the bond is built, from the release this node runs: a node updated before its
+  // bond no longer advertises its install-time list (never drawn for the newer rock-paper-scissors and nextblock versions).
+  try { const { releaseGamesBeforeBond } = await import('./apps.js'); await releaseGamesBeforeBond(st, release); } catch { /* the list in state stands */ }
   const ask = askMinimum !== undefined ? askMinimum : async () => (await import('./install-minimum.js')).installMinimum({});
   const start = startAgent !== undefined ? startAgent : async () => (await import('./service.js')).installProgram({ id: 'custody', description: 'Bitcoin Arena: custody agent',
     home: st.home || home, boot: true, args: [process.execPath, join(release, 'packages', 'arena-installer', 'bin', 'custody-agent.mjs'), '--home', st.home || home] });
