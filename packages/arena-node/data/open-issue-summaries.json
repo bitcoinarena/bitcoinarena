@@ -1415,6 +1415,10 @@
   "text": "Committees and bonds: an electrum-mode census read reports a false reorg when a reused connection drops",
   "kind": "bug"
  },
+ "3085": {
+  "text": "Next Block game: the plugin store hands a tree core as the only adapter, so the game never reaches outside nodes",
+  "kind": "bug"
+ },
  "3086": {
   "text": "Lightning payouts: a won payout with no collect record stays uncollected",
   "kind": "bug"
