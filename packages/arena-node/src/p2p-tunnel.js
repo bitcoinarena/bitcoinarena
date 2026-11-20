@@ -100,27 +100,65 @@ export function guardianApiOverrides({ apiEndpoints, ownName = null, seatRoot, o
 // stranger's whole messages went into `held` without limit - 48 MiB on one connection, still open after 1.5 s; #2075's budget counts only
 // unfinished messages. Now: the dial has a deadline (RELAY_OPEN_MS), `held` at most RELAY_HELD_BYTES, and a side whose peer does not read
 // (bufferedAmount past RELAY_BUFFERED_BYTES) ends the relay - a guardian's API message is far below each.
+// AND ACROSS ALL RELAYS, BY COUNT, AND BY BACKPRESSURE ONCE OPEN (kanban #3143, #3155, #3162, refute r1120b-3 of #3062): measured, RELAY_HELD_BYTES
+// held per relay only - 16 relays to a tarpit endpoint pinned 112 MiB together; an empty message counted 0, so 1,006,000 of them queued on one
+// relay; and an open relay to a census node that read nothing took up to RELAY_BUFFERED_BYTES = 64 MiB per connection (4 relays, 160 MiB).
+// Now every held message is charged RELAY_HELD_OVERHEAD on top of its bytes, a relay holds at most RELAY_HELD_MESSAGES of them and
+// RELAY_HELD_BYTES, ALL relays together at most RELAY_HELD_TOTAL (the relay whose message would pass it is closed); and once open a side
+// whose peer does not read is PAUSED at RELAY_HIGH_WATER (its socket stops being read, so the sender's bytes wait in its own buffers, not in
+// the seat), resumed when the queue has gone out; RELAY_BUFFERED_BYTES stays the hard ceiling that ends the relay.
 export const RELAY_OPEN_MS = 15000;
-export const RELAY_HELD_BYTES = 8 * 1024 * 1024;
-export const RELAY_BUFFERED_BYTES = 64 * 1024 * 1024;
+export const RELAY_HELD_BYTES = 4 * 1024 * 1024;
+export const RELAY_HELD_TOTAL = 8 * 1024 * 1024;
+export const RELAY_HELD_MESSAGES = 1024;
+export const RELAY_HELD_OVERHEAD = 64;
+export const RELAY_HIGH_WATER = 1024 * 1024;
+export const RELAY_BUFFERED_BYTES = 16 * 1024 * 1024;
+/** The budget all relays' held messages share (kanban #3143): `held` bytes charged now. */
+export const relayHeldBudget = (total = RELAY_HELD_TOTAL) => ({ total, held: 0 });
+const SHARED_HELD = relayHeldBudget();
 export function carryApi(ws, root, { openWs = (url) => new WebSocket(url, { maxPayload: 64 * 1024 * 1024, handshakeTimeout: RELAY_OPEN_MS }), keepAliveMs = P2P_KEEPALIVE_MS, path = '/guardian',
-  openMs = RELAY_OPEN_MS, heldBytes = RELAY_HELD_BYTES, bufferedBytes = RELAY_BUFFERED_BYTES } = {}) {
+  openMs = RELAY_OPEN_MS, heldBytes = RELAY_HELD_BYTES, heldMessages = RELAY_HELD_MESSAGES, budget = SHARED_HELD, highWater = RELAY_HIGH_WATER,
+  bufferedBytes = RELAY_BUFFERED_BYTES } = {}) {
   const up = openWs(`${root}${path}`);
-  const held = [];
+  let held = [];
   let heldSize = 0;
+  let ended = false;
+  const release = () => { budget.held -= heldSize; heldSize = 0; held = []; };
   const stopDown = keepAlive(ws, keepAliveMs);
   let opening = setTimeout(() => done(), openMs);
   if (opening.unref) opening.unref();
-  const done = () => { if (opening) { clearTimeout(opening); opening = null; } stopDown(); try { up.close(); } catch { /* gone */ } try { ws.close(); } catch { /* gone */ } };
+  const done = () => {
+    if (opening) { clearTimeout(opening); opening = null; }
+    if (!ended) { ended = true; release(); }
+    stopDown(); try { up.close(); } catch { /* gone */ } try { ws.close(); } catch { /* gone */ }
+  };
   const sizeOf = (m) => (m && typeof m.length === 'number' ? m.length : Array.isArray(m) ? m.reduce((n, b) => n + b.length, 0) : 0);
+  // BACKPRESSURE: `from`'s socket is not read while `to` holds more than highWater unsent; the send that empties it resumes it
+  const paused = new Set();
+  const carry = (from, to, m, binary) => {
+    if ((to.bufferedAmount || 0) > bufferedBytes) { done(); return; }
+    to.send(m, { binary }, () => {
+      if (paused.has(from) && (to.bufferedAmount || 0) <= highWater / 2) { paused.delete(from); try { from.resume(); } catch { /* gone */ } }
+    });
+    if (!paused.has(from) && (to.bufferedAmount || 0) > highWater && typeof from.pause === 'function') { paused.add(from); try { from.pause(); } catch { /* gone */ } }
+  };
   ws.on('message', (m, binary) => {
-    if (up.readyState === 1) { if ((up.bufferedAmount || 0) > bufferedBytes) { done(); return; } up.send(m, { binary }); return; }
-    heldSize += sizeOf(m);
-    if (heldSize > heldBytes) { done(); return; }
+    if (ended) return;
+    if (up.readyState === 1) { carry(ws, up, m, binary); return; }
+    const n = sizeOf(m) + RELAY_HELD_OVERHEAD;
+    if (held.length >= heldMessages || heldSize + n > heldBytes || budget.held + n > budget.total) { done(); return; }
+    heldSize += n; budget.held += n;
     held.push([m, binary]);
   });
-  up.on('open', () => { if (opening) { clearTimeout(opening); opening = null; } keepAlive(up, keepAliveMs); for (const [m, binary] of held.splice(0)) up.send(m, { binary }); heldSize = 0; });
-  up.on('message', (m, binary) => { if (ws.readyState !== 1) return; if ((ws.bufferedAmount || 0) > bufferedBytes) { done(); return; } ws.send(m, { binary }); });
+  up.on('open', () => {
+    if (opening) { clearTimeout(opening); opening = null; }
+    if (ended) return;
+    keepAlive(up, keepAliveMs);
+    const out = held; release();
+    for (const [m, binary] of out) carry(ws, up, m, binary);
+  });
+  up.on('message', (m, binary) => { if (ended || ws.readyState !== 1) return; carry(up, ws, m, binary); });
   up.on('close', done); up.on('error', done); ws.on('close', done); ws.on('error', done);
   return { close: done };
 }
