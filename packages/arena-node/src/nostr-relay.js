@@ -116,7 +116,9 @@ const dTag = (e) => { const t = e.tags.find((x) => x[0] === 'd'); return t ? Str
 export const eventId = (e) => createHash('sha256').update(JSON.stringify([0, e.pubkey, e.created_at, e.kind, e.tags, e.content])).digest('hex');
 
 /** Whether an event is well formed, its id its own, its signature its author's: null, or why not. */
-export function eventRefusal(e, { kinds = RELAY_KINDS, nowS = Math.floor(Date.now() / 1000) } = {}) {
+/** kanban #3044: the relay-wide signature budget (about 1.2 ms a check: a burst holds the loop ~0.25 s at most), and refused pairs kept */
+export const VERIFY_BURST = 200, VERIFY_PER_S = 200, REFUSED_SIGS_KEPT = 4096;
+export function eventRefusal(e, { kinds = RELAY_KINDS, nowS = Math.floor(Date.now() / 1000), checkSig = true } = {}) {
   if (!e || typeof e !== 'object') return 'invalid: not an event';
   if (!HEX64.test(e.id || '') || !HEX64.test(e.pubkey || '') || !HEX128.test(e.sig || '')) return 'invalid: id, pubkey or sig';
   if (!Number.isInteger(e.kind) || e.kind < 0 || e.kind > 65535) return 'invalid: kind';
@@ -128,6 +130,11 @@ export function eventRefusal(e, { kinds = RELAY_KINDS, nowS = Math.floor(Date.no
   if (kinds && !kinds.includes(e.kind)) return `blocked: this relay keeps only kinds ${kinds.join(', ')} (the game's)`;
   if (e.created_at > nowS + FUTURE_S) return 'invalid: created_at is too far in the future';
   if (eventId(e) !== e.id) return 'invalid: the id is not the event\'s hash';
+  if (!checkSig) return null;
+  return sigRefusal(e);
+}
+/** The BIP-340 check alone (eventRefusal's last step): null when the signature is the author's. */
+export function sigRefusal(e) {
   let ok = false;
   const b = (h) => Uint8Array.from(Buffer.from(h, 'hex'));
   try { ok = schnorr.verify(b(e.sig), b(e.id), b(e.pubkey)); } catch { ok = false; }
@@ -319,8 +326,14 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
     created_at ASC, id DESC LIMIT 1`);
   const dropId = db.prepare('DELETE FROM events WHERE id = ?');
   const has = db.prepare('SELECT 1 AS x FROM events WHERE id = ?');
+  // SIGNATURE CHECKS ARE A RELAY-WIDE BUDGET, AND ONE REFUSED (id, sig) IS NOT CHECKED AGAIN (kanban #3044, audit nostr r3-2): measured, 150
+  // free sockets each re-sending ONE junk-signature kind 0 frame 60 times (the per-socket budget) made 9000 BIP-340 checks on the relay's one
+  // event loop - an honest REQ took 11.6 s. A refused (id, sig) is remembered (bounded), and past VERIFY_BURST checks (VERIFY_PER_S refilled)
+  // an EVENT is answered 'rate-limited' before its signature is read, so the loop is never held longer than one burst.
+  const refusedSigs = new Set();
   const lim = { authorEvents: AUTHOR_EVENTS, authorBytes: AUTHOR_BYTES, totalEvents: TOTAL_EVENTS, totalBytes: TOTAL_BYTES, logShare: LOG_SHARE, totalSlowBytes: TOTAL_SLOW_BYTES,
-    seedEvents: SEED_EVENTS, seedBytes: SEED_BYTES, ...limits };
+    seedEvents: SEED_EVENTS, seedBytes: SEED_BYTES, verifyBurst: VERIFY_BURST, verifyPerS: VERIFY_PER_S, ...limits };
+  const verifyBucket = { left: lim.verifyBurst, at: Date.now() };
   // MAKING ROOM IS NOT A WAY TO DELETE A NODE'S RESULTS (kanban #2146, #2214; #1489 a44-refute-24): keys are free - strangers who fill the
   // total with one event a key leave the NODE the largest holder, and then every stranger 30078 under a fresh key and `d` took one of the
   // node's kept, signed round results. An author in `keep` (the seats' node keys: ARENA_RELAY_KEEP for tools/nostr-relay.mjs) is never the
@@ -643,8 +656,18 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
       if (m[0] === 'EVENT') {
         const e = m[1];
         if (JSON.stringify(e || null).length > MAX_EVENT_BYTES) return send(['OK', e && e.id, false, 'invalid: event too large']);
-        const why = eventRefusal(e, { kinds });
-        if (why) return send(['OK', e && e.id, false, why]);
+        const shape = eventRefusal(e, { kinds, checkSig: false });
+        if (shape) return send(['OK', e && e.id, false, shape]);
+        { // kanban #3044: the signature, inside the relay-wide budget
+          const key = `${e.id}:${e.sig}`;
+          if (refusedSigs.has(key)) return send(['OK', e.id, false, 'invalid: the signature is not its author\'s']);
+          const t = Date.now();
+          verifyBucket.left = Math.min(lim.verifyBurst, verifyBucket.left + ((t - verifyBucket.at) * lim.verifyPerS) / 1000); verifyBucket.at = t;
+          if (verifyBucket.left < 1) return send(['OK', e.id, false, 'rate-limited: the relay is checking too many signatures, try again shortly']);
+          verifyBucket.left -= 1;
+          const why = sigRefusal(e);
+          if (why) { refusedSigs.add(key); if (refusedSigs.size > REFUSED_SIGS_KEPT) refusedSigs.delete(refusedSigs.values().next().value); return send(['OK', e.id, false, why]); }
+        }
         if (!isEphemeral(e.kind)) {
           const d = isParam(e.kind) ? dTag(e) : '';
           if (isReplaceable(e.kind) || isParam(e.kind)) {
