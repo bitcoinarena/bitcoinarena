@@ -407,8 +407,13 @@ const handleRound = async (r) => {
   if (words.get(r.id) === mine) posted.set(r.id, held);
 };
 
+// NO REQUEST ENDS THE ATTESTOR (kanban #3048, as the faucet's #2284): a last guard logs anything that escapes a handler instead of ending
+// the process - its words, posted sets and the market's attestation with them
+process.on('uncaughtException', (e) => { log({ step: 'uncaught, kept running', why: String((e && e.stack) || e).slice(0, 2000) }); });
+process.on('unhandledRejection', (e) => { log({ step: 'unhandled rejection, kept running', why: String((e && e.stack) || e).slice(0, 2000) }); });
 http.createServer((req, res) => {
-  const url = new URL(req.url, 'http://x');
+  // kanban #3048: a request target that is no URL (`GET //[`) threw here, outside any try, and ended the daemon (exit 1) - every word lost
+  let url; try { url = new URL(req.url, 'http://x'); } catch { res.writeHead(400, { 'content-type': 'text/plain' }); return res.end('that request target is no URL'); }
   if (req.method === 'GET' && url.pathname === '/attestation') {
     const w = words.get(String(url.searchParams.get('round') || ''));
     if (!w || w.none) { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end(w ? `signs nothing: ${w.none}` : 'no word on that round yet'); }

@@ -1194,7 +1194,7 @@ const serviceRun = async (b) => {
   const commitOf = () => { try { return sha256(readFileSync(`${release}/COMMIT`)); } catch { return new Uint8Array(32); } };
 
   async function handle(req, res) {
-    const url = new URL(req.url, 'http://x');
+    let url; try { url = new URL(req.url, 'http://x'); } catch { res.writeHead(400, { 'content-type': 'text/plain' }); return res.end('that request target is no URL'); }   // kanban #3048
     if (!hostOk(req)) return json(res, 421, { ok: false, why: 'this host is not the installer' });
     // THE ICON, TO ANYONE (the 2026.1.9.11 install test, kanban #704: every page load logged a missing favicon.ico): the node's own, beside its pages
     if (req.method === 'GET' && url.pathname === '/favicon.ico') {

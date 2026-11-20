@@ -776,7 +776,8 @@ export async function serveArbiter({ set, allow, port = 0, host = '127.0.0.1', p
     const answer = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'access-control-allow-origin': '*' }); res.end(JSON.stringify(body)); };
     // kanban #1592 / #1469: a body past its limit was dropped and the request ended - answer 413 while the socket still takes it
     const tooBig = (e) => { if (!(e && (e.tooLarge || e.busy))) return false; try { res.setHeader('connection', 'close'); answer(e.tooLarge ? 413 : 503, { ok: false, why: e.message }); } catch { /* gone */ } return true; };   // busy: kanban #1911
-    const url = new URL(req.url, 'http://x');
+    // kanban #3048: a target that is no URL (`GET //[`) threw in this async handler - an unhandled rejection ends the process
+    let url; try { url = new URL(req.url, 'http://x'); } catch { return answer(400, { ok: false, why: 'that request target is no URL' }); }
     if (req.method === 'GET' && url.pathname === '/status')
       return answer(200, { network: set.network, k: set.k, members: set.members.map((m) => toHex(m.key)), posted });
     // THE SLASH'S PAYOUTS: every share this set locked to a wronged player - round, entry, the player's refund
