@@ -32,6 +32,8 @@ import { withConfigEndpoints } from './federation-endpoints.js';
 import { recordInviteSource, createInviteBuffer } from '../../arena-protocol/src/trusted-guardian-keys.js';
 import { readInvite } from './invite.js';
 import { answersUpTo } from './peer-read.js';   // kanban #2650
+import { peerEndpointRefusal } from './address-book.js';   // kanban #3090/#3093
+import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
 import { buildFederationRecord, encodeFederationRecord, federationRecordId, joinSignedRecord, verifyFederationRecord, verifyFederationRecords,
   FEDERATION_STATUS, GONE, decodeFederationRecord, splitSignedRecord, guardianKeySet, highestVerified, recordStatusName, thresholdOf, loadReserveOf, statusFor, paysDrainShares, playerReserveOf, GATEWAY_FEE_MAX_REFERENCE, RESTRICTION_RANK, selfConsistentRestrictive } from '../../arena-protocol/src/federation-record.js';
 import { recordBand, bandOfRecord } from '../../arena-protocol/src/capacity.js';
@@ -42,7 +44,11 @@ import { recordBand, bandOfRecord } from '../../arena-protocol/src/capacity.js';
  * census order (as federationIsBonded counts them): a bonded stranger whose advert claims the federation under a made-up key never
  * enters the body this seat builds, so it cannot lift the record's nominal past what the real guardians can sign.
  */
-export function guardiansOf(census, federationId, keys = null) {
+// A GUARDIAN'S NODE IS DIALED ONLY AT AN ENDPOINT THE SEAT'S ADDRESS BOOK TAKES (kanban #3090/#3093, a gap in #2856/#3082): `dialOf`
+// (entry -> URL | null), when given, resolves `advertEndpoint` - a refused endpoint (a loopback/private host, a path, a query that swallows
+// the door) becomes '' and is not dialed by gather, mirror or closedAtGuardians. Without it the advert is taken as it is (the body rows
+// do not use advertEndpoint).
+export function guardiansOf(census, federationId, keys = null, dialOf = null) {
   const fid = toHex(federationId);
   const wanted = keys ? guardianKeySet(keys) : null;
   const keysTaken = new Set();
@@ -57,9 +63,16 @@ export function guardiansOf(census, federationId, keys = null) {
     out.push({ peerKey: g.guardianKey, nodePubkey: e.pubkey, operatorId: (e.advert && e.advert.operatorId) || '', bondTxid: e.txid, bondVout: e.vout,
       endpoint: (e.advert && e.advert.guardianEndpoint) || '', bondSats: typeof e.bondSats === 'bigint' ? n.bondSats : String(n.bondSats),
       outputs: n.outputs.map((o) => ({ bondSats: BigInt(o.bondSats), maturity: o.maturity })),   // each output's maturity: the lock (kanban #1093 part 7)
-      advertEndpoint: (e.advert && e.advert.endpoint) || '' });
+      advertEndpoint: dialAt(e, dialOf) });
   }
   return out;
+}
+
+function dialAt(e, dialOf) {
+  const raw = (e.advert && e.advert.endpoint) || '';
+  if (!dialOf || !raw) return raw;
+  let at; try { at = dialOf(e); } catch { at = null; }
+  return at ? String(at) : '';
 }
 
 /** A record's seated guardians (§23A.1: listed, not gone), by node key. */
@@ -206,11 +219,20 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   // THE CHECKER'S OWN VERIFIER OF THOSE BYTES: async (theft-slash.js theftVerifyInput) -> the tool's `theft-verify` line, or undefined where this seat runs none;
   // and its chain: async (txid display hex) -> confirmations | null
   verifySessions = async () => undefined, txConfirmations = async () => null,
+  // THE ADDRESS BOOK'S RESOLVER (kanban #3090/#3093): entry -> the URL to dial | null (server.js addressBook.endpointOf). A guardian's census
+  // endpoint is dialed only through it; without one, only an advert endpoint peerEndpointRefusal takes (`localOk`: a regtest network,
+  // ARENA_LOCAL_SEATS=1, or given) - never the raw advert
+  endpointOf = null, localOk = null,
   // THE FEDERATION'S OWN GUARDIAN KEYS (kanban #2603): async (fidHex) -> [33-byte key] | null, its config's broadcast_public_keys when
   // this seat holds that config (server.js: its own guardian's client.json, else the stake-lock client of a federation it joined). Every
   // record this seat builds lists only census nodes advertising one of them, and every record it verifies is held to them
   // (verifyFederationRecord guardianKeys). Null: no config here - a record is then held to its own threshold, nothing else
   guardianKeysOf = null }) {
+  // kanban #3090/#3093: where a guardian's node is dialed - the address book's word, else only an endpoint peerEndpointRefusal takes
+  const localNow = () => (localOk == null ? process.env.ARENA_LOCAL_SEATS === '1' || !networkId || toHex(networkId) === toHex(NETWORK_ID_REGTEST)
+    : (typeof localOk === 'function' ? !!localOk() : !!localOk));
+  const dialOf = typeof endpointOf === 'function' ? endpointOf
+    : (e) => { const at = (e && e.advert && e.advert.endpoint) || ''; return at && !peerEndpointRefusal(at, { localOk: localNow() }) ? at : null; };
   // the keys once read, by federation id hex: a federation's config keys do not change (a successor is another federation)
   const keysKnown = new Map();
   // THE INVITES THIS SEAT HAS SEEN IN A FEDERATION'S RECORDS (kanban #2609): where the trusted key fetch asks, for a federation this seat
@@ -912,7 +934,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     const fid = toHex(federationId);
     const invite = inviteFor(fid);
     if (!invite) return { ok: false, why: 'this seat names no invite for that federation' };
-    const guardians = withConfigEndpoints(guardiansOf(b.census, federationId, keys), eps, toHex);
+    const guardians = withConfigEndpoints(guardiansOf(b.census, federationId, keys, dialOf), eps, toHex);
     if (!guardians.length) return { ok: false, why: 'no census node guards that federation' };
     const succ = successorOf(fid);
     const spent = spentGuardians(b, federationId);
@@ -1023,6 +1045,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     const asked = await Promise.all(plain.guardians.map(async (g) => {
       const base = String(g.advertEndpoint || '').replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
       if (toHex(g.nodePubkey) === toHex(round.pubkey)) return { g, said: await mySignature(toHex(federationId), null, reserveSats, { previous: prior.hex, inviteFederationId, player: pl.player }) };
+      if (!base) return { g, said: null };   // kanban #3090/#3093: an endpoint the address book refuses is not dialed
       try { const r = await fetcher(`${base}/federation-record?federation=${toHex(federationId)}&height=${b.height}&reserve=${reserveSats}${handed}`, { signal: AbortSignal.timeout(8000) }); return { g, said: r.ok ? await r.json() : null }; }
       catch { return { g, said: null }; }
     }));
@@ -1073,6 +1096,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       answers = await Promise.all(plain.guardians.map(async (g) => {
         if (toHex(g.nodePubkey) === toHex(round.pubkey)) return { g, said: signBody(finals[0].record, finals[1] ? finals[1].record : null) };
         const base = String(g.advertEndpoint || '').replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
+        if (!base) return { g, said: null };   // kanban #3090/#3093
         try { const r = await fetcher(`${base}/federation-record?federation=${toHex(federationId)}&height=${b.height}&reserve=${reserveSats}${handed}&gone=${gone.map((x) => toHex(x.peerKey)).join(',')}${absent.length ? `&absent=${absent.map(absenceHex).join(',')}` : ''}${departed.length ? `&departed=${departed.map(departureHex).join(',')}` : ''}${emergent.length ? `&emergency=${emergent.map(emergencyHex).join(',')}` : ''}${left.length ? `&left=${left.join(',')}` : ''}`, { signal: AbortSignal.timeout(8000) }); return { g, said: r.ok ? await r.json() : null }; }
         catch { return { g, said: null }; }
       }));
@@ -1167,7 +1191,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     const fid = toHex(federationId);
     const censusKept = pass.kept;
     let keys = await keysFor(fid);
-    const guardians = guardiansOf(b.census, federationId, keys);
+    const guardians = guardiansOf(b.census, federationId, keys, dialOf);
     if (!guardians.length) return { ok: false, why: 'no census node guards that federation' };
     const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
     let best = null; let why = 'none of its guardians holds a record';
@@ -1477,10 +1501,11 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       const fid = String(fidHex).toLowerCase();
       const b = basisFor(fid);
       if (!b || !b.ok) return { closed: 0, of: 0, why: (b && b.why) || 'no census' };
-      const guardians = guardiansOf(b.census, fromHex(fid), await keysFor(fid));
+      const guardians = guardiansOf(b.census, fromHex(fid), await keysFor(fid), dialOf);
       const answers = await Promise.all(guardians.map(async (g) => {
         const base = String(g.advertEndpoint || '').replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
         if (toHex(g.nodePubkey) === toHex(round.pubkey)) { const k = kept.get(fid); return !!k && k.status === 'CLOSED'; }
+        if (!base) return false;   // kanban #3090/#3093: not dialed
         try {
           const r = await fetcher(`${base}/federations`, { signal: AbortSignal.timeout(8000) });
           if (!r.ok) return false;

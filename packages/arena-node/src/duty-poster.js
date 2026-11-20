@@ -28,6 +28,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { decodeManifest, gameIdOf } from '../../arena-protocol/src/manifest.js';
 import { blockHashOf } from '../../arena-protocol/src/chain.js';
+import { peerEndpointRefusal } from './address-book.js';   // kanban #3090/#3093
 import { daySlotOf, targetDay, dayStartMs, DUTY_FALLBACK_MS, DUTY_BACKUP_AFTER_MS, DUTY_BACKUP_RANK_CAP } from '../../arena-protocol/src/duty.js';
 import { seriesId, isGridSeries } from '../../arena-protocol/src/series.js';
 import { takesNewRounds } from '../../arena-protocol/src/known-federations.js';
@@ -185,7 +186,8 @@ export function posterOf({ series, templateOf, order }) {
  *   env                       ARENA_DUTY_POST, ARENA_DUTY_WALLET, ARENA_DUTY_FEE_RATE, ARENA_DUTY_MAX_FEE_RATE, ARENA_DUTY_APPS,
  *                             ARENA_DUTY_ITEM_<APP>, ARENA_DUTY_PROTOCOL_<APP> (#1486), ARENA_FUNDED_ROUNDS_FILE, ARENA_DUTY_EMERGENCY
  *   nodeSecret                this node's identity secret: it signs the series it creates
- * and, once its seat listens, attach({ port, host, endpoint, heldTemplates, nameFunded, donationSetAt, nodeKey, lessAbsent }) from server.js.
+ * and, once its seat listens, attach({ port, host, endpoint, heldTemplates, nameFunded, donationSetAt, nodeKey, lessAbsent, endpointOf }) from server.js
+ * (endpointOf: the seat's address book resolver, entry -> URL | null, kanban #3090/#3093).
  */
 export function createDutyPoster({ call, walletCall, networkIdHex, censusEntriesAt, dutyCensus, chainBlocks, dir, env = {}, nodeSecret,
   fetchFn = fetch, log = (l) => console.log(l), now = Date.now, everyMs = DUTY_EVERY_MS }) {
@@ -200,6 +202,16 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
   let lastSeats = [];
   const self = () => (seat ? `http://${seat.host === '0.0.0.0' ? '127.0.0.1' : seat.host}:${seat.port}` : null);
   const reach = (u) => String(u || '').replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
+  // A CENSUS NODE IS DIALED ONLY WHERE THE ADDRESS BOOK TAKES ITS ENDPOINT (kanban #3090/#3093, a gap in #2856/#3082): a bond committing a
+  // loopback or private endpoint, or one with a path or a query that swallows the door, got this node's GET /games, POST /expected and
+  // POST /series. The seat's addressBook.endpointOf (attach) decides; with no seat attached yet, only an advert endpoint
+  // peerEndpointRefusal takes (local hosts on a regtest network or ARENA_LOCAL_SEATS=1). Null: not dialed, not named.
+  const localNow = () => env.ARENA_LOCAL_SEATS === '1' || process.env.ARENA_LOCAL_SEATS === '1' || networkIdHex() === toHex(NETWORK_ID_REGTEST);
+  const peerAt = (e) => {
+    if (!e || !e.advert || !e.advert.endpoint) return null;
+    if (seat && typeof seat.endpointOf === 'function') { let at; try { at = seat.endpointOf(e); } catch { at = null; } return at ? reach(at) : null; }
+    return peerEndpointRefusal(e.advert.endpoint, { localOk: localNow() }) ? null : reach(e.advert.endpoint);
+  };
   // read up to a bound (kanban #1723): /games at PEER_LISTING_BYTES, anything else at PEER_PACKAGE_BYTES
   const seatJson = async (url, ms = 15000, maxBytes = /\/games(\?|$)/.test(url) ? PEER_LISTING_BYTES : PEER_PACKAGE_BYTES) => {
     const r = await fetchFn(url, { signal: AbortSignal.timeout(ms) }); if (!r.ok) { r.body?.cancel().catch(() => {}); throw new Error(`${url}: ${r.status}`); }
@@ -238,13 +250,13 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
       const nid = networkIdHex(); const tip = Number(await call('getblockcount', [])) - 6;
       const entries = nid ? (await censusEntriesAt(nid, tip - (tip % 36))) || [] : [];
       const mine = seat && seat.nodeKey ? toHex(seat.nodeKey) : '';
-      lastSeats = [...new Set(entries.filter((e) => toHex(e.pubkey) !== mine && e.advert && e.advert.endpoint).map((e) => reach(e.advert.endpoint)))];
+      lastSeats = [...new Set(entries.filter((e) => toHex(e.pubkey) !== mine).map(peerAt).filter(Boolean))];   // kanban #3090/#3093
     } catch { /* the last list */ }
     return [...(own ? [own] : []), ...lastSeats];
   };
   // WHO IS WHERE: a census node's address, for GET /duty's names
   const endpointOf = new Map();
-  const remember = (entries) => { for (const e of entries || []) if (e.advert && e.advert.endpoint) endpointOf.set(toHex(e.pubkey), reach(e.advert.endpoint)); };
+  const remember = (entries) => { for (const e of entries || []) { const at = peerAt(e); if (at) endpointOf.set(toHex(e.pubkey), at); } };   // kanban #3090/#3093
 
   // THE APPS THIS NODE HOSTS, BY NAME: their developer keys (a version of an app is one under the same key) - from its own GET /games
   let devOf = {};

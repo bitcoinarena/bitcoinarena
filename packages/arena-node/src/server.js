@@ -7977,7 +7977,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     };
     setInterval(() => { confirmTick().catch((e) => console.log(`[reserve-alarm] confirm: ${e.message}`)); }, Number(process.env.ARENA_ALARM_CONFIRM_MS || 300_000)).unref?.();
   }
-  fedRecords = federationRecords({ round, roster, fetcher: fetch /* the capped door, kanban #2650 */, inviteFor: inviteOfFed, store: recordStore, networkId: chainNetworkId() ? fromHex(chainNetworkId()) : null, reserveOf,
+  fedRecords = federationRecords({ round, roster, fetcher: fetch /* the capped door, kanban #2650 */, endpointOf: (e) => addressBook.endpointOf(e) /* kanban #3090/#3093 */, inviteFor: inviteOfFed, store: recordStore, networkId: chainNetworkId() ? fromHex(chainNetworkId()) : null, reserveOf,
     alarmOf: (fid) => reserveAlarms.of(fid),
     // A THEFT'S PROOF, BUILT AND JUDGED ON ITS OWN BYTES (kanban #1093 part 2, ruling #1109 X): the stake-lock tool exports the signed sessions and verifies them (theft-evidence.js)
     ...theftTools({ bin: process.env.ARENA_STAKE_LOCK_BIN || null, dirOf: (fid) => reserveAuditDirOf(fid), log: (l) => console.log(l) }),
@@ -16670,7 +16670,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (!forced.ok) throw new Error(`no donation set in force at census height ${height}: ${forced.why}`);
       return donationSetId(forced.recipients);
     };
-    duty.attach({ port: http.address().port, host, endpoint: publicEndpoint, heldTemplates: () => series.slice(),
+    duty.attach({ port: http.address().port, host, endpoint: publicEndpoint, endpointOf: (e) => addressBook.endpointOf(e) /* kanban #3090/#3093 */, heldTemplates: () => series.slice(),
       nameFunded: (idHex) => { if (typeof funded.nameRound === 'function') funded.nameRound(idHex); }, donationSetAt: inForce, nodeKey: round.pubkey,
       // the creator of a grid announced here (POST /expected, its creator signature checked there) - a day marker's poster (kanban #1168)
       announcedCreatorOf: (idHex) => { const e = announced.get(String(idHex)); return e && e.creator ? String(e.creator) : null; },
