@@ -95,7 +95,11 @@ export function blankComments(src) {
   // q its quote, e an escape pending, k in a regex class, ts template nesting (open braces in each ${...}), ps paren kinds ("r" regex after,
   // "d" division, "f" either), last the last significant char (STR_END, RE_END, "`" template end, ")" with pk its paren's kind),
   // w the word that char ends (identifier or number), bw the char before that word, pp the char before last
-  let states = [{ m: 'c', q: '', e: 0, k: 0, ts: [], ps: '', last: '', pk: '', w: '', bw: '', pp: '', inw: 0, nl: 0, pd: 0 }];
+  // A HASHBANG IS A LINE COMMENT (kanban #3126, #1489 r1120-refute-5-s3): a module may start with `#!...` (after a BOM, which the loader
+  // strips), a comment to the end of that line. Lexed as code, `#!/*` opened a block comment that blanked every line up to a later `*/`
+  // (on a `//*/` line, a line comment to JS) - code the one-file scan refuses (globalThis, Reflect) passed the tree scan and ran.
+  const hashbang = /^\uFEFF?#!/.test(src);
+  let states = [{ m: hashbang ? 'l' : 'c', q: '', e: 0, k: 0, ts: [], ps: '', last: '', pk: '', w: '', bw: '', pp: '', inw: 0, nl: 0, pd: 0 }];
   const clone = (s) => ({ ...s, ts: [...s.ts] });
   const key = (s) => `${s.m}${s.q}${s.e}${s.k}|${s.ts.join(',')}|${s.pd}${s.ps}|${s.last}${s.pk}|${s.w}|${s.bw}${s.pp}${s.inw}${s.nl}`;
   // what a slash in code starts in this reading: 'r' regex, 'd' division, 'f' either
@@ -224,11 +228,24 @@ export function scanTree(files) {
 /** A tree core entry's files decoded and checked against TREE_LIMITS and the path rule: { ok, files } or { ok: false, why }. */
 export function treeFilesOf(c) {
   if (!Array.isArray(c.files) || !c.files.length || c.files.length > TREE_LIMITS.files) return { ok: false, why: `a tree of 1 to ${TREE_LIMITS.files} files` };
-  const seen = new Set(), files = []; let total = 0;
+  const seen = new Set(), folded = new Map(), dirs = new Map(), files = []; let total = 0;
   for (const f of c.files) {
     if (!f || typeof f !== 'object' || typeof f.path !== 'string' || typeof f.body !== 'string') return { ok: false, why: 'each tree file is { path, body }' };
     const why = treePathRefusal(f.path); if (why) return { ok: false, why: `${f.path.slice(0, 64)}: ${why}` };
     if (seen.has(f.path)) return { ok: false, why: `${f.path} is in the tree twice` };
+    // ONE NAME, ONE KIND, ON EVERY FILE SYSTEM (kanban #3127, #1489 r1120-refute-5-s3): x.js and x.js/y.js (a file and a directory of one
+    // name), or X.js and x.js (one file on a case-insensitive disk), passed the checks and the trial (files in memory), then installPackage
+    // threw EEXIST / EISDIR out of adoptPackage. Refused here, on the path folded to lower case and on every directory it lies in.
+    const low = f.path.toLowerCase();
+    if (folded.has(low)) return { ok: false, why: `${f.path} and ${folded.get(low)} are one file on a case-insensitive disk` };
+    const segs = low.split('/');
+    for (let i = 1; i < segs.length; i++) {
+      const d = segs.slice(0, i).join('/');
+      if (folded.has(d)) return { ok: false, why: `${folded.get(d)} is a file and a directory of ${f.path}` };
+      dirs.set(d, f.path);
+    }
+    if (dirs.has(low)) return { ok: false, why: `${f.path} is a file and a directory of ${dirs.get(low)}` };
+    folded.set(low, f.path);
     seen.add(f.path);
     const bytes = fromBase64(f.body);
     if (bytes.length > TREE_LIMITS.fileBytes) return { ok: false, why: `${f.path} is more than ${TREE_LIMITS.fileBytes} bytes` };

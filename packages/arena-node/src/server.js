@@ -1575,7 +1575,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const signedCores = decodeManifest(fromHex(String(pkg.manifest))).cores;
     pkg = { ...pkg, name: named, title: replaces !== null ? (hosted.get(replaces).title || named) : named,
       cores: pkg.cores.map((c) => { const m = signedCores.find((s) => toHex(s.hash) === c.hash); return { ...c, configs: m ? m.configs.map(toHex) : [] }; }) };
-    const at = installPackage(pluginsDir, pkg, game, { title: pkg.title });   // the title kept apart, as this seat's (kanban #1716, #1780)
+    // A PACKAGE THE DISK CANNOT HOLD IS REFUSED, NEVER THROWN OUT OF AN autoUpdate SWEEP (kanban #3127, #1489 r1120-refute-5-s3): its
+    // half-written directory moved aside (never deleted) like one that does not load; `checked` + `loads: false`, a verdict the sweep keeps
+    let at;
+    try { at = installPackage(pluginsDir, pkg, game, { title: pkg.title }); }   // the title kept apart, as this seat's (kanban #1716, #1780)
+    catch (e) {
+      try { renameSync(joinPath(pluginsDir, game), joinPath(pluginsDir, `.removed-${Date.now()}-${game}`)); } catch { /* left where it is */ }
+      console.log(`[plugins] refused ${game.slice(0, 16)} from ${from}: it cannot be kept on disk: ${e.message}`);
+      return { ok: false, status: 500, checked: true, loads: false, why: `it passed the checks, but it cannot be kept on disk: ${e.message}` };
+    }
     let reg;
     // A PACKAGE THAT DOES NOT LOAD IS NOT KEPT (kanban #2058, #2078): its directory is moved aside (never deleted), so no start
     // loads it again (loadInstalled reads only game-id directories). `loads: false` - a verdict on bytes already checked against
