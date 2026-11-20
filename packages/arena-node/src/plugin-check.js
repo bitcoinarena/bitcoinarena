@@ -83,14 +83,23 @@ export function treeResolve(from, spec) {
  * U+2028 U+2029), a string only at \n \r. More readings than STATES_MOST: nothing further in the file is blanked (more findings, never fewer).
  */
 const STATES_MOST = 64, DEPTH_KEPT = 64;   // readings followed at once; paren kinds and template nestings kept (deeper parens: either reading)
+// BOUNDED WORK IN ALL (kanban #3135, #1489 r1120-refute-5-s4): STATES_MOST bounds the readings per character, not the characters they live for.
+// 60 `(` then 22 lines of `}/(1/` kept ~60 readings live (none merging, never crossing 64) for a whole 2 MiB file: each character lexed and
+// keyed ~60 times, ~110x the plain cost (34 s for three such files, synchronous on the seat before the trial and its deadline). Every reading
+// beyond the first on every character is now paid from a budget - per file, and shared by the whole tree when scanTree passes one; once it
+// runs out nothing further is blanked (the raw text is scanned: more findings, never fewer). An honest file forks rarely (a slash after
+// `}`, `++`, `of`) and its readings merge again within a line or two, far below it.
+export const LEX_EXTRA_MOST = 1 << 20;   // extra reading-steps one file may take
+export const LEX_TREE_EXTRA_MOST = 1 << 21;   // extra reading-steps a whole tree may take
 const STR_END = '\u0001', RE_END = '\u0002';   // not word chars: a string's or a regex's end as `last`
 const LINE_END = (c) => c === '\n' || c === '\r' || c === '\u2028' || c === '\u2029';
 const WORD = /[A-Za-z0-9_$\u0080-\uffff]/;
 const SPACE = /\s/;
 const KW_REGEX = new Set(['return', 'typeof', 'instanceof', 'in', 'new', 'delete', 'void', 'throw', 'case', 'do', 'else', 'yield', 'await', 'default', 'extends']);
 const KW_CTRL = new Set(['if', 'while', 'for', 'with']);
-export function blankComments(src) {
+export function blankComments(src, budget = null) {   // budget: { left } shared across a tree's files (kanban #3135)
   const n = src.length, out = src.split('');
+  let fileLeft = LEX_EXTRA_MOST;
   // a reading: m mode (c code, l line comment, bs/b/be block comment start/inside/end, s string, t template text, tb the "{" of "${", r regex),
   // q its quote, e an escape pending, k in a regex class, ts template nesting (open braces in each ${...}), ps paren kinds ("r" regex after,
   // "d" division, "f" either), last the last significant char (STR_END, RE_END, "`" template end, ")" with pk its paren's kind),
@@ -182,6 +191,8 @@ export function blankComments(src) {
     // BOUNDED WORK PER CHARACTER: at most STATES_MOST readings, each keyed in O(DEPTH_KEPT); a deeper template nesting stops the blanking
     if (states.some((s) => s.ts.length > DEPTH_KEPT)) return out.slice(0, i + 1).join('') + src.slice(i + 1);
     if (states.length > 1) {
+      fileLeft -= states.length - 1; if (budget) budget.left -= states.length - 1;
+      if (fileLeft < 0 || (budget && budget.left < 0)) return out.slice(0, i + 1).join('') + src.slice(i + 1);
       const seen = new Set(); states = states.filter((s) => { const k = key(s); if (seen.has(k)) return false; seen.add(k); return true; });
       if (states.length > STATES_MOST) return out.slice(0, i + 1).join('') + src.slice(i + 1);
     }
@@ -205,15 +216,18 @@ function moduleLoadLines(text) {
   return [...out].sort((a, b) => a - b);
 }
 export function scanTree(files) {
-  const paths = new Set(files.map((f) => f.path)), left = [];
+  const paths = new Set(files.map((f) => f.path)), left = [], budget = { left: LEX_TREE_EXTRA_MOST };   // kanban #3135: one lexer budget per tree
   for (const f of files) {
-    const src = blankComments(utf8(f.bytes)), lines = src.split('\n');
-    // a line's statement (an import may span lines, up to its ';') is a static import/export ... from '<path>' landing on another tree file
+    const src = blankComments(utf8(f.bytes), budget), lines = src.split('\n');
+    // a line's statement is a static import/export ... from '<path>' landing on another tree file
+    // AN IMPORT ENDS AT ITS SPECIFIER, NOT AT A ';' (kanban #3137, #1489 r1120-refute-5-s4): the statement was read up to the first line
+    // holding a ';', so an honest `import { DRAW } from './lib/draw.js'` written without semicolons ran on into the code below, failed the
+    // anchored pattern and was refused. It now ends at its closing specifier string (no ; ( ) or quote before it, so no import() or require()
+    // inside), and only whitespace or one ';' may follow on that line; the lines below are scanned on their own.
     const inTree = (line) => {
-      let stmt = '';
-      for (let i = line - 1; i < lines.length && i < line + 40; i++) { stmt += lines[i] + '\n'; if (lines[i].includes(';')) break; }
-      const m = /^\s*(?:import|export)\b[^;()]*?\bfrom\s*(['"])([^'"]+)\1\s*;?\s*$/.exec(stmt.trim().replace(/\s+/g, ' '));
-      if (!m || /\bimport\s*\(|\brequire\s*\(/.test(stmt)) return false;
+      const stmt = lines.slice(line - 1, line + 40).join('\n');
+      const m = /^\s*(?:import|export)\b[^;()'"`]*?\bfrom\s*(['"])([^'"\n]+)\1([^\n]*)/.exec(stmt);
+      if (!m || !/^\s*;?\s*$/.test(m[3])) return false;
       const to = treeResolve(f.path, m[2]); return !!(to && paths.has(to));
     };
     for (const x of scanSource(src)) {
@@ -238,13 +252,24 @@ export function treeFilesOf(c) {
     // threw EEXIST / EISDIR out of adoptPackage. Refused here, on the path folded to lower case and on every directory it lies in.
     const low = f.path.toLowerCase();
     if (folded.has(low)) return { ok: false, why: `${f.path} and ${folded.get(low)} are one file on a case-insensitive disk` };
-    const segs = low.split('/');
-    for (let i = 1; i < segs.length; i++) {
-      const d = segs.slice(0, i).join('/');
-      if (folded.has(d)) return { ok: false, why: `${folded.get(d)} is a file and a directory of ${f.path}` };
-      dirs.set(d, f.path);
+    // ONE DIRECTORY, ONE SPELLING (kanban #3136, #1489 r1120-refute-5-s4): lib/a.js and LIB/b.js were two directories here and one on a
+    // case-insensitive disk (APFS, NTFS): installed there, coreTree read lib/b.js and the verified game did not load ("changed on disk") on
+    // Mac and Windows seats while Linux seats hosted it. Every directory a path lies in must be spelled as the first path that named it.
+    // NOR A NAME WINDOWS CHANGES: a segment ending in "." (Windows drops it: a./x.js lands in a/) or a reserved device name (con, prn, aux,
+    // nul, com1-9, lpt1-9, with or without an extension) is refused - the installed tree would not be the tree that was hashed.
+    const segs = low.split('/'), exact = f.path.split('/');
+    for (const seg of segs) {
+      if (seg.endsWith('.')) return { ok: false, why: `${f.path}: a name ending in "." is another name on Windows` };
+      if (/^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\.|$)/.test(seg)) return { ok: false, why: `${f.path}: ${seg} is a reserved device name on Windows` };
     }
-    if (dirs.has(low)) return { ok: false, why: `${f.path} is a file and a directory of ${dirs.get(low)}` };
+    for (let i = 1; i < segs.length; i++) {
+      const d = segs.slice(0, i).join('/'), spelled = exact.slice(0, i).join('/');
+      if (folded.has(d)) return { ok: false, why: `${folded.get(d)} is a file and a directory of ${f.path}` };
+      const had = dirs.get(d);
+      if (had !== undefined && had.spelled !== spelled) return { ok: false, why: `${spelled}/ and ${had.spelled}/ are one directory on a case-insensitive disk (${f.path}, ${had.path})` };
+      if (had === undefined) dirs.set(d, { spelled, path: f.path });
+    }
+    if (dirs.has(low)) return { ok: false, why: `${f.path} is a file and a directory of ${dirs.get(low).path}` };
     folded.set(low, f.path);
     seen.add(f.path);
     const bytes = fromBase64(f.body);
