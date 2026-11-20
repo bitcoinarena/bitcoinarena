@@ -7724,6 +7724,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // same network and serial with no series; the sweep wrote it over the kept one, and after the next restart the owner's series were gone. An
       // automatic update must carry every series the owner named; the owner's own update decides for itself.
       if (auto) {
+        // AN AUTOMATIC UPDATE NEVER CHANGES THE FEDERATION (kanban #3026, audit hosting r2-1, measured 2026-11-19: the sweep compared the
+        // federation of its own GET /network, then this function fetched again - one source seat answered the second ask with an invite
+        // naming its own federation, and the seat's federation went DRAINING toward it, kept in draining.json across restarts). The
+        // package taken here is the one compared: a succession is the owner's to take.
+        const heldFed = networksHeld.get(network)?.report?.federationId;
+        if (heldFed && v.federationId !== heldFed) return { ...plain(v), ok: false, status: 422, why: `that package names federation ${String(v.federationId).slice(0, 16)}, this seat's is ${String(heldFed).slice(0, 16)}: a succession is the owner's to take, not an automatic update's` };
         const carried = new Set(v.series.map((t) => toHex(seriesId(t))));
         const lost = [...(networksHeld.get(network)?.ownerSeries || [])].filter((id) => !carried.has(id));
         if (lost.length) return { ...plain(v), ok: false, status: 422, why: `that package drops ${lost.length} series this seat's owner holds (${lost[0].slice(0, 16)}...): an automatic update keeps them` };
