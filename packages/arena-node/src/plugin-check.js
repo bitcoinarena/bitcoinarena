@@ -19,6 +19,121 @@ export const fromBase64 = (s) => (typeof Buffer !== 'undefined' ? new Uint8Array
 const utf8 = (b) => new TextDecoder().decode(b);
 const shaHex = (b) => toHex(sha256(b));
 
+// A TREE CORE IN A PACKAGE (kanban #3085): a core named by its tree hash (Next Block: frozen/<hash>/, 25-26 .js files, ~450 kB) is carried as
+// { hash, name, configs, entry, files: [{ path, body }] } beside the one-file form { ..., source }. Its limits, and its hash by core-hash.js's
+// exact rule recomputed from the bytes in memory (isomorphic: the owner page runs this too).
+export const TREE_LIMITS = Object.freeze({ files: 256, pathBytes: 256, fileBytes: 2 * 1024 * 1024, treeBytes: 8 * 1024 * 1024 });
+const TREE_PATH = /^[A-Za-z0-9._/-]+$/;
+/** Why a tree file's path is refused, or null: relative with "/", only [A-Za-z0-9._/-], ends in .js, no "", "." or ".." segment. */
+export function treePathRefusal(path) {
+  const p = String(path);
+  if (!p || new TextEncoder().encode(p).length > TREE_LIMITS.pathBytes) return `a path of 1 to ${TREE_LIMITS.pathBytes} bytes`;
+  if (!TREE_PATH.test(p)) return 'only letters, digits and . _ / - in a path';
+  if (!p.endsWith('.js')) return 'a tree holds .js files only';
+  if (p.split('/').some((seg) => seg === '' || seg === '.' || seg === '..')) return 'no empty, "." or ".." segment, no leading "/"';
+  return null;
+}
+const NUL_TREE_TAG = new TextEncoder().encode('\0arena-core-tree-framed\0');
+/** A tree's hash from its files in memory ([{ path, bytes }]), by core-hash.js coreTree's rule: sorted by path, `path \0 bytes \0` each, or the
+ *  length-framed form after NUL_TREE_TAG when a path or a file holds a NUL (kanban #1625). */
+export function treeHashHex(files) {
+  const enc = new TextEncoder();
+  const sorted = [...files].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  const nul = sorted.some((f) => f.path.includes('\0') || f.bytes.includes(0));
+  const parts = [];
+  if (nul) {
+    parts.push(NUL_TREE_TAG);
+    for (const f of sorted) {
+      const r = enc.encode(f.path), l32 = new Uint8Array(4), l64 = new Uint8Array(8);
+      new DataView(l32.buffer).setUint32(0, r.length); new DataView(l64.buffer).setBigUint64(0, BigInt(f.bytes.length));
+      parts.push(l32, r, l64, f.bytes);
+    }
+  } else for (const f of sorted) parts.push(enc.encode(f.path), new Uint8Array([0]), f.bytes, new Uint8Array([0]));
+  const all = new Uint8Array(parts.reduce((n, x) => n + x.length, 0)); let at = 0;
+  for (const x of parts) { all.set(x, at); at += x.length; }
+  return shaHex(all);
+}
+/** Where a relative import from `from` lands inside the tree, or null when it leaves the tree or is not relative. */
+export function treeResolve(from, spec) {
+  if (!/^\.{1,2}\//.test(spec)) return null;
+  const parts = from.split('/').slice(0, -1);
+  for (const seg of spec.split('/')) { if (seg === '.' || seg === '') continue; if (seg === '..') { if (!parts.length) return null; parts.pop(); } else parts.push(seg); }
+  return parts.join('/');
+}
+/**
+ * A TREE'S SCAN (kanban #3085, measured on Next Block v8 7d197042: 21 "loads another module" - its files import one another - and 8 more
+ * findings, every one on a comment line: "window's", "C# process", "a global"). scanSource per file, with two exceptions and no other:
+ * - "loads another module" on a static import/export ... from '<relative path>' that resolves to another file of the same tree (an import()
+ *   or require(), a bare or absolute specifier, or a path leaving the tree is still refused);
+ * - the files are scanned with their comments blanked (blankComments): a word in a comment is not code. The sandbox still runs the tree
+ *   with no global, no import beyond its files and no process.
+ * Answers the findings left: [{ file, rule, line }].
+ */
+/**
+ * THE SOURCE WITH ITS COMMENTS BLANKED (kanban #3085): every comment character turned to a space, newlines kept (line numbers stay), strings,
+ * template literals (with their ${...} code, nested) and regex literals left as they are. A regex literal is told from a division by the
+ * last significant character before the slash (the usual rule); a mistaken guess only changes what this lint reads, never what runs.
+ */
+export function blankComments(src) {
+  const out = src.split(''); const n = src.length;
+  const blank = (i) => { if (out[i] !== '\n') out[i] = ' '; };
+  let i = 0, last = '';
+  const stack = [];   // template nesting: each entry counts open braces inside a ${...}
+  const regexCan = () => !last || /[(,=:[!&|?{};+\-*%<>~^]/.test(last) || /\b(return|typeof|instanceof|in|of|new|delete|void|throw|case|do|else|yield|await)$/.test(src.slice(Math.max(0, i - 12), i).trimEnd());
+  while (i < n) {
+    const c = src[i], d = src[i + 1];
+    if (c === '/' && d === '/') { while (i < n && src[i] !== '\n') blank(i++); continue; }
+    if (c === '/' && d === '*') { blank(i++); blank(i++); while (i < n && !(src[i] === '*' && src[i + 1] === '/')) blank(i++); if (i < n) { blank(i++); blank(i++); } continue; }
+    if (c === '"' || c === "'") { i++; while (i < n && src[i] !== c && src[i] !== '\n') i += src[i] === '\\' ? 2 : 1; i++; last = c; continue; }
+    if (c === '`') { i++; for (;;) { if (i >= n) break; if (src[i] === '\\') { i += 2; continue; } if (src[i] === '`') { i++; break; } if (src[i] === '$' && src[i + 1] === '{') { i += 2; stack.push(0); break; } i++; } last = '`'; continue; }
+    if (stack.length && c === '{') { stack[stack.length - 1]++; i++; last = c; continue; }
+    if (stack.length && c === '}') {
+      if (stack[stack.length - 1] === 0) { stack.pop(); i++; for (;;) { if (i >= n) break; if (src[i] === '\\') { i += 2; continue; } if (src[i] === '`') { i++; break; } if (src[i] === '$' && src[i + 1] === '{') { i += 2; stack.push(0); break; } i++; } last = '`'; continue; }
+      stack[stack.length - 1]--; i++; last = c; continue;
+    }
+    if (c === '/' && regexCan()) { i++; let cls = false; while (i < n && src[i] !== '\n') { if (src[i] === '\\') { i += 2; continue; } if (src[i] === '[') cls = true; else if (src[i] === ']') cls = false; else if (src[i] === '/' && !cls) break; i++; } i++; while (i < n && /[a-z]/i.test(src[i])) i++; last = '/'; continue; }
+    if (!/\s/.test(c)) last = c;
+    i++;
+  }
+  return out.join('');
+}
+
+export function scanTree(files) {
+  const paths = new Set(files.map((f) => f.path)), left = [];
+  for (const f of files) {
+    const src = blankComments(utf8(f.bytes)), lines = src.split('\n');
+    for (const x of scanSource(src)) {
+      if (x.rule === 'loads another module') {
+        // the statement from this line to its ';' (an import may span lines)
+        let stmt = '', i = x.line - 1;
+        for (; i < lines.length && i < x.line + 40; i++) { stmt += lines[i] + '\n'; if (lines[i].includes(';')) break; }
+        const m = /^\s*(?:import|export)\b[^;()]*?\bfrom\s*(['"])([^'"]+)\1\s*;?\s*$/.exec(stmt.trim().replace(/\s+/g, ' '));
+        if (m && !/\bimport\s*\(|\brequire\s*\(/.test(stmt)) { const to = treeResolve(f.path, m[2]); if (to && paths.has(to)) continue; }
+      }
+      left.push({ file: f.path, ...x });
+    }
+  }
+  return left;
+}
+
+/** A tree core entry's files decoded and checked against TREE_LIMITS and the path rule: { ok, files } or { ok: false, why }. */
+export function treeFilesOf(c) {
+  if (!Array.isArray(c.files) || !c.files.length || c.files.length > TREE_LIMITS.files) return { ok: false, why: `a tree of 1 to ${TREE_LIMITS.files} files` };
+  const seen = new Set(), files = []; let total = 0;
+  for (const f of c.files) {
+    if (!f || typeof f !== 'object' || typeof f.path !== 'string' || typeof f.body !== 'string') return { ok: false, why: 'each tree file is { path, body }' };
+    const why = treePathRefusal(f.path); if (why) return { ok: false, why: `${f.path.slice(0, 64)}: ${why}` };
+    if (seen.has(f.path)) return { ok: false, why: `${f.path} is in the tree twice` };
+    seen.add(f.path);
+    const bytes = fromBase64(f.body);
+    if (bytes.length > TREE_LIMITS.fileBytes) return { ok: false, why: `${f.path} is more than ${TREE_LIMITS.fileBytes} bytes` };
+    total += bytes.length; if (total > TREE_LIMITS.treeBytes) return { ok: false, why: `the tree is more than ${TREE_LIMITS.treeBytes} bytes` };
+    files.push({ path: f.path, bytes });
+  }
+  if (typeof c.entry !== 'string' || !seen.has(c.entry)) return { ok: false, why: 'its entry is not one of its files' };
+  return { ok: true, files };
+}
+
 // THE SCAN: what a decide adapter may not do, by pattern on its source (comments included - an honest adapter has no reason to
 // spell any of these). Each finding names the rule and the line.
 export const SCAN_RULES = Object.freeze([
@@ -158,7 +273,10 @@ export function checkPackage(pkg, { verify, want = null, parentOf = () => null }
   // hash and a string source/body, checked before either loop reads one - a relaying seat's `clients: [null]`, `cores: [null]`
   // or `clients: {}` (signed by nobody) is refused here, never a TypeError thrown out of adoptPackage and the autoUpdate sweep
   const entries = (list, field) => Array.isArray(list) && list.every((e) => !!e && typeof e === 'object' && typeof e.hash === 'string' && typeof e[field] === 'string');
-  if (!add('its cores are files', entries(pkg.cores == null ? [] : pkg.cores, 'source'))) return out('its cores are not a list of files (hash and source each)', who);
+  // kanban #3085: a core is one file (source) or a tree (entry + files), exactly one of the two
+  const coreEntries = (list) => Array.isArray(list) && list.every((e) => !!e && typeof e === 'object' && typeof e.hash === 'string'
+    && ((typeof e.source === 'string') !== (Array.isArray(e.files) && typeof e.entry === 'string')));
+  if (!add('its cores are files', coreEntries(pkg.cores == null ? [] : pkg.cores))) return out('its cores are not a list of files (hash and source, or entry and files, each)', who);
   if (!add('its clients are files', entries(pkg.clients == null ? [] : pkg.clients, 'body'))) return out('its clients are not a list of files (hash and body each)', who);
   const named = new Set(manifest.cores.map((c) => toHex(c.hash)));
   if (!add('it carries every core its manifest names', (pkg.cores || []).length === named.size, `${(pkg.cores || []).length} of ${named.size}`))
@@ -173,6 +291,18 @@ export function checkPackage(pkg, { verify, want = null, parentOf = () => null }
     coresSeen.add(String(c && c.hash));
   }
   for (const c of pkg.cores || []) {
+    if (Array.isArray(c.files)) {
+      // A TREE CORE (kanban #3085): its files within the limits, its hash by core-hash.js's rule, every file scanned
+      const t = treeFilesOf(c);
+      if (!add(`core ${String(c.hash).slice(0, 12)}… is a well-formed tree`, t.ok, t.ok ? `${t.files.length} files` : t.why)) return out(`core ${String(c.hash).slice(0, 16)}: ${t.why}`, who);
+      const th = treeHashHex(t.files);
+      if (!add(`core ${String(c.hash).slice(0, 12)}… is the tree its manifest names`, th === c.hash && named.has(c.hash), `tree hash ${th.slice(0, 16)}…`))
+        return out(`core ${String(c.hash).slice(0, 16)}: its files are not the tree its manifest names (tree hash ${th.slice(0, 16)})`, who);
+      let found = 0;
+      for (const x of scanTree(t.files)) { findings.push({ core: String(c.hash).slice(0, 16), ...x }); found++; }
+      add(`core ${String(c.hash).slice(0, 12)}… passes the scan`, !found, findings.filter((x) => x.core === String(c.hash).slice(0, 16)).map((x) => `${x.file}: ${x.rule} (line ${x.line})`).join('; '));
+      continue;
+    }
     const src = fromBase64(c.source);
     const h = shaHex(src);
     if (!add(`core ${String(c.hash).slice(0, 12)}… is the file its manifest names`, h === c.hash && named.has(c.hash), `sha-256 ${h.slice(0, 16)}…`))

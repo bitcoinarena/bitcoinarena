@@ -34,13 +34,16 @@ export function trialRun(source, manifest, { ms = TRIAL_MS, name = 'plugin trial
   // ONE TRIAL THREAD AT A TIME (kanban #1880, #1913): the trial never waits for a thread held in a long builtin past its deadline
   // (core-sandbox.js `lingering`); while one still lingers no other is started - refused for now, `retry`: not the version's verdict
   if (trialLingers()) return { ok: false, retry: true, cases: 0, why: 'an earlier trial\'s core thread is still ending: tried again later' };
+  // A TREE CORE (kanban #3085): { files: Map(path -> text), entry } runs from its entry as the seat loads it; a string is the one-file core
+  const coreFiles = source && typeof source === 'object' && source.files instanceof Map ? { files: source.files, entry: source.entry }
+    : { files: new Map([[SINGLE_ENTRY, String(source)]]), entry: SINGLE_ENTRY };
   const until = Date.now() + ms;
   const left = () => until - Date.now();
   let box;
   if (trialNames.size < 256) trialNames.add(name);
   // kanban #1694: the same entry name and core name the seat loads it under (core-sandbox.js coreFiles), so the core cannot
   // tell the trial from the seat by its module's identifier
-  try { box = loadCore({ files: new Map([[SINGLE_ENTRY, String(source)]]), entry: SINGLE_ENTRY }, { name, loadMs: ms, askMs: ms, until, liveCap: ARRAY_BUDGET, oneThread: true }); }   // kanban #1538: kept arrays refused at the budget; #1719: `until` - load and meta share the trial's one deadline
+  try { box = loadCore(coreFiles, { name, loadMs: ms, askMs: ms, until, liveCap: ARRAY_BUDGET, oneThread: true }); }   // kanban #1538: kept arrays refused at the budget; #1719: `until` - load and meta share the trial's one deadline
   catch (e) { return { ok: false, cases: 0, why: `it does not load in the sandbox: ${String(e.message).slice(0, 300)}` }; }   // kanban #2165: bounded
   let kept;
   try { kept = trialCases(box, manifest, left); } finally { box.end(); }
@@ -57,7 +60,7 @@ export function trialRun(source, manifest, { ms = TRIAL_MS, name = 'plugin trial
     let fresh;
     try {
       if (left() <= 0) return { ok: false, cases: kept.cases, why: `the trial did not finish within ${TRIAL_MS} ms` };
-      fresh = loadCore({ files: new Map([[SINGLE_ENTRY, String(source)]]), entry: SINGLE_ENTRY }, { name, loadMs: left(), askMs: left(), until, liveCap: ARRAY_BUDGET, oneThread: true });
+      fresh = loadCore(coreFiles, { name, loadMs: left(), askMs: left(), until, liveCap: ARRAY_BUDGET, oneThread: true });
     } catch (e) { return { ok: false, cases: kept.cases, why: `it does not load again in the sandbox: ${String(e.message).slice(0, 300)}` }; }
     try {
       let v; try { v = JSON.parse(JSON.stringify(fresh.call('decide', { moves: list, config: {} }, left()))); } catch (e) { return { ok: false, cases: kept.cases, why: `on a fresh thread it fails on ${JSON.stringify(set)}: ${String(e.message).slice(0, 300)}` }; }
