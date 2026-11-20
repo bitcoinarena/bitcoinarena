@@ -123,8 +123,9 @@ const guardiansOk = (advert) => {
 const plans = [];
 for (let n = 1; n <= 7; n++) {
   const { secret, pubkey } = keyOf(n);
-  const bonds = rt.bondsOf(secret);
-  if (!bonds.length) throw new Error(`node ${n} (${toHex(pubkey).slice(0, 8)}) has no confirmed unspent bond: nothing to carry, and no bond is posted`);
+  // ONLY A BOND THE NODE SIGNED (kanban #3178, #3182, #3198, #3207, refute of #3016): a stranger's unsigned dust bond to the key is never carried
+  const bonds = rt.ownBondsOf(secret);
+  if (!bonds.length) throw new Error(`node ${n} (${toHex(pubkey).slice(0, 8)}) has no confirmed unspent bond its key signed: nothing to carry, and no bond is posted`);
   const bond = bonds[0];
   say({ node: n, nodeKey: toHex(pubkey).slice(0, 16), bond: `${bond.txid}:${bond.vout}`, bondHeight: bond.height, sats: bond.sats,
     ancestor: !!bond.ancestor, otherBonds: bonds.slice(1).map((b) => `${b.txid}:${b.vout}`), endpoint: bond.advert.endpoint,

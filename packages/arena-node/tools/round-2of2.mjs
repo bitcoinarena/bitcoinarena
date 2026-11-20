@@ -460,7 +460,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       const { DatabaseSync } = await import('node:sqlite');
       for (const i of toPost) {
         const m = members[i];
-        if (rt.bondsOf({ pubkey: m.id.pubkey }).length) continue;
+        if (rt.ownBondsOf({ pubkey: m.id.pubkey }).length) continue;   // a stranger's unsigned dust is no bond of the node (kanban #3178, #3182, #3198, #3207)
         const db = new DatabaseSync(m.path, { readOnly: true });
         let row; try { row = db.prepare('SELECT secret FROM identity WHERE one = 0').get(); } finally { db.close(); }
         const secret = row ? new Uint8Array(row.secret) : null;

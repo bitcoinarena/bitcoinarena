@@ -127,8 +127,11 @@ export async function addBondFromWallet({ cli, wallet, network = 'testnet4', sec
   const { regtest } = await import('../tools/regtest-bond.mjs');
   const rt = regtest(cli, { network, wallet: wallet || 'arena' });
   const bonds = rt.bondsOf(secret);
-  if (!bonds.length) return { ok: false, why: 'this node has no confirmed bond to add to yet' };
-  const bondSats = bonds.reduce((a, b) => a + BigInt(b.sats), 0n);
+  // A STRANGER'S UNSIGNED DUST IS NO BOND (kanban #3178, #3182, #3198, #3207, refute of #3016): inForceOf answers null when no record is the node's, and
+  // that is the same answer as no bond at all - before, newest.advert threw a TypeError. The sum counts only outputs the node signed.
+  const inForce = inForceOf(bonds);
+  if (!bonds.length || !inForce) return { ok: false, why: 'this node has no confirmed bond to add to yet' };
+  const bondSats = bonds.filter((b) => b.signed !== false).reduce((a, b) => a + BigInt(b.sats), 0n);
   // THE SAME ADD ASKED AGAIN (kanban #1374): the one sent before, while its bond is not confirmed yet
   if (post && journal) {
     const was = journal.last('add-bond');
@@ -138,7 +141,7 @@ export async function addBondFromWallet({ cli, wallet, network = 'testnet4', sec
       // never sent (kanban #1423): built and sent anew below
     }
   }
-  const newest = inForceOf(bonds);   // the advertisement in force, as the census reads it (kanban #1836), not bonds[0]
+  const newest = inForce;   // the advertisement in force, as the census reads it (kanban #1836), not bonds[0]
   const versions = [...new Set([...(newest.advert.protocolVersions || []), ...SUPPORTED_PROTOCOL_VERSIONS])].sort((a, b) => a - b);
   let fundingHex = null, fundingFee = 0n, made;
   try { made = rt.postBond(secret, { advert: { ...newest.advert, protocolVersions: versions }, bondSats: add, utxo: (spk) => {
@@ -206,8 +209,9 @@ export async function changeRolesFromWallet({ cli, wallet, network = 'testnet4',
   const { regtest } = await import('../tools/regtest-bond.mjs');
   const rt = regtest(cli, { network, wallet: wallet || 'arena' });
   const bonds = rt.bondsOf(secret);
-  if (!bonds.length) return { ok: false, why: 'this node has no confirmed bond whose advertisement could be updated' };
   const bond = inForceOf(bonds);   // the output whose advertisement is in force (kanban #1836), not bonds[0]
+  // null: only records the node never signed (kanban #3178, #3182, #3198, #3207) - the same answer as no bond
+  if (!bonds.length || !bond) return { ok: false, why: 'this node has no confirmed bond whose advertisement could be updated' };
   // kanban #2182: the seat's own update not mined yet - a change built now would drop the guardians or games it adds
   if (waitFor && inMempool(cli, waitFor)) return { ok: false, why: `this node's own advertisement update ${String(waitFor).slice(0, 16)} is not confirmed yet: change the roles once it is mined` };
   const now = advertInForce(cli, rt, bond, journal ? journal.last('roles') : null);
@@ -290,8 +294,9 @@ export async function guardianOfFromWallet({ cli, wallet, network = 'testnet4', 
   const { regtest } = await import('../tools/regtest-bond.mjs');
   const rt = regtest(cli, { network, wallet: wallet || 'arena', scan });
   const bonds = rt.bondsOf(secret);
-  if (!bonds.length) return { ok: false, noBond: true, why: 'this node has no confirmed bond whose advertisement could be updated' };
   const bond = inForceOf(bonds);   // the output whose advertisement is in force (kanban #1836), not bonds[0]
+  // null: only records the node never signed, a stranger's dust (kanban #3178, #3182, #3198, #3207) - the same answer as no bond, never a TypeError
+  if (!bonds.length || !bond) return { ok: false, noBond: true, why: 'this node has no confirmed bond whose advertisement could be updated' };
   const now = advertInForce(cli, rt, bond, ownerRoles);   // the owner's roles change still in the mempool is kept (kanban #2182)
   if (keep) {
     const want = new Map(((now && now.guardianOf) || []).map((g) => [toHex(g.federationId), g]));
