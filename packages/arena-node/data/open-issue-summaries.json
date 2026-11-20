@@ -1406,5 +1406,17 @@
  "3071": {
   "text": "Node software: the full node and client test suites on main still need triage",
   "kind": "bug"
+ },
+ "3083": {
+  "text": "Committees and bonds: an electrum-mode node never reads a census because batched chain calls are refused",
+  "kind": "bug"
+ },
+ "3084": {
+  "text": "Committees and bonds: an electrum-mode census read reports a false reorg when a reused connection drops",
+  "kind": "bug"
+ },
+ "3086": {
+  "text": "Lightning payouts: a won payout with no collect record stays uncollected",
+  "kind": "bug"
  }
 }
