@@ -36,7 +36,8 @@ export const networkPackageId = (m) => toHex(sha256(utf8(JSON.stringify(['arena/
 
 /** A series template as a package carries it: the contract without its series fields, and its count, cut and period. */
 const templateOf = (s) => {
-  const t = decodeRoundContract(fromHex(String(s.template)));
+  if (!s || !isHex(s.template)) throw new Error('its template is not hex text'); // kanban #3195: never String(...) of a non-string
+  const t = decodeRoundContract(fromHex(s.template));
   if (s.count !== undefined && s.count !== null) t.seriesCount = Number(s.count);
   if (s.cut !== undefined && s.cut !== null) t.seriesCutFrom = Number(s.cut);
   if (s.period !== undefined && s.period !== null) t.seriesPeriodMs = BigInt(s.period);
@@ -83,6 +84,10 @@ export const NETWORK_PACKAGE_MAX_ITEMS = 64;
 // name a handful of recipients each; all of a package's set bodies together may fill one set body's largest entries list, no more, and a
 // longer total is refused before anything is decoded.
 export const NETWORK_PACKAGE_MAX_SET_BYTES = 65535;
+const HEX = /^(?:[0-9a-f]{2})*$/;
+const isHex = (x) => typeof x === 'string' && HEX.test(x);
+const isHexEntry = (x) => !!x && typeof x === 'object' && isHex(x.body) && isHex(x.signature);
+const isId = (x) => typeof x === 'string' && /^[0-9a-f]{64}$/.test(x);
 export function checkNetworkPackage(pkg, { verify: verifyOnce, seatChain, hostsGame = () => true } = {}) {
   const seen = new Map();
   const verify = (sig, msg, key) => {
@@ -98,8 +103,20 @@ export function checkNetworkPackage(pkg, { verify: verifyOnce, seatChain, hostsG
   for (const [what, list] of [['rotations', pkg.rotations], ['donation sets', pkg.donationSets], ['series', pkg.series]])
     if (!add(`it carries at most ${NETWORK_PACKAGE_MAX_ITEMS} ${what}`, list == null || (Array.isArray(list) && list.length <= NETWORK_PACKAGE_MAX_ITEMS),
       Array.isArray(list) ? `${list.length}` : 'not a list')) return out();
+  // EACH CARRIED SET AND ROTATION IS HEX TEXT, AND EACH MANIFEST LIST A SHORT LIST OF IDS (kanban #3195, refute of #3148): the byte cap
+  // counted a body only when it was a string, while the decode read fromHex(String(d.body)) - a peer's JSON answer with a body sent as
+  // ['<hex>'] counted 0 bytes and decoded in full (64 such sets held the thread 32 s again). Anything but hex text is refused here, before
+  // the bytes are counted, and the decode below reads only strings. The manifest's lists are hashed into the id and walked into Sets
+  // before anything else, so they are bounded the same way: arrays of at most NETWORK_PACKAGE_MAX_ITEMS ids of 32 bytes in hex.
+  for (const [what, list] of [['rotation', pkg.rotations], ['donation set', pkg.donationSets]])
+    for (const [i, x] of (list || []).entries())
+      if (!add(`${what} ${i} is hex text`, isHexEntry(x), 'its body and signature must be lowercase hex strings')) return out();
+  const mf = pkg.manifest;
+  for (const what of ['rotations', 'donationSets', 'series'])
+    if (!add(`its manifest names at most ${NETWORK_PACKAGE_MAX_ITEMS} ${what} by id`, mf[what] == null || (Array.isArray(mf[what]) && mf[what].length <= NETWORK_PACKAGE_MAX_ITEMS && mf[what].every(isId)),
+      Array.isArray(mf[what]) ? `${mf[what].length}` : 'not a list')) return out();
   let setBytes = 0;
-  for (const d of pkg.donationSets || []) setBytes += d && typeof d.body === 'string' ? d.body.length / 2 : 0;
+  for (const d of pkg.donationSets || []) setBytes += d.body.length / 2;
   if (!add(`its donation sets carry at most ${NETWORK_PACKAGE_MAX_SET_BYTES} bytes in all`, setBytes <= NETWORK_PACKAGE_MAX_SET_BYTES, `${Math.ceil(setBytes)} bytes`)) return out();
   const m = pkg.manifest;
   const id = networkPackageId(m);
@@ -125,7 +142,7 @@ export function checkNetworkPackage(pkg, { verify: verifyOnce, seatChain, hostsG
   const rotations = [];
   const namedRot = new Set(m.rotations || []);
   for (const [i, r] of (pkg.rotations || []).entries()) {
-    let rot; try { rot = { ...decodeAuthorityRotation(fromHex(String(r.body))), signature: fromHex(String(r.signature)) }; } catch (e) { add(`rotation ${i} reads`, false, e.message); continue; }
+    let rot; try { rot = { ...decodeAuthorityRotation(fromHex(r.body)), signature: fromHex(r.signature) }; } catch (e) { add(`rotation ${i} reads`, false, e.message); continue; }
     const rid = toHex(authorityRotationId(rot));
     add(`rotation serial ${rot.serial} is the one its manifest names`, namedRot.has(rid), rid.slice(0, 16));
     const s = keys ? rotationSignedBy(rot, { recovery: keys.recovery, verify }) : { ok: false, why: 'no recovery key' };
@@ -136,7 +153,7 @@ export function checkNetworkPackage(pkg, { verify: verifyOnce, seatChain, hostsG
   const sets = [];
   const namedSets = new Set(m.donationSets || []);
   for (const [i, d] of (pkg.donationSets || []).entries()) {
-    let set; try { set = { ...decodeDonationSetBody(fromHex(String(d.body))), signature: fromHex(String(d.signature)) }; } catch (e) { add(`donation set ${i} reads`, false, e.message); continue; }
+    let set; try { set = { ...decodeDonationSetBody(fromHex(d.body)), signature: fromHex(d.signature) }; } catch (e) { add(`donation set ${i} reads`, false, e.message); continue; }
     const bid = toHex(donationSetBodyId(set));
     add(`donation set serial ${set.serial} is the one its manifest names`, namedSets.has(bid), bid.slice(0, 16) + '…');
     add(`donation set serial ${set.serial} is for this network`, nid && toHex(set.networkId) === toHex(nid));
