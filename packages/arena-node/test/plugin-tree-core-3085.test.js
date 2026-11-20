@@ -65,3 +65,19 @@ test('#3085: the tree scan still finds every real reach: import(), require, a ba
   for (const [k, n] of Object.entries(left)) assert.ok(n > 0, `${k} must be found`);
   assert.equal(blankComments('a // b\nc').split('\n').length, 2, 'line numbers kept');
 });
+
+// the trial runs a tree from its entry (kanban #3085): a decide adapter whose rule sits in another file of the tree
+test('#3085: the trial runs a tree core from its entry; a tree whose entry imports a file it does not carry does not load', async () => {
+  const { trialRun } = await import('../src/plugin-trial.js');
+  const { ROCK_PAPER_SCISSORS } = await import('../../rock-paper-scissors/plugin/rock-paper-scissors.js');
+  const m = ROCK_PAPER_SCISSORS.manifest;
+  const rule = "export const beats = (a, b) => (a - b + 3) % 3 === 1;\n";
+  const adapter = "import { beats } from './rules/rps.js';\nexport const DECIDE = { name: 'tree rps', decide(moves) { const out = {};\n"
+    + "  for (const x of moves) { const w = moves.some((y) => y !== x && beats(x.move, y.move)), l = moves.some((y) => y !== x && beats(y.move, x.move));\n"
+    + "    out[x.key] = w && !l ? 'WIN' : l && !w ? 'LOSS' : 'DRAW'; } return out; } };\n";
+  const good = trialRun({ files: new Map([['adapter.js', adapter], ['rules/rps.js', rule]]), entry: 'adapter.js' }, m);
+  console.log('  MEASURED #3085 tree trial:', JSON.stringify({ ok: good.ok, cases: good.cases, why: good.why }));
+  assert.equal(good.ok, true, good.why);
+  const lacking = trialRun({ files: new Map([['adapter.js', adapter]]), entry: 'adapter.js' }, m);
+  assert.equal(lacking.ok, false);
+});
