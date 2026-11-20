@@ -58,6 +58,12 @@ test('the seat\'s calls through the bridge: tip, hash, header (verbose and raw),
   const ask = (auth) => fetch(`http://127.0.0.1:${port}/`, { method: 'POST', headers: { authorization: `Basic ${Buffer.from(auth).toString('base64')}` }, body: JSON.stringify({ id: 1, method: 'getblockhash', params: [0] }) });
   assert.equal((await ask('__cookie__:wrong')).status, 401);
   assert.equal((await (await ask(cookie)).json()).result, TESTNET4_GENESIS);
+  // KANBAN #3083 (feedback #363): a JSON-RPC batch, as chain-rpc.js call.batch sends the census block reads, is answered call by call with
+  // its ids - a refused call stays its own error, the others are answered
+  const batch = await (await fetch(`http://127.0.0.1:${port}/`, { method: 'POST', headers: { authorization: `Basic ${Buffer.from(cookie).toString('base64')}` },
+    body: JSON.stringify([{ id: 0, method: 'getblockhash', params: [0] }, { id: 1, method: 'getblockcount' }, { id: 2, method: 'listunspent' }]) })).json();
+  assert.ok(Array.isArray(batch), 'a batch is answered with an array');
+  assert.deepEqual(batch.map((r) => [r.id, r.result, r.error && r.error.code]), [[0, TESTNET4_GENESIS, null], [1, 0, null], [2, null, -32601]]);
 });
 
 test('a block Esplora changed is never handed on', async (t) => {
