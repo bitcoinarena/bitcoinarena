@@ -1285,7 +1285,8 @@ export function recordDonation(storage, federationId, { msat, round, txid = null
 export function recordReceived(storage, federationId, { kind, msat, round = null, outpoint = null }) {
   // 'returned' (kanban #3087, feedback #368): sat the wallet fetched back from the federation (Rescan's reissue, a lost deposit claimed)
   if (kind !== 'referral' && kind !== 'zap-in' && kind !== 'returned') return;
-  ledgerAppend(storage, federationId, { kind, msat: String(msat), round: round ? String(round) : null, ...(outpoint ? { outpoint: String(outpoint) } : {}) });
+  // one row per collected outpoint (kanban #2319, ported with #3087): two tabs, or two passes, write it once
+  ledgerAppend(storage, federationId, { kind, msat: String(msat), round: round ? String(round) : null, ...(outpoint ? { outpoint: String(outpoint) } : {}) }, outpoint ? `zap-${outpoint}` : null);
 }
 /** The rest: the smallest whole sat whose whole notes cover what the wallet is short. */
 export function restOfFeesMsat(shortMsat) {
