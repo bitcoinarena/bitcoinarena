@@ -7289,11 +7289,16 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         if (typeof collectNote === 'function') collectNote('pending ' + String(n.roundIdHex).slice(0, 8), answered.length + ' of ' + (n.nodes || []).length + ' signer nodes answered /standing; '
           + [...votes.entries()].map(([f, c]) => (f === null ? 'none' : f + ' msat') + ' x' + c).join(', ')
           + (answered[0] ? ' | ' + [answered[0].kind, answered[0].state, answered[0].outcome].filter(Boolean).join(' ') : ''));
-        if (!best || best[0] === null || best[0] === '0' || best[1] * 2 <= answered.length) continue;
         // A PAYOUT OWED WITH NO RECORD TO COLLECT IT (kanban #3086, feedback #365, measured 2026-11-20: round 67bba1aa FINAL DELIVERED 180000 msat
         // by 7 of 7 seats, "collect pending" for 7 h, never a collect line - the tab held no arena.collect record for it): the record is
         // rebuilt from the note, once, and the collect loop takes it on its next look
-        try {
+        // AND A STAKE OWED BACK (kanban #3092, refute of #3086): a refunded or VOID round (kind 'refund', every stake comes back) votes
+        // 'none' in the payout vote above, so the rebuild runs BEFORE that vote's continue: when more than half the answering seats name
+        // the entry decided - a payout with a non-zero figure, or a refund - the record is rebuilt, so the forfeit redeem or the expiry
+        // refund runs for that stake too
+        const decided = answered.filter((x) => x.kind === 'refund'
+          || (x.kind === 'payout' && x.pendingMsat !== null && x.pendingMsat !== undefined && String(x.pendingMsat) !== '0')).length;
+        if (decided * 2 > answered.length) try {
           if (n.seed && n.round && n.invite && !st.rebuilt) st.rebuilt = new Set();
           if (n.seed && n.round && n.invite && !st.rebuilt.has(k)) {
             st.rebuilt.add(k);
@@ -7302,10 +7307,11 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             if (!has) {
               const round = Object.assign({}, ARENACLIENT.decodeRoundContract(ARENACLIENT.fromHex(n.round)), { id: ARENACLIENT.fromHex(n.roundIdHex) });
               const ok = ARENACLIENT.saveCollect(vault(), { roundIdHex: n.roundIdHex, round, invite: n.invite, nodes: n.nodes, seed: seedB, order: n.order || 0 });
-              if (typeof collectNote === 'function') collectNote('pending ' + String(n.roundIdHex).slice(0, 8), ok === false ? 'payout owed, its collect record could not be written' : 'payout owed and no collect record: rebuilt from the note');
+              if (typeof collectNote === 'function') collectNote('pending ' + String(n.roundIdHex).slice(0, 8), ok === false ? 'money owed, its collect record could not be written' : 'money owed (a payout or a stake back) and no collect record: rebuilt from the note');
             }
           }
         } catch (e) { if (typeof collectNote === 'function') collectNote('pending ' + String(n.roundIdHex).slice(0, 8), 'collect record not rebuilt: ' + String((e && e.message) || e).slice(0, 120)); }
+        if (!best || best[0] === null || best[0] === '0' || best[1] * 2 <= answered.length) continue;
         total += BigInt(best[0]);
         const one = said.find((x) => x && x.pendingMsat === best[0]);
         if (one && one.windowCloseMs && (closeMs === null || Number(one.windowCloseMs) > closeMs)) { closeMs = Number(one.windowCloseMs); closeRound = n.roundIdHex; }
