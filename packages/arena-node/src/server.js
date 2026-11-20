@@ -6875,7 +6875,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   // THE OWNERS' CONSENTS TO RETIRE A FEDERATION (kanban #577), kept beside the store
   const retireBook = createRetireBook(db && db.arenaPath ? `${db.arenaPath}.retire.json` : null);
-  fedRecords = federationRecords({ round, roster, fetcher: fetch /* the capped door, kanban #2650 */, inviteFor: inviteOfFed, store: recordStore, networkId: chainNetworkId() ? fromHex(chainNetworkId()) : null, reserveOf, endpointsOf: fedEndpointsOf, guardianKeysOf: fedGuardianKeysOf,
+  fedRecords = federationRecords({ round, roster, fetcher: fetch /* the capped door, kanban #2650 */, endpointOf: (e) => addressBook.endpointOf(e) /* kanban #3090/#3093 */, inviteFor: inviteOfFed, store: recordStore, networkId: chainNetworkId() ? fromHex(chainNetworkId()) : null, reserveOf, endpointsOf: fedEndpointsOf, guardianKeysOf: fedGuardianKeysOf,
     // a mirrored record checked against the census at its own height, read off this seat's chain
     censusAt: ballot && typeof ballot.censusEntriesAt === 'function' ? (h) => (chainNetworkId() ? ballot.censusEntriesAt(chainNetworkId(), h) : null) : null,
     // and its tip: a seat that holds no round builds and checks records from the chain's census
@@ -14667,7 +14667,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (!forced.ok) throw new Error(`no donation set in force at census height ${height}: ${forced.why}`);
       return donationSetId(forced.recipients);
     };
-    duty.attach({ port: http.address().port, host, endpoint: publicEndpoint, heldTemplates: () => series.slice(),
+    duty.attach({ port: http.address().port, host, endpoint: publicEndpoint, endpointOf: (e) => addressBook.endpointOf(e) /* kanban #3090/#3093 */, heldTemplates: () => series.slice(),
       nameFunded: (idHex) => { if (typeof funded.nameRound === 'function') funded.nameRound(idHex); }, donationSetAt: inForce, nodeKey: round.pubkey,
       // the creator of a grid announced here (POST /expected, its creator signature checked there) - a day marker's poster (kanban #1168)
       announcedCreatorOf: (idHex) => { const e = announced.get(String(idHex)); return e && e.creator ? String(e.creator) : null; },
