@@ -189,6 +189,9 @@ export function openBountySeason(path = ':memory:', { startMs = null, s2EndMs = 
   try { db.exec("ALTER TABLE links ADD COLUMN proof TEXT NOT NULL DEFAULT 'code'"); } catch { /* there already */ }
   // WHY A PAYOUT WENT DOWN (kanban #2641), e.g. "left Discord: -25 %"
   try { db.exec('ALTER TABLE approvals ADD COLUMN payable_why TEXT'); } catch { /* there already */ }
+  // THE ROW BEFORE AN INTENT (kanban #3220): an 'approving' row keeps the row it replaced (JSON, null when there was none), so a report store that
+  // refuses the approval puts that row back - a waiting report keeps waiting
+  try { db.exec('ALTER TABLE approvals ADD COLUMN intent_prior TEXT'); } catch { /* there already */ }
   const seasonNow = (nowMs) => seasonAt(nowMs, startMs, s2EndMs);
 
   /** A ONE-TIME LINK CODE for a reporter's key (signed in with it): 24 hours, used once, at most LINK_CODES_OPEN_MOST open at a time. */
@@ -353,16 +356,38 @@ export function openBountySeason(path = ':memory:', { startMs = null, s2EndMs = 
       why: `Season ${season}'s pot is used up (${now.leftSats} sat left, this report is ${p.sats}): no bounty` };
     return { ok: true, fits, waits: !fits, season, flags, ...p, pot: now };
   }
-  function keep(report, p, state, { by = null, nowMs = Date.now() } = {}) {
-    db.prepare(`INSERT INTO approvals (report, pubkey, season, level, code_only, follow_up, base_sats, bonus_pct, sats, state, flags, at_ms, by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (report) DO UPDATE SET season = excluded.season, level = excluded.level, code_only = excluded.code_only,
+  function keep(report, p, state, { by = null, nowMs = Date.now() } = {}, prior = null) {
+    db.prepare(`INSERT INTO approvals (report, pubkey, season, level, code_only, follow_up, base_sats, bonus_pct, sats, state, flags, at_ms, by, intent_prior)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (report) DO UPDATE SET season = excluded.season, level = excluded.level, code_only = excluded.code_only,
       follow_up = excluded.follow_up, base_sats = excluded.base_sats, bonus_pct = excluded.bonus_pct, sats = excluded.sats, state = excluded.state, flags = excluded.flags,
-      at_ms = excluded.at_ms, by = excluded.by`)
-      .run(report.id, report.pubkey, p.season, p.level, p.codeOnly ? 1 : 0, p.followUp ? 1 : 0, p.baseSats, p.bonusPct, p.sats, state, JSON.stringify(p.flags || {}), nowMs, by);
+      at_ms = excluded.at_ms, by = excluded.by, intent_prior = excluded.intent_prior`)
+      .run(report.id, report.pubkey, p.season, p.level, p.codeOnly ? 1 : 0, p.followUp ? 1 : 0, p.baseSats, p.bonusPct, p.sats, state, JSON.stringify(p.flags || {}), nowMs, by, prior);
     return approval(report.id);
   }
   const commit = (report, p, o) => keep(report, p, 'approved', o);
   const wait = (report, p, o) => keep(report, p, 'waiting', o);
+  /**
+   * A SEASON 2 APPROVAL IS WRITTEN HERE FIRST, AS AN INTENT (kanban #3220, state audit SM-21): the report's accepted state lives in feedback.db, the
+   * approval in this file - two files, no shared transaction. intend() records the plan as 'approving' (the row it replaces kept) before the report
+   * store approves; settle(id, true) makes it 'approved', settle(id, false) puts the earlier row back ('dropped' when there was none). A write that
+   * fails between the two leaves an 'approving' row, which the faucet's reconcile pass settles by the report's state - nothing is lost either way.
+   */
+  function intend(report, p, o) {
+    const had = db.prepare('SELECT * FROM approvals WHERE report = ?').get(report.id);
+    const prior = !had ? null : had.state === 'approving' ? had.intent_prior : JSON.stringify(had);   // an intent again keeps the first one's row
+    return keep(report, p, 'approving', o, prior);
+  }
+  function settle(id, approved) {
+    const row = db.prepare("SELECT * FROM approvals WHERE report = ? AND state = 'approving'").get(String(id));
+    if (!row) return approval(id);
+    if (approved) db.prepare("UPDATE approvals SET state = 'approved', intent_prior = NULL WHERE report = ? AND state = 'approving'").run(row.report);
+    else if (!row.intent_prior) db.prepare("UPDATE approvals SET state = 'dropped', intent_prior = NULL WHERE report = ? AND state = 'approving'").run(row.report);
+    else { const x = JSON.parse(row.intent_prior);
+      db.prepare(`UPDATE approvals SET season = ?, level = ?, code_only = ?, follow_up = ?, base_sats = ?, bonus_pct = ?, sats = ?, state = ?, flags = ?, at_ms = ?,
+        payable_sats = ?, payable_ms = ?, payable_why = ?, by = ?, intent_prior = NULL WHERE report = ? AND state = 'approving'`)
+        .run(x.season, x.level, x.code_only, x.follow_up, x.base_sats, x.bonus_pct, x.sats, x.state, x.flags, x.at_ms, x.payable_sats ?? null, x.payable_ms ?? null, x.payable_why ?? null, x.by ?? null, row.report); }
+    return approval(id);
+  }
 
   const approvalRow = (x) => (x ? { report: x.report, pubkey: x.pubkey, season: x.season, level: x.level, codeOnly: !!x.code_only, followUp: !!x.follow_up,
     baseSats: x.base_sats, bonusPct: x.bonus_pct, sats: x.sats, state: x.state, flags: JSON.parse(x.flags || '{}'), atMs: x.at_ms,
@@ -375,9 +400,9 @@ export function openBountySeason(path = ':memory:', { startMs = null, s2EndMs = 
    * BEFORE PAYOUT: the bonus read again from flags just verified. The payable amount never rises above the approved one (a bonus lost since is taken
    * off; one gained since waits for the next report). Stored on the approval with its time; nothing is paid here.
    */
-  /** A REPORT REJECTED OR MARKED DUPLICATE TAKES ITS APPROVAL BACK (kanban #2904): approved or waiting -> rejected, nothing payable; answers whether one moved. */
+  /** A REPORT REJECTED OR MARKED DUPLICATE TAKES ITS APPROVAL BACK (kanban #2904): approved, waiting or approving (kanban #3220) -> rejected, nothing payable; answers whether one moved. */
   function voidApproval(id, { why = 'the report was rejected', nowMs = Date.now() } = {}) {
-    return db.prepare("UPDATE approvals SET state = 'rejected', payable_sats = 0, payable_ms = ?, payable_why = ? WHERE report = ? AND state IN ('approved', 'waiting')")
+    return db.prepare("UPDATE approvals SET state = 'rejected', payable_sats = 0, payable_ms = ?, payable_why = ?, intent_prior = NULL WHERE report = ? AND state IN ('approved', 'waiting', 'approving')")
       .run(nowMs, String(why).slice(0, 200), String(id)).changes === 1;
   }
   function payable(id, { nowMs = Date.now() } = {}) {
@@ -452,6 +477,6 @@ export function openBountySeason(path = ':memory:', { startMs = null, s2EndMs = 
     return c ? { ok: true } : { ok: false, why: 'that key carries no real-user mark' };
   };
 
-  return { makeCode, redeem, claimName, seeTelegram, telegramIdOf, links: linksOf, record, verify, flagsOf, pot, plan, commit, wait, approval, approvals, payable, voidApproval, drawEntries, keysOfSeason,
+  return { makeCode, redeem, claimName, seeTelegram, telegramIdOf, links: linksOf, record, verify, flagsOf, pot, plan, commit, wait, intend, settle, approval, approvals, payable, voidApproval, drawEntries, keysOfSeason,
     seasonNow, realUserOf, markRealUser, clearRealUser, playedMarkOf, markPlayed, clearPlayed, close: () => db.close() };
 }
