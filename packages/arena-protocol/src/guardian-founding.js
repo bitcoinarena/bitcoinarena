@@ -44,21 +44,36 @@ export function drawGuardians({ entries, seed, height, nominal, bondMinGuardian,
   const offered = seatedFirst || [];
   const first = offered.length >= f + 1 ? offered.slice(0, nominal) : [];
   const firstOps = new Set(first.map(opOf)), firstNodes = new Set(first.map((e) => toHex(e.pubkey)));
-  const byOp = new Map();
+  // THE LARGEST NODE STANDS FOR ITS OPERATOR (kanban #3146, refute of #3031 r1120b-14): on the deployed values the census floor and
+  // bond_min_guardian are both 50 000 sats, so a stranger's node at the census minimum naming an honest operator's id held the floor
+  // "on its own" and, with a ground-low outpoint, still took that operator's ticket and summed bond. Each node's bonds are summed first
+  // (its key and declared operator, as census nodeBonds groups them; its ticket on its lowest outpoint); of an operator's nodes the one
+  // holding bond_min_guardian with the LARGEST own bond stands, the lowest outpoint only between equal bonds. A squat now costs a bond
+  // larger than the victim's own node; binding the operator id to a key (closing it) is the spec decision #3031 names.
+  const byNode = new Map();
   for (const e of entries || []) {
     const a = e && e.advert;
     if (!a || a.guardianCapable !== true || !a.guardianEndpoint) continue;
     const op = String(a.operatorId || toHex(e.pubkey));
     if (guardingOpen.has(op) || guardingOpen.has(toHex(e.pubkey)) || firstOps.has(op) || firstNodes.has(toHex(e.pubkey))) continue;
+    const k = toHex(e.pubkey) + '|' + op, had = byNode.get(k);
+    if (!had) { byNode.set(k, { op, entry: e, bondSats: BigInt(e.bondSats) }); continue; }
+    had.bondSats += BigInt(e.bondSats);
+    if (outpointOrder(e, had.entry) < 0) had.entry = e;
+  }
+  const byOp = new Map();
+  for (const n of byNode.values()) {
+    const { op, entry: e } = n;
     // THE OPERATOR'S SEAT GOES TO A NODE THAT HOLDS bond_min_guardian ITSELF (kanban #3031, audit census r3-1, measured 2026-11-19: the
     // operator id is self-declared, so a stranger's node at the census minimum naming an honest operator's id with a ground-low bond
-    // outpoint became that operator's entry and was seated on its ticket and summed bond). Of an operator's nodes, the one with the
-    // lowest outpoint among those holding bond_min_guardian on their own stands; only when none does, the lowest of all (as before).
-    const own = BigInt(e.bondSats) >= bondMinGuardian;
+    // outpoint became that operator's entry and was seated on its ticket and summed bond). Of an operator's nodes, one holding
+    // bond_min_guardian on its own stands (the largest, #3146 above); only when none does, the largest of all.
+    const own = n.bondSats >= bondMinGuardian;
     const had = byOp.get(op);
-    if (!had) { byOp.set(op, { entry: e, bondSats: BigInt(e.bondSats), own }); continue; }
-    had.bondSats += BigInt(e.bondSats);
-    if ((own && !had.own) || (own === had.own && outpointOrder(e, had.entry) < 0)) { had.entry = e; had.own = own; }
+    if (!had) { byOp.set(op, { entry: e, bondSats: n.bondSats, own, nodeSats: n.bondSats }); continue; }
+    had.bondSats += n.bondSats;
+    const better = (own && !had.own) || (own === had.own && (n.bondSats > had.nodeSats || (n.bondSats === had.nodeSats && outpointOrder(e, had.entry) < 0)));
+    if (better) { had.entry = e; had.own = own; had.nodeSats = n.bondSats; }
   }
   const pool = [...byOp.values()].filter((x) => x.bondSats >= bondMinGuardian);
   const missing = nominal - first.length;
