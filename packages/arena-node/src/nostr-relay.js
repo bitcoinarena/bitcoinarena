@@ -369,7 +369,21 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   const keepJson = JSON.stringify(keepList), keepSet = new Set(keepList);
   // kanban #2847: standing - the kept node keys, the counted identities (`standing()`, read again each call), a seed kept 7 days here
   const seedKept = db.prepare(`SELECT 1 AS x FROM events WHERE pubkey = ? AND kind = ${SEED_KIND} AND COALESCE(kept_ms, created_at * 1000) <= ? LIMIT 1`);
-  const identities = () => { try { const v = typeof standing === 'function' ? standing() : standing; return new Set([...(v || [])].map((k) => String(k).toLowerCase())); } catch { return new Set(); } };
+  // ONCE PER STANDING SET, NOT PER EVENT (kanban #3061, audit nostr r4-2-1): every EVENT copied the whole standing set (and its JSON) before the
+  // PoW check; the host swaps the set every 10 minutes, so the lower-cased copy and its JSON (with the keep list) are kept per set it hands out
+  let idsOf = null, idsSize = -1, idsCopy = new Set(), idsJson = JSON.stringify(keepList);
+  const identities = () => {
+    try {
+      const v = typeof standing === 'function' ? standing() : standing;
+      if (v !== idsOf || v === null || v === undefined || Array.isArray(v) || v.size !== idsSize) {
+        idsCopy = new Set([...(v || [])].map((k) => String(k).toLowerCase()));
+        idsJson = JSON.stringify([...new Set([...keepList, ...idsCopy])]);
+        idsOf = v; idsSize = v ? v.size : -1;
+      }
+      return idsCopy;
+    } catch { return new Set(); }
+  };
+  const standingJsonNow = () => { identities(); return idsJson; };
   const hasStanding = (pubkey, ids = identities()) => keepSet.has(pubkey) || ids.has(pubkey) || !!seedKept.get(pubkey, now() - STANDING_SEED_MS);
   const seenAuthor = db.prepare('SELECT 1 AS x FROM seen_authors WHERE pubkey = ?');
   const markSeen = db.prepare('INSERT OR IGNORE INTO seen_authors (pubkey) VALUES (?)');
@@ -732,7 +746,7 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
             const before = { ...useOf() };
             // kanban #2847: who may be evicted (standing), and the proof of work an unseen author pays while its pool is nearly full
             const ids = identities();
-            const standingJson = JSON.stringify([...new Set([...keepList, ...ids])]);
+            const standingJson = standingJsonNow();   // kanban #3061: kept per standing set
             // `pow` (kanban #2847): on in the relay the host runs (tools/nostr-relay.mjs, ARENA_RELAY_POW=0 turns it off); a library caller asks for it
             // SEEN IN THE POOL IT WRITES TO (kanban #2988, audit nostr r1-2): seen_authors knows every key that ever wrote anything, so fresh keys
             // that each posted one cheap seed (the seed pool nearly empty, no work asked) then wrote unmined into a nearly full state pool and
