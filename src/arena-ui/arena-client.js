@@ -27528,6 +27528,15 @@ const nodeSaid = (text) => (text.startsWith(CLOSED) ? `error ${text}` : text);
  */
 const BATCH_ANSWER_MS = 5000;
 
+/**
+ * HOW LONG A PEER'S FEED WAITS FOR THE ANSWER TO A BATCH (kanban #3214, wf1489 r1120b refute 12-s2-1): a peer seat that kept its
+ * /play socket open and never answered a batch held its feed - and `awaitPeers`, which a batch the home seat refused waits on in
+ * #carriedByPeers - for good: `publishing` never settled and the honest home seat got no tick after a first-batch stake wait (0 of
+ * 135). A peer that has not answered in this long is read as gone: its link is dropped (every waiter on it hears CLOSED, so no later
+ * answer is matched to the wrong batch) and the next batch or mark opens a new one.
+ */
+const PEER_ANSWER_MS = BATCH_ANSWER_MS;
+
 /** How long `finish` waits for the held ticks to go out before it ends the run anyway. */
 const FINISH_WAIT_MS = 300;
 // HOW OFTEN THE FINAL MARK IS OFFERED AGAIN to a signer node that has not receipted it - a cadence, not a timeout: the
@@ -27815,6 +27824,10 @@ class Client {
     this.said = [];
     this.batchAnswerMs = BATCH_ANSWER_MS;
     this.batchesUnanswered = 0;   // batches the home node did not answer within batchAnswerMs (kanban #3170, #3172)
+    this.peerAnswerMs = PEER_ANSWER_MS;
+    this.peersUnanswered = 0;     // peer links dropped for a batch unanswered within peerAnswerMs (kanban #3214)
+    this.homeHolds = 0;           // how many of `published` the home seat holds; the rest the peers carried (kanban #3215)
+    this.homeCaughtUp = 0;        // batches the peers carried that were fed back to the home seat afterwards (kanban #3215)
 
     // WHAT ARRIVES UNASKED. A GHOSTS frame is not an answer to anything: the
     // node pushes it when somebody else's truck moves, so it cannot go into
@@ -28007,11 +28020,31 @@ class Client {
     return link.opening;
   }
 
-  /** One message to another committee node, answered the way `send` answers. */
-  async sendPeer(base, message) {
+  /**
+   * One message to another committee node, answered the way `send` answers. With `within` (the feed's batches, kanban #3214) a
+   * peer that has not answered in that many ms is read as gone: the link is dropped and every waiter on it hears CLOSED.
+   */
+  async sendPeer(base, message, within = 0) {
     const link = await this.peerLink(base);
     if (!link.sock || link.sock.readyState !== 1) return `${CLOSED}no socket to ${base}`;
-    return new Promise((r) => { link.said.push(r); link.sock.send(message); });
+    return new Promise((r) => {
+      if (!within) { link.said.push(r); link.sock.send(message); return; }
+      let timer = null;
+      const waiter = (a) => { if (timer) clearTimeout(timer); r(a); };
+      timer = setTimeout(() => {
+        timer = null;
+        if (!link.said.includes(waiter)) return;
+        const sock = link.sock;
+        const waiting = link.said;
+        link.said = [];
+        link.sock = null;
+        this.peersUnanswered++;
+        for (const w of waiting) w(`${CLOSED}the node at ${base} did not answer within ${within} ms`);
+        try { if (sock) sock.close(); } catch { /* already going */ }
+      }, within);
+      link.said.push(waiter);
+      link.sock.send(message);
+    });
   }
 
   /** Signer nodes this client's entry on one other committee node. */
@@ -28073,7 +28106,8 @@ class Client {
           // stops costing a round trip per batch of it.
           // ONE FRAME to a peer that refused the entry: its answer says whether it holds it now; the window once it does
           const window = this.published.slice(f.next, f.next + (f.entryRefused && f.entryBackoffUntil ? 1 : FEED_WINDOW));
-          const asked = window.map((one) => ({ one, said: this.sendPeer(base, one.bytes) }));
+          // each answered within peerAnswerMs: a silent peer is a dropped link, not a feed held for good (kanban #3214)
+          const asked = window.map((one) => ({ one, said: this.sendPeer(base, one.bytes, this.peerAnswerMs) }));
           // EVERY ANSWER IS READ, INCLUDING THE ONES AFTER A REFUSAL. They are already on the wire, and a
           // promise nobody reads would leave `sendPeer`'s queue matching the next batch to this one's
           // answer. `stop` is what the old `return` said: the feed ends at the first batch that did not
@@ -28720,7 +28754,13 @@ class Client {
     const bytes = await signBatch(b, this.sign);
     // KEPT BEFORE IT GOES OUT (kanban #1567): a batch the node took whose answer was lost is still this client's own
     this.signedFrames.set(toHex(batchId(b)), bytes);
-    const answer = await this.#sendWithin(bytes, this.batchAnswerMs);
+    // THE HOME SEAT IS FED WHAT THE PEERS CARRIED WITHOUT IT FIRST (kanban #3215, wf1489 r1120b refute 12-s2-2): an honest home seat
+    // whose stake view was one batch behind answered the first batch 'stake not seen', the peer took it, the chain head moved past a
+    // batch the home seat never got, and every later batch was answered 'does not follow the chain head' and carried by the peer
+    // again - the honest home seat held 0 of 120 ticks, and on a 2-seat committee no mark could go live. Its answer to the first
+    // batch it still lacks stands for this one: a seat that still refuses is asked nothing more and the batch goes to the peers.
+    const behind = await this.#homeCatchUp();
+    const answer = behind !== null ? behind : await this.#sendWithin(bytes, this.batchAnswerMs);
 
     // The node answers how many ticks were NEW. A refusal is a named string
     // and the chain must not move on one, the same rule the marks follow.
@@ -28763,9 +28803,24 @@ class Client {
     // arrives late can only be caught up from the run's first batch. A whole
     // run is at most blockTicks x 20 bytes of words.
     this.published.push({ bytes, through: this.nextTick });
+    this.homeHolds = this.published.length;
     if (this.peers.length) this.pumpPeers();
     this.#wakeMarks();
     return { batch: b, answer, accepted: Number(answer) };
+  }
+
+  /**
+   * THE BATCHES THE PEERS CARRIED WITHOUT THE HOME SEAT, FED TO IT IN ORDER (kanban #3215): null once it holds every one, or its
+   * answer to the first it did not take. The same signed frames, never a fresh signature.
+   */
+  async #homeCatchUp() {
+    while (this.homeHolds < this.published.length) {
+      const a = await this.#sendWithin(this.published[this.homeHolds].bytes, this.batchAnswerMs);
+      if (typeof a !== 'string' || !/^[0-9]+$/.test(a)) return a;
+      this.homeHolds++;
+      this.homeCaughtUp++;
+    }
+    return null;
   }
 
   /**
@@ -29155,6 +29210,7 @@ class Client {
       const b = t.batches[i];
       this.published.push({ bytes: frames[i], through: batchTicks(b).at(-1) + 1 });
     }
+    this.homeHolds = t.batches.length;
 
     // AND THE COUNT OF WHAT THIS CLIENT HAS ACCEPTED IS RECONCILED WITH IT.
     //
@@ -29458,6 +29514,7 @@ class Client {
     this.marksRefused = 0;
     this.marksRefusedWhy = null;
     this.published = [];
+    this.homeHolds = 0;
     this.peerFeeds = new Map();
     this.batchesInterrupted = 0;
     this.batchesLandedUnheard = 0;
