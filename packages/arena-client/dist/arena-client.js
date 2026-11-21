@@ -97,6 +97,7 @@ function utf8Decode(bytes) {
 // check the bytes by eye against a hexdump.
 
 
+
 /** Growable output buffer. */
 class Writer {
   constructor() { this.buf = new Uint8Array(256); this.len = 0; }
@@ -380,6 +381,7 @@ function words(bytes) {
 
 
 
+
 const tagCache = new Map();
 
 function tagPrefix(tag) {
@@ -453,6 +455,7 @@ function bytesToBigInt(bytes) {
 // network nobody knows gets (a node loading it exited). Ruled: the current code accepts THIS series from the old id,
 // beside bf876cb1; 24 h before its start (testnet4's own lead) is enough; beacon 154268 still counts. Nothing else of the
 // old id is taken: a round naming it that is not a round of this series is refused (server.js POST /round).
+
 
 /** testnet4's network id before genesis_series_start (04c5ecec): the id series 3cfbe516 names. */
 const NETWORK_ID_TESTNET4_BEFORE_SERIES_GENESIS = fromHex('26b9162e72a397a4433f3cae8ea213a9a3fc2094bc04c1789a91b691edc9f62f');
@@ -539,6 +542,7 @@ const OLD_TESTNET4_SERIES_BOND_HEIGHT = 154300;
 // regenerated - `make-genesis.mjs` makes new ones every run, and the ids are a
 // function of these same public keys, so recomputing beat rerunning.
 
+
 const GENESIS_CONFIG_HASH = fromHex('bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1');
 const NETWORK_ID_REGTEST = fromHex('9855e6790b51f0a6ec3ee1a4d83f4de9ad4be7bffb169f0525ad00a59ced5b38');
 const NETWORK_ID_TESTNET4 = fromHex('1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15');
@@ -600,6 +604,7 @@ const ARBITRATION_KEYS_TESTNET4 = [
 // RoundContract digest can never collide with an Advert digest even if their
 // bodies happen to encode identically. Adding a type means adding a tag, not
 // reusing a neighbour's.
+
 
 
 
@@ -1825,6 +1830,7 @@ const SCORE_SCALE = 100000;
 
 
 
+
 /** What the first checkpoint of a round chains to. */
 const NO_PREVIOUS = new Uint8Array(32);
 
@@ -2010,6 +2016,7 @@ async function provesEquivocation(a, b, sessionPubkey, verify) {
 
 
 
+
 const lxHex = (b) => Array.from(b || [], (x) => x.toString(16).padStart(2, '0')).join('');
 
 /**
@@ -2104,6 +2111,7 @@ const isCompressedPoint = (k) => k instanceof Uint8Array && k.length === 33 && (
 // THE RUN LENGTH IS THE CORE'S. `genesis.js` already reads it from the same
 // place and writes it into the config hash a contract's network_id commits to;
 // restating the number here would be the second clock letter 21 forbade.
+
 
 /**
  * The balance constants live in the contract because 18A.7 says they must:
@@ -3313,6 +3321,7 @@ function entryFederation(round, entry) {
 
 
 
+
 /** The prices a live tape carries: the core's SAMPLES. */
 const TAPE_PRICES = 64;
 
@@ -3586,6 +3595,7 @@ const signedBatchOf = (b, sign) => joinSignedBatch(encodeInputBatch(b), sign(bat
 
 
 // The run length is the core's; this reads it rather than restating it.
+
 
 const GENESIS = new Uint8Array(32);
 
@@ -3998,6 +4008,7 @@ function exactTicksForMs(ms) {
 
 
 
+
 /** One sample every 5 s of round time (§11); the tape before the start is 64 of them. */
 const PRICE_SAMPLE_EVERY_MS = 5000;
 const PRICE_TAPE_LENGTH = 64;
@@ -4286,6 +4297,7 @@ function checkBatchPrices({ batch, roundId, committee, threshold, verify, requir
 
 
 
+
 function encodeCheckpointReceipt(r) {
   const w = new Writer();
   w.u8(TYPE_CHECKPOINT_RECEIPT);
@@ -4362,6 +4374,7 @@ function joinSignedReceipt(bytes, signature) {
 // a share, not for a rank weight, not for a percentage. Every division here is
 // integer division with an explicit remainder, and the remainder is then
 // distributed by a rule rather than dropped.
+
 
 
 
@@ -4910,6 +4923,7 @@ const SETTLEMENT_THRESHOLD = 5;
 //
 // THE CURVE IS INJECTED, like everywhere else in this package: `arena-client`
 // carries no crypto, and `page-curve.js` is what the page loads beside it.
+
 
 
 // `webcrypto` AND NOT `subtle`, which `seal.js` already declares at its own top
@@ -5476,6 +5490,7 @@ async function payInvoice(where, invoice, options = {}) {
 
 
 
+
 /** The round's start deadline, in ticks after a player's join tick. */
 const startDeadlineOf = (contract) =>
   (contract && contract.startDeadlineTicks !== undefined ? contract.startDeadlineTicks : START_DEADLINE_TICKS);
@@ -5591,6 +5606,7 @@ function roundEndMs(contract) {
 
 
 
+
 /** All of a round's window instants (BigInt ms), from its contract alone. */
 function windowsOf(contract) {
   const end = roundEndMs(contract);
@@ -5636,6 +5652,7 @@ function withinTolerance(signedAtMs, atMs) {
 // NOTHING HERE IS BITCOIN CONSENSUS. No script is executed, no signature is
 // checked, no amount is summed. It parses a serialization and answers two
 // questions: what is this transaction called, and what does it commit to.
+
 
 /** Bitcoin hashes twice, everywhere. */
 const hash256 = (bytes) => sha256bytes(sha256bytes(bytes));
@@ -5895,6 +5912,7 @@ function blockMerkleRoot(txids) {
 // the bond output commits to the BODY, which is fixed when the funding
 // transaction is built. Section 5A.1 lists `signature` among the fields; this
 // keeps it adjacent so the commitment and the id are both stable.
+
 
 
 
@@ -6177,6 +6195,7 @@ function splitSignedAdvert(bytes) {
 // Mainnet has no ancestor: it starts as Bitcoin Arena.
 
 
+
 const ANCESTOR_TAG = Object.freeze({
   advert: 'BLWP/v1/Advert',
   bondMarker: 'BLWP/v1/BOND_MARKER',
@@ -6268,6 +6287,7 @@ function decodeAncestorAdvert(body) {
 //
 // Both say what 5A.3B says - the node alone after maturity, the quorum before
 // it - in bytes that a node can actually spend with.
+
 
 /** BIP-341's leaf version for tapscript. */
 const TAPLEAF_VERSION = 0xc0;
@@ -6981,6 +7001,7 @@ function holdControlBlock(path, { internalKey, leaves, lower, parity }) {
 
 
 
+
 /** A block header is exactly this, and a shorter one is not a header. */
 const HEADER_BYTES = 80;
 
@@ -7533,6 +7554,7 @@ function acceptAdvert({
 // answers as it always did.
 
 
+
 const PARTIAL_BLOCKS = new WeakSet();
 /** Registers a block object as partial (census.js chainViewOf and partialViewOf alone call it). */
 const markPartial = (block) => { PARTIAL_BLOCKS.add(block); return block; };
@@ -7587,6 +7609,7 @@ function partialViewOf(range) {
 //
 // WHAT THIS FILE DOES NOT DO: check the signature. The protocol package carries no curve; every reader passes its own
 // BIP-340 verify, as the census's advertisement check does, and an update nobody verified is never applied.
+
 
 
 
@@ -7679,13 +7702,26 @@ async function checkAgainstBond(read, bond, verify) {
 // than every body of that node key before it in chain order: each of its bonds' creation bodies (at their heights) and every update that
 // counted. A replay is never newer than what it copies, so it counts nowhere.
 const tsOf = (a) => { try { return a && a.timestamp !== undefined && a.timestamp !== null ? BigInt(a.timestamp) : null; } catch { return null; } };
-function newestUpdates(view, entries, { atHeight, network = 'regtest', verify, seen = null } = {}) {
+// `signedOwn` (kanban #2994): the outputs whose creation body the node signed (deriveCensus); a creation body outside it sets no timestamp -
+// measured before, a stranger's unsigned body with timestamp 2^62 on a dust output to the node's key made every later signed update "not
+// newer". Without it every creation body counts, as before.
+function newestUpdates(view, entries, { atHeight, network = 'regtest', verify, seen = null, signedOwn = null } = {}) {
   const found = new Map();
   // NO LIST OF BONDS, NOTHING TO UPDATE: measured before, a missing list threw on entries.map.
   if (typeof verify !== 'function' || !view || !Array.isArray(view.blocks) || !Array.isArray(entries)) return found;
   const want = new Map(entries.map((e) => [`${Array.from(e.txid).join(',')}:${e.vout}`, e]));
   const nodeOf = (k) => Array.from(k).join(',');
-  const events = [];   // { height, position, ts, node, key?, update? } - the bonds' own bodies at position -1
+  const events = [];   // { height, position, ts, node, key?, update?, seen? } - the bonds' own bodies at position -1
+  // EVERY BODY THE NODE SIGNED, NOT ONLY THOSE ON ITS ELIGIBLE OUTPUTS (kanban #3179, #3184; refute of #3142): the node's newest timestamp
+  // is the newest of every body of its key the view holds and the key signed - updates of an output that is spent, outside the census
+  // window or never a bond, and creation bodies of its spent or no longer eligible bonds. Those are `seen` events: they raise the node's
+  // newest timestamp and never count as an update or decide. Measured before: the node stepped out (ts 2000) and back in (ts 3000) on its
+  // first output A, withdrew A after its lock and kept its added output B (ts 1500) - the 3000 left the view of this rule, and a replay of
+  // the signed 2000 step-out, on a stranger's 330-sat bond to bondOutputKey(node) or as an update of B, counted as newer and stepped it out.
+  // A replay is never newer than the body it copies, and that body is now always read.
+  const nodes = new Set(entries.map((e) => e.pubkey || (e.advert && e.advert.nodePubkey)).filter((k) => k instanceof Uint8Array).map(nodeOf));
+  const ownKeys = new Set(entries.map((e) => `${Array.from(e.txid).join(',')}:${e.vout}`));
+  const signedBy = (signature, id, pk) => { try { return !!verify(signature, id, pk); } catch { return false; } };
   view.blocks.forEach((block, i) => {
     const height = view.firstHeight + i;
     if (height > atHeight) return;
@@ -7693,15 +7729,32 @@ function newestUpdates(view, entries, { atHeight, network = 'regtest', verify, s
       const position = positionIn(block, i);   // a partial block's kept position (partial-view.js)
       let tx;
       try { tx = parseTransaction(raw); } catch { return; }
-      if (!commitmentsOf(tx).some((c) => readAdvertUpdatePayload(c))) return;
+      const commitments = commitmentsOf(tx);
+      if (!commitments.some((c) => readAdvertUpdatePayload(c))) {
+        // a creation body of the node's key on an output that is not an entry here (kanban #3179, #3184): history only
+        if (!nodes.size || !paysBondMarker(tx, network)) return;
+        for (const item of witnessRunsOf(tx)) {
+          let body, signature, advert, id;
+          try { ({ body, signature } = splitSignedAdvert(item)); advert = decodeAdvert(body); id = advertId(advert); } catch { continue; }
+          if (!commitments.some((c) => c.length === 32 && sameUpdateBytes(c, id))) continue;
+          if (!(advert.nodePubkey instanceof Uint8Array) || !nodes.has(nodeOf(advert.nodePubkey))) continue;
+          if (ownKeys.has(`${Array.from(tx.txid).join(',')}:${advert.bondVout}`)) continue;   // an entry's own body: its event below
+          if (!signedBy(signature, id, advert.nodePubkey)) continue;
+          events.push({ height, position, ts: tsOf(advert), node: nodeOf(advert.nodePubkey), seen: true });
+        }
+        return;
+      }
       const read = readAdvertUpdate(tx, { network });
       if (!read.ok) return;
       const key = `${Array.from(read.bondTxid).join(',')}:${read.bondVout}`;
       const e = want.get(key);
-      if (!e || !sameUpdateBytes(read.nodePubkey, e.pubkey) || height < e.height) return;
-      let signed = false;
-      try { signed = !!verify(read.signature, read.advertId, read.nodePubkey); } catch { signed = false; }
-      if (!signed) return;
+      if (!e || !sameUpdateBytes(read.nodePubkey, e.pubkey) || height < e.height) {
+        // an update of an output that is not this node's entry here (kanban #3179, #3184): history only
+        if (!nodes.has(nodeOf(read.nodePubkey)) || !signedBy(read.signature, read.advertId, read.nodePubkey)) return;
+        events.push({ height, position, ts: tsOf(read.advert), node: nodeOf(read.nodePubkey), seen: true });
+        return;
+      }
+      if (!signedBy(read.signature, read.advertId, read.nodePubkey)) return;
       if (seen) seen(e, read, height);
       events.push({ height, position, ts: tsOf(read.advert), node: nodeOf(read.nodePubkey), key,
         update: { advert: read.advert, advertId: read.advertId, txid: read.txid, height, position, raw } });
@@ -7709,17 +7762,40 @@ function newestUpdates(view, entries, { atHeight, network = 'regtest', verify, s
   });
   for (const e of entries) {
     const pk = e.pubkey || (e.advert && e.advert.nodePubkey);
-    if (pk && Number.isInteger(e.height)) events.push({ height: e.height, position: -1, ts: tsOf(e.advert), node: nodeOf(pk) });
+    if (signedOwn && !signedOwn.has(`${Array.from(e.txid).join(',')}:${e.vout}`)) continue;
+    if (pk && Number.isInteger(e.height)) events.push({ height: e.height, position: -1, ts: tsOf(e.advert), node: nodeOf(pk), own: `${Array.from(e.txid).join(',')}:${e.vout}` });
   }
   events.sort((a, b) => (a.height - b.height) || (a.position - b.position));
   const newest = new Map();   // node key -> the newest timestamp of its bodies so far
+  // THE SAME RULE FOR A CREATION BODY THAT DECIDES (kanban #3142, refute of #2994): `found.freshOwn` is the set of outputs whose creation
+  // body was strictly newer than every body of its node key in an EARLIER block (creation bodies and counted updates) - census.js
+  // newestPerNode lets only those decide for the node's other outputs. Measured before: a stranger's 330-sat bond to bondOutputKey(victim)
+  // whose creation body was a body the victim once signed (an old step-out, or its own creation body) verified, and so decided for every
+  // output by height alone - the victim, back in since, was stepped out again, or a stepped-out victim was put back in. Creation bodies in
+  // one block are each compared against the blocks before, so two of the node's own bonds in one block stand side by side as before.
+  const freshOwn = new Set();
+  const atBlockStart = new Map();   // node key -> its newest timestamp before this block (for the creation bodies at position -1)
+  let blockHeight = null;
   for (const ev of events) {
     const had = newest.has(ev.node) ? newest.get(ev.node) : null;
-    if (!ev.update) { if (ev.ts !== null && (had === null || ev.ts > had)) newest.set(ev.node, ev.ts); continue; }
+    if (ev.height !== blockHeight) { blockHeight = ev.height; atBlockStart.clear(); }
+    if (ev.seen) {   // kanban #3179, #3184: a signed body elsewhere raises the node's newest timestamp, nothing more
+      if (!atBlockStart.has(ev.node)) atBlockStart.set(ev.node, had);
+      if (ev.ts !== null && (had === null || ev.ts > had)) newest.set(ev.node, ev.ts);
+      continue;
+    }
+    if (!ev.update) {
+      if (!atBlockStart.has(ev.node)) atBlockStart.set(ev.node, had);
+      const before = atBlockStart.get(ev.node);
+      if (ev.ts !== null && (before === null || ev.ts > before)) freshOwn.add(ev.own);
+      if (ev.ts !== null && (had === null || ev.ts > had)) newest.set(ev.node, ev.ts);
+      continue;
+    }
     if (ev.ts === null || (had !== null && ev.ts <= had)) continue;   // kanban #2426: not newer than a body before it - a replay
     newest.set(ev.node, ev.ts);
     found.set(ev.key, ev.update);
   }
+  found.freshOwn = freshOwn;
   return found;
 }
 
@@ -7742,6 +7818,7 @@ function newestUpdates(view, entries, { atHeight, network = 'regtest', verify, s
 //
 // WHAT THIS FILE DOES NOT DO: check a signature. The protocol package carries no curve; the census is handed the same
 // BIP-340 verify it checks updates with, and an unchecked re-affirmation carries nothing.
+
 
 
 
@@ -7930,6 +8007,7 @@ function readProtocolVersionName(name) {
 // transaction" - not a match against a published vector. That is a weaker
 // claim about the CODE and a stronger one about the RESULT, and it is written
 // down so nobody later reads a green test here as a vector match.
+
 
 
 const joinBytes = (...parts) => {
@@ -8888,6 +8966,7 @@ function donationKeysFor(network) {
 
 
 
+
 const SLASH_PRESIG_HASH_TYPE = 0x83;
 const SLASH_START_SEQUENCE = 0xfffffffd;
 
@@ -8992,6 +9071,7 @@ function bondPresigStands({ presig, bond, advert, networkId, tweakPoint, verify 
 // THE CENSUS KEY, AS PLAIN RULES (spec 5A.3B, RULED 2026-11-02, kanban #1021): who holds how many shares, which record makes a key stand,
 // which keys stand, and what each epoch has to do about them. No curve and no round of a DKG here: a signature check is injected, as
 // everywhere in this package, and making the key is the seats' work.
+
 
 
 
@@ -9535,6 +9615,7 @@ function censusKeyPlan({ keys = [], epochStart = false }) {
 
 
 
+
 /**
  * 5.00% (Bitcoin Arena, §0A.8 and §22A, RULED 2026-10-06; BLWP's was 2.00%), mandatory, and what each pool takes
  * of it: three equal pools of 5/3 % when the round's guardians are named, else two halves of 2.50% (* 2026-10-07: the 2% table's 1% + 1%, scaled up - no guardian third is left unallocated).
@@ -9936,6 +10017,7 @@ function feeMatchesEntry(entry, { feeBps = NODE_FEE_BPS, donationInFee: inFee = 
 // module the page's bundle may carry. Both import it from here; there is one copy.
 
 
+
 const catSeedParts = (...parts) => {
   const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
   let at = 0;
@@ -9993,6 +10075,7 @@ function committeeSeedFrom({
 // creator could have known when they chose their round must not be usable at
 // all. The first is arithmetic; the second is evidence, and evidence is what
 // this file asks the caller for and refuses to assume.
+
 
 
 
@@ -10363,6 +10446,7 @@ function beaconIsTheChains(contract, beacon, view) {
 // A TEMPLATE-3 BOND'S slash_presig IS CHECKED WITH THE SEATING (5A.3B, kanban #972). A seated node signs one per template-3 bond (slash-presig.js), and the certificate carries them after
 // its justifications, so whoever holds the certificate holds what a slash needs and a seat has one thing to check. A seating with no template-3 bond in it carries none, byte for byte as
 // before. The signature over the seating does not cover them: they sign a transaction, not a seating, and a seating can be signed again without touching them.
+
 
 
 
@@ -10928,6 +11012,7 @@ function seatingSignedTwice(cert, { node, seated, signature, justification = nul
 
 
 
+
 const te = new TextEncoder();
 const RULE_TEXTS = Object.freeze({
   equivocation: 'ARENA rule equivocation v1 (§10, kanban #25, RULED 2026-10-05 (b)): two checkpoints of one entry, each signed by its session key, '
@@ -10994,6 +11079,7 @@ function roleFloorSats(contract, role) {
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // Committee selection: bond-weighted, linear, and decided in integers.
+
 
 
 
@@ -11906,6 +11992,7 @@ const KNOWN_GOOD_GAMES = Object.freeze({
 
 
 
+
 const isGameBytes32 = (b) => b instanceof Uint8Array && b.length === 32;
 
 /** The configs (hex) the round's game shares one world under, as this client knows the game - none for a game it does not. */
@@ -12057,6 +12144,7 @@ function tableAnchorOf(contract) {
 //
 // WHAT IT COSTS. Per node per day: 96 x 9 HEARTBEATs out (132 bytes each, ~114 KB), as many in as a member on average, and one HEARD
 // per membership to 8 others; a seat keeps its memberships' certificates. See §5A.3 for the numbers.
+
 
 
 
@@ -12266,6 +12354,7 @@ function provenHeartbeat(bytes, { roundId, slot, committee, census, closeMs, ver
 // day's duty order (duty.js dutyRoundStands) - which an attacker cannot be on demand: that order is the chain census's rank. A round of
 // any other series proves nothing; its certificate still keeps the nodes it lists in. Every seat and the client decide it the same way
 // (`dutyOf` below: presence-book.js at a seat, client-committee.js at the client).
+
 
 
 
@@ -12495,6 +12584,7 @@ function checkAbsenceProof(claims, { census = null, window, certOf, drawOf, veri
 // The census: which bonds exist at a height, canonicalised and Merkle-rooted.
 //
 // Two decisions here are load-bearing and both look like details.
+
 
 
 
@@ -13600,7 +13690,7 @@ function resolveBody(seen, entry, verifyAdvert) {
   }
 
   return {
-    ok: true, advert: taken.advert, advertId: taken.id, tx,
+    ok: true, advert: taken.advert, advertId: taken.id, tx, signature: taken.signature,
     signatureChecked: !!verifyAdvert,
   };
 }
@@ -13684,6 +13774,7 @@ function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, view, v
   let eligible = [];
   const excluded = [];
   const namedKeys = {};
+  const ownSignatures = new Map();
 
   for (const e of entries) {
     let seen = null;
@@ -13850,6 +13941,7 @@ function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, view, v
       // A TEMPLATE-3 BOND'S OUTPUT, as the chain has it: its slash_presig signs over this script (slash-presig.js), and only the census read it. Not in any leaf or root
       ...(read.advert.bondScriptTemplateVersion === BOND_TEMPLATE_V3 ? { script: read.tx.outputs[e.vout].script } : {}),
     });
+    ownSignatures.set(`${Array.from(e.txid).join(',')}:${e.vout}`, read.signature);
   }
 
   // FROM PROTOCOL 19 THE FLOOR IS THE NODE'S SUM (kanban #544): each output was checked on its own above, and here a node's
@@ -13865,6 +13957,7 @@ function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, view, v
     eligible,
     excluded,
     namedKeys,
+    ownSignatures,   // kanban #2994: each eligible output's creation-body signature, by outpoint (deriveCensus checks it with verifyUpdate)
     // WHAT IS STILL UNCHECKED SHRINKS WHEN A CALLER BRINGS A CURVE. Reporting
     // the signature as unchecked after checking it would be as wrong as not
     // checking it: the list is what a reader is asked to take on trust.
@@ -13957,13 +14050,24 @@ function floorOnSums(eligible, contract) {
  * output's own advertisement, at its bond's height) - the higher block wins, then the later position (an update beats a bond in one
  * block), then the larger txid, so every seat picks the same one.
  */
-function newestPerNode(eligible, updates) {
+// A BODY THE NODE SIGNED BEATS ONE IT DID NOT (kanban #2994, audit census r2-1): `signedOwn` (deriveCensus) is the set of outputs whose
+// creation body verifies under the node key it names; an update is always signed. Measured before: a stranger's 330-sat output to
+// bondOutputKey(victim), committing an UNSIGNED body {serving: false}, was in a later block than the victim's bond and so decided for every
+// output of the node - the victim stepped out. Without `signedOwn` every body counts as signed, as before.
+// A REPLAYED SIGNED BODY DECIDES NOTHING EITHER (kanban #3142, refute of #2994; the #2426 timestamp rule): an output's own body ranks with the
+// signed ones only when it is in `updates.freshOwn` (advert-update.js newestUpdates) - strictly newer than every body of the node in an
+// earlier block. Every signed body is public, so a stranger's dust bond to the node's key could carry one; a replay is never newer than
+// what it copies. Without `freshOwn` (an updates map built by hand) every signed body ranks, as before.
+function newestPerNode(eligible, updates, signedOwn = null) {
   const best = new Map();
+  const fresh = updates && updates.freshOwn instanceof Set ? updates.freshOwn : null;
   for (const e of eligible) {
-    const u = updates.get(`${Array.from(e.txid).join(',')}:${e.vout}`);
-    const c = u ? { u, height: u.height, pos: Number.isInteger(u.position) ? u.position : 0, tie: bondHexOf(u.txid) }
-      : { own: e, height: e.height, pos: -1, tie: bondHexOf(e.txid) };
+    const key = `${Array.from(e.txid).join(',')}:${e.vout}`;
+    const u = updates.get(key);
+    const c = u ? { u, height: u.height, pos: Number.isInteger(u.position) ? u.position : 0, tie: bondHexOf(u.txid), signed: true }
+      : { own: e, height: e.height, pos: -1, tie: bondHexOf(e.txid), signed: (!signedOwn || signedOwn.has(key)) && (!fresh || fresh.has(key)) };
     const k = nodeKeyOf(e), b = best.get(k);
+    if (b && c.signed !== b.signed) { if (c.signed) best.set(k, c); continue; }
     if (!b || c.height > b.height || (c.height === b.height && (c.pos > b.pos || (c.pos === b.pos && c.tie > b.tie)))) best.set(k, c);
   }
   return best;
@@ -14098,7 +14202,16 @@ function deriveCensus(views, { contract, candidates, resolve, verifyAdvert, bond
       presigs.set(outKey(e), { txid: read.txid, height });
   } : null;
   if (typeof verifyUpdate === 'function') {
-    const updates = newestUpdates(chain, eligible, { atHeight: contract.censusHeight, network: network || 'regtest', verify: verifyUpdate, seen: seenPresig });
+    // kanban #2994: which outputs' own creation bodies the node signed - only those decide for its other outputs or set its newest timestamp
+    const signedOwn = new Set();
+    for (const e of eligible) {
+      const key = `${Array.from(e.txid).join(',')}:${e.vout}`;
+      const sig = resolved.ownSignatures && resolved.ownSignatures.get(key);
+      let ok = false;
+      try { ok = sig instanceof Uint8Array && sig.some((b) => b !== 0) && !!verifyUpdate(sig, e.advertId, e.advert.nodePubkey); } catch { ok = false; }
+      if (ok) signedOwn.add(key);
+    }
+    const updates = newestUpdates(chain, eligible, { atHeight: contract.censusHeight, network: network || 'regtest', verify: verifyUpdate, seen: seenPresig, signedOwn });
     if (seenPresig) {
       const kept = [];
       for (const e of eligible) {
@@ -14108,7 +14221,7 @@ function deriveCensus(views, { contract, candidates, resolve, verifyAdvert, bond
       }
       eligible = kept;
     }
-    const deciders = sumsBonds(contract) ? newestPerNode(eligible, updates) : null;
+    const deciders = sumsBonds(contract) ? newestPerNode(eligible, updates, signedOwn) : null;
     const before = eligible;
     eligible = [];
     for (const raw of before) {
@@ -14289,6 +14402,7 @@ async function readWithOneRetry(fetcher, url, opts) {
 // guessing which - so the answer is that there is no answer yet, by name. A
 // SHORTER chain is not a disagreement: it is omission, it is the case this
 // design expects, and the longer one simply carries it.
+
 
 
 
@@ -14903,6 +15017,7 @@ const BIP39_ENGLISH = Object.freeze([
 // `seedFromPhrase` refuses instead of handing back 32 plausible bytes.
 
 
+
 const PHRASE_WORDS = 24;          // 256 bits of entropy + 8 of checksum, 11 bits a word
 const ENTROPY_BYTES = 32;
 const INDEX_OF = new Map(BIP39_ENGLISH.map((w, i) => [w, i]));
@@ -15033,6 +15148,7 @@ function seedHexFromInput(text) {
 // THE GROUP IS INJECTED, like every other curve operation in this package.
 // `packages/protocol` carries no curve on purpose - it does the arithmetic and
 // the refusals, and whoever has a curve brings it.
+
 
 
 
@@ -15388,6 +15504,7 @@ function handoutOutcome(opened) {
 
 
 
+
 const subtle = () => {
   const c = globalThis.crypto;
   if (!c || !c.subtle)
@@ -15505,6 +15622,7 @@ const sealedName = (sealed) => toHex(sealed).slice(0, 16);
 // crooked dealer is caught by WHOEVER HE CHEATED rather than by the first signer node
 // to look. That is not weaker: a dealer who cheats signer node 6 is refused by signer node 6,
 // and a handout five signer nodes accepted is a handout five signer nodes can open.
+
 
 
 
@@ -15715,6 +15833,7 @@ async function dealHandout({ preimage, signerNodes, roundId, playerPubkey,
 
 
 
+
 function playerSubSeed({ roundRandomness, playerPubkey, worldSecret, joinTick }) {
   if (!(roundRandomness instanceof Uint8Array) || roundRandomness.length !== 32)
     throw new Error('round_randomness is 32 bytes');
@@ -15842,6 +15961,7 @@ function worldSecretFits(contract, worldSecret, sharedWorld) {
 // (module_consensus_version; RULED #1134 1). From the height a seat neither opens, lists nor enters a round in a federation without it.
 //
 // Pure: encoding, ids, the rules a seat checks. The MuSig2 math is the seat's (arena-node/src/named-claim.js).
+
 
 
 
@@ -16121,6 +16241,7 @@ const zKey = (() => {
 
 
 
+
 /**
  * THE CONTRACT A PLAYER HANDS A SIGNER NODE (POST /lock), as JSON: hex bytes, the
  * amount as a decimal string. Here, not in the node, because the page writes
@@ -16247,6 +16368,7 @@ function lockFieldsMatchEntry({ lock, entry, kind, claimPk, expiryBlocks = STAKE
 // compare the fingerprint the page shows. The spec names the rule's parts and
 // not the hash; this is the smallest thing that meets them, in the tagged-hash
 // form every other derivation here uses. The curve is injected, as always.
+
 
 
 
@@ -16759,6 +16881,7 @@ function contributionProgress(a, { facts = [], height, network } = {}) {
 // here: a recipient is an opaque `lnurl` string, because this package pays
 // nobody and inventing a payment layer to test one would be inventing a
 // second protocol.
+
 
 
 
@@ -17338,6 +17461,7 @@ function vestedShares(recipients, height, shareOf = undefined) {
 
 
 
+
 /** A paid round's shares on the reserves version, in basis points of the gross stake - all mandatory. */
 const ROUND_SPLIT_BPS = Object.freeze({ nodes: 400, protocolDevs: 200, gameDevs: 200, reserves: 200 });
 /** An item's mandatory shares, in percent of its list price; the developers' share is added on top, as in. */
@@ -17508,6 +17632,7 @@ const entryPaysReserves = (contract, manifest) => paysReserves(contract) && !don
 
 
 
+
 /** 1 type + 2 version + 32 round + 32 entry + 32 run + 32 signer + 8 signed at. */
 const FINAL_SIG_BYTES = 1 + 2 + 32 + 32 + 32 + 32 + 8;
 const FINAL_SIG_SIGNATURE_BYTES = 64;
@@ -17628,7 +17753,10 @@ function finalSigned({ roundId, entryId, runId, records, committee, slots, final
 
 
 
+
 const SERVED_WINDOW_MS = 24 * 3600 * 1000;
+// kanban #3037: the distinct committee keys whose FINALs must verify on a round the reader holds only from answers
+const SERVED_SIGNERS_MIN = 2;
 const TAG_SERVED_NODES = 'ARENA/v1/ServedNodes';
 const snIs32 = (b) => b instanceof Uint8Array && b.length === 32;
 
@@ -17660,8 +17788,13 @@ function servedNodes({ rounds, fromMs, toMs, verify }) {
     const rid = toHex(round.roundId);
     const committee = new Set(round.committee.map(toHex));
     const sources = Array.isArray(round.sources) ? round.sources : null;
-    let any = false;
     const finals = round.finals || [];
+    // ONE NODE ALONE MAKES NO ROUND (kanban #3037, audit gossip r3-1, measured 2026-11-19: a bonded seat that sat on no round named a
+    // made-up round id with itself as the whole committee and one FINAL it signed itself; the #1896/#2739 bonded filter took it and the
+    // seat was listed as served - an equal share of every item purchase's nodes' half, ACTIVE for funding). A round the reader's own
+    // record does not hold (it came from answers: `sources`) credits its signers only when FINALs of at least SERVED_SIGNERS_MIN
+    // distinct committee keys verify on it - a real round is signed by its committee, one key's word is not a round.
+    const signers = new Set(), inWindow = [];
     for (let j = 0; j < finals.length; j++) {
       const bytes = finals[j];
       let x, signature;
@@ -17670,7 +17803,7 @@ function servedNodes({ rounds, fromMs, toMs, verify }) {
       const key = toHex(x.signerPubkey);
       if (toHex(x.roundId) !== rid) { refused.push({ round: rid, why: `a FINAL about another round (${toHex(x.roundId).slice(0, 16)})` }); continue; }
       if (!committee.has(key)) { refused.push({ round: rid, why: `${key.slice(0, 16)} is not of this round's committee` }); continue; }
-      if (served.get(key)?.has(rid)) continue;                 // a round counts once per node: no second check for it
+      if (served.get(key)?.has(rid) || signers.has(key)) continue;   // a round counts once per node: no second check for it
       const src = sources && Array.isArray(sources[j]) && sources[j].length ? sources[j] : null;
       if (src && src.every((s) => (failed.get(s) || 0) >= SERVED_FAILED_MAX)) continue;   // its answers spent their bad-signature budget
       if (src && !round.own) {                                 // kanban #2361: a check of a round the reader did not sit on costs an answer
@@ -17690,11 +17823,16 @@ function servedNodes({ rounds, fromMs, toMs, verify }) {
         }
         continue;
       }
+      signers.add(key);
       if (x.signedAtMs < from || x.signedAtMs >= to) continue;  // outside the window: not refused, just not these 24 h
-      if (!served.has(key)) served.set(key, new Set());
-      served.get(key).add(rid); any = true;
+      inWindow.push(key);
     }
-    if (any) counted++;
+    if (sources && !round.own && signers.size < SERVED_SIGNERS_MIN) {
+      if (inWindow.length) refused.push({ round: rid, why: `only ${signers.size} committee key(s) signed a FINAL on it: one node's word is not a round (kanban #3037)` });
+      continue;
+    }
+    for (const key of inWindow) { if (!served.has(key)) served.set(key, new Set()); served.get(key).add(rid); }
+    if (inWindow.length) counted++;
   }
   const nodes = [...served.entries()].map(([key, s]) => ({ key, rounds: s.size })).sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   return { fromMs: from, toMs: to, nodes, rounds: counted, root: toHex(servedNodesRoot({ fromMs: from, toMs: to, nodes })), refused };
@@ -17980,6 +18118,7 @@ function privateAddress(ip) {
 //   - the vote's marker is "ARN" 'V' (RULED 2026-10-13: "ARN", not the spec's "BLW" - one prefix finds all of the
 //     network's data on chain), with a kind byte as every other ARN payload has: a bare "ARN" vote would be 76 bytes, the same as
 //     a fork re-affirmation ("ARN" 'F', reaffirm.js), so the kind byte keeps them apart. 77 bytes, inside the 80-byte limit
+
 
 
 
@@ -18424,6 +18563,7 @@ function tally({ proposal, standing, census: all, votes, verify, ageBlocks = nul
 
 
 
+
 /** The longest name a player may choose, in characters. */
 const LOBBY_NAME_MAX = 24;
 
@@ -18493,6 +18633,7 @@ const lobbyNameId = (record) => taggedHash(TAG.lobbyName, encodeLobbyName(record
 
 
 
+
 /** How far ahead of a node's clock a name may be dated and still be kept. */
 const PLAYER_NAME_SKEW_MS = 10 * 60 * 1000;
 
@@ -18555,6 +18696,7 @@ function newerPlayerName(a, b) {
 // identities only (a player whose entries name a round key that is the player itself is no identity, badges.js's rule: skipped, the
 // next one moves up); a tie at the cut shares the places it spans; each winner paid a payout contract to its identity's refund key in
 // the federation, from that federation's protocol reserves - at most 10 % of them (funding.js FUNDING_CAP_PCT).
+
 
 
 
@@ -18649,6 +18791,7 @@ const leaderboardHex = (p) => toHex(leaderboardPayoutId(p));
 // 432 blocks before its end: the window [time(end - 432), time(end)) on the chain's median time, which every seat reads alike and
 // which never runs backwards. A signal counts when it was given inside the signal period by an active node, once per node, whatever
 // its bond; the proposal passes when those nodes are at least 15 % of the active ones. Nothing is paid on a signal.
+
 
 
 
@@ -18960,6 +19103,7 @@ function capStands({ proposalSats, paymentSats, reservesSats, paidByProposalSats
 
 
 
+
 /**
  * THE FEES A PROPOSAL MAY CHANGE, each with its code on the wire, its value today, its hard limit and whether it is a donation (a
  * change needs the protocol developers' majority, and it is never 0). Round and market fees in basis points of a stake; an item's
@@ -19164,6 +19308,7 @@ const marketBps = (fees) => ({ nodeBps: fees.marketNodeBps, donationBps: fees.ma
 
 
 
+
 /** A compressed secp256k1 point, as `groupKeyOf` computes the committee's key. */
 const CLAIM_KEY_BYTES = 33;
 const ATTESTATION_SIGNATURE_BYTES = 64;
@@ -19300,6 +19445,7 @@ const splitForRound = (round) => (round && round.feeSet ? roundSplitBps(round.fe
 const feeBpsForRound = (round) => (round && Number.isInteger(round.feeBps) ? round.feeBps
   : roundGiftsInFee(round) ? giftsFeeBps(round.feeSet ? roundSplitBps(round.feeSet) : undefined)
   : roundPaysReserves(round) ? (round.feeSet ? roundSplitBps(round.feeSet).nodes : RESERVES_NODE_FEE_BPS) : knownEntryBps(round && round.gameId));
+
 
 
 
@@ -20700,6 +20846,7 @@ function readInvite(invite) {
 
 
 
+
 const FEDERATION_STATUS = Object.freeze({ OPEN: 1, DRAINING: 2, CRITICAL: 3, CLOSED: 4, HALTED: 5 });
 const GONE = Object.freeze({ DEPARTED: 1, ABANDONED: 2 });
 /** The capacity band a record names (§23A.3a), after its height; a record that names none ends at its height, as every record before did. */
@@ -21142,6 +21289,7 @@ const newestRecord = (verified) => verified.filter((v) => v && v.ok).sort((a, b)
 // the config is tried once more with an invite naming all of them, so one guardian down no longer keeps a player out.
 
 
+
 const seen = new Map();   // federation id hex -> Map(peer id -> url), the first url named for a peer kept
 
 function noteInvite(invite) {
@@ -21193,6 +21341,7 @@ const forgetGuardianInvites = () => { seen.clear(); NOTED_RECORDS.clear(); };   
 // signed by that node's key over this digest; the page counts only signed answers, one allowance per node key, and - given the census
 // it checked - only keys that census bonds. Nothing here is consensus: the digest binds the answer's fields as sent, all as strings.
 
+
 const TAG_SETTLED_LIST = 'ARENA/v1/SettledList';
 
 const str = (v) => (v === undefined || v === null ? '' : String(v));
@@ -21218,6 +21367,7 @@ function settledListDigest({ node, since, rounds }) {
 // is not the one computed, or whose stored expiry is not the computed one, is
 // refused here - the player would otherwise commit to a lock that is not theirs.
 // Not in the bundle yet: the page drives it in W1b.
+
 
 // `point` for a stake lock (the stake point), or `hash` for a fee lock (H(F), Pick b).
 function lockFromClient(answer, { point, hash, claimPk, refundPk }) {
@@ -21255,6 +21405,7 @@ function lockFromClient(answer, { point, hash, claimPk, refundPk }) {
 //
 // NO CURVE: the VRF (vrf.js makeVrf) and `verify(signature, digest, pubkey)` (BIP-340) are injected, as everywhere here.
 // A node key is x-only (BIP-340); its VRF key is the even-y point 02 || x, and its VRF secret the node secret or its negation.
+
 
 
 
@@ -21465,6 +21616,7 @@ function auditorShares({ nodesMsat, auditors }) {
 // NOTHING - and deleted that vocabulary. The rule, its conditions, its order on the wire and the pool arithmetic are the
 // same; only the names are the lock's. LOCK_ACTIONS keeps the byte order the settlement record (slash.js) was encoded in.
 
+
 const CLAIM = 'CLAIM';     // claimed into the settlement by the preimage and the claim key
 const RETURN = 'RETURN';   // forfeited back to its refund key: can only return money to its owner
 const EXPIRE = 'EXPIRE';   // nobody acts; the lock refunds at its expiry
@@ -21623,6 +21775,7 @@ function lockActions({ roundId, entries, minScore = 0, payoutShares = null, prot
 // the pool holds above the table, is the miner's fee. NOBODY HERE KEEPS IT:
 // there is no change output, so an operator cannot take the remainder by
 // building a transaction that pays itself the difference.
+
 
 
 /** BIP-341 P2TR: OP_1, a 32-byte push, the key. */
@@ -21808,6 +21961,7 @@ const payableKey = (pubkey) => {
 // the round's order), each signer node one pre-expired payout contract to its own key -
 // never to the donation recipients, and no split invented here. A VOID or
 // ENTRY_VOID entry's fee lock is not claimed: §22A's fee base leaves it out.
+
 
 
 
@@ -22799,6 +22953,7 @@ function urlOfLnurl(lnurl) {
  */
 
 
+
 const NETWORKS = { bc: 'bitcoin', tb: 'testnet', tbs: 'signet', bcrt: 'regtest', sb: 'simnet' };
 const MSAT_PER_UNIT = { m: 100000000n, u: 100000n, n: 100n };     // p: a tenth of a msat, below
 const TAG_PAYMENT_HASH = 1;        // 'p'
@@ -22901,6 +23056,7 @@ function invoicePayee(invoice, recover) {
 // an id typed into the round. It is bonded nowhere: no census lists its guardians, so
 // federationIsBonded refuses it, as it must.
 
+
 const TEST_FEDERATION_ID = sha256(new TextEncoder().encode('ARENA/v1/TEST_FEDERATION - a stand-in federation for tests and vectors, never one that holds money'));
 
 // ---- arena-protocol/src/known-federations.js
@@ -22910,6 +23066,7 @@ const TEST_FEDERATION_ID = sha256(new TextEncoder().encode('ARENA/v1/TEST_FEDERA
 // is on the client's known-good list, or the client shows it and its guardians and requires an explicit confirmation -
 // the same rule as sim_wasm_hash (§5)". By federation id (the hash of its configuration). Adding one is a reviewed code
 // change, like adding a game core to known-games.js - never a setting, a query parameter or a seat's word.
+
 
 
 const KNOWN_GOOD_FEDERATIONS = Object.freeze({
@@ -22962,6 +23119,7 @@ const knownFederation = (hex) => KNOWN_GOOD_FEDERATIONS[String(hex || '').toLowe
 // Additive: no encoding, no entry and no lock rule changes. A seat that holds a claim for an entry naming a lock outpoint hands
 // that lock only to a claimed entry (stake-lock-signer-node.js); without any claim the old rule stands.
 
+
 const LOCK_CLAIM_TAG = 'ARENA/v1/LockClaim';
 const LOCK_CLAIM_BYTES = 64;
 
@@ -22998,6 +23156,7 @@ function lockClaimKeyOf(entry) {
 // wallet that holds it; and a lock already made, that no signer node has committed
 // yet, is kept with its stake (`saveLock`), so a reload before the signer node takes
 // the entry uses that lock instead of dealing and paying again.
+
 
 
 
@@ -23818,7 +23977,24 @@ function gatewayUrlsOfView(view) {
 async function seatedGatewaysOf(client) {
   const f = client && typeof client === 'object' ? federationOfClient.get(client) : null;
   if (!f || !seatedLookup) return [];
-  try { const l = await Promise.race([seatedLookup(f), new Promise((ok) => setTimeout(() => ok([]), 3000))]); return Array.isArray(l) ? l.filter(Boolean).map(String) : []; } catch { return []; }
+  let l; try { l = await Promise.race([seatedLookup(f), new Promise((ok) => setTimeout(() => ok([]), 3000))]); } catch { return []; }
+  if (!Array.isArray(l)) return [];
+  // ONLY A GATEWAY THE FEDERATION ITSELF LISTS (kanban #3029, audit client r2-1, measured 2026-11-19: the page took the first seat's unsigned
+  // GET /gateway-seats answer, so one non-guardian seat listed first put a gateway of its own first in every deposit and on both legs of a
+  // swap - the pay leg's LNv2 contract funded to it, held up to its expiry). A seated gateway is registered at its federation, so the lock
+  // client's own list (gateways(), read from the guardians) names it; a URL it does not name is not tried first, nor passed as `preferred`.
+  const listed = new Set((await federationGateways(client)).map(gwKey));
+  return l.filter(Boolean).map(String).filter((u) => listed.has(gwKey(u)));
+}
+// ONLY A NAMED GATEWAY THE FEDERATION ITSELF LISTS (kanban #3150, refute of #3029): the page's named gateways - window.ARENA_LEDGER_GATEWAYS,
+// read straight from the page URL's ?gateway= - led both legs of a swap, every deposit and the withdraw's preferred gateway unchecked, so a
+// crafted link https://<site>/?gateway=https://evil/ funded the pay leg's LNv2 contract to a gateway no federation lists. The #3029 rule now
+// holds for them too: a named gateway is kept only when `client`'s federation lists it (the lock client's own gateways(), from the guardians).
+/** `named` kept in order where `client`'s federation lists it (gwKey match); none when it lists none or cannot say. */
+async function listedNamedGateways(client, named = []) {
+  if (!Array.isArray(named) || !named.length) return [];
+  const listed = new Set((await federationGateways(client)).map(gwKey));
+  return named.filter(Boolean).map(String).filter((u) => listed.has(gwKey(u)));
 }
 const listedOf = new WeakMap();
 /** The gateways the federation lists, as the lock client reads them (asked once per wallet); none when it cannot say. */
@@ -24028,7 +24204,7 @@ function depositOffer({ client, stakeMsat, haveMsat = null, needMsat = null, gat
     const amount = BigInt(msat);
     if (amount <= 0n) throw new Error('a deposit is more than 0 sat');
     // ANY LISTED GATEWAY, THE NEXT AFTER A TIMEOUT: the lobby's first, then the federation's
-    const order = gatewayOrder([...await seatedGatewaysOf(client), depositGateway('', gateways)].filter(Boolean), await federationGateways(client));
+    const order = gatewayOrder([...await seatedGatewaysOf(client), depositGateway('', await listedNamedGateways(client, gateways))].filter(Boolean), await federationGateways(client));
     const got = await invoiceThroughGateways(client, amount, order);
     let settled = false;
     const shown = (x) => {
@@ -24288,9 +24464,62 @@ function recordDonation(storage, federationId, { msat, round, txid = null, to = 
 }
 /** WHAT CAME IN TO THIS PLAYER'S KEY, a history row once collected (kanban #681): 'referral' - 10 % of the nodes' fee on an entry its
  *  referral link brought, `round` the round that paid it - or 'zap-in', a zap from another player. `outpoint` is the payout collected. */
-function recordReceived(storage, federationId, { kind, msat, round = null, outpoint = null }) {
-  if (kind !== 'referral' && kind !== 'zap-in') return;
-  ledgerAppend(storage, federationId, { kind, msat: String(msat), round: round ? String(round) : null, ...(outpoint ? { outpoint: String(outpoint) } : {}) });
+function recordReceived(storage, federationId, { kind, msat, round = null, outpoint = null, walletMsat = null }) {
+  // 'returned' (kanban #3087, feedback #368): sat the wallet fetched back from the federation (Rescan's reissue, a lost deposit found and claimed)
+  if (kind !== 'referral' && kind !== 'zap-in' && kind !== 'returned') return;
+  if (kind === 'returned') return recordReturned(storage, federationId, { msat, outpoint, walletMsat });
+  // kanban #2319: one row per collected outpoint (content id 'zap-<outpoint>'): two tabs, or a pass that books what an unfinished one began, write it once
+  ledgerAppend(storage, federationId, { kind, msat: String(msat), round: round ? String(round) : null, ...(outpoint ? { outpoint: String(outpoint) } : {}) }, outpoint ? `zap-${outpoint}` : null);
+}
+/** The kinds the history adds (the wallet screen draws them as plus rows); every other kind takes off. */
+const LEDGER_PLUS = new Set(['deposit', 'winnings', 'refund', 'returned', 'slash-payout', 'moved-in', 'swapped-in', 'referral', 'zap-in']);
+/** What this federation's history adds up to, in msat: its plus rows less every other row. */
+function ledgerNetMsat(storage, federationId) {
+  let n = 0n;
+  for (const r of ledgerRowsKept(storage, federationId)) { try { n += (LEDGER_PLUS.has(r.kind) ? 1n : -1n) * BigInt(r.msat || 0); } catch { /* a row with no amount */ } }
+  return n;
+}
+/**
+ * SAT FETCHED BACK FROM THE FEDERATION, A HISTORY ROW (kanban #3087, feedback #368; refute s4 of #1489: #3138, #3139).
+ * #3139: what Rescan reissues is notes the history mostly never took off - a stake's change (the stake row books only the stake, not the
+ * notes that went in) or the inputs of a transaction the federation never knew (its stake row took off sat that never left). The whole
+ * reissue as a plus row counted that change a second time (deposit +1000, stake -100, returned +900 = 1800 while the wallet holds 900).
+ * With `walletMsat` (what the wallet holds and is being issued, the reissue included) the row books only what the history lacks to
+ * agree with the wallet, at most the reissue and never below 0 - the change counted already books 0, an unknown stake's inputs book back
+ * that stake - and keeps the whole reissue as `fetchedMsat`, which the history names. Without `walletMsat` the whole reissue (as before).
+ * #3138: the row goes through putRoomy (the page's storage relief, and its storage-full alert when still refused). A full browser - the
+ * very state behind #910 - refused the one setItem and the row was lost for good: the reissue was already committed in the wallet, the
+ * next page saw no stuck transaction and wrote nothing, the sat came in with no row (the #368 report). A refused row is now OWED: kept
+ * and written by the next read of this federation's history (ledgerRows, which the wallet screen draws from) once the browser has room.
+ * Answers whether the row is held.
+ */
+const ledgerOwed = new Map();   // ledger key -> { fed, row }: rows the browser refused, written by the next ledgerRows with room
+function recordReturned(storage, federationId, { msat, outpoint = null, walletMsat = null }) {
+  if (!storage || !fedHexOf(federationId)) return false;
+  const fetched = BigInt(msat);
+  // a store that cannot list its keys keeps the one list (ledgerAppend's own path), the whole reissue as before
+  if (typeof storage.key !== 'function') return ledgerAppend(storage, federationId, { kind: 'returned', msat: String(fetched), round: null, ...(outpoint ? { outpoint: String(outpoint) } : {}) }, outpoint ? `zap-${outpoint}` : null);
+  const id = outpoint ? `zap-${String(outpoint).toLowerCase().replace(/[^0-9a-z_-]/g, '')}` : ledgerRowId();
+  const key = `${ledgerKey(federationId)}.${id}`;
+  if (ledgerOwed.has(key)) return writeOwed(storage, key);
+  try { if (outpoint && storage.getItem(key) !== null) return true; } catch { /* unreadable: written below */ }
+  let book = fetched;
+  if (walletMsat !== null && walletMsat !== undefined) {
+    const lack = BigInt(walletMsat) - ledgerNetMsat(storage, federationId);
+    book = lack < 0n ? 0n : lack > fetched ? fetched : lack;
+  }
+  const row = { atMs: Date.now(), kind: 'returned', msat: String(book), round: null, ...(outpoint ? { outpoint: String(outpoint) } : {}), ...(book !== fetched ? { fetchedMsat: String(fetched) } : {}) };
+  ledgerOwed.set(key, { fed: fedHexOf(federationId), row });
+  return writeOwed(storage, key);
+}
+function writeOwed(storage, key) {
+  const o = ledgerOwed.get(key);
+  if (!o) return true;
+  try {
+    if (storage.getItem(key) === null) putRoomy(storage, key, JSON.stringify([o.row]));
+    ledgerOwed.delete(key);
+    return true;
+  } catch { return false; /* still refused: owed, the next read of the history writes it */ }
 }
 /** The rest: the smallest whole sat whose whole notes cover what the wallet is short. */
 function restOfFeesMsat(shortMsat) {
@@ -24443,7 +24672,7 @@ async function fundPlayerWallet({ round, invite, seed, LockClient, storage, dona
       ? { invoice_msat: String(stakeOf(round) > 0n ? stakeOf(round) : asked), credited_msat: String(asked), gateway: '' }
       : JSON.parse(await client.depositFor(String(asked)));
     // ANY LISTED GATEWAY, THE NEXT AFTER A TIMEOUT: the named first, then the federation's list
-    const order = gatewayOrder([...await seatedGatewaysOf(client), depositGateway(plan.gateway, gateways)].filter(Boolean), await federationGateways(client));
+    const order = gatewayOrder([...await seatedGatewaysOf(client), depositGateway(plan.gateway, await listedNamedGateways(client, gateways))].filter(Boolean), await federationGateways(client));
     const invoice = await invoiceThroughGateways(client, plan.invoice_msat, order);
     const d = { invoice: invoice.invoice, amountMsat: BigInt(plan.invoice_msat), creditsMsat: BigInt(plan.credited_msat), gateway: invoice.gateway, tried: invoice.tried };
     deposits.push(d);
@@ -24760,6 +24989,12 @@ const LEDGER_ROW_RE = /^arena\.ledger\.([0-9a-f]{64})(?:\.([0-9a-z_-]+))?$/i;
 const ledgerFedOfKey = (k) => { const m = LEDGER_ROW_RE.exec(String(k || '')); return m ? m[1].toLowerCase() : null; };
 /** This federation's rows, oldest first, as kept: the old list as it was, then each row of its own key by its time. */
 function ledgerRows(storage, federationId) {
+  if (!storage) return [];
+  // kanban #3138: a row the browser refused is written first, now that it may have room
+  if (ledgerOwed.size && typeof storage.key === 'function') for (const [k, o] of [...ledgerOwed]) if (o.fed === fedHexOf(federationId)) writeOwed(storage, k);
+  return ledgerRowsKept(storage, federationId);
+}
+function ledgerRowsKept(storage, federationId) {
   if (!storage) return [];
   const base = ledgerKey(federationId);
   let rows = [];
@@ -25972,15 +26207,6 @@ function collectLines(records = [], { failed = new Map(), held = new Set() } = {
  * part's own state: the payout none, gone or collected (or owed and its redeem final); the stake gone, none or collected (or owed and its
  * redeem or refund final); and this tab's round wallet empty. Anything else is open, and the record is looked at again.
  */
-/**
- * THE ORDER A COLLECT PASS LOOKS AT ITS RECORDS (kanban #3009, feedback #347): the records of orders that matched nobody first - their whole stake
- * is owed back the moment the window closed - then the rest in their kept order. `unfilled`: a Set of `${roundIdHex}:${order}` keys.
- */
-function collectOrder(records, unfilled = new Set()) {
-  const key = (r) => `${String(r.roundIdHex).toLowerCase()}:${Number(r.order) || 0}`;
-  return [...(records || [])].map((r, i) => ({ r, i, u: unfilled.has(key(r)) ? 0 : 1 })).sort((a, b) => a.u - b.u || a.i - b.i).map((x) => x.r);
-}
-
 const COLLECT_STATES = Object.freeze({ OPEN: 'open', DONE: 'done' });
 const PAYOUT_TERMINAL = new Set(['none', 'gone', 'collected']);
 const STAKE_TERMINAL = new Set(['gone', 'none', 'collected']);
@@ -26364,7 +26590,8 @@ async function withdrawCollected({ client, invoiceFor, amountMsat = null, gatewa
   }
   onStep('withdrawing over Lightning');
   // the funded gateway preferred; the lock client never takes the gateway on the invoice's own node
-  const said = JSON.parse(await client.withdraw(inv.invoice, depositGateway('', gateways) || undefined));
+  // kanban #3150: only a named gateway the federation lists is preferred
+  const said = JSON.parse(await client.withdraw(inv.invoice, depositGateway('', await listedNamedGateways(client, gateways)) || undefined));
   const ok = said.state === 'Success';
   return { ok, final: ok, withdrawableMsat: withdrawable, invoiceMsat: said.invoice_msat == null ? null : BigInt(said.invoice_msat),
     state: said.state, gateway: said.gateway, balance_before: said.balance_before, balance_after: said.balance_after,
@@ -26451,12 +26678,26 @@ async function refundKept({ round, roundId, seed, curve, client, storage, kept =
  * /refused-lock to every signer node of the round. Each keeps it only on its own record - it refuses the round, the lock
  * stakes no entry there, its image is A0 of a handout it holds for the round. Answers how many kept it, and each one's word.
  */
+// A SEAT'S POST ANSWERED WITHIN SEAT_READ_MS, ITS BODY TOO, OR NOT AT ALL (kanban #3060, audit client r4-2-1): measured, one seat that took
+// POST /refused-lock (or the handout re-hand) and never answered held lookOwed for good - Promise.all waited on it, so the stake was never
+// owed back, not even by the player's own key after the lock's expiry. A seat silent past the bound is one that did not keep the lock.
+async function seatPost(fetcher, url, opts, ms = SEAT_READ_MS) {
+  let timer;
+  const late = new Promise((_, no) => { timer = setTimeout(() => no(new Error(`no answer within ${ms} ms`)), ms); });
+  try {
+    return await Promise.race([(async () => {
+      const r = await fetcher(url, { ...opts, signal: AbortSignal.timeout(ms) });
+      return { status: r.status, text: typeof r.text === 'function' ? String(await r.text()).slice(0, 4096) : '' };
+    })(), late]);
+  } finally { clearTimeout(timer); }
+}
+
 async function handRefusedLock({ roundId, lock, nodes, fetcher = fetch } = {}) {
   const body = JSON.stringify({ outpoint: `${toHex(lock.outpoint.txid)}:${lock.outpoint.outIdx}`, fields: lockFieldsToJson(lock.fields) });
   const said = await Promise.all([...new Set(nodes || [])].map(async (node) => {
     try {
-      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/refused-lock?round=${toHex(roundId)}`, { method: 'POST', body });
-      return { node, status: r.status, why: (await r.text()).trim().slice(0, 160) };
+      const r = await seatPost(fetcher, `${String(node).replace(/\/+$/, '')}/refused-lock?round=${toHex(roundId)}`, { method: 'POST', body });
+      return { node, status: r.status, why: r.text.trim().slice(0, 160) };
     } catch (e) { return { node, status: 0, why: String(e && e.message || e).slice(0, 160) }; }
   }));
   return { kept: said.filter((x) => x.status === 201).length, said };
@@ -26502,6 +26743,9 @@ async function refusedReturn({ roundId, playerPubkey, locks, nodes, fetcher, cli
     if (st.stored) still.push(lock);
   }
   if (!still.length) return null;
+  // PAST ITS EXPIRY, THE PLAYER'S OWN KEY TAKES IT BACK BEFORE ANY SEAT IS ASKED (kanban #3060): the federation's read-only status decides it,
+  // so an expired lock never waits on a seat's answer (measured: one silent seat held this whole look)
+  { const back = await expiredBack(client, still); if (back) return back; }
   // THE STAKE'S HANDOUT HANDED AGAIN FIRST (kanban #593): a seat keeps the lock only against a handout it holds for the round,
   // and an order cut off mid-join (a seat restarting) may have reached a seat with its lock and without its handout. The tab
   // kept the handout's bytes with the lock; a seat that holds it already answers so
@@ -26513,10 +26757,17 @@ async function refusedReturn({ roundId, playerPubkey, locks, nodes, fetcher, cli
     HANDOUT_HANDED.add(handKey);
     const stake = still.find((l) => l.fields && l.fields.paymentImage && l.fields.paymentImage.kind === 'point');
     const shown = stake ? { headers: { 'x-arena-stake-lock': JSON.stringify({ outpoint: `${toHex(stake.outpoint.txid)}:${stake.outpoint.outIdx}`, fields: lockFieldsToJson(stake.fields) }) } } : {};
-    await Promise.all([...new Set(nodes || [])].map((node) => fetcher(`${String(node).replace(/\/+$/, '')}/handout`, { method: 'POST', body: handoutBody, ...shown }).catch(() => null)));
+    await Promise.all([...new Set(nodes || [])].map((node) => seatPost(fetcher, `${String(node).replace(/\/+$/, '')}/handout`, { method: 'POST', body: handoutBody, ...shown }).catch(() => null)));   // kanban #3060
   }
   let kept = 0;
-  for (const lock of still) kept += (await handRefusedLock({ roundId, lock, nodes, fetcher })).kept > 0 ? 1 : 0;
+  // the seats at once, the locks in order (kanban #3060, #3166): each seat's answer is bounded by SEAT_READ_MS and every seat is asked in
+  // parallel, but the stake (point) locks reach every seat before any fee (hash) lock - a seat keeps a refused fee lock beside the handout
+  // whose kept stake lock is of the same transaction (kanban #1945), and a fee that raced ahead of its stake at one seat was kept there
+  // under another try's fee id, so its forfeit never gathered and stake plus fee waited for the expiry. Two bounds at most, not one per lock.
+  const isStake = (l) => !!(l.fields && l.fields.paymentImage && l.fields.paymentImage.kind === 'point');
+  for (const batch of [still.filter(isStake), still.filter((l) => !isStake(l))]) {
+    for (const h of await Promise.all(batch.map((lock) => handRefusedLock({ roundId, lock, nodes, fetcher })))) kept += h.kept > 0 ? 1 : 0;
+  }
   if (!kept) return null;
   const msat = still.reduce((t, l) => t + BigInt(l.fields.amountMsat), 0n);
   const at = (l) => `${toHex(l.outpoint.txid)}:${l.outpoint.outIdx}`;
@@ -26952,8 +27203,8 @@ async function postLockClaim({ node, entryId: eid, claimFor, fetcher = fetch } =
   if (typeof claimFor !== 'function') return { node, status: 0, why: 'no claim' };
   try {
     const sig = claimFor(eid);
-    const r = await fetcher(`${String(node).replace(/\/+$/, '')}/lock-claim?entry=${toHex(eid)}`, { method: 'POST', body: sig });
-    return { node, status: r.status, why: r.status === 201 ? null : (await r.text()).trim() };
+    const r = await seatPost(fetcher, `${String(node).replace(/\/+$/, '')}/lock-claim?entry=${toHex(eid)}`, { method: 'POST', body: sig });   // kanban #3060: bounded
+    return { node, status: r.status, why: r.status === 201 ? null : r.text.trim() };
   } catch (e) { return { node, status: 0, why: e.message }; }
 }
 
@@ -27164,10 +27415,12 @@ async function swapForRound({ from, to, amountMsat, gateways = [], storage = nul
   // pair; any other end stops, as money may be on its way.
   // each leg's own federation's seated gateways first (§23A.9), then the lobby's named, then its list (kanban #2870: the named led, and after a
   // reboot their old quick-tunnel names cost a swap 39.6 s)
+  // kanban #3150: the named gateways too only where that leg's federation lists them (a ?gateway= link led both legs before)
+  const namedTo = await listedNamedGateways(to, gateways), namedFrom = await listedNamedGateways(from, gateways);
   // and only through gateways at or under the federations' fee cap (§23A.9, kanban #1324): none on a leg, the swap waits and says so
   // EACH LEG UNDER ITS OWN FEDERATION'S CAP (§23A.9 "in the federation record", kanban #1324): the receiving leg the round's, the paying leg the old one's
-  const recvOk = await gatewaysWithinCap(to, [...await seatedGatewaysOf(to), ...gateways, ...await federationGateways(to)], feeMaxTo || feeMax);
-  const payOk = await gatewaysWithinCap(from, [...await seatedGatewaysOf(from), ...gateways, ...await federationGateways(from)], feeMaxFrom || feeMax);
+  const recvOk = await gatewaysWithinCap(to, [...await seatedGatewaysOf(to), ...namedTo, ...await federationGateways(to)], feeMaxTo || feeMax);
+  const payOk = await gatewaysWithinCap(from, [...await seatedGatewaysOf(from), ...namedFrom, ...await federationGateways(from)], feeMaxFrom || feeMax);
   if (!recvOk.gateways.length || !payOk.gateways.length) {
     const why = !recvOk.gateways.length ? capWhy('of the round\'s federation', recvOk.refused) : capWhy('of the paying federation', payOk.refused);
     onState({ state: 'waiting', why });
@@ -29527,6 +29780,7 @@ const stringToBytes = qrcode.stringToBytes;
 // that made the invoice, not by a loose one beside the page. BOLT11 is case-insensitive and its upper case fits the
 // QR alphanumeric mode, as wallets write it; the `lightning:` scheme is the one wallets open.
 
+
 /** An SVG tag of `lightning:<INVOICE>` as a QR code, error correction L. */
 function invoiceQrSvg(invoice, { cellSize = 4, margin = 4 } = {}) {
   const text = String(invoice || '').trim();
@@ -29568,6 +29822,7 @@ function invoiceQrSvg(invoice, { cellSize = 4, margin = 4 } = {}) {
 // input chain. A ghost names the head of the chain it was taken from, exactly
 // as a checkpoint does, so anyone holding that transcript can say whether the
 // picture belongs to it.
+
 
 
 
@@ -29752,6 +30007,7 @@ function ghostBinds(ghost, transcript, entry) {
 
 
 
+
 /**
  * Does this proof land in a block of this chain?
  *
@@ -29865,6 +30121,7 @@ async function askForBond(providers, { chain, ask, timeoutMs = 10000 } = {}) {
 
 
 
+
 // the networks with an ancestor, by the marker names the protocol uses, and the id a re-affirmation names for each
 const ANCESTOR_NETWORK_IDS = Object.freeze({ testnet: NETWORK_ID_TESTNET4, regtest: NETWORK_ID_REGTEST });
 const sameBytesAE = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
@@ -29933,6 +30190,117 @@ function acceptAncestorEndpoint({ chain, transaction, branch, position, update, 
   };
 }
 
+// ---- arena-client/src/node-discovery.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// THE NODES, FOUND ON THE FLY (2026-10-13: "The client may not have a hard coded node list it must be found on
+// the fly"). A page starts from any node it can reach (a bootstrap, not a list), and every census it checks itself - each entry's
+// bond and advertisement proved against headers it agreed (client-committee.js) - names the network's nodes: each bond's
+// advertisement carries the node's endpoint. Those are the nodes this page talks to from then on, kept for its next start.
+
+
+/** The https root of a node's advertised endpoint (wss -> https, ws -> http), or null for none. */
+function endpointRoot(endpoint) {
+  const s = String(endpoint || '').trim();
+  if (!/^(wss?|https?):\/\//i.test(s)) return null;
+  return s.replace(/^ws(s?):/i, 'http$1:').replace(/\/+$/, '');
+}
+
+// AN ENDPOINT THE SEATS REFUSE IS NOT LEARNED BY THE PAGE EITHER (kanban #3107, #3108; wf1489 refute of #3082/#2856): a bond's advert
+// endpoint is the bond holder's choice. The seats dial one only where peerEndpointRefusal (arena-node address-book.js) takes it, but the
+// page took every one raw, kept it in localStorage (arena.nodes.*) and asked it again at every start - one bond committing
+// 'http://127.0.0.1:18777/lnurlp/tips/cb?amount=1000&x=' or 'http://192.168.1.1/admin' made every player's browser send GET <that>/games
+// ... to its own machine or LAN, the query swallowing the door. The same rule here, in the page's own words: an http(s)/ws(s) origin with
+// at most one path segment, no query, fragment or user info, and never a loopback / private / link-local / ULA literal or a local-only name
+// - unless the page itself is served from a local host (a devnet), where its nodes are local too.
+const ND_LOCAL_NAME = /(^|\.)(localhost|local|internal|lan|intranet|localdomain|home\.arpa)$/;
+// ONE RULE FOR THE SEAT, THE PAGE AND PUBLIC-FETCH (kanban #3124, #3125; wf1489 refute of #3107/#3108): the seat's peerEndpointRefusal
+// (arena-node address-book.js) refused IP literals and localhost only, so a bond committing 'http://127.0.0.1.nip.io:18777/lnurlp',
+// 'http://localtest.me:18777/lnurlp' or 'http://host.docker.internal:18777/x' was dialed by every seat on its own loopback or LAN. The
+// names below lead back to an address spelled inside them (public wildcard DNS made for exactly that), and a name carrying an internal
+// IPv4 address in dots or dashes ('10-0-0-1.example', '192.168.1.1.anything') is refused too. The seat and public-fetch now call this
+// function, so the copies cannot drift. NOT *.ts.net: live seats announce their tailnet names (public-fetch refuses them on its own).
+const ND_REBIND_NAME = /(^|\.)(nip\.io|sslip\.io|xip\.io|traefik\.me|localtest\.me|lvh\.me|vcap\.me|localhost\.direct|rbndr\.us|1u\.ms|localho\.st|local\.gd)$/;   // the last four: more public rebinding names
+function ndEmbeddedInternalV4(h) {
+  const parts = h.split(/[.-]/);
+  for (let i = 0; i + 4 <= parts.length; i++) {
+    const q = parts.slice(i, i + 4);
+    if (q.every((x) => /^\d{1,3}$/.test(x) && Number(x) <= 255) && ndInternalV4(q.map(Number).join('.'))) return true;
+  }
+  return false;
+}
+function ndInternalV4(h) {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+  if (!m) return false;
+  const [a, b, c] = m.slice(1, 4).map(Number);
+  return a === 0 || a === 10 || a === 127 || a >= 224 || (a === 100 && b >= 64 && b < 128) || (a === 169 && b === 254) || (a === 172 && b >= 16 && b < 32)
+    || (a === 192 && b === 168) || (a === 192 && b === 0 && (c === 0 || c === 2)) || (a === 198 && (b === 18 || b === 19)) || (a === 198 && b === 51 && c === 100)
+    || (a === 203 && b === 0 && c === 113);
+}
+function ndInternalV6(h) {
+  const [head, tail] = h.includes('::') ? h.split('::') : [h, null];
+  const hs = head ? head.split(':') : [], ts = tail ? tail.split(':') : [];
+  const all = [...hs, ...(tail === null ? [] : new Array(Math.max(0, 8 - hs.length - ts.length)).fill('0')), ...ts];
+  if (all.length !== 8) return true;
+  const w = all.map((x) => parseInt(x || '0', 16));
+  if (w.some((x) => !Number.isFinite(x) || x < 0 || x > 0xffff)) return true;
+  const v4 = (hi, lo) => `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+  if (w.slice(0, 5).every((x) => x === 0) && (w[5] === 0xffff || w[5] === 0)) return (w[5] === 0 && w[6] === 0 && w[7] <= 1) || ndInternalV4(v4(w[6], w[7]));
+  if (w[0] === 0x64 && w[1] === 0xff9b && w.slice(2, 6).every((x) => x === 0)) return ndInternalV4(v4(w[6], w[7]));
+  if (w[0] === 0x2002) return ndInternalV4(v4(w[1], w[2]));
+  return (w[0] & 0xfe00) === 0xfc00 || (w[0] & 0xffc0) === 0xfe80 || (w[0] & 0xffc0) === 0xfec0 || (w[0] & 0xff00) === 0xff00
+    || (w[0] === 0x100 && w[1] === 0 && w[2] === 0 && w[3] === 0) || (w[0] === 0x2001 && w[1] === 0xdb8);
+}
+/** True for a loopback / private / link-local / ULA literal, a local-only name (localhost, *.local, *.lan, a bare single label ...), a name made to
+ * resolve to the address it spells (*.nip.io, localtest.me ...) or one carrying an internal IPv4 address (kanban #3124). */
+function localHostName(hostname) {
+  const h = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '').replace(/%.*$/, '').replace(/\.$/, '');
+  if (!h) return true;
+  if (h.includes(':')) return ndInternalV6(h);
+  if (/^[\d.]+$|^0x/i.test(h)) return !/^\d{1,3}(\.\d{1,3}){3}$/.test(h) || ndInternalV4(h);
+  return !h.includes('.') || ND_LOCAL_NAME.test(h) || ND_REBIND_NAME.test(h) || ndEmbeddedInternalV4(h);   // kanban #3124
+}
+/**
+ * Why the page does not ask `endpoint` as a node, or null - the seats' peerEndpointRefusal, page side (kanban #3107, #3108). `localOk`:
+ * the page itself is served from a local host (a devnet; the page passes localHostName(its own hostname) - no file here reads the page).
+ */
+function nodeEndpointRefusal(endpoint, { localOk = false } = {}) {
+  const s = String(endpoint || '');
+  let u; try { u = new URL(s); } catch { return 'not a URL'; }
+  if (!['http:', 'https:', 'ws:', 'wss:'].includes(u.protocol)) return 'not an http(s) or ws(s) endpoint';
+  if (u.username || u.password) return 'an endpoint carries no user info';
+  if (u.search || u.hash || s.includes('?') || s.includes('#')) return 'an endpoint carries no query or fragment';
+  if (u.pathname.replace(/\/+$/, '').split('/').filter(Boolean).length > 1) return 'an endpoint is an origin with at most one path segment';
+  if (!localOk && localHostName(u.hostname)) return 'an endpoint on a loopback or private address';
+  return null;
+}
+/** The node roots a page kept from an earlier start, without those it must not ask (lists kept before kanban #3107/#3108 are cleaned). */
+function keptNodes(kept, opts = {}) {
+  return (Array.isArray(kept) ? kept : []).filter((n) => typeof n === 'string' && !nodeEndpointRefusal(n, opts));
+}
+
+/** Every node a checked census names, by its advertised endpoint: one root per node key, in the order of their keys. */
+function censusEndpoints(entries, opts = {}) {
+  const byKey = new Map();
+  for (const e of entries || []) {
+    const at = e && e.advert && e.advert.endpoint;
+    if (!at || nodeEndpointRefusal(at, opts)) continue;   // kanban #3107, #3108
+    const root = endpointRoot(at);
+    if (!root || !e.pubkey) continue;
+    const k = toHex(e.pubkey);
+    if (!byKey.has(k)) byKey.set(k, root);
+  }
+  return [...byKey.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map((x) => x[1]);
+}
+
+/** `known` with every root of `found` it lacks, appended - nothing known is dropped or reordered. */
+function mergeNodes(known, found) {
+  const out = [...(known || [])];
+  const have = new Set(out.map((n) => String(n).replace(/\/+$/, '')));
+  for (const n of found || []) { const r = String(n).replace(/\/+$/, ''); if (!have.has(r)) { have.add(r); out.push(r); } }
+  return out;
+}
+
 // ---- arena-client/src/directory.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -29970,8 +30338,12 @@ function acceptAncestorEndpoint({ chain, transaction, branch, position, update, 
 
 
 
+
 const BONDS_KEPT = new WeakMap();   // proof headers -> (bond providers -> a bond that held), see discover
 
+
+
+// kanban #3124
 
 
 /**
@@ -29991,10 +30363,22 @@ const BONDS_KEPT = new WeakMap();   // proof headers -> (bond providers -> a bon
  * one thing a committed endpoint must not be able to ask a player for.
  */
 const LOOPBACK = /^ws:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?(\/|$)/;
-function isSocketAddress(endpoint) {
+// THE ROUND DOOR TAKES NO MORE THAN THE NODE LIST (kanban #3124, #3125; wf1489 refute of #3108): node-discovery's nodeEndpointRefusal kept a
+// LAN/loopback/query endpoint out of the page's node list, but Client.at plays the round on the proven committee node's raw advert
+// endpoint, and this took any wss://host/any/path?query and ws://127.0.0.1:<port>/<anything>?<query> - a bond committing
+// 'wss://192.168.1.1/admin/cgi?x=' made every player's browser send <that>/round/... to its own LAN, the query swallowing the door. Now the
+// same shape as the node list (an origin with at most one path segment, no query, fragment or user info), and never a loopback / private /
+// local-only host (localHostName) - unless `localOk` is true (the page passes it to Client.at only when it is itself served from a local
+// host: a devnet; no file here reads the page). ws:// stays loopback only: taken when `localOk` is true, and when it is not given at all
+// (the tests and tools in Node that drive a node on this machine); `localOk: false` (a page on a public host) refuses it too.
+function isSocketAddress(endpoint, { localOk } = {}) {
   if (typeof endpoint !== 'string') return false;
-  if (LOOPBACK.test(endpoint)) return true;
-  return /^wss:\/\/[^/?#\s]+(\/|$)/.test(endpoint);
+  if (!/^wss?:\/\/[^/?#\s]+(\/|$)/.test(endpoint)) return false;
+  let u; try { u = new URL(endpoint); } catch { return false; }
+  if (u.username || u.password || u.search || u.hash || endpoint.includes('?') || endpoint.includes('#')) return false;
+  if (u.pathname.replace(/\/+$/, '').split('/').filter(Boolean).length > 1) return false;
+  if (u.protocol === 'ws:') return LOOPBACK.test(endpoint) && localOk !== false;
+  return localOk === true || !localHostName(u.hostname);
 }
 
 /**
@@ -30018,7 +30402,7 @@ function isSocketAddress(endpoint) {
  * this that takes an empty list and shrugs is the version that ships.
  */
 function reach({
-  chain, chains, transaction, signedAdvert, branch, position, committee, bond, network, update, reaffirm,
+  chain, chains, transaction, signedAdvert, branch, position, committee, bond, network, update, reaffirm, localOk,
 }) {
   if (!committee || !committee.length)
     return { ok: false, why: 'no committee to check the node against' };
@@ -30049,7 +30433,7 @@ function reach({
     if (carried.ok) {
       if (!committee.some((n) => toHex(n) === toHex(carried.nodePubkey)))
         return { ok: false, why: `the advertisement is for ${toHex(carried.nodePubkey)}, which is not on this round's committee` };
-      if (!isSocketAddress(carried.endpoint))
+      if (!isSocketAddress(carried.endpoint, { localOk }))
         return { ok: false, why: `the advertisement's endpoint ${JSON.stringify(carried.endpoint)} is not a secure socket address` };
       return { ok: true, endpoint: carried.endpoint, nodePubkey: carried.nodePubkey, signature: carried.signature,
         advertId: carried.advertId, txid: carried.txid, blockHash: blockHashOf(carried.header), work, from, checks: carried.checks };
@@ -30076,7 +30460,7 @@ function reach({
           + "which is not on this round's committee",
       };
     }
-    if (!isSocketAddress(seen.endpoint)) {
+    if (!isSocketAddress(seen.endpoint, { localOk })) {
       return {
         ok: false,
         why: `the advertisement's endpoint ${JSON.stringify(seen.endpoint)} `
@@ -30157,7 +30541,7 @@ function chainAnchorFor(networkId) {
 }
 
 async function discover({
-  headers, bonds, anchor, committee, signedAdvert, ask, least, timeoutMs, proved, networkId,
+  headers, bonds, anchor, committee, signedAdvert, ask, least, timeoutMs, proved, networkId, localOk,
 }) {
   // THE RULES ARE THE CLIENT'S. THE PAGE SAYS WHERE TO ASK, AND NOTHING ELSE.
   //
@@ -30307,6 +30691,7 @@ async function discover({
     committee,
     update: bond.update || undefined,
     reaffirm: bond.reaffirm || undefined,
+    localOk,   // kanban #3125
   });
   if (!seen.ok) return seen;
   return {
@@ -30333,6 +30718,7 @@ async function discover({
  * null. Its own module, reading only genesis-ids.js, so the page bundle can use
  * it without genesis.js (which reads the core's game rules).
  */
+
 
 
 function donationKeysForNetworkId(networkId) {
@@ -30362,6 +30748,7 @@ function donationKeysForNetworkId(networkId) {
  * The comment is the player's public key as hex (§22A, 2026-09-08), and
  * it is left out when the endpoint takes fewer than 64 characters (LUD-12).
  */
+
 
 
 /** A player's public key as hex is 64 characters; an endpoint allowing fewer gets no comment. */
@@ -30502,6 +30889,7 @@ function invoiceAnswersPayRequest({ invoice, amountMsat, metadata, network } = {
 // the caller one package over brings the real BIP-340. NO MONEY: nothing here
 // pays an LNURL, and what a donation costs a player is 6e's letter, not this
 // one.
+
 
 
 
@@ -30933,6 +31321,7 @@ function donationSetInForce({
 //
 // Signatures are secp256k1 over the tagged digest, by the 33-byte recipient key; the verifier is injected, as every
 // verifier in this package is: `verifySecp256k1(sig, digest, pubkey)` answers a boolean (or a promise of one).
+
 
 
 
@@ -31714,6 +32103,7 @@ async function bytesCapped(r, max) {
 
 
 
+
 /**
  * A FEDERATION ROUND'S STAKE: THE INVOICE COMES FIRST (2026-09-11).
  *
@@ -31909,6 +32299,29 @@ const ENTRY_BACKOFF_MAX_MS = 60000;
  * they are kept apart from the first place they could be confused.
  */
 const CLOSED = 'closed: ';
+// THE LINK WORD IS THIS CLIENT'S OWN (kanban #3167, wf1489 r1120b refute 12-1): a seat that answered 'closed: ...' as text on
+// an open socket had its batch held and asked again for the rest of the run - no resume ran, the socket never closed - and the
+// peers never got it. Only this client's own close handler and no-socket paths say CLOSED; a node's text that starts with it is
+// that node's refusal and reaches the callers as one.
+const nodeSaid = (text) => (text.startsWith(CLOSED) ? `error ${text}` : text);
+
+/**
+ * HOW LONG A BATCH WAITS FOR ITS NODE'S ANSWER (kanban #3170, #3172, wf1489 r1120b refute 12-2/12-3): a home seat that kept
+ * the socket open and stayed silent on a batch - or answered it with a frame the message handler routes away from the answer
+ * queue, a TYPE_GHOST-led one - left that batch's waiter in `said` for good, publishing never settled and the peers stayed
+ * at the ticks before it. A node answers a batch in milliseconds; one that has not in this long has refused it, and the
+ * batch goes to the peers as any refusal does (#2515).
+ */
+const BATCH_ANSWER_MS = 5000;
+
+/**
+ * HOW LONG A PEER'S FEED WAITS FOR THE ANSWER TO A BATCH (kanban #3214, wf1489 r1120b refute 12-s2-1): a peer seat that kept its
+ * /play socket open and never answered a batch held its feed - and `awaitPeers`, which a batch the home seat refused waits on in
+ * #carriedByPeers - for good: `publishing` never settled and the honest home seat got no tick after a first-batch stake wait (0 of
+ * 135). A peer that has not answered in this long is read as gone: its link is dropped (every waiter on it hears CLOSED, so no later
+ * answer is matched to the wrong batch) and the next batch or mark opens a new one.
+ */
+const PEER_ANSWER_MS = BATCH_ANSWER_MS;
 
 /** How long `finish` waits for the held ticks to go out before it ends the run anyway. */
 const FINISH_WAIT_MS = 300;
@@ -31984,7 +32397,7 @@ class Client {
    * the node's own fixtures talk to a process on localhost that has no bond
    * and never will - and a test that wants the real door calls this one.
    */
-  static async at(discovery, { core, sign, verify, verifySession, contract, roundIdGiven, stakeLock }) {
+  static async at(discovery, { core, sign, verify, verifySession, contract, roundIdGiven, stakeLock, localOk }) {
     if (!contract || !contract.nodes)
       throw new Error('no round contract, so there is no committee to check against');
 
@@ -32027,7 +32440,8 @@ class Client {
     }
 
     // THE ANCHOR FOLLOWS THE ROUND'S NETWORK, read off the contract the round id was just checked against
-    const seen = await discover({ ...discovery, committee: contract.nodes, networkId: contract.networkId });
+    // kanban #3125: `localOk` - the caller's (the page: served from a local host), never the discovery's; see directory.js isSocketAddress
+    const seen = await discover({ ...discovery, committee: contract.nodes, networkId: contract.networkId, localOk });
     // WHICH PROVIDER, AND WHY (M3.3-27): `discover` hands back each provider's
     // own refusal, and the door used to drop it - the rehearsal's flake read
     // "only 1 of 2 providers gave a chain" and nothing more.
@@ -32104,6 +32518,7 @@ class Client {
     this.signedFrames = new Map();
     // A SEAT THAT SERVED THIS ENTRY A BATCH THIS CLIENT NEVER SIGNED: { base, firstTick, why }, null while none has
     this.nodeFault = null;
+    this.homeFault = null;
     // Verifying is injected for the same reason signing is: the curve belongs
     // to whoever runs the client, and this file should not decide it.
     this.verify = verify;
@@ -32193,6 +32608,12 @@ class Client {
     this.publishing = null;
     this.marking = null;
     this.said = [];
+    this.batchAnswerMs = BATCH_ANSWER_MS;
+    this.batchesUnanswered = 0;   // batches the home node did not answer within batchAnswerMs (kanban #3170, #3172)
+    this.peerAnswerMs = PEER_ANSWER_MS;
+    this.peersUnanswered = 0;     // peer links dropped for a batch unanswered within peerAnswerMs (kanban #3214)
+    this.homeHolds = 0;           // how many of `published` the home seat holds; the rest the peers carried (kanban #3215)
+    this.homeCaughtUp = 0;        // batches the peers carried that were fed back to the home seat afterwards (kanban #3215)
 
     // WHAT ARRIVES UNASKED. A GHOSTS frame is not an answer to anything: the
     // node pushes it when somebody else's truck moves, so it cannot go into
@@ -32371,7 +32792,7 @@ class Client {
       sock.binaryType = 'arraybuffer';
       sock.addEventListener('message', (e) => {
         const waiting = link.said.shift();
-        if (waiting) waiting(typeof e.data === 'string' ? e.data : new Uint8Array(e.data));
+        if (waiting) waiting(typeof e.data === 'string' ? nodeSaid(e.data) : new Uint8Array(e.data));
       });
       sock.addEventListener('open', () => { link.sock = sock; link.opening = null; resolve(link); });
       sock.addEventListener('error', () => { link.opening = null; resolve(link); });
@@ -32385,11 +32806,31 @@ class Client {
     return link.opening;
   }
 
-  /** One message to another committee node, answered the way `send` answers. */
-  async sendPeer(base, message) {
+  /**
+   * One message to another committee node, answered the way `send` answers. With `within` (the feed's batches, kanban #3214) a
+   * peer that has not answered in that many ms is read as gone: the link is dropped and every waiter on it hears CLOSED.
+   */
+  async sendPeer(base, message, within = 0) {
     const link = await this.peerLink(base);
     if (!link.sock || link.sock.readyState !== 1) return `${CLOSED}no socket to ${base}`;
-    return new Promise((r) => { link.said.push(r); link.sock.send(message); });
+    return new Promise((r) => {
+      if (!within) { link.said.push(r); link.sock.send(message); return; }
+      let timer = null;
+      const waiter = (a) => { if (timer) clearTimeout(timer); r(a); };
+      timer = setTimeout(() => {
+        timer = null;
+        if (!link.said.includes(waiter)) return;
+        const sock = link.sock;
+        const waiting = link.said;
+        link.said = [];
+        link.sock = null;
+        this.peersUnanswered++;
+        for (const w of waiting) w(`${CLOSED}the node at ${base} did not answer within ${within} ms`);
+        try { if (sock) sock.close(); } catch { /* already going */ }
+      }, within);
+      link.said.push(waiter);
+      link.sock.send(message);
+    });
   }
 
   /** Signer nodes this client's entry on one other committee node. */
@@ -32451,7 +32892,8 @@ class Client {
           // stops costing a round trip per batch of it.
           // ONE FRAME to a peer that refused the entry: its answer says whether it holds it now; the window once it does
           const window = this.published.slice(f.next, f.next + (f.entryRefused && f.entryBackoffUntil ? 1 : FEED_WINDOW));
-          const asked = window.map((one) => ({ one, said: this.sendPeer(base, one.bytes) }));
+          // each answered within peerAnswerMs: a silent peer is a dropped link, not a feed held for good (kanban #3214)
+          const asked = window.map((one) => ({ one, said: this.sendPeer(base, one.bytes, this.peerAnswerMs) }));
           // EVERY ANSWER IS READ, INCLUDING THE ONES AFTER A REFUSAL. They are already on the wire, and a
           // promise nobody reads would leave `sendPeer`'s queue matching the next batch to this one's
           // answer. `stop` is what the old `return` said: the feed ends at the first batch that did not
@@ -32665,7 +33107,7 @@ class Client {
           return undefined;
         }
         const waiting = this.said.shift();
-        if (waiting) waiting(e.data);
+        if (waiting) waiting(nodeSaid(e.data));
         return undefined;
       });
       sock.addEventListener('open', () => {
@@ -32830,6 +33272,30 @@ class Client {
     if (!this.sock || this.sock.readyState !== 1)
       return Promise.resolve('error there is no socket');
     return new Promise((r) => { this.said.push(r); this.sock.send(message); });
+  }
+
+  /**
+   * `send`, answered within `ms` (kanban #3170, #3172): the answer, the close word, or - when neither came in time - a
+   * refusal naming the silence. The waiter that timed out is taken out of `said`, so the answers to what was sent after it
+   * (the marks that share this socket) still go to their own sends. A node that answers the batch later still would shift
+   * them by one; an honest seat answers in milliseconds, so a seat this far behind is one whose answers already decide
+   * nothing alone - every batch that times out goes to the peers, and a mark whose answer is not a receipt is refused.
+   */
+  #sendWithin(message, ms) {
+    // THROUGH send() (kanban #3216): one door for every frame on the socket, so whatever paces or watches send() paces this too
+    // (backpressure.test: batches sent beside it were never counted and a second publish ran while one was on a slow link). The
+    // waiter send() queued is taken out of `said` when the time is up, so later answers still reach their own sends.
+    const before = this.said.length;
+    const sent = this.send(message);
+    const waiter = this.said.length > before ? this.said[this.said.length - 1] : null;
+    let timer;
+    const late = new Promise((r) => { timer = setTimeout(() => {
+      const i = waiter ? this.said.indexOf(waiter) : -1;
+      if (i >= 0) this.said.splice(i, 1);
+      this.batchesUnanswered++;
+      r(`error the node did not answer the batch within ${ms} ms`);
+    }, ms); });
+    return Promise.race([sent, late]).finally(() => clearTimeout(timer));
   }
 
   /**
@@ -33048,22 +33514,112 @@ class Client {
     const bytes = await signBatch(b, this.sign);
     // KEPT BEFORE IT GOES OUT (kanban #1567): a batch the node took whose answer was lost is still this client's own
     this.signedFrames.set(toHex(batchId(b)), bytes);
-    const answer = await this.send(bytes);
+    // THE HOME SEAT IS FED WHAT THE PEERS CARRIED WITHOUT IT FIRST (kanban #3215, wf1489 r1120b refute 12-s2-2): an honest home seat
+    // whose stake view was one batch behind answered the first batch 'stake not seen', the peer took it, the chain head moved past a
+    // batch the home seat never got, and every later batch was answered 'does not follow the chain head' and carried by the peer
+    // again - the honest home seat held 0 of 120 ticks, and on a 2-seat committee no mark could go live. Its answer to the first
+    // batch it still lacks stands for this one: a seat that still refuses is asked nothing more and the batch goes to the peers.
+    const behind = await this.#homeCatchUp();
+    const answer = behind !== null ? behind : await this.#sendWithin(bytes, this.batchAnswerMs);
 
     // The node answers how many ticks were NEW. A refusal is a named string
     // and the chain must not move on one, the same rule the marks follow.
-    if (typeof answer !== 'string' || !/^[0-9]+$/.test(answer)) return { batch: b, answer };
+    if (typeof answer !== 'string' || !/^[0-9]+$/.test(answer)) {
+      // ONE SEAT DOES NOT GATE PUBLISHING (kanban #2515, audit r12): the home seat is one seat of the committee. Measured
+      // before: a home seat that answered "the batch does not follow the chain head" from tick 60 had this client resync
+      // once and end its run, and the honest peer kept 60 of the player's 180 signed ticks - the round FAILED on one
+      // seat's word. A refusal (not a dropped socket, not a stake still on its way) is now put to the other seats: the
+      // same signed frame, after the ones before it, and if enough of them to carry a mark take it - every other seat
+      // when the committee is smaller than that - it is published and the chain moves on. A batch the peers refuse too
+      // is refused, and the resync below still decides.
+      // NOT ONLY A TEXT REFUSAL (kanban #3036, audit play r3-1, measured 2026-11-19: a home seat that answered every batch from tick 60
+      // with 'error stake not seen: ...' for a stake it had already counted, or with a binary frame, kept the honest peer at 60 of 120
+      // ticks - the words held and asked again for the rest of the run, or the run ended). A binary answer is a refusal, and so is
+      // 'stake not seen' once that seat has taken a batch of this run: the stake it counted then is no stake still on its way.
+      // AND A STAKE WAIT FROM THE FIRST BATCH ON IS OFFERED TO THE PEERS TOO (kanban #3177, wf1489 r1120b refute 12-4): a home
+      // seat that answered 'stake not seen' to every batch of the run, for a stake the other seats had counted, kept every tick
+      // from them (0 of 120 after 360 waits) - the published.length gate read its first answer as a stake still on its way.
+      // The peers' own stake view decides: enough of them take the batch and it is published; they answer 'stake not seen'
+      // too and it stays the wait it was.
+      if ((typeof answer !== 'string' || !answer.startsWith(CLOSED))
+          && this.peers.length && (await this.#homeForged(roundId, entryId), true)
+          && await this.#carriedByPeers(bytes, b.firstTick + ticks.length)) {
+        this.batchHead = batchId(b);
+        this.nextTick = b.firstTick + ticks.length;
+        this.homeRefusals = (this.homeRefusals || 0) + 1;
+        const why = typeof answer === 'string' ? answer : 'the node answered the batch with a binary frame, not a tick count';
+        this.homeRefusedWhy = why;
+        this.#wakeMarks();
+        return { batch: b, answer: why, accepted: ticks.length, homeRefused: why };
+      }
+      return { batch: b, answer };
+    }
     this.batchHead = batchId(b);
     this.nextTick = b.firstTick + ticks.length;
+    this.homeRefusedWhy = null;
     // AND THE SAME BYTES GO TO EVERY OTHER COMMITTEE NODE, in the order this
     // node took them - see `pumpPeers`. Every batch is KEPT, peers or not: a
     // node refuses a batch that does not follow its own head, so a peer that
     // arrives late can only be caught up from the run's first batch. A whole
     // run is at most blockTicks x 20 bytes of words.
     this.published.push({ bytes, through: this.nextTick });
+    this.homeHolds = this.published.length;
     if (this.peers.length) this.pumpPeers();
     this.#wakeMarks();
     return { batch: b, answer, accepted: Number(answer) };
+  }
+
+  /**
+   * THE BATCHES THE PEERS CARRIED WITHOUT THE HOME SEAT, FED TO IT IN ORDER (kanban #3215): null once it holds every one, or its
+   * answer to the first it did not take. The same signed frames, never a fresh signature.
+   */
+  async #homeCatchUp() {
+    while (this.homeHolds < this.published.length) {
+      const a = await this.#sendWithin(this.published[this.homeHolds].bytes, this.batchAnswerMs);
+      if (typeof a !== 'string' || !/^[0-9]+$/.test(a)) return a;
+      this.homeHolds++;
+      this.homeCaughtUp++;
+    }
+    return null;
+  }
+
+  /**
+   * WHY THE HOME SEAT REFUSES, READ ONCE PER STRETCH OF REFUSALS (kanban #2515 beside #1567): a home seat that wrote a
+   * batch this client never signed into its own store is named on `homeFault` (that seat is not trusted with this run).
+   * Nothing served is adopted or signed here.
+   * IT NO LONGER ENDS THE RUN (kanban #3002, audit play r3-1a, measured 2026-11-18: a home seat that wrote ONE unsigned tick onto its
+   * own head and refused the next signed batch had this check end the run as a node fault - the client stopped publishing and the
+   * honest peer kept 60 of 180 signed ticks, the #2515 effect at the seat's chosen tick). The forgery is that one seat's; the peers
+   * are offered only frames this client signed itself, and they decide whether the run goes on. Answers true when it named one.
+   */
+  async #homeForged(roundId, entryId) {
+    if (this.homeRefusedWhy) return false;
+    try {
+      const r = await readWithOneRetry(fetch, `${this.base}/transcript?round=${toHex(roundId)}&entry=${toHex(entryId)}`);
+      if (!r.ok) return false;
+      const t = decodeTranscript(new Uint8Array(await r.arrayBuffer()));
+      if (toHex(t.roundId) !== toHex(roundId) || toHex(t.entryId) !== toHex(entryId)) return false;
+      if (t.batches.every((x) => this.signedFrames.has(toHex(batchId(x))))) return false;
+      await this.#ownFrames(t, await this.entryFor(entryId), roundId, entryId, { end: false });
+      return false;
+    } catch (e) { return e.nodeFault === true; }
+  }
+
+  /**
+   * A BATCH THE HOME SEAT REFUSED, OFFERED TO THE PEERS (kanban #2515): queued behind every batch before it, fed, and kept
+   * when enough peers took it. Otherwise it is taken back out of the queue and no feed is left pointing past it.
+   */
+  async #carriedByPeers(bytes, through) {
+    const at = this.published.length;
+    this.published.push({ bytes, through });
+    this.pumpPeers();
+    await this.awaitPeers();
+    const took = this.peers.filter((base) => this.peerFeed(base).next > at).length;
+    const need = Math.min(this.peers.length, receiptsForLive({ gameVerifySlots: this.gameVerifySlots, nodes: this.nodes }));
+    if (took >= need) return true;
+    this.published.splice(at, 1);
+    for (const base of this.peers) { const f = this.peerFeed(base); if (f.next > at) f.next = at; }
+    return false;
   }
 
   // NO `invoice()` AND NO `payStake()` (§23.6, RULED 2026-09-22 22:59). They quoted a joined player the
@@ -33418,6 +33974,7 @@ class Client {
       const b = t.batches[i];
       this.published.push({ bytes: frames[i], through: batchTicks(b).at(-1) + 1 });
     }
+    this.homeHolds = t.batches.length;
 
     // AND THE COUNT OF WHAT THIS CLIENT HAS ACCEPTED IS RECONCILED WITH IT.
     //
@@ -33458,7 +34015,7 @@ class Client {
    * wrote it itself. That is a node fault, named on `nodeFault`; the run ends there (VOID, the seat's fault, never the
    * player's) and nothing of it is signed or handed to a peer.
    */
-  async #ownFrames(t, entry, roundId, entryId) {
+  async #ownFrames(t, entry, roundId, entryId, { end = true } = {}) {
     const frames = new Array(t.batches.length);
     const missing = [];
     t.batches.forEach((b, i) => {
@@ -33487,6 +34044,7 @@ class Client {
       const why = `the node at ${this.base} serves a batch at ticks ${b.firstTick}..${ticks.length ? ticks.at(-1) : b.firstTick} `
         + `as this entry's that this client never signed (${sig ? 'its signature does not verify under the session key' : (asked || 'no signature beside it')}) `
         + '- it is not signed or published again, and that node is not trusted with this run';
+      if (!end) { this.homeFault = { base: this.base, firstTick: b.firstTick, batch: i, why }; throw Object.assign(new Error(why), { nodeFault: true }); }
       this.nodeFault = { base: this.base, firstTick: b.firstTick, batch: i, why };
       this.endRun(`node fault: ${why}`);
       throw Object.assign(new Error(why), { nodeFault: true });
@@ -33700,6 +34258,7 @@ class Client {
     // ANOTHER ENTRY'S RUN STARTS WITH NONE OF THIS ONE'S FRAMES (kanban #1567); the same entry again keeps them
     if (this.signedEntry !== toHex(entryId)) { this.signedFrames = new Map(); this.signedEntry = toHex(entryId); }
     this.nodeFault = null;
+    this.homeFault = null;
     this.where = { roundId, entryId };
     // A LATE ENTRY'S FIRST TICK IS ITS JOIN TICK: the round's tick it joined at, so its run ends with the round's.
     // An entry at tick 0 starts where it always did.
@@ -33721,6 +34280,7 @@ class Client {
     this.marksRefused = 0;
     this.marksRefusedWhy = null;
     this.published = [];
+    this.homeHolds = 0;
     this.peerFeeds = new Map();
     this.batchesInterrupted = 0;
     this.batchesLandedUnheard = 0;
@@ -34385,6 +34945,7 @@ class Client {
 
 
 
+
 async function fetchReserveKey({ federationId, nodes, needed = 5, fetcher = (u, o) => fetch(u, o), timeoutMs = 8000 } = {}) {
   if (!(federationId instanceof Uint8Array) || federationId.length !== 32) return { ok: false, why: 'the round names no federation to pay the reserves in' };
   const fed = toHex(federationId);
@@ -34612,6 +35173,7 @@ function paymentOutLine(o) {
 // rather than letting a client invent one.
 
 
+
 const DISPLAY_NAME_TAG = 'ARENA/v1/DISPLAY_NAME';
 const DISPLAY_NAME_MAX = 32;
 
@@ -34711,6 +35273,7 @@ function playerStoreRecord({ secretKey, displayName = null }) {
 // them (arena-protocol funding.js), signs it with the visitor's own key - an nsec, or a key kept in that browser - and hands it to
 // every node (POST /funding), which keep it and pass it on. The curve is the page's (arena-curve.js, globalThis.ARENA_CURVE: pointX,
 // signSchnorr), passed in as `curve` - this bundle carries no crypto of its own.
+
 
 
 
@@ -34876,6 +35439,7 @@ async function postFunding({ nodes, kind, hex, fetcher = (u, o) => fetch(u, o), 
 
 
 
+
 const TAG_DONATION_GIFT = 'ARENA/v1/DonationGift';
 const TYPE_DONATION_GIFT = 0x44;          // 'D'
 const DONATION_GIFT_VERSION = 1;
@@ -34996,6 +35560,7 @@ function giftStands(g, { recipients, networkSet = null, gameSet = null, verify, 
 // from 100, 500, 1000, 5000 satoshis or custom"; "B e cash"): the player's wallet pays the amount split over a donation set's keys in
 // one federation transaction (paySubmit, the item shop's payment), the donor signs the record (protocol donation-gift.js) and the
 // first seat that keeps it hands it on to every other. Nothing is paid before the split stands; every step that fails says which.
+
 
 
 
@@ -35145,6 +35710,7 @@ function nextRoundLine({ grids, game, nowMs = Date.now(), blockMs = 600000 }) {
 // a refutation spreading from seat to seat (#727): a claim stands on what it carries. Slashing a false note is refused too: an honest seat cut
 // off from a peer would sign one in good faith. What bounds it: a note needs a real failed round, which costs the signers that round's fee in the
 // open; 3 rounds an hour apart, each a fresh draw and a duty posting's; the cap; and the victim loses fees for the window and nothing else.
+
 
 
 
@@ -35527,6 +36093,7 @@ function tagsAccepted(name, at, sw = tagSwitch()) {
 
 
 
+
 const DUTY_SLOT_MS = 3600000;
 const DUTY_AHEAD_SLOTS = 24;
 const DUTY_LOOKBACK_SLOTS = 20;
@@ -35820,6 +36387,7 @@ function dutyRoundStands({ contract, marker, orderEntries, sw = undefined, prima
 
 
 
+
 /** What the creator signs: the round's id under its own tag. */
 const creatorMessage = (roundIdBytes) => taggedHash(TAG.roundCreator, roundIdBytes);
 
@@ -35879,6 +36447,7 @@ function seriesCreatorStands(template, signature, { verify, seriesIdOf }) {
 // THE KIND BYTE IS OURS. The spec writes `ROUND` and fixes no value for it; it
 // is 0x52, 'R', in keeping with the ASCII "ARN". A vote (27A.7.3) is "ARN" 'V'
 // (ballot.js, 2026-10-13), 77 bytes: the kind byte keeps them apart.
+
 
 
 const PUBLICATION_MAGIC = Uint8Array.from([0x41, 0x52, 0x4e]);   // "ARN"
@@ -36003,6 +36572,7 @@ function publicationIsBeforeBeacon({ roundId, tx, txHeight, beaconHeight } = {})
 // (ALL-BUT-MIN-1727, 2026-09-29 17:27; contracts.js). A node holds such a round only when its contract is
 // exactly the one the series derives - index inside 0 .. round_count - 1, entry window the derived one
 // (seriesRoundCheck) - and refuses entries, locks and settlements for any other.
+
 
 
 
@@ -36330,6 +36900,7 @@ function seriesPublicationOutput(seriesIdBytes) {
 //             (beaconFromChain), its hash the randomness (committeeSeedFromBeacon);
 //   SORTITION selectCommittee over the verified entries, the function a seat's Roster.committeeFor runs.
 // This package carries no curve and no signature scheme: `bond` brings the curve operations, `verify` BIP-340.
+
 
 
 
@@ -36747,6 +37318,7 @@ function censusFloor({ entries, out = [], seen = [] }) {
 // An Esplora-style block explorer (mempool.space and its kind: GET /block-height/<h> -> the block hash) is a party outside it. It serves
 // no header blob, so it is asked as a SPOT CHECK: the block the agreed chain has at a height - the census height, the tip - must be the
 // block the explorer names there. A mismatch refuses the round by name; an explorer that cannot be reached is said, not taken as agreement.
+
 
 /** The display hash (big-endian hex, as explorers write it) of a block hash in internal byte order. */
 const displayHash = (internal) => toHex(Uint8Array.from(internal).reverse());
@@ -37488,6 +38060,7 @@ async function roundAttestors(roundIdHex, nodes, { curve, fetcher = fetch } = {}
 
 
 
+
 const feesBaseOf = (n) => String(n).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
 const feesCurveOf = (curve) => { const c = curve || globalThis.ARENA_CURVE; if (!c || typeof c.pointX !== 'function') throw new Error('no curve loaded (arena-curve.js)'); return c; };
 
@@ -37570,6 +38143,7 @@ const FEE_UNITS = Object.freeze(Object.fromEntries(Object.keys(FEES).map((k) => 
 //                was posted before abandon_blocks from his last seen height, bond untouched; later, abandonment as before.
 //
 // NO CURVE: `sign(digest)` and `verify(signature, digest, pubkey)` are injected (BIP-340), as in absence.js.
+
 
 
 
@@ -37677,6 +38251,7 @@ function emergencyDepartureEffect(request, { guardian, lastSeenHeight = null, ab
 // signed by the forum's key, and handed to every node as a funding proposal is (funding-page.js postFunding, kind 'leaderboard'). A
 // winner's payout needs nothing here: it is a payout contract to the winner's identity key, recorded on the seats under that key, which
 // the page's zap collector (identity.js collectZaps) already reads and spends into the wallet.
+
 
 
 
@@ -37946,6 +38521,7 @@ function mountExchange({ el, fetchBook, outcomes = ['Yes', 'No'], onPrice = null
 // keeps a wordlist's correctness where it belongs.
 
 
+
 const VERIFIED_KEY = 'arena.backup.verified';
 
 /**
@@ -38046,6 +38622,7 @@ function backupLine(storage, seed) {
 // other keys - and the transport to those URLs (TLS/DNS of the hosts the guardians chose). A bonded stranger can do neither: it cannot
 // change the endpoints without changing the id, and it is not a threshold of them. The invite only says where to ask first; an invite
 // naming strangers' URLs gets nothing past the id check.
+
 
 
 
@@ -38800,6 +39377,7 @@ function safeFederation(from, statuses = [], { known = () => true } = {}) {
 // its notes are paid - §23A.5: liquidated `abandon_blocks` after the halt, paid at the end of the `claim_blocks` window
 // (federation-slash.js liquidationSchedule) - in blocks, and in time at the chain's recent pace.
 
+
 /** A federation's health for the popup: { level: 'ok' | 'warn' | 'bad' | 'idle', label, note }. */
 function federationHealth(st) {
   const status = st && st.status;
@@ -38882,6 +39460,7 @@ function explorerBaseFor(network, said = null) {
 // are taken from it. K is not a contract field: the engine pays K = ceil(q / 4) (payout.js), never above half of two or
 // more qualifiers, so that warning has no round to fire on.
 
+
 const WARNING_SAYS = Object.freeze({
   flat_rank_curve: 'Its payout curve is nearly flat (r >= 0.95): the last paying rank is paid almost as much as the first, so playing it safe pays.',
   minimum_score_is_a_danger_rule: 'Its minimum score is above 100 points: a run that scores less is paid nothing.',
@@ -38906,6 +39485,7 @@ const warningsSay = (codes) => (codes || []).map((k) => WARNING_SAYS[k]).filter(
 // AN EVENT OF THE ARBITRATION SET, CHECKED (kanban #723; kanban #1148): the bytes the set's members sign and the check that k of them did -
 // shared by the seats (arena-node arbitration-events.js keeps and hands them on) and the page (arena-client liquidation-claim.js acts on a
 // liquidation only when its event stands). One copy, so a seat and a browser can never read the same event differently.
+
 
 
 const EVENT_KINDS = ['liquidation', 'slash'];
@@ -39013,6 +39593,7 @@ const acceptedFor = (event, payoutPk) => ((event && event.claims && Array.isArra
 // returnWaitMs; it goes on in the background (one per e-cash string) and lets the notes go only once the wallet says Success/AlreadyReceived.
 // A record that cannot be written stops the claim before the wallet is touched. Notes handed over that then cannot be written are taken
 // back into the wallet (receiveEcash); a halted federation that cannot take them back has them presented at the signed door at once.
+
 
 
 
@@ -39306,6 +39887,7 @@ const pendingRequestsKey = (fid) => `arena-liquidation-pending-${String(fid).toL
 
 
 
+
 function liquidationKeyFor(seed, federationHex, curve) {
   if (!(seed instanceof Uint8Array) || seed.length !== 32) throw new Error('a claim key comes from the player\'s 32-byte seed');
   if (!curve || typeof curve.pointX !== 'function') throw new Error('a claim key is a key on a curve, and none was injected');
@@ -39425,6 +40007,7 @@ async function collectLiquidationPayouts({ listed, seed, curve, clientFor, stora
 // the notes spent, and the 2.0 lock client tags that send with the record's key (sendEcash(msat, key) / sendAllEcash(key)) and finds
 // it again (sentEcash(key)): an intent left by a closed tab is resolved from the wallet that sent. An older lock client has no sentEcash;
 // its intent stays, named, and is never counted as money.
+
 
 const ECASH_PENDING_PREFIX = 'arena.ecash.pending.';
 const ECASH_EXCHANGE_PREFIX = 'arena.ecash.exchange.';
@@ -39800,6 +40383,7 @@ async function resumeEcashExchanges({ storage, keys, walletFor, fetcher = fetch,
 
 
 
+
 const FRONT = Object.freeze({ BULLS: 1, BEARS: 2, FLAT: 3 });
 const NAMES = Object.freeze({ 1: 'BULLS', 2: 'BEARS', 3: 'FLAT' });
 const frontName = (f) => NAMES[f] || null;
@@ -39892,6 +40476,7 @@ function frontOfRun(batches) {
 // settlement committee - the committee THIS client derived, never a seat's word for it - signed, and shows nothing otherwise.
 
 
+
 const VERDICT_WORDS = Object.freeze({ BULLS: 'THE BULLS WIN', BEARS: 'THE BEARS WIN', FLAT: 'NOBODY WINS: THE PRICE CLOSED WHERE IT OPENED' });
 const verdictPct = (open, close) => `${close >= open ? '+' : ''}${(((close - open) / open) * 100).toFixed(2)}%`;
 
@@ -39942,6 +40527,7 @@ async function roundVerdict({ roundId, nodes, committee, verify, threshold = nul
 // it holds (GET /transcript: its bytes, x-transcript-hash, x-ticks); the run is safe once AT LEAST TWO hold the same transcript - one
 // hash - reaching the run's last tick. The mirror, when one is configured, is handed those bytes, after they are checked against the
 // hash the nodes agree on. Until two agree the page holds the victory screen and says why.
+
 
 
 
@@ -40064,6 +40650,7 @@ async function secureTranscript({ roundId, entryId, nodes, finalTick, mirror = n
 
 
 
+
 // 60 s: rounds of 10 s run back to back and a result lands ~20 s after its entry close (the reveal window), so a player
 // waiting for a verdict sits one or two rounds out between moves - that is staying, not leaving
 const MATCH_CONTINUE_MS = 60000n;
@@ -40141,6 +40728,7 @@ const matchHex = toHex;
 // The newest record of a key is its name. A seat keeps it only when the signature verifies, and lists it beside what the key earned.
 
 
+
 const TAG_REFERRAL_NAME = 'ARENA/v1/ReferralName';
 const TYPE_REFERRAL_NAME = 0x52;          // 'R'
 const REFERRAL_NAME_MAX = 48;
@@ -40197,6 +40785,7 @@ function referralNameStands(r, signature, { verify }) {
 // (lobby-name.js). The other pages check each record before they draw its name,
 // so a signer node can leave a name out but cannot write one, and nobody is shown a
 // key in place of a name: no record, no name, only a count.
+
 
 
 
@@ -40579,6 +41168,7 @@ const ZAPS_REFERRAL_KEY = 'arena.zaps.referral';
 
 
 
+
 const LOBBY_PHASES = ['pending', 'open'];
 
 const lobbyIs32 = (b) => b instanceof Uint8Array && b.length === 32;
@@ -40621,6 +41211,7 @@ const lobbyListingId = (listing) => taggedHash(TAG.lobbyListing, encodeLobbyList
  * the time a join takes, so a join it offers reaches a seat before that cutoff. A late entry names the round tick it joins
  * at; its run is the round's run less those ticks, and it ends on the round's last tick with everybody else's.
  */
+
 
 
 // FROM THE ENTRY TO THE FIRST RECORDED TICK: the session opens (the round, the entry, the socket - 1-2 s measured) while
@@ -40686,6 +41277,7 @@ function lateJoinTick(c, nowMs = Date.now(), leadMs = LATE_JOIN_SESSION_MS) {
 // (§34, reference 64). "Both quantities are computable by anyone from census_root and the chain, so a client can enforce this rule
 // itself and refuse a round whose bracket exceeds what its census supports." Enforced on mainnet (as ruling A of the load rule);
 // a test network shows the ceiling and refuses nothing.
+
 
 
 
@@ -40814,6 +41406,7 @@ const orderWithinPool = ({ filledSats, orderSats, poolSats }) => poolSats === nu
 // AND WHO IS JOINED, BY THE NAMES THEY CHOSE: each signer node serves the name records
 // its joined players signed (lobby-name.js); a row carries the ones that check
 // (identity.js `checkedNames`) - never a key in place of a name.
+
 
 
 
@@ -41678,6 +42271,7 @@ function nextRoundView({ runOverMs, nextStartMs, nowMs = Date.now(), exited = fa
  * share over LNURL once the signer nodes have taken the entry.
  */
 
+
 /** Above this many basis points of the stake (5%) the page asks a second time (§22A). */
 const DONATION_CONFIRM_BPS = 500;
 /**
@@ -41807,6 +42401,7 @@ function chooseDonation({ roundIdHex, round, stakeMsat, ask, confirm, storage, t
 // pooled by the settlement.
 
 
+
 const WINNINGS_PROMPT = 'Where should your winnings be sent? Lightning address (name@host)';
 const WINNINGS_ASKED_PREFIX = 'arena.winnings.asked.';
 const WINNINGS_ADDR_PREFIX = 'arena.winnings.addr.';
@@ -41912,6 +42507,7 @@ async function askForWinnings({ run, prompt, storage, fetcher = fetch } = {}) {
 // purchase (each floored), and the rest - the developers' half and what the node shares' floors leave - in two halves exactly as a
 // round's donation is split over its two sets (donation.js splitTwoSets, ruled 2026-10-06): the protocol devs' half floored, the
 // game dev's the rest. So 25 % / 25 % / 50 %, integer msat, the parts always adding up to the price exactly.
+
 
 
 
@@ -42047,6 +42643,7 @@ const itemsHex = (items) => (items || []).map((it) => ({ ...it, priceSat: String
 //
 // NO CURVE, as everywhere in this package: `verify(signature, digest, key)` is injected (Ed25519, the scheme the
 // donation authority signs with), and a manifest with no verifier to check it is not a game.
+
 
 
 
@@ -42938,6 +43535,7 @@ function payoutRuleForRound(contract, manifest = null) {
 
 
 
+
 const TAG_ITEM_PURCHASE = 'ARENA/v1/ItemPurchase';
 const TYPE_ITEM_PURCHASE = 0x49;          // 'I'
 const PURCHASE_OUTPUTS_MAX = 255;
@@ -43136,6 +43734,7 @@ function purchaseStands(p, { manifest, networkSet, gameSet, served, verify, rese
 //   4. THE RECORD: the game, the item, the price, the buyer, the federation, the transaction, every output and the served list,
 //      signed with the player's key, handed to a seat (POST /item-purchase), which hands it on to every other.
 // No float touches an amount; every step that fails says which, and nothing is paid before the list and the split stand.
+
 
 
 
@@ -43462,6 +44061,7 @@ function replayLinkFor({ endpoints, roundHex, entryHex, random = Math.random } =
 
 
 
+
 const VALUE_SIGNATURE_BYTES = 64;
 
 const scIs32 = (b) => b instanceof Uint8Array && b.length === 32;
@@ -43669,6 +44269,7 @@ function scalarPayoutTable({ entries, value, bounds }) {
 // WHAT VERIFY MEANS WITHOUT A REPLAY: a seat checks the signatures against the manifest's attestor set and the threshold,
 // the round, and the outcome's range - nothing else of the world. WHAT AN OBJECTION IS: two attestations for one round,
 // each standing on its own, naming different outcomes. That pair is the proof; a round holding it settles on neither.
+
 
 
 
@@ -44051,6 +44652,7 @@ function marketWindowOf(contract, manifest) {
 
 
 
+
 const gmIs32 = (b) => b instanceof Uint8Array && b.length === 32;
 const gmSame = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
 const at = (ms) => { try { return new Date(Number(ms)).toISOString(); } catch { return String(ms); } };
@@ -44198,6 +44800,7 @@ function gameMarketVoided(resolution, { market, manifest, nowMs }) {
 // taken from any seat and believed only once it hashes to the series id the round names (series.js seriesId). No Buffer here.
 
 
+
 function parseSeriesLine(line) {
   const [h, ...more] = String(line).trim().split(/\s+/);
   if (!h || !/^[0-9a-f]+$/i.test(h) || h.length % 2) throw new Error('a series line starts with its template, hex');
@@ -44250,6 +44853,7 @@ function seriesLineOf(template, encode = encodeRoundContract) {
 //          price to beat of 73999: 0.01 sat fee, 0.99 sat x odds): an order's fee is its market's rate (1 % by default) of
 //          the part that filled - held in its fee lock and paid out at settlement; what has not filled can be cancelled at
 //          no cost and comes back whole, its fee too. A VOID market gives everything back.
+
 
 
 
@@ -44568,6 +45172,7 @@ function batchVoidAskId({ roundId, k, batchId }) {
 //                       order); each claimed entry gets its winnings, less its sells' debt and fee, plus the rest of N and
 //                       of F it did not spend (the owner: "(a)" - a cancelled or partly filled order's rest comes back here,
 //                       as a seller's proceeds do); the fees due go to the nodes and the donation.
+
 
 const byIdOrder = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 const ledgerDemandAt = (o, q) => (q <= o.price ? (o.net * PRICE_SCALE) / q : 0n);   // order-book.js clearBatch's, the same
@@ -44920,6 +45525,7 @@ function bookSettlement({ positions, outcome, scalar = null }) {
 //   the join ends in state `picked` - Unity does not take it over.
 // - The outcome is the seats' GET /outcome, but believed only once its attestation verifies against the attestors the page
 //   pinned (`checkAttestation`, Ed25519 through WebCrypto); otherwise it is shown as unverified and nothing is concluded.
+
 
 
 
@@ -45428,10 +46034,6 @@ function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() }) {
       // WHEN THE RESULT IS FINAL (2026-10-17: "show there if it's still pending (10 minute delay)"): the seats'
       // finality of an attested outcome and its time, so a client counts the objection window down on every result, won or lost
       ...(o && o.state === 'ATTESTED' ? { final: !!o.final, finalAtMs: Number(o.finalAtMs) || null } : {}), ...more });
-    // A REFUND IS IN TRANSIT UNTIL THIS BROWSER CREDITED IT (kanban #3009): `stakeBack` false - the order's collect record still open
-    const refundRow = (msat, said) => (p.stakeBack === false
-      ? { ...at('refund in transit', { backMsat: String(msat), final: false, finalAtMs: null }), text: `${said}: its ${sats(msat)} sats are on their way back - in your wallet once this page collects them` }
-      : null);
     if (nowMs < Number(p.entryCloseMs)) {
       lines.push({ ...at('open'), text: `${p.market.name}: you picked '${label}' · ${sats(p.stakeMsat)} sats · closes in ${left(Number(p.entryCloseMs) - nowMs)}` });
       continue;
@@ -45458,8 +46060,6 @@ function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() }) {
         }
       }
       // A VOID SHOWN IS DECIDED (kanban #2903, feedback #147): past its deadline or a source round's refund - the row is final, not pending for good
-      // kanban #3009: a VOID round's stake is in transit too until this browser credited it (measured: round 7758c770 VOID, one stake back, one not)
-      if (p.stakeBack === false) { lines.push(refundRow(p.stakeMsat, `${head}: VOID - ${o.why || 'its source round refunds it'}`)); continue; }
       lines.push({ ...at('void', { final: true }), text: `${head}: VOID - ${o.why || 'its source round refunds it'} · every stake comes back` });
       continue;
     }
@@ -45482,10 +46082,6 @@ function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() }) {
     // AN ORDER THAT MATCHED NOBODY (measured 2026-10-17: two 14:00 orders held 0 shares and 0 cost in their round's
     // book on every seat, and the settlement table - filled positions only - had no row for them, so they stayed "waiting"): the page
     // read its position from the book after the close (`unfilled`); its stake comes back whole
-    // NOT REFUNDED BEFORE IT IS IN THE WALLET (kanban #3009, feedback #347: "refunded ±0 final" 30 min while the 100 sat were still at the seats;
-    // measured 2026-11-19: the row said refunded at 06:04Z, the collect credited the stake at 06:06Z): `stakeBack` false - this browser's collect
-    // record of the order is still open - says the refund is on its way, not final; true (credited) or unknown (no record here) as before
-    if (!row && p.unfilled && p.stakeBack === false) { lines.push(refundRow(p.stakeMsat, `${head}: ${signed} · your order matched nobody`)); continue; }
     if (!row && p.unfilled) { lines.push({ ...at('refunded', { backMsat: String(p.stakeMsat) }), text: `${head}: ${signed} · your order matched nobody: its ${sats(p.stakeMsat)} sats come back whole` }); continue; }
     if (!row) { lines.push({ ...at('unknown'), text: `${head}: ${signed} · your pick is not in the signer nodes' table` }); continue; }
     // WON OR LOST, AND HOW MUCH, IS THE VERIFIED OUTCOME'S, NOT A SEAT'S TABLE (kanban #1615; #2153, #2221, #2299, #2354): `check` is
@@ -45514,11 +46110,9 @@ function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() }) {
     const pay = mine.payoutMsat;
     // A FREE ROUND: nothing staked, so the pick was right or wrong and nothing more
     if (BigInt(p.stakeMsat) === 0n) lines.push({ ...at(won ? 'right' : 'wrong'), text: `${head}: ${signed} · ${won ? 'your pick was right' : 'your pick was wrong'} (free round)` });
-    else if (rebuilt.table.refunded && p.stakeBack === false) lines.push(refundRow(net, `${head}: ${signed} · nobody picked it`));
     else if (rebuilt.table.refunded) lines.push({ ...at('refunded', { backMsat: String(net) }), text: `${head}: ${signed} · nobody picked it: your ${sats(net)} sats come back` });
     // NOBODY ON THE OTHER SIDE (measured live 2026-10-13: the first paid Up/Down window, one order alone, read "you won
     // 0 sats" while the seats claimed nothing - an order nobody took the other side of fills nothing, and its lock comes back whole)
-    else if (!p.market.scalar && won && rebuilt.table.losingPoolMsat === 0n && p.stakeBack === false) lines.push(refundRow(mine.stakeMsat, `${head}: ${signed} · nobody took the other side`));
     else if (!p.market.scalar && won && rebuilt.table.losingPoolMsat === 0n) lines.push({ ...at('refunded', { backMsat: String(mine.stakeMsat) }), text: `${head}: ${signed} · nobody took the other side: your ${sats(mine.stakeMsat)} sats come back whole when the lock expires` });
     // A SCALAR SIDE IS PAID ITS SHARE, not all or nothing: what came back, and the gain or the loss
     else if (p.market.scalar) lines.push({ ...at('settled', { payoutMsat: String(pay), netMsat: String(net) }), text: `${head}: ${signed} · '${label}' gets ${sats(pay)} of your ${sats(net)} sats · ${pay >= net ? `+${sats(pay - net)}` : `-${sats(net - pay)}`}${o.final ? '' : ' (final after the objection window)'}` });
@@ -45614,6 +46208,7 @@ function myOrdersFromEntries({ entries, keys }) {
 
 
 
+
 const SALT_BYTES = 32;
 const VERDICT = Object.freeze({ WIN: 'WIN', DRAW: 'DRAW', LOSS: 'LOSS' });
 
@@ -45697,6 +46292,7 @@ const commitHex = (c) => toHex(c);
 //
 // A certificate stands when at least `threshold` distinct committee keys signed the same set with close <= at_ms <= close + window. Its time
 // is the latest of those signers' at_ms: the reveal window opens there.
+
 
 
 
@@ -45858,6 +46454,7 @@ function decodeSignedLockSet(bytes) {
 // close, and the reveals the seats hold - for any head-to-head game; which moves a game has, and what beats what, are the
 // game's own (its client and its decide adapter). The commitment is the protocol's (arena-protocol head-to-head.js); the
 // entry itself is built and handed over as a market pick's is (join.js entryFor, market.js submitPick), with `commit` set.
+
 
 
 
@@ -46059,7 +46656,37 @@ async function revealWhenCertified({ roundIdHex, entryIdHex, move, salt, nodes, 
     if (got.required === false) return { seats: await revealMove({ entryIdHex, move, salt, nodes, identity, fetcher, timeoutMs }), certified: null };
     if (got.certified) {
       if (!got.certified.entries.includes(String(entryIdHex))) return { seats: [], notCertified: true, why: 'your entry is not in the round\'s certified lock set: it is not played, its stake comes back' };
-      return { seats: await revealMove({ entryIdHex, move, salt, nodes, identity, fetcher, timeoutMs }), certified: got.certified };
+      // NOT DONE WHILE THE SEATS ASK AGAIN (kanban #3015, audit h2h r1-1, measured 2026-11-19: a seat one signature ahead served its certificate
+      // to the page first; every honest seat answered the one post 409 "not certified yet - ask again shortly", only that seat held the move,
+      // and at the decide it served its reveals without it - the honest player FORFEIT). The seats that said so (or did not answer) are asked
+      // again every poll until a threshold of seats hold the move or the reveal's deadline passes.
+      // ONE HOST, ONE HOLDER; EVERY ANSWER THAT IS NOT FINAL IS ASKED AGAIN (kanban #3154, #3161, refute of #3015): the holders were counted per
+      // address against lockSetThreshold(addresses), so one seat named under eight spellings of its host ('http://s0', 'http://S0', 'http://s0.',
+      // 'http://s0/a' ...) filled the threshold by itself and the honest seats' "not certified yet" was never followed up; and only status 0 and
+      // that 409 were asked again, so an honest seat briefly busy (503 "try again", 429, or 404 before the entry reached it) was dropped. Now
+      // each address is posted once (seatsByHost, #2709), a host holds the move when any of its addresses took it, the threshold is the
+      // committee's (lockSetThreshold(committee.length), at most the hosts the page can ask) or else a threshold of the hosts, and every
+      // answer but a final one (a reveal taken, or a refusal that will not change: not in the lock set, a reveal that does not stand) is
+      // asked again every poll until the threshold holds or the reveal's deadline passes.
+      // NO HOLDER COUNT DECIDES WHEN TO STOP (kanban #3204, #3210, refute of #3154): counting holders per hostname capped the threshold at the
+      // hosts, and the live seats all sit on one tunnel host (tn4.bitcoin-arena.io/guardian-1..7) - need was 1, the first seat a signature
+      // ahead ended the loop and the six that said "not certified yet" were never posted again; and a stranger's keyless box under five DNS
+      // names in the link filled a threshold of five "hosts" on the first post. A 201 from an address proves nothing about who holds the move,
+      // so it is no reason to stop asking a seat whose answer is not final: every listed seat (each address once, seatsByHost #2709) is posted
+      // again every poll until each one has given a final answer (a reveal taken, or a refusal that will not change) or the reveal's deadline
+      // passes.
+      const { listed } = seatsByHost(nodes);
+      let seats = await revealMove({ entryIdHex, move, salt, nodes: listed, identity, fetcher, timeoutMs });
+      const askAgain = (x) => x.status === 0 || x.status === 404 || x.status === 408 || x.status === 425 || x.status === 429 || x.status >= 500
+        || (x.status === 409 && /not certified yet|ask again|try again/i.test(String(x.why || '')));
+      while (now() <= giveUpAt) {
+        const again = seats.filter(askAgain);
+        if (!again.length) break;
+        await sleep(H2H_LOCK_SET_POLL_MS);
+        const more = await revealMove({ entryIdHex, move, salt, nodes: again.map((x) => x.node), identity, fetcher, timeoutMs });
+        seats = seats.map((x) => more.find((m) => m.node === x.node) || x);
+      }
+      return { seats, certified: got.certified };
     }
     // ONE SEAT'S VOID IS NOT FINAL (kanban #2798, #1489 r21-h2h-1): `void` is any seat's unsigned word, and a seat that said it on the first
     // poll - while the honest seats were still certifying - made the page skip its reveal and forfeit a round the others played. Before the
@@ -46087,6 +46714,7 @@ async function revealWhenCertified({ roundIdHex, entryIdHex, move, salt, nodes, 
 // AND WHERE TIPS GO (tips to developers): a Lightning address (name@host, LUD-16) the developer signs
 // beside the two strings. It is appended to the digest only when there is one, so every info signed before it - with no
 // address - keeps its digest byte for byte and still stands. A tip is the player's own wallet paying that address (zap.js).
+
 
 
 
@@ -46161,6 +46789,7 @@ const gameTypeOf = (m) => (m && m.resultType === 2 ? 'market' : m && m.resultTyp
 //   manifest's clients[] - the same hashes the repo's client list pins and client-hash.mjs checks from outside the page. A
 //   file the manifest does not name is never run. The page then runs it in the same origin, so the wallet and the seed
 //   (sessionStorage / localStorage) are the one the player already has.
+
 
 
 
@@ -46362,41 +46991,6 @@ async function checkedGameInfoOfTile(tile, verifyEd25519) {
     if (info) return info;
   }
   return null;
-}
-
-// ---- arena-client/src/node-discovery.js
-// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
-// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE NODES, FOUND ON THE FLY (2026-10-13: "The client may not have a hard coded node list it must be found on
-// the fly"). A page starts from any node it can reach (a bootstrap, not a list), and every census it checks itself - each entry's
-// bond and advertisement proved against headers it agreed (client-committee.js) - names the network's nodes: each bond's
-// advertisement carries the node's endpoint. Those are the nodes this page talks to from then on, kept for its next start.
-
-/** The https root of a node's advertised endpoint (wss -> https, ws -> http), or null for none. */
-function endpointRoot(endpoint) {
-  const s = String(endpoint || '').trim();
-  if (!/^(wss?|https?):\/\//i.test(s)) return null;
-  return s.replace(/^ws(s?):/i, 'http$1:').replace(/\/+$/, '');
-}
-
-/** Every node a checked census names, by its advertised endpoint: one root per node key, in the order of their keys. */
-function censusEndpoints(entries) {
-  const byKey = new Map();
-  for (const e of entries || []) {
-    const root = endpointRoot(e && e.advert && e.advert.endpoint);
-    if (!root || !e.pubkey) continue;
-    const k = toHex(e.pubkey);
-    if (!byKey.has(k)) byKey.set(k, root);
-  }
-  return [...byKey.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map((x) => x[1]);
-}
-
-/** `known` with every root of `found` it lacks, appended - nothing known is dropped or reordered. */
-function mergeNodes(known, found) {
-  const out = [...(known || [])];
-  const have = new Set(out.map((n) => String(n).replace(/\/+$/, '')));
-  for (const n of found || []) { const r = String(n).replace(/\/+$/, ''); if (!have.has(r)) { have.add(r); out.push(r); } }
-  return out;
 }
 
 // ---- arena-client/src/season-view.js
@@ -46829,6 +47423,7 @@ const relaySet = (urls) => [...new Set([...urls].map(canonicalRelay))];
 
 
 
+
 const ZAP_REQUEST_KIND = 9734;
 const ZAP_RECEIPT_KIND = 9735;
 /** A zap's message, in characters: the request travels in a URL, so it is kept short. */
@@ -47026,6 +47621,7 @@ function zapTotals(receipts, options = {}) {
 
 
 
+
 /** How long a relay is given to answer a read, in ms. */
 const ZAP_READ_MS = 8000;
 /** The amounts the page offers, in sat. */
@@ -47210,7 +47806,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          playerWallet: playerWallet, openPlayerWallet: openPlayerWallet, FAUCET_GRANTS: FAUCET_GRANTS, askFaucet: askFaucet, faucetEcashRowOnce: faucetEcashRowOnce, forgetPhraseWallets: forgetPhraseWallets, useSeatedGateways: useSeatedGateways, seatedGatewaysOf: seatedGatewaysOf, walletDepositOffer: walletDepositOffer, walletDepositChoices: walletDepositChoices, fundPlayerWallet: fundPlayerWallet, earlyDepositOffer: earlyDepositOffer, joinFundingPlan: joinFundingPlan, notSpendableYet: notSpendableYet, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, tidyStorage: tidyStorage, seedRecovers: seedRecovers,
          withdrawPlayerWallet: withdrawPlayerWallet,
          onStorageRefused: onStorageRefused, packWallets: packWallets, scanLostDeposits: scanLostDeposits, saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, reopenUncheckedDone: reopenUncheckedDone, releaseUntakenEntry: releaseUntakenEntry, entryHeldAt: entryHeldAt, keptLockUse: keptLockUse,
-         reconcileKeptLock: reconcileKeptLock, bindLockEntry: bindLockEntry, lockRecordOf: lockRecordOf, collectState: collectState, collectOrder: collectOrder, forfeitCheck: forfeitCheck, settlementAgreement: settlementAgreement, useWalletGate: useWalletGate,
+         reconcileKeptLock: reconcileKeptLock, bindLockEntry: bindLockEntry, lockRecordOf: lockRecordOf, collectState: collectState, forfeitCheck: forfeitCheck, settlementAgreement: settlementAgreement, useWalletGate: useWalletGate,
          roundEndMs: roundEndMs,
          ledgerRows: ledgerRows, ledgerReadSavedStakes: ledgerReadSavedStakes, ledgerHistory: ledgerHistory,
          depositChoices: depositChoices, withdrawChoices: withdrawChoices, invoiceAmountMsat: invoiceAmountMsat, playerWithdrawable: playerWithdrawable, pendingDeposits: pendingDeposits, resumeDeposits: resumeDeposits, restOfFeesMsat: restOfFeesMsat, restInvoiceMsat: restInvoiceMsat, REST_FLOOR_MSAT: REST_FLOOR_MSAT, ceilNote: ceilNote, roundsDepositMsat: roundsDepositMsat, recordDonation: recordDonation, recordReceived: recordReceived, collectIntoPlayerWallet: collectIntoPlayerWallet, donationCostMsat: donationCostMsat, depositOffer: depositOffer, settingsDepositOffer: settingsDepositOffer, issuingMsat: issuingMsat, awaitIssued: awaitIssued, DEPOSIT_INSUFFICIENT: DEPOSIT_INSUFFICIENT,
@@ -47262,6 +47858,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          shopOf: shopOf, buyItem: buyItem, itemTermsOf: itemTermsOf, itemShareOn: itemShareOn, itemPriceOn: itemPriceOn, itemPriceFor: itemPriceFor, ITEM_DEV_SHARES: ITEM_DEV_SHARES, ITEM_DEV_SHARE_DEFAULT: ITEM_DEV_SHARE_DEFAULT, ownedItems: ownedItems, itemsKeyFor: itemsKeyFor, entryItemsFor: entryItemsFor,
          entryUnlocks: entryUnlocks, itemUnlocksOf: itemUnlocksOf,
          entryBreakdown: entryBreakdown, pendingWindowLine: pendingWindowLine, savedLockExpiration: savedLockExpiration,
+         localHostName: localHostName, keptNodes: keptNodes, putRoomy: putRoomy,
          toHex: toHex, fromHex: fromHex };
 })();
 if (typeof module !== "undefined") module.exports = ARENACLIENT;
