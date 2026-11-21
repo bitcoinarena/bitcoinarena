@@ -13607,6 +13607,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'POST' && url.pathname === '/halt-observations') {
         if (!halts) return text(res, 503, 'this seat reads no chain, so it keeps no halt observations');
         let said; try { said = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a halt observation is { observation, signature } as hex'); }   // the bytes as text (kanban #326: String() of the bytes was "123,34,..." - no observation was ever taken)
+        if (halts.refreshTip) await halts.refreshTip();   // kanban #3046: an observation past this seat's tip is refused
         const r = halts.take(said);
         return r.ok ? json(res, r.status, r) : text(res, r.status, r.why);
       }
