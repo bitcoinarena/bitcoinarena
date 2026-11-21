@@ -11834,7 +11834,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             // NOT ON THE CALLER'S COUNT OF RECEIPTS (kanban #2838, #1489 r24-play-1): a stranger handed a seat that missed the first mark only 4 of
             // the 5 public receipts plus a later public mark, and the seat recorded ENTRY_VOID for a run the committee carried live. The receipts this
             // seat holds of the mark and the ones its peers serve at GET /receipts are counted with the given ones before any Void is recorded.
-            const v = voidHere(c, bytes, late, [...receiptsGiven(got), ...(await receiptsKnownOf(c))], got.ask === 'forfeit' ? 'forfeit-ask' : 'forward');
+            // kanban #3045 (audit play r4-1-1, gap in #2838): a Void already recorded here is answered before any peer is asked - each replay of a
+            // voided entry's public first mark made receiptsKnownOf pull GET /receipts from up to 16 peers again
+            const v = round.entryVoid(c.entryId) || voidHere(c, bytes, late, [...receiptsGiven(got), ...(await receiptsKnownOf(c))], got.ask === 'forfeit' ? 'forfeit-ask' : 'forward');
             if (v) return answer(409, { entryVoid: true, why: v.why });
           } else if (got.entryVoid) return answer(409, { why: 'that ENTRY_VOID claim does not verify at this signer node' });
         }
