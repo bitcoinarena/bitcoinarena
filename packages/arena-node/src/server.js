@@ -3187,8 +3187,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const max = 64 * SIGNED_RECEIPT_BYTES, parts = []; let total = 0;
         if (!r.body) return;
         const reader = r.body.getReader();
-        for (;;) { const { done, value } = await reader.read(); if (done) break; total += value.byteLength;
-          if (total > max) { try { await reader.cancel(); } catch { /* gone */ } return; } parts.push(value); }
+        // THE PREFIX IS KEPT (kanban #3028, audit play r3-1): an answer past the bound was dropped whole, so on any run with more than 64 receipts
+        // at a peer (the door serves every mark's, tick order: the first mark's come first) the peers added nothing and the caller's chosen
+        // receipts decided the Void alone. What fits under the bound is read and kept; the rest is not asked for
+        for (;;) { const { done, value } = await reader.read(); if (done) break;
+          if (total + value.byteLength > max) { parts.push(value.subarray(0, max - total)); total = max; try { await reader.cancel(); } catch { /* gone */ } break; }
+          total += value.byteLength; parts.push(value); }
         const buf = new Uint8Array(Buffer.concat(parts, total));
         for (let i = 0; i + SIGNED_RECEIPT_BYTES <= buf.length; i += SIGNED_RECEIPT_BYTES) out.push(buf.slice(i, i + SIGNED_RECEIPT_BYTES));
       } catch { /* a peer that does not answer adds none */ }
