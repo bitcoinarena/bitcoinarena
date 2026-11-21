@@ -8585,7 +8585,13 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
               .then((r) => (r.ok ? r.json() : null)).catch(() => null);
             const size = (b) => (b ? (b.batches || []).length + (b.positions || []).length + ((b.levels && b.levels.buys) || []).length + ((b.levels && b.levels.sells) || []).length : -1);
             const got = (await Promise.all(nodes.slice(0, 9).map(ask))).filter(Boolean);
-            return got.length ? got.reduce((a, b) => (size(b) > size(a) ? b : a)) : null;
+            // THE BOOK MOST SIGNER SEATS ANSWER, NOT THE FULLEST (kanban #3023, audit attest r2-1): an unsigned book padded with more rows by one
+            // seat was always the fullest and set the prices the Up/Down client signs its market orders at. Answers are grouped byte for byte;
+            // the largest group wins, a tie goes to the fuller book (one seat alone, or seats that all differ, as before)
+            const groups = new Map();
+            for (const b of got) { const k = JSON.stringify(b); const g = groups.get(k) || { b, n: 0 }; g.n++; groups.set(k, g); }
+            const best = [...groups.values()].reduce((a, g) => (!a || g.n > a.n || (g.n === a.n && size(g.b) > size(a.b)) ? g : a), null);
+            return best ? best.b : null;
           },
           // THE EXCHANGE VIEW (2026-10-17: "a real desktop view with complete order book bids ask, chart, depth
           // (switchable) like an exchange"; "For all prediction markets"): the page draws it into an element of the client's own
