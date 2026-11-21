@@ -80,6 +80,13 @@ export class ReplayGate {
     return forever;
   }
   taken(o) { this.held.delete(o); }
+  /** Held for the retry time only, whatever `why` says (kanban #3039: a peer's words never hold an order for good). */
+  refusedFor(o, why) {
+    this.held.delete(o);
+    this.held.set(o, { until: this.now() + this.retryMs, why });
+    if (this.held.size > this.max) this.held.delete(this.held.keys().next().value);
+    return false;
+  }
 }
 
 // THE STATE OF ONE BATCH AT THIS SEAT (kanban #1150, the state machine audit of 2026-11-06: the states were implicit - a row with or
@@ -1551,14 +1558,17 @@ export class OrderBook {
     // asked and the certified batch never reached this seat. A refusal the federation decides (REPLAY_NEVER) still holds the order everywhere
     const atPeer = `${o}@${String(base)}`;
     if (!this.#replayGate.allow(o) || !this.#replayGate.allow(atPeer)) return false;
-    const refused = (why) => {
-      const forever = REPLAY_NEVER.test(String(why)) ? this.#replayGate.refused(o, why) : this.#replayGate.refused(atPeer, why);
+    // FOR GOOD ONLY ON THIS SEAT'S OWN READ (kanban #3039, audit entry r3-1): REPLAY_NEVER was matched against any text - one peer's /order-locks
+    // answer carrying "that lock has expired at the federation" as an amount threw that text from lockFieldsFromJson, and the order was held
+    // forever. Only a refusal replayOrder marks `forever` (the federation, asked by this seat, holds the lock expired) holds it for good
+    const refused = (why, forever = false) => {
+      if (forever) this.#replayGate.refused(o, why); else this.#replayGate.refusedFor(atPeer, why);
       console.log(`[orders] ${rid.slice(0, 16)} batch ${k}: order ${o.slice(0, 16)} not replayed from ${base}: ${why}${forever ? ' (not asked again)' : ''}`);
       return false;
     };
     try {
       const r = await this.replayOrder(o, base, rid);   // the batch's round: an entry of another round, or no order, is refused (kanban #2070)
-      if (!r.ok) return refused(r.why);
+      if (!r.ok) return refused(r.why, r.forever === true && REPLAY_NEVER.test(String(r.why)));
       this.#replayGate.taken(o); this.#replayGate.taken(atPeer);
       return true;
     } catch (e) { return refused(e.message); }
