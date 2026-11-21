@@ -206,6 +206,7 @@ function yieldable(round, entryIdBytes) {
   const outs = [round.stakeLock(entryIdBytes), round.feeLock ? round.feeLock(entryIdBytes) : null].filter(Boolean).map((l) => String(l.outpoint));
   if (typeof round.lockFate === 'function' && outs.some((o) => round.lockFate(o))) return false;
   if (typeof round.forfeit === 'function' && round.forfeit(entryIdBytes)) return false;
+  if (typeof round.stakePlayedOn === 'function' && round.stakePlayedOn(entryIdBytes)) return false;   // a run played on it (kanban #3223)
   return true;
 }
 

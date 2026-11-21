@@ -12432,7 +12432,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // staked, a lock after close) has an entry here that the round never counts or settles - a bare held entry kept his lock to
         // its expiry. Only an entry of his whose stake this seat saw or whose stake lock it holds (round.js seatedEntriesOf's rule)
         // settles a stake with the round.
-        if (round.entriesOf(rid).some(({ entryId, entry }) => players.has(toHex(entry.playerPubkey)) && (!!round.stakeSeen(entryId) || !!round.stakeLock(entryId))))
+        // ENTERED WITH THIS LOCK, NOT WITH ANOTHER (kanban #3223): since a run played on a stake keeps its player key (round.js stakePlayedOn),
+        // the lock of a second entry of that key is refused at /lock for good - "an entry of the key is staked" kept that refused lock to its
+        // expiry too. An entry staked on locks settles only its own locks (a lock it holds is refused above); this lock is settled with the
+        // round only when such an entry names it, or when the entry's stake is seen with no lock row held (a stake not on locks).
+        const opHex = `${toHex(outpoint.txid)}:${outpoint.outIdx}`;
+        const enteredWith = (entryId) => {
+          const locks = [round.stakeLock(entryId), round.feeLock ? round.feeLock(entryId) : null].filter(Boolean);
+          return locks.length ? locks.some((l) => String(l.outpoint) === opHex) : !!round.stakeSeen(entryId);
+        };
+        if (round.entriesOf(rid).some(({ entryId, entry }) => players.has(toHex(entry.playerPubkey)) && enteredWith(entryId)))
           return text(res, 409, 'that player entered the round at this signer node: the stake is settled with the round');
         const lport = (lockFed ? await portOfFederation(lockFed) : await portOfRid(rid)) || stakeLocks;
         const [st, id] = await Promise.all([lport.status(outpoint), lport.contractId(fields)]);
@@ -12453,7 +12462,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         //   already keeps REFUSED_LOCKS_PER_HANDOUT locks for the handout at least as large as it. To keep the player's lock out at a
         //   seat a stranger locks that many times the player's amount, every sat of it refunding to the player's key;
         // - the same lock handed again is kept as it was.
-        const opHex = `${toHex(outpoint.txid)}:${outpoint.outIdx}`;
+        // opHex: defined above (kanban #3223) - txid:index of the lock
         const keptLocks = round.refusedLocksOfHandout(held.id);
         const again = keptLocks.find((l) => l.outpoint === opHex);
         // the lock's own id, also for a row kept before #1881 under the bare handout id (kanban #2029: round.js finds it by that id too)

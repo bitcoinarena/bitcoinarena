@@ -3782,6 +3782,21 @@ export class Round {
    * donation rows, in one transaction. Only while nothing was built on it yet: no lock fate of its locks, no settlement of the round, no result of
    * the entry signed here and no forfeit of it - otherwise false and nothing is changed (the later lock is then refused, as before).
    */
+  /**
+   * A STAKE A RUN WAS PLAYED ON (kanban #3223, state audit 2026-11-12 sm1-entry-2): yieldEntryLocks read lock fates, a settlement, a forfeit and
+   * this seat's own result, not the run - so a lower entry of the same player key (a second device on the seed, a reload that PLAYs again, or
+   * anyone dealing a handout under the player's public key with a lock to his refund key) took the stake of a run every seat had already seen
+   * staked and receipted: the played run was unstaked at every seat, left out of the settlement, and its lock had no early return. A stake is
+   * built on once it is seen here and a mark of its run holds a receipt (any committee member's - receipts travel to every seat, so the seats
+   * read this alike, unlike this seat's own result): such an entry keeps the key, and the lower entry's lock is refused as before #2477.
+   */
+  stakePlayedOn(entryIdBytes) {
+    const eid = Buffer.from(entryIdBytes);
+    if (!this.db.prepare('SELECT 1 FROM stake_seen WHERE entry_id = ?').get(eid)) return false;
+    return !!this.db.prepare('SELECT 1 FROM entries e JOIN checkpoints c ON c.round_id = e.round_id AND c.entry_id = e.entry_id '
+      + 'JOIN receipts r ON r.checkpoint_id = c.checkpoint_id WHERE e.entry_id = ? LIMIT 1').get(eid);
+  }
+
   yieldEntryLocks(entryIdBytes, roundIdBytes) {
     const eid = Buffer.from(entryIdBytes), rid = Buffer.from(roundIdBytes);
     const outs = [this.stakeLock(eid), this.feeLock(eid)].filter(Boolean).map((l) => String(l.outpoint));
@@ -3789,6 +3804,7 @@ export class Round {
     if (this.db.prepare('SELECT 1 FROM lock_settlements WHERE round_id = ?').get(rid)) return false;
     if (this.db.prepare('SELECT 1 FROM forfeits WHERE entry_id = ?').get(eid)) return false;
     if (this.identity && this.hasResult(rid, eid, Buffer.from(this.pubkey))) return false;
+    if (this.stakePlayedOn(eid)) return false;
     const own = !this.db.isTransaction;
     if (own) this.db.exec('BEGIN');
     try {
