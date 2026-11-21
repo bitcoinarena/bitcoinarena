@@ -12,7 +12,8 @@
 //   ARENA_FETCH_TIMEOUT_MS       a request that brings no signal of its own is aborted after this (default 30 000); a host that
 //                                did not resolve (ENOTFOUND) is not dialed again for as long
 //   ARENA_FETCH_KEEPALIVE_MS     how long an idle connection to a peer is kept for its next request (default 30 000; 0 = Node's own 4 s)
-import { dialConnect } from './dial-guard.js';   // kanban #3133: every connection this process opens checks where a name resolves
+// kanban #3133: every connection this process opens checks where a name resolves
+import { dialConnect } from './dial-guard.js';
 
 export function parseRoutes(text) {
   return String(text || '').split(',').map((x) => x.trim()).filter(Boolean).map((x) => {

@@ -19,7 +19,8 @@ import { isIP, BlockList } from 'node:net';
 import { request as httpsRequest } from 'node:https';
 import { request as httpRequest } from 'node:http';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
-import { localHostName } from '../../arena-client/src/node-discovery.js';   // kanban #3124: one rule for the seat, the page and this file
+// kanban #3124: one rule for the seat, the page and this file
+import { localHostName } from '../../arena-client/src/node-discovery.js';
 
 const INTERNAL = new BlockList();
 for (const [a, p] of [['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16], ['172.16.0.0', 12], ['192.0.0.0', 24],

@@ -8,8 +8,10 @@
 import { checkAddressAnnouncement, newerAnnouncement, signAddressAnnouncement, endpointOf } from '../../arena-protocol/src/address-announcement.js';
 import { internalAddress } from './public-fetch.js';
 import { isIP } from 'node:net';
-import { localHostName } from '../../arena-client/src/node-discovery.js';   // kanban #3124: the page's and public-fetch's rule, one copy
-import './dial-guard.js';   // kanban #3133: a peer's name is checked again where it resolves, when the connection is made
+// kanban #3124: the page's and public-fetch's rule, one copy
+import { localHostName } from '../../arena-client/src/node-discovery.js';
+// kanban #3133: a peer's name is checked again where it resolves, when the connection is made
+import './dial-guard.js';
 
 /**
  * WHERE A SEAT MAY DIAL A PEER (kanban #2856, #1489 r26-gossip-1): a census node signed an announcement for its own key naming the honest seat's

@@ -6,7 +6,8 @@
 // guardians answer the same sum - one guardian cannot move the number. The reserve is the federation's own coins: the
 // spendable UTXOs and its change not yet confirmed or signed; peg-outs on their way out are not.
 import { parseRoutes, routed } from './fetch-routes.js';
-import { guardianEndpointRefusal } from './address-book.js';   // kanban #3134
+// kanban #3134
+import { guardianEndpointRefusal } from './address-book.js';
 
 const sumOf = (list) => (list || []).reduce((t, u) => t + BigInt(u.amount || 0), 0n);
 export const reserveOfSummary = (s) => sumOf(s.spendable_utxos) + sumOf(s.unconfirmed_change_utxos) + sumOf(s.unsigned_change_utxos);

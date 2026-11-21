@@ -32,7 +32,8 @@ import { withConfigEndpoints } from './federation-endpoints.js';
 import { recordInviteSource, createInviteBuffer } from '../../arena-protocol/src/trusted-guardian-keys.js';
 import { readInvite } from './invite.js';
 import { answersUpTo } from './peer-read.js';   // kanban #2650
-import { peerEndpointRefusal } from './address-book.js';   // kanban #3090/#3093
+// kanban #3090/#3093
+import { peerEndpointRefusal } from './address-book.js';
 import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
 import { buildFederationRecord, encodeFederationRecord, federationRecordId, joinSignedRecord, verifyFederationRecord, verifyFederationRecords,
   FEDERATION_STATUS, GONE, decodeFederationRecord, splitSignedRecord, guardianKeySet, highestVerified, recordStatusName, thresholdOf, loadReserveOf, statusFor, paysDrainShares, playerReserveOf, GATEWAY_FEE_MAX_REFERENCE, RESTRICTION_RANK, selfConsistentRestrictive } from '../../arena-protocol/src/federation-record.js';

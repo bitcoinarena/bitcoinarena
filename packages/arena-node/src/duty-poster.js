@@ -28,11 +28,13 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { decodeManifest, gameIdOf } from '../../arena-protocol/src/manifest.js';
 import { blockHashOf } from '../../arena-protocol/src/chain.js';
-import { peerEndpointRefusal } from './address-book.js';   // kanban #3090/#3093
+// kanban #3090/#3093
+import { peerEndpointRefusal } from './address-book.js';
 import { daySlotOf, targetDay, dayStartMs, DUTY_FALLBACK_MS, DUTY_BACKUP_AFTER_MS, DUTY_BACKUP_RANK_CAP } from '../../arena-protocol/src/duty.js';
 import { seriesId, isGridSeries } from '../../arena-protocol/src/series.js';
 import { takesNewRounds } from '../../arena-protocol/src/known-federations.js';
-import { configForNewRound } from '../../arena-protocol/src/ballot-chain.js';   // kanban #3218
+// kanban #3218
+import { configForNewRound } from '../../arena-protocol/src/ballot-chain.js';
 import { createGridBase, createDayDuty, DUTY_APPS } from './duty-day.js';
 import { buildGrid, publishGridTx, announceGrid, postSeriesLine } from './grid-build.js';
 import * as guard from './duty-guard.js';

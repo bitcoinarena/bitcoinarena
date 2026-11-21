@@ -41,7 +41,8 @@ const BONDS_KEPT = new WeakMap();   // proof headers -> (bond providers -> a bon
 import { advertId } from '../../arena-protocol/src/advert.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { acceptAncestorEndpoint } from '../../arena-protocol/src/ancestor-endpoint.js';
-import { localHostName } from './node-discovery.js';   // kanban #3124
+// kanban #3124
+import { localHostName } from './node-discovery.js';
 
 /**
  * Is this a socket address at all?
