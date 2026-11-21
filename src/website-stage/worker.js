@@ -35,6 +35,9 @@ export default {
       if (request.method !== door) return new Response(JSON.stringify({ ok: false, why: door }), { status: 405, headers: { 'content-type': 'application/json' } });
       const headers = new Headers({ 'content-type': 'application/json', origin: url.origin });
       if (request.headers.get('authorization')) headers.set('authorization', request.headers.get('authorization'));
+      // kanban #2995: the caller's address, believed by the faucet only with this Worker's key (FAUCET_WORKER_KEY, as the site Worker's)
+      headers.set('x-arena-ip', request.headers.get('cf-connecting-ip') || '');
+      if (env.FAUCET_WORKER_KEY) headers.set('x-arena-worker', env.FAUCET_WORKER_KEY);
       const r = await fetch(`${env.FAUCET_ORIGIN}${url.pathname.slice('/api/faucet'.length)}`, { method: door, headers, body: door === 'POST' ? await request.text() : undefined });
       return new Response(r.body, { status: r.status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow' } });
     }
