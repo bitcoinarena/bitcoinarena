@@ -192,10 +192,10 @@ export function createOpr(o = {}) {
   }
 
   // ---------- attempts ----------
-  // THE 5 (kanban #3248, #3265): a paid run counts for good; an unpaid one (pending entry, a submitted run waiting for its entry, a refused run
-  // whose invoice may still be paid) counts until its deadline - so never more than 5 runs at once, paid or not
-  const usedBy = (round, player, t) => q(`SELECT COUNT(*) AS n FROM attempts WHERE round = ? AND player = ? AND (paid_ms IS NOT NULL
-      OR (state NOT IN ('unpaid', 'expired') AND COALESCE(deadline_ms, invoice_expires_ms) > ?))`).get(round, player, t).n;
+  // THE 5 (kanban #3248, #3265): every run that opened counts for the whole round, paid or not - an unpaid run is a seen level, so runs left
+  // unpaid never buy free practice before paying (the coordinator's ruling 2026-11-21). Only an invoice of the earlier flow that expired
+  // before any run opened ('expired': no level was shown) does not count
+  const usedBy = (round, player) => q(`SELECT COUNT(*) AS n FROM attempts WHERE round = ? AND player = ? AND state != 'expired'`).get(round, player).n;
   const startedCount = (round) => q('SELECT COUNT(*) AS n FROM attempts WHERE round = ? AND paid_ms IS NOT NULL').get(round).n;   // the pot: paid entries only
   const phaseOf = (r, t = now()) => (t >= r.end_ms || ['closed', 'listed'].includes(r.state) ? 'ended' : r.state !== 'ready' ? (r.state === 'posting' ? 'posting' : 'preparing')
     : t < r.start_ms ? 'soon' : t >= r.end_ms - cfg.lastCallMs ? 'last-call' : 'open');

@@ -74,7 +74,7 @@ test('#3265 an entry settled after the deadline does not count (lnd settle time)
   assert.deepEqual(w.opr.boardOf(r.id), []); assert.equal(w.opr.potOf(r.id), 0);
 });
 
-test('#3265 the limit counts pending-entry runs; an unpaid run frees its place after its deadline; pot = 100 x paid', async () => {
+test('#3265 every opened run counts toward the 5 for the whole round, paid or not; pot = 100 x paid', async () => {
   const w = world({ start: '2026-11-23T01:00:00Z' }); const r = await openRound(w); const p = keypair();
   const runs = [];
   for (let i = 0; i < 5; i++) { const s = await w.opr.startAttempt(p.pk, { round: r.id }); assert.equal(s.ok, true); runs.push(s); }
@@ -82,10 +82,20 @@ test('#3265 the limit counts pending-entry runs; an unpaid run frees its place a
   w.lnd.pay(runs[0].invoice); w.lnd.pay(runs[1].invoice);
   w.clock.add(10 * MIN + 1); await w.opr.tick();
   assert.equal(w.opr.potOf(r.id), 200);
-  // 2 paid stay counted, 3 unpaid freed: 3 new runs, not 4
-  for (let i = 0; i < 3; i++) assert.equal((await w.opr.startAttempt(p.pk, { round: r.id })).ok, true);
-  assert.equal((await w.opr.startAttempt(p.pk, { round: r.id })).why, 'all 5 attempts of this round are used');
+  assert.equal((await w.opr.checkAttempt(p.pk, runs[4].attempt)).state, 'entry-not-paid');
+  // the 3 never-paid runs still count, hours later: a 6th run is refused
+  w.clock.add(5 * 60 * MIN); await w.opr.tick();
+  const sixth = await w.opr.startAttempt(p.pk, { round: r.id });
+  assert.equal(sixth.ok, false); assert.equal(sixth.why, 'all 5 attempts of this round are used');
   assert.equal(w.opr.publicRound(w.opr.roundRow(r.id)).potSats, 200);
+});
+
+test('#3265 five runs never paid: no 6th run, nothing in the pot, nothing on the board', async () => {
+  const w = world({ start: '2026-11-23T01:00:00Z' }); const r = await openRound(w); const p = keypair();
+  for (let i = 0; i < 5; i++) { const s = await w.opr.startAttempt(p.pk, { round: r.id }); w.clock.add(60000); await w.opr.submitChecked(p.pk, { attempt: s.attempt, token: s.token, log: logOf(5 + i) }); }
+  w.clock.add(60 * MIN); await w.opr.tick();
+  assert.equal((await w.opr.startAttempt(p.pk, { round: r.id })).why, 'all 5 attempts of this round are used');
+  assert.equal(w.opr.potOf(r.id), 0); assert.deepEqual(w.opr.boardOf(r.id), []);
 });
 
 test('#3265 every rejection rule holds for a pending-entry run', async () => {
