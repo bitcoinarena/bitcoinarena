@@ -61,6 +61,8 @@ export const feeBpsForRound = (round) => (round && Number.isInteger(round.feeBps
   : roundPaysReserves(round) ? (round.feeSet ? roundSplitBps(round.feeSet).nodes : RESERVES_NODE_FEE_BPS) : knownEntryBps(round && round.gameId));
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { readWithOneRetry } from './reread.js';
+import { seriesId as seriesIdOf, seriesRoundCheck } from '../../arena-protocol/src/series.js';
+import { parseSeriesLine } from '../../arena-protocol/src/series-line.js';
 import { decodeClaimKeyAttestation, claimKeyIsAttested } from '../../arena-protocol/src/claim-key.js';
 
 /**
@@ -165,7 +167,27 @@ export function joinQuery(search) {
  */
 export const ROUNDS_KEPT_MAX = 2000;
 const ROUNDS_KEPT = new Map();
-export const forgetRounds = () => ROUNDS_KEPT.clear();
+export const forgetRounds = () => { ROUNDS_KEPT.clear(); SERIES_KEPT.clear(); };
+// A SERIES ROUND IS BELIEVED ONLY AS ITS SERIES DERIVES IT (kanban #3041, audit attest r3-1, bypass of #1852): a series round's id hashes only its
+// series id and index, so one seat answering GET /round first with the window moved by a period was taken (and kept): the page recorded the wrong
+// 15 minutes and the attestors' honest outcome read as "another window". The series' template is read from the seats - believed only once it
+// hashes to the series id - and the contract must be byte for byte the round the template derives (series.js seriesRoundCheck); else the next seat
+const SERIES_KEPT = new Map();
+async function seriesTemplateOf(seriesIdHex, nodes, fetcher) {
+  if (SERIES_KEPT.has(seriesIdHex)) return SERIES_KEPT.get(seriesIdHex);
+  for (const node of nodes) {
+    try {
+      const r = await readWithOneRetry(fetcher, node.replace(/\/+$/, '') + '/series-template?id=' + seriesIdHex);
+      if (!r.ok) continue;
+      const t = parseSeriesLine(await r.text());
+      if (toHex(seriesIdOf(t)) !== seriesIdHex) continue;
+      SERIES_KEPT.set(seriesIdHex, t);
+      if (SERIES_KEPT.size > 256) SERIES_KEPT.delete(SERIES_KEPT.keys().next().value);
+      return t;
+    } catch { /* the next seat */ }
+  }
+  return null;
+}
 export async function fetchRound(id, nodes, { fetcher = fetch } = {}) {
   const kept = ROUNDS_KEPT.get(id);
   if (kept) return { contract: kept.contract, from: kept.from, refused: [], kept: true };
@@ -188,6 +210,12 @@ export async function fetchRound(id, nodes, { fetcher = fetch } = {}) {
       // but 600 s, so a day of 60 s RPS rounds would have left the page with no round to list or join
       if (!objectionWindowAllowed(contract.objectionWindowMs))
         throw new Error(`round ${id} names an objection window of ${contract.objectionWindowMs} ms, not one a round may name (${OBJECTION_WINDOW_MS} ms, or a head-to-head round's): that contract is invalid and the page does not join it`);
+      if (contract.seriesId !== undefined && contract.seriesId !== null) {
+        const t = await seriesTemplateOf(toHex(contract.seriesId), nodes, fetcher);
+        if (!t) { refused.push(`${node}: no seat handed the template of its series, so its window cannot be checked`); continue; }
+        const chk = seriesRoundCheck(contract, [t]);
+        if (!chk.ok) { refused.push(`${node}: ${chk.why}`); continue; }
+      }
       ROUNDS_KEPT.set(id, { contract, from: node });
       if (ROUNDS_KEPT.size > ROUNDS_KEPT_MAX) ROUNDS_KEPT.delete(ROUNDS_KEPT.keys().next().value);
       return { contract, from: node, refused };
