@@ -18,6 +18,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { encodeSpentSet, signSpentSet } from '../../arena-protocol/src/spent-set.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { wsGuardianCall } from './halts.js';
+import { textHead } from './peer-read.js';
 
 // the guardian's password never in a reason (an exec error's message is the whole command line, --password with it)
 const runCli = (bin, args, env) => new Promise((done) => execFile(bin, args, { timeout: 120000, maxBuffer: 1 << 26, env },
@@ -73,7 +74,7 @@ export async function publishSpentSet(copy, seats, { fetcher = fetch } = {}) {
   return Promise.all((seats || []).map(async (u) => {
     try {
       const r = await fetcher(`${String(u).replace(/\/+$/, '')}/liquidations/spent-set`, { method: 'POST', body: JSON.stringify(copy), signal: AbortSignal.timeout(20000) });
-      return { seat: u, ok: r.ok, why: r.ok ? null : (await r.text()).slice(0, 160) };
+      return { seat: u, ok: r.ok, why: r.ok ? null : (await textHead(r)).slice(0, 160) };   // kanban #3012: never the whole refusal
     } catch (e) { return { seat: u, ok: false, why: e.message }; }
   }));
 }
