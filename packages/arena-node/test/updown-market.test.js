@@ -55,7 +55,8 @@ test('the Up/Down market: its 15-minute clock, locks that outlive a round (144 r
   // THE ATTESTORS' CORE on a feed: a reading at the window's start, then `after` for the rest of it
   const attest = (x, signers, startCents, afterCents) => {
     const startMs = x.c.entryCloseMs - UPDOWN_PERIOD_MS;
-    const samples = [{ atMs: startMs - 60000n, price: BigInt(startCents) }, { atMs: startMs + 60000n, price: BigInt(afterCents) }];
+    // read every 10 s across the window (kanban #3049: an attestor signs only a window whose start and end it read)
+    const samples = []; for (let t = startMs - 60000n; t <= x.c.entryCloseMs; t += 10000n) samples.push({ atMs: t, price: BigInt(t < startMs + 60000n ? startCents : afterCents) });
     const words = signers.map((l) => attestWindow({ samples, roundId: x.rid, window: { startMs, endMs: x.c.entryCloseMs }, attestor: UPDOWN_ATTESTOR_KEYS[l] }));
     return combine(words, { attestors: ATTESTORS, threshold: 2 });
   };
