@@ -9955,7 +9955,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   });
 
   // kanban #2901: the door counters and the short answer cache (see the dispatch above)
-  const DOOR_CACHE = new Set(['/seating-batch', '/dkg-agreement', '/lock-namer', '/season-rounds', '/census', '/served'])   // not /book-certificates: a fresh certificate must be read at once (book-sync);
+  // kanban #3057 (audit play r4-2-1, gap in #2743): GET /canonical and GET /replay/transcript rebuilt a whole run on the seat's thread for every
+  // public request (10,800 one-tick batches decoded, checked and hashed each time); the same (round, entry) is answered from one answer per DOOR_CACHE_MS
+  const DOOR_CACHE = new Set(['/seating-batch', '/dkg-agreement', '/lock-namer', '/season-rounds', '/census', '/served', '/canonical', '/replay/transcript'])   // not /book-certificates: a fresh certificate must be read at once (book-sync);
   const DOOR_CACHE_MS = Number(process.env.ARENA_DOOR_CACHE_MS || 500);
   // kanban #2910 (measured 2026-11-16 ~19:45Z): GET /season-rounds (peers read 90 days of a game's season, paged) and GET /census (a round's census
   // evidence) held a seat's loop 1-3.2 s each, so a bot's handout reached that seat 3 s late and the round voided. Peers ask the same query again and
@@ -9974,7 +9976,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // key keeps only the parameters it reads, sorted, a game list in its sorted order; and the cache holds at most DOOR_CACHE_BYTES in all,
   // an answer over DOOR_CACHE_BODY_MOST not at all.
   const DOOR_CACHE_PARAMS = { '/season-rounds': ['game', 'days', 'after', 'page'], '/census': ['round', 'creator'],
-    '/served': ['from', 'to', 'finals', 'count', 'height', 'label', 'n'] };
+    '/served': ['from', 'to', 'finals', 'count', 'height', 'label', 'n'], '/canonical': ['round', 'entry'], '/replay/transcript': ['round', 'entry'] };
   // kanban #3169, #3200: the key counts toward DOOR_CACHE_BYTES, and a key longer than DOOR_CACHE_KEY_MOST is never cached (the longest honest one,
   // GET /seating-batch of BATCH_ROUNDS = 64 round ids, is about 4.2 KB)
   const DOOR_CACHE_BYTES = 64 * 1048576, DOOR_CACHE_BODY_MOST = 16 * 1048576, DOOR_CACHE_KEY_MOST = 8192;
