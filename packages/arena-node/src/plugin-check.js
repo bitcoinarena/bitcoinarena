@@ -201,7 +201,7 @@ export function blankComments(src, budget = null) {   // budget: { left } shared
 }
 
 // EVERY MODULE LOAD IN A TREE FILE IS EXEMPTED ON ITS OWN (kanban #3112, #1489 r1120-refute-5-s2): scanSource names only the first hit of a
-// rule, so one allowed `import { h } from './helper.js'` on line 1 hid an `await import('node:fs')`, a `require(...)` or an `import 'node:fs'`
+// rule, so one allowed `import { h } from a helper file` on line 1 hid an `await import('node:fs')`, a `require(...)` or an `import 'node:fs'`
 // further down from the tree scan. moduleLoadLines lists every line a load starts on (each rule pattern's hit and each `import ... from`
 // line, all in one pass each); a line is let through only when its whole statement is a static import from a file of the same tree.
 const MODULE_RULE = 'loads another module';
@@ -221,7 +221,7 @@ export function scanTree(files) {
     const src = blankComments(utf8(f.bytes), budget), lines = src.split('\n');
     // a line's statement is a static import/export ... from '<path>' landing on another tree file
     // AN IMPORT ENDS AT ITS SPECIFIER, NOT AT A ';' (kanban #3137, #1489 r1120-refute-5-s4): the statement was read up to the first line
-    // holding a ';', so an honest `import { DRAW } from './lib/draw.js'` written without semicolons ran on into the code below, failed the
+    // holding a ';', so an honest `import { DRAW } from the lib draw file` written without semicolons ran on into the code below, failed the
     // anchored pattern and was refused. It now ends at its closing specifier string (no ; ( ) or quote before it, so no import() or require()
     // inside), and only whitespace or one ';' may follow on that line; the lines below are scanned on their own.
     const inTree = (line) => {

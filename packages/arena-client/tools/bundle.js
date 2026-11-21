@@ -156,7 +156,10 @@ out += '// Verified against the module build by test/bundle.test.js.\n';
 out += 'var ARENACLIENT = (function () {\n"use strict";\n';
 for (const file of order) {
   const body = readFileSync(file, 'utf8')
-    .replace(/^import\s[\s\S]*?;\s*$/gm, '')
+    // AN IMPORT LINE ENDS AT ITS ';', A COMMENT AFTER IT INCLUDED (kanban #3216, measured 2026-11-21: "import { localHostName } from './node-discovery.js';
+    // // kanban #3124" did not end at its ';' for this pattern, so the strip ran on to the next line ending in ';' and took the doc comment and the
+    // `const LOOPBACK` of directory.js with it - "LOOPBACK is not defined" in every page session)
+    .replace(/^import\s[\s\S]*?;[ \t]*(?:\/\/[^\n]*)?$/gm, '')
     .replace(/^export\s+\*\s+from\s+[^;]*;\s*$/gm, '')
     // A LIST OF NAMES ON ONE LINE, and not a lazy match that crosses them.
     //
@@ -334,6 +337,7 @@ out += '         shopOf: shopOf, buyItem: buyItem, itemTermsOf: itemTermsOf, ite
 out += '         entryUnlocks: entryUnlocks, itemUnlocksOf: itemUnlocksOf,\n';
 // WHAT AN ENTRY'S STAKE IS MADE OF: the deposit request says it
 out += '         entryBreakdown: entryBreakdown, pendingWindowLine: pendingWindowLine, savedLockExpiration: savedLockExpiration,\n';
+out += '         localHostName: localHostName, keptNodes: keptNodes, putRoomy: putRoomy,\n';   // kanban #3216: the page uses them (#3124, #3123, #3107)
 out += '         toHex: toHex, fromHex: fromHex };\n})();\n';
 out += 'if (typeof module !== "undefined") module.exports = ARENACLIENT;\n';
 
