@@ -560,10 +560,15 @@ export function openFeedbackStore(path = ':memory:') {
     const hash = d.paymentHash ? String(d.paymentHash) : null;
     const held = "SELECT 1 FROM rewards WHERE payment_hash = ? AND k1 <> ? AND state IN ('paying', 'paid')";
     if (hash && db.prepare(held).get(hash, w.k1)) return { status: 'ERROR', reason: 'that invoice was used for another reward: make a new invoice' };
+    // THE AMOUNT CHECKED IS THE AMOUNT TAKEN (kanban #3219, #1489 sm1-faucet-21, state audit 2026-11-12 SM-22): the invoice was checked against the
+    // amount read before `await decode` (up to 30 s), and the admin's reward action (another queue) may lower an open link to the Season 2 payable
+    // amount meanwhile (createReward capSats, kanban #2756) - the claim then paid the old, higher amount on a row that says the lower one. The
+    // compare-and-set now carries the amount it checked: a link changed meanwhile is not taken, and the wallet scans it again.
     let took;
-    try { took = db.prepare(`UPDATE rewards SET state = 'paying', invoice = ?, payment_hash = ?, tried_ms = ?, address = ?, payer = ? WHERE k1 = ? AND state = 'open' AND NOT EXISTS (${held})`).run(String(invoice), hash, nowMs, address, payer == null ? null : String(payer), w.k1, hash, w.k1); }
+    try { took = db.prepare(`UPDATE rewards SET state = 'paying', invoice = ?, payment_hash = ?, tried_ms = ?, address = ?, payer = ? WHERE k1 = ? AND state = 'open' AND amount_sats = ? AND NOT EXISTS (${held})`).run(String(invoice), hash, nowMs, address, payer == null ? null : String(payer), w.k1, w.amount_sats, hash, w.k1); }
     catch { return { status: 'ERROR', reason: 'that invoice was used for another reward: make a new invoice' }; }
-    if (took.changes !== 1) return { status: 'ERROR', reason: 'this reward is being paid' };
+    if (took.changes !== 1) { const now = rewardOf.get(w.k1);
+      return { status: 'ERROR', reason: now && now.state === 'open' && now.amount_sats !== w.amount_sats ? `the reward changed: scan the link again (it is now ${now.amount_sats} sat)` : 'this reward is being paid' }; }
     let p;
     try { p = await pay(String(invoice), d.amountSats); } catch (e) { p = { ok: false, why: e.message }; }   // the amount bounds the routing fee (kanban #1450)
     if (p && p.ok) { paidNow(w, p.paymentHash || d.paymentHash, nowMs); return { status: 'OK' }; }
