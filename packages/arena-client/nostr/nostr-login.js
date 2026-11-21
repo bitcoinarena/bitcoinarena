@@ -23,6 +23,8 @@ import { minePow } from 'nostr-tools/nip13';
  * NIP-13 proof of work while it is nearly full ('pow: difficulty N required'). The event is mined here to the highest difficulty asked (`onMining`
  * says so meanwhile: "preparing your profile ..."), signed again and sent to those relays. Answers the relays that took it.
  */
+/** The most proof of work the page mines for one event (kanban #3030): the game relay's POW_MAX. */
+export const POW_MINE_MAX = 28;
 export async function publishWithPow(pool, relays, ev, signer, { onMining = () => {} } = {}) {
   const res = await Promise.allSettled(pool.publish([...relays], ev));
   const took = [], asked = [];
@@ -31,6 +33,11 @@ export async function publishWithPow(pool, relays, ev, signer, { onMining = () =
     const m = /pow: difficulty (\d+) required/.exec(String((r.reason && r.reason.message) || r.reason || ''));
     if (m) asked.push([relays[i], Number(m[1])]);
   });
+  // A CAPPED DIFFICULTY (kanban #3030, audit nostr r2-1): minePow is a synchronous loop on the page's one thread, and the highest difficulty any
+  // relay of the list asked was mined - one public relay answering 'pow: difficulty 64 required' froze the first Nostr login for good. The game's
+  // relay never asks more than POW_MINE_MAX (its POW_MAX, 28); a relay asking more is taken as refusing and is not mined for
+  const fair = asked.filter(([, n]) => Number.isInteger(n) && n >= 0 && n <= POW_MINE_MAX);
+  asked.length = 0; asked.push(...fair);
   if (!asked.length) return took;
   const need = Math.max(...asked.map(([, n]) => n));
   onMining(need);
