@@ -595,14 +595,32 @@ function grantEcash(ask) {
 
 const WANTS = new Map();
 /** A SEASON 2 APPROVAL the plan fits: the report store approves the season's amount (outside Season 1's weekly budget), the season records it. */
+// TWO FILES, ONE DECISION (kanban #3220, state audit SM-21): the approval goes into season2.db first as an intent ('approving', with the plan), then
+// the report store approves, then the intent is settled. season2.db busy (the link bot writes it too), full, or the faucet killed: before the report
+// moved nothing is decided and the admin's retry runs again; after it the 'approving' row is settled by s2Reconcile below - never an accepted report
+// with no Season 2 approval
 function s2Approve(r, p, by) {
+  S2.intend(r, p, { by });
   const out = FEEDBACK.approve(r.id, p.sats, { played: PLAYED.played, excluded: ourKeys(), severity: p.level, by,
     rules: { ...RULES, weeklyBudgetSats: Number.MAX_SAFE_INTEGER, mostSats: Math.max(Number(RULES.mostSats) || 20000, p.sats), leastSats: Math.min(Number(RULES.leastSats ?? 100), p.sats) } });
-  return out.ok ? { ...out, season2: S2.commit(r, p, { by }) } : out;
+  const season2 = S2.settle(r.id, out.ok);
+  return out.ok ? { ...out, season2 } : out;
 }
+// THE PAIR COMES TOGETHER AGAIN (kanban #3220): read by report, both stores - an accepted (or paid) report's intent becomes its approval; a new one's
+// intent is dropped (the row before it back); a rejected or duplicate report's approval, waiting row or intent is taken back. At start, before each
+// Season 2 sweep, and before the admin approves, rejects or marks a duplicate (so the refused retry of a half-done step still repairs it).
+function s2Reconcile(id) {
+  const a = S2.approval(id); const r = a ? FEEDBACK.report(a.report) : null;
+  if (!a || !r) return;
+  if (r.state === 'rejected' || r.state === 'duplicate') { if (['approved', 'waiting', 'approving'].includes(a.state)) S2.voidApproval(a.report, { why: `the report is ${r.state}` }); return; }
+  if (a.state === 'approving') S2.settle(a.report, r.state === 'accepted' || r.state === 'paid');
+}
+function s2ReconcileAll() { for (const st of ['approving', 'approved', 'waiting']) for (const a of S2.approvals({ state: st })) s2Reconcile(a.report); }
+if (S2) { try { s2ReconcileAll(); } catch (e) { console.error(`${new Date().toISOString()} season 2 reconcile at start: ${e.message}`); } }
 // THE WAITING REPORTS, ONCE SEASON 2 RUNS (kanban #2623): oldest first, the links read live, by the Season 2 rules; one the pot cannot take waits on
 if (S2) setInterval(() => { if (!S2_STARTED() || !bountyOn()) return;
   oneAdmin(async () => {
+    s2ReconcileAll();   // kanban #3220
     for (const a of S2.approvals({ state: 'waiting' })) {
       const r = FEEDBACK.report(a.report);
       if (!r || r.state !== 'new') continue;
@@ -752,6 +770,7 @@ createServer((req, res) => {
           if (b.season2 === true) {
             if (!S2) return send(503, { ok: false, why: 'Season 2 is not kept here' });
             if (!S2_STARTED()) return send(200, { ok: false, why: `Season 2 starts ${S2_START_DAY}` });
+            s2Reconcile(b.id);   // kanban #3220: a half-done earlier approval is settled first
             const r = FEEDBACK.report(b.id);
             if (!r) return send(200, { ok: false, why: 'no such report' });
             if (r.state !== 'new') return send(200, { ok: false, why: `a ${r.state} report is not approved for money` });
@@ -782,7 +801,9 @@ createServer((req, res) => {
           return send(200, s1);
         }
         // kanban #2904: a rejection or a duplicate takes the Season 2 approval back in the same step (the report's amount is cleared by the move)
+        // kanban #3220: s2Reconcile first - a rejection whose voidApproval failed before is taken back now, even though the move itself is refused again
         const voidS2 = (out, why) => { if (out.ok && S2 && S2.voidApproval) out.approvalVoided = S2.voidApproval(b.id, { why }); return out; };
+        if (S2 && (b.action === 'reject' || b.action === 'duplicate')) s2Reconcile(b.id);
         if (b.action === 'reject') return send(200, voidS2(FEEDBACK.move(b.id, 'rejected', { reason: b.reason, by }), 'the report was rejected'));
         if (b.action === 'duplicate') return send(200, voidS2(FEEDBACK.move(b.id, 'duplicate', { duplicateOf: b.of, by }), 'the report is a duplicate'));
         const rewardAct = (b, by, capSats) => { const w = FEEDBACK.createReward(b.id, { network: BOUNTY_NETWORK, comment: b.comment ?? null, by, capSats });
