@@ -5247,7 +5247,12 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     function refundOrderKeys() {
       let picks = []; try { picks = JSON.parse(window.sessionStorage.getItem('arena.market.picks') || '[]'); } catch { picks = []; }
       let refund = new Set(); try { refund = new Set((window.ARENA_MARKET_LINES ? window.ARENA_MARKET_LINES() : []).filter((l) => l && (l.state === 'refunded' || l.state === 'refund in transit' || l.state === 'void')).map((l) => l.entry)); } catch { /* no lines yet */ }
-      return new Set(picks.filter((p) => p && p.roundIdHex && (p.unfilled || refund.has(p.entryIdHex))).map((p) => String(p.roundIdHex).toLowerCase() + ':' + (Number(p.order && p.order.index) || 0)));
+      // NOT ON ONE SEAT'S WORD (kanban #3014, audit entry r1-1): `unfilled` is set by the market page from the best answer before any check - one
+      // seat answering ATTESTED with an empty table and a 0-share /book position marked a won order unfilled, and its record closed "payout: none"
+      // once the stake came back. It counts only beside this page's VERIFIED final outcome of the round, whose table has no row for the order
+      const verifiedNoRow = (p) => { try { const o = window.ARENA_MARKET_OUTCOMES && window.ARENA_MARKET_OUTCOMES.get(p.roundIdHex);
+        return !!(o && o.state === 'ATTESTED' && o.final && o.check && o.check.verified && o.table && Array.isArray(o.table.rows) && !o.table.rows.some((x) => x && x.entryId === p.entryIdHex)); } catch { return false; } };
+      return new Set(picks.filter((p) => p && p.roundIdHex && ((p.unfilled && verifiedNoRow(p)) || refund.has(p.entryIdHex))).map((p) => String(p.roundIdHex).toLowerCase() + ':' + (Number(p.order && p.order.index) || 0)));
     }
     const unfilledPickKeys = () => [...refundOrderKeys()];
     // A REFUND-ONLY ORDER'S RECORD IS DONE ONCE ITS STAKE IS CREDITED (kanban #3009): its line is a refund or VOID, so no payout will come.
