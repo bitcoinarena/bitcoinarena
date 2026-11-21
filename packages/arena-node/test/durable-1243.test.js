@@ -40,7 +40,7 @@ test('#1243 the exchange\'s RECEIVING, asked and SENDING rows are durable before
   const raw = new DatabaseSync(':memory:'); raw.exec('PRAGMA synchronous = NORMAL');   // as the store runs (a bare connection starts at FULL)
   const db = spy(raw, log);
   const ports = {
-    [A]: { ecashBalance: async () => 0n, ecashReceive: async () => { log.push('receive'); return { state: 'Success', msat: 100_000n }; } },
+    [A]: { ecashBalance: async () => 0n, ecashReceive: async () => { log.push('receive'); return { state: 'Success', msat: 100_000n, carriedMsat: 100_000n }; } },
     [B]: { ecashBalance: async () => 10_000_000n, ecashSend: async (m) => { log.push('send'); return { ecash: 'fedimintb-1', msat: m }; }, ecashSent: async () => ({ found: false }) },
   };
   const x = ex.createEcashExchange({ db, portOf: async (f) => ports[f] || null, perHourMsat: 1_000_000_000n });

@@ -12,6 +12,7 @@ import { readFileSync } from 'node:fs';
 import { posix } from 'node:path';
 import { workerData } from 'node:worker_threads';
 import { getHeapStatistics } from 'node:v8';
+import { DEPTH_LOCKDOWN, DEPTH_MODULE } from './core-depth.js';
 
 const { files: fileList, entry, name, port, ctrl: ctrlBuffer, arrayBudget, liveCap, answerMax } = workerData;
 const files = new Map(fileList);
@@ -67,6 +68,24 @@ const GC = typeof globalThis.gc === 'function' ? globalThis.gc : (() => {
   }
   throw new Error('this core thread could not read V8\'s gc');
 })();
+// THE SEAT'S V8 FLAGS (kanban #2453, #1489 audit44 refute of #1623): flags are process-wide, so the core thread's realm starts
+// with what the operator's NODE_OPTIONS or node command line set - --expose-gc put a \`gc\` global into the context and
+// --stack-trace-limit=50 started Error.stackTraceLimit at 50 (a core's 30-deep stack listed 36 lines against 11), and one core on
+// one input hashed differently on seats of one committee. Every own global of the context that is not on this fixed list of the
+// language's globals is taken out (gc, and any global a flag or a later Node adds, Temporal under --harmony-temporal), and
+// Error.stackTraceLimit starts at V8's default 10 on every seat (the core may still write it). The globals V8's extension
+// flags install (gc, externalizeString, ...) are not configurable and cannot be deleted, so this thread turns those flags off
+// before it makes the core's context (V8_EXTENSIONS_OFF): flags are read when a context is made, so the node's own realm and its
+// gc stay as the operator started them. A foreign global that still cannot be taken out stops the core from loading, by name.
+const V8_EXTENSIONS_OFF = '--no-expose-gc --no-expose-externalize-string --no-expose-statistics --no-expose-trigger-failure '
+  + '--no-expose-ignition-statistics --expose-cputracemark-as=';
+const GLOBALS = ['Object', 'Function', 'Array', 'Number', 'parseFloat', 'parseInt', 'Infinity', 'NaN', 'undefined', 'Boolean', 'String',
+  'Symbol', 'Date', 'Promise', 'RegExp', 'Error', 'AggregateError', 'EvalError', 'RangeError', 'ReferenceError', 'SyntaxError',
+  'TypeError', 'URIError', 'SuppressedError', 'globalThis', 'JSON', 'Math', 'Intl', 'ArrayBuffer', 'Atomics', 'Uint8Array', 'Int8Array',
+  'Uint16Array', 'Int16Array', 'Uint32Array', 'Int32Array', 'BigUint64Array', 'BigInt64Array', 'Uint8ClampedArray', 'Float16Array',
+  'Float32Array', 'Float64Array', 'DataView', 'Map', 'BigInt', 'Set', 'Iterator', 'WeakMap', 'WeakSet', 'Proxy', 'Reflect',
+  'FinalizationRegistry', 'WeakRef', 'DisposableStack', 'AsyncDisposableStack', 'decodeURI', 'decodeURIComponent', 'encodeURI',
+  'encodeURIComponent', 'escape', 'unescape', 'eval', 'isFinite', 'isNaN', 'console', 'SharedArrayBuffer', 'WebAssembly'];
 const LOCKDOWN = `'use strict';
 (() => {
   const budget = ${BUDGET};
@@ -81,6 +100,10 @@ const LOCKDOWN = `'use strict';
   const taLength = uncurry(gd(TAP, 'length').get), taBytes = uncurry(gd(TAP, 'byteLength').get), taBuffer = uncurry(gd(TAP, 'buffer').get);
   const abBytes = uncurry(gd(ArrayBuffer.prototype, 'byteLength').get);
   const lengthOf = (x) => { try { return taLength(x); } catch { return null; } };
+  // (kanban #2475, #2508) what the wrapper copies an iterable or array-like source with, all taken before any core code
+  const dp = Object.defineProperty, iterSym = Symbol.iterator, trunc = Math.trunc, TypeErr = TypeError, MAX_LEN = 9007199254740991;
+  const toLength = (v) => { const n = +v; return n > 0 ? (n === Infinity ? MAX_LEN : trunc(n) < MAX_LEN ? trunc(n) : MAX_LEN) : 0; };
+  const isObj = (v) => (v !== null && typeof v === 'object') || typeof v === 'function';
   const isBuffer = (x) => { try { abBytes(x); return true; } catch { return false; } };
   const said = 'the core asked for more than ' + Math.round(budget / 1048576) + ' MB of arrays';
   // what the bookkeeping calls is taken now, before the core can replace a prototype's method or getter: a subclass's own
@@ -95,10 +118,19 @@ const LOCKDOWN = `'use strict';
   const lenOf = (o, ab) => R.apply(ab ? abLen : taLen, o, []);
   const tracked = new M();
   let used = 0, over = null, since = 0, base = 0, nextId = 0, count = 0;
-  const take = (n) => { if (over !== null || !(n >= 0) || used + n > budget) { over = said; throw new RangeErr(said); } };
+  // (kanban #2449, #2496) take() RESERVES: the bytes count from the moment they are taken, before the allocation and before
+  // any core code that runs between it and its return (a map callback, a toSorted comparator, a nested call) - so a copy
+  // whose method never returns stays counted, and a nested take() sees every level above it. settle() moves a reservation
+  // to the real byte length once the allocation is known; keep() only marks the object alive (the live count, #1813).
+  const take = (n) => { if (over !== null || !(n >= 0) || used + n > budget) { over = said; throw new RangeErr(said); } used += n; };
+  const settle = (reserved, real) => { if (real > reserved) take(real - reserved); else used -= reserved - real; };
+  // (kanban #2145, #2211) every object the count has taken, so a copy counted by a wrapped constructor is never counted twice
+  const counted = new WeakSet(), wsAdd = WeakSet.prototype.add, wsHas = WeakSet.prototype.has;
+  const isCounted = (o) => R.apply(wsHas, counted, [o]);
   const keep = (o, n) => {
-    used += n; since += n;
+    since += n;
     if (n > 0) { R.apply(mSet, tracked, [nextId++, { r: new WR(o), n }]); count++; }
+    R.apply(wsAdd, counted, [o]);
     return o;
   };
   /** The bytes of the arrays still reachable - read by this thread right after a GC, never by the core. */
@@ -112,6 +144,22 @@ const LOCKDOWN = `'use strict';
     }
     base = live; since = 0;
     return live;
+  };
+  // (kanban #2475) the budget checked without reserving: IteratorToList below reads the elements before anything is allocated
+  const fits = (n) => { if (over !== null || !(n >= 0) || used + n > budget) { over = said; throw new RangeErr(said); } };
+  // IteratorToList, as %TypedArray% runs it, into a list of our own - each element's bytes checked as it comes, so an endless
+  // or oversized iterable stops at the budget, never at the heap
+  const listOf = (x, m, size) => {
+    const it = apply(m, x, []);
+    if (!isObj(it)) throw new TypeErr('Result of the Symbol.iterator method is not an object');
+    const next = it.next, list = [];
+    for (let n = 0; ; n++) {
+      const r = apply(next, it, []);
+      if (!isObj(r)) throw new TypeErr('Iterator result ' + String(r) + ' is not an object');
+      if (r.done) return { list, len: n };
+      fits((n + 1) * size);
+      dp(list, n, { value: r.value, writable: true, enumerable: true, configurable: true });
+    }
   };
   // (kanban #1622) the kinds are read from the realm itself, never from a list: every own global whose prototype chain
   // reaches %TypedArray% (Float16Array on node 24 was missing from the old list and allocated outside the budget and the
@@ -135,13 +183,32 @@ const LOCKDOWN = `'use strict';
       // read through the captured getter as V8 reads it; an array-like's \`length\` is only a first guess, counted again below)
       const x = a[0];
       const n = typeof x === 'number' ? x : lengthOf(x);
-      const asked = typeof n === 'number' ? n * size
-        : (x && typeof x === 'object' && !isBuffer(x) && typeof x.length === 'number') ? x.length * size : 0;
+      // (kanban #2475, #2508; #1489 a44 refute of #1695) AN ITERABLE OR ARRAY-LIKE SOURCE IS COPIED HERE, NEVER BY V8: V8 read
+      // its length again after the wrapper (a core's getter answered 0 to the wrapper and N to V8), allocated N, and then ran the
+      // core's element getters and valueOf - after the allocation - so one that threw skipped the count below: 8 x 32 MB past a
+      // 4 MB budget answered, and a 512 MB one was stopped only by the RSS backstop. The spec's steps, in its order, on one length
+      // read (or the list the iterator gave): the bytes taken and the empty array counted before the first element is read.
+      if (k !== 'ArrayBuffer' && n === null && isObj(x) && !isBuffer(x)) {
+        const m = x[iterSym];
+        let src, len;
+        if (m !== undefined && m !== null) {
+          if (typeof m !== 'function') throw new TypeErr('Symbol.iterator is not a function');
+          ({ list: src, len } = listOf(x, m, size));
+        } else { src = x; len = toLength(x.length); }
+        take(len * size);
+        const o = construct(t, [len], nt === W ? t : nt);
+        const real = bytesOf(o);
+        settle(len * size, real);
+        keep(o, real);
+        for (let i = 0; i < len; i++) o[i] = src[i];
+        return o;
+      }
+      const asked = typeof n === 'number' ? n * size : 0;
       take(asked);
       const o = construct(t, a, nt === W ? t : nt);
       if (k !== 'ArrayBuffer' && isBuffer(x) && taBuffer(o) === x) return o;   // a view on a buffer already counted
       const real = bytesOf(o);
-      take(real - asked > 0 ? real - asked : 0);
+      settle(asked, real);
       return keep(o, real);
     } });
     Object.defineProperty(K.prototype, 'constructor', { value: W, writable: false, configurable: false });
@@ -152,13 +219,58 @@ const LOCKDOWN = `'use strict';
   // constructor, so they are counted - but a factory such as Uint8Array.fromHex / fromBase64 (V8 13.x+, not in node 24.22) allocates on the original,
   // outside the budget and the live cap. Removed wherever the runtime has them, so a newer node cannot open the hole.
   for (const k of KINDS) for (const m of ['fromHex', 'fromBase64']) { try { delete globalThis[k][m]; } catch { /* none */ } try { delete Object.getPrototypeOf(globalThis[k])[m]; } catch { /* none */ } }
+  // THE SPECIES FALLBACK (kanban #2145, #2211, a44 refute of #1622): slice, map and filter of a typed array and slice of an
+  // ArrayBuffer make their copy through the species path, and that path falls back to the realm's RAW intrinsic when the
+  // exemplar's own \`constructor\` is undefined or has no @@species (ECMA-262 TypedArraySpeciesCreate, SpeciesConstructor) -
+  // a core that ran Object.defineProperty(a, 'constructor', { value: undefined }) copied outside the budget and the live
+  // cap. So the count no longer depends on the species lookup: each method is wrapped, and a copy the wrapped constructors
+  // did not already count (or a view on a buffer they counted) is counted here by its real byte length.
+  const copied = (o, bytesOf) => {
+    if (o === null || typeof o !== 'object' || isCounted(o)) return o;
+    if (bytesOf === taBytes) { let b = null; try { b = taBuffer(o); } catch { return o; } if (isCounted(b)) return o; }
+    else if (!isBuffer(o)) return o;
+    const n = bytesOf(o);
+    take(n);
+    return keep(o, n);
+  };
+  // slice and filter run no core code after their copy is allocated (filter calls its callbacks before), so counting the copy
+  // when they return is counting it before any core code can run beside it
+  for (const [O, m, bytesOf] of [[TAP, 'slice', taBytes], [TAP, 'filter', taBytes], [ArrayBuffer.prototype, 'slice', abBytes]]) {
+    const f = O[m];
+    Object.defineProperty(O, m, { value: { [m](...a) { return copied(apply(f, this, a), bytesOf); } }[m], writable: false, configurable: false });
+  }
+  // (kanban #2449, #2496) map allocates its copy FIRST and then calls the core's callback once per element: a callback that
+  // throws (or nests another map) left the copy uncounted. So the copy is made by the raw map with a callback that runs no
+  // core code, counted at once, and only then filled by the core's callback, in the order ECMA-262 %TypedArray%.prototype.map
+  // gives (Get, Call, Set per index): the same values, the same errors, the copy counted before the first callback runs.
+  {
+    const f = TAP.map, same = (v) => v;
+    Object.defineProperty(TAP, 'map', { value: { map(cb, ...rest) {
+      const thisArg = rest[0];
+      const len = taLength(this);
+      if (typeof cb !== 'function') throw new TypeError(String(cb) + ' is not a function');
+      const A = copied(apply(f, this, [same]), taBytes);
+      for (let k = 0; k < len; k++) A[k] = apply(cb, thisArg, [this[k], k, this]);
+      return A;
+    } }.map, writable: false, configurable: false });
+  }
+  // toReversed, toSorted and with copy without a constructor; the copy's bytes are reserved before it is made (the toSorted
+  // comparator and with's value coercion are core code) and settled to its real length after
   for (const m of ['toReversed', 'toSorted', 'with']) {
     const f = TAP[m];
-    Object.defineProperty(TAP, m, { value: function (...a) { take(taBytes(this)); const o = apply(f, this, a); return keep(o, taBytes(o)); }, writable: false, configurable: false });
+    Object.defineProperty(TAP, m, { value: { [m](...a) { const r = taBytes(this); take(r); const o = apply(f, this, a); const real = taBytes(o); settle(r, real); return keep(o, real); } }[m], writable: false, configurable: false });
   }
   // a global the context cannot lose (V8's gc, made non-configurable while ANOTHER thread of this process had --expose-gc set for
   // the moment core-host.js takes to read it - the flag is the process's) is no context to run a core in: it is made again (build)
   for (const k of ${JSON.stringify(REMOVED)}) if (!R.deleteProperty(globalThis, k)) throw new RangeErr('arena:context-again ' + k);
+  // kanban #2453: only the language's own globals stay, whatever the seat's V8 flags added (one that cannot be taken out
+  // stops the load), and the stack trace limit starts the same on every seat
+  const language = new Set(${JSON.stringify(GLOBALS)});
+  for (const k of Reflect.ownKeys(globalThis)) {
+    if (typeof k === 'string' && language.has(k)) continue;
+    if (!Reflect.deleteProperty(globalThis, k)) throw new TypeError("the seat's node put the global " + String(k) + " into the core's realm, and it cannot be taken out");
+  }
+  Error.stackTraceLimit = 10;
   delete Math.random;
   // THE SEAT'S LOCALE (kanban #1623): Intl is gone, but the locale-aware methods of the language still answer by the
   // thread's ICU default locale - the seat's LANG/LC_ALL (measured: '1,234.5|äz' under en_US, '1 234,5|zä' under sv_SE),
@@ -177,10 +289,49 @@ const LOCKDOWN = `'use strict';
     const a = strOf(this), b = String(that);
     return a < b ? -1 : a > b ? 1 : 0;
   } }.localeCompare);
-  Object.defineProperty(Error, 'prepareStackTrace', { value: undefined, writable: false, configurable: false });
+  // THE SEAT'S INSTALL PATH (kanban #2219, #1489 audit44 refute of #1623): V8's default stack text lists this thread's own
+  // frames below the core's - file:///<install dir>/packages/arena-node/src/core-host.js and node:vm with its line numbers -
+  // so a core that put any bit of new Error().stack in its hash or result answered differently on seats installed in
+  // different directories (measured: 625 against 675 characters for /a and /operator-bob/bitcoin-arena), and read the
+  // operator's user name and the Node build. The stack text is formatted here instead: the error's own head, then the frames
+  // of the core's realm (core:/<file>, arena:driver, arena:call, arena:lockdown, and built-ins with no file) from the top
+  // down to the first frame of anything else, which ends it. The node's frames are never in it, whatever the seat's path or
+  // Node build. Error.stackTraceLimit stays the core's to set (a core may write it): a higher one shows more of the core's own
+  // frames, the same on every seat, and never one of the node's. The global Error binding is fixed: Node formats a
+  // stack by globalThis.Error.prepareStackTrace of the error's realm, so a core that replaced the global Error by an object
+  // of its own would be handed the call sites again. Error.captureStackTrace formats through the same function.
+  // every method it calls is taken here: a core that redefines String.prototype.startsWith or includes changes nothing
+  const errToString = Error.prototype.toString, sw = String.prototype.startsWith, inc = String.prototype.includes;
+  const ownFrame = (f) => typeof f !== 'string' || apply(sw, f, ['core:/']) || apply(sw, f, ['arena:']);
+  const head = (e) => { try { return apply(errToString, e, []); } catch { return 'Error'; } };
+  const prepare = { prepareStackTrace(e, sites) {
+    let s = head(e);
+    for (let i = 0; i < sites.length; i++) {
+      let f, line;
+      try { f = sites[i].getFileName(); line = sites[i].toString(); } catch { break; }
+      if (!ownFrame(f) || typeof line !== 'string' || apply(inc, line, ['file:']) || apply(inc, line, ['node:'])) break;
+      s += '\\n    at ' + line;
+    }
+    return s;
+  } }.prepareStackTrace;
+  Object.defineProperty(Error, 'prepareStackTrace', { value: prepare, writable: false, configurable: false, enumerable: false });
+  Object.defineProperty(globalThis, 'Error', { writable: false, configurable: false });
   // the script's value, handed only to this thread and kept on no global: the core never reaches it
-  return Object.freeze({ begin() { used = 0; }, over: () => over, used: () => used,
-    bound: () => (count > ${TRACK_MAX} ? Infinity : base + since), exact });
+  // kanban #2220, #2476: the core's call depth (core-depth.js), counted in its own realm
+  const depth = ${DEPTH_LOCKDOWN};
+  // AN OVERFLOW HANDED TO A REJECTION HANDLER IS STICKY TOO (kanban #2852, #1489 r26-hosting-1): String or JSON.stringify run as a promise
+  // job itself (Promise.resolve(deep).then(String)), so no function of the core's was on the stack when the builtin overflowed and nothing
+  // the core wrote caught it - the RangeError reached the next rejection handler as a plain ARGUMENT and the core branched on where the
+  // machine's stack ran out. Every rejection handler (then's second argument; catch, finally, the combinators and a promise resolved with a
+  // promise all call then) asks the count first: past an overflow it is sticky and thrown on instead of handed over. Anything else passes
+  // untouched. (Replacing then breaks V8's then protector for this thread: a promise of the node's own realm - import()'s refusal - then
+  // settles through the node's microtask queue, between two calls; each call drains the core's queue first, below.)
+  { const then0 = Promise.prototype.then, applyP = Reflect.apply;
+    const guard = (f) => (typeof f === 'function' ? function (r) { depth.c(r); return applyP(f, this, [r]); } : f);
+    Object.defineProperty(Promise.prototype, 'then', { value: { then(a, b) { return applyP(then0, this, [a, guard(b)]); } }.then,
+      writable: false, configurable: false, enumerable: false }); }
+  return Object.freeze({ begin() { used = 0; depth.begin(); }, over: () => (over !== null ? over : depth.over()), used: () => used,
+    bound: () => (count > ${TRACK_MAX} ? Infinity : base + since), exact, depth });
 })();`;
 
 /** Answer the node: the message first, then the flag it waits on. */
@@ -189,7 +340,15 @@ function answer(m) {
   Atomics.store(ctrl, 0, 1);
   Atomics.notify(ctrl, 0);
 }
-const said = (e) => (e && typeof e.message === 'string' ? e.message : String(e));
+// kanban #2165, #2232, #2304 (refute of #1691): A CORE'S FAILURE IS BOUNDED LIKE ITS ANSWER. said(e) is the core's own text
+// (its thrown message, any length - measured 64 MB), posted as `why` and copied into the node's thread, where no limit of this
+// thread applies. It is cut here to WHY_MAX characters in this realm, before it is ever posted; core-sandbox.js refuses a
+// longer one again. Reading it may throw (a getter, a toString): then a fixed text.
+const WHY_MAX = 1024;
+const cut = (s) => (s.length > WHY_MAX ? s.slice(0, WHY_MAX) + ' [cut]' : s);
+const said = (e) => {
+  try { return cut(e && typeof e.message === 'string' ? e.message : String(e)); } catch { return 'the core failed with something that could not be read'; }
+};
 
 // kanban #1813: THIS THREAD'S OWN MEMORY in MB (its isolate: heap, external - the arrays - and malloced), written to the
 // control slot FROM_MB (4) as the load and each call begin; the supervisor charges the core only for growth past it
@@ -200,6 +359,8 @@ markFrom();
 // compiled once, run in every context: the lockdown, the call, and a code cache of each module's source
 const LOCKDOWN_SCRIPT = new vm.Script(LOCKDOWN, { filename: 'arena:lockdown' });
 const CALL_SCRIPT = new vm.Script('__arenaCall(__arenaOp, __arenaIn)', { filename: 'arena:call' });
+// kanban #2852: an empty script, so the jobs the node's realm queued for the core between two calls (import()'s refusal) run as the call begins
+const DRAIN_SCRIPT = new vm.Script('0', { filename: 'arena:drain' });
 const codeCache = new Map();
 
 /** ONE CONTEXT, LOADED FROM THE CORE'S FILES: the lockdown, the core's modules and the driver evaluated in it. Answers
@@ -210,6 +371,7 @@ function build() {
   // nothing of the node stands behind it, and a core's global reads run at full speed (measured 4x slower behind them)
   let context, budget;
   for (let tries = 0; ; tries++) {
+    v8.setFlagsFromString(V8_EXTENSIONS_OFF);   // kanban #2453: no V8 extension global in the context made next
     context = vm.createContext(vm.constants.DONT_CONTEXTIFY, {
       name: `core ${name}`, codeGeneration: { strings: false, wasm: false }, microtaskMode: 'afterEvaluate',
     });
@@ -225,12 +387,19 @@ function build() {
     if (!codeCache.has(key)) codeCache.set(key, m.createCachedData());
     return m;
   };
+  // kanban #2220, #2476: the count's functions, the core's realm's own (made by the lockdown), as the module every core file
+  // imports first (core-depth.js instrumentCore wrote that import; a core that writes one itself is refused there)
+  const depthModule = new vm.SyntheticModule(['e', 'x', 'c'], function () {
+    this.setExport('e', budget.depth.e); this.setExport('x', budget.depth.x); this.setExport('c', budget.depth.c);
+  }, { context, identifier: DEPTH_MODULE });
   const moduleOf = (rel) => {
+    if (rel === DEPTH_MODULE) return depthModule;
     if (!modules.has(rel)) modules.set(rel, compile(rel, files.get(rel), `core:/${rel}`));
     return modules.get(rel);
   };
   // THE GATE: a relative path inside the hashed files, and nothing else
   const resolve = (specifier, fromRel) => {
+    if (specifier === DEPTH_MODULE) return DEPTH_MODULE;
     if (!/^\.\.?\//.test(specifier)) throw new Error(`the core imports "${specifier}", and a core may import only its own files`);
     const rel = posix.normalize(posix.join(posix.dirname(fromRel), specifier));
     if (rel.startsWith('../') || !files.has(rel)) throw new Error(`the core imports "${specifier}", which is not one of its hashed files`);
@@ -238,7 +407,7 @@ function build() {
   };
   const linked = new Set();
   const link = (rel) => {
-    if (linked.has(rel)) return;
+    if (linked.has(rel) || rel === DEPTH_MODULE) return;
     linked.add(rel);
     const m = moduleOf(rel);
     const deps = m.moduleRequests.map((r) => resolve(r.specifier, rel));
@@ -260,6 +429,8 @@ function build() {
   Object.defineProperty(context, '__arenaCall', { value: driver.namespace.call, writable: false, configurable: false, enumerable: false });
   const run = (op, json) => {
     budget.begin();
+    DRAIN_SCRIPT.runInContext(context);
+    if (budget.over() !== null) throw new Error(budget.over());
     context.__arenaOp = op; context.__arenaIn = json;
     const out = CALL_SCRIPT.runInContext(context);
     if (budget.over() !== null) throw new Error(budget.over());

@@ -1,0 +1,1974 @@
+{
+ "718": {
+  "text": "federation: recovery after an unclean shutdown",
+  "kind": "task"
+ },
+ "925": {
+  "text": "bonds: very old bonds fall out of the census",
+  "kind": "bug"
+ },
+ "962": {
+  "text": "Next Block: a truck can drive through tanks",
+  "kind": "bug"
+ },
+ "975": {
+  "text": "slashing: a slash can pay the wrong player",
+  "kind": "bug"
+ },
+ "1007": {
+  "text": "website: a pinned core fails a test",
+  "kind": "bug"
+ },
+ "1008": {
+  "text": "repository: old commits stay readable",
+  "kind": "task"
+ },
+ "1038": {
+  "text": "committees: a missing quorum is handed to the wrong place",
+  "kind": "bug"
+ },
+ "1049": {
+  "text": "settlement: which result counts after a re-run",
+  "kind": "bug"
+ },
+ "1063": {
+  "text": "census: a node with several outputs can be misread",
+  "kind": "bug"
+ },
+ "1077": {
+  "text": "settlement: a commit word is not sent",
+  "kind": "bug"
+ },
+ "1155": {
+  "text": "slashing: a signer set is not bound properly",
+  "kind": "bug"
+ },
+ "1169": {
+  "text": "federation: a silent guardian can lose its place during an update",
+  "kind": "bug"
+ },
+ "1170": {
+  "text": "settlement: a kept batch can be replaced",
+  "kind": "bug"
+ },
+ "1176": {
+  "text": "reserves: the theft alarm misses some cases",
+  "kind": "bug"
+ },
+ "1183": {
+  "text": "settlement: expired stakes are judged per seat",
+  "kind": "bug"
+ },
+ "1187": {
+  "text": "slashing: signing work is done for unchecked requests",
+  "kind": "bug"
+ },
+ "1188": {
+  "text": "slashing: a share can be dropped too early",
+  "kind": "bug"
+ },
+ "1189": {
+  "text": "slashing: an escrow's first claim is decided locally",
+  "kind": "bug"
+ },
+ "1191": {
+  "text": "slashing: a fee coin is funded before it is recorded",
+  "kind": "bug"
+ },
+ "1192": {
+  "text": "slashing: release proposals are not limited",
+  "kind": "bug"
+ },
+ "1193": {
+  "text": "slashing: hold and release can race",
+  "kind": "bug"
+ },
+ "1204": {
+  "text": "audit: state machine review",
+  "kind": "task"
+ },
+ "1239": {
+  "text": "settlement: a guard is empty for some rounds",
+  "kind": "bug"
+ },
+ "1246": {
+  "text": "slashing: a payee check reads today's key",
+  "kind": "bug"
+ },
+ "1247": {
+  "text": "liquidation: an escrow can pay a claim twice",
+  "kind": "bug"
+ },
+ "1248": {
+  "text": "census: a late presence signature can split the seats",
+  "kind": "bug"
+ },
+ "1253": {
+  "text": "liquidation: a claim can take more than it should",
+  "kind": "bug"
+ },
+ "1351": {
+  "text": "census: a presence sent to only some seats can split them",
+  "kind": "bug"
+ },
+ "1352": {
+  "text": "liquidation: a reissue is not recorded ahead of time",
+  "kind": "bug"
+ },
+ "1357": {
+  "text": "slashing: a slash intent keeps too little",
+  "kind": "bug"
+ },
+ "1358": {
+  "text": "federation: a guardian's port can be lost after a restart",
+  "kind": "bug"
+ },
+ "1359": {
+  "text": "reserves: the key history depends on what a seat saw",
+  "kind": "bug"
+ },
+ "1367": {
+  "text": "federation: an absent claim can be replaced by anyone",
+  "kind": "bug"
+ },
+ "1369": {
+  "text": "installer: a rolled-back release is retried too often",
+  "kind": "bug"
+ },
+ "1370": {
+  "text": "settlement: a seat's own pass can overwrite a kept batch",
+  "kind": "bug"
+ },
+ "1372": {
+  "text": "presence: a bare marker can push an honest posting aside",
+  "kind": "bug"
+ },
+ "1376": {
+  "text": "markets: an attestor can sign a market again after a restart",
+  "kind": "bug"
+ },
+ "1377": {
+  "text": "update stage: anyone can reset fellows' health",
+  "kind": "bug"
+ },
+ "1380": {
+  "text": "update stage: any answer counts as healthy",
+  "kind": "bug"
+ },
+ "1386": {
+  "text": "census: an outsider can hold signing sessions open",
+  "kind": "bug"
+ },
+ "1482": {
+  "text": "node software: dependency security updates",
+  "kind": "task"
+ },
+ "1489": {
+  "text": "audit: attacker review with fixes",
+  "kind": "task"
+ },
+ "2564": {
+  "text": "committees: the page can work out a different committee than the seats",
+  "kind": "bug"
+ },
+ "2643": {
+  "text": "committees: one seat's bad answer can refuse every round",
+  "kind": "bug"
+ },
+ "2644": {
+  "text": "stake locks: one lock can store unlimited forged handouts",
+  "kind": "bug"
+ },
+ "2646": {
+  "text": "bounty: the social check can be flooded",
+  "kind": "bug"
+ },
+ "2648": {
+  "text": "settlement: one seat can hide a round so it goes void",
+  "kind": "bug"
+ },
+ "2649": {
+  "text": "attestation: a late observation is accepted",
+  "kind": "bug"
+ },
+ "2650": {
+  "text": "federation: some answers are read without a size limit",
+  "kind": "bug"
+ },
+ "2651": {
+  "text": "seating: answers are read without a size limit",
+  "kind": "bug"
+ },
+ "2652": {
+  "text": "reserves: a share can be taken with extra addresses",
+  "kind": "bug"
+ },
+ "2653": {
+  "text": "settlement: a replayed empty answer can hide a seat's list",
+  "kind": "bug"
+ },
+ "2656": {
+  "text": "payouts: leaderboard places can go to the wrong players",
+  "kind": "bug"
+ },
+ "2658": {
+  "text": "Rock Paper Scissors: the house bot forfeits rounds",
+  "kind": "bug"
+ },
+ "2659": {
+  "text": "head-to-head: a backdated name record can spread",
+  "kind": "bug"
+ },
+ "2660": {
+  "text": "committees: one seat's answer can cost the committee its tolerance",
+  "kind": "bug"
+ },
+ "2661": {
+  "text": "rounds: one junk answer can block a walk-away forfeit",
+  "kind": "bug"
+ },
+ "2662": {
+  "text": "reserves: a peer row can wrongly refuse a stake lock",
+  "kind": "bug"
+ },
+ "2663": {
+  "text": "markets: unbacked sell orders can flood batches",
+  "kind": "bug"
+ },
+ "2664": {
+  "text": "faucet: public requests can crowd the welcome queue",
+  "kind": "bug"
+ },
+ "2665": {
+  "text": "bounty: a Telegram link can count another member",
+  "kind": "bug"
+ },
+ "2666": {
+  "text": "bounty: link codes can be made without limit",
+  "kind": "bug"
+ },
+ "2667": {
+  "text": "gossip: one seat's empty answer can stop another taking its locks",
+  "kind": "bug"
+ },
+ "2668": {
+  "text": "head-to-head: one seat's header can block paid joins",
+  "kind": "bug"
+ },
+ "2669": {
+  "text": "rounds: a long donation list slows every join",
+  "kind": "bug"
+ },
+ "2670": {
+  "text": "proposals: large inputs are read before they are checked",
+  "kind": "bug"
+ },
+ "2673": {
+  "text": "games: a donation setting can stall auto-update",
+  "kind": "bug"
+ },
+ "2674": {
+  "text": "games: a trial run can pass without its config and stall a seat",
+  "kind": "bug"
+ },
+ "2676": {
+  "text": "feedback: a seed phrase split across fields could be kept",
+  "kind": "bug"
+ },
+ "2677": {
+  "text": "relay: fresh keys can fill the relay",
+  "kind": "bug"
+ },
+ "2678": {
+  "text": "rounds: made-up void requests cost heavy checks",
+  "kind": "bug"
+ },
+ "2679": {
+  "text": "rounds: padded results cost heavy checks",
+  "kind": "bug"
+ },
+ "2680": {
+  "text": "attestation: one peer's answer can backdate a late result",
+  "kind": "bug"
+ },
+ "2683": {
+  "text": "bounty: the Armada name lookup can reach internal hosts",
+  "kind": "bug"
+ },
+ "2684": {
+  "text": "bounty: draw entries can be merged by a chosen name",
+  "kind": "bug"
+ },
+ "2687": {
+  "text": "payouts: tie order can be steered",
+  "kind": "bug"
+ },
+ "2688": {
+  "text": "games: many auto-updated versions can use up memory",
+  "kind": "bug"
+ },
+ "2690": {
+  "text": "head-to-head: a stranger can enter under someone else's key",
+  "kind": "bug"
+ },
+ "2691": {
+  "text": "head-to-head: a stake-only lock can hold a paid seat and void the round",
+  "kind": "bug"
+ },
+ "2692": {
+  "text": "zaps: receipts paid to someone else are counted",
+  "kind": "bug"
+ },
+ "2693": {
+  "text": "zaps: very large relay frames can use up memory",
+  "kind": "bug"
+ },
+ "2695": {
+  "text": "rounds: forfeit commits can be flooded",
+  "kind": "bug"
+ },
+ "2696": {
+  "text": "payouts: a forged zap row can block zap payouts",
+  "kind": "bug"
+ },
+ "2697": {
+  "text": "explorer: a missed lookup asks every seat at once",
+  "kind": "bug"
+ },
+ "2698": {
+  "text": "website: the season board trusts a single seat too much",
+  "kind": "bug"
+ },
+ "2699": {
+  "text": "rounds: junk presence requests force heavy checks",
+  "kind": "bug"
+ },
+ "2700": {
+  "text": "proposals: a late proposal can go live on only some seats",
+  "kind": "bug"
+ },
+ "2701": {
+  "text": "price feed: samples can be left out",
+  "kind": "bug"
+ },
+ "2702": {
+  "text": "attestation: seat answers are read without a size limit",
+  "kind": "bug"
+ },
+ "2703": {
+  "text": "season: badge ties are decided by key order",
+  "kind": "bug"
+ },
+ "2704": {
+  "text": "gateways: answers are read without a size limit",
+  "kind": "bug"
+ },
+ "2705": {
+  "text": "markets: refused peer answers are read without a size limit",
+  "kind": "bug"
+ },
+ "2706": {
+  "text": "stake locks: a peer's answer is read without a size limit",
+  "kind": "bug"
+ },
+ "2709": {
+  "text": "head-to-head: one seat listed twice counts twice",
+  "kind": "bug"
+ },
+ "2710": {
+  "text": "games: a timed-out check is remembered as a refusal",
+  "kind": "bug"
+ },
+ "2711": {
+  "text": "games: a lingering trial can drop installed games",
+  "kind": "bug"
+ },
+ "2713": {
+  "text": "wallet: Nostr login can create a second seed",
+  "kind": "bug"
+ },
+ "2714": {
+  "text": "payouts: tip callbacks can create many invoices",
+  "kind": "bug"
+ },
+ "2715": {
+  "text": "relay: some subscriptions can stall the relay",
+  "kind": "bug"
+ },
+ "2716": {
+  "text": "payouts: a payout address can point at internal hosts",
+  "kind": "bug"
+ },
+ "2717": {
+  "text": "feedback: a few networks can use up everyone's daily limit",
+  "kind": "bug"
+ },
+ "2718": {
+  "text": "website: a request rescans all orders",
+  "kind": "bug"
+ },
+ "2719": {
+  "text": "markets: one seat's bare answer can decide a market result",
+  "kind": "bug"
+ },
+ "2720": {
+  "text": "rounds: resume reads peer answers without a size limit",
+  "kind": "bug"
+ },
+ "2722": {
+  "text": "proposals: a per-author limit can be dodged with new keys",
+  "kind": "bug"
+ },
+ "2723": {
+  "text": "proposals: oversized proposals can stop the proposal pull",
+  "kind": "bug"
+ },
+ "2725": {
+  "text": "season: crafted requests can bypass the cache",
+  "kind": "bug"
+ },
+ "2726": {
+  "text": "head-to-head: a paid round can take unlimited entries",
+  "kind": "bug"
+ },
+ "2728": {
+  "text": "stake locks: a peer's share answer is read without a size limit",
+  "kind": "bug"
+ },
+ "2729": {
+  "text": "seats: padded answers can force heavy signature checks",
+  "kind": "bug"
+ },
+ "2730": {
+  "text": "games: the trial run and the seat can disagree",
+  "kind": "bug"
+ },
+ "2731": {
+  "text": "seats: an error path can bypass a safety flag",
+  "kind": "bug"
+ },
+ "2732": {
+  "text": "faucet: the feedback limit can be passed with parallel requests",
+  "kind": "bug"
+ },
+ "2733": {
+  "text": "faucet: a wallet answer is read without a size limit",
+  "kind": "bug"
+ },
+ "2734": {
+  "text": "faucet: the Lightning address check can be fooled by naming",
+  "kind": "bug"
+ },
+ "2735": {
+  "text": "installer: a seat can strip the package list and stop rounds",
+  "kind": "bug"
+ },
+ "2736": {
+  "text": "games: one bad source can stop automatic game updates",
+  "kind": "bug"
+ },
+ "2737": {
+  "text": "settlement: plans are rebuilt on every read",
+  "kind": "bug"
+ },
+ "2738": {
+  "text": "relay: can be slowed by oversized requests",
+  "kind": "bug"
+ },
+ "2739": {
+  "text": "committees: one seat's made-up round can break item purchases",
+  "kind": "bug"
+ },
+ "2740": {
+  "text": "website: a seat's committee answers are read without a size limit",
+  "kind": "bug"
+ },
+ "2741": {
+  "text": "proposals: the deposit price is not enforced",
+  "kind": "bug"
+ },
+ "2742": {
+  "text": "replays: re-signed receipts can queue many replays",
+  "kind": "bug"
+ },
+ "2743": {
+  "text": "seats: a transcript request rebuilds the whole run each time",
+  "kind": "bug"
+ },
+ "2744": {
+  "text": "rounds: proof pulls are not throttled",
+  "kind": "bug"
+ },
+ "2746": {
+  "text": "payouts: one guardian can stall reserve payouts",
+  "kind": "bug"
+ },
+ "2747": {
+  "text": "Next Block: an old game config can bypass a passed vote",
+  "kind": "bug"
+ },
+ "2748": {
+  "text": "payouts: one seat's fake settlement can end a winner's payout",
+  "kind": "bug"
+ },
+ "2749": {
+  "text": "replays: a repeated receipt queues many replays",
+  "kind": "bug"
+ },
+ "2750": {
+  "text": "replays: a repeated mark is forwarded too often",
+  "kind": "bug"
+ },
+ "2751": {
+  "text": "games: a crafted package can block a seat for a long time",
+  "kind": "bug"
+ },
+ "2752": {
+  "text": "federation: junk lock requests reach the federation before local checks",
+  "kind": "bug"
+ },
+ "2753": {
+  "text": "markets: seats can split between a final and a void result",
+  "kind": "bug"
+ },
+ "2754": {
+  "text": "stats: played-round counts can be faked",
+  "kind": "bug"
+ },
+ "2755": {
+  "text": "faucet: junk requests can hold up the players' queue",
+  "kind": "bug"
+ },
+ "2756": {
+  "text": "bounty: a reward could keep a bonus the reporter no longer earns",
+  "kind": "bug"
+ },
+ "2757": {
+  "text": "faucet: one network block can empty the daily welcome pot",
+  "kind": "bug"
+ },
+ "2758": {
+  "text": "explorer: some searches scan the whole table",
+  "kind": "bug"
+ },
+ "2759": {
+  "text": "head-to-head: a seat that never answers can freeze the client",
+  "kind": "bug"
+ },
+ "2760": {
+  "text": "head-to-head: a round can be made unwinnable",
+  "kind": "bug"
+ },
+ "2761": {
+  "text": "chain: one header source can push fake headers",
+  "kind": "bug"
+ },
+ "2763": {
+  "text": "Other: the footer X icon covers the build label",
+  "kind": "bug"
+ },
+ "2764": {
+  "text": "Next Block game: without WebGL the game only says it is unsupported, with no next step",
+  "kind": "bug"
+ },
+ "2765": {
+  "text": "Node software: the page keeps saying it is finding nodes after the chooser has filled",
+  "kind": "bug"
+ },
+ "2767": {
+  "text": "federation: donor funds can follow a wrong record",
+  "kind": "bug"
+ },
+ "2774": {
+  "text": "Node software: duty nodes can pay for work that was not due",
+  "kind": "bug"
+ },
+ "2778": {
+  "text": "Other: the build label beside the wallet is unexplained, so new players read it as an error",
+  "kind": "bug"
+ },
+ "2791": {
+  "text": "Other: a plugin trial can accept a spinning decide adapter",
+  "kind": "bug"
+ },
+ "2792": {
+  "text": "Committees and bonds: a proposal read rebuilds the census on every request",
+  "kind": "bug"
+ },
+ "2793": {
+  "text": "Node software: a bandwidth probe reads a peer answer with no size limit",
+  "kind": "bug"
+ },
+ "2794": {
+  "text": "Other: a fee forfeit can miss its lock",
+  "kind": "bug"
+ },
+ "2795": {
+  "text": "Settlement: a website key can block a whole settlement",
+  "kind": "bug"
+ },
+ "2796": {
+  "text": "Other: unlimited watchers can multiply picture work",
+  "kind": "bug"
+ },
+ "2797": {
+  "text": "Other: an approved donation set can be undone",
+  "kind": "bug"
+ },
+ "2798": {
+  "text": "Node software: one unsigned void can skip a head-to-head reveal",
+  "kind": "bug"
+ },
+ "2799": {
+  "text": "Other: unsigned feedback can name any key as a founding tester",
+  "kind": "bug"
+ },
+ "2800": {
+  "text": "Other: played-round counts can still be faked",
+  "kind": "bug"
+ },
+ "2801": {
+  "text": "Committees and bonds: a census read rebuilds a tree for every entry and can stall",
+  "kind": "bug"
+ },
+ "2802": {
+  "text": "Node software: a client reads item and donation answers with no size limit",
+  "kind": "bug"
+ },
+ "2803": {
+  "text": "Other: a made-up donation can be booked as collected",
+  "kind": "bug"
+ },
+ "2804": {
+  "text": "Node software: a bad mark receipt can make a transcript impossible to build",
+  "kind": "bug"
+ },
+ "2805": {
+  "text": "Node software: an empty signed batch can stop every seat from signing the run",
+  "kind": "bug"
+ },
+ "2806": {
+  "text": "Other: a served read re-checks old finals, and purchases fan that out",
+  "kind": "bug"
+ },
+ "2807": {
+  "text": "Node software: a plugin trial can leave a hosted package untried and block a seat when a round opens",
+  "kind": "bug"
+ },
+ "2808": {
+  "text": "Node software: the trial and the seat can still disagree",
+  "kind": "bug"
+ },
+ "2809": {
+  "text": "Other: a donation gift can free outputs for reuse",
+  "kind": "bug"
+ },
+ "2810": {
+  "text": "Other: an unsigned manifest can show up as a hosted game update",
+  "kind": "bug"
+ },
+ "2811": {
+  "text": "Other: duplicate series entries can starve real series of their share",
+  "kind": "bug"
+ },
+ "2812": {
+  "text": "Node software: a padded donation-ballot answer can stall every pulling seat",
+  "kind": "bug"
+ },
+ "2813": {
+  "text": "Node software: an unsigned seating index can beat honest seats",
+  "kind": "bug"
+ },
+ "2814": {
+  "text": "Other: one network can use up the day's screenshot allowance",
+  "kind": "bug"
+ },
+ "2815": {
+  "text": "Faucet and feedback: one network can take the whole day's faucet share",
+  "kind": "bug"
+ },
+ "2816": {
+  "text": "Other: a paid join reads donation answers with no size limit",
+  "kind": "bug"
+ },
+ "2817": {
+  "text": "Node software: reading old lock certificates can let a stranger stall a seat",
+  "kind": "bug"
+ },
+ "2818": {
+  "text": "Faucet and feedback: a played-round check can trust one seat",
+  "kind": "bug"
+ },
+ "2819": {
+  "text": "Node software: a batch certificate can stall a seat on too many sells",
+  "kind": "bug"
+ },
+ "2820": {
+  "text": "Other: peer round answers can be kept without an identity check",
+  "kind": "bug"
+ },
+ "2821": {
+  "text": "Committees and bonds: a census read waits on each silent seat in turn",
+  "kind": "bug"
+ },
+ "2822": {
+  "text": "Other: forged lock signatures force many checks per request",
+  "kind": "bug"
+ },
+ "2823": {
+  "text": "Node software: many plugin configs can block a seat at install and every start",
+  "kind": "bug"
+ },
+ "2824": {
+  "text": "Node software: a store package with very many cores can block a seat",
+  "kind": "bug"
+ },
+ "2825": {
+  "text": "Settlement: fee rounding can leave a market round unable to settle",
+  "kind": "bug"
+ },
+ "2826": {
+  "text": "Other: run ticks are not bound to the round clock",
+  "kind": "bug"
+ },
+ "2827": {
+  "text": "Faucet and feedback: the daily welcome pot can still be emptied from more than one network",
+  "kind": "bug"
+ },
+ "2828": {
+  "text": "Node software: a padded transaction answer can exhaust the explorer's memory",
+  "kind": "bug"
+ },
+ "2831": {
+  "text": "Committees and bonds: a stranger can use up the shared proposal read and lock bonded proposers out",
+  "kind": "bug"
+ },
+ "2832": {
+  "text": "Node software: one seat can split a head-to-head verdict by withholding reveals",
+  "kind": "bug"
+ },
+ "2833": {
+  "text": "Federation: a forged copy can mark a waiting gift as spent",
+  "kind": "bug"
+ },
+ "2834": {
+  "text": "Node software: strangers can fill the held-aside slots and lock honest players out",
+  "kind": "bug"
+ },
+ "2835": {
+  "text": "Other: a stranger entry can block signing for a paid round",
+  "kind": "bug"
+ },
+ "2836": {
+  "text": "Other: Up or Down can quote a side that is not offered and show a placeholder as a price",
+  "kind": "bug"
+ },
+ "2837": {
+  "text": "Other: nested default values can bypass the depth limit",
+  "kind": "bug"
+ },
+ "2838": {
+  "text": "Node software: a stranger can void a live run at a seat that missed the first mark",
+  "kind": "bug"
+ },
+ "2839": {
+  "text": "Other: idle relay subscriptions can exhaust memory",
+  "kind": "bug"
+ },
+ "2840": {
+  "text": "Committees and bonds: a peer proposal pull skips the census-read budget",
+  "kind": "bug"
+ },
+ "2841": {
+  "text": "Lightning payouts: open places can be filled by washed stake",
+  "kind": "bug"
+ },
+ "2842": {
+  "text": "Faucet and feedback: a round can be marked tapped without a real tap",
+  "kind": "bug"
+ },
+ "2843": {
+  "text": "Node software: a held cancel can open from one seat's unchecked listing",
+  "kind": "bug"
+ },
+ "2844": {
+  "text": "Node software: a trial can be told apart from a seat by its first decide",
+  "kind": "bug"
+ },
+ "2845": {
+  "text": "Other: a network update can overwrite an owner's package and drop their series",
+  "kind": "bug"
+ },
+ "2846": {
+  "text": "Node software: an e-cash exchange reads seat offers and answers with no size limit",
+  "kind": "bug"
+ },
+ "2847": {
+  "text": "Other: the next stranger write can evict a newcomer's profile slot",
+  "kind": "bug"
+ },
+ "2848": {
+  "text": "Other: a gift server that already has receipts can still be refused as full",
+  "kind": "bug"
+ },
+ "2849": {
+  "text": "Next Block game: an out-of-range throttle can cancel the damage slowdown",
+  "kind": "bug"
+ },
+ "2850": {
+  "text": "Committees and bonds: the node minimum counts bond rows, not distinct nodes",
+  "kind": "bug"
+ },
+ "2851": {
+  "text": "Node software: the store can keep one seat's unchecked game info and hide the signed info",
+  "kind": "bug"
+ },
+ "2852": {
+  "text": "Other: a builtin handler can hide a stack overflow from the sticky check",
+  "kind": "bug"
+ },
+ "2853": {
+  "text": "Other: a series publication can be reimbursed the wrong number of times",
+  "kind": "bug"
+ },
+ "2854": {
+  "text": "Other: a forfeit listing can skip the proof-pull gate and fan out to peers",
+  "kind": "bug"
+ },
+ "2855": {
+  "text": "Committees and bonds: unbonded node facts pile up while the census is unread",
+  "kind": "bug"
+ },
+ "2856": {
+  "text": "Node software: an address announcement can make seats dial a private service",
+  "kind": "bug"
+ },
+ "2857": {
+  "text": "Faucet and feedback: a faucet amount check can miss a smaller unit",
+  "kind": "bug"
+ },
+ "2858": {
+  "text": "Other: a stranger can erase a new player's only seed",
+  "kind": "bug"
+ },
+ "2880": {
+  "text": "Settlement: one key's season share can be booked more than once",
+  "kind": "bug"
+ },
+ "2881": {
+  "text": "Other: the explorer can keep finished orders marked pending",
+  "kind": "bug"
+ },
+ "2889": {
+  "text": "Node software: round-card labels go unexplained and a countdown can look like an error",
+  "kind": "bug"
+ },
+ "2906": {
+  "text": "BTC Up/Down game: the page keeps asking every seat about an order that cannot form a book claim",
+  "kind": "bug"
+ },
+ "2907": {
+  "text": "Other: a pinned-apps check fails when an optional sample app cannot be read",
+  "kind": "bug"
+ },
+ "2908": {
+  "text": "BTC Up/Down game: the amount stepper can drop some stakes to the minimum",
+  "kind": "bug"
+ },
+ "2911": {
+  "text": "Next Block game: score exposure is measured from the wrong bay, so some trucks start already exposed",
+  "kind": "bug"
+ },
+ "2912": {
+  "text": "Node software: a shop purchase can be paid and then not recorded",
+  "kind": "bug"
+ },
+ "2913": {
+  "text": "Other: a paid round can show a paid amount that does not match its locks, and call a fee lock returned stake",
+  "kind": "bug"
+ },
+ "2921": {
+  "text": "Other: liquidity weight can follow a provider's own unproven channel claim",
+  "kind": "bug"
+ },
+ "2922": {
+  "text": "BTC Up/Down game: only the first seat's outcome is checked, so one unverifiable seat blocks the result",
+  "kind": "bug"
+ },
+ "2923": {
+  "text": "Committees and bonds: the stake ceiling counts bond rows instead of node keys",
+  "kind": "bug"
+ },
+ "2924": {
+  "text": "Other: an order-book update can lose unsold shares and a resting buy's budget",
+  "kind": "bug"
+ },
+ "2925": {
+  "text": "Lightning payouts: a claimed reserve payout can be trusted with no federation check",
+  "kind": "bug"
+ },
+ "2926": {
+  "text": "Slashing: a liquidation claim from an earlier halt can count in a later one",
+  "kind": "bug"
+ },
+ "2927": {
+  "text": "Other: one input batch can be accepted twice if its parts are reordered",
+  "kind": "bug"
+ },
+ "2928": {
+  "text": "Website: no space between the key line and the delete button",
+  "kind": "bug"
+ },
+ "2929": {
+  "text": "BTC Up/Down game: quotes can ignore ask depth, and a sell can lack a no-buyer guard",
+  "kind": "bug"
+ },
+ "2930": {
+  "text": "Rock Paper Scissors game: a carried move and its verdict can be accepted unchecked",
+  "kind": "bug"
+ },
+ "2931": {
+  "text": "Node software: fee proposals for the same height can be ordered differently per seat",
+  "kind": "bug"
+ },
+ "2932": {
+  "text": "Node software: a spent set kept only in memory can be signed unread",
+  "kind": "bug"
+ },
+ "2933": {
+  "text": "Rock Paper Scissors game: a paid mark can look like a payment, and score or round state can mix rounds",
+  "kind": "bug"
+ },
+ "2934": {
+  "text": "Other: a late claim and a remainder split can be applied out of order",
+  "kind": "bug"
+ },
+ "2935": {
+  "text": "Other: a dashboard handoff can replace a stored owner key",
+  "kind": "bug"
+ },
+ "2936": {
+  "text": "Other: an arbiter remainder can skip donation vesting, and a fallback price can look new",
+  "kind": "bug"
+ },
+ "2937": {
+  "text": "Committees and bonds: one seat can serve another's bond proof, so its own bond stays unproven",
+  "kind": "bug"
+ },
+ "2938": {
+  "text": "Node software: a compatibility check cannot run from a clean install, a dependency is missing",
+  "kind": "bug"
+ },
+ "2939": {
+  "text": "Other: a compatibility row with no checks is listed as working",
+  "kind": "bug"
+ },
+ "2940": {
+  "text": "Next Block game: a paid run can continue without saying the stake is charged again",
+  "kind": "bug"
+ },
+ "2941": {
+  "text": "Rock Paper Scissors game: an unplayed round's stake returns after the page already says so",
+  "kind": "bug"
+ },
+ "2942": {
+  "text": "Lightning payouts: a faucet top-up fails when the deposit invoice belongs to the same node",
+  "kind": "bug"
+ },
+ "2943": {
+  "text": "Next Block game: cargo never counts while the run does not reach the signer nodes",
+  "kind": "bug"
+ },
+ "2944": {
+  "text": "Federation: one record can be held by a single seat, so seats disagree on the list",
+  "kind": "bug"
+ },
+ "2945": {
+  "text": "Settlement: seats can disagree whether a round failed or was voided",
+  "kind": "bug"
+ },
+ "2946": {
+  "text": "Website: an account-delete check fails on login, and the fault is the test not the page",
+  "kind": "bug"
+ },
+ "2947": {
+  "text": "Other: a join can fail after the lock, a void refund can be short, and a deposit can exceed its cap",
+  "kind": "bug"
+ },
+ "2953": {
+  "text": "Website: a compatibility check shows a refusing signer as blank, and the refusal reason is lost",
+  "kind": "bug"
+ },
+ "2955": {
+  "text": "Website: the compatibility page test rejects automatic results from the nightly run",
+  "kind": "bug"
+ },
+ "2959": {
+  "text": "Federation: deposit errors can show internal names; move amounts, lobby text, counts, and the client log can be wrong",
+  "kind": "bug"
+ },
+ "2960": {
+  "text": "Node software: a long season board stays empty while the shorter board inside it still counts rounds",
+  "kind": "bug"
+ },
+ "2966": {
+  "text": "Federation: deposit text can show twice with a stale code, a list can repeat rows, and a seat can keep an old record",
+  "kind": "bug"
+ },
+ "2969": {
+  "text": "Lightning payouts: empty withdraw says nothing, another tab shows the start screen, early withdraw blames the gateways",
+  "kind": "bug"
+ },
+ "2970": {
+  "text": "Node software: a season board can name a different node total each read, and a longer window keeps the shorter header",
+  "kind": "bug"
+ },
+ "2971": {
+  "text": "Website: a compatibility row can say a sidecar works while its checks still fail",
+  "kind": "bug"
+ },
+ "2973": {
+  "text": "Node software: this week's listed payout amounts can be wrong",
+  "kind": "bug"
+ },
+ "2974": {
+  "text": "Federation: some seats still serve an older game list than the others",
+  "kind": "bug"
+ },
+ "2975": {
+  "text": "Next Block game: the price tape can go negative",
+  "kind": "bug"
+ },
+ "2978": {
+  "text": "Federation: seats can disagree on the reserve total for the same period",
+  "kind": "bug"
+ },
+ "2979": {
+  "text": "Committees and bonds: a join can fail when the advert is off this committee, and signers can stay silent",
+  "kind": "bug"
+ },
+ "2980": {
+  "text": "Node software: one seat can hold every other close, so a losing run ends void",
+  "kind": "bug"
+ },
+ "2981": {
+  "text": "Website: a door listing can keep a full copy per request and fill seat memory",
+  "kind": "bug"
+ },
+ "2982": {
+  "text": "Node software: one seat can displace an honest seat's vote",
+  "kind": "bug"
+ },
+ "2983": {
+  "text": "Federation: round fees can pay only guardians",
+  "kind": "bug"
+ },
+ "2984": {
+  "text": "Website: a head-to-head page can take one seat's void as final while others still certify",
+  "kind": "bug"
+ },
+ "2985": {
+  "text": "Other: an explorer listing can scan every transaction on each request",
+  "kind": "bug"
+ },
+ "2986": {
+  "text": "Other: a player can be pushed out of a lock list with no forfeit",
+  "kind": "bug"
+ },
+ "2987": {
+  "text": "Other: a stranger can fill the relay with keys that cannot be evicted",
+  "kind": "bug"
+ },
+ "2988": {
+  "text": "Other: a skipped relay check can erase newcomer profiles",
+  "kind": "bug"
+ },
+ "2989": {
+  "text": "Other: a replayed zap callback can stall the zap server",
+  "kind": "bug"
+ },
+ "2990": {
+  "text": "Node software: a relaying seat can make a genuine update be refused",
+  "kind": "bug"
+ },
+ "2991": {
+  "text": "Slashing: a liquidation fix does not cover the live game",
+  "kind": "bug"
+ },
+ "2992": {
+  "text": "Federation: seats can disagree on who is seated for fees",
+  "kind": "bug"
+ },
+ "2993": {
+  "text": "Federation: the website share of a round can stay at the default",
+  "kind": "bug"
+ },
+ "2994": {
+  "text": "Committees and bonds: an unproven bond can drop a node from the census",
+  "kind": "bug"
+ },
+ "2995": {
+  "text": "Other: one stranger can use up every link code",
+  "kind": "bug"
+ },
+ "2996": {
+  "text": "Other: one stranger can make every social check fail",
+  "kind": "bug"
+ },
+ "2997": {
+  "text": "Faucet and feedback: a follow lookup can skip the team-host refusal",
+  "kind": "bug"
+ },
+ "2998": {
+  "text": "Other: idle connections can block social login for everyone",
+  "kind": "bug"
+ },
+ "2999": {
+  "text": "Other: a flood of guestbook entries can drop every earlier member",
+  "kind": "bug"
+ },
+ "3000": {
+  "text": "Other: one relay can erase a social follow before it is checked",
+  "kind": "bug"
+ },
+ "3001": {
+  "text": "Settlement: an oversized relay read-back can stall settlement",
+  "kind": "bug"
+ },
+ "3002": {
+  "text": "Node software: one home seat can end an honest run",
+  "kind": "bug"
+ },
+ "3003": {
+  "text": "Other: a copied link code can attach the wrong social account",
+  "kind": "bug"
+ },
+ "3004": {
+  "text": "Other: a full relay can stall on every write",
+  "kind": "bug"
+ },
+ "3005": {
+  "text": "Faucet and feedback: a failed top-up can still lower the balance, and a rescan does not restore all of it",
+  "kind": "bug"
+ },
+ "3006": {
+  "text": "Node software: old round funds can stay invisible, and a rescan cannot bring them back",
+  "kind": "bug"
+ },
+ "3009": {
+  "text": "Settlement: an unmatched up/down order can finish without its stake coming back",
+  "kind": "bug"
+ },
+ "3010": {
+  "text": "Rock Paper Scissors game: taps with time still left can be refused as too late",
+  "kind": "bug"
+ },
+ "3011": {
+  "text": "Committees and bonds: one census seat's oversized refusal can fill memory",
+  "kind": "bug"
+ },
+ "3012": {
+  "text": "Federation: one seat's oversized refusal can fill a halted guardian's memory",
+  "kind": "bug"
+ },
+ "3013": {
+  "text": "Website: one seat can leave an honest page stuck on a forfeit",
+  "kind": "bug"
+ },
+ "3014": {
+  "text": "BTC Up/Down game: one seat can close a won order as a refund",
+  "kind": "bug"
+ },
+ "3015": {
+  "text": "Node software: a head-to-head reveal can stick at one seat and never reach the others",
+  "kind": "bug"
+ },
+ "3016": {
+  "text": "Lightning payouts: a seat can endorse a stranger's bond advert",
+  "kind": "bug"
+ },
+ "3017": {
+  "text": "Federation: an update from one seat can replace the held invite",
+  "kind": "bug"
+ },
+ "3018": {
+  "text": "Website: filler posts can still take a copied social link",
+  "kind": "bug"
+ },
+ "3019": {
+  "text": "Node software: one seat can turn a verified win into a refund",
+  "kind": "bug"
+ },
+ "3020": {
+  "text": "Federation: one guardian can make seats disagree on fees",
+  "kind": "bug"
+ },
+ "3021": {
+  "text": "Other: a full relay still checks every standing row on each write",
+  "kind": "bug"
+ },
+ "3022": {
+  "text": "Node software: one seat's refusal can block replay of a certified order",
+  "kind": "bug"
+ },
+ "3023": {
+  "text": "BTC Up/Down game: one seat can set the market's order limits",
+  "kind": "bug"
+ },
+ "3024": {
+  "text": "Other: junk approvals can push a real vote out of early parking",
+  "kind": "bug"
+ },
+ "3025": {
+  "text": "Node software: one slow seat can delay every head-to-head reveal",
+  "kind": "bug"
+ },
+ "3026": {
+  "text": "Federation: one seat can send federation funds the wrong way during an update",
+  "kind": "bug"
+ },
+ "3027": {
+  "text": "Other: a copied code redeemed in chat first can block the social link",
+  "kind": "bug"
+ },
+ "3028": {
+  "text": "Other: extra receipts can void someone else's live run",
+  "kind": "bug"
+ },
+ "3029": {
+  "text": "Node software: one seat can steer deposits and swaps",
+  "kind": "bug"
+ },
+ "3030": {
+  "text": "Website: one login relay can hang the page on an uncapped puzzle",
+  "kind": "bug"
+ },
+ "3031": {
+  "text": "Node software: a founding draw can give an operator's seat to a stranger",
+  "kind": "bug"
+ },
+ "3032": {
+  "text": "Lightning payouts: a listed bot can be treated as unmarked and paid in full",
+  "kind": "bug"
+ },
+ "3033": {
+  "text": "Settlement: one seat's junk price vote can stay in the batch",
+  "kind": "bug"
+ },
+ "3034": {
+  "text": "Other: free-round identities can hold relay standing that cannot be removed",
+  "kind": "bug"
+ },
+ "3035": {
+  "text": "Next Block game: play joins a closing round instead of the one shown, and says it is too late",
+  "kind": "bug"
+ },
+ "3036": {
+  "text": "Node software: a home seat can still withhold peer batches after a missing-stake or short answer",
+  "kind": "bug"
+ },
+ "3037": {
+  "text": "Committees and bonds: a seat can be credited for a round that was not real",
+  "kind": "bug"
+ },
+ "3038": {
+  "text": "Federation: a settlement read rebuilds a round plan every time",
+  "kind": "bug"
+ },
+ "3039": {
+  "text": "Website: one seat's lock answer can stop a certified order from replaying",
+  "kind": "bug"
+ },
+ "3040": {
+  "text": "Committees and bonds: a capped sighting list can freeze the ballot",
+  "kind": "bug"
+ },
+ "3041": {
+  "text": "BTC Up/Down game: one seat can move a round's time window",
+  "kind": "bug"
+ },
+ "3042": {
+  "text": "Other: a plugin trial can skip a decision when a larger set is the first call",
+  "kind": "bug"
+ },
+ "3043": {
+  "text": "Committees and bonds: one padded bond answer can stop the health page updating",
+  "kind": "bug"
+ },
+ "3044": {
+  "text": "Other: many connections can stall social login during signature checks",
+  "kind": "bug"
+ },
+ "3045": {
+  "text": "Other: replaying a voided entry re-asks every peer for receipts",
+  "kind": "bug"
+ },
+ "3046": {
+  "text": "Federation: one census seat can set a halted federation's proven halt",
+  "kind": "bug"
+ },
+ "3047": {
+  "text": "Node software: a paying entry with no handout can leave the winner unpaid",
+  "kind": "bug"
+ },
+ "3048": {
+  "text": "Settlement: one bad request can stop the attestor and void up/down rounds",
+  "kind": "bug"
+ },
+ "3049": {
+  "text": "Settlement: the attestor can sign an up/down outcome from a reading before the window ends",
+  "kind": "bug"
+ },
+ "3050": {
+  "text": "Node software: refused junk can fill a seat's memory",
+  "kind": "bug"
+ },
+ "3051": {
+  "text": "Node software: one network read can stall the seat on unbounded checks",
+  "kind": "bug"
+ },
+ "3052": {
+  "text": "Node software: expanding a large package on the main thread can freeze the seat",
+  "kind": "bug"
+ },
+ "3053": {
+  "text": "Website: one silent seat can freeze the pending line until reload",
+  "kind": "bug"
+ },
+ "3054": {
+  "text": "Lightning payouts: a partial name record can drop a player's season rounds",
+  "kind": "bug"
+ },
+ "3055": {
+  "text": "Other: a spoofed client address can evict a player from a head-to-head table",
+  "kind": "bug"
+ },
+ "3056": {
+  "text": "Other: a season draw place can be chosen after the seed is public",
+  "kind": "bug"
+ },
+ "3057": {
+  "text": "Other: public replay reads rebuild a whole run on every request",
+  "kind": "bug"
+ },
+ "3058": {
+  "text": "Node software: one batch leader can leave an order batch certified at some seats and void at others",
+  "kind": "bug"
+ },
+ "3059": {
+  "text": "Node software: a stranger can flush a new node's address announcement from every seat",
+  "kind": "bug"
+ },
+ "3060": {
+  "text": "Node software: one silent seat can keep a refused round's stake stuck",
+  "kind": "bug"
+ },
+ "3061": {
+  "text": "Other: each relay event copies the whole standing set, so writes grow with identities",
+  "kind": "bug"
+ },
+ "3062": {
+  "text": "Federation: an open guardian dial can keep every stranger message with no bound",
+  "kind": "bug"
+ },
+ "3063": {
+  "text": "Settlement: each encoding of one attestation can start another hand-on duty",
+  "kind": "bug"
+ },
+ "3064": {
+  "text": "Slashing: one seat's made-up federation can move the page's chain tip",
+  "kind": "bug"
+ },
+ "3065": {
+  "text": "Other: a deeply wrapped overflow is not sticky, so a core can see the engine overflow",
+  "kind": "bug"
+ },
+ "3066": {
+  "text": "Other: a nostr round result can book one key's share on every entry",
+  "kind": "bug"
+ },
+ "3067": {
+  "text": "Node software: compiling a large package out of memory can crash the whole seat",
+  "kind": "bug"
+ },
+ "3068": {
+  "text": "Committees and bonds: a bond after an update can advertise the old game list and miss new draws",
+  "kind": "bug"
+ },
+ "3069": {
+  "text": "Faucet and feedback: the node bounty never counts market committees, so an up/down-only node cannot qualify",
+  "kind": "bug"
+ },
+ "3070": {
+  "text": "Node software: an installer node keeps logging a missing-wallet duty failure",
+  "kind": "bug"
+ },
+ "3071": {
+  "text": "Node software: the full node and client test suites on main still need triage",
+  "kind": "bug"
+ },
+ "3083": {
+  "text": "Committees and bonds: an electrum-mode node never reads a census because batched chain calls are refused",
+  "kind": "bug"
+ },
+ "3084": {
+  "text": "Committees and bonds: an electrum-mode census read reports a false reorg when a reused connection drops",
+  "kind": "bug"
+ },
+ "3085": {
+  "text": "Next Block game: the plugin store hands a tree core as the only adapter, so the game never reaches outside nodes",
+  "kind": "bug"
+ },
+ "3086": {
+  "text": "Lightning payouts: a won payout with no collect record stays uncollected",
+  "kind": "bug"
+ },
+ "3088": {
+  "text": "Other: a refused purchase or gift can stay marked paid",
+  "kind": "bug"
+ },
+ "3089": {
+  "text": "Committees and bonds: a first bond after an older update can still name the old game list",
+  "kind": "bug"
+ },
+ "3090": {
+  "text": "Federation: a record lookup can still dial a refused guardian address",
+  "kind": "bug"
+ },
+ "3091": {
+  "text": "Federation: a record lookup can still dial a refused guardian address",
+  "kind": "bug"
+ },
+ "3092": {
+  "text": "Other: a refunded round's stake may not reappear after a rebuild",
+  "kind": "bug"
+ },
+ "3093": {
+  "text": "Committees and bonds: a duty post can dial census addresses the book already refused",
+  "kind": "bug"
+ },
+ "3094": {
+  "text": "Settlement: a market round still needs both overlaps to count as signed",
+  "kind": "bug"
+ },
+ "3095": {
+  "text": "Other: a claimed lost deposit can show twice in history",
+  "kind": "bug"
+ },
+ "3096": {
+  "text": "Faucet and feedback: a node bounty can count a seat's own witness",
+  "kind": "bug"
+ },
+ "3097": {
+  "text": "Node software: an unsigned relayed entry can stall an update",
+  "kind": "bug"
+ },
+ "3098": {
+  "text": "Other: a rescan reissue row can vanish if issuance overlaps a reload",
+  "kind": "bug"
+ },
+ "3099": {
+  "text": "Node software: an unsigned tree entry can let a seat run a different decision",
+  "kind": "bug"
+ },
+ "3100": {
+  "text": "Other: a tree scan can hide code after a comment is misread",
+  "kind": "bug"
+ },
+ "3101": {
+  "text": "Committees and bonds: a new first bond over a spent bond can keep the old game list",
+  "kind": "bug"
+ },
+ "3102": {
+  "text": "Node software: one hung standing seat can freeze the pending lookup",
+  "kind": "bug"
+ },
+ "3103": {
+  "text": "Other: a non-numeric pending amount can abort the pending lookup",
+  "kind": "bug"
+ },
+ "3104": {
+  "text": "Other: a round-keyed done set can drop other notes before a rebuild",
+  "kind": "bug"
+ },
+ "3105": {
+  "text": "Other: a late refusal in another tab can drop a newer paid record",
+  "kind": "bug"
+ },
+ "3106": {
+  "text": "Other: a refused rebuild write is never retried in the tab",
+  "kind": "bug"
+ },
+ "3107": {
+  "text": "Node software: a peer fetch can be steered onto the seat's own services",
+  "kind": "bug"
+ },
+ "3108": {
+  "text": "Committees and bonds: page discovery can keep and dial refused census addresses",
+  "kind": "bug"
+ },
+ "3109": {
+  "text": "Faucet and feedback: a node bounty can count witnesses that are not independent",
+  "kind": "bug"
+ },
+ "3110": {
+  "text": "Faucet and feedback: a node bounty can count a copied market attestation",
+  "kind": "bug"
+ },
+ "3111": {
+  "text": "Website: a rescan returned mark can miss its history row",
+  "kind": "bug"
+ },
+ "3112": {
+  "text": "Other: an early tree import can hide later imports from the scan",
+  "kind": "bug"
+ },
+ "3113": {
+  "text": "Other: a private-field check can drop a division reading",
+  "kind": "bug"
+ },
+ "3114": {
+  "text": "Committees and bonds: the installer wizard's first bond can still name a stale game list",
+  "kind": "bug"
+ },
+ "3115": {
+  "text": "Committees and bonds: the release branch still lacks the first-bond game-list fix",
+  "kind": "bug"
+ },
+ "3116": {
+  "text": "Federation: a refused payment can stay marked paid",
+  "kind": "bug"
+ },
+ "3117": {
+  "text": "Other: a late pay answer can overwrite another tab's paid record",
+  "kind": "bug"
+ },
+ "3118": {
+  "text": "Faucet and feedback: a market bounty can count a handed-over witness",
+  "kind": "bug"
+ },
+ "3119": {
+  "text": "Node software: a check-time close can mark an undrawn seat as signed",
+  "kind": "bug"
+ },
+ "3120": {
+  "text": "Faucet and feedback: a node bounty can count any signer when nothing was drawn",
+  "kind": "bug"
+ },
+ "3121": {
+  "text": "Other: a node-bounty own-witness fix is still missing on the main and release branches",
+  "kind": "bug"
+ },
+ "3122": {
+  "text": "Other: a pending note can be refused when storage is full, with no smaller fallback",
+  "kind": "bug"
+ },
+ "3123": {
+  "text": "Lightning payouts: an owed payout in another tab may never be rebuilt",
+  "kind": "bug"
+ },
+ "3124": {
+  "text": "Node software: the seat address book can accept local names",
+  "kind": "bug"
+ },
+ "3125": {
+  "text": "Website: a page round door can accept local addresses that discovery refuses",
+  "kind": "bug"
+ },
+ "3126": {
+  "text": "Other: a hashbang comment can hide globals from the tree scan",
+  "kind": "bug"
+ },
+ "3127": {
+  "text": "Other: a file and a directory with the same name can pass checks, then fail install",
+  "kind": "bug"
+ },
+ "3128": {
+  "text": "Committees and bonds: a first bond can name the old release's games while release state is stale",
+  "kind": "bug"
+ },
+ "3129": {
+  "text": "Website: the owner page can refuse honest tree packages",
+  "kind": "bug"
+ },
+ "3130": {
+  "text": "Other: rescan history corrections are still missing on the main and release branches",
+  "kind": "bug"
+ },
+ "3131": {
+  "text": "Faucet and feedback: a late drawn attestor can be left out of the node bounty",
+  "kind": "bug"
+ },
+ "3132": {
+  "text": "Lightning payouts: a payout rebuild can be blocked during a short grace",
+  "kind": "bug"
+ },
+ "3133": {
+  "text": "Other: a name that resolves locally can still be dialed",
+  "kind": "bug"
+ },
+ "3134": {
+  "text": "Federation: a reserve read can dial a guardian address without the usual checks",
+  "kind": "bug"
+ },
+ "3135": {
+  "text": "Slashing: a tree scan can stall the package check",
+  "kind": "bug"
+ },
+ "3136": {
+  "text": "Other: mixed-case library directories can pass the same-name package check",
+  "kind": "bug"
+ },
+ "3137": {
+  "text": "Other: an honest tree without semicolons can be refused by the plugin check",
+  "kind": "bug"
+ },
+ "3138": {
+  "text": "Other: a returned history row can be lost when the browser is full and never retried",
+  "kind": "bug"
+ },
+ "3139": {
+  "text": "Other: a rescan returned row can count the same balance twice",
+  "kind": "bug"
+ },
+ "3140": {
+  "text": "Other: a wallet balance can vanish after an empty reading",
+  "kind": "bug"
+ },
+ "3141": {
+  "text": "Other: a leader can void its own batch",
+  "kind": "bug"
+ },
+ "3142": {
+  "text": "Committees and bonds: an old bond record can still decide a census",
+  "kind": "bug"
+ },
+ "3143": {
+  "text": "Federation: a per-relay hold bound lets many relays pin a large amount",
+  "kind": "bug"
+ },
+ "3144": {
+  "text": "Node software: an early seat record can hold the claim window closed",
+  "kind": "bug"
+ },
+ "3145": {
+  "text": "Other: a shared relay signature budget can let junk crowd out honest events",
+  "kind": "bug"
+ },
+ "3146": {
+  "text": "Federation: an operator can still occupy a seat when two minimums match",
+  "kind": "bug"
+ },
+ "3147": {
+  "text": "Committees and bonds: one operator's two keys can form a committee alone and look served",
+  "kind": "bug"
+ },
+ "3148": {
+  "text": "Other: a donation set can stall while working through recipients",
+  "kind": "bug"
+ },
+ "3149": {
+  "text": "Federation: standing seating held only by seated guardians never travels",
+  "kind": "bug"
+ },
+ "3150": {
+  "text": "Other: a gateway hint can still lead both swap legs",
+  "kind": "bug"
+ },
+ "3151": {
+  "text": "Other: a chain read can still die on a malformed request",
+  "kind": "bug"
+ },
+ "3152": {
+  "text": "Committees and bonds: a bond lookup can reuse someone else's unsigned bond",
+  "kind": "bug"
+ },
+ "3153": {
+  "text": "Settlement: a text price from the first seat can ride an honest attestation group",
+  "kind": "bug"
+ },
+ "3154": {
+  "text": "Node software: one seat under many spellings can meet a reveal count",
+  "kind": "bug"
+ },
+ "3155": {
+  "text": "Other: empty messages can bypass a relay queue's size cap",
+  "kind": "bug"
+ },
+ "3156": {
+  "text": "Federation: a missing hold-back can let an operator's other node be drawn",
+  "kind": "bug"
+ },
+ "3157": {
+  "text": "Website: the seat and the page can disagree on a lone closed round's served root",
+  "kind": "bug"
+ },
+ "3158": {
+  "text": "Node software: a standing seating proof can be lost on restart",
+  "kind": "bug"
+ },
+ "3159": {
+  "text": "Website: seats with different readings can leave the page with no price sample",
+  "kind": "bug"
+ },
+ "3160": {
+  "text": "Other: one slow listed relay can delay every entry publish",
+  "kind": "bug"
+ },
+ "3161": {
+  "text": "Other: a head-to-head reveal retry can ignore a transient refusal",
+  "kind": "bug"
+ },
+ "3162": {
+  "text": "Committees and bonds: an open relay can buffer heavily toward a census node that is not reading",
+  "kind": "bug"
+ },
+ "3163": {
+  "text": "Other: one peer's junk signatures can crowd out a standing proof",
+  "kind": "bug"
+ },
+ "3164": {
+  "text": "Federation: an owner update re-fetch can let the source seat swap federation",
+  "kind": "bug"
+ },
+ "3165": {
+  "text": "Settlement: one seat can force an attestation tie and drop the tick price",
+  "kind": "bug"
+ },
+ "3166": {
+  "text": "Other: a refused fee lock can delay a refund",
+  "kind": "bug"
+ },
+ "3167": {
+  "text": "Website: a premature closed notice can stall a batch so peers never receive it",
+  "kind": "bug"
+ },
+ "3168": {
+  "text": "Federation: an auto update can replace a held invite with the source seat's guardian addresses",
+  "kind": "bug"
+ },
+ "3169": {
+  "text": "Other: a door cache cap can ignore how large its keys are",
+  "kind": "bug"
+ },
+ "3170": {
+  "text": "Settlement: a binary answer can leave a batch unsettled so publishing hangs",
+  "kind": "bug"
+ },
+ "3171": {
+  "text": "Node software: one signer's decline can void a certified batch at honest seats",
+  "kind": "bug"
+ },
+ "3172": {
+  "text": "Node software: a silent home seat can stall publishing with no end",
+  "kind": "bug"
+ },
+ "3173": {
+  "text": "Settlement: an attestor can look alive while its listener never started",
+  "kind": "bug"
+ },
+ "3174": {
+  "text": "Reserves: a relay reserve can be drained before signatures are checked",
+  "kind": "bug"
+ },
+ "3175": {
+  "text": "Node software: a seat that is not the leader can void a certified batch",
+  "kind": "bug"
+ },
+ "3176": {
+  "text": "Other: a donation set can bypass the network size cap",
+  "kind": "bug"
+ },
+ "3177": {
+  "text": "Other: a first-batch stake-not-seen notice never reaches peers",
+  "kind": "bug"
+ },
+ "3178": {
+  "text": "Committees and bonds: a re-bond can sign someone else's unsigned bond",
+  "kind": "bug"
+ },
+ "3179": {
+  "text": "Lightning payouts: an older payout step can still win after a newer one was withdrawn",
+  "kind": "bug"
+ },
+ "3180": {
+  "text": "Committees and bonds: a re-bond can sign someone else's unsigned bond",
+  "kind": "bug"
+ },
+ "3181": {
+  "text": "Other: a late final mark can lose an honest delivered run",
+  "kind": "bug"
+ },
+ "3182": {
+  "text": "Committees and bonds: unsigned dust on a bond key can break the advert check and the add",
+  "kind": "bug"
+ },
+ "3183": {
+  "text": "Federation: one guardian's own gateway can lead deposits",
+  "kind": "bug"
+ },
+ "3184": {
+  "text": "Other: an old payout notice can remove a player from a remaining output",
+  "kind": "bug"
+ },
+ "3185": {
+  "text": "Committees and bonds: a listed relay can hold each publish before committee peers are asked",
+  "kind": "bug"
+ },
+ "3186": {
+  "text": "Node software: a seat holding the final mark can stall a delivered close",
+  "kind": "bug"
+ },
+ "3187": {
+  "text": "Other: a head-to-head reveal can be met by seats that share one host",
+  "kind": "bug"
+ },
+ "3188": {
+  "text": "Other: an unfinished relay message can escape every size budget",
+  "kind": "bug"
+ },
+ "3189": {
+  "text": "Committees and bonds: a large census answer can pass the unsent size check",
+  "kind": "bug"
+ },
+ "3190": {
+  "text": "Other: a shared relay budget can let stranger relays refuse honest clients",
+  "kind": "bug"
+ },
+ "3191": {
+  "text": "Reserves: a relay reserve can be drained by junk",
+  "kind": "bug"
+ },
+ "3192": {
+  "text": "Settlement: an attestor can look alive while its listener never started",
+  "kind": "bug"
+ },
+ "3193": {
+  "text": "Other: a refused fee lock can delay a refund",
+  "kind": "bug"
+ },
+ "3194": {
+  "text": "Other: a non-leader signer's decline can void a certified set",
+  "kind": "bug"
+ },
+ "3195": {
+  "text": "Other: a donation set can bypass the network size cap",
+  "kind": "bug"
+ },
+ "3196": {
+  "text": "Other: a malformed peer answer can abort a liquidity gather",
+  "kind": "bug"
+ },
+ "3197": {
+  "text": "Node software: one equivocating seat can lose the price tick",
+  "kind": "bug"
+ },
+ "3198": {
+  "text": "Committees and bonds: a re-bond can sign someone else's unsigned bond",
+  "kind": "bug"
+ },
+ "3199": {
+  "text": "Federation: an owner update re-fetch can let the source seat swap federation",
+  "kind": "bug"
+ },
+ "3200": {
+  "text": "Other: a door cache cap can ignore how large its keys are",
+  "kind": "bug"
+ },
+ "3201": {
+  "text": "Other: a refute check can miss its test harness",
+  "kind": "bug"
+ },
+ "3202": {
+  "text": "Other: a failed chain listener can exit as success and never restart",
+  "kind": "bug"
+ },
+ "3203": {
+  "text": "Node software: a non-leader seat can void a certified batch with an invented second set",
+  "kind": "bug"
+ },
+ "3204": {
+  "text": "Node software: a reveal can be met by seats that share one host",
+  "kind": "bug"
+ },
+ "3205": {
+  "text": "Other: one listed relay can stall each publish before peers are asked",
+  "kind": "bug"
+ },
+ "3206": {
+  "text": "Other: a twice-signed tape can stay blank",
+  "kind": "bug"
+ },
+ "3207": {
+  "text": "Committees and bonds: unsigned dust on a bond can break the advert check and the add",
+  "kind": "bug"
+ },
+ "3208": {
+  "text": "Federation: a bad guardian seating answer can stop the seating gather",
+  "kind": "bug"
+ },
+ "3209": {
+  "text": "Federation: an auto update can replace a held invite with the source seat's guardian addresses",
+  "kind": "bug"
+ },
+ "3210": {
+  "text": "Other: one machine under many names can fill a reveal count",
+  "kind": "bug"
+ },
+ "3211": {
+  "text": "Other: late honest readings can change the median and drop the price tick",
+  "kind": "bug"
+ },
+ "3212": {
+  "text": "Other: a late final mark can lose an honest delivered run",
+  "kind": "bug"
+ },
+ "3213": {
+  "text": "Other: a delivered run's close can be held with no bound",
+  "kind": "bug"
+ },
+ "3214": {
+  "text": "Node software: a silent peer seat can stall publishing after the home stake wait",
+  "kind": "bug"
+ },
+ "3215": {
+  "text": "Node software: a home seat waiting on stake can be skipped for the whole run",
+  "kind": "bug"
+ },
+ "3217": {
+  "text": "Other: a departure can stay marked sent if its anchor confirms before the record is written",
+  "kind": "bug"
+ },
+ "3218": {
+  "text": "Node software: duty days can keep a replaced config after a ballot, so seats refuse them",
+  "kind": "bug"
+ },
+ "3219": {
+  "text": "Other: a lowered reward can still pay the old amount",
+  "kind": "bug"
+ },
+ "3220": {
+  "text": "Other: an approve or reject split across stores can stay unpaired after a failed write",
+  "kind": "bug"
+ },
+ "3221": {
+  "text": "Other: a refund close can drop a lock when the wallet was unread",
+  "kind": "bug"
+ },
+ "3222": {
+  "text": "Other: a merge can mark a wallet empty while notes are still being issued",
+  "kind": "bug"
+ },
+ "3223": {
+  "text": "Other: a later entry of the same key can strip stake from a finished run",
+  "kind": "bug"
+ },
+ "3224": {
+  "text": "Other: a held final mark can end both failed and delivered",
+  "kind": "bug"
+ },
+ "3225": {
+  "text": "Node software: a seat that signed the losing equivocated batch can stay marked signed",
+  "kind": "bug"
+ }
+}

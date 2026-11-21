@@ -32,7 +32,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
-import { isQualifier, FORFEIT as FORFEIT_OUTCOME } from '../../arena-protocol/src/payout.js';
+import { isQualifier, FORFEIT as FORFEIT_OUTCOME, VOID as VOID_OUTCOME } from '../../arena-protocol/src/payout.js';
 import { signShare340, aggregate340, nonceGenerate340, verifyShare340 } from '../../arena-protocol/src/frost-bip340.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { lockFieldsFromJson } from '../../arena-protocol/src/stake-lock.js';
@@ -42,8 +42,9 @@ import { resultFinality } from './finality.js';
 import { stateOf } from './settlement-state.js';
 import { pluginForRound } from './plugins.js';
 import { giftsInFeeLock } from '../../arena-protocol/src/reserves.js';
-import { encodeCommitments, decodeCommitments, decodePeerCommitment, encodeShare, decodeShare, commitmentListRefusal } from './pool-wire.js';
+import { encodeCommitments, decodeCommitments, encodeShare, decodeShare, commitmentListRefusal, decodePeerCommitment, peerCommitmentRefusal, leftOffLast, committedIds, COMMITMENT_BYTES, SHARE_BYTES } from './pool-wire.js';
 import { askPeers, PEER_ASK_MS, PEER_GRACE_MS } from './peer-ask.js';
+import { peerBytesUpTo, peerWhyUpTo } from './peer-body.js';
 import { PLAN_ASK, sendPlanAskHeaders, checkSendPlanAsk, forfeitCommitAskBody } from './send-plan-ask.js';
 import { commitAsker, shareAsker, spendRefusal, OWN } from './asker-pairs.js';
 import { NoncePool, SignerLists, sharesRefused, BOUND_ELSEWHERE, PAIRS_PER_KEY, PAIRS_ALL as POOL_ALL, LIST_TRIALS } from './nonce-pool.js';
@@ -115,7 +116,7 @@ export class Forfeit {
    * federation (it hashes a contract the way the guardians do); `peersFor(rid)`
    * names the other settlement signer nodes' bases.
    */
-  constructor(round, { dkg, port, curve, random, peersFor = () => [], fetcher = (u, o) => fetch(u, o), onVoid = null, pullProof = null, refusedNow = null, bookStanding = null, isBook = null, lockSetOut = null,
+  constructor(round, { dkg, port, curve, random, peersFor = () => [], fetcher = (u, o) => fetch(u, o), onVoid = null, pullProof = null, refusedNow = null, bookStanding = null, isBook = null, lockSetOut = null, kindPending = null,
     peerAskMs = PEER_ASK_MS, peerGraceMs = PEER_GRACE_MS } = {}) {
     this.round = round;
     // HOW LONG A SEAT IS WAITED FOR (peer-ask.js, kanban #1074 as #1061)
@@ -125,6 +126,8 @@ export class Forfeit {
     this.bookStanding = bookStanding;
     // rid -> whether the round is an order book (order-batch.js isBook: a certified batch holds an order) - its orders are its entries, else its plain picks
     this.isBook = isBook;
+    // rid -> the batches holding an order still undecided here (order-batch.js kindPending, kanban #1666): the round's kind is not decided yet
+    this.kindPending = kindPending;
     // §23.2 REFUSED: rid -> why this node refuses the round, or null while it offers it
     this.refusedNow = refusedNow;
     // THE CERTIFIED LOCK SET (protocol 28, kanban #2561, §17A): rid, eid -> why this entry's lock is not in its round (a lock outside the
@@ -177,8 +180,22 @@ export class Forfeit {
     if (kind === 'fee') {
       const fl = this.round.feeLock ? this.round.feeLock(entryIdBytes) : null;
       if (!fl) return refuse('this signer node verified no fee lock for that entry, so it returns none');
+      // A PLAIN PICK IN A ROUND THAT BECAME AN ORDER BOOK (kanban #2207, §0A.7b as ruled in #1417): no entry of that round, returned as §23.2
+      // REFUSED - the stake AND its fee lock. The book's settlement claims fee locks only for the orders of its table, so this door is the only
+      // one that moves it; the lock-fate guard in #signable still holds.
+      const b = this.bookStanding ? this.bookStanding(roundIdBytes, entryIdBytes) : null;
+      if (b && !b.book && b.wrongType) return this.#signable(contract, fl, roundIdBytes);
       if (!cancelled && !this.#marketRefund(roundIdBytes, contract).ok) {
-        const back = await this.#feeBackWithStake(roundIdBytes, entryIdBytes, contract);
+        let back = await this.#feeBackWithStake(roundIdBytes, entryIdBytes, contract);
+        // AN ENTRY LEFT OUTSIDE THE SEATS GETS ITS FEE LOCK BACK WITH ITS STAKE (kanban #2430): a paying head-to-head entry that got no
+        // seat is signed VOID, its fee lock never claimed (lock-settlement.js), and its stake comes back at settlement (#1582) - so does
+        // its fee lock, on the same conditions read for this fee lock: no seat here, the settlement ACCEPTED here, the lock not among its claims
+        if (!back.ok && this.round.stakeLock(entryIdBytes)) {
+          const out = this.#outsideTheSeats(roundIdBytes, entryIdBytes, contract, fl);
+          if (out.ok) back = out;
+        }
+        // kanban #2872: a final-VOID head-to-head round's fee lock back with its stake - no round was played, no fee earned (§23.2, §0A.7)
+        if (!back.ok) { const v = this.h2hVoidReturn(roundIdBytes, entryIdBytes, contract); if (v.ok) back = v; }
         if (!back.ok)
           return refuse('a fee lock comes back at once only for a cancelled order or a refunded market (or with a protocol-27 entry\'s voided stake): '
             + `this one is claimed at resolution, or expires back to its player${back.why ? ` (${back.why})` : ''}`);
@@ -271,7 +288,7 @@ export class Forfeit {
       // VOID (§13C, §23.2 "do nothing"): nothing is forfeited - nobody acts, and
       // the lock returns to the player at its expiry. Not ENTRY_VOID's forfeit.
       // A LOCK OUTSIDE THE SEATS COMES BACK AT SETTLEMENT (kanban #1582 with #1588): /lock keeps every valid lock of a paying head-to-head
-      // round, and the seats are the game's players in the order their entries came (round.js seatedEntriesOf) - a player whose lock is
+      // round, and the seats are the game's players with the lowest entry ids (round.js seatedEntriesOf, #2538) - a player whose lock is
       // held but who got no seat is signed VOID and never claimed. Before, that stake waited for the lock's expiry (144 blocks live);
       // now it comes back as soon as THIS signer node's settlement of the round is ACCEPTED without claiming it, as nobodyWonReturn does
       const out = this.#outsideTheSeats(roundIdBytes, entryIdBytes, contract, lock);
@@ -284,7 +301,9 @@ export class Forfeit {
       if (!outside && !mine) return refuse('this signer node signed no result for that run, so it forfeits nothing');
       const result = outside ? null : decodePlayerResult(splitSignedResult(mine.bytes).body);
       if (!outside && !isQualifier(result, contract.minScore)) {
-        const back = this.nobodyWonReturn(roundIdBytes, entryIdBytes, lock, result);
+        // kanban #2872: a final-VOID head-to-head round's stake back at once (§23.2 VOID: "forfeit at once"), not after its settlement
+        const v = this.h2hVoidReturn(roundIdBytes, entryIdBytes, contract);
+        const back = v.ok ? v : this.nobodyWonReturn(roundIdBytes, entryIdBytes, lock, result);
         if (!back.ok)
           return refuse(`that run is ${result.outcome} with score ${result.score} and this round's minimum is `
             + `${contract.minScore}: not a qualifier, so its stake lock is not forfeited (${back.why})`);
@@ -364,6 +383,36 @@ export class Forfeit {
    * its claims, and no entry of the round still inside a window that could change who won - the lock is forfeited back
    * to its refund key now. A forfeit can only return money to its owner; a walk-away (FORFEIT) is never a refund.
    */
+  /**
+   * A FINAL-VOID HEAD-TO-HEAD ROUND (kanban #2872, ruled 2026-11-16: §23.2's VOID row "forfeit at once; if nobody acts, the lock expires" -
+   * already the rule; §0A.7 "nobody was played against: every entry VOID, its stake back"). Feedback #101: an RPS round whose opponent missed the
+   * certified lock set was signed VOID for every entry, its settlement claimed nothing, and the player's stake waited 144 blocks for its expiry.
+   * On THIS signer node's own record: a paying head-to-head game, this entry's result FINAL here with outcome VOID, and every entry of the round
+   * FINAL here and not a qualifier (the round VOID, nobody won) - then the stake and fee locks go back now. An entry VOID only by §13C's
+   * no-quorum on this seat's clock is not a final-VOID round and is not covered. The lock's fate (#1184) is still read in #signable: a lock this
+   * seat committed to claiming is never returned.
+   */
+  h2hVoidReturn(roundIdBytes, entryIdBytes, contract) {
+    if (!contract || contract.stakeMsat === 0n || !this.round.plugins) return { ok: false };
+    const g = pluginForRound(contract, this.round.plugins);
+    if (!g.ok || !g.headToHead) return { ok: false };
+    const own = (eid) => { const st = resultFinality(this.round, roundIdBytes, eid);
+      if (st.state !== FINAL) return null;
+      const mine = this.round.results(roundIdBytes, eid).find((r) => toHex(r.nodePubkey) === toHex(this.round.pubkey));
+      if (!mine) return null;
+      try { return decodePlayerResult(splitSignedResult(mine.bytes).body); } catch { return null; } };
+    const me = own(entryIdBytes);
+    if (!me || me.outcome !== VOID_OUTCOME) return { ok: false, why: 'its result is not FINAL VOID here' };
+    for (const e of this.round.entriesOf(roundIdBytes)) {
+      const r = own(e.entryId);
+      if (!r) { const st = resultFinality(this.round, roundIdBytes, e.entryId).state;
+        if (st === SUSPENDED || st === PROVISIONALLY_FINAL) return { ok: false, why: 'an entry of the round is still inside its window' };
+        continue; }
+      if (r.outcome !== VOID_OUTCOME || isQualifier(r, contract.minScore)) return { ok: false, why: 'the round is not VOID: an entry of it has a verdict' };
+    }
+    return { ok: true };
+  }
+
   nobodyWonReturn(roundIdBytes, entryIdBytes, lock, result) {
     if (result.outcome === FORFEIT_OUTCOME) return { ok: false, why: 'a walk-away is never a refund' };
     if (this.#settled(roundIdBytes) !== 'ACCEPTED') return { ok: false, why: 'the round\'s settlement is not ACCEPTED at this signer node' };
@@ -412,6 +461,9 @@ export class Forfeit {
     // handed in late cannot turn the round into one that claims the locks returned here. FINAL never turns VOID either.
     const fin = marketStateOf(this.round, roundIdBytes, { contract, manifest: f.plugin.manifest, nowMs });
     if (fin.voided) return { ok: true, why: fin.why };
+    // NO "NOBODY PICKED IT" REFUND WHILE THE ROUND'S KIND IS UNDECIDED (kanban #1666): which entries count (plain picks or orders) waits for the
+    // pending batch holding orders - an order handed back as a pool's now could be filled by that batch once it is certified
+    if (typeof this.kindPending === 'function' && this.kindPending(roundIdBytes).length) return { ok: false };
     // ONLY THE ENTRIES THE SETTLEMENT COUNTS (kanban #1436, audit 8 R2; settlement.js #attestedPlan, stake-secret.js): those whose stake this seat
     // saw, and of the round's kind - a pool's plain picks, an order book's orders (§0A.7b, #1411). One lockless entry naming the outcome (or an
     // order, in a round that ended a pool) kept every real stake from coming back at once while the settlement - counting none of them - claimed
@@ -526,8 +578,22 @@ export class Forfeit {
    * THE FORFEIT, asked by anyone: the one this signer node keeps, or - if it is due -
    * made now with its peers, checked under the claim key, kept, and handed to
    * them.
+   *
+   * ONE PASS PER LOCK AT A TIME (kanban #1489, #1910 - as settle() with #settling): GET /forfeit answers anyone, and two passes of this seat at once
+   * shared its one slot at every peer (nonce-pairs.js: a seat's signed ask while its pair is unspent is handed that same pair back), each with its own
+   * SELF commitment - so the two lists differed, each peer signed whichever share reached it first and refused the other ("keeps no second pair"),
+   * and the refused pass filled the withheld map for the same query. A second ask while one runs waits for that one's answer instead.
    */
   async forfeit(roundIdBytes, entryIdBytes, kind = 'stake') {
+    const k = `${toHex(roundIdBytes)}:${toHex(entryIdBytes)}:${kind === 'fee' ? 'fee' : 'stake'}`;
+    if (this.#forfeiting.has(k)) return this.#forfeiting.get(k);
+    const p = this.#forfeitOnce(roundIdBytes, entryIdBytes, kind).finally(() => this.#forfeiting.delete(k));
+    this.#forfeiting.set(k, p);
+    return p;
+  }
+  #forfeiting = new Map();   // `${round}:${entry}:${kind}` -> the running pass's answer (kanban #1910)
+
+  async #forfeitOnce(roundIdBytes, entryIdBytes, kind) {
     const kept = this.round.forfeit(keptUnder(entryIdBytes, kind));
     if (kept) return { ok: true, ...kept, kept: true };
     const m = await this.message(roundIdBytes, entryIdBytes, kind);
@@ -561,17 +627,21 @@ export class Forfeit {
       // EVERY PEER AT ONCE, WITHIN A BOUND (kanban #1074 as #1061): the list needs the threshold, so a hung seat costs the grace, not the forfeit
       const asked = await askPeers(this.peersFor(roundIdBytes), async (base, signal) => {
         const r = await this.fetcher(`${base}/forfeit-commit?${cq}`, { method: 'POST', headers, signal });
-        if (!r.ok) return { why: (await r.text()).trim() };
-        return { commitment: decodePeerCommitment(new Uint8Array(await r.arrayBuffer())) };   // its nonces are points, or it is refused (kanban #2331, #2345)
+        // kanban #2084: read up to a commitment's size (and a refusal up to 4 KiB), never whatever the peer sends inside the bound
+        if (!r.ok) return { why: (await peerWhyUpTo(r)).trim() };
+        return { commitment: decodePeerCommitment(await peerBytesUpTo(r, COMMITMENT_BYTES)) };   // its nonces are points, or it is refused (kanban #2331, #2345)
       }, { boundMs: this.peerAskMs, graceMs: this.peerGraceMs, enough: m.needed - 1, counts: (x) => !!x.commitment });
       const signers = [{ base: null, commitment: own.commitment }];
       const refused = [];
-      for (const { peer: base, value, error } of asked) {
-        if (value && value.commitment) signers.push({ base, commitment: value.commitment });
-        else refused.push(`${base}: ${value ? value.why : error.message}`);
+      // A COMMITMENT UNDER ANOTHER SIGNER'S ID IS A REFUSAL (kanban #2402, #2471, as settlement.js #peerCommitments); one under an id a peer already
+      // holds is listed beside it (`contest`): #gatherShares keeps one, and the share check - not the order of the answers - tells which one stands
+      for (const { peer: base, value, error } of leftOffLast(asked, this.lists.withheld.get(q))) {
+        const bad = value && value.commitment ? peerCommitmentRefusal(value.commitment, signers, { contest: true }) : null;
+        if (value && value.commitment && !bad) signers.push({ base, commitment: value.commitment });
+        else refused.push(`${base}: ${bad || (value ? value.why : error.message)}`);
       }
-      if (signers.length < m.needed)
-        return refuse(`${signers.length} of the ${m.needed} signer nodes the forfeit needs committed to it: ${refused.join('; ')}`);
+      if (committedIds(signers) < m.needed)
+        return refuse(`${committedIds(signers)} of the ${m.needed} signer nodes the forfeit needs committed to it: ${refused.join('; ')}`);
       const listed = this.lists.listed(q, signers, m.needed);
       const combined = await this.#gatherShares(roundIdBytes, entryIdBytes, kind, m, q, listed);
       if (combined.ok) { ({ signature } = combined); this.lists.done(q); break; }
@@ -615,8 +685,8 @@ export class Forfeit {
     const peers = signers.filter((s) => s.base !== null);
     const asked = await askPeers(peers.map((s) => s.base), async (base, signal) => {
       const r = await this.fetcher(`${base}/forfeit-share?${q}`, { method: 'POST', body, headers, signal });
-      if (!r.ok) return { status: r.status, why: (await r.text()).trim() };
-      return { share: decodeShare(new Uint8Array(await r.arrayBuffer())) };
+      if (!r.ok) return { status: r.status, why: (await peerWhyUpTo(r)).trim() };   // kanban #2084: capped as the commit's
+      return { share: decodeShare(await peerBytesUpTo(r, SHARE_BYTES)) };
     }, { boundMs: this.peerAskMs });
     // A PAIR SPENT ON ANOTHER LIST (kanban #1699, #1764): a pair drawn for this ask, so one who read this list spent it - the seat refusing is not at fault
     const failed = sharesRefused(asked);

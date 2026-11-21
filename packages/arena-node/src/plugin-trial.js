@@ -11,6 +11,7 @@
 // and the whole trial - load, loadCore's own meta ask (kanban #1719) and every call - has ONE deadline, TRIAL_MS, inside a core ask's ASK_MS. The thread is ended after.
 import { loadCore, lingeringCores, ASK_MS, ARRAY_BUDGET, SINGLE_ENTRY } from './core-sandbox.js';
 import { RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
+import { randomBytes } from 'node:crypto';
 
 const VERDICTS = new Set(['WIN', 'DRAW', 'LOSS']);
 /** The whole trial, load included: inside ASK_MS, with room for the checks before it and the thread's end after. */
@@ -34,33 +35,83 @@ export function trialRun(source, manifest, { ms = TRIAL_MS, name = 'plugin trial
   // tell the trial from the seat by its module's identifier; #1719: `until` - load and meta share the trial's one deadline; #1792: every call
   // on ONE thread, so what the adapter keeps across calls is seen (counted exactly, after a GC)
   try { box = loadCore(coreFiles, { name, lingerAs: TRIAL_NAME, loadMs: ms, askMs: ms, until, liveCap: ARRAY_BUDGET, oneThread: true }); }   // kanban #1538: kept arrays refused at the budget
-  catch (e) { return { ok: false, cases: 0, why: `it does not load in the sandbox: ${e.message}` }; }
-  try { return trialCases(box, manifest, left); } finally { box.end(); }
+  catch (e) { return { ok: false, cases: 0, why: `it does not load in the sandbox: ${String(e.message).slice(0, 300)}` }; }   // kanban #2165: bounded
+  let kept;
+  try { kept = trialCases(box, manifest, left); } finally { box.end(); }
+  if (!kept.ok) return kept;
+  // A FIRST CALL ON A FRESH THREAD, AS THE SEAT MAKES IT (kanban #2844, #1489 r25-hosting-3): the trial ran every case on one kept thread in a
+  // fixed order, so the first decide was always all zeros; an adapter counting its calls answered that one right and every later one right,
+  // and gave {} (or spun) on a first call with any other move - which is every close at a seat (verify.js decides on a fresh thread). Now
+  // FRESH_FIRST_CASES random move sets (at least one with a non-zero move) are each decided as the first call of a fresh core thread.
+  for (let i = 0; i < FRESH_FIRST_CASES; i++) {
+    const players = 2 + Math.floor(Math.random() * Math.max(1, Math.min(manifest.players, 4) - 1));
+    const set = Array.from({ length: players }, () => Math.floor(Math.random() * manifest.moveCount));
+    if (i === 0 && manifest.moveCount > 1 && set.every((m) => m === 0)) set[set.length - 1] = 1;
+    const list = set.map((move) => ({ key: randomBytes(32).toString('hex'), move }));
+    let fresh;
+    try {
+      if (left() <= 0) return { ok: false, cases: kept.cases, why: `the trial did not finish within ${TRIAL_MS} ms` };
+      fresh = loadCore(coreFiles, { name, lingerAs: TRIAL_NAME, loadMs: left(), askMs: left(), until, liveCap: ARRAY_BUDGET, oneThread: true });
+    } catch (e) { return { ok: false, cases: kept.cases, why: `it does not load again in the sandbox: ${String(e.message).slice(0, 300)}` }; }
+    try {
+      let v; try { v = JSON.parse(JSON.stringify(fresh.call('decide', { moves: list, config: {} }, left()))); } catch (e) { return { ok: false, cases: kept.cases, why: `on a fresh thread it fails on ${JSON.stringify(set)}: ${String(e.message).slice(0, 300)}` }; }
+      const keys = v && typeof v === 'object' ? Object.keys(v).sort() : [];
+      if (keys.join(',') !== list.map((m) => m.key).sort().join(',') || !keys.every((k) => VERDICTS.has(v[k])))
+        return { ok: false, cases: kept.cases, why: `on a fresh thread it does not answer each player with WIN, DRAW or LOSS on ${JSON.stringify(set)}` };
+    } finally { fresh.end(); }
+  }
+  return kept;
 }
+export const FRESH_FIRST_CASES = 4;
 
+// kanban #2165, #2232, #2304: the refusal carries at most 300 characters of the core's text (the seat logs it and answers it
+// in the 422), as server.js cuts a peer's error
 function trialCases(box, manifest, left) {
   if (!box.meta.decide) return { ok: false, cases: 0, why: 'it exports no DECIDE with a decide(moves) function' };
   let cases = 0;
-  const moves = manifest.moveCount, maxPlayers = Math.min(manifest.players, 4);
-  for (let players = 2; players <= maxPlayers; players++) {
-    const total = moves ** players;
-    for (let n = 0; n < total && cases < MAX_CASES; n++) {
-      const list = Array.from({ length: players }, (_, i) => ({ key: 'p' + i, move: Math.floor(n / moves ** i) % moves }));
-      let a, b;
-      try {
-        if (left() <= 0) throw new Error(`the trial did not finish within ${TRIAL_MS} ms`);
-        a = JSON.stringify(box.call('decide', { moves: list }, left()));
-        if (left() <= 0) throw new Error(`the trial did not finish within ${TRIAL_MS} ms`);
-        b = JSON.stringify(box.call('decide', { moves: list }, left()));
-      } catch (e) { return { ok: false, cases, why: `it fails on ${JSON.stringify(list.map((m) => m.move))}: ${e.message}` }; }
-      if (a !== b) return { ok: false, cases, why: `it answers ${JSON.stringify(list.map((m) => m.move))} differently twice` };
-      let v; try { v = JSON.parse(a); } catch { v = null; }
-      if (!v || typeof v !== 'object') return { ok: false, cases, why: `it answers ${JSON.stringify(list.map((m) => m.move))} with no verdicts` };
-      const keys = Object.keys(v).sort();
-      if (keys.join(',') !== list.map((m) => m.key).sort().join(',')) return { ok: false, cases, why: `it does not answer each player exactly once on ${JSON.stringify(list.map((m) => m.move))}` };
-      if (!keys.every((k) => VERDICTS.has(v[k]))) return { ok: false, cases, why: `it answers something other than WIN, DRAW or LOSS on ${JSON.stringify(list.map((m) => m.move))}` };
-      cases++;
+  const moves = manifest.moveCount;
+  // EVERY PLAYER COUNT THE MANIFEST SEATS (kanban #2791): the exhaustive pass below stops at 4 players and at MAX_CASES, so a
+  // game seating 5-16 whose adapter spins only past 4 players (or past what the cap reaches) passed and held the seat at close.
+  // Now each count 2..manifest.players the exhaustive pass does not reach in full is run first on a few move sets (all the same
+  // move, and a mixed one), the full count included.
+  const sampled = [];
+  let reached = 0;
+  for (let players = 2; players <= manifest.players; players++) {
+    reached += moves ** players;
+    if (players <= 4 && reached <= MAX_CASES) continue;   // every combination of this count is run below
+    for (let m = 0; m < Math.min(moves, 3); m++) sampled.push(Array.from({ length: players }, () => m));
+    sampled.push(Array.from({ length: players }, (_, i) => (i * 7 + players) % moves));
+  }
+  const exhaustive = function* () {
+    const maxPlayers = Math.min(manifest.players, 4);
+    for (let players = 2; players <= maxPlayers; players++) {
+      const total = moves ** players;
+      for (let n = 0; n < total; n++) yield Array.from({ length: players }, (_, i) => Math.floor(n / moves ** i) % moves);
     }
+  };
+  const all = function* () { yield* sampled; yield* exhaustive(); };
+  for (const set of all()) {
+    if (cases >= MAX_CASES + sampled.length) break;
+    // THE SEAT'S CALL SHAPE (kanban #2674): verify.js decides with each entry's 64-hex id as the key and the installed config
+    // ({} - a package's configs are signed hashes with no body), so the trial does too: an adapter that spins only when handed a
+    // config, or a seat-shaped key, is run on that branch here and refused, not first at the seat's close.
+    // FRESH RANDOM KEYS (kanban #2791): the keys were fixed ('a0a0..a0', 'a1a1..a1'), so an adapter told them from a real entry
+    // id and spun only on the seat's; now each case draws new random 64-hex ids, as an entry id is, with no pattern to recognise
+    const list = set.map((move) => ({ key: randomBytes(32).toString('hex'), move }));
+    let a, b;
+    try {
+      if (left() <= 0) throw new Error(`the trial did not finish within ${TRIAL_MS} ms`);
+      a = JSON.stringify(box.call('decide', { moves: list, config: {} }, left()));
+      if (left() <= 0) throw new Error(`the trial did not finish within ${TRIAL_MS} ms`);
+      b = JSON.stringify(box.call('decide', { moves: list, config: {} }, left()));
+    } catch (e) { return { ok: false, cases, why: `it fails on ${JSON.stringify(set)}: ${String(e.message).slice(0, 300)}` }; }
+    if (a !== b) return { ok: false, cases, why: `it answers ${JSON.stringify(set)} differently twice` };
+    let v; try { v = JSON.parse(a); } catch { v = null; }
+    if (!v || typeof v !== 'object') return { ok: false, cases, why: `it answers ${JSON.stringify(set)} with no verdicts` };
+    const keys = Object.keys(v).sort();
+    if (keys.join(',') !== list.map((m) => m.key).sort().join(',')) return { ok: false, cases, why: `it does not answer each player exactly once on ${JSON.stringify(set)}` };
+    if (!keys.every((k) => VERDICTS.has(v[k]))) return { ok: false, cases, why: `it answers something other than WIN, DRAW or LOSS on ${JSON.stringify(set)}` };
+    cases++;
   }
   return { ok: true, cases };
 }

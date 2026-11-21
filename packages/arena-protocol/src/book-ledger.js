@@ -19,7 +19,7 @@
 import { YES, NO, PRICE_SCALE } from './order-book.js';
 
 const byIdOrder = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
-const demandAt = (o, q) => (q <= o.price ? (o.net * PRICE_SCALE) / q : 0n);   // order-book.js clearBatch's, the same
+const ledgerDemandAt = (o, q) => (q <= o.price ? (o.net * PRICE_SCALE) / q : 0n);   // order-book.js clearBatch's, the same
 
 // THE LEDGER KEEPS ITS RESTING SELLS INDEXED (kanban #1722, #1791): it summed `offered` over every resting sell for each new sell and
 // handed every resting sell to clearBatch in every batch - one small filled order posting 16 tiny never-filled sells at each of the 7
@@ -189,7 +189,7 @@ export class BookLedgerState {
     let best = null;
     for (const pi of candidates) {
       const q = [pi, PRICE_SCALE - pi];
-      const d = [0, 1].map((k) => buySides[k].reduce((t, o) => t + demandAt(o, q[k]), 0n) + sellDemand(k, q[k]));
+      const d = [0, 1].map((k) => buySides[k].reduce((t, o) => t + ledgerDemandAt(o, q[k]), 0n) + sellDemand(k, q[k]));
       const v = d[0] < d[1] ? d[0] : d[1];
       if (v === 0n) continue;
       const gap = d[0] > d[1] ? d[0] - d[1] : d[1] - d[0];
@@ -202,7 +202,7 @@ export class BookLedgerState {
         // THE SHORT SIDE FILLS WHOLE; THE LONG SIDE BY LIMIT, BETTER FIRST, THE MARGINAL LIMIT PRO RATA
         let left = best.v;
         const byLimit = new Map();
-        for (const o of buySides[k]) { const w = demandAt(o, q[k]); if (w > 0n) { const key = String(o.price); if (!byLimit.has(key)) byLimit.set(key, { buys: [], level: null }); byLimit.get(key).buys.push({ id: o.id, want: w }); } }
+        for (const o of buySides[k]) { const w = ledgerDemandAt(o, q[k]); if (w > 0n) { const key = String(o.price); if (!byLimit.has(key)) byLimit.set(key, { buys: [], level: null }); byLimit.get(key).buys.push({ id: o.id, want: w }); } }
         for (const l of sellSides[k].ls) if (q[k] <= l.price) { const key = String(l.price); if (!byLimit.has(key)) byLimit.set(key, { buys: [], level: null }); byLimit.get(key).level = l; }
         const limits = [...byLimit.keys()].map(BigInt).sort((a, c) => (a > c ? -1 : 1));
         for (const lim of limits) {

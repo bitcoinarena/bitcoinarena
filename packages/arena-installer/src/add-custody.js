@@ -10,6 +10,7 @@
 import { spawn } from 'node:child_process';
 import { readFileSync, writeFileSync, openSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { uptime } from 'node:os';
 import { fromHex } from '../../arena-protocol/src/hash.js';
 import { walletOf, coinsOf } from './wallet.js';
 import { nodeState, guardianSetupOf, ownCoreOf } from './state.js';
@@ -21,9 +22,37 @@ export const UNDERSTOOD = 'I UNDERSTAND';
 /** A run that has said nothing for this long is taken as gone: another may start. */
 export const STALE_MS = 6 * 3600_000;
 
-/** The progress the runner writes, or null. */
-export function custodyProgress(home) {
-  try { return JSON.parse(readFileSync(join(home, 'custody-add.json'), 'utf8')); } catch { return null; }
+// A RUNNER THAT IS GONE HOLDS NOTHING (kanban #2462, state audit 2026-11-12): the progress file named no process, so a runner the machine's
+// restart (nothing starts it again at boot), a kill or a crash ended left its last state - running, funds, lightning, gateway - and every
+// start was refused "custody is being added already" for up to STALE_MS, with nothing running and the request file already taken. The start
+// now records the runner it started in <home>/custody-add.run { pid, boot, atMs } (boot: the machine's start in minutes, as update.lock
+// keeps it, kanban #1166); a progress whose runner has ended, or was started before the machine last started, is interrupted at once: the
+// page reads `interrupted: true` and the owner starts it again. A start from before this record (no custody-add.run) keeps the old age rule.
+const bootMinute = (now = Date.now(), up = uptime()) => Math.round((now - up * 1000) / 60000);
+const pidAlive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+function runnerGone(home, { alive = pidAlive, boot = bootMinute() } = {}) {
+  let r = null;
+  try { r = JSON.parse(readFileSync(join(home, 'custody-add.run'), 'utf8')); } catch { return false; }
+  if (!r || !Number.isInteger(r.pid) || r.pid <= 0) return false;
+  if (Number.isFinite(r.boot) && Math.abs(r.boot - boot) > 2) return true;
+  return !alive(r.pid);
+}
+/** True while a run holds the next start: not final, said something within STALE_MS, and its runner (when recorded) still alive. */
+function runHolds(home, p, nowMs, o) {
+  return !!p && !['done', 'failed'].includes(p.state) && nowMs - Number(p.atMs || 0) < STALE_MS && !runnerGone(home, o);
+}
+function recordRunner(home, child, nowMs) {
+  // always written: a runner whose pid is unknown (spawn failed) clears the record of the one before, so that one never speaks for it
+  const pid = child && Number.isInteger(child.pid) ? child.pid : null;
+  writeFileSync(join(home, 'custody-add.run'), JSON.stringify({ pid, boot: bootMinute(), atMs: nowMs }) + '\n', { mode: 0o600 });
+}
+
+/** The progress the runner writes, or null; `interrupted: true` on a run that did not finish and whose runner is gone (kanban #2462). */
+export function custodyProgress(home, o = {}) {
+  let p;
+  try { p = JSON.parse(readFileSync(join(home, 'custody-add.json'), 'utf8')); } catch { return null; }
+  if (p && !['done', 'failed'].includes(p.state) && runnerGone(home, o)) return { ...p, interrupted: true };
+  return p;
 }
 
 /**
@@ -71,19 +100,21 @@ export function gatewayGap(s) {
  * THE GATEWAY ALONE (kanban #711): the custody runner's Lightning and gateway steps only - no roles, no bond, no funds - for a custody node
  * whose setup left them for later. Same progress file as adding custody. Answers { ok, progress } or { ok: false, status, why }.
  */
-export function startGatewaySetup({ home, release, state = null, nowMs = Date.now(), node = process.execPath, run = spawn }) {
+export function startGatewaySetup({ home, release, state = null, nowMs = Date.now(), node = process.execPath, run = spawn, runner = {} }) {
   const gap = gatewayGap((state || nodeState(home)).read());
   if (!gap) return { ok: false, status: 409, why: 'this node\'s gateway is set up already' };
   if (!gap.fix) return { ok: false, status: 409, why: gap.why };
   const p = custodyProgress(home);
-  if (p && !['done', 'failed'].includes(p.state) && nowMs - Number(p.atMs || 0) < STALE_MS) return { ok: false, status: 409, why: 'already running', progress: p };
+  if (runHolds(home, p, nowMs, runner)) return { ok: false, status: 409, why: 'already running', progress: p };
   const bin = join(release, 'packages', 'arena-installer', 'bin', 'custody-add.mjs');
   if (!existsSync(bin)) return { ok: false, status: 501, why: 'this release cannot set up the gateway from the owner page' };
   writeFileSync(join(home, 'custody-add.req'), JSON.stringify({ gatewayOnly: true }), { mode: 0o600 });
   const progress = { state: 'running', step: 'starting', gatewayOnly: true, atMs: nowMs };
   writeFileSync(join(home, 'custody-add.json'), JSON.stringify(progress) + '\n', { mode: 0o600 });
   const out = openSync(join(home, 'custody-add.log'), 'a');
-  run(node, [bin, '--home', home], { detached: true, stdio: ['ignore', out, out], env: process.env }).unref();
+  const child = run(node, [bin, '--home', home], { detached: true, stdio: ['ignore', out, out], env: process.env });
+  child.unref();
+  recordRunner(home, child, nowMs);
   return { ok: true, progress };
 }
 
@@ -91,16 +122,18 @@ export function startGatewaySetup({ home, release, state = null, nowMs = Date.no
  * THE START: the request written and the runner started detached. `understood` must be I UNDERSTAND. Answers { ok, progress } or
  * { ok: false, status, why }.
  */
-export function startCustodyAdd({ home, release, understood, pegInSats = null, nowMs = Date.now(), node = process.execPath, run = spawn }) {
+export function startCustodyAdd({ home, release, understood, pegInSats = null, nowMs = Date.now(), node = process.execPath, run = spawn, runner = {} }) {
   if (String(understood || '').trim().toUpperCase() !== UNDERSTOOD) return { ok: false, status: 400, why: `type ${UNDERSTOOD} to go on: the bond's rules` };
   const p = custodyProgress(home);
-  if (p && !['done', 'failed'].includes(p.state) && nowMs - Number(p.atMs || 0) < STALE_MS) return { ok: false, status: 409, why: 'custody is being added already', progress: p };
+  if (runHolds(home, p, nowMs, runner)) return { ok: false, status: 409, why: 'custody is being added already', progress: p };
   const bin = join(release, 'packages', 'arena-installer', 'bin', 'custody-add.mjs');
   if (!existsSync(bin)) return { ok: false, status: 501, why: 'this release cannot add custody from the owner page' };
   writeFileSync(join(home, 'custody-add.req'), JSON.stringify({ understood: UNDERSTOOD, pegInSats: pegInSats == null ? null : Number(pegInSats) }), { mode: 0o600 });
   const progress = { state: 'running', step: 'starting', atMs: nowMs };
   writeFileSync(join(home, 'custody-add.json'), JSON.stringify(progress) + '\n', { mode: 0o600 });
   const out = openSync(join(home, 'custody-add.log'), 'a');
-  run(node, [bin, '--home', home], { detached: true, stdio: ['ignore', out, out], env: process.env }).unref();
+  const child = run(node, [bin, '--home', home], { detached: true, stdio: ['ignore', out, out], env: process.env });
+  child.unref();
+  recordRunner(home, child, nowMs);
   return { ok: true, progress };
 }

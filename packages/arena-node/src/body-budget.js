@@ -96,7 +96,8 @@ export function messageBudget({ total, perAddress = Math.floor(total / 2), reser
   const add = (m, k, n) => { const v = (m.get(k) || 0) + n; if (v > 0) m.set(k, v); else m.delete(k); };
   const plain = (a) => { const s = String(a || ''); return s.startsWith('::ffff:') ? s.slice(7) : s; };
 
-  const watch = (ws, socket, address) => {
+  // `live()` (kanban #3188): false once `ws` no longer parses what `socket` reads (a dialled socket closing after a refused frame drains and drops it)
+  const watch = (ws, socket, address, { live = null } = {}) => {
     const who = plain(address !== undefined ? address : socket && socket.remoteAddress);
     let pending = 0; let inMain = 0; let inSpare = 0; let timer = null; let ended = false;
     const release = () => {
@@ -121,7 +122,7 @@ export function messageBudget({ total, perAddress = Math.floor(total / 2), reser
       pending = Math.max(0, pending - 6 - (data ? data.length : 0));
       if (pending === 0) release();
     };
-    socket.prependListener('data', (c) => take(c.length));
+    socket.prependListener('data', (c) => { if (!live || live()) take(c.length); });
     ws.on('message', () => { if (!ended) release(); });
     ws.on('ping', giveBack); ws.on('pong', giveBack);
     ws.on('close', () => { ended = true; release(); });

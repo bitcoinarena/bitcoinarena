@@ -17,7 +17,7 @@
 // seat void the round - attested.js). A value needs no price to beat: only a reading a minute before the window's end.
 import { createPrivateKey, createPublicKey, sign as edSign, verify as edVerify } from 'node:crypto';
 import { attestationBodyId, encodeAttestation } from '../../arena-protocol/src/attested.js';
-import { upDownOutcome, upDownPrices, UP_DOWN_OUTCOMES } from '../../arena-protocol/src/up-down.js';
+import { upDownOutcome, upDownPrices, UP_DOWN_OUTCOMES, UP_DOWN_AVERAGE_MS } from '../../arena-protocol/src/up-down.js';
 import { valueAttestationBodyId, encodeValueAttestation } from '../../arena-protocol/src/scalar.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { decodeManifest, gameIdOf, isScalar, manifestBodyId, RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
@@ -36,12 +36,34 @@ export function attestorKey(bytes) {
 }
 
 /**
+ * WAS THE AVERAGE ENDING AT EACH OF `ends` READ (kanban #3049, audit attest r4-1-2; the drawn seat's rule, drawn-attestor.js windowRead,
+ * #2461): upDownPrices takes each reading as in force until the next, so a daemon down over a window's end that restored its readings
+ * from SAMPLES_FILE signed the end price from a reading minutes old - measured, a last reading 310 s before the end signed 'Up' at
+ * 81,000.00 where the unread end was 79,000.00. A 60 s average counts only with a reading at most `gapMs` before its first moment, no
+ * gap over `gapMs` inside it, and one at most `gapMs` before its last moment. `gapMs` is three readings (the daemon reads every 10 s).
+ */
+export const READ_GAP_MS = 30000n;
+export function averagesRead(samples, ends, gapMs = READ_GAP_MS) {
+  const at = (samples || []).map((x) => x && x.atMs).filter((t) => typeof t === 'bigint').sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  for (const to of ends) {
+    const from = to - UP_DOWN_AVERAGE_MS;
+    const inForce = at.filter((t) => t <= from);
+    let last = inForce.length ? inForce[inForce.length - 1] : null;
+    if (last === null || from - last > gapMs) return false;
+    for (const t of at.filter((y) => y > from && y < to)) { if (t - last > gapMs) return false; last = t; }
+    if (to - last > gapMs) return false;
+  }
+  return true;
+}
+
+/**
  * THIS ATTESTOR'S WORD ON ONE WINDOW: `samples` [{ atMs, price }] (its medians), the round and its window. Answers
  * { ok, body, signature (hex), key (hex), priceToBeat, endPrice, label } or why it signs nothing.
  */
-export function attestWindow({ samples, roundId, window, attestor }) {
+export function attestWindow({ samples, roundId, window, attestor, gapMs = READ_GAP_MS }) {
   const out = upDownOutcome(samples, { startMs: window.startMs, endMs: window.endMs });
   if (!out.ok) return { ok: false, why: out.why };
+  if (!averagesRead(samples, [window.startMs, window.endMs], gapMs)) return { ok: false, why: 'this attestor did not read the window\'s start and end averages: it signs nothing for it' };
   const body = { roundId, outcome: out.outcome, observedAtMs: window.endMs };
   const signature = new Uint8Array(edSign(null, Buffer.from(attestationBodyId(body)), attestor.key));
   return { ok: true, body, signature: toHex(signature), key: toHex(attestor.pubkey), priceToBeat: out.priceToBeat, endPrice: out.endPrice, label: out.label };
@@ -51,10 +73,11 @@ export function attestWindow({ samples, roundId, window, attestor }) {
  * THIS ATTESTOR'S VALUE FOR ONE WINDOW (a scalar market): the 60 s average ending at the window's end, whole cents, signed as a
  * value attestation body {round, value, observed_at = the window's end}. Answers { ok, body, signature, key, value } or why not.
  */
-export function attestValue({ samples, roundId, window, attestor }) {
+export function attestValue({ samples, roundId, window, attestor, gapMs = READ_GAP_MS }) {
   // the end price alone: upDownPrices over the last millisecond of the window reads the 60 s average ending at its end
   const p = upDownPrices(samples, { startMs: window.endMs - 1n, endMs: window.endMs });
   if (!p.ok) return { ok: false, why: 'no reading a minute before the window\'s end: the value is not known' };
+  if (!averagesRead(samples, [window.endMs], gapMs)) return { ok: false, why: 'this attestor did not read the average at the window\'s end: the value is not known here' };
   const body = { roundId, value: p.endPrice, observedAtMs: window.endMs };
   const signature = new Uint8Array(edSign(null, Buffer.from(valueAttestationBodyId(body)), attestor.key));
   return { ok: true, body, signature: toHex(signature), key: toHex(attestor.pubkey), value: p.endPrice, label: `${p.endPrice} cents` };
@@ -78,8 +101,18 @@ export function verifyEd25519Word(signature, digest, key) {
  * first bad signature), and the round went VOID with 6 good signatures. `verify(signature, bodyId, key)` is the attestors' scheme: ed25519 by default
  * (the fixed attestors), BIP-340 for the drawn ones (the seat passes schnorr.verify). Pass the caller's own word first: it is never replaced.
  */
-export function combine(words, { attestors, threshold, verify = verifyEd25519Word }) {
-  const named = new Set(attestors.map((k) => (typeof k === 'string' ? k : toHex(k))));
+// THE ROUND'S OWN MARKET NAMES THE KEYS, NOT THE DAEMON'S FLAGS (kanban #2635, bypass of #1487): the fixed daemon attests every
+// version of the market that names its key, but combined by its one --attestors list. A version that rotated an attestor out (v2
+// names A, B, D; the flags still say A, B, C) let the dropped C serve a VALID word that A and B put into the attestation, and every
+// seat's attestationStands refused the whole of it on C's key - each retry the same, the round VOID at its deadline. `manifest`
+// (the decoded manifest of the version the round's contract names) now decides which keys count and the threshold; `attestors` /
+// `threshold` stand only when no manifest is known. A drawn market's per-round set is passed as `attestors`, with no manifest.
+export function combine(words, { attestors = [], threshold, manifest = null, verify = verifyEd25519Word }) {
+  if (manifest && Array.isArray(manifest.attestors) && manifest.attestors.length && Number.isInteger(manifest.attestThreshold) && manifest.attestThreshold > 0) {
+    attestors = manifest.attestors;
+    threshold = manifest.attestThreshold;
+  }
+  const named = new Set(attestors.map((k) => (typeof k === 'string' ? k.toLowerCase() : toHex(k))));
   const byBody = new Map();
   for (const w of words) {
     if (!w || !w.body || !named.has(w.key)) continue;

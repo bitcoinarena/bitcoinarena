@@ -460,7 +460,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       const { DatabaseSync } = await import('node:sqlite');
       for (const i of toPost) {
         const m = members[i];
-        if (rt.bondsOf({ pubkey: m.id.pubkey }).length) continue;
+        if (rt.ownBondsOf({ pubkey: m.id.pubkey }).length) continue;   // a stranger's unsigned dust is no bond of the node (kanban #3178, #3182, #3198, #3207)
         const db = new DatabaseSync(m.path, { readOnly: true });
         let row; try { row = db.prepare('SELECT secret FROM identity WHERE one = 0').get(); } finally { db.close(); }
         const secret = row ? new Uint8Array(row.secret) : null;
@@ -1531,7 +1531,8 @@ const typeOf = (file) => {
 export function servePage(build, { host = '127.0.0.1', port = 8000 } = {}) {
   return new Promise((ok, no) => {
     const s = createServer((req, res) => {
-      let path = decodeURIComponent(req.url.split('?')[0]);
+      // kanban #3151: a bad escape (`GET /%`) threw URIError here and ended the page server - answered 400
+      let path; try { path = decodeURIComponent(req.url.split('?')[0]); } catch { res.writeHead(400); return res.end('that request target is no path'); }
       if (path === '/') path = '/index.html';
       // No climbing out of the build directory, even from a local page.
       const file = join(build, normalize(path).replace(/^(\.\.[/\\])+/, ''));

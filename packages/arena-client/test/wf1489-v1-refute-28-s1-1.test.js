@@ -50,7 +50,7 @@ test('the page: a seat repeating a real round with its own committee does not ta
     throw new Error(`no such door ${url}`);
   };
   const r = await buyItem({ manifest: MANIFEST, itemId: 'large-truck', networkSet: NET, gameSet: NET, wallet: w, federationId: 'fe'.repeat(32),
-    player, seats: ['https://good1', 'https://good2', 'https://bad'], fetch, verify, nowMs: () => NOW });
+    player, seats: ['https://good1', 'https://good2', 'https://bad'], fetch, verify, nowMs: () => NOW, bondedKeys: NODE_KEYS.map(toHex) });   // kanban #1896: the keys of a census the page checked
   assert.equal(r.ok, true, r.why);
   const toSybil = paidTo(w.paid, SYBIL_KEY);
   for (const k of NODE_KEYS) assert.ok(paidTo(w.paid, toHex(k)) > 0n, `node ${toHex(k).slice(0, 16)} served the round and is paid nothing (${toSybil} msat went to the one made-up key)`);

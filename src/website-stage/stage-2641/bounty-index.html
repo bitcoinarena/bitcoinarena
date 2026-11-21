@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bitcoin Arena: bug bounty, Season 2</title>
+<meta name="description" content="Find bugs in Bitcoin Arena and earn real sats over Lightning: the Season 2 rules, and the log of Season 1.">
+<meta property="og:title" content="Bitcoin Arena: bug bounty, Season 2">
+<meta property="og:description" content="The rules of the Bitcoin Arena bug bounty, Season 2, and the log of Season 1.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://bitcoinarena.io/bounty/">
+<meta property="og:image" content="https://testnet.bitcoinarena.io/arena-og.png">
+<meta name="twitter:card" content="summary_large_image">
+  <script id="arena-ref-source">/* THE SOURCE OF A VISIT (kanban #1458, the owner 2026-11-11: "Make sure Stacker News is recognised through the referrer and the utm is set correctly, without us having to add it"): the same script inline on bitcoinarena.io, testnet. and docs., before the stats script reads the address. A link's own utm_ always wins. Without one, the referrer's host names the source (the map below), put into the address as utm_source/utm_medium so Umami counts it as if the link had carried it. The visit's first source is kept in this tab (sessionStorage, the source name only) and added to links to the other bitcoinarena.io hosts, so a visitor who goes on to the game keeps it. Stacker News sends no referrer on post links (rel="noreferrer", measured 2026-11-11): its links need their own utm. */(function(){try{
+var M=[[/(^|\.)stacker\.news$/,'stacker-news','community'],[/(^|\.)(x\.com|twitter\.com|t\.co)$/,'x','social'],[/(^|\.)(primal\.net|njump\.me|nostr\.com|iris\.to|coracle\.social|snort\.social|jumble\.social|yakihonne\.com|damus\.io|habla\.news|nostrudel\.ninja)$/,'nostr','social'],[/(^|\.)armada\.buzz$/,'armada','community'],[/(^|\.)reddit\.com$/,'reddit','social'],[/(^|\.)bitcointalk\.org$/,'bitcointalk','forum'],[/(^|\.)github\.com$/,'github','referral'],[/(^|\.)discord\.com$/,'discord','community'],[/(^|\.)(t\.me|telegram\.org)$/,'telegram','community'],[/^news\.ycombinator\.com$/,'hackernews','forum']];
+var OWN=/(^|\.)(bitcoinarena\.io|bitcoin-arena\.io)$/,K='arena.src',q=new URLSearchParams(location.search),src=null;
+if(q.get('utm_source')==='sn'){q.set('utm_source','stacker-news');q.set('utm_medium','community');history.replaceState(history.state,'',location.pathname+'?'+q.toString()+location.hash)}/* #1468: links posted 11-01..11-11 say utm_source=sn - one name for Stacker News */
+if(q.get('utm_source'))src=[q.get('utm_source'),q.get('utm_medium')||''];
+else{var h='';try{h=new URL(document.referrer).hostname.toLowerCase()}catch(e){}
+if(h&&!OWN.test(h)){src=[h.replace(/^www\./,''),'referral'];for(var i=0;i<M.length;i++)if(M[i][0].test(h)){src=[M[i][1],M[i][2]];break}}
+if(src){q.set('utm_source',src[0]);q.set('utm_medium',src[1]);history.replaceState(history.state,'',location.pathname+'?'+q.toString()+location.hash)}}
+var kept=null;try{kept=JSON.parse(sessionStorage.getItem(K)||'null')}catch(e){}
+if(!kept&&src){kept=src;try{sessionStorage.setItem(K,JSON.stringify(src))}catch(e){}}
+window.ARENA_SOURCE=kept?kept[0]:null;
+if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,function(e){var a=e.target&&e.target.closest?e.target.closest('a[href]'):null;if(!a)return;try{var u=new URL(a.href);if(u.hostname===location.hostname||!OWN.test(u.hostname)||/[?&]utm_/.test(u.search))return;u.searchParams.set('utm_source',kept[0]);if(kept[1])u.searchParams.set('utm_medium',kept[1]);a.href=u.toString()}catch(e){}},true)});
+}catch(e){}})();</script>
+  <script defer src="https://stats.bitcoinarena.io/script.js" data-website-id="4f00ff2b-032e-4683-890c-63458e0b178e" data-domains="bitcoinarena.io,www.bitcoinarena.io"></script>
+  <script>/* kanban #943: the campaign reached the stats when the script read the address; then it leaves the address, past the script's own history hook, so no second view */addEventListener('load',function(){var n=0,c=function(){if(!window.umami&&n++<50)return setTimeout(c,100);setTimeout(function(){var u=new URL(location.href),k=Array.from(u.searchParams.keys()).filter(function(x){return/^utm_/.test(x)});if(k.length){k.forEach(function(x){u.searchParams.delete(x)});History.prototype.replaceState.call(history,history.state,'',u.pathname+u.search+u.hash)}},500)};c()})</script>
+<style>
+  :root { --bg: #0d1117; --panel: #161b22; --line: #30363d; --text: #e6edf3; --dim: #8b949e; --btc: #f7931a; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, sans-serif; padding: 32px 16px 56px; }
+  main { max-width: 640px; margin: 0 auto; }
+  a { color: var(--btc); } h1 { font-size: 30px; margin: 0 0 6px; } p { color: var(--dim); margin: 0 0 18px; }
+  .go { display: inline-block; margin: 8px 0 22px; padding: 12px 22px; border-radius: 10px; background: var(--btc); color: #1a1000; font-weight: 700; text-decoration: none; }
+  ul { color: var(--dim); padding-left: 20px; } li { margin-bottom: 8px; }
+  .big { font: 700 56px/1 system-ui, sans-serif; color: var(--btc); } table { width: 100%; border-collapse: collapse; margin-top: 18px; background: var(--panel); border-radius: 10px; overflow: hidden; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; } th { color: var(--dim); font-size: 13px; font-weight: 600; } tr:last-child td { border-bottom: 0; }
+  footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--dim); font-size: 14px; }
+  /* NOSTR IS PURPLE EVERYWHERE (kanban #1344, the owner 2026-11-07) */
+  footer a.nostr-id, a.nostr-id, nav.top .nid, nav.site .nid { color: #b98cff; }
+  footer a.nostr-id:hover, a.nostr-id:hover, nav.top .nid:hover, nav.site .nid:hover { color: #d4b8ff; }
+  /* kanban #2641: every rule has its own link (the owner 2026-11-14: "Alle Regeln per link verlinken") */
+  .toc { margin: 10px 0 14px; padding: 10px 12px; border: 1px solid #30363d; border-radius: 10px; line-height: 1.9; font-size: 14px; }
+  .toc a { white-space: nowrap; }
+  a.rl { display: inline-flex; vertical-align: middle; margin: 0 4px; color: #8b949e; opacity: .55; text-decoration: none; }
+  a.rl svg { width: 13px; height: 13px; } a.rl:hover, a.rl:focus, a.rl.copied { opacity: 1; color: #f7931a; }
+  [id]:target { scroll-margin-top: 80px; background: rgba(247,147,26,.10); border-radius: 6px; }
+  /* kanban #2641: the redesigned rules page - hero, steps, pay tiles, bonus chips, pot bar, draw podium, FAQ */
+  main { max-width: 760px; } h2 { font-size: 22px; margin: 34px 0 10px; } h3 { font-size: 17px; margin: 0 0 10px; }
+  .hero { padding: 26px 22px; border-radius: 16px; background: radial-gradient(120% 140% at 0% 0%, rgba(247,147,26,.22), transparent 60%), var(--panel); border: 1px solid var(--line); }
+  .hero .tag { display: inline-block; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--btc); margin-bottom: 8px; }
+  .hero h1 { font-size: clamp(28px, 7vw, 40px); line-height: 1.1; } .hero .lead { color: var(--text); font-size: 18px; margin: 10px 0 6px; } .hero .when { font-size: 14px; margin: 0; } .hero .go { margin: 16px 0 0; }
+  .toc { font-size: 13px; color: var(--dim); }
+  .steps { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; counter-reset: s; }
+  .steps li { position: relative; padding: 14px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); margin: 0; display: flex; flex-direction: column; gap: 4px; color: var(--dim); font-size: 14px; }
+  .steps li b { color: var(--text); font-size: 15px; } .steps li::before { counter-increment: s; content: counter(s); position: absolute; top: 10px; right: 12px; font-weight: 700; color: var(--line); font-size: 22px; }
+  .steps .si { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; background: rgba(247,147,26,.15); color: var(--btc); margin-bottom: 4px; } .steps .si svg { width: 20px; height: 20px; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 10px; }
+  .tile { padding: 14px 12px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); border-top: 4px solid var(--c); display: flex; flex-direction: column; gap: 2px; }
+  .tile b { font-size: 26px; color: var(--c); font-variant-numeric: tabular-nums; } .tile span { color: var(--text); font-weight: 600; } .tile small { color: var(--dim); font-size: 12px; }
+  .t-crit { --c: #f85149; } .t-high { --c: #f7931a; } .t-med { --c: #d29922; } .t-low { --c: #3fb950; } .t-use { --c: #58a6ff; }
+  .note { font-size: 14px; margin: 10px 0 0; }
+  .bonus { display: grid; gap: 8px; } .chip-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); }
+  .chip { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--text); } .ic { width: 28px; height: 28px; border-radius: 8px; display: inline-grid; place-items: center; background: var(--bg); border: 1px solid var(--line); color: var(--text); } .ic svg { width: 16px; height: 16px; }
+  .plus { flex: none; font-weight: 800; padding: 4px 10px; border-radius: 999px; background: linear-gradient(135deg, #f7931a, #f0388a); color: #0d1117; }
+  .duo { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-top: 34px; }
+  .card { padding: 16px; border-radius: 14px; background: var(--panel); border: 1px solid var(--line); } .card.wide { margin-top: 12px; }
+  .pot b { font-size: 30px; color: var(--btc); font-variant-numeric: tabular-nums; } .pot span { color: var(--dim); }
+  .bar { height: 10px; border-radius: 999px; background: var(--bg); border: 1px solid var(--line); overflow: hidden; margin-top: 8px; } .bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #f7931a, #f0388a); }
+  .podium { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; align-items: end; }
+  .podium li { margin: 0; text-align: center; font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; } .podium li b { display: grid; place-items: center; margin-bottom: 4px; border-radius: 8px 8px 0 0; background: rgba(247,147,26,.18); color: var(--btc); font-size: 16px; }
+  .podium li:nth-child(1) b { height: 64px; background: #f7931a; color: #0d1117; } .podium li:nth-child(2) b { height: 50px; } .podium li:nth-child(3) b { height: 40px; } .podium li:nth-child(4) b { height: 32px; } .podium li:nth-child(5) b { height: 26px; }
+  .faq { margin: 0; } .faq dt { color: var(--text); font-weight: 600; margin-top: 12px; } .faq dd { margin: 2px 0 0; color: var(--dim); font-size: 15px; }
+  .bonus { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; align-items: start; } .bgroup { display: grid; gap: 8px; padding: 10px; border-radius: 14px; border: 1px solid var(--line); } .b-social { border-color: rgba(88,166,255,.35); } .b-community { border-color: rgba(247,147,26,.35); }
+  .bhead { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: 13px; color: var(--dim); } .bhead b { color: var(--text); text-transform: uppercase; letter-spacing: .04em; font-size: 13px; }
+  .pcard { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); color: var(--text); text-decoration: none; min-width: 0; }
+  .pcard:hover { border-color: var(--btc); } .pcard .ptext { flex: 1 1 auto; min-width: 0; font-weight: 600; } .pcard .plus { flex: none; }
+  .steps3 { grid-template-columns: repeat(3, 1fr); } .steps3 li { align-items: center; text-align: center; } .steps3 li::before { display: none; }
+  .fold { margin-top: 22px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); padding: 10px 14px; } .fold > summary { cursor: pointer; font-weight: 700; font-size: 17px; }
+  .fine { margin: 10px 0 0; padding-left: 18px; font-size: 15px; } .fine li { margin-bottom: 6px; }
+  .oi-line { padding: 2px 0; } .oi-line b { color: var(--btc); font-weight: 600; } #s2-open td:first-child { white-space: nowrap; vertical-align: top; color: var(--text); }
+  .gbadge { font-size: 12px; font-weight: 800; padding: 2px 9px; border-radius: 999px; background: linear-gradient(135deg, #f7931a, #f0388a); color: #0d1117; }
+  .joins { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; } .join { display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px 5px 5px; border-radius: 999px; background: var(--panel); border: 1px solid var(--line); color: var(--text); text-decoration: none; font-size: 14px; font-weight: 600; } .join:hover { border-color: var(--btc); } .join .ic { width: 26px; height: 26px; }
+  table { font-size: 14px; } @media (max-width: 480px) { body { padding: 20px 14px 48px; } .hero { padding: 20px 16px; } th, td { padding: 8px; } }
+  .pot-banner { margin: 0 0 18px; padding: 12px 14px; border-radius: 10px; font-weight: 600; line-height: 1.45; }
+  .pot-banner.warn { color: #f5d77a; border: 1px solid rgba(210,153,34,.7); background: rgba(210,153,34,.14); }
+  .pot-banner.full { color: #ffb4ae; border: 1px solid rgba(248,81,73,.7); background: rgba(248,81,73,.14); }
+</style>
+<link rel="me" href="https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2">
+<script>
+/* kanban #2789 (the owner 2026-11-15, stage only): the pot warning, one function for the stage /bounty/ page and the stage Feedback form (inlined by
+   pot-banner.py; tested by packages/arena-node/test/stage-pot-banner-2789.test.js). `s` is GET /feedback/season's answer. Answers null (no banner),
+   or { level: 'warn' | 'full', lines: [text, ...] }:
+   - 100 % (usedUp): red, the used-up text (kanban #2787);
+   - from 98 %: yellow, the sats left and when the next season starts, and how many of this season's reports still wait for review;
+   - from 90 %: yellow, the sats left and when the next season starts. */
+function arenaPotBanner(s) {
+  if (!s || !(Number(s.potSats) > 0)) return null;
+  var pot = Number(s.potSats), used = Number(s.usedSats) || 0, left = Math.max(0, Number.isFinite(Number(s.leftSats)) ? Number(s.leftSats) : pot - used);
+  // the next season by its name, not a date (the owner 2026-11-15: "... nothing is paid until Season <current+1> starts.")
+  var until = Number.isInteger(Number(s.season)) && Number(s.season) > 0 ? 'Season ' + (Number(s.season) + 1) + ' starts' : 'the next season starts';
+  var fmt = function (n) { return Number(n).toLocaleString('en-US'); };
+  if (s.usedUp === true) return { level: 'full', lines: ["This season's bounty pot is used up. Reports are still welcome, but nothing is paid until " + until + '.'] };
+  var pct = used / pot;
+  if (pct < 0.9) return null;
+  var lines = ['Only ' + fmt(left) + " sats left in this season's pot - once it is used up, nothing is paid until " + until + '.'];
+  var waiting = Number(s.pendingNew);
+  if (pct >= 0.98 && Number.isInteger(waiting) && waiting > 0) lines.push(fmt(waiting) + ' other report' + (waiting === 1 ? ' is' : 's are') + ' still waiting for review, so the pot is probably full.');
+  return { level: 'warn', lines: lines };
+}
+</script>
+</head>
+<body>
+<!-- ONE HEADER FOR EVERY PAGE (kanban #1457, the owner 2026-11-11: "Der Header muss überall gleich aussehen"): the start page's header, drawn by site-chrome.js -->
+<script src="https://testnet.bitcoinarena.io/site-chrome.js" data-foot="none"></script>
+<main>
+  <div id="pot-banner" role="status" hidden></div>
+  <section class="hero">
+    <div class="tag">Bug bounty &middot; Season 2 &middot; 15 Nov 18:00 CET - 22 Nov 18:00 CET</div>
+    <h1>Find bugs. Earn sats.</h1>
+    <p class="lead">Play, report, get paid over Lightning.</p>
+    <p class="when">Anything that breaks, loses money or confuses you counts as a bug. Link and verify your X account for the full level. You are paid in real sats over Lightning.</p>
+    <a class="go" href="/">Play a round</a>
+  </section>
+
+  <ol class="steps steps3" id="how-to-report">
+    <li><span class="si"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8 5v14l11-7z"/></svg></span><b>Play a round</b></li>
+    <li><span class="si"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M4 4h16v12H7l-3 3zM7 8v2h10V8zm0 4v2h7v-2z"/></svg></span><b>Use the Feedback function</b><span>at the bottom of the game page</span></li>
+    <li><span class="si"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg></span><b>Get paid</b></li>
+  </ol>
+
+  <h2 id="pay">What you get</h2>
+  <div class="tiles">
+    <div class="tile t-crit"><b>10,000</b><span>critical</span><small>money can be lost or taken</small></div>
+    <div class="tile t-high"><b>5,000</b><span>high</span><small>play or a payout stops</small></div>
+    <div class="tile t-med"><b>2,000</b><span>medium</span><small>needs a retry</small></div>
+    <div class="tile t-low"><b>1,000</b><span>low</span><small>wrong text, layout glitch</small></div>
+    <div class="tile t-use"><b>500</b><span>useful idea</span><small>something could be better</small></div>
+  </div>
+
+  <p class="note">We read every report and give it one of these levels. The first report of a bug wins; something we already know is not paid. <span id="half">Humans get 100 %, bots 15 %: see <a href="#humans">Bounty amounts</a>.</span></p>
+
+  <h2 id="humans">Bounty amounts</h2>
+  <p class="note human-rule"><b>Only humans get 100 % of a bug's amount; bots get 15 %.</b> To prove you are human, link a verified X (Twitter) account. Reports without a linked, verified X account count as bot reports and get 15 %. We reserve the right to exclude bots that try to game this; an accepted bug from such a bot still gets only 15 %.</p>
+
+  <h2 id="community-bonus">Bonus</h2>
+  <div class="bonus">
+    <div class="bgroup b-social"><div class="bhead"><b>Social media · follow</b><span class="gbadge">+20 % each</span></div>
+      <a class="pcard" href="https://x.com/bitcoinarena_io" target="_blank" rel="noopener"><span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M18.9 2H22l-6.8 7.8L23 22h-6.3l-4.9-6.4L6.1 22H3l7.3-8.3L1 2h6.4l4.4 5.9L18.9 2zm-1.1 18h1.7L6.3 3.9H4.5L17.8 20z"/></svg></span><span class="ptext">Follow @bitcoinarena_io on X</span><span class="plus">+20 %</span></a>
+      <a class="pcard" href="https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2" target="_blank" rel="noopener"><span class="ic" aria-hidden="true"><svg viewBox="48 44 167 167" aria-hidden="true" focusable="false"><path fill="#a855f7" d="M210.8 199.4c0 3.1-2.5 5.7-5.7 5.7h-68c-3.1 0-5.7-2.5-5.7-5.7v-15.5c.3-19 2.3-37.2 6.5-45.5 2.5-5 6.7-7.7 11.5-9.1 9.1-2.7 24.9-.9 31.7-1.2 0 0 20.4.8 20.4-10.7s-9.1-8.6-9.1-8.6c-10 .3-17.7-.4-22.6-2.4-8.3-3.3-8.6-9.2-8.6-11.2-.4-23.1-34.5-25.9-64.5-20.1-32.8 6.2.4 53.3.4 116.1v8.4c0 3.1-2.6 5.6-5.7 5.6H57.7c-3.1 0-5.7-2.5-5.7-5.7v-144c0-3.1 2.5-5.7 5.7-5.7h31.7c3.1 0 5.7 2.5 5.7 5.7 0 4.7 5.2 7.2 9 4.5 11.4-8.2 26-12.5 42.4-12.5 36.6 0 64.4 21.4 64.4 68.7v83.2ZM150 99.3c0-6.7-5.4-12.1-12.1-12.1s-12.1 5.4-12.1 12.1 5.4 12.1 12.1 12.1S150 106 150 99.3Z"/></svg></span><span class="ptext">Follow Bitcoin Arena on Nostr</span><span class="plus">+20 %</span></a>
+    </div>
+    <div class="bgroup b-community"><div class="bhead"><b>Community · join</b><span class="gbadge">any 2: +20 %</span></div>
+      <a class="pcard" href="https://t.me/bitcoinarena_io" target="_blank" rel="noopener"><span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="#229ED9" d="M21.9 3.4L18.6 19c-.2 1.1-.9 1.4-1.8.9l-5-3.7-2.4 2.3c-.3.3-.5.5-1 .5l.4-5.1 9.3-8.4c.4-.4-.1-.6-.6-.2L6 12.6 1 11c-1.1-.3-1.1-1.1.2-1.6L20.5 2c.9-.3 1.7.2 1.4 1.4z"/></svg></span><span class="ptext">Join our Telegram group</span></a>
+      <a class="pcard" href="https://discord.gg/9zZbASZyue" target="_blank" rel="noopener"><span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="#5865F2" d="M20.3 4.4A19.6 19.6 0 0 0 15.4 3l-.6 1.3a18.2 18.2 0 0 0-5.6 0L8.6 3a19.6 19.6 0 0 0-4.9 1.4C.6 9.1-.3 13.6.2 18.1a19.8 19.8 0 0 0 6 3l1.3-2.1a12.9 12.9 0 0 1-2-1l.5-.4a14.1 14.1 0 0 0 12 0l.5.4c-.6.4-1.3.7-2 1l1.3 2.1a19.7 19.7 0 0 0 6-3c.5-5.2-.9-9.7-3.5-13.7zM8.5 15.3c-1.2 0-2.2-1.1-2.2-2.4s1-2.4 2.2-2.4 2.2 1.1 2.2 2.4-1 2.4-2.2 2.4zm7 0c-1.2 0-2.2-1.1-2.2-2.4s1-2.4 2.2-2.4 2.2 1.1 2.2 2.4-1 2.4-2.2 2.4z"/></svg></span><span class="ptext">Join our Discord server</span></a>
+      <a class="pcard" href="https://armada.buzz/invite/naddr1qvzqqqyzz5pzpt3qdj9s02tf33v6t5epfuxgk90eklx42cg2ftatwmuzznkww6anqqqqf5522e#BAEU9DouYIxVptZrIZWPrgMF" target="_blank" rel="noopener"><span class="ic" aria-hidden="true"><svg viewBox="20 2 88 124" aria-hidden="true" focusable="false"><g fill="#19e6e6"><path d="M95.4 104.865H32.59c-1.18 0-2.14-.96-2.14-2.14s.96-2.14 2.14-2.14H95.4c1.18 0 2.14.96 2.14 2.14s-.96 2.14-2.14 2.14z"/><path d="M83.98 115.565H44.01a1.43 1.43 0 1 1 0-2.86h39.97a1.43 1.43 0 1 1 0 2.86z"/><path d="M73.99 123.775H54.01a1.071 1.071 0 0 1 0-2.14h19.98a1.071 1.071 0 0 1 0 2.14z"/></g><path fill="#f0388a" d="M64 4.225l-39.97 88.5h17.13l2.31-5.2 2.76-6.22-2.22-1.43-1.42-12.84h9.99l4.89-11.01L64 41.335l11.42 25.7h9.99l-1.43 12.84-2.22 1.43 2.77 6.22 2.31 5.2h17.13z"/><path fill="#f0388a" d="M76.84 79.165c-.15 0-.31-.05-.44-.15l-12.41-9.65-12.41 9.65c-.31.24-.76.19-1-.13a.706.706 0 0 1 .13-1l12.85-9.99c.26-.2.62-.2.88 0l12.85 9.99a.715.715 0 0 1-.43 1.28z"/></svg></span><span class="ptext">Join our Armada community</span></a>
+    </div>
+  </div>
+
+  <p class="note">Up to +60 % on every confirmed report by a human (a linked, verified X account); bots get no bonus. Type your names in the Feedback form and press Check: each one is checked live. We check again before we pay, so stay with us.</p>
+
+  <div class="duo">
+    <section class="card" id="budget"><h3>Season pot</h3>
+      <div class="pot"><b id="pot-used">&hellip;</b> <span>/ <span id="pot-size">120,000</span> sats</span></div>
+      <div class="bar"><i id="pot-bar"></i></div>
+      <p class="note">Season 2: 120,000 sats for reports, bonuses and nodes (100,000 a season from Season 3). A season runs one week. When the pot is used up, there are no more bounties that season - nothing carries over to the next one.</p>
+    </section>
+    <section class="card" id="draw"><h3>Draw prize 50,000 sat: the top 5</h3>
+      <ol class="podium"><li><b>1</b>20,000</li><li><b>2</b>12,000</li><li><b>3</b>8,000</li><li><b>4</b>6,000</li><li><b>5</b>4,000</li></ol>
+      <p class="note">At the end of the season we draw five winners among reporters who are members of Telegram, Discord or Armada. The seed is a Bitcoin block, so anyone can check it.</p>
+    </section>
+  </div>
+
+  <details class="fold" id="rules"><summary>Details</summary>
+    <ul class="fine">
+      <li id="out-of-scope"><b>Out of scope.</b> The feedback form, this bounty page and their services (the feedback API, reward links, social account checks, the admin page) earn no bounty - only the game and the network do.</li>
+      <li id="duplicates"><b>Already known? Not paid.</b> A finding we already know about is excluded: if it matches a ticket in the <a href="#open-issues">open-issues list below</a>, or we had already found it in our own code. You then get a private link to that ticket's text, so you can see it was known before your report. Otherwise the first report wins.</li>
+      <li id="follow-ups">A gap in a fix or another variant: 1,000 sats.</li>
+      <li id="bots">Humans 100 %, bots 15 %: a linked, verified X (Twitter) account proves you are human. Without a linked, verified X account a report counts as a bot report and gets 15 %. Bots that try to game this may be excluded; an accepted bug from such a bot still gets only 15 %.</li>
+      <li id="node-bounty">Run a node for a day: 10,000 sats, the first 3 nodes a season. From 16 Nov 2026 07:06 UTC the 10,000 sat node bounty is only for humans with a linked X account. Node reports from bots are rewarded like any other feedback.</li>
+      <li id="no-game-results">Winning a round is never paid. Test sats have no value.</li>
+      <li>Draw: one confirmed report this season and a member of Telegram, Discord or Armada; one entry per person. Seed: the first Bitcoin block after Season 2 ends (2026-11-22 17:00 UTC). Draw prize 50,000 sat, apart from the 120,000 pot. <a href="draw.mjs">draw.mjs</a></li>
+      <li id="no-carry">The pot is 120,000 sats in Season 2 (100,000 a season from Season 3; a season runs one week). The draw prize, 50,000 sat, is apart from it. When it is used up, there are no more bounties that season - nothing carries over to the next one.</li>
+      <li>We check every report and decide its level. Our decision is final.</li>
+    </ul>
+  </details>
+
+  <details class="fold" id="open-issues"><summary><span id="oi-count">149</span> known issues</summary>
+    <table><thead><tr><th>Area</th><th>Tickets</th></tr></thead><tbody id="s2-open"><tr><td colspan="2">Reading &hellip;</td></tr></tbody></table>
+    <p class="note" id="s2-updated"></p>
+  </details>
+  <script>
+    /* the week's pot and the open-issues list (areas and ticket numbers only), read from the faucet (kanban #2623, #2641) */
+    (function () {
+      var fmt = function (n) { return Number(n).toLocaleString('en-US'); };
+      fetch('/api/faucet/feedback/season').then(function (r) { if (!r.ok) throw 0; return r.json(); }).then(function (s) {
+        document.getElementById('pot-used').textContent = fmt(s.usedSats);
+        /* kanban #2784: the pot's size from the faucet (Season 2: 120,000) */
+        if (s.potSats) { var ps = document.getElementById('pot-size'); if (ps) ps.textContent = fmt(s.potSats); }
+        document.getElementById('pot-bar').style.width = Math.min(100, Math.round(100 * s.usedSats / s.potSats)) + '%';
+        /* kanban #2789: the pot warning on top */
+        var ban = typeof arenaPotBanner === 'function' ? arenaPotBanner(s) : null, box = document.getElementById('pot-banner');
+        if (ban && box) { box.className = 'pot-banner ' + ban.level; box.replaceChildren(); ban.lines.forEach(function (l) { var d = document.createElement('div'); d.textContent = l; box.appendChild(d); }); box.hidden = false; }
+        
+      }).catch(function () { document.getElementById('pot-used').textContent = '?'; });
+      // the list at once: this browser's last copy, else the one built into the page; then the edge's (kanban #2641)
+      var SNAP = {"updated":"2026-11-14T15:49:09.283Z","areas":[{"area":"Census","tickets":["#1248"]},{"area":"Committees and bonds","tickets":["#925","#1038","#1063","#1351","#1386","#2564","#2643","#2660","#2670","#2739","#2740","#2766"]},{"area":"Faucet and feedback","tickets":["#2664","#2732","#2733","#2734","#2755","#2756","#2757"]},{"area":"Federation","tickets":["#718","#1169","#1358","#1367","#2650","#2752","#2767"]},{"area":"Installer","tickets":["#1369"]},{"area":"Lightning payouts","tickets":["#2656","#2687","#2696","#2714","#2716","#2746","#2748"]},{"area":"Liquidation","tickets":["#1247","#1253"]},{"area":"Markets","tickets":["#1376"]},{"area":"Next Block game","tickets":["#962","#2747","#2764"]},{"area":"Node software","tickets":["#1482","#2651","#2659","#2667","#2668","#2674","#2691","#2697","#2698","#2700","#2709","#2719","#2729","#2730","#2735","#2736","#2743","#2751","#2753","#2759","#2765"]},{"area":"Other","tickets":["#1008","#1204","#1352","#1489","#2644","#2645","#2646","#2657","#2661","#2663","#2665","#2666","#2669","#2673","#2676","#2677","#2678","#2679","#2683","#2684","#2688","#2690","#2692","#2693","#2695","#2699","#2703","#2704","#2705","#2706","#2710","#2711","#2713","#2715","#2717","#2718","#2720","#2722","#2723","#2725","#2726","#2728","#2731","#2738","#2741","#2742","#2744","#2749","#2750","#2754","#2758","#2760","#2761","#2763","#2768"]},{"area":"Presence","tickets":["#1372"]},{"area":"Reserves","tickets":["#1176","#1359","#2652","#2662"]},{"area":"Rock Paper Scissors game","tickets":["#2658"]},{"area":"Settlement","tickets":["#1049","#1077","#1170","#1183","#1239","#1370","#2648","#2649","#2653","#2680","#2701","#2702","#2737"]},{"area":"Slashing","tickets":["#975","#1155","#1187","#1188","#1189","#1191","#1192","#1193","#1246","#1357"]},{"area":"Update stage","tickets":["#1377","#1380"]},{"area":"Website","tickets":["#1007"]}]};
+      var show = function (o) { if (!o || !Array.isArray(o.areas)) return; var tb = document.getElementById('s2-open'); tb.textContent = '';
+        o.areas.forEach(function (a) { var tr = document.createElement('tr'), t1 = document.createElement('td'), t2 = document.createElement('td');
+          t1.textContent = a.area; var its = Array.isArray(a.items) && a.items.length ? a.items : (a.tickets || []).map(function (t) { return { id: t, text: '' }; });
+          its.forEach(function (i) { var d = document.createElement('div'); d.className = 'oi-line'; var b = document.createElement('b'); b.textContent = i.id; d.append(b, document.createTextNode(i.text ? ': ' + i.text : '')); t2.append(d); });
+          tr.append(t1, t2); tb.append(tr); });
+        if (!tb.children.length) tb.innerHTML = '<tr><td colspan="2">None open.</td></tr>';
+        var c = document.getElementById('oi-count'); if (c) c.textContent = o.areas.reduce(function (n, a) { return n + (a.tickets || []).length; }, 0); var u = document.getElementById('s2-updated'); if (u && o.updated) u.textContent = 'Updated ' + o.updated.slice(0, 16).replace('T', ' ') + ' UTC'; };
+      var kept = null; try { kept = JSON.parse(localStorage.getItem('arena.open-issues') || 'null'); } catch (e) { kept = null; }
+      show(kept && kept.updated && (!SNAP.updated || kept.updated >= SNAP.updated) ? kept : SNAP);
+      fetch('/api/faucet/feedback/open-issues', { cache: 'no-cache' }).then(function (r) { if (!r.ok) throw 0; return r.json(); }).then(function (o) {
+        show(o); try { localStorage.setItem('arena.open-issues', JSON.stringify(o)); } catch (e) { /* this visit only */ } }).catch(function () {
+        if (!document.querySelector('#s2-open td:nth-child(2)')) document.getElementById('s2-open').innerHTML = '<tr><td colspan="2">Not readable just now.</td></tr>'; });
+    })();
+  </script>
+
+  <span id="season-1"></span><details id="week-1" style="margin-top:28px"><summary style="cursor:pointer;font-size:20px;font-weight:600">Season 1 (2026-11-11 to 2026-11-13): rules and payouts<a class="rl" href="#week-1" aria-label="Link to this rule" title="Copy the link to this rule"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7.78 4.3 9.3 2.78a3.25 3.25 0 0 1 4.6 4.6l-2.5 2.5a3.25 3.25 0 0 1-4.6 0 .75.75 0 0 1 1.06-1.06 1.75 1.75 0 0 0 2.48 0l2.5-2.5a1.75 1.75 0 0 0-2.48-2.48L8.84 5.36A.75.75 0 0 1 7.78 4.3Zm-3.56 7.46 2.5-2.5a1.75 1.75 0 0 1 2.48 0 .75.75 0 1 0 1.06-1.06 3.25 3.25 0 0 0-4.6 0l-2.5 2.5a3.25 3.25 0 0 0 4.6 4.6l1.52-1.52a.75.75 0 1 0-1.06-1.06L6.7 14.24a1.75 1.75 0 0 1-2.48-2.48Z"/></svg></a></summary>
+
+  
+  <p>Season 1 ran from 2026-11-11 to 2026-11-13. Every payment is listed below.</p>
+  <ul>
+    <li><b>Bug bounty,</b> over Lightning, for confirmed bugs and useful reports - by severity:
+      <ul>
+        <li>Useful feedback: <b>500 sats</b> (a clear note on what confused you, with the screen and the step)</li>
+        <li>Bug, low: <b>1,000 sats</b> (a wrong text or a layout glitch that does not stop play)</li>
+        <li>Bug, medium: <b>2,000 sats</b> (a round or a deposit that needs a retry to go through)</li>
+        <li>Bug, high: <b>5,000 sats</b> (play or a payout stops and only a reload or a restart helps)</li>
+        <li>Bug, critical: <b>10,000 sats</b> (money can be lost or taken, or the result is wrong)</li>
+      </ul></li>
+    <li><b>Node bounty: 10,000 sats</b> for running a node, for the first 10 outside nodes - one per person and one per node, reported from the node's owner page.</li>
+    <li><b>Never for game results.</b> Nobody is paid for winning a round.</li>
+    <li>Test sats have no value. Only these Lightning payments are real money.</li>
+  </ul>
+  <p>Found something? Use Feedback at the bottom of the <a href="https://testnet.bitcoinarena.io/">game page</a>.</p>
+  <h3 style="font-size:17px;margin:20px 0 0">How a report was paid</h3>
+  <ul>
+    <li><b>Checked first.</b> Each report is read on its ticket and marked valid or not, with a severity: critical, high, medium or low.</li>
+    <li><b>Approved and paid by the project owner,</b> who answers for every payout. If the owner sets a different severity, that is written on the ticket.</li>
+    <li><b>No limit per person.</b> Every confirmed report is paid, however many one tester sends: in Season 1 one tester has 21 paid reports, another 15.</li>
+    <li><b>A weekly budget of 100,000 sats.</b> Paid so far in Season 1 (Nov 11-13): <span id="s1-paid">99,500</span> sats.</li>
+    <script>/* #2639: the sum of the Season 1 rows of the live payout log; the number above stays when it cannot be read */fetch('/api/faucet/feedback/paid-log').then(function (r) { if (!r.ok) throw 0; return r.json(); }).then(function (l) { var s = 0, n = 0; (Array.isArray(l) ? l : []).forEach(function (x) { if (x && x.season === 'Season 1' && Number.isFinite(Number(x.sats))) { s += Number(x.sats); n++; } }); if (n) document.getElementById('s1-paid').textContent = s.toLocaleString('en-US'); }).catch(function () {});</script><li style="display:none"></li>
+    <li><b>Follow-ups are paid less.</b> A new finding gets its tier. A report that finds a gap in the fix for an earlier report, or another variant of a bug that is already known, is a follow-up: it is fixed like any other report, but paid 1,000 sats, because it builds on the earlier finding and on the fix made for it. In Season 1 that was 15 reports (10 high, 5 medium) at 1,000 sats; the first report of the federation-record chain (#037, high) was paid 2,000 sats.</li>
+    <li><b>Paid in Season 1, by tier:</b> <span id="s1-tiers">critical 10,000 (1 report), high 5,000 (10), medium 2,000 (7), low 1,000 (7), useful 500 (3)</span>, and the follow-ups above. Node bounty: none paid yet.</li>
+    <li><b>From one bounty wallet, over Lightning,</b> kept only for this. Every payout is listed below with its report.</li>
+    <li>The network's reserves never pay a single report. They may top up the bounty wallet once a year, by a public proposal and vote.</li>
+  </ul>
+  <h3 style="font-size:17px;margin:20px 0 0">Every payout</h3>
+  <table id="rows"><thead><tr><th>Season</th><th>Date</th><th>For</th><th>Channel</th><th>Sats</th></tr></thead><tbody></tbody></table>
+  <p id="sum" style="margin-top:14px"></p>
+  <script>
+  (function () {
+    var body = document.querySelector('#rows tbody'), TIER = { critical: 10000, high: 5000, medium: 2000, low: 1000, useful: 500 };
+    fetch('/api/faucet/feedback/paid-log').then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); }).then(function (l) { if (!Array.isArray(l) || !l.length) throw new Error('empty'); return l; }).catch(function () { return fetch('log.json').then(function (r) { return r.ok ? r.json() : []; }).catch(function () { return []; }); }).then(function (list) {
+      var total = 0, by = {}, seasons = {}, tiers = {};   // kanban #2868: each row's own season
+      list.forEach(function (p) { var tr = document.createElement('tr'); [String(p.season || 'Season 1'), p.date, p.reason, p.channel, Number(p.sats).toLocaleString('en-US')].forEach(function (x) { var td = document.createElement('td'); td.textContent = x; tr.appendChild(td); }); body.appendChild(tr); total += Number(p.sats); by[p.channel] = (by[p.channel] || 0) + Number(p.sats); var se = String(p.season || 'Season 1'); seasons[se] = (seasons[se] || 0) + Number(p.sats);
+        var m = /\((critical|high|medium|low|useful)\)$/.exec(String(p.reason || '')); if (se === 'Season 1' && m && Number(p.sats) === TIER[m[1]]) tiers[m[1]] = (tiers[m[1]] || 0) + 1; });
+      var tl = Object.keys(TIER).filter(function (k) { return tiers[k]; }).map(function (k) { return k + ' ' + TIER[k].toLocaleString('en-US') + ' (' + tiers[k] + (tiers[k] === 1 ? ' report' : '') + ')'; });
+      if (tl.length) document.getElementById('s1-tiers').textContent = tl.join(', ');
+      if (!list.length) { var tr = document.createElement('tr'), td = document.createElement('td'); td.colSpan = 5; td.textContent = 'Nothing paid yet.'; tr.appendChild(td); body.appendChild(tr); }
+      else document.getElementById('sum').textContent = Object.keys(seasons).sort().map(function (k) { return k + ': ' + seasons[k].toLocaleString('en-US') + ' sats paid'; }).join('; ') + '.';
+    });
+  })();
+  </script>
+    </details>
+<footer><a href="/">Bitcoin Arena</a> &middot; <a class="nostr-id" href="https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2" rel="me" title="Bitcoin Arena on Nostr - verified as bitcoinarena.io (NIP-05)">Nostr: bitcoinarena.io <span aria-label="verified">&#10003;</span></a></footer>
+</main>
+<script>/* #2641: a rule's link icon copies its address; #week-1 opens Season 1 */
+document.addEventListener('click', function (e) { var a = e.target && e.target.closest ? e.target.closest('a.rl') : null; if (!a) return;
+  var url = location.origin + location.pathname + a.getAttribute('href'); try { navigator.clipboard.writeText(url); } catch (x) {}
+  a.classList.add('copied'); a.title = 'Link copied'; setTimeout(function () { a.classList.remove('copied'); a.title = 'Copy the link to this rule'; }, 1500); });
+function openWeek1() { var id = location.hash.slice(1) === 'season-1' ? 'week-1' : location.hash.slice(1); var e = id && document.getElementById(id); if (!e) return;
+  var d = e.tagName === 'DETAILS' ? e : e.closest('details'); if (d) d.open = true; e.scrollIntoView(); }
+window.addEventListener('hashchange', openWeek1); openWeek1();</script>
+</body>
+</html>

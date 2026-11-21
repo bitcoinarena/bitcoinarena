@@ -44,7 +44,10 @@ test('a gateway that makes no invoice in time, or refuses, is passed over at onc
   assert.deepEqual(got.tried.map((t) => t.gateway), ['A', 'B']);
   assert.match(got.tried[0].why, /no answer in 0.05 s/);
   assert.ok(Date.now() - t0 < 1000);
-  await assert.rejects(invoiceThroughGateways(fakeClient({ A: 'throw' }), 1n, ['A'], { timeoutMs: 50 }), /no gateway made a deposit invoice: A \(A refused\)/);
+  // kanban #2959 (feedback #299): the player's words name no gateway; the gateways tried ride on the error for the log
+  await assert.rejects(invoiceThroughGateways(fakeClient({ A: 'throw' }), 1n, ['gw-a.example:10000'], { timeoutMs: 50 }).catch((e) => {
+    assert.doesNotMatch(e.message, /gw-a|example|10000/); assert.match(e.message, /No Lightning gateway could make a deposit invoice right now \(1 tried\)/);
+    assert.deepEqual(e.tried.map((t) => t.gateway), ['gw-a.example:10000']); throw e; }));
   assert.equal((await invoiceThroughGateways(fakeClient({ '': { end: 'Claimed' } }), 1n, [])).gateway, '', 'none listed: the lock client picks');
 });
 
@@ -88,7 +91,8 @@ test('the seated gateways first: a deposit asks its federation\'s seated gateway
   const asked = [];
   useSeatedGateways(async (fid) => { asked.push(fid); return fid === F ? ['https://seat-1', 'https://seat-2'] : []; });
   try {
-    const c = fakeClient({ 'https://seat-1': 'throw', 'https://seat-2': { end: 'Claimed', afterMs: 10 }, 'https://lobby': { end: 'Claimed' } }, ['https://fed-1', 'https://seat-2']);
+    // kanban #3029: a seated gateway is one the federation lists (the lock client's gateways()); one it does not list is not taken first
+    const c = fakeClient({ 'https://seat-1': 'throw', 'https://seat-2': { end: 'Claimed', afterMs: 10 }, 'https://lobby': { end: 'Claimed' } }, ['https://fed-1', 'https://seat-2', 'https://seat-1/']);
     assert.deepEqual(await seatedGatewaysOf(c), [], 'a client whose federation is not known asks no seats');
     noteClientFederation(c, F.toUpperCase());
     assert.deepEqual(await seatedGatewaysOf(c), ['https://seat-1', 'https://seat-2']);

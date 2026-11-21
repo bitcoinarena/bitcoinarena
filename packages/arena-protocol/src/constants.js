@@ -25,7 +25,7 @@ export const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 27, 28]);
+export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 27, 28, 29, 30, 31]);
 /** The last BLWP/v1 tags become ARENA/v1 at one point per network (tag-switch.js, kanban #525). */
 export const TAG_SWITCH_VERSION = 18;
 /** A node's bond outputs count as their sum: the round's floor is applied to it (census.js nodeBonds, kanban #544). */
@@ -49,6 +49,39 @@ export const GIFTS_IN_FEE_LOCK_VERSION = 27;
  * 22-26 are the 2.0 branches' and 27 the gifts', so this is 28.
  */
 export const LOCK_SET_VERSION = 28;
+/**
+ * 2026.0.29 - A SCORE TIE IS BROKEN BY H(round_id || pubkey) (kanban #1614, decided 2026-11-14 "Ja alle 15": "tie-break H(round_id ||
+ * pubkey), from the next protocol"). Below this version computePayoutTable orders equal scores by the bare player key, which the player
+ * mints - a key ground to start 0x00 won every tie at a paid boundary in every round. From 29 the tie goes by the remainder rule's own
+ * hash (TAG.remainder over round_id || pubkey), which no key can win in advance for every round. Rounds below 29 keep the old order
+ * byte for byte, so the seats agree on every round already played. 22-26 are the 2.0 branches', 27 the gifts', 28 the lock set's.
+ */
+export const TIE_SALT_VERSION = 29;
+/** Whether a round of protocol version `v` breaks score ties by H(round_id || pubkey) (kanban #1614). */
+export const saltsTies = (v) => Number.isInteger(v) && v >= TIE_SALT_VERSION;
+/**
+ * 2026.0.30 - EVERY BOND COUNTS IN THE BOND_MIN MEDIAN (kanban #2686, audit #1489 r3-census-1; the owner 2026-11-14 "ja"). Below this version
+ * census-median.js leaves out every node that declares nothing (the installer's adverts declare nothing), so one declaring seat was the
+ * whole median and, after notice_period, every seat refused every new round naming less. From 30 a node that declares no bond_min counts
+ * at its network's BOND_MIN_DEFAULT_SATS with its whole bond. Rounds below 30 keep the old median byte for byte.
+ */
+export const BOND_MEDIAN_ALL_VERSION = 30;
+/** Whether a round of protocol version `v` counts every census bond in the bond_min median (kanban #2686). */
+export const mediansAllBonds = (v) => Number.isInteger(v) && v >= BOND_MEDIAN_ALL_VERSION;
+/**
+ * 2026.0.31 - A TIE AT A PAID PLACE IS SPLIT EVENLY (kanban #2687, audit #1489 r3-settle-11; spec ruling #2776, 2026-11-15). From 29 a tie
+ * went by H(round_id || pubkey), but the round id is public before a player's key is fixed: a client that ground 32 keys per round won the
+ * tie - the whole loser pool with one paying rank - in 24 rounds of 24. From 31 entries tied at a paid place share the sum of the places
+ * they occupy, equally; no order among them is computed, and the odd msat of that division goes to the protocol reserves. Rounds below
+ * 31 keep #1614's order byte for byte.
+ */
+export const TIE_SPLIT_VERSION = 31;
+/** THE CERTIFIED REVEAL SET (kanban #2832, ruling 2026-11-16 (a)): a paying head-to-head round of this version decides its verdict from the
+ * reveal set its committee certified after a gather, never from what each seat happened to fetch. PREPARED: not in SUPPORTED_PROTOCOL_VERSIONS
+ * until the seats that serve it roll; its own protocol height, older rounds keep today's rule. */
+export const REVEAL_SET_VERSION = 32;
+/** Whether a round of protocol version `v` splits a tie at a paid place evenly (kanban #2687). */
+export const splitsTies = (v) => Number.isInteger(v) && v >= TIE_SPLIT_VERSION;
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (RULED 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -387,6 +420,10 @@ export const TYPE_SIGNED_INPUT_BATCH = 0x36;
  * 0x50 and 0x51 are used on neither line (1.9 ends at 0x36, 2.0 at 0x4e). */
 export const TYPE_LOCK_SET = 0x50;
 export const TYPE_LOCK_SET_CERTIFICATE = 0x51;
+/** THE CERTIFIED REVEAL SET OF A HEAD-TO-HEAD ROUND (kanban #2832, ruling 2026-11-16 (a); reveal-set.js): the twin of the lock set. 0x52, 0x53 are
+ * used on neither line. Written at REVEAL_SET_VERSION, which no build speaks yet (it is not in SUPPORTED_PROTOCOL_VERSIONS): prepared, not rolled. */
+export const TYPE_REVEAL_SET = 0x52;
+export const TYPE_REVEAL_SET_CERTIFICATE = 0x53;
 // A GUARDIAN'S COPY OF A HALTED FEDERATION'S SPENT-NOTE SET (§23A.5 liquidation step 1); 0x23 is the
 // ballot's, 0x24 and 0x25 absence and departure
 export const TYPE_SPENT_SET = 0x26;
@@ -584,6 +621,9 @@ export const TAG = {
   lockSet: 'ARENA/v1/LockSet',
   lockSetSignature: 'ARENA/v1/LockSetSignature',
   lockSetView: 'ARENA/v1/LockSetView',
+  // THE CERTIFIED REVEAL SET (kanban #2832): the set's id and a seat's signature over (set id, its time)
+  revealSet: 'ARENA/v1/RevealSet',
+  revealSetSignature: 'ARENA/v1/RevealSetSignature',
   matchProof: 'ARENA/v1/MatchProof',
   matchRecord: 'ARENA/v1/MatchRecord',
   presence: 'ARENA/v1/Presence',

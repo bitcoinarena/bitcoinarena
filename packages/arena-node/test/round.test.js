@@ -48,19 +48,20 @@ test('the entry id is the tagged hash of its contract', () => {
 });
 
 test('a batch is stored tick by tick, and a repeat writes nothing', () => {
-  const r = fresh(), c = contract();
-  const rid = r.open(c); const e = entryFor(rid); const eid = r.enter(e);
+  // a FREE round: a staked Next Block run takes no player-declared liquidations (kanban #2655)
+  const r = fresh(), c = { ...contract(), stakeMsat: 0n };
+  const rid = r.open(c); const e = { ...entryFor(rid), stakeMsat: 0n, feeMsat: entryFeeMsat(0n) }; const eid = r.enter(e);
   const bytes = encodeInputBatch({
     roundId: rid, entryId: eid, previousHash: GENESIS, firstTick: 0,
     ticks: [[65536, 0, 0, 0, 0], [65536, 100, 0, 0, 0], [65536, 200, 0, 0, 0]],
-    liquidations: [[11, 3 * 65536]],
+    liquidations: [[1, 3 * 65536]],   // kanban #2689: at a tick the batch carries (it was 11, past the batch's ticks 0..2)
   });
   assert.equal(r.batch(bytes), 3, 'three ticks were new');
   assert.equal(r.batch(bytes), 0, 'the same message again writes nothing');
   assert.equal(r.batch(bytes), 0, 'and again');
   const t = r.transcript(rid, eid);
   assert.equal(t.ticks.length, 3);
-  assert.deepEqual(t.liquidations, [[11, 3 * 65536]], 'nor is the strike doubled');
+  assert.deepEqual(t.liquidations, [[1, 3 * 65536]], 'nor is the strike doubled');
 });
 
 test('a batch that would leave a gap is refused, and says which tick is due', () => {
@@ -88,7 +89,8 @@ test('a batch that would leave a gap is refused, and says which tick is due', ()
 test('the words come back exactly as they went in', () => {
   const r = fresh(), c = contract();
   const rid = r.open(c); const e = entryFor(rid); const eid = r.enter(e);
-  const words = [[65536, -22000, 0, 65536, 1], [0, 0, 65536, 0, 0]];
+  // word 4 is the truck core's practice switch: 0 here, a staked Next Block round refuses it (kanban #2654)
+  const words = [[65536, -22000, 0, 65536, 0], [0, 0, 65536, 0, 0]];
   r.batch(encodeInputBatch({ roundId: rid, entryId: eid, previousHash: GENESIS, firstTick: 0, ticks: words, liquidations: [] }));
   assert.deepEqual(r.transcript(rid, eid).ticks.map((x) => x.words), words);
 });
@@ -187,9 +189,9 @@ test('a round outlives the process that opened it', async () => {
 
 
 test('a player who joined late starts at his own joinTick, not at zero', () => {
-  const r = fresh(), c = contract();
+  const r = fresh(), c = { ...contract(), stakeMsat: 0n };   // free: its liquidation is taken (kanban #2655)
   const rid = r.open(c);
-  const eid = r.enter({ ...entryFor(rid), joinTick: 50 });
+  const eid = r.enter({ ...entryFor(rid), stakeMsat: 0n, feeMsat: entryFeeMsat(0n), joinTick: 50 });
   assert.equal(r.nextTick(rid, eid), 50, 'read off the contract he signed');
   assert.throws(() => r.batch(encodeInputBatch({
     roundId: rid, entryId: eid, previousHash: GENESIS, firstTick: 0,

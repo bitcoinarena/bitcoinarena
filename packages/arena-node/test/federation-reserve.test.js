@@ -2,6 +2,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A FEDERATION'S RESERVE, READ FROM ITS GUARDIANS (§23A.3): each guardian's stock wallet_summary over its
 // JSON-RPC WebSocket; kept only when a threshold of them name one sum. A fake WebSocket per endpoint answers as a guardian.
+// The fake endpoints are single-label hosts (ws://g1), which a live seat does not open (kanban #3134): these reads run as a local-seat node (localOk).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readReserve, reserveOfSummary, routedEndpoint } from '../src/federation-reserve.js';
@@ -25,14 +26,14 @@ test('the reserve is the sum a threshold of guardians name - spendable plus the 
   assert.equal(reserveOfSummary(summary([250000, 250000, 150000])), 650007n);
   const eps = [1, 2, 3, 4, 5, 6, 7].map((i) => `ws://g${i}`);
   const all = Object.fromEntries(eps.map((e) => [e, summary([250000, 250000, 150000])]));
-  const ok = await readReserve({ endpoints: eps, threshold: 5, WS: fakeWS(all) });
+  const ok = await readReserve({ endpoints: eps, threshold: 5, localOk: true, WS: fakeWS(all) });
   assert.deepEqual([ok.ok, ok.reserveSats, ok.agreeing, ok.moduleId], [true, 650007n, 5, 3], 'it answers once five agree');
   // two lie, one is down: four honest are fewer than five
   const bad = { ...all, 'ws://g1': summary([1]), 'ws://g2': summary([1]), 'ws://g3': 'down' };
-  const no = await readReserve({ endpoints: eps, threshold: 5, WS: fakeWS(bad) });
+  const no = await readReserve({ endpoints: eps, threshold: 5, localOk: true, WS: fakeWS(bad) });
   assert.deepEqual([no.ok, no.why], [false, '4 of 7 guardians named one reserve, and 5 must']);
   // one lies and one is down: five honest
-  const five = await readReserve({ endpoints: eps, threshold: 5, WS: fakeWS({ ...all, 'ws://g1': summary([1]), 'ws://g2': 'down' }) });
+  const five = await readReserve({ endpoints: eps, threshold: 5, localOk: true, WS: fakeWS({ ...all, 'ws://g1': summary([1]), 'ws://g2': 'down' }) });
   assert.deepEqual([five.ok, five.reserveSats, five.agreeing], [true, 650007n, 5]);
 });
 
@@ -51,9 +52,9 @@ test('a walletv2 federation\'s reserve is its federation_wallet value, named by 
   };
   const eps = [1, 2, 3, 4, 5, 6, 7].map((i) => `ws://v${i}`);
   const wallet = { value: 1098919, outpoint: `${'11'.repeat(32)}:0`, tweak: '22'.repeat(32) };
-  const ok = await readReserve({ endpoints: eps, threshold: 5, WS: v2(Object.fromEntries(eps.map((e) => [e, wallet]))) });
+  const ok = await readReserve({ endpoints: eps, threshold: 5, localOk: true, WS: v2(Object.fromEntries(eps.map((e) => [e, wallet]))) });
   assert.deepEqual([ok.ok, ok.reserveSats, ok.agreeing, ok.moduleId], [true, 1098919n, 5, 2]);
-  const none = await readReserve({ endpoints: eps, threshold: 5, WS: v2(Object.fromEntries(eps.map((e) => [e, null]))) });
+  const none = await readReserve({ endpoints: eps, threshold: 5, localOk: true, WS: v2(Object.fromEntries(eps.map((e) => [e, null]))) });
   assert.deepEqual([none.ok, none.reserveSats], [true, 0n]);
 });
 
@@ -72,10 +73,30 @@ test('a guardian that never answers does not hold the reading: it answers once a
   const eps = [1, 2, 3, 4, 5, 6, 7].map((i) => `ws://g${i}`);
   const all = Object.fromEntries(eps.map((e) => [e, summary([100000])]));
   const t0 = Date.now();
-  const r = await readReserve({ endpoints: eps, threshold: 5, timeoutMs: 5000, WS: fakeWS({ ...all, 'ws://g7': 'silent' }) });
+  const r = await readReserve({ endpoints: eps, threshold: 5, localOk: true, timeoutMs: 5000, WS: fakeWS({ ...all, 'ws://g7': 'silent' }) });
   assert.deepEqual([r.ok, r.reserveSats, r.agreeing], [true, 100007n, 5]);
   assert.ok(Date.now() - t0 < 1000, `answered in ${Date.now() - t0} ms, not after the 5 s timeout`);
   // and a refusal still waits for every answer: three silent, four agree - fewer than five, said when the timeout ends
-  const no = await readReserve({ endpoints: eps, threshold: 5, timeoutMs: 300, WS: fakeWS({ ...all, 'ws://g5': 'silent', 'ws://g6': 'silent', 'ws://g7': 'silent' }) });
+  const no = await readReserve({ endpoints: eps, threshold: 5, localOk: true, timeoutMs: 300, WS: fakeWS({ ...all, 'ws://g5': 'silent', 'ws://g6': 'silent', 'ws://g7': 'silent' }) });
   assert.deepEqual([no.ok, no.why], [false, '4 of 7 guardians named one reserve, and 5 must']);
+});
+
+test('a guardian endpoint the seat\'s rule refuses is not opened; an operator\'s override or route is (kanban #3134)', async () => {
+  const { guardianDialAt } = await import('../src/federation-reserve.js');
+  const routes = parseRoutes('https://seat.example.com/fed2-1=http://127.0.0.1:6221');
+  const overrides = new Map([['wss://seat.example.com/fed2-2/guardian', 'ws://127.0.0.1:7222']]);
+  const at = (e, localOk = false) => guardianDialAt(e, { localOk, overrides, routes });
+  assert.equal(at('ws://127.0.0.1:18777/lnurlp/tips/cb?amount=1000&x='), null);
+  assert.equal(at('ws://127.0.0.1:18777/lnurlp/tips/cb?amount=1000&x=', true), null, 'a query is refused on a local node too');
+  assert.equal(at('ws://127.0.0.1:7000/guardian'), null);
+  assert.equal(at('ws://127.0.0.1:7000/guardian', true), 'ws://127.0.0.1:7000/guardian');
+  assert.equal(at('wss://u:p@g.example/guardian'), null);
+  assert.equal(at('wss://g.example/fed2-9/guardian-next'), 'wss://g.example/fed2-9/guardian-next', 'a public guardian may sit behind a path');
+  assert.equal(at('wss://seat.example.com/fed2-1/guardian'), 'ws://127.0.0.1:6221/guardian', 'the operator\'s route is taken');
+  assert.equal(at('wss://seat.example.com/fed2-2/guardian'), 'ws://127.0.0.1:7222', 'the operator\'s override is taken');
+  const opened = [];
+  const WS = class { constructor(u) { opened.push(u); setTimeout(() => this.on && this.on.error && this.on.error({}), 1); } addEventListener(k, f) { this.on = { ...(this.on || {}), [k]: f }; } send() {} close() {} };
+  const r = await readReserve({ endpoints: ['ws://127.0.0.1:18777/lnurlp/tips/cb?amount=1000&x=', 'ws://10.0.0.5/guardian'], threshold: 1, timeoutMs: 300, WS });
+  assert.deepEqual(opened, []);
+  assert.equal(r.ok, false);
 });

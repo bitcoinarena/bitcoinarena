@@ -52,6 +52,24 @@ const notFound = (e) => /not in mempool|No such mempool|No such mempool or block
 const txThere = (cli, txid, confirmed = false) => { if (confirmed) return true;
   try { cli('getmempoolentry', txid); return true; } catch (e) { if (!notFound(e)) return true; }
   try { const t = JSON.parse(cli('gettransaction', txid)); return Number(t.confirmations) > 0; } catch (e) { return !notFound(e); } };
+// THE ADVERTISEMENT IN FORCE IS THE NEWEST ONE SENT, NOT ONLY THE NEWEST MINED (state audit 2026-11-12, kanban #2182): newestUpdateOf reads mined
+// markers only, so while the owner's roles change sat in the mempool the seat's own check (advert-self -> guardianOfFromWallet) built its update from
+// the advertisement before it - old roles, guardian-capable again - and sent it after: the census reads the one mined last, the owner's change was
+// undone on the chain and asked again answered "already". Every update of a hand-set seat is built on top of the newest one sent while that is
+// unconfirmed: the one sent in this process (`sentUpdates`), and the owner's roles change kept in owner_actions (`ownerRoles`, read by the advert
+// worker, which has its own module); the roles door refuses while advert-self's own update (`waitFor`) is unconfirmed.
+const sentUpdates = new Map();   // `${bond txid}:${vout}` -> { txid, advert } of the update this process sent last
+const inMempool = (cli, txid) => { if (!txid) return false; try { cli('getmempoolentry', String(txid)); return true; } catch (e) { return !notFound(e); } };
+function advertInForce(cli, rt, bond, ownerRoles = null) {
+  const at = `${bond.txid}:${bond.vout}`;
+  const mined = (rt.newestUpdateOf(bond) || {}).advert || bond.advert;
+  const sent = sentUpdates.get(at);
+  if (sent && inMempool(cli, sent.txid)) return sent.advert;
+  const r = ownerRoles, a = r && r.plan && r.plan.after;
+  if (a && Array.isArray(a.roles) && r.plan.bond === at && inMempool(cli, r.txid))
+    return { ...mined, roles: [...a.roles], guardianCapable: !!a.custody, ...(a.custody ? {} : { guardianEndpoint: '' }) };
+  return mined;
+}
 const sameAction = (was, { key, what, nowMs }) => !!was && (key ? was.key === key : (!was.key && was.what === what && nowMs - Number(was.atMs || 0) < SAME_ACTION_MS));
 
 /**
@@ -63,11 +81,42 @@ const sameAction = (was, { key, what, nowMs }) => !!was && (key ? was.key === ke
  * every census, never asked. Answers the record, or null for none.
  */
 export function inForceOf(bonds) {
+  // THE CENSUS'S OWN TIE RULE (kanban #2190, audit44 refute of #1836): two updates of the node in ONE block are ordered by their POSITION in
+  // the block (census.js newestPerNode, advert-update.js newestUpdates: the later one wins) - regtest-bond newestUpdateOf carries it as
+  // updatedBy.position. Before, every update was position 0 and the larger txid decided: the operator's step-out mined after the seat's own
+  // check in one block was read as "not in force", and the seat's next post put the node back in every census. The txid tie compares the
+  // INTERNAL byte order (what parseTransaction computes and the census compares), not bitcoind's display hex.
+  // AN UPDATE WHOSE POSITION IS NOT KNOWN (a record from an older reader): the order in its block cannot be read here, so of two such
+  // updates at one height the one that steps the node out wins - an unknown order never puts a stepped-out node back in unasked.
+  const internalHex = (h) => (/^[0-9a-f]{64}$/i.test(String(h || '')) ? String(h).toLowerCase().match(/../g).reverse().join('') : String(h || '').toLowerCase());
+  const later = (c, best) => {
+    if (c.height !== best.height) return c.height > best.height;
+    if (c.pos !== null && best.pos !== null && c.pos !== best.pos) return c.pos > best.pos;
+    if (c.pos === null || best.pos === null) {
+      if (c.own !== best.own) return !c.own;   // an update beats an output's own body in one block (the census's -1)
+      const co = c.b.advert && c.b.advert.serving === false, bo = best.b.advert && best.b.advert.serving === false;
+      if (co !== bo) return co;
+    }
+    return c.tie > best.tie;
+  };
+  // ONLY THE NEWEST BODY IS IN FORCE (kanban #2426): a body the node signed before, re-posted by anyone as an update of one of its outputs,
+  // is older than the newest the node signed - so of the outputs, only those whose advertisement carries the highest signed timestamp
+  // are read (all, when a record carries none)
+  const tsOf = (a) => { try { return a && a.timestamp !== undefined && a.timestamp !== null ? BigInt(a.timestamp) : null; } catch { return null; } };
+  // A BODY THE NODE DID NOT SIGN IS NEVER IN FORCE HERE (kanban #3016, audit census r1-1): a record whose creation body does not verify under
+  // the node key (`signed: false`, regtest-bond bondsOf) and that no signed update replaced is left out while any other record stands - every
+  // update, re-bond and roles change is built on what inForceOf answers, and signed with the node key
+  const signedOf = (b) => !!b.updatedBy || b.signed !== false;
+  const any = (bonds || []).filter(Boolean);
+  const all = any.some(signedOf) ? any.filter(signedOf) : [];
+  const stamps = all.map((b) => tsOf(b.advert));
+  const top = stamps.every((t) => t !== null) && stamps.length ? stamps.reduce((m, t) => (t > m ? t : m)) : null;
   let best = null;
-  for (const b of bonds || []) {
-    const c = b.updatedBy ? { b, height: b.updatedBy.height, pos: 0, tie: String(b.updatedBy.txid || '').toLowerCase() }
-      : { b, height: b.height, pos: -1, tie: String(b.txid || '').toLowerCase() };
-    if (!best || c.height > best.height || (c.height === best.height && (c.pos > best.pos || (c.pos === best.pos && c.tie > best.tie)))) best = c;
+  for (const b of top === null ? all : all.filter((x, i) => stamps[i] === top)) {
+    const c = b.updatedBy
+      ? { b, own: false, height: b.updatedBy.height, pos: Number.isInteger(b.updatedBy.position) ? b.updatedBy.position : null, tie: internalHex(b.updatedBy.txid) }
+      : { b, own: true, height: b.height, pos: -1, tie: internalHex(b.txid) };
+    if (!best || later(c, best)) best = c;
   }
   return best ? best.b : null;
 }
@@ -78,8 +127,11 @@ export async function addBondFromWallet({ cli, wallet, network = 'testnet4', sec
   const { regtest } = await import('../tools/regtest-bond.mjs');
   const rt = regtest(cli, { network, wallet: wallet || 'arena' });
   const bonds = rt.bondsOf(secret);
-  if (!bonds.length) return { ok: false, why: 'this node has no confirmed bond to add to yet' };
-  const bondSats = bonds.reduce((a, b) => a + BigInt(b.sats), 0n);
+  // A STRANGER'S UNSIGNED DUST IS NO BOND (kanban #3178, #3182, #3198, #3207, refute of #3016): inForceOf answers null when no record is the node's, and
+  // that is the same answer as no bond at all - before, newest.advert threw a TypeError. The sum counts only outputs the node signed.
+  const inForce = inForceOf(bonds);
+  if (!bonds.length || !inForce) return { ok: false, why: 'this node has no confirmed bond to add to yet' };
+  const bondSats = bonds.filter((b) => b.signed !== false).reduce((a, b) => a + BigInt(b.sats), 0n);
   // THE SAME ADD ASKED AGAIN (kanban #1374): the one sent before, while its bond is not confirmed yet
   if (post && journal) {
     const was = journal.last('add-bond');
@@ -89,7 +141,7 @@ export async function addBondFromWallet({ cli, wallet, network = 'testnet4', sec
       // never sent (kanban #1423): built and sent anew below
     }
   }
-  const newest = inForceOf(bonds);   // the advertisement in force, as the census reads it (kanban #1836), not bonds[0]
+  const newest = inForce;   // the advertisement in force, as the census reads it (kanban #1836), not bonds[0]
   const versions = [...new Set([...(newest.advert.protocolVersions || []), ...SUPPORTED_PROTOCOL_VERSIONS])].sort((a, b) => a - b);
   let fundingHex = null, fundingFee = 0n, made;
   try { made = rt.postBond(secret, { advert: { ...newest.advert, protocolVersions: versions }, bondSats: add, utxo: (spk) => {
@@ -149,7 +201,7 @@ const UPDATE_CARRIER_SATS = 3000n;
  * wallet. No bond is spent and no maturity clock starts. Without `post` both transactions are built and checked (testmempoolaccept);
  * with it, sent. The census reads the new roles once the update is 6 deep.
  */
-export async function changeRolesFromWallet({ cli, wallet, network = 'testnet4', secret, pubkey, roles, custody, post = false, key = null, journal = null, nowMs = Date.now() }) {
+export async function changeRolesFromWallet({ cli, wallet, network = 'testnet4', secret, pubkey, roles, custody, post = false, key = null, journal = null, nowMs = Date.now(), waitFor = null }) {
   const want = [...new Set((roles || []).map(String))];
   const bad = want.filter((r) => !ADVERT_ROLES.includes(r));
   if (bad.length) return { ok: false, why: `${bad.join(', ')}: not a role an advertisement names (${ADVERT_ROLES.join(', ')})` };
@@ -157,22 +209,26 @@ export async function changeRolesFromWallet({ cli, wallet, network = 'testnet4',
   const { regtest } = await import('../tools/regtest-bond.mjs');
   const rt = regtest(cli, { network, wallet: wallet || 'arena' });
   const bonds = rt.bondsOf(secret);
-  if (!bonds.length) return { ok: false, why: 'this node has no confirmed bond whose advertisement could be updated' };
   const bond = inForceOf(bonds);   // the output whose advertisement is in force (kanban #1836), not bonds[0]
-  const now = (rt.newestUpdateOf(bond) || {}).advert || bond.advert;
+  // null: only records the node never signed (kanban #3178, #3182, #3198, #3207) - the same answer as no bond
+  if (!bonds.length || !bond) return { ok: false, why: 'this node has no confirmed bond whose advertisement could be updated' };
+  // kanban #2182: the seat's own update not mined yet - a change built now would drop the guardians or games it adds
+  if (waitFor && inMempool(cli, waitFor)) return { ok: false, why: `this node's own advertisement update ${String(waitFor).slice(0, 16)} is not confirmed yet: change the roles once it is mined` };
+  const now = advertInForce(cli, rt, bond, journal ? journal.last('roles') : null);
   const before = { roles: [...(now.roles || [])].sort(), custody: !!now.guardianCapable };
   const after = { roles: want.sort(), custody: custody === undefined ? before.custody : !!custody };
-  if (JSON.stringify(before) === JSON.stringify(after)) return { ok: false, why: 'those are the roles this node already advertises' };
   // CUSTODY OFF NAMES NO GUARDIAN ENDPOINT (advert.js guardianRole: "a node that is not guardian-capable names no guardian_endpoint";
   // measured 2026-10-26, kanban #577: turning the n495 test nodes out of the founding draw was refused before anything was built)
-  const advert = { ...now, roles: after.roles, guardianCapable: after.custody, ...(after.custody ? {} : { guardianEndpoint: '' }), timestamp: BigInt(Date.now()) };
+  const advert = () => ({ ...now, roles: after.roles, guardianCapable: after.custody, ...(after.custody ? {} : { guardianEndpoint: '' }), timestamp: BigInt(Date.now()) });
   // THE SAME CHANGE ASKED AGAIN (kanban #1374): a confirmed one reads as "already advertises" above; one sent and not confirmed is answered, not paid twice
   if (post && journal) {
     const was = journal.last('roles');
     if (sameAction(was, { key, what: JSON.stringify(after), nowMs })) { rebroadcast(cli, was.hexes || []); if (txThere(cli, was.txid)) return { ok: true, plan: was.plan, update: { txid: was.txid }, already: true }; }
   }
+  // asked before the "already advertises" answer (kanban #2182): the advertisement in force now includes the owner's own change still in the mempool
+  if (JSON.stringify(before) === JSON.stringify(after)) return { ok: false, why: 'those are the roles this node already advertises' };
   let plan = null;
-  const sent = sendUpdateFromWallet({ cli, rt, secret, bond, advert, post,
+  const sent = sendUpdateFromWallet({ cli, rt, secret, bond, advert: advert(), post,
     keep: (hexes, txid, feeSats) => { if (journal) journal.keep('roles', { key, what: JSON.stringify(after), atMs: nowMs, hexes, txid,
       plan: { before, after, bond: `${bond.txid}:${bond.vout}`, feeSats, countsAfter: 6 } }); } });
   if (!sent.ok) return sent;
@@ -201,6 +257,7 @@ function sendUpdateFromWallet({ cli, rt, secret, bond, advert, post, keep = () =
   const feeSats = String(BigInt(Math.round(Number(funded.fee) * 1e8)) + 1200n);
   if (!post) return { ok: true, feeSats };
   keep([final.hex, update.hex], update.txid, feeSats);   // kept before it is sent (kanban #1374)
+  sentUpdates.set(`${bond.txid}:${bond.vout}`, { txid: update.txid, advert });   // the next update builds on it (kanban #2182)
   cli('sendrawtransaction', final.hex);
   cli('sendrawtransaction', update.hex);
   return { ok: true, feeSats, txid: update.txid };
@@ -233,13 +290,14 @@ export function ownAdvertAfter(now, { guardianOf, hostedGames = null, nowMs = Da
 // removed - in the same update as the guardians, so a new game version counts once that update does
 // `keep`: the guardians the advertisement names stay, those in `guardianOf` added or their keys made current (a seat's own check, kanban #741:
 // one read of the chain answers both the advertisement in force and the update, where the check read it twice); `scan` as regtest takes it
-export async function guardianOfFromWallet({ cli, wallet, network = 'testnet4', secret, guardianOf, hostedGames = null, post = false, keep = false, scan = null }) {
+export async function guardianOfFromWallet({ cli, wallet, network = 'testnet4', secret, guardianOf, hostedGames = null, post = false, keep = false, scan = null, ownerRoles = null }) {
   const { regtest } = await import('../tools/regtest-bond.mjs');
   const rt = regtest(cli, { network, wallet: wallet || 'arena', scan });
   const bonds = rt.bondsOf(secret);
-  if (!bonds.length) return { ok: false, noBond: true, why: 'this node has no confirmed bond whose advertisement could be updated' };
   const bond = inForceOf(bonds);   // the output whose advertisement is in force (kanban #1836), not bonds[0]
-  const now = (rt.newestUpdateOf(bond) || {}).advert || bond.advert;
+  // null: only records the node never signed, a stranger's dust (kanban #3178, #3182, #3198, #3207) - the same answer as no bond, never a TypeError
+  if (!bonds.length || !bond) return { ok: false, noBond: true, why: 'this node has no confirmed bond whose advertisement could be updated' };
+  const now = advertInForce(cli, rt, bond, ownerRoles);   // the owner's roles change still in the mempool is kept (kanban #2182)
   if (keep) {
     const want = new Map(((now && now.guardianOf) || []).map((g) => [toHex(g.federationId), g]));
     for (const e of guardianOf || []) want.set(toHex(e.federationId), e);

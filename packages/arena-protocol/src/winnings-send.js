@@ -57,6 +57,10 @@ export function gatewayTermsWithinLimits(g) {
   if (base < 0n || ppm < 0n || base > GATEWAY_SEND_FEE_LIMIT.baseMsat || ppm > GATEWAY_SEND_FEE_LIMIT.ppm) return false;
   const d = g && g.expirationDeltaDefault;
   if (d !== null && d !== undefined && !(Number.isSafeInteger(Number(d)) && Number(d) >= 0 && Number(d) <= GATEWAY_EXPIRATION_DELTA_LIMIT)) return false;
+  // ITS MINIMUM, AT MOST ITS DEFAULT (kanban #2627, feedback #052): the proposer names height + default and every seat's sendPlanStands needs
+  // height + minimum at least - a minimum above the default (or none: BigInt(null) throws) refused every plan through that gateway for good
+  const m = g && g.expirationDeltaMinimum;
+  if (m === null || m === undefined || d === null || d === undefined || !Number.isSafeInteger(Number(m)) || Number(m) < 0 || Number(m) > Number(d)) return false;
   return true;
 }
 export function lowestLiveGateway(listed) {

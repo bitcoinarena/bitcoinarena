@@ -26,5 +26,5 @@ test('#3009: a VOID market line is in transit until this browser credited the st
   const [transit] = marketLines({ picks: [{ ...p, stakeBack: false }], outcomes, nowMs: 10 });
   assert.deepEqual([transit.state, transit.final], ['refund in transit', false]);
   const [credited] = marketLines({ picks: [{ ...p, stakeBack: true }], outcomes, nowMs: 10 });
-  assert.equal(credited.state, 'void');   // main's VOID row carries no final flag (kanban #2903 is not on main)
+  assert.deepEqual([credited.state, credited.final], ['void', true]);
 });

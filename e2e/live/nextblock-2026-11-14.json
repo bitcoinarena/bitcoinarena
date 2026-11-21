@@ -1,0 +1,57 @@
+{
+ "suite": "bitcoin-arena live paid rounds, testnet4 (kanban #2642)",
+ "started": "2026-11-14T18:41:51.592Z",
+ "games": {
+  "nextblock": {
+   "pass": true,
+   "exit": 0,
+   "round": "e679b3eb63525e99",
+   "depositMsat": "305000",
+   "lockedMsat": "90000",
+   "seatsTook": 7,
+   "last": {
+    "step": "lightning payout"
+   },
+   "stepsAtSeconds": {
+    "preflight": 2,
+    "seated": 3,
+    "played": 3,
+    "round": 3,
+    "signer nodes outside NODES": 3,
+    "claim key": 3,
+    "joined": 6,
+    "deposit": 24,
+    "locked": 26,
+    "fee locked": 26,
+    "driven": 31,
+    "handed over": 47,
+    "marked bot": 47,
+    "waiting for the start": 47,
+    "published": 140,
+    "settlement": 155,
+    "results": 1046,
+    "settled": 1048,
+    "collected": 1052,
+    "lightning payout": 1056
+   },
+   "seconds": 1056
+  },
+  "rps": {
+   "pass": false,
+   "exit": 1,
+   "round": null,
+   "last": [],
+   "stepsAtSeconds": {
+    "stopped": 6
+   },
+   "seconds": 7
+  },
+  "updown": {
+   "pass": false,
+   "exit": 1,
+   "last": [],
+   "stepsAtSeconds": {},
+   "seconds": 0
+  }
+ }
+}

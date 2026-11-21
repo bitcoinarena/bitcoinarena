@@ -51,7 +51,7 @@ const paidTo = (paid, xonlyHex) => paid.filter((o) => String(o.pk).toLowerCase()
 test('a seat that invents a round with its own made-up committee is paid nothing of the nodes\' half', async () => {
   const w = wallet();
   const r = await buyItem({ manifest: MANIFEST, itemId: 'large-truck', networkSet: NET, gameSet: NET, wallet: w, federationId: 'fe'.repeat(32),
-    player, seats: ['https://good', 'https://bad'], fetch: seats([fake]), verify, nowMs: () => NOW });
+    player, seats: ['https://good', 'https://bad'], fetch: seats([fake]), verify, nowMs: () => NOW, bondedKeys: NODE_KEYS.map(toHex) });   // the census the page checked (kanban #1896, #2915)
   assert.equal(r.ok, true, r.why);
   const toSybils = SYBIL_KEYS.reduce((t, k) => t + paidTo(w.paid, k), 0n);
   assert.equal(toSybils, 0n, `${toSybils} msat of the buyer's payment went to ${SYBIL_KEYS.length} keys one seat made up`);
@@ -61,7 +61,7 @@ test('a seat that names a real round with another committee does not take the ho
   const w = wallet();
   const hijack = { roundId: toHex(ROUND), committee: [SYBIL_KEYS[0]], finals: [] };
   const r = await buyItem({ manifest: MANIFEST, itemId: 'large-truck', networkSet: NET, gameSet: NET, wallet: w, federationId: 'fe'.repeat(32),
-    player, seats: ['https://good', 'https://bad'], fetch: seats([hijack, fake]), verify, nowMs: () => NOW });
+    player, seats: ['https://good', 'https://bad'], fetch: seats([hijack, fake]), verify, nowMs: () => NOW, bondedKeys: NODE_KEYS.map(toHex) });
   assert.equal(r.ok, true, r.why);
   for (const k of NODE_KEYS) assert.ok(paidTo(w.paid, toHex(k)) > 0n, `node ${toHex(k).slice(0, 16)} served the round and is paid nothing`);
 });

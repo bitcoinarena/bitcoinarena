@@ -17,7 +17,7 @@
 //   - a reorg that takes the anchor's block away sends the record back to SENT (the same transaction is looked for again, and the
 //     notice published again with its new block).
 //
-// `wallet` { name, build(d) -> { ok, hex, txid, feeSats, sent? } | { ok: false, why }, send(hex), where?(txid) -> { blockHash, height } | null }
+// `wallet` { name, build(d) -> { ok, hex, txid, feeSats, sent?, builtAt? } | { ok: false, why }, send(hex), where?(txid) -> { blockHash, height } | null }
 // `chain`  { tip(), blockAt(h) -> { hash, txids } }: this node's own bitcoind, to find the anchor when the wallet cannot say (and to judge depth)
 // `confirmedTx(txid, blockHash)` the seats' reader (main.js ballot.confirmedTx); `publish(d)` keeps and posts the anchored notice
 // `store` { read() -> object | null, write(object) }
@@ -33,7 +33,7 @@ const SCAN_MAX = 144;                       // blocks looked through per pass fo
 const RESCAN = 6;                           // the newest blocks looked at again each pass (a reorg near the tip)
 const REORG_WATCH = 144;                    // a published anchor's block is checked while it is less deep than this
 // "already there" from a broadcast is a success: the bytes are in the mempool or a block
-export const ALREADY = /already in (the )?(block ?chain|mempool|utxo set)|txn-already-(known|in-mempool)|already have transaction|outputs already in utxo set|transaction already exists|-27\b/i;
+export const ALREADY = /txn-same-nonwitness-data-in-mempool|already in (the )?(block ?chain|mempool|utxo set)|txn-already-(known|in-mempool)|already have transaction|outputs already in utxo set|transaction already exists|-27\b/i;
 
 const strip = (d) => { const { anchor, ...rest } = d; void anchor; return rest; };
 export const anchorIdOf = (d) => toHex(departureId(d));
@@ -146,9 +146,14 @@ export function createDepartureAnchors({ wallet = null, chain = null, confirmedT
       if (!b || !b.ok) return { ok: false, why: (b && b.why) || 'the wallet built no anchor' };
       if (!carriesAnchor(b.hex, d)) return { ok: false, why: 'the wallet built a transaction without this notice\'s anchor: nothing sent' };
       const txid = txidOfRaw(b.hex);
+      // FROM WHERE IT WAS BUILT, NOT WHERE IT IS RECORDED (kanban #3217): a wallet that sent it already (`sent`: the installer's on-chain
+      // action, maybe done before a crash, or by another process of the wallet) may have had it mined while this seat was away - below
+      // tip - 1, where locate()'s forward scan would never look. The scan starts at the wallet's build tip; a wallet that cannot say it
+      // looks back SCAN_MAX blocks.
+      const builtAt = Number.isInteger(b.builtAt) ? b.builtAt : (b.sent ? tip - SCAN_MAX : tip);
       // WRITTEN BEFORE IT IS SENT: a crash after the broadcast finds the bytes here and sends the same ones again
       r = records[id] = { id, notice: departureHex(d), phase: b.sent ? P.SENT : P.BUILT, txid, hex: b.hex, feeSats: b.feeSats != null ? String(b.feeSats) : null,
-        wallet: wallet.name || 'wallet', sinceHeight: Math.max(0, tip - 1), atMs: nowMs() };
+        wallet: wallet.name || 'wallet', sinceHeight: Math.max(0, Math.min(tip, builtAt) - 1), atMs: nowMs() };
       save();
       if (!b.sent) await sendAgain(r);
       save();
@@ -218,10 +223,11 @@ export async function installerAnchorWallet({ home = null, state = null, seed = 
         build: async (s) => {
           const { tip, coins } = await kit.coinsOf(s.chain, w.spk);
           let tx; try { tx = buildSend({ wallet: w, coins, script, sats: 0n, feeRate }); } catch (e) { return { ok: false, why: e.message }; }
-          return { ok: true, tip, txs: [{ name: 'departure-anchor', hex: tx.hex }], ops: [], result: { txid: tx.txid, hex: tx.hex, feeSats: String(tx.fee) } };
+          return { ok: true, tip, txs: [{ name: 'departure-anchor', hex: tx.hex }], ops: [], result: { txid: tx.txid, hex: tx.hex, feeSats: String(tx.fee), tip } };
         } });
       if (!r.ok) return { ok: false, why: r.why };
-      return { ok: true, hex: r.result.hex, feeSats: r.result.feeSats, sent: true };
+      // the build tip kept in the action (kanban #3217): an answer of one done long ago still says from where to look for it
+      return { ok: true, hex: r.result.hex, feeSats: r.result.feeSats, sent: true, ...(Number.isInteger(r.result.tip) ? { builtAt: r.result.tip } : {}) };
     },
     async send(hex) { return kit.broadcast(st.read().chain, hex); },
   };

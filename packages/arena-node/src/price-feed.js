@@ -63,6 +63,8 @@ import { CLOSED } from './store.js';
 
 const EVERY = PRICE_SAMPLE_EVERY_MS;
 export const SIGN_SLACK_MS = 15000;
+/** A failed read is tried once more only while this much of its 5 s period is left (kanban #2780). */
+export const READ_RETRY_ROOM_MS = 1000;
 /** Protocol 5: a standing sample is served once every committee reading is in, or this long after its moment (all were posted). */
 export const SERVE_AFTER_MS = 2500;
 /** Protocol 5: a seat short of an end's readings asks the committee again at most this often. */
@@ -118,15 +120,18 @@ const wellFormedSigs = (sigs) => {
  * THE SIGNATURES THAT COUNTED (kanban #1770, as game-market standingSigs): one per key priceAttestationStands counted (`signed`),
  * each the one that verifies over `id` - only these are kept and handed out, never what a body carried besides.
  */
-const countedSigs = (id, sigs, signed) => {
-  const want = new Set((signed || []).map((k) => String(k).toLowerCase())), out = [], seen = new Set();
-  for (const s of Array.isArray(sigs) ? sigs : []) {
-    const x = sigShape(s);
-    if (!x || !want.has(x.key) || seen.has(x.key)) continue;
-    if (!verify(fromHex(x.signature), id, fromHex(x.key))) continue;
-    seen.add(x.key); out.push(x);
-  }
-  return out;
+// kanban #2679 (#1489 r2-attest-1): the kept signatures are the ones the count itself verified (recorded as it verifies), never
+// verified a second time - a body padded with junk under the signers' keys cost every entry again here
+const standsCounted = ({ id, sigs, committee, threshold }) => {
+  const verified = new Map();
+  const counting = (sig, msg, key) => {
+    const good = verify(sig, msg, key) === true;
+    if (good) { const k = toHex(key); if (!verified.has(k)) verified.set(k, toHex(sig)); }
+    return good;
+  };
+  const s = priceAttestationStands({ id, sigs, committee, threshold, verify: counting });
+  const want = new Set((s.signed || []).map((k) => String(k).toLowerCase()));
+  return { s, kept: [...verified].filter(([key]) => want.has(key)).map(([key, signature]) => ({ key, signature })) };
 };
 const NO_PROPOSAL = 'a round of protocol 5 takes no proposed price: each seat signs its own reading (POST /price-reading) and the sample is their median';
 /**
@@ -169,17 +174,25 @@ export function closeSampleK(endTick) {
 export async function exchangeTickerCents(fetcher = fetch) {
   const r = await fetcher('https://api.exchange.coinbase.com/products/BTC-USD/ticker', { signal: AbortSignal.timeout(4000) });
   if (!r.ok) throw new Error(`the ticker answered ${r.status}`);
+  // THE ANSWER'S OWN TIME (kanban #2780, ruling #2781): its Date header, to the second - set beside the seat's clock, it says whether the
+  // venue answered fresh at all (a frozen venue, or this seat's clock off)
+  let answerMs = NaN; try { answerMs = Date.parse(r.headers && typeof r.headers.get === 'function' ? r.headers.get('date') : ''); } catch { answerMs = NaN; }
   const j = await r.json();
   const cents = Math.round(Number(j && j.price) * 100);
   const atMs = Date.parse(j && j.time);
   if (!Number.isInteger(cents) || cents <= 0) throw new Error('the ticker answered no price');
   if (!Number.isFinite(atMs)) throw new Error('the ticker answered no trade time');
-  return { cents, atMs };
+  // AND THE BEST BID AND ASK OF THE SAME ANSWER: their mid is the reading when the last trade is stale (ruling #2781 (b))
+  const bid = Math.round(Number(j && j.bid) * 100), ask = Math.round(Number(j && j.ask) * 100);
+  return { cents, atMs, ...(Number.isFinite(answerMs) ? { answerMs } : {}), ...(Number.isInteger(bid) && Number.isInteger(ask) && bid > 0 && ask >= bid ? { bid, ask } : {}) };
 }
 
-/** The default reading: the exchange ticker; the spot price only when the ticker does not answer (its age unknown: now). */
+/**
+ * The default reading: the exchange ticker's answer (ruling #2781: no reading when the venue gives no fresh answer - the spot price is a
+ * cached figure with its own lag, and is no longer read in its place).
+ */
 export async function coinbaseReading(fetcher = fetch) {
-  try { return await exchangeTickerCents(fetcher); } catch { return { cents: await coinbaseCents(fetcher), atMs: Date.now() }; }
+  return exchangeTickerCents(fetcher);
 }
 
 /** BTC/USD in whole cents from Coinbase's spot price - the fallback feed. */
@@ -210,6 +223,7 @@ export class PriceFeed {
     this.mine = new Map();       // `${round}:${k}` / `${round}:tape` -> the reading this seat signed (one each)
     this.built = new Map();      // `${round}:${k}` -> the sample made of the readings held (dropped when one more comes)
     this.endsAsked = new Map();  // round hex -> when this seat last asked the committee for the ends' readings
+    this.endsInFlight = new Map(); // round hex -> the pre-protocol-5 ask of the ends now running (kanban #2395): callers share it
     // every map above but `readings` is let go of a round once it is finished (tidy, kanban #742)
     this.evicted = 0;            // rounds let go of since the last held line
     this.heldLoggedAt = null;
@@ -269,13 +283,45 @@ export class PriceFeed {
     const now = this.now();
     const at = grid(now);
     if (this.readings.has(at)) return this.readings.get(at).cents;
-    let got = null;
-    try { got = await this.readPrice(); } catch { got = null; }
-    // a reader may answer cents (read now) or { cents, atMs } (the price's own time, the exchange ticker's last trade)
-    const r = Number.isInteger(got) ? { cents: got, atMs: now } : got && Number.isInteger(got.cents) ? { cents: got.cents, atMs: Number(got.atMs) } : null;
-    // a price already older than one period when it is read is no reading (interim C)
-    const c = r && r.cents > 0 && Number.isFinite(r.atMs) && now - r.atMs <= EVERY ? r.cents : null;
-    if (c !== null) this.readings.set(at, { cents: c, atMs: Math.min(r.atMs, now) });
+    let got = null, failed = null;
+    try { got = await this.readPrice(); } catch (e) { got = null; failed = `the read failed: ${e && e.message ? e.message : e}`; }
+    // ONE MORE TRY INSIDE THE SAME PERIOD (kanban #2780): measured 2026-11-15 on the test host, the seats' reads timed out together at the
+    // wall clock's 5-minute marks (the host's CPU taken by other jobs for seconds) while the venue answered in 0.2 s; three seats of a committee
+    // missing the same moment cost the round that sample. A failed read is asked once more while its period has room left (READ_RETRY_ROOM_MS)
+    if (failed && this.now() < at + EVERY - READ_RETRY_ROOM_MS) {
+      try { got = await this.readPrice(); failed = null; } catch (e) { got = null; failed = `the read failed: ${e && e.message ? e.message : e}`; }
+    }
+    // a reader may answer cents (read now) or { cents, atMs } (the price's own time, the exchange ticker's last trade) - and, from the
+    // exchange ticker, answerMs (the answer's own time) and the best bid and ask of the same answer
+    const r = Number.isInteger(got) ? { cents: got, atMs: now } : got && Number.isInteger(got.cents) ? { cents: got.cents, atMs: Number(got.atMs),
+      answerMs: Number.isFinite(Number(got.answerMs)) ? Number(got.answerMs) : null, bid: Number.isInteger(got.bid) ? got.bid : null, ask: Number.isInteger(got.ask) ? got.ask : null } : null;
+    // THE READING (ruling #2781 (b), kanban #2780): the last trade when it is at most one period old; otherwise the mid of the best bid and
+    // ask of the same answer, rounded to the cent ("trade" or "mid", so the mix is seen). No reading only when the venue gave no fresh answer:
+    // the read failed, or the answer's own time is more than one period behind this seat's clock (a frozen venue - rule C's case - or a clock off)
+    let c = null, src = null, behind = null;
+    if (r && r.answerMs !== null && r.answerMs !== undefined) behind = now - r.answerMs;
+    const fresh = behind === null || behind <= EVERY;
+    if (r && r.cents > 0 && fresh) {
+      if (Number.isFinite(r.atMs) && now - r.atMs <= EVERY) { c = r.cents; src = 'trade'; }
+      else if (Number.isInteger(r.bid) && Number.isInteger(r.ask) && r.bid > 0 && r.ask >= r.bid && behind !== null) { c = Math.round((r.bid + r.ask) / 2); src = 'mid'; }
+    }
+    if (c !== null) {
+      this.readings.set(at, { cents: c, atMs: src === 'trade' ? Math.min(r.atMs, now) : Math.min(r.answerMs, now), src });
+      const n = this.readSources || (this.readSources = { trade: 0, mid: 0 }); n[src] += 1;
+    }
+    // WHY A MOMENT HAS NO READING, SAID (kanban #2780): every seat's read failed together for hours on 11-14 (no reading of its own, none heard,
+    // no sample for any round) and nothing said why - the read dropped it silently. A failed or stale read is counted by its reason and logged
+    // at most once a minute: the reason, how many moments since the last line, and the trade's age when the ticker was stale.
+    else {
+      const s1 = (ms) => `${Math.round(ms / 100) / 10} s`;
+      const why = failed || (!r ? 'the reader answered no price' : !(r.cents > 0) ? `the reader answered ${r.cents} cents`
+        : !fresh ? `the venue's answer is ${s1(behind)} behind this seat's clock (a fresh answer is at most ${EVERY / 1000} s behind)`
+        : !Number.isFinite(r.atMs) ? 'the reader answered no trade time'
+        : `the last trade was ${s1(now - r.atMs)} old and the answer carried no bid and ask to read the mid of (a trade is at most ${EVERY / 1000} s old)`);
+      const m = this.readMisses || (this.readMisses = { n: 0, at: 0, why: null });
+      m.n += 1; m.why = why;
+      if (now - m.at >= 60000) { this.log(`[prices] no reading at ${new Date(at).toISOString()}: ${why} (${m.n} moment(s) without one since the last line)`); m.n = 0; m.at = now; }
+    }
     for (const k of [...this.readings.keys()].sort((a, b) => a - b).slice(0, Math.max(0, this.readings.size - 128))) this.readings.delete(k);
     return c;
   }
@@ -380,10 +426,12 @@ export class PriceFeed {
       let id; try { id = priceTapeId(t); } catch (e) { return refuse(e.message, 400); }
       // kanban #1958 / #1997: the threshold is checked on the signatures in the shape this seat keeps (64-hex key, 128-hex signature), and the kept
       // ones that verify must reach it - a body whose keys count elsewhere but not in that shape is refused, never kept empty
+      // kanban #2679: the tape held already is taken again before any signature is checked (as a held sample, #2278)
+      const had0 = this.tapes.get(body.round);
+      if (had0 && toHex(priceTapeId({ roundId: rid, tick: 0, prices: had0.prices })) === toHex(id)) return { ok: true };
       const shaped = (Array.isArray(body.sigs) ? body.sigs : []).map(sigShape).filter(Boolean);
-      const s = priceAttestationStands({ id, sigs: shaped, committee: c.committee, threshold: c.needed, verify });
+      const { s, kept } = standsCounted({ id, sigs: shaped, committee: c.committee, threshold: c.needed });
       if (!s.ok) return refuse(`that tape does not stand: ${s.why}`);
-      const kept = countedSigs(id, shaped, s.signed);
       if (kept.length < c.needed) return refuse(`that tape does not stand: ${kept.length} of the committee signed it, ${c.needed} are needed`);
       // THE FIRST TAPE THAT STANDS IS KEPT (kanban #1181): another is refused, the same is taken again
       const had = this.tapes.get(body.round);
@@ -393,14 +441,16 @@ export class PriceFeed {
       return { ok: true };
     }
     const k = Number(body.k);
+    // THE SAME SAMPLE AGAIN COSTS NOTHING (kanban #2278, variant of #1729): one already held at this price stands (its id is the same), so
+    // it is taken again before any signature is checked - a peer repeating a held end buys no BIP-340 verifies
+    if (Number.isSafeInteger(k) && k >= 0) { const had0 = this.#held(body.round, k); if (had0 && Number(had0.priceCents) === Number(body.priceCents) && typeof body.priceCents === typeof had0.priceCents) return { ok: true }; }
     const sample = { roundId: rid, tick: sampleTick(k), priceCents: body.priceCents };
     let id; try { id = priceSampleId(sample); } catch (e) { return refuse(e.message, 400); }
     // kanban #1958 / #1997: the threshold is checked on the signatures in the shape this seat keeps (64-hex key, 128-hex signature), and the kept
     // ones that verify must reach it - a body whose keys count elsewhere but not in that shape is refused, never kept empty
     const shaped = (Array.isArray(body.sigs) ? body.sigs : []).map(sigShape).filter(Boolean);
-    const s = priceAttestationStands({ id, sigs: shaped, committee: c.committee, threshold: c.needed, verify });
+    const { s, kept: sigs } = standsCounted({ id, sigs: shaped, committee: c.committee, threshold: c.needed });   // kanban #1770, #2679: only the signatures that counted
     if (!s.ok) return refuse(`that sample does not stand: ${s.why}`);
-    const sigs = countedSigs(id, shaped, s.signed);   // kanban #1770: only the signatures that counted are kept and served
     if (sigs.length < c.needed) return refuse(`that sample does not stand: ${sigs.length} of the committee signed it, ${c.needed} are needed`);
     // THE FIRST SAMPLE THAT STANDS IS KEPT, per (round, k) (kanban #1181): in memory, and an end in the database first-wins
     const had = this.#held(body.round, k);
@@ -419,14 +469,28 @@ export class PriceFeed {
   /** The ends this seat lacks, from the committee's seats: each kept only once it stands (hold). */
   async #fetchEnds(roundIdBytes, ks) {
     const rh = toHex(roundIdBytes);
+    // A LEGACY ROUND'S ENDS ARE ASKED FOR AT MOST ONCE PER ASK_ENDS_EVERY_MS (kanban #2278, variant of #1729): GET /round-result is
+    // anyone's, and an end that never stands would otherwise send this seat to the whole committee again on every call
+    if (this.now() - (this.endsAsked.get(rh) ?? -Infinity) < ASK_ENDS_EVERY_MS) return;
+    this.endsAsked.set(rh, this.now());
     for (const base of this.peersFor(roundIdBytes)) {
       const missing = ks.filter((k) => !this.#held(rh, k));
       if (!missing.length) return;
       try {
         const r = await this.fetcher(`${String(base).replace(/\/+$/, '')}/price-samples?round=${rh}&ks=${missing.join(',')}`, { signal: AbortSignal.timeout(10000) });
         if (!r.ok) continue;
-        const j = await r.json();
-        for (const x of (j && j.samples) || []) if (missing.includes(Number(x.k))) this.hold({ round: rh, kind: 'sample', k: Number(x.k), priceCents: x.priceCents, sigs: x.sigs });
+        // ONE PEER'S ANSWER IS BOUNDED (kanban #2278, the #1729 bounds on the legacy path): at most FETCH_READINGS_MAX_BYTES of it is
+        // read, and of it at most one sample per missing k is checked - a padded answer (one junk end repeated) costs one check per end
+        const declared = Number(r.headers && typeof r.headers.get === 'function' ? r.headers.get('content-length') : NaN);
+        if (declared > FETCH_READINGS_MAX_BYTES) continue;
+        const j = await cappedJson(r, FETCH_READINGS_MAX_BYTES);
+        const tried = new Set();
+        for (const x of (j && Array.isArray(j.samples) ? j.samples : [])) {
+          const k = Number(x && x.k);
+          if (!missing.includes(k) || tried.has(k) || this.#held(rh, k)) continue;
+          tried.add(k);
+          this.hold({ round: rh, kind: 'sample', k, priceCents: x.priceCents, sigs: x.sigs });
+        }
       } catch { /* the next seat */ }
     }
   }
@@ -446,7 +510,20 @@ export class PriceFeed {
     if (this.now() < endMs) return refuse(`the round runs until ${new Date(endMs).toISOString()}: its result is made at its end`);
     const kClose = closeSampleK(endTick);
     if (c.median) return this.#result5(rid, roundHex, c, endTick, kClose);
-    if (!this.#held(roundHex, 0) || !this.#held(roundHex, kClose)) await this.#fetchEnds(rid, [0, kClose]);
+    // THE ENDS ARE ASKED FOR AT MOST ONCE PER ASK_ENDS_EVERY_MS, AND ONE ASK IS SHARED (kanban #2395, #1489 a44 refute 57, #2170 /
+    // #1730 variant): GET /round-result is public, and a stranger reloading it (one after another or 40 at once) made the seat ask the
+    // committee again on every call - and redo a lying peer's junk verifies each time. As #result5 does, the ask is marked before the
+    // await, and calls that arrive while it runs await the same ask instead of starting their own.
+    if (!this.#held(roundHex, 0) || !this.#held(roundHex, kClose)) {
+      let asking = this.endsInFlight.get(roundHex);
+      if (!asking && !(this.now() - (this.endsAsked.get(roundHex) ?? -Infinity) < ASK_ENDS_EVERY_MS)) {
+        // NOT marked here (kanban #2915): #fetchEnds marks endsAsked itself (#2278) and returns at once when it is marked - marking it
+        // before the call made every ends ask a no-op, so a seat that lost its ends (a restart, a pruned db) never fetched them again
+        asking = this.#fetchEnds(rid, [0, kClose]).finally(() => this.endsInFlight.delete(roundHex));
+        this.endsInFlight.set(roundHex, asking);
+      }
+      if (asking) await asking;
+    }
     const open = this.#held(roundHex, 0), close = this.#held(roundHex, kClose);
     if (!open || !close) return refuse(`no attested ${!open ? 'opening sample (k 0)' : `closing sample (k ${kClose})`} of the round is held here or by its committee`);
     const got = roundResultFrom({ roundId: rid, samples: [open, close], endTick });
@@ -472,7 +549,8 @@ export class PriceFeed {
       try {
         const r = await this.fetcher(`${String(base).replace(/\/+$/, '')}/price-sign`, { method: 'POST', body: JSON.stringify(body), signal: AbortSignal.timeout(5000) });
         // kanban #1770: only a 64-hex key with a 128-hex signature is taken; junk is neither counted nor handed out
-        if (r.ok) { const j = await r.json(); const x = sigShape(j); if (x) sigs.push(x); }
+        // kanban #2458: the answer is one key and one signature - read up to 16 KiB, past it that seat counts nothing
+        if (r.ok) { const j = await cappedJson(r, 16 * 1024); const x = sigShape(j); if (x) sigs.push(x); }
       } catch { /* that seat counts nothing */ }
     }));
     return sigs;
@@ -518,9 +596,9 @@ export class PriceFeed {
   /**
    * THE OPEN PRICE ROUNDS, EACH CONTRACT DECODED ONCE (2026-10-15: "Do everything you can to lower the load"; profiled on
    * a testnet4 seat: the beat was 13.8 % of its main thread - every 5 s it read every open round's contract out of the store and
-   * decoded it twice, the 8 s grids' thousands of rounds, to find the few that play against the price). A round's contract never
+   * decoded it twice, the 8 s grids' thousands of rounds, to find the few that play against the price). Whether a round plays against the price never
    * changes: the open ids are read (no contract), a round seen for the first time is decoded once and remembered as a price round
-   * or not, and a round no longer open is forgotten. And the list itself is read again only once a round opened, closed or had its
+   * or not (its contract itself is the store's kept one, which a v2 seat write-in replaces - kanban #2780), and a round no longer open is forgotten. And the list itself is read again only once a round opened, closed or had its
    * contract changed (round.openSeq; kanban #576, profiled 2026-10-21 23:1xZ on a test host seat: reading the ~4,560 open ids every
    * beat was 6.7 % of its main thread, a fifth of its busy time, while the open set had not moved).
    */
@@ -542,7 +620,13 @@ export class PriceFeed {
         try { if (shared) contract = this.round.contractOf(id); else { const row = this.round.get(id); if (row) contract = decodeRoundContract(new Uint8Array(row.contract)); } } catch { contract = null; }
         this.kept.set(rh, contract && this.priceRound(contract) ? contract : null);
       }
-      const c = this.kept.get(rh);
+      // THE CONTRACT AS THE STORE HOLDS IT NOW (kanban #2780, live 2026-11-15): a v2 round's `nodes` are written in by seatDrawFree - the draw's
+      // first seats, then the certified seated set - and the store lets go of its decoded copy then (and bumps openSeq). This list kept its own
+      // first copy for the round's life, so after a reseat the beat signed readings for rounds this seat had left ("a reading is signed by a key
+      // of the round's committee", refused at its own door) and read nothing for the rounds it was seated into: every seat's own readings fell
+      // to 0 within hours, the feed with them, until a restart. Which rounds play against the price is kept; the contract is the store's.
+      let c = this.kept.get(rh);
+      if (c && shared) { try { c = this.round.contractOf(id) || null; } catch { c = null; } }
       if (c) out.push({ roundId: id, contract: c });
     }
     for (const rh of this.kept.keys()) if (!open.has(rh)) this.kept.delete(rh);
@@ -554,7 +638,7 @@ export class PriceFeed {
   async beat() {
     await this.read();
     const now = this.now();
-    const out = [];
+    const out = [], fives = [];
     for (const r of this.#openPriceRounds()) {
       const contract = r.contract;
       const start = Number(contract.startTimeMs);
@@ -562,12 +646,14 @@ export class PriceFeed {
       const rh = toHex(r.roundId);
       const n = contract.nodes.length;
       const me = toHex(this.round.identity.pubkey || this.round.pubkey);
-      if (mediansPrices(contract)) { out.push(...await this.#beat5(r.roundId, contract, now, me)); continue; }
+      // protocol 5: every round's readings at once (kanban #2780: one after another, the posts of many rounds made the beat run past its mark)
+      if (mediansPrices(contract)) { fives.push(this.#beat5(r.roundId, contract, now, me).catch((e) => [['error', refuse(e.message)]])); continue; }
       if (!this.tapes.has(rh) && toHex(contract.nodes[0]) === me) out.push(['tape', await this.leadTape(r.roundId).catch((e) => refuse(e.message))]);
       const k = Math.floor((now - start) / EVERY) + 1;   // the next sample: one period ahead of its tick
       const m = this.samples.get(rh);
       if (!(m && m.has(k)) && toHex(contract.nodes[k % n]) === me) out.push([k, await this.leadSample(r.roundId, k).catch((e) => refuse(e.message))]);
     }
+    for (const got of await Promise.all(fives)) out.push(...got);
     return out;
   }
 
@@ -625,8 +711,10 @@ export class PriceFeed {
     if (this.heldLoggedAt === null || now - this.heldLoggedAt >= HELD_LOG_EVERY_MS) {
       const s = this.heldSizes();
       this.log(`[prices] held: samples ${s.samples} (${s.sampleEntries}), tapes ${s.tapes}, signed ${s.signed}, heard ${s.heard} (${s.heardSamples}), `
-        + `heardTapes ${s.heardTapes}, mine ${s.mine}, built ${s.built}, endsAsked ${s.endsAsked}; ${this.evicted} finished round(s) let go of since the last line`);
-      this.heldLoggedAt = now; this.evicted = 0;
+        + `heardTapes ${s.heardTapes}, mine ${s.mine}, built ${s.built}, endsAsked ${s.endsAsked}; ${this.evicted} finished round(s) let go of since the last line`
+        // (kanban #2780, ruling #2781) the readings since the last line, by what they were read from
+        + `; readings ${(this.readSources && this.readSources.trade) || 0} trade, ${(this.readSources && this.readSources.mid) || 0} mid`);
+      this.heldLoggedAt = now; this.evicted = 0; this.readSources = { trade: 0, mid: 0 };
     }
     return [...gone];
   }
@@ -988,7 +1076,16 @@ export class PriceFeed {
     };
     if (!this.mine.has(`${rh}:tape`) && now <= start + SIGN_SLACK_MS * 4) out.push(['tape', await send(this.ownTapeReading(rid)).catch((e) => refuse(e.message))]);
     const k = Math.floor((now - start) / EVERY) + 1;
-    if (k <= closeSampleK(Number(contract.blockTicks)) && !this.mine.has(`${rh}:${k}`)) out.push([k, await send(this.ownReading(rid, k)).catch((e) => refuse(e.message))]);
+    // AND THE SAMPLES A LATE BEAT PASSED OVER (kanban #2780): a beat is set for the next 5 s mark only once the last one ended, and one that
+    // ran past a mark (a slow read, the posts of many rounds) skipped that mark's sample for good - measured 11-15 09:00Z on rounds whose 7
+    // seats are all ours: 9 and 10 of 17 samples attested, k 5, 6, 9, 13-16 missing. The two before this one are read too while their moment
+    // is still signable (ownReading: within SIGN_SLACK_MS); each is posted once (`mine`)
+    const closeK = closeSampleK(Number(contract.blockTicks));
+    for (const j of [k - 2, k - 1, k]) {
+      if (j < 0 || j > closeK || this.mine.has(`${rh}:${j}`)) continue;
+      const got = await send(this.ownReading(rid, j)).catch((e) => refuse(e.message));
+      if (j === k || got.ok) out.push([j, got]);   // a caught-up one that is no longer signable says nothing
+    }
     return out;
   }
 }

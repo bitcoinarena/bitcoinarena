@@ -56,7 +56,8 @@ test('#1381 a payment that times out and then FAILED (no route) is not told as p
 });
 
 test('#1381 a payment that times out while the federation holds it in flight is paid', async () => {
-  assert.deepEqual(await ask({ '127.0.0.1:1': { pay: 'timeout', state: 'HELD' } }), { ok: true, sats: 500 });
+  // in flight is not final: the answer says pending with its hash (kanban #2100), so the page keeps its welcome flag until the sats land
+  assert.deepEqual(await ask({ '127.0.0.1:1': { pay: 'timeout', state: 'HELD' } }), { ok: true, sats: 500, pending: true, hash: 'ab'.repeat(32) });
 });
 
 test('#1381 a payment that times out and never went out is not paid', async () => {

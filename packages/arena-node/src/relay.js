@@ -20,21 +20,71 @@ export const relayTargets = (listed, announced) => [...new Map([...(listed || []
  * PUT a transcript at each listed relay and read it back; only when none kept it, at the committee's announced addresses. A posting needs one
  * relay that holds the bytes. Answers { held: [relay], refused: [why] }.
  */
-export async function postTranscript({ listed, announced, path, bytes, fetcher = fetch, sameBytes }) {
-  const held = [], refused = [];
+// A RELAY'S ANSWER IS BOUNDED (kanban #3001, audit gossip r3-1, measured 2026-11-19): the read-back was read whole with no deadline - one relay
+// answering it with an endless body grew the seat's heap, one that sent headers and then nothing held publish, and settleTheStakes behind it,
+// for good; the relays were asked one after another, so a relay listed first held back the honest ones too. Each PUT and GET now has
+// `timeoutMs`, the read-back is read up to the transcript's size (+ RELAY_BACK_SLACK), and the relays of one pass are asked side by side.
+// ONE SLOW RELAY HOLDS NOBODY BACK (kanban #3160, refute of #3001): a pass waited for its slowest relay (Promise.all), and a relay
+// answering the PUT just inside the deadline and then nothing on the read-back cost ~2 x RELAY_TIMEOUT_MS per entry, which
+// settleTheStakes paid once per entry, one after another. A relay now has one deadline for its PUT and read-back together, and a
+// pass ends RELAY_GRACE_MS after the first relay held the bytes; a relay still busy then goes on alone within its own deadline.
+// THE LISTED RELAYS GET A HEAD START, NOT THE WHOLE DEADLINE (kanban #3185, refute of #3160): the announced addresses were asked only
+// after the listed pass ended with nothing held. dayTemplate lists one relay, the poster seat itself, so that one seat (a PUT answered
+// just inside the deadline, then a silent read-back) or a dead or black-holed listed address still cost every honest seat the whole
+// RELAY_TIMEOUT_MS per entry. Now the announced addresses are asked RELAY_HEADSTART_MS after the listed ones when no listed relay has
+// held the bytes by then (at once when every listed relay has already failed); a listed holder before that keeps them unasked, as before.
+// Listed relays come first in `held`; one grace window, started by the first holder of either set, ends the publish.
+export const RELAY_TIMEOUT_MS = 15000, RELAY_BACK_SLACK = 1024, RELAY_GRACE_MS = 1000, RELAY_HEADSTART_MS = 2000;
+async function bytesWithin(r, maxBytes) {
+  if (!r.body || typeof r.body.getReader !== 'function') return new Uint8Array(await r.arrayBuffer());   // an injected stand-in
+  const reader = r.body.getReader(), parts = []; let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.byteLength;
+    if (n > maxBytes) { reader.cancel().catch(() => {}); throw new Error(`its read-back passed ${maxBytes} bytes`); }
+    parts.push(value);
+  }
+  const out = new Uint8Array(n); let at = 0;
+  for (const p of parts) { out.set(p, at); at += p.byteLength; }
+  return out;
+}
+export async function postTranscript({ listed, announced, path, bytes, fetcher = fetch, sameBytes, timeoutMs = RELAY_TIMEOUT_MS, graceMs = RELAY_GRACE_MS, headStartMs = RELAY_HEADSTART_MS }) {
+  const refused = [];
   const post = async (relay) => {
     const at = `${base(relay)}${path}`;
+    const signal = AbortSignal.timeout(timeoutMs);   // one deadline for the PUT and its read-back (kanban #3160)
     try {
-      const put = await fetcher(at, { method: 'PUT', body: bytes });
-      if (!put.ok) { refused.push(`${relay}: kept nothing (${put.status})`); return; }
-      const back = new Uint8Array(await (await fetcher(at)).arrayBuffer());
-      if (!sameBytes(back, bytes)) { refused.push(`${relay}: gave back other bytes`); return; }
-      held.push(relay);
-    } catch (e) { refused.push(`${relay}: ${e.message}`); }
+      const put = await fetcher(at, { method: 'PUT', body: bytes, signal });
+      if (!put.ok) { refused.push(`${relay}: kept nothing (${put.status})`); return false; }
+      const back = await bytesWithin(await fetcher(at, { signal }), bytes.length + RELAY_BACK_SLACK);
+      if (!sameBytes(back, bytes)) { refused.push(`${relay}: gave back other bytes`); return false; }
+      return true;
+    } catch (e) { refused.push(`${relay}: ${e.message}`); return false; }
   };
-  for (const relay of listed || []) await post(relay);
-  if (!held.length) for (const relay of relayTargets([], announced).filter((r) => !relayTargets(listed).includes(base(r)))) await post(relay);
-  return { held, refused };
+  // Side by side; done when every relay asked has answered, or graceMs after the first one held the bytes (kanban #3160). The announced
+  // addresses join headStartMs after the listed ones, or at once when every listed relay failed, unless a listed one held first (kanban #3185).
+  const first = [...new Map((listed || []).map((r) => [base(r), r])).values()];
+  const firstBases = new Set(first.map(base));
+  const fallback = relayTargets([], announced).filter((r) => !firstBases.has(base(r)));
+  const held = await new Promise((resolve) => {
+    const asked = [], ok = []; let left = 0, grace = null, head = null, done = false, joined = false;
+    const finish = () => { if (done) return; done = true; clearTimeout(grace); clearTimeout(head); resolve(asked.filter((_, i) => ok[i])); };
+    const ask = (relays) => relays.forEach((r) => {
+      const i = asked.push(r) - 1; ok[i] = false; left += 1;
+      post(r).then((kept) => {
+        if (done) return;
+        ok[i] = kept; left -= 1;
+        if (kept && i < first.length) clearTimeout(head);   // a listed relay held: the announced ones stay unasked
+        if (kept && !grace) grace = setTimeout(finish, graceMs);
+        if (!left) { if (!joined && !ok.some(Boolean)) join(); else finish(); }
+      });
+    });
+    const join = () => { if (joined || done) return; joined = true; clearTimeout(head); ask(fallback); if (!left) finish(); };
+    ask(first);
+    if (!first.length) join(); else head = setTimeout(join, headStartMs);
+  });
+  return { held, refused: [...refused] };
 }
 
 /** POST `body` to `path` at every relay. Answers { sent, failed: [why] } once every relay answered or timed out. */

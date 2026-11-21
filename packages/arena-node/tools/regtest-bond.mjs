@@ -186,12 +186,27 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
     const covers = (have, want) => [...guards(want)].every((k) => guards(have).has(k));
     for (const b of bondsOf(nodeSecret)) {
       if (BigInt(b.sats) < BigInt(bondSats)) continue;
+      // ONLY A BOND THE NODE SIGNED IS ITS BOND (kanban #3152, refute of #3016): anyone can pay dust to the node's bond output key with an
+      // UNSIGNED copy of its advertisement (his payout key, a newer height). The runner takes the record's bondAdvert / bondSignature as the
+      // node's bond proof, lobby link (&advert=) and `adverts`, so a record whose creation body does not verify under the node key is never
+      // returned - not even with a signed update over it, since the proof is built from the creation body and its (zero) signature.
+      if (b.signed === false) continue;
       const { advert } = b;
       if (advert.endpoint !== endpoint || !!advert.guardianCapable !== !!guardianCapable
         || (advert.guardianEndpoint || '') !== (guardianEndpoint || '') || !covers(advert.guardianOf, guardianOf)) continue;
       return b;
     }
     return null;
+  }
+
+  /**
+   * THE NODE'S OWN BONDS (kanban #3178, #3182, #3198, #3207, refute of #3016): bondsOf without every record whose creation body does not verify under
+   * the node key (`signed: false`) - a stranger's dust paid to the node's bond output key with an unsigned copy of its advertisement (his
+   * payout key). Every caller that SIGNS or MOVES a bond (re-bond, re-affirm, first-bond guard) reads only these: the output is spent by
+   * the node key and its body re-signed as the node's own. A signed update over a stranger's output does not make it the node's.
+   */
+  function ownBondsOf(nodeSecret) {
+    return bondsOf(nodeSecret).filter((b) => b && b.signed !== false);
   }
 
   /**
@@ -217,7 +232,7 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
     for (const u of unspent) {
       const tx = parseTransaction(fromHex(cli('getrawtransaction', u.txid, 'false', cli('getblockhash', String(u.height)))));
       const commitments = commitmentsOf(tx);
-      let advert = null, advertSignature = null;
+      let advert = null, advertSignature = null, advertIdBytes = null;
       let ancestor = false;
       for (const item of witnessRunsOf(tx)) {
         try {
@@ -226,8 +241,9 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
           // a bond of this network, or one the BLWP network posted (ancestor.js): read by its own layout and id
           let a = null;
           try { a = decodeAdvert(signed.body); if (!commits(advertId(a))) a = null; } catch { a = null; }
-          if (!a && commits(ancestorAdvertId(signed.body))) { a = decodeAncestorAdvert(signed.body); ancestor = true; }
-          if (a) { advert = a; advertSignature = signed.signature; break; }
+          let id = a ? advertId(a) : null;
+          if (!a && commits(ancestorAdvertId(signed.body))) { a = decodeAncestorAdvert(signed.body); ancestor = true; id = ancestorAdvertId(signed.body); }
+          if (a) { advert = a; advertSignature = signed.signature; advertIdBytes = id; break; }
         } catch { /* not a signed body */ }
       }
       if (!advert || toHex(advert.nodePubkey) !== toHex(nodeKey)) continue;
@@ -237,10 +253,17 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
       if (!maturity.ok) continue;
       if (u.byMarker ? toHex(keyAt(nodeKey, maturity.maturity).outputKey) !== u.scriptPubKey.slice(4)
         : advert.bondScriptTemplateVersion !== 1) continue;
-      const newer = newestUpdateOf({ txid: fromHex(u.txid).reverse(), vout: u.vout, height: u.height, nodePubkey: nodeKey });
-      out.push({ txid: u.txid, vout: u.vout, height: u.height, sats: Math.round(u.amount * 1e8), maturity: maturity.maturity,
+      // DID THE NODE SIGN THIS BODY (kanban #3016, audit census r1-1, measured 2026-11-19): anyone can pay a bond output to a node's key and
+      // commit an UNSIGNED body copying its advertisement with another payout key and endpoint and a newer timestamp; it was read as the
+      // node's advertisement in force, and the seat's own advert check, Add to bond and roles change signed it as the node's. `signed`
+      // says whether the creation body verifies under the node key (zero key or signature never does); inForceOf reads only signed ones.
+      let signedBody = false;
+      try { signedBody = !!advertSignature && advertSignature.some((x) => x !== 0) && !!advertIdBytes && schnorr.verify(advertSignature, advertIdBytes, nodeKey); } catch { signedBody = false; }
+      const newer = newestUpdateOf({ txid: fromHex(u.txid).reverse(), vout: u.vout, height: u.height, nodePubkey: nodeKey, advert });
+      out.push({ txid: u.txid, vout: u.vout, height: u.height, sats: Math.round(u.amount * 1e8), maturity: maturity.maturity, signed: signedBody,
         advert: newer ? newer.advert : advert, bondAdvert: advert, bondSignature: advertSignature, ...(ancestor ? { ancestor: true } : {}),
-        ...(newer ? { updatedBy: { txid: newer.txidHex, height: newer.height } } : {}) });
+        // its POSITION in its block too (kanban #2190): two updates of the node in one block are ordered by it, as the census orders them
+        ...(newer ? { updatedBy: { txid: newer.txidHex, height: newer.height, ...(Number.isInteger(newer.position) ? { position: newer.position } : {}) } } : {}) });
     }
     return out;
   }
@@ -287,7 +310,19 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
    * kept only if it names this bond, carries its node key, is signed by it and sits at or above the bond.
    */
   let markers = null;
+  /** A transaction's index in the block at `height` (getblock verbosity 1 lists the txids in block order), or null when it cannot be read. */
+  const blockTxids = new Map();
+  function positionIn(height, txidHex) {
+    try {
+      if (!blockTxids.has(height)) blockTxids.set(height, JSON.parse(cli('getblock', cli('getblockhash', String(height)), '1')).tx || []);
+      const i = blockTxids.get(height).indexOf(String(txidHex).toLowerCase());
+      return i >= 0 ? i : null;
+    } catch { return null; }
+  }
   function newestUpdateOf(bond) {
+    blockTxids.clear();
+    const tsOfBody = (a) => { try { return a && a.timestamp !== undefined && a.timestamp !== null ? BigInt(a.timestamp) : null; } catch { return null; } };
+    const ownTs = tsOfBody(bond.advert);
     if (!markers) {
       const scan = scanUtxos([`raw(5120${toHex(bondMarker(network))})`]);
       markers = (scan.unspents || []).filter((m) => m.height > 0);
@@ -303,8 +338,26 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
       let signed = false;
       try { signed = schnorr.verify(read.signature, read.advertId, read.nodePubkey); } catch { signed = false; }
       if (!signed) continue;
-      if (!best || m.height > best.height) best = { advert: read.advert, height: m.height, txidHex: m.txid };
+      // ONLY A NEWER BODY IS AN UPDATE (kanban #2426, advert-update.js newestUpdates): a body the node signed before - the bond's own, an
+      // old check, an old step-out - re-posted by anyone is not newer than what it copies. The update in force is the one with the highest
+      // signed timestamp above the bond's own body; of equal ones the first mined, as the census counts only a strictly newer one.
+      const ts = tsOfBody(read.advert);
+      if (ts === null || (ownTs !== null && ts <= ownTs)) continue;
+      if (best && ts < best.ts) continue;
+      if (best && ts === best.ts) {
+        if (m.height > best.height) continue;
+        if (m.height === best.height) {
+          const pm = positionIn(m.height, m.txid), pb = best.position !== undefined ? best.position : positionIn(best.height, best.txidHex);
+          best.position = pb;
+          if (!(Number.isInteger(pm) && Number.isInteger(pb) && pm < pb)) continue;
+          best = { advert: read.advert, height: m.height, txidHex: m.txid, position: pm, ts };
+          continue;
+        }
+      }
+      best = { advert: read.advert, height: m.height, txidHex: m.txid, ts };
     }
+    if (best) delete best.ts;
+    if (best && best.position === undefined) best.position = positionIn(best.height, best.txidHex);
     return best;
   }
 
@@ -505,6 +558,6 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
     return { blocks, firstHeight: from };
   }
 
-  return { height, mine, bury, minable, waitForHeight, include, postBond, findBond, bondsOf, keyAt, carrierFor, chunksOf, fund, payTo, prepareAdvertUpdate, postAdvertUpdate,
+  return { height, mine, bury, minable, waitForHeight, include, postBond, findBond, bondsOf, ownBondsOf, keyAt, carrierFor, chunksOf, fund, payTo, prepareAdvertUpdate, postAdvertUpdate,
     prepareReaffirmation, postReaffirmation, prepareRebond, postRebond, newestUpdateOf, blocksFrom, genesis: g };
 }

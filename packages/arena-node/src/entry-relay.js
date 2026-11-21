@@ -29,7 +29,8 @@ export const LOCKS_MAX_BYTES = 64 * 1024;
 // hold (GET /api/round-result, which every build serves; a hint and nothing more):
 //   an entry too many seats lack    `slots - needed` seats may lack an entry and it can still reach the threshold; one seat more and it never can. It is no member:
 //                                   ENTRY_VOID where it is held. This changes no outcome a quorum could have reached: such an entry can gather no threshold.
-//   an entry this seat lacks        waits for the threshold of signed results naming it, each checked (verify.js signersNaming). Then it is in, whatever this
+//   an entry this seat lacks        waits until the threshold of peers hold it (their views, kanban #2096: waiting only for signed results was a wait-for
+//                                   cycle between seats short of different entries) or signed results naming it, each checked (verify.js signersNaming). Then it is in, whatever this
 //                                   seat's door said: the entry, its handout, its locks and the winner's address come from the peers, past the door, and every one
 //                                   of them is checked as a client's copy is: the bytes to the id, the shares to the stake point, the locks with the federation, the
 //                                   address and each item by their signatures. This seat then signs what the others signed.
@@ -115,10 +116,22 @@ export function createEntryRelay({ peersOf, entryOf, handoutOf, locksOf, fetcher
           // so a peer answering tens of MB is not buffered and parsed whole on every one of TRIES passes; a refused read is no answer
           const has = r.status === 200 ? await jsonUpTo(r, LOCKS_MAX_BYTES).catch(() => null) : r.status === 404 ? {} : null;
           if (!has) return null;
-          let short = false;
+          let short = false, handed = false;
           for (const [door, have, fields] of [['lock', has.stake, held.stake], ['fee-lock', has.fee, held.fee]]) {
             if (have || !fields) continue;
-            const p = await post(`${base}/${door}?entry=${entryHex}`, JSON.stringify(fields));
+            let p = await post(`${base}/${door}?entry=${entryHex}`, JSON.stringify(fields));
+            // A SEAT WITHOUT THE ENTRY IS HANDED IT, THEN THE LOCK AGAIN (kanban #2546): the entry's own hand-on runs once, and a seat that
+            // was restarting just then answered every later lock pass 404 for good. This seat holds the entry: it goes first, as handEntry sends it
+            if (p.status === 404 && !handed) {
+              handed = true;
+              const entry = entryOf(entryHex);
+              if (entry) {
+                const handout = handoutOf(entryHex);
+                if (handout) await post(`${base}/handout`, handout).catch(() => null);
+                const e = await post(`${base}/entry`, entry).catch(() => null);
+                if (e && (e.status === 201 || e.status === 200)) p = await post(`${base}/${door}?entry=${entryHex}`, JSON.stringify(fields));
+              }
+            }
             if (p.status === 201) took++; else if (p.status === 404) short = true;
           }
           return short ? base : null;

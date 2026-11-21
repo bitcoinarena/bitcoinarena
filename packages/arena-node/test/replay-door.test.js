@@ -5,7 +5,7 @@
 // or a round this node does not hold, has none.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
@@ -44,6 +44,7 @@ test('the engine draws no game: nothing in arena-node/pages or arena-node/src re
   const at = (p) => new URL(p, import.meta.url).pathname;
   const drawing = [];
   for (const dir of ['../pages/', '../src/']) for (const f of readdirSync(at(dir))) {
+    if (statSync(at(dir + f)).isDirectory()) continue;   // src/vendor is a folder (kanban #2220, #2915)
     const src = readFileSync(at(dir + f), 'utf8');
     if (/O_TRUCK|replay\.html/.test(src)) drawing.push(dir.replace('../', '') + f);
   }

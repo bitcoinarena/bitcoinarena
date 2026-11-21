@@ -19,6 +19,8 @@ import { taggedHash, toHex } from './hash.js';
 import { splitSignedFinalSig, decodeFinalSig, finalSigId } from './final-sig.js';
 
 export const SERVED_WINDOW_MS = 24 * 3600 * 1000;
+// kanban #3037: the distinct committee keys whose FINALs must verify on a round the reader holds only from answers
+export const SERVED_SIGNERS_MIN = 2;
 export const TAG_SERVED_NODES = 'ARENA/v1/ServedNodes';
 const snIs32 = (b) => b instanceof Uint8Array && b.length === 32;
 
@@ -50,8 +52,13 @@ export function servedNodes({ rounds, fromMs, toMs, verify }) {
     const rid = toHex(round.roundId);
     const committee = new Set(round.committee.map(toHex));
     const sources = Array.isArray(round.sources) ? round.sources : null;
-    let any = false;
     const finals = round.finals || [];
+    // ONE NODE ALONE MAKES NO ROUND (kanban #3037, audit gossip r3-1, measured 2026-11-19: a bonded seat that sat on no round named a
+    // made-up round id with itself as the whole committee and one FINAL it signed itself; the #1896/#2739 bonded filter took it and the
+    // seat was listed as served - an equal share of every item purchase's nodes' half, ACTIVE for funding). A round the reader's own
+    // record does not hold (it came from answers: `sources`) credits its signers only when FINALs of at least SERVED_SIGNERS_MIN
+    // distinct committee keys verify on it - a real round is signed by its committee, one key's word is not a round.
+    const signers = new Set(), inWindow = [];
     for (let j = 0; j < finals.length; j++) {
       const bytes = finals[j];
       let x, signature;
@@ -60,7 +67,7 @@ export function servedNodes({ rounds, fromMs, toMs, verify }) {
       const key = toHex(x.signerPubkey);
       if (toHex(x.roundId) !== rid) { refused.push({ round: rid, why: `a FINAL about another round (${toHex(x.roundId).slice(0, 16)})` }); continue; }
       if (!committee.has(key)) { refused.push({ round: rid, why: `${key.slice(0, 16)} is not of this round's committee` }); continue; }
-      if (served.get(key)?.has(rid)) continue;                 // a round counts once per node: no second check for it
+      if (served.get(key)?.has(rid) || signers.has(key)) continue;   // a round counts once per node: no second check for it
       const src = sources && Array.isArray(sources[j]) && sources[j].length ? sources[j] : null;
       if (src && src.every((s) => (failed.get(s) || 0) >= SERVED_FAILED_MAX)) continue;   // its answers spent their bad-signature budget
       if (src && !round.own) {                                 // kanban #2361: a check of a round the reader did not sit on costs an answer
@@ -80,11 +87,16 @@ export function servedNodes({ rounds, fromMs, toMs, verify }) {
         }
         continue;
       }
+      signers.add(key);
       if (x.signedAtMs < from || x.signedAtMs >= to) continue;  // outside the window: not refused, just not these 24 h
-      if (!served.has(key)) served.set(key, new Set());
-      served.get(key).add(rid); any = true;
+      inWindow.push(key);
     }
-    if (any) counted++;
+    if (sources && !round.own && signers.size < SERVED_SIGNERS_MIN) {
+      if (inWindow.length) refused.push({ round: rid, why: `only ${signers.size} committee key(s) signed a FINAL on it: one node's word is not a round (kanban #3037)` });
+      continue;
+    }
+    for (const key of inWindow) { if (!served.has(key)) served.set(key, new Set()); served.get(key).add(rid); }
+    if (inWindow.length) counted++;
   }
   const nodes = [...served.entries()].map(([key, s]) => ({ key, rounds: s.size })).sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   return { fromMs: from, toMs: to, nodes, rounds: counted, root: toHex(servedNodesRoot({ fromMs: from, toMs: to, nodes })), refused };
@@ -151,7 +163,12 @@ export const SERVED_CHECKS_MAX = 1024;
 export const SERVED_ANSWER_BYTES_MAX = 32 * 1024 * 1024;
 // `own` (default true): held[0] is the reader's own record (server.js), and the rounds it names are marked `own` - servedNodes does
 // not charge their checks to the answers (kanban #2361). A reader with no record of its own (the page, item-buy.js) passes false.
-export function mergeServedRounds(held, { own = true } = {}) {
+// `bonded` (kanban #1896, decided 2026-11-14 "(b) committee nodes only count"): a Set of node keys (hex) of a census the reader checked,
+// or null. Given, a committee copy counts only when every key of it is such a node: a copy naming a key no checked census bonds is
+// not taken - no vote, no FINAL - however many seat URLs name it (measured before: one stranger's server at three URLs named a real
+// round with a committee of one made-up key, outvoted two honest seats, and that key took the nodes' whole half of a 500-sat item).
+// null (the seats' own merges) reads as before.
+export function mergeServedRounds(held, { own = true, bonded = null } = {}) {
   const hx = (b) => toHex(b);
   const rounds = new Map(), conflicts = new Set();
   (held || []).forEach((seat, at) => {
@@ -162,6 +179,7 @@ export function mergeServedRounds(held, { own = true } = {}) {
       const k = hx(r.roundId);
       if (seen.has(k)) continue;                              // kanban #2239: one answer names a round once
       seen.add(k);
+      if (bonded && !r.committee.every((k) => bonded.has(hx(k)))) continue;   // kanban #1896: only bonded nodes are a committee
       const committee = [...new Set(r.committee.map(hx))].sort().join();
       if (!rounds.has(k)) rounds.set(k, { roundId: r.roundId, copies: new Map(), finals: new Map(), sources: new Map(), own: false });
       const into = rounds.get(k);

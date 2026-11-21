@@ -36,7 +36,8 @@ export const networkPackageId = (m) => toHex(sha256(utf8(JSON.stringify(['arena/
 
 /** A series template as a package carries it: the contract without its series fields, and its count, cut and period. */
 const templateOf = (s) => {
-  const t = decodeRoundContract(fromHex(String(s.template)));
+  if (!s || !isHex(s.template)) throw new Error('its template is not hex text'); // kanban #3195: never String(...) of a non-string
+  const t = decodeRoundContract(fromHex(s.template));
   if (s.count !== undefined && s.count !== null) t.seriesCount = Number(s.count);
   if (s.cut !== undefined && s.cut !== null) t.seriesCutFrom = Number(s.cut);
   if (s.period !== undefined && s.period !== null) t.seriesPeriodMs = BigInt(s.period);
@@ -72,12 +73,51 @@ export function networkPackageOf({ chain, networkId, invite, sets = [], rotation
  * game. Answers { ok, why, id, chain, networkId, federationId, checks: [{ check, ok, detail }], sets, rotations, series }
  * with every check listed, passed or not - the page shows the whole report, and the first failing line is the `why`.
  */
-export function checkNetworkPackage(pkg, { verify, seatChain, hostsGame = () => true } = {}) {
+// AT MOST SO MANY ROTATIONS, DONATION SETS AND SERIES IN ONE PACKAGE, AND EACH SIGNATURE VERIFIED ONCE (kanban #3051, audit hosting r4-1-2):
+// measured, a peer's GET /network answer of 120 junk rotations and 120 junk sets held the seat's thread 16.6 s - every set's authorityAt
+// verified every rotation again, rotations x sets Ed25519 verifies, and a 16 MB package (PEER_PACKAGE_BYTES) holds ~25,000 of each. A real
+// network carries a handful; a longer list is refused before any verify, and a (signature, message, key) is verified once per check.
+export const NETWORK_PACKAGE_MAX_ITEMS = 64;
+// AND AT MOST SO MANY BYTES OF DONATION SET BODIES IN ALL (kanban #3148, refute of #3051): the item cap left each set's entries free - a
+// set body carries up to 65535 bytes, ~1770 key recipients, each a point checked with a BigInt square root in decode, body id, stands and
+// signature. Measured, 64 such junk sets (an 8.2 MB package, under PEER_PACKAGE_BYTES) held the seat's thread 33 s. A real network's sets
+// name a handful of recipients each; all of a package's set bodies together may fill one set body's largest entries list, no more, and a
+// longer total is refused before anything is decoded.
+export const NETWORK_PACKAGE_MAX_SET_BYTES = 65535;
+const HEX = /^(?:[0-9a-f]{2})*$/;
+const isHex = (x) => typeof x === 'string' && HEX.test(x);
+const isHexEntry = (x) => !!x && typeof x === 'object' && isHex(x.body) && isHex(x.signature);
+const isId = (x) => typeof x === 'string' && /^[0-9a-f]{64}$/.test(x);
+export function checkNetworkPackage(pkg, { verify: verifyOnce, seatChain, hostsGame = () => true } = {}) {
+  const seen = new Map();
+  const verify = (sig, msg, key) => {
+    let k; try { k = `${toHex(sig)}:${toHex(msg)}:${toHex(key)}`; } catch { return verifyOnce(sig, msg, key); }
+    if (!seen.has(k)) seen.set(k, verifyOnce(sig, msg, key));
+    return seen.get(k);
+  };
   const checks = [];
   const add = (check, ok, detail = '') => { checks.push({ check, ok: !!ok, detail }); return !!ok; };
   const out = (extra = {}) => { const bad = checks.find((c) => !c.ok); return { ok: !bad, why: bad ? `${bad.check}: ${bad.detail || 'no'}` : null, checks, ...extra }; };
   if (!add('a network package of this store', !!pkg && pkg.format === NETWORK_FORMAT && pkg.manifest && typeof pkg.manifest === 'object', pkg && pkg.format !== NETWORK_FORMAT ? `not ${NETWORK_FORMAT}` : ''))
     return out();
+  for (const [what, list] of [['rotations', pkg.rotations], ['donation sets', pkg.donationSets], ['series', pkg.series]])
+    if (!add(`it carries at most ${NETWORK_PACKAGE_MAX_ITEMS} ${what}`, list == null || (Array.isArray(list) && list.length <= NETWORK_PACKAGE_MAX_ITEMS),
+      Array.isArray(list) ? `${list.length}` : 'not a list')) return out();
+  // EACH CARRIED SET AND ROTATION IS HEX TEXT, AND EACH MANIFEST LIST A SHORT LIST OF IDS (kanban #3195, refute of #3148): the byte cap
+  // counted a body only when it was a string, while the decode read fromHex(String(d.body)) - a peer's JSON answer with a body sent as
+  // ['<hex>'] counted 0 bytes and decoded in full (64 such sets held the thread 32 s again). Anything but hex text is refused here, before
+  // the bytes are counted, and the decode below reads only strings. The manifest's lists are hashed into the id and walked into Sets
+  // before anything else, so they are bounded the same way: arrays of at most NETWORK_PACKAGE_MAX_ITEMS ids of 32 bytes in hex.
+  for (const [what, list] of [['rotation', pkg.rotations], ['donation set', pkg.donationSets]])
+    for (const [i, x] of (list || []).entries())
+      if (!add(`${what} ${i} is hex text`, isHexEntry(x), 'its body and signature must be lowercase hex strings')) return out();
+  const mf = pkg.manifest;
+  for (const what of ['rotations', 'donationSets', 'series'])
+    if (!add(`its manifest names at most ${NETWORK_PACKAGE_MAX_ITEMS} ${what} by id`, mf[what] == null || (Array.isArray(mf[what]) && mf[what].length <= NETWORK_PACKAGE_MAX_ITEMS && mf[what].every(isId)),
+      Array.isArray(mf[what]) ? `${mf[what].length}` : 'not a list')) return out();
+  let setBytes = 0;
+  for (const d of pkg.donationSets || []) setBytes += d.body.length / 2;
+  if (!add(`its donation sets carry at most ${NETWORK_PACKAGE_MAX_SET_BYTES} bytes in all`, setBytes <= NETWORK_PACKAGE_MAX_SET_BYTES, `${Math.ceil(setBytes)} bytes`)) return out();
   const m = pkg.manifest;
   const id = networkPackageId(m);
   const who = { id, chain: m.chain, networkId: m.networkId, federationId: m.federationId };
@@ -102,7 +142,7 @@ export function checkNetworkPackage(pkg, { verify, seatChain, hostsGame = () => 
   const rotations = [];
   const namedRot = new Set(m.rotations || []);
   for (const [i, r] of (pkg.rotations || []).entries()) {
-    let rot; try { rot = { ...decodeAuthorityRotation(fromHex(String(r.body))), signature: fromHex(String(r.signature)) }; } catch (e) { add(`rotation ${i} reads`, false, e.message); continue; }
+    let rot; try { rot = { ...decodeAuthorityRotation(fromHex(r.body)), signature: fromHex(r.signature) }; } catch (e) { add(`rotation ${i} reads`, false, e.message); continue; }
     const rid = toHex(authorityRotationId(rot));
     add(`rotation serial ${rot.serial} is the one its manifest names`, namedRot.has(rid), rid.slice(0, 16));
     const s = keys ? rotationSignedBy(rot, { recovery: keys.recovery, verify }) : { ok: false, why: 'no recovery key' };
@@ -113,7 +153,7 @@ export function checkNetworkPackage(pkg, { verify, seatChain, hostsGame = () => 
   const sets = [];
   const namedSets = new Set(m.donationSets || []);
   for (const [i, d] of (pkg.donationSets || []).entries()) {
-    let set; try { set = { ...decodeDonationSetBody(fromHex(String(d.body))), signature: fromHex(String(d.signature)) }; } catch (e) { add(`donation set ${i} reads`, false, e.message); continue; }
+    let set; try { set = { ...decodeDonationSetBody(fromHex(d.body)), signature: fromHex(d.signature) }; } catch (e) { add(`donation set ${i} reads`, false, e.message); continue; }
     const bid = toHex(donationSetBodyId(set));
     add(`donation set serial ${set.serial} is the one its manifest names`, namedSets.has(bid), bid.slice(0, 16) + '…');
     add(`donation set serial ${set.serial} is for this network`, nid && toHex(set.networkId) === toHex(nid));
@@ -129,6 +169,14 @@ export function checkNetworkPackage(pkg, { verify, seatChain, hostsGame = () => 
     add(`donation set serial ${set.serial} is signed by the network's donation authority`, signed.ok, signed.why);
     sets.push(set);
   }
+  // NO SERIES WORK OVER A REFUSED ROTATION OR SET (kanban #3148): each series' donationSetInForce judges every set again, so a package
+  // already refused stops here - junk never reaches the per-series work - and the rest is judged once per census height.
+  if (checks.some((c) => !c.ok)) {
+    add('its series are checked once its rotations and donation sets stand', false, `${(pkg.series || []).length} series not checked`);
+    return out({ ...who, sets, rotations, series: [], invite: pkg.invite });
+  }
+  const setIds = sets.map((x) => { try { return toHex(donationSetId(x.recipients)); } catch { return null; } });
+  const inForceAt = new Map();
   // THE SERIES: the manifest's, on this network and federation, naming the set in force at its census height, on the
   // genesis grid with its lead, of a game this seat hosts
   const series = [];
@@ -140,12 +188,18 @@ export function checkNetworkPackage(pkg, { verify, seatChain, hostsGame = () => 
     add(`series ${tag} is on this network`, nid && toHex(t.networkId) === toHex(nid));
     add(`series ${tag} uses the invite's federation`, toHex(t.federationId) === m.federationId, toHex(t.federationId).slice(0, 16) + '…');
     const want = toHex(t.donationSetId);
-    const carried = sets.find((x) => { try { return toHex(donationSetId(x.recipients)) === want; } catch { return false; } });
-    let inForce = null;
-    if (keys && sets.length) {
-      try { inForce = donationSetInForce({ networkId: nid, authority: keys.authority, recovery: keys.recovery, sets, rotations, height: t.censusHeight, verify }); } catch { inForce = null; }
+    const carried = setIds.includes(want);
+    const hk = String(t.censusHeight);
+    if (!inForceAt.has(hk)) {
+      let inForce = null;
+      if (keys && sets.length) {
+        try { inForce = donationSetInForce({ networkId: nid, authority: keys.authority, recovery: keys.recovery, sets, rotations, height: t.censusHeight, verify }); } catch { inForce = null; }
+      }
+      let forced = null;
+      try { forced = inForce && inForce.ok ? toHex(donationSetId(inForce.recipients)) : null; } catch { forced = null; }
+      inForceAt.set(hk, { inForce, forcedId: forced });
     }
-    const forcedId = inForce && inForce.ok ? toHex(donationSetId(inForce.recipients)) : null;
+    const { inForce, forcedId } = inForceAt.get(hk);
     add(`series ${tag} names a donation set this package carries, the one in force at its census height`, !!carried && forcedId === want,
       !carried ? `it names ${want.slice(0, 16)}…, which this package does not carry` : forcedId === want ? `serial ${inForce.serial}` : `serial ${inForce && inForce.serial} is in force at ${t.censusHeight}`);
     const lead = seriesLeadIsValid(t);

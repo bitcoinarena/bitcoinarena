@@ -119,7 +119,7 @@ export function lockSettlement({ roundId, entries, minScore = 0, locks, fees, fe
   // pay is refused there ("the operator would keep ..."), and so its stakes are not
   // claimed here either - but its fee locks still are: the fee is owed.
   let h;
-  try { h = lockActions({ roundId, entries, minScore, payoutShares }); } catch (e) {
+  try { h = lockActions({ roundId, entries, minScore, payoutShares, protocolVersion: contract ? contract.protocolVersion : null }); } catch (e) {
     if (!feePart.claims.length) return refuse(e.message);
     return finish({ roundId, claims: [], payouts: [], unpaid: [], forfeits: [], poolMsat: 0n, inputFeesMsat: 0n, spendableMsat: 0n, stakeWhy: e.message }, feePart);
   }
@@ -152,8 +152,10 @@ export function lockSettlement({ roundId, entries, minScore = 0, locks, fees, fe
   const owed = winnings({ table: h.table.table, stakes: h.table.activated });
   if (!owed.ok) return refuse(owed.why);
   const poolMsat = claims.reduce((s, c) => s + c.amountMsat, 0n);
-  if (owed.owedMsat !== poolMsat)
-    return refuse(`the table hands out ${owed.owedMsat} msat and the claimed locks hold ${poolMsat}`);
+  // A PROTOCOL-31 TIE'S ODD MSAT IS THE RESERVES' (kanban #2687, ruling #2776): the table hands it to no player
+  const tieReserveMsat = h.reserveMsat || 0n;
+  if (owed.owedMsat + tieReserveMsat !== poolMsat)
+    return refuse(`the table hands out ${owed.owedMsat} msat${tieReserveMsat ? ` and ${tieReserveMsat} to the reserves` : ''} and the claimed locks hold ${poolMsat}`);
   for (const row of owed.rows) {
     const e = h.table.activated.find((x) => toHex(x.pubkey) === toHex(row.pubkey));
     if (!e || !lockOf(e)) return refuse(`a qualifier's stake lock was never verified, so there is no key to pay: ${toHex(row.pubkey).slice(0, 16)}`);
@@ -166,7 +168,18 @@ export function lockSettlement({ roundId, entries, minScore = 0, locks, fees, fe
   const pooled = [];
   let paying = [...owed.rows];
   const inputFeesMsat = claims.reduce((s, c) => s + lnv2FeeMsat(fees, c.amountMsat), 0n);
-  const spendableMsat = poolMsat - inputFeesMsat;
+  // the tie's odd msat joins the reserves' line of the fee part when there is one (a protocol-27 game round's); with none it is no output
+  // and stays with the guardians as fee, as the floors' leftovers do - never with a player
+  let spendableMsat = poolMsat - inputFeesMsat;
+  if (tieReserveMsat > 0n) {
+    // never part of what the players' payouts split; it joins the reserves' line (its output fee rising with it, if at all, out of the same msat)
+    spendableMsat -= tieReserveMsat;
+    const line = feePart.payouts.find((p) => p.kind === 'reserve');
+    if (line) {
+      const msat = largestPayoutMsat(fees, line.msat + line.feeMsat + tieReserveMsat);
+      if (msat >= line.msat) { line.msat = msat; line.feeMsat = lnv2FeeMsat(fees, msat); line.owedMsat += tieReserveMsat; line.tieMsat = tieReserveMsat; }
+    }
+  }
   const unpaid = [...pooled];
   // A WALK-AWAY IS NEVER A REFUND (RULED 2026-09-30): with nobody to send the winnings to, the other losers' locks
   // expire back - and a walk-away's is claimed all the same, into the remainder split.
@@ -687,7 +700,12 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
   let frontendGross = 0n;
   for (const [k, siteMsat] of sites.shares) {
     const payoutPk = fromHex(k);
-    const got = largestPayoutMsat(fees, (siteMsat * spendable) / poolMsat);
+    // kanban #2795: a website's line is capped at what is left of the nodes' part after the publisher's fee back and the
+    // websites before it - in a small round the publisher can take all of it, and an uncapped website line then made the fee
+    // lines come to more than the fee locks hold, refusing the whole round's one settlement (the winner's payout with it).
+    const left = nodePartMsat - publisherGross - frontendGross;
+    const share = (siteMsat * spendable) / poolMsat;
+    const got = left > 0n ? largestPayoutMsat(fees, share < left ? share : left) : 0n;
     if (got === 0n) { unpaid.push({ pubkey: payoutPk.subarray(1), owedMsat: siteMsat, why: 'the website\'s share does not pay its own output fee' }); continue; }
     frontendGross += got + lnv2FeeMsat(fees, got);
     payouts.push({ pubkey: payoutPk.subarray(1), payoutPk, owedMsat: siteMsat, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: 'frontend' });

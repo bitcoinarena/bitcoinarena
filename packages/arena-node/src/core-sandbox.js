@@ -32,6 +32,7 @@ import { C, ANSWERED, EXITED } from './core-supervisor.js';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { coreTree, coreRelPath, coreBytesHashHex } from './core-hash.js';
+import { instrumentCore } from './core-depth.js';
 
 /** The longest a replay may run: a whole replay of the longest run (10800 ticks) is a few seconds; this is the ceiling. */
 export const CALL_MS = 120000;
@@ -55,6 +56,11 @@ export const RSS_BACKSTOP = 512 * 1024 * 1024;
  *  parses it there, where no limit of the core's thread applies. A replay's answer is a few kB (three truck words a picture);
  *  4 MB parses in well under ASK_MS. core-host.js refuses a longer one before it is posted, and the node again before it is read. */
 export const ANSWER_MAX = 4 * 1024 * 1024;
+/** THE LONGEST FAILURE TEXT (kanban #2165, #2232, #2304; refute of #1691): core-host.js cuts the core's own message to 1 kB
+ *  before posting it; with the host's own prefix a `why` is far below this. Anything else - not a string, or longer - is never
+ *  thrown into the node: the core is ended, and a fixed text says so. */
+export const WHY_MAX = 4096;
+const whyBounded = (why) => typeof why === 'string' && why.length <= WHY_MAX;
 /** The supervisor ends a core this far below the backstop: it reads the process every 2 ms, and a core allocating at full
  *  speed keeps going for the moments its isolate takes to stop (measured on the card). */
 const BACKSTOP_MARGIN_MB = 96;
@@ -227,7 +233,8 @@ function startThread({ files, entry }, { callMs, stepMs, askMs, loadMs, name, ar
       const d = deathOf(sup, id);
       end(caught
         ? `the core grew this node by ${caught} MB in ${what}, and a call may grow it by at most ${Math.round(rssBackstop / 1048576)} MB: its thread was ended at ${triggerMb} MB, and it is not run again`
-        : `the core's thread died in ${what}${d && d.error ? ` (${d.error === 'ERR_WORKER_OUT_OF_MEMORY' ? 'out of its heap' : d.error})` : ''}: it is not run again`);
+        // kanban #2549: the death's text is the core's own (its error event's code or message) - bounded like every other failure text
+        : `the core's thread died in ${what}${d && d.error ? ` (${d.error === 'ERR_WORKER_OUT_OF_MEMORY' ? 'out of its heap' : String(d.error).slice(0, 512)})` : ''}: it is not run again`);
       throw new Error(ended);
     }
     end(`the core did not stop within ${ms} ms (${what}): its thread was ended, and it is not run again`);
@@ -235,7 +242,8 @@ function startThread({ files, entry }, { callMs, stepMs, askMs, loadMs, name, ar
   };
   const loaded = wait(leftOf(loadMs), 'loading');
   loading = false;   // (kanban #2058) the load's own bound ends with the load
-  if (!loaded.ok) { end(loaded.why); throw new Error(loaded.why); }
+  // kanban #2165, #2232, #2304: a failure text past WHY_MAX (or not a string) is never thrown into the node
+  if (!loaded.ok) { const why = whyBounded(loaded.why) ? loaded.why : `the core failed while loading with a message longer than ${WHY_MAX} characters`; end(why); throw new Error(why); }
 
   // `within`: a shorter deadline for this one call (kanban #1538: the plugin trial run gives all its calls one deadline in total)
   const callHere = (op, input = {}, within = null) => {
@@ -245,6 +253,8 @@ function startThread({ files, entry }, { callMs, stepMs, askMs, loadMs, name, ar
     port1.postMessage({ op: String(op), json: plain(input) });
     const ms = Number.isFinite(within) ? Math.max(1, Math.min(within, { callMs, stepMs, askMs }[DEADLINE[op] || 'askMs'])) : { callMs, stepMs, askMs }[DEADLINE[op] || 'askMs'];
     const a = wait(ms, op);
+    // kanban #2165, #2232, #2304: a failure text past WHY_MAX (or not a string) is never thrown into the node - a bounded one is
+    if (!a.ok && !whyBounded(a.why)) throw new Error(`the core failed in ${op} with a message longer than ${WHY_MAX} characters`);
     // A CALL PAST ITS ARRAY BUDGET FAILS, AND ONLY THAT CALL (kanban #1721, #1792, #1831): core-host.js drops the context it
     // ran in - the core cannot catch the refusal and keep what it held. Ending the core here made every later call on this
     // seat fail ("it is not run again") while a seat that never ran that input answered them: the seat's history again.
@@ -286,8 +296,11 @@ export function loadCore({ files, entry }, { callMs = CALL_MS, stepMs = STEP_MS,
   arrayBudget = ARRAY_BUDGET, liveCap = 0, oneThread = false, heap = HEAP_LIMITS, rssBackstop = RSS_BACKSTOP, answerMax = ANSWER_MAX, until = null, lingerAs = null, loadUntil = null } = {}) {
   // answerMax (kanban #1691), until (kanban #1719), lingerAs (kanban #1880) and loadUntil (kanban #2058) reach every thread this core starts
   const opts = { callMs, stepMs, askMs, loadMs, name, arrayBudget, liveCap, heap, rssBackstop, answerMax, until, lingerAs, loadUntil };
+  // THE DEPTH LIMIT, INJECTED AT LOAD (kanban #2220, #2476; core-depth.js): every file the core's threads compile counts its call
+  // depth, so no thread - the kept one, a call's own, a seat's or a reload's - answers by where V8's stack overflowed
+  files = new Map([...files].map(([rel, text]) => [rel, instrumentCore(text, rel)]));
   const leftOf = (ms) => (Number.isFinite(until) ? Math.max(1, Math.min(ms, until - Date.now())) : ms);
-  const kept = startThread({ files, entry }, opts);
+  let kept = startThread({ files, entry }, opts);
   let ended = null;
   let last = kept;
   const memo = new Map();
@@ -296,8 +309,14 @@ export function loadCore({ files, entry }, { callMs = CALL_MS, stepMs = STEP_MS,
     if (ended) throw new Error(ended);
     op = String(op);
     if (oneThread || KEPT.has(op)) {
+      // THE WARM GHOST'S THREAD THAT DIES ENDS THAT THREAD ALONE (kanban #2121, #1489 v1-refute-45-s3-1, as #2008 for a call's own
+      // thread): a player's input that kills its heap while a ghost is stepped is set by the input, not by the core, and ending the
+      // core made every later signed call on this seat throw "it is not run again" while seats that never drew that ghost answered.
+      // The next KEPT call gets a fresh kept thread (the open runs went with the old one: the ghosts open them again). Only the
+      // plugin trial (`oneThread`), which watches one thread across calls, still ends the core.
+      if (!oneThread && kept.ended()) kept = startThread({ files, entry }, opts);
       last = kept;
-      try { return revive(kept.call(op, input, within)); } finally { if (kept.ended()) ended = kept.ended(); }
+      try { return revive(kept.call(op, input, within)); } finally { if (oneThread && kept.ended()) ended = kept.ended(); }
     }
     const key = PURE.has(op) ? `${op}\0${plain(input)}` : null;
     if (key !== null && memo.has(key)) return revive(memo.get(key));
@@ -343,8 +362,11 @@ export function sandboxFor(core, options) {
     catch (e) {
       // ...BUT A LOAD THAT ONLY RAN OUT OF TIME is not cached (kanban #1586): a busy node can miss LOAD_MS once, and a refusal kept
       // for the thread's life left every later close of that game - a head-to-head decide's retry too - failing until a restart
-      if (/did not stop within \d+ ms \(loading\)/.test(e.message)) throw e;
-      s = { refused: e.message };
+      // kanban #2710 (#1489 r4-hosting-6): nor one whose META ASK ran out of time - a seat busy at a core's first load (at start, or the
+      // first ask after an idle sweep) missed ASK_MS there and the game was refused until a restart: every round of it unsigned
+      if (/did not stop within \d+ ms \((loading|meta)\)/.test(e.message)) throw e;
+      // kanban #2549 (refute of #1695): a refusal kept for the thread's life is bounded - whatever path built its text
+      s = { refused: String(e && e.message).slice(0, WHY_MAX) };
     }
     cache.set(key, s);
   }
@@ -352,6 +374,25 @@ export function sandboxFor(core, options) {
   askedAt.set(key, Date.now());
   if (!sweeper && CORE_IDLE_MS > 0) { sweeper = setInterval(() => endIdleCores(CORE_IDLE_MS), 60000); sweeper.unref(); }
   return s;
+}
+
+/**
+ * A LOAD CHECK KEEPS NO THREAD (kanban #2688, #1489 r3-hosting-2): hostedPlugins and registrationFromPackage load every installed version's
+ * cores at start to check they load - and each kept a live core thread for CORE_IDLE_MS with what its top level allocated, one per version its
+ * developer ever published (autoUpdate takes them unattended): a few dozen versions were GBs at every start. Answers what sandboxFor answers
+ * (it throws as sandboxFor does) and ends the thread at once when this check started it; a core already running for a round is left running.
+ * The next real ask loads it again (as after the idle sweep).
+ */
+export function sandboxChecked(core, options) {
+  const key = `${core && core.url}|${(core && core.root) || ''}|${core && (core.sourceHash || core.hash)}`;
+  const had = cache.has(key);
+  const s = sandboxFor(core, options);
+  const meta = s.meta;
+  if (!had && cache.get(key) === s && typeof s.end === 'function') {
+    askedAt.delete(key); cache.delete(key);
+    try { s.end(); } catch { /* already gone */ }
+  }
+  return { meta };
 }
 
 // AN IDLE CORE'S THREAD IS ENDED, and loaded again on its next ask (kanban #576, measured 2026-10-23 03:5xZ on test host seat 1:

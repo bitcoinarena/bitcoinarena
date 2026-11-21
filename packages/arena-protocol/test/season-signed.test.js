@@ -19,32 +19,34 @@ const S = 100000n;
 const en = (player, payoutMsat, roundKey) => ({ player, roundKey, name: null, stakeMsat: S, payoutMsat, outcome: payoutMsat > S ? DELIVERED : FAILED, score: 1 });
 // identities (an entry's round key is not the player) A, B, C, D; X the colluders' invented winner
 const [A, B, C, D, X] = [0x0a, 0x0b, 0x0c, 0x0d, 0x0e].map(h);
-const R1 = contractRound({ gameId: GAME, startMs: T0 + 3600000, n: 1, entries: [en(A, 3n * S, h(0xa1)), en(B, 0n, h(0xb1)), en(C, 0n, h(0xc1))] });
+const R1 = contractRound({ gameId: GAME, startMs: T0 + 3600000, n: 1, entries: [en(A, 4n * S, h(0xa1)), en(B, 0n, h(0xb1)), en(C, 0n, h(0xc1)), en(D, 0n, h(0xd1))] });
+// kanban #2841: a place needs an identity older than the week with 3 older opponents - A, B, C and D played a paid round the day before
+const R0 = contractRound({ gameId: GAME, startMs: T0 - 86400000, n: 4, entries: [en(A, 90000n, h(0xa0)), en(B, 90000n, h(0xb0)), en(C, 90000n, h(0xc0)), en(D, 90000n, h(0xd0))] });
 const R2 = contractRound({ gameId: GAME, startMs: T0 + 7200000, n: 2, entries: [en(C, 2n * S, h(0xc2)), en(D, 0n, h(0xd2))] });
 // THE INVENTED ROUND: a contract the colluders made up, and an account none of the round's honest seats holds
 const FAKE = contractRound({ gameId: GAME, startMs: T0 + 9000000, n: 3, entries: [en(X, 900n * S, h(0xe1)), en(D, 0n, h(0xd3))] });
 // the draws as THIS seat computes them: R1 and R2 drawn on seats 1-9, the invented round on the three colluders 11, 12, 13 and six others
-const DRAW = drawOf(new Map([[R1.roundId, [1, 2, 3, 4, 5, 6, 7, 8, 9]], [R2.roundId, [1, 2, 3, 4, 5, 6, 7, 8, 9]], [FAKE.roundId, [11, 12, 13, 1, 2, 3, 4, 5, 6]]]));
+const DRAW = drawOf(new Map([[R0.roundId, [1, 2, 3, 4, 5, 6, 7, 8, 9]], [R1.roundId, [1, 2, 3, 4, 5, 6, 7, 8, 9]], [R2.roundId, [1, 2, 3, 4, 5, 6, 7, 8, 9]], [FAKE.roundId, [11, 12, 13, 1, 2, 3, 4, 5, 6]]]));
 const WINDOW = { games: [GAME], fromMs: T0, toMs: T0 + 7 * 86400000, top: 3, amountMsat: 3000000n };
-const honest = (n) => seatAnswer(n, [R1, R2]);
-const colluder = (n) => seatAnswer(n, [R1, R2, FAKE]);
+const honest = (n) => seatAnswer(n, [R0, R1, R2]);
+const colluder = (n) => seatAnswer(n, [R0, R1, R2, FAKE]);
 
 test('the scenario: three colluding seats hand in byte-identical invented rounds - the old merge pays them, the signed merge does not', () => {
   // THE OLD RULE: SEASON_NETWORK_AGREE (3) byte-identical accounts, no check of who the round's seats are or whether it exists
   const unsigned = (rounds) => rounds.map(({ contract, sigs, ...r }) => r);
   const old = mergeSeasonAccounts(new Map([['c11', unsigned(colluder(11))], ['c12', unsigned(colluder(12))], ['c13', unsigned(colluder(13))], ['me', unsigned(honest(1))]]),
     { agree: SEASON_NETWORK_AGREE, keys: true });
-  const oldWin = leaderboardWinners({ ...WINDOW, rounds: old.rounds });
-  assert.equal(oldWin.winners[0].player, X, 'the old rule pays the invented winner first');
+  // the old rule counts the invented round (since #2841 a fresh X would take no place anyway: its first paid round is inside the week)
+  assert.ok(old.rounds.some((r) => r.roundId === FAKE.roundId), 'the old rule counts the invented round');
   // THE SIGNED RULE: the same three colluders, this seat and four honest seats of R1's and R2's draw
   const answers = new Map([['c11', colluder(11)], ['c12', colluder(12)], ['c13', colluder(13)], ...[1, 2, 3, 4, 5].map((n) => [`s${n}`, honest(n)])]);
   const m = mergeSignedSeasonAccounts(answers, { seatsOf: DRAW, verify });
   assert.equal(m.ok, true, m.why);
-  assert.deepEqual(m.rounds.map((r) => r.roundId), [R1.roundId, R2.roundId].sort(), 'only the rounds the threshold of their draw signed');
+  assert.deepEqual(m.rounds.map((r) => r.roundId), [R0.roundId, R1.roundId, R2.roundId].sort(), 'only the rounds the threshold of their draw signed');
   assert.ok(m.excluded.some((x) => x.round === FAKE.roundId && /signed by enough of its seats \(3 at most\)/.test(x.why)), JSON.stringify(m.excluded));
   const w = leaderboardWinners({ ...WINDOW, rounds: m.rounds });
-  // A +2S, C 0, B and D -S each (sharing place 3): the honest board
-  assert.deepEqual(w.winners.map((x) => [x.player, x.places]), [[A, '1'], [C, '2'], [B, '3-3 shared by 2'], [D, '3-3 shared by 2']]);
+  // A +2S, C 0, B and D -S each: only A won money, so only A is paid; places 2 and 3 stay in the reserves (kanban #2656)
+  assert.deepEqual(w.winners.map((x) => [x.player, x.places]), [[A, '1']]);
   assert.ok(!w.winners.some((x) => x.player === X), 'X is paid nothing');
 });
 

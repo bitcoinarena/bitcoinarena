@@ -10,7 +10,8 @@ import { DatabaseSync } from 'node:sqlite';
 import * as ex from '../src/ecash-exchange.js';
 
 const A = 'aa'.repeat(32), B = 'bb'.repeat(32);
-const NOTES = 'fedimintA'.padEnd(40, 'x');
+// kanban #2384, #2436: notes that decode (a string the federation's base32 cannot read is refused 400 before anything is written)
+const NOTES = 'fedimintq'.padEnd(40, 'a');
 
 // a federation pair as the stake-lock tool answers it: the reissue is the string's own operation, a keyed send is in the operation log.
 // `lostReceive` / `lostSend`: the federation does it, the answer is lost (a tool timeout, a seat that stopped). `oldTool`: a tool from
@@ -24,7 +25,7 @@ function seat({ lostReceive = 0, lostSend = 0, oldTool = false, carries = 100_00
         if (received.has(e)) return oldTool ? { state: 'AlreadyReceived', msat: 0n } : { state: 'AlreadyReceived', msat: 0n, earlier: 'Success', carriedMsat: carries };
         received.set(e, carries);
         if (lostReceive > 0) { lostReceive--; throw new Error('arena-stake-lock ecash-receive timed out'); }
-        return { state: 'Success', msat: carries }; } },
+        return { state: 'Success', msat: carries, carriedMsat: carries }; } },
     [B]: { ecashBalance: async () => holdsB,
       ecashSend: async (m, { key = null } = {}) => { calls.push('send');
         if (key && !oldTool && log.has(key)) return { ...log.get(key), again: true };

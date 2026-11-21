@@ -15,6 +15,9 @@
  *           c. today or tomorrow with no posting for an app (the seats' GET /duty: the dutyday runners are gone since #702)
  *           d. our pending transactions (GET /pending) old and not on miner C's list, or listed and still unconfirmed; the tip not moving
  *           e. the the test host's 15-min load above HW_LOAD_MAX (12)
+ *           g. our Lightning gateways (HW_GATEWAYS, kanban #2773): each one's payment log and balance judged by src/gateway-loss.js -
+ *              failed payments "note already spent", e-cash gone with no payment to explain it, dead notes (the JSON
+ *              tools/gateway-dead-notes.mjs writes) - red goes to the chat AND to the owner's Signal (HW_SIGNAL_TO), #2771 went unseen 6 days
  *   FIX     what has a safe runbook, each behind guards and a rate limit, and rechecked on the next pass before it is ever done again:
  *           - a test host seat down two passes: restart that one unit (load1 < 12, :03-:08 of a quarter only - never across a seating,
  *             memory seat-roll-seating-window -, one seat per 10 min, the same seat once per hour)
@@ -32,6 +35,7 @@ import { dirname } from 'node:path';
 import { execFile } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { roundSeating, NOW_ROUNDS } from '../../../src/arena-ui/health/network.js';
+import { readGateway } from '../src/hosts.js';
 import { pubsConfig, gatherPubs, assessPubs, pubMemTxs, doResend, doCpfp, doPublicMine, lookScript, parseLook, callsScript, parseCalls, opsPublished, esploraCalls } from './health-watcher-pubs.mjs';
 
 const H = process.env.HOME || '/home/arena';
@@ -74,6 +78,10 @@ export function config(env = process.env, argv = []) {
       mention: env.HW_MENTION || '@owner' },
     probeCensus: env.HW_PROBE_CENSUS !== '0',
     pubs: pubsConfig(env, H),                           // f. the round publications on both chains (./health-watcher-pubs.mjs)
+    // g. "name,base,password file[,dead-notes file]" per gateway, separated by ";" (kanban #2773)
+    gateways: String(env.HW_GATEWAYS || '').split(';').map((x) => x.trim()).filter(Boolean).map((x) => { const [name, base, passwordFile, deadFile] = x.split(',').map((y) => y.trim());
+      return { name, base: String(base || '').replace(/\/+$/, ''), passwordFile, ...(deadFile ? { deadFile } : {}) }; }),
+    signal: { url: env.HW_SIGNAL_URL || 'http://127.0.0.1:8080/api/v1/rpc', to: env.HW_SIGNAL_TO || '' },
   };
 }
 
@@ -130,6 +138,9 @@ export async function gather(io, cfg, state, nowMs) {
   const old = [...new Set([...memPubs, ...pendingTxs(f.pending).filter((t) => state.pendingSeen && state.pendingSeen[t.txid] && nowMs - state.pendingSeen[t.txid] >= cfg.pendingAgeMs).map((t) => t.txid)])];
   if (old.length) f.minerc = await io.minercCheck(old);
   if (io.topProcs && f.load[2] > cfg.loadMax) f.top = await io.topProcs();
+  // g. the gateways, one after the other; each reading judged against the last one kept (its balance, its drops of the window)
+  f.gateways = [];
+  if (io.gateway) for (const g of cfg.gateways) f.gateways.push(await io.gateway(g, (state.gw || {})[g.name] || null).catch((e) => ({ name: g.name, error: e.message })));
   return f;
 }
 const dedupeGames = (gs) => [...new Map(gs.map((g) => [String(g.id).toLowerCase(), g])).values()];
@@ -291,6 +302,25 @@ export function assess(f, prev, cfg) {
     }
   }
 
+  // g. THE GATEWAYS (kanban #2773): red at once - money is at stake, and a payment log does not flap; one that is not read, after two passes
+  st.gw = st.gw || {};
+  for (const g of f.gateways || []) {
+    if (g.error) {
+      const n = streak(`gateway-unread:${g.name}`, true);
+      problems.push({ key: `gateway-unread:${g.name}`, ticket: '2773', title: `gateway ${g.name} not read`, lines: [g.error], tried: ['nothing'], needs: 'gateway checked', alert: n >= cfg.confirm });
+      continue;
+    }
+    st.gw[g.name] = { readAtMs: g.readAtMs, federations: g.federations, watch: { drops: (g.watch && g.watch.drops) || [] } };
+    const w = g.warning;
+    if (w && w.level === 'bad') {
+      streak(`gateway:${g.name}`, true);
+      const f1 = (g.watch && g.watch.failures) || {};
+      problems.push({ key: `gateway:${g.name}`, ticket: '2773', title: `gateway ${g.name}: money at risk`, lines: w.parts,
+        plain: f1.lastAtMs ? [`last failure ${hm(f1.lastAtMs)} UTC: ${f1.lastError || ''}`] : [],
+        tried: ['nothing (read-only)'], needs: 'the gateway stopped from paying and its notes checked (runbook #2771)', alert: true, signal: true });
+    }
+  }
+
   // e. LOAD
   if (l15 > cfg.loadMax) {
     const n = streak('load', true);
@@ -414,6 +444,10 @@ export async function pass(io, cfg, prev) {
   for (const a of alerts) {
     if (cfg.dry) { posted.push({ ...a, dry: true }); markAlerted(state, a, problems, nowMs); continue; }
     try { await io.post(a.text); markAlerted(state, a, problems, nowMs); posted.push({ ...a, ok: true }); } catch (e) { posted.push({ ...a, ok: false, why: e.message }); }
+    // the money alerts also reach the owner's phone (kanban #2773): new, again and resolved; a failed Signal send is said in the log
+    if (/^gateway:/.test(a.key) && io.signal && cfg.signal.to) {
+      try { await io.signal(a.text); posted.push({ ...a, kind: `${a.kind} signal`, ok: true }); } catch (e) { posted.push({ ...a, kind: `${a.kind} signal`, ok: false, why: e.message }); }
+    }
   }
   state.lastPassMs = nowMs;
   return { state, facts: f, problems, fixes, did, alerts: posted };
@@ -516,6 +550,15 @@ export function realIo(cfg) {
     },
     minercAdd: async (txids) => {
       await ssh(`cd ~/${cfg.minerc.dir} && cp watch-pending.txt watch-pending.txt.pre-hw && while read t; do grep -qx "$t" watch-pending.txt || echo "$t" >> watch-pending.txt; done && (pkill -f "node miner-lean-c.mjs" || true)`, txids.join('\n') + '\n');
+    },
+    // kanban #2773: one gateway read the way its node reads it (hosts.js), the last reading as `prev` for the balance check
+    gateway: (g, prev) => readGateway(g, { prev }),
+    // kanban #2773: the owner's Signal, through the local signal-cli daemon's JSON-RPC (memory signal-user; never restarted from here)
+    signal: async (text) => {
+      const r = await fetch(cfg.signal.url, { method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: Date.now(), method: 'send', params: { recipient: [cfg.signal.to], message: text } }), signal: AbortSignal.timeout(20000) });
+      if (!r.ok) throw new Error(`signal HTTP ${r.status}`);
+      const j = await r.json().catch(() => ({})); if (j.error) throw new Error(`signal: ${j.error.message || 'error'}`);
     },
     // a PLAIN channel message as bot claude: no thread_id, no reply_to (memory arena-chat-mandatory)
     post: async (text) => {

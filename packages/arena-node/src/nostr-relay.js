@@ -23,13 +23,20 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 
 export const RELAY_KINDS = Object.freeze([0, 10002, 30078, 24133, 22242, 13194, 23194, 23195, 30762, 30009, 8, 9735]);   // + NIP-47 (wallet connect), + round results and NIP-58 badges, + NIP-57 zap receipts
 const MAX_EVENT_BYTES = 64 * 1024, MAX_SUBS = 20, MAX_FILTERS = 10, MAX_LIMIT = 500, FUTURE_S = 900;
+// WHAT KEPT SUBSCRIPTIONS MAY HOLD (kanban #2839, #1489 r24-nostr-2): a socket's 20 REQs of 10 filters with ~1,600 tag values each stayed compiled
+// for the socket's life - 12.9 MB of heap per idle socket, nothing bounding the total. Each kept subscription is charged its values (ids,
+// authors, kinds and tag values); a socket holds at most SUB_VALUES_PER_SOCKET, the relay at most SUB_VALUES_TOTAL; past either a REQ is CLOSED.
+const SUB_VALUES_PER_SOCKET = 4000, SUB_VALUES_TOTAL = 400000;
+const valuesOf = (compiled) => compiled.reduce((t, c) => t + (c.ids ? c.ids.size : 0) + (c.authors ? c.authors.size : 0) + (c.kinds ? c.kinds.size : 0)
+  + c.tags.reduce((u, [, v]) => u + v.size, 0) + 1, 0);
 // THE RELAY IS NOT ANYBODY'S DISK (kanban #1513, #1489 r1-nostr-3): the only limit was 60 messages per 10 s per socket, and sockets
 // are free, so one fresh key kept any number of events (kind 8, 9735, or 30078/30762/30009 under new `d`s, up to 64 KB each). Now:
 //   - per author at most AUTHOR_EVENTS events and AUTHOR_BYTES bytes; a new one past that pushes out that author's OWN oldest
 //     (nobody else's), so a node's newest round results and badges are always kept;
 //   - in total at most TOTAL_EVENTS events and TOTAL_BYTES bytes; bytes are bytes on disk (#1704); one that replaces or rolls out its
 //     author's own adds nothing and is kept (kanban #1769); one that grows a full store makes room by FAIR SHARE (kanban #1943, #1983, below)
-//     and is refused ('blocked: the relay is full') only when no one holds more than its author;
+//     and is refused ('blocked: the relay is full') only when no one holds more than its author; an author in `keep` (the seats' node
+//     keys, ARENA_RELAY_KEEP) never gives back for another author's write (kanban #2146, #2214);
 //   (no cap on sockets per address: behind the tunnel every player comes from the same local address; the quotas bound the disk);
 //   - a REQ reads only the rows its ids/authors/kinds/since/until/tags select (SQL on indexed columns), at most SCAN_MOST index rows a filter (#1720).
 const AUTHOR_EVENTS = 500, AUTHOR_BYTES = 4 * 1024 * 1024, TOTAL_EVENTS = 200000, TOTAL_BYTES = 512 * 1024 * 1024;
@@ -53,21 +60,50 @@ const eventSize = (e, json, rows) => Buffer.byteLength(json) + EVENT_ROW_BYTES +
 // need it). When an event would take the store past the total, room is made, one event at a time, in this order:
 //   1. the OTHER pool, if it is over its share, gives back: the oldest event of its largest holder goes;
 //   2. else, in the event's own pool, an author who holds MORE than the event's author then will (events or bytes, whichever is over) loses
-//      its oldest - the largest such holder first, the most recently arrived of equal ones first;
+//      its oldest - the largest such holder first, the most recently arrived of equal ones first; by count, when the largest holds ONE
+//      event, also that one, for an author who held at most one before (kanban #2677: one-event-per-fresh-key spam cannot lock new authors out);
 //   3. else, a STATE event rolls out its own author's oldest STATE event (its newest wins, as under its own quota);
 //   4. else it is refused ('blocked: the relay is full'): its author already holds as much as anybody - a LOG event never erases its own
 //      author's older records to take more.
 // So no stranger can shut the relay to anybody else: what free keys add is taken back from the largest holders first, which are theirs.
 // Who holds what (per author and pool) is kept by triggers in temporary tables, rebuilt from the store at every start.
 const LOG_SHARE = 0.5;
-const POOL_SQL = (k) => `(CASE WHEN ${k} IN (0, 3) OR ${k} BETWEEN 10000 AND 19999 OR ${k} BETWEEN 30000 AND 39999 THEN 0 ELSE 1 END)`;   // 0 state, 1 log
-const poolOf = (k) => (isReplaceable(k) || isParam(k) ? 0 : 1);
+// AUTHORS WITH STANDING ARE NEVER EVICTED, AND A FRESH KEY PAYS FOR ITS WRITE WHILE A POOL IS NEARLY FULL (kanban #2847, ruling 2026-11-16; finding
+// wf1489-r25-nostr-1: #2677 evicted the NEWEST single-event holder, so a newcomer's profile lived only until the next stranger's fresh-key write).
+// Standing: a key that signed an identity proof for a counted round (`standing`: the identities the seats' season counts, read on the host) or
+// whose seed (30078) this relay has kept STANDING_SEED_MS (7 days) or more; the seats' node keys (`keep`) too. Outside the seed pool (#2858
+// stands there) room is made only from authors WITHOUT standing, oldest-arrived event first; with none left the write is refused. And an author
+// this relay has never kept an event from must carry NIP-13 proof of work while the pool it writes to is over POW_FILL (90 %) full: difficulty
+// POW_BASE (20) leading zero bits of its id, 2 more for every further 1 % of fill, at most POW_MAX (28); refused as 'pow: difficulty N required'.
+export const STANDING_SEED_MS = 7 * 86400000, POW_FILL = 0.9, POW_BASE = 20, POW_MAX = 28;
+/** The difficulty an unseen author needs at a pool's fill (0..1), or 0 below POW_FILL. */
+export const powRequired = (fill, { powFill = POW_FILL, powBase = POW_BASE, powMax = POW_MAX } = {}) => (fill > powFill ? Math.min(powMax, powBase + 2 * Math.floor((fill - powFill) * 100 + 1e-9)) : 0);
+/** NIP-13: the leading zero bits of an event id (hex). */
+export const leadingZeroBits = (idHex) => { let n = 0; for (const ch of String(idHex)) { const v = parseInt(ch, 16); if (v === 0) { n += 4; continue; } n += Math.clz32(v) - 28; break; } return n; };
+// THE ENCRYPTED SEEDS HAVE A QUOTA OF THEIR OWN (kanban #2393, #1489 a44-refute-20-s2; the owner 2026-11-14): keys are free, so strangers
+// filled the total with one kind 30078 under each fresh key - one event a key, so nobody held more than anybody and fair share had nothing
+// to take - and every node's next signed round result (30762, never sent again) was refused 'blocked: the relay is full'. Kind 30078 (NIP-78
+// app data: the players' NIP-44-encrypted game seeds) is now pool 2, counted against SEED_EVENTS / SEED_BYTES and never against the total
+// the other pools share: no number of seeds refuses a node's result, a profile or a badge. Inside the seed pool room is made as in a pool
+// above (steps 2-4): a holder of more seeds than the writer gives back its oldest, an author replaces its own, else the new seed is refused -
+// an existing player's only seed is never pushed out by strangers' (#2447).
+const SEED_KIND = 30078, SEED_POOL = 2, SEED_EVENTS = 100000, SEED_BYTES = 128 * 1024 * 1024;
+const POOL_SQL = (k) => `(CASE WHEN ${k} = ${SEED_KIND} THEN ${SEED_POOL} WHEN ${k} IN (0, 3) OR ${k} BETWEEN 10000 AND 19999 OR ${k} BETWEEN 30000 AND 39999 THEN 0 ELSE 1 END)`;   // 0 state, 1 log, 2 seeds
+const poolOf = (k) => (k === SEED_KIND ? SEED_POOL : isReplaceable(k) || isParam(k) ? 0 : 1);
 const SLOW_BYTES = 4 * 1024 * 1024;   // kanban #1542: the most one client may leave unread before it is dropped
+// kanban #2738: the stored JSON one REQ may read and parse, all its filters together - twice what one socket may hold unread
+const REQ_READ_BYTES = 2 * SLOW_BYTES;
 const HARD_SLOW_BYTES = 2 * SLOW_BYTES;   // kanban #1717: past this backlog no message at all is queued; the client is dropped
 // kanban #1871, #1904 (bypasses of #1542/#1717): the bound was per socket only, so N unread sockets of one stranger held N x ~4.7 MB.
 // TOTAL_SLOW_BYTES bounds the unsent backlog of all clients together; past it the client with the largest backlog is dropped
 // (an unread socket, never one that reads), so no per-address limit is needed (behind the tunnel every peer has one address).
 const TOTAL_SLOW_BYTES = 2 * SLOW_BYTES;   // 8 MB: a socket that reads keeps almost nothing unsent (ws writes straight to the kernel)
+// kanban #2089 (#1489 v1-refute-50-s4-2, the honest path of #1904): a REQ answer is queued in one synchronous loop, so honest readers
+// asking at the same moment hold a few MB each for a moment. Past TOTAL_SLOW_BYTES the shed now waits SHED_SETTLE_MS and drops only
+// clients whose backlog did not shrink meanwhile (they do not read); a reader has drained by then. Past PANIC_SLOW_BYTES (a flood inside
+// that wait) the largest backlog is dropped at once, as before.
+const SHED_SETTLE_MS = 250;
+const PANIC_SLOW_BYTES = 8 * TOTAL_SLOW_BYTES;   // 64 MB
 const PINGS = 30;   // kanban #1871: pongs answered per socket per 10 s (a ping is no 'message', so it is outside the message budget)
 const hex = (n) => new RegExp(`^[0-9a-f]{${n}}$`);
 const HEX64 = hex(64), HEX128 = hex(128);
@@ -80,7 +116,13 @@ const dTag = (e) => { const t = e.tags.find((x) => x[0] === 'd'); return t ? Str
 export const eventId = (e) => createHash('sha256').update(JSON.stringify([0, e.pubkey, e.created_at, e.kind, e.tags, e.content])).digest('hex');
 
 /** Whether an event is well formed, its id its own, its signature its author's: null, or why not. */
-export function eventRefusal(e, { kinds = RELAY_KINDS, nowS = Math.floor(Date.now() / 1000) } = {}) {
+/** kanban #3044: the relay-wide signature budget (about 1.2 ms a check: a burst holds the loop ~0.25 s at most), and refused pairs kept */
+export const VERIFY_BURST = 200, VERIFY_PER_S = 200, REFUSED_SIGS_KEPT = 4096;
+/** kanban #3145 (#1489 r1120b-refute-10): the two reserves only a socket with no bad signature reaches once the shared budget is empty -
+ *  one for authors with standing here (`keep`, an author already seen), one for everyone else - and the bad signatures one socket may
+ *  send before it is closed */
+export const VERIFY_STANDING_BURST = 50, VERIFY_STANDING_PER_S = 50, VERIFY_CLEAN_BURST = 50, VERIFY_CLEAN_PER_S = 50, BAD_SIGS_PER_SOCKET = 4;
+export function eventRefusal(e, { kinds = RELAY_KINDS, nowS = Math.floor(Date.now() / 1000), checkSig = true } = {}) {
   if (!e || typeof e !== 'object') return 'invalid: not an event';
   if (!HEX64.test(e.id || '') || !HEX64.test(e.pubkey || '') || !HEX128.test(e.sig || '')) return 'invalid: id, pubkey or sig';
   if (!Number.isInteger(e.kind) || e.kind < 0 || e.kind > 65535) return 'invalid: kind';
@@ -92,6 +134,11 @@ export function eventRefusal(e, { kinds = RELAY_KINDS, nowS = Math.floor(Date.no
   if (kinds && !kinds.includes(e.kind)) return `blocked: this relay keeps only kinds ${kinds.join(', ')} (the game's)`;
   if (e.created_at > nowS + FUTURE_S) return 'invalid: created_at is too far in the future';
   if (eventId(e) !== e.id) return 'invalid: the id is not the event\'s hash';
+  if (!checkSig) return null;
+  return sigRefusal(e);
+}
+/** The BIP-340 check alone (eventRefusal's last step): null when the signature is the author's. */
+export function sigRefusal(e) {
   let ok = false;
   const b = (h) => Uint8Array.from(Buffer.from(h, 'hex'));
   try { ok = schnorr.verify(b(e.sig), b(e.id), b(e.pubkey)); } catch { ok = false; }
@@ -103,7 +150,7 @@ export function eventRefusal(e, { kinds = RELAY_KINDS, nowS = Math.floor(Date.no
 // message handler and took the relay down; the filter also stayed in the subscription and threw again on every later EVENT): ids and authors lists of hex
 // (up to 64 characters, a prefix as NIP-01 allows), kinds a list of whole numbers, since, until and limit whole numbers, a #<letter> tag a list of strings.
 // Answers null for a good filter, else why it is not one; a REQ with one bad filter is CLOSED.
-const LIST_MOST = 500;
+const LIST_MOST = 500, TAG_KEYS_MOST = 8;   // kanban #2553: tag keys per filter
 export function filterRefusal(f) {
   if (!f || typeof f !== 'object' || Array.isArray(f)) return 'a filter is an object';
   const hexList = (v) => Array.isArray(v) && v.length <= LIST_MOST && v.every((x) => typeof x === 'string' && /^[0-9a-f]{1,64}$/.test(x));
@@ -111,7 +158,16 @@ export function filterRefusal(f) {
   if (f.authors !== undefined && !hexList(f.authors)) return 'authors is a list of hex';
   if (f.kinds !== undefined && !(Array.isArray(f.kinds) && f.kinds.length <= LIST_MOST && f.kinds.every((k) => Number.isInteger(k) && k >= 0 && k <= 65535))) return 'kinds is a list of whole numbers';
   for (const k of ['since', 'until', 'limit']) if (f[k] !== undefined && !(Number.isInteger(f[k]) && f[k] >= 0)) return `${k} is a whole number`;
-  for (const [k, v] of Object.entries(f)) if (k[0] === '#' && !(k.length === 2 && Array.isArray(v) && v.length <= LIST_MOST && v.every((x) => typeof x === 'string'))) return `${k.slice(0, 8)} is a list of strings`;
+  // A FILTER NAMES FEW TAG LETTERS (kanban #2553, #1489 r13-nostr-1): any one UTF-16 unit passed as a letter, so one filter could name
+  // thousands of distinct keys ("#一", "#丁", ...) and sqlFor ran a prepare + COUNT for each, then one EXISTS per key - ten such filters
+  // per REQ held the event loop ~270 ms. A tag key is #<a-zA-Z> (NIP-01's letters) and a filter names at most TAG_KEYS_MOST of them.
+  let tagKeys = 0;
+  for (const [k, v] of Object.entries(f)) {
+    if (k[0] !== '#') continue;
+    if (!/^#[a-zA-Z]$/.test(k)) return `${k.slice(0, 8)} is not #<letter a-z or A-Z>`;
+    if (++tagKeys > TAG_KEYS_MOST) return `at most ${TAG_KEYS_MOST} #<letter> conditions per filter`;
+    if (!(Array.isArray(v) && v.length <= LIST_MOST && v.every((x) => typeof x === 'string'))) return `${k.slice(0, 8)} is a list of strings`;
+  }
   return null;
 }
 export function matches(f, e) {
@@ -164,7 +220,7 @@ export function matchesCompiled(c, e, tagSets) {
  * THE RELAY: `{ port, host, dbPath }` ('' or ':memory:' keeps nothing on disk). Answers { port, close(), events() }.
  */
 export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memory:', kinds = RELAY_KINDS, name = 'Bitcoin Arena relay',
-  limits = {}, description = 'The game\'s own relay: profiles, relay lists, encrypted game seeds (NIP-78), remote signing (NIP-46), wallet connect (NIP-47), the nodes\' signed round results (kind 30762) and their badges (NIP-58: kinds 30009 and 8), and zap receipts (NIP-57: kind 9735). Nothing else is kept.' } = {}) {
+  limits = {}, keep = [], standing = () => [], now = () => Date.now(), pow = false, description = 'The game\'s own relay: profiles, relay lists, encrypted game seeds (NIP-78), remote signing (NIP-46), wallet connect (NIP-47), the nodes\' signed round results (kind 30762) and their badges (NIP-58: kinds 30009 and 8), and zap receipts (NIP-57: kind 9735). Nothing else is kept.' } = {}) {
   const db = new DatabaseSync(dbPath || ':memory:');
   db.exec(`CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, pubkey TEXT, kind INTEGER, created_at INTEGER, d TEXT, json TEXT);
     CREATE INDEX IF NOT EXISTS ev_author ON events (pubkey, kind, d);
@@ -219,6 +275,14 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   putTag = db.prepare(PUT_TAG);
   // kanban #1704: a store written before has no `size`; it is added and filled once, each row's size as a new event's is counted
   if (!db.prepare('PRAGMA table_info(events)').all().some((c) => c.name === 'size')) db.exec('ALTER TABLE events ADD COLUMN size INTEGER');
+  // kanban #2847: when this relay kept each event (its own clock, not the author's created_at), and every author it ever kept an event from
+  if (!db.prepare('PRAGMA table_info(events)').all().some((c) => c.name === 'kept_ms')) db.exec('ALTER TABLE events ADD COLUMN kept_ms INTEGER');
+  // kanban #3004 (audit nostr r3 #1): making room walks a pool's events in arrival order; without an index on the pool every walk read past
+  // all kept seeds (pool 2, stored first) before the first state or log event. The expression is POOL_SQL('kind') exactly, so the planner
+  // uses it for `${POOL_SQL('kind')} = ? ... ORDER BY rowid`
+  db.exec(`CREATE INDEX IF NOT EXISTS ev_pool ON events (${POOL_SQL('kind')})`);
+  db.exec(`CREATE TABLE IF NOT EXISTS seen_authors (pubkey TEXT PRIMARY KEY);
+    INSERT OR IGNORE INTO seen_authors (pubkey) SELECT DISTINCT pubkey FROM events;`);
   const unsized = db.prepare('SELECT id, json FROM events WHERE size IS NULL').all();
   if (unsized.length) {
     const setSize = db.prepare('UPDATE events SET size = ? WHERE id = ?');
@@ -244,13 +308,14 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
       DELETE FROM holders WHERE pubkey = old.pubkey AND pool = ${POOL_SQL('old.kind')} AND n <= 0;
       UPDATE pools SET n = n - 1, b = b - COALESCE(old.size, 0) WHERE pool = ${POOL_SQL('old.kind')};
     END;`);
-  const totalUse = db.prepare('SELECT COALESCE(SUM(n), 0) AS n, COALESCE(SUM(b), 0) AS b FROM pools');
+  const totalUse = db.prepare(`SELECT COALESCE(SUM(n), 0) AS n, COALESCE(SUM(b), 0) AS b FROM pools WHERE pool != ${SEED_POOL}`);   // kanban #2393: seeds apart
+  const seedUse = db.prepare(`SELECT COALESCE(SUM(n), 0) AS n, COALESCE(SUM(b), 0) AS b FROM pools WHERE pool = ${SEED_POOL}`);
   const poolUse = db.prepare('SELECT n, b FROM pools WHERE pool = ?');
   const holderUse = db.prepare('SELECT n, b FROM holders WHERE pubkey = ? AND pool = ?');
-  const largest = { n: db.prepare('SELECT pubkey, n, b FROM holders WHERE pool = ? AND pubkey != ? ORDER BY n DESC, first DESC LIMIT 1'),
-    b: db.prepare('SELECT pubkey, n, b FROM holders WHERE pool = ? AND pubkey != ? ORDER BY b DESC, first DESC LIMIT 1') };
+  const largest = { n: db.prepare('SELECT pubkey, n, b FROM holders WHERE pool = ? AND pubkey != ? AND pubkey NOT IN (SELECT value FROM json_each(?)) ORDER BY n DESC, first DESC LIMIT 1'),
+    b: db.prepare('SELECT pubkey, n, b FROM holders WHERE pool = ? AND pubkey != ? AND pubkey NOT IN (SELECT value FROM json_each(?)) ORDER BY b DESC, first DESC LIMIT 1') };
   const oldestIn = db.prepare(`SELECT id FROM events WHERE pubkey = ? AND ${POOL_SQL('kind')} = ? AND id != ? ORDER BY created_at ASC, id DESC LIMIT 1`);
-  const put = db.prepare('INSERT OR IGNORE INTO events (id, pubkey, kind, created_at, d, json, size) VALUES (?, ?, ?, ?, ?, ?, ?)');
+  const put = db.prepare('INSERT OR IGNORE INTO events (id, pubkey, kind, created_at, d, json, size, kept_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
   const newest = db.prepare('SELECT id, created_at FROM events WHERE pubkey = ? AND kind = ? AND d = ? ORDER BY created_at DESC, id ASC LIMIT 1');
   const drop = db.prepare('DELETE FROM events WHERE pubkey = ? AND kind = ? AND d = ? AND id != ?');
   const all = db.prepare('SELECT json FROM events ORDER BY created_at DESC');
@@ -265,8 +330,52 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
     created_at ASC, id DESC LIMIT 1`);
   const dropId = db.prepare('DELETE FROM events WHERE id = ?');
   const has = db.prepare('SELECT 1 AS x FROM events WHERE id = ?');
-  const lim = { authorEvents: AUTHOR_EVENTS, authorBytes: AUTHOR_BYTES, totalEvents: TOTAL_EVENTS, totalBytes: TOTAL_BYTES, logShare: LOG_SHARE, totalSlowBytes: TOTAL_SLOW_BYTES, ...limits };
+  // SIGNATURE CHECKS ARE A RELAY-WIDE BUDGET, AND ONE REFUSED (id, sig) IS NOT CHECKED AGAIN (kanban #3044, audit nostr r3-2): measured, 150
+  // free sockets each re-sending ONE junk-signature kind 0 frame 60 times (the per-socket budget) made 9000 BIP-340 checks on the relay's one
+  // event loop - an honest REQ took 11.6 s. A refused (id, sig) is remembered (bounded), and past VERIFY_BURST checks (VERIFY_PER_S refilled)
+  // an EVENT is answered 'rate-limited' before its signature is read, so the loop is never held longer than one burst.
+  const refusedSigs = new Set();
+  const lim = { authorEvents: AUTHOR_EVENTS, authorBytes: AUTHOR_BYTES, totalEvents: TOTAL_EVENTS, totalBytes: TOTAL_BYTES, logShare: LOG_SHARE, totalSlowBytes: TOTAL_SLOW_BYTES,
+    seedEvents: SEED_EVENTS, seedBytes: SEED_BYTES, verifyBurst: VERIFY_BURST, verifyPerS: VERIFY_PER_S,
+    verifyStandingBurst: VERIFY_STANDING_BURST, verifyStandingPerS: VERIFY_STANDING_PER_S, verifyCleanBurst: VERIFY_CLEAN_BURST, verifyCleanPerS: VERIFY_CLEAN_PER_S,
+    badSigsPerSocket: BAD_SIGS_PER_SOCKET, ...limits };
+  // ONE SHARED BUDGET DOES NOT DECIDE WHO IS REFUSED (kanban #3145, #1489 r1120b-refute-10 of #3044): junk frames made distinct (a counter in
+  // `content`: a fresh id, so never in refusedSigs) over 300 free sockets kept the one bucket empty, and every honest EVENT - a seat's signed
+  // 30762 round result, a player's profile - was answered 'rate-limited' for as long as the flood lasted. Now the shared bucket is spent
+  // first; past it, only a socket that has sent no bad signature reaches a reserve (its own for `keep` and seen authors, one for the rest),
+  // and a socket is closed after lim.badSigsPerSocket bad signatures. A flood's sockets go dirty on their first junk frame and keep only the
+  // shared bucket (then are closed); an honest writer's socket stays clean and is checked from its reserve. The CPU bound stays: at most
+  // verifyPerS + both reserves' rates checks a second.
+  const mkBucket = (burst, perS) => ({ left: lim[burst], at: Date.now(), burst, perS });   // names of `lim` fields: a test may set them
+  const take = (k) => {   // one token, or false
+    const t = Date.now();
+    k.left = Math.min(lim[k.burst], k.left + ((t - k.at) * lim[k.perS]) / 1000); k.at = t;
+    if (k.left < 1) return false;
+    k.left -= 1;
+    return true;
+  };
+  const verifyBucket = mkBucket('verifyBurst', 'verifyPerS');
+  const standingBucket = mkBucket('verifyStandingBurst', 'verifyStandingPerS');
+  const cleanBucket = mkBucket('verifyCleanBurst', 'verifyCleanPerS');
+  // MAKING ROOM IS NOT A WAY TO DELETE A NODE'S RESULTS (kanban #2146, #2214; #1489 a44-refute-24): keys are free - strangers who fill the
+  // total with one event a key leave the NODE the largest holder, and then every stranger 30078 under a fresh key and `d` took one of the
+  // node's kept, signed round results. An author in `keep` (the seats' node keys: ARENA_RELAY_KEEP for tools/nostr-relay.mjs) is never the
+  // largest holder that gives back for another author's write; it still rolls out its own oldest (step 3, its quota).
+  const keepList = (Array.isArray(keep) ? keep : [...(keep || [])]).map((k) => String(k).toLowerCase()).filter((k) => HEX64.test(k));
+  const keepJson = JSON.stringify(keepList), keepSet = new Set(keepList);
+  // kanban #2847: standing - the kept node keys, the counted identities (`standing()`, read again each call), a seed kept 7 days here
+  const seedKept = db.prepare(`SELECT 1 AS x FROM events WHERE pubkey = ? AND kind = ${SEED_KIND} AND COALESCE(kept_ms, created_at * 1000) <= ? LIMIT 1`);
+  const identities = () => { try { const v = typeof standing === 'function' ? standing() : standing; return new Set([...(v || [])].map((k) => String(k).toLowerCase())); } catch { return new Set(); } };
+  const hasStanding = (pubkey, ids = identities()) => keepSet.has(pubkey) || ids.has(pubkey) || !!seedKept.get(pubkey, now() - STANDING_SEED_MS);
+  const seenAuthor = db.prepare('SELECT 1 AS x FROM seen_authors WHERE pubkey = ?');
+  const markSeen = db.prepare('INSERT OR IGNORE INTO seen_authors (pubkey) VALUES (?)');
+  // the oldest-arrived event of an author without standing in a pool (never the writer's)
+  const oldestUnstanding = db.prepare(`SELECT id FROM events WHERE ${POOL_SQL('kind')} = ? AND pubkey != ? AND pubkey NOT IN (SELECT value FROM json_each(?))
+    AND NOT EXISTS (SELECT 1 FROM events s WHERE s.pubkey = events.pubkey AND s.kind = ${SEED_KIND} AND COALESCE(s.kept_ms, s.created_at * 1000) <= ?) ORDER BY rowid ASC LIMIT 1`);
+  // kanban #3004 (audit nostr r3 #1): the standing check is asked per candidate through ev_author (pubkey, kind, d) - the NOT IN read every kept seed
+  // (kept_ms has no index) on every call, so 90,000 parked free seeds made each write into a full pool ~20x slower on the relay's one loop
   const clients = new Set();
+  let subValuesHeld = 0;   // kanban #2839: the values all kept subscriptions hold
   const info = { name, description, supported_nips: [1, 11, 42, 46, 47, 57, 58, 65, 78], software: 'arena-node/nostr-relay', version: '1',
     limitation: { max_message_length: MAX_EVENT_BYTES, max_subscriptions: MAX_SUBS, max_filters: MAX_FILTERS, max_limit: MAX_LIMIT }, kinds };
   const server = createServer((req, res) => {
@@ -439,14 +548,23 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
     // filters together; kanban #2378: and at most WORK_ROWS seeks checking candidates, 4 x SCAN_ROWS counting drives
     const out = new Map(), budget = { left: SCAN_ROWS, count: 4 * SCAN_ROWS, drive: 4 * SCAN_ROWS, work: WORK_ROWS };
     let broad = false;
+    // A REQ READS AT MOST REQ_READ_BYTES OF STORED JSON (kanban #2738, audit #1489 r6-nostr-1, high): the plan budgets bounded the scan, not the
+    // bytes - ten disjoint limit:500 filters over 63 KB events with 6,200 multi-letter tags each handed ~5,000 rows (~320 MB) to JSON.parse
+    // and the tag sets before the send loop's SLOW_BYTES cut, holding the relay 2.75 s per REQ. Rows are now read one at a time and parsed only
+    // while the REQ's read stays under the bound (the send loop cuts at SLOW_BYTES anyway); past it the answer is cut and says so (`broad`)
+    let readBytes = 0, cut = false;
     for (const f of filters) {
+      if (cut) break;
       const q = plan(f, budget);
       if (!q) continue;
       let rows;
-      if (q.sql) { rows = db.prepare(q.sql).all(...q.args).map((r) => r.json); broad = broad || !!q.broad; }
+      if (q.sql) { rows = db.prepare(q.sql).iterate(...q.args); broad = broad || !!q.broad; }
       else { const r = walkRows(q, budget); rows = r.rows; broad = broad || r.broad; }
       const c = compileFilter(f);   // kanban #2378: the last check by Sets (min of both sides per tag), not tags x values
-      for (const json of rows) {
+      for (const row of rows) {
+        const json = typeof row === 'string' ? row : row.json;
+        readBytes += json.length;
+        if (readBytes > REQ_READ_BYTES) { cut = true; broad = true; if (typeof rows.return === 'function') rows.return(); break; }
         const e = JSON.parse(json);
         if (!out.has(e.id) && matchesCompiled(c, e, eventTagSets(e))) out.set(e.id, e);
       }
@@ -470,23 +588,50 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   };
   // ALL CLIENTS TOGETHER ARE BOUNDED (kanban #1871, #1904): `queued` is an upper estimate of the unsent bytes of all clients - each
   // message queued adds its length, a 1 s timer (and every time the estimate passes the bound) sets it to the real sum of bufferedAmount.
-  // Past lim.totalSlowBytes the clients with the largest backlogs are dropped until the sum is under it again.
+  // Past lim.totalSlowBytes the clients with the largest backlogs that did not read for SHED_SETTLE_MS are dropped until the sum is under it again (#2089).
+  // Among those, WHO IS SHED IS WHO HAS HELD A BACKLOG LONGEST, NOT WHO HOLDS THE MOST NOW (kanban #2119, #1489 v1-refute-50-s4): a REQ answer is queued
+  // in one synchronous loop, so a client reading at full speed holds its whole answer as backlog for that moment - a stranger who spread
+  // ~7 MB thinly over paused sockets (each below one honest answer) made the honest reader the largest, and it was the one cut off. Now
+  // each 1 s recount marks since when a client has held a backlog (`heldSince`, cleared when it is seen empty); shed() drops the clients
+  // that held one at a recount first, the longest-held first (the larger of equal ones), and a backlog built since the last recount
+  // (an answer being read) only when nothing held is left.
   const backlog = () => { let n = 0; for (const o of clients) n += o.ws.bufferedAmount; return n; };
   let queued = 0;
-  const recount = setInterval(() => { queued = backlog(); }, 1000);
+  const recount = setInterval(() => {
+    const now = Date.now();
+    queued = 0;
+    for (const o of clients) { const b = o.ws.bufferedAmount; queued += b; if (b > 0) { if (!o.heldSince) o.heldSince = now; } else o.heldSince = 0; }
+  }, 1000);
   recount.unref?.();
+  const before = (x, y) => (x.heldSince && y.heldSince ? x.heldSince < y.heldSince || (x.heldSince === y.heldSince && x.ws.bufferedAmount > y.ws.bufferedAmount)
+    : x.heldSince ? true : y.heldSince ? false : x.ws.bufferedAmount > y.ws.bufferedAmount);
+  const shedOne = (big) => {
+    queued -= big.ws.bufferedAmount;
+    clients.delete(big);
+    // a reset, not a close: what the kernel still holds for that socket (it never read it) is thrown away too, not sent after
+    try { big.ws._socket?.resetAndDestroy?.(); } catch { /* gone */ }
+    big.ws.terminate();
+  };
+  const mostBehind = (ok = () => true) => { let big = null; for (const o of clients) if (ok(o) && o.ws.bufferedAmount && (!big || before(o, big))) big = o; return big; };   // #2119 order: the longest-held backlog first
+  let settle = null;   // kanban #2089: the pending look - each client's backlog when the bound was passed
   const shed = () => {
     queued = backlog();
-    while (queued > lim.totalSlowBytes) {
-      let big = null;
-      for (const o of clients) if (!big || o.ws.bufferedAmount > big.ws.bufferedAmount) big = o;
-      if (!big || !big.ws.bufferedAmount) break;
-      queued -= big.ws.bufferedAmount;
-      clients.delete(big);
-      // a reset, not a close: what the kernel still holds for that socket (it never read it) is thrown away too, not sent after
-      try { big.ws._socket?.resetAndDestroy?.(); } catch { /* gone */ }
-      big.ws.terminate();
-    }
+    // A FLOOD INSIDE THE WAIT: the largest backlogs go at once, as before #2089, until the sum is under the panic bound
+    while (queued > PANIC_SLOW_BYTES) { const big = mostBehind(); if (!big || !big.ws.bufferedAmount) break; shedOne(big); }
+    if (queued <= lim.totalSlowBytes || settle) return;
+    const was = new Map([...clients].map((o) => [o, o.ws.bufferedAmount]));
+    settle = setTimeout(() => {
+      settle = null;
+      queued = backlog();
+      // ONLY A CLIENT THAT DID NOT READ: its backlog is no smaller than when the bound was passed (a reader drained meanwhile)
+      while (queued > lim.totalSlowBytes) {
+        const big = mostBehind((o) => was.has(o) && o.ws.bufferedAmount > 0 && o.ws.bufferedAmount >= was.get(o));
+        if (!big) break;
+        shedOne(big);
+      }
+      if (queued > lim.totalSlowBytes) shed();   // still past it (new backlog since): look again after another wait
+    }, SHED_SETTLE_MS);
+    settle.unref?.();
   };
   const queue = (o, msg) => {   // every message the relay sends goes through here
     o.ws.send(msg);
@@ -500,7 +645,10 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   };
   wss.on('connection', (ws) => {
     const subs = new Map();
-    const c = { ws, subs };
+    const c = { ws, subs, held: 0, badSigs: 0 };   // kanban #3145: badSigs, this socket's refused signatures
+    // kanban #2839: every change of a kept subscription goes through these two, so the charges are given back on CLOSE, a cut and the close
+    const dropSub = (sid) => { const had = subs.get(sid); if (!had) return; subs.delete(sid); c.held -= had.charge || 0; subValuesHeld -= had.charge || 0; };
+    c.dropSub = dropSub;
     clients.add(c);
     let budget = 60, pings = PINGS, refill = setInterval(() => { budget = Math.min(60, budget + 20); pings = PINGS; }, 10000);
     const send = (m) => {   // kanban #1717: no message is queued for a client already HARD_SLOW_BYTES behind
@@ -517,7 +665,7 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
       queued += d.length + 2;
       if (queued > lim.totalSlowBytes) shed();
     });
-    ws.on('close', () => { clients.delete(c); clearInterval(refill); });
+    ws.on('close', () => { clients.delete(c); clearInterval(refill); for (const sid of [...subs.keys()]) dropSub(sid); });
     // kanban #1470, #1726, #1796, #1833: a frame ws itself refuses (over maxPayload, a text frame that is not UTF-8, a reserved bit set, a bad
     // opcode) never reaches 'message' - ws emits 'error' on this socket and closes it. Without a listener the EventEmitter throws and the relay
     // process ends for every player; with one, only this socket goes.
@@ -531,8 +679,32 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
       if (m[0] === 'EVENT') {
         const e = m[1];
         if (JSON.stringify(e || null).length > MAX_EVENT_BYTES) return send(['OK', e && e.id, false, 'invalid: event too large']);
-        const why = eventRefusal(e, { kinds });
-        if (why) return send(['OK', e && e.id, false, why]);
+        const shape = eventRefusal(e, { kinds, checkSig: false });
+        if (shape) return send(['OK', e && e.id, false, shape]);
+        { // kanban #3044: the signature, inside the relay-wide budget; kanban #3145: a clean socket's reserves past it, a dirty socket closed
+          const key = `${e.id}:${e.sig}`;
+          const bad = (why) => {
+            send(['OK', e.id, false, why]);
+            if (++c.badSigs >= lim.badSigsPerSocket) { send(['NOTICE', 'error: too many bad signatures, the relay closed this connection']); clients.delete(c); ws.terminate(); }
+          };
+          if (refusedSigs.has(key)) return bad('invalid: the signature is not its author\'s');
+          // kanban #3174 (#1489 r1120b-refute-10-s2 of #3044/#3145): a reserve token is spent only by a GOOD signature. Before, a fresh
+          // socket's first frame always reached a reserve (c.badSigs is 0 until its signature is read) and kept the token when its signature
+          // was junk, and the reserve was picked by the sender-chosen e.pubkey: a stranger reconnecting with one junk frame bearing a seat's
+          // public `keep` key per socket drained the standing reserve, and the seat's signed 30762 round result was 'rate-limited' (plain junk
+          // drained the clean reserve the same way). Now a reserve token taken for a frame whose signature turns out bad is given back, so
+          // copying a seat's key or reconnecting draws nothing from what honest writers keep; that socket is dirty and reaches no reserve
+          // again (the shared bucket only, closed after lim.badSigsPerSocket). The checks junk makes on a reserve are at most one per
+          // connection the relay accepts; the shared bucket still bounds everything a dirty socket sends.
+          const shared = take(verifyBucket);
+          const reserve = !shared && c.badSigs === 0 ? (keepSet.has(e.pubkey) || !!seenAuthor.get(e.pubkey) ? standingBucket : cleanBucket) : null;
+          if (!shared && !(reserve && take(reserve))) return send(['OK', e.id, false, 'rate-limited: the relay is checking too many signatures, try again shortly']);
+          const why = sigRefusal(e);
+          if (why) {
+            if (reserve) reserve.left = Math.min(lim[reserve.burst], reserve.left + 1);   // kanban #3174: junk never keeps a reserve token
+            refusedSigs.add(key); if (refusedSigs.size > REFUSED_SIGS_KEPT) refusedSigs.delete(refusedSigs.values().next().value); return bad(why);
+          }
+        }
         if (!isEphemeral(e.kind)) {
           const d = isParam(e.kind) ? dTag(e) : '';
           if (isReplaceable(e.kind) || isParam(e.kind)) {
@@ -548,11 +720,23 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
             // after the replaceable drop and the author's own trim, so a replacement (a newer kind 0 profile, a node's settled 30762 under the same d)
             // or an author rolling its own oldest out adds nothing and is kept on a full relay; only an event that grows the store past the total is
             // refused. kanban #1811: all of it is one transaction (one write, not one per tag row), rolled back when it is refused.
-            const before = { ...totalUse.get() };
+            const seed = poolOf(e.kind) === SEED_POOL, useOf = () => (seed ? seedUse : totalUse).get();   // kanban #2393: the seeds' own quota
+            const before = { ...useOf() };
+            // kanban #2847: who may be evicted (standing), and the proof of work an unseen author pays while its pool is nearly full
+            const ids = identities();
+            const standingJson = JSON.stringify([...new Set([...keepList, ...ids])]);
+            // `pow` (kanban #2847): on in the relay the host runs (tools/nostr-relay.mjs, ARENA_RELAY_POW=0 turns it off); a library caller asks for it
+            if (pow && !seenAuthor.get(e.pubkey) && !hasStanding(e.pubkey, ids)) {
+              const fill = Math.max(before.n / (seed ? lim.seedEvents : lim.totalEvents), before.b / (seed ? lim.seedBytes : lim.totalBytes));
+              const need = powRequired(fill, lim);   // lim.powFill / powBase / powMax: the defaults above unless a test sets them
+              const target = Number(((e.tags || []).find((t) => Array.isArray(t) && t[0] === 'nonce') || [])[2]);
+              if (need && (leadingZeroBits(e.id) < need || (Number.isFinite(target) && target < need)))
+                return send(['OK', e.id, false, `pow: difficulty ${need} required`]);
+            }
             let verdict = 'kept';
             db.exec('BEGIN');
             try {
-              if (put.run(e.id, e.pubkey, e.kind, e.created_at, d, json, eventSize(e, json, rows)).changes) tagRows(e);   // kanban #1543: its tags indexed with it
+              if (put.run(e.id, e.pubkey, e.kind, e.created_at, d, json, eventSize(e, json, rows), now()).changes) tagRows(e);   // kanban #1543: its tags indexed with it
               if (isReplaceable(e.kind) || isParam(e.kind)) drop.run(e.pubkey, e.kind, d, e.id);
               let use = authorUse.get(e.pubkey);
               while (use.n > 1 && (use.n > lim.authorEvents || use.b > lim.authorBytes)) {
@@ -565,26 +749,42 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
               else {
                 // kanban #1769: only growth past the total counts (a store already past a lowered limit keeps what does not grow it);
                 // kanban #1943, #1983: room is made by fair share (LOG_SHARE above), refused only when nobody holds more than this author
-                const capN = Math.max(lim.totalEvents, before.n), capB = Math.max(lim.totalBytes, before.b);
+                const capN = Math.max(seed ? lim.seedEvents : lim.totalEvents, before.n), capB = Math.max(seed ? lim.seedBytes : lim.totalBytes, before.b);
                 const P = poolOf(e.kind), Q = 1 - P;
                 for (;;) {
-                  const t = totalUse.get();
+                  const t = useOf();
                   const dim = t.n > capN ? 'n' : t.b > capB ? 'b' : null;
                   if (!dim) break;
                   const share = (pool) => (dim === 'n' ? lim.totalEvents : lim.totalBytes) * (pool === 1 ? lim.logShare : 1 - lim.logShare);
                   let victim = null;
-                  const q = poolUse.get(Q);
-                  if (q && q[dim] > share(Q)) { const h = largest[dim].get(Q, ''); if (h) victim = oldestIn.get(h.pubkey, Q, e.id); }   // 1.
-                  if (!victim) {   // 2.
-                    const mine = holderUse.get(e.pubkey, P) || { n: 0, b: 0 }, h = largest[dim].get(P, e.pubkey);
-                    if (h && h[dim] > mine[dim]) victim = oldestIn.get(h.pubkey, P, e.id);
+                  const q = seed ? null : poolUse.get(Q);   // 1. never across the seeds' quota
+                  // 1. the other pool over its share gives back: its oldest-arrived event of an author without standing (kanban #2847)
+                  if (q && q[dim] > share(Q)) victim = oldestUnstanding.get(Q, e.pubkey, standingJson, now() - STANDING_SEED_MS);
+                  // 2. OUTSIDE THE SEED POOL (kanban #2847): the pool's oldest-arrived event of an author without standing - never the newest (the
+                  // newcomer rule of #2677 let the next stranger erase it), never an author with standing; none: step 3, else refused
+                  if (!victim && !seed) victim = oldestUnstanding.get(P, e.pubkey, standingJson, now() - STANDING_SEED_MS);
+                  if (!victim && seed) {   // 2. (the seed pool, as #2858 left it)
+                    const mine = holderUse.get(e.pubkey, P) || { n: 0, b: 0 }, h = largest[dim].get(P, e.pubkey, keepJson);
+                    // THE ONE-EVENT-PER-KEY MASS (kanban #2677, #1489 r2-nostr-11): strangers filled the total with ONE event under each fresh key,
+                    // so nobody held more than a new player's first profile or the zap server's next receipt and both were refused for good. When the
+                    // largest other holder holds a single event, a writer that held at most one before this event gets in by count: the most recently
+                    // arrived single-event holder gives its event back. Every other case stays strict (a tie refuses), and bytes always do.
+                    // NOT IN THE SEED POOL (kanban #2858, #1489 r26-nostr-1): there every honest player holds exactly one event - its game seed, for a
+                    // signer login the only copy - so the newcomer rule let a stranger's next fresh-key 30078 erase the seed of the player admitted just
+                    // before. A kept seed is never taken for another author's room: a full seed pool with nobody holding more than the writer refuses.
+                    const over = h && (h[dim] > mine[dim] || (!seed && dim === 'n' && h.n === 1 && mine.n <= 2));
+                    if (h && (over || keepSet.has(e.pubkey))) victim = oldestIn.get(h.pubkey, P, e.id);   // a kept author's write takes from the largest other (#2146)
                   }
-                  if (!victim && P === 0) victim = oldestIn.get(e.pubkey, 0, e.id);   // 3.
+                  if (!victim && P !== 1) victim = oldestIn.get(e.pubkey, P, e.id);   // 3. (a state event, or a seed)
+                  // 3b. AN AUTHOR WITH A LOG OF ITS OWN ROLLS ITS OLDEST OUT (kanban #2848, #1489 r25-nostr-1): after a one-event-per-fresh-key flood the
+                  // zap server (many 9735 receipts) found no larger holder and every new receipt was refused "relay is full" for good; a log writer
+                  // holding two or more of that pool now gives its own oldest back for the new one - its history shortens, its new events go in
+                  if (!victim && P === 1 && (holderUse.get(e.pubkey, P) || { n: 0 }).n >= 2) victim = oldestIn.get(e.pubkey, P, e.id);
                   if (!victim) { verdict = 'full'; break; }   // 4.
                   dropId.run(victim.id);
                 }
               }
-              if (verdict === 'kept') db.exec('COMMIT'); else db.exec('ROLLBACK');
+              if (verdict === 'kept') { markSeen.run(e.pubkey); db.exec('COMMIT'); } else db.exec('ROLLBACK');
             } catch (err) {
               // kanban #1960, #1994, #2009: a throw in the store step rolls all of it back and is answered - never thrown out of the socket's handler
               try { db.exec('ROLLBACK'); } catch { /* none open */ }
@@ -606,19 +806,36 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
         if (!filters.length || filters.length > MAX_FILTERS) return send(['CLOSED', sid, `invalid: 1 to ${MAX_FILTERS} filters`]);
         { const bad = filters.map(filterRefusal).find(Boolean); if (bad) return send(['CLOSED', sid, `invalid: ${bad}`]); }   // kanban #1470
         if (!subs.has(sid) && subs.size >= MAX_SUBS) return send(['CLOSED', sid, `blocked: at most ${MAX_SUBS} subscriptions`]);
-        subs.set(sid, filters.map(compileFilter));   // kanban #1752: Sets, built once
+        { const compiled = filters.map(compileFilter);   // kanban #1752: Sets, built once
+          const charge = valuesOf(compiled), was = subs.has(sid) ? (subs.get(sid).charge || 0) : 0;
+          // THE HEAVIEST GIVE WAY, NOT THE NEWCOMER (kanban #2998, audit nostr r2-1, measured 2026-11-19: 100 idle sockets of one stranger, 20 REQs of
+          // 199 tag values each, held the relay-wide budget and every later REQ - a player's Nostr-login seed query - was CLOSED). When the relay's
+          // total is full, the largest subscription of the socket holding the most values is CLOSED to make room - only of a socket that holds more
+          // than this one would after the REQ, so a socket never pushes out one lighter than itself, and many heavy sockets cannot hold a light one out.
+          while (c.held - was + charge <= SUB_VALUES_PER_SOCKET && subValuesHeld - was + charge > SUB_VALUES_TOTAL) {
+            let o = null; for (const x of clients) if (x !== c && x.subs.size && (!o || x.held > o.held)) o = x;
+            if (!o || o.held <= c.held - was + charge) break;
+            let vs = null, vc = -1; for (const [k, v] of o.subs) if ((v.charge || 0) > vc) { vs = k; vc = v.charge || 0; }
+            o.dropSub(vs);
+            if (o.ws.readyState === 1) queue(o, JSON.stringify(['CLOSED', vs, 'blocked: the relay is full of subscription values: the heaviest give way first']));
+          }
+          if (c.held - was + charge > SUB_VALUES_PER_SOCKET || subValuesHeld - was + charge > SUB_VALUES_TOTAL) {
+            dropSub(sid);
+            return send(['CLOSED', sid, `blocked: too many subscription values (at most ${SUB_VALUES_PER_SOCKET} per connection)`]);
+          }
+          dropSub(sid); compiled.charge = charge; subs.set(sid, compiled); c.held += charge; subValuesHeld += charge; }
         const found = stored(filters);
         for (const e of found) {
           if (ws.readyState !== 1) return undefined;
           // kanban #1717: the stored answer stops once this socket's unsent backlog passes SLOW_BYTES; the subscription ends
-          if (ws.bufferedAmount > SLOW_BYTES) { subs.delete(sid); return send(['CLOSED', sid, 'error: too slow, the answer was cut; ask again with a smaller limit']); }
+          if (ws.bufferedAmount > SLOW_BYTES) { dropSub(sid); return send(['CLOSED', sid, 'error: too slow, the answer was cut; ask again with a smaller limit']); }
           queue(c, JSON.stringify(['EVENT', sid, e]));   // kanban #1904: counted toward the relay-wide backlog (may drop this client)
         }
         // kanban #2275: a walk that ran out of its budget says so - the answer may miss older matches
         if (found.broad) send(['NOTICE', `error: filter too broad, this REQ examined ${SCAN_ROWS} rows and some of its filters may miss older matches; narrow them (since/until, fewer values)`]);
         return send(['EOSE', sid]);
       }
-      if (m[0] === 'CLOSE') { subs.delete(String(m[1] || '')); return undefined; }
+      if (m[0] === 'CLOSE') { dropSub(String(m[1] || '')); return undefined; }
       return send(['NOTICE', `unknown message ${String(m[0]).slice(0, 20)}`]);
     };
   });
@@ -626,6 +843,6 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   return {
     port: server.address().port,
     events: () => all.all().map((r) => JSON.parse(r.json)),
-    close: () => new Promise((r) => { clearInterval(recount); for (const c of clients) c.ws.terminate(); wss.close(); server.close(() => { db.close(); r(); }); }),
+    close: () => new Promise((r) => { clearInterval(recount); clearTimeout(settle); for (const c of clients) c.ws.terminate(); wss.close(); server.close(() => { db.close(); r(); }); }),
   };
 }

@@ -17,6 +17,13 @@ import { KNOWN_GOOD_GAMES } from '../../arena-protocol/src/known-games.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
 const GAMES_ANSWER_MS = 6000;
+// ONE SEAT'S ANSWER IS BOUNDED (kanban #2558, audit #1489 r13: one seat listing 2000 made-up manifests cost one games read 2001
+// developer-signature checks and 2002 refusals, and - signed under its own throwaway key - would have filled the lobby with tiles):
+// at most this many of a seat's games are decoded and checked, the pinned known-good ids first. An honest seat lists every VERSION it
+// still hosts: 41 on 2026-11-14 (24 btc-updown-15m, 10 rock-paper-scissors, 7 nextblock) - at 32 the newest versions were cut, and Rock
+// Paper Scissors and Up or Down "cannot be loaded" on the live page (feedback #064/#065/#068): their client hashes are named only by
+// v6+ / the newest. 256 keeps a flood at a bounded cost (256 signature checks a seat, against 2000) and room for many more versions.
+export const GAMES_PER_SEAT = 256;
 
 // ITS DEVELOPER SIGNED IT (kanban #1810): the signature over the manifest body's id (manifest.js manifestStands' first rule), by
 // the developer key the manifest names. The client carries no crypto library (the bundle is its own source, nothing from npm): the
@@ -50,7 +57,11 @@ export async function fetchGames({ nodes, fetcher = fetch, answerMs = GAMES_ANSW
     if (e) { refused.push(`${node}: ${e.message}`); continue; }
     if (!r.ok) { refused.push(`${node}: answered ${r.status}`); continue; }
     answered.add(node);
-    for (const g of (body && Array.isArray(body.games)) ? body.games : []) {
+    const listed = (body && Array.isArray(body.games)) ? body.games : [];
+    const isKnown = (g) => Object.prototype.hasOwnProperty.call(KNOWN_GOOD_GAMES, String(g && g.id).toLowerCase());
+    const read = [...listed.filter(isKnown), ...listed.filter((g) => !isKnown(g))].slice(0, GAMES_PER_SEAT);
+    if (listed.length > GAMES_PER_SEAT) refused.push(`${node}: listed ${listed.length} games, only ${GAMES_PER_SEAT} are read (kanban #2558)`);
+    for (const g of read) {
       const id = String(g && g.id).toLowerCase();
       let manifest;
       try { manifest = decodeManifest(fromHex(String(g.manifest))); } catch (err) { refused.push(`${node}: game ${id.slice(0, 16)}: ${err.message}`); continue; }
@@ -82,7 +93,13 @@ export async function fetchGames({ nodes, fetcher = fetch, answerMs = GAMES_ANSW
       if (got.nodeKeys.has(key)) continue;
       got.nodeKeys.add(key);
       got.nodes.push(node);
-      if (!got.info && g.info && typeof g.info === 'object') got.info = g.info;
+      // EVERY SEAT'S INFO IS KEPT, NOT THE FIRST ONLY (kanban #2851, #1489 r26-hosting-2): one seat answering first with a made-up `info` held
+      // the tile's info for good and the developer's signed one, served by the other seats, was never checked; checkedGameInfo now tries each
+      if (g.info && typeof g.info === 'object') {
+        if (!got.infos) Object.defineProperty(got, 'infos', { value: [], enumerable: false });
+        if (got.infos.length < 8 && !got.infos.some((x) => JSON.stringify(x) === JSON.stringify(g.info))) got.infos.push(g.info);
+        if (!got.info) got.info = g.info;
+      }
       if (g.live && typeof g.live === 'object') {
         got.live.rounds = Math.max(got.live.rounds, Number(g.live.rounds) || 0);
         got.live.players = Math.max(got.live.players, Number(g.live.players) || 0);
@@ -173,6 +190,12 @@ export async function gameClientFile({ game, url, digest, fetcher = fetch }) {
  * them - `verifyEd25519(sig, msg, pub)` may be async (the browser's). Anything else answers null and is not shown.
  */
 export async function checkedGameInfo(game, verifyEd25519) {
+  // kanban #2851: each info the seats handed, the first one the developer key signed
+  for (const other of (game && Array.isArray(game.infos) ? game.infos : [])) {
+    if (other === game.info) continue;
+    const got = await checkedGameInfo({ ...game, info: other, infos: undefined }, verifyEd25519);
+    if (got) return got;
+  }
   const info = game && game.info;
   if (!info || typeof info.description !== 'string' || typeof verifyEd25519 !== 'function') return null;
   let digest, sig;

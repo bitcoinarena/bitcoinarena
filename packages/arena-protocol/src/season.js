@@ -99,8 +99,11 @@ function readRound(r, { keys = false } = {}) {
     entries.push({ player, stakeMsat: e.stakeMsat, payoutMsat: payout, score, outcome, name, roundKey, ...(e.bot === true ? { bot: true } : {}) });
   }
   // THE ENTRIES IN ONE ORDER, so two copies of a round that differ only in the order they were listed are one round
+  // THE BOT MARK IS PART OF THE ACCOUNT (kanban #2513): season() and the leaderboard leave a bot's entry out, so a copy of a round
+  // that marks the leader a bot is another account - never the same account id with the honest seats' signatures landing on it
+  // while the merged round keeps the forged mark. Written only for a bot's entry, last: every account without one keeps its bytes and its id.
   const key = (e) => [e.player, e.outcome ?? '', e.score ?? '', e.stakeMsat, e.payoutMsat ?? '', e.name ?? '',
-    ...(keys ? [e.roundKey ?? ''] : [])].join('|');
+    ...(keys ? [e.roundKey ?? ''] : []), ...(e.bot === true ? ['bot'] : [])].join('|');
   entries.sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
   const canon = JSON.stringify([id, game, String(startMs), !!r.void, entries.map(key)]);
   return { id, game, startMs, void: !!r.void, entries, canon };

@@ -418,7 +418,8 @@ async function lnurlDoor() {
   const descriptionHash = createHash('sha256').update(LNURL_METADATA).digest('hex');
   createServer((req, res) => {
     const send = (code, o) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(o)); };
-    const u = new URL(req.url, 'http://x');
+    // kanban #3151: a request target that is no URL threw here and ended the devnet process - answered 400
+    let u; try { u = new URL(req.url, 'http://x'); } catch { return send(400, { status: 'ERROR', reason: 'that request target is no URL' }); }
     if (u.pathname.startsWith('/.well-known/lnurlp/')) return send(200, lnurlPayRequest(PLAN.lnurl));
     if (u.pathname !== '/invoice') return send(404, { status: 'ERROR', reason: 'no such door' });
     const msat = u.searchParams.get('amount');

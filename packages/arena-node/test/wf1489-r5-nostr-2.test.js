@@ -28,7 +28,8 @@ test('r5-nostr-2: one event against many wide subscriptions does not stall the r
       const ws = await open(r.port); socks.push(ws);
       for (let i = 0; i < 20; i++) {
         const got = await ask(ws, ['REQ', `s${i}`, ...Array(10).fill(filter)], (m) => m[0] === 'EOSE' || m[0] === 'CLOSED');
-        assert.equal(got.at(-1)[0], 'EOSE');
+        // kanban #2839: past the per-connection value budget a wide REQ is CLOSED instead of kept - fewer wide subscriptions, the same check below
+        assert.ok(got.at(-1)[0] === 'EOSE' || (got.at(-1)[0] === 'CLOSED' && /too many subscription values/.test(got.at(-1)[2])), JSON.stringify(got.at(-1)));
       }
     }
     const tags = Array.from({ length: 2000 }, (_, i) => ['a', `w${String(i).padStart(18, '0')}`]);

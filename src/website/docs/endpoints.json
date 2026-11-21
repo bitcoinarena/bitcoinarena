@@ -30,10 +30,34 @@
   "params": "none",
   "auth": "none",
   "returns": "200 JSON {guardian:true, endpoint} or {guardian:false}",
-  "purpose": "Says whether this node runs a federation guardian and its public endpoint.",
+  "purpose": "Says whether this node runs a federation guardian and its public endpoint. Behind a gateway that maps <prefix>/guardian to the guardian's own API (testnet4 federation A: tn4.bitcoin-arena.io/guardian-N/guardian is the guardian websocket), use GET /guardian-info, which answers the same.",
   "audience": "operator/monitoring",
-  "line": 3451,
+  "line": 8116,
   "summary": "Whether this node is a guardian",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{guardian:true, endpoint} or {guardian:false}."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/guardian-info",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 JSON {guardian:true, endpoint} or {guardian:false}",
+  "purpose": "The same answer as GET /guardian, at a path no gateway maps to the guardian itself: on testnet4 federation A seats GET <seat>/guardian reaches the guardian's websocket API (405), GET <seat>/guardian-info reaches the seat.",
+  "audience": "operator/monitoring",
+  "line": 8116,
+  "summary": "Whether this node is a guardian (same as GET /guardian)",
   "query": [],
   "body": null,
   "responses": [
@@ -2470,7 +2494,7 @@
  {
   "method": "GET",
   "path": "/rounds",
-  "params": "query ahead (ms or Nh, optional), next (per-series count, optional; 8 when neither is given), all (1: every announced round)",
+  "params": "query ahead (ms or Nh, optional), next (per-series count, optional; 8 when neither is given), all (1: every announced round) Bounds (kanban #2783): `next` at most 64 a series, `ahead` at most 120h (a larger value is read as the bound, a malformed one as not given).",
   "auth": "none",
   "returns": "200 JSON {node, nowMs, rounds:[{id, phase, entryOpen, game, event? {question, outcomes, resolveAtMs}, outcome, startTime, endTime, committee, stakeMsat, free (development rounds only), wallet, joined, playing, watching, names, needed, signerNodes, sig, ...}], games}",
   "purpose": "Lobby listing of announced rounds this node holds, each row signed by the node.",
@@ -2482,21 +2506,21 @@
     "name": "ahead",
     "required": false,
     "type": "string",
-    "description": "Only rounds starting within this many ms, or hours with an h suffix (e.g. 72h).",
+    "description": "Only rounds starting within this many ms, or hours with an h suffix (e.g. 72h). At most 120h.",
     "example": "72h"
    },
    {
     "name": "next",
     "required": false,
     "type": "integer",
-    "description": "At most this many upcoming rounds per series. With neither next nor ahead the node lists the next 8 of each series (kanban #742).",
+    "description": "At most this many upcoming rounds per series. With neither next nor ahead the node lists the next 8 of each series (kanban #742). At most 64.",
     "example": 8
    },
    {
     "name": "all",
     "required": false,
     "type": "integer",
-    "description": "1: every announced round this node holds, unbounded (slow at grid density: tens of thousands of rows). Without it, a bare /rounds is next=8.",
+    "description": "1: every round of the node's current listing window: per series the next 72 and every round starting within 20 min (kanban #2790; the window is built in the background every 45 s). Without it, a bare /rounds is next=8.",
     "example": 1
    }
   ],
@@ -2521,7 +2545,7 @@
  {
   "method": "GET",
   "path": "/api/rounds",
-  "params": "query ahead, next (as /rounds)",
+  "params": "query ahead, next (as /rounds) Bounds (kanban #2783): `next` at most 64 a series, `ahead` at most 120h (a larger value is read as the bound, a malformed one as not given).",
   "auth": "none",
   "returns": "200 JSON {node, nowMs, upcoming[] (rows as /rounds, with event for a template round), finished[] (up to 200), games}",
   "purpose": "Upcoming and finished rounds of hosted games, with times, committee, game and outcome.",
@@ -2533,14 +2557,14 @@
     "name": "ahead",
     "required": false,
     "type": "string",
-    "description": "Only rounds starting within this many ms, or hours with an h suffix (e.g. 72h).",
+    "description": "Only rounds starting within this many ms, or hours with an h suffix (e.g. 72h). At most 120h.",
     "example": "72h"
    },
    {
     "name": "next",
     "required": false,
     "type": "integer",
-    "description": "At most this many upcoming rounds per series.",
+    "description": "At most this many upcoming rounds per series. At most 64.",
     "example": 8
    }
   ],
@@ -10219,6 +10243,34 @@
  },
  {
   "method": "POST",
+  "path": "/duty/emergency-once",
+  "params": "JSON {game, slot, gameId, dry}; header x-duty-once (the secret in ARENA_DUTY_ONCE_FILE)",
+  "auth": "operator secret (x-duty-once)",
+  "returns": "200 JSON {ok, ...} the emergency grid built (dry) or sent; 404 when ARENA_DUTY_ONCE_FILE is not set; refused once <file>.done exists",
+  "purpose": "The operator's one emergency grid (kanban #2864): runs the round poster's emergency publishing once for the day `slot` posts, of the version `gameId` names only. A dry run builds and checks it without sending.",
+  "audience": "operator",
+  "summary": "Post one emergency grid",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "The duty as this node sees it."
+   },
+   {
+    "status": "404",
+    "contentType": "application/json",
+    "description": "{ok:false, why:\"this node runs no round poster\"}."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
   "path": "/expected",
   "params": "none",
   "auth": "none",
@@ -11504,5 +11556,141 @@
   "audience": "operator/monitoring",
   "line": 0,
   "summary": "Take a node's record"
+ },
+ {
+  "method": "POST",
+  "path": "/owner/departure-anchor",
+  "params": "none",
+  "auth": "owner",
+  "returns": "200 JSON plan or anchor state",
+  "purpose": "Anchors a guardian's departure notice on chain: plan, fund from the node wallet (post), or follow an owner-sent txid (kanban #2610).",
+  "audience": "operator/monitoring",
+  "line": 7990,
+  "summary": "Departure notice anchor",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "description": "JSON { departure?, post?, txid?, sinceHeight? }",
+   "required": true
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "The plan or the anchor's state."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "owner",
+  "pathParams": [],
+  "openapiPath": "/owner/departure-anchor"
+ },
+ {
+  "method": "GET",
+  "path": "/lock-namer",
+  "params": "outpoint",
+  "auth": "none",
+  "returns": "200 JSON entry bytes and claims, or 404",
+  "purpose": "The entry this seat took first naming a lock outpoint, with the player's claims it holds (kanban #1692, #1758, #1897).",
+  "audience": "node-to-node",
+  "line": 10099,
+  "summary": "Lock namer",
+  "query": [
+   {
+    "name": "outpoint",
+    "required": true,
+    "description": "outpoint"
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "The entry's bytes and claims."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "No entry names that lock here."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": [],
+  "openapiPath": "/lock-namer"
+ },
+ {
+  "method": "GET, POST",
+  "path": "/lock-claim",
+  "params": "entry",
+  "auth": "none",
+  "returns": "200 JSON kept signature; 400 on a bad entry id or signature",
+  "purpose": "The player's BIP-340 claim on an entry's locks: POST keeps a checked claim, GET answers it (kanban #1897, #1938).",
+  "audience": "player/page",
+  "line": 10115,
+  "summary": "Lock claim",
+  "query": [
+   {
+    "name": "entry",
+    "required": true,
+    "description": "entry"
+   }
+  ],
+  "body": {
+   "contentType": "application/octet-stream",
+   "description": "64-byte signature (POST)",
+   "required": false
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "The claim kept or answered."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "Bad entry id or signature."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "none",
+  "pathParams": [],
+  "openapiPath": "/lock-claim"
+ },
+ {
+  "method": "GET",
+  "path": "/batch-signatures",
+  "params": "round",
+  "auth": "none",
+  "returns": "200 bytes, 64 per batch in transcript order",
+  "purpose": "Each batch's session-key signature in the order GET /transcript serves, zeros where the seat took it bare (kanban #1567, feedback #013).",
+  "audience": "player/page",
+  "line": 10327,
+  "summary": "Batch signatures",
+  "query": [
+   {
+    "name": "round",
+    "required": true,
+    "description": "round"
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/octet-stream",
+    "description": "64 bytes per batch."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": [],
+  "openapiPath": "/batch-signatures"
  }
 ]

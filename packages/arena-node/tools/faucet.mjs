@@ -7,7 +7,7 @@
 //   POST /faucet { address, sats }  -> { ok, txid, sats } or { ok: false, why }
 //   GET  /faucet                    -> { ok, balanceSats, maxSats, leftTodaySats }
 //   POST /player { kind: welcome | topup, account, invoice } -> { ok, sats } or { ok: false, why } (kanban #926: a player's test sats over Lightning)
-//   POST /opponent { round }  GET /opponent : a table with somebody at it (kanban #926), said by the page, read by tools/rps-opponent.mjs
+//   POST /opponent { round, tap?: { key, sig } }  GET /opponent : a table with somebody at it (kanban #926), said by the page, read by tools/rps-opponent.mjs
 //   GET  /player                    -> what was given, new accounts and returning apart (no account, no address)
 //   POST /feedback { event? , text?, build?, game?, round?, player? } -> a report: posted to Arena Chat; a signed `event` (kind 27842) is also kept for review (kanban #1342)
 //   GET  /feedback/mine  (Authorization: Nostr <base64 NIP-98 event>) -> the signed-in key's own reports and their states (kanban #1342)
@@ -23,12 +23,19 @@
 // Each payment's txid is appended to FAUCET_PENDING, which the the test host's miner-C feeder (ops/pending-to-minerc.sh) lists for mining.
 //   FAUCET_PORT  FAUCET_RPC_URL (with /wallet/<name>)  FAUCET_COOKIE  FAUCET_BOOK  FAUCET_PENDING  [FAUCET_FEE_RATE sat/vB, 2]
 import { createServer } from 'node:http';
-import { timingSafeEqual, createHash } from 'node:crypto';
+import { timingSafeEqual, createHash, randomBytes } from 'node:crypto';
 import { readFileSync, writeFileSync, appendFileSync, renameSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { nodeBountyCheck } from '../src/node-bounty-check.js';
 import { seatPublicFetch } from '../src/public-fetch.js';
-import { openFeedbackStore, networkPlayers, imageKind, SHOT_MOST, SHOT_UNCLAIMED_MS, REWARD_LEVELS, NODE_BOUNTY_BASE_SATS, lnAddressWorks, lnAddressUrl, lnAddressInvoice } from '../src/feedback-store.js';
+import { openBountySeason, cleanOpenIssues, seasonEndMs, NO_CARRY_FROM_SEASON, LEVEL_SATS, BOT_PCT } from '../src/bounty-season.js';
+import { verifiersFromEnv } from '../src/bounty-verify.js';
+import { socialCheck, resolversFromEnv } from '../src/bounty-social.js';   // kanban #2641
+import { userbotFromEnv } from '../src/telegram-userbot.js';   // kanban #2641
+import { nostrVerifier, nostrPubkeyOf } from '../src/bounty-nostr.js';   // kanban #2641
+import { readJsonBounded } from '../src/lnurl-read.js';   // kanban #2517
+import { openFeedbackStore, networkPlayers, imageKind, SHOT_MOST, SHOT_UNCLAIMED_MS, REWARD_LEVELS, NODE_BOUNTY_BASE_SATS, lnAddressWorks, lnAddressUrl, lnAddressInvoice, reportAddress } from '../src/feedback-store.js';
+import { eventId } from '../src/nostr-relay.js';   // a resent report is matched by its id's hash (kanban #2456, #2498)
 const LN_ASKS = new Map();   // ip /64 -> times it asked GET /feedback/lnaddress (kanban #1342, #1537)
 const LN_ASKS_ALL = [], LN_ASKS_MINUTE = 120;   // every check of the last minute, all callers (kanban #1537)
 // ONE GLOBAL WINDOW FOR EVERY DOOR THAT FETCHES A CALLER'S ADDRESS (kanban #1714, refute of #1537): the cap held only GET /feedback/lnaddress, and
@@ -57,10 +64,10 @@ async function addressCheckFor(ip, address) {
   // naming a bounty address was refused "try again in a minute", for as long as they liked. Now the report is kept with its address unchecked -
   // nothing is fetched for it here, and the address is asked again at payout (lnAddressInvoice), so a reward is still never paid to one that fails.
   if (!addressCheckSlot()) return { ok: true, unchecked: true };
-  c.n += 1; c.busy = true;
+  c.n += 1; c.busy = true; dayLimitNote({ k: 'addr', ip: k });   // kanban #2284
   try { return await lnAddressWorks(address); } finally { c.busy = false; }
 }
-import { mkdirSync, existsSync, readdirSync, statSync, unlinkSync, statfsSync } from 'node:fs';
+import { mkdirSync, existsSync, readdirSync, statSync, unlinkSync, statfsSync, utimesSync } from 'node:fs';
 import { PLAYER_GRANTS } from '../src/faucet.js';
 const PLAYER_WELCOME_SATS = PLAYER_GRANTS.welcome.invoiceSats;
 import { join as pathJoin, dirname, basename } from 'node:path';
@@ -76,19 +83,108 @@ const rpc = async (method, params = []) => {
   const auth = Buffer.from(readFileSync(env.FAUCET_COOKIE, 'utf8').trim()).toString('base64');
   const r = await fetch(env.FAUCET_RPC_URL, { method: 'POST', headers: { authorization: `Basic ${auth}`, 'content-type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '1.0', id: 'faucet', method, params }), signal: AbortSignal.timeout(30000) });
-  const j = await r.json();
+  // AN HTTP ANSWER THAT IS NO JSON-RPC ANSWER WAS NOT RUN (state audit 2026-11-12, kanban #2533): bitcoind answers a full work queue with HTTP 503
+  // "Work queue depth exceeded" (plain text) and a bad cookie with 401 (no body) before it runs the call. r.json() threw a plain error, pay() read it
+  // as "unsure" and kept the installer's row pending for good. A non-2xx answer without a JSON-RPC body is `rpcRefused` too: the call never ran
+  const text = await r.text();
+  let j = null; try { j = JSON.parse(text); } catch { j = null; }
+  if (!j || typeof j !== 'object' || !('result' in j || 'error' in j)) {
+    const e = new Error(`bitcoind answered HTTP ${r.status}: ${String(text).trim().slice(0, 80) || 'no body'}`);
+    if (!r.ok) e.rpcRefused = true;
+    throw e;
+  }
   if (j.error) throw Object.assign(new Error(j.error.message), { rpcRefused: true });   // bitcoind answered and refused (kanban #1572)
   return j.result;
 };
-const REPORTS = [];   // this day's reports: their count and address, in memory
+const REPORTS = [];   // this day's reports: their count and address, in memory - and in the day-limits file below (kanban #2284)
+// THE DAY'S LIMITS OUTLIVE A RESTART (state audit 2026-11-12, kanban #2284): the reports per address, the address checks (#1511) and the screenshot
+// count and bytes (#1405) were kept only in memory, so every restart of the faucet handed each address a fresh day. Each counted event is appended
+// to one small file beside the book (FAUCET_DAY_LIMITS, default <book>.day-limits.jsonl), and at start today's lines are read back into the same
+// counters (and the file is written again with only today's lines). LN_ASKS (10 min) and NODE_CHECK_ASKS (an hour) stay in memory.
+const DAY_LIMITS_FILE = env.FAUCET_DAY_LIMITS || (env.FAUCET_BOOK ? `${env.FAUCET_BOOK}.day-limits.jsonl` : null);
+function dayLimitNote(x) { if (!DAY_LIMITS_FILE) return; try { appendFileSync(DAY_LIMITS_FILE, `${JSON.stringify({ ...x, atMs: x.atMs ?? Date.now() })}\n`); } catch (e) { console.error(`${new Date().toISOString()} day limits not written: ${e.message}`); } }
+// A SIGNED REPORT SENT AGAIN IS NOT A NEW ONE (kanban #2456, #2498): the ids of kept reports whose chat post failed - only those are posted again
+// when the same event comes back; any other resend of a kept event answers the first result, with no new slot and no chat post
+const UNPOSTED = new Set();
 // THE REPORTS KEPT FOR REVIEW (kanban #1342): one SQLite file beside the book; none when FAUCET_FEEDBACK_DB is not set
+// A FIGURE PER SEASON from the environment (kanban #2784): '2:120000,3:100000' -> { 2: 120000, 3: 100000 }
+function seasonFigures(text) { const o = {}; for (const part of String(text || '').split(',')) { const m = /^\s*(\d+)\s*:\s*(\d+)\s*$/.exec(part); if (m) o[Number(m[1])] = Number(m[2]); } return o; }
 const FEEDBACK = env.FAUCET_FEEDBACK_DB ? openFeedbackStore(env.FAUCET_FEEDBACK_DB) : null;
+// BUG BOUNTY SEASON 2 (kanban #2623): its own file, so Season 1's feedback.db, /bounty and the paid log stay as they are; off when not named
+const S2 = FEEDBACK && env.FAUCET_BOUNTY_S2_DB ? openBountySeason(env.FAUCET_BOUNTY_S2_DB, { startMs: env.FAUCET_BOUNTY_S2_START ? Date.parse(env.FAUCET_BOUNTY_S2_START) : null,
+  s2EndMs: env.FAUCET_BOUNTY_S2_END ? Date.parse(env.FAUCET_BOUNTY_S2_END) : null,   // kanban #2784: Season 2 public, ends 2026-11-22 17:00Z
+  pots: seasonFigures(env.FAUCET_BOUNTY_POTS), drawPrizes: seasonFigures(env.FAUCET_BOUNTY_DRAW_PRIZES),   // kanban #2784: '2:120000', '2:50000'
+  paidOf: (id) => FEEDBACK.paidSatsOf(id) }) : null;   // kanban #2784: the pot counts what was paid
+const S2_VERIFY = verifiersFromEnv(env);
+// WEEK 2'S SOCIAL SCREEN (kanban #2641): names typed per platform, read live. Telegram through the user account reader when it is logged in (else the
+// bot's seen-map); Armada through its own module when its key is configured
+const S2_USERBOT = S2 ? await userbotFromEnv(env, { log: (m) => console.log(`${new Date().toISOString()} ${m}`) }).catch(() => null) : null;
+let S2_ARMADA = null;
+if (S2) { try { const a = await import('../src/bounty-armada.js'); const v = a.armadaFromEnv(env);
+  if (v) { S2_VERIFY.armada = v; S2_ARMADA = async (input) => { const pk = await nostrPubkeyOf(input); if (!pk) return { userId: null, member: null, why: 'that is not a Nostr key (npub) or name@domain' };
+    const r = await v({ userId: pk }); return { userId: pk, username: a.bech32Encode('npub', Buffer.from(pk, 'hex')).slice(0, 20) + '…', member: r.member, why: r.why }; }; } } catch (e) { console.log(`${new Date().toISOString()} armada check off: ${String(e.message).slice(0, 80)}`); } }
+// the user account reader is the Telegram check first (the owner 2026-11-14); a read it cannot make falls back to the bot's getChatMember by id
+if (S2_USERBOT) { const bot = S2_VERIFY.telegram;
+  S2_VERIFY.telegram = async (l) => { let u = l.username ? await S2_USERBOT(l.username).catch(() => null) : null;
+    // THE ACCOUNT FOUND MUST BE THE LINKED ONE (kanban #2665, #1489 r2-faucet-2): the list is searched by the link's stored name, and an account
+    // with no @username whose first name is a real member's name was counted as that member - the found account's id is held against the link's
+    if (u && u.member === true && u.userId !== undefined && u.userId !== null && String(u.userId) !== String(l.userId)) u = { member: null, why: 'the member list names another account by that name' };
+    if (u && (u.member === true || (u.member === false && !bot))) return { member: u.member, why: u.why };
+    // a name not in the list may have changed: the stable id decides
+    return bot ? bot(l) : { member: u ? u.member : null, why: u ? u.why : 'no reader' }; }; }
+// A NOSTR FOLLOW (kanban #2641): the key's newest contact list on our relay and big public ones names our profile key
+if (S2 && env.FAUCET_BOUNTY_NOSTR !== 'off') S2_VERIFY.nostr = nostrVerifier();
+const S2_NOSTR = S2_VERIFY.nostr ? async (input) => { const pk = await nostrPubkeyOf(input); if (!pk) return { userId: null, member: null, why: 'that is not a Nostr key (npub) or name@domain' };
+  const r = await S2_VERIFY.nostr({ userId: pk }); return { userId: pk, username: (await import('../src/bounty-armada.js')).bech32Encode('npub', Buffer.from(pk, 'hex')).slice(0, 20) + '…', member: r.member, why: r.why }; } : null;
+const S2_NAMES = S2 ? { ...resolversFromEnv(S2, env, { userbot: S2_USERBOT, armada: S2_ARMADA }), ...(S2_NOSTR ? { nostr: S2_NOSTR } : {}) } : {};
+const S2_SOCIAL_ASKS = new Map();   // pubkey -> last /feedback/social with names (one each 15 s)
+const S2_SOCIAL_GAP_MS = 15000;
+// ONE BUDGET FOR EVERY LIVE SOCIAL READ, ALL CALLERS TOGETHER (kanban #2646, audit #1489 r1-faucet-2): /feedback/social and /feedback/verify were
+// bounded only per signed-in key, and a NIP-98 key costs nothing - a fresh key per request made one live X read each (the team's X session, then
+// friendships/show), and the Discord bot and the Telegram reader the same, without bound: X's 15-minute read limits locked the account and every
+// real reporter's check failed or waited behind spaced()'s queue. Now each live check takes a slot of one shared minute first; a full minute
+// answers "try again in a minute" at once (nothing read, nothing queued).
+const S2_LIVE_ALL = [], S2_LIVE_MINUTE = Math.max(1, Number(env.FAUCET_BOUNTY_S2_LIVE_MINUTE) || 4);
+function s2LiveSlot(now = Date.now()) {
+  while (S2_LIVE_ALL.length && now - S2_LIVE_ALL[0] >= 60000) S2_LIVE_ALL.shift();
+  if (S2_LIVE_ALL.length >= S2_LIVE_MINUTE) return false;
+  S2_LIVE_ALL.push(now); return true;
+}
+// SEASON 2 STARTS (the owner 2026-11-13 ~17:55Z: "Season 2 läuft ab Sonntag"): before it no Season 2 approval; a Season 1 report past the weekly budget
+// waits for it and is approved by the Season 2 rules once it runs (the sweep below)
+const S2_START_MS = env.FAUCET_BOUNTY_S2_START ? Date.parse(env.FAUCET_BOUNTY_S2_START) : null;
+const S2_END_MS = env.FAUCET_BOUNTY_S2_END ? Date.parse(env.FAUCET_BOUNTY_S2_END) : null;   // kanban #2784
+// WEEK 1 ENDED (kanban #2639): a report received at or after this time belongs to Week 2
+const S1_END_MS = env.FAUCET_BOUNTY_S1_END ? Date.parse(env.FAUCET_BOUNTY_S1_END) : null;
+const S2_STARTED = () => !Number.isFinite(S2_START_MS) || Date.now() >= S2_START_MS;
+const S2_START_DAY = Number.isFinite(S2_START_MS) ? new Date(S2_START_MS).toISOString().slice(0, 10) : null;
+const S2_LEVEL_BY_SATS = { 500: 'useful', 1000: 'low', 2000: 'medium', 5000: 'high', 10000: 'critical' };
+// the address a reporter's NIP-98 sign-in names for /feedback/link and /feedback/verify (the stage page's own origin, through its Worker)
+const S2_BASES = String(env.FAUCET_BOUNTY_S2_BASES || 'https://testnet-stage.bitcoinarena.io/api/faucet/feedback').split(',').map((x) => x.trim().replace(/\/+$/, '')).filter(Boolean);
+const S2_VERIFY_ASKS = new Map();   // pubkey -> last /feedback/verify (one a minute)
+const S2_VERIFY_GAP_MS = 60000;
+const S2_LINK_ASKS = new Map(), S2_LINK_HOUR = { hour: -1, n: 0 };   // kanban #2666: ipKey -> link codes asked this hour; all of them
+const S2_LINK_PER_CALLER_HOUR = 20, S2_LINK_PER_HOUR = 600;
+const S2_KEY_PLATFORMS = (only) => Object.fromEntries(Object.entries(S2_VERIFY).filter(([k]) => !only || only.includes(k)));
 // THE SCREENSHOTS (the owner 2026-11-07): a folder beside the store, one file per image under its SHA-256
 const SHOTS = env.FAUCET_FEEDBACK_SHOTS || (env.FAUCET_FEEDBACK_DB ? `${env.FAUCET_FEEDBACK_DB}.shots` : null);
 if (SHOTS) mkdirSync(SHOTS, { recursive: true });
 const shotFile = (h) => { if (!SHOTS || !/^[0-9a-f]{64}$/.test(h)) return null; for (const ext of ['png', 'jpg', 'webp']) { const f = pathJoin(SHOTS, `${h}.${ext}`); if (existsSync(f)) return f; } return null; };
 const SHOT_UPLOADS = [];   // { ip, atMs } of today
 const SHOTS_PER_IP_PER_DAY = 10;
+if (DAY_LIMITS_FILE) {
+  const day = Math.floor(Date.now() / DAY_MS), keep = [];
+  let lines = []; try { lines = readFileSync(DAY_LIMITS_FILE, 'utf8').split('\n'); } catch { lines = []; }
+  for (const l of lines) {
+    let x; try { x = JSON.parse(l); } catch { continue; }
+    if (!x || !Number.isFinite(x.atMs) || Math.floor(x.atMs / DAY_MS) !== day) continue;
+    keep.push(l);
+    if (x.k === 'report') REPORTS.push({ ip: x.ip ?? null, atMs: x.atMs, signed: !!x.signed });
+    else if (x.k === 'shot') SHOT_UPLOADS.push({ ip: x.ip ?? null, atMs: x.atMs, bytes: Number(x.bytes) || 0 });
+    else if (x.k === 'addr') { const c = ADDR_CHECKS.get(x.ip) || { day, n: 0, busy: false }; c.n += 1; ADDR_CHECKS.set(x.ip, c); }
+  }
+  try { writeFileSync(`${DAY_LIMITS_FILE}.new`, keep.length ? `${keep.join('\n')}\n` : ''); renameSync(`${DAY_LIMITS_FILE}.new`, DAY_LIMITS_FILE); } catch (e) { console.error(`${new Date().toISOString()} day limits not rewritten: ${e.message}`); }
+}
 // THE DISK IS NOT THE UPLOADER'S (audit 5, kanban #1405): an address counts by ipKey (an IPv6 /64 is one), all uploads of a day together write at
 // most SHOT_DAY_BYTES, and none is written while the disk holds less than SHOT_FREE_FLOOR_BYTES free
 const SHOT_DAY_BYTES = Number(env.FAUCET_SHOT_DAY_BYTES || 300e6);
@@ -97,9 +193,26 @@ const freeBytes = (dir) => { try { const s = statfsSync(dir); return Number(s.ba
 if (SHOTS && FEEDBACK) setInterval(() => { try { const used = FEEDBACK.shotsInUse(); for (const f of readdirSync(SHOTS)) { const h = f.split('.')[0];
   if (!used.has(h) && Date.now() - statSync(pathJoin(SHOTS, f)).mtimeMs > SHOT_UNCLAIMED_MS) unlinkSync(pathJoin(SHOTS, f)); } } catch { /* next hour */ } }, 3600000).unref();
 const MINE_URLS = String(env.FAUCET_FEEDBACK_MINE_URLS || 'https://bitcoinarena.io/api/faucet/feedback/mine').split(',').map((x) => x.trim()).filter(Boolean);
-const readBook = () => { try { return JSON.parse(readFileSync(env.FAUCET_BOOK, 'utf8')); } catch { return { paid: [] }; } };
+// ONLY A BOOK THAT IS NOT THERE YET IS EMPTY (kanban #2205): any error reading the book was taken as { paid: [] } - one read that failed for a moment
+// (EMFILE, EIO, a permission slip) paid an account its welcome again and saveBook() wrote that empty book plus one row over the real one. Now only
+// ENOENT is an empty book; any other read or parse error throws, the request is refused ('try again') and nothing is saved
+const readBook = () => {
+  let raw;
+  try { raw = readFileSync(env.FAUCET_BOOK, 'utf8'); } catch (e) { if (e && e.code === 'ENOENT') return { paid: [] }; throw new Error(`the book cannot be read just now (${(e && e.code) || 'error'}): try again`); }
+  return JSON.parse(raw);
+};
 const saveBook = (b) => { writeFileSync(`${env.FAUCET_BOOK}.new`, JSON.stringify(b, null, 1)); renameSync(`${env.FAUCET_BOOK}.new`, env.FAUCET_BOOK); };
 const balanceSats = async () => Math.round(Number((await rpc('getbalances')).mine.trusted) * 1e8);
+// THE PUBLIC BALANCE, READ OUTSIDE THE PAYMENT QUEUE (kanban #2664, #1489 r2-faucet-3): GET /faucet is the installer's open door, and each one
+// was a getbalances RPC queued in one() beside every welcome and top-up - a few hundred open GETs held a new player's welcome for 9 s and more.
+// It now answers from a balance read at most every BALANCE_KEEP_MS, one read at a time, never through the queue
+const BALANCE_KEEP_MS = 5000;
+let balanceKept = null, balanceAt = 0, balanceRead = null;
+const balanceCached = () => {
+  if (balanceKept !== null && Date.now() - balanceAt < BALANCE_KEEP_MS) return Promise.resolve(balanceKept);
+  if (!balanceRead) balanceRead = balanceSats().then((v) => { balanceKept = v; balanceAt = Date.now(); return v; }).finally(() => { balanceRead = null; });
+  return balanceRead;
+};
 // THE CALLER'S ADDRESS: the site's Worker names it (behind it x-forwarded-for is Cloudflare's), else the tunnel's header; no header, no limit by address
 // ONLY THE WORKER NAMES IT (audit 8, kanban #1434): x-arena-ip counts with the Worker's key (FAUCET_WORKER_KEY); any other caller - straight over
 // the tunnel - is the address the tunnel itself added last to x-forwarded-for, whatever the caller wrote before it
@@ -118,6 +231,11 @@ const one = (fn) => { const run = queue.then(fn, fn); queue = run.catch(() => {}
 // players' queue that held every welcome behind it past the page's 45 s
 let adminQueue = Promise.resolve();
 const oneAdmin = (fn) => { const run = adminQueue.then(fn, fn); adminQueue = run.catch(() => {}); return run; };
+// THE REWARDS' OWN QUEUE (state audit 2026-11-12, kanban #2023): a reward's LNURL claim and the admin's pay-to-address run a payinvoice on the bounty
+// payer (lncli's 75 s, a pay-to-address 20 s more for its fetches and decode); in the players' queue every welcome waited behind it past the page's 45 s
+// and was then dropped. They share no state with a welcome; two claims of one link are kept apart by claim()'s open->paying compare-and-set
+let bountyQueue = Promise.resolve();
+const oneBounty = (fn) => { const run = bountyQueue.then(fn, fn); bountyQueue = run.catch(() => {}); return run; };
 // a welcome answered again to the same caller (its address, an IPv6 /64) within this long: its first answer may never have reached the page
 const WELCOME_REISSUE_MS = 15 * 60 * 1000;
 
@@ -126,16 +244,54 @@ const WELCOME_REISSUE_MS = 15 * 60 * 1000;
 // address with no row, and the installer's retry of the same address was paid again. The row is now written first (`pending`, no txid), as the
 // players' grant does. It is taken out again only when bitcoind refused the send, or the wallet shows no send to that address; any other failure
 // keeps it (the address is never paid twice; a row without its txid is the worst case).
-async function walletSentTo(address) {
+async function walletSentTo(address, sinceMs = null) {
   // the wallet's own record: a txid when it sent to the address, 'none' when it holds no such send, null when it cannot say
   try {
     const txs = await rpc('listtransactions', ['*', 1000, 0, true]);
     if (!Array.isArray(txs)) return null;
     const t = txs.find((x) => x && x.category === 'send' && x.address === address);
-    return t ? String(t.txid) : 'none';
+    if (t) return String(t.txid);
+    // a full page that starts after the row was booked may have pushed its send out of view (kanban #2533): no word then
+    if (sinceMs != null && txs.length >= 1000 && !txs.some((x) => x && Number(x.time) * 1000 <= sinceMs)) return null;
+    return 'none';
   } catch { return null; }
 }
+// A PENDING INSTALLER ROW IS READ AGAIN (state audit 2026-11-12, kanban #2533): a row pay() left `pending` (the send timed out, the wallet could not
+// say, the faucet died inside sendtoaddress) was never looked at again - the address refused for good ("got coins already") and counted toward its
+// IP's and the day's caps though nothing may have been sent. At start and on a timer, outside the queue, every pending row older than
+// PAY_CHECK_GRACE_MS (past the 30 s RPC timeout, so bitcoind has run or dropped the call) whose pay() is not running is asked of the wallet: a send
+// found sets its txid (and FAUCET_PENDING), 'none' removes the row so the address can ask again; no word keeps it for the next pass. The decisions
+// are applied to a freshly read book in one synchronous step, by address and atMs.
+const PAYING = new Set();   // addresses whose pay() is running
+const PAY_CHECK_GRACE_MS = Number(env.FAUCET_PAY_CHECK_GRACE_MS || 120000);
+async function checkPendingSends(nowMs = Date.now()) {
+  const rows = (readBook().paid || []).filter((p) => p.pending && !p.txid && !PAYING.has(p.address) && nowMs - Number(p.atMs || 0) > PAY_CHECK_GRACE_MS);
+  const found = new Map(), gone = new Set();
+  for (const r of rows) {
+    const sent = await walletSentTo(r.address, Number(r.atMs || 0));
+    if (sent === 'none') gone.add(`${r.address}|${r.atMs}`);
+    else if (sent) found.set(`${r.address}|${r.atMs}`, sent);
+  }
+  if (!found.size && !gone.size) return false;
+  const b = readBook(); b.paid = b.paid || [];
+  const key = (p) => `${p.address}|${p.atMs}`;
+  for (const p of b.paid) if (p.pending && !PAYING.has(p.address) && found.has(key(p))) {
+    p.txid = found.get(key(p)); delete p.pending; appendFileSync(env.FAUCET_PENDING, `${p.txid}\n`);
+    console.log(`${new Date().toISOString()} pending send to ${p.address} found in the wallet: ${p.txid}`);
+  }
+  b.paid = b.paid.filter((p) => { const drop = p.pending && !p.txid && !PAYING.has(p.address) && gone.has(key(p));
+    if (drop) console.log(`${new Date().toISOString()} pending send to ${p.address}: the wallet holds none - the row removed (the address can ask again)`); return !drop; });
+  saveBook(b);
+  return true;
+}
+let checkingSends = false;
+const checkSendsOnce = () => { if (checkingSends) return; checkingSends = true; checkPendingSends().catch(() => {}).finally(() => { checkingSends = false; }); };
+if (env.FAUCET_RPC_URL) { setTimeout(checkSendsOnce, 0).unref(); setInterval(checkSendsOnce, Number(env.FAUCET_PAY_CHECK_MS || 60000)).unref(); }
 async function pay(ask) {
+  PAYING.add(ask.address);
+  try { return await payNow(ask); } finally { PAYING.delete(ask.address); }
+}
+async function payNow(ask) {
   const book = readBook();
   const d = faucetDecide(ask, book, { balanceSats: await balanceSats() });
   if (!d.ok) return d;
@@ -170,6 +326,12 @@ const PAYERS = String(env.FAUCET_PAYERS || '').split(',').filter(Boolean).map((p
 const lncli = (payer, args, timeoutMs = 20000) => new Promise((res) => execFile(payer.lncli || env.FAUCET_LNCLI, [`--lnddir=${payer.dir}`, `--network=${payer.network || 'testnet4'}`, `--rpcserver=${payer.rpcserver}`, ...args],
   // NO 1 MB CAP ON WHAT LNCLI PRINTS (kanban #1785, state audit 2026-11-12, SM-22): node's default maxBuffer failed a listpayments of a few hundred payments
   { timeout: timeoutMs, maxBuffer: 256 * 1024 * 1024 }, (e, out, err) => res({ ok: !e, timedOut: !!(e && e.killed), out: String(out), err: String(err) })));
+// LNCLI'S STATUS LINE, NEVER THE PAYEE'S WORDS (kanban #2416, #2482, #1489 a44-refute-84 s2): without --json lncli 0.21 prints the payment as a table
+// whose ROUTE column holds the hops' node ALIASES - chosen by the payee. An alias "not found" or "Unknown Payment" made trackpayment read as NONE
+// while lnd said IN_FLIGHT, the sweep dropped the welcome, and the account was paid a second one. A status is read only from a line that BEGINS with
+// "Payment status:" (a table cell never does; the last such line is the payment's), and "never initiated" only from lnd's rpc error on stderr
+const lnStatus = (out) => { const said = [...String(out || '').matchAll(/^Payment status:[ \t]*([A-Z_]+)/gm)].map((m) => m[1]); return said[said.length - 1] || null; };
+const lnNotInitiated = (err) => /^\[lncli\] rpc error:.*(isn't initiated|not initiated|payment not found|unknown payment)/im.test(String(err || ''));
 
 // THE BOUNTY WALLET (kanban #1342 section 3): its own payer, never the faucet's; the payout network one setting (testnet4 in phase 1)
 const BOUNTY_NETWORK = env.FAUCET_BOUNTY_NETWORK || 'testnet4';
@@ -205,8 +367,8 @@ const bountyDecode = async (invoice) => {
 const bountyPay = async (invoice, amountSats = 0) => {
   const feeLimit = Math.max(20, Math.ceil(Number(amountSats || 0) * BOUNTY_FEE_LIMIT_PCT / 100));
   const r = await lncli(BOUNTY_PAYER, ['payinvoice', '--force', '--timeout=60s', `--fee_limit=${feeLimit}`, invoice], 75000);
-  if (/Payment status: SUCCEEDED/.test(r.out)) { const h = /Payment hash: ([0-9a-f]{64})/.exec(r.out); return { ok: true, paymentHash: h ? h[1] : null }; }
-  if (/Payment status: FAILED/.test(r.out) && !r.timedOut) return { ok: false, failed: true, why: (r.out.split('\n').find((l) => /reason/i.test(l)) || 'failed').trim().slice(0, 160) };
+  if (lnStatus(r.out) === 'SUCCEEDED') { const h = /^Payment hash:\s*([0-9a-f]{64})/m.exec(r.out); return { ok: true, paymentHash: h ? h[1] : null }; }
+  if (lnStatus(r.out) === 'FAILED' && !r.timedOut) return { ok: false, failed: true, why: (r.out.split('\n').find((l) => /reason/i.test(l)) || 'failed').trim().slice(0, 160) };
   return { ok: false, why: r.timedOut ? 'the payment timed out' : 'in flight' };
 };
 // A PAYING REWARD READ BY ITS HASH (kanban #1785, state audit 2026-11-12, SM-22): settle read the whole listpayments (500 payments, ~3 KB each) through
@@ -227,6 +389,21 @@ const bountyStatus = async (hash) => {
   // "not initiated" (NONE -> failed) when this payer never paid it - a list read is only the fallback when trackpayment gave no answer
   return !p ? 'unknown' : p.status === 'SUCCEEDED' ? 'paid' : p.status === 'FAILED' ? 'failed' : 'unknown';
 };
+// THE BOUNTY WALLET'S IDENTITY (kanban #2177, #1489 a44-refute-76): written on a reward with its paying compare-and-set and compared by settle, so a
+// wallet that replaced the payer on the same network is never asked about the old one's payment ("not initiated" read as failed paid the holder twice).
+// The network, the node key (lncli getinfo, read until it answers once), the lnddir and the rpcserver: a different value of any is another wallet.
+let BOUNTY_PAYER_KEY = null;
+const bountyPayerId = async () => {
+  if (!BOUNTY_PAYER) return null;
+  if (!BOUNTY_PAYER_KEY) { const r = await lncli(BOUNTY_PAYER, ['getinfo']); let k = null; try { k = r.ok ? JSON.parse(r.out).identity_pubkey : null; } catch { k = null; }
+    if (typeof k === 'string' && /^[0-9a-f]{66}$/.test(k)) BOUNTY_PAYER_KEY = k; }
+  return `${BOUNTY_NETWORK} ${BOUNTY_PAYER_KEY || 'no-key'} ${BOUNTY_PAYER.dir} ${BOUNTY_PAYER.rpcserver}`;
+};
+// A ROW CLAIMED WHILE GETINFO GAVE NO KEY (kanban #2403, #2469, #1489 a44-refute-76-s2): its payer reads '<net> no-key <dir> <rpc>', and once getinfo answers
+// this faucet's payer names the key - the same wallet then never matched its own row, and a reward it paid stayed paying for good. Such a row of this
+// network, lnddir and rpcserver may be this wallet's: settle asks it only to confirm (SUCCEEDED marks it paid; FAILED or "not initiated" leaves it paying).
+// A no-key row is never fully trusted, and while this faucet's own key is still unknown every row is only confirmed (an exact 'no-key' match proves nothing).
+const bountyPayerMayBe = (rowPayer) => !!BOUNTY_PAYER && rowPayer === `${BOUNTY_NETWORK} no-key ${BOUNTY_PAYER.dir} ${BOUNTY_PAYER.rpcserver}`;
 // THE ADMIN (kanban #1342 section 4): the owner's code, held to its hash as the explorer holds it (#1092); the rules, our keys, who played
 const ADMIN_SHA = String(env.FAUCET_ADMIN_SHA256 || '').trim().toLowerCase();
 const isAdmin = (req) => { const code = String(req.headers['x-arena-admin'] || '').trim(); if (!/^[0-9a-f]{64}$/.test(ADMIN_SHA) || !code) return false;
@@ -253,13 +430,17 @@ const originOf = (u) => { try { const x = new URL(String(u).trim()); return (x.p
 const SEAT_TRUSTED_ORIGINS = new Set([...SEASON_BASES, ...String(env.FAUCET_SEAT_TRUSTED_ORIGINS || '').split(',')].map(originOf).filter(Boolean));
 if (env.FAUCET_SEAT_TRUSTED_HOSTS !== undefined) console.log('faucet: FAUCET_SEAT_TRUSTED_HOSTS is ignored (kanban #2074) - name full seat origins in FAUCET_SEAT_TRUSTED_ORIGINS');
 const seatTrusted = (u) => { const o = originOf(u); return !!o && SEAT_TRUSTED_ORIGINS.has(o); };
+// A SEAT'S ANSWER IS READ TO A BOUND (kanban #2517): any operator's seat a season seat lists answers /owner, /roles, /served and /network-games here,
+// and r.json() buffered whatever it sent (a 40 MB /owner taken whole) in the process that pays the welcomes and the mainnet bounties. Each answer
+// is read to NODE_CHECK_MAX_BYTES and the stream cancelled past it; at most NODE_CHECK_MAX_SEATS listed seats are asked
+const NODE_CHECK_MAX_BYTES = 2 * 1024 * 1024, NODE_CHECK_MAX_SEATS = 64;
 const fetchJson1342 = async (u) => { const signal = AbortSignal.timeout(15000);
   const r = seatTrusted(u) ? await fetch(u, { signal, redirect: 'error' }) : await seatPublicFetch(u, { signal });
-  if (!r.ok) throw new Error(`${r.status}`); return r.json(); };
+  if (!r.ok) { try { await r.body?.cancel(); } catch { /* gone */ } throw new Error(`${r.status}`); } return readJsonBounded(r, NODE_CHECK_MAX_BYTES); };
 async function nodeCheckNow(node, npub) {
   const bases = SEASON_BASES;
-  const lists = await Promise.all(bases.map((b) => fetchJson1342(`${b}/network-games`).then((j) => (j.seats || []).map((x) => x.seat), () => [])));
-  const seats = [...new Set([...bases, ...lists.flat()])];
+  const lists = await Promise.all(bases.map((b) => fetchJson1342(`${b}/network-games`).then((j) => (Array.isArray(j && j.seats) ? j.seats : []).slice(0, NODE_CHECK_MAX_SEATS).map((x) => x && x.seat).filter((x) => typeof x === 'string'), () => [])));
+  const seats = [...new Set([...bases, ...lists.flat()])].slice(0, bases.length + NODE_CHECK_MAX_SEATS);
   let excluded = new Set(); try { excluded = ourKeys(); } catch { excluded = new Set(); }
   // the hosts the team's own nodes answer at (kanban #1342: team nodes are never paid)
   // THE TEAM'S OWN SEATS BY THEIR NODE KEYS (audit 7, kanban #1428: our-keys.txt held none of them, and the Mac seats' addresses were no team host):
@@ -273,10 +454,12 @@ async function nodeCheckNow(node, npub) {
   return nodeBountyCheck({ node, npub, seats, fetchJson: fetchJson1342, excluded, teamHosts, censusSeats: bases });
 }
 const PLAYED = networkPlayers({ seats: String(env.FAUCET_SEASON_SEATS || '').split(',').filter(Boolean), games: String(env.FAUCET_SEASON_GAMES || 'rock-paper-scissors,nextblock,btc-updown').split(',').filter(Boolean) });
+// kanban #2875: the owner's played mark on a report counts as played for the Season 2 amount, else the network check
+const playedFor = (r) => !!(r && S2 && S2.playedMarkOf && S2.playedMarkOf(r.id)) || !!PLAYED.played(r && r.pubkey);
 PLAYED.fresh().catch(() => 0);   // kanban #1484: the list is read at start, so the admin page never waits for it
 // ONE SETTLE PASS AT A TIME (kanban #1571): a pass waits up to 20 s a paying row on lncli, so passes overlapped and decided on stale rows
 let settling = false;
-if (FEEDBACK && BOUNTY_PAYER) setInterval(() => { if (settling) return; settling = true; FEEDBACK.settle({ status: bountyStatus, network: BOUNTY_NETWORK }).catch(() => {}).finally(() => { settling = false; }); }, 60000).unref();
+if (FEEDBACK && BOUNTY_PAYER) setInterval(() => { if (settling) return; settling = true; bountyPayerId().then((payer) => FEEDBACK.settle({ status: bountyStatus, network: BOUNTY_NETWORK, payer, mayBe: bountyPayerMayBe, confirmOnly: !BOUNTY_PAYER_KEY })).catch(() => {}).finally(() => { settling = false; }); }, 60000).unref();
 
 /** A player's grant: read the invoice, decide, keep it in the book BEFORE paying (a crash pays nobody twice), and take it out again if no payer could pay. */
 /** Each payer's own node key, read once (lncli getinfo); a payer whose node is the invoice's destination goes last. */
@@ -299,7 +482,7 @@ async function paymentSent(payer, hash) {
   while (Date.now() < until) {
     const r = await lncli(payer, ['listpayments', '--include_incomplete', '--max_payments', '30']);
     let p = null; try { p = (JSON.parse(r.out).payments || []).find((x) => x.payment_hash === hash) || null; } catch { p = null; }
-    if (p && p.status === 'SUCCEEDED') return 'sent';
+    if (p && p.status === 'SUCCEEDED') return 'paid';   // final (kanban #2100): not booked pending, not answered pending
     if (p && p.status === 'FAILED') return 'no';
     if (p && (p.htlcs || []).some((h) => h.status === 'IN_FLIGHT' || h.status === 'SUCCEEDED')) return 'sent';
     await new Promise((ok) => setTimeout(ok, PAY_POLL_MS));
@@ -317,44 +500,62 @@ async function paymentSent(payer, hash) {
 async function paymentFinal(payer, hash) {
   if (!payer) return null;
   const r = await lncli(payer, ['trackpayment', hash], 10000);
-  const text = `${r.out || ''}\n${r.err || ''}`;
-  // A NODE'S ALIAS IS NOT LND'S ANSWER (kanban #2589): lncli prints each HTLC's route as the hops' aliases, which their owners choose - a payee node
-  // named "not found" made an in-flight payment read as never made (NONE -> failed), settle() opened the reward again and the holder of the HTLC was
-  // paid twice. "Not initiated" is lnd's error, on stderr, with no payment printed; a printed payment always ends with its own status line
-  const said0 = [...String(r.out || '').matchAll(/Payment status:\s*([A-Z_]+)/g)];
-  if (!said0.length && /isn't initiated|not initiated|not found|unknown payment/i.test(String(r.err || ''))) return 'NONE';
+  // the payment's own status line decides whenever lncli printed one; NONE only from lnd's rpc error, never from stdout (kanban #2416, #2482;
+  // the same alias hole as #2288 and #2589: lncli prints each HTLC's route as the hops' aliases, which their owners choose)
   // LNCLI'S OWN WORDS (audit 7, kanban #1430): without --json lncli 0.21 prints a table and "Payment status: SUCCEEDED, preimage: ..." (the refill timer
   // reads the same line) - the JSON match found nothing live, so a settled welcome read as no answer; the payment's line, the last one printed, decides
-  const said = [...text.matchAll(/Payment status:\s*([A-Z_]+)/g)].map((m) => m[1]);
-  const last = said[said.length - 1] || null;
+  const last = lnStatus(r.out);
   if (last === 'SUCCEEDED' || last === 'FAILED') return last;
-  return r.timedOut || last ? 'IN_FLIGHT' : null;
+  if (last || r.timedOut) return 'IN_FLIGHT';
+  return lnNotInitiated(r.err) ? 'NONE' : null;
 }
+// THE LAST WORD OF A PAYINVOICE (kanban #2206): with table output lncli prints every update of the payment (lnd PrintLivePayment "Always print in-flight
+// updates"; with stdout not a terminal the clear-line codes erase nothing), so a payment that FAILED within the wait printed IN_FLIGHT first - any
+// IN_FLIGHT line read as sent, the welcome was answered paid and the next payer never asked. The last "Payment status:" line printed decides
+const lastPayStatus = (out) => { const said = [...String(out || '').matchAll(/Payment status:\s*([A-Z_]+)/g)].map((m) => m[1]); return said[said.length - 1] || null; };
 const UNSURE_KEEP_MS = 24 * 3600 * 1000;
+const UNSURE_CAP = 500;   // kanban #2132: grant() refuses while `unsure` holds this many; grantPay never cuts the list
 // OUT OF THE PLAYERS' QUEUE, AND ONLY ITS OWN CHANGES (audit 6 re-check N3/N4, kanban #1426): in the queue its lncli reads held welcomes past the page's
 // 45 s again, and saving the book it had read before its awaits dropped refill rows written meanwhile. The reads run first; the book is read again
 // and only this sweep's decisions, by payment hash, are applied to it in one synchronous step
 const notPaid = (states) => states.length > 0 && states.every((x) => x === 'FAILED' || x === 'NONE');
+// THE PAYER BY WHO IT IS, NOT WHERE IT STOOD IN THE LIST (kanban #1926): `payers` holds indexes into FAUCET_PAYERS, and a restart with the list in
+// another order (a payer added in front) had the sweep ask a different lnd - "not initiated", the row removed while the real payer still held the
+// payment in flight, and a second welcome paid. Each asked payer is now also kept by its own entry (`payerIds`: lnddir|rpcserver) and resolved by it;
+// a payer no longer listed answers nothing (null), so the row stays pending and is never dropped on another node's word. Rows written before keep
+// their indexes
+const payerId = (p) => `${p.dir}|${p.rpcserver}`;
+const askedOf = (r) => Array.isArray(r.payerIds) ? r.payerIds.map((id) => PAYERS.find((p) => payerId(p) === id) || null) : (r.payers || []).map((i) => PAYERS[i]);
 async function sweepPayments(nowMs = Date.now()) {
   const seen = readBook();
   const keep = new Set(), drop = new Set(), rebook = new Map(), forget = new Set();
   for (const r of (seen.players || []).filter((x) => x.pending && !GRANTING.has(x.hash))) {
-    const states = await Promise.all((r.payers || []).map((i) => paymentFinal(PAYERS[i], r.hash).catch(() => null)));
+    const states = await Promise.all(askedOf(r).map((p) => paymentFinal(p, r.hash).catch(() => null)));
     if (states.includes('SUCCEEDED')) keep.add(r.hash);
     else if (notPaid(states)) drop.add(r.hash);
   }
+  // A REFILL STILL UNSURE (kanban #2130): read the same way; NONE/FAILED at every payer asked takes it out of the day's count
+  const keepRefill = new Set(), dropRefill = new Set();
+  for (const r of (seen.refills || []).filter((x) => x.pending && !GRANTING.has(x.hash))) {
+    const states = await Promise.all((r.payers || []).map((i) => paymentFinal(PAYERS[i], r.hash).catch(() => null)));
+    if (states.includes('SUCCEEDED')) keepRefill.add(r.hash);
+    else if (notPaid(states)) dropRefill.add(r.hash);
+  }
   for (const u of seen.unsure || []) {
-    const states = await Promise.all((u.payers || []).map((i) => paymentFinal(PAYERS[i], u.hash).catch(() => null)));
+    const states = await Promise.all(askedOf(u).map((p) => paymentFinal(p, u.hash).catch(() => null)));
     if (states.includes('SUCCEEDED')) rebook.set(u.hash, u);
     else if (notPaid(states) || (!states.includes('IN_FLIGHT') && nowMs - Number(u.removedMs || 0) > UNSURE_KEEP_MS)) forget.add(u.hash);
   }
-  if (!keep.size && !drop.size && !rebook.size && !forget.size) return false;
+  if (!keep.size && !drop.size && !rebook.size && !forget.size && !keepRefill.size && !dropRefill.size) return false;
   const book = readBook();
   book.players = book.players || []; book.unsure = book.unsure || [];
-  for (const r of book.players) if (r.pending && keep.has(r.hash)) { delete r.pending; delete r.payers; console.log(`${new Date().toISOString()} player ${r.kind} ${r.hash.slice(0, 16)}: SUCCEEDED, kept`); }
+  for (const r of book.players) if (r.pending && keep.has(r.hash)) { delete r.pending; delete r.payers; delete r.payerIds; console.log(`${new Date().toISOString()} player ${r.kind} ${r.hash.slice(0, 16)}: SUCCEEDED, kept`); }
   book.players = book.players.filter((r) => { const gone = r.pending && drop.has(r.hash); if (gone) console.log(`${new Date().toISOString()} player ${r.kind} ${r.hash.slice(0, 16)}: not paid by any payer, the row removed (the welcome can be asked again)`); return !gone; });
-  for (const [h, u] of rebook) { const { payers, removedMs, ...row } = u; if (!book.players.some((x) => x.hash === h)) { book.players.push(row); console.log(`${new Date().toISOString()} player ${row.kind} ${h.slice(0, 16)}: paid after all - booked again`); } }
+  for (const [h, u] of rebook) { const { payers, payerIds, removedMs, ...row } = u; if (!book.players.some((x) => x.hash === h)) { book.players.push(row); console.log(`${new Date().toISOString()} player ${row.kind} ${h.slice(0, 16)}: paid after all - booked again`); } }
   book.unsure = book.unsure.filter((u) => !rebook.has(u.hash) && !forget.has(u.hash));
+  book.refills = book.refills || [];
+  for (const r of book.refills) if (r.pending && keepRefill.has(r.hash)) { delete r.pending; delete r.payers; console.log(`${new Date().toISOString()} refill ${r.hash.slice(0, 16)}: SUCCEEDED, kept`); }
+  book.refills = book.refills.filter((r) => { const gone = r.pending && dropRefill.has(r.hash); if (gone) console.log(`${new Date().toISOString()} refill ${r.hash.slice(0, 16)}: not paid by any payer - not counted`); return !gone; });
   saveBook(book);
   return true;
 }
@@ -376,6 +577,12 @@ function unsureWelcome(book, ask) {
 // none - an unsure top-up counted twice toward PLAYER_TOPUPS_PER_DAY refused an account's last top-up of the day
 const withUnsure = (book) => ({ ...book, players: [...(book.players || []), ...(book.unsure || []).map(({ payers, removedMs, ...row }) => row)], unsure: [] });
 
+// WHOLE SATS ONLY AT THE PLAYERS' AND THE REFILL DOOR (kanban #2857, #1489 r26-faucet-1): lnd's num_satoshis is the invoice's msat cut down to whole
+// sats and payinvoice pays the msat - #2589 held the bounty payout to num_msat, but grant() and /refill still decided on num_satoshis, so a welcome
+// invoice for 3,000,999 msat passed "exactly 3000" and was paid in full. An invoice whose msat is not a whole number of sats is refused here
+const wholeSatsOf = (inv) => { const m = inv && inv.num_msat !== undefined && inv.num_msat !== null && inv.num_msat !== '' ? String(inv.num_msat) : null;
+  if (m === null) return Number(inv && inv.num_satoshis);
+  return /^\d+$/.test(m) && BigInt(m) % 1000n === 0n && BigInt(m) / 1000n === BigInt(String(Number(inv.num_satoshis) || 0)) ? Number(inv.num_satoshis) : null; };
 async function grant(ask) {
   if (!/^lntb[0-9a-z]{20,1500}$/.test(String(ask.invoice || ''))) return { ok: false, why: 'that is not a testnet invoice' };
   const read = await lncli(PAYERS[0], ['decodepayreq', ask.invoice]);
@@ -385,9 +592,22 @@ async function grant(ask) {
   book.players = book.players || [];
   const onWay = unsureWelcome(book, ask);   // kanban #1834
   if (onWay) return onWay;
-  const d = playerGrantDecide({ kind: ask.kind, account: ask.account, ip: ask.ip, invoiceSats: Number(inv.num_satoshis) }, withUnsure(book));
+  // FAIL CLOSED WHEN `unsure` IS FULL (kanban #2132): an invoice grant may end in `unsure`, and no unsure row is ever dropped for room - so while it
+  // holds UNSURE_CAP rows no new invoice grant is paid (the sweep empties it as payers give their final word); a pool note adds no unsure row
+  if ((book.unsure || []).length >= UNSURE_CAP) return { ok: false, why: 'the faucet is checking earlier payments: try again in a few minutes' };
+  if (wholeSatsOf(inv) === null) return { ok: false, why: 'the invoice must be for whole sats' };   // kanban #2857
+  const d = playerGrantDecide({ kind: ask.kind, account: ask.account, ip: ask.ip, invoiceSats: wholeSatsOf(inv) }, withUnsure(book));
   if (!d.ok) return d;
-  const row = { account: ask.account, kind: ask.kind, ip: ask.ip, sats: d.grant.invoiceSats, atMs: Date.now(), hash: inv.payment_hash };
+  // (after the account's own answers, so an honest repeat still hears "already has its welcome")
+  // A HASH ALREADY BOOKED IS NOT A NEW GRANT (kanban #2473, #2505, refute of #1834/#1835): the hash is the invoice's own payment_hash, which its maker
+  // chooses (addholdinvoice, a hand-signed invoice) - an e-cash row's hash is sha256 of its note, known to the note's holder. An unpayable invoice named
+  // by a booked hash had its failed-grant cleanup drop that row (an e-cash welcome: the start scan put the handed-out note back on the shelf, and the
+  // account was handed a second welcome). A hash on any row - players, unsure, refills - or one being paid now is refused before anything is booked
+  const hash = String(inv.payment_hash || '');
+  if (!/^[0-9a-f]{64}$/.test(hash) || GRANTING.has(hash) || [...book.players, ...(book.unsure || []), ...(book.refills || [])].some((x) => x && x.hash === hash)) {
+    return { ok: false, why: 'that invoice was already used: make a new one' };
+  }
+  const row = { account: ask.account, kind: ask.kind, ip: ask.ip, sats: d.grant.invoiceSats, atMs: Date.now(), hash };
   // BOOKED PENDING BEFORE ANY PAYINVOICE (kanban #1627, state audit 2026-11-12 SM-19): a plain row booked here was a welcome (or a refill) paid for
   // good when the faucet died inside payinvoice - the sweep reads only pending rows and `unsure`, so a payment never made, or one that FAILED after,
   // refused the account its welcome forever. The row is pending with every payer that may be asked; only SUCCEEDED clears it (here or in the sweep),
@@ -395,10 +615,12 @@ async function grant(ask) {
   GRANTING.add(row.hash);
   try { return await grantPay(ask, inv, d, book, row); } finally { GRANTING.delete(row.hash); }
 }
+// THIS GRANT'S OWN ROW (kanban #2473, #2505): never an e-cash row, and the account, kind and booking time the grant wrote - not every row of a hash
+const ownRow = (p, row) => !!p && !p.ecash && p.hash === row.hash && p.account === row.account && p.kind === row.kind && p.atMs === row.atMs;
 async function grantPay(ask, inv, d, book, row) {
-  book.players.push({ ...row, pending: true, payers: PAYERS.map((_, i) => i) });
+  book.players.push({ ...row, pending: true, payers: PAYERS.map((_, i) => i), payerIds: PAYERS.map(payerId) });   // kanban #1926
   saveBook(book);
-  const tried = [], askedPayers = [];
+  const tried = [], askedPayers = [], askedIds = [], failedFor = [];
   // A PAYER IS NOT ASKED TO PAY ITS OWN NODE'S INVOICE (kanban #1381): payer a is gateway a's lnd - "self-payments not allowed" cost a call before payer b
   for (const payer of await payersFor(inv.destination)) {
     // A TIMEOUT IS NOT A REFUSAL, AND NOT A PAYMENT EITHER (kanban #1381, the owner 2026-11-09 "scheitere daran die test sats zu bekommen": payer b's
@@ -406,24 +628,41 @@ async function grantPay(ask, inv, d, book, row) {
     // after): the payment's own state is read - an HTLC on its way (the federation's incoming contract holds it until the client claims) or SUCCEEDED
     // is paid; FAILED, or no part sent within PAY_SETTLE_MS, is not, and the next payer is asked
     const paid = await lncli(payer, ['payinvoice', '--force', '--timeout=60s', '--fee_limit=20', ask.invoice], PAY_WAIT_MS);
-    const state = /Payment status: (SUCCEEDED|IN_FLIGHT)/.test(paid.out) ? 'sent' : paid.timedOut ? await paymentSent(payer, inv.payment_hash) : 'no';
-    askedPayers.push(PAYERS.indexOf(payer));
+    const paidSays = lnStatus(paid.out);
+    // a last FAILED line, or an exit (not a timeout) without SUCCEEDED, is 'no' and the next payer is asked; only a timed-out lncli whose last line
+    // was IN_FLIGHT counts as sent (kanban #2206)
+    const said = paidSays === 'SUCCEEDED' ? 'sent' : paidSays === 'FAILED' || !paid.timedOut ? 'no' : paidSays === 'IN_FLIGHT' ? 'sent' : await paymentSent(payer, inv.payment_hash);
+    const state = said === 'paid' ? 'sent' : said, final = said === 'paid' || paidSays === 'SUCCEEDED';   // kanban #2100: a final SUCCEEDED is not pending
+    askedPayers.push(PAYERS.indexOf(payer)); askedIds.push(payerId(payer));   // kanban #1926: by its own entry too
     // NOT FINAL YET (kanban #1421): booked as pending with the payers asked; the sweep reads their final word
     if (state === 'sent') {
-      const b2 = readBook(); const mine = (b2.players || []).find((x) => x.hash === row.hash);
-      if (mine && /Payment status: SUCCEEDED/.test(paid.out)) { delete mine.pending; delete mine.payers; saveBook(b2); }
-      else if (mine) { mine.pending = true; mine.payers = [...askedPayers]; saveBook(b2); }
+      // the row stays as booked (pending, kanban #1627) when the book cannot be read again here: the welcome is never paid twice (kanban #2205)
+      try {
+        const b2 = readBook(); const mine = (b2.players || []).find((x) => ownRow(x, row));
+        if (mine && final) { delete mine.pending; delete mine.payers; delete mine.payerIds; saveBook(b2); }
+        else if (mine) { mine.pending = true; mine.payers = [...askedPayers]; mine.payerIds = [...askedIds]; saveBook(b2); }
+      } catch (e) { console.log(`${new Date().toISOString()} player ${row.hash.slice(0, 16)}: not marked: ${e.message}`); }
     }
     if (state === 'sent') {
-      console.log(`${new Date().toISOString()} player ${ask.kind} ${d.grant.invoiceSats} sat (${ask.ip || 'no ip'}): ${inv.payment_hash.slice(0, 16)}`);
-      return { ok: true, sats: d.grant.sats };
+      console.log(`${new Date().toISOString()} player ${ask.kind} ${d.grant.invoiceSats} sat (${ask.ip || 'no ip'}): ${inv.payment_hash.slice(0, 16)}${final ? '' : ' (in flight, pending)'}`);
+      // AN ANSWER THE SWEEP MAY STILL UNDO SAYS SO (kanban #2100, state audit 2026-11-12): a row booked pending is taken off the book when the
+      // payment then FAILS ("the welcome can be asked again"), but { ok, sats } alone read as credited - the page dropped its one-time welcome flag
+      // and nothing ever asked again. A pending row is answered { ok, sats, pending: true, hash }: the page keeps its flag until the sats land
+      return final ? { ok: true, sats: d.grant.sats } : { ok: true, sats: d.grant.sats, pending: true, hash: inv.payment_hash };
     }
+    // FAILED, AND SAID SO IN TIME (kanban #2187): lnd's FAILED is the payment's last state - this payer will never pay it
+    failedFor.push(!paid.timedOut && paidSays === 'FAILED');
     tried.push((paid.err || paid.out).trim().slice(-160));
   }
   const after = readBook();
-  after.players = (after.players || []).filter((p) => p.hash !== row.hash);
+  after.players = (after.players || []).filter((p) => !ownRow(p, row));   // only the row this grant pushed (kanban #2473, #2505)
   // a payer that timed out may still pay it (kanban #1421): kept in `unsure` for the sweep, booked again if any payer says SUCCEEDED
-  after.unsure = [...(after.unsure || []), { ...row, payers: askedPayers, removedMs: Date.now() }].slice(-500);
+  // NEVER CUT FOR ROOM (kanban #2132, re-check of #1628/#1834): `.slice(-500)` dropped the oldest unsure rows, so 500 more unsure grants of fresh
+  // accounts pushed a welcome still in flight out, and its account was paid a second welcome. A row leaves `unsure` only through the sweep (rebooked or
+  // forgotten); the cap is held in grant(), which pays nothing while `unsure` is full
+  // AND A GRANT EVERY ASKED PAYER ANSWERED FAILED AT ONCE IS NOT PARKED AT ALL (kanban #2187): lnd's FAILED is final, nothing can still pay it
+  const definitelyFailed = askedPayers.length > 0 && failedFor.length === askedPayers.length && failedFor.every(Boolean);
+  if (!definitelyFailed) after.unsure = [...(after.unsure || []), { ...row, payers: askedPayers, payerIds: askedIds, removedMs: Date.now() }];
   saveBook(after);
   console.log(`${new Date().toISOString()} player ${ask.kind} not paid: ${tried.join(' | ')}`);
   return { ok: false, why: 'the faucet could not pay just now: try again in a minute' };
@@ -441,15 +680,36 @@ function takeEcash(federation, msat) {
   for (const f of names) {
     const to = pathJoin(shelf, 'taken', f);
     try { renameSync(pathJoin(shelf, f), to); } catch { continue; }   // another take had it
+    // THE TAKE'S OWN TIME ON THE FILE (kanban #2768): a rename keeps the mint time; the start scan puts back only a note taken minutes ago
+    try { const at = new Date(); utimesSync(to, at, at); } catch { /* the scan then leaves it taken */ }
     try { const n = JSON.parse(readFileSync(to, 'utf8')); if (String(n.msat) === String(msat) && n.ecash) return { ecash: String(n.ecash), file: to }; } catch { /* a broken file: the next */ }
   }
   return null;
 }
 // THE START SCAN (kanban #1835): a faucet killed between the take and the book write left the same stranded note. At start, a note in taken/ that no
-// book row names as its noteFile goes back to its shelf - only when the book file is there and reads (a lost book must not put given notes back)
-if (ECASH_POOL) { try { const b = JSON.parse(readFileSync(env.FAUCET_BOOK, 'utf8')); const named = new Set((b.players || []).map((x) => x.noteFile).filter(Boolean));
+// book row names goes back to its shelf - only when the book file is there and reads (a lost book must not put given notes back).
+// BY THE NOTE, NOT ITS PATH (kanban #2180, #2263): a row names its note by `hash` (sha256 of the note's ecash, on every e-cash row since #1381) -
+// the 11-09..11-10 rows (before #1419) carry no noteFile, and a noteFile is the pool path the faucet had then (a symlink, a moved mount or a relative
+// FAUCET_ECASH_POOL names the same pool another way). A note stays in taken/ when its hash is booked, or its federation/taken/file matches a noteFile
+const RESHELVE_MS = 15 * 60000;   // kanban #2768: a stranded take is put back only this soon after it was taken
+let reshelfOld = 0;
+if (ECASH_POOL) { try { const b = JSON.parse(readFileSync(env.FAUCET_BOOK, 'utf8'));
+  const rows = [...(b.players || []), ...(b.unsure || [])].filter((x) => x && x.ecash);
+  const hashes = new Set(rows.map((x) => String(x.hash || '')).filter(Boolean));
+  const tail = (p) => String(p).split(/[\\/]+/).slice(-3).join('/');   // <federation>/taken/<file>, whatever the pool's own path
+  const named = new Set(rows.map((x) => x.noteFile).filter(Boolean).map(tail));
   for (const fed of readdirSync(ECASH_POOL)) { const t = pathJoin(ECASH_POOL, fed, 'taken'); let fs = []; try { fs = readdirSync(t); } catch { continue; }
-    for (const f of fs) if (f.endsWith('.json') && !named.has(pathJoin(t, f))) { try { renameSync(pathJoin(t, f), pathJoin(ECASH_POOL, fed, f)); console.log(`${new Date().toISOString()} e-cash note ${f} back on the shelf: no welcome booked it`); } catch { /* next start */ } } }
+    for (const f of fs) {
+      if (!f.endsWith('.json') || named.has(`${fed}/taken/${f}`)) continue;
+      let h = null; try { const n = JSON.parse(readFileSync(pathJoin(t, f), 'utf8')); if (n.ecash) h = createHash('sha256').update(String(n.ecash)).digest('hex'); } catch { /* unreadable: matched by name only */ }
+      if (h && hashes.has(h)) continue;
+      // ONLY A NOTE TAKEN JUST BEFORE THIS START (kanban #2768): the scan is for a faucet killed between the take and the book write - seconds.
+      // A note taken long ago that no row names was handed out under a row the book no longer holds (72 welcomes of 11-09/11-10 are in the log
+      // and not in the book): put back on 11-12, each was handed out again and the player's wallet was told Rejected (the notes were spent).
+      let takenMs = 0; try { takenMs = statSync(pathJoin(t, f)).mtimeMs; } catch { takenMs = 0; }
+      if (!(Date.now() - takenMs <= RESHELVE_MS)) { reshelfOld++; continue; }
+      try { renameSync(pathJoin(t, f), pathJoin(ECASH_POOL, fed, f)); console.log(`${new Date().toISOString()} e-cash note ${f} back on the shelf: no welcome booked it`); } catch { /* next start */ } } }
+  if (reshelfOld) console.log(`${new Date().toISOString()} ${reshelfOld} e-cash note(s) in taken/ named by no welcome and taken more than ${RESHELVE_MS / 60000} min ago: left there (handed out under a row the book no longer holds)`);
 } catch { /* no book yet, or it does not read: nothing is put back */ } }
 function grantEcash(ask) {
   const book = readBook();
@@ -477,10 +737,65 @@ function grantEcash(ask) {
   return { ok: true, sats: d.grant.sats, ecash: got.ecash };
 }
 
+// THE TICKET BEHIND A DUPLICATE (kanban #2745): read from the board (FAUCET_KANBAN_URL, the key in FAUCET_KANBAN_KEY_FILE); only title and description are kept
+async function dupFromTicket(id, ticket) {
+  const n = Number(String(ticket || '').replace(/^#/, ''));
+  if (!Number.isInteger(n) || n <= 0) return { ok: false, why: 'dupTicket is a ticket number' };
+  const key = readFileSync(env.FAUCET_KANBAN_KEY_FILE || `${env.HOME}/.config/blwp/kanban-key`, 'utf8').trim();
+  const r = await fetch(`${env.FAUCET_KANBAN_URL || 'http://127.0.0.1:18850'}/api/tasks/${n}`, { headers: { authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(10000) });
+  if (r.status !== 200) return { ok: false, why: `ticket #${n} could not be read (${r.status})` };
+  const t = await r.json();
+  return FEEDBACK.dupSnapshot(id, { id: t.id, title: t.title, description: t.description });
+}
 const WANTS = new Map();
+/** A SEASON 2 APPROVAL the plan fits: the report store approves the season's amount (outside Season 1's weekly budget), the season records it. */
+// TWO FILES, ONE DECISION (kanban #3220, state audit SM-21): the approval goes into season2.db first as an intent ('approving', with the plan), then
+// the report store approves, then the intent is settled. season2.db busy (the link bot writes it too), full, or the faucet killed: before the report
+// moved nothing is decided and the admin's retry runs again; after it the 'approving' row is settled by s2Reconcile below - never an accepted report
+// with no Season 2 approval
+function s2Approve(r, p, by) {
+  S2.intend(r, p, { by });
+  const out = FEEDBACK.approve(r.id, p.sats, { played: PLAYED.played, excluded: ourKeys(), severity: p.level, by,
+    rules: { ...RULES, weeklyBudgetSats: Number.MAX_SAFE_INTEGER, mostSats: Math.max(Number(RULES.mostSats) || 20000, p.sats), leastSats: Math.min(Number(RULES.leastSats ?? 100), p.sats) } });
+  const season2 = S2.settle(r.id, out.ok);
+  return out.ok ? { ...out, season2 } : out;
+}
+// THE PAIR COMES TOGETHER AGAIN (kanban #3220): read by report, both stores - an accepted (or paid) report's intent becomes its approval; a new one's
+// intent is dropped (the row before it back); a rejected or duplicate report's approval, waiting row or intent is taken back. At start, before each
+// Season 2 sweep, and before the admin approves, rejects or marks a duplicate (so the refused retry of a half-done step still repairs it).
+function s2Reconcile(id) {
+  const a = S2.approval(id); const r = a ? FEEDBACK.report(a.report) : null;
+  if (!a || !r) return;
+  if (r.state === 'rejected' || r.state === 'duplicate') { if (['approved', 'waiting', 'approving'].includes(a.state)) S2.voidApproval(a.report, { why: `the report is ${r.state}` }); return; }
+  if (a.state === 'approving') S2.settle(a.report, r.state === 'accepted' || r.state === 'paid');
+}
+function s2ReconcileAll() { for (const st of ['approving', 'approved', 'waiting']) for (const a of S2.approvals({ state: st })) s2Reconcile(a.report); }
+if (S2) { try { s2ReconcileAll(); } catch (e) { console.error(`${new Date().toISOString()} season 2 reconcile at start: ${e.message}`); } }
+// THE WAITING REPORTS, ONCE SEASON 2 RUNS (kanban #2623): oldest first, the links read live, by the Season 2 rules; one the pot cannot take waits on
+if (S2) setInterval(() => { if (!S2_STARTED() || !bountyOn()) return;
+  oneAdmin(async () => {
+    s2ReconcileAll();   // kanban #3220
+    for (const a of S2.approvals({ state: 'waiting' })) {
+      const r = FEEDBACK.report(a.report);
+      if (!r || r.state !== 'new') continue;
+      await S2.verify(r.pubkey, S2_VERIFY, { cause: 'season2-start' });   // kanban #2876: a node report too
+      const p = S2.plan(r, { level: a.level, codeOnly: a.codeOnly, followUp: a.followUp, played: playedFor(r) });
+      if (!p.ok) continue;
+      if (p.waits || p.noBounty) { if (p.waits && p.season !== a.season) S2.wait(r, p, { by: 'season2' }); continue; }   // a Season 2 waiter keeps waiting (#2787: Season 2 keeps its rule)
+      const out = s2Approve(r, p, 'season2');
+      console.log(`${new Date().toISOString()} season 2: ${r.label || r.id.slice(0, 12)} ${out.ok ? `approved ${p.sats} sat` : `not approved: ${out.why}`}`);
+    }
+  }).catch(() => {});
+}, Number(env.FAUCET_BOUNTY_S2_SWEEP_MS || 60000)).unref();
 const ORIGIN_OK = /^https:\/\/([a-z0-9-]+\.)?(testnet(-stage)?\.bitcoin-?arena\.io|bitcoin-arena-site\.pages\.dev)$/;   // testnet-stage: the bounty's stage (kanban #1342)
+// NO REQUEST ENDS THE FAUCET (state audit 2026-11-12, kanban #2284): one raw target new URL() refuses ("//[") threw in this listener before any
+// try and the process exited, cutting every grant and claim in flight between its payment and its record. The target is parsed once in a try
+// (400 when it does not parse), and a last guard below logs anything else that escapes instead of ending the process.
+process.on('uncaughtException', (e) => { console.error(`${new Date().toISOString()} uncaught, kept running: ${(e && e.stack) || e}`); });
+process.on('unhandledRejection', (e) => { console.error(`${new Date().toISOString()} unhandled rejection, kept running: ${(e && e.stack) || e}`); });
 createServer((req, res) => {
   const origin = String(req.headers.origin || '');
+  try { new URL(req.url, 'http://x'); } catch { res.writeHead(400, { 'content-type': 'application/json', 'cache-control': 'no-store' }); return res.end(JSON.stringify({ ok: false, why: 'not a request target' })); }
   // THE TWO DOORS A NODE'S OWN OWNER PAGE WRITES TO (kanban #1342 node feedback): signed, rate-limited reports and their screenshots, from any origin;
   // every other door only from the Arena's own hosts
   const writePath = new URL(req.url, 'http://x').pathname.replace(/\/+$/, '');
@@ -495,8 +810,8 @@ createServer((req, res) => {
     if (req.method !== 'POST') return send(405, { ok: false, why: 'GET or POST' });
     let raw = '';
     req.setEncoding('utf8');
-    req.on('data', (c) => { raw += c; if (raw.length > 512) req.destroy(); });
-    req.on('end', () => { try { const b = JSON.parse(raw || '{}'); send(200, opponentWant(WANTS, b.round, Date.now(), b.tapped === true, ipKey(ipOf(req)) || 'none')); /* one caller, at most two tables (kanban #1535) */ } catch { send(400, { ok: false, why: 'not JSON' }); } });
+    req.on('data', (c) => { raw += c; if (raw.length > 1024) req.destroy(); });   // kanban #2087: a signed tap is ~260 bytes more
+    req.on('end', () => { try { const b = JSON.parse(raw || '{}'); send(200, opponentWant(WANTS, b.round, Date.now(), b.tap || null, ipKey(ipOf(req)) || 'none')); /* one caller, at most two tables (kanban #1535) */ } catch { send(400, { ok: false, why: 'not JSON' }); } });
     return undefined;
   }
   if (path === '/refill') {
@@ -511,25 +826,46 @@ createServer((req, res) => {
         if (!/^lntb[0-9a-z]{20,1500}$/.test(String(b.invoice || ''))) return send(200, { ok: false, why: 'that is not a testnet invoice' });
         const read = await lncli(PAYERS[0], ['decodepayreq', b.invoice]);
         if (!read.ok) return send(200, { ok: false, why: 'that invoice cannot be read' });
-        const inv = JSON.parse(read.out), book = readBook(), d = refillDecide({ invoiceSats: Number(inv.num_satoshis) }, book);
+        const inv = JSON.parse(read.out);
+        if (wholeSatsOf(inv) === null) return send(200, { ok: false, why: 'the invoice must be for whole sats' });   // kanban #2857
+        const book = readBook(), d = refillDecide({ invoiceSats: wholeSatsOf(inv) }, book);
         if (!d.ok) return send(200, d);
-        book.refills = book.refills || []; book.refills.push({ sats: d.sats, atMs: Date.now(), hash: inv.payment_hash }); saveBook(book);
-        for (const payer of PAYERS) {
-          const paid = await lncli(payer, ['payinvoice', '--force', '--timeout=60s', '--fee_limit=20', b.invoice], 15000);
-          if (paid.timedOut || /Payment status: (SUCCEEDED|IN_FLIGHT)/.test(paid.out)) {
-            // A PAYMENT THAT FAILED AFTER ITS ANSWER IS NOT A TOP-UP (kanban #1391, measured 2026-11-09: 13 refills of the test opponent, 39,000 sat, were
-            // counted when lncli ran past 15 s - every one then FAILED, INCORRECT_PAYMENT_DETAILS or NO_ROUTE, no sat moved - and the day's cap said "the
-            // top-ups of today are used up" while the bot's wallet held 0, so it entered no round): once lnd knows, a failed one leaves the day's count
-            if (!/Payment status: SUCCEEDED/.test(paid.out)) setTimeout(async () => {
-              const t = await lncli(payer, ['trackpayment', inv.payment_hash], 20000);
-              if (/Payment status: FAILED/.test(t.out)) {
-                const later = readBook(); later.refills = (later.refills || []).filter((r) => r.hash !== inv.payment_hash); saveBook(later);
-                console.log(`${new Date().toISOString()} refill ${d.sats} sat: ${inv.payment_hash.slice(0, 16)} failed after its answer - not counted`);
-              }
-            }, 120000);
-            console.log(`${new Date().toISOString()} refill ${d.sats} sat: ${inv.payment_hash.slice(0, 16)}`); return send(200, { ok: true, sats: d.sats }); }
-        }
-        const after = readBook(); after.refills = (after.refills || []).filter((r) => r.hash !== inv.payment_hash); saveBook(after);
+        // BOOKED PENDING BEFORE ANY PAYINVOICE (kanban #2130, a44 refute of #1627 at the second door): the refill's row was booked plain and only an
+        // in-memory 120 s timer took a failed one out - a faucet killed inside payinvoice (or before that timer ran) kept a refill that never moved a
+        // sat counted toward REFILL_DAY_CAP_SATS all day (#1391). The row is now pending with every payer that may be asked, as a player's grant
+        // (#1627): SUCCEEDED clears it, IN_FLIGHT or a timeout narrows it to the payers asked, and the payment sweep removes it once every one of them
+        // answers NONE/FAILED (after a restart too). refillDecide still counts pending rows, so the cap never pays one twice
+        const hash = inv.payment_hash;
+        // THE SAME INVOICE AGAIN (kanban #2375, a44 refute 6 s2 of #2130): a refill whose invoice was already asked - paid, pending or still paying
+        // here - is refused before any row or payinvoice. A retry of a paid invoice failed at every payer and the failure path removed EVERY row with
+        // that hash, the SUCCEEDED one too, so "refill, re-post the invoice" drained past REFILL_DAY_CAP_SATS; a concurrent retry also took the first
+        // request's pending row and cleared its GRANTING mark. The check and the push below run in one synchronous step after the last await
+        book.refills = book.refills || [];
+        if (GRANTING.has(hash) || book.refills.some((r) => r.hash === hash)) return send(200, { ok: false, why: 'that invoice was already asked' });
+        // ONLY ITS OWN ROW (kanban #2375): each row carries its own id; every later change finds the row by that id, never by the hash alone
+        const id = randomBytes(8).toString('hex'), mineOf = (bk) => (bk.refills || []).find((r) => r.id === id && r.pending);
+        book.refills.push({ id, sats: d.sats, atMs: Date.now(), hash, pending: true, payers: PAYERS.map((_, i) => i) }); saveBook(book);
+        GRANTING.add(hash);
+        try {
+          const askedPayers = [];
+          let unclear = false;
+          for (const payer of PAYERS) {
+            const paid = await lncli(payer, ['payinvoice', '--force', '--timeout=60s', '--fee_limit=20', b.invoice], 15000);
+            askedPayers.push(PAYERS.indexOf(payer));
+            const paidSays = lnStatus(paid.out);   // kanban #2416: the status line, never a node's alias
+            if (paidSays === 'SUCCEEDED' || (paid.timedOut && paidSays !== 'FAILED')) {   // kanban #2206: an IN_FLIGHT update before FAILED, or an exit without SUCCEEDED, is no top-up
+              const b2 = readBook(), mine = mineOf(b2);
+              if (mine && paidSays === 'SUCCEEDED') { delete mine.pending; delete mine.payers; saveBook(b2); }
+              else if (mine) { mine.payers = [...askedPayers]; saveBook(b2); }
+              console.log(`${new Date().toISOString()} refill ${d.sats} sat: ${hash.slice(0, 16)}`); return send(200, { ok: true, sats: d.sats });
+            }
+            // "already paid" / "in transition" is no proof that nothing moved (kanban #2375): the row stays for the sweep to decide
+            if (/already paid|in transition|already exists/i.test(`${paid.err} ${paid.out}`)) unclear = true;
+          }
+          const after = readBook();
+          if (unclear) { const mine = mineOf(after); if (mine) { mine.payers = [...askedPayers]; saveBook(after); } }
+          else { after.refills = (after.refills || []).filter((r) => !(r.id === id && r.pending)); saveBook(after); }
+        } finally { GRANTING.delete(hash); }
         send(200, { ok: false, why: 'could not pay just now' });
       } catch { send(400, { ok: false, why: 'not JSON' }); }
     });
@@ -542,10 +878,12 @@ createServer((req, res) => {
     if (!isAdmin(req)) return send(403, { ok: false, why: 'not the admin code' });
     const q = new URL(req.url, 'http://x').searchParams;
     const withReward = (r, ours) => { const w = FEEDBACK.rewards({ pubkey: r.pubkey }).find((x) => x.report === r.id);
-      return { ...r, lnAddress: FEEDBACK.addressOf(r.id), ours: ours.has(r.pubkey), played: PLAYED.played(r.pubkey), rounds: PLAYED.history ? PLAYED.history(r.pubkey) : null, nodeBounty: FEEDBACK.nodeBountyFor(r), reward: w ? { ...w, lnurl: w.state === 'paid' ? null : FEEDBACK.lnurlOf(w.k1, { base: PUBLIC_BASE }), page: `${PUBLIC_BASE}/lnurlw/${w.k1}` } : null }; };
+      return { ...r, lnAddress: FEEDBACK.addressOf(r.id), ours: ours.has(r.pubkey), played: PLAYED.played(r.pubkey), rounds: PLAYED.history ? PLAYED.history(r.pubkey) : null, nodeBounty: FEEDBACK.nodeBountyFor(r), season2: S2 ? { approval: S2.approval(r.id), links: S2.links(r.pubkey), flags: S2.flagsOf(r.pubkey) } : null, realUser: S2 && S2.realUserOf ? S2.realUserOf(r.pubkey) : null, playedMark: S2 && S2.playedMarkOf ? S2.playedMarkOf(r.id) : null, reward: w ? { ...w, lnurl: w.state === 'paid' ? null : FEEDBACK.lnurlOf(w.k1, { base: PUBLIC_BASE }), page: `${PUBLIC_BASE}/lnurlw/${w.k1}` } : null }; };
     if (path === '/feedback/admin/list' && req.method === 'GET') {
       PLAYED.fresh().catch(() => 0).then(() => { const ours = ourKeys();
-        send(200, { ok: true, reports: FEEDBACK.list({ state: q.get('state'), type: q.get('type'), game: q.get('game'), pubkey: q.get('pubkey'), source: q.get('source') }).map((r) => withReward(r, ours)), budget: { ...FEEDBACK.budget({ rules: RULES }), network: BOUNTY_NETWORK },   // the payout network, for the admin's wording (kanban #1450)
+        send(200, { ok: true, reports: FEEDBACK.list({ state: q.get('state'), type: q.get('type'), game: q.get('game'), pubkey: q.get('pubkey'), source: q.get('source') }).map((r) => withReward(r, ours))
+          // kanban #2904: lite=1 leaves each report's client debug out (1.7 of the list's 2.1 MB); the report view reads it with the report
+          .map((r) => (q.get('lite') === '1' && r.debug ? { ...r, debug: null, debugChars: String(r.debug).length } : r)), budget: { ...FEEDBACK.budget({ rules: RULES }), network: BOUNTY_NETWORK },   // the payout network, for the admin's wording (kanban #1450)
           // THE SATS EACH LEVEL PAYS (the owner 2026-11-10: "Da muss er auch die sats automatisch ausfüllen die wir definiert haben"): the review form fills them in
           levels: [...REWARD_LEVELS.map((l) => ({ level: l.level, sats: l.sats })), { level: 'node', sats: NODE_BOUNTY_BASE_SATS }] }); });
       return undefined;
@@ -570,6 +908,10 @@ createServer((req, res) => {
       if (m && req.method === 'GET') { const f = shotFile(m[1]); if (!f) return send(404, { ok: false, why: 'no such screenshot' });
         res.writeHead(200, { 'content-type': f.endsWith('.png') ? 'image/png' : f.endsWith('.webp') ? 'image/webp' : 'image/jpeg', 'cache-control': 'private, no-store', ...cors });
         return res.end(readFileSync(f)); } }
+    if (S2 && path === '/feedback/admin/season' && req.method === 'GET') {
+      const season = Number(q.get('season')) || S2.seasonNow(Date.now());
+      return send(200, { ok: true, s1EndMs: Number.isFinite(S1_END_MS) ? S1_END_MS : null, s2StartMs: Number.isFinite(S2_START_MS) ? S2_START_MS : null, started: S2_STARTED(), weekEndMs: seasonEndMs(season, S2_START_MS, S2_END_MS), pot: S2.pot(season), approvals: S2.approvals({ season }), waiting: S2.approvals({ state: 'waiting' }), verifiers: Object.keys(S2_VERIFY) });
+    }
     if (path === '/feedback/admin/export.csv' && req.method === 'GET') {
       res.writeHead(200, { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': 'attachment; filename="arena-feedback.csv"', 'cache-control': 'no-store', ...cors });
       return res.end(FEEDBACK.csv());
@@ -593,36 +935,113 @@ createServer((req, res) => {
             if (chk.ok && chk.owner && chk.owner.other) return send(200, { ok: false, why: 'the node names another owner: its bounty goes to that owner\'s report', checks: chk.checks, owner: chk.owner });
             if (!chk.ok || !chk.passes) return send(200, { ok: false, why: `the node checklist does not pass: ${(chk.checks || []).filter((c) => !c.ok).map((c) => `${c.label} (${c.says})`).join('; ') || chk.why}`, checks: chk.checks || null });
           }
+          // SEASON 2 (kanban #2623): the amount is the season's rule, not the admin's - the level (or a follow-up) in full only for a reporter who played a round and has a verified social account, else 25 % (kanban #2784), the
+          // community bonus from the reporter's links read live now, held to the season's pot (past it the report waits for the next season, still new)
+          if (b.season2 === true) {
+            if (!S2) return send(503, { ok: false, why: 'Season 2 is not kept here' });
+            if (!S2_STARTED()) return send(200, { ok: false, why: `Season 2 starts ${S2_START_DAY}` });
+            s2Reconcile(b.id);   // kanban #3220: a half-done earlier approval is settled first
+            const r = FEEDBACK.report(b.id);
+            if (!r) return send(200, { ok: false, why: 'no such report' });
+            if (r.state !== 'new') return send(200, { ok: false, why: `a ${r.state} report is not approved for money` });
+            const level = String(b.severity || '').toLowerCase();
+            await S2.verify(r.pubkey, S2_VERIFY, { cause: 'approve' });   // kanban #2876: a node report too - its bounty needs a proven human now
+            await PLAYED.fresh().catch(() => 0);   // kanban #2784: the full level only for a reporter who played a round (and is proven human)
+            const p = S2.plan(r, { level, codeOnly: b.codeOnly === true, followUp: b.followUp === true, played: playedFor(r) });
+            if (!p.ok) return send(200, p);
+            // kanban #2787: from Season 3 on a used-up pot is no bounty - nothing waits; a line on the report's log says why
+            if (p.noBounty) { FEEDBACK.remark(r.id, p.why, { by }); return send(200, { ok: false, noBounty: true, why: p.why, pot: p.pot }); }
+            if (p.waits) return send(200, { ok: false, waits: true, why: `Season ${p.season}'s pot has ${p.pot.leftSats} sat left and this report is ${p.sats}: it waits for the next season`, season2: S2.wait(r, p, { by }) });
+            return send(200, s2Approve(r, p, by));
+          }
           // A CRITICAL BUG ABOVE THE BANDS IS THE OWNER'S OWN CALL: critical: true lifts mostSats to the amount for this one approval
           const rules = b.critical === true ? { ...RULES, mostSats: Math.max(Number(b.amountSats) || 0, RULES.mostSats || 0) } : RULES;
-          return send(200, FEEDBACK.approve(b.id, b.amountSats, { played: PLAYED.played, excluded: ourKeys(), rules, severity: b.severity || null, by }));
+          // RECEIVED AFTER WEEK 1 ENDED (kanban #2639, the owner 2026-11-13 20:37:31Z: "Alles was nun reinkommt ist automatisch week 2"): never approved in
+          // Week 1, whatever its budget says - it takes the overflow path below
+          const late0 = FEEDBACK.report(b.id);
+          const late = !!(S2 && Number.isFinite(S1_END_MS) && late0 && late0.state === 'new' && late0.receivedMs >= S1_END_MS);
+          const s1 = late ? { ok: false, why: 'received after Season 1 ended' } : FEEDBACK.approve(b.id, b.amountSats, { played: PLAYED.played, excluded: ourKeys(), rules, severity: b.severity || null, by });
+          // PAST THE WEEK 1 BUDGET THE REPORT MOVES TO WEEK 2 (the owner 2026-11-13 ~17:55Z): kept waiting, a note on its log, approved by the Week 2
+          // rules once Week 2 runs; a report that fits stays Week 1 as before
+          if (late || (!s1.ok && S2 && /this week's budget/.test(String(s1.why || '')))) {
+            const r = FEEDBACK.report(b.id);
+            const level = String(b.severity || '').toLowerCase() || S2_LEVEL_BY_SATS[Number(b.amountSats)] || '';
+            const p = r ? S2.plan(r, { level, codeOnly: b.codeOnly === true, followUp: b.followUp === true, played: playedFor(r) }) : { ok: false };
+            if (!p.ok) return send(200, s1);
+            const waiting = S2.wait(r, p, { by });
+            FEEDBACK.remark(r.id, late ? 'received after Season 1 ended: Season 2 rules' : `moved to Season 2: the Season 1 budget is used up; approved by the Season 2 rules${S2_START_DAY ? ` once Season 2 starts (${S2_START_DAY})` : ''}`, { by });
+            return send(200, { ok: true, movedToSeason2: true, why: s1.why, season2: waiting });
+          }
+          return send(200, s1);
         }
-        if (b.action === 'reject') return send(200, FEEDBACK.move(b.id, 'rejected', { reason: b.reason, by }));
-        if (b.action === 'duplicate') return send(200, FEEDBACK.move(b.id, 'duplicate', { duplicateOf: b.of, by }));
-        if (b.action === 'reward') { const w = FEEDBACK.createReward(b.id, { network: BOUNTY_NETWORK, comment: b.comment ?? null, by });
+        // A DUPLICATE OF A KNOWN TICKET (kanban #2745): with dupTicket, the ticket's title and description go behind a secret link for the reporter
+        // kanban #2904: a rejection or a duplicate takes the Season 2 approval back in the same step (the report's amount is cleared by the move)
+        // kanban #3220: s2Reconcile first - a rejection whose voidApproval failed before is taken back now, even though the move itself is refused again
+        const voidS2 = (out, why) => { if (out.ok && S2 && S2.voidApproval) out.approvalVoided = S2.voidApproval(b.id, { why }); return out; };
+        if (S2 && (b.action === 'reject' || b.action === 'duplicate')) s2Reconcile(b.id);
+        if (b.action === 'reject') { const out = voidS2(FEEDBACK.move(b.id, 'rejected', { reason: b.reason, by }), 'the report was rejected');
+          if (!out.ok || b.dupTicket == null) return send(200, out);
+          return dupFromTicket(b.id, b.dupTicket).then((d) => send(200, { ...out, dupLink: d }), () => send(200, { ...out, dupLink: { ok: false, why: 'the ticket could not be read' } })); }
+        if (b.action === 'dup-link') return dupFromTicket(b.id, b.ticket).then((d) => send(200, d), () => send(200, { ok: false, why: 'the ticket could not be read' }));
+        if (b.action === 'duplicate') return send(200, voidS2(FEEDBACK.move(b.id, 'duplicate', { duplicateOf: b.of, by }), 'the report is a duplicate'));
+        const rewardAct = (b, by, capSats) => { const w = FEEDBACK.createReward(b.id, { network: BOUNTY_NETWORK, comment: b.comment ?? null, by, capSats });
           if (!w.ok) return send(200, w);
           const lnurl = FEEDBACK.lnurlOf(w.reward.k1, { base: PUBLIC_BASE });
           // STRAIGHT TO THE REPORT'S LIGHTNING ADDRESS, WITH THE COMMENT (kanban #1474): when it names one and the admin did not ask for the link only; the
           // withdraw link stays the fallback (a wallet that gives no invoice, a failed route) and is answered too
           if (b.payTo === 'link' || !FEEDBACK.addressOf(b.id) || w.reward.state !== 'open') return send(200, { ...w, lnurl, address: FEEDBACK.addressOf(b.id) });
           if (!BOUNTY_PAYER || !bountyOn()) return send(200, { ...w, lnurl, paid: { ok: false, why: 'rewards are off' } });
-          return one(() => FEEDBACK.payToAddress(w.reward.k1, { invoiceFor: (a, sats, c) => lnAddressInvoice(a, sats, c), decode: bountyDecode, pay: bountyPay, network: BOUNTY_NETWORK }))
+          return oneBounty(async () => FEEDBACK.payToAddress(w.reward.k1, { invoiceFor: (a, sats, c) => lnAddressInvoice(a, sats, c), decode: bountyDecode, pay: bountyPay, network: BOUNTY_NETWORK, payer: await bountyPayerId() }))
             .then((paid) => send(200, { ...w, reward: paid.reward || w.reward, lnurl: paid.ok ? null : lnurl, paid }), (e) => send(200, { ...w, lnurl, paid: { ok: false, why: e.message } })); }
+        // A SEASON 2 REWARD PAYS WHAT IS PAYABLE NOW (kanban #2756, #1489 r7-faucet-3; the owner 2026-11-14, #2641): the reporter's links read again
+        // and S2.payable's amount - a community bonus lost since the approval is not paid - caps the link and the address payout
+        if (b.action === 'reward') return (async () => {
+          let capSats = null;
+          const rep = S2 ? FEEDBACK.report(b.id) : null;
+          { const r0 = FEEDBACK.report(b.id); if (r0 && (r0.state === 'rejected' || r0.state === 'duplicate')) return send(200, { ok: false, why: `a ${r0.state} report gets no reward` }); }   // kanban #2904
+          if (rep && S2.approval && S2.approval(rep.id)) { await S2.verify(rep.pubkey, S2_VERIFY, { cause: 'payout' }); const p = S2.payable(rep.id); if (p && p.ok) capSats = p.payableSats; }
+          return rewardAct(b, by, capSats);
+        })().catch((e) => send(200, { ok: false, why: e.message }));
+        // WITHDRAW AN OPEN REWARD LINK (kanban #2786): open -> void, its LNURL refuses; a paid or paying link stays
+        if (b.action === 'void-reward') return send(200, FEEDBACK.voidReward(b.id, { why: b.why ?? null, by }));
         if (b.action === 'note') return send(200, FEEDBACK.note(b.id, { ticket: b.ticket, severity: b.severity, by }));
+        // kanban #2875: the owner's "real user" mark on the report's key (or a named key), set or cleared; no payout share changes with it
+        // kanban #2875: the owner's "played" mark on one report - the Season 2 amount then counts it as played
+        if (b.action === 'played-mark' || b.action === 'played-mark-clear') {
+          if (!S2 || !S2.markPlayed) return send(503, { ok: false, why: 'no Season 2 book here' });
+          if (!FEEDBACK.report(b.id)) return send(404, { ok: false, why: 'no such report' });
+          return send(200, b.action === 'played-mark' ? S2.markPlayed(b.id, { by }) : S2.clearPlayed(b.id, { by }));
+        }
+        if (b.action === 'real-user' || b.action === 'real-user-clear') {
+          if (!S2 || !S2.markRealUser) return send(503, { ok: false, why: 'no Season 2 book here' });
+          const key = b.pubkey ? String(b.pubkey).toLowerCase() : (FEEDBACK.report(b.id) || {}).pubkey;
+          if (!key) return send(404, { ok: false, why: 'no such report' });
+          return send(200, b.action === 'real-user' ? S2.markRealUser(key, { name: b.name, note: b.note, by }) : S2.clearRealUser(key, { by }));
+        }
+
+        // SEASON 2 (kanban #2623): read a reporter's links live; before paying, the amount with the bonus read again; the draw's entries, read again
+        if (S2 && b.action === 'verify') { const r = b.id ? FEEDBACK.report(b.id) : null; const k = r ? r.pubkey : String(b.pubkey || '');
+          if (!/^[0-9a-f]{64}$/.test(k)) return send(200, { ok: false, why: 'no such report or key' });
+          const flags = await S2.verify(k, S2_VERIFY, { cause: 'admin' }); return send(200, { ok: true, flags, links: S2.links(k) }); }
+        if (S2 && b.action === 'payable') { const r = FEEDBACK.report(b.id); if (!r) return send(200, { ok: false, why: 'no such report' });
+          await S2.verify(r.pubkey, S2_VERIFY, { cause: 'payout' }); return send(200, S2.payable(r.id)); }
+        if (S2 && b.action === 'draw-entries') { const season = Number(b.season) || S2.seasonNow(Date.now());
+          for (const k of S2.keysOfSeason(season)) await S2.verify(k, S2_KEY_PLATFORMS(['telegram', 'discord', 'armada']), { cause: 'draw' });
+          return send(200, { ok: true, season, entries: S2.drawEntries(season) }); }
         return send(400, { ok: false, why: 'an action is approve, reject, duplicate, reward or note' });
       }).catch(() => send(500, { ok: false, why: 'try again' })));
       return undefined;
     }
     return send(404, { ok: false, why: 'no such admin door' });
   }
-  // A REWARD'S LNURL-WITHDRAW (kanban #1342, LUD-03): the request, then the callback that pays the wallet's invoice once - one at a time (one())
+  // A REWARD'S LNURL-WITHDRAW (kanban #1342, LUD-03): the request, then the callback that pays the wallet's invoice once - one at a time (oneBounty(), kanban #2023)
   { const m = /^\/lnurlw\/([0-9a-f]{64})(\/callback)?$/.exec(path);
     if (m) {
       if (!FEEDBACK || !BOUNTY_PAYER || !bountyOn()) return send(503, { status: 'ERROR', reason: 'rewards are off' });
       if (!m[2]) return send(200, FEEDBACK.withdrawRequest(m[1], { base: PUBLIC_BASE, network: BOUNTY_NETWORK }));
       const q = new URL(req.url, 'http://x').searchParams;
       if (q.get('k1') !== m[1]) return send(200, { status: 'ERROR', reason: 'k1 does not match the link' });
-      return one(() => FEEDBACK.claim(m[1], q.get('pr') || '', { decode: bountyDecode, pay: bountyPay, network: BOUNTY_NETWORK })).then((r) => send(200, r), () => send(200, { status: 'ERROR', reason: 'try again in a minute' }));
+      return oneBounty(async () => FEEDBACK.claim(m[1], q.get('pr') || '', { decode: bountyDecode, pay: bountyPay, network: BOUNTY_NETWORK, payer: await bountyPayerId() })).then((r) => send(200, r), () => send(200, { status: 'ERROR', reason: 'try again in a minute' }));
     } }
   // A SCREENSHOT FOR A REPORT (the owner 2026-11-07): the raw image, before the report is signed; answers its SHA-256, which the report then names
   if (path === '/feedback/screenshot') {
@@ -649,9 +1068,20 @@ createServer((req, res) => {
       const bytes = Buffer.concat(parts), kind = imageKind(bytes);
       if (!kind) { release(); return send(415, { ok: false, why: 'a screenshot is a PNG, JPEG or WebP image' }); }
       const h = createHash('sha256').update(bytes).digest('hex');
-      const fresh = !shotFile(h);
-      try { if (fresh) writeFileSync(pathJoin(SHOTS, `${h}.${kind}`), bytes); } catch { release(); return send(507, { ok: false, why: 'the faucet has no room for screenshots just now: send the report without one' }); }
+      // A FILE UNDER A HASH IS THAT HASH'S IMAGE (kanban #2101): the file was written in place, and an upload whose hash had a file wrote nothing - a
+      // faucet killed mid-write left a cut file under the image's name, and every later upload of it was answered kept while the cut bytes stayed for
+      // good. Each image is now written to a temp name and renamed to <h>.<kind> (as saveBook does), and a file already there whose bytes do not hash
+      // to h is written again; one that does has its mtime refreshed, so the hourly sweep does not take an image that was just uploaded again.
+      const had = shotFile(h);
+      let intact = false;
+      if (had) { try { intact = createHash('sha256').update(readFileSync(had)).digest('hex') === h; } catch { intact = false; } }
+      const fresh = !intact;
+      try {
+        if (fresh) { const to = pathJoin(SHOTS, `${h}.${kind}`), tmp = `${to}.${process.pid}.new`; writeFileSync(tmp, bytes); renameSync(tmp, had && had !== to ? had : to); }
+        else { try { const now = new Date(); utimesSync(had, now, now); } catch { /* the sweep's next hour */ } }
+      } catch { release(); return send(507, { ok: false, why: 'the faucet has no room for screenshots just now: send the report without one' }); }
       settled = true; slot.bytes = fresh ? bytes.length : 0;
+      dayLimitNote({ k: 'shot', ip, bytes: slot.bytes });   // kanban #2284: the day's screenshot count outlives a restart
       return send(200, { ok: true, sha256: h });
     });
     return undefined;
@@ -701,11 +1131,78 @@ createServer((req, res) => {
     lnAddressWorks(asked).then((w) => send(200, { ok: !!w.ok, why: w.ok ? null : w.why }), (e) => send(200, { ok: false, why: String((e && e.message) || e).slice(0, 120) }));
     return;
   }
-  // THE PUBLIC PAYOUT LOG (kanban #2619): what bitcoinarena.io/bounty/ lists - Season 1, sorted by report, each with its time (UTC)
+  // SEASON 2, THE PUBLIC PART (kanban #2623): the open-issues list (areas and ticket numbers only), the season's pot, and a reporter's own links
+  if (path === '/feedback/open-issues' && req.method === 'GET') {
+    let o = null; try { o = env.FAUCET_OPEN_ISSUES ? JSON.parse(readFileSync(env.FAUCET_OPEN_ISSUES, 'utf8')) : null; } catch { o = null; }
+    return send(200, cleanOpenIssues(o));
+  }
+  if (S2 && path === '/feedback/season' && req.method === 'GET') { const p = S2.pot(S2.seasonNow(Date.now()));
+    // usedUp (kanban #2787): from Season 3 on, a pot that cannot take even the smallest payout (a useful note at 25 %) means no bounty this season
+    return send(200, { season: p.season, potSats: p.potSats, usedSats: p.usedSats, leftSats: p.leftSats, drawPrizeSats: p.drawPrizeSats, nodes: p.nodes, nodesMost: p.nodesMost,
+      usedUp: p.season >= NO_CARRY_FROM_SEASON && p.leftSats < Math.floor((LEVEL_SATS.useful * BOT_PCT) / 100), nextSeasonMs: seasonEndMs(p.season, S2_START_MS, S2_END_MS),
+      // kanban #2789: this season's reports still waiting for review (a number only), for the stage pot banner from 98 %
+      pendingNew: FEEDBACK.countNew(seasonEndMs(p.season - 1, S2_START_MS, S2_END_MS) ?? 0) }); }
+  if (S2 && (path === '/feedback/link' || path === '/feedback/verify' || path === '/feedback/social')) {
+    if (req.method === 'OPTIONS') { res.writeHead(204, { ...cors, 'access-control-allow-methods': 'POST', 'access-control-allow-headers': 'authorization, content-type', 'access-control-max-age': '86400' }); return res.end(); }
+    if (req.method !== 'POST') return send(405, { ok: false, why: 'POST' });
+    let ev = null;
+    try { const h = String(req.headers.authorization || ''); if (h.startsWith('Nostr ')) ev = JSON.parse(Buffer.from(h.slice(6), 'base64').toString('utf8')); } catch { ev = null; }
+    if (!ev) return send(401, { ok: false, why: 'sign in with your key (NIP-98)' });
+    let who = null, last = null;
+    for (const base of S2_BASES) { const m = FEEDBACK.mine(ev, { url: base + path.slice('/feedback'.length), method: 'POST' }); if (m.ok) { who = m.pubkey; break; } last = m; }
+    if (!who) return send(401, { ok: false, why: last ? last.why : 'that sign-in does not stand' });
+    // THE SOCIAL SCREEN (kanban #2641): { x, telegram, discord, armada } names, each read live; no names answers the stored links and the bonus
+    if (path === '/feedback/social') {
+      let raw = '';
+      req.on('data', (c) => { raw += c; if (raw.length > 4096) req.destroy(); });
+      req.on('end', () => {
+        let asked = {}; try { asked = raw ? JSON.parse(raw) : {}; } catch { return send(400, { ok: false, why: 'JSON with x, telegram, discord, armada' }); }
+        if (!asked || typeof asked !== 'object' || Array.isArray(asked)) return send(400, { ok: false, why: 'JSON with x, telegram, discord, armada' });
+        const any = ['x', 'telegram', 'discord', 'armada', 'nostr'].some((k) => typeof asked[k] === 'string' && asked[k].trim());
+        if (any) {
+          const lastAsk = S2_SOCIAL_ASKS.get(who) || 0;
+          if (Date.now() - lastAsk < S2_SOCIAL_GAP_MS) return send(429, { ok: false, why: 'one check every 15 seconds' });
+          if (!s2LiveSlot()) return send(429, { ok: false, why: 'too many checks right now - try again in a minute' });   // kanban #2646
+          S2_SOCIAL_ASKS.set(who, Date.now()); if (S2_SOCIAL_ASKS.size > 5000) S2_SOCIAL_ASKS.delete(S2_SOCIAL_ASKS.keys().next().value);
+        }
+        return socialCheck(S2, who, any ? asked : {}, S2_NAMES).then((j) => send(200, { ...j, on: Object.keys(S2_NAMES) }), () => send(200, { ok: false, why: 'try again' }));
+      });
+      return undefined;
+    }
+    // LINK CODES PER CALLER AND IN ALL, AN HOUR (kanban #2666, #1489 r2-faucet-1): a key costs nothing, so one caller signing in with a fresh key
+    // per request made a code (a row) each - 400 in 1.2 s, none refused. Counted by the caller's ipKey (an IPv6 /64 is one) and for every caller
+    if (path === '/feedback/link') { const hour = Math.floor(Date.now() / 3600000), k = ipKey(ipOf(req)) || String(ipOf(req) || '');
+      if (S2_LINK_HOUR.hour !== hour) { S2_LINK_HOUR.hour = hour; S2_LINK_HOUR.n = 0; S2_LINK_ASKS.clear(); }
+      const mine = S2_LINK_ASKS.get(k) || 0;
+      if (mine >= S2_LINK_PER_CALLER_HOUR) return send(429, { ok: false, why: 'too many link codes from this address this hour - try again later' });
+      if (S2_LINK_HOUR.n >= S2_LINK_PER_HOUR) return send(429, { ok: false, why: 'too many link codes this hour - try again later' });
+      S2_LINK_ASKS.set(k, mine + 1); S2_LINK_HOUR.n += 1; if (S2_LINK_ASKS.size > 5000) S2_LINK_ASKS.delete(S2_LINK_ASKS.keys().next().value);
+      const c = S2.makeCode(who); return send(200, { ...c, links: S2.links(who).map(({ userId, ...l }) => l), flags: S2.flagsOf(who) }); }
+    const lastAsk = S2_VERIFY_ASKS.get(who) || 0;
+    if (Date.now() - lastAsk < S2_VERIFY_GAP_MS) return send(429, { ok: false, why: 'one check a minute' });
+    if (!s2LiveSlot()) return send(429, { ok: false, why: 'too many checks right now - try again in a minute' });   // kanban #2646
+    S2_VERIFY_ASKS.set(who, Date.now()); if (S2_VERIFY_ASKS.size > 5000) S2_VERIFY_ASKS.delete(S2_VERIFY_ASKS.keys().next().value);
+    S2.verify(who, S2_VERIFY, { cause: 'reporter' }).then((flags) => send(200, { ok: true, flags, links: S2.links(who).map(({ userId, ...l }) => l) }), () => send(200, { ok: false, why: 'try again' }));
+    return undefined;
+  }
+  // A DUPLICATE'S TICKET TEXT (kanban #2745): only by its secret token; the ticket number, title and description, nothing else; never indexed or cached
+  { const m = /^\/feedback\/dup\/([0-9a-f]{32})$/.exec(path);
+    if (m && req.method === 'GET') { const x = FEEDBACK ? FEEDBACK.dupLink(m[1]) : null;
+      const H = { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow', 'referrer-policy': 'no-referrer' };
+      if (!x) { res.writeHead(404, H); return res.end('<!doctype html><meta name="robots" content="noindex"><title>Not found</title><p>Not found.</p>'); }
+      const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+      res.writeHead(200, H);
+      return res.end(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex, nofollow"><title>Ticket #${x.ticket}</title>
+<style>body{margin:0;background:#0d1117;color:#e6edf3;font:16px/1.5 system-ui,sans-serif;padding:28px 16px}main{max-width:720px;margin:0 auto}h1{font-size:22px;margin:0 0 6px}p.d{color:#8b949e;font-size:14px;margin:0 0 18px}pre{white-space:pre-wrap;word-break:break-word;background:#161b22;border:1px solid #30363d;border-radius:10px;padding:14px;font:14px/1.5 ui-monospace,monospace}</style></head>
+<body><main><h1>Ticket #${x.ticket}: ${esc(x.title)}</h1><p class="d">The ticket your report matched, as it read on ${new Date(x.madeMs).toISOString().slice(0, 10)}. This link is only for you.</p><pre>${esc(x.body)}</pre></main></body></html>`); } }
+  // THE PUBLIC PAYOUT LOG (kanban #2619): what bitcoinarena.io/bounty/ lists, sorted by report, each with its time (UTC) and its own season
+  // (kanban #2868, feedback #091/#092: it was 'Season 1' for every row, so the page's Season 1 sum took in the Season 2 payouts): a report with a
+  // Season 2 book approval is paid from that approval's season, every other one from Season 1's budget
   if (path === '/feedback/paid-log' && req.method === 'GET') {
     let rows = []; try { rows = FEEDBACK ? FEEDBACK.paidLog() : []; } catch { rows = []; }
     const at = (ms) => (ms ? new Date(ms).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : '');
-    return send(200, rows.map((x) => ({ season: 'Season 1', date: at(x.paidMs), reason: `Feedback #${String(x.number).padStart(3, '0')}${x.severity ? ` (${x.severity})` : ''}`, channel: 'bug bounty', sats: x.sats })));
+    const seasonOf = (id) => { try { const a = S2 ? S2.approval(id) : null; return a && Number.isInteger(a.season) && a.season > 0 ? a.season : 1; } catch { return 1; } };
+    return send(200, rows.map((x) => ({ season: `Season ${seasonOf(x.id)}`, date: at(x.paidMs), reason: `Feedback #${String(x.number).padStart(3, '0')}${x.severity ? ` (${x.severity})` : ''}`, channel: 'bug bounty', sats: x.sats })));
   }
   if (path === '/feedback/rewards' && req.method === 'GET') {
     // the amounts only toward the private page's origin (the owner 2026-11-07: "Den bounty Funktion ausmachen bis ich es sage und nur auf einer privaten URL aktivieren")
@@ -728,7 +1225,7 @@ createServer((req, res) => {
       if (m.ok && !(bountyOn() && BOUNTY_ORIGINS.includes(String(req.headers.origin || '')))) return send(200, { ...m, reports: m.reports.map((r) => ({ ...r, amountSats: null, reward: null })) });
       if (m.ok) { const byReport = new Map(FEEDBACK.rewards({ pubkey: m.pubkey }).map((w) => [w.report, w]));
         return send(200, { ...m, reports: m.reports.map((r) => { const w = byReport.get(r.id);
-          return { ...r, reward: w ? { sats: w.amountSats, network: w.network, state: w.state, comment: w.comment, address: w.address, paidMs: w.paidMs, lnurl: w.state === 'paid' ? null : FEEDBACK.lnurlOf(w.k1, { base: PUBLIC_BASE }) } : null }; }) }); }   // comment, address: kanban #1474
+          return { ...r, reward: w ? { sats: w.amountSats, network: w.network, state: w.state, comment: w.comment, address: w.address, paidMs: w.paidMs, lnurl: w.state !== 'open' ? null : FEEDBACK.lnurlOf(w.k1, { base: PUBLIC_BASE }) } : null }; }) }); }   // comment, address: kanban #1474
       last = m; }
     return send(401, { ok: false, why: last ? last.why : 'that sign-in does not stand' });
   }
@@ -744,7 +1241,9 @@ createServer((req, res) => {
       // A REPORT HOLDS ITS PLACE BEFORE ITS FIRST WAIT (kanban #1808): it was counted only after the chat post came back, so a burst from one address
       // all passed feedbackDecide with none counted yet and FEEDBACK_PER_IP_PER_DAY / FEEDBACK_PER_DAY never tripped. Now its slot is pushed as soon as
       // it passes, and given back if it is not posted after all; earlier days' entries go first, so REPORTS stays one day long
-      let slot = null, posted = false;
+      let slot = null, posted = false, own = null;
+      // A SIGNED REPORT THE STORE KEPT IS ANSWERED KEPT (kanban #1985, #2536): its answer when the chat post after it fails - never "could not be kept"
+      let keptAnswer = null;
       const giveBack = () => { const i = slot ? REPORTS.indexOf(slot) : -1; if (i >= 0) REPORTS.splice(i, 1); slot = null; };
       { const day = Math.floor(Date.now() / DAY_MS); while (REPORTS.length && Math.floor(REPORTS[0].atMs / DAY_MS) !== day) REPORTS.shift(); }
       try {
@@ -752,30 +1251,68 @@ createServer((req, res) => {
         // every address check below goes through the caller's budget (kanban #1511): this name stands for addressCheckFor(ip, ...) here
         const lnAddressWorks = (a) => addressCheckFor(ip, a);
         // A SIGNED REPORT (kanban #1342): its own words go to the chat, and it is kept for review - only if it stands
-        let b = b0, kept = null, counted = false;
+        let b = b0, kept = null, words = {}, counted = false;
         if (b0.event) {
           if (!FEEDBACK) return send(503, { ok: false, why: 'signed reports are not kept here' });
           const e = b0.event;
           const tagOf = (k) => { const t = Array.isArray(e.tags) ? e.tags.find((x) => Array.isArray(x) && x[0] === k) : null; return t ? String(t[1] ?? '') : ''; };
-          let words = {}; try { words = JSON.parse(e.content); } catch { words = {}; }
+          try { words = JSON.parse(e.content); } catch { words = {}; }
           // and where a bounty for it is paid, if the reporter named it (kanban #1363): the signed content's lnAddress
           b = { ...b0, text: `${String(words.happened || '')}${words.expected ? `\nExpected: ${String(words.expected)}` : ''}${words.lnAddress ? `\nBounty address: ${String(words.lnAddress).slice(0, 200)}` : ''}`, build: tagOf('build'), game: tagOf('game'), round: tagOf('round') };
-          const pre = feedbackDecide({ ...b, ip }, REPORTS);
+          // A RESEND OF A KEPT EVENT (kanban #2456, #2498): a page sending its report again after a lost answer or a reload, or anyone holding the event,
+          // booked a new slot and posted the words to the chat on every post - 50 chat posts of one report, and the reporter's next report refused.
+          // A kept event answers its first result here, before any slot; its chat post is tried again only when the first one failed (UNPOSTED)
+          // (only the same bytes: the id is the hash of the event, so a post naming a kept id is that event or answers nothing here)
+          let had = null;
+          try { if (/^[0-9a-f]{64}$/.test(String(e.id)) && eventId(e) === e.id) had = FEEDBACK.report(e.id); } catch { had = null; }
+          const firstAnswer = (x) => ({ ok: true, id: x.id, kept: false, number: x.number ?? null, label: x.label || null });
+          if (had && !UNPOSTED.has(had.id)) return send(200, firstAnswer(had));
+          if (had) {
+            UNPOSTED.delete(had.id);   // one try at a time; put back if it fails again
+            const d1 = feedbackDecide({ ...b, ip, signed: true }, []);
+            if (!d1.ok) { UNPOSTED.add(had.id); return send(200, d1); }
+            try {
+              const token = readFileSync(env.FAUCET_CHAT_TOKEN_FILE, 'utf8').trim();
+              const r = await fetch(`${env.FAUCET_CHAT_URL}/api/channels/${env.FAUCET_CHAT_CHANNEL}/messages`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ text: (had.label ? `${had.label} · ` : '') + d1.text }), signal: AbortSignal.timeout(10000) });
+              if (!r.ok) throw new Error('chat');
+            } catch { UNPOSTED.add(had.id); return send(200, { ...firstAnswer(had), posted: false }); }   // kept already (kanban #1985): its chat post is tried again on the next send
+            return send(200, firstAnswer(had));
+          }
+          const pre = feedbackDecide({ ...b, ip, signed: true }, REPORTS);
           if (!pre.ok) return send(200, pre);
+          // DECIDED AND COUNTED AT ONCE (kanban #2158, #2226): a signed report's slot is taken here, before its first await (the address checks),
+          // so a burst sent together no longer decides against the same count; given back when the report is not taken after all
+          own = { ip, atMs: Date.now(), signed: true }; REPORTS.push(own); slot = own;
           // THE BOUNTY ADDRESS MUST WORK (the owner 2026-11-10, #1342): asked before the report is kept, so a reward is never made for an address nothing pays to
-          if (words.lnAddress) { const w = await lnAddressWorks(words.lnAddress); if (!w.ok) return send(200, { ok: false, why: `That Lightning address does not work: ${w.why}. Check it, or leave it empty.` }); }
+          // THE ADDRESS PAID IS THE ADDRESS CHECKED (kanban #2468, #1489 audit44 refute of #1677): an lnAddress that is not a string is refused (it was
+          // checked as String() of it while the payout took the unchecked lud16 tag), and the address a reward would go to (reportAddress, what
+          // FEEDBACK.addressOf answers) is checked too when it is not the one just checked - a lud16 tag alone, with no content address, included
+          if (words && typeof words === 'object' && words.lnAddress !== undefined && words.lnAddress !== null && words.lnAddress !== '' && typeof words.lnAddress !== 'string') { giveBack(); return send(200, { ok: false, why: 'That Lightning address is not text. Check it, or leave it empty.' }); }
+          if (words.lnAddress) { const w = await lnAddressWorks(words.lnAddress); if (!w.ok) { giveBack(); return send(200, { ok: false, why: `That Lightning address does not work: ${w.why}. Check it, or leave it empty.` }); } }
+          { const pays = reportAddress(e); if (pays && pays !== String(words.lnAddress || '')) { const w = await lnAddressWorks(pays); if (!w.ok) { giveBack(); return send(200, { ok: false, why: `That Lightning address does not work: ${w.why}. Check it, or leave it empty.` }); } } }
           kept = FEEDBACK.take(e, { hasShot: (h) => !!shotFile(h) });
-          if (!kept.ok) return send(200, kept);
+          if (!kept.ok) { giveBack(); return send(200, kept); }
+          // the same event kept meanwhile by a post running beside this one (kanban #2456, #2498): its first result, no slot, no chat post
+          if (!kept.kept) { giveBack(); return send(200, { ok: true, id: kept.id, kept: false, number: kept.number ?? null, label: kept.label || null }); }
           // COUNTED WHEN KEPT (audit 6, kanban #1424): it was counted only after the chat post went out - with the chat down every signed report was
-          // kept and none counted, so the limits never tripped
-          if (kept.kept) { REPORTS.push({ ip, atMs: Date.now() }); counted = true; }
+          // kept and none counted, so the limits never tripped. A kept one stays counted whatever comes after (its slot is no longer given back)
+          counted = true;
+          slot = null;
+          UNPOSTED.add(kept.id);   // until the chat post below comes back (kanban #2456)
+          // KEPT IS KEPT (kanban #1985, #2536): the report is numbered and counted in the store now; a chat post that fails below no longer answers
+          // 502 "could not be kept" - the page then signed the same words anew and a second report was kept. Answered kept, posted false; the
+          // same event sent again tries the chat post again (UNPOSTED, #2456)
+          keptAnswer = { ok: true, id: kept.id, kept: true, number: kept.number ?? null, label: kept.label || null, posted: false };
+          dayLimitNote({ k: 'report', ip, signed: true });   // kanban #2284: kept for good, so on the day's file
         }
-        // counted once (audit 6 re-check N9, kanban #1426): a signed report kept above is in REPORTS already, so the address's 50th report was
-        // kept and numbered here and then refused as its own 51st
-        const d = feedbackDecide({ ...b, ip }, counted ? REPORTS.slice(0, -1) : REPORTS);
+        // DECIDED AND COUNTED AT ONCE (kanban #2158, #2226): the report was put into REPORTS only after the address check and the chat post came back,
+        // so a burst of requests sent together all decided against the same count - one /64 got 1522 reports (and chat posts) past its 50, and the
+        // day was closed. The slot is taken here, before any await, and given back when the report is not taken after all. Counted once (#1426).
+        const d = feedbackDecide({ ...b, ip, signed: !!b0.event }, own ? REPORTS.filter((x) => x !== own) : REPORTS);   // its own slot is not counted twice
+        if (!d.ok) giveBack();
         if (!d.ok) return send(200, d);
         // held from here (kanban #1808) - a replayed signed event (kept:false) too, so a burst of one event is counted as well
-        if (!counted) { slot = { ip, atMs: Date.now() }; REPORTS.push(slot); }
+        if (!counted) { slot = { ip, atMs: Date.now(), signed: !!b0.event }; REPORTS.push(slot); }
         // AN UNSIGNED REPORT'S BOUNTY ADDRESS TOO (#1342, measured on testnet-stage: a report from a tab with no identity named an address nothing pays to and
         // was taken): its "Bounty address:" line must work as well
         if (!b0.event) { const m = /\nBounty address: (\S+)/.exec(String(b0.text || '')); if (m) { const w = await lnAddressWorks(m[1]); if (!w.ok) { giveBack(); return send(200, { ok: false, why: `That Lightning address does not work: ${w.why}. Check it, or leave it empty.` }); } } }
@@ -786,10 +1323,13 @@ createServer((req, res) => {
         // it: a non-2xx answer, or a connection refused before anything was sent
         posted = true;
         const r = await fetch(`${env.FAUCET_CHAT_URL}/api/channels/${env.FAUCET_CHAT_CHANNEL}/messages`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` }, body: JSON.stringify({ text: (kept && kept.label ? `${kept.label} · ` : '') + d.text }), signal: AbortSignal.timeout(10000) });
-        if (!r.ok) { giveBack(); return send(502, { ok: false, why: 'the report could not be kept just now' }); }
+        if (!r.ok) { if (keptAnswer) return send(200, keptAnswer); giveBack(); return send(502, { ok: false, why: 'the report could not be kept just now' }); }
+        if (kept) UNPOSTED.delete(kept.id);
+        if (slot) dayLimitNote({ k: 'report', ip, signed: !!slot.signed });   // kanban #2284: posted, its slot stays counted - on the day's file (a kept signed one was noted when kept)
         if (d.player) appendFileSync(FOUNDING_FILE, `${JSON.stringify({ player: d.player, atMs: Date.now() })}\n`);
         send(200, { ok: true, ...(kept ? { id: kept.id, kept: kept.kept, number: kept.number ?? null, label: kept.label || null } : {}) });   // its number (kanban #1413)
       } catch (e) {
+        if (keptAnswer) return send(200, { ...keptAnswer, posted: null });   // kept; whether the chat took it is not known (kanban #1985)
         if (!posted) { giveBack(); return send(400, { ok: false, why: 'not JSON' }); }
         const code = String((e && e.cause && e.cause.code) || '');
         if (code === 'ECONNREFUSED' || code === 'ENOTFOUND' || code === 'EAI_AGAIN') { giveBack(); return send(502, { ok: false, why: 'the report could not be kept just now' }); }
@@ -808,7 +1348,8 @@ createServer((req, res) => {
   if (path === '/player' || path === '/faucet/player') {
     if (req.method === 'OPTIONS') { res.writeHead(204, { ...cors, 'access-control-allow-methods': 'GET, POST', 'access-control-allow-headers': 'content-type', 'access-control-max-age': '86400' }); return res.end(); }
     // THE TOTALS ARE PUBLIC (no account, no address): any node's dashboard reads them, from its own address
-    if (req.method === 'GET') { res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'access-control-allow-origin': '*' }); return res.end(JSON.stringify({ ok: true, ...playerGrantTotals(readBook()) })); }
+    if (req.method === 'GET') { let totals; try { totals = playerGrantTotals(readBook()); } catch { return send(503, { ok: false, why: 'try again' }); }   // kanban #2205
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'access-control-allow-origin': '*' }); return res.end(JSON.stringify({ ok: true, ...totals })); }
     if (req.method !== 'POST') return send(405, { ok: false, why: 'POST' });
     if (!PAYERS.length) return send(503, { ok: false, why: 'the players\' faucet is off' });
     let raw = '';
@@ -817,6 +1358,8 @@ createServer((req, res) => {
     req.on('end', () => {
       let ask;
       try { ask = JSON.parse(raw || '{}'); } catch { return send(400, { ok: false, why: 'not JSON' }); }
+      // kanban #2499, #2531: kind and account are strings, or nothing is asked - every check after compares them with ===
+      if (!ask || typeof ask !== 'object' || typeof ask.kind !== 'string' || typeof ask.account !== 'string') return send(400, { ok: false, why: 'kind and account are strings' });
       const who = { kind: ask.kind, account: ask.account, ip: ipOf(req) };
       // A PAGE THAT STOPPED WAITING TAKES NOTHING (audit 6, kanban #1419): a request whose connection closed while it was queued is dropped here
       one(async () => (req.socket.destroyed ? { ok: false, why: 'the page stopped waiting: ask again' } : null)
@@ -828,11 +1371,11 @@ createServer((req, res) => {
   }
   if (path !== '' && path !== '/faucet') return send(404, { ok: false, why: 'no such door' });
   if (req.method === 'GET') {
-    return one(async () => {
+    return (async () => {
       const day = Math.floor(Date.now() / DAY_MS);
       const given = readBook().paid.filter((p) => Math.floor(p.atMs / DAY_MS) === day).reduce((a, p) => a + p.sats, 0);
-      return { ok: true, balanceSats: await balanceSats(), maxSats: FAUCET_MAX_SATS, leftTodaySats: Math.max(0, FAUCET_DAY_CAP_SATS - given) };
-    }).then((b) => send(200, b), (e) => send(500, { ok: false, why: e.message }));
+      return { ok: true, balanceSats: await balanceCached(), maxSats: FAUCET_MAX_SATS, leftTodaySats: Math.max(0, FAUCET_DAY_CAP_SATS - given) };
+    })().then((b) => send(200, b), (e) => send(500, { ok: false, why: e.message }));
   }
   if (req.method !== 'POST') return send(405, { ok: false, why: 'GET or POST' });
   let body = '';
@@ -841,7 +1384,15 @@ createServer((req, res) => {
   req.on('end', () => {
     let ask;
     try { ask = JSON.parse(body || '{}'); } catch { return send(400, { ok: false, why: 'not JSON' }); }
+    // THE BOOK'S OWN RULES FIRST, OUTSIDE THE QUEUE (kanban #2664): an ask the book refuses (no address, an address paid, a limit) is answered
+    // at once, with no RPC and no place in the queue the welcomes wait in; only an ask the book would pay is queued and checked again there
+    const pre = faucetDecide({ address: ask.address, sats: ask.sats, ip: ipOf(req) }, readBook(), { balanceSats: Number.MAX_SAFE_INTEGER });
+    if (!pre.ok) return send(200, pre);
     one(() => pay({ address: ask.address, sats: ask.sats, ip: ipOf(req) }))
       .then((r) => send(200, r), (e) => { console.log(`${new Date().toISOString()} failed: ${e.message}`); send(500, { ok: false, why: `the faucet could not pay: ${e.message}` }); });
   });
-}).listen(port, '127.0.0.1', () => console.log(`faucet on 127.0.0.1:${port}`));
+})
+  // kanban #3173/#3180 (same hole as the attestor's and chain-api's): a listen that fails (EADDRINUSE on a restart whose port is still held)
+  // ends the faucet with exit 1, before the last guard (#2284) can swallow it and leave a process with no HTTP server
+  .on('error', (e) => { console.error(`${new Date().toISOString()} http server failed, exiting: ${(e && e.stack) || e}`); process.exit(1); })
+  .listen(port, '127.0.0.1', () => console.log(`faucet on 127.0.0.1:${port}`));

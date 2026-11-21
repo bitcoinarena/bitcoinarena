@@ -26,13 +26,29 @@ const seasonMem = new Map(), SEASON_READS = new Map(), seasonFailed = new Map();
 const keptAt = (kept) => Number(/^\{"at":(\d+)/.exec(kept || '')?.[1] || 0);
 const edgeCache = () => { try { return typeof caches !== 'undefined' && caches.default ? caches.default : null; } catch { return null; } };
 const edgeUrl = (key) => `https://bitcoinarena.io/__season-cache/${encodeURIComponent(key)}`;
+// NOT ONE SEAT'S WORD (kanban #2698, #1489 r4-faucet-13): the board was Promise.any over the three seats - the first parseable answer, so the
+// fastest seat showed any ranking it liked (a made-up leader, real players left out) for 30 minutes, and the tester report read it from KV.
+// Now all three are read: a board two of them answer with the same rows is taken (each seat's answer names its own node, so the rows are
+// compared); else each row two of them list the same way; fewer than two answers keep the last copy.
+const agreedBoard = (texts) => {
+  const boards = texts.map((t) => { try { const b = JSON.parse(t); return b && typeof b === 'object' && Array.isArray(b.rows) ? b : null; } catch { return null; } }).filter(Boolean);
+  if (boards.length < 2) throw new Error(`${boards.length} of ${SEASON_SEATS.length} seats answered a board: one seat's word is not the board`);
+  const rowsOf = boards.map((b) => JSON.stringify(b.rows));
+  const same = rowsOf.findIndex((r, i) => rowsOf.some((o, j) => j !== i && o === r));
+  if (same >= 0) return JSON.stringify(boards[same]);
+  const count = new Map(); for (const b of boards) for (const r of new Set(b.rows.map((x) => JSON.stringify(x)))) count.set(r, (count.get(r) || 0) + 1);
+  const rows = [], seen = new Set();
+  for (const b of boards) for (const x of b.rows) { const k = JSON.stringify(x); if (count.get(k) >= 2 && !seen.has(k)) { seen.add(k); rows.push(x); } }
+  return JSON.stringify({ ...boards[0], node: null, rows, merged: true });
+};
 // one read of a board from the seats per isolate at a time; the answer goes to memory and the edge cache, never to KV
 const fetchSeason = (game, days) => {
   const key = seasonKey(game, days);
   if (SEASON_READS.has(key)) return SEASON_READS.get(key);
   const p = (async () => {
     try {
-      const body = await Promise.any(SEASON_SEATS.map(async (s) => { const r = await fetch(`${s}/season?game=${game}&days=${days}&scope=network`, { signal: AbortSignal.timeout(25000) }); if (!r.ok) throw new Error(String(r.status)); const t = await r.text(); JSON.parse(t); return t; }));
+      const said = await Promise.allSettled(SEASON_SEATS.map(async (s) => { const r = await fetch(`${s}/season?game=${game}&days=${days}&scope=network`, { signal: AbortSignal.timeout(25000) }); if (!r.ok) throw new Error(String(r.status)); return r.text(); }));
+      const body = agreedBoard(said.filter((x) => x.status === 'fulfilled').map((x) => x.value));   // kanban #2698
       const kept = `{"at":${Date.now()},"season":${body}}`;
       seasonMem.set(key, kept); seasonFailed.delete(key);
       const edge = edgeCache();
@@ -84,9 +100,13 @@ async function nightOn(env) { try { return (await env.CHAIN.get('night', { cache
 async function nightCount() {
   const headers = { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'public, max-age=30' };
   try {
-    const rows = await Promise.any(SEASON_SEATS.map(async (s) => { const r = await fetch(`${s}/rounds?next=1`, { signal: AbortSignal.timeout(15000) }); if (!r.ok) throw new Error(String(r.status)); return (await r.json()).rounds || []; }));
-    const live = rows.filter((r) => r.phase === 'open' || Number(r.playing) > 0);
-    return new Response(JSON.stringify({ ok: true, at: Date.now(), joined: live.reduce((n, r) => n + (Number(r.joined) || 0), 0), playing: rows.reduce((n, r) => n + (Number(r.playing) || 0), 0), rounds: live.length }), { headers });
+    // kanban #2698: every seat's count, and the middle one (two answers: the lower) - never the fastest seat's alone
+    const said = await Promise.allSettled(SEASON_SEATS.map(async (s) => { const r = await fetch(`${s}/rounds?next=1`, { signal: AbortSignal.timeout(15000) }); if (!r.ok) throw new Error(String(r.status)); const j = await r.json(); if (!j || !Array.isArray(j.rounds)) throw new Error('no rounds'); return j.rounds; }));
+    const counts = said.filter((x) => x.status === 'fulfilled').map(({ value: rows }) => { const live = rows.filter((r) => r.phase === 'open' || Number(r.playing) > 0);
+      return { joined: live.reduce((n, r) => n + (Number(r.joined) || 0), 0), playing: rows.reduce((n, r) => n + (Number(r.playing) || 0), 0), rounds: live.length }; });
+    if (counts.length < 2) throw new Error('one seat\'s word');
+    const mid = (k) => { const v = counts.map((c) => c[k]).sort((a, b) => a - b); return v.length === 2 ? v[0] : v[Math.floor(v.length / 2)]; };
+    return new Response(JSON.stringify({ ok: true, at: Date.now(), joined: mid('joined'), playing: mid('playing'), rounds: mid('rounds') }), { headers });
   } catch { return new Response('{"ok":false,"why":"no seat answered"}', { status: 503, headers }); }
 }
 // THE PUBLIC TESTNET REPORT'S NUMBERS (kanban #926 item 11): the kept 7-day boards, each player once, as tools/weekly-testers.mjs counts them; team keys and the test opponent left out
@@ -159,7 +179,10 @@ async fetch(request, env, ctx) {
   // SN.BITCOINARENA.IO (kanban #1458, the owner 2026-11-11: "If we can't track the referrer refer to sn.bitcoinarena.io so we can track it" - "to the website"): Stacker
   // News links strip the referrer (rel="noreferrer"), so a post links here and the visit lands on the website with the /sn campaign; a path is kept
   if (url.hostname === 'sn.bitcoinarena.io' || url.hostname === 'sn.bitcoin-arena.io') {
-    const to = new URL(url.pathname + url.search, 'https://bitcoinarena.io');
+    // ONLY ON OUR OWN SITE (feedback #109): a path beginning '//' is a protocol-relative URL, so '//example.com/' sent the visit to example.com -
+    // the path's leading slashes are folded to one and the host is checked
+    let to = new URL(url.pathname.replace(/^\/+/, '/') + url.search, 'https://bitcoinarena.io');
+    if (to.hostname !== 'bitcoinarena.io') to = new URL('https://bitcoinarena.io/');
     if (!to.searchParams.has('utm_source')) for (const [k, v] of new URLSearchParams(CHANNEL_LINKS['/sn'])) to.searchParams.set(k, v);
     return Response.redirect(to.toString(), 302);
   }
@@ -168,8 +191,37 @@ async fetch(request, env, ctx) {
   // /night lands on the Testnet Night page (kanban #926 item 7), the others on the home page; a visit already carrying its campaign is served, not sent round again
   { const path = url.pathname.replace(/\/$/, ''); const utm = CHANNEL_LINKS[path];
     if (utm && !url.searchParams.has('utm_source')) return Response.redirect(`${url.origin}${path === '/night' ? '/night/' : '/'}?${utm}`, 302); }
+  // THE GAME PAGE'S SEASON 2 FORM (kanban #2784, the owner 2026-11-15: Season 2 public): testnet.bitcoinarena.io (and the stage and previews) asks the
+  // season's pot and links, checks and reads its community accounts here, cross-origin - the same doors the stage Worker opens, with CORS for
+  // those pages only; the faucet takes a NIP-98 sign-in for https://bitcoinarena.io/api/faucet/feedback/<door> (FAUCET_BOUNTY_S2_BASES)
+  const S2_DOORS = { '/api/faucet/feedback/link': 'POST', '/api/faucet/feedback/verify': 'POST', '/api/faucet/feedback/social': 'POST', '/api/faucet/feedback/season': 'GET', '/api/faucet/feedback/open-issues': 'GET' };
+  const s2Origin = request.headers.get('origin') || '';
+  // kanban #2877: a node's own owner page (its own address, any origin) signs in at the three POST doors too - each takes only a NIP-98 sign-in by
+  // the caller's own key, no cookie and no secret of the browser, so any origin may ask them; the GET doors stay as they were
+  const s2Cors = /^https:\/\/(testnet|testnet-stage)\.bitcoinarena\.io$|^https:\/\/([a-z0-9-]+\.)?bitcoin-arena-site\.pages\.dev$/.test(s2Origin)
+    || (s2Origin && S2_DOORS[url.pathname] === 'POST')
+    ? { 'access-control-allow-origin': s2Origin, vary: 'origin' } : {};
+  if (S2_DOORS[url.pathname] && request.method === 'OPTIONS') return new Response(null, { status: 204, headers: { ...s2Cors, 'access-control-allow-methods': S2_DOORS[url.pathname], 'access-control-allow-headers': 'authorization, content-type', 'access-control-max-age': '86400' } });
+  if (S2_DOORS[url.pathname] === 'POST' && env.FAUCET_ORIGIN) {
+    if (request.method !== 'POST') return new Response('{"ok":false,"why":"POST"}', { status: 405, headers: { 'content-type': 'application/json', ...s2Cors } });
+    const headers = new Headers({ 'content-type': 'application/json', origin: s2Origin || url.origin });
+    if (request.headers.get('authorization')) headers.set('authorization', request.headers.get('authorization'));
+    const r = await fetch(`${env.FAUCET_ORIGIN}${url.pathname.slice('/api/faucet'.length)}`, { method: 'POST', headers, body: await request.text() });
+    return new Response(r.body, { status: r.status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow', ...s2Cors } });
+  }
+  // SEASON 2 IN PUBLIC (kanban #2784, the owner 2026-11-15): /bounty/ reads the season's pot and the open-issues list as the stage does - GET only;
+  // the open-issues list is kept 5 minutes at the edge (stale up to an hour) so a reader never waits on the faucet
+  if ((url.pathname === '/api/faucet/feedback/season' || url.pathname === '/api/faucet/feedback/open-issues') && env.FAUCET_ORIGIN) {
+    if (request.method !== 'GET') return new Response('{"ok":false,"why":"GET"}', { status: 405, headers: { 'content-type': 'application/json' } });
+    const issues = url.pathname.endsWith('/open-issues'), key = new Request(`${url.origin}${url.pathname}`), cache = caches.default;
+    if (issues) { const hit = await cache.match(key); if (hit) return hit; }
+    const r = await fetch(`${env.FAUCET_ORIGIN}${url.pathname.slice('/api/faucet'.length)}`, { headers: { origin: url.origin } });
+    const out = new Response(r.body, { status: r.status, headers: { 'content-type': 'application/json', 'cache-control': issues ? 'public, max-age=300, stale-while-revalidate=3600' : 'no-store', 'x-robots-tag': 'noindex, nofollow', 'access-control-allow-origin': '*' } });
+    if (issues && r.status === 200 && ctx) ctx.waitUntil(cache.put(key, out.clone()));
+    return out;
+  }
   // THE PLAYERS' FAUCET AND THE TABLE WANTS (kanban #926): passed on to the faucet service, whose address is a secret of this Worker (FAUCET_ORIGIN), with the caller's address for its limits
-  if (url.pathname === '/api/faucet/player' || url.pathname === '/api/faucet/opponent' || url.pathname === '/api/faucet/feedback' || url.pathname === '/api/faucet/feedback/mine' || url.pathname === '/api/faucet/feedback/screenshot' || url.pathname === '/api/faucet/feedback/rewards' || url.pathname === '/api/faucet/feedback/paid-log' || url.pathname === '/api/faucet/feedback/lnaddress' || url.pathname === '/api/faucet/feedback/node-check' || /^\/api\/faucet\/feedback\/admin\/(list|act|export\.csv|report\/[0-9a-f]{64}|node-check\/[0-9a-f]{64}|screenshot\/[0-9a-f]{64})$/.test(url.pathname) || /^\/api\/faucet\/lnurlw\/[0-9a-f]{64}(\/callback)?$/.test(url.pathname) || url.pathname === '/api/faucet/founding' || url.pathname === '/api/faucet/refill') {
+  if (url.pathname === '/api/faucet/player' || url.pathname === '/api/faucet/opponent' || url.pathname === '/api/faucet/feedback' || url.pathname === '/api/faucet/feedback/mine' || url.pathname === '/api/faucet/feedback/screenshot' || url.pathname === '/api/faucet/feedback/rewards' || url.pathname === '/api/faucet/feedback/paid-log' || url.pathname === '/api/faucet/feedback/lnaddress' || url.pathname === '/api/faucet/feedback/node-check' || /^\/api\/faucet\/feedback\/dup\/[0-9a-f]{32}$/.test(url.pathname) || /^\/api\/faucet\/feedback\/admin\/(list|act|export\.csv|season|report\/[0-9a-f]{64}|node-check\/[0-9a-f]{64}|screenshot\/[0-9a-f]{64})$/.test(url.pathname) || /^\/api\/faucet\/lnurlw\/[0-9a-f]{64}(\/callback)?$/.test(url.pathname) || url.pathname === '/api/faucet/founding' || url.pathname === '/api/faucet/refill') {
     if (!env.FAUCET_ORIGIN) return new Response('{"ok":false,"why":"the faucet is off"}', { status: 503, headers: { 'content-type': 'application/json' } });
     const headers = new Headers({ 'content-type': 'application/json', 'x-arena-ip': request.headers.get('cf-connecting-ip') || '' });
     // THE FAUCET BELIEVES THAT ADDRESS ONLY WITH THIS WORKER'S KEY (audit 8, kanban #1434): x-arena-ip was taken from any caller, also straight

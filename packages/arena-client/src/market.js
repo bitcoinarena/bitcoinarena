@@ -13,12 +13,12 @@
 //   pinned (`checkAttestation`, Ed25519 through WebCrypto); otherwise it is shown as unverified and nothing is concluded.
 import { stakeOf } from './join.js';
 import { decodeManifest, gameIdOf, isAttested, isScalar, isGameMarket, RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
-import { decodeValueAttestation, isValueAttestationBytes, valueAttestationBodyId, valueAttestationStands } from '../../arena-protocol/src/scalar.js';
+import { decodeValueAttestation, isValueAttestationBytes, valueAttestationBodyId, valueAttestationStands, scalarPayoutTable } from '../../arena-protocol/src/scalar.js';
 import { gameMarketResolution } from '../../arena-protocol/src/game-market.js';
 import { seriesId, seriesRoundCheck } from '../../arena-protocol/src/series.js';
 import { parseSeriesLine } from '../../arena-protocol/src/series-line.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
-import { decodeAttestation, attestationStands, attestationBodyId, marketWindowOf } from '../../arena-protocol/src/attested.js';
+import { decodeAttestation, attestationStands, attestationBodyId, marketWindowOf, pariMutuelTable } from '../../arena-protocol/src/attested.js';
 import { marketOf, feeOfKnownGame, periodOfKnownGame } from '../../arena-protocol/src/known-game.js';
 import { entryFeeMsat, feeBpsOf, donationBpsOf } from '../../arena-protocol/src/fee.js';
 import { termsOfKnownGame } from '../../arena-protocol/src/known-game.js';
@@ -26,6 +26,7 @@ import { encodeEntryContract, entryId, decodeEntryContract } from '../../arena-p
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { handLock, postLockClaim } from './page-lock.js';
 import { cancelId, sellId, PRICE_SCALE } from '../../arena-protocol/src/order-book.js';
+import { bookSettlement } from '../../arena-protocol/src/book-ledger.js';
 
 const sats = (msat) => (Number(BigInt(msat)) / 1000).toLocaleString('en-US', { maximumFractionDigits: 3 });
 
@@ -462,6 +463,53 @@ export function quietOrders({ picks, lines, read = new Set(), loadedMs = 0, nowM
 }
 
 /**
+ * A SEAT'S SETTLEMENT TABLE, REBUILT ON THE PAGE (kanban #1615; #2153, #2221, #2299, #2354): from the table's own rows (entry id, pick,
+ * stake, fee, donation) and what this page verified - the outcome, or a scalar market's value between its bounds - by the protocol's
+ * own rule (attested.js pariMutuelTable, scalar.js scalarPayoutTable), then held against the seat's table: this pick's row (its pick,
+ * won, net and payout) and the table's refunded and losing pool must be the rebuilt ones exactly. { ok, table, row } with BigInt
+ * amounts, or { ok: false, why }. Which entries a seat counts (the stakes it saw) stays its word; what each is paid does not.
+ */
+function rebuildTable({ table, check, market, entryIdHex, pick, stakeMsat = null, order = false }) {
+  if (!table || !Array.isArray(table.rows)) return { ok: false, why: 'no table' };
+  const msat = (v) => (typeof v === 'bigint' ? (v >= 0n ? v : null) : typeof v === 'string' && /^\d{1,30}$/.test(v) ? BigInt(v)
+    : Number.isSafeInteger(v) && v >= 0 ? BigInt(v) : null);
+  const entries = [];
+  const seen = new Set();
+  for (const r of table.rows) {
+    if (!r || typeof r.entryId !== 'string' || !/^[0-9a-f]{64}$/.test(r.entryId) || seen.has(r.entryId)) return { ok: false, why: 'a row names no entry, or one twice' };
+    seen.add(r.entryId);
+    const e = { entryId: r.entryId, stakeMsat: msat(r.stakeMsat), feeMsat: msat(r.feeMsat), donationMsat: msat(r.donationMsat), pick: r.pick };
+    if (e.stakeMsat === null || e.feeMsat === null || e.donationMsat === null || !Number.isInteger(e.pick)) return { ok: false, why: 'a row lacks its stake, fee, donation or pick' };
+    entries.push(e);
+  }
+  let t;
+  try {
+    if (market.scalar) {
+      if (typeof check.value !== 'bigint' && !(typeof check.value === 'string' && /^-?\d+$/.test(check.value))) return { ok: false, why: 'no verified value' };
+      t = scalarPayoutTable({ entries, value: BigInt(check.value), bounds: { low: BigInt(market.scalar.low), high: BigInt(market.scalar.high) } });
+    } else {
+      if (!Number.isInteger(check.outcome)) return { ok: false, why: 'no verified outcome' };
+      t = pariMutuelTable({ entries, outcome: check.outcome });
+    }
+  } catch (e) { return { ok: false, why: `the table cannot be rebuilt: ${e.message}` }; }
+  const want = String(entryIdHex || '').toLowerCase();
+  const row = t.rows.find((r) => r.entryId === want);
+  const theirs = table.rows.find((r) => r.entryId === want);
+  if (!row || !theirs) return { ok: false, why: 'this pick is not in the rebuilt table' };
+  if (row.pick !== Number(pick)) return { ok: false, why: 'the table names another pick for this entry' };
+  // THIS PICK'S STAKE IS THE ROUND CONTRACT'S, NOT THE SEAT'S ROW (kanban #2542, refute of #1615/#1644): the page knows what it staked;
+  // a row that stakes more - or, for a pick that is not an order (filled in part), anything else - is the seat's word, never a result
+  if (stakeMsat !== null) {
+    const mineStake = BigInt(stakeMsat);
+    if (order ? row.stakeMsat > mineStake : row.stakeMsat !== mineStake) return { ok: false, why: 'the table stakes this pick other than its round contract' };
+  }
+  if (theirs.won !== row.won || msat(theirs.netMsat) !== row.netMsat || msat(theirs.payoutMsat) !== row.payoutMsat) return { ok: false, why: 'this pick\'s row is not the one the verified outcome pays' };
+  if (table.refunded !== t.refunded) return { ok: false, why: 'its refund is not the one the verified outcome makes' };
+  if (!market.scalar && msat(table.losingPoolMsat) !== t.losingPoolMsat) return { ok: false, why: 'its losing pool is not its rows\' own' };
+  return { ok: true, table: t, row };
+}
+
+/**
  * THE LOBBY'S MARKET LINES (Unity draws them under the round rows, kind 'market'): for each pick this page made, the pick
  * while its round is open, then the outcome as the page checked it, and what it means for this pick.
  * `picks`: [{ roundIdHex, entryIdHex, market, pick, stakeMsat, entryCloseMs }]; `outcomes`: Map roundIdHex -> the seats'
@@ -497,13 +545,28 @@ export function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() })
       continue;
     }
     if (o.state === 'VOID') {
-      // kanban #3009: a VOID round's stake is in transit too until this browser credited it
+      // A SEAT'S BARE "VOID" IS NOT THE RESULT BEFORE THE RULE ALLOWS IT (kanban #2719, #1489 r5-attest-1): an attested market is VOID only by its
+      // deadline (attested.js marketVoided; a contradiction is DISPUTED), and the answer carries no evidence - one seat answering VOID (with
+      // the pick's row, so market-page.js kept it) turned a winner's line into "every stake comes back". The page checks the deadline on its
+      // own clock: entry close + the terms' resolution delay + deadline; before it, or for a market with no deadline, it is unverified.
+      if (!p.market.gameSource) {
+        const t = p.market.terms;
+        const deadline = t && t.resolveAfterCloseMs != null && t.deadlineAfterResolveMs != null
+          ? Number(p.entryCloseMs) + Number(t.resolveAfterCloseMs) + Number(t.deadlineAfterResolveMs) : null;
+        if (deadline === null || nowMs < deadline) {
+          lines.push({ ...at('unverified'), text: `${head}: a signer node says VOID - UNVERIFIED (${deadline === null ? 'this market has no deadline that could void it' : `its deadline is in ${left(deadline - nowMs)}`})` });
+          continue;
+        }
+      }
+      // A VOID SHOWN IS DECIDED (kanban #2903, feedback #147): past its deadline or a source round's refund - the row is final, not pending for good
+      // kanban #3009: a VOID round's stake is in transit too until this browser credited it (measured: round 7758c770 VOID, one stake back, one not)
       if (p.stakeBack === false) { lines.push(refundRow(p.stakeMsat, `${head}: VOID - ${o.why || 'its source round refunds it'}`)); continue; }
-      lines.push({ ...at('void'), text: `${head}: VOID - ${o.why || 'its source round refunds it'} · every stake comes back` });
+      lines.push({ ...at('void', { final: true }), text: `${head}: VOID - ${o.why || 'its source round refunds it'} · every stake comes back` });
       continue;
     }
     if (o.state === 'DISPUTED') {
-      lines.push({ ...at('disputed'), text: `${head}: the attestors contradicted themselves, nothing is paid; your stake comes back at expiry` });
+      // a contradiction is decided too: nothing is paid, every stake comes back at expiry - final (kanban #2903)
+      lines.push({ ...at('disputed', { final: true }), text: `${head}: the attestors contradicted themselves, nothing is paid; your stake comes back at expiry` });
       continue;
     }
     const check = o.check || { verified: false, why: 'not checked yet' };
@@ -526,30 +589,76 @@ export function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() })
     if (!row && p.unfilled && p.stakeBack === false) { lines.push(refundRow(p.stakeMsat, `${head}: ${signed} · your order matched nobody`)); continue; }
     if (!row && p.unfilled) { lines.push({ ...at('refunded', { backMsat: String(p.stakeMsat) }), text: `${head}: ${signed} · your order matched nobody: its ${sats(p.stakeMsat)} sats come back whole` }); continue; }
     if (!row) { lines.push({ ...at('unknown'), text: `${head}: ${signed} · your pick is not in the signer nodes' table` }); continue; }
-    // WON OR LOST IS THE VERIFIED OUTCOME'S, NOT A SEAT'S TABLE (kanban #1615): `check` is what this page verified, `o.table`
-    // is one seat's word, unchecked - a seat could hand the real attestation of outcome 0 beside a table built for outcome 1,
-    // and the loser read "you won" under "verified" (or a winner "you lost"). A row whose `won` contradicts the pick against the
-    // verified outcome is shown as unverified, never as a result
-    if (!p.market.scalar && Number.isInteger(check.outcome) && (row.won === true) !== (Number(p.pick) === check.outcome)) {
-      lines.push({ ...at('unverified'), text: `${head}: ${signed} · the signer nodes' table contradicts the verified outcome: what this pick is paid is UNVERIFIED` });
+    // WON OR LOST, AND HOW MUCH, IS THE VERIFIED OUTCOME'S, NOT A SEAT'S TABLE (kanban #1615; #2153, #2221, #2299, #2354): `check` is
+    // what this page verified, `o.table` is one seat's word. The page builds the table again from the table's own rows (each
+    // entry's pick, stake, fee and donation) and the outcome - or a scalar market's value - it verified, by the same protocol rule the
+    // seats use (pariMutuelTable / scalarPayoutTable), and reads won, payout, net, refunded and the losing pool from ITS table only.
+    // A seat's table that differs from it in any of these - a truthy non-boolean `won`, a forged payout, a refund no rule makes, a
+    // scalar share the value does not pay - or that cannot be rebuilt is shown as unverified, never as a result.
+    const rebuilt = rebuildTable({ table: o.table, check, market: p.market, entryIdHex: p.entryIdHex, pick: p.pick, stakeMsat: p.stakeMsat, order: !!p.order });
+    if (!rebuilt.ok) {
+      lines.push({ ...at('unverified'), text: `${head}: ${signed} · the signer nodes' table contradicts the verified outcome: what this pick is paid is UNVERIFIED (${rebuilt.why})` });
       continue;
     }
-    const net = BigInt(row.netMsat);
-    const pay = BigInt(row.payoutMsat);
+    const mine = rebuilt.row;
+    // AN ORDER BOOK'S ORDER IS PAID BY THE BOOK, NOT BY THE PARI-MUTUEL TABLE (kanban #2902, feedback #140): an Up/Down round settles
+    // by book-ledger bookSettlement - its shares at the outcome, less what its sells owe, plus its unspent budget - so its result and
+    // its gain or loss are the book's (`p.bookClaim`, bookClaimOf over the seats' books, read by the page once the outcome is verified).
+    // The table above still decides that the outcome is verified; with sells the pick's side alone no longer says won or lost
+    if (!p.market.scalar && p.bookClaim && BigInt(p.stakeMsat) > 0n) {
+      const put = BigInt(p.stakeMsat), out = BigInt(p.bookClaim.outMsat);
+      lines.push({ ...at('settled', { payoutMsat: String(out), netMsat: String(put) }), text: `${head}: ${signed} · the book pays ${sats(out)} of your ${sats(put)} sats · ${out >= put ? `+${sats(out - put)}` : `-${sats(put - out)}`}${o.final ? '' : ' (final after the objection window)'}` });
+      continue;
+    }
+    const won = mine.won;
+    const net = mine.netMsat;
+    const pay = mine.payoutMsat;
     // A FREE ROUND: nothing staked, so the pick was right or wrong and nothing more
-    if (BigInt(p.stakeMsat) === 0n) lines.push({ ...at(row.won ? 'right' : 'wrong'), text: `${head}: ${signed} · ${row.won ? 'your pick was right' : 'your pick was wrong'} (free round)` });
-    else if (o.table.refunded && p.stakeBack === false) lines.push(refundRow(net, `${head}: ${signed} · nobody picked it`));
-    else if (o.table.refunded) lines.push({ ...at('refunded', { backMsat: String(net) }), text: `${head}: ${signed} · nobody picked it: your ${sats(net)} sats come back` });
+    if (BigInt(p.stakeMsat) === 0n) lines.push({ ...at(won ? 'right' : 'wrong'), text: `${head}: ${signed} · ${won ? 'your pick was right' : 'your pick was wrong'} (free round)` });
+    else if (rebuilt.table.refunded && p.stakeBack === false) lines.push(refundRow(net, `${head}: ${signed} · nobody picked it`));
+    else if (rebuilt.table.refunded) lines.push({ ...at('refunded', { backMsat: String(net) }), text: `${head}: ${signed} · nobody picked it: your ${sats(net)} sats come back` });
     // NOBODY ON THE OTHER SIDE (measured live 2026-10-13: the first paid Up/Down window, one order alone, read "you won
     // 0 sats" while the seats claimed nothing - an order nobody took the other side of fills nothing, and its lock comes back whole)
-    else if (!p.market.scalar && row.won && BigInt(o.table.losingPoolMsat || 0) === 0n && p.stakeBack === false) lines.push(refundRow(row.stakeMsat || p.stakeMsat, `${head}: ${signed} · nobody took the other side`));
-    else if (!p.market.scalar && row.won && BigInt(o.table.losingPoolMsat || 0) === 0n) lines.push({ ...at('refunded', { backMsat: String(row.stakeMsat || p.stakeMsat) }), text: `${head}: ${signed} · nobody took the other side: your ${sats(row.stakeMsat || p.stakeMsat)} sats come back whole when the lock expires` });
+    else if (!p.market.scalar && won && rebuilt.table.losingPoolMsat === 0n && p.stakeBack === false) lines.push(refundRow(mine.stakeMsat, `${head}: ${signed} · nobody took the other side`));
+    else if (!p.market.scalar && won && rebuilt.table.losingPoolMsat === 0n) lines.push({ ...at('refunded', { backMsat: String(mine.stakeMsat) }), text: `${head}: ${signed} · nobody took the other side: your ${sats(mine.stakeMsat)} sats come back whole when the lock expires` });
     // A SCALAR SIDE IS PAID ITS SHARE, not all or nothing: what came back, and the gain or the loss
     else if (p.market.scalar) lines.push({ ...at('settled', { payoutMsat: String(pay), netMsat: String(net) }), text: `${head}: ${signed} · '${label}' gets ${sats(pay)} of your ${sats(net)} sats · ${pay >= net ? `+${sats(pay - net)}` : `-${sats(net - pay)}`}${o.final ? '' : ' (final after the objection window)'}` });
-    else if (row.won) lines.push({ ...at('won', { gainMsat: String(pay - net), payoutMsat: String(pay) }), text: `${head}: ${signed} · you won ${sats(pay - net)} sats${o.final ? '' : ' (final after the objection window)'}` });
+    else if (won) lines.push({ ...at('won', { gainMsat: String(pay - net), payoutMsat: String(pay) }), text: `${head}: ${signed} · you won ${sats(pay - net)} sats${o.final ? '' : ' (final after the objection window)'}` });
     else lines.push({ ...at('lost', { lostMsat: String(net) }), text: `${head}: ${signed} · you lost ${sats(net)} sats` });
   }
   return lines;
+}
+
+/**
+ * WHAT AN ORDER BOOK PAYS ONE ORDER (kanban #2902, feedback #140): `books` the seats' GET /book answers for the round, `outcome` the
+ * verified outcome (0 / 1), `entryIdHex` the order and `stakeMsat` its whole lock (N + F). Each answer's positions settled by the
+ * protocol's own bookSettlement; the order's gain is its winnings less its buys' cost and fee and its sells' debt and fee (an
+ * answer carries no N or F - they only add the unspent budget back, which is no gain). Only an answer at least two seats gave,
+ * byte for byte, and the most often given, counts: { outMsat, gainMsat } (outMsat = stake + gain), or null.
+ */
+export function bookClaimOf({ books, outcome, entryIdHex, stakeMsat }) {
+  if (outcome !== 0 && outcome !== 1) return null;
+  const said = new Map();
+  for (const b of books || []) {
+    const rows = b && Array.isArray(b.positions) ? b.positions : null;
+    if (!rows || !rows.some((x) => x && x.entry === entryIdHex)) continue;
+    const key = JSON.stringify(rows);
+    said.set(key, (said.get(key) || 0) + 1);
+  }
+  const [best] = [...said.entries()].sort((a, b) => b[1] - a[1]);
+  if (!best || best[1] < 2 || [...said.values()].filter((n) => n === best[1]).length > 1) return null;
+  try {
+    const positions = new Map(JSON.parse(best[0]).map((x) => {
+      const cost = BigInt(x.cost), buyFee = BigInt(x.buyFee || 0);
+      return [x.entry, { entry: x.entry, outcome: Number(x.outcome), N: cost, F: buyFee, cost, buyFee, shares: x.shares.map((v) => BigInt(v)),
+        sellDebt: BigInt(x.sellDebt || 0), sellFee: BigInt(x.sellFee || 0) }];
+    }));
+    const row = bookSettlement({ positions, outcome }).claimed.find((r) => r.entry === entryIdHex);
+    if (!row) return null;
+    const me = positions.get(entryIdHex);
+    const gain = row.outMsat - me.cost - me.buyFee;
+    return { outMsat: String(BigInt(stakeMsat) + gain), gainMsat: String(gain) };
+  } catch { return null; }
 }
 
 // AN ORDER'S OWN MESSAGES: what its session key signs to cancel it, or to sell its shares back, before the

@@ -114,10 +114,13 @@ test('season top 3: the last whole UTC week closed (Monday to Monday), its board
   assert.deepEqual(lastClosedWeek(T0 + WEEK_MS), { fromMs: T0, toMs: T0 + WEEK_MS }, 'closed at its last instant');
   assert.deepEqual(lastClosedWeek(T0 + WEEK_MS - 1), { fromMs: T0 - WEEK_MS, toMs: T0 }, 'one ms earlier it is still open');
   assert.equal(lastClosedWeek(0), null);
+  // kanban #2841: a place needs an identity older than the week (a paid round before it) and 3 distinct opponents older than the week,
+  // placed by the P&L of its rounds against older opponents: A, B, C and D played the Sunday before, and all four meet in round 1
   const board = [
-    round(1, [e(A, DELIVERED, 500, 300000n), e(B, FAILED, 1, 0n), e(C, FAILED, 2, 0n)]),     // A +200000
-    round(2, [e(D, DELIVERED, 400, 150000n), e(B, FAILED, 3, 0n)]),                           // D +50000
-    round(3, [e(C, DELIVERED, 900, 0n, { stakeMsat: 0n })]),                                  // free: counts on the board
+    round(90, [e(A, FAILED, 1, 90000n), e(B, FAILED, 1, 90000n), e(C, FAILED, 1, 90000n), e(D, FAILED, 1, 90000n)], { startMs: BigInt(T0 - 86400000) }),
+    round(1, [e(A, DELIVERED, 500, 300000n), e(B, FAILED, 1, 0n), e(C, FAILED, 2, 0n), e(D, FAILED, 2, 0n)]),     // A +200000, B C D -100000
+    round(2, [e(D, DELIVERED, 400, 150000n), e(B, FAILED, 3, 0n)]),                           // D +50000 (so -50000), B -200000
+    round(3, [e(C, DELIVERED, 900, 0n, { stakeMsat: 0n })]),                                  // free and alone: counts for nothing
     round(200, [e(B, DELIVERED, 999, 900000n)]),                                              // next week: not this board
   ];
   const got = badgesEarned({ game: NB, rounds: board, nowMs: thu }, [BADGES[3]]);
@@ -125,13 +128,13 @@ test('season top 3: the last whole UTC week closed (Monday to Monday), its board
     ['0a', 'nextblock@2026-10-05', { window: { fromMs: T0, toMs: T0 + WEEK_MS }, rank: 1 }],
     ['0c', 'nextblock@2026-10-05', { window: { fromMs: T0, toMs: T0 + WEEK_MS }, rank: 3 }],
     ['0d', 'nextblock@2026-10-05', { window: { fromMs: T0, toMs: T0 + WEEK_MS }, rank: 2 }],
-  ], 'by net: A +200000, D +50000, C -100000 (its free round adds 0), B -200000 fourth');
+  ], 'by net against older opponents: A +200000, D -50000, C -100000, B -200000 fourth');
   // no clock handed in: no board badge looked for
   assert.deepEqual(badgesEarned({ game: NB, rounds: board }, [BADGES[3]]).awards, []);
   // a board of two players hands no podium
-  assert.deepEqual(badgesEarned({ game: NB, rounds: [board[1]], nowMs: thu }, [BADGES[3]]).awards, []);
+  assert.deepEqual(badgesEarned({ game: NB, rounds: [board[2]], nowMs: thu }, [BADGES[3]]).awards, []);
   // a key that played the week as its own round key is no identity on the board: its place is not given to the fourth
-  const withBare = [round(1, [e(A, DELIVERED, 500, 300000n, { roundKey: A }), e(B, FAILED, 1, 0n), e(C, FAILED, 2, 0n)]), ...board.slice(1)];
+  const withBare = [board[0], round(1, [e(A, DELIVERED, 500, 300000n, { roundKey: A }), e(B, FAILED, 1, 0n), e(C, FAILED, 2, 0n), e(D, FAILED, 2, 0n)]), ...board.slice(2)];
   const nb = badgesEarned({ game: NB, rounds: withBare, nowMs: thu }, [BADGES[3]]);
   assert.ok(!nb.awards.some((a) => a.player === A));
   assert.ok(!nb.awards.some((a) => a.evidence.rank > 3));

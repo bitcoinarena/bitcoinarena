@@ -355,18 +355,22 @@ if (url) {
       // A REORG DURING THE READ IS NOT KEPT UNDER THE KEY'S HASH (kanban #1841): the key's hash is read first, the walk takes minutes
       // and reads the top heights last - a chain that moved to another branch meanwhile derived that branch's census, and kept under
       // the old block's hash it was answered for three days once the chain went back to it. The census height is read again, and the
-      // view's own block there must be the key's block (the one the cache holds under that hash); otherwise nothing is kept: read again
-      // A FAILED READ IS NOT A REORG (kanban #3084, feedback #364): the census height's hash is asked up to twice; a read that still fails says so
-      let tipHash = null, readWhy = null;
-      if (census.ok) for (let tries = 0; tries < 2 && tipHash === null; tries++) { try { tipHash = String(await call('getblockhash', [height])); } catch (e) { readWhy = String((e && e.message) || e).slice(0, 160); } }
-      if (census.ok && tipHash === null) return { ok: false, why: `the census height's block hash could not be read (${readWhy}): read again` };
+      // view's own block there must be the key's block; otherwise nothing is kept: read again.
+      // BY THE HASH THE VIEW READ IT UNDER, NOT BY THE CACHE (kanban #2191, #1489 a44 refute 95): the check passed whenever the cache did
+      // not hold the key's block (a restart, or evicted) - a chain going A -> B -> A during the walk re-read A's hash at the end, the view
+      // was all branch B, and B's census was kept under A's hash for three days (two seats, one ballot, two censuses: invariant #786).
+      // blocksOver names the hash each block came under; the census height's must be the key's, whatever the cache holds
       if (census.ok) {
         let same = false;
-        try {
-          const atHeight = viewRead && viewRead.blocks ? viewRead.blocks[height - viewRead.firstHeight] : undefined;
-          const keptBlock = blocksKept.get(hash);
-          same = tipHash === hash && atHeight !== undefined && (keptBlock === undefined || keptBlock === atHeight);
-        } catch { same = false; }
+        const at = viewRead && viewRead.blocks ? height - viewRead.firstHeight : -1;
+        const atHeight = at >= 0 ? viewRead.blocks[at] : undefined;
+        const atHash = at >= 0 && Array.isArray(viewRead.hashes) ? viewRead.hashes[at] : undefined;
+        // A FAILED READ IS NOT A REORG (kanban #3084, feedback #364): the last getblockhash failing (an Electrum bridge closing its idle
+        // connection) was told as "the chain reorganised"; it is asked once more, and a read that still fails says so
+        let tipHash = null, readWhy = null;
+        for (let tries = 0; tries < 2 && tipHash === null; tries++) { try { tipHash = String(await call('getblockhash', [height])); } catch (e) { readWhy = String((e && e.message) || e).slice(0, 160); } }
+        if (tipHash === null) return { ok: false, why: `the census height's block hash could not be read (${readWhy}): read again` };
+        same = atHeight !== undefined && atHash === hash && tipHash === hash;
         if (!same) return { ok: false, why: 'the chain reorganised during this census read: read again' };
       }
       if (census.ok) {
@@ -423,6 +427,8 @@ if (url) {
           return { raw: fromHex(String(hex)), height: Number(head.height) };
         } catch { return null; }
       },
+      // a block's height from its header alone (kanban #2670: POST /proposal checks the proposer's bond there before the block is read)
+      blockHeightOf: async (blockHash) => { try { const head = await call('getblockheader', [blockHash]); return head && Number(head.confirmations) >= 1 ? Number(head.height) : null; } catch { return null; } },
       lowestBondMinSats: BigInt(process.env.ARENA_LOWEST_BOND_MIN_SATS || 50000),
       // AND THE TALLY'S READS OF THIS SEAT'S OWN CHAIN (ballot-tally.js, §27A.7.3): the tip; the vote outputs of one block, read
       // raw and kept as votes only (the tally asks each height once); and the bonds
@@ -452,7 +458,9 @@ if (url) {
         if (!census.ok) { console.error(`[ballot] no census at ${height}: ${census.why}`); return null; }
         // each bond's confirmation height and CLTV maturity: the funding vote's age (rules 1, 2) and lock (rule 1), §27A.9.5
         return census.entries.map((e) => ({ pubkey: e.pubkey, outpoint: `${Buffer.from(e.txid).toString('hex')}:${e.vout}`, bondSats: e.bondSats,
-          height: Number.isInteger(e.height) ? e.height : null, maturity: e.advert && Number.isInteger(e.advert.bondMaturityHeight) ? e.advert.bondMaturityHeight : null }));
+          height: Number.isInteger(e.height) ? e.height : null, maturity: e.advert && Number.isInteger(e.advert.bondMaturityHeight) ? e.advert.bondMaturityHeight : null,
+          // kanban #2741: the scalars each node declares (proposal_deposit_sats prices a proposal, its bond-weighted median - proposals.js)
+          ...(e.advert && e.advert.declares ? { advert: { declares: e.advert.declares } } : {}) }));
       },
       // THE WHOLE CENSUS AT A HEIGHT, ADVERTS AND ALL: a founding's trigger height is the chain's, not any round's - the
       // seats' newest rounds name census heights days back, and their views end at those rounds' beacons (measured live 2026-10-15:

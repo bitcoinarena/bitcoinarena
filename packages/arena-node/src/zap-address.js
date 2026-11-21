@@ -22,6 +22,7 @@ import { relaySet } from '../../arena-protocol/src/nostr-relays.js';
 import { lnurlFor } from '../../arena-protocol/src/bech32.js';
 import { eventId } from './nostr-relay.js';
 import { askerAddress } from './reach-check.js';
+import { publicHttpsUrl } from './feedback-store.js';
 
 const OPEN = { 'access-control-allow-origin': '*' };
 const sha256hex = (s) => createHash('sha256').update(s).digest('hex');
@@ -82,6 +83,11 @@ export const ZAP_ASKERS_KEPT = 4096;
 //   handed one bolt11 that only the first could pay.
 export const ZAP_LET_GO_MAX = 4000;
 export const ZAP_MINTS_ALL = 300;
+// AT ONCE, TOO (kanban #2302, #1489 a44-refute-56-s1): the window bounds above count mints, not mints in flight, so strangers from fresh
+// addresses had up to ZAP_MINTS_ALL invoice() calls - each an `lncli addinvoice` child - running at the same moment (64 asks: 64 children).
+// Callers not on this host have at most ZAP_MINTING_MAX invoices being made at once, on both doors together; past it the ask is refused
+// (asked again a moment later it is served). The host's own tools are not limited.
+export const ZAP_MINTING_MAX = 16;
 
 /** The asker a mint is counted against: an IPv4 address as it is, an IPv6 address by its /64 (kanban #1964). */
 export function askerKey(a) {
@@ -101,6 +107,28 @@ export function askerKey(a) {
   return `${groups.slice(0, 4).map((g) => parseInt(g, 16).toString(16)).join(':')}::/64`;
 }
 
+// ONLY PUBLIC RELAYS (kanban #2454): a zap request's `relays` tag is the payer's own word, and once the zap is paid the receipt is sent
+// (tools/zap-address.mjs -> sendToRelay -> a WebSocket upgrade) to every URL it names - ws://127.0.0.1:8080/..., ws://169.254.169.254/...,
+// a LAN host: a blind SSRF from the zap server, one 1-sat zap at a time. The callback keeps only wss:// relays on a public name (no IP
+// literal, localhost, .local/.internal/..., *.ts.net) on the default port, and refuses the zap when none is left; the tool's dial also
+// resolves the name and connects only to a global address (feedback-store globalLookup), so DNS rebinding cannot get past it.
+export function publicRelayUrl(u) {
+  const s = String(u || '');
+  if (!/^wss:\/\//i.test(s)) return false;
+  let url; try { url = new URL(s); } catch { return false; }
+  if (url.port && url.port !== '443') return false;
+  if (url.username || url.password) return false;
+  const host = url.hostname.toLowerCase().replace(/\.$/, '');
+  if (/(^|\.)ts\.net$/.test(host)) return false;
+  return publicHttpsUrl(`https://${url.host}/`);
+}
+// FRESH AND FOR THIS ADDRESS (kanban #2455): every paid zap's receipt carries its signed request on public relays, and the callback
+// took a request of any age, made for any address - a stranger replayed ten of a player's old requests (no payment) and filled that
+// key's ZAP_PENDING_PER_PAYER, so each fresh zap of the player was refused for the invoices' hour. A NIP-57 client signs the request
+// right before it calls the callback: one more than ZAP_REQUEST_FRESH_S from now is refused, and so is one whose own `lnurl` tag
+// names another address (with or without the optional `lnurl` query parameter).
+export const ZAP_REQUEST_FRESH_S = 600;
+
 /** What a plain (not zap) tip's invoice is hashed over (LUD-06: raw JSON, text/plain first, the address as text/identifier). */
 export const addressMetadata = (name, host) => JSON.stringify([['text/plain', `Zap ${name}@${host}`], ['text/identifier', `${name}@${host}`]]);
 
@@ -113,7 +141,7 @@ export function signNostr(template, { secret, curve, nowS = Math.floor(Date.now(
 }
 
 export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, publicBase = null, names, secret, curve, invoice, lookup, publish,
-  statePath = null, minSendable = 1000, maxSendable = 100000000, watchMs = 2000, expiryS = 3600, log = () => {} } = {}) {
+  statePath = null, allowPrivateRelays = false, minSendable = 1000, maxSendable = 100000000, watchMs = 2000, expiryS = 3600, log = () => {} } = {}) {
   if (!publicHost) throw new Error('a Lightning address names its public host');
   if (!secret || !curve) throw new Error('a zap address signs its receipts, and was handed no key');
   const nostrPubkey = toHexB(curve.pointX(secret));
@@ -127,12 +155,19 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
   const tipMinting = new Map();       // the same key -> the mint in flight, which asks at the same moment share
   const askers = new Map();           // asker key (IPv4, IPv6 /64) -> { since, n }: fresh invoices minted for it in this window (kanban #1743, #1801, #1964)
   const letGo = new Map();            // paymentHash -> the zap let go from a full book, watched until its invoice expires (kanban #1922)
+  let strangersMinting = 0;            // invoices being made right now for callers not on this host (kanban #2302)
   let mintsAll = [];                  // when each fresh invoice for a caller not on this host was minted, the last window's (kanban #1964)
   const nowSec = () => Math.floor(Date.now() / 1000);
-  const local = (a) => a === '127.0.0.1' || a === '::1';
+  // THIS HOST'S OWN TOOLS (kanban #2109, #1489 v1-refute-19-s3-1): a caller whose socket is this machine and that sent no proxy header.
+  // Never read from a header: a stranger through the local proxy who names 127.0.0.1 in X-Forwarded-For (or cf-connecting-ip) is
+  // counted under that address like any other asker, not exempt.
+  const ownTool = (req) => {
+    const peer = String(req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+    return (peer === '127.0.0.1' || peer === '::1') && !req.headers['x-forwarded-for'] && !req.headers['cf-connecting-ip'];
+  };
   // '' when it may mint (and is counted), else why not
-  const mayMint = (asker) => {
-    if (local(asker)) return '';
+  const mayMint = (asker, own) => {
+    if (own) return '';
     const now = nowSec();
     const who = askerKey(asker);
     let a = askers.get(who);
@@ -367,11 +402,11 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
       const json = (status, body) => { res.writeHead(status, { 'content-type': 'application/json', ...OPEN }); res.end(JSON.stringify(body)); };
       const refuse = (reason) => { refused.push(reason); if (refused.length > ZAP_REFUSED_KEPT) refused.splice(0, refused.length - ZAP_REFUSED_KEPT); return json(200, { status: 'ERROR', reason }); };
       if (req.method === 'OPTIONS') { res.writeHead(204, { ...OPEN, 'access-control-allow-methods': 'GET' }); return res.end(); }
-      const u = new URL(req.url, 'http://local');
+      let u; try { u = new URL(req.url, 'http://local'); } catch { return json(400, { status: 'ERROR', reason: 'that request target is no URL' }); }   // kanban #3048: `GET //[` ended the process
       const m = u.pathname.match(/^(?:\/\.well-known)?\/lnurlp\/([a-z0-9._-]+)(\/cb)?$/);
       if (req.method !== 'GET' || !m || !names.includes(m[1])) return json(404, { status: 'ERROR', reason: 'no such address here' });
       const name = m[1];
-      const asker = askerAddress(req);
+      const asker = askerAddress(req), own = ownTool(req);
       const metadata = addressMetadata(name, publicHost);
       if (!m[2]) {
         return json(200, { tag: 'payRequest', callback: `${base}/lnurlp/${name}/cb`, metadata, minSendable, maxSendable,
@@ -388,13 +423,19 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
         try { request = JSON.parse(description); } catch { return refuse('the nostr parameter is not a JSON event'); }
         const stands = zapRequestStands(request, { amountMsat, verify });
         if (!stands.ok) return refuse(stands.why);
+        // only public wss:// relays get the receipt (kanban #2454); `allowPrivateRelays` is for tests on a local relay
+        const relays = allowPrivateRelays ? stands.relays : stands.relays.filter(publicRelayUrl);
+        if (!relays.length) return refuse('the zap request names no public wss:// relay');
         // THE ADDRESS'S OWN URL (LUD-16: https://host/.well-known/lnurlp/name), or the pay request's under the public base -
         // measured live: with the callback under a path (/zap) the request's lnurl names the host's well-known URL, not the base's
         const lnurl = u.searchParams.get('lnurl');
         const ours = [`https://${publicHost}/.well-known/lnurlp/${name}`, `${base}/.well-known/lnurlp/${name}`, `${base}/lnurlp/${name}`]
           .map((x) => lnurlFor(x).toLowerCase());
         if (lnurl && !ours.includes(lnurl.toLowerCase())) return refuse('that lnurl is not this address');
-        zap = { request, relays: stands.relays };
+        const tagged = (request.tags || []).find((t) => Array.isArray(t) && t[0] === 'lnurl');
+        if (tagged && !ours.includes(String(tagged[1]).toLowerCase())) return refuse('that zap request is for another address');
+        if (Math.abs(request.created_at - Math.floor(Date.now() / 1000)) > ZAP_REQUEST_FRESH_S) return refuse('that zap request is not fresh; sign it again');
+        zap = { request, relays };
         // ONE SIGNED ZAP REQUEST, ONE OPEN INVOICE (kanban #1514): a request already invoiced and still open gets that invoice again
         // (the same name and amount) and is refused otherwise; a new one waits for room under the caps.
         const open = [...pending.values(), ...letGo.values()].map((p) => [p, requestOf(p)]);
@@ -410,13 +451,16 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
         if (minting.size >= ZAP_PENDING_MAX) return refuse('too many zaps are being invoiced here; try again later');
         // every open zap is watched until it expires (kanban #1922): with the book and the let-go room both full, a new one waits
         if (pending.size + letGo.size + minting.size >= ZAP_PENDING_MAX + ZAP_LET_GO_MAX) return refuse('the book of open zaps is full; try again later');
-        const no = mayMint(asker);
+        const stranger = !own;   // kanban #2302 with #2109: only this node's own loopback tool is no stranger
+        if (stranger && strangersMinting >= ZAP_MINTING_MAX) return refuse('too many invoices are being made here at once; try again in a moment');
+        const no = mayMint(asker, own);
         if (no) return refuse(no);
         minting.set(request.id, request.pubkey);
+        if (stranger) strangersMinting++;
         let made;
         try { made = await invoice({ name, amountMsat, descriptionHash: hex(sha256hex(description)), expiryS }); }
         catch (e) { return refuse(`no invoice was made: ${String(e.message).slice(0, 160)}`); }
-        finally { minting.delete(request.id); }
+        finally { minting.delete(request.id); if (stranger) strangersMinting--; }
         while (pending.size >= ZAP_PENDING_MAX && letGoOldest()) { /* kanban #1743 */ }
         pending.set(made.paymentHash, { paymentHash: made.paymentHash, name, description, relays: zap.relays, invoice: made.request,
           amountMsat: String(amountMsat), until: nowSec() + expiryS });
@@ -428,7 +472,7 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
       if (comment && comment.length > ZAP_COMMENT_MAX) return refuse(`a comment is at most ${ZAP_COMMENT_MAX} characters`);
       // A PLAIN TIP (kanban #1801): its invoice is hashed over the address's metadata only, so one of the same name and amount, still
       // open and unpaid, serves the next tipper as well as a new one would.
-      const key = `${local(asker) ? asker : askerKey(asker)}|${name}|${amountMsat}`;   // one asker's own invoice only (kanban #1999)
+      const key = `${own ? asker : askerKey(asker)}|${name}|${amountMsat}`;   // one asker's own invoice only (kanban #1999)
       const kept = tips.get(key);
       if (kept && kept.until - nowSec() >= expiryS / 2) {
         let got = null;
@@ -438,15 +482,18 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
       if (tips.get(key) === kept) tips.delete(key);
       let mint = tipMinting.get(key);
       if (!mint) {
-        const no = mayMint(asker);
+        const stranger = !own;   // kanban #2302 with #2109: only this node's own loopback tool is no stranger
+        if (stranger && strangersMinting >= ZAP_MINTING_MAX) return refuse('too many invoices are being made here at once; try again in a moment');
+        const no = mayMint(asker, own);
         if (no) return refuse(no);
+        if (stranger) strangersMinting++;
         mint = invoice({ name, amountMsat, descriptionHash: hex(sha256hex(metadata)), expiryS }).then((made) => {
           tips.delete(key);
           tips.set(key, { request: made.request, paymentHash: made.paymentHash, until: nowSec() + expiryS });
           while (tips.size > ZAP_TIPS_KEPT) tips.delete(tips.keys().next().value);
           log(`tip invoice ${name} ${amountMsat} msat ${made.paymentHash.slice(0, 16)}`);
           return made;
-        }).finally(() => { tipMinting.delete(key); });
+        }).finally(() => { tipMinting.delete(key); if (stranger) strangersMinting--; });
         tipMinting.set(key, mint);
       }
       let made;

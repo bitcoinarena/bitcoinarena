@@ -9,7 +9,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { pendingWindowLine, savedLockExpiration } from '../src/page-lock.js';
+import { pendingWindowLine, savedLockExpiration, collectWithin, COLLECT_RECORD_MS } from '../src/page-lock.js';
 import { pageFunction } from './page-script.js';
 import { ArenaText, ArenaBits } from './arena-text.js';   // the page's React lines (kanban #564)
 
@@ -33,7 +33,7 @@ function page({ record, theLook, collect }) {
   const ARENACLIENT = {
     savedCollects: () => [record], roundLocks: () => true, owedToLine: () => 'line', toHex: () => '00'.repeat(32),
     markCollectDone: (v, rid) => { marked.push(rid); record.done = { payout: 'line' }; },
-    collectIntoPlayerWallet: collect, pendingWindowLine, savedLockExpiration,
+    collectIntoPlayerWallet: collect, pendingWindowLine, savedLockExpiration, collectWithin, COLLECT_RECORD_MS,
   };
   const lookRound = async () => ({ look: theLook, held: true, LockClient: 'LC' });
   // since the collect walks every kept phrase's records (keptRecords) and runs each under its phrase (withRecordPhrase);

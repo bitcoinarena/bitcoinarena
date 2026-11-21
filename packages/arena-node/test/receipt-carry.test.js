@@ -183,7 +183,8 @@ test('a peer serving a forged receipt or a stranger\'s adds nothing, and a peer 
     assert.deepEqual(await signersOn(w.b, w.rid, w.eid), [toHex(w.b.round.pubkey)]);
     const carriedB = w.b.verifier.carried.get(`${toHex(w.rid)}:${toHex(w.eid)}`);
     assert.equal(carriedB.taken, 0);
-    assert.equal(carriedB.refused.length, 2, `refused: ${JSON.stringify(carriedB.refused)}`);
+    // kanban #2661: a forged receipt and a stranger's show no start - they are named among the ignored, not the refused that read as doubt
+    assert.equal(carriedB.refused.length + carriedB.ignored.length, 2, `refused: ${JSON.stringify(carriedB.refused)} ignored: ${JSON.stringify(carriedB.ignored)}`);
     assert.ok(carriedB.down.some((d) => d.startsWith(downUrl)), 'the peer that was down was not named');
 
     // A HAS THE SAME BAD PEERS AND THE REAL ONE: the real one carries it.

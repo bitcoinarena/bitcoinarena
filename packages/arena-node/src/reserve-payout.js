@@ -35,12 +35,12 @@ import { lightningAddressEndpoint, payRequestStands, callbackFor, invoiceAnswers
 import { lnurlPublicFetch } from './public-fetch.js';
 import { urlOfLnurl } from '../../arena-protocol/src/bech32.js';
 import { decodeBolt11 } from '../../arena-protocol/src/bolt11.js';
-import { moveSeedOf, moveSeedFor } from './reserve-move.js';
+import { moveSeedOf, moveSeedFor, moveIdOf } from './reserve-move.js';
 import { leaderboardCap } from '../../arena-protocol/src/leaderboard-winners.js';
 import { payeeOf } from './winnings-send.js';
 import { readJsonBounded } from './lnurl-read.js';
 import { hostReach, hostOf, walletFetch } from './public-fetch.js';
-import { commitmentPointsRefusal } from './pool-wire.js';
+import { commitmentPointsRefusal, commitmentListRefusal, MOST_COMMITMENTS } from './pool-wire.js';
 
 
 /**
@@ -285,10 +285,39 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
   // kanban #1159: the height this seat first held the plan at, its attempt, and the signed transaction / refund kept before it is handed in
   for (const [col, type] of [['planned_at', 'INTEGER'], ['attempt', 'INTEGER'], ['submit_sig', 'TEXT'], ['refund_sig', 'TEXT']])
     if (!db.prepare('PRAGMA table_info(reserve_payouts)').all().some((c) => c.name === col)) db.exec(`ALTER TABLE reserve_payouts ADD COLUMN ${col} ${type}`);
+  // kanban #1663: a store from before the fix may hold the inputs of a SUBMITTING attempt it expired at its cutoff - freed at open
+  db.prepare(`DELETE FROM reserve_payout_inputs WHERE proposal IN (SELECT proposal FROM reserve_payouts WHERE state = 'EXPIRED')`).run();
   // A MOVE ONCE CALLED FOR STAYS KNOWN: planned, its inputs count as spent and the drained federation's unspent reserves read 0, so the
   // records no longer list it - and its signing, sending and claiming must go on
   const knownMoves = new Map();
-  const moveOf = (id) => { const m = (moves() || []).find((x) => x.id === id); if (m) knownMoves.set(id, m); return m || knownMoves.get(id) || null; };
+  // ...AND AFTER A RESTART (kanban #2095): knownMoves is memory only, and a seat holding the move PLANNED (its inputs in
+  // reserve_payout_inputs) or further lists it no more - so the move is read back from this seat's own record of it. That row was
+  // written only after this seat checked the plan against the move its records called for (commit, or learn's late check), so its
+  // drained federation, destination, key and drain height are the ones that check saw
+  const HELD = ['PLANNED', 'SUBMITTING', 'SENT', 'REFUNDING', 'PAID'];
+  const heldMoveOf = (id) => {
+    const r = db.prepare(`SELECT plan FROM reserve_payouts WHERE proposal = ? AND state IN (${HELD.map(() => '?').join(', ')})`).get(id, ...HELD);
+    let p = null; try { p = r && r.plan ? JSON.parse(r.plan) : null; } catch { p = null; }
+    if (!p || p.kind !== 'move' || p.proposal !== id) return null;
+    return { id, from: p.federation, to: p.to, toKey: String(p.toKey).toLowerCase(), fromKey: String(p.reserveKey).toLowerCase(), decidableAt: Number(p.decidableAt) || 0 };
+  };
+  // THE MOVE UNDER WAY FOR A LISTED ONE (kanban #2435): the lowest sequence of its (X, destination) whose record here is not finished -
+  // REFUNDED, SHORT or CLAIMED end a move, and reserves X still holds (the refund's return, an output that came later) move under the next
+  // sequence. PAID is not finished: its claim comes first. Every seat derives the same from the records it keeps (they go round).
+  const FINISHED_MOVE = new Set(['REFUNDED', 'SHORT', 'CLAIMED']);
+  const currentMove = (m) => {
+    for (let n = 0; ; n++) {
+      const id = n ? moveIdOf(m.from, m.to, n) : m.id;
+      const r = db.prepare('SELECT state FROM reserve_payouts WHERE proposal = ?').get(id);
+      if (!r || !FINISHED_MOVE.has(r.state)) return n ? { ...m, id, seq: n } : m;
+    }
+  };
+  const moveOf = (id) => {
+    for (const x of moves() || []) { const c = currentMove(x); if (x.id === id || c.id === id) { const m = x.id === id ? x : c; knownMoves.set(id, m); return m; } }
+    if (knownMoves.has(id)) return knownMoves.get(id);
+    const h = heldMoveOf(id); if (h) knownMoves.set(id, h);   // kanban #2095: after a restart, from this seat's own row
+    return h;
+  };
   const fedOf = (kind, plan) => (kind === 'claim' ? plan.to : plan.federation);
   const keyOfKind = (kind, plan) => (kind === 'claim' ? plan.toKey : plan.reserveKey);
   // `${planId}:${kind}:${asker}` -> [{ message, hiding, binding, commitment, list, share }]: a nonce pair signs ONE list, once; a coordinator taking
@@ -306,8 +335,9 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
    */
   const COLS = ['plan_id', 'federation', 'plan', 'txid', 'preimage', 'refund_txid', 'why', 'claim_txid', 'claim_msat', 'planned_at', 'attempt', 'submit_sig', 'refund_sig'];
   // `release`: the inputs this proposal held are freed first (kanban #1159: an expired plan, or the plan that replaces it)
-  function transition(pid, from, to, fields = {}, { plan = null, rows = [], release = false } = {}) {
-    if (!canMove(from, to)) return refuse(`a payout does not go from ${from || 'no record'} to ${to}`, 409);
+  // `overShort` (kanban #2543): a SHORT that was only said, replaced by the payment record the federation confirms (learn)
+  function transition(pid, from, to, fields = {}, { plan = null, rows = [], release = false, overShort = false } = {}) {
+    if (!canMove(from, to) && !(overShort && from === PAYOUT.SHORT && SHORT_OVERRIDDEN_BY.has(to))) return refuse(`a payout does not go from ${from || 'no record'} to ${to}`, 409);
     const set = Object.fromEntries(Object.entries(fields).filter(([k, v]) => COLS.includes(k) && v !== undefined));
     db.exec('SAVEPOINT reserve_payout_step');
     try {
@@ -344,6 +374,8 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
   const say = (rec) => broadcast(signed(rec));
   // THE STATES A PASS LEAVES ALONE, and the fields a new attempt starts from (kanban #1159)
   const DONE = new Set([PAYOUT.PAID, PAYOUT.SHORT, PAYOUT.REFUNDED, PAYOUT.CLAIMED]);
+  // THE PAYMENT RECORDS A SAID SHORTFALL GIVES WAY TO (kanban #2543): a transaction the federation took is what happened
+  const SHORT_OVERRIDDEN_BY = new Set([PAYOUT.SENT, PAYOUT.PAID, PAYOUT.REFUNDED]);
   const FRESH = { txid: null, preimage: null, refund_txid: null, submit_sig: null, refund_sig: null, why: null, claim_txid: null, claim_msat: null };
   // THIS SEAT'S CHAIN HEIGHT (kanban #1159): what `heightNow` says, else the height its last pass ran at
   let lastHeight = null;
@@ -353,6 +385,15 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
   const unspent = (fed, alsoBy = null, withUnknown = false) => (reserveRows(fed) || []).filter((r) => { if (r.unknown && !withUnknown) return false; const s = spentBy(r.outpoint); return !s || (alsoBy && s === alsoBy); })
     .sort((a, b) => (a.verifiedMs - b.verifiedMs) || (a.outpoint < b.outpoint ? -1 : 1));
   const unknownHeld = (fed) => unspent(fed, null, true).filter((r) => r.unknown);
+  // ANOTHER PAYOUT IN FLIGHT HOLDS PART OF THE RESERVES (kanban #2333): a plan marks its WHOLE inputs spent while it waits for its signatures,
+  // so unspent() leaves out far more than it will pay - its change comes back. A read that finds the reserves short while another payout of the
+  // federation is PLANNED, SUBMITTING, SENT or REFUNDING is no shortfall: SHORT is terminal and broadcast, so it is not decided this pass, and
+  // asked again once that payout landed or expired. The proposals whose in-flight records hold reserve rows of `fed`, other than `pid`
+  const IN_FLIGHT = new Set([PAYOUT.PLANNED, PAYOUT.SUBMITTING, PAYOUT.SENT, PAYOUT.REFUNDING]);
+  const othersInFlight = (fed, pid) => { const ids = new Set();
+    for (const r of reserveRows(fed) || []) { const s = spentBy(r.outpoint); if (!s || s === pid || ids.has(s)) continue; const o = rowOf(s); if (o && IN_FLIGHT.has(o.state)) ids.add(s); }
+    return [...ids]; };
+  const inFlightWhy = (ids) => `another payout of that federation is in flight (${ids.map((x) => String(x).slice(0, 16)).join(', ')}) and holds its inputs`;
   const recordResent = new Set();
   const recordOf = (r) => ({ proposal: r.proposal, planId: r.plan_id, federation: r.federation, state: r.state, plan: planOfRow(r), txid: r.txid,
     preimage: r.preimage, refundTxid: r.refund_txid, why: r.why, claimTxid: r.claim_txid || null, claimMsat: r.claim_msat || null });
@@ -544,7 +585,9 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     if (plan.refunds.length > 1 && leaderboardAmounts({ inputs: plan.refunds.slice(0, -1), winners: plan.winners, fees }).covers) return refuse('the plan spends more reserve outputs than the payout needs');
     if (String(plan.changeMsat) !== String(amounts.changeMsat)) return refuse(`the change is ${plan.changeMsat} msat, and those inputs leave ${amounts.changeMsat}`);
     const paid = plan.winners.reduce((t, w) => t + BigInt(w.msat), 0n);
-    if (paid !== BigInt(plan.amountSats) * 1000n) return refuse(`the winners are paid ${paid} msat, and the request is ${plan.amountSats} sat`);
+    // AT MOST THE REQUEST (kanban #2656): a place no net-positive identity fills stays in the reserves (leaderboard-winners.js), so the
+    // winners may be paid less than the request; which places are paid, and how much, is checked against this seat's own read below
+    if (paid <= 0n || paid > BigInt(plan.amountSats) * 1000n) return refuse(`the winners are paid ${paid} msat, and the request is ${plan.amountSats} sat`);
     if (late) return { ok: true, planId: pid, signer: g };
     // THE 10 % CAP over the reserves this seat holds there now (the plan's own inputs counted)
     const held = unspent(plan.federation, plan.proposal).reduce((t, r) => t + BigInt(r.amountMsat), 0n) / 1000n;
@@ -651,9 +694,13 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
   async function commitHere({ plan, kind, txid = null }, asker) {
     if (kind === 'claim') return commitClaim({ plan }, asker);
     const done = rowOf(plan.proposal);
-    if (done && (done.state === PAYOUT.PAID || done.state === PAYOUT.REFUNDED || done.state === PAYOUT.SHORT || done.state === PAYOUT.CLAIMED)) return refuse(`that payout is ${done.state} here: nothing more is signed`, 409);
+    // THE REFUSAL CARRIES THIS SEAT'S SIGNED RECORD (kanban #2330, state audit 2026-11-12): records are pushed once (broadcast, fire-and-forget);
+    // a guardian that missed the SENT / PAID / REFUNDED one held its plan PLANNED (or SENT) for good and asked for a dead plan every turn. The
+    // asker learns the record from the co-signer that refuses - checked as every record is (learn: signed by a guardian, the federation's word)
+    const withRecord = (x) => (done && PAYOUT_SAID.includes(done.state) ? { ...x, record: signed(recordOf(done)) } : x);
+    if (done && (done.state === PAYOUT.PAID || done.state === PAYOUT.REFUNDED || done.state === PAYOUT.SHORT || done.state === PAYOUT.CLAIMED)) return withRecord(refuse(`that payout is ${done.state} here: nothing more is signed`, 409));
     const held = !!(done && done.plan_id === planIdOf(plan) && done.state !== PAYOUT.EXPIRED);
-    if (kind === 'tx' && held && done.state !== PAYOUT.PLANNED) return refuse('that payout\'s transaction is accepted already: it is signed once', 409);
+    if (kind === 'tx' && held && done.state !== PAYOUT.PLANNED) return withRecord(refuse('that payout\'s transaction is accepted already: it is signed once', 409));
     if (held && done.state === PAYOUT.PLANNED && (await expireIfDue(done)).expired) return refuse(`that plan expired here (no transaction in ${PLAN_EXPIRY_BLOCKS} blocks): nothing more is signed for it`, 409);
     let st;
     if (held) {
@@ -710,6 +757,8 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
   async function share(body = {}) {
     const { planId, kind, commitments } = body || {};
     if (!Array.isArray(commitments)) return refuse('a share is asked over a commitment list');
+    // no list longer than any committee is hashed or searched (kanban #2161, as #1672 at /settle-share)
+    if (commitments.length > MOST_COMMITMENTS) return refuse(`${commitments.length} commitments, and no committee holds more than ${MOST_COMMITMENTS}`);
     const r = db.prepare('SELECT federation, plan FROM reserve_payouts WHERE plan_id = ?').get(String(planId));
     if (!r) return refuse('this seat keeps no such plan');
     const a = askStands({ ask: 'share', kind: String(kind), planId: String(planId), list: commitmentListOf(commitments), from: body.from, sig: body.sig }, kind === 'claim' ? JSON.parse(r.plan).to : r.federation);
@@ -724,6 +773,10 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     const r = db.prepare('SELECT federation, plan FROM reserve_payouts WHERE plan_id = ?').get(planId);
     const g = r && guardians().get(kind === 'claim' ? JSON.parse(r.plan).to : r.federation);
     if (!g || !g.signer) return refuse('this seat holds no share of that reserve key');
+    // THE FOURTH ROUND-TWO DOOR GETS THE #1672 BOUND (kanban #2161): a list longer than the federation (or than 2 * needed - 1 where its
+    // members are not known), or naming an id twice, is refused before signShare340 - one guardian seat padding the list with thousands of
+    // made-up commitments held every peer's loop for seconds.
+    { const why = commitmentListRefusal(commitments, { needed: g.needed, nodes: g.members }); if (why) return refuse(why); }
     if (commitments.length < g.needed) return refuse(`${commitments.length} commitments, and the reserve key signs at ${g.needed}`);
     const list = commitments.map((c) => `${c.id}:${toHex(c.hiding)}:${toHex(c.binding)}`).join('|');
     if (pair.list && pair.list !== list) return refuse('this seat signed that message over another list');
@@ -738,6 +791,7 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
   async function sign(plan, kind, extra = {}) {
     const g = guardians().get(fedOf(kind, plan));
     const peers = g.peers || [];
+    const was = rowOf(plan.proposal);   // kanban #2330: a co-signer's record that moves this row ends the signing
     const planId = planIdOf(plan);
     let pub = null;
     try { pub = typeof g.publicShares === 'function' ? g.publicShares() : (g.publicShares || null); } catch { pub = null; }
@@ -760,7 +814,11 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
         if (left.has(peer) || peer === tryOut) continue;
         let r = null;
         try { r = await peer.commit({ plan, kind, ...extra, ...ask }); } catch { /* a peer down: the threshold decides */ }
-        if (!r || !r.ok) continue;
+        if (!r || !r.ok) {
+          // a co-signer further along hands back its signed record (kanban #2330): kept here only as learn keeps any record
+          if (r && r.record && typeof r.record === 'object' && r.record.proposal === plan.proposal) await learn(r.record).catch(() => null);
+          continue;
+        }
         // kanban #1715 (refute of #1527): a commitment is checked before it joins the list - a member id no other signer of this list holds,
         // two valid points - or that peer is left off like a bad share; it can never make this seat's own share throw
         const c = r.commitment, bad = commitmentFault(c, signers, g);
@@ -770,6 +828,8 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
         if (bad) { left.add(peer); why = `a guardian seat's ${kind} commitment does not stand: ${bad}`; continue; }
         signers.push({ peer, commitment: { id: c.id, hiding: c.hiding, binding: c.binding } });
       }
+      { const now = rowOf(plan.proposal);
+        if (now && was && now.state !== was.state) return { ...refuse(`that payout is ${now.state} here now, as a co-signer's record says: the ${kind} is not signed`, 409), learned: true, state: now.state }; }
       if (signers.length < g.needed) return refuse(`${signers.length} of ${g.needed} guardian seats committed to the ${kind}${why ? ` (${why})` : ''}`, 503);
       const commitments = signers.map((x) => x.commitment).sort((a, b) => a.id - b.id);
       const shares = [];
@@ -856,6 +916,8 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
       if (payAmountsCover(have, contractMsat, fees)) return { payer: fed, needs, unread };
       // rows whose round this seat cannot read (kanban #1409) might cover it: not a shortfall - another guardian's turn reads them
       if (unknownHeld(fed).length && payAmountsCover(unspent(fed, null, true), contractMsat, fees)) unread.push(`${fed.slice(0, 8)}: rows whose round this seat cannot read would cover it`);
+      // another payout in flight holds whole inputs whose change comes back (kanban #2333): not a shortfall now either
+      else { const busy = othersInFlight(fed, v.id); if (busy.length) unread.push(`${fed.slice(0, 8)}: ${inFlightWhy(busy)}`); }
     }
     return { payer: null, needs, unread };
   }
@@ -866,13 +928,20 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
    */
   async function shortStands(rec) {
     const feds = guardians();
-    if (![...feds.values()].some((g) => g && g.signer)) return { ok: true };
     const lb = (leaderboards() || []).find((x) => x.id === rec.proposal);
+    // A SEAT THAT PAYS NOTHING (kanban #2543): it keeps a shortfall only of a payout it knows - a passed vote, or a leaderboard payout of the
+    // federation named. One guardian signed a SHORT for any id (one still in its vote too) and every non-signer seat kept it for good.
+    if (![...feds.values()].some((g) => g && g.signer)) {
+      if (lb) return rec.federation === lb.federation ? { ok: true } : refuse('that shortfall names another federation than the leaderboard payout');
+      return (passed() || []).some((p) => p.id === rec.proposal) ? { ok: true } : refuse('this seat has no passed vote for that proposal: it keeps no shortfall of it', 409);
+    }
     if (lb) {
       if (rec.federation !== lb.federation) return refuse('that shortfall names another federation than the leaderboard payout');
       const have = unspent(lb.federation);
       const heldSats = have.reduce((t, x) => t + BigInt(x.amountMsat), 0n) / 1000n;
-      if (!leaderboardCap({ amountSats: lb.amountSats, reservesSats: heldSats }).ok) return { ok: true };
+      // a shortfall said while another payout held the inputs is not kept (kanban #2333): this seat asks again once that one landed
+      const busy = othersInFlight(lb.federation, lb.id);
+      if (!leaderboardCap({ amountSats: lb.amountSats, reservesSats: heldSats }).ok) return busy.length ? refuse(`this seat keeps no shortfall now: ${inFlightWhy(busy)}`, 503) : { ok: true };
       const port = await portOf(lb.federation);
       if (!port) return refuse('this seat reaches no port into that federation: it cannot recompute the shortfall', 503);
       const w = await winnersBook.union(lb.id, []);
@@ -880,7 +949,8 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
       if (!w.winners.length) return { ok: true };
       const winners = w.winners.map((x) => ({ payoutPk: String(x.payoutPk).toLowerCase(), msat: String(x.msat) }));
       const fees = await port.fees();
-      return leaderboardAmounts({ inputs: have, winners, fees }).covers ? refuse('this seat\'s reserves there cover that leaderboard payout: no shortfall here', 409) : { ok: true };
+      if (leaderboardAmounts({ inputs: have, winners, fees }).covers) return refuse('this seat\'s reserves there cover that leaderboard payout: no shortfall here', 409);
+      return busy.length ? refuse(`this seat keeps no shortfall now: ${inFlightWhy(busy)}`, 503) : { ok: true };
     }
     const v = (passed() || []).find((p) => p.id === rec.proposal);
     if (!v) return refuse('this seat has no passed vote for that proposal: it keeps no shortfall of it', 409);
@@ -962,6 +1032,9 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
         }
       } }
     let from = had ? had.state : null, release = false;
+    // A SHORT THAT WAS ONLY SAID (kanban #2543): a guardian's signed shortfall is not the last word against the payment record the federation
+    // confirms (federationSays below) - the coordinator's SENT/PAID/REFUNDED replaces it, its inputs are marked spent and its rows written
+    const overShort = !!(had && had.state === PAYOUT.SHORT && !had.plan_id && SHORT_OVERRIDDEN_BY.has(rec.state));
     if (had && had.plan_id && had.plan_id !== rec.planId) {
       // ANOTHER PLAN OF THE PROPOSAL (kanban #1159): a later attempt over one that expired (here, or - a seat that pays nothing - on the
       // guardian's word), or the landed transaction of another attempt over one that went nowhere; never over a plan that went on
@@ -969,7 +1042,7 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
       if (!r.ok) return r;
       from = r.from; release = true;
     }
-    if (from && !canMove(from, rec.state)) return { ok: true, kept: from };
+    if (from && !canMove(from, rec.state) && !overShort) return { ok: true, kept: from };
     if (rec.state === PAYOUT.PLANNED && !(had && had.plan_id === rec.planId)) {
       // a PLANNED record opens the plan here: from the turn's guardian, where this seat can tell the turn (kanban #1159)
       const known = Number.isInteger(startOf(rec.plan)) && Number.isInteger(tipNow());
@@ -1004,7 +1077,7 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     const t = transition(rec.proposal, from, rec.state, { plan_id: rec.planId, federation: rec.plan.federation, plan: JSON.stringify(rec.plan), txid: rec.txid || (same && had.txid) || null,
       preimage: rec.preimage || (same && had.preimage) || null, refund_txid: rec.refundTxid || null, why: typeof rec.why === 'string' ? rec.why.slice(0, 500) : null,
       claim_txid: rec.claimTxid || null, claim_msat: rec.claimMsat ? String(rec.claimMsat) : null, attempt: attemptOf(rec.plan),
-      ...(same ? {} : { planned_at: tipNow() }) }, { plan: rec.plan, rows, release });
+      ...(same ? {} : { planned_at: tipNow() }) }, { plan: rec.plan, rows, release, overShort });
     return t.ok ? { ok: true, kept: rec.state } : t;
   }
   async function mayReplace(had, rec) {
@@ -1116,8 +1189,12 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
         const heldSats = have.reduce((t, x) => t + BigInt(x.amountMsat), 0n) / 1000n;
         // rows whose round this seat cannot read (kanban #1409): never a SHORT while they exist - asked again, and another guardian's turn reads them
         const unknownNow = unknownHeld(lb.federation).length;
+        // another payout in flight holds whole inputs whose change comes back (kanban #2333): never a SHORT while it does - asked again next pass
+        const busy = othersInFlight(lb.federation, lb.id);
+        const undecided = () => unknownNow ? { id: lb.id, ok: false, why: `not decided this pass: ${unknownNow} reserve row(s) whose round this seat cannot read` }
+          : busy.length ? { id: lb.id, ok: false, why: `not decided this pass: ${inFlightWhy(busy)}` } : null;
         const cap = leaderboardCap({ amountSats: lb.amountSats, reservesSats: heldSats });
-        if (!cap.ok) { out.push(unknownNow ? { id: lb.id, ok: false, why: `not decided this pass: ${unknownNow} reserve row(s) whose round this seat cannot read` } : short(cap.why)); continue; }
+        if (!cap.ok) { out.push(undecided() || short(cap.why)); continue; }
         // THE WINNERS (kanban #1153): this seat's own read frozen once, merged with every guardian peer's frozen evidence, so the plan
         // holds every signed round any co-signer counts; each co-signer checks that list on the evidence and persists it before it commits
         const theirs = (await Promise.all((g.peers || []).map(async (p) => { try { return typeof p.winners === 'function' ? await p.winners(lb.id) : null; } catch { return null; } })))
@@ -1129,7 +1206,7 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
         const inputs = [];
         for (const x of have) { inputs.push({ outpoint: x.outpoint, amountMsat: String(x.amountMsat) }); if (leaderboardAmounts({ inputs, winners, fees }).covers) break; }
         const amounts = leaderboardAmounts({ inputs, winners, fees });
-        if (!amounts.covers) { out.push(unknownNow ? { id: lb.id, ok: false, why: `not decided this pass: ${unknownNow} reserve row(s) whose round this seat cannot read` } : short(`the reserves there (${heldSats} sat) do not cover ${lb.amountSats} sat and the fees`)); continue; }
+        if (!amounts.covers) { out.push(undecided() || short(`the reserves there (${heldSats} sat) do not cover ${lb.amountSats} sat and the fees`)); continue; }
         plan = { kind: 'leaderboard', proposal: lb.id, federation: lb.federation, reserveKey: toHex(g.key), amountSats: String(lb.amountSats), winners,
           rounds: w.pairs, winnersId: w.winnersId, refunds: inputs, changeMsat: String(amounts.changeMsat), nonce: toHex(nonceOf(lb.id, attempt)), ...(attempt ? { attempt: String(attempt) } : {}) };
         const st = await planStands(plan, { evidence: w.evidence });
@@ -1169,7 +1246,7 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
       out.push({ id: r.proposal, ...(await claimMove(r.proposal, plan)) });
     }
     // the moves the records call for, and those under way here (planned or sent: no longer listed once their inputs are spent)
-    const todo = new Map((moves() || []).map((m) => { knownMoves.set(m.id, m); return [m.id, m]; }));
+    const todo = new Map((moves() || []).map((x) => { const m = currentMove(x); knownMoves.set(m.id, m); return [m.id, m]; }));   // kanban #2435
     for (const r of db.prepare(`SELECT * FROM reserve_payouts WHERE state IN ('PLANNED', 'SUBMITTING', 'SENT', 'REFUNDING', 'EXPIRED')`).all()) {
       const p = planOfRow(r); if (!p || p.kind !== 'move' || todo.has(r.proposal)) continue;
       const m = moveOf(r.proposal) || { id: r.proposal, from: p.federation, to: p.to, toKey: p.toKey, fromKey: p.reserveKey, decidableAt: Number(p.decidableAt) || 0 };
@@ -1247,7 +1324,7 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     let r = rowOf(pid);
     if (r.state === PAYOUT.PLANNED) {
       const s = await sign(plan, 'tx');
-      if (!s.ok) return s;
+      if (!s.ok) return s.learned ? { ok: true, state: s.state } : s;   // a co-signer's record moved it on (kanban #2330)
       let txid; try { txid = await txidOfPlan(port, plan); } catch (e) { return refuse(`this seat cannot rebuild the transaction it signed: ${e.message}`, 503); }
       if (!txid) return refuse('this seat cannot rebuild the transaction it signed', 503);
       const t = transition(pid, PAYOUT.PLANNED, PAYOUT.SUBMITTING, { txid, submit_sig: toHex(s.signature), why: 'signed by the reserve key; handed to the federation' });
@@ -1272,7 +1349,9 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
           // NOT HANDED IN AGAIN, AND NOT EXPIRED, UNTIL THE FEDERATION RAN SESSIONS (kanban #1354): an earlier hand-in may sit in its queue
           const w = sessionsPassed(pid, plan);
           if (!w.ok) { note(pid, PAYOUT.SUBMITTING, `${w.why}; not handed in again`); return refuse(w.why, 503); }
-          const t = transition(pid, PAYOUT.SUBMITTING, PAYOUT.EXPIRED, { submit_sig: null, why: `signed at height ${r.planned_at}, not taken, and due to expire at ${h}: not handed in` });
+          // ITS INPUTS FREED WITH IT (kanban #1663): an EXPIRED record holds no input, as expireIfDue's PLANNED -> EXPIRED - kept, they read spent
+          // at this seat and its next attempt here found "the reserves cannot pay it now"; a later attempt locks again what it plans
+          const t = transition(pid, PAYOUT.SUBMITTING, PAYOUT.EXPIRED, { submit_sig: null, why: `signed at height ${r.planned_at}, not taken, and due to expire at ${h}: not handed in` }, { release: true });
           if (t.ok) log(`[payout] ${pid.slice(0, 16)}: EXPIRED - attempt ${attemptOf(plan)} signed but not taken before its plan was due to expire`);
           return t.ok ? { ok: true, state: PAYOUT.EXPIRED } : t;
         }
@@ -1307,7 +1386,7 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     const at = { txid: fromHex(r.txid), outIdx: 0n };
     if (r.state === PAYOUT.SENT) {
       const s = await sign(plan, 'refund', { txid: r.txid });
-      if (!s.ok) return s;
+      if (!s.ok) return s.learned ? { ok: true, state: s.state } : s;   // kanban #2330
       let back; try { back = await txidOfPlan(port, plan, 'refund', { txid: r.txid }); } catch (e) { return refuse(`this seat cannot rebuild the refund it signed: ${e.message}`, 503); }
       if (!back) return refuse('this seat cannot rebuild the refund it signed', 503);
       const t = transition(pid, PAYOUT.SENT, PAYOUT.REFUNDING, { refund_txid: back, refund_sig: toHex(s.signature), why: 'the contract expired unpaid; its refund is handed to the federation' });
@@ -1350,7 +1429,7 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     // the gateway did not pay before the contract expired: spent back to the reserve key, recorded REFUNDED (no re-try here)
     if (st && st.stored && st.stored.blocksLeft <= 0) return refund(pid, plan, port);
     const a = await sign(plan, 'auth', { txid: r.txid });
-    if (!a.ok) return a;
+    if (!a.ok) return a.learned ? { ok: true, state: a.state } : a;   // kanban #2330: PAID or REFUNDED as a co-signer's record says
     const said = await port.send({ gateway: plan.gatewayUrl, outpoint: at, paymentHash: plan.paymentHash, amountMsat: BigInt(plan.contractMsat), expiration: BigInt(plan.expiration),
       claimPk: plan.gatewayPk, refundPk: fromHex(plan.reserveKey), invoice: plan.invoice, auth: a.signature });
     if (said && said.sent && said.preimage && toHex(sha256(said.preimage)) === plan.paymentHash) {

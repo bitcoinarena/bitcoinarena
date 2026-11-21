@@ -82,6 +82,33 @@ const sample = async () => {
   if (r.median === null) log({ step: 'no reading', sources: r.sources });
 };
 
+// A SEAT'S OR PEER'S ANSWER, READ UP TO A CAP (kanban #2457): GET /games, GET /rounds and the peers' GET /attestation were read whole
+// with r.json(), so one seat of --seats (or one peer) could answer millions of rows: the daemon buffered and JSON-parsed them all before
+// the SEAT_ROWS cut, ran out of heap and died on every tick - no attestation, every round VOID. Now a Content-Length over the cap is
+// refused unread and the stream is cancelled once it passes the cap; such a seat or peer counts as not answered.
+const ROUNDS_ANSWER_BYTES = 256 * 1024;
+const GAMES_ANSWER_BYTES = 4 * 1024 * 1024;
+const WORD_ANSWER_BYTES = 64 * 1024;
+// kanban #2702 (#1489 r4-attest-11): the round's contract (GET /round), a series template and a seat's answer to POST /outcome were still
+// read whole (arrayBuffer / text) - one seat streamed 256 MiB into the daemon for one made-up round, 32 at once. Each is capped now.
+const CONTRACT_ANSWER_BYTES = 64 * 1024;
+async function cappedJson(r, cap) { return JSON.parse((await cappedBytes(r, cap)).toString('utf8')); }
+async function cappedBytes(r, cap) {
+  const said = Number(r.headers.get('content-length'));
+  if (said > cap) { try { await r.body?.cancel(); } catch { /* dropped */ } throw new Error(`its answer is ${said} bytes, more than ${cap}`); }
+  if (!r.body) throw new Error('its answer has no body');
+  const reader = r.body.getReader();
+  const parts = []; let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.byteLength;
+    if (n > cap) { reader.cancel().catch(() => {}); throw new Error(`its answer passed ${cap} bytes`); }
+    parts.push(value);
+  }
+  return Buffer.concat(parts);
+}
+
 // EVERY VERSION OF THE MARKET THAT NAMES THIS KEY (marketsToAttest): the seats' /games, read again each minute - with --game-id
 // the listed ids are kept beside them; without it and before the first read, the game's name alone matches, as before
 let marketIds = new Set(GAME_IDS);
@@ -90,6 +117,7 @@ const MARKETS_EVERY_MS = Number(arg('markets-every-ms', '60000'));
 let versions = [];                     // [{ id, version }] of the seats' listing, oldest first
 let listed = false;
 const periods = new Map();             // market id hex -> its manifest's roundPeriodMs (0n: no grid)
+const manifestsById = new Map();       // market id hex -> its decoded manifest: the keys and threshold its rounds combine by (kanban #2635)
 const readMarkets = async () => {
   if (Date.now() - marketsReadMs < MARKETS_EVERY_MS) return;
   const games = [];
@@ -99,7 +127,7 @@ const readMarkets = async () => {
     try {
       const r = await fetch(`${seat}/games`, { signal: AbortSignal.timeout(8000) });
       if (!r.ok) return;
-      games.push(...((await r.json()).games || [])); read++;
+      games.push(...((await cappedJson(r, GAMES_ANSWER_BYTES)).games || [])); read++; // kanban #2457: capped
     } catch { /* the other seats */ }
   }));
   if (!read) return;
@@ -111,7 +139,8 @@ const readMarkets = async () => {
   // market believed above (kanban #2080: a forged manifest's grid is no grid of this market's) - a grid of a market no longer
   // believed is dropped with it
   for (const id of [...periods.keys()]) if (!next.has(id)) periods.delete(id);
-  for (const g of games) { try { const m = decodeManifest(fromHex(String(g.manifest))); const id = toHex(gameIdOf(m)); if (next.has(id)) periods.set(id, m.roundPeriodMs); } catch { /* not a manifest */ } }
+  for (const id of [...manifestsById.keys()]) if (!next.has(id)) manifestsById.delete(id);
+  for (const g of games) { try { const m = decodeManifest(fromHex(String(g.manifest))); const id = toHex(gameIdOf(m)); if (next.has(id)) { periods.set(id, m.roundPeriodMs); manifestsById.set(id, m); } } catch { /* not a manifest */ } }
   const added = [...next].filter((id) => !marketIds.has(id));
   const dropped = [...marketIds].filter((id) => !next.has(id));
   // THE WHOLE LIST at the first read and on every change, the latest version named
@@ -137,7 +166,7 @@ const CONTRACT_RETRY_MS = Number(arg('contract-retry-ms', '30000'));
 const closes = new Map();              // round hex -> { closeMs } believed from its contract (never changes: the bytes are the round)
 const closeTried = new Map();          // round hex -> ms its contract was last asked for, while none verified
 const noClose = new Set();             // round hex: logged once as having no close to sign
-const getJson = async (u) => { const r = await fetch(u, { signal: AbortSignal.timeout(8000) }); if (!r.ok) return null; return r.json(); };
+const getJson = async (u, cap = ROUNDS_ANSWER_BYTES) => { const r = await fetch(u, { signal: AbortSignal.timeout(8000) }); if (!r.ok) return null; return cappedJson(r, cap); };   // kanban #2457: every answer read up to a cap
 const roundsOfGame = async () => {
   await readMarkets();
   const byId = new Map();              // round hex -> Map seat -> listed close
@@ -147,7 +176,7 @@ const roundsOfGame = async () => {
       // the full listing every 5 s made a seat sign all its ~2,400 rows each 45 s window - 4,800 signatures a window, its
       // listing-sign worker at ~42 % (measured 16:02Z on seat 3). A market's rounds whose window ended within the hour are a
       // handful, kept in the listing's closed tally.
-      const j = await getJson(`${seat}/rounds?next=16`);
+      const j = await getJson(`${seat}/rounds?next=16`, ROUNDS_ANSWER_BYTES);   // kanban #2457: capped
       if (!j) return;
       const rows = Array.isArray(j) ? j : j.rounds || [];
       // entryCloseMs is decimal ms (a string on the wire)
@@ -192,13 +221,13 @@ const firstOf = (items, fn) => new Promise((resolve) => {
 const contractFrom = async (seat, r) => {
   const x = await fetch(`${seat}/round?id=${r.id}`, { signal: AbortSignal.timeout(8000) });
   if (!x.ok) return null;
-  const bytes = new Uint8Array(await x.arrayBuffer());
+  const bytes = new Uint8Array(await cappedBytes(x, CONTRACT_ANSWER_BYTES));   // kanban #2702
   let got = roundCloseOf({ id: r.id, contract: bytes, marketIds });
   if (!got.ok && got.seriesId) {
     const t = await firstOf([seat, ...SEATS.filter((s) => s !== seat)], async (s2) => {
       const y = await fetch(`${s2}/series-template?id=${got.seriesId}`, { signal: AbortSignal.timeout(8000) });
       if (!y.ok) return null;
-      const k = roundCloseOf({ id: r.id, contract: bytes, seriesLine: await y.text(), marketIds });
+      const k = roundCloseOf({ id: r.id, contract: bytes, seriesLine: (await cappedBytes(y, CONTRACT_ANSWER_BYTES)).toString('utf8'), marketIds });
       return k.ok ? k : null;
     });
     if (t) got = t;
@@ -227,9 +256,15 @@ const closeOfRound = async (r) => {
   }
   // no contract: a listed close only while every seat listing the round names the same close AND the same game (kanban #2080)
   const pairs = [...new Set([...r.listedBy.values()].map((l) => `${l.close}/${l.gameId}`))];
-  if (pairs.length !== 1) return { closeMs: null, why: `the seats list ${pairs.length} (close, game) pairs for it and none serves its contract` };
-  const only = [...r.listedBy.values()][0];
-  return { closeMs: only.close, gameId: only.gameId, from: 'listing' };
+  if (pairs.length === 1) { const only = [...r.listedBy.values()][0]; return { closeMs: only.close, gameId: only.gameId, from: 'listing' }; }
+  // SEATS DISAGREE (kanban #2647, audit #1489 r1-attest-1): one seat listing a shifted close made the round unsigned (VOID) - or, read
+  // first, signed on its window. A (close, game) pair listed by more than half of ALL configured seats is the round's; else none
+  const votes = new Map();
+  for (const l of r.listedBy.values()) { const k = `${l.close}/${l.gameId}`; votes.set(k, { n: (votes.get(k)?.n || 0) + 1, l }); }
+  const top = [...votes.values()].find((v) => v.n * 2 > SEATS.length);
+  if (!top) return { closeMs: null, why: `the seats list ${pairs.length} (close, game) pairs for it, none by a majority of the ${SEATS.length} seats, and none serves its contract` };
+  log({ step: 'listed close by majority', round: r.id, closeMs: top.l.close, seats: top.n, of: SEATS.length });
+  return { closeMs: top.l.close, gameId: top.l.gameId, from: 'listing' };
 };
 
 // THE ROUNDS WORTH WORK THIS TICK: every round whose close is known from its contract or that holds a word; of the others, only
@@ -328,7 +363,8 @@ const handleRound = async (r) => {
     const by = [...r.listedBy.keys()].find((seat) => (spent.get(seat) || 0) < SEAT_WORDS_PER_HOUR);
     if (by === undefined) return;
     roundMeta.set(r.id, { closeMs: c.closeMs, by });
-    const w = (MODE === 'value' ? attestValue : attestWindow)({ samples, roundId: fromHex(r.id), window, attestor });
+    // kanban #3049: a window counts only if read - three readings of this daemon's interval at most between two
+    const w = (MODE === 'value' ? attestValue : attestWindow)({ samples, roundId: fromHex(r.id), window, attestor, gapMs: BigInt(3 * SAMPLE_MS) });
     words.set(r.id, w.ok ? { ...w, closeMs: c.closeMs, from: c.from } : { none: w.why, closeMs: c.closeMs, from: c.from });
     log(w.ok ? { step: 'signed', round: r.id, from: c.from, window: { start: new Date(Number(window.startMs)).toISOString(), end: new Date(Number(window.endMs)).toISOString() },
       ...(MODE === 'value' ? { value: w.value } : { priceToBeat: w.priceToBeat, endPrice: w.endPrice, outcome: w.label }),
@@ -342,17 +378,19 @@ const handleRound = async (r) => {
   if (SEATS.every((seat) => held.has(seat) || (absent.get(seat) || 0) > Date.now())) return;
   // THE OTHER ATTESTORS' WORDS, and the attestation once the threshold of them sign one body
   const theirs = await Promise.all(PEERS.map(async (p) => {
-    try { const x = await fetch(`${p}/attestation?round=${r.id}`, { signal: AbortSignal.timeout(5000) }); return x.ok ? wordFromJson(await x.json()) : null; } catch { return null; }
+    try { const x = await fetch(`${p}/attestation?round=${r.id}`, { signal: AbortSignal.timeout(5000) }); return x.ok ? wordFromJson(await cappedJson(x, WORD_ANSWER_BYTES)) : null; } catch { return null; }
   }));
   const all = [mine, ...theirs.filter(Boolean)];
-  const att = combine(all, { attestors: ATTESTORS, threshold: THRESHOLD });
+  // kanban #2635 (bypass of #1487): by the attestors of the version the round's contract names - a key that version dropped is no
+  // signer of its rounds, its valid word left out; the --attestors / --threshold flags only for a market whose manifest was not read
+  const att = combine(all, { attestors: ATTESTORS, threshold: THRESHOLD, manifest: manifestsById.get(c.gameId) || null });
   if (!att) return;
   // every seat at once (kanban #1891): a seat that holds a POST open delays no other seat
   await Promise.all(SEATS.map(async (seat) => {
     if (held.has(seat) || (absent.get(seat) || 0) > Date.now()) return;
     try {
       const x = await fetch(`${seat}/outcome?round=${r.id}`, { method: 'POST', body: att.bytes, signal: AbortSignal.timeout(8000) });
-      const text = (await x.text()).trim();
+      const text = (await cappedBytes(x, WORD_ANSWER_BYTES).catch(() => Buffer.from(''))).toString('utf8').trim();   // kanban #2702: capped
       if (x.status === 201 || x.status === 200) { held.add(seat); log({ step: 'posted', round: r.id, seat, status: x.status, signers: att.signers, ...(MODE === 'value' ? { value: att.body.value } : { outcome: att.body.outcome }),
         words: all.map((w) => ({ key: w.key.slice(0, 8), ...(MODE === 'value' ? { value: w.body.value } : { outcome: w.body.outcome }) })) }); }
       else if (x.status === 404) {
@@ -369,8 +407,13 @@ const handleRound = async (r) => {
   if (words.get(r.id) === mine) posted.set(r.id, held);
 };
 
+// NO REQUEST ENDS THE ATTESTOR (kanban #3048, as the faucet's #2284): a last guard logs anything that escapes a handler instead of ending
+// the process - its words, posted sets and the market's attestation with them
+process.on('uncaughtException', (e) => { log({ step: 'uncaught, kept running', why: String((e && e.stack) || e).slice(0, 2000) }); });
+process.on('unhandledRejection', (e) => { log({ step: 'unhandled rejection, kept running', why: String((e && e.stack) || e).slice(0, 2000) }); });
 http.createServer((req, res) => {
-  const url = new URL(req.url, 'http://x');
+  // kanban #3048: a request target that is no URL (`GET //[`) threw here, outside any try, and ended the daemon (exit 1) - every word lost
+  let url; try { url = new URL(req.url, 'http://x'); } catch { res.writeHead(400, { 'content-type': 'text/plain' }); return res.end('that request target is no URL'); }
   if (req.method === 'GET' && url.pathname === '/attestation') {
     const w = words.get(String(url.searchParams.get('round') || ''));
     if (!w || w.none) { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end(w ? `signs nothing: ${w.none}` : 'no word on that round yet'); }
@@ -383,7 +426,12 @@ http.createServer((req, res) => {
       markets: { ids: [...marketIds], latest: versions.at(-1) || null, versions, readAt: marketsReadMs ? new Date(marketsReadMs).toISOString() : null } }));
   }
   res.writeHead(404); res.end();
-}).listen(PORT, '0.0.0.0', () => log({ step: 'up', port: PORT, mode: MODE, key: toHex(attestor.pubkey), sources: SOURCES, gameIds: GAME_IDS, readingsFromDisk: samplesFromDisk, seats: SEATS, peers: PEERS }));
+})
+  // kanban #3173/#3180 (refute of #3048): a listen that fails (EADDRINUSE on a restart whose port is still held, EACCES) ends the daemon
+  // with exit 1 here, before the last guard above can swallow it - else it ran on with no /attestation and no /status, and its supervisor
+  // never restarted it. The guard stays for what escapes a request handler.
+  .on('error', (e) => { log({ step: 'http server failed, exiting', why: String((e && e.stack) || e).slice(0, 2000) }); process.exit(1); })
+  .listen(PORT, '0.0.0.0', () => log({ step: 'up', port: PORT, mode: MODE, key: toHex(attestor.pubkey), sources: SOURCES, gameIds: GAME_IDS, readingsFromDisk: samplesFromDisk, seats: SEATS, peers: PEERS }));
 
 await sample();
 setInterval(() => sample().catch((e) => log({ step: 'sample failed', why: e.message })), SAMPLE_MS);

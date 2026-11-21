@@ -64,9 +64,7 @@ export function finalityStep(round, roundIdBytes, entryIdBytes, computed, { now 
   }
   if (!computed) return computed;
   const finalAfter = computed.finalAfterMs !== undefined && computed.finalAfterMs !== null ? BigInt(computed.finalAfterMs) : null;
-  // a check of it still queued or running in this process holds it whatever the row's age (kanban #1225); otherwise PENDING_OBJECTION_MS
-  const checking = round.objectionChecks instanceof Map && (round.objectionChecks.get(hex(entryIdBytes)) || 0) > 0;
-  const pending = ignorePending ? null : typeof round.pendingObjectionAt === 'function' ? round.pendingObjectionAt(roundIdBytes, entryIdBytes, checking ? 0 : Number(now) - PENDING_OBJECTION_MS) : null;
+  const pending = ignorePending ? null : pendingObjectionAt(round, roundIdBytes, entryIdBytes, now);
   if (pending !== null && (computed.state === FINAL || computed.signable) && (finalAfter === null || BigInt(pending) < finalAfter)) {
     const { signable: _signable, ...rest } = computed;
     return { ...rest, state: SUSPENDED, pendingObjection: true, pendingObjectionAtMs: pending, computedState: computed.state,
@@ -79,6 +77,15 @@ export function finalityStep(round, roundIdBytes, entryIdBytes, computed, { now 
     } catch { /* kept on the next read */ }
   }
   return computed;
+}
+
+/** The earliest objection still being checked here (kanban #1173), or null: a check of it still queued or running in this process holds it whatever
+ * the row's age (kanban #1225); otherwise PENDING_OBJECTION_MS - or, given `heldUntilMs`, any row while the clock is before it (kanban #2272). */
+function pendingObjectionAt(round, roundIdBytes, entryIdBytes, now, heldUntilMs = null) {
+  if (typeof round.pendingObjectionAt !== 'function') return null;
+  const checking = round.objectionChecks instanceof Map && (round.objectionChecks.get(hex(entryIdBytes)) || 0) > 0;
+  const young = heldUntilMs !== null && BigInt(now) < BigInt(heldUntilMs);
+  return round.pendingObjectionAt(roundIdBytes, entryIdBytes, checking || young ? 0 : Number(now) - PENDING_OBJECTION_MS);
 }
 
 /** A kept FINAL, as the readers read one: its run, its final_after, its re-run's result when it is FINAL on one - whatever the evidence says now. */
@@ -102,10 +109,10 @@ function keptFinal(round, roundIdBytes, entryIdBytes, kept, computed) {
  * finalityStep (kanban #1173): FINAL kept once reached, and an objection being checked holds it SUSPENDED.
  */
 export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.now(), ignorePending = false } = {}) {
-  return finalityStep(round, roundIdBytes, entryIdBytes, computeFinality(round, roundIdBytes, entryIdBytes, { now }), { now, ignorePending });
+  return finalityStep(round, roundIdBytes, entryIdBytes, computeFinality(round, roundIdBytes, entryIdBytes, { now, ignorePending }), { now, ignorePending });
 }
 
-function computeFinality(round, roundIdBytes, entryIdBytes, { now = round.now() } = {}) {
+function computeFinality(round, roundIdBytes, entryIdBytes, { now = round.now(), ignorePending = false } = {}) {
   const row = round.get(roundIdBytes);
   if (!row) return { state: null, why: 'no such round' };
   const contract = decodeRoundContract(new Uint8Array(row.contract));
@@ -232,6 +239,17 @@ function computeFinality(round, roundIdBytes, entryIdBytes, { now = round.now() 
   if (!inTime) {
     const common = { ...base, closesAtMs: win.closeMs, objection: objection && objection.why, lateObjection,
       ...(lateObjection ? { lateObjectionAtMs: filedAt } : {}) };
+    // AN OBJECTION THAT REACHED THIS SEAT IN TIME AND IS STILL BEING CHECKED DECIDES NOTHING YET, NOR DOES THE CLOCK AROUND IT (kanban #2272, state
+    // audit 2026-11-12): its check (a replay, FIFO per entry, on a loaded seat) may end after final_after. Before, a read in that gap found no stored
+    // objection and wrote §13C's VOID here once and for good (the transcript not posted in time); the check then held, the objection was taken in time
+    // and the entry read SUSPENDED - beside a no-quorum VOID the settlement, the finality watch and the restart read first, while a seat whose check
+    // answered sooner held none. Now no §13C outcome is written in this branch while such a check stands: the entry reads SUSPENDED (pending) until it
+    // answered - taken, the re-run decides it; refused, this branch decides as before. An in-time arrival may be up to 600 s old at final_after, so
+    // the PENDING_OBJECTION_MS bound of a check that never answered runs from final_after here, not from the arrival
+    const pendingAt = ignorePending ? null : pendingObjectionAt(round, roundIdBytes, entryIdBytes, now, win.finalAfterMs + BigInt(PENDING_OBJECTION_MS));
+    const pendingInTime = pendingAt !== null && BigInt(pendingAt) < win.finalAfterMs;
+    const holdPending = (outcome, why) => ({ ...common, state: SUSPENDED, pendingObjection: true, pendingObjectionAtMs: pendingAt, computedState: outcome,
+      why: `an objection reached this seat at ${utc(pendingAt)}, before ${utc(win.finalAfterMs)}, and its check has not answered: nothing is decided here until it has (kanban #2272); the evidence alone reads ${outcome}: ${why}` });
     const fin = finalSigs(signedResultId, win.finalAfterMs);
     const said = { signed: fin.signed, needed: fin.needed };
     // A DECISION WRITTEN AT THIS SEAT STANDS from final_after on (a late posting's VOID, a late threshold's, a
@@ -264,6 +282,7 @@ function computeFinality(round, roundIdBytes, entryIdBytes, { now = round.now() 
       if (d.outcome) {
         const why = `not FINAL by the re-run window's end at ${utc(win.rerunCloseMs)}: ${fin.signed || 0} of ${fin.needed} seats `
           + `signed FINAL - ${d.why} (§13C)`;
+        if (pendingInTime) return holdPending(d.outcome, why);
         // written only when asked at this seat's own clock: a look ahead (a caller's `now` past it) decides nothing
         if (typeof round.putNoQuorum === 'function' && nowMs <= BigInt(round.now()))
           round.putNoQuorum({ entryId: entryIdBytes, roundId: roundIdBytes, outcome: d.outcome, why });
@@ -288,6 +307,7 @@ function computeFinality(round, roundIdBytes, entryIdBytes, { now = round.now() 
         + `${inTimePosted.posted || 0} of ${inTimePosted.needed || '?'} postings held in time`
         + `${published.ok ? `; the posting that completed the threshold reached this seat at ${utc(published.atMs)}, after the result window's deadline` : ''}`
         + ' - a seat that cannot retrieve the transcript within the result window treats the entry as VOID (§13A, §13C)';
+      if (pendingInTime) return holdPending(VOID, why);
       if (typeof round.putNoQuorum === 'function' && nowMs <= BigInt(round.now())
         && round.putNoQuorum({ entryId: entryIdBytes, roundId: roundIdBytes, outcome: VOID, why }) === 1)
         console.log(`[close] ${hex(entryIdBytes).slice(0, 16)} VOID: ${why}`);
@@ -335,6 +355,11 @@ function computeFinality(round, roundIdBytes, entryIdBytes, { now = round.now() 
     if (d.outcome) {
       const why = `${d.why} - the re-run window closed at ${utc(win.rerunCloseMs)} with ${rerun.agreed || 0} of `
         + `${rerun.needed || seen.needed} re-runs on one outcome (§13A, §13C)`;
+      // WRITTEN ONCE, like every other §13C door (kanban #2326): unwritten, the seat read the entry as undecided for good
+      // (decidedHere, resumingCloses) and a proof pulled after the deadline turned its VOID into a FORFEIT. Written only
+      // when asked at this seat's own clock: a look ahead (a caller's `now` past it) decides nothing.
+      if (typeof round.putNoQuorum === 'function' && nowMs <= BigInt(round.now()))
+        round.putNoQuorum({ entryId: entryIdBytes, roundId: roundIdBytes, outcome: d.outcome, why });
       return { ...common, state: d.outcome, noQuorum: true, rerun: said, rerunWindowClosedAtMs: Number(win.rerunCloseMs), why };
     }
     return { ...suspended, why: `the re-run window closed: ${d.why}` };

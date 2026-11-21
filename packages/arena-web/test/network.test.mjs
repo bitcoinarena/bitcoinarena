@@ -41,7 +41,7 @@ test('another node\'s network: checked in the browser, Install only after the ch
   assert.deepEqual([bad.c.state.take, bad.posted.length], [false, 0]);
   const ok = driven(); await ok.c.reload(); ok.c.setState({ from: 'https://n1/' }); await ok.c.look(); ok.c.check();
   assert.equal(ok.c.state.take, true); await ok.c.take();
-  assert.deepEqual(ok.posted[0], ['/owner/network/install', 'network-install', { network: 'ff'.repeat(32), from: 'https://n1' }]);
+  assert.deepEqual(ok.posted[0], ['/owner/network/install', 'network-install', { network: 'ff'.repeat(32), from: 'https://n1', id: 'ee'.repeat(32), federationId: '337ae01a' }], 'the package the page checked, signed by id and federation (kanban #3164)');
   const up = driven({ update: { ok: false, why: 'set 2 is not newer than 3' } }); await up.c.reload(); up.c.setState({ from: 'https://n2' }); await up.c.look();
   assert.ok(up.c.state.offer.installed, 'an update of the installed network'); up.c.check();
   assert.deepEqual([up.c.state.take, up.c.state.error], [false, 'set 2 is not newer than 3']);

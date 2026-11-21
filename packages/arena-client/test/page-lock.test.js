@@ -46,6 +46,7 @@ import { TRUCK_68E2_HASH } from '../../nextblock/plugin/truck-cores.js';   // th
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 import { pointKey } from '../../arena-protocol/test/point-key-fixture.js';  // kanban #1675: fixture keys are curve points
+import { signedSeats } from './settled-signed.js';   // kanban #2108: seats sign their /settled answers
 // The shape of a real invite (bech32m, prefix `fed1`, separator `1`): the first
 // rehearsal's page threw on its own invite because this constant had no separator.
 const INVITE = 'fed11qgqpw9thwvaz7te3xgmjuvpwxqhrzw' + 'q'.repeat(20);
@@ -950,7 +951,7 @@ test('a device holding only the seed matches its own key against the keys each s
     if (m && contracts.has(m[1])) return new Response(contracts.get(m[1]), { status: 200 });
     return new Response('no', { status: 404 });
   };
-  const ask = { seed, curve: pageCurve, nodes: ['http://a.test'], fetcher: signerNodes, sinceMs: 1000 };
+  const ask = { seed, curve: pageCurve, nodes: ['http://a.test'], ...signedSeats(signerNodes, ['http://a.test']), sinceMs: 1000 };
   const found = await findOwedRounds(ask);
   console.log(`  found ${found.length} of ${listing.length} listed: ${found.map((f) => `${f.roundIdHex.slice(0, 12)} payout=${f.payout} lock=${f.lock}`).join(', ')}; asked ${asked.join(' ')}`);
   assert.deepEqual(found.map((f) => f.roundIdHex), [toHex(rid)], 'not exactly the round that pays this seed');
@@ -1376,6 +1377,8 @@ test('the join link carries the federation\'s invite, and refuses one that is no
 // lock client's plan named 'http://gw' (its own pick); the operator lists the funded gateway, and the receive names that.
 test('a deposit goes through the listed funded gateway, not the lock client\'s pick', async () => {
   const { LockClient, log } = lockClient();
+  // kanban #3150: a named gateway is used only when the federation lists it - this one's federation does
+  LockClient.prototype.gateways = async function () { return JSON.stringify(['https://funded.example/']); };
   await fundPlayerWallet({ round, invite: INVITE, seed, LockClient, storage: tabStorage(), gateways: ['https://funded.example/'] });
   const asked = log.filter((l) => l.receive).map((l) => l.receive.gateway);
   assert.ok(asked.length > 0, 'no deposit was asked');
@@ -1392,6 +1395,8 @@ test('an estimated deposit asks no depositFor, and its invoice carries the margi
   let quoted = 0;
   const orig = LockClient.prototype.depositFor;
   LockClient.prototype.depositFor = function (...a) { quoted++; return orig.apply(this, a); };
+  // kanban #3150: a named gateway is used only when the federation lists it - this one's federation does
+  LockClient.prototype.gateways = async function () { return JSON.stringify(['https://funded.example/']); };
   const deposits = [];
   await fundPlayerWallet({ round, invite: INVITE, seed, LockClient, storage: tabStorage(), estimateDeposit: true,
     gateways: ['https://funded.example/'], onDeposit: (d) => deposits.push(d) });
@@ -1603,7 +1608,8 @@ test('a close refuses the deposit', async () => {
 });
 test('the deposit status: each invoice names its gateway, and a watcher hears how it ended - claimed, expired or a failed wait', async () => {
   const heard = [];
-  const client = { receive: async () => JSON.stringify({ invoice: 'lntb1x', operation: 'op1' }),
+  // kanban #3150: the named gateway is one the federation lists
+  const client = { receive: async () => JSON.stringify({ invoice: 'lntb1x', operation: 'op1' }), gateways: async () => JSON.stringify(['https://gw-b.example/']),
     awaitReceive: async (op) => (op === 'op1' ? 'Expired' : 'Claimed') };
   const offer = depositOffer({ client, stakeMsat: 100000n, gateways: ['https://gw-b.example/'] });
   offer.watch((d, final) => heard.push([d.gateway, final]));
@@ -1725,7 +1731,8 @@ test('1 sat = 1 sat (2026-10-01): a 100 sat round - stake lock 96, fee lock 2, d
 });
 test('a withdrawal names the funded gateway to the lock client (2026-10-01 08:34: the stock pick sent an LND-a invoice to gateway A and it was refunded)', async () => {
   const seen = [];
-  const client = { withdrawableMsat: async () => '50000',
+  // kanban #3150: the named gateway is one the federation lists (one it does not list is never preferred)
+  const client = { withdrawableMsat: async () => '50000', gateways: async () => JSON.stringify(['https://gw-a.example/', 'https://gw-b.example/']),
     withdraw: async (invoice, gw) => { seen.push(gw); return JSON.stringify({ state: 'Success', preimage: 'ab'.repeat(32), invoice_msat: 5000, gateway: gw }); } };
   const out = await withdrawCollected({ client, amountMsat: 5000n, gateways: ['https://gw-b.example/'],
     invoiceFor: async () => ({ ok: true, invoice: bolt11For(5000n) }) });

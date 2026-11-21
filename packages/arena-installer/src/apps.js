@@ -56,3 +56,57 @@ export async function hostedGameIdsOf(release, chosenIds, apps = appsIn(release)
   if (!regs.length) return [];
   return [...hostedPlugins(regs, { log: () => {} }).keys()].sort();
 }
+
+/**
+ * THE RELEASE'S GAMES WRITTEN DOWN BEFORE A NODE'S FIRST BOND (kanban #3068, #3089): a node with no bond yet has nothing on chain to
+ * correct, so its state.hostedGames is simply set to what `release` hosts for its chosen apps - the bond, when it is built, names
+ * these. Called by the updater (change-roles.js refreshHostedGames) AND where the first bond is built (add-bond.js firstBondOnNode):
+ * the updater that moves a node into a release is the PREVIOUS release's code, so a node updated by an older updater (whose refresh
+ * returned "no bond yet" without writing anything) would otherwise bond with the install-time list. A bonded node is left alone: its
+ * list is what its advertisement names on chain, and refreshHostedGames posts the update. Answers the release's game ids ([] when it
+ * hosts none of the node's apps or the node is bonded).
+ */
+export async function releaseGamesBeforeBond(st, release) {
+  const s = st.read();
+  if (s.bond && s.bond.txid) return [];
+  const apps = appsIn(release);
+  const now = await hostedGameIdsOf(release, chosenApps(s, apps), apps);
+  if (now.length && JSON.stringify([...new Set(s.hostedGames || [])].sort()) !== JSON.stringify([...new Set(now)].sort())) st.save({ hostedGames: now });
+  return now;
+}
+
+/**
+ * THE GAMES A NEW FIRST BOND NAMES (kanban #3114, #3115 - refute of #3068/#3089/#3101): ONE build rule for every door that posts a first
+ * bond - the owner page (add-bond.js firstBond) and the installer wizard (wizard.js 'POST /api/bond/post') - so no copy of the build can
+ * drift again. Read inside the bond's build, where no live bond is left: the games of the release the node RUNS (`s.release.path`, which
+ * an updater writes when it moves the node; else `release`, the code building the bond) for its chosen apps. Never state.hostedGames
+ * alone: an updater of 1.9.28 or older moved the node without writing them, and over a withdrawn bond (kanban #2098) they are the old
+ * bond's list. Answers the list ([] / an unreadable release: s.hostedGames as before, so a bond is never built with no game).
+ */
+//
+// WHICH RELEASE RUNS, IN THE WINDOW OF AN UPDATE (kanban #3128, refute of #3068/#3114): update.js starts the new release's units (STARTED)
+// minutes before it records state.release.path (KEPT); an updater killed in between (a reboot) or still checking leaves state.release naming
+// the OLD release while the new one runs. Read first, s.release.path named the old release's games (3 of 10) and even overwrote the list
+// releaseGamesBeforeBond had just written. So the order is: (1) an open update journal (<home>/update-journal.json, `home` given) - its
+// units run `to` once written (UNITS_WRITTEN, STARTED), `from` before that and while rolling back; (2) `runs`, the release the door knows
+// is running because it IS that code (the owner page: server.js passes its own folder); (3) s.release.path; (4) `release`.
+export async function runningReleaseOf(home) {
+  if (!home) return null;
+  try {
+    const { readJournal, openJournal, UPDATE_PHASE: U } = await import('./update.js');
+    const j = readJournal(home);
+    if (!openJournal(j)) return null;
+    return (j.phase === U.UNITS_WRITTEN || j.phase === U.STARTED ? j.to : j.from) || null;
+  } catch { return null; }
+}
+export async function bondGamesOf(s, release, { home = null, runs = null } = {}) {
+  const journaled = await runningReleaseOf(home);
+  for (const rel of [...new Set([journaled, runs, s && s.release && s.release.path, release].filter(Boolean))]) {
+    try {
+      const apps = appsIn(rel);
+      const now = await hostedGameIdsOf(rel, chosenApps(s, apps), apps);
+      if (now.length) return now;
+    } catch { /* the next release, then the list in state */ }
+  }
+  return (s && s.hostedGames) || [];
+}
