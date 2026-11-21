@@ -851,10 +851,12 @@ createServer((req, res) => {
     // A WRONG ADMIN CODE IS COUNTED (kanban #3243, audit r10): tries were unlimited, so the code could be guessed as fast as asked. A caller
     // (its address; none named: one shared key) gets ADMIN_TRIES_PER_CALLER wrong codes in ADMIN_TRY_WINDOW_MS, all callers together
     // ADMIN_TRIES_ALL; past either the admin answers 429 until the window ends - also to the right code, so a guess learns nothing
-    const who = `admin:${ipOf(req) || 'unnamed'}`, now0 = Date.now();
+    const who = `admin:${(typeof ipKey === 'function' ? ipKey(ipOf(req)) : ipOf(req)) || 'unnamed'}`, now0 = Date.now();
     for (const [k, v] of ADMIN_FAILS) if (now0 - v.since > ADMIN_TRY_WINDOW_MS) ADMIN_FAILS.delete(k);
     const mine = ADMIN_FAILS.get(who), all = ADMIN_FAILS.get('admin:*');
-    if ((mine && mine.n >= ADMIN_TRIES_PER_CALLER) || (all && all.n >= ADMIN_TRIES_ALL)) return send(429, { ok: false, why: 'too many wrong admin codes - try again later' });
+    // kanban #3263 (audit r22): the all-callers count locks only callers that guessed wrong themselves - a caller with no wrong code (the
+    // owner) is never locked out by strangers; an IPv6 /64 is one caller (ipKey)
+    if ((mine && mine.n >= ADMIN_TRIES_PER_CALLER) || (all && all.n >= ADMIN_TRIES_ALL && mine && mine.n > 0)) return send(429, { ok: false, why: 'too many wrong admin codes - try again later' });
     if (!isAdmin(req)) {
       for (const k of [who, 'admin:*']) { const v = ADMIN_FAILS.get(k) || { n: 0, since: now0 }; v.n++; ADMIN_FAILS.set(k, v); }
       return send(403, { ok: false, why: 'not the admin code' });
