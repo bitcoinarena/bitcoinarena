@@ -204,6 +204,7 @@ export function openBountySeason(path = ':memory:', { startMs = null, s2EndMs = 
     CREATE TRIGGER IF NOT EXISTS link_names_move AFTER UPDATE OF username, user_id ON links WHEN new.username IS NOT NULL BEGIN
       INSERT OR IGNORE INTO link_names (platform, user_id, username) VALUES (new.platform, new.user_id, lower(new.username)); END;`);
   const namesOf = db.prepare('SELECT username FROM link_names WHERE platform = ? AND user_id = ?');
+  const firstNameOf = db.prepare('SELECT username FROM link_names WHERE platform = ? AND user_id = ? ORDER BY rowid ASC LIMIT 1');   // kanban #3056
   const seasonNow = (nowMs) => seasonAt(nowMs, startMs, s2EndMs);
 
   /** A ONE-TIME LINK CODE for a reporter's key (signed in with it): 24 hours, used once, at most LINK_CODES_OPEN_MOST open at a time. */
@@ -451,7 +452,15 @@ export function openBountySeason(path = ':memory:', { startMs = null, s2EndMs = 
       const f = flagsOf(k, { nowMs });
       const ls = linksOf(k);
       const pick = COMMUNITIES.map((p) => f[p] && ls.find((l) => l.platform === p)).find(Boolean) || null;
-      if (pick) picks.push({ name: `${pick.platform}:${pick.username || pick.userId}`, id: `${pick.platform}:${pick.userId || k}`, key: k });
+      // THE NAME THE ACCOUNT FIRST CARRIED (kanban #3056, audit faucet r4-2-1): the entries are read after the seed block is public, and an entrant
+      // renamed his linked account (same id, claimName/redeem update the name) until the published draw gave him place 1. An entry names the
+      // account by the first name this store saw for it (link_names, in the order kept), which no later rename moves
+      // (kept lower-case there: the current name is shown while it is that first name in any case)
+      if (pick) {
+        const first = pick.userId ? firstNameOf.get(pick.platform, String(pick.userId)) : null;
+        const shown = first && first.username && String(pick.username || '').toLowerCase() !== first.username ? first.username : (pick.username || pick.userId);
+        picks.push({ name: `${pick.platform}:${shown}`, id: `${pick.platform}:${pick.userId || k}`, key: k });
+      }
     }
     // ONE ENTRY PER KEY, NEVER MERGED BY A NAME (kanban #2684, #1489 r3-faucet-2): a username is text another account can show too (an old link
     // under a Telegram first name, a name given up and taken), and two keys under one name collapsed into ONE entry here and in bounty-draw.mjs -
