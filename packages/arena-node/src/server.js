@@ -14480,6 +14480,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             if (roundId.length !== 32 || entryId.length !== 32)
               return sock.send('error a watch names a round and an entry');
             if (!round.get(roundId)) return sock.send('error no such round');
+            // A CLOSED ROUND IS PICTURED NO FURTHER (kanban #3264, audit r22 play-1): a watch frame walked every other entry's run through the core on
+            // this thread (the warm, then the field's pictures), and for a closed round the sweep had let go of the runs - each frame rebuilt them
+            // cold from their join tick. Its result is read from GET /results, not the play socket
+            if (round.get(roundId).state === CLOSED) return sock.send('error that round is closed: it is pictured no further');
             const held = round.entry(entryId);
             if (!held) return sock.send('error no such entry');
             if (hexOf(decodeEntryContract(held).roundId) !== hexOf(roundId))
@@ -14508,7 +14512,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             // watching rounds make no pictures (NODE-OPT-1648, 41a58db5), a watcher arriving after a truck drove was shown
             // it from the start - measured, ghost-realtime: tick 149 of a truck that had published 1199. The same bounded
             // walk the warm step takes, once, for this watcher; a run longer than it catches up over the next pushes.
-            try {
+            // kanban #3264: a repeat watch on this socket is not warmed again
+            if (!already) try {
               timed('ghost watcher warm', () => {
                 for (const e of round.entriesOf(who.roundId)) {
                   const eid = e.entryId;
