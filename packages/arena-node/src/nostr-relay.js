@@ -734,6 +734,9 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
             if (cur && (cur.created_at > e.created_at || (cur.created_at === e.created_at && cur.id < e.id)))
               return send(['OK', e.id, true, 'duplicate: a newer one is kept']);
           }
+          // A COPY ALREADY KEPT IS NOT SENT ON AGAIN (kanban #3262, audit r21 nostr-1): a re-sent kept event was answered OK and fanned out to every
+          // matching subscription each time - 60 frames per 10 s per free socket of any kept 64 KB event. As NIP-01 relays do: 'duplicate:', nothing more
+          if (has.get(e.id)) return send(['OK', e.id, true, 'duplicate: already have this event']);
           const json = JSON.stringify(e);
           if (!has.get(e.id)) {   // a copy already kept changes nothing (as INSERT OR IGNORE did)
             const rows = indexedTags(e);
