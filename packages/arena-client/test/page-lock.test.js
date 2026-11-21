@@ -2364,7 +2364,8 @@ test('the join-funding deposit asks the federation\'s seated gateways before the
   useSeatedGateways(async (fid) => { looked.push(fid); return fid === F ? ['https://seat-1', 'https://seat-2'] : []; });
   try {
     const { LockClient, log } = lockClient();
-    LockClient.prototype.gateways = async () => JSON.stringify(['https://fed-1', 'https://seat-2']);
+    // kanban #3029: a seated gateway is one the federation lists (the lock client's gateways()); one it does not list is not taken first
+    LockClient.prototype.gateways = async () => JSON.stringify(['https://fed-1', 'https://seat-2', 'https://seat-1/']);
     const receive = LockClient.prototype.receive;
     LockClient.prototype.receive = async function (msat, gateway) {
       if (gateway === 'https://seat-1') { log.push({ receive: { msat, gateway } }); throw new Error('seat-1 refused'); }
