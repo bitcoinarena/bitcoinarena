@@ -63,6 +63,12 @@ export const ADDRESS_BOOK_MAX = 4096;
 // plain GET /address-announcements, so never pulled by other seats, never used by endpointOf, never counted - only answered for a lookup
 // by that key (list({ node }), GET /address-announcements?node=<key>). Once the census names the node it moves into the book.
 export const ADDRESS_PENDING_MAX = 256;
+// A FLOOD DOES NOT PUSH A NEW NODE OUT (kanban #3059, audit census r4-2): the bucket dropped the least recently announced node for any
+// new key, so a stranger posting ADDRESS_PENDING_MAX announcements under fresh keys (one signature each, no bond, no auth) pushed a new
+// node out of every seat and the owner page could not find it. Now a held node re-announced within ADDRESS_PENDING_KEEP_MS (two of
+// the node's 10 min re-announce intervals and some) is never pushed out: a new key takes the place of the least recently announced
+// one only when that one is older, else it is refused 503 (try again) and nothing held goes.
+export const ADDRESS_PENDING_KEEP_MS = 25 * 60 * 1000;
 
 export function createAddressBook({ db, verify, nowMs = () => Date.now(), isCensusNode = () => null, censusKeys = null, ownKey = null, localOk = false }) {
   const localNow = () => (typeof localOk === 'function' ? !!localOk() : !!localOk);   // kanban #2856
@@ -99,7 +105,8 @@ export function createAddressBook({ db, verify, nowMs = () => Date.now(), isCens
   };
   let map = new Map();
   let needRefill = false;
-  const pending = new Map();   // kanban #2066: node -> announcement, oldest first
+  const pending = new Map();   // kanban #2066: node -> announcement, oldest first; kanban #3059: pendingSeen node -> when last taken
+  const pendingSeen = new Map();
   // PRUNING IS NOT FOR GOOD (kanban #2085, wf1489 refute of #1533): one census read without an honest node (a bond renewal gap, or
   // censusForAddresses' fallback to fedRecords.censusNewestAt) pruned its row, and nothing read it back when the census named it again,
   // nor at the next start: the seat dialed its dead census endpoint until it announced again. The keys of pruned rows are kept here
@@ -129,7 +136,7 @@ export function createAddressBook({ db, verify, nowMs = () => Date.now(), isCens
   /** Held and written: take()'s write (the row's pruned mark cleared). */
   function store(clean) {
     map.set(clean.node, clean);
-    pending.delete(clean.node); prunedKeys.delete(clean.node);
+    pending.delete(clean.node); pendingSeen.delete(clean.node); prunedKeys.delete(clean.node);
     db.prepare('INSERT INTO address_announcements (node, body, pruned) VALUES (?, ?, 0) ON CONFLICT(node) DO UPDATE SET body = excluded.body, pruned = 0').run(clean.node, JSON.stringify(clean));
   }
   /** kanban #2085, #2066: census nodes back in the book - their pruned rows read again, and their pending announcements taken. */
@@ -151,7 +158,7 @@ export function createAddressBook({ db, verify, nowMs = () => Date.now(), isCens
     }
     for (const [k, a] of [...pending]) {
       if (isCensusNode(k) !== true) continue;
-      pending.delete(k);
+      pending.delete(k); pendingSeen.delete(k);
       if (!map.has(k) && map.size >= ADDRESS_BOOK_MAX) continue;
       const have = map.get(k);
       if (newerAnnouncement(have, a) !== have) store(a);
@@ -180,9 +187,14 @@ export function createAddressBook({ db, verify, nowMs = () => Date.now(), isCens
       // kanban #2066: held for a lookup by its key only (bounded, the least recently announced goes first)
       const clean = { node: a.node, endpoint: a.endpoint, atMs: a.atMs, sig: a.sig };
       const have = pending.get(clean.node);
-      pending.delete(clean.node);
+      if (!have && pending.size >= ADDRESS_PENDING_MAX) {
+        const oldest = pending.keys().next().value;
+        if (nowMs() - (pendingSeen.get(oldest) ?? -Infinity) < ADDRESS_PENDING_KEEP_MS) return { ok: false, status: 503, why: 'too many new nodes announced: try again in a few minutes' };
+        pending.delete(oldest); pendingSeen.delete(oldest);
+      }
+      pending.delete(clean.node); pendingSeen.delete(clean.node);
       pending.set(clean.node, newerAnnouncement(have, clean) || clean);
-      while (pending.size > ADDRESS_PENDING_MAX) pending.delete(pending.keys().next().value);
+      pendingSeen.set(clean.node, nowMs());
       return { ok: false, status: 409, why: 'not a node of this seat\'s census' };
     }
     prune();   // junk held from before the census was read does not take a place (kanban #1712)
