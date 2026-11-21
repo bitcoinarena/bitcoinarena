@@ -223,9 +223,9 @@ test('the test reads the seated node, not the operator: two small nodes summing 
   assert.equal(toHex(d.drawn[0].pubkey), toHex(b32(2)));
   // the operator's sum still decides who may sit and the weight: 60,000 + 40,000 stays one ticket of 100,000
   assert.equal(d.eligible, 10);
-  // the seated node is the one its ticket names, the lowest outpoint: a larger second node does not lift it
+  // the seated node is the operator's LARGEST own node (kanban #3146, not the lowest outpoint any more): its 100,000 is ahead
   const big = [node(5, 'split', { bond: 50000n }), node(6, 'split', { bond: 100000n })];
-  assert.equal(drawGuardians({ ...base, entries: [...big, ...others], pressureBond: 100000n }).atPressureBond, 0);
+  assert.equal(drawGuardians({ ...base, entries: [...big, ...others], pressureBond: 100000n }).atPressureBond, 1);
 });
 
 test('from the point a node that does not advertise the version is no candidate; before it nothing is asked', () => {
