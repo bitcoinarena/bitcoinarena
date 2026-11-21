@@ -139,7 +139,7 @@ export async function addBondOnNode({ home, release, addSats, post = false, chai
  * most every 10 minutes. Answers { ok, plan } / { ok, plan, bond } / { ok, done: true, bond } when a bond is posted already, or { ok: false, why }.
  */
 export async function firstBond({ state, post = false, chainKit = { coinsOf, broadcast, seen: txSeen, txOut: (txid, vout, chain) => txOut(chain, txid, vout) }, softwareHash, guardianEndpoint = null, askMinimum = null,
-  startAgent = null, feeRate = 2, nowMs = Date.now(), censusKey }) {
+  startAgent = null, feeRate = 2, nowMs = Date.now(), censusKey, release = null }) {
   // A FIRST BOND SENT AND NOT RECORDED (kanban #1165: a crash, a lost answer, the wizard's post beside this one): finished first - the Bond
   // panel asks every 30 s, so a bond broadcast before a crash is recorded within the minute - and never built a second time
   if (openActionOf(state.read())) await resumeOpen(state, { chainKit });
@@ -186,9 +186,23 @@ export async function firstBond({ state, post = false, chainKit = { coinsOf, bro
       const db = new DatabaseSync(state.path('node.db'), { readOnly: true });
       let nodeSecret;
       try { nodeSecret = new Uint8Array(db.prepare('SELECT secret FROM identity WHERE one = 0').get().secret); } finally { db.close(); }
+      // THE NEW BOND NAMES THE GAMES OF THE RELEASE THIS NODE RUNS (kanban #3101, refute of #3068/#3089): read here, inside the build, where
+      // no live bond is left - not from state.hostedGames, which over a withdrawn (spent) recorded bond (kanban #2098) is still the list the
+      // OLD bond advertised: releaseGamesBeforeBond leaves a recorded bond alone and refreshHostedGames cannot correct it (its update names
+      // the spent bond), so a node bonded on an older release, withdrawn, updated and bonded again named the old games and was never drawn
+      // for the newer versions. The list is written to state with the bond. No release given (or it hosts none of the apps): state's list.
+      let hostedGames = s2.hostedGames;
+      if (release) {
+        try {
+          const { appsIn, chosenApps, hostedGameIdsOf } = await import('./apps.js');
+          const apps = appsIn(release);
+          const now = await hostedGameIdsOf(release, chosenApps(s2, apps), apps);
+          if (now.length) hostedGames = now;
+        } catch { /* the list in state stands */ }
+      }
       let built;
       try {
-        built = buildBond({ network: bondNetworkOf(s2), hostedGames: s2.hostedGames, hostGroup: s2.hostGroup, wallet: w, nodeSecret, coins, tip, bondSats, operatorId: `op-${s2.owner.pubkey.slice(0, 12)}`, roles: s2.roles,
+        built = buildBond({ network: bondNetworkOf(s2), hostedGames, hostGroup: s2.hostGroup, wallet: w, nodeSecret, coins, tip, bondSats, operatorId: `op-${s2.owner.pubkey.slice(0, 12)}`, roles: s2.roles,
           endpoint: s2.reach.url, payoutPubkey: payoutKeyOf(seed), softwareHash, feeRate, guardianEndpoint, nowMs, censusKey: censusKey === undefined ? await censusKeyOfNode(s2) : censusKey,
           emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null });
       } catch (e) { return { ok: false, why: e.message, plan }; }
@@ -196,7 +210,8 @@ export async function firstBond({ state, post = false, chainKit = { coinsOf, bro
         lock: lockOf(tip, { maturity: built.maturity }), atMs: nowMs, fromOwnerArea: true, ...(built.presigUpdate ? { censusKey: built.censusKey, presigUpdate: built.presigUpdate.txid } : {}) };
       // the wizard's mark('bond'): the step done, and what its advertisement declares (change-roles refreshHostedGames)
       return { ok: true, tip, txs: [{ name: 'funding', hex: built.funding.hex }, { name: 'bond', hex: built.bond.hex }, built.presigUpdate ? { name: 'presig', hex: built.presigUpdate.hex } : null],
-        ops: [...(spent.length ? [{ op: 'drop-bonds', values: spent }] : []), { op: 'set', key: 'bond', value: bond }, { op: 'set', key: 'advertProtocols', value: [...SUPPORTED_PROTOCOL_VERSIONS] }, { op: 'done', step: 'bond' }], result: { plan, bond } };
+        ops: [...(spent.length ? [{ op: 'drop-bonds', values: spent }] : []), { op: 'set', key: 'bond', value: bond },
+          ...(hostedGames !== s2.hostedGames ? [{ op: 'set', key: 'hostedGames', value: hostedGames }] : []), { op: 'set', key: 'advertProtocols', value: [...SUPPORTED_PROTOCOL_VERSIONS] }, { op: 'done', step: 'bond' }], result: { plan, bond } };
     } });
   if (r.alreadyBond) return { ok: true, done: true, bond: r.alreadyBond };
   if (!r.ok) return r.plan || !planned ? r : { ...r, plan: planned };
@@ -239,6 +254,6 @@ async function firstBondOnNodeNow({ home, release, post = false, chainKit, state
   const ask = askMinimum !== undefined ? askMinimum : async () => (await import('./install-minimum.js')).installMinimum({});
   const start = startAgent !== undefined ? startAgent : async () => (await import('./service.js')).installProgram({ id: 'custody', description: 'Bitcoin Arena: custody agent',
     home: st.home || home, boot: true, args: [process.execPath, join(release, 'packages', 'arena-installer', 'bin', 'custody-agent.mjs'), '--home', st.home || home] });
-  return firstBond({ state: st, post, softwareHash, guardianEndpoint: (guardianSetupOf(st.read(), { release }) || {}).endpoint || null, askMinimum: ask, startAgent: start, censusKey,
+  return firstBond({ state: st, post, softwareHash, release, guardianEndpoint: (guardianSetupOf(st.read(), { release }) || {}).endpoint || null, askMinimum: ask, startAgent: start, censusKey,
     ...(chainKit ? { chainKit } : {}) });
 }
