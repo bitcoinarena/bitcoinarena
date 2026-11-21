@@ -81,7 +81,10 @@ export function clockStep(was, { reading, peerSessions = [], need = 1, tip }) {
   return now;
 }
 
+/** How far past this seat's last read tip an observation's height may be (kanban #3046): a day of blocks - a lagging seat still takes its peers'. */
+export const HALT_TIP_SLACK = 144;
 export function createHalts({ records, censusSeats, clocks, verify, sign, ownKey, height, ask, post = async () => {}, load = () => [], save = () => {}, say = () => {} }) {
+  let lastTip = null;   // kanban #3046: the tip this seat last read
   const seen = new Map();                    // federation hex -> { session, firstHeight, answering: [peer key], at }
   const kept = new Map();                    // federation hex -> Map(observer hex -> observation)
   const keptG = new Map();                   // federation hex -> Map(guardian peer key hex -> its signed observation) (kanban #1319)
@@ -143,6 +146,7 @@ export function createHalts({ records, censusSeats, clocks, verify, sign, ownKey
   /** One pass over every federation this seat holds a record of; answers what it saw and signed. */
   async function observe() {
     const tip = await height();
+    if (Number.isFinite(tip)) lastTip = tip;
     const out = [];
     for (const fid of (records.list() || []).map((x) => x.federation)) {
       const held = records.recordOf(fid);
@@ -188,6 +192,10 @@ export function createHalts({ records, censusSeats, clocks, verify, sign, ownKey
     const held = records.recordOf(toHex(o.federationId));
     if (!held) return { ok: false, status: 409, why: 'this seat holds no record of that federation' };
     if ((o.answering || []).length > (held.record.guardians || []).length) return { ok: false, status: 409, why: 'that observation names more answering guardians than the record lists' };
+    // NOT ABOVE THIS SEAT'S OWN TIP (kanban #3046, audit gossip r4-1-1): one census seat's observation at first_height 2^32-11 was kept for good and
+    // set the halted federation's proven halt height. An observation whose height is past this seat's last read tip + HALT_TIP_SLACK is refused
+    if (lastTip !== null && (o.height > lastTip + HALT_TIP_SLACK || o.firstHeight > lastTip + HALT_TIP_SLACK))
+      return { ok: false, status: 409, why: `that observation names height ${o.height}, past this seat's tip ${lastTip}` };
     if (!verify(o.signature, haltObservationId(o), o.observer)) return { ok: false, status: 409, why: 'that observation is not signed by its seat' };
     const fresh = keep(o);
     if (fresh) persist();
@@ -236,7 +244,9 @@ export function createHalts({ records, censusSeats, clocks, verify, sign, ownKey
   const listGuardian = (fid) => [...(keptG.get(String(fid).toLowerCase()) || new Map()).values()].map(asJsonG);
   /** The signed observations held of a federation, as a bound proof carries them (kanban #1269). */
   const observationsOf = (fid) => [...(kept.get(String(fid).toLowerCase()) || new Map()).values()];
-  return { observe, take, takeGuardian, proofOf, haltOf, haltedFederations, list, listGuardian, observationsOf, seen: (fid) => seen.get(fid) || null, CLOCK_RULE };
+  /** Reads this seat's tip now (the door asks it before take). */
+  const refreshTip = async () => { try { const t = await height(); if (Number.isFinite(t)) lastTip = t; } catch { /* the last one stands */ } };
+  return { observe, take, refreshTip, takeGuardian, proofOf, haltOf, haltedFederations, list, listGuardian, observationsOf, seen: (fid) => seen.get(fid) || null, CLOCK_RULE };
 }
 
 /**
