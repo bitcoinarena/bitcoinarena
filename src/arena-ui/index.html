@@ -5240,8 +5240,10 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     const unfilledPickKeys = () => [...refundOrderKeys()];
     // A REFUND-ONLY ORDER'S RECORD IS DONE ONCE ITS STAKE IS CREDITED (kanban #3009): its line is a refund or VOID, so no payout will come.
     // `credited`: this pass's collect brought the stake back, or the look reads it collected before. Answers whether it closed the record.
+    // A ROUND WALLET NOT READ IS NOT EMPTY (kanban #3221, #1265): inTabMsat null (withdrawableMsat failed) keeps the record open - written done
+    // with tabMsat '0' it let tidyStorage remove the round's lock wallet with e-cash in it never read
     function closeRefundOnly(rec, look, credited) {
-      if (!credited || !refundOrderKeys().has(orderKeyOf(rec)) || !(look.inTabMsat === undefined || look.inTabMsat === null || look.inTabMsat === 0n)) return false;
+      if (!credited || !refundOrderKeys().has(orderKeyOf(rec)) || !(look.inTabMsat === undefined || look.inTabMsat === 0n)) return false;
       if (!ARENACLIENT.markCollectDone(vault(), rec.roundIdHex, { payout: 'none: the order is refunded whole', stake: ARENACLIENT.owedToLine(look), tabMsat: '0' }, rec.seed, rec.order || 0)) return false;
       stakeBack.delete(backKey(rec));
       collectNote(rec.roundIdHex.slice(0, 8) + (rec.order ? '.o' + rec.order : ''), 'MARKED DONE: its stake was its whole refund (#3009)');
@@ -5628,7 +5630,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             // AN ORDER WHOSE WHOLE STAKE IS ITS REFUND IS DONE ONCE THAT STAKE IS CREDITED (kanban #3009, feedback #347): its market line says it matched
             // nobody (or nobody took the other side), so no payout will ever come - the record no longer waits for a settlement that never runs.
             // Only these orders: a winner's stake comes back by forfeit too, and its record waits for its payout as before
-            else if (refundOrderKeys().has(orderKeyOf(older)) && co.got && co.got.stake && (co.got.stake.ok || co.got.stake.final)
+            // kanban #3221: only with the round wallet read empty (inTabMsat 0n, or no round wallet), as the else-if below - null is not read (#1265)
+            else if (refundOrderKeys().has(orderKeyOf(older)) && co.got && co.got.stake && (co.got.stake.ok || co.got.stake.final) && (lo.inTabMsat === undefined || lo.inTabMsat === 0n)
               && ARENACLIENT.markCollectDone(vault(), older.roundIdHex, { payout: 'none: the order matched nobody', stake: ARENACLIENT.owedToLine(lo), tabMsat: '0' }, older.seed, older.order || 0)) {
               stakeBack.delete(backKey(older));
               collectNote(older.roundIdHex.slice(0, 8) + (older.order ? '.o' + older.order : ''), 'older round MARKED DONE: its stake was its whole refund (#3009)');
