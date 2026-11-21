@@ -241,6 +241,21 @@ async fetch(request, env, ctx) {
     return fetch(`${env.FAUCET_ORIGIN}${url.pathname.slice('/api/faucet'.length)}${url.search}`, { method: request.method, headers,
       body: request.method === 'POST' ? (url.pathname === '/api/faucet/feedback/screenshot' ? await request.arrayBuffer() : await request.text()) : undefined });
   }
+  // THE ORANGE PILL RUN ROUND SERVICE (kanban #3248-#3250, #3256): /api/opr/* passed on to arena-opr, whose address is a secret of this Worker
+  // (OPR_ORIGIN; unset: off), with the caller's address under this Worker's key (OPR_WORKER_KEY, as the faucet's #1434), the player's NIP-98
+  // sign-in and, on the admin paths only, the admin code. GET and POST only; nothing is cached
+  if (url.pathname.startsWith('/api/opr/')) {
+    if (!env.OPR_ORIGIN) return new Response('{"ok":false,"why":"the round service is off"}', { status: 503, headers: { 'content-type': 'application/json' } });
+    if (request.method !== 'GET' && request.method !== 'POST') return new Response('{"ok":false,"why":"GET or POST"}', { status: 405, headers: { 'content-type': 'application/json' } });
+    const path = url.pathname.slice('/api/opr'.length);
+    if (!/^\/[a-z0-9/_-]{1,80}$/.test(path)) return new Response('{"ok":false,"why":"no such route"}', { status: 404, headers: { 'content-type': 'application/json' } });
+    const headers = new Headers({ 'content-type': 'application/json', 'x-arena-ip': request.headers.get('cf-connecting-ip') || '' });
+    if (env.OPR_WORKER_KEY) headers.set('x-arena-worker', env.OPR_WORKER_KEY);
+    if (request.headers.get('authorization')) headers.set('authorization', request.headers.get('authorization'));
+    if (path.startsWith('/admin/') && request.headers.get('x-arena-admin')) headers.set('x-arena-admin', request.headers.get('x-arena-admin'));
+    const r = await fetch(`${env.OPR_ORIGIN}${path}${url.search}`, { method: request.method, headers, body: request.method === 'POST' ? await request.text() : undefined });
+    return new Response(r.body, { status: r.status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow' } });
+  }
   // A PHONE'S BENCHMARK LINES (the page's ?bench=1): logged for wrangler tail and Workers Logs, stored only with the bench key, nothing served back
   if (url.pathname === '/__bench' && request.method === 'POST') {
     const body = (await request.text()).slice(0, 20000);
