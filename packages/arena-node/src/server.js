@@ -5914,11 +5914,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const market = attestedOf(c);
     const att = market ? outcomeOf(rid, c) : null;
     const decided = att && att.state === 'ATTESTED' ? { index: att.outcome, label: att.label } : null;
-    const entries = round.entriesOf(rid).map(({ entryId, entry }) => {
+    // AS THE SEASON BOOKS IT (kanban #3066, audit nostr r4-3-1, gap in #2880/#2835): a paid round lists only its entries with a stake lock held
+    // here, and a key's settled share goes with its first entry only - a stranger's lockless entry under the winner's round key made the result
+    // book the winner's share twice, the pool read as paid twice
+    const paidRound = c.stakeMsat > 0n;   // season-read.js entriesOf's rule
+    const listed = paidRound ? round.entriesOf(rid).filter(({ entryId }) => { const l = round.stakeLock ? round.stakeLock(entryId) : null; return !!(l && l.fields); }) : round.entriesOf(rid);
+    const shareBooked = new Set();
+    const entries = listed.map(({ entryId, entry }) => {
       const player = toHex(entry.playerPubkey);
+      const share = shareBooked.has(player) ? 0n : (paid.get(player) || 0n);
+      shareBooked.add(player);
       const row = { entry: toHex(entryId), player, name: names.get(player) || displayNameFromKey(entry.playerPubkey),
         federation: entry.federationId instanceof Uint8Array && !zero(entry.federationId) ? toHex(entry.federationId) : roundFed,
-        outcome: null, score: null, pick: null, rank: null, payoutMsat: String(paid.get(player) || 0n) };
+        outcome: null, score: null, pick: null, rank: null, payoutMsat: String(share) };
       if (market) {
         row.pick = entry.pick === undefined || entry.pick === null ? null : Number(entry.pick);
         row.outcome = decided && row.pick !== null ? (row.pick === decided.index ? 'WON' : 'LOST') : null;
