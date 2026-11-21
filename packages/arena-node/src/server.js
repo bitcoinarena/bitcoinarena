@@ -16806,6 +16806,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // connection and no envelope around it.
         const bytes = new Uint8Array(data);
         if (bytes[0] === TYPE_CHECKPOINT) {
+          // kanban #3255 (audit r20 play-1): whether this seat held the mark before this frame - a replay of a held final mark is answered with its
+          // receipt again, and offered it to every peer (a new WebSocket each) on every frame; only a mark this frame stored is offered on
+          let heldBefore = false;
+          try { heldBefore = !!round.holdsMark(checkpointId(decodeCheckpoint(splitSigned(bytes).body))); } catch { heldBefore = false; }
           const answer = round.checkpoint(bytes);
           // A MARK TAKEN AFTER THE CLOSE - only the held-back final mark gets through that door (ruled 2026-09-23/24) - has
           // its receipt offered to every peer at once (§10's receipt exchange): they signed before it existed and pull no
@@ -16813,7 +16817,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           try {
             const c = decodeCheckpoint(splitSigned(bytes).body);
             const row = round.get(c.roundId);
-            if (row && row.state === CLOSED && answer instanceof Uint8Array) offerReceipt(c.roundId, answer);
+            if (row && row.state === CLOSED && answer instanceof Uint8Array && !heldBefore) offerReceipt(c.roundId, answer);
           } catch { /* the answer stands whatever the offer does */ }
           return sock.send(answer);
         }
