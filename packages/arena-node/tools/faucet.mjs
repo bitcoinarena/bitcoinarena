@@ -144,12 +144,19 @@ const S2_SOCIAL_GAP_MS = 15000;
 // friendships/show), and the Discord bot and the Telegram reader the same, without bound: X's 15-minute read limits locked the account and every
 // real reporter's check failed or waited behind spaced()'s queue. Now each live check takes a slot of one shared minute first; a full minute
 // answers "try again in a minute" at once (nothing read, nothing queued).
+// A SHARE PER CALLER FIRST (kanban #2996, audit faucet r2-3): one stranger with 4 fresh keys a minute held the whole shared minute and every
+// reporter's check was refused. A caller (its ipKey, an IPv6 /64 as one; the Workers name it since #2995) takes at most S2_LIVE_PER_CALLER of
+// the minute's slots; a caller over its share is told so and takes none
 const S2_LIVE_ALL = [], S2_LIVE_MINUTE = Math.max(1, Number(env.FAUCET_BOUNTY_S2_LIVE_MINUTE) || 4);
-function s2LiveSlot(now = Date.now()) {
-  while (S2_LIVE_ALL.length && now - S2_LIVE_ALL[0] >= 60000) S2_LIVE_ALL.shift();
+const S2_LIVE_PER_CALLER = Math.max(1, Number(env.FAUCET_BOUNTY_S2_LIVE_PER_CALLER) || 2);
+function s2LiveSlot(caller = '', now = Date.now()) {
+  while (S2_LIVE_ALL.length && now - S2_LIVE_ALL[0].at >= 60000) S2_LIVE_ALL.shift();
+  if (S2_LIVE_ALL.filter((x) => x.caller === caller).length >= S2_LIVE_PER_CALLER) return 'caller';
   if (S2_LIVE_ALL.length >= S2_LIVE_MINUTE) return false;
-  S2_LIVE_ALL.push(now); return true;
+  S2_LIVE_ALL.push({ at: now, caller }); return true;
 }
+const s2CallerOf = (req) => ipKey(ipOf(req)) || String(ipOf(req) || '');
+const S2_LIVE_REFUSED = (got) => (got === 'caller' ? 'too many checks from this address right now - try again in a minute' : 'too many checks right now - try again in a minute');
 // SEASON 2 STARTS (the owner 2026-11-13 ~17:55Z: "Season 2 läuft ab Sonntag"): before it no Season 2 approval; a Season 1 report past the weekly budget
 // waits for it and is approved by the Season 2 rules once it runs (the sweep below)
 const S2_START_MS = env.FAUCET_BOUNTY_S2_START ? Date.parse(env.FAUCET_BOUNTY_S2_START) : null;
@@ -1162,7 +1169,7 @@ createServer((req, res) => {
         if (any) {
           const lastAsk = S2_SOCIAL_ASKS.get(who) || 0;
           if (Date.now() - lastAsk < S2_SOCIAL_GAP_MS) return send(429, { ok: false, why: 'one check every 15 seconds' });
-          if (!s2LiveSlot()) return send(429, { ok: false, why: 'too many checks right now - try again in a minute' });   // kanban #2646
+          { const slot = s2LiveSlot(s2CallerOf(req)); if (slot !== true) return send(429, { ok: false, why: S2_LIVE_REFUSED(slot) }); }   // kanban #2646, #2996
           S2_SOCIAL_ASKS.set(who, Date.now()); if (S2_SOCIAL_ASKS.size > 5000) S2_SOCIAL_ASKS.delete(S2_SOCIAL_ASKS.keys().next().value);
         }
         return socialCheck(S2, who, any ? asked : {}, S2_NAMES).then((j) => send(200, { ...j, on: Object.keys(S2_NAMES) }), () => send(200, { ok: false, why: 'try again' }));
@@ -1180,7 +1187,7 @@ createServer((req, res) => {
       const c = S2.makeCode(who); return send(200, { ...c, links: S2.links(who).map(({ userId, ...l }) => l), flags: S2.flagsOf(who) }); }
     const lastAsk = S2_VERIFY_ASKS.get(who) || 0;
     if (Date.now() - lastAsk < S2_VERIFY_GAP_MS) return send(429, { ok: false, why: 'one check a minute' });
-    if (!s2LiveSlot()) return send(429, { ok: false, why: 'too many checks right now - try again in a minute' });   // kanban #2646
+    { const slot = s2LiveSlot(s2CallerOf(req)); if (slot !== true) return send(429, { ok: false, why: S2_LIVE_REFUSED(slot) }); }   // kanban #2646, #2996
     S2_VERIFY_ASKS.set(who, Date.now()); if (S2_VERIFY_ASKS.size > 5000) S2_VERIFY_ASKS.delete(S2_VERIFY_ASKS.keys().next().value);
     S2.verify(who, S2_VERIFY, { cause: 'reporter' }).then((flags) => send(200, { ok: true, flags, links: S2.links(who).map(({ userId, ...l }) => l) }), () => send(200, { ok: false, why: 'try again' }));
     return undefined;
