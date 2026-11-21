@@ -46608,19 +46608,43 @@ const h2hFromHex = (h) => Uint8Array.from(String(h).match(/../g) || [], (x) => p
 const H2H_VOID_SLACK_MS = 1000;
 const lockSetThreshold = (n) => { try { return receiptsNeeded(n); } catch { return Math.floor(n / 2) + 1; } };
 
-async function lockSetOfSeats({ roundIdHex, nodes, committee = null, verify = null, entryCloseMs, fetcher = fetch, timeoutMs = H2H_SEAT_ASK_MS }) {
+/** How long one ask of the lock set waits for the seats still out once a majority answered (kanban #3025). */
+const H2H_STRAGGLER_MS = 500;
+async function lockSetOfSeats({ roundIdHex, nodes, committee = null, verify = null, entryCloseMs, fetcher = fetch, timeoutMs = H2H_SEAT_ASK_MS, stragglerMs = H2H_STRAGGLER_MS }) {
   const { listed, hostOf, hosts } = seatsByHost(nodes);   // kanban #2709: each address once; an unsigned set counts one vote per host
-  const said = await Promise.all(listed.map(async (node) => {
+  // THE FIRST CERTIFICATE THAT STANDS ENDS THE ASK (kanban #3025, audit h2h r2-1): every seat was awaited before any answer was looked at, so one
+  // seat answering just inside the 5 s deadline held each poll - and the reveal - up to ~9 s past a certificate the page already had. With a
+  // committee to check against, an answer whose certificate stands is taken as it arrives; the seats still in flight are not waited for
+  const stands = (x) => {
+    if (!x || typeof x !== 'object' || !x.certificate || !/^[0-9a-f]+$/.test(String(x.certificate)) || !(committee && committee.length && typeof verify === 'function')) return null;
     try {
-      // kanban #2658 (2.0): h2hAsk / h2hJson are not defined on this branch (the #2561 port took them from a tree that had them) - every
-      // seat's answer threw, was read as no answer, and a protocol-28 reveal waited for a certificate it never saw: VOID. 1.9's reading.
-      return await withDeadline(timeoutMs, async (signal) => {
-        const r = await fetcher(`${String(node).replace(/\/+$/, '')}/lock-set?round=${roundIdHex}`, { signal, cache: 'no-store' });
-        if (!r.ok) { try { r.body && r.body.cancel && await r.body.cancel(); } catch { /* gone */ } return null; }
-        return JSON.parse(await cappedText(r, H2H_REVEALS_CAP));
-      });
+      const st = lockSetCertificateStands(h2hFromHex(x.certificate), { roundId: h2hFromHex(roundIdHex), committee, threshold: lockSetThreshold(committee.length),
+        entryCloseMs: BigInt(entryCloseMs), verify });
+      return st.ok ? st : null;
     } catch { return null; }
-  }));
+  };
+  const said = new Array(listed.length).fill(null);
+  let early = null, straggle = null;
+  await new Promise((done) => {
+    let left = listed.length;
+    if (!left) { done(); return; }
+    listed.forEach(async (node, i) => {
+      try {
+        // kanban #2658 (2.0): 1.9's reading (h2hAsk / h2hJson are not defined on this branch)
+        said[i] = await withDeadline(timeoutMs, async (signal) => {
+          const r = await fetcher(`${String(node).replace(/\/+$/, '')}/lock-set?round=${roundIdHex}`, { signal, cache: 'no-store' });
+          if (!r.ok) { try { r.body && r.body.cancel && await r.body.cancel(); } catch { /* gone */ } return null; }
+          return JSON.parse(await cappedText(r, H2H_REVEALS_CAP));
+        });
+      } catch { said[i] = null; }
+      if (!early) { const st = stands(said[i]); if (st) { early = { entries: st.entries, atMs: st.atMs }; done(); } }
+      if (--left === 0) done();
+      // a majority of the seats answered: the rest get H2H_STRAGGLER_MS more, then this ask ends with what came (the next poll asks all again)
+      else if (!straggle && listed.length - left >= Math.floor(listed.length / 2) + 1) straggle = setTimeout(done, stragglerMs);
+    });
+  });
+  if (straggle) clearTimeout(straggle);
+  if (early) return { required: true, certified: early, void: false, voids: 0 };
   const answered = said.filter((x) => x && typeof x === 'object');
   if (!answered.length) return { required: null, certified: null, void: false };
   if (!answered.some((x) => x.required === true)) return { required: false, certified: null, void: false };
