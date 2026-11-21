@@ -39,6 +39,7 @@ import { pathToFileURL } from 'node:url';
 import { roundSeating, NOW_ROUNDS } from '../../../src/arena-ui/health/network.js';
 import { readGateway } from '../src/hosts.js';
 import { netMoves } from '../src/gateway-loss.js';
+import { openWindows, applyPlanned, autoWindow, rollsIn } from './health-watcher-planned.mjs';
 import { pubsConfig, gatherPubs, assessPubs, pubMemTxs, doResend, doCpfp, doPublicMine, lookScript, parseLook, callsScript, parseCalls, opsPublished, esploraCalls } from './health-watcher-pubs.mjs';
 
 const H = process.env.HOME || '/home/arena';
@@ -86,6 +87,10 @@ export function config(env = process.env, argv = []) {
       return { name, base: String(base || '').replace(/\/+$/, ''), passwordFile, ...(deadFile ? { deadFile } : {}) }; }),
     // g. the operator's announced moves between our gateways (kanban #2773): [{ from, to, federation, msat, atMs }], explains a drop
     gatewayMovesFile: env.HW_GATEWAY_MOVES || `${H}/blwp-testnet4/ops/gateway-moves.json`,
+    // planned downtime (kanban #2773, ./health-watcher-planned.mjs): the announced windows, their grace, the roll-seen window's length
+    plannedFile: env.HW_PLANNED_DOWNTIME || `${H}/blwp-testnet4/ops/planned-downtime.json`,
+    plannedGraceMs: n('HW_PLANNED_GRACE_MIN', 5) * 60000,
+    plannedAutoMs: n('HW_PLANNED_AUTO_GRACE_MIN', 10) * 60000,
     signal: { url: env.HW_SIGNAL_URL || 'http://127.0.0.1:8080/api/v1/rpc', to: env.HW_SIGNAL_TO || '' },
   };
 }
@@ -147,6 +152,9 @@ export async function gather(io, cfg, state, nowMs) {
   f.gateways = [];
   if (io.gateway) for (const g of cfg.gateways) f.gateways.push(await io.gateway(g, (state.gw || {})[g.name] || null).catch((e) => ({ name: g.name, error: e.message })));
   f.gatewayMoves = cfg.gateways.length && io.gatewayMoves ? await io.gatewayMoves().catch(() => []) : [];
+  // planned downtime: the announced windows and the roll jobs running now (kanban #2773)
+  f.planned = io.planned ? await io.planned().catch(() => []) : [];
+  f.rolls = io.rolls ? await io.rolls().catch(() => []) : [];
   return f;
 }
 const dedupeGames = (gs) => [...new Map(gs.map((g) => [String(g.id).toLowerCase(), g])).values()];
@@ -438,6 +446,11 @@ export async function pass(io, cfg, prev) {
   const nowMs = io.now();
   const f = await gather(io, cfg, prev || {}, nowMs);
   const { state, problems, fixes } = assess(f, prev || {}, cfg);
+  // kanban #2773: what we take down ourselves (announced, or a roll running) is logged "planned: ...", not alerted, not restarted
+  state.plannedAuto = autoWindow((prev || {}).plannedAuto, f.rolls, nowMs, { graceMs: cfg.plannedAutoMs });
+  if (!state.plannedAuto) delete state.plannedAuto;
+  const windows = openWindows([...(f.planned || []), ...(state.plannedAuto ? [state.plannedAuto] : [])], nowMs, { graceMs: cfg.plannedGraceMs });
+  applyPlanned(problems, fixes, windows, cfg);
   if (f.censusProbe) state.census = { atMs: f.censusProbe.atMs, answering: f.censusProbe.answering };
   const did = [];
   for (const x of fixes.filter((y) => y.allowed)) {
@@ -463,7 +476,7 @@ export async function pass(io, cfg, prev) {
     }
   }
   state.lastPassMs = nowMs;
-  return { state, facts: f, problems, fixes, did, alerts: posted };
+  return { state, facts: f, problems, fixes, did, alerts: posted, planned: windows };
 }
 
 // ---------------------------------------------------------------- THE REAL WORLD
@@ -566,6 +579,10 @@ export function realIo(cfg) {
     },
     // kanban #2773: one gateway read the way its node reads it (hosts.js), the last reading as `prev` for the balance check
     gateway: (g, prev) => readGateway(g, { prev }),
+    // kanban #2773: the planned downtime windows (no file is none) and the roll jobs running (units and processes; none when unread)
+    planned: async () => { try { const j = JSON.parse(readFileSync(cfg.plannedFile, 'utf8')); return Array.isArray(j) ? j : []; } catch { return []; } },
+    rolls: async () => rollsIn(await run('systemctl', ['--user', 'list-units', '--type=service', '--state=active,activating', '--no-legend', '--plain', 'roll*', 'restart*']).catch(() => ''),
+      await run('pgrep', ['-af', '(^|[ /])(roll|restart)[A-Za-z0-9_.-]*\\.(sh|mjs)( |$)']).catch(() => '')),
     // kanban #2773: the announced moves; no file is none
     gatewayMoves: async () => { try { const j = JSON.parse(readFileSync(cfg.gatewayMovesFile, 'utf8')); return Array.isArray(j) ? j : (j && Array.isArray(j.moves) ? j.moves : []); } catch { return []; } },
     // kanban #2773: the owner's Signal, through the local signal-cli daemon's JSON-RPC (memory signal-user; never restarted from here)
@@ -603,6 +620,7 @@ export function report(r, cfg) {
   const out = [JSON.stringify({ hw: 'pass', at: new Date(r.facts.nowMs).toISOString(), dry: cfg.dry, load: r.facts.load,
     seats: `${r.facts.seats.filter((s) => s.ok).length}/${r.facts.seats.length}`, lists: `${r.facts.lists.filter(Boolean).length}/${r.facts.lists.length}`,
     problems: r.problems.map((p) => `${p.alert ? '!' : '-'} ${p.key}: ${p.title}`),
+    ...(r.planned && r.planned.length ? { planned: r.planned.map((w) => `${w.what} until ${new Date(Number(w.untilMs)).toISOString().slice(11, 16)}${w.auto ? ' (roll seen)' : ''}`) } : {}),
     fixes: r.fixes.map((x) => `${x.allowed ? (cfg.dry ? 'would' : 'do') : 'held'} ${x.kind} ${x.unit || (x.txid ? x.txid.slice(0, 8) : `${x.chain ? `${x.chain} ` : ''}${(x.txids || []).length} txid(s)`)}${x.blocked.length ? ` (${x.blocked.join('; ')})` : ''}`),
     did: r.did.map((x) => `${x.kind} ${x.unit || x.chain || (x.txid || '').slice(0, 8)}${x.txids ? ` ${x.txids.map((t) => t.slice(0, 8)).join(',')}` : ''}${x.dry ? ' (dry)' : x.ok ? ' ok' : ' FAILED'}${x.why ? `: ${x.why}` : ''}`),
     alerts: r.alerts.map((a) => `${a.kind} ${a.key}${a.dry ? ' (dry: not posted)' : a.ok ? ' posted' : ` NOT POSTED ${a.why}`}`) })];
