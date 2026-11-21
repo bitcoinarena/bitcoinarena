@@ -5450,10 +5450,13 @@ function readVarint(bytes, at) {
   throw new Error('a length larger than this parser will read');
 }
 
+// VIEWS, NOT COPIES (kanban #3236, a heap snapshot of a seat: 74,118 kept parses, 388 MB - every script, witness item and previous txid
+// its own copied buffer). A parse's byte fields are views of the raw transaction: nothing writes them or the raw bytes in place (a raw is
+// a block's own slice, splitBlock), and a kept parse is kept with its raw anyway (census.js parsedKept).
 function readSlice(bytes, at, what) {
   const { value, next } = readVarint(bytes, at);
   const end = need(bytes, next, value, what);
-  return { bytes: bytes.slice(next, end), next: end };
+  return { bytes: bytes.subarray(next, end), next: end };
 }
 
 /**
@@ -5483,7 +5486,7 @@ function parseTransaction(raw) {
   const inputs = [];
   for (let i = 0; i < ins.value; i++) {
     const end = need(raw, at, 36, 'outpoint');
-    const previousTxid = raw.slice(at, at + 32);
+    const previousTxid = raw.subarray(at, at + 32);
     const previousVout = (raw[at + 32] | (raw[at + 33] << 8)
       | (raw[at + 34] << 16) | (raw[at + 35] << 24)) >>> 0;
     const script = readSlice(raw, end, 'input script');
@@ -41814,6 +41817,9 @@ const commitHex = (c) => toHex(c);
 
 /** No certificate by the entry close + this: the round is VOID (the ruling's "close + 3 s"). */
 const LOCK_SET_WINDOW_MS = 3000;
+/** A seat takes and assembles a round's set until the close + LOCK_SET_WINDOW_MS + this, and says VOID only from then (kanban #2588; arena-node
+ *  lock-set-book.js). A page that waits for the certificate takes no VOID before it (kanban #2984). */
+const LOCK_SET_FINAL_AFTER_MS = 2000;
 /** A seat signs its set once it holds every committee seat's view, or at the latest this long after the close (with a threshold of views). */
 const LOCK_SET_VIEW_WAIT_MS = 1200;
 /** At most a committee's worth of signatures in a certificate (9 drawn for 7 seats). */
@@ -42118,6 +42124,8 @@ const h2hFromHex = (h) => Uint8Array.from(String(h).match(/../g) || [], (x) => p
 // THE CERTIFICATE'S THRESHOLD AS THE SEATS COUNT IT (arena-node lock-set-book.js #threshold): the committee table, else a majority of the
 // committee - a round seated by 6 (a 7-slot round with one seat gone) has no row in receiptsNeeded, and every reveal of such a protocol-28
 // table threw "no committee threshold for 6 slots" in the page, the house bot and tn4-rps-paid.mjs (kanban #2658, measured 2026-11-14 21:47Z)
+/** Clock slack past the seats' final point before a page takes VOID (kanban #2984). */
+const H2H_VOID_SLACK_MS = 1000;
 const lockSetThreshold = (n) => { try { return receiptsNeeded(n); } catch { return Math.floor(n / 2) + 1; } };
 
 async function lockSetOfSeats({ roundIdHex, nodes, committee = null, verify = null, entryCloseMs, fetcher = fetch, timeoutMs = H2H_SEAT_MS }) {
@@ -42152,7 +42160,9 @@ async function lockSetOfSeats({ roundIdHex, nodes, committee = null, verify = nu
       if (byEntries.get(k) >= Math.min(2, hosts.length)) { certified = { entries: [...x.entries].sort(), atMs: Number(x.certifiedAtMs) || null }; break; }
     }
   }
-  return { required: true, certified, void: !certified && answered.some((x) => x.void === true) };
+  // kanban #2984: how many listed addresses said VOID - one seat's unsigned word is not the round's
+  const voids = said.filter((x) => x && typeof x === 'object' && x.void === true).length;
+  return { required: true, certified, void: !certified && voids > 0, voids: certified ? 0 : voids };
 }
 
 /**
@@ -42207,8 +42217,15 @@ async function revealWhenCertified({ roundIdHex, entryIdHex, move, salt, nodes, 
     // poll - while the honest seats were still certifying - made the page skip its reveal and forfeit a round the others played. Before the
     // seats' own certifying window has passed the page keeps asking; a certificate it checked wins whenever it comes, and it gives up only
     // after the window (the seats void a set they could not certify by then) or past its own deadline
-    const windowOver = now() > Number(entryCloseMs) + LOCK_SET_WINDOW_MS;
-    if ((got.void && windowOver) || now() > giveUpAt) return { seats: [], void: true, why: 'the round\'s lock set was not certified by its close + 3 s: the round is VOID, every stake comes back' };
+    // NOT ON ONE SEAT'S VOID, NOT BEFORE THE SEATS' OWN FINAL POINT (kanban #2984, audit h2h r1-1): the seats take and assemble the set until
+    // close + LOCK_SET_WINDOW_MS + LOCK_SET_FINAL_AFTER_MS and say VOID only from then; a page that stopped at close + 3 s on one seat's
+    // void skipped its reveal of a set the honest seats certified at close + 3.5 s and FORFEIT. A VOID now ends the wait only past that
+    // point (plus a second of clock slack) and only when more seats said it than a committee's dishonest share can (n - threshold + 1);
+    // else the page keeps asking until its own deadline
+    const n = committee && committee.length ? committee.length : seatsByHost(nodes).listed.length;
+    const voidsNeeded = Math.max(1, Math.min(seatsByHost(nodes).listed.length, n - lockSetThreshold(n) + 1));
+    const windowOver = now() > Number(entryCloseMs) + LOCK_SET_WINDOW_MS + LOCK_SET_FINAL_AFTER_MS + H2H_VOID_SLACK_MS;
+    if ((got.void && got.voids >= voidsNeeded && windowOver) || now() > giveUpAt) return { seats: [], void: true, why: 'the round\'s lock set was not certified by its close + 3 s: the round is VOID, every stake comes back' };
     if (onWait) { try { onWait('certifying'); } catch { /* the page's own */ } }
     await sleep(H2H_LOCK_SET_POLL_MS);
   }

@@ -5,7 +5,7 @@
 // game's own (its client and its decide adapter). The commitment is the protocol's (arena-protocol head-to-head.js); the
 // entry itself is built and handed over as a market pick's is (join.js entryFor, market.js submitPick), with `commit` set.
 import { headToHeadCommit } from '../../arena-protocol/src/head-to-head.js';
-import { lockSetCertificateStands, LOCK_SET_WINDOW_MS } from '../../arena-protocol/src/lock-set.js';
+import { lockSetCertificateStands, LOCK_SET_WINDOW_MS, LOCK_SET_FINAL_AFTER_MS } from '../../arena-protocol/src/lock-set.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 
 const h2hHex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
@@ -152,6 +152,8 @@ const h2hFromHex = (h) => Uint8Array.from(String(h).match(/../g) || [], (x) => p
 // THE CERTIFICATE'S THRESHOLD AS THE SEATS COUNT IT (arena-node lock-set-book.js #threshold): the committee table, else a majority of the
 // committee - a round seated by 6 (a 7-slot round with one seat gone) has no row in receiptsNeeded, and every reveal of such a protocol-28
 // table threw "no committee threshold for 6 slots" in the page, the house bot and tn4-rps-paid.mjs (kanban #2658, measured 2026-11-14 21:47Z)
+/** Clock slack past the seats' final point before a page takes VOID (kanban #2984). */
+export const H2H_VOID_SLACK_MS = 1000;
 export const lockSetThreshold = (n) => { try { return receiptsNeeded(n); } catch { return Math.floor(n / 2) + 1; } };
 
 export async function lockSetOfSeats({ roundIdHex, nodes, committee = null, verify = null, entryCloseMs, fetcher = fetch, timeoutMs = H2H_SEAT_MS }) {
@@ -186,7 +188,9 @@ export async function lockSetOfSeats({ roundIdHex, nodes, committee = null, veri
       if (byEntries.get(k) >= Math.min(2, hosts.length)) { certified = { entries: [...x.entries].sort(), atMs: Number(x.certifiedAtMs) || null }; break; }
     }
   }
-  return { required: true, certified, void: !certified && answered.some((x) => x.void === true) };
+  // kanban #2984: how many listed addresses said VOID - one seat's unsigned word is not the round's
+  const voids = said.filter((x) => x && typeof x === 'object' && x.void === true).length;
+  return { required: true, certified, void: !certified && voids > 0, voids: certified ? 0 : voids };
 }
 
 /**
@@ -241,8 +245,15 @@ export async function revealWhenCertified({ roundIdHex, entryIdHex, move, salt, 
     // poll - while the honest seats were still certifying - made the page skip its reveal and forfeit a round the others played. Before the
     // seats' own certifying window has passed the page keeps asking; a certificate it checked wins whenever it comes, and it gives up only
     // after the window (the seats void a set they could not certify by then) or past its own deadline
-    const windowOver = now() > Number(entryCloseMs) + LOCK_SET_WINDOW_MS;
-    if ((got.void && windowOver) || now() > giveUpAt) return { seats: [], void: true, why: 'the round\'s lock set was not certified by its close + 3 s: the round is VOID, every stake comes back' };
+    // NOT ON ONE SEAT'S VOID, NOT BEFORE THE SEATS' OWN FINAL POINT (kanban #2984, audit h2h r1-1): the seats take and assemble the set until
+    // close + LOCK_SET_WINDOW_MS + LOCK_SET_FINAL_AFTER_MS and say VOID only from then; a page that stopped at close + 3 s on one seat's
+    // void skipped its reveal of a set the honest seats certified at close + 3.5 s and FORFEIT. A VOID now ends the wait only past that
+    // point (plus a second of clock slack) and only when more seats said it than a committee's dishonest share can (n - threshold + 1);
+    // else the page keeps asking until its own deadline
+    const n = committee && committee.length ? committee.length : seatsByHost(nodes).listed.length;
+    const voidsNeeded = Math.max(1, Math.min(seatsByHost(nodes).listed.length, n - lockSetThreshold(n) + 1));
+    const windowOver = now() > Number(entryCloseMs) + LOCK_SET_WINDOW_MS + LOCK_SET_FINAL_AFTER_MS + H2H_VOID_SLACK_MS;
+    if ((got.void && got.voids >= voidsNeeded && windowOver) || now() > giveUpAt) return { seats: [], void: true, why: 'the round\'s lock set was not certified by its close + 3 s: the round is VOID, every stake comes back' };
     if (onWait) { try { onWait('certifying'); } catch { /* the page's own */ } }
     await sleep(H2H_LOCK_SET_POLL_MS);
   }

@@ -18,7 +18,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import {
-  LOCK_SET_WINDOW_MS, LOCK_SET_VIEW_WAIT_MS, LOCK_SET_MAX_ENTRIES, lockSetOf, lockSetId, lockSetSignatureId, lockSetViewId,
+  LOCK_SET_WINDOW_MS, LOCK_SET_FINAL_AFTER_MS, LOCK_SET_VIEW_WAIT_MS, LOCK_SET_MAX_ENTRIES, lockSetOf, lockSetId, lockSetSignatureId, lockSetViewId,
   encodeLockSetCertificate, lockSetCertificateStands, lockSetToSign, decodeLockSetCertificate, encodeSignedLockSet,
 } from '../../arena-protocol/src/lock-set.js';
 
@@ -39,7 +39,7 @@ export const LOCK_SET_RETURN_AFTER_MS = 2000 + LOCK_SET_PEER_MS;
  * certified a round every seat had answered VOID (the honest player's page stops there and never reveals - he FORFEITS). From then on no
  * signature or certificate is taken while none is held, and VOID is said only from then (before it the set is pending): VOID is never taken back.
  */
-export const LOCK_SET_FINAL_AFTER_MS = 2000;
+export { LOCK_SET_FINAL_AFTER_MS };   // kanban #2984: the protocol's (lock-set.js), so a page waits for it too
 // A SIGNATURE CHECKED ONCE (kanban #2864, the owner 2026-11-15: "fuer den User muss alles snappy sein"): a steady seat's profile had lsVerify at ~9 %
 // of the seat (~20 % of its busy time) - every pull, push and certificate checks the same few signatures again. The answer for (sig, msg, key)
 // is kept; true and false alike (the same bytes give the same answer), at most LS_VERIFIED_MOST entries, the oldest dropped first.
