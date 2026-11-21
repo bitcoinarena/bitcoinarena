@@ -61,6 +61,10 @@ export function packageOf(game, { ancestors = [], cut = null } = {}) {
 // THE CHECKS ARE plugin-check.js's (the page runs them too); THE SEAT ADDS THE TRIAL RUN (plugin-trial.js) on every core
 export { scanSource, SCAN_RULES } from './plugin-check.js';
 /** The page's report plus the seat's trial run: { ok, why, checks, findings, gameId, name, version, devKey, parent }. */
+// A CORE'S NAME IS NOBODY'S SIGNATURE (kanban #2990, audit hosting r2-1): a relaying seat that served the genuine package with
+// cores[0].name = {"toString":1} made loadCore throw, the trial answered a plain refusal, and the seat kept the GENUINE version as refused
+// by its trial for 24 h (autoUpdateSweep) - every honest source after it skipped. Only a short string is a core's name; else its hash's start.
+export const coreNameOf = (c) => (typeof c.name === 'string' && c.name ? c.name.slice(0, 80) : String(c.hash).slice(0, 16));
 export function verifyPackage(pkg, { verify, want = null, parentOf } = {}) {
   const r = checkPackage(pkg, { verify, want, parentOf });
   if (!r.ok) return r;
@@ -69,7 +73,7 @@ export function verifyPackage(pkg, { verify, want = null, parentOf } = {}) {
     // kanban #3085: a tree core runs from its entry with all its files
     const core = Array.isArray(c.files) ? { files: new Map(c.files.map((f) => [f.path, Buffer.from(f.body, 'base64').toString('utf8')])), entry: c.entry }
       : Buffer.from(c.source, 'base64').toString('utf8');
-    const t = trialRun(core, manifest, { name: c.name || String(c.hash).slice(0, 16) });
+    const t = trialRun(core, manifest, { name: coreNameOf(c) });
     r.checks.push({ check: `core ${c.hash.slice(0, 12)}… runs in the sandbox`, ok: t.ok, detail: t.ok ? `${t.cases} move combinations, each answered the same twice` : t.why });
     // `trial` (kanban #1880, #1913): the verdict on these signed bytes, which a seat may remember; `retry`: none yet (try again)
     if (!t.ok) return { ...r, ok: false, trial: !t.retry, retry: !!t.retry, why: `the trial run refuses it: ${t.why}` };
@@ -129,7 +133,7 @@ export async function registrationFromPackage(at, pkg, { title = null, within = 
     // THE CONFIGS ARE THE SIGNED MANIFEST'S (kanban #1814): a package's cores[].configs are signed by nobody, so a relaying seat
     // could empty them (every round of the version refused) or add one the manifest does not list (hostedPlugins throws)
     const signed = manifest.cores.find((m) => toHex(m.hash) === c.hash);
-    const core = { name: c.name, hash: c.hash, url: pathToFileURL(file).href, ...(tree ? { root: pathToFileURL(join(at, coreDirOf(c.hash)) + '/').href } : {}),
+    const core = { name: coreNameOf(c), hash: c.hash, url: pathToFileURL(file).href, ...(tree ? { root: pathToFileURL(join(at, coreDirOf(c.hash)) + '/').href } : {}),
       configs: new Map((signed ? signed.configs : []).map((h) => [toHex(h), {}])) };
     // THE INSTALL LOAD IS HELD TO THE TRIAL'S BOUND (kanban #1694): a core that passed the trial loaded within TRIAL_MS, so the
     // seat waits no longer for it here (was LOAD_MS, 10 s of the node's thread per version, on install and every restart)
