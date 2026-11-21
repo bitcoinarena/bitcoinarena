@@ -1,0 +1,16 @@
+{
+  "name": "orange-pill-run",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Orange Pill Run: a daily platformer whose level is the previous UTC day's BTC-USD chart; deterministic simulation shared by browser and server (kanban #3245).",
+  "exports": {
+    "./sim": "./src/sim/index.js",
+    "./level-check": "./src/level-check.mjs",
+    "./candles": "./src/candles.mjs"
+  },
+  "scripts": {
+    "test": "node --test test/",
+    "build": "node client/build.mjs"
+  }
+}
