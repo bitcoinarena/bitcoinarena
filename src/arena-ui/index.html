@@ -3942,6 +3942,10 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     async function joinTheRoundIfOneWasNamed() {
       if (typeof ARENACLIENT === 'undefined') return;
       const thisJoin = window.ARENA_JOIN || null;   // the lobby's join this call makes (null for a round link)
+      // THE JOIN BEFORE'S SESSION SIGNAL GOES DOWN FIRST (kanban #3237, feedback #375, round a71d3039: "Cannot read properties of null (reading
+      // 'join')", the stake locked, no entry at any seat): left standing, the bridge opened a session for this join's round on the old entry, the
+      // new entry then replaced it mid-open and its client.join threw into ARENA_ENTRY_REFUSED; a join with no entry of its own read as joined
+      window.ARENA_ENTRY = undefined; window.ARENA_CHAIN = undefined; window.ARENA_ADVERT = undefined;
       const readAt = performance.now();
       const named = await ARENACLIENT.joinFromQuery(location.search);
       if (!named) return;
