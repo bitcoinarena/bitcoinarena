@@ -183,13 +183,23 @@ export function createDonationBallots({ db, knownSets, verifySecp256k1, log = ()
   const PULL_TRIES = 1024, REFUSED_KEPT = 8192;
   const refusedHexes = new Set();
   const parked = new Map();   // hex -> kind
+  const parkedBy = new Map();   // hex -> its signer (kanban #3024)
+  const EARLY_PER_SIGNER = 8;
   const park = async (kind, hex, obj) => {
     try {
       const digest = kind === 'proposal' ? donationProposalId(obj) : donationApprovalDigest(obj);
+      // ONLY A SIGNER THAT COULD EVER COUNT, AND A FEW PER SIGNER (kanban #3024, audit census r2-1): any self-signed object was parked, so a
+      // stranger's 1024 junk approvals under fresh keys pushed a real early vote out of the pool. A parked object's signer must be a recipient
+      // of a set this seat holds or of a proposal it holds (a chained parent), and one signer keeps at most EARLY_PER_SIGNER parked
+      const who = toHex(kind === 'proposal' ? obj.proposer : obj.signer);
+      const inProposal = () => { for (const b of ballots().values()) if (b && b.proposal && keyIn(b.proposal, who)) return true; return false; };
+      if (!heldSets().some((set) => keyIn(set, who)) && !inProposal()) return false;
+      if ([...parkedBy.values()].filter((k) => k === who).length >= EARLY_PER_SIGNER && !parked.has(hex)) return false;
       if (!(await verifySecp256k1(obj.signature, digest, kind === 'proposal' ? obj.proposer : obj.signer))) return false;
+      parkedBy.set(hex, who);
     } catch { return false; }
     parked.delete(hex); parked.set(hex, kind);
-    while (parked.size > EARLY_MAX) parked.delete(parked.keys().next().value);
+    while (parked.size > EARLY_MAX) { const o = parked.keys().next().value; parked.delete(o); parkedBy.delete(o); }
     return true;
   };
   let unparking = false;
