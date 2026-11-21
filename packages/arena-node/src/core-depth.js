@@ -155,18 +155,34 @@ export const DEPTH_LOCKDOWN = `(() => {
     const overflow = 'Maximum call stack size exceeded';
     // kanban #2712: an overflow WRAPPED (a SuppressedError's error / suppressed, an AggregateError's errors, a cause) is the overflow too -
     // own data properties only, a few levels deep, so no getter of the core's runs here
-    const isOverflow = (err, depth) => {
-      if (err === null || typeof err !== 'object' || depth > 4) return false;
-      if (apply(isProto, REp, [err])) { const m = ownDesc(err, 'message'); if (m && m.value === overflow) return true; }
-      const inner = (k) => { const v = ownDesc(err, k); return !!(v && 'value' in v && isOverflow(v.value, depth + 1)); };
-      if (inner('error') || inner('suppressed') || inner('cause')) return true;
-      const es = ownDesc(err, 'errors');
-      if (es && 'value' in es && isArr(es.value)) { const len = ownDesc(es.value, 'length'); for (let i = 0; i < (len ? len.value : 0) && i < 16; i++) { const v = ownDesc(es.value, String(i)); if (v && 'value' in v && isOverflow(v.value, depth + 1)) return true; } }
+    // kanban #3065 (audit hosting r4-3-1, gap in #2712): the walk stopped 4 levels down and read 16 of an AggregateError's errors, so an overflow
+    // a DisposableStack wrapped in 6 SuppressedErrors was not sticky. It now walks every wrapped value (own data properties only) with no fixed
+    // depth, each object once; a wrapping too large to walk (more than WALK_MOST objects) counts as the overflow - the same answer on every
+    // machine. Only what was taken before any core code ran is used (no array or WeakSet method the core could replace)
+    const WALK_MOST = 4096, WS = WeakSet, wsAdd = WeakSet.prototype.add, wsHas = WeakSet.prototype.has, KEYS = ['error', 'suppressed', 'cause'];
+    const isOverflow = (err0) => {
+      if (err0 === null || typeof err0 !== 'object') return false;
+      const todo = { __proto__: null, 0: err0 }, seen = new WS();   // a null-prototype stack: no setter a core put on Array.prototype is hit
+      let top = 1, n = 0;
+      while (top > 0) {
+        const err = todo[--top];
+        if (err === null || typeof err !== 'object' || apply(wsHas, seen, [err])) continue;
+        apply(wsAdd, seen, [err]);
+        if (++n > WALK_MOST) return true;
+        if (apply(isProto, REp, [err])) { const m = ownDesc(err, 'message'); if (m && m.value === overflow) return true; }
+        for (let j = 0; j < 3; j++) { const v = ownDesc(err, KEYS[j]); if (v && 'value' in v) { if (top >= WALK_MOST) return true; todo[top++] = v.value; } }
+        const es = ownDesc(err, 'errors');
+        if (es && 'value' in es && isArr(es.value)) {
+          const len = ownDesc(es.value, 'length'), L = len && typeof len.value === 'number' ? len.value : 0;
+          if (L > WALK_MOST) return true;
+          for (let i = 0; i < L; i++) { const v = ownDesc(es.value, String(i)); if (v && 'value' in v) { if (top >= WALK_MOST) return true; todo[top++] = v.value; } }
+        }
+      }
       return false;
     };
     const c = (err) => {
       if (sticky !== null) throw new RE(sticky);
-      if (isOverflow(err, 0)) { sticky = 'the core overflowed the stack'; throw new RE(sticky); }
+      if (isOverflow(err)) { sticky = 'the core overflowed the stack'; throw new RE(sticky); }
     };
     return Object.freeze({ e, x, c, begin() { d = 0; }, over: () => sticky });
   })()`;
