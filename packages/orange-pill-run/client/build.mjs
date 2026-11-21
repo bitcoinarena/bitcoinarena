@@ -57,3 +57,32 @@ const outFile = arg("--out") || path.join(here, "dist/index.html");
 fs.mkdirSync(path.dirname(outFile), { recursive: true });
 fs.writeFileSync(outFile, html);
 console.log("wrote", path.relative(process.cwd(), outFile), html.length, "bytes,", order.length, "modules:", order.map(id).join(" "));
+
+// THE PUBLIC RULES PAGE (kanban #3251), beside the game: games/orange-pill-run/rules.html, from the same text as the game's Rules sheet
+const { RULES, RULES_TITLE } = await import(pathToFileURL(path.join(here, "src/rules.js")).href);
+const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const rules = `<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>${esc(RULES_TITLE)}</title>
+<style>
+:root { color-scheme: dark; --bg: #0f0a10; --text: #f6ece4; --soft: #c8bab2; --btc: #f7931a; --line: #46343f; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.55 Inter, system-ui, -apple-system, "Segoe UI", sans-serif; padding: 24px 16px 40px; }
+main { max-width: 680px; margin: 0 auto; }
+h1 { font: 700 1.6rem "Space Grotesk", "Segoe UI", system-ui, sans-serif; margin: 0 0 16px; }
+ol { padding-left: 1.2em; display: grid; gap: 10px; color: var(--soft); } b { color: var(--text); }
+a { color: var(--btc); }
+</style>
+<main>
+<h1>${esc(RULES_TITLE)}</h1>
+<ol>
+${RULES.map(([k, v]) => `<li><b>${esc(k)}.</b> ${esc(v)}</li>`).join("\n")}
+</ol>
+<p><a href="../../?game=orange-pill-run">Play the Orange Pill Run</a></p>
+</main>
+`;
+const rulesFile = path.join(path.dirname(outFile), "rules.html");
+fs.writeFileSync(rulesFile, rules);
+console.log("wrote", path.relative(process.cwd(), rulesFile), rules.length, "bytes");

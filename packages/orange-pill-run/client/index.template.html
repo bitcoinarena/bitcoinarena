@@ -43,6 +43,7 @@ table { border-collapse: collapse; width: 100%; font-size: .95rem; font-variant-
 th { color: var(--dim); font-weight: 400; font-size: .75rem; text-align: right; padding: 3px 6px; }
 td { text-align: right; padding: 5px 6px; border-top: 1px solid var(--line); white-space: nowrap; }
 th:first-child, td:first-child { text-align: left; }
+td:first-child { white-space: normal; }   /* kanban #3251: a long label wraps; the numbers stay in view on a phone */
 td i { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 6px; }
 tr.me td { background: #3c240e; }
 td.tot { font-family: var(--display); font-weight: 700; color: var(--gold); }
@@ -58,34 +59,94 @@ button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 #pad .jump.held { background: var(--gold); }
 @media (hover: hover) and (pointer: fine) { #pad { display: none; } }
 @media (max-width: 600px) { header p { display: none; } }
+/* kanban #3251: the intro, result, leaderboard, rules and replay screens; #3265: the entry's line while the run goes on */
+body:not(.playing) #pad, body.replaying #pad { display: none; }
+.wal { font-family: var(--display); font-size: .78rem; color: var(--soft); white-space: nowrap; }
+.wal b { color: var(--gold); }
+.box.intro h2 { font-size: 1.5rem; margin: 0 0 2px; }
+.box .line { font-size: .98rem; margin: 0 0 10px; color: var(--soft); }
+.bounty { font-family: var(--display); font-weight: 700; font-size: 1.15rem; color: var(--gold); margin: 0 0 10px; }
+.facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px 12px; margin: 0 0 12px; }
+.facts div { min-width: 0; } .facts .wide { grid-column: 1 / -1; }
+.facts dt { font-size: .72rem; color: var(--dim); margin: 0; }
+.facts dd { margin: 1px 0 0; font-size: .95rem; color: var(--text); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+button.big { width: 100%; padding: 14px 18px; font-size: 1.1rem; }
+button:disabled { opacity: .5; cursor: default; }
+.why { min-height: 1.2em; margin: 8px 0 0 !important; font-size: .88rem !important; color: var(--soft); }
+.links { display: flex; gap: 16px; margin-top: 10px; font-size: .92rem; }
+.links a, a.lk { color: var(--btc); text-decoration: none; } .links a:hover, a.lk:hover { text-decoration: underline; }
+.entry { font-size: .95rem !important; font-weight: 600; margin: 0 0 8px !important; }
+.entry.ok { color: var(--green) !important; } .entry.bad { color: var(--red) !important; } .entry.wait { color: var(--gold) !important; }
+.facts2 { margin: 10px 0 0; display: grid; gap: 3px; font-size: .95rem; color: var(--soft); }
+.facts2 b { color: var(--text); }
+.xbox { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--btc); border-radius: 10px; display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.xbox span { color: var(--text); font-size: .93rem; } .xbox button { padding: 7px 12px; font-size: .9rem; }
+.rules ol { margin: 0; padding-left: 1.1em; display: grid; gap: 6px; color: var(--soft); font-size: .92rem; line-height: 1.4; }
+.rules ol b { color: var(--text); }
+.box.wide { width: min(620px, 100%); max-height: 100%; overflow: auto; }
+td button.rp { padding: 3px 8px; font-size: .8rem; border-radius: 7px; }
+#rbar { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); display: flex; gap: 8px; background: rgba(28,21,30,.92); border: 1px solid var(--line); border-radius: 12px; padding: 6px; }
+#rbar button { padding: 8px 14px; font-size: .95rem; }
+#rbar button[aria-pressed="true"] { border-color: var(--btc); color: var(--btc); }
+#pill { position: absolute; left: 50%; top: 44px; transform: translateX(-50%); max-width: calc(100% - 20px); box-sizing: border-box; font-size: .8rem; color: var(--text);
+  background: rgba(28,21,30,.85); border: 1px solid var(--line); border-radius: 99px; padding: 4px 12px; pointer-events: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#pill.ok { border-color: var(--green); } #pill.bad { border-color: var(--red); } #pill.wait { border-color: var(--gold); }
+/* in the Arena's frame the page's bar carries the name: the header is one line, the wallet and the round */
+body.bridged header h1, body.bridged header p { display: none; }
+body.bridged header { justify-content: space-between; }
+body.bridged .tag { margin-left: 0; }
+@media (max-height: 700px) { .box.intro h2 { font-size: 1.25rem; } .facts { gap: 4px 12px; } .box { padding: 14px; } }
 </style>
 
 <header>
   <h1>Orange Pill Run</h1>
   <p>Run across the last 24 hours of the Bitcoin chart. Every candle is a platform.</p>
+  <span class="wal" id="wal" hidden></span>
   <span class="tag" id="modeTag">OFFLINE · PRACTICE</span>
 </header>
 
 <div id="stage">
   <canvas id="cv" aria-label="Game"></canvas>
   <div class="sheet" id="intro">
-    <div class="box">
-      <h2>Today's chart is the level</h2>
+    <div class="box intro">
+      <h2>Orange Pill Run</h2>
+      <p class="line" id="iLine">Run yesterday's Bitcoin chart. Tap to jump. Don't fall.</p>
+      <p class="bounty" id="iBounty" hidden></p>
+      <dl class="facts" id="iFacts" hidden></dl>
       <div class="price" id="iPrice"></div>
-      <p>Run the Bitcoin chart. Tap to jump. Don't fall.</p>
-      <div class="row"><button class="primary" id="startBtn">Start run</button></div>
+      <button class="primary big" id="startBtn">Practice run (free)</button>
+      <p class="why" id="iWhy" role="status"></p>
+      <nav class="links"><a href="#rules" id="rulesLink">Rules</a><a href="#board" id="boardLink">Leaderboard</a></nav>
     </div>
   </div>
   <div class="sheet" id="result" hidden>
     <div class="box">
       <h2 id="rTitle"></h2>
-      <p id="rText"></p>
+      <p class="entry" id="rEntry" role="status"></p>
       <div class="tw"><table id="rScore"></table></div>
-      <p class="eyebrow">Your best runs on this chart</p>
-      <div class="tw"><table id="rBest"></table></div>
-      <div class="row"><button class="primary" id="againBtn">Run again</button></div>
+      <p class="refused" id="rRefused" hidden></p>
+      <div class="facts2" id="rFacts"><span id="rRank"></span><span id="rBeat"></span><span id="rLeft"></span></div>
+      <div class="xbox" id="rX" hidden><span id="rXText">Link your X account to be placed and win.</span><button id="xBtn" type="button">Link X</button></div>
+      <div class="row"><button class="primary" id="againBtn">Play again</button><button id="replayBtn">Watch replay</button><button id="rBoardBtn">Leaderboard</button></div>
     </div>
   </div>
+  <div class="sheet" id="board" hidden>
+    <div class="box wide">
+      <h2>Leaderboard</h2>
+      <p id="bLine"></p>
+      <div class="tw"><table id="bTable"></table></div>
+      <div class="row"><button class="primary" id="bBack">Back</button></div>
+    </div>
+  </div>
+  <div class="sheet" id="rules" hidden>
+    <div class="box wide rules">
+      <h2 id="rulesTitle">Rules</h2>
+      <ol id="rulesList"></ol>
+      <div class="row"><button class="primary" id="rulesBack">Back</button><a class="lk" id="rulesPage" href="rules.html" target="_blank" rel="noopener" style="align-self:center">Rules page</a></div>
+    </div>
+  </div>
+  <div id="rbar" hidden><button id="rbPlay" type="button">Pause</button><button id="rb2x" type="button" aria-pressed="false">2x</button><button id="rbClose" type="button">Close</button></div>
+  <div id="pill" hidden role="status"></div>
 </div>
 
 <div id="pad">
