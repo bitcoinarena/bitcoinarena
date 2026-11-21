@@ -7744,7 +7744,10 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       const close = () => { if (busy) return; box.classList.remove('show'); job = null; };
       box.addEventListener('click', (e) => { if (e.target === box) close(); });
       async function open(j) {
-        job = Object.assign({}, j); busy = false;
+        // ONE ZAP AT A TIME (kanban #3230, feedback #305): open() used to clear busy while a send was still paying, so the old send's
+        // result landed in the next player's dialog and a second send could start beside it. A dialog that is paying stays open on it.
+        if (busy) { box.classList.add('show'); return; }
+        job = Object.assign({}, j);
         set({ title: j.title || 'Zap', msg: '', goDisabled: true, goLabel: j.recipient ? 'Zap' : 'Tip', showMsg: !j.recipient, to: '', st: '', stKind: '' });
         box.classList.add('show');
         if (j.recipient) { set({ to: 'to ' + (j.name || 'this player') + ' \u00b7 e-cash into their Bitcoin Arena wallet, from yours', st: '', goDisabled: false }); return; }
@@ -7778,6 +7781,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           const mine = job;
           const out = await zapInFederation(mine).catch((e) => ({ ok: false, why: e.message }));
           busy = false;
+          if (mine !== job) return;
           window.ARENA_ZAP_LAST = { at: Date.now(), recipient: mine.recipient, msat: String(choice), ok: !!out.ok, zapped: !!out.ok, why: out.why || null, txid: out.txid || null, inFederation: true };
           if (out.ok) say('Zapped ' + ARENACLIENT.zapSatLine(choice) + ' \u2713 \u00b7 ' + (mine.name || 'the player') + ' collects it into their wallet', 'ok');
           else { say('Not sent: ' + out.why, 'bad'); set({ goDisabled: false }); }
@@ -7794,6 +7798,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             pay: async (invoice) => { say('Paying ' + ARENACLIENT.zapSatLine(choice) + ' \u2026'); return pay(invoice); } });
         } catch (e) { out = { ok: false, why: e && e.message ? e.message : String(e) }; }
         busy = false;
+        if (mine !== job) return;
         window.ARENA_ZAP_LAST = { at: Date.now(), address: mine.address, msat: String(choice), ok: !!out.ok, zapped: !!out.zapped, why: out.why || null,
           paymentHash: out.paymentHash || null, request: out.request ? out.request.id : null };
         if (out.ok) say((out.zapped ? 'Zapped ' : 'Tipped ') + ARENACLIENT.zapSatLine(choice) + ' \u2713' + (out.zapped ? ' \u00b7 the receipt goes to the relay' : ''), 'ok');
@@ -8028,6 +8033,9 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         console.log('[arena] no games answered after ' + waits.length + ' tries - Try again offered');
         return null;
       }
+      // THE TRY LINE GOES WHEN A TRY FINDS THE NODES (kanban #3235, feedback #353): "try 2 of 8" stayed on the stage after try 2 had found
+      // them, so a later step that hung read as discovery stuck. The stage now names the step that follows.
+      { const st = document.getElementById('stage'); if (st && /\(try \d+ of \d+\)/.test(st.textContent || '')) window.ArenaText.say(st, 'Found the game\'s nodes \u2026 loading the game'); }
       // THE WALLET FROM HERE, BEFORE THE PICK (the games screen shows the balance) - the games are read already
       if (got.games && got.games.length && window.ARENA_OPEN_WALLET_EARLY) window.ARENA_OPEN_WALLET_EARLY(window.ARENA_LEDGER_LOBBY);
       console.log('[arena] games of ' + nodes.length + ' node(s): ' + got.games.map((g) => g.name).join(', ') + ' in ' + (Date.now() - t0) + ' ms');
