@@ -177,6 +177,8 @@ export function openBountySeason(path = ':memory:', { startMs = null, s2EndMs = 
     CREATE TABLE IF NOT EXISTS link_codes (code TEXT PRIMARY KEY, pubkey TEXT NOT NULL, made_ms INTEGER NOT NULL, used_ms INTEGER, platform TEXT, user_id TEXT);
     CREATE INDEX IF NOT EXISTS link_codes_by_key ON link_codes (pubkey, made_ms);
     CREATE INDEX IF NOT EXISTS link_codes_by_age ON link_codes (made_ms);
+    CREATE TABLE IF NOT EXISTS link_code_uses (code TEXT NOT NULL, platform TEXT NOT NULL, used_ms INTEGER NOT NULL, user_id TEXT, PRIMARY KEY (code, platform));
+    INSERT OR IGNORE INTO link_code_uses (code, platform, used_ms, user_id) SELECT code, platform, used_ms, user_id FROM link_codes WHERE used_ms IS NOT NULL AND platform IS NOT NULL;
     CREATE TABLE IF NOT EXISTS links (pubkey TEXT NOT NULL, platform TEXT NOT NULL, user_id TEXT NOT NULL, username TEXT, linked_ms INTEGER NOT NULL,
       member INTEGER, checked_ms INTEGER, why TEXT, PRIMARY KEY (pubkey, platform));
     CREATE TABLE IF NOT EXISTS tg_seen (username TEXT PRIMARY KEY, user_id TEXT NOT NULL, seen_ms INTEGER NOT NULL);
@@ -221,13 +223,17 @@ export function openBountySeason(path = ':memory:', { startMs = null, s2EndMs = 
     const code = `BA-${m[1].toUpperCase()}`;
     const c = db.prepare('SELECT * FROM link_codes WHERE code = ?').get(code);
     if (!c) return { ok: false, why: 'unknown code' };
-    if (c.used_ms != null) return { ok: false, why: 'that code was used already' };
+    // ONCE PER PLATFORM (kanban #3027, audit faucet r2-1): one use for all platforms let a stranger who read a reporter's code on X send it to the
+    // Discord or Telegram bot before the next 3-minute X poll - the code was used up there and the reporter's X account (Season 2's only human
+    // proof) could never be linked by code. A code links one account per platform now; on X the first poster of it still wins (#3003)
+    if (db.prepare('SELECT 1 AS x FROM link_code_uses WHERE code = ? AND platform = ?').get(code, platform)) return { ok: false, why: 'that code was used already' };
     if (nowMs - c.made_ms > LINK_CODE_MS) return { ok: false, why: 'that code has expired: make a new one' };
     const held = db.prepare('SELECT pubkey, proof FROM links WHERE platform = ? AND user_id = ?').get(platform, String(userId));
     if (held && held.pubkey !== c.pubkey && held.proof === 'code') return { ok: false, why: 'that account is linked to another report key' };
     // a code proves the account: a key that only typed its name in the form (kanban #2641) gives it up
     if (held && held.pubkey !== c.pubkey) db.prepare('DELETE FROM links WHERE platform = ? AND user_id = ?').run(platform, String(userId));
     db.prepare('UPDATE link_codes SET used_ms = ?, platform = ?, user_id = ? WHERE code = ? AND used_ms IS NULL').run(nowMs, platform, String(userId), code);
+    db.prepare('INSERT OR IGNORE INTO link_code_uses (code, platform, used_ms, user_id) VALUES (?, ?, ?, ?)').run(code, platform, nowMs, String(userId));
     db.prepare(`INSERT INTO links (pubkey, platform, user_id, username, linked_ms, proof) VALUES (?, ?, ?, ?, ?, 'code')
       ON CONFLICT (pubkey, platform) DO UPDATE SET user_id = excluded.user_id, username = excluded.username, linked_ms = excluded.linked_ms, member = NULL, checked_ms = NULL, why = NULL, proof = 'code'`)
       .run(c.pubkey, platform, String(userId), username ? String(username).slice(0, 64) : null, nowMs);
