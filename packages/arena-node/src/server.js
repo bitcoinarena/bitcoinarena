@@ -1066,7 +1066,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // per round and attestation body at a time.
   const handingOn = new Set(), handedOn = new Set();   // duties running; duties done (every peer took it: a retry posts nothing more)
   const handOutcomeOn = async (target, raw, untilMs, { fresh = true } = {}) => {
-    const key = `${toHex(target)}:${toHex(sha256(raw))}`;
+    // ONE DUTY PER ATTESTATION BODY, NOT PER ENCODING (kanban #3063, audit attest r4-3-1): the duty was keyed by sha256 of the posted bytes, and a
+    // stranger's re-ordered or repeated-signature copies of one held attestation (each stands) each started a retrying hand-on to every
+    // settlement peer until the deadline. The key is the body id - what the signatures sign - whatever the signature list looks like
+    let body = null;
+    try { body = isValueAttestationBytes(raw) ? valueAttestationBodyId(decodeValueAttestation(raw)) : attestationBodyId(decodeAttestation(raw)); } catch { body = null; }
+    const key = `${toHex(target)}:${toHex(body || sha256(raw))}`;
     if (handingOn.has(key) || (!fresh && handedOn.has(key))) return;
     handingOn.add(key);
     const done = () => { handingOn.delete(key); if (!left.length) { handedOn.add(key); if (handedOn.size > 4096) handedOn.delete(handedOn.values().next().value); } };
