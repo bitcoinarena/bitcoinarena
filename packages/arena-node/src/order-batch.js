@@ -839,13 +839,32 @@ export class OrderBook {
     if (sigs.length < m.needed) return refuse(`that certificate carries ${sigs.length} seats' signatures and batch ${c.k} needs ${m.needed}`, 403);
     const rid = Buffer.from(roundIdBytes), k = Number(c.k);
     const heldQ = this.db.prepare('SELECT batch_id, own_sig, certificate FROM market_batches WHERE round_id = ? AND k = ?');
-    const another = () => { const h = heldQ.get(rid, k); return h && h.batch_id !== c.id ? refuse(`this seat holds another set for batch ${c.k}: two certified sets for one batch cannot be`) : null; };
+    // A SET ONLY SIGNED HERE GIVES WAY TO ANOTHER SET'S CERTIFICATE (kanban #3225, audit #1489 SM-1): k's leader signed two sets, the
+    // threshold signed A and this seat signed B. It refused A's certificate ("this seat holds another set") and could never void B (A's
+    // signers are too many for B's blockers), so k stayed SIGNED here for good: no later batch signed (#signGuard), the settlement and
+    // every order's return refused (pending) - two honest seats out of the round, the faulty leader needed for everything after. An
+    // honest seat signs one set per batch and any two thresholds share one, so A's certificate (k's record, its leader's signature and
+    // the threshold's, all checked above) proves B can never be certified: SIGNED(B) -> CERTIFIED(A), in the move's one transaction -
+    // B's orders, cancels and sells wait again unless A holds them, B's row (and this seat's signature over B) is replaced by A's.
+    // Only another CERTIFIED set is refused: two certified sets for one batch cannot be.
+    const another = () => { const h = heldQ.get(rid, k); return h && h.batch_id !== c.id && h.certificate ? refuse(`this seat holds another set for batch ${c.k}: two certified sets for one batch cannot be`) : null; };
     { const no = another(); if (no) return no; }
+    let superseded = null;
     // ABSENT, DECLINED or SIGNED -> CERTIFIED; a VOID batch is never certified
     const moved = this.#move(rid, k, BATCH.CERTIFIED, {
       guard: another,
-      write: () => { const h = heldQ.get(rid, k); this.#store(rid, roundIdBytes, k, c.id, cert.record, h ? h.own_sig : null, JSON.stringify(sigs), this.now()); },
+      write: () => {
+        const h = heldQ.get(rid, k);
+        if (h && h.batch_id !== c.id) {
+          superseded = h.batch_id;
+          this.db.prepare('UPDATE market_orders SET batch = NULL WHERE round_id = ? AND batch = ?').run(rid, k);
+          this.db.prepare('UPDATE market_book_events SET batch = NULL WHERE round_id = ? AND batch = ?').run(rid, k);
+          this.db.prepare('UPDATE market_batches SET batch_id = ?, record = ?, own_sig = NULL, certificate = NULL WHERE round_id = ? AND k = ?').run(c.id, JSON.stringify(cert.record), rid, k);
+        }
+        this.#store(rid, roundIdBytes, k, c.id, cert.record, h && h.batch_id === c.id ? h.own_sig : null, JSON.stringify(sigs), this.now());
+      },
     });
+    if (moved.ok && superseded) console.log(`[orders] ${toHex(roundIdBytes).slice(0, 16)} batch ${k}: the set ${superseded.slice(0, 16)} signed here is superseded by the certified set ${c.id.slice(0, 16)} (kanban #3225)`);
     if (!moved.ok) return moved.from === BATCH.CERTIFIED ? { ok: true, fresh: false } : moved;
     if (!reading) this.#syncStep(toHex(roundIdBytes), { kind: 'certified', k });
     return { ok: true, fresh: true };
@@ -921,6 +940,9 @@ export class OrderBook {
     }
     if (state === BATCH.DECLINED || state === BATCH.VOID) return declined();
     const held = this.db.prepare('SELECT batch_id, own_sig, certificate, record FROM market_batches WHERE round_id = ? AND k = ?').get(rid, k);
+    // A SIGNER THAT HOLDS k CERTIFIED ANSWERS THE CERTIFICATE TOO (kanban #3225): the asker may hold another set of k signed, and only a
+    // certificate of k decides k there (#decide's DECIDED branch) - a bare signature over this set left it pending for good
+    if (held.own_sig && held.certificate) return { ok: true, seat, signed: held.own_sig, batchId: held.batch_id, certificate: JSON.parse(held.certificate), record: JSON.parse(held.record) };
     if (held.own_sig) return { ok: true, seat, signed: held.own_sig, batchId: held.batch_id };
     // the certified record goes with the certificate (kanban #1886): the asker checks it is a set OF BATCH k before it takes k as decided
     return { ok: true, seat, batchId: held.batch_id, certificate: JSON.parse(held.certificate), record: JSON.parse(held.record) };
