@@ -191,12 +191,12 @@ export async function firstBond({ state, post = false, chainKit = { coinsOf, bro
       // OLD bond advertised: releaseGamesBeforeBond leaves a recorded bond alone and refreshHostedGames cannot correct it (its update names
       // the spent bond), so a node bonded on an older release, withdrawn, updated and bonded again named the old games and was never drawn
       // for the newer versions. The list is written to state with the bond. No release given (or it hosts none of the apps): state's list.
+      // kanban #3114/#3115: the one build rule both first-bond doors share (apps.js bondGamesOf), also the release the node runs
       let hostedGames = s2.hostedGames;
-      if (release) {
+      if (release || (s2.release && s2.release.path)) {
         try {
-          const { appsIn, chosenApps, hostedGameIdsOf } = await import('./apps.js');
-          const apps = appsIn(release);
-          const now = await hostedGameIdsOf(release, chosenApps(s2, apps), apps);
+          const { bondGamesOf } = await import('./apps.js');
+          const now = await bondGamesOf(s2, release);
           if (now.length) hostedGames = now;
         } catch { /* the list in state stands */ }
       }

@@ -74,3 +74,22 @@ export async function releaseGamesBeforeBond(st, release) {
   if (now.length && JSON.stringify([...new Set(s.hostedGames || [])].sort()) !== JSON.stringify([...new Set(now)].sort())) st.save({ hostedGames: now });
   return now;
 }
+
+/**
+ * THE GAMES A NEW FIRST BOND NAMES (kanban #3114, #3115 - refute of #3068/#3089/#3101): ONE build rule for every door that posts a first
+ * bond - the owner page (add-bond.js firstBond) and the installer wizard (wizard.js 'POST /api/bond/post') - so no copy of the build can
+ * drift again. Read inside the bond's build, where no live bond is left: the games of the release the node RUNS (`s.release.path`, which
+ * an updater writes when it moves the node; else `release`, the code building the bond) for its chosen apps. Never state.hostedGames
+ * alone: an updater of 1.9.28 or older moved the node without writing them, and over a withdrawn bond (kanban #2098) they are the old
+ * bond's list. Answers the list ([] / an unreadable release: s.hostedGames as before, so a bond is never built with no game).
+ */
+export async function bondGamesOf(s, release) {
+  for (const rel of [...new Set([s && s.release && s.release.path, release].filter(Boolean))]) {
+    try {
+      const apps = appsIn(rel);
+      const now = await hostedGameIdsOf(rel, chosenApps(s, apps), apps);
+      if (now.length) return now;
+    } catch { /* the next release, then the list in state */ }
+  }
+  return (s && s.hostedGames) || [];
+}

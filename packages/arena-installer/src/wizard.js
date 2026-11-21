@@ -22,7 +22,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { testConnection, TESTNET4_ELECTRUM } from './chain-test.js';
 import { newSeed, confirmPositions, checkConfirm, ownerKeyOf, nostrPubkeyHex, CONFIRM_WORDS, emergencyOf, seedOfWords, seedOfNsec, newNsec, nodeKeyOf, signNostrEvent, npubOf } from './seed.js';
 import { nextStep, doneOf, seatConf, writeSeatConf, ROLES, guardianSetupOf, ownCoreOf } from './state.js';
-import { appsIn, appsView, chosenApps, hostedGameIdsOf } from './apps.js';
+import { appsIn, appsView, chosenApps, hostedGameIdsOf, bondGamesOf } from './apps.js';
 import { installService, installProgram } from './service.js';
 import { control, followTunnelNow, nodeOf } from './node-services.js';
 import { newerVersion } from '../../arena-node/src/release-latest.js';
@@ -1051,10 +1051,16 @@ const serviceRun = async (b) => {
           // compare-and-set on the state read now: a bond recorded meanwhile (the owner page, another tab) is never posted a second time
           if (n.bond && n.bond.txid) return { ok: false, why: `this node's bond is posted already (${n.bond.txid})` };
           const { tip, coins } = await chainKit.coinsOf(n.chain, w.spk);
+          // THE GAMES OF THE RELEASE THE NODE RUNS (kanban #3114/#3115, refute of #3068/#3089/#3101): this door built its own copy of the
+          // bond from n.hostedGames, the install-time list - a node installed, left at the bond step, moved by an older updater (1.9.28 and
+          // older wrote no games) and finished here, advertised 2 of the release's 10 games. The same rule as add-bond.js firstBond
+          // (apps.js bondGamesOf), written to state with the bond
+          let hostedGames = n.hostedGames;
+          try { const now = await bondGamesOf(n, release); if (now.length) hostedGames = now; } catch (e) { log(`apps: the hosted games could not be read: ${e.message}`); }
           const censusKey = await censusKeyOfNode(n);
           let built;
           try {
-            built = buildBond({ network: bondNetworkOf(n), hostedGames: n.hostedGames, hostGroup: n.hostGroup, wallet: w, nodeSecret: nodeSecretNow(), coins, tip, bondSats, operatorId: `op-${n.owner.pubkey.slice(0, 12)}`, roles: n.roles,
+            built = buildBond({ network: bondNetworkOf(n), hostedGames, hostGroup: n.hostGroup, wallet: w, nodeSecret: nodeSecretNow(), coins, tip, bondSats, operatorId: `op-${n.owner.pubkey.slice(0, 12)}`, roles: n.roles,
               endpoint: n.reach.url, payoutPubkey: payoutKeyOf(seed), softwareHash: commitOf(), feeRate: 2, censusKey,
               guardianEndpoint: (guardianSetupOf(n, { release }) || {}).endpoint || null,
               emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null });
@@ -1063,7 +1069,8 @@ const serviceRun = async (b) => {
             lock: lockOf(tip, { maturity: built.maturity }), atMs: Date.now(), ...(built.presigUpdate ? { censusKey: built.censusKey, presigUpdate: built.presigUpdate.txid } : {}) };
           // the wizard's mark('bond') with it: the step done, and what its advertisement declares (change-roles refreshHostedGames)
           return { ok: true, tip, txs: [{ name: 'funding', hex: built.funding.hex }, { name: 'bond', hex: built.bond.hex }, built.presigUpdate ? { name: 'presig', hex: built.presigUpdate.hex } : null],
-            ops: [{ op: 'set', key: 'bond', value: bond }, { op: 'set', key: 'advertProtocols', value: [...SUPPORTED_PROTOCOL_VERSIONS] }, { op: 'done', step: 'bond' }], result: { bond } };
+            ops: [{ op: 'set', key: 'bond', value: bond }, ...(hostedGames !== n.hostedGames ? [{ op: 'set', key: 'hostedGames', value: hostedGames }] : []),
+              { op: 'set', key: 'advertProtocols', value: [...SUPPORTED_PROTOCOL_VERSIONS] }, { op: 'done', step: 'bond' }], result: { bond } };
         } });
       if (!r.ok) return r;
       const bond = r.result.bond;
