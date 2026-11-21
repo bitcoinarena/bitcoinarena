@@ -18,6 +18,8 @@
  *           g. our Lightning gateways (HW_GATEWAYS, kanban #2773): each one's payment log and balance judged by src/gateway-loss.js -
  *              failed payments "note already spent", e-cash gone with no payment to explain it, dead notes (the JSON
  *              tools/gateway-dead-notes.mjs writes) - red goes to the chat AND to the owner's Signal (HW_SIGNAL_TO), #2771 went unseen 6 days
+ *              - a drop matched by the same e-cash arriving at another of ours (same federation, neighbouring readings) or announced in
+ *              HW_GATEWAY_MOVES (ops/gateway-moves.json) is our own move: a plain "moved ... gw-c -> gw-b" line, not red (2026-11-21)
  *   FIX     what has a safe runbook, each behind guards and a rate limit, and rechecked on the next pass before it is ever done again:
  *           - a test host seat down two passes: restart that one unit (load1 < 12, :03-:08 of a quarter only - never across a seating,
  *             memory seat-roll-seating-window -, one seat per 10 min, the same seat once per hour)
@@ -36,6 +38,7 @@ import { execFile } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { roundSeating, NOW_ROUNDS } from '../../../src/arena-ui/health/network.js';
 import { readGateway } from '../src/hosts.js';
+import { netMoves } from '../src/gateway-loss.js';
 import { pubsConfig, gatherPubs, assessPubs, pubMemTxs, doResend, doCpfp, doPublicMine, lookScript, parseLook, callsScript, parseCalls, opsPublished } from './health-watcher-pubs.mjs';
 
 const H = process.env.HOME || '/home/arena';
@@ -81,6 +84,8 @@ export function config(env = process.env, argv = []) {
     // g. "name,base,password file[,dead-notes file]" per gateway, separated by ";" (kanban #2773)
     gateways: String(env.HW_GATEWAYS || '').split(';').map((x) => x.trim()).filter(Boolean).map((x) => { const [name, base, passwordFile, deadFile] = x.split(',').map((y) => y.trim());
       return { name, base: String(base || '').replace(/\/+$/, ''), passwordFile, ...(deadFile ? { deadFile } : {}) }; }),
+    // g. the operator's announced moves between our gateways (kanban #2773): [{ from, to, federation, msat, atMs }], explains a drop
+    gatewayMovesFile: env.HW_GATEWAY_MOVES || `${H}/blwp-testnet4/ops/gateway-moves.json`,
     signal: { url: env.HW_SIGNAL_URL || 'http://127.0.0.1:8080/api/v1/rpc', to: env.HW_SIGNAL_TO || '' },
   };
 }
@@ -139,6 +144,7 @@ export async function gather(io, cfg, state, nowMs) {
   // g. the gateways, one after the other; each reading judged against the last one kept (its balance, its drops of the window)
   f.gateways = [];
   if (io.gateway) for (const g of cfg.gateways) f.gateways.push(await io.gateway(g, (state.gw || {})[g.name] || null).catch((e) => ({ name: g.name, error: e.message })));
+  f.gatewayMoves = cfg.gateways.length && io.gatewayMoves ? await io.gatewayMoves().catch(() => []) : [];
   return f;
 }
 const dedupeGames = (gs) => [...new Map(gs.map((g) => [String(g.id).toLowerCase(), g])).values()];
@@ -302,14 +308,21 @@ export function assess(f, prev, cfg) {
 
   // g. THE GATEWAYS (kanban #2773): red at once - money is at stake, and a payment log does not flap; one that is not read, after two passes
   st.gw = st.gw || {};
+  // a drop on one of ours matched by the same e-cash arriving at another of ours (or announced) is a move, not a loss (kanban #2773)
+  netMoves(f.gateways || [], { announced: f.gatewayMoves || [] });
   for (const g of f.gateways || []) {
     if (g.error) {
       const n = streak(`gateway-unread:${g.name}`, true);
       problems.push({ key: `gateway-unread:${g.name}`, ticket: '2773', title: `gateway ${g.name} not read`, lines: [g.error], tried: ['nothing'], needs: 'gateway checked', alert: n >= cfg.confirm });
       continue;
     }
-    st.gw[g.name] = { readAtMs: g.readAtMs, federations: g.federations, watch: { drops: (g.watch && g.watch.drops) || [] } };
+    st.gw[g.name] = { readAtMs: g.readAtMs, federations: g.federations, watch: { drops: (g.watch && g.watch.drops) || [], rises: (g.watch && g.watch.rises) || [] } };
     const w = g.warning;
+    // the moves: a plain line, never an alert
+    for (const d of ((g.watch && g.watch.drops) || []).filter((x) => x.moved)) {
+      problems.push({ key: `gateway-move:${g.name}:${d.federation.slice(0, 8)}:${d.toMs}`, ticket: '2773', title: `moved ${(BigInt(d.moved.msat) / 1000n).toLocaleString('en-US')} sat ${d.moved.from} -> ${d.moved.to} (${d.federation.slice(0, 8)}, ${hm(d.toMs)} UTC${d.moved.by === 'announced' ? ', announced' : ''})`,
+        lines: [], tried: ['nothing'], needs: '-', alert: false });
+    }
     if (w && w.level === 'bad') {
       streak(`gateway:${g.name}`, true);
       const f1 = (g.watch && g.watch.failures) || {};
@@ -526,6 +539,8 @@ export function realIo(cfg) {
     },
     // kanban #2773: one gateway read the way its node reads it (hosts.js), the last reading as `prev` for the balance check
     gateway: (g, prev) => readGateway(g, { prev }),
+    // kanban #2773: the announced moves; no file is none
+    gatewayMoves: async () => { try { const j = JSON.parse(readFileSync(cfg.gatewayMovesFile, 'utf8')); return Array.isArray(j) ? j : (j && Array.isArray(j.moves) ? j.moves : []); } catch { return []; } },
     // kanban #2773: the owner's Signal, through the local signal-cli daemon's JSON-RPC (memory signal-user; never restarted from here)
     signal: async (text) => {
       const r = await fetch(cfg.signal.url, { method: 'POST', headers: { 'content-type': 'application/json' },

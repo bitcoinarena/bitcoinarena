@@ -111,7 +111,9 @@ export function balanceCheck(prev, cur, events, { dropMsat = DROP_MSAT } = {}) {
   const moved = big(cur.ecashMsat) - big(prev.ecashMsat);
   const unexplained = explainedMsat(events, prev.atMs, cur.atMs) - moved;   // > 0: less e-cash than the payments explain
   const u = unexplained > 0n ? unexplained : 0n;
-  return { unexplainedMsat: String(u), over: u > big(dropMsat), fromMs: prev.atMs, toMs: cur.atMs };
+  // kanban #2865: more e-cash than the payments explain - e-cash coming back (a spend_ecash received again, change of a payment) - is
+  // answered too, so the caller can net it against the drops it still holds for the window
+  return { unexplainedMsat: String(u), returnedMsat: String(unexplained < 0n ? -unexplained : 0n), over: u > big(dropMsat), fromMs: prev.atMs, toMs: cur.atMs };
 }
 
 /**
@@ -152,10 +154,79 @@ export function gatewayWarning(name, { failures, drops = [], dead = null } = {})
   if (failures && failures.failed > 0) {
     parts.push(`${failures.failed} failed payment${failures.failed === 1 ? '' : 's'} in 24 h${failures.alreadySpent ? ` (${failures.alreadySpent} "note already spent")` : ''}${big(failures.failedMsat) > 0n ? `, ${satOf(failures.failedMsat)} at stake` : ''}`);
   }
-  const over = drops.filter((d) => d && d.over);
+  const over = drops.filter((d) => d && d.over && !d.pending);
   if (over.length) parts.push(`${satOf(over.reduce((s, d) => s + big(d.unexplainedMsat), 0n))} left the e-cash balance with no payment to explain it`);
+  // kanban #2773: a fresh drop the other gateways have not answered yet waits one pass (the receive may land in the next reading)
+  const pending = drops.filter((d) => d && d.over && d.pending);
+  if (pending.length) parts.push(`${satOf(pending.reduce((s, d) => s + big(d.unexplainedMsat), 0n))} left the e-cash balance, no payment explains it yet (one pass for a matching receive)`);
   if (dead && dead.dead > 0) parts.push(`${dead.dead} dead note${dead.dead === 1 ? '' : 's'} (${satOf(dead.deadMsat)}) the federation counts as spent`);
   // a failed payment alone is red only with "already spent" or a drop: a payer's expired invoice is not money lost
   const bad = (failures && failures.alreadySpent > 0) || over.length > 0 || (dead && dead.dead > 0);
-  return { level: bad ? 'bad' : parts.length ? 'warn' : 'ok', text: parts.length ? `${name}: ${parts.join('; ')}` : `${name}: no failed payments, balance explained`, parts };
+  const moves = drops.filter((d) => d && d.moved).map(moveLine);
+  return { level: bad ? 'bad' : parts.length ? 'warn' : 'ok', text: parts.length ? `${name}: ${parts.join('; ')}` : `${name}: no failed payments, balance explained${moves.length ? ` (${moves.join('; ')})` : ''}`, parts, ...(moves.length ? { moves } : {}) };
+}
+
+const moveLine = (d) => `moved ${satOf(d.moved.msat)} ${d.moved.from} -> ${d.moved.to}${d.moved.by === 'announced' ? ' (announced)' : ''}`;
+
+/**
+ * kanban #2773 (2026-11-21 13:15Z: 100,000,256 msat sent as e-cash from gw-c to gw-b in 337ae01a, by gateway-cli ecash send / receive -
+ * neither gateway's payment log records that, so gw-c showed a drop nothing explained and stayed red for hours): OUR OWN MOVES ARE NOT
+ * LOSSES. `gateways` are the readings of one pass (readGateway: { name, readAtMs, warning, watch: { failures, drops, rises, dead,
+ * error } }); each kept drop not yet explained is netted against
+ *   - an unexplained rise on ANOTHER of our gateways, same federation, intervals overlapping or within `nearMs`, the amounts equal
+ *     within `tolMsat` (the federation's fees: the drop threshold), or
+ *   - an announced move (`announced`: the operator's ops/gateway-moves.json, [{ from, to, federation, msat, atMs }], federation a
+ *     prefix of the id), from this gateway, the amount within `tolMsat`, `atMs` in the drop's interval give or take `nearMs`.
+ * A matched drop keeps `moved` { from, to, msat, by } and only what is left beyond the match (normally 0) is judged; each rise and each
+ * announcement explains one drop. A drop of this very reading not matched waits one pass (`pending`, a warning, not red): the receive
+ * may land in the other gateway's next reading. Changes the readings in place and answers the moves found, each { from, to, ... }.
+ */
+export const MOVE_NEAR_MS = 10 * 60000;
+export function netMoves(gateways, { announced = [], tolMsat = DROP_MSAT, nearMs = MOVE_NEAR_MS } = {}) {
+  const live = gateways.filter((g) => g && !g.error && g.watch);
+  const near = (a, b) => a.toMs + nearMs >= b.fromMs && b.toMs + nearMs >= a.fromMs;
+  const close = (x, y) => { const d = big(x) - big(y); return (d < 0n ? -d : d) <= big(tolMsat); };
+  const usedAnn = new Set(live.flatMap((g) => (g.watch.drops || []).filter((d) => d.moved && d.moved.key).map((d) => d.moved.key)));
+  const annList = (Array.isArray(announced) ? announced : []).filter((m) => m && m.from && m.federation && m.msat != null && m.atMs != null);
+  const out = [];
+  for (const g of live) {
+    let changed = false;
+    for (const d of g.watch.drops || []) {
+      if (d.moved) { out.push(d.moved); continue; }
+      if (!(big(d.unexplainedMsat) > 0n)) continue;
+      let hit = null;
+      for (const o of live) {
+        if (o === g || hit) continue;
+        for (const r of o.watch.rises || []) {
+          if (r.movedFrom || r.federation !== d.federation || !near(d, r) || !close(r.msat, d.unexplainedMsat)) continue;
+          r.movedFrom = g.name; hit = { from: g.name, to: o.name, federation: d.federation, msat: d.unexplainedMsat, by: 'rise', riseMsat: String(r.msat) }; break;
+        }
+      }
+      if (!hit) {
+        for (let i = 0; i < annList.length; i++) {
+          const m = annList[i], key = `${m.from}>${m.to}@${m.atMs}:${m.msat}`;
+          if (usedAnn.has(key) || m.from !== g.name || !String(d.federation).startsWith(String(m.federation)) || !close(m.msat, d.unexplainedMsat)
+            || !(Number(m.atMs) >= d.fromMs - nearMs && Number(m.atMs) <= d.toMs + nearMs)) continue;
+          usedAnn.add(key); hit = { from: g.name, to: m.to || '?', federation: d.federation, msat: d.unexplainedMsat, by: 'announced', key };
+          // the receive the announcement names is ours too: it explains nothing else
+          for (const o of live) if (o.name === m.to) for (const r of o.watch.rises || []) if (!r.movedFrom && r.federation === d.federation && near(d, r) && close(r.msat, d.unexplainedMsat)) { r.movedFrom = g.name; break; }
+          break;
+        }
+      }
+      if (hit) {
+        const left = big(d.unexplainedMsat) - big(hit.riseMsat ?? hit.msat);
+        d.moved = hit; d.unexplainedMsat = String(left > big(tolMsat) ? left : 0n); d.over = big(d.unexplainedMsat) > DROP_MSAT; d.pending = false;
+        out.push(hit); changed = true;
+      } else if (d.over) {
+        const p = d.toMs >= g.readAtMs;
+        if (p !== !!d.pending) { d.pending = p; changed = true; }
+      }
+    }
+    if (changed) {
+      const w = gatewayWarning(g.name, { failures: g.watch.failures, drops: g.watch.drops || [], dead: g.watch.dead || null });
+      if (g.watch.error && w.level === 'ok') { w.level = 'warn'; w.text = `${g.name}: the payment log was not read (${g.watch.error})`; }
+      g.warning = w;
+    }
+  }
+  return out;
 }

@@ -10,7 +10,7 @@
 // and the password and the macaroon never leave this file: the snapshot carries figures only.
 import { request } from 'node:https';
 import { readFileSync } from 'node:fs';
-import { readPaymentLog, failuresOf, balanceCheck, gatewayWarning, WATCH_WINDOW_MS } from './gateway-loss.js';
+import { readPaymentLog, failuresOf, balanceCheck, gatewayWarning, WATCH_WINDOW_MS, DROP_MSAT } from './gateway-loss.js';
 
 const DAY = 86400000;
 
@@ -95,6 +95,8 @@ async function watchGateway({ name, base, auth, fetcher, nowMs, federations, pre
   const failures = { failed: 0, alreadySpent: 0, rejectedReceives: 0, failedMsat: '0', lastAtMs: null, lastError: null };
   // the drops seen before stay for the window: a loss is one interval long, the card must not vanish a minute later
   const drops = ((prev && prev.watch && prev.watch.drops) || []).filter((d) => d.toMs >= sinceMs);
+  // kanban #2773: and the rises nothing explains (e-cash received from another of our gateways), for health-watcher netMoves
+  const rises = ((prev && prev.watch && prev.watch.rises) || []).filter((d) => d.toMs >= sinceMs);
   let error = null;
   for (const f of federations) {
     const id = f.federation_id || '';
@@ -108,13 +110,24 @@ async function watchGateway({ name, base, auth, fetcher, nowMs, federations, pre
     if (was && prev.readAtMs) {
       const d = balanceCheck({ atMs: prev.readAtMs, ecashMsat: was.ecashMsat }, { atMs: nowMs, ecashMsat: String(f.balance_msat || 0) }, evs);
       if (d.over) drops.push({ federation: id, unexplainedMsat: d.unexplainedMsat, over: true, fromMs: d.fromMs, toMs: d.toMs });
+      // kanban #2865: e-cash that comes back nets the drops of this federation still held for the window, oldest first - an
+      // out-and-back (the 11-15 gw-c cleanup: whole balance spent and received again) no longer stays red for 24 h
+      let back = BigInt(d.returnedMsat || '0');
+      for (const x of drops) {
+        if (back <= 0n || x.federation !== id || x.moved) continue;
+        const left = BigInt(x.unexplainedMsat), take = back < left ? back : left;
+        x.unexplainedMsat = String(left - take); x.nettedMsat = String(BigInt(x.nettedMsat || '0') + take); back -= take;
+        x.over = BigInt(x.unexplainedMsat) > BigInt(DROP_MSAT);
+      }
+      // kanban #2773: what is left of it is a rise nothing explains - kept for the window, a drop on another gateway may be its other end
+      if (back > BigInt(DROP_MSAT)) rises.push({ federation: id, msat: String(back), fromMs: d.fromMs, toMs: d.toMs });
     }
   }
   let dead = null;
   if (deadFile) { try { dead = JSON.parse(readFile(deadFile, 'utf8')); } catch { dead = null; } }
   const warning = gatewayWarning(name, { failures, drops, dead });
   if (error && warning.level === 'ok') { warning.level = 'warn'; warning.text = `${name}: the payment log was not read (${error})`; }
-  return { watch: { failures, drops, dead, ...(error ? { error } : {}) }, warning };
+  return { watch: { failures, drops, rises, dead, ...(error ? { error } : {}) }, warning };
 }
 
 /**
