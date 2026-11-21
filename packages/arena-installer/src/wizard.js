@@ -1055,8 +1055,9 @@ const serviceRun = async (b) => {
           // bond from n.hostedGames, the install-time list - a node installed, left at the bond step, moved by an older updater (1.9.28 and
           // older wrote no games) and finished here, advertised 2 of the release's 10 games. The same rule as add-bond.js firstBond
           // (apps.js bondGamesOf), written to state with the bond
+          // kanban #3128: and in an update's window (units started, state.release not yet recorded) the open update journal names the release
           let hostedGames = n.hostedGames;
-          try { const now = await bondGamesOf(n, release); if (now.length) hostedGames = now; } catch (e) { log(`apps: the hosted games could not be read: ${e.message}`); }
+          try { const now = await bondGamesOf(n, release, { home: state.home }); if (now.length) hostedGames = now; } catch (e) { log(`apps: the hosted games could not be read: ${e.message}`); }
           const censusKey = await censusKeyOfNode(n);
           let built;
           try {

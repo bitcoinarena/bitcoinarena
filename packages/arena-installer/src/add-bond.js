@@ -196,7 +196,7 @@ export async function firstBond({ state, post = false, chainKit = { coinsOf, bro
       if (release || (s2.release && s2.release.path)) {
         try {
           const { bondGamesOf } = await import('./apps.js');
-          const now = await bondGamesOf(s2, release);
+          const now = await bondGamesOf(s2, release, { home: state.home, runs: release });   // kanban #3128: the owner page is the running release's code
           if (now.length) hostedGames = now;
         } catch { /* the list in state stands */ }
       }

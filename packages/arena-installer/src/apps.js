@@ -83,8 +83,25 @@ export async function releaseGamesBeforeBond(st, release) {
  * alone: an updater of 1.9.28 or older moved the node without writing them, and over a withdrawn bond (kanban #2098) they are the old
  * bond's list. Answers the list ([] / an unreadable release: s.hostedGames as before, so a bond is never built with no game).
  */
-export async function bondGamesOf(s, release) {
-  for (const rel of [...new Set([s && s.release && s.release.path, release].filter(Boolean))]) {
+//
+// WHICH RELEASE RUNS, IN THE WINDOW OF AN UPDATE (kanban #3128, refute of #3068/#3114): update.js starts the new release's units (STARTED)
+// minutes before it records state.release.path (KEPT); an updater killed in between (a reboot) or still checking leaves state.release naming
+// the OLD release while the new one runs. Read first, s.release.path named the old release's games (3 of 10) and even overwrote the list
+// releaseGamesBeforeBond had just written. So the order is: (1) an open update journal (<home>/update-journal.json, `home` given) - its
+// units run `to` once written (UNITS_WRITTEN, STARTED), `from` before that and while rolling back; (2) `runs`, the release the door knows
+// is running because it IS that code (the owner page: server.js passes its own folder); (3) s.release.path; (4) `release`.
+export async function runningReleaseOf(home) {
+  if (!home) return null;
+  try {
+    const { readJournal, openJournal, UPDATE_PHASE: U } = await import('./update.js');
+    const j = readJournal(home);
+    if (!openJournal(j)) return null;
+    return (j.phase === U.UNITS_WRITTEN || j.phase === U.STARTED ? j.to : j.from) || null;
+  } catch { return null; }
+}
+export async function bondGamesOf(s, release, { home = null, runs = null } = {}) {
+  const journaled = await runningReleaseOf(home);
+  for (const rel of [...new Set([journaled, runs, s && s.release && s.release.path, release].filter(Boolean))]) {
     try {
       const apps = appsIn(rel);
       const now = await hostedGameIdsOf(rel, chosenApps(s, apps), apps);
