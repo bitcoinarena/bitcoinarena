@@ -293,7 +293,20 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
   };
   // REPLACEMENTS REFUSED FOR GOOD (kanban #2083): entries never leave a round, so a replacement refused for them is refused again without its signatures checked
   const refusedLate = new Set();
-  const keepCert = (rid, role, bytes, { index = null, supersede = false } = {}) => {
+  let lastCanonicalKey = null;
+  const refusedCerts = new Map(), REFUSED_CERTS_MOST = 20000;   // kanban #3254: canonical certificate -> its refusal
+  // kanban #3254: a refusal of a canonical certificate is answered again from refusedCerts while the held certificate stays the one it was refused
+  // against (the key names it); "cannot draw that round yet" is not kept - it may change
+  const keepCert = (rid, role, bytes, opts = {}) => {
+    lastCanonicalKey = null;
+    const r = keepCertOnce(rid, role, bytes, opts);
+    if (r && r.ok === false && lastCanonicalKey && !/cannot draw that round yet|takes its place once/.test(String(r.why))) {
+      refusedCerts.set(lastCanonicalKey, r);
+      if (refusedCerts.size > REFUSED_CERTS_MOST) refusedCerts.delete(refusedCerts.keys().next().value);
+    }
+    return r;
+  };
+  const keepCertOnce = (rid, role, bytes, { index = null, supersede = false } = {}) => {
     // ONE HELD ALREADY, byte for byte, is not checked again (2026-10-12 "figure out why CPU usage so high and
     // optimise it": every batch answer repeats a round's certificate, and each was verified - all its signatures - before the
     // seat looked whether it held exactly these bytes)
@@ -305,6 +318,20 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     }
     const lateKey = `${toHex(rid)}:${role}:${toHex(seatingIdOfCert(bytes))}`;
     if (refusedLate.has(lateKey)) return { ok: false, superseded: true, why: 'the seating held seats rounds that took entries: a replacement does not move them' };
+    // CANONICAL BEFORE ANY SIGNATURE IS CHECKED, AND A REFUSAL ANSWERED ONCE (kanban #3254, audit r20 census-1): a held certificate re-posted with one
+    // junk (key, signature) pair missed the byte-for-byte shortcut and was drawn and verified again (7 Schnorr checks), and a refused one was refused
+    // from scratch on every repost (7 + 14). The seated members' signatures in seated order are compared with the held bytes first, and a
+    // canonical form refused for a bad signature is answered from REFUSED_CERTS_MOST kept refusals while the held certificate stays the same
+    let canonicalKey = null;
+    try {
+      const d = decodeSeatingCertificate(bytes), by = new Map(d.signatures.map((x) => [toHex(x.nodePubkey), x.signature]));
+      const canon = encodeSeatingCertificate({ roundId: d.roundId, role: d.role, seated: d.seated, signatures: d.seated.map((k) => ({ nodePubkey: k, signature: by.get(toHex(k)) || new Uint8Array(64) })) });
+      if (held && Buffer.compare(Buffer.from(held.cert), Buffer.from(canon)) === 0) return { ok: true, kept: false };
+      canonicalKey = `${toHex(rid)}:${role}:${supersede ? 's' : '-'}:${held ? toHex(seatingIdOfCert(held.cert)) : '-'}:${Buffer.from(canon).toString('base64')}`;
+      const was = refusedCerts.get(canonicalKey);
+      lastCanonicalKey = canonicalKey;
+      if (was) return was;
+    } catch { /* it does not decode: verifySeating says why */ }
     const check = checkFor(rid, role, index);
     if (!check || check.refused) return { ok: false, why: `this node cannot draw that round yet${check ? `: ${check.refused}` : ''}` };
     const v = verifySeating(bytes, check);
