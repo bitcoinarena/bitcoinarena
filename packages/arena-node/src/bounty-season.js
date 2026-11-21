@@ -194,6 +194,16 @@ export function openBountySeason(path = ':memory:', { startMs = null, s2EndMs = 
   // THE ROW BEFORE AN INTENT (kanban #3220): an 'approving' row keeps the row it replaced (JSON, null when there was none), so a report store that
   // refuses the approval puts that row back - a waiting report keeps waiting
   try { db.exec('ALTER TABLE approvals ADD COLUMN intent_prior TEXT'); } catch { /* there already */ }
+  // EVERY NAME A LINKED ACCOUNT CARRIED (kanban #3032, audit faucet r3-1): the bot list (#2958) was matched against the link's current username only,
+  // so a listed X bot renamed its account (free on X), typed or posted the new name, and its reports paid the human amount again. Each
+  // (platform, account id, name) a link ever held is kept, and the list is matched against all of an account's names
+  db.exec(`CREATE TABLE IF NOT EXISTS link_names (platform TEXT NOT NULL, user_id TEXT NOT NULL, username TEXT NOT NULL, PRIMARY KEY (platform, user_id, username));
+    INSERT OR IGNORE INTO link_names (platform, user_id, username) SELECT platform, user_id, lower(username) FROM links WHERE username IS NOT NULL;
+    CREATE TRIGGER IF NOT EXISTS link_names_add AFTER INSERT ON links WHEN new.username IS NOT NULL BEGIN
+      INSERT OR IGNORE INTO link_names (platform, user_id, username) VALUES (new.platform, new.user_id, lower(new.username)); END;
+    CREATE TRIGGER IF NOT EXISTS link_names_move AFTER UPDATE OF username, user_id ON links WHEN new.username IS NOT NULL BEGIN
+      INSERT OR IGNORE INTO link_names (platform, user_id, username) VALUES (new.platform, new.user_id, lower(new.username)); END;`);
+  const namesOf = db.prepare('SELECT username FROM link_names WHERE platform = ? AND user_id = ?');
   const seasonNow = (nowMs) => seasonAt(nowMs, startMs, s2EndMs);
 
   /** A ONE-TIME LINK CODE for a reporter's key (signed in with it): 24 hours, used once, at most LINK_CODES_OPEN_MOST open at a time. */
@@ -312,7 +322,8 @@ export function openBountySeason(path = ':memory:', { startMs = null, s2EndMs = 
     // A KNOWN AI BOT IS A BOT, WHATEVER IT LINKS (kanban #2958, the owner 2026-11-17 on x.com/damaidams: "Alle tickets mit diesem handle als bot
     // markieren, auch in Zukunft"): a key that links an X handle on the bot list (FAUCET_BOT_X_HANDLES file, read on every call) gets no flag -
     // not human, no social bonus - for every report, past and future
-    if (links.some((l) => l.platform === 'x' && botXHandles().has(String(l.username || '').replace(/^@/, '').toLowerCase()))) return { ...f, bot: true };
+    const bots = botXHandles(), listed = (n) => bots.has(String(n || '').replace(/^@/, '').toLowerCase());
+    if (links.some((l) => l.platform === 'x' && (listed(l.username) || (bots.size && namesOf.all('x', String(l.userId)).some((r) => listed(r.username)))))) return { ...f, bot: true };
     for (const l of links) if (l.member === true && l.checkedMs != null && nowMs - l.checkedMs <= CHECK_FRESH_MS) f[l.platform] = true;
     return f;
   }
