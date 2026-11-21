@@ -45,6 +45,8 @@ import { toHex, fromHex, taggedHash } from '../../arena-protocol/src/hash.js';
  * node key (server.js: round.identity), which signs its own sighting of each proposal it takes before its voting ends.
  */
 export const SEEN_TAG = 'arena/proposal-seen/v1';
+/** How many entries of a peer's sightings list one pull reads (kanban #3040): far above any census, and every key checked once. */
+export const SIGHTINGS_READ_MOST = 4096;
 export const seenMessage = (idHex, at) => taggedHash(SEEN_TAG, Uint8Array.from([...fromHex(String(idHex).toLowerCase()),
   at & 0xff, (at >>> 8) & 0xff, (at >>> 16) & 0xff, (at >>> 24) & 0xff]));
 const xOnlyHex = (k) => { const h = typeof k === 'string' ? k.toLowerCase() : k ? toHex(Uint8Array.from(k)) : ''; return h.length === 66 ? h.slice(2) : h; };
@@ -599,11 +601,16 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
         weight.set(k, (weight.get(k) || 0n) + (w > 0n ? w : 0n));
       }
       const signed = new Map();
-      const offered = [...(Array.isArray(had.sightings) ? had.sightings : []), ...(record && Array.isArray(record.sightings) ? record.sightings.slice(0, 64) : [])];
+      // NOT CUT BY POSITION (kanban #3040, audit census r3-1): a peer's first 64 sightings were taken, served in key order, so 64 low-key dust bonds
+      // put in front hid every honest sighting and no bound proposal ever counted. A peer's list is read up to SIGHTINGS_READ_MOST entries; a key
+      // not in the census, or held already, is passed over before any signature is checked, and at most one signature per census key is checked
+      const offered = [...(Array.isArray(had.sightings) ? had.sightings : []), ...(record && Array.isArray(record.sightings) ? record.sightings.slice(0, SIGHTINGS_READ_MOST) : [])];
+      const tried = new Set();
       for (const x of offered) {
         if (!x || typeof x.by !== 'string' || typeof x.sig !== 'string') continue;
         const by = x.by.toLowerCase(), at = Number(x.at);
-        if (signed.has(by) || !weight.has(by) || !/^[0-9a-f]{128}$/.test(x.sig.toLowerCase())) continue;
+        if (signed.has(by) || tried.has(by) || !weight.has(by) || !/^[0-9a-f]{128}$/.test(x.sig.toLowerCase())) continue;
+        tried.add(by);
         if (!Number.isInteger(at) || at < had.publishedAt || at >= had.votingUntil) continue;
         let good = false;
         try { good = !!verify(fromHex(x.sig.toLowerCase()), seenMessage(had.id, at), fromHex(by)); } catch { good = false; }
