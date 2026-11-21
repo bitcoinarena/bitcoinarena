@@ -27835,6 +27835,7 @@ class Client {
     this.signedFrames = new Map();
     // A SEAT THAT SERVED THIS ENTRY A BATCH THIS CLIENT NEVER SIGNED: { base, firstTick, why }, null while none has
     this.nodeFault = null;
+    this.homeFault = null;
     // Verifying is injected for the same reason signing is: the curve belongs
     // to whoever runs the client, and this file should not decide it.
     this.verify = verify;
@@ -28884,7 +28885,7 @@ class Client {
       // The peers' own stake view decides: enough of them take the batch and it is published; they answer 'stake not seen'
       // too and it stays the wait it was.
       if ((typeof answer !== 'string' || !answer.startsWith(CLOSED))
-          && this.peers.length && !(await this.#homeForged(roundId, entryId))
+          && this.peers.length && (await this.#homeForged(roundId, entryId), true)
           && await this.#carriedByPeers(bytes, b.firstTick + ticks.length)) {
         this.batchHead = batchId(b);
         this.nextTick = b.firstTick + ticks.length;
@@ -28927,8 +28928,12 @@ class Client {
 
   /**
    * WHY THE HOME SEAT REFUSES, READ ONCE PER STRETCH OF REFUSALS (kanban #2515 beside #1567): a home seat that wrote a
-   * batch this client never signed into its own store is a node fault and ends the run, as the resync names it. One that
-   * is only behind or refusing holds nothing forged, and the peers carry the run. Nothing served is adopted here.
+   * batch this client never signed into its own store is named on `homeFault` (that seat is not trusted with this run).
+   * Nothing served is adopted or signed here.
+   * IT NO LONGER ENDS THE RUN (kanban #3002, audit play r3-1a, measured 2026-11-18: a home seat that wrote ONE unsigned tick onto its
+   * own head and refused the next signed batch had this check end the run as a node fault - the client stopped publishing and the
+   * honest peer kept 60 of 180 signed ticks, the #2515 effect at the seat's chosen tick). The forgery is that one seat's; the peers
+   * are offered only frames this client signed itself, and they decide whether the run goes on. Answers true when it named one.
    */
   async #homeForged(roundId, entryId) {
     if (this.homeRefusedWhy) return false;
@@ -28938,7 +28943,7 @@ class Client {
       const t = decodeTranscript(new Uint8Array(await r.arrayBuffer()));
       if (toHex(t.roundId) !== toHex(roundId) || toHex(t.entryId) !== toHex(entryId)) return false;
       if (t.batches.every((x) => this.signedFrames.has(toHex(batchId(x))))) return false;
-      await this.#ownFrames(t, await this.entryFor(entryId), roundId, entryId);
+      await this.#ownFrames(t, await this.entryFor(entryId), roundId, entryId, { end: false });
       return false;
     } catch (e) { return e.nodeFault === true; }
   }
@@ -29353,7 +29358,7 @@ class Client {
    * wrote it itself. That is a node fault, named on `nodeFault`; the run ends there (VOID, the seat's fault, never the
    * player's) and nothing of it is signed or handed to a peer.
    */
-  async #ownFrames(t, entry, roundId, entryId) {
+  async #ownFrames(t, entry, roundId, entryId, { end = true } = {}) {
     const frames = new Array(t.batches.length);
     const missing = [];
     t.batches.forEach((b, i) => {
@@ -29382,6 +29387,7 @@ class Client {
       const why = `the node at ${this.base} serves a batch at ticks ${b.firstTick}..${ticks.length ? ticks.at(-1) : b.firstTick} `
         + `as this entry's that this client never signed (${sig ? 'its signature does not verify under the session key' : (asked || 'no signature beside it')}) `
         + '- it is not signed or published again, and that node is not trusted with this run';
+      if (!end) { this.homeFault = { base: this.base, firstTick: b.firstTick, batch: i, why }; throw Object.assign(new Error(why), { nodeFault: true }); }
       this.nodeFault = { base: this.base, firstTick: b.firstTick, batch: i, why };
       this.endRun(`node fault: ${why}`);
       throw Object.assign(new Error(why), { nodeFault: true });
@@ -29595,6 +29601,7 @@ class Client {
     // ANOTHER ENTRY'S RUN STARTS WITH NONE OF THIS ONE'S FRAMES (kanban #1567); the same entry again keeps them
     if (this.signedEntry !== toHex(entryId)) { this.signedFrames = new Map(); this.signedEntry = toHex(entryId); }
     this.nodeFault = null;
+    this.homeFault = null;
     this.where = { roundId, entryId };
     // A LATE ENTRY'S FIRST TICK IS ITS JOIN TICK: the round's tick it joined at, so its run ends with the round's.
     // An entry at tick 0 starts where it always did.
