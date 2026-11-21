@@ -1217,7 +1217,9 @@ export class LockSettlement {
       if (gf.gifts) for (const fid of fed.federationIds) reserveKeys.set(fid, this.reserveKeyFor ? await this.reserveKeyFor(fid).catch(() => null) : null);
       const got = federationPlans({ roundId: roundIdBytes, entries: on.entries, minScore: contract.minScore, payoutShares, locks, feeLocks,
         signerNodes: feeLocks.size ? this.signerNodesFor(roundIdBytes, contract) : null, contract, donationSet: ds && ds.ok ? ds.set : null,
-        ...(gf.gifts ? { gifts: gf.gifts } : {}) }, { ...fed, reserveKeyOf: (fid) => reserveKeys.get(fid) || null });
+        // kanban #2993 (audit settle r2-1): the fee set in force (websitePct, the nodes' fee) as the one-federation path has it - left out, a
+        // round that takes any federation paid websites the 10 % default whatever the network voted
+        ...this.roundFees(contract), ...(gf.gifts ? { gifts: gf.gifts } : {}) }, { ...fed, reserveKeyOf: (fid) => reserveKeys.get(fid) || null });
       if (!got.ok) return refuse(`no lock is claimed: ${got.why}`);
       return { ok: true, anyFed: true, plan: got.plan, split: got.split, base: { plan: got.plan, entryOf: lockEntry }, contract, claimPk, held, locks, lockEntry };
     }
