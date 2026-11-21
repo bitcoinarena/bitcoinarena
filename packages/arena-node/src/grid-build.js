@@ -15,6 +15,7 @@ import { MIN_ENTRY_WINDOW_MS } from '../../arena-protocol/src/constants.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { seriesLineOf, parseSeriesLine } from './series-line.js';
 import { fundAtRate } from './fund-at-rate.js';
+import { textHead } from './peer-read.js';
 
 const le = (n, bytes) => { const b = Buffer.alloc(bytes); if (bytes === 8) b.writeBigUInt64LE(BigInt(n)); else b.writeUIntLE(n, 0, bytes); return b; };
 const outputBytes = (o) => Buffer.concat([le(o.value || 0, 8), Buffer.from([o.script.length]), Buffer.from(o.script)]);
@@ -117,7 +118,7 @@ export async function postSeriesLine(line, targets, { fetchFn = fetch, tries = 3
   const answers = await Promise.all(targets.map(async ([who, url]) => {
     let ok = false, why = '';
     for (let t = 0; t < tries && !ok; t++) {
-      try { const r = await fetchFn(`${url}/series`, { method: 'POST', body: line, signal: AbortSignal.timeout(30000) }); ok = r.ok; if (!ok) why = await r.text(); }
+      try { const r = await fetchFn(`${url}/series`, { method: 'POST', body: line, signal: AbortSignal.timeout(30000) }); ok = r.ok; if (!ok) why = await textHead(r); }   // kanban #3011: a refusal's first 4 KiB, never its whole body
       catch (e) { why = e.message; }
       if (!ok && !/no chain view|view .*pending|fetch failed|unreachable|not confirmed|no publication|nobody has funded/i.test(why)) break;
       if (!ok) await new Promise((res) => setTimeout(res, waitMs));
