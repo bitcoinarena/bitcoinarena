@@ -32,7 +32,7 @@ import { C, ANSWERED, EXITED } from './core-supervisor.js';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { coreTree, coreRelPath, coreBytesHashHex } from './core-hash.js';
-import { instrumentCore } from './core-depth.js';
+import { instrumentCore, coreBudget } from './core-depth.js';
 
 /** The longest a replay may run: a whole replay of the longest run (10800 ticks) is a few seconds; this is the ceiling. */
 export const CALL_MS = 120000;
@@ -297,7 +297,9 @@ export function loadCore({ files, entry }, { callMs = CALL_MS, stepMs = STEP_MS,
   const opts = { callMs, stepMs, askMs, loadMs, name, arrayBudget, liveCap, heap, rssBackstop, answerMax, until, lingerAs, loadUntil };
   // THE DEPTH LIMIT, INJECTED AT LOAD (kanban #2220, #2476; core-depth.js): every file the core's threads compile counts its call
   // depth, so no thread - the kept one, a call's own, a seat's or a reload's - answers by where V8's stack overflowed
-  files = new Map([...files].map(([rel, text]) => [rel, instrumentCore(text, rel)]));
+  // kanban #3052, #3067: one budget for all of the core's files - bytes and functions - before any of them is instrumented or compiled
+  const budget = coreBudget();
+  files = new Map([...files].map(([rel, text]) => [rel, instrumentCore(text, rel, budget)]));
   const leftOf = (ms) => (Number.isFinite(until) ? Math.max(1, Math.min(ms, until - Date.now())) : ms);
   let kept = startThread({ files, entry }, opts);
   let ended = null;
