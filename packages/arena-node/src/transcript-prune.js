@@ -10,7 +10,6 @@
 // window (no rules block) keeps its transcript: there is no window to end. The round itself, its entries, receipts and results stay.
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { roundEndMs } from '../../arena-protocol/src/first-mark.js';
-import { toHex } from '../../arena-protocol/src/hash.js';
 
 export const DAY_MS = 86400000;
 /** How often a seat looks (an hour: the windows are a day long). */
@@ -121,8 +120,11 @@ export function usedMarkerTables(db) {
     .filter((t) => !skip.has(t) && /^[a-z_0-9]+$/.test(t) && db.prepare(`PRAGMA table_info(${t})`).all().some((c) => c.name === 'round_id'));
 }
 
-// A round id keyed as SQLite compares them: a text id never equals a blob one.
-const idKey = (v) => (typeof v === 'string' ? `s${v}` : v instanceof Uint8Array ? `b${toHex(v)}` : `o${String(v)}`);
+// A round id keyed as SQLite compares them: a text id never equals a blob one. A blob's key is its bytes one character each, not its hex
+// (kanban #3236, a heap snapshot of a seat: the used ids of a sweep, 83 MB) - one key per byte string either way, half the length, and one
+// flat string (a 'b' joined on would be a second string object beside it).
+const blobKey = (v) => { const k = Buffer.allocUnsafe(v.byteLength + 1); k[0] = 0x62; k.set(v, 1); return k.latin1Slice(); };
+export const idKey = (v) => (typeof v === 'string' ? `s${v}` : v instanceof Uint8Array ? blobKey(v) : `o${String(v)}`);
 const MARKS = 'arena_round_marks';
 /**
  * THE USED IDS READ ONCE PER SWEEP, NOT ONCE PER PASS (kanban #2859, CDP profile of testnet4 seat 7 2026-11-15: rebuilding them on every

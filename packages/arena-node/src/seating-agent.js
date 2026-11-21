@@ -27,6 +27,12 @@ import { endpointsOf } from './roster.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
 import { jsonUpTo, textUpTo, PEER_ANSWER_BYTES } from './peer-read.js';   // kanban #2651
+import { createInterner } from './intern.js';
+
+// ONE STRING PER SEATED KEY (kanban #3236, a heap snapshot of a seat: the kept certificates held 922k seated hex strings, 125k distinct, and the
+// tables' reseat lists 533k, 15 distinct - 173 MB). Equal keys kept are one string; a string is a value, so nothing reads them differently.
+const SEATED_HEX = createInterner({ most: 1 << 18 });
+export const seatedHexOf = (k) => SEATED_HEX.shareText(toHex(k));
 
 /** How far ahead of its start a round is looked at: PRESENT is signed in the last minute before seating_close. */
 /** The most PRESENTs one POST /presents batch is read for (kanban #1271): as POST /presence's 4096 lines. */
@@ -138,7 +144,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
   }
   for (const r of db.prepare('SELECT round_id, role FROM seat_equivocations').all()) certs.set(`${toHex(new Uint8Array(r.round_id))}:${r.role}`, null);
   // a kept certificate was checked before it was kept (keepCert): read back, it names its seated
-  function decodeSeated(cert) { return decodeSeatingCertificate(cert).seated.map(toHex); }
+  function decodeSeated(cert) { return decodeSeatingCertificate(cert).seated.map(seatedHexOf); }
   function seatingIdOfCert(cert) { try { const d = decodeSeatingCertificate(cert); return seatingId({ roundId: d.roundId, role: d.role, seated: d.seated }); } catch { return new Uint8Array(0); } }
 
   // A TABLE'S LATER SEATINGS (kanban #1020, the owner 2026-11-02: "Die tote node muss doch 120s vor Runden Beginn einchecken, das kann sie doch nicht"; measured 10:45Z: a node
@@ -329,7 +335,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       // drawn seats' own certificates say it (tick's confirm read): `supersede` is set only when more than half of them hold this seating, and it then
       // replaces the held one - no equivocation, since an ordered pair proves none. A pair that is not ordered still is (below).
       if (supersede && certs.get(key) !== null) {
-        const xs = decodeSeated(old), ys = v.seating.seated.map(toHex), w = { drawnKeys: check.drawn };
+        const xs = decodeSeated(old), ys = v.seating.seated.map(seatedHexOf), w = { drawnKeys: check.drawn };
         if (seatingBefore(w, xs, ys) || seatingBefore(w, ys, xs) || leftOutPair(check.drawn, xs, ys)) {
           db.prepare('UPDATE seat_certs SET cert = ? WHERE round_id = ? AND role = ?').run(bytes, rid, role);
           certs.set(key, ys);
@@ -356,7 +362,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       // Of two such certificates the replacement stands at every seat: kept when it comes second, and taking the place of the other when that came first,
       // while the round has no entries. One certificate per round and role still seats it; a pair of any other shape is equivocation as before.
       if (certs.get(key) !== null) {
-        const heldSeated = decodeSeated(old), newSeated = v.seating.seated.map(toHex), drawnHex = check.drawn.map(toHex);
+        const heldSeated = decodeSeated(old), newSeated = v.seating.seated.map(seatedHexOf), drawnHex = check.drawn.map(toHex);
         if (replaces(heldSeated, newSeated, drawnHex)) return { ok: false, superseded: true, why: 'a certificate that replaced this seating (a member of it withheld its signature) seats that round here' };
         if (replaces(newSeated, heldSeated, drawnHex)) {
           // A REPLACEMENT AFTER ENTRIES CAME (kanban #2083, wf1489 v1 refute-17-s3): the held seating stands, the newcomer is refused as superseded - and no
@@ -403,10 +409,10 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       return { ok: true, equivocation: true, signers: e.signers.map(toHex) };
     }
     db.prepare('INSERT OR IGNORE INTO seat_certs (round_id, role, cert, confirmed) VALUES (?, ?, ?, 0)').run(rid, role, bytes);
-    if (!certs.has(key) || certs.get(key) !== null) certs.set(key, v.seating.seated.map(toHex));
+    if (!certs.has(key) || certs.get(key) !== null) certs.set(key, v.seating.seated.map(seatedHexOf));
     // read against the drawn seats until most of them are seen holding it, whenever and however it came (kanban #2360, #2363)
     if (certs.get(key) !== null) listPending(rid, role, index);
-    noteReseat(rid, role, v.seating.seated.map(toHex), check.contract);
+    noteReseat(rid, role, v.seating.seated.map(seatedHexOf), check.contract);
     // the seats a v2 round counts are these (2026.0.2): the server writes them into the stored contract
     try { onSeated(rid, role, v.seating.seated, check.contract); } catch (e) { log(`[seating] ${toHex(rid).slice(0, 16)} ${role}: ${e.message}`); }
     return { ok: true, kept: true };
