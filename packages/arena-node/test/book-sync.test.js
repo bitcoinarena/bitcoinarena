@@ -125,7 +125,8 @@ test('a seat that missed a batch certificate reads the other seats\' batches bef
     skipTo(Number(w.c.entryCloseMs) + 2 * B + 10);
     await closeRound(w, { window: false });
     const startMs = w.c.entryCloseMs - UPDOWN_PERIOD_MS;
-    const samples = [{ atMs: startMs - 60000n, price: 8295000n }, { atMs: startMs + 60000n, price: 8299000n }];
+    // read every 10 s across the window (kanban #3049: an attestor signs only a window whose start and end it read): the start average 8295000, the end 8299000
+    const samples = []; for (let t = startMs - 60000n; t <= w.c.entryCloseMs; t += 10000n) samples.push({ atMs: t, price: t < startMs + 60000n ? 8295000n : 8299000n });
     const att = combine(['A', 'B'].map((l) => attestWindow({ samples, roundId: w.rid, window: { startMs, endMs: w.c.entryCloseMs }, attestor: UPDOWN_ATTESTOR_KEYS[l] })), { attestors: ATTESTORS, threshold: 2 });
     await Promise.all(w.nodes.map((d) => fetch(`${base(d)}/outcome?round=${rid}`, { method: 'POST', body: att.bytes })));
     const o = await (await fetch(`${base(w.a)}/outcome?round=${rid}`)).json();
