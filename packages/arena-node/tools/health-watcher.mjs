@@ -68,7 +68,8 @@ export function config(env = process.env, argv = []) {
     confirm: n('HW_CONFIRM_PASSES', 2),                 // a problem counts once it is seen on this many passes in a row
     notOpenPasses: n('HW_NOT_OPEN_PASSES', 5),          // "seated, none open" alerts only after this many passes (about 15 min)
     repeatMs: n('HW_REPEAT_MIN', 60) * 60000,           // the same alert again at most this often
-    seatDownAlertMs: n('HW_SEAT_DOWN_ALERT_MIN', 20) * 60000,
+    seatDownAlertMs: n('HW_SEAT_DOWN_ALERT_MIN', 10) * 60000,   // kanban #2773: and a 30 s check fails too (pass)
+    seatRecheckMs: n('HW_SEAT_RECHECK_S', 30) * 1000,
     restartGapMs: n('HW_RESTART_GAP_MIN', 10) * 60000,  // one seat restart in this long, any seat
     restartSameMs: n('HW_RESTART_SAME_MIN', 60) * 60000,// the same seat at most once in this long
     flapRestarts: n('HW_FLAP_RESTARTS', 3),             // NRestarts climbing by this much in an hour
@@ -215,10 +216,12 @@ export function assess(f, prev, cfg) {
     const lines = [`down ${mins(nowMs - down.downSince)} min${s.why ? ` (${String(s.why).slice(0, 40)})` : ''}${u ? `, unit ${u.active || '?'}, ${u.nRestarts ?? '?'} restarts` : ''}`];
     const tried = [];
     let alert = nowMs - down.downSince >= cfg.seatDownAlertMs, needs = '';
-    if (!s.unit) { alert = true; needs = 'restart on the test host, see #759'; tried.push('nothing (second-host seat)'); }
+ // kanban #2773 (the owner 2026-11-21 22:01): only a seat down HW_SEAT_DOWN_ALERT_MIN (10) is alerted - a stall of a few passes is
+    // logged; the load holding the restart, a restart that did not help or a second-host seat no longer alert sooner
+    if (!s.unit) { needs = 'restart on the test host, see #759'; tried.push('nothing (second-host seat)'); }
     else {
       if (fx && fx.recheck === 'pending') { fx.recheck = 'failed'; }
-      if (fx && fx.recheck === 'failed') { tried.push(`restarted ${hm(fx.atMs)} UTC, still down`); alert = true; }
+      if (fx && fx.recheck === 'failed') tried.push(`restarted ${hm(fx.atMs)} UTC, still down`);
       const blocked = [], held = [];   // blocked: the log's words; held: the alert's
       if (!(l1 < cfg.loadMax)) { blocked.push(`1-min load ${l1} >= ${cfg.loadMax}`); held.push(`load ${l1} >= ${cfg.loadMax}`); }
       if (!inRestartMinutes(nowMs)) { blocked.push(`${hm(nowMs)} UTC is not :03-:08 of a quarter (seating)`); held.push('seating minutes'); }
@@ -229,14 +232,15 @@ export function assess(f, prev, cfg) {
       const allowed = !blocked.length;
       fixes.push({ key: fixKey, kind: 'restart-seat', unit: s.unit, base: k, allowed, blocked });
       if (allowed) restartPlanned = true;
-      else {
-        tried.push(`restart held (${held.join(', ')})`);
-        if (blocked.some((b) => /load|restarting it already|restarted \d+ min ago \(once/.test(b))) alert = true;
-      }
+      else tried.push(`restart held (${held.join(', ')})`);
       if (allowed) tried.push('restarting it now');
       needs = allowed ? 'nothing yet (recheck next pass)' : 'manual restart when safe, see #759';
     }
     problems.push({ key: `seat-down:${k}`, ticket: '759', title: `${seatName(k)} not answering`, lines, tried, needs, alert });
+  }
+  // every seat down: alerted at once (a 30 s check in pass must fail too)
+  if (f.seats.length && f.seats.every((s) => !s.ok)) {
+    problems.push({ key: 'seats-all-down', ticket: '759', title: `every seat down (${f.seats.length} of ${f.seats.length} not answering)`, lines: [], tried: ['nothing'], needs: 'the hosts checked, see #759', alert: true });
   }
   // a seat unit restarting by itself over and over (NRestarts climbing)
   for (const [unit, u] of Object.entries(f.units)) {
@@ -441,6 +445,41 @@ export function markAlerted(st, a, problems, nowMs) {
   st.alerts[a.key] = { ...(st.alerts[a.key] || { firstMs: nowMs }), lastMs: nowMs, title: p.title, ticket: p.ticket, absent: 0 };
 }
 
+// ---------------------------------------------------------------- SEATS DOWN: CHECKED TWICE, SAID ONCE (kanban #2773, the owner 2026-11-21 22:01:
+// "Warnungen minimieren ausser sie sind wirklich akkurat und wichtig" - four "seat N not answering" alerts for an 8 s stall at load 12.9)
+/** Each alerting seat-down (and every-seat-down) is asked again with a longer timeout; one that answers is logged, not alerted. */
+export async function recheckSeats(io, problems, f, cfg) {
+  const base = (p) => p.key.slice('seat-down:'.length);
+  const asks = problems.filter((p) => p.alert && /^seat-down:/.test(p.key)).filter((p) => {
+    const s = f.seats.find((x) => x.base === base(p)), u = s && s.unit ? f.units[s.unit] : null;
+    return !(u && u.active && u.active !== 'active');   // a unit failed or stopped is down: no second look needed
+  });
+  await Promise.all(asks.map(async (p) => {
+    const a = await io.identity(base(p), cfg.seatRecheckMs).catch(() => ({ ok: false }));
+    if (a && a.ok) { p.alert = false; p.title += ` (answered a ${Math.round(cfg.seatRecheckMs / 1000)} s check)`; }
+  }));
+  const all = problems.find((p) => p.key === 'seats-all-down' && p.alert);
+  if (all) {
+    const some = f.seats.slice(0, 3);
+    const got = await Promise.all(some.map((s) => io.identity(s.base, cfg.seatRecheckMs).catch(() => ({ ok: false }))));
+    if (got.some((a) => a && a.ok)) { all.alert = false; all.title += ` (a ${Math.round(cfg.seatRecheckMs / 1000)} s check answered)`; }
+  }
+}
+/** "seats 2, 5, 6, 7 not answering for 12 min": the alerting seat-downs become one problem `seats-down`; each stays in the log. */
+export function combineSeatsDown(problems, nowMs, st) {
+  const down = problems.filter((p) => p.alert && /^seat-down:/.test(p.key));
+  if (!down.length) return null;
+  const names = down.map((p) => p.title.replace(/ not answering.*$/, ''));
+  const host = names.filter((x) => /^seat \d+$/.test(x)).map((x) => x.slice(5)), other = names.filter((x) => !/^seat \d+$/.test(x));
+  const who = [...(host.length ? [`seat${host.length > 1 ? 's' : ''} ${host.join(', ')}`] : []), ...other].join(', ');
+  const since = Math.max(...down.map((p) => { const k = p.key.slice('seat-down:'.length); return (st.seats[k] && st.seats[k].downSince) || nowMs; }));
+  for (const p of down) { p.alert = false; p.title += ' (in seats-down)'; }
+  const one = { key: 'seats-down', ticket: '759', title: `${who} not answering for ${mins(nowMs - since)} min`, lines: down.map((p, i) => `${names[i]}: ${(p.lines || []).join('; ')}`),
+    tried: [...new Set(down.flatMap((p) => p.tried || []))], needs: down.length > 1 ? 'the seats checked, see #759' : down[0].needs, alert: true };
+  problems.push(one);
+  return one;
+}
+
 // ---------------------------------------------------------------- ONE PASS
 export async function pass(io, cfg, prev) {
   const nowMs = io.now();
@@ -451,6 +490,9 @@ export async function pass(io, cfg, prev) {
   if (!state.plannedAuto) delete state.plannedAuto;
   const windows = openWindows([...(f.planned || []), ...(state.plannedAuto ? [state.plannedAuto] : [])], nowMs, { graceMs: cfg.plannedGraceMs });
   applyPlanned(problems, fixes, windows, cfg);
+  // kanban #2773: a seat is alerted only when a second, longer check fails too, and all of them in one message
+  await recheckSeats(io, problems, f, cfg);
+  combineSeatsDown(problems, nowMs, state);
   if (f.censusProbe) state.census = { atMs: f.censusProbe.atMs, answering: f.censusProbe.answering };
   const did = [];
   for (const x of fixes.filter((y) => y.allowed)) {
@@ -521,14 +563,14 @@ export function realIo(cfg) {
     loadavg: async () => readFileSync('/proc/loadavg', 'utf8').split(' ').slice(0, 3).map(Number),
     topProcs: async () => { try { return topLine(await run('ps', ['-eo', 'pcpu,args', '--sort=-pcpu', '--no-headers'])); } catch { return null; } },
     get,
-    identity: async (base) => {
+    identity: async (base, timeoutMs = 8000) => {
       try {
-        const r = await fetch(base + '/identity', { signal: AbortSignal.timeout(8000) });
+        const r = await fetch(base + '/identity', { signal: AbortSignal.timeout(timeoutMs) });
         if (!r.ok) return { ok: false, why: `HTTP ${r.status}` };
         const b = Buffer.from(await r.arrayBuffer());
         if (b.length === 32) return { ok: true, key: b.toString('hex') };
         try { const j = JSON.parse(b.toString()); return { ok: true, key: j.node || j.key || null }; } catch { return { ok: true, key: null }; }
-      } catch (e) { return { ok: false, why: e.name === 'TimeoutError' ? 'no answer in 8 s' : e.message }; }
+      } catch (e) { return { ok: false, why: e.name === 'TimeoutError' ? `no answer in ${Math.round(timeoutMs / 1000)} s` : e.message }; }
     },
     units: async (units) => {
       const out = {};

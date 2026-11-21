@@ -38,15 +38,16 @@ test('#2773 an announced seat window: "planned: ..." in the log, no alert; still
   // 20:12 + 5 min grace: the passes after 20:17 alert as usual
   for (let i = 0; i < 3; i++) await w.pass();
   assert.ok(w.now - 180000 > T + 14 * 60000);
-  assert.equal(prob(w.r, `seat-down:${MAC2}`).alert, true);
+  assert.match(prob(w.r, 'seats-down').title, /seat 2 not answering/);
+  assert.equal(prob(w.r, 'seats-down').alert, true);
   assert.ok(w.posts.some((t) => /PROBLEM: .*seat 2 not answering/.test(t)), w.posts.join('\n'));
 });
 
 test('#2773 an outage nobody planned still alerts, beside a planned one', async () => {
   const w = watcher({ down: [MAC2, MAC3], planned: [{ what: 'fed2 seat 2', fromMs: T, untilMs: T + 60 * 60000 }] });
-  for (let i = 0; i < 2; i++) await w.pass();
-  assert.equal(prob(w.r, `seat-down:${MAC2}`).alert, false);
-  assert.equal(prob(w.r, `seat-down:${MAC3}`).alert, true);
+  for (let i = 0; i < 5; i++) await w.pass();
+  assert.match(prob(w.r, `seat-down:${MAC2}`).title, /^planned: /);
+  assert.ok(prob(w.r, 'seats-down') && !/seat 2/.test(prob(w.r, 'seats-down').title) && /seat 3 not answering/.test(prob(w.r, 'seats-down').title));
   assert.ok(w.posts.some((t) => /PROBLEM: .*seat 3 not answering/.test(t)));
 });
 
