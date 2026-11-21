@@ -19,10 +19,15 @@ export async function readStanding(seats = standingSeats, games = standingGames,
         let after = '';
         for (let page = 0; page < 200; page++) {
           const j = await (await fetcher(`${base}/season-rounds?game=${encodeURIComponent(game)}&days=90&page=1${after ? `&after=${after}` : ''}`, { signal: AbortSignal.timeout(30000) })).json();
-          for (const r of j.rounds || []) for (const e of r.entries || []) {
+          // A PAID, SETTLED ENTRY ONLY (kanban #3034, audit nostr r3-2): a free round's entry reads payoutMsat '0' and an ENTRY_VOID or no-quorum
+          // one a result too, so fresh identities joining free rounds got standing (unevictable keys) without staking anything. An entry counts
+          // when its round is not void, it staked (stakeMsat > 0), its amount is settled and its outcome is a played one
+          const staked = (v) => typeof v === 'string' && /^[0-9]{1,30}$/.test(v) && BigInt(v) > 0n;
+          for (const r of j.rounds || []) { if (r.void) continue; for (const e of r.entries || []) {
             const p = String(e.player || '').toLowerCase(), k = String(e.roundKey || '').toLowerCase();
-            if (/^[0-9a-f]{64}$/.test(p) && /^[0-9a-f]{64}$/.test(k) && k !== p && e.payoutMsat !== null && e.payoutMsat !== undefined && e.bot !== true) got.add(p);
-          }
+            if (/^[0-9a-f]{64}$/.test(p) && /^[0-9a-f]{64}$/.test(k) && k !== p && e.payoutMsat !== null && e.payoutMsat !== undefined && e.bot !== true
+              && staked(String(e.stakeMsat)) && !/VOID|NO_QUORUM/i.test(String(e.outcome || ''))) got.add(p);
+          } }
           if (!j.next) break;
           after = j.next;
         }
