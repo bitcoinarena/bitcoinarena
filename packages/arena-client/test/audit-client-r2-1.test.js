@@ -52,9 +52,11 @@ test('one seat\'s unsigned GET /gateway-seats answer does not pick the gateway a
   // two wallets of the seed (stand-ins for the lock client), each bound to its federation as openPlayerWallet binds them
   const paidThrough = [], receivedThrough = [];
   let bal = 1_000_000n;
-  const from = { balanceMsat: async () => String(bal), gateways: async () => JSON.stringify([HONEST[FID_FROM]]),
+  const from = { gatewayFees: async () => JSON.stringify({ send: { ppm: 1000, baseMsat: 1000 }, receive: { ppm: 1000, baseMsat: 0 } }),   // 2.0 reads each gateway's fees (swap.test.js)
+    balanceMsat: async () => String(bal), gateways: async () => JSON.stringify([HONEST[FID_FROM]]),
     withdraw: async (invoice, gw) => { paidThrough.push(gw); bal -= 50_000n; return JSON.stringify({ state: 'Success', preimage: '00'.repeat(32) }); } };
-  const to = { gateways: async () => JSON.stringify([HONEST[FID_TO]]),
+  const to = { gatewayFees: async () => JSON.stringify({ send: { ppm: 1000, baseMsat: 1000 }, receive: { ppm: 1000, baseMsat: 0 } }),   // 2.0 reads each gateway's fees (swap.test.js)
+    gateways: async () => JSON.stringify([HONEST[FID_TO]]),
     receive: async (msat, gw) => { receivedThrough.push(gw); return JSON.stringify({ invoice: 'lntb500n1' + gw, operation: 'op1' }); }, awaitReceive: async () => 'Claimed' };
   pageLock.noteClientFederation(from, FID_FROM);
   pageLock.noteClientFederation(to, FID_TO);
