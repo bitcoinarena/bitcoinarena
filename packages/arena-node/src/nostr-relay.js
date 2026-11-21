@@ -295,6 +295,7 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   db.exec(`CREATE TEMP TABLE IF NOT EXISTS holders (pubkey TEXT, pool INTEGER, n INTEGER, b INTEGER, first INTEGER, PRIMARY KEY (pubkey, pool));
     CREATE INDEX IF NOT EXISTS temp.holders_n ON holders (pool, n, first);
     CREATE INDEX IF NOT EXISTS temp.holders_b ON holders (pool, b, first);
+    CREATE INDEX IF NOT EXISTS temp.holders_first ON holders (pool, first);
     CREATE TEMP TABLE IF NOT EXISTS pools (pool INTEGER PRIMARY KEY, n INTEGER, b INTEGER);
     INSERT INTO holders (pubkey, pool, n, b, first) SELECT pubkey, ${POOL_SQL('kind')}, COUNT(*), COALESCE(SUM(size), 0), MIN(rowid) FROM main.events GROUP BY 1, 2;
     INSERT INTO pools (pool, n, b) SELECT pool, SUM(n), SUM(b) FROM holders GROUP BY pool;
@@ -306,6 +307,9 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
     CREATE TEMP TRIGGER IF NOT EXISTS ev_hold_drop AFTER DELETE ON main.events BEGIN
       UPDATE holders SET n = n - 1, b = b - COALESCE(old.size, 0) WHERE pubkey = old.pubkey AND pool = ${POOL_SQL('old.kind')};
       DELETE FROM holders WHERE pubkey = old.pubkey AND pool = ${POOL_SQL('old.kind')} AND n <= 0;
+      -- kanban #3021: \`first\` stays the author's oldest-arrived row in the pool (the eviction walk goes by it)
+      UPDATE holders SET first = (SELECT MIN(e.rowid) FROM main.events e WHERE e.pubkey = old.pubkey AND ${POOL_SQL('e.kind')} = ${POOL_SQL('old.kind')})
+        WHERE pubkey = old.pubkey AND pool = ${POOL_SQL('old.kind')} AND first = old.rowid;
       UPDATE pools SET n = n - 1, b = b - COALESCE(old.size, 0) WHERE pool = ${POOL_SQL('old.kind')};
     END;`);
   const totalUse = db.prepare(`SELECT COALESCE(SUM(n), 0) AS n, COALESCE(SUM(b), 0) AS b FROM pools WHERE pool != ${SEED_POOL}`);   // kanban #2393: seeds apart
@@ -370,8 +374,12 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   const seenAuthor = db.prepare('SELECT 1 AS x FROM seen_authors WHERE pubkey = ?');
   const markSeen = db.prepare('INSERT OR IGNORE INTO seen_authors (pubkey) VALUES (?)');
   // the oldest-arrived event of an author without standing in a pool (never the writer's)
-  const oldestUnstanding = db.prepare(`SELECT id FROM events WHERE ${POOL_SQL('kind')} = ? AND pubkey != ? AND pubkey NOT IN (SELECT value FROM json_each(?))
-    AND NOT EXISTS (SELECT 1 FROM events s WHERE s.pubkey = events.pubkey AND s.kind = ${SEED_KIND} AND COALESCE(s.kept_ms, s.created_at * 1000) <= ?) ORDER BY rowid ASC LIMIT 1`);
+  // ONE STEP PER AUTHOR, NOT PER ROW (kanban #3021, audit nostr r1-1, gap in #3004): the walk went over the pool's events in arrival order and
+  // skipped a standing author's rows one at a time - 90,000 rows of 180 standing keys at the front made every write into a full pool ~119 ms
+  // on the relay's one loop. It now walks the pool's holders by their oldest-arrived row (holders.first, kept exact by ev_hold_drop), so a
+  // standing author costs one step whatever it holds; the victim is still the pool's oldest-arrived event of an author without standing
+  const oldestUnstanding = db.prepare(`SELECT e.id FROM holders h JOIN main.events e ON e.rowid = h.first WHERE h.pool = ? AND h.pubkey != ? AND h.pubkey NOT IN (SELECT value FROM json_each(?))
+    AND NOT EXISTS (SELECT 1 FROM main.events s WHERE s.pubkey = h.pubkey AND s.kind = ${SEED_KIND} AND COALESCE(s.kept_ms, s.created_at * 1000) <= ?) ORDER BY h.first ASC LIMIT 1`);
   // kanban #3004 (audit nostr r3 #1): the standing check is asked per candidate through ev_author (pubkey, kind, d) - the NOT IN read every kept seed
   // (kept_ms has no index) on every call, so 90,000 parked free seeds made each write into a full pool ~20x slower on the relay's one loop
   const clients = new Set();
