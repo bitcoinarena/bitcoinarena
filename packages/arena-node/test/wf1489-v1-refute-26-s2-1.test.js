@@ -42,7 +42,7 @@ test('a seat answering a void ask with the certificate of another batch does not
     const first = await leaderOf(k0).orderBook.lead(w.rid, k0);
     assert.equal(first.certified, true, `batch ${k0} was not certified: ${first.why}`);
     const cert0 = leaderOf(k0).orderBook.certificates(w.rid).find((c) => c.k === String(k0));
-    // k1: its leader's set reaches no other seat (the network lost it) - its own signature only, never a threshold
+    // k1: its leader's set reaches only one other seat (the network lost the rest) - 2 signatures, never a threshold
     await lockAndPlay(w, player(3), { noMarks: true, pick: YES, order: { price: 51000n } });
     await lockAndPlay(w, player(4), { noMarks: true, pick: NO, order: { price: 49000n } });
     const k1 = Math.floor(testNow() / B);
@@ -53,13 +53,11 @@ test('a seat answering a void ask with the certificate of another batch does not
     const A = w.nodes.find((d) => d !== L1 && d !== L2);
     const bad = w.nodes.find((d) => d !== L1 && d !== L2 && d !== A);
     const o1 = L1.orderBook.fetcher;
-    // (kanban #3194, #3203: a void now needs `needed` seats that cannot sign k1's set - with k1 signed by L1 and A and the dishonest seat
-    // silent only four could decline it, so the set reaches no other seat here: A and the four others decline, five, and k1 is voided)
-    L1.orderBook.fetcher = async (u, o) => String(u).includes('/batch?round=') ? new Response('lost', { status: 503 }) : o1(u, o);
+    L1.orderBook.fetcher = async (u, o) => (String(u).includes('/batch?round=') && !String(u).includes(`:${A.port}/`)) ? new Response('lost', { status: 503 }) : o1(u, o);
     const half = await L1.orderBook.lead(w.rid, k1);
     assert.equal(half.ok, true, half.why);
     assert.equal(half.certified, false);
-    assert.deepEqual(L1.orderBook.pending(w.rid), [k1], 'k1\'s leader holds k1 signed');
+    assert.deepEqual(A.orderBook.pending(w.rid), [k1], 'seat A holds k1 signed');
     L1.orderBook.fetcher = o1;
     // k2: the dishonest seat answers k1's void ask with k0's certificate and refuses to sign k2
     await at(k2);
@@ -73,6 +71,6 @@ test('a seat answering a void ask with the certificate of another batch does not
     const d1 = (got.decided || []).find((d) => String(d.k) === String(k1));
     assert.ok(d1, `batch ${k1} was not decided at all: ${got.why}`);
     assert.equal(d1.state, 'VOID', `half-signed batch ${k1} was "${d1.state}" (${d1.why}) on another batch's certificate: never voided`);
-    assert.deepEqual(L1.orderBook.pending(w.rid), [], `k1's leader still holds batch ${k1} pending and signs no later batch`);
+    assert.deepEqual(A.orderBook.pending(w.rid), [], `seat A still holds batch ${k1} pending and signs no later batch`);
   } finally { await w.close(); }
 });
