@@ -11,6 +11,7 @@
 // Nothing is ever published: the relay code sends only REQ and CLOSE. A relay asking for NIP-42 AUTH is reported, never answered.
 // Secrets come in as arguments and never reach an answer, a log line or an error text.
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';   // kanban #3000
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { hmac } from '@noble/hashes/hmac.js';
@@ -242,6 +243,8 @@ export function wsQuery({ timeoutMs = 8000, WebSocketImpl = globalThis.WebSocket
       else if (a[0] === 'AUTH') { if (onNote) onNote(url, 'relay asked for NIP-42 AUTH (not answered)'); }
     };
   });
+  // kanban #3000: a copy is keyed by all of it (id, signature, content ...), so only byte-equal copies merge
+  const copyKey = (e) => { try { return createHash('sha256').update(JSON.stringify(e)).digest('hex'); } catch { return String(e && e.id); } };
   return async (relays, filters) => {
     const seen = new Map();
     let truncated = false;
@@ -249,7 +252,10 @@ export function wsQuery({ timeoutMs = 8000, WebSocketImpl = globalThis.WebSocket
       let until;
       for (let p = 0; p < maxPages; p++) {
         const page = await one(url, { ...f, limit: Math.min(f.limit || pageLimit, pageLimit), ...(until === undefined ? {} : { until }) });
-        let oldest = Infinity; for (const e of page) { seen.set(e.id, e); if (e.created_at < oldest) oldest = e.created_at; }
+        // ONE COPY PER DISTINCT EVENT, NEVER THE LAST ANSWER'S (kanban #3000, audit nostr r2-3): copies were merged by the claimed id, so a relay
+        // answering last with a genuine event's id and a broken signature (or garbage content) replaced the copy the other relays sent, and the
+        // caller's check then dropped it - a follow or a join erased. Copies that differ are all kept; the caller keeps the ones that check
+        let oldest = Infinity; for (const e of page) { seen.set(copyKey(e), e); if (e.created_at < oldest) oldest = e.created_at; }
         if (f.limit || page.length < Math.min(pageLimit, 100) || !Number.isFinite(oldest) || oldest - 1 === until) break;
         until = oldest - 1;
         // kanban #2999: the last page was full and more are left - what this read holds is only the newest part
