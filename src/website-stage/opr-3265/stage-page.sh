@@ -9,7 +9,7 @@ SRC=$1; OUT=$2; UI=$3; HERE=$(cd "$(dirname "$0")" && pwd); REPO=$(cd "$HERE/../
 nice -n 19 ionice -c3 cp -al "$SRC" "$OUT"
 cp --remove-destination "$SRC/index.html" "$OUT/index.html"
 python3 "$HERE/opr-page.py" "$OUT/index.html"
-OLD=$(grep -o 'class="build-line">UI [0-9]*' "$OUT/index.html" | head -1 | grep -o '[0-9]*$')
+OLD=$(grep -o 'class="build-line"[^>]*>UI [0-9]*' "$OUT/index.html" | head -1 | grep -o '[0-9]*$')
 sed -i "s#>UI $OLD<#>UI $UI<#g; s#· UI $OLD'#· UI $UI'#g" "$OUT/index.html"
 mkdir -p "$OUT/games/orange-pill-run"
 node "$REPO/packages/orange-pill-run/client/build.mjs" --out "$OUT/games/orange-pill-run/index.html"
