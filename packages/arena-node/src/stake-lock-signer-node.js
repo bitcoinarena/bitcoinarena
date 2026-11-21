@@ -516,8 +516,10 @@ const expirationOf = async (port, outpoint, st, fields) => {
 // field with the federation as before but asks freshness at the lock's own height, and refuses a lock the federation no longer holds unexpired.
 function heightToCheckAt(st, fields, contract, certified) {
   if (!certified) return { ok: true, height: st.blockCount };
-  if (!(Number(st.stored.blocksLeft) >= 1)) return { ok: false, why: 'that lock has expired at the federation: a replayed order needs a lock still held' };
   const lockHeight = fields.expiration - (contract.stakeExpiryBlocks ?? STAKE_EXPIRY_BLOCKS);
+  // kanban #3039: `expired` is this seat's own federation read, given only for a lock that matches the entry (the callers check it at the lock's
+  // own height first) - the only refusal a replay takes for good (order-batch.js #replay); a peer naming some other expired lock is refused plainly
+  if (!(Number(st.stored.blocksLeft) >= 1)) return { ok: false, expired: true, height: Math.max(0, lockHeight), why: 'that lock has expired at the federation: a replayed order needs a lock still held' };
   return { ok: true, height: Math.max(0, Math.min(st.blockCount, lockHeight)) };
 }
 
@@ -595,9 +597,10 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
   if (!(claimPk instanceof Uint8Array)) return { ok: false, why: 'this signer node holds no claim key for that round' };
 
   const at = heightToCheckAt(st, fields, contract, certified);
-  if (!at.ok) return at;
+  if (!at.ok && !at.expired) return at;
   const matches = lockMatchesEntry({ lock: fields, entry, kind: 'stake', claimPk, height: at.height, expiryBlocks: contract.stakeExpiryBlocks });
   if (!matches.ok) return matches;
+  if (!at.ok) return at;   // kanban #3039: expired, and the entry's own lock
   }
   const stakeNamers = await stakeNamersAsked;
   if (namedFirstByAnother(round, entry, entryIdBytes, 'stake', outpoint, stakeNamers)) return { ok: false, why: stakeNamedFirstWhy };
@@ -701,9 +704,10 @@ export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk
     st = ex.st; }
   if (!(claimPk instanceof Uint8Array)) return { ok: false, why: 'this signer node holds no claim key for that round' };
   const at = heightToCheckAt(st, fields, contract, certified);
-  if (!at.ok) return at;
+  if (!at.ok && !at.expired) return at;
   const matches = lockMatchesEntry({ lock: fields, entry, kind: 'fee', claimPk, height: at.height, expiryBlocks: contract.stakeExpiryBlocks });
   if (!matches.ok) return matches;
+  if (!at.ok) return at;   // kanban #3039: expired, and the entry's own lock
   }
   const feeNamers = await feeNamersAsked;
   if (namedFirstByAnother(round, entry, entryIdBytes, 'fee', outpoint, feeNamers)) return { ok: false, why: feeNamedFirstWhy };
