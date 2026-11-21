@@ -1826,5 +1826,113 @@
  "3188": {
   "text": "Other: an unfinished relay message can escape every size budget",
   "kind": "bug"
+ },
+ "3189": {
+  "text": "Committees and bonds: a large census answer can pass the unsent size check",
+  "kind": "bug"
+ },
+ "3190": {
+  "text": "Other: a shared relay budget can let stranger relays refuse honest clients",
+  "kind": "bug"
+ },
+ "3191": {
+  "text": "Reserves: a relay reserve can be drained by junk",
+  "kind": "bug"
+ },
+ "3192": {
+  "text": "Settlement: an attestor can look alive while its listener never started",
+  "kind": "bug"
+ },
+ "3193": {
+  "text": "Other: a refused fee lock can delay a refund",
+  "kind": "bug"
+ },
+ "3194": {
+  "text": "Other: a non-leader signer's decline can void a certified set",
+  "kind": "bug"
+ },
+ "3195": {
+  "text": "Other: a donation set can bypass the network size cap",
+  "kind": "bug"
+ },
+ "3196": {
+  "text": "Other: a malformed peer answer can abort a liquidity gather",
+  "kind": "bug"
+ },
+ "3197": {
+  "text": "Node software: one equivocating seat can lose the price tick",
+  "kind": "bug"
+ },
+ "3198": {
+  "text": "Committees and bonds: a re-bond can sign someone else's unsigned bond",
+  "kind": "bug"
+ },
+ "3199": {
+  "text": "Federation: an owner update re-fetch can let the source seat swap federation",
+  "kind": "bug"
+ },
+ "3200": {
+  "text": "Other: a door cache cap can ignore how large its keys are",
+  "kind": "bug"
+ },
+ "3201": {
+  "text": "Other: a refute check can miss its test harness",
+  "kind": "bug"
+ },
+ "3202": {
+  "text": "Other: a failed chain listener can exit as success and never restart",
+  "kind": "bug"
+ },
+ "3203": {
+  "text": "Node software: a non-leader seat can void a certified batch with an invented second set",
+  "kind": "bug"
+ },
+ "3204": {
+  "text": "Node software: a reveal can be met by seats that share one host",
+  "kind": "bug"
+ },
+ "3205": {
+  "text": "Other: one listed relay can stall each publish before peers are asked",
+  "kind": "bug"
+ },
+ "3206": {
+  "text": "Other: a twice-signed tape can stay blank",
+  "kind": "bug"
+ },
+ "3207": {
+  "text": "Committees and bonds: unsigned dust on a bond can break the advert check and the add",
+  "kind": "bug"
+ },
+ "3208": {
+  "text": "Federation: a bad guardian seating answer can stop the seating gather",
+  "kind": "bug"
+ },
+ "3209": {
+  "text": "Federation: an auto update can replace a held invite with the source seat's guardian addresses",
+  "kind": "bug"
+ },
+ "3210": {
+  "text": "Other: one machine under many names can fill a reveal count",
+  "kind": "bug"
+ },
+ "3211": {
+  "text": "Other: late honest readings can change the median and drop the price tick",
+  "kind": "bug"
+ },
+ "3212": {
+  "text": "Other: a late final mark can lose an honest delivered run",
+  "kind": "bug"
+ },
+ "3213": {
+  "text": "Other: a delivered run's close can be held with no bound",
+  "kind": "bug"
+ },
+ "3214": {
+  "text": "Node software: a silent peer seat can stall publishing after the home stake wait",
+  "kind": "bug"
+ },
+ "3215": {
+  "text": "Node software: a home seat waiting on stake can be skipped for the whole run",
+  "kind": "bug"
  }
 }
