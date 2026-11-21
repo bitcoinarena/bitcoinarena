@@ -9383,10 +9383,13 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             const walletAt = performance.now();
             const take = async () => {
               mergeSaid(fedHex, 'merging', 'opening wallet ' + from);
+              // THE RECOVER-ONCE MARK IS THE RECOVERY OPEN'S ONLY (kanban #3222): read before the open, written only when the phrase had no wallet
+              // here in this federation - written on every open, a phrase this merge opened was never opened again once tidyStorage removed its store
+              const recovering = !x.ancestor && entriesOf(x.hex, false) === 0;
               const other = await Promise.race([ARENACLIENT.openPlayerWallet({ federationId: ARENACLIENT.fromHex(fedHex), invite, seed: ARENACLIENT.fromHex(x.hex), LockClient: wasm.LockClient, storage: L, ancestor: x.ancestor }),
                 new Promise((_, no) => setTimeout(() => no(new Error('the wallet did not open in ' + MERGE_OPEN_MS / 1000 + ' s')), MERGE_OPEN_MS))]);
               if (typeof other.sendAllEcash !== 'function') return;
-              try { if (!x.ancestor && entriesOf(x.hex, false) >= 0) L.setItem(recoverTriedKey(x.hex), String(Date.now())); } catch { /* kanban #3140: tried once */ }
+              try { if (recovering) L.setItem(recoverTriedKey(x.hex), String(Date.now())); } catch { /* kanban #3140: tried once */ }
               // WHAT IT HOLDS, REMEMBERED UNTIL IT IS EMPTIED (2026-10-20 19:3xZ: "The total balance should always show the full balance even if
               // it's not merged yet. The merge is a kind of slow process"): the sum counts it from the next read on, a next page from its first
               const knownKey = 'arena.wallet.known.' + fedHex.slice(0, 16) + '.' + x.hex.slice(0, 16) + (x.ancestor ? '.blwp' : '');
@@ -9407,7 +9410,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
               // NOTES STILL BEING ISSUED ARE NOT AN EMPTY WALLET (kanban #3140, feedback #369: 866 sat in 337ae01a - its load 1342 - read 0 while
               // they were issued; the wallet was marked empty, its remembered balance dropped (900 -> 34 sat, no history row) and the next page
               // load removed its database): the remembered balance stays, nothing is marked, and the next merge pass reads it again
-              let issuing = 0n; try { issuing = ARENACLIENT.issuingMsat ? BigInt(await ARENACLIENT.issuingMsat(other)) : typeof other.issuingMsat === 'function' ? BigInt(await other.issuingMsat()) : 0n; } catch { issuing = 1n; }
+              const issuingOf = async () => { try { return ARENACLIENT.issuingMsat ? BigInt(await ARENACLIENT.issuingMsat(other)) : typeof other.issuingMsat === 'function' ? BigInt(await other.issuingMsat()) : 0n; } catch { return 1n; } };
+              const issuing = await issuingOf();
               if (holds === 0n && issuing > 0n) { console.log('[arena] merge ' + fedHex.slice(0, 8) + ' wallet ' + from + ': ' + issuing + ' msat still being issued - not empty, read again on the next pass');
                 if (L.getItem(knownKey) === null) L.setItem(knownKey, String(issuing)); return; }
               if (holds === 0n) { if (!openIntentOf(x.hex, x.ancestor)) noteEmpty(); return; }
@@ -9428,7 +9432,14 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
               // from here the kept e-cash is what is counted (the sum reads it), not the remembered balance
               L.removeItem(knownKey);
               await receiveKept();
-              if (BigInt(await other.balanceMsat()) === 0n) noteEmpty();
+              // AND AFTER ITS SPENDABLE NOTES LEFT (kanban #3222, gap in #3140): a wallet that held 100 sat and 866 sat still being issued reads 0
+              // once the 100 sat are sent - not empty: the issuing part is remembered, nothing is marked, the next merge pass reads it again
+              if (BigInt(await other.balanceMsat()) === 0n) {
+                const still = await issuingOf();
+                if (still > 0n) { console.log('[arena] merge ' + fedHex.slice(0, 8) + ' wallet ' + from + ': ' + still + ' msat still being issued after the send - not empty, read again on the next pass');
+                  L.setItem(knownKey, String(still)); if (window.ARENA_SUM_BALANCES) window.ARENA_SUM_BALANCES(); return; }
+                noteEmpty();
+              }
             };
             try {
               // this tab's own phrase is held by this tab already; any other is taken under its lock
