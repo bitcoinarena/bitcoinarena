@@ -372,6 +372,7 @@ const ourKeys = () => { try { return new Set(readFileSync(env.FAUCET_FEEDBACK_EX
 // THE SEATS A NODE CHECK ASKS (kanban #1342): every seat the season seats list (GET /network-games - a seat does not list itself, so they are merged, and each is one too)
 const NODE_CHECKS = new Map();
 const NODE_CHECK_ASKS = new Map(); const NODE_CHECKS_PER_HOUR = 10; let NODE_CHECK_BUSY = false;   // audit 5 #1402
+let NODE_CHECK_CHAIN = Promise.resolve(), NODE_CHECK_WAITING = 0; const NODE_CHECK_RUNNING = new Map(), NODE_CHECK_QUEUE_MOST = 8;   // kanban #3259
 // AN ANNOUNCED SEAT ENDPOINT IS ASKED ON THE PUBLIC INTERNET ONLY (kanban #1884, re-check of #1511): GET /network-games lists the census nodes'
 // endpoints, which any bonded node sets by a free signed address announcement - http://127.0.0.1:8080, 169.254.169.254, a LAN host - and a stranger's
 // node check made this faucet GET /owner, /roles and /served there. Only the operator's own are taken as given: the FAUCET_SEASON_SEATS bases, and a
@@ -1058,11 +1059,22 @@ createServer((req, res) => {
     const who = ipKey(ip) || ip;   // an IPv6 address by its /64, :: written out (kanban #1405)
     const mine = (NODE_CHECK_ASKS.get(who) || []).filter((t) => t > Date.now() - 3600000);
     if (mine.length >= NODE_CHECKS_PER_HOUR) return send(429, { ok: false, why: `at most ${NODE_CHECKS_PER_HOUR} node checks an hour from one address: try again later` });
-    if (NODE_CHECK_BUSY) return send(429, { ok: false, why: 'a node check is running: try again in a minute' });
+    // A QUEUE, NOT A REFUSAL (kanban #3259, audit r21 faucet-3): one global busy flag answered 429 to everyone while a check ran, so a stranger's
+    // back-to-back checks of random keys (one /64 each of a /48) kept every honest check refused. Checks still run one at a time over all
+    // callers, but a caller waits its turn (at most NODE_CHECK_QUEUE_MOST waiting), and the same node:npub asked meanwhile shares the one check
+    const inFlight = NODE_CHECK_RUNNING.get(k);
+    if (!inFlight && NODE_CHECK_WAITING >= NODE_CHECK_QUEUE_MOST) return send(429, { ok: false, why: 'node checks are queued: try again in a minute' });
     mine.push(Date.now()); NODE_CHECK_ASKS.set(who, mine); if (NODE_CHECK_ASKS.size > 5000) NODE_CHECK_ASKS.delete(NODE_CHECK_ASKS.keys().next().value);
-    NODE_CHECK_BUSY = true;
-    return nodeCheckNow(node, npub).then((answer) => { NODE_CHECKS.set(k, { at: Date.now(), answer }); if (NODE_CHECKS.size > 200) NODE_CHECKS.delete(NODE_CHECKS.keys().next().value); send(200, answer); },
-      (e) => send(502, { ok: false, why: `the seats could not be read: ${String(e.message || e).slice(0, 120)}` })).finally(() => { NODE_CHECK_BUSY = false; });
+    const run = inFlight || (() => {
+      NODE_CHECK_WAITING++;
+      const p = NODE_CHECK_CHAIN.then(() => { NODE_CHECK_WAITING--; NODE_CHECK_BUSY = true; return nodeCheckNow(node, npub); })
+        .then((answer) => { NODE_CHECKS.set(k, { at: Date.now(), answer }); if (NODE_CHECKS.size > 200) NODE_CHECKS.delete(NODE_CHECKS.keys().next().value); return answer; })
+        .finally(() => { NODE_CHECK_BUSY = false; NODE_CHECK_RUNNING.delete(k); });
+      NODE_CHECK_CHAIN = p.catch(() => {});
+      NODE_CHECK_RUNNING.set(k, p);
+      return p;
+    })();
+    return run.then((answer) => send(200, answer), (e) => send(502, { ok: false, why: `the seats could not be read: ${String(e.message || e).slice(0, 120)}` }));
   }
   // THE REWARD TABLE (kanban #1342, the owner 2026-11-08): the levels the form shows are the ones approve pays from - one source; public, no amounts
   // are promised while the bounty is off (the page shows the table only in its bounty build)
