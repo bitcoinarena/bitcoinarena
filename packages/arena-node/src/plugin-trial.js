@@ -52,10 +52,14 @@ export function trialRun(source, manifest, { ms = TRIAL_MS, name = 'plugin trial
   // fixed order, so the first decide was always all zeros; an adapter counting its calls answered that one right and every later one right,
   // and gave {} (or spun) on a first call with any other move - which is every close at a seat (verify.js decides on a fresh thread). Now
   // FRESH_FIRST_CASES random move sets (at least one with a non-zero move) are each decided as the first call of a fresh core thread.
+  // EVERY PLAYER COUNT THE GAME SEATS (kanban #3042, audit hosting r3-1, gap between #2791 and #2844): the fresh-thread sets had 2..4 players, so an
+  // adapter that gave {} on a first call with 5+ mixed moves passed, and every seat's close of its 5+ player rounds threw "no verdict". The sets
+  // now draw 2..players, and the second one seats the game's full count with mixed moves
+  const most = Math.max(2, Number(manifest.players) || 2);
   for (let i = 0; i < FRESH_FIRST_CASES; i++) {
-    const players = 2 + Math.floor(Math.random() * Math.max(1, Math.min(manifest.players, 4) - 1));
+    const players = i === 1 ? most : 2 + Math.floor(Math.random() * (most - 1));
     const set = Array.from({ length: players }, () => Math.floor(Math.random() * manifest.moveCount));
-    if (i === 0 && manifest.moveCount > 1 && set.every((m) => m === 0)) set[set.length - 1] = 1;
+    if ((i === 0 || i === 1) && manifest.moveCount > 1 && set.every((m) => m === set[0])) set[set.length - 1] = (set[0] + 1) % manifest.moveCount;
     const list = set.map((move) => ({ key: randomBytes(32).toString('hex'), move }));
     let fresh;
     try {
