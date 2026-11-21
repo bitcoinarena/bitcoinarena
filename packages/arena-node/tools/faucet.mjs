@@ -370,6 +370,7 @@ const bountyPayerId = async () => {
 const bountyPayerMayBe = (rowPayer) => !!BOUNTY_PAYER && rowPayer === `${BOUNTY_NETWORK} no-key ${BOUNTY_PAYER.dir} ${BOUNTY_PAYER.rpcserver}`;
 // THE ADMIN (kanban #1342 section 4): the owner's code, held to its hash as the explorer holds it (#1092); the rules, our keys, who played
 const ADMIN_SHA = String(env.FAUCET_ADMIN_SHA256 || '').trim().toLowerCase();
+const ADMIN_FAILS = new Map(), ADMIN_TRY_WINDOW_MS = 15 * 60 * 1000, ADMIN_TRIES_PER_CALLER = 5, ADMIN_TRIES_ALL = 30;   // kanban #3243
 const isAdmin = (req) => { const code = String(req.headers['x-arena-admin'] || '').trim(); if (!/^[0-9a-f]{64}$/.test(ADMIN_SHA) || !code) return false;
   return timingSafeEqual(Buffer.from(createHash('sha256').update(code).digest('hex')), Buffer.from(ADMIN_SHA)); };
 const RULES = (() => { try { return JSON.parse(env.FAUCET_REWARD_RULES || '{}'); } catch { return {}; } })();
@@ -847,7 +848,17 @@ createServer((req, res) => {
   if (path.startsWith('/feedback/admin/')) {
     if (req.method === 'OPTIONS') { res.writeHead(204, { ...cors, 'access-control-allow-methods': 'GET, POST', 'access-control-allow-headers': 'content-type, x-arena-admin', 'access-control-max-age': '86400' }); return res.end(); }
     if (!FEEDBACK) return send(503, { ok: false, why: 'reports are not kept here' });
-    if (!isAdmin(req)) return send(403, { ok: false, why: 'not the admin code' });
+    // A WRONG ADMIN CODE IS COUNTED (kanban #3243, audit r10): tries were unlimited, so the code could be guessed as fast as asked. A caller
+    // (its address; none named: one shared key) gets ADMIN_TRIES_PER_CALLER wrong codes in ADMIN_TRY_WINDOW_MS, all callers together
+    // ADMIN_TRIES_ALL; past either the admin answers 429 until the window ends - also to the right code, so a guess learns nothing
+    const who = `admin:${ipOf(req) || 'unnamed'}`, now0 = Date.now();
+    for (const [k, v] of ADMIN_FAILS) if (now0 - v.since > ADMIN_TRY_WINDOW_MS) ADMIN_FAILS.delete(k);
+    const mine = ADMIN_FAILS.get(who), all = ADMIN_FAILS.get('admin:*');
+    if ((mine && mine.n >= ADMIN_TRIES_PER_CALLER) || (all && all.n >= ADMIN_TRIES_ALL)) return send(429, { ok: false, why: 'too many wrong admin codes - try again later' });
+    if (!isAdmin(req)) {
+      for (const k of [who, 'admin:*']) { const v = ADMIN_FAILS.get(k) || { n: 0, since: now0 }; v.n++; ADMIN_FAILS.set(k, v); }
+      return send(403, { ok: false, why: 'not the admin code' });
+    }
     const q = new URL(req.url, 'http://x').searchParams;
     const withReward = (r, ours) => { const w = FEEDBACK.rewards({ pubkey: r.pubkey }).find((x) => x.report === r.id);
       return { ...r, lnAddress: FEEDBACK.addressOf(r.id), ours: ours.has(r.pubkey), played: PLAYED.played(r.pubkey), rounds: PLAYED.history ? PLAYED.history(r.pubkey) : null, nodeBounty: FEEDBACK.nodeBountyFor(r), season2: S2 ? { approval: S2.approval(r.id), links: S2.links(r.pubkey), flags: S2.flagsOf(r.pubkey) } : null, realUser: S2 && S2.realUserOf ? S2.realUserOf(r.pubkey) : null, playedMark: S2 && S2.playedMarkOf ? S2.playedMarkOf(r.id) : null, reward: w ? { ...w, lnurl: w.state === 'paid' ? null : FEEDBACK.lnurlOf(w.k1, { base: PUBLIC_BASE }), page: `${PUBLIC_BASE}/lnurlw/${w.k1}` } : null }; };
