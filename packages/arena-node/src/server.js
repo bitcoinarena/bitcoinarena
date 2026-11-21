@@ -13926,7 +13926,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // the lock there under the forged handout's own id only - no other seat held that id and the forfeit gathered 1 of 2 commitments. The lock is
         // now kept under each naming handout's own id as well (at most 8: a stranger may hold up to the round's handout cap), so the id of the
         // player's own handout - the one every seat holds - names it at every seat. A lock one handout names is kept as before.
-        for (const x of matches.slice(1, 8)) round.putRefusedLock({ lockId: refusedLockOwnId(x.id, opHex), handoutId: x.id, ...kept });
+        // NO CAP OF 8 (kanban #2986, audit entry r2-1): 8 forged handouts taken before the player's at one seat filled the 8 and the player's own
+        // id was never written there - the forfeit gathered 1 of 2 again. Every naming handout this seat holds is an alias now: they are bounded
+        // by the round's handouts (HANDOUTS_UNENTERED_MAX loose ones), and each real lock is written once (a lock handed again is answered above)
+        for (const x of matches.slice(1)) round.putRefusedLock({ lockId: refusedLockOwnId(x.id, opHex), handoutId: x.id, ...kept });
         console.log(`[refused-lock] ${toHex(rid).slice(0, 16)}: ${String(fields.amountMsat)} msat kept for its return (${String(refusedWhy).slice(0, 80)})`);
         return text(res, 201, `kept for its return: forfeit it at /forfeit?round=${toHex(rid)}&entry=${toHex(lockId)}`);
       }
