@@ -97,6 +97,7 @@ function utf8Decode(bytes) {
 // check the bytes by eye against a hexdump.
 
 
+
 /** Growable output buffer. */
 class Writer {
   constructor() { this.buf = new Uint8Array(256); this.len = 0; }
@@ -380,6 +381,7 @@ function words(bytes) {
 
 
 
+
 const tagCache = new Map();
 
 function tagPrefix(tag) {
@@ -453,6 +455,7 @@ function bytesToBigInt(bytes) {
 // network nobody knows gets (a node loading it exited). Ruled: the current code accepts THIS series from the old id,
 // beside bf876cb1; 24 h before its start (testnet4's own lead) is enough; beacon 154268 still counts. Nothing else of the
 // old id is taken: a round naming it that is not a round of this series is refused (server.js POST /round).
+
 
 /** testnet4's network id before genesis_series_start (04c5ecec): the id series 3cfbe516 names. */
 const NETWORK_ID_TESTNET4_BEFORE_SERIES_GENESIS = fromHex('26b9162e72a397a4433f3cae8ea213a9a3fc2094bc04c1789a91b691edc9f62f');
@@ -539,6 +542,7 @@ const OLD_TESTNET4_SERIES_BOND_HEIGHT = 154300;
 // regenerated - `make-genesis.mjs` makes new ones every run, and the ids are a
 // function of these same public keys, so recomputing beat rerunning.
 
+
 const GENESIS_CONFIG_HASH = fromHex('bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1');
 const NETWORK_ID_REGTEST = fromHex('9855e6790b51f0a6ec3ee1a4d83f4de9ad4be7bffb169f0525ad00a59ced5b38');
 const NETWORK_ID_TESTNET4 = fromHex('1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15');
@@ -600,6 +604,7 @@ const ARBITRATION_KEYS_TESTNET4 = [
 // RoundContract digest can never collide with an Advert digest even if their
 // bodies happen to encode identically. Adding a type means adding a tag, not
 // reusing a neighbour's.
+
 
 
 
@@ -1601,6 +1606,7 @@ const SCORE_SCALE = 100000;
 
 
 
+
 /** What the first checkpoint of a round chains to. */
 const NO_PREVIOUS = new Uint8Array(32);
 
@@ -1786,6 +1792,7 @@ async function provesEquivocation(a, b, sessionPubkey, verify) {
 
 
 
+
 const lxHex = (b) => Array.from(b || [], (x) => x.toString(16).padStart(2, '0')).join('');
 
 /**
@@ -1880,6 +1887,7 @@ const isCompressedPoint = (k) => k instanceof Uint8Array && k.length === 33 && (
 // THE RUN LENGTH IS THE CORE'S. `genesis.js` already reads it from the same
 // place and writes it into the config hash a contract's network_id commits to;
 // restating the number here would be the second clock letter 21 forbade.
+
 
 /**
  * The balance constants live in the contract because 18A.7 says they must:
@@ -3082,6 +3090,7 @@ function entryFederation(round, entry) {
 
 
 
+
 /** The prices a live tape carries: the core's SAMPLES. */
 const TAPE_PRICES = 64;
 
@@ -3355,6 +3364,7 @@ const signedBatchOf = (b, sign) => joinSignedBatch(encodeInputBatch(b), sign(bat
 
 
 // The run length is the core's; this reads it rather than restating it.
+
 
 const GENESIS = new Uint8Array(32);
 
@@ -3767,6 +3777,7 @@ function exactTicksForMs(ms) {
 
 
 
+
 /** One sample every 5 s of round time (§11); the tape before the start is 64 of them. */
 const PRICE_SAMPLE_EVERY_MS = 5000;
 const PRICE_TAPE_LENGTH = 64;
@@ -4055,6 +4066,7 @@ function checkBatchPrices({ batch, roundId, committee, threshold, verify, requir
 
 
 
+
 function encodeCheckpointReceipt(r) {
   const w = new Writer();
   w.u8(TYPE_CHECKPOINT_RECEIPT);
@@ -4131,6 +4143,7 @@ function joinSignedReceipt(bytes, signature) {
 // a share, not for a rank weight, not for a percentage. Every division here is
 // integer division with an explicit remainder, and the remainder is then
 // distributed by a rule rather than dropped.
+
 
 
 
@@ -4665,6 +4678,7 @@ const SETTLEMENT_THRESHOLD = 5;
 //
 // THE CURVE IS INJECTED, like everywhere else in this package: `arena-client`
 // carries no crypto, and `page-curve.js` is what the page loads beside it.
+
 
 
 // `webcrypto` AND NOT `subtle`, which `seal.js` already declares at its own top
@@ -5231,6 +5245,7 @@ async function payInvoice(where, invoice, options = {}) {
 
 
 
+
 /** The round's start deadline, in ticks after a player's join tick. */
 const startDeadlineOf = (contract) =>
   (contract && contract.startDeadlineTicks !== undefined ? contract.startDeadlineTicks : START_DEADLINE_TICKS);
@@ -5346,6 +5361,7 @@ function roundEndMs(contract) {
 
 
 
+
 /** All of a round's window instants (BigInt ms), from its contract alone. */
 function windowsOf(contract) {
   const end = roundEndMs(contract);
@@ -5391,6 +5407,7 @@ function withinTolerance(signedAtMs, atMs) {
 // NOTHING HERE IS BITCOIN CONSENSUS. No script is executed, no signature is
 // checked, no amount is summed. It parses a serialization and answers two
 // questions: what is this transaction called, and what does it commit to.
+
 
 /** Bitcoin hashes twice, everywhere. */
 const hash256 = (bytes) => sha256bytes(sha256bytes(bytes));
@@ -5651,6 +5668,7 @@ function blockMerkleRoot(txids) {
 
 
 
+
 /** A Fedimint guardian's broadcast key: a compressed secp256k1 point. */
 const GUARDIAN_KEY_BYTES = 33;
 
@@ -5892,6 +5910,7 @@ function splitSignedAdvert(bytes) {
 // Mainnet has no ancestor: it starts as Bitcoin Arena.
 
 
+
 const ANCESTOR_TAG = Object.freeze({
   advert: 'BLWP/v1/Advert',
   bondMarker: 'BLWP/v1/BOND_MARKER',
@@ -5983,6 +6002,7 @@ function decodeAncestorAdvert(body) {
 //
 // Both say what 5A.3B says - the node alone after maturity, the quorum before
 // it - in bytes that a node can actually spend with.
+
 
 /** BIP-341's leaf version for tapscript. */
 const TAPLEAF_VERSION = 0xc0;
@@ -6485,6 +6505,7 @@ function bondOutputKeyMatches(onChain, inputs, { tweakPoint, combine } = {}) {
 // difficulty retargeting; it answers two questions only - is this transaction
 // in this header's block, and which of these header chains carries the most
 // work. That is what discovery needs and it is deliberately not more.
+
 
 
 
@@ -7050,6 +7071,7 @@ function acceptAdvert({
 
 
 
+
 const ADVERT_UPDATE_MAGIC = Uint8Array.from([0x41, 0x52, 0x4e, 0x41]);     // "ARN" 'A'
 const ADVERT_UPDATE_BYTES = 4 + 32 + 4 + 32;
 
@@ -7255,6 +7277,7 @@ function newestUpdates(view, entries, { atHeight, network = 'regtest', verify, s
 
 
 
+
 const REAFFIRM_MAGIC = Uint8Array.from([0x41, 0x52, 0x4e, 0x46]);     // "ARN" 'F'
 const REAFFIRM_BYTES = 4 + 8 + 64;
 
@@ -7447,6 +7470,7 @@ function readProtocolVersionName(name) {
 // same loop without the odd-length check - and two of one decoder is two
 // places for it to differ. It also made this file unbundleable beside
 // hash.js, which is how it was found.
+
 
 
 
@@ -7854,6 +7878,7 @@ function feeMatchesEntry(entry, { feeBps = NODE_FEE_BPS, donationInFee: inFee = 
 // Amounts are msat as BigInt, like every other money number in this protocol.
 
 /** The smallest number of guardians whose loss halts a federation of `nominal` with threshold `2f + 1`. */
+
 
 const haltsAt = (f) => f + 1;
 
@@ -8429,6 +8454,7 @@ function donationKeysFor(network) {
 
 
 
+
 // ONE PARSE PER TRANSACTION (kanban #586/#587, measured 2026-10-23 17:11Z on a test host seat after a restart: 10 min at 100 % CPU,
 // decodeAdvert 23 %, sha256 13 %, parseTransaction 7 %, readSlice 6 % - every census height parsed every transaction of its 2,017
 // blocks again, and decoded every advertisement again, though the blocks themselves are kept, one copy shared by every view): a
@@ -8448,6 +8474,7 @@ function txidHexOf(tx) {
   if (h === undefined) { h = toHex(tx.txid); txidHexKept.set(tx, h); }
   return h;
 }
+
 
 
 
@@ -10051,6 +10078,7 @@ async function readWithOneRetry(fetcher, url, opts) {
 
 
 
+
 /**
  * One provider's answer, over HTTP, as 80-byte records back to back.
  *
@@ -10661,6 +10689,7 @@ const BIP39_ENGLISH = Object.freeze([
 // `seedFromPhrase` refuses instead of handing back 32 plausible bytes.
 
 
+
 const PHRASE_WORDS = 24;          // 256 bits of entropy + 8 of checksum, 11 bits a word
 const ENTROPY_BYTES = 32;
 const INDEX_OF = new Map(BIP39_ENGLISH.map((w, i) => [w, i]));
@@ -10791,6 +10820,7 @@ function seedHexFromInput(text) {
 // THE GROUP IS INJECTED, like every other curve operation in this package.
 // `packages/protocol` carries no curve on purpose - it does the arithmetic and
 // the refusals, and whoever has a curve brings it.
+
 
 
 
@@ -11146,6 +11176,7 @@ function handoutOutcome(opened) {
 
 
 
+
 const subtle = () => {
   const c = globalThis.crypto;
   if (!c || !c.subtle)
@@ -11263,6 +11294,7 @@ const sealedName = (sealed) => toHex(sealed).slice(0, 16);
 // crooked dealer is caught by WHOEVER HE CHEATED rather than by the first signer node
 // to look. That is not weaker: a dealer who cheats signer node 6 is refused by signer node 6,
 // and a handout five signer nodes accepted is a handout five signer nodes can open.
+
 
 
 
@@ -11470,6 +11502,7 @@ async function dealHandout({ preimage, signerNodes, roundId, playerPubkey,
 // module the page's bundle may carry. Both import it from here; there is one copy.
 
 
+
 const catSeedParts = (...parts) => {
   const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
   let at = 0;
@@ -11506,6 +11539,7 @@ function committeeSeedFrom({
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // Player sub-seed, 2026-09-08: secret lives on the Entry Contract so
 // a node can replay. IMPLEMENTATION.md: H(round_randomness || pubkey || secret || join_tick).
+
 
 
 
@@ -11655,6 +11689,7 @@ function worldSecretFits(contract, worldSecret, sharedWorld) {
 
 
 
+
 /**
  * THE CONTRACT A PLAYER HANDS A SIGNER NODE (POST /lock), as JSON: hex bytes, the
  * amount as a decimal string. Here, not in the node, because the page writes
@@ -11779,6 +11814,7 @@ function lockFieldsMatchEntry({ lock, entry, kind, claimPk, expiryBlocks = STAKE
 // compare the fingerprint the page shows. The spec names the rule's parts and
 // not the hash; this is the smallest thing that meets them, in the tagged-hash
 // form every other derivation here uses. The curve is injected, as always.
+
 
 
 
@@ -12620,6 +12656,7 @@ const KNOWN_GOOD_GAMES = Object.freeze({
 
 
 
+
 const isGameBytes32 = (b) => b instanceof Uint8Array && b.length === 32;
 
 /** The configs (hex) the round's game shares one world under, as this client knows the game - none for a game it does not. */
@@ -12767,6 +12804,7 @@ function tableAnchorOf(contract) {
 // here: a recipient is an opaque `lnurl` string, because this package pays
 // nobody and inventing a payment layer to test one would be inventing a
 // second protocol.
+
 
 
 
@@ -13330,6 +13368,7 @@ function vestedShares(recipients, height) {
 
 
 
+
 /** A paid round's shares on the reserves version, in basis points of the gross stake - all mandatory. */
 const ROUND_SPLIT_BPS = Object.freeze({ nodes: 400, protocolDevs: 200, gameDevs: 200, reserves: 200 });
 /** An item's mandatory shares, in percent of its list price; the developers' share is added on top, as in. */
@@ -13500,6 +13539,7 @@ const entryPaysReserves = (contract, manifest) => paysReserves(contract) && !don
 
 
 
+
 /** 1 type + 2 version + 32 round + 32 entry + 32 run + 32 signer + 8 signed at. */
 const FINAL_SIG_BYTES = 1 + 2 + 32 + 32 + 32 + 32 + 8;
 const FINAL_SIG_SIGNATURE_BYTES = 64;
@@ -13617,6 +13657,7 @@ function finalSigned({ roundId, entryId, runId, records, committee, slots, final
 // can show exactly which node or count differs (servedNodesDiffer). Equal or weighted shares are both read from this one list.
 //
 // NO CURVE: `verify(signature, digest, key)` is injected, as final-sig.js takes it.
+
 
 
 
@@ -13832,6 +13873,7 @@ function mergeServedRounds(held, { own = true, bonded = null } = {}) {
 //   - the vote's marker is "ARN" 'V' (RULED 2026-10-13: "ARN", not the spec's "BLW" - one prefix finds all of the
 //     network's data on chain), with a kind byte as every other ARN payload has: a bare "ARN" vote would be 76 bytes, the same as
 //     a fork re-affirmation ("ARN" 'F', reaffirm.js), so the kind byte keeps them apart. 77 bytes, inside the 80-byte limit
+
 
 
 
@@ -14159,6 +14201,7 @@ function tally({ proposal, standing, census, votes, verify, bound = false, keyed
 
 
 
+
 /** The longest name a player may choose, in characters. */
 const LOBBY_NAME_MAX = 24;
 
@@ -14228,6 +14271,7 @@ const lobbyNameId = (record) => taggedHash(TAG.lobbyName, encodeLobbyName(record
 
 
 
+
 /** How far ahead of a node's clock a name may be dated and still be kept. */
 const PLAYER_NAME_SKEW_MS = 10 * 60 * 1000;
 
@@ -14290,6 +14334,7 @@ function newerPlayerName(a, b) {
 // identities only (a player whose entries name a round key that is the player itself is no identity, badges.js's rule: skipped, the
 // next one moves up); a tie at the cut shares the places it spans; each winner paid a payout contract to its identity's refund key in
 // the federation, from that federation's protocol reserves - at most 10 % of them (funding.js FUNDING_CAP_PCT).
+
 
 
 
@@ -14384,6 +14429,7 @@ const leaderboardHex = (p) => toHex(leaderboardPayoutId(p));
 // 432 blocks before its end: the window [time(end - 432), time(end)) on the chain's median time, which every seat reads alike and
 // which never runs backwards. A signal counts when it was given inside the signal period by an active node, once per node, whatever
 // its bond; the proposal passes when those nodes are at least 15 % of the active ones. Nothing is paid on a signal.
+
 
 
 
@@ -14670,6 +14716,7 @@ function capStands({ proposalSats, paymentSats, reservesSats, paidByProposalSats
 
 
 
+
 /**
  * THE FEES A PROPOSAL MAY CHANGE, each with its code on the wire, its value today, its hard limit and whether it is a donation (a
  * change needs the protocol developers' majority, and it is never 0). Round and market fees in basis points of a stake; an item's
@@ -14872,6 +14919,7 @@ const marketBps = (fees) => ({ nodeBps: fees.marketNodeBps, donationBps: fees.ma
 
 
 
+
 /** A compressed secp256k1 point, as `groupKeyOf` computes the committee's key. */
 const CLAIM_KEY_BYTES = 33;
 const ATTESTATION_SIGNATURE_BYTES = 64;
@@ -15008,6 +15056,7 @@ const splitForRound = (round) => (round && round.feeSet ? roundSplitBps(round.fe
 const feeBpsForRound = (round) => (round && Number.isInteger(round.feeBps) ? round.feeBps
   : roundGiftsInFee(round) ? giftsFeeBps(round.feeSet ? roundSplitBps(round.feeSet) : undefined)
   : roundPaysReserves(round) ? (round.feeSet ? roundSplitBps(round.feeSet).nodes : RESERVES_NODE_FEE_BPS) : knownEntryBps(round && round.gameId));
+
 
 
 
@@ -16422,6 +16471,7 @@ function readInvite(invite) {
 
 
 
+
 const FEDERATION_STATUS = Object.freeze({ OPEN: 1, DRAINING: 2, CRITICAL: 3, CLOSED: 4, HALTED: 5 });
 const GONE = Object.freeze({ DEPARTED: 1, ABANDONED: 2 });
 const nameOf = (table, v) => Object.keys(table).find((k) => table[k] === v);
@@ -16720,6 +16770,7 @@ const newestRecord = (verified) => verified.filter((v) => v && v.ok).sort((a, b)
 // the config is tried once more with an invite naming all of them, so one guardian down no longer keeps a player out.
 
 
+
 const seen = new Map();   // federation id hex -> Map(peer id -> url), the first url named for a peer kept
 
 function noteInvite(invite) {
@@ -16771,6 +16822,7 @@ const forgetGuardianInvites = () => { seen.clear(); NOTED_RECORDS.clear(); };   
 // signed by that node's key over this digest; the page counts only signed answers, one allowance per node key, and - given the census
 // it checked - only keys that census bonds. Nothing here is consensus: the digest binds the answer's fields as sent, all as strings.
 
+
 const TAG_SETTLED_LIST = 'ARENA/v1/SettledList';
 
 const str = (v) => (v === undefined || v === null ? '' : String(v));
@@ -16796,6 +16848,7 @@ function settledListDigest({ node, since, rounds }) {
 // is not the one computed, or whose stored expiry is not the computed one, is
 // refused here - the player would otherwise commit to a lock that is not theirs.
 // Not in the bundle yet: the page drives it in W1b.
+
 
 // `point` for a stake lock (the stake point), or `hash` for a fee lock (H(F), Pick b).
 function lockFromClient(answer, { point, hash, claimPk, refundPk }) {
@@ -16838,6 +16891,7 @@ function lockFromClient(answer, { point, hash, claimPk, refundPk }) {
 // CUT 6b (RULED 2026-09-24) moved this here from payout.js, where it was written for a hold invoice - SETTLE, CANCEL,
 // NOTHING - and deleted that vocabulary. The rule, its conditions, its order on the wire and the pool arithmetic are the
 // same; only the names are the lock's. LOCK_ACTIONS keeps the byte order the settlement record (slash.js) was encoded in.
+
 
 const CLAIM = 'CLAIM';     // claimed into the settlement by the preimage and the claim key
 const RETURN = 'RETURN';   // forfeited back to its refund key: can only return money to its owner
@@ -16997,6 +17051,7 @@ function lockActions({ roundId, entries, minScore = 0, payoutShares = null, prot
 // the pool holds above the table, is the miner's fee. NOBODY HERE KEEPS IT:
 // there is no change output, so an operator cannot take the remainder by
 // building a transaction that pays itself the difference.
+
 
 
 /** BIP-341 P2TR: OP_1, a 32-byte push, the key. */
@@ -17182,6 +17237,7 @@ const payableKey = (pubkey) => {
 // the round's order), each signer node one pre-expired payout contract to its own key -
 // never to the donation recipients, and no split invented here. A VOID or
 // ENTRY_VOID entry's fee lock is not claimed: §22A's fee base leaves it out.
+
 
 
 
@@ -18128,6 +18184,7 @@ function urlOfLnurl(lnurl) {
  */
 
 
+
 const NETWORKS = { bc: 'bitcoin', tb: 'testnet', tbs: 'signet', bcrt: 'regtest', sb: 'simnet' };
 const MSAT_PER_UNIT = { m: 100000000n, u: 100000n, n: 100n };     // p: a tenth of a msat, below
 const TAG_PAYMENT_HASH = 1;        // 'p'
@@ -18230,6 +18287,7 @@ function invoicePayee(invoice, recover) {
 // an id typed into the round. It is bonded nowhere: no census lists its guardians, so
 // federationIsBonded refuses it, as it must.
 
+
 const TEST_FEDERATION_ID = sha256(new TextEncoder().encode('ARENA/v1/TEST_FEDERATION - a stand-in federation for tests and vectors, never one that holds money'));
 
 // ---- arena-protocol/src/known-federations.js
@@ -18239,6 +18297,7 @@ const TEST_FEDERATION_ID = sha256(new TextEncoder().encode('ARENA/v1/TEST_FEDERA
 // is on the client's known-good list, or the client shows it and its guardians and requires an explicit confirmation -
 // the same rule as sim_wasm_hash (§5)". By federation id (the hash of its configuration). Adding one is a reviewed code
 // change, like adding a game core to known-games.js - never a setting, a query parameter or a seat's word.
+
 
 
 const KNOWN_GOOD_FEDERATIONS = Object.freeze({
@@ -18291,6 +18350,7 @@ const knownFederation = (hex) => KNOWN_GOOD_FEDERATIONS[String(hex || '').toLowe
 // Additive: no encoding, no entry and no lock rule changes. A seat that holds a claim for an entry naming a lock outpoint hands
 // that lock only to a claimed entry (stake-lock-signer-node.js); without any claim the old rule stands.
 
+
 const LOCK_CLAIM_TAG = 'ARENA/v1/LockClaim';
 const LOCK_CLAIM_BYTES = 64;
 
@@ -18327,6 +18387,7 @@ function lockClaimKeyOf(entry) {
 // wallet that holds it; and a lock already made, that no signer node has committed
 // yet, is kept with its stake (`saveLock`), so a reload before the signer node takes
 // the entry uses that lock instead of dealing and paying again.
+
 
 
 
@@ -25073,6 +25134,7 @@ const stringToBytes = qrcode.stringToBytes;
 // that made the invoice, not by a loose one beside the page. BOLT11 is case-insensitive and its upper case fits the
 // QR alphanumeric mode, as wallets write it; the `lightning:` scheme is the one wallets open.
 
+
 /** An SVG tag of `lightning:<INVOICE>` as a QR code, error correction L. */
 function invoiceQrSvg(invoice, { cellSize = 4, margin = 4 } = {}) {
   const text = String(invoice || '').trim();
@@ -25114,6 +25176,7 @@ function invoiceQrSvg(invoice, { cellSize = 4, margin = 4 } = {}) {
 // input chain. A ghost names the head of the chain it was taken from, exactly
 // as a checkpoint does, so anyone holding that transcript can say whether the
 // picture belongs to it.
+
 
 
 
@@ -25298,6 +25361,7 @@ function ghostBinds(ghost, transcript, entry) {
 
 
 
+
 /**
  * Does this proof land in a block of this chain?
  *
@@ -25411,6 +25475,7 @@ async function askForBond(providers, { chain, ask, timeoutMs = 10000 } = {}) {
 
 
 
+
 // the networks with an ancestor, by the marker names the protocol uses, and the id a re-affirmation names for each
 const ANCESTOR_NETWORK_IDS = Object.freeze({ testnet: NETWORK_ID_TESTNET4, regtest: NETWORK_ID_REGTEST });
 const sameBytesAE = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
@@ -25486,6 +25551,7 @@ function acceptAncestorEndpoint({ chain, transaction, branch, position, update, 
 // the fly"). A page starts from any node it can reach (a bootstrap, not a list), and every census it checks itself - each entry's
 // bond and advertisement proved against headers it agreed (client-committee.js) - names the network's nodes: each bond's
 // advertisement carries the node's endpoint. Those are the nodes this page talks to from then on, kept for its next start.
+
 
 /** The https root of a node's advertised endpoint (wss -> https, ws -> http), or null for none. */
 function endpointRoot(endpoint) {
@@ -25626,11 +25692,30 @@ function mergeNodes(known, found) {
 
 
 
+
 const BONDS_KEPT = new WeakMap();   // proof headers -> (bond providers -> a bond that held), see discover
 
 
 
 
+
+/**
+ * Is this a socket address at all?
+ *
+ * Section 25.1: "Then connect `wss://` to the `endpoint` from the verified
+ * advertisement." The endpoint is a string a bonded operator committed to on
+ * chain, which makes it THEIRS - it does not make it a URL. Without this the
+ * client would take whatever was committed and hand it to `WebSocket` after a
+ * blind `replace(/^ws/, 'http')`, so a body carrying `http://...`, a bare
+ * host, or something that is not an address at all would become the base a
+ * round is played on.
+ *
+ * `ws://` is allowed for loopback only, because a test node on this machine
+ * has no certificate and refusing it would mean the tests could not drive the
+ * real door. Nothing else: a plaintext socket to another host is exactly the
+ * one thing a committed endpoint must not be able to ask a player for.
+ */
+const LOOPBACK = /^ws:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?(\/|$)/;
 // THE ROUND DOOR TAKES NO MORE THAN THE NODE LIST (kanban #3124, #3125; wf1489 refute of #3108): node-discovery's nodeEndpointRefusal kept a
 // LAN/loopback/query endpoint out of the page's node list, but Client.at plays the round on the proven committee node's raw advert
 // endpoint, and this took any wss://host/any/path?query and ws://127.0.0.1:<port>/<anything>?<query> - a bond committing
@@ -25988,6 +26073,7 @@ async function discover({
  */
 
 
+
 function donationKeysForNetworkId(networkId) {
   const is = (known) => networkId instanceof Uint8Array && networkId.length === 32
     && networkId.every((x, i) => x === known[i]);
@@ -26015,6 +26101,7 @@ function donationKeysForNetworkId(networkId) {
  * The comment is the player's public key as hex (§22A, 2026-09-08), and
  * it is left out when the endpoint takes fewer than 64 characters (LUD-12).
  */
+
 
 
 /** A player's public key as hex is 64 characters; an endpoint allowing fewer gets no comment. */
@@ -26155,6 +26242,7 @@ function invoiceAnswersPayRequest({ invoice, amountMsat, metadata, network } = {
 // the caller one package over brings the real BIP-340. NO MONEY: nothing here
 // pays an LNURL, and what a donation costs a player is 6e's letter, not this
 // one.
+
 
 
 
@@ -26586,6 +26674,7 @@ function donationSetInForce({
 //
 // Signatures are secp256k1 over the tagged digest, by the 33-byte recipient key; the verifier is injected, as every
 // verifier in this package is: `verifySecp256k1(sig, digest, pubkey)` answers a boolean (or a promise of one).
+
 
 
 
@@ -27324,6 +27413,7 @@ async function bytesCapped(r, max) {
   return out;
 }
 // THE PLAYER'S DONATION (M3.2 6e): the split, the failure rule, the LNURL checks.
+
 
 
 
@@ -28522,21 +28612,20 @@ class Client {
    * nothing alone - every batch that times out goes to the peers, and a mark whose answer is not a receipt is refused.
    */
   #sendWithin(message, ms) {
-    if (!this.sock || this.sock.readyState !== 1) return this.send(message);
-    return new Promise((r) => {
-      let done = false;
-      const waiter = (a) => { if (done) return; done = true; clearTimeout(timer); r(a); };
-      const timer = setTimeout(() => {
-        if (done) return;
-        done = true;
-        const i = this.said.indexOf(waiter);
-        if (i >= 0) this.said.splice(i, 1);
-        this.batchesUnanswered++;
-        r(`error the node did not answer the batch within ${ms} ms`);
-      }, ms);
-      this.said.push(waiter);
-      this.sock.send(message);
-    });
+    // THROUGH send() (kanban #3216): one door for every frame on the socket, so whatever paces or watches send() paces this too
+    // (backpressure.test: batches sent beside it were never counted and a second publish ran while one was on a slow link). The
+    // waiter send() queued is taken out of `said` when the time is up, so later answers still reach their own sends.
+    const before = this.said.length;
+    const sent = this.send(message);
+    const waiter = this.said.length > before ? this.said[this.said.length - 1] : null;
+    let timer;
+    const late = new Promise((r) => { timer = setTimeout(() => {
+      const i = waiter ? this.said.indexOf(waiter) : -1;
+      if (i >= 0) this.said.splice(i, 1);
+      this.batchesUnanswered++;
+      r(`error the node did not answer the batch within ${ms} ms`);
+    }, ms); });
+    return Promise.race([sent, late]).finally(() => clearTimeout(timer));
   }
 
   /**
@@ -30192,6 +30281,7 @@ class Client {
 
 
 
+
 async function fetchReserveKey({ federationId, nodes, needed = 5, fetcher = (u, o) => fetch(u, o), timeoutMs = 8000 } = {}) {
   if (!(federationId instanceof Uint8Array) || federationId.length !== 32) return { ok: false, why: 'the round names no federation to pay the reserves in' };
   const fed = toHex(federationId);
@@ -30419,6 +30509,7 @@ function paymentOutLine(o) {
 // rather than letting a client invent one.
 
 
+
 const DISPLAY_NAME_TAG = 'ARENA/v1/DISPLAY_NAME';
 const DISPLAY_NAME_MAX = 32;
 
@@ -30518,6 +30609,7 @@ function playerStoreRecord({ secretKey, displayName = null }) {
 // them (arena-protocol funding.js), signs it with the visitor's own key - an nsec, or a key kept in that browser - and hands it to
 // every node (POST /funding), which keep it and pass it on. The curve is the page's (arena-curve.js, globalThis.ARENA_CURVE: pointX,
 // signSchnorr), passed in as `curve` - this bundle carries no crypto of its own.
+
 
 
 
@@ -30741,6 +30833,7 @@ async function postFunding({ nodes, kind, hex, fetcher = (u, o) => fetch(u, o), 
 
 
 
+
 const TAG_DONATION_GIFT = 'ARENA/v1/DonationGift';
 const TYPE_DONATION_GIFT = 0x44;          // 'D'
 const DONATION_GIFT_VERSION = 1;
@@ -30874,6 +30967,7 @@ function giftStands(g, { recipients, networkSet = null, gameSet = null, verify, 
 
 
 
+
 const ITEMS_MARKER = 0x07;
 const ITEMS_MAX = 64;
 const ITEM_NAME_MAX = 48;
@@ -31004,6 +31098,7 @@ const itemsHex = (items) => (items || []).map((it) => ({ ...it, priceSat: String
 //
 // NO CURVE, as everywhere in this package: `verify(signature, digest, key)` is injected (Ed25519, the scheme the
 // donation authority signs with), and a manifest with no verifier to check it is not a game.
+
 
 
 
@@ -31800,6 +31895,7 @@ function payoutRuleForRound(contract, manifest = null) {
 
 
 
+
 const TAG_ITEM_PURCHASE = 'ARENA/v1/ItemPurchase';
 const TYPE_ITEM_PURCHASE = 0x49;          // 'I'
 const PURCHASE_OUTPUTS_MAX = 255;
@@ -32013,6 +32109,7 @@ function purchaseStands(p, { manifest, networkSet, gameSet, served, verify, rese
 
 
 
+
 /** seating_close is this long before the round's start: round i+1 is seated before round i (90 s earlier) starts. */
 const SEATING_LEAD_MS = 120000n;
 const ROLE_BYTE = Object.freeze({ game: 1, settlement: 2 });
@@ -32175,6 +32272,7 @@ function seatingBefore(drawnKeys, a, b) {
 // shows which rules it stakes under. The texts are the rules as built; changing one is a new hash, i.e. a new rule.
 
 
+
 const te = new TextEncoder();
 const RULE_TEXTS = Object.freeze({
   equivocation: 'ARENA rule equivocation v1 (§10, kanban #25, RULED 2026-10-05 (b)): two checkpoints of one entry, each signed by its session key, '
@@ -32231,6 +32329,7 @@ function roleFloorSats(contract, role) {
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // Committee selection: bond-weighted, linear, and decided in integers.
+
 
 
 
@@ -32467,6 +32566,7 @@ function drawAttestors({ entries, contract, committeeSeed }) {
 // creator could have known when they chose their round must not be usable at
 // all. The first is arithmetic; the second is evidence, and evidence is what
 // this file asks the caller for and refuses to assume.
+
 
 
 
@@ -32809,6 +32909,7 @@ function beaconIsTheChains(contract, beacon, view) {
 
 
 
+
 const sameCC = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array && a.length === b.length && a.every((x, i) => x === b[i]);
 const bytesOfCC = (v) => (v instanceof Uint8Array ? v : typeof v === 'string' ? fromHex(v) : null);
 // A BRANCH IS A LIST OR THE PROOF DOES NOT READ (kanban #2160, #2228, #2301): `(p.branch || []).map` threw a TypeError for a string branch
@@ -33003,6 +33104,7 @@ function committeeFromChain({ contract, roundId, headers, firstHeight, evidence,
 // An Esplora-style block explorer (mempool.space and its kind: GET /block-height/<h> -> the block hash) is a party outside it. It serves
 // no header blob, so it is asked as a SPOT CHECK: the block the agreed chain has at a height - the census height, the tip - must be the
 // block the explorer names there. A mismatch refuses the round by name; an explorer that cannot be reached is said, not taken as agreement.
+
 
 /** The display hash (big-endian hex, as explorers write it) of a block hash in internal byte order. */
 const displayHash = (internal) => toHex(Uint8Array.from(internal).reverse());
@@ -33689,6 +33791,7 @@ async function roundAttestors(roundIdHex, nodes, { curve, fetcher = fetch } = {}
 // hands every kept body again when the page loads.
 // Invariant: one item (one gift press), one payment - a paid purchase's record is handed again, never paid again.
 
+
 const PAID_PURCHASE_PREFIX = 'arena.purchase.';
 const PAID_GIFT_PREFIX = 'arena.gift.';
 
@@ -33801,6 +33904,7 @@ function paidRecordKeys(storage) {
 //   4. THE RECORD: the game, the item, the price, the buyer, the federation, the transaction, every output and the served list,
 //      signed with the player's key, handed to a seat (POST /item-purchase), which hands it on to every other.
 // No float touches an amount; every step that fails says which, and nothing is paid before the list and the split stand.
+
 
 
 
@@ -34150,6 +34254,7 @@ function entryUnlocks(entry, manifest) {
 
 
 
+
 /** Whether a typed amount is one the popup may pay: a whole number of sat from 1 to 10,000,000. Answers { ok, sat } or { ok: false, why }. */
 function giftAmountOf(typed) {
   const s = String(typed == null ? '' : typed).trim().replace(/[,_\s]/g, '');
@@ -34313,6 +34418,7 @@ function nextRoundLine({ grids, game, nowMs = Date.now(), blockMs = 600000 }) {
 
 
 
+
 const feesBaseOf = (n) => String(n).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
 const feesCurveOf = (curve) => { const c = curve || globalThis.ARENA_CURVE; if (!c || typeof c.pointX !== 'function') throw new Error('no curve loaded (arena-curve.js)'); return c; };
 
@@ -34394,6 +34500,7 @@ const FEE_UNITS = Object.freeze(Object.fromEntries(Object.keys(FEES).map((k) => 
 //                was posted before abandon_blocks from his last seen height, bond untouched; later, abandonment as before.
 //
 // NO CURVE: `sign(digest)` and `verify(signature, digest, pubkey)` are injected (BIP-340), as in absence.js.
+
 
 
 
@@ -34501,6 +34608,7 @@ function emergencyDepartureEffect(request, { guardian, lastSeenHeight = null, ab
 // signed by the forum's key, and handed to every node as a funding proposal is (funding-page.js postFunding, kind 'leaderboard'). A
 // winner's payout needs nothing here: it is a payout contract to the winner's identity key, recorded on the seats under that key, which
 // the page's zap collector (identity.js collectZaps) already reads and spends into the wallet.
+
 
 
 
@@ -34770,6 +34878,7 @@ function mountExchange({ el, fetchBook, outcomes = ['Yes', 'No'], onPrice = null
 // keeps a wordlist's correctness where it belongs.
 
 
+
 const VERIFIED_KEY = 'arena.backup.verified';
 
 /**
@@ -34870,6 +34979,7 @@ function backupLine(storage, seed) {
 // other keys - and the transport to those URLs (TLS/DNS of the hosts the guardians chose). A bonded stranger can do neither: it cannot
 // change the endpoints without changing the id, and it is not a threshold of them. The invite only says where to ask first; an invite
 // naming strangers' URLs gets nothing past the id check.
+
 
 
 
@@ -35592,6 +35702,7 @@ function safeFederation(from, statuses = [], { known = () => true } = {}) {
 // its notes are paid - §23A.5: liquidated `abandon_blocks` after the halt, paid at the end of the `claim_blocks` window
 // (federation-slash.js liquidationSchedule) - in blocks, and in time at the chain's recent pace.
 
+
 /** A federation's health for the popup: { level: 'ok' | 'warn' | 'bad' | 'idle', label, note }. */
 function federationHealth(st) {
   const status = st && st.status;
@@ -35671,6 +35782,7 @@ function explorerBaseFor(network, said = null) {
 // are taken from it. K is not a contract field: the engine pays K = ceil(q / 4) (payout.js), never above half of two or
 // more qualifiers, so that warning has no round to fire on.
 
+
 const WARNING_SAYS = Object.freeze({
   flat_rank_curve: 'Its payout curve is nearly flat (r >= 0.95): the last paying rank is paid almost as much as the first, so playing it safe pays.',
   minimum_score_is_a_danger_rule: 'Its minimum score is above 100 points: a run that scores less is paid nothing.',
@@ -35695,6 +35807,7 @@ const warningsSay = (codes) => (codes || []).map((k) => WARNING_SAYS[k]).filter(
 // AN EVENT OF THE ARBITRATION SET, CHECKED (kanban #723; kanban #1148): the bytes the set's members sign and the check that k of them did -
 // shared by the seats (arena-node arbitration-events.js keeps and hands them on) and the page (arena-client liquidation-claim.js acts on a
 // liquidation only when its event stands). One copy, so a seat and a browser can never read the same event differently.
+
 
 
 const EVENT_KINDS = ['liquidation', 'slash'];
@@ -35802,6 +35915,7 @@ const acceptedFor = (event, payoutPk) => ((event && event.claims && Array.isArra
 // returnWaitMs; it goes on in the background (one per e-cash string) and lets the notes go only once the wallet says Success/AlreadyReceived.
 // A record that cannot be written stops the claim before the wallet is touched. Notes handed over that then cannot be written are taken
 // back into the wallet (receiveEcash); a halted federation that cannot take them back has them presented at the signed door at once.
+
 
 
 
@@ -36206,6 +36320,7 @@ const pendingRequestsKey = (fid) => `arena-liquidation-pending-${String(fid).toL
 
 
 
+
 function liquidationKeyFor(seed, federationHex, curve) {
   if (!(seed instanceof Uint8Array) || seed.length !== 32) throw new Error('a claim key comes from the player\'s 32-byte seed');
   if (!curve || typeof curve.pointX !== 'function') throw new Error('a claim key is a key on a curve, and none was injected');
@@ -36325,6 +36440,7 @@ async function collectLiquidationPayouts({ listed, seed, curve, clientFor, stora
 // the notes spent, and the 2.0 lock client tags that send with the record's key (sendEcash(msat, key) / sendAllEcash(key)) and finds
 // it again (sentEcash(key)): an intent left by a closed tab is resolved from the wallet that sent. An older lock client has no sentEcash;
 // its intent stays, named, and is never counted as money.
+
 
 const ECASH_PENDING_PREFIX = 'arena.ecash.pending.';
 const ECASH_EXCHANGE_PREFIX = 'arena.ecash.exchange.';
@@ -36799,6 +36915,7 @@ async function resumeEcashExchanges({ storage, keys, walletFor, fetcher = fetch,
 
 
 
+
 const FRONT = Object.freeze({ BULLS: 1, BEARS: 2, FLAT: 3 });
 const NAMES = Object.freeze({ 1: 'BULLS', 2: 'BEARS', 3: 'FLAT' });
 const frontName = (f) => NAMES[f] || null;
@@ -36891,6 +37008,7 @@ function frontOfRun(batches) {
 // settlement committee - the committee THIS client derived, never a seat's word for it - signed, and shows nothing otherwise.
 
 
+
 const VERDICT_WORDS = Object.freeze({ BULLS: 'THE BULLS WIN', BEARS: 'THE BEARS WIN', FLAT: 'NOBODY WINS: THE PRICE CLOSED WHERE IT OPENED' });
 const verdictPct = (open, close) => `${close >= open ? '+' : ''}${(((close - open) / open) * 100).toFixed(2)}%`;
 
@@ -36941,6 +37059,7 @@ async function roundVerdict({ roundId, nodes, committee, verify, threshold = nul
 // it holds (GET /transcript: its bytes, x-transcript-hash, x-ticks); the run is safe once AT LEAST TWO hold the same transcript - one
 // hash - reaching the run's last tick. The mirror, when one is configured, is handed those bytes, after they are checked against the
 // hash the nodes agree on. Until two agree the page holds the victory screen and says why.
+
 
 
 
@@ -37063,6 +37182,7 @@ async function secureTranscript({ roundId, entryId, nodes, finalTick, mirror = n
 
 
 
+
 // 60 s: rounds of 10 s run back to back and a result lands ~20 s after its entry close (the reveal window), so a player
 // waiting for a verdict sits one or two rounds out between moves - that is staying, not leaving
 const MATCH_CONTINUE_MS = 60000n;
@@ -37140,6 +37260,7 @@ const matchHex = toHex;
 // The newest record of a key is its name. A seat keeps it only when the signature verifies, and lists it beside what the key earned.
 
 
+
 const TAG_REFERRAL_NAME = 'ARENA/v1/ReferralName';
 const TYPE_REFERRAL_NAME = 0x52;          // 'R'
 const REFERRAL_NAME_MAX = 48;
@@ -37196,6 +37317,7 @@ function referralNameStands(r, signature, { verify }) {
 // (lobby-name.js). The other pages check each record before they draw its name,
 // so a signer node can leave a name out but cannot write one, and nobody is shown a
 // key in place of a name: no record, no name, only a count.
+
 
 
 
@@ -37655,6 +37777,7 @@ const ZAPS_REFERRAL_KEY = 'arena.zaps.referral';
 
 
 
+
 const LOBBY_PHASES = ['pending', 'open'];
 
 const lobbyIs32 = (b) => b instanceof Uint8Array && b.length === 32;
@@ -37697,6 +37820,7 @@ const lobbyListingId = (listing) => taggedHash(TAG.lobbyListing, encodeLobbyList
  * the time a join takes, so a join it offers reaches a seat before that cutoff. A late entry names the round tick it joins
  * at; its run is the round's run less those ticks, and it ends on the round's last tick with everybody else's.
  */
+
 
 
 // FROM THE ENTRY TO THE FIRST RECORDED TICK: the session opens (the round, the entry, the socket - 1-2 s measured) while
@@ -37762,6 +37886,7 @@ function lateJoinTick(c, nowMs = Date.now(), leadMs = LATE_JOIN_SESSION_MS) {
 // (§34, reference 64). "Both quantities are computable by anyone from census_root and the chain, so a client can enforce this rule
 // itself and refuse a round whose bracket exceeds what its census supports." Enforced on mainnet (as ruling A of the load rule);
 // a test network shows the ceiling and refuses nothing.
+
 
 
 const MAX_PLAYERS_PER_ROUND = 64n;
@@ -37837,6 +37962,7 @@ function stakeWithinCeiling({ entries, stakeSats, maxPlayers = MAX_PLAYERS_PER_R
 // AND WHO IS JOINED, BY THE NAMES THEY CHOSE: each signer node serves the name records
 // its joined players signed (lobby-name.js); a row carries the ones that check
 // (identity.js `checkedNames`) - never a key in place of a name.
+
 
 
 
@@ -38701,6 +38827,7 @@ function nextRoundView({ runOverMs, nextStartMs, nowMs = Date.now(), exited = fa
  * share over LNURL once the signer nodes have taken the entry.
  */
 
+
 /** Above this many basis points of the stake (5%) the page asks a second time (§22A). */
 const DONATION_CONFIRM_BPS = 500;
 /**
@@ -38828,6 +38955,7 @@ function chooseDonation({ roundIdHex, round, stakeMsat, ask, confirm, storage, t
 // 201 - and on every load the page posts the SAME signed bytes again to the nodes that did not, and to no other,
 // until every one has. Empty, cancelled or not an address: nothing is kept and nothing is posted; the share is
 // pooled by the settlement.
+
 
 
 const WINNINGS_PROMPT = 'Where should your winnings be sent? Lightning address (name@host)';
@@ -38988,6 +39116,7 @@ function replayLinkFor({ endpoints, roundHex, entryHex, random = Math.random } =
 // as it reads an outcome's (outcomeStanding).
 //
 // NO CURVE, as everywhere in this package: `verify(signature, digest, key)` is injected - Ed25519, the attestors' scheme.
+
 
 
 
@@ -39200,6 +39329,7 @@ function scalarPayoutTable({ entries, value, bounds }) {
 // WHAT VERIFY MEANS WITHOUT A REPLAY: a seat checks the signatures against the manifest's attestor set and the threshold,
 // the round, and the outcome's range - nothing else of the world. WHAT AN OBJECTION IS: two attestations for one round,
 // each standing on its own, naming different outcomes. That pair is the proof; a round holding it settles on neither.
+
 
 
 
@@ -39560,6 +39690,7 @@ function marketWindowOf(contract, manifest) {
 // is 0x52, 'R', in keeping with the ASCII "ARN". A vote (27A.7.3) is "ARN" 'V'
 // (ballot.js, 2026-10-13), 77 bytes: the kind byte keeps them apart.
 
+
 const PUBLICATION_MAGIC = Uint8Array.from([0x41, 0x52, 0x4e]);   // "ARN"
 const PUBLICATION_KIND_ROUND = 0x52;                             // 'R'
 const PUBLICATION_BYTES = 36;
@@ -39663,6 +39794,7 @@ function publicationIsBeforeBeacon({ roundId, tx, txHeight, beaconHeight } = {})
 // (ALL-BUT-MIN-1727, 2026-09-29 17:27; contracts.js). A node holds such a round only when its contract is
 // exactly the one the series derives - index inside 0 .. round_count - 1, entry window the derived one
 // (seriesRoundCheck) - and refuses entries, locks and settlements for any other.
+
 
 
 
@@ -40008,6 +40140,7 @@ function seriesPublicationOutput(seriesIdBytes) {
 
 
 
+
 const gmIs32 = (b) => b instanceof Uint8Array && b.length === 32;
 const gmSame = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
 const at = (ms) => { try { return new Date(Number(ms)).toISOString(); } catch { return String(ms); } };
@@ -40155,6 +40288,7 @@ function gameMarketVoided(resolution, { market, manifest, nowMs }) {
 // taken from any seat and believed only once it hashes to the series id the round names (series.js seriesId). No Buffer here.
 
 
+
 function parseSeriesLine(line) {
   const [h, ...more] = String(line).trim().split(/\s+/);
   if (!h || !/^[0-9a-f]+$/i.test(h) || h.length % 2) throw new Error('a series line starts with its template, hex');
@@ -40207,6 +40341,7 @@ function seriesLineOf(template, encode = encodeRoundContract) {
 //          price to beat of 73999: 0.01 sat fee, 0.99 sat x odds): an order's fee is its market's rate (1 % by default) of
 //          the part that filled - held in its fee lock and paid out at settlement; what has not filled can be cancelled at
 //          no cost and comes back whole, its fee too. A VOID market gives everything back.
+
 
 
 
@@ -40525,6 +40660,7 @@ function batchVoidAskId({ roundId, k, batchId }) {
 //                       order); each claimed entry gets its winnings, less its sells' debt and fee, plus the rest of N and
 //                       of F it did not spend (the owner: "(a)" - a cancelled or partly filled order's rest comes back here,
 //                       as a seller's proceeds do); the fees due go to the nodes and the donation.
+
 
 const byIdOrder = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 const ledgerDemandAt = (o, q) => (q <= o.price ? (o.net * PRICE_SCALE) / q : 0n);   // order-book.js clearBatch's, the same
@@ -40877,6 +41013,7 @@ function bookSettlement({ positions, outcome, scalar = null }) {
 //   the join ends in state `picked` - Unity does not take it over.
 // - The outcome is the seats' GET /outcome, but believed only once its attestation verifies against the attestors the page
 //   pinned (`checkAttestation`, Ed25519 through WebCrypto); otherwise it is shown as unverified and nothing is concluded.
+
 
 
 
@@ -41580,6 +41717,7 @@ function myOrdersFromEntries({ entries, keys }) {
 
 
 
+
 const SALT_BYTES = 32;
 const VERDICT = Object.freeze({ WIN: 'WIN', DRAW: 'DRAW', LOSS: 'LOSS' });
 
@@ -41663,6 +41801,7 @@ const commitHex = (c) => toHex(c);
 //
 // A certificate stands when at least `threshold` distinct committee keys signed the same set with close <= at_ms <= close + window. Its time
 // is the latest of those signers' at_ms: the reveal window opens there.
+
 
 
 
@@ -41824,6 +41963,7 @@ function decodeSignedLockSet(bytes) {
 // close, and the reveals the seats hold - for any head-to-head game; which moves a game has, and what beats what, are the
 // game's own (its client and its decide adapter). The commitment is the protocol's (arena-protocol head-to-head.js); the
 // entry itself is built and handed over as a market pick's is (join.js entryFor, market.js submitPick), with `commit` set.
+
 
 
 
@@ -42086,6 +42226,7 @@ async function revealWhenCertified({ roundIdHex, entryIdHex, move, salt, nodes, 
 
 
 
+
 const GAME_INFO_DESCRIPTION_MAX = 500;
 const GAME_INFO_WEBSITE_MAX = 200;
 const GAME_INFO_SIGNATURE_BYTES = 64;
@@ -42156,6 +42297,7 @@ const gameTypeOf = (m) => (m && m.resultType === 2 ? 'market' : m && m.resultTyp
 //   manifest's clients[] - the same hashes the repo's client list pins and client-hash.mjs checks from outside the page. A
 //   file the manifest does not name is never run. The page then runs it in the same origin, so the wallet and the seed
 //   (sessionStorage / localStorage) are the one the player already has.
+
 
 
 
@@ -42792,6 +42934,7 @@ const relaySet = (urls) => [...new Set([...urls].map(canonicalRelay))];
 
 
 
+
 const ZAP_REQUEST_KIND = 9734;
 const ZAP_RECEIPT_KIND = 9735;
 /** A zap's message, in characters: the request travels in a URL, so it is kept short. */
@@ -42983,6 +43126,7 @@ function zapTotals(receipts, options = {}) {
 //
 // A PLAYER'S ADDRESS IS THEIR OWN WORD: the lud16 of their Nostr profile (kind 0) on the game's relay, signed by their
 // identity key. A game developer's is the one their developer key signed beside the manifest (game-info.js `lightning`).
+
 
 
 
@@ -43225,6 +43369,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          shopOf: shopOf, buyItem: buyItem, resendPaidRecords: resendPaidRecords, itemTermsOf: itemTermsOf, itemShareOn: itemShareOn, itemPriceOn: itemPriceOn, itemPriceFor: itemPriceFor, ITEM_DEV_SHARES: ITEM_DEV_SHARES, ITEM_DEV_SHARE_DEFAULT: ITEM_DEV_SHARE_DEFAULT, ownedItems: ownedItems, itemsKeyFor: itemsKeyFor, entryItemsFor: entryItemsFor,
          entryUnlocks: entryUnlocks, itemUnlocksOf: itemUnlocksOf,
          entryBreakdown: entryBreakdown, pendingWindowLine: pendingWindowLine, savedLockExpiration: savedLockExpiration,
+         localHostName: localHostName, keptNodes: keptNodes, putRoomy: putRoomy,
          toHex: toHex, fromHex: fromHex };
 })();
 if (typeof module !== "undefined") module.exports = ARENACLIENT;

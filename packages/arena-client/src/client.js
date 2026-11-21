@@ -1287,21 +1287,20 @@ export class Client {
    * nothing alone - every batch that times out goes to the peers, and a mark whose answer is not a receipt is refused.
    */
   #sendWithin(message, ms) {
-    if (!this.sock || this.sock.readyState !== 1) return this.send(message);
-    return new Promise((r) => {
-      let done = false;
-      const waiter = (a) => { if (done) return; done = true; clearTimeout(timer); r(a); };
-      const timer = setTimeout(() => {
-        if (done) return;
-        done = true;
-        const i = this.said.indexOf(waiter);
-        if (i >= 0) this.said.splice(i, 1);
-        this.batchesUnanswered++;
-        r(`error the node did not answer the batch within ${ms} ms`);
-      }, ms);
-      this.said.push(waiter);
-      this.sock.send(message);
-    });
+    // THROUGH send() (kanban #3216): one door for every frame on the socket, so whatever paces or watches send() paces this too
+    // (backpressure.test: batches sent beside it were never counted and a second publish ran while one was on a slow link). The
+    // waiter send() queued is taken out of `said` when the time is up, so later answers still reach their own sends.
+    const before = this.said.length;
+    const sent = this.send(message);
+    const waiter = this.said.length > before ? this.said[this.said.length - 1] : null;
+    let timer;
+    const late = new Promise((r) => { timer = setTimeout(() => {
+      const i = waiter ? this.said.indexOf(waiter) : -1;
+      if (i >= 0) this.said.splice(i, 1);
+      this.batchesUnanswered++;
+      r(`error the node did not answer the batch within ${ms} ms`);
+    }, ms); });
+    return Promise.race([sent, late]).finally(() => clearTimeout(timer));
   }
 
   /**
