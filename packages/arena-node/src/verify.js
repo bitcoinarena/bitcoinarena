@@ -805,6 +805,22 @@ export class Verifier {
     // Taken here, this seat's receipt reaches the peer on its next pull, and both seats sign DELIVERED over the transcript with the mark.
     // A DELIVERED run only, as the peer's own hold (pendingFinal): a run that is not delivered is signed stopped at the peer at its close.
     if (!markHere && have >= ask.tick && answer && answer.ok && answer.outcome === 'DELIVERED') {
+      // NOT AFTER A SEAT OF THE ROUND SIGNED THE STOPPED TRANSCRIPT (kanban #3224, #1489 sm1-round-1): the mark holder gives its own hold up
+      // (#3212, pendingFinal) twice HELD_FINAL_ASK_MS after it first saw it and signs the transcript without the mark, for good. A seat whose
+      // close came later than that (its replays queued behind a round end's others, or catching up after a restart) took the mark here and
+      // signed DELIVERED - measured: FAILED at one seat, DELIVERED at the other, never 2 of 2, the winner's run to §13C. The peers' results
+      // are pulled first (the gather); a stopped result another seat already signed is met: this seat signs that same stopped transcript.
+      try { await this.#gather(roundIdBytes, entryId); } catch { /* a peer that is down signed nothing we can read */ }
+      const stoppedElsewhere = this.round.results(roundIdBytes, entryId).some((r) => {
+        if (hex(r.nodePubkey) === hex(this.round.pubkey)) return false;
+        try { return decodePlayerResult(splitSignedResult(r.bytes).body).outcome !== 'DELIVERED'; } catch { return false; }
+      });
+      if (stoppedElsewhere) {
+        this.round.dropHeldFinalAsk(entryId);
+        if (this.holdSeen) this.holdSeen.delete(hex(entryId));
+        console.log(`[close] ${hex(entryId).slice(0, 16)}: a peer already signed the stopped transcript: the final mark at tick ${ask.tick} is not taken`);
+        return { signStopped: true };
+      }
       try {
         this.round.checkpoint(new Uint8Array(ask.mark));
         this.round.dropHeldFinalAsk(entryId);
