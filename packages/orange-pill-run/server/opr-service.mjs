@@ -90,6 +90,9 @@ export function createOpr(o = {}) {
       at_ms INTEGER NOT NULL, why TEXT, rows TEXT);
     CREATE TABLE IF NOT EXISTS bounty_claims (round TEXT PRIMARY KEY, player TEXT NOT NULL, ln_address TEXT NOT NULL, at_ms INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS auth_seen (id TEXT PRIMARY KEY, at_ms INTEGER NOT NULL);`);
+  // PAID WHEN (kanban #3265): a run may start before its entry is paid ("pending entry"); paid_ms is when lnd settled its invoice, and only a paid
+  // run is in the pot, on the board and on a list. Rows from before (paid, then started) are paid at their start
+  try { db.exec('ALTER TABLE attempts ADD COLUMN paid_ms INTEGER'); db.exec("UPDATE attempts SET paid_ms = started_ms WHERE paid_ms IS NULL AND started_ms IS NOT NULL AND state IN ('started', 'scored', 'rejected', 'timeout')"); } catch { /* there already */ }
   const q = (sql) => db.prepare(sql);
   const roundRow = (id) => q('SELECT * FROM rounds WHERE id = ?').get(String(id));
   const levels = new Map();   // round id -> built level
@@ -189,9 +192,11 @@ export function createOpr(o = {}) {
   }
 
   // ---------- attempts ----------
-  const usedBy = (round, player, t) => q(`SELECT COUNT(*) AS n FROM attempts WHERE round = ? AND player = ? AND (state IN ('started', 'scored', 'rejected', 'timeout')
-      OR (state = 'invoiced' AND invoice_expires_ms > ?))`).get(round, player, t).n;
-  const startedCount = (round) => q(`SELECT COUNT(*) AS n FROM attempts WHERE round = ? AND state IN ('started', 'scored', 'rejected', 'timeout')`).get(round).n;
+  // THE 5 (kanban #3248, #3265): a paid run counts for good; an unpaid one (pending entry, a submitted run waiting for its entry, a refused run
+  // whose invoice may still be paid) counts until its deadline - so never more than 5 runs at once, paid or not
+  const usedBy = (round, player, t) => q(`SELECT COUNT(*) AS n FROM attempts WHERE round = ? AND player = ? AND (paid_ms IS NOT NULL
+      OR (state NOT IN ('unpaid', 'expired') AND COALESCE(deadline_ms, invoice_expires_ms) > ?))`).get(round, player, t).n;
+  const startedCount = (round) => q('SELECT COUNT(*) AS n FROM attempts WHERE round = ? AND paid_ms IS NOT NULL').get(round).n;   // the pot: paid entries only
   const phaseOf = (r, t = now()) => (t >= r.end_ms || ['closed', 'listed'].includes(r.state) ? 'ended' : r.state !== 'ready' ? (r.state === 'posting' ? 'posting' : 'preparing')
     : t < r.start_ms ? 'soon' : t >= r.end_ms - cfg.lastCallMs ? 'last-call' : 'open');
   function carryIn(r) {
@@ -211,32 +216,54 @@ export function createOpr(o = {}) {
     const ph = phaseOf(r, t);
     if (ph === 'last-call') return { ok: false, why: 'no new attempts in the last 5 minutes of a round' };
     if (ph !== 'open') return { ok: false, why: `the round is not open (${ph})` };
-    const pending = q("SELECT * FROM attempts WHERE round = ? AND player = ? AND state = 'invoiced' AND invoice_expires_ms > ? ORDER BY created_ms LIMIT 1").get(r.id, player, t + 30000);
-    if (pending) return { ok: true, attempt: pending.id, invoice: pending.invoice, sats: r.entry_sats, expiresMs: pending.invoice_expires_ms, again: true };
     if (usedBy(r.id, player, t) >= r.max_attempts) return { ok: false, why: `all ${r.max_attempts} attempts of this round are used` };
-    const expirySeconds = Math.floor(Math.min(cfg.invoiceS * 1000, r.end_ms - cfg.lastCallMs - t) / 1000);
-    if (expirySeconds < 60) return { ok: false, why: 'no new attempts in the last 5 minutes of a round' };
+    // THE RUN OPENS AT ONCE (kanban #3265, the owner 2026-11-21: play at once with an empty new wallet): the level, a token and the entry invoice
+    // together; the invoice lives exactly as long as the run's 10 minutes, so an entry paid after the deadline is impossible
+    const deadline = Math.min(t + cfg.submitMs, r.end_ms);
+    const expirySeconds = Math.floor((deadline - t) / 1000);
+    if (expirySeconds < 60 || t >= r.end_ms - cfg.lastCallMs) return { ok: false, why: 'no new attempts in the last 5 minutes of a round' };
     let inv;
     try { inv = await invoices.create({ sats: r.entry_sats, memo: `Orange Pill Run ${r.id} entry`, expirySeconds }); }
     catch (e) { log(`entry invoice not made: ${e.message}`); return { ok: false, why: 'the entry invoice could not be made - try again in a minute' }; }
     // the count again after the wait: two starts at once never make a sixth
     if (usedBy(r.id, player, now()) >= r.max_attempts) return { ok: false, why: `all ${r.max_attempts} attempts of this round are used` };
     const id = randomBytes(16).toString('hex');
-    q(`INSERT INTO attempts (id, round, player, ip, invoice, paid_hash, invoice_expires_ms, created_ms, state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'invoiced')`)
-      .run(id, r.id, player, ip, inv.invoice, inv.hash, t + expirySeconds * 1000, t);
+    const token = randomBytes(32).toString('hex');
+    q(`INSERT INTO attempts (id, round, player, ip, invoice, paid_hash, invoice_expires_ms, created_ms, started_ms, token, deadline_ms, state)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`).run(id, r.id, player, ip, inv.invoice, inv.hash, t + expirySeconds * 1000, t, t, token, deadline);
     q('INSERT INTO players (pubkey, seen_ms) VALUES (?, ?) ON CONFLICT (pubkey) DO UPDATE SET seen_ms = excluded.seen_ms').run(player, t);
-    return { ok: true, attempt: id, invoice: inv.invoice, sats: r.entry_sats, expiresMs: t + expirySeconds * 1000 };
+    return { ok: true, attempt: id, state: 'pending-entry', invoice: inv.invoice, sats: r.entry_sats, expiresMs: t + expirySeconds * 1000,
+      token, startedMs: t, deadlineMs: deadline, level: levelFor(r) };
   }
   const levelFor = (r) => ({ round: r.id, chartDay: r.chart_day, candles: J(r.candles), seed: J(r.seed), gameVersion: r.game_version, levelHash: r.level_hash });
-  /** An invoiced attempt whose invoice lnd says is settled starts now: the attempt counts, its token is made (only here). */
+  /**
+   * THE ENTRY, READ FROM LND (kanban #3248, #3265). A run's invoice settled for the whole entry before its deadline: the run is paid (paid_ms) - a
+   * pending run is started, a submitted one waiting for its entry is scored and goes on the board. Not settled once the deadline passed (the
+   * invoice has expired with it): "entry not paid" - not ranked, not in the pot. A row of the earlier flow ('invoiced': paid first, then the
+   * token) is still settled as it was.
+   */
   async function settle(a) {
-    if (a.state !== 'invoiced') return a;
+    const open = ['pending', 'awaiting'].includes(a.state) || (a.state === 'rejected' && a.paid_ms == null && a.paid_hash);
+    if (a.state !== 'invoiced' && !open) return a;
     let l;
     try { l = await invoices.lookup(a.paid_hash); } catch (e) { log(`invoice ${String(a.paid_hash).slice(0, 12)} not read: ${e.message}`); return a; }
     const t = now(), r = roundRow(a.round);
+    if (open) {
+      const paidAt = Number.isFinite(l.settleMs) && l.settleMs > 0 ? l.settleMs : Math.min(t, a.deadline_ms);   // no settle time read: lnd's expiry (= the deadline) vouches
+      if (l.state === 'SETTLED' && l.paidMsat >= r.entry_sats * 1000 && paidAt <= a.deadline_ms + 5000) {
+        const next = a.state === 'pending' ? 'started' : a.state === 'awaiting' ? 'scored' : a.state;
+        if (q('UPDATE attempts SET paid_ms = ?, state = ? WHERE id = ? AND state = ? AND paid_ms IS NULL').run(Math.min(paidAt, t), next, a.id, a.state).changes) {
+          log(`attempt ${a.id.slice(0, 8)} of ${a.round}: entry paid${next === 'scored' ? ', run scored' : ''}`);
+          if (next === 'scored' && r.state === 'listed') refreshLists(r.id);
+        }
+      } else if (t > a.deadline_ms && a.state !== 'rejected') {   // the invoice expired with the deadline: not paid (or not in full) for good
+        q("UPDATE attempts SET state = 'unpaid', why = 'entry not paid - this run does not count' WHERE id = ? AND state = ? AND paid_ms IS NULL").run(a.id, a.state);
+      }
+      return q('SELECT * FROM attempts WHERE id = ?').get(a.id);
+    }
     if (l.state === 'SETTLED' && l.paidMsat >= r.entry_sats * 1000) {
       const deadline = Math.min(t + cfg.submitMs, r.end_ms);
-      q("UPDATE attempts SET state = 'started', started_ms = ?, token = ?, deadline_ms = ? WHERE id = ? AND state = 'invoiced'").run(t, randomBytes(32).toString('hex'), deadline, a.id);
+      q("UPDATE attempts SET state = 'started', started_ms = ?, paid_ms = ?, token = ?, deadline_ms = ? WHERE id = ? AND state = 'invoiced'").run(t, t, randomBytes(32).toString('hex'), deadline, a.id);
     } else if (l.state === 'CANCELED' || (l.state !== 'SETTLED' && t > a.invoice_expires_ms + 60000)) {
       q("UPDATE attempts SET state = 'expired' WHERE id = ? AND state = 'invoiced'").run(a.id);
     }
@@ -248,8 +275,11 @@ export function createOpr(o = {}) {
     a = await settle(a);
     const r = roundRow(a.round);
     if (a.state === 'invoiced') return { ok: true, state: 'invoiced', invoice: a.invoice, expiresMs: a.invoice_expires_ms };
-    if (a.state === 'started' && now() < a.deadline_ms) return { ok: true, state: 'started', token: a.token, startedMs: a.started_ms, deadlineMs: a.deadline_ms, level: levelFor(r) };
-    return { ok: true, state: a.state, why: a.why || null, score: J(a.score) };
+    if (a.state === 'pending' && now() <= a.deadline_ms) return { ok: true, state: 'pending-entry', paid: false, invoice: a.invoice, expiresMs: a.invoice_expires_ms, token: a.token, startedMs: a.started_ms, deadlineMs: a.deadline_ms, level: levelFor(r) };
+    if (a.state === 'awaiting') return { ok: true, state: 'pending-entry', paid: false, submitted: true, invoice: a.invoice, deadlineMs: a.deadline_ms, score: J(a.score) };
+    if (a.state === 'unpaid') return { ok: true, state: 'entry-not-paid', paid: false, why: a.why, score: J(a.score) };
+    if (a.state === 'started' && now() < a.deadline_ms) return { ok: true, state: 'started', paid: true, token: a.token, startedMs: a.started_ms, deadlineMs: a.deadline_ms, level: levelFor(r) };
+    return { ok: true, state: a.state, paid: a.paid_ms != null, why: a.why || null, score: J(a.score) };
   }
 
   function submit(player, body = {}, { ip = null } = {}) {
@@ -259,15 +289,16 @@ export function createOpr(o = {}) {
     if (!a || !a.token || tok.length !== a.token.length || !timingSafeEqual(Buffer.from(tok), Buffer.from(a.token))) return { ok: false, why: 'unknown token' };
     if (a.player !== player) return { ok: false, why: 'that token is not yours' };
     if (body.round != null && String(body.round) !== a.round) return { ok: false, why: 'that token is of another round' };
-    if (a.state !== 'started') return { ok: false, why: 'that token was used already' };
+    if (a.state !== 'started' && a.state !== 'pending') return { ok: false, why: a.state === 'unpaid' ? 'entry not paid - this run does not count' : 'that token was used already' };
     const r = roundRow(a.round);
+    const from = a.state;
     const reject = (why, extra = {}) => {
-      q("UPDATE attempts SET state = 'rejected', why = ?, submitted_ms = ?, log = ?, client = ?, flags = ? WHERE id = ? AND state = 'started'")
-        .run(why, t, body.log == null ? null : JSON.stringify(body.log).slice(0, cfg.bodyMost), JSON.stringify(body.client || {}).slice(0, 2000), JSON.stringify(extra.flags || {}), a.id);
+      q("UPDATE attempts SET state = 'rejected', why = ?, submitted_ms = ?, log = ?, client = ?, flags = ? WHERE id = ? AND state = ?")
+        .run(why, t, body.log == null ? null : JSON.stringify(body.log).slice(0, cfg.bodyMost), JSON.stringify(body.client || {}).slice(0, 2000), JSON.stringify(extra.flags || {}), a.id, from);
       log(`attempt ${a.id.slice(0, 8)} of ${a.round} refused: ${why}`);
       return { ok: false, why, closed: true };
     };
-    if (t > a.deadline_ms) { q("UPDATE attempts SET state = 'timeout', why = 'not submitted in time' WHERE id = ? AND state = 'started'").run(a.id); return { ok: false, why: 'the 10 minutes of this attempt are over', closed: true }; }
+    if (t > a.deadline_ms) { if (from === 'started') q("UPDATE attempts SET state = 'timeout', why = 'not submitted in time' WHERE id = ? AND state = 'started'").run(a.id); return { ok: false, why: 'the 10 minutes of this attempt are over', closed: true }; }
     const bad = logRefusal(body.log, { maxSteps: cfg.maxSteps, most: cfg.logPressesMost });
     if (bad) return reject(`malformed log: ${bad}`);
     if (body.log.v !== r.game_version) return reject(`wrong game version: the round plays ${r.game_version}`);
@@ -289,11 +320,25 @@ export function createOpr(o = {}) {
       if (n >= cfg.ipCrowd) flags.ipCrowd = n;
     }
     const review = Object.keys(flags).length ? 'pending' : 'none';
-    const done = q(`UPDATE attempts SET state = 'scored', submitted_ms = ?, log = ?, log_hash = ?, score = ?, flags = ?, client = ?, review = ? WHERE id = ? AND state = 'started'`)
-      .run(t, JSON.stringify(body.log), logHash, JSON.stringify(score), JSON.stringify(flags), JSON.stringify(body.client || {}).slice(0, 2000), review, a.id);
+    // a run whose entry is not paid yet is kept with its score, waiting: it is placed only once the entry settles before the deadline (#3265)
+    const to = from === 'started' ? 'scored' : 'awaiting';
+    const done = q(`UPDATE attempts SET state = ?, submitted_ms = ?, log = ?, log_hash = ?, score = ?, flags = ?, client = ?, review = ? WHERE id = ? AND state = ?`)
+      .run(to, t, JSON.stringify(body.log), logHash, JSON.stringify(score), JSON.stringify(flags), JSON.stringify(body.client || {}).slice(0, 2000), review, a.id, from);
     if (!done.changes) return { ok: false, why: 'that token was used already' };
-    if (r.state === 'listed') refreshLists(r.id);
-    return { ok: true, attempt: a.id, score };
+    if (to === 'scored' && r.state === 'listed') refreshLists(r.id);
+    return { ok: true, attempt: a.id, score, paid: to === 'scored', state: to === 'scored' ? 'scored' : 'pending-entry' };
+  }
+  /** Submit over the wire (kanban #3265): the entry is read from lnd before and, for a run still waiting for it, again after. */
+  async function submitChecked(player, body = {}, opts = {}) {
+    let a = q('SELECT * FROM attempts WHERE id = ?').get(String(body.attempt || ''));
+    if (a && a.player === player && a.state === 'pending') await settle(a);
+    const out = submit(player, body, opts);
+    a = q('SELECT * FROM attempts WHERE id = ?').get(String(body.attempt || ''));
+    if (out.ok && a && a.state === 'awaiting') {
+      a = await settle(a);
+      if (a.state === 'scored') return { ...out, paid: true, state: 'scored' };
+    }
+    return out;
   }
 
   // ---------- board, players, placement ----------
@@ -321,7 +366,7 @@ export function createOpr(o = {}) {
   function publicBoard(round, viewer = null) {
     const r = roundRow(round);
     const ended = now() >= r.end_ms;
-    const used = new Map(q(`SELECT player, COUNT(*) AS n FROM attempts WHERE round = ? AND state IN ('started', 'scored', 'rejected', 'timeout') GROUP BY player`).all(round).map((x) => [x.player, x.n]));
+    const used = new Map(q('SELECT player, COUNT(*) AS n FROM attempts WHERE round = ? AND paid_ms IS NOT NULL GROUP BY player').all(round).map((x) => [x.player, x.n]));
     return boardOf(round).map((b) => ({ rank: b.rank, name: b.name, player: b.player, score: b.total, timeS: b.timeS, attempts: used.get(b.player) || 0,
       placed: xOf(b.player).placed, replay: (ended && b.rank <= 10) || b.player === viewer ? `/replay/${b.attempt}` : null }));
   }
@@ -440,7 +485,8 @@ export function createOpr(o = {}) {
         const d = dayOf(now()), s = dayStart(d);
         if (d >= cfg.firstDay && now() >= s + cfg.alertAfterMs && !roundRow(d) && !alertedDays.has(d)) { alertedDays.add(d); alert(`Orange Pill Run ${d}: no daily round by ${new Date(s + cfg.alertAfterMs).toISOString().slice(11, 16)}Z`); }
       }
-      for (const a of q("SELECT * FROM attempts WHERE state = 'invoiced' ORDER BY created_ms LIMIT 50").all()) await settle(a);
+      for (const a of q(`SELECT * FROM attempts WHERE state IN ('invoiced', 'pending', 'awaiting') OR (state = 'rejected' AND paid_ms IS NULL AND paid_hash IS NOT NULL AND deadline_ms > ?)
+          ORDER BY created_ms LIMIT 100`).all(now() - 60000)) await settle(a);
       q("UPDATE attempts SET state = 'timeout', why = 'not submitted in time' WHERE state = 'started' AND deadline_ms < ?").run(now());
       for (const r of q(`SELECT * FROM rounds WHERE ${LIVE} AND end_ms <= ?`).all(now())) close(r, now());
       for (const r of q("SELECT * FROM rounds WHERE state = 'closed' AND end_ms + ? <= ?").all(cfg.verifyGraceMs, now())) makeLists(r, now());
@@ -557,7 +603,8 @@ export function createOpr(o = {}) {
         const mine = r ? q('SELECT * FROM attempts WHERE round = ? AND player = ? ORDER BY created_ms').all(r.id, me) : [];
         return send(200, { ok: true, pubkey: me, name: nameOf(me), x: x.x ? { username: x.x.username } : null, placed: x.placed, placedWhy: x.placed ? null : x.why,
           round: r ? r.id : null, used: r ? usedBy(r.id, me, now()) : 0, maxAttempts: r ? r.max_attempts : cfg.maxAttempts,
-          attempts: mine.map((a) => ({ attempt: a.id, state: a.state, why: a.why, score: J(a.score), startedMs: a.started_ms })) });
+          attempts: mine.map((a) => ({ attempt: a.id, state: a.state === 'pending' || a.state === 'awaiting' ? 'pending-entry' : a.state === 'unpaid' ? 'entry-not-paid' : a.state,
+            paid: a.paid_ms != null, why: a.why, score: J(a.score), startedMs: a.started_ms })) });
       }
       if (req.method === 'POST' && path === '/name') {
         const n = String(body.name || '').trim();
@@ -567,12 +614,12 @@ export function createOpr(o = {}) {
       }
       if (req.method === 'POST' && path === '/attempt') { const r = await startAttempt(me, { round: body.round, ip }); return send(r.ok ? 200 : 409, r); }
       if (req.method === 'POST' && path === '/attempt/check') { const r = await checkAttempt(me, body.attempt); return send(r.ok ? 200 : 404, r); }
-      if (req.method === 'POST' && path === '/submit') { const r = submit(me, body, { ip }); return send(r.ok ? 200 : 409, r); }
+      if (req.method === 'POST' && path === '/submit') { const r = await submitChecked(me, body, { ip }); return send(r.ok ? 200 : 409, r); }
       if (req.method === 'POST' && path === '/claim') { const r = claimBounty(me, body); return send(r.ok ? 200 : 409, r); }
       return send(404, { ok: false, why: 'no such route' });
     } catch (e) { log(`request failed: ${e.stack || e.message}`); return send(500, { ok: false, why: 'the round service failed on that' }); }
   }
 
-  return { db, cfg, tick, handle, testRound, ensureDaily, startAttempt, checkAttempt, submit, settle, boardOf, publicBoard, publicRound, currentRound, roundRow: (id) => roundRow(id),
+  return { db, cfg, tick, handle, testRound, ensureDaily, startAttempt, checkAttempt, submit, submitChecked, settle, boardOf, publicBoard, publicRound, currentRound, roundRow: (id) => roundRow(id),
     potOf: (id) => potOf(roundRow(id)), listsOf, decideList, rejectRow, disqualify, review, payable, claimBounty, xOf, postFields: (id) => postFields(roundRow(id)), close: () => db.close() };
 }

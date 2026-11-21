@@ -25,7 +25,7 @@ export function fakeLnd() {
   return {
     inv,
     async create({ sats, memo, expirySeconds }) { const hash = randomBytes(32).toString('hex'); inv.set(hash, { sats, memo, expirySeconds, state: 'OPEN', paidMsat: 0 }); return { hash, invoice: `lntb${sats}n1${hash.slice(0, 40)}` }; },
-    async lookup(hash) { const x = inv.get(hash); if (!x) throw new Error('unknown'); return { state: x.state, paidMsat: x.paidMsat }; },
+    async lookup(hash) { const x = inv.get(hash); if (!x) throw new Error('unknown'); return { state: x.state, paidMsat: x.paidMsat, settleMs: x.settleMs || null }; },
     pay(invoice, msat = null) { const h = [...inv.keys()].find((k) => invoice.endsWith(k.slice(0, 40))); const x = inv.get(h); x.state = 'SETTLED'; x.paidMsat = msat ?? x.sats * 1000; },
   };
 }

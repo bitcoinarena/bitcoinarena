@@ -5,38 +5,36 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { world, openRound, paidAttempt, keypair, logOf, at, MIN } from './server-helpers.mjs';
 
-test('#3248 a 6th attempt is refused; an unpaid invoice of the 5 is held until it expires', async () => {
+test('#3248 a 6th attempt is refused; an unpaid run of the 5 holds its place until its deadline', async () => {
   const w = world({ start: '2026-11-23T01:00:00Z' });
   const r = await openRound(w);
   const p = keypair();
   for (let i = 0; i < 4; i++) { const a = await paidAttempt(w, p.pk, r.id); assert.equal(a.state, 'started'); }
   const fifth = await w.opr.startAttempt(p.pk, { round: r.id });
-  assert.equal(fifth.ok, true);
-  const again = await w.opr.startAttempt(p.pk, { round: r.id });   // the open invoice is handed back, not a new one
-  assert.equal(again.attempt, fifth.attempt); assert.equal(again.again, true);
-  w.lnd.pay(fifth.invoice); await w.opr.checkAttempt(p.pk, fifth.attempt);
-  const sixth = await w.opr.startAttempt(p.pk, { round: r.id });
+  assert.equal(fifth.ok, true); assert.equal(fifth.state, 'pending-entry');
+  const sixth = await w.opr.startAttempt(p.pk, { round: r.id });   // the unpaid fifth counts (#3265)
   assert.equal(sixth.ok, false); assert.equal(sixth.why, 'all 5 attempts of this round are used');
+  w.lnd.pay(fifth.invoice); await w.opr.checkAttempt(p.pk, fifth.attempt);
+  assert.equal((await w.opr.startAttempt(p.pk, { round: r.id })).why, 'all 5 attempts of this round are used');
   assert.equal(w.lnd.inv.size, 5);
   // another player is not counted against this one
   assert.equal((await w.opr.startAttempt(keypair().pk, { round: r.id })).ok, true);
 });
 
-test('#3248 an attempt without a paid invoice gets no token; underpaid neither; an expired invoice frees its place', async () => {
+test('#3248 an underpaid entry never pays the run; an unknown token is refused', async () => {
   const w = world({ start: '2026-11-23T01:00:00Z' });
   const r = await openRound(w);
   const p = keypair();
   const s = await w.opr.startAttempt(p.pk, { round: r.id });
   assert.equal(w.lnd.inv.get([...w.lnd.inv.keys()][0]).sats, 100);
-  let c = await w.opr.checkAttempt(p.pk, s.attempt);
-  assert.equal(c.state, 'invoiced'); assert.equal(c.token, undefined);
   assert.equal(w.opr.submit(p.pk, { attempt: s.attempt, token: '', log: logOf(3) }).why, 'unknown token');
   w.lnd.pay(s.invoice, 99000);   // 99 sat
-  c = await w.opr.checkAttempt(p.pk, s.attempt);
-  assert.equal(c.state, 'invoiced');
+  let c = await w.opr.checkAttempt(p.pk, s.attempt);
+  assert.equal(c.state, 'pending-entry'); assert.equal(c.paid, false);
   assert.equal(w.opr.potOf(r.id), 0);
   w.clock.add(12 * MIN); await w.opr.tick();
-  assert.equal((await w.opr.checkAttempt(p.pk, s.attempt)).state, 'invoiced');   // underpaid: never a token
+  c = await w.opr.checkAttempt(p.pk, s.attempt);
+  assert.equal(c.state, 'entry-not-paid');   // 99 of 100 sat: never paid, never counted
   assert.equal(w.opr.potOf(r.id), 0);
   // someone else's attempt id is not yours
   assert.equal((await w.opr.checkAttempt(keypair().pk, s.attempt)).ok, false);
@@ -68,14 +66,14 @@ test('#3248 submit within 10 minutes; later the attempt is closed with 0', async
   assert.equal(w.opr.boardOf(r.id).length, 0);
 });
 
-test('#3248 no new attempt in the last 5 minutes; an invoice never outlives the cutoff', async () => {
+test('#3248 no new attempt in the last 5 minutes; an invoice never outlives the round', async () => {
   const w = world({ start: '2026-11-23T00:00:10Z' });
   const r = await openRound(w);
   w.clock.set(at('2026-11-23T23:50:00Z'));
   const p = keypair();
   const s = await w.opr.startAttempt(p.pk, { round: r.id });
   assert.equal(s.ok, true);
-  assert.ok(s.expiresMs <= at('2026-11-23T23:55:00Z'));
+  assert.ok(s.expiresMs <= r.end_ms && s.expiresMs === s.deadlineMs);   // #3265: the invoice lives as long as the run, never past the round
   w.clock.set(at('2026-11-23T23:55:00Z'));
   const late = await w.opr.startAttempt(p.pk, { round: r.id });
   assert.equal(late.ok, false); assert.match(late.why, /last 5 minutes/);

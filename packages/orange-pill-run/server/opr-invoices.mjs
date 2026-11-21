@@ -4,7 +4,7 @@
 // lnds (tools/faucet.mjs lncli: --lnddir, --network, --rpcserver; FAUCET_PAYERS=<lnddir>|<rpc host:port>): OPR_LNCLI, OPR_LND=<lnddir>|<rpc host:port>,
 // OPR_LN_NETWORK (testnet4). An attempt token is given only after lnd says the invoice is SETTLED for at least the entry.
 //   create({ sats, memo, expirySeconds }) -> { hash, invoice }
-//   lookup(hash) -> { state: 'OPEN' | 'SETTLED' | 'CANCELED' | 'ACCEPTED', paidMsat }
+//   lookup(hash) -> { state: 'OPEN' | 'SETTLED' | 'CANCELED' | 'ACCEPTED', paidMsat, settleMs }
 import { execFile } from 'node:child_process';
 
 export function lncliInvoices({ lncli, lnd, network = 'testnet4' } = {}) {
@@ -21,7 +21,7 @@ export function lncliInvoices({ lncli, lnd, network = 'testnet4' } = {}) {
     async lookup(hash) {
       if (!/^[0-9a-f]{64}$/.test(String(hash))) throw new Error('no hash');
       const r = await call(['lookupinvoice', hash]);
-      return { state: String(r.state || ''), paidMsat: Number(r.amt_paid_msat || 0) };
+      return { state: String(r.state || ''), paidMsat: Number(r.amt_paid_msat || 0), settleMs: Number(r.settle_date || 0) * 1000 || null };
     },
   };
 }
