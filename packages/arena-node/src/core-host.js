@@ -440,8 +440,15 @@ function build() {
     }
   }
   const modules = new Map();
+  // AN import() IS REFUSED WITH THE CORE'S OWN ERROR (kanban #3242, audit r10 hosting 1, critical): with no importModuleDynamically the
+  // rejection of import('node:fs') was an Error of this thread's realm, where code generation is on - e.constructor.constructor was a
+  // working Function and the core ran any code in the seat. The refusal is now an Error made in the core's context (taken before any
+  // core code runs), whose Function generates nothing (codeGeneration strings: false).
+  const CoreError = vm.runInContext('Error', context);
+  // (its code stays the one node gave before, so a core sees the same refusal as ever - only the realm changed)
+  const refuseImport = () => { const e = new CoreError('a core loads no module by import()'); e.code = 'ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING'; throw e; };
   const compile = (key, text, identifier) => {
-    const m = new vm.SourceTextModule(text, { context, identifier, cachedData: codeCache.get(key) });
+    const m = new vm.SourceTextModule(text, { context, identifier, cachedData: codeCache.get(key), importModuleDynamically: refuseImport });
     if (!codeCache.has(key)) codeCache.set(key, m.createCachedData());
     return m;
   };
