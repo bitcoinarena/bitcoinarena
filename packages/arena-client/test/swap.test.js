@@ -195,9 +195,10 @@ test('a swap\'s two legs try each one\'s own federation\'s seated gateways befor
   const FROM = 'a1'.repeat(32), TO = 'b2'.repeat(32);
   useSeatedGateways(async (fid) => (fid === TO ? ['https://seat-to'] : fid === FROM ? ['https://seat-from'] : []));
   try {
-    const listed = JSON.stringify(['https://gw-c', 'https://gw-b']);
+    // kanban #3029: a seated gateway is one its federation lists (the lock client's gateways()), so each federation's list names its seat
     const to = wallet(0n, { base: 0, ppm: 0 }), from = wallet(500000n, { base: 0, ppm: 0 });
-    to.gateways = async () => listed; from.gateways = async () => listed;
+    to.gateways = async () => JSON.stringify(['https://gw-c', 'https://gw-b', 'https://seat-to']);
+    from.gateways = async () => JSON.stringify(['https://gw-c', 'https://gw-b', 'https://seat-from']);
     noteClientFederation(to, TO); noteClientFederation(from, FROM);
     const recvOf = new Map(); let n = 0;
     to.receive = async (msat, gw) => { to.pending = BigInt(msat); const inv = `lnbcrt-${++n}-${msat}`; recvOf.set(inv, gw); return JSON.stringify({ invoice: inv, operation: 'op' + n }); };
