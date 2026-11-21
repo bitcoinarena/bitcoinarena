@@ -2125,6 +2125,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const got = configServesRound({ configHash: contract.configHash, height: contract.censusHeight, history: ballotTally.spans(toHex(contract.networkId)), siblings });
     return got.ok ? null : got.why;
   };
+  // THE BALLOT A DUTY DAY NAMES ITS CONFIG BY (kanban #3218): the same spans and siblings as configRefusal, and whether a proposal that
+  // would activate by the day's census height is still undecided here (then no config is known there: duty-poster.js dutyDayConfig)
+  const ballotForDuty = (contract) => {
+    if (!ballotTally || !contract || !(contract.networkId instanceof Uint8Array)) return null;
+    const net = toHex(contract.networkId);
+    const f = pluginForRound(contract, hosted);
+    const siblings = f.ok && f.core && f.core.configs instanceof Map ? [...f.core.configs.keys()] : null;
+    const pending = ballotTally.live(net) === null || ballotTally.historyAt(net, Number(contract.censusHeight)) === null;
+    return { history: ballotTally.spans(net), siblings, pending };
+  };
   // WHAT A PLAYER'S DONATION IN THIS ROUND PAYS (§0A.8): half to the network's set - the protocol devs - and
   // half to the round's game's set - its developer's, as its registration carries it, checked against its manifest. A
   // round of a game this node does not host, or with no network set, has no target, and its entries' donations are judged
@@ -14766,7 +14776,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // the creator of a grid announced here (POST /expected, its creator signature checked there) - a day marker's poster (kanban #1168)
       announcedCreatorOf: (idHex) => { const e = announced.get(String(idHex)); return e && e.creator ? String(e.creator) : null; },
       // and the whole announced grid: its game and first close, so a marker counts only for its own app's day (kanban #1204 FED-C1)
-      announcedOf: (idHex) => announced.get(String(idHex)) || null });
+      announcedOf: (idHex) => announced.get(String(idHex)) || null,
+      ballotFor: ballotForDuty /* kanban #3218 */ });
   };
   // A SLOW BODY IS DROPPED (kanban #1724, #1794): a request not received whole within REQUEST_MS (120 s, ARENA_REQUEST_TIMEOUT_MS;
   // Node's default is 300 s) ends, and the budget share its body held is freed

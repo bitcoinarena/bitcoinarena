@@ -32,6 +32,7 @@ import { peerEndpointRefusal } from './address-book.js';   // kanban #3090/#3093
 import { daySlotOf, targetDay, dayStartMs, DUTY_FALLBACK_MS, DUTY_BACKUP_AFTER_MS, DUTY_BACKUP_RANK_CAP } from '../../arena-protocol/src/duty.js';
 import { seriesId, isGridSeries } from '../../arena-protocol/src/series.js';
 import { takesNewRounds } from '../../arena-protocol/src/known-federations.js';
+import { configForNewRound } from '../../arena-protocol/src/ballot-chain.js';   // kanban #3218
 import { createGridBase, createDayDuty, DUTY_APPS } from './duty-day.js';
 import { buildGrid, publishGridTx, announceGrid, postSeriesLine } from './grid-build.js';
 import * as guard from './duty-guard.js';
@@ -163,6 +164,22 @@ export function dayTemplate({ held, family, networkId, game, ownRelay = null, re
 }
 
 /**
+ * THE CONFIG A DAY NAMES (kanban #3218, state audit #1489 sm1 census-1): the template carries the config of the last day it holds, and after
+ * a config activation that is the one the ballot replaced - a day created at or after the activation naming it is refused by every seat
+ * (ballot-chain.js configServesRound behind offerRefusal), and every later day copied it again, for good. A day names the config live at
+ * its census height, by the rule round-2of2 uses (configForNewRound: a config the ballot never named stays as it was). `ballot` is the
+ * seat's own ballot ({ history: its spans, siblings: the core's configs, pending }), null when the seat counts none. While a proposal that
+ * would activate by the census height is undecided (pending), no config is known, and no day is posted rather than one the seats refuse.
+ * -> { ok: true, configHash } | { ok: false, why }
+ */
+export function dutyDayConfig({ configHash, height, ballot }) {
+  if (!ballot) return { ok: true, configHash };
+  if (ballot.pending) return { ok: false, why: `the ballot has not decided every proposal that activates by census height ${height}: the config live there is not known yet` };
+  if (!(configHash instanceof Uint8Array) || configHash.length !== 32) return { ok: true, configHash };
+  return { ok: true, configHash: configForNewRound({ wanted: configHash, height, history: ballot.history, siblings: ballot.siblings || null }) };
+}
+
+/**
  * WHO POSTED A DAY (kanban #702 addition, 2026-10-26: "In health also say who posted that round" - "Since its pre deterministic"): the
  * creator key of the series its marked transaction publishes (`templateOf(idHex)` the line this node holds), its rank in the day's duty
  * order (1-based), and whether a fallback node posted it. Null poster when this node holds none of its series.
@@ -185,8 +202,9 @@ export function posterOf({ series, templateOf, order }) {
  *   env                       ARENA_DUTY_POST, ARENA_DUTY_WALLET, ARENA_DUTY_FEE_RATE, ARENA_DUTY_MAX_FEE_RATE, ARENA_DUTY_APPS,
  *                             ARENA_DUTY_ITEM_<APP>, ARENA_DUTY_PROTOCOL_<APP> (#1486), ARENA_FUNDED_ROUNDS_FILE, ARENA_DUTY_EMERGENCY
  *   nodeSecret                this node's identity secret: it signs the series it creates
- * and, once its seat listens, attach({ port, host, endpoint, heldTemplates, nameFunded, donationSetAt, nodeKey, endpointOf }) from server.js
- * (endpointOf: the seat's address book resolver, entry -> URL | null, kanban #3090/#3093).
+ * and, once its seat listens, attach({ port, host, endpoint, heldTemplates, nameFunded, donationSetAt, nodeKey, endpointOf, ballotFor }) from server.js
+ * (endpointOf: the seat's address book resolver, entry -> URL | null, kanban #3090/#3093; ballotFor(contract): the seat's ballot for a day's
+ * config, dutyDayConfig, kanban #3218).
  */
 export function createDutyPoster({ call, walletCall, networkIdHex, censusEntriesAt, dutyCensus, chainBlocks, dir, env = {}, nodeSecret,
   fetchFn = fetch, log = (l) => console.log(l), now = Date.now, everyMs = DUTY_EVERY_MS }) {
@@ -284,6 +302,11 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
   const openGrid = (game) => async (kind, opts) => {
     const base = kind.base || {};
     const t = templates.get(game);
+    // THE CONFIG LIVE AT THE DAY'S CENSUS HEIGHT (kanban #3218): the app's own (RPS: its manifest's) or the template's, moved on by the ballot
+    const named = dutyDayConfig({ configHash: (kind.fields && kind.fields.configHash) || t.contract.configHash, height: Number(kind.fields.censusHeight),
+      ballot: seat && typeof seat.ballotFor === 'function' ? seat.ballotFor({ ...t.contract, ...kind.fields }) : null });
+    if (!named.ok) { say({ dutyDay: 'CONFIG NOT KNOWN', game, why: named.why }); return { ok: false, why: named.why }; }
+    kind = { ...kind, fields: { ...kind.fields, configHash: named.configHash } };
     // THE PROTOCOL A GRID IS WRITTEN IN: the day's shape's, or the newest version's requirement when that is higher - raised to the
     // operator's floor for the app (ARENA_DUTY_PROTOCOL_<APP>, kanban #1486) once the census at that version can draw the committee
     const floor = dutyProtocolFloor(env, game);
