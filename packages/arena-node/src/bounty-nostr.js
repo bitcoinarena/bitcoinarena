@@ -8,6 +8,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { eventId } from './nostr-relay.js';
 import { bech32Decode, wsQuery } from './bounty-armada.js';
 import { checkedFetch } from './public-fetch.js';
+import { faucetUrlRefusal } from './feedback-store.js';
 import { readJsonBounded } from './lnurl-read.js';
 
 export const ARENA_NOSTR_PUBKEY = '09dbfd772e67e02440df604429f47c747668b82b8e8a5121d367976a06de2bf7';
@@ -16,7 +17,10 @@ const HEX64 = /^[0-9a-f]{64}$/;
 const hexOf = (b) => Buffer.from(b).toString('hex');
 
 /** An npub, nprofile, hex key or name@domain -> the hex pubkey, or null. NIP-05: https, public host, 16 KiB, 8 s. */
-export async function nostrPubkeyOf(input, { fetchFn = checkedFetch, timeoutMs = 8000 } = {}) {
+// kanban #2997 (audit faucet r2-1): a name@domain is fetched with the faucet's refusal (walletRefusal and the team hosts by name, #2683), as
+// armadaPubkeyOf does - checkedFetch's default refusal let FAUCET_TEAM_HOSTS names through
+const nip05Fetch = (url, o = {}) => checkedFetch(url, { signal: o.signal, headers: o.headers, refusal: faucetUrlRefusal });
+export async function nostrPubkeyOf(input, { fetchFn = nip05Fetch, timeoutMs = 8000 } = {}) {
   const s = String(input || '').trim();
   if (HEX64.test(s.toLowerCase())) return s.toLowerCase();
   const d = bech32Decode(s);
