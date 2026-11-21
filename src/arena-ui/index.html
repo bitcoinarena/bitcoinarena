@@ -1476,6 +1476,13 @@
     #arena-settings input[type=text], #arena-settings input[type=password], #arena-settings select { flex: 1 1 auto; min-width: 0; font: inherit; padding: 9px 10px;
       background: #0d1218; color: #e8eaed; border: 1px solid #3a4a5c; border-radius: 6px; }
     #arena-settings select { width: 100%; font-weight: 700; font-size: 17px; color: #f7931a; }
+    /* THE THREE INVITES TELL APART (kanban #3241, feedback #380: each field showed the referral link's start, the same in all three):
+       each field shows its end (...utm_content=tester-N), and a label beside it names it */
+    #arena-settings input[id^="arena-invite-"] { direction: rtl; }
+    #arena-settings .name-row:has(> #arena-invite-1)::before { content: 'Tester 1'; }
+    #arena-settings .name-row:has(> #arena-invite-2)::before { content: 'Tester 2'; }
+    #arena-settings .name-row:has(> #arena-invite-3)::before { content: 'Tester 3'; }
+    #arena-settings .name-row:has(> [id^="arena-invite-"])::before { flex: none; color: #9fb3c8; font-size: 13px; white-space: nowrap; }
     /* THE SEED, A SMALL MODAL OVER SETTINGS: 24 numbered words in a grid, then Verify one word at a time. */
     /* THE WALLET SCREEN (2026-10-10: "a new loading screen in each game - create a new wallet or restore
        wallet ... Also Login with Nostr"): shown at start in a browser that holds no wallet; above the loading screen */
