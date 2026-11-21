@@ -120,7 +120,36 @@ export function endpointsOf(committee, selfPubkey, endpointOf = null) {
 /** THE ONE REFUSAL A NODE THAT READS NO CHAIN GIVES FOR A ROUND'S CENSUS - and POST /round's for a paying round (RULED 2026-09-25). */
 export const NO_CHAIN_VIEW_WHY = 'this node has no chain view for that round, so it cannot say who is bonded';
 
-const whereOf = new WeakMap();                 // chain view -> its txid index (guardianBondsFor)
+// THE TXID INDEX PER BLOCK, NOT PER VIEW (kanban #3236, a seat's heap snapshot: one full index per view held every txid of every view at once):
+// a block's own index is built once and shared by every view that holds the block; a view keeps only the answers asked of it
+const WHERE_OF_BLOCK = new WeakMap();          // block -> { txids, at: txid hex -> position } | null (a transaction that does not parse)
+function whereInBlock(block) {
+  let w = WHERE_OF_BLOCK.get(block);
+  if (w === undefined) {
+    try {
+      const txids = (block.transactions || []).map((raw) => parseTransaction(raw).txid);
+      const at = new Map();
+      txids.forEach((t, position) => at.set(toHex(t), position));
+      w = { txids, at };
+    } catch { w = null; }
+    WHERE_OF_BLOCK.set(block, w);
+  }
+  return w;
+}
+const whereOf = new WeakMap();                 // chain view -> txid hex -> { block, txids, position } | null, the answers asked for
+export function whereInView(view, hex) {
+  const kept = view && typeof view === 'object' ? (whereOf.get(view) || whereOf.set(view, new Map()).get(view)) : null;
+  if (kept && kept.has(hex)) return kept.get(hex) || undefined;
+  let found = null;
+  const blocks = view && Array.isArray(view.blocks) ? view.blocks : [];
+  for (let i = blocks.length - 1; i >= 0 && !found; i--) {
+    const w = blocks[i] && typeof blocks[i] === 'object' ? whereInBlock(blocks[i]) : null;
+    const position = w ? w.at.get(hex) : undefined;
+    if (position !== undefined) found = { block: blocks[i], txids: w.txids, position };
+  }
+  if (kept) kept.set(hex, found);
+  return found || undefined;
+}
 
 /** A chain view's transactions by txid, indexed once per view object (censusFor). */
 const TXIDS_OF_VIEW = new WeakMap();
@@ -235,17 +264,8 @@ export function censusOfView(view, contract, { network = networkOf(contract.netw
 // WHERE EACH TRANSACTION OF A VIEW STANDS, ONCE PER VIEW: txid hex -> { block, i, txids }. A partial block (the seat's index, kanban #925)
 // answers its kept positions and branches (partial-view.js positionIn / branchIn); a whole block its index and a branch from all its txids.
 function whereIn(view) {
-  let where = view && typeof view === 'object' ? whereOf.get(view) : null;
-  if (!where) {
-    where = new Map();
-    for (const block of (view && Array.isArray(view.blocks) ? view.blocks : [])) {
-      let txids;
-      try { txids = (block.transactions || []).map((raw) => parseTransaction(raw).txid); } catch { continue; }
-      txids.forEach((t, i) => where.set(toHex(t), { block, txids, i }));
-    }
-    if (view && typeof view === 'object') whereOf.set(view, where);
-  }
-  return where;
+  // 2.0: answered off the per-block index (whereInView, kanban #3236), in this file's { block, txids, i } shape
+  return { get: (hex) => { const f = whereInView(view, hex); return f ? { block: f.block, txids: f.txids, i: f.position } : undefined; } };
 }
 const proofAt = (at) => ({ transaction: toHex(at.block.transactions[at.i]), position: positionIn(at.block, at.i), branch: branchIn(at.block, at.i, at.txids).map(toHex) });
 

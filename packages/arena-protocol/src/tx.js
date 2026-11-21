@@ -60,10 +60,13 @@ export function readVarint(bytes, at) {
   throw new Error('a length larger than this parser will read');
 }
 
+// VIEWS, NOT COPIES (kanban #3236, a heap snapshot of a seat: 74,118 kept parses, 388 MB - every script, witness item and previous txid
+// its own copied buffer). A parse's byte fields are views of the raw transaction: nothing writes them or the raw bytes in place (a raw is
+// a block's own slice, splitBlock), and a kept parse is kept with its raw anyway (census.js parsedKept).
 function readSlice(bytes, at, what) {
   const { value, next } = readVarint(bytes, at);
   const end = need(bytes, next, value, what);
-  return { bytes: bytes.slice(next, end), next: end };
+  return { bytes: bytes.subarray(next, end), next: end };
 }
 
 /**
@@ -93,7 +96,7 @@ export function parseTransaction(raw) {
   const inputs = [];
   for (let i = 0; i < ins.value; i++) {
     const end = need(raw, at, 36, 'outpoint');
-    const previousTxid = raw.slice(at, at + 32);
+    const previousTxid = raw.subarray(at, at + 32);
     const previousVout = (raw[at + 32] | (raw[at + 33] << 8)
       | (raw[at + 34] << 16) | (raw[at + 35] << 24)) >>> 0;
     const script = readSlice(raw, end, 'input script');
