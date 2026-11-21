@@ -16,10 +16,11 @@ import { execFileSync } from 'node:child_process';
 
 const DIR = mkdtempSync(join(tmpdir(), 'wf1489-a44-refute-22-s2-1-'));
 const SRC = fileURLToPath(new URL('../src/', import.meta.url));
-const FILES = ['core-sandbox.js', 'core-supervisor.js', 'core-host.js', 'core-driver.js', 'core-hash.js'];
+// 2.0: core-depth.js and its vendored acorn are part of the sandbox too
+const FILES = ['core-sandbox.js', 'core-supervisor.js', 'core-host.js', 'core-driver.js', 'core-hash.js', 'core-depth.js', 'vendor/acorn.mjs'];
 const install = (where) => {
   const d = join(DIR, where, 'src');
-  mkdirSync(d, { recursive: true });
+  mkdirSync(join(d, 'vendor'), { recursive: true });
   writeFileSync(join(DIR, where, 'package.json'), '{"type":"module"}');
   for (const f of FILES) copyFileSync(join(SRC, f), join(d, f));
   return pathToFileURL(join(d, 'core-sandbox.js')).href;
