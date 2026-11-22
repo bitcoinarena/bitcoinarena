@@ -70,11 +70,14 @@ const eventSize = (e, json, rows) => Buffer.byteLength(json) + EVENT_ROW_BYTES +
 const LOG_SHARE = 0.5;
 // AUTHORS WITH STANDING ARE NEVER EVICTED, AND A FRESH KEY PAYS FOR ITS WRITE WHILE A POOL IS NEARLY FULL (kanban #2847, ruling 2026-11-16; finding
 // wf1489-r25-nostr-1: #2677 evicted the NEWEST single-event holder, so a newcomer's profile lived only until the next stranger's fresh-key write).
-// Standing: a key that signed an identity proof for a counted round (`standing`: the identities the seats' season counts, read on the host) or
-// whose seed (30078) this relay has kept STANDING_SEED_MS (7 days) or more; the seats' node keys (`keep`) too. Outside the seed pool (#2858
+// Standing: a key that signed an identity proof for a counted round (`standing`: the identities the seats' season counts, read on the host);
+// the seats' node keys (`keep`) too. NO STANDING FROM A SEED'S AGE (kanban #2987, audit nostr-r1-1; supersedes the #2847 seed rule by owner
+// decision 2026-11-22): a seed kept STANDING_SEED_MS (7 days) gave its author standing, but a seed is free under any fresh key, so a patient
+// stranger parked one per key, waited a week and filled the pools with keys nobody could evict. Outside the seed pool (#2858
 // stands there) room is made only from authors WITHOUT standing, oldest-arrived event first; with none left the write is refused. And an author
 // this relay has never kept an event from must carry NIP-13 proof of work while the pool it writes to is over POW_FILL (90 %) full: difficulty
 // POW_BASE (20) leading zero bits of its id, 2 more for every further 1 % of fill, at most POW_MAX (28); refused as 'pow: difficulty N required'.
+// STANDING_SEED_MS no longer gives standing (kanban #2987); kept exported for the tests that move the clock past it
 export const STANDING_SEED_MS = 7 * 86400000, POW_FILL = 0.9, POW_BASE = 20, POW_MAX = 28;
 /** The difficulty an unseen author needs at a pool's fill (0..1), or 0 below POW_FILL. */
 export const powRequired = (fill, { powFill = POW_FILL, powBase = POW_BASE, powMax = POW_MAX } = {}) => (fill > powFill ? Math.min(powMax, powBase + 2 * Math.floor((fill - powFill) * 100 + 1e-9)) : 0);
@@ -367,8 +370,8 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   // largest holder that gives back for another author's write; it still rolls out its own oldest (step 3, its quota).
   const keepList = (Array.isArray(keep) ? keep : [...(keep || [])]).map((k) => String(k).toLowerCase()).filter((k) => HEX64.test(k));
   const keepJson = JSON.stringify(keepList), keepSet = new Set(keepList);
-  // kanban #2847: standing - the kept node keys, the counted identities (`standing()`, read again each call), a seed kept 7 days here
-  const seedKept = db.prepare(`SELECT 1 AS x FROM events WHERE pubkey = ? AND kind = ${SEED_KIND} AND COALESCE(kept_ms, created_at * 1000) <= ? LIMIT 1`);
+  // kanban #2847: standing - the kept node keys, the counted identities (`standing()`, read again each call). kanban #2987 (owner decision
+  // 2026-11-22, supersedes the #2847 seed rule): a seed kept 7 days here no longer gives standing - only the keep list and counted identities do
   // ONCE PER STANDING SET, NOT PER EVENT (kanban #3061, audit nostr r4-2-1): every EVENT copied the whole standing set (and its JSON) before the
   // PoW check; the host swaps the set every 10 minutes, so the lower-cased copy and its JSON (with the keep list) are kept per set it hands out
   let idsOf = null, idsSize = -1, idsCopy = new Set(), idsJson = JSON.stringify(keepList);
@@ -384,7 +387,7 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
     } catch { return new Set(); }
   };
   const standingJsonNow = () => { identities(); return idsJson; };
-  const hasStanding = (pubkey, ids = identities()) => keepSet.has(pubkey) || ids.has(pubkey) || !!seedKept.get(pubkey, now() - STANDING_SEED_MS);
+  const hasStanding = (pubkey, ids = identities()) => keepSet.has(pubkey) || ids.has(pubkey);   // kanban #2987: no seed-age standing
   const seenAuthor = db.prepare('SELECT 1 AS x FROM seen_authors WHERE pubkey = ?');
   const markSeen = db.prepare('INSERT OR IGNORE INTO seen_authors (pubkey) VALUES (?)');
   // the oldest-arrived event of an author without standing in a pool (never the writer's)
@@ -393,7 +396,7 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   // on the relay's one loop. It now walks the pool's holders by their oldest-arrived row (holders.first, kept exact by ev_hold_drop), so a
   // standing author costs one step whatever it holds; the victim is still the pool's oldest-arrived event of an author without standing
   const oldestUnstanding = db.prepare(`SELECT e.id FROM holders h JOIN main.events e ON e.rowid = h.first WHERE h.pool = ? AND h.pubkey != ? AND h.pubkey NOT IN (SELECT value FROM json_each(?))
-    AND NOT EXISTS (SELECT 1 FROM main.events s WHERE s.pubkey = h.pubkey AND s.kind = ${SEED_KIND} AND COALESCE(s.kept_ms, s.created_at * 1000) <= ?) ORDER BY h.first ASC LIMIT 1`);
+    ORDER BY h.first ASC LIMIT 1`);   // kanban #2987: standing is the keep list and the counted identities only (no seed-age clause)
   // kanban #3004 (audit nostr r3 #1): the standing check is asked per candidate through ev_author (pubkey, kind, d) - the NOT IN read every kept seed
   // (kept_ms has no index) on every call, so 90,000 parked free seeds made each write into a full pool ~20x slower on the relay's one loop
   const clients = new Set();
@@ -788,10 +791,10 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
                   let victim = null;
                   const q = seed ? null : poolUse.get(Q);   // 1. never across the seeds' quota
                   // 1. the other pool over its share gives back: its oldest-arrived event of an author without standing (kanban #2847)
-                  if (q && q[dim] > share(Q)) victim = oldestUnstanding.get(Q, e.pubkey, standingJson, now() - STANDING_SEED_MS);
+                  if (q && q[dim] > share(Q)) victim = oldestUnstanding.get(Q, e.pubkey, standingJson);
                   // 2. OUTSIDE THE SEED POOL (kanban #2847): the pool's oldest-arrived event of an author without standing - never the newest (the
                   // newcomer rule of #2677 let the next stranger erase it), never an author with standing; none: step 3, else refused
-                  if (!victim && !seed) victim = oldestUnstanding.get(P, e.pubkey, standingJson, now() - STANDING_SEED_MS);
+                  if (!victim && !seed) victim = oldestUnstanding.get(P, e.pubkey, standingJson);
                   if (!victim && seed) {   // 2. (the seed pool, as #2858 left it)
                     const mine = holderUse.get(e.pubkey, P) || { n: 0, b: 0 }, h = largest[dim].get(P, e.pubkey, keepJson);
                     // THE ONE-EVENT-PER-KEY MASS (kanban #2677, #1489 r2-nostr-11): strangers filled the total with ONE event under each fresh key,
