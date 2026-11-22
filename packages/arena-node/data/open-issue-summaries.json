@@ -2162,5 +2162,25 @@
  "3327": {
   "text": "Lightning payouts: the payout table and the pot bar disagree on season spend",
   "kind": "bug"
+ },
+ "3337": {
+  "text": "BTC Up/Down game: a backup round can be open and assigned with its primary on the same market",
+  "kind": "bug"
+ },
+ "3338": {
+  "text": "Other: duty postings can come from ranks outside the published roster and past its cap",
+  "kind": "bug"
+ },
+ "3339": {
+  "text": "Federation: one seat can return a different halt proof than the others for the same halt",
+  "kind": "bug"
+ },
+ "3340": {
+  "text": "Slashing: some halted liquidations never reach a terminal state",
+  "kind": "bug"
+ },
+ "3341": {
+  "text": "Committees and bonds: bonding can fail with a raw error when the node has no public endpoint",
+  "kind": "bug"
  }
 }
