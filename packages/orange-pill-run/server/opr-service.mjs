@@ -625,10 +625,9 @@ export function createOpr(o = {}) {
   }
   function publicBoard(round, viewer = null) {
     const r = roundRow(round);
-    const ended = now() >= r.end_ms;
     const used = new Map(q('SELECT player, COUNT(*) AS n FROM attempts WHERE round = ? AND paid_ms IS NOT NULL GROUP BY player').all(round).map((x) => [x.player, x.n]));
     return boardOf(round).map((b) => ({ rank: b.rank, name: b.name, key: rowKeyOf(b.player), player: b.player, score: b.total, timeS: b.timeS, attempts: used.get(b.player) || 0,
-      placed: xOf(b.player, r).placed, replay: (ended && b.rank <= 10) || b.player === viewer ? `/replay/${b.attempt}` : null }));
+      placed: xOf(b.player, r).placed, replay: `/replay/${b.attempt}` }));   // #3336: every row's best run is public, during the round too (owner 2026-11-22)
   }
 
   /**
@@ -960,8 +959,10 @@ export function createOpr(o = {}) {
         if (!a || !visible(r)) return send(404, { ok: false, why: 'no such run' });
         let viewer = null;
         if (req.headers.authorization) { const w = authOf(req, path, raw); if (w.ok) viewer = w.pubkey; }
-        const top = now() >= r.end_ms && boardOf(r.id).some((b) => b.attempt === a.id && b.rank <= 10);
-        if (!top && viewer !== a.player) return send(403, { ok: false, why: 'replays of a round are public after it ends, for its top 10; your own runs always' });
+        // #3336 (owner 2026-11-22: "Und wir wollen alle Replays sehen"): the best run of every board row is public at any time, also while the
+        // round runs; any other run (an older, weaker one; a disqualified player's) only to its own player
+        const onBoard = boardOf(r.id).some((b) => b.attempt === a.id);
+        if (!onBoard && viewer !== a.player) return send(403, { ok: false, why: 'only the best run of each leaderboard row is public; your own runs always' });
         return send(200, { ok: true, attempt: a.id, name: nameOf(a.player), log: J(a.log), score: J(a.score), level: levelFor(r) });
       }
       // signed-in doors

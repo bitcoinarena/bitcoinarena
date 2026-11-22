@@ -75,7 +75,7 @@ test('#3249 the board: best per player; tie on score -> shorter time, then the e
   const board = w.opr.boardOf(r.id);
   assert.deepEqual(board.map((x) => [x.player, x.total, x.rank]), [[a.pk, 80, 1], [c.pk, 80, 2], [b.pk, 80, 3]]);
   const pub = w.opr.publicBoard(r.id);
-  assert.equal(pub[0].attempts, 3); assert.equal(pub[0].replay, null);   // replays of a running round are not public
+  assert.equal(pub[0].attempts, 3); assert.ok(pub.every((x) => x.replay === `/replay/${board.find((b) => b.rank === x.rank).attempt}`));   // #3336: every row's best run, while the round runs
 });
 
 test('#3249 bot signals: too regular, identical logs across accounts, many accounts on one address, a hidden tab - stored, under review', async () => {
