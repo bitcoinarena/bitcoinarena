@@ -7853,7 +7853,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       const board = box.querySelector('.board'), foot = box.querySelector('.foot');
       const dayButtons = Array.from(box.querySelectorAll('.days button'));
       const POLL_MS = ARENACLIENT.SEASON_POLL_MS || 30000;
-      const s = { open: false, game: null, days: 7, timer: null, ask: 0, book: null, seen: null };
+      const s = { open: false, game: null, days: 7, timer: null, ask: 0, book: null, seen: null, kept: new Map() };
       const myBadges = box.querySelector('.mybadges');
       // THE ROWS IN REACT (kanban #564, the Arena page's bundle: window.ArenaSeason): drawn from the last board, again whenever a
       // player's badges come in
@@ -7953,8 +7953,14 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           .then((v) => { if (v.ok && !answered && s.open && ask === s.ask) { draw(v); window.ArenaText.say(state, 'Updating from the nodes \u2026');
             // the kept board stands: the bar does not run on for slow seats, their answer still replaces it when it comes
             setTimeout(() => { if (!answered && ask === s.ask) { barDone(); window.ArenaText.say(state, ''); } }, 15000); } }, () => {});
+        // THE NODES' LAST BOARD OF THIS GAME AND WINDOW IN THIS TAB, AT ONCE (kanban #3289), when the site kept none: the nodes' new answer replaces it
+        const keptKey = g.name + '|' + s.days, keptHere = live && s.kept.get(keptKey);
+        if (keptHere && !answered && !board.children.length) { draw(keptHere); window.ArenaText.say(state, 'Updating from the nodes \u2026'); }
+        // EIGHT SEATS AT ONCE, 45 s EACH (kanban #3289, measured on the stage 2026-11-22: a seat builds its network season in 22-50 s, past the 12 s
+        // the board gave it, so no node's board ever came; the seat keeps what it built 5 min, so the next ask is quick)
         const v = await ARENACLIENT.fetchSeason({ nodes: Array.isArray(g.nodes) ? g.nodes : [], game: g.name, days: s.days, title: g.title || g.name,
-          viewer: viewer(), fetch: (u, o) => fetch(u, o), via, timeout, race: 4 });
+          viewer: viewer(), fetch: (u, o) => fetch(u, o), via, timeout, race: 8, answerMs: 45000 });
+        if (v.ok) { s.kept.set(keptKey, v); if (s.kept.size > 16) s.kept.delete(s.kept.keys().next().value); }
         answered = true;
         if (!s.open || ask !== s.ask) return;     // closed meanwhile, or a newer ask (a day switch) is under way
         barDone();
