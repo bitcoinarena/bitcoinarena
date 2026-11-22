@@ -26,11 +26,12 @@ import { ipKey } from '../../arena-node/src/faucet.js';
 const DAY_MS = 86400000, MIN_MS = 60000;
 export const DEFAULTS = Object.freeze({
   firstDay: '2026-11-23', daily: true, entrySats: 0, maxAttempts: 5, submitMs: 10 * MIN_MS, lastCallMs: 5 * MIN_MS, invoiceS: 600,
-  verifyGraceMs: 60 * MIN_MS, bountySats: 2000, bountyClaimMs: 7 * DAY_MS, alertAfterMs: 15 * MIN_MS, fastSlackMs: 1000, maxSteps: 180 * 60,
+  verifyGraceMs: 60 * MIN_MS, bountySats: 10000,   // the play bounty in real sats (owner 2026-11-22: 10,000; it was 2,000) - every round reads it here, none stores its own
+  bountyClaimMs: 7 * DAY_MS, alertAfterMs: 15 * MIN_MS, fastSlackMs: 1000, maxSteps: 180 * 60,
   confirmations: 1, publicBases: ['https://testnet-stage.bitcoinarena.io/api/opr'], adminSha: '', workerKey: '', showTest: false, ipCrowd: 3,
   testMinutesMost: 24 * 60, logPressesMost: 6000, bodyMost: 256 * 1024, ipAttemptsShare: 2,
 });
-// FREE ROUNDS (kanban #3273, owner 2026-11-22: "a free round - no testnet sats, but 2,000 real sats for the winner"): a round made now has
+// FREE ROUNDS (kanban #3273, owner 2026-11-22: "a free round - no testnet sats, but 2,000 real sats for the winner" - since 10,000, #3251): a round made now has
 // entry_sats 0. A free run starts at once (no invoice, no lnd), counts as paid (paid_ms = its start), is scored at submit; the round has no pot
 // and no pot list - only the bounty list. A round made earlier with entry_sats > 0 keeps the paid path below unchanged
 export const AUTH_AGE_MOST_S = 60;

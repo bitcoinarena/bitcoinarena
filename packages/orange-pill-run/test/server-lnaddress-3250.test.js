@@ -108,7 +108,7 @@ test('#3250 owner rule: the top player has no address - rank 2 with one gets the
   w.clock.set(r.end_ms); await w.opr.tick(); w.clock.add(60 * MIN); await w.opr.tick();
   const b = listOf(w, r, 'bounty');
   assert.equal(b.rows.length, 1);
-  assert.equal(b.rows[0].player, ps[1].pk); assert.equal(b.rows[0].sats, 2000); assert.equal(b.rows[0].lnAddress, 'second@walletofsatoshi.com');
+  assert.equal(b.rows[0].player, ps[1].pk); assert.equal(b.rows[0].sats, 10000); assert.equal(b.rows[0].lnAddress, 'second@walletofsatoshi.com');
   assert.deepEqual(b.rows[0].skipped.map((x) => [x.player, x.rank, x.why]), [[ps[0].pk, 1, NO_LN_ADDRESS]]);
   // the pot is not touched by the rule; each row names the stored address (null when none)
   assert.deepEqual(listOf(w, r, 'pot').rows.map((x) => [x.player, x.lnAddress]), [[ps[0].pk, null], [ps[1].pk, 'second@walletofsatoshi.com'], [ps[2].pk, 'third@walletofsatoshi.com']]);
@@ -148,9 +148,9 @@ test('#3250 owner rule: nobody with an address - no bounty row; the bounty lapse
   assert.equal(listOf(w, r, 'pot').rows.length, 2);
   assert.equal(listOf(w, r, 'pot').carrySats, 0);
   assert.equal(w.opr.claimBounty(ps[0].pk, { round: r.id }).ok, false);
-  // the next round's bounty is the plain 2,000 again: nothing carried
+  // the next round's bounty is the plain 10,000 again: nothing carried
   w.clock.set(Date.parse('2026-11-24T01:00:00Z')); const next = await openRound(w, '2026-11-24');
-  assert.equal(w.opr.publicRound(next).bountySats, 2000);
+  assert.equal(w.opr.publicRound(next).bountySats, 10000);
 });
 
 test('#3250 payable: an approved list names each row\'s Lightning address', async () => {
