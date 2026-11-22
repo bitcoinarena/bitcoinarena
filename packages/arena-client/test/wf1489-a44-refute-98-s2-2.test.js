@@ -16,7 +16,7 @@ const NOW = 1_800_000_000_000;
 const make = (win) => new Function('window', 'Date', SRC + '\nreturn { joinWaitLine, sayJoining };')(win, { now: () => win.now });
 
 test('the page: a reloaded round link is joined with next + link, and its own countdown says "round starts in"', () => {
-  assert.match(HTML, /window\.ARENA_LOBBY_ACT\.join\(id, \{ holdUntilMs: startMs, next: true, link: true \}\)/);
+  assert.match(HTML, /window\.ARENA_LOBBY_ACT\.join\(id, \{ holdUntilMs: holdMs, next: true, link: true \}\)/);
   assert.match(HTML, /join\.stage = \(next && !link \? 'next round starts in ' : 'round starts in '\)/);
   assert.match(HTML, /const join = window\.ARENA_JOIN = \{[^}]*next: !!next \};\s*\n\s*sayJoining\(join,/);
 });
