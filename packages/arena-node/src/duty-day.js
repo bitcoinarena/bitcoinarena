@@ -182,7 +182,7 @@ export function createGridBase({ chainCall, prepare = null, censusEntriesAt, con
       const f = guard.dutyFieldsOf(game, picked.pick, { core: game === 'nextblock' ? cores.nextblock : cores.rps,
         preferCore: pin && pin.fields.simCoreHash ? toHex(pin.fields.simCoreHash) : '', base: rpsBase, fromHex });
       if (!f.ok) return { ok: false, why: f.why };
-      return { ok: true, fields: f.fields, periodMs: f.periodMs, marketTerms: f.marketTerms, version: picked.pick.version, id: picked.pick.id, hosts: `${picked.have}/${picked.need}`,
+      return { ok: true, fields: f.fields, configs: f.configs || null, periodMs: f.periodMs, marketTerms: f.marketTerms, version: picked.pick.version, id: picked.pick.id, hosts: `${picked.have}/${picked.need}`,
         requiredProtocol: picked.pick.requiredProtocolVersion };
     }
     const use = v.use === 'pin' ? pin : builtinFor(game);
