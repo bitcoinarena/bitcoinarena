@@ -73,7 +73,8 @@ test('an installed package refused this once is not advertised away', async () =
   const { hostedGameIdsOf } = await import('../src/apps.js');
   const n = node();
   const named = [...await hostedGameIdsOf(repo, ['nextblock']), RPS_ID].sort();
-  n.state.save({ hostedGames: named, advertProtocols: (await import('../../arena-protocol/src/constants.js')).SUPPORTED_PROTOCOL_VERSIONS });
+  // 2.0: the audit role already granted (auditGrantDue), so the only reason for an update would be the refused package
+  n.state.save({ hostedGames: named, auditGranted: true, advertProtocols: (await import('../../arena-protocol/src/constants.js')).SUPPORTED_PROTOCOL_VERSIONS });
   writeFileSync(join(n.home, 'node.db.plugins', RPS_ID, 'package.json'), '{ half written');   // the check fails this once
   assert.deepEqual(await refreshHostedGames({ home: n.home, release: repo, state: n.state, chainKit: n.chainKit, post: true }), { ok: true, unchanged: true });
   assert.equal(n.sent.length, 0, 'no update dropping the game');
