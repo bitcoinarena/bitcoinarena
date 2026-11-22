@@ -69,7 +69,7 @@ export function introBoard(board, me, n = INTRO_TOP) {
   return { rows: top, own, empty: top.length ? null : "No run yet - be the first" };
 }
 
-/** A FREE ROUND (kanban #3273, owner 2026-11-22): entry 0 - no wallet, no balance, no faucet; the 10,000 real sats still go to the winner. */
+/** A FREE ROUND (kanban #3273, owner 2026-11-22): entry 0 - no wallet, no balance, no faucet; the 5,000 real sats still go to the winner. */
 export const isFree = (round) => !!round && !(Number(round.entrySats) > 0);
 export const FREE_LABEL = "Play · free";
 export function introModel({ round, me, board, wallet, nowMs = Date.now(), loading = false, opened = [], top = INTRO_TOP }) {
@@ -152,7 +152,7 @@ export function payableOf(wallet, entry = 100) {
 }
 
 /** The daily prize line (#3251): { text, small } - a test round's says from when (the first daily round) or "Daily:". */
-export const PRIZE_SATS = 10000, FIRST_DAILY_MS = Date.UTC(2026, 10, 23), FIRST_DAILY_WORDS = "23 Nov";
+export const PRIZE_SATS = 5000, FIRST_DAILY_MS = Date.UTC(2026, 10, 23), FIRST_DAILY_WORDS = "23 Nov";
 export function prizeLine(round, nowMs = Date.now()) {
   if (!round) return null;
   const sats = fmtSats(round.bountySats > 0 ? round.bountySats : PRIZE_SATS);
@@ -189,7 +189,7 @@ export function resultModel({ res, parTime, timePerS = 20, entry, entryWhy, befo
   out.beat = !before ? (after ? "Your first score of the round" : null) : res.total > before.total ? "New best - you beat your " + fmtSats(before.total) : "Your best stays " + fmtSats(before.total);
   // the prize, once more on the result (#3251, owner 2026-11-22)
   if (round) { const sats = fmtSats(round.bountySats > 0 ? round.bountySats : PRIZE_SATS);
-    // one line (owner 2026-11-22, iPhone): "Rank 2 · daily best wins 10,000 real sats"
+    // one line (owner 2026-11-22, iPhone): "Rank 2 · daily best wins 5,000 real sats"
     out.prize = (after && after.rank ? "Rank " + after.rank + " · d" : round.test && nowMs < FIRST_DAILY_MS ? "From " + FIRST_DAILY_WORDS + ": d" : "D") + "aily best wins " + sats + " real sats"; }
   if (me) out.left = "Attempts left: " + Math.max(0, max - usedOf(me, opened)) + " of " + max;   // #3251: this run counts, whatever /me said before it
   // #3251: not eligible - said plainly, once (owner 2026-11-22)

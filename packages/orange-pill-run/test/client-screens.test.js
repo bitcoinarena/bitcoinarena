@@ -9,7 +9,7 @@ import { RULES } from "../client/src/rules.js";
 
 const T0 = Date.parse("2026-11-23T10:00:00Z");
 const round = (o = {}) => ({ id: "2026-11-23", number: 1, test: false, phase: "open", startMs: Date.parse("2026-11-23T00:00:00Z"), endMs: Date.parse("2026-11-24T00:00:00Z"),
-  entrySats: 100, maxAttempts: 5, split: [50, 30, 20], potSats: 1200, bountySats: 10000, best: { score: 1234, timeS: 41.25, name: "alice" }, ...o });
+  entrySats: 100, maxAttempts: 5, split: [50, 30, 20], potSats: 1200, bountySats: 5000, best: { score: 1234, timeS: 41.25, name: "alice" }, ...o });
 const me = (o = {}) => ({ ok: true, name: "bob", rowKey: "kb", used: 2, maxAttempts: 5, x: null, placed: false, attempts: [
   { attempt: "a1", state: "scored", score: { total: 700, timeS: 50 } }, { attempt: "a2", state: "scored", score: { total: 980, timeS: 44 } }], ...o });
 const board = [{ rank: 1, name: "alice", key: "ka", score: 1234, timeS: 41.25 }, { rank: 4, name: "bob", key: "kb", score: 980, timeS: 44 }];
@@ -19,7 +19,7 @@ test("#3251 the intro: one line, bounty, best, pot and split, attempts, own best
   const m = introModel({ round: round(), me: me(), board, wallet: W(), nowMs: T0 });
   assert.equal(m.line, "Run yesterday's Bitcoin chart. Tap to jump. Don't fall.");
   assert.equal(m.bounty, null);   // the prize line says it (owner 2026-11-22)
-  assert.deepEqual(m.prize, { text: "🏆 Daily best score wins 10,000 real sats", small: "needs X + Lightning address" });
+  assert.deepEqual(m.prize, { text: "🏆 Daily best score wins 5,000 real sats", small: "needs X + Lightning address" });
   assert.equal(m.best, "1,234 in 41.3 s by alice");
   assert.equal(m.pot, "1,200 testnet sats · split 50 / 30 / 20");
   assert.equal(m.attempts, "Your attempts: 2 of 5");
@@ -276,12 +276,12 @@ test("#3251 the daily prize: prominent on the intro (a test round shows it from 
   const { prizeLine } = await import("../client/src/screens.js");
   const before = Date.parse("2026-11-22T09:00:00Z");
   const t = introModel({ round: round({ test: true, bountySats: 0, maxAttempts: 99 }), me: me(), board, wallet: W(), nowMs: before });
-  assert.equal(t.prize.text, "From 23 Nov: 🏆 Daily best score wins 10,000 real sats");
+  assert.equal(t.prize.text, "From 23 Nov: 🏆 Daily best score wins 5,000 real sats");
   assert.equal(t.bounty, "Test round · no play bounty");
-  assert.equal(prizeLine(round({ test: true, bountySats: 0 }), T0).text, "🏆 Daily best score wins 10,000 real sats");
+  assert.equal(prizeLine(round({ test: true, bountySats: 0 }), T0).text, "🏆 Daily best score wins 5,000 real sats");
   const res = { finished: true, timeS: 40.5, total: 1100, clean: true, parts: {} };
-  assert.equal(resultModel({ res, parTime: 60, entry: "paid", after: { total: 1100, rank: 3 }, me: me(), round: round(), nowMs: T0 }).prize, "Rank 3 · daily best wins 10,000 real sats");
-  assert.equal(resultModel({ res, parTime: 60, entry: "paid", after: { total: 1100, rank: 1 }, me: me(), round: round({ test: true, bountySats: 0 }), nowMs: before }).prize, "Rank 1 · daily best wins 10,000 real sats");
+  assert.equal(resultModel({ res, parTime: 60, entry: "paid", after: { total: 1100, rank: 3 }, me: me(), round: round(), nowMs: T0 }).prize, "Rank 3 · daily best wins 5,000 real sats");
+  assert.equal(resultModel({ res, parTime: 60, entry: "paid", after: { total: 1100, rank: 1 }, me: me(), round: round({ test: true, bountySats: 0 }), nowMs: before }).prize, "Rank 1 · daily best wins 5,000 real sats");
   assert.equal(resultModel({ res, parTime: 60, entry: "paid", me: me() }).prize, undefined);
 });
 
@@ -304,9 +304,9 @@ test("#3251 the result on a phone: one facts row, the prize and the eligibility 
   const res = { finished: false, timeS: 180, total: 182, clean: false, parts: {} };
   const r = resultModel({ res, parTime: 60, entry: "paid", before: { total: 218 }, after: { total: 218, rank: 2 }, me: me({ used: 4 }), max: 99, round: round({ test: true, bountySats: 0 }), nowMs: Date.parse("2026-11-22T09:00:00Z") });
   assert.equal(r.facts, "Rank 2 · best 218 · 95 of 99 left");
-  assert.equal(r.prize, "Rank 2 · daily best wins 10,000 real sats");
+  assert.equal(r.prize, "Rank 2 · daily best wins 5,000 real sats");
   assert.equal(r.notCounted, "X not linked · ⚡ no Lightning address"); assert.equal(r.linkX, true);
-  assert.equal(resultModel({ res, parTime: 60, entry: "paid", me: me({ used: 1 }), max: 5, round: round({ test: true, bountySats: 0 }), nowMs: Date.parse("2026-11-22T09:00:00Z") }).prize, "From 23 Nov: daily best wins 10,000 real sats");
+  assert.equal(resultModel({ res, parTime: 60, entry: "paid", me: me({ used: 1 }), max: 5, round: round({ test: true, bountySats: 0 }), nowMs: Date.parse("2026-11-22T09:00:00Z") }).prize, "From 23 Nov: daily best wins 5,000 real sats");
 });
 
 test("#3273 a free round: Play · free, no wallet, balance, faucet or pot; the prize line says free; the result has no entry line", () => {
@@ -315,7 +315,7 @@ test("#3273 a free round: Play · free, no wallet, balance, faucet or pot; the p
   const m = introModel({ round: free, me: me(), board, wallet: { pubkey: "ab".repeat(32), balance: null, welcomeComing: false, canTopUp: true }, nowMs: T0 });
   assert.deepEqual(m.button, { label: "Play · free", disabled: false, why: "" });
   assert.equal(m.free, true); assert.equal(m.pot, null); assert.equal(m.topUp, undefined);
-  assert.deepEqual(m.prize, { text: "🏆 Free to play · daily best score wins 10,000 real sats", small: "needs X + Lightning address" });
+  assert.deepEqual(m.prize, { text: "🏆 Free to play · daily best score wins 5,000 real sats", small: "needs X + Lightning address" });
   assert.equal(m.x.text, "X not linked · ⚡ no Lightning address");   // the eligibility line stays
   const low = introModel({ round: free, me: me(), board, wallet: W({ balance: { sats: 0, best: 0 } }), nowMs: T0 });
   assert.equal(low.button.disabled, false); assert.equal(low.topUp, undefined);
@@ -327,6 +327,6 @@ test("#3273 a free round: Play · free, no wallet, balance, faucet or pot; the p
   assert.equal(r.rank, "Not on the board yet");
   const a = attemptOf({ ok: true, attempt: "x", token: "t", level: {}, state: "started", free: true, paid: true, sats: 0 });
   assert.equal(a.free, true); assert.equal(a.sats, 0); assert.equal(a.invoice, null); assert.equal(entryOf({ ok: true, state: "started", paid: true }), "paid");
-  assert.equal(RULES.find((x) => x[0] === "Free to play")[1], "Free to play. 5 attempts a day, your best counts. The best player with a linked X account and a valid Lightning address wins 10,000 real sats.");
+  assert.equal(RULES.find((x) => x[0] === "Free to play")[1], "Free to play. 5 attempts a day, your best counts. The best player with a linked X account and a valid Lightning address wins 5,000 real sats.");
   assert.ok(!RULES.some((x) => /testnet sats|pot/i.test(x[1])), "no entry or pot in the rules");
 });

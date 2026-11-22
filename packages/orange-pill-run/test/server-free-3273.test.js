@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // #3273 the free round (owner 2026-11-22): entry 0 - a run starts at once with no invoice and lnd never asked, 5 a day, scored at submit,
-// no pot, only the bounty list (10,000 real sats), the chain post carries entry 0. A paid round made earlier keeps its paid path.
+// no pot, only the bounty list (5,000 real sats), the chain post carries entry 0. A paid round made earlier keeps its paid path.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
@@ -33,7 +33,7 @@ test('#3273 the default entry is 0: a free attempt starts at once, no invoice, l
   await w.opr.tick();
   assert.equal(w.lndCalls, 0);
   const pr = w.opr.publicRound(r);
-  assert.equal(pr.entrySats, 0); assert.equal(pr.free, true); assert.equal(pr.potSats, 0); assert.equal(pr.bountySats, 10000);
+  assert.equal(pr.entrySats, 0); assert.equal(pr.free, true); assert.equal(pr.potSats, 0); assert.equal(pr.bountySats, 5000);
 });
 
 test('#3273 five free attempts a day, the 6th refused; a test round keeps its own limit', async () => {
@@ -68,11 +68,11 @@ test('#3273 a free run is on the board at submit; no pot; at the end only the bo
   await endRound(w, r);
   const lists = w.opr.listsOf(r.id);
   assert.deepEqual(lists.map((l) => l.kind), ['bounty']);
-  assert.deepEqual(lists[0].rows.map((x) => [x.player, x.sats, x.lnAddress]), [[b.pk, 10000, 'bob@walletofsatoshi.com']]);
+  assert.deepEqual(lists[0].rows.map((x) => [x.player, x.sats, x.lnAddress]), [[b.pk, 5000, 'bob@walletofsatoshi.com']]);
   assert.equal(lists[0].state, 'waiting');
-  assert.ok(w.alerts.some((x) => /free round, no pot; bounty: 1\. user\d+ 10000 sat/.test(x)), w.alerts.join('\n'));
+  assert.ok(w.alerts.some((x) => /free round, no pot; bounty: 1\. user\d+ 5000 sat/.test(x)), w.alerts.join('\n'));
   assert.equal(w.opr.decideList({ round: r.id, kind: 'bounty', action: 'approve', by: 'owner', version: (w.opr.listsOf(r.id).find((l) => l.kind === 'bounty') || {}).version }).ok, true);
-  assert.deepEqual(w.opr.payable().map((l) => [l.kind, l.sats]), [['bounty', 10000]]);
+  assert.deepEqual(w.opr.payable().map((l) => [l.kind, l.sats]), [['bounty', 5000]]);
   assert.equal(w.lndCalls, 0);
 });
 
