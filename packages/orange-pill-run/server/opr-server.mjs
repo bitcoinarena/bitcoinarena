@@ -5,7 +5,8 @@
 // /api/opr/* (src/website/worker.js). Listens on 127.0.0.1 only. Environment (secrets are files or hashes, never values in the unit):
 //   OPR_PORT (18877), OPR_DB (the sqlite file), OPR_ADMIN_SHA256 (sha256 hex of the admin code), OPR_WORKER_KEY (the Worker's x-arena-worker key)
 //   OPR_PUBLIC_BASES (comma list of public /api/opr URLs the NIP-98 sign-in may name; default the testnet stage)
-//   OPR_LNCLI, OPR_LND=<lnddir>|<rpc host:port>, OPR_LN_NETWORK (testnet4): the lnd that makes and reads the entry invoices
+//   OPR_ENTRY_SATS (0: free rounds, kanban #3273): the entry of a round made from now on
+//   OPR_LNCLI, OPR_LND=<lnddir>|<rpc host:port>, OPR_LN_NETWORK (testnet4): the lnd that makes and reads the entry invoices (optional: free rounds need none)
 //   OPR_BITCOIN_CLI, OPR_BITCOIN_DATADIR, OPR_BITCOIN_CHAIN (optional), OPR_WALLET (arena-opr), OPR_FEE_RATE (sat/vB, 1),
 //   OPR_PENDING_FILE (miner C's list), OPR_CONFIRMATIONS (1); OPR_CHAIN=off opens rounds without a post (local runs only)
 //   OPR_S2_DB (the bug bounty's Season 2 book: X links), FAUCET_BOT_X_HANDLES (its bot list, read by that store)
@@ -31,7 +32,7 @@ const sim = { GAME_VERSION: simMod.GAME_VERSION, buildLevel: simMod.buildLevel, 
 const fetchCandles = async (day) => (await fetchDay(day, { log: (m) => log(`candles ${day}: ${m}`) })).candles;   // Coinbase, then Kraken, Bitstamp
 
 const s2 = env.OPR_S2_DB ? (await import('../../arena-node/src/bounty-season.js')).openBountySeason(env.OPR_S2_DB) : null;
-const invoices = lncliInvoices({ lncli: env.OPR_LNCLI, lnd: env.OPR_LND, network: env.OPR_LN_NETWORK || 'testnet4' });
+const invoices = !env.OPR_LNCLI || !env.OPR_LND ? null : lncliInvoices({ lncli: env.OPR_LNCLI, lnd: env.OPR_LND, network: env.OPR_LN_NETWORK || 'testnet4' });
 const chain = env.OPR_CHAIN === 'off' ? null : bitcoinCliChain({ cli: env.OPR_BITCOIN_CLI, datadir: env.OPR_BITCOIN_DATADIR || null, chain: env.OPR_BITCOIN_CHAIN || null,
   wallet: env.OPR_WALLET, pendingFile: env.OPR_PENDING_FILE || null, feeRate: Number(env.OPR_FEE_RATE || 1), log });
 
@@ -44,7 +45,7 @@ const alert = (text) => {
 };
 
 const opr = createOpr({ dbPath: env.OPR_DB, sim, fetchCandles, checkLevel, invoices, chain, s2, alert, log, cfg: {
-  firstDay: env.OPR_FIRST_DAY || '2026-11-23', daily: env.OPR_DAILY !== 'off', showTest: env.OPR_SHOW_TEST === 'on',
+  entrySats: Number(env.OPR_ENTRY_SATS || 0), firstDay: env.OPR_FIRST_DAY || '2026-11-23', daily: env.OPR_DAILY !== 'off', showTest: env.OPR_SHOW_TEST === 'on',
   adminSha: env.OPR_ADMIN_SHA256 || '', workerKey: env.OPR_WORKER_KEY || '', confirmations: Number(env.OPR_CONFIRMATIONS || 1),
   publicBases: String(env.OPR_PUBLIC_BASES || 'https://testnet-stage.bitcoinarena.io/api/opr').split(',').map((x) => x.trim().replace(/\/+$/, '')).filter(Boolean),
 } });

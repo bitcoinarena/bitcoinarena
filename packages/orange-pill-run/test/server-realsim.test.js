@@ -21,7 +21,7 @@ test('#3249 the real sim: a bot run is scored as runLog scores it; a shifted pre
   let t = Date.parse('2026-11-22T10:00:00Z');
   const lnd = fakeLnd(), chain = fakeChain();
   const opr = createOpr({ now: () => t, sim: { GAME_VERSION: sim.GAME_VERSION, buildLevel: sim.buildLevel, runLog: sim.runLog }, fetchCandles: async () => day.candles,
-    checkLevel, invoices: lnd, chain, log: () => {}, cfg: { showTest: true, adminSha: createHash('sha256').update('x').digest('hex') } });
+    checkLevel, invoices: lnd, chain, log: () => {}, cfg: { showTest: true, entrySats: 100, adminSha: createHash('sha256').update('x').digest('hex') } });
   const made = opr.testRound({ minutes: 30, chartDay: day.day });
   assert.equal(made.ok, true, made.why);
   await opr.tick(); await opr.tick(); chain.confirm(); await opr.tick();
@@ -63,7 +63,7 @@ test('#3271 a round opened on opr-1 keeps opr-1 after the service moved to opr-2
   const lnd = fakeLnd(), chain = fakeChain();
   const realSim = { GAME_VERSION: sim.GAME_VERSION, buildLevel: sim.buildLevel, runLog: sim.runLog };
   const mk = (s) => createOpr({ dbPath, now: () => t, sim: s, fetchCandles: async () => day.candles, checkLevel, invoices: lnd, chain, log: () => {},
-    cfg: { showTest: true, adminSha: createHash('sha256').update('x').digest('hex') } });
+    cfg: { showTest: true, entrySats: 100, adminSha: createHash('sha256').update('x').digest('hex') } });
   // before the deploy: the service ran opr-1 (the same code, its version pinned to opr-1)
   const old = mk({ ...realSim, GAME_VERSION: 'opr-1' });
   const made = old.testRound({ minutes: 60, chartDay: day.day });

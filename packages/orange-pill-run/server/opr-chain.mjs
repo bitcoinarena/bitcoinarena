@@ -4,7 +4,7 @@
 // announced the Arena's way: one testnet4 transaction with one OP_RETURN, "ARN" and a kind byte as every other ARN payload has (ballot "ARNV",
 // advert "ARNA", fork "ARNF"), here "ARN" 'O'. 80 bytes at most (the OP_RETURN limit). Big-endian integers. The payload:
 //
-//   "ARNO" (4) | format 1 (1) | flags (1: bit 0 = test round) | round number (u32) | start ms (u48) | end ms (u48) | entry sats (u32)
+//   "ARNO" (4) | format 1 (1) | flags (1: bit 0 = test round) | round number (u32) | start ms (u48) | end ms (u48) | entry sats (u32; 0: a free round, #3273)
 //   | attempt limit (u8) | pot split (3 x u8, percent) | chart day (u16, days since 1970-01-01) | game version (u8 length + ASCII, at most 15)
 //   | level hash (32: sha256 of the level's canonical JSON, levelHashOf)
 //
@@ -32,7 +32,7 @@ export function encodeRoundPost(r) {
   const v = Buffer.from(String(r.gameVersion), 'ascii');
   if (!v.length || v.length > 15) throw new Error('the game version is 1 to 15 ASCII bytes on chain');
   if (!/^[0-9a-f]{64}$/.test(String(r.levelHash))) throw new Error('the level hash is 32 bytes hex');
-  const ints = [[r.number, 0, 0xffffffff], [r.startMs, 0, 2 ** 48 - 1], [r.endMs, 0, 2 ** 48 - 1], [r.entrySats, 1, 0xffffffff], [r.attempts, 1, 255]];
+  const ints = [[r.number, 0, 0xffffffff], [r.startMs, 0, 2 ** 48 - 1], [r.endMs, 0, 2 ** 48 - 1], [r.entrySats, 0, 0xffffffff], [r.attempts, 1, 255]];
   for (const [x, lo, hi] of ints) if (!Number.isSafeInteger(x) || x < lo || x > hi) throw new Error('a round field is out of range');
   if (!(r.endMs > r.startMs)) throw new Error('a round ends after it starts');
   const split = r.split || [];

@@ -59,7 +59,7 @@ export function world({ start = '2026-11-23T00:00:00Z', cfg = {}, chain = fakeCh
   const wallets = new Map(), lnAsked = [];
   const lnFake = async (a) => { lnAsked.push(a); return wallets.get(a) || { ok: true, address: a }; };
   const opr = createOpr({ lnCheck: lnCheck || lnFake, now: clock.now, sim: stubSim, fetchCandles: async (d) => candles48(d), checkLevel: async () => ({ ok: true, seed: 7, tries: 1, hash: 'h' }),
-    invoices: lnd, chain, s2, alert: (x) => alerts.push(x), log: (m) => lines.push(m), cfg: { adminSha: createHash('sha256').update('letmein').digest('hex'), showTest: true, ...cfg } });
+    invoices: lnd, chain, s2, alert: (x) => alerts.push(x), log: (m) => lines.push(m), cfg: { adminSha: createHash('sha256').update('letmein').digest('hex'), showTest: true, entrySats: 100, ...cfg } });   // the paid tests keep 100; free: cfg.entrySats 0 (#3273)
   const link = (pk, verified = true, username = null) => {
     xn++; const r = s2.claimName(pk, 'x', { userId: `x${xn}`, username: username || `user${xn}` });
     if (!r.ok) throw new Error(r.why);

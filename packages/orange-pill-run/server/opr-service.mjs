@@ -22,11 +22,14 @@ import { checkLnAddress, lnAddressSyntax, LN_CHECKS_PER_HOUR } from './opr-lnadd
 
 const DAY_MS = 86400000, MIN_MS = 60000;
 export const DEFAULTS = Object.freeze({
-  firstDay: '2026-11-23', daily: true, entrySats: 100, maxAttempts: 5, submitMs: 10 * MIN_MS, lastCallMs: 5 * MIN_MS, invoiceS: 600,
+  firstDay: '2026-11-23', daily: true, entrySats: 0, maxAttempts: 5, submitMs: 10 * MIN_MS, lastCallMs: 5 * MIN_MS, invoiceS: 600,
   verifyGraceMs: 60 * MIN_MS, bountySats: 2000, bountyClaimMs: 7 * DAY_MS, alertAfterMs: 15 * MIN_MS, fastSlackMs: 1000, maxSteps: 180 * 60,
   confirmations: 1, publicBases: ['https://testnet-stage.bitcoinarena.io/api/opr'], adminSha: '', workerKey: '', showTest: false, ipCrowd: 3,
   testMinutesMost: 24 * 60, logPressesMost: 6000, bodyMost: 256 * 1024,
 });
+// FREE ROUNDS (kanban #3273, owner 2026-11-22: "a free round - no testnet sats, but 2,000 real sats for the winner"): a round made now has
+// entry_sats 0. A free run starts at once (no invoice, no lnd), counts as paid (paid_ms = its start), is scored at submit; the round has no pot
+// and no pot list - only the bounty list. A round made earlier with entry_sats > 0 keeps the paid path below unchanged
 export const AUTH_AGE_MOST_S = 60;
 export const TEST_ATTEMPTS_MOST = 99;   // a test round's attempts per player at most (kanban #3256); the daily rounds keep cfg.maxAttempts (5)
 const ADMIN_TRY_WINDOW_MS = 15 * MIN_MS, ADMIN_TRIES_PER_CALLER = 5, ADMIN_TRIES_ALL = 30;   // as the faucet's admin (kanban #3243)
@@ -217,7 +220,7 @@ export function createOpr(o = {}) {
   function carryTarget(fromId) {
     const f = roundRow(fromId);
     const x = f && q(`SELECT r.id FROM rounds r LEFT JOIN payout_lists l ON l.round = r.id AND l.kind = 'pot'
-      WHERE r.test = 0 AND r.state != 'void' AND r.start_ms > ? AND (l.state IS NULL OR l.state = 'waiting') ORDER BY r.start_ms LIMIT 1`).get(f.start_ms);
+      WHERE r.test = 0 AND r.entry_sats > 0 AND r.state != 'void' AND r.start_ms > ? AND (l.state IS NULL OR l.state = 'waiting') ORDER BY r.start_ms LIMIT 1`).get(f.start_ms);
     return x ? x.id : null;
   }
   const freeCarries = () => q("SELECT round, carry_sats FROM payout_lists WHERE kind = 'pot' AND state = 'approved' AND carry_sats > 0 AND carry_to IS NULL").all();
@@ -231,7 +234,8 @@ export function createOpr(o = {}) {
     if (r.test) return;
     for (const l of freeCarries()) if (carryTarget(l.round) === r.id) q("UPDATE payout_lists SET carry_to = ? WHERE round = ? AND kind = 'pot' AND carry_to IS NULL").run(r.id, l.round);
   }
-  const potOf = (r) => r.entry_sats * startedCount(r.id) + carryIn(r);
+  const isFree = (r) => !(r.entry_sats > 0);
+  const potOf = (r) => (isFree(r) ? 0 : r.entry_sats * startedCount(r.id) + carryIn(r));   // a free round has no pot and takes no carry (#3273)
 
   async function startAttempt(player, { round, ip = null } = {}) {
     const t = now();
@@ -247,6 +251,15 @@ export function createOpr(o = {}) {
     const deadline = Math.min(t + cfg.submitMs, r.end_ms);
     const expirySeconds = Math.floor((deadline - t) / 1000);
     if (expirySeconds < 60 || t >= r.end_ms - cfg.lastCallMs) return { ok: false, why: 'no new attempts in the last 5 minutes of a round' };
+    if (isFree(r)) {   // FREE (kanban #3273): started and paid at once - no invoice, lnd is never asked
+      const id = randomBytes(16).toString('hex');
+      const token = randomBytes(32).toString('hex');
+      q(`INSERT INTO attempts (id, round, player, ip, created_ms, started_ms, paid_ms, token, deadline_ms, state)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'started')`).run(id, r.id, player, ip, t, t, t, token, deadline);
+      q('INSERT INTO players (pubkey, seen_ms) VALUES (?, ?) ON CONFLICT (pubkey) DO UPDATE SET seen_ms = excluded.seen_ms').run(player, t);
+      return { ok: true, attempt: id, state: 'started', paid: true, free: true, sats: 0, token, startedMs: t, deadlineMs: deadline, level: levelFor(r) };
+    }
+    if (!invoices) return { ok: false, why: 'the entry invoice could not be made - try again in a minute' };
     let inv;
     try { inv = await invoices.create({ sats: r.entry_sats, memo: `Orange Pill Run ${r.id} entry`, expirySeconds }); }
     catch (e) { log(`entry invoice not made: ${e.message}`); return { ok: false, why: 'the entry invoice could not be made - try again in a minute' }; }
@@ -431,7 +444,7 @@ export function createOpr(o = {}) {
       return payoutLists({ board, potSats: potOf(r), placedOf: xOf, bountySats: cfg.bountySats, test: !!r.test, lnOf: lnOf(r),
         held: (p) => { const b = board.find((x) => x.player === p); return rj.has(p) ? 'row rejected' : b && b.review === 'pending' ? 'under review' : null; } });
     };
-    return { pot: make('pot').pot, bounty: make('bounty').bounty };
+    return { pot: isFree(r) ? null : make('pot').pot, bounty: make('bounty').bounty };   // a free round: the bounty list only (#3273)
   }
   function writeList(r, kind, list, t) {
     if (!list) return;
@@ -455,7 +468,8 @@ export function createOpr(o = {}) {
     writeList(r, 'pot', l.pot, t); writeList(r, 'bounty', l.bounty, t);
     q("UPDATE rounds SET state = 'listed', listed_ms = ? WHERE id = ? AND state = 'closed'").run(t, r.id);
     const rows = (x) => (x ? x.rows.map((w) => `${w.place}. ${w.xAccount || w.player.slice(0, 8)} ${w.sats} sat`).join(', ') || 'nobody placed' : '');
-    alert(`Orange Pill Run ${r.id}${r.test ? ' (test)' : ''}: payout lists wait for sign-off - pot ${l.pot.potSats} sat: ${rows(l.pot)}${l.bounty ? `; bounty: ${rows(l.bounty)}` : ''}`);
+    const parts = [l.pot ? `pot ${l.pot.potSats} sat: ${rows(l.pot)}` : 'free round, no pot', l.bounty ? `bounty: ${rows(l.bounty)}` : null].filter(Boolean);
+    alert(`Orange Pill Run ${r.id}${r.test ? ' (test)' : ''}: payout lists wait for sign-off - ${parts.join('; ')}`);
     log(`round ${r.id}: payout lists written (waiting for sign-off)`);
   }
   const listRow = (x) => (x ? { round: x.round, kind: x.kind, rows: J(x.rows, []), sats: x.sats, carrySats: x.carry_sats, state: x.state, by: x.by, atMs: x.at_ms, why: x.why, madeMs: x.made_ms } : null);
@@ -577,7 +591,7 @@ export function createOpr(o = {}) {
     if (!r) return null;
     const board = boardOf(r.id), best = board[0];
     return { id: r.id, number: r.num, test: !!r.test, chartDay: r.chart_day, startMs: r.start_ms, endMs: r.end_ms, phase: phaseOf(r, t), lastCallMs: r.end_ms - cfg.lastCallMs,
-      entrySats: r.entry_sats, maxAttempts: r.max_attempts, split: [...SPLIT], potSats: potOf(r), bountySats: r.test ? 0 : cfg.bountySats,
+      entrySats: r.entry_sats, free: isFree(r), maxAttempts: r.max_attempts, split: [...SPLIT], potSats: potOf(r), bountySats: r.test ? 0 : cfg.bountySats,
       gameVersion: r.game_version, levelHash: r.level_hash, players: board.length,
       post: { txid: r.post_txid, height: r.post_height, confirmed: r.state !== 'waiting' && r.state !== 'posting' && (!!r.post_height || !chain) },
       best: best ? { score: best.total, timeS: best.timeS, name: best.name } : null };
