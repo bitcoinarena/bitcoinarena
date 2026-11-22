@@ -18,7 +18,8 @@ const W = (o = {}) => ({ pubkey: "ab".repeat(32), balance: { sats: 3000 }, welco
 test("#3251 the intro: one line, bounty, best, pot and split, attempts, own best and rank, time left, the Play label", () => {
   const m = introModel({ round: round(), me: me(), board, wallet: W(), nowMs: T0 });
   assert.equal(m.line, "Run yesterday's Bitcoin chart. Tap to jump. Don't fall.");
-  assert.equal(m.bounty, "Play bounty: 2,000 sats today for the best player with a Lightning address");
+  assert.equal(m.bounty, null);   // the prize line says it (owner 2026-11-22)
+  assert.deepEqual(m.prize, { text: "🏆 Best score at the end of the day wins 2,000 real sats", small: "· needs your Lightning address + X account" });
   assert.equal(m.best, "1,234 in 41.3 s by alice");
   assert.equal(m.pot, "1,200 testnet sats · split 50 / 30 / 20");
   assert.equal(m.attempts, "Your attempts: 2 of 5");
@@ -35,7 +36,7 @@ test("#3251 the Play button is off with a reason: 5 attempts used, last 5 minute
   const off = (o) => introModel({ nowMs: T0, round: round(), me: me(), board, wallet: W(), ...o }).button;
   assert.deepEqual(off({ me: me({ used: 5 }) }), { label: "Play · 100 testnet sats", disabled: true, why: "All 5 attempts of this round are used." });
   assert.equal(off({ round: round({ phase: "last-call" }) }).why, "No new attempts in the last 5 minutes of a round.");
-  assert.equal(off({ wallet: W({ balance: { sats: 40 } }) }).why, "Your balance is too low: an attempt costs 100 testnet sats.");
+  assert.equal(off({ wallet: W({ balance: { sats: 40 } }) }).why, "Your balance is too low: you need about 103 testnet sats (the entry and the payment's fee).");
   assert.equal(off({ round: round({ phase: "posting" }) }).disabled, true);
   assert.equal(off({ round: round({ phase: "ended" }) }).why, "This round has ended.");
   assert.equal(off({ round: null }).disabled, true);
@@ -159,9 +160,12 @@ test("#3265 a failed payment is tried again, not given up on", async () => {
 });
 
 test("#3270 the intro names the X account: not linked with the link, @handle ✓ once linked, nothing before /me or without the Arena", () => {
-  assert.deepEqual(introModel({ round: round(), me: me(), board, wallet: W(), nowMs: T0 }).x, { text: "X account: not linked", link: true });
-  assert.deepEqual(introModel({ round: null, me: me(), board, wallet: W(), nowMs: T0 }).x, { text: "X account: not linked", link: true });
-  assert.deepEqual(introModel({ round: round(), me: me({ x: { username: "satoshi" } }), board, wallet: W(), nowMs: T0 }).x, { text: "X account: @satoshi ✓", link: false });
+  // #3251: the line says whether the player can win the 2,000 sats, and what is missing
+  assert.deepEqual(introModel({ round: round(), me: me(), board, wallet: W(), nowMs: T0 }).x, { ok: false, text: "Not eligible for the 2,000 sats: link your X account and save a Lightning address", link: true, ln: true });
+  assert.deepEqual(introModel({ round: null, me: me({ lnAddress: "a@wos.com" }), board, wallet: W(), nowMs: T0 }).x, { ok: false, text: "Not eligible for the 2,000 sats: link your X account", link: true, ln: false });
+  assert.deepEqual(introModel({ round: round(), me: me({ x: { username: "satoshi" }, placed: true }), board, wallet: W(), nowMs: T0 }).x, { ok: false, text: "Not eligible for the 2,000 sats: save a Lightning address", link: false, ln: true });
+  assert.equal(introModel({ round: round(), me: me({ x: { username: "satoshi" }, placed: false, lnAddress: "a@wos.com" }), board, wallet: W(), nowMs: T0 }).x.text, "Not eligible for the 2,000 sats: your X account is not verified yet");
+  assert.deepEqual(introModel({ round: round(), me: me({ x: { username: "satoshi" }, placed: true, lnAddress: "a@wos.com" }), board, wallet: W(), nowMs: T0 }).x, { ok: true, text: "✓ You can win: X @satoshi · ⚡ address saved", link: false, ln: false });
   assert.equal(introModel({ round: round(), me: null, board, wallet: W(), nowMs: T0 }).x, null);
   assert.equal(introModel({ round: null, me: null, board: [], wallet: null, nowMs: T0 }).x, undefined);
 });
@@ -226,4 +230,63 @@ test("#3251 sound: the world's counters name the events; the loop is 16 bars of 
   assert.deepEqual(worldEvents(s, { ...s, done: true }), ["timeup"]);
   assert.deepEqual(worldEvents(null, s), []);
   assert.equal(BPM, 140); assert.equal(LOOP.eighths, 128); assert.equal(LOOP.bass.length, 128); assert.equal(LOOP.hats.length, 128);
+});
+
+test("#3251 the wallet pays from one federation, the fee on top: 100 sat is not enough, sats on their way are; the top-up offer", async () => {
+  const { payableOf } = await import("../client/src/screens.js");
+  const w = (balance, o = {}) => W({ balance, ...o });
+  // the owner's case: "100 sat ⇄" in the bar, all of it still merging in - even once landed it cannot pay 100 + the fee: said, with the top-up
+  let m = introModel({ round: round(), me: me(), board, wallet: w({ sats: 0, total: 100, coming: 100, best: 0, payable: null }, { canTopUp: true }), nowMs: T0 });
+  assert.equal(m.button.disabled, true); assert.equal(m.button.why, "You need about 103 sats - get 300 free sats"); assert.deepEqual(m.topUp, { label: "Get 300 free sats" });
+  // 300 merging in: Play stays on, the entry is paid in the background once they land
+  m = introModel({ round: round(), me: me(), board, wallet: w({ sats: 0, total: 300, coming: 300, best: 0, payable: null }, { canTopUp: true }), nowMs: T0 });
+  assert.equal(m.button.disabled, false); assert.equal(m.button.why, "Your sats are on their way - they pay the entry while you play.");
+  // exactly 100 spendable in a non-lobby federation, the gateway's fee read: 97 payable - short, with the faucet's top-up
+  m = introModel({ round: round(), me: me(), board, wallet: w({ sats: 100, total: 100, coming: 0, best: 100, payable: 97 }, { canTopUp: true }), nowMs: T0 });
+  assert.equal(m.button.disabled, true); assert.equal(m.button.why, "You need about 103 sats - get 300 free sats"); assert.deepEqual(m.topUp, { label: "Get 300 free sats" });
+  // the top-up asked: Play on
+  m = introModel({ round: round(), me: me(), board, wallet: w({ sats: 100, total: 100, coming: 0, best: 100, payable: 97 }, { canTopUp: true, topUpComing: true }), nowMs: T0 });
+  assert.equal(m.button.disabled, false); assert.equal(m.topUp, undefined);
+  // 300 in another federation, 0 in the lobby's: paid from there
+  assert.equal(payableOf(w({ sats: 300, total: 300, coming: 0, best: 300, payable: 296 }), 100).state, "ok");
+  // two federations of 60 each: 120 in all, but one payment cannot leave from both
+  assert.equal(payableOf(w({ sats: 120, total: 120, coming: 0, best: 60, payable: 57 }), 100).state, "short");
+  // payable not read yet: 100 is short of 100 + the guessed fee, 103 is enough
+  assert.deepEqual(payableOf(w({ sats: 100, best: 100 }), 100), { state: "short", need: 103 });
+  assert.equal(payableOf(w({ sats: 103, best: 103 }), 100).state, "ok");
+  // no faucet around: the plain reason, no button
+  m = introModel({ round: round(), me: me(), board, wallet: w({ sats: 100, best: 100, payable: 97 }), nowMs: T0 });
+  assert.match(m.button.why, /^Your balance is too low: you need about 103 testnet sats/); assert.equal(m.topUp, undefined);
+});
+
+test("#3251 the entry is paid only when one federation can send it after the fees (payable), not on the summed balance", async () => {
+  const calls = []; let bal = { sats: 120, best: 60, payable: 57 };
+  const bridge = { balance: () => bal, welcomeComing: () => false, pay: async (inv) => { calls.push(inv); return { ok: true }; } };
+  let paid = false;
+  const api = { post: async (path) => (path === "/attempt/check" ? (paid ? { ok: true, state: "started", paid: true } : { ok: true, state: "pending-entry", paid: false }) : { ok: false }) };
+  let t = 0; const seen = [];
+  const e = createEntry({ api, bridge, now: () => t, sleep: async (ms) => { t += ms; if (t > 6000) { bal = { sats: 300, best: 300, payable: 296 }; } if (calls.length) paid = true; } });
+  const r = await e.payInBackground({ attempt: "a1", invoice: "lntb1", sats: 100, deadlineMs: 60000 }, { onStatus: (k, w) => seen.push([k, w]) }).done;
+  assert.equal(r, "paid"); assert.equal(calls.length, 1);
+  assert.deepEqual(seen[0], ["waiting-balance", "57 of 100 sats"]);
+});
+
+test("#3251 the daily prize: prominent on the intro (a test round shows it from Mon 23 Nov), and on the result with the rank", async () => {
+  const { prizeLine } = await import("../client/src/screens.js");
+  const before = Date.parse("2026-11-22T09:00:00Z");
+  const t = introModel({ round: round({ test: true, bountySats: 0, maxAttempts: 99 }), me: me(), board, wallet: W(), nowMs: before });
+  assert.equal(t.prize.text, "From Mon 23 Nov, daily: 🏆 Best score at the end of the day wins 2,000 real sats");
+  assert.equal(t.bounty, "Test round · no play bounty");
+  assert.equal(prizeLine(round({ test: true, bountySats: 0 }), T0).text, "Daily: 🏆 Best score at the end of the day wins 2,000 real sats");
+  const res = { finished: true, timeS: 40.5, total: 1100, clean: true, parts: {} };
+  assert.equal(resultModel({ res, parTime: 60, entry: "paid", after: { total: 1100, rank: 3 }, me: me(), round: round(), nowMs: T0 }).prize, "Best score of the day wins 2,000 real sats - you are rank 3");
+  assert.equal(resultModel({ res, parTime: 60, entry: "paid", after: { total: 1100, rank: 1 }, me: me(), round: round({ test: true, bountySats: 0 }), nowMs: before }).prize, "From Mon 23 Nov: best score of the day wins 2,000 real sats - you are rank 1");
+  assert.equal(resultModel({ res, parTime: 60, entry: "paid", me: me() }).prize, undefined);
+});
+
+test("#3251 the result says plainly when a run cannot win the play bounty; the rules say it in one sentence", () => {
+  const res = { finished: true, timeS: 40.5, total: 1100, clean: true, parts: {} };
+  assert.equal(resultModel({ res, parTime: 60, entry: "paid", me: me({ lnAddress: "a@wos.com" }), round: round() }).notCounted, "This run does not count for the 2,000 sats - link X and save a Lightning address by 1 hour after the round.");
+  assert.equal(resultModel({ res, parTime: 60, entry: "paid", me: me({ x: { username: "s" }, placed: true, lnAddress: "a@wos.com" }), round: round() }).notCounted, undefined);
+  assert.ok(RULES.find((r) => r[0] === "Play bounty")[1].endsWith("No X account and no valid Lightning address: no play bounty."));
 });

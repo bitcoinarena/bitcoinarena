@@ -42,11 +42,13 @@ let vault = null; try { vault = window.localStorage; } catch (_) { vault = null;
 const entry = api ? createEntry({ api, bridge, store: vault, log: (m) => console.log("[opr] " + m) }) : null;
 const wallet = () => {
   if (!bridge) return null;
-  let pubkey = null, balance = null, welcomeComing = false;
+  let pubkey = null, balance = null, welcomeComing = false, topUpComing = false, canTopUp = false;
   try { pubkey = bridge.pubkey(); } catch (_) { pubkey = null; }
   try { balance = bridge.balance(); } catch (_) { balance = null; }
   try { welcomeComing = !!bridge.welcomeComing(); } catch (_) { welcomeComing = false; }
-  return { pubkey, balance, welcomeComing };
+  try { topUpComing = typeof bridge.topUpComing === "function" && !!bridge.topUpComing(); } catch (_) { topUpComing = false; }
+  try { canTopUp = typeof bridge.topUp === "function" && (typeof bridge.canTopUp !== "function" || !!bridge.canTopUp()); } catch (_) { canTopUp = false; }
+  return { pubkey, balance, welcomeComing, topUpComing, canTopUp };
 };
 
 // ---------- the loop ----------
@@ -139,23 +141,27 @@ function paintWallet() {
   el.hidden = false; el.textContent = "";
   if (!w.balance) { el.textContent = w.welcomeComing ? "Wallet: welcome sats on their way …" : "Wallet: opening …"; return; }
   const b = document.createElement("b"); b.textContent = fmtSats(w.balance.sats);
-  el.append("Wallet: ", b, " testnet sats" + (w.welcomeComing && Number(w.balance.sats) < 100 ? " · welcome on its way" : ""));
+  const coming = Number(w.balance.coming) || 0;   // #3251: sats merging in or being issued, in any federation of the wallet
+  el.append("Wallet: ", b, " testnet sats" + (w.welcomeComing && Number(w.balance.sats) < 100 ? " · welcome on its way" : coming > 0 ? " · " + fmtSats(coming) + " on the way" : w.topUpComing ? " · top-up on its way" : ""));
 }
 function paintIntro() {
   const m = introModel({ round: S.round, me: S.me, board: S.board, wallet: wallet(), nowMs: Date.now(), loading: !S.loaded, opened: openedIn() });
   $("iLine").textContent = m.line;
   $("iBounty").hidden = !m.bounty; $("iBounty").textContent = m.bounty || "";
+  $("iPrize").hidden = !m.prize; $("iPrizeText").textContent = m.prize ? m.prize.text : ""; $("iPrizeSmall").textContent = m.prize ? " " + m.prize.small : "";
   const dl = $("iFacts"); dl.textContent = ""; dl.hidden = !m.facts;
   for (const [k, v, cls] of m.facts || []) { const d = document.createElement("div"); if (cls) d.className = cls; const dt = document.createElement("dt"), dd = document.createElement("dd"); dt.textContent = k; dd.textContent = v; d.append(dt, dd); dl.append(d); }
   paintIntroBoard(m.board);
   $("iPrice").hidden = !m.practice;
   // #3270: the X account on the intro, so a player can link it before the first run (it was only on the result screen)
-  $("iX").hidden = !m.x; $("iXText").textContent = m.x ? m.x.text : "";
+  $("iX").hidden = !m.x; $("iXText").textContent = m.x ? m.x.text : ""; $("iX").className = "xline " + (m.x ? (m.x.ok ? "ok" : "bad") : "");
   $("iXBtn").hidden = !(m.x && m.x.link && bridge && bridge.linkX);
   const btn = $("startBtn"); if (!btn.dataset.busy) { btn.textContent = m.button.label; btn.disabled = !!m.button.disabled; }
   if (!$("iWhy").dataset.err) $("iWhy").textContent = m.button.why || (S.err && bridge ? S.err : "");
+  $("iTopUp").hidden = !m.topUp; if (m.topUp) $("iTopUp").textContent = m.topUp.label;
   $("modeTag").textContent = !bridge ? "OFFLINE · PRACTICE" : S.round ? (S.round.test ? "TEST ROUND " : "ROUND ") + (S.round.number || "") : "TESTNET";
-  paintLn("i");
+  // the address field right under the line while no address is saved (or while it is being typed or answered)
+  { const inp = $("iLnIn"), st = LN.i; paintLn("i", !(m.x && !m.x.ln && !st.dirty && !st.msg && document.activeElement !== inp)); }
   paintWallet();
   HOOKS.intro = m;
 }
@@ -299,7 +305,7 @@ function paintEntry() {
 function showResult({ res, mode: m, entry: en, sending = false }) {
   const after = S.me ? myBest(S.me, S.board) : null;
   const model = resultModel({ res, parTime: L.parTime, timePerS: rulesOf(L.version).timePerS, entry: en, entryWhy: run && run.entryWhy, before: run && m === "play" ? run.before : null, after: m === "play" && run ? after : null,
-    me: m === "play" && run ? S.me : null, max: S.round ? S.round.maxAttempts : 5, mode: m === "play" && !run ? "practice" : m, submitWhy: run && run.submitWhy, opened: openedIn() });
+    me: m === "play" && run ? S.me : null, max: S.round ? S.round.maxAttempts : 5, mode: m === "play" && !run ? "practice" : m, submitWhy: run && run.submitWhy, opened: openedIn(), round: m === "play" && run ? S.round : null, nowMs: Date.now() });
   $("rTitle").textContent = model.title;
   const re = $("rEntry"); re.hidden = !en; if (en) { re.className = "entry " + model.entry.kind; re.textContent = sending ? "Sending your run …" : model.entry.text; }
   const t1 = $("rScore"); t1.textContent = ""; const add = (a, v, cl) => cellRow(t1.insertRow(), [a, v], cl);
@@ -309,7 +315,9 @@ function showResult({ res, mode: m, entry: en, sending = false }) {
     saved.best.push({ score: res.total, time: res.timeS, finished: res.finished }); saved.best.sort((a, z) => z.score - a.score); saved.best = saved.best.slice(0, 5); save();
     model.rank = "Practice best: " + saved.best[0].score; model.left = bridge ? "" : "Open the game in the Arena to play for the pot.";
   }
+  $("rPrize").hidden = !model.prize; $("rPrize").textContent = model.prize || "";
   $("rRank").textContent = model.rank || ""; $("rBeat").textContent = model.beat || ""; $("rLeft").textContent = model.left || "";
+  $("rNot").hidden = !model.notCounted; $("rNot").textContent = model.notCounted || "";
   $("rX").hidden = !model.xPrompt; $("rXText").textContent = model.xPrompt || "";
   $("xBtn").hidden = !(bridge && bridge.linkX) || !(S.me && !S.me.x);
   paintLn("r", m === "play");   // every result of a play or practice run, not a replay
@@ -369,6 +377,8 @@ document.addEventListener("pointerdown", (e) => { if (running && mode === "play"
 document.addEventListener("selectstart", (e) => { if (running) e.preventDefault(); });
 document.addEventListener("contextmenu", (e) => { if (running) e.preventDefault(); });
 $("startBtn").onclick = () => { if (audio) audio.unlock(); if (!$("startBtn").disabled) play(); };
+// #3251: the page's faucet top-up ("Get 300 sats"), from the game; Play turns on while it is on its way
+$("iTopUp").onclick = () => { let ok = false; try { ok = !!(bridge && bridge.topUp && bridge.topUp()); } catch (_) { ok = false; } if (!ok) $("iWhy").textContent = "The faucet could not be asked now - use Get 300 sats at the bottom right."; paintIntro(); };
 $("sndBtn").onclick = (e) => { e.stopPropagation(); if (!audio) return; audio.unlock(); audio.next(); if (running && audio.mode === "on") audio.startMusic(); paintSound(); };
 $("sndBtn").addEventListener("pointerdown", (e) => e.stopPropagation());   // a tap on the speaker is not a jump
 $("againBtn").onclick = () => { if (run) { if (run.payer && (run.entry === "paid" || run.entry === "not-paid")) run.payer.stop(); run = null; } pill("", ""); showIntro(); };

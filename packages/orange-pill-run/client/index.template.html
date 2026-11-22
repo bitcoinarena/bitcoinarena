@@ -126,6 +126,19 @@ body.bridged .tag { margin-left: 0; }
   .lnrow { margin: 0 0 6px; } .lnrow input { padding: 5px 9px; } .lnrow button { padding: 4px 12px; }
   button.big { padding: 10px 14px; font-size: 1rem; } .why { font-size: .8rem !important; } .links { margin-top: 6px; font-size: .86rem; }
 }
+/* kanban #3251: the faucet's top-up under the reason, when the wallet cannot pay the entry and its fee */
+.whyrow { display: flex; align-items: center; gap: 10px; } .whyrow .why { flex: 1; min-width: 0; }
+.topup { flex: none; margin-top: 6px; padding: 6px 12px; font-size: .86rem; border-color: var(--green); color: var(--green); white-space: nowrap; }
+/* kanban #3251 (owner 2026-11-22): the daily prize, right under the title line, in the orange accent; "no play bounty" small */
+.prize { margin: 0 0 8px !important; color: var(--btc) !important; font-family: var(--display); line-height: 1.3 !important; }
+.prize b { font-size: 1.05rem; } .prize small { font-family: var(--body); font-size: .78rem; color: var(--soft); font-weight: 400; }
+.prize.rp { font-weight: 700; font-size: .95rem !important; margin: 8px 0 0 !important; }
+.bounty.small { font-size: .8rem !important; font-weight: 400; color: var(--dim); margin: -4px 0 8px !important; }
+@media (max-width: 400px) { .prize b { font-size: .98rem; } }
+@media (max-height: 700px) { .prize { margin: 0 0 6px !important; } .prize b { font-size: .95rem; } }
+/* kanban #3251 (owner 2026-11-22): eligible in green, not eligible in red - with its button and field right there */
+.xline.ok { color: var(--green) !important; } .xline.bad { color: var(--red) !important; font-weight: 600; }
+.notcounted { margin: 6px 0 0 !important; font-size: .88rem !important; color: var(--red) !important; font-weight: 600; line-height: 1.35 !important; }
 /* kanban #3251: the speaker toggle in the header (music + effects, effects only, off) */
 .snd { font-size: .72rem; padding: 3px 10px; border-radius: 99px; font-weight: 600; color: var(--soft); white-space: nowrap; }
 body.bridged .snd { margin-left: auto; } body:not(.bridged) .snd { margin-left: auto; } body:not(.bridged) .tag { margin-left: 0; }
@@ -134,6 +147,8 @@ body.bridged .snd { margin-left: auto; } body:not(.bridged) .snd { margin-left: 
 .iboard table { font-size: .84rem; }
 .iboard td { padding: 2px 8px; border-top: 1px solid rgba(70,52,63,.55); line-height: 1.25; }
 .iboard tr:first-child td { border-top: 0; }
+/* the intro never outgrows its frame: it is a column as tall as the sheet at most, and the board is the one part that gives way (and scrolls) */
+.box.intro { display: flex; flex-direction: column; max-height: 100%; } .box.intro > * { flex: none; } .box.intro > .iboard { flex: 0 1 auto; min-height: 4.6rem; }
 .iboard td.rk { width: 1.8em; color: var(--dim); } .iboard td.nm { text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 9.5em; }
 .iboard tr.gap td { border-top: 2px dashed var(--dim); }
 .iboard .iempty { margin: 6px 10px !important; font-size: .88rem !important; }
@@ -156,15 +171,16 @@ body.bridged .snd { margin-left: auto; } body:not(.bridged) .snd { margin-left: 
     <div class="box intro">
       <h2>Orange Pill Run</h2>
       <p class="line" id="iLine">Run yesterday's Bitcoin chart. Tap to jump. Don't fall.</p>
-      <p class="bounty" id="iBounty" hidden></p>
-      <dl class="facts" id="iFacts" hidden></dl>
-      <div class="iboard" id="iBoard" hidden><p class="iempty" id="iBEmpty" hidden></p><table id="iBTable"></table></div>
-      <div class="price" id="iPrice"></div>
+      <p class="prize" id="iPrize" hidden><b id="iPrizeText"></b><small id="iPrizeSmall"></small></p>
+      <p class="bounty small" id="iBounty" hidden></p>
       <p class="xline" id="iX" hidden><span id="iXText"></span><button id="iXBtn" type="button" hidden>Link X</button></p>
       <form class="lnrow" id="iLn" hidden><input id="iLnIn" type="text" inputmode="email" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="320" placeholder="Lightning address for prizes" aria-label="Lightning address for prizes"><button id="iLnBtn" type="submit">Save</button></form>
       <p class="lnwhy" id="iLnWhy" role="status" hidden></p>
+      <dl class="facts" id="iFacts" hidden></dl>
+      <div class="iboard" id="iBoard" hidden><p class="iempty" id="iBEmpty" hidden></p><table id="iBTable"></table></div>
+      <div class="price" id="iPrice"></div>
       <button class="primary big" id="startBtn">Practice run (free)</button>
-      <p class="why" id="iWhy" role="status"></p>
+      <div class="whyrow"><p class="why" id="iWhy" role="status"></p><button class="topup" id="iTopUp" type="button" hidden>Get 300 free sats</button></div>
       <nav class="links"><a href="#rules" id="rulesLink">Rules</a><a href="#board" id="boardLink">Leaderboard</a></nav>
     </div>
   </div>
@@ -174,6 +190,8 @@ body.bridged .snd { margin-left: auto; } body:not(.bridged) .snd { margin-left: 
       <p class="entry" id="rEntry" role="status"></p>
       <div class="tw"><table id="rScore"></table></div>
       <p class="refused" id="rRefused" hidden></p>
+      <p class="prize rp" id="rPrize" hidden></p>
+      <p class="notcounted" id="rNot" hidden></p>
       <div class="facts2" id="rFacts"><span id="rRank"></span><span id="rBeat"></span><span id="rLeft"></span></div>
       <form class="lnrow" id="rLn" hidden><input id="rLnIn" type="text" inputmode="email" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="320" placeholder="Lightning address for prizes" aria-label="Lightning address for prizes"><button id="rLnBtn" type="submit">Save</button></form>
       <p class="lnwhy" id="rLnWhy" role="status" hidden></p>

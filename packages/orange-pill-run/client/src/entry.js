@@ -47,9 +47,13 @@ export function createEntry({ api, bridge, now = () => Date.now(), sleep = (ms) 
         if (c && c.ok && e === "not-paid") { onStatus("not-paid", c.why || null); return "not-paid"; }
         if (wasSent(att.invoice)) { onStatus("confirming"); await sleep(pollMs); continue; }
         const bal = bridge && bridge.balance ? bridge.balance() : null;
-        if (!bal || !(Number(bal.sats) >= att.sats)) {
+        // #3251: what ONE federation can send after the fees (payable) when the page has read it, else the most one federation holds
+        // and never more than the best federation holds less the gateway's fee (3 sat taken at least: screens.js FEE_GUESS_SATS)
+        const top = !bal ? 0 : Number(bal.best != null ? bal.best : bal.sats) || 0;
+        const can = !bal ? 0 : Math.min(top - 3, bal.payable != null ? Number(bal.payable) : Infinity);
+        if (!bal || !(can >= att.sats)) {
           const welcome = bridge && bridge.welcomeComing ? !!bridge.welcomeComing() : false;
-          onStatus(welcome ? "waiting-welcome" : "waiting-balance", bal ? `${Number(bal.sats) || 0} of ${att.sats} sats` : "the wallet is opening");
+          onStatus(welcome ? "waiting-welcome" : "waiting-balance", bal ? `${can || 0} of ${att.sats} sats` : "the wallet is opening");
           await sleep(pollMs); continue;
         }
         onStatus("paying");

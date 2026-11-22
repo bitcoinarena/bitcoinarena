@@ -22,11 +22,17 @@ export function myBest(me, board) {
  * The intro: { line, bounty, best, pot, attempts, mine, left, button: { label, disabled, why }, practice }.
  * wallet: { pubkey, balance: { sats } | null, welcomeComing } or null (no Arena page around the game: practice only).
  */
-/** The intro's X line (#3270): { text, link } while the player's /me is known - link = true while no X account is linked. */
-export function xLine(me) {
+/**
+ * WHO CAN WIN THE PLAY BOUNTY (#3251, owner 2026-11-22: "unmistakable" - without a linked, verified X account AND a valid Lightning address
+ * there is no share): { ok, text, link, ln } while the player's /me is known - link: the Link X button belongs beside it; ln: the address field.
+ */
+export function xLine(me, sats = PRIZE_SATS) {
   if (!me) return null;
-  if (!me.x) return { text: "X account: not linked", link: true };
-  return { text: "X account: " + (me.x.username ? "@" + me.x.username : "linked") + " ✓", link: false };
+  const hasX = !!(me.x && me.placed), hasLn = !!me.lnAddress;
+  if (hasX && hasLn) return { ok: true, text: "✓ You can win: X " + (me.x.username ? "@" + me.x.username : "linked") + " · ⚡ address saved", link: false, ln: false };
+  const xWhy = !me.x ? "link your X account" : "your X account is not verified yet";
+  const need = !hasX && !hasLn ? xWhy + " and save a Lightning address" : !hasX ? xWhy : "save a Lightning address";
+  return { ok: false, text: "Not eligible for the " + fmtSats(sats) + " sats: " + need, link: !me.x, ln: !hasLn };
 }
 
 /**
@@ -57,7 +63,7 @@ export function introModel({ round, me, board, wallet, nowMs = Date.now(), loadi
     m.button = { label: "Practice run (free)", disabled: false, why: "Open the game in the Arena to play for the pot." };
     return m;
   }
-  m.x = xLine(me);
+  m.x = xLine(me, round && round.bountySats > 0 ? round.bountySats : PRIZE_SATS);
   // #3251: until the first GET /round has answered, the intro does not say "no round" (it showed for a second before the round loaded)
   if (!round && loading) {
     m.button = { label: "Play · 100 testnet sats", disabled: true, why: "Loading the round …" };
@@ -68,8 +74,11 @@ export function introModel({ round, me, board, wallet, nowMs = Date.now(), loadi
     return m;
   }
   const entry = Number(round.entrySats || 100), max = Number(round.maxAttempts || 5);
-  // the owner's bounty rule (#3250, 2026-11-22): the best player with a Lightning address, not rank 1
-  m.bounty = round.bountySats > 0 ? "Play bounty: " + fmtSats(round.bountySats) + " sats today for the best player with a Lightning address" : round.test ? "Test round · no play bounty" : null;
+  // THE PRIZE, PROMINENT (owner 2026-11-22: "Es fehlt jede Nachricht, dass der beste Score am Ende des Tages 2000 echte Sats bekommt"): a daily
+  // round says it with what it needs (#3250: a Lightning address, a verified X account); a test round shows the daily prize to come, and its own
+  // "no play bounty" small. The prize line takes the old "Play bounty: ..." line's place on a daily round
+  m.prize = prizeLine(round, nowMs);
+  m.bounty = round.test ? "Test round · no play bounty" : null;
   m.best = round.best ? fmtSats(round.best.score) + " in " + fmtTime(round.best.timeS) + " by " + round.best.name : "No run yet - be the first";
   const split = Array.isArray(round.split) ? round.split.join(" / ") : "50 / 30 / 20";
   m.pot = fmtSats(round.potSats) + " testnet sats · split " + split;
@@ -84,17 +93,53 @@ export function introModel({ round, me, board, wallet, nowMs = Date.now(), loadi
   m.board = introBoard(board, me);
   const label = "Play · " + fmtSats(entry) + " testnet sats";
   const off = (why) => (m.button = { label, disabled: true, why });
-  const bal = wallet.balance ? Number(wallet.balance.sats) || 0 : null;
+  const pay = payableOf(wallet, entry);
   if (round.phase === "ended") off("This round has ended.");
   else if (round.phase === "last-call") off("No new attempts in the last 5 minutes of a round.");
   else if (round.phase === "soon") off("The round opens in " + fmtLeft(round.startMs - nowMs) + ".");
   else if (round.phase !== "open") off("The round is being prepared - it opens once its level is posted on chain.");
   else if (used >= max) off("All " + max + " attempts of this round are used.");
   else if (!wallet.pubkey) off("Your Arena wallet is opening …");
-  // A NEW, EMPTY WALLET PLAYS AT ONCE (kanban #3265): its welcome sats are on their way and pay the entry in the background
-  else if (bal !== null && bal < entry && !wallet.welcomeComing) off("Your balance is too low: an attempt costs " + fmtSats(entry) + " testnet sats.");
-  else m.button = { label, disabled: false, why: bal !== null && bal < entry ? "Your welcome sats are on their way - they pay the entry while you play." : "" };
+  // A NEW, EMPTY WALLET PLAYS AT ONCE (kanban #3265): its welcome sats are on their way and pay the entry in the background; so do sats
+  // merging in from another wallet and a faucet top-up (#3251)
+  else if (pay.state === "short") {
+    off(wallet.canTopUp ? "You need about " + fmtSats(pay.need) + " sats - get 300 free sats" : "Your balance is too low: you need about " + fmtSats(pay.need) + " testnet sats (the entry and the payment's fee).");
+    if (wallet.canTopUp) m.topUp = { label: "Get 300 free sats" };
+  }
+  else m.button = { label, disabled: false, why: pay.state === "coming" ? (wallet.welcomeComing ? "Your welcome sats are on their way" : "Your sats are on their way") + " - they pay the entry while you play." : "" };
   return m;
+}
+
+/**
+ * CAN THE WALLET PAY AN ENTRY (kanban #3251): { state: 'ok' | 'coming' | 'short' | 'unknown', need }. A Lightning payment leaves from one
+ * federation and costs the gateway's fee on top: balance.payable (what the best federation can send after the fees) when the page has read
+ * it, else balance.best (or sats) less a guessed fee. Sats on their way (the welcome, a top-up, sats merging in) let the run start - the entry
+ * is paid in the background once they land (#3265).
+ */
+export const FEE_GUESS_SATS = 3;
+export function payableOf(wallet, entry = 100) {
+  const b = wallet && wallet.balance;
+  if (!b) return { state: wallet && (wallet.welcomeComing || wallet.topUpComing) ? "coming" : "unknown", need: entry + FEE_GUESS_SATS };
+  const best = Number.isFinite(Number(b.best)) && b.best != null ? Number(b.best) : Number(b.sats) || 0;
+  const payable = b.payable == null || !Number.isFinite(Number(b.payable)) ? null : Number(b.payable);
+  // the wallet's withdrawableMsat leaves the gateway's fee out when no gateway is named (measured on stage: 3,000 held, 3,000 "payable"),
+  // so the guessed fee is the least taken
+  const fee = Math.max(FEE_GUESS_SATS, payable !== null && best > 0 ? best - payable : 0);
+  const need = entry + fee;
+  if (best >= need) return { state: "ok", need };
+  const coming = Number(b.coming) || 0;
+  if (wallet.welcomeComing || wallet.topUpComing || (coming > 0 && best + coming >= need)) return { state: "coming", need };
+  return { state: "short", need };
+}
+
+/** The daily prize line (#3251): { text, small } - a test round's says from when (the first daily round) or "Daily:". */
+export const PRIZE_SATS = 2000, FIRST_DAILY_MS = Date.UTC(2026, 10, 23), FIRST_DAILY_WORDS = "Mon 23 Nov";
+export function prizeLine(round, nowMs = Date.now()) {
+  if (!round) return null;
+  const sats = fmtSats(round.bountySats > 0 ? round.bountySats : PRIZE_SATS);
+  const text = "🏆 Best score at the end of the day wins " + sats + " real sats";
+  if (!round.test) return { text, small: "· needs your Lightning address + X account" };
+  return { text: (nowMs < FIRST_DAILY_MS ? "From " + FIRST_DAILY_WORDS + ", daily: " : "Daily: ") + text, small: "· needs your Lightning address + X account" };
 }
 
 /** What the result screen says about the entry (kanban #3265). */
@@ -109,7 +154,7 @@ export function entryLine(entry, why) {
  * The result: { title, entry, rows: [[label, value]], total, rank, beat, left, xPrompt }.
  * res: the run (resultOf); before/after: myBest() before and after the run; me: GET /me after it.
  */
-export function resultModel({ res, parTime, timePerS = 20, entry, entryWhy, before, after, me, max = 5, mode = "play", submitWhy = null, opened = [] }) {
+export function resultModel({ res, parTime, timePerS = 20, entry, entryWhy, before, after, me, max = 5, mode = "play", submitWhy = null, opened = [], round = null, nowMs = Date.now() }) {
   const out = {};
   out.title = mode === "replay" ? "Replay: " + (res.finished ? "flag in " + fmtTime(res.timeS) : "time is up") : res.finished ? "Flag reached in " + fmtTime(res.timeS) : "Time is up";
   out.entry = entryLine(entry, entryWhy);
@@ -121,7 +166,12 @@ export function resultModel({ res, parTime, timePerS = 20, entry, entryWhy, befo
   if (submitWhy) out.refused = "The service did not take this run: " + submitWhy;
   out.rank = after && after.rank ? "Rank " + after.rank + " after this run" : entry === "paid" ? "Not on the board yet" : null;
   out.beat = !before ? (after ? "Your first score of the round" : null) : res.total > before.total ? "New best - you beat your " + fmtSats(before.total) : "Your best stays " + fmtSats(before.total);
+  // the prize, once more on the result (#3251, owner 2026-11-22)
+  if (round) { const sats = fmtSats(round.bountySats > 0 ? round.bountySats : PRIZE_SATS), pre = round.test ? (nowMs < FIRST_DAILY_MS ? "From " + FIRST_DAILY_WORDS + ": b" : "Daily: b") : "B";
+    out.prize = pre + "est score of the day wins " + sats + " real sats" + (after && after.rank ? " - you are rank " + after.rank : ""); }
   if (me) out.left = "Attempts left: " + Math.max(0, max - usedOf(me, opened)) + " of " + max;   // #3251: this run counts, whatever /me said before it
+  // #3251: not eligible - said plainly, once (owner 2026-11-22)
+  if (me && !(me.x && me.placed && me.lnAddress)) out.notCounted = "This run does not count for the " + fmtSats(round && round.bountySats > 0 ? round.bountySats : PRIZE_SATS) + " sats - link X and save a Lightning address by 1 hour after the round.";
   if (me && !me.x) out.xPrompt = "Link your X account to be placed and win.";
   else if (me && me.x && !me.placed) out.xPrompt = "Your X account " + (me.x.username ? "@" + me.x.username + " " : "") + "is linked - " + (me.placedWhy || "not verified yet") + ".";
   return out;
