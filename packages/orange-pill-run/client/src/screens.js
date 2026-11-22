@@ -262,20 +262,17 @@ export function xFieldModel(text, stored) {
   return { text: "", kind: "", canSave: true };
 }
 /**
- * THE ANSWER TO SAVE (the bug bounty's own live X check, POST /api/faucet/feedback/social { x }, the one My feedback's X field uses): the account is
- * looked up on X itself; linked to this key only when it exists and follows the Arena's account (one key per X account, kept by that book).
- * -> { ok, text, kind }.
+ * THE ANSWER TO SAVE (kanban #3331, the round service's POST /x { x }): the account is looked up on X (it must exist; following is not asked) and
+ * kept for this game key; one game key per X account, first come first served. -> { ok, text, kind }.
  */
-export const X_FOLLOW = "bitcoinarena_io";
 export function xSaveAnswer(j, typed) {
   const at = "@" + (xHandleOf(typed) || String(typed || "").trim());
   if (!j || typeof j !== "object") return { ok: false, kind: "bad", text: "The check did not answer - try again" };
-  const x = j.results && j.results.x;
-  if (j.ok === false || !x) return { ok: false, kind: "bad", text: String(j.why || "The check did not answer - try again").slice(0, 120) };
-  if (x.member === true) return { ok: true, kind: "ok", text: "✓ saved @" + (x.username || xHandleOf(typed)) };
-  if (/no such X account|not an X username/i.test(x.why || "")) return { ok: false, kind: "bad", text: "No X account " + at + " - check the spelling. Not saved." };
-  if (x.member === false) return { ok: false, kind: "bad", text: (x.username ? "@" + x.username : at) + " found, but it does not follow @" + X_FOLLOW + " yet - follow, then Save again. Not saved." };
-  return { ok: false, kind: "bad", text: (x.why ? String(x.why).slice(0, 100) : "Not checked") + " - not saved" };
+  if (j.ok === true) return { ok: true, kind: "ok", text: "✓ saved @" + ((j.x && j.x.username) || xHandleOf(typed)) };
+  const why = String(j.why || "");
+  if (/no such X account|not an X username/i.test(why)) return { ok: false, kind: "bad", text: "No X account " + at + " - check the spelling. Not saved." };
+  if (/already used by another player/i.test(why)) return { ok: false, kind: "bad", text: (j.username ? "@" + j.username : at) + " is already used by another player - not saved" };
+  return { ok: false, kind: "bad", text: (why ? why.slice(0, 100) : "Not checked") + " - not saved" };
 }
 
 /** The leaderboard rows: [[rank, name, score, time, placed]] */

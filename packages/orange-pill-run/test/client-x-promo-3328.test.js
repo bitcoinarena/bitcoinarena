@@ -31,21 +31,24 @@ test("#3328 the X handle: typed as @name, name or a link; the field says nothing
   assert.deepEqual(xFieldModel("@Bob", "bob"), { text: "✓ saved", kind: "ok", canSave: false });
 });
 
-test("#3328 the server's answer: saved when found, a clear message when the account does not exist, follows not, or is taken", () => {
-  assert.deepEqual(xSaveAnswer({ ok: true, results: { x: { member: true, username: "bob", why: "follows" } } }, "@bob"), { ok: true, kind: "ok", text: "✓ saved @bob" });
-  assert.deepEqual(xSaveAnswer({ ok: true, results: { x: { member: false, username: "nosuch", why: "no such X account" } } }, "@nosuch"),
+test("#3331 the server's answer: saved when found, a clear message when the account does not exist or another player has it; no report key", () => {
+  assert.deepEqual(xSaveAnswer({ ok: true, x: { username: "bob" } }, "@bob"), { ok: true, kind: "ok", text: "✓ saved @bob" });
+  assert.deepEqual(xSaveAnswer({ ok: false, why: "no such X account", username: "nosuch" }, "@nosuch"),
     { ok: false, kind: "bad", text: "No X account @nosuch - check the spelling. Not saved." });
-  assert.match(xSaveAnswer({ ok: true, results: { x: { member: false, username: "carol", why: "does not follow" } } }, "carol").text, /@carol found, but it does not follow @bitcoinarena_io yet/);
-  assert.equal(xSaveAnswer({ ok: true, results: { x: { member: null, why: "that account is linked to another report key" } } }, "dave").text, "that account is linked to another report key - not saved");
-  assert.equal(xSaveAnswer({ ok: false, why: "one check every 15 seconds" }, "dave").text, "one check every 15 seconds");
+  assert.equal(xSaveAnswer({ ok: false, why: "this X account is already used by another player", username: "carol" }, "carol").text, "@carol is already used by another player - not saved");
+  assert.equal(xSaveAnswer({ ok: false, why: "X could not be checked right now - try again in a minute" }, "dave").text, "X could not be checked right now - try again in a minute - not saved");
   assert.equal(xSaveAnswer(null, "dave").ok, false);
+  const scr = readFileSync(new URL("../client/src/screens.js", import.meta.url), "utf8"), main = readFileSync(new URL("../client/src/main.js", import.meta.url), "utf8");
+  assert.equal(/report key|follow @|feedback\/social|socialUrl/i.test(scr + main), false, "no report key, no follow, no bug bounty door");
+  assert.match(main, /api\.post\("\/x", \{ x: typed \}\)/);
 });
 
 test("#3328 the game never opens the page's My feedback dialog; the fields are empty with a plain placeholder", () => {
   const main = readFileSync(new URL("../client/src/main.js", import.meta.url), "utf8");
   assert.equal(/bridge\.linkX\s*\(/.test(main), false, "no bridge.linkX() call");
   const page = readFileSync(new URL("../client/index.template.html", import.meta.url), "utf8");
-  assert.equal((page.match(/placeholder="you@wallet.com"/g) || []).length, 2);
+  assert.equal((page.match(/placeholder="you@lnurl-wallet.com"/g) || []).length, 2);   // #3331 (owner 2026-11-22)
+  assert.equal(/placeholder="you@wallet.com"/.test(page), false);
   for (const p of ["i", "r"]) assert.match(page, new RegExp(`id="${p}XfIn"[^>]*placeholder="@yourXhandle"`));
   assert.equal((page.match(/>Check<\/button>/g) || []).length, 2);
 });

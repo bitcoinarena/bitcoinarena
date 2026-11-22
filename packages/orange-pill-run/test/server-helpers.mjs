@@ -56,7 +56,7 @@ export function proveX(s2, pk, { userId, username = null, nowMs }) {
 
 /** A service on a fake clock, with a Season 2 book in memory: link(pk, verified) gives the key a linked X account - linked by a code posted from it
  *  (proof 'code', as the bug bounty's X poll redeems it). A typed name places a player as well (kanban #3279, owner 2026-11-22). */
-export function world({ start = '2026-11-23T00:00:00Z', cfg = {}, chain = fakeChain(), s2On = true, lnCheck = null } = {}) {
+export function world({ start = '2026-11-23T00:00:00Z', cfg = {}, chain = fakeChain(), s2On = true, lnCheck = null, xAccounts = null } = {}) {
   let t = at(start);
   const clock = { now: () => t, set: (ms) => { t = ms; }, add: (ms) => { t += ms; } };
   const lnd = fakeLnd();
@@ -66,14 +66,18 @@ export function world({ start = '2026-11-23T00:00:00Z', cfg = {}, chain = fakeCh
   // the wallets' answers to a Lightning address check (#3250): every address is a good one unless set here ({ ok: false, why })
   const wallets = new Map(), lnAsked = [];
   const lnFake = async (a) => { lnAsked.push(a); return wallets.get(a) || { ok: true, address: a }; };
-  const opr = createOpr({ lnCheck: lnCheck || lnFake, now: clock.now, sim: stubSim, fetchCandles: async (d) => candles48(d), checkLevel: async () => ({ ok: true, seed: 7, tries: 1, hash: 'h' }),
+  // X on a fake (kanban #3331): xAccounts maps a lower-case handle to its userId; a handle not in it does not exist; 'down' answers no read
+  const xs = xAccounts || new Map(), xAsked = [];
+  const xLookup = async (name) => { xAsked.push(name); if (xs.get('*') === 'down') return { userId: null, member: null, why: 'x 503' };
+    const id = xs.get(String(name).toLowerCase()); return id ? { userId: id, username: name, member: false, why: 'does not follow' } : { userId: null, username: name, member: false, why: 'no such X account' }; };
+  const opr = createOpr({ xLookup, botXHandles: () => new Set([...xs.keys()].filter((k) => k.startsWith('bot'))), lnCheck: lnCheck || lnFake, now: clock.now, sim: stubSim, fetchCandles: async (d) => candles48(d), checkLevel: async () => ({ ok: true, seed: 7, tries: 1, hash: 'h' }),
     invoices: lnd, chain, s2, alert: (x) => alerts.push(x), log: (m) => lines.push(m), cfg: { adminSha: createHash('sha256').update('letmein').digest('hex'), showTest: true, entrySats: 100, ...cfg } });   // the paid tests keep 100; free: cfg.entrySats 0 (#3273)
   const link = (pk, verified = true, username = null) => {
     xn++; const r = proveX(s2, pk, { userId: `x${xn}`, username: username || `user${xn}`, nowMs: t });
     if (!r.ok) throw new Error(r.why);
     if (verified) s2.record(pk, 'x', { member: true, nowMs: t });
   };
-  return { opr, clock, lnd, chain, s2, alerts, lines, link, wallets, lnAsked };
+  return { opr, clock, lnd, chain, s2, alerts, lines, link, wallets, lnAsked, xs, xAsked };
 }
 
 /** Make the round ready: level, post, confirmation. */

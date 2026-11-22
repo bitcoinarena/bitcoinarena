@@ -9,7 +9,10 @@
 //   checkLevel(candles, roundId, { version }) -> { ok, seed, tries, hash }                  (src/level-check.mjs)
 //   invoices { create, lookup }                                                      (opr-invoices.mjs: one testnet4 lnd)
 //   chain { post(payloadHex) -> txid, status(txid) -> { confirmations, height } }    (opr-chain.mjs; null: no post, a round opens on its level)
-//   s2: the bug bounty's Season 2 store (arena-node/src/bounty-season.js openBountySeason) - its X links decide who is placed; read only here
+//   xLookup(handle) -> { userId, username, why }: whether an X account of that name exists (arena-node/src/bounty-verify.js xByName; userId null:
+//       none, or not read). The game's own X links (kanban #3331) are kept here, per game key, in x_links - never in the bug bounty's book
+//   s2: the bug bounty's Season 2 store (arena-node/src/bounty-season.js openBountySeason) - only a FALLBACK for keys linked there before #3331; read only
+//   botXHandles() -> Set of lower-case X handles on the bot list (FAUCET_BOT_X_HANDLES, read on every call)
 //   alert(text): the owner's alert hook (off unless configured)
 //   lnCheck(address) -> { ok, address } | { ok: false, why }: a player's Lightning address asked at its wallet (opr-lnaddress.mjs checkLnAddress)
 // NOTHING IS PAID HERE. The service writes payout lists and their approval records; paying stays a separate step.
@@ -22,6 +25,15 @@ import { bestPerPlayer, payoutLists, SPLIT } from './opr-payout.mjs';
 import { checkLnAddress, lnAddressSyntax, LN_CHECKS_PER_HOUR } from './opr-lnaddress.mjs';
 import { runFeatures, nearLogs, deviceOf, scoreRun, topReasons, HOLD_ABOVE } from './opr-botscore.mjs';
 import { ipKey } from '../../arena-node/src/faucet.js';
+import { readFileSync } from 'node:fs';
+
+/** The X handle as typed (@name, name or an x.com link) -> the bare name, or null when it cannot be one (kanban #3331). */
+export function xHandleOf(text) {
+  const n = String(text == null ? '' : text).trim().replace(/^https?:\/\/(www\.)?(x|twitter)\.com\//i, '').replace(/^@/, '').replace(/[/?#].*$/, '');
+  return /^[A-Za-z0-9_]{1,15}$/.test(n) ? n : null;
+}
+export const X_CHECK_GAP_MS = 15000, X_CHECKS_PER_HOUR = 20;
+const botListFromEnv = () => { try { const f = process.env.FAUCET_BOT_X_HANDLES; return new Set(f ? readFileSync(f, 'utf8').split('\n').map((l) => l.trim().replace(/^@/, '').toLowerCase()).filter((l) => l && !l.startsWith('#')) : []); } catch { return new Set(); } };
 
 const DAY_MS = 86400000, MIN_MS = 60000;
 export const DEFAULTS = Object.freeze({
@@ -86,6 +98,7 @@ export function createOpr(o = {}) {
   const alert = o.alert || (() => {});
   const { sim, fetchCandles, checkLevel, invoices, chain = null, s2 = null } = o;
   const lnCheck = o.lnCheck || ((a) => checkLnAddress(a));
+  const xLookup = o.xLookup || null, botXHandles = o.botXHandles || botListFromEnv;
   const db = new DatabaseSync(o.dbPath || ':memory:');
   db.exec(`PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000;
     CREATE TABLE IF NOT EXISTS rounds (id TEXT PRIMARY KEY, num INTEGER NOT NULL UNIQUE, test INTEGER NOT NULL, day TEXT, chart_day TEXT NOT NULL,
@@ -117,6 +130,11 @@ export function createOpr(o = {}) {
   // THE BOT LIKELIHOOD (kanban #3274): bot_feat a run's own features (opr-botscore.mjs runFeatures), made once at submit; held: a list's held rows
   try { db.exec('ALTER TABLE attempts ADD COLUMN bot_feat TEXT'); } catch { /* there already */ }
   try { db.exec('ALTER TABLE payout_lists ADD COLUMN held TEXT'); } catch { /* there already */ }
+  // THE GAME'S OWN X LINKS (kanban #3331, owner 2026-11-22: the game must not be tied to feedback reports): one X account per game key and one game
+  // key per X account (user_id UNIQUE: first come, first served - nothing is proven, so an account never moves to another key); linked_ms is when
+  // this key took it (the placement rules count from there). x_checks: the lookups asked, for the per-key limit
+  db.exec(`CREATE TABLE IF NOT EXISTS x_links (pubkey TEXT PRIMARY KEY, user_id TEXT NOT NULL UNIQUE, username TEXT NOT NULL, linked_ms INTEGER NOT NULL, checked_ms INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS x_checks (player TEXT NOT NULL, at_ms INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS x_checks_by_player ON x_checks (player, at_ms);`);
   db.exec('CREATE TABLE IF NOT EXISTS ln_checks (player TEXT NOT NULL, at_ms INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS ln_checks_by_player ON ln_checks (player, at_ms);');
   // ONE ADDRESS, A FEW PLAYERS' ATTEMPTS (kanban #3283): ip_key the caller's address as a limit counts it (an IPv6 /64 as one, faucet.js ipKey)
   try { db.exec('ALTER TABLE attempts ADD COLUMN ip_key TEXT'); } catch { /* there already */ }
@@ -519,7 +537,8 @@ export function createOpr(o = {}) {
     return { runs, players };
   }
   /**
-   * PLACED (kanban #3245, #3250): a linked X account the bug bounty verified (Season 2 links, its own flow), not a known bot there.
+   * PLACED (kanban #3245, #3250, #3331): an X account this game key linked in the game's own x_links (found on X at save time), or - for a key
+   * linked before #3331 - its Season 2 link verified by the bug bounty; not on the bot list.
    * TYPED OR PROVEN, BOTH PLACE (kanban #3279, #3285; owner 2026-11-22 ~12:45Z: "Zu kompliziert, mach das weg"): an X account linked in the
    * Season 2 book the normal way places the player - a handle typed in the social form (proof 'name', claimName) as well as a posted link code
    * (proof 'code', redeem). The proof kind rides along as x.proof ('typed' | 'code') so the admin page and every list row show it at the owner's
@@ -533,22 +552,62 @@ export function createOpr(o = {}) {
    * one key's attempts in a round. A key that links later is placed from its next round on.
    */
   const firstRunOf = (round, pk) => q("SELECT MIN(created_ms) AS m FROM attempts WHERE round = ? AND player = ? AND state != 'expired'").get(round, pk).m;
+  const isBotX = (name) => { const b = botXHandles(); return !!name && b.has(String(name).replace(/^@/, '').toLowerCase()); };
+  const xLinkOf = (pk) => q('SELECT * FROM x_links WHERE pubkey = ?').get(String(pk)) || null;
+  // THE GAME'S OWN LINK FIRST (kanban #3331): the existence check at save time is its verification - no follow, no member read. A key with no game
+  // link falls back to its Season 2 link made before #3331 (the old rules, unchanged), unless another game key now holds that X account here
   function xOf(pk, r = null) {
-    if (!s2) return { placed: false, x: null, why: 'no X check here' };
-    let l = null, flags = {};
-    try { l = s2.links(pk).find((x) => x.platform === 'x') || null; flags = s2.flagsOf(pk) || {}; } catch (e) { return { placed: false, x: null, why: `X not read (${e.message})` }; }
+    const g = xLinkOf(pk);
+    let l = null, flags = {}, viaS2 = false;
+    if (g) l = { userId: g.user_id, username: g.username, linkedMs: g.linked_ms, proof: 'game' };
+    else if (s2) {
+      try { l = s2.links(pk).find((x) => x.platform === 'x') || null; flags = s2.flagsOf(pk) || {}; } catch (e) { return { placed: false, x: null, why: `X not read (${e.message})` }; }
+      if (l) { viaS2 = true; const held = q('SELECT pubkey FROM x_links WHERE user_id = ?').get(String(l.userId)); if (held && held.pubkey !== pk) l = null; }
+    }
     if (!l) return { placed: false, x: null, why: 'no X account linked' };
-    const x = { userId: String(l.userId), username: l.username || null, proof: l.proof === 'code' ? 'code' : 'typed' };   // shown at sign-off (#3279)
-    if (flags.bot) return { placed: false, x, why: 'a known bot account' };
-    if (l.member !== true) return { placed: false, x, why: 'the X account is not verified yet' };
+    const x = { userId: String(l.userId), username: l.username || null, proof: l.proof === 'game' ? 'game' : l.proof === 'code' ? 'code' : 'typed' };   // shown at sign-off (#3279)
+    if (flags.bot || isBotX(l.username)) return { placed: false, x, why: 'a known bot account' };
+    if (viaS2 && l.member !== true) return { placed: false, x, why: 'the X account is not verified yet' };
     if (r && !(Number(l.linkedMs) <= r.end_ms + cfg.verifyGraceMs)) return { placed: false, x, why: 'the X account was linked more than 1 hour after the round ended' };
     if (r) {
       const first = firstRunOf(r.id, pk);
       if (first != null && !(Number(l.linkedMs) <= first)) return { placed: false, x, why: 'the X account was linked after your first run of this round - it counts from the next round' };
       // verified (a member read) after the link and by the hour after the round - a read days later does not rebuild a waiting list either (#3278)
-      if (!s2.memberRead(pk, 'x', { userId: l.userId, fromMs: l.linkedMs, toMs: r.end_ms + cfg.verifyGraceMs })) return { placed: false, x, why: 'the X account was not verified by 1 hour after the round ended' };
+      if (viaS2 && !s2.memberRead(pk, 'x', { userId: l.userId, fromMs: l.linkedMs, toMs: r.end_ms + cfg.verifyGraceMs })) return { placed: false, x, why: 'the X account was not verified by 1 hour after the round ended' };
     }
     return { placed: true, x, why: null };
+  }
+  /**
+   * SAVE AN X HANDLE (kanban #3331, POST /x { x }): the name looked up on X (it must exist; following is not asked), then kept for this game key.
+   * Refused when another game key holds that X account. The same account again: saved, linked_ms unchanged. Another account: replaces this key's
+   * link with a new linked_ms (the old one is free again; the new one counts from the key's next round it has not played yet).
+   */
+  async function saveX(player, typed) {
+    const name = xHandleOf(typed);
+    if (!name) return { ok: false, code: 400, why: 'Not an X username' };
+    if (!xLookup) return { ok: false, code: 503, why: 'X cannot be checked here' };
+    const t = now();
+    const last = q('SELECT MAX(at_ms) AS m, COUNT(*) AS n FROM x_checks WHERE player = ? AND at_ms > ?').get(player, t - 60 * MIN_MS);
+    if (last.m != null && t - last.m < X_CHECK_GAP_MS) return { ok: false, code: 429, why: `One check every ${X_CHECK_GAP_MS / 1000} seconds - try again in a moment` };
+    if (last.n >= X_CHECKS_PER_HOUR) return { ok: false, code: 429, why: 'Too many checks - try again in an hour' };
+    q('INSERT INTO x_checks (player, at_ms) VALUES (?, ?)').run(player, t);
+    let a;
+    try { a = await xLookup(name); } catch (e) { a = { userId: null, why: String(e && e.message || e) }; }
+    if (a && !a.userId && /no such X account/i.test(String(a.why || ''))) return { ok: false, code: 404, why: 'no such X account', username: name };
+    if (!a || !a.userId) { log(`x check for ${player.slice(0, 8)} not answered: ${a && a.why}`); return { ok: false, code: 503, why: 'X could not be checked right now - try again in a minute' }; }
+    const userId = String(a.userId), username = String(a.username || name).replace(/^@/, '');
+    const mine = xLinkOf(player);
+    if (mine && mine.user_id === userId) { q('UPDATE x_links SET username = ?, checked_ms = ? WHERE pubkey = ?').run(username, now(), player); return { ok: true, x: { username } }; }
+    const held = q('SELECT pubkey FROM x_links WHERE user_id = ?').get(userId);
+    if (held && held.pubkey !== player) return { ok: false, code: 409, why: 'this X account is already used by another player', username };
+    const at = now();
+    try {
+      q(`INSERT INTO x_links (pubkey, user_id, username, linked_ms, checked_ms) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (pubkey) DO UPDATE SET user_id = excluded.user_id, username = excluded.username, linked_ms = excluded.linked_ms, checked_ms = excluded.checked_ms`).run(player, userId, username, at, at);
+    } catch (e) { if (/UNIQUE/i.test(e.message)) return { ok: false, code: 409, why: 'this X account is already used by another player', username }; throw e; }
+    log(`x @${username} linked to ${player.slice(0, 8)}${mine ? ` (was @${mine.username})` : ''}`);
+    for (const x of q("SELECT DISTINCT l.round FROM payout_lists l JOIN rounds r ON r.id = l.round WHERE l.state = 'waiting' AND r.state = 'listed'").all()) refreshLists(x.round);
+    return { ok: true, x: { username } };
   }
   function publicBoard(round, viewer = null) {
     const r = roundRow(round);
@@ -850,6 +909,7 @@ export function createOpr(o = {}) {
         q('INSERT INTO players (pubkey, name, seen_ms) VALUES (?, ?, ?) ON CONFLICT (pubkey) DO UPDATE SET name = excluded.name').run(me, n, now());
         return send(200, { ok: true, name: n });
       }
+      if (req.method === 'POST' && path === '/x') { const r = await saveX(me, body.x); const { code, ...out } = r; return send(r.ok ? 200 : code || 400, out); }
       if (req.method === 'POST' && path === '/lnaddress') { const r = await saveLnAddress(me, body.address); const { code, ...out } = r; return send(r.ok ? 200 : code || 400, out); }
       if (req.method === 'POST' && path === '/attempt') { const r = await startAttempt(me, { round: body.round, ip }); return send(r.ok ? 200 : 409, r); }
       if (req.method === 'POST' && path === '/attempt/check') { const r = await checkAttempt(me, body.attempt); return send(r.ok ? 200 : 404, r); }
@@ -860,5 +920,5 @@ export function createOpr(o = {}) {
   }
 
   return { db, cfg, tick, handle, testRound, ensureDaily, startAttempt, checkAttempt, submit, submitChecked, settle, boardOf, publicBoard, publicRound, currentRound, roundRow: (id) => roundRow(id),
-    potOf: (id) => potOf(roundRow(id)), listsOf, decideList, rejectRow, disqualify, review, payable, claimBounty, saveLnAddress, xOf, postFields: (id) => postFields(roundRow(id)), close: () => db.close() };
+    potOf: (id) => potOf(roundRow(id)), listsOf, decideList, rejectRow, disqualify, review, payable, claimBounty, saveLnAddress, saveX, xOf, postFields: (id) => postFields(roundRow(id)), close: () => db.close() };
 }

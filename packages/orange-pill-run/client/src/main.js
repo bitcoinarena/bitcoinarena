@@ -37,9 +37,8 @@ function findBridge() {
     location.replace(location.pathname.replace(/games\/orange-pill-run\/(index\.html)?$/, "") + "?game=orange-pill-run" + (location.hash || "")); }
 const bridge = findBridge();
 if (bridge) document.body.classList.add("bridged");
-// THE X HANDLE'S CHECK (kanban #3328): the bug bounty's live X lookup, its own door (bridge.socialUrl, signed for exactly that URL); without it the
-// field is not shown (the game never opens the page's My feedback dialog)
-const xApi = bridge && bridge.socialUrl ? makeApi({ base: bridge.socialUrl, signBase: bridge.socialUrl, bridge, fetch: (u, o) => fetch(u, o) }) : null;
+// THE X HANDLE'S CHECK (kanban #3328, #3331): the round service's own POST /x - the game keeps its X link per game key, never in the bug bounty's
+// book (owner 2026-11-22: the game must not be tied to feedback reports); the game never opens the page's My feedback dialog
 const api = bridge ? makeApi({ base: bridge.apiBase || location.origin + "/api/opr", signBase: bridge.signBase || bridge.apiBase || location.origin + "/api/opr", bridge, fetch: (u, o) => fetch(u, o) }) : null;
 let vault = null; try { vault = window.localStorage; } catch (_) { vault = null; }
 const entry = api ? createEntry({ api, bridge, store: vault, log: (m) => console.log("[opr] " + m) }) : null;
@@ -373,7 +372,7 @@ for (const p of ["i", "r"]) {
 const XF = { i: { dirty: false, msg: null }, r: { dirty: false, msg: null } };
 function paintXf(p, show = true) {
   const form = $(p + "Xf"), inp = $(p + "XfIn"), btn = $(p + "XfBtn"), why = $(p + "XfWhy"), st = XF[p];
-  const on = show && !!xApi && !!S.me;
+  const on = show && !!api && !!S.me;
   form.hidden = !on; if (!on) { why.hidden = true; return; }
   const stored = (S.me.x && S.me.x.username) || "";
   const m = st.msg || xFieldModel(inp.value, stored);
@@ -385,7 +384,7 @@ async function saveX(p) {
   if (btn.disabled || btn.dataset.busy) return;
   const typed = inp.value.trim();
   btn.dataset.busy = "1"; btn.disabled = true; st.msg = { text: "Checking @" + (xHandleOf(typed) || typed) + " on X …", kind: "" }; paintXf(p);
-  const j = await xApi.post("", { x: typed }).catch(() => null);
+  const j = await api.post("/x", { x: typed }).catch(() => null);
   const a = xSaveAnswer(j, typed);
   delete btn.dataset.busy;
   st.msg = { text: a.text, kind: a.kind }; st.dirty = !a.ok;
