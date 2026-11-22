@@ -1581,7 +1581,9 @@
     #arena-games.compact .name { min-height: 2.2em; }
     #arena-games .more { margin-top: 0; }
     #arena-games .foot-row { margin-top: 6px; }
-  </style>
+      /* kanban #3251 (owner 2026-11-22): the header balance stays one line - the ⇄ beside the sats, never wrapped under them */
+    #arena-hdr-bal, #arena-hdr-sats { white-space: nowrap; }
+</style>
   <!-- UP/DOWN'S STYLE (kanban #521): the pick sheet's, from packages/btc-updown/page -->
   <link rel="stylesheet" href="games/btc-updown/market-page.css">
   <!-- TICK TOCK'S STYLE (kanban #521): the next round's box, from packages/nextblock/page -->
