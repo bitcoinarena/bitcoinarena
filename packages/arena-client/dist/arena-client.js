@@ -43879,6 +43879,11 @@ const LOBBY_SKEW_MS = 60000;
 const SIGNER_ANSWER_MS = 10000;
 /** How long the lobby waits for the other seats once half of them answered. */
 const LOBBY_LAST_MS = 2500;
+/**
+ * AND ONCE THREE QUARTERS ANSWERED, THIS MUCH MORE (kanban #3289, measured on the live page 2026-11-22: twelve of 14 seats answered /rounds
+ * in 0.3 s and the first lobby waited 2.5 s for two silent ones). A late seat is in the next read; what counts is unchanged.
+ */
+const LOBBY_MOST_MS = 500;
 
 /**
  * `fetcher` with a limit: a read that has not answered in `ms` is refused with the words the lobby shows, and a real
@@ -44097,7 +44102,7 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
     // AT MOST 8 UPCOMING ROUNDS OF EACH SERIES (`next`): a node holding two series lists ~1150 rounds otherwise - 63 s,
     // past what the lobby waits for a node. A lobby shows one round per kind; eight leaves the lead's choice its room.
     const one = ask(`${String(node).replace(/\/+$/, '')}/rounds?next=${LOBBY_PER_SERIES}&compact=1${gamesQuery}`).then((r) => ({ r }), (e) => ({ e }));
-    one.then(() => { answeredCount += 1; if (answeredCount * 2 >= unique.length && unique.length > 2) setTimeout(settle, LOBBY_LAST_MS); });
+    one.then(() => { answeredCount += 1; if (unique.length > 2 && answeredCount * 2 >= unique.length) setTimeout(settle, answeredCount * 4 >= unique.length * 3 && unique.length >= 4 ? LOBBY_MOST_MS : LOBBY_LAST_MS); });
     return Promise.race([one, settled.then(() => ({ e: Object.assign(new Error(`did not answer within ${LOBBY_LAST_MS} ms of half the seats`), { silent: true }) }))]);
   }));
   for (const [k, node] of unique.entries()) {
@@ -47810,6 +47815,8 @@ const gameTypeOf = (m) => (m && m.resultType === 2 ? 'market' : m && m.resultTyp
 
 
 const GAMES_ANSWER_MS = 6000;
+/** How long GET /games waits for the last seats once three quarters of them answered (kanban #3289). */
+const GAMES_MOST_MS = 500;
 // ONE SEAT'S ANSWER IS BOUNDED (kanban #2558, audit #1489 r13: one seat listing 2000 made-up manifests cost one games read 2001
 // developer-signature checks and 2002 refusals, and - signed under its own throwaway key - would have filled the lobby with tiles):
 // at most this many of a seat's games are decoded and checked, the pinned known-good ids first. An honest seat lists every VERSION it
@@ -47843,8 +47850,18 @@ async function fetchGames({ nodes, fetcher = fetch, answerMs = GAMES_ANSWER_MS, 
   // a node naming another's key would push the other's title out of the count below (kanban #2033)
   const answered = new Set();
   const signedById = new Map();   // game id -> its developer signed it (kanban #1810), checked once
-  const answers = await Promise.all(unique.map((node) => fetcher(`${node}/games`, { signal: AbortSignal.timeout(answerMs) })
-    .then(async (r) => ({ r, body: r.ok ? await r.json() : null }), (e) => ({ e }))));
+  // THREE QUARTERS IN, THE REST GET GAMES_MOST_MS MORE (kanban #3289, measured on the live page 2026-11-22: two of 14 seats never
+  // answered and every load waited the whole 2.5 s while twelve had answered in 0.4 s). Only who is waited for changes: a manifest
+  // still counts by its hash and its developer's signature, a title by more than half of the seats that answered.
+  let settle = null, answeredCount = 0;
+  const settled = new Promise((resolve) => { settle = resolve; });
+  const answers = await Promise.all(unique.map((node) => {
+    const abort = new AbortController();
+    const one = fetcher(`${node}/games`, { signal: AbortSignal.any ? AbortSignal.any([abort.signal, AbortSignal.timeout(answerMs)]) : AbortSignal.timeout(answerMs) })
+      .then(async (r) => ({ r, body: r.ok ? await r.json() : null }), (e) => ({ e }));
+    one.then(() => { answeredCount += 1; if (unique.length >= 4 && answeredCount * 4 >= unique.length * 3) setTimeout(settle, GAMES_MOST_MS); });
+    return Promise.race([one, settled.then(() => { abort.abort(); return { e: new Error(`did not answer within ${GAMES_MOST_MS} ms of three quarters of the seats`) }; })]);
+  }));
   for (const [k, node] of unique.entries()) {
     const { r, body, e } = answers[k];
     if (e) { refused.push(`${node}: ${e.message}`); continue; }
