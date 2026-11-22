@@ -5023,10 +5023,15 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         // SUBMITTED AT ONCE, PLACED AFTER (kanban #601, 2026-10-23: "Deutlich unter 1s ist die Zielmarke", ruling "Sofort eingereicht"): the
         // order is the tab's - shown, cancellable - as soon as its locks are sent to the federation and the first seat took its entry
         // (`submitted`); it is placed once the first seat holds the accepted lock; refused by the federation or every seat, it is taken back
+        // A CANCEL TAPPED WHILE IT PLACES STAYS (kanban #3276, feedback #384: cancelled 3.6 s after its submit, every book seat took it, then
+        // the 'placed' record written from scratch dropped `cancelled` - the order showed open again and the second tap was refused with
+        // "already carried by batch"): the record written again keeps the cancel and the sells this tab holds for that order
+        const keptOrderOf = (eid) => { const k = readPicks().find((p) => p.entryIdHex === eid && p.order);
+          return k ? { ...(k.order.cancelled ? { cancelled: true } : {}), ...(k.order.sells ? { sells: k.order.sells } : {}) } : {}; };
         const recordOf = (eid, state) => Object.assign(ARENACLIENT.pickRecord({ roundIdHex: named.roundIdHex, entryIdHex: eid, pick: chosen.pick,
           round: named.round, nodes: named.nodes, confirmed: !!chosen.confirmed }),
           chosen.limitPrice ? { order: { limitPrice: chosen.limitPrice, orderExpiryMs: String(chosen.orderExpiryMs || 0), sessionKeyPkcs8, placedMs: Date.now(), index: Number(chosen.orderIndex) || 0, state,
-            timing: (window.ARENA_ORDER_TIMES && window.ARENA_ORDER_TIMES.get(named.roundIdHex + ':' + (Number(chosen.orderIndex) || 0))) || {} } } : {});
+            timing: (window.ARENA_ORDER_TIMES && window.ARENA_ORDER_TIMES.get(named.roundIdHex + ':' + (Number(chosen.orderIndex) || 0))) || {}, ...keptOrderOf(eid) } } : {});
         const t0 = performance.now();
         const placedIds = window.ARENA_PLACED_IDS || (window.ARENA_PLACED_IDS = new Set());   // placed orders: no slow-tx log for them at 10 s
         let early = null;
@@ -8951,9 +8956,12 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             if (!pk8) return { ok: false, why: 'this browser holds no wallet seed to make the order\'s key with' };
             const key = await crypto.subtle.importKey('pkcs8', ARENACLIENT.fromHex(pk8), { name: 'Ed25519' }, false, ['sign']);
             const sig = new Uint8Array(await crypto.subtle.sign({ name: 'Ed25519' }, key, ARENACLIENT.orderCancelId({ roundId: ARENACLIENT.fromHex(x.roundIdHex), entryId: ARENACLIENT.fromHex(entryIdHex) })));
+            // A CANCEL A BATCH ALREADY CARRIES IS DONE (kanban #3276): the seats answer 409 "that cancel is already carried by batch N" to a
+            // second tap - the order is cancelled, not refused
+            const cancelTaken = (r) => (r.status >= 200 && r.status < 300) || (r.status === 409 && /already carried by batch/.test(String(r.why || '')));
             const seats = await Promise.all(x.nodes.map((n) => fetch(String(n).replace(/\/+$/, '') + '/cancel?entry=' + entryIdHex, { method: 'POST', body: sig })
               .then(async (r) => ({ node: n, status: r.status, why: r.ok ? '' : (await r.text()).slice(0, 160) })).catch((e) => ({ node: n, status: 0, why: e.message }))));
-            const ok = seats.some((r) => r.status >= 200 && r.status < 300);
+            const ok = seats.some(cancelTaken);
             if (ok) { x.order.cancelled = true; rememberPick(x); }
             return { ok, seats };
           },
