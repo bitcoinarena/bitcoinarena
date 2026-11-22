@@ -8357,7 +8357,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             onTip: window.ARENA_ZAP ? (g, info) => window.ARENA_ZAP.open({ title: 'Tip the developer of ' + (g.title || g.name), address: info.lightning }) : null });
           // THE ORANGE PILL RUN AS A TILE (owner 2026-11-22: "Bau es ein als App"): not a node-hosted game, so not in the seats' list - one tile of
           // its own at the end of Games, on the testnet stage only (the game is stage-only until the owner says so); a tap opens ?game=orange-pill-run
-          if (/^testnet-stage\./.test(location.hostname) || window.ARENA_OPR_TILE) {
+          // kanban #3328 (owner 2026-11-22): the tile on testnet.bitcoinarena.io too, not only on the stage
+          if (/^testnet(-stage)?\./.test(location.hostname) || window.ARENA_OPR_TILE) {
             const addOpr = () => {
               const grid = list.querySelector('section.group .grid'); if (!grid || grid.querySelector('[data-game="orange-pill-run"]')) return !!grid;
               const t = document.createElement('button'); t.type = 'button'; t.className = 'tile game play-game'; t.dataset.game = 'orange-pill-run';
