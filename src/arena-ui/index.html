@@ -1018,6 +1018,8 @@
        with Night on: Docs 10-42, Feedback 52-116, Night 122-240) the links give way, Donate is its heart alone (its name stays for a screen reader),
        and the UI number's text goes while Night is shown - it lay over Night before this too; at 380 px and under the button is a little smaller */
     #arena-foot-topup { display: none; }
+    /* A FREE ORANGE PILL RUN (kanban #3273): no wallet around it - no balance, Deposit, Withdraw or faucet top-up; Settings keeps the wallet */
+    html body.arena-opr-free .wb-bal, html body.arena-opr-free #arena-wb-deposit, html body.arena-opr-free #arena-wb-withdraw, html body.arena-opr-free #arena-foot-topup { display: none !important; }
     body.arena-topup-on.arena-own-client #arena-foot-topup, body.arena-topup-on.arena-picking #arena-foot-topup, body.arena-topup-on.arena-game-chosen:not(.arena-own-client):has(#boot:not(.done)) #arena-foot-topup,
     body.arena-topup-on.arena-unity-menu #arena-foot-topup, body.arena-topup-on:has(#arena-season.show) #arena-foot-topup, body.arena-topup-on:has(#arena-shop.show) #arena-foot-topup,
     html.arena-root body.arena-topup-on:not(.arena-picking):not(.arena-game-chosen):has(#boot:not(.done)) #arena-foot-topup {
@@ -8220,7 +8222,18 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       window.ARENA_OPR_ON = true;
       window.ARENA_GAME_NAME = 'orange-pill-run';
       window.ARENA_TRACK('game-open', { game: 'orange-pill-run' });
-      if (window.ARENA_OPEN_WALLET_EARLY) window.ARENA_OPEN_WALLET_EARLY(window.ARENA_LEDGER_LOBBY);
+      // #3273: the wallet only for a round that asks an entry; a free round (entrySats 0) opens none
+      window.ARENA_OPR_FREE = null;
+      document.body.classList.add('arena-opr-free');   // the game is free; a paid round takes the class off
+      fetch(location.origin + '/api/opr/round', { cache: 'no-store', signal: AbortSignal.timeout(10000) }).then((r) => r.json()).then((j) => {
+        const paid = !!(j && j.ok && j.round && Number(j.round.entrySats) > 0);
+        window.ARENA_OPR_FREE = !paid;
+        console.log('[arena] #3273 orange pill run: the round is ' + (paid ? 'paid - the wallet opens' : 'free - no wallet'));
+        if (!paid) return;
+        document.body.classList.remove('arena-opr-free');
+        if (window.ARENA_OPR_FRESH) { window.ARENA_NEW_WALLET = true; window.ARENA_BALANCE_TRIED = true; try { localStorage.setItem('arena.welcome.pending', '1'); } catch { /* no welcome */ } if (window.ARENA_WELCOME) window.ARENA_WELCOME(); }
+        if (window.ARENA_OPEN_WALLET_EARLY) window.ARENA_OPEN_WALLET_EARLY(window.ARENA_LEDGER_LOBBY);
+      }).catch((e) => { window.ARENA_OPR_FREE = true; console.log('[arena] #3273 orange pill run: the round not read (' + ((e && e.message) || e) + ') - no wallet'); });
       const frame = document.createElement('iframe');
       frame.id = 'arena-client'; frame.title = 'Orange Pill Run'; frame.allow = 'autoplay';
       frame.src = 'games/orange-pill-run/index.html' + location.hash;
@@ -8229,7 +8242,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       const deposit = document.getElementById('arena-deposit'); if (deposit) document.body.appendChild(deposit);
       const b = document.getElementById('boot'); if (b) { b.classList.add('done'); setTimeout(() => { if (b.parentNode) b.remove(); }, 300); }
       frame.addEventListener('load', () => { try { frame.contentWindow.focus(); } catch { /* another origin */ } }, { once: true });
-      console.log('[arena] #3265 orange pill run: its client in a frame, the wallet ' + (walletSeed() ? 'open' : 'being made'));
+      console.log('[arena] #3265 orange pill run: its client in a frame, the identity ' + (walletSeed() ? 'here' : 'being made'));
       return new Promise(() => {});   // the node games' lobby is not read for this game
     };
     async function chooseTheGame(nodes) {
@@ -11824,7 +11837,18 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       };
       // THE ORANGE PILL RUN'S LINK PLAYS AT ONCE (kanban #3265, the owner 2026-11-21 ~23:05Z: someone who opens the game URL directly has a new, empty wallet and can still
       // join and start playing at once): no screen to choose a wallet - this Create, its welcome asked at once, the seed words kept for Settings
-      if (window.ARENA_OPR_PAGE) { const made = create(); console.log('[arena] #3265 orange pill run: a new wallet made at once' + (made.ok ? '' : ': ' + made.why)); return; }
+      // A FREE ROUND NEEDS NO WALLET (kanban #3273, owner 2026-11-22: free to play, 2,000 real sats to the winner): only the tab's identity key - the
+      // tab seed, made here silently, no welcome asked, no words shown, no federation wallet opened. ARENA_OPR_START opens the wallet (and asks
+      // the welcome for a seed made here) only when the open round asks an entry (entrySats > 0)
+      if (window.ARENA_OPR_PAGE) {
+        try { ARENACLIENT.tabSeed({ storage: window.sessionStorage, random: (n) => crypto.getRandomValues(new Uint8Array(n)) }); } catch (e) { console.log('[arena] #3273 orange pill run: no identity: ' + e.message); return; }
+        if (window.ARENA_SEED_KEEPER) window.ARENA_SEED_KEEPER.beat();
+        window.ARENA_WALLET_SCREEN.made = 'identity'; window.ARENA_OPR_FRESH = true;
+        window.ARENA_TRACK('opr-identity');
+        done();
+        console.log('[arena] #3273 orange pill run: the tab identity made, no wallet');
+        return;
+      }
       // NOSTR: its bundle only now
       let N = null;
       const nostr = () => window.ARENA_NOSTR_LOAD().then((x) => (N = x));
