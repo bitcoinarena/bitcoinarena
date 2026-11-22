@@ -387,6 +387,34 @@ const presenceByRound = new WeakMap();
 const presenceTables = (round) => { let t = presenceByRound.get(round); if (!t) { t = new Map(); presenceByRound.set(round, t); } return t; };
 // THE ORDER OF SAYS, EXACT (kanban #2385): two says in one millisecond are still one before the other
 let presenceSeq = 0;
+// kanban #3258: the values at which deriveCensus's bond_min decisions can change for a census derived with bond_min 0 (server.js
+// bondMinFloorFor): every resolved output's amount and every sum over a non-empty subset of one node key's resolved outputs; null when a
+// key holds more than `maxOutputs` outputs (then the census is derived at the exact bond_min)
+export function bondMinFloorValues(census, { maxOutputs = 12 } = {}) {
+  const byKey = new Map();
+  const resolved = [...(census.entries || []), ...(census.excluded || []).filter((e) => e.step === 'reaffirm' || e.step === 'update' || e.step === 'sum')];
+  for (const e of resolved) {
+    const pk = e.pubkey || (e.advert && e.advert.nodePubkey);
+    const k = pk instanceof Uint8Array ? toHex(pk) : String(pk || '');
+    if (!byKey.has(k)) byKey.set(k, []);
+    byKey.get(k).push(BigInt(e.bondSats || 0));
+  }
+  const values = new Set();
+  for (const outs of byKey.values()) {
+    if (outs.length > maxOutputs) return null;
+    let sums = [];                             // the sums of the non-empty subsets (an output of 0 sat is a value too)
+    for (const v of outs) sums = [...sums, v, ...sums.map((x) => x + v)];
+    for (const x of sums) values.add(x);
+  }
+  return [...values].sort((x, y) => (x < y ? -1 : x > y ? 1 : 0));
+}
+/** kanban #3258: which census bond_min `b` reads: 'base' (the bond_min-0 census: nothing falls), 'none' (everything falls), or the value to derive at. */
+export function bondMinCanonical(values, b) {
+  if (!values) return b;
+  if (!values.length || b <= values[0]) return 'base';
+  if (b > values[values.length - 1]) return 'none';
+  return values.find((v) => v >= b);
+}
 // WHERE A PRESENCE CAME FROM (kanban #2385, #2437): the asker's address (behind cloudflared / tailscale serve the address the proxy saw,
 // reach-check.js askerAddress); an IPv6 address by its /48, so one holder of a block of addresses is one source, not 65,536
 export function presenceSource(req) {
@@ -1188,7 +1216,22 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // median of the declared bond_min, a rise counted only once it has held notice_period (bondMinInForce). The median is read at the census
   // height and at six points across the notice before it (a dip between two of them is not seen, so this errs strict), each kept per
   // height. A round naming a higher bond_min is stricter, and taken. Rounds of protocol 1 and 2 are not asked: their floor is their own.
-  const medianAtHeight = new Map();            // network:version:bond_min:depth:height -> bigint | null (kanban #2685)
+  // ONE DERIVATION PER CENSUS HEIGHT, NOT PER BOND_MIN (kanban #3258, audit wf1489 r21 census-1, owner decision 2026-11-22): keyed by bond_min
+  // (#2685), every throw-away round naming a fresh bond_min cost up to seven (regtest eleven) whole-view derivations on the loop before any
+  // other check. Now each notice point's census is derived ONCE with bond_min 0 (nothing dropped by the floor) and kept, with the values at
+  // which deriveCensus's floor decisions can change: every resolved output's amount (protocol < 19 drops an output under bond_min) and every
+  // sum over a subset of one node key's outputs (from 19 a node - key and operator - falls by the sum of the outputs still eligible, after
+  // resolving and again after updates; both are sums over subsets of the key's resolved outputs). Between two such values every drop decision
+  // is the same, so the census at bond_min b IS the census at the smallest value >= b: b at or under the smallest value is the bond_min-0
+  // census itself, b above the largest drops everything, and any other b is derived by deriveCensus itself at that value (never filtered
+  // by hand), kept per value. The median stays consensus - the census every seat derives at the round's bond_min - and a stranger's fresh
+  // bond_min values cost at most one derivation per distinct value per height. A key with more than FLOOR_SUBSET_OUTPUTS outputs: as before,
+  // derived at the exact bond_min. Both maps are LRU-bounded.
+  const FLOOR_KEPT = 4096, FLOOR_SUBSET_OUTPUTS = 12;
+  const floorBase = new Map();                 // network:version:depth:height -> { values: bigint[] | null, median: bigint | null }
+  const medianAtHeight = new Map();            // network:version:depth:height:bond_min -> bigint | null (#2685 key, bond_min canonical)
+  const lruGet = (m, k) => { const v = m.get(k); if (v !== undefined) { m.delete(k); m.set(k, v); } return v; };
+  const lruSet = (m, k, v) => { m.delete(k); m.set(k, v); while (m.size > FLOOR_KEPT) m.delete(m.keys().next().value); };
   const bondMinFloorFor = (contract, rid) => {
     if (!(contract.protocolVersion >= 3)) return null;
     const notice = NOTICE_BLOCKS[networkOf(contract.networkId)] || NOTICE_BLOCKS.mainnet;
@@ -1198,19 +1241,37 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // KEPT PER WHAT THE CENSUS IS DERIVED FROM, NOT PER HEIGHT ALONE (kanban #2685, audit #1489 r3-census-2, high): the census read here is the
     // posted contract's (deriveCensus drops bonds under ITS bond_min, adverts not speaking ITS version, and reads its depth rule - roster.js
     // censusFor's own key), so a stranger's throw-away round naming bond_min = one chosen bond put that bond's declared value in as the median
-    // of all seven heights, and every honest round there was refused after it. Keyed as roster.js keys a census: network, version, bond_min, depth.
-    const whose = `${contract.networkId instanceof Uint8Array ? toHex(contract.networkId) : ''}:${contract.protocolVersion ?? ''}:${contract.bondMinSats ?? ''}:${contract.censusConfirmations ?? ''}`;
+    // of all seven heights, and every honest round there was refused after it. Keyed as roster.js keys a census: network, version, depth, and
+    // bond_min - canonical since #3258 (above).
+    const whose = `${contract.networkId instanceof Uint8Array ? toHex(contract.networkId) : ''}:${contract.protocolVersion ?? ''}:${contract.censusConfirmations ?? ''}`;
+    const undeclared = mediansAllBonds(contract.protocolVersion) ? { undeclared: bondMinDefaultSats(networkOf(contract.networkId) || 'mainnet') } : {};
+    const medianOf = (c) => bondWeightedMedian(c.entries || [], 'bondMinSats', undeclared);   // kanban #2686: from protocol 30 every census bond counts
+    const derive = (h, bondMin) => { try { return roster.censusFor(rid, h, { asRoundsOwn: false, posted: { ...contract, bondMinSats: bondMin } }); } catch { return { ok: false }; } };
+    let b; try { b = BigInt(contract.bondMinSats); } catch { b = null; }
     for (const h of heights) {
-      const key = `${whose}:${h}`;
-      if (!medianAtHeight.has(key)) {
-        let c; try { c = roster.censusFor(rid, h, { asRoundsOwn: false, posted: contract }); } catch { c = { ok: false }; }
-        if (!c.ok) continue;                     // not readable now: asked again next time
-        // kanban #2686: from protocol 30 every census bond counts, one declaring nothing at its network's default
-        medianAtHeight.set(key, bondWeightedMedian(c.entries || [], 'bondMinSats',
-          mediansAllBonds(contract.protocolVersion) ? { undeclared: bondMinDefaultSats(networkOf(contract.networkId) || 'mainnet') } : {}));
-        if (medianAtHeight.size > 4096) medianAtHeight.delete(medianAtHeight.keys().next().value);
+      const hk = `${whose}:${h}`;
+      let base = lruGet(floorBase, hk);
+      if (base === undefined) {
+        const c0 = derive(h, 0n);
+        if (!c0.ok) continue;                    // not readable now: asked again next time
+        base = { values: bondMinFloorValues(c0, { maxOutputs: FLOOR_SUBSET_OUTPUTS }), median: medianOf(c0) };
+        lruSet(floorBase, hk, base);
       }
-      const m = medianAtHeight.get(key);
+      if (b === null) continue;
+      const at = bondMinCanonical(base.values, b);   // the census at b is the census at this value
+      let m;
+      if (at === 'base') m = base.median;
+      else if (at === 'none') m = medianOf({ entries: [] });
+      else {
+        const key = `${hk}:${at}`;
+        m = lruGet(medianAtHeight, key);
+        if (m === undefined) {
+          const c = derive(h, at);
+          if (!c.ok) continue;
+          m = medianOf(c);
+          lruSet(medianAtHeight, key, m);
+        }
+      }
       if (typeof m === 'bigint') history.push({ height: h, median: m });
     }
     return history.length ? { ...bondMinInForce(history, H, notice), points: history.length } : null;
