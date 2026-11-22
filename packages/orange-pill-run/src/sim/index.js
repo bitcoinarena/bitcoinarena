@@ -1,5 +1,5 @@
 // Orange Pill Run - the simulation (kanban #3246): pure, no DOM, the same in the browser and in Node.
-export { GAME_VERSION, T, ROWS, VH, STEP, PW, PH, TIME_LIMIT, MAX_STEPS, TILE, isSolid, COL, PW_INFO, PW_ORDER, C0, fmtUsd } from "./constants.js";
+export { GAME_VERSION, VERSIONS, rulesOf, T, ROWS, VH, STEP, PW, PH, TIME_LIMIT, MAX_STEPS, TILE, isSolid, COL, PW_INFO, PW_ORDER, C0, fmtUsd } from "./constants.js";
 export { buildLevel } from "./level.js";
 export { newWorld, stepWorld, tileAt } from "./world.js";
 export { scoreOf } from "./score.js";

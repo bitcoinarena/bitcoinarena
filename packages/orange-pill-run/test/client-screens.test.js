@@ -63,6 +63,8 @@ test("#3251 the result: breakdown, rank after, beat best, attempts left, the X p
   assert.equal(r.left, "Attempts left: 2 of 5");
   assert.equal(r.xPrompt, "Link your X account to be placed and win.");
   assert.equal(r.rows.at(-1)[1], "×1.5");
+  assert.deepEqual(r.rows[3], ["Time bonus (20 per second under 60 s)", 40]);   // #3271 opr-2
+  assert.equal(resultModel({ res, parTime: 38, timePerS: 2, entry: "paid", me: me() }).rows[3][0], "Time bonus (2 per second under 38 s)");
   const r2 = resultModel({ res: { ...res, total: 500 }, parTime: 60, entry: "waiting", before: { total: 980 }, after: { total: 980, rank: 4 }, me: me({ x: { username: "bob" }, placed: true }) });
   assert.equal(r2.beat, "Your best stays 980");
   assert.equal(r2.xPrompt, undefined);
@@ -82,7 +84,8 @@ test("#3251 the rules carry the card's four sentences word for word", () => {
     "Any exploit or cheat disqualifies: changing the game or its data, more than one account, playing for someone else, abusing a bug instead of reporting it. Found a bug? Report it in the bug bounty.",
     "We review the top runs. Every payout is checked and approved by us before it is sent. Our decision is final.",
     "Testnet sats have no value. The play bounty is paid in real sats and can end or change at any time."]) assert.ok(all.includes(s), s);
-  for (const k of ["Round", "Level", "Entry", "Attempts", "Score", "Tie-break", "Pot", "Play bounty", "X account"]) assert.ok(RULES.some((r) => r[0] === k), k);
+  assert.match(RULES.find((r) => r[0] === "Speed")[1], /Faster finishes score much more: 20 points for every second under/);   // #3271
+  for (const k of ["Round", "Level", "Entry", "Attempts", "Score", "Speed", "Tie-break", "Pot", "Play bounty", "X account"]) assert.ok(RULES.some((r) => r[0] === k), k);
 });
 
 test("#3265 the sign-in names the stage URL without the query, the method and the body's hash", async () => {

@@ -5,7 +5,7 @@
 // THE ARENA AROUND THE GAME (#3265): the Arena page loads this file in a frame of its own origin (?game=orange-pill-run) and hands it
 // window.ARENA_OPR - the identity key's sign-in, the wallet's balance, the page's pay-an-invoice path, the welcome's state and the bug bounty's
 // X link. Without it (the file on its own) the game is practice only.
-import { GAME_VERSION, STEP, MAX_STEPS } from "../../src/sim/constants.js";
+import { GAME_VERSION, VERSIONS, rulesOf, STEP, MAX_STEPS } from "../../src/sim/constants.js";
 import { buildLevel } from "../../src/sim/level.js";
 import { newWorld, stepWorld } from "../../src/sim/world.js";
 import { botInput, BOT_CONFIGS } from "../../src/sim/bot.js";
@@ -94,7 +94,7 @@ function finish() {
   running = false; document.body.classList.remove("playing", "replaying"); $("rbar").hidden = true; pill("", "");
   if (down >= 0) { presses.push([down, W.f]); down = -1; }
   const res = resultOf(W);
-  if (mode !== "replay") { lastLog = { v: GAME_VERSION, presses }; lastResult = { ...res, mode }; }
+  if (mode !== "replay") { lastLog = { v: L.version, presses }; lastResult = { ...res, mode }; }
   if (HOOKS.onFinish) { try { if (HOOKS.onFinish(lastLog, { ...res, mode }, W) === false) return; } catch (_) {} }
   if (mode === "play" && run) return sendRun(res);
   showResult({ res, mode, entry: mode === "play" ? "practice" : null });
@@ -164,8 +164,10 @@ function onEntry(kind, why) {
 }
 function useLevel(level) {
   if (!level || !Array.isArray(level.candles)) throw new Error("the round sent no level");
-  if (level.gameVersion && level.gameVersion !== GAME_VERSION) throw new Error("this page plays " + GAME_VERSION + ", the round " + level.gameVersion + " - reload the page");
-  L = buildLevel(level.candles, level.seed); levelOf = level.round || "round";
+  // a round plays the version it was opened with (kanban #3271: an opr-1 round keeps opr-1 after the page moved on)
+  const v = level.gameVersion || GAME_VERSION;
+  if (!Object.prototype.hasOwnProperty.call(VERSIONS, v)) throw new Error("this page plays " + GAME_VERSION + ", the round " + v + " - reload the page");
+  L = buildLevel(level.candles, level.seed, v); levelOf = level.round || "round";
 }
 async function play() {
   if (!api) return begin("play");
@@ -232,7 +234,7 @@ function paintEntry() {
 }
 function showResult({ res, mode: m, entry: en, sending = false }) {
   const after = S.me ? myBest(S.me, S.board) : null;
-  const model = resultModel({ res, parTime: L.parTime, entry: en, entryWhy: run && run.entryWhy, before: run && m === "play" ? run.before : null, after: m === "play" && run ? after : null,
+  const model = resultModel({ res, parTime: L.parTime, timePerS: rulesOf(L.version).timePerS, entry: en, entryWhy: run && run.entryWhy, before: run && m === "play" ? run.before : null, after: m === "play" && run ? after : null,
     me: m === "play" && run ? S.me : null, max: S.round ? S.round.maxAttempts : 5, mode: m === "play" && !run ? "practice" : m, submitWhy: run && run.submitWhy });
   $("rTitle").textContent = model.title;
   const re = $("rEntry"); re.hidden = !en; if (en) { re.className = "entry " + model.entry.kind; re.textContent = sending ? "Sending your run …" : model.entry.text; }

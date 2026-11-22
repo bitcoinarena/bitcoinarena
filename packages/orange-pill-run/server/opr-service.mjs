@@ -3,9 +3,9 @@
 // THE ORANGE PILL RUN ROUND SERVICE (kanban #3245; #3248 rounds, entry, attempts, board, pot; #3249 server-checked scores, bot signals, replays;
 // #3250 X placement, bounty, payout lists with sign-off; #3256 rounds posted on chain, test rounds). One process, one node:sqlite file.
 // Everything it needs from outside is handed in, so tests run it with fakes:
-//   sim { buildLevel(candles, seed), runLog(L, log, { maxSteps }), GAME_VERSION }   (src/sim, the same code the page runs)
+//   sim { buildLevel(candles, seed, version), runLog(L, log, { maxSteps }), GAME_VERSION }   (src/sim, the same code the page runs)
 //   fetchCandles(day) -> 48 candles of that UTC day                                  (src/candles.mjs)
-//   checkLevel(candles, roundId) -> { ok, seed, tries, hash }                        (src/level-check.mjs)
+//   checkLevel(candles, roundId, { version }) -> { ok, seed, tries, hash }                  (src/level-check.mjs)
 //   invoices { create, lookup }                                                      (opr-invoices.mjs: one testnet4 lnd)
 //   chain { post(payloadHex) -> txid, status(txid) -> { confirmations, height } }    (opr-chain.mjs; null: no post, a round opens on its level)
 //   s2: the bug bounty's Season 2 store (arena-node/src/bounty-season.js openBountySeason) - its X links decide who is placed; read only here
@@ -98,7 +98,7 @@ export function createOpr(o = {}) {
   const q = (sql) => db.prepare(sql);
   const roundRow = (id) => q('SELECT * FROM rounds WHERE id = ?').get(String(id));
   const levels = new Map();   // round id -> built level
-  const levelOf = (r) => { let L = levels.get(r.id); if (!L) { L = sim.buildLevel(J(r.candles), J(r.seed)); levels.set(r.id, L); } return L; };
+  const levelOf = (r) => { let L = levels.get(r.id); if (!L) { L = sim.buildLevel(J(r.candles), J(r.seed), r.game_version); levels.set(r.id, L); } return L; };
 
   // ---------- rounds ----------
   const LIVE = "state IN ('waiting', 'posting', 'ready')";
@@ -154,7 +154,7 @@ export function createOpr(o = {}) {
         q('UPDATE rounds SET candles = ? WHERE id = ? AND candles IS NULL').run(JSON.stringify(candles), r.id);
         candles = J(roundRow(r.id).candles);
       }
-      const c = await checkLevel(candles, r.id);
+      const c = await checkLevel(candles, r.id, { version: r.game_version });
       if (!c || !c.ok) { q('UPDATE rounds SET post_why = ? WHERE id = ?').run('the level check found no playable level', r.id); log(`round ${r.id}: the level check failed`); return; }
       const hash = levelHashOf({ gameVersion: r.game_version, seed: c.seed, candles });
       q("UPDATE rounds SET seed = ?, level_hash = ?, check_hash = ?, state = 'posting', post_why = NULL WHERE id = ? AND state = 'waiting'")

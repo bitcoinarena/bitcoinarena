@@ -1,9 +1,24 @@
 // Orange Pill Run - simulation constants (kanban #3246). Any change to a rule or to the tuning below changes
 // scores, so it must bump GAME_VERSION; a round pins the version it was opened with.
-export const GAME_VERSION = "opr-1";
+// VERSIONS holds what differs between versions, so a round opened on an older version still builds, replays and
+// scores as it did (kanban #3271): run/boost = the runner's top speeds, foe = factor on every enemy and hazard
+// speed (patrol, bear, bills, printer rate, hops, clouds), hopP/hopUp = a hopper's cycle and air steps,
+// timePerS = score per second under par.
+export const VERSIONS = {
+  "opr-1": { run: 3.2, boost: 4.8, foe: 1, hopP: 80, hopUp: 40, timePerS: 2 },
+  // owner 2026-11-22: "Die Zeit muss viel mehr gewichtet sein" and "Und 10% langsamer"
+  "opr-2": { run: 2.88, boost: 4.32, foe: 0.9, hopP: 88, hopUp: 44, timePerS: 20 },
+};
+export const GAME_VERSION = "opr-2";
+// the rules of a version; throws a TypeError for one this code does not know
+export function rulesOf(v) {
+  const r = Object.prototype.hasOwnProperty.call(VERSIONS, v) ? VERSIONS[v] : null;
+  if (!r) throw new TypeError("unknown game version " + JSON.stringify(v));
+  return r;
+}
 
 export const T = 24, ROWS = 14, VH = ROWS * T, STEP = 1 / 60;           // world units; 60 simulation steps per second
-export const GRAV = 0.5, JUMP_V = -10, CUT_V = -3.4, RUN = 3.2, BOOST = 4.8, ACC = 0.45, MAXFALL = 9;
+export const GRAV = 0.5, JUMP_V = -10, CUT_V = -3.4, ACC = 0.45, MAXFALL = 9;
 export const PW = 16, PH = 22, TIME_LIMIT = 180;
 export const MAX_STEPS = TIME_LIMIT * 60;                                 // the run is over by then at the latest
 export const DEATH_PENALTY = 3;                                           // seconds per death

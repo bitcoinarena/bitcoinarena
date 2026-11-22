@@ -30,12 +30,13 @@ export function botsFinish(L) {
   return { ok: false, runs };
 }
 
-export function checkLevel(candles, roundId, { maxTries = MAX_TRIES } = {}) {
+// version = the round's pinned game version (kanban #3271: a round opened on opr-1 is checked and played on opr-1)
+export function checkLevel(candles, roundId, { maxTries = MAX_TRIES, version = GAME_VERSION } = {}) {
   const attempts = [];
   for (let k = 0; k < maxTries; k++) {
-    const seed = seedFor(candles, roundId, k), L = buildLevel(candles, seed), b = botsFinish(L);
+    const seed = seedFor(candles, roundId, k), L = buildLevel(candles, seed, version), b = botsFinish(L);
     attempts.push({ k, seed, runs: b.runs });
-    if (b.ok) { const levelHash = levelHashOf(candles, seed); return { ok: true, seed, tries: k + 1, levelHash, hash: levelHash, gameVersion: GAME_VERSION, bot: b.runs[b.runs.length - 1], attempts }; }
+    if (b.ok) { const levelHash = levelHashOf(candles, seed, version); return { ok: true, seed, tries: k + 1, levelHash, hash: levelHash, gameVersion: version, bot: b.runs[b.runs.length - 1], attempts }; }
   }
-  return { ok: false, seed: null, tries: maxTries, levelHash: null, hash: null, gameVersion: GAME_VERSION, attempts };
+  return { ok: false, seed: null, tries: maxTries, levelHash: null, hash: null, gameVersion: version, attempts };
 }

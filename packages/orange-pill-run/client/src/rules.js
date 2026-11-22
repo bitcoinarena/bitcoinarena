@@ -7,6 +7,7 @@ export const RULES = [
   ["Entry", "100 testnet sats per attempt, paid from your Arena wallet."],
   ["Attempts", "At most 5 attempts per player and round. A run is sent within 10 minutes of its start."],
   ["Score", "The server replays your inputs and scores the run itself. Your best score of the round counts."],
+  ["Speed", "Faster finishes score much more: 20 points for every second under the level's par time. Sats, stomps, the flag (100) and the day high (50) count too; a run without a hit scores ×1.5. A run that misses the flag gets no time bonus."],
   ["Tie-break", "On equal scores the shorter run time ranks higher, then the earlier submission."],
   ["Pot", "The round's entries, in testnet sats, go 50 / 30 / 20 to ranks 1, 2 and 3. With two placed players 60 / 40, with one 100 %. With none, the pot carries over to the next round."],
   ["Play bounty", "2,000 sats, in real sats, to rank 1 of the round."],

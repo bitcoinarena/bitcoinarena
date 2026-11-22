@@ -2,13 +2,13 @@
 // prototype's makeWorld/stepWorld. The run is automatic; the only input is { jump: bool } per step.
 // No DOM, no Date, no Math.random/sin/cos/hypot/sqrt/atan2: the same level and the same jump presses give the
 // same world on every engine (trig.js). W.fx holds floating texts and particles for the renderer only.
-import { T, ROWS, VH, STEP, GRAV, JUMP_V, CUT_V, RUN, BOOST, ACC, MAXFALL, PW, PH, TIME_LIMIT, DEATH_PENALTY, C0, TILE, isSolid, COL, PW_INFO, PW_ORDER, fmtUsd } from "./constants.js";
+import { T, ROWS, VH, STEP, GRAV, JUMP_V, CUT_V, ACC, MAXFALL, PW, PH, TIME_LIMIT, DEATH_PENALTY, C0, TILE, isSolid, COL, PW_INFO, PW_ORDER, fmtUsd, rulesOf } from "./constants.js";
 import { sinRad, hypotD } from "./trig.js";
 
 // a fresh world on its own copy of the level (the level object is never changed, so one L serves many runs)
 export function newWorld(L) {
   const Lw = structuredClone(L);
-  return { L: Lw, f: 0, done: false, time: 0, penalty: 0, rugs: new Map(), rugGone: [], fx: [], bills: [], qHits: 0, qN: 0,
+  return { L: Lw, R: rulesOf(Lw.version || "opr-1"), f: 0, done: false, time: 0, penalty: 0, rugs: new Map(), rugGone: [], fx: [], bills: [], qHits: 0, qN: 0,
     p: { x: 3 * T, y: 12 * T - PH, vx: 0, vy: 0, ground: false, coyote: 0, buffer: 0, facing: 1, hurtT: 0, shield: false, boost: 0, pw: { pill: 0, diamond: 0, laser: 0, magnet: 0, moon: 0 }, cp: 0, anim: 0, prevJump: false, landT: 0, dying: 0, fell: false, why: "", cause: "", dj: false },
     stats: { coins: 0, blocks: 0, stomps: 0, hits: 0, high: false, finished: false, printers: 0, powers: 0 } };
 }
@@ -21,8 +21,8 @@ function killFoe(W, e, text) { e.dead = 34; W.stats.stomps++; W.fx.push({ kind: 
 function hurt(W) { const p = W.p; if (p.hurtT > 0 || p.pw.diamond > 0) return;
   if (p.pw.pill > 0) { p.pw.pill = 0; p.hurtT = 70; W.fx.push({ kind: "text", text: "orange pill used up", x: p.x + 8, y: p.y - 6, t: 60, color: COL.btc }); return; } if (p.shield) { p.shield = false; p.hurtT = 60; W.fx.push({ kind: "text", text: "wallet saved you", x: p.x + 8, y: p.y - 6, t: 60, color: COL.blue }); return; } respawn(W); }
 const camXHint = (W) => W.p.x - 300;
-// enemies get up to 50 % faster toward the goal
-const ramp = (W) => 1 + .5 * Math.min(1, Math.max(0, W.p.x / (W.L.goal * T)));
+// enemies get up to 50 % faster toward the goal; R.foe scales every enemy and hazard speed (kanban #3271)
+const ramp = (W) => (1 + .5 * Math.min(1, Math.max(0, W.p.x / (W.L.goal * T)))) * W.R.foe;
 const ageFx = (W) => { W.fx.forEach((e) => { e.t -= e.kind === "text" ? .4 : 1; }); W.fx = W.fx.filter((e) => e.t > 0); };
 
 export function stepWorld(W, inp) {
@@ -30,7 +30,7 @@ export function stepWorld(W, inp) {
   const jump = !!(inp && inp.jump);
   const p = W.p, L = W.L; W.f++; W.time = W.f * STEP + W.penalty;
   if (p.dying > 0) { p.dying--; if (!p.fell) { p.vy = Math.min(MAXFALL, p.vy + GRAV * .7); p.y += p.vy; } ageFx(W); if (p.dying === 0) respawnNow(W); if (W.time >= TIME_LIMIT) W.done = true; return; }
-  const max = p.boost > 0 ? BOOST : RUN; if (p.boost > 0) p.boost--;
+  const R = W.R, max = p.boost > 0 ? R.boost : R.run; if (p.boost > 0) p.boost--;
   for (const k of PW_ORDER) if (p.pw[k] > 0 && --p.pw[k] === 0 && k !== "pill") W.fx.push({ kind: "text", text: PW_INFO[k].text.split(" · ")[0].toLowerCase() + " over", x: p.x + 8, y: p.y - 10, t: 50, color: COL.text });
   p.vx = Math.min(max, p.vx + ACC); p.facing = 1;                                           // the run is automatic
   if (jump && !p.prevJump) p.buffer = 9; else if (p.buffer > 0) p.buffer--;
@@ -108,7 +108,7 @@ export function stepWorld(W, inp) {
       return;
     }
     let ey = e.row * T - 20;
-    if (e.hop) { const ph = (W.f + e.x0 * 3) % 80; ey -= ph < 40 ? sinRad(ph / 40 * Math.PI) * 46 : 0; }
+    if (e.hop) { const ph = (W.f + e.x0 * 3) % R.hopP; ey -= ph < R.hopUp ? sinRad(ph / R.hopUp * Math.PI) * 46 : 0; }
     else { const nx = e.x + e.dir * 0.65 * ramp(W), tx = Math.floor((e.dir > 0 ? nx + 20 : nx) / T);
       if (!isSolid(tileAt(W, tx, e.row)) || isSolid(tileAt(W, tx, e.row - 1)) || Math.abs(nx - e.x0) > e.span) e.dir *= -1; else e.x = nx; }
     e.y = ey;
@@ -117,11 +117,11 @@ export function stepWorld(W, inp) {
       else hurt(W);
     }
   });
-  W.bills.forEach((bl) => { bl.x += bl.vx; bl.t++; const by = bl.y + sinRad(bl.t / 6) * 3; bl.by = by;
+  W.bills.forEach((bl) => { bl.x += bl.vx; bl.t++; const by = bl.y + sinRad(bl.t * R.foe / 6) * 3; bl.by = by;
     if (isSolid(tileAt(W, Math.floor(bl.x / T), Math.floor((by + 4) / T))) || bl.x < camXHint(W) - 60) bl.gone = true;
     else if (p.x + PW > bl.x + 1 && p.x < bl.x + 15 && p.y + PH > by && p.y < by + 8) { bl.gone = true; hurt(W); } });
   W.bills = W.bills.filter((bl) => !bl.gone);
-  L.clouds.forEach((c) => { c.x = c.x0 + sinRad(W.f / 65) * 30; c.y = c.y0 + sinRad(W.f / 42) * 12;
+  L.clouds.forEach((c) => { c.x = c.x0 + sinRad(W.f * R.foe / 65) * 30; c.y = c.y0 + sinRad(W.f * R.foe / 42) * 12;
     if (p.x + PW > c.x + 10 && p.x < c.x + 42 && p.y + PH > c.y + 10 && p.y < c.y + 24) hurt(W); });
   if (p.hurtT > 0) p.hurtT--;
   p.anim += Math.abs(p.vx) * 0.09;

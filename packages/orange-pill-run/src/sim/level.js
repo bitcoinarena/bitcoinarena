@@ -2,10 +2,12 @@
 // Small moves do not change the height: those candles merge into one flat plateau, shown as faint candles on its
 // face. Only a real move up or down makes a step, and that candle is a full pillar. The flat stretches get their
 // own challenges, picked from a list seeded by `seed`, so one chart and one seed always build the same level.
-// Pure: candles = [[t, o, h, l, c], ...] (48 x 30 min, t in unix seconds), seed = 32-bit integer.
-import { T, ROWS, RUN, C0, TILE } from "./constants.js";
+// Pure: candles = [[t, o, h, l, c], ...] (48 x 30 min, t in unix seconds), seed = 32-bit integer, version = the
+// round's game version (L.version; the world and the score follow it; the layout is the same in every version).
+import { T, ROWS, C0, TILE, GAME_VERSION, rulesOf } from "./constants.js";
 
-export function buildLevel(candles, seed) {
+export function buildLevel(candles, seed, version = GAME_VERSION) {
+  const R = rulesOf(version);
   if (!Array.isArray(candles) || candles.length < 8) throw new TypeError("buildLevel: candles must be an array of [t,o,h,l,c]");
   const cs = candles, n = cs.length;
   let hi = -Infinity, lo = Infinity;
@@ -22,7 +24,7 @@ export function buildLevel(candles, seed) {
   // columns: a step candle is a 3-wide pillar; the rest of a segment is 3 columns of plateau per candle; a notch between segments
   let x = C0; segs.forEach((s, si) => { s.x0 = x; s.items.forEach((m, k) => { m.x0 = x; m.real = k === 0; m.seg = si; x += 3; }); s.x1 = x - 1; x += 1; });
   const endX = x;
-  const L = { w: endX + 24, t: new Uint8Array((endX + 24) * ROWS), meta, segs, colMeta: new Int16Array(endX + 24).fill(-1), coins: [], enemies: [], clouds: [], items: [], checkpoints: [{ x: 3, row: 12 }], goal: endX + 18, dayHigh: null, seed: seed | 0, from: cs[0][0], to: cs[n - 1][0] };
+  const L = { w: endX + 24, t: new Uint8Array((endX + 24) * ROWS), meta, segs, colMeta: new Int16Array(endX + 24).fill(-1), coins: [], enemies: [], clouds: [], items: [], checkpoints: [{ x: 3, row: 12 }], goal: endX + 18, dayHigh: null, seed: seed | 0, version, from: cs[0][0], to: cs[n - 1][0] };
   const set = (cx, y, v) => { if (cx >= 0 && cx < L.w && y >= 0 && y < ROWS) L.t[y * L.w + cx] = v; };
   const get = (cx, y) => L.t[y * L.w + cx];
   const coin = (cx, y) => L.coins.push({ x: cx * T + T / 2, y: y * T + T / 2, got: false });
@@ -71,6 +73,6 @@ export function buildLevel(candles, seed) {
   for (let k = 6; k < n; k += 6) { const m = meta[k]; let cx = m.x0 + 1; while ((![7, 8, 10].includes(get(cx, m.top)) || get(cx, m.top - 1) === 11) && cx < m.x0 + 3) cx++; L.checkpoints.push({ x: cx, row: m.top }); }
   for (let cx = endX; cx < L.w; cx++) { set(cx, 12, 1); set(cx, 13, 1); }
   for (let k = 0; k < 3; k++) for (let y = 11 - k; y <= 11; y++) set(endX + 10 + k, y, 2);
-  L.parTime = Math.round(L.goal * T / RUN / 60 * 1.6);
+  L.parTime = Math.round(L.goal * T / R.run / 60 * 1.6);
   return L;
 }

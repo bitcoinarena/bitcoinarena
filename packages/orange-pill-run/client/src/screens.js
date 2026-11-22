@@ -81,12 +81,12 @@ export function entryLine(entry, why) {
  * The result: { title, entry, rows: [[label, value]], total, rank, beat, left, xPrompt }.
  * res: the run (resultOf); before/after: myBest() before and after the run; me: GET /me after it.
  */
-export function resultModel({ res, parTime, entry, entryWhy, before, after, me, max = 5, mode = "play", submitWhy = null }) {
+export function resultModel({ res, parTime, timePerS = 20, entry, entryWhy, before, after, me, max = 5, mode = "play", submitWhy = null }) {
   const out = {};
   out.title = mode === "replay" ? "Replay: " + (res.finished ? "flag in " + fmtTime(res.timeS) : "time is up") : res.finished ? "Flag reached in " + fmtTime(res.timeS) : "Time is up";
   out.entry = entryLine(entry, entryWhy);
   const p = res.parts || {};
-  out.rows = [["Sats (coins and ₿ blocks)", p.sats], ["Shitcoins stomped × 10", p.stomps], ["Flag reached", p.goal], ["Time bonus (2 per second under " + parTime + " s)", p.time], ["Day high", p.high]];
+  out.rows = [["Sats (coins and ₿ blocks)", p.sats], ["Shitcoins stomped × 10", p.stomps], ["Flag reached", p.goal], ["Time bonus (" + timePerS + " per second under " + parTime + " s)", p.time], ["Day high", p.high]];
   if (res.clean) out.rows.push(["No hits", "×1.5"]);
   out.total = res.total;
   if (mode !== "play") return out;
