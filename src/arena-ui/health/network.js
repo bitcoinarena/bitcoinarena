@@ -56,7 +56,10 @@ export async function live(base, path, fetchImpl = fetch) {
     const r = await fetchImpl(base + path, { signal: AbortSignal.timeout(ASK_MS), cache: 'no-store' });
     const ms = Date.now() - t0;
     if (!r.ok) { let why = ''; try { why = JSON.parse(await boundedText(r, 4096)).why || ''; } catch { /* not JSON */ } return { ok: false, status: r.status, why, ms }; }
-    return { ok: true, ms, body: JSON.parse(await boundedText(r, LIVE_BYTES)) };
+    const body = JSON.parse(await boundedText(r, LIVE_BYTES));
+    // a door answers a JSON object: `null`, a number or a string is that node's bad answer, not one that stops the read (#3323)
+    if (body === null || typeof body !== 'object') return { ok: false, status: r.status, why: 'the answer is not a JSON object', ms };
+    return { ok: true, ms, body };
   } catch (e) { return { ok: false, status: 0, why: e.name === 'TimeoutError' ? 'no answer in 10 s' : e.message, ms: Date.now() - t0 }; }
 }
 
@@ -746,7 +749,7 @@ export function makeHealth({ H, $, window = {} }) {
 
   function paintNetwork({ tip, nodes, seats, roles, feds, reserves, funding, censusKey = null }) {
     const up = nodes.filter((n) => n.version && n.version.ok).length;
-    const protos = new Map(); for (const n of nodes) if (n.version && n.version.ok) { const p = Math.max(...(n.version.body.protocols || [0])); protos.set(p, (protos.get(p) || 0) + 1); }
+    const protos = new Map(); for (const n of nodes) if (n.version && n.version.ok) { const ps = n.version.body.protocols, p = Math.max(0, ...(Array.isArray(ps) ? ps.map(Number).filter(Number.isFinite) : [])); protos.set(p, (protos.get(p) || 0) + 1); }
     // every census node's bond: its own answer, else the census's (a node that does not answer still has a bond)
     const bonds = nodes.reduce((s, n) => s + (n.bond && n.bond.ok && n.bond.body.bond ? Number(n.bond.body.bond.sats) : Number(n.bondSats || 0)), 0);
     const facts = [
@@ -759,7 +762,7 @@ export function makeHealth({ H, $, window = {} }) {
       ['Protocol reserves', reserves ? satMsat(reserves.body.totalMsat) + ' sat' : '-', ''],
       ['Seats in daily.json', seats.length, ''],
       // THE NEWEST SETTLEMENT any node's dashboard shows, and how long ago: rounds that stopped settling show here first
-      ...(() => { const last = Math.max(0, ...nodes.flatMap((n) => (n.dash && n.dash.ok ? n.dash.body.settlements || [] : []).map((x) => Number(x.madeMs) || 0)));
+      ...(() => { const last = Math.max(0, ...nodes.flatMap((n) => (n.dash && n.dash.ok && Array.isArray(n.dash.body.settlements) ? n.dash.body.settlements : []).map((x) => Number(x.madeMs) || 0)));
         if (!last) return [['Last settlement', '-', 'muted']];
         const h = (Date.now() - last) / 3600000;
         return [['Last settlement (any node)', h < 1 ? Math.round(h * 60) + ' min ago' : Math.round(h) + ' h ago', h > 26 ? 'warn' : 'ok']]; })(),
