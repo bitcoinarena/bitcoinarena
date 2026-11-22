@@ -27,17 +27,20 @@ async function get(url) {
 const json = async (url) => (await get(url)).json();
 const text = async (url) => (await (await get(url)).text()).trim();
 
-/** Every confirmed transaction paying `scripthash`, newest first, paged as mempool.space pages them (25 at a time). */
+/** Every confirmed transaction paying `scripthash`, newest first, paged as mempool.space pages them (25 at a time), at
+ *  most PAGES pages: { all, capped } - capped when the last page read was still full, so older ones were not listed (#3322:
+ *  the markers are public scripts anyone can pay, so a stranger's junk payments can fill the cap). */
+const PAGES = 40;
 async function txsOf(scripthash) {
   const all = [];
   let page = await json(`${SOURCE}/scripthash/${scripthash}/txs`);
-  for (let i = 0; i < 40; i++) {
+  for (let i = 0; ; i++) {
     const confirmed = page.filter((t) => t.status && t.status.confirmed);
     all.push(...confirmed);
-    if (confirmed.length < 25) break;
+    if (confirmed.length < 25) return { all, capped: false };
+    if (i >= PAGES) return { all, capped: true };
     page = await json(`${SOURCE}/scripthash/${scripthash}/txs/chain/${confirmed[confirmed.length - 1].txid}`);
   }
-  return all;
 }
 
 /** The read: { at, source, tip, txs: [{ txid, marker, hex, height, pos, merkle, header, outspends }], errors }. */
@@ -54,8 +57,16 @@ export async function scanChain(previous = null) {
   try { tip = Number(await text(`${SOURCE}/blocks/tip/height`)); } catch (e) { note('tip', e); }
   const listed = [];
   for (const [marker, scripthash] of Object.entries(MARKER_SCRIPTHASHES)) {
-    try { for (const s of await txsOf(scripthash)) listed.push({ s, marker }); }
-    catch (e) { note(marker, e); for (const t of (previous && previous.txs) || []) if (t.marker === marker) listed.push({ s: { txid: t.txid }, marker, only: t }); }
+    try {
+      const { all, capped } = await txsOf(scripthash);
+      for (const s of all) listed.push({ s, marker });
+      // a capped listing is partial: the previous read's txs of this marker that it did not reach are kept, not dropped
+      if (capped) {
+        partial = true;
+        const seen = new Set(all.map((s) => s.txid));
+        for (const t of (previous && previous.txs) || []) if (t.marker === marker && !seen.has(t.txid)) listed.push({ s: { txid: t.txid }, marker, only: t });
+      }
+    } catch (e) { note(marker, e); for (const t of (previous && previous.txs) || []) if (t.marker === marker) listed.push({ s: { txid: t.txid }, marker, only: t }); }
   }
   // 1. the transactions not read yet: bytes, merkle branch, block header
   for (const { s, marker, only } of listed) {
