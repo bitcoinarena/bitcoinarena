@@ -2014,5 +2014,9 @@
  "3264": {
   "text": "Other: watching a closed round again resimulates its runs on the main thread",
   "kind": "bug"
+ },
+ "3272": {
+  "text": "Other: a system update can stop the lightning node along with Tor and leave the gateway disconnected",
+  "kind": "bug"
  }
 }
