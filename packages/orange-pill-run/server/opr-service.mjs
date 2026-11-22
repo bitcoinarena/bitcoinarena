@@ -32,13 +32,14 @@ export function xHandleOf(text) {
   const n = String(text == null ? '' : text).trim().replace(/^https?:\/\/(www\.)?(x|twitter)\.com\//i, '').replace(/^@/, '').replace(/[/?#].*$/, '');
   return /^[A-Za-z0-9_]{1,15}$/.test(n) ? n : null;
 }
-export const X_CHECK_GAP_MS = 15000, X_CHECKS_PER_HOUR = 20;
+export const X_CHECK_GAP_MS = 15000, X_CHECKS_PER_HOUR = 20, LN_CHECK_GAP_MS = 5000;
 const botListFromEnv = () => { try { const f = process.env.FAUCET_BOT_X_HANDLES; return new Set(f ? readFileSync(f, 'utf8').split('\n').map((l) => l.trim().replace(/^@/, '').toLowerCase()).filter((l) => l && !l.startsWith('#')) : []); } catch { return new Set(); } };
 
 const DAY_MS = 86400000, MIN_MS = 60000;
 export const DEFAULTS = Object.freeze({
   firstDay: '2026-11-23', daily: true, entrySats: 0, maxAttempts: 5, submitMs: 10 * MIN_MS, lastCallMs: 5 * MIN_MS, invoiceS: 600,
   verifyGraceMs: 60 * MIN_MS, bountySats: 2500,   // the play bounty in real sats (owner 2026-11-22: 2,500 - 5,000 earlier that day, 10,000 before; it was 2,000) - every round reads it here, none stores its own
+  lnChecksPerMinAll: 60, xChecksPerMinAll: 15,   // kanban #3333: wallet asks and X lookups of all keys together per minute
   bountyClaimMs: 7 * DAY_MS, alertAfterMs: 15 * MIN_MS, fastSlackMs: 1000, maxSteps: 180 * 60,
   confirmations: 1, publicBases: ['https://testnet-stage.bitcoinarena.io/api/opr'], promoEnd: null, adminSha: '', workerKey: '', showTest: false, ipCrowd: 3,
   testMinutesMost: 24 * 60, logPressesMost: 6000, bodyMost: 256 * 1024, ipAttemptsShare: 2,
@@ -134,8 +135,8 @@ export function createOpr(o = {}) {
   // key per X account (user_id UNIQUE: first come, first served - nothing is proven, so an account never moves to another key); linked_ms is when
   // this key took it (the placement rules count from there). x_checks: the lookups asked, for the per-key limit
   db.exec(`CREATE TABLE IF NOT EXISTS x_links (pubkey TEXT PRIMARY KEY, user_id TEXT NOT NULL UNIQUE, username TEXT NOT NULL, linked_ms INTEGER NOT NULL, checked_ms INTEGER NOT NULL);
-    CREATE TABLE IF NOT EXISTS x_checks (player TEXT NOT NULL, at_ms INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS x_checks_by_player ON x_checks (player, at_ms);`);
-  db.exec('CREATE TABLE IF NOT EXISTS ln_checks (player TEXT NOT NULL, at_ms INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS ln_checks_by_player ON ln_checks (player, at_ms);');
+    CREATE TABLE IF NOT EXISTS x_checks (player TEXT NOT NULL, at_ms INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS x_checks_by_player ON x_checks (player, at_ms); CREATE INDEX IF NOT EXISTS x_checks_by_time ON x_checks (at_ms);`);
+  db.exec('CREATE TABLE IF NOT EXISTS ln_checks (player TEXT NOT NULL, at_ms INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS ln_checks_by_player ON ln_checks (player, at_ms); CREATE INDEX IF NOT EXISTS ln_checks_by_time ON ln_checks (at_ms);');
   // ONE ADDRESS, A FEW PLAYERS' ATTEMPTS (kanban #3283): ip_key the caller's address as a limit counts it (an IPv6 /64 as one, faucet.js ipKey)
   try { db.exec('ALTER TABLE attempts ADD COLUMN ip_key TEXT'); } catch { /* there already */ }
   db.exec('CREATE INDEX IF NOT EXISTS attempts_by_ip_key ON attempts (round, ip_key)');
@@ -483,6 +484,10 @@ export function createOpr(o = {}) {
     const t = now();
     const n = q('SELECT COUNT(*) AS n, MIN(at_ms) AS first FROM ln_checks WHERE player = ? AND at_ms > ?').get(player, t - 60 * MIN_MS);
     if (n.n >= LN_CHECKS_PER_HOUR) return { ok: false, code: 429, why: `Too many checks - try again in ${Math.max(1, Math.ceil((n.first + 60 * MIN_MS - t) / MIN_MS))} min` };
+    // ALL KEYS TOGETHER (kanban #3333): keys are free, so the per-key limit alone does not bound the wallet asks; one every LN_CHECK_GAP_MS per key too
+    const last = q('SELECT MAX(at_ms) AS m FROM ln_checks WHERE player = ?').get(player).m;
+    if (last != null && t - last < LN_CHECK_GAP_MS) return { ok: false, code: 429, why: 'One check every few seconds - try again in a moment' };
+    if (q('SELECT COUNT(*) AS n FROM ln_checks WHERE at_ms > ?').get(t - MIN_MS).n >= cfg.lnChecksPerMinAll) return { ok: false, code: 429, why: 'Too many checks right now - try again in a minute' };
     q('INSERT INTO ln_checks (player, at_ms) VALUES (?, ?)').run(player, t);
     let c;
     try { c = await lnCheck(s.address); } catch { c = { ok: false, why: 'That wallet did not answer' }; }
@@ -492,7 +497,7 @@ export function createOpr(o = {}) {
        ON CONFLICT (pubkey) DO UPDATE SET ln_address = excluded.ln_address, ln_address_ms = excluded.ln_address_ms, ln_since_ms = COALESCE(players.ln_since_ms, excluded.ln_since_ms)`)
       .run(player, s.address, at, at, at);
     log(`ln address of ${player.slice(0, 8)} kept (${s.domain})`);
-    for (const x of q("SELECT DISTINCT l.round FROM payout_lists l JOIN rounds r ON r.id = l.round WHERE l.state = 'waiting' AND r.state = 'listed'").all()) refreshLists(x.round);
+    refreshListsOf(player);
     return { ok: true, lnAddress: s.address };
   }
   function boardOf(round) { return bestPerPlayer(runsOf(round)).map((b) => ({ ...b, name: nameOf(b.player) })); }
@@ -590,6 +595,7 @@ export function createOpr(o = {}) {
     const last = q('SELECT MAX(at_ms) AS m, COUNT(*) AS n FROM x_checks WHERE player = ? AND at_ms > ?').get(player, t - 60 * MIN_MS);
     if (last.m != null && t - last.m < X_CHECK_GAP_MS) return { ok: false, code: 429, why: `One check every ${X_CHECK_GAP_MS / 1000} seconds - try again in a moment` };
     if (last.n >= X_CHECKS_PER_HOUR) return { ok: false, code: 429, why: 'Too many checks - try again in an hour' };
+    if (q('SELECT COUNT(*) AS n FROM x_checks WHERE at_ms > ?').get(t - MIN_MS).n >= cfg.xChecksPerMinAll) return { ok: false, code: 429, why: 'Too many checks right now - try again in a minute' };
     q('INSERT INTO x_checks (player, at_ms) VALUES (?, ?)').run(player, t);
     let a;
     try { a = await xLookup(name); } catch (e) { a = { userId: null, why: String(e && e.message || e) }; }
@@ -606,7 +612,7 @@ export function createOpr(o = {}) {
          ON CONFLICT (pubkey) DO UPDATE SET user_id = excluded.user_id, username = excluded.username, linked_ms = excluded.linked_ms, checked_ms = excluded.checked_ms`).run(player, userId, username, at, at);
     } catch (e) { if (/UNIQUE/i.test(e.message)) return { ok: false, code: 409, why: 'this X account is already used by another player', username }; throw e; }
     log(`x @${username} linked to ${player.slice(0, 8)}${mine ? ` (was @${mine.username})` : ''}`);
-    for (const x of q("SELECT DISTINCT l.round FROM payout_lists l JOIN rounds r ON r.id = l.round WHERE l.state = 'waiting' AND r.state = 'listed'").all()) refreshLists(x.round);
+    refreshListsOf(player);
     return { ok: true, x: { username } };
   }
   function publicBoard(round, viewer = null) {
@@ -641,6 +647,14 @@ export function createOpr(o = {}) {
     q(`INSERT INTO payout_lists (round, kind, rows, sats, carry_sats, state, made_ms, held) VALUES (?, ?, ?, ?, ?, 'waiting', ?, ?)
        ON CONFLICT (round, kind) DO UPDATE SET rows = excluded.rows, sats = excluded.sats, carry_sats = excluded.carry_sats, made_ms = excluded.made_ms, held = excluded.held`)
       .run(r.id, kind, JSON.stringify(list.rows), sats, list.carrySats || 0, t, JSON.stringify(list.held || []));
+  }
+  /**
+   * ONLY THE ROUNDS THIS KEY CAN CHANGE (kanban #3333, audit 2 #3330): an address or X save changes a waiting list only where the key has a scored run
+   * (it is on that round's board). Every waiting list was rebuilt on every save before - ~0.5 s of blocked service per fresh key's request.
+   */
+  function refreshListsOf(player) {
+    for (const x of q(`SELECT DISTINCT l.round FROM payout_lists l JOIN rounds r ON r.id = l.round WHERE l.state = 'waiting' AND r.state = 'listed'
+        AND EXISTS (SELECT 1 FROM attempts a WHERE a.round = l.round AND a.player = ? AND a.state = 'scored')`).all(String(player))) refreshLists(x.round);
   }
   function refreshLists(round) {
     const r = roundRow(round);
@@ -839,6 +853,10 @@ export function createOpr(o = {}) {
       if (req.method === 'POST') {
         for await (const c of req) { raw += c; if (raw.length > cfg.bodyMost) return send(413, { ok: false, why: 'too big' }); }
       }
+      // THE WORKER'S DOOR ONLY (kanban #3334, audit 2 #3330): the Tailscale funnel path /opr and tn4.bitcoin-arena.io/opr reach this port too; a request
+      // that came through a proxy without the Worker's key is refused on every route. Direct calls on this host (127.0.0.1, no proxy header) stay
+      // open for the e2e helper and the owner's tools
+      if (proxied(req)) return send(403, { ok: false, why: 'the round service answers through the site only' });
       const body = J(raw, {}) || {};
       const ip = ipOf(req);
       if (path.startsWith('/admin/')) {

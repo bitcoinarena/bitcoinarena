@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { world, openRound, paidAttempt, keypair, logOf, signIn, MIN } from './server-helpers.mjs';
 import { lnAddressSyntax, checkLnAddress, WHY, LN_CHECKS_PER_HOUR } from '../server/opr-lnaddress.mjs';
+import { LN_CHECK_GAP_MS } from '../server/opr-service.mjs';
 import { NO_LN_ADDRESS } from '../server/opr-payout.mjs';
 
 const good = { tag: 'payRequest', callback: 'https://walletofsatoshi.com/lnurlp/x/callback', minSendable: 1000, maxSendable: 100000000000, metadata: '[]' };
@@ -64,9 +65,12 @@ test('#3250 save: kept only when the wallet answers; at most 10 wallet checks pe
   w.wallets.set('bad@walletofsatoshi.com', { ok: false, why: WHY.answer });
   assert.deepEqual(await w.opr.saveLnAddress(p.pk, 'nope'), { ok: false, code: 400, why: WHY.syntax });
   assert.equal(w.lnAsked.length, 0);   // a typo asks no wallet and uses no check
+  const gap = () => w.clock.add(LN_CHECK_GAP_MS);   // #3333: one wallet ask every 5 s per key
   assert.equal((await w.opr.saveLnAddress(p.pk, 'bad@walletofsatoshi.com')).why, WHY.answer);
+  const fast = await w.opr.saveLnAddress(p.pk, 'Me@WalletOfSatoshi.com'); assert.equal(fast.code, 429); gap();
   assert.deepEqual(await w.opr.saveLnAddress(p.pk, 'Me@WalletOfSatoshi.com'), { ok: true, lnAddress: 'me@walletofsatoshi.com' });
-  for (let i = 3; i <= LN_CHECKS_PER_HOUR; i++) assert.equal((await w.opr.saveLnAddress(p.pk, `me${i}@walletofsatoshi.com`)).ok, true);
+  for (let i = 3; i <= LN_CHECKS_PER_HOUR; i++) { gap(); assert.equal((await w.opr.saveLnAddress(p.pk, `me${i}@walletofsatoshi.com`)).ok, true); }
+  gap();
   const over = await w.opr.saveLnAddress(p.pk, 'late@walletofsatoshi.com');
   assert.equal(over.ok, false); assert.equal(over.code, 429); assert.match(over.why, /^Too many checks - try again in \d+ min$/);
   assert.equal(w.lnAsked.length, LN_CHECKS_PER_HOUR);
@@ -82,6 +86,7 @@ test('#3250 save: kept only when the wallet answers; at most 10 wallet checks pe
   try {
     assert.equal((await fetch(base + '/lnaddress', { method: 'POST', body: '{}' })).status, 401);
     let r = await call('POST', '/lnaddress', { address: 'x' }); assert.equal(r.status, 400); assert.equal(r.json.why, WHY.syntax); assert.equal(r.json.code, undefined);
+    gap();
     r = await call('POST', '/lnaddress', { address: 'final@walletofsatoshi.com' }); assert.equal(r.status, 200); assert.equal(r.json.lnAddress, 'final@walletofsatoshi.com');
     r = await call('GET', '/me'); assert.equal(r.json.lnAddress, 'final@walletofsatoshi.com');
   } finally { srv.close(); }
