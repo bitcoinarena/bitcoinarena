@@ -133,6 +133,9 @@ a { color: var(--btc); }
   const store = (() => { try { return window.sessionStorage; } catch (_) { return null; } })();
   const local = (() => { try { return window.localStorage; } catch (_) { return null; } })();
   let code = ""; try { code = (store && store.getItem(KEY)) || ""; } catch (_) { code = ""; }
+  // A LINK WITH THE CODE (owner 2026-11-22): #code=<code> in the address (a fragment: never sent to a server) is taken into this tab once and
+  // removed from the address at once, as the feedback admin page does
+  try { const h = new URLSearchParams(location.hash.replace(/^#/, "")); const c = h.get("code"); if (c) { code = c.trim(); if (store) store.setItem(KEY, code); history.replaceState(null, "", location.pathname + location.search); } } catch (_) { /* the address keeps nothing */ }
   let by = ""; try { by = (local && local.getItem(BY)) || ""; } catch (_) { by = ""; }
   let rounds = [], holdAbove = 70, current = null, lastRuns = null, lastLists = null;
 
