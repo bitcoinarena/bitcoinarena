@@ -114,7 +114,7 @@ import { isBackupPublication, playedOfWindow, dayMarkersOf, itemTag } from '../.
 import { nextToAsk } from './dup-ask.js';
 import { decodeRoundContract, encodeRoundContract, contractWarnings, decodeEntryContract, publicationRelaysAreValid, custodyFieldsAreValid, roundId as roundIdOf, entryFederation } from '../../arena-protocol/src/contracts.js';
 import { revealStands, headToHeadCommit } from '../../arena-protocol/src/head-to-head.js';
-import { certifiesLockSet, LOCK_SET_WINDOW_MS } from '../../arena-protocol/src/lock-set.js';   // kanban #2561
+import { certifiesLockSet, LOCK_SET_WINDOW_MS, LOCK_SET_MAX_ENTRIES, lockSetViewsAllSeen, certifiedSeats } from '../../arena-protocol/src/lock-set.js';   // kanban #2561, #3257
 import { LockSetBook } from './lock-set-book.js';
 import { toHex, fromHex, sha256, taggedHash } from '../../arena-protocol/src/hash.js';
 import { advertInTransaction, nodeBondOf } from '../../arena-protocol/src/census.js';
@@ -4665,9 +4665,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   // ITS VIEW: the entries whose stake this seat SAW before the close (the set the settlement counts, seatedEntriesOf played) - a lock written
   // here at or after the close, by whatever door, is in no view
-  const lockSetView = (rid, c) => round.seatedEntriesOf(rid, c.stakeMsat, { played: true })
+  // FROM PROTOCOL 33 EVERY ENTRY WHOSE STAKE WAS SEEN BEFORE THE CLOSE (kanban #3257, audit #1489 r20-h2h-1; owner 2026-11-22 option A): the view
+  // was seatedEntriesOf, already cut to the game's `players` lowest entry ids, so a low-id third lock handed to 4 of 7 seats a moment before the
+  // close cut {C, low} there and {low, high} at the other 3 - only `low` reached the threshold of views and the honest pair's round was VOID. Now
+  // the view is uncut (an entry this seat decided is no member stays out, as in seatedEntriesOf; at most LOCK_SET_MAX_ENTRIES, lowest ids) and
+  // the seats are the game's `players` lowest ids of the CERTIFIED set (lock-set.js certifiedSeats, verify.js #headToHeadClose): an entry only
+  // some seats saw drops out alone. Rounds below 33 keep the cut view byte for byte.
+  const noMember = (entryId) => { const v = round.entryVoid(entryId); return !!v && v.evidenceKind === 'below-threshold'; };
+  const lockSetView = (rid, c) => (lockSetViewsAllSeen(c) ? round.entriesOf(rid).filter(({ entryId }) => !noMember(entryId)) : round.seatedEntriesOf(rid, c.stakeMsat, { played: true }))
     .filter(({ entryId }) => { const seen = round.stakeSeen(entryId); return !!seen && BigInt(Math.floor(Number(seen.seenMs))) < c.entryCloseMs; })
-    .map(({ entryId }) => toHex(entryId));
+    .map(({ entryId }) => toHex(entryId)).slice(0, LOCK_SET_MAX_ENTRIES);
   const lockSets = new LockSetBook({ round, peersOf: (rid) => verifier.peersOf(rid), roundOf: lockSetRound, viewOf: lockSetView, log: (l) => console.log(l) });
   verifier.lockSets = lockSets;
   verifier.lockSetRound = lockSetRound;
@@ -13661,6 +13668,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           ? 'that round has no certified lock set and its window has closed: it is VOID, every stake comes back (kanban #2561)'
           : 'that round\'s lock set is not certified yet: no reveal is taken before it (kanban #2561) - ask again shortly');
         if (certifiedSet && !certifiedSet.entries.includes(toHex(eid))) return text(res, 409, 'that entry is not in the round\'s certified lock set: it is not played, its stake comes back (kanban #2561)');
+        // FROM 33 THE SEATS ARE THE GAME'S `players` LOWEST IDS OF THE CERTIFIED SET (kanban #3257): a certified entry outside them is not played
+        const certifiedSeated = certifiedSet ? certifiedSeats(certifiedSet.entries, c, found.plugin.manifest.players) : null;
+        if (certifiedSeated && !certifiedSeated.includes(toHex(eid))) return text(res, 409, 'that entry is in the round\'s certified lock set but takes no seat (the game\'s players lowest entry ids of the set play): it is not played, its stake comes back (kanban #3257)');
         let body;
         try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a reveal is JSON: { "move": <integer>, "salt": "<64 hex>" }'); }
         const salt = /^[0-9a-f]{64}$/i.test(String(body && body.salt)) ? new Uint8Array(Buffer.from(body.salt, 'hex')) : null;
@@ -13702,7 +13712,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // now, not at that deadline. A round short of a reveal still waits for its end (that entry's FORFEIT).
         if (closeAtEnd && fresh) {
           // a paying round's seated players only - those backed by a lock (kanban #1437, audit 8 R3): a lockless entry neither holds the close nor counts toward it
-          const all = certifiedSet ? certifiedSet.entries.map((h) => ({ entryId: fromHex(h) }))   // protocol 28: the certified set (kanban #2561)
+          const all = certifiedSet ? certifiedSeated.map((h) => ({ entryId: fromHex(h) }))   // protocol 28: the certified set (kanban #2561); from 33 its seats (#3257)
             : round.seatedEntriesOf(entry.roundId, c.stakeMsat, { played: true });   // stakes seen: the set the close plays (kanban #1544)
           const revealed = new Set(round.revealsOf(entry.roundId).map((r) => toHex(r.entryId)));
           if (all.length >= found.plugin.manifest.players && all.every(({ entryId }) => revealed.has(toHex(entryId))) && round.close(entry.roundId)) {

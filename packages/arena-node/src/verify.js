@@ -67,6 +67,7 @@ import { decodeRoundContract, encodeRoundContract } from '../../arena-protocol/s
 import { matchProofId } from '../../arena-protocol/src/match.js';
 import { decodeLobbyName, lobbyNameId } from '../../arena-protocol/src/lobby-name.js';
 import { headToHeadResults, headToHeadCommit } from '../../arena-protocol/src/head-to-head.js';
+import { certifiedSeats } from '../../arena-protocol/src/lock-set.js';   // kanban #3257
 import { splitSigned as splitSignedMark, decodeCheckpoint, checkpointId, SIGNED_CHECKPOINT_BYTES } from '../../arena-protocol/src/checkpoint.js';
 import { pluginForRound, hostedPlugins, itemUnlocksOf } from './plugins.js';
 
@@ -1004,7 +1005,9 @@ export class Verifier {
       // peers now; none standing anywhere it asked and every entry is VOID, every stake back (never a partial round)
       if (this.lockSets && typeof this.lockSetRound === 'function' && this.lockSetRound(roundIdBytes)) {
         const cert = await this.lockSets.settle(roundIdBytes);
-        seated = new Set(cert ? cert.entries : []);
+        // from 33 the certified set holds every entry seen before the close at a threshold of seats, and its seats are the game's `players`
+        // lowest entry ids of it (kanban #3257, lock-set.js certifiedSeats); below 33 the set as certified, as before
+        seated = new Set(cert ? certifiedSeats(cert.entries, contract, found.plugin.manifest.players) : []);
         if (!cert) console.log(`[h2h] ${hex(roundIdBytes).slice(0, 16)}: ${typeof this.lockSets.contested === 'function' && this.lockSets.contested(roundIdBytes) ? 'a contested lock set (two certificates, ruling #2587)' : 'no certified lock set'} - every entry VOID (kanban #2561)`);
       }
       const carried = await this.carryReveals(roundIdBytes, entries, found.plugin.manifest.moveCount);
