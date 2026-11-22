@@ -30,3 +30,18 @@ test('not found: a day within 6 h is asked again every minute, a later one after
   assert.equal(nextToAsk(rows, { asked, now: now + DUP_SOON_ASK_MS, askMs: ASK }).k, 'soon', '10-30 (1 h away) again after a minute');
   assert.equal(askAgainAt({ at: now, pending: false, startMs: day31, now, askMs: ASK }), now + ASK, '10-31 (25 h away) after 10 min');
 });
+
+// KANBAN #3380 (2026-11-23): the earliest emergency posting of Next Block's 11-23 named config 00..00, which no seat runs - held as the day's
+// lead, it would have dropped the valid emergency grid posted after it
+test('#3380 a posting this seat refuses does not take the lead: the valid later emergency grid is kept', async () => {
+  const { dayPostingsKept } = await import('../src/dup-ask.js');
+  const rows = [{ txid: 'aa', role: 'emergency', height: 162830, refused: true }, { txid: 'bb', role: 'emergency', height: 162900 },
+    { txid: 'cc', role: 'primary', height: 162671, refused: true }, { txid: 'dd', role: 'backup', height: 162688, refused: true }];
+  const k = dayPostingsKept(rows);
+  assert.equal(k.lead.txid, 'bb');
+  assert.deepEqual([...k.keep], ['bb']);
+  // nothing refused: the earliest emergency leads, as before
+  const before = dayPostingsKept(rows.map((r) => ({ ...r, refused: false })));
+  assert.equal(before.lead.txid, 'aa');
+  assert.deepEqual([...before.keep].sort(), ['aa', 'dd']);
+});

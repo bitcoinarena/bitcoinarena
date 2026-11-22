@@ -97,7 +97,7 @@ import { createProposals } from './proposals.js';
 import { createBallotTally } from './ballot-tally.js';
 import { createOperatorTokens, operatorUri } from './operator-tokens.js';
 import { isBackupPublication, playedOfWindow, dayMarkersOf, itemTag } from '../../arena-protocol/src/duty.js';
-import { nextToAsk } from './dup-ask.js';
+import { nextToAsk, dayPostingsKept } from './dup-ask.js';
 import { decodeRoundContract, encodeRoundContract, contractWarnings, decodeEntryContract, publicationRelaysAreValid, custodyFieldsAreValid, roundId as roundIdOf, entryFederation } from '../../arena-protocol/src/contracts.js';
 import { revealStands, headToHeadCommit } from '../../arena-protocol/src/head-to-head.js';
 import { certifiesLockSet, LOCK_SET_WINDOW_MS, LOCK_SET_MAX_ENTRIES, lockSetViewsAllSeen, certifiedSeats } from '../../arena-protocol/src/lock-set.js';   // kanban #2561, #3257
@@ -6855,16 +6855,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const seatedPostings = new Set();
     for (const [k, p] of gridPosting) if (seatedRead.series.has(k)) seatedPostings.add(p.txid);
     const groups = new Map();
-    for (const x of series) { const k = toHex(seriesId(x)); const p = gridPosting.get(k); if (!p) continue; if (!groups.has(p.group)) groups.set(p.group, []); groups.get(p.group).push({ k, ...p }); }
+    // A SERIES THIS SEAT REFUSES (its config not one its core runs, kanban #3380) is no posting of its day: it does not take the lead
+    const runsConfig = (x) => { try { const f = pluginForRound(x, hosted); if (!f.ok || !f.core || !(f.core.configs instanceof Map) || !(x.configHash instanceof Uint8Array)) return true;
+      return f.core.configs.has(toHex(x.configHash)); } catch { return true; } };
+    for (const x of series) { const k = toHex(seriesId(x)); const p = gridPosting.get(k); if (!p) continue; if (!groups.has(p.group)) groups.set(p.group, []); groups.get(p.group).push({ k, ...p, refused: !runsConfig(x) }); }
     // ONLY A DAY NOT BEGUN IS DECIDED (measured 2026-10-29 10:18Z: a seat off 9ea77b85's committee - played that day - held no seating
     // certificate for it and would have dropped it; what is seated differs per seat): before its first window no round of the day is
     // seated anywhere and every seat reads the same chain, so all seats keep the same postings; a running day keeps every posting it has
     for (const [group, rows] of groups) {
       if (Number(group.slice(group.lastIndexOf(':') + 1)) * 86400000 <= now) continue;
-      const firstOf = (role) => rows.filter((r) => r.role === role).sort((a, b) => (a.height - b.height) || (a.txid < b.txid ? -1 : a.txid > b.txid ? 1 : 0))[0];
-      const lead = firstOf('emergency') || firstOf('primary'), back = firstOf('backup');
-      const keep = new Set([lead && lead.txid, back && back.txid, ...rows.filter((r) => seatedPostings.has(r.txid)).map((r) => r.txid)].filter(Boolean));
-      for (const r of rows) if (!keep.has(r.txid)) {
+      const { lead, back, keep } = dayPostingsKept(rows, seatedPostings);
+      for (const r of rows) if (!keep.has(r.txid) && !r.refused) {
         // A DRY RUN UNLESS ARENA_DUP_DROP=1: the decision is logged once per series and checked against the grids the seats play first
         if (process.env.ARENA_DUP_DROP !== '1') {
           if (!dupSaid.has(r.k)) { dupSaid.add(r.k); console.log(`[series] #742 would drop ${r.k.slice(0, 16)}: a ${r.role} posting (${r.txid.slice(0, 8)} at ${r.height}); held for its day: ${lead ? `${lead.role} ${lead.txid.slice(0, 8)} at ${lead.height}` : '-'}${back ? `, backup ${back.txid.slice(0, 8)} at ${back.height}` : ''}`); }

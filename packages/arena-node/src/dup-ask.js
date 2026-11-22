@@ -32,3 +32,16 @@ export function nextToAsk(rows, { asked, now, askMs, soonMs = DUP_SOON_MS }) {
   }
   return best;
 }
+
+/**
+ * THE POSTINGS A SEAT HOLDS FOR ONE GAME, FEDERATION AND DAY (kanban #742): the earliest emergency posting if there is one, else the earliest
+ * primary, and the earliest backup - by height, then txid - and every posting with a seated round. A ROW THIS SEAT REFUSES (kanban #3380,
+ * `refused: true` - its config not one its core runs) is no posting of the day: it does not take the lead, so on 2026-11-23 the valid
+ * emergency grid after three refused ones is the one held. -> Set of txids kept (refused rows are not in it, and are not dropped for it)
+ */
+export function dayPostingsKept(rows, seatedTxids = new Set()) {
+  const live = (rows || []).filter((r) => !r.refused);
+  const firstOf = (role) => live.filter((r) => r.role === role).sort((a, b) => (a.height - b.height) || (a.txid < b.txid ? -1 : a.txid > b.txid ? 1 : 0))[0];
+  const lead = firstOf('emergency') || firstOf('primary'), back = firstOf('backup');
+  return { lead, back, keep: new Set([lead && lead.txid, back && back.txid, ...live.filter((r) => seatedTxids.has(r.txid)).map((r) => r.txid)].filter(Boolean)) };
+}
