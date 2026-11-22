@@ -10,7 +10,7 @@ export const RULES = [
   ["Speed", "Faster finishes score much more: 20 points for every second under the level's par time. Sats, stomps, the flag (100) and the day high (50) count too; a run without a hit scores ×1.5. A run that misses the flag gets no time bonus."],
   ["Tie-break", "On equal scores the shorter run time ranks higher, then the earlier submission."],
   ["Play bounty", "2,000 sats, in real sats, each round. The play bounty goes to the best player with a valid Lightning address saved by one hour after the round. No X account and no valid Lightning address: no play bounty."],
-  ["X account", "To be placed and win, link and verify your X account (the same link as the bug bounty). A player without one is not placed; the next player moves up."],
+  ["X account", "To be placed and win, link your X account with its code (the same link as the bug bounty) before your first run of the round; it can be verified until one hour after the round. A player without one is not placed; the next player moves up."],
   ["Humans only", "Humans only. Bots, scripts, automated or assisted play are excluded."],
   ["Fair play", "Any exploit or cheat disqualifies: changing the game or its data, more than one account, playing for someone else, abusing a bug instead of reporting it. Found a bug? Report it in the bug bounty."],
   ["Review", "We review the top runs. Every payout is checked and approved by us before it is sent. Our decision is final."],

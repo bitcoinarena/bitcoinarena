@@ -469,7 +469,13 @@ export function createOpr(o = {}) {
    * form (proof 'name', claimName) proves nothing - anyone can type a real follower's name - so it never places a player for real sats.
    * BY THE HOUR AFTER THE ROUND (kanban #3278, #3286; #3250: "verify until 1 hour after the round ends"): with round r given, a link made after
    * r.end_ms + verifyGraceMs does not place the player in r - a later list rebuild (any POST /lnaddress) cannot bring a late link in.
+   * LINKED BEFORE THE FIRST RUN (kanban #3281, #3288): the 5 attempts are counted per key, the bounty is paid per X account, and keys are free -
+   * one person played 5 runs on each of N fresh keys and linked the one X account after the round to the best of them. A key is placed in r
+   * only when its proven X link was made before its first attempt of r: every run that can win was made by the key while it held the account,
+   * and one X account is on one key at a time (redeem refuses an account a code linked to another key), so one X account stands behind at most
+   * one key's attempts in a round. A key that links later is placed from its next round on.
    */
+  const firstRunOf = (round, pk) => q("SELECT MIN(created_ms) AS m FROM attempts WHERE round = ? AND player = ? AND state != 'expired'").get(round, pk).m;
   function xOf(pk, r = null) {
     if (!s2) return { placed: false, x: null, why: 'no X check here' };
     let l = null, flags = {};
@@ -480,6 +486,12 @@ export function createOpr(o = {}) {
     if (l.proof !== 'code') return { placed: false, x, why: 'the X account is not proven yet - post your link code from it' };
     if (l.member !== true) return { placed: false, x, why: 'the X account is not verified yet' };
     if (r && !(Number(l.linkedMs) <= r.end_ms + cfg.verifyGraceMs)) return { placed: false, x, why: 'the X account was linked more than 1 hour after the round ended' };
+    if (r) {
+      const first = firstRunOf(r.id, pk);
+      if (first != null && !(Number(l.linkedMs) <= first)) return { placed: false, x, why: 'the X account was linked after your first run of this round - it counts from the next round' };
+      // verified (a member read) after the link and by the hour after the round - a read days later does not rebuild a waiting list either (#3278)
+      if (!s2.memberRead(pk, 'x', { userId: l.userId, fromMs: l.linkedMs, toMs: r.end_ms + cfg.verifyGraceMs })) return { placed: false, x, why: 'the X account was not verified by 1 hour after the round ended' };
+    }
     return { placed: true, x, why: null };
   }
   function publicBoard(round, viewer = null) {

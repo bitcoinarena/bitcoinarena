@@ -110,13 +110,28 @@ test('#3249 #3250 disqualify recalculates the waiting lists; a rejected row move
   assert.deepEqual(rowsOf(w, r, 'pot').map((x) => x.player), [ps[1].pk, ps[2].pk, ps[3].pk]);
 });
 
+// #3281 #3288: the X account is LINKED (proven by its code) before the player's first run of the round; its VERIFICATION (the member read) may
+// come until 1 hour after the round. A link made after the first run counts from the next round; a read after the hour does not count
 test('#3250 X can be verified until 1 hour after the round: the lists are written then', async () => {
-  const { w, r, ps } = await played([10, 9], [true, false]);
+  const { w, r, ps } = await played([10, 9, 8], [true, 'unverified', 'unverified']);
   w.clock.set(r.end_ms); await w.opr.tick();
   assert.deepEqual(w.opr.listsOf(r.id), []);
-  w.clock.add(50 * MIN); w.link(ps[1].pk);
+  w.clock.add(50 * MIN); w.s2.record(ps[1].pk, 'x', { member: true, nowMs: w.clock.now() });
   w.clock.add(10 * MIN); await w.opr.tick();
   assert.deepEqual(rowsOf(w, r, 'pot').map((x) => x.player), [ps[0].pk, ps[1].pk]);
+  w.clock.add(MIN); w.s2.record(ps[2].pk, 'x', { member: true, nowMs: w.clock.now() });   // read after the hour: not placed in this round
+  w.opr.rejectRow({ round: r.id, kind: 'pot', player: 'nobody', by: 'owner' });           // a rebuild of the waiting lists
+  assert.deepEqual(rowsOf(w, r, 'pot').map((x) => x.player), [ps[0].pk, ps[1].pk]);
+  assert.match(w.opr.xOf(ps[2].pk, r).why, /not verified by 1 hour after/);
+});
+
+test('#3281 #3288 an X account linked after the key\'s first run of the round does not place it in that round', async () => {
+  const { w, r, ps } = await played([10, 9], [false, true]);
+  w.link(ps[0].pk);   // proven and verified now, after its run
+  await endRound(w, r);
+  assert.deepEqual(rowsOf(w, r, 'pot').map((x) => x.player), [ps[1].pk]);
+  assert.match(w.opr.xOf(ps[0].pk, r).why, /after your first run of this round/);
+  assert.equal(w.opr.xOf(ps[0].pk).placed, true);   // from the next round on
 });
 
 test('#3250 the bounty winner confirms the claim to the saved Lightning address within 7 days; nobody else can, no other address', async () => {

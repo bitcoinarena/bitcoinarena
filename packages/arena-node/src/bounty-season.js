@@ -316,6 +316,15 @@ export function openBountySeason(path = ':memory:', { startMs = null, s2EndMs = 
   }
 
   const botXHandles = () => { try { const f = process.env.FAUCET_BOT_X_HANDLES; return new Set(f ? readFileSync(f, 'utf8').split('\n').map((l) => l.trim().replace(/^@/, '').toLowerCase()).filter((l) => l && !l.startsWith('#')) : []); } catch { return new Set(); } };
+  /**
+   * A MEMBER READ IN A WINDOW (kanban #3278, #3281: the Orange Pill Run's "verified by 1 hour after the round"): whether a read of this key's link to
+   * account `userId` said member at a time from fromMs to toMs. The link row keeps only its last read, which a later read moves; `checks` keeps them all.
+   */
+  function memberRead(pubkey, platform, { userId, fromMs = 0, toMs } = {}) {
+    return !!db.prepare('SELECT 1 AS x FROM checks WHERE pubkey = ? AND platform = ? AND user_id = ? AND member = 1 AND at_ms >= ? AND at_ms <= ? LIMIT 1')
+      .get(String(pubkey), String(platform), String(userId), Number(fromMs) || 0, Number(toMs));
+  }
+
   /** THE STORED FLAGS of a key: a platform counts when its last read said member and is fresh (CHECK_FRESH_MS). */
   function flagsOf(pubkey, { nowMs = Date.now() } = {}) {
     const f = { telegram: false, discord: false, x: false, armada: false, nostr: false };
@@ -503,6 +512,6 @@ export function openBountySeason(path = ':memory:', { startMs = null, s2EndMs = 
     return c ? { ok: true } : { ok: false, why: 'that key carries no real-user mark' };
   };
 
-  return { makeCode, redeem, claimName, seeTelegram, telegramIdOf, links: linksOf, record, verify, flagsOf, pot, plan, commit, wait, intend, settle, approval, approvals, payable, voidApproval, drawEntries, keysOfSeason,
+  return { makeCode, redeem, claimName, seeTelegram, telegramIdOf, links: linksOf, record, memberRead, verify, flagsOf, pot, plan, commit, wait, intend, settle, approval, approvals, payable, voidApproval, drawEntries, keysOfSeason,
     seasonNow, realUserOf, markRealUser, clearRealUser, playedMarkOf, markPlayed, clearPlayed, close: () => db.close() };
 }

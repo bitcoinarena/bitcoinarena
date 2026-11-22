@@ -32,7 +32,8 @@ export function xLine(me, sats = PRIZE_SATS) {
   // BOTH PARTS, ALWAYS, EACH WITH ITS STATE (owner 2026-11-22: "Mein X wird gar nicht angezeigt"): red only for what is missing
   const handle = me.x ? (me.x.username ? "@" + me.x.username : "linked") : "";
   const parts = [
-    hasX ? { text: "✓ X " + handle, ok: true } : me.x ? { text: "X " + handle + " not verified yet", ok: false } : { text: "X not linked", ok: false },
+    // the server's reason when it gave one (#3281: "linked after your first run of this round - it counts from the next round")
+    hasX ? { text: "✓ X " + handle, ok: true } : me.x ? { text: "X " + handle + (me.placedWhy ? " - " + me.placedWhy : " not verified yet"), ok: false } : { text: "X not linked", ok: false },
     hasLn ? { text: "⚡ " + me.lnAddress + " ✓", ok: true } : { text: "⚡ no Lightning address", ok: false },
   ];
   const ok = hasX && hasLn;
