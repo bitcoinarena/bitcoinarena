@@ -17,15 +17,17 @@ import { sinRad } from "./trig.js";
 // printer's cooldown at every value it can have then.
 export function hazardList(L) {
   const out = [];
-  for (const e of L.enemies) {
-    const top = e.row * T;
-    if (e.kind === "bear") out.push({ src: e, dyn: "bear" });
-    else if (e.kind === "printer") { out.push({ src: e, box: [e.x0, top - 20, e.x0 + 24, top] }); out.push({ src: e, dyn: "bills" }); }
-    else if (e.hop) out.push({ src: e, box: [e.x0, top - 20 - 46, e.x0 + 20, top] });
-    else out.push({ src: e, box: [e.x0 - e.span, top - 20, e.x0 + e.span + 20, top] });
-  }
-  for (const c of L.clouds) out.push({ src: c, box: [c.x0 - 30 + 10, c.y0 - 12 + 10, c.x0 + 30 + 42, c.y0 + 12 + 24] });
+  for (const e of L.enemies) out.push(...hazardsOf(e));
+  for (const c of L.clouds) out.push(...hazardsOf(c, true));
   return out;
+}
+function hazardsOf(e, cloud = false) {
+  if (cloud) return [{ src: e, box: [e.x0 - 30 + 10, e.y0 - 12 + 10, e.x0 + 30 + 42, e.y0 + 12 + 24] }];
+  const top = e.row * T;
+  if (e.kind === "bear") return [{ src: e, dyn: "bear" }];
+  if (e.kind === "printer") return [{ src: e, box: [e.x0, top - 20, e.x0 + 24, top] }, { src: e, dyn: "bills" }];
+  if (e.hop) return [{ src: e, box: [e.x0, top - 20 - 46, e.x0 + 20, top] }];
+  return [{ src: e, box: [e.x0 - e.span, top - 20, e.x0 + e.span + 20, top] }];
 }
 
 // the runner's boxes over SAFE_STEPS steps after a respawn at column cx on row `row` with no input and no grace, on
@@ -49,8 +51,8 @@ function respawnPaths(L, cx, row) {
   }
   return paths;
 }
-const M = 3;                                                              // clearance around the runner, world units
-const hits = (q, x0, y0, x1, y1) => q[2] + M > x0 && q[0] - M < x1 && q[3] + M > y0 && q[1] - M < y1;
+const M = 3, MY = 1;                                                      // clearance around the runner (across, up and down), world units
+const hits = (q, x0, y0, x1, y1) => q[2] + M > x0 && q[0] - M < x1 && q[3] + MY > y0 && q[1] - MY < y1;
 // the same rules as world.js stepWorld for a bear and for bills, along the runner's boxes after each step
 function dynTouches(L, path, h) {
   const e = h.src, R = rulesOf(L.version), solid = (cx, y) => cx < 0 || cx >= L.w ? true : y < 0 || y >= ROWS ? false : isSolid(L.t[y * L.w + cx]);
@@ -152,22 +154,61 @@ export function buildLevel(candles, seed, version = GAME_VERSION) {
   if (!R.safeCp) for (let k = 6; k < n; k += 6) { const m = meta[k]; let cx = m.x0 + 1; while ((![7, 8, 10].includes(get(cx, m.top)) || get(cx, m.top - 1) === 11) && cx < m.x0 + 3) cx++; L.checkpoints.push({ x: cx, row: m.top }); }
   for (let cx = endX; cx < L.w; cx++) { set(cx, 12, 1); set(cx, 13, 1); }
   for (let k = 0; k < 3; k++) for (let y = 11 - k; y <= 11; y++) set(endX + 10 + k, y, 2);
-  // opr-3 (kanban #3275): the planned column (every 6th candle, as before) moves to the nearest safe column (behind it
-  // first at equal distance) within MOVE columns of it, at least GAP columns after the previous checkpoint and before
-  // the next planned one. With no safe column in that window, it goes to the column whose tiles are safe with the
-  // fewest enemies, printers and clouds reaching its stretch (the nearest of those), and those are taken out of the
-  // level. With no column in the window whose tiles are safe, the checkpoint is left out.
+  // opr-3 (kanban #3275; owner: keep the enemies): the planned column (every 6th candle, as before) moves to the nearest
+  // safe column (behind it first at equal distance), at least GAP columns after the previous checkpoint and before the
+  // next planned one. With no safe column in that window: the column whose tiles are safe and whose blocking hazards
+  // (only those that reach its 90-step stretch, never another) can all be moved takes it, fewest such hazards first,
+  // then the nearest; those hazards move. Only when no column allows that, the column with the fewest hazards that
+  // cannot move takes it, the others move and those are taken out. With no column in the window whose tiles are safe,
+  // the checkpoint is left out. L.moved / L.taken count the hazards moved and taken out.
   if (R.safeCp) { const plan = []; for (let k = 6; k < n; k += 6) plan.push(meta[k].x0 + 1);
-    const MOVE = 18, GAP = 6, row = (cx) => surfaceOf(L, cx);
-    plan.forEach((want, j) => { const lo = Math.max(want - MOVE, L.checkpoints[L.checkpoints.length - 1].x + GAP), hi = Math.min(want + MOVE, j + 1 < plan.length ? plan[j + 1] - 1 : endX - 1);
-      const hz = hazardList(L); let best = null;
+    const GAP = 3, SHIFT = 18, row = (cx) => surfaceOf(L, cx), cpPaths = [respawnPaths(L, 3, 12)];
+    const SHIFTS = []; for (let k = 1; k <= SHIFT; k++) SHIFTS.push(k);
+    L.moved = 0; L.taken = 0;
+    const standOk = (cx, r) => cx >= 0 && cx < L.w && L.colMeta[cx] >= 0 && [TILE.CG, TILE.CR, TILE.PLAT].includes(get(cx, r)) && get(cx, r - 1) === TILE.EMPTY && !isSolid(get(cx, r - 2));
+    // the hazard src moved whole columns from where the level put it - forward first, 1 to SHIFT; a walker or a hopper
+    // then also back - or null when no such place clears `paths` and every earlier checkpoint's stretch. An enemy
+    // stands on the plateau or candle top it lands on (that row), on both its columns; it never overlaps another
+    // hazard's body; a cloud stays before the flag.
+    const home = new Map(), bodyOf = (e, cloud) => { const h = hazardsOf(e, cloud)[0]; return h.box || [e.x0, e.row * T - 22, e.x0 + 24, e.row * T]; };
+    const shifted = (src, paths) => { const cloud = L.clouds.includes(src), h0 = home.has(src) ? home.get(src) : src.x0;
+      for (const k of !cloud && !src.kind ? SHIFTS.concat(SHIFTS.map((v) => -v)) : SHIFTS) { const x0 = h0 + k * T; if (x0 === src.x0) continue;
+        const e = { ...src, x0, x: cloud ? src.x : x0 }; if (e.minX !== undefined) e.minX = src.minX + (x0 - src.x0);
+        if (cloud) { if (x0 > (L.goal - 18) * T) continue; }
+        else { let ok = surfaceOf(L, Math.floor(x0 / T)) > 0; if (ok) e.row = surfaceOf(L, Math.floor(x0 / T));
+          ok = ok && standOk(Math.floor(x0 / T), e.row) && standOk(Math.floor((x0 + 20) / T), e.row);
+          if (!ok) continue; }
+        const b = bodyOf(e, cloud);
+        if ([...L.enemies, ...L.clouds].some((o) => o !== src && (() => { const c = bodyOf(o, L.clouds.includes(o)); return b[2] > c[0] && b[0] < c[2] && b[3] > c[1] && b[1] < c[3]; })())) continue;
+        const hs = hazardsOf(e, cloud);
+        if (hs.some((h) => touches(L, paths, h)) || cpPaths.some((ps) => ps && hs.some((h) => touches(L, ps, h)))) continue;
+        if (!home.has(src)) home.set(src, src.x0);
+        return e; }
+      return null; };
+    plan.forEach((want, j) => { const lo = L.checkpoints[L.checkpoints.length - 1].x + GAP, hi = j + 1 < plan.length ? plan[j + 1] - 1 : endX - 1;
+      const hz = hazardList(L), cands = [];
       for (let d = 0; want - d >= lo || want + d <= hi; d++) for (const cx of d ? [want - d, want + d] : [want]) { if (cx < lo || cx > hi) continue;
         const paths = respawnPaths(L, cx, row(cx)); if (!paths) continue;
-        const hit = new Set(hz.filter((h) => touches(L, paths, h)).map((h) => h.src));
-        if (!best || hit.size < best.hit.size) best = { cx, hit }; if (!hit.size) break; }
-      if (!best) return; if (!best.hit.size) { L.checkpoints.push({ x: best.cx, row: row(best.cx) }); return; }
-      L.enemies = L.enemies.filter((e) => !best.hit.has(e)); L.clouds = L.clouds.filter((c) => !best.hit.has(c));
-      L.checkpoints.push({ x: best.cx, row: row(best.cx) }); }); }
+        cands.push({ cx, paths, hit: [...new Set(hz.filter((h) => touches(L, paths, h)).map((h) => h.src))] }); }
+      if (!cands.length) return;
+      const place = (c) => { L.checkpoints.push({ x: c.cx, row: row(c.cx) }); cpPaths.push(c.paths); };
+      const free = cands.find((c) => !c.hit.length); if (free) return place(free);
+      const byHits = [...cands].sort((a, b) => a.hit.length - b.hit.length);
+      // one move changes where the next may go, so a failed set of moves is undone before the next column is tried
+      const tryMove = (c, takeRest) => { const done = [], out = [];
+        for (const src of c.hit) { const e = shifted(src, c.paths);
+          if (e) { done.push([src, { ...src }]); Object.assign(src, e); }
+          else if (takeRest) out.push(src);
+          else { done.forEach(([s0, was]) => Object.assign(s0, was)); return false; } }
+        L.moved += done.length; L.taken += out.length;
+        L.enemies = L.enemies.filter((e) => !out.includes(e)); L.clouds = L.clouds.filter((e) => !out.includes(e)); return true; };
+      for (const c of byHits) if (tryMove(c, false)) return place(c);
+      // none can be cleared by moves alone: the column with the fewest hazards that cannot move, then the fewest hazards
+      const stuck = (c) => { const done = []; let n = 0;
+        for (const src of c.hit) { const e = shifted(src, c.paths); if (e) { done.push([src, { ...src }]); Object.assign(src, e); } else n++; }
+        done.forEach(([s0, was]) => Object.assign(s0, was)); return n; };
+      let best = null; for (const c of byHits) { const k = stuck(c); if (!best || k < best.k) best = { c, k }; }
+      tryMove(best.c, true); place(best.c); }); }
   L.parTime = Math.round(L.goal * T / R.run / 60 * 1.6);
   return L;
 }

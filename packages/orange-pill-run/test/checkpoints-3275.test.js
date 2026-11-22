@@ -83,17 +83,23 @@ test("#3275 opr-3 respawn: the bills in flight are gone and the bears are back a
   }
 });
 
-test("#3275 opr-3 keeps the layout: the same tiles, coins and items as opr-2; only checkpoints move and enemies or clouds on a checkpoint's stretch are taken out", () => {
-  let n2 = 0, n3 = 0;
-  for (const { candles, seed } of levels) {
+test("#3275 opr-3 keeps the layout and the enemies: the same tiles, coins and items as opr-2; a hazard on a checkpoint's stretch moves at most 18 columns, a handful are taken out", () => {
+  let n2 = 0, n3 = 0, moved = 0, taken = 0;
+  const same = (a, b) => { const { x0, x, minX, row, ...ra } = a, { x0: y0, x: y, minX: mb, row: r2, ...rb } = b; return JSON.stringify(ra) === JSON.stringify(rb); };
+  for (const { day: d, candles, seed } of levels) {
     const L2 = buildLevel(candles, seed, "opr-2"), L3 = buildLevel(candles, seed, "opr-3");
     assert.deepEqual([...L3.t], [...L2.t]); assert.deepEqual(L3.coins, L2.coins); assert.deepEqual(L3.items, L2.items); assert.equal(L3.goal, L2.goal);
-    const keys2 = new Set([...L2.enemies, ...L2.clouds].map((e) => JSON.stringify(e)));
-    for (const e of [...L3.enemies, ...L3.clouds]) assert.ok(keys2.has(JSON.stringify(e)));
+    // the hazards keep their order; each one of opr-3 is one of opr-2, in place or shifted by whole columns
+    for (const [a2, a3] of [[L2.enemies, L3.enemies], [L2.clouds, L3.clouds]]) { let i = 0, mv = 0;
+      for (const e of a3) { while (i < a2.length && !same(a2[i], e)) i++; assert.ok(i < a2.length, d + " " + JSON.stringify(e));
+        const dx = e.x0 - a2[i].x0; assert.ok(dx % T === 0 && Math.abs(dx) <= 18 * T, d + " shift " + dx); if (dx) mv++; i++; }
+      moved += mv; }
+    taken += L3.taken;
+    assert.equal(L2.enemies.length + L2.clouds.length - L3.enemies.length - L3.clouds.length, L3.taken, d);
     n2 += L2.enemies.length + L2.clouds.length; n3 += L3.enemies.length + L3.clouds.length;
   }
-  console.log("# enemies and clouds on the 30 days: opr-2", n2, "opr-3", n3);
-  assert.ok(n3 >= 0.7 * n2, n3 + " of " + n2);
+  console.log("# enemies and clouds on the 30 days: opr-2", n2, "opr-3", n3, "moved", moved, "taken out", taken);
+  assert.ok(taken <= 10, "taken out " + taken);
 });
 
 test("#3275 old rounds unchanged: opr-1 and opr-2 levels hash as before on the 30 days, the opr-2 log scores as recorded", () => {
@@ -106,12 +112,15 @@ test("#3275 old rounds unchanged: opr-1 and opr-2 levels hash as before on the 3
 });
 
 test("#3275 the bots' deaths soon after a respawn: far fewer on opr-3 than on opr-2, the level check still 30/30", () => {
-  const quick = (v) => { let q = 0;
+  // q: deaths within 60 steps of a respawn; still: of those, the ones with no jump since the respawn (the stretch itself)
+  const quick = (v) => { let q = 0, still = 0;
     for (const { candles, seed } of levels) { const L = buildLevel(candles, seed, v);
-      for (const b of BOT_CONFIGS) { const cfg = { ...b }, W = newWorld(L); let resp = -1e9, was = false;
-        while (!W.done) { const h = W.stats.hits; stepWorld(W, botInput(W, cfg)); if (W.stats.hits > h && W.f - resp <= 60) q++; if (was && W.p.dying === 0) resp = W.f; was = W.p.dying > 0; } } }
-    return q; };
+      for (const b of BOT_CONFIGS) { const cfg = { ...b }, W = newWorld(L); let resp = -1e9, was = false, jumped = false;
+        while (!W.done) { const h = W.stats.hits, inp = botInput(W, cfg); if (inp.jump) jumped = true; stepWorld(W, inp);
+          if (W.stats.hits > h && W.f - resp <= 60) { q++; if (!jumped) still++; }
+          if (was && W.p.dying === 0) { resp = W.f; jumped = false; } was = W.p.dying > 0; } } }
+    return { q, still }; };
   const q2 = quick("opr-2"), q3 = quick("opr-3");
-  console.log("# bot deaths within 60 steps of a respawn: opr-2", q2, "opr-3", q3);
-  assert.equal(q3, 0); assert.ok(q2 > 0);
+  console.log("# bot deaths within 60 steps of a respawn: opr-2", q2.q, "(" + q2.still + " without a jump) opr-3", q3.q, "(" + q3.still + " without a jump)");
+  assert.equal(q3.still, 0); assert.ok(q3.q <= 2); assert.ok(q2.q > 10);
 });
