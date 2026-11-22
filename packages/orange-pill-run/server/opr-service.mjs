@@ -26,6 +26,7 @@ export const DEFAULTS = Object.freeze({
   testMinutesMost: 24 * 60, logPressesMost: 6000, bodyMost: 256 * 1024,
 });
 export const AUTH_AGE_MOST_S = 60;
+export const TEST_ATTEMPTS_MOST = 99;   // a test round's attempts per player at most (kanban #3256); the daily rounds keep cfg.maxAttempts (5)
 const ADMIN_TRY_WINDOW_MS = 15 * MIN_MS, ADMIN_TRIES_PER_CALLER = 5, ADMIN_TRIES_ALL = 30;   // as the faucet's admin (kanban #3243)
 const dayOf = (ms) => new Date(ms).toISOString().slice(0, 10);
 const dayStart = (day) => Date.parse(`${day}T00:00:00Z`);
@@ -111,11 +112,11 @@ export function createOpr(o = {}) {
     return roundRow(id);
   }
   /** Only one round open at a time (kanban #3256): a test round may not overlap any round, nor a daily round's day. */
-  // a test round may allow more attempts (kanban #3256, maxAttempts 1..20, default 5); the daily rounds keep cfg.maxAttempts (the owner's rule: 5)
+  // a test round may allow more attempts (kanban #3256, maxAttempts 1..99, default 5; owner 2026-11-22: up to 99); the daily rounds keep cfg.maxAttempts (the owner's rule: 5)
   function testRound({ startMs, minutes, chartDay, by = 'admin', maxAttempts = null } = {}) {
     const t = now();
     const most = maxAttempts == null ? cfg.maxAttempts : Number(maxAttempts);
-    if (!Number.isInteger(most) || most < 1 || most > 20) return { ok: false, why: 'maxAttempts is a whole number from 1 to 20' };
+    if (!Number.isInteger(most) || most < 1 || most > TEST_ATTEMPTS_MOST) return { ok: false, why: `maxAttempts is a whole number from 1 to ${TEST_ATTEMPTS_MOST}` };
     startMs = startMs == null ? t : Number(startMs);
     minutes = Number(minutes);
     if (!Number.isSafeInteger(startMs) || startMs < t - MIN_MS) return { ok: false, why: 'the start is a time from now on (ms)' };
