@@ -8282,6 +8282,24 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             onChip: (g, kind) => { if (window.ARENA_CHIP_LIST) window.ARENA_CHIP_LIST(g, kind, chosen); },
             onSeason: (g) => { if (window.ARENA_SEASON) window.ARENA_SEASON.open(g); },
             onTip: window.ARENA_ZAP ? (g, info) => window.ARENA_ZAP.open({ title: 'Tip the developer of ' + (g.title || g.name), address: info.lightning }) : null });
+          // THE ORANGE PILL RUN AS A TILE (owner 2026-11-22: "Bau es ein als App"): not a node-hosted game, so not in the seats' list - one tile of
+          // its own at the end of Games, on the testnet stage only (the game is stage-only until the owner says so); a tap opens ?game=orange-pill-run
+          if (/^testnet-stage\./.test(location.hostname) || window.ARENA_OPR_TILE) {
+            const addOpr = () => {
+              const grid = list.querySelector('section.group .grid'); if (!grid || grid.querySelector('[data-game="orange-pill-run"]')) return !!grid;
+              const t = document.createElement('button'); t.type = 'button'; t.className = 'tile game play-game'; t.dataset.game = 'orange-pill-run';
+              t.innerHTML = '<span class="play">Play →</span><div class="head"><div class="logo"><svg viewBox="0 0 64 64" width="100%" height="100%" aria-hidden="true">'
+                + '<rect x="6" y="22" width="52" height="20" rx="10" fill="#f7931a"/><rect x="32" y="22" width="26" height="20" rx="10" fill="#fff6dc"/><rect x="30" y="22" width="6" height="20" fill="#f7931a"/>'
+                + '<path d="M14 54 L24 44 L32 48 L44 34 L56 38" stroke="#4ade80" stroke-width="3" fill="none" stroke-linecap="round"/></svg></div><div><div class="name">Orange Pill Run</div>'
+                + '<span class="badge">Daily tournament · test</span></div></div><div class="desc">Run yesterday\'s Bitcoin chart. Tap to jump. Don\'t fall. Five attempts a day, the best three share the pot.</div>';
+              t.addEventListener('click', () => { const q = new URLSearchParams(location.search.replace(/^\?/, '')); q.set('game', 'orange-pill-run'); location.search = q.toString(); });
+              grid.appendChild(t);
+              const h = list.querySelector('section.group h3'); if (h) h.textContent = h.textContent.replace(/\d+\s*$/, (n) => String(Number(n) + 1));
+              return true;
+            };
+            let tries = 0; const iv = setInterval(() => { if (addOpr() || ++tries > 50) clearInterval(iv); }, 100);
+            new MutationObserver(() => addOpr()).observe(list, { childList: true, subtree: true });
+          }
           // THE LAYOUT: compact unless this browser chose the details; the switch flips it and keeps the choice
           {
             let layout = 'compact'; try { if (window.ARENA_BROWSER_STORE().getItem('arena.games.layout') === 'list') layout = 'list'; } catch { /* storage blocked */ }
