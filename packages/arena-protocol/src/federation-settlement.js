@@ -46,7 +46,7 @@ export function federationSettlementNonce(roundId, federationId) {
  * `payouts` [{ payoutPk, msat, ... }] - each payout's `msat` in the plan is its weight. Answers per federation id hex
  * { claims, payouts, poolMsat, inputFeesMsat, spendableMsat, paidMsat, outputFeesMsat, unspentMsat, unpaid }.
  */
-function splitPart({ claims, payouts, federationOf, feesOf, part, reserveKeyOf = null }) {
+function splitPart({ claims, payouts, federationOf, feesOf, part, reserveKeyOf = null, unreachedStay = false }) {
   const byFed = new Map();
   for (const c of claims) {
     const fid = federationOf(c.outpoint);
@@ -57,6 +57,7 @@ function splitPart({ claims, payouts, federationOf, feesOf, part, reserveKeyOf =
   }
   const weightTotal = payouts.reduce((s, p) => s + p.msat, 0n);
   const out = new Map();
+  const holes = [];
   for (const [fid, fc] of byFed) {
     const fees = feesOf(fid);
     if (!fees || typeof fees.ppm !== 'bigint' || typeof fees.baseMsat !== 'bigint') return refuse(`no fee rule for federation ${fid.slice(0, 16)}`);
@@ -65,6 +66,12 @@ function splitPart({ claims, payouts, federationOf, feesOf, part, reserveKeyOf =
     const spendableMsat = poolMsat - inputFeesMsat;
     const unpaid = [];
     let paying = payouts.filter((p) => p.msat > 0n);
+    // from 33 a fee part its input fees eat whole is the same hole (below: not claimed), not a refusal of the round's whole settlement
+    if (unreachedStay && part === 'fee' && spendableMsat <= 0n) {
+      holes.push({ federation: fid, poolMsat, inputFeesMsat, unpaid,
+        why: `federation ${fid.slice(0, 16)}: its guardians' fees on the fee locks (${inputFeesMsat} msat) take the whole ${poolMsat}, so none of them is claimed and each expires back to its player` });
+      continue;
+    }
     if (paying.length && spendableMsat <= 0n) return refuse(`federation ${fid.slice(0, 16)}: its guardians' fees on the ${part} locks (${inputFeesMsat} msat) take the whole ${poolMsat}`);
     let split = [];
     // THE SAME FRACTION OF THIS FEDERATION'S POT TO EVERY PAYOUT; one too small to pay its own output fee here leaves the split
@@ -76,6 +83,16 @@ function splitPart({ claims, payouts, federationOf, feesOf, part, reserveKeyOf =
       if (!small.length) break;
       for (const x of small) unpaid.push({ pubkey: x.p.pubkey, payoutPk: x.p.payoutPk, federation: fid, why: 'its part in this federation does not pay its own output fee' });
       paying = paying.filter((p) => !small.some((x) => x.p === p));
+    }
+    // A FEE THAT CANNOT REACH A SIGNER NODE IS NOT CLAIMED, IN ANY FEDERATION (2026.0.33, kanban #2983, audit settle-r1-1; owner 2026-11-22): a
+    // federation's fee part whose every share fails its own output fee paid nobody, yet its fee locks were claimed into its transaction - the
+    // players' fees went to its guardians only (5000 msat per player of a 100 sat stake under 1000 msat per input and output, 7 nodes). From 33
+    // that federation's fee locks stay out of its transaction and expire back to their players, as the one-federation feeSettlement does
+    // (lock-settlement.js), and the hole is named. Below 33 they are claimed as before, byte for byte.
+    if (unreachedStay && part === 'fee' && !split.length) {
+      holes.push({ federation: fid, poolMsat, inputFeesMsat, unpaid,
+        why: `federation ${fid.slice(0, 16)}: its fee locks hold ${poolMsat} msat and their inputs cost ${inputFeesMsat}: no signer node's share pays its own output, so none of them is claimed and each expires back to its player` });
+      continue;
     }
     // A LIGHTNING SEND IS ONE INVOICE OF ONE AMOUNT: it is never split across federations
     if (byFed.size > 1 && split.some((x) => x.p.sent)) return refuse(`a ${part} payout is a Lightning send of one amount, and the round's locks are in ${byFed.size} federations`);
@@ -98,7 +115,7 @@ function splitPart({ claims, payouts, federationOf, feesOf, part, reserveKeyOf =
     if (unspentMsat < 0n) return refuse(`federation ${fid.slice(0, 16)}: the ${part} payouts and their fees come to more than its locks pay for`);
     out.set(fid, { claims: fc, payouts: fp, poolMsat, inputFeesMsat, spendableMsat, paidMsat, outputFeesMsat, unspentMsat, unpaid });
   }
-  return { ok: true, byFed: out };
+  return { ok: true, byFed: out, holes };
 }
 
 /**
@@ -108,7 +125,9 @@ function splitPart({ claims, payouts, federationOf, feesOf, part, reserveKeyOf =
  * `federationOf(outpoint)` -> the federation id (hex or bytes) a claimed lock is in; `feesOf(fidHex)` -> that federation's
  * { ppm, baseMsat }. Answers { ok, settlements: [{ federation, nonce, claims, payouts, ... }] } in federation id order.
  */
-export function splitByFederation(plan, { roundId, federationOf, feesOf, reserveKeyOf = null }) {
+// `unreachedFeesStay` (2026.0.33, kanban #2983): a federation's fee locks whose fee part pays nobody are left unclaimed - the caller passes
+// runsDisjointRules(contract.protocolVersion); the answer's `feeHoles` names each such federation.
+export function splitByFederation(plan, { roundId, federationOf, feesOf, reserveKeyOf = null, unreachedFeesStay = false }) {
   if (!plan || !plan.ok) return refuse(plan && plan.why ? plan.why : 'no settlement plan to split');
   if (plan.nothing) return { ok: true, nothing: true, settlements: [] };
   if (typeof federationOf !== 'function' || typeof feesOf !== 'function') return refuse('the federations of the locks and their fee rules are named by the caller');
@@ -125,7 +144,7 @@ export function splitByFederation(plan, { roundId, federationOf, feesOf, reserve
   const stake = splitPart({ claims: onePot ? plan.claims : plan.claims.filter((c) => !isFee(c)), payouts: stakePayouts, federationOf, feesOf,
     part: onePot ? 'stake and fee' : 'stake', reserveKeyOf });
   if (!stake.ok) return stake;
-  const fee = splitPart({ claims: onePot ? [] : plan.claims.filter(isFee), payouts: feePayouts, federationOf, feesOf, part: 'fee', reserveKeyOf });
+  const fee = splitPart({ claims: onePot ? [] : plan.claims.filter(isFee), payouts: feePayouts, federationOf, feesOf, part: 'fee', reserveKeyOf, unreachedStay: unreachedFeesStay === true });
   if (!fee.ok) return fee;
   const feds = [...new Set([...stake.byFed.keys(), ...fee.byFed.keys()])].sort();
   const empty = { claims: [], payouts: [], poolMsat: 0n, inputFeesMsat: 0n, spendableMsat: 0n, paidMsat: 0n, outputFeesMsat: 0n, unspentMsat: 0n, unpaid: [] };
@@ -138,5 +157,5 @@ export function splitByFederation(plan, { roundId, federationOf, feesOf, reserve
       poolMsat: s.poolMsat, inputFeesMsat: s.inputFeesMsat, spendableMsat: s.spendableMsat, paidMsat: s.paidMsat, outputFeesMsat: s.outputFeesMsat, unspentMsat: s.unspentMsat,
       feePoolMsat: f.poolMsat, feePaidMsat: f.paidMsat, feeUnspentMsat: f.unspentMsat, unpaid: [...s.unpaid, ...f.unpaid] };
   });
-  return { ok: true, nothing: false, settlements, forfeits: plan.forfeits || [] };
+  return { ok: true, nothing: false, settlements, forfeits: plan.forfeits || [], ...(fee.holes.length ? { feeHoles: fee.holes } : {}) };
 }

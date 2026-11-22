@@ -27,7 +27,7 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { decodeRoundContract, decodeEntryContract, entryFederation, entryId as entryIdOf } from '../../arena-protocol/src/contracts.js';
-import { takesAnyFederation, acksSettlement } from '../../arena-protocol/src/constants.js';
+import { takesAnyFederation, acksSettlement, runsDisjointRules } from '../../arena-protocol/src/constants.js';
 import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
 import { stallsOut, silentSeats } from '../../arena-protocol/src/stall.js';
 import { signSettlementCommit, checkSettlementCommit, signSettlementAsk, checkSettlementAsk, asksBySeat, ASK_COMMIT, ASK_SHARE, signSettlementAck, settlementAckId, countAcks, joinAcks, splitAcks, splitSignedAck, encodeSettlementTable, decodeSettlementTable, settlementTableId, planTableRows, planTableBuild } from '../../arena-protocol/src/settlement-ack.js';
@@ -195,7 +195,9 @@ export function federationPlans(args, { federationOf, feesOf, reserveKeyOf = nul
   const plan = lockSettlement({ ...args, fees: NO_FEES });
   if (!plan.ok) return { ok: false, why: plan.why };
   if (plan.nothing) return { ok: false, why: plan.why, ...(plan.noFill ? { code: REFUSAL.NOTHING_CLAIMED } : {}) };
-  const split = splitByFederation(plan, { roundId: args.roundId, federationOf, feesOf, reserveKeyOf });
+  // from protocol 33 a federation's fee locks whose fee part pays no signer node stay unclaimed (kanban #2983)
+  const split = splitByFederation(plan, { roundId: args.roundId, federationOf, feesOf, reserveKeyOf,
+    unreachedFeesStay: !!(args.contract && runsDisjointRules(args.contract.protocolVersion)) });
   if (!split.ok) return { ok: false, why: split.why };
   return { ok: true, plan, split };
 }
@@ -925,7 +927,8 @@ export class LockSettlement {
     if (paysReserve && plan.payouts.some((p) => p.reserve)) {
       for (const fid of fed.federationIds) reserveKeys.set(fid, this.reserveKeyFor ? await this.reserveKeyFor(fid).catch(() => null) : null);
     }
-    const split = splitByFederation(plan, { roundId: roundIdBytes, ...fed, reserveKeyOf: (fid) => reserveKeys.get(fid) || null });
+    const split = splitByFederation(plan, { roundId: roundIdBytes, ...fed, reserveKeyOf: (fid) => reserveKeys.get(fid) || null,
+      unreachedFeesStay: runsDisjointRules(contract.protocolVersion) });   // kanban #2983, protocol 33
     if (!split.ok) return refuse(`no lock is claimed: ${split.why}`);
     return { ok: true, anyFed: true, plan, split, base: { plan, entryOf: rest.lockEntry }, contract, locks, ...rest };
   }
