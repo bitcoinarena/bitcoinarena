@@ -90,6 +90,13 @@ button:disabled { opacity: .5; cursor: default; }
 .rules ol b { color: var(--text); }
 .box.wide { width: min(620px, 100%); max-height: 100%; overflow: auto; }
 td button.rp { padding: 3px 8px; font-size: .8rem; border-radius: 7px; }
+/* THE LEADERBOARD FITS A PHONE (owner 2026-11-22: the replay column was cut, the names misaligned): fixed columns, names cut with an
+   ellipsis, the replay as ▶ */
+#bTable { table-layout: fixed; width: 100%; font-size: .9rem; }
+#bTable th, #bTable td { padding: 4px 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#bTable .c-rk { width: 2.1em; text-align: left; } #bTable .c-nm { text-align: left; } #bTable .c-sc { width: 3.9em; text-align: right; } #bTable .c-tm { width: 4.4em; text-align: right; } #bTable .c-rp { width: 2.4em; text-align: center; }
+#bTable td button.rp { padding: 2px 0; width: 100%; font-size: .8rem; }
+#board .tw { overflow-x: hidden; }
 #rbar { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); display: flex; gap: 8px; background: rgba(28,21,30,.92); border: 1px solid var(--line); border-radius: 12px; padding: 6px; }
 #rbar button { padding: 8px 14px; font-size: .95rem; }
 #rbar button[aria-pressed="true"] { border-color: var(--btc); color: var(--btc); }
@@ -136,7 +143,8 @@ body.bridged .tag { margin-left: 0; }
 .xline { flex-wrap: nowrap !important; } .xline > span { flex: 1; min-width: 0; } .xline button { flex: none; }
 @media (max-height: 760px) { .facts dt { font-size: .66rem; } .facts dd { font-size: .86rem; } .facts { margin: 0 0 8px; } .xline { font-size: .86rem !important; } }
 /* kanban #3251 (owner 2026-11-22): eligible in green, not eligible in red - with its button and field right there */
-.xline.ok { color: var(--green) !important; } .xline.bad { color: var(--red) !important; font-weight: 600; }
+.xline { color: var(--soft) !important; font-weight: 600; } .st-ok { color: var(--green); } .st-bad { color: var(--red); }
+.notcounted { color: var(--soft) !important; }
 .notcounted { margin: 6px 0 0 !important; font-size: .88rem !important; color: var(--red) !important; font-weight: 600; line-height: 1.35 !important; }
 /* THE RESULT ON A PHONE (owner 2026-11-22, iPhone: "alle Knöpfe in eine Zeile"; the sheet scrolled): the three buttons in one row of equal
    widths, short labels on a phone; a compact score table; one line each for the prize, the eligibility and the facts */
@@ -150,6 +158,14 @@ body.bridged .tag { margin-left: 0; }
 .notcounted button { flex: none; padding: 4px 10px; font-size: .85rem; border-color: var(--btc); color: var(--btc); }
 #rFacts { margin: 6px 0 0; }
 @media (max-height: 760px) { #result .box { padding: 12px 14px; } #result .row { margin-top: 10px; } .row.r3 button { padding: 9px 6px; } .prize.rp { margin: 6px 0 0 !important; } }
+/* THE SPEAKER AND THE ROUND IN THE HUD (owner 2026-11-22: "Oben ist ungenutzter Platz"): no top row on a free round; render.js places them */
+#hudctl { position: absolute; inset: 0; pointer-events: none; z-index: 6; }
+#hudctl > * { position: absolute; left: -999px; top: 0; pointer-events: auto; box-sizing: border-box; display: flex; align-items: center; justify-content: center; margin: 0;
+  background: rgba(14,9,16,.82); border: 1.5px solid rgba(255,255,255,.14); border-radius: 99px; }
+#hudctl .snd { padding: 0; font-size: .9rem; line-height: 1; }
+#hudctl .tag { padding: 0 9px; font-family: var(--display); font-weight: 700; font-size: .9rem; letter-spacing: 0; color: var(--text); white-space: nowrap; }
+#hudctl .tag.test { border-style: dashed; border-color: rgba(255,255,255,.35); }
+body.bridged.nowal header { display: none; }
 /* kanban #3251: the speaker toggle in the header (music + effects, effects only, off) */
 .snd { font-size: .9rem; line-height: 1; padding: 3px 8px; border-radius: 99px; color: var(--soft); white-space: nowrap; flex: none; }
 /* ONE TOP ROW, ALWAYS (owner 2026-11-22, iPhone): the wallet truncates, the speaker and the round badge stay right */
@@ -161,7 +177,7 @@ body.bridged .snd { margin-left: auto; } body:not(.bridged) .snd { margin-left: 
 .iboard td { padding: 2px 8px; border-top: 1px solid rgba(70,52,63,.55); line-height: 1.25; }
 .iboard tr:first-child td { border-top: 0; }
 /* the intro never outgrows its frame: it is a column as tall as the sheet at most, and the board is the one part that gives way (and scrolls) */
-.box.intro { display: flex; flex-direction: column; max-height: 100%; } .box.intro > * { flex: none; } .box.intro > .iboard { flex: 0 1 auto; min-height: 4.6rem; }
+.box.intro { display: flex; flex-direction: column; max-height: 100%; } .box.intro > * { flex: none; } .box.intro > .iboard { flex: 0 1 auto; min-height: 1.9rem; }
 .iboard td.rk { width: 1.8em; color: var(--dim); } .iboard td.nm { text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 9.5em; }
 .iboard tr.gap td { border-top: 2px dashed var(--dim); }
 .iboard .iempty { margin: 6px 10px !important; font-size: .88rem !important; }
@@ -174,8 +190,6 @@ body.bridged .snd { margin-left: auto; } body:not(.bridged) .snd { margin-left: 
   <h1>Orange Pill Run</h1>
   <p>Run across the last 24 hours of the Bitcoin chart. Every candle is a platform.</p>
   <span class="wal" id="wal" hidden></span>
-  <button class="snd" id="sndBtn" type="button" aria-label="Sound">🔊</button>
-  <span class="tag" id="modeTag">OFFLINE · PRACTICE</span>
 </header>
 
 <div id="stage">
@@ -230,6 +244,7 @@ body.bridged .snd { margin-left: auto; } body:not(.bridged) .snd { margin-left: 
   <div id="rbar" hidden><button id="rbPlay" type="button">Pause</button><button id="rb2x" type="button" aria-pressed="false">2x</button><button id="rbClose" type="button">Close</button></div>
   <div id="pill" hidden role="status"></div>
   <div id="hint" hidden>Tap anywhere to jump</div>
+  <div id="hudctl"><button class="snd" id="sndBtn" type="button" aria-label="Sound">🔊</button><span class="tag" id="modeTag">PRACTICE</span></div>
 </div>
 
 <!--OPR_SCRIPT-->

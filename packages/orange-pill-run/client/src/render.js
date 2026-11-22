@@ -432,14 +432,31 @@ function introduce(W, sx, sy) {
   const hd = W.L.dayHigh; if (hd && !hd.got) show("high", hd.x, hd.y - 14, "DAY HIGH " + usd(hd.price) + " · +50", COL.gold);
   const r = W.L.t.findIndex((v, kk) => v === TILE.RUG && (kk % W.L.w) * T > camX && (kk % W.L.w) * T < camX + viewW); if (r >= 0) show("rug", (r % W.L.w) * T + 12, Math.floor(r / W.L.w) * T, "RUG PULL · don't stand still", "#ff7b72");
 }
+let hudKey = "";
+function placeHud(x, y, h, small) {
+  const snd = document.getElementById("sndBtn"), tag = document.getElementById("modeTag");
+  if (!snd || !tag || snd.parentNode.id !== "hudctl") return x;
+  const sw = h + 4, tw = Math.max(h, tag.offsetWidth || h);
+  const sx = x, tx = small ? cssW - PAD - tw : x + sw + 6, ty = small ? y + h + 6 : y;
+  const k = [sx, y, h, tx, ty].map(Math.round).join(",");
+  if (k !== hudKey) { hudKey = k;
+    Object.assign(snd.style, { left: Math.round(sx) + "px", top: Math.round(y) + "px", height: h + "px", width: sw + "px" });
+    Object.assign(tag.style, { left: Math.round(tx) + "px", top: Math.round(ty) + "px", height: h + "px", minWidth: h + "px" }); }
+  return small ? x + sw + 6 : x + sw + 6 + tw + 6;
+}
 function pill(x, y, w, h) { ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x, y, w, h, h / 2); else ctx.rect(x, y, w, h); ctx.fillStyle = "rgba(14,9,16,.82)"; ctx.fill(); ctx.strokeStyle = "rgba(255,255,255,.14)"; ctx.lineWidth = 1.5; ctx.stroke(); }
 
 function drawHud(W, ghosts) {
   const sc = scoreOf(W), L = W.L, small = cssW < 600, fs = small ? 15 : 18, pad = 10, h = fs + 14;
   const cmi = L.colMeta[Math.floor((W.p.x + 8) / T)], m = L.meta[cmi >= 0 ? cmi : 0], onChart = cmi >= 0;
   const pills = [["⏱ " + W.time.toFixed(1) + "s", COL.text], ["₿ " + (W.stats.coins + W.stats.blocks * 5) + " sats", COL.gold], ["★ " + sc.base + (W.stats.hits === 0 ? " ×1.5" : ""), COL.btc]];
+  // a phone: tighter pills, so the speaker fits right after the ★ pill (#3251, owner 2026-11-22: "tu das Sound-Icon neben die Sterne")
+  const pp = small ? 18 : 24, gap = small ? 5 : 6;
   let x = pad; ctx.font = "700 " + fs + "px " + FONT;
-  pills.forEach(([t, c]) => { const w = ctx.measureText(t).width + 24; pill(x, pad, w, h); label(t, x + w / 2, pad + h / 2 + 1, fs, c); x += w + 6; });
+  pills.forEach(([t, c]) => { const w = ctx.measureText(t).width + pp; pill(x, pad, w, h); label(t, x + w / 2, pad + h / 2 + 1, fs, c); x += w + gap; });
+  // THE SPEAKER AND THE ROUND'S NUMBER IN THE HUD (#3251): DOM buttons placed on the pill row - the speaker after ★, the round's badge at the
+  // right end of the price row on a phone, after the speaker on a wide screen; the stats row leaves them their room
+  x = placeHud(x, pad, h, small);
   // price of the candle you stand on
   const ptxt = onChart ? hhmm(m.t) + " UTC  " + usd(m.c) + "  " + (m.move >= 0 ? "▲ " : "▼ ") + Math.abs(m.move * 100).toFixed(2) + "%" : "BTC " + usd(L.meta[L.meta.length - 1].c) + "  24 h " + ((L.meta[L.meta.length - 1].c - L.meta[0].o) / L.meta[0].o * 100).toFixed(1) + "%";
   const pc = onChart ? (m.green ? COL.green : COL.red) : COL.text;
@@ -456,7 +473,6 @@ function drawHud(W, ghosts) {
   const fxm = toX(L.goal * T); ctx.fillStyle = COL.btc; ctx.fillRect(fxm - 1, iy - 2, 2, ih + 4);
   const dot = (wx, c, r) => { ctx.beginPath(); ctx.arc(toX(wx), my + mh - 6, r, 0, 7); ctx.fillStyle = c; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = "#0c0608"; ctx.stroke(); };
   ghosts.forEach((gh) => { const i = Math.min(gh.path.length / 2 - 1, Math.floor(W.f / 2)) * 2; if (i >= 0) dot(gh.path[i], gh.color, 4.5); }); dot(W.p.x, COL.btc, 6);
-  if (W.time < 4) label("Tap to jump", cssW / 2, Math.max(cssH * .32, hudTop + 40), small ? 19 : 28, COL.text, Math.min(1, 4 - W.time));
   const act = []; if (W.p.boost > 0) act.push(["⚡ " + Math.ceil(W.p.boost / 60) + " s", COL.gold]);
   PW_ORDER.forEach((k) => { const t = W.p.pw[k]; if (t > 0) act.push([PW_INFO[k].icon + " " + PW_INFO[k].text.split(" · ")[0].replace(/^\w/, (c) => c) + (k === "pill" ? "" : " " + Math.ceil(t / 60) + " s"), PW_INFO[k].color]); });
   act.forEach(([txt, c], i) => label(txt, cssW / 2, (pillShown() ? hudTopPill : hudTop) + 14 + i * (small ? 20 : 25), small ? 15 : 19, c, 1));

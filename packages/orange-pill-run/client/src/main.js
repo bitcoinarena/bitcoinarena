@@ -172,8 +172,8 @@ async function readNow() {
 const freeNow = () => !S.round || isFree(S.round);
 function paintWallet() {
   const w = wallet(), el = $("wal");
-  if (!w || freeNow()) { el.hidden = true; return; }
-  el.hidden = false; el.textContent = "";
+  if (!w || freeNow()) { el.hidden = true; document.body.classList.add("nowal"); return; }
+  el.hidden = false; el.textContent = ""; document.body.classList.remove("nowal");
   if (!w.balance) { el.textContent = w.welcomeComing ? "Welcome sats coming …" : "Wallet opening …"; return; }
   const b = document.createElement("b"); b.textContent = fmtSats(w.balance.sats);
   const coming = Number(w.balance.coming) || 0;   // #3251: sats merging in or being issued, in any federation of the wallet
@@ -182,6 +182,11 @@ function paintWallet() {
   el.title = fmtSats(w.balance.sats) + " testnet sats in your Arena wallet" + (coming > 0 ? ", " + fmtSats(coming) + " more on the way" : "");
 }
 let introTop = 10, introFitH = 0;
+// the X / Lightning status (#3251): each part green or red as it stands
+function paintStatus(el, st) {
+  el.textContent = ""; if (!st) return;
+  st.parts.forEach((x, i) => { if (i) el.append(x.sep || " · "); const sp = document.createElement("span"); sp.className = x.ok ? "st-ok" : "st-bad"; sp.textContent = x.text; el.append(sp); });
+}
 function paintIntro() {
   const m = introModel({ round: S.round, me: S.me, board: S.board, wallet: wallet(), nowMs: Date.now(), loading: !S.loaded, opened: openedIn(), top: introTop });
   $("iLine").textContent = m.line;
@@ -192,13 +197,16 @@ function paintIntro() {
   paintIntroBoard(m.board);
   $("iPrice").hidden = !m.practice;
   // #3270: the X account on the intro, so a player can link it before the first run (it was only on the result screen)
-  $("iX").hidden = !m.x; $("iXText").textContent = m.x ? m.x.text : ""; $("iX").className = "xline " + (m.x ? (m.x.ok ? "ok" : "bad") : "");
+  $("iX").hidden = !m.x; paintStatus($("iXText"), m.x); $("iX").className = "xline " + (m.x ? (m.x.ok ? "ok" : "bad") : "");
   $("iXBtn").hidden = !(m.x && m.x.link && bridge && bridge.linkX);
   const btn = $("startBtn"); if (!btn.dataset.busy) { btn.textContent = m.button.label; btn.disabled = !!m.button.disabled; }
   if (!$("iWhy").dataset.err) $("iWhy").textContent = m.button.why || (S.err && bridge ? S.err : "");
   $("iTopUp").hidden = !m.topUp; if (m.topUp) $("iTopUp").textContent = m.topUp.label;
   // one top row always (owner 2026-11-22): the round's badge short, "Test round · no play bounty" its tooltip
-  $("modeTag").textContent = !bridge ? "PRACTICE" : m.tag || "TESTNET"; $("modeTag").title = m.bounty || "";
+  // the round's number only (owner 2026-11-22: "zeig nur 4 für Round 4 an"); a test round: a dashed outline and its tooltip
+  const tg = $("modeTag"), tt = !bridge ? "Practice" : S.round ? String(S.round.number || "") || "·" : "·";
+  if (tg.textContent !== tt) tg.textContent = tt;
+  tg.classList.toggle("test", !!(S.round && S.round.test)); tg.title = !bridge ? "Practice: open the game in the Arena to play the round" : S.round ? (S.round.test ? "Test round " : "Round ") + (S.round.number || "") + (m.bounty ? " · no play bounty" : "") : "";
   // the address field right under the line while no address is saved (or while it is being typed or answered)
   { const inp = $("iLnIn"), st = LN.i; paintLn("i", !(m.x && !m.x.ln && !st.dirty && !st.msg && document.activeElement !== inp)); }
   paintWallet();
@@ -374,7 +382,7 @@ function showResult({ res, mode: m, entry: en, sending = false }) {
   // compact (owner 2026-11-22, iPhone): one facts row when the service answered; the practice and replay lines as before
   if (model.facts) { $("rRank").textContent = model.facts; $("rBeat").textContent = ""; $("rLeft").textContent = ""; }
   else { $("rRank").textContent = model.rank || ""; $("rBeat").textContent = model.beat || ""; $("rLeft").textContent = model.left || ""; }
-  $("rNot").hidden = !model.notCounted; $("rNotText").textContent = model.notCounted || "";
+  $("rNot").hidden = !model.status; paintStatus($("rNotText"), model.status || null);
   $("rX").hidden = true;   // the line above says it, with the button (#3251)
   $("xBtn").hidden = !(bridge && bridge.linkX) || !model.linkX;
   // the address field only while none is saved (or while it is typed or answered)
@@ -396,17 +404,18 @@ async function showBoard() {
   const r = b.round;
   $("bLine").textContent = r ? (r.test ? "Test round " : "Round ") + (r.number || "") + " · " + r.players + " players · " + (isFree(r) ? "free to play" : "pot " + fmtSats(r.potSats) + " testnet sats") : "";
   const rows = boardRows(S.board);
-  cellRow(t.createTHead().insertRow(), ["#", "Player", "Score", "Time", ""], null, true);
+  const C = ["c-rk", "c-nm", "c-sc", "c-tm", "c-rp"];
+  cellRow(t.createTHead().insertRow(), ["#", "Player", "Score", "Time", ""], C, true);
   const body = t.createTBody();
-  if (!rows.length) cellRow(body.insertRow(), ["", "No run yet", "", "", ""]);
+  if (!rows.length) cellRow(body.insertRow(), ["", "No run yet", "", "", ""], C);
   // own runs: their replays are always yours to watch (GET /me's attempts)
   const ownBest = S.me ? myBest(S.me, S.board) : null;
   for (const x of rows) {
     const tr = body.insertRow(); if (S.me && x.name === S.me.name) tr.className = "me";
     let rp = x.replay; if (!rp && ownBest && S.me && x.name === S.me.name) rp = "/replay/" + ownBest.attempt;
     let cell = "";
-    if (rp) { cell = document.createElement("button"); cell.className = "rp"; cell.type = "button"; cell.textContent = "Replay"; cell.onclick = () => watchReplay(rp); }
-    cellRow(tr, [x.rank, x.name + (x.placed ? " ✓" : ""), x.score, x.time, cell], [null, null, "tot", null, null]);
+    if (rp) { cell = document.createElement("button"); cell.className = "rp"; cell.type = "button"; cell.textContent = "▶"; cell.title = "Watch the replay"; cell.setAttribute("aria-label", "Watch the replay"); cell.onclick = () => watchReplay(rp); }
+    cellRow(tr, [x.rank, x.name + (x.placed ? " ✓" : ""), x.score, x.time, cell], ["c-rk", "c-nm", "c-sc tot", "c-tm", "c-rp"]);
   }
 }
 async function watchReplay(path) {

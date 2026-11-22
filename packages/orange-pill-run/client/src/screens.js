@@ -29,10 +29,16 @@ export function myBest(me, board) {
 export function xLine(me, sats = PRIZE_SATS) {
   if (!me) return null;
   const hasX = !!(me.x && me.placed), hasLn = !!me.lnAddress;
-  // one short line on a phone (owner 2026-11-22, iPhone: "Zu voll für das kleine Phone")
-  if (hasX && hasLn) return { ok: true, text: "✓ You can win: X " + (me.x.username ? "@" + me.x.username : "linked") + " · ⚡ saved", link: false, ln: false };
-  const need = !hasX && !hasLn ? (!me.x ? "link X + Lightning address" : "verify X + Lightning address") : !hasX ? (!me.x ? "link your X account" : "X account not verified yet") : "save a Lightning address";
-  return { ok: false, text: "Not eligible: " + need, link: !me.x, ln: !hasLn };
+  // BOTH PARTS, ALWAYS, EACH WITH ITS STATE (owner 2026-11-22: "Mein X wird gar nicht angezeigt"): red only for what is missing
+  const handle = me.x ? (me.x.username ? "@" + me.x.username : "linked") : "";
+  const parts = [
+    hasX ? { text: "✓ X " + handle, ok: true } : me.x ? { text: "X " + handle + " not verified yet", ok: false } : { text: "X not linked", ok: false },
+    hasLn ? { text: "⚡ " + me.lnAddress + " ✓", ok: true } : { text: "⚡ no Lightning address", ok: false },
+  ];
+  const ok = hasX && hasLn;
+  if (ok) parts.push({ text: "- you can win", ok: true, sep: " " });
+  const text = parts.map((x, i) => (i ? (x.sep || " · ") : "") + x.text).join("");
+  return { ok, text, parts, link: !me.x, ln: !hasLn };
 }
 
 /**
@@ -181,7 +187,7 @@ export function resultModel({ res, parTime, timePerS = 20, entry, entryWhy, befo
   if (me) out.left = "Attempts left: " + Math.max(0, max - usedOf(me, opened)) + " of " + max;   // #3251: this run counts, whatever /me said before it
   // #3251: not eligible - said plainly, once (owner 2026-11-22)
   // one line, the intro's words (owner 2026-11-22, iPhone); its Link X button beside it
-  if (me) { const x = xLine(me); if (!x.ok) { out.notCounted = x.text; out.linkX = x.link; } }
+  if (me) { const x = xLine(me); out.status = x; out.linkX = x.link; if (!x.ok) out.notCounted = x.text; }
   // the three facts in one row: "Rank 2 · best 218 · 95 of 99 left"
   if (me) { const best = Math.max(after ? after.total : 0, before ? before.total : 0);
     out.facts = [after && after.rank ? "Rank " + after.rank : "Not ranked yet", best > 0 ? "best " + fmtSats(best) : null, Math.max(0, max - usedOf(me, opened)) + " of " + max + " left"].filter(Boolean).join(" · "); }
