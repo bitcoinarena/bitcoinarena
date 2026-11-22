@@ -1,8 +1,9 @@
 // Orange Pill Run - the renderer (kanban #3246), moved unchanged from the prototype
 // (marketing/print/game-mockups/orange-pill-run.html). It only reads the world; drawing may use Math.sin etc.
-import { T, ROWS, VH, PH, TILE, isSolid, PW_INFO, PW_ORDER } from "../../src/sim/constants.js";
+import { T, ROWS, VH, PW, PH, TILE, isSolid, PW_INFO, PW_ORDER } from "../../src/sim/constants.js";
 import { tileAt } from "../../src/sim/world.js";
 import { scoreOf } from "../../src/sim/score.js";
+import { layoutPops, layoutHint, hintAge, layoutTimers, aheadZone, popSize, HINT_LIFE } from "./labels.js";
 
 const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const COL = { text: css("--text") || "#f6ece4", soft: css("--soft") || "#c8bab2", dim: css("--dim") || "#8c8086", btc: css("--btc") || "#f7931a", gold: css("--gold") || "#ffd166", blue: css("--blue") || "#58a6ff", green: css("--green") || "#3fb950", red: css("--red") || "#f85149" };
@@ -398,8 +399,11 @@ function drawWorld(W, ghosts) {
   const vg = ctx.createRadialGradient(cssW / 2, cssH * .55, Math.min(cssW, cssH) * .3, cssW / 2, cssH / 2, Math.max(cssW, cssH) * .75); vg.addColorStop(0, "rgba(0,0,0,0)"); vg.addColorStop(1, "rgba(5,0,10,.5)"); ctx.fillStyle = vg; ctx.fillRect(0, 0, cssW, cssH);
   const sx = (wx) => (wx - camX) * zoom, sy = (wy) => (wy - camY) * zoom;
   ghosts.forEach((gh) => { const i = Math.min(gh.path.length / 2 - 1, Math.floor(f / 2)) * 2; if (i >= 0) label(gh.name, sx(gh.path[i] + 8), sy(gh.path[i + 1]) - 14, 13, gh.color, .85); });
+  // #3251: the floating texts never cover what is in front of the runner - popups above and behind him, the hint in the HUD band
+  drawn = []; const big = p.pw.pill > 0 ? 1.35 : 1, col = T * zoom;
+  runnerBox = { x: (p.x - camX) * zoom, w: PW * zoom, top: (p.y + PH - PH * big - camY) * zoom, bottom: (p.y + PH - camY) * zoom };
   introduce(W, sx, sy);
-  W.fx.forEach((e) => { if (e.kind === "text") label(e.text, sx(e.x), sy(e.y) - (70 - e.t) * .7, 17, e.color, Math.min(1, e.t / 25)); });
+  drawPops(W);
   if (p.dying > 0) { const k = p.dying / 55; ctx.fillStyle = `rgba(60,0,0,${.35 * k})`; ctx.fillRect(0, 0, cssW, cssH); label(p.why ? "REKT · " + p.why : "REKT", cssW / 2, cssH * .42, Math.min(72, cssW / 8), "#ff6b62", Math.min(1, k * 2)); label("+3 s · back to the last checkpoint", cssW / 2, cssH * .42 + Math.min(60, cssW / 10), 18, COL.text, Math.min(1, k * 2)); }
   drawHud(W, ghosts);
 }
@@ -408,29 +412,46 @@ function pillShown() { const pl = document.getElementById("pill"); return !!pl &
 function view(W) {
   const p = W && W.p;
   return { cssW, cssH, zoom, camX, camY, viewW, viewH, hudTop: pillShown() ? hudTopPill : hudTop,
-    runner: p ? { x: (p.x - camX) * zoom, top: (p.y - camY) * zoom, bottom: (p.y + PH - camY) * zoom } : null };
+    runner: p ? { x: (p.x - camX) * zoom, top: (p.y - camY) * zoom, bottom: (p.y + PH - camY) * zoom } : null,
+    texts: drawn.slice(), ahead: runnerBox ? aheadZone(runnerBox, T * zoom) : null };
 }
 function label(text, x, y, size, color, alpha) {
   ctx.globalAlpha = alpha == null ? 1 : alpha; ctx.font = "700 " + size + "px " + FONT; ctx.textAlign = "center"; ctx.textBaseline = "middle";
   ctx.lineWidth = Math.max(3, size / 4); ctx.strokeStyle = "rgba(12,6,8,.9)"; ctx.lineJoin = "round"; ctx.strokeText(text, x, y); ctx.fillStyle = color; ctx.fillText(text, x, y); ctx.globalAlpha = 1;
 }
-function tag(text, x, y, color, alpha) {
-  ctx.globalAlpha = alpha; ctx.font = "700 14px " + FONT; const w = ctx.measureText(text).width + 20; x = Math.max(w / 2 + 8, Math.min(cssW - w / 2 - 8, x)); y = Math.max(hudTop + 16, y);
-  ctx.fillStyle = "rgba(14,9,16,.92)"; ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x - w / 2, y - 14, w, 28, 8); else ctx.rect(x - w / 2, y - 14, w, 28); ctx.fill(); ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.stroke();
-  ctx.fillStyle = color; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(text, x, y + 1); ctx.globalAlpha = 1;
-}
+
+// THE FIRST-SIGHT HINTS (#3251): once a kind a run, one at a time, in a box at the HUD band's lower edge - never at the hazard, where it
+// stood between the runner and what he has to jump. A ring marks the hazard it names while it is shown.
+const HINTS = new WeakMap(), POPS = new WeakMap();
+let drawn = [], runnerBox = null;
 function introduce(W, sx, sy) {
-  W.seen = W.seen || {}; W.nextTag = W.nextTag || 250;
-  const show = (key, wx, wy, text, color) => { const s = W.seen[key]; if (s === undefined) { if (wx > camX + 30 && wx < camX + viewW - 30) { W.seen[key] = Math.max(W.f, W.nextTag); W.nextTag = W.seen[key] + 320; } return; }
-    const age = W.f - s; if (age < 0 || age > 300) return; tag(text, sx(wx), sy(wy) - 24, color, Math.min(1, (300 - age) / 30, (age + 1) / 10)); };
-  const e = W.L.enemies.find((x) => !x.kind && x.dead !== 0 && !x.dead && x.x > camX && x.x < camX + viewW); if (e) show("shit", e.x + 10, e.row * T - 20, "SHITCOIN · jump on it", "#d8a25a");
-  const br = W.L.enemies.find((x) => x.kind === "bear" && !x.dead && x.dead !== 0 && x.x > camX && x.x < camX + viewW); if (br) show("bear", br.x + 12, br.row * T - 30, "BEAR · it charges, jump on it", "#ff7b72");
-  const pr = W.L.enemies.find((x) => x.kind === "printer" && !x.dead && x.dead !== 0 && x.x > camX && x.x < camX + viewW); if (pr) show("printer", pr.x + 12, pr.row * T - 24, "MONEY PRINTER · dodge the bills", "#56d364");
-  const c = W.L.clouds.find((x) => x.x > camX && x.x < camX + viewW); if (c) show("fud", c.x + 27, c.y, "FUD STORM · don't touch", "#c8c0dc");
-  W.L.items.forEach((it) => { if (it.got || it.rise !== undefined) return; const info = PW_INFO[it.kind]; if (info) show(it.kind, it.x, it.y - 14, info.text, info.color); else show(it.kind, it.x, it.y - 10, it.kind === "bolt" ? "LIGHTNING · 5 s sprint" : "HARDWARE WALLET · shield", it.kind === "bolt" ? COL.gold : COL.blue); });
-  const sp = W.L.t.findIndex((v, kk) => v === TILE.SPIKE && (kk % W.L.w) * T > camX && (kk % W.L.w) * T < camX + viewW); if (sp >= 0) show("spike", (sp % W.L.w) * T + 12, Math.floor(sp / W.L.w) * T, "LIQUIDATION · jump over", "#ff7b72");
-  const hd = W.L.dayHigh; if (hd && !hd.got) show("high", hd.x, hd.y - 14, "DAY HIGH " + usd(hd.price) + " · +50", COL.gold);
-  const r = W.L.t.findIndex((v, kk) => v === TILE.RUG && (kk % W.L.w) * T > camX && (kk % W.L.w) * T < camX + viewW); if (r >= 0) show("rug", (r % W.L.w) * T + 12, Math.floor(r / W.L.w) * T, "RUG PULL · don't stand still", "#ff7b72");
+  let seen = HINTS.get(W); if (!seen) { seen = { next: 250 }; HINTS.set(W, seen); }
+  let on = null;
+  const show = (key, wx, wy, text, color) => { if (on) return; const age = hintAge(seen, key, W.f, wx > camX + 30 && wx < camX + viewW - 30); if (age >= 0) on = { wx, wy, text, color, age }; };
+  const e = W.L.enemies.find((x) => !x.kind && x.dead !== 0 && !x.dead && x.x > camX && x.x < camX + viewW); if (e) show("shit", e.x + 10, e.row * T - 10, "SHITCOIN · jump on it", "#d8a25a");
+  const br = W.L.enemies.find((x) => x.kind === "bear" && !x.dead && x.dead !== 0 && x.x > camX && x.x < camX + viewW); if (br) show("bear", br.x + 12, br.row * T - 16, "BEAR · it charges, jump on it", "#ff7b72");
+  const pr = W.L.enemies.find((x) => x.kind === "printer" && !x.dead && x.dead !== 0 && x.x > camX && x.x < camX + viewW); if (pr) show("printer", pr.x + 12, pr.row * T - 14, "MONEY PRINTER · dodge the bills", "#56d364");
+  const c = W.L.clouds.find((x) => x.x > camX && x.x < camX + viewW); if (c) show("fud", c.x + 27, c.y + 10, "FUD STORM · don't touch", "#c8c0dc");
+  W.L.items.forEach((it) => { if (it.got || it.rise !== undefined) return; const info = PW_INFO[it.kind]; if (info) show(it.kind, it.x, it.y, info.text, info.color); else show(it.kind, it.x, it.y, it.kind === "bolt" ? "LIGHTNING · 5 s sprint" : "HARDWARE WALLET · shield", it.kind === "bolt" ? COL.gold : COL.blue); });
+  const sp = W.L.t.findIndex((v, kk) => v === TILE.SPIKE && (kk % W.L.w) * T > camX && (kk % W.L.w) * T < camX + viewW); if (sp >= 0) show("spike", (sp % W.L.w) * T + 12, Math.floor(sp / W.L.w) * T + 12, "LIQUIDATION · jump over", "#ff7b72");
+  const hd = W.L.dayHigh; if (hd && !hd.got) show("high", hd.x, hd.y, "DAY HIGH " + usd(hd.price) + " · +50", COL.gold);
+  const r = W.L.t.findIndex((v, kk) => v === TILE.RUG && (kk % W.L.w) * T > camX && (kk % W.L.w) * T < camX + viewW); if (r >= 0) show("rug", (r % W.L.w) * T + 12, Math.floor(r / W.L.w) * T + 12, "RUG PULL · don't stand still", "#ff7b72");
+  if (!on) return;
+  const a = Math.min(1, (HINT_LIFE - on.age) / 30, (on.age + 1) / 10), small = cssW < 600, fs = small ? 13 : 14;
+  ctx.globalAlpha = a * (.55 + .25 * Math.sin(W.f / 6)); ctx.strokeStyle = on.color; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(sx(on.wx), sy(on.wy), 16 * zoom, 0, 7); ctx.stroke(); ctx.globalAlpha = 1;
+  ctx.font = "700 " + fs + "px " + FONT; const box = layoutHint(ctx.measureText(on.text).width, cssW, pillShown() ? hudTopPill : hudTop, runnerBox, T * zoom);
+  if (!box) return;
+  ctx.globalAlpha = a; ctx.fillStyle = "rgba(14,9,16,.92)"; ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(box.x0, box.y0, box.x1 - box.x0, box.y1 - box.y0, 8); else ctx.rect(box.x0, box.y0, box.x1 - box.x0, box.y1 - box.y0); ctx.fill(); ctx.strokeStyle = on.color; ctx.lineWidth = 2; ctx.stroke();
+  ctx.fillStyle = on.color; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(on.text, (box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2 + 1); ctx.globalAlpha = 1;
+  drawn.push({ kind: "hint", text: on.text, x0: box.x0, x1: box.x1, y0: box.y0, y1: box.y1 });
+}
+// THE POPUPS (#3251): "+10 stomp", "MOON BOOTS!", "checkpoint" ... above the runner and behind him, 0.8 s, smaller on a phone.
+// Their age is counted here from the step the renderer first saw them; the simulation's fx timer is not read for it and not changed.
+function drawPops(W) {
+  const small = cssW < 600, size = popSize(small); ctx.font = "700 " + size + "px " + FONT;
+  const pops = [];
+  W.fx.forEach((e) => { if (e.kind !== "text") return; let f0 = POPS.get(e); if (f0 === undefined) { f0 = W.f; POPS.set(e, f0); } pops.push({ text: e.text, w: ctx.measureText(e.text).width, age: W.f - f0, ref: e }); });
+  layoutPops(pops, runnerBox, T * zoom, small).forEach((r) => { label(r.text, (r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2, r.size, r.ref.color, Math.max(0, r.alpha)); drawn.push({ kind: "pop", text: r.text, x0: r.x0, x1: r.x1, y0: r.y0, y1: r.y1 }); });
 }
 let hudKey = "";
 function placeHud(x, y, h, small) {
@@ -473,9 +494,21 @@ function drawHud(W, ghosts) {
   const fxm = toX(L.goal * T); ctx.fillStyle = COL.btc; ctx.fillRect(fxm - 1, iy - 2, 2, ih + 4);
   const dot = (wx, c, r) => { ctx.beginPath(); ctx.arc(toX(wx), my + mh - 6, r, 0, 7); ctx.fillStyle = c; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = "#0c0608"; ctx.stroke(); };
   ghosts.forEach((gh) => { const i = Math.min(gh.path.length / 2 - 1, Math.floor(W.f / 2)) * 2; if (i >= 0) dot(gh.path[i], gh.color, 4.5); }); dot(W.p.x, COL.btc, 6);
-  const act = []; if (W.p.boost > 0) act.push(["⚡ " + Math.ceil(W.p.boost / 60) + " s", COL.gold]);
-  PW_ORDER.forEach((k) => { const t = W.p.pw[k]; if (t > 0) act.push([PW_INFO[k].icon + " " + PW_INFO[k].text.split(" · ")[0].replace(/^\w/, (c) => c) + (k === "pill" ? "" : " " + Math.ceil(t / 60) + " s"), PW_INFO[k].color]); });
-  act.forEach(([txt, c], i) => label(txt, cssW / 2, (pillShown() ? hudTopPill : hudTop) + 14 + i * (small ? 20 : 25), small ? 15 : 19, c, 1));
+  // THE POWER-UP TIMERS IN THE PILL ROW (#3251): "🌙 MOON BOOTS 10 s" as a pill where the HUD rows have room ("🌙 10 s" where they are
+  // tight), else on the mini chart's top edge - no more text across the play band
+  const act = []; if (W.p.boost > 0) act.push({ full: "⚡ LIGHTNING " + Math.ceil(W.p.boost / 60) + " s", short: "⚡ " + Math.ceil(W.p.boost / 60) + " s", c: COL.gold });
+  PW_ORDER.forEach((k) => { const t = W.p.pw[k]; if (t > 0) { const s = k === "pill" ? "" : " " + Math.ceil(t / 60) + " s"; act.push({ full: PW_INFO[k].icon + " " + PW_INFO[k].text.split(" · ")[0] + s, short: PW_INFO[k].icon + (s || " 1 hit"), c: PW_INFO[k].color }); } });
+  if (!act.length) return;
+  const tagEl = document.getElementById("modeTag"), tagW = tagEl && tagEl.parentNode && tagEl.parentNode.id === "hudctl" ? Math.max(h, tagEl.offsetWidth || h) : 0;
+  const slots = small ? [{ x: x, y: pad, end: cssW - pad }, { x: px + pw + gap, y: py, end: cssW - pad - (tagW ? tagW + gap : 0) }]
+    : [{ x: px + pw + gap, y: pad, end: mid ? cssW - pad : mx - gap }];
+  ctx.font = "700 " + fs + "px " + FONT;
+  const items = act.map((a) => ({ ...a, wFull: ctx.measureText(a.full).width, wShort: ctx.measureText(a.short).width }));
+  let ox = mx + mw - 6;
+  layoutTimers(slots, items, pp, gap).forEach((r, i) => {
+    if (r) { pill(r.x, r.y, r.w, h); label(r.text, r.x + r.w / 2, r.y + h / 2 + 1, fs, items[i].c); return; }
+    const sf = small ? 11 : 13; ctx.font = "700 " + sf + "px " + FONT; const w = ctx.measureText(items[i].short).width + 12; ox -= w; pill(ox, my + 3, w, sf + 6); label(items[i].short, ox + w / 2, my + 3 + (sf + 6) / 2 + 1, sf, items[i].c); ox -= 4;
+  });
 }
 
 
