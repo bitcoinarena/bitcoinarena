@@ -2182,5 +2182,157 @@
  "3341": {
   "text": "Committees and bonds: bonding can fail with a raw error when the node has no public endpoint",
   "kind": "bug"
+ },
+ "3343": {
+  "text": "Node software: a home seat that drops play after refusing one batch can end the honest run on reconnect",
+  "kind": "bug"
+ },
+ "3344": {
+  "text": "Node software: the funding signal can count only one seat's finishes because the served window is refused",
+  "kind": "bug"
+ },
+ "3345": {
+  "text": "Node software: two consented name records of one round key can still split the season account",
+  "kind": "bug"
+ },
+ "3346": {
+  "text": "Node software: one seat's unproven dispute can replace a verified winner on the market line",
+  "kind": "bug"
+ },
+ "3347": {
+  "text": "Node software: one seat signing two lock-set views can void a paid head-to-head round",
+  "kind": "bug"
+ },
+ "3348": {
+  "text": "Committees and bonds: a stranger bond under another operator can pull a node out of seating",
+  "kind": "bug"
+ },
+ "3349": {
+  "text": "Other: a reporter's public link code still works on Discord and Telegram, so a stranger can replace the member link and ",
+  "kind": "bug"
+ },
+ "3350": {
+  "text": "Lightning payouts: several spellings of one box in a link can make a winner's payout read none",
+  "kind": "bug"
+ },
+ "3351": {
+  "text": "Committees and bonds: junk paths of one box in a link can seed a world the committee never replays",
+  "kind": "bug"
+ },
+ "3352": {
+  "text": "Website: one silent seat can hold a market order's cancel or sell with no deadline",
+  "kind": "bug"
+ },
+ "3353": {
+  "text": "Other: Orange Pill Run shared minute caps let a stranger's fresh keys lock honest players out",
+  "kind": "bug"
+ },
+ "3354": {
+  "text": "Other: Orange Pill Run board and round reads rebuild the whole board per request and can stall the round service",
+  "kind": "bug"
+ },
+ "3355": {
+  "text": "Other: Orange Pill Run's address cap is too wide, so one network can store refused logs without bound",
+  "kind": "bug"
+ },
+ "3356": {
+  "text": "Other: Orange Pill Run name checks accept unlimited fresh keys and scan every player row",
+  "kind": "bug"
+ },
+ "3357": {
+  "text": "Committees and bonds: forfeiting a void entry whose refund does not combine re-sends the first mark to every peer",
+  "kind": "bug"
+ },
+ "3358": {
+  "text": "Node software: a decide adapter can sign opposite head-to-head verdicts on different Node builds",
+  "kind": "bug"
+ },
+ "3359": {
+  "text": "Reserves: the relay re-checks a replayed public event before the duplicate check and can drain signature reserves",
+  "kind": "bug"
+ },
+ "3360": {
+  "text": "Settlement: one home seat's unsigned combined answer can close a delivered run on the previous mark",
+  "kind": "bug"
+ },
+ "3361": {
+  "text": "Committees and bonds: one seat answering with another entry's postings can void the run",
+  "kind": "bug"
+ },
+ "3362": {
+  "text": "Committees and bonds: one seat answering with another entry's re-runs can keep an objection under threshold",
+  "kind": "bug"
+ },
+ "3363": {
+  "text": "Node software: a network season read can still do a full store read and ask every seat per made-up game",
+  "kind": "bug"
+ },
+ "3364": {
+  "text": "Lightning payouts: a guardian's fee share can follow a stranger's payout",
+  "kind": "bug"
+ },
+ "3365": {
+  "text": "Faucet and feedback: a stranger with two addresses can still refuse every reporter's social check",
+  "kind": "bug"
+ },
+ "3366": {
+  "text": "Faucet and feedback: season link codes are one pool counted too narrowly, so one network can take them all",
+  "kind": "bug"
+ },
+ "3367": {
+  "text": "Faucet and feedback: a late social link to a fallback winner can take that winner off a past bounty list",
+  "kind": "bug"
+ },
+ "3368": {
+  "text": "BTC Up/Down game: one seat's list of made-up round ids makes the page ask every seat for each",
+  "kind": "bug"
+ },
+ "3369": {
+  "text": "Node software: two crossed entries of one key can be staked differently at different seats",
+  "kind": "bug"
+ },
+ "3370": {
+  "text": "Rock Paper Scissors game: the house bot can take stake and lock expiry from the first seat that answers",
+  "kind": "bug"
+ },
+ "3371": {
+  "text": "Next Block game: a store or auto-update build can host empty config so shared worlds replay with per-player seeds",
+  "kind": "bug"
+ },
+ "3372": {
+  "text": "Committees and bonds: ticks past the last carried mark can split a committee's signed result",
+  "kind": "bug"
+ },
+ "3373": {
+  "text": "Committees and bonds: a peer pull can vouch once per listed copy, so one repeated record multiplies signature checks",
+  "kind": "bug"
+ },
+ "3374": {
+  "text": "Other: Orange Pill Run lets a stranger on a shared address open unused attempts and refuse everyone else there for the d",
+  "kind": "bug"
+ },
+ "3375": {
+  "text": "Other: Orange Pill Run name checks compare exact spellings, so a doubled space can copy another player's board label",
+  "kind": "bug"
+ },
+ "3376": {
+  "text": "Faucet and feedback: one follow-check relay can ignore the limit and stall the faucet on one thread",
+  "kind": "bug"
+ },
+ "3377": {
+  "text": "Reserves: the standing verify reserve is open to any key with one free event, so seen keys can drain it and refuse a rou",
+  "kind": "bug"
+ },
+ "3378": {
+  "text": "Other: a relay's transient rate-limit refusal can be booked as final, so a round result or badge is never sent again",
+  "kind": "bug"
+ },
+ "3379": {
+  "text": "Other: the shared zap mint cap is first come, first served, so unpaid tips can refuse every honest zap",
+  "kind": "bug"
+ },
+ "3380": {
+  "text": "Next Block game: no seat lists a next-block round on testnet",
+  "kind": "bug"
  }
 }
