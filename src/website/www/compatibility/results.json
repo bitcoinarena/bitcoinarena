@@ -18,9 +18,9 @@
  },
  {
   "name": "Sidecar",
-  "version": "1.18.1",
+  "version": "1.18.2",
   "kind": "Browser extension",
-  "date": "2026-11-21",
+  "date": "2026-11-22",
   "testedBy": null,
   "how": "automatic",
   "url": "https://sidecar.top/",
