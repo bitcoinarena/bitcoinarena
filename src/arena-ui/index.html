@@ -8306,7 +8306,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       console.log('[arena] games of ' + nodes.length + ' node(s): ' + got.games.map((g) => g.name).join(', ') + ' in ' + (Date.now() - t0) + ' ms');
       // THE START'S STEPS, TIMED (kanban #1133): read by the loading screen's end, shown to an admin beside the build stamp
       (window.ARENA_START_T = window.ARENA_START_T || {}).games = performance.now();
-      window.ARENA_GAMES = got.games.map((g) => ({ id: g.id, name: g.name, title: g.title, known: g.known, attested: g.attested, nodes: g.nodes.length }));
+      window.ARENA_GAMES = got.games.map((g) => ({ id: g.id, name: g.name, title: g.title, known: g.known, attested: g.attested, nodes: g.nodeCount || g.nodes.length }));   // distinct node keys, every address kept in g.nodes (kanban #3253)
       // EVERY VERSION'S MANIFEST, for the shop and a round's items
       window.ARENA_GAMES_FULL = got.games;
       if (got.refused.length) console.warn('[arena] games refused: ' + got.refused.join(' | '));

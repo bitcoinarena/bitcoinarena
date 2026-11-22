@@ -87,11 +87,15 @@ export async function fetchGames({ nodes, fetcher = fetch, answerMs = GAMES_ANSW
       if (!got.named) Object.defineProperty(got, 'named', { value: [], enumerable: false });
       if (!got.named.some((n) => n.node === node)) got.named.push({ node, title: typeof g.title === 'string' && g.title ? g.title : null, icon: typeof g.icon === 'string' && g.icon ? g.icon : null });
       // ONE NODE, COUNTED ONCE (2026-10-14 07:42Z, a phone off the tailnet: "28 nodes" for 14): a seat reached at two
-      // addresses (its Funnel name and its named tunnel) answers both with the same node key; it hosts the game once
+      // addresses (its Funnel name and its named tunnel) answers both with the same node key; the shown count (`nodeCount`) is of
+      // distinct keys. EVERY ADDRESS STAYS IN game.nodes (kanban #3253): that key is the seat's own unsigned word, and a seat listed
+      // first that named an honest seat's key pushed the honest address out of game.nodes - the shop then handed a paid item's record
+      // to the liar alone. One seat at two addresses is asked twice (a purchase post is idempotent); no address is dropped on a claim.
       const key = body && /^[0-9a-f]{64}$/i.test(String(body.node)) ? String(body.node).toLowerCase() : node;
       if (!got.nodeKeys) Object.defineProperty(got, 'nodeKeys', { value: new Set(), enumerable: false });
-      if (got.nodeKeys.has(key)) continue;
       got.nodeKeys.add(key);
+      if (!Object.prototype.hasOwnProperty.call(got, 'nodeCount')) Object.defineProperty(got, 'nodeCount', { get: () => got.nodeKeys.size, enumerable: false });
+      if (got.nodes.includes(node)) continue;
       got.nodes.push(node);
       // EVERY SEAT'S INFO IS KEPT, NOT THE FIRST ONLY (kanban #2851, #1489 r26-hosting-2): one seat answering first with a made-up `info` held
       // the tile's info for good and the developer's signed one, served by the other seats, was never checked; checkedGameInfo now tries each
@@ -124,7 +128,7 @@ export async function fetchGames({ nodes, fetcher = fetch, answerMs = GAMES_ANSW
     const icon = agreed(named, (n) => n.icon);
     if (icon !== null) { const from = named.find((n) => n.icon === icon).node; got.icon = `${from}/${icon.replace(/^\/+/, '')}`; }
   }
-  const games = [...byId.values()].sort((a, b) => (Number(b.known) - Number(a.known)) || (b.nodes.length - a.nodes.length) || (a.name < b.name ? -1 : 1));
+  const games = [...byId.values()].sort((a, b) => (Number(b.known) - Number(a.known)) || ((b.nodeCount || b.nodes.length) - (a.nodeCount || a.nodes.length)) || (a.name < b.name ? -1 : 1));
   return { games, refused };
 }
 
