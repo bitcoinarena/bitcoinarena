@@ -219,7 +219,7 @@ import { PLAN_ASK, SEND_PLAN_ASK_HEADER, sendPlanAskHeaders, checkSendPlanAsk } 
 import { objectionWindowAllowed, mediansAllBonds } from '../../arena-protocol/src/constants.js';   // kanban #1398
 import { settledListDigest } from '../../arena-protocol/src/settled-list.js';   // kanban #2108, #2123
 import { TYPE_SETTLEMENT_ACK, TYPE_CHECKPOINT, TYPE_INPUT_BATCH, TYPE_SIGNED_INPUT_BATCH, STAKE_NOT_SEEN, takesAnyFederation, networkOf, TYPE_RERUN_RESULT, TYPE_AUDIT_SLASH_PROOF, TYPE_ABANDONED_PROOF, TYPE_THEFT_PROOF, TYPE_BOUND_PROOF, SUPPORTED_PROTOCOL_VERSIONS, GATEWAY_SEAT_VERSION, LIQUIDITY_VERSION, PRESSURE_WEIGHT_VERSION, AUDITOR_VERSION, seatingRulesEpochOf } from '../../arena-protocol/src/constants.js';
-import { splitSigned, decodeCheckpoint, checkpointId } from '../../arena-protocol/src/checkpoint.js';
+import { splitSigned, decodeCheckpoint, checkpointId, encodeCheckpoint, joinSigned } from '../../arena-protocol/src/checkpoint.js';
 import { MAX_SIGNED_INPUT_BATCH_BYTES, decodeInputBatch, splitSignedBatch, batchId } from '../../arena-protocol/src/batch.js';
 import { SIGNED_CHECKPOINT_BYTES } from '../../arena-protocol/src/checkpoint.js';
 import { TAG, TYPE_CHECKPOINT_RECEIPT, PRESENCE_VERSION, noQuorumGoesToRerun } from '../../arena-protocol/src/constants.js';
@@ -3047,9 +3047,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (!isBinary) return null;
     const bytes = new Uint8Array(data);
     if (bytes[0] !== TYPE_CHECKPOINT) return null;
+    // ONE ENCODING PER MARK (kanban #3314, #1489 audit play r3-1): the signature is over checkpointId, which re-encodes the fields at
+    // PROTOCOL_VERSION, so a copy of the public first mark with another supported version byte verified and was no byte-equal
+    // "replay of the held mark" - each such frame POSTed /first-mark to every unreceipted peer past the #2387/#2750 clock. The
+    // mark is taken in its canonical encoding (the bytes its signature signs), and every test below compares that.
     try {
-      const c = decodeCheckpoint(splitSigned(bytes).body);
-      return c.previousHash.every((x) => x === 0) ? { bytes, c } : null;
+      const { body, signature } = splitSigned(bytes);
+      const c = decodeCheckpoint(body);
+      return c.previousHash.every((x) => x === 0) ? { bytes: joinSigned(encodeCheckpoint(c), signature), c } : null;
     } catch { return null; }
   };
   /** One receipt this signer node issued, offered to every peer of the round over its play socket, as a peer offers one. */
