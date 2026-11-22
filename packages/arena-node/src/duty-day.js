@@ -620,7 +620,7 @@ export function createDayDuty(o) {
       let emergency = null;
       if (due.due) {
         if (!dueSince.has(slot)) dueSince.set(slot, nowMs);
-        const waitMs = Math.min(Math.max(rank, 0), rankCap) * 20 * 60000;
+        const waitMs = guard.emergencyWaitMs(rank, rankCap);   // each rank its own step (#3338)
         const how = { mtpMs, committeeLeadMs: emergencyCommitteeLeadMs, seedWaitMs };
         const plan = guard.emergencyPlan({ nowMs, day, shape: guard.dayShape(game, 900000), ...how });
         emergency = { why: due.why, plan: plan.ok ? { committee: new Date(plan.committeeMs).toISOString(), firstStart: new Date(plan.firstStartMs).toISOString(), slots: plan.slots, lostMin: Math.round(plan.lostMs / 60000) } : plan.why };

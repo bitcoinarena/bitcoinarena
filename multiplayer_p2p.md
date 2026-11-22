@@ -4079,7 +4079,8 @@ dead            a posting whose census block the chain left, whose census the se
                 for it, 2026-10-29), or that is not
                 drawable on the seats for the newest version 4 h before it starts (or while it runs), gets an emergency grid of what is
                 left of it ("ARN" 'D' with the
-                item "<app>-day-emergency"), at most 3, from the day's duty node first and the next ranks 20 min apart. An
+                item "<app>-day-emergency"), at most 3, from the day's duty node first and the next ranks 20 min apart, each rank past the
+                third 3 min after the one before it (kanban #3338: never two ranks in one minute). An
                 unconfirmed posting has its fee raised once, 3 h before its committee time
 paying          the node pays from its own Bitcoin Core wallet, confirmed coins first, at 0.1 sat/vB (raised to at most 1). A node
                 that cannot pay - no wallet, no confirmed coins, a chain read through Electrum - says so on GET /duty and posts
