@@ -22,7 +22,7 @@ import { tableAnchorOf, feeOfKnownGame } from '../../arena-protocol/src/known-ga
 import { takesNewRounds } from '../../arena-protocol/src/known-federations.js';
 import { seriesWriter, writeGuarded } from './series-writer.js';
 import { isOldTestnet4Id, isOldTestnet4Series, OLD_TESTNET4_SERIES_BOND_HEIGHT } from '../../arena-protocol/src/old-series.js';
-import { seriesRoundCheck, seriesId, seriesRound, ROUNDS_PER_SERIES, roundsPerSeries, isGridSeries, seriesLeadIsValid, findSeriesPublication, seriesPublicationOutput } from '../../arena-protocol/src/series.js';
+import { SERIES_WRITE_AHEAD_MS, seriesRoundCheck, seriesId, seriesRound, ROUNDS_PER_SERIES, roundsPerSeries, isGridSeries, seriesLeadIsValid, findSeriesPublication, seriesPublicationOutput } from '../../arena-protocol/src/series.js';
 import { parseSeriesLine, readSeriesLines, seriesLineOf } from './series-line.js';
 import { blockRandom, blockRandomReady } from '../../arena-protocol/src/block-random.js';
 import { servedNodes, mergeServedRounds, SERVED_WINDOW_MS, SERVED_HELD_MAX, SERVED_ANSWER_BYTES_MAX } from '../../arena-protocol/src/served-nodes.js';
@@ -4140,7 +4140,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const now = round.now(), out = [];
       // kanban #2406: rows opened within DRAWN_KEEP_MS (the attestor's KEEP_MS - the longest market window and its due time) are read,
       // so a seat restarted inside a long window still holds its round when it falls due
-      for (const r of round.db.prepare('SELECT rowid AS n, lower(hex(round_id)) AS h, opened_ms AS at FROM rounds WHERE rowid > ? AND opened_ms > ?').all(drawnAfterRowid, now - (sourceHosted ? 40 * 86400000 : DRAWN_KEEP_MS))) {
+      // kanban #3315: and a drawn game's rows opened up to SERIES_WRITE_AHEAD_MS before that - the series writer opens each round 72 h
+      // ahead of its start and never again, so a restarted seat left out (and signed no word for) every drawn round of the next ~47 h
+      const drawnBand = sourceHosted ? 40 * 86400000 : DRAWN_KEEP_MS;
+      const drawnIds = [...hosted.entries()].filter(([, h]) => h && h.manifest && isDrawnAttest(h.manifest)).map(([k]) => k.toLowerCase());
+      for (const r of round.db.prepare(`SELECT rowid AS n, lower(hex(round_id)) AS h, opened_ms AS at FROM rounds WHERE rowid > ? AND opened_ms > ?
+          AND (opened_ms > ? OR lower(hex(substr(contract, 36, 32))) IN (${drawnIds.map(() => '?').join(', ') || "''"}))`)
+        .all(drawnAfterRowid, now - Math.max(drawnBand, DRAWN_KEEP_MS + Number(SERIES_WRITE_AHEAD_MS)), now - drawnBand, ...drawnIds)) {
         if (r.n > drawnAfterRowid) drawnAfterRowid = r.n;
         try {
           const c = round.contractOf(fromHex(r.h)), plugin = c ? attestedOf(c) : null;
