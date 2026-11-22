@@ -10861,7 +10861,12 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         if (window.ARENA_LOBBY_ACT && (window.ARENA_LOBBY_ROWS || []).some((x) => x.id === id && x.joinable)) break;
         await new Promise((r) => setTimeout(r, 500));
       }
-      const took = !!(window.ARENA_LOBBY_ACT && window.ARENA_LOBBY_ACT.join(id, { holdUntilMs: startMs, next: true, link: true }));
+      // HELD TO THE CONTRACT'S START, NOT TO ONE SEAT'S WORD (kanban #3321, audit client r3-1): startMs is an unsigned field of the first seat's
+      // listing that names the round - a day late held the run past the round's window with the stake committed. The lobby row carries the start
+      // of the round's hash-bound contract (lobby.js); with no row, 0 lets the join take the contract's start itself.
+      const row = (window.ARENA_LOBBY_ROWS || []).find((x) => x.id === id);
+      const holdMs = row && Number.isFinite(Number(row.startTimeMs)) && Number(row.startTimeMs) > 0 ? Number(row.startTimeMs) : 0;
+      const took = !!(window.ARENA_LOBBY_ACT && window.ARENA_LOBBY_ACT.join(id, { holdUntilMs: holdMs, next: true, link: true }));
       console.log(`[arena] round link ${id.slice(0, 16)}: ${took ? 'joined, held to its start' : 'not joinable from the lobby - PLAY it there'}`);
       // ON SCREEN, NOT ONLY IN THE CONSOLE (MF 18: "committee pending: silent"): a round whose committee has not formed
       // says when its entry opens, in the lobby's red box
