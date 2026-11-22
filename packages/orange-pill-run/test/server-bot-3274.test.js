@@ -80,7 +80,7 @@ async function realRound() {
   const posts = [];
   const chain = { async post(hex) { posts.push(hex); return createHash('sha256').update(hex).digest('hex'); }, async status() { return { confirmations: 1, height: 5 }; } };
   const opr = createOpr({ now: () => t, sim: SIM, fetchCandles: async () => day.candles, checkLevel, invoices: null, chain, s2, log: () => {}, lnCheck: async (a) => ({ ok: true, address: a }),
-    cfg: { showTest: true, daily: true, firstDay: ROUND, bountySats: 5000, adminSha: createHash('sha256').update('x').digest('hex') } });
+    cfg: { showTest: true, daily: true, firstDay: ROUND, bountySats: 2500, adminSha: createHash('sha256').update('x').digest('hex') } });
   await opr.tick(); await opr.tick(); await opr.tick();
   const r = opr.roundRow(ROUND);
   assert.equal(r.state, 'ready');

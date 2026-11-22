@@ -38,7 +38,7 @@ test('#3248 #3250 payout lists for 1, 2, 3 and 10 placed players; the bounty to 
     assert.deepEqual(pot.map((x) => x.sats), want, `${n} players`);
     assert.deepEqual(pot.map((x) => x.player), ps.slice(0, Math.min(3, n)).map((p) => p.pk));
     assert.ok(pot.every((x) => x.xAccount && x.replay && x.flags && x.score > 0));
-    assert.deepEqual(rowsOf(w, r, 'bounty').map((x) => [x.player, x.sats]), [[ps[0].pk, 5000]]);
+    assert.deepEqual(rowsOf(w, r, 'bounty').map((x) => [x.player, x.sats]), [[ps[0].pk, 2500]]);
     assert.ok(w.opr.listsOf(r.id).every((l) => l.state === 'waiting'));
   }
 });

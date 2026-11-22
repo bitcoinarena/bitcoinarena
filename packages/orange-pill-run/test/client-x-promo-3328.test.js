@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { introModel, prizeLine, promoLine, xHandleOf, xFieldModel, xSaveAnswer } from "../client/src/screens.js";
 
 const round = (o = {}) => ({ id: "2026-11-23", number: 1, test: false, phase: "open", startMs: Date.parse("2026-11-23T00:00:00Z"), endMs: Date.parse("2026-11-24T00:00:00Z"),
-  entrySats: 0, maxAttempts: 5, split: [50, 30, 20], potSats: 0, bountySats: 5000, best: null, ...o });
+  entrySats: 0, maxAttempts: 5, split: [50, 30, 20], potSats: 0, bountySats: 2500, best: null, ...o });
 const PROMO = { firstDay: "2026-11-23", endMs: Date.parse("2026-11-30T00:00:00Z") };
 
 test("#3328 the promotion line: the days and the end, only when the service names one; ended after it", () => {
