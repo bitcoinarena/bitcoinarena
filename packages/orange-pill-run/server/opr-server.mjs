@@ -20,6 +20,7 @@ import { readFileSync } from 'node:fs';
 import { createOpr } from './opr-service.mjs';
 import { lncliInvoices } from './opr-invoices.mjs';
 import { bitcoinCliChain } from './opr-chain.mjs';
+import { ceilingInWorker } from './opr-ceiling.mjs';
 
 const env = process.env;
 const log = (m) => console.log(`${new Date().toISOString()} ${m}`);
@@ -48,7 +49,7 @@ const alert = (text) => {
     body: JSON.stringify({ text }), signal: AbortSignal.timeout(10000) }).then((r) => { if (!r.ok) log(`alert not posted: chat ${r.status}`); }, (e) => log(`alert not posted: ${e.message}`));
 };
 
-const opr = createOpr({ dbPath: env.OPR_DB, sim, fetchCandles, checkLevel, invoices, chain, s2, xLookup, alert, log, cfg: {
+const opr = createOpr({ dbPath: env.OPR_DB, sim, fetchCandles, checkLevel, ceilingOf: ceilingInWorker, invoices, chain, s2, xLookup, alert, log, cfg: {
   entrySats: Number(env.OPR_ENTRY_SATS || 0), promoEnd: env.OPR_PROMO_END || null, firstDay: env.OPR_FIRST_DAY || '2026-11-23', daily: env.OPR_DAILY !== 'off', showTest: env.OPR_SHOW_TEST === 'on',
   adminSha: env.OPR_ADMIN_SHA256 || '', workerKey: env.OPR_WORKER_KEY || '', confirmations: Number(env.OPR_CONFIRMATIONS || 1),
   publicBases: String(env.OPR_PUBLIC_BASES || 'https://testnet-stage.bitcoinarena.io/api/opr').split(',').map((x) => x.trim().replace(/\/+$/, '')).filter(Boolean),

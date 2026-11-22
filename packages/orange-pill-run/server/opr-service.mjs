@@ -23,7 +23,7 @@ import { HTTP_AUTH_KIND } from '../../arena-node/src/feedback-store.js';
 import { encodeRoundPost, levelHashOf } from './opr-chain.mjs';
 import { bestPerPlayer, payoutLists, SPLIT } from './opr-payout.mjs';
 import { checkLnAddress, lnAddressSyntax, LN_CHECKS_PER_HOUR } from './opr-lnaddress.mjs';
-import { runFeatures, nearLogs, deviceOf, scoreRun, topReasons, HOLD_ABOVE } from './opr-botscore.mjs';
+import { runFeatures, nearLogs, deviceOf, scoreRun, topReasons, strongRuns, gridOf, HOLD_ABOVE } from './opr-botscore.mjs';
 import { ipKey } from '../../arena-node/src/faucet.js';
 import { readFileSync } from 'node:fs';
 
@@ -98,6 +98,7 @@ export function createOpr(o = {}) {
   const log = o.log || ((m) => console.log(`${new Date().toISOString()} ${m}`));
   const alert = o.alert || (() => {});
   const { sim, fetchCandles, checkLevel, invoices, chain = null, s2 = null } = o;
+  const ceilingOf = o.ceilingOf || null;   // async (candles, seed, version) -> { total, timeS } (kanban #3332; none: the field measure only)
   const lnCheck = o.lnCheck || ((a) => checkLnAddress(a));
   const xLookup = o.xLookup || null, botXHandles = o.botXHandles || botListFromEnv;
   const db = new DatabaseSync(o.dbPath || ':memory:');
@@ -131,6 +132,12 @@ export function createOpr(o = {}) {
   // THE BOT LIKELIHOOD (kanban #3274): bot_feat a run's own features (opr-botscore.mjs runFeatures), made once at submit; held: a list's held rows
   try { db.exec('ALTER TABLE attempts ADD COLUMN bot_feat TEXT'); } catch { /* there already */ }
   try { db.exec('ALTER TABLE payout_lists ADD COLUMN held TEXT'); } catch { /* there already */ }
+  // A FLAGGED RUN STOPS THE LIST (kanban #3332): waiting - why a list has no row yet (a suspiciously strong or inhumanly precise run above it waits
+  // for the owner's decision); null when none
+  try { db.exec('ALTER TABLE payout_lists ADD COLUMN waiting TEXT'); } catch { /* there already */ }
+  // THE LEVEL'S CEILING (kanban #3332): what the service's own search reaches on the round's level (src/level-ceiling.mjs, o.ceilingOf in a worker),
+  // made once per round after its level; admin only
+  for (const col of ['ceiling INTEGER', 'ceiling_s REAL']) { try { db.exec(`ALTER TABLE rounds ADD COLUMN ${col}`); } catch { /* there already */ } }
   // THE GAME'S OWN X LINKS (kanban #3331, owner 2026-11-22: the game must not be tied to feedback reports): one X account per game key and one game
   // key per X account (user_id UNIQUE: first come, first served - nothing is proven, so an account never moves to another key); linked_ms is when
   // this key took it (the placement rules count from there). x_checks: the lookups asked, for the per-key limit
@@ -524,6 +531,7 @@ export function createOpr(o = {}) {
     const runs = new Map(), players = new Map();
     for (const a of rows) {
       let feat = J(a.bot_feat);
+      if (feat && feat.gridK === undefined) { const lg = J(q('SELECT log FROM attempts WHERE id = ?').get(a.id).log); Object.assign(feat, gridOf(lg && lg.presses)); }   // stored before #3332
       if (!feat && rr) { try { feat = runFeatures(sim, levelOf(rr), J(q('SELECT log FROM attempts WHERE id = ?').get(a.id).log)); q('UPDATE attempts SET bot_feat = ? WHERE id = ? AND bot_feat IS NULL').run(JSON.stringify(feat), a.id); } catch { feat = {}; } }
       const g = groups.get(a.near_rep || a.id);
       const othersN = g.size - (g.has(a.player) ? 1 : 0), repeatOwn = (g.get(a.player) || 0) >= 2;
@@ -623,18 +631,42 @@ export function createOpr(o = {}) {
       placed: xOf(b.player, r).placed, replay: (ended && b.rank <= 10) || b.player === viewer ? `/replay/${b.attempt}` : null }));
   }
 
+  /**
+   * THE FLAGGED RUNS OF A ROUND (kanban #3332), admin and lists only: each player whose best run is SUSPICIOUSLY STRONG (opr-botscore strongRuns:
+   * far above the best unflagged run below it) or INHUMANLY PRECISE (its bot likelihood above HOLD_ABOVE, #3274). decision: 'pending' until the
+   * owner approves the run (POST /admin/review clear - its review 'cleared') or disqualifies the player (who then leaves the board).
+   */
+  function flagsOf(round, board = boardOf(round), bots = botsOf(round)) {
+    const best = new Map(board.map((b) => [b.player, b]));
+    const isCleared = (p) => { const b = best.get(p); return !!(b && b.review === 'cleared'); };
+    const precise = (p) => { const bt = bots.players.get(p); return !!(bt && bt.score > HOLD_ABOVE); };
+    const rr = roundRow(round);
+    const strong = strongRuns(board, { flagged: (p) => precise(p) && !isCleared(p), cleared: isCleared, ceiling: rr ? rr.ceiling : null });
+    const out = new Map();
+    for (const b of board) {
+      const s = strong.get(b.player), bt = bots.players.get(b.player);
+      if (!s && !precise(b.player)) continue;
+      out.set(b.player, { player: b.player, name: b.name || nameOf(b.player), attempt: b.attempt, score: b.total, timeS: b.timeS, rank: b.rank,
+        kind: s ? 'strong' : 'precise', why: s ? s.why : `bot likelihood ${bt.score} - held for review`, ref: s ? s.ref : null,
+        bot: bt ? { score: bt.score, reasons: bt.top } : null, decision: isCleared(b.player) ? 'approved' : 'pending' });
+    }
+    return out;
+  }
+
   // ---------- payout lists ----------
   function buildLists(r) {
     const board = boardOf(r.id);
     const bots = botsOf(r.id);
+    const flagged = flagsOf(r.id, board, bots);
     const botOf = (p) => { const b = bots.players.get(p); return b ? { score: b.score, reasons: b.top } : null; };
     const rejected = (kind) => new Set(q('SELECT player FROM row_rejects WHERE round = ? AND kind = ?').all(r.id, kind).map((x) => x.player));
     const make = (kind) => {
       const rj = rejected(kind);
-      // A LIKELY BOT IS HELD (kanban #3274): above HOLD_ABOVE the row waits for review - the admin clears the run (POST /admin/review) to lift it
+      // A LIKELY BOT IS HELD (kanban #3274): above HOLD_ABOVE the row waits for review - the admin clears the run (POST /admin/review) to lift it.
+      // A SUSPICIOUSLY STRONG run too (kanban #3332); both are flagged, and a flagged run above the paid rows makes the list wait (opr-payout)
       return payoutLists({ board, potSats: potOf(r), placedOf: (p) => xOf(p, r), bountySats: cfg.bountySats, test: !!r.test, lnOf: lnOf(r), botOf,
-        held: (p) => { const b = board.find((x) => x.player === p), bt = bots.players.get(p);
-          return rj.has(p) ? 'row rejected' : bt && bt.score > HOLD_ABOVE && !(b && b.review === 'cleared') ? `bot likelihood ${bt.score} - held for review`
+        held: (p) => { const b = board.find((x) => x.player === p), f = flagged.get(p);
+          return rj.has(p) ? 'row rejected' : f && f.decision === 'pending' ? { why: f.kind === 'strong' ? `${f.why} - held for the owner's decision` : f.why, flag: f.kind }
             : b && b.review === 'pending' ? 'under review' : null; } });
     };
     return { pot: isFree(r) ? null : make('pot').pot, bounty: make('bounty').bounty };   // a free round: the bounty list only (#3273)
@@ -644,9 +676,9 @@ export function createOpr(o = {}) {
     const had = q('SELECT state FROM payout_lists WHERE round = ? AND kind = ?').get(r.id, kind);
     if (had && had.state !== 'waiting') return;   // an approved or rejected list is never rewritten
     const sats = list.rows.reduce((a, x) => a + x.sats, 0);
-    q(`INSERT INTO payout_lists (round, kind, rows, sats, carry_sats, state, made_ms, held) VALUES (?, ?, ?, ?, ?, 'waiting', ?, ?)
-       ON CONFLICT (round, kind) DO UPDATE SET rows = excluded.rows, sats = excluded.sats, carry_sats = excluded.carry_sats, made_ms = excluded.made_ms, held = excluded.held`)
-      .run(r.id, kind, JSON.stringify(list.rows), sats, list.carrySats || 0, t, JSON.stringify(list.held || []));
+    q(`INSERT INTO payout_lists (round, kind, rows, sats, carry_sats, state, made_ms, held, waiting) VALUES (?, ?, ?, ?, ?, 'waiting', ?, ?, ?)
+       ON CONFLICT (round, kind) DO UPDATE SET rows = excluded.rows, sats = excluded.sats, carry_sats = excluded.carry_sats, made_ms = excluded.made_ms, held = excluded.held, waiting = excluded.waiting`)
+      .run(r.id, kind, JSON.stringify(list.rows), sats, list.carrySats || 0, t, JSON.stringify(list.held || []), list.waiting || null);
   }
   /**
    * ONLY THE ROUNDS THIS KEY CAN CHANGE (kanban #3333, audit 2 #3330): an address or X save changes a waiting list only where the key has a scored run
@@ -669,14 +701,15 @@ export function createOpr(o = {}) {
     writeList(r, 'pot', l.pot, t); writeList(r, 'bounty', l.bounty, t);
     q("UPDATE rounds SET state = 'listed', listed_ms = ? WHERE id = ? AND state = 'closed'").run(t, r.id);
     const rows = (x) => (x ? x.rows.map((w) => `${w.place}. ${w.xAccount || w.player.slice(0, 8)} ${w.sats} sat`).join(', ') || 'nobody placed' : '');
-    const parts = [l.pot ? `pot ${l.pot.potSats} sat: ${rows(l.pot)}` : 'free round, no pot', l.bounty ? `bounty: ${rows(l.bounty)}` : null].filter(Boolean);
+    const parts = [l.pot ? `pot ${l.pot.potSats} sat: ${rows(l.pot)}` : 'free round, no pot', l.bounty ? `bounty: ${rows(l.bounty)}` : null,
+      [l.pot, l.bounty].some((x) => x && x.waiting) ? `WAITING: ${(l.bounty && l.bounty.waiting) || l.pot.waiting}` : null].filter(Boolean);
     alert(`Orange Pill Run ${r.id}${r.test ? ' (test)' : ''}: payout lists wait for sign-off - ${parts.join('; ')}`);
     log(`round ${r.id}: payout lists written (waiting for sign-off)`);
   }
   // THE VERSION A SIGN-OFF NAMES (kanban #3287): a hash of what the owner reviews - rows, held rows, sats, carry. A waiting list is rebuilt by
   // any player's POST /lnaddress, a review, a row reject, a late entry; an approve names the version it was shown and is refused for another
   const listVersion = (x) => sha(JSON.stringify([J(x.rows, []), J(x.held, []), x.sats, x.carry_sats])).slice(0, 16);
-  const listRow = (x) => (x ? { round: x.round, kind: x.kind, rows: J(x.rows, []), sats: x.sats, carrySats: x.carry_sats, state: x.state, by: x.by, atMs: x.at_ms, why: x.why, madeMs: x.made_ms, held: J(x.held, []), version: listVersion(x) } : null);
+  const listRow = (x) => (x ? { round: x.round, kind: x.kind, rows: J(x.rows, []), sats: x.sats, carrySats: x.carry_sats, state: x.state, by: x.by, atMs: x.at_ms, why: x.why, madeMs: x.made_ms, held: J(x.held, []), waiting: x.waiting || null, version: listVersion(x) } : null);
   const listsOf = (round) => q('SELECT * FROM payout_lists WHERE round = ? ORDER BY kind DESC').all(round).map(listRow);
   /** THE POT NEVER PAYS MORE THAN WAS PAID IN (kanban #3266): over the approved pot lists (plus `also`, a list about to be approved), what they
    *  commit - rows paid plus carries not taken into another approved list - against the paid entries of their rounds. */
@@ -696,6 +729,7 @@ export function createOpr(o = {}) {
     if (!['approve', 'reject'].includes(action)) return { ok: false, why: 'approve or reject' };
     if (!by || !String(by).trim()) return { ok: false, why: 'who signs off (by)' };
     if (l.state !== 'waiting') return { ok: false, why: `the list is ${l.state} already` };
+    if (action === 'approve' && l.waiting) return { ok: false, code: 409, why: l.waiting };   // kanban #3332: the flagged run is decided first
     if (action === 'approve' && String(version || '') !== listVersion(l)) return { ok: false, code: 409, why: version ? 'the list changed since you opened it - reload it and review it again' : 'name the list version you reviewed (version)', version: listVersion(l) };
     if (action === 'approve' && l.kind === 'pot') { const g = potLedger(l.round); if (g.why) { log(`payout list ${l.round}/pot not approved: ${g.why}`); return { ok: false, why: g.why }; } }
     const t = now(), state = action === 'approve' ? 'approved' : 'rejected';
@@ -758,6 +792,27 @@ export function createOpr(o = {}) {
     return { ok: true, lnAddress: stored };
   }
 
+  // ---------- the level's ceiling (kanban #3332) ----------
+  const ceilingJobs = new Map(), ceilingFailed = new Map();
+  /** The round's ceiling, once (a worker thread): stored with the round; a waiting list is rebuilt with it. A failure is tried again after 10 min. */
+  function ensureCeiling(r) {
+    if (!ceilingOf || !r || r.ceiling != null || r.seed == null || r.candles == null) return Promise.resolve();
+    if (ceilingJobs.has(r.id)) return ceilingJobs.get(r.id);
+    if (now() - (ceilingFailed.get(r.id) || -Infinity) < 10 * MIN_MS) return Promise.resolve();
+    const job = (async () => {
+      try {
+        const c = await ceilingOf(J(r.candles), J(r.seed), r.game_version);
+        if (!c || !Number.isFinite(c.total) || c.total <= 0) throw new Error('no finished run found');
+        q('UPDATE rounds SET ceiling = ?, ceiling_s = ? WHERE id = ? AND ceiling IS NULL').run(Math.round(c.total), Number.isFinite(c.timeS) ? c.timeS : null, r.id);
+        log(`round ${r.id}: level ceiling ${Math.round(c.total)} points in ${c.timeS} s`);
+        refreshLists(r.id);
+      } catch (e) { ceilingFailed.set(r.id, now()); log(`round ${r.id}: no level ceiling (${String(e.message).slice(0, 120)})`); }
+      finally { ceilingJobs.delete(r.id); }
+    })();
+    ceilingJobs.set(r.id, job);
+    return job;
+  }
+
   // ---------- the clock ----------
   function currentRound(t = now()) {
     const vis = cfg.showTest ? '' : 'AND test = 0';
@@ -786,7 +841,9 @@ export function createOpr(o = {}) {
           ORDER BY created_ms LIMIT 100`).all(now() - 60000)) await settle(a);
       q("UPDATE attempts SET state = 'timeout', why = 'not submitted in time' WHERE state = 'started' AND deadline_ms < ?").run(now());
       for (const r of q(`SELECT * FROM rounds WHERE ${LIVE} AND end_ms <= ?`).all(now())) close(r, now());
-      for (const r of q("SELECT * FROM rounds WHERE state = 'closed' AND end_ms + ? <= ?").all(cfg.verifyGraceMs, now())) makeLists(r, now());
+      // the ceiling of every round that has a level and may still be listed or rebuilt (in the background); a round's lists wait for its own
+      for (const r of q("SELECT * FROM rounds WHERE ceiling IS NULL AND seed IS NOT NULL AND state IN ('posting', 'ready', 'closed', 'listed') AND end_ms > ? ORDER BY start_ms DESC LIMIT 3").all(now() - 8 * DAY_MS)) ensureCeiling(r);
+      for (const r of q("SELECT * FROM rounds WHERE state = 'closed' AND end_ms + ? <= ?").all(cfg.verifyGraceMs, now())) { await ensureCeiling(r); makeLists(roundRow(r.id), now()); }
       q('DELETE FROM auth_seen WHERE at_ms < ?').run(now() - 5 * MIN_MS);
       q('DELETE FROM ln_checks WHERE at_ms < ?').run(now() - 60 * MIN_MS);
     } finally { ticking = false; }
@@ -863,7 +920,7 @@ export function createOpr(o = {}) {
         const g = adminGate(req, ip);
         if (g) return send(g[0], { ok: false, why: g[1] });
         const by = String(body.by || 'admin').slice(0, 80);
-        if (req.method === 'GET' && path === '/admin/rounds') return send(200, { ok: true, rounds: q('SELECT * FROM rounds ORDER BY start_ms DESC LIMIT 60').all().map((r) => ({ ...publicRound(r), state: r.state, postWhy: r.post_why })) });
+        if (req.method === 'GET' && path === '/admin/rounds') return send(200, { ok: true, rounds: q('SELECT * FROM rounds ORDER BY start_ms DESC LIMIT 60').all().map((r) => ({ ...publicRound(r), state: r.state, postWhy: r.post_why, ceiling: r.ceiling, ceilingS: r.ceiling_s })) });
         if (req.method === 'GET' && path === '/admin/runs') {
           const round = url.searchParams.get('round'), player = url.searchParams.get('player');
           const rows = q('SELECT * FROM attempts WHERE round = ? ORDER BY created_ms').all(String(round)).filter((a) => !player || a.player === player);
@@ -874,7 +931,8 @@ export function createOpr(o = {}) {
             playerBot: bots.players.has(a.player) ? { score: bots.players.get(a.player).score, reasons: bots.players.get(a.player).top } : null,
             review: a.review, ip: a.ip, startedMs: a.started_ms, submittedMs: a.submitted_ms, client: J(a.client), x: xOf(a.player), disqualified: out.has(a.player), replay: `/replay/${a.id}` })),
             players: [...bots.players].filter(([p]) => !player || p === player).map(([p, b]) => ({ player: p, name: nameOf(p), bot: { score: b.score, reasons: b.top }, attempt: b.attempt })).sort((x, y) => y.bot.score - x.bot.score),
-            holdAbove: HOLD_ABOVE, disqualified: q('SELECT * FROM disqualified WHERE round = ?').all(String(round)) });
+            holdAbove: HOLD_ABOVE, disqualified: q('SELECT * FROM disqualified WHERE round = ?').all(String(round)),
+            ceiling: (roundRow(String(round)) || {}).ceiling ?? null, flagged: [...flagsOf(String(round), undefined, bots).values()].filter((f) => !player || f.player === player) });   // kanban #3332
         }
         if (req.method === 'GET' && path === '/admin/lists') return send(200, { ok: true, lists: listsOf(String(url.searchParams.get('round'))), approvals: q('SELECT * FROM approvals WHERE round = ? ORDER BY n').all(String(url.searchParams.get('round'))), claim: q('SELECT * FROM bounty_claims WHERE round = ?').get(String(url.searchParams.get('round'))) || null });
         if (req.method === 'GET' && path === '/admin/payable') { try { return send(200, { ok: true, lists: payable() }); } catch (e) { alert(`Orange Pill Run: payable refused - ${e.message}`); return send(409, { ok: false, why: e.message }); } }

@@ -36,28 +36,36 @@ export function shares(pot, pcts) {
 export const NO_LN_ADDRESS = 'no valid Lightning address';
 // HELD ROWS (kanban #3274): a placed player held (under review, a rejected row, a likely bot) is named in the list's `held`, with why - and, with
 // botOf handed in, every row and held row carries the player's bot likelihood { score, reasons } for the sign-off
+// A FLAGGED RUN STOPS THE LIST (kanban #3332, owner 2026-11-22): held(player) may answer { why, flag } - flag 'strong' (suspiciously strong) or
+// 'precise' (inhumanly precise / a likely bot). Such a run waits for the owner's decision (approve or disqualify); while it ranks above a row the
+// list would pay (or the list would pay nobody), the list has no row and names why in `waiting` - nobody below it moves up before the decision
 export function payoutLists({ board, potSats, placedOf, held = () => null, bountySats = 0, test = false, lnOf = null, botOf = null }) {
   const eligible = [], heldRows = [];
   const bot = (p) => (botOf ? { bot: botOf(p) || null } : {});
   for (const r of board) {
     const p = placedOf(r.player);
     if (!p || !p.placed || !p.x) continue;   // nobody without a verified X account on a list (#3250)
-    const h = held(r.player);
-    if (h) { heldRows.push({ player: r.player, name: r.name || null, xAccount: p.x.username || null, xProof: p.x.proof || null, rank: r.rank, score: r.total, attempt: r.attempt, why: h, ...bot(r.player) }); continue; }
+    const h0 = held(r.player), h = h0 && typeof h0 === 'object' ? h0 : h0 ? { why: h0 } : null;
+    if (h) { heldRows.push({ player: r.player, name: r.name || null, xAccount: p.x.username || null, xProof: p.x.proof || null, rank: r.rank, score: r.total, attempt: r.attempt, why: h.why, flag: h.flag || null, ...bot(r.player) }); continue; }
     eligible.push({ r, x: p.x });
   }
+  const flagged = heldRows.filter((h) => h.flag);
+  const waitsAbove = (rank) => { const f = flagged.find((h) => rank == null || h.rank < rank); return f ? `a flagged run ranked above (rank ${f.rank}, ${f.name || f.player.slice(0, 8)}: ${f.why}) waits for the owner's decision - approve or disqualify it first` : null; };
   const top = eligible.slice(0, 3), pcts = splitFor(top.length), amounts = shares(potSats, pcts);
   const row = ({ r, x }, place, sats, pct) => ({ player: r.player, name: r.name || null, xAccount: x.username || null, xUserId: x.userId, xProof: x.proof || null, rank: r.rank, place, score: r.total,
     timeS: r.timeS, attempt: r.attempt, replay: `/replay/${r.attempt}`, flags: r.flags || {}, sats, pct, ...(lnOf ? { lnAddress: (lnOf(r.player) || {}).address || null } : {}), ...bot(r.player) });
-  const pot = { rows: top.map((e, i) => row(e, i + 1, amounts[i], pcts[i])), carrySats: top.length ? 0 : potSats, potSats, held: heldRows };
+  const potWait = waitsAbove(top.length ? top[top.length - 1].r.rank : null);
+  const pot = potWait ? { rows: [], carrySats: 0, potSats, held: heldRows, waiting: potWait }
+    : { rows: top.map((e, i) => row(e, i + 1, amounts[i], pcts[i])), carrySats: top.length ? 0 : potSats, potSats, held: heldRows, waiting: null };
   let bounty = null;
   if (!test && bountySats > 0) {
-    if (!lnOf) bounty = { rows: eligible.length ? [row(eligible[0], 1, bountySats, 100)] : [], bountySats, held: heldRows };
+    if (!lnOf) { const w = waitsAbove(eligible.length ? eligible[0].r.rank : null); bounty = { rows: eligible.length && !w ? [row(eligible[0], 1, bountySats, 100)] : [], bountySats, held: heldRows, waiting: w }; }
     else {
       const skipped = [];
       const win = eligible.find((e) => { const l = lnOf(e.r.player); if (l && l.address && l.inTime) return true;
         skipped.push({ player: e.r.player, name: e.r.name || null, xAccount: e.x.username || null, xProof: e.x.proof || null, rank: e.r.rank, why: NO_LN_ADDRESS }); return false; });
-      bounty = { rows: win ? [{ ...row(win, 1, bountySats, 100), skipped }] : [], skipped, bountySats, held: heldRows };
+      const w = waitsAbove(win ? win.r.rank : null);
+      bounty = { rows: win && !w ? [{ ...row(win, 1, bountySats, 100), skipped }] : [], skipped, bountySats, held: heldRows, waiting: w };
     }
   }
   return { pot, bounty };

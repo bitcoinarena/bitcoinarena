@@ -8,9 +8,22 @@
 //   runFeatures(sim, L, log)        once per run, at submit (stored): press timing, and the reactions to hazards measured on the replayed world
 //   nearLogs(a, b)                  two press lists within a step or two of each other (a replayed or shared run)
 //   scoreRun({ feat, flags, client, cross })  -> { score, reasons: [{ points, why }] }, reasons strongest first
+//   strongRuns(board, { flagged, cleared })   -> Map player -> { attempt, total, ref, ratio, cleared, why }: SUSPICIOUSLY STRONG runs (kanban #3332)
 import { createHash } from 'node:crypto';
 
 export const HOLD_ABOVE = 70;
+// SUSPICIOUSLY STRONG (kanban #3332, audit 2 #3330; owner 2026-11-22 "Ja"): the day's level is public data, so a search with the game's own sim
+// finds runs no human plays (test-5: 954 points; the best human 413), and every page-reported trait can be faked. Two measures, either holds:
+//  - THE LEVEL'S CEILING: at or above CEILING_SHARE of what the service's own search reaches on the round's level (src/level-ceiling.mjs). The
+//    stage's real players (2026-11-22, best runs): at most 77 % (test-4: 797 of 1034; test-5: 413 of 939 = 44 %); the audit's search: 102 %.
+//  - THE FIELD: above STRONG_RATIO times the best unflagged finished run of another player that ranks below it, and STRONG_MARGIN points more.
+//    The widest real gap from one player's best to the next one down: 1.71x (test-4: 602 over 351; test-5: 337 over 198 1.70x); the search 2.31x.
+//    Earlier rounds are not the field: levels differ from day to day. Keys are free, so a ladder of searched runs could lift the field; the
+//    ceiling does not move.
+export const STRONG_RATIO = 2, STRONG_MARGIN = 150, CEILING_SHARE = 0.85;
+// INHUMANLY PRECISE (kanban #3332): presses that go down and up on a fixed step grid (every k-th step, k 3-8) - a search or a script that acts
+// every k steps. The real players' runs on test-1..5: at most 45 % of their press steps on one grid (k 3-8); the beam search's raw output: 100 %
+export const GRID_SHARE = 0.8;
 const REACT_BEFORE = 30, REACT_AFTER = 40;   // a press belongs to a hazard when it goes down from 30 steps before to 40 after it showed
 
 const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
@@ -27,7 +40,7 @@ export function runFeatures(sim, L, log) {
   const holds = ps.map(([d, u]) => u - d), downs = ps.map(([d]) => d);
   const ipi = downs.slice(1).map((d, i) => d - downs[i]);
   const counts = new Map(); for (const h of holds) counts.set(h, (counts.get(h) || 0) + 1);
-  const f = { n: ps.length, holdSd: r3(sd(holds)), holdKinds: counts.size, holdMode: holds.length ? r3(Math.max(...counts.values()) / holds.length) : null, ipiCv: ipi.length && mean(ipi) > 0 ? r3(sd(ipi) / mean(ipi)) : null, firstDown: ps.length ? ps[0][0] : null };
+  const f = { n: ps.length, holdSd: r3(sd(holds)), holdKinds: counts.size, holdMode: holds.length ? r3(Math.max(...counts.values()) / holds.length) : null, ipiCv: ipi.length && mean(ipi) > 0 ? r3(sd(ipi) / mean(ipi)) : null, firstDown: ps.length ? ps[0][0] : null, ...gridOf(ps) };
   if (!sim || typeof sim.newWorld !== 'function' || typeof sim.stepWorld !== 'function' || typeof sim.botInput !== 'function' || !L) return f;
   const W = sim.newWorld(L), onsets = [];
   const cap = Math.min(sim.MAX_STEPS || 10800, 10800);
@@ -54,6 +67,44 @@ export function runFeatures(sim, L, log) {
   f.exact = deltas.length ? r3(deltas.filter((d) => d === 0 || d === 1).length / deltas.length) : null;
   f.reactMedian = median(deltas); f.reactSd = r3(sd(deltas));
   return f;
+}
+
+/** The step grid the presses sit on most (kanban #3332): of every down and up step, the largest share in one residue class mod k (k 3-8), by
+ *  its excess over chance (1/k). { gridK, gridShare } - gridK null for fewer than 12 presses. */
+export function gridOf(ps) {
+  if (!Array.isArray(ps) || ps.length < 12) return { gridK: null, gridShare: null };
+  const xs = ps.flat();
+  let best = { gridK: null, gridShare: 0 }, bestEx = -1;
+  for (let k = 3; k <= 8; k++) {
+    const c = new Array(k).fill(0);
+    for (const x of xs) c[((x % k) + k) % k]++;
+    const share = Math.max(...c) / xs.length;
+    if (share - 1 / k > bestEx + 1e-12) { bestEx = share - 1 / k; best = { gridK: k, gridShare: r3(share) }; }
+  }
+  return best;
+}
+
+/**
+ * SUSPICIOUSLY STRONG runs of a ranked board (best first; rows { player, attempt, total, finished }). ceiling: the level's (null: the field only).
+ * The field of a run: the best finished run below it that is not flagged (flagged(player): held as a likely bot; a strong run is flagged too
+ * unless cleared(player) - the owner approved it, and then counts as the field above it). A cleared one is still named (cleared: true).
+ */
+export function strongRuns(board, { flagged = () => false, cleared = () => false, ceiling = null, ratio = STRONG_RATIO, margin = STRONG_MARGIN, share = CEILING_SHARE } = {}) {
+  const out = new Map();
+  let ref = null;
+  for (let i = (board || []).length - 1; i >= 0; i--) {
+    const b = board[i], total = Number(b.total) || 0;
+    const nearTop = Number(ceiling) > 0 && total >= share * ceiling;
+    const far = ref !== null && ref > 0 && total > ratio * ref && total - ref >= margin;
+    const ok = cleared(b.player);
+    if (nearTop || far) {
+      const parts = [nearTop ? `${Math.round((total / ceiling) * 100)} % of what a search of this level reaches (${ceiling})` : null,
+        far ? `${(Math.floor((total / ref) * 10) / 10).toFixed(1)}x the best unflagged run below it (${ref})` : null].filter(Boolean);
+      out.set(b.player, { attempt: b.attempt, total, ref, ceiling: Number(ceiling) > 0 ? ceiling : null, cleared: ok, why: `suspiciously strong: ${total} points - ${parts.join(', ')}` });
+    }
+    if ((!(nearTop || far) || ok) && (ok || !flagged(b.player)) && b.finished !== false && (ref === null || total > ref)) ref = total;
+  }
+  return out;
 }
 
 /** Two press lists that are the same run within a step or two: about as many presses, nearly every one at the same step. */
@@ -96,10 +147,11 @@ export function scoreRun({ feat = {}, flags = {}, client = {}, cross = {} } = {}
   if (t && events === 0 && (feat.n || 0) >= 3) add(50, `${feat.n} presses with no touch, mouse or key event`);
   if (t && Number(t.taps) >= 8 && t.jit != null && Number(t.jit) < 1) add(35, `${t.taps} taps on the same pixel`);
   if (feat.reacted >= 8 && feat.exact != null) {
-    if (feat.exact >= 0.5) add(55, `${Math.round(feat.exact * 100)} % of ${feat.reacted} hazards answered on the exact step`);
+    if (feat.exact >= 0.5) add(55, `inhumanly precise: ${Math.round(feat.exact * 100)} % of ${feat.reacted} hazards answered on the exact step`);
     else if (feat.exact >= 0.3) add(30, `${Math.round(feat.exact * 100)} % of ${feat.reacted} hazards answered on the exact step`);
     else if (feat.reactSd != null && feat.reactSd < 1.5 && feat.reactMedian != null && Math.abs(feat.reactMedian) <= 4) add(25, 'the same reaction time to every hazard');
   }
+  if ((feat.n || 0) >= 12 && feat.gridK && feat.gridShare >= GRID_SHARE) add(75, `inhumanly precise: ${Math.round(feat.gridShare * 100)} % of the press steps on a ${feat.gridK}-step grid`);
   if (flags.sameHold || ((feat.n || 0) >= 12 && (feat.holdKinds <= 1 || feat.holdSd < 0.5))) add(35, `every press held exactly as long (${feat.n} presses)`);
   else if ((feat.n || 0) >= 12 && feat.holdMode >= 0.9) add(35, `${Math.round(feat.holdMode * 100)} % of ${feat.n} presses held exactly as long`);
   else if ((feat.n || 0) >= 20 && feat.holdKinds <= 2) add(15, 'press lengths of only two kinds');
