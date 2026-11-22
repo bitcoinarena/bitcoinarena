@@ -3070,6 +3070,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   function decideOutage(rid, eid, { evidenceKind, evidence = null }) {
     const had = round.entryVoid(eid);
     if (had) return had;
+    if (headToHeadRound(rid) !== null) return null;   // kanban #3318: a head-to-head entry has no outage Void
     // THE PLAYER'S TWO FIRST MARKS ARE NOT AN OUTAGE (§13B, §13C). Measured: an
     // on-time first mark to B while A was down and a late one to A - both signer nodes
     // recorded ENTRY_VOID and forfeited the lock to the player at once, a refund
@@ -3154,6 +3155,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   function voidHere(c, bytes, late, givenReceipts = [], learned = 'forward') {
     const had = round.entryVoid(c.entryId);
     if (had) return had;
+    // A HEAD-TO-HEAD ENTRY PLAYS NO RUN, SO IT HAS NO OUTAGE (kanban #3318, audit h2h r3-1): its player's own first mark at one seat and a later
+    // mark of his own as "evidence" recorded ENTRY_VOID at the others once he had read the opponent's move at GET /reveals, and #headToHeadClose
+    // signed the honest winner VOID there - a free option on every loss. Its verdict comes from the reveals alone; no outage Void is recorded for it.
+    if (headToHeadRound(c.roundId) !== null) return null;
     if (secondFirstMark(c, bytes, { orHeld: true })) return null;
     // THE PLAYER'S OWN FIRST MARK, OR NO VOID HERE. A signer node records ENTRY_VOID
     // only for a first mark it holds in the player's own hand - signed by the
@@ -10286,6 +10291,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         catch (e) { return answer(400, { why: `that is not a signed mark: ${e.message}` }); }
         if (!c.previousHash.every((x) => x === 0)) return answer(400, { why: 'only a first mark is handed on' });
         if (!round.entry(c.entryId)) return answer(404, { why: 'this signer node holds no such entry' });
+        // NO MARK OF A HEAD-TO-HEAD ENTRY (kanban #3318): it plays no run - a receipt of one was the first half of a self-made ENTRY_VOID
+        if (headToHeadRound(c.roundId) !== null) return answer(409, { why: 'a head-to-head entry plays no run: this signer node takes no mark of it (kanban #3318)' });
         // THE MARK'S SIGNATURE BEFORE ANYTHING ELSE (kanban #1503, feedback #012 by Hexbox Tools): the batches handed with
         // it were stored first and unchecked, each naming its own entry, so a mark with a bad signature for a decoy entry
         // carried forged batches into any other entry and was 409'd only after they were stored. Now a mark that does not
