@@ -104,15 +104,18 @@ export function createOpr(o = {}) {
   const LIVE = "state IN ('waiting', 'posting', 'ready')";
   const liveOther = (t, id = null) => q(`SELECT * FROM rounds WHERE ${LIVE} AND end_ms > ? AND id IS NOT ? ORDER BY start_ms LIMIT 1`).get(t, id);
   const nextNum = () => (q('SELECT COALESCE(MAX(num), 0) + 1 AS n FROM rounds').get().n);
-  function insertRound({ id, test, day, chartDay, startMs, endMs, by }) {
+  function insertRound({ id, test, day, chartDay, startMs, endMs, by, maxAttempts = cfg.maxAttempts }) {
     q(`INSERT INTO rounds (id, num, test, day, chart_day, start_ms, end_ms, game_version, entry_sats, max_attempts, state, created_ms, created_by)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'waiting', ?, ?)`).run(id, nextNum(), test ? 1 : 0, day, chartDay, startMs, endMs, String(sim.GAME_VERSION),
-      cfg.entrySats, cfg.maxAttempts, now(), by || null);
+      cfg.entrySats, maxAttempts, now(), by || null);
     return roundRow(id);
   }
   /** Only one round open at a time (kanban #3256): a test round may not overlap any round, nor a daily round's day. */
-  function testRound({ startMs, minutes, chartDay, by = 'admin' } = {}) {
+  // a test round may allow more attempts (kanban #3256, maxAttempts 1..20, default 5); the daily rounds keep cfg.maxAttempts (the owner's rule: 5)
+  function testRound({ startMs, minutes, chartDay, by = 'admin', maxAttempts = null } = {}) {
     const t = now();
+    const most = maxAttempts == null ? cfg.maxAttempts : Number(maxAttempts);
+    if (!Number.isInteger(most) || most < 1 || most > 20) return { ok: false, why: 'maxAttempts is a whole number from 1 to 20' };
     startMs = startMs == null ? t : Number(startMs);
     minutes = Number(minutes);
     if (!Number.isSafeInteger(startMs) || startMs < t - MIN_MS) return { ok: false, why: 'the start is a time from now on (ms)' };
@@ -128,8 +131,8 @@ export function createOpr(o = {}) {
       return { ok: false, why: `the daily round of ${d} runs then: one round at a time` };
     }
     const id = `test-${nextNum()}`;
-    const r = insertRound({ id, test: true, day: null, chartDay, startMs, endMs, by });
-    log(`round ${id} (test) made by ${by}: ${new Date(startMs).toISOString()} for ${minutes} min, chart ${chartDay}`);
+    const r = insertRound({ id, test: true, day: null, chartDay, startMs, endMs, by, maxAttempts: most });
+    log(`round ${id} (test) made by ${by}: ${new Date(startMs).toISOString()} for ${minutes} min, chart ${chartDay}, ${most} attempts`);
     return { ok: true, round: publicRound(r) };
   }
   /** The daily round of the day `t` falls in, made once; a live test round holds it back until it ends (one round at a time). */
