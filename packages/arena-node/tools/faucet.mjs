@@ -1215,8 +1215,12 @@ createServer((req, res) => {
       // REWARDS ONLY TOWARD THE PRIVATE PAGE (the owner's switch): anywhere else the reports come with their states and no reward
       if (m.ok && !(bountyOn() && BOUNTY_ORIGINS.includes(String(req.headers.origin || '')))) return send(200, { ...m, reports: m.reports.map((r) => ({ ...r, amountSats: null, reward: null })) });
       if (m.ok) { const byReport = new Map(FEEDBACK.rewards({ pubkey: m.pubkey }).map((w) => [w.report, w]));
+        // THE AMOUNT SHOWN IS THE AMOUNT PAID (kanban #3267, feedback #382): amountSats was the figure set at approve (the human level, the
+        // social bonus), while a bot-listed reporter is paid the bot rate at payout - shown now: the reward's own sats once one exists, else
+        // what the season rule pays now (S2.payable), else the recorded figure
+        const payNow = (r) => { try { const p = S2 && S2.payable ? S2.payable(r.id) : null; return p && p.ok ? p.payableSats : r.amountSats; } catch { return r.amountSats; } };
         return send(200, { ...m, reports: m.reports.map((r) => { const w = byReport.get(r.id);
-          return { ...r, reward: w ? { sats: w.amountSats, network: w.network, state: w.state, comment: w.comment, address: w.address, paidMs: w.paidMs, lnurl: w.state !== 'open' ? null : FEEDBACK.lnurlOf(w.k1, { base: PUBLIC_BASE }) } : null }; }) }); }   // comment, address: kanban #1474
+          return { ...r, amountSats: w ? w.amountSats : payNow(r), reward: w ? { sats: w.amountSats, network: w.network, state: w.state, comment: w.comment, address: w.address, paidMs: w.paidMs, lnurl: w.state !== 'open' ? null : FEEDBACK.lnurlOf(w.k1, { base: PUBLIC_BASE }) } : null }; }) }); }   // comment, address: kanban #1474
       last = m; }
     return send(401, { ok: false, why: last ? last.why : 'that sign-in does not stand' });
   }
