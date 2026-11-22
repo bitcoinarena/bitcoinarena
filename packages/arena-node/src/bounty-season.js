@@ -329,22 +329,33 @@ export function openBountySeason(path = ':memory:', { startMs = null, s2EndMs = 
     return f;
   }
 
+  /**
+   * WHAT THE POT COUNTS, ONE ROW PER APPROVED REPORT (kanban #3327, feedback #386): { report, season, sats, paid } - paid: the reward's paid amount;
+   * not paid yet (its claim link open, or no link made yet): what it pays now under the current rule. `season` null: every season.
+   */
+  function counted(season = null) {
+    const out = [];
+    for (const a of db.prepare(`SELECT * FROM approvals WHERE (? IS NULL OR season = ?) AND state = 'approved' ORDER BY at_ms`).all(season, season)) {
+      const paid = typeof paidOf === 'function' ? paidOf(a.report) : null;
+      if (Number.isInteger(paid) && paid >= 0) { out.push({ report: a.report, season: a.season, sats: paid, paid: true }); continue; }
+      const now = seasonPayout({ level: a.level, codeOnly: !!a.code_only, followUp: !!a.follow_up, flags: a.level === 'node' ? {} : JSON.parse(a.flags || '{}') });
+      out.push({ report: a.report, season: a.season, sats: now.ok ? Math.min(now.sats, a.sats) : a.sats, paid: false });
+    }
+    return out;
+  }
+
   function pot(season) {
     const s = Number(season);
     // WHAT THE POT HAS REALLY GIVEN (kanban #2784, the owner 2026-11-15): an approval counts what was paid for it, else what it pays now under the
     // current rule (seasonPayout from its stored level, code-only, follow-up and flags; never above its stored amount). The stored amount alone
     // kept the old 50 % approvals at 50 % after they were paid at 25 %: 11,750 used where 5,875 was paid or payable.
-    let used = 0;
-    for (const a of db.prepare(`SELECT * FROM approvals WHERE season = ? AND state = 'approved'`).all(s)) {
-      const paid = typeof paidOf === 'function' ? paidOf(a.report) : null;
-      if (Number.isInteger(paid) && paid >= 0) { used += paid; continue; }
-      const now = seasonPayout({ level: a.level, codeOnly: !!a.code_only, followUp: !!a.follow_up, flags: a.level === 'node' ? {} : JSON.parse(a.flags || '{}') });
-      used += now.ok ? Math.min(now.sats, a.sats) : a.sats;
-    }
+    // kanban #3327 (feedback #386): what it counts, per approval, is counted() - the payout log lists the same rows, paid and not yet paid
+    let used = 0, paidSats = 0;
+    for (const c of counted(s)) { used += c.sats; if (c.paid) paidSats += c.sats; }
     const waiting = db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(sats), 0) AS s FROM approvals WHERE state = 'waiting'`).get();
     const nodes = db.prepare(`SELECT COUNT(*) AS n FROM approvals WHERE season = ? AND state = 'approved' AND level = 'node'`).get(s).n;
     const pot = potOf(s);
-    return { season: s, potSats: pot, usedSats: used, leftSats: pot - used, drawPrizeSats: drawPrizeOf(s), nodes, nodesMost: NODES_PER_SEASON, waiting: { n: waiting.n, sats: waiting.s } };
+    return { season: s, potSats: pot, usedSats: used, paidSats, owedSats: used - paidSats, leftSats: pot - used, drawPrizeSats: drawPrizeOf(s), nodes, nodesMost: NODES_PER_SEASON, waiting: { n: waiting.n, sats: waiting.s } };
   }
 
   /**
@@ -503,6 +514,6 @@ export function openBountySeason(path = ':memory:', { startMs = null, s2EndMs = 
     return c ? { ok: true } : { ok: false, why: 'that key carries no real-user mark' };
   };
 
-  return { makeCode, redeem, claimName, seeTelegram, telegramIdOf, links: linksOf, record, verify, flagsOf, pot, plan, commit, wait, intend, settle, approval, approvals, payable, voidApproval, drawEntries, keysOfSeason,
+  return { makeCode, redeem, claimName, seeTelegram, telegramIdOf, links: linksOf, record, verify, flagsOf, pot, counted, plan, commit, wait, intend, settle, approval, approvals, payable, voidApproval, drawEntries, keysOfSeason,
     seasonNow, realUserOf, markRealUser, clearRealUser, playedMarkOf, markPlayed, clearPlayed, close: () => db.close() };
 }

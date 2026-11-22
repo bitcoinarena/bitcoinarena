@@ -104,6 +104,7 @@ test('#2623 the faucet: link code by sign-in, Season 2 approval with bonus and h
     assert.equal((await fetch(`${base}/feedback/dup/${'0'.repeat(32)}`)).status, 404);
     assert.equal(JSON.stringify(await j('/feedback/admin/list', { headers: { 'x-arena-admin': ADMIN } })).includes(tok), false, 'the token is not in the admin list');
     const log = await fetch(`${base}/feedback/paid-log`).then((r) => r.json());
-    assert.deepEqual(log, [], 'nothing was paid: approval only computes and records');
+    assert.deepEqual(log.filter((x) => x.state === 'paid'), [], 'nothing was paid: approval only computes and records');
+    assert.ok(log.length > 0 && log.every((x) => x.state === 'approved' && x.date === ''), 'kanban #3327: the approvals the pot counts are listed, not yet paid');
   } finally { faucet.kill(); chatServer.close(); if (err.trim()) console.log('  stderr:', err.slice(0, 400)); }
 });
