@@ -86,3 +86,8 @@ ${RULES.map(([k, v]) => `<li><b>${esc(k)}.</b> ${esc(v)}</li>`).join("\n")}
 const rulesFile = path.join(path.dirname(outFile), "rules.html");
 fs.writeFileSync(rulesFile, rules);
 console.log("wrote", path.relative(process.cwd(), rulesFile), rules.length, "bytes");
+
+// THE ADMIN PANEL (kanban #3249): games/orange-pill-run/admin.html, self-contained, copied as written
+const adminFile = path.join(path.dirname(outFile), "admin.html");
+fs.copyFileSync(path.join(here, "admin.html"), adminFile);
+console.log("wrote", path.relative(process.cwd(), adminFile), fs.statSync(adminFile).size, "bytes");
