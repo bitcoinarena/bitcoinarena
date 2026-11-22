@@ -403,7 +403,7 @@ async function showBoard() {
   S.board = b.board || [];
   const r = b.round;
   $("bLine").textContent = r ? (r.test ? "Test round " : "Round ") + (r.number || "") + " · " + r.players + " players · " + (isFree(r) ? "free to play" : "pot " + fmtSats(r.potSats) + " testnet sats") : "";
-  const rows = boardRows(S.board);
+  const rows = boardRows(S.board, S.me);
   const C = ["c-rk", "c-nm", "c-sc", "c-tm", "c-rp"];
   cellRow(t.createTHead().insertRow(), ["#", "Player", "Score", "Time", ""], C, true);
   const body = t.createTBody();
@@ -411,8 +411,8 @@ async function showBoard() {
   // own runs: their replays are always yours to watch (GET /me's attempts)
   const ownBest = S.me ? myBest(S.me, S.board) : null;
   for (const x of rows) {
-    const tr = body.insertRow(); if (S.me && x.name === S.me.name) tr.className = "me";
-    let rp = x.replay; if (!rp && ownBest && S.me && x.name === S.me.name) rp = "/replay/" + ownBest.attempt;
+    const tr = body.insertRow(); if (x.me) tr.className = "me";   // by the row's key, not its name (#3277)
+    let rp = x.replay; if (!rp && ownBest && x.me) rp = "/replay/" + ownBest.attempt;
     let cell = "";
     if (rp) { cell = document.createElement("button"); cell.className = "rp"; cell.type = "button"; cell.textContent = "▶"; cell.title = "Watch the replay"; cell.setAttribute("aria-label", "Watch the replay"); cell.onclick = () => watchReplay(rp); }
     cellRow(tr, [x.rank, x.name + (x.placed ? " ✓" : ""), x.score, x.time, cell], ["c-rk", "c-nm", "c-sc tot", "c-tm", "c-rp"]);

@@ -10,9 +10,9 @@ import { RULES } from "../client/src/rules.js";
 const T0 = Date.parse("2026-11-23T10:00:00Z");
 const round = (o = {}) => ({ id: "2026-11-23", number: 1, test: false, phase: "open", startMs: Date.parse("2026-11-23T00:00:00Z"), endMs: Date.parse("2026-11-24T00:00:00Z"),
   entrySats: 100, maxAttempts: 5, split: [50, 30, 20], potSats: 1200, bountySats: 2000, best: { score: 1234, timeS: 41.25, name: "alice" }, ...o });
-const me = (o = {}) => ({ ok: true, name: "bob", used: 2, maxAttempts: 5, x: null, placed: false, attempts: [
+const me = (o = {}) => ({ ok: true, name: "bob", rowKey: "kb", used: 2, maxAttempts: 5, x: null, placed: false, attempts: [
   { attempt: "a1", state: "scored", score: { total: 700, timeS: 50 } }, { attempt: "a2", state: "scored", score: { total: 980, timeS: 44 } }], ...o });
-const board = [{ rank: 1, name: "alice", score: 1234, timeS: 41.25 }, { rank: 4, name: "bob", score: 980, timeS: 44 }];
+const board = [{ rank: 1, name: "alice", key: "ka", score: 1234, timeS: 41.25 }, { rank: 4, name: "bob", key: "kb", score: 980, timeS: 44 }];
 const W = (o = {}) => ({ pubkey: "ab".repeat(32), balance: { sats: 3000 }, welcomeComing: false, ...o });
 
 test("#3251 the intro: one line, bounty, best, pot and split, attempts, own best and rank, time left, the Play label", () => {
@@ -207,11 +207,12 @@ test("#3251 the counters count the run just made: GET /me's count, its listed ru
 
 test("#3251 the intro's board: the top 10, the player's row marked; outside the 10 the player's row comes after them", async () => {
   const { introBoard } = await import("../client/src/screens.js");
-  const b = Array.from({ length: 14 }, (_, k) => ({ rank: k + 1, name: "p" + (k + 1), score: 2000 - k * 10, timeS: 40 + k, placed: k % 2 === 0 }));
-  const x = introBoard(b, { name: "p13" });
+  const b = Array.from({ length: 14 }, (_, k) => ({ rank: k + 1, name: "p" + (k + 1), key: "k" + (k + 1), score: 2000 - k * 10, timeS: 40 + k, placed: k % 2 === 0 }));
+  const x = introBoard(b, { name: "p13", rowKey: "k13" });
   assert.equal(x.rows.length, 10); assert.equal(x.rows.some((r) => r.me), false);
   assert.deepEqual([x.own.rank, x.own.name, x.own.me], ["13", "p13", true]);
-  const y = introBoard(b, { name: "p3" });
+  const y = introBoard(b, { name: "p3", rowKey: "k3" });
+  assert.equal(introBoard(b, { name: "p3" }).rows.some((r) => r.me), false);   // #3277: a name alone marks no row
   assert.equal(y.rows[2].me, true); assert.equal(y.own, null);
   assert.equal(introBoard(b, null).own, null);
 });
@@ -292,8 +293,8 @@ test("#3251 the result says plainly when a run cannot win the play bounty; the r
 });
 
 test("#3251 a small phone: the board can show the top 3 and the player's own row; the round badge is short", () => {
-  const b = Array.from({ length: 8 }, (_, k) => ({ rank: k + 1, name: "p" + (k + 1), score: 900 - k, timeS: 40 }));
-  const m = introModel({ round: round({ test: true, number: 3 }), me: me({ name: "p6" }), board: b, wallet: W(), nowMs: T0, top: 3 });
+  const b = Array.from({ length: 8 }, (_, k) => ({ rank: k + 1, name: "p" + (k + 1), key: "k" + (k + 1), score: 900 - k, timeS: 40 }));
+  const m = introModel({ round: round({ test: true, number: 3 }), me: me({ name: "p6", rowKey: "k6" }), board: b, wallet: W(), nowMs: T0, top: 3 });
   assert.deepEqual(m.board.rows.map((r) => r.name), ["p1", "p2", "p3"]); assert.equal(m.board.own.name, "p6");
   assert.equal(m.tag, "TEST 3"); assert.equal(m.bounty, "Test round · no play bounty");
   assert.equal(introModel({ round: round({ number: 1 }), me: me(), board: b, wallet: W(), nowMs: T0 }).tag, "DAY 1");

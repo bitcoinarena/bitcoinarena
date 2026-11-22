@@ -432,6 +432,11 @@ export function createOpr(o = {}) {
 
   // ---------- board, players, placement ----------
   const nameOf = (pk) => { const p = q('SELECT name FROM players WHERE pubkey = ?').get(pk); return (p && p.name) || `player ${pk.slice(0, 8)}`; };
+  // ONE NAME, ONE PLAYER (kanban #3277, #3280): a chosen name another key holds (any case) is refused, and the default form 'player <8 hex>' is kept
+  // for the players without one. A board row names its player by rowKey (a hash of the key; GET /me tells a player its own), never by name
+  const nameRefusal = (pk, n) => (/^player [0-9a-f]{8}$/i.test(n) ? "that name is kept for players without one ('player' and 8 hex)"
+    : q('SELECT 1 AS x FROM players WHERE lower(name) = lower(?) AND pubkey != ?').get(n, pk) ? 'that name is taken - pick another' : null);
+  const rowKeyOf = (pk) => sha(`opr-row|${pk}`).slice(0, 16);
   const dq = (round) => new Set(q('SELECT player FROM disqualified WHERE round = ?').all(round).map((x) => x.player));
   function runsOf(round) {
     const out = dq(round);
@@ -543,7 +548,7 @@ export function createOpr(o = {}) {
     const r = roundRow(round);
     const ended = now() >= r.end_ms;
     const used = new Map(q('SELECT player, COUNT(*) AS n FROM attempts WHERE round = ? AND paid_ms IS NOT NULL GROUP BY player').all(round).map((x) => [x.player, x.n]));
-    return boardOf(round).map((b) => ({ rank: b.rank, name: b.name, player: b.player, score: b.total, timeS: b.timeS, attempts: used.get(b.player) || 0,
+    return boardOf(round).map((b) => ({ rank: b.rank, name: b.name, key: rowKeyOf(b.player), player: b.player, score: b.total, timeS: b.timeS, attempts: used.get(b.player) || 0,
       placed: xOf(b.player, r).placed, replay: (ended && b.rank <= 10) || b.player === viewer ? `/replay/${b.attempt}` : null }));
   }
 
@@ -825,7 +830,7 @@ export function createOpr(o = {}) {
         const r = url.searchParams.get('round') ? roundRow(url.searchParams.get('round')) : currentRound();
         const x = xOf(me, r);
         const mine = r ? q('SELECT * FROM attempts WHERE round = ? AND player = ? ORDER BY created_ms').all(r.id, me) : [];
-        return send(200, { ok: true, pubkey: me, name: nameOf(me), lnAddress: storedLn(me), x: x.x ? { username: x.x.username } : null, placed: x.placed, placedWhy: x.placed ? null : x.why,
+        return send(200, { ok: true, pubkey: me, name: nameOf(me), rowKey: rowKeyOf(me), lnAddress: storedLn(me), x: x.x ? { username: x.x.username } : null, placed: x.placed, placedWhy: x.placed ? null : x.why,
           round: r ? r.id : null, used: r ? usedBy(r.id, me, now()) : 0, maxAttempts: r ? r.max_attempts : cfg.maxAttempts,
           attempts: mine.map((a) => ({ attempt: a.id, state: a.state === 'pending' || a.state === 'awaiting' ? 'pending-entry' : a.state === 'unpaid' ? 'entry-not-paid' : a.state,
             paid: a.paid_ms != null, why: a.why, score: J(a.score), startedMs: a.started_ms })) });
@@ -833,6 +838,8 @@ export function createOpr(o = {}) {
       if (req.method === 'POST' && path === '/name') {
         const n = String(body.name || '').trim();
         if (!/^[A-Za-z0-9 _.-]{2,20}$/.test(n)) return send(400, { ok: false, why: 'a name is 2 to 20 letters, digits, space, _ . -' });
+        const taken = nameRefusal(me, n);
+        if (taken) return send(409, { ok: false, why: taken });
         q('INSERT INTO players (pubkey, name, seen_ms) VALUES (?, ?, ?) ON CONFLICT (pubkey) DO UPDATE SET name = excluded.name').run(me, n, now());
         return send(200, { ok: true, name: n });
       }

@@ -8,13 +8,19 @@ export function fmtLeft(ms) {
 }
 export const fmtTime = (t) => (Number.isFinite(Number(t)) ? Number(t).toFixed(1) + " s" : "-");
 
-/** The player's own best run of the round and its rank on the board (rows of GET /board, the player's name from GET /me). */
+/**
+ * THE PLAYER'S OWN ROW (kanban #3277, #3280): names are not proof of anything - matched by the row's key (GET /board's `key`, GET /me's `rowKey`),
+ * or its pubkey where a row carries one; never by name.
+ */
+export const isMine = (r, me) => !!(r && me && ((r.player && me.pubkey) ? r.player === me.pubkey : (r.key && me.rowKey) ? r.key === me.rowKey : false));
+
+/** The player's own best run of the round and its rank on the board (rows of GET /board, the player's own row by its key from GET /me). */
 export function myBest(me, board) {
   const runs = ((me && me.attempts) || []).filter((a) => a && a.state === "scored" && a.score && Number.isFinite(a.score.total));
   if (!runs.length) return null;
   runs.sort((a, b) => (b.score.total - a.score.total) || (a.score.timeS - b.score.timeS));
   const best = runs[0];
-  const row = (board || []).find((r) => r.name === me.name && r.score === best.score.total);
+  const row = (board || []).find((r) => isMine(r, me));
   return { total: best.score.total, timeS: best.score.timeS, attempt: best.attempt, rank: row ? row.rank : null };
 }
 
@@ -58,7 +64,7 @@ export function usedOf(me, opened = []) {
  */
 export const INTRO_TOP = 10;
 export function introBoard(board, me, n = INTRO_TOP) {
-  const name = me && me.name, rows = (board || []).map((r) => ({ rank: String(r.rank), name: String(r.name || ""), score: fmtSats(r.score), time: fmtTime(r.timeS), placed: !!r.placed, me: !!name && r.name === name }));
+  const rows = (board || []).map((r) => ({ rank: String(r.rank), name: String(r.name || ""), score: fmtSats(r.score), time: fmtTime(r.timeS), placed: !!r.placed, me: isMine(r, me) }));
   const top = rows.slice(0, n), own = rows.slice(n).find((r) => r.me) || null;
   return { rows: top, own, empty: top.length ? null : "No run yet - be the first" };
 }
@@ -220,4 +226,4 @@ export function lnFieldModel(text, stored) {
 }
 
 /** The leaderboard rows: [[rank, name, score, time, placed]] */
-export const boardRows = (board) => (board || []).map((r) => ({ rank: String(r.rank), name: String(r.name || ""), score: fmtSats(r.score), time: fmtTime(r.timeS), placed: !!r.placed, replay: r.replay || null }));
+export const boardRows = (board, me = null) => (board || []).map((r) => ({ rank: String(r.rank), name: String(r.name || ""), score: fmtSats(r.score), time: fmtTime(r.timeS), placed: !!r.placed, replay: r.replay || null, me: isMine(r, me) }));
