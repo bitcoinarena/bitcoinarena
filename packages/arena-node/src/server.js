@@ -15756,8 +15756,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // with the arbitration set's events (kanban #723): every liquidation and slash it published, each with its signatures; ?events=0 leaves them out
         const events = arbitrationEvents && url.searchParams.get('events') !== '0' ? arbitrationEvents.list({ kind: url.searchParams.get('kind') || null }) : [];
         if (!liquidations) return json(res, 200, { node: toHex(round.pubkey), liquidations: [], events });
+        // each row's phase on this seat's tip (kanban #3340); a tip that does not read leaves the phase null
+        let tip = null;
+        try { if (typeof chainTip === 'function') { const t = Number(await chainTip()); if (Number.isInteger(t)) tip = t; } } catch { /* phase null */ }
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
-        return res.end(JSON.stringify({ node: toHex(round.pubkey), liquidations: liquidations.list(), events }));
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), liquidations: liquidations.list({ tip }), events }));
       }
       // AN EVENT OF THE ARBITRATION SET (kanban #723): { event, signatures } - taken when k members signed it and it is newer than the one
       // held, then handed on to every seat this one can name, so the explorer finds it at any seat
