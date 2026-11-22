@@ -2,7 +2,7 @@
 // prototype's makeWorld/stepWorld. The run is automatic; the only input is { jump: bool } per step.
 // No DOM, no Date, no Math.random/sin/cos/hypot/sqrt/atan2: the same level and the same jump presses give the
 // same world on every engine (trig.js). W.fx holds floating texts and particles for the renderer only.
-import { T, ROWS, VH, STEP, GRAV, JUMP_V, CUT_V, ACC, MAXFALL, PW, PH, TIME_LIMIT, DEATH_PENALTY, C0, TILE, isSolid, COL, PW_INFO, PW_ORDER, fmtUsd, rulesOf } from "./constants.js";
+import { T, ROWS, VH, STEP, GRAV, JUMP_V, CUT_V, ACC, MAXFALL, PW, PH, TIME_LIMIT, DEATH_PENALTY, RESPAWN_GRACE, C0, TILE, isSolid, COL, PW_INFO, PW_ORDER, fmtUsd, rulesOf } from "./constants.js";
 import { sinRad, hypotD } from "./trig.js";
 
 // a fresh world on its own copy of the level (the level object is never changed, so one L serves many runs)
@@ -14,7 +14,11 @@ export function newWorld(L) {
 }
 export const tileAt = (W, tx, ty) => (tx < 0 || tx >= W.L.w) ? TILE.GROUND : ty >= ROWS ? TILE.EMPTY : ty < 0 ? TILE.EMPTY : W.L.t[ty * W.L.w + tx];
 function respawn(W) { const p = W.p; if (p.dying > 0) return; W.stats.hits++; p.dying = 55; p.fell = p.y > VH; p.why = p.fell || p.cause === "fell" ? "you fell" : ""; p.cause = ""; p.vx = 0; p.vy = p.fell ? 0 : -6; p.boost = 0; p.shield = false; p.pw = { pill: 0, diamond: 0, laser: 0, magnet: 0, moon: 0 }; }
-function respawnNow(W) { const p = W.p, c = W.L.checkpoints[p.cp]; W.rugGone.forEach((k) => { W.L.t[k] = TILE.RUG; W.rugs.delete(k); }); W.rugGone = []; p.x = c.x * T; p.y = c.row * T - PH; p.vx = 0; p.vy = 0; p.hurtT = 70; W.penalty += DEATH_PENALTY; W.time = W.f * STEP + W.penalty; W.fx.push({ kind: "text", text: "+3 s penalty", x: p.x + 8, y: p.y - 6, t: 60, color: COL.red }); }
+function respawnNow(W) { const p = W.p, c = W.L.checkpoints[p.cp]; W.rugGone.forEach((k) => { W.L.t[k] = TILE.RUG; W.rugs.delete(k); }); W.rugGone = []; p.x = c.x * T; p.y = c.row * T - PH; p.vx = 0; p.vy = 0; p.hurtT = RESPAWN_GRACE;
+  // opr-3 (kanban #3275): no jump pressed before the death carries over, the bills in flight are gone and every bear
+  // stands at its place again, so the stretch after the checkpoint holds only what the level puts there (level.js)
+  if (W.R.safeCp) { p.buffer = 0; p.coyote = 0; p.dj = false; W.bills = []; W.L.enemies.forEach((e) => { if (e.kind === "bear" && !(e.dead === 0 || e.dead)) { e.x = e.x0; e.charging = false; } }); }
+  W.penalty += DEATH_PENALTY; W.time = W.f * STEP + W.penalty; W.fx.push({ kind: "text", text: "+3 s penalty", x: p.x + 8, y: p.y - 6, t: 60, color: COL.red }); }
 function givePower(W, kind, x, y) { const p = W.p, info = PW_INFO[kind]; p.pw[kind] = info.t; W.stats.powers++;
   W.fx.push({ kind: "text", text: info.text.split(" · ")[0] + "!", x, y: y - 14, t: 80, color: info.color }); W.fx.push({ kind: "ring", x: p.x + 8, y: p.y + 11, t: 24, color: info.color }); }
 function killFoe(W, e, text) { e.dead = 34; W.stats.stomps++; W.fx.push({ kind: "text", text, x: e.x + 10, y: (e.y || e.row * T - 20) - 8, t: 50, color: COL.gold }); W.fx.push({ kind: "puff", x: e.x + 10, y: (e.y || e.row * T - 20) + 14, t: 18 }); }

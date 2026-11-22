@@ -61,7 +61,7 @@ test("malformed logs and other versions are refused", () => {
 });
 
 test("#3271 an opr-1 round still builds, replays and scores as opr-1 (the log recorded before opr-2, the same result)", () => {
-  assert.equal(GAME_VERSION, "opr-2");
+  assert.ok(VERSIONS["opr-2"]); assert.notEqual(GAME_VERSION, "opr-1");
   assert.equal(rec1.log.v, "opr-1");
   const L1 = buildLevel(day.candles, rec1.seed, "opr-1"), a = runLog(L1, rec1.log);
   assert.equal(L1.version, "opr-1");

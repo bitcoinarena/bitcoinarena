@@ -56,7 +56,7 @@ test('#3249 the real sim: a bot run is scored as runLog scores it; a shifted pre
 });
 
 test('#3271 a round opened on opr-1 keeps opr-1 after the service moved to opr-2: level check, replay and score are opr-1; a new round is opr-2', async () => {
-  assert.equal(sim.GAME_VERSION, 'opr-2');
+  assert.notEqual(sim.GAME_VERSION, 'opr-1');
   const day = fx.days[fx.days.length - 2];
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'opr3271-')), dbPath = dir + '/opr.sqlite';
   let t = Date.parse('2026-11-22T10:00:00Z');
@@ -103,7 +103,7 @@ test('#3271 a round opened on opr-1 keeps opr-1 after the service moved to opr-2
   assert.equal(made2.ok, true, made2.why);
   await opr.tick(); await opr.tick(); chain.confirm(); await opr.tick();
   const r2 = opr.roundRow(made2.round.id);
-  assert.equal(r2.game_version, 'opr-2');
+  assert.equal(r2.game_version, sim.GAME_VERSION);
   assert.equal(r2.level_hash, checkLevel(day.candles, r2.id).levelHash);
   opr.close();
 });

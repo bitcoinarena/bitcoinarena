@@ -3,8 +3,87 @@
 // face. Only a real move up or down makes a step, and that candle is a full pillar. The flat stretches get their
 // own challenges, picked from a list seeded by `seed`, so one chart and one seed always build the same level.
 // Pure: candles = [[t, o, h, l, c], ...] (48 x 30 min, t in unix seconds), seed = 32-bit integer, version = the
-// round's game version (L.version; the world and the score follow it; the layout is the same in every version).
-import { T, ROWS, C0, TILE, GAME_VERSION, rulesOf } from "./constants.js";
+// round's game version (L.version; the world and the score follow it; opr-1 and opr-2 share one layout; opr-3 moves
+// the checkpoints to safe spots, kanban #3275).
+import { T, ROWS, PW, PH, C0, TILE, GAME_VERSION, SAFE_STEPS, isSolid, rulesOf } from "./constants.js";
+import { newWorld, stepWorld } from "./world.js";
+import { sinRad } from "./trig.js";
+
+// kanban #3275: what an enemy or hazard of the level can do to a runner after a respawn. Walkers, hoppers and FUD clouds
+// as the box they can ever reach [x0, y0, x1, y1] in world units: a walker anywhere on its patrol span, a hopper at
+// the top of its hop, a cloud over its whole drift; a printer's own body as a box. A bear and a printer's bills are
+// played out step by step along the runner's path (dyn): a respawn on opr-3 puts every bear back and clears the bills
+// in flight (world.js respawnNow), so the bear starts from its place and the bills from the printer - with the
+// printer's cooldown at every value it can have then.
+export function hazardList(L) {
+  const out = [];
+  for (const e of L.enemies) {
+    const top = e.row * T;
+    if (e.kind === "bear") out.push({ src: e, dyn: "bear" });
+    else if (e.kind === "printer") { out.push({ src: e, box: [e.x0, top - 20, e.x0 + 24, top] }); out.push({ src: e, dyn: "bills" }); }
+    else if (e.hop) out.push({ src: e, box: [e.x0, top - 20 - 46, e.x0 + 20, top] });
+    else out.push({ src: e, box: [e.x0 - e.span, top - 20, e.x0 + e.span + 20, top] });
+  }
+  for (const c of L.clouds) out.push({ src: c, box: [c.x0 - 30 + 10, c.y0 - 12 + 10, c.x0 + 30 + 42, c.y0 + 12 + 24] });
+  return out;
+}
+
+// the runner's boxes over SAFE_STEPS steps after a respawn at column cx on row `row` with no input and no grace, on
+// the tiles alone - twice: with the level's pickups still there (the lightning makes it run faster) and with them gone
+// (taken before the death); null when it is not a place to stand (a spike or a wall over it, off the plateaus) or when
+// the tiles hurt or end the run in that time: a gap or notch to fall into, a rug tile under it, a spike
+function respawnPaths(L, cx, row) {
+  if (cx < 0 || cx >= L.w || row < 2 || row >= ROWS) return null;
+  const at = (x, y) => L.t[y * L.w + x], v = at(cx, row);
+  if (!(L.colMeta[cx] >= 0 ? [TILE.CG, TILE.CR, TILE.PLAT].includes(v) : cx < C0 && v === TILE.GROUND) || at(cx, row - 1) !== TILE.EMPTY || isSolid(at(cx, row - 2))) return null;
+  const paths = [];
+  for (const items of [L.items, []]) {
+    const W = newWorld({ w: L.w, t: L.t, coins: [], enemies: [], clouds: [], items, checkpoints: [{ x: cx, row }], goal: L.goal, dayHigh: null, version: L.version, parTime: 0 });
+    const p = W.p, path = []; p.x = cx * T; p.y = row * T - PH; p.hurtT = 0;
+    for (let s = 0; s < SAFE_STEPS && !W.done; s++) {
+      stepWorld(W, { jump: false });
+      if (p.dying > 0 || W.stats.hits > 0 || p.hurtT > 0 || W.rugs.size > 0) return null;
+      path.push([p.x, p.y, p.x + PW, p.y + PH]);
+    }
+    paths.push(path);
+  }
+  return paths;
+}
+const M = 3;                                                              // clearance around the runner, world units
+const hits = (q, x0, y0, x1, y1) => q[2] + M > x0 && q[0] - M < x1 && q[3] + M > y0 && q[1] - M < y1;
+// the same rules as world.js stepWorld for a bear and for bills, along the runner's boxes after each step
+function dynTouches(L, path, h) {
+  const e = h.src, R = rulesOf(L.version), solid = (cx, y) => cx < 0 || cx >= L.w ? true : y < 0 || y >= ROWS ? false : isSolid(L.t[y * L.w + cx]);
+  const ramp = (px) => (1 + .5 * Math.min(1, Math.max(0, px / (L.goal * T)))) * R.foe;
+  if (h.dyn === "bear") { let x = e.x0, charging = false; const ey = e.row * T - 22;
+    for (const q of path) { const px = q[0];
+      if (!charging && x - px < 210 + M && x > px - M) charging = true;
+      if (charging) { const nx = x - 1.6 * ramp(px), tx = Math.floor(nx / T); if (solid(tx, e.row) && !solid(tx, e.row - 1)) x = nx; else charging = false; }
+      if (hits(q, x + 6, ey + 5, x + 20, ey + 22)) return true; }
+    return false; }
+  if (!path.some((q) => e.x0 > q[0] && e.x0 - q[0] < 420 + M)) return false;
+  const ey = e.row * T - 20;
+  for (let cd0 = 0; cd0 <= Math.round(150 / R.foe) + 1; cd0++) { let cd = cd0, bills = [];
+    for (const q of path) { const px = q[0]; cd--;
+      if (cd <= 0 && e.x0 > px && e.x0 - px < 420) { cd = Math.round(150 / ramp(px)); bills.push({ x: e.x0 - 4, y: ey + 4, vx: -1.9 * ramp(px), t: 0 }); }
+      for (const bl of bills) { bl.x += bl.vx; bl.t++; const by = bl.y + sinRad(bl.t * R.foe / 6) * 3;
+        if (solid(Math.floor(bl.x / T), Math.floor((by + 4) / T)) || bl.x < px - 360) bl.gone = true;
+        else if (hits(q, bl.x + 1, by, bl.x + 15, by + 8)) return true; }
+      bills = bills.filter((bl) => !bl.gone); } }
+  return false;
+}
+const touches = (L, paths, h) => paths.some((path) => (h.dyn ? dynTouches(L, path, h) : path.some((q) => hits(q, ...h.box))));
+
+// kanban #3275: a checkpoint at column cx on row `row` is safe when the runner stands there (on a plateau or a candle,
+// no spike, no wall over it), a respawn with no input and no grace lives SAFE_STEPS steps on the tiles alone (no gap,
+// no notch, no rug, no spike), and its box at every one of those steps stays M units clear of every hazard (hazardList).
+export function checkpointSafe(L, cx, row, hz = hazardList(L)) {
+  const paths = respawnPaths(L, cx, row);
+  return !!paths && !hz.some((h) => touches(L, paths, h));
+}
+
+// the surface row of a chart column (its plateau or candle top), -1 off the chart
+const surfaceOf = (L, cx) => (cx >= 0 && cx < L.w && L.colMeta[cx] >= 0 ? L.meta[L.colMeta[cx]].top : -1);
 
 export function buildLevel(candles, seed, version = GAME_VERSION) {
   const R = rulesOf(version);
@@ -70,9 +149,25 @@ export function buildLevel(candles, seed, version = GAME_VERSION) {
   byMove.slice(-4).reverse().forEach((m, k) => { if (k === 0) L.items.push({ kind: "bolt", x: (m.x0 + 1) * T + 12, y: (m.top - 1) * T, got: false }); else if (m.top - 4 >= 1 && get(m.x0 + 1, m.top - 4) === 0) set(m.x0 + 1, m.top - 4, 4); });
   const topC = meta.reduce((p, q) => (q.h > p.h ? q : p));
   L.dayHigh = { x: (topC.x0 + 1) * T + 12, y: Math.max(1, topC.top - 3) * T + 12, got: false, price: topC.h, t: topC.t };
-  for (let k = 6; k < n; k += 6) { const m = meta[k]; let cx = m.x0 + 1; while ((![7, 8, 10].includes(get(cx, m.top)) || get(cx, m.top - 1) === 11) && cx < m.x0 + 3) cx++; L.checkpoints.push({ x: cx, row: m.top }); }
+  if (!R.safeCp) for (let k = 6; k < n; k += 6) { const m = meta[k]; let cx = m.x0 + 1; while ((![7, 8, 10].includes(get(cx, m.top)) || get(cx, m.top - 1) === 11) && cx < m.x0 + 3) cx++; L.checkpoints.push({ x: cx, row: m.top }); }
   for (let cx = endX; cx < L.w; cx++) { set(cx, 12, 1); set(cx, 13, 1); }
   for (let k = 0; k < 3; k++) for (let y = 11 - k; y <= 11; y++) set(endX + 10 + k, y, 2);
+  // opr-3 (kanban #3275): the planned column (every 6th candle, as before) moves to the nearest safe column (behind it
+  // first at equal distance) within MOVE columns of it, at least GAP columns after the previous checkpoint and before
+  // the next planned one. With no safe column in that window, it goes to the column whose tiles are safe with the
+  // fewest enemies, printers and clouds reaching its stretch (the nearest of those), and those are taken out of the
+  // level. With no column in the window whose tiles are safe, the checkpoint is left out.
+  if (R.safeCp) { const plan = []; for (let k = 6; k < n; k += 6) plan.push(meta[k].x0 + 1);
+    const MOVE = 18, GAP = 6, row = (cx) => surfaceOf(L, cx);
+    plan.forEach((want, j) => { const lo = Math.max(want - MOVE, L.checkpoints[L.checkpoints.length - 1].x + GAP), hi = Math.min(want + MOVE, j + 1 < plan.length ? plan[j + 1] - 1 : endX - 1);
+      const hz = hazardList(L); let best = null;
+      for (let d = 0; want - d >= lo || want + d <= hi; d++) for (const cx of d ? [want - d, want + d] : [want]) { if (cx < lo || cx > hi) continue;
+        const paths = respawnPaths(L, cx, row(cx)); if (!paths) continue;
+        const hit = new Set(hz.filter((h) => touches(L, paths, h)).map((h) => h.src));
+        if (!best || hit.size < best.hit.size) best = { cx, hit }; if (!hit.size) break; }
+      if (!best) return; if (!best.hit.size) { L.checkpoints.push({ x: best.cx, row: row(best.cx) }); return; }
+      L.enemies = L.enemies.filter((e) => !best.hit.has(e)); L.clouds = L.clouds.filter((c) => !best.hit.has(c));
+      L.checkpoints.push({ x: best.cx, row: row(best.cx) }); }); }
   L.parTime = Math.round(L.goal * T / R.run / 60 * 1.6);
   return L;
 }

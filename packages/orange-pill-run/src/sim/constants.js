@@ -8,8 +8,11 @@ export const VERSIONS = {
   "opr-1": { run: 3.2, boost: 4.8, foe: 1, hopP: 80, hopUp: 40, timePerS: 2 },
   // owner 2026-11-22: "Die Zeit muss viel mehr gewichtet sein" and "Und 10% langsamer"
   "opr-2": { run: 2.88, boost: 4.32, foe: 0.9, hopP: 88, hopUp: 44, timePerS: 20 },
+  // kanban #3275, owner 2026-11-22: "Die Checkpoints so gestalten, dass man nicht direkt danach sterben kann".
+  // safeCp: each checkpoint stands where a respawn with no input lives SAFE_STEPS steps without the grace (level.js)
+  "opr-3": { run: 2.88, boost: 4.32, foe: 0.9, hopP: 88, hopUp: 44, timePerS: 20, safeCp: true },
 };
-export const GAME_VERSION = "opr-2";
+export const GAME_VERSION = "opr-3";
 // the rules of a version; throws a TypeError for one this code does not know
 export function rulesOf(v) {
   const r = Object.prototype.hasOwnProperty.call(VERSIONS, v) ? VERSIONS[v] : null;
@@ -22,6 +25,8 @@ export const GRAV = 0.5, JUMP_V = -10, CUT_V = -3.4, ACC = 0.45, MAXFALL = 9;
 export const PW = 16, PH = 22, TIME_LIMIT = 180;
 export const MAX_STEPS = TIME_LIMIT * 60;                                 // the run is over by then at the latest
 export const DEATH_PENALTY = 3;                                           // seconds per death
+export const RESPAWN_GRACE = 70;                                          // steps without damage after a respawn (hurtT)
+export const SAFE_STEPS = 90;                                             // opr-3: 1.5 s of run after a checkpoint are safe
 export const C0 = 14;                                                     // first candle column
 export const TILE = { EMPTY: 0, GROUND: 1, BRICK: 2, ONEWAY: 3, QBLOCK: 4, USED: 5, RUG: 6, CG: 7, CR: 8, FILL: 9, PLAT: 10, SPIKE: 11 };
 const SOLID_TILES = new Uint8Array(16);
