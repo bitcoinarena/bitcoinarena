@@ -115,7 +115,37 @@ export function endpointsOf(committee, selfPubkey, endpointOf = null) {
 /** THE ONE REFUSAL A NODE THAT READS NO CHAIN GIVES FOR A ROUND'S CENSUS - and POST /round's for a paying round (RULED 2026-09-25). */
 export const NO_CHAIN_VIEW_WHY = 'this node has no chain view for that round, so it cannot say who is bonded';
 
-const whereOf = new WeakMap();                 // chain view -> its txid index (guardianBondsFor)
+// WHERE A TRANSACTION IS IN A VIEW (guardianBondsFor, censusEvidenceFor). Indexed once per BLOCK, not once per view (kanban #3236, a heap snapshot
+// of a seat: 339k txid hex keys in per-view indexes, 68k distinct, ~150 MB - the views of a seat share their blocks): a block's index is kept
+// with the block, and a view keeps only the answers it was asked for. The newest block that holds a txid answers, as the per-view index did.
+const WHERE_OF_BLOCK = new WeakMap();          // block -> { txids, at: txid hex -> position } | null (a transaction that does not parse)
+function whereInBlock(block) {
+  let w = WHERE_OF_BLOCK.get(block);
+  if (w === undefined) {
+    try {
+      const txids = (block.transactions || []).map((raw) => parseTransaction(raw).txid);
+      const at = new Map();
+      txids.forEach((t, position) => at.set(toHex(t), position));
+      w = { txids, at };
+    } catch { w = null; }
+    WHERE_OF_BLOCK.set(block, w);
+  }
+  return w;
+}
+const whereOf = new WeakMap();                 // chain view -> txid hex -> { block, txids, position } | null, the answers asked for
+export function whereInView(view, hex) {
+  const kept = view && typeof view === 'object' ? (whereOf.get(view) || whereOf.set(view, new Map()).get(view)) : null;
+  if (kept && kept.has(hex)) return kept.get(hex) || undefined;
+  let found = null;
+  const blocks = view && Array.isArray(view.blocks) ? view.blocks : [];
+  for (let i = blocks.length - 1; i >= 0 && !found; i--) {
+    const w = blocks[i] && typeof blocks[i] === 'object' ? whereInBlock(blocks[i]) : null;
+    const position = w ? w.at.get(hex) : undefined;
+    if (position !== undefined) found = { block: blocks[i], txids: w.txids, position };
+  }
+  if (kept) kept.set(hex, found);
+  return found || undefined;
+}
 
 /** A chain view's transactions by txid, indexed once per view object (censusFor). */
 const TXIDS_OF_VIEW = new WeakMap();
@@ -617,17 +647,8 @@ export class Roster {
     const fid = toHex(contract.federationId);
     const view = this.chainFor({ contract, roundIdBytes });
 
-    // ONE INDEX PER VIEW (the rounds of a series share their view): built once, not on every ask.
-    let where = view && typeof view === 'object' ? whereOf.get(view) : null;
-    if (!where) {
-      where = new Map();
-      for (const block of (view && Array.isArray(view.blocks) ? view.blocks : [])) {
-        let txids;
-        try { txids = (block.transactions || []).map((raw) => parseTransaction(raw).txid); } catch { continue; }
-        txids.forEach((t, position) => where.set(toHex(t), { block, txids, position }));
-      }
-      if (view && typeof view === 'object') whereOf.set(view, where);
-    }
+    // ONE INDEX PER BLOCK (the rounds of a series share their view, the views their blocks): built once, not on every ask.
+    const where = { get: (hex) => whereInView(view, hex) };
     const bonds = [];
     for (const e of census.entries) {
       if (!((e.advert && e.advert.guardianOf) || []).some((g) => toHex(g.federationId) === fid)) continue;
@@ -659,16 +680,7 @@ export class Roster {
     if (!census.ok) return census;
     const contract = this.#held(roundIdBytes);
     const view = this.chainFor({ contract, roundIdBytes });
-    let where = view && typeof view === 'object' ? whereOf.get(view) : null;
-    if (!where) {
-      where = new Map();
-      for (const block of (view && Array.isArray(view.blocks) ? view.blocks : [])) {
-        let txids;
-        try { txids = (block.transactions || []).map((raw) => parseTransaction(raw).txid); } catch { continue; }
-        txids.forEach((t, position) => where.set(toHex(t), { block, txids, position }));
-      }
-      if (view && typeof view === 'object') whereOf.set(view, where);
-    }
+    const where = { get: (hex) => whereInView(view, hex) };
     const proof = (txid) => { const at = txid ? where.get(toHex(txid)) : null; return at ? { transaction: toHex(at.block.transactions[at.position]),
       position: at.position, branch: merkleBranchOf(at.txids, at.position).map(toHex) } : null; };
     const entries = [];

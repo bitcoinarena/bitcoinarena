@@ -11,6 +11,7 @@
 // Nothing is ever published: the relay code sends only REQ and CLOSE. A relay asking for NIP-42 AUTH is reported, never answered.
 // Secrets come in as arguments and never reach an answer, a log line or an error text.
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';   // kanban #3000
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { hmac } from '@noble/hashes/hmac.js';
@@ -242,18 +243,30 @@ export function wsQuery({ timeoutMs = 8000, WebSocketImpl = globalThis.WebSocket
       else if (a[0] === 'AUTH') { if (onNote) onNote(url, 'relay asked for NIP-42 AUTH (not answered)'); }
     };
   });
+  // kanban #3000: a copy is keyed by all of it (id, signature, content ...), so only byte-equal copies merge
+  const copyKey = (e) => { try { return createHash('sha256').update(JSON.stringify(e)).digest('hex'); } catch { return String(e && e.id); } };
   return async (relays, filters) => {
     const seen = new Map();
+    let truncated = false;
     await Promise.all(relays.flatMap((url) => filters.map(async (f) => {
       let until;
       for (let p = 0; p < maxPages; p++) {
         const page = await one(url, { ...f, limit: Math.min(f.limit || pageLimit, pageLimit), ...(until === undefined ? {} : { until }) });
-        let oldest = Infinity; for (const e of page) { seen.set(e.id, e); if (e.created_at < oldest) oldest = e.created_at; }
+        // ONE COPY PER DISTINCT EVENT, NEVER THE LAST ANSWER'S (kanban #3000, audit nostr r2-3): copies were merged by the claimed id, so a relay
+        // answering last with a genuine event's id and a broken signature (or garbage content) replaced the copy the other relays sent, and the
+        // caller's check then dropped it - a follow or a join erased. Copies that differ are all kept; the caller keeps the ones that check
+        let oldest = Infinity; for (const e of page) { seen.set(copyKey(e), e); if (e.created_at < oldest) oldest = e.created_at; }
         if (f.limit || page.length < Math.min(pageLimit, 100) || !Number.isFinite(oldest) || oldest - 1 === until) break;
         until = oldest - 1;
+        // kanban #2999: the last page was full and more are left - what this read holds is only the newest part
+        if (p === maxPages - 1) truncated = true;
       }
     })));
-    return [...seen.values()];
+    const out = [...seen.values()];
+    // A READ CUT SHORT SAYS SO (kanban #2999, audit nostr r2-2): one member flooding the guestbook stream with newer wraps pushed every earlier
+    // join past the page budget, and the reader answered "not a member" for each of them
+    Object.defineProperty(out, 'truncated', { value: truncated });
+    return out;
   };
 }
 
@@ -302,8 +315,13 @@ export async function armadaMembers({ secretKeyHex, relays = ARMADA_RELAYS, comm
   const states = foldMembers(rumors, { owner: c.owner, livePk: live && live.pk, authorityOf, nowMs });
   const members = new Set([...states].filter(([, s]) => s.state === 'join').map(([pk]) => pk));
   members.add(c.owner);
+  // kanban #2999: a guestbook read cut short (wsQuery's page budget) is marked, with the keys it did see leave or be removed
+  const truncated = !!wraps.truncated;
+  const gone = new Set([...states].filter(([, s]) => s.state !== 'join').map(([pk]) => pk));
+  Object.defineProperty(members, 'truncated', { value: truncated });
+  Object.defineProperty(members, 'gone', { value: gone });
   if (!detail) return members;
-  return { members, states, community: { id: c.id, name: c.name, owner: c.owner, epochs: c.roots.length, liveEpoch: c.rootEpoch }, wraps: wraps.length, rumors: rumors.length, undecryptable: bad, notes };
+  return { members, states, community: { id: c.id, name: c.name, owner: c.owner, epochs: c.roots.length, liveEpoch: c.rootEpoch }, wraps: wraps.length, rumors: rumors.length, undecryptable: bad, truncated, notes };
 }
 
 export function armadaVerifier({ secretKeyHex, relays = ARMADA_RELAYS, community = {}, members = armadaMembers, cacheMs = 60000, query } = {}) {
@@ -311,13 +329,24 @@ export function armadaVerifier({ secretKeyHex, relays = ARMADA_RELAYS, community
   let inflight = null;
   const load = async () => {
     if (cache && Date.now() - cache.at < cacheMs) return cache.set;
-    if (!inflight) inflight = (async () => { try { const set = await members({ secretKeyHex, relays, community, query }); cache = { at: Date.now(), set }; return set; } finally { inflight = null; } })();
+    if (!inflight) inflight = (async () => { try {
+      let set = await members({ secretKeyHex, relays, community, query });
+      // A READ CUT SHORT KEEPS WHAT AN EARLIER READ SAW (kanban #2999): a member it read before stays one unless this read saw him leave or be
+      // removed; a key it did not find is unknown (member: null - the season keeps its last flag), never "not a member"
+      if (set && set.truncated) {
+        const kept = new Set(set);
+        for (const pk of (cache && cache.set) || []) if (!(set.gone && set.gone.has(pk))) kept.add(pk);
+        Object.defineProperty(kept, 'truncated', { value: true });
+        set = kept;
+      }
+      cache = { at: Date.now(), set }; return set; } finally { inflight = null; } })();
     return inflight;
   };
   return async (link) => {
     const pk = String((link && link.userId) || '').toLowerCase();
     if (!HEX64.test(pk)) return { member: null, why: 'not a nostr pubkey' };
-    try { const set = await load(); return set.has(pk) ? { member: true, why: 'in the community guestbook' } : { member: false, why: 'not in the community guestbook' }; }
+    try { const set = await load(); return set.has(pk) ? { member: true, why: 'in the community guestbook' }
+      : set.truncated ? { member: null, why: 'the community guestbook was read only in part (too many entries)' } : { member: false, why: 'not in the community guestbook' }; }
     catch (e) { return { member: null, why: short(e) }; }
   };
 }

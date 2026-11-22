@@ -184,7 +184,14 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
     mintsAll.push(now);
     return '';
   };
-  const requestOf = (p) => { try { return JSON.parse(p.description); } catch { return {}; } };
+  // PARSED ONCE PER OPEN ZAP (kanban #2989, audit nostr r1-3): every callback parsed every open zap's kept description (a 9734 of several KB
+  // each, ~2,100 open) before any bound, so one replayed request stalled the zap server; the id and payer a callback compares are kept per entry
+  const requestMemo = new WeakMap();
+  const requestOf = (p) => {
+    let r = requestMemo.get(p);
+    if (!r) { try { const j = JSON.parse(p.description); r = { id: j && j.id, pubkey: j && j.pubkey }; } catch { r = {}; } requestMemo.set(p, r); }
+    return r;
+  };
   const owed = new Map();             // receipt id -> { receipt, relays: [relay still owed a send] } (kanban #2249)
   let loadedOwed = [];
   if (statePath && existsSync(statePath)) {

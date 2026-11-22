@@ -144,12 +144,19 @@ const S2_SOCIAL_GAP_MS = 15000;
 // friendships/show), and the Discord bot and the Telegram reader the same, without bound: X's 15-minute read limits locked the account and every
 // real reporter's check failed or waited behind spaced()'s queue. Now each live check takes a slot of one shared minute first; a full minute
 // answers "try again in a minute" at once (nothing read, nothing queued).
+// A SHARE PER CALLER FIRST (kanban #2996, audit faucet r2-3): one stranger with 4 fresh keys a minute held the whole shared minute and every
+// reporter's check was refused. A caller (its ipKey, an IPv6 /64 as one; the Workers name it since #2995) takes at most S2_LIVE_PER_CALLER of
+// the minute's slots; a caller over its share is told so and takes none
 const S2_LIVE_ALL = [], S2_LIVE_MINUTE = Math.max(1, Number(env.FAUCET_BOUNTY_S2_LIVE_MINUTE) || 4);
-function s2LiveSlot(now = Date.now()) {
-  while (S2_LIVE_ALL.length && now - S2_LIVE_ALL[0] >= 60000) S2_LIVE_ALL.shift();
+const S2_LIVE_PER_CALLER = Math.max(1, Number(env.FAUCET_BOUNTY_S2_LIVE_PER_CALLER) || 2);
+function s2LiveSlot(caller = '', now = Date.now()) {
+  while (S2_LIVE_ALL.length && now - S2_LIVE_ALL[0].at >= 60000) S2_LIVE_ALL.shift();
+  if (S2_LIVE_ALL.filter((x) => x.caller === caller).length >= S2_LIVE_PER_CALLER) return 'caller';
   if (S2_LIVE_ALL.length >= S2_LIVE_MINUTE) return false;
-  S2_LIVE_ALL.push(now); return true;
+  S2_LIVE_ALL.push({ at: now, caller }); return true;
 }
+const s2CallerOf = (req) => ipKey(ipOf(req)) || String(ipOf(req) || '');
+const S2_LIVE_REFUSED = (got) => (got === 'caller' ? 'too many checks from this address right now - try again in a minute' : 'too many checks right now - try again in a minute');
 // SEASON 2 STARTS (the owner 2026-11-13 ~17:55Z: "Season 2 läuft ab Sonntag"): before it no Season 2 approval; a Season 1 report past the weekly budget
 // waits for it and is approved by the Season 2 rules once it runs (the sweep below)
 const S2_START_MS = env.FAUCET_BOUNTY_S2_START ? Date.parse(env.FAUCET_BOUNTY_S2_START) : null;
@@ -406,6 +413,7 @@ const bountyPayerId = async () => {
 const bountyPayerMayBe = (rowPayer) => !!BOUNTY_PAYER && rowPayer === `${BOUNTY_NETWORK} no-key ${BOUNTY_PAYER.dir} ${BOUNTY_PAYER.rpcserver}`;
 // THE ADMIN (kanban #1342 section 4): the owner's code, held to its hash as the explorer holds it (#1092); the rules, our keys, who played
 const ADMIN_SHA = String(env.FAUCET_ADMIN_SHA256 || '').trim().toLowerCase();
+const ADMIN_FAILS = new Map(), ADMIN_TRY_WINDOW_MS = 15 * 60 * 1000, ADMIN_TRIES_PER_CALLER = 5, ADMIN_TRIES_ALL = 30;   // kanban #3243
 const isAdmin = (req) => { const code = String(req.headers['x-arena-admin'] || '').trim(); if (!/^[0-9a-f]{64}$/.test(ADMIN_SHA) || !code) return false;
   return timingSafeEqual(Buffer.from(createHash('sha256').update(code).digest('hex')), Buffer.from(ADMIN_SHA)); };
 const RULES = (() => { try { return JSON.parse(env.FAUCET_REWARD_RULES || '{}'); } catch { return {}; } })();
@@ -413,6 +421,7 @@ const ourKeys = () => { try { return new Set(readFileSync(env.FAUCET_FEEDBACK_EX
 // THE SEATS A NODE CHECK ASKS (kanban #1342): every seat the season seats list (GET /network-games - a seat does not list itself, so they are merged, and each is one too)
 const NODE_CHECKS = new Map();
 const NODE_CHECK_ASKS = new Map(); const NODE_CHECKS_PER_HOUR = 10; let NODE_CHECK_BUSY = false;   // audit 5 #1402
+let NODE_CHECK_CHAIN = Promise.resolve(), NODE_CHECK_WAITING = 0; const NODE_CHECK_RUNNING = new Map(), NODE_CHECK_QUEUE_MOST = 8;   // kanban #3259
 // AN ANNOUNCED SEAT ENDPOINT IS ASKED ON THE PUBLIC INTERNET ONLY (kanban #1884, re-check of #1511): GET /network-games lists the census nodes'
 // endpoints, which any bonded node sets by a free signed address announcement - http://127.0.0.1:8080, 169.254.169.254, a LAN host - and a stranger's
 // node check made this faucet GET /owner, /roles and /served there. Only the operator's own are taken as given: the FAUCET_SEASON_SEATS bases, and a
@@ -875,7 +884,19 @@ createServer((req, res) => {
   if (path.startsWith('/feedback/admin/')) {
     if (req.method === 'OPTIONS') { res.writeHead(204, { ...cors, 'access-control-allow-methods': 'GET, POST', 'access-control-allow-headers': 'content-type, x-arena-admin', 'access-control-max-age': '86400' }); return res.end(); }
     if (!FEEDBACK) return send(503, { ok: false, why: 'reports are not kept here' });
-    if (!isAdmin(req)) return send(403, { ok: false, why: 'not the admin code' });
+    // A WRONG ADMIN CODE IS COUNTED (kanban #3243, audit r10): tries were unlimited, so the code could be guessed as fast as asked. A caller
+    // (its address; none named: one shared key) gets ADMIN_TRIES_PER_CALLER wrong codes in ADMIN_TRY_WINDOW_MS, all callers together
+    // ADMIN_TRIES_ALL; past either the admin answers 429 until the window ends - also to the right code, so a guess learns nothing
+    const who = `admin:${(typeof ipKey === 'function' ? ipKey(ipOf(req)) : ipOf(req)) || 'unnamed'}`, now0 = Date.now();
+    for (const [k, v] of ADMIN_FAILS) if (now0 - v.since > ADMIN_TRY_WINDOW_MS) ADMIN_FAILS.delete(k);
+    const mine = ADMIN_FAILS.get(who), all = ADMIN_FAILS.get('admin:*');
+    // kanban #3263 (audit r22): the all-callers count locks only callers that guessed wrong themselves - a caller with no wrong code (the
+    // owner) is never locked out by strangers; an IPv6 /64 is one caller (ipKey)
+    if ((mine && mine.n >= ADMIN_TRIES_PER_CALLER) || (all && all.n >= ADMIN_TRIES_ALL && mine && mine.n > 0)) return send(429, { ok: false, why: 'too many wrong admin codes - try again later' });
+    if (!isAdmin(req)) {
+      for (const k of [who, 'admin:*']) { const v = ADMIN_FAILS.get(k) || { n: 0, since: now0 }; v.n++; ADMIN_FAILS.set(k, v); }
+      return send(403, { ok: false, why: 'not the admin code' });
+    }
     const q = new URL(req.url, 'http://x').searchParams;
     const withReward = (r, ours) => { const w = FEEDBACK.rewards({ pubkey: r.pubkey }).find((x) => x.report === r.id);
       return { ...r, lnAddress: FEEDBACK.addressOf(r.id), ours: ours.has(r.pubkey), played: PLAYED.played(r.pubkey), rounds: PLAYED.history ? PLAYED.history(r.pubkey) : null, nodeBounty: FEEDBACK.nodeBountyFor(r), season2: S2 ? { approval: S2.approval(r.id), links: S2.links(r.pubkey), flags: S2.flagsOf(r.pubkey) } : null, realUser: S2 && S2.realUserOf ? S2.realUserOf(r.pubkey) : null, playedMark: S2 && S2.playedMarkOf ? S2.playedMarkOf(r.id) : null, reward: w ? { ...w, lnurl: w.state === 'paid' ? null : FEEDBACK.lnurlOf(w.k1, { base: PUBLIC_BASE }), page: `${PUBLIC_BASE}/lnurlw/${w.k1}` } : null }; };
@@ -1103,11 +1124,22 @@ createServer((req, res) => {
     const who = ipKey(ip) || ip;   // an IPv6 address by its /64, :: written out (kanban #1405)
     const mine = (NODE_CHECK_ASKS.get(who) || []).filter((t) => t > Date.now() - 3600000);
     if (mine.length >= NODE_CHECKS_PER_HOUR) return send(429, { ok: false, why: `at most ${NODE_CHECKS_PER_HOUR} node checks an hour from one address: try again later` });
-    if (NODE_CHECK_BUSY) return send(429, { ok: false, why: 'a node check is running: try again in a minute' });
+    // A QUEUE, NOT A REFUSAL (kanban #3259, audit r21 faucet-3): one global busy flag answered 429 to everyone while a check ran, so a stranger's
+    // back-to-back checks of random keys (one /64 each of a /48) kept every honest check refused. Checks still run one at a time over all
+    // callers, but a caller waits its turn (at most NODE_CHECK_QUEUE_MOST waiting), and the same node:npub asked meanwhile shares the one check
+    const inFlight = NODE_CHECK_RUNNING.get(k);
+    if (!inFlight && NODE_CHECK_WAITING >= NODE_CHECK_QUEUE_MOST) return send(429, { ok: false, why: 'node checks are queued: try again in a minute' });
     mine.push(Date.now()); NODE_CHECK_ASKS.set(who, mine); if (NODE_CHECK_ASKS.size > 5000) NODE_CHECK_ASKS.delete(NODE_CHECK_ASKS.keys().next().value);
-    NODE_CHECK_BUSY = true;
-    return nodeCheckNow(node, npub).then((answer) => { NODE_CHECKS.set(k, { at: Date.now(), answer }); if (NODE_CHECKS.size > 200) NODE_CHECKS.delete(NODE_CHECKS.keys().next().value); send(200, answer); },
-      (e) => send(502, { ok: false, why: `the seats could not be read: ${String(e.message || e).slice(0, 120)}` })).finally(() => { NODE_CHECK_BUSY = false; });
+    const run = inFlight || (() => {
+      NODE_CHECK_WAITING++;
+      const p = NODE_CHECK_CHAIN.then(() => { NODE_CHECK_WAITING--; NODE_CHECK_BUSY = true; return nodeCheckNow(node, npub); })
+        .then((answer) => { NODE_CHECKS.set(k, { at: Date.now(), answer }); if (NODE_CHECKS.size > 200) NODE_CHECKS.delete(NODE_CHECKS.keys().next().value); return answer; })
+        .finally(() => { NODE_CHECK_BUSY = false; NODE_CHECK_RUNNING.delete(k); });
+      NODE_CHECK_CHAIN = p.catch(() => {});
+      NODE_CHECK_RUNNING.set(k, p);
+      return p;
+    })();
+    return run.then((answer) => send(200, answer), (e) => send(502, { ok: false, why: `the seats could not be read: ${String(e.message || e).slice(0, 120)}` }));
   }
   // THE REWARD TABLE (kanban #1342, the owner 2026-11-08): the levels the form shows are the ones approve pays from - one source; public, no amounts
   // are promised while the bounty is off (the page shows the table only in its bounty build)
@@ -1162,7 +1194,7 @@ createServer((req, res) => {
         if (any) {
           const lastAsk = S2_SOCIAL_ASKS.get(who) || 0;
           if (Date.now() - lastAsk < S2_SOCIAL_GAP_MS) return send(429, { ok: false, why: 'one check every 15 seconds' });
-          if (!s2LiveSlot()) return send(429, { ok: false, why: 'too many checks right now - try again in a minute' });   // kanban #2646
+          { const slot = s2LiveSlot(s2CallerOf(req)); if (slot !== true) return send(429, { ok: false, why: S2_LIVE_REFUSED(slot) }); }   // kanban #2646, #2996
           S2_SOCIAL_ASKS.set(who, Date.now()); if (S2_SOCIAL_ASKS.size > 5000) S2_SOCIAL_ASKS.delete(S2_SOCIAL_ASKS.keys().next().value);
         }
         return socialCheck(S2, who, any ? asked : {}, S2_NAMES).then((j) => send(200, { ...j, on: Object.keys(S2_NAMES) }), () => send(200, { ok: false, why: 'try again' }));
@@ -1180,7 +1212,7 @@ createServer((req, res) => {
       const c = S2.makeCode(who); return send(200, { ...c, links: S2.links(who).map(({ userId, ...l }) => l), flags: S2.flagsOf(who) }); }
     const lastAsk = S2_VERIFY_ASKS.get(who) || 0;
     if (Date.now() - lastAsk < S2_VERIFY_GAP_MS) return send(429, { ok: false, why: 'one check a minute' });
-    if (!s2LiveSlot()) return send(429, { ok: false, why: 'too many checks right now - try again in a minute' });   // kanban #2646
+    { const slot = s2LiveSlot(s2CallerOf(req)); if (slot !== true) return send(429, { ok: false, why: S2_LIVE_REFUSED(slot) }); }   // kanban #2646, #2996
     S2_VERIFY_ASKS.set(who, Date.now()); if (S2_VERIFY_ASKS.size > 5000) S2_VERIFY_ASKS.delete(S2_VERIFY_ASKS.keys().next().value);
     S2.verify(who, S2_VERIFY, { cause: 'reporter' }).then((flags) => send(200, { ok: true, flags, links: S2.links(who).map(({ userId, ...l }) => l) }), () => send(200, { ok: false, why: 'try again' }));
     return undefined;

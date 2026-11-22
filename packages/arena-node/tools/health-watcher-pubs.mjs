@@ -47,6 +47,9 @@ export function pubsConfig(env = process.env, H = process.env.HOME || '/home/are
     opsDir: env.HW_OPS_LOG_DIR || `${H}/blwp-testnet4`,
     scanBack: n('HW_SCAN_BACK', 300), scanMax: n('HW_SCAN_MAX', 320),
     sourceMs: n('HW_PUB_SOURCE_H', 36) * 3600000, keepMs: n('HW_PUB_KEEP_H', 48) * 3600000,
+    // kanban #2773 (the owner 2026-11-21: fewer alerts, only accurate and important ones): an unconfirmed publication is alerted only
+    // when its rounds start within HW_PUB_URGENT_H (3) or it has waited over HW_PUB_ALERT_AFTER_H (2); before that the log says it
+    urgentMs: n('HW_PUB_URGENT_H', 3) * 3600000, alertAfterMs: n('HW_PUB_ALERT_AFTER_H', 2) * 3600000,
     publicBlocks: n('HW_PUBLIC_BLOCKS', 2), publicMs: n('HW_PUBLIC_MIN', 30) * 60000, oursBlocks: n('HW_OURS_BLOCKS', 2),
     resendMs: n('HW_RESEND_MIN', 30) * 60000,
     cpfp: env.HW_CPFP !== '0', cpfpGapMs: n('HW_CPFP_GAP_MIN', 60) * 60000, cpfpMax: n('HW_CPFP_MAX_BUMPS', 2),
@@ -164,11 +167,12 @@ export async function esploraLook(http, txids) {
   const r = { tip, mem: [], found: [], unread: [] };
   for (let i = 0; i < txids.length; i += 5) {
     await Promise.all(txids.slice(i, i + 5).map(async (x) => {
-      const s = await http('GET', `/tx/${x}/status`);
+      // GET /tx/<id>, not /status: /status answers {"confirmed":false} for a txid nobody knows (measured 2026-11-04 on both bases)
+      const s = await http('GET', `/tx/${x}`);
       if (s.status === 404) return;                     // the chain and its mempool do not know it
       let j = null; try { j = JSON.parse(s.text); } catch { /* no */ }
-      if (!s.ok || !j) { r.unread.push(x); return; }
-      if (j.confirmed) r.found.push({ txid: x, h: j.block_height, hash: j.block_hash }); else r.mem.push(x);
+      if (!s.ok || !j || !j.status) { r.unread.push(x); return; }
+      if (j.status.confirmed) r.found.push({ txid: x, h: j.status.block_height, hash: j.status.block_hash }); else r.mem.push(x);
     }));
   }
   return r;
@@ -378,9 +382,14 @@ export function assessPubs(f, st, pc, problems, fixes, nowMs) {
     if (bad.some((b) => b.p.orphan)) tried.push('replacement looked up');
     if (!tried.length) tried.push('nothing yet');
     const needsPublic = bad.some((b) => b.pubLate);
-    problems.push({ key: 'publications', ticket: '759', title: 'round publication not confirmed', lines, tried: [tried.join(', ')],
+    // urgent: its rounds start within urgentMs (or its time is not known), or it has waited past alertAfterMs; an orphan always
+    const startOf = (p) => { const s = decodePayload(payloadOf(p.vout)).series.map((id) => seriesById.get(id)).find(Boolean);
+      const v = s && s.from != null ? s.from : (p.when || [])[0]; return v != null && Number.isFinite(Number(v)) ? Number(v) : null; };
+    const urgent = bad.filter(({ p }) => p.orphan || startOf(p) === null || startOf(p) - nowMs <= pc.urgentMs || nowMs - p.firstMs > pc.alertAfterMs);
+    const soonest = Math.min(...bad.map(({ p }) => startOf(p) ?? Infinity));
+    problems.push({ key: 'publications', ticket: '759', title: `round publication not confirmed${urgent.length ? '' : ` (not urgent: its rounds start in ${Math.round((soonest - nowMs) / 3600000)} h)`}`, lines, tried: [tried.join(', ')],
       needs: bad.some((b) => b.p.orphan) ? 'republish needed: the payload is in no chain and its inputs are spent, see #1124'
-        : needsPublic ? (pc.publicConfirm ? 'public mining, see #759' : 'public mining (HW_PUBLIC_CONFIRM off), see #759') : 'miner C checked, see #759', alert: true });
+        : needsPublic ? (pc.publicConfirm ? 'public mining, see #759' : 'public mining (HW_PUBLIC_CONFIRM off), see #759') : 'miner C checked, see #759', alert: urgent.length > 0 });
   }
   return { bad };
 }

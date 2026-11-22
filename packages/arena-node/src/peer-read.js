@@ -45,6 +45,27 @@ export async function bytesUpTo(r, maxBytes) {
 
 export async function textUpTo(r, maxBytes) { return (await bytesUpTo(r, maxBytes)).toString('utf8'); }
 
+// A REFUSAL'S FIRST BYTES ONLY (kanban #3011, #3012): a peer's non-ok answer is read for its reason - at most `maxBytes`, then the stream is
+// dropped. The duty poster's POST /series and a guardian's spent-set post read a refusal whole, and one seat streaming an endless body for
+// the 20-30 s timeout filled the posting seat's heap. Never throws for the size; a stand-in with no stream is read as it offers itself
+export const REFUSAL_BYTES = 4096;
+export async function textHead(r, maxBytes = REFUSAL_BYTES) {
+  if (!r) return '';
+  if (r.body === undefined) return typeof r.text === 'function' ? String(await r.text()).slice(0, maxBytes) : '';
+  if (!r.body) return '';
+  const reader = r.body.getReader();
+  const chunks = []; let n = 0;
+  try {
+    while (n < maxBytes) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const take = value.subarray(0, maxBytes - n);
+      chunks.push(Buffer.from(take.buffer, take.byteOffset, take.byteLength)); n += take.length;
+    }
+  } finally { reader.cancel().catch(() => {}); }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
 // a fetch Response always has `body` (a stream, or null for no body); only an injected stand-in (tests' fetchFn) has none at all,
 // and that one is read as it offers itself
 export const jsonUpTo = async (r, maxBytes) => (r.body === undefined && typeof r.json === 'function' ? r.json() : JSON.parse(await textUpTo(r, maxBytes)));

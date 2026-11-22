@@ -18,6 +18,8 @@
  *           g. our Lightning gateways (HW_GATEWAYS, kanban #2773): each one's payment log and balance judged by src/gateway-loss.js -
  *              failed payments "note already spent", e-cash gone with no payment to explain it, dead notes (the JSON
  *              tools/gateway-dead-notes.mjs writes) - red goes to the chat AND to the owner's Signal (HW_SIGNAL_TO), #2771 went unseen 6 days
+ *              - a drop matched by the same e-cash arriving at another of ours (same federation, neighbouring readings) or announced in
+ *              HW_GATEWAY_MOVES (ops/gateway-moves.json) is our own move: a plain "moved ... gw-c -> gw-b" line, not red (2026-11-21)
  *   FIX     what has a safe runbook, each behind guards and a rate limit, and rechecked on the next pass before it is ever done again:
  *           - a test host seat down two passes: restart that one unit (load1 < 12, :03-:08 of a quarter only - never across a seating,
  *             memory seat-roll-seating-window -, one seat per 10 min, the same seat once per hour)
@@ -36,6 +38,8 @@ import { execFile } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { roundSeating, NOW_ROUNDS } from '../../../src/arena-ui/health/network.js';
 import { readGateway } from '../src/hosts.js';
+import { netMoves } from '../src/gateway-loss.js';
+import { openWindows, applyPlanned, autoWindow, rollsIn } from './health-watcher-planned.mjs';
 import { pubsConfig, gatherPubs, assessPubs, pubMemTxs, doResend, doCpfp, doPublicMine, lookScript, parseLook, callsScript, parseCalls, opsPublished, esploraCalls } from './health-watcher-pubs.mjs';
 
 const H = process.env.HOME || '/home/arena';
@@ -64,7 +68,8 @@ export function config(env = process.env, argv = []) {
     confirm: n('HW_CONFIRM_PASSES', 2),                 // a problem counts once it is seen on this many passes in a row
     notOpenPasses: n('HW_NOT_OPEN_PASSES', 5),          // "seated, none open" alerts only after this many passes (about 15 min)
     repeatMs: n('HW_REPEAT_MIN', 60) * 60000,           // the same alert again at most this often
-    seatDownAlertMs: n('HW_SEAT_DOWN_ALERT_MIN', 20) * 60000,
+    seatDownAlertMs: n('HW_SEAT_DOWN_ALERT_MIN', 10) * 60000,   // kanban #2773: and a 30 s check fails too (pass)
+    seatRecheckMs: n('HW_SEAT_RECHECK_S', 30) * 1000,
     restartGapMs: n('HW_RESTART_GAP_MIN', 10) * 60000,  // one seat restart in this long, any seat
     restartSameMs: n('HW_RESTART_SAME_MIN', 60) * 60000,// the same seat at most once in this long
     flapRestarts: n('HW_FLAP_RESTARTS', 3),             // NRestarts climbing by this much in an hour
@@ -81,6 +86,12 @@ export function config(env = process.env, argv = []) {
     // g. "name,base,password file[,dead-notes file]" per gateway, separated by ";" (kanban #2773)
     gateways: String(env.HW_GATEWAYS || '').split(';').map((x) => x.trim()).filter(Boolean).map((x) => { const [name, base, passwordFile, deadFile] = x.split(',').map((y) => y.trim());
       return { name, base: String(base || '').replace(/\/+$/, ''), passwordFile, ...(deadFile ? { deadFile } : {}) }; }),
+    // g. the operator's announced moves between our gateways (kanban #2773): [{ from, to, federation, msat, atMs }], explains a drop
+    gatewayMovesFile: env.HW_GATEWAY_MOVES || `${H}/blwp-testnet4/ops/gateway-moves.json`,
+    // planned downtime (kanban #2773, ./health-watcher-planned.mjs): the announced windows, their grace, the roll-seen window's length
+    plannedFile: env.HW_PLANNED_DOWNTIME || `${H}/blwp-testnet4/ops/planned-downtime.json`,
+    plannedGraceMs: n('HW_PLANNED_GRACE_MIN', 5) * 60000,
+    plannedAutoMs: n('HW_PLANNED_AUTO_GRACE_MIN', 10) * 60000,
     signal: { url: env.HW_SIGNAL_URL || 'http://127.0.0.1:8080/api/v1/rpc', to: env.HW_SIGNAL_TO || '' },
   };
 }
@@ -141,6 +152,10 @@ export async function gather(io, cfg, state, nowMs) {
   // g. the gateways, one after the other; each reading judged against the last one kept (its balance, its drops of the window)
   f.gateways = [];
   if (io.gateway) for (const g of cfg.gateways) f.gateways.push(await io.gateway(g, (state.gw || {})[g.name] || null).catch((e) => ({ name: g.name, error: e.message })));
+  f.gatewayMoves = cfg.gateways.length && io.gatewayMoves ? await io.gatewayMoves().catch(() => []) : [];
+  // planned downtime: the announced windows and the roll jobs running now (kanban #2773)
+  f.planned = io.planned ? await io.planned().catch(() => []) : [];
+  f.rolls = io.rolls ? await io.rolls().catch(() => []) : [];
   return f;
 }
 const dedupeGames = (gs) => [...new Map(gs.map((g) => [String(g.id).toLowerCase(), g])).values()];
@@ -201,10 +216,12 @@ export function assess(f, prev, cfg) {
     const lines = [`down ${mins(nowMs - down.downSince)} min${s.why ? ` (${String(s.why).slice(0, 40)})` : ''}${u ? `, unit ${u.active || '?'}, ${u.nRestarts ?? '?'} restarts` : ''}`];
     const tried = [];
     let alert = nowMs - down.downSince >= cfg.seatDownAlertMs, needs = '';
-    if (!s.unit) { alert = true; needs = 'restart on the test host, see #759'; tried.push('nothing (second-host seat)'); }
+ // kanban #2773 (the owner 2026-11-21 22:01): only a seat down HW_SEAT_DOWN_ALERT_MIN (10) is alerted - a stall of a few passes is
+    // logged; the load holding the restart, a restart that did not help or a second-host seat no longer alert sooner
+    if (!s.unit) { needs = 'restart on the test host, see #759'; tried.push('nothing (second-host seat)'); }
     else {
       if (fx && fx.recheck === 'pending') { fx.recheck = 'failed'; }
-      if (fx && fx.recheck === 'failed') { tried.push(`restarted ${hm(fx.atMs)} UTC, still down`); alert = true; }
+      if (fx && fx.recheck === 'failed') tried.push(`restarted ${hm(fx.atMs)} UTC, still down`);
       const blocked = [], held = [];   // blocked: the log's words; held: the alert's
       if (!(l1 < cfg.loadMax)) { blocked.push(`1-min load ${l1} >= ${cfg.loadMax}`); held.push(`load ${l1} >= ${cfg.loadMax}`); }
       if (!inRestartMinutes(nowMs)) { blocked.push(`${hm(nowMs)} UTC is not :03-:08 of a quarter (seating)`); held.push('seating minutes'); }
@@ -215,14 +232,15 @@ export function assess(f, prev, cfg) {
       const allowed = !blocked.length;
       fixes.push({ key: fixKey, kind: 'restart-seat', unit: s.unit, base: k, allowed, blocked });
       if (allowed) restartPlanned = true;
-      else {
-        tried.push(`restart held (${held.join(', ')})`);
-        if (blocked.some((b) => /load|restarting it already|restarted \d+ min ago \(once/.test(b))) alert = true;
-      }
+      else tried.push(`restart held (${held.join(', ')})`);
       if (allowed) tried.push('restarting it now');
       needs = allowed ? 'nothing yet (recheck next pass)' : 'manual restart when safe, see #759';
     }
     problems.push({ key: `seat-down:${k}`, ticket: '759', title: `${seatName(k)} not answering`, lines, tried, needs, alert });
+  }
+  // every seat down: alerted at once (a 30 s check in pass must fail too)
+  if (f.seats.length && f.seats.every((s) => !s.ok)) {
+    problems.push({ key: 'seats-all-down', ticket: '759', title: `every seat down (${f.seats.length} of ${f.seats.length} not answering)`, lines: [], tried: ['nothing'], needs: 'the hosts checked, see #759', alert: true });
   }
   // a seat unit restarting by itself over and over (NRestarts climbing)
   for (const [unit, u] of Object.entries(f.units)) {
@@ -304,14 +322,21 @@ export function assess(f, prev, cfg) {
 
   // g. THE GATEWAYS (kanban #2773): red at once - money is at stake, and a payment log does not flap; one that is not read, after two passes
   st.gw = st.gw || {};
+  // a drop on one of ours matched by the same e-cash arriving at another of ours (or announced) is a move, not a loss (kanban #2773)
+  netMoves(f.gateways || [], { announced: f.gatewayMoves || [] });
   for (const g of f.gateways || []) {
     if (g.error) {
       const n = streak(`gateway-unread:${g.name}`, true);
       problems.push({ key: `gateway-unread:${g.name}`, ticket: '2773', title: `gateway ${g.name} not read`, lines: [g.error], tried: ['nothing'], needs: 'gateway checked', alert: n >= cfg.confirm });
       continue;
     }
-    st.gw[g.name] = { readAtMs: g.readAtMs, federations: g.federations, watch: { drops: (g.watch && g.watch.drops) || [] } };
+    st.gw[g.name] = { readAtMs: g.readAtMs, federations: g.federations, watch: { drops: (g.watch && g.watch.drops) || [], rises: (g.watch && g.watch.rises) || [] } };
     const w = g.warning;
+    // the moves: a plain line, never an alert
+    for (const d of ((g.watch && g.watch.drops) || []).filter((x) => x.moved)) {
+      problems.push({ key: `gateway-move:${g.name}:${d.federation.slice(0, 8)}:${d.toMs}`, ticket: '2773', title: `moved ${(BigInt(d.moved.msat) / 1000n).toLocaleString('en-US')} sat ${d.moved.from} -> ${d.moved.to} (${d.federation.slice(0, 8)}, ${hm(d.toMs)} UTC${d.moved.by === 'announced' ? ', announced' : ''})`,
+        lines: [], tried: ['nothing'], needs: '-', alert: false });
+    }
     if (w && w.level === 'bad') {
       streak(`gateway:${g.name}`, true);
       const f1 = (g.watch && g.watch.failures) || {};
@@ -420,11 +445,54 @@ export function markAlerted(st, a, problems, nowMs) {
   st.alerts[a.key] = { ...(st.alerts[a.key] || { firstMs: nowMs }), lastMs: nowMs, title: p.title, ticket: p.ticket, absent: 0 };
 }
 
+// ---------------------------------------------------------------- SEATS DOWN: CHECKED TWICE, SAID ONCE (kanban #2773, the owner 2026-11-21 22:01:
+// "Warnungen minimieren ausser sie sind wirklich akkurat und wichtig" - four "seat N not answering" alerts for an 8 s stall at load 12.9)
+/** Each alerting seat-down (and every-seat-down) is asked again with a longer timeout; one that answers is logged, not alerted. */
+export async function recheckSeats(io, problems, f, cfg) {
+  const base = (p) => p.key.slice('seat-down:'.length);
+  const asks = problems.filter((p) => p.alert && /^seat-down:/.test(p.key)).filter((p) => {
+    const s = f.seats.find((x) => x.base === base(p)), u = s && s.unit ? f.units[s.unit] : null;
+    return !(u && u.active && u.active !== 'active');   // a unit failed or stopped is down: no second look needed
+  });
+  await Promise.all(asks.map(async (p) => {
+    const a = await io.identity(base(p), cfg.seatRecheckMs).catch(() => ({ ok: false }));
+    if (a && a.ok) { p.alert = false; p.title += ` (answered a ${Math.round(cfg.seatRecheckMs / 1000)} s check)`; }
+  }));
+  const all = problems.find((p) => p.key === 'seats-all-down' && p.alert);
+  if (all) {
+    const some = f.seats.slice(0, 3);
+    const got = await Promise.all(some.map((s) => io.identity(s.base, cfg.seatRecheckMs).catch(() => ({ ok: false }))));
+    if (got.some((a) => a && a.ok)) { all.alert = false; all.title += ` (a ${Math.round(cfg.seatRecheckMs / 1000)} s check answered)`; }
+  }
+}
+/** "seats 2, 5, 6, 7 not answering for 12 min": the alerting seat-downs become one problem `seats-down`; each stays in the log. */
+export function combineSeatsDown(problems, nowMs, st) {
+  const down = problems.filter((p) => p.alert && /^seat-down:/.test(p.key));
+  if (!down.length) return null;
+  const names = down.map((p) => p.title.replace(/ not answering.*$/, ''));
+  const host = names.filter((x) => /^seat \d+$/.test(x)).map((x) => x.slice(5)), other = names.filter((x) => !/^seat \d+$/.test(x));
+  const who = [...(host.length ? [`seat${host.length > 1 ? 's' : ''} ${host.join(', ')}`] : []), ...other].join(', ');
+  const since = Math.max(...down.map((p) => { const k = p.key.slice('seat-down:'.length); return (st.seats[k] && st.seats[k].downSince) || nowMs; }));
+  for (const p of down) { p.alert = false; p.title += ' (in seats-down)'; }
+  const one = { key: 'seats-down', ticket: '759', title: `${who} not answering for ${mins(nowMs - since)} min`, lines: down.map((p, i) => `${names[i]}: ${(p.lines || []).join('; ')}`),
+    tried: [...new Set(down.flatMap((p) => p.tried || []))], needs: down.length > 1 ? 'the seats checked, see #759' : down[0].needs, alert: true };
+  problems.push(one);
+  return one;
+}
+
 // ---------------------------------------------------------------- ONE PASS
 export async function pass(io, cfg, prev) {
   const nowMs = io.now();
   const f = await gather(io, cfg, prev || {}, nowMs);
   const { state, problems, fixes } = assess(f, prev || {}, cfg);
+  // kanban #2773: what we take down ourselves (announced, or a roll running) is logged "planned: ...", not alerted, not restarted
+  state.plannedAuto = autoWindow((prev || {}).plannedAuto, f.rolls, nowMs, { graceMs: cfg.plannedAutoMs });
+  if (!state.plannedAuto) delete state.plannedAuto;
+  const windows = openWindows([...(f.planned || []), ...(state.plannedAuto ? [state.plannedAuto] : [])], nowMs, { graceMs: cfg.plannedGraceMs });
+  applyPlanned(problems, fixes, windows, cfg);
+  // kanban #2773: a seat is alerted only when a second, longer check fails too, and all of them in one message
+  await recheckSeats(io, problems, f, cfg);
+  combineSeatsDown(problems, nowMs, state);
   if (f.censusProbe) state.census = { atMs: f.censusProbe.atMs, answering: f.censusProbe.answering };
   const did = [];
   for (const x of fixes.filter((y) => y.allowed)) {
@@ -450,7 +518,7 @@ export async function pass(io, cfg, prev) {
     }
   }
   state.lastPassMs = nowMs;
-  return { state, facts: f, problems, fixes, did, alerts: posted };
+  return { state, facts: f, problems, fixes, did, alerts: posted, planned: windows };
 }
 
 // ---------------------------------------------------------------- THE REAL WORLD
@@ -495,14 +563,14 @@ export function realIo(cfg) {
     loadavg: async () => readFileSync('/proc/loadavg', 'utf8').split(' ').slice(0, 3).map(Number),
     topProcs: async () => { try { return topLine(await run('ps', ['-eo', 'pcpu,args', '--sort=-pcpu', '--no-headers'])); } catch { return null; } },
     get,
-    identity: async (base) => {
+    identity: async (base, timeoutMs = 8000) => {
       try {
-        const r = await fetch(base + '/identity', { signal: AbortSignal.timeout(8000) });
+        const r = await fetch(base + '/identity', { signal: AbortSignal.timeout(timeoutMs) });
         if (!r.ok) return { ok: false, why: `HTTP ${r.status}` };
         const b = Buffer.from(await r.arrayBuffer());
         if (b.length === 32) return { ok: true, key: b.toString('hex') };
         try { const j = JSON.parse(b.toString()); return { ok: true, key: j.node || j.key || null }; } catch { return { ok: true, key: null }; }
-      } catch (e) { return { ok: false, why: e.name === 'TimeoutError' ? 'no answer in 8 s' : e.message }; }
+      } catch (e) { return { ok: false, why: e.name === 'TimeoutError' ? `no answer in ${Math.round(timeoutMs / 1000)} s` : e.message }; }
     },
     units: async (units) => {
       const out = {};
@@ -553,6 +621,12 @@ export function realIo(cfg) {
     },
     // kanban #2773: one gateway read the way its node reads it (hosts.js), the last reading as `prev` for the balance check
     gateway: (g, prev) => readGateway(g, { prev }),
+    // kanban #2773: the planned downtime windows (no file is none) and the roll jobs running (units and processes; none when unread)
+    planned: async () => { try { const j = JSON.parse(readFileSync(cfg.plannedFile, 'utf8')); return Array.isArray(j) ? j : []; } catch { return []; } },
+    rolls: async () => rollsIn(await run('systemctl', ['--user', 'list-units', '--type=service', '--state=active,activating', '--no-legend', '--plain', 'roll*', 'restart*']).catch(() => ''),
+      await run('pgrep', ['-af', '(^|[ /])(roll|restart)[A-Za-z0-9_.-]*\\.(sh|mjs)( |$)']).catch(() => '')),
+    // kanban #2773: the announced moves; no file is none
+    gatewayMoves: async () => { try { const j = JSON.parse(readFileSync(cfg.gatewayMovesFile, 'utf8')); return Array.isArray(j) ? j : (j && Array.isArray(j.moves) ? j.moves : []); } catch { return []; } },
     // kanban #2773: the owner's Signal, through the local signal-cli daemon's JSON-RPC (memory signal-user; never restarted from here)
     signal: async (text) => {
       const r = await fetch(cfg.signal.url, { method: 'POST', headers: { 'content-type': 'application/json' },
@@ -588,6 +662,7 @@ export function report(r, cfg) {
   const out = [JSON.stringify({ hw: 'pass', at: new Date(r.facts.nowMs).toISOString(), dry: cfg.dry, load: r.facts.load,
     seats: `${r.facts.seats.filter((s) => s.ok).length}/${r.facts.seats.length}`, lists: `${r.facts.lists.filter(Boolean).length}/${r.facts.lists.length}`,
     problems: r.problems.map((p) => `${p.alert ? '!' : '-'} ${p.key}: ${p.title}`),
+    ...(r.planned && r.planned.length ? { planned: r.planned.map((w) => `${w.what} until ${new Date(Number(w.untilMs)).toISOString().slice(11, 16)}${w.auto ? ' (roll seen)' : ''}`) } : {}),
     fixes: r.fixes.map((x) => `${x.allowed ? (cfg.dry ? 'would' : 'do') : 'held'} ${x.kind} ${x.unit || (x.txid ? x.txid.slice(0, 8) : `${x.chain ? `${x.chain} ` : ''}${(x.txids || []).length} txid(s)`)}${x.blocked.length ? ` (${x.blocked.join('; ')})` : ''}`),
     did: r.did.map((x) => `${x.kind} ${x.unit || x.chain || (x.txid || '').slice(0, 8)}${x.txids ? ` ${x.txids.map((t) => t.slice(0, 8)).join(',')}` : ''}${x.dry ? ' (dry)' : x.ok ? ' ok' : ' FAILED'}${x.why ? `: ${x.why}` : ''}`),
     alerts: r.alerts.map((a) => `${a.kind} ${a.key}${a.dry ? ' (dry: not posted)' : a.ok ? ' posted' : ` NOT POSTED ${a.why}`}`) })];

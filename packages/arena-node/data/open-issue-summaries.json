@@ -1970,5 +1970,49 @@
  "3225": {
   "text": "Node software: a seat that signed the losing equivocated batch can stay marked signed",
   "kind": "bug"
+ },
+ "3242": {
+  "text": "Other: a failed load can leak a host capability and escape the sandbox",
+  "kind": "bug"
+ },
+ "3253": {
+  "text": "Node software: claiming another seat's key can drop that seat and lose a paid record",
+  "kind": "bug"
+ },
+ "3254": {
+  "text": "Node software: seating rechecks padded or refused certificates for every stranger",
+  "kind": "bug"
+ },
+ "3255": {
+  "text": "Other: a replayed held final mark after close opens a peer link on every frame",
+  "kind": "bug"
+ },
+ "3257": {
+  "text": "Node software: a late low-id lock on some seats can void an honest head-to-head round",
+  "kind": "bug"
+ },
+ "3258": {
+  "text": "Committees and bonds: a bond-floor check rebuilds an uncached census for every stranger request",
+  "kind": "bug"
+ },
+ "3259": {
+  "text": "Faucet and feedback: a stranger can hold the shared node-check slot so an honest check is refused",
+  "kind": "bug"
+ },
+ "3260": {
+  "text": "Settlement: a single scalar-market attestor can void or pick a round against both honest values",
+  "kind": "bug"
+ },
+ "3261": {
+  "text": "Other: an unsigned hash stream of a single tree-core file can block a signed update for a day",
+  "kind": "bug"
+ },
+ "3262": {
+  "text": "Other: the relay rebroadcasts an already kept event on every resend",
+  "kind": "bug"
+ },
+ "3264": {
+  "text": "Other: watching a closed round again resimulates its runs on the main thread",
+  "kind": "bug"
  }
 }

@@ -177,6 +177,8 @@ export function openBountySeason(path = ':memory:', { startMs = null, s2EndMs = 
     CREATE TABLE IF NOT EXISTS link_codes (code TEXT PRIMARY KEY, pubkey TEXT NOT NULL, made_ms INTEGER NOT NULL, used_ms INTEGER, platform TEXT, user_id TEXT);
     CREATE INDEX IF NOT EXISTS link_codes_by_key ON link_codes (pubkey, made_ms);
     CREATE INDEX IF NOT EXISTS link_codes_by_age ON link_codes (made_ms);
+    CREATE TABLE IF NOT EXISTS link_code_uses (code TEXT NOT NULL, platform TEXT NOT NULL, used_ms INTEGER NOT NULL, user_id TEXT, PRIMARY KEY (code, platform));
+    INSERT OR IGNORE INTO link_code_uses (code, platform, used_ms, user_id) SELECT code, platform, used_ms, user_id FROM link_codes WHERE used_ms IS NOT NULL AND platform IS NOT NULL;
     CREATE TABLE IF NOT EXISTS links (pubkey TEXT NOT NULL, platform TEXT NOT NULL, user_id TEXT NOT NULL, username TEXT, linked_ms INTEGER NOT NULL,
       member INTEGER, checked_ms INTEGER, why TEXT, PRIMARY KEY (pubkey, platform));
     CREATE TABLE IF NOT EXISTS tg_seen (username TEXT PRIMARY KEY, user_id TEXT NOT NULL, seen_ms INTEGER NOT NULL);
@@ -192,6 +194,17 @@ export function openBountySeason(path = ':memory:', { startMs = null, s2EndMs = 
   // THE ROW BEFORE AN INTENT (kanban #3220): an 'approving' row keeps the row it replaced (JSON, null when there was none), so a report store that
   // refuses the approval puts that row back - a waiting report keeps waiting
   try { db.exec('ALTER TABLE approvals ADD COLUMN intent_prior TEXT'); } catch { /* there already */ }
+  // EVERY NAME A LINKED ACCOUNT CARRIED (kanban #3032, audit faucet r3-1): the bot list (#2958) was matched against the link's current username only,
+  // so a listed X bot renamed its account (free on X), typed or posted the new name, and its reports paid the human amount again. Each
+  // (platform, account id, name) a link ever held is kept, and the list is matched against all of an account's names
+  db.exec(`CREATE TABLE IF NOT EXISTS link_names (platform TEXT NOT NULL, user_id TEXT NOT NULL, username TEXT NOT NULL, PRIMARY KEY (platform, user_id, username));
+    INSERT OR IGNORE INTO link_names (platform, user_id, username) SELECT platform, user_id, lower(username) FROM links WHERE username IS NOT NULL;
+    CREATE TRIGGER IF NOT EXISTS link_names_add AFTER INSERT ON links WHEN new.username IS NOT NULL BEGIN
+      INSERT OR IGNORE INTO link_names (platform, user_id, username) VALUES (new.platform, new.user_id, lower(new.username)); END;
+    CREATE TRIGGER IF NOT EXISTS link_names_move AFTER UPDATE OF username, user_id ON links WHEN new.username IS NOT NULL BEGIN
+      INSERT OR IGNORE INTO link_names (platform, user_id, username) VALUES (new.platform, new.user_id, lower(new.username)); END;`);
+  const namesOf = db.prepare('SELECT username FROM link_names WHERE platform = ? AND user_id = ?');
+  const firstNameOf = db.prepare('SELECT username FROM link_names WHERE platform = ? AND user_id = ? ORDER BY rowid ASC LIMIT 1');   // kanban #3056
   const seasonNow = (nowMs) => seasonAt(nowMs, startMs, s2EndMs);
 
   /** A ONE-TIME LINK CODE for a reporter's key (signed in with it): 24 hours, used once, at most LINK_CODES_OPEN_MOST open at a time. */
@@ -221,13 +234,17 @@ export function openBountySeason(path = ':memory:', { startMs = null, s2EndMs = 
     const code = `BA-${m[1].toUpperCase()}`;
     const c = db.prepare('SELECT * FROM link_codes WHERE code = ?').get(code);
     if (!c) return { ok: false, why: 'unknown code' };
-    if (c.used_ms != null) return { ok: false, why: 'that code was used already' };
+    // ONCE PER PLATFORM (kanban #3027, audit faucet r2-1): one use for all platforms let a stranger who read a reporter's code on X send it to the
+    // Discord or Telegram bot before the next 3-minute X poll - the code was used up there and the reporter's X account (Season 2's only human
+    // proof) could never be linked by code. A code links one account per platform now; on X the first poster of it still wins (#3003)
+    if (db.prepare('SELECT 1 AS x FROM link_code_uses WHERE code = ? AND platform = ?').get(code, platform)) return { ok: false, why: 'that code was used already' };
     if (nowMs - c.made_ms > LINK_CODE_MS) return { ok: false, why: 'that code has expired: make a new one' };
     const held = db.prepare('SELECT pubkey, proof FROM links WHERE platform = ? AND user_id = ?').get(platform, String(userId));
     if (held && held.pubkey !== c.pubkey && held.proof === 'code') return { ok: false, why: 'that account is linked to another report key' };
     // a code proves the account: a key that only typed its name in the form (kanban #2641) gives it up
     if (held && held.pubkey !== c.pubkey) db.prepare('DELETE FROM links WHERE platform = ? AND user_id = ?').run(platform, String(userId));
     db.prepare('UPDATE link_codes SET used_ms = ?, platform = ?, user_id = ? WHERE code = ? AND used_ms IS NULL').run(nowMs, platform, String(userId), code);
+    db.prepare('INSERT OR IGNORE INTO link_code_uses (code, platform, used_ms, user_id) VALUES (?, ?, ?, ?)').run(code, platform, nowMs, String(userId));
     db.prepare(`INSERT INTO links (pubkey, platform, user_id, username, linked_ms, proof) VALUES (?, ?, ?, ?, ?, 'code')
       ON CONFLICT (pubkey, platform) DO UPDATE SET user_id = excluded.user_id, username = excluded.username, linked_ms = excluded.linked_ms, member = NULL, checked_ms = NULL, why = NULL, proof = 'code'`)
       .run(c.pubkey, platform, String(userId), username ? String(username).slice(0, 64) : null, nowMs);
@@ -306,7 +323,8 @@ export function openBountySeason(path = ':memory:', { startMs = null, s2EndMs = 
     // A KNOWN AI BOT IS A BOT, WHATEVER IT LINKS (kanban #2958, the owner 2026-11-17 on x.com/damaidams: "Alle tickets mit diesem handle als bot
     // markieren, auch in Zukunft"): a key that links an X handle on the bot list (FAUCET_BOT_X_HANDLES file, read on every call) gets no flag -
     // not human, no social bonus - for every report, past and future
-    if (links.some((l) => l.platform === 'x' && botXHandles().has(String(l.username || '').replace(/^@/, '').toLowerCase()))) return { ...f, bot: true };
+    const bots = botXHandles(), listed = (n) => bots.has(String(n || '').replace(/^@/, '').toLowerCase());
+    if (links.some((l) => l.platform === 'x' && (listed(l.username) || (bots.size && namesOf.all('x', String(l.userId)).some((r) => listed(r.username)))))) return { ...f, bot: true };
     for (const l of links) if (l.member === true && l.checkedMs != null && nowMs - l.checkedMs <= CHECK_FRESH_MS) f[l.platform] = true;
     return f;
   }
@@ -434,7 +452,15 @@ export function openBountySeason(path = ':memory:', { startMs = null, s2EndMs = 
       const f = flagsOf(k, { nowMs });
       const ls = linksOf(k);
       const pick = COMMUNITIES.map((p) => f[p] && ls.find((l) => l.platform === p)).find(Boolean) || null;
-      if (pick) picks.push({ name: `${pick.platform}:${pick.username || pick.userId}`, id: `${pick.platform}:${pick.userId || k}`, key: k });
+      // THE NAME THE ACCOUNT FIRST CARRIED (kanban #3056, audit faucet r4-2-1): the entries are read after the seed block is public, and an entrant
+      // renamed his linked account (same id, claimName/redeem update the name) until the published draw gave him place 1. An entry names the
+      // account by the first name this store saw for it (link_names, in the order kept), which no later rename moves
+      // (kept lower-case there: the current name is shown while it is that first name in any case)
+      if (pick) {
+        const first = pick.userId ? firstNameOf.get(pick.platform, String(pick.userId)) : null;
+        const shown = first && first.username && String(pick.username || '').toLowerCase() !== first.username ? first.username : (pick.username || pick.userId);
+        picks.push({ name: `${pick.platform}:${shown}`, id: `${pick.platform}:${pick.userId || k}`, key: k });
+      }
     }
     // ONE ENTRY PER KEY, NEVER MERGED BY A NAME (kanban #2684, #1489 r3-faucet-2): a username is text another account can show too (an old link
     // under a Telegram first name, a name given up and taken), and two keys under one name collapsed into ONE entry here and in bounty-draw.mjs -

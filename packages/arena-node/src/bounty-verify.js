@@ -144,12 +144,38 @@ export function xByName({ session = () => xSessionFromChrome(), fetchFn = fetch,
 }
 
 /** THE NEWEST X POSTS FOR A QUERY (SearchTimeline, Latest): [{ id, text, userId, name }] - the posts a link code is looked for in. */
-export async function xSearch(query, { session = () => xSessionFromChrome(), fetchFn = fetch, count = 40, queryId = 'vLHjqbDv7TPFMBkIIO1nOA' } = {}) {
+// MORE THAN ONE PAGE (kanban #3018, audit faucet r1-1, gap in #3003): one page of 40 newest posts was read, so a copied code plus 39 filler
+// posts before the next poll pushed the reporter's own post out and the copy was the oldest one seen - redeemed, the stranger's account
+// linked. The search follows X's Bottom cursor for up to `pages` pages (200 posts at 40) and sorts what it read oldest first
+export async function xSearch(query, { session = () => xSessionFromChrome(), fetchFn = fetch, count = 40, pages = 5, queryId = 'vLHjqbDv7TPFMBkIIO1nOA' } = {}) {
   const s = await session();
-  const r = await fetchFn(`https://x.com/i/api/graphql/${queryId}/SearchTimeline`, { method: 'POST', headers: xHeaders(s), signal: AbortSignal.timeout(15000),
-    body: JSON.stringify({ variables: { rawQuery: query, count, querySource: 'typed_query', product: 'Latest' }, features: {}, queryId }) });
-  if (r.status !== 200) throw new Error(`x search ${r.status}`);
-  return postsOf(await r.json());
+  const all = new Map();
+  let cursor = null;
+  for (let p = 0; p < Math.max(1, pages); p++) {
+    const variables = { rawQuery: query, count, querySource: 'typed_query', product: 'Latest', ...(cursor ? { cursor } : {}) };
+    const r = await fetchFn(`https://x.com/i/api/graphql/${queryId}/SearchTimeline`, { method: 'POST', headers: xHeaders(s), signal: AbortSignal.timeout(15000),
+      body: JSON.stringify({ variables, features: {}, queryId }) });
+    if (r.status !== 200) { if (p === 0) throw new Error(`x search ${r.status}`); break; }
+    const body = await r.json();
+    const before = all.size;
+    for (const x of postsOf(body)) if (!all.has(x.id)) all.set(x.id, x);
+    const next = bottomCursorOf(body);
+    if (all.size === before || !next || next === cursor) break;
+    cursor = next;
+  }
+  const n = (id) => { try { return BigInt(id); } catch { return 0n; } };
+  return [...all.values()].sort((a, b) => (n(a.id) < n(b.id) ? -1 : n(a.id) > n(b.id) ? 1 : 0));
+}
+/** The Bottom cursor of a SearchTimeline answer (the next, older page), or null. */
+export function bottomCursorOf(body) {
+  let found = null;
+  const walk = (o, depth) => {
+    if (found || !o || typeof o !== 'object' || depth > 40) return;
+    if (o.cursorType === 'Bottom' && typeof o.value === 'string' && o.value) { found = o.value; return; }
+    for (const v of Array.isArray(o) ? o : Object.values(o)) walk(v, depth + 1);
+  };
+  walk(body, 0);
+  return found;
 }
 /** Every post in a SearchTimeline answer, with its author's stable id and name. */
 export function postsOf(body) {

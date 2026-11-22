@@ -28,6 +28,15 @@ export const CORE_STACK_MB = 32;
 export const DEPTH_SAID = `the core nested its calls more than ${DEPTH_MAX} deep`;
 export const DEPTH_MODULE = 'arena:depth';
 const RESERVED = '__arena$';
+// A CORE'S SIZE, BOUNDED BEFORE IT IS INSTRUMENTED OR COMPILED (kanban #3052, #3067): instrumentCore ran in the seat's own thread on a
+// core as large as a peer's package carries (16 MB, 1.8M `()=>0`: 4.6 s frozen, a 200 MB string), and a core with that many functions
+// can run its thread out of heap while V8 compiles it - inside CompileModule, where the worker's resourceLimits abort the whole
+// process. The shipped cores are about 440 kB and 280 functions; a core's files together may hold CORE_SOURCE_MAX bytes and
+// CORE_FUNCTIONS_MAX functions (both checked here, the functions counted while the file is parsed, so the parse stops at the bound).
+export const CORE_SOURCE_MAX = 2 * 1024 * 1024;
+export const CORE_FUNCTIONS_MAX = 20000;
+/** A fresh budget for one core's files (loadCore makes one per core). */
+export const coreBudget = () => ({ bytes: CORE_SOURCE_MAX, functions: CORE_FUNCTIONS_MAX });
 
 const IMPORT = `import{e as ${RESERVED}e,x as ${RESERVED}x,c as ${RESERVED}c}from'${DEPTH_MODULE}';`;
 // kanban #2731 (#1489 r5-hosting-4): what leaves a core function by a throw asks the count too - an overflow raised in a builtin the
@@ -36,13 +45,25 @@ const IMPORT = `import{e as ${RESERVED}e,x as ${RESERVED}x,c as ${RESERVED}c}fro
 const ENTER = `${RESERVED}e();try{`, LEAVE = `}catch(${RESERVED}u){${RESERVED}c(${RESERVED}u);throw ${RESERVED}u;}finally{${RESERVED}x();}`;
 
 /** The core file `text` with its depth counted; throws when it cannot be read or names what the count uses. */
-export function instrumentCore(text, rel = 'core') {
+export function instrumentCore(text, rel = 'core', budget = coreBudget()) {
   const arrows = [];
+  const tooBig = () => new Error(`the core is too large: its files may hold ${CORE_SOURCE_MAX} bytes and ${CORE_FUNCTIONS_MAX} functions together`);
+  budget.bytes -= text.length;
+  if (budget.bytes < 0) throw tooBig();
+  // the parse stops once the arrows and `function`s it has seen (never more than the file's functions) pass what is left; the walk
+  // below then takes every function (methods, getters and setters too) off the budget
+  let seen = 0;
   let ast;
   try {
     ast = Parser.parse(text, { ecmaVersion: 'latest', sourceType: 'module', allowHashBang: true,
-      onToken: (t) => { if (t.type.label === '=>') arrows.push(t.end); } });
-  } catch (e) { throw new Error(`the core's file ${rel} could not be read: ${String(e && e.message).slice(0, 200)}`); }
+      onToken: (t) => {
+        if (t.type.label === '=>') arrows.push(t.end);
+        if ((t.type.label === '=>' || t.type.label === 'function') && ++seen > budget.functions) throw tooBig();
+      } });
+  } catch (e) {
+    if (seen > budget.functions) throw tooBig();
+    throw new Error(`the core's file ${rel} could not be read: ${String(e && e.message).slice(0, 200)}`);
+  }
   // [position, order, text], applied from the end: at one position the lowest order ends up first - the import, then closes
   // (the deeper node's first), then opens (the outer node's first)
   const edits = [];
@@ -67,6 +88,7 @@ export function instrumentCore(text, rel = 'core') {
         if (node.source && String(node.source.value) === DEPTH_MODULE) throw new Error(`the core imports "${node.source.value}", and a core may import only its own files`);
         break;
       case 'FunctionDeclaration': case 'FunctionExpression': case 'ArrowFunctionExpression':
+        if (--budget.functions < 0) throw tooBig();
         if (node.body.type === 'BlockStatement' && node.body.end - node.body.start === 2) add(node.body.start + 1, OPEN(depth), ENTER + LEAVE);   // {}
         else if (node.body.type === 'BlockStatement') { add(node.body.start + 1, OPEN(depth), ENTER); add(node.body.end - 1, CLOSE(depth), LEAVE); }
         else { add(arrowAt(node), OPEN(depth), `{${ENTER}return (`); add(node.end, CLOSE(depth), `);${LEAVE}}`); }
@@ -133,18 +155,34 @@ export const DEPTH_LOCKDOWN = `(() => {
     const overflow = 'Maximum call stack size exceeded';
     // kanban #2712: an overflow WRAPPED (a SuppressedError's error / suppressed, an AggregateError's errors, a cause) is the overflow too -
     // own data properties only, a few levels deep, so no getter of the core's runs here
-    const isOverflow = (err, depth) => {
-      if (err === null || typeof err !== 'object' || depth > 4) return false;
-      if (apply(isProto, REp, [err])) { const m = ownDesc(err, 'message'); if (m && m.value === overflow) return true; }
-      const inner = (k) => { const v = ownDesc(err, k); return !!(v && 'value' in v && isOverflow(v.value, depth + 1)); };
-      if (inner('error') || inner('suppressed') || inner('cause')) return true;
-      const es = ownDesc(err, 'errors');
-      if (es && 'value' in es && isArr(es.value)) { const len = ownDesc(es.value, 'length'); for (let i = 0; i < (len ? len.value : 0) && i < 16; i++) { const v = ownDesc(es.value, String(i)); if (v && 'value' in v && isOverflow(v.value, depth + 1)) return true; } }
+    // kanban #3065 (audit hosting r4-3-1, gap in #2712): the walk stopped 4 levels down and read 16 of an AggregateError's errors, so an overflow
+    // a DisposableStack wrapped in 6 SuppressedErrors was not sticky. It now walks every wrapped value (own data properties only) with no fixed
+    // depth, each object once; a wrapping too large to walk (more than WALK_MOST objects) counts as the overflow - the same answer on every
+    // machine. Only what was taken before any core code ran is used (no array or WeakSet method the core could replace)
+    const WALK_MOST = 4096, WS = WeakSet, wsAdd = WeakSet.prototype.add, wsHas = WeakSet.prototype.has, KEYS = ['error', 'suppressed', 'cause'];
+    const isOverflow = (err0) => {
+      if (err0 === null || typeof err0 !== 'object') return false;
+      const todo = { __proto__: null, 0: err0 }, seen = new WS();   // a null-prototype stack: no setter a core put on Array.prototype is hit
+      let top = 1, n = 0;
+      while (top > 0) {
+        const err = todo[--top];
+        if (err === null || typeof err !== 'object' || apply(wsHas, seen, [err])) continue;
+        apply(wsAdd, seen, [err]);
+        if (++n > WALK_MOST) return true;
+        if (apply(isProto, REp, [err])) { const m = ownDesc(err, 'message'); if (m && m.value === overflow) return true; }
+        for (let j = 0; j < 3; j++) { const v = ownDesc(err, KEYS[j]); if (v && 'value' in v) { if (top >= WALK_MOST) return true; todo[top++] = v.value; } }
+        const es = ownDesc(err, 'errors');
+        if (es && 'value' in es && isArr(es.value)) {
+          const len = ownDesc(es.value, 'length'), L = len && typeof len.value === 'number' ? len.value : 0;
+          if (L > WALK_MOST) return true;
+          for (let i = 0; i < L; i++) { const v = ownDesc(es.value, String(i)); if (v && 'value' in v) { if (top >= WALK_MOST) return true; todo[top++] = v.value; } }
+        }
+      }
       return false;
     };
     const c = (err) => {
       if (sticky !== null) throw new RE(sticky);
-      if (isOverflow(err, 0)) { sticky = 'the core overflowed the stack'; throw new RE(sticky); }
+      if (isOverflow(err)) { sticky = 'the core overflowed the stack'; throw new RE(sticky); }
     };
     return Object.freeze({ e, x, c, begin() { d = 0; }, over: () => sticky });
   })()`;

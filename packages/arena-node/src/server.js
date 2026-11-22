@@ -1066,7 +1066,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // per round and attestation body at a time.
   const handingOn = new Set(), handedOn = new Set();   // duties running; duties done (every peer took it: a retry posts nothing more)
   const handOutcomeOn = async (target, raw, untilMs, { fresh = true } = {}) => {
-    const key = `${toHex(target)}:${toHex(sha256(raw))}`;
+    // ONE DUTY PER ATTESTATION BODY, NOT PER ENCODING (kanban #3063, audit attest r4-3-1): the duty was keyed by sha256 of the posted bytes, and a
+    // stranger's re-ordered or repeated-signature copies of one held attestation (each stands) each started a retrying hand-on to every
+    // settlement peer until the deadline. The key is the body id - what the signatures sign - whatever the signature list looks like
+    let body = null;
+    try { body = isValueAttestationBytes(raw) ? valueAttestationBodyId(decodeValueAttestation(raw)) : attestationBodyId(decodeAttestation(raw)); } catch { body = null; }
+    const key = `${toHex(target)}:${toHex(body || sha256(raw))}`;
     if (handingOn.has(key) || (!fresh && handedOn.has(key))) return;
     handingOn.add(key);
     const done = () => { handingOn.delete(key); if (!left.length) { handedOn.add(key); if (handedOn.size > 4096) handedOn.delete(handedOn.values().next().value); } };
@@ -3080,8 +3085,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const max = 64 * SIGNED_RECEIPT_BYTES, parts = []; let total = 0;
         if (!r.body) return;
         const reader = r.body.getReader();
-        for (;;) { const { done, value } = await reader.read(); if (done) break; total += value.byteLength;
-          if (total > max) { try { await reader.cancel(); } catch { /* gone */ } return; } parts.push(value); }
+        // THE PREFIX IS KEPT (kanban #3028, audit play r3-1): an answer past the bound was dropped whole, so on any run with more than 64 receipts
+        // at a peer (the door serves every mark's, tick order: the first mark's come first) the peers added nothing and the caller's chosen
+        // receipts decided the Void alone. What fits under the bound is read and kept; the rest is not asked for
+        for (;;) { const { done, value } = await reader.read(); if (done) break;
+          if (total + value.byteLength > max) { parts.push(value.subarray(0, max - total)); total = max; try { await reader.cancel(); } catch { /* gone */ } break; }
+          total += value.byteLength; parts.push(value); }
         const buf = new Uint8Array(Buffer.concat(parts, total));
         for (let i = 0; i + SIGNED_RECEIPT_BYTES <= buf.length; i += SIGNED_RECEIPT_BYTES) out.push(buf.slice(i, i + SIGNED_RECEIPT_BYTES));
       } catch { /* a peer that does not answer adds none */ }
@@ -3239,8 +3248,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // one seat's word is no proof a head-to-head lock was held before the moves could be known (kanban #2225): such a lock is not replayed
     for (const kind of ['stake', 'fee']) { let h = null; try { h = locks && locks[kind] ? h2hLockRefusal(entry, eid, kind) : null; } catch { h = null; } if (h) return { ok: false, why: h }; }
     // a certified batch's order: its locks were verified in time by the threshold, so not refused here for the blocks since (kanban #1992)
-    if (locks.stake && !round.stakeLock(eid)) { const g = await takeStakeLock(eid, lockFieldsFromJson(locks.stake), {}, undefined, { certified: true }); if (!g.ok) return { ok: false, why: `its stake lock: ${g.why}` }; }
-    if (locks.fee && round.feeLock && !round.feeLock(eid)) { const g = await takeFeeLock(eid, lockFieldsFromJson(locks.fee), undefined, { certified: true }); if (!g.ok) return { ok: false, why: `its fee lock: ${g.why}` }; }
+    if (locks.stake && !round.stakeLock(eid)) { const g = await takeStakeLock(eid, lockFieldsFromJson(locks.stake), {}, undefined, { certified: true }); if (!g.ok) return { ok: false, why: `its stake lock: ${g.why}`, forever: g.expired === true }; }
+    if (locks.fee && round.feeLock && !round.feeLock(eid)) { const g = await takeFeeLock(eid, lockFieldsFromJson(locks.fee), undefined, { certified: true }); if (!g.ok) return { ok: false, why: `its fee lock: ${g.why}`, forever: g.expired === true }; }
     console.log(`[orders] replayed order ${entryHex.slice(0, 16)} from ${base}: its entry and locks are held here now`);
     return { ok: true };
   };
@@ -5021,11 +5030,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const market = attestedOf(c);
     const att = market ? outcomeOf(rid, c) : null;
     const decided = att && att.state === 'ATTESTED' ? { index: att.outcome, label: att.label } : null;
-    const entries = round.entriesOf(rid).map(({ entryId, entry }) => {
+    // AS THE SEASON BOOKS IT (kanban #3066, audit nostr r4-3-1, gap in #2880/#2835): a paid round lists only its entries with a stake lock held
+    // here, and a key's settled share goes with its first entry only - a stranger's lockless entry under the winner's round key made the result
+    // book the winner's share twice, the pool read as paid twice
+    const paidRound = c.stakeMsat > 0n;   // season-read.js entriesOf's rule
+    const listed = paidRound ? round.entriesOf(rid).filter(({ entryId }) => { const l = round.stakeLock ? round.stakeLock(entryId) : null; return !!(l && l.fields); }) : round.entriesOf(rid);
+    const shareBooked = new Set();
+    const entries = listed.map(({ entryId, entry }) => {
       const player = toHex(entry.playerPubkey);
+      const share = shareBooked.has(player) ? 0n : (paid.get(player) || 0n);
+      shareBooked.add(player);
       const row = { entry: toHex(entryId), player, name: names.get(player) || displayNameFromKey(entry.playerPubkey),
         federation: entry.federationId instanceof Uint8Array && !zero(entry.federationId) ? toHex(entry.federationId) : roundFed,
-        outcome: null, score: null, pick: null, rank: null, payoutMsat: String(paid.get(player) || 0n) };
+        outcome: null, score: null, pick: null, rank: null, payoutMsat: String(share) };
       if (market) {
         row.pick = entry.pick === undefined || entry.pick === null ? null : Number(entry.pick);
         row.outcome = decided && row.pick !== null ? (row.pick === decided.index ? 'WON' : 'LOST') : null;
@@ -8562,7 +8579,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   });
 
   // kanban #2901: the door counters and the short answer cache (see the dispatch above)
-  const DOOR_CACHE = new Set(['/seating-batch', '/dkg-agreement', '/lock-namer', '/season-rounds', '/census', '/served'])   // not /book-certificates: a fresh certificate must be read at once (book-sync);
+  // kanban #3057 (audit play r4-2-1, gap in #2743): GET /canonical and GET /replay/transcript rebuilt a whole run on the seat's thread for every
+  // public request (10,800 one-tick batches decoded, checked and hashed each time); the same (round, entry) is answered from one answer per DOOR_CACHE_MS
+  const DOOR_CACHE = new Set(['/seating-batch', '/dkg-agreement', '/lock-namer', '/season-rounds', '/census', '/served', '/canonical', '/replay/transcript'])   // not /book-certificates: a fresh certificate must be read at once (book-sync);
   const DOOR_CACHE_MS = Number(process.env.ARENA_DOOR_CACHE_MS || 500);
   // kanban #2910 (measured 2026-11-16 ~19:45Z): GET /season-rounds (peers read 90 days of a game's season, paged) and GET /census (a round's census
   // evidence) held a seat's loop 1-3.2 s each, so a bot's handout reached that seat 3 s late and the round voided. Peers ask the same query again and
@@ -8581,7 +8600,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // key keeps only the parameters it reads, sorted, a game list in its sorted order; and the cache holds at most DOOR_CACHE_BYTES in all,
   // an answer over DOOR_CACHE_BODY_MOST not at all.
   const DOOR_CACHE_PARAMS = { '/season-rounds': ['game', 'days', 'after', 'page'], '/census': ['round', 'creator'],
-    '/served': ['from', 'to', 'finals', 'count', 'height', 'label', 'n'] };
+    '/served': ['from', 'to', 'finals', 'count', 'height', 'label', 'n'], '/canonical': ['round', 'entry'], '/replay/transcript': ['round', 'entry'] };
   // kanban #3169, #3200: the key counts toward DOOR_CACHE_BYTES, and a key longer than DOOR_CACHE_KEY_MOST is never cached (the longest honest one,
   // GET /seating-batch of BATCH_ROUNDS = 64 round ids, is about 4.2 KB)
   const DOOR_CACHE_BYTES = 64 * 1048576, DOOR_CACHE_BODY_MOST = 16 * 1048576, DOOR_CACHE_KEY_MOST = 8192;
@@ -10179,7 +10198,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             // NOT ON THE CALLER'S COUNT OF RECEIPTS (kanban #2838, #1489 r24-play-1): a stranger handed a seat that missed the first mark only 4 of
             // the 5 public receipts plus a later public mark, and the seat recorded ENTRY_VOID for a run the committee carried live. The receipts this
             // seat holds of the mark and the ones its peers serve at GET /receipts are counted with the given ones before any Void is recorded.
-            const v = voidHere(c, bytes, late, [...receiptsGiven(got), ...(await receiptsKnownOf(c))], got.ask === 'forfeit' ? 'forfeit-ask' : 'forward');
+            // kanban #3045 (audit play r4-1-1, gap in #2838): a Void already recorded here is answered before any peer is asked - each replay of a
+            // voided entry's public first mark made receiptsKnownOf pull GET /receipts from up to 16 peers again
+            const v = round.entryVoid(c.entryId) || voidHere(c, bytes, late, [...receiptsGiven(got), ...(await receiptsKnownOf(c))], got.ask === 'forfeit' ? 'forfeit-ask' : 'forward');
             if (v) return answer(409, { entryVoid: true, why: v.why });
           } else if (got.entryVoid) return answer(409, { why: 'that ENTRY_VOID claim does not verify at this signer node' });
         }
@@ -12489,7 +12510,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // the lock there under the forged handout's own id only - no other seat held that id and the forfeit gathered 1 of 2 commitments. The lock is
         // now kept under each naming handout's own id as well (at most 8: a stranger may hold up to the round's handout cap), so the id of the
         // player's own handout - the one every seat holds - names it at every seat. A lock one handout names is kept as before.
-        for (const x of matches.slice(1, 8)) round.putRefusedLock({ lockId: refusedLockOwnId(x.id, opHex), handoutId: x.id, ...kept });
+        // NO CAP OF 8 (kanban #2986, audit entry r2-1): 8 forged handouts taken before the player's at one seat filled the 8 and the player's own
+        // id was never written there - the forfeit gathered 1 of 2 again. Every naming handout this seat holds is an alias now: they are bounded
+        // by the round's handouts (HANDOUTS_UNENTERED_MAX loose ones), and each real lock is written once (a lock handed again is answered above)
+        for (const x of matches.slice(1)) round.putRefusedLock({ lockId: refusedLockOwnId(x.id, opHex), handoutId: x.id, ...kept });
         console.log(`[refused-lock] ${toHex(rid).slice(0, 16)}: ${String(fields.amountMsat)} msat kept for its return (${String(refusedWhy).slice(0, 80)})`);
         return text(res, 201, `kept for its return: forfeit it at /forfeit?round=${toHex(rid)}&entry=${toHex(lockId)}`);
       }
@@ -13583,6 +13607,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'POST' && url.pathname === '/halt-observations') {
         if (!halts) return text(res, 503, 'this seat reads no chain, so it keeps no halt observations');
         let said; try { said = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a halt observation is { observation, signature } as hex'); }   // the bytes as text (kanban #326: String() of the bytes was "123,34,..." - no observation was ever taken)
+        if (halts.refreshTip) await halts.refreshTip();   // kanban #3046: an observation past this seat's tip is refused
         const r = halts.take(said);
         return r.ok ? json(res, r.status, r) : text(res, r.status, r.why);
       }
@@ -14455,6 +14480,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             if (roundId.length !== 32 || entryId.length !== 32)
               return sock.send('error a watch names a round and an entry');
             if (!round.get(roundId)) return sock.send('error no such round');
+            // A CLOSED ROUND IS PICTURED NO FURTHER (kanban #3264, audit r22 play-1): a watch frame walked every other entry's run through the core on
+            // this thread (the warm, then the field's pictures), and for a closed round the sweep had let go of the runs - each frame rebuilt them
+            // cold from their join tick. Its result is read from GET /results, not the play socket
+            if (round.get(roundId).state === CLOSED) return sock.send('error that round is closed: it is pictured no further');
             const held = round.entry(entryId);
             if (!held) return sock.send('error no such entry');
             if (hexOf(decodeEntryContract(held).roundId) !== hexOf(roundId))
@@ -14483,7 +14512,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             // watching rounds make no pictures (NODE-OPT-1648, 41a58db5), a watcher arriving after a truck drove was shown
             // it from the start - measured, ghost-realtime: tick 149 of a truck that had published 1199. The same bounded
             // walk the warm step takes, once, for this watcher; a run longer than it catches up over the next pushes.
-            try {
+            // kanban #3264: a repeat watch on this socket is not warmed again
+            if (!already) try {
               timed('ghost watcher warm', () => {
                 for (const e of round.entriesOf(who.roundId)) {
                   const eid = e.entryId;
@@ -14543,6 +14573,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // connection and no envelope around it.
         const bytes = new Uint8Array(data);
         if (bytes[0] === TYPE_CHECKPOINT) {
+          // kanban #3255 (audit r20 play-1): whether this seat held the mark before this frame - a replay of a held final mark is answered with its
+          // receipt again, and offered it to every peer (a new WebSocket each) on every frame; only a mark this frame stored is offered on
+          let heldBefore = false;
+          try { heldBefore = !!round.holdsMark(checkpointId(decodeCheckpoint(splitSigned(bytes).body))); } catch { heldBefore = false; }
           const answer = round.checkpoint(bytes);
           // A MARK TAKEN AFTER THE CLOSE - only the held-back final mark gets through that door (ruled 2026-09-23/24) - has
           // its receipt offered to every peer at once (§10's receipt exchange): they signed before it existed and pull no
@@ -14550,7 +14584,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           try {
             const c = decodeCheckpoint(splitSigned(bytes).body);
             const row = round.get(c.roundId);
-            if (row && row.state === CLOSED && answer instanceof Uint8Array) offerReceipt(c.roundId, answer);
+            if (row && row.state === CLOSED && answer instanceof Uint8Array && !heldBefore) offerReceipt(c.roundId, answer);
           } catch { /* the answer stands whatever the offer does */ }
           return sock.send(answer);
         }

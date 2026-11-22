@@ -457,6 +457,11 @@ export function checkPackage(pkg, { verify, want = null, parentOf = () => null }
       continue;
     }
     const src = fromBase64(c.source);
+    // NOT A TREE'S HASH STREAM IN THE ONE-FILE FORM (kanban #3261, audit r21 hosting-1): the manifest signs only a core's hash, and a tree core's
+    // hash is sha256 of its framed stream (path \0 bytes \0 ...) - one seat served that stream as a one-file source, it matched, failed the trial
+    // and the genuine update was refused for 24 h. A core's source is JavaScript text: one with a NUL byte is refused here, before any trial
+    if (!add(`core ${String(c.hash).slice(0, 12)}… is a source file, not a tree's hash stream`, !(src instanceof Uint8Array) || !src.includes(0)))
+      return out(`core ${String(c.hash).slice(0, 16)}: its one-file source holds a NUL byte - a tree core's hash stream is not a source file`, who);
     const h = shaHex(src);
     if (!add(`core ${String(c.hash).slice(0, 12)}… is the file its manifest names`, h === c.hash && named.has(c.hash), `sha-256 ${h.slice(0, 16)}…`))
       return out(`core ${String(c.hash).slice(0, 16)}: its source is not the file its manifest names (sha-256 ${h.slice(0, 16)})`, who);
