@@ -40,7 +40,7 @@ for (const [who, ipFor, cap] of [['one stranger address', () => '203.0.113.7', Z
     try {
       let answered = 0;
       for (let i = 0; i < ZAP_PENDING_MAX + 100; i++) {
-        const j = await (await fetch(zapUrl(z.port), { headers: { 'cf-connecting-ip': ipFor(i) } })).json();
+        const j = await (await fetch(zapUrl(z.port), { headers: { 'x-forwarded-for': ipFor(i) } })).json();
         if (j.pr) answered++;
       }
       console.log(`  ${who}: minted ${minted}, handed out ${answered}, bound ${cap}`);

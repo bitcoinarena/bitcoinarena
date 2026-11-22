@@ -26,7 +26,7 @@ async function stand({ failFirst = 0 } = {}) {
     },
     lookup: async ({ paymentHash }) => ({ settled: lnd.paid.has(paymentHash) }), publish: async () => {}, watchMs: 3600000 });
   const tip = async (msat, ip = null, comment = null) => (await fetch(`http://127.0.0.1:${z.port}/lnurlp/bob/cb?amount=${msat}${comment ? `&comment=${comment}` : ''}`,
-    { headers: ip ? { 'cf-connecting-ip': ip } : {} })).json();
+    { headers: ip ? { 'x-forwarded-for': ip } : {} })).json();
   return { z, tip, lnd };
 }
 

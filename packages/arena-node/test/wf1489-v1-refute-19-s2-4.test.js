@@ -28,8 +28,8 @@ test('#1489 v1-refute-19-s2-4: two honest tippers of the same amount are not han
     lookup: async () => ({ settled: false }), publish: async () => {}, watchMs: 3600000 });
   try {
     const url = `http://127.0.0.1:${z.port}/lnurlp/bob/cb?amount=21000`;
-    const a = await (await fetch(url, { headers: { 'cf-connecting-ip': '198.51.100.31' } })).json();
-    const b = await (await fetch(url, { headers: { 'cf-connecting-ip': '192.0.2.44' } })).json();
+    const a = await (await fetch(url, { headers: { 'x-forwarded-for': '198.51.100.31' } })).json();
+    const b = await (await fetch(url, { headers: { 'x-forwarded-for': '192.0.2.44' } })).json();
     assert.ok(a.pr && b.pr);
     assert.notEqual(a.pr, b.pr, 'two different tippers, one invoice: the second payment is refused');
   } finally { await z.close(); }

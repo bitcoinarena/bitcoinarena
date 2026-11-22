@@ -65,8 +65,8 @@ const HOSTS_KEPT = 4096;
 // - The plain tip callback minted one invoice per call: a tip of the same name and amount gets the open, unpaid invoice again
 //   (looked up first; ZAP_TIPS_KEPT of them kept, asks at the same moment share one mint).
 // - And what any one asker can mint at all is bounded: ZAP_MINTS_PER_ASKER fresh invoices (zap or tip) per ZAP_ASKER_WINDOW_S, the
-//   asker being the address the proxy in front saw (reach-check.js askerAddress: cf-connecting-ip, else the first X-Forwarded-For
-//   hop). A caller on this machine itself, with no proxy header, is this host's own tools and is not limited.
+//   asker being the address the proxy in front saw (reach-check.js askerAddress, kanban #3055: the right-most X-Forwarded-For hop
+//   our own proxy appended; cf-connecting-ip only with ARENA_TRUST_CF_CONNECTING_IP=1). A caller on this machine itself, with no proxy header, is this host's own tools and is not limited.
 export const ZAP_TIPS_KEPT = 256;
 export const ZAP_MINTS_PER_ASKER = 30;
 export const ZAP_ASKER_WINDOW_S = 600;

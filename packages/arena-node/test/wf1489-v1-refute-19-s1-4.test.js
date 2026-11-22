@@ -28,7 +28,7 @@ test('#1801 #1743: one address behind the proxy mints at most ZAP_MINTS_PER_ASKE
     lookup: async () => ({ settled: false }), publish: async () => {}, watchMs: 3600000 });
   try {
     const to = keyPair();
-    const from = (ip) => ({ headers: { 'cf-connecting-ip': ip } });
+    const from = (ip) => ({ headers: { 'x-forwarded-for': ip } });
     const base = `http://127.0.0.1:${z.port}/lnurlp/bob/cb`;
     for (let i = 0; i < 40; i++) await (await fetch(`${base}?amount=${1000 + i}`, from('203.0.113.7'))).json();
     for (let i = 0; i < 20; i++) {

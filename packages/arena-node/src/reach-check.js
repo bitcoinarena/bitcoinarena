@@ -34,16 +34,31 @@ export function isPublicAddress(ip) {
 }
 
 /**
- * The asker's address: the socket's peer, or - when the peer is this machine's own proxy (the seats sit behind cloudflared and
- * tailscale serve) - the address the first proxy saw: Cloudflare's cf-connecting-ip, else the first X-Forwarded-For hop.
+ * The asker's address: the socket's peer, or - when the peer is this machine's own proxy (the seats sit behind tailscale serve/funnel,
+ * cloudflared and the tn4 local proxy) - the address OUR proxies saw.
+ *
+ * ONLY OUR OWN HOPS ARE TRUSTED (kanban #3055, audit h2h r4-2-1; owner decision 2026-11-22). The first X-Forwarded-For hop is whatever the
+ * client wrote (nginx $proxy_add_x_forwarded_for, Cloudflare and the tn4 local proxy append after it), and cf-connecting-ip is a plain
+ * client header on every path Cloudflare is not in front of (tailscale funnel passes it as sent; measured 2026-11-22 on the funnel:
+ * a client's cf-connecting-ip was taken as the asker). So a stranger named a fresh source per throwaway key and evicted a real player
+ * from a head-to-head table (presenceSource). Now:
+ * - X-Forwarded-For: the RIGHT-MOST hop, the one the proxy in front of us appended (tailscale serve/funnel sets the header to the source
+ *   alone; Cloudflare appends the address it saw). Loopback hops at the right end are our own proxies on this machine (the tn4 local
+ *   proxy appends cloudflared's 127.0.0.1) and are skipped; a loopback hop can only sit at the right end if one of our proxies wrote it.
+ * - cf-connecting-ip only when ARENA_TRUST_CF_CONNECTING_IP=1: a seat that only Cloudflare reaches (no funnel, no other door to the
+ *   loopback port), where the edge overwrites it with the real address.
  */
-export function askerAddress(req) {
+const LOOPBACK = (a) => a === '127.0.0.1' || a === '::1' || /^127\./.test(a);
+export function askerAddress(req, { env = process.env } = {}) {
   const peer = String(req.socket.remoteAddress || '').replace(/^::ffff:/, '');
-  if (peer === '127.0.0.1' || peer === '::1') {
-    const cf = String(req.headers['cf-connecting-ip'] || '').trim();
-    if (cf) return cf.replace(/^::ffff:/, '');
-    const xff = String(req.headers['x-forwarded-for'] || '').split(',').map((s) => s.trim()).filter(Boolean);
-    return xff.length ? xff[0].replace(/^::ffff:/, '') : peer;
+  if (LOOPBACK(peer)) {
+    if (env.ARENA_TRUST_CF_CONNECTING_IP === '1') {
+      const cf = String(req.headers['cf-connecting-ip'] || '').trim();
+      if (cf) return cf.replace(/^::ffff:/, '');
+    }
+    const xff = String(req.headers['x-forwarded-for'] || '').split(',').map((s) => s.trim().replace(/^::ffff:/, '')).filter(Boolean);
+    while (xff.length && LOOPBACK(xff[xff.length - 1])) xff.pop();
+    return xff.length ? xff[xff.length - 1] : peer;
   }
   return peer;
 }

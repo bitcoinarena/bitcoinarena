@@ -42,7 +42,7 @@ async function stand() {
     publish: async (r) => { published.push(r); }, watchMs: 3600000 });
   const ask = async (payer, to, n, ip = null) => {
     const request = signNostr(zapRequestTemplate({ recipient: to, amountMsat: 1000n, relays: ['wss://relay.example'], comment: `n${n}` }), { secret: payer.secret, curve });
-    const headers = ip ? { 'cf-connecting-ip': ip } : {};
+    const headers = ip ? { 'x-forwarded-for': ip } : {};
     return (await fetch(`http://127.0.0.1:${z.port}/lnurlp/bob/cb?amount=1000&nostr=${encodeURIComponent(JSON.stringify(request))}`, { headers })).json();
   };
   return { z, ask, byInvoice, settled, cancelled, published, lnd };
