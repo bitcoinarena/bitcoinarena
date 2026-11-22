@@ -161,3 +161,12 @@ test("#3270 the intro names the X account: not linked with the link, @handle ✓
   assert.equal(introModel({ round: round(), me: null, board, wallet: W(), nowMs: T0 }).x, null);
   assert.equal(introModel({ round: null, me: null, board: [], wallet: null, nowMs: T0 }).x, undefined);
 });
+
+test("#3251 the intro says nothing about 'no round' until the first GET /round answered; the three short facts in one row", () => {
+  const l = introModel({ round: null, me: null, board: [], wallet: W(), nowMs: T0, loading: true });
+  assert.deepEqual(l.button, { label: "Play · 100 testnet sats", disabled: true, why: "Loading the round …" });
+  assert.equal(introModel({ round: null, me: null, board: [], wallet: W(), nowMs: T0 }).button.why, "No round is open right now.");
+  const m = introModel({ round: round(), me: me(), board, wallet: W(), nowMs: T0, loading: true });   // a round already known: as always
+  assert.equal(m.button.disabled, false);
+  assert.deepEqual(m.facts.slice(2).map((f) => [f[1], f[2]]), [["14 h 0 min", "f3"], ["2 of 5", "f3"], ["980 · #4", "f3"]]);
+});

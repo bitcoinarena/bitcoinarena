@@ -21,7 +21,7 @@ body.playing { touch-action: none; }
 .box, .box * { -webkit-user-select: text; user-select: text; }
 html, body { height: 100%; }
 body {
-  background: var(--bg); color: var(--text); font-family: var(--body); box-sizing: border-box;
+  background: var(--bg); color: var(--text); font-family: var(--body); box-sizing: border-box; margin: 0;   /* #3251: the default 8 px margin made the frame scroll */
   padding-block: 10px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
   display: flex; flex-direction: column; gap: 10px; align-items: center;
 }
@@ -97,7 +97,27 @@ td button.rp { padding: 3px 8px; font-size: .8rem; border-radius: 7px; }
 body.bridged header h1, body.bridged header p { display: none; }
 body.bridged header { justify-content: space-between; }
 body.bridged .tag { margin-left: 0; }
-@media (max-height: 700px) { .box.intro h2 { font-size: 1.25rem; } .facts { gap: 4px 12px; } .box { padding: 14px; } }
+/* kanban #3251 (owner 2026-11-22, iPhone): the intro fits the frame with no scrollbar. The three short facts stay one row; short frames
+   (a phone with its browser bars: the frame is the screen less the bars and the Arena's 41 + 30 px) get tighter type and spacing. If a
+   frame is smaller still, only the sheet scrolls, without a visible bar. */
+.facts .f3 dd { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sheet { scrollbar-width: none; } .sheet::-webkit-scrollbar { display: none; }
+@media (max-height: 700px) {
+  body { padding-block: 8px; gap: 8px; }
+  .box { padding: 14px 16px; } .box.intro h2 { font-size: 1.3rem; }
+  .box .line { font-size: .92rem; line-height: 1.35; margin: 0 0 8px; }
+  .bounty { font-size: 1.02rem; margin: 0 0 8px; }
+  .facts { gap: 4px 10px; margin: 0 0 10px; } .facts dd { font-size: .92rem; }
+  .xline { margin: 0 0 8px !important; } button.big { padding: 12px 16px; font-size: 1.05rem; }
+  .why { margin: 6px 0 0 !important; } .links { margin-top: 8px; }
+}
+@media (max-height: 560px) {
+  .sheet { padding: 6px; } .box { padding: 12px 14px; } .box.intro h2 { font-size: 1.15rem; }
+  .box .line { font-size: .85rem; margin: 0 0 6px; } .bounty { font-size: .95rem; margin: 0 0 6px; }
+  .facts { gap: 2px 10px; margin: 0 0 8px; } .facts dt { font-size: .68rem; } .facts dd { font-size: .86rem; }
+  .xline { margin: 0 0 6px !important; font-size: .85rem !important; } .xline button { padding: 3px 10px; }
+  button.big { padding: 10px 14px; font-size: 1rem; } .why { font-size: .8rem !important; } .links { margin-top: 6px; font-size: .86rem; }
+}
 </style>
 
 <header>

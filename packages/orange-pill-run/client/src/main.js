@@ -101,12 +101,12 @@ function finish() {
 }
 
 // ---------- the service: round, me, board ----------
-const S = { round: null, me: null, board: [], err: null, at: 0 };
+const S = { round: null, me: null, board: [], err: null, at: 0, loaded: false };   // loaded: the first GET /round has answered (#3251)
 let run = null;   // the attempt being played: { attempt, token, level, invoice, sats, deadlineMs, before, payer, entry, entryWhy, sent }
 async function refresh() {
   if (!api) return;
   const [r, b] = await Promise.all([api.get("/round"), api.get("/board")]);
-  S.round = r.ok ? r.round : null; S.err = r.ok ? null : r.why;
+  S.round = r.ok ? r.round : null; S.err = r.ok ? null : r.why; S.loaded = true;
   S.board = b.ok ? b.board : [];
   const w = wallet();
   if (w && w.pubkey) { const m = await api.getSigned("/me" + (S.round ? "?round=" + encodeURIComponent(S.round.id) : "")); if (m.ok) S.me = m; }
@@ -121,7 +121,7 @@ function paintWallet() {
   el.append("Wallet: ", b, " testnet sats" + (w.welcomeComing && Number(w.balance.sats) < 100 ? " · welcome on its way" : ""));
 }
 function paintIntro() {
-  const m = introModel({ round: S.round, me: S.me, board: S.board, wallet: wallet(), nowMs: Date.now() });
+  const m = introModel({ round: S.round, me: S.me, board: S.board, wallet: wallet(), nowMs: Date.now(), loading: !S.loaded });
   $("iLine").textContent = m.line;
   $("iBounty").hidden = !m.bounty; $("iBounty").textContent = m.bounty || "";
   const dl = $("iFacts"); dl.textContent = ""; dl.hidden = !m.facts;

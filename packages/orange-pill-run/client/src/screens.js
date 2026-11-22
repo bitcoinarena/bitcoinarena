@@ -29,7 +29,7 @@ export function xLine(me) {
   return { text: "X account: " + (me.x.username ? "@" + me.x.username : "linked") + " ✓", link: false };
 }
 
-export function introModel({ round, me, board, wallet, nowMs = Date.now() }) {
+export function introModel({ round, me, board, wallet, nowMs = Date.now(), loading = false }) {
   const m = { line: "Run yesterday's Bitcoin chart. Tap to jump. Don't fall.", practice: false };
   if (!wallet) {
     m.practice = true;
@@ -37,6 +37,11 @@ export function introModel({ round, me, board, wallet, nowMs = Date.now() }) {
     return m;
   }
   m.x = xLine(me);
+  // #3251: until the first GET /round has answered, the intro does not say "no round" (it showed for a second before the round loaded)
+  if (!round && loading) {
+    m.button = { label: "Play · 100 testnet sats", disabled: true, why: "Loading the round …" };
+    return m;
+  }
   if (!round) {
     m.button = { label: "Play · 100 testnet sats", disabled: true, why: "No round is open right now." };
     return m;
@@ -52,8 +57,8 @@ export function introModel({ round, me, board, wallet, nowMs = Date.now() }) {
   m.mine = mine ? "Your best: " + fmtSats(mine.total) + (mine.rank ? " · rank " + mine.rank : "") : "Your best: no run yet";
   m.left = round.phase === "soon" ? "Opens in " + fmtLeft(round.startMs - nowMs) : "Time left: " + fmtLeft(round.endMs - nowMs);
   // the same lines as label and value, for the intro's grid
-  m.facts = [["Current best", m.best, "wide"], ["Pot so far", m.pot.replace(" · split ", " · "), "wide"], [round.phase === "soon" ? "Opens in" : "Time left", m.left.replace(/^(Opens in|Time left:) /, "")],
-    ["Your attempts", used + " of " + max], ["Your best", m.mine.replace(/^Your best: /, "")]];
+  m.facts = [["Current best", m.best, "wide"], ["Pot so far", m.pot.replace(" · split ", " · "), "wide"], [round.phase === "soon" ? "Opens in" : "Time left", m.left.replace(/^(Opens in|Time left:) /, ""), "f3"],
+    ["Your attempts", used + " of " + max, "f3"], ["Your best", mine ? fmtSats(mine.total) + (mine.rank ? " · #" + mine.rank : "") : "no run yet", "f3"]];
   const label = "Play · " + fmtSats(entry) + " testnet sats";
   const off = (why) => (m.button = { label, disabled: true, why });
   const bal = wallet.balance ? Number(wallet.balance.sats) || 0 : null;
