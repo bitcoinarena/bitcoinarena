@@ -142,6 +142,17 @@ async function chainFor(contract, nodes, { fetcher, least, nowMs, anchorAt, expl
   };
   const had = (keptChains.get(key) || []).filter(serves).pop();
   if (had) return had;
+  // ONE READ AT A TIME PER CHAIN (kanban #3289, measured on the live page 2026-11-22 at 390x844: 16 GET /headers of 686 KB each, 11 MB, in one
+  // RPS load - the games screen's federation check, the lobby's round and the warm-up each read the same chain at once, none kept yet): a
+  // caller that finds a read of this chain under way waits for it and takes it if it serves its round; else it reads, as before
+  const going = chainReads.get(key);
+  if (going) { const got = await going.catch(() => null); if (got && got.ok && serves(got)) return got; }
+  const read = readChain(contract, nodes, { fetcher, least, anchorAt, explorer, key, nowMs });
+  chainReads.set(key, read);
+  try { return await read; } finally { if (chainReads.get(key) === read) chainReads.delete(key); }
+}
+const chainReads = new Map();     // network:explorer -> the chain read under way
+async function readChain(contract, nodes, { fetcher, least, anchorAt, explorer, key, nowMs }) {
   const anchor = anchorAt ? anchorAt.hash : chainAnchorFor(contract.networkId);
   // A FEW SEATS, NOT EVERY ONE (headers.js headerSources): two must agree, two may be slow
   const picked = headerSources(nodes);
