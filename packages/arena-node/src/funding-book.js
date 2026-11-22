@@ -557,12 +557,19 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
   // and donation rule checked against the set folded before it. A whole set frozen at decide time made the order seats decided in
   // matter: B (activation 400) decided before A (activation 140) existed kept a set without A, and undid A from 400 on the seat
   // that watched live, not on one that caught up. A pure function of the outcomes held - a reorg that reopens one re-folds it.
+  // kanban #3317: a fee row is BIP-340 checked once per seat run (keyed by its bytes), and the fold reads only the proposals a
+  // decision names - a stranger's 256 unsignalled rows made every feesAt (each round's feesFor) verify all of them, and GET /fees
+  // did that once per row (65,536 checks, ~90 s on the seat's thread)
+  const feeReads = new Map();
+  const readFee = (hex) => { let x = feeReads.get(hex); if (!x) { x = read('fee', hex); feeReads.set(hex, x); } return x; };
+  const feeHex = db.prepare("SELECT hex FROM funding_items WHERE kind = 'fee' AND id = ?");
   function feeFold() {
-    const props = new Map(rows('fee').map((r) => [r.id, read('fee', r.hex)]).filter(([, x]) => x.ok).map(([id, x]) => [id, x.obj]));
     let set = FEES_TODAY;
     const out = [];
     for (const o of feeOutcomes()) {
-      const p = props.get(o.proposal);
+      const row = feeHex.get(o.proposal);
+      const x = row ? readFee(row.hex) : null;
+      const p = x && x.ok ? x.obj : null;
       // a decision written before #2313 has no `passed`: it stands as it was decided
       const passed = o.passed === undefined ? o.accepted === true : o.passed === true;
       if (!p || !passed) { out.push({ proposal: o.proposal, activationHeight: o.activation, inForce: false, fees: set }); continue; }
@@ -575,9 +582,9 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
   }
   const decisionOf = (d, f, o) => (f && f.inForce ? { accepted: true, fees: f.fees, activationHeight: o.activationHeight, passed: d.passed, devs: d.devs }
     : { ...d, accepted: false, fees: undefined, why: d.accepted === false && d.why ? d.why : 'its set does not stand on the fees in force before its activation' });
-  function feesAt(height) {
+  function feesAt(height, fold = feeFold()) {
     let at = FEES_TODAY;
-    for (const f of feeFold()) if (f.activationHeight <= height) at = f.fees;
+    for (const f of fold) if (f.activationHeight <= height) at = f.fees;
     return at;
   }
   // ---- THE FEE SIGNAL ON CHAIN (kanban #1283, RULED #1277 B) ----
@@ -626,7 +633,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
    */
   async function decideFees() {
     const done = [];
-    for (const row of rows('fee').map((r) => ({ r, p: read('fee', r.hex) })).filter((x) => x.p.ok).sort((a, b) => a.p.obj.activationHeight - b.p.obj.activationHeight)) {
+    for (const row of rows('fee').map((r) => ({ r, p: readFee(r.hex) })).filter((x) => x.p.ok).sort((a, b) => a.p.obj.activationHeight - b.p.obj.activationHeight)) {
       const pid = row.r.id;
       if (db.prepare('SELECT 1 FROM fee_outcomes WHERE proposal = ?').get(pid)) continue;
       const signal = outcomeOf(pid);
@@ -668,14 +675,15 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
   }
   /** The fee proposals as a page reads them: each one's changes, signal, vote, the developers' answers and its decision. */
   function feeList(height = null) {
+    const fold = feeFold();                                   // once per request (kanban #3317), not once per row
     return rows('fee').map((row) => {
-      const p = read('fee', row.hex); if (!p.ok) return null;
+      const p = readFee(row.hex); if (!p.ok) return null;
       const o = p.obj;
       const st = outcomeOf(row.id) || signalOutcome({ proposal: o, signals: signalsOf(row.id), active: null, tip: height, schedule });
       const decided = db.prepare('SELECT outcome FROM fee_outcomes WHERE proposal = ?').get(row.id);
       // the decision as the fold holds it (kanban #2313): accepted = in force from its activation over the set folded before it
-      const folded = decided ? feeFold().find((f) => f.proposal === row.id) : null;
-      const before = feesAt(o.activationHeight - 1);
+      const folded = decided ? fold.find((f) => f.proposal === row.id) : null;
+      const before = feesAt(o.activationHeight - 1, fold);
       const devs = approvalsOf(row.id).map((a) => ({ dev: toHex(a.approval.dev), approve: a.approval.approve }));
       return { id: row.id, network: toHex(o.networkId), author: toHex(o.author), publishedHeight: o.publishedHeight, activationHeight: o.activationHeight,
         changes: o.changes.map((c) => ({ fee: c.fee, from: before[c.fee], to: c.value, donation: !!FEES[c.fee].donation })), purpose: o.purpose,
