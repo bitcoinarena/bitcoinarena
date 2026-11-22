@@ -104,5 +104,27 @@ export function resultModel({ res, parTime, timePerS = 20, entry, entryWhy, befo
   return out;
 }
 
+/**
+ * THE LIGHTNING ADDRESS FIELD (kanban #3250), checked as the player types: null when it looks like one (the service then asks the wallet), or the
+ * short reason. The same rule as the service's lnAddressSyntax (user [a-z0-9-_.+] @ a public domain); the service has the last word.
+ */
+export function lnSyntaxWhy(text) {
+  const a = String(text == null ? "" : text).trim().toLowerCase();
+  const m = /^([a-z0-9\-_.+]{1,64})@([a-z0-9.-]{1,253})$/.exec(a);
+  if (!m) return "Not a Lightning address";
+  const labels = m[2].split(".");
+  if (labels.length < 2 || labels.some((l) => !l || l.length > 63 || l.startsWith("-") || l.endsWith("-")) || !/^[a-z][a-z0-9-]*[a-z0-9]$|^[a-z]{2,}$/.test(labels[labels.length - 1])) return "Not a Lightning address";
+  if (/(^|\.)(localhost|local|internal|lan|home|arpa|onion|localdomain|intranet|ts\.net|nip\.io|sslip\.io|localtest\.me)$/.test(m[2])) return "That is not a public wallet";
+  return null;
+}
+/** What the field says under it: { text, kind: "ok" | "bad" | "" , canSave }. stored: GET /me's lnAddress. */
+export function lnFieldModel(text, stored) {
+  const a = String(text == null ? "" : text).trim().toLowerCase();
+  if (!a) return { text: "", kind: "", canSave: false };
+  if (stored && a === stored) return { text: "✓ saved", kind: "ok", canSave: false };
+  const why = lnSyntaxWhy(a);
+  return why ? { text: why, kind: "bad", canSave: false } : { text: "", kind: "", canSave: true };
+}
+
 /** The leaderboard rows: [[rank, name, score, time, placed]] */
 export const boardRows = (board) => (board || []).map((r) => ({ rank: String(r.rank), name: String(r.name || ""), score: fmtSats(r.score), time: fmtTime(r.timeS), placed: !!r.placed, replay: r.replay || null }));

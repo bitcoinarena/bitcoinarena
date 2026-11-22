@@ -13,7 +13,7 @@ import { resultOf, validateLog } from "../../src/sim/replay.js";
 import { fit, drawWorld, view, usd } from "./render.js";
 import { makeApi } from "./api.js";
 import { createEntry, entryOf } from "./entry.js";
-import { introModel, resultModel, entryLine, myBest, boardRows, fmtSats, fmtTime } from "./screens.js";
+import { introModel, resultModel, entryLine, myBest, boardRows, fmtSats, fmtTime, lnFieldModel } from "./screens.js";
 import { RULES, RULES_TITLE } from "./rules.js";
 
 const HOOKS = (window.OPR = window.OPR || {});
@@ -133,6 +133,7 @@ function paintIntro() {
   const btn = $("startBtn"); if (!btn.dataset.busy) { btn.textContent = m.button.label; btn.disabled = !!m.button.disabled; }
   if (!$("iWhy").dataset.err) $("iWhy").textContent = m.button.why || (S.err && bridge ? S.err : "");
   $("modeTag").textContent = !bridge ? "OFFLINE · PRACTICE" : S.round ? (S.round.test ? "TEST ROUND " : "ROUND ") + (S.round.number || "") : "TESTNET";
+  paintLn("i");
   paintWallet();
   HOOKS.intro = m;
 }
@@ -225,6 +226,33 @@ async function watchEntry(mine, res) {
   if (mine.payer) mine.payer.stop();
 }
 
+// ---------- the Lightning address for prizes (kanban #3250): intro and result, one field each ----------
+const LN = { i: { dirty: false, msg: null }, r: { dirty: false, msg: null } };
+function paintLn(p, show = true) {
+  const form = $(p + "Ln"), inp = $(p + "LnIn"), btn = $(p + "LnBtn"), why = $(p + "LnWhy"), st = LN[p];
+  const on = show && !!api && !!S.me;   // signed in: GET /me answered
+  form.hidden = !on; if (!on) { why.hidden = true; return; }
+  const stored = S.me.lnAddress || "";
+  if (!st.dirty && document.activeElement !== inp && inp.value !== stored) inp.value = stored;   // prefilled when stored
+  const m = st.msg || lnFieldModel(inp.value, stored);
+  why.textContent = m.text; why.className = "lnwhy " + (m.kind || ""); why.hidden = !m.text;
+  if (!btn.dataset.busy) btn.disabled = !lnFieldModel(inp.value, stored).canSave;
+}
+async function saveLn(p) {
+  const inp = $(p + "LnIn"), btn = $(p + "LnBtn"), st = LN[p];
+  if (btn.disabled || btn.dataset.busy) return;
+  btn.dataset.busy = "1"; btn.disabled = true; st.msg = { text: "Checking your wallet …", kind: "" }; paintLn(p);
+  const r = await api.post("/lnaddress", { address: inp.value.trim() }).catch(() => ({ ok: false, why: "The round service did not answer" }));
+  delete btn.dataset.busy;
+  if (r.ok) { S.me = { ...S.me, lnAddress: r.lnAddress }; inp.value = r.lnAddress; st.dirty = false; st.msg = null; for (const k of ["i", "r"]) { LN[k].dirty = false; paintLn(k, k === "i" || !$("result").hidden); } }
+  else { st.msg = { text: r.why || "Not saved", kind: "bad" }; paintLn(p); }
+  HOOKS.ln = { ok: !!r.ok, why: r.ok ? null : r.why || null, lnAddress: S.me && S.me.lnAddress };
+}
+for (const p of ["i", "r"]) {
+  $(p + "LnIn").addEventListener("input", () => { LN[p].dirty = true; LN[p].msg = null; paintLn(p); });
+  $(p + "Ln").addEventListener("submit", (e) => { e.preventDefault(); saveLn(p); });
+}
+
 // ---------- the screens ----------
 const cellRow = (tr, cells, cls, th) => cells.forEach((c, i) => { const td = document.createElement(th ? "th" : "td"); if (c instanceof Node) td.append(c); else td.textContent = c == null ? "" : c; if (cls && cls[i]) td.className = cls[i]; tr.append(td); });
 function paintEntry() {
@@ -248,6 +276,7 @@ function showResult({ res, mode: m, entry: en, sending = false }) {
   $("rRank").textContent = model.rank || ""; $("rBeat").textContent = model.beat || ""; $("rLeft").textContent = model.left || "";
   $("rX").hidden = !model.xPrompt; $("rXText").textContent = model.xPrompt || "";
   $("xBtn").hidden = !(bridge && bridge.linkX) || !(S.me && !S.me.x);
+  paintLn("r", m === "play");   // every result of a play or practice run, not a replay
   const used = S.me ? Number(S.me.used || 0) : 0, max = S.round ? Number(S.round.maxAttempts || 5) : 5;
   $("againBtn").textContent = run && used >= max ? "Back" : "Play again";
   $("replayBtn").disabled = !lastLog;

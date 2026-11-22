@@ -4,6 +4,10 @@
 //   Ranking: higher score first; tie: shorter run time, then the earlier submission.
 //   Pot: 50 / 30 / 20 to ranks 1-3 among placed players; one placed: 100; two: 60 / 40; none: the pot carries over. Whole sats, rounded
 //   down, the remainder to rank 1. Bounty: one row, rank 1 among placed players. A player who is not placed is skipped and the next moves up.
+//   THE BOUNTY NEEDS A LIGHTNING ADDRESS (kanban #3250, owner 2026-11-22): with lnOf handed in, the bounty goes to the best placed player whose
+//   valid Lightning address was saved by one hour after the round (lnOf(p).inTime); each higher placed player passed over is named on the
+//   winner's row (skipped: why "no valid Lightning address"). Nobody with one: no bounty row - the bounty lapses (it never carries, as before).
+//   Every row names the player's stored address (lnAddress, null when none), for the payout step.
 
 export const SPLIT = Object.freeze([50, 30, 20]);
 export const splitFor = (n) => (n <= 0 ? [] : n === 1 ? [100] : n === 2 ? [60, 40] : [...SPLIT]);
@@ -28,7 +32,8 @@ export function shares(pot, pcts) {
  * The two lists of a round. board: ranked best runs; placedOf(player) -> { placed: bool, x: { userId, username } | null, why };
  * held(player) -> a reason (under review, a rejected row) or null. Answers { pot: { rows, carrySats }, bounty: { rows } | null }.
  */
-export function payoutLists({ board, potSats, placedOf, held = () => null, bountySats = 0, test = false }) {
+export const NO_LN_ADDRESS = 'no valid Lightning address';
+export function payoutLists({ board, potSats, placedOf, held = () => null, bountySats = 0, test = false, lnOf = null }) {
   const eligible = [];
   for (const r of board) {
     const p = placedOf(r.player);
@@ -38,8 +43,17 @@ export function payoutLists({ board, potSats, placedOf, held = () => null, bount
   }
   const top = eligible.slice(0, 3), pcts = splitFor(top.length), amounts = shares(potSats, pcts);
   const row = ({ r, x }, place, sats, pct) => ({ player: r.player, name: r.name || null, xAccount: x.username || null, xUserId: x.userId, rank: r.rank, place, score: r.total,
-    timeS: r.timeS, attempt: r.attempt, replay: `/replay/${r.attempt}`, flags: r.flags || {}, sats, pct });
+    timeS: r.timeS, attempt: r.attempt, replay: `/replay/${r.attempt}`, flags: r.flags || {}, sats, pct, ...(lnOf ? { lnAddress: (lnOf(r.player) || {}).address || null } : {}) });
   const pot = { rows: top.map((e, i) => row(e, i + 1, amounts[i], pcts[i])), carrySats: top.length ? 0 : potSats, potSats };
-  const bounty = test || !(bountySats > 0) ? null : { rows: eligible.length ? [row(eligible[0], 1, bountySats, 100)] : [], bountySats };
+  let bounty = null;
+  if (!test && bountySats > 0) {
+    if (!lnOf) bounty = { rows: eligible.length ? [row(eligible[0], 1, bountySats, 100)] : [], bountySats };
+    else {
+      const skipped = [];
+      const win = eligible.find((e) => { const l = lnOf(e.r.player); if (l && l.address && l.inTime) return true;
+        skipped.push({ player: e.r.player, name: e.r.name || null, xAccount: e.x.username || null, rank: e.r.rank, why: NO_LN_ADDRESS }); return false; });
+      bounty = { rows: win ? [{ ...row(win, 1, bountySats, 100), skipped }] : [], skipped, bountySats };
+    }
+  }
   return { pot, bounty };
 }

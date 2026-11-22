@@ -10,6 +10,7 @@
 //   chain { post(payloadHex) -> txid, status(txid) -> { confirmations, height } }    (opr-chain.mjs; null: no post, a round opens on its level)
 //   s2: the bug bounty's Season 2 store (arena-node/src/bounty-season.js openBountySeason) - its X links decide who is placed; read only here
 //   alert(text): the owner's alert hook (off unless configured)
+//   lnCheck(address) -> { ok, address } | { ok: false, why }: a player's Lightning address asked at its wallet (opr-lnaddress.mjs checkLnAddress)
 // NOTHING IS PAID HERE. The service writes payout lists and their approval records; paying stays a separate step.
 import { DatabaseSync } from 'node:sqlite';
 import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
@@ -17,6 +18,7 @@ import { eventRefusal } from '../../arena-node/src/nostr-relay.js';
 import { HTTP_AUTH_KIND } from '../../arena-node/src/feedback-store.js';
 import { encodeRoundPost, levelHashOf } from './opr-chain.mjs';
 import { bestPerPlayer, payoutLists, SPLIT } from './opr-payout.mjs';
+import { checkLnAddress, lnAddressSyntax, LN_CHECKS_PER_HOUR } from './opr-lnaddress.mjs';
 
 const DAY_MS = 86400000, MIN_MS = 60000;
 export const DEFAULTS = Object.freeze({
@@ -71,6 +73,7 @@ export function createOpr(o = {}) {
   const log = o.log || ((m) => console.log(`${new Date().toISOString()} ${m}`));
   const alert = o.alert || (() => {});
   const { sim, fetchCandles, checkLevel, invoices, chain = null, s2 = null } = o;
+  const lnCheck = o.lnCheck || ((a) => checkLnAddress(a));
   const db = new DatabaseSync(o.dbPath || ':memory:');
   db.exec(`PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000;
     CREATE TABLE IF NOT EXISTS rounds (id TEXT PRIMARY KEY, num INTEGER NOT NULL UNIQUE, test INTEGER NOT NULL, day TEXT, chart_day TEXT NOT NULL,
@@ -96,6 +99,10 @@ export function createOpr(o = {}) {
   try { db.exec('ALTER TABLE attempts ADD COLUMN paid_ms INTEGER'); db.exec("UPDATE attempts SET paid_ms = started_ms WHERE paid_ms IS NULL AND started_ms IS NOT NULL AND state IN ('started', 'scored', 'rejected', 'timeout')"); } catch { /* there already */ }
   // A CARRY IS DECIDED ONCE (kanban #3266): carry_to is the round an approved pot list's carry went into (null: none open yet, the next one takes it)
   try { db.exec('ALTER TABLE payout_lists ADD COLUMN carry_to TEXT'); } catch { /* there already */ }
+  // THE PLAYER'S LIGHTNING ADDRESS (kanban #3250): ln_address the last one its wallet confirmed, ln_address_ms when, ln_since_ms when the player
+  // first had a valid one (never moved by a later change: the bounty's "saved by one hour after the round"); ln_checks: the wallet asks of the last hour
+  for (const col of ['ln_address TEXT', 'ln_address_ms INTEGER', 'ln_since_ms INTEGER']) { try { db.exec(`ALTER TABLE players ADD COLUMN ${col}`); } catch { /* there already */ } }
+  db.exec('CREATE TABLE IF NOT EXISTS ln_checks (player TEXT NOT NULL, at_ms INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS ln_checks_by_player ON ln_checks (player, at_ms);');
   const q = (sql) => db.prepare(sql);
   const roundRow = (id) => q('SELECT * FROM rounds WHERE id = ?').get(String(id));
   const levels = new Map();   // round id -> built level
@@ -369,6 +376,32 @@ export function createOpr(o = {}) {
       return { attempt: a.id, player: a.player, total: s.total, timeS: s.timeS, submittedMs: a.submitted_ms, finished: s.finished, clean: s.clean, deaths: s.deaths, flags: J(a.flags, {}), review: a.review };
     });
   }
+  /** A player's Lightning address for round r's lists: { address, inTime } - inTime: a valid one saved by the X grace after the round (#3250). */
+  const lnOf = (r) => (pk) => { const p = q('SELECT ln_address, ln_since_ms FROM players WHERE pubkey = ?').get(pk);
+    return { address: (p && p.ln_address) || null, inTime: !!(p && p.ln_address && p.ln_since_ms != null && p.ln_since_ms <= r.end_ms + cfg.verifyGraceMs) }; };
+  const storedLn = (pk) => { const p = q('SELECT ln_address FROM players WHERE pubkey = ?').get(pk); return (p && p.ln_address) || null; };
+  /**
+   * SAVE A LIGHTNING ADDRESS (kanban #3250, POST /lnaddress): the syntax first (no wallet asked for a typo), then at most LN_CHECKS_PER_HOUR wallet
+   * asks per player and hour, then the wallet itself. Kept only when it answered as a Lightning address; the waiting lists are rebuilt with it.
+   */
+  async function saveLnAddress(player, address) {
+    const s = lnAddressSyntax(address);
+    if (!s.ok) return { ok: false, code: 400, why: s.why };
+    const t = now();
+    const n = q('SELECT COUNT(*) AS n, MIN(at_ms) AS first FROM ln_checks WHERE player = ? AND at_ms > ?').get(player, t - 60 * MIN_MS);
+    if (n.n >= LN_CHECKS_PER_HOUR) return { ok: false, code: 429, why: `Too many checks - try again in ${Math.max(1, Math.ceil((n.first + 60 * MIN_MS - t) / MIN_MS))} min` };
+    q('INSERT INTO ln_checks (player, at_ms) VALUES (?, ?)').run(player, t);
+    let c;
+    try { c = await lnCheck(s.address); } catch { c = { ok: false, why: 'That wallet did not answer' }; }
+    if (!c || !c.ok) { log(`ln address of ${player.slice(0, 8)} not kept: ${c && c.why}`); return { ok: false, code: 400, why: String((c && c.why) || 'That wallet did not answer').slice(0, 80) }; }
+    const at = now();
+    q(`INSERT INTO players (pubkey, ln_address, ln_address_ms, ln_since_ms, seen_ms) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT (pubkey) DO UPDATE SET ln_address = excluded.ln_address, ln_address_ms = excluded.ln_address_ms, ln_since_ms = COALESCE(players.ln_since_ms, excluded.ln_since_ms)`)
+      .run(player, s.address, at, at, at);
+    log(`ln address of ${player.slice(0, 8)} kept (${s.domain})`);
+    for (const x of q("SELECT DISTINCT l.round FROM payout_lists l JOIN rounds r ON r.id = l.round WHERE l.state = 'waiting' AND r.state = 'listed'").all()) refreshLists(x.round);
+    return { ok: true, lnAddress: s.address };
+  }
   function boardOf(round) { return bestPerPlayer(runsOf(round)).map((b) => ({ ...b, name: nameOf(b.player) })); }
   /** PLACED (kanban #3245, #3250): a linked X account the bug bounty verified (Season 2 links, its own flow), not a known bot there. */
   function xOf(pk) {
@@ -395,7 +428,7 @@ export function createOpr(o = {}) {
     const rejected = (kind) => new Set(q('SELECT player FROM row_rejects WHERE round = ? AND kind = ?').all(r.id, kind).map((x) => x.player));
     const make = (kind) => {
       const rj = rejected(kind);
-      return payoutLists({ board, potSats: potOf(r), placedOf: xOf, bountySats: cfg.bountySats, test: !!r.test,
+      return payoutLists({ board, potSats: potOf(r), placedOf: xOf, bountySats: cfg.bountySats, test: !!r.test, lnOf: lnOf(r),
         held: (p) => { const b = board.find((x) => x.player === p); return rj.has(p) ? 'row rejected' : b && b.review === 'pending' ? 'under review' : null; } });
     };
     return { pot: make('pot').pot, bounty: make('bounty').bounty };
@@ -487,7 +520,7 @@ export function createOpr(o = {}) {
     const g = potLedger();
     if (g.why) throw new Error(g.why);
     return q("SELECT * FROM payout_lists WHERE state = 'approved' ORDER BY at_ms").all().map(listRow)
-    .map((l) => ({ ...l, approval: q("SELECT by, at_ms AS atMs FROM approvals WHERE round = ? AND kind = ? AND action = 'approved' ORDER BY n DESC LIMIT 1").get(l.round, l.kind) || null }))
+    .map((l) => ({ ...l, rows: l.rows.map((w) => (w.lnAddress ? w : { ...w, lnAddress: storedLn(w.player) })), approval: q("SELECT by, at_ms AS atMs FROM approvals WHERE round = ? AND kind = ? AND action = 'approved' ORDER BY n DESC LIMIT 1").get(l.round, l.kind) || null }))
     .filter((l) => l.approval && l.approval.by);
   }
   function claimBounty(player, { round, lnAddress } = {}) {
@@ -497,9 +530,13 @@ export function createOpr(o = {}) {
     const row = l && J(l.rows, [])[0];
     if (!row || row.player !== player) return { ok: false, why: 'the bounty of that round is not yours' };
     if (now() > r.end_ms + cfg.bountyClaimMs) return { ok: false, why: 'the bounty expired (7 days after the round)' };
-    if (!/^[a-z0-9._+-]{1,64}@[a-z0-9.-]{1,190}\.[a-z]{2,}$/i.test(String(lnAddress || ''))) return { ok: false, why: 'that is not a Lightning address (name@domain)' };
-    q('INSERT OR REPLACE INTO bounty_claims (round, player, ln_address, at_ms) VALUES (?, ?, ?, ?)').run(r.id, player, String(lnAddress).toLowerCase(), now());
-    return { ok: true };
+    // THE CLAIM CONFIRMS, IT ADDS NO ADDRESS (kanban #3250, owner 2026-11-22): the bounty went to a player with a valid address saved in time; the
+    // claim pays to that stored address (the default) - another one is first saved and checked at POST /lnaddress
+    const stored = storedLn(player);
+    if (!stored) return { ok: false, why: 'no Lightning address saved - save one first' };
+    if (lnAddress != null && String(lnAddress).trim() && String(lnAddress).trim().toLowerCase() !== stored) return { ok: false, why: 'that is not your saved Lightning address - save it first' };
+    q('INSERT OR REPLACE INTO bounty_claims (round, player, ln_address, at_ms) VALUES (?, ?, ?, ?)').run(r.id, player, stored, now());
+    return { ok: true, lnAddress: stored };
   }
 
   // ---------- the clock ----------
@@ -532,6 +569,7 @@ export function createOpr(o = {}) {
       for (const r of q(`SELECT * FROM rounds WHERE ${LIVE} AND end_ms <= ?`).all(now())) close(r, now());
       for (const r of q("SELECT * FROM rounds WHERE state = 'closed' AND end_ms + ? <= ?").all(cfg.verifyGraceMs, now())) makeLists(r, now());
       q('DELETE FROM auth_seen WHERE at_ms < ?').run(now() - 5 * MIN_MS);
+      q('DELETE FROM ln_checks WHERE at_ms < ?').run(now() - 60 * MIN_MS);
     } finally { ticking = false; }
   }
 
@@ -642,7 +680,7 @@ export function createOpr(o = {}) {
         const r = url.searchParams.get('round') ? roundRow(url.searchParams.get('round')) : currentRound();
         const x = xOf(me);
         const mine = r ? q('SELECT * FROM attempts WHERE round = ? AND player = ? ORDER BY created_ms').all(r.id, me) : [];
-        return send(200, { ok: true, pubkey: me, name: nameOf(me), x: x.x ? { username: x.x.username } : null, placed: x.placed, placedWhy: x.placed ? null : x.why,
+        return send(200, { ok: true, pubkey: me, name: nameOf(me), lnAddress: storedLn(me), x: x.x ? { username: x.x.username } : null, placed: x.placed, placedWhy: x.placed ? null : x.why,
           round: r ? r.id : null, used: r ? usedBy(r.id, me, now()) : 0, maxAttempts: r ? r.max_attempts : cfg.maxAttempts,
           attempts: mine.map((a) => ({ attempt: a.id, state: a.state === 'pending' || a.state === 'awaiting' ? 'pending-entry' : a.state === 'unpaid' ? 'entry-not-paid' : a.state,
             paid: a.paid_ms != null, why: a.why, score: J(a.score), startedMs: a.started_ms })) });
@@ -653,6 +691,7 @@ export function createOpr(o = {}) {
         q('INSERT INTO players (pubkey, name, seen_ms) VALUES (?, ?, ?) ON CONFLICT (pubkey) DO UPDATE SET name = excluded.name').run(me, n, now());
         return send(200, { ok: true, name: n });
       }
+      if (req.method === 'POST' && path === '/lnaddress') { const r = await saveLnAddress(me, body.address); const { code, ...out } = r; return send(r.ok ? 200 : code || 400, out); }
       if (req.method === 'POST' && path === '/attempt') { const r = await startAttempt(me, { round: body.round, ip }); return send(r.ok ? 200 : 409, r); }
       if (req.method === 'POST' && path === '/attempt/check') { const r = await checkAttempt(me, body.attempt); return send(r.ok ? 200 : 404, r); }
       if (req.method === 'POST' && path === '/submit') { const r = await submitChecked(me, body, { ip }); return send(r.ok ? 200 : 409, r); }
@@ -662,5 +701,5 @@ export function createOpr(o = {}) {
   }
 
   return { db, cfg, tick, handle, testRound, ensureDaily, startAttempt, checkAttempt, submit, submitChecked, settle, boardOf, publicBoard, publicRound, currentRound, roundRow: (id) => roundRow(id),
-    potOf: (id) => potOf(roundRow(id)), listsOf, decideList, rejectRow, disqualify, review, payable, claimBounty, xOf, postFields: (id) => postFields(roundRow(id)), close: () => db.close() };
+    potOf: (id) => potOf(roundRow(id)), listsOf, decideList, rejectRow, disqualify, review, payable, claimBounty, saveLnAddress, xOf, postFields: (id) => postFields(roundRow(id)), close: () => db.close() };
 }

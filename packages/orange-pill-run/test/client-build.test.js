@@ -12,7 +12,7 @@ test("client/build.mjs writes one html with the whole game inlined", () => {
   const html = fs.readFileSync(out, "utf8");
   assert.doesNotMatch(html, /<script[^>]+src=/);
   assert.doesNotMatch(html, /^\s*(import|export)\s/m);
-  for (const s of ["function stepWorld", "function buildLevel", "function drawWorld", "window.OPR_DAY", "user-select: none", "touch-action"]) assert.ok(html.includes(s), s);
+  for (const s of ["function stepWorld", "function buildLevel", "function drawWorld", "window.OPR_DAY", "user-select: none", "touch-action", "Lightning address for prizes", "function saveLn", "/lnaddress"]) assert.ok(html.includes(s), s);
   const js = html.match(/<script>\n([\s\S]*)<\/script>/)[1];
   assert.doesNotThrow(() => new Function(js));
 });

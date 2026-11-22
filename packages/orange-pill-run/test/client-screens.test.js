@@ -2,7 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { introModel, resultModel, entryLine, myBest, fmtLeft } from "../client/src/screens.js";
+import { introModel, resultModel, entryLine, myBest, fmtLeft, lnSyntaxWhy, lnFieldModel } from "../client/src/screens.js";
 import { makeApi } from "../client/src/api.js";
 import { createEntry, entryOf, attemptOf } from "../client/src/entry.js";
 import { RULES } from "../client/src/rules.js";
@@ -169,4 +169,16 @@ test("#3251 the intro says nothing about 'no round' until the first GET /round a
   const m = introModel({ round: round(), me: me(), board, wallet: W(), nowMs: T0, loading: true });   // a round already known: as always
   assert.equal(m.button.disabled, false);
   assert.deepEqual(m.facts.slice(2).map((f) => [f[1], f[2]]), [["14 h 0 min", "f3"], ["2 of 5", "f3"], ["980 · #4", "f3"]]);
+});
+
+test("#3250 the Lightning address field: live syntax, the stored one shows ✓ saved, Save only for a new well-formed one; the rules line", () => {
+  for (const ok of ["alice@walletofsatoshi.com", "Alice@WalletOfSatoshi.com", "a.b-c_d+e@getalby.com"]) assert.equal(lnSyntaxWhy(ok), null, ok);
+  for (const bad of ["", "alice", "a@b", "a b@wos.com", "a@wos.com:443", "a@1.2.3.4"]) assert.equal(lnSyntaxWhy(bad), "Not a Lightning address", bad);
+  assert.equal(lnSyntaxWhy("a@box.local"), "That is not a public wallet");
+  assert.deepEqual(lnFieldModel("", null), { text: "", kind: "", canSave: false });
+  assert.deepEqual(lnFieldModel("me@wos.com", "me@wos.com"), { text: "✓ saved", kind: "ok", canSave: false });
+  assert.deepEqual(lnFieldModel(" Me@WOS.com ", "me@wos.com"), { text: "✓ saved", kind: "ok", canSave: false });
+  assert.deepEqual(lnFieldModel("me@", null), { text: "Not a Lightning address", kind: "bad", canSave: false });
+  assert.deepEqual(lnFieldModel("new@wos.com", "me@wos.com"), { text: "", kind: "", canSave: true });
+  assert.ok(RULES.find((r) => r[0] === "Play bounty")[1].includes("The play bounty goes to the best player with a valid Lightning address saved by one hour after the round."));
 });

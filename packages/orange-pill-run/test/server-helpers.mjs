@@ -48,21 +48,24 @@ export function signIn(kp, { path, method = 'GET', body = '', createdAt, base = 
 }
 
 /** A service on a fake clock, with a Season 2 book in memory: link(pk, verified) gives the key a linked X account. */
-export function world({ start = '2026-11-23T00:00:00Z', cfg = {}, chain = fakeChain(), s2On = true } = {}) {
+export function world({ start = '2026-11-23T00:00:00Z', cfg = {}, chain = fakeChain(), s2On = true, lnCheck = null } = {}) {
   let t = at(start);
   const clock = { now: () => t, set: (ms) => { t = ms; }, add: (ms) => { t += ms; } };
   const lnd = fakeLnd();
   const s2 = s2On ? openBountySeason(':memory:') : null;
   const alerts = [], lines = [];
   let xn = 0;
-  const opr = createOpr({ now: clock.now, sim: stubSim, fetchCandles: async (d) => candles48(d), checkLevel: async () => ({ ok: true, seed: 7, tries: 1, hash: 'h' }),
+  // the wallets' answers to a Lightning address check (#3250): every address is a good one unless set here ({ ok: false, why })
+  const wallets = new Map(), lnAsked = [];
+  const lnFake = async (a) => { lnAsked.push(a); return wallets.get(a) || { ok: true, address: a }; };
+  const opr = createOpr({ lnCheck: lnCheck || lnFake, now: clock.now, sim: stubSim, fetchCandles: async (d) => candles48(d), checkLevel: async () => ({ ok: true, seed: 7, tries: 1, hash: 'h' }),
     invoices: lnd, chain, s2, alert: (x) => alerts.push(x), log: (m) => lines.push(m), cfg: { adminSha: createHash('sha256').update('letmein').digest('hex'), showTest: true, ...cfg } });
   const link = (pk, verified = true, username = null) => {
     xn++; const r = s2.claimName(pk, 'x', { userId: `x${xn}`, username: username || `user${xn}` });
     if (!r.ok) throw new Error(r.why);
     if (verified) s2.record(pk, 'x', { member: true, nowMs: t });
   };
-  return { opr, clock, lnd, chain, s2, alerts, lines, link };
+  return { opr, clock, lnd, chain, s2, alerts, lines, link, wallets, lnAsked };
 }
 
 /** Make the round ready: level, post, confirmation. */

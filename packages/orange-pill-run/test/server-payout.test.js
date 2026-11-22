@@ -6,12 +6,13 @@ import assert from 'node:assert/strict';
 import { world, openRound, paidAttempt, keypair, logOf, at, MIN } from './server-helpers.mjs';
 import { shares, splitFor } from '../server/opr-payout.mjs';
 
-/** A round with players of the given press counts (score = 10 x presses); placed[i] links a verified X account. */
-async function played(counts, placed = counts.map(() => true), { extraAttempts = 0 } = {}) {
+/** A round with players of the given press counts (score = 10 x presses); placed[i] links a verified X account; ln[i] saves a Lightning address (#3250). */
+async function played(counts, placed = counts.map(() => true), { extraAttempts = 0, ln = placed.map((x) => x === true) } = {}) {
   const w = world({ start: '2026-11-23T01:00:00Z' }); const r = await openRound(w);
   const ps = counts.map(() => keypair());
   for (const [i, p] of ps.entries()) {
     if (placed[i] === true) w.link(p.pk); else if (placed[i] === 'unverified') w.link(p.pk, false);
+    if (ln[i]) assert.equal((await w.opr.saveLnAddress(p.pk, `player${i}@walletofsatoshi.com`)).ok, true);
     const a = await paidAttempt(w, p.pk, r.id); w.clock.add(60000);
     assert.equal(w.opr.submit(p.pk, { attempt: a.attempt, token: a.token, log: logOf(counts[i], undefined, 37 + i) }).ok, true);
   }
@@ -118,13 +119,15 @@ test('#3250 X can be verified until 1 hour after the round: the lists are writte
   assert.deepEqual(rowsOf(w, r, 'pot').map((x) => x.player), [ps[0].pk, ps[1].pk]);
 });
 
-test('#3250 the bounty winner names a Lightning address within 7 days; nobody else can', async () => {
+test('#3250 the bounty winner confirms the claim to the saved Lightning address within 7 days; nobody else can, no other address', async () => {
   const { w, r, ps } = await played([10, 9]);
   await endRound(w, r);
   assert.equal(w.opr.claimBounty(ps[1].pk, { round: r.id, lnAddress: 'a@b.io' }).ok, false);
-  assert.equal(w.opr.claimBounty(ps[0].pk, { round: r.id, lnAddress: 'nope' }).ok, false);
-  assert.equal(w.opr.claimBounty(ps[0].pk, { round: r.id, lnAddress: 'winner@walletofsatoshi.com' }).ok, true);
+  assert.match(w.opr.claimBounty(ps[0].pk, { round: r.id, lnAddress: 'other@walletofsatoshi.com' }).why, /not your saved Lightning address/);
+  const c = w.opr.claimBounty(ps[0].pk, { round: r.id });   // the stored address is the default
+  assert.equal(c.ok, true); assert.equal(c.lnAddress, 'player0@walletofsatoshi.com');
+  assert.equal(w.opr.claimBounty(ps[0].pk, { round: r.id, lnAddress: 'Player0@walletofsatoshi.com' }).ok, true);
   w.clock.set(r.end_ms + 7 * 24 * 60 * MIN + 1);
-  assert.match(w.opr.claimBounty(ps[0].pk, { round: r.id, lnAddress: 'winner@walletofsatoshi.com' }).why, /expired/);
+  assert.match(w.opr.claimBounty(ps[0].pk, { round: r.id }).why, /expired/);
   void at;
 });

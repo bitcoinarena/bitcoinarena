@@ -83,6 +83,13 @@ button:disabled { opacity: .5; cursor: default; }
 .xline { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 10px !important; font-size: .92rem !important; color: var(--soft); }
 .xline button { padding: 5px 12px; font-size: .88rem; border-color: var(--btc); color: var(--btc); }
 .xbox span { color: var(--text); font-size: .93rem; } .xbox button { padding: 7px 12px; font-size: .9rem; }
+/* kanban #3250: the Lightning address for prizes, one compact row on the intro and the result */
+.lnrow { display: flex; gap: 8px; margin: 0 0 10px; }
+.lnrow input { flex: 1; min-width: 0; font: 16px/1.2 var(--body); color: var(--text); background: #120d14; border: 1px solid var(--line); border-radius: 9px; padding: 7px 10px; }   /* 16 px: iOS does not zoom */
+.lnrow input:focus { outline: none; border-color: var(--btc); }
+.lnrow button { padding: 6px 14px; font-size: .9rem; border-color: var(--btc); color: var(--btc); }
+.lnwhy { margin: -6px 0 8px !important; font-size: .8rem !important; color: var(--soft); } .lnwhy.ok { color: var(--green) !important; } .lnwhy.bad { color: var(--red) !important; }
+#result .lnrow { margin: 10px 0 6px; } #result .lnwhy { margin: 0 0 6px !important; }
 .rules ol { margin: 0; padding-left: 1.1em; display: grid; gap: 6px; color: var(--soft); font-size: .92rem; line-height: 1.4; }
 .rules ol b { color: var(--text); }
 .box.wide { width: min(620px, 100%); max-height: 100%; overflow: auto; }
@@ -108,7 +115,7 @@ body.bridged .tag { margin-left: 0; }
   .box .line { font-size: .92rem; line-height: 1.35; margin: 0 0 8px; }
   .bounty { font-size: 1.02rem; margin: 0 0 8px; }
   .facts { gap: 4px 10px; margin: 0 0 10px; } .facts dd { font-size: .92rem; }
-  .xline { margin: 0 0 8px !important; } button.big { padding: 12px 16px; font-size: 1.05rem; }
+  .xline { margin: 0 0 8px !important; } .lnrow { margin: 0 0 8px; } .lnrow input { padding: 6px 10px; } button.big { padding: 12px 16px; font-size: 1.05rem; }
   .why { margin: 6px 0 0 !important; } .links { margin-top: 8px; }
 }
 @media (max-height: 560px) {
@@ -116,6 +123,7 @@ body.bridged .tag { margin-left: 0; }
   .box .line { font-size: .85rem; margin: 0 0 6px; } .bounty { font-size: .95rem; margin: 0 0 6px; }
   .facts { gap: 2px 10px; margin: 0 0 8px; } .facts dt { font-size: .68rem; } .facts dd { font-size: .86rem; }
   .xline { margin: 0 0 6px !important; font-size: .85rem !important; } .xline button { padding: 3px 10px; }
+  .lnrow { margin: 0 0 6px; } .lnrow input { padding: 5px 9px; } .lnrow button { padding: 4px 12px; }
   button.big { padding: 10px 14px; font-size: 1rem; } .why { font-size: .8rem !important; } .links { margin-top: 6px; font-size: .86rem; }
 }
 </style>
@@ -137,6 +145,8 @@ body.bridged .tag { margin-left: 0; }
       <dl class="facts" id="iFacts" hidden></dl>
       <div class="price" id="iPrice"></div>
       <p class="xline" id="iX" hidden><span id="iXText"></span><button id="iXBtn" type="button" hidden>Link X</button></p>
+      <form class="lnrow" id="iLn" hidden><input id="iLnIn" type="text" inputmode="email" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="320" placeholder="Lightning address for prizes" aria-label="Lightning address for prizes"><button id="iLnBtn" type="submit">Save</button></form>
+      <p class="lnwhy" id="iLnWhy" role="status" hidden></p>
       <button class="primary big" id="startBtn">Practice run (free)</button>
       <p class="why" id="iWhy" role="status"></p>
       <nav class="links"><a href="#rules" id="rulesLink">Rules</a><a href="#board" id="boardLink">Leaderboard</a></nav>
@@ -149,6 +159,8 @@ body.bridged .tag { margin-left: 0; }
       <div class="tw"><table id="rScore"></table></div>
       <p class="refused" id="rRefused" hidden></p>
       <div class="facts2" id="rFacts"><span id="rRank"></span><span id="rBeat"></span><span id="rLeft"></span></div>
+      <form class="lnrow" id="rLn" hidden><input id="rLnIn" type="text" inputmode="email" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="320" placeholder="Lightning address for prizes" aria-label="Lightning address for prizes"><button id="rLnBtn" type="submit">Save</button></form>
+      <p class="lnwhy" id="rLnWhy" role="status" hidden></p>
       <div class="xbox" id="rX" hidden><span id="rXText">Link your X account to be placed and win.</span><button id="xBtn" type="button">Link X</button></div>
       <div class="row"><button class="primary" id="againBtn">Play again</button><button id="replayBtn">Watch replay</button><button id="rBoardBtn">Leaderboard</button></div>
     </div>
