@@ -8293,6 +8293,24 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
                 + '<path d="M14 54 L24 44 L32 48 L44 34 L56 38" stroke="#4ade80" stroke-width="3" fill="none" stroke-linecap="round"/></svg></div><div><div class="name">Orange Pill Run</div>'
                 + '<span class="badge">Daily tournament · test</span></div></div><div class="desc">Run yesterday\'s Bitcoin chart. Tap to jump. Don\'t fall. Five attempts a day, the best three share the pot.</div>';
               t.addEventListener('click', () => { const q = new URLSearchParams(location.search.replace(/^\?/, '')); q.set('game', 'orange-pill-run'); location.search = q.toString(); });
+              // THE SAME DETAILS AS THE OTHER TILES (owner 2026-11-22): the players and live rounds chips and the Leaderboard link, cloned from a
+              // node game's tile so they look alike, filled from the round service (GET /api/opr/round); a tap on the leaderboard opens the game's board
+              const ref = grid.querySelector('.tile:not([data-game="orange-pill-run"])');
+              if (ref) {
+                const st = ref.querySelector('.stats'), sg = ref.querySelector('.season-go');
+                if (st) { const c = st.cloneNode(true); const chips = [...c.querySelectorAll('.chip')]; if (chips[0]) chips[0].remove();
+                  for (const x of chips) { x.removeAttribute('role'); x.removeAttribute('tabindex'); x.classList.remove('opens'); }
+                  t.appendChild(c); t._oprChips = chips.slice(1, 3); }
+                if (sg) { const g = sg.cloneNode(true); g.title = 'Leaderboard: Orange Pill Run';
+                  g.addEventListener('click', (e) => { e.stopPropagation(); const q = new URLSearchParams(location.search.replace(/^\?/, '')); q.set('game', 'orange-pill-run'); location.href = location.pathname + '?' + q.toString() + '#board'; });
+                  t.appendChild(g); }
+              }
+              const setChip = (x, n, word) => { if (!x) return; const w = x.querySelector('.word'); const svg = x.querySelector('svg');
+                x.textContent = ''; if (svg) x.appendChild(svg); x.appendChild(document.createTextNode(String(n))); if (w) { w.textContent = ' ' + word; x.appendChild(w); }
+                x.title = n + ' ' + word; x.setAttribute('aria-label', n + ' ' + word); x.classList.toggle('idle', !n); };
+              fetch('/api/opr/round', { cache: 'no-store' }).then((r) => r.json()).then((j) => { const r = j && j.round; const ch = t._oprChips || [];
+                setChip(ch[0], r ? Number(r.players || 0) : 0, 'players'); setChip(ch[1], r && r.phase === 'open' ? 1 : 0, 'rounds');
+                const badge = t.querySelector('.badge'); if (badge && r) badge.textContent = (r.test ? 'Test round · ' : 'Daily tournament · ') + (r.phase === 'open' ? 'open' : r.phase); }).catch(() => {});
               grid.appendChild(t);
               const h = list.querySelector('section.group h3'); if (h) h.textContent = h.textContent.replace(/\d+\s*$/, (n) => String(Number(n) + 1));
               return true;
