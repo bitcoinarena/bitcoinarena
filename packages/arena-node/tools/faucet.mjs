@@ -1170,7 +1170,7 @@ createServer((req, res) => {
   }
   if (S2 && path === '/feedback/season' && req.method === 'GET') { const p = S2.pot(S2.seasonNow(Date.now()));
     // usedUp (kanban #2787): from Season 3 on, a pot that cannot take even the smallest payout (a useful note at 25 %) means no bounty this season
-    return send(200, { season: p.season, potSats: p.potSats, usedSats: p.usedSats, leftSats: p.leftSats, drawPrizeSats: p.drawPrizeSats, nodes: p.nodes, nodesMost: p.nodesMost,
+    return send(200, { season: p.season, potSats: p.potSats, usedSats: p.usedSats, paidSats: p.paidSats, owedSats: p.owedSats, leftSats: p.leftSats, drawPrizeSats: p.drawPrizeSats, nodes: p.nodes, nodesMost: p.nodesMost,
       usedUp: p.season >= NO_CARRY_FROM_SEASON && p.leftSats < Math.floor((LEVEL_SATS.useful * BOT_PCT) / 100), nextSeasonMs: seasonEndMs(p.season, S2_START_MS, S2_END_MS),
       // kanban #2789: this season's reports still waiting for review (a number only), for the stage pot banner from 98 %
       pendingNew: FEEDBACK.countNew(seasonEndMs(p.season - 1, S2_START_MS, S2_END_MS) ?? 0) }); }
@@ -1234,7 +1234,14 @@ createServer((req, res) => {
     let rows = []; try { rows = FEEDBACK ? FEEDBACK.paidLog() : []; } catch { rows = []; }
     const at = (ms) => (ms ? new Date(ms).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : '');
     const seasonOf = (id) => { try { const a = S2 ? S2.approval(id) : null; return a && Number.isInteger(a.season) && a.season > 0 ? a.season : 1; } catch { return 1; } };
-    return send(200, rows.map((x) => ({ season: `Season ${seasonOf(x.id)}`, date: at(x.paidMs), reason: `Feedback #${String(x.number).padStart(3, '0')}${x.severity ? ` (${x.severity})` : ''}`, channel: 'bug bounty', sats: x.sats })));
+    // EVERY PAYOUT THE POT COUNTS (kanban #3327, feedback #386): /feedback/season's usedSats counts each approved report, its reward claimed or
+    // not, so the log listed 53,680 of Season 2's 63,705 - an approved one not yet paid is a row too, state 'approved' (no paid time), a paid one 'paid'
+    const out = rows.map((x) => ({ number: x.number, row: { season: `Season ${seasonOf(x.id)}`, date: at(x.paidMs), reason: `Feedback #${String(x.number).padStart(3, '0')}${x.severity ? ` (${x.severity})` : ''}`, channel: 'bug bounty', sats: x.sats, state: 'paid' } }));
+    try {
+      for (const c of S2 && S2.counted ? S2.counted() : []) { if (c.paid) continue; const r = FEEDBACK.report(c.report); if (!r) continue;
+        out.push({ number: Number(r.number), row: { season: `Season ${c.season}`, date: '', reason: `Feedback #${String(r.number).padStart(3, '0')}${r.severity ? ` (${r.severity})` : ''}`, channel: 'bug bounty', sats: c.sats, state: 'approved' } }); }
+    } catch { /* the paid rows stand */ }
+    return send(200, out.sort((a, b) => a.number - b.number).map((x) => x.row));
   }
   if (path === '/feedback/rewards' && req.method === 'GET') {
     // the amounts only toward the private page's origin (the owner 2026-11-07: "Den bounty Funktion ausmachen bis ich es sage und nur auf einer privaten URL aktivieren")
