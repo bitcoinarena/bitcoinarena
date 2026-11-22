@@ -51,6 +51,11 @@ export const LOBBY_SKEW_MS = 60000;
 export const SIGNER_ANSWER_MS = 10000;
 /** How long the lobby waits for the other seats once half of them answered. */
 export const LOBBY_LAST_MS = 2500;
+/**
+ * AND ONCE THREE QUARTERS ANSWERED, THIS MUCH MORE (kanban #3289, measured on the live page 2026-11-22: twelve of 14 seats answered /rounds
+ * in 0.3 s and the first lobby waited 2.5 s for two silent ones). A late seat is in the next read; what counts is unchanged.
+ */
+export const LOBBY_MOST_MS = 500;
 
 /**
  * `fetcher` with a limit: a read that has not answered in `ms` is refused with the words the lobby shows, and a real
@@ -269,7 +274,7 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
     // AT MOST 8 UPCOMING ROUNDS OF EACH SERIES (`next`): a node holding two series lists ~1150 rounds otherwise - 63 s,
     // past what the lobby waits for a node. A lobby shows one round per kind; eight leaves the lead's choice its room.
     const one = ask(`${String(node).replace(/\/+$/, '')}/rounds?next=${LOBBY_PER_SERIES}&compact=1${gamesQuery}`).then((r) => ({ r }), (e) => ({ e }));
-    one.then(() => { answeredCount += 1; if (answeredCount * 2 >= unique.length && unique.length > 2) setTimeout(settle, LOBBY_LAST_MS); });
+    one.then(() => { answeredCount += 1; if (unique.length > 2 && answeredCount * 2 >= unique.length) setTimeout(settle, answeredCount * 4 >= unique.length * 3 && unique.length >= 4 ? LOBBY_MOST_MS : LOBBY_LAST_MS); });
     return Promise.race([one, settled.then(() => ({ e: Object.assign(new Error(`did not answer within ${LOBBY_LAST_MS} ms of half the seats`), { silent: true }) }))]);
   }));
   for (const [k, node] of unique.entries()) {
