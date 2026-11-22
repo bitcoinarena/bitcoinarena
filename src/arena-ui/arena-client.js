@@ -619,7 +619,7 @@ const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]);
+const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 33]);
 /**
  * THE VERSION THAT RUNS THE CENSUS KEY'S DAEMON (5A.3B, RULED 2026-11-02, kanban #1048 answer 2). A node that does not speak it cannot deal or sign, so a share given to it counts against
  * the threshold and nobody can use it: a node whose advertisement does not list this version is out of the key's census, in T and the shares alike. It is above BOND_SUM_VERSION, so
@@ -775,6 +775,25 @@ const TIE_SPLIT_VERSION = 31;
 const REVEAL_SET_VERSION = 32;
 /** Whether a round of protocol version `v` splits a tie at a paid place evenly (kanban #2687). */
 const splitsTies = (v) => Number.isInteger(v) && v >= TIE_SPLIT_VERSION;
+/**
+ * 2026.0.33 - THREE RULES EVERY SEAT OF A ROUND MUST COMPUTE ALIKE (owner decision 2026-11-22 "Ja", kanban #3257, #3260, #2983). Rounds below 33
+ * keep every rule byte for byte; a round written at 33 is served only by a build that speaks it (speaksVersion), so a rolling restart never has
+ * two seats of one round compute two rules: a seat on the old build refuses the round by its version, and the round creators (the duty days,
+ * round-2of2, ARENA_PROTOCOL_VERSION) write 33 only once every seat of the network runs a build that lists it.
+ *   - #3257 THE LOCK-SET VIEW HOLDS EVERY ENTRY WHOSE STAKE WAS SEEN BEFORE THE CLOSE (lock-set.js lockSetViewsAllSeen): not round.js
+ *     seatedEntriesOf, already cut to the game's `players` lowest entry ids - a low-id third lock handed to only some seats moved the cut, the
+ *     views split and the honest pair fell out of the certified set (VOID). The set is certified as before; the game's `players` lowest entry
+ *     ids of the certified set are the seats (certifiedSeats), the rest VOID and returned as now.
+ *   - #3260 A SCALAR MARKET'S DISPUTE ONLY BETWEEN DISJOINT SIGNER SETS (attested.js marketTransition): an attestor key that signed two different
+ *     values is an equivocator - flagged, its signatures dropped - and a value attestation counts only with the threshold left without it.
+ *   - #2983 A FEDERATION'S FEE LOCKS THAT PAY NO SIGNER NODE ARE NOT CLAIMED (federation-settlement.js splitByFederation): a federation's fee part
+ *     that pays no payout leaves its fee locks out of its transaction (they expire back to their players), as the one-federation feeSettlement does.
+ * 32 is the certified reveal set's (prepared, not spoken): versions are cumulative, so a round at 33 is at or above 32 - the build that wires the
+ * reveal set must gate it on a version of its own above every version spoken by then, never on `>= 32` alone.
+ */
+const DISJOINT_RULES_VERSION = 33;
+/** Whether a round of protocol version `v` runs the 2026.0.33 rules (kanban #3257, #3260, #2983). */
+const runsDisjointRules = (v) => Number.isInteger(v) && v >= DISJOINT_RULES_VERSION;
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (RULED 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -45506,10 +45525,58 @@ const saidOf = (a) => (typeof a.value === 'bigint' ? `value ${a.value}` : `outco
  * Answers { state, outcome?, value?, observedAtMs?, firstMs?, finalAtMs?, atMs?, reason?, why?, said? } - `reason` of a VOID:
  * 'deadline', 'dispute' or 'game'.
  */
-function marketTransition(prev, held, { deadlineMs = null, windowMs, nowMs, voids = [] }) {
+// AN EQUIVOCATOR'S SIGNATURES DO NOT COUNT (2026.0.33, kanban #3260, audit #1489 r21-attest-1; owner 2026-11-22 option A). Two honest attestors of
+// a scalar market read their sources on their own clocks and sign values a cent apart; one attestor C that co-signed both honest bodies made two
+// standing value attestations, {A, C} and {B, C}, and the round VOID 'dispute' - a free option on every scalar round (or C posted only the value
+// that paid it more). From 33 a dispute counts only between attestations whose signer sets are disjoint: a key that signed two different values
+// (in what the seat holds before the deadline) is an equivocator - named in the answer's `equivocators`, its signed attestations kept as the
+// evidence they are - and every value attestation counts only with `attestThreshold` signers left without the equivocators. What still stands
+// settles as before; when nothing does, the round waits for an attestation without them (or is VOID at its deadline, as any round without one).
+// Value attestations only (scalar markets); an index market, a market on a game and every round below 33 are read byte for byte as before.
+// THE SAME EVIDENCE AS A DISPUTE: only what came before the deadline and inside the objection window the first value attestation opened (its
+// receivedMs + windowMs) - an equivocation handed in later is evidence only, as a contradiction after the window is (transitionOver).
+function withoutEquivocators(held, { attestThreshold, deadlineMs = null, windowMs = null }) {
+  const D = deadlineMs === null || deadlineMs === undefined ? Infinity : Number(deadlineMs);
+  const firstAt = Math.min(...held.filter((h) => typeof h.value === 'bigint' && Number(h.receivedMs) < D).map((h) => Number(h.receivedMs)));
+  const cut = windowMs === null || windowMs === undefined || !Number.isFinite(firstAt) ? D : Math.min(D, firstAt + Number(windowMs));
+  const valuesOf = new Map();
+  for (const h of held) {
+    if (typeof h.value !== 'bigint' || Number(h.receivedMs) >= cut) continue;
+    for (const sg of h.signatures || []) {
+      const k = toHex(sg.key);
+      if (!valuesOf.has(k)) valuesOf.set(k, new Set());
+      valuesOf.get(k).add(h.value);
+    }
+  }
+  const equivocators = [...valuesOf].filter(([, v]) => v.size > 1).map(([k]) => k).sort();
+  if (!equivocators.length) return { held, equivocators };
+  const bad = new Set(equivocators);
+  const kept = held.filter((h) => {
+    if (typeof h.value !== 'bigint') return true;
+    const left = new Set((h.signatures || []).map((sg) => toHex(sg.key)).filter((k) => !bad.has(k)));
+    return left.size >= Number(attestThreshold);
+  });
+  return { held: kept, equivocators };
+}
+
+function marketTransition(prev, held, { deadlineMs = null, windowMs, nowMs, voids = [], protocolVersion = null, attestThreshold = null }) {
   if (prev && marketTerminal(prev.state)) return prev;
   const D = deadlineMs === null || deadlineMs === undefined ? Infinity : Number(deadlineMs);
   const W = Number(windowMs), now = Number(nowMs);
+  // FROM 33: no equivocator's signature counts toward a scalar value (withoutEquivocators, kanban #3260)
+  let equivocators = [];
+  if (runsDisjointRules(protocolVersion) && Number.isInteger(Number(attestThreshold)) && Number(attestThreshold) > 0 && held.some((h) => typeof h.value === 'bigint')) {
+    const w = withoutEquivocators(held, { attestThreshold, deadlineMs, windowMs });
+    held = w.held; equivocators = w.equivocators;
+    // an ATTESTED value read before an equivocator was known stands only while an attestation of it still stands without one (the seat's
+    // persisted ATTESTED row then goes back to OPEN: round.js casMarketState; FINAL and VOID stay terminal)
+    if (equivocators.length && prev && prev.state === MARKET_STATE.ATTESTED && typeof prev.value === 'bigint' && !held.some((h) => typeof h.value === 'bigint' && h.value === prev.value)) prev = null;
+  }
+  const flagged = (x) => (equivocators.length ? { ...x, equivocators } : x);
+  return flagged(transitionOver(prev, held, { D, W, now, voids }));
+}
+
+function transitionOver(prev, held, { D, W, now, voids }) {
   const events = [...voids.map((v) => ({ at: Number(v.receivedMs), void: v })), ...held.map((h) => ({ at: Number(h.receivedMs), h }))]
     .filter((e) => e.at < D).sort((x, y) => x.at - y.at || (x.void ? -1 : 0) - (y.void ? -1 : 0));
   let s = prev && prev.state === MARKET_STATE.ATTESTED ? { ...prev } : { state: MARKET_STATE.OPEN };
@@ -47210,6 +47277,22 @@ const lsBytes = (x) => (x instanceof Uint8Array ? x : fromHex(String(x)));
 const certifiesLockSet = (contract, headToHead) => !!headToHead && !!contract && Number.isInteger(contract.protocolVersion)
   && contract.protocolVersion >= LOCK_SET_VERSION && typeof contract.stakeMsat === 'bigint' && contract.stakeMsat > 0n;
 
+/**
+ * 2026.0.33 (kanban #3257): does a seat's view of this round hold EVERY entry whose stake it saw before the close, not only the game's `players`
+ * lowest ids (round.js seatedEntriesOf)? Below 33 the cut view let a low-id lock handed to only some seats split the views; from 33 the view is
+ * uncut and the seats are cut from the certified set (certifiedSeats), the same at every seat holding that certificate.
+ */
+const lockSetViewsAllSeen = (contract) => !!contract && runsDisjointRules(contract.protocolVersion);
+
+/**
+ * THE SEATS OF A CERTIFIED LOCK SET (kanban #3257): from 33 the game's `players` lowest entry ids of the certified entries (hex, any order;
+ * answered ascending), below 33 the certified entries as they are, byte for byte (each view was cut already). `players` null or not a positive integer: all.
+ */
+function certifiedSeats(entries, contract, players) {
+  if (!lockSetViewsAllSeen(contract) || !Number.isInteger(players) || players <= 0) return [...(entries || [])];
+  return [...new Set((entries || []).map((e) => String(e).toLowerCase()))].sort().slice(0, players);
+}
+
 /** The set in its one encoding: entries ascending, each once. */
 function encodeLockSet({ roundId, entries }) {
   if (!lsIs32(roundId)) throw new Error('a lock set names its 32-byte round');
@@ -47797,11 +47880,15 @@ async function fetchGames({ nodes, fetcher = fetch, answerMs = GAMES_ANSWER_MS, 
       if (!got.named) Object.defineProperty(got, 'named', { value: [], enumerable: false });
       if (!got.named.some((n) => n.node === node)) got.named.push({ node, title: typeof g.title === 'string' && g.title ? g.title : null, icon: typeof g.icon === 'string' && g.icon ? g.icon : null });
       // ONE NODE, COUNTED ONCE (2026-10-14 07:42Z, a phone off the tailnet: "28 nodes" for 14): a seat reached at two
-      // addresses (its Funnel name and its named tunnel) answers both with the same node key; it hosts the game once
+      // addresses (its Funnel name and its named tunnel) answers both with the same node key; the shown count (`nodeCount`) is of
+      // distinct keys. EVERY ADDRESS STAYS IN game.nodes (kanban #3253): that key is the seat's own unsigned word, and a seat listed
+      // first that named an honest seat's key pushed the honest address out of game.nodes - the shop then handed a paid item's record
+      // to the liar alone. One seat at two addresses is asked twice (a purchase post is idempotent); no address is dropped on a claim.
       const key = body && /^[0-9a-f]{64}$/i.test(String(body.node)) ? String(body.node).toLowerCase() : node;
       if (!got.nodeKeys) Object.defineProperty(got, 'nodeKeys', { value: new Set(), enumerable: false });
-      if (got.nodeKeys.has(key)) continue;
       got.nodeKeys.add(key);
+      if (!Object.prototype.hasOwnProperty.call(got, 'nodeCount')) Object.defineProperty(got, 'nodeCount', { get: () => got.nodeKeys.size, enumerable: false });
+      if (got.nodes.includes(node)) continue;
       got.nodes.push(node);
       // EVERY SEAT'S INFO IS KEPT, NOT THE FIRST ONLY (kanban #2851, #1489 r26-hosting-2): one seat answering first with a made-up `info` held
       // the tile's info for good and the developer's signed one, served by the other seats, was never checked; checkedGameInfo now tries each
@@ -47834,7 +47921,7 @@ async function fetchGames({ nodes, fetcher = fetch, answerMs = GAMES_ANSWER_MS, 
     const icon = agreed(named, (n) => n.icon);
     if (icon !== null) { const from = named.find((n) => n.icon === icon).node; got.icon = `${from}/${icon.replace(/^\/+/, '')}`; }
   }
-  const games = [...byId.values()].sort((a, b) => (Number(b.known) - Number(a.known)) || (b.nodes.length - a.nodes.length) || (a.name < b.name ? -1 : 1));
+  const games = [...byId.values()].sort((a, b) => (Number(b.known) - Number(a.known)) || ((b.nodeCount || b.nodes.length) - (a.nodeCount || a.nodes.length)) || (a.name < b.name ? -1 : 1));
   return { games, refused };
 }
 
