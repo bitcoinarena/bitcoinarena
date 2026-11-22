@@ -13763,8 +13763,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       if (req.method === 'GET' && url.pathname === '/liquidations') {
         if (!liquidations) return json(res, 200, { node: toHex(round.pubkey), liquidations: [] });
+        // each row's phase on this seat's tip (kanban #3340); a tip that does not read leaves the phase null
+        let tip = null;
+        try { if (typeof chainTip === 'function') { const t = Number(await chainTip()); if (Number.isInteger(t)) tip = t; } } catch { /* phase null */ }
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
-        return res.end(JSON.stringify({ node: toHex(round.pubkey), liquidations: liquidations.list() }));
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), liquidations: liquidations.list({ tip }) }));
       }
       if (req.method === 'POST' && url.pathname === '/liquidations/spent-set') {
         if (!liquidations) return text(res, 503, 'this seat holds no federation records yet');

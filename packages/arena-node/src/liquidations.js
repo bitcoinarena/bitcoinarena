@@ -36,7 +36,13 @@ export function createLiquidations({ records, clocks, verify, claimsUrl = null, 
     return { ok: true, kept: true, session: c.session };
   }
 
-  function list() {
+  // WHERE A LIQUIDATION STANDS ON THIS SEAT'S TIP (kanban #3340, feedback #391): halted until it liquidates, then the claim window, the
+  // late-claim tail, and ended from the block the remainder splits at. The paying is the arbitration set's (§23A.5 steps 2-4); this
+  // seat only mirrors it, so a row past its last deadline says it ended instead of looking as it did on the day of the halt.
+  const phaseOf = (tip, w) => (!Number.isInteger(tip) ? null : tip < w.liquidatesAt ? 'halted' : tip < w.claimWindowCloses ? 'claim-window'
+    : tip < w.remainderSplitsAt ? 'late-claims' : 'ended');
+  /** `tip`: this seat's chain tip, for each row's phase (none: phase null). */
+  function list({ tip = null } = {}) {
     return haltedFederations().map((fid) => {
       const halt = haltOf(fid); const held = records.recordOf(fid);
       const when = liquidationSchedule({ haltHeight: halt.height, clocks });
@@ -51,6 +57,9 @@ export function createLiquidations({ records, clocks, verify, claimsUrl = null, 
           ...(halt.proof.observerKeys ? { observerKeys: halt.proof.observerKeys.map(toHex) } : {}) } : null,
         // WHERE CLAIMS GO (§23A.5 step 2: "advertises where claims go ... every seat mirrors them"): the arbitration set's door
         claims: claimsUrl,
+        ...(claimsUrl ? {} : { claimsWhy: 'this seat names no claim door (ARENA_LIQUIDATION_CLAIMS): claims go to the arbitration set\'s endpoints (§5A.3B)' }),
+        phase: phaseOf(tip, { liquidatesAt: halt.height + clocks.abandonBlocks, claimWindowCloses: when.claimWindowCloses, remainderSplitsAt: when.remainderSplitsAt }),
+        tip: Number.isInteger(tip) ? tip : null,
         liquidatesAt: halt.height + clocks.abandonBlocks,
         claimWindowCloses: when.claimWindowCloses, lateClaimsUntil: when.lateClaimsUntil, remainderSplitsAt: when.remainderSplitsAt,
         spentSet: pick.copy ? { session: pick.session, signers: pick.signers, disagree: pick.disagree, nonces: pick.copy.nonces.length,
