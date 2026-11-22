@@ -5372,6 +5372,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       return keysOf();
     };
     const OWED_LOOKBACK_MS = 24 * 3600 * 1000;
+    // kanban #3335: an Orange Pill Run run in play (the game's bridge.playing); at most 4 min (a run is 3 min), so a lost "ended" never stops the page
+    window.ARENA_OPR_IN_PLAY = () => !!window.ARENA_OPR_PLAYING && Date.now() - window.ARENA_OPR_PLAYING < 240000;
     async function findTheRoundsOwed(named) {
       if (typeof ARENACLIENT === 'undefined' || !ARENACLIENT.findOwedRounds || !window.ARENA_CURVE || !named || !named.federation) return;
       try {
@@ -5380,6 +5382,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         // It waits for the wallet (the tab's first seed) and runs then.
         let tabSeed = collectSeed();
         while (!tabSeed) { await new Promise((r) => setTimeout(r, 1000)); tabSeed = collectSeed(); }
+        while (window.ARENA_OPR_IN_PLAY()) await new Promise((r) => setTimeout(r, 2000));   // #3335: not during a run
         // EVERY SAVED PHRASE OF THIS BROWSER, each scanned with its own key and its finds kept under its own seed
         const tabHex = ARENACLIENT.toHex(tabSeed);
         const seeds = ARENACLIENT.browserSeedHexes ? ARENACLIENT.browserSeedHexes(vault(), tabHex) : [tabHex];
@@ -5529,6 +5532,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     // this browser holds a wallet in, the whole wallet is presented to the arbitration set (kept in storage until it is taken), and
     // every payout that set locked to this seed's claim key is collected into this browser's wallet of the federation it was paid in
     async function claimLiquidations() {
+      // #3335 (measured on the live page: 84-95 ms in one task 14 s after a load, in the middle of a run): the claim waits for the run to end
+      while (window.ARENA_OPR_IN_PLAY && window.ARENA_OPR_IN_PLAY()) await new Promise((r) => setTimeout(r, 2000));
       const lob = window.ARENA_LEDGER_LOBBY; const seed = walletSeed();
       if (!lob || !lob.nodes || !lob.nodes.length || !seed || !ARENACLIENT.presentNotes || !window.ARENA_CURVE) return;
       // THE ARBITRATION SET'S SIGNED EVENTS, NOT A SEAT'S LIST (kanban #1148): up to three seats asked and their events merged - a seat can withhold
@@ -5601,6 +5606,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     const orderClear = async () => { while (Date.now() - (window.ARENA_ORDER_AT || 0) < 10000) await new Promise((r) => setTimeout(r, 1000)); };
     async function lookThePayout() {
       if (performance.now() < 30000) return;
+      if (window.ARENA_OPR_IN_PLAY && window.ARENA_OPR_IN_PLAY()) return;   // #3335: after the run
       if (payoutAsking) {
         if (payoutAskingSince && Date.now() - payoutAskingSince > 60000)
           collectNote('loop', 'still on its last look, started ' + new Date(payoutAskingSince).toISOString().slice(11, 19) + 'Z - a step has not returned');
@@ -7169,7 +7175,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     };
     window.ArenaSettings.logs(document.getElementById('arena-set-logs'), { onCopy: async () => (window.ARENA_COPY_LOGS ? window.ARENA_COPY_LOGS() : 'this page keeps no client logs') });
     // the balance read again every 10 s (a read, never a spend)
-    setInterval(() => { if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE(); }, 10000);
+    setInterval(() => { if (window.ARENA_OPR_IN_PLAY && window.ARENA_OPR_IN_PLAY()) return; if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE(); }, 10000);   // #3335: not during a run
 
     const withdrawGo = document.getElementById('arena-withdraw-go');
     if (withdrawGo) withdrawGo.addEventListener('click', () => {
@@ -7397,6 +7403,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     async function lookThePending() {
       const st = lookThePending.st || (lookThePending.st = { busy: false, seen: new Map(), settledMs: 30000, unansweredMs: 10000, askMs: 8000, graceMs: 200 });
       if (st.busy) return;
+      if (window.ARENA_OPR_IN_PLAY && window.ARENA_OPR_IN_PLAY()) return;   // #3335: after the run
       st.busy = true;
       try {
       let notes = [];
@@ -8243,6 +8250,10 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         return r.ok ? { ok: true, preimage: r.preimage, by: 'your player wallet' } : { ok: false, why: r.why };
       },
       linkX: () => { if (window.ARENA_MY_FEEDBACK) window.ARENA_MY_FEEDBACK(); },
+      // A RUN IN PLAY HAS THE THREAD (kanban #3335, owner 2026-11-22 "Es ruckelt immer noch!"): the game says when a run (or a replay) starts and
+      // ends; while one runs the page's own background work - the lobby behind the frame, the payout and pending looks, the balance read, the
+      // block count warm-up, the owed-rounds scan - waits, so no 15-100 ms task of the page lands in the middle of a run's frames
+      playing: (on) => { window.ARENA_OPR_PLAYING = on ? Date.now() : 0; },
     };
     window.ARENA_OPR_START = () => {
       if (window.ARENA_OPR_ON) return new Promise(() => {});
@@ -9220,7 +9231,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           }
           if (el.textContent !== text) el.textContent = text;
         };
-        paint(); const t = setInterval(() => { if (!fr.isConnected) { clearInterval(t); return; } paint().catch(() => {}); }, 5000);
+        paint(); const t = setInterval(() => { if (!fr.isConnected) { clearInterval(t); return; } if (window.ARENA_OPR_IN_PLAY && window.ARENA_OPR_IN_PLAY()) return; paint().catch(() => {}); }, 5000);   // #3335
         // the moment the lobby draws (kanban #1132): the first rows reach this line now, not at the next 5 s tick; the client takes them on its
         // own next read, so a second paint 1.2 s later catches its new line
         const onLobby = () => { if (!fr.isConnected) { window.removeEventListener('arena-lobby', onLobby); return; } paint().catch(() => {}); setTimeout(() => paint().catch(() => {}), 1200); };
@@ -9919,7 +9930,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         const warm = () => client.warmBlockCount().then(() => {
           try { if (fid && typeof client.keptBlockCount === 'function') { const k = client.keptBlockCount(); if (k && k !== 'null') (window.ARENA_BROWSER_STORE() || localStorage).setItem(COUNT_KEY(fid), k); } } catch { /* this page only */ }
         }).catch(() => { /* the lock reads it itself */ });
-        warm(); const t = setInterval(warm, 45000); if (t && t.unref) t.unref();
+        warm(); const t = setInterval(() => { if (!(window.ARENA_OPR_IN_PLAY && window.ARENA_OPR_IN_PLAY())) warm(); }, 45000); if (t && t.unref) t.unref();   // #3335
       };
       const RESUMED = new Set();
       window.ARENA_KEEP_WALLET = (fid, client) => {
@@ -10693,7 +10704,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           // is open, so PLAY's lock skips a consensus read of its own (lib.rs count_for_lock)
           if (typeof client.warmBlockCount === 'function') {
             const warmCount = () => client.warmBlockCount().catch(() => { /* the lock reads it itself */ });
-            warmCount(); setInterval(warmCount, 45000);
+            warmCount(); setInterval(() => { if (!(window.ARENA_OPR_IN_PLAY && window.ARENA_OPR_IN_PLAY())) warmCount(); }, 45000);   // #3335
           }
           // THE BALANCE THE BOXES SHOW (Confirmed / Pending, lobby and Settings): read off this wallet, never computed
           const fed = ARENACLIENT.toHex(r.raw.contract.federationId);
@@ -11223,7 +11234,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       // the player drove and nobody saw the lobby). Joined and Unity's lobby down: a read every LOBBY_IN_RUN_MS keeps the next rounds known.
       const LOBBY_IN_RUN_MS = 30000;
       const inRun = () => !!(window.ARENA_JOIN && window.ARENA_JOIN.state === 'joined' && window.ARENA_UNITY_LOBBY && window.ARENA_UNITY_LOBBY.showing === false);
-      setInterval(() => { if (painting) return; if (inRun() && Date.now() - (window.ARENA_LOBBY_PAINTED_AT || 0) < LOBBY_IN_RUN_MS) return; painting = true; window.ARENA_LOBBY_PAINTING = true;
+      setInterval(() => { if (painting) return; if (window.ARENA_OPR_IN_PLAY && window.ARENA_OPR_IN_PLAY()) return; if (inRun() && Date.now() - (window.ARENA_LOBBY_PAINTED_AT || 0) < LOBBY_IN_RUN_MS) return; painting = true; window.ARENA_LOBBY_PAINTING = true;
         paint().finally(() => { painting = false; window.ARENA_LOBBY_PAINTING = false; window.ARENA_LOBBY_PAINTED_AT = Date.now(); }); }, 1000);
       return true;
     }

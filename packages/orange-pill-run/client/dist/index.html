@@ -2213,7 +2213,11 @@ function telPress(kind, e) {
 }
 addEventListener("blur", () => { if (TEL && running && mode === "play") TEL.blur++; });
 document.addEventListener("visibilitychange", () => { if (!TEL || !running || mode !== "play") return; if (document.hidden) { TEL.hidden++; TEL.hidAt = performance.now(); } else if (TEL.hidAt != null) { TEL.hiddenMs += performance.now() - TEL.hidAt; TEL.hidAt = null; } });
+// A RUN HAS THE THREAD (kanban #3335, owner 2026-11-22 "Es ruckelt immer noch!" in the Arena page): the page around the frame shares this
+// thread; while a run or a replay plays it holds its background work (lobby, payout and pending looks, balance read, owed scan) - bridge.playing
+const inPlay = (on) => { if (bridge && typeof bridge.playing === "function") try { bridge.playing(!!on); } catch (_) { /* an older page */ } };
 function begin(m, opts = {}) {
+  inPlay(true);
   mode = m; TEL = m === "play" ? telNew() : null; W = newWorld(L); snap = audio ? snapWorld(W) : null; presses = []; down = -1; replayIdx = 0; speed = opts.speed || 1; paused = false; input.jump = false; input.letGo = false; input.seen = false;
   botCfg = m === "bot" ? { ...BOT_CONFIGS[opts.bot || 0] } : null;
   document.body.classList.add("playing"); document.body.classList.toggle("replaying", m === "replay"); running = true; clock.reset(performance.now()); prevMovers = null;
@@ -2233,6 +2237,7 @@ function loop(now) {
   requestAnimationFrame(loop);
 }
 function finish() {
+  inPlay(false);
   if (audio) audio.stopMusic();
   $("hint").hidden = true;
   running = false; document.body.classList.remove("playing", "replaying"); $("rbar").hidden = true; pill("", "");
@@ -2345,7 +2350,8 @@ function paintPractice() {
   el.append(bb, sp, sm);
 }
 // the intro's board and counters live: read again every 15 s while the intro is open (#3251, owner 2026-11-22)
-setInterval(() => { if (!$("intro").hidden) { paintIntro(); if (api && !reading && Date.now() - S.at > 15000) refresh().then(paintIntro).catch(() => {}); } else paintWallet(); }, 1000);
+// #3335: nothing during a run (paintWallet reads bridge.balance, which reads the wallet's payable amount in the page)
+setInterval(() => { if (running) return; if (!$("intro").hidden) { paintIntro(); if (api && !reading && Date.now() - S.at > 15000) refresh().then(paintIntro).catch(() => {}); } else paintWallet(); }, 1000);
 
 // ---------- one attempt (#3265: it starts at once; the entry is paid in the background) ----------
 const pill = (kind, text) => { const p = $("pill"); p.hidden = !text; p.className = kind || ""; p.textContent = text || ""; };
@@ -2594,6 +2600,7 @@ function replayBack() {
   showIntro();
 }
 function stopReplay() {
+  inPlay(false);
   if (audio) audio.stopMusic();
   running = false; paused = false; document.body.classList.remove("playing", "replaying"); $("rbar").hidden = true;
 }
