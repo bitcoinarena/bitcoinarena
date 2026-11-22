@@ -115,6 +115,10 @@ export function createOpr(o = {}) {
   // ONE ADDRESS, A FEW PLAYERS' ATTEMPTS (kanban #3283): ip_key the caller's address as a limit counts it (an IPv6 /64 as one, faucet.js ipKey)
   try { db.exec('ALTER TABLE attempts ADD COLUMN ip_key TEXT'); } catch { /* there already */ }
   db.exec('CREATE INDEX IF NOT EXISTS attempts_by_ip_key ON attempts (round, ip_key)');
+  // NEAR-IDENTICAL RUNS, FOUND ONCE (kanban #3282): near_rep the first earlier run of the round this run's log is near (nearLogs) - its own id when
+  // none - and presses_n its press count; set at submit, so the bot pass reads groups instead of comparing every pair of logs at list time
+  for (const col of ['near_rep TEXT', 'presses_n INTEGER']) { try { db.exec(`ALTER TABLE attempts ADD COLUMN ${col}`); } catch { /* there already */ } }
+  db.exec('CREATE INDEX IF NOT EXISTS attempts_near ON attempts (round, near_rep, presses_n); CREATE INDEX IF NOT EXISTS attempts_by_player ON attempts (player, created_ms);');
   const q = (sql) => db.prepare(sql);
   const roundRow = (id) => q('SELECT * FROM rounds WHERE id = ?').get(String(id));
   const levels = new Map();   // round id -> built level
@@ -337,6 +341,24 @@ export function createOpr(o = {}) {
   }
 
   // the page's run telemetry (kanban #3274): kept as sent, cut to 2,000 chars - the t object is shortened first so the rest stays readable JSON
+  /**
+   * PLACE ONE RUN AMONG THE ROUND'S NEAR GROUPS (kanban #3282): its log against the groups' first runs with about as many presses (nearLogs' own
+   * length window), the newest NEAR_CANDIDATES_MOST of them - bounded work per submit, never a pass over every pair of the round's runs.
+   */
+  const NEAR_CANDIDATES_MOST = 200;
+  function placeNear(id) {
+    const a = q('SELECT id, round, log, near_rep FROM attempts WHERE id = ?').get(id);
+    if (!a || a.near_rep || a.log == null) return;
+    const lg = J(a.log), n = lg && Array.isArray(lg.presses) ? lg.presses.length : 0;
+    let rep = a.id;
+    if (n >= 10) {
+      const slack = Math.max(1, Math.floor(n * 0.05));
+      const cands = q('SELECT id, log FROM attempts WHERE round = ? AND near_rep = id AND id != ? AND presses_n BETWEEN ? AND ? ORDER BY created_ms DESC LIMIT ?')
+        .all(a.round, a.id, n - slack, n + slack, NEAR_CANDIDATES_MOST);
+      for (const c of cands) if (nearLogs(lg, J(c.log))) { rep = c.id; break; }
+    }
+    q('UPDATE attempts SET near_rep = ?, presses_n = ? WHERE id = ?').run(rep, n, a.id);
+  }
   const clientText = (c) => { const s = JSON.stringify(c && typeof c === 'object' ? c : {}); if (s.length <= 2000) return s;
     const { t, ...rest } = c; const tt = t && typeof t === 'object' ? { src: t.src, jit: t.jit, taps: t.taps, blur: t.blur, hidden: t.hidden, hiddenMs: t.hiddenMs, first: t.first, wd: t.wd, auto: Array.isArray(t.auto) ? t.auto.slice(0, 6) : undefined, dc: t.dc, dpr: t.dpr } : undefined;
     const s2 = JSON.stringify({ ...rest, ua: String(rest.ua || '').slice(0, 160), t: tt }); return s2.length <= 2000 ? s2 : JSON.stringify({ t: tt }); };
@@ -355,6 +377,10 @@ export function createOpr(o = {}) {
     const reject = (why, extra = {}) => {
       q("UPDATE attempts SET state = 'rejected', why = ?, submitted_ms = ?, log = ?, client = ?, flags = ? WHERE id = ? AND state = ?")
         .run(why, t, extra.keepLog ? JSON.stringify(body.log) : null, clientText(body.client), JSON.stringify(extra.flags || {}), a.id, from);
+      if (extra.keepLog) {   // its features and near group now, as a scored run's (kanban #3282: none of it is left for the list time)
+        try { q('UPDATE attempts SET bot_feat = ? WHERE id = ? AND bot_feat IS NULL').run(JSON.stringify(runFeatures(sim, levelOf(r), body.log)), a.id); } catch { /* none */ }
+        placeNear(a.id);
+      }
       log(`attempt ${a.id.slice(0, 8)} of ${a.round} refused: ${why}`);
       return { ok: false, why, closed: true };
     };
@@ -387,6 +413,7 @@ export function createOpr(o = {}) {
     const done = q(`UPDATE attempts SET state = ?, submitted_ms = ?, log = ?, log_hash = ?, score = ?, flags = ?, client = ?, review = ?, bot_feat = ? WHERE id = ? AND state = ?`)
       .run(to, t, JSON.stringify(body.log), logHash, JSON.stringify(score), JSON.stringify(flags), clientText(body.client), review, feat ? JSON.stringify(feat) : null, a.id, from);
     if (!done.changes) return { ok: false, why: 'that token was used already' };
+    placeNear(a.id);
     if (to === 'scored' && r.state === 'listed') refreshLists(r.id);
     return { ok: true, attempt: a.id, score, paid: to === 'scored', state: to === 'scored' ? 'scored' : 'pending-entry' };
   }
@@ -445,27 +472,32 @@ export function createOpr(o = {}) {
    * { score, top, attempt } } - a player's is their most bot-like scored run. Across runs: near-identical inputs of other players and of the
    * player's own runs, players per address and per device, new players arriving together, a known bot X account.
    */
+  // LINEAR IN THE ROUND'S RUNS (kanban #3282): the near groups were found at submit (placeNear; a run from before that is placed here once), the
+  // first-seen times come from one grouped read, new players together are looked for among the players of the same address only, X read once a player
   function botsOf(round) {
-    const rows = q("SELECT * FROM attempts WHERE round = ? AND state IN ('scored', 'rejected') AND log IS NOT NULL ORDER BY created_ms").all(String(round));
+    round = String(round);
+    for (const x of q("SELECT id FROM attempts WHERE round = ? AND state IN ('scored', 'rejected') AND log IS NOT NULL AND near_rep IS NULL ORDER BY created_ms").all(round)) placeNear(x.id);
+    const rows = q("SELECT id, player, ip, client, flags, bot_feat, state, created_ms, near_rep FROM attempts WHERE round = ? AND state IN ('scored', 'rejected') AND log IS NOT NULL ORDER BY created_ms").all(round);
     const rr = roundRow(round);
-    const logs = new Map(rows.map((a) => [a.id, J(a.log)]));
-    const ipPlayers = new Map(), devPlayers = new Map(), devOf = new Map();
+    const ipPlayers = new Map(), devPlayers = new Map(), devOf = new Map(), groups = new Map();
     const addTo = (m, k, p) => { if (!k) return; const s = m.get(k) || new Set(); s.add(p); m.set(k, s); };
-    for (const a of rows) { const d = deviceOf(J(a.client, {})); devOf.set(a.id, d); addTo(ipPlayers, a.ip, a.player); addTo(devPlayers, d, a.player); }
-    const firstSeen = (p) => q('SELECT MIN(created_ms) AS m FROM attempts WHERE player = ?').get(p).m;
-    const firsts = new Map([...new Set(rows.map((a) => a.player))].map((p) => [p, firstSeen(p)]));
+    for (const a of rows) {
+      const d = deviceOf(J(a.client, {})); devOf.set(a.id, d); addTo(ipPlayers, a.ip, a.player); addTo(devPlayers, d, a.player);
+      const g = groups.get(a.near_rep || a.id) || new Map(); g.set(a.player, (g.get(a.player) || 0) + 1); groups.set(a.near_rep || a.id, g);
+    }
+    const firsts = new Map(q('SELECT player, MIN(created_ms) AS m FROM attempts WHERE player IN (SELECT DISTINCT player FROM attempts WHERE round = ?) GROUP BY player').all(round).map((x) => [x.player, x.m]));
+    const xs = new Map(), xFor = (p) => { if (!xs.has(p)) xs.set(p, xOf(p)); return xs.get(p); };
     const runs = new Map(), players = new Map();
     for (const a of rows) {
       let feat = J(a.bot_feat);
-      if (!feat && rr) { try { feat = runFeatures(sim, levelOf(rr), logs.get(a.id)); q('UPDATE attempts SET bot_feat = ? WHERE id = ? AND bot_feat IS NULL').run(JSON.stringify(feat), a.id); } catch { feat = {}; } }
-      const others = new Set(), lg = logs.get(a.id);
-      let repeatOwn = false;
-      for (const b of rows) { if (b.id === a.id || !nearLogs(lg, logs.get(b.id))) continue; if (b.player === a.player) repeatOwn = true; else others.add(b.player); }
+      if (!feat && rr) { try { feat = runFeatures(sim, levelOf(rr), J(q('SELECT log FROM attempts WHERE id = ?').get(a.id).log)); q('UPDATE attempts SET bot_feat = ? WHERE id = ? AND bot_feat IS NULL').run(JSON.stringify(feat), a.id); } catch { feat = {}; } }
+      const g = groups.get(a.near_rep || a.id);
+      const othersN = g.size - (g.has(a.player) ? 1 : 0), repeatOwn = (g.get(a.player) || 0) >= 2;
       const f0 = firsts.get(a.player);
-      const near = [...firsts].filter(([p, m]) => p !== a.player && m != null && f0 != null && Math.abs(m - f0) <= 10 * MIN_MS
-        && a.ip && (ipPlayers.get(a.ip) || new Set()).has(p)).length;   // new players together from one address
-      const x = xOf(a.player);
-      const s = scoreRun({ feat: feat || {}, flags: J(a.flags, {}), client: J(a.client, {}), cross: { nearOther: others.size, repeatOwn,
+      let near = 0;   // new players together from one address
+      if (a.ip && f0 != null) for (const p of ipPlayers.get(a.ip) || []) { const m = firsts.get(p); if (p !== a.player && m != null && Math.abs(m - f0) <= 10 * MIN_MS) near++; }
+      const x = xFor(a.player);
+      const s = scoreRun({ feat: feat || {}, flags: J(a.flags, {}), client: J(a.client, {}), cross: { nearOther: othersN, repeatOwn,
         ipPlayers: a.ip ? (ipPlayers.get(a.ip) || new Set()).size : 0, devicePlayers: devOf.get(a.id) ? devPlayers.get(devOf.get(a.id)).size : 0,
         ageMs: f0 == null ? null : a.created_ms - f0, newNearby: near ? near + 1 : 0, botX: x.why === 'a known bot account' } });
       const v = { score: s.score, top: topReasons(s), reasons: s.reasons };

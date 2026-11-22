@@ -62,8 +62,12 @@ export function nearLogs(a, b) {
   if (x.length < 10 || y.length < 10) return false;
   if (Math.abs(x.length - y.length) > Math.max(1, Math.floor(Math.min(x.length, y.length) * 0.05))) return false;
   const n = Math.min(x.length, y.length);
-  let close = 0;
-  for (let i = 0; i < n; i++) if (Math.abs(x[i][0] - y[i][0]) <= 2 && Math.abs((x[i][1] - x[i][0]) - (y[i][1] - y[i][0])) <= 2) close++;
+  let close = 0, off = 0;
+  const offMost = n - Math.ceil(n * 0.9 - 1e-9);   // more presses apart than this and the answer is no: stop there (kanban #3282, same answer)
+  for (let i = 0; i < n; i++) {
+    if (Math.abs(x[i][0] - y[i][0]) <= 2 && Math.abs((x[i][1] - x[i][0]) - (y[i][1] - y[i][0])) <= 2) close++;
+    else if (++off > offMost) return false;
+  }
   return close / n >= 0.9;
 }
 
