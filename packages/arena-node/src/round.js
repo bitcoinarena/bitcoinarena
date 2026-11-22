@@ -3805,6 +3805,17 @@ export class Round {
       + 'JOIN receipts r ON r.checkpoint_id = c.checkpoint_id WHERE e.entry_id = ? LIMIT 1').get(eid);
   }
 
+  /**
+   * AN ORDER IN A BATCH IS BUILT ON (kanban #3319, audit entry r3-2, gap in #2477/#3223): an order of a book plays no run, so stakePlayedOn never
+   * held for it - a lower order of the same player key, its lock handed after the outcome was attested, let a filled losing order's locks go at
+   * every seat, and the book's settlement never formed (the loser's stake back at expiry). An order this seat holds in a batch (certified, or
+   * signed here and not yet declined) is built on: it keeps the key, the lower entry's lock is refused as before #2477.
+   */
+  orderInBatch(entryIdBytes) {
+    try { return !!this.db.prepare('SELECT 1 FROM market_orders WHERE order_id = ? AND batch IS NOT NULL').get(Buffer.from(entryIdBytes).toString('hex')); }
+    catch { return false; }   // a store with no order book
+  }
+
   yieldEntryLocks(entryIdBytes, roundIdBytes) {
     const eid = Buffer.from(entryIdBytes), rid = Buffer.from(roundIdBytes);
     const outs = [this.stakeLock(eid), this.feeLock(eid)].filter(Boolean).map((l) => String(l.outpoint));
@@ -3813,6 +3824,7 @@ export class Round {
     if (this.db.prepare('SELECT 1 FROM forfeits WHERE entry_id = ?').get(eid)) return false;
     if (this.identity && this.hasResult(rid, eid, Buffer.from(this.pubkey))) return false;
     if (this.stakePlayedOn(eid)) return false;
+    if (this.orderInBatch(eid)) return false;   // kanban #3319
     const own = !this.db.isTransaction;
     if (own) this.db.exec('BEGIN');
     try {
