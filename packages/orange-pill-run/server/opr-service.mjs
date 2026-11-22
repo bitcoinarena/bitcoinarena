@@ -462,7 +462,12 @@ export function createOpr(o = {}) {
     }
     return { runs, players };
   }
-  /** PLACED (kanban #3245, #3250): a linked X account the bug bounty verified (Season 2 links, its own flow), not a known bot there. */
+  /**
+   * PLACED (kanban #3245, #3250): a linked X account the bug bounty verified (Season 2 links, its own flow), not a known bot there.
+   * PROVEN, NOT TYPED (kanban #3279, #3285; owner 2026-11-22: placed = an X account whose ownership is proven + a valid Lightning address): only a
+   * link made by a code posted from the X account (proof 'code', bounty-season.js redeem) places a player. A handle typed in the Season 2 social
+   * form (proof 'name', claimName) proves nothing - anyone can type a real follower's name - so it never places a player for real sats.
+   */
   function xOf(pk) {
     if (!s2) return { placed: false, x: null, why: 'no X check here' };
     let l = null, flags = {};
@@ -470,6 +475,7 @@ export function createOpr(o = {}) {
     if (!l) return { placed: false, x: null, why: 'no X account linked' };
     const x = { userId: String(l.userId), username: l.username || null };
     if (flags.bot) return { placed: false, x, why: 'a known bot account' };
+    if (l.proof !== 'code') return { placed: false, x, why: 'the X account is not proven yet - post your link code from it' };
     if (l.member !== true) return { placed: false, x, why: 'the X account is not verified yet' };
     return { placed: true, x, why: null };
   }

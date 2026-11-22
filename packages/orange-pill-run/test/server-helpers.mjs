@@ -47,7 +47,15 @@ export function signIn(kp, { path, method = 'GET', body = '', createdAt, base = 
   return `Nostr ${Buffer.from(JSON.stringify(e)).toString('base64')}`;
 }
 
-/** A service on a fake clock, with a Season 2 book in memory: link(pk, verified) gives the key a linked X account. */
+/** An X account proven for a key in a Season 2 book: a link code made for the key and posted from the account (proof 'code', kanban #3279). */
+export function proveX(s2, pk, { userId, username = null, nowMs }) {
+  const c = s2.makeCode(pk, { nowMs });
+  if (!c.ok) return c;
+  return s2.redeem(c.code, { platform: 'x', userId, username, nowMs });
+}
+
+/** A service on a fake clock, with a Season 2 book in memory: link(pk, verified) gives the key a linked X account - proven by a link code posted
+ *  from it (proof 'code', as the bug bounty's X poll redeems it; kanban #3279: a typed name places nobody). */
 export function world({ start = '2026-11-23T00:00:00Z', cfg = {}, chain = fakeChain(), s2On = true, lnCheck = null } = {}) {
   let t = at(start);
   const clock = { now: () => t, set: (ms) => { t = ms; }, add: (ms) => { t += ms; } };
@@ -61,7 +69,7 @@ export function world({ start = '2026-11-23T00:00:00Z', cfg = {}, chain = fakeCh
   const opr = createOpr({ lnCheck: lnCheck || lnFake, now: clock.now, sim: stubSim, fetchCandles: async (d) => candles48(d), checkLevel: async () => ({ ok: true, seed: 7, tries: 1, hash: 'h' }),
     invoices: lnd, chain, s2, alert: (x) => alerts.push(x), log: (m) => lines.push(m), cfg: { adminSha: createHash('sha256').update('letmein').digest('hex'), showTest: true, entrySats: 100, ...cfg } });   // the paid tests keep 100; free: cfg.entrySats 0 (#3273)
   const link = (pk, verified = true, username = null) => {
-    xn++; const r = s2.claimName(pk, 'x', { userId: `x${xn}`, username: username || `user${xn}` });
+    xn++; const r = proveX(s2, pk, { userId: `x${xn}`, username: username || `user${xn}`, nowMs: t });
     if (!r.ok) throw new Error(r.why);
     if (verified) s2.record(pk, 'x', { member: true, nowMs: t });
   };
