@@ -39,12 +39,12 @@ for (const [door, urlOf] of [['zap', (port) => zapUrl(port)], ['plain tip', (por
     const z = await mintingServer(async () => { running++; peak = Math.max(peak, running); await new Promise((r) => hold.push(r)); running--; });
     try {
       const calls = [];
-      for (let i = 0; i < 64; i++) calls.push(fetch(urlOf(z.port, i), { headers: { 'cf-connecting-ip': ipOf(i) } }).then((r) => r.json()));
+      for (let i = 0; i < 64; i++) calls.push(fetch(urlOf(z.port, i), { headers: { 'x-forwarded-for': ipOf(i) } }).then((r) => r.json()));
       await new Promise((r) => setTimeout(r, 1500));
       const seen = peak;
       hold.splice(0).forEach((r) => r()); const late = setInterval(() => { hold.splice(0).forEach((r) => r()); }, 20);
       const said = await Promise.all(calls);
-      const after = await (await fetch(urlOf(z.port, 999), { headers: { 'cf-connecting-ip': ipOf(999) } })).json();
+      const after = await (await fetch(urlOf(z.port, 999), { headers: { 'x-forwarded-for': ipOf(999) } })).json();
       clearInterval(late);
       console.log(`  ${door}: ${seen} at once, ${said.filter((j) => j.pr).length} of 64 handed out, one more after: ${after.pr ? 'handed out' : after.reason}`);
       assert.ok(seen <= ZAP_MINTING_MAX, `${seen} ${door} invoices were being made at once (lncli children), past ${ZAP_MINTING_MAX}`);

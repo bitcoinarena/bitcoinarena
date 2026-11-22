@@ -31,14 +31,14 @@ test('#1489 v1-refute-19-s2-1: an honest open zap paid after strangers fill the 
     const url = (r) => `http://127.0.0.1:${z.port}/lnurlp/bob/cb?amount=1000&nostr=${encodeURIComponent(JSON.stringify(r))}`;
     let n = 0;
     const zapReq = (k) => signNostr(zapRequestTemplate({ recipient: to.pubkey, amountMsat: 1000n, relays: ['wss://relay.example'], comment: `zap ${n++}` }), { secret: k.secret, curve });
-    const honest = await (await fetch(url(zapReq(keyPair())), { headers: { 'cf-connecting-ip': '198.51.100.20' } })).json();
+    const honest = await (await fetch(url(zapReq(keyPair())), { headers: { 'x-forwarded-for': '198.51.100.20' } })).json();
     assert.ok(honest.pr, JSON.stringify(honest));
     const honestHash = [...z.pending.keys()][0];
     let key = keyPair();
     for (let i = 0; i < ZAP_PENDING_MAX; i++) {
       if (i % ZAP_PENDING_PER_PAYER === 0) key = keyPair();
       const ip = `2001:db8:77:1::${Math.floor(i / ZAP_MINTS_PER_ASKER).toString(16)}`;   // one /64, a new address each 30 mints
-      await (await fetch(url(zapReq(key)), { headers: { 'cf-connecting-ip': ip } })).json();
+      await (await fetch(url(zapReq(key)), { headers: { 'x-forwarded-for': ip } })).json();
     }
     paidHashes.add(honestHash);                       // the honest payer pays the invoice he was handed
     await z.watch();

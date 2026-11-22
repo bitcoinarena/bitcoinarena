@@ -14,8 +14,14 @@ test('only public addresses; the asker is the peer, or the last forwarded hop be
   for (const ip of ['127.0.0.1', '10.1.2.3', ['192', '168.0.5'].join('.'), '172.16.0.1', ['100', '64.0.1'].join('.'), '169.254.1.1', '0.0.0.0', '::1', 'fd7a:115c::1', 'fe80::1', '224.0.0.1', 'x'])
     assert.equal(isPublicAddress(ip), false, ip);
   assert.equal(askerAddress(reqFrom('203.0.113.9', '1.2.3.4')), '203.0.113.9', 'a forwarded header from a remote peer is ignored');
-  assert.equal(askerAddress(reqFrom('127.0.0.1', '9.9.9.9, 5.6.7.8')), '9.9.9.9', 'behind the local proxies: the address the first one saw');
-  assert.equal(askerAddress({ socket: { remoteAddress: '127.0.0.1' }, headers: { 'cf-connecting-ip': '7.7.7.7', 'x-forwarded-for': '9.9.9.9' } }), '7.7.7.7', 'Cloudflare\'s first');
+  // kanban #3055: only the hop our own proxy appended (the right-most; our loopback hops at the right end skipped); the client's first hop is its own text
+  assert.equal(askerAddress(reqFrom('127.0.0.1', '9.9.9.9, 5.6.7.8')), '5.6.7.8', 'behind the local proxy: the hop it appended, not the client\'s first');
+  assert.equal(askerAddress(reqFrom('127.0.0.1', '9.9.9.9, 5.6.7.8, 127.0.0.1')), '5.6.7.8', 'cloudflared -> the tn4 local proxy: the edge\'s hop, our loopback hop skipped');
+  assert.equal(askerAddress(reqFrom('127.0.0.1', '127.0.0.1')), '127.0.0.1', 'only loopback hops: the peer');
+  // kanban #3055: cf-connecting-ip only on a seat that says only Cloudflare reaches it
+  const cfReq = { socket: { remoteAddress: '127.0.0.1' }, headers: { 'cf-connecting-ip': '7.7.7.7', 'x-forwarded-for': '9.9.9.9' } };
+  assert.equal(askerAddress(cfReq, { env: {} }), '9.9.9.9', 'a client-sent cf-connecting-ip is not believed');
+  assert.equal(askerAddress(cfReq, { env: { ARENA_TRUST_CF_CONNECTING_IP: '1' } }), '7.7.7.7', 'Cloudflare\'s first where the seat trusts it');
   assert.equal(askerAddress(reqFrom('::ffff:5.6.7.8')), '5.6.7.8');
 });
 

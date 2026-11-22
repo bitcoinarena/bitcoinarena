@@ -26,7 +26,7 @@ test('#1489 v1-refute-19-s2-2: one IPv6 /64 is one asker for the mint bound', as
     lookup: async () => ({ settled: false }), publish: async () => {}, watchMs: 3600000 });
   try {
     for (let i = 0; i < 200; i++) {
-      await (await fetch(`http://127.0.0.1:${z.port}/lnurlp/bob/cb?amount=${1000 + i}`, { headers: { 'cf-connecting-ip': `2001:db8:77:1::${(i + 1).toString(16)}` } })).json();
+      await (await fetch(`http://127.0.0.1:${z.port}/lnurlp/bob/cb?amount=${1000 + i}`, { headers: { 'x-forwarded-for': `2001:db8:77:1::${(i + 1).toString(16)}` } })).json();
     }
     assert.ok(st.minted <= ZAP_MINTS_PER_ASKER, `200 tips from 200 addresses of one /64: ${st.minted} invoices minted`);
   } finally { await z.close(); }

@@ -50,7 +50,7 @@ test('#1964: all remote askers together mint at most ZAP_MINTS_ALL invoices a wi
     lookup: async () => ({ settled: false }), publish: async () => {}, watchMs: 3600000 });
   try {
     for (let i = 0; i < ZAP_MINTS_ALL + 100; i++) {
-      await (await fetch(`http://127.0.0.1:${z.port}/lnurlp/bob/cb?amount=${1000 + i}`, { headers: { 'cf-connecting-ip': `198.51.${100 + (i >> 8)}.${i & 255}` } })).json();
+      await (await fetch(`http://127.0.0.1:${z.port}/lnurlp/bob/cb?amount=${1000 + i}`, { headers: { 'x-forwarded-for': `198.51.${100 + (i >> 8)}.${i & 255}` } })).json();
     }
     assert.equal(st.minted, ZAP_MINTS_ALL);
     assert.ok((await (await fetch(`http://127.0.0.1:${z.port}/lnurlp/bob/cb?amount=999999`)).json()).pr, 'this host is not limited');

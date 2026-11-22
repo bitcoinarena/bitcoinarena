@@ -34,7 +34,7 @@ test('audit nostr-r1 #3: a replayed zap callback parses every open zap\'s reques
     let opened = 0, replay = null;
     for (let i = 0; i < ZAP_MINTS_ALL; i++) {
       const req = zapReq();
-      const j = await (await fetch(urlOf(z.port, req), { headers: { 'cf-connecting-ip': `198.18.${(i >> 8) & 255}.${i & 255}` } })).json();
+      const j = await (await fetch(urlOf(z.port, req), { headers: { 'x-forwarded-for': `198.18.${(i >> 8) & 255}.${i & 255}` } })).json();
       if (j.pr) { opened++; replay = req; }
     }
     assert.ok(opened >= ZAP_MINTS_ALL - 1, `opened ${opened}`);
@@ -44,7 +44,7 @@ test('audit nostr-r1 #3: a replayed zap callback parses every open zap\'s reques
     const t = process.hrtime.bigint();
     JSON.parse = function (...a) { parses++; return parse.apply(this, a); };
     let body;
-    try { body = await (await fetch(urlOf(z.port, replay), { headers: { 'cf-connecting-ip': '203.0.113.9' } })).text(); }
+    try { body = await (await fetch(urlOf(z.port, replay), { headers: { 'x-forwarded-for': '203.0.113.9' } })).text(); }
     finally { JSON.parse = parse; }
     const ms = Number(process.hrtime.bigint() - t) / 1e6;
     console.log(`  ${opened} open zaps of ${BIG.length} B each: one replayed call did ${parses} JSON parses in ${ms.toFixed(1)} ms; answer ${body.slice(0, 40)}`);
