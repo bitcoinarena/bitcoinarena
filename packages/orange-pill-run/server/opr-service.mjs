@@ -467,8 +467,10 @@ export function createOpr(o = {}) {
    * PROVEN, NOT TYPED (kanban #3279, #3285; owner 2026-11-22: placed = an X account whose ownership is proven + a valid Lightning address): only a
    * link made by a code posted from the X account (proof 'code', bounty-season.js redeem) places a player. A handle typed in the Season 2 social
    * form (proof 'name', claimName) proves nothing - anyone can type a real follower's name - so it never places a player for real sats.
+   * BY THE HOUR AFTER THE ROUND (kanban #3278, #3286; #3250: "verify until 1 hour after the round ends"): with round r given, a link made after
+   * r.end_ms + verifyGraceMs does not place the player in r - a later list rebuild (any POST /lnaddress) cannot bring a late link in.
    */
-  function xOf(pk) {
+  function xOf(pk, r = null) {
     if (!s2) return { placed: false, x: null, why: 'no X check here' };
     let l = null, flags = {};
     try { l = s2.links(pk).find((x) => x.platform === 'x') || null; flags = s2.flagsOf(pk) || {}; } catch (e) { return { placed: false, x: null, why: `X not read (${e.message})` }; }
@@ -477,6 +479,7 @@ export function createOpr(o = {}) {
     if (flags.bot) return { placed: false, x, why: 'a known bot account' };
     if (l.proof !== 'code') return { placed: false, x, why: 'the X account is not proven yet - post your link code from it' };
     if (l.member !== true) return { placed: false, x, why: 'the X account is not verified yet' };
+    if (r && !(Number(l.linkedMs) <= r.end_ms + cfg.verifyGraceMs)) return { placed: false, x, why: 'the X account was linked more than 1 hour after the round ended' };
     return { placed: true, x, why: null };
   }
   function publicBoard(round, viewer = null) {
@@ -484,7 +487,7 @@ export function createOpr(o = {}) {
     const ended = now() >= r.end_ms;
     const used = new Map(q('SELECT player, COUNT(*) AS n FROM attempts WHERE round = ? AND paid_ms IS NOT NULL GROUP BY player').all(round).map((x) => [x.player, x.n]));
     return boardOf(round).map((b) => ({ rank: b.rank, name: b.name, player: b.player, score: b.total, timeS: b.timeS, attempts: used.get(b.player) || 0,
-      placed: xOf(b.player).placed, replay: (ended && b.rank <= 10) || b.player === viewer ? `/replay/${b.attempt}` : null }));
+      placed: xOf(b.player, r).placed, replay: (ended && b.rank <= 10) || b.player === viewer ? `/replay/${b.attempt}` : null }));
   }
 
   // ---------- payout lists ----------
@@ -496,7 +499,7 @@ export function createOpr(o = {}) {
     const make = (kind) => {
       const rj = rejected(kind);
       // A LIKELY BOT IS HELD (kanban #3274): above HOLD_ABOVE the row waits for review - the admin clears the run (POST /admin/review) to lift it
-      return payoutLists({ board, potSats: potOf(r), placedOf: xOf, bountySats: cfg.bountySats, test: !!r.test, lnOf: lnOf(r), botOf,
+      return payoutLists({ board, potSats: potOf(r), placedOf: (p) => xOf(p, r), bountySats: cfg.bountySats, test: !!r.test, lnOf: lnOf(r), botOf,
         held: (p) => { const b = board.find((x) => x.player === p), bt = bots.players.get(p);
           return rj.has(p) ? 'row rejected' : bt && bt.score > HOLD_ABOVE && !(b && b.review === 'cleared') ? `bot likelihood ${bt.score} - held for review`
             : b && b.review === 'pending' ? 'under review' : null; } });
@@ -753,7 +756,7 @@ export function createOpr(o = {}) {
       const me = who.pubkey;
       if (req.method === 'GET' && path === '/me') {
         const r = url.searchParams.get('round') ? roundRow(url.searchParams.get('round')) : currentRound();
-        const x = xOf(me);
+        const x = xOf(me, r);
         const mine = r ? q('SELECT * FROM attempts WHERE round = ? AND player = ? ORDER BY created_ms').all(r.id, me) : [];
         return send(200, { ok: true, pubkey: me, name: nameOf(me), lnAddress: storedLn(me), x: x.x ? { username: x.x.username } : null, placed: x.placed, placedWhy: x.placed ? null : x.why,
           round: r ? r.id : null, used: r ? usedBy(r.id, me, now()) : 0, maxAttempts: r ? r.max_attempts : cfg.maxAttempts,
