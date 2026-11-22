@@ -172,6 +172,20 @@ export function dayTemplate({ held, family, networkId, game, ownRelay = null, re
  * would activate by the census height is undecided (pending), no config is known, and no day is posted rather than one the seats refuse.
  * -> { ok: true, configHash } | { ok: false, why }
  */
+/**
+ * THE CONFIG A DAY STARTS FROM (kanban #3380): the app's own field (RPS: its manifest's), else the template's - unless the day's core lists
+ * its configs and the template's is none of them (the built-in template's zero, taken once no day of the app is held, and copied by every
+ * later day: from 2026-11-21 every seat refused every Next Block day, "not the config 0000000000000000 that round names"); then the core's
+ * first. `coreConfigs`: hex strings, or null when not known (kept as before).
+ */
+export function dayConfigOf({ fieldsConfig = null, templateConfig = null, coreConfigs = null }) {
+  if (fieldsConfig) return fieldsConfig;
+  if (!Array.isArray(coreConfigs) || !coreConfigs.length) return templateConfig;
+  const have = templateConfig instanceof Uint8Array && templateConfig.length === 32 ? toHex(templateConfig) : null;
+  if (have && coreConfigs.map((x) => String(x).toLowerCase()).includes(have)) return templateConfig;
+  return fromHex(String(coreConfigs[0]));
+}
+
 export function dutyDayConfig({ configHash, height, ballot }) {
   if (!ballot) return { ok: true, configHash };
   if (ballot.pending) return { ok: false, why: `the ballot has not decided every proposal that activates by census height ${height}: the config live there is not known yet` };
@@ -303,7 +317,7 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
     const base = kind.base || {};
     const t = templates.get(game);
     // THE CONFIG LIVE AT THE DAY'S CENSUS HEIGHT (kanban #3218): the app's own (RPS: its manifest's) or the template's, moved on by the ballot
-    const named = dutyDayConfig({ configHash: (kind.fields && kind.fields.configHash) || t.contract.configHash, height: Number(kind.fields.censusHeight),
+    const named = dutyDayConfig({ configHash: dayConfigOf({ fieldsConfig: kind.fields && kind.fields.configHash, templateConfig: t.contract.configHash, coreConfigs: kind.base && kind.base.configs }), height: Number(kind.fields.censusHeight),
       ballot: seat && typeof seat.ballotFor === 'function' ? seat.ballotFor({ ...t.contract, ...kind.fields }) : null });
     if (!named.ok) { say({ dutyDay: 'CONFIG NOT KNOWN', game, why: named.why }); return { ok: false, why: named.why }; }
     kind = { ...kind, fields: { ...kind.fields, configHash: named.configHash } };

@@ -171,7 +171,9 @@ export function dutyFieldsOf(game, entry, { core = '', preferCore = '', base = {
     if (!configs.length) return { ok: false, why: `${entry.name} ${entry.version}: its core ${c.hash.slice(0, 8)} names no config` };
     return { ok: true, fields: { ...base, gameId, simCoreHash: fromHex(c.hash), configHash: fromHex(configs[0]), minScore: Number(m.minScore) }, manifest: m };
   }
-  if (game === 'nextblock') return { ok: true, fields: { gameId, simCoreHash: fromHex(c.hash) }, manifest: m };
+  // AND ITS CORE'S CONFIGS (kanban #3380): a Next Block day names its template's config, and one its core does not run - the built-in zero -
+  // is replaced by the core's first (duty-poster.js dayConfigOf)
+  if (game === 'nextblock') return { ok: true, fields: { gameId, simCoreHash: fromHex(c.hash) }, configs: (m.cores[c.index].configs || []).map((x) => (typeof x === 'string' ? x : toHex(x)).toLowerCase()), manifest: m };
   return { ok: false, why: `no duty fields for ${game}` };
 }
 
