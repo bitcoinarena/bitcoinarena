@@ -180,7 +180,7 @@ test('#2641 payout: approved at +40 %, left one of the two communities, +20 % pa
   // a read that fails is no member
   await s.verify(K(1), { x: async () => { throw new Error('x down'); }, telegram: async () => ({ member: null, why: 'telegram 502' }) });
   // without X the reporter is no longer a proven human: 15 % (kanban #2788, #2784)
-  const p3 = s.payable(r1.id); assert.equal(p3.payableSats, 750); assert.match(p3.why, /^left (X, Telegram|Telegram, X): -40 %, no verified X account: 15 %$/);
+  const p3 = s.payable(r1.id); assert.equal(p3.payableSats, 750); assert.match(p3.why, /^left (X, Telegram|Telegram, X): -40 %, no linked X account: 15 %$/);
 });
 
 test('#2641 the browser store: validated names kept per key, failed ones dropped, unreadable checks keep what was kept, storage errors tolerated', () => {
