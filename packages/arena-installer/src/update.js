@@ -559,9 +559,24 @@ function servicesOf({ platform, env, sh, home, port, node, selfPid = process.pid
     seatFor: (release) => seatUnit({ node, release, home, port }), seatFile,
     bridgeFor: (release, state) => bridgeUnit({ node, release, home, bridgePort: bridgePortOf(home, state) }),
     stop: async (fs) => { const r = await sh('systemctl', ['--user', 'stop', ...fs.map(unit)]); return r.ok ? { ok: true } : { ok: false, why: `the node did not stop: ${r.err.trim().slice(0, 200)}` }; },
-    start: async (fs) => { await sh('systemctl', ['--user', 'daemon-reload']); const r = await sh('systemctl', ['--user', 'start', ...fs.map(unit)]); return r.ok ? { ok: true } : { ok: false, why: (r.err || '').trim().slice(0, 200) }; },
+    // and the units PartOf one of them (kanban #3272): systemd stopped them with it, but PartOf= never starts them again
+    start: async (fs) => { await sh('systemctl', ['--user', 'daemon-reload']); const r = await sh('systemctl', ['--user', 'start', ...[...fs, ...partOfCompanions(fs, files())].map(unit)]); return r.ok ? { ok: true } : { ok: false, why: (r.err || '').trim().slice(0, 200) }; },
     prepare: async () => {},
   };
+}
+
+/**
+ * THE UNITS A STOP TOOK ALONG (kanban #3272, a local seat 2026.1.9.28 -> .29, 2026-11-21: LND stayed dead, the gateway Disconnected): LND is
+ * PartOf its Tor, so stopping Tor stops LND too, but PartOf= passes on no start. An LND that names no release is not in the units an update
+ * moves, so starting them again left it stopped. Answers the files of `all` not in `started` whose PartOf= names one of `started`.
+ */
+export function partOfCompanions(started, all) {
+  const base = (f) => String(f).split(/[\\/]/).pop();
+  const names = new Set(started.map(base));
+  return all.filter((f) => !started.includes(f) && !names.has(base(f)) && (() => {
+    let t = ''; try { t = readFileSync(f, 'utf8'); } catch { return false; }
+    return [...t.matchAll(/^PartOf=(.*)$/gm)].some((m) => m[1].trim().split(/\s+/).some((n) => names.has(n)));
+  })());
 }
 
 /** A release's own VERSION and COMMIT (tools/release/build-release.sh writes them at its root), or nulls for a tree without them. */
