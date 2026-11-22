@@ -85,6 +85,7 @@ button:disabled { opacity: .5; cursor: default; }
 .lnrow input:focus { outline: none; border-color: var(--btc); }
 .lnrow button { padding: 6px 14px; font-size: .9rem; border-color: var(--btc); color: var(--btc); }
 .lnwhy { margin: -6px 0 8px !important; font-size: .8rem !important; color: var(--soft); } .lnwhy.ok { color: var(--green) !important; } .lnwhy.bad { color: var(--red) !important; }
+.prize small.promo { display: block; color: var(--text); margin-top: 2px; }   /* kanban #3328: until when the promotion runs */
 #result .lnrow { margin: 10px 0 6px; } #result .lnwhy { margin: 0 0 6px !important; }
 .rules ol { margin: 0; padding-left: 1.1em; display: grid; gap: 6px; color: var(--soft); font-size: .92rem; line-height: 1.4; }
 .rules ol b { color: var(--text); }
@@ -202,10 +203,12 @@ body.bridged .snd { margin-left: auto; } body:not(.bridged) .snd { margin-left: 
     <div class="box intro">
       <h2>Orange Pill Run</h2>
       <p class="line" id="iLine">Run yesterday's Bitcoin chart. Tap to jump. Don't fall.</p>
-      <p class="prize" id="iPrize" hidden><b id="iPrizeText"></b><small id="iPrizeSmall"></small></p>
+      <p class="prize" id="iPrize" hidden><b id="iPrizeText"></b><small id="iPrizeSmall"></small><small class="promo" id="iPromo" hidden></small></p>
       <p class="bounty small" id="iBounty" hidden></p>
       <p class="xline" id="iX" hidden><span id="iXText"></span><button id="iXBtn" type="button" hidden>Link X</button></p>
-      <form class="lnrow" id="iLn" hidden><input id="iLnIn" type="text" inputmode="email" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="320" placeholder="Lightning address for prizes" aria-label="Lightning address for prizes"><button id="iLnBtn" type="submit">Save</button></form>
+      <form class="lnrow" id="iXf" hidden><input id="iXfIn" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="64" placeholder="@yourXhandle" aria-label="Your X handle"><button id="iXfBtn" type="submit">Check</button></form>
+      <p class="lnwhy" id="iXfWhy" role="status" hidden></p>
+      <form class="lnrow" id="iLn" hidden><input id="iLnIn" type="text" inputmode="email" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="320" placeholder="you@lnurl-wallet.com" aria-label="Lightning address for prizes"><button id="iLnBtn" type="submit">Save</button></form>
       <p class="lnwhy" id="iLnWhy" role="status" hidden></p>
       <dl class="facts" id="iFacts" hidden></dl>
       <div class="iboard" id="iBoard" hidden><p class="iempty" id="iBEmpty" hidden></p><table id="iBTable"></table></div>
@@ -224,7 +227,9 @@ body.bridged .snd { margin-left: auto; } body:not(.bridged) .snd { margin-left: 
       <p class="prize rp" id="rPrize" hidden></p>
       <p class="notcounted" id="rNot" hidden><span id="rNotText"></span><button id="xBtn" type="button">Link X</button></p>
       <div class="facts2" id="rFacts"><span id="rRank"></span><span id="rBeat"></span><span id="rLeft"></span></div>
-      <form class="lnrow" id="rLn" hidden><input id="rLnIn" type="text" inputmode="email" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="320" placeholder="Lightning address for prizes" aria-label="Lightning address for prizes"><button id="rLnBtn" type="submit">Save</button></form>
+      <form class="lnrow" id="rXf" hidden><input id="rXfIn" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="64" placeholder="@yourXhandle" aria-label="Your X handle"><button id="rXfBtn" type="submit">Check</button></form>
+      <p class="lnwhy" id="rXfWhy" role="status" hidden></p>
+      <form class="lnrow" id="rLn" hidden><input id="rLnIn" type="text" inputmode="email" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="320" placeholder="you@lnurl-wallet.com" aria-label="Lightning address for prizes"><button id="rLnBtn" type="submit">Save</button></form>
       <p class="lnwhy" id="rLnWhy" role="status" hidden></p>
       <div class="xbox" id="rX" hidden><span id="rXText">Link your X account to be placed and win.</span></div>
       <div class="row r3"><button class="primary" id="againBtn">Play again</button><button id="replayBtn"><span class="lg">Watch replay</span><span class="sm">Replay</span></button><button id="rBoardBtn"><span class="lg">Leaderboard</span><span class="sm">Board</span></button></div>
@@ -1256,8 +1261,8 @@ function drawCheckpoint(c, on, f) {
   const led = on ? "#56d364" : "#a83232"; glow(led, on ? 12 : 4, () => { ctx.fillStyle = led; ctx.beginPath(); ctx.arc(x + 3.5, y - 35.5, 2.4, 0, 7); ctx.fill(); });
   ctx.fillStyle = "rgba(255,255,255,.12)"; ctx.fillRect(x - 5, y - 41, 17, 2);
 }
-function drawWorld(W, ghosts) {
-  const L = W.L, p = W.p, f = W.f; L0 = L;
+function drawWorld(W, ghosts, frame) {      // frame (#3335): the step count the screen shows, between two steps; W.f without it
+  const L = W.L, p = W.p, f = frame === undefined ? W.f : frame; L0 = L;
   camX = Math.max(0, Math.min(L.w * T - viewW, p.x - viewW * .2));
   // vertical camera (#3270): the world's rows live in the band under the HUD. If the whole world fits, its ground sits on the
   // canvas bottom; otherwise the camera holds the runner between 30 % and 70 % of the band and moves only when he leaves it.
@@ -1619,9 +1624,11 @@ function xLine(me, sats = PRIZE_SATS) {
   const handle = me.x ? (me.x.username ? "@" + me.x.username : "linked") : "";
   const parts = [
     // the server's reason when it gave one (#3281: "linked after your first run of this round - it counts from the next round")
-    hasX ? { text: "✓ X " + handle, ok: true } : me.x ? { text: "X " + handle + (me.placedWhy ? " - " + me.placedWhy : " not verified yet"), ok: false } : { text: "X not linked", ok: false },
-    hasLn ? { text: "⚡ " + me.lnAddress + " ✓", ok: true } : { text: "⚡ no Lightning address", ok: false },
-  ];
+    // NOTHING SAVED YET IS NO ERROR (kanban #3328, owner 2026-11-22: "No Lightning Address" read as an error, a bad first impression): a missing
+    // part says nothing here - its empty field (X handle, Lightning address) stands in its place
+    hasX ? { text: "✓ X " + handle, ok: true } : me.x ? { text: "X " + handle + (me.placedWhy ? " - " + me.placedWhy : " not verified yet"), ok: false } : null,
+    hasLn ? { text: "⚡ " + me.lnAddress + " ✓", ok: true } : null,
+  ].filter(Boolean);
   const ok = hasX && hasLn;
   if (ok) parts.push({ text: "- you can win", ok: true, sep: " " });
   const text = parts.map((x, i) => (i ? (x.sep || " · ") : "") + x.text).join("");
@@ -1649,7 +1656,7 @@ function introBoard(board, me, n = INTRO_TOP) {
   return { rows: top, own, empty: top.length ? null : "No run yet - be the first" };
 }
 
-/** A FREE ROUND (kanban #3273, owner 2026-11-22): entry 0 - no wallet, no balance, no faucet; the 10,000 real sats still go to the winner. */
+/** A FREE ROUND (kanban #3273, owner 2026-11-22): entry 0 - no wallet, no balance, no faucet; the 2,500 real sats still go to the winner. */
 const isFree = (round) => !!round && !(Number(round.entrySats) > 0);
 const FREE_LABEL = "Play · free";
 function introModel({ round, me, board, wallet, nowMs = Date.now(), loading = false, opened = [], top = INTRO_TOP }) {
@@ -1732,14 +1739,31 @@ function payableOf(wallet, entry = 100) {
 }
 
 /** The daily prize line (#3251): { text, small } - a test round's says from when (the first daily round) or "Daily:". */
-const PRIZE_SATS = 10000, FIRST_DAILY_MS = Date.UTC(2026, 10, 23), FIRST_DAILY_WORDS = "23 Nov";
+const PRIZE_SATS = 2500, FIRST_DAILY_MS = Date.UTC(2026, 10, 23), FIRST_DAILY_WORDS = "23 Nov";
 function prizeLine(round, nowMs = Date.now()) {
   if (!round) return null;
   const sats = fmtSats(round.bountySats > 0 ? round.bountySats : PRIZE_SATS);
   // short (owner 2026-11-22, iPhone): two lines at most on a 375 px phone
   const text = "🏆 " + (isFree(round) ? "Free to play · daily" : "Daily") + " best score wins " + sats + " real sats", small = "needs X + Lightning address";
-  if (!round.test || nowMs >= FIRST_DAILY_MS) return { text, small };
-  return { text: "From " + FIRST_DAILY_WORDS + ": " + text, small };
+  const promo = promoLine(round, nowMs);
+  if (!round.test || nowMs >= FIRST_DAILY_MS) return promo ? { text, small, promo } : { text, small };
+  return promo ? { text: "From " + FIRST_DAILY_WORDS + ": " + text, small, promo } : { text: "From " + FIRST_DAILY_WORDS + ": " + text, small };
+}
+/**
+ * UNTIL WHEN THE PROMOTION RUNS (kanban #3328, owner 2026-11-22: "bis wann die Aktion geht" - one week, the daily rounds 23 to 29 Nov): from the
+ * round's promo { firstDay, endMs } (the service's OPR_PROMO_END), null when the service names no end.
+ */
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const dayWords = (ms) => { const d = new Date(ms); return d.getUTCDate() + " " + MONTHS[d.getUTCMonth()]; };
+function promoLine(round, nowMs = Date.now()) {
+  const p = round && round.promo;
+  if (!p || !Number.isFinite(Number(p.endMs))) return null;
+  const end = Number(p.endMs), last = end - 1, first = Date.parse(String(p.firstDay) + "T00:00:00Z");
+  const lastDay = dayWords(last), endUtc = new Date(end).toISOString().slice(11, 16), until = endUtc === "00:00" ? lastDay + ", 24:00 UTC" : dayWords(end) + ", " + endUtc + " UTC";
+  if (nowMs >= end) return "The daily bounty ended on " + lastDay;
+  const a = new Date(first), b = new Date(last);
+  const span = !Number.isFinite(first) ? null : a.getUTCMonth() === b.getUTCMonth() ? a.getUTCDate() + "–" + lastDay : dayWords(first) + " – " + lastDay;
+  return (span ? "Daily bounty " + span + " · " : "Daily bounty ") + "until " + until;
 }
 
 /** What the result screen says about the entry (kanban #3265). */
@@ -1769,7 +1793,7 @@ function resultModel({ res, parTime, timePerS = 20, entry, entryWhy, before, aft
   out.beat = !before ? (after ? "Your first score of the round" : null) : res.total > before.total ? "New best - you beat your " + fmtSats(before.total) : "Your best stays " + fmtSats(before.total);
   // the prize, once more on the result (#3251, owner 2026-11-22)
   if (round) { const sats = fmtSats(round.bountySats > 0 ? round.bountySats : PRIZE_SATS);
-    // one line (owner 2026-11-22, iPhone): "Rank 2 · daily best wins 10,000 real sats"
+    // one line (owner 2026-11-22, iPhone): "Rank 2 · daily best wins 2,500 real sats"
     out.prize = (after && after.rank ? "Rank " + after.rank + " · d" : round.test && nowMs < FIRST_DAILY_MS ? "From " + FIRST_DAILY_WORDS + ": d" : "D") + "aily best wins " + sats + " real sats"; }
   if (me) out.left = "Attempts left: " + Math.max(0, max - usedOf(me, opened)) + " of " + max;   // #3251: this run counts, whatever /me said before it
   // #3251: not eligible - said plainly, once (owner 2026-11-22)
@@ -1778,7 +1802,7 @@ function resultModel({ res, parTime, timePerS = 20, entry, entryWhy, before, aft
   // the three facts in one row: "Rank 2 · best 218 · 95 of 99 left"
   if (me) { const best = Math.max(after ? after.total : 0, before ? before.total : 0);
     out.facts = [after && after.rank ? "Rank " + after.rank : "Not ranked yet", best > 0 ? "best " + fmtSats(best) : null, Math.max(0, max - usedOf(me, opened)) + " of " + max + " left"].filter(Boolean).join(" · "); }
-  if (me && !me.x) out.xPrompt = "Link your X account to be placed and win.";
+  if (me && !me.x) out.xPrompt = "Add your X handle to be placed and win.";
   else if (me && me.x && !me.placed) out.xPrompt = "Your X account " + (me.x.username ? "@" + me.x.username + " " : "") + "is linked - " + (me.placedWhy || "not verified yet") + ".";
   return out;
 }
@@ -1805,10 +1829,41 @@ function lnFieldModel(text, stored) {
   return why ? { text: why, kind: "bad", canSave: false } : { text: "", kind: "", canSave: true };
 }
 
+/**
+ * THE X HANDLE FIELD (kanban #3328, owner 2026-11-22: an empty field for the X handle, checked on Save): the handle as typed (@name, name or an
+ * x.com link) -> the bare name, or null when it cannot be an X username.
+ */
+function xHandleOf(text) {
+  const n = String(text == null ? "" : text).trim().replace(/^https?:\/\/(www\.)?(x|twitter)\.com\//i, "").replace(/^@/, "").replace(/[/?#].*$/, "");
+  return /^[A-Za-z0-9_]{1,15}$/.test(n) ? n : null;
+}
+/** What the X field says under it while typed: { text, kind, canSave }. stored: GET /me's x.username. */
+function xFieldModel(text, stored) {
+  const raw = String(text == null ? "" : text).trim();
+  if (!raw) return { text: "", kind: "", canSave: false };
+  const n = xHandleOf(raw);
+  if (!n) return { text: "Not an X username", kind: "bad", canSave: false };
+  if (stored && n.toLowerCase() === String(stored).toLowerCase()) return { text: "✓ saved", kind: "ok", canSave: false };
+  return { text: "", kind: "", canSave: true };
+}
+/**
+ * THE ANSWER TO SAVE (kanban #3331, the round service's POST /x { x }): the account is looked up on X (it must exist; following is not asked) and
+ * kept for this game key; one game key per X account, first come first served. -> { ok, text, kind }.
+ */
+function xSaveAnswer(j, typed) {
+  const at = "@" + (xHandleOf(typed) || String(typed || "").trim());
+  if (!j || typeof j !== "object") return { ok: false, kind: "bad", text: "The check did not answer - try again" };
+  if (j.ok === true) return { ok: true, kind: "ok", text: "✓ saved @" + ((j.x && j.x.username) || xHandleOf(typed)) };
+  const why = String(j.why || "");
+  if (/no such X account|not an X username/i.test(why)) return { ok: false, kind: "bad", text: "No X account " + at + " - check the spelling. Not saved." };
+  if (/already used by another player/i.test(why)) return { ok: false, kind: "bad", text: (j.username ? "@" + j.username : at) + " is already used by another player - not saved" };
+  return { ok: false, kind: "bad", text: (why ? why.slice(0, 100) : "Not checked") + " - not saved" };
+}
+
 /** The leaderboard rows: [[rank, name, score, time, placed]] */
 const boardRows = (board, me = null) => (board || []).map((r) => ({ rank: String(r.rank), name: String(r.name || ""), score: fmtSats(r.score), time: fmtTime(r.timeS), placed: !!r.placed, replay: r.replay || null, me: isMine(r, me) }));
 
-return { fmtSats, fmtLeft, fmtTime, isMine, myBest, xLine, usedOf, INTRO_TOP, introBoard, isFree, FREE_LABEL, introModel, FEE_GUESS_SATS, payableOf, PRIZE_SATS, prizeLine, entryLine, resultModel, lnSyntaxWhy, lnFieldModel, boardRows };
+return { fmtSats, fmtLeft, fmtTime, isMine, myBest, xLine, usedOf, INTRO_TOP, introBoard, isFree, FREE_LABEL, introModel, FEE_GUESS_SATS, payableOf, PRIZE_SATS, prizeLine, promoLine, entryLine, resultModel, lnSyntaxWhy, lnFieldModel, xHandleOf, xFieldModel, xSaveAnswer, boardRows };
 })();
 __m["client/src/rules.js"] = (() => {
 // Orange Pill Run - the public rules (kanban #3251). One source: the game's Rules sheet and the rules page (client/dist/rules.html) both read it.
@@ -1817,13 +1872,13 @@ const RULES_TITLE = "Orange Pill Run: the rules";
 const RULES = [
   ["Round", "One round each UTC day, from 00:00 to 24:00 UTC. No new attempt starts in the last 5 minutes of a round."],
   ["Level", "The level is the previous UTC day's Bitcoin chart: 48 candles of 30 minutes, BTC-USD from Coinbase. Everyone plays the same level."],
-  ["Free to play", "Free to play. 5 attempts a day, your best counts. The best player with a linked X account and a valid Lightning address wins 10,000 real sats."],
+  ["Free to play", "Free to play. 5 attempts a day, your best counts. The best player with a linked X account and a valid Lightning address wins 2,500 real sats."],
   ["Attempts", "At most 5 attempts per player and round. A run is sent within 10 minutes of its start."],
   ["Score", "The server replays your inputs and scores the run itself. Your best score of the round counts."],
   ["Speed", "Faster finishes score much more: 20 points for every second under the level's par time. Sats, stomps, the flag (100) and the day high (50) count too; a run without a hit scores ×1.5. A run that misses the flag gets no time bonus."],
   ["Tie-break", "On equal scores the shorter run time ranks higher, then the earlier submission."],
-  ["Play bounty", "10,000 sats, in real sats, each round. The play bounty goes to the best player with a valid Lightning address saved by one hour after the round. No X account and no valid Lightning address: no play bounty."],
-  ["X account", "To be placed and win, link your X account with its code (the same link as the bug bounty) before your first run of the round; it can be verified until one hour after the round. A player without one is not placed; the next player moves up."],
+  ["Play bounty", "2,500 sats, in real sats, each round. The play bounty goes to the best player with a valid Lightning address saved by one hour after the round. No X account and no valid Lightning address: no play bounty."],
+  ["X account", "To be placed and win, save your X handle in the game's X field before your first run of the round (the account must exist on X; one player per X account, first come first served). A player without one is not placed; the next player moves up."],
   ["Humans only", "Humans only. Bots, scripts, automated or assisted play are excluded."],
   ["Fair play", "Any exploit or cheat disqualifies: changing the game or its data, more than one account, playing for someone else, abusing a bug instead of reporting it. Found a bug? Report it in the bug bounty."],
   ["Review", "We review the top runs. Every payout is checked and approved by us before it is sent. Our decision is final."],
@@ -1973,6 +2028,64 @@ function makeAudio({ store = null, doc = typeof document !== "undefined" ? docum
 
 return { snapWorld, worldEvents, BPM, LOOP, SOUND_MODES, makeAudio };
 })();
+__m["client/src/frameloop.js"] = (() => {
+// Orange Pill Run - the frame clock and the drawn-between-steps positions (kanban #3335, owner 2026-11-22: "Das Spiel ruckelt auf dem
+// MacBook Pro M5"). The simulation stays at a fixed 60 steps per second (src/sim, deterministic, the log and the score never change);
+// the screen runs at its own rate (120 Hz on a ProMotion display). Drawing the state of the last whole step showed the same picture on
+// every other frame at 120 Hz (measured: 50 % of the frames without camera movement) and 0/2-step pairs at 60 Hz (10 %).
+// Now every frame draws the moving things between the step before and the last step, at alpha = the unspent time / STEP.
+// The positions are set for the draw only and put back exactly (the same numbers) before anything steps again.
+
+// clock.advance(now, speed, paused, can, step): adds the time since the last frame (at most maxDt, nothing while paused), runs step() while
+// a whole step is due and can() holds, returns the steps taken. clock.alpha(): how far the screen is between the last two steps (0..1).
+function makeClock(STEP, maxDt = .1) {
+  let acc = 0, last = 0;
+  return {
+    reset(now) { acc = 0; last = now; },
+    advance(now, speed, paused, can, step) {
+      const dt = Math.max(0, Math.min(maxDt, (now - last) / 1000)); last = now;
+      if (!paused) acc += dt * speed;
+      let n = 0; while (acc >= STEP && can()) { step(); acc -= STEP; n++; }
+      return n;
+    },
+    alpha: () => Math.max(0, Math.min(1, acc / STEP)),
+  };
+}
+
+// what moves between steps: the runner, the enemies, the printers' bills, the FUD clouds, the rising and magnet-pulled items and coins
+const KEYS = ["x", "y", "by"];
+const movers = (W) => [W.p, ...W.L.enemies, ...W.bills, ...W.L.clouds, ...W.L.items, ...W.L.coins];
+// a jump longer than this between two steps is a teleport (a respawn at the checkpoint, a bear put back), never drawn in between
+const TELEPORT = 48;
+
+// the positions before a step, by object
+function snapMovers(W) {
+  const m = new Map();
+  for (const o of movers(W)) m.set(o, [o.x, o.y, o.by]);
+  return m;
+}
+
+// draw(frame) with every mover at prev + (now - prev) * alpha; frame = the step count between the two steps, for the animations.
+// Each changed number is put back afterwards, also if draw throws.
+function drawBetween(W, prev, alpha, draw) {
+  const back = [];
+  if (prev && alpha < 1) {
+    for (const o of movers(W)) {
+      const s = prev.get(o); if (!s) continue;
+      for (let k = 0; k < 3; k++) {
+        const key = KEYS[k], was = s[k], cur = o[key];
+        if (typeof was !== "number" || typeof cur !== "number" || was === cur || !Number.isFinite(was) || !Number.isFinite(cur) || Math.abs(cur - was) > TELEPORT) continue;
+        back.push(o, key, cur); o[key] = was + (cur - was) * alpha;
+      }
+    }
+  }
+  const frame = prev ? Math.max(0, W.f - 1 + alpha) : W.f;
+  try { return draw(frame); }
+  finally { for (let i = 0; i < back.length; i += 3) back[i][back[i + 1]] = back[i + 2]; }
+}
+
+return { makeClock, TELEPORT, snapMovers, drawBetween };
+})();
 __m["client/src/main.js"] = (() => {
 // Orange Pill Run - the client loop, input, recording and screens (kanban #3246, #3251, #3265). The simulation runs at a fixed 60 steps
 // per second (src/sim), independent of the frame rate; every step's jump state goes into the input log
@@ -1989,9 +2102,10 @@ const { resultOf, validateLog } = __m["src/sim/replay.js"];
 const { fit, drawWorld, view, usd } = __m["client/src/render.js"];
 const { makeApi } = __m["client/src/api.js"];
 const { createEntry, entryOf } = __m["client/src/entry.js"];
-const { introModel, resultModel, entryLine, myBest, boardRows, fmtSats, fmtTime, lnFieldModel, usedOf, isFree } = __m["client/src/screens.js"];
+const { introModel, resultModel, entryLine, myBest, boardRows, fmtSats, fmtTime, lnFieldModel, usedOf, isFree, xFieldModel, xSaveAnswer, xHandleOf } = __m["client/src/screens.js"];
 const { RULES, RULES_TITLE } = __m["client/src/rules.js"];
 const { makeAudio, snapWorld, worldEvents } = __m["client/src/audio.js"];
+const { makeClock, snapMovers, drawBetween } = __m["client/src/frameloop.js"];
 
 const HOOKS = (window.OPR = window.OPR || {});
 // the practice day: { candles, seed, source, from, to } - set by the page before this script, or the embedded one
@@ -2013,6 +2127,8 @@ function findBridge() {
     location.replace(location.pathname.replace(/games\/orange-pill-run\/(index\.html)?$/, "") + "?game=orange-pill-run" + (location.hash || "")); }
 const bridge = findBridge();
 if (bridge) document.body.classList.add("bridged");
+// THE X HANDLE'S CHECK (kanban #3328, #3331): the round service's own POST /x - the game keeps its X link per game key, never in the bug bounty's
+// book (owner 2026-11-22: the game must not be tied to feedback reports); the game never opens the page's My feedback dialog
 const api = bridge ? makeApi({ base: bridge.apiBase || location.origin + "/api/opr", signBase: bridge.signBase || bridge.apiBase || location.origin + "/api/opr", bridge, fetch: (u, o) => fetch(u, o) }) : null;
 let vault = null; try { vault = window.localStorage; } catch (_) { vault = null; }
 const entry = api ? createEntry({ api, bridge, store: vault, log: (m) => console.log("[opr] " + m) }) : null;
@@ -2028,7 +2144,9 @@ const wallet = () => {
 };
 
 // ---------- the loop ----------
-let W = null, running = false, paused = false, acc = 0, last = 0, mode = "idle";
+let W = null, running = false, paused = false, mode = "idle";
+// #3335: fixed steps, every frame drawn between the last two (frameloop.js)
+const clock = makeClock(STEP); let prevMovers = null;
 let presses = [], down = -1, botCfg = null, replayLog = null, replayIdx = 0, speed = 1;
 let lastLog = null, lastResult = null;
 const input = { jump: false };
@@ -2098,7 +2216,7 @@ document.addEventListener("visibilitychange", () => { if (!TEL || !running || mo
 function begin(m, opts = {}) {
   mode = m; TEL = m === "play" ? telNew() : null; W = newWorld(L); snap = audio ? snapWorld(W) : null; presses = []; down = -1; replayIdx = 0; speed = opts.speed || 1; paused = false; input.jump = false; input.letGo = false; input.seen = false;
   botCfg = m === "bot" ? { ...BOT_CONFIGS[opts.bot || 0] } : null;
-  document.body.classList.add("playing"); document.body.classList.toggle("replaying", m === "replay"); running = true; acc = 0; last = performance.now();
+  document.body.classList.add("playing"); document.body.classList.toggle("replaying", m === "replay"); running = true; clock.reset(performance.now()); prevMovers = null;
   showSheet(null); if (m !== "play") pill("", "");
   $("rbar").hidden = m !== "replay"; paintRbar();
   if (HOOKS.onStart) try { HOOKS.onStart({ mode, gameVersion: GAME_VERSION }); } catch (_) {}
@@ -2109,10 +2227,8 @@ function begin(m, opts = {}) {
 }
 function loop(now) {
   if (!running) return;
-  const dt = Math.max(0, Math.min(.1, (now - last) / 1000)); last = now;
-  if (!paused) acc += dt * speed;
-  while (acc >= STEP && !W.done && W.f < MAX_STEPS) { step(); acc -= STEP; }
-  drawWorld(W, []);
+  clock.advance(now, speed, paused, () => !W.done && W.f < MAX_STEPS, () => { prevMovers = snapMovers(W); step(); });
+  drawBetween(W, prevMovers, clock.alpha(), (fr) => drawWorld(W, [], fr));
   if (W.done || W.f >= MAX_STEPS) return finish();
   requestAnimationFrame(loop);
 }
@@ -2174,13 +2290,16 @@ function paintIntro() {
   $("iLine").textContent = m.line;
   $("iBounty").hidden = true;
   $("iPrize").hidden = !m.prize; $("iPrizeText").textContent = m.prize ? m.prize.text : ""; $("iPrizeSmall").textContent = m.prize ? " " + m.prize.small : "";
+  $("iPromo").hidden = !(m.prize && m.prize.promo); $("iPromo").textContent = (m.prize && m.prize.promo) || "";
   const dl = $("iFacts"); dl.textContent = ""; dl.hidden = !m.facts;
   for (const [k, v, cls] of m.facts || []) { const d = document.createElement("div"); if (cls) d.className = cls; const dt = document.createElement("dt"), dd = document.createElement("dd"); dt.textContent = k; dd.textContent = v; d.append(dt, dd); dl.append(d); }
   paintIntroBoard(m.board);
   $("iPrice").hidden = !m.practice;
   // #3270: the X account on the intro, so a player can link it before the first run (it was only on the result screen)
-  $("iX").hidden = !m.x; paintStatus($("iXText"), m.x); $("iX").className = "xline " + (m.x ? (m.x.ok ? "ok" : "bad") : "");
-  $("iXBtn").hidden = !(m.x && m.x.link && bridge && bridge.linkX);
+  $("iX").hidden = !m.x || !m.x.parts.length; paintStatus($("iXText"), m.x); $("iX").className = "xline " + (m.x ? (m.x.ok ? "ok" : "bad") : "");
+  $("iXBtn").hidden = true;   // #3328 (owner playtest 2026-11-22): the game never opens the page's My feedback dialog - the X field is right here
+  // #3328: the X handle field while no X account is linked (or while it is typed or answered)
+  { const inp = $("iXfIn"), st = XF.i; paintXf("i", !!(m.x && (m.x.link || st.dirty || st.msg || document.activeElement === inp))); }
   const btn = $("startBtn"); if (!btn.dataset.busy) { btn.textContent = m.button.label; btn.disabled = !!m.button.disabled; }
   if (!$("iWhy").dataset.err) $("iWhy").textContent = m.button.why || (S.err && bridge ? S.err : "");
   $("iTopUp").hidden = !m.topUp; if (m.topUp) $("iTopUp").textContent = m.topUp.label;
@@ -2339,6 +2458,35 @@ for (const p of ["i", "r"]) {
   $(p + "Ln").addEventListener("submit", (e) => { e.preventDefault(); saveLn(p); });
 }
 
+// ---------- the X handle (kanban #3328): intro and result, one field each, checked on Save ----------
+const XF = { i: { dirty: false, msg: null }, r: { dirty: false, msg: null } };
+function paintXf(p, show = true) {
+  const form = $(p + "Xf"), inp = $(p + "XfIn"), btn = $(p + "XfBtn"), why = $(p + "XfWhy"), st = XF[p];
+  const on = show && !!api && !!S.me;
+  form.hidden = !on; if (!on) { why.hidden = true; return; }
+  const stored = (S.me.x && S.me.x.username) || "";
+  const m = st.msg || xFieldModel(inp.value, stored);
+  why.textContent = m.text; why.className = "lnwhy " + (m.kind || ""); why.hidden = !m.text;
+  if (!btn.dataset.busy) btn.disabled = !xFieldModel(inp.value, stored).canSave;
+}
+async function saveX(p) {
+  const inp = $(p + "XfIn"), btn = $(p + "XfBtn"), st = XF[p];
+  if (btn.disabled || btn.dataset.busy) return;
+  const typed = inp.value.trim();
+  btn.dataset.busy = "1"; btn.disabled = true; st.msg = { text: "Checking @" + (xHandleOf(typed) || typed) + " on X …", kind: "" }; paintXf(p);
+  const j = await api.post("/x", { x: typed }).catch(() => null);
+  const a = xSaveAnswer(j, typed);
+  delete btn.dataset.busy;
+  st.msg = { text: a.text, kind: a.kind }; st.dirty = !a.ok;
+  if (a.ok) { const m = await api.getSigned("/me" + (S.round ? "?round=" + encodeURIComponent(S.round.id) : "")).catch(() => null); if (m && m.ok) S.me = m; inp.value = ""; st.dirty = false; }
+  paintXf(p); paintIntro(); if (!$("result").hidden && resultArgs) paintResult(resultArgs);
+  HOOKS.x = { ok: a.ok, text: a.text };
+}
+for (const p of ["i", "r"]) {
+  $(p + "XfIn").addEventListener("input", () => { XF[p].dirty = true; XF[p].msg = null; paintXf(p); });
+  $(p + "Xf").addEventListener("submit", (e) => { e.preventDefault(); saveX(p); });
+}
+
 // ---------- the screens ----------
 const cellRow = (tr, cells, cls, th) => cells.forEach((c, i) => { const td = document.createElement(th ? "th" : "td"); if (c instanceof Node) td.append(c); else td.textContent = c == null ? "" : c; if (cls && cls[i]) td.className = cls[i]; tr.append(td); });
 function paintEntry() {
@@ -2370,9 +2518,10 @@ function paintResult({ res, mode: m, entry: en, sending = false }) {
   // compact (owner 2026-11-22, iPhone): one facts row when the service answered; the practice and replay lines as before
   if (model.facts) { $("rRank").textContent = model.facts; $("rBeat").textContent = ""; $("rLeft").textContent = ""; }
   else { $("rRank").textContent = model.rank || ""; $("rBeat").textContent = model.beat || ""; $("rLeft").textContent = model.left || ""; }
-  $("rNot").hidden = !model.status; paintStatus($("rNotText"), model.status || null);
+  $("rNot").hidden = !model.status || !model.status.parts.length; paintStatus($("rNotText"), model.status || null);
   $("rX").hidden = true;   // the line above says it, with the button (#3251)
-  $("xBtn").hidden = !(bridge && bridge.linkX) || !model.linkX;
+  $("xBtn").hidden = true;   // #3328: no My feedback dialog from the game
+  paintXf("r", m === "play" && !!S.me && (!S.me.x || XF.r.dirty || !!XF.r.msg || document.activeElement === $("rXfIn")));
   // the address field only while none is saved (or while it is typed or answered)
   paintLn("r", m === "play" && !!S.me && (!S.me.lnAddress || LN.r.dirty || !!LN.r.msg || document.activeElement === $("rLnIn")));
   const used = usedOf(S.me, openedIn()), max = S.round ? Number(S.round.maxAttempts || 5) : 5;
@@ -2484,8 +2633,7 @@ $("bBack").onclick = () => showIntro();
 $("rulesBack").onclick = () => showIntro();
 $("rulesLink").onclick = (e) => { e.preventDefault(); showRules(); };
 $("boardLink").onclick = (e) => { e.preventDefault(); showBoard(); };
-$("xBtn").onclick = () => { try { bridge.linkX(); } catch (_) { /* the page has no link here */ } };
-$("iXBtn").onclick = $("xBtn").onclick;
+// #3328 (owner playtest 2026-11-22: "Link X" opened My feedback with every community field): no bridge.linkX from the game, the X field checks inline
 $("rbPlay").onclick = () => { paused = !paused; if (audio) { audio.unlock(); if (paused) audio.stopMusic(); else audio.startMusic(); } paintRbar(); };
 $("rb2x").onclick = () => { speed = speed === 2 ? 1 : 2; paintRbar(); };
 $("rbClose").onclick = () => { stopReplay(); replayBack(); };

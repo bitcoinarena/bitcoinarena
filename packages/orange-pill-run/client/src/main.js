@@ -16,6 +16,7 @@ import { createEntry, entryOf } from "./entry.js";
 import { introModel, resultModel, entryLine, myBest, boardRows, fmtSats, fmtTime, lnFieldModel, usedOf, isFree, xFieldModel, xSaveAnswer, xHandleOf } from "./screens.js";
 import { RULES, RULES_TITLE } from "./rules.js";
 import { makeAudio, snapWorld, worldEvents } from "./audio.js";
+import { makeClock, snapMovers, drawBetween } from "./frameloop.js";
 
 const HOOKS = (window.OPR = window.OPR || {});
 // the practice day: { candles, seed, source, from, to } - set by the page before this script, or the embedded one
@@ -54,7 +55,9 @@ const wallet = () => {
 };
 
 // ---------- the loop ----------
-let W = null, running = false, paused = false, acc = 0, last = 0, mode = "idle";
+let W = null, running = false, paused = false, mode = "idle";
+// #3335: fixed steps, every frame drawn between the last two (frameloop.js)
+const clock = makeClock(STEP); let prevMovers = null;
 let presses = [], down = -1, botCfg = null, replayLog = null, replayIdx = 0, speed = 1;
 let lastLog = null, lastResult = null;
 const input = { jump: false };
@@ -124,7 +127,7 @@ document.addEventListener("visibilitychange", () => { if (!TEL || !running || mo
 function begin(m, opts = {}) {
   mode = m; TEL = m === "play" ? telNew() : null; W = newWorld(L); snap = audio ? snapWorld(W) : null; presses = []; down = -1; replayIdx = 0; speed = opts.speed || 1; paused = false; input.jump = false; input.letGo = false; input.seen = false;
   botCfg = m === "bot" ? { ...BOT_CONFIGS[opts.bot || 0] } : null;
-  document.body.classList.add("playing"); document.body.classList.toggle("replaying", m === "replay"); running = true; acc = 0; last = performance.now();
+  document.body.classList.add("playing"); document.body.classList.toggle("replaying", m === "replay"); running = true; clock.reset(performance.now()); prevMovers = null;
   showSheet(null); if (m !== "play") pill("", "");
   $("rbar").hidden = m !== "replay"; paintRbar();
   if (HOOKS.onStart) try { HOOKS.onStart({ mode, gameVersion: GAME_VERSION }); } catch (_) {}
@@ -135,10 +138,8 @@ function begin(m, opts = {}) {
 }
 function loop(now) {
   if (!running) return;
-  const dt = Math.max(0, Math.min(.1, (now - last) / 1000)); last = now;
-  if (!paused) acc += dt * speed;
-  while (acc >= STEP && !W.done && W.f < MAX_STEPS) { step(); acc -= STEP; }
-  drawWorld(W, []);
+  clock.advance(now, speed, paused, () => !W.done && W.f < MAX_STEPS, () => { prevMovers = snapMovers(W); step(); });
+  drawBetween(W, prevMovers, clock.alpha(), (fr) => drawWorld(W, [], fr));
   if (W.done || W.f >= MAX_STEPS) return finish();
   requestAnimationFrame(loop);
 }

@@ -351,8 +351,8 @@ function drawCheckpoint(c, on, f) {
   const led = on ? "#56d364" : "#a83232"; glow(led, on ? 12 : 4, () => { ctx.fillStyle = led; ctx.beginPath(); ctx.arc(x + 3.5, y - 35.5, 2.4, 0, 7); ctx.fill(); });
   ctx.fillStyle = "rgba(255,255,255,.12)"; ctx.fillRect(x - 5, y - 41, 17, 2);
 }
-function drawWorld(W, ghosts) {
-  const L = W.L, p = W.p, f = W.f; L0 = L;
+function drawWorld(W, ghosts, frame) {      // frame (#3335): the step count the screen shows, between two steps; W.f without it
+  const L = W.L, p = W.p, f = frame === undefined ? W.f : frame; L0 = L;
   camX = Math.max(0, Math.min(L.w * T - viewW, p.x - viewW * .2));
   // vertical camera (#3270): the world's rows live in the band under the HUD. If the whole world fits, its ground sits on the
   // canvas bottom; otherwise the camera holds the runner between 30 % and 70 % of the band and moves only when he leaves it.

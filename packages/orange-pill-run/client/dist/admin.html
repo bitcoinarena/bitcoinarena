@@ -127,7 +127,9 @@ a { color: var(--btc); }
 <script>
 "use strict";
 (() => {
-  const API = (location.protocol === "https:" || location.protocol === "http:") ? location.origin + "/api/opr" : "https://testnet-stage.bitcoinarena.io/api/opr";
+  // kanban #3328: the stage's own Worker; testnet.bitcoinarena.io (Pages) and its previews ask https://bitcoinarena.io/api/opr (CORS there)
+  const API = location.hostname === "testnet-stage.bitcoinarena.io" || location.hostname === "localhost" || location.hostname === "127.0.0.1" ? location.origin + "/api/opr"
+    : /^https?:$/.test(location.protocol) ? "https://bitcoinarena.io/api/opr" : "https://testnet-stage.bitcoinarena.io/api/opr";
   const KEY = "opr-admin-code", BY = "opr-admin-by";
   const $ = (id) => document.getElementById(id);
   const store = (() => { try { return window.sessionStorage; } catch (_) { return null; } })();
@@ -143,7 +145,7 @@ a { color: var(--btc); }
   const el = (tag, props = {}, ...kids) => { const e = document.createElement(tag); for (const [k, v] of Object.entries(props)) { if (v == null) continue; if (k === "class") e.className = v; else if (k === "text") e.textContent = v; else if (k.startsWith("on")) e[k] = v; else e.setAttribute(k, v); } for (const c of kids) if (c != null) e.append(c); return e; };
   const short = (k) => (k ? String(k).slice(0, 8) + "…" : "-");
   // the X link's proof kind at sign-off (kanban #3279, owner 2026-11-22): typed in the form, or proven by a posted link code - shown, never refused
-  const proofTxt = (p) => (p === "code" ? " (proven by code)" : p ? " (typed)" : "");
+  const proofTxt = (p) => (p === "game" ? " (game X check)" : p === "code" ? " (proven by code)" : p ? " (typed)" : "");
   const when = (ms) => (ms ? new Date(ms).toISOString().replace("T", " ").slice(0, 16) + "Z" : "-");
   const fmtTime = (s) => (s == null ? "-" : (+s).toFixed(2) + " s");
 
