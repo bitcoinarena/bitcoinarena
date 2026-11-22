@@ -22,7 +22,7 @@
 // is the latest of those signers' at_ms: the reveal window opens there.
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex, fromHex } from './hash.js';
-import { TAG, TYPE_LOCK_SET, TYPE_LOCK_SET_CERTIFICATE, LOCK_SET_VERSION, speaksVersion } from './constants.js';
+import { TAG, TYPE_LOCK_SET, TYPE_LOCK_SET_CERTIFICATE, LOCK_SET_VERSION, speaksVersion, runsDisjointRules } from './constants.js';
 
 /** No certificate by the entry close + this: the round is VOID (the ruling's "close + 3 s"). */
 export const LOCK_SET_WINDOW_MS = 3000;
@@ -43,6 +43,22 @@ const lsBytes = (x) => (x instanceof Uint8Array ? x : fromHex(String(x)));
 /** Does this round play under the certified lock set? A paying head-to-head round of protocol 28 or later (`headToHead`: its game is one). */
 export const certifiesLockSet = (contract, headToHead) => !!headToHead && !!contract && Number.isInteger(contract.protocolVersion)
   && contract.protocolVersion >= LOCK_SET_VERSION && typeof contract.stakeMsat === 'bigint' && contract.stakeMsat > 0n;
+
+/**
+ * 2026.0.33 (kanban #3257): does a seat's view of this round hold EVERY entry whose stake it saw before the close, not only the game's `players`
+ * lowest ids (round.js seatedEntriesOf)? Below 33 the cut view let a low-id lock handed to only some seats split the views; from 33 the view is
+ * uncut and the seats are cut from the certified set (certifiedSeats), the same at every seat holding that certificate.
+ */
+export const lockSetViewsAllSeen = (contract) => !!contract && runsDisjointRules(contract.protocolVersion);
+
+/**
+ * THE SEATS OF A CERTIFIED LOCK SET (kanban #3257): from 33 the game's `players` lowest entry ids of the certified entries (hex, any order;
+ * answered ascending), below 33 the certified entries as they are, byte for byte (each view was cut already). `players` null or not a positive integer: all.
+ */
+export function certifiedSeats(entries, contract, players) {
+  if (!lockSetViewsAllSeen(contract) || !Number.isInteger(players) || players <= 0) return [...(entries || [])];
+  return [...new Set((entries || []).map((e) => String(e).toLowerCase()))].sort().slice(0, players);
+}
 
 /** The set in its one encoding: entries ascending, each once. */
 export function encodeLockSet({ roundId, entries }) {

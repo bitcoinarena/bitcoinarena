@@ -25,7 +25,7 @@ export const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 27, 28, 29, 30, 31]);
+export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 27, 28, 29, 30, 31, 33]);
 /** The last BLWP/v1 tags become ARENA/v1 at one point per network (tag-switch.js, kanban #525). */
 export const TAG_SWITCH_VERSION = 18;
 /** A node's bond outputs count as their sum: the round's floor is applied to it (census.js nodeBonds, kanban #544). */
@@ -82,6 +82,25 @@ export const TIE_SPLIT_VERSION = 31;
 export const REVEAL_SET_VERSION = 32;
 /** Whether a round of protocol version `v` splits a tie at a paid place evenly (kanban #2687). */
 export const splitsTies = (v) => Number.isInteger(v) && v >= TIE_SPLIT_VERSION;
+/**
+ * 2026.0.33 - THREE RULES EVERY SEAT OF A ROUND MUST COMPUTE ALIKE (owner decision 2026-11-22 "Ja", kanban #3257, #3260, #2983). Rounds below 33
+ * keep every rule byte for byte; a round written at 33 is served only by a build that speaks it (speaksVersion), so a rolling restart never has
+ * two seats of one round compute two rules: a seat on the old build refuses the round by its version, and the round creators (the duty days,
+ * round-2of2, ARENA_PROTOCOL_VERSION) write 33 only once every seat of the network runs a build that lists it.
+ *   - #3257 THE LOCK-SET VIEW HOLDS EVERY ENTRY WHOSE STAKE WAS SEEN BEFORE THE CLOSE (lock-set.js lockSetViewsAllSeen): not round.js
+ *     seatedEntriesOf, already cut to the game's `players` lowest entry ids - a low-id third lock handed to only some seats moved the cut, the
+ *     views split and the honest pair fell out of the certified set (VOID). The set is certified as before; the game's `players` lowest entry
+ *     ids of the certified set are the seats (certifiedSeats), the rest VOID and returned as now.
+ *   - #3260 A SCALAR MARKET'S DISPUTE ONLY BETWEEN DISJOINT SIGNER SETS (attested.js marketTransition): an attestor key that signed two different
+ *     values is an equivocator - flagged, its signatures dropped - and a value attestation counts only with the threshold left without it.
+ *   - #2983 A FEDERATION'S FEE LOCKS THAT PAY NO SIGNER NODE ARE NOT CLAIMED (federation-settlement.js splitByFederation): a federation's fee part
+ *     that pays no payout leaves its fee locks out of its transaction (they expire back to their players), as the one-federation feeSettlement does.
+ * 32 is the certified reveal set's (prepared, not spoken): versions are cumulative, so a round at 33 is at or above 32 - the build that wires the
+ * reveal set must gate it on a version of its own above every version spoken by then, never on `>= 32` alone.
+ */
+export const DISJOINT_RULES_VERSION = 33;
+/** Whether a round of protocol version `v` runs the 2026.0.33 rules (kanban #3257, #3260, #2983). */
+export const runsDisjointRules = (v) => Number.isInteger(v) && v >= DISJOINT_RULES_VERSION;
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (RULED 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
