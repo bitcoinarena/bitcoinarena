@@ -174,8 +174,13 @@ export async function fetchSeason({ nodes, game, days, title = null, viewer = []
   if (front.length) {
     try { return await Promise.any(front.map((seat) => ask(seat).catch((e) => { tried.push({ seat, why: e && e.message ? e.message : String(e) }); throw e; }))); } catch { /* the rest */ }
   }
-  for (const seat of seats.slice(front.length)) {
-    try { return await ask(seat); } catch (e) { tried.push({ seat, why: e && e.message ? e.message : String(e) }); }
+  // AND THE REST RACED TOO, `race` AT A TIME (kanban #3289, measured on the stage 2026-11-22: a seat builds its network season in 22-50 s,
+  // past the page's limit, and the seats after the first four were then asked one by one - two minutes before the board asked again)
+  const step = race > 1 ? race : 1;
+  for (let i = front.length; i < seats.length; i += step) {
+    const batch = seats.slice(i, i + step);
+    if (batch.length === 1) { try { return await ask(batch[0]); } catch (e) { tried.push({ seat: batch[0], why: e && e.message ? e.message : String(e) }); } continue; }
+    try { return await Promise.any(batch.map((seat) => ask(seat).catch((e) => { tried.push({ seat, why: e && e.message ? e.message : String(e) }); throw e; }))); } catch { /* the next ones */ }
   }
   return { ok: false, why: tried.length ? 'no node answered the season just now' : 'no node to ask', tried };
 }
