@@ -157,7 +157,7 @@ test('#3250 payable: an approved list names each row\'s Lightning address', asyn
   const { w, r, ps } = await round([30, 20], { write: false });
   await w.opr.saveLnAddress(ps[0].pk, 'first@walletofsatoshi.com');
   w.clock.set(r.end_ms); await w.opr.tick(); w.clock.add(60 * MIN); await w.opr.tick();
-  assert.equal(w.opr.decideList({ round: r.id, kind: 'bounty', action: 'approve', by: 'owner' }).ok, true);
+  assert.equal(w.opr.decideList({ round: r.id, kind: 'bounty', action: 'approve', by: 'owner', version: (w.opr.listsOf(r.id).find((l) => l.kind === 'bounty') || {}).version }).ok, true);
   const pay = w.opr.payable();
   assert.equal(pay[0].kind, 'bounty'); assert.equal(pay[0].rows[0].lnAddress, 'first@walletofsatoshi.com');
 });

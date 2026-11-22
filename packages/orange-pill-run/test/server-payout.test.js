@@ -61,7 +61,7 @@ test('#3248 none placed: the pot carries over to the next round', async () => {
   assert.deepEqual(rowsOf(w, r, 'bounty'), []);
   const next = w.opr.roundRow('2026-11-24');
   assert.equal(w.opr.potOf(next.id), 0);   // #3266 not while the list waits: it could still be rebuilt to pay the pot
-  assert.equal(w.opr.decideList({ round: r.id, kind: 'pot', action: 'approve', by: 'admin' }).ok, true);
+  assert.equal(w.opr.decideList({ round: r.id, kind: 'pot', action: 'approve', by: 'admin', version: (w.opr.listsOf(r.id).find((l) => l.kind === 'pot') || {}).version }).ok, true);
   assert.equal(w.opr.potOf(next.id), 200);
 });
 
@@ -81,7 +81,7 @@ test('#3250 no payout without an approval record: who and when; an approved list
   await endRound(w, r);
   assert.deepEqual(w.opr.payable(), []);
   assert.equal(w.opr.decideList({ round: r.id, kind: 'pot', action: 'approve' }).ok, false);   // no "by"
-  const ok = w.opr.decideList({ round: r.id, kind: 'pot', action: 'approve', by: 'owner' });
+  const ok = w.opr.decideList({ round: r.id, kind: 'pot', action: 'approve', by: 'owner', version: (w.opr.listsOf(r.id).find((l) => l.kind === 'pot') || {}).version });
   assert.equal(ok.ok, true);
   const pay = w.opr.payable();
   assert.equal(pay.length, 1); assert.equal(pay[0].kind, 'pot'); assert.equal(pay[0].approval.by, 'owner'); assert.equal(pay[0].approval.atMs, w.clock.now());

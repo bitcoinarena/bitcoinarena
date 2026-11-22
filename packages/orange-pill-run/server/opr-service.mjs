@@ -544,7 +544,10 @@ export function createOpr(o = {}) {
     alert(`Orange Pill Run ${r.id}${r.test ? ' (test)' : ''}: payout lists wait for sign-off - ${parts.join('; ')}`);
     log(`round ${r.id}: payout lists written (waiting for sign-off)`);
   }
-  const listRow = (x) => (x ? { round: x.round, kind: x.kind, rows: J(x.rows, []), sats: x.sats, carrySats: x.carry_sats, state: x.state, by: x.by, atMs: x.at_ms, why: x.why, madeMs: x.made_ms, held: J(x.held, []) } : null);
+  // THE VERSION A SIGN-OFF NAMES (kanban #3287): a hash of what the owner reviews - rows, held rows, sats, carry. A waiting list is rebuilt by
+  // any player's POST /lnaddress, a review, a row reject, a late entry; an approve names the version it was shown and is refused for another
+  const listVersion = (x) => sha(JSON.stringify([J(x.rows, []), J(x.held, []), x.sats, x.carry_sats])).slice(0, 16);
+  const listRow = (x) => (x ? { round: x.round, kind: x.kind, rows: J(x.rows, []), sats: x.sats, carrySats: x.carry_sats, state: x.state, by: x.by, atMs: x.at_ms, why: x.why, madeMs: x.made_ms, held: J(x.held, []), version: listVersion(x) } : null);
   const listsOf = (round) => q('SELECT * FROM payout_lists WHERE round = ? ORDER BY kind DESC').all(round).map(listRow);
   /** THE POT NEVER PAYS MORE THAN WAS PAID IN (kanban #3266): over the approved pot lists (plus `also`, a list about to be approved), what they
    *  commit - rows paid plus carries not taken into another approved list - against the paid entries of their rounds. */
@@ -558,12 +561,13 @@ export function createOpr(o = {}) {
     }
     return { committed, entries, why: committed > entries ? `the approved pot lists would commit ${committed} pot sats (paid or carried), more than the ${entries} sat of paid entries of their rounds` : null };
   }
-  function decideList({ round, kind, action, by, why = null } = {}) {
+  function decideList({ round, kind, action, by, why = null, version = null } = {}) {
     const l = q('SELECT * FROM payout_lists WHERE round = ? AND kind = ?').get(String(round), String(kind));
     if (!l) return { ok: false, why: 'no such list' };
     if (!['approve', 'reject'].includes(action)) return { ok: false, why: 'approve or reject' };
     if (!by || !String(by).trim()) return { ok: false, why: 'who signs off (by)' };
     if (l.state !== 'waiting') return { ok: false, why: `the list is ${l.state} already` };
+    if (action === 'approve' && String(version || '') !== listVersion(l)) return { ok: false, code: 409, why: version ? 'the list changed since you opened it - reload it and review it again' : 'name the list version you reviewed (version)', version: listVersion(l) };
     if (action === 'approve' && l.kind === 'pot') { const g = potLedger(l.round); if (g.why) { log(`payout list ${l.round}/pot not approved: ${g.why}`); return { ok: false, why: g.why }; } }
     const t = now(), state = action === 'approve' ? 'approved' : 'rejected';
     q('UPDATE payout_lists SET state = ?, by = ?, at_ms = ?, why = ? WHERE round = ? AND kind = ? AND state = \'waiting\'').run(state, String(by).slice(0, 80), t, why ? String(why).slice(0, 300) : null, l.round, l.kind);
@@ -736,7 +740,7 @@ export function createOpr(o = {}) {
         if (req.method === 'GET' && path === '/admin/payable') { try { return send(200, { ok: true, lists: payable() }); } catch (e) { alert(`Orange Pill Run: payable refused - ${e.message}`); return send(409, { ok: false, why: e.message }); } }
         if (req.method === 'POST' && path === '/admin/disqualify') { const r = disqualify({ ...body, by }); return send(r.ok ? 200 : 400, r); }
         if (req.method === 'POST' && path === '/admin/review') { const r = review({ ...body, by }); return send(r.ok ? 200 : 400, r); }
-        if (req.method === 'POST' && path === '/admin/list') { const r = decideList({ ...body, by }); return send(r.ok ? 200 : 400, r); }
+        if (req.method === 'POST' && path === '/admin/list') { const { code, ...r } = decideList({ ...body, by }); return send(r.ok ? 200 : code || 400, r); }
         if (req.method === 'POST' && path === '/admin/row') { const r = rejectRow({ ...body, by }); return send(r.ok ? 200 : 400, r); }
         if (req.method === 'POST' && path === '/admin/test-round') { const r = testRound({ ...body, by }); if (r.ok) tick().catch(() => {}); return send(r.ok ? 200 : 400, r); }
         return send(404, { ok: false, why: 'no such admin route' });

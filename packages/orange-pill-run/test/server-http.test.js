@@ -87,7 +87,11 @@ test('#3256 #3250 admin: wrong codes counted (5, then 429 also for the right one
     for (const h of held) assert.equal((await call('POST', '/admin/review', { admin: 'letmein', body: { attempt: h.attempt, action: 'clear' } })).status, 200);
     const l2 = (await call('GET', `/admin/lists?round=${id}`, { admin: 'letmein' })).json;
     assert.deepEqual(l2.lists[0].rows.map((x) => x.sats), [300, 180, 120]);
-    const ok = await call('POST', '/admin/list', { admin: 'letmein', body: { round: id, kind: 'pot', action: 'approve', by: 'owner' } });
+    // #3287: an approve names the version the owner reviewed - the version from before the review (2 rows) is refused, the rebuilt one approved
+    const stale = await call('POST', '/admin/list', { admin: 'letmein', body: { round: id, kind: 'pot', action: 'approve', by: 'owner', version: l.lists[0].version } });
+    assert.equal(stale.status, 409); assert.match(stale.json.why, /changed since you opened it/);
+    assert.equal((await call('POST', '/admin/list', { admin: 'letmein', body: { round: id, kind: 'pot', action: 'approve', by: 'owner' } })).status, 409);   // no version
+    const ok = await call('POST', '/admin/list', { admin: 'letmein', body: { round: id, kind: 'pot', action: 'approve', by: 'owner', version: l2.lists[0].version } });
     assert.equal(ok.json.list.state, 'approved');
     const pay = (await call('GET', '/admin/payable', { admin: 'letmein' })).json.lists;
     assert.equal(pay[0].approval.by, 'owner');

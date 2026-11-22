@@ -7,7 +7,7 @@ import { world, openRound, paidAttempt, keypair, logOf, MIN } from './server-hel
 
 const endRound = async (w, r) => { w.clock.set(r.end_ms); await w.opr.tick(); w.clock.add(60 * MIN); await w.opr.tick(); };
 const potList = (w, id) => w.opr.listsOf(id).find((l) => l.kind === 'pot');
-const approve = (w, id) => w.opr.decideList({ round: id, kind: 'pot', action: 'approve', by: 'admin' });
+const approve = (w, id) => w.opr.decideList({ round: id, kind: 'pot', action: 'approve', by: 'admin', version: (w.opr.listsOf(id).find((l) => l.kind === 'pot') || {}).version });
 const entriesPaid = (w) => w.opr.db.prepare('SELECT COALESCE(SUM(r.entry_sats), 0) AS s FROM attempts a JOIN rounds r ON r.id = a.round WHERE a.paid_ms IS NOT NULL').get().s;
 const payablePot = (w) => w.opr.payable().filter((l) => l.kind === 'pot').reduce((a, l) => a + l.sats, 0);
 async function play(w, r, pk, presses) {

@@ -115,8 +115,10 @@ test('F3 approving a list approves the rows the owner reviewed, not a rebuild ma
   // between view and click: a links X and re-saves its own address (allowed any time), the waiting list is rebuilt
   link(a.pk);
   assert.equal((await w.opr.saveLnAddress(a.pk, `q${a.pk.slice(0, 6)}@walletofsatoshi.com`)).ok, true);
-  const d = w.opr.decideList({ round: w.r.id, kind: 'bounty', action: 'approve', by: 'owner' });
+  const late = w.opr.decideList({ round: w.r.id, kind: 'bounty', action: 'approve', by: 'owner', version: seen.version });   // the version the owner saw (#3287)
+  const d = late.ok ? late : w.opr.decideList({ round: w.r.id, kind: 'bounty', action: 'approve', by: 'owner', version: bountyOf(w).version });
   assert.equal(d.ok, true);
+  if (!late.ok) assert.match(late.why, /changed since you opened it/);
   assert.deepEqual(d.list.rows.map((x) => x.player), seen.rows.map((x) => x.player), 'the approved bounty row is not the one the owner reviewed');
 });
 

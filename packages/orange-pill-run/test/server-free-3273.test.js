@@ -71,7 +71,7 @@ test('#3273 a free run is on the board at submit; no pot; at the end only the bo
   assert.deepEqual(lists[0].rows.map((x) => [x.player, x.sats, x.lnAddress]), [[b.pk, 2000, 'bob@walletofsatoshi.com']]);
   assert.equal(lists[0].state, 'waiting');
   assert.ok(w.alerts.some((x) => /free round, no pot; bounty: 1\. user\d+ 2000 sat/.test(x)), w.alerts.join('\n'));
-  assert.equal(w.opr.decideList({ round: r.id, kind: 'bounty', action: 'approve', by: 'owner' }).ok, true);
+  assert.equal(w.opr.decideList({ round: r.id, kind: 'bounty', action: 'approve', by: 'owner', version: (w.opr.listsOf(r.id).find((l) => l.kind === 'bounty') || {}).version }).ok, true);
   assert.deepEqual(w.opr.payable().map((l) => [l.kind, l.sats]), [['bounty', 2000]]);
   assert.equal(w.lndCalls, 0);
 });

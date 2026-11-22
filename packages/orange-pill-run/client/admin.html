@@ -283,7 +283,7 @@ a { color: var(--btc); }
       if ((l.held || []).length) d.append(el("div", { class: "why", text: "Held: " + l.held.map((s) => "rank " + s.rank + " " + (s.name || short(s.player)) + (s.xAccount ? " @" + s.xAccount : "") + " - " + s.why).join("; ") }));
       if (l.state === "waiting") {
         d.append(el("div", { class: "row", style: "margin-top:8px" },
-          el("button", { type: "button", class: "go", text: "Approve list", onclick: () => { if (confirm("Approve the " + l.kind + " list of " + l.round + " (" + l.sats + " sat) as " + (by || "admin") + "?")) act("/admin/list", { round: l.round, kind: l.kind, action: "approve" }, "List approved."); } }),
+          el("button", { type: "button", class: "go", text: "Approve list", onclick: () => { if (confirm("Approve the " + l.kind + " list of " + l.round + " (" + l.sats + " sat) as " + (by || "admin") + "?")) act("/admin/list", { round: l.round, kind: l.kind, action: "approve", version: l.version }, "List approved."); } }),
           el("button", { type: "button", class: "bad", text: "Reject list", onclick: () => { const why = prompt("Reject the " + l.kind + " list of " + l.round + " - reason:"); if (why && why.trim()) act("/admin/list", { round: l.round, kind: l.kind, action: "reject", why: why.trim() }, "List rejected."); } })));
       }
       box.append(d);
