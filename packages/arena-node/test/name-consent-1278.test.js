@@ -12,7 +12,7 @@ import { seasonRoundOf } from '../src/season-read.js';
 import { assumeAssigned } from './assignment.js';
 import { b32, rand, contractFor } from './window-fixture.js';
 import { encodeRoundContract, roundId, encodeEntryContract } from '../../arena-protocol/src/contracts.js';
-import { encodeLobbyName, lobbyNameId } from '../../arena-protocol/src/lobby-name.js';
+import { encodeLobbyName, decodeLobbyName, lobbyNameId } from '../../arena-protocol/src/lobby-name.js';
 import { matchProofId } from '../../arena-protocol/src/match.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { HOSTED } from './plugins/hosted.js';
@@ -45,6 +45,8 @@ test('#1278 a record naming an identity books the round to it only with that ide
     const proven = await post(alice, ALICE, proofOf(ALICE, alice));        // her own, with her proof
     const forged = await post(forger, RIVAL, proofOf(MALLORY, forger));    // a proof by another key
     const names = (await (await fetch(`${base}/names?round=${toHex(rid)}`)).json()).names;
+    // kanban #3054: the season books a record only once f + 1 seats hold it (verify.js carryNames marks it) - marked here as that pass would
+    for (const n of d.round.lobbyNames(rid)) d.round.markLobbyNameHeld(rid, decodeLobbyName(n.record).playerPubkey, n.record, n.identitySig ? 2 : 1);
     const s = seasonRoundOf(d.round, rid, c);
     const bookedTo = (p) => s.entries.find((e) => e.roundKey === toHex(p.pub)).player;
     const facts = { unproven, proven, forged, servedProofs: names.filter((n) => n.identitySig).length,

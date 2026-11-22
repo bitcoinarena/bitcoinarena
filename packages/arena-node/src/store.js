@@ -1475,6 +1475,13 @@ export function openStore(path = ':memory:') {
     db.exec('ALTER TABLE relayed ADD COLUMN capped INTEGER NOT NULL DEFAULT 0');
   if (!db.prepare('PRAGMA table_info(lobby_names)').all().some((c) => c.name === 'identity_sig'))
     db.exec('ALTER TABLE lobby_names ADD COLUMN identity_sig BLOB');
+  // HOW MANY SEATS HOLD A NAME RECORD (kanban #3054): `held` 1 = the record's bytes are held by f + 1 of the round's seats, 2 = with the identity's
+  // consent too, NULL = not shown so yet. The season account books a record's name (1) and identity (2) only so: a record posted to some seats only
+  // made those seats sign one account and the rest another, and the round left the season. The records held before this column are taken as held.
+  if (!db.prepare('PRAGMA table_info(lobby_names)').all().some((c) => c.name === 'held')) {
+    db.exec('ALTER TABLE lobby_names ADD COLUMN held INTEGER');
+    db.exec('UPDATE lobby_names SET held = CASE WHEN identity_sig IS NULL THEN 1 ELSE 2 END');
+  }
   // THE ROUNDS A CONSENTED NAME RECORD PUTS AN IDENTITY IN (kanban #2167, refutes #1748): the record's identity key (bytes 64..96, lobby-name.js),
   // read by match.js before any reveal of that round has reached this seat
   db.exec('CREATE INDEX IF NOT EXISTS lobby_names_consented_identity ON lobby_names (substr(record, 65, 32)) WHERE identity_sig IS NOT NULL');

@@ -99,7 +99,11 @@ function entriesOf(round, rid, contract, { paid, market }) {
   const named = new Map();
   for (const n of round.lobbyNames(rid)) {
     // its identity counts only with that identity's own consent, checked at the door (kanban #1278, RULED #1276); the name is shown either way
-    try { const r = decodeLobbyName(n.record); named.set(hex(r.playerPubkey), { identity: hex(r.identityPubkey), consented: !!n.identitySig, name: r.name || null }); } catch { /* not a record */ }
+    // ...AND ONLY A RECORD F + 1 OF THE ROUND'S SEATS HOLD (kanban #3054): a record posted to some seats only made those seats book the entry to the
+    // identity and the rest to the bare round key - two signed accounts of one round, neither at the threshold, and the round left the season for
+    // every player in it. verify.js carryNames counts the seats that serve it: `held` 1 its bytes (the name), 2 with the identity's consent
+    if (!(n.held >= 1)) continue;
+    try { const r = decodeLobbyName(n.record); named.set(hex(r.playerPubkey), { identity: hex(r.identityPubkey), consented: !!n.identitySig && n.held >= 2, name: r.name || null }); } catch { /* not a record */ }
   }
 
   // A ROUND KEY TWO ENTRIES NAME BOOKS NEITHER BY ITS RECORD (kanban #2690, #1489 r3-h2h-2): an entry carries no signature of its player key, so a
