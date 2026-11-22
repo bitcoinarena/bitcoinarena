@@ -10190,6 +10190,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         // the seats' /reserves, asked each minute beside the rounds (draw, A FEDERATION NO ENTRY CAN PAY INTO); the first time up to 1.5 s are waited
         // for it, and a table drawn before it answers is taken back then
         const reservesRead = () => (window.ARENA_RESERVES_READ = window.ARENA_RESERVES_READ || { atMs: 0, keyless: new Set(), asking: null });
+        let reservesGate = null;
         { const k = reservesRead(), nodesNow = [...(named.nodes || []), ...((testnet && testnet.named.nodes) || [])];
           if (ARENACLIENT.fetchKeylessFederations && nodesNow.length && Date.now() - k.atMs > 60000 && !k.asking) {
             const firstRead = !k.atMs;
@@ -10198,13 +10199,16 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
               k.keyless = x; k.atMs = Date.now(); k.asking = null;
               if (changed && mineGot) draw(mineGot, testnet ? (theirsGot || NOT_YET) : null);
             }, () => { k.asking = null; });
-            if (firstRead) await Promise.race([k.asking, new Promise((ok) => setTimeout(ok, 1500))]);
+            // THE ROUNDS ASKED BESIDE IT, NOT AFTER IT (kanban #3289, measured on the live page 2026-11-22: two silent seats held /reserves its
+            // 1.5 s and only then were the rounds asked): the first draw still waits for the reserves, or 1.5 s
+            if (firstRead) reservesGate = Promise.race([k.asking, new Promise((ok) => setTimeout(ok, 1500))]);
           } }
         const pMine = read(named.nodes);
         const pTheirs = testnet ? read(testnet.named.nodes) : Promise.resolve(null);
-        pMine.then((g) => { mineGot = g; draw(g, testnet ? (theirsGot || NOT_YET) : null); });
-        pTheirs.then((g) => { theirsGot = g; if (g) draw(mineGot || NOT_YET, g); });
-        await Promise.all([pMine, pTheirs]);
+        const dMine = pMine.then(async (g) => { await reservesGate; mineGot = g; draw(g, testnet ? (theirsGot || NOT_YET) : null); });
+        const dTheirs = pTheirs.then(async (g) => { await reservesGate; theirsGot = g; if (g) draw(mineGot || NOT_YET, g); });
+        // both drawn before the paint is over, as when each draw followed its read at once
+        for (const x of await Promise.allSettled([dMine, dTheirs])) if (x.status === 'rejected') console.warn('[arena] lobby draw: ' + ((x.reason && x.reason.message) || x.reason));
       };
       const draw = (got, got2) => {
         const now = Date.now();
