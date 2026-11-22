@@ -15,7 +15,7 @@
 }
 [hidden] { display: none !important; }
 /* a game screen: no text selection, no long-press menu, no tap flash, no double-tap zoom (iOS) */
-html, body, #stage, #pad, canvas { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+html, body, #stage, canvas { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
 html, body { touch-action: manipulation; overscroll-behavior: none; }
 body.playing { touch-action: none; }
 .box, .box * { -webkit-user-select: text; user-select: text; }
@@ -52,15 +52,11 @@ td.tot { font-family: var(--display); font-weight: 700; color: var(--gold); }
 button { font-family: var(--display); font-weight: 700; font-size: 1rem; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 11px 18px; cursor: pointer; touch-action: manipulation; }
 button.primary { background: var(--btc); color: var(--ink); border-color: var(--btc); }
 button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
-#pad { display: grid; grid-template-columns: 1fr; width: 100%; max-width: 560px; }
-#pad button { padding: 16px 0; font-size: 1.3rem; user-select: none; -webkit-user-select: none; }
-#pad button.held { background: var(--line); }
-#pad .jump { background: var(--btc); color: var(--ink); border-color: var(--btc); }
-#pad .jump.held { background: var(--gold); }
-@media (hover: hover) and (pointer: fine) { #pad { display: none; } }
 @media (max-width: 600px) { header p { display: none; } }
 /* kanban #3251: the intro, result, leaderboard, rules and replay screens; #3265: the entry's line while the run goes on */
-body:not(.playing) #pad, body.replaying #pad { display: none; }
+/* kanban #3251 (owner 2026-11-22): no JUMP button - a tap anywhere on the field jumps; this hint says so for the first 2 s of a run */
+#hint { position: absolute; left: 50%; bottom: 18%; transform: translateX(-50%); font-family: var(--display); font-weight: 700; font-size: 1.05rem; color: var(--ink);
+  background: var(--btc); border-radius: 99px; padding: 8px 18px; pointer-events: none; white-space: nowrap; box-shadow: 0 6px 24px rgba(0,0,0,.5); }
 .wal { font-family: var(--display); font-size: .78rem; color: var(--soft); white-space: nowrap; }
 .wal b { color: var(--gold); }
 .box.intro h2 { font-size: 1.5rem; margin: 0 0 2px; }
@@ -136,11 +132,28 @@ body.bridged .tag { margin-left: 0; }
 .bounty.small { font-size: .8rem !important; font-weight: 400; color: var(--dim); margin: -4px 0 8px !important; }
 @media (max-width: 400px) { .prize b { font-size: .98rem; } }
 @media (max-height: 700px) { .prize { margin: 0 0 6px !important; } .prize b { font-size: .95rem; } }
+/* a small phone (owner 2026-11-22): one-line eligibility, a smaller facts row */
+.xline { flex-wrap: nowrap !important; } .xline > span { flex: 1; min-width: 0; } .xline button { flex: none; }
+@media (max-height: 760px) { .facts dt { font-size: .66rem; } .facts dd { font-size: .86rem; } .facts { margin: 0 0 8px; } .xline { font-size: .86rem !important; } }
 /* kanban #3251 (owner 2026-11-22): eligible in green, not eligible in red - with its button and field right there */
 .xline.ok { color: var(--green) !important; } .xline.bad { color: var(--red) !important; font-weight: 600; }
 .notcounted { margin: 6px 0 0 !important; font-size: .88rem !important; color: var(--red) !important; font-weight: 600; line-height: 1.35 !important; }
+/* THE RESULT ON A PHONE (owner 2026-11-22, iPhone: "alle Knöpfe in eine Zeile"; the sheet scrolled): the three buttons in one row of equal
+   widths, short labels on a phone; a compact score table; one line each for the prize, the eligibility and the facts */
+.row.r3 { flex-wrap: nowrap; } .row.r3 button { flex: 1 1 0; min-width: 0; padding: 11px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row.r3 .sm { display: none; }
+@media (max-width: 430px) { .row.r3 .lg { display: none; } .row.r3 .sm { display: inline; } }
+#result .box { display: flex; flex-direction: column; max-height: 100%; } #result .box > * { flex: none; } #result .box > .tw { flex: 0 1 auto; min-height: 5rem; overflow-y: auto; }
+#rScore { font-size: .86rem; } #rScore td { padding: 2px 6px; line-height: 1.25; }
+#result h2 { font-size: 1.3rem; margin: 0 0 4px; }
+.notcounted { display: flex; align-items: center; gap: 8px; } .notcounted span { flex: 1; min-width: 0; }
+.notcounted button { flex: none; padding: 4px 10px; font-size: .85rem; border-color: var(--btc); color: var(--btc); }
+#rFacts { margin: 6px 0 0; }
+@media (max-height: 760px) { #result .box { padding: 12px 14px; } #result .row { margin-top: 10px; } .row.r3 button { padding: 9px 6px; } .prize.rp { margin: 6px 0 0 !important; } }
 /* kanban #3251: the speaker toggle in the header (music + effects, effects only, off) */
-.snd { font-size: .72rem; padding: 3px 10px; border-radius: 99px; font-weight: 600; color: var(--soft); white-space: nowrap; }
+.snd { font-size: .9rem; line-height: 1; padding: 3px 8px; border-radius: 99px; color: var(--soft); white-space: nowrap; flex: none; }
+/* ONE TOP ROW, ALWAYS (owner 2026-11-22, iPhone): the wallet truncates, the speaker and the round badge stay right */
+body.bridged header { flex-wrap: nowrap; align-items: center; gap: 8px; } body.bridged .wal { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; } body.bridged .tag { flex: none; }
 body.bridged .snd { margin-left: auto; } body:not(.bridged) .snd { margin-left: auto; } body:not(.bridged) .tag { margin-left: 0; }
 /* kanban #3251 (owner 2026-11-22): the top 10 on the intro, compact rows; on a short frame only this list scrolls, never the page */
 .iboard { margin: 0 0 10px; max-height: min(16.5rem, 34vh); overflow-y: auto; scrollbar-width: thin; border: 1px solid var(--line); border-radius: 10px; }
@@ -161,7 +174,7 @@ body.bridged .snd { margin-left: auto; } body:not(.bridged) .snd { margin-left: 
   <h1>Orange Pill Run</h1>
   <p>Run across the last 24 hours of the Bitcoin chart. Every candle is a platform.</p>
   <span class="wal" id="wal" hidden></span>
-  <button class="snd" id="sndBtn" type="button">♪ on</button>
+  <button class="snd" id="sndBtn" type="button" aria-label="Sound">🔊</button>
   <span class="tag" id="modeTag">OFFLINE · PRACTICE</span>
 </header>
 
@@ -191,12 +204,12 @@ body.bridged .snd { margin-left: auto; } body:not(.bridged) .snd { margin-left: 
       <div class="tw"><table id="rScore"></table></div>
       <p class="refused" id="rRefused" hidden></p>
       <p class="prize rp" id="rPrize" hidden></p>
-      <p class="notcounted" id="rNot" hidden></p>
+      <p class="notcounted" id="rNot" hidden><span id="rNotText"></span><button id="xBtn" type="button">Link X</button></p>
       <div class="facts2" id="rFacts"><span id="rRank"></span><span id="rBeat"></span><span id="rLeft"></span></div>
       <form class="lnrow" id="rLn" hidden><input id="rLnIn" type="text" inputmode="email" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="320" placeholder="Lightning address for prizes" aria-label="Lightning address for prizes"><button id="rLnBtn" type="submit">Save</button></form>
       <p class="lnwhy" id="rLnWhy" role="status" hidden></p>
-      <div class="xbox" id="rX" hidden><span id="rXText">Link your X account to be placed and win.</span><button id="xBtn" type="button">Link X</button></div>
-      <div class="row"><button class="primary" id="againBtn">Play again</button><button id="replayBtn">Watch replay</button><button id="rBoardBtn">Leaderboard</button></div>
+      <div class="xbox" id="rX" hidden><span id="rXText">Link your X account to be placed and win.</span></div>
+      <div class="row r3"><button class="primary" id="againBtn">Play again</button><button id="replayBtn"><span class="lg">Watch replay</span><span class="sm">Replay</span></button><button id="rBoardBtn"><span class="lg">Leaderboard</span><span class="sm">Board</span></button></div>
     </div>
   </div>
   <div class="sheet" id="board" hidden>
@@ -216,10 +229,7 @@ body.bridged .snd { margin-left: auto; } body:not(.bridged) .snd { margin-left: 
   </div>
   <div id="rbar" hidden><button id="rbPlay" type="button">Pause</button><button id="rb2x" type="button" aria-pressed="false">2x</button><button id="rbClose" type="button">Close</button></div>
   <div id="pill" hidden role="status"></div>
-</div>
-
-<div id="pad">
-  <button id="pJ" class="jump" aria-label="Jump">JUMP</button>
+  <div id="hint" hidden>Tap anywhere to jump</div>
 </div>
 
 <!--OPR_SCRIPT-->

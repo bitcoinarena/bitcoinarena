@@ -66,6 +66,7 @@ function jumpNow() {
   const s = W.f;
   if (mode === "bot") return botInput(W, botCfg).jump;
   if (mode === "replay") { const ps = replayLog.presses; while (replayIdx < ps.length && ps[replayIdx][1] <= s) replayIdx++; return replayIdx < ps.length && ps[replayIdx][0] <= s; }
+  input.seen = input.seen || input.jump;
   return input.jump;
 }
 // sound (#3251): read from the world after each step, never written into it
@@ -75,23 +76,26 @@ function step() {
   const s = W.f, j = jumpNow();
   if (j && down < 0) down = s; else if (!j && down >= 0) { presses.push([down, s]); down = -1; }
   stepWorld(W, { jump: j });
+  if (input.letGo && input.seen) { input.jump = false; input.letGo = false; }
   if (audio) { const n = snapWorld(W); for (const e of worldEvents(snap, n)) audio.play(e); snap = n; }
 }
 function paintSound() {
   const b = $("sndBtn"); if (!b || !audio) { if (b) b.hidden = true; return; }
-  const m = audio.mode; b.textContent = m === "on" ? "♪ on" : m === "fx" ? "♪ fx only" : "♪ off";
+  const m = audio.mode; b.textContent = m === "on" ? "🔊" : m === "fx" ? "🔉" : "🔇"; b.title = m === "on" ? "Music and effects" : m === "fx" ? "Effects only" : "Sound off";
   b.setAttribute("aria-label", m === "on" ? "Sound: music and effects" : m === "fx" ? "Sound: effects only" : "Sound off");
 }
 const SHEETS = ["intro", "result", "board", "rules"];
 const showSheet = (id) => { for (const s of SHEETS) $(s).hidden = s !== id; };
 function begin(m, opts = {}) {
-  mode = m; W = newWorld(L); snap = audio ? snapWorld(W) : null; presses = []; down = -1; replayIdx = 0; speed = opts.speed || 1; paused = false; input.jump = false;
+  mode = m; W = newWorld(L); snap = audio ? snapWorld(W) : null; presses = []; down = -1; replayIdx = 0; speed = opts.speed || 1; paused = false; input.jump = false; input.letGo = false; input.seen = false;
   botCfg = m === "bot" ? { ...BOT_CONFIGS[opts.bot || 0] } : null;
   document.body.classList.add("playing"); document.body.classList.toggle("replaying", m === "replay"); running = true; acc = 0; last = performance.now();
   showSheet(null); if (m !== "play") pill("", "");
   $("rbar").hidden = m !== "replay"; $("rbPlay").textContent = "Pause"; $("rb2x").setAttribute("aria-pressed", String(speed === 2));
   if (HOOKS.onStart) try { HOOKS.onStart({ mode, gameVersion: GAME_VERSION }); } catch (_) {}
-  if (audio) { audio.unlock(); audio.startMusic(); }   // every start is a tap or a key: the iOS rule holds
+  if (audio) { audio.unlock(); audio.startMusic(); }
+  // the hint instead of a JUMP button (#3251, owner 2026-11-22): 2 s at the start of a run
+  { const h = $("hint"); clearTimeout(h._t); h.hidden = m !== "play"; if (m === "play") h._t = setTimeout(() => { h.hidden = true; }, 2000); }   // every start is a tap or a key: the iOS rule holds
   requestAnimationFrame(loop);
 }
 function loop(now) {
@@ -105,6 +109,7 @@ function loop(now) {
 }
 function finish() {
   if (audio) audio.stopMusic();
+  $("hint").hidden = true;
   running = false; document.body.classList.remove("playing", "replaying"); $("rbar").hidden = true; pill("", "");
   if (down >= 0) { presses.push([down, W.f]); down = -1; }
   const res = resultOf(W);
@@ -139,15 +144,18 @@ function paintWallet() {
   const w = wallet(), el = $("wal");
   if (!w) { el.hidden = true; return; }
   el.hidden = false; el.textContent = "";
-  if (!w.balance) { el.textContent = w.welcomeComing ? "Wallet: welcome sats on their way …" : "Wallet: opening …"; return; }
+  if (!w.balance) { el.textContent = w.welcomeComing ? "Welcome sats coming …" : "Wallet opening …"; return; }
   const b = document.createElement("b"); b.textContent = fmtSats(w.balance.sats);
   const coming = Number(w.balance.coming) || 0;   // #3251: sats merging in or being issued, in any federation of the wallet
-  el.append("Wallet: ", b, " testnet sats" + (w.welcomeComing && Number(w.balance.sats) < 100 ? " · welcome on its way" : coming > 0 ? " · " + fmtSats(coming) + " on the way" : w.topUpComing ? " · top-up on its way" : ""));
+  // short, one line (owner 2026-11-22): "300 sats · +100 coming"; it truncates, never wraps
+  el.append(b, " sats" + (w.welcomeComing && Number(w.balance.sats) < 100 ? " · welcome coming" : coming > 0 ? " · +" + fmtSats(coming) + " coming" : w.topUpComing ? " · top-up coming" : ""));
+  el.title = fmtSats(w.balance.sats) + " testnet sats in your Arena wallet" + (coming > 0 ? ", " + fmtSats(coming) + " more on the way" : "");
 }
+let introTop = 10, introFitH = 0;
 function paintIntro() {
-  const m = introModel({ round: S.round, me: S.me, board: S.board, wallet: wallet(), nowMs: Date.now(), loading: !S.loaded, opened: openedIn() });
+  const m = introModel({ round: S.round, me: S.me, board: S.board, wallet: wallet(), nowMs: Date.now(), loading: !S.loaded, opened: openedIn(), top: introTop });
   $("iLine").textContent = m.line;
-  $("iBounty").hidden = !m.bounty; $("iBounty").textContent = m.bounty || "";
+  $("iBounty").hidden = true;
   $("iPrize").hidden = !m.prize; $("iPrizeText").textContent = m.prize ? m.prize.text : ""; $("iPrizeSmall").textContent = m.prize ? " " + m.prize.small : "";
   const dl = $("iFacts"); dl.textContent = ""; dl.hidden = !m.facts;
   for (const [k, v, cls] of m.facts || []) { const d = document.createElement("div"); if (cls) d.className = cls; const dt = document.createElement("dt"), dd = document.createElement("dd"); dt.textContent = k; dd.textContent = v; d.append(dt, dd); dl.append(d); }
@@ -159,11 +167,21 @@ function paintIntro() {
   const btn = $("startBtn"); if (!btn.dataset.busy) { btn.textContent = m.button.label; btn.disabled = !!m.button.disabled; }
   if (!$("iWhy").dataset.err) $("iWhy").textContent = m.button.why || (S.err && bridge ? S.err : "");
   $("iTopUp").hidden = !m.topUp; if (m.topUp) $("iTopUp").textContent = m.topUp.label;
-  $("modeTag").textContent = !bridge ? "OFFLINE · PRACTICE" : S.round ? (S.round.test ? "TEST ROUND " : "ROUND ") + (S.round.number || "") : "TESTNET";
+  // one top row always (owner 2026-11-22): the round's badge short, "Test round · no play bounty" its tooltip
+  $("modeTag").textContent = !bridge ? "PRACTICE" : m.tag || "TESTNET"; $("modeTag").title = m.bounty || "";
   // the address field right under the line while no address is saved (or while it is being typed or answered)
   { const inp = $("iLnIn"), st = LN.i; paintLn("i", !(m.x && !m.x.ln && !st.dirty && !st.msg && document.activeElement !== inp)); }
   paintWallet();
   HOOKS.intro = m;
+  // A SMALL PHONE (owner 2026-11-22, iPhone): the whole intro, Rules and Leaderboard included, fits its frame - if the 10 rows do not, the top 3
+  // and the player's own row (the full 10 in the Leaderboard sheet); the 10 again once there is room
+  // (the board's own box scrolling counts as not fitting: the rows are shown whole)
+  const sh = $("intro"), ib = $("iBoard");
+  const tight = () => sh.scrollHeight > sh.clientHeight + 1 || (!ib.hidden && ib.scrollHeight > ib.clientHeight + 1);
+  if (!sh.hidden && sh.clientHeight > 0) {
+    if (introTop > 3 && tight()) { introTop = 3; paintIntro(); }
+    else if (introTop === 3 && sh.clientHeight !== introFitH) { introFitH = sh.clientHeight; introTop = 10; paintIntro(); if (tight()) { introTop = 3; paintIntro(); } }
+  }
 }
 // the intro's top 10 (#3251, owner 2026-11-22): rank, name, score, time; the player's row marked, below a divider when outside the 10
 function paintIntroBoard(b) {
@@ -302,6 +320,7 @@ function paintEntry() {
   const l = entryLine(run.entry || "waiting", run.entryWhy);
   const el = $("rEntry"); el.className = "entry " + l.kind; el.textContent = l.text;
 }
+const narrow = () => { try { return matchMedia("(max-width: 430px)").matches; } catch (_) { return false; } };
 function showResult({ res, mode: m, entry: en, sending = false }) {
   const after = S.me ? myBest(S.me, S.board) : null;
   const model = resultModel({ res, parTime: L.parTime, timePerS: rulesOf(L.version).timePerS, entry: en, entryWhy: run && run.entryWhy, before: run && m === "play" ? run.before : null, after: m === "play" && run ? after : null,
@@ -316,13 +335,16 @@ function showResult({ res, mode: m, entry: en, sending = false }) {
     model.rank = "Practice best: " + saved.best[0].score; model.left = bridge ? "" : "Open the game in the Arena to play for the pot.";
   }
   $("rPrize").hidden = !model.prize; $("rPrize").textContent = model.prize || "";
-  $("rRank").textContent = model.rank || ""; $("rBeat").textContent = model.beat || ""; $("rLeft").textContent = model.left || "";
-  $("rNot").hidden = !model.notCounted; $("rNot").textContent = model.notCounted || "";
-  $("rX").hidden = !model.xPrompt; $("rXText").textContent = model.xPrompt || "";
-  $("xBtn").hidden = !(bridge && bridge.linkX) || !(S.me && !S.me.x);
-  paintLn("r", m === "play");   // every result of a play or practice run, not a replay
+  // compact (owner 2026-11-22, iPhone): one facts row when the service answered; the practice and replay lines as before
+  if (model.facts) { $("rRank").textContent = model.facts; $("rBeat").textContent = ""; $("rLeft").textContent = ""; }
+  else { $("rRank").textContent = model.rank || ""; $("rBeat").textContent = model.beat || ""; $("rLeft").textContent = model.left || ""; }
+  $("rNot").hidden = !model.notCounted; $("rNotText").textContent = model.notCounted || "";
+  $("rX").hidden = true;   // the line above says it, with the button (#3251)
+  $("xBtn").hidden = !(bridge && bridge.linkX) || !model.linkX;
+  // the address field only while none is saved (or while it is typed or answered)
+  paintLn("r", m === "play" && !!S.me && (!S.me.lnAddress || LN.r.dirty || !!LN.r.msg || document.activeElement === $("rLnIn")));
   const used = usedOf(S.me, openedIn()), max = S.round ? Number(S.round.maxAttempts || 5) : 5;
-  $("againBtn").textContent = run && used >= max ? "Back" : "Play again";
+  $("againBtn").textContent = run && used >= max ? "Back" : narrow() ? "Again" : "Play again";
   $("replayBtn").disabled = !lastLog;
   $("rBoardBtn").hidden = !api;
   showSheet("result"); $("againBtn").focus();
@@ -367,12 +389,14 @@ function showRules() {
 }
 
 // input: one button. Tap anywhere, Space, ArrowUp; on phones no selection, long-press menu or zoom while playing.
-addEventListener("keydown", (e) => { const kk = keyMap[e.code]; if (!kk) return; input[kk] = true; if (running) e.preventDefault(); });
-addEventListener("keyup", (e) => { const kk = keyMap[e.code]; if (kk) input[kk] = false; });
-{ const bt = $("pJ"); const on = (e) => { input.jump = true; bt.classList.add("held"); e.preventDefault(); }, off = () => { input.jump = false; bt.classList.remove("held"); };
-  bt.addEventListener("pointerdown", on); bt.addEventListener("pointerup", off); bt.addEventListener("pointercancel", off); bt.addEventListener("pointerleave", off); }
-document.addEventListener("pointerdown", (e) => { if (running && mode === "play" && !e.target.closest("#rbar, #sndBtn")) { input.jump = true; if (e.cancelable) e.preventDefault(); } }, { passive: false });
-["pointerup", "pointercancel"].forEach((ev) => document.addEventListener(ev, () => { input.jump = false; }));
+// A TAP SHORTER THAN A FRAME STILL JUMPS (#3251: with the JUMP button gone every jump is a tap on the field): a press is held until one
+// simulation step has seen it, then let go - the input log (and so the replay) records it as the steps saw it
+const press = () => { input.jump = true; input.seen = false; input.letGo = false; };
+const release = () => { if (input.seen) input.jump = false; else input.letGo = true; };
+addEventListener("keydown", (e) => { const kk = keyMap[e.code]; if (!kk) return; if (!e.repeat) press(); if (running) e.preventDefault(); });
+addEventListener("keyup", (e) => { const kk = keyMap[e.code]; if (kk) release(); });
+document.addEventListener("pointerdown", (e) => { if (running && mode === "play" && !e.target.closest("#rbar, #sndBtn")) { press(); if (e.cancelable) e.preventDefault(); } }, { passive: false });
+["pointerup", "pointercancel"].forEach((ev) => document.addEventListener(ev, () => { if (input.jump) release(); }));
 ["touchstart", "touchmove", "gesturestart", "dblclick"].forEach((ev) => document.addEventListener(ev, (e) => { if (running && mode === "play" && e.cancelable && !(e.target.closest && e.target.closest("#sndBtn"))) e.preventDefault(); }, { passive: false }));
 document.addEventListener("selectstart", (e) => { if (running) e.preventDefault(); });
 document.addEventListener("contextmenu", (e) => { if (running) e.preventDefault(); });
@@ -393,7 +417,7 @@ $("iXBtn").onclick = $("xBtn").onclick;
 $("rbPlay").onclick = () => { paused = !paused; $("rbPlay").textContent = paused ? "Play" : "Pause"; };
 $("rb2x").onclick = () => { speed = speed === 2 ? 1 : 2; $("rb2x").setAttribute("aria-pressed", String(speed === 2)); };
 $("rbClose").onclick = () => { if (audio) audio.stopMusic(); running = false; document.body.classList.remove("playing", "replaying"); $("rbar").hidden = true; showIntro(); };
-// kanban #3270: refit whenever the stage changes size, not only the window. The JUMP pad appears when a run starts and takes
+// kanban #3270: refit whenever the stage changes size, not only the window. (The JUMP pad that appeared when a run started is gone, #3251.) It took
 // ~70 px from the stage; with a window resize alone the canvas kept its old height and the stage clipped the ground off.
 const refit = () => { fit(); if (!running) (W ? drawWorld(W, []) : idle()); };
 addEventListener("resize", refit);
@@ -406,7 +430,7 @@ Object.assign(HOOKS, {
   play: () => begin("play"), enter: () => play(),
   playBot: (opts = {}) => begin("bot", opts),
   replay(log, opts = {}) { const bad = validateLog(log); if (bad) throw new TypeError(bad); replayLog = log; begin("replay", opts); },
-  state: () => ({ running, paused, speed, mode, f: W ? W.f : 0, done: W ? W.done : false, run: run ? { attempt: run.attempt, entry: run.entry, status: run.status } : null }),
+  state: () => ({ running, paused, speed, mode, f: W ? W.f : 0, presses: presses.length + (down >= 0 ? 1 : 0), done: W ? W.done : false, run: run ? { attempt: run.attempt, entry: run.entry, status: run.status } : null }),
   view: () => view(W), audio: () => (audio ? { state: audio.state, mode: audio.mode, music: audio.musicOn } : null), lastLog: () => lastLog, lastResult: () => lastResult, service: () => ({ ...S }),
   showIntro, showResult: (r) => showResult({ res: r || lastResult, mode: "play", entry: "practice" }), showBoard, showRules,
 });

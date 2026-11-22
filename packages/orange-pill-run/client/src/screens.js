@@ -29,10 +29,10 @@ export function myBest(me, board) {
 export function xLine(me, sats = PRIZE_SATS) {
   if (!me) return null;
   const hasX = !!(me.x && me.placed), hasLn = !!me.lnAddress;
-  if (hasX && hasLn) return { ok: true, text: "✓ You can win: X " + (me.x.username ? "@" + me.x.username : "linked") + " · ⚡ address saved", link: false, ln: false };
-  const xWhy = !me.x ? "link your X account" : "your X account is not verified yet";
-  const need = !hasX && !hasLn ? xWhy + " and save a Lightning address" : !hasX ? xWhy : "save a Lightning address";
-  return { ok: false, text: "Not eligible for the " + fmtSats(sats) + " sats: " + need, link: !me.x, ln: !hasLn };
+  // one short line on a phone (owner 2026-11-22, iPhone: "Zu voll für das kleine Phone")
+  if (hasX && hasLn) return { ok: true, text: "✓ You can win: X " + (me.x.username ? "@" + me.x.username : "linked") + " · ⚡ saved", link: false, ln: false };
+  const need = !hasX && !hasLn ? (!me.x ? "link X + Lightning address" : "verify X + Lightning address") : !hasX ? (!me.x ? "link your X account" : "X account not verified yet") : "save a Lightning address";
+  return { ok: false, text: "Not eligible: " + need, link: !me.x, ln: !hasLn };
 }
 
 /**
@@ -50,13 +50,13 @@ export function usedOf(me, opened = []) {
  * placed below the 10 gets their row after them (own), behind a divider. me: GET /me (its name); board: GET /board's rows.
  */
 export const INTRO_TOP = 10;
-export function introBoard(board, me) {
+export function introBoard(board, me, n = INTRO_TOP) {
   const name = me && me.name, rows = (board || []).map((r) => ({ rank: String(r.rank), name: String(r.name || ""), score: fmtSats(r.score), time: fmtTime(r.timeS), placed: !!r.placed, me: !!name && r.name === name }));
-  const top = rows.slice(0, INTRO_TOP), own = rows.slice(INTRO_TOP).find((r) => r.me) || null;
+  const top = rows.slice(0, n), own = rows.slice(n).find((r) => r.me) || null;
   return { rows: top, own, empty: top.length ? null : "No run yet - be the first" };
 }
 
-export function introModel({ round, me, board, wallet, nowMs = Date.now(), loading = false, opened = [] }) {
+export function introModel({ round, me, board, wallet, nowMs = Date.now(), loading = false, opened = [], top = INTRO_TOP }) {
   const m = { line: "Run yesterday's Bitcoin chart. Tap to jump. Don't fall.", practice: false };
   if (!wallet) {
     m.practice = true;
@@ -78,7 +78,8 @@ export function introModel({ round, me, board, wallet, nowMs = Date.now(), loadi
   // round says it with what it needs (#3250: a Lightning address, a verified X account); a test round shows the daily prize to come, and its own
   // "no play bounty" small. The prize line takes the old "Play bounty: ..." line's place on a daily round
   m.prize = prizeLine(round, nowMs);
-  m.bounty = round.test ? "Test round · no play bounty" : null;
+  m.bounty = round.test ? "Test round · no play bounty" : null;   // the round badge's tooltip (owner 2026-11-22: off the intro)
+  m.tag = (round.test ? "TEST " : "DAY ") + (round.number || "");
   m.best = round.best ? fmtSats(round.best.score) + " in " + fmtTime(round.best.timeS) + " by " + round.best.name : "No run yet - be the first";
   const split = Array.isArray(round.split) ? round.split.join(" / ") : "50 / 30 / 20";
   m.pot = fmtSats(round.potSats) + " testnet sats · split " + split;
@@ -90,7 +91,7 @@ export function introModel({ round, me, board, wallet, nowMs = Date.now(), loadi
   // the same lines as label and value, for the intro's grid; the owner 2026-11-22: no pot line on the intro, the top 10 instead of "Current best"
   m.facts = [[round.phase === "soon" ? "Opens in" : "Time left", m.left.replace(/^(Opens in|Time left:) /, ""), "f3"],
     ["Your attempts", used + " of " + max, "f3"], ["Your best", mine ? fmtSats(mine.total) + (mine.rank ? " · #" + mine.rank : "") : "no run yet", "f3"]];
-  m.board = introBoard(board, me);
+  m.board = introBoard(board, me, top);
   const label = "Play · " + fmtSats(entry) + " testnet sats";
   const off = (why) => (m.button = { label, disabled: true, why });
   const pay = payableOf(wallet, entry);
@@ -133,13 +134,14 @@ export function payableOf(wallet, entry = 100) {
 }
 
 /** The daily prize line (#3251): { text, small } - a test round's says from when (the first daily round) or "Daily:". */
-export const PRIZE_SATS = 2000, FIRST_DAILY_MS = Date.UTC(2026, 10, 23), FIRST_DAILY_WORDS = "Mon 23 Nov";
+export const PRIZE_SATS = 2000, FIRST_DAILY_MS = Date.UTC(2026, 10, 23), FIRST_DAILY_WORDS = "23 Nov";
 export function prizeLine(round, nowMs = Date.now()) {
   if (!round) return null;
   const sats = fmtSats(round.bountySats > 0 ? round.bountySats : PRIZE_SATS);
-  const text = "🏆 Best score at the end of the day wins " + sats + " real sats";
-  if (!round.test) return { text, small: "· needs your Lightning address + X account" };
-  return { text: (nowMs < FIRST_DAILY_MS ? "From " + FIRST_DAILY_WORDS + ", daily: " : "Daily: ") + text, small: "· needs your Lightning address + X account" };
+  // short (owner 2026-11-22, iPhone): two lines at most on a 375 px phone
+  const text = "🏆 Daily best score wins " + sats + " real sats", small = "needs X + Lightning address";
+  if (!round.test || nowMs >= FIRST_DAILY_MS) return { text, small };
+  return { text: "From " + FIRST_DAILY_WORDS + ": " + text, small };
 }
 
 /** What the result screen says about the entry (kanban #3265). */
@@ -167,11 +169,16 @@ export function resultModel({ res, parTime, timePerS = 20, entry, entryWhy, befo
   out.rank = after && after.rank ? "Rank " + after.rank + " after this run" : entry === "paid" ? "Not on the board yet" : null;
   out.beat = !before ? (after ? "Your first score of the round" : null) : res.total > before.total ? "New best - you beat your " + fmtSats(before.total) : "Your best stays " + fmtSats(before.total);
   // the prize, once more on the result (#3251, owner 2026-11-22)
-  if (round) { const sats = fmtSats(round.bountySats > 0 ? round.bountySats : PRIZE_SATS), pre = round.test ? (nowMs < FIRST_DAILY_MS ? "From " + FIRST_DAILY_WORDS + ": b" : "Daily: b") : "B";
-    out.prize = pre + "est score of the day wins " + sats + " real sats" + (after && after.rank ? " - you are rank " + after.rank : ""); }
+  if (round) { const sats = fmtSats(round.bountySats > 0 ? round.bountySats : PRIZE_SATS);
+    // one line (owner 2026-11-22, iPhone): "Rank 2 · daily best wins 2,000 real sats"
+    out.prize = (after && after.rank ? "Rank " + after.rank + " · d" : round.test && nowMs < FIRST_DAILY_MS ? "From " + FIRST_DAILY_WORDS + ": d" : "D") + "aily best wins " + sats + " real sats"; }
   if (me) out.left = "Attempts left: " + Math.max(0, max - usedOf(me, opened)) + " of " + max;   // #3251: this run counts, whatever /me said before it
   // #3251: not eligible - said plainly, once (owner 2026-11-22)
-  if (me && !(me.x && me.placed && me.lnAddress)) out.notCounted = "This run does not count for the " + fmtSats(round && round.bountySats > 0 ? round.bountySats : PRIZE_SATS) + " sats - link X and save a Lightning address by 1 hour after the round.";
+  // one line, the intro's words (owner 2026-11-22, iPhone); its Link X button beside it
+  if (me) { const x = xLine(me); if (!x.ok) { out.notCounted = x.text; out.linkX = x.link; } }
+  // the three facts in one row: "Rank 2 · best 218 · 95 of 99 left"
+  if (me) { const best = Math.max(after ? after.total : 0, before ? before.total : 0);
+    out.facts = [after && after.rank ? "Rank " + after.rank : "Not ranked yet", best > 0 ? "best " + fmtSats(best) : null, Math.max(0, max - usedOf(me, opened)) + " of " + max + " left"].filter(Boolean).join(" · "); }
   if (me && !me.x) out.xPrompt = "Link your X account to be placed and win.";
   else if (me && me.x && !me.placed) out.xPrompt = "Your X account " + (me.x.username ? "@" + me.x.username + " " : "") + "is linked - " + (me.placedWhy || "not verified yet") + ".";
   return out;
