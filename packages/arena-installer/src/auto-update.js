@@ -215,12 +215,33 @@ export async function resumeUnderLock({ home, log = () => {} }) {
 }
 
 /**
+ * THE ADVERTISEMENT'S GAMES, CHECKED AT EVERY CHECK (kanban #3068 follow-up): a node gets new game versions between releases - installed
+ * packages it takes from the network (node.db.plugins) - and refreshHostedGames ran only inside a release update, so a node on the newest
+ * release served rock-paper-scissors v11 for days and its advertisement never named it (measured 2026-11-22: 43 games served, 37 advertised,
+ * no RPS round drawn). Now each check that finds the node up to date asks it too, under the update lock (no update moves the node meanwhile):
+ * the same list again is no transaction; a new one is the update, paid from the node's wallet as after a release. A node with no state (no
+ * installer home) or no recorded release is left alone. Answers refreshHostedGames' answer, or null.
+ */
+export async function refreshGamesNow({ home, refresh = null, lock = takeUpdateLock }) {
+  if (!home || !existsSync(join(home, 'state.json'))) return null;
+  const { nodeState } = await import('./state.js');
+  const s = nodeState(home).read();
+  const release = s.release && s.release.path;
+  if (!release || !existsSync(release)) return null;
+  const held = await lock(home);
+  try {
+    const go = refresh || (async (o) => (await import('./change-roles.js')).refreshHostedGames(o));
+    return await go({ home, release, post: true });
+  } finally { held.release(); }
+}
+
+/**
  * The service: a check now (after `firstMs`) and every `everyMs`; after an update it ends with `exitAfterUpdate` (75) so its service
  * starts it again from the new release. `sleep` and `exit` injectable for the tests.
  */
 export async function runAutoUpdate({ home, latest, everyMs = 30 * 60_000, firstMs = 10 * 60_000, log = (l) => console.log(`${new Date().toISOString()} ${l}`),
   sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), exit = (code) => process.exit(code), once = checkOnce, rounds = Infinity, trace = QUIET,
-  interactive = (o) => moveAgentsInteractive({ ...o, sh: run }), resume = resumeUnderLock }) {
+  interactive = (o) => moveAgentsInteractive({ ...o, sh: run }), resume = resumeUnderLock, games = refreshGamesNow }) {
   log(`auto update: on for ${home}; first check in ${Math.round(firstMs / 60000)} min, then every ${Math.round(everyMs / 60000)} min`);
   // THE AGENTS AN OLDER UPDATER WROTE (kanban #1128): this service starts from the new release after every update, so the new release moves
   // this node's agents to Interactive itself, once (launchd-interactive.js; macOS only) - not at the update after
@@ -231,12 +252,21 @@ export async function runAutoUpdate({ home, latest, everyMs = 30 * 60_000, first
   try { const r = await resume({ home, log }); if (r) log(`#1166 the unfinished update ${r.from} -> ${r.to}: ${r.resumed} (${r.why})`); }
   catch (e) { log(`#1166 the unfinished update could not be finished: ${e.message}`); }
   await sleep(firstMs);
+  let lastGames = null;
   for (let i = 0; i < rounds; i++) {
     let r;
     // the progress in the service's log: one line per step (update-progress.js)
     try { r = await once({ home, latest, log, trace, progress: progressBar({ line: log }).report }); } catch (e) { trace.tag('update').fail('the check', e); r = { ok: false, why: e.message }; }
     log(r.upToDate ? `up to date (${r.version})` : r.skipped ? r.skipped : r.ok ? `updated ${r.from} -> ${r.to}` : `no update: ${r.why}`);
     if (r.ok && r.to) { log('ending: this service starts again from the new release'); return exit(75); }
+    // the advertisement's games (kanban #3068 follow-up): said when an update was sent, and when the reason it was not changes - not every 30 min
+    if (r.upToDate && games) {
+      let g;
+      try { g = await games({ home }); } catch (e) { g = { ok: false, why: e.message }; }
+      const said = !g || g.unchanged ? null : g.update ? `advertisement: the games update was sent (${g.plan ? `${g.plan.before} -> ${g.plan.after} games, ` : ''}${g.update.txid})` : g.ok ? null : `advertisement: the games were not updated: ${g.why}`;
+      if (said && said !== lastGames) log(said);
+      lastGames = said;
+    }
     await sleep(everyMs);
   }
   return null;
