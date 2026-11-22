@@ -176,12 +176,22 @@ const LOCKDOWN = `'use strict';
     if (!Number.isInteger(b) || b < 1) throw new RangeErr('the typed array kind ' + k + ' has no element size');
     KINDS.push(k); sizeOf[k] = b;
   }
+  // NO FLOAT BITS (kanban #3316, #1489 audit hosting r3-1): a NaN's bit pattern is the CPU's - 0/0 at run time is 0xfff8.. on x64
+  // and 0x7ff8.. on arm64 - so a core that read a float's bytes through another view of its buffer answered by the seat's
+  // architecture (the trial on one machine passed it; x64 and arm64 seats of one committee signed opposite verdicts). A float
+  // typed array's memory is never seen by any other view: a Float*Array is never made on a buffer, its \`buffer\` is refused,
+  // and DataView writes every NaN as the one canonical pattern. Float values are the same on every seat; only bits differed.
+  const FLOAT = new Set();
+  for (const k of KINDS) if (k.startsWith('Float')) FLOAT.add(k);
+  const taTag = uncurry(gd(TAP, Symbol.toStringTag).get);
+  const isFloatTA = (o) => { let t; try { t = taTag(o); } catch { return false; } return R.apply(Set.prototype.has, FLOAT, [t]); };
   for (const k of KINDS) {
     const K = globalThis[k], size = sizeOf[k], bytesOf = k === 'ArrayBuffer' ? abBytes : taBytes;
     const W = new P(K, { construct(t, a, nt) {
       // the bytes asked for, before they are allocated: a length, or the length of what is copied in (a typed array's own,
       // read through the captured getter as V8 reads it; an array-like's \`length\` is only a first guess, counted again below)
       const x = a[0];
+      if (R.apply(Set.prototype.has, FLOAT, [k]) && isBuffer(x)) throw new TypeErr('a ' + k + ' is not made on a buffer here: its bytes would show the NaN bits of the CPU');
       const n = typeof x === 'number' ? x : lengthOf(x);
       // (kanban #2475, #2508; #1489 a44 refute of #1695) AN ITERABLE OR ARRAY-LIKE SOURCE IS COPIED HERE, NEVER BY V8: V8 read
       // its length again after the wrapper (a core's getter answered 0 to the wrapper and N to V8), allocated N, and then ran the
@@ -215,6 +225,33 @@ const LOCKDOWN = `'use strict';
     globalThis[k] = W;
   }
   for (const m of ['transfer', 'transferToFixedLength', 'resize']) delete ArrayBuffer.prototype[m];
+  Object.defineProperty(TAP, 'buffer', { get: gd({ get buffer() {
+    if (isFloatTA(this)) throw new TypeErr('the buffer of a float typed array is not handed out here: its bytes would show the NaN bits of the CPU');
+    return taBuffer(this);
+  } }, 'buffer').get, set: undefined, enumerable: false, configurable: false });
+  {
+    // ToIndex(requestIndex), ToNumber(value), ToBoolean(littleEndian) in the spec's order; a NaN goes in as two (or one) integer
+    // writes of the canonical pattern, after the float write of 0 has made the receiver and bounds checks
+    const DVP = DataView.prototype, u32 = DVP.setUint32, u16 = DVP.setUint16;
+    const toIndex = (v) => { if (v === undefined) return 0; const n = +v; const i = n !== n ? 0 : trunc(n); if (!(i >= 0 && i <= MAX_LEN)) throw new RangeErr('Offset is outside the bounds of the DataView'); return i === 0 ? 0 : i; };
+    const canon = {
+      setFloat64: (dv, i, le) => { apply(u32, dv, [le ? i : i + 4, 0, le]); apply(u32, dv, [le ? i + 4 : i, 0x7ff80000, le]); },
+      setFloat32: (dv, i, le) => { apply(u32, dv, [i, 0x7fc00000, le]); },
+      setFloat16: (dv, i, le) => { apply(u16, dv, [i, 0x7e00, le]); },
+    };
+    for (const m of ['setFloat64', 'setFloat32', 'setFloat16']) {
+      const f = DVP[m];
+      if (typeof f !== 'function') continue;
+      const put = canon[m];
+      Object.defineProperty(DVP, m, { value: { [m](requestIndex, value, littleEndian) {
+        const i = toIndex(requestIndex), x = +value, le = !!littleEndian;
+        if (x === x) return apply(f, this, [i, x, le]);
+        apply(f, this, [i, 0, le]);
+        put(this, i, le);
+        return undefined;
+      } }[m], writable: true, enumerable: false, configurable: true });
+    }
+  }
   // AND EVERY STATIC FACTORY OF A TYPED ARRAY KIND THAT IS NOT from/of (feedback #024, kanban #2567): from/of build through \`this\` - the wrapped
   // constructor, so they are counted - but a factory such as Uint8Array.fromHex / fromBase64 (V8 13.x+, not in node 24.22) allocates on the original,
   // outside the budget and the live cap. Removed wherever the runtime has them, so a newer node cannot open the hole.
