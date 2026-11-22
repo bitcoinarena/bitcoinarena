@@ -73,7 +73,9 @@ test('wf1489-v1-refute-4-s1-1: a Correction is said only on a result two seats s
   assert.equal(first.provisional, true); assert.equal(first.score, 2);
   // later both seats sign the loss: two seats' signatures, so the correction is said, once
   answers.a = liar;
-  await g.result(RID);
+  // a seat's unsigned answer is kept 3 s (kanban #3269): the seats are read again after that
+  const real = Date.now; Date.now = () => real() + 3100;
+  try { await g.result(RID); } finally { Date.now = real; }
   assert.equal(warned.length, 1);
   assert.match(warned[0], /a loss, not a win/);
 });

@@ -8558,22 +8558,38 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             return { entries, empty, settled, match: m ? { identities: m.identities, names: nw && nw.v ? JSON.parse(nw.v.names) : [], score: m.score, played: m.played,
               continued: !!m.previousRound, byEntry: m.players || {}, seat: m.seat, signature: m.signature } : null };
           };
-          const stop = new AbortController(), answers = listed.map(() => undefined);
-          // a page without AbortSignal.any (or a test's stand-in) still bounds each ask by its own timeout
-          const signalOf = () => { const t = AbortSignal.timeout(5000); try { return typeof AbortSignal.any === 'function' && t ? AbortSignal.any([stop.signal, t]) : t; } catch { return t; } };
+          // ONE ASK PER SEAT AND ROUND AT A TIME, AND NOT AGAIN AT ONCE (kanban #3269, measured in Chrome on the RPS page 2026-11-22: about 2,200
+          // GET /api/round-result in 3 minutes, 1,058 of them 404 - every call asked every listed seat, and the client calls this again and again while a
+          // round settles): a seat's ask that is still out is shared by every call; its answer is kept 3 s, and a seat that answers nothing (404, not
+          // drawn, down) is asked again after 3 s, then 6 s, then every 10 s. Once the votes settle the round with every entry signed, no seat of it
+          // is asked again for 60 s. Kept per round and seat, at most 512, the oldest dropped first. The votes are counted from these answers by the
+          // same rules as before.
+          const asks = resultsSeen.asks || (resultsSeen.asks = new Map());
+          const askSeat = (n) => {
+            const k = id + ' ' + seatKey(n), was = asks.get(k);
+            if (was && (was.pending || Date.now() < was.until)) return was.pending || Promise.resolve(was.j);
+            const pending = (async () => {
+              try {
+                const r = await fetch(String(n).replace(/\/+$/, '') + '/api/round-result?round=' + id, { cache: 'no-store', signal: AbortSignal.timeout(5000) });
+                return r.ok ? validAnswer(await r.json()) : null;
+              } catch { return null; }
+            })();
+            const rec = { pending, j: null, at: 0, until: 0, misses: was ? was.misses : 0 };
+            asks.delete(k); asks.set(k, rec); if (asks.size > 512) asks.delete(asks.keys().next().value);
+            pending.then((j) => {
+              rec.pending = null; rec.j = j; rec.at = Date.now(); rec.misses = j && j.players.length ? 0 : rec.misses + 1;
+              rec.until = Math.max(rec.until, Date.now() + (rec.misses ? Math.min(10000, 3000 * 2 ** (rec.misses - 1)) : 3000));
+            });
+            return pending;
+          };
+          const answers = listed.map(() => undefined);
           const got = await new Promise((done) => {
             if (!listed.length) { done(tally(answers)); return; }
-            listed.forEach((n, i) => (async () => {
-              let j = null;
-              try {
-                const r = await fetch(String(n).replace(/\/+$/, '') + '/api/round-result?round=' + id, { cache: 'no-store', signal: signalOf() });
-                j = r.ok ? validAnswer(await r.json()) : null;
-              } catch { j = null; }
-              answers[i] = j;
-              const t = tally(answers); if (t.settled) done(t);
-            })());
+            listed.forEach((n, i) => askSeat(n).then((j) => { answers[i] = j; const t = tally(answers); if (t.settled) done(t); }));
           });
-          stop.abort();
+          if (got.settled && got.entries.length >= needs && got.entries.every((e) => e.outcome && e.signedBy > 0)) {
+            for (const n of listed) { const a = asks.get(id + ' ' + seatKey(n)); if (a) a.until = Math.max(a.until, (a.at || Date.now()) + 60000); }   // from when it answered: a kept answer does not keep itself
+          }
           if (got.empty) none = { entries: [], match: null };
           if (got.entries.length) best = { entries: got.entries, match: got.match };
           if (best && needs === 2 && best.entries.length === 2) { resultsSeen.set(id, best); if (resultsSeen.size > 32) resultsSeen.delete(resultsSeen.keys().next().value); }
