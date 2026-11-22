@@ -59,6 +59,8 @@ test('#3248 none placed: the pot carries over to the next round', async () => {
   assert.deepEqual(pot.rows, []); assert.equal(pot.carrySats, 200);
   assert.deepEqual(rowsOf(w, r, 'bounty'), []);
   const next = w.opr.roundRow('2026-11-24');
+  assert.equal(w.opr.potOf(next.id), 0);   // #3266 not while the list waits: it could still be rebuilt to pay the pot
+  assert.equal(w.opr.decideList({ round: r.id, kind: 'pot', action: 'approve', by: 'admin' }).ok, true);
   assert.equal(w.opr.potOf(next.id), 200);
 });
 

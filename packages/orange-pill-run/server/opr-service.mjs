@@ -93,6 +93,8 @@ export function createOpr(o = {}) {
   // PAID WHEN (kanban #3265): a run may start before its entry is paid ("pending entry"); paid_ms is when lnd settled its invoice, and only a paid
   // run is in the pot, on the board and on a list. Rows from before (paid, then started) are paid at their start
   try { db.exec('ALTER TABLE attempts ADD COLUMN paid_ms INTEGER'); db.exec("UPDATE attempts SET paid_ms = started_ms WHERE paid_ms IS NULL AND started_ms IS NOT NULL AND state IN ('started', 'scored', 'rejected', 'timeout')"); } catch { /* there already */ }
+  // A CARRY IS DECIDED ONCE (kanban #3266): carry_to is the round an approved pot list's carry went into (null: none open yet, the next one takes it)
+  try { db.exec('ALTER TABLE payout_lists ADD COLUMN carry_to TEXT'); } catch { /* there already */ }
   const q = (sql) => db.prepare(sql);
   const roundRow = (id) => q('SELECT * FROM rounds WHERE id = ?').get(String(id));
   const levels = new Map();   // round id -> built level
@@ -199,12 +201,24 @@ export function createOpr(o = {}) {
   const startedCount = (round) => q('SELECT COUNT(*) AS n FROM attempts WHERE round = ? AND paid_ms IS NOT NULL').get(round).n;   // the pot: paid entries only
   const phaseOf = (r, t = now()) => (t >= r.end_ms || ['closed', 'listed'].includes(r.state) ? 'ended' : r.state !== 'ready' ? (r.state === 'posting' ? 'posting' : 'preparing')
     : t < r.start_ms ? 'soon' : t >= r.end_ms - cfg.lastCallMs ? 'last-call' : 'open');
+  // CARRY (kanban #3266): a round takes a carry only from an APPROVED pot list - a waiting list can still be rebuilt to pay it, so its carry
+  // is not decided yet. An approved carry goes to the first later daily round whose pot list is not final (none yet, or waiting)
+  function carryTarget(fromId) {
+    const f = roundRow(fromId);
+    const x = f && q(`SELECT r.id FROM rounds r LEFT JOIN payout_lists l ON l.round = r.id AND l.kind = 'pot'
+      WHERE r.test = 0 AND r.state != 'void' AND r.start_ms > ? AND (l.state IS NULL OR l.state = 'waiting') ORDER BY r.start_ms LIMIT 1`).get(f.start_ms);
+    return x ? x.id : null;
+  }
+  const freeCarries = () => q("SELECT round, carry_sats FROM payout_lists WHERE kind = 'pot' AND state = 'approved' AND carry_sats > 0 AND carry_to IS NULL").all();
   function carryIn(r) {
     if (r.test) return 0;
-    const prev = q('SELECT * FROM rounds WHERE test = 0 AND start_ms < ? ORDER BY start_ms DESC LIMIT 1').get(r.start_ms);
-    if (!prev) return 0;
-    const l = q("SELECT carry_sats FROM payout_lists WHERE round = ? AND kind = 'pot' AND state != 'rejected'").get(prev.id);
-    return l ? l.carry_sats : 0;
+    const pinned = q("SELECT COALESCE(SUM(carry_sats), 0) AS s FROM payout_lists WHERE kind = 'pot' AND state = 'approved' AND carry_to = ?").get(r.id).s;
+    return pinned + freeCarries().filter((l) => carryTarget(l.round) === r.id).reduce((a, l) => a + l.carry_sats, 0);
+  }
+  /** Pin the approved carries that flow into r (before r's list is written, so the carry is in exactly one list). */
+  function claimCarries(r) {
+    if (r.test) return;
+    for (const l of freeCarries()) if (carryTarget(l.round) === r.id) q("UPDATE payout_lists SET carry_to = ? WHERE round = ? AND kind = 'pot' AND carry_to IS NULL").run(r.id, l.round);
   }
   const potOf = (r) => r.entry_sats * startedCount(r.id) + carryIn(r);
 
@@ -394,10 +408,12 @@ export function createOpr(o = {}) {
   function refreshLists(round) {
     const r = roundRow(round);
     if (!r || r.state !== 'listed') return;
+    claimCarries(r);
     const l = buildLists(r), t = now();
     writeList(r, 'pot', l.pot, t); writeList(r, 'bounty', l.bounty, t);
   }
   function makeLists(r, t) {
+    claimCarries(r);
     const l = buildLists(r);
     writeList(r, 'pot', l.pot, t); writeList(r, 'bounty', l.bounty, t);
     q("UPDATE rounds SET state = 'listed', listed_ms = ? WHERE id = ? AND state = 'closed'").run(t, r.id);
@@ -407,16 +423,33 @@ export function createOpr(o = {}) {
   }
   const listRow = (x) => (x ? { round: x.round, kind: x.kind, rows: J(x.rows, []), sats: x.sats, carrySats: x.carry_sats, state: x.state, by: x.by, atMs: x.at_ms, why: x.why, madeMs: x.made_ms } : null);
   const listsOf = (round) => q('SELECT * FROM payout_lists WHERE round = ? ORDER BY kind DESC').all(round).map(listRow);
+  /** THE POT NEVER PAYS MORE THAN WAS PAID IN (kanban #3266): over the approved pot lists (plus `also`, a list about to be approved), what they
+   *  commit - rows paid plus carries not taken into another approved list - against the paid entries of their rounds. */
+  function potLedger(also = null) {
+    const lists = q("SELECT * FROM payout_lists WHERE kind = 'pot'").all().filter((l) => l.state === 'approved' || l.round === also);
+    const ids = new Set(lists.map((l) => l.round));
+    let committed = 0, entries = 0;
+    for (const l of lists) {
+      committed += l.sats + (l.carry_to && ids.has(l.carry_to) ? 0 : l.carry_sats);
+      const r = roundRow(l.round); entries += r ? r.entry_sats * startedCount(r.id) : 0;
+    }
+    return { committed, entries, why: committed > entries ? `the approved pot lists would commit ${committed} pot sats (paid or carried), more than the ${entries} sat of paid entries of their rounds` : null };
+  }
   function decideList({ round, kind, action, by, why = null } = {}) {
     const l = q('SELECT * FROM payout_lists WHERE round = ? AND kind = ?').get(String(round), String(kind));
     if (!l) return { ok: false, why: 'no such list' };
     if (!['approve', 'reject'].includes(action)) return { ok: false, why: 'approve or reject' };
     if (!by || !String(by).trim()) return { ok: false, why: 'who signs off (by)' };
     if (l.state !== 'waiting') return { ok: false, why: `the list is ${l.state} already` };
+    if (action === 'approve' && l.kind === 'pot') { const g = potLedger(l.round); if (g.why) { log(`payout list ${l.round}/pot not approved: ${g.why}`); return { ok: false, why: g.why }; } }
     const t = now(), state = action === 'approve' ? 'approved' : 'rejected';
     q('UPDATE payout_lists SET state = ?, by = ?, at_ms = ?, why = ? WHERE round = ? AND kind = ? AND state = \'waiting\'').run(state, String(by).slice(0, 80), t, why ? String(why).slice(0, 300) : null, l.round, l.kind);
     q('INSERT INTO approvals (round, kind, action, by, at_ms, why, rows) VALUES (?, ?, ?, ?, ?, ?, ?)').run(l.round, l.kind, state, String(by).slice(0, 80), t, why ? String(why).slice(0, 300) : null, l.rows);
     log(`payout list ${l.round}/${l.kind} ${state} by ${by}`);
+    if (state === 'approved' && l.kind === 'pot' && l.carry_sats > 0) {   // the carry is decided now: into the next round whose list is not final
+      const to = carryTarget(l.round);
+      if (to) { q("UPDATE payout_lists SET carry_to = ? WHERE round = ? AND kind = 'pot'").run(to, l.round); refreshLists(to); log(`round ${l.round}: carry ${l.carry_sats} sat into ${to}`); }
+    }
     return { ok: true, list: listRow(q('SELECT * FROM payout_lists WHERE round = ? AND kind = ?').get(l.round, l.kind)) };
   }
   function rejectRow({ round, kind, player, why = null, by } = {}) {
@@ -446,9 +479,13 @@ export function createOpr(o = {}) {
     return { ok: true };
   }
   /** What may be paid: approved lists only, each with its approval record (who, when). */
-  const payable = () => q("SELECT * FROM payout_lists WHERE state = 'approved' ORDER BY at_ms").all().map(listRow)
+  function payable() {
+    const g = potLedger();
+    if (g.why) throw new Error(g.why);
+    return q("SELECT * FROM payout_lists WHERE state = 'approved' ORDER BY at_ms").all().map(listRow)
     .map((l) => ({ ...l, approval: q("SELECT by, at_ms AS atMs FROM approvals WHERE round = ? AND kind = ? AND action = 'approved' ORDER BY n DESC LIMIT 1").get(l.round, l.kind) || null }))
     .filter((l) => l.approval && l.approval.by);
+  }
   function claimBounty(player, { round, lnAddress } = {}) {
     const r = roundRow(round);
     if (!r || r.test) return { ok: false, why: 'no bounty in that round' };
@@ -564,7 +601,7 @@ export function createOpr(o = {}) {
             disqualified: q('SELECT * FROM disqualified WHERE round = ?').all(String(round)) });
         }
         if (req.method === 'GET' && path === '/admin/lists') return send(200, { ok: true, lists: listsOf(String(url.searchParams.get('round'))), approvals: q('SELECT * FROM approvals WHERE round = ? ORDER BY n').all(String(url.searchParams.get('round'))), claim: q('SELECT * FROM bounty_claims WHERE round = ?').get(String(url.searchParams.get('round'))) || null });
-        if (req.method === 'GET' && path === '/admin/payable') return send(200, { ok: true, lists: payable() });
+        if (req.method === 'GET' && path === '/admin/payable') { try { return send(200, { ok: true, lists: payable() }); } catch (e) { alert(`Orange Pill Run: payable refused - ${e.message}`); return send(409, { ok: false, why: e.message }); } }
         if (req.method === 'POST' && path === '/admin/disqualify') { const r = disqualify({ ...body, by }); return send(r.ok ? 200 : 400, r); }
         if (req.method === 'POST' && path === '/admin/review') { const r = review({ ...body, by }); return send(r.ok ? 200 : 400, r); }
         if (req.method === 'POST' && path === '/admin/list') { const r = decideList({ ...body, by }); return send(r.ok ? 200 : 400, r); }
