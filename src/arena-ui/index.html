@@ -5564,6 +5564,9 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       }
       const events = [...rows.values()];
       if (!events.length) return;
+      // #3335 (measured on the preview: a claim started before the run, its last seat answered 11 s into it, and the checks and the wallet
+      // that followed held the thread 86 ms in one task): a claim begun before the run waits here, before its own work, until the run ends
+      while (window.ARENA_OPR_IN_PLAY && window.ARENA_OPR_IN_PLAY()) await new Promise((r) => setTimeout(r, 2000));
       const liq = [...new Set(events.map((ev) => String(ev.event.federation).toLowerCase()))].map((federation) => ({ federation }));
       // THE CHAIN TIP THE CLAIM WINDOW IS READ AGAINST: the explorer's tip, READ HERE AND WAITED FOR (8 s at most); without it the LOWEST
       // record height of the LIQUIDATED federations themselves (records their own guardians signed), none, and nothing is handed over.
