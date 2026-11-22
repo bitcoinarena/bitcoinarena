@@ -24,7 +24,7 @@ export function entryOf(a) {
 /** POST /attempt's answer, in one shape: { ok, attempt, token, level, invoice, sats, expiresMs, deadlineMs, state, why, again } */
 export function attemptOf(r) {
   if (!r || !r.ok) return { ok: false, why: (r && r.why) || "the round service did not answer" };
-  return { ok: true, attempt: r.attempt, token: r.token || null, level: r.level || null, invoice: r.invoice || null, sats: Number(r.sats || r.entrySats || 100),
+  return { ok: true, attempt: r.attempt, token: r.token || null, level: r.level || null, invoice: r.invoice || null, free: !!r.free, sats: r.free ? 0 : Number(r.sats || r.entrySats || 100),
     expiresMs: Number(r.expiresMs || 0) || null, deadlineMs: Number(r.deadlineMs || 0) || null, state: r.state || (r.token ? "pending-entry" : "invoiced"), again: !!r.again };
 }
 

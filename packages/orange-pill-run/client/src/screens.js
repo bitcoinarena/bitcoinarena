@@ -56,24 +56,29 @@ export function introBoard(board, me, n = INTRO_TOP) {
   return { rows: top, own, empty: top.length ? null : "No run yet - be the first" };
 }
 
+/** A FREE ROUND (kanban #3273, owner 2026-11-22): entry 0 - no wallet, no balance, no faucet; the 2,000 real sats still go to the winner. */
+export const isFree = (round) => !!round && !(Number(round.entrySats) > 0);
+export const FREE_LABEL = "Play · free";
 export function introModel({ round, me, board, wallet, nowMs = Date.now(), loading = false, opened = [], top = INTRO_TOP }) {
   const m = { line: "Run yesterday's Bitcoin chart. Tap to jump. Don't fall.", practice: false };
   if (!wallet) {
     m.practice = true;
-    m.button = { label: "Practice run (free)", disabled: false, why: "Open the game in the Arena to play for the pot." };
+    m.button = { label: "Practice run (free)", disabled: false, why: "Open the game in the Arena to play for the daily prize." };
     return m;
   }
   m.x = xLine(me, round && round.bountySats > 0 ? round.bountySats : PRIZE_SATS);
   // #3251: until the first GET /round has answered, the intro does not say "no round" (it showed for a second before the round loaded)
+  // the game is free (#3273): until a round says otherwise the button says so
   if (!round && loading) {
-    m.button = { label: "Play · 100 testnet sats", disabled: true, why: "Loading the round …" };
+    m.button = { label: FREE_LABEL, disabled: true, why: "Loading the round …" };
     return m;
   }
   if (!round) {
-    m.button = { label: "Play · 100 testnet sats", disabled: true, why: "No round is open right now." };
+    m.button = { label: FREE_LABEL, disabled: true, why: "No round is open right now." };
     return m;
   }
-  const entry = Number(round.entrySats || 100), max = Number(round.maxAttempts || 5);
+  const free = isFree(round), entry = free ? 0 : Number(round.entrySats), max = Number(round.maxAttempts || 5);
+  m.free = free;
   // THE PRIZE, PROMINENT (owner 2026-11-22: "Es fehlt jede Nachricht, dass der beste Score am Ende des Tages 2000 echte Sats bekommt"): a daily
   // round says it with what it needs (#3250: a Lightning address, a verified X account); a test round shows the daily prize to come, and its own
   // "no play bounty" small. The prize line takes the old "Play bounty: ..." line's place on a daily round
@@ -82,7 +87,7 @@ export function introModel({ round, me, board, wallet, nowMs = Date.now(), loadi
   m.tag = (round.test ? "TEST " : "DAY ") + (round.number || "");
   m.best = round.best ? fmtSats(round.best.score) + " in " + fmtTime(round.best.timeS) + " by " + round.best.name : "No run yet - be the first";
   const split = Array.isArray(round.split) ? round.split.join(" / ") : "50 / 30 / 20";
-  m.pot = fmtSats(round.potSats) + " testnet sats · split " + split;
+  m.pot = free ? null : fmtSats(round.potSats) + " testnet sats · split " + split;
   const used = usedOf(me, opened);
   m.attempts = "Your attempts: " + used + " of " + max;
   const mine = me ? myBest(me, board) : null;
@@ -92,15 +97,15 @@ export function introModel({ round, me, board, wallet, nowMs = Date.now(), loadi
   m.facts = [[round.phase === "soon" ? "Opens in" : "Time left", m.left.replace(/^(Opens in|Time left:) /, ""), "f3"],
     ["Your attempts", used + " of " + max, "f3"], ["Your best", mine ? fmtSats(mine.total) + (mine.rank ? " · #" + mine.rank : "") : "no run yet", "f3"]];
   m.board = introBoard(board, me, top);
-  const label = "Play · " + fmtSats(entry) + " testnet sats";
+  const label = free ? FREE_LABEL : "Play · " + fmtSats(entry) + " testnet sats";
   const off = (why) => (m.button = { label, disabled: true, why });
-  const pay = payableOf(wallet, entry);
+  const pay = free ? { state: "ok", need: 0 } : payableOf(wallet, entry);
   if (round.phase === "ended") off("This round has ended.");
   else if (round.phase === "last-call") off("No new attempts in the last 5 minutes of a round.");
   else if (round.phase === "soon") off("The round opens in " + fmtLeft(round.startMs - nowMs) + ".");
   else if (round.phase !== "open") off("The round is being prepared - it opens once its level is posted on chain.");
   else if (used >= max) off("All " + max + " attempts of this round are used.");
-  else if (!wallet.pubkey) off("Your Arena wallet is opening …");
+  else if (!wallet.pubkey) off(free ? "Signing you in …" : "Your Arena wallet is opening …");
   // A NEW, EMPTY WALLET PLAYS AT ONCE (kanban #3265): its welcome sats are on their way and pay the entry in the background; so do sats
   // merging in from another wallet and a faucet top-up (#3251)
   else if (pay.state === "short") {
@@ -139,7 +144,7 @@ export function prizeLine(round, nowMs = Date.now()) {
   if (!round) return null;
   const sats = fmtSats(round.bountySats > 0 ? round.bountySats : PRIZE_SATS);
   // short (owner 2026-11-22, iPhone): two lines at most on a 375 px phone
-  const text = "🏆 Daily best score wins " + sats + " real sats", small = "needs X + Lightning address";
+  const text = "🏆 " + (isFree(round) ? "Free to play · daily" : "Daily") + " best score wins " + sats + " real sats", small = "needs X + Lightning address";
   if (!round.test || nowMs >= FIRST_DAILY_MS) return { text, small };
   return { text: "From " + FIRST_DAILY_WORDS + ": " + text, small };
 }
@@ -149,6 +154,7 @@ export function entryLine(entry, why) {
   if (entry === "paid") return { kind: "ok", text: "Entry paid - this run counts." };
   if (entry === "not-paid") return { kind: "bad", text: "Entry not paid - this run does not count." + (why ? " (" + why + ")" : "") };
   if (entry === "practice") return { kind: "", text: "Practice run - not sent." };
+  if (entry === "free") return { kind: "", text: "" };   // a free round has no entry to speak of (#3273)
   return { kind: "wait", text: "Waiting for your entry - the run counts once the 100 sats are paid." };
 }
 
@@ -166,7 +172,7 @@ export function resultModel({ res, parTime, timePerS = 20, entry, entryWhy, befo
   out.total = res.total;
   if (mode !== "play") return out;
   if (submitWhy) out.refused = "The service did not take this run: " + submitWhy;
-  out.rank = after && after.rank ? "Rank " + after.rank + " after this run" : entry === "paid" ? "Not on the board yet" : null;
+  out.rank = after && after.rank ? "Rank " + after.rank + " after this run" : entry === "paid" || entry === "free" ? "Not on the board yet" : null;
   out.beat = !before ? (after ? "Your first score of the round" : null) : res.total > before.total ? "New best - you beat your " + fmtSats(before.total) : "Your best stays " + fmtSats(before.total);
   // the prize, once more on the result (#3251, owner 2026-11-22)
   if (round) { const sats = fmtSats(round.bountySats > 0 ? round.bountySats : PRIZE_SATS);

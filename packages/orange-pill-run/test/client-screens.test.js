@@ -87,9 +87,9 @@ test("#3251 the rules carry the card's four sentences word for word", () => {
   for (const s of ["Humans only. Bots, scripts, automated or assisted play are excluded.",
     "Any exploit or cheat disqualifies: changing the game or its data, more than one account, playing for someone else, abusing a bug instead of reporting it. Found a bug? Report it in the bug bounty.",
     "We review the top runs. Every payout is checked and approved by us before it is sent. Our decision is final.",
-    "Testnet sats have no value. The play bounty is paid in real sats and can end or change at any time."]) assert.ok(all.includes(s), s);
+    "The play bounty is paid in real sats and can end or change at any time."]) assert.ok(all.includes(s), s);
   assert.match(RULES.find((r) => r[0] === "Speed")[1], /Faster finishes score much more: 20 points for every second under/);   // #3271
-  for (const k of ["Round", "Level", "Entry", "Attempts", "Score", "Speed", "Tie-break", "Pot", "Play bounty", "X account"]) assert.ok(RULES.some((r) => r[0] === k), k);
+  for (const k of ["Round", "Level", "Free to play", "Attempts", "Score", "Speed", "Tie-break", "Play bounty", "X account"]) assert.ok(RULES.some((r) => r[0] === k), k);
 });
 
 test("#3265 the sign-in names the stage URL without the query, the method and the body's hash", async () => {
@@ -172,7 +172,7 @@ test("#3270 the intro names the X account: not linked with the link, @handle ✓
 
 test("#3251 the intro says nothing about 'no round' until the first GET /round answered; the three short facts in one row", () => {
   const l = introModel({ round: null, me: null, board: [], wallet: W(), nowMs: T0, loading: true });
-  assert.deepEqual(l.button, { label: "Play · 100 testnet sats", disabled: true, why: "Loading the round …" });
+  assert.deepEqual(l.button, { label: "Play · free", disabled: true, why: "Loading the round …" });   // the game is free (#3273)
   assert.equal(introModel({ round: null, me: null, board: [], wallet: W(), nowMs: T0 }).button.why, "No round is open right now.");
   const m = introModel({ round: round(), me: me(), board, wallet: W(), nowMs: T0, loading: true });   // a round already known: as always
   assert.equal(m.button.disabled, false);
@@ -306,4 +306,26 @@ test("#3251 the result on a phone: one facts row, the prize and the eligibility 
   assert.equal(r.prize, "Rank 2 · daily best wins 2,000 real sats");
   assert.equal(r.notCounted, "Not eligible: link X + Lightning address"); assert.equal(r.linkX, true);
   assert.equal(resultModel({ res, parTime: 60, entry: "paid", me: me({ used: 1 }), max: 5, round: round({ test: true, bountySats: 0 }), nowMs: Date.parse("2026-11-22T09:00:00Z") }).prize, "From 23 Nov: daily best wins 2,000 real sats");
+});
+
+test("#3273 a free round: Play · free, no wallet, balance, faucet or pot; the prize line says free; the result has no entry line", () => {
+  const free = round({ entrySats: 0, potSats: 0 });
+  // an empty, new tab: no balance, no welcome - Play is on at once
+  const m = introModel({ round: free, me: me(), board, wallet: { pubkey: "ab".repeat(32), balance: null, welcomeComing: false, canTopUp: true }, nowMs: T0 });
+  assert.deepEqual(m.button, { label: "Play · free", disabled: false, why: "" });
+  assert.equal(m.free, true); assert.equal(m.pot, null); assert.equal(m.topUp, undefined);
+  assert.deepEqual(m.prize, { text: "🏆 Free to play · daily best score wins 2,000 real sats", small: "needs X + Lightning address" });
+  assert.equal(m.x.text, "Not eligible: link X + Lightning address");   // the eligibility line stays
+  const low = introModel({ round: free, me: me(), board, wallet: W({ balance: { sats: 0, best: 0 } }), nowMs: T0 });
+  assert.equal(low.button.disabled, false); assert.equal(low.topUp, undefined);
+  assert.equal(introModel({ round: free, me: me({ used: 5 }), board, wallet: W(), nowMs: T0 }).button.why, "All 5 attempts of this round are used.");
+  assert.equal(introModel({ round: free, me: null, board, wallet: W({ pubkey: null }), nowMs: T0 }).button.why, "Signing you in …");
+  const res = { finished: true, timeS: 40.5, total: 1100, clean: true, parts: {} };
+  const r = resultModel({ res, parTime: 60, entry: "free", me: me({ used: 3 }), max: 5, round: free, nowMs: T0 });
+  assert.deepEqual(r.entry, { kind: "", text: "" });
+  assert.equal(r.rank, "Not on the board yet");
+  const a = attemptOf({ ok: true, attempt: "x", token: "t", level: {}, state: "started", free: true, paid: true, sats: 0 });
+  assert.equal(a.free, true); assert.equal(a.sats, 0); assert.equal(a.invoice, null); assert.equal(entryOf({ ok: true, state: "started", paid: true }), "paid");
+  assert.equal(RULES.find((x) => x[0] === "Free to play")[1], "Free to play. 5 attempts a day, your best counts. The best player with a linked X account and a valid Lightning address wins 2,000 real sats.");
+  assert.ok(!RULES.some((x) => /testnet sats|pot/i.test(x[1])), "no entry or pot in the rules");
 });

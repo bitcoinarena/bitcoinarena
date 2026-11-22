@@ -13,7 +13,7 @@ import { resultOf, validateLog } from "../../src/sim/replay.js";
 import { fit, drawWorld, view, usd } from "./render.js";
 import { makeApi } from "./api.js";
 import { createEntry, entryOf } from "./entry.js";
-import { introModel, resultModel, entryLine, myBest, boardRows, fmtSats, fmtTime, lnFieldModel, usedOf } from "./screens.js";
+import { introModel, resultModel, entryLine, myBest, boardRows, fmtSats, fmtTime, lnFieldModel, usedOf, isFree } from "./screens.js";
 import { RULES, RULES_TITLE } from "./rules.js";
 import { makeAudio, snapWorld, worldEvents } from "./audio.js";
 
@@ -140,9 +140,11 @@ async function readNow() {
   if (w && w.pubkey) { const m = await api.getSigned("/me" + (S.round ? "?round=" + encodeURIComponent(S.round.id) : "")); if (m.ok) S.me = m; else HOOKS.meWhy = m.why || null; }
   S.at = Date.now();
 }
+// A FREE ROUND SHOWS NO WALLET (kanban #3273): no balance line, no welcome, no top-up - only once a round asks an entry
+const freeNow = () => !S.round || isFree(S.round);
 function paintWallet() {
   const w = wallet(), el = $("wal");
-  if (!w) { el.hidden = true; return; }
+  if (!w || freeNow()) { el.hidden = true; return; }
   el.hidden = false; el.textContent = "";
   if (!w.balance) { el.textContent = w.welcomeComing ? "Welcome sats coming …" : "Wallet opening …"; return; }
   const b = document.createElement("b"); b.textContent = fmtSats(w.balance.sats);
@@ -239,7 +241,7 @@ async function play() {
     const before = S.me ? myBest(S.me, S.board) : null;
     const a = await entry.start(S.round.id);
     if (!a.ok) { await refresh().catch(() => {}); return fail(a.why); }
-    run = { ...a, round: S.round.id, before, entry: null, status: null };
+    run = { ...a, round: S.round.id, before, entry: a.free || (isFree(S.round) && a.state === "started") ? "free" : null, status: null };
     (S.opened[S.round.id] = S.opened[S.round.id] || []).push(a.attempt);   // #3251: this run counts from now on
     refresh().catch(() => {});   // and GET /me says so too (read again after POST /attempt)
     if (!a.level || !a.token) {
@@ -251,7 +253,7 @@ async function play() {
     }
     useLevel(run.level);
     delete btn.dataset.busy;
-    if (run.entry !== "paid") run.payer = entry.payInBackground(run, { onStatus: onEntry });
+    if (run.entry !== "paid" && run.entry !== "free") run.payer = entry.payInBackground(run, { onStatus: onEntry });
     begin("play");
   } catch (e) { run = null; fail((e && e.message) || String(e)); }
 }
@@ -264,6 +266,11 @@ async function sendRun(res) {
   mine.sent = r;
   if (!r.ok) mine.submitWhy = r.why || "not taken";
   // the entry's state as the service says it now; a waiting entry is asked again until it is decided or the attempt's time is over
+  if (mine.entry === "free") {   // #3273: scored at submit, nothing to wait for
+    await refresh().catch(() => {});
+    if (run === mine) showResult({ res, mode: "play", entry: "free" });
+    return;
+  }
   if (r.ok && entryOf(r) === "paid") mine.entry = "paid";   // the service's word on the submit: paid: true, scored
   const e = await entry.entryNow(mine.attempt).catch(() => ({ entry: null }));
   if (e.entry === "paid" || e.entry === "not-paid") { mine.entry = e.entry; if (e.entry === "not-paid") mine.entryWhy = (e.check && e.check.why) || null; }
@@ -326,13 +333,13 @@ function showResult({ res, mode: m, entry: en, sending = false }) {
   const model = resultModel({ res, parTime: L.parTime, timePerS: rulesOf(L.version).timePerS, entry: en, entryWhy: run && run.entryWhy, before: run && m === "play" ? run.before : null, after: m === "play" && run ? after : null,
     me: m === "play" && run ? S.me : null, max: S.round ? S.round.maxAttempts : 5, mode: m === "play" && !run ? "practice" : m, submitWhy: run && run.submitWhy, opened: openedIn(), round: m === "play" && run ? S.round : null, nowMs: Date.now() });
   $("rTitle").textContent = model.title;
-  const re = $("rEntry"); re.hidden = !en; if (en) { re.className = "entry " + model.entry.kind; re.textContent = sending ? "Sending your run …" : model.entry.text; }
+  const re = $("rEntry"); re.hidden = !en || (en === "free" && !sending); if (!re.hidden) { re.className = "entry " + model.entry.kind; re.textContent = sending ? "Sending your run …" : model.entry.text; }
   const t1 = $("rScore"); t1.textContent = ""; const add = (a, v, cl) => cellRow(t1.insertRow(), [a, v], cl);
   for (const [a, v] of model.rows) add(a, v); add("Total", model.total, [null, "tot"]);
   $("rRefused").hidden = !model.refused; $("rRefused").textContent = model.refused || "";
   if (m === "play" && !run) {   // practice: the browser's own best runs on this chart
     saved.best.push({ score: res.total, time: res.timeS, finished: res.finished }); saved.best.sort((a, z) => z.score - a.score); saved.best = saved.best.slice(0, 5); save();
-    model.rank = "Practice best: " + saved.best[0].score; model.left = bridge ? "" : "Open the game in the Arena to play for the pot.";
+    model.rank = "Practice best: " + saved.best[0].score; model.left = bridge ? "" : "Open the game in the Arena to play for the daily prize.";
   }
   $("rPrize").hidden = !model.prize; $("rPrize").textContent = model.prize || "";
   // compact (owner 2026-11-22, iPhone): one facts row when the service answered; the practice and replay lines as before
@@ -358,7 +365,7 @@ async function showBoard() {
   if (!b.ok) { $("bLine").textContent = b.why || "not read"; return; }
   S.board = b.board || [];
   const r = b.round;
-  $("bLine").textContent = r ? (r.test ? "Test round " : "Round ") + (r.number || "") + " · " + r.players + " players · pot " + fmtSats(r.potSats) + " testnet sats" : "";
+  $("bLine").textContent = r ? (r.test ? "Test round " : "Round ") + (r.number || "") + " · " + r.players + " players · " + (isFree(r) ? "free to play" : "pot " + fmtSats(r.potSats) + " testnet sats") : "";
   const rows = boardRows(S.board);
   cellRow(t.createTHead().insertRow(), ["#", "Player", "Score", "Time", ""], null, true);
   const body = t.createTBody();
