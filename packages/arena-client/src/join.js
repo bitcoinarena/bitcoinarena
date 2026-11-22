@@ -61,7 +61,8 @@ export const feeBpsForRound = (round) => (round && Number.isInteger(round.feeBps
   : roundPaysReserves(round) ? (round.feeSet ? roundSplitBps(round.feeSet).nodes : RESERVES_NODE_FEE_BPS) : knownEntryBps(round && round.gameId));
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { readWithOneRetry } from './reread.js';
-import { seriesId as seriesIdOf, seriesRoundCheck } from '../../arena-protocol/src/series.js';
+// NO IMPORT ALIAS (kanban #3268): the bundle drops imports, and series.js declares its own private seriesIdOf(template, periodMs, count)
+import { seriesId, seriesRoundCheck } from '../../arena-protocol/src/series.js';
 import { parseSeriesLine } from '../../arena-protocol/src/series-line.js';
 import { decodeClaimKeyAttestation, claimKeyIsAttested } from '../../arena-protocol/src/claim-key.js';
 
@@ -180,7 +181,7 @@ async function seriesTemplateOf(seriesIdHex, nodes, fetcher) {
       const r = await readWithOneRetry(fetcher, node.replace(/\/+$/, '') + '/series-template?id=' + seriesIdHex);
       if (!r.ok) continue;
       const t = parseSeriesLine(await r.text());
-      if (toHex(seriesIdOf(t)) !== seriesIdHex) continue;
+      if (toHex(seriesId(t)) !== seriesIdHex) continue;
       SERIES_KEPT.set(seriesIdHex, t);
       if (SERIES_KEPT.size > 256) SERIES_KEPT.delete(SERIES_KEPT.keys().next().value);
       return t;

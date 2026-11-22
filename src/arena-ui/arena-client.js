@@ -15547,6 +15547,7 @@ const feeBpsForRound = (round) => (round && Number.isInteger(round.feeBps) ? rou
   : roundPaysReserves(round) ? (round.feeSet ? roundSplitBps(round.feeSet).nodes : RESERVES_NODE_FEE_BPS) : knownEntryBps(round && round.gameId));
 
 
+// NO IMPORT ALIAS (kanban #3268): the bundle drops imports, and series.js declares its own private seriesIdOf(template, periodMs, count)
 
 
 
@@ -15666,7 +15667,7 @@ async function seriesTemplateOf(seriesIdHex, nodes, fetcher) {
       const r = await readWithOneRetry(fetcher, node.replace(/\/+$/, '') + '/series-template?id=' + seriesIdHex);
       if (!r.ok) continue;
       const t = parseSeriesLine(await r.text());
-      if (toHex(seriesIdOf(t)) !== seriesIdHex) continue;
+      if (toHex(seriesId(t)) !== seriesIdHex) continue;
       SERIES_KEPT.set(seriesIdHex, t);
       if (SERIES_KEPT.size > 256) SERIES_KEPT.delete(SERIES_KEPT.keys().next().value);
       return t;
@@ -22251,7 +22252,7 @@ async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fetcher =
         const r = await fetcher(`${base(node)}/round?id=${id}`, { signal });
         if (!r.ok) return null;
         const c = decodeRoundContract(new Uint8Array(await r.arrayBuffer()));
-        return toHex(roundIdOf(c)) === id && roundLocks(c) ? c : null;
+        return toHex(roundId(c)) === id && roundLocks(c) ? c : null;
       }).then((c) => {
         answered = true; open -= 1;
         const fast = !timedOut && Date.now() - askedAt <= OWED_FAST_MS;

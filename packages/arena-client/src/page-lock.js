@@ -31,7 +31,7 @@ import { decodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
 import { lockFromClient } from './lock-result.js';
 import { feeLockPays } from '../../arena-protocol/src/lock-settlement.js';
 import { roundLocks, playerFor, sharesNeededFor } from './join.js';
-import { encodeRoundContract, decodeRoundContract, roundId as roundIdOf, custodyFieldsAreValid, entryId } from '../../arena-protocol/src/contracts.js';
+import { encodeRoundContract, decodeRoundContract, roundId, custodyFieldsAreValid, entryId } from '../../arena-protocol/src/contracts.js';
 import { decodeBolt11 } from '../../arena-protocol/src/bolt11.js';
 import { takesDeposits } from '../../arena-protocol/src/known-federations.js';
 import { splitDonation, donationSetPaysKeys } from '../../arena-protocol/src/donation.js';
@@ -3364,7 +3364,7 @@ export async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fe
         const r = await fetcher(`${base(node)}/round?id=${id}`, { signal });
         if (!r.ok) return null;
         const c = decodeRoundContract(new Uint8Array(await r.arrayBuffer()));
-        return toHex(roundIdOf(c)) === id && roundLocks(c) ? c : null;
+        return toHex(roundId(c)) === id && roundLocks(c) ? c : null;
       }).then((c) => {
         answered = true; open -= 1;
         const fast = !timedOut && Date.now() - askedAt <= OWED_FAST_MS;
