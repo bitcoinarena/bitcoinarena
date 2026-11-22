@@ -172,6 +172,13 @@ export function haltProof(observations, { record, censusSeats, abandonBlocks, ve
     if (since !== undefined && since < haltHeight - abandonBlocks) { departedBefore.push(g.peerKey); continue; }
     (largest.members.has(k) ? answered : abandoned).push(g.peerKey);
   }
+  // THE ID NAMES THE HALT, NOT THE COPIES IT WAS READ FROM (kanban #3339, feedback #390): it hashed each observer's newest observation,
+  // whose height is that seat's last tip - seats re-sign every pass and hold their peers' copies from different passes, so one halt showed
+  // two or three ids across the 14 seats, and they moved. Now: the federation, the session, the halt height and the abandoned guardians
+  // (sorted) - what every seat that proves this halt agrees on. Which seats observed it is `observerKeys`, beside it.
+  const w = new Writer();
+  w.bytes(record.federationId); w.u32(best.session); w.u32(haltHeight); w.u32(abandoned.length);
+  for (const k of [...abandoned].sort(cmp)) w.bytes(k);
   return { ok: true, session: best.session, haltHeight, observers: set.length, abandoned, answered, departedBefore, signers: counted.size, largestSubset: largest.size,
-    id: taggedHash(TAG.haltObservation, Uint8Array.from(set.sort((a, b) => cmp(a.observer, b.observer)).flatMap((o) => [...haltObservationId(o)]))) };
+    observerKeys: set.map((o) => o.observer).sort(cmp), id: taggedHash(TAG.haltProof, w.finish()) };
 }

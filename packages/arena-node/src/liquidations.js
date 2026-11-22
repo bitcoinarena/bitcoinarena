@@ -57,7 +57,8 @@ export function createLiquidations({ records, clocks, verify, claimsUrl = null, 
         record: held && held.bytes ? toHex(held.bytes) : null,
         // the mark of theft a halt stands on, when it is one (kanban #1093 part 2): inflation with its session, or the unbacked spend's txid
         alarm: halt.alarm || null,
-        haltProof: halt.proof ? { session: halt.proof.session, observers: halt.proof.observers, abandoned: halt.proof.abandoned.map(toHex), id: toHex(halt.proof.id) } : null,
+        haltProof: halt.proof ? { session: halt.proof.session, observers: halt.proof.observers, abandoned: halt.proof.abandoned.map(toHex), id: toHex(halt.proof.id),
+          ...(halt.proof.observerKeys ? { observerKeys: halt.proof.observerKeys.map(toHex) } : {}) } : null,
         // WHERE CLAIMS GO (§23A.5 step 2: "advertises where claims go ... every seat mirrors them"): the arbitration set's door
         claims: claimsUrl,
         liquidatesAt: halt.height + clocks.abandonBlocks,

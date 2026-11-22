@@ -719,6 +719,8 @@ export const TAG = {
   contributionAgreement: 'ARENA/v1/ContributionAgreement',
   contributionLeave: 'ARENA/v1/ContributionLeave',
   contributionTermination: 'ARENA/v1/ContributionTermination',
+  // THE HALT A PROOF NAMES (kanban #3339): federation, session, halt height and abandoned guardians - the same on every seat
+  haltProof: 'ARENA/v1/HaltProof',
   entryContract: 'ARENA/v1/EntryContract',
   advert: 'ARENA/v1/Advert',
   censusLeaf: 'ARENA/v1/CensusLeaf',
