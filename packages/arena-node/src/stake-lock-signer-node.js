@@ -333,6 +333,7 @@ function yieldable(round, entryIdBytes) {
   if (typeof round.lockFate === 'function' && outs.some((o) => round.lockFate(o))) return false;
   if (typeof round.forfeit === 'function' && round.forfeit(entryIdBytes)) return false;
   if (typeof round.stakePlayedOn === 'function' && round.stakePlayedOn(entryIdBytes)) return false;   // a run played on it (kanban #3223)
+  if (typeof round.orderInBatch === 'function' && round.orderInBatch(entryIdBytes)) return false;   // an order in a batch (kanban #3319)
   return true;
 }
 
