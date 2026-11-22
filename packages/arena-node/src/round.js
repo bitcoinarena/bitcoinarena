@@ -2363,6 +2363,14 @@ export class Round {
   }
 
   /** The game's players when the round is a hosted head-to-head game's, else null (kanban #1588). */
+  // a round whose entries play no marks (head-to-head, attested market): kanban #3320
+  #neverReceipted(roundIdBytes) {
+    const row = this.get(roundIdBytes);
+    if (!row) return false;
+    try { const g = pluginForRound(decodeRoundContract(new Uint8Array(row.contract)), this.plugins); return !!(g.ok && (g.headToHead || g.attested)); }
+    catch { return false; }
+  }
+
   #headToHeadPlayers(roundIdBytes) {
     const row = this.get(roundIdBytes);
     if (!row) return null;
@@ -3801,6 +3809,11 @@ export class Round {
   stakePlayedOn(entryIdBytes) {
     const eid = Buffer.from(entryIdBytes);
     if (!this.db.prepare('SELECT 1 FROM stake_seen WHERE entry_id = ?').get(eid)) return false;
+    // A ROUND WITH NO RECEIPTS EVER (kanban #3320, audit entry r3-1, gap in #3223): a head-to-head entry (its move committed) and a market pick play
+    // no marks, so no receipt ever held for them and a stranger's lower entry under the player's public key unstaked him at every seat up to the
+    // close. In such a round a stake seen here is built on: it keeps the key, the lower entry's lock is refused as before #2477.
+    const r = this.db.prepare('SELECT round_id FROM entries WHERE entry_id = ?').get(eid);
+    if (r && this.#neverReceipted(r.round_id)) return true;
     return !!this.db.prepare('SELECT 1 FROM entries e JOIN checkpoints c ON c.round_id = e.round_id AND c.entry_id = e.entry_id '
       + 'JOIN receipts r ON r.checkpoint_id = c.checkpoint_id WHERE e.entry_id = ? LIMIT 1').get(eid);
   }
