@@ -94,9 +94,11 @@ export async function checkExtension(product, { site = SITE, relay = RELAY, pack
     // Browser subprocesses do not inherit wallet pairings or the CI GitHub token.
     const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(COMPAT_|GITHUB_TOKEN$|GH_TOKEN$)/.test(k)));
     stage = 'launch Chromium';
+    // English UI on every machine (#2956): an adapter clicks the extension's own labelled buttons (Alby's "Connect"), and on a host with
+    // another system language the extension pages render translated - the Alby check timed out at 'read wallet seed' on a German host
     context = await chromium.launchPersistentContext(join(dir, 'profile'), {
-      channel: 'chromium', headless: true, env, ...(executablePath ? { executablePath } : {}),
-      args: [`--disable-extensions-except=${extensionDir}`, `--load-extension=${extensionDir}`],
+      channel: 'chromium', headless: true, locale: 'en-US', env: { ...env, LANG: 'en_US.UTF-8', LANGUAGE: 'en_US' }, ...(executablePath ? { executablePath } : {}),
+      args: [`--disable-extensions-except=${extensionDir}`, `--load-extension=${extensionDir}`, '--lang=en-US'],
     });
     context.setDefaultTimeout(90000);
     const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
