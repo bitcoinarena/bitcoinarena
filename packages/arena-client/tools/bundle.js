@@ -146,6 +146,13 @@ for (const file of order) {
         console.error(`bundle: ${relative(ROOT, file)} imports ${a[1]} as ${a[2]}, and the bundle drops imports - nothing declares ${a[2]}`);
         process.exit(1);
       }
+      // AND ONE THAT SOME FILE DOES DECLARE BINDS TO THAT DECLARATION, NOT TO a (kanban #3268, live UI 724: join.js's
+      // `seriesId as seriesIdOf` called series.js's private seriesIdOf(template, periodMs, count) - every series round refused, RPS
+      // offered no round for hours, every node test green). An alias is never the same binding in one scope: refused too.
+      if (a && a[1] !== a[2]) {
+        console.error(`bundle: ${relative(ROOT, file)} imports ${a[1]} as ${a[2]}, and in the bundle ${a[2]} is ${relative(ROOT, declared.get(a[2]))}'s own ${a[2]}, not ${a[1]}`);
+        process.exit(1);
+      }
     }
   }
 }
