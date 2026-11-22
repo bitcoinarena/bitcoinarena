@@ -2259,7 +2259,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
               m.style.cssText = 'position:fixed;z-index:2147483000;background:#161b22;border:1px solid #c0392b;border-radius:8px;padding:6px;display:flex;flex-direction:column;gap:4px;font:600 14px/1.3 system-ui,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.5)';
               const item = (label, href) => { const x = document.createElement('a'); x.textContent = label; x.href = href; x.style.cssText = 'color:#fff;text-decoration:none;padding:8px 12px;border-radius:6px;background:#21262d;white-space:nowrap'; m.appendChild(x); };
               item('Feedback payouts', adminHref());
-              if (/^testnet-stage\./.test(location.hostname)) item('Orange Pill Run admin', location.origin + '/games/orange-pill-run/admin.html');
+              if (/^testnet(-stage)?\.|\.bitcoin-arena-site\.pages\.dev$/.test(location.hostname)) item('Orange Pill Run admin', location.origin + '/games/orange-pill-run/admin.html');
               document.body.appendChild(m);
               const r = a.getBoundingClientRect(); m.style.left = Math.max(8, Math.min(r.left, innerWidth - m.offsetWidth - 8)) + 'px'; m.style.top = Math.max(8, r.top - m.offsetHeight - 6) + 'px';
               setTimeout(() => document.addEventListener('click', function off(ev) { if (!m.contains(ev.target)) { m.remove(); document.removeEventListener('click', off); } }), 0);
@@ -8180,6 +8180,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     // pay-an-invoice path (the zaps' pay; with no paying round listed, the same withdraw of the player wallet that holds the most), and the bug bounty's
     // X link (My feedback). The lobby of the node games is never read here.
     window.ARENA_OPR_PAGE = window.ARENA_SITE_GAME === 'orange-pill-run';
+    // kanban #3328: the stage's own Worker serves /api/opr; testnet.bitcoinarena.io (Pages) and the previews ask https://bitcoinarena.io/api/opr, as the faucet
+    window.ARENA_OPR_BASE = (location.hostname === 'testnet-stage.bitcoinarena.io' ? location.origin : 'https://bitcoinarena.io') + '/api/opr';
     // the wallet's parts as the game counts them (#3251): per federation, what it can spend now and what is still coming in
     function oprParts() {
       const b = window.ARENA_WALLET_BALANCE, parts = b && Array.isArray(b.parts) ? b.parts : [];
@@ -8197,7 +8199,9 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     }
     window.ARENA_OPR = {
       v: 1,
-      apiBase: location.origin + '/api/opr', signBase: location.origin + '/api/opr',
+      apiBase: window.ARENA_OPR_BASE, signBase: window.ARENA_OPR_BASE,
+      // kanban #3328: the game's own X handle field asks the bug bounty's live X check (the door My feedback's X field uses), signed for exactly this URL
+      socialUrl: (location.hostname === 'testnet-stage.bitcoinarena.io' ? location.origin : 'https://bitcoinarena.io') + '/api/faucet/feedback/social',
       pubkey: () => { try { return ARENACLIENT.tabIdentity({ storage: window.sessionStorage, random: () => { throw new Error('this tab has no wallet yet'); }, curve: window.ARENA_CURVE }).pubkeyHex || null; } catch { return null; } },
       signHttpAuth: (tags) => ARENACLIENT.identitySignEvent({ kind: 27235, tags, content: '' }, { storage: window.sessionStorage, random: () => { throw new Error('this tab has no wallet yet'); }, curve: window.ARENA_CURVE }),
       // WHAT CAN PAY NOW, IN EVERY FEDERATION OF THE WALLET (kanban #3251, the owner 2026-11-22: "100 sat ⇄" in the bar, "Wallet: 0" in the game):
@@ -8248,7 +8252,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       // #3273: the wallet only for a round that asks an entry; a free round (entrySats 0) opens none
       window.ARENA_OPR_FREE = null;
       document.body.classList.add('arena-opr-free');   // the game is free; a paid round takes the class off
-      fetch(location.origin + '/api/opr/round', { cache: 'no-store', signal: AbortSignal.timeout(10000) }).then((r) => r.json()).then((j) => {
+      fetch(window.ARENA_OPR_BASE + '/round', { cache: 'no-store', signal: AbortSignal.timeout(10000) }).then((r) => r.json()).then((j) => {
         const paid = !!(j && j.ok && j.round && Number(j.round.entrySats) > 0);
         window.ARENA_OPR_FREE = !paid;
         console.log('[arena] #3273 orange pill run: the round is ' + (paid ? 'paid - the wallet opens' : 'free - no wallet'));
@@ -8377,7 +8381,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
               const setChip = (x, n, word) => { if (!x) return; const w = x.querySelector('.word'); const svg = x.querySelector('svg');
                 x.textContent = ''; if (svg) x.appendChild(svg); x.appendChild(document.createTextNode(String(n))); if (w) { w.textContent = ' ' + word; x.appendChild(w); }
                 x.title = n + ' ' + word; x.setAttribute('aria-label', n + ' ' + word); x.classList.toggle('idle', !n); };
-              fetch('/api/opr/round', { cache: 'no-store' }).then((r) => r.json()).then((j) => { const r = j && j.round; const ch = t._oprChips || [];
+              fetch((location.hostname === 'testnet-stage.bitcoinarena.io' ? location.origin : 'https://bitcoinarena.io') + '/api/opr/round', { cache: 'no-store' }).then((r) => r.json()).then((j) => { const r = j && j.round; const ch = t._oprChips || [];
                 setChip(ch[0], r ? Number(r.players || 0) : 0, 'players'); setChip(ch[1], r && r.phase === 'open' ? 1 : 0, 'rounds');
                 const badge = t.querySelector('.badge'); if (badge && r) badge.textContent = (r.test ? 'Test round · ' : 'Daily tournament · ') + (r.phase === 'open' ? 'open' : r.phase); }).catch(() => {});
               grid.appendChild(t);

@@ -11,6 +11,7 @@
 //   OPR_PENDING_FILE (miner C's list), OPR_CONFIRMATIONS (1); OPR_CHAIN=off opens rounds without a post (local runs only)
 //   OPR_S2_DB (the bug bounty's Season 2 book: X links), FAUCET_BOT_X_HANDLES (its bot list, read by that store)
 //   OPR_FIRST_DAY (2026-11-23), OPR_DAILY (on), OPR_SHOW_TEST (off: test rounds hidden from the public routes; on for the stage)
+//   OPR_PROMO_END (unset): the promotion's end, an ISO time or date (kanban #3328: 2026-11-30T00:00:00Z) - no daily round ends after it; shown in the game
 //   OPR_ALERTS (off), OPR_CHAT_URL, OPR_CHAT_CHANNEL, OPR_CHAT_TOKEN_FILE: the alert hook (Arena Chat, as the faucet posts); off: log only
 //   OPR_TICK_MS (15000)
 import { createServer } from 'node:http';
@@ -45,7 +46,7 @@ const alert = (text) => {
 };
 
 const opr = createOpr({ dbPath: env.OPR_DB, sim, fetchCandles, checkLevel, invoices, chain, s2, alert, log, cfg: {
-  entrySats: Number(env.OPR_ENTRY_SATS || 0), firstDay: env.OPR_FIRST_DAY || '2026-11-23', daily: env.OPR_DAILY !== 'off', showTest: env.OPR_SHOW_TEST === 'on',
+  entrySats: Number(env.OPR_ENTRY_SATS || 0), promoEnd: env.OPR_PROMO_END || null, firstDay: env.OPR_FIRST_DAY || '2026-11-23', daily: env.OPR_DAILY !== 'off', showTest: env.OPR_SHOW_TEST === 'on',
   adminSha: env.OPR_ADMIN_SHA256 || '', workerKey: env.OPR_WORKER_KEY || '', confirmations: Number(env.OPR_CONFIRMATIONS || 1),
   publicBases: String(env.OPR_PUBLIC_BASES || 'https://testnet-stage.bitcoinarena.io/api/opr').split(',').map((x) => x.trim().replace(/\/+$/, '')).filter(Boolean),
 } });

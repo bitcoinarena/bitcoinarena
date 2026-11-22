@@ -25,3 +25,20 @@ test('#3248 the Worker passes /api/opr/* on to the round service', async () => {
     assert.equal((await worker.fetch(new Request('https://testnet-stage.bitcoinarena.io/api/opr/round', { method: 'PUT' }), env, null)).status, 405);
   } finally { globalThis.fetch = realFetch; }
 });
+
+test('#3328 the testnet page calls /api/opr/* cross-origin: CORS for the Arena pages only, the preflight answered', async () => {
+  const worker = (await import('../../../src/website/worker.js')).default;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response('{"ok":true}', { status: 200 });
+  try {
+    const env = { OPR_ORIGIN: 'http://opr.internal', OPR_WORKER_KEY: 'wk' };
+    const pre = await worker.fetch(new Request('https://bitcoinarena.io/api/opr/submit', { method: 'OPTIONS', headers: { origin: 'https://testnet.bitcoinarena.io' } }), env, null);
+    assert.equal(pre.status, 204);
+    assert.equal(pre.headers.get('access-control-allow-origin'), 'https://testnet.bitcoinarena.io');
+    assert.match(pre.headers.get('access-control-allow-headers'), /authorization/);
+    const g = await worker.fetch(new Request('https://bitcoinarena.io/api/opr/round', { headers: { origin: 'https://abc.bitcoin-arena-site.pages.dev' } }), env, null);
+    assert.equal(g.headers.get('access-control-allow-origin'), 'https://abc.bitcoin-arena-site.pages.dev');
+    const evil = await worker.fetch(new Request('https://bitcoinarena.io/api/opr/round', { headers: { origin: 'https://evil.example' } }), env, null);
+    assert.equal(evil.headers.get('access-control-allow-origin'), null);
+  } finally { globalThis.fetch = realFetch; }
+});

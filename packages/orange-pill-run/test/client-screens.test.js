@@ -65,7 +65,7 @@ test("#3251 the result: breakdown, rank after, beat best, attempts left, the X p
   assert.equal(r.rank, "Rank 2 after this run");
   assert.equal(r.beat, "New best - you beat your 980");
   assert.equal(r.left, "Attempts left: 2 of 5");
-  assert.equal(r.xPrompt, "Link your X account to be placed and win.");
+  assert.equal(r.xPrompt, "Add your X handle to be placed and win.");
   assert.equal(r.rows.at(-1)[1], "×1.5");
   assert.deepEqual(r.rows[3], ["Time bonus (20 per second under 60 s)", 40]);   // #3271 opr-2
   assert.equal(resultModel({ res, parTime: 38, timePerS: 2, entry: "paid", me: me() }).rows[3][0], "Time bonus (2 per second under 38 s)");
@@ -162,8 +162,9 @@ test("#3265 a failed payment is tried again, not given up on", async () => {
 test("#3270 the intro names the X account: not linked with the link, @handle ✓ once linked, nothing before /me or without the Arena", () => {
   // #3251: both parts always, each with its state (owner 2026-11-22: "Mein X wird gar nicht angezeigt")
   const st = (o) => { const x = introModel({ round: round(), me: me(o), board, wallet: W(), nowMs: T0 }).x; return [x.ok, x.text, x.link, x.ln, x.parts.map((p) => p.ok)]; };
-  assert.deepEqual(st({}), [false, "X not linked · ⚡ no Lightning address", true, true, [false, false]]);
-  assert.deepEqual(st({ x: { username: "georgeprime" }, placed: true }), [false, "✓ X @georgeprime · ⚡ no Lightning address", false, true, [true, false]]);
+  // #3328: nothing saved is no error - no red "X not linked" / "no Lightning address"; the empty fields stand there instead
+  assert.deepEqual(st({}), [false, "", true, true, []]);
+  assert.deepEqual(st({ x: { username: "georgeprime" }, placed: true }), [false, "✓ X @georgeprime", false, true, [true]]);
   assert.deepEqual(st({ x: { username: "satoshi" }, placed: false, lnAddress: "a@wos.com" }), [false, "X @satoshi not verified yet · ⚡ a@wos.com ✓", false, false, [false, true]]);
   assert.deepEqual(st({ x: { username: "georgeprime" }, placed: true, lnAddress: "name@wallet.com" }), [true, "✓ X @georgeprime · ⚡ name@wallet.com ✓ - you can win", false, false, [true, true, true]]);
   assert.equal(introModel({ round: round(), me: null, board, wallet: W(), nowMs: T0 }).x, null);
@@ -287,7 +288,7 @@ test("#3251 the daily prize: prominent on the intro (a test round shows it from 
 
 test("#3251 the result says plainly when a run cannot win the play bounty; the rules say it in one sentence", () => {
   const res = { finished: true, timeS: 40.5, total: 1100, clean: true, parts: {} };
-  assert.equal(resultModel({ res, parTime: 60, entry: "paid", me: me({ lnAddress: "a@wos.com" }), round: round() }).notCounted, "X not linked · ⚡ a@wos.com ✓");
+  assert.equal(resultModel({ res, parTime: 60, entry: "paid", me: me({ lnAddress: "a@wos.com" }), round: round() }).notCounted, "⚡ a@wos.com ✓");
   assert.equal(resultModel({ res, parTime: 60, entry: "paid", me: me({ x: { username: "s" }, placed: true, lnAddress: "a@wos.com" }), round: round() }).notCounted, undefined);
   assert.ok(RULES.find((r) => r[0] === "Play bounty")[1].endsWith("No X account and no valid Lightning address: no play bounty."));
 });
@@ -305,7 +306,7 @@ test("#3251 the result on a phone: one facts row, the prize and the eligibility 
   const r = resultModel({ res, parTime: 60, entry: "paid", before: { total: 218 }, after: { total: 218, rank: 2 }, me: me({ used: 4 }), max: 99, round: round({ test: true, bountySats: 0 }), nowMs: Date.parse("2026-11-22T09:00:00Z") });
   assert.equal(r.facts, "Rank 2 · best 218 · 95 of 99 left");
   assert.equal(r.prize, "Rank 2 · daily best wins 5,000 real sats");
-  assert.equal(r.notCounted, "X not linked · ⚡ no Lightning address"); assert.equal(r.linkX, true);
+  assert.equal(r.notCounted, ""); assert.equal(r.linkX, true);   // #3328: no error-looking text, the fields ask
   assert.equal(resultModel({ res, parTime: 60, entry: "paid", me: me({ used: 1 }), max: 5, round: round({ test: true, bountySats: 0 }), nowMs: Date.parse("2026-11-22T09:00:00Z") }).prize, "From 23 Nov: daily best wins 5,000 real sats");
 });
 
@@ -316,7 +317,7 @@ test("#3273 a free round: Play · free, no wallet, balance, faucet or pot; the p
   assert.deepEqual(m.button, { label: "Play · free", disabled: false, why: "" });
   assert.equal(m.free, true); assert.equal(m.pot, null); assert.equal(m.topUp, undefined);
   assert.deepEqual(m.prize, { text: "🏆 Free to play · daily best score wins 5,000 real sats", small: "needs X + Lightning address" });
-  assert.equal(m.x.text, "X not linked · ⚡ no Lightning address");   // the eligibility line stays
+  assert.equal(m.x.text, ""); assert.equal(m.x.link, true); assert.equal(m.x.ln, true);   // #3328: the two empty fields, no red line
   const low = introModel({ round: free, me: me(), board, wallet: W({ balance: { sats: 0, best: 0 } }), nowMs: T0 });
   assert.equal(low.button.disabled, false); assert.equal(low.topUp, undefined);
   assert.equal(introModel({ round: free, me: me({ used: 5 }), board, wallet: W(), nowMs: T0 }).button.why, "All 5 attempts of this round are used.");

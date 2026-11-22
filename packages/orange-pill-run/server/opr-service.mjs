@@ -28,7 +28,7 @@ export const DEFAULTS = Object.freeze({
   firstDay: '2026-11-23', daily: true, entrySats: 0, maxAttempts: 5, submitMs: 10 * MIN_MS, lastCallMs: 5 * MIN_MS, invoiceS: 600,
   verifyGraceMs: 60 * MIN_MS, bountySats: 5000,   // the play bounty in real sats (owner 2026-11-22: 5,000 - it was 10,000 earlier that day; it was 2,000) - every round reads it here, none stores its own
   bountyClaimMs: 7 * DAY_MS, alertAfterMs: 15 * MIN_MS, fastSlackMs: 1000, maxSteps: 180 * 60,
-  confirmations: 1, publicBases: ['https://testnet-stage.bitcoinarena.io/api/opr'], adminSha: '', workerKey: '', showTest: false, ipCrowd: 3,
+  confirmations: 1, publicBases: ['https://testnet-stage.bitcoinarena.io/api/opr'], promoEnd: null, adminSha: '', workerKey: '', showTest: false, ipCrowd: 3,
   testMinutesMost: 24 * 60, logPressesMost: 6000, bodyMost: 256 * 1024, ipAttemptsShare: 2,
 });
 // FREE ROUNDS (kanban #3273, owner 2026-11-22: "a free round - no testnet sats, but 2,000 real sats for the winner" - since 10,000, #3251): a round made now has
@@ -76,6 +76,11 @@ export function runSignals(log, client = {}) {
 
 export function createOpr(o = {}) {
   const cfg = { ...DEFAULTS, ...(o.cfg || {}) };
+  // THE PROMOTION'S END (kanban #3328, owner 2026-11-22: one week from the first daily round - the last one is 2026-11-29, the end 2026-11-30 00:00Z):
+  // cfg.promoEnd an ISO time or date (OPR_PROMO_END; null: open-ended). No daily round is made that would end after it; the public round names it
+  const promoEndMs = cfg.promoEnd == null || cfg.promoEnd === '' ? null : Date.parse(String(cfg.promoEnd));
+  if (promoEndMs !== null && !Number.isFinite(promoEndMs)) throw new Error(`promoEnd is not a time: ${cfg.promoEnd}`);
+  const dailyDay = (day) => cfg.daily && day >= cfg.firstDay && (promoEndMs === null || dayStart(day) + DAY_MS <= promoEndMs);
   const now = o.now || (() => Date.now());
   const log = o.log || ((m) => console.log(`${new Date().toISOString()} ${m}`));
   const alert = o.alert || (() => {});
@@ -151,7 +156,7 @@ export function createOpr(o = {}) {
     if (live) return { ok: false, why: `round ${live.id} is open or about to open until ${new Date(live.end_ms).toISOString()}: one round at a time` };
     const hit = q("SELECT id FROM rounds WHERE state NOT IN ('void') AND start_ms < ? AND end_ms > ? LIMIT 1").get(endMs, startMs);
     if (hit) return { ok: false, why: `that time overlaps round ${hit.id}: one round at a time` };
-    if (cfg.daily && endMs > dayStart(cfg.firstDay)) {
+    if (cfg.daily && endMs > dayStart(cfg.firstDay) && (promoEndMs === null || startMs < promoEndMs)) {
       const d = dayOf(Math.max(startMs, dayStart(cfg.firstDay)));
       return { ok: false, why: `the daily round of ${d} runs then: one round at a time` };
     }
@@ -165,7 +170,7 @@ export function createOpr(o = {}) {
   function ensureDaily(t) {
     if (!cfg.daily) return null;
     const day = dayOf(t);
-    if (day < cfg.firstDay || roundRow(day)) return null;
+    if (!dailyDay(day) || roundRow(day)) return null;
     const live = liveOther(t);
     if (live) { if (blockedNote !== `${day}/${live.id}`) { blockedNote = `${day}/${live.id}`; log(`the daily round ${day} waits: round ${live.id} is open until ${new Date(live.end_ms).toISOString()}`); } return null; }
     const s = dayStart(day);
@@ -702,7 +707,7 @@ export function createOpr(o = {}) {
       }
       if (cfg.daily) {   // no round at all by the alert time (the daily one held back or never made)
         const d = dayOf(now()), s = dayStart(d);
-        if (d >= cfg.firstDay && now() >= s + cfg.alertAfterMs && !roundRow(d) && !alertedDays.has(d)) { alertedDays.add(d); alert(`Orange Pill Run ${d}: no daily round by ${new Date(s + cfg.alertAfterMs).toISOString().slice(11, 16)}Z`); }
+        if (dailyDay(d) && now() >= s + cfg.alertAfterMs && !roundRow(d) && !alertedDays.has(d)) { alertedDays.add(d); alert(`Orange Pill Run ${d}: no daily round by ${new Date(s + cfg.alertAfterMs).toISOString().slice(11, 16)}Z`); }
       }
       for (const a of q(`SELECT * FROM attempts WHERE state IN ('invoiced', 'pending', 'awaiting') OR (state = 'rejected' AND paid_ms IS NULL AND paid_hash IS NOT NULL AND deadline_ms > ?)
           ORDER BY created_ms LIMIT 100`).all(now() - 60000)) await settle(a);
@@ -721,7 +726,8 @@ export function createOpr(o = {}) {
       entrySats: r.entry_sats, free: isFree(r), maxAttempts: r.max_attempts, split: [...SPLIT], potSats: potOf(r), bountySats: r.test ? 0 : cfg.bountySats,
       gameVersion: r.game_version, levelHash: r.level_hash, players: board.length,
       post: { txid: r.post_txid, height: r.post_height, confirmed: r.state !== 'waiting' && r.state !== 'posting' && (!!r.post_height || !chain) },
-      best: best ? { score: best.total, timeS: best.timeS, name: best.name } : null };
+      best: best ? { score: best.total, timeS: best.timeS, name: best.name } : null,
+      promo: promoEndMs === null ? null : { firstDay: cfg.firstDay, endMs: promoEndMs } };
   }
 
   // ---------- HTTP ----------

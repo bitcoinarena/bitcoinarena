@@ -13,7 +13,7 @@ import { resultOf, validateLog } from "../../src/sim/replay.js";
 import { fit, drawWorld, view, usd } from "./render.js";
 import { makeApi } from "./api.js";
 import { createEntry, entryOf } from "./entry.js";
-import { introModel, resultModel, entryLine, myBest, boardRows, fmtSats, fmtTime, lnFieldModel, usedOf, isFree } from "./screens.js";
+import { introModel, resultModel, entryLine, myBest, boardRows, fmtSats, fmtTime, lnFieldModel, usedOf, isFree, xFieldModel, xSaveAnswer, xHandleOf } from "./screens.js";
 import { RULES, RULES_TITLE } from "./rules.js";
 import { makeAudio, snapWorld, worldEvents } from "./audio.js";
 
@@ -37,6 +37,9 @@ function findBridge() {
     location.replace(location.pathname.replace(/games\/orange-pill-run\/(index\.html)?$/, "") + "?game=orange-pill-run" + (location.hash || "")); }
 const bridge = findBridge();
 if (bridge) document.body.classList.add("bridged");
+// THE X HANDLE'S CHECK (kanban #3328): the bug bounty's live X lookup, its own door (bridge.socialUrl, signed for exactly that URL); without it the
+// field is not shown (the game never opens the page's My feedback dialog)
+const xApi = bridge && bridge.socialUrl ? makeApi({ base: bridge.socialUrl, signBase: bridge.socialUrl, bridge, fetch: (u, o) => fetch(u, o) }) : null;
 const api = bridge ? makeApi({ base: bridge.apiBase || location.origin + "/api/opr", signBase: bridge.signBase || bridge.apiBase || location.origin + "/api/opr", bridge, fetch: (u, o) => fetch(u, o) }) : null;
 let vault = null; try { vault = window.localStorage; } catch (_) { vault = null; }
 const entry = api ? createEntry({ api, bridge, store: vault, log: (m) => console.log("[opr] " + m) }) : null;
@@ -198,13 +201,16 @@ function paintIntro() {
   $("iLine").textContent = m.line;
   $("iBounty").hidden = true;
   $("iPrize").hidden = !m.prize; $("iPrizeText").textContent = m.prize ? m.prize.text : ""; $("iPrizeSmall").textContent = m.prize ? " " + m.prize.small : "";
+  $("iPromo").hidden = !(m.prize && m.prize.promo); $("iPromo").textContent = (m.prize && m.prize.promo) || "";
   const dl = $("iFacts"); dl.textContent = ""; dl.hidden = !m.facts;
   for (const [k, v, cls] of m.facts || []) { const d = document.createElement("div"); if (cls) d.className = cls; const dt = document.createElement("dt"), dd = document.createElement("dd"); dt.textContent = k; dd.textContent = v; d.append(dt, dd); dl.append(d); }
   paintIntroBoard(m.board);
   $("iPrice").hidden = !m.practice;
   // #3270: the X account on the intro, so a player can link it before the first run (it was only on the result screen)
-  $("iX").hidden = !m.x; paintStatus($("iXText"), m.x); $("iX").className = "xline " + (m.x ? (m.x.ok ? "ok" : "bad") : "");
-  $("iXBtn").hidden = !(m.x && m.x.link && bridge && bridge.linkX);
+  $("iX").hidden = !m.x || !m.x.parts.length; paintStatus($("iXText"), m.x); $("iX").className = "xline " + (m.x ? (m.x.ok ? "ok" : "bad") : "");
+  $("iXBtn").hidden = true;   // #3328 (owner playtest 2026-11-22): the game never opens the page's My feedback dialog - the X field is right here
+  // #3328: the X handle field while no X account is linked (or while it is typed or answered)
+  { const inp = $("iXfIn"), st = XF.i; paintXf("i", !!(m.x && (m.x.link || st.dirty || st.msg || document.activeElement === inp))); }
   const btn = $("startBtn"); if (!btn.dataset.busy) { btn.textContent = m.button.label; btn.disabled = !!m.button.disabled; }
   if (!$("iWhy").dataset.err) $("iWhy").textContent = m.button.why || (S.err && bridge ? S.err : "");
   $("iTopUp").hidden = !m.topUp; if (m.topUp) $("iTopUp").textContent = m.topUp.label;
@@ -363,6 +369,35 @@ for (const p of ["i", "r"]) {
   $(p + "Ln").addEventListener("submit", (e) => { e.preventDefault(); saveLn(p); });
 }
 
+// ---------- the X handle (kanban #3328): intro and result, one field each, checked on Save ----------
+const XF = { i: { dirty: false, msg: null }, r: { dirty: false, msg: null } };
+function paintXf(p, show = true) {
+  const form = $(p + "Xf"), inp = $(p + "XfIn"), btn = $(p + "XfBtn"), why = $(p + "XfWhy"), st = XF[p];
+  const on = show && !!xApi && !!S.me;
+  form.hidden = !on; if (!on) { why.hidden = true; return; }
+  const stored = (S.me.x && S.me.x.username) || "";
+  const m = st.msg || xFieldModel(inp.value, stored);
+  why.textContent = m.text; why.className = "lnwhy " + (m.kind || ""); why.hidden = !m.text;
+  if (!btn.dataset.busy) btn.disabled = !xFieldModel(inp.value, stored).canSave;
+}
+async function saveX(p) {
+  const inp = $(p + "XfIn"), btn = $(p + "XfBtn"), st = XF[p];
+  if (btn.disabled || btn.dataset.busy) return;
+  const typed = inp.value.trim();
+  btn.dataset.busy = "1"; btn.disabled = true; st.msg = { text: "Checking @" + (xHandleOf(typed) || typed) + " on X …", kind: "" }; paintXf(p);
+  const j = await xApi.post("", { x: typed }).catch(() => null);
+  const a = xSaveAnswer(j, typed);
+  delete btn.dataset.busy;
+  st.msg = { text: a.text, kind: a.kind }; st.dirty = !a.ok;
+  if (a.ok) { const m = await api.getSigned("/me" + (S.round ? "?round=" + encodeURIComponent(S.round.id) : "")).catch(() => null); if (m && m.ok) S.me = m; inp.value = ""; st.dirty = false; }
+  paintXf(p); paintIntro(); if (!$("result").hidden && resultArgs) paintResult(resultArgs);
+  HOOKS.x = { ok: a.ok, text: a.text };
+}
+for (const p of ["i", "r"]) {
+  $(p + "XfIn").addEventListener("input", () => { XF[p].dirty = true; XF[p].msg = null; paintXf(p); });
+  $(p + "Xf").addEventListener("submit", (e) => { e.preventDefault(); saveX(p); });
+}
+
 // ---------- the screens ----------
 const cellRow = (tr, cells, cls, th) => cells.forEach((c, i) => { const td = document.createElement(th ? "th" : "td"); if (c instanceof Node) td.append(c); else td.textContent = c == null ? "" : c; if (cls && cls[i]) td.className = cls[i]; tr.append(td); });
 function paintEntry() {
@@ -394,9 +429,10 @@ function paintResult({ res, mode: m, entry: en, sending = false }) {
   // compact (owner 2026-11-22, iPhone): one facts row when the service answered; the practice and replay lines as before
   if (model.facts) { $("rRank").textContent = model.facts; $("rBeat").textContent = ""; $("rLeft").textContent = ""; }
   else { $("rRank").textContent = model.rank || ""; $("rBeat").textContent = model.beat || ""; $("rLeft").textContent = model.left || ""; }
-  $("rNot").hidden = !model.status; paintStatus($("rNotText"), model.status || null);
+  $("rNot").hidden = !model.status || !model.status.parts.length; paintStatus($("rNotText"), model.status || null);
   $("rX").hidden = true;   // the line above says it, with the button (#3251)
-  $("xBtn").hidden = !(bridge && bridge.linkX) || !model.linkX;
+  $("xBtn").hidden = true;   // #3328: no My feedback dialog from the game
+  paintXf("r", m === "play" && !!S.me && (!S.me.x || XF.r.dirty || !!XF.r.msg || document.activeElement === $("rXfIn")));
   // the address field only while none is saved (or while it is typed or answered)
   paintLn("r", m === "play" && !!S.me && (!S.me.lnAddress || LN.r.dirty || !!LN.r.msg || document.activeElement === $("rLnIn")));
   const used = usedOf(S.me, openedIn()), max = S.round ? Number(S.round.maxAttempts || 5) : 5;
@@ -508,8 +544,7 @@ $("bBack").onclick = () => showIntro();
 $("rulesBack").onclick = () => showIntro();
 $("rulesLink").onclick = (e) => { e.preventDefault(); showRules(); };
 $("boardLink").onclick = (e) => { e.preventDefault(); showBoard(); };
-$("xBtn").onclick = () => { try { bridge.linkX(); } catch (_) { /* the page has no link here */ } };
-$("iXBtn").onclick = $("xBtn").onclick;
+// #3328 (owner playtest 2026-11-22: "Link X" opened My feedback with every community field): no bridge.linkX from the game, the X field checks inline
 $("rbPlay").onclick = () => { paused = !paused; if (audio) { audio.unlock(); if (paused) audio.stopMusic(); else audio.startMusic(); } paintRbar(); };
 $("rb2x").onclick = () => { speed = speed === 2 ? 1 : 2; paintRbar(); };
 $("rbClose").onclick = () => { stopReplay(); replayBack(); };

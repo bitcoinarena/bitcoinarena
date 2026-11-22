@@ -127,7 +127,9 @@ a { color: var(--btc); }
 <script>
 "use strict";
 (() => {
-  const API = (location.protocol === "https:" || location.protocol === "http:") ? location.origin + "/api/opr" : "https://testnet-stage.bitcoinarena.io/api/opr";
+  // kanban #3328: the stage's own Worker; testnet.bitcoinarena.io (Pages) and its previews ask https://bitcoinarena.io/api/opr (CORS there)
+  const API = location.hostname === "testnet-stage.bitcoinarena.io" || location.hostname === "localhost" || location.hostname === "127.0.0.1" ? location.origin + "/api/opr"
+    : /^https?:$/.test(location.protocol) ? "https://bitcoinarena.io/api/opr" : "https://testnet-stage.bitcoinarena.io/api/opr";
   const KEY = "opr-admin-code", BY = "opr-admin-by";
   const $ = (id) => document.getElementById(id);
   const store = (() => { try { return window.sessionStorage; } catch (_) { return null; } })();

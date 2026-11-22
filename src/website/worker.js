@@ -244,17 +244,22 @@ async fetch(request, env, ctx) {
   // THE ORANGE PILL RUN ROUND SERVICE (kanban #3248-#3250, #3256): /api/opr/* passed on to arena-opr, whose address is a secret of this Worker
   // (OPR_ORIGIN; unset: off), with the caller's address under this Worker's key (OPR_WORKER_KEY, as the faucet's #1434), the player's NIP-98
   // sign-in and, on the admin paths only, the admin code. GET and POST only; nothing is cached
+  // CROSS-ORIGIN FOR THE TESTNET PAGE (kanban #3328): testnet.bitcoinarena.io (Pages) and its previews call it here, as they call the faucet; CORS for
+  // those pages only (no cookie rides along: the sign-in is the player's NIP-98 header, the admin code a header)
   if (url.pathname.startsWith('/api/opr/')) {
-    if (!env.OPR_ORIGIN) return new Response('{"ok":false,"why":"the round service is off"}', { status: 503, headers: { 'content-type': 'application/json' } });
-    if (request.method !== 'GET' && request.method !== 'POST') return new Response('{"ok":false,"why":"GET or POST"}', { status: 405, headers: { 'content-type': 'application/json' } });
+    const oo = request.headers.get('origin') || '';
+    const oprCors = /^https:\/\/(testnet|testnet-stage)\.bitcoinarena\.io$|^https:\/\/([a-z0-9-]+\.)?bitcoin-arena-site\.pages\.dev$/.test(oo) ? { 'access-control-allow-origin': oo, vary: 'origin' } : {};
+    if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: { ...oprCors, 'access-control-allow-methods': 'GET, POST', 'access-control-allow-headers': 'authorization, content-type, x-arena-admin', 'access-control-max-age': '86400' } });
+    if (!env.OPR_ORIGIN) return new Response('{"ok":false,"why":"the round service is off"}', { status: 503, headers: { 'content-type': 'application/json', ...oprCors } });
+    if (request.method !== 'GET' && request.method !== 'POST') return new Response('{"ok":false,"why":"GET or POST"}', { status: 405, headers: { 'content-type': 'application/json', ...oprCors } });
     const path = url.pathname.slice('/api/opr'.length);
-    if (!/^\/[a-z0-9/_-]{1,80}$/.test(path)) return new Response('{"ok":false,"why":"no such route"}', { status: 404, headers: { 'content-type': 'application/json' } });
+    if (!/^\/[a-z0-9/_-]{1,80}$/.test(path)) return new Response('{"ok":false,"why":"no such route"}', { status: 404, headers: { 'content-type': 'application/json', ...oprCors } });
     const headers = new Headers({ 'content-type': 'application/json', 'x-arena-ip': request.headers.get('cf-connecting-ip') || '' });
     if (env.OPR_WORKER_KEY) headers.set('x-arena-worker', env.OPR_WORKER_KEY);
     if (request.headers.get('authorization')) headers.set('authorization', request.headers.get('authorization'));
     if (path.startsWith('/admin/') && request.headers.get('x-arena-admin')) headers.set('x-arena-admin', request.headers.get('x-arena-admin'));
     const r = await fetch(`${env.OPR_ORIGIN}${path}${url.search}`, { method: request.method, headers, body: request.method === 'POST' ? await request.text() : undefined });
-    return new Response(r.body, { status: r.status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow' } });
+    return new Response(r.body, { status: r.status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow', ...oprCors } });
   }
   // A PHONE'S BENCHMARK LINES (the page's ?bench=1): logged for wrangler tail and Workers Logs, stored only with the bench key, nothing served back
   if (url.pathname === '/__bench' && request.method === 'POST') {

@@ -39,9 +39,11 @@ export function xLine(me, sats = PRIZE_SATS) {
   const handle = me.x ? (me.x.username ? "@" + me.x.username : "linked") : "";
   const parts = [
     // the server's reason when it gave one (#3281: "linked after your first run of this round - it counts from the next round")
-    hasX ? { text: "✓ X " + handle, ok: true } : me.x ? { text: "X " + handle + (me.placedWhy ? " - " + me.placedWhy : " not verified yet"), ok: false } : { text: "X not linked", ok: false },
-    hasLn ? { text: "⚡ " + me.lnAddress + " ✓", ok: true } : { text: "⚡ no Lightning address", ok: false },
-  ];
+    // NOTHING SAVED YET IS NO ERROR (kanban #3328, owner 2026-11-22: "No Lightning Address" read as an error, a bad first impression): a missing
+    // part says nothing here - its empty field (X handle, Lightning address) stands in its place
+    hasX ? { text: "✓ X " + handle, ok: true } : me.x ? { text: "X " + handle + (me.placedWhy ? " - " + me.placedWhy : " not verified yet"), ok: false } : null,
+    hasLn ? { text: "⚡ " + me.lnAddress + " ✓", ok: true } : null,
+  ].filter(Boolean);
   const ok = hasX && hasLn;
   if (ok) parts.push({ text: "- you can win", ok: true, sep: " " });
   const text = parts.map((x, i) => (i ? (x.sep || " · ") : "") + x.text).join("");
@@ -158,8 +160,25 @@ export function prizeLine(round, nowMs = Date.now()) {
   const sats = fmtSats(round.bountySats > 0 ? round.bountySats : PRIZE_SATS);
   // short (owner 2026-11-22, iPhone): two lines at most on a 375 px phone
   const text = "🏆 " + (isFree(round) ? "Free to play · daily" : "Daily") + " best score wins " + sats + " real sats", small = "needs X + Lightning address";
-  if (!round.test || nowMs >= FIRST_DAILY_MS) return { text, small };
-  return { text: "From " + FIRST_DAILY_WORDS + ": " + text, small };
+  const promo = promoLine(round, nowMs);
+  if (!round.test || nowMs >= FIRST_DAILY_MS) return promo ? { text, small, promo } : { text, small };
+  return promo ? { text: "From " + FIRST_DAILY_WORDS + ": " + text, small, promo } : { text: "From " + FIRST_DAILY_WORDS + ": " + text, small };
+}
+/**
+ * UNTIL WHEN THE PROMOTION RUNS (kanban #3328, owner 2026-11-22: "bis wann die Aktion geht" - one week, the daily rounds 23 to 29 Nov): from the
+ * round's promo { firstDay, endMs } (the service's OPR_PROMO_END), null when the service names no end.
+ */
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const dayWords = (ms) => { const d = new Date(ms); return d.getUTCDate() + " " + MONTHS[d.getUTCMonth()]; };
+export function promoLine(round, nowMs = Date.now()) {
+  const p = round && round.promo;
+  if (!p || !Number.isFinite(Number(p.endMs))) return null;
+  const end = Number(p.endMs), last = end - 1, first = Date.parse(String(p.firstDay) + "T00:00:00Z");
+  const lastDay = dayWords(last), endUtc = new Date(end).toISOString().slice(11, 16), until = endUtc === "00:00" ? lastDay + ", 24:00 UTC" : dayWords(end) + ", " + endUtc + " UTC";
+  if (nowMs >= end) return "The daily bounty ended on " + lastDay;
+  const a = new Date(first), b = new Date(last);
+  const span = !Number.isFinite(first) ? null : a.getUTCMonth() === b.getUTCMonth() ? a.getUTCDate() + "–" + lastDay : dayWords(first) + " – " + lastDay;
+  return (span ? "Daily bounty " + span + " · " : "Daily bounty ") + "until " + until;
 }
 
 /** What the result screen says about the entry (kanban #3265). */
@@ -198,7 +217,7 @@ export function resultModel({ res, parTime, timePerS = 20, entry, entryWhy, befo
   // the three facts in one row: "Rank 2 · best 218 · 95 of 99 left"
   if (me) { const best = Math.max(after ? after.total : 0, before ? before.total : 0);
     out.facts = [after && after.rank ? "Rank " + after.rank : "Not ranked yet", best > 0 ? "best " + fmtSats(best) : null, Math.max(0, max - usedOf(me, opened)) + " of " + max + " left"].filter(Boolean).join(" · "); }
-  if (me && !me.x) out.xPrompt = "Link your X account to be placed and win.";
+  if (me && !me.x) out.xPrompt = "Add your X handle to be placed and win.";
   else if (me && me.x && !me.placed) out.xPrompt = "Your X account " + (me.x.username ? "@" + me.x.username + " " : "") + "is linked - " + (me.placedWhy || "not verified yet") + ".";
   return out;
 }
@@ -223,6 +242,40 @@ export function lnFieldModel(text, stored) {
   if (stored && a === stored) return { text: "✓ saved", kind: "ok", canSave: false };
   const why = lnSyntaxWhy(a);
   return why ? { text: why, kind: "bad", canSave: false } : { text: "", kind: "", canSave: true };
+}
+
+/**
+ * THE X HANDLE FIELD (kanban #3328, owner 2026-11-22: an empty field for the X handle, checked on Save): the handle as typed (@name, name or an
+ * x.com link) -> the bare name, or null when it cannot be an X username.
+ */
+export function xHandleOf(text) {
+  const n = String(text == null ? "" : text).trim().replace(/^https?:\/\/(www\.)?(x|twitter)\.com\//i, "").replace(/^@/, "").replace(/[/?#].*$/, "");
+  return /^[A-Za-z0-9_]{1,15}$/.test(n) ? n : null;
+}
+/** What the X field says under it while typed: { text, kind, canSave }. stored: GET /me's x.username. */
+export function xFieldModel(text, stored) {
+  const raw = String(text == null ? "" : text).trim();
+  if (!raw) return { text: "", kind: "", canSave: false };
+  const n = xHandleOf(raw);
+  if (!n) return { text: "Not an X username", kind: "bad", canSave: false };
+  if (stored && n.toLowerCase() === String(stored).toLowerCase()) return { text: "✓ saved", kind: "ok", canSave: false };
+  return { text: "", kind: "", canSave: true };
+}
+/**
+ * THE ANSWER TO SAVE (the bug bounty's own live X check, POST /api/faucet/feedback/social { x }, the one My feedback's X field uses): the account is
+ * looked up on X itself; linked to this key only when it exists and follows the Arena's account (one key per X account, kept by that book).
+ * -> { ok, text, kind }.
+ */
+export const X_FOLLOW = "bitcoinarena_io";
+export function xSaveAnswer(j, typed) {
+  const at = "@" + (xHandleOf(typed) || String(typed || "").trim());
+  if (!j || typeof j !== "object") return { ok: false, kind: "bad", text: "The check did not answer - try again" };
+  const x = j.results && j.results.x;
+  if (j.ok === false || !x) return { ok: false, kind: "bad", text: String(j.why || "The check did not answer - try again").slice(0, 120) };
+  if (x.member === true) return { ok: true, kind: "ok", text: "✓ saved @" + (x.username || xHandleOf(typed)) };
+  if (/no such X account|not an X username/i.test(x.why || "")) return { ok: false, kind: "bad", text: "No X account " + at + " - check the spelling. Not saved." };
+  if (x.member === false) return { ok: false, kind: "bad", text: (x.username ? "@" + x.username : at) + " found, but it does not follow @" + X_FOLLOW + " yet - follow, then Save again. Not saved." };
+  return { ok: false, kind: "bad", text: (x.why ? String(x.why).slice(0, 100) : "Not checked") + " - not saved" };
 }
 
 /** The leaderboard rows: [[rank, name, score, time, placed]] */
