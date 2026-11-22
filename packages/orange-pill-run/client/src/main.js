@@ -169,7 +169,7 @@ function refresh() {
 async function readNow() {
   const [r, b] = await Promise.all([api.get("/round"), api.get("/board")]);
   S.round = r.ok ? r.round : null; S.err = r.ok ? null : r.why; S.loaded = true;
-  S.board = b.ok ? b.board : [];
+  S.board = b.ok ? b.board : []; if (b.ok && b.round) S.boardRound = b.round;
   const w = wallet();
   if (w && w.pubkey) { const m = await api.getSigned("/me" + (S.round ? "?round=" + encodeURIComponent(S.round.id) : "")); if (m.ok) S.me = m; else HOOKS.meWhy = m.why || null; }
   S.at = Date.now();
@@ -406,15 +406,11 @@ function paintResult({ res, mode: m, entry: en, sending = false }) {
   showSheet("result"); $("againBtn").focus();
   HOOKS.result = { ...model, entryKind: en, sending };
 }
-async function showBoard() {
-  if (!showSheet("board")) return;
-  const t = $("bTable"); t.textContent = ""; $("bLine").textContent = "Reading …";
-  if (!api) { $("bLine").textContent = "The leaderboard is in the Arena."; return; }
-  const b = await api.get("/board" + (S.round ? "?round=" + encodeURIComponent(S.round.id) : ""));
-  if (!b.ok) { $("bLine").textContent = b.why || "not read"; return; }
-  S.board = b.board || [];
-  const r = b.round;
-  $("bLine").textContent = r ? (r.test ? "Test round " : "Round ") + (r.number || "") + " · " + r.players + " players · " + (isFree(r) ? "free to play" : "pot " + fmtSats(r.potSats) + " testnet sats") : "";
+// THE BOARD AT ONCE FROM WHAT THE INTRO READ (kanban #3289, owner 2026-11-22: "Das Laden des Leaderboards dauert auch zu lang"; GET /board took
+// 0.8-5 s on the stage): the sheet draws the rows the intro holds (read with the round, refreshed every 15 s) and then the fresh answer over them
+const roundLine = (r) => r ? (r.test ? "Test round " : "Round ") + (r.number || "") + " · " + r.players + " players · " + (isFree(r) ? "free to play" : "pot " + fmtSats(r.potSats) + " testnet sats") : "";
+function paintBoard() {
+  const t = $("bTable"); t.textContent = "";
   const rows = boardRows(S.board, S.me);
   const C = ["c-rk", "c-nm", "c-sc", "c-tm", "c-rp"];
   cellRow(t.createTHead().insertRow(), ["#", "Player", "Score", "Time", ""], C, true);
@@ -429,6 +425,21 @@ async function showBoard() {
     if (rp) { cell = document.createElement("button"); cell.className = "rp"; cell.type = "button"; cell.textContent = "▶"; cell.title = "Watch the replay"; cell.setAttribute("aria-label", "Watch the replay"); cell.onclick = () => { if (audio) audio.unlock(); watchReplay(rp); }; }
     cellRow(tr, [x.rank, x.name + (x.placed ? " ✓" : ""), x.score, x.time, cell], ["c-rk", "c-nm", "c-sc tot", "c-tm", "c-rp"]);
   }
+}
+let boardAsk = 0;
+async function showBoard() {
+  if (!showSheet("board")) return;
+  const t = $("bTable"); t.textContent = ""; $("bLine").textContent = "Reading …";
+  if (!api) { $("bLine").textContent = "The leaderboard is in the Arena."; return; }
+  const ask = ++boardAsk;
+  const kept = S.loaded && S.board.length > 0;
+  if (kept) { paintBoard(); $("bLine").textContent = (S.boardRound ? roundLine(S.boardRound) + " · " : "") + "updating …"; }
+  const b = await api.get("/board" + (S.round ? "?round=" + encodeURIComponent(S.round.id) : ""));
+  if (ask !== boardAsk) return;   // a newer opening of the sheet draws its own answer
+  if (!b.ok) { $("bLine").textContent = kept ? (S.boardRound ? roundLine(S.boardRound) + " · " : "") + "not updated: " + (b.why || "not read") : (b.why || "not read"); return; }
+  S.board = b.board || []; if (b.round) S.boardRound = b.round;
+  $("bLine").textContent = roundLine(b.round);
+  paintBoard();
 }
 async function watchReplay(path) {
   try {
