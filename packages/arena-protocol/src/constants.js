@@ -494,6 +494,8 @@ export const TAG = {
   // (A GUARDIAN FOUNDING'S TICKET and WHO IS ON DUTY: their tags switch from BLWP/v1 to ARENA/v1 at one point - tag-switch.js, kanban #525)
   // A SEAT'S SIGNED OBSERVATION OF A HALT (§23A.5)
   haltObservation: 'ARENA/v1/HaltObservation',
+  // THE HALT A PROOF NAMES (kanban #3339): federation, session, halt height and abandoned guardians - the same on every seat
+  haltProof: 'ARENA/v1/HaltProof',
   entryContract: 'ARENA/v1/EntryContract',
   advert: 'ARENA/v1/Advert',
   censusLeaf: 'ARENA/v1/CensusLeaf',

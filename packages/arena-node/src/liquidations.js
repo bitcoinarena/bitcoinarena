@@ -47,7 +47,8 @@ export function createLiquidations({ records, clocks, verify, claimsUrl = null, 
       const pick = held ? newestSpentSet(all, { record: held.record, verify, maxSession }) : { copy: null, why: 'no record held' };
       return {
         federation: fid, haltHeight: halt.height, haltRecord: halt.bytes ? toHex(halt.bytes) : null,
-        haltProof: halt.proof ? { session: halt.proof.session, observers: halt.proof.observers, abandoned: halt.proof.abandoned.map(toHex), id: toHex(halt.proof.id) } : null,
+        haltProof: halt.proof ? { session: halt.proof.session, observers: halt.proof.observers, abandoned: halt.proof.abandoned.map(toHex), id: toHex(halt.proof.id),
+          ...(halt.proof.observerKeys ? { observerKeys: halt.proof.observerKeys.map(toHex) } : {}) } : null,
         // WHERE CLAIMS GO (§23A.5 step 2: "advertises where claims go ... every seat mirrors them"): the arbitration set's door
         claims: claimsUrl,
         liquidatesAt: halt.height + clocks.abandonBlocks,
