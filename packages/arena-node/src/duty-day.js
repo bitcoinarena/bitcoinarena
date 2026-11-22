@@ -243,7 +243,7 @@ export function createDayDuty(o) {
     committeeLeadMs = guard.DUTY_DAY_COMMITTEE_LEAD_MS, rankCap = guard.DUTY_DAY_RANK_CAP, drawableByMs = guard.DUTY_DRAWABLE_BY_MS,
     emergencyOn = true, emergencyCommitteeLeadMs = guard.DUTY_EMERGENCY_COMMITTEE_LEAD_MS, seedWaitMs = guard.DUTY_SEED_WAIT_MS,
     drawSeats = 12, dryRank0 = false, seatsAgreeOn = null, role = 'primary', postedPrimary = async () => false, fetchFn = fetch, say = () => {}, now = Date.now, canPay = async () => ({ ok: true }),
-    announce = null, publicSend = null, creatorOf = null, seriesInfoOf = null, creators = [],
+    announce = null, publicSend = null, creatorOf = null, seriesInfoOf = null, creators = [], seriesRefused = null,
     // FIELDS THE CALLER SETS ON THE DAY'S ROUNDS (kanban #1398: a head-to-head game's 60 s objection window, once every seat takes it); none by default
     extraFields = () => ({}) } = o;
   // WHO A MARKER IS FROM (kanban #1168, MARKER above): `creatorOf(seriesIdHex)` the creator key (hex) of a series whose signed line this
@@ -595,12 +595,25 @@ export function createDayDuty(o) {
       const ks = keptOf(slot);
       const verdicts = [];
       for (const k of ks) { try { verdicts.push(k.verdict = await judge(k, view, idx, mtpMs)); } catch (e) { verdicts.push(k.verdict = { state: 'pending', stage: 'unread', why: e.message }); } }
+      // A POSTING EVERY SEAT REFUSES IS DEAD (kanban #3380: on 2026-11-23 three Next Block emergency grids naming config 00..00 filled the cap of
+      // three, and the grid that would have been taken was never posted): its series name a config their core does not run
+      const refusedOf = async (series) => { if (typeof seriesRefused !== 'function') return null; try { return await seriesRefused(series); } catch { return null; } };
+      for (let i = 0; i < ks.length; i++) {
+        const why = ks[i].verdict && ks[i].verdict.state !== 'dead' ? await refusedOf(ks[i].series) : null;
+        if (why) verdicts[i] = ks[i].verdict = { state: 'dead', stage: 'refused', why };
+      }
       // WHAT THE SEATS DRAW OF THE APP IN WHAT IS LEFT OF THE DAY, whoever posted it: drawn on a majority, the day is drawable
       const drawnNow = await familyDraw(Math.max(day.startMs, nowMs), day.endMs);
       if (drawnNow.of && drawnNow.drawn * 2 > drawnNow.of) verdicts.push({ state: 'drawable', stage: 'drawn', why: `rounds of it drawn on ${drawnNow.drawn} of ${drawnNow.of} seats` });
       // AND ANOTHER MACHINE'S POSTING OF IT (its marker, no kept file here): pending until the seats draw it
       // only a marker that counts (kanban #1168: a bare marker anyone wrote held the day and its emergency grid back)
-      const foreign = markers.filter((m) => m.counts && m.slot === slot && (m.tag === tag || m.tag === emergencyTag) && !ks.some((k) => k.txid === m.txid));
+      const foreign = [];
+      for (const m of markers) {
+        if (!(m.counts && m.slot === slot && (m.tag === tag || m.tag === emergencyTag) && !ks.some((k) => k.txid === m.txid))) continue;
+        // ANOTHER NODE'S POSTING EVERY SEAT REFUSES (kanban #3380) is not the day's: not pending, not under the cap
+        if (await refusedOf(m.series)) continue;
+        foreign.push(m);
+      }
       if (foreign.some((m) => m.tag === tag)) verdicts.push({ state: 'pending', stage: 'foreign', why: `posted by another node; drawn on ${drawnNow.drawn} of ${drawnNow.of} seats` });
       const verdict = guard.dayVerdict(verdicts);
       // A DEAD EMERGENCY GRID IS NOT ONE OF THE DAY'S (2026.1.9.11 release check, Up/Down 2026-10-27: two emergency grids died - one
