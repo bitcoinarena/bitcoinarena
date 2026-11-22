@@ -16,3 +16,14 @@ test("client/build.mjs writes one html with the whole game inlined", () => {
   const js = html.match(/<script>\n([\s\S]*)<\/script>/)[1];
   assert.doesNotThrow(() => new Function(js));
 });
+
+// #3251 (owner 2026-11-22): the replay's controls are not on the play field, and a replay has its own end card
+test("the replay bar sits below the stage, outside the canvas's box; the replay end card exists", () => {
+  const t = fs.readFileSync(new URL("../client/index.template.html", import.meta.url), "utf8");
+  const stage = t.indexOf('<div id="stage">'), bar = t.indexOf('<div id="rbar"'), end = t.indexOf("<!--OPR_SCRIPT-->");
+  assert.ok(stage > 0 && bar > stage && bar < end);
+  const inner = t.slice(stage, bar);   // the stage's own markup closes before the bar
+  assert.equal((inner.match(/<div/g) || []).length, (inner.match(/<\/div>/g) || []).length);
+  for (const id of ["rend", "eBack", "eAgain"]) assert.ok(t.includes('id="' + id + '"'), id);
+  assert.ok(t.includes(">⏸<") && t.includes(">2×<") && t.includes(">✕<"));
+});

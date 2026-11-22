@@ -97,9 +97,13 @@ td button.rp { padding: 3px 8px; font-size: .8rem; border-radius: 7px; }
 #bTable .c-rk { width: 2.1em; text-align: left; } #bTable .c-nm { text-align: left; } #bTable .c-sc { width: 3.9em; text-align: right; } #bTable .c-tm { width: 4.4em; text-align: right; } #bTable .c-rp { width: 2.4em; text-align: center; }
 #bTable td button.rp { padding: 2px 0; width: 100%; font-size: .8rem; }
 #board .tw { overflow-x: hidden; }
-#rbar { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); display: flex; gap: 8px; background: rgba(28,21,30,.92); border: 1px solid var(--line); border-radius: 12px; padding: 6px; }
-#rbar button { padding: 8px 14px; font-size: .95rem; }
+/* THE REPLAY'S CONTROLS BELOW THE FIELD (#3251, owner 2026-11-22: they lay over the play field): a slim bar under the stage, icons, 44 px
+   tall (a thumb); the stage gives up that height while a replay runs and the canvas refits */
+#rbar { flex: none; display: flex; gap: 10px; justify-content: center; width: 100%; }
+#rbar button { min-width: 64px; height: 44px; padding: 0 14px; font-size: 1.15rem; line-height: 1; border-radius: 12px; }
+#rbar #rb2x { font-size: 1rem; }
 #rbar button[aria-pressed="true"] { border-color: var(--btc); color: var(--btc); }
+@media (max-height: 700px) { #rbar button { height: 40px; } }
 #pill { position: absolute; left: 50%; top: 44px; transform: translateX(-50%); max-width: calc(100% - 20px); box-sizing: border-box; font-size: .8rem; color: var(--text);
   background: rgba(28,21,30,.85); border: 1px solid var(--line); border-radius: 99px; padding: 4px 12px; pointer-events: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #pill.ok { border-color: var(--green); } #pill.bad { border-color: var(--red); } #pill.wait { border-color: var(--gold); }
@@ -241,10 +245,17 @@ body.bridged .snd { margin-left: auto; } body:not(.bridged) .snd { margin-left: 
       <div class="row"><button class="primary" id="rulesBack">Back</button><a class="lk" id="rulesPage" href="rules.html" target="_blank" rel="noopener" style="align-self:center">Rules page</a></div>
     </div>
   </div>
-  <div id="rbar" hidden><button id="rbPlay" type="button">Pause</button><button id="rb2x" type="button" aria-pressed="false">2x</button><button id="rbClose" type="button">Close</button></div>
+  <div class="sheet" id="rend" hidden>
+    <div class="box">
+      <h2 id="eTitle">Replay</h2>
+      <p id="eLine"></p>
+      <div class="row"><button class="primary" id="eBack" type="button">Back</button><button id="eAgain" type="button">Watch again</button></div>
+    </div>
+  </div>
   <div id="pill" hidden role="status"></div>
   <div id="hint" hidden>Tap anywhere to jump</div>
   <div id="hudctl"><button class="snd" id="sndBtn" type="button" aria-label="Sound">🔊</button><span class="tag" id="modeTag">PRACTICE</span></div>
 </div>
+<div id="rbar" hidden><button id="rbPlay" type="button" aria-label="Pause" title="Pause">⏸</button><button id="rb2x" type="button" aria-pressed="false" aria-label="Double speed" title="Double speed">2×</button><button id="rbClose" type="button" aria-label="Close the replay" title="Close">✕</button></div>
 
 <!--OPR_SCRIPT-->

@@ -84,8 +84,13 @@ function paintSound() {
   const m = audio.mode; b.textContent = m === "on" ? "🔊" : m === "fx" ? "🔉" : "🔇"; b.title = m === "on" ? "Music and effects" : m === "fx" ? "Effects only" : "Sound off";
   b.setAttribute("aria-label", m === "on" ? "Sound: music and effects" : m === "fx" ? "Sound: effects only" : "Sound off");
 }
-const SHEETS = ["intro", "result", "board", "rules"];
-const showSheet = (id) => { for (const s of SHEETS) $(s).hidden = s !== id; };
+const SHEETS = ["intro", "result", "board", "rules", "rend"];
+// A REPLAY OWNS THE SCREEN (#3251, owner 2026-11-22: "nach ein paar Sekunden kommt das Overlay des letzten Runs wieder"): while one runs no sheet
+// opens over it - the last run's submit (POST /attempt/submit, GET /me, the entry's poll) still answering asked for its result screen and got it.
+// What they ask is kept (resultArgs) and shown on Back from the replay's own end card.
+const replayOn = () => running && mode === "replay";
+let heldWhileReplay = 0;
+const showSheet = (id) => { if (id && replayOn()) { heldWhileReplay++; return false; } for (const s of SHEETS) $(s).hidden = s !== id; return true; };
 // THE RUN'S TELEMETRY (kanban #3274), sent with the log for the fair-play review: how the presses came in and how the tab was used - counts and
 // spreads only, no personal data (no positions are sent, no identifiers)
 let TEL = null;
@@ -119,7 +124,7 @@ function begin(m, opts = {}) {
   botCfg = m === "bot" ? { ...BOT_CONFIGS[opts.bot || 0] } : null;
   document.body.classList.add("playing"); document.body.classList.toggle("replaying", m === "replay"); running = true; acc = 0; last = performance.now();
   showSheet(null); if (m !== "play") pill("", "");
-  $("rbar").hidden = m !== "replay"; $("rbPlay").textContent = "Pause"; $("rb2x").setAttribute("aria-pressed", String(speed === 2));
+  $("rbar").hidden = m !== "replay"; paintRbar();
   if (HOOKS.onStart) try { HOOKS.onStart({ mode, gameVersion: GAME_VERSION }); } catch (_) {}
   if (audio) { audio.unlock(); audio.startMusic(); }
   // the hint instead of a JUMP button (#3251, owner 2026-11-22): 2 s at the start of a run
@@ -143,6 +148,7 @@ function finish() {
   const res = resultOf(W);
   if (mode !== "replay") { lastLog = { v: L.version, presses }; lastResult = { ...res, mode }; }
   if (HOOKS.onFinish) { try { if (HOOKS.onFinish(lastLog, { ...res, mode }, W) === false) return; } catch (_) {} }
+  if (mode === "replay") return showReplayEnd(res);   // the replay's own end card, never the last run's result (#3251)
   if (mode === "play" && run) return sendRun(res);
   showResult({ res, mode, entry: mode === "play" ? "practice" : null });
 }
@@ -233,7 +239,7 @@ function paintIntroBoard(b) {
   if (b.own) add(b.own, "gap");
 }
 function showIntro() {
-  showSheet("intro"); $("rbar").hidden = true; paintPractice(); paintIntro();
+  if (!showSheet("intro")) return; $("rbar").hidden = true; paintPractice(); paintIntro();
   if (api && Date.now() - S.at > 5000) refresh().then(paintIntro).catch(() => {});
 }
 function paintPractice() {
@@ -365,7 +371,13 @@ function paintEntry() {
   const el = $("rEntry"); el.className = "entry " + l.kind; el.textContent = l.text;
 }
 const narrow = () => { try { return matchMedia("(max-width: 430px)").matches; } catch (_) { return false; } };
-function showResult({ res, mode: m, entry: en, sending = false }) {
+let resultArgs = null;   // the last result screen asked (#3251): Back from a replay shows it as it stands now
+function showResult(args) {
+  if (args.mode === "play") resultArgs = args;
+  if (replayOn()) { heldWhileReplay++; return; }   // the replay runs: nothing opens over it
+  paintResult(args);
+}
+function paintResult({ res, mode: m, entry: en, sending = false }) {
   const after = S.me ? myBest(S.me, S.board) : null;
   const model = resultModel({ res, parTime: L.parTime, timePerS: rulesOf(L.version).timePerS, entry: en, entryWhy: run && run.entryWhy, before: run && m === "play" ? run.before : null, after: m === "play" && run ? after : null,
     me: m === "play" && run ? S.me : null, max: S.round ? S.round.maxAttempts : 5, mode: m === "play" && !run ? "practice" : m, submitWhy: run && run.submitWhy, opened: openedIn(), round: m === "play" && run ? S.round : null, nowMs: Date.now() });
@@ -395,7 +407,7 @@ function showResult({ res, mode: m, entry: en, sending = false }) {
   HOOKS.result = { ...model, entryKind: en, sending };
 }
 async function showBoard() {
-  showSheet("board");
+  if (!showSheet("board")) return;
   const t = $("bTable"); t.textContent = ""; $("bLine").textContent = "Reading …";
   if (!api) { $("bLine").textContent = "The leaderboard is in the Arena."; return; }
   const b = await api.get("/board" + (S.round ? "?round=" + encodeURIComponent(S.round.id) : ""));
@@ -414,7 +426,7 @@ async function showBoard() {
     const tr = body.insertRow(); if (x.me) tr.className = "me";   // by the row's key, not its name (#3277)
     let rp = x.replay; if (!rp && ownBest && x.me) rp = "/replay/" + ownBest.attempt;
     let cell = "";
-    if (rp) { cell = document.createElement("button"); cell.className = "rp"; cell.type = "button"; cell.textContent = "▶"; cell.title = "Watch the replay"; cell.setAttribute("aria-label", "Watch the replay"); cell.onclick = () => watchReplay(rp); }
+    if (rp) { cell = document.createElement("button"); cell.className = "rp"; cell.type = "button"; cell.textContent = "▶"; cell.title = "Watch the replay"; cell.setAttribute("aria-label", "Watch the replay"); cell.onclick = () => { if (audio) audio.unlock(); watchReplay(rp); }; }
     cellRow(tr, [x.rank, x.name + (x.placed ? " ✓" : ""), x.score, x.time, cell], ["c-rk", "c-nm", "c-sc tot", "c-tm", "c-rp"]);
   }
 }
@@ -424,11 +436,33 @@ async function watchReplay(path) {
     if (!j.ok && j.status === 403 && wallet() && wallet().pubkey) j = await api.getSigned(path);
     if (!j.ok) { $("bLine").textContent = j.why || "no replay"; return; }
     useLevel(j.level); const bad = validateLog(j.log); if (bad) throw new Error(bad);
-    replayLog = j.log; begin("replay");
+    replayLog = j.log; replayFrom = "board"; begin("replay");
   } catch (e) { $("bLine").textContent = (e && e.message) || String(e); }
 }
+// ---------- the replay viewer (#3251): its controls in a bar below the field, its own end card ----------
+let replayFrom = "result";   // where Back goes: the result screen it was opened from, or the leaderboard
+function paintRbar() {
+  const p = $("rbPlay"); p.textContent = paused ? "▶" : "⏸"; p.setAttribute("aria-label", paused ? "Play" : "Pause"); p.title = paused ? "Play" : "Pause";
+  $("rb2x").setAttribute("aria-pressed", String(speed === 2));
+}
+function showReplayEnd(res) {
+  if (!showSheet("rend")) return;
+  $("eTitle").textContent = "Replay: " + (res.finished ? "flag in " + fmtTime(res.timeS) : "time is up");
+  $("eLine").textContent = "Score " + fmtSats(res.total) + " · " + fmtTime(res.timeS);
+  $("eBack").focus();
+}
+function replayBack() {
+  if (replayFrom === "board" && api) return showBoard();
+  if (resultArgs) return paintResult(resultArgs);
+  if (lastResult && replayFrom === "result") return paintResult({ res: lastResult, mode: lastResult.mode === "bot" ? "bot" : "play", entry: lastResult.mode === "play" ? "practice" : null });
+  showIntro();
+}
+function stopReplay() {
+  if (audio) audio.stopMusic();
+  running = false; paused = false; document.body.classList.remove("playing", "replaying"); $("rbar").hidden = true;
+}
 function showRules() {
-  showSheet("rules"); $("rulesTitle").textContent = RULES_TITLE;
+  if (!showSheet("rules")) return; $("rulesTitle").textContent = RULES_TITLE;
   const ol = $("rulesList"); if (ol.childElementCount) return;
   for (const [k, v] of RULES) { const li = document.createElement("li"), b = document.createElement("b"); b.textContent = k + ". "; li.append(b, v); ol.append(li); }
 }
@@ -445,13 +479,19 @@ document.addEventListener("pointerdown", (e) => { if (running && mode === "play"
 ["touchstart", "touchmove", "gesturestart", "dblclick"].forEach((ev) => document.addEventListener(ev, (e) => { if (running && mode === "play" && e.cancelable && !(e.target.closest && e.target.closest("#sndBtn"))) e.preventDefault(); }, { passive: false }));
 document.addEventListener("selectstart", (e) => { if (running) e.preventDefault(); });
 document.addEventListener("contextmenu", (e) => { if (running) e.preventDefault(); });
+// SOUND ON EVERY TAP (#3251, owner 2026-11-22 "Sound geht nicht mehr"): iOS lets an AudioContext start or come back (after the tab was
+// hidden, the phone locked, a call) only inside a user gesture. Every tap and key resumes it; a run's taps are preventDefault'ed, so
+// pointerup/touchend carry it there (no click comes)
+for (const ev of ["pointerup", "touchend", "click", "keydown"]) document.addEventListener(ev, () => { if (!audio) return; audio.unlock(); if (running && !paused && audio.mode === "on") audio.startMusic(); }, { capture: true, passive: true });
 $("startBtn").onclick = () => { if (audio) audio.unlock(); if (!$("startBtn").disabled) play(); };
 // #3251: the page's faucet top-up ("Get 300 sats"), from the game; Play turns on while it is on its way
 $("iTopUp").onclick = () => { let ok = false; try { ok = !!(bridge && bridge.topUp && bridge.topUp()); } catch (_) { ok = false; } if (!ok) $("iWhy").textContent = "The faucet could not be asked now - use Get 300 sats at the bottom right."; paintIntro(); };
 $("sndBtn").onclick = (e) => { e.stopPropagation(); if (!audio) return; audio.unlock(); audio.next(); if (running && audio.mode === "on") audio.startMusic(); paintSound(); };
 $("sndBtn").addEventListener("pointerdown", (e) => e.stopPropagation());   // a tap on the speaker is not a jump
 $("againBtn").onclick = () => { if (run) { if (run.payer && (run.entry === "paid" || run.entry === "not-paid")) run.payer.stop(); run = null; } pill("", ""); showIntro(); };
-$("replayBtn").onclick = () => { if (!lastLog) return; replayLog = lastLog; begin("replay"); };
+$("replayBtn").onclick = () => { if (!lastLog) return; if (audio) audio.unlock(); replayLog = lastLog; replayFrom = "result"; begin("replay"); };
+$("eAgain").onclick = () => { if (!replayLog) return; if (audio) audio.unlock(); begin("replay"); };
+$("eBack").onclick = () => replayBack();
 $("rBoardBtn").onclick = () => showBoard();
 $("bBack").onclick = () => showIntro();
 $("rulesBack").onclick = () => showIntro();
@@ -459,9 +499,9 @@ $("rulesLink").onclick = (e) => { e.preventDefault(); showRules(); };
 $("boardLink").onclick = (e) => { e.preventDefault(); showBoard(); };
 $("xBtn").onclick = () => { try { bridge.linkX(); } catch (_) { /* the page has no link here */ } };
 $("iXBtn").onclick = $("xBtn").onclick;
-$("rbPlay").onclick = () => { paused = !paused; $("rbPlay").textContent = paused ? "Play" : "Pause"; };
-$("rb2x").onclick = () => { speed = speed === 2 ? 1 : 2; $("rb2x").setAttribute("aria-pressed", String(speed === 2)); };
-$("rbClose").onclick = () => { if (audio) audio.stopMusic(); running = false; document.body.classList.remove("playing", "replaying"); $("rbar").hidden = true; showIntro(); };
+$("rbPlay").onclick = () => { paused = !paused; if (audio) { audio.unlock(); if (paused) audio.stopMusic(); else audio.startMusic(); } paintRbar(); };
+$("rb2x").onclick = () => { speed = speed === 2 ? 1 : 2; paintRbar(); };
+$("rbClose").onclick = () => { stopReplay(); replayBack(); };
 // kanban #3270: refit whenever the stage changes size, not only the window. (The JUMP pad that appeared when a run started is gone, #3251.) It took
 // ~70 px from the stage; with a window resize alone the canvas kept its old height and the stage clipped the ground off.
 const refit = () => { fit(); if (!running) (W ? drawWorld(W, []) : idle()); };
@@ -476,7 +516,8 @@ Object.assign(HOOKS, {
   playBot: (opts = {}) => begin("bot", opts),
   replay(log, opts = {}) { const bad = validateLog(log); if (bad) throw new TypeError(bad); replayLog = log; begin("replay", opts); },
   state: () => ({ running, paused, speed, mode, f: W ? W.f : 0, presses: presses.length + (down >= 0 ? 1 : 0), done: W ? W.done : false, run: run ? { attempt: run.attempt, entry: run.entry, status: run.status } : null }),
-  view: () => view(W), audio: () => (audio ? { state: audio.state, mode: audio.mode, music: audio.musicOn } : null), lastLog: () => lastLog, lastResult: () => lastResult, service: () => ({ ...S }),
+  view: () => view(W), audio: () => (audio ? { state: audio.state, mode: audio.mode, music: audio.musicOn, gain: audio.gain } : null),
+  screen: () => (SHEETS.find((s) => !$(s).hidden) || null), held: () => heldWhileReplay, lastLog: () => lastLog, lastResult: () => lastResult, service: () => ({ ...S }),
   showIntro, showResult: (r) => showResult({ res: r || lastResult, mode: "play", entry: "practice" }), showBoard, showRules,
 });
 fit(); idle(); paintSound(); showIntro();

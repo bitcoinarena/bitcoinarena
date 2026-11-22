@@ -56,16 +56,19 @@ export function makeAudio({ store = null, doc = typeof document !== "undefined" 
   function unlock() {   // call from a user gesture
     if (!AC) return false;
     try {
+      if (ctx && ctx.state === "closed") ctx = null;   // a closed one never plays again: a new one, in this gesture
       if (!ctx) {
         ctx = new AC();
-        master = ctx.createGain(); master.gain.value = 0.5; master.connect(ctx.destination);
+        master = ctx.createGain(); master.gain.value = mode === "off" ? 0 : 0.5; master.connect(ctx.destination);
         musicBus = ctx.createGain(); musicBus.gain.value = 0.32; musicBus.connect(master);
         fxBus = ctx.createGain(); fxBus.gain.value = 0.55; fxBus.connect(master);
         noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 0.5, ctx.sampleRate);
         const d = noiseBuf.getChannelData(0); let x = 1;
         for (let i = 0; i < d.length; i++) { x = (x * 16807) % 2147483647; d[i] = (x / 2147483647) * 2 - 1; }   // its own noise, not Math.random
       }
-      if (ctx.state === "suspended" && !(doc && doc.hidden)) ctx.resume();
+      // not only "suspended": iOS also leaves a context "interrupted" (a call, the phone locked, another app's audio); every state but
+      // running is resumed from the gesture (#3251)
+      if (ctx.state !== "running" && !(doc && doc.hidden)) { const r = ctx.resume(); if (r && r.catch) r.catch(() => {}); }
       return true;
     } catch (_) { return false; }
   }
@@ -130,5 +133,5 @@ export function makeAudio({ store = null, doc = typeof document !== "undefined" 
   }
   const next = () => setMode(SOUND_MODES[(SOUND_MODES.indexOf(mode) + 1) % SOUND_MODES.length]);
   if (doc) doc.addEventListener("visibilitychange", () => { if (!ctx) return; try { if (doc.hidden) ctx.suspend(); else ctx.resume(); } catch (_) {} });
-  return { unlock, startMusic, stopMusic, play, setMode, next, get mode() { return mode; }, get state() { return ctx ? ctx.state : "none"; }, get musicOn() { return playing; } };
+  return { unlock, startMusic, stopMusic, play, setMode, next, get mode() { return mode; }, get state() { return ctx ? ctx.state : "none"; }, get musicOn() { return playing; }, get gain() { return master ? master.gain.value : null; } };
 }
