@@ -311,6 +311,15 @@ export function dayDueFromMs(slot, rank, cap = DUTY_DAY_RANK_CAP) {
   return dayStartMs(slot) + cap * HOUR + Math.min((rank - cap) * DUTY_PAST_CAP_STEP_MS, HOUR - DUTY_PAST_CAP_STEP_MS);
 }
 
+// THE EMERGENCY GRID'S WAIT FROM WHEN IT IS DUE, PER RANK (kanban #3338, feedback #388): the duty node at once, the next ranks 20 min apart
+// up to the cap, then one DUTY_PAST_CAP_STEP_MS step per rank. It was min(rank, cap) x 20 min, so every rank past the cap was due in the
+// same minute: on 2026-11-22 the nodes ranked 7, 20 and 30 posted three nextblock emergency grids in one block (162694). A pass reads the
+// mempool first, so the first that posts is seen (in flight) by the next before its step.
+export function emergencyWaitMs(rank, cap = DUTY_DAY_RANK_CAP) {
+  const r = Math.max(Number.isInteger(rank) ? rank : 0, 0);
+  return r <= cap ? r * 20 * 60000 : cap * 20 * 60000 + (r - cap) * DUTY_PAST_CAP_STEP_MS;
+}
+
 /** The day `slot` posts and its explicit timeline (kanban #689 d). */
 export function dayTimeline(slot, { committeeLeadMs = DUTY_DAY_COMMITTEE_LEAD_MS, cap = DUTY_DAY_RANK_CAP, drawableByMs = DUTY_DRAWABLE_BY_MS } = {}) {
   const { startMs, endMs } = targetDay(slot);
