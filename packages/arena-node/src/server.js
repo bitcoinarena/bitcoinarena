@@ -1014,6 +1014,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // signSeason at ~9 %, GET /season and /season-rounds often in the [lag] lines): every seat asks every other for its season rounds, so a 30 s
   // keep re-read the store and signed every round twice a minute per query. The same bytes are now kept 5 minutes (ARENA_SEASON_KEEP_MS).
   const SEASON_KEEP_MS = Number(process.env.ARENA_SEASON_KEEP_MS) > 0 ? Number(process.env.ARENA_SEASON_KEEP_MS) : 300000;
+  const SEASON_STALE_MS = Number(process.env.ARENA_SEASON_STALE_MS) > 0 ? Number(process.env.ARENA_SEASON_STALE_MS) : 30 * 60000;   // kanban #3289
   // A NETWORK SEASON'S ASKS: each other seat's /season-rounds within SEASON_PEER_TIMEOUT_MS (8 s), its silence
   // counted as missing; SEASON_PEER_LANES of them at once, so one board never opens a request to every seat in one burst
   const SEASON_PEER_TIMEOUT_MS = 8000;
@@ -2168,7 +2169,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const q = `${ids.join(',')}|${w.days}`;
     const had = seasonNetKept.get(q);
     if (had && had.json && Date.now() - had.at <= SEASON_KEEP_MS) return had;
-    if (had && had.reading) return had.reading;
+    // THE LAST BOARD WHILE THE NEXT IS BUILT (kanban #3289, measured 2026-11-22: a network season took 22-50 s to build, longer than the page
+    // waited, so after each SEASON_KEEP_MS the board's next asker got nothing): a kept board up to SEASON_STALE_MS old is answered at once
+    // and the new one built behind it. It is the same agreed account, only older.
+    const stale = !!(had && had.json && Date.now() - had.at <= SEASON_STALE_MS);
+    if (had && had.reading) return stale ? had : had.reading;
     const reading = seasonNetwork(ids, w).then((json) => {
       const kept = { at: Date.now(), json };
       seasonNetKept.set(q, kept);
@@ -2176,6 +2181,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       return kept;
     }, (e) => { if (had && had.json) seasonNetKept.set(q, had); else seasonNetKept.delete(q); throw e; });
     seasonNetKept.set(q, { ...(had || {}), reading });
+    if (stale) { reading.catch(() => {}); return had; }
     return reading;
   };
   // A MARKET ANOTHER SEAT PUBLISHED (kanban #920) is taken at each read, unless the owner turned that off (owner settings `takeMarkets: false`)
