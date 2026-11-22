@@ -102,7 +102,7 @@ import { decodeRoundContract, encodeRoundContract, contractWarnings, decodeEntry
 import { revealStands, headToHeadCommit } from '../../arena-protocol/src/head-to-head.js';
 import { certifiesLockSet, LOCK_SET_WINDOW_MS, LOCK_SET_MAX_ENTRIES, lockSetViewsAllSeen, certifiedSeats } from '../../arena-protocol/src/lock-set.js';   // kanban #2561, #3257
 import { LockSetBook } from './lock-set-book.js';
-import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
+import { toHex, fromHex, sha256, taggedHash } from '../../arena-protocol/src/hash.js';
 import { advertInTransaction, nodeBondOf } from '../../arena-protocol/src/census.js';
 
 /**
@@ -358,6 +358,21 @@ export function bondMinCanonical(values, b) {
 }
 // WHERE A PRESENCE CAME FROM (kanban #2385, #2437): the asker's address (behind cloudflared / tailscale serve the address the proxy saw,
 // reach-check.js askerAddress); an IPv6 address by its /48, so one holder of a block of addresses is one source, not 65,536
+// A NODE KEY PROVEN AT AN ADDRESS (kanban #2982, #3253): what a seat signs, BIP-340 with its node key, when asked GET /identity?nonce=. The
+// asker's fresh nonce makes the answer the seat's word now, not one replayed from another address.
+export const identityProofDigest = (nonce) => taggedHash('ARENA/v1/NodeIdentityProof', nonce);
+// whether the seat at `base` signs for `key` (64 hex) over a fresh nonce - false on any other answer, or none in `ms`
+export async function provesNodeKey(base, key, { fetch: f = fetch, ms = 8000 } = {}) {
+  try {
+    const nonce = randomBytes(32);
+    const r = await f(`${base}/identity?nonce=${toHex(nonce)}`, { signal: AbortSignal.timeout(ms) });
+    if (!r.ok) return false;
+    const j = JSON.parse(await readTextCapped(r, 4096));
+    if (!j || String(j.node).toLowerCase() !== key || !/^[0-9a-f]{128}$/i.test(String(j.sig))) return false;
+    return schnorr.verify(fromHex(String(j.sig).toLowerCase()), identityProofDigest(nonce), fromHex(key));
+  } catch { return false; }
+}
+
 export function presenceSource(req) {
   const a = askerAddress(req);
   if (!a.includes(':')) return a;
@@ -1913,9 +1928,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
 
   // THE NETWORK SEASON (GET /season?scope=network): this seat's own rounds and every other seat's, merged by
-  // agreement. Each seat is counted under the node key its answer names - two addresses of one seat (a census endpoint and
-  // a peer given) are one seat's word, not two: the first in address order is taken - and an answer naming this seat's own
-  // key is this seat reached through its own address, not another witness. Every seat's answer is a claim only: what
+  // agreement. Two addresses of one seat (a census endpoint and a peer given) are one seat's word, not two, when both prove the
+  // node key they name (kanban #2982, seasonAccounts below); an answer naming this seat's own key is this seat reached through its
+  // own address, not another witness. Every seat's answer is a claim only: what
   // makes a round count is SEASON_NETWORK_AGREE seats agreeing on it byte for byte (season.js). One read per query at a time.
   const seasonNetKept = new Map();               // query -> { at, json } | { reading }
   // EVERY SEAT'S ACCOUNTS OF A SEASON, unmerged: this seat's own rounds of the window, then each other seat's answer to
@@ -1925,6 +1940,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // no key at all - read as an account, it would disagree with every seat that sends them, so it is not asked to agree.
   // With `signed` (kanban #1153: the leaderboard payout and the board badge) this seat's own rounds carry its own signatures, and each
   // answer is kept under its address: what counts is the signatures (protocol mergeSignedSeasonAccounts), never the node an answer names.
+  // which addresses proved which node key (kanban #2982): kept PROOF_KEEP_MS, so a board read asks a seat to sign once in a while, not per query
+  const proofKept = new Map();   // `${address}|${key}` -> { at, ok }
+  const PROOF_KEEP_MS = 10 * 60000;
+  const provenAt = async (seat, key) => {
+    const k = `${seat}|${key}`;
+    const had = proofKept.get(k);
+    if (had && Date.now() - had.at <= PROOF_KEEP_MS) return had.ok;
+    const ok = await provesNodeKey(seat, key, { fetch: seasonFetch, ms: SEASON_PEER_TIMEOUT_MS });
+    proofKept.set(k, { at: Date.now(), ok });
+    if (proofKept.size > 256) proofKept.delete(proofKept.keys().next().value);
+    return ok;
+  };
   const seasonAccounts = async (ids, w, { days = w.days, keyed = false, signed = false } = {}) => {
     const games = new Set(ids);
     const read = seasonRounds(round, { games, fromMs: w.fromMs, toMs: w.toMs, isMarket: (c) => !!attestedOf(c) });
@@ -1992,9 +2019,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     await Promise.all(Array.from({ length: Math.min(SEASON_PEER_LANES, seats.length) }, lane));
     const me = toHex(round.pubkey);
     const bySeat = new Map([[me, own]]);
-    for (const a of answers.filter(Boolean).sort((x, y) => (x.seat < y.seat ? -1 : x.seat > y.seat ? 1 : 0))) {
-      const label = signed ? a.seat : a.node || a.seat;
-      if (!bySeat.has(label)) bySeat.set(label, a.rounds);
+    const got = answers.filter(Boolean).sort((x, y) => (x.seat < y.seat ? -1 : x.seat > y.seat ? 1 : 0));
+    if (signed) { for (const a of got) if (!bySeat.has(a.seat)) bySeat.set(a.seat, a.rounds); return { bySeat, asked: seats.length }; }
+    // ONE SEAT AT TWO ADDRESSES COUNTS ONCE, BUT ONLY WHEN IT PROVES IT (kanban #2982): the `node` an answer names is the seat's own
+    // unsigned word. Before, the first answer in address order naming a key took that key's place, so a seat whose address sorts
+    // first answered under an honest seat's key and the honest seat's answer was dropped as "a second address" - one honest vote
+    // gone. Now: an answer naming this seat's own key is this seat or a liar, never another witness (dropped). Where two or more
+    // addresses name one key, each is asked to sign a fresh nonce with it (GET /identity?nonce=, provesNodeKey): those that prove it
+    // are one seat, counted once (the first in address order); an unproven claim of a key another address proves adds no voice and
+    // displaces nobody; where nobody proves it, each address counts under its own URL - as a seat naming its own key would.
+    const byKey = new Map();
+    for (const a of got) { if (a.node === me) continue; const k = a.node || a.seat; if (!byKey.has(k)) byKey.set(k, []); byKey.get(k).push(a); }
+    for (const [k, group] of byKey) {
+      if (group.length === 1 || !group[0].node) { for (const a of group) if (!bySeat.has(a.seat)) bySeat.set(group.length === 1 && a.node ? k : a.seat, a.rounds); continue; }
+      const proven = await Promise.all(group.map((a) => provenAt(a.seat, k)));
+      const first = group.find((a, i) => proven[i]);
+      if (first) { if (!bySeat.has(k)) bySeat.set(k, first.rounds); continue; }
+      for (const a of group) if (!bySeat.has(a.seat)) bySeat.set(a.seat, a.rounds);
     }
     return { bySeat, asked: seats.length };
   };
@@ -8816,7 +8857,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return claimJson(v.ok ? 200 : 503, JSON.parse(JSON.stringify(v, (k, x) => (typeof x === 'bigint' ? String(x) : x))));
       }
       if (req.method === 'GET' && url.pathname === '/identity') {
-        return bytes(res, 200, round.pubkey);
+        // THE KEY, PROVEN (kanban #2982, #3253): ?nonce=<32 bytes hex>, a fresh one the asker made, answers this seat's BIP-340 signature
+        // over identityProofDigest(nonce) - so an address that names this key in an answer can be shown to be this seat (seasonAccounts)
+        const nonce = url.searchParams.get('nonce');
+        if (nonce === null) return bytes(res, 200, round.pubkey);
+        if (!/^[0-9a-f]{64}$/i.test(nonce)) return text(res, 400, 'GET /identity?nonce=<32 bytes hex>');
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), nonce: nonce.toLowerCase(),
+          sig: toHex(schnorr.sign(identityProofDigest(fromHex(nonce.toLowerCase())), round.identity.secret)) }));
       }
 
       // THE ICON OF ITS PAGES (the 2026.1.9.11 install test: the dashboard and the owner page logged a missing favicon.ico at every load)

@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { serve } from '../src/server.js';
+import { serve, identityProofDigest } from '../src/server.js';
 import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
 import { seasonRounds } from '../src/season-read.js';
@@ -17,7 +17,7 @@ import { encodeRoundContract, encodeEntryContract, roundId, entryId } from '../.
 import { encodePlayerResult, joinSignedResult, resultId } from '../../arena-protocol/src/result.js';
 import { encodeLobbyName } from '../../arena-protocol/src/lobby-name.js';
 import { displayNameFromKey } from '../../arena-protocol/src/display-name.js';
-import { toHex } from '../../arena-protocol/src/hash.js';
+import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { seasonRoundsToJson, seasonRoundsFromJson, seasonContractOf, seasonAccountOf } from '../../arena-protocol/src/season.js';
 import { HOSTED, NEXTBLOCK_GAME_ID } from './plugins/hosted.js';
 
@@ -195,6 +195,8 @@ test('GET /season?scope=network: the other seats\' rounds merged, a round counte
   // SEVEN OTHER SEATS, answered by a fetcher the test holds: A, B and C hold this seat's rounds and one more it does not
   // (B with round 1's amounts altered - one dissent against three); C and D a forged round, which F (answering under this
   // seat's own key) and G (under A's key, at a second address) hand in too - two seats' word, not four; E never answers.
+  // kanban #2982: A proves its key (GET /identity?nonce=, signed with it); G names A's key but signs nothing - an unproven claim of a
+  // key another address proves adds no voice.
   const key = (n) => toHex(schnorr.getPublicKey(b32(n)));
   const base = (x) => `http://127.0.0.1:9/seat-${x}`;
   const peers = ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map(base);
@@ -202,6 +204,11 @@ test('GET /season?scope=network: the other seats\' rounds merged, a round counte
   const answers = new Map();
   const asked = [];
   const seasonFetch = async (u) => {
+    const proof = /^(.*)\/identity\?nonce=([0-9a-f]{64})$/.exec(u);
+    if (proof && proof[1] === base('a')) {
+      return new Response(JSON.stringify({ node: key(0xa1), nonce: proof[2], sig: toHex(schnorr.sign(identityProofDigest(fromHex(proof[2])), b32(0xa1))) }), { status: 200 });
+    }
+    if (proof) return new Response('no', { status: 404 });
     asked.push(u);
     const at = peers.find((p) => u.startsWith(`${p}/`));
     const a = answers.get(at);
