@@ -725,6 +725,13 @@ export class Verifier {
       try { mine.push({ bytes: b, c: decodeCheckpoint(splitSignedMark(b).body) }); } catch { /* not a mark */ }
     }
     if (!mine.length) return false;
+    // INDEXED ONCE (kanban #3313): each of this seat's marks hexed once and filed by tick and by parent, so a peer mark is set only
+    // against the marks at its tick or from its parent - linear in the marks, where every pair (theirs x mine, two 231-byte hexes
+    // each) held the seat's thread for marks^2 x peers at the close of a run marked every tick
+    const byTick = new Map();
+    const byParent = new Map();
+    const file = (map, key, i) => { const l = map.get(key); if (l) l.push(i); else map.set(key, [i]); };
+    mine.forEach((m, i) => { m.hex = hex(m.bytes); file(byTick, m.c.tick, i); file(byParent, hex(m.c.previousHash), i); });
     const verify = (sig, msg, pub) => { try { return sessionCurve.verify(sig, msg, pub); } catch { return false; } };
     const cap = (mine.length + PEER_MARKS_AHEAD) * SIGNED_MARK_BYTES;
     for (const { peer, body } of await peersCheckpoints(this.peersOf(roundIdBytes), roundIdBytes, entryId, cap, PEER_DATA_WAIT_MS)) {
@@ -732,9 +739,10 @@ export class Verifier {
       for (let at = 0; at + SIGNED_MARK_BYTES <= body.length; at += SIGNED_MARK_BYTES) {
         const theirs = body.slice(at, at + SIGNED_MARK_BYTES);
         let tc; try { tc = decodeCheckpoint(splitSignedMark(theirs).body); } catch { continue; }
-        for (const m of mine) {
-          if (hex(m.bytes) === hex(theirs)) continue;
-          if (m.c.tick !== tc.tick && hex(m.c.previousHash) !== hex(tc.previousHash)) continue;
+        const theirsHex = hex(theirs);
+        const near = [...new Set([...(byTick.get(tc.tick) || []), ...(byParent.get(hex(tc.previousHash)) || [])])].sort((x, y) => x - y);
+        for (const m of near.map((i) => mine[i])) {
+          if (m.hex === theirsHex) continue;
           // TWO CHAINS FROM ONE PARENT FORFEIT ONLY WHEN BOTH WERE RECEIPTED (ruled 2026-10-05 (b); kanban #2550, #1489 r13 play-2): a peer's
           // listed mark is its word, and a stale-head mark every seat refused is public at /equivocation - one seat appended it to its
           // /checkpoints and every honest seat signed an honest stuck page FORFEIT. A peer's mark at another tick (one parent) that THIS seat
