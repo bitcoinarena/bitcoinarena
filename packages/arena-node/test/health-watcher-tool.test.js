@@ -219,3 +219,24 @@ test('names for the chat: seats by number, the top processes as "seat 6 70%"', (
     '50.8 /home/arena/.nvm/versions/node/v24.15.0/bin/node tools/market-bot.mjs --x', '3.0 [chrome] <defunct>'].join('\n');
   assert.equal(topLine(ps), 'seat 6 69%, seat 1 68%, bitcoind 51%, node market-bot.mjs 51%');
 });
+
+// KANBAN #3380 (2026-11-22): Next Block was posted every day from 11-21, every seat refused its series, no seat listed a round - unseen ~2 days
+test('#3380 an app posted today with no open round for 2 h is red, to the chat and to Signal; an open round clears it', async () => {
+  const noNb = { games: GAMES, rounds: HEALTHY.rounds.filter((r) => r.game.id !== NB) };
+  const w = world({ rounds: noNb, load: [1, 1, 1] });
+  const sent = [];
+  w.io.signal = async (text) => { sent.push(text); };
+  const cfg = { ...CFG, signal: { ...CFG.signal, to: '+00000000000' } };
+  let st = {};
+  const firsts = await passes(w, 30, st, cfg);   // 30 passes x 3 min = 90 min: not yet
+  assert.ok(!firsts.r.problems.some((p) => p.key === 'no-open:nextblock'), 'under 2 h: nothing');
+  const later = await passes(w, 12, firsts.st, cfg);   // past 2 h
+  const p = later.r.problems.find((x) => x.key === 'no-open:nextblock');
+  assert.ok(p, JSON.stringify(later.r.problems.map((x) => x.key)));
+  assert.match(p.title, /Next Block: posted, but no open round for \d+ min/);
+  assert.ok(sent.some((t) => /Next Block/.test(t)), 'the alert reached Signal');
+  assert.ok(!later.r.problems.some((x) => x.key === 'no-open:rock-paper-scissors'), 'an app with open rounds is not named');
+  w.rounds = HEALTHY;
+  const back = await passes(w, 1, later.st, cfg);
+  assert.ok(!back.r.problems.some((x) => x.key === 'no-open:nextblock'), 'an open round clears it');
+});

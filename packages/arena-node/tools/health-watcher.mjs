@@ -92,6 +92,7 @@ export function config(env = process.env, argv = []) {
     plannedFile: env.HW_PLANNED_DOWNTIME || `${H}/blwp-testnet4/ops/planned-downtime.json`,
     plannedGraceMs: n('HW_PLANNED_GRACE_MIN', 5) * 60000,
     plannedAutoMs: n('HW_PLANNED_AUTO_GRACE_MIN', 10) * 60000,
+    noOpenMs: Number(env.HW_NO_OPEN_MS) || 2 * 3600000,
     signal: { url: env.HW_SIGNAL_URL || 'http://127.0.0.1:8080/api/v1/rpc', to: env.HW_SIGNAL_TO || '' },
   };
 }
@@ -196,6 +197,20 @@ export function assess(f, prev, cfg) {
     const n = streak('rounds-unread', true);
     problems.push({ key: 'rounds-unread', ticket: '759', title: 'no seat lists rounds', lines: [`asked: ${cfg.listSeats.map(seatName).join(', ')}`], tried: ['nothing'], needs: 'seats checked, see #759', alert: n >= cfg.confirm });
   }
+  // a2. AN APP WITH A SERIES AND NO OPEN ROUND FOR HW_NO_OPEN_MS (2 h, kanban #3380: Next Block was posted every day from 11-21 and no seat listed
+  // one of its rounds, unseen ~2 days): the app posted today, no seat listing a round of it open for entry since; red, to the chat AND Signal
+  st.openSeen = st.openSeen || {};
+  for (const name of postedToday) {
+    const open = (f.lists || []).some((b) => ((b && b.rounds) || []).some((r) => r && r.entryOpen === true && (r.game && r.game.name) === name && Number(r.entryCloseMs) > nowMs));
+    if (open || !(name in st.openSeen)) { st.openSeen[name] = nowMs; if (open) continue; }
+    const since = st.openSeen[name];
+    if (f.lists.every((x) => !x) || nowMs - since < cfg.noOpenMs) continue;
+    seen.add(`no-open:${name}`);
+    problems.push({ key: `no-open:${name}`, ticket: '3380', title: `${appName(name)}: posted, but no open round for ${mins(nowMs - since)} min`,
+      lines: [`no seat lists an open ${appName(name)} round since ${hm(since)}Z; check the seats' [series] lines (a refused config, a game not hosted)`],
+      tried: ['nothing (read-only)'], needs: 'the day\'s series checked, an emergency grid the seats take', alert: true, signal: true });
+  }
+  for (const name of Object.keys(st.openSeen)) if (!postedToday.has(name)) delete st.openSeen[name];
   for (const [name, c] of cells) if (c.c === 'warn' && /not seated/.test(c.t)) problems.push({ key: `partly:${name}`, ticket: '758', title: `${name}: ${c.t}`, lines: [], alert: false });
 
   // b. SEATS
@@ -513,7 +528,7 @@ export async function pass(io, cfg, prev) {
     if (cfg.dry) { posted.push({ ...a, dry: true }); markAlerted(state, a, problems, nowMs); continue; }
     try { await io.post(a.text); markAlerted(state, a, problems, nowMs); posted.push({ ...a, ok: true }); } catch (e) { posted.push({ ...a, ok: false, why: e.message }); }
     // the money alerts also reach the owner's phone (kanban #2773): new, again and resolved; a failed Signal send is said in the log
-    if (/^gateway:/.test(a.key) && io.signal && cfg.signal.to) {
+    if (/^(gateway|no-open):/.test(a.key) && io.signal && cfg.signal.to) {
       try { await io.signal(a.text); posted.push({ ...a, kind: `${a.kind} signal`, ok: true }); } catch (e) { posted.push({ ...a, kind: `${a.kind} signal`, ok: false, why: e.message }); }
     }
   }

@@ -177,6 +177,25 @@ export function dutyFieldsOf(game, entry, { core = '', preferCore = '', base = {
   return { ok: false, why: `no duty fields for ${game}` };
 }
 
+/**
+ * DOES THE CORE A SERIES NAMES RUN THE CONFIG IT NAMES (kanban #3380): the hosting seat writes a round only when its core lists that config
+ * (27A.7.5 "not selectable for it"); a template (a series' contract fields: gameId, simCoreHash, configHash) is checked against the manifests
+ * of `catalog` (catalogOf). A market (zero core) or a game or core the catalog does not hold is not judged here: { ok: true, known: false }.
+ * -> { ok: true, known } | { ok: false, known: true, why }
+ */
+export function configRunByCore(t, catalog) {
+  const hex = (x) => (x instanceof Uint8Array ? toHex(x) : String(x || '')).toLowerCase();
+  if (!t || !catalog) return { ok: true, known: false };
+  const core = hex(t.simCoreHash), cfg = hex(t.configHash);
+  if (!/^[0-9a-f]{64}$/.test(core) || /^0+$/.test(core)) return { ok: true, known: false };
+  const entry = catalog.get(hex(t.gameId));
+  const c = entry && entry.manifest && (entry.manifest.cores || []).find((x) => hex(x.hash) === core);
+  if (!c) return { ok: true, known: false };
+  const configs = (c.configs || []).map(hex);
+  if (configs.includes(cfg)) return { ok: true, known: true };
+  return { ok: false, known: true, why: `its core ${core.slice(0, 8)} (${entry.name} ${entry.version}) runs config ${configs.map((x) => x.slice(0, 8)).join(', ') || '(none)'}, not ${cfg.slice(0, 16)}: every seat refuses it` };
+}
+
 /** The block hashes (display order, as getblockhash prints them) of a seat's GET /headers - 80-byte headers end to end. */
 export function headerHashes(bytes, blockHashOf) {
   const out = new Set();

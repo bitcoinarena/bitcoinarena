@@ -321,6 +321,10 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
       ballot: seat && typeof seat.ballotFor === 'function' ? seat.ballotFor({ ...t.contract, ...kind.fields }) : null });
     if (!named.ok) { say({ dutyDay: 'CONFIG NOT KNOWN', game, why: named.why }); return { ok: false, why: named.why }; }
     kind = { ...kind, fields: { ...kind.fields, configHash: named.configHash } };
+    // AND ONLY A CONFIG THE CORE RUNS IS POSTED (kanban #3380): a day the seats refuse is no day, and it would take an emergency's place
+    { const cat = await gridBaseOf().seatCatalog().catch(() => null);
+      const runs = guard.configRunByCore({ ...t.contract, ...kind.fields }, cat);
+      if (!runs.ok) { say({ dutyDay: 'CONFIG NOT RUN BY ITS CORE', game, why: runs.why }); return { ok: false, why: `nothing posted: ${runs.why}` }; } }
     // THE PROTOCOL A GRID IS WRITTEN IN: the day's shape's, or the newest version's requirement when that is higher - raised to the
     // operator's floor for the app (ARENA_DUTY_PROTOCOL_<APP>, kanban #1486) once the census at that version can draw the committee
     const floor = dutyProtocolFloor(env, game);
@@ -398,7 +402,7 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
       announce, publicSend: env.ARENA_DUTY_ESPLORA === '0' ? null : publicSend,
       // WHO A DAY MARKER IS FROM (kanban #1168): the creator of a series this seat holds or was announced; ARENA_DUTY_CREATORS the creator
       // keys (hex, comma-separated) the operator counts as duty posters beside the day's duty order - a runner whose key is not a census node
-      creatorOf, seriesInfoOf, creators: String(env.ARENA_DUTY_CREATORS || '').split(',').map((x) => x.trim()).filter(Boolean) });
+      creatorOf, seriesInfoOf, seriesRefused, creators: String(env.ARENA_DUTY_CREATORS || '').split(',').map((x) => x.trim()).filter(Boolean) });
     engines.set(key, e);
     return e;
   };
@@ -427,6 +431,25 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
     const h = infos.get(String(idHex)); if (h) return h;
     const a = typeof seat.announcedOf === 'function' ? seat.announcedOf(String(idHex)) : null;
     return a && a.creator ? { creator: String(a.creator), gameId: a.gameId || null, firstCloseMs: Number(a.firstCloseMs) } : null;
+  };
+  // A POSTING EVERY SEAT REFUSES (kanban #3380): each series of it this seat holds names a config its core does not run (configRunByCore) -
+  // the why, else null. Such a posting is no posting of the day: it holds no emergency grid back and takes no place under the cap
+  const seriesRefused = async (ids) => {
+    const list = (ids || []).map(String);
+    if (!list.length) return null;
+    const cat = await gridBaseOf().seatCatalog().catch(() => null);
+    if (!cat || !cat.size) return null;
+    const byId = new Map();
+    for (const t of seat.heldTemplates()) { try { byId.set(toHex(seriesId(t)), t); } catch { /* not a series */ } }
+    let why = null;
+    for (const id of list) {
+      const t = byId.get(id);
+      if (!t) return null;                       // a series not held here is not judged
+      const r = guard.configRunByCore(t, cat);
+      if (r.ok) return null;
+      why = why || r.why;
+    }
+    return why;
   };
   let gridBases = null;
   const gridBaseOf = () => gridBases || (gridBases = createGridBase({ chainCall: call,

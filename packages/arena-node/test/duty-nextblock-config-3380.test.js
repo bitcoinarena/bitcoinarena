@@ -29,3 +29,16 @@ test('a template config the core runs is kept, a field config wins, and no core 
   assert.equal(toHex(dayConfigOf({ fieldsConfig: fromHex(id(0x0d)), templateConfig: fromHex(id(0xf5)), coreConfigs: [id(0x21)] })), id(0x0d));
   assert.equal(toHex(dayConfigOf({ templateConfig: fromHex(id(0x33)), coreConfigs: null })), id(0x33));
 });
+
+test('configRunByCore: a template whose core does not run its config is refused by name; a market or an unknown core is not judged', async () => {
+  const { configRunByCore } = await import('../src/duty-guard.js');
+  const cat = new Map([[id(8), { id: id(8), name: 'nextblock', version: 8, manifest: v8.manifest }]]);
+  const t = (cfg, coreH = 0x7d, g = 8) => ({ gameId: fromHex(id(g)), simCoreHash: fromHex(id(coreH)), configHash: fromHex(id(cfg)) });
+  assert.deepEqual(configRunByCore(t(0x21), cat), { ok: true, known: true });
+  const zero = configRunByCore({ ...t(0x21), configHash: new Uint8Array(32) }, cat);
+  assert.equal(zero.ok, false);
+  assert.match(zero.why, /runs config 21212121, f5f5f5f5, not 0000000000000000/);
+  assert.equal(configRunByCore({ ...t(0x21), simCoreHash: new Uint8Array(32) }, cat).known, false);
+  assert.equal(configRunByCore(t(0x21, 0x99), cat).known, false);
+  assert.equal(configRunByCore(t(0x21, 0x7d, 9), cat).known, false);
+});

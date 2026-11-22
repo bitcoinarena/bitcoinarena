@@ -292,6 +292,25 @@ test('(d) a day not drawable on the seats for the newest version gets an emergen
   assert.equal(em.marker.tag, tagOf('nextblock-day-emergency'));
 });
 
+// KANBAN #3380 (2026-11-22): three Next Block emergency grids naming config 00..00 - refused by every seat - filled the cap of three, and the
+// grid the seats would take was never posted. A posting whose series every seat refuses (seriesRefused) is not under the cap
+test('#3380 emergency grids every seat refuses do not fill the cap: the fourth, valid one is posted', async () => {
+  const run = async (seriesRefused) => {
+    const dir = mkdtempSync(join(tmpdir(), 'duty-'));
+    const pub = txOf([dutyMarkerOutput(DAY - 1, 'nextblock-day'), seriesPublicationOutput(new Uint8Array(32).fill(7))]);
+    const bad = [0x81, 0x82, 0x83].map((b) => txOf([dutyMarkerOutput(DAY - 1, 'nextblock-day-emergency'), seriesPublicationOutput(new Uint8Array(32).fill(b))]));
+    const undrawn = () => ({ rounds: [0, 1, 2].map((i) => ({ game: { id: GID }, startTime: new Date(T0 + 3 * H + i * 90000).toISOString(), committee: { drawn: false, why: 'no committee: 0 game nodes' } })) });
+    const w = world({ local: [ORDER[0]], nowMs: T0 + 30 * MIN, dir, inBlocks: [{ atMs: T0 - 20 * H, raw: pub.raw }, ...bad.map((b) => ({ atMs: T0 - 19 * H, raw: b.raw }))],
+      seats: ['http://s1', 'http://s2', 'http://s3'], seatRounds: undrawn });
+    keptPosting(dir, { slot: DAY - 1, txid: pub.txid, committeeMs: T0 - 12 * H, firstStartMs: T0, postedAtMs: T0 - 8 * H });
+    await createDayDuty({ ...w.opts, seriesRefused }).look();
+    return w.did.published.find((p) => p.marker.slot === DAY - 1 && p.marker.tag === tagOf('nextblock-day-emergency'));
+  };
+  assert.equal(await run(null), undefined, 'three emergency grids counted: the cap holds the fourth back');
+  const refused = async (ids) => (ids.some((id) => /^8[123]/.test(id)) ? 'its core runs config 2170f250, not 0000000000000000' : null);
+  assert.ok(await run(refused), 'the three refused ones do not count: the valid grid is posted');
+});
+
 // SEAT 4, 2026-10-26 11:38-11:43Z (ARENA_DUTY_POST=on, dry): old rounds' views timed out every few seconds, every census read was held "a
 // block read failed less than a minute ago", the day's anchor census never read - GET /duty "anchor: null, order: []" - and its first pass
 // saw no seat and planned emergency grids for days that were posted and drawn
