@@ -76,7 +76,7 @@ test('#2847: an author with standing survives any number of stranger writes; wit
   } finally { for (const w of socks2) w.terminate(); await r2.close(); }
 });
 
-test('#2847: a seed kept 7 days here gives its author standing (the relay\'s own clock, not the author\'s created_at)', async () => {
+test('#2987: a seed kept 7 days here no longer gives its author standing (owner decision 2026-11-22 supersedes the #2847 seed rule)', async () => {
   let t = Date.now();
   const r = await startRelay({ port: 0, limits: { totalEvents: 3, powBase: 8, powMax: 10 }, pow: true, now: () => t });
   const socks = [];
@@ -87,6 +87,6 @@ test('#2847: a seed kept 7 days here gives its author standing (the relay\'s own
     await publish(r.port, [plain(old, { at, content: '{"name":"old"}' })], socks);
     t += STANDING_SEED_MS + 1000;
     for (let i = 0; i < 6; i++) await publish(r.port, [mined(key(), { at: at + 1 + i }, 10)], socks);
-    assert.equal(await kept(r.port, old.pub, socks), 1, 'its profile stays: its seed was kept 7 days');
+    assert.equal(await kept(r.port, old.pub, socks), 0, 'its profile gives way like any author without standing: a seed\'s age is no standing');
   } finally { for (const w of socks) w.terminate(); await r.close(); }
 });
