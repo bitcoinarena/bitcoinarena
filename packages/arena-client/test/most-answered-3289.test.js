@@ -46,3 +46,21 @@ test('lobby: seven of eight seats answered - the eighth gets a short time more, 
   assert.ok(took < 40 + LOBBY_MOST_MS + 400, `drawn after ${took} ms`);
   assert.deepEqual(got.unanswered, ['http://s7']);
 });
+
+test('lobby: half of the seats answered at once, the other half silent - the rest get twice that time (at least 0.5 s), not 2.5 s', async () => {
+  const t0 = Date.now();
+  const got = await fetchLobby({ nodes, fetcher: slowFetcher(new Set(['http://s4', 'http://s5', 'http://s6', 'http://s7']), () => ({ node: 'ab'.repeat(32), nowMs: Date.now(), rounds: [] })), verify: () => true, answerMs: 10000 });
+  const took = Date.now() - t0;
+  assert.ok(took < 40 + LOBBY_MOST_MS + 400, `drawn after ${took} ms`);
+  assert.equal(got.unanswered.length, 4);
+});
+
+test('lobby: the first half took 1.5 s - the rest still get the whole 2.5 s', async () => {
+  const late = (url, opts = {}) => new Promise((resolve, reject) => {
+    const o = new URL(url).origin, ms = ['http://s4', 'http://s5', 'http://s6', 'http://s7'].includes(o) ? 3700 : 1500;
+    const t = setTimeout(() => resolve(new Response(JSON.stringify({ node: 'ab'.repeat(32), nowMs: Date.now(), rounds: [] }), { status: 200 })), ms);
+    if (opts.signal) opts.signal.addEventListener('abort', () => { clearTimeout(t); reject(new Error('aborted')); });
+  });
+  const got = await fetchLobby({ nodes, fetcher: late, verify: () => true, answerMs: 10000 });
+  assert.deepEqual(got.unanswered, [], 'the slower half came in within 2.5 s of the first and counts');
+});

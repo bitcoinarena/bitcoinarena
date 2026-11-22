@@ -44098,11 +44098,15 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
   // ONLY THE OPENED GAME'S ROUNDS (kanban #1391, measured on live UI 605: a game screen read every seat's whole listing, 600-800 KB of every game, every few
   // seconds): with `preferGames` the seats are asked for those games alone (GET /rounds?games=); a seat before it answers every game, as before
   const gamesQuery = Array.isArray(preferGames) && preferGames.length && preferGames.length <= 16 ? `&games=${preferGames.map((g) => String(g).toLowerCase()).join(',')}` : '';
+  const askedAt = Date.now();
   const answers = await Promise.all(unique.map((node) => {
     // AT MOST 8 UPCOMING ROUNDS OF EACH SERIES (`next`): a node holding two series lists ~1150 rounds otherwise - 63 s,
     // past what the lobby waits for a node. A lobby shows one round per kind; eight leaves the lead's choice its room.
     const one = ask(`${String(node).replace(/\/+$/, '')}/rounds?next=${LOBBY_PER_SERIES}&compact=1${gamesQuery}`).then((r) => ({ r }), (e) => ({ e }));
-    one.then(() => { answeredCount += 1; if (unique.length > 2 && answeredCount * 2 >= unique.length) setTimeout(settle, answeredCount * 4 >= unique.length * 3 && unique.length >= 4 ? LOBBY_MOST_MS : LOBBY_LAST_MS); });
+    // HOW LONG MORE, BY HOW QUICK THE FIRST HALF WAS (kanban #3289): twice the time the first half took, at least LOBBY_MOST_MS and at most
+    // LOBBY_LAST_MS - seats that answered in 0.15 s are not waited 2.5 s past for the silent ones, seats that took 4 s still are
+    one.then(() => { answeredCount += 1; if (unique.length > 2 && answeredCount * 2 >= unique.length) setTimeout(settle, answeredCount * 4 >= unique.length * 3 && unique.length >= 4 ? LOBBY_MOST_MS
+      : Math.min(LOBBY_LAST_MS, Math.max(LOBBY_MOST_MS, 2 * (Date.now() - askedAt)))); });
     return Promise.race([one, settled.then(() => ({ e: Object.assign(new Error(`did not answer within ${LOBBY_LAST_MS} ms of half the seats`), { silent: true }) }))]);
   }));
   for (const [k, node] of unique.entries()) {
