@@ -185,6 +185,20 @@ export const CENSUS_PROVIDERS_TO_LOCK = 2;
 export async function evidenceFor(roundIdHex, contract, nodes, { fetcher, skip = new Set(), providers = CENSUS_PROVIDERS_TO_LOCK }) {
   const key = toHex(contract.censusRoot);
   if (keptCensus.has(key) && !skip.size) return { ok: true, entries: keptCensus.get(key), from: 'kept' };
+  // ONE READ OF A CENSUS AT A TIME (kanban #3289, measured on the live page: 56 GET /census in one load, every seat asked by each of four
+  // callers at the same moment): with nothing skipped, a caller that finds a read of the same census root under way takes its answer
+  // when it stands (`providers` distinct seats); else it reads, as before
+  if (!skip.size && providers === CENSUS_PROVIDERS_TO_LOCK) {
+    const going = censusReads.get(key);
+    if (going) { const got = await going.catch(() => null); if (got && got.ok) return got; }
+    const read = readEvidence(roundIdHex, contract, nodes, { fetcher, skip, providers, key });
+    censusReads.set(key, read);
+    try { return await read; } finally { if (censusReads.get(key) === read) censusReads.delete(key); }
+  }
+  return readEvidence(roundIdHex, contract, nodes, { fetcher, skip, providers, key });
+}
+const censusReads = new Map();    // census root -> the read under way
+async function readEvidence(roundIdHex, contract, nodes, { fetcher, skip, providers, key }) {
   // EVERY SEAT ASKED AT ONCE, THE FIRST `providers` DISTINCT ONES THAT HAND A USABLE CENSUS TAKEN (kanban #3010, feedback #348: an RPS tap with 7-9 s on the
   // timer was "too late"; measured live 2026-11-19 05:42Z, one tap's seat wait was 5.7 s while guardian-2/-3/-4 and fed2-7 answered "signal timed
   // out" over tn4): the seats were asked one after another, each read allowed READ_MS, so a slow seat early in the list held the tap until it answered.

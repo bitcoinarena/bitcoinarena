@@ -28,3 +28,22 @@ test('two committees of the same network asked at once: the headers are read onc
   assert.equal(new Set(headers).size, headers.length, `each source asked once while the read runs: ${headers.join(' ')}`);
   await Promise.allSettled([one, two]);
 });
+
+test('and the census of one root asked by two callers at once: each seat asked once while the read runs', async () => {
+  const { evidenceFor } = await import('../src/committee.js');
+  const b = (n) => new Uint8Array(32).fill(n);
+  const asked = [];
+  const fetcher = (u, { signal } = {}) => new Promise((resolve, reject) => {
+    asked.push(String(u));
+    setTimeout(() => reject(new Error('down')), 150);
+    if (signal) signal.addEventListener('abort', () => reject(new Error('aborted')));
+  });
+  const contract = { censusRoot: b(7) };
+  const nodes = ['https://s1', 'https://s2', 'https://s3'];
+  const one = evidenceFor('ab'.repeat(32), contract, nodes, { fetcher });
+  const two = evidenceFor('ab'.repeat(32), contract, nodes, { fetcher });
+  await new Promise((r) => setTimeout(r, 60));
+  assert.equal(asked.length, 3, asked.join(' '));
+  const [x, y] = await Promise.all([one, two]);
+  assert.equal(x.ok, false); assert.equal(y.ok, false);
+});
