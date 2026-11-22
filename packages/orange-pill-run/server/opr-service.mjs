@@ -738,11 +738,17 @@ export function createOpr(o = {}) {
   const adminSha = String(cfg.adminSha || '').trim().toLowerCase();
   const fails = new Map();
   const isAdminCode = (code) => /^[0-9a-f]{64}$/.test(adminSha) && !!code && timingSafeEqual(Buffer.from(sha(code)), Buffer.from(adminSha));
+  // THE ADMIN DOOR (kanban #3284, the faucet's #3263 ported): a caller is the Worker-named address (x-arena-ip under the Worker's key) or, on this
+  // host, the socket's - each by ipKey (an IPv6 /64 is one caller); the all-callers count locks only callers that sent a wrong code themselves, so
+  // strangers never lock out the owner. A request that came in through a proxy without the Worker's key (the public funnel path /opr reaches
+  // 127.0.0.1:18877 with X-Forwarded-For) is no admin caller at all: refused before any count, so it cannot lock the local 127.0.0.1 caller
+  const proxied = (req) => !fromWorker(req) && ['x-forwarded-for', 'forwarded', 'x-forwarded-host', 'tailscale-funnel-request'].some((h) => req.headers[h] != null);
   function adminGate(req, ip) {
-    const who = `admin:${ip || 'unnamed'}`, t = now();
+    if (proxied(req)) return [403, 'the admin door is open through the site or on this host only'];
+    const who = `admin:${ipKey(ip) || 'unnamed'}`, t = now();
     for (const [k, v] of fails) if (t - v.since > ADMIN_TRY_WINDOW_MS) fails.delete(k);
     const mine = fails.get(who), all = fails.get('admin:*');
-    if ((mine && mine.n >= ADMIN_TRIES_PER_CALLER) || (all && all.n >= ADMIN_TRIES_ALL)) return [429, 'too many wrong admin codes - try again later'];
+    if ((mine && mine.n >= ADMIN_TRIES_PER_CALLER) || (all && all.n >= ADMIN_TRIES_ALL && mine && mine.n > 0)) return [429, 'too many wrong admin codes - try again later'];
     if (!isAdminCode(String(req.headers['x-arena-admin'] || '').trim())) {
       for (const k of [who, 'admin:*']) { const v = fails.get(k) || { n: 0, since: t }; v.n++; fails.set(k, v); }
       return [403, 'not the admin code'];
