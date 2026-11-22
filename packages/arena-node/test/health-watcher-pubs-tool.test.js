@@ -235,7 +235,7 @@ function esploraWorld({ cases = CASES, spenderPayload = null, down = false } = {
     if ((m = /^\/tx\/([0-9a-f]{64})\/status$/.exec(path))) return w.conf.has(m[1]) || w.mem.has(m[1]) ? r(200, status(m[1])) : r(404, 'Transaction not found');
     if ((m = /^\/tx\/([0-9a-f]{64})\/outspend\/(\d+)$/.exec(path))) { const by = w.outspend.get(`${m[1]}:${m[2]}`); return r(200, by ? { spent: true, txid: by, vin: 0, status: status(by) } : { spent: false }); }
     if ((m = /^\/tx\/([0-9a-f]{64})\/hex$/.exec(path))) return w.txs.has(m[1]) ? r(200, w.txs.get(m[1]).hex) : r(404, 'Transaction not found');
-    if ((m = /^\/tx\/([0-9a-f]{64})$/.exec(path))) { const x = w.txs.get(m[1]); return x ? r(200, { ...x, status: status(m[1]) }) : r(404, 'Transaction not found'); }
+    if ((m = /^\/tx\/([0-9a-f]{64})$/.exec(path))) { const x = w.txs.get(m[1]); return x ? r(200, { ...x, status: status(m[1]) }) : w.conf.has(m[1]) || w.mem.has(m[1]) ? r(200, { txid: m[1], status: status(m[1]) }) : r(404, 'Transaction not found'); }
     if (method === 'POST' && path === '/tx') { w.sent.push(body); return r(400, 'sendrawtransaction RPC error: {"code":-25,"message":"bad-txns-inputs-missingorspent"}'); }
     return r(404, 'not found');
   };
@@ -283,7 +283,7 @@ test('#1124 the three real replaced publications: payload landed in another tx -
   // the next passes: the replacements read on the public chain, 59 and 202 deep there and confirmed on ours - done with; the old alert
   // RESOLVED; the replaced txids not tracked again
   ({ r, st } = await go(w, st, CFGE(), 2));
-  for (const c of CASES) { assert.ok(w.http.includes(`GET /tx/${c.by}/status`)); assert.equal(st.pubs[c.by], undefined); assert.equal(st.pubs[c.txid], undefined); }
+  for (const c of CASES) { assert.ok(w.http.includes(`GET /tx/${c.by}`)); assert.equal(st.pubs[c.by], undefined); assert.equal(st.pubs[c.txid], undefined); }
   assert.equal(w.posts.filter((t) => /RESOLVED: round publication not confirmed/.test(t)).length, 1, w.posts.join('\n'));
   assert.equal(w.posts.filter((t) => /PROBLEM|STILL/.test(t)).length, 0);
 });
@@ -330,4 +330,19 @@ test('#1124 the Esplora call adapter, payload decoding, time spans', async () =>
   assert.deepEqual(decodePayload(CASES[0].payload), { series: ['ba68579a119743102b2675c1634aabb36390d5239583a5ede9db3de7bdb45762', '0b94d74f172b8171f0fee3038c01af237f7db40d943b5913195c81efc7b6c7a1'], rounds: [], days: [Date.UTC(2026, 10, 4)] });
   assert.equal(spanText(Date.UTC(2026, 10, 5), Date.UTC(2026, 10, 6)), '11-05 00:00-24:00Z');
   assert.equal(spanText(Date.UTC(2026, 10, 4, 10, 41), Date.UTC(2026, 10, 5, 22)), '11-04 10:41Z-11-05 22:00Z');
+});
+
+test('#2773 an unconfirmed publication for later (tomorrow\'s series published tonight) is logged; alerted when its rounds are 3 h away or it waited 2 h', async () => {
+  for (const [startIn, alertedAt] of [[20 * 3600000, 'waited'], [2 * 3600000, 'first'], [5 * 3600000, 'soon']]) {
+    const w = makeWorld();
+    for (const g of w.pending.grids) { g.firstWindowMs = String(NOW + startIn); g.lastCloseMs = String(NOW + startIn + 14 * 3600000); }
+    let { r, st } = await go(w, {});
+    if (alertedAt === 'first') { assert.equal(pubAlerts(w).length, 1); continue; }
+    assert.equal(pubAlerts(w).length, 0, w.posts.join('\n'));
+    assert.match(r.problems.find((p) => p.key === 'publications').title, /^round publication not confirmed \(not urgent: its rounds start in (20|5) h\)$/);
+    w.now += (alertedAt === 'soon' ? 2 * 3600000 + 60000 : 2 * 3600000 + 60000);
+    ({ r, st } = await go(w, st));
+    // 'soon': 3 h from the start now (and 2 h waited); 'waited': unconfirmed over 2 h
+    assert.equal(pubAlerts(w).length, 1, alertedAt);
+  }
 });

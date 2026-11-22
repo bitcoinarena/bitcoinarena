@@ -19,6 +19,7 @@ import { isIP, BlockList } from 'node:net';
 import { request as httpsRequest } from 'node:https';
 import { request as httpRequest } from 'node:http';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
+import { localHostName } from '../../arena-client/src/node-discovery.js';   // kanban #3124: one rule for the seat, the page and this file
 
 const INTERNAL = new BlockList();
 for (const [a, p] of [['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16], ['172.16.0.0', 12], ['192.0.0.0', 24],
@@ -189,7 +190,13 @@ export function walletFetch(url, { signal, headers } = {}) {
     const req = httpsRequest(url, { method: 'GET', headers, lookup: globalLookup, signal }, (res) => {
       const parts = []; let n = 0;
       res.on('data', (c) => { n += c.length; if (n > WALLET_ANSWER_MOST) { req.destroy(new Error('its answer is too large')); return; } parts.push(c); });
-      res.on('end', () => resolve(new Response(Buffer.concat(parts), { status: res.statusCode >= 200 && res.statusCode <= 599 ? res.statusCode : 502 })));
+      // NEVER A NULL-BODY STATUS INTO new Response (kanban #2516): a wallet answering 204/205/304 made the constructor throw inside this
+      // listener - an uncaught exception that killed the whole faucet. Such an answer, and any status outside 200-599, is a bodiless 502,
+      // and whatever still throws rejects the fetch instead of escaping the listener.
+      res.on('end', () => {
+        const st = res.statusCode, bad = !(st >= 200 && st <= 599) || st === 204 || st === 205 || st === 304;
+        try { resolve(bad ? new Response(null, { status: 502 }) : new Response(Buffer.concat(parts), { status: st })); } catch (e) { reject(e); }
+      });
       res.on('error', reject);
     });
     req.on('error', reject);
@@ -204,7 +211,7 @@ const LOCAL_SUFFIX = /(^|\.)(localhost|local|internal|lan|home|arpa|localdomain|
 export function internalByName(hostname) {
   const host = String(hostname || '').toLowerCase().replace(/\.$/, '');
   return !host || /^\[|^\d+(\.\d+){3}$|^\d+$|^0x/i.test(host) || !host.includes('.') || isIP(host) !== 0 || LOCAL_SUFFIX.test(host)
-    || /(^|[.-])\d{1,3}([.-]\d{1,3}){3}([.-]|$)/.test(host);
+    || /(^|[.-])\d{1,3}([.-]\d{1,3}){3}([.-]|$)/.test(host) || localHostName(host);   // kanban #3124: never less than the seat's and the page's rule
 }
 
 /** The origin-free "host[:port]" a URL names, lower case, for the operator's own list of local LNURL hosts. */

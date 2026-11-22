@@ -166,3 +166,15 @@ export function seatingEquivocation(a, b, check) {
   if (!both.length) return { ok: false, why: 'those seatings share no signer' };
   return { ok: true, signers: both, roundId: x.seating.roundId, role: x.seating.role };
 }
+
+/**
+ * THE ORDER OF SEATINGS (kanban #738, shared with the page by kanban #2537): seating `a` comes before seating `b` (node keys hex, both
+ * in score order, `drawnKeys` the round's draw in score order) when `b` seats at least as many and its i-th seated ranks no lower in
+ * the draw than `a`'s i-th, for every i of `a`. Honest seats re-sign only forward in this order, so a certificate for a seating that
+ * comes before another standing one is made of signatures its signers gave up (superseded, #1812). Not part of any encoding.
+ */
+export function seatingBefore(drawnKeys, a, b) {
+  if (a.join(',') === b.join(',') || b.length < a.length) return false;
+  const r = new Map(drawnKeys.map((k, i) => [typeof k === 'string' ? k : toHex(k), i]));
+  return a.every((k, i) => r.has(k) && r.has(b[i]) && r.get(b[i]) <= r.get(k));
+}

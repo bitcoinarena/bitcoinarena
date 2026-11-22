@@ -65,14 +65,62 @@ export const AUTH_AGE_MOST_S = 60;
 // seedRunSpans, the same function log-level.js redact masks with - any non-letter between the words (list numbers in any layout, a tab table, a JSON
 // array, quotes, dots, underscores, "+", zero-width spaces), 4-letter BIP39 prefixes counted as their words. A list number just before the first word
 // ("1.", "(1)", "#1", "1-") goes with the run.
+// EVERY WALLET KEY SPELLING, NOT ONLY NSEC AND BARE HEX (kanban #2632, a bypass of #1472): an extended private key (xprv/tprv/yprv/zprv/uprv/vprv and
+// the multisig Yprv/Zprv/Uprv/Vprv, 111 base58 characters), a 64-hex key glued to anything that is not hex ("0x" + 64 hex: \b never falls between the x
+// and the hex; "key_<hex>" alike) and a WIF private key (5/K/L mainnet, 9/c testnet, 51 or 52 base58 characters) went through and reached the stored
+// report and the chat post. scrubKeys is the one door every report passes (take's happened/expected, the kept event's content and tags, the debug read,
+// faucet.js feedbackDecide), so the keys are removed here by their shape. A key with a typo still counts: nothing checks its checksum.
+const WALLET_KEYS = Object.freeze([
+  /\b(nsec|ncryptsec)1[0-9a-z]{20,}\b/gi,
+  /\b[xtyzuvXYZUV]prv[1-9A-HJ-NP-Za-km-z]{100,112}\b/g,
+  /(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])/gi,
+  /\b[5KLc9][1-9A-HJ-NP-Za-km-z]{50,51}\b/g,
+]);
+/**
+ * A TICKET'S TEXT FOR A DUPLICATE'S REPORTER (kanban #2745): scrubKeys, then anything that reads as a key, token, path, cookie, address or code -
+ * hex of 32+ characters, long base64/base58-like runs, filesystem paths, cookie pairs, admin/token/secret assignments, IPv4 and IPv6 addresses - is "…".
+ */
+export const scrubTicket = (t) => scrubKeys(String(t || ''))
+  .replace(/(?<![\w:])(?=[0-9a-f:]*(?:::|[a-f][0-9a-f]*:|:[0-9a-f]*[a-f]))(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}(?![\w:])/gi, '…')
+  .replace(/\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b/g, '…')
+  .replace(/\b(?:npub|nsec|lnurl|lnbc|lntb)1[0-9a-z]{20,}\b/gi, '…')
+  .replace(/\b[0-9a-f]{32,}\b/gi, '…')
+  .replace(/\b[A-Za-z0-9_\-+/=]{32,}\b/g, '…')
+  .replace(/(?:~|\.{1,2})?\/(?:[\w.@+-]+\/)+[\w.@+-]*/g, '…')
+  .replace(/\b[\w-]*(?:token|secret|password|passwd|cookie|admin|auth|key|code|session|bearer)[\w-]*\s*[:=]\s*\S+/gi, '…')
+  .replace(/\b[A-Za-z_][\w-]*=[^\s;]{8,};?/g, '…');
+
 export const scrubKeys = (t) => {
-  let s = String(t).replace(/\b(nsec|ncryptsec)1[0-9a-z]{20,}\b/gi, '[removed]').replace(/\b[0-9a-f]{64}\b/gi, '[removed]');
+  let s = String(t);
+  for (const re of WALLET_KEYS) s = s.replace(re, '[removed]');
   for (const [a, b] of seedRunSpans(s).reverse()) {
     const lead = /[#(]?\d{1,2}[ \t]*[.):-]?[ \t]*$/.exec(s.slice(0, a));
     s = s.slice(0, lead ? lead.index : a) + '[removed]' + s.slice(b);
   }
   return s;
 };
+// A SEED SPLIT OVER THE FORM'S BOXES IS ONE SEED (kanban #2676, #1489 r2-nostr-12, a way round #1472): seedRunSpans counts one unbroken run of 12
+// words, and each box was scrubbed alone - six words in "what happened", six in "what you expected" were two short runs, kept in the row, in the
+// kept event (its JSON has the key "expected" between them) and in the chat post ("Expected:" between them). The boxes are now read as one text,
+// joined by a space, and a run found across them is removed from each box it stands in; the form's own labels ("Expected:", "Bounty address:")
+// do not break a run in a text built from the boxes.
+const FORM_LABELS = /\b(?:Expected|Bounty address):/g;
+const cutSpans = (t, spans) => { let s = t; for (const [a, b] of [...spans].sort((x, y) => y[0] - x[0])) s = s.slice(0, a) + '[removed]' + s.slice(b); return s; };
+/** `fields` scrubbed as one text (kanban #2676): each a string; answers them in the same order, every seed run across them removed, then scrubKeys. */
+export function scrubFields(fields) {
+  const parts = fields.map((f) => String(f ?? ''));
+  const joined = parts.join(' ');
+  const spans = seedRunSpans(joined.replace(FORM_LABELS, (m) => ' '.repeat(m.length)));
+  let at = 0;
+  return parts.map((f) => {
+    const from = at, to = at + f.length; at = to + 1;
+    const mine = spans.filter(([a, b]) => a < to && b > from).map(([a, b]) => [Math.max(a, from) - from, Math.min(b, to) - from]);
+    return scrubKeys(cutSpans(f, mine));
+  });
+}
+/** A text built from the form's boxes (the chat post): a seed run across its labels is removed too (kanban #2676). */
+export const scrubAcrossLabels = (t) => { const s = String(t ?? ''); return scrubKeys(cutSpans(s, seedRunSpans(s.replace(FORM_LABELS, (m) => ' '.repeat(m.length))))); };
+const stringsOf = (v, out = [], depth = 0) => { if (typeof v === 'string') out.push(v); else if (v && typeof v === 'object' && depth <= DEEP_MOST) for (const x of Object.values(v)) stringsOf(x, out, depth + 1); return out; };
 // WHAT IS KEPT OF THE SIGNED EVENT (kanban #1737, #1799, #1843, #1858): the event as kept had its raw content - the seed the columns had lost stayed on
 // disk in `event`, and `debug` was scrubbed only when read. The kept copy now holds every string of the content scrubbed (happened, expected, debug,
 // anything else) and every tag value scrubbed but the hex ones the store reads (node, screenshot, round, p, e). Its id and sig stay for reference: the
@@ -97,7 +145,9 @@ export function keptEvent(e) {
   const tags = (Array.isArray(e.tags) ? e.tags : []).filter((t) => Array.isArray(t) && KEPT_TAGS.has(t[0]))
     .map((t) => t.map((x, i) => (i === 0 || typeof x !== 'string' || hexTagValue(t, x, i) ? x : scrubKeys(x))));
   const kept = { id: e.id, pubkey: e.pubkey, created_at: e.created_at, kind: e.kind, tags, content, sig: e.sig };
-  if (!seedRunSpans(JSON.stringify([kept.tags, kept.content])).length) return kept;
+  // (kanban #2676) and the content's strings read as one text, with no JSON key between them
+  let joined = ''; try { joined = stringsOf(JSON.parse(content)).join(' '); } catch { joined = String(content); }
+  if (!seedRunSpans(JSON.stringify([kept.tags, kept.content])).length && !seedRunSpans(joined).length) return kept;
   const plain = tags.filter((t) => hexTagValue(t, t[1], 1) || (STRICT_TAG[t[0]] && typeof t[1] === 'string' && STRICT_TAG[t[0]].test(t[1]))).map((t) => [t[0], t[1]]);
   return { ...kept, tags: plain, content: JSON.stringify({ removed: 'a seed phrase was found in this report: its content is not kept' }) };
 }
@@ -105,6 +155,26 @@ const tag = (e, k) => { const t = e.tags.find((x) => x[0] === k); return t ? Str
 const said = (x, re) => (re.test(String(x || '')) ? String(x) : '');
 // (kanban #1590, a bypass of #1472: the report as kept, never as received - keptEvent above, since #2003 / #2016 / #2050 the one rule)
 
+/** THE ADDRESS A SIGNED REPORT ASKED TO BE PAID AT (its content's lnAddress, else its signed lud16 tag): null when it named none or named it wrongly.
+ *  THE CHECKED ADDRESS FIRST (kanban #1677): a lud16 tag naming another address never takes the content's place.
+ *  ONLY A STRING IS AN ADDRESS (kanban #2468, #1489 audit44 refute of #1677): a content lnAddress of any other shape (["good@wallet"], an object, a
+ *  number) was checked at send as String() of it, while this read skipped it and took the tag - an address never checked. A content that names an
+ *  lnAddress at all decides alone: a non-string or a malformed string answers null, never the tag. POST /feedback refuses a non-string lnAddress and
+ *  checks exactly what this answers (faucet.mjs), so the address paid is the address checked. */
+export const LN_ADDRESS_RE = /^[a-z0-9._+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$/i;
+export const LNURL_RE = /^lnurl1[02-9ac-hj-np-z]+$/i;
+const addressShape = (a) => (LN_ADDRESS_RE.test(a) || LNURL_RE.test(a) ? a : null);
+export function reportAddress(e) {
+  if (!e || typeof e !== 'object') return null;
+  let c = null; try { c = JSON.parse(e.content); } catch { c = null; }
+  const v = c && typeof c === 'object' && !Array.isArray(c) ? c.lnAddress : undefined;
+  if (v !== undefined && v !== null && v !== '') {
+    if (typeof v !== 'string') return null;   // kanban #2468: never the tag in its place
+    if (v.trim()) return addressShape(v.trim());
+  }
+  const t = Array.isArray(e.tags) ? e.tags.find((x) => Array.isArray(x) && x[0] === 'lud16') : null;
+  return t && typeof t[1] === 'string' ? addressShape(t[1].trim()) : null;
+}
 export function openFeedbackStore(path = ':memory:') {
   const db = new DatabaseSync(path);
   // FREED BYTES ARE ZEROED (kanban #2003, #2016, #2050): a row rewritten without a seed must not leave the seed in the file's free space
@@ -115,12 +185,14 @@ export function openFeedbackStore(path = ':memory:') {
     CREATE INDEX IF NOT EXISTS reports_by_key ON reports (pubkey, received_ms);
     CREATE TABLE IF NOT EXISTS report_moves (id TEXT NOT NULL, from_state TEXT NOT NULL, to_state TEXT NOT NULL, at_ms INTEGER NOT NULL, by TEXT, note TEXT);
     CREATE TABLE IF NOT EXISTS rewards (k1 TEXT PRIMARY KEY, report TEXT NOT NULL UNIQUE, pubkey TEXT NOT NULL, amount_sats INTEGER NOT NULL, network TEXT NOT NULL,
-      created_ms INTEGER NOT NULL, state TEXT NOT NULL DEFAULT 'open', invoice TEXT, payment_hash TEXT, tried_ms INTEGER, paid_ms INTEGER, why TEXT);`);
+      created_ms INTEGER NOT NULL, state TEXT NOT NULL DEFAULT 'open', invoice TEXT, payment_hash TEXT, tried_ms INTEGER, paid_ms INTEGER, why TEXT);
+    CREATE TABLE IF NOT EXISTS dup_links (token TEXT PRIMARY KEY, report TEXT NOT NULL UNIQUE, ticket INTEGER NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, made_ms INTEGER NOT NULL);`);
   // COLUMNS ADDED AFTER THE FIRST FILE (kanban #1342 follow-up): a file from before gains them, null for its old rows
   for (const [col, ddl] of [['source', 'TEXT'], ['node', 'TEXT'], ['screenshot', 'TEXT'], ['number', 'INTEGER']])
     if (!db.prepare('PRAGMA table_info(reports)').all().some((c) => c.name === col)) db.exec(`ALTER TABLE reports ADD COLUMN ${col} ${ddl}`);
   // THE ADMIN'S WORDS WITH A REWARD AND WHERE IT WENT (kanban #1474): the comment sent with the payment, the Lightning address it was paid to
-  for (const col of ['comment', 'address'])
+  // THE WALLET THAT PAID (kanban #2177, #1489 a44-refute-76): the bounty payer's identity, written with the paying compare-and-set; null for older rows
+  for (const col of ['comment', 'address', 'payer'])
     if (!db.prepare('PRAGMA table_info(rewards)').all().some((c) => c.name === col)) db.exec(`ALTER TABLE rewards ADD COLUMN ${col} TEXT`);
   // EVERY REPORT ITS NUMBER (kanban #1413, the owner 2026-11-10: "Gib jedem feedback eine unique number also Feedback #001 etc wie eine Ticket Number die überall
   // angezeigt wird"): 1, 2, 3 ... in the order the reports came, never reused; the reports of a file from before are numbered once, oldest first
@@ -144,11 +216,41 @@ export function openFeedbackStore(path = ':memory:') {
     }
     if (changed && path !== ':memory:') db.exec('PRAGMA wal_checkpoint(TRUNCATE); VACUUM; PRAGMA wal_checkpoint(TRUNCATE);'); }
   // A PAID REPORT FROM BEFORE GETS ITS APPROVAL TIME BACK (kanban #1786): paidNow used to move changed_ms to the payment time; the approval's move
-  // (report_moves, to 'accepted') still holds when it was approved
-  db.exec(`UPDATE reports SET changed_ms = (SELECT MAX(m.at_ms) FROM report_moves m WHERE m.id = reports.id AND m.to_state = 'accepted')
-    WHERE state = 'paid' AND EXISTS (SELECT 1 FROM report_moves m WHERE m.id = reports.id AND m.to_state = 'accepted')
-      AND changed_ms IS NOT (SELECT MAX(m.at_ms) FROM report_moves m WHERE m.id = reports.id AND m.to_state = 'accepted')`);
+  // (report_moves, to 'accepted') still holds when it was approved.
+  // ONLY THE APPROVAL ITSELF (kanban #2269, #1489 a44-refute-77-s2): createReward ("reward link made") and note() log a move accepted -> accepted
+  // too, days after the approval; taking the latest move to 'accepted' moved the approval time to that link or note at every restart, and a
+  // reward approved last week counted again toward the key's 3 a week and the week's budget. The approval is the one move approve() writes,
+  // new -> accepted. Running it on every open stays right: it writes back the approval time and nothing else (and repairs a file the old
+  // repair already moved to a link or note time).
+  db.exec(`UPDATE reports SET changed_ms = (SELECT MAX(m.at_ms) FROM report_moves m WHERE m.id = reports.id AND m.from_state = 'new' AND m.to_state = 'accepted')
+    WHERE state = 'paid' AND EXISTS (SELECT 1 FROM report_moves m WHERE m.id = reports.id AND m.from_state = 'new' AND m.to_state = 'accepted')
+      AND changed_ms IS NOT (SELECT MAX(m.at_ms) FROM report_moves m WHERE m.id = reports.id AND m.from_state = 'new' AND m.to_state = 'accepted')`);
+  // ONE PAYMENT, ONE REWARD (kanban #1925, state audit 2026-11-12): a payment hash is held by at most one paying or paid reward. A file that already holds
+  // two keeps opening (the index is then not made); claim() and settle() hold the rule by themselves.
+  try { db.exec("CREATE UNIQUE INDEX IF NOT EXISTS rewards_by_payment ON rewards (payment_hash) WHERE payment_hash IS NOT NULL AND state IN ('paying', 'paid')"); } catch { /* an older file with a shared hash */ }
+  // COUPLED WRITES IN ONE TRANSACTION (kanban #1984, state audit 2026-11-12): a reward paid and its report paid, a link voided and its report rejected,
+  // commit together or not at all - a faucet killed between two autocommit statements left the sats paid and the report accepted for good
+  // inside a caller's transaction it is part of that one (kanban #2020's immediately(), below, is the same rule)
+  const inTx = (fn) => { const own = !db.isTransaction; if (own) db.exec('BEGIN IMMEDIATE'); try { const v = fn(); if (own) db.exec('COMMIT'); return v; } catch (err) { if (own) { try { db.exec('ROLLBACK'); } catch { /* none open */ } } throw err; } };
+  // AND THE REPAIR (kanban #1984): a file written before this fix may hold an accepted report whose reward is paid; it is paid, as paidNow would have
+  // left it (its approval time kept, #1786; logged by 'repair'). Run at open and before each settle pass.
+  const repairPaid = () => inTx(() => {
+    for (const x of db.prepare("SELECT r.id, w.paid_ms, w.payment_hash, w.created_ms FROM reports r JOIN rewards w ON w.report = r.id WHERE r.state = 'accepted' AND w.state = 'paid'").all()) {
+      const at = Number(x.paid_ms ?? x.created_ms ?? Date.now());
+      db.prepare("UPDATE reports SET state = 'paid' WHERE id = ? AND state = 'accepted'").run(x.id);   // the approval time stays (kanban #1786)
+      db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(x.id, 'accepted', 'paid', at, 'repair', x.payment_hash || null);
+    }
+  });
+  repairPaid();
   const get = db.prepare('SELECT * FROM reports WHERE id = ?');
+  // A PAIR OF ROWS IS NEVER WRITTEN HALF (kanban #2020, state audit 2026-11-12: a kill between a rejection's link void and its report's update left an
+  // ACCEPTED report with a VOID link - approved, in the week's budget, never payable): every move that writes a report and its reward link, or a row and
+  // its move log, runs in one BEGIN IMMEDIATE ... COMMIT; inside a caller's transaction it is part of that one
+  const immediately = (fn) => {
+    const own = !db.isTransaction;
+    if (own) db.exec('BEGIN IMMEDIATE');
+    try { const r = fn(); if (own) db.exec('COMMIT'); return r; } catch (e) { if (own) { try { db.exec('ROLLBACK'); } catch { /* none open */ } } throw e; }
+  };
   const row = (r) => (r ? { id: r.id, pubkey: r.pubkey, type: r.type, signedAt: r.signed_at, receivedMs: r.received_ms, happened: r.happened, expected: r.expected,
     game: r.game || null, round: r.round || null, build: r.build || null, state: r.state, reason: r.reason || null, duplicateOf: r.duplicate_of || null,
     severity: r.severity || null, amountSats: r.amount_sats ?? null, ticket: r.ticket || null, changedMs: r.changed_ms ?? null,
@@ -169,8 +271,10 @@ export function openFeedbackStore(path = ':memory:') {
     if (!FEEDBACK_TYPES.includes(type)) return { ok: false, why: `a report is one of ${FEEDBACK_TYPES.join(', ')}` };
     let body;
     try { body = JSON.parse(e.content); } catch { return { ok: false, why: 'a report\'s content is { happened, expected }' }; }
-    const happened = scrubKeys(String((body && body.happened) || '').trim()).slice(0, TEXT_MOST);
-    const expected = scrubKeys(String((body && body.expected) || '').trim()).slice(0, TEXT_MOST);
+    // (kanban #2676) the two boxes scrubbed as one text: a seed split over them is one seed
+    const [happenedAll, expectedAll] = scrubFields([String((body && body.happened) || '').trim(), String((body && body.expected) || '').trim()]);
+    const happened = happenedAll.slice(0, TEXT_MOST);
+    const expected = expectedAll.slice(0, TEXT_MOST);
     if (happened.length < TEXT_LEAST) return { ok: false, why: `say what happened in at least ${TEXT_LEAST} characters (${happened.length} so far)` };
     const source = tag(e, 'source') || 'frontend';
     if (!FEEDBACK_SOURCES.includes(source)) return { ok: false, why: `a report comes from ${FEEDBACK_SOURCES.join(' or ')}` };
@@ -202,14 +306,42 @@ export function openFeedbackStore(path = ':memory:') {
   function mine(authEvent, opts) {
     const who = authOf(authEvent, opts);
     if (!who.ok) return who;
-    return { ok: true, pubkey: who.pubkey, reports: db.prepare('SELECT * FROM reports WHERE pubkey = ? ORDER BY received_ms DESC').all(who.pubkey).map(row) };
+    // a duplicate's secret ticket link goes only to the report's own key, here (kanban #2745)
+    const dup = db.prepare('SELECT token FROM dup_links WHERE report = ?');
+    return { ok: true, pubkey: who.pubkey, reports: db.prepare('SELECT * FROM reports WHERE pubkey = ? ORDER BY received_ms DESC').all(who.pubkey).map((r) => {
+      const x = row(r); const d = dup.get(r.id); return d ? { ...x, dupToken: d.token } : x; }) };
+  }
+
+  /**
+   * A DUPLICATE OF A KNOWN TICKET (kanban #2745, the owner 2026-11-14: "bekommt der Submitter einen secret link der den kritischen Teil des Tickets
+   * erhält ... nur den Ticket Text, nicht die Kommentare und die Historie"): the ticket's title and description as they are now, scrubbed, kept under a
+   * random 128-bit token tied to the report (one per report; a new snapshot replaces it). Only title and description are taken from `task`.
+   */
+  function dupSnapshot(id, task, { nowMs = Date.now() } = {}) {
+    const r = get.get(String(id));
+    if (!r) return { ok: false, why: 'no such report' };
+    const n = Number(task && task.id);
+    if (!Number.isInteger(n) || n <= 0) return { ok: false, why: 'no such ticket' };
+    const title = scrubTicket(String((task && task.title) || '')).slice(0, 300), body = scrubTicket(String((task && task.description) || '')).slice(0, 20000);
+    const had = db.prepare('SELECT token FROM dup_links WHERE report = ?').get(r.id);
+    const token = had ? had.token : randomBytes(16).toString('hex');
+    db.prepare(`INSERT INTO dup_links (token, report, ticket, title, body, made_ms) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT (report) DO UPDATE SET ticket = excluded.ticket, title = excluded.title, body = excluded.body, made_ms = excluded.made_ms`).run(token, r.id, n, title, body, nowMs);
+    return { ok: true, report: r.id, ticket: n };
+  }
+  /** The snapshot behind a token, or null. */
+  function dupLink(token) {
+    if (!/^[0-9a-f]{32}$/.test(String(token || ''))) return null;
+    const x = db.prepare('SELECT ticket, title, body, made_ms FROM dup_links WHERE token = ?').get(String(token));
+    return x ? { ticket: x.ticket, title: x.title, body: x.body, madeMs: x.made_ms } : null;
   }
 
   /**
    * A STATE MOVE, BY A HUMAN (the admin, slice 4): only the moves the table allows; a rejection needs its reason, a duplicate the report it repeats
    * (an earlier one, not itself, not one that is a duplicate in turn). Every move is logged with who made it.
    */
-  function move(id, to, { reason = null, duplicateOf = null, by = null, nowMs = Date.now() } = {}) {
+  function move(...a) { return immediately(() => moveNow(...a)); }   // one transaction (kanban #2020)
+  function moveNow(id, to, { reason = null, duplicateOf = null, by = null, nowMs = Date.now() } = {}) {
     const r = get.get(String(id));
     if (!r) return { ok: false, why: 'no such report' };
     if (!(NEXT[r.state] || []).includes(to)) return { ok: false, why: `a ${r.state} report does not become ${to}` };
@@ -227,15 +359,22 @@ export function openFeedbackStore(path = ':memory:') {
     }
     // A REJECTION TAKES ITS REWARD LINK BACK (audit 5 #1402, reproduced: approve, make the link, reject - the link still paid, outside the week's budget):
     // an open link is voided (compare-and-set from open); one being paid or paid keeps the report as it is
-    if (to === STATES.REJECTED) {
-      const w = db.prepare('SELECT * FROM rewards WHERE report = ?').get(r.id);
-      if (w && w.state !== 'open' && w.state !== 'void') return { ok: false, why: `its reward is ${w.state === 'paid' ? 'paid' : 'being paid'}: a paid report stays as it is` };
-      if (w && w.state === 'open' && db.prepare("UPDATE rewards SET state = 'void', why = 'the report was rejected' WHERE k1 = ? AND state = 'open'").run(w.k1).changes !== 1)
-        return { ok: false, why: 'its reward is being paid: try again in a minute' };
-    }
-    db.prepare('UPDATE reports SET state = ?, reason = ?, duplicate_of = ?, changed_ms = ? WHERE id = ? AND state = ?')
-      .run(to, to === STATES.REJECTED ? String(reason).trim().slice(0, 500) : r.reason, to === STATES.DUPLICATE ? dupId : r.duplicate_of, nowMs, r.id, r.state);
-    db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, to, nowMs, by, reason || duplicateOf || null);
+    // the void, the report's move and its log line in one transaction (kanban #1984): never a void link beside a report still accepted
+    const refused = inTx(() => {
+      if (to === STATES.REJECTED || to === STATES.DUPLICATE) {
+        const w = db.prepare('SELECT * FROM rewards WHERE report = ?').get(r.id);
+        if (w && w.state !== 'open' && w.state !== 'void') return `its reward is ${w.state === 'paid' ? 'paid' : 'being paid'}: a paid report stays as it is`;
+        if (w && w.state === 'open' && db.prepare("UPDATE rewards SET state = 'void', why = 'the report was rejected' WHERE k1 = ? AND state = 'open'").run(w.k1).changes !== 1)
+          return 'its reward is being paid: try again in a minute';
+      }
+      // A REJECTED OR DUPLICATE REPORT HOLDS NO AMOUNT (kanban #2904: eight rejected reports still read "1,200 sat approved"): cleared in the same move
+      const noMoney = to === STATES.REJECTED || to === STATES.DUPLICATE;
+      db.prepare('UPDATE reports SET state = ?, reason = ?, duplicate_of = ?, amount_sats = ?, changed_ms = ? WHERE id = ? AND state = ?')
+        .run(to, to === STATES.REJECTED ? String(reason).trim().slice(0, 500) : r.reason, to === STATES.DUPLICATE ? dupId : r.duplicate_of, noMoney ? null : r.amount_sats, nowMs, r.id, r.state);
+      db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, to, nowMs, by, reason || duplicateOf || null);
+      return null;
+    });
+    if (refused) return { ok: false, why: refused };
     return { ok: true, report: row(get.get(r.id)) };
   }
 
@@ -248,7 +387,8 @@ export function openFeedbackStore(path = ':memory:') {
    *   an amount       between `leastSats` and `mostSats` (a critical bug above that is the owner's own call: a higher `mostSats` for that one approval)
    * Answers { ok, report } or { ok: false, why } naming the rule.
    */
-  function approve(id, amountSats, { played, excluded = new Set(), rules = REWARD_DEFAULTS, severity = null, by = null, nowMs = Date.now() } = {}) {
+  function approve(...a) { return immediately(() => approveNow(...a)); }   // one transaction (kanban #2020)
+  function approveNow(id, amountSats, { played, excluded = new Set(), rules = REWARD_DEFAULTS, severity = null, by = null, nowMs = Date.now() } = {}) {
     const r = get.get(String(id));
     if (!r) return { ok: false, why: 'no such report' };
     if (r.state !== STATES.NEW) return { ok: false, why: `${/^[aeiou]/.test(r.state) ? 'an' : 'a'} ${r.state} report is not approved for money${r.state === STATES.DUPLICATE ? ': the first report of it is' : ''}` };
@@ -268,13 +408,17 @@ export function openFeedbackStore(path = ':memory:') {
       if (paidRows.some((x) => x.node && String(x.node) === String(r.node))) return { ok: false, why: 'one node bounty per node: that node has one' };
       if (paidNodes.length >= NODE_BOUNTY_MOST) return { ok: false, why: `the node bounty is for the first ${NODE_BOUNTY_MOST} outside nodes: all are taken` };
     }
-    // NO ROUND NEEDED (kanban #2621, the owner 2026-11-13: "Es muss keiner eine runde gespielt haben, neues req"): a reporter is paid for the report
-    // whether or not their key finished a round; `played` stays for the admin view (rounds, apps) only. The other limits stand.
+    // NO ROUND NEEDED HERE (kanban #2621, the owner 2026-11-13: "Es muss keiner eine runde gespielt haben, neues req"): this is the SEASON 1 approval
+    // (the admin's amount); `played` stays for the admin view (rounds, apps) only. The other limits stand. SEASON 2 approvals do not come here:
+    // bounty-season.js seasonPayout pays the full level only for a played round by a verified X account, else 15 % (kanban #2784, #2788,
+    // feedback #090 / kanban #2868 - the Season 2 page and the feedback form say the same).
     const since = nowMs - WEEK_MS;
     const mine = db.prepare(`SELECT COUNT(*) AS n FROM reports WHERE pubkey = ? AND state IN ('accepted', 'paid') AND changed_ms >= ?`).get(r.pubkey, since).n;
     if (Number.isFinite(R.perKeyPerWeek) && mine >= R.perKeyPerWeek) return { ok: false, why: `that key has ${mine} rewards this week: at most ${R.perKeyPerWeek}` };
-    const week = db.prepare(`SELECT COALESCE(SUM(amount_sats), 0) AS s FROM reports WHERE state IN ('accepted', 'paid') AND changed_ms >= ? AND COALESCE(severity, '') NOT IN ('critical', 'node')`).get(since).s;   // a critical one is outside the budget
-    if (!(lv && lv.outsideBudget) && week + sats > R.weeklyBudgetSats) return { ok: false, why: `this week's budget: ${week} of ${R.weeklyBudgetSats} sat approved, ${sats} more does not fit` };
+    // THE CAP IS EVERYTHING (the owner 2026-11-13 ~20:35Z: "der cap ist 100k"): node bounties and critical findings count in the week's budget too -
+    // kept outside it, the faucet counted 94,000 of 100,000 while 104,000 was approved, and a report that should have moved to Season 2 stayed in Season 1
+    const week = db.prepare(`SELECT COALESCE(SUM(amount_sats), 0) AS s FROM reports WHERE state IN ('accepted', 'paid') AND changed_ms >= ?`).get(since).s;   // a critical one is outside the budget
+    if (week + sats > R.weeklyBudgetSats) return { ok: false, why: `this week's budget: ${week} of ${R.weeklyBudgetSats} sat approved, ${sats} more does not fit` };
     // THE LEVEL AS THE GUARDS READ IT (audit 6, kanban #1422): stored normalised ('Node' was kept as given and missed by the guards' severity = 'node')
     const level = lv ? lv.level : (severity ? String(severity).toLowerCase() : null);
     db.prepare('UPDATE reports SET state = ?, amount_sats = ?, severity = ?, changed_ms = ? WHERE id = ? AND state = ?').run(STATES.ACCEPTED, sats, level, nowMs, r.id, STATES.NEW);
@@ -284,23 +428,85 @@ export function openFeedbackStore(path = ':memory:') {
 
   // ---- THE REWARD (kanban #1342 section 3): one LNURL-withdraw per approved report, for exactly its amount, single use, never expiring ----
   const rewardRow = (w) => (w ? { k1: w.k1, report: w.report, pubkey: w.pubkey, amountSats: w.amount_sats, network: w.network, createdMs: w.created_ms, state: w.state,
-    paymentHash: w.payment_hash || null, paidMs: w.paid_ms ?? null, why: w.why || null, comment: w.comment || null, address: w.address || null } : null);
+    paymentHash: w.payment_hash || null, paidMs: w.paid_ms ?? null, why: w.why || null, comment: w.comment || null, address: w.address || null, payer: w.payer || null } : null);
   const rewardOf = db.prepare('SELECT * FROM rewards WHERE k1 = ?');
 
   /** THE LINK FOR AN ACCEPTED REPORT: made once (asked again, the same k1). `network` the payout network ('testnet4' in phase 1). */
-  function createReward(id, { network = 'testnet4', comment = null, nowMs = Date.now(), by = null } = {}) {
+  function createReward(...a) { return immediately(() => createRewardNow(...a)); }   // one transaction (kanban #2020)
+  // `capSats` (kanban #2756, #1489 r7-faucet-3): the most the reward pays - a Season 2 approval's payable amount, read again right before
+  // (bounty-season.js payable: a community bonus lost since the approval is not paid). A new link is made for the lower of it and the
+  // approved amount; an open link not yet paid is lowered to it. null: the approved amount, as before.
+  function createRewardNow(id, { network = 'testnet4', comment = null, nowMs = Date.now(), by = null, capSats = null } = {}) {
     const r = get.get(String(id));
     if (!r) return { ok: false, why: 'no such report' };
+    const cap = Number.isInteger(capSats) && capSats >= 0 ? capSats : null;
+    const lowered = (k1, from) => { if (cap === null || !(from > cap)) return;
+      if (db.prepare("UPDATE rewards SET amount_sats = ? WHERE k1 = ? AND state = 'open'").run(cap, k1).changes === 1)
+        db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, r.state, nowMs, by, `reward lowered from ${from} to ${cap} sat at payout (the bonus read again)`); };
     const said = comment === null || comment === undefined ? null : String(comment).replace(/\s+/g, ' ').trim().slice(0, COMMENT_MOST) || null;
-    const had = db.prepare('SELECT * FROM rewards WHERE report = ?').get(r.id);
+    // NEVER A REWARD FOR A REJECTED OR DUPLICATE REPORT (kanban #2904): whatever link or amount it still names
+    if (r.state === STATES.REJECTED || r.state === STATES.DUPLICATE) return { ok: false, why: `a ${r.state} report gets no reward` };
+    let had = db.prepare('SELECT * FROM rewards WHERE report = ?').get(r.id);
+    // AN OPEN LINK OF ANOTHER NETWORK IS MADE AGAIN ON THIS ONE (kanban #2452, state audit 2026-11-12 SM-21 x SM-22, after #1784): a testnet4 link left
+    // open by the payout switch (2026-11-11) was refused by every payer and answered again here, so its approved report stayed accepted for good - and a
+    // node bounty held the node's one bounty and a NODE_BOUNTY_MOST place. While the row is open and its report approved, the admin's reward action
+    // moves it to `network` under a new k1 (one compare-and-set from open: the old link is dead, never paid on either network); failed tries are
+    // cleared. A paying or paid row stays as it is: settle() asks only the payer of its own network (#1784, #2177).
+    if (had && had.state === 'open' && String(had.network) !== String(network) && r.state === STATES.ACCEPTED) {
+      const k1 = randomBytes(32).toString('hex');
+      if (db.prepare("UPDATE rewards SET k1 = ?, network = ?, created_ms = ?, invoice = NULL, payment_hash = NULL, tried_ms = NULL, address = NULL, why = NULL WHERE k1 = ? AND state = 'open' AND network = ?")
+        .run(k1, String(network), nowMs, had.k1, had.network).changes !== 1) return { ok: false, why: 'its reward is being paid: try again in a minute' };
+      db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, r.state, nowMs, by,
+        `reward link made again, ${had.amount_sats} sat on ${network} (the ${had.network} link is withdrawn)`);
+      if (said !== null) db.prepare("UPDATE rewards SET comment = ? WHERE k1 = ? AND state = 'open'").run(said, k1);
+      lowered(k1, had.amount_sats);
+      return { ok: true, reward: rewardRow(rewardOf.get(k1)), made: true };
+    }
+    // A WITHDRAWN LINK IS MADE AGAIN (kanban #2786 follow-up, the owner 2026-11-15 "um 17:55 zahlst du die verbleibenden 1800"): the void row (one per
+    // report) gets a new k1 and the amount payable now, open again in one compare-and-set from void; the old LNURL stays dead (its k1 is gone)
+    if (had && had.state === 'void' && r.state === STATES.ACCEPTED && r.amount_sats > 0) {
+      const sats = cap === null ? r.amount_sats : Math.min(r.amount_sats, cap);
+      if (!(sats > 0)) return { ok: false, why: 'the amount payable now is 0 sat: no reward link' };
+      const k1 = randomBytes(32).toString('hex');
+      if (db.prepare("UPDATE rewards SET k1 = ?, state = 'open', amount_sats = ?, network = ?, created_ms = ?, invoice = NULL, payment_hash = NULL, tried_ms = NULL, paid_ms = NULL, why = NULL, address = NULL, payer = NULL, comment = ? WHERE k1 = ? AND state = 'void'")
+        .run(k1, sats, String(network), nowMs, said, had.k1).changes !== 1) return { ok: false, why: 'its reward changed meanwhile: try again' };
+      db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, r.state, nowMs, by,
+        `reward link made again after its withdrawal, ${sats} sat on ${network} (the withdrawn ${had.amount_sats} sat link stays dead)`);
+      return { ok: true, reward: rewardRow(rewardOf.get(k1)), made: true };
+    }
     if (had) { if (said !== null && had.state === 'open') db.prepare("UPDATE rewards SET comment = ? WHERE k1 = ? AND state = 'open'").run(said, had.k1);
+      lowered(had.k1, had.amount_sats);
       return { ok: true, reward: rewardRow(rewardOf.get(had.k1)), made: false }; }
     if (r.state !== STATES.ACCEPTED || !(r.amount_sats > 0)) return { ok: false, why: 'only an approved report with its amount gets a reward link' };
+    const sats = cap === null ? r.amount_sats : Math.min(r.amount_sats, cap);
+    if (!(sats > 0)) return { ok: false, why: 'the amount payable now is 0 sat: no reward link' };
     const k1 = randomBytes(32).toString('hex');
-    db.prepare('INSERT INTO rewards (k1, report, pubkey, amount_sats, network, created_ms, comment) VALUES (?, ?, ?, ?, ?, ?, ?)').run(k1, r.id, r.pubkey, r.amount_sats, String(network), nowMs, said);
-    db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, r.state, nowMs, by, `reward link made, ${r.amount_sats} sat on ${network}`);
+    db.prepare('INSERT INTO rewards (k1, report, pubkey, amount_sats, network, created_ms, comment) VALUES (?, ?, ?, ?, ?, ?, ?)').run(k1, r.id, r.pubkey, sats, String(network), nowMs, said);
+    db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, r.state, nowMs, by,
+      `reward link made, ${sats} sat on ${network}${sats < r.amount_sats ? ` (approved ${r.amount_sats}; the bonus read again at payout)` : ''}`);
     return { ok: true, reward: rewardRow(rewardOf.get(k1)), made: true };
   }
+
+  /** THE OWNER WITHDRAWS AN OPEN LINK (kanban #2786, the owner 2026-11-15 "Keine Auszahlungen"): open -> void in one compare-and-set, so its LNURL
+   *  refuses from then on; the row stays (never deleted) and the report keeps its state. A link being paid or paid is not touched. */
+  function voidReward(id, { why = null, by = null, nowMs = Date.now() } = {}) {
+    const r = get.get(String(id)); if (!r) return { ok: false, why: 'no such report' };
+    const w = db.prepare('SELECT * FROM rewards WHERE report = ?').get(r.id);
+    if (!w) return { ok: false, why: 'this report has no reward link' };
+    if (w.state === 'void') return { ok: true, reward: rewardRow(w), made: false };
+    if (w.state !== 'open') return { ok: false, why: w.state === 'paid' ? 'its reward is paid' : 'its reward is being paid: try again in a minute' };
+    const said = String(why || 'withdrawn by the owner').replace(/\s+/g, ' ').trim().slice(0, 200);
+    return immediately(() => {
+      if (db.prepare("UPDATE rewards SET state = 'void', why = ? WHERE k1 = ? AND state = 'open'").run(said, w.k1).changes !== 1) return { ok: false, why: 'its reward is being paid: try again in a minute' };
+      db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, r.state, nowMs, by, `reward link withdrawn, ${w.amount_sats} sat on ${w.network}: ${said}`);
+      return { ok: true, reward: rewardRow(rewardOf.get(w.k1)), made: true };
+    });
+  }
+
+  /** HOW MANY REPORTS STILL WAIT FOR REVIEW (kanban #2789, the stage pot banner): reports in state new received at or after `sinceMs` - a number only. */
+  function countNew(sinceMs = 0) { return Number(db.prepare("SELECT COUNT(*) AS n FROM reports WHERE state = 'new' AND received_ms >= ?").get(Number(sinceMs) || 0).n); }
+  /** THE SATS PAID FOR A REPORT (kanban #2784, the Season 2 pot): its reward's amount when that reward is paid, else null. */
+  function paidSatsOf(id) { const w = db.prepare("SELECT amount_sats FROM rewards WHERE report = ? AND state = 'paid'").get(String(id)); return w ? Number(w.amount_sats) : null; }
 
   /** LUD-03's first answer, at `<base>/lnurlw/<k1>`: the request a wallet reads; an ERROR for a paid or unknown link. */
   function withdrawRequest(k1, { base, network = null }) {
@@ -335,7 +541,9 @@ export function openFeedbackStore(path = ':memory:') {
   // named an address that got nothing. Now the address goes into the same UPDATE that takes the row to paying, for that invoice only: a claim through the
   // withdraw link (the LNURL callback) writes NULL, and a payment that surely failed clears it as it opens the link again.
   const claim = (k1, invoice, opts = {}) => claimFor(k1, invoice, opts, null);
-  async function claimFor(k1, invoice, { decode, pay, network = null, nowMs = Date.now() } = {}, address = null) {
+  // THE PAYER IS WRITTEN WITH THE PAYMENT (kanban #2177, #1489 a44-refute-76): `payer` names the wallet that pays (the faucet: network, node key, lnddir,
+  // rpcserver); settle() then asks only that wallet about it - another wallet on the same network never saw the payment and answers "not initiated"
+  async function claimFor(k1, invoice, { decode, pay, network = null, payer = null, nowMs = Date.now() } = {}, address = null) {
     const w = rewardOf.get(String(k1));
     if (!w) return { status: 'ERROR', reason: 'no such reward' };
     if (!onNetwork(w, network)) return { status: 'ERROR', reason: otherNetwork(w) };   // kanban #1784
@@ -346,8 +554,21 @@ export function openFeedbackStore(path = ':memory:') {
     if (d && d.paused) return { status: 'ERROR', reason: PAYOUTS_PAUSED };   // kanban #2412: the wallet's state, not the invoice's
     if (!d || !d.ok) return { status: 'ERROR', reason: 'that invoice could not be read' };
     if (Number(d.amountSats) !== w.amount_sats) return { status: 'ERROR', reason: `the invoice must be for exactly ${w.amount_sats} sat` };
-    const took = db.prepare("UPDATE rewards SET state = 'paying', invoice = ?, payment_hash = ?, tried_ms = ?, address = ? WHERE k1 = ? AND state = 'open'").run(String(invoice), d.paymentHash || null, nowMs, address, w.k1);
-    if (took.changes !== 1) return { status: 'ERROR', reason: 'this reward is being paid' };
+    // AN INVOICE ANOTHER REWARD HOLDS IS REFUSED (kanban #1925): reward Y claimed with the invoice X was already paid with got "invoice is already paid" from
+    // lnd, stayed paying, and settle() read X's SUCCEEDED for that hash as Y's payment - Y and its report booked paid, no sat sent. The check is in the
+    // compare-and-set itself, and the partial unique index refuses a second holder too.
+    const hash = d.paymentHash ? String(d.paymentHash) : null;
+    const held = "SELECT 1 FROM rewards WHERE payment_hash = ? AND k1 <> ? AND state IN ('paying', 'paid')";
+    if (hash && db.prepare(held).get(hash, w.k1)) return { status: 'ERROR', reason: 'that invoice was used for another reward: make a new invoice' };
+    // THE AMOUNT CHECKED IS THE AMOUNT TAKEN (kanban #3219, #1489 sm1-faucet-21, state audit 2026-11-12 SM-22): the invoice was checked against the
+    // amount read before `await decode` (up to 30 s), and the admin's reward action (another queue) may lower an open link to the Season 2 payable
+    // amount meanwhile (createReward capSats, kanban #2756) - the claim then paid the old, higher amount on a row that says the lower one. The
+    // compare-and-set now carries the amount it checked: a link changed meanwhile is not taken, and the wallet scans it again.
+    let took;
+    try { took = db.prepare(`UPDATE rewards SET state = 'paying', invoice = ?, payment_hash = ?, tried_ms = ?, address = ?, payer = ? WHERE k1 = ? AND state = 'open' AND amount_sats = ? AND NOT EXISTS (${held})`).run(String(invoice), hash, nowMs, address, payer == null ? null : String(payer), w.k1, w.amount_sats, hash, w.k1); }
+    catch { return { status: 'ERROR', reason: 'that invoice was used for another reward: make a new invoice' }; }
+    if (took.changes !== 1) { const now = rewardOf.get(w.k1);
+      return { status: 'ERROR', reason: now && now.state === 'open' && now.amount_sats !== w.amount_sats ? `the reward changed: scan the link again (it is now ${now.amount_sats} sat)` : 'this reward is being paid' }; }
     let p;
     try { p = await pay(String(invoice), d.amountSats); } catch (e) { p = { ok: false, why: e.message }; }   // the amount bounds the routing fee (kanban #1450)
     if (p && p.ok) { paidNow(w, p.paymentHash || d.paymentHash, nowMs); return { status: 'OK' }; }
@@ -356,18 +577,21 @@ export function openFeedbackStore(path = ':memory:') {
     return { status: 'ERROR', reason: 'the payment is not settled yet: it is checked again, do not claim twice' };
   }
   // `onHash` (kanban #1571): settle() marks paid only the payment it asked about - the row must still be paying under that hash
+  // ... and the reward's paid, the report's paid and its log line commit together (kanban #1984)
   function paidNow(w, paymentHash, nowMs, { onHash = undefined } = {}) {
-    if (onHash !== undefined) {
-      if (db.prepare("UPDATE rewards SET state = 'paid', paid_ms = ?, why = NULL WHERE k1 = ? AND state = 'paying' AND payment_hash = ?").run(nowMs, w.k1, onHash).changes !== 1) return false;
-    } else db.prepare("UPDATE rewards SET state = 'paid', payment_hash = COALESCE(?, payment_hash), paid_ms = ?, why = NULL WHERE k1 = ?").run(paymentHash || null, nowMs, w.k1);
-    const r = get.get(w.report);
-    if (r && r.state === STATES.ACCEPTED) {
-      // PAID KEEPS THE APPROVAL TIME (kanban #1786): changed_ms of an accepted or paid report is when it was approved - the per-key limit and the week's
-      // budget count by it. The payment time is the reward's paid_ms; moving changed_ms to it counted a reward approved last week and claimed today again
-      db.prepare('UPDATE reports SET state = ? WHERE id = ? AND state = ?').run(STATES.PAID, r.id, STATES.ACCEPTED);
-      db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, STATES.PAID, nowMs, 'lnurlw', paymentHash || null);
-    }
-    return true;
+    return inTx(() => {
+      if (onHash !== undefined) {
+        if (db.prepare("UPDATE rewards SET state = 'paid', paid_ms = ?, why = NULL WHERE k1 = ? AND state = 'paying' AND payment_hash = ?").run(nowMs, w.k1, onHash).changes !== 1) return false;
+      } else db.prepare("UPDATE rewards SET state = 'paid', payment_hash = COALESCE(?, payment_hash), paid_ms = ?, why = NULL WHERE k1 = ?").run(paymentHash || null, nowMs, w.k1);
+      const r = get.get(w.report);
+      if (r && r.state === STATES.ACCEPTED) {
+        // PAID KEEPS THE APPROVAL TIME (kanban #1786): changed_ms of an accepted or paid report is when it was approved - the per-key limit and the week's
+        // budget count by it. The payment time is the reward's paid_ms; moving changed_ms to it counted a reward approved last week and claimed today again
+        db.prepare('UPDATE reports SET state = ? WHERE id = ? AND state = ?').run(STATES.PAID, r.id, STATES.ACCEPTED);
+        db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, STATES.PAID, nowMs, 'lnurlw', paymentHash || null);
+      }
+      return true;
+    });
   }
   /**
    * A PAYMENT WHOSE OUTCOME WAS NOT KNOWN (a restart mid-pay, a timeout): `status(paymentHash)` -> 'paid' | 'failed' | 'unknown', the payer's own
@@ -377,18 +601,42 @@ export function openFeedbackStore(path = ':memory:') {
   // claim()'s payinvoice still ran (75 s) - with a hold invoice the holder claimed again and was paid twice. Read only after `freshMs`.
   // ONLY THE PAYER THAT MADE A PAYMENT IS ASKED ABOUT IT (kanban #1784): `status` is the payer of `network`; a paying row of another network was paid by
   // another wallet, which this one never saw ("not listed" read as failed reopened it and the holder was paid twice, once per network) - it stays paying.
-  async function settle({ status, network = null, nowMs = Date.now(), freshMs = 180000 } = {}) {
+  // ONLY THE WALLET THAT MADE IT, NOT ONLY ITS NETWORK (kanban #2177, #1489 a44-refute-76): the bounty wallet replaced on the same network (a new lnd,
+  // FAUCET_BOUNTY_PAYER pointed at another dir) answered "not initiated" for the old wallet's payment still in flight - read as failed, the link opened and the
+  // holder was paid by both wallets. `payer` is this faucet's payer now: a row another payer is paying stays paying for the admin (null: not checked).
+  // A PAYER THAT MAY BE THIS WALLET IS ASKED ONLY TO CONFIRM (kanban #2403, #2469, #1489 a44-refute-76-s2): two rows are not known to be this wallet's -
+  // a row from before the payer column (payer NULL: every reward paying when #2177 was deployed, perhaps the old wallet's) and a row whose payer `mayBe(payer)`
+  // names as possibly this one (the faucet: claimed while getinfo gave no node key, same network, lnddir and rpcserver). Such a row is marked paid on this
+  // wallet's SUCCEEDED; 'failed' (FAILED or "not initiated") never reopens it - another wallet may still pay it - so it stays paying for the admin.
+  // `confirmOnly` reads a whole pass that way (the faucet while its own node key is still unknown: its payer id proves nothing).
+  async function settle({ status, network = null, payer = null, mayBe = null, confirmOnly: confirmAll = false, nowMs = Date.now(), freshMs = 180000 } = {}) {
     const out = [];
     // A DECISION HOLDS ONLY FOR THE PAYMENT IT READ (kanban #1571): status() may wait 20 s a row and two passes may overlap, so a row read at the
     // start of a pass can be opened, claimed again and paying under a NEW hash by the time it is decided. Each row is read again before its
     // decision, and the move is a compare-and-set on the hash that was asked about - an answer about an old payment never touches a new one.
+    repairPaid();   // kanban #1984
     for (const { k1 } of db.prepare("SELECT k1 FROM rewards WHERE state = 'paying'").all()) {
       const w = rewardOf.get(k1);
       if (!w || w.state !== 'paying') continue;
       if (!onNetwork(w, network)) { out.push({ k1: w.k1, status: 'unknown', otherNetwork: w.network }); continue; }   // kanban #1784
+      let confirmOnly = confirmAll === true;   // kanban #2403, #2469: a row not known to be this payer's is only ever marked paid
+      if (payer != null && w.payer == null) confirmOnly = true;
+      else if (payer != null && String(w.payer) !== String(payer)) {
+        let maybe = false; try { maybe = typeof mayBe === 'function' && mayBe(String(w.payer)) === true; } catch { maybe = false; }
+        if (!maybe) { out.push({ k1: w.k1, status: 'unknown', otherPayer: w.payer }); continue; }   // kanban #2177
+        confirmOnly = true;
+      }
       if (Number(w.tried_ms || 0) > nowMs - freshMs) { out.push({ k1: w.k1, status: 'unknown', fresh: true }); continue; }
+      // A HASH IS CREDITED ONLY TO THE REWARD THAT FIRST TOOK IT (kanban #1925): a paying reward whose hash another reward holds paid, or took earlier, was
+      // not paid by that payment - its link opens again (a file from before the claim() check may hold such a pair)
+      const first = db.prepare("SELECT k1 FROM rewards WHERE payment_hash = ? AND state IN ('paying', 'paid') ORDER BY state = 'paid' DESC, tried_ms, rowid LIMIT 1").get(w.payment_hash);
+      if (w.payment_hash && first && first.k1 !== w.k1) {
+        db.prepare("UPDATE rewards SET state = 'open', why = 'that invoice was another reward''s payment: make a new invoice' WHERE k1 = ? AND state = 'paying'").run(w.k1);
+        out.push({ k1: w.k1, status: 'failed', shared: true }); continue;
+      }
       let st = 'unknown';
       try { st = w.payment_hash ? await status(w.payment_hash) : 'unknown'; } catch { st = 'unknown'; }
+      if (confirmOnly && st !== 'paid') { out.push({ k1: w.k1, status: 'unknown', confirmOnly: true, asked: st }); continue; }   // kanban #2403, #2469
       let moved = false;
       if (st === 'paid') moved = paidNow(w, w.payment_hash, nowMs, { onHash: w.payment_hash });
       else if (st === 'failed') moved = db.prepare("UPDATE rewards SET state = 'open', address = NULL, why = 'the payment failed' WHERE k1 = ? AND state = 'paying' AND payment_hash = ?").run(w.k1, w.payment_hash).changes === 1;   // #1571 own hash, #1575 address cleared
@@ -396,16 +644,24 @@ export function openFeedbackStore(path = ':memory:') {
     }
     return out;
   }
-  /** THE ADDRESS A REPORT ASKED TO BE PAID AT (its content's lnAddress, else its signed lud16 tag): null when it named none.
-   *  THE CHECKED ADDRESS FIRST (kanban #1677): POST /feedback checks only the content's lnAddress (lnAddressWorks, #1511), so a lud16 tag naming another
-   *  address never takes its place - the tag is read only when the content names none, and lnAddressInvoice refuses an internal host for either. */
+  /** THE ADDRESS A REPORT ASKED TO BE PAID AT (reportAddress below): null when it named none. */
+  // OWNER-SET PAY ADDRESS (the owner 2026-11-16 "Trage die Lightning-Adresse in alle seine Reports ein"): an address the owner entered for a player key,
+  // used only when the signed report itself names none; the signed report's own address always wins. Set by hand in owner_addresses (pubkey, address, why, at_ms).
+  db.exec(`CREATE TABLE IF NOT EXISTS owner_addresses (pubkey TEXT PRIMARY KEY, address TEXT NOT NULL, why TEXT, at_ms INTEGER NOT NULL)`);
+  const ownerAddr = db.prepare('SELECT address FROM owner_addresses WHERE pubkey = ?');
+  /** The owner sets (or, with null, clears) a key's pay address (kanban #2904); only a well-formed Lightning address or LNURL is kept. */
+  function ownerAddress(pubkey, address, { why = null, nowMs = Date.now() } = {}) {
+    const k = String(pubkey).toLowerCase(); if (!/^[0-9a-f]{64}$/.test(k)) return { ok: false, why: 'a player key is 64 hex characters' };
+    if (address === null) { db.prepare('DELETE FROM owner_addresses WHERE pubkey = ?').run(k); return { ok: true, cleared: true }; }
+    const a = addressShape(String(address).trim()); if (!a) return { ok: false, why: 'not a Lightning address or LNURL' };
+    db.prepare('INSERT INTO owner_addresses (pubkey, address, why, at_ms) VALUES (?, ?, ?, ?) ON CONFLICT(pubkey) DO UPDATE SET address = excluded.address, why = excluded.why, at_ms = excluded.at_ms').run(k, a, why, nowMs);
+    return { ok: true, address: a };
+  }
   function addressOf(id) {
     const r = get.get(String(id)); if (!r) return null;
     let e = null; try { e = JSON.parse(r.event); } catch { e = null; }
-    const tag = e && Array.isArray(e.tags) ? (e.tags.find((t) => Array.isArray(t) && t[0] === 'lud16') || [])[1] : null;
-    let c = null; try { c = JSON.parse(e && e.content); } catch { c = null; }
-    const a = String((c && typeof c.lnAddress === 'string' && c.lnAddress.trim()) || tag || '').trim();
-    return /^[a-z0-9._+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(a) || /^lnurl1[02-9ac-hj-np-z]+$/i.test(a) ? a : null;
+    const own = reportAddress(e); if (own) return own;
+    const o = ownerAddr.get(String(r.pubkey)); return o ? addressShape(String(o.address).trim()) : null;
   }
   /**
    * PAID STRAIGHT TO THE REPORT'S LIGHTNING ADDRESS (kanban #1474, the owner 2026-11-11: "Do we have a function to give a comment when we pay?" - "1, ja. Und zeig es
@@ -413,16 +669,17 @@ export function openFeedbackStore(path = ':memory:') {
    * takes), and that invoice goes through claim() - the same compare-and-set, the same payer, the same "an unknown outcome stays paying". `invoiceFor(address,
    * sats, comment)` -> { ok, invoice } | { ok: false, why }. Answers { ok, status } or { ok: false, why }.
    */
-  async function payToAddress(k1, { invoiceFor, decode, pay, network = null, nowMs = Date.now() } = {}) {
+  async function payToAddress(k1, { invoiceFor, decode, pay, network = null, payer = null, nowMs = Date.now() } = {}) {
     const w = rewardOf.get(String(k1));
     if (!w) return { ok: false, why: 'no such reward' };
     if (!onNetwork(w, network)) return { ok: false, why: otherNetwork(w) };   // kanban #1784
     if (w.state !== 'open') return { ok: false, why: w.state === 'paid' ? 'this reward is paid' : w.state === 'void' ? 'this reward was withdrawn' : 'this reward is being paid' };
+    { const rep = get.get(w.report); if (!rep || rep.state === STATES.REJECTED || rep.state === STATES.DUPLICATE) return { ok: false, why: `a ${rep ? rep.state : 'missing'} report is not paid` }; }   // kanban #2904
     const address = addressOf(w.report);
     if (!address) return { ok: false, why: 'the report names no Lightning address: send its withdraw link instead' };
     let inv; try { inv = await invoiceFor(address, w.amount_sats, w.comment || ''); } catch (e) { inv = { ok: false, why: e.message }; }
     if (!inv || !inv.ok) return { ok: false, why: `the address gave no invoice: ${(inv && inv.why) || 'no answer'}` };
-    const r = await claimFor(w.k1, inv.invoice, { decode, pay, network, nowMs }, address);   // the address is written with its invoice's paying CAS (kanban #1575)
+    const r = await claimFor(w.k1, inv.invoice, { decode, pay, network, payer, nowMs }, address);   // the address is written with its invoice's paying CAS (kanban #1575)
     return r.status === 'OK' ? { ok: true, status: 'paid', address, reward: rewardRow(rewardOf.get(w.k1)) } : { ok: false, why: r.reason, address, reward: rewardRow(rewardOf.get(w.k1)) };
   }
   const rewards = ({ pubkey = null } = {}) => (pubkey ? db.prepare('SELECT * FROM rewards WHERE pubkey = ? ORDER BY created_ms DESC').all(String(pubkey))
@@ -443,15 +700,22 @@ export function openFeedbackStore(path = ':memory:') {
     db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, r.state, nowMs, by, `note: ${ticket ? `ticket ${ticket}` : ''}${severity ? ` severity ${severity}` : ''}`.trim());
     return { ok: true, report: row(get.get(r.id)) };
   }
+  /** A LINE ON A REPORT'S LOG without a move (kanban #2623: "moved to Season 2 ..."), shown with its moves. */
+  function remark(id, text, { by = null, nowMs = Date.now() } = {}) {
+    const r = get.get(String(id)); if (!r) return { ok: false, why: 'no such report' };
+    db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, r.state, nowMs, by, scrubKeys(String(text)).slice(0, 300));
+    return { ok: true };
+  }
   /** Who did what to a report, oldest first. */
   const moves = (id) => db.prepare('SELECT * FROM report_moves WHERE id = ? ORDER BY at_ms').all(String(id)).map((m) => ({ from: m.from_state, to: m.to_state, atMs: m.at_ms, by: m.by, note: m.note }));
   /** THE BUDGET BAR: approved this week and in all, paid, and links not yet claimed. */
   // THE PUBLIC PAYOUT LOG (kanban #2619): every paid reward with its report's number and severity and the time it was paid, sorted by the
   // report's number - no key, no address, no invoice. bitcoinarena.io/bounty/ reads it live, so a payout shows there the moment it is paid.
-  const paidLogRows = db.prepare(`SELECT r.number AS number, r.severity AS severity, w.amount_sats AS sats, w.paid_ms AS paidMs FROM reports r
+  // `id` is the report's id for the caller's season lookup (kanban #2868); GET /feedback/paid-log does not send it
+  const paidLogRows = db.prepare(`SELECT r.id AS id, r.number AS number, r.severity AS severity, w.amount_sats AS sats, w.paid_ms AS paidMs FROM reports r
     JOIN rewards w ON w.report = r.id WHERE w.state = 'paid' ORDER BY r.number`);
   function paidLog() {
-    return paidLogRows.all().map((x) => ({ number: Number(x.number), severity: x.severity || null, sats: Number(x.sats), paidMs: x.paidMs == null ? null : Number(x.paidMs) }));
+    return paidLogRows.all().map((x) => ({ id: x.id, number: Number(x.number), severity: x.severity || null, sats: Number(x.sats), paidMs: x.paidMs == null ? null : Number(x.paidMs) }));
   }
   function budget({ rules = REWARD_DEFAULTS, nowMs = Date.now() } = {}) {
     const R = { ...REWARD_DEFAULTS, ...(rules || {}) };
@@ -468,7 +732,10 @@ export function openFeedbackStore(path = ':memory:') {
       weekPaidSats: sum(`SELECT COALESCE(SUM(amount_sats), 0) AS s FROM rewards WHERE state = 'paid' AND paid_ms >= ?`, nowMs - WEEK_MS),
       weeklyBudgetSats: R.weeklyBudgetSats, allApprovedSats: sum(`SELECT COALESCE(SUM(amount_sats), 0) AS s FROM reports WHERE state IN ('accepted', 'paid')`),
       paidSats: sum(`SELECT COALESCE(SUM(amount_sats), 0) AS s FROM rewards WHERE state = 'paid'`),
-      openRewards: db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(amount_sats), 0) AS s FROM rewards WHERE state <> 'paid'`).get(),
+      // ONLY LINKS THAT CAN STILL PAY ARE OWED (kanban #2287, state audit 2026-11-12, SM-22): a link voided by its report's rejection (open -> void) never
+      // pays, so it is no unclaimed reward; a link whose payment is in flight (paying) is named on its own line, not mixed into the unclaimed ones
+      openRewards: db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(amount_sats), 0) AS s FROM rewards WHERE state = 'open'`).get(),
+      payingRewards: db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(amount_sats), 0) AS s FROM rewards WHERE state = 'paying'`).get(),
       counts: Object.fromEntries(db.prepare('SELECT state, COUNT(*) AS n FROM reports GROUP BY state').all().map((x) => [x.state, x.n])) };
   }
   /** THE CSV (the Monday scoreboard, #922): one line per report, with its reward if any. Text cells quoted; a leading =, +, - or @ neutralised. */
@@ -505,8 +772,11 @@ export function openFeedbackStore(path = ':memory:') {
       takenBy: taken ? { id: taken.id, label: feedbackLabel(taken.number), sameNode: !!(taken.node && String(taken.node) === String(report.node)) } : null,
       full: !mine && !taken && held.length >= NODE_BOUNTY_MOST };
   }
-  return { take, mine, move, approve, list, shotsInUse, note, moves, budget, paidLog, csv, nodeBountyFor, createReward, withdrawRequest, lnurlOf, claim, settle, rewards, payToAddress, addressOf, reward: (k1) => rewardRow(rewardOf.get(String(k1))), report: (id) => row(get.get(String(id))), close: () => db.close(), eventId };
+  return { take, mine, dupSnapshot, dupLink, move, approve, list, shotsInUse, note, remark, moves, budget, paidLog, csv, nodeBountyFor, createReward, voidReward, paidSatsOf, countNew, withdrawRequest, lnurlOf, claim, settle, rewards, payToAddress, addressOf, ownerAddress, reward: (k1) => rewardRow(rewardOf.get(String(k1))), report: (id) => row(get.get(String(id))), close: () => db.close(), eventId };
 }
+
+/** The most of one seat's GET /season?scope=network answer the faucet reads (kanban #2517). */
+export const NETWORK_SEASON_MAX_BYTES = 16 * 1024 * 1024;
 
 /**
  * WHO FINISHED A ROUND ON THE NETWORK (kanban #1342, the reading tools/weekly-testers.mjs and founding-badges.mjs make): each game's
@@ -519,6 +789,13 @@ export function networkPlayers({ seats, games, days = 90, keepMs = 10 * 60 * 100
   // EACH GAME'S PLAYERS AS LAST READ (kanban #2565, measured 2026-11-12: a refresh while no seat answered - one restarting, the rest slow
   // under load - emptied the list and every reward was refused "not finished a round" for 10 min): a game no seat answers keeps its last list
   const lastOf = new Map();   // game -> Map(player -> rounds)
+  // WHO ENTERED A PAID ROUND, WHATEVER IT CAME TO (kanban #2875, the owner 2026-11-16): the season rows count no VOID round and no refunded entry, so a
+  // player whose paid rounds all went void read "never played". Each seat's season answer carries `entered` (unsigned, from that seat's own store:
+  // the players with a locked entry in a paid round); a seat holds only its committees' rounds, so every seat's own season is read for it (each
+  // seat keeps that answer cached). Kept per seat and game like the rows: a seat that does not answer keeps its last list
+  const enteredLast = new Map();   // `${seat}|${game}` -> Set(player)
+  const keyOk = (k) => /^[0-9a-f]{64}$/i.test(String(k || ''));
+  let entered = new Set();
   async function refresh() {
     const next = new Set(), counts = new Map();
     // ONE SEAT'S NETWORK VIEW PER GAME, THE GAMES AT ONCE (kanban #1484, the owner 2026-11-11: "Is VERY slow, speed it up"): scope=network is the whole network's
@@ -529,15 +806,27 @@ export function networkPlayers({ seats, games, days = 90, keepMs = 10 * 60 * 100
         try {
           const r = await fetcher(`${String(seat).replace(/\/$/, '')}/season?scope=network&game=${encodeURIComponent(g)}&days=${days}`, { signal: AbortSignal.timeout(20000), redirect: 'error' });   // kanban #1884: a configured seat is asked as given, never redirected
           if (!r.ok) continue;
-          const b = await r.json();
+          // READ TO A BOUND (kanban #2517): a season seat's network board is a few hundred KB; r.json() took whatever one seat sent
+          const b = await readJsonBounded(r, NETWORK_SEASON_MAX_BYTES);
           const read = new Map();
           for (const row of b.rows || []) if (Number(row.rounds) > 0 && /^[0-9a-f]{64}$/i.test(String(row.player || ''))) {
             const k = String(row.player).toLowerCase(); read.set(k, (read.get(k) || 0) + Number(row.rounds)); }
           lastOf.set(g, read);
+          if (Array.isArray(b.entered)) enteredLast.set(`network|${g}`, new Set(b.entered.filter(keyOk).map((k) => String(k).toLowerCase())));
           return;
         } catch { /* that seat does not answer: the next one */ }
       }
     }));
+    await Promise.all(seats.flatMap((seat) => games.map(async (g) => {
+      try {
+        const r = await fetcher(`${String(seat).replace(/\/$/, '')}/season?game=${encodeURIComponent(g)}&days=${days}`, { signal: AbortSignal.timeout(20000), redirect: 'error' });
+        if (!r.ok) return;
+        const b = await readJsonBounded(r, NETWORK_SEASON_MAX_BYTES);
+        if (Array.isArray(b.entered)) enteredLast.set(`${seat}|${g}`, new Set(b.entered.filter(keyOk).map((k) => String(k).toLowerCase())));
+      } catch { /* that seat does not answer: its last list stays */ }
+    })));
+    const ent = new Set(); for (const s of enteredLast.values()) for (const k of s) ent.add(k);
+    entered = ent;
     for (const g of games) for (const [k, n] of lastOf.get(g) || []) {
       next.add(k); const m = counts.get(k) || {}; m[g] = (m[g] || 0) + n; counts.set(k, m); }
     keys = next; perGame = counts; at = Date.now();
@@ -545,7 +834,7 @@ export function networkPlayers({ seats, games, days = 90, keepMs = 10 * 60 * 100
   }
   return {
     refresh,
-    played: (pubkey) => keys.has(String(pubkey || '').toLowerCase()),
+    played: (pubkey) => keys.has(String(pubkey || '').toLowerCase()) || entered.has(String(pubkey || '').toLowerCase()),
     // { rounds, games: [[game, rounds], ...] } in the network season of `days`, the most played first; none: rounds 0
     history: (pubkey) => { const m = perGame.get(String(pubkey || '').toLowerCase()) || {}; const games = Object.entries(m).sort((a, b) => b[1] - a[1]);
       return { rounds: games.reduce((t, [, n]) => t + n, 0), games, days }; },
@@ -585,6 +874,8 @@ export const COMMENT_MOST = 200;
 export { internalAddress, walletUrlRefusal, guardedLookup, publicFetch } from './public-fetch.js';
 // and the a45 #2236 name for the faucet's and the winnings send's one guard by where a name leads (kanban #1809, #2236)
 export { hostReach } from './public-fetch.js';
+// kanban #2454: the zap address tool dials a receipt's relay only through this lookup (global addresses, checked at connect)
+export { guardedLookup as globalLookup } from './public-fetch.js';
 // the names #1511 / #1809 gave these checks, kept for their callers: a URL on a public name, an address that is global, one pinned GET
 export const publicHttpsUrl = (u) => !walletUrlRefusal(u);
 export const addressIsGlobal = (address) => !internalAddress(address);
@@ -601,6 +892,8 @@ const leadsInternal = (u) => new Promise((resolve) => {
 function teamHosts() { return String(process.env.FAUCET_TEAM_HOSTS || 'tn4.bitcoin-arena.io').split(',').map((x) => x.trim().toLowerCase().replace(/\.$/, '')).filter(Boolean); }
 const onTeamHost = (url) => { let h = ''; try { h = new URL(String(url)).hostname.toLowerCase().replace(/\.$/, ''); } catch { return true; } return teamHosts().some((t) => h === t || h.endsWith(`.${t}`)); };
 const walletRefusal = (url) => walletUrlRefusal(url) || (onTeamHost(url) ? 'its wallet must be on a public name' : null);
+/** The same refusal for any other URL a stranger names to the faucet (kanban #2683: an Armada NIP-05 domain). */
+export const faucetUrlRefusal = walletRefusal;
 const walletGet = async (fetchFn, u, timeoutMs) => {
   if (fetchFn !== publicFetch && await leadsInternal(u)) throw Object.assign(new Error('its wallet must be on a public name'), { code: 'EINTERNALHOST' });
   return checkedFetch(u, { fetchFn, signal: AbortSignal.timeout(timeoutMs), headers: { accept: 'application/json' }, refusal: walletRefusal });

@@ -41,6 +41,7 @@ const BONDS_KEPT = new WeakMap();   // proof headers -> (bond providers -> a bon
 import { advertId } from '../../arena-protocol/src/advert.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { acceptAncestorEndpoint } from '../../arena-protocol/src/ancestor-endpoint.js';
+import { localHostName } from './node-discovery.js';   // kanban #3124
 
 /**
  * Is this a socket address at all?
@@ -59,10 +60,22 @@ import { acceptAncestorEndpoint } from '../../arena-protocol/src/ancestor-endpoi
  * one thing a committed endpoint must not be able to ask a player for.
  */
 const LOOPBACK = /^ws:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?(\/|$)/;
-export function isSocketAddress(endpoint) {
+// THE ROUND DOOR TAKES NO MORE THAN THE NODE LIST (kanban #3124, #3125; wf1489 refute of #3108): node-discovery's nodeEndpointRefusal kept a
+// LAN/loopback/query endpoint out of the page's node list, but Client.at plays the round on the proven committee node's raw advert
+// endpoint, and this took any wss://host/any/path?query and ws://127.0.0.1:<port>/<anything>?<query> - a bond committing
+// 'wss://192.168.1.1/admin/cgi?x=' made every player's browser send <that>/round/... to its own LAN, the query swallowing the door. Now the
+// same shape as the node list (an origin with at most one path segment, no query, fragment or user info), and never a loopback / private /
+// local-only host (localHostName) - unless `localOk` is true (the page passes it to Client.at only when it is itself served from a local
+// host: a devnet; no file here reads the page). ws:// stays loopback only: taken when `localOk` is true, and when it is not given at all
+// (the tests and tools in Node that drive a node on this machine); `localOk: false` (a page on a public host) refuses it too.
+export function isSocketAddress(endpoint, { localOk } = {}) {
   if (typeof endpoint !== 'string') return false;
-  if (LOOPBACK.test(endpoint)) return true;
-  return /^wss:\/\/[^/?#\s]+(\/|$)/.test(endpoint);
+  if (!/^wss?:\/\/[^/?#\s]+(\/|$)/.test(endpoint)) return false;
+  let u; try { u = new URL(endpoint); } catch { return false; }
+  if (u.username || u.password || u.search || u.hash || endpoint.includes('?') || endpoint.includes('#')) return false;
+  if (u.pathname.replace(/\/+$/, '').split('/').filter(Boolean).length > 1) return false;
+  if (u.protocol === 'ws:') return LOOPBACK.test(endpoint) && localOk !== false;
+  return localOk === true || !localHostName(u.hostname);
 }
 
 /**
@@ -86,7 +99,7 @@ export function isSocketAddress(endpoint) {
  * this that takes an empty list and shrugs is the version that ships.
  */
 export function reach({
-  chain, chains, transaction, signedAdvert, branch, position, committee, bond, network, update, reaffirm,
+  chain, chains, transaction, signedAdvert, branch, position, committee, bond, network, update, reaffirm, localOk,
 }) {
   if (!committee || !committee.length)
     return { ok: false, why: 'no committee to check the node against' };
@@ -117,7 +130,7 @@ export function reach({
     if (carried.ok) {
       if (!committee.some((n) => toHex(n) === toHex(carried.nodePubkey)))
         return { ok: false, why: `the advertisement is for ${toHex(carried.nodePubkey)}, which is not on this round's committee` };
-      if (!isSocketAddress(carried.endpoint))
+      if (!isSocketAddress(carried.endpoint, { localOk }))
         return { ok: false, why: `the advertisement's endpoint ${JSON.stringify(carried.endpoint)} is not a secure socket address` };
       return { ok: true, endpoint: carried.endpoint, nodePubkey: carried.nodePubkey, signature: carried.signature,
         advertId: carried.advertId, txid: carried.txid, blockHash: blockHashOf(carried.header), work, from, checks: carried.checks };
@@ -144,7 +157,7 @@ export function reach({
           + "which is not on this round's committee",
       };
     }
-    if (!isSocketAddress(seen.endpoint)) {
+    if (!isSocketAddress(seen.endpoint, { localOk })) {
       return {
         ok: false,
         why: `the advertisement's endpoint ${JSON.stringify(seen.endpoint)} `
@@ -225,7 +238,7 @@ export function chainAnchorFor(networkId) {
 }
 
 export async function discover({
-  headers, bonds, anchor, committee, signedAdvert, ask, least, timeoutMs, proved, networkId,
+  headers, bonds, anchor, committee, signedAdvert, ask, least, timeoutMs, proved, networkId, localOk,
 }) {
   // THE RULES ARE THE CLIENT'S. THE PAGE SAYS WHERE TO ASK, AND NOTHING ELSE.
   //
@@ -375,6 +388,7 @@ export async function discover({
     committee,
     update: bond.update || undefined,
     reaffirm: bond.reaffirm || undefined,
+    localOk,   // kanban #3125
   });
   if (!seen.ok) return seen;
   return {

@@ -74,7 +74,8 @@ test('a grid series line is taken once per table, funded by its id, written, kep
     const rows = (await (await fetch(`${url}/rounds?ahead=${2 * 3600000}`)).json()).rounds;
     const listed = new Set(rows.map((r) => r.id));
     assert.ok(listed.has(toHex(roundId(seriesRound(t, 0)))), 'round 0 listed');
-    assert.ok(listed.has(toHex(roundId(seriesRound(t, 224)))), 'round 224 listed');
+    // round 224 is past the bounded listing window since #2790 (per series the next 72); it is written and kept (#2915)
+    assert.ok(s.round.get(Buffer.from(roundId(seriesRound(t, 224)))), 'round 224 written');
     // AND WHAT A PLAYER IS WARNED OF: nothing for these rules; nextblock's own "exposure ignored" for a grid whose
     // exposure reference is 0 - the game's plugin's word, beside the signed row
     assert.deepEqual(rows.find((r) => r.id === toHex(roundId(seriesRound(t, 0)))).warnings, []);
@@ -90,13 +91,11 @@ test('a grid series line is taken once per table, funded by its id, written, kep
       dayWritten = ((await (await fetch(`${url}/series`)).json()).series.find((x) => x.series === toHex(seriesId(daylong))) || {}).written || 0; }
     // NOW is START - 1 h - 123 ms: the 3 h ahead reach just short of 2 h into the grid - slots 0 .. 899
     assert.equal(dayWritten, 900, 'written 3 h ahead');
+    // the second grid is written and kept; its rows come with the next listing window (#2790), which this test's frozen clock never
+    // reaches - so the store is read, not the listing (#2915)
     let row2 = null;
-    for (let i = 0; i < 40 && !row2; i++) {
-      await new Promise((r) => setTimeout(r, 250));
-      row2 = (await (await fetch(`${url}/rounds?ahead=${2 * 3600000}`)).json()).rounds.find((r) => r.id === toHex(roundId(seriesRound(blind, 0))));
-    }
-    assert.ok(row2, 'the second grid\'s round 0 listed');
-    assert.deepEqual(row2.warnings, ['exposure_ignored']);
+    for (let i = 0; i < 40 && !row2; i++) { await new Promise((r) => setTimeout(r, 250)); row2 = s.round.get(Buffer.from(roundId(seriesRound(blind, 0)))); }
+    assert.ok(row2, 'the second grid\'s round 0 written');
     // AND A POSTED ROUND OF IT PASSES THE SERIES CHECK AS DERIVED (this seat reaches no federation, so a paying round stops
     // there - after the series check), and is refused by it moved
     const ok = await fetch(`${url}/round`, { method: 'POST', body: encodeRoundContract(seriesRound(t, 3)) });

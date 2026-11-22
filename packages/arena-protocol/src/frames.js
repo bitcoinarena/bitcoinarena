@@ -22,7 +22,7 @@ import {
   TYPE_CHECKPOINT, TYPE_RESULT, TYPE_PAYOUT_TABLE, TYPE_INPUT_BATCH,
   TYPE_TRANSCRIPT, TYPE_CHECKPOINT_RECEIPT, TYPE_OBJECTION, TYPE_SLASH_PROOF,
   TYPE_SETTLEMENT_RECORD, TYPE_FEE_CLAIM, TYPE_SERVICE_RECORD, TYPE_FEE_PROPOSAL, TYPE_FEE_APPROVAL, TYPE_FUNDING_PROPOSAL, TYPE_FUNDING_SIGNAL, TYPE_LEADERBOARD_PAYOUT, TYPE_FUNDING_COMMENT, TYPE_PLAYER_NAME,
-  TYPE_DONATION_SET, TYPE_GHOST, TYPE_VSS_HANDOUT,
+  TYPE_DONATION_SET, TYPE_GHOST, TYPE_VSS_HANDOUT, TYPE_LOCK_SET, TYPE_LOCK_SET_CERTIFICATE, TYPE_REVEAL_SET, TYPE_REVEAL_SET_CERTIFICATE,
   TYPE_DKG_CONTRIBUTION, TYPE_SIGNED_DONATION_SET, TYPE_DONATION_SET_KEYS, TYPE_AUTHORITY_ROTATION,
   TYPE_CLAIM_KEY_ATTESTATION, TYPE_DKG_AGREEMENT, TYPE_TRANSCRIPT_POSTING, TYPE_RERUN_RESULT, TYPE_FINAL_SIGNATURE,
   TYPE_GAME_MANIFEST, TYPE_OUTCOME_ATTESTATION, TYPE_PRICE_SAMPLE, TYPE_PRICE_TAPE, TYPE_FEDERATION_RECORD, TYPE_PRESENT, TYPE_SEATING,
@@ -120,6 +120,14 @@ export const FRAMES = new Map([
   [TYPE_DONATION_APPROVAL, { name: 'DonationApproval', authority: true }],
   // a donation set of keys whose entries vest day by day (§27A.4.1): who the donations pay, and how that moves
   [TYPE_DONATION_SET_KEYS_VESTING, { name: 'DonationSetKeysVesting', authority: true }],
+
+  // A HEAD-TO-HEAD ROUND'S LOCK SET AND ITS CERTIFICATE (kanban #2561, protocol 28) and THE CERTIFIED REVEAL SET (kanban #2832, prepared,
+  // protocol 32): declared and never entered here (frames.test, release 2026.1.9.28 #2915). They decide which entries a round plays and whose
+  // reveal counts - money moves on them: authority.
+  [TYPE_LOCK_SET, { name: 'LockSet', authority: true }],
+  [TYPE_LOCK_SET_CERTIFICATE, { name: 'LockSetCertificate', authority: true }],
+  [TYPE_REVEAL_SET, { name: 'RevealSet', authority: true }],
+  [TYPE_REVEAL_SET_CERTIFICATE, { name: 'RevealSetCertificate', authority: true }],
 
   // THE ONLY ONE. 0.9's ghost: something to look at, and nothing else.
   [TYPE_GHOST, { name: 'Ghost', authority: false }],

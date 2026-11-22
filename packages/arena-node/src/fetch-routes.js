@@ -12,6 +12,8 @@
 //   ARENA_FETCH_TIMEOUT_MS       a request that brings no signal of its own is aborted after this (default 30 000); a host that
 //                                did not resolve (ENOTFOUND) is not dialed again for as long
 //   ARENA_FETCH_KEEPALIVE_MS     how long an idle connection to a peer is kept for its next request (default 30 000; 0 = Node's own 4 s)
+import { dialConnect } from './dial-guard.js';   // kanban #3133: every connection this process opens checks where a name resolves
+
 export function parseRoutes(text) {
   return String(text || '').split(',').map((x) => x.trim()).filter(Boolean).map((x) => {
     const i = x.indexOf('=');
@@ -27,6 +29,17 @@ export function routed(url, routes) {
   }
   return s;
 }
+
+// A SEAT'S OWN FETCH FOLLOWS NO REDIRECT UNLESS ITS CALLER ASKS FOR ONE (kanban #3107, #3108; wf1489 refute of #2856/#3082/#3090/#3093):
+// the address book refuses a census endpoint on a loopback or private host, with a query or more than one path segment - but only the
+// URL as dialed was checked. A bonded node committed a PUBLIC endpoint the book takes and answered every door with a 302 to
+// http://127.0.0.1:18777/lnurlp/tips/cb?amount=1000&x=, and every honest seat that gathered federation records (and every other peer read
+// through this fetch: seating, claims, founding, the duty poster, pulls) followed it to its own loopback service, path and query the
+// attacker's. A seat's doors need no redirect (public-fetch.js), seats advertise https/wss, and the fixed services the seat reads (esplora,
+// the price feed, bitcoind, lnd) answer in place: a call that names no `redirect` is made with redirect: 'error' - a 3xx is no answer.
+// A caller that follows redirects by hand (public-fetch.js checkedFetch: 'manual') or knows its host redirects (app-fetch.js) says so.
+export const PEER_REDIRECT = 'error';
+export const noRedirect = (init) => (init && init.redirect ? init : { ...(init || {}), redirect: PEER_REDIRECT });
 
 /** A fetch that routes, caps the requests in flight per origin, and times out a request that brings no signal. */
 export function cappedFetch(inner, { routes = [], maxPerOrigin = 8, timeoutMs = 30000, dispatcher = null } = {}) {
@@ -65,6 +78,7 @@ export function cappedFetch(inner, { routes = [], maxPerOrigin = 8, timeoutMs = 
   const f = async (input, init = {}) => {
     const called = typeof input === 'string' || input instanceof URL ? String(input) : input.url;
     const url = routed(called, routes);
+    init = noRedirect(init);   // kanban #3107, #3108
     let lane; try { lane = laneOf(called); } catch { return inner(input, init); }
     let host; try { host = new URL(url).hostname; } catch { host = null; }
     const gone = host && unresolved.get(host);
@@ -102,7 +116,7 @@ export function keepAliveDispatcher(native, keepAliveMs) {
     const sym = Symbol.for('undici.globalDispatcher.1');
     if (!globalThis[sym]) { try { await native('data:,'); } catch { /* no dispatcher: Node's own then */ } }
     const g = globalThis[sym];
-    try { return g && typeof g.constructor === 'function' ? new g.constructor({ keepAliveTimeout: keepAliveMs, keepAliveMaxTimeout: Math.max(keepAliveMs, 600000) }) : null; }
+    try { return g && typeof g.constructor === 'function' ? new g.constructor({ keepAliveTimeout: keepAliveMs, keepAliveMaxTimeout: Math.max(keepAliveMs, 600000), connect: dialConnect() /* kanban #3133 */ }) : null; }
     catch { return null; }
   })());
 }

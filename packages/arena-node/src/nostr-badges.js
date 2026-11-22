@@ -48,8 +48,9 @@
 // GET /badges and GET /badge-definitions, published or not, so a client checks their ids and signatures itself.
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { eventId } from './nostr-relay.js';
-import { acceptedNotIn, publishPass } from './nostr-results.js';
+import { acceptedNotInWalk, publishPass } from './nostr-results.js';
 import { BADGES, BADGES_VERSION, badgesEarned, checkCatalogue, lastClosedWeek } from '../../arena-protocol/src/badges.js';
+import { PLACE_AGE_LOOKBACK_DAYS } from '../../arena-protocol/src/place-eligibility.js';   // kanban #2841
 import { seasonRoundsToJson, seasonRoundsFromJson, mergeSignedSeasonAccounts, SEASON_NETWORK_AGREE } from '../../arena-protocol/src/season.js';
 
 export const BADGE_DEFINITION_KIND = 30009;
@@ -237,6 +238,8 @@ export function nostrBadges({ db, secret, on = false, relays = [], roundOf, sett
   // A WEEK THAT COULD NOT BE READ YET, by `${game}|${week from}`: when it is asked again. In memory: a restart asks once
   // more at once, and how long a week is asked for at all is counted from the week's end, not from this map.
   const boardNext = new Map();
+  // kanban #2526: each tick reads the next page of newly ACCEPTED rounds, so rounds skipped as not settled never hold the window
+  const nextAccepted = acceptedNotInWalk(db, 'nostr_badge_rounds');
   let timer = null, busy = false, stopped = false;
 
   /** Keep each new award, signed: one per (badge, player, scope), the first one kept stands. Answers how many were new. */
@@ -255,7 +258,7 @@ export function nostrBadges({ db, secret, on = false, relays = [], roundOf, sett
   /** 1. THE ROUND BADGES: each newly ACCEPTED round into the ledger, then each game it touched handed to badgesEarned. */
   const awardRounds = () => {
     const touched = new Set();
-    for (const rid of acceptedNotIn(db, 'nostr_badge_rounds', startedMs - lookbackMs)) {
+    for (const rid of nextAccepted(startedMs - lookbackMs)) {
       if (!settled(rid)) continue;
       let got;
       try { got = roundOf(rid); } catch (e) { got = { ok: false, why: e.message }; }
@@ -298,7 +301,8 @@ export function nostrBadges({ db, secret, on = false, relays = [], roundOf, sett
       if (stopped) break;                          // stopped while the seats were asked: the store may be closing
       // EACH SEAT'S ROUNDS OF THE WEEK ONLY: another seat was asked for whole days back from its own clock, which reaches past
       // the week at both ends. A round with no readable start is handed on, for the merge to name.
-      const from = BigInt(week.fromMs), to = BigInt(week.toMs);
+      // AND THE PLACE RULE'S LOOKBACK (kanban #2841): an identity's age is read from its rounds before the week; the board itself is the week's
+      const from = BigInt(week.fromMs) - BigInt(PLACE_AGE_LOOKBACK_DAYS) * 86400000n, to = BigInt(week.toMs);
       const inWeek = (r) => {
         const t = !r ? null : typeof r.startMs === 'bigint' ? r.startMs : Number.isSafeInteger(r.startMs) ? BigInt(r.startMs) : null;
         return t === null || (t >= from && t < to);

@@ -102,13 +102,27 @@ function entriesOf(round, rid, contract, { paid, market }) {
     try { const r = decodeLobbyName(n.record); named.set(hex(r.playerPubkey), { identity: hex(r.identityPubkey), consented: !!n.identitySig, name: r.name || null }); } catch { /* not a record */ }
   }
 
-  return round.entriesOf(rid).map(({ entryId, entry }) => {
+  // A ROUND KEY TWO ENTRIES NAME BOOKS NEITHER BY ITS RECORD (kanban #2690, #1489 r3-h2h-2): an entry carries no signature of its player key, so a
+  // stranger posted his own entry under an honest player's public round key and her consented record booked HIS forfeit to her identity. The record
+  // books an entry only when it is the round's one entry of that key; a reveal's own proof (the identity over round AND entry) still books its entry.
+  // A PAID ROUND'S ENTRIES ARE ITS LOCKED ONES (kanban #2835, #1489 r24-settle-1): a stranger's lockless entry under made-up keys (kept under the
+  // lockless cap and relayed to every seat) had no stake lock, read as payoutMsat null, and every seat refused to sign the round's season account -
+  // the round never counted for the leaderboard payout or the board badge. An entry with no stake lock held here takes no seat and pays nothing:
+  // it is left out of a paid round's account (and of perKey, so an unsigned copy under a victim's key no longer strips her identity)
+  const all = paid ? round.entriesOf(rid).filter(({ entryId }) => { const l = typeof round.stakeLock === 'function' ? round.stakeLock(entryId) : null; return !!(l && l.fields); })
+    : round.entriesOf(rid);
+  const perKey = new Map(); for (const { entry } of all) { const k = hex(entry.playerPubkey); perKey.set(k, (perKey.get(k) || 0) + 1); }
+  // A KEY'S SHARE ONCE PER ROUND (feedback #109): the settlement pays its shares per key, and a key may hold several entries of one paid round (a
+  // fresh session key each) - the whole share was added to every entry of the key, and the season summed them: two winning entries booked
+  // 372,000 msat for a round that paid 282,000. The share now goes with the key's first entry only (the entries' own locks stay per entry)
+  const shareBooked = new Set();
+  return all.map(({ entryId, entry }) => {
     const key = hex(entry.playerPubkey);
     const proven = typeof round.identityOf === 'function' ? round.identityOf(entryId) : null;
     const record = named.get(key) || null;
     // A ROUND BOOKS TO AN IDENTITY ONLY WITH ITS CONSENT (kanban #1278, RULED #1276): the record's identity with its proof, or a head-to-head reveal's
     // proof (the identity key over round and entry); two different identities proven over one round key book it to neither; else the bare round key
-    const consented = record && record.consented ? record.identity : null;
+    const consented = record && record.consented && perKey.get(key) === 1 ? record.identity : null;
     const player = proven && consented && hex(proven.identity) !== consented ? key : proven ? hex(proven.identity) : consented || key;
     // `roundKey` beside the player: the key the entry joined under, so a reader can tell an identity from a bare round key
     // (the badges award only an identity, protocol badges.js). season() reads no such field; /season-rounds sends it, for the
@@ -132,7 +146,9 @@ function entriesOf(round, rid, contract, { paid, market }) {
     const late = typeof round.lateLockSettlement === 'function' ? round.lateLockSettlement(rid, entryId) : null;
     if (late && late.state !== ACCEPTED) return base;
     const taken = claimed.has(lock.outpoint) || !!late;
-    return { ...base, payoutMsat: (taken ? 0n : BigInt(String(lock.fields.amountMsat))) + (shares.get(key) || 0n) };
+    const share = shareBooked.has(key) ? 0n : (shares.get(key) || 0n);
+    shareBooked.add(key);
+    return { ...base, payoutMsat: (taken ? 0n : BigInt(String(lock.fields.amountMsat))) + share };
   });
 }
 

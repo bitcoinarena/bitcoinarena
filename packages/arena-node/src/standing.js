@@ -26,8 +26,12 @@ export { OBJECTION_WINDOW_MS };
 
 // One entry's outcome as far as this node can say: from its threshold of signed results, or a refund/forfeit word.
 function outcomeOf(round, roundIdBytes, entryId) {
-  if (round.entryVoid && round.entryVoid(entryId)) return { decided: true, outcome: ENTRY_VOID, score: 0, state: ENTRY_VOID };
+  // AN OUTAGE VOID LATER DECIDED FORFEIT ON TWO FIRST MARKS (kanban #2318): FORFEIT, the Void history - the settlement's order.
   const nq = round.noQuorum ? round.noQuorum(entryId) : null;
+  const voided = !!(round.entryVoid && round.entryVoid(entryId));
+  if (voided && ((nq && nq.outcome === FORFEIT) || (typeof round.twoFirstMarks === 'function' && round.twoFirstMarks(roundIdBytes, entryId))))
+    return { decided: true, outcome: FORFEIT, score: 0, state: FORFEIT };
+  if (voided) return { decided: true, outcome: ENTRY_VOID, score: 0, state: ENTRY_VOID };
   if (nq && (nq.outcome === VOID || nq.outcome === FORFEIT)) return { decided: true, outcome: nq.outcome, score: 0, state: nq.outcome };
   let s;
   try { s = resultFinality(round, roundIdBytes, entryId); } catch (e) { return { decided: false, state: null, why: e.message }; }
@@ -97,7 +101,7 @@ export function standingOf(round, roundIdBytes, entryIdBytes, contract) {
     if (!rule.ok) return { ...base, state: mine.state, outcome: mine.outcome, pendingMsat: null, kind: null,
       provisional: entries.length < counted, signedSoFar: entries.length, entries: counted, why: rule.why };
     kind = 'payout';
-    const { table } = computePayoutTable({ roundId: roundIdBytes, entries, minScore: contract.minScore, payoutShares: rule.payoutShares });
+    const { table } = computePayoutTable({ roundId: roundIdBytes, entries, minScore: contract.minScore, payoutShares: rule.payoutShares, protocolVersion: contract.protocolVersion });
     const row = table.find((t) => toHex(t.pubkey) === toHex(mine.pubkey));
     pendingMsat = row ? String(row.amountMsat) : '0';
   }

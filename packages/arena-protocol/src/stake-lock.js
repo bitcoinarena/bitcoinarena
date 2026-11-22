@@ -79,7 +79,28 @@ export function lockMatchesEntry({ lock, entry, kind, claimPk, height, expiryBlo
   if (!lock || !entry) return { ok: false, why: 'there is no lock or no entry to compare' };
   if (!Number.isInteger(height) || height < 0)
     return { ok: false, why: 'there is no federation height, so nothing says the expiry is far enough' };
+  const fields = lockFieldsMatchEntry({ lock, entry, kind, claimPk, expiryBlocks });
+  if (!fields.ok) return fields;
+  const lockHeight = lock.expiration - expiryBlocks;
+  if (lockHeight < height - STAKE_LOCK_FRESHNESS_BLOCKS)
+    return {
+      ok: false,
+      why: `that ${kind} lock's lock height ${lockHeight} (its expiration ${lock.expiration} less the round's ${expiryBlocks} blocks) `
+        + `is more than ${STAKE_LOCK_FRESHNESS_BLOCKS} blocks below the height ${height} it is verified at: `
+        + 'a loser could refund before settlement',
+    };
+  return { ok: true };
+}
 
+/**
+ * EVERY CHECK OF lockMatchesEntry THAT NEEDS NO FEDERATION HEIGHT (kanban #2752, #1489 r7-entry-2): the image, the amount, the claim and
+ * refund keys and an expiration at all. A seat runs it before it asks the federation anything, so a hand-over whose fields can never
+ * be the entry's lock costs no federation question - a stranger who knows only a public entry id could otherwise fill the seat's one
+ * federation lane with junk /lock posts.
+ */
+export function lockFieldsMatchEntry({ lock, entry, kind, claimPk, expiryBlocks = STAKE_EXPIRY_BLOCKS } = {}) {
+  if (kind !== 'stake' && kind !== 'fee') return { ok: false, why: 'a lock is a stake lock or a fee lock' };
+  if (!lock || !entry) return { ok: false, why: 'there is no lock or no entry to compare' };
   const image = lock.paymentImage || {};
   if (kind === 'stake') {
     if (!(entry.stakePoint instanceof Uint8Array) || entry.stakePoint.every((b) => b === 0))
@@ -107,13 +128,5 @@ export function lockMatchesEntry({ lock, entry, kind, claimPk, height, expiryBlo
     return { ok: false, why: `that ${kind} lock's refund_pk is not the entry's player key` };
   if (!Number.isInteger(lock.expiration)) return { ok: false, why: `that ${kind} lock names no expiration height` };
   if (!Number.isInteger(expiryBlocks) || expiryBlocks < 1) return { ok: false, why: 'the round names no stake_expiry_blocks to check the lock against' };
-  const lockHeight = lock.expiration - expiryBlocks;
-  if (lockHeight < height - STAKE_LOCK_FRESHNESS_BLOCKS)
-    return {
-      ok: false,
-      why: `that ${kind} lock's lock height ${lockHeight} (its expiration ${lock.expiration} less the round's ${expiryBlocks} blocks) `
-        + `is more than ${STAKE_LOCK_FRESHNESS_BLOCKS} blocks below the height ${height} it is verified at: `
-        + 'a loser could refund before settlement',
-    };
   return { ok: true };
 }

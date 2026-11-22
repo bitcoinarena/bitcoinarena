@@ -78,11 +78,19 @@ export class NetworkPanel extends React.Component {
     this.setState({ report: { ...r, ok: r.ok, why: r.why }, take: r.ok && u.ok, error: u.ok ? null : u.why });
   }
   async take() {
-    const { offer } = this.state;
+    const { offer, report } = this.state;
     this.setState({ taking: true });
+    // THE OWNER SIGNS THE PACKAGE THIS PAGE CHECKED (kanban #3164, #3168): its id, its federation and its invite beside { network, from } -
+    // the node fetches the package again and takes it only when it is this one (a source seat cannot show the page one package and the
+    // node another), and a new federation (a succession) only when the owner signed its id
+    const args = { network: offer.m.networkId, from: offer.from };
+    const id = (report && report.id) || offer.pkg.id;
+    if (typeof id === 'string' && id) args.id = id;
+    if (typeof offer.m.federationId === 'string' && offer.m.federationId) args.federationId = offer.m.federationId;
+    if (typeof offer.pkg.invite === 'string' && offer.pkg.invite) args.invite = offer.pkg.invite;
     try {
-      const res = offer.installed ? await this.props.api.post('/owner/network/update', await this.props.api.signed('network-update', { network: offer.m.networkId, from: offer.from }))
-        : await this.props.api.post('/owner/network/install', await this.props.api.signed('network-install', { network: offer.m.networkId, from: offer.from }));
+      const res = offer.installed ? await this.props.api.post('/owner/network/update', await this.props.api.signed('network-update', args))
+        : await this.props.api.post('/owner/network/install', await this.props.api.signed('network-install', args));
       this.setState({ report: res, take: false, taking: false, done: `${offer.installed ? 'Updated' : 'Installed'} - in force now ✓` });
       await this.reload();
     } catch (e) { this.setState({ taking: false, error: e.message }); }

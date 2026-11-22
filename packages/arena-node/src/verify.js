@@ -15,6 +15,7 @@
 import { peerBody as sharedPeerBody } from './peer-body.js';
 import { sandboxFor } from './core-sandbox.js';
 import { windowsOf } from '../../arena-protocol/src/window.js';
+import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { dissentsOn, dissentsFirstOn, postsLateOn, LATE_POSTING_AFTER_MS } from './test-dissent.js';
 import { ReplayPool } from './pool.js';
 import { checkObjectionBundle, replayKeyOf, liveRunKeyOf } from './objection-check.js';
@@ -26,6 +27,8 @@ import { SIGNED_RECEIPT_BYTES, splitSignedReceipt, decodeCheckpointReceipt } fro
 
 // How many of one peer's /receipts records are taken before the loop is given back (kanban #1636).
 const RECEIPTS_PER_TURN = 64;
+// kanban #2980: how long a close is held back for a final mark a peer holds and this seat lacks (the player alone can feed it)
+export const HELD_FINAL_ASK_MS = Number(process.env.ARENA_HELD_FINAL_ASK_MS || 5000);
 import { resultFrom, signResult, verifiedFinal, runId } from './verdict.js';
 import { stoppedOutcome } from '../../arena-protocol/src/first-mark.js';
 import { noQuorumOutcome as noQuorumRule, VOID } from '../../arena-protocol/src/payout.js';
@@ -56,6 +59,7 @@ import {
 } from '../../arena-protocol/src/result.js';
 import { decodeRoundContract, encodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { matchProofId } from '../../arena-protocol/src/match.js';
+import { decodeLobbyName, lobbyNameId } from '../../arena-protocol/src/lobby-name.js';
 import { headToHeadResults, headToHeadCommit } from '../../arena-protocol/src/head-to-head.js';
 import { splitSigned as splitSignedMark, decodeCheckpoint, checkpointId, SIGNED_CHECKPOINT_BYTES } from '../../arena-protocol/src/checkpoint.js';
 import { pluginForRound, hostedPlugins, itemUnlocksOf } from './plugins.js';
@@ -64,7 +68,7 @@ import { pluginForRound, hostedPlugins, itemUnlocksOf } from './plugins.js';
 const ATTESTED_NO_RUN = 'that round\'s game is attested: its result is its attestors\' outcome (GET /outcome), not a run - nothing of it is replayed';
 import { committeeSeedFromBeacon, beaconFromChain, beaconIsTheChains } from '../../arena-protocol/src/beacon.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { postTranscript, relayTargets } from './relay.js';
+import { postTranscript, relayTargets, RELAY_TIMEOUT_MS } from './relay.js';
 
 /**
  * WHAT A BEACON IS WORTH TO THIS NODE, worked out once per round.
@@ -253,8 +257,25 @@ async function peerHead(answer, cap) {
  * POST /proof-pull, and again at every close. Now each peer gives at most this many.
  */
 const EQUIVOCATION_PAIRS_PER_PEER = 32;
-/** A peer's /entry-void answer is one small JSON object (kanban #1632). */
-const ENTRY_VOID_MAX_BYTES = 4096;
+/**
+ * A PEER'S /entry-void ANSWER IS ONE SMALL JSON OBJECT (kanban #1632, #2163): why, the first mark, the evidence (a signed
+ * mark), the seat's own receipt, a receipt per committee seat and an offer per seat. #1632 set 4096, about 3.9 KB away
+ * from an honest answer at 7 seats; 64 KB holds an honest one for a committee far past any the census seats, and parses in
+ * well under a millisecond. Every reader of the door uses this one cap: verify.js (#equivocationProven, #peerVoidBefore)
+ * and server.js lateByPeers through peerEntryVoid.
+ */
+const ENTRY_VOID_MAX_BYTES = 64 * 1024;
+/**
+ * ONE PEER'S GET /entry-void, timed and capped (kanban #2163): the parsed answer, or null when the peer holds none (any
+ * status but 200). Throws when the peer is down, too slow or answers past ENTRY_VOID_MAX_BYTES - it then proves nothing.
+ * Before, server.js lateByPeers read this door with a bare fetch + r.json(): one peer's 120 MB answer, sent inside the
+ * 1.5 s timeout, held the seat's thread 4.3 s per /play message carrying a first mark the seat did not hold.
+ */
+export async function peerEntryVoid(peer, entryIdHex, waitMs = PEER_WAIT_MS) {
+  const r = await fetch(`${String(peer).replace(/\/+$/, '')}/entry-void?entry=${entryIdHex}`, { signal: AbortSignal.timeout(waitMs) });
+  if (r.status !== 200) { try { await r.body?.cancel(); } catch { /* gone */ } return null; }
+  return JSON.parse(Buffer.from(await peerBody(r, ENTRY_VOID_MAX_BYTES)).toString('utf8'));
+}
 /**
  * A PEER'S GET /results ANSWER IS BOUNDED (kanban #1634): it was read whole (fetch + arrayBuffer, no #1550 cap) and every
  * record that named the round, the player and a committee key cost a schnorr.verify, all in one synchronous block - one
@@ -348,6 +369,12 @@ export class Verifier {
     this.latePostingSaid = new Set();
     // ONE RETRY IN FLIGHT PER RUN (kanban #1569): a retry asked for while one for the same run is replaying gets that one.
     this.retrying = new Map();
+    // WHO IS IN A HEAD-TO-HEAD ROUND, KNOWN BEFORE ANY RETRY SIGNS IT (kanban #2295, #1755, #1071): the server sets this to a
+    // predicate (roundIdBytes) -> true once its close has learned the round's members (membersKnown). A head-to-head round is
+    // signed by retry / retryClose only after that: a player's own checkpoint receipt over /play reached retry's #headToHeadClose
+    // with no members check, and a seat short of the second entry signed VOID 0 for a two-player round alone. Unset (a verifier
+    // made without a server), nothing is gated.
+    this.membersSettled = null;
     /** The last close's whole sequence: replays, then the asking. */
     this.settling = Promise.resolve([]);
   }
@@ -436,7 +463,26 @@ export class Verifier {
    * could not. Kept in `carried` so a close can say what it was offered.
    */
   async carryReceipts(roundIdBytes, entryIdBytes) {
-    const report = { taken: 0, refused: [], down: [], answered: 0 };
+    // `ignored` (kanban #2661, #1489 r2-play-1): what shows no start - bytes that are no receipt, a signature that does not verify, signers off the
+    // committee, receipts of another entry's marks. #neverStarted reads `refused` as doubt that the player started; one junk answer (144 zero
+    // bytes: "not a checkpoint receipt") put there kept every walk-away of the round from FORFEIT at every honest seat. Such lines are kept and
+    // logged apart, and a peer that answered only them counts as having answered nothing.
+    const report = { taken: 0, refused: [], ignored: [], down: [], answered: 0 };
+    // WHO MAY HAVE SIGNED A RECORD WORTH A VERIFY (kanban #2151, #1489 audit44 refute of #1636): the round's assigned
+    // committee, read once per carry. #1636 bounded only the records that FAIL to verify: a peer answering records that
+    // each verify under a fresh key for a random mark passed the per-(mark, signer) dedupe every time, so every one of
+    // up to ~130,000 per answer cost a schnorr verify and four SQL statements on the foreign path, at every close and
+    // retry, and flushed every real divergence signal out of foreign_receipts (FOREIGN_RECEIPTS_KEPT). takeReceipt
+    // refuses an off-committee signer for a mark this seat holds anyway; here it is refused before any curve work, for
+    // a mark this seat does not hold too (a stranger's key is no divergence signal). A record for a mark this seat
+    // holds under another entry is not this answer's business and is skipped unverified, and at most one committee's
+    // worth of records for marks this seat has not got are filed per answer (the divergence signal needs one, not a
+    // table full). An honest peer's answer (GET /receipts: its committee receipts for THIS entry's marks) is taken whole.
+    const committee = typeof this.round.signerNodes === 'function' ? this.round.signerNodes(roundIdBytes).map((k) => hex(k)) : null;
+    const onCommittee = committee && committee.length ? new Set(committee) : null;
+    const foreignPerAnswer = onCommittee ? onCommittee.size : RECEIPTS_PER_TURN;
+    const whose = typeof this.round.markOfEntry === 'function'
+      ? (id) => this.round.markOfEntry(roundIdBytes, entryIdBytes, id) : () => 'entry';
     for (const peer of this.peersOf(roundIdBytes)) {
       let body;
       try {
@@ -458,21 +504,32 @@ export class Verifier {
       // verify is read no further (an honest seat serves only receipts it verified itself), and the loop is given back
       // between batches of RECEIPTS_PER_TURN records.
       const seen = new Set();
+      const skipped = { offCommittee: 0, otherEntry: 0, foreignOver: 0 };
+      let foreign = 0;
       let at = 0;
       while (at + SIGNED_RECEIPT_BYTES <= body.length) {
         let stop = false;
         timed(`close take receipts ${hex(entryIdBytes).slice(0, 8)}`, () => {
           for (let n = 0; n < RECEIPTS_PER_TURN && at + SIGNED_RECEIPT_BYTES <= body.length; n++, at += SIGNED_RECEIPT_BYTES) {
             const one = body.slice(at, at + SIGNED_RECEIPT_BYTES);
+            let r = null;
             try {
-              const r = decodeCheckpointReceipt(splitSignedReceipt(one).body);
+              r = decodeCheckpointReceipt(splitSignedReceipt(one).body);
               const key = `${hex(r.checkpointId)}:${hex(r.nodePubkey)}`;
               if (seen.has(key)) continue;
               seen.add(key);
+              if (onCommittee && !onCommittee.has(hex(r.nodePubkey))) { skipped.offCommittee++; continue; }
+              const held = whose(r.checkpointId);
+              if (held === 'other') { skipped.otherEntry++; continue; }
+              if (held === null && ++foreign > foreignPerAnswer) { skipped.foreignOver++; continue; }
               this.round.takeReceipt(one);
               report.taken++;
             } catch (e) {
+              // no receipt at all, or one whose signature does not verify: nothing that shows a start (kanban #2661)
+              if (!r || /does not verify/.test(e.message)) { report.ignored.push(`${peer}: ${e.message}`); if (/does not verify/.test(e.message)) { stop = true; at = body.length; break; } continue; }
               report.refused.push(`${peer}: ${e.message}`);
+              // kanban #2551: which mark a receipt for a mark this node has not got names - the close asks whether it is this entry's
+              if (r && /a mark this node has not got/.test(e.message)) (report.foreign ||= []).push({ peer, at: report.refused.length - 1, markId: hex(r.checkpointId) });
               if (/does not verify/.test(e.message)) { stop = true; at = body.length; break; }
             }
           }
@@ -480,6 +537,10 @@ export class Verifier {
         if (stop || at + SIGNED_RECEIPT_BYTES > body.length) break;
         await new Promise((r) => setImmediate(r));
       }
+      // NAMED ONCE PER PEER, NOT ONCE PER RECORD: what was skipped unverified, so a close still says what it was offered
+      if (skipped.offCommittee) report.ignored.push(`${peer}: ${skipped.offCommittee} receipts from signers off this round's committee, skipped unverified`);
+      if (skipped.otherEntry) report.ignored.push(`${peer}: ${skipped.otherEntry} receipts for marks of another entry, skipped unverified`);
+      if (skipped.foreignOver) report.refused.push(`${peer}: ${skipped.foreignOver} more receipts for marks this node has not got than one committee's worth (${foreignPerAnswer}), skipped unverified`);
     }
     // AND ANY SIGNER NODE'S REFUSED FIRST MARK (M3.3-34): the player's own on-time first
     // mark that a signer node, up, refused - checked here (round.onTimeFirstMark). It
@@ -581,6 +642,7 @@ export class Verifier {
     // signed FAILED over the late-carried mark - the hold settled into the pool.
     if (voided && !this.round.provenTwoFirstMarks(roundIdBytes, entryId))
       return { entryId, stored: false, why: 'this signer node holds the entry ENTRY_VOID (§16): it signs no run for it' };
+    if (!canonical) await this.#placeForeign(roundIdBytes, entryId, entry);
     if (!canonical && this.#neverStarted(roundIdBytes, entryId)) {
       const ruled = stoppedOutcome({ receiptedMarks: 0, deadlinePassed: true });
       return this.#sign({ roundIdBytes, entryId, entry, contract,
@@ -612,7 +674,7 @@ export class Verifier {
     // end the window; the settlement's combine does. Only this case; every other stopped run is signed as ever.
     // ONE CHECK, WHATEVER THE REPLAY SAID (ruled 2026-09-24): a DELIVERED signature is over the transcript that holds
     // the final mark, so a node short the mark - its inputs short or whole - does not sign until it has it.
-    const held = await this.#holdBack(roundIdBytes, entryId, entry);
+    const held = await this.#holdBack(roundIdBytes, entryId, entry, answer);
     if (held && !held.signStopped) return held;
     // THE COMBINE CAME FIRST while this node still lacked the final mark: the stopped transcript is signed - never a
     // DELIVERED over a transcript without the mark (ruled 2026-09-23/24).
@@ -628,9 +690,25 @@ export class Verifier {
     // a run it lost (§15: closing the browser does not escape a losing stake).
     const pendingFinal = answer.outcome === 'DELIVERED' ? this.round.pendingFinalMark(roundIdBytes, entryId) : null;
     if (pendingFinal) {
-      if (!(await this.#combined(roundIdBytes)))
-        return { entryId, stored: false, waiting: true, heldBack: true,
-          why: `holding back the close: the run's final mark at tick ${pendingFinal.tick} is carried by ${pendingFinal.receipts} of the ${pendingFinal.need} it needs` };
+      // THIS HOLD HAS AN END THE PLAYER CANNOT MOVE TOO (kanban #3212, #1489 refute of #2980 s2-2): the player sent its last mark to this seat
+      // only and stopped; the settlement never combines while the run is not final, so this seat held its DELIVERED close for good (240+
+      // attempts measured) while the peer signed the stopped transcript. A peer whose inputs are whole now takes the mark from here
+      // (#holdBack); a peer short of them signs the stopped transcript HELD_FINAL_ASK_MS after its hold began. Twice that long after this
+      // seat first saw its hold (round clock or this process's clock, never past half the round's objection window), the mark still not
+      // carried, this seat signs that same stopped transcript - at its last carried mark, never a DELIVERED without the mark's receipts.
+      const k = `${hex(roundIdBytes)}:${hex(entryId)}`;
+      if (!this.pendingSeen) this.pendingSeen = new Map();
+      if (!this.pendingSeen.has(k)) this.pendingSeen.set(k, { round: this.round.now(), here: Date.now() });
+      if (!(await this.#combined(roundIdBytes))) {
+        const seen = this.pendingSeen.get(k);
+        if (this.round.now() - seen.round <= 2 * this.#heldLimit(roundIdBytes) && Date.now() - seen.here <= 2 * this.#heldLimit(roundIdBytes))
+          return { entryId, stored: false, waiting: true, heldBack: true,
+            why: `holding back the close: the run's final mark at tick ${pendingFinal.tick} is carried by ${pendingFinal.receipts} of the ${pendingFinal.need} it needs` };
+        this.pendingSeen.delete(k);
+        const stoppedAt = await this.#atLastMark(roundIdBytes, entryId, entry, { ...answer, outcome: null }, canonical, options);
+        return this.#sign({ roundIdBytes, entryId, entry, contract, answer: stoppedAt, transcript: canonical, stopped: true });
+      }
+      this.pendingSeen.delete(k);
     }
     const scored = answer.outcome === null
       ? await this.#atLastMark(roundIdBytes, entryId, entry, answer, canonical, options) : answer;
@@ -662,6 +740,12 @@ export class Verifier {
         for (const m of mine) {
           if (hex(m.bytes) === hex(theirs)) continue;
           if (m.c.tick !== tc.tick && hex(m.c.previousHash) !== hex(tc.previousHash)) continue;
+          // TWO CHAINS FROM ONE PARENT FORFEIT ONLY WHEN BOTH WERE RECEIPTED (ruled 2026-10-05 (b); kanban #2550, #1489 r13 play-2): a peer's
+          // listed mark is its word, and a stale-head mark every seat refused is public at /equivocation - one seat appended it to its
+          // /checkpoints and every honest seat signed an honest stuck page FORFEIT. A peer's mark at another tick (one parent) that THIS seat
+          // refused itself as not following the chain head (offered_marks) was not carried here, whatever the peer lists: no pair is kept
+          // from it. A pair at one tick, and a fork limb this seat never saw (one mark at each seat), are unchanged
+          if (m.c.tick !== tc.tick && this.round.refusedOfferedMark(checkpointId(tc))) continue;
           try {
             // both receipted: this seat's own chain, and the peer's receipted chain it serves
             if ((await provesEquivocation(m.bytes, theirs, sessionPubkey, verify)).ok && this.round.putForkPair({ a: m.bytes, b: theirs, receipted: true })) {
@@ -683,7 +767,14 @@ export class Verifier {
    * its batches and it, feed first, until the run can be replayed whole. Not once the settlement is combined: then the
    * stopped transcript is signed and the doors shut. Answers the held answer, or null to sign as ever.
    */
-  async #holdBack(roundIdBytes, entryId, entry) {
+  /** How long a close is held for a final mark (kanban #2980): HELD_FINAL_ASK_MS, never past a quarter of the round's objection window. */
+  #heldLimit(roundIdBytes) {
+    let limit = HELD_FINAL_ASK_MS;
+    try { const w = Number(decodeRoundContract(new Uint8Array(this.round.get(roundIdBytes).contract)).objectionWindowMs); if (w > 0) limit = Math.min(limit, w / 4); } catch { /* the default */ }
+    return limit;
+  }
+
+  async #holdBack(roundIdBytes, entryId, entry, answer = null) {
     if (await this.#combined(roundIdBytes)) {
       const kept = this.round.heldFinalAsk(entryId);
       if (!kept) return null;
@@ -701,9 +792,59 @@ export class Verifier {
     }
     // THE MARK IN, AND ITS INPUTS: the hold is done - the doors shut, and the run is signed over the transcript with it.
     const have = this.round.heldInputTicks(roundIdBytes, entryId);
-    if (this.round.holdsMark(checkpointId(decodeCheckpoint(splitSignedMark(ask.mark).body))) && have >= ask.tick) {
+    const markHere = this.round.holdsMark(checkpointId(decodeCheckpoint(splitSignedMark(ask.mark).body)));
+    if (markHere && have >= ask.tick) {
       this.round.dropHeldFinalAsk(entryId);
       return null;
+    }
+    // THE MARK AT A PEER, THE INPUTS WHOLE HERE, THE RUN DELIVERED (kanban #3213, #1489 refute of #2980 s2-3): this seat does not wait for
+    // the player to send the mark again - the peer's copy is the player's own mark (signed under the session key, chained onto a mark held
+    // here, checked by #peerFinalMark and again by the checkpoint door, which takes after the close only this held mark). Measured before:
+    // an honest winner whose connection to this seat dropped at its last mark and came back 7 s later was signed FAILED here at the 5 s
+    // bound and its resent mark refused ('the round is closed'), while the peer held its DELIVERED close for good - the run never final.
+    // Taken here, this seat's receipt reaches the peer on its next pull, and both seats sign DELIVERED over the transcript with the mark.
+    // A DELIVERED run only, as the peer's own hold (pendingFinal): a run that is not delivered is signed stopped at the peer at its close.
+    if (!markHere && have >= ask.tick && answer && answer.ok && answer.outcome === 'DELIVERED') {
+      // NOT AFTER A SEAT OF THE ROUND SIGNED THE STOPPED TRANSCRIPT (kanban #3224, #1489 sm1-round-1): the mark holder gives its own hold up
+      // (#3212, pendingFinal) twice HELD_FINAL_ASK_MS after it first saw it and signs the transcript without the mark, for good. A seat whose
+      // close came later than that (its replays queued behind a round end's others, or catching up after a restart) took the mark here and
+      // signed DELIVERED - measured: FAILED at one seat, DELIVERED at the other, never 2 of 2, the winner's run to §13C. The peers' results
+      // are pulled first (the gather); a stopped result another seat already signed is met: this seat signs that same stopped transcript.
+      try { await this.#gather(roundIdBytes, entryId); } catch { /* a peer that is down signed nothing we can read */ }
+      const stoppedElsewhere = this.round.results(roundIdBytes, entryId).some((r) => {
+        if (hex(r.nodePubkey) === hex(this.round.pubkey)) return false;
+        try { return decodePlayerResult(splitSignedResult(r.bytes).body).outcome !== 'DELIVERED'; } catch { return false; }
+      });
+      if (stoppedElsewhere) {
+        this.round.dropHeldFinalAsk(entryId);
+        if (this.holdSeen) this.holdSeen.delete(hex(entryId));
+        console.log(`[close] ${hex(entryId).slice(0, 16)}: a peer already signed the stopped transcript: the final mark at tick ${ask.tick} is not taken`);
+        return { signStopped: true };
+      }
+      try {
+        this.round.checkpoint(new Uint8Array(ask.mark));
+        this.round.dropHeldFinalAsk(entryId);
+        if (this.holdSeen) this.holdSeen.delete(hex(entryId));
+        console.log(`[close] ${hex(entryId).slice(0, 16)}: took the run's final mark at tick ${ask.tick} from a peer (inputs whole here)`);
+        // the close is read again with the mark in: its receipts pulled, the transcript carried with it
+        return { entryId, stored: false, waiting: true, heldBack: true, why: `took the run's final mark at tick ${ask.tick} from a peer: the close is read again with it` };
+      } catch (e) { console.log(`[close] ${hex(entryId).slice(0, 16)}: the peer's final mark was not taken: ${e.message}`); }
+    }
+    // THE HOLD HAS AN END THE PLAYER CANNOT MOVE (kanban #2980, audit play r1-1, measured 2 of 2 on 2026-11-19: a player sent its last mark to
+    // seat A only and stopped; seat B held its close for that mark, which only the player could feed it, until the settlement combined - and
+    // the settlement does not combine while a run is not final, so B never signed: A alone decided the run VOID past final_after, a loser's
+    // refund, and on 5 of 7 every payout of the round stalled). HELD_FINAL_ASK_MS after the hold began, a mark still not here is not waited
+    // for: the stopped transcript is signed, as at the combine.
+    // on the round's clock from the stored hold, and on this process's own clock from the first time it saw the hold (a seat's watch runs on it);
+    // never past a quarter of the round's own objection window, so the seats' results still meet inside the windows the round names
+    const limit = this.#heldLimit(roundIdBytes);
+    const k = hex(entryId);
+    if (!this.holdSeen) this.holdSeen = new Map();
+    if (!this.holdSeen.has(k)) this.holdSeen.set(k, Date.now());
+    if ((Number.isFinite(Number(ask.heldMs)) && this.round.now() - Number(ask.heldMs) > limit) || Date.now() - this.holdSeen.get(k) > limit) {
+      this.holdSeen.delete(k);
+      this.round.dropHeldFinalAsk(entryId);
+      return markHere ? null : { signStopped: true };
     }
     return { entryId, stored: false, waiting: true, heldBack: true,
       why: `holding back the close: a peer holds the run's final mark at tick ${ask.tick}; this signer node holds inputs `
@@ -795,8 +936,42 @@ export class Verifier {
     if (this.round.firstMarkHeld(roundIdBytes, entryId)) return false;
     if (this.round.entryVoid(entryId)) return false;
     const carried = this.carried.get(`${hex(roundIdBytes)}:${hex(entryId)}`);
-    return !!carried && this.#unreached(roundIdBytes, carried) === 0 && carried.refused.length === 0 && carried.taken === 0
+    // kanban #2551: a receipt for a mark this node has not got is doubt only when that mark was shown to be this entry's (#placeForeign)
+    const unplaced = new Set(carried && carried.unplaced ? carried.unplaced : []);
+    const refused = carried ? carried.refused.filter((_, i) => !unplaced.has(i)) : [];
+    return !!carried && this.#unreached(roundIdBytes, carried) === 0 && refused.length === 0 && carried.taken === 0
       && !(carried.refusedMarks && carried.refusedMarks.length);
+  }
+
+  /**
+   * A RECEIPT FOR A MARK THIS NODE HAS NOT GOT IS DOUBT ONLY WHEN THE MARK IS THIS ENTRY'S (kanban #2551, #1489 r13 play-1): a receipt carries a
+   * checkpoint id and a node key, nothing that ties it to the entry asked about, and takeReceipt checks only its signature - so one seat adding
+   * to its GET /receipts answer a receipt it signed over 32 random bytes (or a real receipt of another entry's mark) kept #neverStarted false,
+   * and a paying entry whose player sat down and never played was signed FORFEIT at no honest seat. Each such mark is looked for in the peers'
+   * GET /checkpoints for this round and entry: it counts as doubt once one peer serves it there, of this round and entry, signed under the
+   * entry's session key. Otherwise its refusal is set aside (`carried.unplaced`, indexes into carried.refused) - the rest of the close reads as before.
+   */
+  async #placeForeign(roundIdBytes, entryId, entry) {
+    const carried = this.carried.get(`${hex(roundIdBytes)}:${hex(entryId)}`);
+    if (!carried || !Array.isArray(carried.foreign) || !carried.foreign.length || this.round.firstMarkHeld(roundIdBytes, entryId)) return;
+    const want = new Set(carried.foreign.map((f) => f.markId));
+    const placed = new Set();
+    const cap = (want.size + PEER_MARKS_AHEAD) * SIGNED_CHECKPOINT_BYTES;
+    for (const { body } of await peersCheckpoints(this.peersOf(roundIdBytes), roundIdBytes, entryId, cap)) {
+      if (!body) continue;
+      for (let at = 0; at + SIGNED_CHECKPOINT_BYTES <= body.length; at += SIGNED_CHECKPOINT_BYTES) {
+        let c, sig;
+        try { const x = splitSignedMark(body.slice(at, at + SIGNED_CHECKPOINT_BYTES)); c = decodeCheckpoint(x.body); sig = x.signature; } catch { continue; }
+        if (hex(c.roundId) !== hex(roundIdBytes) || hex(c.entryId) !== hex(entryId)) continue;
+        const id = hex(checkpointId(c));
+        if (!want.has(id) || placed.has(id)) continue;
+        let ok = false;
+        try { ok = !!entry && sessionCurve.verify(sig, checkpointId(c), entry.sessionPubkey); } catch { ok = false; }
+        if (ok) placed.add(id);
+      }
+    }
+    carried.unplaced = carried.foreign.filter((f) => !placed.has(f.markId)).map((f) => f.at);
+    if (carried.unplaced.length) console.log(`[close] ${hex(entryId).slice(0, 16)}: ${carried.unplaced.length} receipt(s) for marks no peer shows as this entry's - not counted as a start (kanban #2551)`);
   }
 
   /**
@@ -840,14 +1015,23 @@ export class Verifier {
       }
       const carried = await this.carryReveals(roundIdBytes, entries, found.plugin.manifest.moveCount);
       const held = new Map(this.round.revealsOf(roundIdBytes).map((r) => [hex(r.entryId), r]));
-      // NO VERDICT WHILE THE REVEAL SET IS OPEN (kanban #1589, audit 2026-11-12 sm1-h2h-2): a reveal may stand at one seat only (the page
+      // NO VERDICT WHILE THE REVEAL SET IS OPEN (kanban #1589, again as #1648; audit 2026-11-12 sm1-h2h-2): a reveal may stand at one seat only (the page
       // counts it sent at one 201, SM-P3), so a seat whose peer did not answer its /reveals pull decided without it - the honest
       // revealer FORFEIT, his opponent the lone revealer the WINNER - signed, and kept it for good (one result per seat), while the seat
       // holding the reveal signed the opposite: neither verdict reached the threshold, the round never settled. Now a seated entry
       // with no reveal held here, while a peer of the round did not answer, signs nothing yet: the finality watch closes again
       // (retryClose) until every peer answered - then every reveal that stood at any seat is held - or the result window has passed.
       const missing = entries.some(({ entryId }) => seated.has(hex(entryId)) && !held.has(hex(entryId)));
-      if (missing && carried && carried.down.length && !resultWindow(this.round, roundIdBytes, contract).ok)
+      // ...BUT NOT ON ONE PEER'S SILENCE ONCE A THRESHOLD ANSWERED (kanban #2708, audit #1489 r4-h2h-1, high): a seat answering 503 (or nothing) held
+      // every honest seat's verdict until the result window had passed, and the lone revealer's WIN was then VOID (no quorum) - one seat of 7 on
+      // every walk-away round it sat on. When this seat and the peers that answered are a threshold of the committee and none of them held the
+      // missing reveal, the silent ones can hold it at most below a threshold: they cannot carry the opposite verdict, so this one is decided now.
+      const answered = carried && Number.isInteger(carried.asked) ? 1 + carried.asked - carried.down.length : 0;
+      // a committee size with no known threshold (a 6-node committee is live, feedback #019) keeps the old rule - wait - and never throws:
+      // the throw here crashed every seat at start on audit90 (2026-11-14 12:15Z), the close runs inside the finality watch's startup pass
+      let need = Infinity; try { need = receiptsNeeded(Math.max(1, (contract.nodes || []).length)); } catch { need = Infinity; }
+      const quorumAnswered = answered >= need;
+      if (missing && carried && carried.down.length && !quorumAnswered && !resultWindow(this.round, roundIdBytes, contract).ok)
         return { waiting: `reveals not settled: ${carried.down.length} peer(s) of the round did not answer (${carried.down.join('; ').slice(0, 140)})` };
       const list = entries.filter(({ entryId }) => seated.has(hex(entryId)))
         .map(({ entryId }) => { const r = held.get(hex(entryId)); return { key: hex(entryId), move: r ? r.move : null }; });
@@ -977,9 +1161,64 @@ export class Verifier {
     const byId = new Map(entries.map((e) => [hex(e.entryId), e.entry]));
     // NO MORE PEERS ONCE EVERY ENTRY'S REVEAL IS HELD (kanban #576, measured 2026-10-23 02:39Z: /reveals was the largest fetch left on
     // test host seat 1, 216 a minute): a reveal is bound to its entry's commitment, so another peer can add nothing
-    const allHeld = () => { const held = new Set(this.round.revealsOf(roundIdBytes).map((r) => hex(r.entryId))); return [...byId.keys()].every((k) => held.has(k)); };
+    // A NAME RECORD THIS SEAT MISSED IS CARRIED (kanban #1851, state audit 2026-11-12 sm3-h2h-1): the page posts its name record once to every seat at the
+    // join, and /name refuses after a head-to-head round's entry close (#1263). A seat that missed it (restarting, slow, a lost post) dropped the reveal's
+    // identity for want of consent (#1401) and booked the entry to the bare round key for good, while the other seats booked it to the player's identity.
+    // The record is signed by the player's round key and the consent by the identity, so a peer's copy is checked here on its own: taken only if both
+    // signatures verify, it names this round and a player of it, and its signed atMs is at or before the entry close - what the door would have taken.
+    let closeMs = null;
+    try { closeMs = Number(decodeRoundContract(new Uint8Array(this.round.get(roundIdBytes).contract)).entryCloseMs); } catch { closeMs = null; }
+    const players = new Set(entries.filter((e) => e.entry && e.entry.playerPubkey instanceof Uint8Array).map((e) => hex(e.entry.playerPubkey)));
+    const unconsented = () => typeof this.round.consentedIdentityOf === 'function' && [...players].some((p) => !this.round.consentedIdentityOf(roundIdBytes, Buffer.from(p, 'hex')));
+    // SERVED BY MORE THAN ONE PEER (kanban #2659, #1489 r1-h2h-4): the record's atMs is the player's own word - signed by his round key, it
+    // proves nothing about WHEN he signed it. A player who named no identity could read the result, sign a backdated record only for a round he
+    // won and hand it to ONE seat he runs: every honest seat carried it and booked his wins to his identity, his losses to bare keys (#1263/#1401
+    // reopened). The page posts its record to every seat at the join, and an honest seat's door takes it only before the close, so a record is
+    // now carried only when at least f + 1 peers (f = floor((n - 1) / 3) of the n seats, never fewer than two peers) serve the same signed bytes:
+    // at least one honest seat took it at its door in time. Gathered from every peer first, then carried.
+    const nameSeen = new Map();   // record hex -> { peers: Set, n }
+    const gatherNames = async (peer) => {
+      let body;
+      try {
+        const answer = await fetch(`${peer}/names?round=${hex(roundIdBytes)}`, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
+        if (!answer.ok) return;
+        body = JSON.parse((await capped(answer, 65536 + players.size * 1024)).toString('utf8'));
+      } catch { return; }
+      for (const n of (body && Array.isArray(body.names) ? body.names : [])) {
+        try {
+          if (!/^[0-9a-f]+$/i.test(String(n.record)) || !/^[0-9a-f]{128}$/i.test(String(n.sig)) || !/^[0-9a-f]{128}$/i.test(String(n.identitySig))) continue;
+          const bytes = new Uint8Array(Buffer.from(n.record, 'hex')), sig = new Uint8Array(Buffer.from(n.sig, 'hex')), identitySig = new Uint8Array(Buffer.from(n.identitySig, 'hex'));
+          const rec = decodeLobbyName(bytes);
+          if (hex(rec.roundId) !== hex(roundIdBytes) || !players.has(hex(rec.playerPubkey))) continue;
+          if (closeMs === null || !Number.isFinite(closeMs) || !(Number(rec.atMs) <= closeMs)) continue;
+          if (this.round.consentedIdentityOf(roundIdBytes, rec.playerPubkey)) continue;
+          if (!schnorr.verify(sig, lobbyNameId(rec), rec.playerPubkey)) continue;
+          if (!schnorr.verify(identitySig, matchProofId({ roundId: roundIdBytes, entryId: rec.playerPubkey, identityKey: rec.identityPubkey }), rec.identityPubkey)) continue;
+          const k = hex(bytes), seen = nameSeen.get(k) || { peers: new Set(), n: { bytes, rec, sig, identitySig } };
+          seen.peers.add(peer); nameSeen.set(k, seen);
+        } catch { /* a record that does not read or verify is not carried */ }
+      }
+    };
+    const carryNames = async (peers) => {
+      await Promise.all(peers.map((peer) => gatherNames(peer)));
+      const need = Math.max(2, Math.floor(peers.length / 3) + 1);   // n = peers + this seat: f + 1 = floor((n - 1) / 3) + 1
+      for (const { peers: by, n } of nameSeen.values()) {
+        if (by.size < need || this.round.consentedIdentityOf(roundIdBytes, n.rec.playerPubkey)) continue;
+        this.round.putLobbyName({ roundId: roundIdBytes, playerPubkey: n.rec.playerPubkey, record: n.bytes, signature: n.sig, atMs: n.rec.atMs, identitySig: n.identitySig });
+      }
+    };
+    // ...and an entry is held in full only with its reveal AND, where its player's consent is held here, its identity: the reveal door dropped the
+    // identity of a reveal that came before the consent was carried, and a peer's /reveals serves it again
+    const allHeld = () => {
+      const held = new Set(this.round.revealsOf(roundIdBytes).map((r) => hex(r.entryId)));
+      return [...byId.entries()].every(([k, e]) => held.has(k) && !(typeof this.round.identityOf === 'function' && typeof this.round.consentedIdentityOf === 'function'
+        && e.playerPubkey instanceof Uint8Array && this.round.consentedIdentityOf(roundIdBytes, e.playerPubkey) && !this.round.identityOf(Buffer.from(k, 'hex'))));
+    };
+    if (this.round.putLobbyName && unconsented()) await carryNames([...new Set(this.peersOf(roundIdBytes))]);
+    let asked = 0;   // kanban #2708: how many peers were asked for their reveals (answered = asked - down)
     for (const peer of this.peersOf(roundIdBytes)) {
       if (allHeld()) break;
+      asked++;
       let body;
       try {
         // BOUNDED IN TIME AND SIZE (kanban #1507): a seat that answered 200 and trickled its body a byte at a time held
@@ -1014,7 +1253,7 @@ export class Verifier {
         }
       }
     }
-    return { down };
+    return { down, asked };
   }
 
   #attested(contract) {
@@ -1498,6 +1737,10 @@ export class Verifier {
    * inside the result window; past it, a signer node still unable to retrieve the
    * transcript decides by §13C (2026-09-15 07:49, #unretrievedPastWindow).
    */
+  #membersSettled(roundIdBytes) {
+    if (typeof this.membersSettled !== 'function') return true;
+    try { return this.membersSettled(roundIdBytes) === true; } catch { return false; }
+  }
   retryClose(roundIdBytes, entryIdBytes) {
     return timed(`close retry ${hex(entryIdBytes).slice(0, 8)}`, () => this.#retryClose(roundIdBytes, entryIdBytes), { over: 50 });
   }
@@ -1517,6 +1760,8 @@ export class Verifier {
     // first mark and every peer up, and #kept signed every revealed entry - the winner too - FORFEIT 0 as a run that never started.
     { const h2h = this.#headToHead(contract);
       if (h2h) {
+        // kanban #2295: not before this seat knows who is in the round (as retry)
+        if (!this.#membersSettled(roundIdBytes)) return { entryId: entryIdBytes, stored: false, why: 'this seat does not yet know who is in that head-to-head round: it signs nothing for it' };
         const [work] = this.#headToHeadClose(roundIdBytes, contract, h2h, entryIdBytes);
         return work ? await work : { entryId: entryIdBytes, stored: false, why: 'no such member entry in that head-to-head round' };
       } }
@@ -1763,10 +2008,15 @@ export class Verifier {
       try {
         const answer = await peerFetch(`${peer}/postings?round=${hex(roundIdBytes)}&entry=${hex(entryIdBytes)}`);
         if (!answer.ok) continue;
-        body = await peerBody(answer);
+        // BOUNDED, AND ONE CHECK PER SIGNER KEY (kanban #2729, audit #1489 r5-gossip-3, high; #1634 for /results): one seat answered 16 MiB of
+        // copies of a posting naming its own key with random signatures and every honest seat verified each one on its thread (74,000 BIP-340
+        // checks, ~48 s per publish). The read is capped at two postings per signer node, and an answer gets one check per signer key at most,
+        // none for a key whose posting this seat already holds (a held posting is never replaced)
+        body = await peerBody(answer, 2 * Math.max(1, signerNodes.length) * SIGNED_POSTING_BYTES);
       } catch { continue; }                  // a peer that is down is not a fault
+      const tried = new Set(this.round.postings(roundIdBytes, entryIdBytes).map((x) => hex(x.signerNodePubkey)));
       for (let at = 0; at + SIGNED_POSTING_BYTES <= body.length; at += SIGNED_POSTING_BYTES)
-        this.#keepPeerPosting(roundIdBytes, entryIdBytes, body.slice(at, at + SIGNED_POSTING_BYTES), playerPubkey, signerNodes);
+        this.#keepPeerPosting(roundIdBytes, entryIdBytes, body.slice(at, at + SIGNED_POSTING_BYTES), playerPubkey, signerNodes, tried);
     }
 
     const count = transcriptIsPublished({
@@ -1992,10 +2242,13 @@ export class Verifier {
       try {
         const answer = await peerFetch(`${peer}/reruns?round=${hex(roundIdBytes)}&entry=${hex(entryIdBytes)}`);
         if (!answer.ok) continue;
-        body = await peerBody(answer);
+        // kanban #2729: the same bound as /postings - two re-runs per signer node read (a price round's result is 10 bytes longer), one check per
+        // signer key and answer (a held re-run may still be replaced by a fresh one that counts, putRerun, so held keys are checked again)
+        body = await peerBody(answer, 2 * Math.max(1, signerNodes.length) * (SIGNED_RERUN_BYTES + 16));
       } catch { continue; }
+      const tried = new Set();
       for (const rec of cutSignedReruns(body))
-        this.#keepPeerRerun(roundIdBytes, rec.slice(), found.entry.playerPubkey, signerNodes, entryIdBytes);
+        this.#keepPeerRerun(roundIdBytes, rec.slice(), found.entry.playerPubkey, signerNodes, entryIdBytes, tried);
     }
 
     const count = rerunIsAgreed({
@@ -2111,7 +2364,7 @@ export class Verifier {
       report.filed.push(who);
       for (const relay of relayTargets(contract.publicationRelays, this.peersOf(roundIdBytes))) {
         try {
-          const put = await fetch(`${String(relay).replace(/\/+$/, '')}/slash/${hex(id)}`, { method: 'PUT', body: record });
+          const put = await fetch(`${String(relay).replace(/\/+$/, '')}/slash/${hex(id)}`, { method: 'PUT', body: record, signal: AbortSignal.timeout(RELAY_TIMEOUT_MS) });   // kanban #3001: a relay's answer has a deadline
           if (put.ok) report.published += 1;
           else report.refused.push(`${relay}: kept no proof (${put.status})`);
         } catch (e) { report.refused.push(`${relay}: ${e.message}`); }
@@ -2176,7 +2429,7 @@ export class Verifier {
       report.filed.push(who);
       for (const relay of relayTargets(contract.publicationRelays, this.peersOf(roundIdBytes))) {
         try {
-          const put = await fetch(`${String(relay).replace(/\/+$/, '')}/slash/${hex(id)}`, { method: 'PUT', body: record });
+          const put = await fetch(`${String(relay).replace(/\/+$/, '')}/slash/${hex(id)}`, { method: 'PUT', body: record, signal: AbortSignal.timeout(RELAY_TIMEOUT_MS) });   // kanban #3001: a relay's answer has a deadline
           if (put.ok) report.published += 1;
           else report.refused.push(`${relay}: kept no proof (${put.status})`);
         } catch (e) { report.refused.push(`${relay}: ${e.message}`); }
@@ -2186,7 +2439,7 @@ export class Verifier {
   }
 
   /** One re-run from a peer: about this round and player, from a joined signer node, and signed by it. */
-  #keepPeerRerun(roundIdBytes, record, playerPubkey, signerNodes, entryIdBytes) {
+  #keepPeerRerun(roundIdBytes, record, playerPubkey, signerNodes, entryIdBytes, tried = null) {
     let x, signature;
     try {
       const split = splitSignedRerun(record);
@@ -2195,6 +2448,7 @@ export class Verifier {
     } catch { return false; }
     if (hex(x.result.roundId) !== hex(roundIdBytes) || hex(x.result.playerPubkey) !== hex(playerPubkey)) return false;
     if (!signerNodes.some((s) => hex(s) === hex(x.result.nodePubkey))) return false;
+    if (tried) { if (tried.has(hex(x.result.nodePubkey))) return false; tried.add(hex(x.result.nodePubkey)); }   // kanban #2729
     let ok = false;
     try { ok = schnorr.verify(signature, rerunResultId(x), x.result.nodePubkey); } catch { ok = false; }
     if (!ok) return false;
@@ -2315,7 +2569,7 @@ export class Verifier {
   }
 
   /** One posting from a peer: about this round and player, from a joined signer node, and signed by it. */
-  #keepPeerPosting(roundIdBytes, entryIdBytes, record, playerPubkey, signerNodes) {
+  #keepPeerPosting(roundIdBytes, entryIdBytes, record, playerPubkey, signerNodes, tried = null) {
     let p, signature;
     try {
       const split = splitSignedPosting(record);
@@ -2324,6 +2578,8 @@ export class Verifier {
     } catch { return false; }
     if (hex(p.roundId) !== hex(roundIdBytes) || hex(p.playerPubkey) !== hex(playerPubkey)) return false;
     if (!signerNodes.some((s) => hex(s) === hex(p.signerNodePubkey))) return false;
+    // kanban #2729: one signature check per signer key and answer, none for a key held already
+    if (tried) { if (tried.has(hex(p.signerNodePubkey))) return false; tried.add(hex(p.signerNodePubkey)); }
     let ok = false;
     try { ok = schnorr.verify(signature, transcriptPostingId(p), p.signerNodePubkey); } catch { ok = false; }
     if (!ok) return false;
@@ -2402,6 +2658,8 @@ export class Verifier {
     // A HEAD-TO-HEAD ENTRY IS RETRIED AS ITS CLOSE, never replayed as a run (kanban #1586; as #retryClose)
     { const h2h = this.#headToHead(contract);
       if (h2h) {
+        // kanban #2295: not before this seat knows who is in the round - its close decides it then
+        if (!this.#membersSettled(roundIdBytes)) return null;
         const [work] = this.#headToHeadClose(roundIdBytes, contract, h2h, entryIdBytes);
         if (!work) return null;
         this.done = [...this.done, work];

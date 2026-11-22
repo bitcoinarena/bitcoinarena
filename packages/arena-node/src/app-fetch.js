@@ -61,7 +61,7 @@ async function fill(app, cache, { fetcher, concurrency, timeoutMs, log }) {
     let last;
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        const r = await fetcher(rawUrl(app.repo, app.commit, p), { signal: AbortSignal.timeout(timeoutMs) });
+        const r = await fetcher(rawUrl(app.repo, app.commit, p), { signal: AbortSignal.timeout(timeoutMs), redirect: 'follow' /* kanban #3107: raw.githubusercontent.com may move a renamed repo; the files are pinned by hash */ });
         if (r.status !== 200) throw new Error(`${p} answered ${r.status}`);
         const b = Buffer.from(await r.arrayBuffer());
         // NOTHING UNCHECKED IS KEPT: a file that is not the pinned one is refused, never written

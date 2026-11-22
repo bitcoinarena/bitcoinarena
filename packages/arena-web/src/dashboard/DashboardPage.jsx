@@ -13,6 +13,24 @@ import { SetupStatus, FoundingWait, PegInCard, NoBondCard, noBond } from './Setu
 import { CopyButton } from '../design/components.jsx';
 import { UptimeStats } from './Uptime.jsx';
 
+/**
+ * THE GATEWAY MONEY-LOSS CARD (kanban #2773, the owner 2026-11-14 after #2771: gw-c lost the use of its notes for six days unseen): the
+ * gateway this node hosts, judged by the node (hosts.js + gateway-loss.js) - failed payments "note already spent", e-cash gone with
+ * no payment to explain it, dead notes. Red at the top while any is above zero; amber for failures without a loss; nothing when fine.
+ */
+export function GatewayWarningCard({ gateway: G, nowMs }) {
+  const w = G && G.warning;
+  if (!w || w.level === 'ok') return null;
+  const bad = w.level === 'bad', f = (G.watch && G.watch.failures) || {};
+  return (
+    <div className="card gateway-warning" id="gateway-warning" style={{ borderColor: bad ? '#f85149' : '#d29922' }}>
+      <div className="setup-head"><h3>Gateway {G.name}</h3><span className={`setup-pill ${bad ? 'bad' : 'warn'}`}>{bad ? 'Money at risk' : 'Payments failing'}</span></div>
+      <ul>{(w.parts && w.parts.length ? w.parts : [w.text]).map((t, i) => <li key={i}>{t}</li>)}</ul>
+      {f.lastAtMs ? <p className="sub">Last failure {short(f.lastAtMs, nowMs)} UTC{f.lastError ? `: ${f.lastError}` : ''}</p> : null}
+      {G.watch && G.watch.error ? <p className="sub">{G.watch.error}</p> : null}
+    </div>);
+}
+
 /** msat to the page's sat: three decimals under 10, one under 1,000, none above. */
 export const sat = (m) => { const n = Number(m || 0) / 1000; return `${(n < 10 ? n.toFixed(3) : n.toFixed(n < 1000 ? 1 : 0)).replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '')} sat`; };
 /** A short date: "21 Oct 10:16" this year, with the year otherwise. */
@@ -250,6 +268,7 @@ export class DashboardPage extends React.Component {
           <a className="btn" href={ownerHref(D.node, typeof location === 'undefined' ? null : location)}>Owner area →</a>
         </header>
         {/* NO BOND, AT THE TOP (kanban #728): red, with the way to set it up; no founding then (FoundingWait says nothing) */}
+        {G && G.warning && G.warning.level !== 'ok' ? <section><GatewayWarningCard gateway={G} nowMs={now} /></section> : null}
         {noBond(D.setup) ? <section><NoBondCard status={D.setup} href={bondHref(D.node, typeof location === 'undefined' ? null : location)} /></section> : null}
         {D.setup && D.setup.ok && D.setup.pegIn && D.setup.pegIn.txid ? <section><PegInCard status={D.setup} /></section> : null}
         {D.setup && D.setup.ok ? <section><SetupStatus status={D.setup} node={D.node} /></section> : null}

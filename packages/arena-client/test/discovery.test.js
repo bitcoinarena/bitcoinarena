@@ -475,7 +475,7 @@ test('the door will not open on one provider, or without an anchor', async () =>
  * the one that asks whether this is Bitcoin.
  */
 test('a self-consistent world of the attackers own making is refused', async () => {
-  const his = bondFor(advertFor('wss://the-attackers-node:443'));
+  const his = bondFor(advertFor('wss://the-attackers-node.example:443')   /* kanban #3125: a dotted name, a single label is a LAN name */);
   const c = contract([operatorPubkey]);
   const door = { core, sign, verify, contract: c, roundIdGiven: roundId(c) };
 

@@ -1,0 +1,7 @@
+[Unit]
+Description=#2623 #2641 refresh the open-issues list hourly (the faucet serves the file; no page deploy)
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=1h
+[Install]
+WantedBy=timers.target

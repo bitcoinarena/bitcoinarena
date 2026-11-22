@@ -37,7 +37,8 @@ test('#2015 #2049: four colluders, three other witnesses each - no trusted seat 
 });
 
 test('#2015 #2049: the trusted seat holding the same round and committee confirms it; another committee under that id does not', async () => {
-  const same = await nodeBountyCheck({ node: KEYS[0].pk, seats: [], nowMs: NOW, censusSeats: [TRUSTED], fetchJson: world([{ roundId: RID, committee: COMMITTEE, finals: [] }]) });
+  // KANBAN #3118-#3121: a FINAL counts only as the trusted seat holds it - a real /served lists a game round only from the FINALs it keeps
+  const same = await nodeBountyCheck({ node: KEYS[0].pk, seats: [], nowMs: NOW, censusSeats: [TRUSTED], fetchJson: world([{ roundId: RID, committee: COMMITTEE, finals: fins }]) });
   const other = await nodeBountyCheck({ node: KEYS[0].pk, seats: [], nowMs: NOW, censusSeats: [TRUSTED], fetchJson: world([{ roundId: RID, committee: [KEYS[0].pk, 'f0'.repeat(32)], finals: [] }]) });
   console.log('  MEASURED #2015 trusted confirms:', JSON.stringify({ same: [same.passes, says(same)], other: [other.passes, says(other)] }));
   assert.equal(same.passes, true);

@@ -118,12 +118,25 @@ export async function refreshHostedGames({ home, release, post = false, chainKit
   const st = state || nodeState(home);
   await resumeOpen(st, { chainKit });   // kanban #1165
   const s = st.read();
-  if (!s.bond || !s.bond.txid) return { ok: false, why: 'no bond yet: its advertisement will name the games when it is posted' };
-  const { appsIn, chosenApps, hostedGameIdsOf } = await import('./apps.js');
+  const { appsIn, chosenApps, hostedGameIdsOf, releaseGamesBeforeBond, pluginsDirOf } = await import('./apps.js');
   const apps = appsIn(release);
-  const now = await hostedGameIdsOf(release, chosenApps(s, apps), apps);
+  // THE RELEASE'S APPS AND THE GAMES THE NODE INSTALLED ITSELF (kanban #3068 follow-up: rock-paper-scissors v6-v11 reach an installer node
+  // as installed packages, and an advertisement of the release's apps alone never named them) - the list the seat hosts
+  const refused = [];
+  let now = await hostedGameIdsOf(release, chosenApps(s, apps), apps, { pluginsDir: pluginsDirOf(st), refused });
+  // NO BOND YET: THE GAMES ARE STILL WRITTEN DOWN (kanban #3068, measured 2026-11-20 on a live installer node: updated 1.9.27 -> 1.9.28 before
+  // its bond, this returned early and state kept the install-time list; the bond posted later (add-bond.js buildBond takes state.hostedGames)
+  // advertised 35 games without rock-paper-scissors v6-v11 and nextblock v7, so the node was never drawn for them). Nothing on chain - the
+  // bond, when it is posted, names these.
+  if (!s.bond || !s.bond.txid) {
+    await releaseGamesBeforeBond(st, release);   // kanban #3089: the same write the first bond makes (add-bond.js firstBondOnNode)
+    return { ok: false, why: 'no bond yet: its advertisement will name the games when it is posted', ...(now.length ? { hostedGames: now.length } : {}) };
+  }
   if (!now.length) return { ok: false, why: 'this release hosts no game of the node\'s apps' };
   const had = [...new Set(s.hostedGames && s.hostedGames.length ? s.hostedGames : [toHex(NEXTBLOCK_GAME_ID)])].sort();
+  // AN INSTALLED PACKAGE REFUSED THIS ONCE IS NOT A GAME THE NODE STOPPED HOSTING: a check that failed (a trial with no verdict yet, a file
+  // being written) must not cost a transaction that drops the game and another that names it again - its advertised games stay named
+  if (refused.length) now = [...new Set([...now, ...had])].sort();
   // AND THE NEWEST PROTOCOLS: an advertisement declares the protocol versions its release spoke when it was posted (state advertProtocols;
   // unknown for a node bonded before it was kept); a release that speaks more is declared with the same update
   const protocols = [...SUPPORTED_PROTOCOL_VERSIONS];
@@ -141,7 +154,9 @@ export async function refreshHostedGames({ home, release, post = false, chainKit
   const r = await onchainAction({ state: st, kind: 'games', key: JSON.stringify({ now, protocols, rolesNow }), chainKit,
     build: async (s2) => {
       if (!s2.bond || s2.bond.txid !== s.bond.txid) return { ok: false, why: 'the bond changed meanwhile: ask again' };
-      const built = await advertUpdateOf({ st, s: s2, release, roles: rolesNow, hostedGames: now, nowMs, chainKit });
+      // THE ROLES AS THEY ARE WHEN IT IS BUILT (kanban #2181): s2's, not the outer read's - a roles change the owner page finished while
+      // the new release's apps were loading (DONE, state.json roles = the new ones) would else be advertised away by this later update
+      const built = await advertUpdateOf({ st, s: s2, release, roles: s2.roles || [], hostedGames: now, nowMs, chainKit });
       if (!built.ok) return built;
       const u = built.update;
       return { ok: true, tip: built.tip, txs: [{ name: 'funding', hex: u.funding.hex }, { name: 'update', hex: u.update.hex }],

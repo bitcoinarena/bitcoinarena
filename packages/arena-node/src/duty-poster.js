@@ -28,9 +28,11 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { decodeManifest, gameIdOf } from '../../arena-protocol/src/manifest.js';
 import { blockHashOf } from '../../arena-protocol/src/chain.js';
+import { peerEndpointRefusal } from './address-book.js';   // kanban #3090/#3093
 import { daySlotOf, targetDay, dayStartMs, DUTY_FALLBACK_MS, DUTY_BACKUP_AFTER_MS, DUTY_BACKUP_RANK_CAP } from '../../arena-protocol/src/duty.js';
 import { seriesId, isGridSeries } from '../../arena-protocol/src/series.js';
 import { takesNewRounds } from '../../arena-protocol/src/known-federations.js';
+import { configForNewRound } from '../../arena-protocol/src/ballot-chain.js';   // kanban #3218
 import { createGridBase, createDayDuty, DUTY_APPS } from './duty-day.js';
 import { buildGrid, publishGridTx, announceGrid, postSeriesLine } from './grid-build.js';
 import * as guard from './duty-guard.js';
@@ -108,7 +110,12 @@ export const DUTY_TEMPLATE = Object.freeze({ protocolVersion: 3, configHash: new
   custody: 'FEDERATION', stakeExpiryBlocks: 144, slashMinimumServed: 20, slashRemainder: 'SPLIT', censusConfirmations: 6, randomnessRule: 'bitcoin-block-hash',
   publicationRelays: [], gameVerifySlots: 7, settlementSlots: 7, stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: 4920, exposureReference: 1000,
   corridorHalfWidth: 40, spawnFreeRadius: 20, timeFloor: 30, timeCeil: 150, minScore: 0, rankNumerator: 3, rankDenominator: 4, nodes: [] });
-const RPS_TICKS = { blockTicks: 600, startDeadlineTicks: 300 };
+// AN RPS ROUND'S TIMING (kanban #2864, the owner 2026-11-15: "8s runden und dann 5-10s aufdecken"): a head-to-head round has no run, and its end - the
+// reveal deadline and the earliest settlement - is its entry close + 2 x startDeadlineTicks + blockTicks (first-mark.js roundEndMs): 600 + 2 x 300 ticks
+// was 20 s after the close; 301 + 2 x 150 is 10.015 s, just over the protocol's least head-to-head reveal window (manifest.js H2H_REVEAL_MIN_MS, which
+// round.js holds a round to: 300 + 2 x 150 would be 9,998 ms and refused). No core is asked
+// (round.js: a head-to-head round's run length is not checked against a core). ARENA_RPS_BLOCK_TICKS / ARENA_RPS_START_TICKS change it.
+export const RPS_TICKS = Object.freeze({ blockTicks: Number(process.env.ARENA_RPS_BLOCK_TICKS) || 301, startDeadlineTicks: Number(process.env.ARENA_RPS_START_TICKS) || 150 });
 
 /**
  * THE PROTOCOL AN APP'S DAYS ARE RAISED TO (kanban #1486): ARENA_DUTY_PROTOCOL_<APP> (RPS, NEXTBLOCK, UPDOWN) names the lowest version this
@@ -157,6 +164,22 @@ export function dayTemplate({ held, family, networkId, game, ownRelay = null, re
 }
 
 /**
+ * THE CONFIG A DAY NAMES (kanban #3218, state audit #1489 sm1 census-1): the template carries the config of the last day it holds, and after
+ * a config activation that is the one the ballot replaced - a day created at or after the activation naming it is refused by every seat
+ * (ballot-chain.js configServesRound behind offerRefusal), and every later day copied it again, for good. A day names the config live at
+ * its census height, by the rule round-2of2 uses (configForNewRound: a config the ballot never named stays as it was). `ballot` is the
+ * seat's own ballot ({ history: its spans, siblings: the core's configs, pending }), null when the seat counts none. While a proposal that
+ * would activate by the census height is undecided (pending), no config is known, and no day is posted rather than one the seats refuse.
+ * -> { ok: true, configHash } | { ok: false, why }
+ */
+export function dutyDayConfig({ configHash, height, ballot }) {
+  if (!ballot) return { ok: true, configHash };
+  if (ballot.pending) return { ok: false, why: `the ballot has not decided every proposal that activates by census height ${height}: the config live there is not known yet` };
+  if (!(configHash instanceof Uint8Array) || configHash.length !== 32) return { ok: true, configHash };
+  return { ok: true, configHash: configForNewRound({ wanted: configHash, height, history: ballot.history, siblings: ballot.siblings || null }) };
+}
+
+/**
  * WHO POSTED A DAY (kanban #702 addition, 2026-10-26: "In health also say who posted that round" - "Since its pre deterministic"): the
  * creator key of the series its marked transaction publishes (`templateOf(idHex)` the line this node holds), its rank in the day's duty
  * order (1-based), and whether a fallback node posted it. Null poster when this node holds none of its series.
@@ -179,7 +202,9 @@ export function posterOf({ series, templateOf, order }) {
  *   env                       ARENA_DUTY_POST, ARENA_DUTY_WALLET, ARENA_DUTY_FEE_RATE, ARENA_DUTY_MAX_FEE_RATE, ARENA_DUTY_APPS,
  *                             ARENA_DUTY_ITEM_<APP>, ARENA_DUTY_PROTOCOL_<APP> (#1486), ARENA_FUNDED_ROUNDS_FILE, ARENA_DUTY_EMERGENCY
  *   nodeSecret                this node's identity secret: it signs the series it creates
- * and, once its seat listens, attach({ port, host, endpoint, heldTemplates, nameFunded, donationSetAt, nodeKey }) from server.js.
+ * and, once its seat listens, attach({ port, host, endpoint, heldTemplates, nameFunded, donationSetAt, nodeKey, endpointOf, ballotFor }) from server.js
+ * (endpointOf: the seat's address book resolver, entry -> URL | null, kanban #3090/#3093; ballotFor(contract): the seat's ballot for a day's
+ * config, dutyDayConfig, kanban #3218).
  */
 export function createDutyPoster({ call, walletCall, networkIdHex, censusEntriesAt, dutyCensus, chainBlocks, dir, env = {}, nodeSecret,
   fetchFn = fetch, log = (l) => console.log(l), now = Date.now, everyMs = DUTY_EVERY_MS }) {
@@ -194,6 +219,16 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
   let lastSeats = [];
   const self = () => (seat ? `http://${seat.host === '0.0.0.0' ? '127.0.0.1' : seat.host}:${seat.port}` : null);
   const reach = (u) => String(u || '').replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
+  // A CENSUS NODE IS DIALED ONLY WHERE THE ADDRESS BOOK TAKES ITS ENDPOINT (kanban #3090/#3093, a gap in #2856/#3082): a bond committing a
+  // loopback or private endpoint, or one with a path or a query that swallows the door, got this node's GET /games, POST /expected and
+  // POST /series. The seat's addressBook.endpointOf (attach) decides; with no seat attached yet, only an advert endpoint
+  // peerEndpointRefusal takes (local hosts on a regtest network or ARENA_LOCAL_SEATS=1). Null: not dialed, not named.
+  const localNow = () => env.ARENA_LOCAL_SEATS === '1' || process.env.ARENA_LOCAL_SEATS === '1' || networkIdHex() === toHex(NETWORK_ID_REGTEST);
+  const peerAt = (e) => {
+    if (!e || !e.advert || !e.advert.endpoint) return null;
+    if (seat && typeof seat.endpointOf === 'function') { let at; try { at = seat.endpointOf(e); } catch { at = null; } return at ? reach(at) : null; }
+    return peerEndpointRefusal(e.advert.endpoint, { localOk: localNow() }) ? null : reach(e.advert.endpoint);
+  };
   // read up to a bound (kanban #1723): /games at PEER_LISTING_BYTES, anything else at PEER_PACKAGE_BYTES
   const seatJson = async (url, ms = 15000, maxBytes = /\/games(\?|$)/.test(url) ? PEER_LISTING_BYTES : PEER_PACKAGE_BYTES) => {
     const r = await fetchFn(url, { signal: AbortSignal.timeout(ms) }); if (!r.ok) { r.body?.cancel().catch(() => {}); throw new Error(`${url}: ${r.status}`); }
@@ -232,13 +267,13 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
       const nid = networkIdHex(); const tip = Number(await call('getblockcount', [])) - 6;
       const entries = nid ? (await censusEntriesAt(nid, tip - (tip % 36))) || [] : [];
       const mine = seat && seat.nodeKey ? toHex(seat.nodeKey) : '';
-      lastSeats = [...new Set(entries.filter((e) => toHex(e.pubkey) !== mine && e.advert && e.advert.endpoint).map((e) => reach(e.advert.endpoint)))];
+      lastSeats = [...new Set(entries.filter((e) => toHex(e.pubkey) !== mine).map(peerAt).filter(Boolean))];   // kanban #3090/#3093
     } catch { /* the last list */ }
     return [...(own ? [own] : []), ...lastSeats];
   };
   // WHO IS WHERE: a census node's address, for GET /duty's names
   const endpointOf = new Map();
-  const remember = (entries) => { for (const e of entries || []) if (e.advert && e.advert.endpoint) endpointOf.set(toHex(e.pubkey), reach(e.advert.endpoint)); };
+  const remember = (entries) => { for (const e of entries || []) { const at = peerAt(e); if (at) endpointOf.set(toHex(e.pubkey), at); } };   // kanban #3090/#3093
 
   // THE APPS THIS NODE HOSTS, BY NAME: their developer keys (a version of an app is one under the same key) - from its own GET /games
   let devOf = {};
@@ -267,6 +302,11 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
   const openGrid = (game) => async (kind, opts) => {
     const base = kind.base || {};
     const t = templates.get(game);
+    // THE CONFIG LIVE AT THE DAY'S CENSUS HEIGHT (kanban #3218): the app's own (RPS: its manifest's) or the template's, moved on by the ballot
+    const named = dutyDayConfig({ configHash: (kind.fields && kind.fields.configHash) || t.contract.configHash, height: Number(kind.fields.censusHeight),
+      ballot: seat && typeof seat.ballotFor === 'function' ? seat.ballotFor({ ...t.contract, ...kind.fields }) : null });
+    if (!named.ok) { say({ dutyDay: 'CONFIG NOT KNOWN', game, why: named.why }); return { ok: false, why: named.why }; }
+    kind = { ...kind, fields: { ...kind.fields, configHash: named.configHash } };
     // THE PROTOCOL A GRID IS WRITTEN IN: the day's shape's, or the newest version's requirement when that is higher - raised to the
     // operator's floor for the app (ARENA_DUTY_PROTOCOL_<APP>, kanban #1486) once the census at that version can draw the committee
     const floor = dutyProtocolFloor(env, game);
@@ -282,7 +322,7 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
     const census = await censusFor({ ...contract, ...kind.fields });
     const built = buildGrid({ contract, kind, ...opts, censusRootFor: () => census.root, censusEntries: () => census.entries,
       blockTicksAt: null });
-    const sent = await publishGridTx({ outs: built.outs, rpc: walletCall(wallet.wallet), feeRate: opts.feeRate, dry: env.ARENA_GRID_DRY === '1' });
+    const sent = await publishGridTx({ outs: built.outs, rpc: walletCall(wallet.wallet), feeRate: opts.feeRate, dry: env.ARENA_GRID_DRY === '1' || opts.dry === true });   // kanban #2864: the operator's one grid, tried dry first
     if (sent.dry) return { ok: false, dry: true, accepted: sent.accepted, reject: sent.reject, bytes: sent.vsize, feeSat: String(sent.fee), series: built.ids.map(toHex), rounds: built.rounds };
     // NAMED FUNDED HERE, AND IN THE FUNDED FILE THIS MACHINE'S SEATS SHARE (as the runner named them), before any seat is asked
     for (const id of built.ids) {
@@ -452,6 +492,19 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
     },
     stop() { if (timer) clearInterval(timer); if (this._t0) clearTimeout(this._t0); timer = null; },
     pass, status,
+    // THE OPERATOR'S ONE EMERGENCY GRID (kanban #2864): the day duty's own publishing for `slot`'s target day, of the version `gameIdHex` only;
+    // the day's templates read first (as a pass does). `dry`: built and checked by the wallet, nothing sent. Server door: POST /duty/emergency-once
+    async postOnce({ game, slot, gameIdHex = null, dry = false } = {}) {
+      if (!seat) return { ok: false, why: 'the poster is not attached yet' };
+      if (!apps.includes(game)) return { ok: false, why: `this node's poster runs no ${game}` };
+      wallet = await readWallet();
+      if (!networkIdHex()) return { ok: false, why: 'this node knows no network yet' };
+      await readDevs();
+      if (!devOf[game]) return { ok: false, why: `this node hosts no ${game}` };
+      const gb = gridBaseOf();
+      templates.set(game, dayTemplate({ held: seat.heldTemplates(), family: await familyOf(game, gb), networkId: fromHex(networkIdHex()), game, ownRelay: seat.endpoint ? reach(seat.endpoint) : self() }));
+      try { return await engineFor(game, gb, 'primary').publishOnce({ slot, gameIdHex, dry }); } catch (e) { return { ok: false, why: e.message }; }
+    },
     // for the tests: one pass at once
     get engines() { return engines; },
   };

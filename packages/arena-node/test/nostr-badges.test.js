@@ -192,8 +192,11 @@ const S = 100000n;
 const wr = (n, entries, startMs = MON - WEEK_MS + n * 3600000) => contractRound({ gameId: GAME, startMs, n, entries });
 const en = (player, n, payout, roundKey = keyOf(0x70 + n)) => ({ player, roundKey, name: null, stakeMsat: S, payoutMsat: payout, outcome: 'DELIVERED', score: n });
 const DAVE = keyOf(0x24), ERIN = keyOf(0x25);
-// ALICE, BOB and CAROL's two rounds of the week, which every honest seat holds
-const WEEK = [wr(1, [en(ALICE, 1, 3n * S), en(BOB, 2, 0n), en(CAROL, 3, 0n)]), wr(2, [en(BOB, 4, 2n * S), en(CAROL, 5, 0n)])];
+// the week's two rounds, which every honest seat holds - and (kanban #2841) the round all five played before the week: a place needs an
+// identity older than the week with 3 distinct opponents older than the week, placed by its P&L against them
+// round 1: ALICE +3S, BOB, CAROL, DAVE -S; round 2: BOB +S, CAROL 0, DAVE -S -> ALICE +3S, BOB 0, CAROL -S, DAVE -2S
+const WEEK = [wr(1, [en(ALICE, 1, 4n * S), en(BOB, 2, 0n), en(CAROL, 3, 0n), en(DAVE, 7, 0n)]), wr(2, [en(BOB, 4, 2n * S), en(CAROL, 5, S), en(DAVE, 8, 0n)]),
+  wr(8, [ALICE, BOB, CAROL, DAVE, ERIN].map((p, i) => en(p, 10 + i, 90000n)), MON - WEEK_MS - 86400000)];
 const DRAWN = drawOf(new Map(), [1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13]);
 const verifySig = (s, m, k) => schnorr.verify(s, m, k);
 // seat i + 1 answers the i-th list, or { n, rounds } names the seat
@@ -224,9 +227,9 @@ test('the board badge: the network\'s week, read once BOARD_GRACE_MS + BOARD_NET
     assert.deepEqual(asked, [['nextblock', MON - WEEK_MS, MON]]);
     assert.equal(t.awarded, 3);
     assert.deepEqual(podium(book), [[['nextblock@2026-10-05', 1]], [['nextblock@2026-10-05', 2]], [['nextblock@2026-10-05', 3]], [], []]);
-    assert.deepEqual(book.awardsOf(ALICE)[0].evidence, { window: { fromMs: MON - WEEK_MS, toMs: MON }, rank: 1, seats: 5, signed: 2 });
+    assert.deepEqual(book.awardsOf(ALICE)[0].evidence, { window: { fromMs: MON - WEEK_MS, toMs: MON }, rank: 1, seats: 5, signed: 3 });
     assert.deepEqual(book.awardsOf(ALICE)[0].event.tags.slice(2, 6), [['window', '2026-10-05T00:00:00.000Z', '2026-10-12T00:00:00.000Z'],
-      ['rank', '1'], ['seats', '5'], ['signed', '2']]);
+      ['rank', '1'], ['seats', '5'], ['signed', '3']]);
     assert.deepEqual(await off.tick(), { awarded: 0, sent: 0 });
     assert.deepEqual(off.awardsOf(ALICE), []);
     off.start();                                 // off: no clock either
@@ -240,7 +243,7 @@ test('the board badge counts a round only when 5 seats of its draw signed the sa
   // beats BOB, five seats signed: it counts. And every seat hands in a round of the week after, asked for days back: not this week's.
   const solo = wr(3, [en(DAVE, 9, 100n * S), en(ALICE, 1, 0n)]);
   const three = wr(4, [en(DAVE, 9, 50n * S), en(CAROL, 1, 0n)]);
-  const five = wr(5, [en(ERIN, 6, 4n * S), en(BOB, 1, 0n)]);
+  const five = wr(5, [en(ERIN, 6, 5n * S), en(BOB, 1, 0n), en(CAROL, 2, 0n), en(DAVE, 3, 0n)]);   // ERIN +4S against three older opponents (kanban #2841)
   const fake = wr(7, [en(DAVE, 9, 900n * S), en(ALICE, 1, 0n)]);
   const bare = { ...WEEK[0], entries: WEEK[0].entries.map((e) => (e.player === BOB ? { ...e, roundKey: BOB } : e)) };
   const later = wr(6, [en(DAVE, 9, 100n * S), en(ERIN, 1, 0n)], MON + 3600000);
@@ -251,14 +254,14 @@ test('the board badge counts a round only when 5 seats of its draw signed the sa
   const loud = boardBook(async () => accounts, { now: () => DUE, log: (l) => lines.push(l) });
   try {
     assert.equal((await book.tick()).awarded, 3);
-    // THE SIGNED ROUNDS 1, 2 AND 5, as season() ranks them: ERIN +3S net, ALICE +2S, BOB -1S (-1S, +1S, -1S), CAROL -2S
+    // THE SIGNED ROUNDS 1, 2 AND 5 (and the one before the week), placed by the P&L against older opponents: ERIN +4S, ALICE +3S, BOB -1S, CAROL -2S, DAVE -3S
     const ranks = podium(book).map((x) => (x.length ? x[0][1] : null));
     assert.deepEqual(ranks, [2, 3, null, null, 1], 'ALICE 2, BOB 3, CAROL 4th (no badge), DAVE none, ERIN 1');
     assert.equal(ranks[3], null, 'DAVE: neither one seat, nor three, nor three colluders\' identical invented round is a round');
     assert.equal(ranks[4], 1, 'ERIN: a round five seats of its draw signed counts');
     assert.equal(ranks[1], 3, 'BOB keeps his place over one seat naming him a bare round key');
     await loud.tick();
-    assert.ok(lines.some((l) => /week of 2026-10-05: 3 signed rounds from 9 seats/.test(l)), lines.join('\n'));
+    assert.ok(lines.some((l) => /week of 2026-10-05: 4 signed rounds from 9 seats/.test(l)), lines.join('\n'));
   } finally { book.stop(); loud.stop(); }
 });
 

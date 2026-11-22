@@ -42,7 +42,7 @@ test('with no attested sample nothing changes: Unity\'s price reaches the core',
 });
 
 test('once the seats serve attested samples, only they reach the core - each just before its tick - and the client with the signatures', async () => {
-  const tape = { tick: 0, prices: Array.from({ length: 64 }, (_, i) => 8290000 + i), sigs: [sig, sig] };
+  const tape = { tick: 0, prices: Array.from({ length: 64 }, (_, i) => 8290000 + i), sigs: [sig, { key: '03'.repeat(32), signature: '04'.repeat(64) }] };   // two committee keys: one key twice counts once (#3153)
   const { P, core, client, calls } = rig({ samples: [{ tick: 2, priceCents: 8297193, sigs: [sig] }], tape });
   P.watch('ab'.repeat(32), ['http://seat']); await settle();
   assert.equal(P.active, true);

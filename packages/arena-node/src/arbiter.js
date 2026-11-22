@@ -403,7 +403,7 @@ export async function txidOf(rpc, hex) { try { return String((await rpc('decoder
 export async function post(rpc, hex) {
   const [r] = await rpc('testmempoolaccept', [[hex]]);
   // SENT BEFORE (kanban #1232): the same bytes already in the mempool are this transaction posted, its answer lost
-  if (r && !r.allowed && /txn-already-in-mempool|txn-already-known/.test(String(r['reject-reason'] || ''))) return { ok: true, txid: r.txid, tested: r, again: true };
+  if (r && !r.allowed && /txn-already-in-mempool|txn-already-known|txn-same-nonwitness-data-in-mempool/.test(String(r['reject-reason'] || ''))) return { ok: true, txid: r.txid, tested: r, again: true };
   if (!r || !r.allowed) return { ok: false, why: `the mempool refuses it: ${r && r['reject-reason']}`, tested: r };
   const txid = await rpc('sendrawtransaction', [hex]);
   return { ok: true, txid, tested: r };
@@ -486,7 +486,8 @@ export async function serveArbiter({ set, allow, port = 0, host = '127.0.0.1', p
     const answer = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'access-control-allow-origin': '*' }); res.end(JSON.stringify(body)); };
     // kanban #1592 / #1469: a body past its limit was dropped and the request ended - answer 413 while the socket still takes it
     const tooBig = (e) => { if (!(e && e.tooLarge)) return false; try { res.setHeader('connection', 'close'); answer(413, { ok: false, why: e.message }); } catch { /* gone */ } return true; };
-    const url = new URL(req.url, 'http://x');
+    // kanban #3048: a target that is no URL (`GET //[`) threw in this async handler - an unhandled rejection ends the process
+    let url; try { url = new URL(req.url, 'http://x'); } catch { return answer(400, { ok: false, why: 'that request target is no URL' }); }
     if (req.method === 'GET' && url.pathname === '/status')
       return answer(200, { network: set.network, k: set.k, members: set.members.map((m) => toHex(m.key)), posted });
     // THE SLASH'S PAYOUTS: every share this set locked to a wronged player - round, entry, the player's refund

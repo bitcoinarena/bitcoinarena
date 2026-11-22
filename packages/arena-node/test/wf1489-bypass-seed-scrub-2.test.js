@@ -39,7 +39,7 @@ test('#1590 the kept event keeps id, sig, the read tags and the address; debug a
     assert.equal(s.take(e).ok, true);
     const got = s.report(e.id);
     assert.ok(got.debug.includes('log line') && !/Absorb|absorb/.test(got.debug));
-    assert.equal(s.addressOf(e.id), 'pay@example.com');
+    assert.equal(s.addressOf(e.id), 'me@example.com');   // the content's checked lnAddress before the lud16 tag (kanban #1677, #2915)
     assert.equal(got.build, '1.9.27');
     s.close();
     // a file written before the fix: the raw event put back by hand, then the store opened again
@@ -49,7 +49,7 @@ test('#1590 the kept event keeps id, sig, the read tags and the address; debug a
     const s2 = openFeedbackStore(file);
     const kept = JSON.parse(new DatabaseSync(file).prepare('SELECT event FROM reports WHERE id = ?').get(e.id).event);
     assert.equal(kept.id, e.id); assert.equal(kept.sig, e.sig); assert.equal(kept.pubkey, e.pubkey);
-    assert.equal(s2.addressOf(e.id), 'pay@example.com');
+    assert.equal(s2.addressOf(e.id), 'me@example.com');
     s2.close();
     for (const f of [file, `${file}-wal`]) if (existsSync(f)) {
       const bytes = readFileSync(f).toString('latin1');

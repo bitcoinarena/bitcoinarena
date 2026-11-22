@@ -215,6 +215,13 @@ const downSave = (nowMs) => { try { const st = downStore(); if (!st) return; con
 export const skippedNodes = (nowMs = Date.now()) => [...downMap()].filter(([, v]) => v > nowMs).map(([node, untilMs]) => ({ node, untilMs }));
 /** Forget every skip (tests). */
 export const forgetSkippedNodes = () => { DOWN = new Map(); FAILS.clear(); try { const st = downStore(); if (st) st.removeItem(DOWN_KEY); } catch { /* nothing kept */ } };
+// THE SEATS' WARNING CODES FOR ONE ROUND (kanban #2557): from the listings that count only; a census objection needs the threshold.
+function seatWarnings(counting, needed) {
+  const by = new Map();
+  for (const c of counting) for (const k of new Set(c.warnings || [])) by.set(k, (by.get(k) || 0) + 1);
+  return [...by].filter(([k, n]) => k !== 'census_objected' || n >= needed).map(([k]) => k);
+}
+
 export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, verifyMany = null, skewMs = LOBBY_SKEW_MS, answerMs = SIGNER_ANSWER_MS, skipFailed = false, preferGames = null, rereadMs = 0 } = {}) {
   if (!Array.isArray(nodes) || !nodes.length) throw new Error('a lobby asks the nodes it was named, and it was named none');
   if (typeof verify !== 'function') throw new Error('a lobby checks each signer node\'s signed listing, and no verify was injected');
@@ -333,9 +340,31 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
     // then the closed ones, soonest first
     .sort((a, b) => (((soonest.get(a) ?? Infinity) <= nowMs) - ((soonest.get(b) ?? Infinity) <= nowMs)) || ((soonest.get(a) ?? Infinity) - (soonest.get(b) ?? Infinity)));
   const prefer = Array.isArray(preferGames) && preferGames.length ? new Set(preferGames.map((g) => String(g).toLowerCase())) : null;
-  const wanted = prefer
-    ? [...open.filter((id) => prefer.has(gameOf.get(id))), ...open.filter((id) => !prefer.has(gameOf.get(id))).slice(0, LOBBY_OTHER_CONTRACTS_PER_READ)].slice(0, LOBBY_CONTRACTS_PER_READ)
-    : open.slice(0, LOBBY_CONTRACTS_PER_READ);
+  const tiers = prefer
+    ? [open.filter((id) => prefer.has(gameOf.get(id))), open.filter((id) => !prefer.has(gameOf.get(id))).slice(0, LOBBY_OTHER_CONTRACTS_PER_READ)]
+    : [open];
+  // EACH SEAT ITS TURN AT THE READ'S CONTRACT BUDGET (kanban #2556, audit #1489 r13): the order above is any seat's word (its close, its game), so
+  // one seat listing hundreds of made-up ids closing soonest took all LOBBY_CONTRACTS_PER_READ every read - each 404s, is held unreadable, the next
+  // made-up ones take their place - and the honest seats' new round was never fetched and got no row. Now the seats take turns, each its own
+  // listed ids in the order above (the opened game's first, as before): one seat's listing costs at most its share while others list rounds too,
+  // and a read whose ids all fit takes every one of them, as before
+  const wanted = [];
+  const picked = new Set();
+  for (const tier of tiers) {
+    const bySeat = new Map();
+    for (const id of tier) for (const c of said.get(id) || []) {
+      const k = String(c.node);
+      if (!bySeat.has(k)) bySeat.set(k, []);
+      const l = bySeat.get(k);
+      if (l[l.length - 1] !== id) l.push(id);
+    }
+    const queues = [...bySeat.values()].map((ids) => ({ ids, at: 0 }));
+    while (wanted.length < LOBBY_CONTRACTS_PER_READ && queues.some((q) => q.at < q.ids.length))
+      for (const q of queues) {
+        while (q.at < q.ids.length && picked.has(q.ids[q.at])) q.at++;
+        if (q.at < q.ids.length && wanted.length < LOBBY_CONTRACTS_PER_READ) { picked.add(q.ids[q.at]); wanted.push(q.ids[q.at]); q.at++; }
+      }
+  }
   for (let i = 0; i < wanted.length; i += 16)
     await Promise.all(wanted.slice(i, i + 16).map((id) => fetchRound(id, answeredFirst, { fetcher: ask })
       .then(({ contract }) => { CONTRACTS.set(id, contract); UNREADABLE.delete(id); }, (e) => { UNREADABLE.set(id, nowMs); refused.push(`${id.slice(0, 16)}: ${e.message}`); })));
@@ -409,7 +438,11 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
       disagrees: counts.filter((c) => c.free !== !pays).map((c) => c.node),
       names: [],                                            // checked below, within the read's budget (kanban #2259, #2276)
       // WHAT THE PLAYER IS WARNED OF BEFORE ENTRY (§18A.7 / §22A): a paying round's only
-      warnings: pays ? entryWarnings(contract, counts.flatMap((c) => c.warnings || [])) : [],
+      // ONLY FROM THE LISTINGS THAT COUNT (kanban #2557): a seat outside the round's committee, or one whose listing is stale or
+      // falsely signed, named 'census_objected' on every paid round and the 'Before you stake' dialog showed it. A game warning is
+      // taken from a fresh, signed listing of a signer node; 'census_objected' (its seats take no entry) only when at least the
+      // round's threshold of those name it. The listing signature does not cover the codes, so one signer node can still name them.
+      warnings: pays ? entryWarnings(contract, seatWarnings(counts.filter((c) => c.counts), needed)) : [],
       contract,
       // THE ROUND'S GAME, FROM ITS CONTRACT (checked against the round id above, so no node's word): one row per game and
       // kind; a market (§0A.7a) - pinned, or a round naming no core, which only a market does - is joined by its pick sheet
@@ -723,7 +756,13 @@ export function lobbyRowNotOffered(r) {
   // ONE GRID PLAYED PER WINDOW (§5A.5 the backup rule, kanban #702, 2026-10-26: "Yes make it part of the design, in the spec"): a seat names
   // a round it does not play in its window - a backup under a drawn primary, a primary whose backup took entries there - played: false;
   // a round most of the seats that say so do not play is not offered
-  const plays = (r.said || []).filter((c) => c && typeof c.played === 'boolean');
+  // ONLY THE ROUND'S OWN SIGNER NODES VOTE, EACH ONCE (kanban #2555, audit #1489 r13): a row fetchLobby built marks each listing `counts`
+  // (fresh, from a signer node of the round, open and assigned there, signed); only those are read, one per node key - before, every
+  // listing was, so one seat outside the committee naming the id six times with `played: false` hid a round its signer nodes play
+  const fromLobby = (r.said || []).some((c) => c && typeof c.counts === 'boolean');
+  const keys = new Set();
+  const plays = (r.said || []).filter((c) => c && typeof c.played === 'boolean'
+    && (!fromLobby || (c.counts === true && !keys.has(c.key) && keys.add(c.key))));
   if (plays.length && plays.filter((c) => !c.played).length * 2 > plays.length) return 'not played';
   const said = (r.said || []).map((c) => c && c.committee).filter(Boolean);
   // a seat names a drawn committee by its members ({ drawn: { game: [...], settlement: [...] } }), an undrawn one drawn: false and why

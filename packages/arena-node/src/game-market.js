@@ -112,6 +112,12 @@ const settledHere = (round, rid) => {
  * Answers { state, outcome?, value?, observedAtMs?, firstMs?, finalAtMs?, reason?, why?, final, voided, persisted }.
  * A store without market_states (a test's fake) reads the same transition, nothing persisted.
  */
+// A DEADLINE VOID WAITS OUT THE HAND-ON GRACE BEFORE IT IS PERSISTED (kanban #2753, #1489 r7-attest-1; server.js ATTEST_HANDON_GRACE_MS, #2423):
+// a seat takes an attestation a settlement peer proves it held before the deadline for this long after it. A deadline VOID persisted
+// inside that time - by one unauthenticated GET /outcome half a second past the deadline, on a seat the peer's hand-on had not reached
+// yet (restarting) - was terminal, the hand-on that then proved the timely taking was evidence only, and the seats split FINAL / VOID for
+// good. Until the grace ends the round reads OPEN (nothing persisted, no return door); once it ends, the VOID is persisted as before.
+export const DEADLINE_VOID_GRACE_MS = 30000;
 export function marketStateOf(round, roundIdBytes, { contract, manifest, nowMs }) {
   const persisting = typeof round.marketState === 'function' && typeof round.casMarketState === 'function';
   const answer = (s, persisted) => ({ ...s, final: s.state === MARKET_STATE.FINAL, voided: s.state === MARKET_STATE.VOID, persisted });
@@ -129,6 +135,8 @@ export function marketStateOf(round, roundIdBytes, { contract, manifest, nowMs }
         firstMs: Number(h.receivedMs), finalAtMs: Number(h.receivedMs) + Number(contract.objectionWindowMs), atMs: Number(nowMs), reason: 'settled',
         why: 'its settlement went in before this seat kept a market state: FINAL on the outcome it settled' };
     }
+    if (next.state === MARKET_STATE.VOID && next.reason === 'deadline' && Number(nowMs) < Number(next.atMs) + DEADLINE_VOID_GRACE_MS)
+      return answer({ state: MARKET_STATE.OPEN, why: `past the market's deadline with no outcome held here: VOID once the ${DEADLINE_VOID_GRACE_MS / 1000} s hand-on grace ends, unless a settlement peer proves it took one in time` }, false);
     const moved = next.state !== (prev ? prev.state : MARKET_STATE.OPEN);
     if (!persisting || !moved) return answer(next, persisting && !!prev && !moved);
     if (round.casMarketState(roundIdBytes, prev ? prev.state : null, next, prev ? (prev.firstMs ?? null) : null)) return answer(next, true);
@@ -258,34 +266,22 @@ export function gameMarkets({ round, plugins, committeeFor, verify, now = () => 
     return resolveWith(m, src, { openCents, closeCents, front, sigs });
   }
 
-  function resolveWith({ market, manifest }, src, { openCents, closeCents, front, sigs }) {
+  function resolveWith({ market, manifest }, src, { openCents, closeCents, front, sigs }, verifyWith = verify) {
     const sourceHex = toHex(market.sourceRoundId);
     // A SOURCE THAT CAN NEVER FIT is VOID before any committee is drawn for it
     const fits = gameMarketFitsSource({ market, manifest, source: src.source, sourceHeld: src.held, sourceSeries: seriesHeld() || [] });
     if (!fits.ok) return { ...fits, source: sourceHex, voided: !!fits.void, ...(fits.void ? { voidWhy: `its source does not fit it: ${fits.why}` } : {}) };
     const c = sourceCommittee(market.sourceRoundId, src);
     if (!c.ok) return c;
-    const resolution = gameMarketResolution({ market, manifest, source: src.source, committee: c.keys, verify, sourceHeld: src.held, sourceSeries: seriesHeld() || [],
+    const resolution = gameMarketResolution({ market, manifest, source: src.source, committee: c.keys, verify: verifyWith, sourceHeld: src.held, sourceSeries: seriesHeld() || [],
       result: { roundId: market.sourceRoundId, openCents, closeCents, ...(front !== undefined ? { front } : {}) }, sigs });
     const voided = gameMarketVoided(resolution, { market, manifest, nowMs: now() });
     return { ...resolution, source: sourceHex, committee: c.keys, sourceEndMs: Number(fits.sourceEndMs), voided: voided.voided, ...(voided.voided ? { voidWhy: voided.why } : {}) };
   }
 
   // ONLY THE SIGNATURES THAT COUNT ARE KEPT: one per key of the drawn committee, each verifying over the result's id - what any
-  // seat recounts. A body handed in with a thousand signatures is not stored as one.
-  const standingSigs = (resultIdBytes, sigs, keys) => {
-    const out = [], seen = new Set(), members = new Set(keys);
-    for (const s of Array.isArray(sigs) ? sigs : []) {
-      const key = typeof s.key === 'string' ? s.key.toLowerCase() : s.key instanceof Uint8Array ? toHex(s.key) : '';
-      if (!members.has(key) || seen.has(key)) continue;
-      let sig;
-      try { sig = typeof s.signature === 'string' ? fromHex(s.signature) : s.signature; } catch { continue; }
-      let good = false;
-      try { good = verify(sig, resultIdBytes, fromHex(key)) === true; } catch { good = false; }
-      if (good) { seen.add(key); out.push({ key, signature: toHex(sig) }); }
-    }
-    return out;
-  };
+  // seat recounts. A body handed in with a thousand signatures is not stored as one. kanban #2679: they are the ones the count
+  // itself verified (hold's `counting`), never verified again.
 
   /**
    * HOLD A MARKET ROUND'S OUTCOME: the resolution as `resolve` makes it - fetching the source contract first where this seat does
@@ -319,15 +315,27 @@ export function gameMarkets({ round, plugins, committeeFor, verify, now = () => 
     if (!result) return refuse('no source round result to hold: { openCents, closeCents, front?, sigs }', 400);
     if (BigInt(now()) < fits.sourceEndMs)
       return refuse(`source round ${toHex(sid).slice(0, 16)} runs until ${new Date(Number(fits.sourceEndMs)).toISOString()}: no result of it is taken before its end`);
-    const got = resolveWith(m, src, result);
-    if (!got.ok) return got.status ? got : { ...got, status: 409 };
     let resultBytes, rid;
     try {
       const x = { roundId: sid, openCents: result.openCents, closeCents: result.closeCents, front: frontOf(result.openCents, result.closeCents) };
       resultBytes = encodeRoundResult(x); rid = roundResultId(x);
     } catch (e) { return refuse(`that result names no prices: ${e.message}`, 400); }
-    const fresh = round.putGameOutcome({ roundId: marketRoundIdBytes, resultId: rid, sourceRoundId: sid, outcome: got.refund ? GAME_MARKET_REFUND : got.outcome,
-      why: got.refund ? got.why : null, result: resultBytes, sigs: standingSigs(rid, result.sigs, got.committee), source: src.bytes,
+    // A RESULT HELD ALREADY IS CHECKED ON WHAT WAS KEPT (kanban #2679, #1489 r2-attest-1): a stranger re-POSTing a held result padded with
+    // junk under the committee's keys cost ~113 BIP-340 verifies a POST (7 tries a key in the count, then each entry again in standingSigs).
+    // Now a result this seat already holds for the round is resolved on its kept signatures (one a key), whatever the body carries - and the
+    // signatures kept are the ones the count itself verified, never verified a second time.
+    const kept = round.gameOutcomes(marketRoundIdBytes).find((o) => toHex(o.resultId) === toHex(rid));
+    const verified = new Map();
+    const counting = (sig, msg, key) => {
+      const good = verify(sig, msg, key) === true;
+      if (good && toHex(msg) === toHex(rid)) { const k = toHex(key); if (!verified.has(k)) verified.set(k, toHex(sig)); }
+      return good;
+    };
+    const got = resolveWith(m, src, kept ? { ...result, sigs: kept.sigs } : result, counting);
+    if (!got.ok) return got.status ? got : { ...got, status: 409 };
+    const members = new Set(got.committee || []);
+    const fresh = kept ? false : round.putGameOutcome({ roundId: marketRoundIdBytes, resultId: rid, sourceRoundId: sid, outcome: got.refund ? GAME_MARKET_REFUND : got.outcome,
+      why: got.refund ? got.why : null, result: resultBytes, sigs: [...verified].filter(([key]) => members.has(key)).map(([key, signature]) => ({ key, signature })), source: src.bytes,
       observedMs: Number(fits.sourceEndMs), receivedMs: now() });
     const { committee, ...answer } = got;
     // what the round IS now, on its persisted state: a result held after it turned FINAL or VOID changed nothing (evidence only)

@@ -62,7 +62,9 @@ test('a whole /rounds listing does not hold the loop: /identity answers every 10
     const rows = JSON.parse(a).rounds.length;
     const worst = Math.max(...waits);
     console.log('  FACTS:', JSON.stringify({ rows, listMs: Math.round(listMs), identityAsks: waits.length, identityWorstMs: Math.round(worst) }));
-    assert.ok(rows > 2000, `the node lists ${rows} rounds - not a large listing`);
+    // since kanban #2790 a listing is cut from the window's bounded background build (72 a series and the next 20 min), which this first ask waits for
+    // the first ask after a start waits for a bare window's build (kanban #2790: the next 8 a series and the next 15 min)
+    assert.ok(rows >= 20, `the node lists ${rows} rounds`);
     assert.equal(a, b, 'two listings asked together answered differently');
     assert.ok(waits.length >= 3, `/identity was answered ${waits.length} times while ${rows} rounds were listed in ${Math.round(listMs)} ms`);
     assert.ok(worst < 250, `/identity waited ${Math.round(worst)} ms behind a listing of ${rows} rounds (${Math.round(listMs)} ms)`);

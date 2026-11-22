@@ -14,7 +14,8 @@
 // THE STATES (kanban #1160), one enum and one transition function, each step compare-and-set, each written BEFORE the side effect it names:
 //   none -> receiving   the row exists before the player's notes are reissued: a stop in the middle leaves "receiving", and the retry's
 //                       AlreadyReceived is this exchange's own receive (its amount the string's, as the tool reads it back)
-//   receiving -> taken  the notes are in, with what they carried | -> refused: the federation would not reissue them
+//   receiving -> taken  the notes are in, with what THEY carried (kanban #1936: the notes' own amount, never the client's balance change)
+//                       | -> refused: the federation would not reissue them
 //   taken -> sending    the payout is named (its key: the exchange id) before the seat's notes leave
 //   sending -> paid     the notes out, kept. A retry in "sending" never spends blind: it reads the keyed send back from the tool's
 //                       operation log (stake-lock ecash-sent); found, it is the answer; not found, the send is made then; a tool that
@@ -80,9 +81,14 @@ export function createEcashExchange({ db, portOf, maxMsat = 1_000_000n, perHourM
   const markAsked = db.prepare("UPDATE ecash_exchanges SET receive_asked = 1 WHERE id = ? AND state = 'receiving'");
   const get = db.prepare('SELECT * FROM ecash_exchanges WHERE id = ?');
   // an hour's spend counts what is out or on its way out, by the time its payout was named (kanban #1637; a row from before: when it was made)
-  const lastHour = db.prepare("SELECT out_msat, pay_msat FROM ecash_exchanges WHERE state IN ('paid', 'sending') AND COALESCE(pay_ms, made_ms) >= ?");
-  // what the seat owes out of its notes already: payouts named and not yet paid, notes taken whose payout is not named yet (kanban #1637)
-  const owedRows = db.prepare("SELECT state, in_msat, want_msat, pay_msat FROM ecash_exchanges WHERE to_fed = ? AND state IN ('taken', 'sending')");
+  // - and a RECEIVING row whose reissue was asked (receive_asked 1, or NULL from before #1204) at what it asked for (kanban #2143, audit44
+  // refute 21): its notes may be with the seat already, its answer lost; the row being checked is not counted against itself
+  const ASKED_RECEIVING = "(state = 'receiving' AND (receive_asked IS NULL OR receive_asked = 1))";
+  const lastHour = db.prepare(`SELECT state, out_msat, pay_msat, want_msat FROM ecash_exchanges WHERE id != ? AND (state IN ('paid', 'sending') OR ${ASKED_RECEIVING}) AND COALESCE(pay_ms, made_ms) >= ?`);
+  // what the seat owes out of its notes already: payouts named and not yet paid, notes taken whose payout is not named yet (kanban #1637),
+  // and reissues asked whose answer never came (kanban #2143): a RECEIVING row that asked may hold the player's notes - a new exchange paid
+  // out of the seat's notes meanwhile left that player's retry with notes taken and nothing to pay him with. Counted at want_msat
+  const owedRows = db.prepare(`SELECT state, in_msat, want_msat, pay_msat FROM ecash_exchanges WHERE to_fed = ? AND id != ? AND (state IN ('taken', 'sending') OR ${ASKED_RECEIVING})`);
   let queue = Promise.resolve();
   const hex64 = /^[0-9a-f]{64}$/;
   const refuse = (status, why) => ({ ok: false, status, why });
@@ -125,6 +131,15 @@ export function createEcashExchange({ db, portOf, maxMsat = 1_000_000n, perHourM
   async function step({ id, from, to, ecash, want }) {
     let r = get.get(id);
     if (r && r.state === EXCHANGE.PAID) return paidAnswer(r, true);
+    // NOT E-CASH, NO ROW (kanban #2384, #2436, audit44 refute 21 s2): a string the federation's own base32 cannot read (decodeEcashBytes is
+    // its decode_prefixed_bytes exactly) is never reissued anywhere - the tool fails before it reaches a guardian. Written as a RECEIVING row
+    // and asked, it stayed RECEIVING with receive_asked 1 for good, and #2143 counted it as owed at the stranger's want_msat and in the hour:
+    // garbage posted for free pinned the seat's balance (honest exchanges 409 "holds 0 sat free") and spent its hour (429). Refused 400
+    // before anything is written; a row such a string left from before is closed REFUSED (it never held notes) and counts no more.
+    if (!decodeEcashBytes(ecash)) {
+      if (r && r.state === EXCHANGE.RECEIVING) transition(id, EXCHANGE.RECEIVING, EXCHANGE.REFUSED, { why: 'not e-cash: the string does not decode' });
+      return refuse(400, 'that is not e-cash: the string does not decode as fedimint notes');
+    }
     // A TAKEN ROW IS NEVER ANSWERED 4xx (kanban #1583, audit #1489 sm1-page-2): the page reads 400/404/409/429 as "this seat took nothing",
     // takes its notes back (Rejected - the seat holds them) and gives the exchange up as refused for good. A row whose notes this seat took or
     // may have taken (TAKEN, SENDING, RECEIVING asked before) meets a passing condition here - its client of a federation not up yet after a
@@ -162,12 +177,13 @@ export function createEcashExchange({ db, portOf, maxMsat = 1_000_000n, perHourM
     // other exchanges had spent the seat's notes in `to` meanwhile - the retry took the player's notes and the payout then failed
     if (!r || r.state === EXCHANGE.RECEIVING) {
       const w = r ? BigInt(r.want_msat || want) : want;
-      const paidHour = lastHour.all(now() - 3_600_000).reduce((t, x) => t + BigInt(x.out_msat || x.pay_msat || 0), 0n);
+      const paidHour = lastHour.all(id, now() - 3_600_000).reduce((t, x) => t + BigInt((x.state === EXCHANGE.RECEIVING ? x.want_msat : (x.out_msat || x.pay_msat)) || 0), 0n);
       let no = null;
       if (paidHour + w > perHourMsat) no = refuse(429, `this seat's exchanges for this hour are spent (${perHourMsat / 1000n} sat an hour)`);
       else {
-        const owed = owedRows.all(to).reduce((t, x) => {
+        const owed = owedRows.all(to, id).reduce((t, x) => {
           if (x.state === EXCHANGE.SENDING) return t + BigInt(x.pay_msat || 0);
+          if (x.state === EXCHANGE.RECEIVING) return t + BigInt(x.want_msat || 0);   // kanban #2143: an asked reissue, at what it asked
           const a = BigInt(x.in_msat || 0), b = BigInt(x.want_msat || x.in_msat || 0);
           return t + (a < b ? a : b);
         }, 0n);
@@ -206,7 +222,17 @@ export function createEcashExchange({ db, portOf, maxMsat = 1_000_000n, perHourM
         log(`[exchange] ${id.slice(0, 12)}: a fresh reissue after the halt - refused, held for the operator, nothing paid`);
         return refuse(409, haltedWhy);
       }
-      if (got.state === 'Success') carried = BigInt(got.msat || 0);
+      if (got.state === 'Success') {
+        // BOOKED BY THE NOTES, NEVER BY THE BALANCE (kanban #1936, state audit 2026-11-12): the tool's "msat" is the client's balance after
+        // its run less before - a reissue left by an earlier, killed run finishes in this run and counts in (paid twice: here and at that
+        // exchange's retry), and a balance that has not risen yet counts 0 (TAKEN with nothing, refused for good). What the notes carried is
+        // `carriedMsat` (the tool's e.amount()); a tool that does not say it holds the row in RECEIVING - asked again, its AlreadyReceived says it
+        if (got.carriedMsat === undefined || got.carriedMsat === null) {
+          note(id, EXCHANGE.RECEIVING, 'reissued; this seat\'s tool does not say what the notes carried: ask again');
+          return refuse(503, 'that e-cash is taken here and its amount is read back on the next ask: ask again with the same e-cash');
+        }
+        carried = BigInt(got.carriedMsat);
+      }
       else if (got.state === 'AlreadyReceived' && !askedBefore) {
         // RECEIVED BEFORE, BUT NOT BY THIS EXCHANGE (kanban #1204 RES-3): another spelling of the same notes, or notes this seat took elsewhere
         transition(id, EXCHANGE.RECEIVING, EXCHANGE.REFUSED, { why: 'those notes were received here before, not by this exchange' });
@@ -222,6 +248,11 @@ export function createEcashExchange({ db, portOf, maxMsat = 1_000_000n, perHourM
           return refuse(503, 'that e-cash is taken here and its amount cannot be read back yet: held, nothing paid twice');
         }
         carried = BigInt(got.carriedMsat);
+      } else if (got.state === 'Invalid') {
+        // NOT NOTES OF THIS FEDERATION (kanban #2384, #2436): the tool could not read them as e-cash, or they are another federation's, or of
+        // a denomination it does not take - answered before anything reached a guardian, so nothing was taken: closed for good, never owed
+        transition(id, EXCHANGE.RECEIVING, EXCHANGE.REFUSED, { why: `not e-cash of this federation: ${String(got.why || 'invalid').slice(0, 200)}` });
+        return refuse(400, `that is not e-cash of federation ${from.slice(0, 8)}: ${String(got.why || 'invalid').slice(0, 120)}`);
       } else {
         transition(id, EXCHANGE.RECEIVING, EXCHANGE.REFUSED, { why: `the federation said ${got.state}` });
         return refuse(409, `federation ${from.slice(0, 8)} did not reissue that e-cash: ${got.state} (spent before?)`);
@@ -232,8 +263,19 @@ export function createEcashExchange({ db, portOf, maxMsat = 1_000_000n, perHourM
     }
     // THE SEAT'S NOTES OUT: what was taken, never more than was asked - named before they leave
     if (r.state === EXCHANGE.TAKEN) {
-      const taken = BigInt(r.in_msat || 0);
-      if (taken <= 0n) return refuse(409, 'that e-cash carried nothing');
+      let taken = BigInt(r.in_msat || 0);
+      if (taken <= 0n) {
+        // A ROW TAKEN WITH 0 (kanban #1936): booked by a balance that had not risen yet (before the fix above). Not refused for good: the
+        // tool is asked again, and its AlreadyReceived of this row's own earlier Success says what the notes carried; booked once, guarded
+        let got = null;
+        try { got = await pin.ecashReceive(ecash); } catch (e) { return refuse(503, `federation ${from.slice(0, 8)} did not answer (${String(e.message).slice(0, 120)}); ask again with the same e-cash`); }
+        if (!got || got.state !== 'AlreadyReceived' || got.earlier !== 'Success' || got.carriedMsat === undefined || got.carriedMsat === null || BigInt(got.carriedMsat) <= 0n)
+          return refuse(503, 'that e-cash is taken here and what it carried cannot be read back yet: held, ask again');
+        taken = BigInt(got.carriedMsat);
+        durably(db, () => db.prepare("UPDATE ecash_exchanges SET in_msat = ? WHERE id = ? AND state = 'taken' AND (in_msat IS NULL OR in_msat = '0')").run(String(taken), id));
+        r = get.get(id);
+        if (r.state !== EXCHANGE.TAKEN || BigInt(r.in_msat || 0) !== taken) return refuse(409, 'that exchange moved on here while it was read back: ask again');
+      }
       const asked = BigInt(r.want_msat || want);
       const pay = taken < asked ? taken : asked;
       const t = transition(id, EXCHANGE.TAKEN, EXCHANGE.SENDING, { pay_msat: String(pay), pay_ms: now() });   // kanban #1637: the hour it counts in

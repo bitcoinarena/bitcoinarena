@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { MovePanel } from '../dist/test/move.mjs';
+import { MovePanel, moveAmountCheck } from '../dist/test/move.mjs';
 
 const A = 'aa'.repeat(32), B = 'bb'.repeat(32), C = 'cc'.repeat(32);
 const feds = [{ id: B, label: 'Federation bbbbbbbb', sats: 996, from: true, to: true }, { id: A, label: 'Federation aaaaaaaa', sats: 2199, from: true, to: true },
@@ -43,4 +43,15 @@ test('all of it is moved as null (exactly all); an edited amount as its msat; to
 
 test('nothing held anywhere: says so, offers no move', () => {
   assert.match(html(panel({ feds: [{ id: A, label: 'x', sats: 0, from: false, to: true }], canOf: async () => 0n, move: async () => ({}) })), /nothing to move/);
+});
+
+test('#2959 the Move amount is checked as typed: no sign, no letters, never above what can be sent', () => {
+  const can = 3000000n;   // 3,000 sat
+  assert.deepEqual(moveAmountCheck('-1', can), { ok: false, words: 'Enter a whole number of sat (digits only).' });
+  assert.deepEqual(moveAmountCheck('abc', can), { ok: false, words: 'Enter a whole number of sat (digits only).' });
+  assert.deepEqual(moveAmountCheck('', can), { ok: false, words: '' });
+  assert.deepEqual(moveAmountCheck('0', can), { ok: false, words: 'A move is more than 0 sat.' });
+  assert.deepEqual(moveAmountCheck('999999', can), { ok: false, words: 'At most 3,000 sat can be sent after the fees.' });
+  assert.deepEqual(moveAmountCheck('3,000', can), { ok: true, sat: 3000, words: '' });
+  assert.deepEqual(moveAmountCheck('1200', null), { ok: true, sat: 1200, words: '' });
 });

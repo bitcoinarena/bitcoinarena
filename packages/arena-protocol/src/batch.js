@@ -171,10 +171,13 @@ export function decodeInputBatch(bytes) {
   } catch { throw new Error('trailing bytes after the batch'); }
   if (!b.attests.length) delete b.attests;
   // each room joins the load at its tick; a room with no load there is not a batch this encoder writes
+  // ONE PASS, NOT ROOMS x LOADS (kanban #2707, audit #1489 r4-play-4): a frame of 65,535 loads with a room each joined in ~4.3e9 steps
+  let loadAt = null;
   for (const [at, room] of rooms) {
-    const l = b.loads.filter((x) => x[0] === at);
-    if (l.length !== 1 || l[0].length > 3) throw new Error('a room names no single load at its tick');
-    l[0].push(room);
+    if (!loadAt) { loadAt = new Map(); for (const x of b.loads) loadAt.set(x[0], loadAt.has(x[0]) ? null : x); }
+    const l = loadAt.get(at);
+    if (!l || l.length > 3) throw new Error('a room names no single load at its tick');
+    l.push(room);
   }
   if (b.tapes.length > 1) throw new Error('a batch carries at most one tape');
   // one encoding per batch: empty optional tails are written as none

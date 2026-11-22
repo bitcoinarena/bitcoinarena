@@ -156,7 +156,10 @@ out += '// Verified against the module build by test/bundle.test.js.\n';
 out += 'var ARENACLIENT = (function () {\n"use strict";\n';
 for (const file of order) {
   const body = readFileSync(file, 'utf8')
-    .replace(/^import\s[\s\S]*?;\s*$/gm, '')
+    // AN IMPORT LINE ENDS AT ITS ';', A COMMENT AFTER IT INCLUDED (kanban #3216, measured 2026-11-21: "import { localHostName } from './node-discovery.js';
+    // // kanban #3124" did not end at its ';' for this pattern, so the strip ran on to the next line ending in ';' and took the doc comment and the
+    // `const LOOPBACK` of directory.js with it - "LOOPBACK is not defined" in every page session)
+    .replace(/^import\s[\s\S]*?;[ \t]*(?:\/\/[^\n]*)?$/gm, '')
     .replace(/^export\s+\*\s+from\s+[^;]*;\s*$/gm, '')
     // A LIST OF NAMES ON ONE LINE, and not a lazy match that crosses them.
     //
@@ -230,14 +233,14 @@ out += '         awaitAttestedClaimKey: awaitAttestedClaimKey,\n';
 out += '         sharesNeededFor: sharesNeededFor,\n';
 // THE PLAYER'S STAKE LOCK (W1b): what the injected lock client is asked, and the
 // hand-over of the lock it made to every signer node.
-out += '         lockStake: lockStake, handLock: handLock, lockSecretFor: lockSecretFor, lockLine: lockLine,\n';
+out += '         lockStake: lockStake, handLock: handLock, lockSecretFor: lockSecretFor, lockLine: lockLine, inviteForRound: inviteForRound,\n';
 out += '         lockClaimer: lockClaimer, postLockClaim: postLockClaim,\n';   // the player's claim on its entry's locks (kanban #1897, #1938)
 out += '         fetchReserveKey: fetchReserveKey, fetchReservesTotal: fetchReservesTotal, fetchReservesPaymentsOut: fetchReservesPaymentsOut, paymentOutLine: paymentOutLine, fetchProposals: fetchProposals, fetchNetworkId: fetchNetworkId, signedProposal: signedProposal, signedComment: signedComment, signedName: signedName, forumIdentity: forumIdentity, forumNameOf: forumNameOf, giftDonation: giftDonation, signedLeaderboardPayout: signedLeaderboardPayout, splitFromPercents: splitFromPercents, fetchLeaderboards: fetchLeaderboards, heightAtDate: heightAtDate, LB_SCOPE: LB_SCOPE, LB_PERIOD_DAYS: LB_PERIOD_DAYS, LB_TOP_MAX: LB_TOP_MAX, fetchFees: fetchFees, feeChangesFrom: feeChangesFrom, signedFeeProposal: signedFeeProposal, earliestActivation: earliestActivation, roundFeesLine: roundFeesLine, marketFeesLine: marketFeesLine, marketFeeBpsOf: marketFeeBpsOf, FEE_UNITS: FEE_UNITS, FEES: FEES, FEES_TODAY: FEES_TODAY, feeProposalStands: feeProposalStands, zapPlayer: zapPlayer, collectZaps: collectZaps, referralOf: referralOf, referralNameFor: referralNameFor, myOrdersFromEntries: myOrdersFromEntries, mountExchange: mountExchange, exchangeLadder: exchangeLadder, exchangeHistory: exchangeHistory, exchangeVolume: exchangeVolume, giftAmountOf: giftAmountOf, giftRecipientsLine: giftRecipientsLine, GIFT_CHOICES_SAT: GIFT_CHOICES_SAT, postFunding: postFunding, newProposalKey: newProposalKey, keyOfNsec: keyOfNsec, npubOf: npubOf, npubOfKey: npubOfKey, reservesDonation: reservesDonation, reservesDonationForRound: reservesDonationForRound, roundPaysReserves: roundPaysReserves, roundGiftsInFee: roundGiftsInFee,\n';
 // AND THE PLAYER WALLET (§24A.1, RULED 2026-09-25): one per seed and federation; the top-up is its own act, before the
 // stake, and the stake is spent from it.
 out += '         playerWallet: playerWallet, openPlayerWallet: openPlayerWallet, FAUCET_GRANTS: FAUCET_GRANTS, askFaucet: askFaucet, faucetEcashRowOnce: faucetEcashRowOnce, forgetPhraseWallets: forgetPhraseWallets, useSeatedGateways: useSeatedGateways, seatedGatewaysOf: seatedGatewaysOf, walletDepositOffer: walletDepositOffer, walletDepositChoices: walletDepositChoices, fundPlayerWallet: fundPlayerWallet, earlyDepositOffer: earlyDepositOffer, joinFundingPlan: joinFundingPlan, notSpendableYet: notSpendableYet, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, tidyStorage: tidyStorage, seedRecovers: seedRecovers,\n';
 out += '         withdrawPlayerWallet: withdrawPlayerWallet,\n';
-out += '         onStorageRefused: onStorageRefused, packWallets: packWallets, scanLostDeposits: scanLostDeposits, saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, reopenUncheckedDone: reopenUncheckedDone, releaseUntakenEntry: releaseUntakenEntry, keptLockUse: keptLockUse,\n';
+out += '         onStorageRefused: onStorageRefused, packWallets: packWallets, scanLostDeposits: scanLostDeposits, saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, reopenUncheckedDone: reopenUncheckedDone, releaseUntakenEntry: releaseUntakenEntry, entryHeldAt: entryHeldAt, keptLockUse: keptLockUse,\n';
 // THE STAKE LOCK'S RECORD AS ONE STATE MACHINE (kanban #1162): a submitted lock read in the federation before reuse, the entry it is named in kept
 out += '         reconcileKeptLock: reconcileKeptLock, bindLockEntry: bindLockEntry, lockRecordOf: lockRecordOf, collectState: collectState, collectOrder: collectOrder, forfeitCheck: forfeitCheck, settlementAgreement: settlementAgreement, useWalletGate: useWalletGate,\n';
 // AND THE ROUND'S CLOSE, which ends a reloaded tab's resume (keptLockUse beforeClose)
@@ -264,7 +267,7 @@ out += '         warmLockQuotes: warmLockQuotes,\n';
 out += '         refundKept: refundKept, refundLine: refundLine,\n';
 // AND NOTHING SPENT BEFORE THE PLAYER WITHDRAWS: the look that spends nothing, and the collect
 // that happens only inside a withdraw, in one action. (join's owedLine is the hold panel's.)
-out += '         lookOwed: lookOwed, owedToLine: owedToLine, collectOwed: collectOwed, collectAndWithdraw: collectAndWithdraw, findOwedRounds: findOwedRounds,\n';
+out += '         lookOwed: lookOwed, collectWithin: collectWithin, COLLECT_RECORD_MS: COLLECT_RECORD_MS, owedToLine: owedToLine, collectOwed: collectOwed, collectAndWithdraw: collectAndWithdraw, findOwedRounds: findOwedRounds,\n';
 // THE LOBBY (M3.3-34): a link that names nodes and no round lists what they
 // hold, every row checked against its own contract; Join is the join link.
 out += '         lobbyQuery: lobbyQuery, fetchLobby: fetchLobby, lobbyLine: lobbyLine, lobbyJoinSearch: lobbyJoinSearch,\n';
@@ -314,7 +317,7 @@ out += '         askForWinnings: askForWinnings, resendWinnings: resendWinnings,
 out += '         winningsQualify: winningsQualify,\n';
 // A MARKET (§0A.7a): the pick sheet's model, the pick handed to the seats, the outcome checked, the lines
 out += '         marketForRound: marketForRound, pickSheet: pickSheet, submitPick: submitPick, checkAttestation: checkAttestation,\n';
-out += '         marketLines: marketLines, quietOrders: quietOrders, webCryptoEd25519: webCryptoEd25519, pickRecord: pickRecord,\n';
+out += '         marketLines: marketLines, bookClaimOf: bookClaimOf, quietOrders: quietOrders, webCryptoEd25519: webCryptoEd25519, pickRecord: pickRecord,\n';
 // A SCALAR MARKET'S VALUE AND A MARKET ON A GAME'S SOURCE RESULT, CHECKED BY THE PAGE (protocols 7 and 6)
 out += '         checkMarketOutcome: checkMarketOutcome, scalarValueLine: scalarValueLine, fetchSeriesTemplate: fetchSeriesTemplate, seriesRoundCheck: seriesRoundCheck, roundOfPick: roundOfPick,\n';
 // A HEAD-TO-HEAD ROUND: the hidden move, its commitment, its reveal, and the reveals the seats hold
@@ -329,10 +332,11 @@ out += '         yourBadgesLine: yourBadgesLine, badgeGlyph: badgeGlyph, badgeIm
 out += '         sendZap: sendZap, zapTarget: zapTarget, zapsReceived: zapsReceived, playerLightningAddress: playerLightningAddress,\n';
 out += '         zapProfileEvent: zapProfileEvent, zapSatLine: zapSatLine, ZAP_CHOICES_SAT: ZAP_CHOICES_SAT, identitySignEvent: identitySignEvent,\n';
 // THE GAME'S ITEMS: the shop, the purchase, what the player owns, the items an entry plays with and their unlocks
-out += '         shopOf: shopOf, buyItem: buyItem, itemTermsOf: itemTermsOf, itemShareOn: itemShareOn, itemPriceOn: itemPriceOn, itemPriceFor: itemPriceFor, ITEM_DEV_SHARES: ITEM_DEV_SHARES, ITEM_DEV_SHARE_DEFAULT: ITEM_DEV_SHARE_DEFAULT, ownedItems: ownedItems, itemsKeyFor: itemsKeyFor, entryItemsFor: entryItemsFor,\n';
+out += '         shopOf: shopOf, buyItem: buyItem, resendPaidRecords: resendPaidRecords, itemTermsOf: itemTermsOf, itemShareOn: itemShareOn, itemPriceOn: itemPriceOn, itemPriceFor: itemPriceFor, ITEM_DEV_SHARES: ITEM_DEV_SHARES, ITEM_DEV_SHARE_DEFAULT: ITEM_DEV_SHARE_DEFAULT, ownedItems: ownedItems, itemsKeyFor: itemsKeyFor, entryItemsFor: entryItemsFor,\n';
 out += '         entryUnlocks: entryUnlocks, itemUnlocksOf: itemUnlocksOf,\n';
 // WHAT AN ENTRY'S STAKE IS MADE OF: the deposit request says it
 out += '         entryBreakdown: entryBreakdown, pendingWindowLine: pendingWindowLine, savedLockExpiration: savedLockExpiration,\n';
+out += '         localHostName: localHostName, keptNodes: keptNodes, putRoomy: putRoomy,\n';   // kanban #3216: the page uses them (#3124, #3123, #3107)
 out += '         toHex: toHex, fromHex: fromHex };\n})();\n';
 out += 'if (typeof module !== "undefined") module.exports = ARENACLIENT;\n';
 

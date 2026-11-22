@@ -127,10 +127,12 @@ test('#1567 refusal path: a forged batch the home seat appended is never signed 
       `the honest peer stored ${hostileAt(b, rid, eid)} forged ticks as the player's (holds ${ticksAt(b, rid, eid).length})`);
     for (const f of client.published) assert.ok(!(toHex(f.bytes).includes(toHex(new Uint8Array(new Int32Array(HOSTILE).buffer)))),
       'the client keeps no frame carrying the forged words');
-    assert.ok(client.nodeFault, 'the home seat is named at fault');
-    assert.match(client.nodeFault.why, /never signed/);
-    assert.equal(client.ended, true, 'the run does not go on through a seat that forged its inputs');
-    assert.match(client.endingReason, /never signed/);
+    // THE FORGING SEAT IS NAMED, AND THE RUN GOES ON THROUGH THE PEERS (kanban #3002): ending the run here was the forging seat's
+    // way to stop an honest run at a tick of its choosing; the peers take only the frames this client signed
+    assert.ok(client.homeFault, 'the home seat is named at fault');
+    assert.match(client.homeFault.why, /never signed/);
+    assert.equal(client.ended, false, `one forging seat does not end the honest run: ${client.endingReason}`);
+    assert.ok(ticksAt(b, rid, eid).length >= 120, `the honest peer holds the player's 120 signed ticks (holds ${ticksAt(b, rid, eid).length})`);
   } finally { client.close(); await a.close(); await b.close(); }
 });
 

@@ -22,6 +22,8 @@
 import { meetsCensusMinimum } from '../../arena-protocol/src/census.js';
 import { dayPostDue, dayStartMs, targetDay, DUTY_DAY_MS, DUTY_POST_BY_MS } from '../../arena-protocol/src/duty.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
+import { manifestBodyId } from '../../arena-protocol/src/manifest.js';
+import { verifyEd25519 } from './ed25519.js';
 
 const HOUR = 3600000;
 // THE DUTY'S APPS BY THE NAME THEIR MANIFESTS CARRY (GET /games `name`): a version is the same app only under the same developer key
@@ -74,13 +76,18 @@ export function dayShape(game, periodMs) {
  * THE APPS THE SEATS HOLD, one entry per game id: GET /games of each seat asked (`listings`, each `{ games: [...] }`), every manifest
  * decoded (`decode(hex)`) and its id worked out again (`idOf(manifest)`) - an entry whose manifest is not its id is left out.
  */
-export function catalogOf(listings, { decode, idOf }) {
+// ONLY A MANIFEST ITS DEVELOPER SIGNED (kanban #2774, feedback #074): one seat listing a real app's name and developer key at version 9999 with
+// a zero signature was "the newest version" here (duty-day.js familyIds), every drawn round of the day counted as not drawn, and duty nodes
+// paid for emergency grids. The developer's signature over the manifest body (manifest.js manifestStands' first rule) is checked; `signed`
+// may be handed in (a test's own manifests), else Ed25519 over manifestBodyId.
+const developerSigned = (m) => { try { return verifyEd25519(m.signature, manifestBodyId(m), m.gameDevPubkey) === true; } catch { return false; } };
+export function catalogOf(listings, { decode, idOf, signed = developerSigned }) {
   const out = new Map();
   for (const l of listings || []) for (const g of (l && l.games) || []) {
     const id = String(g.id || '').toLowerCase();
     if (!/^[0-9a-f]{64}$/.test(id) || out.has(id) || !g.manifest) continue;
     let m; try { m = decode(Uint8Array.from(Buffer.from(String(g.manifest), 'hex'))); } catch { continue; }
-    if (toHex(idOf(m)) !== id) continue;
+    if (toHex(idOf(m)) !== id || !signed(m)) continue;
     out.set(id, { id, name: m.gameName, version: Number(m.version), dev: toHex(m.gameDevPubkey), requiredProtocolVersion: Number(m.requiredProtocolVersion || 1), manifest: m });
   }
   return out;

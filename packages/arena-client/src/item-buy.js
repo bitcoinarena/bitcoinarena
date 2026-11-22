@@ -21,6 +21,8 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { itemsSecretFor } from '../../arena-protocol/src/player-key.js';
 import { entryItemDigest } from '../../arena-protocol/src/contracts.js';
 import { ITEMS_VERSION, RESERVES_VERSION } from '../../arena-protocol/src/constants.js';
+import { newestCheckedCensus } from './committee.js';
+import { PAID_PURCHASE_PREFIX, PAID_GIFT_PREFIX, paidRecordGet, paidRecordPut, paidRecordPutIf, paidRecordFind, paidRecordWallet, paidRecordDropIf, paidRecordMark, paidRecordKeys } from './paid-records.js';
 
 /**
  * THE TERMS A GAME VERSION SELLS ITS ITEMS ON: a version requiring protocol 11 the reserves' - nodes 40 %, the
@@ -70,7 +72,11 @@ export async function readJsonUpTo(r, maxBytes) {
 }
 
 /** The served list of the 24 h before `toMs`, from every seat that answers. Answers { ok, served, seats } or { ok: false, why }. */
-export async function servedFromSeats({ seats, toMs, fetch, verify, timeoutMs = 15000 }) {
+// `bondedKeys` (kanban #1896): the node keys (hex) of a census this page checked. A round's committee counts only when all its keys are
+// among them (mergeServedRounds `bonded`); with none the page cannot tell a node from a URL, and nothing is read.
+export async function servedFromSeats({ seats, toMs, fetch, verify, timeoutMs = 15000, bondedKeys = null }) {
+  const bonded = bondedKeys ? new Set([...bondedKeys].map((k) => String(k).toLowerCase())) : null;
+  if (!bonded || !bonded.size) return { ok: false, why: 'this page has checked no census, so it cannot tell which keys are nodes: no served list is read' };
   const fromMs = BigInt(toMs) - BigInt(SERVED_WINDOW_MS);
   // kept in the order the seats are listed, not the order they answer (kanban #1522): between two committees named by equally many
   // seats the one held first stands (mergeServedRounds), and that must not be whichever seat answered fastest
@@ -89,9 +95,34 @@ export async function servedFromSeats({ seats, toMs, fetch, verify, timeoutMs = 
   const answered = held.filter(Boolean).length;
   if (!answered) return { ok: false, why: 'no seat answered who served a round in the last 24 hours' };
   // kanban #2361: the page holds no record of its own - no answer's rounds are taken as the reader's, every answer's checks are charged
-  const served = servedNodes({ rounds: mergeServedRounds(held.filter(Boolean), { own: false }).rounds, fromMs, toMs: BigInt(toMs), verify });
+  const served = servedNodes({ rounds: mergeServedRounds(held.filter(Boolean), { own: false, bonded }).rounds, fromMs, toMs: BigInt(toMs), verify });
   if (!served.nodes.length) return { ok: false, why: 'no node served a round in the last 24 hours: the nodes\' half has nobody to go to' };
   return { ok: true, served, seats: answered };
+}
+
+/**
+ * HAND A PAID RECORD TO THE SEATS (kanban #2420): POSTed to every seat at once (60 s each), not stopping at the first 200 - a seat
+ * that answers 200 and keeps nothing must not be the only one that ever saw it. Kept when two seats answer 200 (the one seat, when
+ * only one is listed): GET /items names a purchase only when two seats do. Answers { keptBy: the first keeping seat in list order or
+ * null, kept: how many kept it, last: the last refusal }.
+ */
+export async function handToSeats({ seats, door, body, fetch, timeoutMs = 60000 }) {
+  const list = (seats || []).slice(0, 64);
+  const why = [];
+  const kept = await Promise.all(list.map(async (s, i) => {
+    try {
+      const r = await fetch(`${String(s).replace(/\/$/, '')}/${door}`, { method: 'POST', body, signal: AbortSignal.timeout(timeoutMs) });
+      if (r.ok) return true;
+      why[i] = `${s}: ${r.status} ${(await r.text()).trim().slice(0, 200)}`;
+    } catch (e) { why[i] = `${s}: ${e.message}`; }
+    return false;
+  }));
+  const n = kept.filter(Boolean).length;
+  const need = Math.min(2, list.length);
+  const refusals = why.filter(Boolean);
+  const last = !list.length ? 'no seat to hand it to' : refusals.length ? refusals[refusals.length - 1] : 'no seat to hand it to';
+  return { keptBy: list.length && n >= need ? list[kept.indexOf(true)] : null, kept: n,
+    last: n && n < need ? `only ${n} of ${list.length} seats kept it (two must): ${last}` : last };
 }
 
 /**
@@ -100,11 +131,22 @@ export async function servedFromSeats({ seats, toMs, fetch, verify, timeoutMs = 
  * `seats` the game's seats; `verify` BIP340; `devsPct` the developers' share the buyer chose (one of ITEM_DEV_SHARES, default
  * 50 - the nodes' half is paid whatever it is). Answers { ok, purchaseId, txid, priceSat, paidSat, devsPct, outputs, keptBy } or { ok: false, step, why }.
  */
-export async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, federationId, player, seats, fetch, verify, nowMs = () => Date.now(), devsPct = null, reserveNeeded = 5 }) {
+// `bondedKeys`: the node keys (hex) of a census this page checked (kanban #1896); left out, the newest census this page checked.
+export async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, federationId, player, seats, fetch, verify, nowMs = () => Date.now(), devsPct = null, reserveNeeded = 5, storage = null, bondedKeys = null, walletOf = null, wallets = null }) {
   const no = (step, why) => ({ ok: false, step, why });
   const item = itemOf(manifest, itemId);
   if (!item) return no('item', `"${manifest && manifest.gameName}" sells no item "${itemId}"`);
   const terms = itemTermsOf(manifest);
+  // THIS ITEM PAID BEFORE AND ITS RECORD NOT KEPT (kanban #2274): the kept purchase goes on - acceptance, record, seats - and nothing is paid again
+  const keptKey = `${PAID_PURCHASE_PREFIX}${manifest.gameName}.${itemId}.${toHex(player.pubkey).slice(0, 16)}`;
+  // kanban #3117: also a paid record kept beside the key (paidRecordPutIf), when another tab's payment held it
+  const found = paidRecordFind(storage, keptKey);
+  const kept = found && found.rec;
+  if (kept && kept.submitted) return finishPurchase({ rec: kept, keptKey: found.key, storage, manifest, item, itemId, terms, wallet, federationId, walletOf, wallets, player, fetch, again: true });
+  if (kept) {   // written ahead, the page gone before the federation answered: whether it paid is the wallet history's to say, so said once
+    paidRecordDropIf(storage, keptKey, kept);   // kanban #3105: only this record, never one another tab wrote since
+    return no('payment', `an earlier payment of this item had no answer (the page closed while paying, ${new Date(Number(kept.boughtAtMs)).toISOString()}): look at the wallet history before buying again`);
+  }
   if (devsPct === null || devsPct === undefined) devsPct = terms.defaultShare;
   if (!terms.shares.includes(Number(devsPct))) return no('share', `a developers' share is one of ${terms.shares.join(', ')} %`);
   // THE RESERVES' KEY FIRST: on the reserves' terms nothing is paid before five of the game's nodes name the
@@ -116,7 +158,8 @@ export async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, f
     reserveKey = rk.key;
   }
   const toMs = BigInt(nowMs() - 60000);                     // a minute back: the newest FINALs have reached every seat
-  const got = await servedFromSeats({ seats, toMs, fetch, verify });
+  if (!bondedKeys) { const c = newestCheckedCensus(); bondedKeys = c ? c.entries.map((e) => toHex(e.pubkey)) : null; }
+  const got = await servedFromSeats({ seats, toMs, fetch, verify, bondedKeys });
   if (!got.ok) return no('served', got.why);
   let built;
   try {
@@ -128,32 +171,74 @@ export async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, f
   // window (purchaseImage), so this payment stands for this item's record alone
   const image = toHex(purchaseImage({ playerPubkey: player.pubkey, gameDevPubkey: manifest.gameDevPubkey, gameName: manifest.gameName, itemId, priceSat: item.priceSat,
     servedFromMs: got.served.fromMs, servedToMs: got.served.toMs }));
-  let submitted, accepted;
+  // WRITTEN AHEAD (kanban #2274): the purchase is kept before the payment and again with its transaction the moment the federation
+  // answers it, so a record the seats do not keep is handed again on the next press, never paid again. One that cannot be written pays nothing.
+  const rec = { seats: [...(seats || [])], federationId, devsPct: Number(devsPct), servedFromMs: String(got.served.fromMs), servedToMs: String(got.served.toMs),
+    servedRoot: got.served.root, reserveKey: reserveKey ? toHex(reserveKey) : null, reserveMsat: built.reserve ? String(built.reserve.msat) : null,
+    outputs: built.outputs.length, boughtAtMs: String(nowMs()), submitted: null, body: null, mark: paidRecordMark() };
+  // kanban #3117: read again right before the write-ahead (the reads above awaited the seats) - another tab that wrote this purchase
+  // meanwhile is never written over; nothing is paid, the next press goes on with that one
+  if (paidRecordGet(storage, keptKey)) return no('payment', 'nothing paid: another payment of this item was started meanwhile (another tab) - press Buy again to go on with it');
+  try { paidRecordPut(storage, keptKey, rec); } catch (e) { return no('payment', `nothing paid: the purchase could not be written ahead (${e && e.message || e})`); }
   try {
-    submitted = JSON.parse(await wallet.paySubmit(JSON.stringify(built.outputs.map((o) => ({ pk: toHex(o.pk), msat: String(o.msat), image })))));
-    accepted = JSON.parse(await wallet.lockAccepted(JSON.stringify(submitted)));
-  } catch (e) { return no('payment', String(e && e.message || e)); }
-  const outs = accepted.donations || [];
-  if (outs.length !== built.outputs.length || !outs.every((d) => d.ids_match)) return no('payment', 'the federation does not hold the outputs as they were built');
-  const record = { gameDevPubkey: manifest.gameDevPubkey, gameName: manifest.gameName, itemId, priceSat: item.priceSat, devsPct: Number(devsPct), playerPubkey: player.pubkey,
-    federationId: fromHex(federationId), txid: fromHex(submitted.txid), servedFromMs: got.served.fromMs, servedToMs: got.served.toMs, servedRoot: fromHex(got.served.root),
-    outputs: outs.map((d) => ({ outIdx: Number(d.out_idx), pk: fromHex(d.recipient_pk), msat: BigInt(d.amount_msat) })), boughtAtMs: BigInt(nowMs()),
-    ...(terms.reserves ? { gameId: gameIdOf(manifest), reserveKey } : {}) };
-  const signature = player.sign(purchaseId(record));
-  const body = JSON.stringify({ purchase: toHex(encodePurchase(record)), signature: toHex(signature) });
-  // HANDED TO THE FIRST SEAT THAT KEEPS IT: it checks the record and the federation, then hands it on to every other seat
-  let keptBy = null, last = 'no seat to hand it to';
-  for (const s of seats || []) {
-    try {
-      const r = await fetch(`${String(s).replace(/\/$/, '')}/item-purchase`, { method: 'POST', body, signal: AbortSignal.timeout(60000) });
-      if (r.ok) { keptBy = s; break; }
-      last = `${s}: ${r.status} ${(await r.text()).trim().slice(0, 200)}`;
-    } catch (e) { last = `${s}: ${e.message}`; }
+    rec.submitted = JSON.parse(await wallet.paySubmit(JSON.stringify(built.outputs.map((o) => ({ pk: toHex(o.pk), msat: String(o.msat), image })))));
+  } catch (e) { paidRecordDropIf(storage, keptKey, rec); return no('payment', String(e && e.message || e)); }
+  // kanban #3117: never over another tab's payment kept under the key since - beside it then, and finished under that key
+  let ownKey = keptKey;
+  try { ownKey = paidRecordPutIf(storage, keptKey, rec); } catch { /* the payment stands; the record is built and handed below */ }
+  return finishPurchase({ rec, keptKey: ownKey, storage, manifest, item, itemId, terms, wallet, federationId, walletOf, wallets, player, fetch, again: false });
+}
+
+// THE PAID PURCHASE FINISHED (kanban #2274): its acceptance read back, the record signed and kept with its body, handed to every seat
+// (kept when two keep it, #2420); dropped only then. A purchase kept from an earlier press goes on from where it stood - its body as it was.
+async function finishPurchase({ rec, keptKey, storage, manifest, item, itemId, terms, wallet, federationId, walletOf = null, wallets = null, player, fetch, again }) {
+  const no = (step, why) => ({ ok: false, step, why });
+  const txid = rec.submitted.txid;
+  if (!rec.body) {
+    // kanban #3116: the record's own federation's wallet reads its acceptance (or the guardians' refusal), whatever wallet the page picked to pay
+    const own = rec.federationId === federationId ? wallet : paidRecordWallet({ walletOf, wallets }, rec.federationId);
+    if (!own || typeof own.lockAccepted !== 'function') return no('record', `paid (transaction ${txid}) from federation ${rec.federationId.slice(0, 8)}: open that federation's wallet to finish the record, nothing is paid again`);
+    let accepted;
+    try { accepted = JSON.parse(await own.lockAccepted(JSON.stringify(rec.submitted))); } catch (e) {
+      // REFUSED BY THE GUARDIANS IS NOT PAID (kanban #3081, feedback #360): the federation answered that it will not accept the transaction (an
+      // input already spent - another tab of the same player merged those notes first): nothing was paid, so the record is dropped and the next
+      // press builds a new payment. Before, it was kept as "paid, acceptance not read yet" and handed again forever; the item never came.
+      const why = String((e && e.message) || e);
+      if (/did not accept the lock transaction/i.test(why)) { paidRecordDropIf(storage, keptKey, rec);   // kanban #3105: only if the key still holds THIS refused payment
+        return no('payment', `not paid: the federation refused the payment (${why.replace(/^.*did not accept the lock transaction:\s*/i, '').slice(0, 160)}) - press Buy again`); }
+      return no('record', `paid (transaction ${txid}), its acceptance not read yet (${String(e && e.message || e)}): pressed again, it is read again, never paid again`); }
+    const outs = accepted.donations || [];
+    if (outs.length !== rec.outputs || !outs.every((d) => d.ids_match)) return no('payment', 'the federation does not hold the outputs as they were built');
+    const record = { gameDevPubkey: manifest.gameDevPubkey, gameName: manifest.gameName, itemId, priceSat: item.priceSat, devsPct: rec.devsPct, playerPubkey: player.pubkey,
+      federationId: fromHex(rec.federationId), txid: fromHex(txid), servedFromMs: BigInt(rec.servedFromMs), servedToMs: BigInt(rec.servedToMs), servedRoot: fromHex(rec.servedRoot),
+      outputs: outs.map((d) => ({ outIdx: Number(d.out_idx), pk: fromHex(d.recipient_pk), msat: BigInt(d.amount_msat) })), boughtAtMs: BigInt(rec.boughtAtMs),
+      ...(terms.reserves ? { gameId: gameIdOf(manifest), reserveKey: fromHex(rec.reserveKey) } : {}) };
+    rec.body = JSON.stringify({ purchase: toHex(encodePurchase(record)), signature: toHex(player.sign(purchaseId(record))) });
+    rec.purchaseId = toHex(purchaseId(record));
+    try { keptKey = paidRecordPutIf(storage, keptKey, rec); } catch { /* kanban #3117: never over another payment; handed below; a failed hand-over is then kept in nothing but this answer's retry */ }
   }
-  if (!keptBy) return { ok: false, step: 'record', why: `paid (transaction ${submitted.txid}), but no seat kept the record yet: ${last}`, purchaseId: toHex(purchaseId(record)), txid: submitted.txid,
-    retry: body };
-  return { ok: true, purchaseId: toHex(purchaseId(record)), txid: submitted.txid, priceSat: item.priceSat, paidSat: itemPriceOn(manifest, item.priceSat, devsPct),
-    devsPct: Number(devsPct), outputs: outs.length, keptBy, ...(terms.reserves ? { reserveKey: toHex(reserveKey), reserveMsat: built.reserve.msat } : {}) };
+  // HANDED TO EVERY SEAT, KEPT ONLY WHEN TWO KEEP IT (kanban #2420): no longer the first seat that answers 200 - one lying seat listed
+  // first said 200, dropped the record and never handed it on, the page said "bought" and no honest seat held the paid item
+  const { keptBy, last } = await handToSeats({ seats: rec.seats, door: 'item-purchase', body: rec.body, fetch });
+  if (!keptBy) return { ok: false, step: 'record', paid: true, why: `${again ? 'an earlier purchase of this item was ' : ''}paid (transaction ${txid}), but no seat kept the record yet: ${last} - it is handed again, never paid again`,
+    purchaseId: rec.purchaseId, txid, retry: rec.body };
+  paidRecordDropIf(storage, keptKey, rec);   // kanban #3105: a newer payment kept under the key since stays
+  return { ok: true, purchaseId: rec.purchaseId, txid, priceSat: item.priceSat, paidSat: itemPriceOn(manifest, item.priceSat, rec.devsPct),
+    devsPct: rec.devsPct, outputs: rec.outputs, keptBy, ...(again ? { earlier: true } : {}), ...(terms.reserves ? { reserveKey: rec.reserveKey, reserveMsat: BigInt(rec.reserveMsat) } : {}) };
+}
+
+/** AT LOAD (kanban #2274): every kept paid record that has its signed body is handed again to the seats it names; the kept ones are
+ *  dropped. Answers [{ key, ok, why }]. */
+export async function resendPaidRecords({ storage, fetch }) {
+  const said = [];
+  for (const key of paidRecordKeys(storage)) {
+    const rec = paidRecordGet(storage, key);
+    if (!rec || !rec.body) continue;
+    const { keptBy, last } = await handToSeats({ seats: rec.seats, door: key.startsWith(PAID_GIFT_PREFIX) ? 'donation-gift' : 'item-purchase', body: rec.body, fetch });
+    if (keptBy) paidRecordDropIf(storage, key, rec);   // kanban #3105
+    said.push({ key, ok: !!keptBy, why: keptBy ? `kept by ${keptBy}` : last });
+  }
+  return said;
 }
 
 /**
@@ -161,6 +246,9 @@ export async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, f
  * are merged by purchase id - no longer the first seat's answer as it is, where one seat answering [] hid a purchase every other seat
  * keeps, or named a made-up one. A purchase is kept when two seats name it (one, when only one seat answered); the record kept is the
  * first seat's in list order.
+ * Kanban #2421: agreement is on the record that matters (id, itemId, gameName), not the id alone - one seat naming the player's real
+ * purchase id with another itemId was counted with the honest seats and its record kept, so the entry named an item never bought and
+ * every seat refused it. A purchase of another game than the one asked is skipped; an id two variants both reach `need` for is not kept.
  */
 export async function ownedItems({ seats, player, gameName = null, fetch }) {
   const answers = await Promise.all((seats || []).map(async (s) => {
@@ -173,17 +261,22 @@ export async function ownedItems({ seats, player, gameName = null, fetch }) {
   }));
   const answered = answers.filter((a) => a);
   const need = answered.length >= 2 ? 2 : 1;
-  const byId = new Map();
+  const byRecord = new Map();
   for (const items of answered) {
     const seen = new Set();
     for (const it of items) {
       if (!it || typeof it.id !== 'string' || seen.has(it.id)) continue;
+      if (gameName && it.gameName !== gameName) continue;     // kanban #2421: only the game asked
       seen.add(it.id);
-      const e = byId.get(it.id);
-      if (e) e.n++; else byId.set(it.id, { it, n: 1 });
+      const k = JSON.stringify([it.id, String(it.itemId), String(it.gameName)]);
+      const e = byRecord.get(k);
+      if (e) e.n++; else byRecord.set(k, { it, n: 1 });
     }
   }
-  return [...byId.values()].filter((e) => e.n >= need).map((e) => e.it);
+  // kanban #2421: one variant per purchase id reaches `need`, else the seats disagree on what was bought and none is kept
+  const byId = new Map();
+  for (const e of byRecord.values()) if (e.n >= need) byId.set(e.it.id, byId.has(e.it.id) ? null : e.it);
+  return [...byId.values()].filter(Boolean);
 }
 
 /**

@@ -17,9 +17,10 @@
 // kept with its bytes and its old outcome, never deleted, and COUNTING again when that block is back or the proposal is posted
 // again from a new block. Each move is a compare-and-set on the state it leaves, and is written to the store BEFORE this
 // seat's memory takes it: a write that fails leaves the proposal where it was.
-import { decodeConfigProposalBody, proposalId, proposalStands, isRepeal, SCHEDULES, REPEAL_SCHEDULES } from '../../arena-protocol/src/ballot.js';
+import { bondWeightedMedian } from '../../arena-protocol/src/census-median.js';
+import { decodeConfigProposalBody, proposalId, proposalStands, isRepeal, SCHEDULES, REPEAL_SCHEDULES, encodeConfigProposalBody, configHashOf, proposalBodyId } from '../../arena-protocol/src/ballot.js';
 import { depositOf } from '../../arena-protocol/src/ballot-chain.js';
-import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { toHex, fromHex, taggedHash } from '../../arena-protocol/src/hash.js';
 
 /**
  * `confirmedTx(txidHex, blockHashHex)` -> { raw: Uint8Array, height } or null: the transaction from that block of this seat's
@@ -30,7 +31,7 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
  * none given: no proposal is read as a repeal (the first slice's behaviour). `censusAt(networkIdHex, height)` -> [{ pubkey }] or
  * null: the bonds active at that height (the tally's census, ballot-tally.js); given, a proposer outside it is refused (kanban #1489).
  * `tipHeight()` -> this seat's tip (or set later by the tally, `useTip`); given, a proposal first posted once its voting has begun is
- * refused (kanban #1608).
+ * refused (kanban #1608) - unless it is an ORPHANED record this seat holds, posted again from a new block (kanban #2135, #2197).
  * `blockHashAt(height)` -> this seat's block hash at that height, null above the tip (throws: no answer): given (here, or to
  * recheck by the tally), a kept record's proposer is judged only on the branch its publication block is on (kanban #2032).
  * `bindHeightFor(net)` -> the network's BALLOT_BIND_HEIGHT (ballot.js; none given: never bound, the old reading): a proposal whose
@@ -38,6 +39,19 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
  * and bytes (ballot-chain.js depositOf), it is taken at any time (the commitment, not this seat's tip, fixes it before its voting),
  * and the tally reads its votes by seq (`bound(record)`).
  */
+/**
+ * A SIGHTING (kanban #2432, decided 2026-11-14 "a text counts only if a seat majority held it before voting ended"): "the seat with node
+ * key K held proposal `id` at its tip `at`" - signed by K, checked by anyone. `seenSigner` { pubkey, sign(msg) -> sig }: this seat's
+ * node key (server.js: round.identity), which signs its own sighting of each proposal it takes before its voting ends.
+ */
+export const SEEN_TAG = 'arena/proposal-seen/v1';
+/** How many entries of a peer's sightings list one pull reads (kanban #3040): far above any census, and every key checked once. */
+export const SIGHTINGS_READ_MOST = 4096;
+export const seenMessage = (idHex, at) => taggedHash(SEEN_TAG, Uint8Array.from([...fromHex(String(idHex).toLowerCase()),
+  at & 0xff, (at >>> 8) & 0xff, (at >>> 16) & 0xff, (at >>> 24) & 0xff]));
+const xOnlyHex = (k) => { const h = typeof k === 'string' ? k.toLowerCase() : k ? toHex(Uint8Array.from(k)) : ''; return h.length === 66 ? h.slice(2) : h; };
+/** KEPT LATE (kanban #2432): first held here once its voting had ended, and not yet seen in time by a census majority - not counted. */
+export const isLate = (r) => !!(r && r.late && !(r.late.agreed && r.late.agreed.rule === 'census-weight'));
 export const PROPOSAL_STATE = Object.freeze({ COUNTING: 'COUNTING', PASSED: 'PASSED', FAILED: 'FAILED', ORPHANED: 'ORPHANED' });
 const S = PROPOSAL_STATE;
 /** The only moves there are: anything else is refused. */
@@ -47,12 +61,19 @@ const MOVES = Object.freeze({ [S.COUNTING]: [S.PASSED, S.FAILED, S.ORPHANED], [S
 export const stateOf = (r) => (r && S[r.state] ? r.state : r && r.orphaned ? S.ORPHANED : r && r.decided ? (r.decided.passed ? S.PASSED : S.FAILED) : S.COUNTING);
 
 export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsFor, verify, store, schedule = SCHEDULES.mainnet, scheduleFor = null,
-  repealSchedule = REPEAL_SCHEDULES.mainnet, repealScheduleFor = null, historyFor = null, censusAt = null, tipHeight = null, blockHashAt = null, bindHeightFor = null }) {
+  repealSchedule = REPEAL_SCHEDULES.mainnet, repealScheduleFor = null, historyFor = null, censusAt = null, tipHeight = null, blockHashAt = null, bindHeightFor = null,
+  seenSigner = null, keyHeightFor = null, blockHeightOf = null, censusNow = null }) {
   let tipOf = typeof tipHeight === 'function' ? tipHeight : null;
   /** BOUND: deposited at or above its network's BALLOT_BIND_HEIGHT (kanban #2125); below it, or with no gate given, the old reading. */
   const isBound = (net, height) => {
     if (typeof bindHeightFor !== 'function') return false;
     const gate = Number(bindHeightFor(net));
+    return Number.isFinite(gate) && Number.isInteger(height) && height >= gate;
+  };
+  /** KEYED: published at or above its network's BALLOT_KEY_HEIGHT (kanban #2671) - its votes name their bond; no gate given, never. */
+  const isKeyed = (net, height) => {
+    if (typeof keyHeightFor !== 'function') return false;
+    const gate = Number(keyHeightFor(net));
     return Number.isFinite(gate) && Number.isInteger(height) && height >= gate;
   };
   const held = new Map((store && store.read ? store.read() || [] : []).map((x) => [x.id, { ...x, state: stateOf(x) }]));
@@ -148,6 +169,7 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
   // and read from the set alone, so every seat that holds two of them answers the same. Another proposer naming a kept deposit
   // is still refused by name (the deposit is not his).
   const SAME_DEPOSIT_KEPT = 8;
+  const PROPOSAL_CONFIG_MAX = 4096;   // kanban #2723
   const backedBy = (depositHex, id, proposerHex = null) => [...held.values()].find((r) => r.id !== id && depositTxidOf(r) === depositHex
     && (proposerHex === null || String(r.proposer || '').toLowerCase() !== proposerHex)) || null;
   const sameDeposit = (depositHex, id) => [...held.values()].filter((r) => r.id !== id && depositTxidOf(r) === depositHex);
@@ -155,8 +177,9 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
   // body hash). The same body re-signed on the same deposit - another proposal_id, since the id covers the signature - is the SAME
   // proposal: its deposit is not voided (#1840 stays for a DIFFERENT body on one deposit, and for unbound deposits, which commit to
   // nothing), votes under any twin id count for it (ballot-tally.js, protocol tally `twins`), and one twin stands for the group: the
-  // one already decided (or holding an outcome through a recount), else one counting, else the lowest id - so a twin posted after
-  // the outcome never moves it. The #2590 tip check for twins is gone: a twin changes nothing a vote decided.
+  // one already decided (or holding an outcome through a recount), else one counting, else the lowest id. A twin taken after the
+  // outcome reopens the count over every twin (kanban #2629, add): the outcome held in force until it is decided again.
+  // The #2590 tip check for twins is gone.
   const bodyHexOf = (r) => { const h = String((r && r.proposal) || '').toLowerCase(); return h.length > 128 ? h.slice(0, -128) : null; };
   const boundRecord = (r) => !!r && isBound(r.networkId, Number(r.publishedAt));
   const rankOf = (r) => { const st = stateOf(r); return st === S.PASSED || st === S.FAILED ? 0 : st === S.COUNTING ? (r.undecided && r.undecided.outcome ? 1 : 2) : 3; };
@@ -174,8 +197,8 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
     const g = groupOf(id); if (!g) return null;
     return g.slice().sort((a, b) => rankOf(a) - rankOf(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0].id;
   };
-  /** COUNTED: the only kept proposal its deposit backs (kanban #1840), or the twin that stands for its group (#2607). */
-  const counts = (id) => standsFor(id) === id;
+  /** COUNTED: the only kept proposal its deposit backs (kanban #1840), or the twin that stands for its group (#2607) - and not kept late (#2432). */
+  const counts = (id) => standsFor(id) === id && !isLate(held.get(id));
   // THE CENSUS OF A KEPT RECORD'S OWN BRANCH (kanban #2032, after #1670 / #1865): a restart while a reorg has taken out its
   // publication block (and a fresh bond with it) read the census of ANOTHER branch, which left the proposer out - and the
   // record was written `unbonded` for good, never restored when its block came back. With a block reader the census is read
@@ -199,20 +222,71 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
     const out = census.slice(); out.ownBranch = !!own;
     return out;
   }
+  // kanban #2792: the new (network, height) keys the POST /proposal pre-check may derive a census for, per minute
+  const DOOR_CENSUS_KEYS = 4, DOOR_CENSUS_WINDOW_MS = 60000;
+  // kanban #2840 (#1489 r25-census-1): a peer's listing pulled into add() is outside input too - one seat listing 256 junk records under fresh keys
+  // at 256 heights made every honest seat's pull start 256 census derivations. The pull has a window of its own, the door's size, so it cannot
+  // shut the door either; proposers bonded in the census held now pass both (#2831); the tally's own re-post (`own: true`) is not held to it.
+  const windows = { door: { from: 0, keys: new Set() }, peer: { from: 0, keys: new Set() } };
+  const doorCensusKey = (key, which = 'door') => {
+    const now = Date.now();
+    if (now - windows[which].from >= DOOR_CENSUS_WINDOW_MS) windows[which] = { from: now, keys: new Set() };
+    const w = windows[which];
+    if (w.keys.has(key)) return true;
+    if (w.keys.size >= DOOR_CENSUS_KEYS) return false;
+    w.keys.add(key);
+    return true;
+  };
   const api = {
-    async add({ proposal: hex, blockHash }) {
+    async add({ proposal: hex, blockHash } = {}, { own = false } = {}) {
       if (!/^[0-9a-f]+$/i.test(String(hex || '')) || String(hex).length < 130) return { ok: false, status: 400, why: 'a proposal is the hex of its body and its 64-byte signature' };
       if (!/^[0-9a-f]{64}$/i.test(String(blockHash || ''))) return { ok: false, status: 400, why: 'name the block its deposit confirmed in (blockHash, 64 hex)' };
       const bytes = fromHex(String(hex).toLowerCase());
       let p;
       try { p = { ...decodeConfigProposalBody(bytes.subarray(0, bytes.length - 64)), signature: bytes.slice(bytes.length - 64) }; }
       catch (e) { return { ok: false, status: 400, why: `that is no config proposal: ${e.message}` }; }
+      // A CONFIG IS A GAME'S CONFIG, NOT 64 KiB (kanban #2723, #1489 r5-census-11): a proposal carries its config whole (a u16 vec), and one
+      // bonded seat posting ~33 proposals with 64 KiB configs pushed every seat's GET /proposals past the 4 MiB a peer listing is read to -
+      // no seat could pull any proposal (nor its #2432 sightings) from any other, for good. The game configs are under 100 bytes (the
+      // genesis 74); a proposal's config is at most PROPOSAL_CONFIG_MAX bytes - a rule of the bytes alone, the same answer at every seat.
+      if (p.config && p.config.length > PROPOSAL_CONFIG_MAX) return { ok: false, status: 422, why: `its config is ${p.config.length} bytes; a proposal carries at most ${PROPOSAL_CONFIG_MAX}` };
       const id = toHex(proposalId(p));
       // KEPT ALREADY - unless orphaned and named from another block: then it is checked again, and taken from that block
       const was = held.get(id);
       if (was && (stateOf(was) !== S.ORPHANED || was.blockHash === String(blockHash).toLowerCase())) return { ok: true, status: 200, ...was, already: true };
       const net = toHex(p.networkId);
       const depositHex = toHex(p.depositTxid);
+      // ITS FACE AND ITS PROPOSER BEFORE THE CHAIN IS READ (kanban #2670, #1489 r2-census-3): confirmedTx loads the whole block the deposit is
+      // named in (getrawtransaction with a block hash), and it ran before the signature and the proposer's bond were checked - 50 junk-signed
+      // proposals naming a large block were 50 block reads, and in parallel they filled bitcoind's work queue for the tally, census and
+      // settlement. Now what needs no chain is checked first (proposalStands' face: its encoding, config_hash = H(config), the proposer's
+      // signature), then the proposer's bond in the census at the named block's height (its header - the publication height, as below);
+      // only then is the block read.
+      { try { encodeConfigProposalBody(p); } catch (e) { return { ok: false, status: 422, why: e.message }; }
+        if (toHex(p.configHash) !== toHex(configHashOf(p.config))) return { ok: false, status: 422, why: 'config_hash is not the hash of the config the proposal carries (27A.7.1)' };
+        if (typeof verify !== 'function' || !verify(p.signature, proposalBodyId(p), p.proposer)) return { ok: false, status: 422, why: 'the proposal is not signed by the node it names as proposer' };
+        if (typeof blockHeightOf === 'function' && typeof censusAt === 'function') {
+          let h = null; try { h = await blockHeightOf(String(blockHash).toLowerCase()); } catch { h = null; }
+          if (Number.isInteger(h) && h >= 0) {
+            // A NETWORK THIS SEAT KEEPS NO DONATION SET FOR, AND A BUDGET OF CENSUS READS (kanban #2792, #1489 r20-census-1): the pre-check
+            // derived a census (a 2016-block walk and a census_kept row kept 3 days) at the network and height the poster picks - any 32-byte
+            // network_id, any real block hash, a fresh key, no auth: one derivation per request. A network with no donation set in force at
+            // that height is refused before any census (the deposit check below refuses it anyway); and the door starts at most
+            // DOOR_CENSUS_KEYS new (network, height) census reads a minute (#1818 / #2270 for the guardian doors) - over it, 503 (ask
+            // again). The pull and the tally's re-post (`own`) are this seat's own passes and are not held to it.
+            let known = null; try { known = recipientsFor(net, h); } catch { known = null; }
+            if (!known) return { ok: false, status: 422, why: `this seat knows no donation set in force for that network at height ${h}` };
+            // A PROPOSER BONDED IN THE CENSUS THIS SEAT ALREADY HOLDS IS NOT HELD TO THE BUDGET (kanban #2831, #1489 r24-census-1: the budget was one
+            // window for every poster, and 4 unbonded stranger posts a minute shut out each bonded proposer with 503): `censusNow()`, the seat's current
+            // census (no derivation), names the bonded node keys; only posters it does not name share the DOOR_CENSUS_KEYS window
+            let bondedHere = false;
+            if (typeof censusNow === 'function') { try { const now = censusNow(); bondedHere = Array.isArray(now) && now.some((e) => e && xOnly(e.pubkey) === xOnly(p.proposer)); } catch { bondedHere = false; } }
+            if ((!own || own === 'peer') && !bondedHere && !doorCensusKey(`${net}:${h}`, own === 'peer' ? 'peer' : 'door')) return { ok: false, status: 503, why: 'this seat reads only a few new censuses a minute for posted proposals: ask again shortly' };
+            let census = null; try { census = await censusAt(net, h); } catch { census = null; }
+            if (Array.isArray(census) && !census.some((e) => e && xOnly(e.pubkey) === xOnly(p.proposer)))
+              return { ok: false, status: 422, why: `the proposer holds no active bond in the census at height ${h} (27A.7.2)` };
+          }
+        } }
       const tx = await confirmedTx(toHex(Uint8Array.from(p.depositTxid).reverse()), String(blockHash).toLowerCase());
       if (!tx) return { ok: false, status: 422, why: 'that block of this seat\'s chain does not hold the deposit the proposal names' };
       // the network's donation set IN FORCE AT THE DEPOSIT'S HEIGHT (27A.4): the set the deposit had to pay
@@ -233,17 +307,46 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
       // and activation - counted on his own vote, and live retroactively under rounds this seat served. Taken only while this
       // seat's tip is below its first voting block (a review-0 repeal, whose voting starts at its own block: at that block).
       // Mainnet's review is 1008 blocks, time enough for every seat to hear of it (POST or the peer pull). A tip not read is a 503.
+      // AN ORPHANED RECORD THIS SEAT HOLDS (kanban #2135, #2197) is not asked again: it was taken here through this same check, so
+      // it was seen before its voting; a reorg that moved its deposit to another block does not make it late. Refused, the honest
+      // proposal was lost for good and the votes already on chain for it counted for nothing, while a seat whose chain never left
+      // the old block kept counting it. Only the new block's deposit and the stands rules above are checked for it.
+      const seenBefore = !!was && stateOf(was) === S.ORPHANED;
+      let seenAt = was ? (Number.isFinite(Number(was.seenAt)) ? Number(was.seenAt) : null) : null;
       // BOUND (ruling #2012 (c)): the deposit commits to these bytes and confirmed at the publication height - before the first
       // voting block (votingFrom >= publishedAt: a repeal's review 0 votes from that very block) - so the chain, not this seat's
       // tip, says it was there in time: a late pull is as good as an early POST, and every seat that hears of it takes it.
+      // HELD BEFORE ITS VOTING ENDED, OR KEPT LATE (kanban #2432, decided 2026-11-14): the binding fixes the bytes, not that anyone saw
+      // them - a proposer could commit, vote YES alone, and show the text only after its voting and activation (#1608 again, measured:
+      // passed on his own 35 %, live from 208, the round served at 220 refused after the fact). A bound proposal this seat first
+      // holds once its voting has ended is KEPT LATE: listed, never counted, until bonds holding more than half of the census weight
+      // at its publication (the proposer's left out) signed that they held it before its voting ended (`sightings`, vouch). Every
+      // record notes the tip it was taken at; one taken in time carries this seat's own signed sighting.
+      let lateWhy = null;
       if (bound) {
         if (!(dep.publishedAt <= stands.votingFrom)) return { ok: false, status: 422, why: `its deposit confirmed at ${dep.publishedAt}, after its first voting block ${stands.votingFrom}` };
-      } else if (tipOf) {
+        if (tipOf && !seenBefore) {
+          let tip = NaN;
+          try { tip = Number(await tipOf()); } catch { tip = NaN; }
+          if (!Number.isFinite(tip)) return { ok: false, status: 503, why: 'this seat could not read its tip: ask again shortly' };
+          seenAt = tip;
+          if (tip >= stands.votingUntil)
+            lateWhy = `its voting ended at ${stands.votingUntil} and this seat first held it at ${tip}: kept, but not counted until bonds holding more than half of the census weight signed that they held it before its voting ended (kanban #2432)`;
+          // HELD IN TIME HERE IS NOT A MAJORITY (kanban #2700, #1489 r4-census-1): the #2432 rule ran only at a seat that first held the text
+          // late - a proposer who showed it to ONE seat in its last voting block had that seat count it on its own sighting (passed, live)
+          // while every other seat kept it late and never counted it: he chose which seats moved to the new config. Now every seat counts a
+          // bound proposal only once bonds holding more than half of the census weight (the proposer's left out) signed that they held it
+          // before its voting ended - its own sighting included, the others' taken from the peer pull (vouch), the same rule everywhere.
+          else if (typeof censusAt === 'function')
+            lateWhy = `held here at ${tip}, before its voting ended at ${stands.votingUntil}: counted once bonds holding more than half of the census weight signed that they held it in time (kanban #2432, #2700)`;
+        }
+      } else if (tipOf && !seenBefore) {
         let tip = NaN;
         try { tip = Number(await tipOf()); } catch { tip = NaN; }
         if (!Number.isFinite(tip)) return { ok: false, status: 503, why: 'this seat could not read its tip: ask again shortly' };
         if (tip >= Math.max(stands.votingFrom, dep.publishedAt + 1))
           return { ok: false, status: 422, why: `its voting began at ${stands.votingFrom} and this seat's tip is ${tip}: a proposal must be posted before its voting phase` };
+        seenAt = tip;
       }
       // THE PROPOSER IS A BONDED NODE (27A.7.2 "node pubkey with an active bond", kanban #1489): its key is in the census at the
       // publication height - the census the tally counts with. A fresh key with a 1-sat deposit took the ballot before; now refused
@@ -255,6 +358,16 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
         const me = xOnly(p.proposer);
         if (!census.some((e) => e && xOnly(e.pubkey) === me))
           return { ok: false, status: 422, why: `the proposer holds no active bond in the census at height ${dep.publishedAt} (27A.7.2)` };
+        // THE PRICE OF PROPOSING IS THE CENSUS'S MEDIAN (kanban #2741, #1489 r6-census-2; §27A.7.2 "proposal_deposit_sats is a median"): only the
+        // cap was checked, so a bonded node proposed for 1 sat each. The deposit must reach the bond-weighted median proposal_deposit_sats its
+        // census declares at the publication height (census-median.js; nodes declaring none do not count, none declaring: no floor) - held
+        // to the cap, so the two never ask for more than a deposit may be. A function of the chain, the same answer at every seat.
+        const median = bondWeightedMedian(census, 'proposalDepositSats');
+        if (median !== null) {
+          const cap = BigInt(lowestBondMinSatsFor(net)) / 100n, floor = median < cap ? median : cap;
+          if (BigInt(dep.depositSats) < floor)
+            return { ok: false, status: 422, why: `a deposit of ${dep.depositSats} sat is under the ${floor} sat the census at height ${dep.publishedAt} prices proposing at (its bond-weighted median proposal_deposit_sats, 27A.7.2)` };
+        }
       }
       // checked on a proposal that stands on its face and on the chain: refused by its own fault first, then by the deposit (#1489)
       const other = backedBy(depositHex, id, toHex(p.proposer));
@@ -263,24 +376,54 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
       // any time; the #2590 tip check for twins is gone (counts(): one twin stands for the group, a decided one first)
       if (sameDeposit(depositHex, id).length >= SAME_DEPOSIT_KEPT)
         return { ok: false, status: 409, why: `that deposit already backs ${SAME_DEPOSIT_KEPT} proposals of this proposer: no more are kept (kanban #1840, #2607)` };
+      // A TWIN OF A TEXT HELD IN TIME (kanban #2607, #2432): the same body over the same deposit is the same proposal - its text was held
+      // before its voting ended when a twin kept here (not late) was, so a re-signed twin taken later is not late
+      if (lateWhy) { const body = toHex(bytes).slice(0, -128); if (sameDeposit(depositHex, id).some((r) => boundRecord(r) && bodyHexOf(r) === body && !isLate(r))) lateWhy = null; }
       const kept = { id, proposal: toHex(bytes), networkId: net, parent: toHex(p.parent), configHash: toHex(p.configHash), class: stands.class,
         proposer: toHex(p.proposer), publishedAt: dep.publishedAt, depositSats: String(dep.depositSats), votingFrom: stands.votingFrom,
         votingUntil: stands.votingUntil, activationHeight: stands.activationHeight, repeal: stands.repeal, depositTxid: depositHex,
         // THE BLOCK IT WAS PUBLISHED IN: a reorg that takes it out unpublishes the proposal (ballot-tally.js)
-        blockHash: String(blockHash).toLowerCase(), state: S.COUNTING };
+        blockHash: String(blockHash).toLowerCase(), state: S.COUNTING,
+        // THE TIP IT WAS FIRST SEEN AT here (kanban #2135, #2197): kept through an orphan and a re-post from a new block
+        ...(seenAt !== null ? { seenAt } : {}), ...(lateWhy ? { late: { at: seenAt, why: lateWhy } } : {}),
+        // AN ORPHAN TAKEN AGAIN keeps what it was: kept late stays late until vouched for, its sightings stay (kanban #2432)
+        ...(was && was.late ? { late: was.late } : {}), ...(was && Array.isArray(was.sightings) ? { sightings: was.sightings } : {}) };
+      // THIS SEAT'S OWN SIGHTING (kanban #2432): held before its voting ended, its node key signs "held at `seenAt`"
+      if (!kept.sightings && seenAt !== null && seenAt < stands.votingUntil && seenSigner && typeof seenSigner.sign === 'function') {   // kanban #2700: also while it waits for the majority
+        try { kept.sightings = [{ by: xOnlyHex(seenSigner.pubkey), at: seenAt, sig: toHex(Uint8Array.from(seenSigner.sign(seenMessage(id, seenAt)))) }]; } catch { /* kept without one */ }
+      }
+      // KEPT LATE: vouched for at once with what it holds (counted at once when no bond but the proposer's is in the census)
+      const late = async (r) => { if (!isLate(r)) return r; try { await api.vouch(id, null); } catch { /* the next pull */ } return { ...(held.get(id) || r), why: (r.late && r.late.why) || lateWhy }; };
+      // A TWIN AFTER ITS GROUP'S OUTCOME COUNTS IT AGAIN (kanban #2629, state audit #1489 sm1 census-1): votes under a twin's id
+      // can sit in the voting blocks before any seat holds the twin, so a seat that decided before the twin reached it and one
+      // that took it before its own decision wrote two final outcomes for one proposal - and two live configs. Now a decided
+      // twin of the group is undecided BEFORE the new one is kept (its outcome held in force through the recount, #1635), and
+      // the group is counted again over every twin it holds: the outcome is one function of the chain and the twins held, the
+      // same at every seat. Undecided first: a crash between the two writes only recounts to the outcome it had.
+      if (bound) {
+        const body = toHex(bytes).slice(0, -128);
+        for (const r of sameDeposit(depositHex, id)) {
+          const st = stateOf(r);
+          if ((st !== S.PASSED && st !== S.FAILED) || !boundRecord(r) || bodyHexOf(r) !== body) continue;
+          if (!api.undecide(r.id, `a twin (${id.slice(0, 16)}) was taken after its outcome: counted again over every twin (kanban #2629)`) && stateOf(held.get(r.id)) === st)
+            return { ok: false, status: 503, why: 'this seat could not reopen the count of its twin: ask again shortly' };
+        }
+      }
       // TAKEN AGAIN FROM A NEW BLOCK: the orphaned record moves back to COUNTING with the record checked here
       if (was) {
         if (!transition(id, S.ORPHANED, S.COUNTING, { record: kept, at: dep.publishedAt, why: 'posted again from a block of this chain' }))
           return held.has(id) ? { ok: true, status: 200, ...held.get(id), already: true } : { ok: false, status: 409, why: 'that proposal moved while it was checked: ask again' };
-        return { ok: true, status: 201, ...held.get(id) };
+        return { ok: true, status: 201, ...(await late(held.get(id))) };
       }
       if (held.has(id)) return { ok: true, status: 200, ...held.get(id), already: true };   // taken by another ask while this one read the chain
       try { commit(kept); } catch (e) { return { ok: false, status: 503, why: `this seat could not keep it: ${e.message}` }; }
-      return { ok: true, status: 201, ...kept };
+      return { ok: true, status: 201, ...(await late(kept)) };
     },
     list: () => [...held.values()].sort((a, b) => b.publishedAt - a.publishedAt),
     /** Is a kept record read bound (kanban #2125): its votes by seq. From its network's gate and its publication height, never the store's word. */
     bound: (r) => !!r && isBound(r.networkId, Number(r.publishedAt)),
+    /** Is a kept record read keyed (kanban #2671): its votes name their bond. From its network's gate and its publication height. */
+    keyed: (r) => !!r && isKeyed(r.networkId, Number(r.publishedAt)),
     counts,
     /** The twin that stands for `id`'s group (kanban #2607): `id` itself when it has none; null when its deposit is void (#1840). */
     twinOf: standsFor,
@@ -425,10 +568,64 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
       for (const r of asked) {
         if (!r || typeof r.proposal !== 'string' || typeof r.blockHash !== 'string') continue;
         const mine = typeof r.id === 'string' ? held.get(r.id.toLowerCase()) : null;
-        if (mine && stateOf(mine) !== S.ORPHANED) continue;             // kept and counted here: nothing to learn
-        try { const got = await api.add({ proposal: r.proposal, blockHash: r.blockHash }); if (got.ok && got.status === 201) took++; } catch { /* not one */ }
+        // kept here: only its signed sightings are news (kanban #2432) - who listed it proves nothing
+        if (mine && stateOf(mine) !== S.ORPHANED) { if (isLate(mine)) { try { await api.vouch(mine.id, r); } catch { /* the next pull */ } } continue; }
+        try {
+          const got = await api.add({ proposal: r.proposal, blockHash: r.blockHash }, { own: 'peer' });   // kanban #2840
+          if (got.ok && got.status === 201) took++;
+          if (got.ok && isLate(held.get(got.id))) await api.vouch(got.id, r);
+        } catch { /* not one */ }
       }
       return took;
+    },
+    /**
+     * SIGHTINGS OF A PROPOSAL KEPT LATE HERE (kanban #2432): `record` (a peer's listed record, or null) offers `sightings` [{ by, at, sig }]
+     * - each a census bond key's signature over seenMessage(id, at). One is taken when its key holds a bond in the census at the
+     * publication height and is NOT the proposer's, `at` is in [publishedAt, votingUntil) - held before its voting ended - and the
+     * signature checks; who listed it does not matter (a late seat relays the ones it holds). The record counts here once the keys that
+     * signed hold MORE THAN HALF of the census weight left after the proposer's - or at once when no bond but the proposer's is in the
+     * census (nobody else could vote). Never a seat URL, never a seat's own unsigned word. Written first. Answers whether it counts now.
+     */
+    async vouch(id, record) {
+      const had = held.get(String(id || '').toLowerCase());
+      if (!isLate(had) || typeof censusAt !== 'function') return false;
+      let census = null;
+      try { census = await censusAt(had.networkId, had.publishedAt); } catch { census = null; }
+      if (!Array.isArray(census)) return false;
+      const proposerKey = xOnlyHex(had.proposer);
+      const weight = new Map();
+      for (const e of census) {
+        const k = e && xOnlyHex(e.pubkey);
+        if (!k || k.length !== 64 || k === proposerKey) continue;
+        let w = 0n; try { w = BigInt(e.bondSats ?? 0); } catch { w = 0n; }
+        weight.set(k, (weight.get(k) || 0n) + (w > 0n ? w : 0n));
+      }
+      const signed = new Map();
+      // NOT CUT BY POSITION (kanban #3040, audit census r3-1): a peer's first 64 sightings were taken, served in key order, so 64 low-key dust bonds
+      // put in front hid every honest sighting and no bound proposal ever counted. A peer's list is read up to SIGHTINGS_READ_MOST entries; a key
+      // not in the census, or held already, is passed over before any signature is checked, and at most one signature per census key is checked
+      const offered = [...(Array.isArray(had.sightings) ? had.sightings : []), ...(record && Array.isArray(record.sightings) ? record.sightings.slice(0, SIGHTINGS_READ_MOST) : [])];
+      const tried = new Set();
+      for (const x of offered) {
+        if (!x || typeof x.by !== 'string' || typeof x.sig !== 'string') continue;
+        const by = x.by.toLowerCase(), at = Number(x.at);
+        if (signed.has(by) || tried.has(by) || !weight.has(by) || !/^[0-9a-f]{128}$/.test(x.sig.toLowerCase())) continue;
+        tried.add(by);
+        if (!Number.isInteger(at) || at < had.publishedAt || at >= had.votingUntil) continue;
+        let good = false;
+        try { good = !!verify(fromHex(x.sig.toLowerCase()), seenMessage(had.id, at), fromHex(by)); } catch { good = false; }
+        if (good) signed.set(by, { by, at, sig: x.sig.toLowerCase() });
+      }
+      const total = [...weight.values()].reduce((a, b) => a + b, 0n);
+      const seen = [...signed.keys()].reduce((a, k) => a + weight.get(k), 0n);
+      const agreed = total === 0n || 2n * seen > total;
+      const sightings = [...signed.values()].sort((a, b) => (a.by < b.by ? -1 : 1));
+      if (JSON.stringify(sightings) === JSON.stringify(had.sightings || []) && !agreed) return false;
+      const next = { ...had, sightings, ...(agreed ? { late: { ...had.late, agreed: { rule: 'census-weight', weight: String(seen), of: String(total),
+        by: sightings.map((x) => x.by), at: sightings.length ? Math.min(...sightings.map((x) => x.at)) : null } } } : {}) };
+      if (held.get(had.id) !== had) return false;                       // moved meanwhile: asked again on the next pull
+      try { commit(next); } catch { return false; }
+      return agreed;
     },
   };
   // the first check runs at once; the tally asks again before each pass for any census that was not readable yet

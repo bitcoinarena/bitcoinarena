@@ -243,7 +243,9 @@ test('the same seed picks the same committee', () => {
 
   // and the other two, moved on the ROUND, still change the answer
   assert.notDeepEqual(
-    selectCommittee({ entries: uneven, contract: { ...round, bondMinSats: 2000000n }, role: 'game',
+    // kanban #2850: a floor of 1,200,000 keeps three of the five keys - at 2,000,000 one key is left, under census_min_nodes, and that census
+    // is refused now (it drew a committee of one before)
+    selectCommittee({ entries: uneven, contract: { ...round, bondMinSats: 1200000n }, role: 'game',
       committeeSeed: SEED })
       .map((e) => e.txid[0]), fair.map((e) => e.txid[0]));
 });

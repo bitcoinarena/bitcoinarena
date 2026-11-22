@@ -438,6 +438,8 @@ async function placeOrder(c, rid, rung, orderIndex, signers, closeMs, marginMs =
 }
 // a seat that has not answered one order post in this long is counted as not taking the order (kanban #605)
 const SEAT_LIMIT_MS = Number(env.SEAT_LIMIT_MS || 30000);
+// the smallest order a seat takes (server.js: "an order stakes 1000 to 100000000 msat")
+const MIN_ORDER_MSAT = 1000n;
 const CLAIM_KEYS = new Map();
 // THE SIGNER NODES' OWN ADDRESSES, asked beside the seats (kanban #804, signer-addresses.mjs: federation B round 76c7d631 had two installed
 // nodes among its six signer nodes, and "4 of 6 signer nodes attest this claim key" while both served it)
@@ -478,7 +480,18 @@ async function collectPass() {
   const seed = Uint8Array.from(Buffer.from(readFileSync(join(DIR, 'seed.hex'), 'utf8').trim(), 'hex'));
   for (const o of due) {
     try {
-      if (!roundOf.has(o.round)) roundOf.set(o.round, decodeRoundContract(new Uint8Array(await (await fetch(`${nodes[0]}/round?id=${o.round}`)).arrayBuffer())));
+      // THE ROUND FROM ANY SEAT THAT HOLDS IT (kanban #2919): a seat holds only the rounds whose committee it sat on, and answered the others
+      // 404 "no such round" - read as a contract that was "not a RoundContract: type 110", so such an order never collected and took one of
+      // the pass's slots every 10 min (m17a: 6,357 times since 11-01). Each seat is asked until one answers 200 with a contract.
+      if (!roundOf.has(o.round)) {
+        let got = null, last = 'no seat answered';
+        for (const n of nodes) {
+          try { const r = await fetch(`${n}/round?id=${o.round}`, { signal: AbortSignal.timeout(8000) }); if (!r.ok) { last = `${n}: ${r.status}`; continue; } got = decodeRoundContract(new Uint8Array(await r.arrayBuffer())); break; }
+          catch (e) { last = `${n}: ${String(e.message).slice(0, 80)}`; }
+        }
+        if (!got) throw new Error(`no seat holds round ${o.round.slice(0, 16)} (${last})`);
+        roundOf.set(o.round, got);
+      }
       const c = roundOf.get(o.round), rid = fromHex(o.round);
       const ask = { round: c, roundId: rid, invite: inviteText, seed, curve: feldmanGroup, LockClient: LockClientCls, storage, nodes, order: o.order };
       const look = await lookOwed({ ...ask, client: w });
@@ -563,7 +576,10 @@ async function pass() {
       .filter((q) => !ONLY_SIDE || Number(q.outcome) === (ONLY_SIDE === 'down' ? 1 : 0));
     const done = new Set(placed[row.id] || []);
     const made = [...done].filter((k) => !k.startsWith('take:')).length, taken = done.size - made;
-    const todo = makerTurn ? ladder.filter((q) => !done.has(`${q.outcome}:${q.priceCents}`)).slice(0, Math.max(0, MAX_ORDERS - made)) : [];
+    // NO RUNG BELOW THE SEATS' SMALLEST ORDER (kanban #2772, measured 2026-11-14 on testnet4: SHARES=10 quoted Up@5c = 507 msat, every seat
+    // refused it - "an order stakes 1000 to 100000000 msat" - and the retry of that rung then failed in the lock record, "a stake lock goes
+    // accepted -> committed, not -> accepted"): such a rung is not placed
+    const todo = makerTurn ? ladder.filter((q) => q.stakeMsat >= MIN_ORDER_MSAT && !done.has(`${q.outcome}:${q.priceCents}`)).slice(0, Math.max(0, MAX_ORDERS - made)) : [];
     const take = takeOf(fair, taken, start, closeAt);
     if (take) todo.push(take);
     if (SELLS > 0 && !DRY) { try { await sellPass(row, fair, closeAt); } catch (e) { say({ step: 'sell pass failed', round: row.id.slice(0, 16), why: String(e.message).slice(0, 200) }); } }

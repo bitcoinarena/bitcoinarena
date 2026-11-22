@@ -5,7 +5,7 @@
 // game's own (its client and its decide adapter). The commitment is the protocol's (arena-protocol head-to-head.js); the
 // entry itself is built and handed over as a market pick's is (join.js entryFor, market.js submitPick), with `commit` set.
 import { headToHeadCommit } from '../../arena-protocol/src/head-to-head.js';
-import { lockSetCertificateStands, LOCK_SET_WINDOW_MS } from '../../arena-protocol/src/lock-set.js';
+import { lockSetCertificateStands, LOCK_SET_WINDOW_MS, LOCK_SET_FINAL_AFTER_MS } from '../../arena-protocol/src/lock-set.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 
 const h2hHex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
@@ -76,14 +76,34 @@ export async function revealMove({ entryIdHex, move, salt, nodes, identity = nul
   }));
 }
 
+// ONE SERVER, ONE VOTE (kanban #2709, #1489 r4-h2h-3; the page's rule of #2329/#2364): the node list comes from the join link, so one seat named
+// twice ('http://evil' and 'http://evil/', two paths or a trailing dot of one host) was two votes here and outvoted the honest seat. Each
+// address is asked once (its normalized spelling) and every host is one vote: its addresses settle among themselves (the answer most of
+// them give, none on a tie). The quorum is two hosts, one for a round whose seats all sit on one host.
+export const h2hSeatKey = (n) => { const t = String(n).trim().replace(/\/+$/, ''); try { const u = new URL(t); return (u.origin + u.pathname).replace(/\/+$/, ''); } catch { return t; } };
+export const h2hHostKey = (n) => { try { const u = new URL(String(n).trim()); if (u.hostname) return u.hostname.toLowerCase().replace(/\.+$/, ''); } catch { /* not a URL */ } return h2hSeatKey(n); };
+export function seatsByHost(nodes) {
+  const listed = [], seen = new Set();
+  for (const n of nodes || []) { const k = h2hSeatKey(n); if (!seen.has(k)) { seen.add(k); listed.push(n); } }
+  const hostOf = listed.map(h2hHostKey);
+  return { listed, hostOf, hosts: [...new Set(hostOf)] };
+}
+// one host's word from its addresses' answers (values compared as strings): the one most of them give, none on a tie
+const hostWord = (vals) => {
+  const c = new Map(); for (const v of vals) if (v !== undefined) c.set(v, (c.get(v) || 0) + 1);
+  const r = [...c].sort((a, b) => b[1] - a[1]);
+  return r.length && (r.length === 1 || r[0][1] > r[1][1]) ? r[0][0] : undefined;
+};
+
 /** Every reveal the round's seats hold, merged by entry: { [entryIdHex]: move }. */
 // A MOVE COUNTS ONLY WHEN THE SEATS AGREE ON IT (kanban #1489): the merge was last-answer-wins, so one seat answering late with
 // an opponent's move changed flipped the provisional verdict the page shows before any seat signs. Each seat now gives one
 // vote per entry; an entry's move is the one at least two seats (or every seat, on a one-seat list) name, and more seats than
 // name any other move. A tie, or a move only one seat of several names, leaves the entry undecided here.
 export async function revealsOfRound({ roundIdHex, nodes, fetcher = fetch, timeoutMs = H2H_SEAT_MS }) {
-  const votes = new Map();   // entry -> Map(move -> seats naming it)
-  await Promise.all(nodes.map(async (node) => {
+  const { listed, hostOf, hosts } = seatsByHost(nodes);   // kanban #2709: each address once, each host one vote
+  const said = new Map();   // host -> Map(entry -> [move per address])
+  await Promise.all(listed.map(async (node, ni) => {
     try {
       const j = await withDeadline(timeoutMs, async (signal) => {
         const r = await fetcher(`${String(node).replace(/\/+$/, '')}/reveals?round=${roundIdHex}`, { signal });
@@ -94,13 +114,18 @@ export async function revealsOfRound({ roundIdHex, nodes, fetcher = fetch, timeo
       for (const x of (j && Array.isArray(j.reveals) ? j.reveals : [])) {
         if (Number.isInteger(x.move) && typeof x.entry === 'string' && !mine.has(x.entry)) mine.set(x.entry, x.move);
       }
-      for (const [entry, move] of mine) {
-        if (!votes.has(entry)) votes.set(entry, new Map());
-        const m = votes.get(entry); m.set(move, (m.get(move) || 0) + 1);
-      }
+      if (!said.has(hostOf[ni])) said.set(hostOf[ni], new Map());
+      const h = said.get(hostOf[ni]);
+      for (const [entry, move] of mine) { if (!h.has(entry)) h.set(entry, []); h.get(entry).push(move); }
     } catch { /* a seat that is down says nothing */ }
   }));
-  const need = Math.min(2, nodes.length);
+  const votes = new Map();   // entry -> Map(move -> hosts naming it)
+  for (const h of said.values()) for (const [entry, moves] of h) {
+    const move = hostWord(moves); if (move === undefined) continue;
+    if (!votes.has(entry)) votes.set(entry, new Map());
+    const m = votes.get(entry); m.set(move, (m.get(move) || 0) + 1);
+  }
+  const need = Math.min(2, hosts.length);
   const out = {};
   for (const [entry, m] of votes) {
     const ranked = [...m].sort((a, b) => b[1] - a[1]);
@@ -116,6 +141,7 @@ export const H2H_SEAT_ASK_MS = H2H_SEAT_MS;
 // before the round's committee has certified, at its threshold, the set of entries whose stake it saw locked before the close - and the
 // page reveals only once it has seen that certificate itself. Without one by the close + 3 s the round is VOID: every stake comes back.
 export const H2H_LOCK_SET_POLL_MS = 150;
+export const H2H_REVEAL_WAIT_MS = 25000;   // kanban #2861: was 6 s
 const h2hFromHex = (h) => Uint8Array.from(String(h).match(/../g) || [], (x) => parseInt(x, 16));
 
 /**
@@ -123,34 +149,73 @@ const h2hFromHex = (h) => Uint8Array.from(String(h).match(/../g) || [], (x) => p
  * void }. A certificate counts only if it stands against `committee` (hex keys, the round's seats the page dealt its stake to) under
  * `verify` (BIP-340); without a committee, only one at least two seats serve with the same entries (one seat on a one-seat list).
  */
-export async function lockSetOfSeats({ roundIdHex, nodes, committee = null, verify = null, entryCloseMs, fetcher = fetch, timeoutMs = H2H_SEAT_MS }) {
-  const said = await Promise.all(nodes.map(async (node) => {
+// THE CERTIFICATE'S THRESHOLD AS THE SEATS COUNT IT (arena-node lock-set-book.js #threshold): the committee table, else a majority of the
+// committee - a round seated by 6 (a 7-slot round with one seat gone) has no row in receiptsNeeded, and every reveal of such a protocol-28
+// table threw "no committee threshold for 6 slots" in the page, the house bot and tn4-rps-paid.mjs (kanban #2658, measured 2026-11-14 21:47Z)
+/** Clock slack past the seats' final point before a page takes VOID (kanban #2984). */
+export const H2H_VOID_SLACK_MS = 1000;
+export const lockSetThreshold = (n) => { try { return receiptsNeeded(n); } catch { return Math.floor(n / 2) + 1; } };
+
+/** How long one ask of the lock set waits for the seats still out once a majority answered (kanban #3025). */
+export const H2H_STRAGGLER_MS = 500;
+export async function lockSetOfSeats({ roundIdHex, nodes, committee = null, verify = null, entryCloseMs, fetcher = fetch, timeoutMs = H2H_SEAT_MS, stragglerMs = H2H_STRAGGLER_MS }) {
+  const { listed, hostOf, hosts } = seatsByHost(nodes);   // kanban #2709: each address once; an unsigned set counts one vote per host
+  // THE FIRST CERTIFICATE THAT STANDS ENDS THE ASK (kanban #3025, audit h2h r2-1): every seat was awaited before any answer was looked at, so one
+  // seat answering just inside the 5 s deadline held each poll - and the reveal - up to ~9 s past a certificate the page already had. With a
+  // committee to check against, an answer whose certificate stands is taken as it arrives; the seats still in flight are not waited for
+  const stands = (x) => {
+    if (!x || typeof x !== 'object' || !x.certificate || !/^[0-9a-f]+$/.test(String(x.certificate)) || !(committee && committee.length && typeof verify === 'function')) return null;
     try {
-      return await withDeadline(timeoutMs, async (signal) => {
-        const r = await fetcher(`${String(node).replace(/\/+$/, '')}/lock-set?round=${roundIdHex}`, { signal, cache: 'no-store' });
-        if (!r.ok) { try { r.body && r.body.cancel && await r.body.cancel(); } catch { /* gone */ } return null; }
-        return JSON.parse(await cappedText(r, H2H_REVEALS_CAP));
-      });
+      const st = lockSetCertificateStands(h2hFromHex(x.certificate), { roundId: h2hFromHex(roundIdHex), committee, threshold: lockSetThreshold(committee.length),
+        entryCloseMs: BigInt(entryCloseMs), verify });
+      return st.ok ? st : null;
     } catch { return null; }
-  }));
+  };
+  const said = new Array(listed.length).fill(null);
+  let early = null, straggle = null;
+  await new Promise((done) => {
+    let left = listed.length;
+    if (!left) { done(); return; }
+    listed.forEach(async (node, i) => {
+      try {
+        said[i] = await withDeadline(timeoutMs, async (signal) => {
+          const r = await fetcher(`${String(node).replace(/\/+$/, '')}/lock-set?round=${roundIdHex}`, { signal, cache: 'no-store' });
+          if (!r.ok) { try { r.body && r.body.cancel && await r.body.cancel(); } catch { /* gone */ } return null; }
+          return JSON.parse(await cappedText(r, H2H_REVEALS_CAP));
+        });
+      } catch { said[i] = null; }
+      if (!early) { const st = stands(said[i]); if (st) { early = { entries: st.entries, atMs: st.atMs }; done(); } }
+      if (--left === 0) done();
+      // a majority of the seats answered: the rest get H2H_STRAGGLER_MS more, then this ask ends with what came (the next poll asks all again)
+      else if (!straggle && listed.length - left >= Math.floor(listed.length / 2) + 1) straggle = setTimeout(done, stragglerMs);
+    });
+  });
+  if (straggle) clearTimeout(straggle);
+  if (early) return { required: true, certified: early, void: false, voids: 0 };
   const answered = said.filter((x) => x && typeof x === 'object');
   if (!answered.length) return { required: null, certified: null, void: false };
   if (!answered.some((x) => x.required === true)) return { required: false, certified: null, void: false };
   let certified = null;
   const byEntries = new Map();
-  for (const x of answered) {
+  const byHost = new Map();   // entries key -> hosts serving it (unsigned path)
+  for (const [i, x] of said.entries()) {
+    if (!x || typeof x !== 'object') continue;
     if (!x.certificate || !/^[0-9a-f]+$/.test(String(x.certificate))) continue;
     if (committee && committee.length && typeof verify === 'function') {
-      const st = lockSetCertificateStands(h2hFromHex(x.certificate), { roundId: h2hFromHex(roundIdHex), committee, threshold: receiptsNeeded(committee.length),
+      const st = lockSetCertificateStands(h2hFromHex(x.certificate), { roundId: h2hFromHex(roundIdHex), committee, threshold: lockSetThreshold(committee.length),
         entryCloseMs: BigInt(entryCloseMs), verify });
       if (st.ok) { certified = { entries: st.entries, atMs: st.atMs }; break; }
     } else if (Array.isArray(x.entries)) {
       const k = [...x.entries].sort().join(',');
-      byEntries.set(k, (byEntries.get(k) || 0) + 1);
-      if (byEntries.get(k) >= Math.min(2, nodes.length)) { certified = { entries: [...x.entries].sort(), atMs: Number(x.certifiedAtMs) || null }; break; }
+      if (!byHost.has(k)) byHost.set(k, new Set());
+      byHost.get(k).add(hostOf[i]);
+      byEntries.set(k, byHost.get(k).size);
+      if (byEntries.get(k) >= Math.min(2, hosts.length)) { certified = { entries: [...x.entries].sort(), atMs: Number(x.certifiedAtMs) || null }; break; }
     }
   }
-  return { required: true, certified, void: !certified && answered.some((x) => x.void === true) };
+  // kanban #2984: how many listed addresses said VOID - one seat's unsigned word is not the round's
+  const voids = said.filter((x) => x && typeof x === 'object' && x.void === true).length;
+  return { required: true, certified, void: !certified && voids > 0, voids: certified ? 0 : voids };
 }
 
 /**
@@ -160,15 +225,60 @@ export async function lockSetOfSeats({ roundIdHex, nodes, committee = null, veri
  */
 export async function revealWhenCertified({ roundIdHex, entryIdHex, move, salt, nodes, identity = null, committee = null, verify = null, entryCloseMs,
   fetcher = fetch, now = () => Date.now(), timeoutMs = H2H_SEAT_MS, onWait = null, sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)) }) {
-  const giveUpAt = Number(entryCloseMs) + LOCK_SET_WINDOW_MS + 6000;
+  // HOW LONG A PAGE WAITS FOR BUSY SEATS (kanban #2861, the owner's playtest 2026-11-15: at load ~43 the certificate came ~15 s after the close; the
+  // page gave up at close + 9 s and showed "Not revealed - you lose" while the opponent revealed): a seat's VOID after the window still ends the
+  // wait at once; with none, a late certificate opens the reveal up to close + LOCK_SET_WINDOW_MS + H2H_REVEAL_WAIT_MS
+  const giveUpAt = Number(entryCloseMs) + LOCK_SET_WINDOW_MS + H2H_REVEAL_WAIT_MS;
   for (;;) {
     const got = await lockSetOfSeats({ roundIdHex, nodes, committee, verify, entryCloseMs, fetcher, timeoutMs });
     if (got.required === false) return { seats: await revealMove({ entryIdHex, move, salt, nodes, identity, fetcher, timeoutMs }), certified: null };
     if (got.certified) {
       if (!got.certified.entries.includes(String(entryIdHex))) return { seats: [], notCertified: true, why: 'your entry is not in the round\'s certified lock set: it is not played, its stake comes back' };
-      return { seats: await revealMove({ entryIdHex, move, salt, nodes, identity, fetcher, timeoutMs }), certified: got.certified };
+      // NOT DONE WHILE THE SEATS ASK AGAIN (kanban #3015, audit h2h r1-1, measured 2026-11-19: a seat one signature ahead served its certificate
+      // to the page first; every honest seat answered the one post 409 "not certified yet - ask again shortly", only that seat held the move,
+      // and at the decide it served its reveals without it - the honest player FORFEIT). The seats that said so (or did not answer) are asked
+      // again every poll until a threshold of seats hold the move or the reveal's deadline passes.
+      // ONE HOST, ONE HOLDER; EVERY ANSWER THAT IS NOT FINAL IS ASKED AGAIN (kanban #3154, #3161, refute of #3015): the holders were counted per
+      // address against lockSetThreshold(addresses), so one seat named under eight spellings of its host ('http://s0', 'http://S0', 'http://s0.',
+      // 'http://s0/a' ...) filled the threshold by itself and the honest seats' "not certified yet" was never followed up; and only status 0 and
+      // that 409 were asked again, so an honest seat briefly busy (503 "try again", 429, or 404 before the entry reached it) was dropped. Now
+      // each address is posted once (seatsByHost, #2709), a host holds the move when any of its addresses took it, the threshold is the
+      // committee's (lockSetThreshold(committee.length), at most the hosts the page can ask) or else a threshold of the hosts, and every
+      // answer but a final one (a reveal taken, or a refusal that will not change: not in the lock set, a reveal that does not stand) is
+      // asked again every poll until the threshold holds or the reveal's deadline passes.
+      // NO HOLDER COUNT DECIDES WHEN TO STOP (kanban #3204, #3210, refute of #3154): counting holders per hostname capped the threshold at the
+      // hosts, and the live seats all sit on one tunnel host (tn4.bitcoin-arena.io/guardian-1..7) - need was 1, the first seat a signature
+      // ahead ended the loop and the six that said "not certified yet" were never posted again; and a stranger's keyless box under five DNS
+      // names in the link filled a threshold of five "hosts" on the first post. A 201 from an address proves nothing about who holds the move,
+      // so it is no reason to stop asking a seat whose answer is not final: every listed seat (each address once, seatsByHost #2709) is posted
+      // again every poll until each one has given a final answer (a reveal taken, or a refusal that will not change) or the reveal's deadline
+      // passes.
+      const { listed } = seatsByHost(nodes);
+      let seats = await revealMove({ entryIdHex, move, salt, nodes: listed, identity, fetcher, timeoutMs });
+      const askAgain = (x) => x.status === 0 || x.status === 404 || x.status === 408 || x.status === 425 || x.status === 429 || x.status >= 500
+        || (x.status === 409 && /not certified yet|ask again|try again/i.test(String(x.why || '')));
+      while (now() <= giveUpAt) {
+        const again = seats.filter(askAgain);
+        if (!again.length) break;
+        await sleep(H2H_LOCK_SET_POLL_MS);
+        const more = await revealMove({ entryIdHex, move, salt, nodes: again.map((x) => x.node), identity, fetcher, timeoutMs });
+        seats = seats.map((x) => more.find((m) => m.node === x.node) || x);
+      }
+      return { seats, certified: got.certified };
     }
-    if (got.void || now() > giveUpAt) return { seats: [], void: true, why: 'the round\'s lock set was not certified by its close + 3 s: the round is VOID, every stake comes back' };
+    // ONE SEAT'S VOID IS NOT FINAL (kanban #2798, #1489 r21-h2h-1): `void` is any seat's unsigned word, and a seat that said it on the first
+    // poll - while the honest seats were still certifying - made the page skip its reveal and forfeit a round the others played. Before the
+    // seats' own certifying window has passed the page keeps asking; a certificate it checked wins whenever it comes, and it gives up only
+    // after the window (the seats void a set they could not certify by then) or past its own deadline
+    // NOT ON ONE SEAT'S VOID, NOT BEFORE THE SEATS' OWN FINAL POINT (kanban #2984, audit h2h r1-1): the seats take and assemble the set until
+    // close + LOCK_SET_WINDOW_MS + LOCK_SET_FINAL_AFTER_MS and say VOID only from then; a page that stopped at close + 3 s on one seat's
+    // void skipped its reveal of a set the honest seats certified at close + 3.5 s and FORFEIT. A VOID now ends the wait only past that
+    // point (plus a second of clock slack) and only when more seats said it than a committee's dishonest share can (n - threshold + 1);
+    // else the page keeps asking until its own deadline
+    const n = committee && committee.length ? committee.length : seatsByHost(nodes).listed.length;
+    const voidsNeeded = Math.max(1, Math.min(seatsByHost(nodes).listed.length, n - lockSetThreshold(n) + 1));
+    const windowOver = now() > Number(entryCloseMs) + LOCK_SET_WINDOW_MS + LOCK_SET_FINAL_AFTER_MS + H2H_VOID_SLACK_MS;
+    if ((got.void && got.voids >= voidsNeeded && windowOver) || now() > giveUpAt) return { seats: [], void: true, why: 'the round\'s lock set was not certified by its close + 3 s: the round is VOID, every stake comes back' };
     if (onWait) { try { onWait('certifying'); } catch { /* the page's own */ } }
     await sleep(H2H_LOCK_SET_POLL_MS);
   }

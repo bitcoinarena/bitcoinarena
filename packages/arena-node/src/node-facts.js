@@ -20,6 +20,11 @@ export const PROBE_BYTES = 1000000;
 export const FACTS_MOST_BYTES = 1024;
 /** A record dated further ahead than this is refused: a node cannot keep its record newest by dating it in the future. */
 export const FACTS_AHEAD_MS = 300000;
+/**
+ * The least time between two kept records of one node (kanban #2425): a seat hands every kept record on to every seat it knows, so a node that dated its records 1 ms apart
+ * had each one verified, written and fanned out S x S times across the network. A record dated less than this after the held one is not kept, so not passed on.
+ */
+export const FACTS_KEEP_GAP_MS = FACTS_EVERY_MS / 4;
 
 const te = new TextEncoder();
 /** The bytes signed: a tag, then the record's fields in one order. */
@@ -52,6 +57,29 @@ export function osName({ osApi = os, read = readFileSync } = {}) {
   return `${osApi.type()} ${osApi.release()}`.slice(0, 48);
 }
 
+/** Room past PROBE_BYTES a peer's said Content-Length may name before its probe is refused unread (kanban #2793). */
+export const PROBE_SLACK_BYTES = 65536;
+/**
+ * THE PROBE, COUNTED AND NEVER HELD (kanban #2793): a peer among the first three answered GET /node-facts/probe with an endless stream and r.arrayBuffer() buffered all of it
+ * for the 30 s the read was allowed - hundreds of MB to GB, again after every restart since a failed reading is not kept. Now a said Content-Length above
+ * PROBE_BYTES + PROBE_SLACK_BYTES is refused before reading, and the body is read chunk by chunk, counted, not kept, and cancelled once PROBE_BYTES have come.
+ */
+async function probeBytes(r) {
+  const said = Number(r.headers?.get?.('content-length'));
+  if (said > PROBE_BYTES + PROBE_SLACK_BYTES) { try { await r.body?.cancel(); } catch { /* dropped */ } throw new Error(`its probe is ${said} bytes`); }
+  if (r.body === undefined && typeof r.arrayBuffer === 'function') return (await r.arrayBuffer()).byteLength; // an injected stand-in with no stream
+  if (!r.body) return 0;
+  const reader = r.body.getReader();
+  let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.byteLength;
+    if (n >= PROBE_BYTES) { reader.cancel().catch(() => {}); break; }
+  }
+  return n;
+}
+
 /** The download speed from a few peers, Mbit/s, the middle reading; null with none answering. */
 export async function measureBandwidth(peers, { fetcher = fetch, nowMs = () => Date.now(), most = 3 } = {}) {
   const got = [];
@@ -60,7 +88,7 @@ export async function measureBandwidth(peers, { fetcher = fetch, nowMs = () => D
       const t = nowMs();
       const r = await fetcher(`${base}/node-facts/probe`, { signal: AbortSignal.timeout(30000) });
       if (!r.ok) continue;
-      const bytes = (await r.arrayBuffer()).byteLength;
+      const bytes = await probeBytes(r);
       const ms = nowMs() - t;
       if (bytes >= PROBE_BYTES && ms > 0) got.push(Math.round((bytes * 8) / (ms * 1000) * 10) / 10);
     } catch { /* that peer next time */ }
@@ -74,6 +102,10 @@ export function signFacts({ node, atMs, facts, sign }) {
   return { record, signature: toHex(sign(factsDigest(record))) };
 }
 
+// RECORDS TAKEN WHILE THE CENSUS IS UNREAD (kanban #2855, #1489 r26-gossip-2): isBonded answers null in a seat's first minute or while no census
+// reads, and offer() took every self-signed record from fresh keys - one row each, kept and served for good. Now: GET /node-facts lists only the
+// keys the read census does not refuse, and while it is unread at most FACTS_UNKNOWN_MOST rows are held (a bonded node is always taken)
+export const FACTS_UNKNOWN_MOST = 2000;
 /** The seat's book of what nodes said. `isBonded(hex)`: true, false, or null while unknown (taken: a seat that reads no census yet refuses nobody). */
 export function createNodeFactsBook({ db, verify, isBonded = () => null, nowMs = () => Date.now() }) {
   db.exec('CREATE TABLE IF NOT EXISTS node_facts (node TEXT PRIMARY KEY, at_ms INTEGER NOT NULL, said TEXT NOT NULL, seen_ms INTEGER NOT NULL)');
@@ -86,16 +118,20 @@ export function createNodeFactsBook({ db, verify, isBonded = () => null, nowMs =
     if (v !== null && v !== undefined) db.prepare('INSERT OR REPLACE INTO node_facts_once (key, value) VALUES (?, ?)').run(key, JSON.stringify(v));
     return v ?? null;
   }
-  /** Keeps a record that stands and is newer than the one held. { ok, kept } or { ok: false, why }. */
+  /** Keeps a record that stands and is at least FACTS_KEEP_GAP_MS newer than the one held. { ok, kept } or { ok: false, why }. */
   function offer(said) {
     const r = said && said.record;
     if (!r || !/^[0-9a-f]{64}$/.test(String(r.node)) || !Number.isSafeInteger(r.atMs) || !r.facts || typeof r.facts !== 'object') return { ok: false, why: 'a record is { record: { node, atMs, facts }, signature }' };
     const text = JSON.stringify(said);
     if (text.length > FACTS_MOST_BYTES) return { ok: false, why: 'that record is too large' };
     if (r.atMs > nowMs() + FACTS_AHEAD_MS) return { ok: false, why: 'that record is dated in the future' };
-    if (isBonded(r.node) === false) return { ok: false, why: 'that node holds no bond' };
+    const bonded = isBonded(r.node);
+    if (bonded === false) return { ok: false, why: 'that node holds no bond' };
+    if (bonded !== true && !db.prepare('SELECT 1 FROM node_facts WHERE node = ?').get(r.node)
+      && db.prepare('SELECT COUNT(*) AS n FROM node_facts').get().n >= FACTS_UNKNOWN_MOST) return { ok: false, why: 'the census is not read yet: try again later' };   // kanban #2855
     const had = db.prepare('SELECT at_ms FROM node_facts WHERE node = ?').get(r.node);
     if (had && had.at_ms >= r.atMs) return { ok: true, kept: false };
+    if (had && r.atMs - had.at_ms < FACTS_KEEP_GAP_MS) return { ok: true, kept: false }; // kanban #2425: at most one kept (and passed on) per FACTS_KEEP_GAP_MS
     let good = false;
     try { good = !!verify(fromHex(String(said.signature)), factsDigest(r), fromHex(r.node)); } catch { good = false; }
     if (!good) return { ok: false, why: 'that record is not signed by the node it names' };
@@ -103,6 +139,8 @@ export function createNodeFactsBook({ db, verify, isBonded = () => null, nowMs =
     return { ok: true, kept: true };
   }
   /** Every record held, newest first, each with its age: a node's last word stays here after it went offline. */
-  const list = () => db.prepare('SELECT said, at_ms FROM node_facts ORDER BY at_ms DESC').all().map((x) => ({ ...JSON.parse(x.said), ageS: Math.round((nowMs() - Number(x.at_ms)) / 1000) }));
+  // kanban #2855: a key the read census refuses (no bond) is not served, nor passed on
+  const list = () => db.prepare('SELECT node, said, at_ms FROM node_facts ORDER BY at_ms DESC').all().filter((x) => isBonded(String(x.node)) !== false)
+    .map((x) => ({ ...JSON.parse(x.said), ageS: Math.round((nowMs() - Number(x.at_ms)) / 1000) }));
   return { offer, list, once };
 }

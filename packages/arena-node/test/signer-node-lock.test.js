@@ -54,7 +54,8 @@ test('the player\'s own lock is verified: the signer node asks the federation, t
 test('a lock that is not the entry\'s is refused by name, and the stake stays unseen', async () => {
   const cases = [
     ['no lock at the outpoint', async (s) => { s.port.locks.clear(); return s.fields; }, /holds no lock at the entry's stake_lock_outpoint/],
-    ['a contract other than the one stored', async (s) => ({ ...s.fields, amountMsat: s.fields.amountMsat + 1n }), /its id is another/],
+    // (kanban #2752) another contract whose fields could still be the entry's lock: a wrong amount is refused before the federation is asked
+    ['a contract other than the one stored', async (s) => ({ ...s.fields, expiration: s.fields.expiration + 1 }), /its id is another/],
     ['a stored lock for the wrong amount', async (s) => { const f = { ...s.fields, amountMsat: s.fields.amountMsat - 1n }; await s.port.put(s.outpoint, f); return f; }, /holds \d+ msat, and the entry's net stake/],
     ['a hash image', async (s) => { const f = { ...s.fields, paymentImage: { kind: 'hash', bytes: s.entry.stakeCommitment } }; await s.port.put(s.outpoint, f); return f; }, /payment image is not the entry's stake point/],
     ['another claim key', async (s) => { const f = { ...s.fields, claimPk: Uint8Array.from([0x02, ...b32(0xc2)]) }; await s.port.put(s.outpoint, f); return f; }, /claim_pk is not this round's attested claim key/],
@@ -180,9 +181,14 @@ test('#1215 a second entry of the same player key with its own lock is refused -
       const got = mode === 'at-once' ? await Promise.all([hand(s.eid), hand(eid2)]) : [await hand(s.eid), await hand(eid2)];
       const kept = [s.d.round.stakeLock(s.eid), s.d.round.stakeLock(eid2)].filter(Boolean).length;
       console.log(`  #1215 ${mode}: ${got.map((x) => x.status).join(' / ')} - ${got.find((x) => x.status === 409)?.said || 'none refused'}`);
-      assert.deepEqual(got.map((x) => x.status).sort(), [201, 409], `${mode}: ${got.map((x) => x.said).join(' | ')}`);
-      assert.match(got.find((x) => x.status === 409).said, /one player key stakes one entry/);
       assert.equal(kept, 1, `${mode}: ${kept} entries of one key staked`);
+      // THE KEY'S ENTRY IS THE LOWEST ENTRY ID (kanban #2477): the same at every seat, whichever lock came first. A higher entry's lock is
+      // refused; a lower one's lock coming second takes the key from the higher one (both answered 201, one kept)
+      const lower = Buffer.compare(Buffer.from(s.eid), Buffer.from(eid2)) < 0 ? s.eid : eid2;
+      assert.ok(s.d.round.stakeLock(lower), `${mode}: the lower entry id is not the one staked`);
+      const refused = got.filter((x) => x.status === 409);
+      assert.ok(refused.length <= 1 && got.some((x) => x.status === 201), `${mode}: ${got.map((x) => x.said).join(' | ')}`);
+      for (const r of refused) assert.match(r.said, /one player key stakes one entry/);
     } finally { await s.close(); }
   }
 });

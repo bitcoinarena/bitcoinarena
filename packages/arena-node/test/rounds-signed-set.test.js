@@ -55,43 +55,52 @@ test('rows are signed when a listing asks, once a window: nothing unasked, next=
     // NOTHING ASKED, NOTHING SIGNED (the background set signed every row every 45 s)
     await new Promise((r) => setTimeout(r, 4000));
     assert.equal(s.listingSignatures(), 0, 'the node signed rows nobody asked for');
-    // THE LOBBY'S ASK: one upcoming round of each series - only those rows are signed
+    // THE LOBBY'S ASK: one upcoming round of each series. Since kanban #2790 the first listing waits for the window's one background build -
+    // a fixed, bounded set (72 a series and the next 20 min) - and every later listing of the window is cut from it
     const next = await ask('?next=1');
     const nextRows = next.body.rounds.length;
+    const windowRows = s.listingSignatures();
     assert.ok(nextRows >= 1 && nextRows <= series.length, `next=1 listed ${nextRows} rows`);
-    assert.equal(s.listingSignatures(), nextRows, 'next=1 signed more than it listed');
+    assert.ok(windowRows >= nextRows && windowRows < 1000, `the window built ${windowRows} rows - not a bounded set`);
     assert.ok(pageChecks(next.body), 'a next=1 row does not check the page\'s way');
     // THE FULL LISTING: every announced row, the ones next=1 signed served from the window, the rest signed now (?all=1 since c8784218,
     // kanban #742: a bare GET /rounds lists the next 8 of each series)
     const full = await ask('?all=1&probe=a');
     const rows = full.body.rounds.length;
-    assert.ok(rows > 2000, `the node lists ${rows} rounds - not a large listing`);
+    assert.equal(rows, windowRows, `all=1 listed ${rows} rows, the window holds ${windowRows}`);
     assert.equal(full.body.nowMs, next.body.nowMs, 'two listings of one window carry different times');
-    assert.equal(s.listingSignatures(), rows, `the full listing of ${rows} rows made ${s.listingSignatures()} signatures in all`);
+    assert.equal(s.listingSignatures(), windowRows, `the full listing signed ${s.listingSignatures() - windowRows} rows while its asker waited`);
     // A SECOND FULL LISTING IN THE WINDOW: no signature, the same rows, quick
     // (asked before the first listing's signatures are checked: on a loaded machine that check outlasted the test
     // server's 5 s keep-alive, and fetch reused the closed connection - ECONNRESET, measured on the test host 2026-10-06)
     const again = await ask('?all=1&probe=b');
-    assert.equal(s.listingSignatures(), rows, 'a second listing in the window signed again');
+    assert.equal(s.listingSignatures(), windowRows, 'a second listing in the window signed again');
     assert.deepEqual(again.body.rounds.map((x) => x.sig), full.body.rounds.map((x) => x.sig));
-    // ONE ROW'S SIGNED FACTS CHANGE: a player joins it - signed again at once, for the same time, and nothing else
+    // ONE ROW'S SIGNED FACTS CHANGE: a player joins it - listed as signed at first, signed again in the background (kanban #2790) within a
+    // second, for the same time, and nothing else
     const pick = full.body.rounds[5];
     const own = s.round.playersOf.bind(s.round);
     s.round.playersOf = (rid) => (Buffer.from(rid).toString('hex') === pick.id ? { joined: 1, playing: 0 } : own(rid));
+    await ask('?all=1&probe=c0');
+    for (let i = 0; i < 40 && s.listingSignatures() === windowRows; i++) await new Promise((r) => setTimeout(r, 100));
     const after = await ask('?all=1&probe=c');
     const row = after.body.rounds.find((x) => x.id === pick.id);
     assert.equal(row.joined, 1, 'the changed row still shows its old count');
     assert.notEqual(row.sig, pick.sig, 'the changed row kept its old signature');
-    assert.equal(s.listingSignatures(), rows + 1, 'a change of one row signed more than that row');
+    assert.equal(s.listingSignatures(), windowRows + 1, 'a change of one row signed more than that row');
     assert.equal(after.body.nowMs, full.body.nowMs);
     // A NEW WINDOW, 45 s on: the lobby's ask is signed for the new time, and only its rows
     clock = NOW + 45000;
     // and the real seconds with it: a small listing is kept 5 s of real time (server.js /rounds), and on a quick machine the
     // asks above take less than that (measured on the test host 2026-10-13 22:50Z: the kept next=1 came back, red every run)
     await new Promise((r) => setTimeout(r, 5100));
+    // THE NEW WINDOW WAS BUILT IN THE BACKGROUND (kanban #2790), at the new time, before this ask - which signs nothing; the build is the
+    // same bounded set
+    const before = s.listingSignatures();
     const later = await ask('?next=1');
     assert.equal(BigInt(later.body.nowMs), BigInt(next.body.nowMs) + 45000n, 'the new window does not carry the new time');
-    assert.equal(s.listingSignatures(), rows + 1 + later.body.rounds.length, 'a new window signed more than it was asked');
+    assert.equal(s.listingSignatures(), before, 'the first ask of the new window signed rows while it waited');
+    assert.ok(before - windowRows - 1 <= 1200, `the new window signed ${before - windowRows - 1} rows - more than a window holds (1,200: what the last window was asked for)`);
     assert.ok(pageChecks(later.body));
     // the signatures checked last, every request made: checking 2,880 rows outlasts the test server's keep-alive
     assert.ok(pageChecks(full.body), 'a row of the full listing does not check the page\'s way');

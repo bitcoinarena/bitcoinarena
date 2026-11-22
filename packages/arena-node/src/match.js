@@ -53,11 +53,28 @@ function matchAt(round, plugins, roundIdBytes, depth) {
   if (!found.ok || !found.headToHead) return null;
   // the round's seated players: in a paying round only the entries backed by a lock (kanban #1437, audit 8 R3) - its stake seen, the ones played (kanban #1544)
   const entries = typeof round.seatedEntriesOf === 'function' ? round.seatedEntriesOf(roundIdBytes, c.stakeMsat, { played: true }) : round.entriesOf(roundIdBytes);
-  if (entries.length !== 2) return null;
+  // A PAYING ROUND WHOSE LOCKS HAVE NOT ALL REACHED THIS SEAT YET (kanban #2404, refutes #1748 + #2167, #1489 a44-refute-59-s2): its entries are
+  // held here but their locks crossed to another seat (the client handed them there, or the network was slow), and this seat pulls them only at
+  // its own close (server.js takeEntryParts). Until then fewer than two entries are seated-and-played here, and answering null ('not a
+  // head-to-head round') let the next round of the match be kept as a new match for good while the other seats continued it. Such a round is
+  // UNDECIDED while it is open, or closed less than UNDECIDED_GRACE_MS ago with nothing signed by this seat for any of its entries yet.
+  if (entries.length !== 2) {
+    const all = round.entriesOf(roundIdBytes);
+    if (all.length >= 2 && entries.length < all.length) {
+      const pending = (e) => !(typeof round.hasResult === 'function' && round.hasResult(roundIdBytes, e.entryId, round.pubkey))
+        && !(typeof round.entryVoid === 'function' && round.entryVoid(e.entryId));
+      if (row.state === OPEN && all.some(pending)) return UNDECIDED;
+      const recentClose = row.closed_ms != null && Number(round.now()) - Number(row.closed_ms) < UNDECIDED_GRACE_MS;
+      if (recentClose && all.every(pending)) return UNDECIDED;
+    }
+    return null;
+  }
   // EACH SIDE'S IDENTITY: its reveal's, else the one its consented name record names (audit 5 #1401) - a loser who left the identity off his reveal, or
   // forfeited, broke the chain and the next round's score started at 0-0; the consent is fixed at the join, before anything is known
+  // kanban #2690: the record names an identity for a round key, not for an entry - two entries of one key (a stranger's copy of a public key) book by it neither
+  const keyCount = (k) => round.entriesOf(roundIdBytes).filter((x) => Buffer.compare(Buffer.from(x.entry.playerPubkey), Buffer.from(k)) === 0).length;
   const idOf = ({ entryId, entry }) => round.identityOf(entryId)
-    || (typeof round.consentedIdentityOf === 'function' && entry ? ((h) => (h ? { identity: Uint8Array.from(Buffer.from(h, 'hex')) } : null))(round.consentedIdentityOf(roundIdBytes, entry.playerPubkey)) : null);
+    || (typeof round.consentedIdentityOf === 'function' && entry && keyCount(entry.playerPubkey) === 1 ? ((h) => (h ? { identity: Uint8Array.from(Buffer.from(h, 'hex')) } : null))(round.consentedIdentityOf(roundIdBytes, entry.playerPubkey)) : null);
   const named = entries.map((e) => ({ entryId: e.entryId, id: idOf(e), result: agreedResult(round, roundIdBytes, e.entryId) }));
   if (named.some((x) => !x.id)) return null;
   if (named.some((x) => !x.result)) {                                 // not decided yet: counted once it is
@@ -71,13 +88,36 @@ function matchAt(round, plugins, roundIdBytes, depth) {
   const close = c.entryCloseMs;
   let previous = null;
   for (const idHex of ids) {
-    for (const r of round.roundsOfIdentity(fromHex(idHex))) {
+    // kanban #2280: the rounds it is a side of by its consented name record count too (a forfeit against a third player ends the match), the
+    // same two ways its sides are named above - h2h_identities alone holds only the rounds it revealed in
+    const consented = typeof round.roundsOfConsentedIdentity === 'function' ? round.roundsOfConsentedIdentity(fromHex(idHex)) : [];
+    for (const r of [...round.roundsOfIdentity(fromHex(idHex)), ...consented]) {
       if (toHex(r.roundId) === toHex(roundIdBytes)) continue;
       const pr = round.get(r.roundId);
       if (!pr) continue;
       const pc = decodeRoundContract(new Uint8Array(pr.contract));
       if (toHex(pc.gameId) !== toHex(c.gameId) || pc.entryCloseMs >= close) continue;
       if (!previous || pc.entryCloseMs > previous.closeMs) previous = { roundId: r.roundId, closeMs: pc.entryCloseMs };
+    }
+  }
+  // A ROUND BEFORE THAT IS NOT YET DECIDED HERE AND NAMED ONLY BY ITS CONSENTED NAME RECORDS (kanban #2167, refutes #1748): its reveals - and with them
+  // its h2h_identities rows - reach a slow seat only at its own close (a peer's /reveals), so roundsOfIdentity does not list it yet. A later
+  // round of this game within the continue time, newer than the round before found above, that is still UNDECIDED keeps nothing here either;
+  // one that is decided or not head-to-head is ignored, so the round before is chosen exactly as before.
+  if (typeof round.roundsNamingIdentity === 'function') {
+    const seen = new Set();
+    for (const idHex of ids) {
+      for (const r of round.roundsNamingIdentity(fromHex(idHex))) {
+        const h = toHex(r.roundId);
+        if (h === toHex(roundIdBytes) || seen.has(h)) continue;
+        seen.add(h);
+        const pr = round.get(r.roundId);
+        if (!pr) continue;
+        const pc = decodeRoundContract(new Uint8Array(pr.contract));
+        if (toHex(pc.gameId) !== toHex(c.gameId) || pc.entryCloseMs >= close || close - pc.entryCloseMs > MATCH_CONTINUE_MS) continue;
+        if (previous && pc.entryCloseMs <= previous.closeMs) continue;
+        if (matchAt(round, plugins, r.roundId, depth + 1) === UNDECIDED) return UNDECIDED;
+      }
     }
   }
   let prev = null;

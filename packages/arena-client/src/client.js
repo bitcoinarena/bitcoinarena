@@ -65,6 +65,28 @@ import { readWithOneRetry } from './reread.js';
 import { NO_SHARES } from '../../arena-protocol/src/handout.js';
 import { entryFeeMsat } from '../../arena-protocol/src/fee.js';
 import { netStakeMsat } from '../../arena-protocol/src/payout.js';
+// ONE NODE'S GET /receipts ANSWER, AT MOST (kanban #2554): the seat's own cap on a peer body (#1550)
+const RECEIPTS_MAX_BYTES = 16 * 1024 * 1024;
+// EVERY PEER READ OF A RESUME IS BOUNDED TOO (kanban #2720, #1489 r5-play-1): a mark list (GET /checkpoints), a transcript and its batch
+// signatures were read whole with arrayBuffer() - one committee seat answering the player's own marks 20,000 times (9 MB) made 40,003
+// session-key checks and held a reload 2 s (about 22 s per 100 MB), long enough to end the run as a stall. Each is read up to its cap
+// (the stream cancelled past it); a mark list's copies cost no check, records of another round or entry none, and the loop yields.
+const CHECKPOINTS_MAX_BYTES = 2 * 1024 * 1024, TRANSCRIPT_MAX_BYTES = 16 * 1024 * 1024, BATCH_SIGS_MAX_BYTES = 1024 * 1024;
+async function bytesCapped(r, max) {
+  const said = Number(r.headers && r.headers.get ? r.headers.get('content-length') : NaN);
+  if (Number.isFinite(said) && said > max) { try { await r.body?.cancel(); } catch { /* gone */ } throw new Error(`${said} bytes is more than ${max}`); }
+  if (!r.body || typeof r.body.getReader !== 'function') { const b = new Uint8Array(await r.arrayBuffer()); if (b.length > max) throw new Error(`${b.length} bytes is more than ${max}`); return b; }
+  const reader = r.body.getReader(); const parts = []; let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.byteLength;
+    if (n > max) { try { await reader.cancel(); } catch { /* gone */ } throw new Error(`more than ${max} bytes`); }
+    parts.push(value);
+  }
+  const out = new Uint8Array(n); let at = 0; for (const p of parts) { out.set(p, at); at += p.byteLength; }
+  return out;
+}
 // THE PLAYER'S DONATION (M3.2 6e): the split, the failure rule, the LNURL checks.
 import { donationSetMatchesRound, splitDonation, donationAfterFailures, donationSetPaysKeys } from '../../arena-protocol/src/donation.js';
 import { donationKeysForNetworkId } from '../../arena-protocol/src/donation-keys.js';
@@ -269,6 +291,29 @@ export const ENTRY_BACKOFF_MAX_MS = 60000;
  * they are kept apart from the first place they could be confused.
  */
 const CLOSED = 'closed: ';
+// THE LINK WORD IS THIS CLIENT'S OWN (kanban #3167, wf1489 r1120b refute 12-1): a seat that answered 'closed: ...' as text on
+// an open socket had its batch held and asked again for the rest of the run - no resume ran, the socket never closed - and the
+// peers never got it. Only this client's own close handler and no-socket paths say CLOSED; a node's text that starts with it is
+// that node's refusal and reaches the callers as one.
+const nodeSaid = (text) => (text.startsWith(CLOSED) ? `error ${text}` : text);
+
+/**
+ * HOW LONG A BATCH WAITS FOR ITS NODE'S ANSWER (kanban #3170, #3172, wf1489 r1120b refute 12-2/12-3): a home seat that kept
+ * the socket open and stayed silent on a batch - or answered it with a frame the message handler routes away from the answer
+ * queue, a TYPE_GHOST-led one - left that batch's waiter in `said` for good, publishing never settled and the peers stayed
+ * at the ticks before it. A node answers a batch in milliseconds; one that has not in this long has refused it, and the
+ * batch goes to the peers as any refusal does (#2515).
+ */
+export const BATCH_ANSWER_MS = 5000;
+
+/**
+ * HOW LONG A PEER'S FEED WAITS FOR THE ANSWER TO A BATCH (kanban #3214, wf1489 r1120b refute 12-s2-1): a peer seat that kept its
+ * /play socket open and never answered a batch held its feed - and `awaitPeers`, which a batch the home seat refused waits on in
+ * #carriedByPeers - for good: `publishing` never settled and the honest home seat got no tick after a first-batch stake wait (0 of
+ * 135). A peer that has not answered in this long is read as gone: its link is dropped (every waiter on it hears CLOSED, so no later
+ * answer is matched to the wrong batch) and the next batch or mark opens a new one.
+ */
+export const PEER_ANSWER_MS = BATCH_ANSWER_MS;
 
 /** How long `finish` waits for the held ticks to go out before it ends the run anyway. */
 const FINISH_WAIT_MS = 300;
@@ -344,7 +389,7 @@ export class Client {
    * the node's own fixtures talk to a process on localhost that has no bond
    * and never will - and a test that wants the real door calls this one.
    */
-  static async at(discovery, { core, sign, verify, verifySession, contract, roundIdGiven, stakeLock }) {
+  static async at(discovery, { core, sign, verify, verifySession, contract, roundIdGiven, stakeLock, localOk }) {
     if (!contract || !contract.nodes)
       throw new Error('no round contract, so there is no committee to check against');
 
@@ -387,7 +432,8 @@ export class Client {
     }
 
     // THE ANCHOR FOLLOWS THE ROUND'S NETWORK, read off the contract the round id was just checked against
-    const seen = await discover({ ...discovery, committee: contract.nodes, networkId: contract.networkId });
+    // kanban #3125: `localOk` - the caller's (the page: served from a local host), never the discovery's; see directory.js isSocketAddress
+    const seen = await discover({ ...discovery, committee: contract.nodes, networkId: contract.networkId, localOk });
     // WHICH PROVIDER, AND WHY (M3.3-27): `discover` hands back each provider's
     // own refusal, and the door used to drop it - the rehearsal's flake read
     // "only 1 of 2 providers gave a chain" and nothing more.
@@ -464,10 +510,12 @@ export class Client {
     this.signedFrames = new Map();
     // A SEAT THAT SERVED THIS ENTRY A BATCH THIS CLIENT NEVER SIGNED: { base, firstTick, why }, null while none has
     this.nodeFault = null;
+    this.homeFault = null;
     // Verifying is injected for the same reason signing is: the curve belongs
     // to whoever runs the client, and this file should not decide it.
     this.verify = verify;
     this.sock = null;
+    this.connectingSock = null;  // the newest connect() not yet open: the only one that may become `sock` (kanban #2213)
     this.head = NO_PREVIOUS;      // the mark chain head this client has published
     // WHO HAS WITNESSED WHAT. Mark id -> the distinct committee keys that have
     // receipted it. A Set because five receipts from one node is one node
@@ -553,6 +601,12 @@ export class Client {
     this.publishing = null;
     this.marking = null;
     this.said = [];
+    this.batchAnswerMs = BATCH_ANSWER_MS;
+    this.batchesUnanswered = 0;   // batches the home node did not answer within batchAnswerMs (kanban #3170, #3172)
+    this.peerAnswerMs = PEER_ANSWER_MS;
+    this.peersUnanswered = 0;     // peer links dropped for a batch unanswered within peerAnswerMs (kanban #3214)
+    this.homeHolds = 0;           // how many of `published` the home seat holds; the rest the peers carried (kanban #3215)
+    this.homeCaughtUp = 0;        // batches the peers carried that were fed back to the home seat afterwards (kanban #3215)
 
     // WHAT ARRIVES UNASKED. A GHOSTS frame is not an answer to anything: the
     // node pushes it when somebody else's truck moves, so it cannot go into
@@ -731,7 +785,7 @@ export class Client {
       sock.binaryType = 'arraybuffer';
       sock.addEventListener('message', (e) => {
         const waiting = link.said.shift();
-        if (waiting) waiting(typeof e.data === 'string' ? e.data : new Uint8Array(e.data));
+        if (waiting) waiting(typeof e.data === 'string' ? nodeSaid(e.data) : new Uint8Array(e.data));
       });
       sock.addEventListener('open', () => { link.sock = sock; link.opening = null; resolve(link); });
       sock.addEventListener('error', () => { link.opening = null; resolve(link); });
@@ -745,11 +799,31 @@ export class Client {
     return link.opening;
   }
 
-  /** One message to another committee node, answered the way `send` answers. */
-  async sendPeer(base, message) {
+  /**
+   * One message to another committee node, answered the way `send` answers. With `within` (the feed's batches, kanban #3214) a
+   * peer that has not answered in that many ms is read as gone: the link is dropped and every waiter on it hears CLOSED.
+   */
+  async sendPeer(base, message, within = 0) {
     const link = await this.peerLink(base);
     if (!link.sock || link.sock.readyState !== 1) return `${CLOSED}no socket to ${base}`;
-    return new Promise((r) => { link.said.push(r); link.sock.send(message); });
+    return new Promise((r) => {
+      if (!within) { link.said.push(r); link.sock.send(message); return; }
+      let timer = null;
+      const waiter = (a) => { if (timer) clearTimeout(timer); r(a); };
+      timer = setTimeout(() => {
+        timer = null;
+        if (!link.said.includes(waiter)) return;
+        const sock = link.sock;
+        const waiting = link.said;
+        link.said = [];
+        link.sock = null;
+        this.peersUnanswered++;
+        for (const w of waiting) w(`${CLOSED}the node at ${base} did not answer within ${within} ms`);
+        try { if (sock) sock.close(); } catch { /* already going */ }
+      }, within);
+      link.said.push(waiter);
+      link.sock.send(message);
+    });
   }
 
   /** Signer nodes this client's entry on one other committee node. */
@@ -811,7 +885,8 @@ export class Client {
           // stops costing a round trip per batch of it.
           // ONE FRAME to a peer that refused the entry: its answer says whether it holds it now; the window once it does
           const window = this.published.slice(f.next, f.next + (f.entryRefused && f.entryBackoffUntil ? 1 : FEED_WINDOW));
-          const asked = window.map((one) => ({ one, said: this.sendPeer(base, one.bytes) }));
+          // each answered within peerAnswerMs: a silent peer is a dropped link, not a feed held for good (kanban #3214)
+          const asked = window.map((one) => ({ one, said: this.sendPeer(base, one.bytes, this.peerAnswerMs) }));
           // EVERY ANSWER IS READ, INCLUDING THE ONES AFTER A REFUSAL. They are already on the wire, and a
           // promise nobody reads would leave `sendPeer`'s queue matching the next batch to this one's
           // answer. `stop` is what the old `return` said: the feed ends at the first batch that did not
@@ -1007,6 +1082,11 @@ export class Client {
   connect() {
     return new Promise((resolve, reject) => {
       const sock = new WebSocket(`${this.base.replace(/^http/, 'ws')}/play`);
+      // ONE ATTEMPT AT A TIME (kanban #2213): the newest connect() is the only socket that may become `this.sock`. An
+      // attempt connectFirst gave up on (timed out before 'open') is closed by it through `connectingSock`, and if it opens
+      // anyway it is closed at once - it never takes the place of the socket connectFirst answered with, so one socket
+      // feeds `said` and every reply goes to its own send.
+      this.connectingSock = sock;
       // Binary arrives as a Blob otherwise, and `new Uint8Array(blob)` is
       // silently EMPTY rather than an error - measured: a 139-byte receipt
       // read back as a zero-length array and the reply was never understood.
@@ -1025,10 +1105,16 @@ export class Client {
           return undefined;
         }
         const waiting = this.said.shift();
-        if (waiting) waiting(e.data);
+        if (waiting) waiting(nodeSaid(e.data));
         return undefined;
       });
       sock.addEventListener('open', () => {
+        if (this.connectingSock !== sock) {             // superseded or given up on (kanban #2213)
+          try { sock.close(); } catch { /* gone */ }
+          reject(new Error('a superseded socket opened'));
+          return;
+        }
+        this.connectingSock = null;
         this.sock = sock;
         if (!this.ended) this.state = 'ready';
         resolve(this);
@@ -1075,6 +1161,8 @@ export class Client {
       } catch (e) {
         this.error = String(e.message || e);
         if (this.sock) { const sk = this.sock; this.sock = null; try { sk.close(); } catch { /* gone */ } }
+        // The attempt that has not opened is not `this.sock`: close it too, or it opens later beside the next (kanban #2213).
+        if (this.connectingSock) { const sk = this.connectingSock; this.connectingSock = null; try { sk.close(); } catch { /* gone */ } }
         backoff = backoff ? Math.min(backoff * 2, 8000) : 1000;
         if (this.ended || now() + backoff >= untilMs) throw new Error(`${this.error} (${this.firstTries} tries)`);
         await this.sleep(backoff);
@@ -1190,6 +1278,30 @@ export class Client {
     if (!this.sock || this.sock.readyState !== 1)
       return Promise.resolve('error there is no socket');
     return new Promise((r) => { this.said.push(r); this.sock.send(message); });
+  }
+
+  /**
+   * `send`, answered within `ms` (kanban #3170, #3172): the answer, the close word, or - when neither came in time - a
+   * refusal naming the silence. The waiter that timed out is taken out of `said`, so the answers to what was sent after it
+   * (the marks that share this socket) still go to their own sends. A node that answers the batch later still would shift
+   * them by one; an honest seat answers in milliseconds, so a seat this far behind is one whose answers already decide
+   * nothing alone - every batch that times out goes to the peers, and a mark whose answer is not a receipt is refused.
+   */
+  #sendWithin(message, ms) {
+    // THROUGH send() (kanban #3216): one door for every frame on the socket, so whatever paces or watches send() paces this too
+    // (backpressure.test: batches sent beside it were never counted and a second publish ran while one was on a slow link). The
+    // waiter send() queued is taken out of `said` when the time is up, so later answers still reach their own sends.
+    const before = this.said.length;
+    const sent = this.send(message);
+    const waiter = this.said.length > before ? this.said[this.said.length - 1] : null;
+    let timer;
+    const late = new Promise((r) => { timer = setTimeout(() => {
+      const i = waiter ? this.said.indexOf(waiter) : -1;
+      if (i >= 0) this.said.splice(i, 1);
+      this.batchesUnanswered++;
+      r(`error the node did not answer the batch within ${ms} ms`);
+    }, ms); });
+    return Promise.race([sent, late]).finally(() => clearTimeout(timer));
   }
 
   /**
@@ -1357,16 +1469,28 @@ export class Client {
     const r = await readWithOneRetry(fetch,
       `${base}/receipts?round=${toHex(roundId)}&entry=${toHex(entryId)}`);
     if (!r.ok) throw new Error(`the node refused the receipts: ${(await r.text()).trim()}`);
+    // BOUNDED IN WORK ON THE PAGE TOO (kanban #2554, refute of #1636 - the seat's carryReceipts has the same bounds): one seat's
+    // answer is read up to RECEIPTS_MAX_BYTES, each (mark, signer) is verified once - a copy of a receipt already taken costs no
+    // signature check - and the loop gives the page's thread back every 64 records, so one committee seat answering its own
+    // valid receipt thousands of times cannot hold the page on a resume
+    const said = Number(r.headers && r.headers.get ? r.headers.get('content-length') : NaN);
+    if (Number.isFinite(said) && said > RECEIPTS_MAX_BYTES) throw new Error(`${said} bytes of receipts is more than one node's answer may be`);
     const bytes = new Uint8Array(await r.arrayBuffer());
+    if (bytes.length > RECEIPTS_MAX_BYTES) throw new Error(`${bytes.length} bytes of receipts is more than one node's answer may be`);
     if (bytes.length % SIGNED_RECEIPT_BYTES !== 0)
       throw new Error(
         `${bytes.length} bytes is not a whole number of ${SIGNED_RECEIPT_BYTES}-byte receipts`);
 
     const out = [];
-    for (let at = 0; at < bytes.length; at += SIGNED_RECEIPT_BYTES) {
+    const taken = new Set();
+    for (let at = 0, n = 0; at < bytes.length; at += SIGNED_RECEIPT_BYTES, n += 1) {
+      if (n > 0 && n % 64 === 0) await new Promise((ok) => setTimeout(ok, 0));
       const one = bytes.subarray(at, at + SIGNED_RECEIPT_BYTES);
       const { body, signature } = splitSignedReceipt(one);
       const rec = decodeCheckpointReceipt(body);
+      const key = `${toHex(rec.checkpointId)}:${toHex(rec.nodePubkey)}`;
+      if (taken.has(key)) continue;
+      taken.add(key);
       if (!this.nodes.some((n) => toHex(n) === toHex(rec.nodePubkey)))
         throw new Error(
           `a receipt signed by ${toHex(rec.nodePubkey)}, which is not on this round's committee`);
@@ -1408,22 +1532,112 @@ export class Client {
     const bytes = await signBatch(b, this.sign);
     // KEPT BEFORE IT GOES OUT (kanban #1567): a batch the node took whose answer was lost is still this client's own
     this.signedFrames.set(toHex(batchId(b)), bytes);
-    const answer = await this.send(bytes);
+    // THE HOME SEAT IS FED WHAT THE PEERS CARRIED WITHOUT IT FIRST (kanban #3215, wf1489 r1120b refute 12-s2-2): an honest home seat
+    // whose stake view was one batch behind answered the first batch 'stake not seen', the peer took it, the chain head moved past a
+    // batch the home seat never got, and every later batch was answered 'does not follow the chain head' and carried by the peer
+    // again - the honest home seat held 0 of 120 ticks, and on a 2-seat committee no mark could go live. Its answer to the first
+    // batch it still lacks stands for this one: a seat that still refuses is asked nothing more and the batch goes to the peers.
+    const behind = await this.#homeCatchUp();
+    const answer = behind !== null ? behind : await this.#sendWithin(bytes, this.batchAnswerMs);
 
     // The node answers how many ticks were NEW. A refusal is a named string
     // and the chain must not move on one, the same rule the marks follow.
-    if (typeof answer !== 'string' || !/^[0-9]+$/.test(answer)) return { batch: b, answer };
+    if (typeof answer !== 'string' || !/^[0-9]+$/.test(answer)) {
+      // ONE SEAT DOES NOT GATE PUBLISHING (kanban #2515, audit r12): the home seat is one seat of the committee. Measured
+      // before: a home seat that answered "the batch does not follow the chain head" from tick 60 had this client resync
+      // once and end its run, and the honest peer kept 60 of the player's 180 signed ticks - the round FAILED on one
+      // seat's word. A refusal (not a dropped socket, not a stake still on its way) is now put to the other seats: the
+      // same signed frame, after the ones before it, and if enough of them to carry a mark take it - every other seat
+      // when the committee is smaller than that - it is published and the chain moves on. A batch the peers refuse too
+      // is refused, and the resync below still decides.
+      // NOT ONLY A TEXT REFUSAL (kanban #3036, audit play r3-1, measured 2026-11-19: a home seat that answered every batch from tick 60
+      // with 'error stake not seen: ...' for a stake it had already counted, or with a binary frame, kept the honest peer at 60 of 120
+      // ticks - the words held and asked again for the rest of the run, or the run ended). A binary answer is a refusal, and so is
+      // 'stake not seen' once that seat has taken a batch of this run: the stake it counted then is no stake still on its way.
+      // AND A STAKE WAIT FROM THE FIRST BATCH ON IS OFFERED TO THE PEERS TOO (kanban #3177, wf1489 r1120b refute 12-4): a home
+      // seat that answered 'stake not seen' to every batch of the run, for a stake the other seats had counted, kept every tick
+      // from them (0 of 120 after 360 waits) - the published.length gate read its first answer as a stake still on its way.
+      // The peers' own stake view decides: enough of them take the batch and it is published; they answer 'stake not seen'
+      // too and it stays the wait it was.
+      if ((typeof answer !== 'string' || !answer.startsWith(CLOSED))
+          && this.peers.length && (await this.#homeForged(roundId, entryId), true)
+          && await this.#carriedByPeers(bytes, b.firstTick + ticks.length)) {
+        this.batchHead = batchId(b);
+        this.nextTick = b.firstTick + ticks.length;
+        this.homeRefusals = (this.homeRefusals || 0) + 1;
+        const why = typeof answer === 'string' ? answer : 'the node answered the batch with a binary frame, not a tick count';
+        this.homeRefusedWhy = why;
+        this.#wakeMarks();
+        return { batch: b, answer: why, accepted: ticks.length, homeRefused: why };
+      }
+      return { batch: b, answer };
+    }
     this.batchHead = batchId(b);
     this.nextTick = b.firstTick + ticks.length;
+    this.homeRefusedWhy = null;
     // AND THE SAME BYTES GO TO EVERY OTHER COMMITTEE NODE, in the order this
     // node took them - see `pumpPeers`. Every batch is KEPT, peers or not: a
     // node refuses a batch that does not follow its own head, so a peer that
     // arrives late can only be caught up from the run's first batch. A whole
     // run is at most blockTicks x 20 bytes of words.
     this.published.push({ bytes, through: this.nextTick });
+    this.homeHolds = this.published.length;
     if (this.peers.length) this.pumpPeers();
     this.#wakeMarks();
     return { batch: b, answer, accepted: Number(answer) };
+  }
+
+  /**
+   * THE BATCHES THE PEERS CARRIED WITHOUT THE HOME SEAT, FED TO IT IN ORDER (kanban #3215): null once it holds every one, or its
+   * answer to the first it did not take. The same signed frames, never a fresh signature.
+   */
+  async #homeCatchUp() {
+    while (this.homeHolds < this.published.length) {
+      const a = await this.#sendWithin(this.published[this.homeHolds].bytes, this.batchAnswerMs);
+      if (typeof a !== 'string' || !/^[0-9]+$/.test(a)) return a;
+      this.homeHolds++;
+      this.homeCaughtUp++;
+    }
+    return null;
+  }
+
+  /**
+   * WHY THE HOME SEAT REFUSES, READ ONCE PER STRETCH OF REFUSALS (kanban #2515 beside #1567): a home seat that wrote a
+   * batch this client never signed into its own store is named on `homeFault` (that seat is not trusted with this run).
+   * Nothing served is adopted or signed here.
+   * IT NO LONGER ENDS THE RUN (kanban #3002, audit play r3-1a, measured 2026-11-18: a home seat that wrote ONE unsigned tick onto its
+   * own head and refused the next signed batch had this check end the run as a node fault - the client stopped publishing and the
+   * honest peer kept 60 of 180 signed ticks, the #2515 effect at the seat's chosen tick). The forgery is that one seat's; the peers
+   * are offered only frames this client signed itself, and they decide whether the run goes on. Answers true when it named one.
+   */
+  async #homeForged(roundId, entryId) {
+    if (this.homeRefusedWhy) return false;
+    try {
+      const r = await readWithOneRetry(fetch, `${this.base}/transcript?round=${toHex(roundId)}&entry=${toHex(entryId)}`);
+      if (!r.ok) return false;
+      const t = decodeTranscript(new Uint8Array(await r.arrayBuffer()));
+      if (toHex(t.roundId) !== toHex(roundId) || toHex(t.entryId) !== toHex(entryId)) return false;
+      if (t.batches.every((x) => this.signedFrames.has(toHex(batchId(x))))) return false;
+      await this.#ownFrames(t, await this.entryFor(entryId), roundId, entryId, { end: false });
+      return false;
+    } catch (e) { return e.nodeFault === true; }
+  }
+
+  /**
+   * A BATCH THE HOME SEAT REFUSED, OFFERED TO THE PEERS (kanban #2515): queued behind every batch before it, fed, and kept
+   * when enough peers took it. Otherwise it is taken back out of the queue and no feed is left pointing past it.
+   */
+  async #carriedByPeers(bytes, through) {
+    const at = this.published.length;
+    this.published.push({ bytes, through });
+    this.pumpPeers();
+    await this.awaitPeers();
+    const took = this.peers.filter((base) => this.peerFeed(base).next > at).length;
+    const need = Math.min(this.peers.length, receiptsForLive({ gameVerifySlots: this.gameVerifySlots, nodes: this.nodes }));
+    if (took >= need) return true;
+    this.published.splice(at, 1);
+    for (const base of this.peers) { const f = this.peerFeed(base); if (f.next > at) f.next = at; }
+    return false;
   }
 
   // NO `invoice()` AND NO `payStake()` (§23.6, RULED 2026-09-22 22:59). They quoted a joined player the
@@ -1778,6 +1992,7 @@ export class Client {
       const b = t.batches[i];
       this.published.push({ bytes: frames[i], through: batchTicks(b).at(-1) + 1 });
     }
+    this.homeHolds = t.batches.length;
 
     // AND THE COUNT OF WHAT THIS CLIENT HAS ACCEPTED IS RECONCILED WITH IT.
     //
@@ -1818,7 +2033,7 @@ export class Client {
    * wrote it itself. That is a node fault, named on `nodeFault`; the run ends there (VOID, the seat's fault, never the
    * player's) and nothing of it is signed or handed to a peer.
    */
-  async #ownFrames(t, entry, roundId, entryId) {
+  async #ownFrames(t, entry, roundId, entryId, { end = true } = {}) {
     const frames = new Array(t.batches.length);
     const missing = [];
     t.batches.forEach((b, i) => {
@@ -1847,6 +2062,7 @@ export class Client {
       const why = `the node at ${this.base} serves a batch at ticks ${b.firstTick}..${ticks.length ? ticks.at(-1) : b.firstTick} `
         + `as this entry's that this client never signed (${sig ? 'its signature does not verify under the session key' : (asked || 'no signature beside it')}) `
         + '- it is not signed or published again, and that node is not trusted with this run';
+      if (!end) { this.homeFault = { base: this.base, firstTick: b.firstTick, batch: i, why }; throw Object.assign(new Error(why), { nodeFault: true }); }
       this.nodeFault = { base: this.base, firstTick: b.firstTick, batch: i, why };
       this.endRun(`node fault: ${why}`);
       throw Object.assign(new Error(why), { nodeFault: true });
@@ -1886,12 +2102,12 @@ export class Client {
         const q = `round=${toHex(roundId)}&entry=${toHex(entryId)}`;
         const r = await readWithOneRetry(fetch, `${base}/transcript?${q}`);
         if (!r.ok) return null;
-        const pt = decodeTranscript(new Uint8Array(await r.arrayBuffer()));
+        const pt = decodeTranscript(await bytesCapped(r, TRANSCRIPT_MAX_BYTES));   // kanban #2720: bounded
         if (pt.batches.length <= n || toHex(pt.roundId) !== toHex(roundId) || toHex(pt.entryId) !== toHex(entryId)) return null;
         if (!checkTranscript(pt).ok) return null;
         const s = await readWithOneRetry(fetch, `${base}/batch-signatures?${q}`);
         if (!s.ok) return null;
-        const sigs = new Uint8Array(await s.arrayBuffer());
+        const sigs = await bytesCapped(s, BATCH_SIGS_MAX_BYTES);   // kanban #2720: bounded
         const W = SIGNED_BATCH_SIGNATURE_BYTES;
         const k = pt.batches.length - 1;
         if (sigs.length < (k + 1) * W) return null;
@@ -1982,11 +2198,19 @@ export class Client {
       const withheld = new Set();   // signed marks a peer lists and the home list leaves out
       const readList = async (base, home) => {
         const r = await readWithOneRetry(fetch, `${base}/checkpoints?round=${toHex(roundId)}&entry=${toHex(entryId)}`);
-        const b = new Uint8Array(await r.arrayBuffer());
-        if (!r.ok || b.length % SIGNED_CHECKPOINT_BYTES !== 0) return;
-        for (let at = 0; at < b.length; at += SIGNED_CHECKPOINT_BYTES) {
-          const { body, signature } = splitSigned(b.subarray(at, at + SIGNED_CHECKPOINT_BYTES));
+        if (!r.ok) { try { await r.body?.cancel(); } catch { /* gone */ } return; }
+        const b = await bytesCapped(r, CHECKPOINTS_MAX_BYTES);   // kanban #2720: bounded
+        if (b.length % SIGNED_CHECKPOINT_BYTES !== 0) return;
+        const seen = new Set();   // kanban #2720: a copy of a record already read costs no check
+        for (let at = 0, n = 0; at < b.length; at += SIGNED_CHECKPOINT_BYTES, n += 1) {
+          if (n > 0 && n % 64 === 0) await new Promise((ok) => setTimeout(ok, 0));
+          const rec = b.subarray(at, at + SIGNED_CHECKPOINT_BYTES);
+          const k = toHex(rec);
+          if (seen.has(k)) continue;
+          seen.add(k);
+          const { body, signature } = splitSigned(rec);
           const m = decodeCheckpoint(body);
+          if (toHex(m.roundId) !== toHex(roundId) || toHex(m.entryId) !== toHex(entryId)) continue;   // another round's or entry's: no check
           const id = checkpointId(m);
           if (!entry || !(await this.verifySession(signature, id, entry.sessionPubkey))) continue;   // not this player's
           ticks.set(toHex(id), m.tick);
@@ -2052,6 +2276,7 @@ export class Client {
     // ANOTHER ENTRY'S RUN STARTS WITH NONE OF THIS ONE'S FRAMES (kanban #1567); the same entry again keeps them
     if (this.signedEntry !== toHex(entryId)) { this.signedFrames = new Map(); this.signedEntry = toHex(entryId); }
     this.nodeFault = null;
+    this.homeFault = null;
     this.where = { roundId, entryId };
     // A LATE ENTRY'S FIRST TICK IS ITS JOIN TICK: the round's tick it joined at, so its run ends with the round's.
     // An entry at tick 0 starts where it always did.
@@ -2073,6 +2298,7 @@ export class Client {
     this.marksRefused = 0;
     this.marksRefusedWhy = null;
     this.published = [];
+    this.homeHolds = 0;
     this.peerFeeds = new Map();
     this.batchesInterrupted = 0;
     this.batchesLandedUnheard = 0;

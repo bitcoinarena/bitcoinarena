@@ -32,14 +32,31 @@ export function unavailableLine(no, fid, u, nowMs = Date.now()) {
   return `${name} is temporarily unavailable: no reserve key yet, so paid rounds there are paused.${when}`;
 }
 
+// AN ANSWER READ UP TO A BOUND (kanban #3043, audit faucet r3-2): every answer was read whole with r.json(), and the kept copy held all but the
+// dashboard and rounds answers whole - one census node's /owner/bond padded to 26 MiB stopped the health copy from being stored. An answer past
+// LIVE_BYTES is not read further and counts as no answer (the honest ones are a few kB; a dashboard 40-75 kB)
+export const LIVE_BYTES = 2 * 1048576;
+async function boundedText(r, most) {
+  if (!r.body || typeof r.body.getReader !== 'function') { const t = await r.text(); if (t.length > most) throw new Error(`the answer is over ${most} bytes`); return t; }
+  const reader = r.body.getReader(), parts = []; let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.byteLength;
+    if (n > most) { try { await reader.cancel(); } catch { /* gone */ } throw new Error(`the answer is over ${most} bytes`); }
+    parts.push(value);
+  }
+  const all = new Uint8Array(n); let at = 0; for (const p of parts) { all.set(p, at); at += p.byteLength; }
+  return new TextDecoder().decode(all);
+}
 /** One answer from a node: { ok, status, why, ms, body } - never throws; a node that does not answer in ASK_MS is { ok: false }. */
 export async function live(base, path, fetchImpl = fetch) {
   const t0 = Date.now();
   try {
     const r = await fetchImpl(base + path, { signal: AbortSignal.timeout(ASK_MS), cache: 'no-store' });
     const ms = Date.now() - t0;
-    if (!r.ok) { let why = ''; try { why = (await r.json()).why || ''; } catch { /* not JSON */ } return { ok: false, status: r.status, why, ms }; }
-    return { ok: true, ms, body: await r.json() };
+    if (!r.ok) { let why = ''; try { why = JSON.parse(await boundedText(r, 4096)).why || ''; } catch { /* not JSON */ } return { ok: false, status: r.status, why, ms }; }
+    return { ok: true, ms, body: JSON.parse(await boundedText(r, LIVE_BYTES)) };
   } catch (e) { return { ok: false, status: 0, why: e.name === 'TimeoutError' ? 'no answer in 10 s' : e.message, ms: Date.now() - t0 }; }
 }
 
@@ -755,7 +772,16 @@ export function makeHealth({ H, $, window = {} }) {
   // network's band (the lowest-load OPEN federation's: new deposits go there) with the installer's minimum bond
   function paintCapacity(cap, feds = []) {
     if (cap && cap.body) window.ARENA_HEALTH_CAPACITY = cap.body;
-    H.draw($('capacity'), 'capacity', { view: H.capacityView(cap && cap.body, feds, fedNoOf) });
+    // NOT A FEDERATION THAT IS TEMPORARILY UNAVAILABLE (feedback #104): the seats' lowest-load OPEN federation can be one with no reserve key yet,
+    // where paid rounds are paused - the card named it "the lowest-load OPEN federation" while the federations table said it was unavailable.
+    // The network line is read from the OPEN federations that are available here (the seats' own bands kept)
+    let body = cap && cap.body;
+    if (body && body.network && Array.isArray(body.federations) && UNAVAILABLE.has(body.network.lowestFederation)) {
+      const open = body.federations.filter((f) => f.status === 'OPEN' && typeof f.load === 'number' && !UNAVAILABLE.has(f.federation));
+      const lowest = open.length ? open.reduce((x, y) => (y.load < x.load ? y : x)) : null;
+      body = { ...body, network: { ...body.network, lowestFederation: lowest ? lowest.federation : null, lowestLoad: lowest ? lowest.load : null, band: lowest ? lowest.band : body.network.band } };
+    }
+    H.draw($('capacity'), 'capacity', { view: H.capacityView(body, feds, fedNoOf) });
   }
 
   function paintFeds(list) {

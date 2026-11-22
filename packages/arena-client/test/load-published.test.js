@@ -73,8 +73,9 @@ async function rig() {
   return { node, client, rid, eid };
 }
 
-async function drive(client, n) {
-  for (let i = 0; i < n; i++) client.record([45875, 6000, 0, 0, 0]);
+const IDLE = [0, 0, 0, 0, 0];
+async function drive(client, n, input = [45875, 6000, 0, 0, 0]) {
+  for (let i = 0; i < n; i++) client.record(input);
   for (let i = 0; i < 40; i++) {
     const p = client.drain();
     if (p) { try { await p; } catch { /* a refusal is a measurement here */ } }
@@ -83,16 +84,20 @@ async function drive(client, n) {
   }
 }
 
+// THE ROOM THE BED TAKES (kanban #2915): a seat refuses a load without it since the cargo factor became the bed fill ("the load at tick 0
+// carries no room"); every page sends it. The value replay-heat uses.
+const ROOM = 252308;
+
 test('a load declared at roll-out is in the node\'s transcript at tick zero', async () => {
   const { node, client, rid, eid } = await rig();
   try {
     // Roll-out: the round starts, the load is declared, then the driving.
-    assert.equal(client.submitLoad(FEE_SATS, BTC_HUND), true);
+    assert.equal(client.submitLoad(FEE_SATS, BTC_HUND, ROOM), true);
     await drive(client, 300);
 
     const t = node.round.transcript(rid, eid);
     assert.equal(t.ticks.length, 300, `the node kept ${t.ticks.length} ticks`);
-    assert.deepEqual(t.loads, [[0, FEE_SATS, BTC_HUND]],
+    assert.deepEqual(t.loads, [[0, FEE_SATS, BTC_HUND, ROOM]],
       'the node stored no load, so every replay of this run is hunted at zero');
     assert.equal(client.loads.length, 0, 'the client is still holding a published load');
     console.log(`  ${t.ticks.length} ticks and the load [${t.loads[0]}] stored at tick ${t.loads[0][0]}`);
@@ -102,9 +107,11 @@ test('a load declared at roll-out is in the node\'s transcript at tick zero', as
 test('a load declared mid-run rides the batch that covers its own tick', async () => {
   const { node, client, rid, eid } = await rig();
   try {
-    await drive(client, 300);
+    // BEFORE ROLL OUT (kanban #1488, #2915): a seat takes a bed only while the truck has not been driven, so the run's first 300
+    // ticks stand still (input 0) - the load is still declared mid-run, on the tick the run has reached
+    await drive(client, 300, IDLE);
     const at = client.offered;
-    assert.equal(client.submitLoad(9000, 0), true);
+    assert.equal(client.submitLoad(9000, 0, ROOM), true);
     await drive(client, 300);
 
     const t = node.round.transcript(rid, eid);
@@ -125,8 +132,8 @@ test('a load held while the batch is still held goes out with those ticks', asyn
   try {
     // Ticks recorded but nothing drained, then the load, then the drain: the
     // load's tick is inside the batch that is about to go out.
-    for (let i = 0; i < 50; i++) client.record([45875, 6000, 0, 0, 0]);
-    assert.equal(client.submitLoad(FEE_SATS, BTC_HUND), true);
+    for (let i = 0; i < 50; i++) client.record(IDLE);   // standing still: before ROLL OUT (kanban #1488, #2915)
+    assert.equal(client.submitLoad(FEE_SATS, BTC_HUND, ROOM), true);
     assert.equal(client.loads.length, 1);
     for (let i = 0; i < 50; i++) client.record([45875, 6000, 0, 0, 0]);
 
@@ -136,7 +143,7 @@ test('a load held while the batch is still held goes out with those ticks', asyn
       await wait(2);
     }
     const t = node.round.transcript(rid, eid);
-    assert.deepEqual(t.loads, [[50, FEE_SATS, BTC_HUND]]);
+    assert.deepEqual(t.loads, [[50, FEE_SATS, BTC_HUND, ROOM]]);
     assert.equal(client.loads.length, 0);
     console.log(`  declared at tick 50 with 100 ticks held, published inside the batch that carries it`);
   } finally { await node.close(); }
@@ -146,7 +153,7 @@ test('an ended run declares nothing more', async () => {
   const { node, client } = await rig();
   try {
     client.endRun('the test says so');
-    assert.equal(client.submitLoad(FEE_SATS, BTC_HUND), false);
+    assert.equal(client.submitLoad(FEE_SATS, BTC_HUND, ROOM), false);
     assert.equal(client.loads.length, 0);
   } finally { await node.close(); }
 });

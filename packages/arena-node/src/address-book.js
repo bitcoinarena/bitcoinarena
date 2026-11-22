@@ -6,6 +6,48 @@
 // This seat's own: signed whenever the address it names itself (ARENA_WSS_<port>) is not the one it last announced, and pushed to
 // every census node's seat once in a while (announceOwn), so a node whose census endpoint went stale is found again at once.
 import { checkAddressAnnouncement, newerAnnouncement, signAddressAnnouncement, endpointOf } from '../../arena-protocol/src/address-announcement.js';
+import { internalAddress } from './public-fetch.js';
+import { isIP } from 'node:net';
+import { localHostName } from '../../arena-client/src/node-discovery.js';   // kanban #3124: the page's and public-fetch's rule, one copy
+import './dial-guard.js';   // kanban #3133: a peer's name is checked again where it resolves, when the connection is made
+
+/**
+ * WHERE A SEAT MAY DIAL A PEER (kanban #2856, #1489 r26-gossip-1): a census node signed an announcement for its own key naming the honest seat's
+ * own loopback service ('http://127.0.0.1:18777/lnurlp/tips/cb?amount=1000&x=') and every seat sent `${endpoint}/<door>` there - a host, port and
+ * path the attacker picked, the door swallowed by the query. A peer endpoint is an origin with at most one path segment, no query, fragment or
+ * user info; a loopback, private, link-local, CGNAT or ULA IP literal or a localhost name is refused unless this node runs local seats (`localOk`:
+ * a regtest chain, ARENA_LOCAL_SEATS=1 - a devnet's seats sit on 127.0.0.1). Live seats announce public names (tunnels, *.ts.net) and are routed
+ * to their private addresses by ARENA_ROUTE_MAP after the check. Answers why not, or null.
+ */
+export function peerEndpointRefusal(endpoint, { localOk = false } = {}) {
+  let u; try { u = new URL(String(endpoint)); } catch { return 'not a URL'; }
+  if (!['http:', 'https:', 'ws:', 'wss:'].includes(u.protocol)) return 'not an http(s) or ws(s) endpoint';
+  if (u.username || u.password) return 'an endpoint carries no user info';
+  if (u.search || u.hash || String(endpoint).includes('?') || String(endpoint).includes('#')) return 'an endpoint carries no query or fragment';
+  if (u.pathname.replace(/\/+$/, '').split('/').filter(Boolean).length > 1) return 'an endpoint is an origin with at most one path segment';
+  const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
+  // kanban #3124, #3125: also every name the page and public-fetch call local (a single label, *.local/.lan/.internal ..., *.nip.io,
+  // localtest.me ..., a name carrying an internal IPv4 address) - 'http://127.0.0.1.nip.io:18777/lnurlp' reached the seat's own loopback
+  const local = (isIP(host) ? internalAddress(host) : /^\d+$|^0x/i.test(host)) || host === 'localhost' || host.endsWith('.localhost') || localHostName(host);
+  if (local && !localOk) return 'an endpoint on a loopback or private address';
+  return null;
+}
+
+/**
+ * WHERE A SEAT MAY OPEN A GUARDIAN'S API (kanban #3134, wf1489 refute of #3082): a bond commits a second endpoint, `guardianEndpoint` (advert.js
+ * asks only ws(s)://\S+), and the reserve read (federation-reserve.js) and the halt watch (halts.js) opened it raw - a guardian committing
+ * 'ws://127.0.0.1:18777/lnurlp/tips/cb?amount=1000&x=' made every seat that signed or gathered its federation's record send that GET (the
+ * WebSocket upgrade) to its own loopback service. A guardian endpoint is a ws(s) URL with no query, fragment or user info, on a host the
+ * peer rule takes (no loopback / private literal or local-only name unless `localOk`); unlike a seat endpoint it may carry a path (guardians
+ * sit behind one host at /guardian-N, /fed2-N/guardian-next). Answers why not, or null.
+ */
+export function guardianEndpointRefusal(endpoint, { localOk = false } = {}) {
+  let u; try { u = new URL(String(endpoint)); } catch { return 'not a URL'; }
+  if (!['ws:', 'wss:'].includes(u.protocol)) return 'not a ws(s) endpoint';
+  if (u.username || u.password) return 'an endpoint carries no user info';
+  if (u.search || u.hash || String(endpoint).includes('?') || String(endpoint).includes('#')) return 'an endpoint carries no query or fragment';
+  return peerEndpointRefusal(`${u.protocol}//${u.host}`, { localOk });
+}
 
 // BOUNDED, AND ONLY CENSUS NODES (kanban #1533, wf1489 round 2: one peer's GET /address-announcements listing 2000 self-signed keys
 // with 4 KB endpoints added 2000 rows, 8.5 MB, to every seat that pulled it, and each served them all again). An endpoint longer than
@@ -21,8 +63,15 @@ export const ADDRESS_BOOK_MAX = 4096;
 // plain GET /address-announcements, so never pulled by other seats, never used by endpointOf, never counted - only answered for a lookup
 // by that key (list({ node }), GET /address-announcements?node=<key>). Once the census names the node it moves into the book.
 export const ADDRESS_PENDING_MAX = 256;
+// A FLOOD DOES NOT PUSH A NEW NODE OUT (kanban #3059, audit census r4-2): the bucket dropped the least recently announced node for any
+// new key, so a stranger posting ADDRESS_PENDING_MAX announcements under fresh keys (one signature each, no bond, no auth) pushed a new
+// node out of every seat and the owner page could not find it. Now a held node re-announced within ADDRESS_PENDING_KEEP_MS (two of
+// the node's 10 min re-announce intervals and some) is never pushed out: a new key takes the place of the least recently announced
+// one only when that one is older, else it is refused 503 (try again) and nothing held goes.
+export const ADDRESS_PENDING_KEEP_MS = 25 * 60 * 1000;
 
-export function createAddressBook({ db, verify, nowMs = () => Date.now(), isCensusNode = () => null, censusKeys = null, ownKey = null }) {
+export function createAddressBook({ db, verify, nowMs = () => Date.now(), isCensusNode = () => null, censusKeys = null, ownKey = null, localOk = false }) {
+  const localNow = () => (typeof localOk === 'function' ? !!localOk() : !!localOk);   // kanban #2856
   db.exec('CREATE TABLE IF NOT EXISTS address_announcements (node TEXT PRIMARY KEY, body TEXT NOT NULL)');
   // THE BOUNDS HOLD FOR WHAT IS HELD, NOT ONLY AT THE DOOR (kanban #1712, #1778, wf1489 refute of #1533): an announcement taken while
   // no census was read yet (isCensusNode -> null, the first minute after a start) stayed in the book and was served, counted and used
@@ -45,6 +94,7 @@ export function createAddressBook({ db, verify, nowMs = () => Date.now(), isCens
       const a = JSON.parse(body);
       if (!checkAddressAnnouncement(a, { verify, nowMs: nowMs() }).ok) return null;
       if (String(a.endpoint).length > ADDRESS_ENDPOINT_MAX) return null;
+      if (peerEndpointRefusal(a.endpoint, { localOk: localNow() })) return null;   // kanban #2856: a row stored before the check is not dialed
       return { node: a.node, endpoint: a.endpoint, atMs: a.atMs, sig: a.sig };
     } catch { return null; }
   };
@@ -55,7 +105,8 @@ export function createAddressBook({ db, verify, nowMs = () => Date.now(), isCens
   };
   let map = new Map();
   let needRefill = false;
-  const pending = new Map();   // kanban #2066: node -> announcement, oldest first
+  const pending = new Map();   // kanban #2066: node -> announcement, oldest first; kanban #3059: pendingSeen node -> when last taken
+  const pendingSeen = new Map();
   // PRUNING IS NOT FOR GOOD (kanban #2085, wf1489 refute of #1533): one census read without an honest node (a bond renewal gap, or
   // censusForAddresses' fallback to fedRecords.censusNewestAt) pruned its row, and nothing read it back when the census named it again,
   // nor at the next start: the seat dialed its dead census endpoint until it announced again. The keys of pruned rows are kept here
@@ -85,7 +136,7 @@ export function createAddressBook({ db, verify, nowMs = () => Date.now(), isCens
   /** Held and written: take()'s write (the row's pruned mark cleared). */
   function store(clean) {
     map.set(clean.node, clean);
-    pending.delete(clean.node); prunedKeys.delete(clean.node);
+    pending.delete(clean.node); pendingSeen.delete(clean.node); prunedKeys.delete(clean.node);
     db.prepare('INSERT INTO address_announcements (node, body, pruned) VALUES (?, ?, 0) ON CONFLICT(node) DO UPDATE SET body = excluded.body, pruned = 0').run(clean.node, JSON.stringify(clean));
   }
   /** kanban #2085, #2066: census nodes back in the book - their pruned rows read again, and their pending announcements taken. */
@@ -107,7 +158,7 @@ export function createAddressBook({ db, verify, nowMs = () => Date.now(), isCens
     }
     for (const [k, a] of [...pending]) {
       if (isCensusNode(k) !== true) continue;
-      pending.delete(k);
+      pending.delete(k); pendingSeen.delete(k);
       if (!map.has(k) && map.size >= ADDRESS_BOOK_MAX) continue;
       const have = map.get(k);
       if (newerAnnouncement(have, a) !== have) store(a);
@@ -131,13 +182,19 @@ export function createAddressBook({ db, verify, nowMs = () => Date.now(), isCens
     const c = checkAddressAnnouncement(a, { verify, nowMs: nowMs() });
     if (!c.ok) return { ok: false, why: c.why };
     if (String(a.endpoint).length > ADDRESS_ENDPOINT_MAX) return { ok: false, status: 400, why: `an endpoint of at most ${ADDRESS_ENDPOINT_MAX} characters` };
+    { const no = peerEndpointRefusal(a.endpoint, { localOk: localNow() }); if (no) return { ok: false, status: 400, why: no }; }   // kanban #2856
     if (!self && a.node !== me && isCensusNode(a.node) === false) {
       // kanban #2066: held for a lookup by its key only (bounded, the least recently announced goes first)
       const clean = { node: a.node, endpoint: a.endpoint, atMs: a.atMs, sig: a.sig };
       const have = pending.get(clean.node);
-      pending.delete(clean.node);
+      if (!have && pending.size >= ADDRESS_PENDING_MAX) {
+        const oldest = pending.keys().next().value;
+        if (nowMs() - (pendingSeen.get(oldest) ?? -Infinity) < ADDRESS_PENDING_KEEP_MS) return { ok: false, status: 503, why: 'too many new nodes announced: try again in a few minutes' };
+        pending.delete(oldest); pendingSeen.delete(oldest);
+      }
+      pending.delete(clean.node); pendingSeen.delete(clean.node);
       pending.set(clean.node, newerAnnouncement(have, clean) || clean);
-      while (pending.size > ADDRESS_PENDING_MAX) pending.delete(pending.keys().next().value);
+      pendingSeen.set(clean.node, nowMs());
       return { ok: false, status: 409, why: 'not a node of this seat\'s census' };
     }
     prune();   // junk held from before the census was read does not take a place (kanban #1712)
@@ -166,7 +223,9 @@ export function createAddressBook({ db, verify, nowMs = () => Date.now(), isCens
     if (k && !map.has(k) && pending.has(k)) out.push(pending.get(k));
     return out;
   }
-  return { take, own, prune, map: () => { prune(); return map; }, list, endpointOf: (entry) => endpointOf(entry, held) };
+  // kanban #2856: the census advert's endpoint is held to the same rule - a node's bond may commit a loopback endpoint as well
+  const okOrNull = (u) => (u && !peerEndpointRefusal(u, { localOk: localNow() }) ? u : null);
+  return { take, own, prune, map: () => { prune(); return map; }, list, endpointOf: (entry) => okOrNull(endpointOf(entry, held)) };
 }
 
 /** Push this node's announcement to every census node's seat at the address it is found at; answers how many took it. */

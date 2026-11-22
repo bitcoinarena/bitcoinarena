@@ -27,8 +27,17 @@ export function newKey() {
 // `states` (optional, filled): { federation id hex: { status, successor } } - successor the record's successor_id hex, null for none;
 // what moves a dev's money out of a DRAINING federation into its successor (kanban #578, the owner: "federations that are draining
 // and are re-created keep their dev settings")
-export async function invitesFromSeats({ seats, fetcher = fetch, decode, want = 3, timeoutMs = 15000, states = null }) {
+// NOT ONE SEAT'S UNSIGNED WORD (kanban #2767, feedback #058, high): the state was the FIRST lister's plain JSON `status` and an unsigned
+// record's successor, keyed by the seat's own `federation` field, and kept for the life of the process - one seat answering first moved a
+// dev's whole balance into a federation its operator runs (bin/arena-donor.mjs migrateFromDraining), and a real DRAIN signed later was never
+// read. Now a state comes from the record's own bytes (its status and successor_id, its own federation id, which the seat's field and - when
+// `federationIdOf` is given - its invite must name), and only when at least two of the seats that answered (the one seat of a one-seat list)
+// serve the same status and successor and more serve that than anything else; a federation without such agreement has no state (nothing
+// moves). Every call reads the states afresh: what was set before and is not agreed now is dropped.
+const STATUS_NAMES = Object.freeze({ 1: 'OPEN', 2: 'DRAINING', 3: 'CRITICAL', 4: 'CLOSED', 5: 'HALTED' });
+export async function invitesFromSeats({ seats, fetcher = fetch, decode, want = 3, timeoutMs = 15000, states = null, federationIdOf = null }) {
   const out = {};
+  const votes = new Map();       // fid -> Map(status|successor -> { n, state })
   let answered = 0;
   for (const seat of seats || []) {
     if (answered >= want) break;
@@ -36,15 +45,34 @@ export async function invitesFromSeats({ seats, fetcher = fetch, decode, want = 
     try { d = await (await fetcher(`${String(seat).replace(/\/+$/, '')}/federations`, { signal: AbortSignal.timeout(timeoutMs) })).json(); } catch { continue; }
     if (!d || !Array.isArray(d.federations)) continue;
     answered++;
+    const mine = new Set();      // one vote per federation per seat
     for (const f of d.federations) {
       if (!f || f.status === 'CLOSED' || typeof f.record !== 'string') continue;
       try {
         const r = decode(f.record);
         const fid = String(f.federation).toLowerCase();
-        if (r && r.invite) out[fid] = r.invite;
+        // the record's own federation (and its invite's), never only the seat's field - for its invite and its state alike
+        if (r && r.federationId && Buffer.from(r.federationId).toString('hex') !== fid) continue;
+        if (typeof federationIdOf === 'function') { let named = null; try { named = String(federationIdOf(r.invite)).toLowerCase(); } catch { named = null; } if (named !== fid) continue; }
+        if (r && r.invite) out[fid] = out[fid] || r.invite;
+        if (!states || mine.has(fid)) continue;
+        const status = r && Number.isInteger(r.status) ? STATUS_NAMES[r.status] : null;
+        if (!status) continue;
         const succ = r && r.successorId ? Buffer.from(r.successorId).toString('hex') : '';
-        if (states && !states[fid]) states[fid] = { status: String(f.status || ''), successor: /^0*$/.test(succ) ? null : succ };
+        const state = { status, successor: /^0*$/.test(succ) ? null : succ };
+        mine.add(fid);
+        if (!votes.has(fid)) votes.set(fid, new Map());
+        const m = votes.get(fid), k = `${state.status}|${state.successor}`;
+        m.set(k, { n: (m.has(k) ? m.get(k).n : 0) + 1, state });
       } catch { /* a record that does not read */ }
+    }
+  }
+  if (states) {
+    const need = Math.min(2, Math.max(1, answered));
+    for (const k of Object.keys(states)) delete states[k];
+    for (const [fid, m] of votes) {
+      const ranked = [...m.values()].sort((a, b) => b.n - a.n);
+      if (ranked[0].n >= need && (ranked.length === 1 || ranked[0].n > ranked[1].n)) states[fid] = ranked[0].state;
     }
   }
   return out;
@@ -87,19 +115,61 @@ export const walletSecretFor = (secretHex, federationIdHex) =>
  * one donation), grouped by federation. A seat that does not answer is named and skipped - another seat that verified the
  * same entry answers for it.
  */
+// kanban #2133, #2195 (refute of #1618, the donor's copy of the page's flaw): one seat listing 20,000 made-up outpoints under the
+// dev's key made one pass ask 20,000 rates, append 20,000 records and send 20,000 federation Refund calls. A seat's list is read
+// only to its first DONOR_ROWS_PER_SEAT well-formed rows (outpoint txid:vout, 64-hex federation id, positive whole msat amount);
+// a pass asks at most DONOR_RATES_PER_PASS rates and sends at most DONOR_REFUNDS_PER_PASS Refund calls, spent fairly (donorOrder);
+// the rest wait for the next pass (the seats delete what a receipt names, so an honest seat's next rows come up).
+export const DONOR_ROWS_PER_SEAT = 500;
+export const DONOR_RATES_PER_PASS = 200;
+export const DONOR_REFUNDS_PER_PASS = 200;
+const FIRST_SEAT = Symbol('first seat');
+/**
+ * The order a pass's budget is spent in: outpoints listed by more distinct seats first; among those listed by as many, the seats
+ * take turns (round-robin by the lowest-index seat that listed each), so one seat's rows alone never use the budget that rows other
+ * seats list need. Stable: rows with no seat facts keep their order.
+ */
+export function donorOrder(donations) {
+  const tiers = new Map();
+  for (const d of donations) {
+    const n = Number(d.seats) || 0, owner = d[FIRST_SEAT] ?? -1;
+    if (!tiers.has(n)) tiers.set(n, new Map());
+    const byOwner = tiers.get(n);
+    if (!byOwner.has(owner)) byOwner.set(owner, []);
+    byOwner.get(owner).push(d);
+  }
+  const out = [];
+  for (const n of [...tiers.keys()].sort((a, b) => b - a)) {
+    const queues = [...tiers.get(n).keys()].sort((a, b) => a - b).map((o) => tiers.get(n).get(o));
+    for (let i = 0, more = true; more; i++) {
+      more = false;
+      for (const q of queues) if (i < q.length) { out.push(q[i]); more = true; }
+    }
+  }
+  return out;
+}
+const wellFormedRow = (d) => !!d && /^[0-9a-f]{64}:\d+$/.test(String(d.outpoint)) && /^[0-9a-f]{64}$/i.test(String(d.federationId))
+  && /^[1-9]\d{0,20}$/.test(String(d.amountMsat));
 export async function gatherDonations({ recipientPkHex, seats, fetcher = fetch, since = 0 }) {
   const byOutpoint = new Map();
   const unanswered = [];
-  await Promise.all(seats.map(async (seat) => {
+  await Promise.all(seats.map(async (seat, si) => {
     try {
       const r = await fetcher(`${seat.replace(/\/$/, '')}/donations?key=${recipientPkHex}&since=${since}`);
       if (!r.ok) { unanswered.push(`${seat}: ${r.status}`); return; }
       const j = await r.json();
-      for (const d of j.donations || []) {
+      const list = j && Array.isArray(j.donations) ? j.donations : [];
+      const mine = new Set(); // kanban #2133: a seat that lists an outpoint twice is one seat
+      for (const d of list) {
+        if (mine.size >= DONOR_ROWS_PER_SEAT) break;
+        if (!wellFormedRow(d) || mine.has(d.outpoint)) continue;
+        mine.add(d.outpoint);
         const was = byOutpoint.get(d.outpoint);
         // a seat that names a market donation's parts (kanban #580) completes the row another seat gave without them
-        if (was) { was.seats++; if (!was.parts && Array.isArray(d.parts) && d.parts.length) was.parts = d.parts; continue; }
-        byOutpoint.set(d.outpoint, { ...d, seats: 1 });
+        if (was) { was.seats++; if (si < was[FIRST_SEAT]) was[FIRST_SEAT] = si; if (!was.parts && Array.isArray(d.parts) && d.parts.length) was.parts = d.parts; continue; }
+        const row = { ...d, seats: 1 };
+        Object.defineProperty(row, FIRST_SEAT, { value: si, writable: true, enumerable: false });
+        byOutpoint.set(d.outpoint, row);
       }
     } catch (e) { unanswered.push(`${seat}: ${e.message}`); }
   }));
@@ -130,10 +200,14 @@ export function splitOutpoint(s) {
  * wallet there. A contract the guardians no longer hold was spent - by this key, the only one that can - and is final.
  * Answers what was redeemed, what was already spent, and what failed (asked again on the next pass).
  */
-export async function redeemAll({ client, donations, recipientPkHex, secretHex, done = new Set() }) {
+export async function redeemAll({ client, donations, recipientPkHex, secretHex, done = new Set(), refundsPerPass = DONOR_REFUNDS_PER_PASS }) {
   const redeemed = [], spent = [], failed = [];
-  for (const d of donations) {
+  let asked = 0;
+  for (const d of donorOrder(donations)) {
     if (done.has(d.outpoint)) continue;
+    // kanban #2133, #2195: at most DONOR_REFUNDS_PER_PASS Refund calls a pass, most-listed first; the rest wait for the next pass
+    if (asked >= refundsPerPass) break;
+    asked++;
     const { txid, outIdx } = splitOutpoint(d.outpoint);
     let said;
     const image = d.senderOnContract && /^[0-9a-f]{64}$/.test(String(d.playerKey || '')) ? d.playerKey : '00'.repeat(32);
@@ -398,8 +472,12 @@ export async function settleRead({ path, donations, client, key, seats, fetcher 
   const recorded = new Set(readRecord(path).map((r) => r.outpoint));
   const unrecorded = [];
   const fresh = [];
-  for (const d of donations) {
+  let rated = 0, waiting = 0;
+  for (const d of donorOrder(donations)) {
     if (recorded.has(d.outpoint)) continue;
+    // kanban #2133, #2195: at most DONOR_RATES_PER_PASS rate lookups (and so records) a pass, most-listed first
+    if (rated >= DONOR_RATES_PER_PASS) { waiting++; continue; }
+    rated++;
     const rate = await rateAt({ atMs: d.verifiedMs, fetcher });
     if (!rate.ok) { unrecorded.push({ outpoint: d.outpoint, why: rate.why }); continue; }
     fresh.push(donationRecord(d, rate, { recordedAt: now() }));
@@ -420,5 +498,5 @@ export async function settleRead({ path, donations, client, key, seats, fetcher 
       catch (e) { answers.push({ seat, why: e.message }); }
     }
   }
-  return { recorded: fresh.length, redeemed: r.redeemed, spent: r.spent, failed: r.failed, unrecorded, receipted: read.length, answers };
+  return { recorded: fresh.length, redeemed: r.redeemed, spent: r.spent, failed: r.failed, unrecorded, waiting, receipted: read.length, answers };
 }

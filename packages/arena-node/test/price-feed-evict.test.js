@@ -110,7 +110,7 @@ for (const version of [5, 4]) {
     assert.deepEqual(seat.tidy(), []);
     for (const m of used) for (const r of net.rounds) assert.ok(held(seat)[m].has(r.rh), `${m} still holds ${r.rh.slice(0, 8)} inside A's window`);
     assert.equal(lines.length, 1);
-    assert.match(lines[0], /^\[prices\] held: samples \d+ \(\d+\), tapes \d+, signed \d+, heard \d+ \(\d+\), heardTapes \d+, mine \d+, built \d+, endsAsked \d+; 0 finished round\(s\) let go of since the last line$/);
+    assert.match(lines[0], /^\[prices\] held: samples \d+ \(\d+\), tapes \d+, signed \d+, heard \d+ \(\d+\), heardTapes \d+, mine \d+, built \d+, endsAsked \d+; 0 finished round\(s\) let go of since the last line; readings \d+ trade, \d+ mid$/);
 
     // past it: A leaves every map; B keeps every entry it had
     t = finishAt;
@@ -130,7 +130,8 @@ for (const version of [5, 4]) {
       if (version >= 5) for (const x of ends) assert.equal(x.readings.length, 7, `all seven readings of end ${x.k}`);
     }
     // B, open, still serves every sample it holds to a page
-    assert.deepEqual(seat.list(B.rh).samples.map((x) => x.k), [0, 3, kClose]);
+    // (kanban #2780: from protocol 5 the beat of k 3 also signs the samples before it that are still signable - here k 1)
+    assert.deepEqual(seat.list(B.rh).samples.map((x) => x.k), version >= 5 ? [0, 1, 3, kClose] : [0, 3, kClose]);
     // a peer short of A's ends gets them from this seat alone (the others do not answer), after the let-go
     const peer = net.seats[3];
     for (const m of MAPS) peer[m].clear();
@@ -145,7 +146,7 @@ for (const version of [5, 4]) {
     assert.deepEqual(seat.tidy(), [A.rh]);
     for (const m of MAPS) assert.equal(held(seat)[m].has(A.rh), false);
     assert.equal(lines.length, 2);
-    assert.match(lines[1], /; 2 finished round\(s\) let go of since the last line$/);
+    assert.match(lines[1], /; 2 finished round\(s\) let go of since the last line; readings \d+ trade, \d+ mid$/);
 
     // B closes too and its window passes: the seat holds nothing of either
     B.state = CLOSED; B.closed_ms = t;

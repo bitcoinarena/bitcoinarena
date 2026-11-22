@@ -44,7 +44,9 @@ test('the gateway: state, e-cash per federation, balances and 30 days of payment
   assert.deepEqual([g.lightningMsat, g.inboundMsat, g.onchainSat], ['722117053', '1332143947', '69116']);
   assert.deepEqual(g.payments30d.incoming, { success: 1, failure: 0, feesMsat: '10' });
   assert.ok(seen.every((s) => s.auth === 'Bearer s3cret'));
-  assert.deepEqual(seen.map((s) => s.method).sort(), ['GET', 'GET', 'POST']);
+  // the payment summary, and (kanban #2773) one payment-log read for its one federation - every call with the password in its header
+  assert.deepEqual(seen.map((s) => s.method).sort(), ['GET', 'GET', 'POST', 'POST']);
+  assert.equal(g.warning.level, 'ok');
   assert.doesNotMatch(JSON.stringify(g), /s3cret/, 'the password is not in the figures');
 });
 

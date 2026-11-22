@@ -29,8 +29,14 @@ import { lnurlPublicFetch } from './public-fetch.js';
 import { sendableInvoiceMsat, lowestLiveGateway, sendPlanStands, proposedExpiration } from '../../arena-protocol/src/winnings-send.js';
 import { signShare340, aggregate340, nonceGenerate340 } from '../../arena-protocol/src/frost-bip340.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
+import { textUpTo, binaryUpTo } from './peer-read.js';
+// EVERY PEER ANSWER HERE IS READ UP TO A BOUND (kanban #2728, #1489 r5-gossip-2): a sealed share, a commitment or a share is ~100 bytes and a
+// refusal one line, but they were read whole (arrayBuffer / text), bounded only in time - one seat answered GET /share with 64 MiB and every
+// honest seat opening a stake buffered it, per open. Now PEER_SMALL_BYTES each, the stream cancelled past it (over it is a refusal).
+const PEER_SMALL_BYTES = 64 * 1024;
+const whyUpTo = async (r) => (r.body === undefined && typeof r.text === 'function' ? r.text() : textUpTo(r, PEER_SMALL_BYTES));
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
-import { encodeCommitments, decodeCommitments, decodePeerCommitment, decodeShare, commitmentListRefusal } from './pool-wire.js';
+import { encodeCommitments, decodeCommitments, decodeShare, commitmentListRefusal, decodePeerCommitment, peerCommitmentRefusal, leftOffLast, committedIds } from './pool-wire.js';
 import { largestPayoutMsat, lnv2FeeMsat } from '../../arena-protocol/src/lock-settlement.js';
 import { urlOfLnurl } from '../../arena-protocol/src/bech32.js';
 import { stateOf } from './settlement-state.js';
@@ -452,10 +458,27 @@ export class WinningsSend {
       .map((r) => r.gatewayUrl));
   }
 
-  /** The next gateway: the lowest live key the entry's earlier attempts (up to `upTo`, kanban #1629) did not use. */
-  nextGateway(roundIdBytes, entryHex, listed, upTo = null) {
-    const used = this.usedGateways(roundIdBytes, entryHex, upTo);
-    return lowestLiveGateway(listed.filter((g) => !used.has(g.url)));
+  /** The next gateway: the lowest live key of the gateways the re-send may take (resendGateways). */
+  nextGateway(roundIdBytes, entryHex, listed, upTo = Infinity) {
+    return lowestLiveGateway(this.resendGateways(roundIdBytes, entryHex, listed, upTo));
+  }
+
+  /**
+   * THE GATEWAYS A RE-SEND AFTER ATTEMPT `upTo` MAY TAKE: the live ones the entry's attempts 0..upTo did not use; once every live one
+   * was used, the live ones whose last attempt for the entry is the oldest (kanban #2094: with a paying round's two gateways each letting
+   * one attempt expire unpaid, "not used before" left none, and the share sat in an expired contract under the committee key for good,
+   * though both gateways paid again). Each seat reads it from the same attempt rows, so the proposer (proposeResend) and the peers
+   * (checkResend's sendPlanStands) meet on the same attempt N+1; attempt N+1 rows another seat offered are not counted.
+   */
+  resendGateways(roundIdBytes, entryHex, listed, upTo = Infinity) {
+    const last = new Map();
+    for (const r of this.round.sendAttemptsOf(roundIdBytes))
+      if (toHex(r.entryId) === entryHex && r.attempt <= upTo && r.gatewayUrl) last.set(r.gatewayUrl, Math.max(last.get(r.gatewayUrl) ?? -1, r.attempt));
+    const live = listed.filter((g) => g && g.live === true);
+    const fresh = live.filter((g) => !last.has(g.url));
+    if (fresh.length || !live.length) return fresh;
+    const oldest = Math.min(...live.map((g) => last.get(g.url)));
+    return live.filter((g) => last.get(g.url) === oldest);
   }
 
   /** The proposer's re-send plan for an expired attempt. */
@@ -495,7 +518,7 @@ export class WinningsSend {
     const headers = sendPlanAskHeaders(this.round, { kind: PLAN_ASK.RESEND, roundId: roundIdBytes, lateEntryId: this.round.lateEntryId || null, body });
     const asked = await askPeers(this.peersFor(roundIdBytes), async (base, signal) => {
       const r = await this.fetcher(`${base}/resend-sends?round=${toHex(roundIdBytes)}${this.scopeParam}`, { method: 'POST', body, headers, signal });
-      return r.ok ? null : (await r.text()).trim();
+      return r.ok ? null : String(await whyUpTo(r)).trim();
     }, { boundMs: this.peerAskMs });
     return asked.filter((x) => !('value' in x) || x.value !== null).map((x) => `${x.peer}: ${'value' in x ? x.value : x.error.message}`);
   }
@@ -528,10 +551,9 @@ export class WinningsSend {
     const out = largestPayoutMsat(fees, prev.payoutMsat - lnv2FeeMsat(fees, prev.payoutMsat));
     const pr = await this.invoiceFor(prev.address, sendableInvoiceMsat(out, gw.sendFeeDefault));
     if (!pr.ok) return refuse(`this signer node could not read the address's own invoice: ${pr.why}`);
-    const others = g.gateways.filter((x) => x.url !== prev.gatewayUrl);
-    const used = this.usedGateways(roundIdBytes, String(p.entry), prev.attempt);
-    const stands = sendPlanStands({ plan: p, payoutMsat: out, gateways: others.filter((x) => !used.has(x.url)), height: g.height, metadata: pr.metadata, network: this.network,
-      payee: pr.payee, payeeOf });
+    // THE SAME GATEWAY RULE AS THE PROPOSER'S (kanban #2094): an unused live gateway, or once all were used the one used longest ago
+    const stands = sendPlanStands({ plan: p, payoutMsat: out, gateways: this.resendGateways(roundIdBytes, String(p.entry), g.gateways, prev.attempt),
+      height: g.height, metadata: pr.metadata, network: this.network, payee: pr.payee, payeeOf });
     if (!stands.ok) return refuse(`the re-send does not stand here: ${stands.why}`);
     this.round.putSendPlan({ entryId: prev.entryId, roundId: roundIdBytes, attempt: prev.attempt + 1, address: prev.address, invoice: p.invoice,
       paymentHash: p.paymentHash, invoiceMsat: stands.invoiceMsat, payoutMsat: out, owedMsat: prev.owedMsat, gatewayUrl: p.gatewayUrl,
@@ -594,6 +616,11 @@ export class WinningsSend {
     // older build sends it - nobody named. Each asker draws from its own bucket below, and a pair is spent only on a list its own asker signs.
     const keptMs = 2 * this.peerAskMs + this.peerGraceMs;
     const now = Number(this.round.now());
+    // A RE-SEND ATTEMPT IS SIGNED ONLY FOR A SEAT OF THE ROUND (kanban #2134, after #1629): a share given on a kept attempt N+1 bars the #1241
+    // lower-hash replace, and an unsigned ask (anyone at the door) could set it - a stranger's commit and a share over a made-up list pinned
+    // each seat's own attempt 1, so two seats that kept different ones never met on one hash and the re-send never reached the threshold.
+    // Attempt N+1 exists only through /resend-sends, which takes it only from a seat of the round (#1154); attempt 0 keeps the unsigned bucket.
+    if (row.attempt > 0 && !own && !header) return refuse('this signer node draws a nonce pair for a re-send only for a seat of the round: sign the ask', 403);
     let asker = null;
     if (own) asker = this.ownKey();
     else if (header) {
@@ -649,6 +676,9 @@ export class WinningsSend {
     // one seat of seven stopped the send for good. Now a list spends a pair only when the same asker signs it (PLAN_ASK.SHARE over the list's
     // bytes) - or, for a pair drawn by an unsigned ask (a seat on an older build), when the list is unsigned too, as before. Anyone else's
     // list, a peer seat's included, spends nothing.
+    if (row.attempt > 0 && !local && !header) return refuse('this signer node signs a re-send only for a seat of the round: sign the ask', 403);   // kanban #2134
+    // ONE NONCE UNDER TWO IDS IS NO LIST (kanban #2134): a commitment copied under other signers' ids is made up, and is never signed
+    { const seen = new Set(); for (const c of commitments) { const k = `${toHex(c.hiding)}:${toHex(c.binding)}`; if (seen.has(k)) return refuse('that list carries one nonce under two ids'); seen.add(k); } }
     let by = null;
     if (!local && header) {
       const checked = this.askedBy(header, PLAN_ASK.SHARE, roundIdBytes, built, encodeCommitments(commitments));
@@ -673,8 +703,21 @@ export class WinningsSend {
   /**
    * The committee's signature of `kind` over one attempt, made here with the peers: every peer asked at once within a bound (kanban #1074 as #1061), and a
    * seat that gave no share, or one that does not stand, left off the next list while the threshold remains (as #1070), asked again at once.
+   *
+   * ONE SIGNING PER SEND AT A TIME (kanban #1489, #1910 - as settle() with #settling): two passes of this seat at once (settle() and the winnings
+   * timer both reaching sendAll) shared its one slot at every peer (nonce-pairs.js), each with its own SELF commitment, so each peer signed the first
+   * list and refused the other ("keeps no second pair"). A second signing of the same send while one runs waits for that one's answer.
    */
   async sign(roundIdBytes, row, built, kind) {
+    const k = `${kind}:${toHex(roundIdBytes)}:${toHex(row.entryId)}:${row.attempt}:${String(row.paymentHash).toLowerCase()}`;
+    if (this.#signing.has(k)) return this.#signing.get(k);
+    const p = this.#signOnce(roundIdBytes, row, built, kind).finally(() => this.#signing.delete(k));
+    this.#signing.set(k, p);
+    return p;
+  }
+  #signing = new Map();    // `${kind}:${round}:${entry}:${attempt}:${hash}` -> the running signing's answer (kanban #1910)
+
+  async #signOnce(roundIdBytes, row, built, kind) {
     const entryHex = toHex(row.entryId);
     const q = `round=${toHex(roundIdBytes)}&entry=${entryHex}&kind=${kind}&attempt=${row.attempt}&hash=${row.paymentHash}${this.scopeParam}`;
     this.lists.begin(q);
@@ -696,11 +739,14 @@ export class WinningsSend {
       }
       const asked = await askPeers(this.peersFor(roundIdBytes), async (base, signal) => {
         const r = await this.fetcher(`${base}/send-commit?${cq}`, { method: 'POST', headers, signal });
-        return r.ok ? { commitment: decodePeerCommitment(new Uint8Array(await r.arrayBuffer())) } : null;   // its nonces are points, or it is refused (kanban #2331, #2345)
+        return r.ok ? { commitment: decodePeerCommitment(new Uint8Array(await binaryUpTo(r, PEER_SMALL_BYTES))) } : null;   // its nonces are points, or it is refused (kanban #2331, #2345)
       }, { boundMs: this.peerAskMs, graceMs: this.peerGraceMs, enough: built.needed - 1, counts: (x) => !!(x && x.commitment) });
       const signers = [{ base: null, commitment: own.commitment }];
-      for (const { peer: base, value } of asked) if (value && value.commitment) signers.push({ base, commitment: value.commitment });
-      if (signers.length < built.needed) return refuse(`${signers.length} of ${built.needed} signer nodes committed to the ${kind}`);
+      // A COMMITMENT UNDER ANOTHER SIGNER'S ID IS NOT LISTED (kanban #2402, #2471, as settlement.js #peerCommitments); one under an id a peer holds is
+      // listed beside it (`contest`), and the share check decides which one stands (kanban #2402, a45-refute-3 s1-2)
+      for (const { peer: base, value } of leftOffLast(asked, this.lists.withheld.get(q)))
+        if (value && value.commitment && !peerCommitmentRefusal(value.commitment, signers, { contest: true })) signers.push({ base, commitment: value.commitment });
+      if (committedIds(signers) < built.needed) return refuse(`${committedIds(signers)} of ${built.needed} signer nodes committed to the ${kind}`);
       const listed = this.lists.listed(q, signers, built.needed);
       const combined = await this.#gatherShares(roundIdBytes, entryHex, built, kind, row.attempt, q, message, listed);
       if (combined.ok) { this.lists.done(q); return combined; }
@@ -738,8 +784,8 @@ export class WinningsSend {
     const peers = signers.filter((x) => x.base !== null);
     const asked = await askPeers(peers.map((x) => x.base), async (base, signal) => {
       const r = await this.fetcher(`${base}/send-share?${q}`, { method: 'POST', body, headers, signal });
-      if (!r.ok) return { status: r.status, why: (await r.text()).trim() };
-      return { share: decodeShare(new Uint8Array(await r.arrayBuffer())) };
+      if (!r.ok) return { status: r.status, why: String(await whyUpTo(r)).trim() };
+      return { share: decodeShare(new Uint8Array(await binaryUpTo(r, PEER_SMALL_BYTES))) };
     }, { boundMs: this.peerAskMs });
     // A PAIR SPENT ON ANOTHER LIST (kanban #2011, the forfeit's #1699): `poisoned`, and the seat refusing is not at fault
     const failed = sharesRefused(asked, `${kind} share`);
@@ -775,8 +821,19 @@ export class WinningsSend {
    * entry's latest attempt: a re-send not yet funded is funded (the committee signs its txid and it is submitted); a
    * funded one is signed over its invoice and asked of its gateway; one that did not pay and has EXPIRED is re-sent
    * through the next live gateway. A PAID winning is left alone, and a gateway asked twice answers its one payment.
+   * ONE PASS PER ROUND AT A TIME (kanban #1910): settle() and the winnings timer both reach it for one round; a second pass while one runs waits for
+   * that one's answer, so the two never sign, mark or re-send the same rows side by side.
    */
   async sendAll(roundIdBytes, built) {
+    const k = toHex(roundIdBytes);
+    if (this.#sending.has(k)) return this.#sending.get(k);
+    const p = this.#sendAllOnce(roundIdBytes, built).finally(() => this.#sending.delete(k));
+    this.#sending.set(k, p);
+    return p;
+  }
+  #sending = new Map();    // round id hex -> the running pass's answer (kanban #1910)
+
+  async #sendAllOnce(roundIdBytes, built) {
     const out = [];
     for (const row of this.round.sendPlansOf(roundIdBytes)) {
       const entryHex = toHex(row.entryId);

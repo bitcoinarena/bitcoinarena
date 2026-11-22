@@ -57,7 +57,8 @@ export function standingLiquiditySeating({ signed = [], federationId, epoch, sea
     row.signers.add(String(s.guardian).toLowerCase());
     byBody.set(key, row);
   }
-  const best = [...byBody.values()].sort((a, b) => b.signers.size - a.signers.size)[0];
+  // the most signers; a tie broken by the list's bytes, never by the order the signatures were read in (kanban #2640)
+  const best = [...byBody.entries()].sort(([ka, a], [kb, b]) => b.signers.size - a.signers.size || (ka < kb ? -1 : ka > kb ? 1 : 0)).map(([, row]) => row)[0];
   if (!best || best.signers.size < threshold) return { ok: false, signers: best ? best.signers.size : 0, why: `no liquidity seating for epoch ${epoch} is signed by ${threshold} of the seated guardians` };
   return { ok: true, seating: { federationId: String(federationId).toLowerCase(), epoch, providers: best.providers }, signers: best.signers.size };
 }

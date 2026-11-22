@@ -30,6 +30,7 @@ import { displayNameFromKey } from '../../arena-protocol/src/display-name.js';
 import { signEvent } from './nwc.js';
 import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
 import { encodeReferralName, referralNameId } from '../../arena-protocol/src/referral-name.js';
+import { putRoomy } from './page-lock.js';
 
 /** Where a tab keeps the name its player chose. */
 export const CUSTOM_NAME_KEY = 'arena.player.name';
@@ -279,11 +280,44 @@ export function referralNameFor({ name, storage, random, curve, nowMs = Date.now
  * and not asked again. Answers { key, collected: [{ outpoint, federationId, amountMsat, item, roundId }], spent, failed, waiting, totalMsat,
  * referral }.
  * AND WHAT THIS PLAYER'S REFERRAL LINK EARNED (kanban #681): the website payouts under the same key ('website' rows, referralOf) are
- * collected the same way; `referral` is every one the seats list - { msat, payouts } - collected or not.
+ * collected the same way; `referral` is every one this wallet collected - { msat, payouts } - kept in `keep` (arena.zaps.referral,
+ * kanban #1929): a row a seat lists is data, not money.
  */
+// kanban #2133, #2195: [outpoint, byVersion] in the order the Refund budget is spent - most distinct seats first, then round-robin
+// by the lowest-index seat that listed each outpoint (Map order is the order rows were read, so a seat's own rows keep their order).
+function fairOrder(found, seen) {
+  const tiers = new Map(); // distinct seats -> first seat -> [entries]
+  for (const e of found) {
+    if (seen.has(e[0])) continue;
+    const seatsOf = new Set();
+    for (const v of e[1].values()) for (const si of v.seats) seatsOf.add(si);
+    const n = seatsOf.size, owner = Math.min(...seatsOf);
+    if (!tiers.has(n)) tiers.set(n, new Map());
+    const byOwner = tiers.get(n);
+    if (!byOwner.has(owner)) byOwner.set(owner, []);
+    byOwner.get(owner).push(e);
+  }
+  const out = [];
+  for (const n of [...tiers.keys()].sort((a, b) => b - a)) {
+    const queues = [...tiers.get(n).keys()].sort((a, b) => a - b).map((o) => tiers.get(n).get(o));
+    for (let i = 0, more = true; more; i++) {
+      more = false;
+      for (const q of queues) if (i < q.length) { out.push(q[i]); more = true; }
+    }
+  }
+  return out;
+}
 export const ZAPS_COLLECTED_KEY = 'arena.zaps.collected';
+/** THE REFUNDS THIS BROWSER BEGAN (kanban #2319): an outpoint is written here (putRoomy) BEFORE its refund is sent and leaves once the
+ *  pass has filed it. A refund the guardians accepted in a pass that never ended (the tab closed, reloaded, the call cut or timed out)
+ *  is found spent by the next pass; with its mark here it is this browser's own collect and is returned as collected - booked once
+ *  (the page's row id is 'zap-<outpoint>', so two tabs that both see it write one row) - not filed as spent and never booked. */
+export const ZAPS_COLLECTING_KEY = 'arena.zaps.collecting';
+export const ZAPS_CURSOR_KEY = 'arena.zaps.cursor';
 export const ZAPS_ROWS_PER_SEAT = 200;
 export const ZAPS_REFUNDS_PER_PASS = 50;
+// kanban #2428: settled outpoints remembered (was 500) - one dropped is asked again, found spent, and noted again.
+export const ZAPS_SEEN_KEPT = 4000;
 export async function collectZaps({ storage, keep = storage, random, curve, clients, seats, fetcher = fetch } = {}) {
   if (!curve || typeof curve.pointX !== 'function') throw new Error('a zap is collected with the identity key, and no curve was injected');
   const secret = identitySecretFor(tabSeed({ storage, random }));
@@ -291,49 +325,97 @@ export async function collectZaps({ storage, keep = storage, random, curve, clie
   let done = [];
   try { done = JSON.parse((keep && keep.getItem(ZAPS_COLLECTED_KEY)) || '[]'); } catch { done = []; }
   const seen = new Set(Array.isArray(done) ? done : []);
+  let marked = [];
+  try { marked = JSON.parse((keep && keep.getItem(ZAPS_COLLECTING_KEY)) || '[]'); } catch { marked = []; }
+  const collecting = new Set(Array.isArray(marked) ? marked : []);
+  const begun = new Set(collecting);   // marked by an earlier pass: this pass's own spent answer to its own first refund is not one
+  const keepSeen = () => { try { if (keep) keep.setItem(ZAPS_COLLECTED_KEY, JSON.stringify([...seen].slice(-ZAPS_SEEN_KEPT))); } catch { /* not kept: asked again, then found spent */ } };
+  const keepCollecting = () => { if (keep) putRoomy(keep, ZAPS_COLLECTING_KEY, JSON.stringify([...collecting].slice(-ZAPS_SEEN_KEPT))); };
+  let cursors = {};
+  try { cursors = JSON.parse((keep && keep.getItem(ZAPS_CURSOR_KEY)) || '{}') || {}; } catch { cursors = {}; }
+  if (typeof cursors !== 'object' || Array.isArray(cursors)) cursors = {};
   // kanban #1557: a /donations row is not signed, so one seat answering first with the real outpoint and a changed amountMsat /
   // playerKey / senderOnContract must not stand for that outpoint. Every distinct version is kept (outpoint -> version -> the seats
   // that said it; one version per seat and outpoint, so a seat cannot flood an outpoint), and each is tried - most seats first - until
   // one is collected or reads as spent, as lookOwed keeps every version since #1273.
-  const found = new Map();
+  // `found` holds every well-formed row (the referral total counts them all, collected or not); `open` only the rows this pass may
+  // spend its Refund budget on.
+  const found = new Map(), open = new Map();
   const versionOf = (d) => JSON.stringify([String(d.federationId).toLowerCase(), String(d.amountMsat), !!d.senderOnContract, String(d.playerKey || ''), String(d.item || '')]);
-  await Promise.all((seats || []).map(async (s, si) => {
+  const note = (into, d, si) => {
+    let byVersion = into.get(d.outpoint);
+    if (!byVersion) into.set(d.outpoint, byVersion = new Map());
+    if ([...byVersion.values()].some((v) => v.seats.has(si))) return;
+    const k = versionOf(d);
+    if (!byVersion.has(k)) byVersion.set(k, { d, seats: new Set() });
+    byVersion.get(k).seats.add(si);
+  };
+  const seatList = (seats || []).map((s) => String(s).replace(/\/$/, ''));
+  const rowsOf = await Promise.all(seatList.map(async (s) => {
     try {
-      const r = await fetcher(`${String(s).replace(/\/$/, '')}/donations?key=${pk}&since=0`, { cache: 'no-store', signal: AbortSignal.timeout(8000) });
-      if (!r.ok) return;
-      // kanban #1618: one seat's list is read only to its first ZAPS_ROWS_PER_SEAT well-formed rows (outpoint txid:vout, a 64-hex
-      // federation id, a positive whole msat amount) - a seat listing 20,000 made-up outpoints no longer drives 20,000 Refund calls.
-      let taken = 0;
+      const r = await fetcher(`${s}/donations?key=${pk}&since=0`, { cache: 'no-store', signal: AbortSignal.timeout(8000) });
+      if (!r.ok) return [];
       const list = (await r.json()).donations;
-      for (const d of (Array.isArray(list) ? list : [])) {
-        if (taken >= ZAPS_ROWS_PER_SEAT) break;
-        if (!d || !/^[0-9a-f]{64}:\d+$/.test(String(d.outpoint)) || !/^[0-9a-f]{64}$/i.test(String(d.federationId))
-          || !/^[1-9]\d{0,20}$/.test(String(d.amountMsat))) continue;
-        taken++;
-        let byVersion = found.get(d.outpoint);
-        if (!byVersion) found.set(d.outpoint, byVersion = new Map());
-        if ([...byVersion.values()].some((v) => v.seats.has(si))) continue;
-        const k = versionOf(d);
-        if (!byVersion.has(k)) byVersion.set(k, { d, seats: new Set() });
-        byVersion.get(k).seats.add(si);
-      }
-    } catch { /* another seat answers for it */ }
+      return (Array.isArray(list) ? list : []).filter((d) => d && /^[0-9a-f]{64}:\d+$/.test(String(d.outpoint))
+        && /^[0-9a-f]{64}$/i.test(String(d.federationId)) && /^[1-9]\d{0,20}$/.test(String(d.amountMsat)));
+    } catch { return []; /* another seat answers for it */ }
   }));
+  const nextCursors = {};
+  rowsOf.forEach((rows, si) => {
+    for (const d of rows) note(found, d, si);
+    // kanban #1618: one seat's rows open to the Refund budget are at most ZAPS_ROWS_PER_SEAT well-formed rows a pass (outpoint
+    // txid:vout, a 64-hex federation id, a positive whole msat amount) - a seat listing 20,000 made-up outpoints no longer drives
+    // 20,000 Refund calls.
+    // kanban #2428 (refute of #1618): the seats list a key's rows OLDEST FIRST and never delete a player's, so the first 200 rows
+    // alone froze every zap after the 200th for good (200 old zaps or referral payouts, or 200 one-msat dust zaps a stranger sent).
+    // Rows already settled (in `seen`) no longer use the per-seat budget, and when more than ZAPS_ROWS_PER_SEAT unsettled rows are
+    // listed, a per-seat cursor (kept in `keep`) moves the window forward each pass and wraps, so every row is reached in turn.
+    const unsettled = rows.filter((d) => !seen.has(d.outpoint));
+    let start = 0;
+    if (unsettled.length > ZAPS_ROWS_PER_SEAT) {
+      const c = Number(cursors[seatList[si]]);
+      start = Number.isSafeInteger(c) && c >= 0 ? c % unsettled.length : 0;
+      nextCursors[seatList[si]] = (start + ZAPS_ROWS_PER_SEAT) % unsettled.length;
+    }
+    const n = Math.min(ZAPS_ROWS_PER_SEAT, unsettled.length);
+    for (let i = 0; i < n; i++) note(open, unsettled[(start + i) % unsettled.length], si);
+  });
+  try { if (keep) keep.setItem(ZAPS_CURSOR_KEY, JSON.stringify(nextCursors)); } catch { /* not kept: the window starts at the oldest row again */ }
   const collected = [], spent = [], failed = [], waiting = [];
   const accepted = new Map(); // outpoint -> the version a refund accepted
   let asked = 0;
-  for (const [outpoint, byVersion] of found) {
-    if (seen.has(outpoint)) continue;
-    const versions = [...byVersion.values()].sort((a, b) => b.seats.size - a.seats.size).map((v) => v.d);
+  // kanban #2133, #2195 (refute of #1618): the ZAPS_REFUNDS_PER_PASS budget is spent fairly, not in the order the seats' answers
+  // arrived - else one fast seat with 200 fresh made-up rows a pass took every call and a real zap every honest seat lists waited
+  // for ever. Outpoints listed by more distinct seats go first; among those listed by as many, the seats that listed them take turns
+  // (round-robin by the lowest-index seat that listed each), so one seat's rows alone never use the budget other seats' rows need.
+  for (const [outpoint, byVersion] of fairOrder(open, seen)) {
+    // a version in a federation this tab holds no wallet in is looked at first (it waits, asking nothing), so a spent answer elsewhere never files
+    // the outpoint ahead of it (kanban #2833)
+    const noWallet = (d) => { const c = clients && clients.get ? clients.get(String(d.federationId).toLowerCase()) : null; return !c || typeof c.refund !== 'function' ? 0 : 1; };
+    const versions = [...byVersion.values()].sort((a, b) => noWallet(a.d) - noWallet(b.d) || b.seats.size - a.seats.size).map((v) => v.d);
     const tried = [], waits = [];
     let settled = false;
     for (const d of versions) {
+      // A SPENT ANSWER FROM ONE FEDERATION DOES NOT FILE AN OUTPOINT ANOTHER VERSION NAMES IN A FEDERATION NOT YET ASKED (kanban #2833, #1489
+      // r24-client-1): one seat listed a real zap's outpoint under a federation this tab holds a wallet in; the refund there found no contract
+      // ("spent") and the outpoint was filed for good, so the real zap - in a federation the tab had no wallet in yet - was never collected.
+      // While a version in another federation is waiting (no wallet open, or no budget left this pass), a spent answer elsewhere settles nothing.
+      if (waits.some((w) => String(w.federationId).toLowerCase() !== String(d.federationId).toLowerCase())) {
+        const r0 = await collectOne(d);
+        if (r0 === 'collected') { accepted.set(outpoint, d); seen.add(outpoint); keepSeen(); collecting.delete(outpoint); try { keepCollecting(); } catch { /* seen */ } settled = true; break; }
+        if (r0 === 'waiting') waits.push(d); else if (r0 && r0.why !== undefined) tried.push(r0);
+        continue;
+      }
       const r = await collectOne(d);
       if (r === 'waiting') { waits.push(d); continue; }
       if (r === 'skip') continue;
       if (r && r.why !== undefined) { tried.push(r); continue; }
       if (r === 'collected') accepted.set(outpoint, d);
+      // filed: noted as seen at once (not only at the pass's end), then the mark leaves (kanban #2319)
       seen.add(outpoint);
+      keepSeen();
+      collecting.delete(outpoint);
+      try { keepCollecting(); } catch { /* the mark stays: the outpoint is already seen and never asked again */ }
       settled = true;
       break;
     }
@@ -349,20 +431,33 @@ export async function collectZaps({ storage, keep = storage, random, curve, clie
     if (!m || !/^\d+$/.test(String(d.amountMsat))) return 'skip';
     const image = d.senderOnContract && /^[0-9a-f]{64}$/.test(String(d.playerKey || '')) ? d.playerKey : '00'.repeat(32);
     const fields = JSON.stringify({ paymentImage: { kind: 'hash', bytes: image }, amountMsat: String(d.amountMsat), claimPk: pk, refundPk: pk, expiration: 0 });
+    // kanban #2319: the intent is written ahead; a refund whose mark cannot be kept is not sent (its answer could be lost unbooked)
+    if (!collecting.has(d.outpoint)) {
+      collecting.add(d.outpoint);
+      try { keepCollecting(); } catch (e) { collecting.delete(d.outpoint); return { ...d, why: `not collected: this browser cannot note it (${String(e && e.message || e)})` }; }
+    }
     let said;
     try { said = JSON.parse(await client.refund(m[1], Number(m[2]), fields, toHex(secret))); } catch (e) { return { ...d, why: String(e && e.message || e) }; }
-    if (said.accepted === true) { collected.push({ outpoint: d.outpoint, federationId: d.federationId, amountMsat: String(d.amountMsat), item: d.item || null, roundId: d.roundId || null }); return 'collected'; }
-    if (said.stored_before === null || said.stored_before === undefined) { spent.push(d); return 'spent'; }
+    const mine = { outpoint: d.outpoint, federationId: d.federationId, amountMsat: String(d.amountMsat), item: d.item || null, roundId: d.roundId || null };
+    if (said.accepted === true) { collected.push(mine); return 'collected'; }
+    if (said.stored_before === null || said.stored_before === undefined) {
+      if (begun.has(d.outpoint)) { collected.push(mine); return 'collected'; }   // a refund this browser began, accepted in a pass that did not end
+      spent.push(d); return 'spent';
+    }
     return { ...d, why: said.error || 'the federation did not accept the collect' };
   }
-  try { if (keep) keep.setItem(ZAPS_COLLECTED_KEY, JSON.stringify([...seen].slice(-500))); } catch { /* not kept: asked again, then found spent */ }
-  // kanban #1557: the referral total counts an outpoint's row only when a refund accepted that version or every seat that listed the
-  // outpoint gave the same one - a seat's changed amount neither inflates nor hides it.
-  const web = [];
-  for (const [outpoint, byVersion] of found) {
-    const d = accepted.get(outpoint) || (byVersion.size === 1 ? [...byVersion.values()][0].d : null);
-    if (d && d.item === 'website' && /^\d+$/.test(String(d.amountMsat))) web.push(d);
-  }
+  keepSeen();
+  // kanban #1929 (the owner 2026-11-14: only collected payments count): the referral total is the website payouts the federation
+  // accepted to this key, in this pass or an earlier one, kept in `keep` (arena.zaps.referral: outpoint -> msat) - never a seat's
+  // bare /donations list, which one seat could make up (a row with no contract behind it). A payout waiting for a wallet in its
+  // federation is counted once it is collected.
+  let earned = {};
+  try { const k = JSON.parse((keep && keep.getItem(ZAPS_REFERRAL_KEY)) || '{}'); if (k && typeof k === 'object' && !Array.isArray(k)) earned = k; } catch { earned = {}; }
+  for (const c of collected) if (c.item === 'website' && /^\d{1,21}$/.test(String(c.amountMsat))) earned[c.outpoint] = String(c.amountMsat);
+  const web = Object.entries(earned).filter(([o, a]) => /^[0-9a-f]{64}:\d+$/.test(o) && /^\d{1,21}$/.test(String(a))).slice(-ZAPS_SEEN_KEPT);
+  try { if (keep && collected.some((c) => c.item === 'website')) keep.setItem(ZAPS_REFERRAL_KEY, JSON.stringify(Object.fromEntries(web))); } catch { /* counted again once kept */ }
   return { key: pk, collected, spent, failed, waiting, totalMsat: String(collected.reduce((t, c) => t + BigInt(c.amountMsat), 0n)),
-    referral: { msat: String(web.reduce((t, d) => t + BigInt(d.amountMsat || 0), 0n)), payouts: web.length } };
+    referral: { msat: String(web.reduce((t, [, a]) => t + BigInt(a), 0n)), payouts: web.length } };
 }
+/** kanban #1929: the website (referral) payouts this wallet collected, outpoint -> msat. */
+export const ZAPS_REFERRAL_KEY = 'arena.zaps.referral';

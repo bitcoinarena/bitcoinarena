@@ -371,7 +371,11 @@ test('automatic network updates: a newer package of the same network and federat
     let v;
     for (let i = 0; i < 50; i++) { await new Promise((r) => setTimeout(r, 100)); v = await view(); if (v.installed[0].sets.length === 2) break; }
     assert.deepEqual(v.installed[0].sets.map((s) => s.serial), ['1', '2'], 'A2\'s newer package taken by itself');
-    assert.deepEqual(v.installed[0].series.map((s) => [s.id, s.held]), [[toHex(seriesIdOf(series)), true]], 'its series held, no restart');
+    // an automatic update holds no series nobody funded or published (kanban #2545): it is listed, not written - the owner's own update takes it
+    assert.deepEqual(v.installed[0].series.map((s) => [s.id, s.held]), [[toHex(seriesIdOf(series)), false]], 'its series listed, not written by an unattended update');
+    [st, j] = await post('/owner/network/update', req('network-update', { network: net, from: url(a2) }));
+    assert.equal(st, 200, j.why);
+    assert.deepEqual((await view()).installed[0].series.map((s) => [s.id, s.held]), [[toHex(seriesIdOf(series)), true]], 'the owner\'s update holds it, no restart');
     assert.equal(v.installed[0].federationId, toHex(TEST_FEDERATION_ID), 'A3\'s other federation was not taken');
     assert.deepEqual(v.draining, [], 'and nothing is draining');
   } finally { for (const s of [a1, a2, a3, b]) await s.close(); }

@@ -7,9 +7,28 @@
 // `arena-install --add-bond <sats>` and the owner page's "Add to bond" show the plan (the amount, the fees, the new total, the
 // maturity); with --yes / the confirm it is posted and recorded in the state's `bonds`.
 import { DatabaseSync } from 'node:sqlite';
-import { walletOf, payoutKeyOf, coinsOf, broadcast, txSeen } from './wallet.js';
+import { walletOf, payoutKeyOf, coinsOf, broadcast, txSeen, txOut } from './wallet.js';
 import { buildBond, lockOf, MARKER_SATS, EMERGENCY_IN_ADVERT } from './bond.js';
 import { bondsOf } from './state.js';
+
+/**
+ * THE RECORDED BOND OUTPUTS THE CHAIN SHOWS SPENT (kanban #2098, state audit 2026-11-12): a withdrawal on the owner page (POST
+ * /owner/bond-withdraw, a seat that missed writing it, or one from before it did) leaves state.json naming outputs that are gone - first-bond
+ * then answered "posted already" with the spent bond for good and add-bond put the spent sat into its total. Each recorded output is asked of
+ * the chain (chainKit.txOut, Bitcoin Core's gettxout with the mempool); only a definite "spent" (null) takes it out - an unknown answer, an
+ * error or a chain kit without txOut keeps it. Answers the outpoints spent: [] when none (or nothing could be asked).
+ */
+async function spentBondsOf(s, chainKit) {
+  if (!chainKit || typeof chainKit.txOut !== 'function') return [];
+  const spent = [];
+  for (const b of bondsOf(s)) {
+    let o; try { o = await chainKit.txOut(b.txid, Number(b.vout || 0), s.chain); } catch { o = undefined; }
+    if (o === null) spent.push({ txid: b.txid, vout: Number(b.vout || 0) });
+  }
+  return spent;
+}
+const isIn = (spent) => (b) => spent.some((x) => x.txid === b.txid && x.vout === Number(b.vout || 0));
+const liveBondsOf = (s, spent) => bondsOf(s).filter((b) => !isIn(spent)(b));
 import { onchainAction, resumeOpen, openActionOf } from './onchain-action.js';
 
 /** The same "Add" asked again within this long - the owner page's double click, an answer lost - is the one done, not a second output
@@ -28,7 +47,7 @@ import { fromHex } from '../../arena-protocol/src/hash.js';
  * again; the same add asked again (`key`, else the same amount within ADD_BOND_SAME_MS) answers the one done; the output is added to
  * the bonds as they are when it is through (the outputs read before the broadcast are never written back).
  */
-export async function addBond({ state, addSats, post = false, chainKit = { coinsOf, broadcast, seen: txSeen }, softwareHash, feeRate = 2, guardianEndpoint = null,
+export async function addBond({ state, addSats, post = false, chainKit = { coinsOf, broadcast, seen: txSeen, txOut: (txid, vout, chain) => txOut(chain, txid, vout) }, softwareHash, feeRate = 2, guardianEndpoint = null,
   guardianOf = [], nowMs = Date.now(), key = null }) {
   let add;
   try { add = BigInt(addSats); } catch { return { ok: false, why: `not an amount of sat: ${addSats}` }; }
@@ -36,27 +55,30 @@ export async function addBond({ state, addSats, post = false, chainKit = { coins
   if (add < MARKER_SATS) return { ok: false, why: `an added bond output is at least ${MARKER_SATS} sat` };
   if (!post) {
     await resumeOpen(state, { chainKit });   // an add sent before and not through yet: finished first, so the plan reads the coins after it
-    const p = await addBondPlan({ state, s: state.read(), add, chainKit, softwareHash, feeRate, guardianEndpoint, guardianOf, nowMs });
+    const s = state.read();
+    const p = await addBondPlan({ state, s, spent: await spentBondsOf(s, chainKit), add, chainKit, softwareHash, feeRate, guardianEndpoint, guardianOf, nowMs });
     return p.ok ? { ok: true, plan: p.plan } : p;
   }
+  const spent = await spentBondsOf(state.read(), chainKit);   // kanban #2098: asked of the chain before the action's build
   const r = await onchainAction({ state, kind: 'add-bond', key: key ? `key ${key}` : `${add} sat`, sameWithinMs: key ? 0 : ADD_BOND_SAME_MS, chainKit,
     build: async (s) => {
-      const p = await addBondPlan({ state, s, add, chainKit, softwareHash, feeRate, guardianEndpoint, guardianOf, nowMs });
+      const p = await addBondPlan({ state, s, spent, add, chainKit, softwareHash, feeRate, guardianEndpoint, guardianOf, nowMs });
       if (!p.ok) return p;
       const { built, tip, plan } = p;
       const bond = { txid: built.bond.txid, vout: 0, fundingTxid: built.funding.txid, sats: String(built.bondSats), maturity: built.maturity, advertId: built.advertId, postedAtTip: tip,
         lock: plan.lock, atMs: Date.now(), added: true };
       return { ok: true, tip, txs: [{ name: 'funding', hex: built.funding.hex }, { name: 'bond', hex: built.bond.hex }],
-        ops: [{ op: 'push', key: 'bonds', values: [bond] }], result: { plan: planWithoutBytes(plan), bond } };
+        ops: [...(spent.length ? [{ op: 'drop-bonds', values: spent }] : []), { op: 'push', key: 'bonds', values: [bond] }], result: { plan: planWithoutBytes(plan), bond } };
     } });
   if (!r.ok) return r;
   return { ok: true, plan: r.result.plan, bond: r.result.bond, bonds: bondsOf(state.read()), ...(r.already ? { already: true } : {}) };
 }
 
 /** The plan of an added output on the state `s`: { ok, plan, built, tip } or { ok: false, why }. */
-async function addBondPlan({ state, s, add, chainKit, softwareHash, feeRate, guardianEndpoint, guardianOf, nowMs }) {
-  const outputs = bondsOf(s);
-  if (!outputs.length) return { ok: false, why: 'this node has no bond yet: set up its first bond in the owner area (Bond)' };
+async function addBondPlan({ state, s, spent = [], add, chainKit, softwareHash, feeRate, guardianEndpoint, guardianOf, nowMs }) {
+  const outputs = liveBondsOf(s, spent);   // kanban #2098: the outputs the chain still holds, never a withdrawn one
+  if (!outputs.length) return { ok: false, why: bondsOf(s).length ? 'this node\'s bond was withdrawn: post a new first bond in the owner area (Bond)'
+    : 'this node has no bond yet: set up its first bond in the owner area (Bond)' };
   const seedHex = state.readSecret('seed.hex');
   if (!seedHex) return { ok: false, why: 'the wallet seed is not in this node\'s home' };
   const seed = fromHex(seedHex);
@@ -115,13 +137,21 @@ export async function addBondOnNode({ home, release, addSats, post = false, chai
  * liquidity node its agent started, as the wizard starts it. `askMinimum` asks the seats the network's minimum (install-minimum.js), at
  * most every 10 minutes. Answers { ok, plan } / { ok, plan, bond } / { ok, done: true, bond } when a bond is posted already, or { ok: false, why }.
  */
-export async function firstBond({ state, post = false, chainKit = { coinsOf, broadcast, seen: txSeen }, softwareHash, guardianEndpoint = null, askMinimum = null,
-  startAgent = null, feeRate = 2, nowMs = Date.now() }) {
+export async function firstBond({ state, post = false, chainKit = { coinsOf, broadcast, seen: txSeen, txOut: (txid, vout, chain) => txOut(chain, txid, vout) }, softwareHash, guardianEndpoint = null, askMinimum = null,
+  startAgent = null, feeRate = 2, nowMs = Date.now(), release = null }) {
   // A FIRST BOND SENT AND NOT RECORDED (kanban #1165: a crash, a lost answer, the wizard's post beside this one): finished first - the Bond
   // panel asks every 30 s, so a bond broadcast before a crash is recorded within the minute - and never built a second time
   if (openActionOf(state.read())) await resumeOpen(state, { chainKit });
   let s = state.read();
-  if (bondsOf(s).length) return { ok: true, done: true, bond: s.bond || bondsOf(s)[0] };
+  // kanban #2098: a record whose every output the chain shows spent (the bond withdrawn) is no bond - a new first bond is posted over it
+  const spent = bondsOf(s).length ? await spentBondsOf(s, chainKit) : [];
+  // A BONDED CUSTODY OR LIQUIDITY NODE WITHOUT ITS AGENT (kanban #2464, #1489 sm1-node-4): the bond is recorded by its on-chain action
+  // before the agent is installed, so a seat that died between the two (or an install that failed once) answered "done" here for good and
+  // the agent was never installed (no guardian_of, no peg-in, no deposit). Every ask on a recorded bond now installs a missing agent first.
+  if (liveBondsOf(s, spent).length) {
+    const agent = await agentIfMissing({ state, startAgent, nowMs });
+    return { ok: true, done: true, bond: liveBondsOf(s, spent)[0], ...(agent ? { agent } : {}) };
+  }
   if (!(s.done || {}).service) return { ok: false, why: 'this node is not installed yet: its bond is signed with its own key' };
   const seedHex = state.readSecret('seed.hex');
   if (!seedHex) return { ok: false, why: 'the wallet seed is not in this node\'s home' };
@@ -154,16 +184,30 @@ export async function firstBond({ state, post = false, chainKit = { coinsOf, bro
   // THE FIRST BOND IS AN ON-CHAIN ACTION OF ITS OWN KIND (kanban #1165), built only on a state with no bond (compare-and-set): the wizard's bond step posts the same kind ('first-bond')
   const r = await onchainAction({ state, kind: 'first-bond', chainKit,
     build: async (s2) => {
-      if (bondsOf(s2).length) return { ok: false, alreadyBond: s2.bond || bondsOf(s2)[0] };   // recorded meanwhile (an older wizard, another tab)
+      if (liveBondsOf(s2, spent).length) return { ok: false, alreadyBond: liveBondsOf(s2, spent)[0] };   // recorded meanwhile (an older wizard, another tab)
       const { tip, coins, bondSats, plan } = await planOf(s2, false);
       planned = plan;
       if (!plan.enough) return { ok: false, why: `the wallet holds ${plan.walletSats} sat: send ${plan.shortSats} sat more to ${w.address} first`, plan };
       const db = new DatabaseSync(state.path('node.db'), { readOnly: true });
       let nodeSecret;
       try { nodeSecret = new Uint8Array(db.prepare('SELECT secret FROM identity WHERE one = 0').get().secret); } finally { db.close(); }
+      // THE NEW BOND NAMES THE GAMES OF THE RELEASE THIS NODE RUNS (kanban #3101, refute of #3068/#3089): read here, inside the build, where
+      // no live bond is left - not from state.hostedGames, which over a withdrawn (spent) recorded bond (kanban #2098) is still the list the
+      // OLD bond advertised: releaseGamesBeforeBond leaves a recorded bond alone and refreshHostedGames cannot correct it (its update names
+      // the spent bond), so a node bonded on an older release, withdrawn, updated and bonded again named the old games and was never drawn
+      // for the newer versions. The list is written to state with the bond. No release given (or it hosts none of the apps): state's list.
+      // kanban #3114/#3115: the one build rule both first-bond doors share (apps.js bondGamesOf), also the release the node runs
+      let hostedGames = s2.hostedGames;
+      if (release || (s2.release && s2.release.path)) {
+        try {
+          const { bondGamesOf } = await import('./apps.js');
+          const now = await bondGamesOf(s2, release, { home: state.home, runs: release });   // kanban #3128: the owner page is the running release's code
+          if (now.length) hostedGames = now;
+        } catch { /* the list in state stands */ }
+      }
       let built;
       try {
-        built = buildBond({ hostedGames: s2.hostedGames, wallet: w, nodeSecret, coins, tip, bondSats, operatorId: `op-${s2.owner.pubkey.slice(0, 12)}`, roles: s2.roles,
+        built = buildBond({ hostedGames, wallet: w, nodeSecret, coins, tip, bondSats, operatorId: `op-${s2.owner.pubkey.slice(0, 12)}`, roles: s2.roles,
           endpoint: s2.reach.url, payoutPubkey: payoutKeyOf(seed), softwareHash, feeRate, guardianEndpoint, nowMs,
           emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null });
       } catch (e) { return { ok: false, why: e.message, plan }; }
@@ -171,20 +215,33 @@ export async function firstBond({ state, post = false, chainKit = { coinsOf, bro
         lock: lockOf(tip, { maturity: built.maturity }), atMs: nowMs, fromOwnerArea: true };
       // the wizard's mark('bond'): the step done, and what its advertisement declares (change-roles refreshHostedGames)
       return { ok: true, tip, txs: [{ name: 'funding', hex: built.funding.hex }, { name: 'bond', hex: built.bond.hex }],
-        ops: [{ op: 'set', key: 'bond', value: bond }, { op: 'set', key: 'advertProtocols', value: [...SUPPORTED_PROTOCOL_VERSIONS] }, { op: 'done', step: 'bond' }], result: { plan, bond } };
+        ops: [...(spent.length ? [{ op: 'drop-bonds', values: spent }] : []), { op: 'set', key: 'bond', value: bond },
+          ...(hostedGames !== s2.hostedGames ? [{ op: 'set', key: 'hostedGames', value: hostedGames }] : []), { op: 'set', key: 'advertProtocols', value: [...SUPPORTED_PROTOCOL_VERSIONS] }, { op: 'done', step: 'bond' }], result: { plan, bond } };
     } });
   if (r.alreadyBond) return { ok: true, done: true, bond: r.alreadyBond };
   if (!r.ok) return r.plan || !planned ? r : { ...r, plan: planned };
   const plan = r.result.plan, bond = r.result.bond;
-  s = state.read();
-  const custody = (s.roles || []).includes('custody');
   // A CUSTODY OR LIQUIDITY NODE'S AGENT, as the wizard's bond step starts it (custody-agent.js: guardian_of, the peg-in, the deposit)
-  let agent = null;
-  if ((custody || (s.roles || []).includes('liquidity')) && startAgent && !((state.read().custodyAgent || {}).installedMs)) {
-    try { agent = await startAgent(); } catch (e) { agent = { ok: false, why: e.message }; }
-    state.save({ custodyAgent: agent && agent.ok ? { installedMs: nowMs } : { why: (agent && agent.why) || 'not started' } });
-  }
+  const agent = await agentIfMissing({ state, startAgent, nowMs });
   return { ok: true, plan, bond, agent };
+}
+
+/**
+ * The custody agent of a bonded custody or liquidity node, installed when it is not recorded installed (kanban #2464): idempotent (the
+ * install is a service unit written again), a failed install kept as { why } with no installedMs - tried again at the next ask. Not on a
+ * node whose custody is still to be added to its bond's advertisement (the wizard's custody-advert step installs it then). Null when
+ * nothing was to do.
+ */
+async function agentIfMissing({ state, startAgent, nowMs }) {
+  const s = state.read();
+  if (!startAgent || !bondsOf(s).length || ((s.custodyAgent || {}).installedMs)) return null;
+  const custody = (s.roles || []).includes('custody');
+  if (!custody && !(s.roles || []).includes('liquidity')) return null;
+  if (custody && s.custodyLater && !(s.bond || {}).custodyAdvert) return null;
+  let agent;
+  try { agent = await startAgent(); } catch (e) { agent = { ok: false, why: e.message }; }
+  state.save({ custodyAgent: agent && agent.ok ? { installedMs: nowMs } : { why: (agent && agent.why) || 'not started' } });
+  return agent;
 }
 
 /** THE FIRST BOND ON AN INSTALLED NODE (kanban #728): POST /owner/first-bond - the release's software hash and guardian endpoint, as addBondOnNode. */
@@ -206,9 +263,14 @@ async function firstBondOnNodeNow({ home, release, post = false, chainKit, state
   const { nodeState, guardianSetupOf } = await import('./state.js');
   const st = state || nodeState(home);
   let softwareHash; try { softwareHash = sha256(readFileSync(join(release, 'COMMIT'))); } catch { softwareHash = new Uint8Array(32); }
+  // THE FIRST BOND NAMES THIS RELEASE'S GAMES (kanban #3089, refute of #3068): the games were written down only by the updater's
+  // refreshHostedGames - and the updater that moved this node here is the previous release's code, which (1.9.28 and older) returned
+  // "no bond yet" without writing them. Read here, where the bond is built, from the release this node runs: a node updated before its
+  // bond no longer advertises its install-time list (never drawn for the newer rock-paper-scissors and nextblock versions).
+  try { const { releaseGamesBeforeBond } = await import('./apps.js'); await releaseGamesBeforeBond(st, release); } catch { /* the list in state stands */ }
   const ask = askMinimum !== undefined ? askMinimum : async () => (await import('./install-minimum.js')).installMinimum({});
   const start = startAgent !== undefined ? startAgent : async () => (await import('./service.js')).installProgram({ id: 'custody', description: 'Bitcoin Arena: custody agent',
     home: st.home || home, boot: true, args: [process.execPath, join(release, 'packages', 'arena-installer', 'bin', 'custody-agent.mjs'), '--home', st.home || home] });
-  return firstBond({ state: st, post, softwareHash, guardianEndpoint: (guardianSetupOf(st.read(), { release }) || {}).endpoint || null, askMinimum: ask, startAgent: start,
+  return firstBond({ state: st, post, softwareHash, release, guardianEndpoint: (guardianSetupOf(st.read(), { release }) || {}).endpoint || null, askMinimum: ask, startAgent: start,
     ...(chainKit ? { chainKit } : {}) });
 }

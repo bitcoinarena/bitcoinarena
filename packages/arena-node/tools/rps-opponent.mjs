@@ -12,7 +12,7 @@
  *
  * WALLETS: DIR/wallet-<federation>.json, kept across runs. DIR/keys.jsonl: each entry's player key and locks, as tn4-rps-paid's KEYS_FILE, for tn4-collect.mjs.
  */
-import { readFileSync, writeFileSync, appendFileSync, copyFileSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, appendFileSync, copyFileSync, existsSync, mkdirSync, renameSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes, randomInt } from 'node:crypto';
@@ -23,7 +23,8 @@ import { feldmanGroup } from '../src/curve.js';
 import { lockFieldsToJson } from '../src/stake-lock-signer-node.js';
 import { attestedClaimKey } from '../../arena-client/src/join.js';
 import { pageCurve } from '../../arena-client/src/page-curve.js';
-import { hiddenMove, moveCommitment, revealMove } from '../../arena-client/src/head-to-head.js';
+import { hiddenMove, moveCommitment } from '../../arena-client/src/head-to-head.js';
+import { revealAsPage } from './h2h-reveal.mjs';   // kanban #2658: from protocol 28 the reveal waits for the certified lock set
 import { decodeRoundContract, roundId, encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
 import { markBot, entryKeys } from './mark-bot.mjs';   // kanban #2035: every live entry marked bot in the explorer
 import { dealHandout, encodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
@@ -38,6 +39,7 @@ import { matchProofId, presenceId } from '../../arena-protocol/src/match.js';
 import { encodeLobbyName, lobbyNameId } from '../../arena-protocol/src/lobby-name.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { lockClaimDigest } from '../../arena-protocol/src/lock-claim.js';
+import { botMayEnter, BOT_LEAD_MS } from '../src/opponent-trigger.js';   // kanban #2842: it stakes only on a verified stake lock
 
 const env = process.env;
 const nodes = String(env.NODES || '').split(',').map((u) => u.trim().replace(/\/+$/, '')).filter(Boolean);
@@ -45,6 +47,10 @@ const DIR = env.DIR, NAME = 'Test bot';
 // MIN_LEFT_MS (kanban #2043): the seats take a head-to-head handout only with more than ceil(h2hHandoutLeadMs * 1.5) left (node-start.js 2700 ms, so 4.05 s),
 // so an entry started with less could never be taken - it is not started
 const MOST_PER_HOUR = Number(env.MOST_PER_HOUR || 400), MIN_LEFT_MS = Number(env.MIN_LEFT_MS || 4050);
+// THE BOT'S LEAD FROM ITS TYPICAL LOCK, NOT ITS SLOWEST (kanban #2901, measured 2026-11-16 14:09-14:17Z: one 18.6 s lock while a seat restarted
+// made the max-based lead 19.4 s and the bot skipped the next rounds of known players with 9.7-15 s left): the median of its last locks + 1.5 s,
+// at least 4 s and at most 10 s
+const botLeadMs = (seen = []) => { const v = [...seen].sort((x, y) => x - y); const m = v.length ? v[Math.floor(v.length / 2)] : 0; return Math.max(4000, Math.min(10000, m + 1500)); };
 const lockMsSeen = [];   // the bot's last locks' times (kanban #2043): its lead before a lock is the page's rule over them (h2h-order.mjs h2hLeadMs)
 const log = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o }, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
 const rand = (n) => new Uint8Array(randomBytes(n));
@@ -62,17 +68,30 @@ const { LockClient } = wasm;
 
 // ONE WALLET PER FEDERATION, its secret and notes on disk: a restart keeps the money
 const wallets = new Map();
+const ROTATE_ENTRIES = Number(env.ROTATE_ENTRIES || 8000);   // kanban #2910
 for (const file of String(env.INVITES || '').split(',').filter(Boolean)) {
   const invite = readFileSync(file, 'utf8').replace(/["\s]/g, '');
   const fed = String(LockClient.federationIdOf(invite)).toLowerCase();
   const path = join(DIR, `wallet-${fed.slice(0, 16)}.json`);
   const kept = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : { secret: toHex(rand(32)), notes: [] };
   const held = new Map(kept.notes);
-  const flush = () => writeFileSync(path, JSON.stringify({ secret: kept.secret, notes: [...held] }), { mode: 0o600 });
+  // kanban #2910: the store was written whole and synchronously on every put/remove - 42,418 entries, 46 MB, the bot blocked ~8 s per lock
+  // (handout posted 9 s late). Written in the background at most once a second; the first write (below) stays synchronous.
+  let flushTimer = null;
+  const flushNow = () => writeFileSync(path, JSON.stringify({ secret: kept.secret, notes: [...held] }), { mode: 0o600 });
+  const flush = () => { if (flushTimer) return; flushTimer = setTimeout(() => { flushTimer = null; try { flushNow(); } catch {} }, 1000); };
   const store = { entries: () => JSON.stringify([...held]), put: (k, v) => { held.set(k, v); flush(); }, remove: (k) => { held.delete(k); flush(); } };
   const lc = await LockClient.join(invite, LockClient.federationIdOf(invite), kept.secret, store);
-  flush();
+  flushNow();
   wallets.set(fed, { lc, rule: JSON.parse(await lc.feeRule()) });
+  // A WALLET THAT GROWS TOO BIG IS ROTATED (kanban #2910, the owner 2026-11-16 "die Wallet-Migration regelmaessig, so dass es nicht mehr auftritt"): its
+  // store grew to 42,418 entries (46 MB) and slowed every lock to ~10 s. Past ROTATE_ENTRIES the file is renamed (never deleted) and the bot exits:
+  // its loop starts it again on a fresh wallet, which tops itself up from the faucet; what was left in the old one stays in the renamed file.
+  setInterval(() => {
+    if (held.size <= ROTATE_ENTRIES || busy) return;
+    try { flushNow(); renameSync(path, path + '.rotated-' + new Date().toISOString().replace(/[:.]/g, '')); } catch (e) { log({ step: 'rotate failed', why: e.message }); return; }
+    log({ step: 'wallet rotated', federation: fed.slice(0, 8), entries: held.size }); setTimeout(() => process.exit(0), 500);
+  }, 600000).unref();
   log({ step: 'wallet', federation: fed.slice(0, 8), balanceMsat: String(await lc.balanceMsat()) });
 }
 
@@ -100,7 +119,8 @@ const splitFile = join(DIR, 'splits.json');
 const big = (_, v) => (typeof v === 'bigint' ? { $n: String(v) } : v instanceof Uint8Array ? { $b: toHex(v) } : v);
 const un = (_, v) => (v && typeof v === 'object' && v.$n !== undefined ? BigInt(v.$n) : v && typeof v === 'object' && v.$b !== undefined ? fromHex(v.$b) : v);
 try { for (const [k, x] of JSON.parse(readFileSync(splitFile, 'utf8'), un)) splits.set(k, x); } catch { /* none kept yet */ }
-const splitKey = (c) => [toHex(c.federationId), c.stakeMsat, toHex(c.donationSetId), toHex(c.gameId)].join(':');
+// the protocol version is part of the key (kanban #2658): a protocol-27 round's entry carries no donation, a cached split of an older round's did
+const splitKey = (c) => [toHex(c.federationId), c.stakeMsat, toHex(c.donationSetId), toHex(c.gameId), Number(c.protocolVersion)].join(':');
 // A SEAT THAT ANSWERS FIRST: the donation sets of a round come from whichever of a few seats holds them soonest
 const firstSeat = async (u, o) => { const path = String(u).replace(/^https?:\/\/[^/]+/, ''); return Promise.any(nodes.slice(0, 5).map(async (n) => { const r = await fetch(`${n}${path}`, { ...o, signal: AbortSignal.timeout(3000) }); if (!r.ok) throw new Error(String(r.status)); return r; })); };
 const keys = new Map();   // federation hex -> its reserve key, read once
@@ -128,6 +148,7 @@ async function enter(c, rid, ready) {
   // NOT UNDER THE SEATS' KEPT LEAD (kanban #2043): a handout posted with less than ceil(h2hHandoutLeadMs * 1.5) left is refused by every seat
   if (Number(c.entryCloseMs) - Date.now() < 4050) return { ok: false, why: 'too late to enter' };
   const me = evenPlayer();
+  botKeys.add(toHex(me.pubkey));   // kanban #2842: its own entries never count as a player
   const s = { p: scalar(), player: me.pubkey };
   s.point = feldmanGroup.pointFromScalar(scalarFrom32(s.p) % FIELD);
   const needed = receiptsNeeded(c.settlementSlots ?? c.gameVerifySlots);
@@ -138,14 +159,16 @@ async function enter(c, rid, ready) {
   // fee lock only once `needed` seats took it and the time left on the seats' clock (their 201s' x-entry-close-in-ms) still covers the lock and the entry
   // (h2hLockRefusal, the page's lead). Before, the bot locked first: with 0.9-4.05 s left it spent the developers' and reserves' parts, then every seat refused
   // the handout 409 and the entry with it. A refused or late handout now leaves nothing locked.
-  const order = await handoutThenLock({ body: encodeHandout(dealt.handout), needed, nodes, entryCloseMs: c.entryCloseMs, leadMs: h2hLeadMs(lockMsSeen), waitMs: POST_MS,
-    lock: async () => {
-      const t = Date.now();
-      // SUBMITTED, NOT WAITED FOR (as market-bot.mjs, kanban #601): the guardians' agreement took over 30 s from the test host, in an 8 s round. The entry goes in at once, its locks after it
-      const l = await lockEntry({ lc: w.lc, c, split, stakePoint: s.point, player: s.player, claimPk: att.claimPk, gate, rand, expiry: Number(c.stakeExpiryBlocks), submitOnly: true });
-      lockMsSeen.push(Date.now() - t); if (lockMsSeen.length > 8) lockMsSeen.shift();
-      return l;
-    } });
+  // THE LOCK IN PARALLEL WITH THE HANDOUT (kanban #2910, the owner 2026-11-16 "mach den Lock des Bots viel schneller"; measured 19:03Z: handout 3.7 s, then the
+  // lock submitted and accepted 6 s later - 9.8 s in all, the page's lock overlaps its handout): the lock is submitted at once and the handout posted beside
+  // it. A refused handout leaves a lock no certified set names: the round voids and its locks come back at once (#2872); the donation parts of a test bot's
+  // 100 sat stake are the price.
+  const tLock = Date.now();
+  const pre = lockEntry({ lc: w.lc, c, split, stakePoint: s.point, player: s.player, claimPk: att.claimPk, gate, rand, expiry: Number(c.stakeExpiryBlocks), submitOnly: true })
+    .then((l) => { const sub = Date.now() - tLock; lockMsSeen.push(sub); if (lockMsSeen.length > 8) lockMsSeen.shift(); log({ step: "lock submitted", round: roundHex.slice(0, 8), submitMs: sub }); if (l && l.accepted) l.accepted.then(() => log({ step: "lock accepted", round: roundHex.slice(0, 8), acceptedMs: Date.now() - tLock }), () => {}); return l; });
+  pre.catch(() => {});
+  const order = await handoutThenLock({ body: encodeHandout(dealt.handout), needed, nodes, entryCloseMs: c.entryCloseMs, leadMs: botLeadMs(lockMsSeen), waitMs: POST_MS,
+    lock: () => pre });
   steps.handout = ms(t0);
   if (!order.ok) return { ok: false, why: order.why };
   const locks = order.locks;
@@ -206,11 +229,13 @@ async function enter(c, rid, ready) {
   for (const n of nodes) fetch(`${n}/name`, { method: 'POST', signal: AbortSignal.timeout(POST_MS), body: nameBody }).catch(() => null);
   log({ step: 'entered', round: roundHex.slice(0, 8), entry: toHex(eid).slice(0, 8), took, of: said.length, needed, ms: steps, leftAtEndMs: Number(c.entryCloseMs) - Date.now(),
     ...(took < needed ? { refused: [...new Set(said.map((x) => x.why).filter(Boolean))].slice(0, 2) } : {}) });
-  // THE REVEAL AFTER THE ENTRY CLOSE, as a page's
+  // THE REVEAL AFTER THE ENTRY CLOSE, as a page's - from protocol 28 once the lock set is certified (kanban #2658: one revealMove at close + 150 ms
+  // was refused 409 by every seat, the bot FORFEITED and the player at its table won every paid round)
   const proof = { key: toHex(identityKey), sig: toHex(schnorr.sign(matchProofId({ roundId: rid, entryId: eid, identityKey }), identity)) };
   setTimeout(async () => {
-    const r = await revealMove({ entryIdHex: toHex(eid), move: hidden.move, salt: hidden.salt, nodes, identity: proof }).catch((x) => [{ status: 0, why: x.message }]);
-    log({ step: 'revealed', round: roundHex.slice(0, 8), move: hidden.move, ok: r.filter((x) => x.status === 200 || x.status === 201).length, of: r.length });
+    const said = await revealAsPage({ c, roundIdHex: roundHex, entryIdHex: toHex(eid), move: hidden.move, salt: hidden.salt, nodes, identity: proof }).catch((x) => ({ seats: [{ status: 0, why: x.message }] }));
+    const r = said.seats || [];
+    log({ step: 'revealed', round: roundHex.slice(0, 8), move: hidden.move, ok: r.filter((x) => x.status === 200 || x.status === 201).length, of: r.length, ...(said.why ? { why: said.why } : {}) });
   }, Math.max(0, Number(c.entryCloseMs) - Date.now() + 150));
   return { ok: took >= needed };
 }
@@ -218,6 +243,11 @@ async function enter(c, rid, ready) {
 // A TABLE IS WATCHED WHILE THE PAGE SAYS SOMEBODY IS AT IT: the bot says it is there (free) and reads the claim key ahead, and enters when the player taps. Measured 2026-11-01: entering
 // every 8 s round while somebody looked would lock 100 sat a round for a day, and an entry lands about 4 s after its tap, so one that waited to see the player's entry had no time left.
 const seen = new Map();      // round hex -> { c, rid, told, entered }
+// KNOWN PLAYERS (kanban #2901): keys whose stake lock a seat verified in an earlier round
+const KNOWN_FILE = env.KNOWN_FILE || join(process.env.HOME || '.', 'm808/bot926/opp/known-players.json');
+const KNOWN = new Set((() => { try { return JSON.parse(readFileSync(KNOWN_FILE, 'utf8')); } catch { return []; } })());
+const knownAdd = (key) => { if (!/^[0-9a-f]{64}$/.test(key) || KNOWN.has(key)) return; KNOWN.add(key); try { writeFileSync(KNOWN_FILE, JSON.stringify([...KNOWN])); } catch {} log({ step: 'known player', key: key.slice(0, 8), known: KNOWN.size }); };
+const botKeys = new Set();    // the player keys this bot entered with (kanban #2842): never a reason to enter
 const hour = [];
 let busy = false;
 const contractOf = async (round) => {
@@ -242,6 +272,7 @@ const go = (w, k, step) => {
   while (hour.length && now - hour[0] > 3600000) hour.shift();
   if (hour.length >= MOST_PER_HOUR) { log({ step: 'hourly limit' }); return; }
   k.entered = true; hour.push(now); busy = true;
+  sayHere(w.round, k);   // kanban #2901: said only now, as it enters
   log({ step, round: w.round.slice(0, 8), leftMs: Number(k.c.entryCloseMs) - now });
   enter(k.c, k.rid, k.claim).then((r) => { if (!r.ok) log({ step: 'entry not made', round: w.round.slice(0, 8), why: String(r.why || 'too few seats took it').slice(0, 200) }); }, (e) => log({ step: 'entry failed', round: w.round.slice(0, 8), why: String(e.message).slice(0, 200) })).finally(() => { busy = false; if (env.ONCE) setTimeout(() => process.exit(0), 40000); });
 };
@@ -254,7 +285,8 @@ const sayAtTables = () => {
   for (const [round, k] of seen) {
     const until = tables.get(tableOf(k.c));
     // AGAIN EVERY 2 S, AS A PAGE DOES: a seat forgets who is at a table in seconds, and a word said before the round began was gone by its first seconds ("You are alone" from 0:10 to 0:07)
-    if (until && until > now && Number(k.c.entryCloseMs) > now && Number(k.c.entryCloseMs) - now < 20000) sayHere(round, k, true);
+    // only a table the bot entered (kanban #2901, the owner's playtest 12:5xZ: "Test bot" stood at his table, its hand '?', and it never staked)
+    if (k.entered && until && until > now && Number(k.c.entryCloseMs) > now && Number(k.c.entryCloseMs) - now < 20000) sayHere(round, k, true);
   }
 };
 setInterval(sayAtTables, 2000);
@@ -274,14 +306,47 @@ const pass = async () => {
     if (left <= 0 || k.entered) continue;
     real++;
     tables.set(tableOf(k.c), Date.now() + 40000);
-    sayHere(w.round, k);
+    // NOT AT THE TABLE BEFORE IT STAKES (kanban #2901): its presence is said by go(), once it enters - a player never sees the bot seated in a round it stays out of
     if (busy || left < MIN_LEFT_MS) continue;
-    if (w.tapped) { go(w, k, 'a player tapped'); continue; }
-    // A PAGE THAT SAID NO TAP, OR A TAP THE DOOR LOST: the entry itself, read beside the loop so it never holds up a tap at another table. The first seat that holds it is enough
+    // A TAP IS A HINT (kanban #2842, ruling 2026-11-16 (a)): it only puts the table on this list; the bot stakes on the seats' own fact - a seat
+    // holding a VERIFIED stake lock of one non-bot entry (GET /order-locks: stakeVerifiedMs), with BOT_LEAD_MS before the close (opponent-trigger.js).
+    // Read beside the loop so it never holds up another table; the first seat that answers is enough
+    // A KNOWN PLAYER'S TAP BRINGS THE BOT AT ONCE (kanban #2901): the faucet now passes the signed tap's key; a key the bot saw play before
+    // (its lock verified at a seat) gets the bot on the tap, 2-4 s before its entry reaches the seats - a fresh key's tap still waits (#2842)
+    if (w.tapped && w.tapKey && KNOWN.has(String(w.tapKey)) && left >= Math.max(MIN_LEFT_MS, botLeadMs(lockMsSeen) + 1000)) { go(w, k, 'a known player tapped'); continue; }
     if (k.asking) continue;
     k.asking = true;
-    Promise.any(nodes.slice(0, 5).map(async (n) => { const r = await fetch(`${n}/api/round-result?round=${w.round}`, { signal: AbortSignal.timeout(2500) }); const j = await r.json(); const m = ((j && j.players) || []).length; if (!m) throw new Error('none'); return m; }))
-      .then((m) => { if (m === 1 && !k.entered && !busy) go(w, k, 'a player paid'); }, () => {}).finally(() => { k.asking = false; });
+    Promise.any(nodes.slice(0, 5).map(async (n) => {
+      const j = await (await fetch(`${n}/api/round-result?round=${w.round}`, { signal: AbortSignal.timeout(2500) })).json();
+      const entries = ((j && j.players) || []).filter((p) => BigInt(p.stakeMsat || 0) > 0n).map((p) => ({ entry: p.entry, player: p.player }));
+      if (!entries.length) throw new Error('none');
+      const locks = new Map(), posted = new Set();   // kanban #2901: posted = a seat holds the entry's stake lock (verified or not yet)
+      await Promise.all(entries.map(async (e) => { const r = await fetch(`${n}/order-locks?entry=${e.entry}`, { signal: AbortSignal.timeout(2500) });
+        if (r.ok) { const o = await r.json(); if (o && o.stake) posted.add(e.entry); if (o && o.stake && Number.isFinite(Number(o.stakeVerifiedMs))) locks.set(e.entry, Number(o.stakeVerifiedMs)); } }));
+      return { entries, locks, posted };
+    }))
+      .then(({ entries, locks, posted }) => {
+        if (k.entered || busy) return;
+        // A KNOWN PLAYER GETS THE BOT AT ONCE (kanban #2901, the owner 2026-11-16 ~14:10Z "ja"): a key whose stake lock a seat has verified before is
+        // learnt (kept in KNOWN_FILE); its next entry brings the bot straight away, without waiting for this round's lock to be verified - a fresh
+        // key still needs a verified lock (#2842), so a stranger's free tap never sends the bot to an empty table
+        for (const e of entries) if (e.player && locks.has(e.entry) && !botKeys.has(String(e.player))) knownAdd(String(e.player));
+        if (w.tapKey && entries.some((e) => locks.has(e.entry) && !botKeys.has(String(e.player || '')))) knownAdd(String(w.tapKey));   // kanban #2901: the tapping key played
+        const others = entries.filter((e) => e && e.entry && !botKeys.has(String(e.player || '')));
+        if (others.length === 1 && KNOWN.has(String(others[0].player || '')) && Number(k.c.entryCloseMs) - Date.now() >= MIN_LEFT_MS) { go(w, k, 'a known player entered'); return; }
+        // A POSTED STAKE LOCK IS ENOUGH (kanban #2901, the owner 2026-11-16 "mach den Lock des Bots viel schneller"; measured 18:41Z: the seats verified the
+        // player's lock with 4.7 s left and the bot came too late): the page gives each round a fresh key, so 'known' rarely matches - the bot now
+        // enters as soon as a seat holds the one other entry's stake lock, verified or not. A made-up lock only parks the bot's stake: the round
+        // voids for want of a certified opponent and its locks come back at once (#2872).
+        if (others.length === 1 && posted && posted.has(others[0].entry) && Number(k.c.entryCloseMs) - Date.now() >= MIN_LEFT_MS) { go(w, k, 'a player posted a stake lock'); return; }
+        // WHAT THE BOT ITSELF NEEDS, NOT A FIXED 12 S (kanban #2901, the owner's playtest 2026-11-16 12:49Z, round 1dc93d0e: his lock was verified 7.9 s
+        // before the close and the bot stayed out "under the 12000 ms lead"): the 12 s lead is the page's to give (it offers a round only with
+        // H2H_OPPONENT_LEAD_MS left); the bot joins whenever its own handout, lock and entry still fit - its slowest recent lock + 1.5 s, at least 4 s
+        const need = Math.max(MIN_LEFT_MS, botLeadMs(lockMsSeen) + 1000);
+        const d = botMayEnter({ entries, locks, botKeys, closeMs: Number(k.c.entryCloseMs), nowMs: Date.now(), leadMs: 0, minLeftMs: need });
+        if (d.go) go(w, k, w.tapped ? 'a player locked (tapped)' : 'a player locked');
+        else if (k.said !== d.why) { k.said = d.why; log({ step: 'not entered', round: w.round.slice(0, 8), tapped: !!w.tapped, why: d.why }); }
+      }, () => {}).finally(() => { k.asking = false; });
   }
   if (seen.size > 2048) seen.clear();
 };

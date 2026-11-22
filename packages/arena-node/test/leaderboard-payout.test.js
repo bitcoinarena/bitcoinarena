@@ -86,11 +86,15 @@ const A = toHex(schnorr.getPublicKey(identitySecretFor(SEED)));
 const B = hx(0x0b), C = hx(0x0c), D = hx(0x0d), E = hx(0x0e), F = hx(0x0f);
 const GAME = hx(0x9a);
 const T0 = Date.UTC(2026, 9, 10);
-const S0 = 100000n;
-const en = (player, payoutMsat, roundKey) => ({ player, outcome: payoutMsat > 0n ? DELIVERED : FAILED, score: null, payoutMsat, stakeMsat: S0, name: null, roundKey });
+// kanban #2841: a place needs an identity older than the week with 3 distinct opponents older than the week, and is capped at 10x its week's
+// entry fees (10 % of a stake each): all six played a paid round the day before, the week's round seats all six, and a 10,000 sat stake caps a
+// place at 10,000,000 msat
+const S0 = 10000000n;
+const en = (player, netMsat, roundKey) => ({ player, outcome: netMsat > -S0 ? DELIVERED : FAILED, score: null, payoutMsat: S0 + netMsat, stakeMsat: S0, name: null, roundKey });
 const ROUNDS = [
-  { roundId: hx(0x11), gameId: GAME, startMs: T0 + 3600000, entries: [en(A, 400000n, hx(0xa1)), en(B, 1000000n, B), en(F, 900000n, null)] },
-  { roundId: hx(0x12), gameId: GAME, startMs: T0 + 7200000, entries: [en(C, 300000n, hx(0xc1)), en(D, 200000n, hx(0xd1)), en(E, 200000n, hx(0xe1))] },
+  { roundId: hx(0x10), gameId: GAME, startMs: T0 - 86400000, entries: [A, B, C, D, E, F].map((p, i) => en(p, -S0 / 10n, hx(0x30 + i))) },
+  { roundId: hx(0x11), gameId: GAME, startMs: T0 + 3600000, entries: [en(A, 300000n, hx(0xa1)), en(B, 1000000n, B), en(F, 900000n, null),
+    en(C, 200000n, hx(0xc1)), en(D, 100000n, hx(0xd1)), en(E, 100000n, hx(0xe1))] },
 ];
 const WIN = { rounds: ROUNDS, games: [GAME], fromMs: T0, toMs: T0 + 7 * 86400000, top: 3, amountMsat: 3000000n };
 // THE SAME ROUNDS WITH THEIR CONTRACTS, as the seats sign them (kanban #1153): what the payout counts

@@ -11,18 +11,21 @@
 //   4. CERTIFY. A threshold of signatures over one set, each at a time inside [close, close + LOCK_SET_WINDOW_MS], is the certificate; kept.
 // No reveal is taken or served here before it (server.js POST /reveal, GET /reveals), and only its entries are seated and decided
 // (verify.js #headToHeadClose). None standing anywhere by the close + window: the round is VOID.
+import { textUpTo } from './peer-read.js';
+/** The most of a peer's GET /lock-set answer read (kanban #2706). */
+const LOCK_SET_ANSWER_MOST = 262144;
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import {
-  LOCK_SET_WINDOW_MS, LOCK_SET_VIEW_WAIT_MS, LOCK_SET_MAX_ENTRIES, lockSetOf, lockSetId, lockSetSignatureId, lockSetViewId,
+  LOCK_SET_WINDOW_MS, LOCK_SET_FINAL_AFTER_MS, LOCK_SET_VIEW_WAIT_MS, LOCK_SET_MAX_ENTRIES, lockSetOf, lockSetId, lockSetSignatureId, lockSetViewId,
   encodeLockSetCertificate, lockSetCertificateStands, lockSetToSign, decodeLockSetCertificate, encodeSignedLockSet,
 } from '../../arena-protocol/src/lock-set.js';
 
 const HEX64 = /^[0-9a-f]{64}$/;
 const HEX128 = /^[0-9a-f]{128}$/;
 /** How often a seat pulls its peers while a round's set is open, and how long it waits for one peer. */
-export const LOCK_SET_PULL_MS = 150;
+export const LOCK_SET_PULL_MS = Number(process.env.ARENA_LOCK_SET_PULL_MS || 400);   // kanban #2901: was 150 - 798 pulls in 30 s on one seat; pushes carry the fast path
 export const LOCK_SET_PEER_MS = 2500;
 /**
  * WHEN A LOCK OUTSIDE THE CERTIFICATE GOES BACK (kanban #2585): not before the close + LOCK_SET_WINDOW_MS + this. A seat steps a round's set until
@@ -36,8 +39,22 @@ export const LOCK_SET_RETURN_AFTER_MS = 2000 + LOCK_SET_PEER_MS;
  * certified a round every seat had answered VOID (the honest player's page stops there and never reveals - he FORFEITS). From then on no
  * signature or certificate is taken while none is held, and VOID is said only from then (before it the set is pending): VOID is never taken back.
  */
-export const LOCK_SET_FINAL_AFTER_MS = 2000;
-const lsVerify = (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } };
+export { LOCK_SET_FINAL_AFTER_MS };   // kanban #2984: the protocol's (lock-set.js), so a page waits for it too
+// A SIGNATURE CHECKED ONCE (kanban #2864, the owner 2026-11-15: "fuer den User muss alles snappy sein"): a steady seat's profile had lsVerify at ~9 %
+// of the seat (~20 % of its busy time) - every pull, push and certificate checks the same few signatures again. The answer for (sig, msg, key)
+// is kept; true and false alike (the same bytes give the same answer), at most LS_VERIFIED_MOST entries, the oldest dropped first.
+const LS_VERIFIED_MOST = 20000;
+const lsVerified = new Map();
+const lsHex = (b) => Buffer.from(b).toString('hex');
+const lsVerify = (sig, msg, key) => {
+  let k;
+  try { k = lsHex(sig) + lsHex(msg) + lsHex(key); } catch { return false; }
+  const had = lsVerified.get(k); if (had !== undefined) return had;
+  let ok; try { ok = schnorr.verify(sig, msg, key); } catch { ok = false; }
+  lsVerified.set(k, ok); if (lsVerified.size > LS_VERIFIED_MOST) lsVerified.delete(lsVerified.keys().next().value);
+  return ok;
+};
+export const lsVerifyForTest = lsVerify;   // kanban #2864
 
 export class LockSetBook {
   /**
@@ -59,6 +76,11 @@ export class LockSetBook {
     /** rid hex -> the one pull made before a lock outside the certificate is first returned (kanban #2585) */
     this.returnPulls = new Map();
   }
+
+  /** Whether anything of a round's set was asked, taken or made here yet (kanban #2901): a seat with no entry of the round steps it only from then. */
+  touched(rid) { return this.rooms.has(toHex(rid)); }
+  /** Whether a view held here names an entry (kanban #2901 b): an empty round's set is worth no signature, whoever asks. */
+  heardEntries(rid) { const r = this.rooms.get(toHex(rid)); if (!r) return false; for (const v of r.views.values()) if (v && v.entries && v.entries.length) return true; return false; }
 
   #room(ridHex) {
     let r = this.rooms.get(ridHex);
@@ -104,7 +126,11 @@ export class LockSetBook {
 
   #signed(rid) {
     const row = this.db.prepare('SELECT entries, at_ms, sig FROM lock_set_signed WHERE round_id = ?').get(rid);
-    return row ? { key: toHex(this.round.pubkey), atMs: Number(row.at_ms), entries: JSON.parse(row.entries), sig: toHex(new Uint8Array(row.sig)) } : null;
+    if (!row) return null;
+    const entries = JSON.parse(row.entries);
+    // ALWAYS WITH ITS setId (kanban #2660): #assemble groups the room's signatures by setId, and state() (GET /lock-set, public) put this
+    // record back into the room - without a setId the seat's own signature stopped counting and a committee with exactly its threshold went VOID
+    return { key: toHex(this.round.pubkey), atMs: Number(row.at_ms), entries, sig: toHex(new Uint8Array(row.sig)), setId: toHex(lockSetId(lockSetOf({ roundId: rid, entries }))) };
   }
 
   /** GET /lock-set's answer. */
@@ -364,8 +390,11 @@ export class LockSetBook {
       try {
         const r = await this.fetch(`${k.replace(/\/+$/, '')}/lock-set?round=${toHex(rid)}`, { signal: AbortSignal.timeout(LOCK_SET_PEER_MS) });
         if (!r.ok) { try { await r.body?.cancel(); } catch { /* gone */ } return; }
-        const text = await r.text();
-        if (text.length > 262144) return;
+        // kanban #2706 (#1489 r4-gossip-3): read up to the bound, not whole and measured after - one peer streamed 96 MiB within
+        // LOCK_SET_PEER_MS and every honest seat buffered it on every 150 ms pull (204 MiB held); past 256 KiB the stream is cancelled
+        // (an answer with no stream - an injected stand-in - is read as it offers itself, still held to the bound)
+        const text = r.body ? await textUpTo(r, LOCK_SET_ANSWER_MOST) : String(await r.text());
+        if (text.length > LOCK_SET_ANSWER_MOST) return;
         this.take(rid, JSON.parse(text));
         room.answeredAt.set(k, this.#now());   // feedback #035: this peer answered (its certificate, if any, is taken)
       } catch { /* a peer that is down or slow says nothing */ }
@@ -408,6 +437,15 @@ export class LockSetBook {
    */
   async settle(rid) {
     if (!this.certified(rid)) await this.pull(rid);
+    // WHILE THE WINDOW IS OPEN, ASKED AGAIN (kanban #2914, measured 2026-11-17: in 7 of 64 two-entry RPS rounds some seats certified the set and
+    // others signed every entry VOID - round 2efed1ea certified at seats 4-7 at close + 1.3 s, VOID at seats 1-3, no common result): a seat that
+    // closed at the entry close pulled its peers once while they were still signing, found no certificate and kept VOID for good. Now, past the
+    // close and until the window and its final 2 s are over (voidNow), the peers are asked again every LOCK_SET_PULL_MS.
+    const c = this.roundOf(rid);
+    while (c && !this.certified(rid) && !this.conflicted(rid) && this.#now() >= Number(c.entryCloseMs) && !this.voidNow(rid, c)) {
+      await new Promise((ok) => setTimeout(ok, LOCK_SET_PULL_MS));
+      await this.pull(rid);
+    }
     return this.conflicted(rid) ? null : this.certified(rid);
   }
 }

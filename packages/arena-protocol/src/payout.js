@@ -9,7 +9,7 @@
 
 import { Writer, Reader } from './encode.js';
 import { taggedHash, bytesToBigInt } from './hash.js';
-import { TAG, TYPE_PAYOUT_TABLE, PROTOCOL_VERSION, speaksVersion } from './constants.js';
+import { TAG, TYPE_PAYOUT_TABLE, PROTOCOL_VERSION, speaksVersion, saltsTies, splitsTies } from './constants.js';
 
 export const DELIVERED = 'DELIVERED';
 export const FAILED = 'FAILED';
@@ -113,14 +113,15 @@ export const payingRanks = (qualifiers) =>
  * Dropping the remainder instead would break the sum invariant below, and
  * giving it to the top rank would be a silent extra prize.
  */
+const remainderKey = (roundId, pubkey) => {
+  const w = new Writer();
+  w.bytes32(roundId);
+  w.bytes32(pubkey);
+  return bytesToBigInt(taggedHash(TAG.remainder, w.finish()));
+};
 export function remainderOrder(roundId, entries) {
   return entries
-    .map((e) => {
-      const w = new Writer();
-      w.bytes32(roundId);
-      w.bytes32(e.pubkey);
-      return { e, key: bytesToBigInt(taggedHash(TAG.remainder, w.finish())) };
-    })
+    .map((e) => ({ e, key: remainderKey(roundId, e.pubkey) }))
     .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
     .map((x) => x.e);
 }
@@ -171,7 +172,9 @@ export function payoutSharesFit(shares) {
 
 // `payoutShares`: the round's game's top split (manifest.js payoutSharesOf), or null for §18A's rank curve - the default,
 // so every caller that names none computes exactly the table it always did.
-export function computePayoutTable({ roundId, entries, minScore = 0, payoutShares = null }) {
+// `protocolVersion`: the round contract's version. From TIE_SALT_VERSION (29) equal scores are ordered by H(round_id || pubkey), the
+// remainder rule's key (kanban #1614); below it, or unnamed, by the bare key as every round already played was.
+export function computePayoutTable({ roundId, entries, minScore = 0, payoutShares = null, protocolVersion = null }) {
   if (payoutShares !== null && payoutShares !== undefined) {
     const fit = payoutSharesFit(payoutShares);
     if (!fit.ok) throw new Error(fit.why);
@@ -187,12 +190,19 @@ export function computePayoutTable({ roundId, entries, minScore = 0, payoutShare
   // Qualification is generous on purpose: a cautious player keeps their stake
   // and simply does not place. Disqualifying them would move their stake into
   // the pool, which is a levy on a legal strategy rather than balance.
+  // TIES (kanban #1614): from protocol 29 decided by the same rule the remainder uses, H(round_id || pubkey), so the
+  // order is neither the order the entries arrived in nor a key the player ground to win every tie; below 29 by the bare
+  // key, as the rounds already played were settled
+  const salted = saltsTies(protocolVersion);
+  const tieKey = salted ? new Map(entries.map((e) => [e, remainderKey(roundId, e.pubkey)])) : null;
   const qualifiers = activated
     .filter((e) => isQualifier(e, minScore))
     .sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
-      // ties decided by the same rule the remainder uses, so the order is not
-      // the order the entries happened to arrive in
+      if (salted) {
+        const ka = tieKey.get(a), kb = tieKey.get(b);
+        if (ka !== kb) return ka < kb ? -1 : 1;
+      }
       return compareBytes(a.pubkey, b.pubkey);
     });
 
@@ -255,6 +265,22 @@ export function computePayoutTable({ roundId, entries, minScore = 0, payoutShare
     .map((w, i) => w * net.get(qualifiers[i]));
   const total = weights.reduce((s, w) => s + w, 0n);
 
+  // A TIE AT A PAID PLACE IS ONE SHARE, SPLIT EVENLY (kanban #2687, ruling #2776, protocol 31): see evenTieShares below
+  let reserveMsat = 0n;
+  if (splitsTies(protocolVersion)) {
+    const even = evenTieShares({ roundId, qualifiers, k, pool, net, split, payoutShares });
+    if (even) {
+      for (const [e, share] of even.shares) payouts.set(e, payouts.get(e) + share);
+      reserveMsat = even.reserveMsat;
+      const paid31 = [...payouts.values()].reduce((s, v) => s + v, 0n);
+      const staked31 = settling.reduce((s, e) => s + net.get(e), 0n);
+      if (qualifiers.length > 0 && paid31 + reserveMsat !== staked31)
+        throw new Error(`payout invariant broken: paid ${paid31} and ${reserveMsat} to the reserves against staked ${staked31}`);
+      return { pool, qualifiers: qualifiers.length, payingRanks: even.payingRanks, settling, activated, reserveMsat,
+        table: activated.map((e) => ({ pubkey: e.pubkey, amountMsat: payouts.get(e) })) };
+    }
+  }
+
   let handed = 0n;
   if (total > 0n && pool > 0n) {
     for (let i = 0; i < k; i++) {
@@ -290,8 +316,65 @@ export function computePayoutTable({ roundId, entries, minScore = 0, payoutShare
     payingRanks: k,
     settling,
     activated,
+    reserveMsat: 0n,
     table: activated.map((e) => ({ pubkey: e.pubkey, amountMsat: payouts.get(e) })),
   };
+}
+
+/**
+ * THE PAID PLACES WITH TIES SPLIT EVENLY (protocol 31, kanban #2687, ruling #2776): `qualifiers` in place order (score first). Entries tied on
+ * score are one group; a group that reaches a paid place (one of the first `k`) occupies its places p..p+n-1 and shares the sum of their weights -
+ * the places past k weigh nothing - EQUALLY: no order among its members is ever computed. 22A's net weighting is kept order-free: a place's
+ * weight times its occupant's net stake for an untied place, and for a group the mean of its places' weights times the sum of its members'
+ * nets. Each untied place's and each group's share is floored; a group's share is divided by its size and the odd msat of that division goes
+ * to the protocol reserves; what the floors leave goes as before by H(round_id || pubkey), over the untied paid places only (to the reserves
+ * when every paid place is in a tie). Answers null when no paid place is tied (the table is then exactly the protocol-29 one).
+ */
+function evenTieShares({ roundId, qualifiers, k, pool, net, split, payoutShares }) {
+  if (k === 0 || pool <= 0n) return null;
+  const groups = [];
+  for (let i = 0; i < qualifiers.length;) {
+    let j = i + 1;
+    while (j < qualifiers.length && qualifiers[j].score === qualifiers[i].score) j++;
+    if (i < k) groups.push({ from: i, members: qualifiers.slice(i, j) });
+    i = j;
+  }
+  if (!groups.some((g) => g.members.length > 1)) return null;
+  const placeW = split ? payoutShares.slice(0, k).map((s) => BigInt(s)) : rankWeights(k);
+  const wAt = (p) => (p < k ? placeW[p] : 0n);
+  // weights over a common scale L (the least common multiple of the group sizes), so a group's mean place weight stays whole
+  const gcd = (a, b) => (b === 0n ? a : gcd(b, a % b));
+  const L = groups.reduce((l, g) => { const n = BigInt(g.members.length); return (l * n) / gcd(l, n); }, 1n);
+  const units = groups.map((g) => {
+    const n = BigInt(g.members.length);
+    let sumW = 0n; for (let p = g.from; p < g.from + g.members.length; p++) sumW += wAt(p);
+    const nets = g.members.reduce((s, e) => s + net.get(e), 0n);
+    return { g, n, weight: (sumW * (L / n)) * nets };
+  });
+  const total = units.reduce((s, u) => s + u.weight, 0n);
+  if (total <= 0n) return null;
+  const shares = new Map();
+  let handed = 0n, reserveMsat = 0n;
+  const untied = [];
+  for (const u of units) {
+    const share = (pool * u.weight) / total;
+    handed += share;
+    if (u.n === 1n) { shares.set(u.g.members[0], share); untied.push(u.g.members[0]); continue; }
+    const each = share / u.n;
+    for (const e of u.g.members) shares.set(e, each);
+    reserveMsat += share - each * u.n;   // the odd msat of the tie's division: the reserves', no player's
+  }
+  let left = pool - handed;
+  if (left > 0n) {
+    const paidUntied = untied.filter((e) => wAt(qualifiers.indexOf(e)) > 0n);
+    if (!paidUntied.length) { reserveMsat += left; left = 0n; }
+    else {
+      const order = remainderOrder(roundId, paidUntied);
+      for (let i = 0; left > 0n; i = (i + 1) % order.length) { shares.set(order[i], shares.get(order[i]) + 1n); left -= 1n; }
+    }
+  }
+  const payingRanks = Math.max(k, ...groups.map((g) => g.from + g.members.length));
+  return { shares, reserveMsat, payingRanks };
 }
 
 /**
