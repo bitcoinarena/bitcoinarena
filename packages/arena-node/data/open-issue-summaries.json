@@ -2018,5 +2018,149 @@
  "3272": {
   "text": "Other: a system update can stop the lightning node along with Tor and leave the gateway disconnected",
   "kind": "bug"
+ },
+ "3291": {
+  "text": "Slashing: a run's stored transcript can grow without a size bound",
+  "kind": "bug"
+ },
+ "3292": {
+  "text": "Federation: one census seat can keep a halted federation's proven halt ahead of the tip",
+  "kind": "bug"
+ },
+ "3293": {
+  "text": "Committees and bonds: a paid gift to a vesting set can be refused",
+  "kind": "bug"
+ },
+ "3294": {
+  "text": "Other: reading other rounds can drop a busy round's kept ledger so the book is parsed again",
+  "kind": "bug"
+ },
+ "3295": {
+  "text": "Node software: a cancel some seats already took can be refused everywhere else",
+  "kind": "bug"
+ },
+ "3296": {
+  "text": "Node software: refused seating certificates can fill a seat's memory",
+  "kind": "bug"
+ },
+ "3297": {
+  "text": "Node software: a stranger can make seats certify a paid round nobody entered",
+  "kind": "bug"
+ },
+ "3298": {
+  "text": "Other: a plugin trial can pass an adapter that only works on one set",
+  "kind": "bug"
+ },
+ "3299": {
+  "text": "Lightning payouts: held invoices can stall honest welcomes and payouts",
+  "kind": "bug"
+ },
+ "3300": {
+  "text": "Node software: stranger checks can fill the shared queue so an honest check is refused",
+  "kind": "bug"
+ },
+ "3301": {
+  "text": "Other: one login relay can block a player's login on every try",
+  "kind": "bug"
+ },
+ "3302": {
+  "text": "Node software: re-sent public frames can hold a seat's thread",
+  "kind": "bug"
+ },
+ "3303": {
+  "text": "Settlement: long-window markets can void because readings are not kept long enough",
+  "kind": "bug"
+ },
+ "3304": {
+  "text": "Committees and bonds: one round's census can drop smaller bonded nodes from served lists",
+  "kind": "bug"
+ },
+ "3305": {
+  "text": "Settlement: late pool-pick locks on some seats can split a market's settlement",
+  "kind": "bug"
+ },
+ "3306": {
+  "text": "Other: an automatic update can let another game take a hosted game's name",
+  "kind": "bug"
+ },
+ "3307": {
+  "text": "Website: a bad join link can stop the lock poll so a player never reveals",
+  "kind": "bug"
+ },
+ "3308": {
+  "text": "Node software: a leaderboard zap can follow one seat's own key",
+  "kind": "bug"
+ },
+ "3309": {
+  "text": "Other: a stranger can replace a real player's tap at the test opponent",
+  "kind": "bug"
+ },
+ "3310": {
+  "text": "Other: odd run telemetry can crash the bot-likelihood check",
+  "kind": "bug"
+ },
+ "3311": {
+  "text": "Lightning payouts: a tip callback can spawn unbounded invoice lookups",
+  "kind": "bug"
+ },
+ "3312": {
+  "text": "Federation: reading many rounds in turn rebuilds every split plan",
+  "kind": "bug"
+ },
+ "3313": {
+  "text": "Committees and bonds: a run marked on every tick can hold every seat at close",
+  "kind": "bug"
+ },
+ "3314": {
+  "text": "Other: a copy of a held public first mark can bypass the replay throttle",
+  "kind": "bug"
+ },
+ "3315": {
+  "text": "Settlement: restarted seats can void older drawn rounds for a long stretch",
+  "kind": "bug"
+ },
+ "3316": {
+  "text": "Node software: a decide adapter can make different machines sign different verdicts",
+  "kind": "bug"
+ },
+ "3317": {
+  "text": "Node software: many fee proposals can stall a seat's fee read",
+  "kind": "bug"
+ },
+ "3318": {
+  "text": "Other: a losing head-to-head player can void the winner",
+  "kind": "bug"
+ },
+ "3319": {
+  "text": "Settlement: a later order of the same key can stop the book's settlement",
+  "kind": "bug"
+ },
+ "3320": {
+  "text": "Rock Paper Scissors game: a lower entry under a player's key can unstake them everywhere",
+  "kind": "bug"
+ },
+ "3321": {
+  "text": "Node software: a reloaded round link can start too late and lose the stake",
+  "kind": "bug"
+ },
+ "3322": {
+  "text": "Committees and bonds: dust to the bond marker can push honest bonds out of the chain read",
+  "kind": "bug"
+ },
+ "3323": {
+  "text": "Committees and bonds: one node's empty version answer can stop the health page",
+  "kind": "bug"
+ },
+ "3324": {
+  "text": "Committees and bonds: runtime game versions are not advertised, so a bonded node is not drawn",
+  "kind": "bug"
+ },
+ "3326": {
+  "text": "Lightning payouts: the human/bot rule says verified account but only a linked account is checked",
+  "kind": "bug"
+ },
+ "3327": {
+  "text": "Lightning payouts: the payout table and the pot bar disagree on season spend",
+  "kind": "bug"
  }
 }
