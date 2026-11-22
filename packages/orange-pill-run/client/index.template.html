@@ -126,12 +126,27 @@ body.bridged .tag { margin-left: 0; }
   .lnrow { margin: 0 0 6px; } .lnrow input { padding: 5px 9px; } .lnrow button { padding: 4px 12px; }
   button.big { padding: 10px 14px; font-size: 1rem; } .why { font-size: .8rem !important; } .links { margin-top: 6px; font-size: .86rem; }
 }
+/* kanban #3251: the speaker toggle in the header (music + effects, effects only, off) */
+.snd { font-size: .72rem; padding: 3px 10px; border-radius: 99px; font-weight: 600; color: var(--soft); white-space: nowrap; }
+body.bridged .snd { margin-left: auto; } body:not(.bridged) .snd { margin-left: auto; } body:not(.bridged) .tag { margin-left: 0; }
+/* kanban #3251 (owner 2026-11-22): the top 10 on the intro, compact rows; on a short frame only this list scrolls, never the page */
+.iboard { margin: 0 0 10px; max-height: min(16.5rem, 34vh); overflow-y: auto; scrollbar-width: thin; border: 1px solid var(--line); border-radius: 10px; }
+.iboard table { font-size: .84rem; }
+.iboard td { padding: 2px 8px; border-top: 1px solid rgba(70,52,63,.55); line-height: 1.25; }
+.iboard tr:first-child td { border-top: 0; }
+.iboard td.rk { width: 1.8em; color: var(--dim); } .iboard td.nm { text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 9.5em; }
+.iboard tr.gap td { border-top: 2px dashed var(--dim); }
+.iboard .iempty { margin: 6px 10px !important; font-size: .88rem !important; }
+@media (max-height: 700px) { .iboard { margin: 0 0 8px; max-height: min(15rem, 25vh); } .iboard td { padding: 1px 8px; } }
+@media (max-width: 400px) { .bounty { font-size: .95rem !important; line-height: 1.3 !important; } }
+@media (max-height: 560px) { .iboard { max-height: 24vh; } .iboard table { font-size: .8rem; } }
 </style>
 
 <header>
   <h1>Orange Pill Run</h1>
   <p>Run across the last 24 hours of the Bitcoin chart. Every candle is a platform.</p>
   <span class="wal" id="wal" hidden></span>
+  <button class="snd" id="sndBtn" type="button">♪ on</button>
   <span class="tag" id="modeTag">OFFLINE · PRACTICE</span>
 </header>
 
@@ -143,6 +158,7 @@ body.bridged .tag { margin-left: 0; }
       <p class="line" id="iLine">Run yesterday's Bitcoin chart. Tap to jump. Don't fall.</p>
       <p class="bounty" id="iBounty" hidden></p>
       <dl class="facts" id="iFacts" hidden></dl>
+      <div class="iboard" id="iBoard" hidden><p class="iempty" id="iBEmpty" hidden></p><table id="iBTable"></table></div>
       <div class="price" id="iPrice"></div>
       <p class="xline" id="iX" hidden><span id="iXText"></span><button id="iXBtn" type="button" hidden>Link X</button></p>
       <form class="lnrow" id="iLn" hidden><input id="iLnIn" type="text" inputmode="email" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="320" placeholder="Lightning address for prizes" aria-label="Lightning address for prizes"><button id="iLnBtn" type="submit">Save</button></form>

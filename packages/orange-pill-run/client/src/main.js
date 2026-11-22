@@ -13,8 +13,9 @@ import { resultOf, validateLog } from "../../src/sim/replay.js";
 import { fit, drawWorld, view, usd } from "./render.js";
 import { makeApi } from "./api.js";
 import { createEntry, entryOf } from "./entry.js";
-import { introModel, resultModel, entryLine, myBest, boardRows, fmtSats, fmtTime, lnFieldModel } from "./screens.js";
+import { introModel, resultModel, entryLine, myBest, boardRows, fmtSats, fmtTime, lnFieldModel, usedOf } from "./screens.js";
 import { RULES, RULES_TITLE } from "./rules.js";
+import { makeAudio, snapWorld, worldEvents } from "./audio.js";
 
 const HOOKS = (window.OPR = window.OPR || {});
 // the practice day: { candles, seed, source, from, to } - set by the page before this script, or the embedded one
@@ -65,20 +66,30 @@ function jumpNow() {
   if (mode === "replay") { const ps = replayLog.presses; while (replayIdx < ps.length && ps[replayIdx][1] <= s) replayIdx++; return replayIdx < ps.length && ps[replayIdx][0] <= s; }
   return input.jump;
 }
+// sound (#3251): read from the world after each step, never written into it
+let audio = null; try { audio = makeAudio({ store: window.localStorage }); } catch (_) { audio = null; }
+let snap = null;
 function step() {
   const s = W.f, j = jumpNow();
   if (j && down < 0) down = s; else if (!j && down >= 0) { presses.push([down, s]); down = -1; }
   stepWorld(W, { jump: j });
+  if (audio) { const n = snapWorld(W); for (const e of worldEvents(snap, n)) audio.play(e); snap = n; }
+}
+function paintSound() {
+  const b = $("sndBtn"); if (!b || !audio) { if (b) b.hidden = true; return; }
+  const m = audio.mode; b.textContent = m === "on" ? "♪ on" : m === "fx" ? "♪ fx only" : "♪ off";
+  b.setAttribute("aria-label", m === "on" ? "Sound: music and effects" : m === "fx" ? "Sound: effects only" : "Sound off");
 }
 const SHEETS = ["intro", "result", "board", "rules"];
 const showSheet = (id) => { for (const s of SHEETS) $(s).hidden = s !== id; };
 function begin(m, opts = {}) {
-  mode = m; W = newWorld(L); presses = []; down = -1; replayIdx = 0; speed = opts.speed || 1; paused = false; input.jump = false;
+  mode = m; W = newWorld(L); snap = audio ? snapWorld(W) : null; presses = []; down = -1; replayIdx = 0; speed = opts.speed || 1; paused = false; input.jump = false;
   botCfg = m === "bot" ? { ...BOT_CONFIGS[opts.bot || 0] } : null;
   document.body.classList.add("playing"); document.body.classList.toggle("replaying", m === "replay"); running = true; acc = 0; last = performance.now();
   showSheet(null); if (m !== "play") pill("", "");
   $("rbar").hidden = m !== "replay"; $("rbPlay").textContent = "Pause"; $("rb2x").setAttribute("aria-pressed", String(speed === 2));
   if (HOOKS.onStart) try { HOOKS.onStart({ mode, gameVersion: GAME_VERSION }); } catch (_) {}
+  if (audio) { audio.unlock(); audio.startMusic(); }   // every start is a tap or a key: the iOS rule holds
   requestAnimationFrame(loop);
 }
 function loop(now) {
@@ -91,6 +102,7 @@ function loop(now) {
   requestAnimationFrame(loop);
 }
 function finish() {
+  if (audio) audio.stopMusic();
   running = false; document.body.classList.remove("playing", "replaying"); $("rbar").hidden = true; pill("", "");
   if (down >= 0) { presses.push([down, W.f]); down = -1; }
   const res = resultOf(W);
@@ -101,15 +113,24 @@ function finish() {
 }
 
 // ---------- the service: round, me, board ----------
-const S = { round: null, me: null, board: [], err: null, at: 0, loaded: false };   // loaded: the first GET /round has answered (#3251)
+const S = { round: null, me: null, board: [], err: null, at: 0, loaded: false, opened: {} };   // loaded: the first GET /round has answered (#3251)
+// #3251: the runs this tab opened, per round (POST /attempt's ids) - the counters count them even before GET /me has caught up
+const openedIn = () => (S.round && S.opened[S.round.id]) || [];
 let run = null;   // the attempt being played: { attempt, token, level, invoice, sats, deadlineMs, before, payer, entry, entryWhy, sent }
-async function refresh() {
-  if (!api) return;
+// one read at a time (#3251): a refresh asked while one runs waits for it and then reads again, so the answer is never older than the ask
+let reading = null, readAgain = null;
+function refresh() {
+  if (!api) return Promise.resolve();
+  if (reading) { if (!readAgain) readAgain = reading.catch(() => {}).then(() => { readAgain = null; return refresh(); }); return readAgain; }
+  reading = readNow().finally(() => { reading = null; });
+  return reading;
+}
+async function readNow() {
   const [r, b] = await Promise.all([api.get("/round"), api.get("/board")]);
   S.round = r.ok ? r.round : null; S.err = r.ok ? null : r.why; S.loaded = true;
   S.board = b.ok ? b.board : [];
   const w = wallet();
-  if (w && w.pubkey) { const m = await api.getSigned("/me" + (S.round ? "?round=" + encodeURIComponent(S.round.id) : "")); if (m.ok) S.me = m; }
+  if (w && w.pubkey) { const m = await api.getSigned("/me" + (S.round ? "?round=" + encodeURIComponent(S.round.id) : "")); if (m.ok) S.me = m; else HOOKS.meWhy = m.why || null; }
   S.at = Date.now();
 }
 function paintWallet() {
@@ -121,11 +142,12 @@ function paintWallet() {
   el.append("Wallet: ", b, " testnet sats" + (w.welcomeComing && Number(w.balance.sats) < 100 ? " · welcome on its way" : ""));
 }
 function paintIntro() {
-  const m = introModel({ round: S.round, me: S.me, board: S.board, wallet: wallet(), nowMs: Date.now(), loading: !S.loaded });
+  const m = introModel({ round: S.round, me: S.me, board: S.board, wallet: wallet(), nowMs: Date.now(), loading: !S.loaded, opened: openedIn() });
   $("iLine").textContent = m.line;
   $("iBounty").hidden = !m.bounty; $("iBounty").textContent = m.bounty || "";
   const dl = $("iFacts"); dl.textContent = ""; dl.hidden = !m.facts;
   for (const [k, v, cls] of m.facts || []) { const d = document.createElement("div"); if (cls) d.className = cls; const dt = document.createElement("dt"), dd = document.createElement("dd"); dt.textContent = k; dd.textContent = v; d.append(dt, dd); dl.append(d); }
+  paintIntroBoard(m.board);
   $("iPrice").hidden = !m.practice;
   // #3270: the X account on the intro, so a player can link it before the first run (it was only on the result screen)
   $("iX").hidden = !m.x; $("iXText").textContent = m.x ? m.x.text : "";
@@ -136,6 +158,17 @@ function paintIntro() {
   paintLn("i");
   paintWallet();
   HOOKS.intro = m;
+}
+// the intro's top 10 (#3251, owner 2026-11-22): rank, name, score, time; the player's row marked, below a divider when outside the 10
+function paintIntroBoard(b) {
+  const box = $("iBoard"); box.hidden = !b; if (!b) return;
+  const t = $("iBTable"); t.textContent = "";
+  $("iBEmpty").hidden = !b.empty; $("iBEmpty").textContent = b.empty || "";
+  t.hidden = !!b.empty; if (b.empty) return;
+  const body = t.createTBody();
+  const add = (x, cls) => { const tr = body.insertRow(); tr.className = [x.me ? "me" : "", cls || ""].join(" ").trim(); cellRow(tr, [x.rank, x.name + (x.placed ? " ✓" : ""), x.score, x.time], ["rk", "nm", "tot", null]); };
+  for (const x of b.rows) add(x);
+  if (b.own) add(b.own, "gap");
 }
 function showIntro() {
   showSheet("intro"); $("rbar").hidden = true; paintPractice(); paintIntro();
@@ -148,7 +181,8 @@ function paintPractice() {
   sm.textContent = "practice chart · " + (DAY.source || "Coinbase BTC-USD");
   el.append(bb, sp, sm);
 }
-setInterval(() => { if (!$("intro").hidden) { paintIntro(); if (api && Date.now() - S.at > 20000) refresh().then(paintIntro).catch(() => {}); } else paintWallet(); }, 1000);
+// the intro's board and counters live: read again every 15 s while the intro is open (#3251, owner 2026-11-22)
+setInterval(() => { if (!$("intro").hidden) { paintIntro(); if (api && !reading && Date.now() - S.at > 15000) refresh().then(paintIntro).catch(() => {}); } else paintWallet(); }, 1000);
 
 // ---------- one attempt (#3265: it starts at once; the entry is paid in the background) ----------
 const pill = (kind, text) => { const p = $("pill"); p.hidden = !text; p.className = kind || ""; p.textContent = text || ""; };
@@ -182,6 +216,8 @@ async function play() {
     const a = await entry.start(S.round.id);
     if (!a.ok) { await refresh().catch(() => {}); return fail(a.why); }
     run = { ...a, round: S.round.id, before, entry: null, status: null };
+    (S.opened[S.round.id] = S.opened[S.round.id] || []).push(a.attempt);   // #3251: this run counts from now on
+    refresh().catch(() => {});   // and GET /me says so too (read again after POST /attempt)
     if (!a.level || !a.token) {
       // the older service: paid first, then the run
       btn.textContent = "Paying the entry …";
@@ -263,7 +299,7 @@ function paintEntry() {
 function showResult({ res, mode: m, entry: en, sending = false }) {
   const after = S.me ? myBest(S.me, S.board) : null;
   const model = resultModel({ res, parTime: L.parTime, timePerS: rulesOf(L.version).timePerS, entry: en, entryWhy: run && run.entryWhy, before: run && m === "play" ? run.before : null, after: m === "play" && run ? after : null,
-    me: m === "play" && run ? S.me : null, max: S.round ? S.round.maxAttempts : 5, mode: m === "play" && !run ? "practice" : m, submitWhy: run && run.submitWhy });
+    me: m === "play" && run ? S.me : null, max: S.round ? S.round.maxAttempts : 5, mode: m === "play" && !run ? "practice" : m, submitWhy: run && run.submitWhy, opened: openedIn() });
   $("rTitle").textContent = model.title;
   const re = $("rEntry"); re.hidden = !en; if (en) { re.className = "entry " + model.entry.kind; re.textContent = sending ? "Sending your run …" : model.entry.text; }
   const t1 = $("rScore"); t1.textContent = ""; const add = (a, v, cl) => cellRow(t1.insertRow(), [a, v], cl);
@@ -277,7 +313,7 @@ function showResult({ res, mode: m, entry: en, sending = false }) {
   $("rX").hidden = !model.xPrompt; $("rXText").textContent = model.xPrompt || "";
   $("xBtn").hidden = !(bridge && bridge.linkX) || !(S.me && !S.me.x);
   paintLn("r", m === "play");   // every result of a play or practice run, not a replay
-  const used = S.me ? Number(S.me.used || 0) : 0, max = S.round ? Number(S.round.maxAttempts || 5) : 5;
+  const used = usedOf(S.me, openedIn()), max = S.round ? Number(S.round.maxAttempts || 5) : 5;
   $("againBtn").textContent = run && used >= max ? "Back" : "Play again";
   $("replayBtn").disabled = !lastLog;
   $("rBoardBtn").hidden = !api;
@@ -327,12 +363,14 @@ addEventListener("keydown", (e) => { const kk = keyMap[e.code]; if (!kk) return;
 addEventListener("keyup", (e) => { const kk = keyMap[e.code]; if (kk) input[kk] = false; });
 { const bt = $("pJ"); const on = (e) => { input.jump = true; bt.classList.add("held"); e.preventDefault(); }, off = () => { input.jump = false; bt.classList.remove("held"); };
   bt.addEventListener("pointerdown", on); bt.addEventListener("pointerup", off); bt.addEventListener("pointercancel", off); bt.addEventListener("pointerleave", off); }
-document.addEventListener("pointerdown", (e) => { if (running && mode === "play" && !e.target.closest("#rbar")) { input.jump = true; if (e.cancelable) e.preventDefault(); } }, { passive: false });
+document.addEventListener("pointerdown", (e) => { if (running && mode === "play" && !e.target.closest("#rbar, #sndBtn")) { input.jump = true; if (e.cancelable) e.preventDefault(); } }, { passive: false });
 ["pointerup", "pointercancel"].forEach((ev) => document.addEventListener(ev, () => { input.jump = false; }));
-["touchstart", "touchmove", "gesturestart", "dblclick"].forEach((ev) => document.addEventListener(ev, (e) => { if (running && mode === "play" && e.cancelable) e.preventDefault(); }, { passive: false }));
+["touchstart", "touchmove", "gesturestart", "dblclick"].forEach((ev) => document.addEventListener(ev, (e) => { if (running && mode === "play" && e.cancelable && !(e.target.closest && e.target.closest("#sndBtn"))) e.preventDefault(); }, { passive: false }));
 document.addEventListener("selectstart", (e) => { if (running) e.preventDefault(); });
 document.addEventListener("contextmenu", (e) => { if (running) e.preventDefault(); });
-$("startBtn").onclick = () => { if (!$("startBtn").disabled) play(); };
+$("startBtn").onclick = () => { if (audio) audio.unlock(); if (!$("startBtn").disabled) play(); };
+$("sndBtn").onclick = (e) => { e.stopPropagation(); if (!audio) return; audio.unlock(); audio.next(); if (running && audio.mode === "on") audio.startMusic(); paintSound(); };
+$("sndBtn").addEventListener("pointerdown", (e) => e.stopPropagation());   // a tap on the speaker is not a jump
 $("againBtn").onclick = () => { if (run) { if (run.payer && (run.entry === "paid" || run.entry === "not-paid")) run.payer.stop(); run = null; } pill("", ""); showIntro(); };
 $("replayBtn").onclick = () => { if (!lastLog) return; replayLog = lastLog; begin("replay"); };
 $("rBoardBtn").onclick = () => showBoard();
@@ -344,7 +382,7 @@ $("xBtn").onclick = () => { try { bridge.linkX(); } catch (_) { /* the page has 
 $("iXBtn").onclick = $("xBtn").onclick;
 $("rbPlay").onclick = () => { paused = !paused; $("rbPlay").textContent = paused ? "Play" : "Pause"; };
 $("rb2x").onclick = () => { speed = speed === 2 ? 1 : 2; $("rb2x").setAttribute("aria-pressed", String(speed === 2)); };
-$("rbClose").onclick = () => { running = false; document.body.classList.remove("playing", "replaying"); $("rbar").hidden = true; showIntro(); };
+$("rbClose").onclick = () => { if (audio) audio.stopMusic(); running = false; document.body.classList.remove("playing", "replaying"); $("rbar").hidden = true; showIntro(); };
 // kanban #3270: refit whenever the stage changes size, not only the window. The JUMP pad appears when a run starts and takes
 // ~70 px from the stage; with a window resize alone the canvas kept its old height and the stage clipped the ground off.
 const refit = () => { fit(); if (!running) (W ? drawWorld(W, []) : idle()); };
@@ -359,10 +397,10 @@ Object.assign(HOOKS, {
   playBot: (opts = {}) => begin("bot", opts),
   replay(log, opts = {}) { const bad = validateLog(log); if (bad) throw new TypeError(bad); replayLog = log; begin("replay", opts); },
   state: () => ({ running, paused, speed, mode, f: W ? W.f : 0, done: W ? W.done : false, run: run ? { attempt: run.attempt, entry: run.entry, status: run.status } : null }),
-  view: () => view(W), lastLog: () => lastLog, lastResult: () => lastResult, service: () => ({ ...S }),
+  view: () => view(W), audio: () => (audio ? { state: audio.state, mode: audio.mode, music: audio.musicOn } : null), lastLog: () => lastLog, lastResult: () => lastResult, service: () => ({ ...S }),
   showIntro, showResult: (r) => showResult({ res: r || lastResult, mode: "play", entry: "practice" }), showBoard, showRules,
 });
-fit(); idle(); showIntro();
+fit(); idle(); paintSound(); showIntro();
 if (api) refresh().then(paintIntro).catch(() => {});
 if (location.hash === "#rules") showRules(); else if (location.hash === "#board") showBoard();
 const q = new URLSearchParams(location.search);

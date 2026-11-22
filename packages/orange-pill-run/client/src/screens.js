@@ -29,7 +29,28 @@ export function xLine(me) {
   return { text: "X account: " + (me.x.username ? "@" + me.x.username : "linked") + " ✓", link: false };
 }
 
-export function introModel({ round, me, board, wallet, nowMs = Date.now(), loading = false }) {
+/**
+ * THE RUNS THIS PLAYER OPENED IN THE ROUND (#3251): GET /me's count, and never fewer than the runs it lists plus the ones this tab opened since
+ * (opened: attempt ids from POST /attempt) - a /me read before the run, or one that did not answer, must not show the run as not made.
+ */
+export function usedOf(me, opened = []) {
+  const ids = new Set(((me && me.attempts) || []).map((a) => a && a.attempt).filter(Boolean));
+  for (const a of opened || []) if (a) ids.add(a);
+  return Math.max(me ? Number(me.used || 0) : 0, ids.size);
+}
+
+/**
+ * THE INTRO'S LEADERBOARD (#3251, owner 2026-11-22): the top 10 as { rank, name, score, time, me }, the player's own row marked; a player
+ * placed below the 10 gets their row after them (own), behind a divider. me: GET /me (its name); board: GET /board's rows.
+ */
+export const INTRO_TOP = 10;
+export function introBoard(board, me) {
+  const name = me && me.name, rows = (board || []).map((r) => ({ rank: String(r.rank), name: String(r.name || ""), score: fmtSats(r.score), time: fmtTime(r.timeS), placed: !!r.placed, me: !!name && r.name === name }));
+  const top = rows.slice(0, INTRO_TOP), own = rows.slice(INTRO_TOP).find((r) => r.me) || null;
+  return { rows: top, own, empty: top.length ? null : "No run yet - be the first" };
+}
+
+export function introModel({ round, me, board, wallet, nowMs = Date.now(), loading = false, opened = [] }) {
   const m = { line: "Run yesterday's Bitcoin chart. Tap to jump. Don't fall.", practice: false };
   if (!wallet) {
     m.practice = true;
@@ -47,18 +68,20 @@ export function introModel({ round, me, board, wallet, nowMs = Date.now(), loadi
     return m;
   }
   const entry = Number(round.entrySats || 100), max = Number(round.maxAttempts || 5);
-  m.bounty = round.bountySats > 0 ? "Play bounty: " + fmtSats(round.bountySats) + " sats today for rank 1" : round.test ? "Test round · no play bounty" : null;
+  // the owner's bounty rule (#3250, 2026-11-22): the best player with a Lightning address, not rank 1
+  m.bounty = round.bountySats > 0 ? "Play bounty: " + fmtSats(round.bountySats) + " sats today for the best player with a Lightning address" : round.test ? "Test round · no play bounty" : null;
   m.best = round.best ? fmtSats(round.best.score) + " in " + fmtTime(round.best.timeS) + " by " + round.best.name : "No run yet - be the first";
   const split = Array.isArray(round.split) ? round.split.join(" / ") : "50 / 30 / 20";
   m.pot = fmtSats(round.potSats) + " testnet sats · split " + split;
-  const used = me ? Number(me.used || 0) : 0;
+  const used = usedOf(me, opened);
   m.attempts = "Your attempts: " + used + " of " + max;
   const mine = me ? myBest(me, board) : null;
   m.mine = mine ? "Your best: " + fmtSats(mine.total) + (mine.rank ? " · rank " + mine.rank : "") : "Your best: no run yet";
   m.left = round.phase === "soon" ? "Opens in " + fmtLeft(round.startMs - nowMs) : "Time left: " + fmtLeft(round.endMs - nowMs);
-  // the same lines as label and value, for the intro's grid
-  m.facts = [["Current best", m.best, "wide"], ["Pot so far", m.pot.replace(" · split ", " · "), "wide"], [round.phase === "soon" ? "Opens in" : "Time left", m.left.replace(/^(Opens in|Time left:) /, ""), "f3"],
+  // the same lines as label and value, for the intro's grid; the owner 2026-11-22: no pot line on the intro, the top 10 instead of "Current best"
+  m.facts = [[round.phase === "soon" ? "Opens in" : "Time left", m.left.replace(/^(Opens in|Time left:) /, ""), "f3"],
     ["Your attempts", used + " of " + max, "f3"], ["Your best", mine ? fmtSats(mine.total) + (mine.rank ? " · #" + mine.rank : "") : "no run yet", "f3"]];
+  m.board = introBoard(board, me);
   const label = "Play · " + fmtSats(entry) + " testnet sats";
   const off = (why) => (m.button = { label, disabled: true, why });
   const bal = wallet.balance ? Number(wallet.balance.sats) || 0 : null;
@@ -86,7 +109,7 @@ export function entryLine(entry, why) {
  * The result: { title, entry, rows: [[label, value]], total, rank, beat, left, xPrompt }.
  * res: the run (resultOf); before/after: myBest() before and after the run; me: GET /me after it.
  */
-export function resultModel({ res, parTime, timePerS = 20, entry, entryWhy, before, after, me, max = 5, mode = "play", submitWhy = null }) {
+export function resultModel({ res, parTime, timePerS = 20, entry, entryWhy, before, after, me, max = 5, mode = "play", submitWhy = null, opened = [] }) {
   const out = {};
   out.title = mode === "replay" ? "Replay: " + (res.finished ? "flag in " + fmtTime(res.timeS) : "time is up") : res.finished ? "Flag reached in " + fmtTime(res.timeS) : "Time is up";
   out.entry = entryLine(entry, entryWhy);
@@ -98,7 +121,7 @@ export function resultModel({ res, parTime, timePerS = 20, entry, entryWhy, befo
   if (submitWhy) out.refused = "The service did not take this run: " + submitWhy;
   out.rank = after && after.rank ? "Rank " + after.rank + " after this run" : entry === "paid" ? "Not on the board yet" : null;
   out.beat = !before ? (after ? "Your first score of the round" : null) : res.total > before.total ? "New best - you beat your " + fmtSats(before.total) : "Your best stays " + fmtSats(before.total);
-  if (me) out.left = "Attempts left: " + Math.max(0, max - Number(me.used || 0)) + " of " + max;
+  if (me) out.left = "Attempts left: " + Math.max(0, max - usedOf(me, opened)) + " of " + max;   // #3251: this run counts, whatever /me said before it
   if (me && !me.x) out.xPrompt = "Link your X account to be placed and win.";
   else if (me && me.x && !me.placed) out.xPrompt = "Your X account " + (me.x.username ? "@" + me.x.username + " " : "") + "is linked - " + (me.placedWhy || "not verified yet") + ".";
   return out;
