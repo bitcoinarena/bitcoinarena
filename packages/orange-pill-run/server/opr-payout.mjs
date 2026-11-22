@@ -33,26 +33,30 @@ export function shares(pot, pcts) {
  * held(player) -> a reason (under review, a rejected row) or null. Answers { pot: { rows, carrySats }, bounty: { rows } | null }.
  */
 export const NO_LN_ADDRESS = 'no valid Lightning address';
-export function payoutLists({ board, potSats, placedOf, held = () => null, bountySats = 0, test = false, lnOf = null }) {
-  const eligible = [];
+// HELD ROWS (kanban #3274): a placed player held (under review, a rejected row, a likely bot) is named in the list's `held`, with why - and, with
+// botOf handed in, every row and held row carries the player's bot likelihood { score, reasons } for the sign-off
+export function payoutLists({ board, potSats, placedOf, held = () => null, bountySats = 0, test = false, lnOf = null, botOf = null }) {
+  const eligible = [], heldRows = [];
+  const bot = (p) => (botOf ? { bot: botOf(p) || null } : {});
   for (const r of board) {
     const p = placedOf(r.player);
     if (!p || !p.placed || !p.x) continue;   // nobody without a verified X account on a list (#3250)
-    if (held(r.player)) continue;
+    const h = held(r.player);
+    if (h) { heldRows.push({ player: r.player, name: r.name || null, xAccount: p.x.username || null, rank: r.rank, score: r.total, attempt: r.attempt, why: h, ...bot(r.player) }); continue; }
     eligible.push({ r, x: p.x });
   }
   const top = eligible.slice(0, 3), pcts = splitFor(top.length), amounts = shares(potSats, pcts);
   const row = ({ r, x }, place, sats, pct) => ({ player: r.player, name: r.name || null, xAccount: x.username || null, xUserId: x.userId, rank: r.rank, place, score: r.total,
-    timeS: r.timeS, attempt: r.attempt, replay: `/replay/${r.attempt}`, flags: r.flags || {}, sats, pct, ...(lnOf ? { lnAddress: (lnOf(r.player) || {}).address || null } : {}) });
-  const pot = { rows: top.map((e, i) => row(e, i + 1, amounts[i], pcts[i])), carrySats: top.length ? 0 : potSats, potSats };
+    timeS: r.timeS, attempt: r.attempt, replay: `/replay/${r.attempt}`, flags: r.flags || {}, sats, pct, ...(lnOf ? { lnAddress: (lnOf(r.player) || {}).address || null } : {}), ...bot(r.player) });
+  const pot = { rows: top.map((e, i) => row(e, i + 1, amounts[i], pcts[i])), carrySats: top.length ? 0 : potSats, potSats, held: heldRows };
   let bounty = null;
   if (!test && bountySats > 0) {
-    if (!lnOf) bounty = { rows: eligible.length ? [row(eligible[0], 1, bountySats, 100)] : [], bountySats };
+    if (!lnOf) bounty = { rows: eligible.length ? [row(eligible[0], 1, bountySats, 100)] : [], bountySats, held: heldRows };
     else {
       const skipped = [];
       const win = eligible.find((e) => { const l = lnOf(e.r.player); if (l && l.address && l.inTime) return true;
         skipped.push({ player: e.r.player, name: e.r.name || null, xAccount: e.x.username || null, rank: e.r.rank, why: NO_LN_ADDRESS }); return false; });
-      bounty = { rows: win ? [{ ...row(win, 1, bountySats, 100), skipped }] : [], skipped, bountySats };
+      bounty = { rows: win ? [{ ...row(win, 1, bountySats, 100), skipped }] : [], skipped, bountySats, held: heldRows };
     }
   }
   return { pot, bounty };

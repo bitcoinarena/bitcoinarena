@@ -86,8 +86,36 @@ function paintSound() {
 }
 const SHEETS = ["intro", "result", "board", "rules"];
 const showSheet = (id) => { for (const s of SHEETS) $(s).hidden = s !== id; };
+// THE RUN'S TELEMETRY (kanban #3274), sent with the log for the fair-play review: how the presses came in and how the tab was used - counts and
+// spreads only, no personal data (no positions are sent, no identifiers)
+let TEL = null;
+const telNew = () => ({ at: performance.now(), src: { touch: 0, mouse: 0, pen: 0, key: 0 }, xs: [], ys: [], blur: 0, hidden: 0, hiddenMs: 0, hidAt: null, first: null });
+const telSpread = (xs) => { if (xs.length < 2) return null; const m = xs.reduce((a, b) => a + b, 0) / xs.length; return Math.sqrt(xs.reduce((a, x) => a + (x - m) ** 2, 0) / xs.length); };
+function telOut() {
+  const T = TEL; if (!T) return null;
+  if (T.hidAt != null) { T.hiddenMs += performance.now() - T.hidAt; T.hidAt = null; }
+  const sx = telSpread(T.xs), sy = telSpread(T.ys);
+  let nav = {}; try { nav = navigator; } catch (_) { nav = {}; }
+  const ua = String(nav.userAgent || ""), auto = [];
+  if (/HeadlessChrome|PhantomJS|Electron|SlimerJS/i.test(ua)) auto.push("headless");
+  try { if (!nav.languages || !nav.languages.length) auto.push("no languages"); } catch (_) {}
+  try { if (window.outerWidth === 0 && window.outerHeight === 0) auto.push("no window"); } catch (_) {}
+  try { if (window.callPhantom || window._phantom || window.__nightmare || window.domAutomation || window.domAutomationController) auto.push("driver object"); } catch (_) {}
+  let small = 0; try { small = Math.min(screen.width, screen.height); } catch (_) { small = 0; }
+  const touch = "ontouchstart" in window || (nav.maxTouchPoints || 0) > 0;
+  return { src: T.src, taps: T.xs.length, jit: sx == null || sy == null ? null : Math.round((sx + sy) * 5) / 10, blur: T.blur, hidden: T.hidden, hiddenMs: Math.round(T.hiddenMs),
+    first: T.first == null ? null : Math.round(T.first), wd: nav.webdriver === true, auto, dc: touch ? (small && small < 600 ? "phone" : "tablet") : "desktop", dpr: Math.round((window.devicePixelRatio || 1) * 100) / 100 };
+}
+function telPress(kind, e) {
+  if (!TEL || !running || mode !== "play") return;
+  TEL.src[kind] = (TEL.src[kind] || 0) + 1;
+  if (TEL.first == null) TEL.first = performance.now() - TEL.at;
+  if (e && kind !== "key" && TEL.xs.length < 400 && Number.isFinite(e.clientX)) { TEL.xs.push(e.clientX); TEL.ys.push(e.clientY); }
+}
+addEventListener("blur", () => { if (TEL && running && mode === "play") TEL.blur++; });
+document.addEventListener("visibilitychange", () => { if (!TEL || !running || mode !== "play") return; if (document.hidden) { TEL.hidden++; TEL.hidAt = performance.now(); } else if (TEL.hidAt != null) { TEL.hiddenMs += performance.now() - TEL.hidAt; TEL.hidAt = null; } });
 function begin(m, opts = {}) {
-  mode = m; W = newWorld(L); snap = audio ? snapWorld(W) : null; presses = []; down = -1; replayIdx = 0; speed = opts.speed || 1; paused = false; input.jump = false; input.letGo = false; input.seen = false;
+  mode = m; TEL = m === "play" ? telNew() : null; W = newWorld(L); snap = audio ? snapWorld(W) : null; presses = []; down = -1; replayIdx = 0; speed = opts.speed || 1; paused = false; input.jump = false; input.letGo = false; input.seen = false;
   botCfg = m === "bot" ? { ...BOT_CONFIGS[opts.bot || 0] } : null;
   document.body.classList.add("playing"); document.body.classList.toggle("replaying", m === "replay"); running = true; acc = 0; last = performance.now();
   showSheet(null); if (m !== "play") pill("", "");
@@ -261,7 +289,8 @@ async function sendRun(res) {
   const mine = run; mine.shown = false;
   showResult({ res, mode: "play", entry: mine.entry || "waiting", sending: true });
   mine.shown = true;
-  const client = { ua: String(navigator.userAgent || "").slice(0, 160), w: innerWidth, h: innerHeight, touch: "ontouchstart" in window, v: GAME_VERSION };
+  const t = telOut();
+  const client = { ua: String(navigator.userAgent || "").slice(0, 160), w: innerWidth, h: innerHeight, touch: "ontouchstart" in window, v: GAME_VERSION, hiddenMs: t ? t.hiddenMs : 0, t };
   const r = await entry.submit({ attempt: mine.attempt, token: mine.token, round: mine.round, log: lastLog, client });
   mine.sent = r;
   if (!r.ok) mine.submitWhy = r.why || "not taken";
@@ -400,9 +429,9 @@ function showRules() {
 // simulation step has seen it, then let go - the input log (and so the replay) records it as the steps saw it
 const press = () => { input.jump = true; input.seen = false; input.letGo = false; };
 const release = () => { if (input.seen) input.jump = false; else input.letGo = true; };
-addEventListener("keydown", (e) => { const kk = keyMap[e.code]; if (!kk) return; if (!e.repeat) press(); if (running) e.preventDefault(); });
+addEventListener("keydown", (e) => { const kk = keyMap[e.code]; if (!kk) return; if (!e.repeat) { telPress("key", e); press(); } if (running) e.preventDefault(); });
 addEventListener("keyup", (e) => { const kk = keyMap[e.code]; if (kk) release(); });
-document.addEventListener("pointerdown", (e) => { if (running && mode === "play" && !e.target.closest("#rbar, #sndBtn")) { press(); if (e.cancelable) e.preventDefault(); } }, { passive: false });
+document.addEventListener("pointerdown", (e) => { if (running && mode === "play" && !e.target.closest("#rbar, #sndBtn")) { telPress(e.pointerType === "touch" || e.pointerType === "pen" ? e.pointerType : "mouse", e); press(); if (e.cancelable) e.preventDefault(); } }, { passive: false });
 ["pointerup", "pointercancel"].forEach((ev) => document.addEventListener(ev, () => { if (input.jump) release(); }));
 ["touchstart", "touchmove", "gesturestart", "dblclick"].forEach((ev) => document.addEventListener(ev, (e) => { if (running && mode === "play" && e.cancelable && !(e.target.closest && e.target.closest("#sndBtn"))) e.preventDefault(); }, { passive: false }));
 document.addEventListener("selectstart", (e) => { if (running) e.preventDefault(); });

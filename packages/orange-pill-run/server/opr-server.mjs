@@ -28,7 +28,7 @@ if (!env.OPR_DB) throw new Error('OPR_DB names the sqlite file');
 const simMod = await import('../src/sim/index.js');
 const { checkLevel } = await import('../src/level-check.mjs');
 const { fetchDay } = await import('../src/candles.mjs');
-const sim = { GAME_VERSION: simMod.GAME_VERSION, buildLevel: simMod.buildLevel, runLog: simMod.runLog };
+const sim = { GAME_VERSION: simMod.GAME_VERSION, buildLevel: simMod.buildLevel, runLog: simMod.runLog, newWorld: simMod.newWorld, stepWorld: simMod.stepWorld, botInput: simMod.botInput, MAX_STEPS: simMod.MAX_STEPS };   // the last four: the bot likelihood (#3274)
 const fetchCandles = async (day) => (await fetchDay(day, { log: (m) => log(`candles ${day}: ${m}`) })).candles;   // Coinbase, then Kraken, Bitstamp
 
 const s2 = env.OPR_S2_DB ? (await import('../../arena-node/src/bounty-season.js')).openBountySeason(env.OPR_S2_DB) : null;
