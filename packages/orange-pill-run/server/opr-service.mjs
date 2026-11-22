@@ -21,13 +21,14 @@ import { encodeRoundPost, levelHashOf } from './opr-chain.mjs';
 import { bestPerPlayer, payoutLists, SPLIT } from './opr-payout.mjs';
 import { checkLnAddress, lnAddressSyntax, LN_CHECKS_PER_HOUR } from './opr-lnaddress.mjs';
 import { runFeatures, nearLogs, deviceOf, scoreRun, topReasons, HOLD_ABOVE } from './opr-botscore.mjs';
+import { ipKey } from '../../arena-node/src/faucet.js';
 
 const DAY_MS = 86400000, MIN_MS = 60000;
 export const DEFAULTS = Object.freeze({
   firstDay: '2026-11-23', daily: true, entrySats: 0, maxAttempts: 5, submitMs: 10 * MIN_MS, lastCallMs: 5 * MIN_MS, invoiceS: 600,
   verifyGraceMs: 60 * MIN_MS, bountySats: 2000, bountyClaimMs: 7 * DAY_MS, alertAfterMs: 15 * MIN_MS, fastSlackMs: 1000, maxSteps: 180 * 60,
   confirmations: 1, publicBases: ['https://testnet-stage.bitcoinarena.io/api/opr'], adminSha: '', workerKey: '', showTest: false, ipCrowd: 3,
-  testMinutesMost: 24 * 60, logPressesMost: 6000, bodyMost: 256 * 1024,
+  testMinutesMost: 24 * 60, logPressesMost: 6000, bodyMost: 256 * 1024, ipAttemptsShare: 2,
 });
 // FREE ROUNDS (kanban #3273, owner 2026-11-22: "a free round - no testnet sats, but 2,000 real sats for the winner"): a round made now has
 // entry_sats 0. A free run starts at once (no invoice, no lnd), counts as paid (paid_ms = its start), is scored at submit; the round has no pot
@@ -111,6 +112,9 @@ export function createOpr(o = {}) {
   try { db.exec('ALTER TABLE attempts ADD COLUMN bot_feat TEXT'); } catch { /* there already */ }
   try { db.exec('ALTER TABLE payout_lists ADD COLUMN held TEXT'); } catch { /* there already */ }
   db.exec('CREATE TABLE IF NOT EXISTS ln_checks (player TEXT NOT NULL, at_ms INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS ln_checks_by_player ON ln_checks (player, at_ms);');
+  // ONE ADDRESS, A FEW PLAYERS' ATTEMPTS (kanban #3283): ip_key the caller's address as a limit counts it (an IPv6 /64 as one, faucet.js ipKey)
+  try { db.exec('ALTER TABLE attempts ADD COLUMN ip_key TEXT'); } catch { /* there already */ }
+  db.exec('CREATE INDEX IF NOT EXISTS attempts_by_ip_key ON attempts (round, ip_key)');
   const q = (sql) => db.prepare(sql);
   const roundRow = (id) => q('SELECT * FROM rounds WHERE id = ?').get(String(id));
   const levels = new Map();   // round id -> built level
@@ -217,6 +221,10 @@ export function createOpr(o = {}) {
   // unpaid never buy free practice before paying (the coordinator's ruling 2026-11-21). Only an invoice of the earlier flow that expired
   // before any run opened ('expired': no level was shown) does not count
   const usedBy = (round, player) => q(`SELECT COUNT(*) AS n FROM attempts WHERE round = ? AND player = ? AND state != 'expired'`).get(round, player).n;
+  // PER ADDRESS (kanban #3283): keys are free, so the per-key 5 alone let one address open attempts (and store refused runs) without end. One
+  // address opens at most ipAttemptsShare x the round's attempts (2 players' worth: 10 in a daily round); a caller with no address is not counted
+  const ipFull = (r, key) => !!key && q(`SELECT COUNT(*) AS n FROM attempts WHERE round = ? AND ip_key = ? AND state != 'expired'`).get(r.id, key).n >= cfg.ipAttemptsShare * r.max_attempts;
+  const IP_FULL = 'this address opened all the attempts it may in this round';
   const startedCount = (round) => q('SELECT COUNT(*) AS n FROM attempts WHERE round = ? AND paid_ms IS NOT NULL').get(round).n;   // the pot: paid entries only
   const phaseOf = (r, t = now()) => (t >= r.end_ms || ['closed', 'listed'].includes(r.state) ? 'ended' : r.state !== 'ready' ? (r.state === 'posting' ? 'posting' : 'preparing')
     : t < r.start_ms ? 'soon' : t >= r.end_ms - cfg.lastCallMs ? 'last-call' : 'open');
@@ -251,6 +259,8 @@ export function createOpr(o = {}) {
     if (ph === 'last-call') return { ok: false, why: 'no new attempts in the last 5 minutes of a round' };
     if (ph !== 'open') return { ok: false, why: `the round is not open (${ph})` };
     if (usedBy(r.id, player, t) >= r.max_attempts) return { ok: false, why: `all ${r.max_attempts} attempts of this round are used` };
+    const ik = ipKey(ip);
+    if (ipFull(r, ik)) return { ok: false, why: IP_FULL };
     // THE RUN OPENS AT ONCE (kanban #3265, the owner 2026-11-21: play at once with an empty new wallet): the level, a token and the entry invoice
     // together; the invoice lives exactly as long as the run's 10 minutes, so an entry paid after the deadline is impossible
     const deadline = Math.min(t + cfg.submitMs, r.end_ms);
@@ -259,8 +269,8 @@ export function createOpr(o = {}) {
     if (isFree(r)) {   // FREE (kanban #3273): started and paid at once - no invoice, lnd is never asked
       const id = randomBytes(16).toString('hex');
       const token = randomBytes(32).toString('hex');
-      q(`INSERT INTO attempts (id, round, player, ip, created_ms, started_ms, paid_ms, token, deadline_ms, state)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'started')`).run(id, r.id, player, ip, t, t, t, token, deadline);
+      q(`INSERT INTO attempts (id, round, player, ip, ip_key, created_ms, started_ms, paid_ms, token, deadline_ms, state)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'started')`).run(id, r.id, player, ip, ik, t, t, t, token, deadline);
       q('INSERT INTO players (pubkey, seen_ms) VALUES (?, ?) ON CONFLICT (pubkey) DO UPDATE SET seen_ms = excluded.seen_ms').run(player, t);
       return { ok: true, attempt: id, state: 'started', paid: true, free: true, sats: 0, token, startedMs: t, deadlineMs: deadline, level: levelFor(r) };
     }
@@ -270,10 +280,11 @@ export function createOpr(o = {}) {
     catch (e) { log(`entry invoice not made: ${e.message}`); return { ok: false, why: 'the entry invoice could not be made - try again in a minute' }; }
     // the count again after the wait: two starts at once never make a sixth
     if (usedBy(r.id, player, now()) >= r.max_attempts) return { ok: false, why: `all ${r.max_attempts} attempts of this round are used` };
+    if (ipFull(r, ik)) return { ok: false, why: IP_FULL };
     const id = randomBytes(16).toString('hex');
     const token = randomBytes(32).toString('hex');
-    q(`INSERT INTO attempts (id, round, player, ip, invoice, paid_hash, invoice_expires_ms, created_ms, started_ms, token, deadline_ms, state)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`).run(id, r.id, player, ip, inv.invoice, inv.hash, t + expirySeconds * 1000, t, t, token, deadline);
+    q(`INSERT INTO attempts (id, round, player, ip, ip_key, invoice, paid_hash, invoice_expires_ms, created_ms, started_ms, token, deadline_ms, state)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`).run(id, r.id, player, ip, ik, inv.invoice, inv.hash, t + expirySeconds * 1000, t, t, token, deadline);
     q('INSERT INTO players (pubkey, seen_ms) VALUES (?, ?) ON CONFLICT (pubkey) DO UPDATE SET seen_ms = excluded.seen_ms').run(player, t);
     return { ok: true, attempt: id, state: 'pending-entry', invoice: inv.invoice, sats: r.entry_sats, expiresMs: t + expirySeconds * 1000,
       token, startedMs: t, deadlineMs: deadline, level: levelFor(r) };
@@ -339,21 +350,23 @@ export function createOpr(o = {}) {
     if (a.state !== 'started' && a.state !== 'pending') return { ok: false, why: a.state === 'unpaid' ? 'entry not paid - this run does not count' : 'that token was used already' };
     const r = roundRow(a.round);
     const from = a.state;
+    // A REFUSED RUN KEEPS ITS LOG ONLY WHEN IT IS A LOG (kanban #3283): a well-formed one (at most logPressesMost presses) stays for the bot pass and
+    // the replay; anything else (up to 256 KB of junk each, from free keys) is not stored - the refusal and its reason are
     const reject = (why, extra = {}) => {
       q("UPDATE attempts SET state = 'rejected', why = ?, submitted_ms = ?, log = ?, client = ?, flags = ? WHERE id = ? AND state = ?")
-        .run(why, t, body.log == null ? null : JSON.stringify(body.log).slice(0, cfg.bodyMost), clientText(body.client), JSON.stringify(extra.flags || {}), a.id, from);
+        .run(why, t, extra.keepLog ? JSON.stringify(body.log) : null, clientText(body.client), JSON.stringify(extra.flags || {}), a.id, from);
       log(`attempt ${a.id.slice(0, 8)} of ${a.round} refused: ${why}`);
       return { ok: false, why, closed: true };
     };
     if (t > a.deadline_ms) { if (from === 'started') q("UPDATE attempts SET state = 'timeout', why = 'not submitted in time' WHERE id = ? AND state = 'started'").run(a.id); return { ok: false, why: 'the 10 minutes of this attempt are over', closed: true }; }
     const bad = logRefusal(body.log, { maxSteps: cfg.maxSteps, most: cfg.logPressesMost });
     if (bad) return reject(`malformed log: ${bad}`);
-    if (body.log.v !== r.game_version) return reject(`wrong game version: the round plays ${r.game_version}`);
+    if (body.log.v !== r.game_version) return reject(`wrong game version: the round plays ${r.game_version}`, { keepLog: true });
     let res;
-    try { res = sim.runLog(levelOf(r), body.log, { maxSteps: cfg.maxSteps }); } catch (e) { return reject(`the log does not replay (${String(e.message).slice(0, 80)})`); }
-    if (!res || !Number.isSafeInteger(res.steps) || !Number.isFinite(res.total)) return reject('the log does not replay');
+    try { res = sim.runLog(levelOf(r), body.log, { maxSteps: cfg.maxSteps }); } catch (e) { return reject(`the log does not replay (${String(e.message).slice(0, 80)})`, { keepLog: true }); }
+    if (!res || !Number.isSafeInteger(res.steps) || !Number.isFinite(res.total)) return reject('the log does not replay', { keepLog: true });
     const gameMs = (res.steps * 1000) / 60;
-    if (t - a.started_ms + cfg.fastSlackMs < gameMs) return reject(`submitted faster than the run's game time (${Math.round(gameMs / 1000)} s)`, { flags: { tooFast: true } });
+    if (t - a.started_ms + cfg.fastSlackMs < gameMs) return reject(`submitted faster than the run's game time (${Math.round(gameMs / 1000)} s)`, { flags: { tooFast: true }, keepLog: true });
     const score = { total: res.total, parts: res.parts, clean: !!res.clean, finished: !!res.finished, steps: res.steps, deaths: res.deaths, timeS: res.timeS };
     const logHash = sha(JSON.stringify(body.log.presses));
     const flags = runSignals(body.log, body.client);
