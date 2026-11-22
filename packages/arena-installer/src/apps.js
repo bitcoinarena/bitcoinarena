@@ -46,15 +46,38 @@ export function appsEnvValue(release, chosenIds, apps = appsIn(release)) {
  * and the installer's advertisement named Next Block's first version alone - an installed node was never drawn for Up/Down, Rock Paper
  * Scissors or a newer Next Block. These are the chosen apps' registrations as the seat hosts them (arena-node plugins.js hostedPlugins:
  * a version that does not stand is left out, so the node never names a game it would refuse), as hex, sorted.
+ *
+ * AND THE GAMES THE NODE INSTALLED ITSELF (kanban #3068 follow-up, measured 2026-11-22 on a live installer node on 2026.1.9.29: it served
+ * 43 games and advertised 37 - rock-paper-scissors v6 to v11, the live RPS game among them, came to it from the network as installed
+ * packages in <home>/node.db.plugins, not with the release, so no advertisement named them and the node was never drawn for an RPS round).
+ * `pluginsDir` given: its packages as the seat loads them at start (main.js, plugin-package.js loadInstalled: each checked again, a refused
+ * one left out), after the chosen apps' registrations and once per game. `refused` collects the packages left out, for a caller that must
+ * not read a check that failed this once as a game the node stopped hosting.
  */
-export async function hostedGameIdsOf(release, chosenIds, apps = appsIn(release)) {
+export async function hostedGameIdsOf(release, chosenIds, apps = appsIn(release), { pluginsDir = null, refused = null } = {}) {
   const { pathToFileURL } = await import('node:url');
   const { hostedPlugins } = await import('../../arena-node/src/plugins.js');
   const files = appsEnvValue(release, chosenIds, apps).split(',').filter(Boolean);
   const regs = [];
   for (const f of files) { try { const m = await import(pathToFileURL(f).href); if (m.GAME) regs.push(m.GAME); } catch { /* not hosted either */ } }
+  // as main.js: an installed game the release's apps already host is not added twice
+  if (pluginsDir) regs.push(...await installedRegistrationsOf(pluginsDir, regs, refused));
   if (!regs.length) return [];
   return [...hostedPlugins(regs, { log: () => {} }).keys()].sort();
+}
+
+/** The node's own plugins directory, as the seat reads it (main.js: ARENA_PLUGINS_DIR, else `<database>.plugins`; the installer's is node.db). */
+export const pluginsDirOf = (st) => (st && typeof st.path === 'function' ? st.path('node.db.plugins') : null);
+
+async function installedRegistrationsOf(dir, have, refused) {
+  if (!existsSync(dir)) return [];
+  const [{ loadInstalled }, { verifyEd25519 }, { toHex }] = await Promise.all([import('../../arena-node/src/plugin-package.js'),
+    import('../../arena-node/src/ed25519.js'), import('../../arena-protocol/src/hash.js')]);
+  let got;
+  try { got = await loadInstalled(dir, { verify: verifyEd25519 }); } catch (e) { if (refused) refused.push({ dir, why: e.message }); return []; }
+  if (refused) refused.push(...got.refused);
+  const ids = new Set(have.map((g) => { try { return toHex(g.gameId); } catch { return ''; } }));
+  return got.registrations.filter((g) => { const k = toHex(g.gameId); if (ids.has(k)) return false; ids.add(k); return true; });
 }
 
 /**
@@ -70,7 +93,7 @@ export async function releaseGamesBeforeBond(st, release) {
   const s = st.read();
   if (s.bond && s.bond.txid) return [];
   const apps = appsIn(release);
-  const now = await hostedGameIdsOf(release, chosenApps(s, apps), apps);
+  const now = await hostedGameIdsOf(release, chosenApps(s, apps), apps, { pluginsDir: pluginsDirOf(st) });
   if (now.length && JSON.stringify([...new Set(s.hostedGames || [])].sort()) !== JSON.stringify([...new Set(now)].sort())) st.save({ hostedGames: now });
   return now;
 }
@@ -104,7 +127,7 @@ export async function bondGamesOf(s, release, { home = null, runs = null } = {})
   for (const rel of [...new Set([journaled, runs, s && s.release && s.release.path, release].filter(Boolean))]) {
     try {
       const apps = appsIn(rel);
-      const now = await hostedGameIdsOf(rel, chosenApps(s, apps), apps);
+      const now = await hostedGameIdsOf(rel, chosenApps(s, apps), apps, { pluginsDir: home ? join(home, 'node.db.plugins') : null });
       if (now.length) return now;
     } catch { /* the next release, then the list in state */ }
   }

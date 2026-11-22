@@ -124,9 +124,12 @@ export async function refreshHostedGames({ home, release, post = false, chainKit
   const st = state || nodeState(home);
   await resumeOpen(st, { chainKit });   // kanban #1165
   const s = st.read();
-  const { appsIn, chosenApps, hostedGameIdsOf, releaseGamesBeforeBond } = await import('./apps.js');
+  const { appsIn, chosenApps, hostedGameIdsOf, releaseGamesBeforeBond, pluginsDirOf } = await import('./apps.js');
   const apps = appsIn(release);
-  const now = await hostedGameIdsOf(release, chosenApps(s, apps), apps);
+  // THE RELEASE'S APPS AND THE GAMES THE NODE INSTALLED ITSELF (kanban #3068 follow-up: rock-paper-scissors v6-v11 reach an installer node
+  // as installed packages, and an advertisement of the release's apps alone never named them) - the list the seat hosts
+  const refused = [];
+  let now = await hostedGameIdsOf(release, chosenApps(s, apps), apps, { pluginsDir: pluginsDirOf(st), refused });
   // NO BOND YET: THE GAMES ARE STILL WRITTEN DOWN (kanban #3068, measured 2026-11-20 on a live installer node: updated 1.9.27 -> 1.9.28 before
   // its bond, this returned early and state kept the install-time list; the bond posted later (add-bond.js buildBond takes state.hostedGames)
   // advertised 35 games without rock-paper-scissors v6-v11 and nextblock v7, so the node was never drawn for them). Nothing on chain - the
@@ -137,6 +140,9 @@ export async function refreshHostedGames({ home, release, post = false, chainKit
   }
   if (!now.length) return { ok: false, why: 'this release hosts no game of the node\'s apps' };
   const had = [...new Set(s.hostedGames && s.hostedGames.length ? s.hostedGames : [toHex(NEXTBLOCK_GAME_ID)])].sort();
+  // AN INSTALLED PACKAGE REFUSED THIS ONCE IS NOT A GAME THE NODE STOPPED HOSTING: a check that failed (a trial with no verdict yet, a file
+  // being written) must not cost a transaction that drops the game and another that names it again - its advertised games stay named
+  if (refused.length) now = [...new Set([...now, ...had])].sort();
   // AND THE NEWEST PROTOCOLS: an advertisement declares the protocol versions its release spoke when it was posted (state advertProtocols;
   // unknown for a node bonded before it was kept); a release that speaks more is declared with the same update
   const protocols = [...SUPPORTED_PROTOCOL_VERSIONS];
