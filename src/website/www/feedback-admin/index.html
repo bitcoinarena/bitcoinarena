@@ -219,8 +219,8 @@ const SOCIAL_SVG = {"x": "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusa
     const played = !!(r.played || r.playedMark);
     const human = isHuman(r);
     const why = r.realUser ? `Human: the owner's real-user mark${r.realUser.name ? ` (${r.realUser.name})` : ''}`
-      : human ? 'Human: a linked, verified X account'
-      : `Bot rule (15 %): no linked, verified X account${played ? ' (played a round - that alone does not count)' : ''}`;
+      : human ? 'Human: a linked X account'
+      : `Bot rule (15 %): no linked X account${played ? ' (played a round - that alone does not count)' : ''}`;
     const s = el('span', { cls: `who-ic ${human ? 'human' : 'bot'}`, title: why, 'aria-label': why });
     s.innerHTML = human
       ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm0 2c-4.4 0-8 2.2-8 5v1h16v-1c0-2.8-3.6-5-8-5z"/></svg>'
@@ -290,7 +290,7 @@ const SOCIAL_SVG = {"x": "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusa
     // A NODE REPORT'S BOUNTY CHECKLIST (kanban #1342, the owner 2026-11-08): read live from the seats (about 30 s); approve at level "node" goes through only when it passes
     if (r.source === 'node' && r.node) { const box = el('div', {}, el('h2', { text: 'Node bounty checklist' }), el('div', { cls: 'dim', text: 'reading the seats …' })); d.append(box);
       // kanban #2876: received from 2026-11-16 07:06:38 UTC the node bounty needs a proven human; the faucet refuses it otherwise and says why
-      if (Number(r.receivedMs) >= 1794812798412) d.append(el('div', { cls: 'warn', text: 'Received after 16 Nov 2026 07:06 UTC: the 10,000 sat node bounty only for a human (a linked, verified X account). A bot\'s node report: approve it as ordinary feedback at its level.' }));
+      if (Number(r.receivedMs) >= 1794812798412) d.append(el('div', { cls: 'warn', text: 'Received after 16 Nov 2026 07:06 UTC: the 10,000 sat node bounty only for a human (a linked X account). A bot\'s node report: approve it as ordinary feedback at its level.' }));
       call(`node-check/${r.id}`).then((c) => { box.replaceChildren(el('h2', { text: 'Node bounty checklist' }));
         if (!c || !Array.isArray(c.checks)) return box.append(el('div', { cls: 'bad', text: (c && c.why) || 'not read' }));
         // THE REQUIREMENTS AS NUMBERS (the owner 2026-11-10: "wie lange der online ist und wieviel runden er erfolgreich gehostet hat"): days served of the last 7,

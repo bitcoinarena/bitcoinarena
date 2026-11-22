@@ -43,7 +43,7 @@ export function bonusPct(flags = {}) {
 
 /**
  * WHAT ONE APPROVAL PAYS, by the Season 2 rules: the level's sats (a follow-up 1,000) in full only when the reporter played a round AND is proven
- * human - a linked, verified X (Twitter) account (kanban #2788, the owner 2026-11-15: "Um human zu beweisen benoetigen wir einen Twitter"; Telegram,
+ * human - a linked X (Twitter) account (kanban #2788, the owner 2026-11-15: "Um human zu beweisen benoetigen wir einen Twitter"; Telegram,
  * Discord and Armada no longer prove it, they stay a bonus); everything else - a code-only finding (no played round) or a player with no verified X
  * account (counts as a bot) - pays BOT_PCT, 15 % (kanban #2784; 25 % until the owner's 15 % later that day; code-only was half). Then the community bonus on top. A node bounty is 10,000 flat (it is not a
  * report: no bonus, no half).
@@ -454,7 +454,7 @@ export function openBountySeason(path = ':memory:', { startMs = null, s2EndMs = 
     const NAMES = { x: 'X', telegram: 'Telegram', discord: 'Discord', armada: 'Armada' };
     const lost = PLATFORMS.filter((k) => a.flags && a.flags[k] === true && now[k] !== true);
     // nothing left and no bonus lost: the rule itself went down (kanban #2784: the bot share 25 % -> 15 %)
-    const why = sats < a.sats ? (!lost.length && a.bonusPct === p.bonusPct ? `the bot share is ${BOT_PCT} % now (approved ${a.sats})` : `left ${lost.map((k) => NAMES[k]).join(', ') || 'a community'}: -${a.bonusPct - p.bonusPct} %${!a.codeOnly && p.quarter ? `, no verified X account: ${BOT_PCT} %` : ''}`) : null;   // kanban #2788: X proves a human
+    const why = sats < a.sats ? (!lost.length && a.bonusPct === p.bonusPct ? `the bot share is ${BOT_PCT} % now (approved ${a.sats})` : `left ${lost.map((k) => NAMES[k]).join(', ') || 'a community'}: -${a.bonusPct - p.bonusPct} %${!a.codeOnly && p.quarter ? `, no linked X account: ${BOT_PCT} %` : ''}`) : null;   // kanban #2788: X proves a human
     db.prepare('UPDATE approvals SET payable_sats = ?, payable_ms = ?, payable_why = ? WHERE report = ?').run(sats, nowMs, why, a.report);
     return { ok: true, report: a.report, approvedSats: a.sats, payableSats: sats, bonusPct: Math.min(p.bonusPct, a.bonusPct), flags: now, lost, why };
   }
