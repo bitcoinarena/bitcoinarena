@@ -60,7 +60,7 @@ function linuxNode() {
     for (const u of [UNIT, TOR, LND]) running.add(u);
     n.seat = v1;
   };
-  n.update = (to) => updateNode({ home, newRelease: to, port, env, sh: n.sh, fetcher: n.fetcher, platform: 'linux', nowMs: () => 0, sleep: fast,
+  n.update = (to) => updateNode({ home, newRelease: to, port, env, sh: n.sh, fetcher: n.fetcher, platform: 'linux', arch: 'x64', nowMs: () => 0, sleep: fast,
     waitMs: 1500, fetchApps: async () => ({ ok: true }), refreshGames: null });
   return n;
 }
