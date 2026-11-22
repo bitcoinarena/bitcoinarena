@@ -44,7 +44,8 @@ test('a node naming another node\'s key does not push that node\'s title out of 
     'http://a': { node: key, games: [{ ...genuine, title: 'Tick Tock, Next Block' }] },
   });
   assert.doesNotMatch(g.title, /evil/);
-  assert.equal(g.nodes.length, 1, 'still hosted once per node key');
+  assert.equal(g.nodeCount, 1, 'still counted once per node key');
+  assert.deepEqual(g.nodes, ['http://evil', 'http://a'], 'and both addresses are kept: the claim drops no address (kanban #3253)');
 });
 
 test('two addresses of one evil node each count once, and still lose to three honest ones', async () => {

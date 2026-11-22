@@ -96,8 +96,10 @@ test('a seat reached at two addresses hosts a game once (2026-10-14 07:42Z: "28 
     return answer({ ...(seats[at] ? { node: seats[at] } : {}), games: [listed(NEXTBLOCK)] });
   };
   const got = await fetchGames({ nodes: Object.keys(seats), fetcher });
-  assert.deepEqual(got.games[0].nodes, ['https://tn4.bitcoin-arena.io/guardian-1', 'https://tn4.bitcoin-arena.io/fed2-1', 'http://old'],
-    'two seats with keys, once each; a seat that names no key counts by its address');
+  // kanban #3253: the count is of keys, but every address stays in game.nodes - the key is the seat's own unsigned word, and one seat
+  // naming another's key must not push the other's address out (the shop hands a paid record to game.nodes)
+  assert.equal(got.games[0].nodeCount, 3, 'two seats with keys, once each; a seat that names no key counts by its address');
+  assert.deepEqual(got.games[0].nodes, Object.keys(seats), 'every address that answered is asked');
 });
 
 test('a tile showing version 2 runs version 3\'s newer client file - the same developer\'s - and never another developer\'s', async () => {
