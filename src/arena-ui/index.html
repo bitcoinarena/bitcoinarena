@@ -2251,7 +2251,19 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             // IN THIS TAB (the owner 2026-11-10: "es passiert nichts wenn ich drauf klicke"): measured in WebKit at iPad size, a tap on a new-tab link in
             // the stamp opened nothing, the same link in this tab opens the admin page; Back returns to the games
             a.href = adminHref();
-            a.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); location.assign(adminHref()); });
+            // A SMALL MENU (owner 2026-11-22: the Orange Pill Run admin under the red ADMIN): the feedback payouts as before, and on the stage the
+            // round admin of the Orange Pill Run; a tap outside closes it
+            a.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation();
+              const old = document.getElementById('arena-admin-menu'); if (old) { old.remove(); return; }
+              const m = document.createElement('div'); m.id = 'arena-admin-menu';
+              m.style.cssText = 'position:fixed;z-index:2147483000;background:#161b22;border:1px solid #c0392b;border-radius:8px;padding:6px;display:flex;flex-direction:column;gap:4px;font:600 14px/1.3 system-ui,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.5)';
+              const item = (label, href) => { const x = document.createElement('a'); x.textContent = label; x.href = href; x.style.cssText = 'color:#fff;text-decoration:none;padding:8px 12px;border-radius:6px;background:#21262d;white-space:nowrap'; m.appendChild(x); };
+              item('Feedback payouts', adminHref());
+              if (/^testnet-stage\./.test(location.hostname)) item('Orange Pill Run admin', location.origin + '/games/orange-pill-run/admin.html');
+              document.body.appendChild(m);
+              const r = a.getBoundingClientRect(); m.style.left = Math.max(8, Math.min(r.left, innerWidth - m.offsetWidth - 8)) + 'px'; m.style.top = Math.max(8, r.top - m.offsetHeight - 6) + 'px';
+              setTimeout(() => document.addEventListener('click', function off(ev) { if (!m.contains(ev.target)) { m.remove(); document.removeEventListener('click', off); } }), 0);
+            });
             a.style.cssText = 'pointer-events:auto;display:inline-block;margin-right:6px;padding:1px 6px;border-radius:4px;background:#c0392b;color:#fff;font:700 10px/1.5 system-ui,sans-serif;letter-spacing:.06em;cursor:pointer;text-decoration:none;vertical-align:middle';
             b.insertBefore(a, b.firstChild);
           }
