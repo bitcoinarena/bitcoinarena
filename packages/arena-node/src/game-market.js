@@ -141,7 +141,9 @@ export function marketStateOf(round, roundIdBytes, { contract, manifest, nowMs }
     if (prev && marketTerminal(prev.state)) return answer(prev, true);
     const held = heldOutcomes(round, roundIdBytes);
     const voids = (round.gameOutcomes ? round.gameOutcomes(roundIdBytes) : []).filter((g) => g.outcome === GAME_MARKET_REFUND).map((g) => ({ receivedMs: g.receivedMs, why: g.why }));
-    let next = marketTransition(prev, held, { deadlineMs: marketDeadlineOf(manifest, contract), windowMs: contract.objectionWindowMs, nowMs, voids });
+    // from protocol 33 an attestor that signed two values of a scalar round counts toward neither (kanban #3260, attested.js withoutEquivocators)
+    let next = marketTransition(prev, held, { deadlineMs: marketDeadlineOf(manifest, contract), windowMs: contract.objectionWindowMs, nowMs, voids,
+      protocolVersion: contract.protocolVersion, attestThreshold: isScalar(manifest) ? manifest.attestThreshold : null });
     // THE MIGRATION'S ONE CASE: no persisted state yet, a settlement that went in, and the evidence read now naming no FINAL
     // (a pre-#1151 store whose settlement took a late attestation): FINAL on the first outcome it held, as the old reading paid it
     if (!prev && next.state !== MARKET_STATE.FINAL && held.length && settledHere(round, roundIdBytes)) {

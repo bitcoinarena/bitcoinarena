@@ -20,7 +20,7 @@
 // each standing on its own, naming different outcomes. That pair is the proof; a round holding it settles on neither.
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
-import { PROTOCOL_VERSION, speaksVersion, TYPE_OUTCOME_ATTESTATION, TAG } from './constants.js';
+import { PROTOCOL_VERSION, speaksVersion, TYPE_OUTCOME_ATTESTATION, TAG, runsDisjointRules } from './constants.js';
 import { isAttested, isTemplate, isGameMarket, isScalar, isDrawnAttest, marketOfRound } from './manifest.js';
 
 export const OUTCOME_SIGNATURE_BYTES = 64;
@@ -321,10 +321,58 @@ const saidOf = (a) => (typeof a.value === 'bigint' ? `value ${a.value}` : `outco
  * Answers { state, outcome?, value?, observedAtMs?, firstMs?, finalAtMs?, atMs?, reason?, why?, said? } - `reason` of a VOID:
  * 'deadline', 'dispute' or 'game'.
  */
-export function marketTransition(prev, held, { deadlineMs = null, windowMs, nowMs, voids = [] }) {
+// AN EQUIVOCATOR'S SIGNATURES DO NOT COUNT (2026.0.33, kanban #3260, audit #1489 r21-attest-1; owner 2026-11-22 option A). Two honest attestors of
+// a scalar market read their sources on their own clocks and sign values a cent apart; one attestor C that co-signed both honest bodies made two
+// standing value attestations, {A, C} and {B, C}, and the round VOID 'dispute' - a free option on every scalar round (or C posted only the value
+// that paid it more). From 33 a dispute counts only between attestations whose signer sets are disjoint: a key that signed two different values
+// (in what the seat holds before the deadline) is an equivocator - named in the answer's `equivocators`, its signed attestations kept as the
+// evidence they are - and every value attestation counts only with `attestThreshold` signers left without the equivocators. What still stands
+// settles as before; when nothing does, the round waits for an attestation without them (or is VOID at its deadline, as any round without one).
+// Value attestations only (scalar markets); an index market, a market on a game and every round below 33 are read byte for byte as before.
+// THE SAME EVIDENCE AS A DISPUTE: only what came before the deadline and inside the objection window the first value attestation opened (its
+// receivedMs + windowMs) - an equivocation handed in later is evidence only, as a contradiction after the window is (transitionOver).
+export function withoutEquivocators(held, { attestThreshold, deadlineMs = null, windowMs = null }) {
+  const D = deadlineMs === null || deadlineMs === undefined ? Infinity : Number(deadlineMs);
+  const firstAt = Math.min(...held.filter((h) => typeof h.value === 'bigint' && Number(h.receivedMs) < D).map((h) => Number(h.receivedMs)));
+  const cut = windowMs === null || windowMs === undefined || !Number.isFinite(firstAt) ? D : Math.min(D, firstAt + Number(windowMs));
+  const valuesOf = new Map();
+  for (const h of held) {
+    if (typeof h.value !== 'bigint' || Number(h.receivedMs) >= cut) continue;
+    for (const sg of h.signatures || []) {
+      const k = toHex(sg.key);
+      if (!valuesOf.has(k)) valuesOf.set(k, new Set());
+      valuesOf.get(k).add(h.value);
+    }
+  }
+  const equivocators = [...valuesOf].filter(([, v]) => v.size > 1).map(([k]) => k).sort();
+  if (!equivocators.length) return { held, equivocators };
+  const bad = new Set(equivocators);
+  const kept = held.filter((h) => {
+    if (typeof h.value !== 'bigint') return true;
+    const left = new Set((h.signatures || []).map((sg) => toHex(sg.key)).filter((k) => !bad.has(k)));
+    return left.size >= Number(attestThreshold);
+  });
+  return { held: kept, equivocators };
+}
+
+export function marketTransition(prev, held, { deadlineMs = null, windowMs, nowMs, voids = [], protocolVersion = null, attestThreshold = null }) {
   if (prev && marketTerminal(prev.state)) return prev;
   const D = deadlineMs === null || deadlineMs === undefined ? Infinity : Number(deadlineMs);
   const W = Number(windowMs), now = Number(nowMs);
+  // FROM 33: no equivocator's signature counts toward a scalar value (withoutEquivocators, kanban #3260)
+  let equivocators = [];
+  if (runsDisjointRules(protocolVersion) && Number.isInteger(Number(attestThreshold)) && Number(attestThreshold) > 0 && held.some((h) => typeof h.value === 'bigint')) {
+    const w = withoutEquivocators(held, { attestThreshold, deadlineMs, windowMs });
+    held = w.held; equivocators = w.equivocators;
+    // an ATTESTED value read before an equivocator was known stands only while an attestation of it still stands without one (the seat's
+    // persisted ATTESTED row then goes back to OPEN: round.js casMarketState; FINAL and VOID stay terminal)
+    if (equivocators.length && prev && prev.state === MARKET_STATE.ATTESTED && typeof prev.value === 'bigint' && !held.some((h) => typeof h.value === 'bigint' && h.value === prev.value)) prev = null;
+  }
+  const flagged = (x) => (equivocators.length ? { ...x, equivocators } : x);
+  return flagged(transitionOver(prev, held, { D, W, now, voids }));
+}
+
+function transitionOver(prev, held, { D, W, now, voids }) {
   const events = [...voids.map((v) => ({ at: Number(v.receivedMs), void: v })), ...held.map((h) => ({ at: Number(h.receivedMs), h }))]
     .filter((e) => e.at < D).sort((x, y) => x.at - y.at || (x.void ? -1 : 0) - (y.void ? -1 : 0));
   let s = prev && prev.state === MARKET_STATE.ATTESTED ? { ...prev } : { state: MARKET_STATE.OPEN };

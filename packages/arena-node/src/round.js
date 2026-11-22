@@ -4550,7 +4550,13 @@ export class Round {
    * meanwhile, or a terminal one (never written again - the store's triggers refuse it too), answers false.
    */
   casMarketState(roundIdBytes, from, next, fromFirstMs = null) {
-    if (from === 'FINAL' || from === 'VOID' || next.state === 'OPEN') return false;
+    if (from === 'FINAL' || from === 'VOID') return false;
+    // ATTESTED BACK TO OPEN (kanban #3260, protocol 33): the value it stood on lost its standing when one of its signers turned out to have signed
+    // another value too (attested.js withoutEquivocators). OPEN is no row; only an ATTESTED one is removed, a terminal one never (the trigger)
+    if (next.state === 'OPEN') {
+      if (from !== 'ATTESTED') return false;
+      return this.db.prepare("DELETE FROM market_states WHERE round_id = ? AND state = 'ATTESTED' AND first_ms IS ?").run(Buffer.from(roundIdBytes), fromFirstMs).changes === 1;
+    }
     const cols = [next.state, Number.isInteger(next.outcome) ? next.outcome : null, typeof next.value === 'bigint' ? String(next.value) : null,
       next.observedAtMs !== undefined && next.observedAtMs !== null ? Number(next.observedAtMs) : null,
       Number.isFinite(next.firstMs) ? next.firstMs : null, Number.isFinite(next.finalAtMs) ? next.finalAtMs : null,
