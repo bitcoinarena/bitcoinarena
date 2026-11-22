@@ -74,11 +74,17 @@ export async function addBond({ state, addSats, post = false, chainKit = { coins
   return { ok: true, plan: r.result.plan, bond: r.result.bond, bonds: bondsOf(state.read()), ...(r.already ? { already: true } : {}) };
 }
 
+// NO PUBLIC ENDPOINT, NO BOND (kanban #3341, feedback #389): the bond's advertisement names the node's public URL (reach.url); without one the
+// encoder threw its raw "str needs a string" at the post, after the owner had funded the wallet. Asked before the plan, so no coins are asked for
+const endpointOf = (s) => (s && s.reach && typeof s.reach.url === 'string' && s.reach.url.trim() ? s.reach.url : null);
+const NO_ENDPOINT_WHY = 'Set your node\'s public endpoint URL first (Address: How others reach this node): the bond\'s advertisement names where this node is reached';
+
 /** The plan of an added output on the state `s`: { ok, plan, built, tip } or { ok: false, why }. */
 async function addBondPlan({ state, s, spent = [], add, chainKit, softwareHash, feeRate, guardianEndpoint, guardianOf, nowMs }) {
   const outputs = liveBondsOf(s, spent);   // kanban #2098: the outputs the chain still holds, never a withdrawn one
   if (!outputs.length) return { ok: false, why: bondsOf(s).length ? 'this node\'s bond was withdrawn: post a new first bond in the owner area (Bond)'
     : 'this node has no bond yet: set up its first bond in the owner area (Bond)' };
+  if (!endpointOf(s)) return { ok: false, why: NO_ENDPOINT_WHY };
   const seedHex = state.readSecret('seed.hex');
   if (!seedHex) return { ok: false, why: 'the wallet seed is not in this node\'s home' };
   const seed = fromHex(seedHex);
@@ -153,6 +159,7 @@ export async function firstBond({ state, post = false, chainKit = { coinsOf, bro
     return { ok: true, done: true, bond: liveBondsOf(s, spent)[0], ...(agent ? { agent } : {}) };
   }
   if (!(s.done || {}).service) return { ok: false, why: 'this node is not installed yet: its bond is signed with its own key' };
+  if (!endpointOf(s)) return { ok: false, why: NO_ENDPOINT_WHY };
   const seedHex = state.readSecret('seed.hex');
   if (!seedHex) return { ok: false, why: 'the wallet seed is not in this node\'s home' };
   const { depositParts, bondMinimumOf, CUSTODY_PEG_IN_SATS } = await import('./wizard.js');
@@ -185,6 +192,7 @@ export async function firstBond({ state, post = false, chainKit = { coinsOf, bro
   const r = await onchainAction({ state, kind: 'first-bond', chainKit,
     build: async (s2) => {
       if (liveBondsOf(s2, spent).length) return { ok: false, alreadyBond: liveBondsOf(s2, spent)[0] };   // recorded meanwhile (an older wizard, another tab)
+      if (!endpointOf(s2)) return { ok: false, why: NO_ENDPOINT_WHY };
       const { tip, coins, bondSats, plan } = await planOf(s2, false);
       planned = plan;
       if (!plan.enough) return { ok: false, why: `the wallet holds ${plan.walletSats} sat: send ${plan.shortSats} sat more to ${w.address} first`, plan };

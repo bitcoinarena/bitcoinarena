@@ -140,6 +140,36 @@ test('the first bond after "I\'ll post it later": the address and what to send, 
   assert.match((await firstBond({ state: fresh, chainKit: kit([]) })).why, /not installed yet/);
 });
 
+// NO PUBLIC ENDPOINT YET (kanban #3341, feedback #389): the bond's advertisement names the node's public URL, and a node with none (a quick
+// tunnel not up yet, a reach step left open) failed the post with the encoder's raw "str needs a string" - after the owner had funded it.
+// The plan says so before any coins are asked for, the post refuses by name, and an add to the bond the same
+test('a node with no public endpoint URL: the first bond and an add say "Set your node\'s public endpoint URL first", nothing built or sent', async () => {
+  for (const reach of [{ mode: 'quick', url: null }, undefined]) {
+    const { state } = node({ bond: null });
+    state.save({ done: { service: 1 }, reach });
+    const sent = [];
+    const coins = [{ txid: '5a'.repeat(32), vout: 1, sats: 400000, height: 157000 }];
+    const p = await firstBond({ state, chainKit: kit(sent, coins) });
+    assert.equal(p.ok, false, 'the plan asks for no coins');
+    assert.match(p.why, /Set your node's public endpoint URL first/);
+    const r = await firstBond({ state, chainKit: kit(sent, coins), post: true });
+    assert.equal(r.ok, false);
+    assert.match(r.why, /Set your node's public endpoint URL first/);
+    assert.doesNotMatch(r.why, /str needs a string/);
+    assert.equal(sent.length, 0, 'nothing sent');
+    assert.ok(!state.read().bond, 'no bond recorded');
+  }
+  const { state } = node();
+  state.save({ reach: { mode: 'quick', url: null } });
+  const sent = [];
+  for (const post of [false, true]) {
+    const a = await addBond({ state, addSats: 32000, post, chainKit: kit(sent) });
+    assert.equal(a.ok, false);
+    assert.match(a.why, /Set your node's public endpoint URL first/);
+  }
+  assert.equal(sent.length, 0);
+});
+
 test('the first bond on a custody node starts its agent, as the wizard does; a plain node starts none', async () => {
   const started = [];
   const startAgent = async () => { started.push(1); return { ok: true }; };
