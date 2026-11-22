@@ -54,24 +54,23 @@ async function realRound({ maxAttempts } = {}) {
 }
 const bountyOf = (w) => w.opr.listsOf(w.r.id).find((l) => l.kind === 'bounty');
 
-// F1: the X check that "places" a player for the 2,000 real sats accepts a link made by only TYPING someone else's handle (proof 'name').
-test('F1 a key that typed a stranger\'s X handle is not placed and takes no real-sat bounty', async () => {
+// F1 (#3285, owner 2026-11-22 ~12:45Z "Zu kompliziert, mach das weg"): a link made by typing a handle (proof 'name') places the player again; the
+// owner's sign-off sees it as "typed" on the bounty row - shown, not refused.
+test('F1 a key that typed its X handle is placed, and its bounty row names the proof "typed" for the sign-off', async () => {
   const w = await realRound();
-  const mallory = keypair(), alice = keypair();
-  // the faucet's POST /feedback/social: the resolver finds the typed handle as a real @bitcoinarena follower (the victim's), nothing ties it to mallory
+  const typed = keypair();
   const resolvers = { x: async (name) => ({ userId: '424242', username: name, member: true }) };
-  const sc = await socialCheck(w.s2, mallory.pk, { x: 'alice_real_human' }, resolvers);
+  const sc = await socialCheck(w.s2, typed.pk, { x: 'typed_handle' }, resolvers);
   assert.equal(sc.results.x.member, true);
-  assert.equal(w.s2.links(mallory.pk)[0].proof, 'name');
-  assert.equal((await w.opr.saveLnAddress(mallory.pk, 'mallory@walletofsatoshi.com')).ok, true);
-  // mallory is a script with human-shaped noise: best of a few seeds
-  for (const seed of [1, 2, 3]) assert.equal((await w.play(mallory.pk, humanLike(L, seed), phoneClient(seed))).ok, true);
-  void alice;
+  assert.equal(w.s2.links(typed.pk)[0].proof, 'name');
+  assert.equal((await w.opr.saveLnAddress(typed.pk, 'typed@walletofsatoshi.com')).ok, true);
+  for (const seed of [1, 2, 3]) assert.equal((await w.play(typed.pk, humanLike(L, seed), phoneClient(seed))).ok, true);
   await w.endAndList();
+  assert.equal(w.opr.xOf(typed.pk).placed, true);
   const b = bountyOf(w);
-  const placed = w.opr.xOf(mallory.pk).placed;
-  assert.equal(placed, false, 'an X link by typed name only (proof "name") must not place a player for real sats');
-  assert.notEqual(b.rows[0] && b.rows[0].player, mallory.pk, `bounty row: ${JSON.stringify(b.rows[0] && { player: b.rows[0].player.slice(0, 8), x: b.rows[0].xAccount, sats: b.rows[0].sats })}`);
+  const row = (b.rows[0] && b.rows[0].player === typed.pk) ? b.rows[0] : (b.held || []).find((h) => h.player === typed.pk);
+  assert.ok(row, `typed key on the bounty list (a row or held): ${JSON.stringify(b)}`);
+  assert.equal(row.xProof, 'typed');
 });
 
 // F2: "He can still verify until 1 hour after the round ends" (#3250) - not enforced: any later POST /lnaddress rebuilds every waiting list with

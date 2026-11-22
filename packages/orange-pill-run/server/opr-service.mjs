@@ -515,14 +515,15 @@ export function createOpr(o = {}) {
   }
   /**
    * PLACED (kanban #3245, #3250): a linked X account the bug bounty verified (Season 2 links, its own flow), not a known bot there.
-   * PROVEN, NOT TYPED (kanban #3279, #3285; owner 2026-11-22: placed = an X account whose ownership is proven + a valid Lightning address): only a
-   * link made by a code posted from the X account (proof 'code', bounty-season.js redeem) places a player. A handle typed in the Season 2 social
-   * form (proof 'name', claimName) proves nothing - anyone can type a real follower's name - so it never places a player for real sats.
+   * TYPED OR PROVEN, BOTH PLACE (kanban #3279, #3285; owner 2026-11-22 ~12:45Z: "Zu kompliziert, mach das weg"): an X account linked in the
+   * Season 2 book the normal way places the player - a handle typed in the social form (proof 'name', claimName) as well as a posted link code
+   * (proof 'code', redeem). The proof kind rides along as x.proof ('typed' | 'code') so the admin page and every list row show it at the owner's
+   * sign-off; nothing is refused for it.
    * BY THE HOUR AFTER THE ROUND (kanban #3278, #3286; #3250: "verify until 1 hour after the round ends"): with round r given, a link made after
    * r.end_ms + verifyGraceMs does not place the player in r - a later list rebuild (any POST /lnaddress) cannot bring a late link in.
    * LINKED BEFORE THE FIRST RUN (kanban #3281, #3288): the 5 attempts are counted per key, the bounty is paid per X account, and keys are free -
    * one person played 5 runs on each of N fresh keys and linked the one X account after the round to the best of them. A key is placed in r
-   * only when its proven X link was made before its first attempt of r: every run that can win was made by the key while it held the account,
+   * only when its X link was made before its first attempt of r: every run that can win was made by the key while it held the account,
    * and one X account is on one key at a time (redeem refuses an account a code linked to another key), so one X account stands behind at most
    * one key's attempts in a round. A key that links later is placed from its next round on.
    */
@@ -532,9 +533,8 @@ export function createOpr(o = {}) {
     let l = null, flags = {};
     try { l = s2.links(pk).find((x) => x.platform === 'x') || null; flags = s2.flagsOf(pk) || {}; } catch (e) { return { placed: false, x: null, why: `X not read (${e.message})` }; }
     if (!l) return { placed: false, x: null, why: 'no X account linked' };
-    const x = { userId: String(l.userId), username: l.username || null };
+    const x = { userId: String(l.userId), username: l.username || null, proof: l.proof === 'code' ? 'code' : 'typed' };   // shown at sign-off (#3279)
     if (flags.bot) return { placed: false, x, why: 'a known bot account' };
-    if (l.proof !== 'code') return { placed: false, x, why: 'the X account is not proven yet - post your link code from it' };
     if (l.member !== true) return { placed: false, x, why: 'the X account is not verified yet' };
     if (r && !(Number(l.linkedMs) <= r.end_ms + cfg.verifyGraceMs)) return { placed: false, x, why: 'the X account was linked more than 1 hour after the round ended' };
     if (r) {

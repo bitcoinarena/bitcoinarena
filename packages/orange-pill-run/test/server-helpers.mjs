@@ -54,8 +54,8 @@ export function proveX(s2, pk, { userId, username = null, nowMs }) {
   return s2.redeem(c.code, { platform: 'x', userId, username, nowMs });
 }
 
-/** A service on a fake clock, with a Season 2 book in memory: link(pk, verified) gives the key a linked X account - proven by a link code posted
- *  from it (proof 'code', as the bug bounty's X poll redeems it; kanban #3279: a typed name places nobody). */
+/** A service on a fake clock, with a Season 2 book in memory: link(pk, verified) gives the key a linked X account - linked by a code posted from it
+ *  (proof 'code', as the bug bounty's X poll redeems it). A typed name places a player as well (kanban #3279, owner 2026-11-22). */
 export function world({ start = '2026-11-23T00:00:00Z', cfg = {}, chain = fakeChain(), s2On = true, lnCheck = null } = {}) {
   let t = at(start);
   const clock = { now: () => t, set: (ms) => { t = ms; }, add: (ms) => { t += ms; } };

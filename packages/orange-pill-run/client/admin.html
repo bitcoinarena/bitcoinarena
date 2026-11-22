@@ -142,6 +142,8 @@ a { color: var(--btc); }
   const say = (text, kind = "err") => { const m = $("msg"); m.textContent = text || ""; m.className = text ? "on " + kind : ""; if (kind === "ok" && text) setTimeout(() => { if (m.textContent === text) say(""); }, 4000); };
   const el = (tag, props = {}, ...kids) => { const e = document.createElement(tag); for (const [k, v] of Object.entries(props)) { if (v == null) continue; if (k === "class") e.className = v; else if (k === "text") e.textContent = v; else if (k.startsWith("on")) e[k] = v; else e.setAttribute(k, v); } for (const c of kids) if (c != null) e.append(c); return e; };
   const short = (k) => (k ? String(k).slice(0, 8) + "…" : "-");
+  // the X link's proof kind at sign-off (kanban #3279, owner 2026-11-22): typed in the form, or proven by a posted link code - shown, never refused
+  const proofTxt = (p) => (p === "code" ? " (proven by code)" : p ? " (typed)" : "");
   const when = (ms) => (ms ? new Date(ms).toISOString().replace("T", " ").slice(0, 16) + "Z" : "-");
   const fmtTime = (s) => (s == null ? "-" : (+s).toFixed(2) + " s");
 
@@ -224,7 +226,7 @@ a { color: var(--btc); }
       const x = a.x || {}, rank = rankOf.get(a.attempt);
       const pl = el("div", {}, el("b", { text: a.name || "(no name)" }), " ", el("span", { class: "mono muted", text: short(a.player), title: a.player }));
       const tags = el("div", { class: "why" });
-      tags.append(x.x && x.x.username ? el("span", { text: "@" + x.x.username + " " }) : el("span", { text: "no X " }));
+      tags.append(x.x ? el("span", { text: (x.x.username ? "@" + x.x.username : "X") + proofTxt(x.x.proof) + " " }) : el("span", { text: "no X " }));
       tags.append(el("span", { class: "pill " + (x.placed ? "green" : ""), text: x.placed ? "placed" : "not placed", title: x.why || "" }));
       if (!x.placed && x.why && x.why !== "no X account linked") tags.append(" ", el("span", { text: x.why }));
       tags.append(el("div", { text: "LN: " + (ln.get(a.player) || "-") }));
@@ -272,15 +274,15 @@ a { color: var(--btc); }
         if (l.state === "waiting") acts.append(el("button", { type: "button", class: "small bad", text: "Reject row", onclick: () => { const why = prompt("Reject the row of " + (w.name || short(w.player)) + " - reason:"); if (why && why.trim()) act("/admin/row", { round: l.round, kind: l.kind, player: w.player, why: why.trim() }, "Row rejected."); } }));
         tb.append(el("tr", { class: w.bot && w.bot.score >= 70 ? "hot" : null },
           el("td", { "data-l": "Place" }, el("span", { text: String(w.place) + " (rank " + w.rank + ")" })),
-          el("td", { "data-l": "Player" }, el("div", {}, el("b", { text: w.name || "(no name)" }), " ", el("span", { class: "mono muted", text: short(w.player) }), el("div", { class: "why", text: (w.xAccount ? "@" + w.xAccount : "no X") + " · score " + w.score + " · " + fmtTime(w.timeS) }))),
+          el("td", { "data-l": "Player" }, el("div", {}, el("b", { text: w.name || "(no name)" }), " ", el("span", { class: "mono muted", text: short(w.player) }), el("div", { class: "why", text: (w.xAccount ? "@" + w.xAccount + proofTxt(w.xProof) : "no X") + " · score " + w.score + " · " + fmtTime(w.timeS) }))),
           el("td", { "data-l": "Sats" }, el("span", { text: w.sats + " (" + w.pct + " %)" })),
           el("td", { "data-l": "LN address" }, el("span", { class: "mono", text: w.lnAddress || "-" })),
           el("td", { "data-l": "Bot" }, botCell(w.bot)), acts));
       }
       d.append(t);
       const skipped = ((l.rows || [])[0] && l.rows[0].skipped) || [];
-      if (skipped.length) d.append(el("div", { class: "why", text: "Skipped: " + skipped.map((s) => "rank " + s.rank + " " + (s.name || short(s.player)) + (s.xAccount ? " @" + s.xAccount : "") + " - " + s.why).join("; ") }));
-      if ((l.held || []).length) d.append(el("div", { class: "why", text: "Held: " + l.held.map((s) => "rank " + s.rank + " " + (s.name || short(s.player)) + (s.xAccount ? " @" + s.xAccount : "") + " - " + s.why).join("; ") }));
+      if (skipped.length) d.append(el("div", { class: "why", text: "Skipped: " + skipped.map((s) => "rank " + s.rank + " " + (s.name || short(s.player)) + (s.xAccount ? " @" + s.xAccount + proofTxt(s.xProof) : "") + " - " + s.why).join("; ") }));
+      if ((l.held || []).length) d.append(el("div", { class: "why", text: "Held: " + l.held.map((s) => "rank " + s.rank + " " + (s.name || short(s.player)) + (s.xAccount ? " @" + s.xAccount + proofTxt(s.xProof) : "") + " - " + s.why).join("; ") }));
       if (l.state === "waiting") {
         d.append(el("div", { class: "row", style: "margin-top:8px" },
           el("button", { type: "button", class: "go", text: "Approve list", onclick: () => { if (confirm("Approve the " + l.kind + " list of " + l.round + " (" + l.sats + " sat) as " + (by || "admin") + "?")) act("/admin/list", { round: l.round, kind: l.kind, action: "approve", version: l.version }, "List approved."); } }),
