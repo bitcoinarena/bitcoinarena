@@ -150,3 +150,11 @@ test("#3265 a failed payment is tried again, not given up on", async () => {
   assert.ok(seen.includes("pay-failed"));
   assert.equal(f.pays(), 1);
 });
+
+test("#3270 the intro names the X account: not linked with the link, @handle ✓ once linked, nothing before /me or without the Arena", () => {
+  assert.deepEqual(introModel({ round: round(), me: me(), board, wallet: W(), nowMs: T0 }).x, { text: "X account: not linked", link: true });
+  assert.deepEqual(introModel({ round: null, me: me(), board, wallet: W(), nowMs: T0 }).x, { text: "X account: not linked", link: true });
+  assert.deepEqual(introModel({ round: round(), me: me({ x: { username: "satoshi" } }), board, wallet: W(), nowMs: T0 }).x, { text: "X account: @satoshi ✓", link: false });
+  assert.equal(introModel({ round: round(), me: null, board, wallet: W(), nowMs: T0 }).x, null);
+  assert.equal(introModel({ round: null, me: null, board: [], wallet: null, nowMs: T0 }).x, undefined);
+});

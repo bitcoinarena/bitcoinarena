@@ -22,6 +22,13 @@ export function myBest(me, board) {
  * The intro: { line, bounty, best, pot, attempts, mine, left, button: { label, disabled, why }, practice }.
  * wallet: { pubkey, balance: { sats } | null, welcomeComing } or null (no Arena page around the game: practice only).
  */
+/** The intro's X line (#3270): { text, link } while the player's /me is known - link = true while no X account is linked. */
+export function xLine(me) {
+  if (!me) return null;
+  if (!me.x) return { text: "X account: not linked", link: true };
+  return { text: "X account: " + (me.x.username ? "@" + me.x.username : "linked") + " ✓", link: false };
+}
+
 export function introModel({ round, me, board, wallet, nowMs = Date.now() }) {
   const m = { line: "Run yesterday's Bitcoin chart. Tap to jump. Don't fall.", practice: false };
   if (!wallet) {
@@ -29,6 +36,7 @@ export function introModel({ round, me, board, wallet, nowMs = Date.now() }) {
     m.button = { label: "Practice run (free)", disabled: false, why: "Open the game in the Arena to play for the pot." };
     return m;
   }
+  m.x = xLine(me);
   if (!round) {
     m.button = { label: "Play · 100 testnet sats", disabled: true, why: "No round is open right now." };
     return m;

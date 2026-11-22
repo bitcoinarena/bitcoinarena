@@ -10,7 +10,7 @@ import { buildLevel } from "../../src/sim/level.js";
 import { newWorld, stepWorld } from "../../src/sim/world.js";
 import { botInput, BOT_CONFIGS } from "../../src/sim/bot.js";
 import { resultOf, validateLog } from "../../src/sim/replay.js";
-import { fit, drawWorld, usd } from "./render.js";
+import { fit, drawWorld, view, usd } from "./render.js";
 import { makeApi } from "./api.js";
 import { createEntry, entryOf } from "./entry.js";
 import { introModel, resultModel, entryLine, myBest, boardRows, fmtSats, fmtTime } from "./screens.js";
@@ -127,6 +127,9 @@ function paintIntro() {
   const dl = $("iFacts"); dl.textContent = ""; dl.hidden = !m.facts;
   for (const [k, v, cls] of m.facts || []) { const d = document.createElement("div"); if (cls) d.className = cls; const dt = document.createElement("dt"), dd = document.createElement("dd"); dt.textContent = k; dd.textContent = v; d.append(dt, dd); dl.append(d); }
   $("iPrice").hidden = !m.practice;
+  // #3270: the X account on the intro, so a player can link it before the first run (it was only on the result screen)
+  $("iX").hidden = !m.x; $("iXText").textContent = m.x ? m.x.text : "";
+  $("iXBtn").hidden = !(m.x && m.x.link && bridge && bridge.linkX);
   const btn = $("startBtn"); if (!btn.dataset.busy) { btn.textContent = m.button.label; btn.disabled = !!m.button.disabled; }
   if (!$("iWhy").dataset.err) $("iWhy").textContent = m.button.why || (S.err && bridge ? S.err : "");
   $("modeTag").textContent = !bridge ? "OFFLINE · PRACTICE" : S.round ? (S.round.test ? "TEST ROUND " : "ROUND ") + (S.round.number || "") : "TESTNET";
@@ -307,10 +310,15 @@ $("rulesBack").onclick = () => showIntro();
 $("rulesLink").onclick = (e) => { e.preventDefault(); showRules(); };
 $("boardLink").onclick = (e) => { e.preventDefault(); showBoard(); };
 $("xBtn").onclick = () => { try { bridge.linkX(); } catch (_) { /* the page has no link here */ } };
+$("iXBtn").onclick = $("xBtn").onclick;
 $("rbPlay").onclick = () => { paused = !paused; $("rbPlay").textContent = paused ? "Play" : "Pause"; };
 $("rb2x").onclick = () => { speed = speed === 2 ? 1 : 2; $("rb2x").setAttribute("aria-pressed", String(speed === 2)); };
 $("rbClose").onclick = () => { running = false; document.body.classList.remove("playing", "replaying"); $("rbar").hidden = true; showIntro(); };
-addEventListener("resize", () => { fit(); if (!running) (W ? drawWorld(W, []) : idle()); });
+// kanban #3270: refit whenever the stage changes size, not only the window. The JUMP pad appears when a run starts and takes
+// ~70 px from the stage; with a window resize alone the canvas kept its old height and the stage clipped the ground off.
+const refit = () => { fit(); if (!running) (W ? drawWorld(W, []) : idle()); };
+addEventListener("resize", refit);
+if (typeof ResizeObserver === "function") { let sz = ""; new ResizeObserver(() => { const st = $("stage"), k = st.clientWidth + "x" + st.clientHeight; if (k !== sz) { sz = k; refit(); } }).observe($("stage")); }
 function idle() { drawWorld(newWorld(L), []); }
 
 // the API for the page and for tests
@@ -320,7 +328,7 @@ Object.assign(HOOKS, {
   playBot: (opts = {}) => begin("bot", opts),
   replay(log, opts = {}) { const bad = validateLog(log); if (bad) throw new TypeError(bad); replayLog = log; begin("replay", opts); },
   state: () => ({ running, paused, speed, mode, f: W ? W.f : 0, done: W ? W.done : false, run: run ? { attempt: run.attempt, entry: run.entry, status: run.status } : null }),
-  lastLog: () => lastLog, lastResult: () => lastResult, service: () => ({ ...S }),
+  view: () => view(W), lastLog: () => lastLog, lastResult: () => lastResult, service: () => ({ ...S }),
   showIntro, showResult: (r) => showResult({ res: r || lastResult, mode: "play", entry: "practice" }), showBoard, showRules,
 });
 fit(); idle(); showIntro();

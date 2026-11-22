@@ -15,6 +15,10 @@ const hhmm = (t) => new Date(t * 1000).toISOString().slice(11, 16);
 // the moon (upper right) and from glowing objects; gradients give volume, soft shadows and glows give depth.
 const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
 let cssW = 800, cssH = 450, dpr = 1, zoom = 1, viewW = 600, viewH = 336, camX = 0, camY = 0, R = 1;
+// kanban #3270: the HUD (stat pills, price line, mini chart) and the entry pill sit over the top of the canvas. The play band is
+// the canvas below them; zoom and the vertical camera are taken from that band, never from the whole canvas height.
+let hudTop = 0, hudTopPill = 0, camW = null;
+const PAD = 10, PILL_H = 26;
 const OUT = "rgba(20,10,8,.55)";
 const mk = (w, h) => { const c = document.createElement("canvas"); c.width = Math.max(1, Math.round(w)); c.height = Math.max(1, Math.round(h)); return c; };
 const hash = (a, c) => { let h = (a * 374761393 + c * 668265263) | 0; h = (h ^ (h >>> 13)) * 1274126177; return ((h ^ (h >>> 16)) >>> 0) / 4294967296; };
@@ -22,8 +26,19 @@ let ASSET = {};
 function fit() {
   const st = document.getElementById("stage"); cssW = Math.max(240, st.clientWidth); cssH = Math.max(180, st.clientHeight);
   dpr = window.devicePixelRatio || 1; cv.width = Math.round(cssW * dpr); cv.height = Math.round(cssH * dpr); cv.style.width = cssW + "px"; cv.style.height = cssH + "px";
-  zoom = Math.max(.85, Math.min(cssH / (VH * 0.62), cssW / (25 * T)));     // about 6 candles in view, characters large
-  viewW = cssW / zoom; viewH = cssH / zoom; R = dpr * zoom;
+  // the HUD's rows as drawHud lays them out: narrow = three rows (stats, price, mini chart), wide = one row beside the mini chart
+  // between 600 and 900 px (a phone held sideways) the stats and the price fill the first row; the mini chart goes on the second, lower
+  const small = cssW < 600, mid = !small && cssW < 900, h = (small ? 15 : 18) + 14, mh = mid ? 40 : 58;
+  const hudBottom = small ? PAD + h + 6 + h + 6 + mh : mid ? PAD + h + 6 + mh : PAD + Math.max(h, mh);
+  const pillY = small ? hudBottom + 6 : PAD + h + 6;     // the entry pill: under the mini chart (narrow), under the stat pills (wide)
+  hudTop = hudBottom + 6; hudTopPill = Math.max(hudTop, pillY + PILL_H + 6);
+  const pl = document.getElementById("pill");
+  if (pl) Object.assign(pl.style, small ? { top: pillY + "px", left: "50%", transform: "translateX(-50%)", maxWidth: (cssW - 2 * PAD) + "px" }
+    : { top: pillY + "px", left: PAD + "px", transform: "none", maxWidth: (mid ? cssW - Math.min(360, cssW * .5) - 4 * PAD : Math.max(160, cssW - 440 - 2 * PAD)) + "px" });
+  // zoom from the play band: about 62 % of the world's height in the band, and at most 15 columns across a phone (25 on a wide screen)
+  const band = Math.max(120, cssH - hudTop);
+  zoom = Math.max(.85, Math.min(band / (VH * 0.62), cssW / ((small ? 15 : 25) * T)));
+  viewW = cssW / zoom; viewH = cssH / zoom; R = dpr * zoom; camW = null;
   buildAssets();
 }
 // ---- pre-rendered textures and backdrops, rebuilt on resize at the screen's resolution ----
@@ -338,7 +353,15 @@ function drawCheckpoint(c, on, f) {
 function drawWorld(W, ghosts) {
   const L = W.L, p = W.p, f = W.f; L0 = L;
   camX = Math.max(0, Math.min(L.w * T - viewW, p.x - viewW * .2));
-  camY = viewH >= VH ? VH - viewH : Math.max(0, Math.min(VH - viewH, p.y - viewH * .55));
+  // vertical camera (#3270): the world's rows live in the band under the HUD. If the whole world fits, its ground sits on the
+  // canvas bottom; otherwise the camera holds the runner between 30 % and 70 % of the band and moves only when he leaves it.
+  const top = (pillShown() ? hudTopPill : hudTop) / zoom, band = viewH - top, lowest = VH - viewH;
+  if (band >= VH) camY = lowest;
+  else {
+    if (camW !== W) { camW = W; camY = lowest; }
+    camY = Math.max(p.y + PH - top - band * .7, Math.min(p.y - top - band * .3, camY));
+    camY = Math.max(-top, Math.min(lowest, camY));
+  }
   drawBackdrop(f); W2S();
   L.checkpoints.slice(1).forEach((c, i) => drawCheckpoint(c, p.cp > i, f));
   drawFlag(L, f);
@@ -380,12 +403,19 @@ function drawWorld(W, ghosts) {
   if (p.dying > 0) { const k = p.dying / 55; ctx.fillStyle = `rgba(60,0,0,${.35 * k})`; ctx.fillRect(0, 0, cssW, cssH); label(p.why ? "REKT · " + p.why : "REKT", cssW / 2, cssH * .42, Math.min(72, cssW / 8), "#ff6b62", Math.min(1, k * 2)); label("+3 s · back to the last checkpoint", cssW / 2, cssH * .42 + Math.min(60, cssW / 10), 18, COL.text, Math.min(1, k * 2)); }
   drawHud(W, ghosts);
 }
+function pillShown() { const pl = document.getElementById("pill"); return !!pl && !pl.hidden; }
+// for tests and measurement (#3270): where the camera is and where the runner is drawn, in CSS pixels of the canvas
+function view(W) {
+  const p = W && W.p;
+  return { cssW, cssH, zoom, camX, camY, viewW, viewH, hudTop: pillShown() ? hudTopPill : hudTop,
+    runner: p ? { x: (p.x - camX) * zoom, top: (p.y - camY) * zoom, bottom: (p.y + PH - camY) * zoom } : null };
+}
 function label(text, x, y, size, color, alpha) {
   ctx.globalAlpha = alpha == null ? 1 : alpha; ctx.font = "700 " + size + "px " + FONT; ctx.textAlign = "center"; ctx.textBaseline = "middle";
   ctx.lineWidth = Math.max(3, size / 4); ctx.strokeStyle = "rgba(12,6,8,.9)"; ctx.lineJoin = "round"; ctx.strokeText(text, x, y); ctx.fillStyle = color; ctx.fillText(text, x, y); ctx.globalAlpha = 1;
 }
 function tag(text, x, y, color, alpha) {
-  ctx.globalAlpha = alpha; ctx.font = "700 14px " + FONT; const w = ctx.measureText(text).width + 20; x = Math.max(w / 2 + 8, Math.min(cssW - w / 2 - 8, x)); y = Math.max(96, y);
+  ctx.globalAlpha = alpha; ctx.font = "700 14px " + FONT; const w = ctx.measureText(text).width + 20; x = Math.max(w / 2 + 8, Math.min(cssW - w / 2 - 8, x)); y = Math.max(hudTop + 16, y);
   ctx.fillStyle = "rgba(14,9,16,.92)"; ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x - w / 2, y - 14, w, 28, 8); else ctx.rect(x - w / 2, y - 14, w, 28); ctx.fill(); ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.stroke();
   ctx.fillStyle = color; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(text, x, y + 1); ctx.globalAlpha = 1;
 }
@@ -416,7 +446,8 @@ function drawHud(W, ghosts) {
   ctx.font = "700 " + fs + "px " + FONT; let pw = ctx.measureText(ptxt).width + 24, px = small ? pad : x, py = small ? pad + h + 6 : pad;
   pill(px, py, pw, h); label(ptxt, px + pw / 2, py + h / 2 + 1, fs, pc);
   // mini chart of the whole day: every candle, the part you see, you and the ghosts
-  const mw = small ? cssW - pad * 2 : Math.min(420, Math.max(220, cssW - (px + pw) - pad * 3)), mh = 58, mx = small ? pad : cssW - mw - pad, my = small ? py + h + 6 : pad;
+  const mid = !small && cssW < 900;     // #3270: a phone held sideways - the mini chart on the second row, beside the entry pill
+  const mw = small ? cssW - pad * 2 : mid ? Math.min(360, cssW * .5) : Math.min(420, Math.max(220, cssW - (px + pw) - pad * 3)), mh = mid ? 40 : 58, mx = small ? pad : cssW - mw - pad, my = small ? py + h + 6 : mid ? pad + h + 6 : pad;
   ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(mx, my, mw, mh, 12); else ctx.rect(mx, my, mw, mh); ctx.fillStyle = "rgba(14,9,16,.84)"; ctx.fill(); ctx.strokeStyle = "rgba(255,255,255,.14)"; ctx.lineWidth = 1.5; ctx.stroke();
   const ix = mx + 10, iw = mw - 20, iy = my + 8, ih = mh - 16, lvl = L.goal * T, toX = (wx) => ix + Math.max(0, Math.min(1, wx / lvl)) * iw;
   const hiP = Math.max(...L.meta.map((c) => c.h)), loP = Math.min(...L.meta.map((c) => c.l)), toY = (pp) => iy + (hiP - pp) / (hiP - loP || 1) * ih;
@@ -425,11 +456,11 @@ function drawHud(W, ghosts) {
   const fxm = toX(L.goal * T); ctx.fillStyle = COL.btc; ctx.fillRect(fxm - 1, iy - 2, 2, ih + 4);
   const dot = (wx, c, r) => { ctx.beginPath(); ctx.arc(toX(wx), my + mh - 6, r, 0, 7); ctx.fillStyle = c; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = "#0c0608"; ctx.stroke(); };
   ghosts.forEach((gh) => { const i = Math.min(gh.path.length / 2 - 1, Math.floor(W.f / 2)) * 2; if (i >= 0) dot(gh.path[i], gh.color, 4.5); }); dot(W.p.x, COL.btc, 6);
-  if (W.time < 4) label("Tap to jump", cssW / 2, cssH * .32, small ? 19 : 28, COL.text, Math.min(1, 4 - W.time));
+  if (W.time < 4) label("Tap to jump", cssW / 2, Math.max(cssH * .32, hudTop + 40), small ? 19 : 28, COL.text, Math.min(1, 4 - W.time));
   const act = []; if (W.p.boost > 0) act.push(["⚡ " + Math.ceil(W.p.boost / 60) + " s", COL.gold]);
   PW_ORDER.forEach((k) => { const t = W.p.pw[k]; if (t > 0) act.push([PW_INFO[k].icon + " " + PW_INFO[k].text.split(" · ")[0].replace(/^\w/, (c) => c) + (k === "pill" ? "" : " " + Math.ceil(t / 60) + " s"), PW_INFO[k].color]); });
-  act.forEach(([txt, c], i) => label(txt, cssW / 2, cssH * .15 + i * (small ? 20 : 25), small ? 15 : 19, c, 1));
+  act.forEach(([txt, c], i) => label(txt, cssW / 2, (pillShown() ? hudTopPill : hudTop) + 14 + i * (small ? 20 : 25), small ? 15 : 19, c, 1));
 }
 
 
-export { fit, drawWorld, COL, usd };
+export { fit, drawWorld, view, COL, usd };

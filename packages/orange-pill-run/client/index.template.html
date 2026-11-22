@@ -80,6 +80,8 @@ button:disabled { opacity: .5; cursor: default; }
 .facts2 { margin: 10px 0 0; display: grid; gap: 3px; font-size: .95rem; color: var(--soft); }
 .facts2 b { color: var(--text); }
 .xbox { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--btc); border-radius: 10px; display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.xline { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 10px !important; font-size: .92rem !important; color: var(--soft); }
+.xline button { padding: 5px 12px; font-size: .88rem; border-color: var(--btc); color: var(--btc); }
 .xbox span { color: var(--text); font-size: .93rem; } .xbox button { padding: 7px 12px; font-size: .9rem; }
 .rules ol { margin: 0; padding-left: 1.1em; display: grid; gap: 6px; color: var(--soft); font-size: .92rem; line-height: 1.4; }
 .rules ol b { color: var(--text); }
@@ -114,6 +116,7 @@ body.bridged .tag { margin-left: 0; }
       <p class="bounty" id="iBounty" hidden></p>
       <dl class="facts" id="iFacts" hidden></dl>
       <div class="price" id="iPrice"></div>
+      <p class="xline" id="iX" hidden><span id="iXText"></span><button id="iXBtn" type="button" hidden>Link X</button></p>
       <button class="primary big" id="startBtn">Practice run (free)</button>
       <p class="why" id="iWhy" role="status"></p>
       <nav class="links"><a href="#rules" id="rulesLink">Rules</a><a href="#board" id="boardLink">Leaderboard</a></nav>
