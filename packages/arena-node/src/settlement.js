@@ -191,6 +191,9 @@ const LATE_SENDERS_MAX = 4096;
 // and for a protocol-27 round's reserves line (kanban #1486), planned to RESERVE_LATER_PK the same way
 /** How long an empty any-federation split is kept for GET /lock-settlement, and how many rounds' splits (kanban #3038). */
 export const FED_SUMMARY_MISS_MS = 30000, FED_SUMMARY_MOST = 512;
+// kanban #3312 (audit settle a5-3-1): a settled round's split (every row ACCEPTED, the split not empty) is final - kept apart, up to this many rounds,
+// so a stranger reading 513 settled rounds in turn no longer pushes each out of the 512 before it is read again
+export const FED_SUMMARY_SETTLED_MOST = 20000;
 export function federationPlans(args, { federationOf, feesOf, reserveKeyOf = null }) {
   const plan = lockSettlement({ ...args, fees: NO_FEES });
   if (!plan.ok) return { ok: false, why: plan.why };
@@ -530,7 +533,9 @@ export class LockSettlement {
     // rows are unchanged - a split that came out empty for FED_SUMMARY_MISS_MS only - at most FED_SUMMARY_MOST rounds
     if (!this.fedSummaries) this.fedSummaries = new Map();
     const rid = toHex(roundIdBytes), rowsKey = JSON.stringify(rows.map((r) => [r.federation, r.state, r.txid || null]));
-    const had = this.fedSummaries.get(rid);
+    if (!this.fedSettled) this.fedSettled = new Map();
+    const final = rows.every((r) => r.state === ACCEPTED);
+    const had = (final && this.fedSettled.get(rid)) || this.fedSummaries.get(rid);
     let split;
     if (had && had.rowsKey === rowsKey && (had.split.length || Date.now() - had.at < FED_SUMMARY_MISS_MS)) split = had.split;
     else {
@@ -538,8 +543,14 @@ export class LockSettlement {
       try { got = await this.planOf(roundIdBytes); } catch { got = null; }
       split = got && got.ok && got.split ? got.split.settlements : [];
       this.fedSummaries.delete(rid);
-      this.fedSummaries.set(rid, { rowsKey, split, at: Date.now() });
-      if (this.fedSummaries.size > FED_SUMMARY_MOST) this.fedSummaries.delete(this.fedSummaries.keys().next().value);
+      if (final && split.length) {   // kanban #3312: a settled round's split does not change - kept in the larger store
+        this.fedSettled.delete(rid);
+        this.fedSettled.set(rid, { rowsKey, split, at: Date.now() });
+        if (this.fedSettled.size > FED_SUMMARY_SETTLED_MOST) this.fedSettled.delete(this.fedSettled.keys().next().value);
+      } else {
+        this.fedSummaries.set(rid, { rowsKey, split, at: Date.now() });
+        if (this.fedSummaries.size > FED_SUMMARY_MOST) this.fedSummaries.delete(this.fedSummaries.keys().next().value);
+      }
     }
     return rows.map((r) => {
       const s = split.find((x) => x.federation === r.federation);
