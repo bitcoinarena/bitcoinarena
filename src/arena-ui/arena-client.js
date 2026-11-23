@@ -5723,7 +5723,7 @@ function readVarint(bytes, at) {
 
 // VIEWS, NOT COPIES (kanban #3236, a heap snapshot of a seat: 74,118 kept parses, 388 MB - every script, witness item and previous txid
 // its own copied buffer). A parse's byte fields are views of the raw transaction: nothing writes them or the raw bytes in place (a raw is
-// a block's own slice, splitBlock), and a kept parse is kept with its raw anyway (census.js parsedKept).
+// a view of its block's bytes, splitBlock - kanban #3238), and a kept parse is kept with its raw anyway (census.js parsedKept).
 function readSlice(bytes, at, what) {
   const { value, next } = readVarint(bytes, at);
   const end = need(bytes, next, value, what);
@@ -12067,6 +12067,21 @@ const KNOWN_GOOD_GAMES = Object.freeze({
   // ask and promises no payout without one
   '30d66419115bf8c72cbf651de809212859f28448e632c55ca0d1762d29338946': Object.freeze({
     name: 'btc-updown-15m',
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze([]),
+      threshold: 0, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']), attestDraw: Object.freeze({ count: 7, threshold: 5 }) }),
+    fee: Object.freeze({ nodeBps: 40, donationBps: 60 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+    periodMs: '900000',
+    requiredProtocolVersion: 2,
+  }),
+  '90d207d64b3c2ab565d43b0437b3ddf45a99f400f8fc104425174d059254e42e': Object.freeze({
+    name: 'btc-updown-15m',
+    // UP/DOWN VERSION 26 (kanban #3075, #3079, #3080; feedback #351, #358, #359): version 25 in every term, with a client that says when a locked order's window closes, shows no cancel past an order's expiry and no Buy in a window the seats have not got ready
     cores: Object.freeze({
 
     }),

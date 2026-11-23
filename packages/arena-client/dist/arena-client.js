@@ -5723,7 +5723,7 @@ function readVarint(bytes, at) {
 
 // VIEWS, NOT COPIES (kanban #3236, a heap snapshot of a seat: 74,118 kept parses, 388 MB - every script, witness item and previous txid
 // its own copied buffer). A parse's byte fields are views of the raw transaction: nothing writes them or the raw bytes in place (a raw is
-// a block's own slice, splitBlock), and a kept parse is kept with its raw anyway (census.js parsedKept).
+// a view of its block's bytes, splitBlock - kanban #3238), and a kept parse is kept with its raw anyway (census.js parsedKept).
 function readSlice(bytes, at, what) {
   const { value, next } = readVarint(bytes, at);
   const end = need(bytes, next, value, what);
@@ -12067,6 +12067,21 @@ const KNOWN_GOOD_GAMES = Object.freeze({
   // ask and promises no payout without one
   '30d66419115bf8c72cbf651de809212859f28448e632c55ca0d1762d29338946': Object.freeze({
     name: 'btc-updown-15m',
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze([]),
+      threshold: 0, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']), attestDraw: Object.freeze({ count: 7, threshold: 5 }) }),
+    fee: Object.freeze({ nodeBps: 40, donationBps: 60 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+    periodMs: '900000',
+    requiredProtocolVersion: 2,
+  }),
+  '90d207d64b3c2ab565d43b0437b3ddf45a99f400f8fc104425174d059254e42e': Object.freeze({
+    name: 'btc-updown-15m',
+    // UP/DOWN VERSION 26 (kanban #3075, #3079, #3080; feedback #351, #358, #359): version 25 in every term, with a client that says when a locked order's window closes, shows no cancel past an order's expiry and no Buy in a window the seats have not got ready
     cores: Object.freeze({
 
     }),
@@ -24357,10 +24372,26 @@ function tidyStorage(storage, { seeds = [], current = null, federations = [], he
 }
 
 /** WHERE THE PLAYER WALLET IS KEPT: the tab's storage, under the federation and the secret's hash, never the secret. */
+// ANOTHER TAB'S SPEND IS SEEN BEFORE THIS TAB SPENDS (kanban #3237, feedback #374/#375 "invalid input: 2-The note is already spent"): a lock
+// client reads the wallet from storage once, when it opens, and spends from its own copy in memory after. Two tabs of one phrase (or a tab left
+// open while another one played) each held the same notes: one spent them, the other's copy still listed them and handed them to the
+// federation again - refused as already spent, the buy or the stake gone with an error. Every write of a wallet now leaves a mark beside it
+// (arena.walletgen.<fed16>.<secret16>, this tab's id and a count); a client whose store last saw another mark is stale, and the player wallet
+// (openPlayerWallet's freshWallet) opens again from storage before it spends.
+const WALLET_GEN_PREFIX = 'arena.walletgen.';
+const TAB_MARK = (() => { try { const b = new Uint8Array(6); globalThis.crypto.getRandomValues(b); return toHex(b); } catch { return Math.random().toString(16).slice(2, 14); } })();
+let walletGenCount = 0;
 function walletStoreFor(storage, federationId, secret) {
   const prefix = `arena.walletdb.${toHex(federationId).slice(0, 16)}.${toHex(sha256(secret)).slice(0, 16)}.`;
+  const genKey = WALLET_GEN_PREFIX + prefix.slice('arena.walletdb.'.length, -1);
+  let seen = null;
+  const readGen = () => { try { return storage.getItem(genKey); } catch { return null; } };
+  // not marked (storage full): another tab does not see this write - the refusal path below (already spent: opened again, once more) covers it
+  const mark = () => { const t = `${TAB_MARK}.${++walletGenCount}`; try { storage.setItem(genKey, t); seen = t; } catch { /* see above */ } };
   return {
+    stale() { return readGen() !== seen; },
     entries() {
+      seen = readGen();
       const out = [];
       for (let i = 0; i < storage.length; i++) {
         const k = storage.key(i);
@@ -24368,10 +24399,57 @@ function walletStoreFor(storage, federationId, secret) {
       }
       return JSON.stringify(out);
     },
-    put(k, v) { putWalletValue(storage, prefix + packHex(k), v); dropRaw(storage, prefix, k); },   // kanban #1978: the raw row goes once the packed one is written
-    remove(k) { storage.removeItem(prefix + packHex(k)); storage.removeItem(prefix + k); },
+    put(k, v) { putWalletValue(storage, prefix + packHex(k), v); dropRaw(storage, prefix, k); mark(); },   // kanban #1978: the raw row goes once the packed one is written; #3237 the mark
+    remove(k) { storage.removeItem(prefix + packHex(k)); storage.removeItem(prefix + k); mark(); },
   };
 }
+
+// THE SPENDS A STALE WALLET NEVER MAKES (kanban #3237): each is made by the wallet as storage holds it now - opened again first when another tab
+// wrote it since. And refused as already spent (a write another tab could not mark, an older page's tab), the wallet is opened again from storage
+// and the spend made once more - only where the refusal comes with the call itself, so nothing was paid: a submission accepted behind
+// (lockSubmit, paySubmit -> lockAccepted) is never made twice here; its refusal opens the wallet again for the next press.
+const FRESH_SPENDS = new Set(['sendEcash', 'sendAllEcash', 'withdraw', 'lock', 'lockBoth', 'lockHash', 'lockWithDonations', 'lockSubmit', 'paySubmit',
+  'balanceMsat', 'withdrawableMsat']);
+// the acceptance of a submission is read by the client that made it (never one opened since); its refusal as already spent opens the wallet again
+const REFUSED_BEHIND = new Set(['lockAccepted']);
+const RETRY_SPENDS = new Set(['sendEcash', 'sendAllEcash', 'withdraw', 'lock', 'lockBoth', 'lockHash', 'lockWithDonations']);
+const isAlreadySpent = (e) => /already spent/i.test(String((e && e.message) || e));
+function freshWallet(client, store, reopen, onStep = () => {}) {
+  if (!client || typeof client !== 'object' || !store || typeof store.stale !== 'function') return client;
+  let inner = client, st = store, reopening = null, forced = false;
+  const again = (why) => {
+    if (!reopening) {
+      reopening = (async () => {
+        onStep(why);
+        const r = await reopen();
+        inner = r.client; st = r.store; forced = false;
+        return inner;
+      })().finally(() => { reopening = null; });
+    }
+    return reopening;
+  };
+  const current = () => (reopening ? reopening : (forced || st.stale()) ? again('another tab of this browser changed this wallet - opening it again from storage') : Promise.resolve(inner));
+  const wrapped = new Proxy(client, {
+    get(_t, p) {
+      if (p === FRESH_INNER) return inner;
+      const v = inner[p];
+      if (typeof v !== 'function') return v;
+      if (typeof p !== 'string' || !(FRESH_SPENDS.has(p) || REFUSED_BEHIND.has(p))) return v.bind(inner);
+      const made = inner;
+      return async (...a) => {
+        const c = REFUSED_BEHIND.has(p) ? made : await current();
+        try { return await c[p](...a); } catch (e) {
+          if (!isAlreadySpent(e)) throw e;
+          if (!RETRY_SPENDS.has(p)) { forced = true; throw e; }
+          const c2 = await again('the federation counts a note of this wallet spent - opening the wallet again from storage and spending once more');
+          return c2[p](...a);
+        }
+      };
+    },
+  });
+  return wrapped;
+}
+const FRESH_INNER = Symbol('freshWallet.inner');
 
 /**
  * A SEED BROUGHT FROM ANOTHER DEVICE RECOVERS ITS WALLET (2026-10-04: "patch Fedimint's recovery so it runs in
@@ -24493,16 +24571,23 @@ async function openPlayerWallet({ federationId, invite, seed, LockClient, storag
   let timer = null;
   // A CONFIG NO GUARDIAN OF THE INVITE GAVE (one guardian down): once more, with an invite naming every guardian this client has seen named
   // for the federation (guardian-invites.js)
-  const enter = (inv) => (recover ? LockClient.recover : LockClient.join).call(LockClient, inv, toHex(round.federationId), toHex(secret), store);
-  const joinOnce = () => enter(invite).catch((e) => {
+  const enter = (inv, st = store, how = recover ? LockClient.recover : LockClient.join) => how.call(LockClient, inv, toHex(round.federationId), toHex(secret), st);
+  const joinOnce = (st = store, how = undefined) => enter(invite, st, how).catch((e) => {
     const whole = /download client config/i.test(String((e && e.message) || e)) ? wholeInvite(invite) : null;
     if (!whole) throw e;
     onStep('one of the federation\'s guardians did not answer - reading its configuration from the others');
-    return enter(whole);
+    return enter(whole, st, how);
   });
+  // kanban #3237: opened again from what storage holds now (a join of the kept wallet, never a recovery)
+  const reopen = async () => {
+    const st = storage ? walletStoreFor(storage, round.federationId, secret) : unkeptLockStore();
+    const c = await joinOnce(st, LockClient.join);
+    noteClientFederation(c, toHex(round.federationId));   // the tweak feed already running goes on through the wallet to this client
+    return { client: c, store: st };
+  };
   noteInvite(invite);
   const joining = Promise.race([
-    joinOnce(),
+    joinOnce().then((c) => (storage ? freshWallet(c, store, reopen, onStep) : c)),
     new Promise((_, no) => { timer = setTimeout(() => no(new Error(`the federation did not open the player wallet in ${Math.round(joinWaitMs / 1000)} s - press PLAY again`)), joinWaitMs); }),
   ]).finally(() => clearTimeout(timer));
   joining.then((c) => noteClientFederation(c, toHex(round.federationId)), () => {});
