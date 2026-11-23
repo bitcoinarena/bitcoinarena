@@ -34168,7 +34168,11 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
         if (r.status === 404 && /no seating certificate/.test(body)) { spoke = true; continue; }
         if (!r.ok) continue;
         spoke = true;
-        const { cert, index = 0 } = JSON.parse(body);
+        const answered = JSON.parse(body), cert = answered.cert;
+        // AN INDEX IS ONLY A TABLE'S (kanban #2813, #1489 r22-census-1; #2537 did not hold): `index` is unsigned JSON, and on a round of no table the
+        // certificate was checked against this round whatever it said - one seat answering a superseded seating with index 999 beat every honest
+        // seat's certified one (the highest index stands). With no table anchor every seating is this round's own: index 0
+        const index = anchor ? (Number.isInteger(answered.index) && answered.index >= 0 ? answered.index : 0) : 0;
         // A TABLE'S LATER SEATING (kanban #1020): a check-in of this table at or before this round; of those a seat hands, the newest stands
         if (anchor && index > contract.roundIndex) { refused.push(`${u}: a seating of a later round of the table`); continue; }
         const v = seatingChecked(cert, { roundId: anchor && index > 0 ? seriesRoundIdOf(contract.seriesId, index) : seatId, role, drawn: got.drawn[role], slots: slotsForRole(contract, role), verify: curve.verify });
