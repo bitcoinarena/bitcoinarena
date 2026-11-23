@@ -213,3 +213,14 @@ test('a live tape is carried in its own order, one a batch, and a batch without 
   const both = { ...sample(), samples: [[300, 19650000]], tapes: [[120, ...prices]] };
   assert.deepEqual(decodeInputBatch(encodeInputBatch(both)).samples, [[300, 19650000]]);
 });
+
+test('#2927 one batch id names one byte string: vectors out of the encoder\'s order do not decode (feedback #233)', () => {
+  const b = { roundId: new Uint8Array(32).fill(1), entryId: new Uint8Array(32).fill(2), previousHash: new Uint8Array(32), firstTick: 0,
+    ticks: [[0, 0, 0, 0, 0].slice(0, INPUT_WORDS)], liquidations: [], loads: [], samples: [[5, 100], [5, 200]] };
+  const bytes = encodeInputBatch(b);
+  assert.deepEqual(decodeInputBatch(bytes).samples, [[5, 100], [5, 200]]);
+  const swapped = Uint8Array.from(bytes); const n = bytes.length;
+  swapped.set(bytes.subarray(n - 8, n), n - 16); swapped.set(bytes.subarray(n - 16, n - 8), n - 8);
+  assert.notDeepEqual(swapped, bytes);
+  assert.throws(() => decodeInputBatch(swapped), /canonical order/);
+});
