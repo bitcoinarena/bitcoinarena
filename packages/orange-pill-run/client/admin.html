@@ -70,6 +70,13 @@ a { color: var(--btc); }
   table.cards td.acts::before { content: none; }
   table.cards td > span, table.cards td > div { min-width: 0; overflow-wrap: anywhere; }
 }
+/* THE REPLAY VIEWER (kanban #3533): the game beside this panel in a frame, fed the run this panel fetched with its code */
+#viewer { position: fixed; inset: 0; z-index: 5; background: rgba(8,5,9,.82); display: grid; place-items: center; padding: 12px; }
+#viewer[hidden] { display: none; }
+#viewer .vbox { width: min(960px, 100%); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px; display: grid; gap: 8px; }
+#viewer .vhead { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+#viewer .vhead b { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+#vFrame { width: 100%; height: min(72vh, 620px); border: 0; border-radius: 8px; background: #000; display: block; }
 </style>
 </head>
 <body>
@@ -129,6 +136,13 @@ a { color: var(--btc); }
     </section>
   </div>
 </main>
+<div id="viewer" hidden role="dialog" aria-modal="true" aria-labelledby="vTitle">
+  <div class="vbox">
+    <div class="vhead"><b id="vTitle">Replay</b><button id="vClose" type="button" class="small">Close</button></div>
+    <div id="vWhy" class="why" role="status"></div>
+    <iframe id="vFrame" title="Replay of the run"></iframe>
+  </div>
+</div>
 <script>
 "use strict";
 (() => {
@@ -221,7 +235,7 @@ a { color: var(--btc); }
     const tb = el("tbody"); t.append(tb);
     for (const f of fl) {
       const acts = el("td", { class: "acts" });
-      acts.append(el("a", { href: "../../?game=orange-pill-run#replay=" + f.attempt, target: "_blank", rel: "noopener noreferrer", text: "Replay" }));
+      acts.append(el("button", { type: "button", class: "small", text: "Replay", title: "watch this run", onclick: () => watchRun({ attempt: f.attempt, name: f.name, score: f.score }) }));
       acts.append(el("button", { type: "button", class: "small go", text: "Approve", disabled: f.decision !== "pending" ? "" : null, title: "a human run: it counts for payout",
         onclick: () => { if (confirm("Approve the run of " + (f.name || short(f.player)) + " (" + f.score + " points) as " + (by || "admin") + "? It is then paid like any other run.")) act("/admin/review", { attempt: f.attempt, action: "clear" }, "Run " + short(f.attempt) + " approved."); } }));
       acts.append(el("button", { type: "button", class: "small bad", text: "Disqualify", disabled: dq.has(f.player) ? "" : null,
@@ -273,7 +287,7 @@ a { color: var(--btc); }
       if (a.review && a.review !== "none") st.append(el("div", {}, el("span", { class: "pill " + (a.review === "cleared" ? "green" : "red"), text: "review " + a.review })));
       if (dq.has(a.player)) st.append(el("div", {}, el("span", { class: "pill red", text: "disqualified" }), el("div", { class: "why", text: dq.get(a.player).why + " (" + dq.get(a.player).by + ", " + when(dq.get(a.player).at_ms) + ")" })));
       const acts = el("td", { class: "acts" });
-      if (a.state === "scored" || a.state === "rejected") acts.append(el("a", { href: "../../?game=orange-pill-run#replay=" + a.attempt, target: "_blank", rel: "noopener noreferrer", text: "Replay" }));
+      acts.append(el("button", { type: "button", class: "small", text: "Replay", title: "watch this run", onclick: () => watchRun({ attempt: a.attempt, name: a.name, score: a.score && a.score.total }) }));
       acts.append(el("button", { type: "button", class: "small", text: "Clear", disabled: a.review === "cleared" ? "" : null, title: "clear the run for payout", onclick: () => act("/admin/review", { attempt: a.attempt, action: "clear" }, "Run " + short(a.attempt) + " cleared.") }));
       acts.append(el("button", { type: "button", class: "small bad", text: "Disqualify", disabled: dq.has(a.player) ? "" : null, onclick: () => { const why = prompt("Disqualify " + (a.name || short(a.player)) + " in " + current + " - reason:"); if (why && why.trim()) act("/admin/disqualify", { round: current, player: a.player, why: why.trim() }, (a.name || short(a.player)) + " disqualified."); } }));
       const s = a.bot ? a.bot.score : -1;
@@ -331,6 +345,39 @@ a { color: var(--btc); }
     if ((j.approvals || []).length) ap.append(el("div", { text: "History: " + j.approvals.map((a) => a.kind + " " + a.action + " by " + a.by + " " + when(a.at_ms) + (a.why ? " (" + a.why + ")" : "")).join("; ") }));
     if (j.claim) ap.append(el("div", { text: "Bounty claimed by " + short(j.claim.player) + " to " + j.claim.ln_address + " " + when(j.claim.at_ms) }));
   }
+
+  // ---------- the replay viewer (kanban #3533) ----------
+  // ANY run (a weaker one, a refused one kept with its log, a disqualified player's) from GET /admin/replay/<id> with this tab's code; the game
+  // (index.html beside this page, same origin) plays it in a frame through window.OPR.watch - the code never leaves this page, never in a URL
+  let frameReady = null, watching = 0;
+  function gameFrame() {
+    if (frameReady) return frameReady;
+    const f = $("vFrame");
+    frameReady = new Promise((ok, no) => {
+      f.onload = () => { let g = null; try { g = f.contentWindow && f.contentWindow.OPR; } catch (_) { g = null; } if (g && typeof g.watch === "function") ok(g); else no(new Error("the game page did not load here")); };
+      f.src = "index.html?practice";
+    });
+    frameReady.catch(() => { frameReady = null; });
+    return frameReady;
+  }
+  async function watchRun(a) {
+    const n = ++watching;
+    $("viewer").hidden = false; $("vClose").focus();
+    $("vTitle").textContent = "Replay · " + (a.name || "(no name)") + " · " + short(a.attempt) + (a.score != null ? " · " + a.score + " points" : "");
+    $("vWhy").textContent = "Loading …";
+    let facts = "";
+    try {
+      const [j, g] = await Promise.all([call("GET", "/admin/replay/" + a.attempt), gameFrame()]);
+      if (n !== watching) return;
+      facts = j.state + (j.why ? " - " + j.why : "") + (j.review && j.review !== "none" ? " · review " + j.review : "") + " · round " + j.level.round + " · " + j.level.gameVersion;
+      g.watch(j);
+      $("vWhy").textContent = facts;
+    } catch (e) { if (n === watching) $("vWhy").textContent = "Replay not shown: " + ((e && e.message) || e) + (facts ? " (" + facts + ")" : ""); }
+  }
+  function closeViewer() { watching++; $("viewer").hidden = true; frameReady = null; $("vFrame").src = "about:blank"; }
+  $("vClose").onclick = closeViewer;
+  document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && !$("viewer").hidden) closeViewer(); });
+  window.OPR_ADMIN.watch = (attempt) => watchRun({ attempt });   // for tests
 
   async function act(path, body, okText) {
     try { await call("POST", path, body); say(okText, "ok"); await loadRounds(current); } catch (e) { say(e.message); }

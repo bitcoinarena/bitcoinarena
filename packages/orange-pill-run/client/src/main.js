@@ -485,14 +485,32 @@ async function showBoard() {
   $("bLine").textContent = roundLine(b.round);
   paintBoard();
 }
-async function watchReplay(path) {
+async function watchReplay(path, from = "board") {
+  const fail = (t) => { if (from === "board") { $("bLine").textContent = t; return; } replayErr(t); };
   try {
+    if (!api) return fail("Replays play in the Arena.");
     let j = await api.get(path);
     if (!j.ok && j.status === 403 && wallet() && wallet().pubkey) j = await api.getSigned(path);
-    if (!j.ok) { $("bLine").textContent = j.why || "no replay"; return; }
-    useLevel(j.level); const bad = validateLog(j.log, L.version || GAME_VERSION); if (bad) throw new Error(bad);   // kanban #3391: the log replays on its round's version, not the page's newest
-    replayLog = j.log; replayFrom = "board"; begin("replay");
-  } catch (e) { $("bLine").textContent = (e && e.message) || String(e); }
+    if (!j.ok) return fail("Replay not shown: " + (j.why || "no replay"));
+    watchRun(j, from);
+  } catch (e) { fail("Replay not shown: " + ((e && e.message) || String(e))); }
+}
+// one fetched run ({ level, log }) played in the replay viewer: on its round's level and version (kanban #3391)
+function watchRun(j, from) {
+  if (!j || !j.log) throw new Error("the run has no log");
+  if (running && mode === "play") throw new Error("a run is being played");
+  if (running) stopReplay();
+  useLevel(j.level); const bad = validateLog(j.log, L.version || GAME_VERSION); if (bad) throw new Error(bad);   // kanban #3391: the log replays on its round's version, not the page's newest
+  replayLog = j.log; replayFrom = from; begin("replay");
+}
+// A REPLAY LINK (kanban #3533, owner 2026-11-23): ?game=orange-pill-run#replay=<attempt> - the Arena page hands its hash to this frame; the run
+// is fetched (GET /replay/<attempt>) and played. Anything it cannot play is said on the intro, never silently dropped
+function replayErr(t) { if (replayOn()) stopReplay(); showIntro(); const w = $("iWhy"); w.dataset.err = "1"; w.textContent = t; HOOKS.replayErr = t; }
+function replayFromHash() {
+  const m = /^#replay=([0-9a-f]{32})$/i.exec(location.hash || "");
+  if (!m) { if (/^#replay=/.test(location.hash || "")) replayErr("Replay not shown: that is no run id"); return false; }
+  watchReplay("/replay/" + m[1].toLowerCase(), "link");
+  return true;
 }
 // ---------- the replay viewer (#3251): its controls in a bar below the field, its own end card ----------
 let replayFrom = "result";   // where Back goes: the result screen it was opened from, or the leaderboard
@@ -569,6 +587,8 @@ Object.assign(HOOKS, {
   gameVersion: GAME_VERSION, get level() { return L; }, levelOf: () => levelOf, bridged: !!bridge,
   play: () => begin("play"), enter: () => play(),
   playBot: (opts = {}) => begin("bot", opts),
+  // the admin page (kanban #3533) plays any run it fetched with its own code: { level, log } as GET /admin/replay/<id> answers
+  watch(j) { watchRun(j, "admin"); },
   replay(log, opts = {}) { const bad = validateLog(log, (L && L.version) || GAME_VERSION); if (bad) throw new TypeError(bad); replayLog = log; begin("replay", opts); },
   state: () => ({ running, paused, speed, mode, f: W ? W.f : 0, presses: presses.length + (down >= 0 ? 1 : 0), done: W ? W.done : false, run: run ? { attempt: run.attempt, entry: run.entry, status: run.status } : null }),
   view: () => view(W), audio: () => (audio ? { state: audio.state, mode: audio.mode, music: audio.musicOn, gain: audio.gain } : null),
@@ -581,6 +601,7 @@ if (api) refresh().then(paintIntro).catch(() => {}).then(() => {
   const w = wallet(); if (!w || !w.pubkey) return;
   return entry.resendUnsent(w.pubkey).then((sent) => { HOOKS.resent = sent.map((x) => ({ attempt: x.attempt, ok: !!(x.r && x.r.ok) })); if (sent.length) return refresh().then(paintIntro); });
 }).catch(() => {});
-if (location.hash === "#rules") showRules(); else if (location.hash === "#board") showBoard();
+if (location.hash === "#rules") showRules(); else if (location.hash === "#board") showBoard(); else replayFromHash();
+addEventListener("hashchange", () => { if (/^#replay=/.test(location.hash || "")) replayFromHash(); });
 const q = new URLSearchParams(location.search);
 if (q.has("bot")) begin("bot", { bot: +q.get("bot") || 0, speed: +q.get("speed") || 1 });

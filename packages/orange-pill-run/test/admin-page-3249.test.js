@@ -16,14 +16,14 @@ test('#3249 client/build.mjs writes dist/admin.html: self-contained, the code on
   const html = fs.readFileSync(path.join(path.dirname(out), 'admin.html'), 'utf8');
   assert.equal(html, fs.readFileSync(new URL('../client/admin.html', import.meta.url), 'utf8'));
   assert.doesNotMatch(html, /<script[^>]+src=|<link[^>]+href=|@import|url\(http/i);
-  for (const s of ['x-arena-admin', 'sessionStorage', '/admin/rounds', '/admin/runs?round=', '/admin/lists?round=', '/admin/review', '/admin/disqualify', '/admin/list"', '/admin/row', '/admin/test-round', '#replay=', 'name="viewport"']) assert.ok(html.includes(s), s);
+  for (const s of ['x-arena-admin', 'sessionStorage', '/admin/rounds', '/admin/runs?round=', '/admin/lists?round=', '/admin/review', '/admin/disqualify', '/admin/list"', '/admin/row', '/admin/test-round', '/admin/replay/', 'name="viewport"']) assert.ok(html.includes(s), s);
   assert.doesNotMatch(html, /console\.log|[?&](code|admin)=/);   // never logged, never in a URL
   const js = html.match(/<script>\n([\s\S]*)<\/script>/)[1];
   assert.doesNotThrow(() => new Function(js));
 });
 
 test('#3249 the admin routes answer what the panel reads', async () => {
-  const { w, id } = await adminWorld();
+  const { w, id } = await adminWorld({ t0: Date.parse('2026-11-20T12:00:00Z') });
   const { srv, base } = await serveAdmin(w);
   const get = async (p, code = 'letmein') => { const r = await fetch(base + '/api/opr' + p, { headers: { 'x-arena-admin': code } }); return { status: r.status, json: await r.json() }; };
   try {

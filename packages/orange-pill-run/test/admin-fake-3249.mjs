@@ -9,8 +9,8 @@ import { createServer } from 'node:http';
 import { world, keypair, logOf, MIN } from './server-helpers.mjs';
 
 /** The world: a closed test round with its list made; after that the fake clock follows the real one (so the page can make a new test round). */
-export async function adminWorld({ realClock = false } = {}) {
-  const t0 = Date.now() - 3 * 60 * MIN;
+// t0: the world's start (kanban #3533: a fixed one before the daily rounds' first day - from 2026-11-23 a test round "now - 3 h" met the daily round)
+export async function adminWorld({ realClock = false, t0 = Date.now() - 3 * 60 * MIN } = {}) {
   const w = world({ start: new Date(t0).toISOString() });
   const chartDay = new Date(t0 - 86400000).toISOString().slice(0, 10);
   const made = w.opr.testRound({ startMs: t0 + MIN, minutes: 30, chartDay, by: 'owner', maxAttempts: 3 });

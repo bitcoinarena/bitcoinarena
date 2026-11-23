@@ -1026,6 +1026,16 @@ export function createOpr(o = {}) {
         if (req.method === 'POST' && path === '/admin/list') { const { code, ...r } = decideList({ ...body, by }); return send(r.ok ? 200 : code || 400, r); }
         if (req.method === 'POST' && path === '/admin/row') { const r = rejectRow({ ...body, by }); return send(r.ok ? 200 : 400, r); }
         if (req.method === 'POST' && path === '/admin/test-round') { const r = testRound({ ...body, by }); if (r.ok) tick().catch(() => {}); return send(r.ok ? 200 : 400, r); }
+        // ANY RUN'S REPLAY FOR REVIEW (kanban #3533, owner 2026-11-23): GET /replay/<id> is public only for each board row's best run (#3336);
+        // the admin watches every run whose log is stored - a weaker one, a refused one kept with its log, a disqualified player's, a test round's
+        const am = /^\/admin\/replay\/([0-9a-f]{32})$/.exec(path);
+        if (req.method === 'GET' && am) {
+          const a = q('SELECT * FROM attempts WHERE id = ?').get(am[1]);
+          const r = a && roundRow(a.round);
+          if (!a || !r) return send(404, { ok: false, why: 'no such run' });
+          if (a.log == null) return send(404, { ok: false, why: `that run has no stored log (${a.state}${a.why ? ': ' + a.why : ''})` });
+          return send(200, { ok: true, attempt: a.id, player: a.player, name: nameOf(a.player), state: a.state, why: a.why, review: a.review, log: J(a.log), score: J(a.score), level: levelFor(r) });
+        }
         return send(404, { ok: false, why: 'no such admin route' });
       }
       // THE PUBLIC READS ARE BUILT ONCE PER STATE AND SECOND (kanban #3354, audit opr a6-1-3): GET /board, /round and /rounds need no sign-in and
