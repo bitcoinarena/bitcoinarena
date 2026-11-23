@@ -8398,6 +8398,23 @@ function donationSetMatchesRound(contract, recipients) {
 
 /** A day of vesting, in blocks (§27A.4.1: "vesting is daily", 2026-10-16). */
 const VESTING_DAY_BLOCKS = 144;
+/** How many vesting steps below its tip a seat still takes a split at (kanban #3293): a page splits at its lobby round's census height. */
+const VESTING_STEPS_BACK = 2;
+/**
+ * THE VESTED SETS A SPLIT MAY HAVE BEEN MADE AT (kanban #3293, audit settle-a5-1-1): a page splits a gift or a purchase over the set
+ * vested at its lobby round's census height (donation-pay.js fetchDonationSet), a seat checks at its own tip, and a day's series shares
+ * one census height - so the tip is routinely a vesting step or two past it. The distinct vested sets at the tip and at each of the
+ * `steps` days below it, the tip's first; vesting only moves forward, so no set from a later height is ever among them.
+ */
+function vestedSetsNear(recipients, height, steps = VESTING_STEPS_BACK) {
+  const out = [], seen = new Set(), h = Number(height) || 0;
+  for (let k = 0; k <= steps; k++) {
+    const set = vestedShares(recipients, Math.max(0, h - k * VESTING_DAY_BLOCKS));
+    const key = Array.isArray(set) ? set.map((r) => r.shareBps).join(',') : String(k);
+    if (!seen.has(key)) { seen.add(key); out.push(set); }
+  }
+  return out;
+}
 /**
  * THE SHARES A VESTING SET PAYS AT A HEIGHT (§27A.4.1): each vesting entry has moved from its share towards its target
  * by one day's step per VESTING_DAY_BLOCKS since its start (floored to whole basis points, at most its target); every other entry
@@ -34107,7 +34124,7 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
   }
   if (!got.ok) return { ...got, censusRefused };
   keptCensus.set(toHex(contract.censusRoot), evidence.entries);
-  keptChecked.set(toHex(contract.censusRoot), got.checkedCensus ? { ...got.checkedCensus, height: Number(contract.censusHeight) } : got.checkedCensus);
+  keptChecked.set(toHex(contract.censusRoot), got.checkedCensus ? { ...got.checkedCensus, height: Number(contract.censusHeight), bondMin: typeof contract.bondMinSats === 'bigint' ? contract.bondMinSats : null } : got.checkedCensus);
   // THE SEATING (§5A.7 reserve seats): each role's certificate, asked of the seats and checked against the draw
   // this client made itself - every seated node signed it, in score order, within the seats and at least the threshold. A
   // checked certificate's seated are the committee. `seating[role]`: { seated, from } checked; { missing } when a seat
@@ -34368,9 +34385,18 @@ const checkedCensusFor = (contract) => { if (!contract || !(contract.censusRoot 
  * window show how many nodes the network currently has"): the census at the highest height among the rounds this page checked,
  * its distinct node keys counted. null before any census is checked.
  */
+// AT THE NETWORK'S FLOOR, NOT ONE ROUND'S BRACKET (kanban #3304, audit census-a5-2-1): a round's census holds only the nodes bonded at or above ITS
+// bond_min, and any round may name a stricter one (every seat takes it) - checked one block later it became "the network's bonded nodes", so
+// served rounds of the smaller-bond nodes were dropped from an item purchase's served list and the collect scan. The census of the lowest
+// bond_min checked is taken, the newest of those.
 function newestCheckedCensus() {
   let best = null;
-  for (const c of keptChecked.values()) if (c && Array.isArray(c.entries) && (!best || (c.height || 0) > (best.height || 0))) best = c;
+  const lower = (a, b) => (a.bondMin !== null && a.bondMin !== undefined && b.bondMin !== null && b.bondMin !== undefined && a.bondMin !== b.bondMin ? a.bondMin < b.bondMin : null);
+  for (const c of keptChecked.values()) {
+    if (!c || !Array.isArray(c.entries)) continue;
+    const lo = best ? lower(c, best) : true;
+    if (!best || lo === true || (lo === null && (c.height || 0) > (best.height || 0))) best = c;
+  }
   if (!best) return null;
   const keys = new Set(best.entries.map((e) => toHex(e.pubkey)));
   return { height: best.height || null, nodes: keys.size, entries: best.entries };
