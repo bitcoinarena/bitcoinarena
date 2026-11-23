@@ -433,6 +433,8 @@ const ourKeys = () => { try { return new Set(readFileSync(env.FAUCET_FEEDBACK_EX
 const NODE_CHECKS = new Map();
 const NODE_CHECK_ASKS = new Map(); const NODE_CHECKS_PER_HOUR = 10; let NODE_CHECK_BUSY = false;   // audit 5 #1402
 let NODE_CHECK_CHAIN = Promise.resolve(), NODE_CHECK_WAITING = 0; const NODE_CHECK_RUNNING = new Map(), NODE_CHECK_QUEUE_MOST = 8;   // kanban #3259
+// kanban #3300 (audit faucet a5-1-2): the waiting checks one network (an IPv6 /48, an IPv4 /24) may hold - nine /64s of one /48 filled the queue
+const NODE_CHECK_WAIT_BY_NET = new Map(), NODE_CHECK_WAIT_PER_NET = 2;
 // AN ANNOUNCED SEAT ENDPOINT IS ASKED ON THE PUBLIC INTERNET ONLY (kanban #1884, re-check of #1511): GET /network-games lists the census nodes'
 // endpoints, which any bonded node sets by a free signed address announcement - http://127.0.0.1:8080, 169.254.169.254, a LAN host - and a stranger's
 // node check made this faucet GET /owner, /roles and /served there. Only the operator's own are taken as given: the FAUCET_SEASON_SEATS bases, and a
@@ -1146,10 +1148,15 @@ createServer((req, res) => {
     // callers, but a caller waits its turn (at most NODE_CHECK_QUEUE_MOST waiting), and the same node:npub asked meanwhile shares the one check
     const inFlight = NODE_CHECK_RUNNING.get(k);
     if (!inFlight && NODE_CHECK_WAITING >= NODE_CHECK_QUEUE_MOST) return send(429, { ok: false, why: 'node checks are queued: try again in a minute' });
+    // ONE NETWORK HOLDS AT MOST NODE_CHECK_WAIT_PER_NET OF THE QUEUE (kanban #3300): a stranger's nine /64s of one /48 took all 8 places and every
+    // honest operator's check was refused 429 again - now his network waits for 2 places, and the rest stay for other callers
+    const net = ipNetsOf(who)[0] || who;
+    if (!inFlight && (NODE_CHECK_WAIT_BY_NET.get(net) || 0) >= NODE_CHECK_WAIT_PER_NET) return send(429, { ok: false, why: 'node checks from your network are queued: try again in a minute' });
     mine.push(Date.now()); NODE_CHECK_ASKS.set(who, mine); if (NODE_CHECK_ASKS.size > 5000) NODE_CHECK_ASKS.delete(NODE_CHECK_ASKS.keys().next().value);
     const run = inFlight || (() => {
-      NODE_CHECK_WAITING++;
-      const p = NODE_CHECK_CHAIN.then(() => { NODE_CHECK_WAITING--; NODE_CHECK_BUSY = true; return nodeCheckNow(node, npub); })
+      NODE_CHECK_WAITING++; NODE_CHECK_WAIT_BY_NET.set(net, (NODE_CHECK_WAIT_BY_NET.get(net) || 0) + 1);
+      const started = () => { NODE_CHECK_WAITING--; const n = (NODE_CHECK_WAIT_BY_NET.get(net) || 1) - 1; if (n > 0) NODE_CHECK_WAIT_BY_NET.set(net, n); else NODE_CHECK_WAIT_BY_NET.delete(net); };
+      const p = NODE_CHECK_CHAIN.then(() => { started(); NODE_CHECK_BUSY = true; return nodeCheckNow(node, npub); })
         .then((answer) => { NODE_CHECKS.set(k, { at: Date.now(), answer }); if (NODE_CHECKS.size > 200) NODE_CHECKS.delete(NODE_CHECKS.keys().next().value); return answer; })
         .finally(() => { NODE_CHECK_BUSY = false; NODE_CHECK_RUNNING.delete(k); });
       NODE_CHECK_CHAIN = p.catch(() => {});

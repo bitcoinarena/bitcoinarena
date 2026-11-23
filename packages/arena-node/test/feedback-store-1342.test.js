@@ -352,7 +352,7 @@ test('#1402 the faucet\'s node check runs one at a time and at most 10 an hour p
   const src = readFileSync(new URL('../tools/faucet.mjs', import.meta.url), 'utf8');
   assert.ok(src.includes('const NODE_CHECKS_PER_HOUR = 10; let NODE_CHECK_BUSY = false;'));
   // kanban #3259: still one at a time over all callers - queued behind the running one (NODE_CHECK_CHAIN), not refused
-  assert.ok(src.includes("const p = NODE_CHECK_CHAIN.then(() => { NODE_CHECK_WAITING--; NODE_CHECK_BUSY = true; return nodeCheckNow(node, npub); })"));
+  assert.ok(src.includes("const p = NODE_CHECK_CHAIN.then(() => { started(); NODE_CHECK_BUSY = true; return nodeCheckNow(node, npub); })"));
   assert.ok(src.includes("const who = ipKey(ip) || ip;"), 'an IPv6 address counted per /64 (ipKey since #1405: the split missed compressed addresses)');
 });
 
