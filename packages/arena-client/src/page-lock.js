@@ -30,7 +30,7 @@ import { refundKeyOf, lockFieldsToJson, lockFieldsFromJson } from '../../arena-p
 import { decodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
 import { lockFromClient } from './lock-result.js';
 import { feeLockPays } from '../../arena-protocol/src/lock-settlement.js';
-import { roundLocks, playerFor, sharesNeededFor } from './join.js';
+import { roundLocks, playerFor, sharesNeededFor, sourceKey } from './join.js';
 import { encodeRoundContract, decodeRoundContract, roundId, custodyFieldsAreValid, entryId } from '../../arena-protocol/src/contracts.js';
 import { decodeBolt11 } from '../../arena-protocol/src/bolt11.js';
 import { takesDeposits } from '../../arena-protocol/src/known-federations.js';
@@ -2561,9 +2561,17 @@ const payoutKind = (p) => p.kind || 'qualifier';
 const normalPayouts = (payouts) => payouts.map((p) => ({ ...p, kind: payoutKind(p), pk: p.pk.toLowerCase(), msat: String(p.msat) }));
 // the player's payout in a settlement (kanban #2014): its kind read as the group key reads it
 const isQualifierTo = (p, pk) => payoutKind(p) === 'qualifier' && String(p.pk).toLowerCase() === String(pk).toLowerCase();
+// ONE SEAT PER BOX, HOWEVER THE LINK SPELLS IT (kanban #3350, audit client-a6-1-1, high): http://liar.test, http://liar.test/ and
+// http://liar.test// were three "seats" - their unsigned ACCEPTED settlement outvoted the round's two honest seats and the winner's payout
+// read "none". A seat is its origin and first path segment (join.js sourceKey: seats behind one proxy differ by path); the first spelling asks.
+export const distinctSeats = (nodes) => {
+  const seen = new Set(), out = [];
+  for (const n of nodes || []) { const k = sourceKey(String(n)) || String(n).replace(/\/+$/, ''); if (!seen.has(k)) { seen.add(k); out.push(n); } }
+  return out;
+};
 export async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1, payee = null } = {}) {
   // EVERY SIGNER NODE AT ONCE (kanban #593)
-  const answers = await Promise.all([...new Set(nodes || [])].map(async (node) => {
+  const answers = await Promise.all(distinctSeats(nodes).map(async (node) => {
     try {
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/lock-settlement?round=${toHex(roundId)}`, { signal: AbortSignal.timeout(SEAT_READ_MS) });
       if (!r.ok) return { said: `${node}: ${r.status}` };
@@ -2605,7 +2613,7 @@ export async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1
 /** HOW MANY SEATS MUST AGREE ON A ROUND'S SETTLEMENT (kanban #1163): its settlement threshold, never more than the seats asked. */
 export const settlementAgreement = (round, nodes = []) => {
   let t = 1; try { t = sharesNeededFor(round); } catch { t = 1; }
-  return Math.max(1, Math.min(Number(t) || 1, new Set(nodes || []).size || 1));
+  return Math.max(1, Math.min(Number(t) || 1, distinctSeats(nodes).length || 1));   // seats, not spellings (kanban #3350)
 };
 
 /**
