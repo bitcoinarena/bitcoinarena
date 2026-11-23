@@ -137,7 +137,10 @@ export function guardingOpenOf({ entries = [], held = [], except = null }) {
     const f = toHex(g.federationId), st = status.get(f);
     if (f === lower(except) || !holdsBack(e, st)) continue;   // a draining one frees its guardians
     const node = toHex(e.pubkey), rec = records.get(f);
-    if (st === undefined) ops.add(node);
+    // kanban #3156 (#1489 r1120b-refute-14, gap in #3031): opOf is the census-BOUND operator (#3385: a binding the operator key signed), else the
+    // node key alone - so a claim on a federation no seat holds also holds back that proven operator's other nodes (spec 23A.2), and a stranger
+    // naming an operator id it holds no binding for still holds back only itself
+    if (st === undefined) { ops.add(node); ops.add(opOf(e)); }
     else if (!rec || rec.guardians.some((x) => x && x.nodePubkey && toHex(x.nodePubkey) === node)) ops.add(opOf(e));
   }
   return ops;
