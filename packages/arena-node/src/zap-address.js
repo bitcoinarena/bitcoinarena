@@ -89,6 +89,11 @@ export const ZAP_MINTS_ALL = 300;
 // Callers not on this host have at most ZAP_MINTING_MAX invoices being made at once, on both doors together; past it the ask is refused
 // (asked again a moment later it is served). The host's own tools are not limited.
 export const ZAP_MINTING_MAX = 16;
+// LOOKED UP AT ONCE, TOO (kanban #3311, audit nostr a5-2-1): a plain tip of the same asker, name and amount gets its kept invoice again
+// after a lookup (in the node an `lncli lookupinvoice` child), and that lookup had no bound: one stranger with one minted tip and N GETs at
+// once ran N children. Asks at the same moment for one kept tip now share one lookup, and callers not on this host have at most
+// ZAP_LOOKING_MAX kept tips being looked up at once; past it the ask is refused (asked again a moment later it is served).
+export const ZAP_LOOKING_MAX = 16;
 // ROOM FOR NEWCOMERS (kanban #3379, audit nostr a6-3-4): ZAP_MINTS_ALL was first come, first served, so ten addresses (or ten /64s of one
 // /48) asking 30 unpaid plain tips each took the whole window and every honest zap was refused until it ended. Past ZAP_MINTS_ALL a window
 // now keeps ZAP_MINTS_SPARE more mints for networks that have minted little in it: an asker whose network (IPv4 /24, IPv6 /48, see netKey)
@@ -174,6 +179,8 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
   const askers = new Map();           // asker key (IPv4, IPv6 /64) -> { since, n }: fresh invoices minted for it in this window (kanban #1743, #1801, #1964)
   const letGo = new Map();            // paymentHash -> the zap let go from a full book, watched until its invoice expires (kanban #1922)
   let strangersMinting = 0;            // invoices being made right now for callers not on this host (kanban #2302)
+  const tipLooking = new Map();       // paymentHash -> the kept tip's lookup in flight, which asks at the same moment share (kanban #3311)
+  let strangersLooking = 0;            // kept tips being looked up right now for callers not on this host (kanban #3311)
   let mintsAll = [];                  // when each fresh invoice for a caller not on this host was minted, the last window's (kanban #1964)
   const nowSec = () => Math.floor(Date.now() / 1000);
   // THIS HOST'S OWN TOOLS (kanban #2109, #1489 v1-refute-19-s3-1): a caller whose socket is this machine and that sent no proxy header.
@@ -507,8 +514,17 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
       const key = `${own ? asker : askerKey(asker)}|${name}|${amountMsat}`;   // one asker's own invoice only (kanban #1999)
       const kept = tips.get(key);
       if (kept && kept.until - nowSec() >= expiryS / 2) {
-        let got = null;
-        try { got = await lookup({ name, paymentHash: kept.paymentHash }); } catch (e) { log(`lookup ${kept.paymentHash.slice(0, 16)} failed: ${e.message}`); }
+        let look = tipLooking.get(kept.paymentHash);   // asks at the same moment share one lookup (kanban #3311)
+        if (!look) {
+          const counted = !own;
+          if (counted && strangersLooking >= ZAP_LOOKING_MAX) return refuse('too many invoices are being checked here at once; try again in a moment');
+          if (counted) strangersLooking++;
+          look = Promise.resolve().then(() => lookup({ name, paymentHash: kept.paymentHash }))
+            .catch((e) => { log(`lookup ${kept.paymentHash.slice(0, 16)} failed: ${e.message}`); return null; })
+            .finally(() => { tipLooking.delete(kept.paymentHash); if (counted) strangersLooking--; });
+          tipLooking.set(kept.paymentHash, look);
+        }
+        const got = await look;
         if (got && !got.settled && tips.get(key) === kept) return json(200, { pr: kept.request, routes: [] });
       }
       if (tips.get(key) === kept) tips.delete(key);
