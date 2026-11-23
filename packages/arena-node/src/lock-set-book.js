@@ -85,7 +85,7 @@ export class LockSetBook {
   #room(ridHex) {
     let r = this.rooms.get(ridHex);
     if (!r) {
-      r = { views: new Map(), sigs: new Map(), cert: null, pulledAt: new Map(), pulling: new Map(), pushed: new Set(), answeredAt: new Map() };
+      r = { views: new Map(), sigs: new Map(), cert: null, pulledAt: new Map(), pulling: new Map(), pushed: new Set(), answeredAt: new Map(), twoViews: new Set() };
       this.rooms.set(ridHex, r);
       if (this.rooms.size > 512) this.rooms.delete(this.rooms.keys().next().value);
     }
@@ -171,10 +171,16 @@ export class LockSetBook {
       if (!lsVerify(fromHex(x.sig), idOf({ setId, atMs }), fromHex(x.key))) return null;
       return { key: String(x.key), atMs, entries: set.entries.map(toHex), sig: String(x.sig), setId: toHex(setId) };
     };
-    for (const v of (Array.isArray(body && body.views) ? body.views : []).slice(0, committee.length)) {
-      if (room.views.has(String(v && v.key))) continue;
+    // TWO VIEWS OF ONE KEY (kanban #3347, audit h2h-a6-1-1; gap in #3257): a seat that signed {A,B,C} to some seats and {A,B} to others tipped an
+    // entry seen by threshold - 1 honest seats in at some and out at others - two signed sets, no certificate, the honest pair VOID. A second view
+    // of a key over another set is that key's equivocation: neither of its views is counted here from then on (signOnce), and the push carries
+    // every view this seat holds, so the other variant reaches each seat before a borderline entry is signed
+    for (const v of (Array.isArray(body && body.views) ? body.views : []).slice(0, 2 * committee.length)) {
+      const had = room.views.get(String(v && v.key));
+      if (had && (had.sig === String(v.sig) || room.twoViews.has(had.key))) continue;
       const ok = read(v, lockSetViewId);
-      if (ok) { room.views.set(ok.key, ok); got.views++; }
+      if (ok && !had) { room.views.set(ok.key, ok); got.views++; }
+      else if (ok && had.setId && ok.setId !== had.setId) { room.twoViews.add(ok.key); got.views++; this.log(`[lock-set] ${toHex(rid).slice(0, 16)}: seat ${ok.key.slice(0, 16)} sent two views over two sets - not counted (kanban #3347)`); }
     }
     for (const s of (Array.isArray(body && body.signatures) ? body.signatures : []).slice(0, committee.length)) {
       const had = room.sigs.get(String(s && s.key));
@@ -343,9 +349,16 @@ export class LockSetBook {
     if (now < close || now > close + LOCK_SET_WINDOW_MS) return;
     const own = room.views.get(me);
     if (!own) return;
-    const views = [...room.views.values()].filter((v) => committee.includes(v.key));
+    const views = [...room.views.values()].filter((v) => committee.includes(v.key) && !room.twoViews.has(v.key));   // kanban #3347
     if (views.length < threshold) return;
     if (views.length < committee.length && now < close + LOCK_SET_VIEW_WAIT_MS) return;
+    // kanban #3347: an entry whose count f views could tip (threshold - f <= count < threshold + f) is not signed early on every view held - the
+    // seat waits the view wait, so a second view of a seat that equivocates reaches it first; an entry every honest seat saw signs at once as before
+    if (now < close + LOCK_SET_VIEW_WAIT_MS) {
+      const f = Math.floor((committee.length - 1) / 3), count = new Map();
+      for (const v of views) for (const e of new Set(v.entries)) count.set(e, (count.get(e) || 0) + 1);
+      if (f > 0 && [...new Set(own.entries)].some((e) => { const n = count.get(e) || 0; return n >= threshold - f && n < threshold + f; })) return;
+    }
     const entries = lockSetToSign({ own: own.entries, views: views.map((v) => v.entries), threshold });
     const set = lockSetOf({ roundId: rid, entries });
     const setId = lockSetId(set);
@@ -364,7 +377,7 @@ export class LockSetBook {
     const cert = this.certified(rid);
     // RULING #2587 ("seats share certificates"): the second certificate travels with the first, so every peer sees the contest at once
     const conflict = this.conflicted(rid) ? this.db.prepare('SELECT cert FROM lock_set_conflicts WHERE round_id = ?').get(rid) : null;
-    return { views: room.views.has(me) ? [room.views.get(me)] : [], signatures: room.sigs.has(me) ? [room.sigs.get(me)] : [], ...(cert ? { certificate: toHex(cert.bytes) } : {}),
+    return { views: [...room.views.values()], signatures: room.sigs.has(me) ? [room.sigs.get(me)] : [], ...(cert ? { certificate: toHex(cert.bytes) } : {}),   // kanban #3347: every view held
       ...(conflict ? { conflict: toHex(new Uint8Array(conflict.cert)) } : {}) };
   }
 
