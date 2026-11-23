@@ -241,6 +241,14 @@ export function openBountySeason(path = ':memory:', { startMs = null, s2EndMs = 
     if (nowMs - c.made_ms > LINK_CODE_MS) return { ok: false, why: 'that code has expired: make a new one' };
     const held = db.prepare('SELECT pubkey, proof FROM links WHERE platform = ? AND user_id = ?').get(platform, String(userId));
     if (held && held.pubkey !== c.pubkey && held.proof === 'code') return { ok: false, why: 'that account is linked to another report key' };
+    // A USED CODE NEVER REPLACES A PROVEN LINK (kanban #3349, audit faucet a6-1-1, gap in #3027): a code is public once it was used (an X code is
+    // posted on X), and since #3027 it stays good on the other platforms for 24 h - a stranger DMed it to the Discord or Telegram bot and his
+    // account replaced the reporter's own code-proven member link (the community bonus lost at payout). A code already used on one platform
+    // may still link another platform the key has no code-proven account on, but never moves an existing one; a fresh code still does
+    const had = db.prepare('SELECT user_id, proof FROM links WHERE pubkey = ? AND platform = ?').get(c.pubkey, platform);
+    if (had && had.proof === 'code' && had.user_id !== String(userId) && db.prepare('SELECT 1 AS x FROM link_code_uses WHERE code = ?').get(code)) {
+      return { ok: false, why: 'that code was used already: make a new one in My feedback' };
+    }
     // a code proves the account: a key that only typed its name in the form (kanban #2641) gives it up
     if (held && held.pubkey !== c.pubkey) db.prepare('DELETE FROM links WHERE platform = ? AND user_id = ?').run(platform, String(userId));
     db.prepare('UPDATE link_codes SET used_ms = ?, platform = ?, user_id = ? WHERE code = ? AND used_ms IS NULL').run(nowMs, platform, String(userId), code);
