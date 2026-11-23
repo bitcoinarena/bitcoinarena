@@ -2,6 +2,26 @@
 // behind a password form (SITE_PASSWORD, cookie ba_gate) since 2026-10-08, and the games screen's "Docs" link opened that form. Every
 // page is served as it is. A link from the gated days still works: /__login and ?password=... land on the page they named, without a form.
 import { scanChain } from './chain-scan.js';
+// ONE SEAT'S ANSWER IS READ UP TO A BOUND (kanban #2828, #1489 r23-faucet-1): r.text() buffered whatever a seat streamed - a valid list padded with
+// 160 MiB of spaces, read twice a run, was past a Worker's 128 MB and killed every minute's read. Read chunk by chunk, the stream cancelled past `max`.
+async function textUpTo(r, max) {
+  const said = Number(r.headers && r.headers.get ? r.headers.get('content-length') : NaN);
+  if (Number.isFinite(said) && said > max) { try { await r.body?.cancel(); } catch { /* gone */ } throw new Error(`its answer is ${said} bytes, more than ${max}`); }
+  if (!r.body || typeof r.body.getReader !== 'function') { const t = await r.text(); if (t.length > max) throw new Error(`its answer is more than ${max} bytes`); return t; }
+  const reader = r.body.getReader(), parts = [];
+  let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.byteLength;
+    if (n > max) { try { await reader.cancel(); } catch { /* gone */ } throw new Error(`its answer is more than ${max} bytes`); }
+    parts.push(value);
+  }
+  const all = new Uint8Array(n); let at = 0;
+  for (const p of parts) { all.set(p, at); at += p.byteLength; }
+  return new TextDecoder().decode(all);
+}
+const SEASON_ANSWER_MAX = 4 * 1024 * 1024;   // kanban #2828: a season seat's network board is a few hundred KB
 
 // THE NODES, AS BITCOIN NAMES THEM: the cron below reads testnet4 through mempool.space every 2 minutes and
 // keeps the read in KV; /api/chain-nodes hands it out at once. It is evidence, not a verdict - the page (www/js/
@@ -47,7 +67,7 @@ const fetchSeason = (game, days) => {
   if (SEASON_READS.has(key)) return SEASON_READS.get(key);
   const p = (async () => {
     try {
-      const said = await Promise.allSettled(SEASON_SEATS.map(async (s) => { const r = await fetch(`${s}/season?game=${game}&days=${days}&scope=network`, { signal: AbortSignal.timeout(25000) }); if (!r.ok) throw new Error(String(r.status)); return r.text(); }));
+      const said = await Promise.allSettled(SEASON_SEATS.map(async (s) => { const r = await fetch(`${s}/season?game=${game}&days=${days}&scope=network`, { signal: AbortSignal.timeout(25000) }); if (!r.ok) throw new Error(String(r.status)); return textUpTo(r, SEASON_ANSWER_MAX); }));
       const body = agreedBoard(said.filter((x) => x.status === 'fulfilled').map((x) => x.value));   // kanban #2698
       const kept = `{"at":${Date.now()},"season":${body}}`;
       seasonMem.set(key, kept); seasonFailed.delete(key);
@@ -101,7 +121,7 @@ async function nightCount() {
   const headers = { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'public, max-age=30' };
   try {
     // kanban #2698: every seat's count, and the middle one (two answers: the lower) - never the fastest seat's alone
-    const said = await Promise.allSettled(SEASON_SEATS.map(async (s) => { const r = await fetch(`${s}/rounds?next=1`, { signal: AbortSignal.timeout(15000) }); if (!r.ok) throw new Error(String(r.status)); const j = await r.json(); if (!j || !Array.isArray(j.rounds)) throw new Error('no rounds'); return j.rounds; }));
+    const said = await Promise.allSettled(SEASON_SEATS.map(async (s) => { const r = await fetch(`${s}/rounds?next=1`, { signal: AbortSignal.timeout(15000) }); if (!r.ok) throw new Error(String(r.status)); const j = JSON.parse(await textUpTo(r, SEASON_ANSWER_MAX)); if (!j || !Array.isArray(j.rounds)) throw new Error('no rounds'); return j.rounds; }));
     const counts = said.filter((x) => x.status === 'fulfilled').map(({ value: rows }) => { const live = rows.filter((r) => r.phase === 'open' || Number(r.playing) > 0);
       return { joined: live.reduce((n, r) => n + (Number(r.joined) || 0), 0), playing: rows.reduce((n, r) => n + (Number(r.playing) || 0), 0), rounds: live.length }; });
     if (counts.length < 2) throw new Error('one seat\'s word');
