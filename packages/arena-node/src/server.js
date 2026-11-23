@@ -601,6 +601,11 @@ export const CANCEL_PLAYER_DOOR_MARGIN_MS = 800;
 export const CANCEL_HANDON_RETRY_MS = 250;
 // the held door's peer ask ends this long before the close, so its yes still lands before it (kanban #2076)
 export const CANCEL_HELD_ASK_MARGIN_MS = 25;
+// THE HAND-ON'S OWN LANDING TIME (kanban #3295, audit entry-a5-1-1): a cancel one or two seats took at their player door just before the margin
+// is handed on at once and lands inside the margin, where the f + 1 listing rule (#2843) refused it at every other seat - two tables, the whole
+// fault margin gone. For this long after the player door shuts, one other seat's listing is enough (the #1875 rule): an honest hand-on lands in
+// it. A cancel then held by f + 1 seats is taken everywhere later in the margin, so a colluding seat can still leave it at no more than f seats.
+export const CANCEL_HANDON_GRACE_MS = 400;
 /** Which cancel door is open at `nowMs` for a round closing at `entryCloseMs`: 'open', 'held' (only a cancel a round seat holds), or 'closed'. */
 export function cancelDoorAt(nowMs, entryCloseMs, relayed) {
   const now = BigInt(Math.floor(Number(nowMs))), close = BigInt(entryCloseMs);
@@ -6053,7 +6058,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // and honest seats asked inside the margin took the player's late cancel on its word alone - 3 of 6 honest seats took it, 3 refused, the
     // market split in two tables. The cancel now counts as held only when f + 1 of the round's seats list it (f = floor((n - 1) / 3), never fewer
     // than two peers on a committee of three or more), so at least one honest seat took it in time.
-    const need = peers.length >= 2 ? Math.max(2, Math.floor(peers.length / 3) + 1) : 1;
+    const inGrace = Number(round.now()) < Number(closeMs) - CANCEL_PLAYER_DOOR_MARGIN_MS + CANCEL_HANDON_GRACE_MS;   // kanban #3295
+    const need = peers.length >= 2 && !inGrace ? Math.max(2, Math.floor(peers.length / 3) + 1) : 1;
     let open = peers.length, settled = false, listed = 0;
     const finish = (v) => { if (settled) return; settled = true; clearTimeout(timer); stop.abort(); resolve(v); };
     const timer = setTimeout(() => finish(false), Math.min(2000, budget));
