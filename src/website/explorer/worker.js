@@ -33,10 +33,30 @@ const seatName = (url) => url.replace('https://tn4.bitcoin-arena.io/', '');
 const json = (body, { status = 200, maxAge = 0 } = {}) => new Response(JSON.stringify(body), { status,
   headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': maxAge ? `public, max-age=${maxAge}` : 'no-store' } });
 
+// ONE SEAT'S ANSWER IS READ UP TO A BOUND (kanban #2828, #1489 r23-faucet-1): r.text() buffered whatever a seat streamed - a valid list padded with
+// 160 MiB of spaces, read twice a run, was past a Worker's 128 MB and killed every minute's read. Read chunk by chunk, the stream cancelled past `max`.
+async function textUpTo(r, max) {
+  const said = Number(r.headers && r.headers.get ? r.headers.get('content-length') : NaN);
+  if (Number.isFinite(said) && said > max) { try { await r.body?.cancel(); } catch { /* gone */ } throw new Error(`its answer is ${said} bytes, more than ${max}`); }
+  if (!r.body || typeof r.body.getReader !== 'function') { const t = await r.text(); if (t.length > max) throw new Error(`its answer is more than ${max} bytes`); return t; }
+  const reader = r.body.getReader(), parts = [];
+  let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.byteLength;
+    if (n > max) { try { await reader.cancel(); } catch { /* gone */ } throw new Error(`its answer is more than ${max} bytes`); }
+    parts.push(value);
+  }
+  const all = new Uint8Array(n); let at = 0;
+  for (const p of parts) { all.set(p, at); at += p.byteLength; }
+  return new TextDecoder().decode(all);
+}
+const SEAT_ANSWER_MAX = 12 * 1024 * 1024;   // kanban #2828: a seat's /txs?full=1 of 500 is a few MB
 async function ask(url, ms = ASK_MS) {
   try {
     const r = await fetch(url, { signal: AbortSignal.timeout(ms), headers: { accept: 'application/json' } });
-    const text = await r.text();
+    const text = await textUpTo(r, SEAT_ANSWER_MAX);
     let body = null; try { body = JSON.parse(text); } catch { body = null; }
     return { status: r.status, body };
   } catch (e) { return { status: 0, body: null, why: String(e && e.message ? e.message : e).slice(0, 120) }; }
