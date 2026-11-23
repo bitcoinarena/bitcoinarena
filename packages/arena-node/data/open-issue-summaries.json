@@ -2342,5 +2342,9 @@
  "3386": {
   "text": "Node software: the compile bound still misses added wrappers, so a seat can still be aborted",
   "kind": "bug"
+ },
+ "3531": {
+  "text": "Website: an embedded wallet can leave its seed readable by the host page",
+  "kind": "bug"
  }
 }
