@@ -67,3 +67,12 @@ test('a day carries the newest held template its manifest takes, not a newer ref
   assert.equal(templateFitsManifest(good, cat, (c) => (c.minScore >= 1 ? { ok: true } : { ok: false })).ok, true);
   assert.equal(templateFitsManifest(bad, new Map(), roundFitsManifest).known, false, 'a game the catalog does not hold is not judged');
 });
+
+test('with no held day its manifest takes, a Next Block day starts at min_score 1 point (SCORE_SCALE), not the built-in 0', async () => {
+  const { dayTemplate } = await import('../src/duty-poster.js');
+  const { SCORE_SCALE } = await import('../../arena-protocol/src/constants.js');
+  const t = dayTemplate({ held: [], family: new Set(), networkId: new Uint8Array(32), game: 'nextblock' });
+  assert.equal(t.from, 'built-in');
+  assert.equal(t.contract.minScore, SCORE_SCALE);
+  assert.equal(dayTemplate({ held: [], family: new Set(), networkId: new Uint8Array(32), game: 'updown' }).contract.minScore, 0, 'a market keeps 0');
+});
