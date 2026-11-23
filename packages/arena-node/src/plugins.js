@@ -58,8 +58,10 @@ export function hostedPlugins(registrations = [], { verify = verifyEd25519, log 
     for (const [hash, core] of p.cores) {
       const listed = p.manifest.cores.find((c) => toHex(c.hash) === hash);
       if (!listed) throw new Error(`game "${p.manifest.gameName}": core ${hash.slice(0, 16)} is installed for it, and its manifest lists no such core`);
+      // kanban #2823 (#1489 r23-hosting-3): the listed configs as a set, once - `some` per config was quadratic (3000 configs: ~1.1 s at every start)
+      const listedConfigs = new Set(listed.configs.map((h) => toHex(h)));
       for (const config of core.configs.keys())
-        if (!listed.configs.some((h) => toHex(h) === config))
+        if (!listedConfigs.has(config))
           throw new Error(`game "${p.manifest.gameName}": config ${config.slice(0, 16)} is installed on core ${hash.slice(0, 16)}, and its manifest lists no such config for it`);
       // AND IT LOADS IN ITS SANDBOX (§0A.6): read and hashed by this node, linked to its own files only, run
       // with no network, file system or clock - the only way this node ever runs it. One that does not is not hosted.
