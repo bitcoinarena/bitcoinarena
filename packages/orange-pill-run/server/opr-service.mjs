@@ -54,6 +54,10 @@ const dayOf = (ms) => new Date(ms).toISOString().slice(0, 10);
 const dayStart = (day) => Date.parse(`${day}T00:00:00Z`);
 const sha = (x) => createHash('sha256').update(x).digest('hex');
 const J = (x, d = null) => { try { return x == null ? d : JSON.parse(x); } catch { return d; } };
+// A RUN'S PAGE TELEMETRY AS PLAIN DATA (kanban #3310, audit opr-a5-2-1, high): client = {"ua":{"toString":1,"valueOf":1}} made String(client.ua) throw
+// in deviceOf at every list tick - no payout list was ever written and GET /admin/runs answered 500. Own toString/valueOf keys are dropped at every depth.
+const plainClient = (k, v) => (k === 'toString' || k === 'valueOf' ? undefined : v);
+const JC = (x, d = null) => { try { return x == null ? d : JSON.parse(x, plainClient); } catch { return d; } };
 
 /** A well-formed input log: { v, presses: [[down, up], ...] }, sorted, non-overlapping whole steps, nothing else. */
 export function logRefusal(log, { maxSteps, most = 6000 } = {}) {
@@ -394,7 +398,7 @@ export function createOpr(o = {}) {
     }
     q('UPDATE attempts SET near_rep = ?, presses_n = ? WHERE id = ?').run(rep, n, a.id);
   }
-  const clientText = (c) => { const s = JSON.stringify(c && typeof c === 'object' ? c : {}); if (s.length <= 2000) return s;
+  const clientText = (c0) => { const c = JC(JSON.stringify(c0 && typeof c0 === 'object' ? c0 : {}), {}); const s = JSON.stringify(c); if (s.length <= 2000) return s;
     const { t, ...rest } = c; const tt = t && typeof t === 'object' ? { src: t.src, jit: t.jit, taps: t.taps, blur: t.blur, hidden: t.hidden, hiddenMs: t.hiddenMs, first: t.first, wd: t.wd, auto: Array.isArray(t.auto) ? t.auto.slice(0, 6) : undefined, dc: t.dc, dpr: t.dpr } : undefined;
     const s2 = JSON.stringify({ ...rest, ua: String(rest.ua || '').slice(0, 160), t: tt }); return s2.length <= 2000 ? s2 : JSON.stringify({ t: tt }); };
   function submit(player, body = {}, { ip = null } = {}) {
@@ -430,7 +434,7 @@ export function createOpr(o = {}) {
     if (t - a.started_ms + cfg.fastSlackMs < gameMs) return reject(`submitted faster than the run's game time (${Math.round(gameMs / 1000)} s)`, { flags: { tooFast: true }, keepLog: true });
     const score = { total: res.total, parts: res.parts, clean: !!res.clean, finished: !!res.finished, steps: res.steps, deaths: res.deaths, timeS: res.timeS };
     const logHash = sha(JSON.stringify(body.log.presses));
-    const flags = runSignals(body.log, body.client);
+    const flags = runSignals(body.log, JC(JSON.stringify(body.client ?? null), null));
     const same = q("SELECT id, player FROM attempts WHERE round = ? AND log_hash = ? AND player != ? AND state = 'scored'").all(a.round, logHash, player);
     if (same.length) {
       flags.sameLog = true;
@@ -526,7 +530,7 @@ export function createOpr(o = {}) {
     const ipPlayers = new Map(), devPlayers = new Map(), devOf = new Map(), groups = new Map();
     const addTo = (m, k, p) => { if (!k) return; const s = m.get(k) || new Set(); s.add(p); m.set(k, s); };
     for (const a of rows) {
-      const d = deviceOf(J(a.client, {})); devOf.set(a.id, d); addTo(ipPlayers, a.ip, a.player); addTo(devPlayers, d, a.player);
+      const d = deviceOf(JC(a.client, {})); devOf.set(a.id, d); addTo(ipPlayers, a.ip, a.player); addTo(devPlayers, d, a.player);
       const g = groups.get(a.near_rep || a.id) || new Map(); g.set(a.player, (g.get(a.player) || 0) + 1); groups.set(a.near_rep || a.id, g);
     }
     const firsts = new Map(q('SELECT player, MIN(created_ms) AS m FROM attempts WHERE player IN (SELECT DISTINCT player FROM attempts WHERE round = ?) GROUP BY player').all(round).map((x) => [x.player, x.m]));
@@ -542,7 +546,7 @@ export function createOpr(o = {}) {
       let near = 0;   // new players together from one address
       if (a.ip && f0 != null) for (const p of ipPlayers.get(a.ip) || []) { const m = firsts.get(p); if (p !== a.player && m != null && Math.abs(m - f0) <= 10 * MIN_MS) near++; }
       const x = xFor(a.player);
-      const s = scoreRun({ feat: feat || {}, flags: J(a.flags, {}), client: J(a.client, {}), cross: { nearOther: othersN, repeatOwn,
+      const s = scoreRun({ feat: feat || {}, flags: J(a.flags, {}), client: JC(a.client, {}), cross: { nearOther: othersN, repeatOwn,
         ipPlayers: a.ip ? (ipPlayers.get(a.ip) || new Set()).size : 0, devicePlayers: devOf.get(a.id) ? devPlayers.get(devOf.get(a.id)).size : 0,
         ageMs: f0 == null ? null : a.created_ms - f0, newNearby: near ? near + 1 : 0, botX: x.why === 'a known bot account' } });
       const v = { score: s.score, top: topReasons(s), reasons: s.reasons };
@@ -947,7 +951,7 @@ export function createOpr(o = {}) {
           return send(200, { ok: true, runs: rows.map((a) => ({ attempt: a.id, player: a.player, name: nameOf(a.player), state: a.state, why: a.why, score: J(a.score), flags: J(a.flags, {}),
             bot: bots.runs.has(a.id) ? { score: bots.runs.get(a.id).score, reasons: bots.runs.get(a.id).top } : null,
             playerBot: bots.players.has(a.player) ? { score: bots.players.get(a.player).score, reasons: bots.players.get(a.player).top } : null,
-            review: a.review, ip: a.ip, startedMs: a.started_ms, submittedMs: a.submitted_ms, client: J(a.client), x: xOf(a.player), disqualified: out.has(a.player), replay: `/replay/${a.id}` })),
+            review: a.review, ip: a.ip, startedMs: a.started_ms, submittedMs: a.submitted_ms, client: JC(a.client), x: xOf(a.player), disqualified: out.has(a.player), replay: `/replay/${a.id}` })),
             players: [...bots.players].filter(([p]) => !player || p === player).map(([p, b]) => ({ player: p, name: nameOf(p), bot: { score: b.score, reasons: b.top }, attempt: b.attempt })).sort((x, y) => y.bot.score - x.bot.score),
             holdAbove: HOLD_ABOVE, disqualified: q('SELECT * FROM disqualified WHERE round = ?').all(String(round)),
             ceiling: (roundRow(String(round)) || {}).ceiling ?? null, flagged: [...flagsOf(String(round), undefined, bots).values()].filter((f) => !player || f.player === player) });   // kanban #3332
