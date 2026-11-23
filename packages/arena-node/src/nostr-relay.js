@@ -337,11 +337,12 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
     created_at ASC, id DESC LIMIT 1`);
   const dropId = db.prepare('DELETE FROM events WHERE id = ?');
   const has = db.prepare('SELECT 1 AS x FROM events WHERE id = ?');
+  const hasSigned = db.prepare('SELECT 1 AS x FROM events WHERE id = ? AND instr(json, ?) > 0');   // kanban #3359: kept with this very signature
   // SIGNATURE CHECKS ARE A RELAY-WIDE BUDGET, AND ONE REFUSED (id, sig) IS NOT CHECKED AGAIN (kanban #3044, audit nostr r3-2): measured, 150
   // free sockets each re-sending ONE junk-signature kind 0 frame 60 times (the per-socket budget) made 9000 BIP-340 checks on the relay's one
   // event loop - an honest REQ took 11.6 s. A refused (id, sig) is remembered (bounded), and past VERIFY_BURST checks (VERIFY_PER_S refilled)
   // an EVENT is answered 'rate-limited' before its signature is read, so the loop is never held longer than one burst.
-  const refusedSigs = new Set();
+  const refusedSigs = new Set(), checkedSigs = new Set();   // kanban #3359: checkedSigs the (id, sig) pairs lately verified good
   const lim = { authorEvents: AUTHOR_EVENTS, authorBytes: AUTHOR_BYTES, totalEvents: TOTAL_EVENTS, totalBytes: TOTAL_BYTES, logShare: LOG_SHARE, totalSlowBytes: TOTAL_SLOW_BYTES,
     seedEvents: SEED_EVENTS, seedBytes: SEED_BYTES, verifyBurst: VERIFY_BURST, verifyPerS: VERIFY_PER_S,
     verifyStandingBurst: VERIFY_STANDING_BURST, verifyStandingPerS: VERIFY_STANDING_PER_S, verifyCleanBurst: VERIFY_CLEAN_BURST, verifyCleanPerS: VERIFY_CLEAN_PER_S,
@@ -364,6 +365,10 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   const verifyBucket = mkBucket('verifyBurst', 'verifyPerS');
   const standingBucket = mkBucket('verifyStandingBurst', 'verifyStandingPerS');
   const cleanBucket = mkBucket('verifyCleanBurst', 'verifyCleanPerS');
+  // THE SEATS' KEYS HAVE A RESERVE OF THEIR OWN (kanban #3377, audit nostr a6-3-2): the standing reserve was open to every key that ever wrote
+  // one free event (seen_authors), so a stranger's seen keys signing new valid events kept it empty and a seat's signed 30762 round result was
+  // 'rate-limited'. `keep` keys now draw a reserve no other key reaches (the standing one's size and rate); seen authors keep the standing one
+  const keepBucket = mkBucket('verifyStandingBurst', 'verifyStandingPerS');
   // MAKING ROOM IS NOT A WAY TO DELETE A NODE'S RESULTS (kanban #2146, #2214; #1489 a44-refute-24): keys are free - strangers who fill the
   // total with one event a key leave the NODE the largest holder, and then every stranger 30078 under a fresh key and `d` took one of the
   // node's kept, signed round results. An author in `keep` (the seats' node keys: ARENA_RELAY_KEEP for tools/nostr-relay.mjs) is never the
@@ -713,6 +718,11 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
             if (++c.badSigs >= lim.badSigsPerSocket) { send(['NOTICE', 'error: too many bad signatures, the relay closed this connection']); clients.delete(c); ws.terminate(); }
           };
           if (refusedSigs.has(key)) return bad('invalid: the signature is not its author\'s');
+          // A COPY OF A CHECKED EVENT IS NOT CHECKED AGAIN (kanban #3359, audit nostr a6-2-1): the signature was verified before the duplicate
+          // check and only BAD pairs were remembered, so a stranger re-sending any public valid event (a seat's kept round result, one signed
+          // NIP-46 frame) spent a reserve token per copy and honest writes were 'rate-limited'. The same id and signature as an event this relay
+          // keeps, or as one it verified lately (checkedSigs: ephemeral frames are not kept), is the same signed event: no second check
+          const checked = checkedSigs.has(key) || !!hasSigned.get(e.id, `"sig":"${e.sig}"`);
           // kanban #3174 (#1489 r1120b-refute-10-s2 of #3044/#3145): a reserve token is spent only by a GOOD signature. Before, a fresh
           // socket's first frame always reached a reserve (c.badSigs is 0 until its signature is read) and kept the token when its signature
           // was junk, and the reserve was picked by the sender-chosen e.pubkey: a stranger reconnecting with one junk frame bearing a seat's
@@ -721,10 +731,11 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
           // copying a seat's key or reconnecting draws nothing from what honest writers keep; that socket is dirty and reaches no reserve
           // again (the shared bucket only, closed after lim.badSigsPerSocket). The checks junk makes on a reserve are at most one per
           // connection the relay accepts; the shared bucket still bounds everything a dirty socket sends.
-          const shared = take(verifyBucket);
-          const reserve = !shared && c.badSigs === 0 ? (keepSet.has(e.pubkey) || !!seenAuthor.get(e.pubkey) ? standingBucket : cleanBucket) : null;
-          if (!shared && !(reserve && take(reserve))) return send(['OK', e.id, false, 'rate-limited: the relay is checking too many signatures, try again shortly']);
-          const why = sigRefusal(e);
+          const shared = !checked && take(verifyBucket);
+          const reserve = !checked && !shared && c.badSigs === 0 ? (keepSet.has(e.pubkey) ? keepBucket : seenAuthor.get(e.pubkey) ? standingBucket : cleanBucket) : null;
+          if (!checked && !shared && !(reserve && take(reserve))) return send(['OK', e.id, false, 'rate-limited: the relay is checking too many signatures, try again shortly']);
+          const why = checked ? null : sigRefusal(e);
+          if (!why && !checked) { checkedSigs.add(key); if (checkedSigs.size > REFUSED_SIGS_KEPT) checkedSigs.delete(checkedSigs.values().next().value); }
           if (why) {
             if (reserve) reserve.left = Math.min(lim[reserve.burst], reserve.left + 1);   // kanban #3174: junk never keeps a reserve token
             refusedSigs.add(key); if (refusedSigs.size > REFUSED_SIGS_KEPT) refusedSigs.delete(refusedSigs.values().next().value); return bad(why);
