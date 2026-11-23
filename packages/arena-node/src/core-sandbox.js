@@ -48,7 +48,10 @@ export const LOAD_MS = 10000;
 /** The bytes of typed arrays and ArrayBuffers alive in one core's sandbox (core-host.js counts them; the core's real need
  *  is 0.28 MB for a whole 10800-tick replay, so 64 MB is about 228 times it). */
 export const ARRAY_BUDGET = 64 * 1024 * 1024;
-/** The V8 heap of the core's thread: its arrays, objects and strings. Past it only that thread dies. */
+/** The V8 heap of the core's thread: its arrays, objects and strings. Past it while the core RUNS, only that thread dies.
+ *  Past it while V8 COMPILES the core (vm.SourceTextModule in core-host.js), V8 cannot stop: it aborts the whole node
+ *  process (kanban #3067, #3386). Only the bounds checked before the compile keep a core under it there:
+ *  CORE_SOURCE_MAX, CORE_FUNCTIONS_MAX, CORE_TOKENS_MAX and CORE_INSTRUMENTED_MAX in core-depth.js. */
 export const HEAP_LIMITS = Object.freeze({ maxOldGenerationSizeMb: 128, maxYoungGenerationSizeMb: 16 });
 /** THE BACKSTOP: how far one core's own thread may grow while one call into it runs - read every 2 ms by the core supervisor
  *  (kanban #1813: its own isolate's memory, not the process's, which other games' cores share). */
