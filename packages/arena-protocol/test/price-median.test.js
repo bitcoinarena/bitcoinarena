@@ -71,7 +71,7 @@ test('a batch carries a protocol-5 sample (kind 2) and tape (kind 3) with each s
   assert.deepEqual(back.attests, [...b.attests].sort((x, y) => x[1] - y[1] || x[0] - y[0]));
   assert.throws(() => encodeInputBatch({ ...b, attests: [[300, 0, 1, []], [300, 2, 1, []]] }), /one attested sample a tick/, 'one sample a tick, of either kind');
   assert.throws(() => encodeInputBatch({ ...b, attests: [[0, 1, tape, []], [0, 3, tape, []]] }), /at most one attested tape/);
-  assert.throws(() => encodeInputBatch({ ...b, attests: [[300, 4, 1, []]] }), /one attested sample a tick/, 'no fifth kind');
+  assert.throws(() => encodeInputBatch({ ...b, attests: [[300, 5, 1, []]] }), /one attested sample a tick/, 'no sixth kind (kind 4 is an attested liquidation, kanban #2694)');
   assert.throws(() => encodeInputBatch({ ...b, attests: [[300, 2, 1, Array.from({ length: MAX_ATTEST_SIGS + 1 }, (_, i) => reading(i, 1))]] }), /at most 9 signatures/);
   assert.throws(() => encodeInputBatch({ ...b, attests: [[0, 3, tape, [[b32(1), tape.slice(1), new Uint8Array(64)]]]] }), /64 prices/);
 });

@@ -17,7 +17,7 @@ import {
   decodeRoundContract, roundWindowsAreValid, lastTickOfRun, sittingSeatsFitTheSlots } from '../../arena-protocol/src/contracts.js';
 import { decodeInputBatch, batchTicks, batchId, splitSignedBatch } from '../../arena-protocol/src/batch.js';
 import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
-import { checkBatchPrices } from '../../arena-protocol/src/price-sample.js';
+import { checkBatchPrices, checkBatchLiquidations } from '../../arena-protocol/src/price-sample.js';
 import { LATE_JOIN_LAST_ENTRY_MS, entryItemDigest } from '../../arena-protocol/src/contracts.js';
 /** How long after a round's entry close an entry new to a seat is still taken (kanban #1216). */
 export const ENTRY_CLOSE_GRACE_MS = 15000n;
@@ -104,6 +104,12 @@ export function noteNextblockGames(hosted) {
     if (g && (g.name === 'nextblock' || (g.manifest && g.manifest.gameName === 'nextblock'))) NEXTBLOCK_GAME_HEXES.add(String(id).toLowerCase());
   }
 }
+// THE NEXT BLOCK VERSIONS WHOSE STAKED RUN TAKES COMMITTEE-ATTESTED LIQUIDATIONS (kanban #2694, follow-up of #2655 option 2): a
+// known-good game marked attestedLiquidations (v9 on), and any a seat notes from what it hosts. Every other staked Next Block
+// version keeps the #2655 refusal byte for byte; a free run takes bare ones as before.
+const LIQ_ATTESTED_GAME_HEXES = new Set(Object.entries(KNOWN_GOOD_GAMES).filter(([, g]) => g && g.name === 'nextblock' && g.attestedLiquidations).map(([id]) => id));
+export function noteAttestedLiquidationGames(ids) { for (const id of ids || []) LIQ_ATTESTED_GAME_HEXES.add(String(id).toLowerCase()); }
+export const attestedLiquidationGameIds = () => [...LIQ_ATTESTED_GAME_HEXES].sort();
 const factsOf = (contract) => {
   const key = Buffer.from(contract).toString('base64');
   let f = contractFacts.get(key);
@@ -112,7 +118,8 @@ const factsOf = (contract) => {
       const c = decodeRoundContract(new Uint8Array(contract));
       // kanban #2654: a staked Next Block round, where the truck core's practice word (input word 4) is a shield
       const staked = BigInt(c.stakeMsat || 0) > 0n;
-      f = { blockTicks: c.blockTicks, practiceRefused: staked && NEXTBLOCK_GAME_HEXES.has(Buffer.from(c.gameId || []).toString('hex')) };
+      const gameHex = Buffer.from(c.gameId || []).toString('hex');
+      f = { blockTicks: c.blockTicks, practiceRefused: staked && NEXTBLOCK_GAME_HEXES.has(gameHex), staked, gameHex };
     } catch { f = null; }
     contractFacts.set(key, f);
     if (contractFacts.size > 8192) contractFacts.delete(contractFacts.keys().next().value);
@@ -1195,8 +1202,20 @@ export class Round {
     // NO PLAYER-DECLARED LIQUIDATIONS IN A PAID RUN (kanban #2655, audit #1489 r1-play-1; the owner 2026-11-14 "1"): the client names each
     // strike's tick and size and nobody attests it, so a modified client cratered every tank near the front and won. Until the
     // committee attests liquidations (the To Do card for it), a staked Next Block run takes none; free rounds keep them.
-    if (factsOf(round.contract).practiceRefused && (b.liquidations || []).some(([, size]) => Number(size) !== 0))
+    // kanban #2694: A VERSION THAT TAKES COMMITTEE-ATTESTED LIQUIDATIONS (v9 on): its staked run plays each strike the committee signed
+    // (attestation kind 4, checkBatchLiquidations) and refuses a bare one; any run checks every liquidation attestation it carries.
+    const liqFacts = factsOf(round.contract);
+    const liqAttested = LIQ_ATTESTED_GAME_HEXES.has(liqFacts.gameHex);
+    const liqAttests = (b.attests || []).some((a) => a[1] === 4);
+    if (liqFacts.practiceRefused && !liqAttested && ((b.liquidations || []).some(([, size]) => Number(size) !== 0) || liqAttests))
       throw new Error('a staked Next Block run takes no player-declared liquidations until the committee attests them');
+    if (!seen && (liqAttests || (liqAttested && liqFacts.staked && (b.liquidations || []).length))) {
+      const c = decodeRoundContract(new Uint8Array(round.contract));
+      const liq = checkBatchLiquidations({ batch: b, roundId: b.roundId, committee: c.nodes,
+        threshold: (() => { try { return receiptsNeeded(c.gameVerifySlots); } catch { return c.nodes.length; } })(),
+        verify: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } }, require: liqAttested && liqFacts.staked });
+      if (!liq.ok) throw new Error(liq.why);
+    }
     if (b.ticks.length > blockTicks)
       throw new Error(
         `a batch carries at most the round's ${blockTicks} ticks, got ${b.ticks.length}`);

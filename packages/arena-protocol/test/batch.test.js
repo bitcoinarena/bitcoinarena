@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { toHex } from '../src/hash.js';
-import { encodeInputBatch, decodeInputBatch, batchId, batchTicks, INPUT_WORDS, MAX_BATCH_TICKS, MAX_ATTEST_SIGS, MAX_ATTESTED_SAMPLES, MAX_INPUT_BATCH_BYTES } from '../src/batch.js';
+import { encodeInputBatch, decodeInputBatch, batchId, batchTicks, INPUT_WORDS, MAX_BATCH_TICKS, MAX_ATTEST_SIGS, MAX_ATTESTED_SAMPLES, MAX_ATTESTED_LIQUIDATIONS, MAX_INPUT_BATCH_BYTES } from '../src/batch.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const sample = () => ({
@@ -113,6 +113,8 @@ test('the ceiling the encoder sets is the one the transport is built on', () => 
   // Built, not reasoned about: the largest batch that can encode at all, so a
   // frame longer than this is not a protocol message and can be refused
   // without being parsed.
+  // kanban #2694: and the attested liquidations, kind 4, nine signatures each
+  const liqAttests = Array.from({ length: MAX_ATTESTED_LIQUIDATIONS }, (_, k) => [k, 4, 1, Array.from({ length: MAX_ATTEST_SIGS }, (_, i) => [b32(i), new Uint8Array(64).fill(i)])]);
   const b = {
     roundId: b32(7), entryId: b32(9), previousHash: new Uint8Array(32), firstTick: 0,
     ticks: Array.from({ length: MAX_BATCH_TICKS }, () => [65536, 0, 0, 0, 0]),
@@ -122,17 +124,18 @@ test('the ceiling the encoder sets is the one the transport is built on', () => 
     tapes: [[0, ...Array.from({ length: 64 }, () => 1)]],
     // at their largest the attested prices are protocol 5's: nine signed readings each, their own prices with them
     attests: [...Array.from({ length: MAX_ATTESTED_SAMPLES }, (_, k) => [k * 300, 2, 8297193, Array.from({ length: MAX_ATTEST_SIGS }, (_, i) => [b32(i), 8297193, new Uint8Array(64).fill(i)])]),
-      [0, 3, Array.from({ length: 64 }, () => 8290000), Array.from({ length: MAX_ATTEST_SIGS }, (_, i) => [b32(i), Array.from({ length: 64 }, () => 8290000), new Uint8Array(64).fill(i)])]],
+      [0, 3, Array.from({ length: 64 }, () => 8290000), Array.from({ length: MAX_ATTEST_SIGS }, (_, i) => [b32(i), Array.from({ length: 64 }, () => 8290000), new Uint8Array(64).fill(i)])],
+      ...liqAttests],
   };
   assert.equal(encodeInputBatch(b).length, MAX_INPUT_BATCH_BYTES);
   // the same batch with 's attestations (kinds 0 and 1, nine signatures each) is 256 x 36 + 9 x 256 bytes shorter
   const v4 = { ...b, attests: [...Array.from({ length: MAX_ATTESTED_SAMPLES }, (_, k) => [k * 300, 0, 8297193, Array.from({ length: MAX_ATTEST_SIGS }, (_, i) => [b32(i), new Uint8Array(64).fill(i)])]),
-    [0, 1, Array.from({ length: 64 }, () => 8290000), Array.from({ length: MAX_ATTEST_SIGS }, (_, i) => [b32(i), new Uint8Array(64).fill(i)])]] };
+    [0, 1, Array.from({ length: 64 }, () => 8290000), Array.from({ length: MAX_ATTEST_SIGS }, (_, i) => [b32(i), new Uint8Array(64).fill(i)])], ...liqAttests] };
   assert.equal(encodeInputBatch(v4).length, MAX_INPUT_BATCH_BYTES - 256 * 36 - 9 * 256);
   // + 2 + 65535 x 8 for the price samples and + 2 + 260 for the one live tape a batch may carry (2026-09-17);
   // + 2 + 65535 x 8 for the rooms; + 2 + 256 x 875 + 1127 for the attested samples and tape, nine signatures each;
   // protocol 5's readings carry their own cents (+4 each) and a tape reading its 64 prices (+256 each)
-  assert.equal(MAX_INPUT_BATCH_BYTES, 2621509 + 2 + MAX_BATCH_TICKS * 8 + 2 + 260 + 2 + MAX_BATCH_TICKS * 8 + 2 + 256 * (875 + 36) + 1127 + 9 * 256);
+  assert.equal(MAX_INPUT_BATCH_BYTES, 2621509 + 2 + MAX_BATCH_TICKS * 8 + 2 + 260 + 2 + MAX_BATCH_TICKS * 8 + 2 + 256 * (875 + 36) + 1127 + 9 * 256 + 64 * 875);
 });
 
 test('the committee\'s signatures on a sample and the tape: a fourth optional tail; a batch without them keeps its bytes', () => {
