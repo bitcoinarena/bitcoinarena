@@ -23,6 +23,7 @@ import {
 } from '../../arena-protocol/src/lock-set.js';
 
 const HEX64 = /^[0-9a-f]{64}$/;
+const CHECKED_KEPT = 4096;   // kanban #2817: certificates checked once, kept beside the rooms
 const HEX128 = /^[0-9a-f]{128}$/;
 /** How often a seat pulls its peers while a round's set is open, and how long it waits for one peer. */
 export const LOCK_SET_PULL_MS = Number(process.env.ARENA_LOCK_SET_PULL_MS || 400);   // kanban #2901: was 150 - 798 pulls in 30 s on one seat; pushes carry the fast path
@@ -101,6 +102,11 @@ export class LockSetBook {
     const ridHex = toHex(rid);
     const room = this.rooms.get(ridHex);
     if (room && room.cert) return room.cert;
+    // A CERTIFICATE CHECKED ONCE STAYS CHECKED (kanban #2817, #1489 r22-h2h-1): the rooms hold 512 rounds, so a stranger asking GET /lock-set for
+    // 513+ certified rounds in turn made every ask re-run the threshold verifies of a certificate this seat checked before (~3 ms each, no login).
+    // A checked one is kept here as well, up to CHECKED_KEPT (lockSetRound keeps 4096 contracts: an older round answers null before any check)
+    const checked = this.#checked.get(ridHex);
+    if (checked) { this.#room(ridHex).cert = checked; return checked; }
     const row = this.db.prepare('SELECT cert, at_ms FROM lock_set_certs WHERE round_id = ?').get(rid);
     if (!row) return null;
     const c = this.roundOf(rid);
@@ -110,6 +116,7 @@ export class LockSetBook {
     if (!got.ok) return null;
     const cert = { ...got, bytes: new Uint8Array(row.cert) };
     this.#room(ridHex).cert = cert;
+    this.#remember(ridHex, cert);
     return cert;
   }
 
@@ -220,9 +227,12 @@ export class LockSetBook {
     return false;
   }
 
+  #checked = new Map();   // round hex -> a certificate this seat checked (kanban #2817)
+  #remember(ridHex, cert) { this.#checked.delete(ridHex); this.#checked.set(ridHex, cert); while (this.#checked.size > CHECKED_KEPT) this.#checked.delete(this.#checked.keys().next().value); }
   #keep(rid, cert) {
     this.db.prepare('INSERT OR IGNORE INTO lock_set_certs (round_id, cert, at_ms) VALUES (?, ?, ?)').run(rid, cert.bytes, cert.atMs);
     this.#room(toHex(rid)).cert = cert;
+    this.#remember(toHex(rid), cert);
     this.log(`[lock-set] ${toHex(rid).slice(0, 16)}: certified ${cert.entries.length} entr${cert.entries.length === 1 ? 'y' : 'ies'} at close + ${cert.atMs - Number(this.roundOf(rid).entryCloseMs)} ms`);
   }
 
