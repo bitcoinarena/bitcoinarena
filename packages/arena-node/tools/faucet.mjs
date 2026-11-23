@@ -68,7 +68,7 @@ import { mkdirSync, existsSync, readdirSync, statSync, unlinkSync, statfsSync, u
 import { PLAYER_GRANTS } from '../src/faucet.js';
 const PLAYER_WELCOME_SATS = PLAYER_GRANTS.welcome.invoiceSats;
 import { join as pathJoin, dirname, basename } from 'node:path';
-import { ipKey } from '../src/faucet.js';
+import { ipKey, ipNetsOf } from '../src/faucet.js';
 import { refillDecide, feedbackDecide, FEEDBACK_PER_IP_PER_DAY, faucetDecide, playerGrantDecide, playerGrantTotals, opponentWant, opponentWants, FAUCET_MAX_SATS, FAUCET_DAY_CAP_SATS, DAY_MS } from '../src/faucet.js';
 
 const env = process.env;
@@ -131,6 +131,9 @@ if (SHOTS) mkdirSync(SHOTS, { recursive: true });
 const shotFile = (h) => { if (!SHOTS || !/^[0-9a-f]{64}$/.test(h)) return null; for (const ext of ['png', 'jpg', 'webp']) { const f = pathJoin(SHOTS, `${h}.${ext}`); if (existsSync(f)) return f; } return null; };
 const SHOT_UPLOADS = [];   // { ip, atMs } of today
 const SHOTS_PER_IP_PER_DAY = 10;
+// kanban #2814 (#1489 r22-faucet-2): one network - an IPv6 /48 or /32, an IPv4 /24 - stores at most 1/SHOT_NET_SHARE of the day's screenshot bytes;
+// counted per /64 only, twenty /64s of one /48 filled the whole day and every honest reporter's screenshot was refused until midnight
+const SHOT_NET_SHARE = 4;
 if (DAY_LIMITS_FILE) {
   const day = Math.floor(Date.now() / DAY_MS), keep = [];
   let lines = []; try { lines = readFileSync(DAY_LIMITS_FILE, 'utf8').split('\n'); } catch { lines = []; }
@@ -1011,6 +1014,8 @@ createServer((req, res) => {
     const ip = ipKey(ipOf(req)), day = Math.floor(Date.now() / DAY_MS);
     while (SHOT_UPLOADS.length && Math.floor(SHOT_UPLOADS[0].atMs / DAY_MS) !== day) SHOT_UPLOADS.shift();
     if (ip && SHOT_UPLOADS.filter((x) => x.ip === ip).length >= SHOTS_PER_IP_PER_DAY) return send(429, { ok: false, why: 'this address sent all the screenshots it can today' });
+    for (const net of ipNetsOf(ip)) if (SHOT_UPLOADS.filter((x) => ipNetsOf(x.ip).includes(net)).reduce((n, x) => n + (x.bytes || 0), 0) >= SHOT_DAY_BYTES / SHOT_NET_SHARE)
+      return send(429, { ok: false, why: 'this network sent all the screenshots it can today' });
     if (SHOT_UPLOADS.reduce((n, x) => n + (x.bytes || 0), 0) >= SHOT_DAY_BYTES) return send(429, { ok: false, why: 'the faucet took all the screenshots it keeps today: send the report without one, or try tomorrow' });
     { const free = freeBytes(SHOTS); if (free !== null && free < SHOT_FREE_FLOOR_BYTES) return send(507, { ok: false, why: 'the faucet has no room for screenshots just now: send the report without one' }); }
     // THE SLOT IS TAKEN BEFORE THE BODY IS READ (kanban #1676): an upload still open counts against its address and the day's bytes at the most it can
