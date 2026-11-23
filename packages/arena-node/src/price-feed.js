@@ -387,13 +387,28 @@ export class PriceFeed {
       if (!Array.isArray(body.prices) || body.prices.length !== PRICE_TAPE_LENGTH) return refuse(`a tape is ${PRICE_TAPE_LENGTH} prices`, 400);
       if (this.now() < start - EVERY - 1000 || this.now() > start + SIGN_SLACK_MS * 4) return refuse('a round\'s tape is signed at its start');
       let held = 0;
+      const owns = [];
       for (let i = 0; i < PRICE_TAPE_LENGTH; i++) {
         const own = this.ownAt(start - (PRICE_TAPE_LENGTH - i) * EVERY);
+        owns.push(own);
         if (own === null) continue;
         held++;
         if (!this.#within(body.prices[i], own)) return refuse(`price ${i} of the tape is not what this seat read (${own} cents)`);
       }
       if (held < PRICE_TAPE_LENGTH / 2) return refuse(`this seat read ${held} of the tape's moments, too few to vouch for it`);
+      // NO MOMENT SIGNED BLIND (kanban #2932, feedback #247): a moment this seat did not read was signed whatever it said, so the leader chose
+      // up to half the tape. An unread moment must lie within the readings this seat holds on either side of it (the nearest before and
+      // after, widened by the tolerance): a gap is bridged by what the price did around it, never by the leader's choice.
+      for (let i = 0; i < PRICE_TAPE_LENGTH; i++) {
+        if (owns[i] !== null) continue;
+        let a = null, b = null;
+        for (let j = i - 1; j >= 0 && a === null; j--) a = owns[j];
+        for (let j = i + 1; j < PRICE_TAPE_LENGTH && b === null; j++) b = owns[j];
+        const ends = [a, b].filter((x) => x !== null);
+        const lo = Math.min(...ends), hi = Math.max(...ends), p = body.prices[i];
+        if (!Number.isInteger(p) || p < lo - lo * this.tolerance || p > hi + hi * this.tolerance)
+          return refuse(`price ${i} of the tape is a moment this seat did not read, and it is not within the readings around it (${lo}-${hi} cents)`);
+      }
       let id; try { id = priceTapeId({ roundId: rid, tick: 0, prices: body.prices }); } catch (e) { return refuse(e.message, 400); }
       const lead = leaderOk(c.contract.nodes[0], id); if (lead) return lead;
       const st = this.#stepSign(body.round, 'tape', toHex(id));

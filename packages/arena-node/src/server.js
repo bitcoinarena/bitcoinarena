@@ -7134,7 +7134,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const ht = setInterval(() => { halts.observe().catch((e) => console.log(`[halt] observe: ${e.message}`)); }, Number(process.env.ARENA_HALT_OBSERVE_MS || 600000));
     if (ht.unref) ht.unref();
   }
-  liquidations = createLiquidations({ records: fedRecords, clocks: fedClocks, verify: schnorrVerify, claimsUrl: process.env.ARENA_LIQUIDATION_CLAIMS || null, halts });
+  // kanban #2932: the guardians' spent-set copies kept beside the halts file
+  const spentCopiesFile = db && db.arenaPath ? `${db.arenaPath}.spent-sets.json` : null;
+  liquidations = createLiquidations({ records: fedRecords, clocks: fedClocks, verify: schnorrVerify, claimsUrl: process.env.ARENA_LIQUIDATION_CLAIMS || null, halts,
+    load: () => (spentCopiesFile && existsSync(spentCopiesFile) ? JSON.parse(readFileSync(spentCopiesFile, 'utf8')) : []),
+    save: (v) => { if (spentCopiesFile) { try { writeFileSync(spentCopiesFile, JSON.stringify(v)); } catch { /* kept in memory */ } } } });
   // THE FEDERATION THIS NODE IS A GUARDIAN OF: the held record (not CLOSED) that names its node key, and its peer key there
   ownGuardianSeat = () => {
     for (const f of (fedRecords.list() || []).map((x) => x.federation)) {

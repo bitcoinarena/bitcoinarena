@@ -201,3 +201,18 @@ test('D: a proposed price outside 0.05 % of the seat\'s own reading is refused; 
   assert.equal(o[2].sign(askOf(net, 1, edge)).ok, true);
   assert.equal(o[3].sign(askOf(net, 1, below)).ok, true);
 });
+
+test('#2932 a seat does not sign tape moments it did not read blind: an unread moment stays within the readings around it (feedback #247)', async () => {
+  const { priceTapeId } = await import('../../arena-protocol/src/price-sample.js');
+  let t = START - 64 * 5000;
+  const net = network({ readings: [0, 1, 2, 3, 4, 5, 6].map(() => () => 8290000), now: () => t });
+  for (; t < START - 32 * 5000; t += 5000) for (const s of net.seats) await s.read();   // the first half read, the second half not
+  t = START - 4000;
+  const ask = (prices) => ({ round: toHex(net.rid), kind: 'tape', prices,
+    leaderSig: toHex(schnorr.sign(priceTapeId({ roundId: net.rid, tick: 0, prices }), net.seatOf(0).round.identity.secret)) });
+  const other = net.seatOf(1);
+  const chosen = [...Array(33).fill(8290000), ...Array(31).fill(1)];
+  assert.match(other.sign(ask(chosen)).why || 'signed', /did not read/, 'the leader chose the unread half');
+  const honest = Array(64).fill(8290000);
+  assert.equal(other.sign(ask(honest)).ok, true);
+});
