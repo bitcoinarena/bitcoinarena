@@ -45,6 +45,15 @@ export async function keepDonationGift({ g, recipients, networkSet = null, gameS
     rows.push({ outpoint, entryId: st.id, roundId: new Uint8Array(32), federationId: g.federationId, recipientPk: o.pk, amountMsat: o.msat,
       contractId: String(stored.stored.contractId), senderOnContract: true, image: toHex(g.donor), item: giftItem(g) });
   }
+  // AN OUTPUT ALREADY KEPT FOR AN ENTRY IS NOT A GIFT'S (kanban #2809, #1489 r22-settle-2): an entry's donation contract carries the player's key as
+  // its image, so the player signed a gift over the same outputs and the rows were rewritten under the gift (INSERT OR REPLACE): the entry lost its
+  // donation on every seat and the outputs were free for a second entry. A gift whose output this seat keeps for anything else is refused.
+  let kept = null;
+  try { kept = db.prepare('SELECT entry_id FROM donation_outputs WHERE outpoint = ?'); } catch { kept = null; }   // no table yet: nothing kept
+  if (kept) for (const r of rows) {
+    const h = kept.get(`${toHex(r.outpoint.txid)}:${r.outpoint.outIdx}`);
+    if (h && toHex(new Uint8Array(h.entry_id)) !== id) return no(409, `the output at ${toHex(r.outpoint.txid).slice(0, 16)}…:${r.outpoint.outIdx} is kept here for entry ${toHex(new Uint8Array(h.entry_id)).slice(0, 16)}: one payment is one donation`);
+  }
   db.prepare('INSERT OR IGNORE INTO donation_gifts (id, donor, target, game_dev, game_name, txid, total_msat, bytes, signature, kept_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
     .run(id, toHex(g.donor), g.target, toHex(g.gameDevPubkey), g.gameName || '', toHex(g.txid), String(g.totalMsat), Buffer.from(encodeDonationGift(g)), Buffer.from(g.signature), nowMs);
   if (keepRows) keepRows(rows);
