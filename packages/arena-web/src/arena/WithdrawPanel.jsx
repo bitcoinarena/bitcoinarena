@@ -33,7 +33,10 @@ export class WithdrawPanel extends React.Component {
       this.set({ usable: can > 0n, amount: can > 0n ? `You can withdraw up to ${satOf(can)}. Make an invoice in your own wallet for any amount up to that and paste it here.`
         : 'Your wallet is empty, so there is nothing to withdraw.' });
       if (can > 0n && this.state.invoice) this.read(this.state.invoice);   // an invoice pasted meanwhile is checked against the exact amount
-    } catch (e) { this.set({ amount: 'Your balance could not be read (' + (e && e.message ? e.message : e) + '). Try again in a moment.' }); }
+    } catch (e) {
+      // A REASON IN THE PLAYER'S WORDS STANDS AS IT IS (kanban #2969, feedback #316): no federation chosen yet read as "All gateways failed"
+      this.set({ amount: e && e.plain ? e.message : 'Your balance could not be read (' + (e && e.message ? e.message : e) + '). Try again in a moment.' });
+    }
   }
   // the amount read off the pasted invoice; one over the exact balance said at once
   read(text) {
@@ -47,7 +50,8 @@ export class WithdrawPanel extends React.Component {
     const { say, send, onSent } = this.props;
     const chosen = this.read(this.state.invoice);
     const pasted = String(this.state.invoice || '').trim();
-    if (!pasted) { say('Paste an invoice first.'); return; }
+    // SAID IN THE PANEL (kanban #2969, feedback #309): the why-line is outside the dialog, so an empty field's press showed nothing
+    if (!pasted) { say(''); this.status(1, 'Paste a Lightning invoice from your own wallet first.', 'fail'); return; }
     if (!chosen) return;
     if (this.canMsat !== null && chosen > this.canMsat) { say(''); this.status(3, TOO_MUCH, 'fail'); return; }
     say('');

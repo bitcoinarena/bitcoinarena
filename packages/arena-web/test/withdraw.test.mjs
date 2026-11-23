@@ -61,7 +61,8 @@ test('an invoice above the balance: the player\'s words at once, and on go the w
   const none = panel({ can: 50000n, invoiceMsat: 30000n });
   await tick();
   await none.go();
-  assert.deepEqual(none.calls.said, ['Paste an invoice first.']);
+  assert.deepEqual(none.calls.said, ['']);   // kanban #2969: said in the panel, not on the why-line outside it
+  assert.deepEqual(none.last(), { step: 1, words: 'Paste a Lightning invoice from your own wallet first.', kind: 'fail' });
   assert.equal(none.calls.send.length, 0);
 });
 
@@ -82,4 +83,15 @@ test('an invoice within the balance is withdrawn for its amount, and every outco
     assert.deepEqual([p.calls.send[0].amountMsat, p.calls.send[0].invoice], [30000n, 'lnbc300n1ok'], 'the invoice\'s amount, the pasted invoice trimmed');
     assert.deepEqual(p.last(), said);
   }
+});
+
+test('#2969 an empty invoice field says so in the panel; a balance read with no federation chosen says that, not the gateways (feedback #309/#316)', async () => {
+  const p = panel({ can: 50000n });
+  await tick();
+  await p.go();
+  assert.ok(p.last() && /Paste a Lightning invoice from your own wallet first/.test(p.last().words), 'nothing was said in the panel');
+  assert.equal(p.calls.send.length, 0);
+  const none = panel({ can: Object.assign(new Error('No federation is chosen yet. Open a game first - your balance is read in the federation it plays in.'), { plain: true }) });
+  await tick();
+  assert.equal(none.m.state.amount, 'No federation is chosen yet. Open a game first - your balance is read in the federation it plays in.');
 });
