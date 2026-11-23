@@ -173,6 +173,10 @@ export async function lockSetOfSeats({ roundIdHex, nodes, committee = null, veri
   };
   const said = new Array(listed.length).fill(null);
   let early = null, straggle = null;
+  // BY HOST, NOT BY ADDRESS (kanban #3307, audit h2h-a5-2-1): a join link naming the seats plus nine paths of one box made the box's instant answers a
+  // majority of the listed addresses, so every poll ended H2H_STRAGGLER_MS after them and an honest seat slower than that was never heard. The
+  // straggler rule starts once a majority of HOSTS answered (each host one vote, as #2709 counts them)
+  const answeredHosts = new Set(), hostMajority = Math.floor(hosts.length / 2) + 1;
   await new Promise((done) => {
     let left = listed.length;
     if (!left) { done(); return; }
@@ -185,9 +189,10 @@ export async function lockSetOfSeats({ roundIdHex, nodes, committee = null, veri
         });
       } catch { said[i] = null; }
       if (!early) { const st = stands(said[i]); if (st) { early = { entries: st.entries, atMs: st.atMs }; done(); } }
+      answeredHosts.add(hostOf[i]);
       if (--left === 0) done();
-      // a majority of the seats answered: the rest get H2H_STRAGGLER_MS more, then this ask ends with what came (the next poll asks all again)
-      else if (!straggle && listed.length - left >= Math.floor(listed.length / 2) + 1) straggle = setTimeout(done, stragglerMs);
+      // a majority of the seats' hosts answered: the rest get H2H_STRAGGLER_MS more, then this ask ends with what came (the next poll asks all again)
+      else if (!straggle && answeredHosts.size >= hostMajority) straggle = setTimeout(done, stragglerMs);
     });
   });
   if (straggle) clearTimeout(straggle);
@@ -214,7 +219,10 @@ export async function lockSetOfSeats({ roundIdHex, nodes, committee = null, veri
     }
   }
   // kanban #2984: how many listed addresses said VOID - one seat's unsigned word is not the round's
-  const voids = said.filter((x) => x && typeof x === 'object' && x.void === true).length;
+  // kanban #3307: counted once per host (its addresses' word, hostWord), so one box under many paths is one VOID, not nine
+  const voidOf = new Map();
+  for (const [i, x] of said.entries()) if (x && typeof x === 'object') { if (!voidOf.has(hostOf[i])) voidOf.set(hostOf[i], []); voidOf.get(hostOf[i]).push(x.void === true ? 'void' : 'not'); }
+  const voids = [...voidOf.values()].filter((v) => hostWord(v) === 'void').length;
   return { required: true, certified, void: !certified && voids > 0, voids: certified ? 0 : voids };
 }
 
@@ -276,7 +284,7 @@ export async function revealWhenCertified({ roundIdHex, entryIdHex, move, salt, 
     // point (plus a second of clock slack) and only when more seats said it than a committee's dishonest share can (n - threshold + 1);
     // else the page keeps asking until its own deadline
     const n = committee && committee.length ? committee.length : seatsByHost(nodes).listed.length;
-    const voidsNeeded = Math.max(1, Math.min(seatsByHost(nodes).listed.length, n - lockSetThreshold(n) + 1));
+    const voidsNeeded = Math.max(1, Math.min(seatsByHost(nodes).hosts.length, n - lockSetThreshold(n) + 1));   // kanban #3307: voids are counted per host
     const windowOver = now() > Number(entryCloseMs) + LOCK_SET_WINDOW_MS + LOCK_SET_FINAL_AFTER_MS + H2H_VOID_SLACK_MS;
     if ((got.void && got.voids >= voidsNeeded && windowOver) || now() > giveUpAt) return { seats: [], void: true, why: 'the round\'s lock set was not certified by its close + 3 s: the round is VOID, every stake comes back' };
     if (onWait) { try { onWait('certifying'); } catch { /* the page's own */ } }
