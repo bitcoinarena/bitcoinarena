@@ -237,8 +237,17 @@ export function wsQuery({ timeoutMs = 8000, WebSocketImpl = globalThis.WebSocket
     ws.onmessage = (m) => {
       let a; try { a = JSON.parse(typeof m.data === 'string' ? m.data : Buffer.from(m.data).toString()); } catch { return; }
       if (!Array.isArray(a)) return;
-      if (a[0] === 'EVENT' && a[1] === sub && a[2] && typeof a[2].id === 'string') got.push(a[2]);
-      else if (a[0] === 'EOSE' && a[1] === sub) finish();
+      // A RELAY'S ANSWER IS READ UP TO THE FILTER'S LIMIT (kanban #3376, audit nostr a6-3-1): one relay ignoring limit:3 streamed 20,000 kind 3
+      // events, all kept, then each BIP-340-checked on the faucet's one thread (~27 s). An event the filter did not ask for (another kind or
+      // author) is dropped, and at the limit the subscription is closed and the read ends
+      if (a[0] === 'EVENT' && a[1] === sub && a[2] && typeof a[2].id === 'string') {
+        if (done) return;
+        const e = a[2];
+        if (Array.isArray(filter.kinds) && !filter.kinds.includes(e.kind)) return;
+        if (Array.isArray(filter.authors) && !filter.authors.includes(e.pubkey)) return;
+        got.push(e);
+        if (Number.isInteger(filter.limit) && filter.limit > 0 && got.length >= filter.limit) finish();
+      } else if (a[0] === 'EOSE' && a[1] === sub) finish();
       else if (a[0] === 'CLOSED' && a[1] === sub) finish(`closed: ${String(a[2] || '').slice(0, 60)}`);
       else if (a[0] === 'AUTH') { if (onNote) onNote(url, 'relay asked for NIP-42 AUTH (not answered)'); }
     };
