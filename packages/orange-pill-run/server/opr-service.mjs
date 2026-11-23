@@ -1057,7 +1057,7 @@ export function createOpr(o = {}) {
             paid: a.paid_ms != null, why: a.why, score: J(a.score), startedMs: a.started_ms })) });
       }
       if (req.method === 'POST' && path === '/name') {
-        const n = String(body.name || '').trim();
+        const n = String(body.name || '').trim().replace(/\s+/g, ' ');   // kanban #3375: a run of spaces reads as one on the board - kept as one
         if (!/^[A-Za-z0-9 _.-]{2,20}$/.test(n)) return send(400, { ok: false, why: 'a name is 2 to 20 letters, digits, space, _ . -' });
         const taken = nameRefusal(me, n);
         if (taken) return send(409, { ok: false, why: taken });
