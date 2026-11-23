@@ -83,6 +83,9 @@ export const ZAP_ASKERS_KEPT = 4096;
 //   handed one bolt11 that only the first could pay.
 export const ZAP_LET_GO_MAX = 4000;
 export const ZAP_MINTS_ALL = 300;
+// kanban #3379 (audit nostr a6-3-4): keyless plain tips take at most this many of the window's ZAP_MINTS_ALL - ten addresses' unpaid tips
+// filled the whole cap first come, first served and every signed zap was refused for the window; the rest stays for signed zap requests
+export const ZAP_TIPS_ALL = 150;
 // AT ONCE, TOO (kanban #2302, #1489 a44-refute-56-s1): the window bounds above count mints, not mints in flight, so strangers from fresh
 // addresses had up to ZAP_MINTS_ALL invoice() calls - each an `lncli addinvoice` child - running at the same moment (64 asks: 64 children).
 // Callers not on this host have at most ZAP_MINTING_MAX invoices being made at once, on both doors together; past it the ask is refused
@@ -157,6 +160,7 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
   const letGo = new Map();            // paymentHash -> the zap let go from a full book, watched until its invoice expires (kanban #1922)
   let strangersMinting = 0;            // invoices being made right now for callers not on this host (kanban #2302)
   let strangersLooking = 0; const tipLookups = new Map();   // kanban #3311: kept tip invoices being looked up (one lookup per invoice at a time)
+  let tipsAll = [];                  // kanban #3379: the plain tips among them
   let mintsAll = [];                  // when each fresh invoice for a caller not on this host was minted, the last window's (kanban #1964)
   const nowSec = () => Math.floor(Date.now() / 1000);
   // THIS HOST'S OWN TOOLS (kanban #2109, #1489 v1-refute-19-s3-1): a caller whose socket is this machine and that sent no proxy header.
@@ -167,7 +171,7 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
     return (peer === '127.0.0.1' || peer === '::1') && !req.headers['x-forwarded-for'] && !req.headers['cf-connecting-ip'];
   };
   // '' when it may mint (and is counted), else why not
-  const mayMint = (asker, own) => {
+  const mayMint = (asker, own, plain = false) => {
     if (own) return '';
     const now = nowSec();
     const who = askerKey(asker);
@@ -176,6 +180,8 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
     if (a && a.n >= ZAP_MINTS_PER_ASKER) return `at most ${ZAP_MINTS_PER_ASKER} invoices per ${ZAP_ASKER_WINDOW_S / 60} minutes from one address`;
     mintsAll = mintsAll.filter((t) => now - t < ZAP_ASKER_WINDOW_S);
     if (mintsAll.length >= ZAP_MINTS_ALL) return `this Lightning address mints at most ${ZAP_MINTS_ALL} invoices per ${ZAP_ASKER_WINDOW_S / 60} minutes; try again later`;
+    tipsAll = tipsAll.filter((t) => now - t < ZAP_ASKER_WINDOW_S);
+    if (plain && tipsAll.length >= ZAP_TIPS_ALL) return `this Lightning address mints at most ${ZAP_TIPS_ALL} plain tip invoices per ${ZAP_ASKER_WINDOW_S / 60} minutes; try again later`;
     if (!a) {
       if (askers.size >= ZAP_ASKERS_KEPT) for (const [k, v] of askers) if (now - v.since >= ZAP_ASKER_WINDOW_S) askers.delete(k);
       if (askers.size >= ZAP_ASKERS_KEPT) return 'too many addresses are asking here; try again later';   // a live window is never dropped
@@ -183,6 +189,7 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
     }
     a.n++;
     mintsAll.push(now);
+    if (plain) tipsAll.push(now);
     return '';
   };
   // PARSED ONCE PER OPEN ZAP (kanban #2989, audit nostr r1-3): every callback parsed every open zap's kept description (a 9734 of several KB
@@ -503,7 +510,7 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
       if (!mint) {
         const stranger = !own;   // kanban #2302 with #2109: only this node's own loopback tool is no stranger
         if (stranger && strangersMinting >= ZAP_MINTING_MAX) return refuse('too many invoices are being made here at once; try again in a moment');
-        const no = mayMint(asker, own);
+        const no = mayMint(asker, own, true);   // kanban #3379: a plain tip
         if (no) return refuse(no);
         if (stranger) strangersMinting++;
         mint = invoice({ name, amountMsat, descriptionHash: hex(sha256hex(metadata)), expiryS }).then((made) => {

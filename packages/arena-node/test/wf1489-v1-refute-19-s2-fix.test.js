@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { zapRequestTemplate } from '../../arena-protocol/src/zap.js';
-import { serveZapAddresses, signNostr, ZAP_PENDING_MAX, ZAP_MINTS_ALL, askerKey } from '../src/zap-address.js';
+import { serveZapAddresses, signNostr, ZAP_PENDING_MAX, ZAP_MINTS_ALL, ZAP_TIPS_ALL, askerKey } from '../src/zap-address.js';
 import { testInvoice } from './bolt11-fixture.js';
 
 const hex = (b) => Buffer.from(b).toString('hex');
@@ -52,7 +52,7 @@ test('#1964: all remote askers together mint at most ZAP_MINTS_ALL invoices a wi
     for (let i = 0; i < ZAP_MINTS_ALL + 100; i++) {
       await (await fetch(`http://127.0.0.1:${z.port}/lnurlp/bob/cb?amount=${1000 + i}`, { headers: { 'x-forwarded-for': `198.51.${100 + (i >> 8)}.${i & 255}` } })).json();
     }
-    assert.equal(st.minted, ZAP_MINTS_ALL);
+    assert.equal(st.minted, ZAP_TIPS_ALL);   // kanban #3379: these are plain tips, which take at most ZAP_TIPS_ALL of ZAP_MINTS_ALL
     assert.ok((await (await fetch(`http://127.0.0.1:${z.port}/lnurlp/bob/cb?amount=999999`)).json()).pr, 'this host is not limited');
     assert.equal(askerKey('2001:DB8:77:1:aa:bb:cc:dd'), askerKey('2001:db8:77:1::1'));
     assert.notEqual(askerKey('2001:db8:77:1::1'), askerKey('2001:db8:77:2::1'));
