@@ -314,6 +314,23 @@ const EVIDENCE_RECORDS_PER_MARK = 64;
  */
 const EVIDENCE_PROVEN_MARKS = 16;
 
+// A FAILED DECIDE IS NOT RUN AGAIN AND AGAIN (kanban #3298, audit hosting-a5-1-1; gap in #2844): the plugin trial decides only a few move sets as a
+// fresh thread's first call, so an adapter that spins on one chosen set as its first call passes it, and the seat decides every close on a fresh
+// thread - each retryClose of each entry held the seat's main thread ASK_MS again (2032 ms measured), every finality tick, until the window
+// ended. Now a decide that failed for a round's exact move list is tried at most DECIDE_TRIES times on this seat (a second try for a slow
+// moment); after that the stored failure is answered at once, and the round goes VOID as an undecidable one did before.
+export const DECIDE_TRIES = 2;
+const DECIDE_FAILED_MAX = 4096;
+export function decideBounded(failed, key, run) {
+  const had = failed.get(key);
+  if (had && had.n >= DECIDE_TRIES) throw new Error(had.why);
+  try { return run(); } catch (e) {
+    if (failed.size >= DECIDE_FAILED_MAX && !had) failed.delete(failed.keys().next().value);
+    failed.set(key, { n: (had ? had.n : 0) + 1, why: `${e.message} (not decided again here: kanban #3298)` });
+    throw e;
+  }
+}
+
 export class Verifier {
   constructor(round, {
     randomnessFor = NO_RANDOMNESS_SOURCE, chainFor = null, pool = new ReplayPool(), peers = [],
@@ -1053,7 +1070,9 @@ export class Verifier {
       let box = null;
       try { box = found.core ? sandboxFor(found.core) : null; } catch (e) { throw new Error(`game "${found.plugin.manifest.gameName}"'s decide adapter does not load in its sandbox: ${e.message}`); }
       if (!box || !box.meta.decide) throw new Error(`game "${found.plugin.manifest.gameName}"'s decide adapter is not installed on this node`);
-      const results = headToHeadResults(list, (moves, config) => box.call('decide', { moves, config }), found.config, { players: found.plugin.manifest.players });
+      if (!this.decideFailed) this.decideFailed = new Map();
+      const results = decideBounded(this.decideFailed, `${hex(roundIdBytes)}:${JSON.stringify(list)}`,
+        () => headToHeadResults(list, (moves, config) => box.call('decide', { moves, config }), found.config, { players: found.plugin.manifest.players }));
       if (!stored) return { held, results };
       // kanban #2625: kept once - a decision a concurrent close kept first is the one signed from
       return fromStored(this.round.keepHeadToHeadDecision(roundIdBytes, { results,
