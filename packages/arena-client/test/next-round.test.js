@@ -90,3 +90,10 @@ test('a round already running is left to the lobby: the page does not pull a pla
   assert.equal(nextRoundAfter(played, rows, 90000).startTimeMs, 91000, 'not started: entered');
   assert.equal(nextRoundAfter(played, rows, 100000).startTimeMs, 181000, 'started, its late join still open: the one after it');
 });
+
+test('#2940 a paid next round says it stakes again; a free one reads as before (feedback #234/#271)', async () => {
+  const { nextRoundView: view } = await import('../src/next-round.js');
+  assert.equal(view({ nextStartMs: 60000, nowMs: 0, stakeMsat: '100000' }).line, 'joining next round in 60 seconds - it stakes 100 sat again');
+  assert.equal(view({ nextStartMs: 60000, nowMs: 0, stakeMsat: 0 }).line, 'joining next round in 60 seconds');
+  assert.equal(view({ nextStartMs: 60000, nowMs: 0 }).line, 'joining next round in 60 seconds');
+});

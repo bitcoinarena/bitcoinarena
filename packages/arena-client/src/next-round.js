@@ -53,10 +53,13 @@ export function nextRoundAfter(played, rows, nowMs = Date.now()) {
  * next round. `runOverMs` is kept for the caller's record; the card's own 8 s are Unity's (it can fold, and stays while
  * the next round is coming).
  */
-export function nextRoundView({ runOverMs, nextStartMs, nowMs = Date.now(), exited = false } = {}) {
+// A PAID NEXT ROUND SAYS IT COSTS THE STAKE AGAIN (kanban #2940, feedback #234/#271): continuing stays the default (2026-09-28), but
+// players read "joining next round" as free and paid 4 rounds without knowing - the line names the stake each paid round takes
+export const costsAgain = (stakeMsat) => { const s = big(stakeMsat); return s > 0n ? ` - it stakes ${(s / 1000n).toString()} sat again` : ''; };
+export function nextRoundView({ runOverMs, nextStartMs, nowMs = Date.now(), exited = false, stakeMsat = 0 } = {}) {
   void runOverMs;
   if (exited || !Number.isFinite(nextStartMs)) return { show: 'lobby' };
   if (nowMs >= nextStartMs) return { show: 'start' };
   const seconds = Math.ceil((nextStartMs - nowMs) / 1000);
-  return { show: 'countdown', seconds, line: joiningNextRoundIn(seconds), exit: EXIT_GAME };
+  return { show: 'countdown', seconds, line: joiningNextRoundIn(seconds) + costsAgain(stakeMsat), exit: EXIT_GAME };
 }
