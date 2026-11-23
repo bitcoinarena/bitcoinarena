@@ -20,8 +20,11 @@ const MAX_CASES = 2000;
 // the label a trial's thread lingers under (core-sandbox.js lingerAs) - the core itself is loaded under the seat's own name (kanban #1694)
 const TRIAL_NAME = 'plugin trial';
 
-export function trialRun(source, manifest, { ms = TRIAL_MS, name = 'plugin trial' } = {}) {
-  if (manifest.resultType !== RESULT_TYPE.HEAD_TO_HEAD) return { ok: true, cases: 0, why: 'no decide adapter to run (not a head-to-head game)' };
+export function trialRun(source, manifest, { ms = TRIAL_MS, name = 'plugin trial', configs = [] } = {}) {
+  // A GAME WITH A RUN IS TRIED TOO (kanban #2807, audit r21 hosting-2): a non-head-to-head package passed untried, so a REPLAY core whose
+  // runTicksFits spun held the seat's thread ~2 s on every POST /round (plugins.js runLengthFits), never remembered. Its run-length asks -
+  // runTicks for its config, runTicksFits at 1, its own length and the manifest's longest run - are now made in the trial's deadline
+  if (manifest.resultType !== RESULT_TYPE.HEAD_TO_HEAD) return trialRunLength(source, manifest, { ms, name, configs });
   // ONE TRIAL THREAD AT A TIME (kanban #1880, #1913): the trial never waits for a thread held in a long builtin past its deadline
   // (core-sandbox.js `lingering`); while one still lingers no other is started - refused for now, `retry`: not the version's verdict
   if (lingeringCores(TRIAL_NAME)) return { ok: false, retry: true, cases: 0, why: 'an earlier trial\'s core thread is still ending: tried again later' };
@@ -118,4 +121,33 @@ function trialCases(box, manifest, left) {
     cases++;
   }
   return { ok: true, cases };
+}
+
+function trialRunLength(source, manifest, { ms, name, configs }) {
+  if (lingeringCores(TRIAL_NAME)) return { ok: false, retry: true, cases: 0, why: 'an earlier trial\'s core thread is still ending: tried again later' };
+  const coreFiles = source && typeof source === 'object' && source.files instanceof Map ? { files: source.files, entry: source.entry }
+    : { files: new Map([[SINGLE_ENTRY, String(source)]]), entry: SINGLE_ENTRY };
+  const until = Date.now() + ms;
+  const left = () => until - Date.now();
+  let box;
+  try { box = loadCore(coreFiles, { name, lingerAs: TRIAL_NAME, loadMs: ms, askMs: ms, until, liveCap: ARRAY_BUDGET, oneThread: true }); }
+  catch (e) { return { ok: false, cases: 0, why: `it does not load in the sandbox: ${String(e.message).slice(0, 300)}` }; }
+  let cases = 0;
+  try {
+    const own = [];
+    // a package core's config is the empty object at the seat (plugin-package.js registrationFromPackage), whichever hash names it
+    if (box.meta.runTicks && Array.isArray(configs) && configs.length) {
+      const t = box.call('runTicks', { config: {} }, left()); cases++;
+      if (Number.isInteger(t)) own.push(t);
+    }
+    if (box.meta.runTicksFits) {
+      const ticks = [...new Set([1, Number(manifest.runTicksMax) || 1, ...own, Number.isInteger(box.meta.RUN_TICKS) ? box.meta.RUN_TICKS : 1])];
+      for (const t of ticks) {
+        if (left() <= 0) return { ok: false, cases, why: `the trial did not finish within ${TRIAL_MS} ms` };
+        box.call('runTicksFits', { ticks: t }, left()); cases++;
+      }
+    }
+  } catch (e) { return { ok: false, cases, why: `its run length asks do not answer: ${String(e && e.message || e).slice(0, 300)}` }; }
+  finally { box.end(); }
+  return { ok: true, cases, why: 'its run length asks answer' };
 }
