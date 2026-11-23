@@ -5068,11 +5068,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // pick-up. A run decided otherwise (ENTRY_VOID, a late start) does not count.
   const resumingCloses = Promise.resolve([]).then(async (already) => {
     const picked = [];
-    for (const rid of round.closedRounds()) {
+    // PAGE BY PAGE, AND THE LOOP LET GO BETWEEN PAGES (kanban #3238): all closed rounds read at once took a seat's heap to 1.3 GB and its
+    // malloc to 1.5 GB at start (round.js eachClosedRound)
+    const self = toHex(round.pubkey);
+    let seen = 0;
+    for (const rid of round.eachClosedRound()) {
       if (shuttingDown) break;
+      if (++seen % 512 === 0) await new Promise((r) => setImmediate(r));
       const key = toHex(rid);
       if ((already || []).includes(key)) continue;
-      if (!round.signerNodes(rid).some((s) => toHex(s) === toHex(round.pubkey))) continue;
+      if (!round.signerNodes(rid).some((s) => toHex(s) === self)) continue;
       const short = round.entriesOf(rid).filter(({ entryId }) => !voidStands(rid, entryId) && !round.noQuorum(entryId)
         && resultFinality(round, rid, entryId).state !== 'FINAL');
       if (!short.length) continue;

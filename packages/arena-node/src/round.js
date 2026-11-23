@@ -118,6 +118,8 @@ const factsOf = (contract) => {
   return f;
 };
 const parses = (contract) => factsOf(contract) !== null;
+// closed rounds read at a time (eachClosedRound, kanban #3238)
+const CLOSED_PAGE = 512;
 // a settlement's winners' shares as kept (lock_settlement_shares, lock_settlement_txids.shares); 'null' is a round's shares marked unknown (kanban #2277)
 const sharesToJson = (shares) => JSON.stringify(shares.map((x) => ({ pubkey: Buffer.from(x.pubkey).toString('hex'), msat: String(x.msat) })));
 const sharesFromJson = (json) => {
@@ -3677,9 +3679,31 @@ export class Round {
 
   /** The entry's start line - join tick + the round's start deadline - and the round's threshold. */
   /** The rounds this node has closed. */
-  closedRounds() {
-    return this.db.prepare('SELECT round_id, contract FROM rounds WHERE state = ?').all(CLOSED)
-      .filter((r) => parses(r.contract)).map((r) => new Uint8Array(r.round_id));
+  closedRounds() { return [...this.eachClosedRound()]; }
+
+  /**
+   * THE CLOSED ROUNDS PAGE BY PAGE (kanban #3238, measured on a copy of a fed2 seat's store, ~600,000 closed rounds): closedRounds read
+   * every closed round's contract at once - one native buffer per row, all alive together, then each decoded - and a seat's start
+   * (server.js, the closes short of final) took its JS heap to 1.3 GB and malloc to 1.5 GB in the first 40 s. Both fell back to ~0.15 GB
+   * after, but glibc keeps the high-water of its heap (a Beelink seat's [heap] was 931 MB two minutes after start, and stays). Read
+   * CLOSED_PAGE rows at a time, in the order they opened, each page a new statement run (no read held open between pages).
+   */
+  *eachClosedRound({ page = CLOSED_PAGE } = {}) {
+    let at = null;
+    for (;;) {
+      const rows = at === null
+        ? this.db.prepare('SELECT round_id, contract, opened_ms FROM rounds WHERE state = ? ORDER BY opened_ms, round_id LIMIT ?').all(CLOSED, page)
+        : this.db.prepare('SELECT round_id, contract, opened_ms FROM rounds WHERE state = ? AND (opened_ms > ? OR (opened_ms = ? AND round_id > ?)) '
+          + 'ORDER BY opened_ms, round_id LIMIT ?').all(CLOSED, at.openedMs, at.openedMs, at.roundId, page);
+      if (!rows.length) return;
+      const last = rows[rows.length - 1];
+      at = { openedMs: last.opened_ms, roundId: last.round_id };
+      const full = rows.length === page;
+      const ids = rows.filter((r) => parses(r.contract)).map((r) => new Uint8Array(r.round_id));
+      rows.length = 0;
+      yield* ids;
+      if (!full) return;
+    }
   }
 
   /** Where this signer node's close of a run stands (M3.3-34), kept across a restart. */
