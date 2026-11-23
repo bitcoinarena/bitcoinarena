@@ -43002,6 +43002,25 @@ async function fetchSeasonSnapshot({ url, game, days, title = null, viewer = [],
  * seat it came from, or `{ ok: false, why, tried }` when none answered. `via` maps a seat's URL to the route the page
  * reaches it by (ARENA_ROUTED_URL).
  */
+/** How long the season race waits past its first answer for the seats it asked, to confirm each row's key (kanban #3308). */
+const SEASON_CONFIRM_MS = 1500;
+/** The first view, each row's key the one most answering seats give under its name (kanban #3308); unconfirmed rows marked. */
+function confirmRows(views) {
+  const first = views[0];
+  if (!first || !Array.isArray(first.rows)) return first;
+  const rows = first.rows.map((r) => {
+    const count = new Map();
+    for (const v of views) {
+      const o = (v.rows || []).find((x) => x && (r.name ? x.name === r.name : x.player === r.player));   // a row with no name: by its key
+      if (o && typeof o.player === 'string') count.set(o.player, (count.get(o.player) || 0) + 1);
+    }
+    const ranked = [...count].sort((a, b) => b[1] - a[1]);
+    const top = ranked[0];
+    if (top && top[1] >= 2 && (ranked.length === 1 || top[1] > ranked[1][1])) return top[0] === r.player ? r : { ...r, player: top[0] };
+    return { ...r, keyUnconfirmed: true };
+  });
+  return { ...first, rows };
+}
 async function fetchSeason({ nodes, game, days, title = null, viewer = [], fetch, via = (u) => u, answerMs = SEASON_ANSWER_MS, timeout, race = 1 } = {}) {
   if (!Number.isInteger(days) || days < 1 || days > 90)
     return { ok: false, why: 'a season is 1 to 90 whole days', tried: [] };
@@ -43016,10 +43035,21 @@ async function fetchSeason({ nodes, game, days, title = null, viewer = [], fetch
     if (!view.ok) throw new Error(view.why);
     return { ...view, seat };
   };
+  // A ROW'S KEY IS NOT ONE SEAT'S WORD (kanban #3308, audit client-a5-2-1): the first seat to answer decided which key a zap to a named leader paid -
+  // a fast seat put its own key under "Satoshi" and every zap's e-cash went to it. The race now waits up to SEASON_CONFIRM_MS past the first
+  // answer for the others it asked; a row's key is the one most of the answering seats give under its name (two at least), and a row whose key
+  // no second seat confirms is marked keyUnconfirmed (the page takes no zap to it)
+  const raced = (batch) => new Promise((resolve, reject) => {
+    const views = []; let left = batch.length, timer = null, over = false;
+    const finish = () => { if (over) return; over = true; if (timer) clearTimeout(timer); if (!views.length) reject(new Error('none')); else resolve(confirmRows(views)); };
+    for (const seat of batch) ask(seat).then((v) => { if (over) return; views.push(v); if (!timer) timer = setTimeout(finish, SEASON_CONFIRM_MS); },
+      (e) => { tried.push({ seat, why: e && e.message ? e.message : String(e) }); })
+      .finally(() => { if (--left === 0) finish(); });
+  });
   // A FEW AT ONCE (kanban #941): the first that answers, so one slow seat costs nothing; the rest one by one as before
   const front = seats.slice(0, race > 1 ? race : 0);
   if (front.length) {
-    try { return await Promise.any(front.map((seat) => ask(seat).catch((e) => { tried.push({ seat, why: e && e.message ? e.message : String(e) }); throw e; }))); } catch { /* the rest */ }
+    try { return await raced(front); } catch { /* the rest */ }
   }
   // AND THE REST RACED TOO, `race` AT A TIME (kanban #3289, measured on the stage 2026-11-22: a seat builds its network season in 22-50 s,
   // past the page's limit, and the seats after the first four were then asked one by one - two minutes before the board asked again)
@@ -43027,7 +43057,7 @@ async function fetchSeason({ nodes, game, days, title = null, viewer = [], fetch
   for (let i = front.length; i < seats.length; i += step) {
     const batch = seats.slice(i, i + step);
     if (batch.length === 1) { try { return await ask(batch[0]); } catch (e) { tried.push({ seat: batch[0], why: e && e.message ? e.message : String(e) }); } continue; }
-    try { return await Promise.any(batch.map((seat) => ask(seat).catch((e) => { tried.push({ seat, why: e && e.message ? e.message : String(e) }); throw e; }))); } catch { /* the next ones */ }
+    try { return await raced(batch); } catch { /* the next ones */ }
   }
   return { ok: false, why: tried.length ? 'no node answered the season just now' : 'no node to ask', tried };
 }

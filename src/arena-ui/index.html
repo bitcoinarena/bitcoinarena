@@ -7931,6 +7931,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         job = Object.assign({}, j);
         set({ title: j.title || 'Zap', msg: '', goDisabled: true, goLabel: j.recipient ? 'Zap' : 'Tip', showMsg: !j.recipient, to: '', st: '', stKind: '' });
         box.classList.add('show');
+        if (j.refused) { say(j.refused, 'bad'); return; }   // kanban #3308: a board row whose key no second node confirmed takes no zap
         if (j.recipient) { set({ to: 'to ' + (j.name || 'this player') + ' \u00b7 e-cash into their Bitcoin Arena wallet, from yours', st: '', goDisabled: false }); return; }
         if (!job.address) {
           say('Looking up ' + (j.name || 'this player') + '\u2019s Lightning address \u2026');
@@ -8024,7 +8025,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       // player's badges come in
       let reactRows = [];
       const drawReact = () => window.ArenaSeason.drawRows(board, { rows: reactRows, badgesOf: (p) => (s.book ? s.book.get(p) : null), via: (u) => via(u),
-        onZap: window.ARENA_ZAP ? (r) => window.ARENA_ZAP.open({ title: 'Zap ' + r.name, recipient: r.player, name: r.name }) : null });
+        onZap: window.ARENA_ZAP ? (r) => window.ARENA_ZAP.open(r.keyUnconfirmed ? { title: 'Zap ' + r.name, refused: 'Not yet: only one node has named this player\u2019s key so far. Try again when the board has asked more nodes.' } : { title: 'Zap ' + r.name, recipient: r.player, name: r.name }) : null });   // kanban #3308
       // WHO IS LOOKING: the tab's identity key - the one a round's lobby record names, which is who a season counts a round
       // under. Before the lobby has made it (the choice of games comes first) it is made here from the tab's seed, only when
       // the tab has one already: a board is never the reason a seed is minted.
