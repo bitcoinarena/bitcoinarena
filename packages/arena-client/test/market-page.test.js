@@ -299,7 +299,7 @@ test('the outcome: verified when the pinned attestors signed it, UNVERIFIED for 
   const pick = (entryIdHex, p, roundIdHex = rid) => ({ roundIdHex, entryIdHex, market, pick: p, stakeMsat: 1_000_000n, entryCloseMs: 0 });
   const outcomes = new Map([[rid, { state: 'ATTESTED', label: 'above 100k', final: true, table, check: verified }],
     ['cc'.repeat(32), { state: 'ATTESTED', label: 'above 100k', final: true, table, check: foreign }],
-    ['dd'.repeat(32), { state: 'DISPUTED' }]]);
+    ['dd'.repeat(32), { state: 'DISPUTED', check: { verified: true, disputed: true } }]]);   // kanban #3346: a DISPUTED this page verified
   const lines = marketLines({ picks: [pick('aa'.repeat(32), 0), pick('bb'.repeat(32), 1), pick('aa'.repeat(32), 0, 'cc'.repeat(32)), pick('aa'.repeat(32), 0, 'dd'.repeat(32)),
     { ...pick('ee'.repeat(32), 2, 'ee'.repeat(32)), entryCloseMs: Date.now() + 3600000 }], outcomes }).map((l) => l.text);
   console.log('  LINES:\n   ' + lines.join('\n   '));
