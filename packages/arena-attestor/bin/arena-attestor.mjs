@@ -19,6 +19,7 @@ import { readSources } from '../src/sources.js';
 import { attestorKey, attestWindow, attestValue, combine, wordToJson, wordFromJson, marketsToAttest, marketVersions, roundCloseOf } from '../src/attestor.js';
 import { fromHex, toHex } from '../../arena-protocol/src/hash.js';
 import { decodeManifest, gameIdOf } from '../../arena-protocol/src/manifest.js';
+import { UP_DOWN_AVERAGE_MS } from '../../arena-protocol/src/up-down.js';
 
 const arg = (name, dflt = null) => { const i = process.argv.indexOf(`--${name}`); return i > 1 ? process.argv[i + 1] : dflt; };
 const NAME = arg('name', 'A');
@@ -39,7 +40,11 @@ if (MODE !== 'outcome' && MODE !== 'value') throw new Error('--mode outcome (an 
 const PORT = Number(arg('port', '21661'));
 const LOG = arg('log');
 const SAMPLE_MS = Number(arg('sample-ms', '10000'));
-const KEEP_MS = 2 * 3600 * 1000;
+// AS LONG AS THE LONGEST LEGAL WINDOW NEEDS (kanban #3303, audit attest-a5-2-1; the #2406 fix of the drawn seat, drawn-attestor.js KEEP_MS): a market
+// may run on any period a day divides (manifest.js seriesPeriodFits), and the price to beat is the reading in force a minute before its window's
+// START - with 2 h a 3 h market's was pruned before its close, the daemon signed nothing and every round went VOID. A day + the hour it signs in +
+// the minute before the start: one reading every --sample-ms (8,900 rows at 10 s)
+const KEEP_MS = Math.max(2 * 3600 * 1000, 24 * 3600 * 1000 + 3600 * 1000 + Number(UP_DOWN_AVERAGE_MS));
 // THE READINGS ON DISK (measured 2026-10-13: a restart at 10:02:58Z signed nothing for the window that began at 10:00Z -
 // "no reading a minute before the window's start" - its start reading lived only in the old process's memory): every median is
 // kept in --samples-file (default: the log beside it, .samples), and read back at start, so a restart loses no window
