@@ -1568,11 +1568,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return boundedAncestors(typeof g.ancestorCut === 'string' && hex.length >= MAX_PACKAGE_ANCESTORS ? [g.ancestorCut, ...hex] : hex);
   };
   const hostedParent = (id) => { const g = hosted.get(toHex(id)); return g ? g.manifest : null; };
-  const installedInfo = (id) => { const g = hosted.get(id); return g ? { gameId: id, devKey: toHex(g.manifest.gameDevPubkey), version: g.manifest.version, parent: toHex(g.manifest.parentManifestId) } : null; };
+  const installedInfo = (id) => { const g = hosted.get(id); return g ? { gameId: id, name: g.manifest.gameName, devKey: toHex(g.manifest.gameDevPubkey), version: g.manifest.version, parent: toHex(g.manifest.parentManifestId) } : null; };
   // A NETWORK ROW IS AN UPDATE OF A HOSTED GAME only when checkUpdate takes it against that game (kanban #1902): its parent is
   // hosted here, it is not, and the same developer signed a newer version - a stranger naming a hosted game as parent is not one
   const updateOfHosted = (g) => (g && !hosted.has(g.id) && hosted.has(g.parent)
-    && checkUpdate(installedInfo(g.parent), { devKey: String(g.devKey), parent: g.parent, version: g.version }).ok ? g.parent : null);
+    && checkUpdate(installedInfo(g.parent), { name: g.name, devKey: String(g.devKey), parent: g.parent, version: g.version }).ok ? g.parent : null);
   // ANOTHER SEAT'S ANSWER, READ UP TO A BOUND (kanban #1540): textUpTo / jsonUpTo / listedGames live in peer-read.js since #1723,
   // shared with the duty poster's own read of the census seats' GET /games
   // A PEER'S ENTRY, HANDOUT AND PAYOUT ADDRESS, READ UP TO A CAP (kanban #2368, refute of #1829 / #2244 / #2327): takeEntryParts, takeAcceptedEntry
@@ -1738,7 +1738,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // the game asked for is the manifest's own id (kanban #1553) - a listing naming another id beside it is not asked at all (#1552)
         if (id !== gid || hosted.has(id)) continue;
         if (!manifestStands(m, { verify: verifyEd25519, parentOf: hostedParent }).ok) continue;
-        const u = checkUpdate(installedInfo(parent), { devKey: toHex(m.gameDevPubkey), parent, version: m.version });
+        const u = checkUpdate(installedInfo(parent), { name: m.gameName, devKey: toHex(m.gameDevPubkey), parent, version: m.version });
         if (!u.ok) continue;
         tried.add(parent);
         // one source's package never ends the sweep for the sources after it (kanban #2307)
