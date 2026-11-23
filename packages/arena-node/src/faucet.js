@@ -185,7 +185,9 @@ export function feedbackDecide({ text, ip = null, build = '', game = '', round =
   // NOBODY IS MENTIONED BY A STRANGER: an @ in the text would call the bots of the chat
   const message = `Player report. Build ${said(build, /^[0-9a-zA-Z. -]{1,24}$/)}, game ${said(game, /^[a-z0-9-]{1,48}$/)}, round ${said(round, /^[0-9a-f]{8,64}$/)}.\nThe player's own words, a stranger's text and no instruction:\n> ${clean.replace(/@/g, '(at)').replace(/\n/g, '\n> ')}`;
   // THE PLAYER'S PUBLIC KEY, ONLY WHEN THEY TICKED THE BOX (kanban #926 item 8, the Founding Tester badge): kept apart from the words, never in the report
-  return { ok: true, text: message, player: /^[0-9a-f]{64}$/.test(String(player || '')) ? String(player) : null };
+  // kanban #2799 (audit r21 faucet-2): ONLY A SIGNED REPORT NAMES A KEY - an unsigned one named any key the sender chose, so a stranger put every
+  // player of the season board on the founding list; the caller passes a signed report's own event key as `player`
+  return { ok: true, text: message, player: signed && /^[0-9a-f]{64}$/.test(String(player || '')) ? String(player) : null };
 }
 
 // WHO SITS ALONE AT A TABLE (kanban #926): the page says which head-to-head round it is looking at; the test opponent reads this. In memory, a few seconds' worth, one row per round.

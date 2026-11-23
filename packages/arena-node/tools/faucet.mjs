@@ -1305,7 +1305,9 @@ createServer((req, res) => {
           const tagOf = (k) => { const t = Array.isArray(e.tags) ? e.tags.find((x) => Array.isArray(x) && x[0] === k) : null; return t ? String(t[1] ?? '') : ''; };
           try { words = JSON.parse(e.content); } catch { words = {}; }
           // and where a bounty for it is paid, if the reporter named it (kanban #1363): the signed content's lnAddress
-          b = { ...b0, text: `${String(words.happened || '')}${words.expected ? `\nExpected: ${String(words.expected)}` : ''}${words.lnAddress ? `\nBounty address: ${String(words.lnAddress).slice(0, 200)}` : ''}`, build: tagOf('build'), game: tagOf('game'), round: tagOf('round') };
+          b = { ...b0, text: `${String(words.happened || '')}${words.expected ? `\nExpected: ${String(words.expected)}` : ''}${words.lnAddress ? `\nBounty address: ${String(words.lnAddress).slice(0, 200)}` : ''}`, build: tagOf('build'), game: tagOf('game'), round: tagOf('round'),
+            // kanban #2799: the founding key is the signed event's own key, and only when the reporter ticked the box for it (the page sends that key)
+            player: /^[0-9a-f]{64}$/.test(String(e.pubkey || '')) && String(b0.player || '').toLowerCase() === String(e.pubkey) ? String(e.pubkey) : null };
           // A RESEND OF A KEPT EVENT (kanban #2456, #2498): a page sending its report again after a lost answer or a reload, or anyone holding the event,
           // booked a new slot and posted the words to the chat on every post - 50 chat posts of one report, and the reporter's next report refused.
           // A kept event answers its first result here, before any slot; its chat post is tried again only when the first one failed (UNPOSTED)
