@@ -158,10 +158,15 @@ export function openBountySeason(path = ':memory:', { startMs = null, potSats = 
   // (platform, account id, name) a link ever held is kept, and the list is matched against all of an account's names
   db.exec(`CREATE TABLE IF NOT EXISTS link_names (platform TEXT NOT NULL, user_id TEXT NOT NULL, username TEXT NOT NULL, PRIMARY KEY (platform, user_id, username));
     INSERT OR IGNORE INTO link_names (platform, user_id, username) SELECT platform, user_id, lower(username) FROM links WHERE username IS NOT NULL;
-    CREATE TRIGGER IF NOT EXISTS link_names_add AFTER INSERT ON links WHEN new.username IS NOT NULL BEGIN
-      INSERT OR IGNORE INTO link_names (platform, user_id, username) VALUES (new.platform, new.user_id, lower(new.username)); END;
-    CREATE TRIGGER IF NOT EXISTS link_names_move AFTER UPDATE OF username, user_id ON links WHEN new.username IS NOT NULL BEGIN
-      INSERT OR IGNORE INTO link_names (platform, user_id, username) VALUES (new.platform, new.user_id, lower(new.username)); END;`);
+    DROP TRIGGER IF EXISTS link_names_add; DROP TRIGGER IF EXISTS link_names_move;
+    CREATE TRIGGER link_names_add AFTER INSERT ON links WHEN new.username IS NOT NULL BEGIN
+      INSERT INTO link_names (platform, user_id, username) SELECT new.platform, new.user_id, lower(new.username)
+        WHERE NOT EXISTS (SELECT 1 FROM link_names WHERE platform = new.platform AND user_id = new.user_id AND username = lower(new.username)); END;
+    CREATE TRIGGER link_names_move AFTER UPDATE OF username, user_id ON links WHEN new.username IS NOT NULL BEGIN
+      INSERT INTO link_names (platform, user_id, username) SELECT new.platform, new.user_id, lower(new.username)
+        WHERE NOT EXISTS (SELECT 1 FROM link_names WHERE platform = new.platform AND user_id = new.user_id AND username = lower(new.username)); END;`);
+  // NO CONFLICT IN THE TRIGGER (kanban #2645): an upsert's ON CONFLICT DO UPDATE overrides a trigger's OR IGNORE, so an account linked again to the
+  // same key under the same name threw "UNIQUE constraint failed: link_names..." in redeem
   const namesOf = db.prepare('SELECT username FROM link_names WHERE platform = ? AND user_id = ?');
   const firstNameOf = db.prepare('SELECT username FROM link_names WHERE platform = ? AND user_id = ? ORDER BY rowid ASC LIMIT 1');   // kanban #3056
   /** A ONE-TIME LINK CODE for a reporter's key (signed in with it): 24 hours, used once, at most LINK_CODES_OPEN_MOST open at a time. */
