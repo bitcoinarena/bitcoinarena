@@ -356,7 +356,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       const d = decodeSeatingCertificate(bytes), by = new Map(d.signatures.map((x) => [toHex(x.nodePubkey), x.signature]));
       const canon = encodeSeatingCertificate({ roundId: d.roundId, role: d.role, seated: d.seated, signatures: d.seated.map((k) => ({ nodePubkey: k, signature: by.get(toHex(k)) || new Uint8Array(64) })) });
       if (held && Buffer.compare(Buffer.from(held.cert), Buffer.from(canon)) === 0) return { ok: true, kept: false };
-      canonicalKey = `${toHex(rid)}:${role}:${supersede ? 's' : '-'}:${held ? toHex(seatingIdOfCert(held.cert)) : '-'}:${Buffer.from(canon).toString('base64')}`;
+      canonicalKey = `${toHex(rid)}:${role}:${supersede ? 's' : '-'}:${held ? toHex(seatingIdOfCert(held.cert)) : '-'}:${toHex(sha256(canon))}`;   // kanban #3296: the hash, not the ~65 KB canonical bytes (a stranger's padded junk filled the heap)
       const was = refusedCerts.get(canonicalKey);
       lastCanonicalKey = canonicalKey;
       if (was) return was;
