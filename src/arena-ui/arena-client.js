@@ -38870,10 +38870,14 @@ function readEntryFromEvidence(item, { contract, headers, firstHeight, bond, ver
 
 /** Does any bond of this evidence name a census key? Only then has a client any standing key to read, and a census without one costs it nothing. */
 function evidenceNamesCensusKey(evidence) {
+  // AN ENTRY THAT DOES NOT READ NAMES NO KEY (kanban #3244, 1.9's #2160 on 2.0): one provider's odd-length hex or string branch threw here,
+  // before the evidence check that refuses that provider by name - clientCommittee threw and the join was refused while three seats served the true census
   return (evidence || []).some((item) => {
-    const b = proofOf(item);
-    if (!b || !b.transaction || item.reaffirm) return false;
-    try { const c = committedSigned(parseTransaction(b.transaction)); return !!c && c.advert.bondScriptTemplateVersion === BOND_TEMPLATE_V3; } catch { return false; }
+    try {
+      const b = proofOf(item);
+      if (!b || !b.transaction || item.reaffirm) return false;
+      const c = committedSigned(parseTransaction(b.transaction)); return !!c && c.advert.bondScriptTemplateVersion === BOND_TEMPLATE_V3;
+    } catch { return false; }
   });
 }
 
