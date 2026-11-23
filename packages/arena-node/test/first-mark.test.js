@@ -219,8 +219,11 @@ test('late start at close (4): the peer is down at the close - the signer node h
     await untilForwarded(w.b, run);
     await w.downB();
     assert.equal(await say(w.a.port, `close ${toHex(w.rid)}`), 'closed');
+    // the close replays the run in a worker (measured ~1.9 s on an idle 12-core box, more under load): its hold is waited for, not a
+    // fixed 1.5 s that the replay now outlasts
     await wait(1500);
-    const held = await closingOf(w.a, w, run);
+    let held = await closingOf(w.a, w, run);
+    for (let i = 0; !held && i < 60; i++) { await wait(250); held = await closingOf(w.a, w, run); }
     const whileDown = await signedAt(w.a, w, run);
     await w.upB();
     assert.equal(await say(w.b.port, `close ${toHex(w.rid)}`), 'closed');
@@ -257,8 +260,11 @@ test('late start at close (5): an on-time first mark at B and a late one at A, B
     const bHeld = { onTimeFirstMark: holdsFirst(w.b, run), lateStart: !!w.b.round.startForfeit(run.eid) };
     await w.downB();
     assert.equal(await say(w.a.port, `close ${toHex(w.rid)}`), 'closed');
+    // the close replays the run in a worker (measured ~1.9 s on an idle 12-core box, more under load): its hold is waited for, not a
+    // fixed 1.5 s that the replay now outlasts
     await wait(1500);
-    const held = await closingOf(w.a, w, run);
+    let held = await closingOf(w.a, w, run);
+    for (let i = 0; !held && i < 60; i++) { await wait(250); held = await closingOf(w.a, w, run); }
     const atA = await signedAt(w.a, w, run);
     const facts = { saidB, saidA, bBeforeItWentDown: bHeld, aLateStart: atA.lateStart,
       held: held && { state: held.state, attempts: held.attempts, why: String(held.lastWhy).slice(0, 40) }, atA: brief(atA) };

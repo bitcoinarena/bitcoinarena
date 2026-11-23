@@ -141,11 +141,17 @@ test('the node imports no core and registers no game, and only the sandbox\'s dr
   // preflight.js says "this M3 step (RULED 2026-09-20...)" - which the bare regex read as a core being
   // stepped inside the preflight. Comments are taken out first, so the rule is about what the node DOES.
   const codeOf = (src) => src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
-  for (const f of readdirSync(new URL('../src/', import.meta.url).pathname)) {
+  // the files of src/ itself: src/vendor/ (acorn, kanban #2220, 57a3eb13c) is a third-party parser, no engine file
+  for (const f of readdirSync(new URL('../src/', import.meta.url).pathname, { withFileTypes: true }).filter((e) => e.isFile()).map((e) => e.name)) {
     const src = codeOf(readFileSync(new URL('../src/' + f, import.meta.url).pathname, 'utf8'));
     if (/packages\/core|@blwp\/core|core\/src|core\/frozen/.test(src)) imports.push(f);
     if (/core\/plugin\//.test(src)) registrations.push(f);
-    if (/\bstep\s*\(/.test(src)) steps.push(f);
+    // A STEP THAT IS NOT A CORE'S: a file's own state machine named step - founding.js's phase (96c31ef66), ecash-exchange.js's
+    // exchange (bf1353a38), departure-anchor.js's anchor (6af60eded), lock-set-book.js's method (fc198cf5d) and server.js calling it
+    // as lockSets.step (kanban #2561) - is taken out first; any other step( call, and every x.step( on a core, still counts.
+    const ownStep = /(?:\bfunction\s+step|\b(?:const|let)\s+step\s*=|^\s*(?:async\s+)?step)\s*[(=]/m.test(src);
+    const stepped = src.replace(/\b(?:lockSets|this)\.step\s*\(/g, ' ').replace(ownStep ? /(^|[^.\w$])step\s*\(/g : /$^/, '$1 ');
+    if (/\bstep\s*\(/.test(stepped)) steps.push(f);
   }
   assert.deepEqual(imports, [], 'an engine file imports a core');
   // since not even the launcher: main.js hosts what ARENA_APPS names, the installer names the apps

@@ -85,7 +85,8 @@ test('the Capacity card: each federation\'s band, who is below B* and by how muc
   const drawn = [], made = []; const window = {};
   const H = { capacityView: (...a) => { made.push(a); return { made: a.length }; }, draw: (el, kind, props) => drawn.push([el, kind, props]) };
   const fedNoOf = (f) => ({ ['dd'.repeat(32)]: 2, ['ee'.repeat(32)]: 3 })[f] || null;
-  const paint = new Function('$', 'window', 'fedNoOf', 'H', src + '\nreturn paintCapacity;')((id) => '#' + id, window, fedNoOf, H);
+  // UNAVAILABLE: the page's federations with no reserve key (4e3c5916f, kanban #2882) - none here
+  const paint = new Function('$', 'window', 'fedNoOf', 'H', 'UNAVAILABLE', src + '\nreturn paintCapacity;')((id) => '#' + id, window, fedNoOf, H, new Map());
   const feds = [{ federation: 'dd'.repeat(32), successor: 'ee'.repeat(32) }];
   paint({ body: drain }, feds);
   assert.deepEqual(made, [[drain, feds, fedNoOf]]);
@@ -107,7 +108,8 @@ test('Waiting for a founding: one list from one seat, and every number counted f
   const drawTable = (id, head, rows, empty, foot) => drawn.push([id, 'table', { head, rows, empty, foot }]);
   const paint = new Function('$', 'H', 'sat', 'cut', 'drawTable', src + '\nreturn paintFounding;')((id) => '#' + id, H, sat, cut, drawTable);
   const K = (i) => String(i).padStart(2, '0').repeat(32);
-  // ten drawn, eight with their code; two more that can be drawn; the seat asked all twelve
+  // ten drawn, eight with their code; two more that can be drawn; the seat asked all twelve - one of the drawn has founding off, so it is no row
+  // and counted nowhere (f623efd2b, kanban #599: only the nodes that can be founded, every number counted from the rows shown)
   const run = { id: 'f0'.repeat(32), windowEnd: 157308, trigger: { height: 157302 }, seated: Array.from({ length: 10 }, (_, i) => ({ node: K(i), position: i })),
     codes: Array.from({ length: 8 }, (_, i) => ({ node: K(i) })), alternates: [K(10)], noShows: [], federation: false, void: false };
   const mem = { height: 157307, free: 20, needed: 10, nodes: Array.from({ length: 12 }, (_, i) => ({ node: K(i), endpoint: `https://n${i}`, state: i < 8 ? 'setup' : i === 8 ? 'off' : i === 9 ? 'no answer' : 'setup' })) };
@@ -116,12 +118,13 @@ test('Waiting for a founding: one list from one seat, and every number counted f
   paint(nodes, [], mem);
   const facts = drawn.find((d) => d[0] === '#founding-facts')[2].items.map((f) => f[1]);
   const t = drawn.find((d) => d[0] === 'founding')[2];
-  assert.deepEqual(facts, ['12 nodes (20 operators, 10 needed)', '10 of 12', 'f0f0f0f0: 10 drawn, 8 posted their code · until block 157,308']);
-  assert.equal(t.rows.length, 12, 'as many rows as "can be drawn" says');
+  assert.deepEqual(facts, ['11 nodes (10 operators needed)', '10 of 11', 'f0f0f0f0: 9 drawn, 8 posted their code · until block 157,308']);
+  assert.equal(t.rows.length, 11, 'as many rows as "can be drawn" says');
+  assert.ok(!t.rows.some((r) => r.key === K(8)), 'the node with founding off is no row');
   assert.equal(t.rows.filter((r) => r.cells[2].t === 'ready').length, 10, 'as many "ready" rows as the count says');
   assert.equal(t.rows.filter((r) => /code ✓/.test(r.cells[3].t || '')).length, 8, 'as many "code ✓" rows as "posted their code"');
-  assert.deepEqual(t.rows.slice(0, 10).map((r) => r.cells[3].t), [...Array(8).fill(0).map((_, i) => `drawn #${i + 1} · code ✓`), 'drawn #9 · no code yet', 'drawn #10 · no code yet'], 'the drawn first, in order');
-  assert.deepEqual([t.rows[8].cells[2].t, t.rows[9].cells[2].t], ['founding is off on this node', 'no answer'], 'and why the two have no code');
+  assert.deepEqual(t.rows.slice(0, 9).map((r) => r.cells[3].t), [...Array(8).fill(0).map((_, i) => `drawn #${i + 1} · code ✓`), 'drawn #10 · no code yet'], 'the drawn first, in order');
+  assert.equal(t.rows[8].cells[2].t, 'no answer', 'and why the drawn one shown has no code');
   // no seat answered its list: nothing is guessed
   drawn.length = 0;
   paint([], [], null);

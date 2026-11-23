@@ -8,6 +8,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import WebSocket from 'ws';
@@ -55,7 +56,7 @@ test('#1489-v1-refute-48-s2-1 a stranger can publish an event carrying ~6000 sin
 });
 
 test('#1489-v1-refute-48-s2-1 a REQ of 10 matching-nothing filters costs the same whatever many tags the candidate events carry', async () => {
-  const dir = mkdtempSync(join(process.cwd(), 'wf48s2-'));
+  const dir = mkdtempSync(join(tmpdir(), 'wf48s2-'));
   const N = 600, shapes = { oneTag: 0, manyTags: 2000 }, res = {};
   const F = { '#p': [COMMON], '#a': ['nope'], limit: 1 };
   for (const [name, k] of Object.entries(shapes)) {

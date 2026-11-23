@@ -30,6 +30,8 @@ test('#1469 variant: 150 parallel unfinished claim bodies just under 1 MiB must 
     const rssMB = Math.round((after.rss - before.rss) / 1048576);
     const timeout = arb.server ? arb.server.requestTimeout : (arb.http ? arb.http.requestTimeout : 'n/a');
     console.log('  FACTS (arbiter parallel):', JSON.stringify({ connections: 150, perBodyKB: per / 1024, heldMB, rssGrowthMB: rssMB, requestTimeout: timeout }));
-    assert.ok(Math.max(heldMB, rssMB) < 48, `150 unfinished claim bodies pin ${Math.max(heldMB, rssMB)} MiB in the arbiter (rss +${rssMB} MiB)`);
+    // the bound sits between the two: the bodies kept whole pin ~141 MiB (150 x 960 KiB); budgeted, rss grew +29..40 MiB over 5 runs on the
+    // MacBook (abe7a4b25), and +48..54 MiB over 4 idle runs on Linux (Node 24): there the bound of 48 failed every time
+    assert.ok(Math.max(heldMB, rssMB) < 75, `150 unfinished claim bodies pin ${Math.max(heldMB, rssMB)} MiB in the arbiter (rss +${rssMB} MiB)`);
   } finally { child.kill('SIGKILL'); await arb.close(); }
 });

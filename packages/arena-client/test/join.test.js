@@ -313,11 +313,18 @@ test('the page joins a named round and still invents none', () => {
   // THE FIELDS ONLY A ROUND'S BUILDER WRITES never appear, and nothing encodes a contract: `stakeMsat` is an order's own
   // amount since (a pick record, an order message) and `committeeTimeMs` is read off fetched rounds to sort them - the
   // words alone no longer say a round is invented, so those two are checked as the page uses them: never encoded into a contract
-  for (const field of ['censusRoot', 'simCoreHash', 'gameVerifySlots', 'blockTicks'])
+  for (const field of ['censusRoot', 'simCoreHash', 'blockTicks'])
     assert.ok(!page.includes(field),
       'the page writes ' + field + ', so it is inventing a round rather than joining one');
-  for (const builder of ['encodeRoundContract', 'openGrid', 'standUpRound', 'roundContractFields'])
+  // `gameVerifySlots` is read off a joined round since (kanban #1391, eede6e906: how many seats must take the entry), never set
+  assert.ok(!/gameVerifySlots\s*:/.test(page), 'the page writes gameVerifySlots, so it is inventing a round rather than joining one');
+  for (const builder of ['openGrid', 'standUpRound', 'roundContractFields'])
     assert.ok(!page.includes(builder), 'the page calls ' + builder + ', so it is inventing a round rather than joining one');
+  // encodeRoundContract only of the round it joined (kanban #3086, a3d6b9d4f: the pending note carries the joined round's own
+  // contract bytes for a later collect) - never of a contract the page put together
+  const encoded = [...page.matchAll(/encodeRoundContract\(([^)]*)\)/g)].map((m) => m[1]);
+  assert.equal(page.split('encodeRoundContract').length - 1, encoded.length, 'the page names encodeRoundContract other than to call it');
+  for (const arg of encoded) assert.equal(arg, 'named.round', 'the page calls encodeRoundContract on ' + arg + ', so it is inventing a round rather than joining one');
   assert.ok(!/committeeTimeMs\s*:/.test(page), 'the page sets a committee time, so it is inventing a round rather than joining one');
 
   // THE SESSION KEY IS PER TAB. localStorage would make two tabs one player,

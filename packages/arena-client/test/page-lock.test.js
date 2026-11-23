@@ -997,8 +997,14 @@ test('the page withdraws nothing on a timer: its interval functions look, the pa
     const body = page.slice(at, page.indexOf('\n    }\n', at));
     assert.doesNotMatch(body, spends, `${name}, on a timer, spends`);
   }
-  for (const f of ['redeemPayout', 'returnStake', 'refundKept', 'withdrawCollected', 'collectOwed'])
+  for (const f of ['redeemPayout', 'returnStake', 'refundKept', 'collectOwed'])
     assert.ok(!page.includes(`ARENACLIENT.${f}(`), `the page calls ${f} itself`);
+  // ONE withdrawCollected, THE ORANGE PILL RUN'S ENTRY (kanban #3265, 44d6f8f8d): the game's frame hands the page the 100-sat
+  // invoice of a run the player started, and ARENA_OPR.pay pays exactly that invoice - never on a timer (above), nowhere else
+  const collected = [...page.matchAll(/ARENACLIENT\.withdrawCollected\(/g)].map((m) => m.index);
+  const oprPayAt = page.indexOf('      pay: async (invoice) => {', page.indexOf('window.ARENA_OPR = {'));
+  assert.equal(collected.length, 1, 'the page calls withdrawCollected itself');
+  assert.ok(oprPayAt > 0 && collected[0] > oprPayAt && collected[0] < page.indexOf('\n      },\n', oprPayAt), 'withdrawCollected is called outside the Orange Pill Run entry pay');
   const calls = [...page.matchAll(/ARENACLIENT\.collectAndWithdraw\(/g)].map((m) => m.index);
   const withdrawAt = page.indexOf('window.ARENA_WITHDRAW = async function');
   assert.equal(calls.length, 1);

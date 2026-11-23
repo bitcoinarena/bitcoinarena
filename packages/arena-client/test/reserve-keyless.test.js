@@ -138,8 +138,10 @@ test('a round\'s result is read from a seat that holds its players, not the firs
   const src = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
   const at = src.indexOf('result: async (id) => {');
   const body = src.slice(at, src.indexOf('// A MARKET\'S CLIENT: place an order', at));
-  assert.match(body, /if \(!\(j\.players \|\| \[\]\)\.length\) \{ none = none \|\| \{ entries: \[\], match: null \}; continue; \}/);
-  assert.match(body, /return none;/);
+  // the seats' vote since 08601b23c (kanban #1867): a seat with no players is skipped in the tally, the others count
+  assert.match(body, /if \(!j\.players\.length\) \{ empty = true; continue; \}/);
+  assert.match(body, /if \(got\.empty\) none = \{ entries: \[\], match: null \};/);
+  assert.match(body, /return best \|\| none;/);
   // the seats' answers as measured on round 1b995103: seven seats with no players ahead of the five that signed
   const answers = [...Array(7).fill({ players: [] }), { players: [{ entry: 'a', outcome: 'FAILED' }, { entry: 'b', outcome: 'DELIVERED' }] }];
   let none = null, got = null;
@@ -211,7 +213,8 @@ test('the order strip speaks to the player: no msat or inner steps, a refusal in
   assert.ok(strip.length > 500, 'the strip code is found');
   assert.ok(!/'Order not placed: ' \+ \(j\.why/.test(strip), 'the raw reason is not the line');
   assert.ok(!/return 'locking your stake: '/.test(strip), 'no inner step on the line');
-  assert.match(strip, /if \(j\.state === 'refused'\) \{ line = refusedWords\(j\.why\); cls = 'bad'; \}/);
+  // the refusal's one sentence, with the round's first 8 hex after it since 7ec761ef8 (kanban #1485)
+  assert.match(strip, /if \(j\.state === 'refused'\) \{ line = refusedWords\(j\.why\) \+ \(j\.round \? ' \(round ' \+ String\(j\.round\)\.slice\(0, 8\) \+ '\)' : ''\); cls = 'bad'; \}/);
   for (const words of ['Your order came too late for this round. Tap again to play the next one.', 'Not enough sats in your wallet for this round.', ' Add some with Deposit or Get 300 sats.',
     " sat of your winnings arrive ' + pendingWhen() + '.'"]) assert.ok(strip.includes(words), words);   // #1391: the pending winnings are named, #1398: with their own window
   assert.ok(strip.includes("return mins <= 1 ? 'within about a minute' : 'within about ' + mins + ' minutes'; };"), 'when they arrive, from the seats\' window close');

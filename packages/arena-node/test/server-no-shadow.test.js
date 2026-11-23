@@ -16,8 +16,11 @@ test('server.js declares none of the names it imports', () => {
     for (const part of m[1].split(',')) { const name = part.trim().split(/\s+as\s+/).pop().trim(); if (name) imported.add(name); }
   for (const m of src.matchAll(/^import\s+([A-Za-z_$][\w$]*)\s+from/gm)) imported.add(m[1]);
   // KNOWN AND NARROW: `stateOf` (settlement-state.js) is declared again as an entry's state inside one nested function (the FINAL
-  // gathering, near its uses) and read only there - not the shape that broke the seats (a declaration in serve()'s own scope)
-  const ALLOWED = new Set(['stateOf']);
+  // gathering, near its uses) and read only there - not the shape that broke the seats (a declaration in serve()'s own scope).
+  // The same for `itemOf` (items.js; inside devAttribute, a donation row's item - 9c4ad7351, 2026-10-22) and `lockAt` (bond-withdraw.js;
+  // inside txView's resultOf, an entry's lock outpoint - 037f72d2e, 2026-10-24): neither function calls the import. A rename in
+  // server.js would let both leave this list.
+  const ALLOWED = new Set(['stateOf', 'itemOf', 'lockAt']);
   const again = [];
   for (const m of src.matchAll(/\b(?:const|let|var|function)\s+([A-Za-z_$][\w$]*)\b/g)) if (imported.has(m[1]) && !ALLOWED.has(m[1])) again.push(m[1]);
   console.log('  IMPORTS:', imported.size, 'declared again:', JSON.stringify([...new Set(again)]));

@@ -8,6 +8,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import WebSocket from 'ws';
@@ -47,7 +48,7 @@ const SHAPES = {
 };
 
 test('#1720 a REQ of 10 worst-shape filters costs the same on a small and on a large store', async () => {
-  const dir = mkdtempSync(join(process.cwd(), 'wf1720w-'));
+  const dir = mkdtempSync(join(tmpdir(), 'wf1720w-'));
   const sizes = { small: 1000, large: 40000 }, res = {};
   for (const [name, n] of Object.entries(sizes)) {
     const path = join(dir, `${name}.db`); fill(path, n);

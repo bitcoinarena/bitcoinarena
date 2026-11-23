@@ -33,7 +33,9 @@ const CASES = [
   ['at the top level (load)', `${SORT}\nexport const DECIDE = { name: "z", decide(moves) { const out = {}; for (const m of moves) out[m.key] = "DRAW"; return out; } };`],
 ];
 
-test('#1880/#1913: each uninterruptible builtin, measured alone, holds the seat\'s thread at most ASK_MS; the next trial waits for nothing', async () => {
+// ITS OWN TIME (measured 2026-11-23 on a 12-core Linux box, Node 24): each case waits for the earlier trial's thread, and the
+// 6e6-element sort runs ~33 s in the core's thread there (13.6 s on the main thread) - ~100 s for the three, past the suite's 120 s
+test('#1880/#1913: each uninterruptible builtin, measured alone, holds the seat\'s thread at most ASK_MS; the next trial waits for nothing', { timeout: 300000 }, async () => {
   let n = 0;
   for (const [what, src] of CASES) {
     for (let t = Date.now(); lingeringCores('plugin trial') && Date.now() - t < 60000;) await new Promise((r) => setTimeout(r, 50));

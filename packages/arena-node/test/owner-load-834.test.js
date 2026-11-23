@@ -20,8 +20,10 @@ test('every screen that is not the area ends the load, and a sign-in counts agai
   const start = HTML.slice(HTML.indexOf('async function start()'));
   assert.match(start, /This node did not answer: ' \+ e\.message; loadEnd\(\); return;/);
   assert.match(start, /Try again in a minute\.'; loadEnd\(\); return;/);
-  assert.match(HTML, /const loaded = \(p\) => import\(at\(p\)\)\.catch\(\(e\) => \{[^\n]*loadEnd\(\); throw e; \}\);/);
-  assert.match(HTML, /onIn: \(\) => \{ me = null; loadAgain\(\); start\(\); \}/);
+  // the code comes from codeAt (the site's own copies on the site, the node's off it: kanban #1432); a failed load still ends the load
+  assert.match(HTML, /const loaded = \(p\) => import\(codeAt\(p\)\)\.catch\(\(e\) => \{[^\n]*loadEnd\(\); throw e; \}\);/);
+  // a sign-in is counted first (kanban #923), then the load counts again
+  assert.match(HTML, /onIn: \(\) => \{ (counted\('owner-login'\); )?me = null; loadAgain\(\); start\(\); \}/);
 });
 
 test('no href="#": the line under the page is hidden or goes somewhere real', () => {
