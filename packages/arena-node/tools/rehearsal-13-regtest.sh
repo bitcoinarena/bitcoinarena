@@ -16,8 +16,8 @@ if [ -z "${R13_WRAPPED:-}" ]; then export R13_WRAPPED=1; exec timeout -k 30 "${T
 : "${FEDIMINT_BIN:?}"; : "${LOCK_BIN:?}"
 F=$FEDIMINT_BIN; FH=${FEDIMINT_HOME:-$F/home}
 P=${PROBE_DIR:-$(mktemp -d /tmp/r13-XXXXXX)}
-B=${BITCOIN_BIN:-/mnt/bitcoin/bitcoin-31.1/bin}
-L=${LND_BIN:-/mnt/bitcoin/lnd-linux-amd64-v0.21.3-beta}
+B=${BITCOIN_BIN:-/srv/arena/bitcoin-31.1/bin}
+L=${LND_BIN:-/srv/arena/lnd-linux-amd64-v0.21.3-beta}
 HERE=$(cd "$(dirname "$0")" && pwd)
 PAY_MSAT=${PAY_MSAT:-250000000}       # 250,000 sat per wallet: 3 of them within the gateway's 1,000,000 sat in each federation
 # the run's own datadir: a bitcoin.conf of the machine (the test host's names testnet4) must not reach these calls

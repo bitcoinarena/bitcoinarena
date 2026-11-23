@@ -1,7 +1,7 @@
 #!/bin/bash
 # kanban #2905: the pre-roll gate - one canary round now (no roll check, no alert), exit 0 when it was played and signed in time, 1 when not.
-# Call it from a roll script after each seat (or seat batch), from the Beelink:
-#   ssh -o BatchMode=yes user@192.168.1.226 '~/arena-canary/canary-gate.sh' || { echo "STOP canary gate failed"; exit 1; }
+# Call it from a roll script after each seat (or seat batch), from the test host:
+#   ssh -o BatchMode=yes user@test-laptop '~/arena-canary/canary-gate.sh' || { echo "STOP canary gate failed"; exit 1; }
 # A pass that finds the canary busy waits for it (the lock); a fresh key's first round (VOID by design, #2901) is played once more.
 DIR=${CANARY_DIR:-$HOME/arena-canary}; export CANARY_DIR=$DIR CANARY_TAG=${CANARY_TAG:-gate}
 export PATH=$HOME/.nvm/versions/node/v24.22.3/bin:/usr/bin:/bin:/usr/sbin:/sbin

@@ -10,7 +10,7 @@
 # reached players. The checkout moves only when a commit is checked out there on purpose.
 set -euo pipefail
 COMMIT="${1:?name the pushed commit the Daily signer nodes run}"
-D="${ARENA_2OF2_DIR:-/mnt/bitcoin/blwp-2of2}"
+D="${ARENA_2OF2_DIR:-/srv/arena/blwp-2of2}"
 REPO="${ARENA_REPO:-/home/arena/btc-logistics-war}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SRC="$(cd "$HERE/../.." && pwd)"

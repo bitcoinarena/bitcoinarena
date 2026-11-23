@@ -25,8 +25,8 @@ test('#1962 redirects: each hop checked, at most REDIRECTS_MOST followed, never 
 });
 
 test('#1884 seat endpoints: public names and public IP literals only', () => {
-  for (const u of ['http://127.0.0.1:8080/', 'http://localhost:1/', 'http://169.254.169.254/', 'http://[::1]:3/', 'http://10.1.2.3/', 'http://192.168.1.18:31221',
-    'http://100.85.86.106/', 'http://seat.local/', 'http://2130706433/', 'ftp://seat.example/', 'http://u:p@seat.example/'])
+  for (const u of ['http://127.0.0.1:8080/', 'http://localhost:1/', 'http://169.254.169.254/', 'http://[::1]:3/', 'http://10.1.2.3/', 'http://192.168.1.33:31221',
+    'http://100.64.0.11/', 'http://seat.local/', 'http://2130706433/', 'ftp://seat.example/', 'http://u:p@seat.example/'])
     assert.ok(seatUrlRefusal(u), `${u} must be refused`);
   for (const u of ['https://seat.example.com/guardian-2', 'http://seat.example.com:31221', 'http://8.8.8.8:31221/'])
     assert.equal(seatUrlRefusal(u), null, `${u} must be taken`);

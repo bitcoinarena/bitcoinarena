@@ -22,7 +22,7 @@ export async function launch({ chrome = process.env.CHROME || DEFAULT_CHROME, di
   const profile = join(dir, 'profile');
   mkdirSync(profile, { recursive: true });
   const port = 9400 + Math.floor(Math.random() * 400);
-  // under nice -n 19 (the MacBook carries a live node; nice execs Chrome, so the pid is Chrome's)
+  // under nice -n 19 (the test laptop carries a live node; nice execs Chrome, so the pid is Chrome's)
   const proc = spawn('nice', ['-n', '19', chrome, '--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, '--no-first-run',
     '--no-default-browser-check', `--window-size=${width},${height}`, '--use-gl=swiftshader', '--enable-unsafe-swiftshader',
     '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--autoplay-policy=no-user-gesture-required',

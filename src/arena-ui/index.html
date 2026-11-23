@@ -1566,7 +1566,7 @@
     #arena-seed-modal .verify-n { font-size: 20px; font-weight: 800; }
     #arena-seed-modal .why { color: #ff7b72; min-height: 1.3em; }
     #arena-seed-modal .done { color: #3fb950; font-size: 18px; font-weight: 800; }
-    /* ONE SCREEN, NO SCROLLING (2026-10-18: "it is slightly too high to fit on a normal macbook pro screen. We want to see everything
+    /* ONE SCREEN, NO SCROLLING (2026-10-18: "it is slightly too high to fit on a normal laptop screen. We want to see everything
        on one page without scrolling" - measured 80 px over at 1440 x 760; "not a two-column layout - optimise the space vertically"): the
        same layout, less height - the tiles' logos 96 px, tighter tiles, headings and footer. Measured: 1512 x 830, 1440 x 760 and 1280 x 720 fit. */
     body.arena-picking #arena-games { padding-top: calc(41px + env(safe-area-inset-top, 0px) + 10px); }
@@ -4677,7 +4677,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         // and reserves' parts stayed spent): the handout, the lock and the entry need ARENA_H2H_LEAD_MS() before the close; with less, nothing is sent or locked
         if (!reuse && window.ARENA_HIDDEN_CHOSEN && window.ARENA_HIDDEN_CHOSEN.round === named.roundIdHex && thisJoin && !thisJoin.free
           && Number(named.round.entryCloseMs) - (Date.now() + (window.ARENA_SEAT_AHEAD_MS || 0)) < window.ARENA_H2H_LEAD_MS() + 1500) {   // kanban #1892: the seats' clock as the last handout read it
-          // NOT `missed` (measured 2026-11-11 on the MacBook, round 9f51edf1 -> 41432520): a missed join is retried in the next round, and that retry
+          // NOT `missed` (measured 2026-11-11 on the test laptop, round 9f51edf1 -> 41432520): a missed join is retried in the next round, and that retry
           // locked the stake and made no entry - the hidden move is the old round's. A late tap is refused; the player taps the next round
           window.ARENA_JOIN_REFUSED = 'the entry closed before it went in - nothing was locked';
           console.log('[arena] #1485 no handout, no lock: head-to-head round ' + named.roundIdHex.slice(0, 8) + ' closes in ' + ((Number(named.round.entryCloseMs) - Date.now()) / 1000).toFixed(1) + ' s');
@@ -8675,7 +8675,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         });
       };
       // A HEAD-TO-HEAD ROUND IS HANDED TO ITS CLIENT WITH THE LAST MOMENT A TAP STILL GOES IN, NOT ITS ENTRY CLOSE (kanban #2563, feedback #017
-      // 2026-11-12: "the page repeatedly shows exactly: Your order came too late for this round"; measured in Beelink Chrome on UI 639: taps at 0:04
+      // 2026-11-12: "the page repeatedly shows exactly: Your order came too late for this round"; measured in test-host Chrome on UI 639: taps at 0:04
       // and 0:02 refused, no handout sent, taps at 0:08 taken). The client shows a round, its countdown and its buttons down to 1.5 s before the close
       // it is given (its CLOSING_MS), but a paid tap needs ARENA_H2H_LEAD_MS() + 1.5 s (#1485) and any tap 3 s (#1394): every tap in the second half
       // of the countdown was refused. The close it is given is moved earlier by what the tap needs beyond those 1.5 s, plus 2.5 s for the join's own
@@ -10825,7 +10825,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       }, 2000);
       // JOINING IS SAID FROM THE TAP, WITH THE COUNTDOWN (kanban #1483, the owner 2026-11-11: "When clicking Join sometimes the countdown does not appear,
       // only lock messages ('joining the round - stake lock: exchanging at tn4.bitcoin-arena.io/guardian-1') ... Make it more efficient and clear that we
-      // are in process of joining the round"). Measured on the live page (UI 634) in the Beelink Chrome: from the tap the join's stage was EMPTY for
+      // are in process of joining the round"). Measured on the live page (UI 634) in the test host Chrome: from the tap the join's stage was EMPTY for
       // 16-22 s (the donation set, the fees, the claim key - Unity said only "joining the round ...", no countdown, no step), and the countdown came only
       // once the stake was locked; the lock's own steps showed raw ("exchanging at <seat>"). Now, while a join is being made and its round not yet shown
       // loaded, the join's stage is ALWAYS this line: the time to the round's start, counted each second, and the step in a player's words with how long

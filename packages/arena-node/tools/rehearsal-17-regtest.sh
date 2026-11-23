@@ -21,8 +21,8 @@ if [ -z "${R17_WRAPPED:-}" ]; then export R17_WRAPPED=1; exec timeout -k 30 "${T
 : "${FEDIMINT_BIN:?}"
 F=$FEDIMINT_BIN; FH=${FEDIMINT_HOME:-$F/home}
 P=${PROBE_DIR:-$(mktemp -d /tmp/r17-XXXXXX)}
-B=${BITCOIN_BIN:-/mnt/bitcoin/bitcoin-31.1/bin}
-L=${LND_BIN:-/mnt/bitcoin/lnd-linux-amd64-v0.21.3-beta}
+B=${BITCOIN_BIN:-/srv/arena/bitcoin-31.1/bin}
+L=${LND_BIN:-/srv/arena/lnd-linux-amd64-v0.21.3-beta}
 HERE=$(cd "$(dirname "$0")" && pwd)
 PAY_MSAT=${PAY_MSAT:-300000000}       # 300,000 sat per wallet
 SPEND_MSAT=${SPEND_MSAT:-100000000}   # what p3 hands to p1

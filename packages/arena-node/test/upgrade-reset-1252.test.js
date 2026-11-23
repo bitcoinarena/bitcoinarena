@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// KANBAN #1252: "throw er; // Unhandled 'error' event ... read ECONNRESET ... on Socket instance" ended seats on the old Mac (fed B seat 3 at its audit15
+// KANBAN #1252: "throw er; // Unhandled 'error' event ... read ECONNRESET ... on Socket instance" ended seats on the second host (fed B seat 3 at its audit15
 // start, 2026-11-07 04:48Z, and 8 times on seats 5-7 before): an upgraded socket gets no error listener from Node, and a peer's reset on it ended the node.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE SEATS' EXCHANGE OFFERS ARE READ AT ONCE, NOT ONE AFTER ANOTHER (kanban #1483, the owner 2026-11-11: "joining the round - stake lock: exchanging at
 // tn4.bitcoin-arena.io/guardian-1 ... Make it more efficient"): exchangeEcashInto asked GET /exchange of each seat in turn with an 8 s timeout each, so
-// every seat that did not answer (a restarting seat, a loaded Beelink: load 40 measured 2026-11-12 03:00Z) put up to 8 s in front of the lock. The offers
+// every seat that did not answer (a restarting seat, a loaded test-host: load 40 measured 2026-11-12 03:00Z) put up to 8 s in front of the lock. The offers
 // are now read side by side and the first offering seats IN THE SEATS' ORDER are used, as before.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

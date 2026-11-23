@@ -14,7 +14,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { WebSocket } from 'ws';
 
-// THE TEST HOST, NOT THE MACBOOK (HARD, 2026-09-20 15:12: "Live Chrome
+// THE TEST HOST, NOT THE LAPTOP (HARD, 2026-09-20 15:12: "Live Chrome
 // playtests run on the test host only. Do not use the test host."). This defaulted
 // to 9341, the test host's forwarded port from the 2026-09-18 HARD that ruling
 // replaced, so the suite answered "no page on CDP 9341" on the machine the

@@ -1,4 +1,4 @@
-// kanban #3335 (owner 2026-11-22: "Das Spiel ruckelt auf dem MacBook Pro M5"): the screen moves every frame by the time the frame took,
+// kanban #3335 (owner 2026-11-22: "Das Spiel ruckelt auf dem Laptop"): the screen moves every frame by the time the frame took,
 // at 120 Hz and at 60 Hz; the simulation and its result are the same as without drawing in between.
 import test from "node:test";
 import assert from "node:assert/strict";

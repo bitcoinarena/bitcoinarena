@@ -41,7 +41,7 @@ export default {
       const r = await fetch(`${env.FAUCET_ORIGIN}${url.pathname.slice('/api/faucet'.length)}`, { method: door, headers, body: door === 'POST' ? await request.text() : undefined });
       return new Response(r.body, { status: r.status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow' } });
     }
-    // THE ORANGE PILL RUN'S ROUND SERVICE ON THE STAGE (kanban #3245, #3265): /api/opr/* passed on to arena-opr on the Beelink, whose address is a secret of
+    // THE ORANGE PILL RUN'S ROUND SERVICE ON THE STAGE (kanban #3245, #3265): /api/opr/* passed on to arena-opr on the test host, whose address is a secret of
     // this Worker (OPR_ORIGIN, the Funnel path as FAUCET_ORIGIN's; unset: off), with the caller's address under this Worker's key (OPR_WORKER_KEY), the
     // player's NIP-98 sign-in (signed for https://testnet-stage.bitcoinarena.io/api/opr<path>) and, on the admin paths only, the admin code. GET and POST only, nothing cached
     if (url.pathname.startsWith('/api/opr/')) {

@@ -30,8 +30,8 @@ set -uo pipefail
 F=$FEDIMINT_BIN
 FH=${FEDIMINT_HOME:-$F/home}
 P=${PROBE_DIR:-$(mktemp -d /tmp/stake-lock-step1-XXXXXX)}
-B=${BITCOIN_BIN:-/mnt/bitcoin/bitcoin-31.1/bin}
-L=${LND_BIN:-/mnt/bitcoin/lnd-linux-amd64-v0.21.3-beta}
+B=${BITCOIN_BIN:-/srv/arena/bitcoin-31.1/bin}
+L=${LND_BIN:-/srv/arena/lnd-linux-amd64-v0.21.3-beta}
 DEPOSIT_MSAT=${1:-2000000}
 LOCK_MSAT=${2:-980000}
 # stake_expiry_blocks = 144, ruled 2026-09-11 14:40 (FEDERATION.md "Rulings").

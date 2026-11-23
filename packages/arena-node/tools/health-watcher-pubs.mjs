@@ -9,7 +9,7 @@
  *           emergency marker), the grids the seats read with rounds still ahead (GET /pending grids, GET /expected), the ops grids
  *           (~/blwp-testnet4/emergency-*.log "published" lines of the last 36 h), and their unconfirmed parents (up to 4 deep)
  * LOOKED    on two chains, each by its own bitcoind (no txindex: the mempool, and every new block scanned once for our txids):
- *           ours    the seats' branch (bitcoin-cli -datadir=/mnt/bitcoin/tn4 on the test host)
+ *           ours    the seats' branch (bitcoin-cli -datadir=/srv/arena/tn4 on the test host)
  *           public  public testnet4 through a public Esplora API (kanban #1124, 2026-11-04: the ssh node went behind a slow relay and the
  *                   watcher read nothing there for 6 h): HW_PUBLIC_ESPLORA, mempool.space then blockstream.info, every call HW_ESPLORA_MS
  *                   (8 s); a base that fails steps back for 10 min. The ssh bitcoind (HW_PUBLIC_HOST) is only the second source, read
@@ -40,7 +40,7 @@ const gameName = (g) => GAME[g] || g || '?';
 export function pubsConfig(env = process.env, H = process.env.HOME || '/home/arena') {
   const n = (k, d) => (env[k] != null && env[k] !== '' ? Number(env[k]) : d);
   return {
-    oursCli: (env.HW_OURS_CLI || '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli -datadir=/mnt/bitcoin/tn4').split(' '),
+    oursCli: (env.HW_OURS_CLI || '/srv/arena/bitcoin-31.1/bin/bitcoin-cli -datadir=/srv/arena/tn4').split(' '),
     publicHost: env.HW_PUBLIC_HOST || 'arena@198.51.100.106',
     publicCli: env.HW_PUBLIC_CLI || '$HOME/.arena-node/bitcoin-core/bitcoin-31.1/bin/bitcoin-cli -testnet4 -datadir=$HOME/.arena-node/bitcoin-testnet4',
     wallet: env.HW_POSTING_WALLET || 'blwp-tn4-bonds',

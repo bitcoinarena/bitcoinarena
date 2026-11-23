@@ -202,7 +202,7 @@ const lookup = (ctx, x, rhash) => lnc(ctx, x, 'lookupinvoice', rhash);
 const posts = (ctx) => F(ctx).chat.length;
 const firstPng = () => Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
 
-// ONE LIGHT TAB (the MacBook's load, kanban #2642): the Next Block game's Unity build (*.unityweb) is not loaded - SwiftShader took ~5 cores and
+// ONE LIGHT TAB (the test laptop's load, kanban #2642): the Next Block game's Unity build (*.unityweb) is not loaded - SwiftShader took ~5 cores and
 // none of these flows plays a round. The page's own rule then opens the wallet without Unity (unityStartSettled: at most 60 s). https/wss stay blocked.
 async function lightTab(ctx, url) {
   const b = await ctx.chrome({ width: 1100, height: 800 });

@@ -80,7 +80,7 @@ export function bodyBudget({ total, perAddress = Math.floor(total / 2), reserve 
  *
  * The budget above covers HTTP bodies only. A websocket keeps every fragment of a message until its last one came, up to the
  * server's maxPayload, with no time limit (the seat's own keepalive pings hold the socket open): measured 2026-11-12 on the
- * MacBook, six /guardian-p2p connections each sending 56 MiB of one message and never its final fragment pinned 383 MiB in the
+ * test laptop, six /guardian-p2p connections each sending 56 MiB of one message and never its final fragment pinned 383 MiB in the
  * seat. So every accepted websocket is watched on its raw socket: the bytes received since its last whole message (control
  * frames taken off again) count against one shared budget with the same rules as the bodies - one address at most `perAddress`,
  * a small unfinished message (at most `smallMost`) may use a separate `reserve` (one address at most half of it), and a message

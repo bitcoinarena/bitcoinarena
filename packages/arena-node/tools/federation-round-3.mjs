@@ -43,7 +43,7 @@ const RT = join(P, 'btc');
 // THE PROBE'S CHAIN ANSWERS TO A USER AND PASSWORD, not a cookie - it is started
 // with -rpcuser=arena -rpcpassword=arena - so both doors are opened the same way.
 const AUTH = ['-rpcuser=arena', '-rpcpassword=arena'];
-const BIN = env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli';
+const BIN = env.BITCOIN_CLI || '/srv/arena/bitcoin-31.1/bin/bitcoin-cli';
 const base = ['-regtest', `-datadir=${RT}`, `-rpcport=${rpcport}`, ...AUTH];
 const cliRaw = (...a) => execFileSync(BIN, [...base, ...a], { encoding: 'utf8' }).trim();
 // THE FEDERATION'S OWN WALLET IS ALREADY LOADED HERE, so every wallet call has to

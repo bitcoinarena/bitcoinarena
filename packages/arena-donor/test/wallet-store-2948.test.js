@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // kanban #2948: THE WALLET FILE IS NOT REWRITTEN AT EVERY KEY. The lock client's commit (lock-client store.rs commit_inner) calls
-// put/remove once per key, synchronously; the donor's fileStore rewrote the whole wallet file at each one. Measured on the Beelink
+// put/remove once per key, synchronously; the donor's fileStore rewrote the whole wallet file at each one. Measured on the test host
 // 2026-11-23, seat 2's dev-b: a 22.8 MB wallet, one donation redeemed - 2,428 MB written in 25 s. Now a commit's changes are one
 // appended log line, and the snapshot is written again only when the log has outgrown it.
 import { test } from 'node:test';

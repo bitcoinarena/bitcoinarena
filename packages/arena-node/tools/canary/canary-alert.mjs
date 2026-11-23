@@ -1,15 +1,15 @@
-// kanban #2905: the canary's alert. Reads $CANARY_DIR/canary.jsonl after each run and tells the owner (Signal, through the Beelink) and the card
+// kanban #2905: the canary's alert. Reads $CANARY_DIR/canary.jsonl after each run and tells the owner (Signal, through the test host) and the card
 // when 2 counted rounds in a row failed (VOID with the bot expected, no signed result within 60 s, lock > 6 s, no entry, page down) or no
 // round was played for 90 min (time inside a seat roll does not count). At most one alert an hour; one "wieder ok" when a round passes again.
 // Usage: node canary-alert.mjs [--test]   --test (or CANARY_ALERT_TEST=1): the message goes only to the card, marked TEST, state untouched.
-// Env: CANARY_DIR, CANARY_BEELINK (ssh target, default user@192.168.1.65), CANARY_CARD (default 2905)
+// Env: CANARY_DIR, CANARY_BEELINK (ssh target, default user@test-host), CANARY_CARD (default 2905)
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 
 const DIR = process.env.CANARY_DIR || `${homedir()}/arena-canary`;
 const TEST = process.argv.includes('--test') || process.env.CANARY_ALERT_TEST === '1';
-const BEE = process.env.CANARY_BEELINK || 'user@192.168.1.65', CARD = process.env.CANARY_CARD || '2905';
+const BEE = process.env.CANARY_BEELINK || 'user@test-host', CARD = process.env.CANARY_CARD || '2905';
 const HOUR = 3600000, STALE = 90 * 60000, now = Date.now();
 const lines = (() => { try { return readFileSync(`${DIR}/canary.jsonl`, 'utf8').trim().split('\n').map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean); } catch { return []; } })();
 const stateFile = `${DIR}/alert-state.json`;
@@ -37,7 +37,7 @@ if (!inRoll && (twoFailed || stale)) {
   if (!state.down || now - (state.lastAlertAt || 0) >= HOUR) {
     kind = 'alert';
     msg = `#2905 Canary: Stein-Papier-Schere bezahlt geht nicht. ${twoFailed ? '2 Runden hintereinander fehlgeschlagen' : `seit ${Math.round((now - since) / 60000)} min keine gespielte Runde`}: `
-      + counted.slice(-3).map(why).join('; ') + '. Log: MacBook ~/arena-canary/canary.jsonl';
+      + counted.slice(-3).map(why).join('; ') + '. Log: test laptop ~/arena-canary/canary.jsonl';
   }
 } else if (state.down && latest && latest.ok) {
   kind = 'recovered';

@@ -34,7 +34,7 @@ test('AUDIT admin lockout: 30 wrong codes from 6 addresses (one IPv6 /64) lock t
     }
     // the owner, from their own address, with the RIGHT code
     const owner = await call('GET', '/admin/rounds', { admin: 'letmein', headers: { 'x-arena-worker': 'wk-secret', 'x-arena-ip': '203.0.113.7' } });
-    // and on the Beelink itself (127.0.0.1, as the funnel path /opr arrives too)
+    // and on the test host itself (127.0.0.1, as the funnel path /opr arrives too)
     const local = await call('GET', '/admin/rounds', { admin: 'letmein' });
     assert.equal(owner.status, 200, `the owner with the right code got ${owner.status}: ${owner.json.why}`);
     assert.equal(local.status, 200, `local admin with the right code got ${local.status}`);
@@ -45,13 +45,13 @@ test('AUDIT admin lockout over the funnel: 5 wrong codes from anyone on the inte
   const w = world({ start: '2026-11-22T10:00:00Z', cfg: { workerKey: 'wk-secret' } });
   const { srv, call } = await serve(w);
   try {
-    // https://<beelink>.ts.net/opr/admin/... arrives with remoteAddress 127.0.0.1, no Worker key, and the funnel's X-Forwarded-For (#3284: refused
+    // https://<host>.ts.net/opr/admin/... arrives with remoteAddress 127.0.0.1, no Worker key, and the funnel's X-Forwarded-For (#3284: refused
     // as an admin caller before any count - the faucet reads the same header from the same funnel)
     for (let i = 0; i < 5; i++) {
       const g = await call('GET', '/admin/rounds', { admin: i === 4 ? 'letmein' : 'guess', headers: { 'x-forwarded-for': '198.51.100.66', 'tailscale-funnel-request': '?1' } });
       assert.equal(g.status, 403, `a funnel request is no admin caller (${g.json.why})`);
     }
-    const local = await call('GET', '/admin/rounds', { admin: 'letmein' });   // the owner's curl on the Beelink
+    const local = await call('GET', '/admin/rounds', { admin: 'letmein' });   // the owner's curl on the test host
     assert.equal(local.status, 200, `the right code on 127.0.0.1 got ${local.status}: ${local.json.why}`);
   } finally { srv.close(); }
 });

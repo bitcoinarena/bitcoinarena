@@ -16,8 +16,8 @@ LOG=${1:?the log file}
 HERE=$(cd "$(dirname "$0")" && pwd)
 NODE=${NODE_BIN:-$(command -v node)}
 export FORK_BIN=${FORK_BIN:-/home/arena/blwp-testnet4/patched/bin} FORK_HOME=${FORK_HOME:-/home/arena/blwp-testnet4/patched/home}
-B=${BITCOIN_BIN:-/mnt/bitcoin/bitcoin-31.1/bin}
-L=${LND_BIN:-/mnt/bitcoin/lnd-linux-amd64-v0.21.3-beta}
+B=${BITCOIN_BIN:-/srv/arena/bitcoin-31.1/bin}
+L=${LND_BIN:-/srv/arena/lnd-linux-amd64-v0.21.3-beta}
 WASM=${WASM_PKG:-$(cd "$HERE/../../arena-client/dist" && pwd)}
 export H=$(mktemp -d /tmp/tn4-tools-regtest-XXXXXX)
 : > "$LOG"

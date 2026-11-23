@@ -3,7 +3,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE NODE UPDATE AND ROLLBACK DRIVEN FOR THE E2E SUITE (kanban #2642, e2e/flows/installer.mjs): this tree's update.js (updateNode) and
 // auto-update.js (checkOnce) move a node in a TEMP HOME between real release folders, with real seats of each release answering on
-// 127.0.0.1 - only the service manager is stood in for. On the MacBook the node's own services are launchd agents in the user's real
+// 127.0.0.1 - only the service manager is stood in for. On the test laptop the node's own services are launchd agents in the user's real
 // gui domain (where a live node runs), so the update is run with platform 'linux' and this file's systemctl/journalctl: it reads each
 // unit file the update writes (WorkingDirectory, ExecStart) and starts / stops that process itself. Everything else - the checks, the
 // journal, the backup, the unit rewrite, the health and version checks, the rollback - is the product's own code.

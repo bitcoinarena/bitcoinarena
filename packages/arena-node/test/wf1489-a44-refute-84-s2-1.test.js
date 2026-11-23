@@ -4,7 +4,7 @@
 // `unsure` (or pending in `players`). A row leaves both only through the sweep, by paymentFinal - which reads lncli trackpayment's TEXT output and
 // tests /isn't initiated|not initiated|not found|unknown payment/i over ALL of it BEFORE the "Payment status:" line. Without --json lncli 0.21
 // prints the payment as a table whose ROUTE column is the hops' node ALIASES (cmd/commands formatPayment + aliasCache.get, present in
-// /mnt/bitcoin/lnd-linux-amd64-v0.21.8-beta/lncli). The invoice's destination is the player's own node: a peer that sets its alias to "not found"
+// /srv/arena/lnd-linux-amd64-v0.21.8-beta/lncli). The invoice's destination is the player's own node: a peer that sets its alias to "not found"
 // makes every trackpayment of a payment to it read as NONE ("this payer never paid it"), while lnd says IN_FLIGHT (or SUCCEEDED). The sweep then
 // forgets the unsure welcome / drops the pending welcome, and the same account is paid a second welcome while the first is still held.
 // Attacker role: the payee's Lightning node (a peer), not a client flood. Path: the page's retry ("try again in a few minutes").

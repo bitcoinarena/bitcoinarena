@@ -4,7 +4,7 @@
 // either" - priceAttestationStands wraps toHex(s.key) in a try for a key that is not a string. It does not bound it. toHex(bytes) is
 // `new Array(bytes.length)` and a loop to bytes.length, so a JSON key { "length": 4294967295 } (30 bytes of body) makes one
 // unauthenticated POST /price-attested (price-feed hold) - or POST /game-outcome, via roundResultStands - loop 4.3 billion times on the
-// seat's only thread before the members check ever runs: the seat stops answering (measured on the Beelink: 1e7 0.6 s, 5e7 7.3 s,
+// seat's only thread before the members check ever runs: the seat stops answering (measured on the test host: 1e7 0.6 s, 5e7 7.3 s,
 // superlinear). A key is 32 bytes; nothing past that should be read.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

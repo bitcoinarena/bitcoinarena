@@ -2,7 +2,7 @@
 
 commit a79895475 · 7 runs merged (2026-11-14T09:57:20.378Z .. 2026-11-14T18:43:42.253Z) · **55 pass, 0 fail, 2 not covered**
 
-Private regtest devnet on the MacBook (devnet.mjs: 5-of-7 federation, seven seats, two gateways on two lnds, a payee lnd); the page built from
+Private regtest devnet on the test laptop (devnet.mjs: 5-of-7 federation, seven seats, two gateways on two lnds, a payee lnd); the page built from
 this tree (tools/build-arena-page.mjs) served by e2e/lib/page.mjs and driven in headless Chrome. Order: money first, then reach.
 
 | flow | area | result | s | evidence / why |

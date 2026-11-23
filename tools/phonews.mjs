@@ -3,7 +3,7 @@
 // item 16: a phone opens every guardian wss:// endpoint (A and B), from the live page's origin, and asks each for its session count
 import WebSocket from 'ws'; import { spawn } from 'node:child_process'; import fs from 'node:fs';
 const [shot = 'phonews.png'] = process.argv.slice(2); const port = 9454;
-const dir = fs.mkdtempSync('/tmp/claude-1000/pw-');
+const dir = fs.mkdtempSync('/tmp/pw-');
 const ch = spawn(process.env.CHROME_BIN || new URL('./blwp-browser/chrome', import.meta.url).pathname, ['--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${dir}`, '--no-first-run', 'about:blank'], { stdio: 'ignore' });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let tabs; for (let i = 0; i < 50; i++) { try { tabs = await (await fetch(`http://127.0.0.1:${port}/json`)).json(); if (tabs.find((t) => t.type === 'page')) break; } catch {} await sleep(200); }

@@ -1,5 +1,5 @@
 // Orange Pill Run - the frame clock and the drawn-between-steps positions (kanban #3335, owner 2026-11-22: "Das Spiel ruckelt auf dem
-// MacBook Pro M5"). The simulation stays at a fixed 60 steps per second (src/sim, deterministic, the log and the score never change);
+// laptop"). The simulation stays at a fixed 60 steps per second (src/sim, deterministic, the log and the score never change);
 // the screen runs at its own rate (120 Hz on a ProMotion display). Drawing the state of the last whole step showed the same picture on
 // every other frame at 120 Hz (measured: 50 % of the frames without camera movement) and 0/2-step pairs at 60 Hz (10 %).
 // Now every frame draws the moving things between the step before and the last step, at alpha = the unspent time / STEP.
