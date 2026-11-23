@@ -76,7 +76,10 @@ export function haltProof(observations, { record, censusSeats, abandonBlocks, ve
   if (laterSession !== null && laterSession > best.session)
     return { ok: false, why: `session ${laterSession} is after the halted session ${best.session}: the federation is slow, not halted` };
   const set = [...best.m.values()];
-  const haltHeight = Math.max(...set.map((o) => o.firstHeight));
+  // THE HEIGHT BY WHICH A QUORUM SAW THE HALT (kanban #3292, audit gossip a5-1-1, gap in #3046): the latest first_height of the set let one
+  // census seat set the halt height alone - re-signed each block at tip + 144 it kept the claim window from ever opening. Now the need-th
+  // smallest first_height: fewer than a quorum of observers can move it neither up nor down past what honest observers saw.
+  const haltHeight = set.map((o) => o.firstHeight).sort((a, b) => a - b)[need - 1];
   const seen = new Map();
   for (const o of set) for (const k of o.answering) seen.set(toHex(k), (seen.get(toHex(k)) || 0) + 1);
   const majority = Math.floor(set.length / 2) + 1;
