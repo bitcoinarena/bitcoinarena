@@ -24,7 +24,7 @@ import { encodeRoundPost, levelHashOf } from './opr-chain.mjs';
 import { bestPerPlayer, payoutLists, SPLIT } from './opr-payout.mjs';
 import { checkLnAddress, lnAddressSyntax, LN_CHECKS_PER_HOUR } from './opr-lnaddress.mjs';
 import { runFeatures, nearLogs, deviceOf, scoreRun, topReasons, strongRuns, gridOf, HOLD_ABOVE } from './opr-botscore.mjs';
-import { ipKey } from '../../arena-node/src/faucet.js';
+import { ipKey, ipNetsOf } from '../../arena-node/src/faucet.js';
 import { readFileSync } from 'node:fs';
 
 /** The X handle as typed (@name, name or an x.com link) -> the bare name, or null when it cannot be one (kanban #3331). */
@@ -44,6 +44,7 @@ export const DEFAULTS = Object.freeze({
   bountyClaimMs: 7 * DAY_MS, alertAfterMs: 15 * MIN_MS, fastSlackMs: 1000, maxSteps: 180 * 60,
   confirmations: 1, publicBases: ['https://testnet-stage.bitcoinarena.io/api/opr'], promoEnd: null, adminSha: '', workerKey: '', showTest: false, ipCrowd: 3,
   testMinutesMost: 24 * 60, logPressesMost: 6000, bodyMost: 256 * 1024, ipAttemptsShare: 2,
+  refusedLogNetBytes: 2e6, refusedLogRoundBytes: 200e6,   // kanban #3355: refused logs kept per round from one network (IPv6 /48, IPv4 /24) and from all
 });
 // FREE ROUNDS (kanban #3273, owner 2026-11-22: "a free round - no testnet sats, but 2,000 real sats for the winner" - since 10,000, #3251): a round made now has
 // entry_sats 0. A free run starts at once (no invoice, no lnd), counts as paid (paid_ms = its start), is scored at submit; the round has no pot
@@ -157,6 +158,9 @@ export function createOpr(o = {}) {
   // ONE ADDRESS, A FEW PLAYERS' ATTEMPTS (kanban #3283): ip_key the caller's address as a limit counts it (an IPv6 /64 as one, faucet.js ipKey)
   try { db.exec('ALTER TABLE attempts ADD COLUMN ip_key TEXT'); } catch { /* there already */ }
   db.exec('CREATE INDEX IF NOT EXISTS attempts_by_ip_key ON attempts (round, ip_key)');
+  // A REFUSED LOG'S NETWORK AND SIZE (kanban #3355): log_net the caller's IPv6 /48 or IPv4 /24, log_bytes the kept log's length - for the budgets
+  for (const col of ['log_net TEXT', 'log_bytes INTEGER']) { try { db.exec(`ALTER TABLE attempts ADD COLUMN ${col}`); } catch { /* there already */ } }
+  db.exec('CREATE INDEX IF NOT EXISTS attempts_refused_logs ON attempts (round, log_net, log_bytes)');
   // NEAR-IDENTICAL RUNS, FOUND ONCE (kanban #3282): near_rep the first earlier run of the round this run's log is near (nearLogs) - its own id when
   // none - and presses_n its press count; set at submit, so the bot pass reads groups instead of comparing every pair of logs at list time
   for (const col of ['near_rep TEXT', 'presses_n INTEGER']) { try { db.exec(`ALTER TABLE attempts ADD COLUMN ${col}`); } catch { /* there already */ } }
@@ -416,9 +420,21 @@ export function createOpr(o = {}) {
     const from = a.state;
     // A REFUSED RUN KEEPS ITS LOG ONLY WHEN IT IS A LOG (kanban #3283): a well-formed one (at most logPressesMost presses) stays for the bot pass and
     // the replay; anything else (up to 256 KB of junk each, from free keys) is not stored - the refusal and its reason are
+    // A NETWORK'S REFUSED LOGS ARE BOUNDED (kanban #3355, audit opr a6-1-4): the per-address cap counts one IPv6 /64, and a /48 holds 65,536 of
+    // them - each well-formed refused log (~60 KB) was kept, so one host filled the shared disk again. A round keeps at most refusedLogNetBytes
+    // of refused logs from one network (its /48, or an IPv4 /24) and refusedLogRoundBytes from all; past that the refusal and its reason only
     const reject = (why, extra = {}) => {
-      q("UPDATE attempts SET state = 'rejected', why = ?, submitted_ms = ?, log = ?, client = ?, flags = ? WHERE id = ? AND state = ?")
-        .run(why, t, extra.keepLog ? JSON.stringify(body.log) : null, clientText(body.client), JSON.stringify(extra.flags || {}), a.id, from);
+      let text = extra.keepLog ? JSON.stringify(body.log) : null;
+      const net = (a.ip_key && ipNetsOf(a.ip_key)[0]) || a.ip_key || `key:${a.player}`;
+      if (text != null) {
+        const held = (sql, ...args) => q(sql).get(...args).n;
+        if (held('SELECT COALESCE(SUM(log_bytes), 0) AS n FROM attempts WHERE round = ? AND log_net = ?', a.round, net) + text.length > cfg.refusedLogNetBytes
+          || held('SELECT COALESCE(SUM(log_bytes), 0) AS n FROM attempts WHERE round = ? AND log_net IS NOT NULL', a.round) + text.length > cfg.refusedLogRoundBytes) {
+          text = null; extra = { ...extra, keepLog: false };
+        }
+      }
+      q("UPDATE attempts SET state = 'rejected', why = ?, submitted_ms = ?, log = ?, client = ?, flags = ?, log_net = ?, log_bytes = ? WHERE id = ? AND state = ?")
+        .run(why, t, text, clientText(body.client), JSON.stringify(extra.flags || {}), text != null ? net : null, text != null ? text.length : null, a.id, from);
       if (extra.keepLog) {   // its features and near group now, as a scored run's (kanban #3282: none of it is left for the list time)
         try { q('UPDATE attempts SET bot_feat = ? WHERE id = ? AND bot_feat IS NULL').run(JSON.stringify(runFeatures(sim, levelOf(r), body.log)), a.id); } catch { /* none */ }
         placeNear(a.id);
