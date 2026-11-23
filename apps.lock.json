@@ -35,7 +35,7 @@
     },
     "arena-app-up-or-down": {
       "repo": "bitcoinarena/arena-app-up-or-down",
-      "commit": "fb45ba04399eafcba4a29f4a7c0911bb5e207c1a",
+      "commit": "a5e3b6b90f2ee787287faa6660e38264c8c23f7c",
       "copy": "packages/btc-updown",
       "paths": [
         "/*"
