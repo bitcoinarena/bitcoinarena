@@ -132,6 +132,7 @@ export function runTicksOf(core, config) {
  * the contract - not a fixed constant")? A core held to one length (the truck before the fork) takes that one; a core
  * that takes the round's length takes any it says fits (1 .. RUN_TICKS for the truck).
  */
+const FITS_FAILED = new WeakMap();   // core -> run length -> the refusal of an ask that did not answer (kanban #2807)
 export function runLengthFits(core, config, blockTicks) {
   if (!core) return { ok: false, why: 'no core to check that round\'s run length against' };
   let s;
@@ -146,7 +147,13 @@ export function runLengthFits(core, config, blockTicks) {
     return blockTicks === own ? { ok: true }
       : { ok: false, why: `that round says a run is ${blockTicks} ticks and this core ends one at ${own}` };
   }
-  return s.call('runTicksFits', { ticks: blockTicks }) ? { ok: true }
+  // kanban #2807: an ask that did not answer is remembered for that core and length - never asked again on the seat's thread
+  const memo = FITS_FAILED.get(core) || FITS_FAILED.set(core, new Map()).get(core);
+  if (memo.has(blockTicks)) return memo.get(blockTicks);
+  let fits;
+  try { fits = s.call('runTicksFits', { ticks: blockTicks }); }
+  catch (e) { const r = { ok: false, why: `${core.name}'s runTicksFits did not answer: ${String(e && e.message || e).slice(0, 200)}` }; if (memo.size < 1024) memo.set(blockTicks, r); return r; }
+  return fits ? { ok: true }
     : { ok: false, why: `that round says a run is ${blockTicks} ticks, and ${core.name} runs 1 to ${runTicksOf(core, config)}` };
 }
 
