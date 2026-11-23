@@ -112,3 +112,25 @@ test('standing orders: what has not filled stands into the next batch (every hal
   const back = [...b2.returned, ...b3.returned].reduce((t, r) => t + r.stakeMsat, 0n);
   assert.equal(fills.reduce((t, f) => t + f.costMsat + f.feeMsat, 0n) + back, stakes, 'a msat of the stakes went nowhere across the batches');
 });
+
+test('#2924 a resting sell keeps its unsold shares and a resting lock-backed buy only its unspent budget (feedback #230/#231)', () => {
+  const t0 = 1791598500000n;
+  // a lock-backed buy: 99,000 msat net budget; a small Down meets part of it, the rest stands
+  const buy = { ...o('e', YES, 60000, 100), net: 99000n, fullNet: 99000n, fullFee: 1000n };
+  const b1 = bookBatch({ incoming: [buy, o('f', NO, 45000, 20)], nowMs: t0, feeBps: FEE });
+  const spent1 = b1.fills.filter((f) => f.id === buy.id).reduce((t, f) => t + f.costMsat, 0n);
+  const rest = b1.resting.find((x) => x.id === buy.id);
+  assert.ok(rest && spent1 > 0n);
+  assert.equal(rest.net, 99000n - spent1, 'the resting buy keeps only what it did not spend');
+  const b2 = bookBatch({ resting: b1.resting, incoming: [o('g', NO, 45000, 1000)], nowMs: t0 + BATCH_MS, feeBps: FEE });
+  const spent2 = b2.fills.filter((f) => f.id === buy.id).reduce((t, f) => t + f.costMsat, 0n);
+  assert.ok(spent1 + spent2 <= 99000n, `two batches spent ${spent1} + ${spent2}, over the 99,000 budget`);
+  // a sell of 50 sat of shares that a 2 sat buy meets only in part: the unsold shares stand
+  const sell = { id: 'h'.padStart(64, '0'), outcome: YES, price: 40000n, sell: true, sharesMsat: 50000n };
+  const s1 = bookBatch({ incoming: [sell, o('i', YES, 60000, 2)], nowMs: t0, feeBps: FEE });
+  const sold = s1.fills.filter((f) => f.id === sell.id).reduce((t, f) => t + f.payoutMsat, 0n);
+  assert.ok(sold > 0n && sold < 50000n);
+  const srest = s1.resting.find((x) => x.id === sell.id);
+  assert.ok(srest, 'the unsold shares did not stand');
+  assert.equal(srest.sharesMsat, 50000n - sold);
+});

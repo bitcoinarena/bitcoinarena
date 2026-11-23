@@ -247,7 +247,14 @@ export function bookBatch({ resting = [], incoming = [], cancels = [], nowMs, fe
   const byId = new Map(live.map((o) => [o.id, o]));
   const fills = b.fills.filter((f) => f.payoutMsat > 0n);
   // WHAT IS LEFT STANDS: an order's refund is its remaining stake (its fee on that part not charged), into the next batch
-  const resting2 = b.fills.filter((f) => f.refundMsat > 0n).map((f) => ({ ...byId.get(f.id), stakeMsat: f.refundMsat }));
+  // A SELL RESTS WITH ITS UNSOLD SHARES, A LOCK-BACKED BUY WITH ONLY ITS UNSPENT BUDGET (kanban #2924, feedback #230/#231): a sell's
+  // refund is always 0, so its rest never stood, and a buy with its own net kept the whole net and spent it again next batch
+  const resting2 = b.fills.flatMap((f) => {
+    const o = byId.get(f.id);
+    if (f.sell) return f.restSharesMsat > 0n ? [{ ...o, sharesMsat: f.restSharesMsat }] : [];
+    if (f.refundMsat <= 0n) return [];
+    return [{ ...o, stakeMsat: f.refundMsat, ...(typeof o.net === 'bigint' ? { net: f.restNetMsat } : {}) }];
+  });
   return { price: b.price, matchedMsat: b.matchedMsat, fills, resting: resting2, returned };
 }
 
