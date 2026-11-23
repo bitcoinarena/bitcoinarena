@@ -3494,12 +3494,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
     return null;
   }
-  async function pushVoid(rid, eid) {
-    if (!round.entryVoid(eid)) return;
+  // ONE PUSH OF A VOID PER ENTRY AT A TIME, AND NOT AGAIN FOR VOID_PUSH_MISS_MS (kanban #3357, audit entry a6-2-1, gap in #2854): each GET /forfeit of an
+  // ENTRY_VOID entry whose refund does not combine forwarded the first mark, its batches and receipts to every committee peer again - a stranger's
+  // small GET became n-1 POST /first-mark with their checks at every peer, for as long as the refund stayed uncombined
+  const VOID_PUSH_MISS_MS = 60000;
+  const voidPushes = new Map();   // entry hex -> { at, p }
+  function pushVoid(rid, eid) {
+    if (!round.entryVoid(eid)) return Promise.resolve();
+    const k = toHex(eid), had = voidPushes.get(k);
+    if (had && (had.p || Date.now() - had.at < VOID_PUSH_MISS_MS)) return had.p || Promise.resolve();
     const f = firstMarkMessage(rid, eid);
+    if (!f) return Promise.resolve();
     // named as the forfeit ask's push: a signer node that learns the Void only from it
     // signs no lock refund before the result window passes (forfeit.js)
-    if (f) await forwardFirstMark(f, { ask: 'forfeit' });
+    const p = Promise.resolve().then(() => forwardFirstMark(f, { ask: 'forfeit' })).finally(() => { voidPushes.set(k, { at: Date.now(), p: null }); });
+    voidPushes.delete(k); voidPushes.set(k, { at: Date.now(), p });
+    if (voidPushes.size > 4096) voidPushes.delete(voidPushes.keys().next().value);
+    return p;
   }
 
   // THE SIGNER NODES' FORFEIT OF A QUALIFIER'S STAKE LOCK (W5b), with this signer node's share
