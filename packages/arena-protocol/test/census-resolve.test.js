@@ -546,7 +546,8 @@ test('a census checks the marker of its own network, not the default', async () 
   });
   const entryFor = (tx) => ({
     txid: parseTransaction(tx).txid, vout: 0, pubkey: b32(0x11),
-    bondSats: 60000n, height: 900000, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'], spent: false,
+    // a template-1 bond of testnet4's legacy era (kanban #3548: one confirmed from 156,038 on is not stake there)
+    bondSats: 60000n, height: 156000, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'], spent: false,
   });
   const round = (networkId) => ({
     bondMinSats: 50000n, protocolVersion: PROTOCOL_VERSION, networkId,

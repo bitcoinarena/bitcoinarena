@@ -40,9 +40,12 @@ const advertFor = (n, over = {}) => ({
   bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1, payoutPubkey: b32(3), guardianOf: [],
   guardianCapable: false, guardianEndpoint: '', timestamp: 1788700000000n, ...over,
 });
+// TESTNET4'S BONDS ARE TEMPLATE 2 (kanban #3548): a template-1 bond confirmed from 156,038 on is not stake there - its recovery leaf carries
+// genesis' 100 - so this chain's bonds carry their own maturity height, well past their confirmation plus 144
+const TEMPLATE = (net) => (net === 'testnet4' ? { bondScriptTemplateVersion: 2, bondMaturityHeight: 170000 } : {});
 const outputKeyOf = (net, nodeKey) => {
   const g = genesisFor(net);
-  return bondOutputKey({ nodeKey, arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK, bondMaturity: g.bondMaturity,
+  return bondOutputKey({ nodeKey, arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK, bondMaturity: TEMPLATE(net).bondMaturityHeight ?? g.bondMaturity,
     internalKey: bondInternalKey({ nodeKey, arbitrationKeys: g.arbitrationKeys }, { combine }).internalKey }, { tweakPoint, combine }).outputKey;
 };
 const plain = (n) => serializeSpend({
@@ -62,14 +65,14 @@ const spend = (txid, vout, n) => serializeSpend({
  */
 function arenaOf(net, networkId) {
   const bond = (n, prev) => {
-    const ad = advertFor(n);
+    const ad = advertFor(n, TEMPLATE(net));
     return bondTransaction(ad, { network: net === 'testnet4' ? 'testnet' : net, signature: schnorr.sign(advertId(ad), b32(n)),
       outputKey: outputKeyOf(net, keyOf(n)), previousTxid: b32(prev), value: 100000 });
   };
   const old = bond(0x21, 0xa1), updated = bond(0x22, 0xa2), spent = bond(0x23, 0xa3), shallow = bond(0x24, 0xa4);
-  const upAd = advertFor(0x22, { endpoint: 'wss://moved.example/', timestamp: 1790000000000n });
+  const upAd = advertFor(0x22, { ...TEMPLATE(net), endpoint: 'wss://moved.example/', timestamp: 1790000000000n });
   const update = advertUpdateTransaction(upAd, { network: net === 'testnet4' ? 'testnet' : net, bondTxid: txidOf(updated), bondVout: 0, signature: schnorr.sign(advertId(upAd), b32(0x22)) });
-  const ancAd = advertFor(0x25, { hostedGames: [] });
+  const ancAd = advertFor(0x25, { ...TEMPLATE(net), hostedGames: [] });
   const ancBody = encodeAncestorAdvert(ancAd), ancId = ancestorAdvertId(ancBody);
   const ancestor = bondTransaction(ancAd, { commitment: ancId, body: joinSignedAdvert(ancBody, schnorr.sign(ancId, b32(0x25))),
     markerProgram: ancestorMarker(net), outputKey: outputKeyOf(net, keyOf(0x25)), previousTxid: b32(0xa5), value: 100000 });
