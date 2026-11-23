@@ -19,9 +19,15 @@ export const DONATION_GIFTS_SQL = `CREATE TABLE IF NOT EXISTS donation_gifts (
  * the federation's lock port (status, contractId); `db` the seat's store; `verify` BIP340; `keepRows(rows)` the store's
  * putDonationOutputs. Answers { ok, id, kept: 'new' | 'held' } or { ok: false, status, why }.
  */
-export async function keepDonationGift({ g, recipients, networkSet = null, gameSet = null, port, db, verify, keepRows, nowMs = Date.now() }) {
+// `networkSets` (kanban #3293): the network sets vested a few days back (vestedSetsNear), the tip's first - a split at any of them stands
+export async function keepDonationGift({ g, recipients, networkSet = null, gameSet = null, networkSets = null, port, db, verify, keepRows, nowMs = Date.now() }) {
   const no = (status, why) => ({ ok: false, status, why });
-  const st = giftStands(g, { recipients, networkSet, gameSet, verify, nowMs });
+  let st = giftStands(g, { recipients, networkSet, gameSet, verify, nowMs });
+  const both = g.target === GIFT_TO_BOTH;
+  if (!st.ok && Array.isArray(networkSets) && (both ? networkSet : recipients)) for (const alt of networkSets.slice(1)) {
+    const t = giftStands(g, both ? { recipients, networkSet: alt, gameSet, verify, nowMs } : { recipients: alt, networkSet, gameSet, verify, nowMs });
+    if (t.ok) { st = t; break; }
+  }
   if (!st.ok) return no(422, st.why);
   const id = toHex(st.id);
   db.exec(DONATION_GIFTS_SQL);

@@ -63,9 +63,14 @@ export function ensurePurchaseState(db) {
  */
 // `fees`: the fee set in force: an item's parts on the reserves' terms; unset, today's
 export async function keepItemPurchase({ p, manifest, networkSet, gameSet, served, port, db, verify, nowMs = Date.now(), reserveKey = null, keepReserve = null, keepDonations = null, fees = null,
-  legacyImage = true }) {
+  legacyImage = true, networkSets = null }) {
   const no = (status, why) => ({ ok: false, status, why });
-  const st = purchaseStands(p, { manifest, networkSet, gameSet, served, verify, reserveKey, fees });
+  let st = purchaseStands(p, { manifest, networkSet, gameSet, served, verify, reserveKey, fees });
+  // kanban #3293: the page split at its round's census height, a vesting step or two below this seat's tip (vestedSetsNear)
+  if (!st.ok && Array.isArray(networkSets)) for (const alt of networkSets.slice(1)) {
+    const t = purchaseStands(p, { manifest, networkSet: alt, gameSet, served, verify, reserveKey, fees });
+    if (t.ok) { st = t; break; }
+  }
   if (!st.ok) return no(422, st.why);
   const id = toHex(st.id), txid = toHex(p.txid);
   ensurePurchaseState(db);

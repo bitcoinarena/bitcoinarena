@@ -514,6 +514,23 @@ export function donationSetMatchesRound(contract, recipients) {
 
 /** A day of vesting, in blocks (§27A.4.1: "vesting is daily", 2026-10-16). */
 export const VESTING_DAY_BLOCKS = 144;
+/** How many vesting steps below its tip a seat still takes a split at (kanban #3293): a page splits at its lobby round's census height. */
+export const VESTING_STEPS_BACK = 2;
+/**
+ * THE VESTED SETS A SPLIT MAY HAVE BEEN MADE AT (kanban #3293, audit settle-a5-1-1): a page splits a gift or a purchase over the set
+ * vested at its lobby round's census height (donation-pay.js fetchDonationSet), a seat checks at its own tip, and a day's series shares
+ * one census height - so the tip is routinely a vesting step or two past it. The distinct vested sets at the tip and at each of the
+ * `steps` days below it, the tip's first; vesting only moves forward, so no set from a later height is ever among them.
+ */
+export function vestedSetsNear(recipients, height, steps = VESTING_STEPS_BACK) {
+  const out = [], seen = new Set(), h = Number(height) || 0;
+  for (let k = 0; k <= steps; k++) {
+    const set = vestedShares(recipients, Math.max(0, h - k * VESTING_DAY_BLOCKS));
+    const key = Array.isArray(set) ? set.map((r) => r.shareBps).join(',') : String(k);
+    if (!seen.has(key)) { seen.add(key); out.push(set); }
+  }
+  return out;
+}
 /**
  * THE SHARES A VESTING SET PAYS AT A HEIGHT (§27A.4.1): each vesting entry has moved from its share towards its target
  * by one day's step per VESTING_DAY_BLOCKS since its start (floored to whole basis points, at most its target); every other entry
