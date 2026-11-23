@@ -30,8 +30,9 @@ test('AUDIT2 one POST /lnaddress by a stranger rebuilds every waiting list: cost
   assert.ok(ms < 50, `a stranger's address save rebuilds every waiting list: ${ms.toFixed(0)} ms of blocked event loop per request, from free keys at 10 per key and hour`);
 });
 
-test('#3333 a save by a key on a waiting list still rebuilds that list; all keys together get at most lnChecksPerMinAll wallet asks a minute', async () => {
-  const w = world({ start: '2026-11-23T00:00:00Z', cfg: { entrySats: 0, lnChecksPerMinAll: 3 } });
+test('#3333 a save by a key on a waiting list still rebuilds that list; all keys of one caller address get at most lnChecksPerMinAll wallet asks a minute (#3353: per address), all callers lnChecksPerMinNet', async () => {
+  const w = world({ start: '2026-11-23T00:00:00Z', cfg: { entrySats: 0, lnChecksPerMinAll: 3, lnChecksPerMinNet: 6 } });
+  const ip = { ip: '198.51.100.9' };
   w.clock.set(Date.parse('2026-11-23T00:00:00Z') + MIN);
   await w.opr.tick(); await w.opr.tick(); w.chain.confirm(); await w.opr.tick();
   const r = w.opr.currentRound(), kp = keypair();
@@ -41,11 +42,14 @@ test('#3333 a save by a key on a waiting list still rebuilds that list; all keys
   w.clock.set(r.end_ms); await w.opr.tick(); w.clock.add(60 * MIN); await w.opr.tick();   // lists written; the address still in time
   const bounty = () => w.opr.listsOf(r.id).find((x) => x.kind === 'bounty');
   assert.equal(bounty().rows.length, 0, 'no address yet: nobody on the list');
-  assert.equal((await w.opr.saveLnAddress(kp.pk, 'me@walletofsatoshi.com')).ok, true);
+  assert.equal((await w.opr.saveLnAddress(kp.pk, 'me@walletofsatoshi.com', ip)).ok, true);
   assert.equal(bounty().rows[0].player, kp.pk, 'the saving key\'s own list is rebuilt');
-  for (let i = 0; i < 2; i++) assert.equal((await w.opr.saveLnAddress(keypair().pk, `a${i}@walletofsatoshi.com`)).ok, true);
-  const all = await w.opr.saveLnAddress(keypair().pk, 'b@walletofsatoshi.com');
+  for (let i = 0; i < 2; i++) assert.equal((await w.opr.saveLnAddress(keypair().pk, `a${i}@walletofsatoshi.com`, ip)).ok, true);
+  const all = await w.opr.saveLnAddress(keypair().pk, 'b@walletofsatoshi.com', ip);
   assert.equal(all.code, 429); assert.match(all.why, /right now/);
+  // another caller address is not held by this one's minute; the whole service's backstop holds a key without a run
+  for (let i = 0; i < 3; i++) assert.equal((await w.opr.saveLnAddress(keypair().pk, `c${i}@walletofsatoshi.com`, { ip: '203.0.113.77' })).ok, true);
+  assert.equal((await w.opr.saveLnAddress(keypair().pk, 'd@walletofsatoshi.com', { ip: '192.0.2.44' })).code, 429);
   w.clock.add(MIN + 1);
-  assert.equal((await w.opr.saveLnAddress(keypair().pk, 'b@walletofsatoshi.com')).ok, true);
+  assert.equal((await w.opr.saveLnAddress(keypair().pk, 'b@walletofsatoshi.com', ip)).ok, true);
 });

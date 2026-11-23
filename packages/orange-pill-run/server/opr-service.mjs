@@ -39,7 +39,8 @@ const DAY_MS = 86400000, MIN_MS = 60000;
 export const DEFAULTS = Object.freeze({
   firstDay: '2026-11-23', daily: true, entrySats: 0, maxAttempts: 5, submitMs: 10 * MIN_MS, lastCallMs: 5 * MIN_MS, invoiceS: 600,
   verifyGraceMs: 60 * MIN_MS, bountySats: 2500,   // the play bounty in real sats (owner 2026-11-22: 2,500 - 5,000 earlier that day, 10,000 before; it was 2,000) - every round reads it here, none stores its own
-  lnChecksPerMinAll: 60, xChecksPerMinAll: 15,   // kanban #3333: wallet asks and X lookups of all keys together per minute
+  lnChecksPerMinAll: 60, xChecksPerMinAll: 15,   // kanban #3333, #3353: wallet asks and X lookups per minute of all keys of ONE caller address (ipKey)
+  lnChecksPerMinNet: 600, xChecksPerMinNet: 150,   // kanban #3353: the whole service's backstop per minute; a key with a run in a round still listing is not held by it
   bountyClaimMs: 7 * DAY_MS, alertAfterMs: 15 * MIN_MS, fastSlackMs: 1000, maxSteps: 180 * 60,
   confirmations: 1, publicBases: ['https://testnet-stage.bitcoinarena.io/api/opr'], promoEnd: null, adminSha: '', workerKey: '', showTest: false, ipCrowd: 3,
   testMinutesMost: 24 * 60, logPressesMost: 6000, bodyMost: 256 * 1024, ipAttemptsShare: 2,
@@ -151,6 +152,8 @@ export function createOpr(o = {}) {
     CREATE INDEX IF NOT EXISTS x_link_moves_by_from ON x_link_moves (from_pubkey, at_ms);
     CREATE TABLE IF NOT EXISTS x_checks (player TEXT NOT NULL, at_ms INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS x_checks_by_player ON x_checks (player, at_ms); CREATE INDEX IF NOT EXISTS x_checks_by_time ON x_checks (at_ms);`);
   db.exec('CREATE TABLE IF NOT EXISTS ln_checks (player TEXT NOT NULL, at_ms INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS ln_checks_by_player ON ln_checks (player, at_ms); CREATE INDEX IF NOT EXISTS ln_checks_by_time ON ln_checks (at_ms);');
+  // THE CALLER'S ADDRESS OF A CHECK (kanban #3353): the minute caps of #3333 are counted per caller address, not for all callers together
+  for (const tb of ['ln_checks', 'x_checks']) { try { db.exec(`ALTER TABLE ${tb} ADD COLUMN ip_key TEXT`); } catch { /* there already */ } db.exec(`CREATE INDEX IF NOT EXISTS ${tb}_by_ip ON ${tb} (ip_key, at_ms)`); }
   // ONE ADDRESS, A FEW PLAYERS' ATTEMPTS (kanban #3283): ip_key the caller's address as a limit counts it (an IPv6 /64 as one, faucet.js ipKey)
   try { db.exec('ALTER TABLE attempts ADD COLUMN ip_key TEXT'); } catch { /* there already */ }
   db.exec('CREATE INDEX IF NOT EXISTS attempts_by_ip_key ON attempts (round, ip_key)');
@@ -492,7 +495,17 @@ export function createOpr(o = {}) {
    * SAVE A LIGHTNING ADDRESS (kanban #3250, POST /lnaddress): the syntax first (no wallet asked for a typo), then at most LN_CHECKS_PER_HOUR wallet
    * asks per player and hour, then the wallet itself. Kept only when it answered as a Lightning address; the waiting lists are rebuilt with it.
    */
-  async function saveLnAddress(player, address) {
+  // ONE CALLER'S FLOOD LOCKS ONLY THAT CALLER (kanban #3353, audit opr a6-1-1): the all-keys minute caps of #3333 were one window for every
+  // caller, so a stranger's free fresh keys filled it each minute and no honest player could save an address or link X - the bounty skipped
+  // the honest best player. The cap is now counted per caller address (ipKey; a call with none, never from the HTTP door, is its key's own);
+  // a much larger whole-service backstop stays for the lookups' cost, and a key with a run in a round still listing (an attempt) passes it
+  const checkKeyOf = (player, ip) => { const ik = ipKey(ip); return ik ? `ip:${ik}` : `key:${player}`; };
+  const hasStake = (pk, t) => !!q(`SELECT 1 FROM attempts a JOIN rounds r ON r.id = a.round WHERE a.player = ? AND a.state != 'expired' AND r.end_ms + ? > ? LIMIT 1`).get(String(pk), cfg.verifyGraceMs, t);
+  const checkCapped = (tb, player, ck, t, perCaller, perNet) => {
+    if (q(`SELECT COUNT(*) AS n FROM ${tb} WHERE ip_key = ? AND at_ms > ?`).get(ck, t - MIN_MS).n >= perCaller) return true;
+    return q(`SELECT COUNT(*) AS n FROM ${tb} WHERE at_ms > ?`).get(t - MIN_MS).n >= perNet && !hasStake(player, t);
+  };
+  async function saveLnAddress(player, address, { ip = null } = {}) {
     const s = lnAddressSyntax(address);
     if (!s.ok) return { ok: false, code: 400, why: s.why };
     const t = now();
@@ -501,8 +514,9 @@ export function createOpr(o = {}) {
     // ALL KEYS TOGETHER (kanban #3333): keys are free, so the per-key limit alone does not bound the wallet asks; one every LN_CHECK_GAP_MS per key too
     const last = q('SELECT MAX(at_ms) AS m FROM ln_checks WHERE player = ?').get(player).m;
     if (last != null && t - last < LN_CHECK_GAP_MS) return { ok: false, code: 429, why: 'One check every few seconds - try again in a moment' };
-    if (q('SELECT COUNT(*) AS n FROM ln_checks WHERE at_ms > ?').get(t - MIN_MS).n >= cfg.lnChecksPerMinAll) return { ok: false, code: 429, why: 'Too many checks right now - try again in a minute' };
-    q('INSERT INTO ln_checks (player, at_ms) VALUES (?, ?)').run(player, t);
+    const ck = checkKeyOf(player, ip);
+    if (checkCapped('ln_checks', player, ck, t, cfg.lnChecksPerMinAll, cfg.lnChecksPerMinNet)) return { ok: false, code: 429, why: 'Too many checks right now - try again in a minute' };
+    q('INSERT INTO ln_checks (player, at_ms, ip_key) VALUES (?, ?, ?)').run(player, t, ck);
     let c;
     try { c = await lnCheck(s.address); } catch { c = { ok: false, why: 'That wallet did not answer' }; }
     if (!c || !c.ok) { log(`ln address of ${player.slice(0, 8)} not kept: ${c && c.why}`); return { ok: false, code: 400, why: String((c && c.why) || 'That wallet did not answer').slice(0, 80) }; }
@@ -610,7 +624,7 @@ export function createOpr(o = {}) {
   // an attempt (any state but expired, as firstRunOf counts) in a round still running (#3382)
   const playingNow = (pk, t) => !!q(`SELECT 1 FROM attempts a JOIN rounds r ON r.id = a.round WHERE a.player = ? AND a.state != 'expired'
     AND r.end_ms > ? AND r.state NOT IN ('closed', 'listed') LIMIT 1`).get(String(pk), t);
-  async function saveX(player, typed) {
+  async function saveX(player, typed, { ip = null } = {}) {
     const name = xHandleOf(typed);
     if (!name) return { ok: false, code: 400, why: 'Not an X username' };
     if (!xLookup) return { ok: false, code: 503, why: 'X cannot be checked here' };
@@ -618,8 +632,9 @@ export function createOpr(o = {}) {
     const last = q('SELECT MAX(at_ms) AS m, COUNT(*) AS n FROM x_checks WHERE player = ? AND at_ms > ?').get(player, t - 60 * MIN_MS);
     if (last.m != null && t - last.m < X_CHECK_GAP_MS) return { ok: false, code: 429, why: `One check every ${X_CHECK_GAP_MS / 1000} seconds - try again in a moment` };
     if (last.n >= X_CHECKS_PER_HOUR) return { ok: false, code: 429, why: 'Too many checks - try again in an hour' };
-    if (q('SELECT COUNT(*) AS n FROM x_checks WHERE at_ms > ?').get(t - MIN_MS).n >= cfg.xChecksPerMinAll) return { ok: false, code: 429, why: 'Too many checks right now - try again in a minute' };
-    q('INSERT INTO x_checks (player, at_ms) VALUES (?, ?)').run(player, t);
+    const ck = checkKeyOf(player, ip);
+    if (checkCapped('x_checks', player, ck, t, cfg.xChecksPerMinAll, cfg.xChecksPerMinNet)) return { ok: false, code: 429, why: 'Too many checks right now - try again in a minute' };
+    q('INSERT INTO x_checks (player, at_ms, ip_key) VALUES (?, ?, ?)').run(player, t, ck);
     let a;
     try { a = await xLookup(name); } catch (e) { a = { userId: null, why: String(e && e.message || e) }; }
     if (a && !a.userId && /no such X account/i.test(String(a.why || ''))) return { ok: false, code: 404, why: 'no such X account', username: name };
@@ -1009,8 +1024,8 @@ export function createOpr(o = {}) {
         q('INSERT INTO players (pubkey, name, seen_ms) VALUES (?, ?, ?) ON CONFLICT (pubkey) DO UPDATE SET name = excluded.name').run(me, n, now());
         return send(200, { ok: true, name: n });
       }
-      if (req.method === 'POST' && path === '/x') { const r = await saveX(me, body.x); const { code, ...out } = r; return send(r.ok ? 200 : code || 400, out); }
-      if (req.method === 'POST' && path === '/lnaddress') { const r = await saveLnAddress(me, body.address); const { code, ...out } = r; return send(r.ok ? 200 : code || 400, out); }
+      if (req.method === 'POST' && path === '/x') { const r = await saveX(me, body.x, { ip }); const { code, ...out } = r; return send(r.ok ? 200 : code || 400, out); }
+      if (req.method === 'POST' && path === '/lnaddress') { const r = await saveLnAddress(me, body.address, { ip }); const { code, ...out } = r; return send(r.ok ? 200 : code || 400, out); }
       if (req.method === 'POST' && path === '/attempt') { const r = await startAttempt(me, { round: body.round, ip }); return send(r.ok ? 200 : 409, r); }
       if (req.method === 'POST' && path === '/attempt/check') { const r = await checkAttempt(me, body.attempt); return send(r.ok ? 200 : 404, r); }
       if (req.method === 'POST' && path === '/submit') { const r = await submitChecked(me, body, { ip }); return send(r.ok ? 200 : 409, r); }
