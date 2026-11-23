@@ -18,7 +18,7 @@ async function open(ctx, profileDir, url = ctx.lobbyUrl, { unity = true, keepUni
   await t.until('!!document.getElementById("arena-hdr-bal")', 60000, 'the wallet bar');
   if (unity) {
     // UNITY ONLY AS LONG AS THE PAGE NEEDS IT: once the client has booted, its frame loop is paused (emscripten's pauseMainLoop) - on
-    // SwiftShader every frame is drawn by the CPU (~11 cores measured on the MacBook). The wallet, deposits and withdrawals go on.
+    // SwiftShader every frame is drawn by the CPU (~11 cores measured on the test laptop). The wallet, deposits and withdrawals go on.
     t.pauseUnity = () => t.js('(() => { const m = window.unityInstance && window.unityInstance.Module; if (m && typeof m.pauseMainLoop === "function") { m.pauseMainLoop(); return true; } return false; })()').catch(() => false);
     if (!keepUnity) { await t.until('!!window.unityInstance', 120000, 'Unity booted').catch(() => null); await wait(3000); t.unityPaused = await t.pauseUnity(); }
   }

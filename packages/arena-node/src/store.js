@@ -57,7 +57,7 @@ export function renameToSignerNodes(db) {
  * A WRITE-AHEAD RECORD, ON THE DISK BEFORE ITS EFFECT (kanban #1243, audit 3 #1210 CRASH-2): the store runs synchronous = NORMAL, so a commit is
  * durable only at the next WAL sync - and a power loss could take the very record a write-ahead fix stands on (an exchange's RECEIVING row while
  * the federation already holds the notes, a deal, an epoch contribution, a settlement SUBMITTING, a send FUNDING). `fn` runs with synchronous =
- * FULL, so its commit fsyncs the WAL (measured on the Beelink: 6.2 ms a write, 0.015 ms at NORMAL); every other write stays NORMAL. Inside an
+ * FULL, so its commit fsyncs the WAL (measured on the test host: 6.2 ms a write, 0.015 ms at NORMAL); every other write stays NORMAL. Inside an
  * open transaction nothing is switched (the transaction's own commit decides).
  */
 export function durably(db, fn) {

@@ -36,7 +36,7 @@ const PAGE_PORT = Number(env.E2E_PAGE_PORT || BASE + 9);
 const FAUCET_PORT = Number(env.E2E_FAUCET_PORT || BASE + 15);   // base + 10 .. 12 is lnd A
 mkdirSync(OUT, { recursive: true });
 const say = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o }));
-// THE MACHINE'S LOAD RULE (the MacBook carries a live node beside the suite: keep the load under 19): a headless Chrome running Unity on
+// THE MACHINE'S LOAD RULE (the test laptop carries a live node beside the suite: keep the load under 19): a headless Chrome running Unity on
 // SwiftShader takes ~5 cores, so a browser is started only while the 1-minute load is under E2E_MAX_LOAD (default 14), waiting up to E2E_GATE_MS (default 2 min)
 const MAX_LOAD = Number(env.E2E_MAX_LOAD || 14);
 async function loadGate(tell) {
@@ -85,7 +85,7 @@ async function runFlows({ t0, live, dn, page, pageUrl, lobbyUrl }) {
   const shared = {};   // what one flow leaves for another (a funded wallet's words, a settled round)
   const results = [];
   const chromes = [];
-  // A KILLED RUN TAKES ITS BROWSERS WITH IT (measured: two headless Chromes of a killed run kept drawing Unity on the MacBook)
+  // A KILLED RUN TAKES ITS BROWSERS WITH IT (measured: two headless Chromes of a killed run kept drawing Unity on the test laptop)
   for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP', 'SIGALRM']) process.once(sig, async () => { for (const b of chromes.splice(0)) await b.close().catch(() => {}); process.exit(3); });
   const ctx = (f) => ({ env, out: OUT, dir: flowDir(OUT, f.id), dn, pageUrl, lobbyUrl, shared, root: ROOT, faucetUrl: `http://127.0.0.1:${FAUCET_PORT}`, page,
     async chrome(opts = {}) { const b = await launch({ dir: join(flowDir(OUT, f.id), `chrome-${chromes.length}`), ...opts }); chromes.push(b); return b; },

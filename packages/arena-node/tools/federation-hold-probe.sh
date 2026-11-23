@@ -38,8 +38,8 @@ fi
 F=$FEDIMINT_BIN
 FH=${FEDIMINT_HOME:-$F/home}
 P=${PROBE_DIR:-$(mktemp -d /tmp/federation-hold-probe-XXXXXX)}
-B=${BITCOIN_BIN:-/mnt/bitcoin/bitcoin-31.1/bin}
-L=${LND_BIN:-/mnt/bitcoin/lnd-linux-amd64-v0.21.3-beta}
+B=${BITCOIN_BIN:-/srv/arena/bitcoin-31.1/bin}
+L=${LND_BIN:-/srv/arena/lnd-linux-amd64-v0.21.3-beta}
 WINDOW_S=${1:-30}
 AMOUNT_MSAT=${2:-1000000}
 # THE GUARDIANS' HOLD (FM_LNV2_INCOMING_HOLD_SECS): only a fedimintd built with

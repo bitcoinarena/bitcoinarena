@@ -7,7 +7,7 @@
  * regtest's network id, signed offline by regtest's Ed25519 donation authority (refused if the key is not the one regtest
  * genesis names), serial 2 above the LNURL test set's 1, in force from height 0. Only a node handed this set reads it.
  *
- *   node packages/arena-protocol/tools/sign-regtest-key-donation-set.mjs        (ARENA_GENESIS_KEYS, default /mnt/bitcoin/blwp-genesis)
+ *   node packages/arena-protocol/tools/sign-regtest-key-donation-set.mjs        (ARENA_GENESIS_KEYS, default /srv/arena/blwp-genesis)
  *
  * Writes src/test-donation-set-keys-regtest.js - PUBLIC BYTES ONLY.
  */
@@ -20,7 +20,7 @@ import { encodeDonationSetBody, decodeDonationSetBody, donationSetBodyId } from 
 import { donationSetId } from '../src/donation.js';
 import { TESTNET4_DONATION_SET_KEYS } from '../src/testnet4-donation-set-keys.js';
 
-const KEYDIR = process.env.ARENA_GENESIS_KEYS || '/mnt/bitcoin/blwp-genesis';
+const KEYDIR = process.env.ARENA_GENESIS_KEYS || '/srv/arena/blwp-genesis';
 const OUT = new URL('../src/test-donation-set-keys-regtest.js', import.meta.url);
 const RECIPIENTS = TESTNET4_DONATION_SET_KEYS.recipients.map((r) => ({ recipientPk: r.recipientPk, shareBps: r.shareBps, label: r.label }));
 const key = createPrivateKey({ key: readFileSync(join(KEYDIR, 'regtest-authority.pkcs8')), format: 'der', type: 'pkcs8' });

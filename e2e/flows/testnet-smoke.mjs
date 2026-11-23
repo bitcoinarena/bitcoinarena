@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE LIVE TESTNET PAGE, SMOKED (kanban #2642, the owner 2026-11-15): the page as it is served at E2E_LIVE_URL (default the testnet site), in one
-// headless Chrome on the MacBook, against the live testnet4 seats - every game from the chooser until it is loaded by its manifest hash (Next
+// headless Chrome on the test laptop, against the live testnet4 seats - every game from the chooser until it is loaded by its manifest hash (Next
 // Block: until its rounds list is drawn), a new wallet and its welcome sats from the faucet, the Feedback form, and the console errors of all
 // of it held to a known-noise allowlist. Only with `node e2e/run.mjs --live` (the regtest runs never reach the live site); run from our own
 // address only, whose new wallets the explorer marks as ours (an admin address: kept out of the played counts).

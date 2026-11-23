@@ -12,7 +12,7 @@
  * `dropMoved(epochOf)` lets go of every key whose federation's epoch is now another (`epochOf(fed)`: the current epoch, or null when
  * this seat cannot tell, which keeps the key).
  */
-// KEPT ACROSS A RESTART (kanban #2869, measured 2026-11-16 01:44-02:10Z: every old-Mac seat lost federation A's key with its restart and,
+// KEPT ACROSS A RESTART (kanban #2869, measured 2026-11-16 01:44-02:10Z: every second-host seat lost federation A's key with its restart and,
 // unable to reach the guardian seats, named none for hours - each settlement paying the reserves refused): `store`, when given,
 // { load() -> [{ fed, epoch, key }], save(fed, epoch|null, key|null) }, holds what is kept; a kept key still answers only for its own epoch.
 export function reserveKeyCache({ store = null } = {}) {

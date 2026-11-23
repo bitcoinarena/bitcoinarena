@@ -21,8 +21,8 @@ if [ -z "${SUCCESSION_WRAPPED:-}" ]; then export SUCCESSION_WRAPPED=1; exec time
 : "${FEDIMINT_BIN:?}"
 F=$FEDIMINT_BIN; FH=${FEDIMINT_HOME:-$F/home}
 P=${PROBE_DIR:-$(mktemp -d /tmp/succession-XXXXXX)}
-B=${BITCOIN_BIN:-/mnt/bitcoin/bitcoin-31.1/bin}
-L=${LND_BIN:-/mnt/bitcoin/lnd-linux-amd64-v0.21.3-beta}
+B=${BITCOIN_BIN:-/srv/arena/bitcoin-31.1/bin}
+L=${LND_BIN:-/srv/arena/lnd-linux-amd64-v0.21.3-beta}
 HERE=$(cd "$(dirname "$0")" && pwd)
 PAY_MSAT=${PAY_MSAT:-300000000}       # 300,000 sat per player
 # the run's own datadir: a bitcoin.conf of the machine (the test host's names testnet4) must not reach these calls

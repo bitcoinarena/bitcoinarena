@@ -1,12 +1,12 @@
 #!/bin/bash
-# kanban #2905: one canary pass on the MacBook (launchd io.bitcoinarena.canary2905, every 30 min): skip quietly while a seat roll runs on the
-# Beelink, else one paid RPS round (canary-rps.mjs), then the alert check (canary-alert.mjs). One pass at a time (lock file); the round runs
+# kanban #2905: one canary pass on the test laptop (launchd io.bitcoinarena.canary2905, every 30 min): skip quietly while a seat roll runs on the
+# test-host, else one paid RPS round (canary-rps.mjs), then the alert check (canary-alert.mjs). One pass at a time (lock file); the round runs
 # in its own process group and is killed whole after 8 min. Log: $CANARY_DIR/canary.jsonl, $CANARY_DIR/run.log. Nothing is deleted.
-# Install: MacBook - this directory's files to ~/arena-canary, ln -s <a playwright-core node_modules> ~/arena-canary/node_modules, the plist to
-# ~/Library/LaunchAgents + launchctl bootstrap gui/$(id -u) <plist>; Beelink - canary-beelink.py to ~/arena-canary (ssh from the MacBook, LAN).
+# Install: test laptop - this directory's files to ~/arena-canary, ln -s <a playwright-core node_modules> ~/arena-canary/node_modules, the plist to
+# ~/Library/LaunchAgents + launchctl bootstrap gui/$(id -u) <plist>; test-host - canary-beelink.py to ~/arena-canary (ssh from the test laptop, LAN).
 DIR=${CANARY_DIR:-$HOME/arena-canary}; export CANARY_DIR=$DIR
 export PATH=$HOME/.nvm/versions/node/v24.22.3/bin:/usr/bin:/bin:/usr/sbin:/sbin
-BEE=${CANARY_BEELINK:-user@192.168.1.65}; export CANARY_BEELINK=$BEE
+BEE=${CANARY_BEELINK:-user@test-host}; export CANARY_BEELINK=$BEE
 cd "$DIR" || exit 2
 exec >> "$DIR/run.log" 2>&1
 now() { date -u +%FT%TZ; }

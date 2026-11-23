@@ -29,7 +29,7 @@ const BUILDS = [
 ];
 
 // ONE TEST PER SCRIPT (kanban #2356): the three ran as one test, and the curve's build needs esbuild,
-// which a checkout without it (the test MacBook's shared deps) does not have - so the one test threw on
+// which a checkout without it (the test laptop's shared deps) does not have - so the one test threw on
 // the curve before it compared arena-client.js, it was red for that on every run, and a red nobody read
 // let #2310 ship a protocol-only vestedShares fix while the page bundle kept the old one. Now
 // arena-client.js and blwp-core.js (no esbuild) are checked everywhere; the curve is skipped, by name,

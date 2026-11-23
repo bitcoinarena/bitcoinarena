@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE ORANGE PILL RUN ROUND SERVICE, as a process (kanban #3248-#3250, #3256): systemd user unit arena-opr on the Beelink, behind the site Worker's
+// THE ORANGE PILL RUN ROUND SERVICE, as a process (kanban #3248-#3250, #3256): systemd user unit arena-opr on the test host, behind the site Worker's
 // /api/opr/* (src/website/worker.js). Listens on 127.0.0.1 only. Environment (secrets are files or hashes, never values in the unit):
 //   OPR_PORT (18877), OPR_DB (the sqlite file), OPR_ADMIN_SHA256 (sha256 hex of the admin code), OPR_WORKER_KEY (the Worker's x-arena-worker key)
 //   OPR_PUBLIC_BASES (comma list of public /api/opr URLs the NIP-98 sign-in may name; default the testnet stage)

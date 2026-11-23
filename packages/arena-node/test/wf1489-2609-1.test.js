@@ -38,16 +38,17 @@ const genuineApi = () => apiOf(Object.fromEntries(URLS.map((u) => [u, CONFIG])))
 
 test('the id is what fedimint computes: the testnet4 and regtest federations\' client.json hash to their invites\' ids', () => {
   let n = 0;
-  for (const d of ['/mnt/bitcoin/blwp-tn4-guardians/node-7.db.guardian', '/mnt/bitcoin/blwp-regtest-seats/g0']) {
+  for (const d of ['/srv/arena/blwp-tn4-guardians/node-7.db.guardian', '/srv/arena/blwp-regtest-seats/g0']) {
     if (!existsSync(`${d}/client.json`)) continue;
     const id = federationIdOfConfig(JSON.parse(readFileSync(`${d}/client.json`, 'utf8')));
     assert.equal(id, readInvite(readFileSync(`${d}/invite-code`, 'utf8')).federationId);
     console.log(`#2609 ${d}: config hashes to ${id.slice(0, 16)}, the invite's id`); n++;
   }
-  // a known vector (federation 337ae01a, testnet4) when the data dirs are not on this machine
-  const tn4 = configOf(Array.from({ length: 7 }, (_, i) => `wss://beelink.tail1723e2.ts.net/guardian-${i + 1}/guardian`), KEYS);
-  assert.equal(federationIdOfConfig(tn4), '337ae01ad1e9bb35b5628faad3457e62d69d036efe8a34bcfc20cb31b42bb75e');
-  console.log(`#2609 vector 337ae01a holds (${n} live data dirs checked too)`);
+  // a known vector when the data dirs are not on this machine: the regtest federation 423e010e (fedimint's own id, from its invite code;
+  // four guardians on 127.0.0.1 named g0..g3 - kanban #3388: no private host name in a vector)
+  const rt = { global: { api_endpoints: Object.fromEntries(Array.from({ length: 4 }, (_, i) => [String(i), { url: `ws://127.0.0.1:${30121 + 10 * i}/`, name: `g${i}` }])) }, modules: {} };
+  assert.equal(federationIdOfConfig(rt), '423e010e320b0200d3a72e3fa0a6798263a43f768b50e22aee1d128ade12e563');
+  console.log(`#2609 vector 423e010e holds (${n} live data dirs checked too)`);
 });
 
 test('a config a threshold agrees on is taken; one guardian alone with another config is refused; a config not hashing to the id is refused', async () => {

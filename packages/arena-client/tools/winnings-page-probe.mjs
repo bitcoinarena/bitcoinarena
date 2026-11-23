@@ -144,7 +144,7 @@ const fed = await port.guardians();
 // and this round needs seven. Its own wallet, funded here; the chain answers to -rpcuser/-rpcpassword.
 const RPCPORT = env.BTC_RPCPORT || '31101';
 const btcBase = ['-regtest', `-datadir=${P}/btc`, `-rpcport=${RPCPORT}`, '-rpcuser=arena', '-rpcpassword=arena'];
-const BTC = env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli';
+const BTC = env.BITCOIN_CLI || '/srv/arena/bitcoin-31.1/bin/bitcoin-cli';
 const cliRaw = (...a) => execFileSync(BTC, [...btcBase, ...a], { encoding: 'utf8' }).trim();
 try { cliRaw('createwallet', 'arena'); } catch { try { cliRaw('loadwallet', 'arena'); } catch { /* loaded */ } }
 const cli = (...a) => execFileSync(BTC, [...btcBase, '-rpcwallet=arena', ...a], { encoding: 'utf8' }).trim();

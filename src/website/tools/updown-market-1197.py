@@ -2,8 +2,9 @@
 # One price line across a 15-minute round, the price to beat dashed, the side above tinted Up and below Down, the chance of each side as
 # one big bar, and the time left.
 import math, random
+import os
 from PIL import Image, ImageDraw, ImageFont
-FD = '/tmp/claude-1000/-home-user-marketing/e57274cb-2da0-4b2d-bce8-60829622d86b/scratchpad/fonts/'
+FD = os.environ.get('FONT_DIR', 'fonts') + '/'
 F = lambda n, s: ImageFont.truetype(FD + n + '.ttf', s)
 S = 2; W, H = 1280 * S, 720 * S
 BG = (12, 16, 24); INK = (236, 238, 242); INK2 = (160, 168, 182); INK3 = (98, 108, 124); LINE = (34, 42, 56)

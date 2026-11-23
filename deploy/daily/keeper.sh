@@ -30,7 +30,7 @@
 # failed every 30 s - so the keeper says once why it holds and keeps the signer nodes on the tunnels'
 # names. Nothing here prints the token.
 set -uo pipefail
-D="${ARENA_2OF2_DIR:-/mnt/bitcoin/blwp-2of2}"
+D="${ARENA_2OF2_DIR:-/srv/arena/blwp-2of2}"
 CODE="${ARENA_DAILY_CODE:-$D/code}"
 ENVF="$D/signer-nodes.env"
 LAST="$D/keeper.deployed.json"

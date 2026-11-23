@@ -1,7 +1,8 @@
 # #1197: the Up or Down card's chart, drawn the way the marketing chart.py draws candles, in the Arena's own look (no trading-site chrome):
 # 10-second candles across one 15-minute round, the price to beat, and the round's chance of up.
+import os
 from PIL import Image, ImageDraw, ImageFont
-FD = '/tmp/claude-1000/-home-user-marketing/e57274cb-2da0-4b2d-bce8-60829622d86b/scratchpad/fonts/'
+FD = os.environ.get('FONT_DIR', 'fonts') + '/'
 F = lambda n, s: ImageFont.truetype(FD + n + '.ttf', s)
 S = 2  # drawn at 2x, saved at 1280x720
 W, H = 1280 * S, 720 * S

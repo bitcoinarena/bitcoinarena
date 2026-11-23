@@ -8,8 +8,8 @@ set -uo pipefail
 : "${FEDIMINT_BIN:?}" ; : "${WASM_DIR:?}"
 F=$FEDIMINT_BIN; FH=${FEDIMINT_HOME:-$(mktemp -d /tmp/fedimint-home-XXXXXX)}
 P=${PROBE_DIR:-$(mktemp -d /tmp/donation-image-XXXXXX)}
-B=${BITCOIN_BIN:-/mnt/bitcoin/bitcoin-31.1/bin}
-L=${LND_BIN:-/mnt/bitcoin/lnd-linux-amd64-v0.21.3-beta}
+B=${BITCOIN_BIN:-/srv/arena/bitcoin-31.1/bin}
+L=${LND_BIN:-/srv/arena/lnd-linux-amd64-v0.21.3-beta}
 HERE=$(cd "$(dirname "$0")" && pwd)
 NODE_TOOLS=$HERE/../../arena-node/tools
 bcn() { $B/bitcoin-cli -regtest -rpcport=30101 -rpcuser=arena -rpcpassword=arena "$@"; }

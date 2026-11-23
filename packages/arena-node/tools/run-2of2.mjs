@@ -5,7 +5,7 @@
  * THE DAILY'S 2-OF-2 (M3.3-34): two arena-nodes on one machine, threshold 2,
  * bonded, and a free round always joinable in the lobby.
  *
- *   RT=/mnt/bitcoin/blwp-2of2/btc RPCPORT=30401 \
+ *   RT=/srv/arena/blwp-2of2/btc RPCPORT=30401 \
  *   ARENA_WSS_18080=wss://seat.example.com/blwp-a \
  *   ARENA_WSS_18081=wss://seat.example.com/blwp-b \
  *   node tools/run-2of2.mjs
@@ -41,7 +41,7 @@ import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 
 const env = process.env;
-const dir = env.ARENA_2OF2_DIR || '/mnt/bitcoin/blwp-2of2';
+const dir = env.ARENA_2OF2_DIR || '/srv/arena/blwp-2of2';
 const host = env.ARENA_BIND || '198.51.100.98';
 const portA = Number(env.ARENA_PORT_A || 18080);
 const portB = Number(env.ARENA_PORT_B || 18081);
@@ -106,7 +106,7 @@ const auth = [
   ...(env.RPCAUTH ? [`-rpcuser=${env.RPCAUTH.split(':')[0]}`, `-rpcpassword=${env.RPCAUTH.split(':').slice(1).join(':')}`] : []),
   ...(env.RPCWALLET ? [`-rpcwallet=${env.RPCWALLET}`] : []),
 ];
-const cli = (...a) => execFileSync(env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli',
+const cli = (...a) => execFileSync(env.BITCOIN_CLI || '/srv/arena/bitcoin-31.1/bin/bitcoin-cli',
   ['-regtest', `-datadir=${env.RT}`, `-rpcport=${rpcport}`, ...auth, ...a], { encoding: 'utf8' }).trim();
 
 // BOTH SIGNER NODES CLOSE EACH ROUND AT ITS END, by their own clocks (server closeAtEnd,

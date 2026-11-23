@@ -39,11 +39,11 @@ const env = process.env;
 const publish = process.argv.includes('--publish');
 const measure = process.argv.includes('--measure');
 const home = env.ARENA_TESTNET4_DIR || `${env.HOME}/blwp-testnet4`;
-const datadir = env.ARENA_TN4_DATADIR || '/mnt/bitcoin/tn4';
+const datadir = env.ARENA_TN4_DATADIR || '/srv/arena/tn4';
 const wallet = env.ARENA_TN4_BOND_WALLET || 'blwp-tn4-bonds';
 const NODES = (env.ARENA_REBOND_NODES || '1,2,3,4,5,6,7').split(',').map(Number);
 const SLACK = Number(env.ARENA_REBOND_SLACK || 12);    // blocks the re-bond may wait for a miner (~10 min each on testnet4)
-const cli = (...a) => execFileSync(env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli',
+const cli = (...a) => execFileSync(env.BITCOIN_CLI || '/srv/arena/bitcoin-31.1/bin/bitcoin-cli',
   [`-datadir=${datadir}`, `-rpcwallet=${wallet}`, ...a], { encoding: 'utf8', maxBuffer: 64 << 20 }).trim();
 const say = (o) => console.log(JSON.stringify(o, (k, v) => (typeof v === 'bigint' ? String(v) : v instanceof Uint8Array ? toHex(v) : v)));
 const CARRIER_SATS = 3000n;

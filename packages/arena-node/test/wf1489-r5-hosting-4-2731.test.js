@@ -13,7 +13,7 @@ import { loadCore } from '../src/core-sandbox.js';
 
 test('#1489-r5-hosting-4: a core that reads V8\'s stack overflow through a promise handler is refused', () => {
   // one probe (each overflow costs the core a few seconds of its own thread): nested arrays 100000 deep, joined by String() -
-  // V8's Array.prototype.join recurses into itself; on the MacBook (node 24, arm64) it runs out of stack there, JSON.stringify
+  // V8's Array.prototype.join recurses into itself; on the test laptop (node 24, arm64) it runs out of stack there, JSON.stringify
   // of the same array does not - where each one ends is the machine's frame size
   const src = `const nest = (n) => { let a = 0; for (let i = 0; i < n; i++) a = [a]; return a; };
 const SAID = await new Promise((ok) => ok(String(nest(100000)).length)).then(() => 'fits', (e) => String(e && e.message));

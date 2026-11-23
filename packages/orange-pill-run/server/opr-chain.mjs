@@ -70,7 +70,7 @@ export function decodeRoundPost(buf) {
 }
 
 /**
- * THE WALLET THAT POSTS (bitcoin-cli of the Beelink's testnet4 bitcoind, its own wallet): post(payloadHex) -> txid, status(txid) ->
+ * THE WALLET THAT POSTS (bitcoin-cli of the test host's testnet4 bitcoind, its own wallet): post(payloadHex) -> txid, status(txid) ->
  * { confirmations, height } | null. createrawtransaction with a data output, fundrawtransaction (the wallet's own coins and change, at
  * OPR_FEE_RATE sat/vB), signrawtransactionwithwallet, sendrawtransaction; the txid is appended to the miner C list.
  */

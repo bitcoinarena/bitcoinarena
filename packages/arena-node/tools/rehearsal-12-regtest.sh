@@ -14,8 +14,8 @@ if [ -z "${R12_WRAPPED:-}" ]; then export R12_WRAPPED=1; exec timeout -k 30 "${T
 : "${FEDIMINT_BIN:?}"
 F=$FEDIMINT_BIN; FH=${FEDIMINT_HOME:-$F/home}
 P=${PROBE_DIR:-$(mktemp -d /tmp/r12-XXXXXX)}
-B=${BITCOIN_BIN:-/mnt/bitcoin/bitcoin-31.1/bin}
-L=${LND_BIN:-/mnt/bitcoin/lnd-linux-amd64-v0.21.3-beta}
+B=${BITCOIN_BIN:-/srv/arena/bitcoin-31.1/bin}
+L=${LND_BIN:-/srv/arena/lnd-linux-amd64-v0.21.3-beta}
 HERE=$(cd "$(dirname "$0")" && pwd)
 bcn() { $B/bitcoin-cli -datadir=$P/btc -regtest -rpcport=30101 -rpcuser=arena -rpcpassword=arena "$@"; }
 stop() {

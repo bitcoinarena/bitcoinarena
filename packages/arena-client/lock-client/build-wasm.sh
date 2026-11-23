@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # Rebuild the Arena wasm lock client with whole-msat e-cash (2026-10-01: "we want 1 sat = 1 sat").
 set -euxo pipefail
-# WHERE: the the test host's /mnt/bitcoin by default; ARENA_LOCK_BUILD and ARENA_FORK_DIR move it (the test host,: a whole
+# WHERE: the test host's /srv/arena by default; ARENA_LOCK_BUILD and ARENA_FORK_DIR move it (the test host: a whole
 # wasm build of the fork is a job that takes the test host past load 12)
-B=${ARENA_LOCK_BUILD:-/mnt/bitcoin/lockclient-build}
-FORK=${ARENA_FORK_DIR:-/mnt/bitcoin/fedimint-fork}
+B=${ARENA_LOCK_BUILD:-/srv/arena/lockclient-build}
+FORK=${ARENA_FORK_DIR:-/srv/arena/fedimint-fork}
 case "$(uname -s)-$(uname -m)" in
   Darwin-arm64) WASI_PLAT=arm64-macos; WB_PLAT=aarch64-apple-darwin; SEDI=(sed -i '') ;;
   *) WASI_PLAT=x86_64-linux; WB_PLAT=x86_64-unknown-linux-musl; SEDI=(sed -i) ;;
 esac
 mkdir -p $B
 # THE SOURCES ARE THIS SCRIPT'S OWN DIRECTORY (2026-10-04): the crate and the patches next to it, not a fixed old
-# checkout - before, every run re-linked the crate to /mnt/bitcoin/blwp-build-a535 and built that tree's lib.rs.
+# checkout - before, every run re-linked the crate to /srv/arena/blwp-build-a535 and built that tree's lib.rs.
 HERE=${ARENA_LOCK_CLIENT_DIR:-$(cd "$(dirname "$0")" && pwd)}
 export RUSTUP_HOME=$B/rustup CARGO_HOME=$B/cargo PATH=$B/cargo/bin:$PATH
 cd $B

@@ -46,7 +46,7 @@ node "$ROOT/tools/fill-template.mjs" --check "$BUILD"
 # with the tunnels it bonded under), and it is checked before it ships: two signer nodes, a bond door,
 # a signed advertisement, and every signer node answering /rounds. A missing file or a silent signer node
 # refuses the deploy by name - a lobby that points at silence is not shipped.
-DAILY_DIR="${ARENA_2OF2_DIR:-/mnt/bitcoin/blwp-2of2}"
+DAILY_DIR="${ARENA_2OF2_DIR:-/srv/arena/blwp-2of2}"
 DAILY="$DAILY_DIR/daily.json"
 [ -f "$DAILY" ] || { echo "refusing: no $DAILY - the Daily's signerNodes (packages/arena-node/tools/run-2of2.mjs) write it; without it the bare root shows no lobby" >&2; exit 3; }
 # THE FREE PAIR MAY BE DOWN; THE PAID LOBBY MAY NOT (2026-10-07, path 2): a daily.json that names no live

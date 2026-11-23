@@ -1,6 +1,6 @@
 // kanban #2905: one health line from the canary log, for the hourly check: rounds staked vs played/signed per hour (last 1 h and 24 h),
 // median lock and result time, failures by kind, the last ok round and the alert state.
-// Usage: node canary-health.mjs [log]   (default $CANARY_DIR/canary.jsonl)   e.g. from the Beelink: ssh user@192.168.1.226 '~/arena-canary/canary-health.sh'
+// Usage: node canary-health.mjs [log]   (default $CANARY_DIR/canary.jsonl)   e.g. from the test host: ssh user@test-laptop '~/arena-canary/canary-health.sh'
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 

@@ -21,7 +21,7 @@ import { NETWORK_ID_TESTNET4, AUTHORITY_PUBKEY_TESTNET4 } from '../src/genesis-i
 import { encodeDonationSetBody, decodeDonationSetBody, donationSetBodyId } from '../src/authority.js';
 import { donationSetId } from '../src/donation.js';
 
-const KEYDIR = process.env.ARENA_GENESIS_KEYS || '/mnt/bitcoin/blwp-genesis';
+const KEYDIR = process.env.ARENA_GENESIS_KEYS || '/srv/arena/blwp-genesis';
 const OUT = new URL('../src/testnet4-donation-set-keys.js', import.meta.url);
 const dirs = String(process.env.DONOR_DIRS || '').split(',').filter(Boolean);
 if (dirs.length !== 2) throw new Error('DONOR_DIRS names the two dev clients, dev a then dev b');

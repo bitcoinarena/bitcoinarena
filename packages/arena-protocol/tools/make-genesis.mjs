@@ -9,7 +9,7 @@ import { toHex } from '../src/hash.js';
 import { computeNetworkId, genesisFor } from '../src/genesis.js';
 import { computeGenesisConfigHash } from '../../nextblock/config/game-config.js';
 
-const KEYDIR = process.env.ARENA_GENESIS_KEYS || '/mnt/bitcoin/blwp-genesis';
+const KEYDIR = process.env.ARENA_GENESIS_KEYS || '/srv/arena/blwp-genesis';
 const OUT = new URL('../src/genesis-ids.js', import.meta.url);
 
 function ed25519() {

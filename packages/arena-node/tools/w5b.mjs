@@ -108,7 +108,7 @@ let chain = {};
 let guardianOf = [];
 if (onChain) {
   const RT = join(P, 'btc');
-  const BIN = env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli';
+  const BIN = env.BITCOIN_CLI || '/srv/arena/bitcoin-31.1/bin/bitcoin-cli';
   const base = ['-regtest', `-datadir=${RT}`, `-rpcport=${env.RPCPORT}`, '-rpcuser=arena', '-rpcpassword=arena'];
   const cliRaw = (...a) => execFileSync(BIN, [...base, ...a], { encoding: 'utf8' }).trim();
   const cli = (...a) => execFileSync(BIN, [...base, '-rpcwallet=arena', ...a], { encoding: 'utf8' }).trim();

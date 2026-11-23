@@ -41,7 +41,7 @@ const out = (o) => console.log(JSON.stringify({ at: new Date().toISOString().sli
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const b32 = (n) => new Uint8Array(32).fill(n);
 const ports = [23421, 23431];
-const dir = mkdtempSync(join(env.SERIES_DIR || '/mnt/bitcoin', 'series-regtest-'));
+const dir = mkdtempSync(join(env.SERIES_DIR || '/srv/arena', 'series-regtest-'));
 const stores = ports.map((_, i) => join(dir, `node-${i + 1}.db`));
 const keys = stores.map((p) => { const db = openStore(p); const k = nodeIdentity(db).pubkey; db.close(); return k; });
 

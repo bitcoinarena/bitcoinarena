@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// KANBAN #2869 (2026-11-16 01:44-02:10Z): every old-Mac seat lost federation A's reserve key with its restart and named none for hours. The
+// KANBAN #2869 (2026-11-16 01:44-02:10Z): every second-host seat lost federation A's reserve key with its restart and named none for hours. The
 // kept key now survives a restart through the seat's store, still only for its own epoch; a key let go for a moved epoch leaves the store too.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

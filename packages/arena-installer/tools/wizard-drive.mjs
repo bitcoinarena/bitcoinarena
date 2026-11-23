@@ -23,7 +23,7 @@ const shot = async (name) => {
 const click = (id) => js(`document.getElementById(${JSON.stringify(id)}).click(), true`);
 await call('Page.navigate', { url: link }); await sleep(2500);
 await shot('01-bitcoin');
-await js(`document.getElementById('c-url').value='http://127.0.0.1:48332/'; document.getElementById('c-cookie').value='/mnt/bitcoin/tn4/testnet4/.cookie'; true`);
+await js(`document.getElementById('c-url').value='http://127.0.0.1:48332/'; document.getElementById('c-cookie').value='/srv/arena/tn4/testnet4/.cookie'; true`);
 await click('chain-test'); await sleep(7000); await shot('02-bitcoin-tested');
 await click('chain-save'); await sleep(9000); await shot('03-roles');
 await js(`document.querySelector('#roles input[value=custody]').checked = true; true`); await shot('03b-roles-custody');

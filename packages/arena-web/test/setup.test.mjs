@@ -142,7 +142,7 @@ test('federation: ten guardians, seven lit; Continue posts and moves on', async 
 });
 
 test('reach on a tailnet (kanban #734): not reached directly, Funnel is the default and the limit is said; nothing claims direct reach', () => {
-  const d = { reached: false, address: '46.22.17.30', port: 6221, tailnet: 'macbook.example.com', diagnosis: { advice: 'a router in front of this machine does not forward port 6221' } };
+  const d = { reached: false, address: '46.22.17.30', port: 6221, tailnet: 'laptop.example.com', diagnosis: { advice: 'a router in front of this machine does not forward port 6221' } };
   const html = renderToStaticMarkup(React.createElement(ReachStep, { st: { direct: d, defaultPort: 6221 }, post: async () => ({ ok: true }), get: async () => ({}) }));
   assert.match(html, /Not reachable directly from the internet: a router in front of this machine does not forward port 6221\nThis machine is on your tailnet as macbook\.example\.com\. Tailscale Funnel is the default: it needs no port opened on your router\./);
   assert.match(html, /<input type="radio" name="rm" checked="" value="tailscale"\/>/, 'Funnel is chosen');

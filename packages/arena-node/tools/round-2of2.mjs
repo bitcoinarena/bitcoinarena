@@ -1581,7 +1581,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   // The same daemon, over its own cli - the bonds are posted with it, and the
   // census is read back from the chain the beacon comes off.
   const cli = rt
-    ? (...a) => execFileSync(process.env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli',
+    ? (...a) => execFileSync(process.env.BITCOIN_CLI || '/srv/arena/bitcoin-31.1/bin/bitcoin-cli',
         ['-regtest', `-datadir=${rt}`, `-rpcport=${rpcport}`, ...a], { encoding: 'utf8' }).trim()
     : null;
 

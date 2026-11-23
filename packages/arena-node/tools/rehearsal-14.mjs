@@ -28,7 +28,7 @@ import { signAbsence, abandonmentProof, signDeparture, departureStands } from '.
 import { guardianSlashStands, guardianSlashPayees, clocksFor } from '../../arena-protocol/src/federation-slash.js';
 import { toHex, fromHex, taggedHash } from '../../arena-protocol/src/hash.js';
 
-const RT = process.env.RT, PORT = process.env.RPCPORT || '29443', B = process.env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli';
+const RT = process.env.RT, PORT = process.env.RPCPORT || '29443', B = process.env.BITCOIN_CLI || '/srv/arena/bitcoin-31.1/bin/bitcoin-cli';
 if (!RT) throw new Error('RT=<the private regtest datadir>');
 const cli = (...a) => execFileSync(B, ['-regtest', `-datadir=${RT}`, `-rpcport=${PORT}`, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const out = (o) => console.log(JSON.stringify(o, (_, v) => (typeof v === 'bigint' ? String(v) : v)));

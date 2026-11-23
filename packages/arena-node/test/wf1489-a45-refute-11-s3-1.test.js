@@ -5,7 +5,7 @@
 // away, every row of the same created_at it already returned. A page is max(8, 5000 / streams) rows, and a 500-value list makes 500
 // streams: page 10. 20,001 events with p=X all at ONE created_at (allowed: any past second), walked for one REQ's 20,000 candidates, are
 // 2,000 pages re-reading 10, 20, ... 20,000 rows each - about 20 million index rows, and the budget counts only the 20,000 returned.
-// The same walk over distinct created_at answers the player at ~60 ms (MacBook); one created_at held it ~1,100 ms (tag), ~750 ms (kind).
+// The same walk over distinct created_at answers the player at ~60 ms (test laptop); one created_at held it ~1,100 ms (tag), ~750 ms (kind).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import WebSocket from 'ws';

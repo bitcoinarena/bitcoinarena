@@ -6,7 +6,7 @@ Wants=blwp-daily-btc.service blwp-daily-lnd-committee.service
 WorkingDirectory=@D@/code/packages/arena-node
 Environment=PATH=@PATH@
 Environment=RT=@D@/btc RPCPORT=30401 ARENA_PAID_STAKE_MSAT=100000
-Environment=ARENA_LNCLI=/mnt/bitcoin/lnd-linux-amd64-v0.21.3-beta/lncli ARENA_LND_DIR=@D@/lnd-committee ARENA_LND_RPC=127.0.0.1:30410 ARENA_LND_NETWORK=regtest
+Environment=ARENA_LNCLI=/srv/arena/lnd-linux-amd64-v0.21.3-beta/lncli ARENA_LND_DIR=@D@/lnd-committee ARENA_LND_RPC=127.0.0.1:30410 ARENA_LND_NETWORK=regtest
 EnvironmentFile=@D@/signer-nodes.env
 ExecStart=/bin/bash -c 'exec node tools/run-2of2.mjs >> @D@/daily.log 2>&1'
 Restart=always

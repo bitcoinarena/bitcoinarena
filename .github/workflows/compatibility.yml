@@ -65,7 +65,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: node packages/arena-node/tools/compat-publish.mjs compat-report/report.json
       - name: Put the measured results on main
-        # #2971 (owner 11-18): the page follows the checks by itself - no PR, no manual merge. The Beelink deploys main's
+        # #2971 (owner 11-18): the page follows the checks by itself - no PR, no manual merge. The test host deploys main's
         # results.json to bitcoinarena.io within the hour (arena-compat-deploy timer).
         run: |
           if git diff --quiet -- src/website/www/compatibility/results.json; then exit 0; fi

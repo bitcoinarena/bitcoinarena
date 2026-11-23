@@ -8,7 +8,7 @@ import { TEST_DONATION_ENDPOINTS } from '../../arena-protocol/src/test-donation-
 import { lnurlFor } from '../../arena-protocol/src/bech32.js';
 
 test('#2236: POST /payout-address refuses a port, an IP literal, a local suffix, a tailnet name, a wildcard loopback name; a public name stands', () => {
-  const refused = ['x@127.0.0.1:18866', 'x@localtest.me', 'x@beelink.tail1723e2.ts.net', 'x@10.0.0.5:8080', 'x@127.0.0.1', 'x@127.0.0.1.nip.io', 'x@127-0-0-1.sslip.io',
+  const refused = ['x@127.0.0.1:18866', 'x@localtest.me', 'x@host-a.tail0000aa.ts.net', 'x@10.0.0.5:8080', 'x@127.0.0.1', 'x@127.0.0.1.nip.io', 'x@127-0-0-1.sslip.io',
     'x@getalby.com:8443', 'x@router.lan', 'x@printer.local', 'x@abcdefghijklmnop.onion', 'x@100.100.100.100', 'x@localhost'];
   const why = Object.fromEntries(refused.map((a) => [a, payoutAddressRefusal(a)]));
   console.log('  MEASURED refused:', JSON.stringify(why));
@@ -32,7 +32,7 @@ test('#2236: an http:// or internal callback of a public address is never asked;
   assert.deepEqual(fetched, ['https://pay.example/.well-known/lnurlp/winner']);
   assert.match(a.why, /callback/);
   // an https callback on a tailnet name, a port, a wildcard loopback name: refused the same way
-  for (const cb of ['https://beelink.tail1723e2.ts.net/x', 'https://pay.example:8443/cb', 'https://127.0.0.1.nip.io/cb', 'https://10.1.2.3/cb']) {
+  for (const cb of ['https://host-a.tail0000aa.ts.net/x', 'https://pay.example:8443/cb', 'https://127.0.0.1.nip.io/cb', 'https://10.1.2.3/cb']) {
     const seen = [];
     const w = new WinningsSend({ round: {}, port: null, lnurlFetch: async (u) => { seen.push(String(u)); return payRequest(cb); } });
     const r = await w.invoiceFor('winner@pay.example', 1000n);
@@ -40,7 +40,7 @@ test('#2236: an http:// or internal callback of a public address is never asked;
   }
   // an lnurl1 naming an internal URL: refused before any fetch, as the address
   const lf = []; const w2 = new WinningsSend({ round: {}, port: null, lnurlFetch: async (u) => { lf.push(String(u)); return payRequest('https://pay.example/cb'); } });
-  for (const u of ['http://127.0.0.1:18866/feedback', 'https://beelink.tail1723e2.ts.net/arenachat', 'https://192.168.1.68/x', 'https://[::1]/x']) await w2.invoiceFor(lnurlFor(u), 1000n);
+  for (const u of ['http://127.0.0.1:18866/feedback', 'https://host-a.tail0000aa.ts.net/arenachat', 'https://192.168.1.32/x', 'https://[::1]/x']) await w2.invoiceFor(lnurlFor(u), 1000n);
   assert.deepEqual(lf, []);
   // HONEST: the test donation set's local recipients (off mainnet) and their own callback are asked; on mainnet they are not
   const d = []; const wd = new WinningsSend({ round: {}, port: null, lnurlFetch: async (u) => { d.push(String(u)); return u.startsWith(TEST_DONATION_ENDPOINTS[0]) ? payRequest('http://127.0.0.1:18777/lnurlp/blwp-test-a/cb') : new Response('{}'); } });

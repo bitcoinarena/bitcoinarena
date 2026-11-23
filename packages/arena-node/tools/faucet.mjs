@@ -428,9 +428,10 @@ let NODE_CHECK_CHAIN = Promise.resolve(), NODE_CHECK_WAITING = 0; const NODE_CHE
 // listed seat at the exact origin of one of them or of FAUCET_SEAT_TRUSTED_ORIGINS (kanban #2074, below). Every other listed seat goes through seatPublicFetch: a public name or a
 // public IP literal, a public resolved address, no redirect. A trusted one is never redirected either.
 const SEASON_BASES = String(env.FAUCET_SEASON_SEATS || '').split(',').map((u) => u.trim().replace(/\/+$/, '')).filter(Boolean);
-const TEAM_HOSTS = String(env.FAUCET_TEAM_HOSTS || 'beelink.tail1723e2.ts.net,127.0.0.1,localhost,192.168.1.18,100.85.86.106,100.99.158.103,192.168.1.68,tn4.bitcoin-arena.io').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+// the team's own hosts come from the operator's FAUCET_TEAM_HOSTS (kanban #3388: no host name of ours in the code)
+const TEAM_HOSTS = String(env.FAUCET_TEAM_HOSTS || '127.0.0.1,localhost').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
 // TRUSTED BY EXACT ORIGIN, NEVER BY HOSTNAME (kanban #2074, re-check of #1511 / #1884): a trust list of host names let any bonded node announce
-// http://<trusted host>:<any port>/ - the Beelink's Tailscale name reaches signal-cli 8080, OpenClaw 18789 and the Chrome debug ports 9351/9352 there,
+// http://<trusted host>:<any port>/ - a team host's tailnet name reaches that host's local-only services,
 // a loopback/LAN seat host every port on it - and a stranger's node check made this faucet GET /roles, /owner and /served at that port with plain
 // fetch. A listed seat is taken as given only when its origin (scheme + host + port) is the origin of a FAUCET_SEASON_SEATS base or one of
 // FAUCET_SEAT_TRUSTED_ORIGINS (full origins, comma separated; an entry that is no http(s) origin is ignored). No default list: a tail-net name is
@@ -452,7 +453,7 @@ async function nodeCheckNow(node, npub) {
   const seats = [...new Set([...bases, ...lists.flat()])].slice(0, bases.length + NODE_CHECK_MAX_SEATS);
   let excluded = new Set(); try { excluded = ourKeys(); } catch { excluded = new Set(); }
   // the hosts the team's own nodes answer at (kanban #1342: team nodes are never paid)
-  // THE TEAM'S OWN SEATS BY THEIR NODE KEYS (audit 7, kanban #1428: our-keys.txt held none of them, and the Mac seats' addresses were no team host):
+  // THE TEAM'S OWN SEATS BY THEIR NODE KEYS (audit 7, kanban #1428: our-keys.txt held none of them, and the second-host seats' addresses were no team host):
   // every seat this faucet is configured with, and every listed seat at a team host, is the team's - its /roles node key is excluded
   const teamHosts = TEAM_HOSTS;
   const hostOf = (u) => { try { return new URL(u).hostname.toLowerCase(); } catch { return ''; } };

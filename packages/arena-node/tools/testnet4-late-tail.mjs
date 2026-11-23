@@ -24,8 +24,8 @@ import {
 const [nodeUrl, startIso, outDir, send] = process.argv.slice(2);
 if (!nodeUrl || !startIso || !outDir) { console.error('usage: testnet4-late-tail.mjs <node url> <tail start ISO> <out dir> [--send]'); process.exit(2); }
 const env = process.env;
-const cli = (...a) => execFileSync(env.ARENA_BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli',
-  [`-datadir=${env.ARENA_TN4_DATADIR || '/mnt/bitcoin/tn4'}`, ...a], { encoding: 'utf8' }).trim();
+const cli = (...a) => execFileSync(env.ARENA_BITCOIN_CLI || '/srv/arena/bitcoin-31.1/bin/bitcoin-cli',
+  [`-datadir=${env.ARENA_TN4_DATADIR || '/srv/arena/tn4'}`, ...a], { encoding: 'utf8' }).trim();
 const wallet = (...a) => cli(`-rpcwallet=${env.ARENA_TN4_WALLET || 'blwp-tn4-bonds'}`, ...a);
 const say = (o) => console.log(JSON.stringify(o, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
 

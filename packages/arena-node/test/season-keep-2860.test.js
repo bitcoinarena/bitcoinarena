@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// KANBAN #2860 (the owner's playtest 2026-11-15: RPS orders timed out at Beelink load ~28): a seat's profile had seasonRounds + signSeason at ~9 %
+// KANBAN #2860 (the owner's playtest 2026-11-15: RPS orders timed out at test-host load ~28): a seat's profile had seasonRounds + signSeason at ~9 %
 // and GET /season-rounds and /season in its [lag] lines - every seat asks every other for its season rounds, and the 30 s keep re-read the store
 // and signed every round twice a minute per query. Kept 5 minutes now: an ask 4 minutes later is the same bytes from the keep, one 6 minutes
 // later is read and signed again. Date is moved with node:test's mock timers.

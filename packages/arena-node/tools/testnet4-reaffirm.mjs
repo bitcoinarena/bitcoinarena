@@ -51,9 +51,9 @@ if (!HOSTED.every((g) => g.length === 32) || new Set(HOSTED.map(toHex)).size !==
 const publish = process.argv.includes('--publish');
 const updateOnly = process.argv.includes('--update-only');
 const home = env.ARENA_TESTNET4_DIR || `${env.HOME}/blwp-testnet4`;
-const datadir = env.ARENA_TN4_DATADIR || '/mnt/bitcoin/tn4';
+const datadir = env.ARENA_TN4_DATADIR || '/srv/arena/tn4';
 const wallet = env.ARENA_TN4_BOND_WALLET || 'blwp-tn4-bonds';
-const cli = (...a) => execFileSync(env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli',
+const cli = (...a) => execFileSync(env.BITCOIN_CLI || '/srv/arena/bitcoin-31.1/bin/bitcoin-cli',
   [`-datadir=${datadir}`, `-rpcwallet=${wallet}`, ...a], { encoding: 'utf8', maxBuffer: 64 << 20 }).trim();
 const say = (o) => console.log(JSON.stringify(o, (k, v) => (typeof v === 'bigint' ? String(v) : v instanceof Uint8Array ? toHex(v) : v)));
 const CARRIER_SATS = 3000n;

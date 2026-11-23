@@ -18,8 +18,8 @@
 LOG=${GUARD_LOG:-$HOME/blwp-testnet4/public-tip-guard.log}
 SETTLE=${GUARD_SETTLE:-2}
 API=https://mempool.space/testnet4/api
-bee() { /mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli -datadir=/mnt/bitcoin/tn4 "$@"; }
-mac() { ssh -n -o ConnectTimeout=10 -o BatchMode=yes macbook-playtest "\$HOME/blwp-offload/bin-dl/bitcoin-31.1/bin/bitcoin-cli -datadir=\$HOME/blwp-offload/tn4-mac $*"; }
+bee() { /srv/arena/bitcoin-31.1/bin/bitcoin-cli -datadir=/srv/arena/tn4 "$@"; }
+mac() { ssh -n -o ConnectTimeout=10 -o BatchMode=yes "${GUARD_SECOND_HOST:-second-host}" "\$HOME/blwp-offload/bin-dl/bitcoin-31.1/bin/bitcoin-cli -datadir=\$HOME/blwp-offload/tn4-mac $*"; }
 public_at() { local h; h=$(curl -s -m 10 $API/block-height/$1) || return 1; [[ "$h" =~ ^[0-9a-f]{64}$ ]] && echo "$h"; }
 guard() {   # $1 = node name, $2 = cli function
   local n=$1 cli=$2 h ours pub ptip

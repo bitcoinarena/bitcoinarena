@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// KANBAN #2869 (measured 2026-11-15 23:46Z, round ac3f97a3): old-Mac seats 4 and 5 refused a market order's locks with "this signer node holds no
+// KANBAN #2869 (measured 2026-11-15 23:46Z, round ac3f97a3): second-host seats 4 and 5 refused a market order's locks with "this signer node holds no
 // claim key for that round" - their run ended "no key after 30 runs" while committee seats restarted, and nothing ran it again. The key's one
 // reader (claimKeyOf, which the lock, fee-lock, handout and /claim-key checks use) now starts a new run when it holds no key, at most once a
 // CLAIM_KEY_AGAIN_MS per committee after a run gave up, never for a committee the node is not on, never twice at once.
