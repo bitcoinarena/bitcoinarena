@@ -34,7 +34,7 @@ test('#3331 a handle linked to a feedback key in the Season 2 book saves for a f
   assert.equal(w.opr.xOf(feedbackKey.pk).placed, false);
 });
 
-test('#3331 a made-up handle is refused, nothing saved; the same handle on a second key is refused; a bad name is not looked up', async () => {
+test('#3331 a made-up handle is refused, nothing saved; the same handle on a second key moves (#3382); a bad name is not looked up', async () => {
   const w = xWorld(); await openRound(w);
   const a = keypair(), b = keypair();
   const no = await w.opr.saveX(a.pk, 'nosuchhandle_zz');
@@ -42,9 +42,10 @@ test('#3331 a made-up handle is refused, nothing saved; the same handle on a sec
   assert.equal(w.opr.xOf(a.pk).x, null);
   gap(w);
   assert.equal((await w.opr.saveX(a.pk, 'alice')).ok, true);
-  const taken = await w.opr.saveX(b.pk, 'https://x.com/Alice');
-  assert.equal(taken.ok, false); assert.equal(taken.code, 409); assert.equal(taken.why, 'this X account is already used by another player');
-  assert.equal(w.opr.xOf(b.pk).x, null);
+  // #3382: a has no attempt in the running round - the account moves to b (it was refused here before)
+  const moved = await w.opr.saveX(b.pk, 'https://x.com/Alice');
+  assert.equal(moved.ok, true, moved.why);
+  assert.equal(w.opr.xOf(b.pk).x.userId, '222'); assert.equal(w.opr.xOf(a.pk).x, null);
   const n = w.xAsked.length;
   assert.equal((await w.opr.saveX(b.pk, 'bad name!')).why, 'Not an X username');
   assert.equal(w.xAsked.length, n);

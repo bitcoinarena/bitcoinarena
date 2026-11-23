@@ -139,9 +139,12 @@ export function createOpr(o = {}) {
   // made once per round after its level; admin only
   for (const col of ['ceiling INTEGER', 'ceiling_s REAL']) { try { db.exec(`ALTER TABLE rounds ADD COLUMN ${col}`); } catch { /* there already */ } }
   // THE GAME'S OWN X LINKS (kanban #3331, owner 2026-11-22: the game must not be tied to feedback reports): one X account per game key and one game
-  // key per X account (user_id UNIQUE: first come, first served - nothing is proven, so an account never moves to another key); linked_ms is when
-  // this key took it (the placement rules count from there). x_checks: the lookups asked, for the per-key limit
+  // key per X account (user_id UNIQUE); linked_ms is when this key took it (the placement rules count from there). x_checks: the lookups asked, for
+  // the per-key limit. A MOVE (kanban #3382, owner 2026-11-23): an account moves to another key while the key holding it has no attempt in a
+  // running round - the old row stays, released (user_id 'released-<ms>-<id>', never read as a link), and x_link_moves keeps what it held
   db.exec(`CREATE TABLE IF NOT EXISTS x_links (pubkey TEXT PRIMARY KEY, user_id TEXT NOT NULL UNIQUE, username TEXT NOT NULL, linked_ms INTEGER NOT NULL, checked_ms INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS x_link_moves (user_id TEXT NOT NULL, username TEXT NOT NULL, from_pubkey TEXT NOT NULL, from_linked_ms INTEGER NOT NULL, to_pubkey TEXT NOT NULL, at_ms INTEGER NOT NULL);
+    CREATE INDEX IF NOT EXISTS x_link_moves_by_from ON x_link_moves (from_pubkey, at_ms);
     CREATE TABLE IF NOT EXISTS x_checks (player TEXT NOT NULL, at_ms INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS x_checks_by_player ON x_checks (player, at_ms); CREATE INDEX IF NOT EXISTS x_checks_by_time ON x_checks (at_ms);`);
   db.exec('CREATE TABLE IF NOT EXISTS ln_checks (player TEXT NOT NULL, at_ms INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS ln_checks_by_player ON ln_checks (player, at_ms); CREATE INDEX IF NOT EXISTS ln_checks_by_time ON ln_checks (at_ms);');
   // ONE ADDRESS, A FEW PLAYERS' ATTEMPTS (kanban #3283): ip_key the caller's address as a limit counts it (an IPv6 /64 as one, faucet.js ipKey)
@@ -564,9 +567,24 @@ export function createOpr(o = {}) {
    */
   const firstRunOf = (round, pk) => q("SELECT MIN(created_ms) AS m FROM attempts WHERE round = ? AND player = ? AND state != 'expired'").get(round, pk).m;
   const isBotX = (name) => { const b = botXHandles(); return !!name && b.has(String(name).replace(/^@/, '').toLowerCase()); };
-  const xLinkOf = (pk) => q('SELECT * FROM x_links WHERE pubkey = ?').get(String(pk)) || null;
+  const lastRunOf = (round, pk) => q("SELECT MAX(created_ms) AS m FROM attempts WHERE round = ? AND player = ? AND state != 'expired'").get(round, pk).m;
+  // a released row (a move, #3382, or by hand: user_id 'released-...') is no link
+  const xLinkOf = (pk) => q("SELECT * FROM x_links WHERE pubkey = ? AND user_id NOT LIKE 'released-%'").get(String(pk)) || null;
+  /**
+   * WHAT A KEY HELD FOR A FINISHED ROUND (kanban #3382): a key that gave its X account away by a move stays placed in a round all of whose runs it
+   * made while holding it - a move never changes a finished round's list. A move is refused while the holder has an attempt in a running round,
+   * so a key's runs of the round a move happens in are all after it (not covered), and one account stands behind one key's runs per round.
+   */
+  const heldFor = (pk, r) => {
+    const first = firstRunOf(r.id, pk);
+    if (first == null) return null;
+    const last = lastRunOf(r.id, pk);
+    const m = q('SELECT * FROM x_link_moves WHERE from_pubkey = ? AND from_linked_ms <= ? AND at_ms > ? ORDER BY at_ms DESC LIMIT 1').get(String(pk), first, last);
+    return m ? { user_id: m.user_id, username: m.username, linked_ms: m.from_linked_ms } : null;
+  };
   function xOf(pk, r = null) {
-    const g = xLinkOf(pk);
+    let g = xLinkOf(pk);
+    if (r && !(g && Number(g.linked_ms) <= (firstRunOf(r.id, pk) ?? Infinity))) g = heldFor(pk, r) || g;
     if (!g) return { placed: false, x: null, why: 'no X account linked' };
     const l = { userId: g.user_id, username: g.username, linkedMs: g.linked_ms };
     const x = { userId: String(l.userId), username: l.username || null, proof: 'game' };   // shown at sign-off (#3279)
@@ -580,9 +598,14 @@ export function createOpr(o = {}) {
   }
   /**
    * SAVE AN X HANDLE (kanban #3331, POST /x { x }): the name looked up on X (it must exist; following is not asked), then kept for this game key.
-   * Refused when another game key holds that X account. The same account again: saved, linked_ms unchanged. Another account: replaces this key's
-   * link with a new linked_ms (the old one is free again; the new one counts from the key's next round it has not played yet).
+   * Another game key holding that X account (kanban #3382, owner 2026-11-23: his own second device was refused): the account moves here when that
+   * key has no attempt (any state but expired) in a running round - it keeps no link from then on, this key's link counts from now; refused
+   * while it has one. The same account again: saved, linked_ms unchanged. Another account: replaces this key's link with a new linked_ms (the old
+   * one is free again; the new one counts from the key's next round it has not played yet).
    */
+  // an attempt (any state but expired, as firstRunOf counts) in a round still running (#3382)
+  const playingNow = (pk, t) => !!q(`SELECT 1 FROM attempts a JOIN rounds r ON r.id = a.round WHERE a.player = ? AND a.state != 'expired'
+    AND r.end_ms > ? AND r.state NOT IN ('closed', 'listed') LIMIT 1`).get(String(pk), t);
   async function saveX(player, typed) {
     const name = xHandleOf(typed);
     if (!name) return { ok: false, code: 400, why: 'Not an X username' };
@@ -600,13 +623,21 @@ export function createOpr(o = {}) {
     const userId = String(a.userId), username = String(a.username || name).replace(/^@/, '');
     const mine = xLinkOf(player);
     if (mine && mine.user_id === userId) { q('UPDATE x_links SET username = ?, checked_ms = ? WHERE pubkey = ?').run(username, now(), player); return { ok: true, x: { username } }; }
-    const held = q('SELECT pubkey FROM x_links WHERE user_id = ?').get(userId);
-    if (held && held.pubkey !== player) return { ok: false, code: 409, why: 'this X account is already used by another player', username };
+    const held = q('SELECT * FROM x_links WHERE user_id = ?').get(userId);
     const at = now();
+    if (held && held.pubkey !== player && playingNow(held.pubkey, at))
+      return { ok: false, code: 409, why: `@${username} already played today's round on another device - try again after the round ends`, username };
+    db.exec('BEGIN');
     try {
+      if (held && held.pubkey !== player) {
+        q('INSERT INTO x_link_moves (user_id, username, from_pubkey, from_linked_ms, to_pubkey, at_ms) VALUES (?, ?, ?, ?, ?, ?)').run(userId, held.username, held.pubkey, held.linked_ms, player, at);
+        q('UPDATE x_links SET user_id = ?, checked_ms = ? WHERE pubkey = ?').run(`released-${at}-${userId}`, at, held.pubkey);
+        log(`x @${username} moved from ${held.pubkey.slice(0, 8)} to ${player.slice(0, 8)} (#3382)`);
+      }
       q(`INSERT INTO x_links (pubkey, user_id, username, linked_ms, checked_ms) VALUES (?, ?, ?, ?, ?)
          ON CONFLICT (pubkey) DO UPDATE SET user_id = excluded.user_id, username = excluded.username, linked_ms = excluded.linked_ms, checked_ms = excluded.checked_ms`).run(player, userId, username, at, at);
-    } catch (e) { if (/UNIQUE/i.test(e.message)) return { ok: false, code: 409, why: 'this X account is already used by another player', username }; throw e; }
+      db.exec('COMMIT');
+    } catch (e) { db.exec('ROLLBACK'); if (/UNIQUE/i.test(e.message)) return { ok: false, code: 409, why: 'this X account is already used by another player', username }; throw e; }
     log(`x @${username} linked to ${player.slice(0, 8)}${mine ? ` (was @${mine.username})` : ''}`);
     refreshListsOf(player);
     return { ok: true, x: { username } };

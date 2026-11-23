@@ -43,12 +43,12 @@ test('AUDIT X typed name (#3279, then #3381 "Bounty und Spiel müssen unabhängi
   assert.equal(w.s2.claimName(first.pk, 'x', { userId: 'x-typed', username: 'typedname' }).ok, true);
   w.s2.record(first.pk, 'x', { member: true, nowMs: w.clock.now() });
   assert.deepEqual([w.opr.xOf(first.pk, r).placed, w.opr.xOf(first.pk, r).x], [false, null]);
-  // the same handle saved in the game: placed; a second key saving the same account is refused
+  // the same handle saved in the game: placed; a second key saving the same account is refused once the first has played the round (#3382)
   assert.equal((await w.opr.saveX(first.pk, 'typedname')).ok, true);
-  w.clock.add(16000);
-  assert.equal((await w.opr.saveX(other.pk, 'typedname')).code, 409);
   assert.equal((await w.opr.saveLnAddress(first.pk, 'first@walletofsatoshi.com')).ok, true);
   await play(w, first, r, 30);
+  w.clock.add(16000);
+  assert.equal((await w.opr.saveX(other.pk, 'typedname')).code, 409);
   w.clock.set(r.end_ms); await w.opr.tick(); w.clock.add(60 * MIN); await w.opr.tick();
   const x = w.opr.xOf(first.pk, r);
   assert.equal(x.placed, true, x.why);
