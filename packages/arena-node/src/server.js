@@ -14051,7 +14051,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // PROTOCOL 28 (kanban #2561): no move public before this seat holds the certified lock set, and only its entries' moves
         let certifiedOnly = null;
         if (lockSetRound(new Uint8Array(id))) {
-          const cert = lockSets.certified(new Uint8Array(id)) || await lockSets.step(new Uint8Array(id));
+          // kanban #3297 (audit h2h-a5-1-1): a stranger's GET stepped the set of a round nobody entered at every seat (the #2901 load back);
+          // stepped here only under the #2901 b gate - an entry or handout here, a certificate, or a view naming an entry
+          const lid = new Uint8Array(id);
+          let work = false; try { work = round.handoutCount(lid) > 0 || round.entriesOf(lid).length > 0; } catch { work = true; }
+          const cert = lockSets.certified(lid) || ((work || lockSets.heardEntries(lid)) ? await lockSets.step(lid) : null);
           if (!cert) {
             res.writeHead(200, { 'content-type': 'application/json', ...CORS });
             return res.end(JSON.stringify({ round: toHex(id), reveals: [], lockSet: lockSets.voidNow(new Uint8Array(id)) ? 'void' : 'pending' }));
