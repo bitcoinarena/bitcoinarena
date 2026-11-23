@@ -6578,6 +6578,10 @@ node_fee = 5.00% of gross_round_volume
                                  the Round Contract names, §23A)
 ```
 
+**The node fee is summed per entry** *(kanban #2825, 2026-11-23)*: a round's node fee is the sum of
+each entry's fee, each rounded down to the msat (what its fee lock holds), never the rate applied once
+to the total - `node_fee = Σ floor(stake_i × fee_bps / 10,000)`.
+
 **RULED (2026-09-21): guardians earn from the node fee** (2% under BLWP, 5% in Bitcoin Arena). They carry the
 reserve, the bond and the liability of every round the federation settles,
 and until this ruling had no income at all (Fedimint base fees are 0). The
