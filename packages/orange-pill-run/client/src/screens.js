@@ -41,7 +41,7 @@ export function xLine(me, sats = PRIZE_SATS) {
     // the server's reason when it gave one (#3281: "linked after your first run of this round - it counts from the next round")
     // NOTHING SAVED YET IS NO ERROR (kanban #3328, owner 2026-11-22: "No Lightning Address" read as an error, a bad first impression): a missing
     // part says nothing here - its empty field (X handle, Lightning address) stands in its place
-    hasX ? { text: "✓ X " + handle, ok: true } : me.x ? { text: "X " + handle + (me.placedWhy ? " - " + me.placedWhy : " not verified yet"), ok: false } : null,
+    hasX ? { text: "✓ X " + handle, ok: true } : me.x ? { text: "X " + handle + (me.placedWhy ? " - " + (me.placedWhy.startsWith(handle + " ") ? me.placedWhy.slice(handle.length + 1) : me.placedWhy) : " not verified yet"), ok: false } : null,   // #3534: the handle once
     hasLn ? { text: "⚡ " + me.lnAddress + " ✓", ok: true } : null,
   ].filter(Boolean);
   const ok = hasX && hasLn;
@@ -51,7 +51,8 @@ export function xLine(me, sats = PRIZE_SATS) {
   return { ok, text, parts, link: !me.x || needsFollow(me), follow: needsFollow(me), ln: !hasLn };
 }
 /** FOLLOWING @bitcoinarena_io IS REQUIRED (kanban #3534, owner 2026-11-23): the account, the link, and whether /me says this player still has to. */
-export const X_HOUSE = "bitcoinarena_io", FOLLOW_URL = "https://x.com/bitcoinarena_io";
+export const X_HOUSE = "bitcoinarena_io";
+export const FOLLOW_URL = "https://x.com/bitcoinarena_io";   // one export per line: client/build.mjs names the first only
 export function needsFollow(me) { return !!(me && me.x && !me.placed && (me.x.follows === false || /follow/i.test(String(me.placedWhy || "")))); }
 
 /**
