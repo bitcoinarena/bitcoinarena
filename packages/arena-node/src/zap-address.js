@@ -34,11 +34,6 @@ const toHexB = (b) => Buffer.from(b).toString('hex');
 export const ZAP_PENDING_MAX = 1000;
 export const ZAP_PENDING_PER_PAYER = 10;
 export const ZAP_REFUSED_KEPT = 200;
-// PLAIN TIPS TOO (kanban #1754): the callback without `nostr` needs no key and no signature, and each call was one more LND invoice
-// (one `lncli addinvoice` child in tools/zap-address.mjs) with no bound at all. Open tip invoices (until their expiry) are capped
-// like open zaps, and so are the tip invoices being made at once.
-export const ZAP_TIPS_OPEN_MAX = ZAP_PENDING_MAX;
-export const ZAP_TIPS_MINTING_MAX = 16;
 // RECEIPTS DO NOT WAIT ON ANOTHER ZAP'S RELAYS (kanban #1828): the relays are the payer's own choice, and watch() used to await each
 // publish before it looked at the next zap - one 1-sat zap naming 8 silent relays held every later receipt (and the expiry sweep)
 // for 8 x 10 s. A paid zap's receipt is signed and kept at once; its publish runs beside the watcher, a few at a time, from a
@@ -159,11 +154,8 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
   const receipts = [];
   const refused = [];
   const minting = new Map();          // zap request id -> payer pubkey, whose invoice is being made right now (kanban #1514, #1683)
-  const tips = new Map();             // paymentHash -> until, each plain tip invoice still open (kanban #1754)
-  let tipsMinting = 0;                // plain tip invoices being made right now (kanban #1754)
-  const pruneTips = (nowS) => { for (const [h, until] of tips) if (until < nowS) tips.delete(h); };
-  const tipKept = new Map();          // `${name}|${amountMsat}` -> { request, paymentHash, until }: open plain-tip invoices handed again (kanban #1801)
-  const tipMinting = new Map();       // the same key -> the mint in flight, which asks at the same moment share (kanban #1801)
+  const tips = new Map();             // `${asker}|${name}|${amountMsat}` -> { request, paymentHash, until }: open plain-tip invoices (kanban #1801, #1999)
+  const tipMinting = new Map();       // the same key -> the mint in flight, which asks at the same moment share
   const askers = new Map();           // asker key (IPv4, IPv6 /64) -> { since, n }: fresh invoices minted for it in this window (kanban #1743, #1801, #1964)
   const letGo = new Map();            // paymentHash -> the zap let go from a full book, watched until its invoice expires (kanban #1922)
   let strangersMinting = 0;            // invoices being made right now for callers not on this host (kanban #2302)
@@ -494,9 +486,9 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
       const comment = u.searchParams.get('comment');
       if (comment && comment.length > ZAP_COMMENT_MAX) return refuse(`a comment is at most ${ZAP_COMMENT_MAX} characters`);
       // A PLAIN TIP (kanban #1801): its invoice is hashed over the address's metadata only, so one of the same name and amount, still
-      // open and unpaid, serves the next tipper as well as a new one would; asks at the same moment share one mint
+      // open and unpaid, serves the next tipper as well as a new one would.
       const key = `${own ? asker : askerKey(asker)}|${name}|${amountMsat}`;   // one asker's own invoice only (kanban #1999)
-      const kept = tipKept.get(key);
+      const kept = tips.get(key);
       if (kept && kept.until - nowSec() >= expiryS / 2) {
         // ONE LOOKUP PER KEPT INVOICE AT A TIME (kanban #3311, audit nostr a5-2-1): each callback GET ran its own lookup - an `lncli lookupinvoice`
         // child on the node - so one stranger's burst of GETs for one amount forked one child per connection, unbounded. Concurrent GETs of one
@@ -511,27 +503,23 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
         }
         let got = null;
         try { got = await look; } catch (e) { log(`lookup ${kept.paymentHash.slice(0, 16)} failed: ${e.message}`); }
-        if (got && !got.settled && tipKept.get(key) === kept) return json(200, { pr: kept.request, routes: [] });
+        if (got && !got.settled && tips.get(key) === kept) return json(200, { pr: kept.request, routes: [] });
       }
-      if (tipKept.get(key) === kept) tipKept.delete(key);
+      if (tips.get(key) === kept) tips.delete(key);
       let mint = tipMinting.get(key);
       if (!mint) {
         const stranger = !own;   // kanban #2302 with #2109: only this node's own loopback tool is no stranger
-        pruneTips(nowSec());
-        if (tipsMinting >= ZAP_TIPS_MINTING_MAX) return refuse('too many tips are being invoiced right now; ask again');
         if (stranger && strangersMinting >= ZAP_MINTING_MAX) return refuse('too many invoices are being made here at once; try again in a moment');
-        if (tips.size + tipsMinting >= ZAP_TIPS_OPEN_MAX) return refuse('too many tips are open here; try again later');
-        { const no = mayMint(asker, own, true); if (no) return refuse(no); }   // kanban #3379: a plain tip
-        tipsMinting++;
+        const no = mayMint(asker, own, true);   // kanban #3379: a plain tip
+        if (no) return refuse(no);
         if (stranger) strangersMinting++;
         mint = invoice({ name, amountMsat, descriptionHash: hex(sha256hex(metadata)), expiryS }).then((made) => {
-          tips.set(String(made.paymentHash), nowSec() + expiryS);
-          tipKept.delete(key);
-          tipKept.set(key, { request: made.request, paymentHash: made.paymentHash, until: nowSec() + expiryS });
-          while (tipKept.size > ZAP_TIPS_KEPT) tipKept.delete(tipKept.keys().next().value);
+          tips.delete(key);
+          tips.set(key, { request: made.request, paymentHash: made.paymentHash, until: nowSec() + expiryS });
+          while (tips.size > ZAP_TIPS_KEPT) tips.delete(tips.keys().next().value);
           log(`tip invoice ${name} ${amountMsat} msat ${made.paymentHash.slice(0, 16)}`);
           return made;
-        }).finally(() => { tipsMinting--; tipMinting.delete(key); if (stranger) strangersMinting--; });
+        }).finally(() => { tipMinting.delete(key); if (stranger) strangersMinting--; });
         tipMinting.set(key, mint);
       }
       let made;
