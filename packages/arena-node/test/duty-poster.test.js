@@ -313,6 +313,27 @@ test('#3380 emergency grids every seat refuses do not fill the cap: the fourth, 
   assert.ok(await run(refused), 'the three refused ones do not count: the valid grid is posted');
 });
 
+// KANBAN #3380 (2026-11-23 02:20-02:28Z): seat 6's Next Block engine re-posted the lines of its refused postings (config 00..00) on every pass -
+// each seat that did not answer asked 30 times - and the valid emergency grid, confirmed at 162867, waited behind them; no line reached a seat
+test('#3380 a refused posting is kept dead and its line is not posted again; a confirmed grid not yet posted goes first', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'duty-'));
+  const bad = txOf([dutyMarkerOutput(DAY - 1, 'nextblock-day-emergency'), seriesPublicationOutput(new Uint8Array(32).fill(0x81))]);
+  const good = txOf([dutyMarkerOutput(DAY - 1, 'nextblock-day-emergency'), seriesPublicationOutput(new Uint8Array(32).fill(0x92))]);
+  const w = world({ local: [ORDER[0]], nowMs: T0 + 30 * MIN, dir, inBlocks: [{ atMs: T0 - 19 * H, raw: bad.raw }, { atMs: T0 - 2 * H, raw: good.raw }] });
+  const file = (n) => join(dir, `nextblock-day-${DAY - 1}-e${n}.json`);
+  const base = { item: 'nextblock-day', slot: DAY - 1, target: new Date(T0).toISOString(), emergency: true, gameId: GID, version: 24, committeeMs: T0 - 12 * H, firstStartMs: T0 };
+  writeFileSync(file(1), JSON.stringify({ ...base, txid: bad.txid, series: ['81'.repeat(32)], lines: ['bad-line'], posted: [{ took: 3, of: 30 }], postedAtMs: 0 }) + '\n');
+  writeFileSync(file(2), JSON.stringify({ ...base, txid: good.txid, series: ['92'.repeat(32)], lines: ['good-line'], posted: null }) + '\n');
+  const sent = [];
+  const seriesRefused = async (ids) => (ids.some((id) => id.startsWith('81')) ? 'its core runs config 2170f250, not 0000000000000000' : null);
+  const d = createDayDuty({ ...w.opts, seriesRefused, postSeries: async (line) => { sent.push(line); return { took: 30, of: 30, refused: [] }; } });
+  await d.look();
+  await d.look();
+  assert.equal(JSON.parse(readFileSync(file(1), 'utf8')).verdict.state, 'dead', 'the refused posting is written dead');
+  assert.deepEqual(sent.filter((l) => l === 'bad-line'), [], 'the refused line is not posted again');
+  assert.equal(sent[0], 'good-line', 'the confirmed grid not yet posted goes first');
+});
+
 // SEAT 4, 2026-10-26 11:38-11:43Z (ARENA_DUTY_POST=on, dry): old rounds' views timed out every few seconds, every census read was held "a
 // block read failed less than a minute ago", the day's anchor census never read - GET /duty "anchor: null, order: []" - and its first pass
 // saw no seat and planned emergency grids for days that were posted and drawn

@@ -404,15 +404,22 @@ export function createDayDuty(o) {
   };
   // THE SERIES TO THE SEATS once the publication is in a block - not a dead one, not past its day's end, not more often than every
   // DUTY_REPOST_EVERY_MS (10-26: three dead days were re-posted to 52 seats every ~3.5 min)
+  // WHY EVERY SEAT REFUSES A POSTING'S SERIES (kanban #3380, seriesRefused), else null
+  const refusedOf = async (series) => { if (typeof seriesRefused !== 'function') return null; try { return await seriesRefused(series); } catch { return null; } };
   const postKept = async (idx) => {
     const nowMs = now();
-    for (const f of readdirSync(dir).filter((x) => x.startsWith(`${item}-`) && x.endsWith('.json'))) {
-      let k; try { k = { file: join(dir, f), ...JSON.parse(readFileSync(join(dir, f), 'utf8')) }; } catch { continue; }
+    // A GRID NOT YET POSTED FIRST (kanban #3380): a re-post asks every seat that does not answer up to 30 times, and a confirmed new grid waited behind it
+    const files = readdirSync(dir).filter((x) => x.startsWith(`${item}-`) && x.endsWith('.json'))
+      .map((f) => { try { return { file: join(dir, f), ...JSON.parse(readFileSync(join(dir, f), 'utf8')) }; } catch { return null; } }).filter(Boolean)
+      .sort((a, b) => (a.posted ? 1 : 0) - (b.posted ? 1 : 0));
+    for (const kf of files) {
+      let k = kf;
       if (!k.lines || !k.txid) continue;
       if (k.posted && k.posted.every((p) => p.took === p.of)) continue;
       if (!idx.at.has(k.txid)) continue;
       if (k.verdict && k.verdict.state === 'dead') continue;
       if (Date.parse(k.target) + DUTY_DAY_MS <= nowMs) continue;
+      if (await refusedOf(k.series)) continue;   // kanban #3380: a line every seat refuses is not posted again
       if (k.postedAtMs && nowMs - k.postedAtMs < guard.DUTY_REPOST_EVERY_MS) continue;
       const posted = [];
       for (const line of k.lines) { try { posted.push(await postSeries(line)); } catch (e) { posted.push({ took: 0, of: 1, refused: [{ who: '-', why: e.message }] }); } }
@@ -597,10 +604,10 @@ export function createDayDuty(o) {
       for (const k of ks) { try { verdicts.push(k.verdict = await judge(k, view, idx, mtpMs)); } catch (e) { verdicts.push(k.verdict = { state: 'pending', stage: 'unread', why: e.message }); } }
       // A POSTING EVERY SEAT REFUSES IS DEAD (kanban #3380: on 2026-11-23 three Next Block emergency grids naming config 00..00 filled the cap of
       // three, and the grid that would have been taken was never posted): its series name a config their core does not run
-      const refusedOf = async (series) => { if (typeof seriesRefused !== 'function') return null; try { return await seriesRefused(series); } catch { return null; } };
       for (let i = 0; i < ks.length; i++) {
         const why = ks[i].verdict && ks[i].verdict.state !== 'dead' ? await refusedOf(ks[i].series) : null;
-        if (why) verdicts[i] = ks[i].verdict = { state: 'dead', stage: 'refused', why };
+        // WRITTEN DEAD (kanban #3380): postKept reads the file, and a refused posting's line posted again every pass held the engine for minutes
+        if (why) { verdicts[i] = ks[i].verdict = { state: 'dead', stage: 'refused', why }; keep(ks[i]); }
       }
       // WHAT THE SEATS DRAW OF THE APP IN WHAT IS LEFT OF THE DAY, whoever posted it: drawn on a majority, the day is drawable
       const drawnNow = await familyDraw(Math.max(day.startMs, nowMs), day.endMs);
