@@ -282,7 +282,7 @@ import { censusRootOf } from '../../arena-protocol/src/census.js';
 import { decodeSeatingCertificate, encodeSeatingCertificate, signPresent, SEATING_ROLES } from '../../arena-protocol/src/seating.js';
 import { receiptsNeeded as roundThreshold, donationKeysForNetworkId } from '../../arena-protocol/src/genesis.js';
 import { authorityAt, donationSetSignedBy, donationSetInForce, encodeDonationSetBody, encodeAuthorityRotation, donationSetBodyId, authorityRotationId } from '../../arena-protocol/src/authority.js';
-import { donationSetId, donationOutputsExpected, encodeDonationSet, vestedShares } from '../../arena-protocol/src/donation.js';
+import { donationSetId, donationOutputsExpected, encodeDonationSet, vestedShares, vestedSetsNear } from '../../arena-protocol/src/donation.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { timed, watchLoop } from './slow.js';
 import { resultFinality, finalSignatureNow, finalRerunResult, NO_RUN } from './finality.js';
@@ -12574,7 +12574,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const mergedBy = (bonded) => servedNodes({ rounds: mergeServedRounds(heldIn, { bonded }).rounds, fromMs: from, toMs: to, verify: verifyOnce });
         let merged = mergedBy(bondedNodeKeys());   // kanban #2739
         if (merged.root !== toHex(p.servedRoot)) for (const keys of recentCensusKeySets()) { const m = mergedBy(keys); if (m.root === toHex(p.servedRoot)) { merged = m; break; } }
-        const got = await keepItemPurchase({ p, manifest: game.manifest, networkSet: vestedShares(forced.recipients, height), gameSet: game.donationSet,
+        const got = await keepItemPurchase({ p, manifest: game.manifest, networkSet: vestedShares(forced.recipients, height), networkSets: vestedSetsNear(forced.recipients, height), gameSet: game.donationSet,
           served: { fromMs: merged.fromMs, toMs: merged.toMs, nodes: merged.nodes, root: merged.root }, port: await portOfFederation(p.federationId), db: round.db,
           verify: (sg, m, k) => schnorr.verify(sg, m, k), reserveKey: itemReserveKey, keepReserve: (row) => round.putDonationOutputs([row]), keepDonations: (rows) => round.putDonationOutputs(rows), fees: feesAtHeight(height),
           // kanban #1180: the payment names the item (purchaseImage); a payment with the buyer's key alone as its image only where the
@@ -12613,8 +12613,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           let height = net.censusHeight; try { if (typeof chainTip === 'function') height = Number(await chainTip()); } catch { /* the newest round's height */ }
           const forced = donationSetInForce({ networkId: net.networkId, authority: keys.authority, recovery: keys.recovery, sets: donationSets,
             rotations: donationRotations, height, verify: verifyDonation, approved: approvedSets() });
-          return forced.ok ? { set: vestedShares(forced.recipients, height) } : { status: 503, why: `no network donation set in force here: ${forced.why}` };
+          return forced.ok ? { set: vestedShares(forced.recipients, height), near: vestedSetsNear(forced.recipients, height) } : { status: 503, why: `no network donation set in force here: ${forced.why}` };
         };
+        let networkSets = null;   // kanban #3293: the page split at its round's census height, a vesting step or two below the tip
         // A ZAP TO A PLAYER: its one output to the player's identity key, refundKeyOf - no set to hold
         if (g.target === GIFT_TO_PLAYER) recipients = playerGiftRecipients(g.gameDevPubkey);
         else if (g.target === GIFT_TO_GAME) { const x = gameSetOf(); if (!x.set) return text(res, x.status, x.why); recipients = x.set; }
@@ -12622,9 +12623,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         else if (g.target === GIFT_TO_BOTH) {
           const x = gameSetOf(); if (!x.set) return text(res, x.status, x.why);
           const y = await networkSetOf(); if (!y.set) return text(res, y.status, y.why);
-          gameSet = x.set; networkSet = y.set;
-        } else { const y = await networkSetOf(); if (!y.set) return text(res, y.status, y.why); recipients = y.set; }
-        const got = await keepDonationGift({ g, recipients, networkSet, gameSet, port: await portOfFederation(g.federationId), db: round.db,
+          gameSet = x.set; networkSet = y.set; networkSets = y.near;
+        } else { const y = await networkSetOf(); if (!y.set) return text(res, y.status, y.why); recipients = y.set; networkSets = y.near; }
+        const got = await keepDonationGift({ g, recipients, networkSet, gameSet, networkSets, port: await portOfFederation(g.federationId), db: round.db,
           verify: (sg, m, k) => schnorr.verify(sg, m, k), keepRows: (rows) => round.putDonationOutputs(rows) });
         if (!got.ok) return text(res, got.status || 422, got.why);
         if (got.kept === 'new') {
