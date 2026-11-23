@@ -11,7 +11,7 @@ import { checkLevel } from '../src/level-check.mjs';
 import { createOpr } from '../server/opr-service.mjs';
 import { runFeatures, scoreRun, nearLogs, HOLD_ABOVE } from '../server/opr-botscore.mjs';
 import { openBountySeason } from '../../arena-node/src/bounty-season.js';
-import { keypair, signIn, proveX } from './server-helpers.mjs';
+import { keypair, signIn, proveX, gameLink } from './server-helpers.mjs';
 
 const fx = JSON.parse(fs.readFileSync(new URL('./fixtures/candles-30d.json', import.meta.url)));
 const day = fx.days[fx.days.length - 1];
@@ -85,7 +85,7 @@ async function realRound() {
   const r = opr.roundRow(ROUND);
   assert.equal(r.state, 'ready');
   let xn = 0;
-  const link = (pk) => { xn++; assert.equal(proveX(s2, pk, { userId: `u${xn}`, username: `user${xn}`, nowMs: t }).ok, true); s2.record(pk, 'x', { member: true, nowMs: t }); };   // proven by a code (#3279)
+  const link = (pk) => { xn++; assert.equal(gameLink(opr, pk, { userId: `u${xn}`, username: `user${xn}`, nowMs: t }).ok, true); };   // the game's own link (#3381)
   const play = async (kp, log, client, ip = null) => {
     const s = await opr.startAttempt(kp.pk, { round: r.id, ip });
     assert.equal(s.ok, true, s.why);

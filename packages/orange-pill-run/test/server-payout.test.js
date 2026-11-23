@@ -67,12 +67,10 @@ test('#3248 none placed: the pot carries over to the next round', async () => {
 
 test('#3250 a bot on the bounty\'s list is not placed', async () => {
   const { w, r, ps } = await played([10, 9]);
-  // the faucet's known-bot list (FAUCET_BOT_X_HANDLES), read by the same store
-  const { writeFileSync, mkdtempSync } = await import('node:fs'); const { join } = await import('node:path'); const { tmpdir } = await import('node:os');
-  const f = join(mkdtempSync(join(tmpdir(), 'opr-bots-')), 'bots.txt');
-  const name = w.s2.links(ps[0].pk)[0].username; writeFileSync(f, `${name}\n`);
-  process.env.FAUCET_BOT_X_HANDLES = f;
-  try { await endRound(w, r); } finally { delete process.env.FAUCET_BOT_X_HANDLES; }
+  // the known-bot list (FAUCET_BOT_X_HANDLES; this world's list: every handle starting with "bot") against the game's own link (#3381)
+  w.opr.db.prepare('UPDATE x_links SET username = ? WHERE pubkey = ?').run('bot_ps0', ps[0].pk); w.xs.set('bot_ps0', 'id-bot');
+  await endRound(w, r);
+  assert.equal(w.opr.xOf(ps[0].pk, r).why, 'a known bot account');
   assert.deepEqual(rowsOf(w, r, 'pot').map((x) => x.player), [ps[1].pk]);
 });
 
@@ -110,19 +108,15 @@ test('#3249 #3250 disqualify recalculates the waiting lists; a rejected row move
   assert.deepEqual(rowsOf(w, r, 'pot').map((x) => x.player), [ps[1].pk, ps[2].pk, ps[3].pk]);
 });
 
-// #3281 #3288: the X account is LINKED (proven by its code) before the player's first run of the round; its VERIFICATION (the member read) may
-// come until 1 hour after the round. A link made after the first run counts from the next round; a read after the hour does not count
-test('#3250 X can be verified until 1 hour after the round: the lists are written then', async () => {
+// #3281 #3288 #3381: the X account is the game's own link (POST /x, checked on X at save time - no member read since #3381), made before the
+// player's first run of the round; the lists are written 1 hour after the round. A key with no game link is not placed
+test('#3250 the lists are written 1 hour after the round; only keys with the game\'s own X link are placed', async () => {
   const { w, r, ps } = await played([10, 9, 8], [true, 'unverified', 'unverified']);
   w.clock.set(r.end_ms); await w.opr.tick();
   assert.deepEqual(w.opr.listsOf(r.id), []);
-  w.clock.add(50 * MIN); w.s2.record(ps[1].pk, 'x', { member: true, nowMs: w.clock.now() });
-  w.clock.add(10 * MIN); await w.opr.tick();
-  assert.deepEqual(rowsOf(w, r, 'pot').map((x) => x.player), [ps[0].pk, ps[1].pk]);
-  w.clock.add(MIN); w.s2.record(ps[2].pk, 'x', { member: true, nowMs: w.clock.now() });   // read after the hour: not placed in this round
-  w.opr.rejectRow({ round: r.id, kind: 'pot', player: 'nobody', by: 'owner' });           // a rebuild of the waiting lists
-  assert.deepEqual(rowsOf(w, r, 'pot').map((x) => x.player), [ps[0].pk, ps[1].pk]);
-  assert.match(w.opr.xOf(ps[2].pk, r).why, /not verified by 1 hour after/);
+  w.clock.add(60 * MIN); await w.opr.tick();
+  assert.deepEqual(rowsOf(w, r, 'pot').map((x) => x.player), [ps[0].pk]);
+  assert.equal(w.opr.xOf(ps[2].pk, r).why, 'no X account linked');
 });
 
 test('#3281 #3288 an X account linked after the key\'s first run of the round does not place it in that round', async () => {

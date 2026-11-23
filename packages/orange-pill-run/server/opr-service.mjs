@@ -11,7 +11,7 @@
 //   chain { post(payloadHex) -> txid, status(txid) -> { confirmations, height } }    (opr-chain.mjs; null: no post, a round opens on its level)
 //   xLookup(handle) -> { userId, username, why }: whether an X account of that name exists (arena-node/src/bounty-verify.js xByName; userId null:
 //       none, or not read). The game's own X links (kanban #3331) are kept here, per game key, in x_links - never in the bug bounty's book
-//   s2: the bug bounty's Season 2 store (arena-node/src/bounty-season.js openBountySeason) - only a FALLBACK for keys linked there before #3331; read only
+//   (kanban #3381, owner 2026-11-23: "Bounty und Spiel müssen unabhängig sein"): the bug bounty's Season 2 book is not read here at all - no s2
 //   botXHandles() -> Set of lower-case X handles on the bot list (FAUCET_BOT_X_HANDLES, read on every call)
 //   alert(text): the owner's alert hook (off unless configured)
 //   lnCheck(address) -> { ok, address } | { ok: false, why }: a player's Lightning address asked at its wallet (opr-lnaddress.mjs checkLnAddress)
@@ -97,7 +97,7 @@ export function createOpr(o = {}) {
   const now = o.now || (() => Date.now());
   const log = o.log || ((m) => console.log(`${new Date().toISOString()} ${m}`));
   const alert = o.alert || (() => {});
-  const { sim, fetchCandles, checkLevel, invoices, chain = null, s2 = null } = o;
+  const { sim, fetchCandles, checkLevel, invoices, chain = null } = o;   // o.s2 (the bounty book) is ignored since #3381
   const ceilingOf = o.ceilingOf || null;   // async (candles, seed, version) -> { total, timeS } (kanban #3332; none: the field measure only)
   const lnCheck = o.lnCheck || ((a) => checkLnAddress(a));
   const xLookup = o.xLookup || null, botXHandles = o.botXHandles || botListFromEnv;
@@ -550,43 +550,31 @@ export function createOpr(o = {}) {
     return { runs, players };
   }
   /**
-   * PLACED (kanban #3245, #3250, #3331): an X account this game key linked in the game's own x_links (found on X at save time), or - for a key
-   * linked before #3331 - its Season 2 link verified by the bug bounty; not on the bot list.
-   * TYPED OR PROVEN, BOTH PLACE (kanban #3279, #3285; owner 2026-11-22 ~12:45Z: "Zu kompliziert, mach das weg"): an X account linked in the
-   * Season 2 book the normal way places the player - a handle typed in the social form (proof 'name', claimName) as well as a posted link code
-   * (proof 'code', redeem). The proof kind rides along as x.proof ('typed' | 'code') so the admin page and every list row show it at the owner's
-   * sign-off; nothing is refused for it.
+   * PLACED (kanban #3245, #3250, #3331, #3381): an X account this game key linked in the game's own x_links (found on X at save time), not on the
+   * bot list. ONLY THE GAME'S OWN LINK (kanban #3381, owner playtest 2026-11-23: the phone's game screen said "✓ X @fexx_off" - a typed link in the
+   * bug bounty's Season 2 book on that key - although the owner never linked an X account in the game; owner: "Bounty und Spiel müssen unabhängig
+   * sein"): the bounty book is neither shown nor counted; a player who linked X only there links it again in the game.
    * BY THE HOUR AFTER THE ROUND (kanban #3278, #3286; #3250: "verify until 1 hour after the round ends"): with round r given, a link made after
    * r.end_ms + verifyGraceMs does not place the player in r - a later list rebuild (any POST /lnaddress) cannot bring a late link in.
    * LINKED BEFORE THE FIRST RUN (kanban #3281, #3288): the 5 attempts are counted per key, the bounty is paid per X account, and keys are free -
    * one person played 5 runs on each of N fresh keys and linked the one X account after the round to the best of them. A key is placed in r
    * only when its X link was made before its first attempt of r: every run that can win was made by the key while it held the account,
-   * and one X account is on one key at a time (redeem refuses an account a code linked to another key), so one X account stands behind at most
+   * and one X account is on one key at a time (saveX refuses an account another game key holds), so one X account stands behind at most
    * one key's attempts in a round. A key that links later is placed from its next round on.
    */
   const firstRunOf = (round, pk) => q("SELECT MIN(created_ms) AS m FROM attempts WHERE round = ? AND player = ? AND state != 'expired'").get(round, pk).m;
   const isBotX = (name) => { const b = botXHandles(); return !!name && b.has(String(name).replace(/^@/, '').toLowerCase()); };
   const xLinkOf = (pk) => q('SELECT * FROM x_links WHERE pubkey = ?').get(String(pk)) || null;
-  // THE GAME'S OWN LINK FIRST (kanban #3331): the existence check at save time is its verification - no follow, no member read. A key with no game
-  // link falls back to its Season 2 link made before #3331 (the old rules, unchanged), unless another game key now holds that X account here
   function xOf(pk, r = null) {
     const g = xLinkOf(pk);
-    let l = null, flags = {}, viaS2 = false;
-    if (g) l = { userId: g.user_id, username: g.username, linkedMs: g.linked_ms, proof: 'game' };
-    else if (s2) {
-      try { l = s2.links(pk).find((x) => x.platform === 'x') || null; flags = s2.flagsOf(pk) || {}; } catch (e) { return { placed: false, x: null, why: `X not read (${e.message})` }; }
-      if (l) { viaS2 = true; const held = q('SELECT pubkey FROM x_links WHERE user_id = ?').get(String(l.userId)); if (held && held.pubkey !== pk) l = null; }
-    }
-    if (!l) return { placed: false, x: null, why: 'no X account linked' };
-    const x = { userId: String(l.userId), username: l.username || null, proof: l.proof === 'game' ? 'game' : l.proof === 'code' ? 'code' : 'typed' };   // shown at sign-off (#3279)
-    if (flags.bot || isBotX(l.username)) return { placed: false, x, why: 'a known bot account' };
-    if (viaS2 && l.member !== true) return { placed: false, x, why: 'the X account is not verified yet' };
+    if (!g) return { placed: false, x: null, why: 'no X account linked' };
+    const l = { userId: g.user_id, username: g.username, linkedMs: g.linked_ms };
+    const x = { userId: String(l.userId), username: l.username || null, proof: 'game' };   // shown at sign-off (#3279)
+    if (isBotX(l.username)) return { placed: false, x, why: 'a known bot account' };
     if (r && !(Number(l.linkedMs) <= r.end_ms + cfg.verifyGraceMs)) return { placed: false, x, why: 'the X account was linked more than 1 hour after the round ended' };
     if (r) {
       const first = firstRunOf(r.id, pk);
       if (first != null && !(Number(l.linkedMs) <= first)) return { placed: false, x, why: 'the X account was linked after your first run of this round - it counts from the next round' };
-      // verified (a member read) after the link and by the hour after the round - a read days later does not rebuild a waiting list either (#3278)
-      if (viaS2 && !s2.memberRead(pk, 'x', { userId: l.userId, fromMs: l.linkedMs, toMs: r.end_ms + cfg.verifyGraceMs })) return { placed: false, x, why: 'the X account was not verified by 1 hour after the round ended' };
     }
     return { placed: true, x, why: null };
   }

@@ -36,24 +36,26 @@ test('AUDIT X grace: an X account linked hours after the round (list already wri
   assert.equal(bountyWinner(w, r), honest.pk, 'an X link made after end + 1 h must not place the player (#3250: verify until 1 hour after the round)');
 });
 
-test('AUDIT X typed name (#3279, owner 2026-11-22 "Zu kompliziert, mach das weg"): a typed X link places the player; the list row shows proof "typed"; one X account stays on one key', async () => {
-  const w = freeWorld(); const r = await openRound(w);
+test('AUDIT X typed name (#3279, then #3381 "Bounty und Spiel müssen unabhängig sein"): a typed bounty-book link neither shows nor places; the game\'s own link places, proof "game"; one X account stays on one key', async () => {
+  const w = freeWorld({ xAccounts: new Map([['typedname', 'x-typed']]) }); const r = await openRound(w);
   const first = keypair(), other = keypair();
-  // a handle typed in the Season 2 social form: claimName links it with proof 'name'
+  // a handle typed in the Season 2 social form: claimName links it with proof 'name' - in the bounty book only
   assert.equal(w.s2.claimName(first.pk, 'x', { userId: 'x-typed', username: 'typedname' }).ok, true);
   w.s2.record(first.pk, 'x', { member: true, nowMs: w.clock.now() });
-  assert.equal(w.s2.links(first.pk)[0].proof, 'name');
-  // one X account on one key: a second key typing the same account is refused
-  assert.equal(w.s2.claimName(other.pk, 'x', { userId: 'x-typed', username: 'typedname' }).ok, false);
+  assert.deepEqual([w.opr.xOf(first.pk, r).placed, w.opr.xOf(first.pk, r).x], [false, null]);
+  // the same handle saved in the game: placed; a second key saving the same account is refused
+  assert.equal((await w.opr.saveX(first.pk, 'typedname')).ok, true);
+  w.clock.add(16000);
+  assert.equal((await w.opr.saveX(other.pk, 'typedname')).code, 409);
   assert.equal((await w.opr.saveLnAddress(first.pk, 'first@walletofsatoshi.com')).ok, true);
   await play(w, first, r, 30);
   w.clock.set(r.end_ms); await w.opr.tick(); w.clock.add(60 * MIN); await w.opr.tick();
   const x = w.opr.xOf(first.pk, r);
   assert.equal(x.placed, true, x.why);
-  assert.equal(x.x.proof, 'typed');
+  assert.equal(x.x.proof, 'game');
   assert.equal(bountyWinner(w, r), first.pk);
   const row = w.opr.listsOf(r.id).find((l) => l.kind === 'bounty').rows[0];
-  assert.equal(row.xProof, 'typed', 'the owner sees at sign-off that the X link was typed, not proven by a code');
+  assert.equal(row.xProof, 'game');
 });
 
 test('AUDIT Sybil: one person, six fresh keys from six addresses, 30 runs; the best key links the one X account in the grace hour and is paid unheld', async () => {

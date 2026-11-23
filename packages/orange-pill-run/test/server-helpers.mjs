@@ -47,6 +47,13 @@ export function signIn(kp, { path, method = 'GET', body = '', createdAt, base = 
   return `Nostr ${Buffer.from(JSON.stringify(e)).toString('base64')}`;
 }
 
+/** THE GAME'S OWN X LINK (kanban #3331, #3381): a row in the service's x_links, as POST /x saves it after the X lookup - the only link the game counts. */
+export function gameLink(opr, pk, { userId, username = null, nowMs }) {
+  try { opr.db.prepare('INSERT INTO x_links (pubkey, user_id, username, linked_ms, checked_ms) VALUES (?, ?, ?, ?, ?)').run(String(pk), String(userId), String(username || userId), nowMs, nowMs); }
+  catch (e) { return { ok: false, why: e.message }; }
+  return { ok: true };
+}
+
 /** An X account proven for a key in a Season 2 book: a link code made for the key and posted from the account (proof 'code', kanban #3279). */
 export function proveX(s2, pk, { userId, username = null, nowMs }) {
   const c = s2.makeCode(pk, { nowMs });
@@ -54,8 +61,8 @@ export function proveX(s2, pk, { userId, username = null, nowMs }) {
   return s2.redeem(c.code, { platform: 'x', userId, username, nowMs });
 }
 
-/** A service on a fake clock, with a Season 2 book in memory: link(pk, verified) gives the key a linked X account - linked by a code posted from it
- *  (proof 'code', as the bug bounty's X poll redeems it). A typed name places a player as well (kanban #3279, owner 2026-11-22). */
+/** A service on a fake clock: link(pk, linked) gives the key the game's own X link (kanban #3381: the only one that counts; linked false: none).
+ *  A Season 2 book in memory is handed to the service as well (w.s2) - the service must ignore it (kanban #3381). */
 export function world({ start = '2026-11-23T00:00:00Z', cfg = {}, chain = fakeChain(), s2On = true, lnCheck = null, xAccounts = null } = {}) {
   let t = at(start);
   const clock = { now: () => t, set: (ms) => { t = ms; }, add: (ms) => { t += ms; } };
@@ -73,9 +80,9 @@ export function world({ start = '2026-11-23T00:00:00Z', cfg = {}, chain = fakeCh
   const opr = createOpr({ xLookup, botXHandles: () => new Set([...xs.keys()].filter((k) => k.startsWith('bot'))), lnCheck: lnCheck || lnFake, now: clock.now, sim: stubSim, fetchCandles: async (d) => candles48(d), checkLevel: async () => ({ ok: true, seed: 7, tries: 1, hash: 'h' }),
     invoices: lnd, chain, s2, alert: (x) => alerts.push(x), log: (m) => lines.push(m), cfg: { adminSha: createHash('sha256').update('letmein').digest('hex'), showTest: true, entrySats: 100, ...cfg } });   // the paid tests keep 100; free: cfg.entrySats 0 (#3273)
   const link = (pk, verified = true, username = null) => {
-    xn++; const r = proveX(s2, pk, { userId: `x${xn}`, username: username || `user${xn}`, nowMs: t });
+    xn++; if (!verified) return;
+    const r = gameLink(opr, pk, { userId: `x${xn}`, username: username || `user${xn}`, nowMs: t });
     if (!r.ok) throw new Error(r.why);
-    if (verified) s2.record(pk, 'x', { member: true, nowMs: t });
   };
   return { opr, clock, lnd, chain, s2, alerts, lines, link, wallets, lnAsked, xs, xAsked };
 }

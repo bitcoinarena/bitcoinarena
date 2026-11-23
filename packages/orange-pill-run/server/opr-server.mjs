@@ -9,7 +9,7 @@
 //   OPR_LNCLI, OPR_LND=<lnddir>|<rpc host:port>, OPR_LN_NETWORK (testnet4): the lnd that makes and reads the entry invoices (optional: free rounds need none)
 //   OPR_BITCOIN_CLI, OPR_BITCOIN_DATADIR, OPR_BITCOIN_CHAIN (optional), OPR_WALLET (arena-opr), OPR_FEE_RATE (sat/vB, 1),
 //   OPR_PENDING_FILE (miner C's list), OPR_CONFIRMATIONS (1); OPR_CHAIN=off opens rounds without a post (local runs only)
-//   OPR_S2_DB (the bug bounty's Season 2 book: X links made before #3331, read as a fallback), FAUCET_BOT_X_HANDLES (the bot list),
+//   FAUCET_BOT_X_HANDLES (the bot list; the bug bounty's book is not read here since #3381 - OPR_S2_DB is ignored),
 //   OPR_X_PORT (the logged-in X browser's debug port: the game's own X handle lookup, kanban #3331; unset: no X check)
 //   OPR_FIRST_DAY (2026-11-23), OPR_DAILY (on), OPR_SHOW_TEST (off: test rounds hidden from the public routes; on for the stage)
 //   OPR_PROMO_END (unset): the promotion's end, an ISO time or date (kanban #3328: 2026-11-30T00:00:00Z) - no daily round ends after it; shown in the game
@@ -34,7 +34,6 @@ const { fetchDay } = await import('../src/candles.mjs');
 const sim = { GAME_VERSION: simMod.GAME_VERSION, buildLevel: simMod.buildLevel, runLog: simMod.runLog, newWorld: simMod.newWorld, stepWorld: simMod.stepWorld, botInput: simMod.botInput, MAX_STEPS: simMod.MAX_STEPS };   // the last four: the bot likelihood (#3274)
 const fetchCandles = async (day) => (await fetchDay(day, { log: (m) => log(`candles ${day}: ${m}`) })).candles;   // Coinbase, then Kraken, Bitstamp
 
-const s2 = env.OPR_S2_DB ? (await import('../../arena-node/src/bounty-season.js')).openBountySeason(env.OPR_S2_DB) : null;
 const xLookup = env.OPR_X_PORT ? await (async () => { const v = await import('../../arena-node/src/bounty-verify.js');
   return v.xByName({ session: () => v.xSessionFromChrome({ port: Number(env.OPR_X_PORT) }) }); })() : null;
 const invoices = !env.OPR_LNCLI || !env.OPR_LND ? null : lncliInvoices({ lncli: env.OPR_LNCLI, lnd: env.OPR_LND, network: env.OPR_LN_NETWORK || 'testnet4' });
@@ -49,13 +48,13 @@ const alert = (text) => {
     body: JSON.stringify({ text }), signal: AbortSignal.timeout(10000) }).then((r) => { if (!r.ok) log(`alert not posted: chat ${r.status}`); }, (e) => log(`alert not posted: ${e.message}`));
 };
 
-const opr = createOpr({ dbPath: env.OPR_DB, sim, fetchCandles, checkLevel, ceilingOf: ceilingInWorker, invoices, chain, s2, xLookup, alert, log, cfg: {
+const opr = createOpr({ dbPath: env.OPR_DB, sim, fetchCandles, checkLevel, ceilingOf: ceilingInWorker, invoices, chain, xLookup, alert, log, cfg: {
   entrySats: Number(env.OPR_ENTRY_SATS || 0), promoEnd: env.OPR_PROMO_END || null, firstDay: env.OPR_FIRST_DAY || '2026-11-23', daily: env.OPR_DAILY !== 'off', showTest: env.OPR_SHOW_TEST === 'on',
   adminSha: env.OPR_ADMIN_SHA256 || '', workerKey: env.OPR_WORKER_KEY || '', confirmations: Number(env.OPR_CONFIRMATIONS || 1),
   publicBases: String(env.OPR_PUBLIC_BASES || 'https://testnet-stage.bitcoinarena.io/api/opr').split(',').map((x) => x.trim().replace(/\/+$/, '')).filter(Boolean),
 } });
 
-createServer((req, res) => { opr.handle(req, res); }).listen(port, '127.0.0.1', () => log(`orange pill run on 127.0.0.1:${port}, game ${sim.GAME_VERSION}, chain ${chain ? env.OPR_WALLET : 'off'}, X ${xLookup ? 'own links' : 'off'}${s2 ? ' + season 2 fallback' : ''}`));
+createServer((req, res) => { opr.handle(req, res); }).listen(port, '127.0.0.1', () => log(`orange pill run on 127.0.0.1:${port}, game ${sim.GAME_VERSION}, chain ${chain ? env.OPR_WALLET : 'off'}, X ${xLookup ? 'own links only' : 'off'}`));
 const tick = () => opr.tick().catch((e) => log(`tick failed: ${e.stack || e.message}`));
 tick();
 setInterval(tick, Number(env.OPR_TICK_MS || 15000));

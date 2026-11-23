@@ -14,7 +14,7 @@ import { runFeatures, scoreRun, strongRuns, HOLD_ABOVE, STRONG_RATIO, CEILING_SH
 import { ceilingInWorker } from '../server/opr-ceiling.mjs';
 import { bestPerPlayer } from '../server/opr-payout.mjs';
 import { openBountySeason } from '../../arena-node/src/bounty-season.js';
-import { keypair, proveX } from './server-helpers.mjs';
+import { keypair, proveX, gameLink } from './server-helpers.mjs';
 
 const F = JSON.parse(fs.readFileSync(new URL('./fixtures/opr-live-runs-3332.json', import.meta.url)));
 const levelOf = (id) => { const R = F.rounds[id]; return sim.buildLevel(R.candles, R.seed, R.version); };
@@ -102,7 +102,7 @@ async function dailyOn(id) {
   const keyOf = async (name) => {
     if (keys.has(name)) return keys.get(name);
     const k = keypair(); keys.set(name, k); xn++;
-    assert.equal(proveX(s2, k.pk, { userId: `u${xn}`, username: name, nowMs: t }).ok, true); s2.record(k.pk, 'x', { member: true, nowMs: t });
+    assert.equal(gameLink(opr, k.pk, { userId: `u${xn}`, username: name, nowMs: t }).ok, true);
     assert.equal((await opr.saveLnAddress(k.pk, `${name}@walletofsatoshi.com`)).ok, true);
     return k;
   };

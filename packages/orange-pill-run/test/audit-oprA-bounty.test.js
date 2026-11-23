@@ -10,7 +10,7 @@ import { checkLevel } from '../src/level-check.mjs';
 import { createOpr } from '../server/opr-service.mjs';
 import { openBountySeason } from '../../arena-node/src/bounty-season.js';
 import { socialCheck } from '../../arena-node/src/bounty-social.js';
-import { keypair, proveX, MIN } from './server-helpers.mjs';
+import { keypair, proveX, gameLink, MIN } from './server-helpers.mjs';
 
 const fx = JSON.parse(fs.readFileSync(new URL('./fixtures/candles-30d.json', import.meta.url)));
 const day = fx.days[fx.days.length - 1];
@@ -54,23 +54,25 @@ async function realRound({ maxAttempts } = {}) {
 }
 const bountyOf = (w) => w.opr.listsOf(w.r.id).find((l) => l.kind === 'bounty');
 
-// F1 (#3285, owner 2026-11-22 ~12:45Z "Zu kompliziert, mach das weg"): a link made by typing a handle (proof 'name') places the player again; the
-// owner's sign-off sees it as "typed" on the bounty row - shown, not refused.
-test('F1 a key that typed its X handle is placed, and its bounty row names the proof "typed" for the sign-off', async () => {
+// F1 (#3285, then #3381 owner 2026-11-23 "Bounty und Spiel müssen unabhängig sein"): a handle typed in the bug bounty's social form links it in the
+// Season 2 book only - the game neither shows nor places it; the same player is placed once the handle is saved in the game (proof 'game').
+test('F1 a key that typed its X handle in the bounty form is not placed; saved in the game it is, its row names the proof "game"', async () => {
   const w = await realRound();
   const typed = keypair();
   const resolvers = { x: async (name) => ({ userId: '424242', username: name, member: true }) };
   const sc = await socialCheck(w.s2, typed.pk, { x: 'typed_handle' }, resolvers);
   assert.equal(sc.results.x.member, true);
   assert.equal(w.s2.links(typed.pk)[0].proof, 'name');
+  assert.deepEqual([w.opr.xOf(typed.pk).placed, w.opr.xOf(typed.pk).x], [false, null], 'the bounty book does not reach the game (#3381)');
+  assert.equal(gameLink(w.opr, typed.pk, { userId: '424242', username: 'typed_handle', nowMs: w.clock.now() }).ok, true);
   assert.equal((await w.opr.saveLnAddress(typed.pk, 'typed@walletofsatoshi.com')).ok, true);
   for (const seed of [1, 2, 3]) assert.equal((await w.play(typed.pk, humanLike(L, seed), phoneClient(seed))).ok, true);
   await w.endAndList();
   assert.equal(w.opr.xOf(typed.pk).placed, true);
   const b = bountyOf(w);
   const row = (b.rows[0] && b.rows[0].player === typed.pk) ? b.rows[0] : (b.held || []).find((h) => h.player === typed.pk);
-  assert.ok(row, `typed key on the bounty list (a row or held): ${JSON.stringify(b)}`);
-  assert.equal(row.xProof, 'typed');
+  assert.ok(row, `the key on the bounty list (a row or held): ${JSON.stringify(b)}`);
+  assert.equal(row.xProof, 'game');
 });
 
 // F2: "He can still verify until 1 hour after the round ends" (#3250) - not enforced: any later POST /lnaddress rebuilds every waiting list with
@@ -79,7 +81,7 @@ test('F2 an X account linked after end+1h does not take the bounty when a later 
   const w = await realRound();
   const late = keypair(), honest = keypair(), stranger = keypair();
   let xn = 0;
-  const link = (pk) => { xn++; assert.equal(proveX(w.s2, pk, { userId: `u${xn}`, username: `user${xn}`, nowMs: w.clock.now() }).ok, true); w.s2.record(pk, 'x', { member: true, nowMs: w.clock.now() }); };
+  const link = (pk) => { xn++; assert.equal(gameLink(w.opr, pk, { userId: `u${xn}`, username: `user${xn}`, nowMs: w.clock.now() }).ok, true); };
   link(honest.pk);
   for (const k of [late, honest]) assert.equal((await w.opr.saveLnAddress(k.pk, `p${k.pk.slice(0, 6)}@walletofsatoshi.com`)).ok, true);
   // late plays better (more seeds), but has no X account by the grace
@@ -103,7 +105,7 @@ test('F3 approving a list approves the rows the owner reviewed, not a rebuild ma
   const w = await realRound();
   const a = keypair(), b = keypair();
   let xn = 0;
-  const link = (pk) => { xn++; assert.equal(proveX(w.s2, pk, { userId: `v${xn}`, username: `name${xn}`, nowMs: w.clock.now() }).ok, true); w.s2.record(pk, 'x', { member: true, nowMs: w.clock.now() }); };
+  const link = (pk) => { xn++; assert.equal(gameLink(w.opr, pk, { userId: `v${xn}`, username: `name${xn}`, nowMs: w.clock.now() }).ok, true); };
   link(b.pk);
   for (const k of [a, b]) assert.equal((await w.opr.saveLnAddress(k.pk, `q${k.pk.slice(0, 6)}@walletofsatoshi.com`)).ok, true);
   for (const seed of [31, 32, 33, 34, 35]) assert.equal((await w.play(a.pk, humanLike(L, seed), phoneClient(seed))).ok, true);
@@ -141,7 +143,7 @@ test('F4 one X account gets no more than the round\'s 5 attempts toward the boun
   // end, then 30 min into the grace: link, then the lists at end+1h
   w.clock.add(r.end_ms - w.clock.now() + 30 * MIN);
   await w.opr.tick();
-  assert.equal(proveX(w.s2, top[0], { userId: 'one-human', username: 'one_human', nowMs: w.clock.now() }).ok, true); w.s2.record(top[0], 'x', { member: true, nowMs: w.clock.now() });
+  assert.equal(gameLink(w.opr, top[0], { userId: 'one-human', username: 'one_human', nowMs: w.clock.now() }).ok, true);
   w.clock.add(31 * MIN); await w.opr.tick();
   const b = bountyOf(w);
   // the attack wins when the best key, linked after all 15 runs, takes the bounty row (#3288 fix: a key is placed only with a link made before its first run)

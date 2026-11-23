@@ -30,7 +30,7 @@ test('#3331 a handle linked to a feedback key in the Season 2 book saves for a f
   assert.equal(w.s2.links(feedbackKey.pk)[0].userId, '111', 'the feedback link stays as it was');
   const x = w.opr.xOf(game.pk);
   assert.equal(x.placed, true, x.why); assert.equal(x.x.proof, 'game');
-  // the feedback key, an S2 fallback, is no longer placed by that account now a game key holds it
+  // the feedback key's Season 2 link never places in the game (#3381)
   assert.equal(w.opr.xOf(feedbackKey.pk).placed, false);
 });
 
@@ -79,10 +79,10 @@ test('#3331 placement: linked before the first run of the round places; linked a
   assert.equal(l.rows[0].player, early.pk); assert.equal(l.rows[0].xProof, 'game');
 });
 
-test('#3331 a key linked in the Season 2 book before #3331 keeps its placement (fallback); the same key re-saving its own handle keeps linked_ms', async () => {
+test('#3331 #3381 a key with a game link is placed (no Season 2 fallback since #3381); the same key re-saving its own handle keeps linked_ms', async () => {
   const w = xWorld(); const r = await openRound(w);
   const old = keypair(), mine = keypair();
-  w.link(old.pk);   // proven and verified in the S2 book, as the game did before #3331
+  w.link(old.pk);   // the game's own link (#3381: the Season 2 book no longer counts)
   await play(w, old, r, 10);
   assert.equal(w.opr.xOf(old.pk, r).placed, true, w.opr.xOf(old.pk, r).why);
   assert.equal((await w.opr.saveX(mine.pk, 'alice')).ok, true);
