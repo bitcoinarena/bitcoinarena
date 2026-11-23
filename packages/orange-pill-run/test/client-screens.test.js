@@ -89,7 +89,21 @@ test("#3251 the rules carry the card's four sentences word for word", () => {
     "We review the top runs. Every payout is checked and approved by us before it is sent. Our decision is final.",
     "The play bounty is paid in real sats and can end or change at any time."]) assert.ok(all.includes(s), s);
   assert.match(RULES.find((r) => r[0] === "Speed")[1], /Faster finishes score much more: 20 points for every second under/);   // #3271
-  for (const k of ["Round", "Level", "Free to play", "Attempts", "Score", "Speed", "Tie-break", "Play bounty", "X account"]) assert.ok(RULES.some((r) => r[0] === k), k);
+  const speed = RULES.find((r) => r[0] === "Speed")[1];   // #3550 (owner 2026-11-23): x1.5 only for a run that reaches the flag; +3 s per death
+  assert.ok(speed.includes("a run that reaches the flag without a hit scores ×1.5"), speed);
+  assert.ok(!speed.includes("a run without a hit scores"), speed);
+  assert.ok(speed.includes("Each death adds 3 s to your run time"), speed);
+  assert.match(RULES.find((r) => r[0] === "Jump")[1], /short tap or click is a small hop; hold longer to jump higher.*click, Space or the Up arrow/);
+  for (const k of ["Round", "Level", "Free to play", "Attempts", "Score", "Speed", "Tie-break", "Jump", "Play bounty", "X account"]) assert.ok(RULES.some((r) => r[0] === k), k);
+});
+
+test("#3550 the start hint says a short press hops and a long one jumps high; a mouse player reads click, Space or Up", async () => {
+  const { hintText } = await import("../client/src/rules.js");
+  assert.equal(hintText(false), "Tap: small hop · hold: high jump");
+  assert.equal(hintText(true), "Click, Space or ↑: short = small hop, hold = high jump");
+  const html = (await import("node:fs")).readFileSync(new URL("../client/index.template.html", import.meta.url), "utf8");
+  assert.ok(html.includes('<div id="hint" hidden>Tap: small hop · hold: high jump</div>'));
+  assert.ok(!html.includes("Tap anywhere to jump"));
 });
 
 test("#3265 the sign-in names the stage URL without the query, the method and the body's hash", async () => {

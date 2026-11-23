@@ -14,9 +14,10 @@ import { fit, drawWorld, view, usd } from "./render.js";
 import { makeApi } from "./api.js";
 import { createEntry, entryOf } from "./entry.js";
 import { introModel, resultModel, entryLine, myBest, boardRows, fmtSats, fmtTime, lnFieldModel, usedOf, isFree, xFieldModel, xSaveAnswer, xHandleOf, needsFollow, X_HOUSE, FOLLOW_URL } from "./screens.js";
-import { RULES, RULES_TITLE } from "./rules.js";
+import { RULES, RULES_TITLE, hintText } from "./rules.js";
 import { makeAudio, snapWorld, worldEvents } from "./audio.js";
 import { makeClock, snapMovers, drawBetween } from "./frameloop.js";
+const finePointer = () => { try { return matchMedia("(pointer: fine)").matches; } catch (_) { return false; } };   // #3550: a mouse, not a finger
 
 const HOOKS = (window.OPR = window.OPR || {});
 // the practice day: { candles, seed, source, from, to } - set by the page before this script, or the embedded one
@@ -136,8 +137,8 @@ function begin(m, opts = {}) {
   $("rbar").hidden = m !== "replay"; paintRbar();
   if (HOOKS.onStart) try { HOOKS.onStart({ mode, gameVersion: GAME_VERSION }); } catch (_) {}
   if (audio) { audio.unlock(); audio.startMusic(); }
-  // the hint instead of a JUMP button (#3251, owner 2026-11-22): 2 s at the start of a run
-  { const h = $("hint"); clearTimeout(h._t); h.hidden = m !== "play"; if (m === "play") h._t = setTimeout(() => { h.hidden = true; }, 2000); }   // every start is a tap or a key: the iOS rule holds
+  // the hint instead of a JUMP button (#3251, owner 2026-11-22): the first 3 s of a run (#3550)
+  { const h = $("hint"); clearTimeout(h._t); h.hidden = m !== "play"; if (m === "play") { h.textContent = hintText(finePointer()); h._t = setTimeout(() => { h.hidden = true; }, 3000); } }   // every start is a tap or a key: the iOS rule holds; #3550: 3 s, the text is longer
   requestAnimationFrame(loop);
 }
 function loop(now) {
