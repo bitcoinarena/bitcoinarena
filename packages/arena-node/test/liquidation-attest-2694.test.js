@@ -72,3 +72,16 @@ test('#2694 v9 free run: a bare liquidation is taken as before, an attestation i
   play(r, rid, eid, { liquidations: [[7, SIZE], [11, LIQ_MAX]] });
   assert.deepEqual(r.transcript(rid, eid).liquidations, [[7, SIZE], [11, LIQ_MAX]]);
 });
+
+test('#2694 v9 staked run: a batch that leaves out a strike this seat holds attested in its tick range is refused', () => {
+  noteAttestedLiquidationGames([Buffer.from(NEXTBLOCK_GAME_ID).toString('hex')]);
+  const r = new Round(openStore(), () => 1234, { plugins: HOSTED });
+  const rid = r.open(contract(seats)); const eid = r.enter(entryFor(rid));
+  r.attestedLiquidations = (roundId, from) => [[7, SIZE], [50, 2 * SIZE]].filter(([t]) => t >= from);   // what the committee's feed holds here
+  // ticks 0-29 without the strike at 7: the player left out a strike that hurts him
+  assert.throws(() => play(r, rid, eid, {}), /leaves out the committee's liquidation at tick 7/);
+  assert.throws(() => play(r, rid, eid, { liquidations: [[3, 0]] }), /tick 7/);
+  // with it: taken; the strike at 50 lies past this batch
+  play(r, rid, eid, { liquidations: [[7, SIZE]], attests: [att(rid, 7, SIZE)] });
+  assert.deepEqual(r.transcript(rid, eid).liquidations, [[7, SIZE]]);
+});

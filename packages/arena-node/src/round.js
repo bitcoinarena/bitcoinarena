@@ -1216,6 +1216,18 @@ export class Round {
         verify: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } }, require: liqAttested && liqFacts.staked });
       if (!liq.ok) throw new Error(liq.why);
     }
+    // AND NONE LEFT OUT (kanban #2694): a staked run of such a version plays every strike the committee attested in its ticks - a player
+    // who drops one that hurts him chooses his war as surely as one who adds one. `attestedLiquidations(roundId, fromTick)` is what this
+    // seat holds of the round (liquidation-feed.js); a strike attested after the batch passed its tick is not asked for again.
+    if (!seen && liqAttested && liqFacts.staked && typeof this.attestedLiquidations === 'function') {
+      const last = b.firstTick + b.ticks.length;
+      let due = []; try { due = this.attestedLiquidations(b.roundId, b.firstTick) || []; } catch { due = []; }
+      for (const [tick, size] of due) {
+        if (tick < b.firstTick || tick >= last) continue;
+        if (!(b.liquidations || []).some(([t, z]) => t === tick && z === size))
+          throw new Error(`the batch leaves out the committee's liquidation at tick ${tick} (size ${size})`);
+      }
+    }
     if (b.ticks.length > blockTicks)
       throw new Error(
         `a batch carries at most the round's ${blockTicks} ticks, got ${b.ticks.length}`);
