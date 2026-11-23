@@ -3614,10 +3614,17 @@ export class Round {
   // `identitySig` (kanban #1278, RULED #1276): the identity's own consent, checked at the door. A newer record naming the same identity keeps the proof held;
   // a proof for the record held (not newer) is still taken
   // `held` (kanban #3054): 1 or 2 when the record was carried because f + 1 of the round's seats serve it (verify.js carryNames); a new record is not yet held
-  putLobbyName({ roundId, playerPubkey, record, signature, atMs, identitySig = null, held = null }) {
+  // `replace` (kanban #3345): the carry pass's pick of f + 1 held records replaces this seat's record of that player whatever its atMs
+  putLobbyName({ roundId, playerPubkey, record, signature, atMs, identitySig = null, held = null, replace = false }) {
     const had = this.db.prepare('SELECT record, identity_sig, at_ms FROM lobby_names WHERE round_id = ? AND player_pubkey = ?').get(Buffer.from(roundId), Buffer.from(playerPubkey));
     const idOf = (b) => Buffer.from(b).subarray(64, 96).toString('hex');
     const sig = identitySig ? Buffer.from(identitySig) : null;
+    if (replace && had && Buffer.from(had.record).equals(Buffer.from(record))) return false;
+    if (replace && had) {
+      const keep = sig || (had.identity_sig && idOf(had.record) === idOf(record) ? had.identity_sig : null);
+      return this.db.prepare('UPDATE lobby_names SET record = ?, signature = ?, at_ms = ?, identity_sig = ?, held = ? WHERE round_id = ? AND player_pubkey = ?')
+        .run(Buffer.from(record), Buffer.from(signature), Number(atMs), keep, held === 1 || held === 2 ? held : null, Buffer.from(roundId), Buffer.from(playerPubkey)).changes > 0;
+    }
     if (had && !(Number(atMs) > Number(had.at_ms))) {
       if (sig && !had.identity_sig && idOf(had.record) === idOf(record))
         return this.db.prepare('UPDATE lobby_names SET identity_sig = ? WHERE round_id = ? AND player_pubkey = ?').run(sig, Buffer.from(roundId), Buffer.from(playerPubkey)).changes > 0;

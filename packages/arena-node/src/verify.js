@@ -1246,19 +1246,28 @@ export class Verifier {
     for (const n of this.round.lobbyNames(roundIdBytes)) {
       try { const ok = check(n.record, n.signature, n.identitySig || null); if (ok) own.set(hex(n.record), { ...ok, bytes: n.record }); } catch { /* not counted */ }
     }
+    // ONE RECORD PER PLAYER KEY, THE SAME AT EVERY SEAT (kanban #3345, audit settle-a6-1-1; gap in #3054): a player who posted two consented records of
+    // one round key, each to f + 1 seats, had each seat keep its own (marked held) and skip the other - seats booked the entry to two identities and
+    // signed two season accounts, the round left out of the season. Of the records f + 1 seats hold for one player key, every seat now takes the
+    // same one - the newest atMs, the lowest bytes on a tie - and carries it over whatever record of that player it holds
+    const best = new Map();   // player hex -> { k, at, mine, holders, consenting }
     for (const [k, at] of seen) {
       const mine = own.get(k);
       const holders = at.peers.size + (mine ? 1 : 0);
       if (holders < need) continue;
       const consenting = at.consentedBy.size + (mine && mine.consented ? 1 : 0);
+      const p = hex(at.n.rec.playerPubkey), cur = best.get(p);
+      const later = !cur || Number(at.n.rec.atMs) > Number(cur.at.n.rec.atMs) || (Number(at.n.rec.atMs) === Number(cur.at.n.rec.atMs) && k < cur.k);
+      if (later) best.set(p, { k, at, mine, consenting });
+    }
+    for (const { at, mine, consenting } of best.values()) {
       if (mine) {
         this.round.markLobbyNameHeld(roundIdBytes, at.n.rec.playerPubkey, mine.bytes, consenting >= need && mine.consented ? 2 : 1);
         continue;
       }
-      // A RECORD THIS SEAT MISSED (#1851): carried, unless this seat holds another record of that player with its identity's consent
-      if (this.round.consentedIdentityOf(roundIdBytes, at.n.rec.playerPubkey)) continue;
+      // A RECORD THIS SEAT MISSED (#1851), or the one every seat takes over another record of that player this seat holds (#3345)
       this.round.putLobbyName({ roundId: roundIdBytes, playerPubkey: at.n.rec.playerPubkey, record: at.n.bytes, signature: at.n.sig, atMs: at.n.rec.atMs,
-        identitySig: consenting >= need ? at.n.identitySig : null, held: consenting >= need ? 2 : 1 });
+        identitySig: consenting >= need ? at.n.identitySig : null, held: consenting >= need ? 2 : 1, replace: true });
     }
   }
 
