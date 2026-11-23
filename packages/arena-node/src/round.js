@@ -23,6 +23,8 @@ import { LATE_JOIN_LAST_ENTRY_MS, entryItemDigest } from '../../arena-protocol/s
 export const ENTRY_CLOSE_GRACE_MS = 15000n;
 import { LATE_JOIN_MS } from '../../arena-protocol/src/series.js';
 import { ticksForMs } from '../../arena-protocol/src/tick.js';
+// kanban #2826: how far (2 price sample periods of 5 s) a live mark may lag this seat's clock for its run and still be receipted
+export const MARK_LAG_TICKS = 600;
 import { KNOWN_GOOD_GAMES } from '../../arena-protocol/src/known-games.js';
 import { worldSecretFits } from '../../arena-protocol/src/seed.js';
 import { encodeTranscript, transcriptHash, checkTranscript, GENESIS } from '../../arena-protocol/src/transcript.js';
@@ -209,7 +211,7 @@ export const FINAL_SIG_EVIDENCE_PER_SIGNER = 4;
  * a walk-away (FORFEIT, stake claimed) into a refund the player chose (VOID), which §13C forbids. Such a refusal is never
  * kept (Round#putRefusedFirstMark) and never counted (verify.js #noQuorum), here or shown by a peer.
  */
-export const PLAYER_CAUSED_REFUSAL = /send the batches first|names inputs this node has not seen|does not follow the chain head|expected a tick after/;
+export const PLAYER_CAUSED_REFUSAL = /send the batches first|names inputs this node has not seen|does not follow the chain head|expected a tick after|behind this seat's clock for the run/;   // kanban #2826: a run played behind the clock
 export const playerCausedRefusal = (why) => PLAYER_CAUSED_REFUSAL.test(String(why || ''));
 
 // A PLAYER'S CLAIM ON THE LOCKS ITS ENTRY NAMES HOLDS (kanban #1897, #1938; protocol lock-claim.js): `bytes` are the entry, `entryIdBytes` its id,
@@ -1629,10 +1631,26 @@ export class Round {
         `the checkpoint is at tick ${c.tick} and this node holds this run's inputs only `
         + `before tick ${owed}: send the batches first`);
 
+    // NO RECEIPT FOR A RUN PLAYED BEHIND THE CLOCK (kanban #2826, #1489 r23-play-1): a mark's tick is the player's own, so a client
+    // that started on time and then slowed its ticks played half a minute behind the round, steering with attested price samples
+    // already in hand (§11: sample k is the price of round time). This seat's clock for the run starts at the first mark it holds
+    // (its tick, its arrival here); a later mark more than MARK_LAG_TICKS behind that clock is not receipted here, and the receipt
+    // threshold decides whether the run stands. Only a live mark of an open round: the held final mark after the close is not asked.
+    if (round.state === OPEN && head.tick !== null) {
+      const first = this.db.prepare('SELECT tick, received_ms FROM checkpoints WHERE round_id = ? AND entry_id = ? ORDER BY tick ASC LIMIT 1')
+        .get(c.roundId, c.entryId);
+      const since = first ? BigInt(this.now()) - BigInt(first.received_ms) : 0n;
+      if (first && since > 0n) {
+        const behind = Number(ticksForMs(since).ticks) - (c.tick - Number(first.tick));
+        if (behind > MARK_LAG_TICKS)
+          throw new Error(`the mark at tick ${c.tick} is ${behind} ticks behind this seat's clock for the run (more than ${MARK_LAG_TICKS}): not receipted here`);
+      }
+    }
+
     this.db.prepare(
       'INSERT INTO checkpoints (round_id, entry_id, tick, checkpoint_id, bytes, received_ms) '
       + 'VALUES (?, ?, ?, ?, ?, ?)')
-      .run(c.roundId, c.entryId, c.tick, id, bytes, Date.now());
+      .run(c.roundId, c.entryId, c.tick, id, bytes, this.now());
     this.noteEvidenceBlock(c.roundId, c.entryId, id);
     return this.receiptFor(id);
   }
