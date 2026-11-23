@@ -14,6 +14,7 @@ import { seatingRulesActive } from '../../arena-protocol/src/gateway-seating.js'
 import { seatingRulesEpochOf, pegInMaxAgeOf } from '../../arena-protocol/src/constants.js';
 import { seatGateways, feesOfRoutingInfo, GATEWAY_EPOCH_BLOCKS, GATEWAY_SEATS, GATEWAY_MINIMUMS } from '../../arena-protocol/src/gateway-seats.js';
 import { GATEWAY_FEE_MAX_REFERENCE } from '../../arena-protocol/src/federation-record.js';
+import { operatorOf } from '../../arena-protocol/src/operator-binding.js';
 import { pegInPressure } from '../../arena-protocol/src/capacity.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { nodeBondOf } from '../../arena-protocol/src/census.js';
@@ -199,7 +200,7 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
       const rows = new Map([...(epochs.get(e) || new Map())].filter(([, r]) => r && r.claim && r.claim.federationId === fid));
       const candidates = [...rows].map(([node, r]) => {
         const x = all.find((y) => toHex(y.pubkey) === node);
-        return { node: Uint8Array.from(Buffer.from(node, 'hex')), operatorId: (x && x.advert && x.advert.operatorId) || node, seatedGuardian: seatedNow.has(node),
+        return { node: Uint8Array.from(Buffer.from(node, 'hex')), operatorId: x ? operatorOf(x) : node, /* kanban #3385: bound operator only */ seatedGuardian: seatedNow.has(node),
           registered: r.up > 0, volumeSats: r.modulePk ? ((volumes.get(e) || new Map()).get(r.modulePk) || 0n) / 1000n : 0n, capacitySats: BigInt(r.claim.capacitySats), inboundSats: BigInt(r.claim.inboundSats || 0), outboundSats: BigInt(r.claim.outboundSats || 0), outsideInboundSats: BigInt(r.claim.outsideInboundSats || 0), pegInSats: BigInt(r.claim.pegInSats),
           availabilityPct: r.probes ? (100 * r.up) / r.probes : 0, bondSats: x ? nodeBondOf(all, node).bondSats : 0n, gatewayUrl: r.claim.gatewayUrl, fees: r.fees || null };
       });

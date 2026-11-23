@@ -9,7 +9,7 @@ import { toHex } from '../../arena-protocol/src/hash.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const node = (n, op, { bond = 1000000n, txid = b32(0x40 + n), guardianOf = [] } = {}) =>
-  ({ pubkey: b32(n), txid, vout: 0, bondSats: bond, advert: { operatorId: op, guardianCapable: true, guardianEndpoint: `wss://g${n}`, guardianOf } });
+  ({ pubkey: b32(n), txid, vout: 0, bondSats: bond, operator: op, advert: { operatorId: op, guardianCapable: true, guardianEndpoint: `wss://g${n}`, guardianOf } });
 
 const honest = Array.from({ length: 10 }, (_, i) => node(i + 1, `op${i + 1}`));
 const ATTACKER = 0x90;

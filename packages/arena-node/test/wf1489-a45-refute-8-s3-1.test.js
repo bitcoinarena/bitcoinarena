@@ -41,7 +41,7 @@ test('a stranger asking GET /federations?fresh=1 50 times does not make the seat
   }).listen(0);
   await new Promise((ok) => evilSeat.once('listening', ok));
   const entries = [{ pubkey: evil.pubkey, txid: new Uint8Array(32).fill(0xe0), vout: 0, bondSats: 50000n,
-    advert: { operatorId: 'evil', endpoint: `http://127.0.0.1:${evilSeat.address().port}`, guardianOf: [{ federationId: fid, guardianKey: advertKey }] } }];
+    operator: 'evil', advert: { operatorId: 'evil', endpoint: `http://127.0.0.1:${evilSeat.address().port}`, guardianOf: [{ federationId: fid, guardianKey: advertKey }] } }];
   const reads = []; const tip = 157092;
   const s = await serve(openStore(), { port: 0, chain: 'bitcoin-regtest', chainTip: async () => tip,
     ballot: { censusEntriesAt: async (_net, height) => { reads.push(height); return entries; } } });
@@ -80,7 +80,7 @@ test('50 concurrent GET /federations?fresh=1 asks share one gather pass (kanban 
   }).listen(0);
   await new Promise((ok) => evilSeat.once('listening', ok));
   const entries = [{ pubkey: evil.pubkey, txid: new Uint8Array(32).fill(0xe0), vout: 0, bondSats: 50000n,
-    advert: { operatorId: 'evil', endpoint: `http://127.0.0.1:${evilSeat.address().port}`, guardianOf: [{ federationId: fid, guardianKey: advertKey }] } }];
+    operator: 'evil', advert: { operatorId: 'evil', endpoint: `http://127.0.0.1:${evilSeat.address().port}`, guardianOf: [{ federationId: fid, guardianKey: advertKey }] } }];
   const reads = []; const tip = 157092;
   const s = await serve(openStore(), { port: 0, chain: 'bitcoin-regtest', chainTip: async () => tip,
     ballot: { censusEntriesAt: async (_net, height) => { reads.push(height); return entries; } } });

@@ -17,7 +17,7 @@ test('a stranger spending the named-height reads first does not make the guardia
   const SUCC = new Uint8Array(32).fill(0x4e);
   const n = { secret: new Uint8Array(32).fill(71) }; n.pubkey = schnorr.getPublicKey(n.secret);
   const entry = { pubkey: n.pubkey, txid: new Uint8Array(32).fill(0xe1), vout: 0, bondSats: 50000n,
-    advert: { operatorId: 'op549b', endpoint: 'wss://n549b.example', guardianEndpoint: 'wss://g549b.example', guardianOf: [{ federationId: SUCC, guardianKey: Uint8Array.from([2, ...new Uint8Array(32).fill(0x91)]) }] } };
+    operator: 'op549b', advert: { operatorId: 'op549b', endpoint: 'wss://n549b.example', guardianEndpoint: 'wss://g549b.example', guardianOf: [{ federationId: SUCC, guardianKey: Uint8Array.from([2, ...new Uint8Array(32).fill(0x91)]) }] } };
   let now = 1_000_000;
   const seat = federationRecords({ round: { pubkey: n.pubkey, identity: { secret: n.secret } }, newest: () => null, roster: { censusFor: () => ({ ok: false }) },
     inviteFor: (fid) => (fid === toHex(SUCC) ? `fed:${fid}` : null), networkId: NET, nowMs: () => now, censusAt: async () => [entry], chainTip: async () => 157092 });

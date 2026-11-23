@@ -672,7 +672,7 @@ test('guardiansOf: a node with two bond outputs is one guardian, its bond their 
   const fid = new Uint8Array(32).fill(0x33);
   const advert = (n) => ({ operatorId: `op-${n}`, guardianOf: [{ federationId: fid, guardianKey: Uint8Array.from([0x02, ...new Uint8Array(32).fill(n)]) }], guardianEndpoint: `wss://g${n}`, endpoint: `https://n${n}` });
   const e = (n, txidByte, sats) => ({ pubkey: new Uint8Array(32).fill(n), txid: new Uint8Array(32).fill(txidByte), vout: 0, bondSats: sats, advert: advert(n) });
-  const rows = guardiansOf({ entries: [e(1, 0x90, 50000n), e(1, 0x10, 32000n), e(2, 0x50, 50000n), { pubkey: new Uint8Array(32).fill(3), txid: new Uint8Array(32).fill(0x60), vout: 0, bondSats: 90000n, advert: { operatorId: 'x', guardianOf: [] } }] }, fid);
+  const rows = guardiansOf({ entries: [e(1, 0x90, 50000n), e(1, 0x10, 32000n), e(2, 0x50, 50000n), { pubkey: new Uint8Array(32).fill(3), txid: new Uint8Array(32).fill(0x60), vout: 0, bondSats: 90000n, operator: 'x', advert: { operatorId: 'x', guardianOf: [] } }] }, fid);
   assert.deepEqual(rows.map((r) => [toHex(r.nodePubkey).slice(0, 2), r.bondSats, toHex(r.bondTxid).slice(0, 2)]), [['01', 82000n, '10'], ['02', 50000n, '50']]);
 });
 
@@ -682,7 +682,7 @@ test('a guardian seat asked at a chain census height it has not read yet reads i
   const SUCC = new Uint8Array(32).fill(0x4e);
   const n = { secret: new Uint8Array(32).fill(71) }; n.pubkey = schnorr.getPublicKey(n.secret);
   const entry = { pubkey: n.pubkey, txid: new Uint8Array(32).fill(0xe1), vout: 0, bondSats: 50000n,
-    advert: { operatorId: 'op549b', endpoint: 'wss://n549b.example', guardianEndpoint: 'wss://g549b.example', guardianOf: [{ federationId: SUCC, guardianKey: Uint8Array.from([2, ...new Uint8Array(32).fill(0x91)]) }] } };
+    operator: 'op549b', advert: { operatorId: 'op549b', endpoint: 'wss://n549b.example', guardianEndpoint: 'wss://g549b.example', guardianOf: [{ federationId: SUCC, guardianKey: Uint8Array.from([2, ...new Uint8Array(32).fill(0x91)]) }] } };
   let reads = 0;
   const seat = federationRecords({ round: { pubkey: n.pubkey, identity: { secret: n.secret } }, newest: () => null, roster: { censusFor: () => ({ ok: false }) },
     inviteFor: (fid) => `fed:${fid}`, networkId: NET, censusAt: async () => { reads++; await new Promise((r) => setTimeout(r, 20)); return [entry]; }, chainTip: async () => 157092 });

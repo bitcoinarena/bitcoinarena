@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// kanban #3385: each entry carries `operator`, the operator its census bound it to (deriveCensus) - here as each advert names it.
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A FOUNDING CEREMONY AS THE SEATS RUN IT (spec §23A.2): eight guardian-capable nodes of eight operators; four drawn, three
 // alternates. Every seat computes the same draw; the seated post signed setup codes, a code from anyone else is refused; with all
@@ -16,7 +17,7 @@ const key = (s) => { const secret = taggedHash('TEST/founding', new TextEncoder(
 const verify = (sig, m, k) => { try { return schnorr.verify(sig, m, k); } catch { return false; } };
 const keys = Array.from({ length: 8 }, (_, i) => key(`n${i}`));
 const entries = keys.map((k, i) => ({ pubkey: k.pub, txid: taggedHash('TEST/tx', Uint8Array.of(i)), vout: 0, bondSats: 1000000n,
-  advert: { operatorId: `op${i}`, guardianCapable: true, guardianEndpoint: `wss://g${i}` } }));
+  operator: `op${i}`, advert: { operatorId: `op${i}`, guardianCapable: true, guardianEndpoint: `wss://g${i}` } }));
 const seed = taggedHash('TEST/beacon', Uint8Array.of(1));
 
 function network({ offline = new Set(), done = () => true, stale = new Set(), staleError = 'Local parameters have already been set', freshFails = false,

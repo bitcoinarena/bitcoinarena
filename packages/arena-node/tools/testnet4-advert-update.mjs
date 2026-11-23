@@ -29,6 +29,7 @@ import { openStore, nodeIdentity } from '../src/store.js';
 import { readInvite } from '../src/invite.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { readAdvertUpdate, checkAgainstBond } from '../../arena-protocol/src/advert-update.js';
+import { operatorBindingId, boundOperatorOf } from '../../arena-protocol/src/operator-binding.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
 const env = process.env;
@@ -63,7 +64,17 @@ const DECLARE = /^\d+:\d+$/.test(env.ARENA_ADVERT_DECLARE || '')
   ? (([b, p]) => ({ bondMinSats: BigInt(b), proposalDepositSats: BigInt(p) }))(env.ARENA_ADVERT_DECLARE.split(':')) : null;
 // THE OPERATOR IT DECLARES AS A KEY (§5A.13): ARENA_ADVERT_OPERATOR=<64 hex> - an entry declaring the same operator
 // conflicts this node in that round (it neither signs nor earns); unset, the advert's operator stays as it was
-const OPERATOR = /^[0-9a-f]{64}$/.test(env.ARENA_ADVERT_OPERATOR || '') ? env.ARENA_ADVERT_OPERATOR : null;
+// THE OPERATOR KEY SIGNS THE BINDING (kanban #3385, operator-binding.js): an operatorId counts only with the operator key's signature over
+// (node key, operatorId, network). ARENA_ADVERT_OPERATOR_SECRET_FILE=<file holding the operator's 64-hex secret> sets operatorId to its
+// x-only key and signs each node's binding; ARENA_ADVERT_OPERATOR without it publishes an unsigned id - the census then reads the node
+// as its own operator (said below). The secret is read from the file, never printed.
+const OPERATOR_SECRET = env.ARENA_ADVERT_OPERATOR_SECRET_FILE ? fromHex(readFileSync(env.ARENA_ADVERT_OPERATOR_SECRET_FILE, 'utf8').trim()) : null;
+if (OPERATOR_SECRET && OPERATOR_SECRET.length !== 32) throw new Error('ARENA_ADVERT_OPERATOR_SECRET_FILE holds no 32-byte secret');
+const OPERATOR = OPERATOR_SECRET ? toHex(schnorr.getPublicKey(OPERATOR_SECRET))
+  : /^[0-9a-f]{64}$/.test(env.ARENA_ADVERT_OPERATOR || '') ? env.ARENA_ADVERT_OPERATOR : null;
+if (OPERATOR && !OPERATOR_SECRET) console.error('[advert] ARENA_ADVERT_OPERATOR without ARENA_ADVERT_OPERATOR_SECRET_FILE: unsigned, each node counts as its own operator (#3385)');
+const bindingOf = (nodePubkey, op) => (OPERATOR_SECRET && op === OPERATOR ? schnorr.sign(operatorBindingId({ nodePubkey, operatorId: op, network: 'testnet4' }), OPERATOR_SECRET) : null);
+const bound = (a) => boundOperatorOf(a, 'testnet4', (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } }) === a.operatorId;
 // THE GUARDIAN'S PAYOUT KEY (§22A v4.6.4, 2026.0.13, gap 2): ARENA_ADVERT_PAYOUT=1 - each named node's advertisement
 // names a real payout_pubkey instead of the placeholder 32 x 0x03 every testnet4 advert carried (measured 2026-10-17): a key made
 // once per node and kept (0600, never printed) at ARENA_PAYOUT_KEY_DIR/node-<n>.hex, a copy at ARENA_PAYOUT_KEY_BACKUP when set.
@@ -126,7 +137,7 @@ for (const n of (ONLY.length ? ONLY : [1, 2, 3, 4, 5, 6, 7])) {
   const versionsDiffer = VERSIONS && (bond.advert.protocolVersions || []).join(',') !== VERSIONS.join(',');
   const appsDiffer = ADD_APPS.length && appsWith(bond.advert.hostedGames).length !== (bond.advert.hostedGames || []).length;
   const servingDiffers = SERVING !== null && (bond.advert.serving !== false) !== SERVING;
-  const operatorDiffers = OPERATOR !== null && bond.advert.operatorId !== OPERATOR;
+  const operatorDiffers = OPERATOR !== null && (bond.advert.operatorId !== OPERATOR || (OPERATOR_SECRET && !bound(bond.advert)));
   const payout = PAYOUT ? payoutKeyOf(n) : null;
   const payoutDiffers = payout !== null && toHex(bond.advert.payoutPubkey) !== toHex(payout);
   const declaresDiffer = DECLARE && JSON.stringify(bond.advert.declares || null, (k, v) => (typeof v === 'bigint' ? String(v) : v))
@@ -135,6 +146,8 @@ for (const n of (ONLY.length ? ONLY : [1, 2, 3, 4, 5, 6, 7])) {
   const advert = { ...bond.advert, guardianOf: entries, timestamp: BigInt(Date.now()),
     ...(VERSIONS ? { protocolVersions: VERSIONS } : {}), ...(ADD_APPS.length ? { hostedGames: appsWith(bond.advert.hostedGames) } : {}),
     ...(SERVING !== null ? { serving: SERVING } : {}), ...(DECLARE ? { declares: DECLARE } : {}), ...(OPERATOR ? { operatorId: OPERATOR } : {}), ...(payout ? { payoutPubkey: payout } : {}) };
+  // the binding goes with the operatorId it signs: signed afresh with the operator secret, kept only while it still verifies, else dropped
+  { const sig = bindingOf(advert.nodePubkey, advert.operatorId); if (sig) advert.operatorSig = sig; else if (!advert.operatorSig || !bound(advert)) delete advert.operatorSig; }
   plans.push({ n, secret, bond, advert, prepared: rt.prepareAdvertUpdate(secret, advert) });
 }
 if (!plans.length) { say({ done: 'every bond already advertises its node\'s current guardian key; nothing posted' }); process.exit(0); }

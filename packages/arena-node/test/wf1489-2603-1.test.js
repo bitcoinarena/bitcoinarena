@@ -94,7 +94,7 @@ test('the body a keyed seat builds lists only the config keys; a census-only lis
   assert.equal(guardiansOf(w.census, FED).length, 11);
   // a stranger copying a real guardian's key does not add an eighth row either: one node per key
   const copy = { pubkey: w.strangers[0].pubkey, txid: new Uint8Array(32).fill(0xfe), vout: 0, bondSats: 50000n,
-    advert: { operatorId: 'x', endpoint: 'wss://copy.example', guardianOf: [{ federationId: FED, guardianKey: w.nodes[3].guardianKey }] } };
+    operator: 'x', advert: { operatorId: 'x', endpoint: 'wss://copy.example', guardianOf: [{ federationId: FED, guardianKey: w.nodes[3].guardianKey }] } };
   assert.equal(guardiansOf({ entries: [...w.census.entries.slice(0, 7), copy] }, FED, w.keys).length, 7);
 });
 

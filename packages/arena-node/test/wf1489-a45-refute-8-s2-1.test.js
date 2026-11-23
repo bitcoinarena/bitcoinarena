@@ -25,8 +25,8 @@ test('one census seat guarding 40 made-up federations does not make one mirror p
   const recordKey = Uint8Array.from([2, ...new Uint8Array(32).fill(0x62)]);
   const census = { ok: true, entries: [
     { pubkey: evil.pubkey, txid: new Uint8Array(32).fill(0xe0), vout: 0, bondSats: 50000n,
-      advert: { operatorId: 'evil', endpoint: 'wss://evil.example', guardianEndpoint: 'wss://gevil.example', guardianOf: fids.map((f) => ({ federationId: f, guardianKey: advertKey })) } },
-    { pubkey: me.pubkey, txid: new Uint8Array(32).fill(0xe1), vout: 0, bondSats: 50000n, advert: { operatorId: 'me', endpoint: 'wss://me.example', guardianOf: [] } },
+      operator: 'evil', advert: { operatorId: 'evil', endpoint: 'wss://evil.example', guardianEndpoint: 'wss://gevil.example', guardianOf: fids.map((f) => ({ federationId: f, guardianKey: advertKey })) } },
+    { pubkey: me.pubkey, txid: new Uint8Array(32).fill(0xe1), vout: 0, bondSats: 50000n, operator: 'me', advert: { operatorId: 'me', endpoint: 'wss://me.example', guardianOf: [] } },
   ] };
   let h = 150000;
   const answer = () => {

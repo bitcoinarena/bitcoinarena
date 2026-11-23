@@ -35,7 +35,7 @@ test('host_group: the hash of the name, case and spaces aside; through encode an
 });
 
 const node = (n, op, group) => ({ pubkey: b32(n), txid: b32(0x40 + n), vout: 0, bondSats: 1000000n,
-  advert: { operatorId: op, guardianCapable: true, guardianEndpoint: `wss://g${n}`, ...(group ? { hostGroup: hostGroupOf(group) } : {}) } });
+  operator: op, advert: { operatorId: op, guardianCapable: true, guardianEndpoint: `wss://g${n}`, ...(group ? { hostGroup: hostGroupOf(group) } : {}) } });
 
 test('the founding draw seats at most f guardians of one host_group; a node naming none is a group of its own', () => {
   // twelve operators: eight on one machine, four elsewhere; a federation of 7 has f = 2

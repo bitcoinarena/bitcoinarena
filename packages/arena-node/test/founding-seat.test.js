@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// kanban #3385: each entry carries `operator`, the operator its census bound it to (deriveCensus) - here as each advert names it.
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SEAT'S PART IN A FOUNDING (spec §23A.2): a record entering DRAINING at 200 triggers a succession; every seat reads the
 // same beacon (block 201) and census and draws the same four; only nodes whose guardian waits in setup take part; a seat whose post
@@ -20,7 +21,7 @@ const key = (s) => { const secret = taggedHash('TEST/fseat', new TextEncoder().e
 const verify = (sig, m, k) => { try { return schnorr.verify(sig, m, k); } catch { return false; } };
 const keys = Array.from({ length: 6 }, (_, i) => key(`n${i}`));
 const entries = keys.map((k, i) => ({ pubkey: k.pub, txid: taggedHash('TEST/tx', Uint8Array.of(i)), vout: 0, bondSats: 1000000n,
-  advert: { operatorId: `op${i}`, guardianCapable: true, guardianEndpoint: `wss://g${i}` } }));
+  operator: `op${i}`, advert: { operatorId: `op${i}`, guardianCapable: true, guardianEndpoint: `wss://g${i}` } }));
 const clocks = { abandonBlocks: 10, foundingWindow: 10 };
 
 function world({ draining = true, lossy = new Set() } = {}) {
@@ -125,7 +126,7 @@ const sKeys = Array.from({ length: 8 }, (_, i) => key(`s${i}`));             // 
 const peerKeyOf = (i) => Uint8Array.from([2, ...taggedHash('TEST/peer', Uint8Array.of(i))]);
 const sOps = ['op0', 'op1', 'op2', 'op3', 'node15', 'op5', 'op6', 'decoy'];
 const sEntries = sKeys.map((k, i) => ({ pubkey: k.pub, txid: taggedHash('TEST/stx', Uint8Array.of(i)), vout: 0, bondSats: 1000000n,
-  advert: { operatorId: sOps[i], guardianCapable: true, guardianEndpoint: `wss://s${i}/guardian`,
+  operator: sOps[i], advert: { operatorId: sOps[i], guardianCapable: true, guardianEndpoint: `wss://s${i}/guardian`,
     guardianOf: i < 4 ? [{ federationId: F, guardianKey: peerKeyOf(i) }] : i === 7 ? [{ federationId: G, guardianKey: peerKeyOf(7) }] : [] } }));
 const recordF = (nominal = 4, n = 4) => buildFederationRecord({ federationId: F, networkId: new Uint8Array(32), invite: 'fed11', nominal, height: 480,
   guardians: sKeys.slice(0, n).map((k, i) => ({ peerKey: peerKeyOf(i), nodePubkey: k.pub, operatorId: sOps[i], bondTxid: sEntries[i].txid, bondVout: 0, endpoint: `wss://s${i}/guardian`, bondSats: 1000000n })) });
@@ -218,7 +219,7 @@ test('federation B: a notice from B7 founds a successor of SEVEN (the record\'s 
   const bKeys = Array.from({ length: 8 }, (_, i) => key(`b${i}`));                 // b0..b6 guard B (one operator, 2of2), b7 is node15
   const B = taggedHash('TEST/fed', Uint8Array.of(7));
   const ents = bKeys.map((k, i) => ({ pubkey: k.pub, txid: taggedHash('TEST/btx', Uint8Array.of(i)), vout: 0, bondSats: 50000n,
-    advert: { operatorId: i < 7 ? '2of2' : 'node15', guardianCapable: true, guardianEndpoint: `wss://b${i}/guardian`, guardianOf: i < 7 ? [{ federationId: B, guardianKey: peerKeyOf(20 + i) }] : [] } }));
+    operator: i < 7 ? '2of2' : 'node15', advert: { operatorId: i < 7 ? '2of2' : 'node15', guardianCapable: true, guardianEndpoint: `wss://b${i}/guardian`, guardianOf: i < 7 ? [{ federationId: B, guardianKey: peerKeyOf(20 + i) }] : [] } }));
   const rec = buildFederationRecord({ federationId: B, networkId: new Uint8Array(32), invite: 'fed11', nominal: 7, height: 700,
     guardians: bKeys.slice(0, 7).map((k, i) => ({ peerKey: peerKeyOf(20 + i), nodePubkey: k.pub, operatorId: '2of2', bondTxid: ents[i].txid, bondVout: 0, endpoint: `wss://b${i}/guardian`, bondSats: 50000n })) });
   const d = signDeparture({ federationId: B, peerKey: peerKeyOf(26), leaveAfterHeight: 730, postedAt: 710, nodePubkey: bKeys[6].pub }, (h) => schnorr.sign(h, bKeys[6].secret));
@@ -247,7 +248,7 @@ test('a cohort (protocol 2026.0.14) while federation B is OPEN: ten new operator
   const bFed = 'bb'.repeat(32);
   const all = Array.from({ length: 14 }, (_, i) => key(`c${i}`));
   const entriesWith = (slot) => all.map((k, i) => ({ pubkey: k.pub, txid: taggedHash('TEST/ctx', Uint8Array.of(i)), vout: 0, bondSats: 1000000n,
-    advert: { operatorId: `cop${i}`, guardianCapable: true, guardianEndpoint: `wss://c${i}`, ...(i < 4 && slot ? { foundingSlot: true } : {}),
+    operator: `cop${i}`, advert: { operatorId: `cop${i}`, guardianCapable: true, guardianEndpoint: `wss://c${i}`, ...(i < 4 && slot ? { foundingSlot: true } : {}),
       guardianOf: i < 4 ? [{ federationId: Uint8Array.from(Buffer.from(bFed, 'hex')), guardianKey: new Uint8Array(33) }] : [] } }));
   const held = [{ federation: bFed, status: 'OPEN', height: 300 }];
   const run = async (slot) => {
@@ -277,7 +278,7 @@ test('a cohort (protocol 2026.0.14) while federation B is OPEN: ten new operator
 test('a drawn node whose guardian is not in setup (left in a failed key generation) starts it again in a fresh setup, once, and takes part (kanban #495, the installers 2026-10-22)', async () => {
   const all = Array.from({ length: 12 }, (_, i) => key(`f${i}`));
   const cEntries = all.map((k, i) => ({ pubkey: k.pub, txid: taggedHash('TEST/ftx', Uint8Array.of(i)), vout: 0, bondSats: 1000000n,
-    advert: { operatorId: `fop${i}`, guardianCapable: true, guardianEndpoint: `wss://f${i}`, guardianOf: [] } }));
+    operator: `fop${i}`, advert: { operatorId: `fop${i}`, guardianCapable: true, guardianEndpoint: `wss://f${i}`, guardianOf: [] } }));
   const held = [{ federation: 'bb'.repeat(32), status: 'OPEN', height: 300 }];
   const w = { tip: 300 };
   const make = (i, flags) => createFoundingSeat({ records: () => held, entriesAt: async (h) => (h >= 300 ? cEntries : []),
@@ -307,7 +308,7 @@ test('a drawn node whose guardian is not in setup (left in a failed key generati
 test('a guardian that waits in setup only after the tick that started it takes part on the next tick (kanban #577: n495-1/2 at a27706f2, asked before fedimintd answered)', async () => {
   const all = Array.from({ length: 12 }, (_, i) => key(`g${i}`));
   const cEntries = all.map((k, i) => ({ pubkey: k.pub, txid: taggedHash('TEST/gtx', Uint8Array.of(i)), vout: 0, bondSats: 1000000n,
-    advert: { operatorId: `gop${i}`, guardianCapable: true, guardianEndpoint: `wss://g${i}`, guardianOf: [] } }));
+    operator: `gop${i}`, advert: { operatorId: `gop${i}`, guardianCapable: true, guardianEndpoint: `wss://g${i}`, guardianOf: [] } }));
   const held = [{ federation: 'bb'.repeat(32), status: 'OPEN', height: 300 }];
   const w = { tip: 300 };
   const make = (i, flags) => createFoundingSeat({ records: () => held, entriesAt: async (h) => (h >= 300 ? cEntries : []),
@@ -335,7 +336,7 @@ test('a seat that holds no record (no round) sees the federation the census name
   const bFed = 'bb'.repeat(32);
   const all = Array.from({ length: 14 }, (_, i) => key(`r${i}`));
   const cEntries = all.map((k, i) => ({ pubkey: k.pub, txid: taggedHash('TEST/rtx', Uint8Array.of(i)), vout: 0, bondSats: 1000000n,
-    advert: { operatorId: `rop${i}`, guardianCapable: true, guardianEndpoint: `wss://r${i}`,
+    operator: `rop${i}`, advert: { operatorId: `rop${i}`, guardianCapable: true, guardianEndpoint: `wss://r${i}`,
       guardianOf: i < 4 ? [{ federationId: Uint8Array.from(Buffer.from(bFed, 'hex')), guardianKey: new Uint8Array(33) }] : [] } }));
   const w = { tip: 300 };
   const s = createFoundingSeat({ records: () => [], entriesAt: async (h) => (h >= 300 ? cEntries : cEntries.slice(0, 4)),
@@ -355,7 +356,7 @@ test('a seat that holds no record (no round) sees the federation the census name
 test('seats that hold no round and name no peers read the drawn nodes\' codes at their adverts\' endpoints (kanban #495: every cohort draw went void, each seat holding only its own code)', async () => {
   const all = Array.from({ length: 12 }, (_, i) => key(`e${i}`));
   const cEntries = all.map((k, i) => ({ pubkey: k.pub, txid: taggedHash('TEST/etx', Uint8Array.of(i)), vout: 0, bondSats: 1000000n,
-    advert: { operatorId: `eop${i}`, guardianCapable: true, endpoint: `ws://10.0.0.1:${6500 + i}`, guardianEndpoint: `ws://10.0.0.1:${6500 + i}/guardian`, guardianOf: [] } }));
+    operator: `eop${i}`, advert: { operatorId: `eop${i}`, guardianCapable: true, endpoint: `ws://10.0.0.1:${6500 + i}`, guardianEndpoint: `ws://10.0.0.1:${6500 + i}/guardian`, guardianOf: [] } }));
   const held = [{ federation: 'bb'.repeat(32), status: 'OPEN', height: 300 }];
   const w = { tip: 300 };
   const seats = [];
@@ -386,7 +387,7 @@ test('seats that hold no round and name no peers read the drawn nodes\' codes at
 test('seats started at different heights draw the same cohort, and a void one is drawn again founding_window + 1 later (kanban #495: the seven second-host seats drew at 157,178, the installers at 157,179)', async () => {
   const all = Array.from({ length: 12 }, (_, i) => key(`d${i}`));
   const cEntries = all.map((k, i) => ({ pubkey: k.pub, txid: taggedHash('TEST/dtx', Uint8Array.of(i)), vout: 0, bondSats: 1000000n,
-    advert: { operatorId: `dop${i}`, guardianCapable: true, guardianEndpoint: `wss://d${i}`, guardianOf: [] } }));
+    operator: `dop${i}`, advert: { operatorId: `dop${i}`, guardianCapable: true, guardianEndpoint: `wss://d${i}`, guardianOf: [] } }));
   const held = [{ federation: 'bb'.repeat(32), status: 'OPEN', height: 280 }];
   const w = { tip: 293 };
   const reads = [];
@@ -415,7 +416,7 @@ test('a node whose advert names a dead endpoint still seats its code: each seat 
   const all = Array.from({ length: 12 }, (_, i) => key(`q${i}`));
   const live = (i) => `http://10.0.0.1:${6600 + i}`;
   const cEntries = all.map((k, i) => ({ pubkey: k.pub, txid: taggedHash('TEST/qtx', Uint8Array.of(i)), vout: 0, bondSats: 1000000n,
-    advert: { operatorId: `qop${i}`, guardianCapable: true, endpoint: i >= 9 ? `https://old-tunnel-${i}.example` : live(i).replace('http:', 'ws:'),
+    operator: `qop${i}`, advert: { operatorId: `qop${i}`, guardianCapable: true, endpoint: i >= 9 ? `https://old-tunnel-${i}.example` : live(i).replace('http:', 'ws:'),
       guardianEndpoint: `wss://g${i}`, guardianOf: [] } }));
   const held = [{ federation: 'bb'.repeat(32), status: 'OPEN', height: 300 }];
   const w = { tip: 300 };
@@ -467,7 +468,7 @@ test('a refusal fedimint-cli prints on stdout is in the error the founding reads
 test('readiness: the guardian in setup, running or none, the newest count of free operators against ten, and why no founding started (kanban #585)', async () => {
   const all = Array.from({ length: 12 }, (_, i) => key(`h${i}`));
   const cEntries = all.map((k, i) => ({ pubkey: k.pub, txid: taggedHash('TEST/htx', Uint8Array.of(i)), vout: 0, bondSats: 1000000n,
-    advert: { operatorId: `hop${i}`, guardianCapable: true, guardianEndpoint: `wss://h${i}`, guardianOf: [] } }));
+    operator: `hop${i}`, advert: { operatorId: `hop${i}`, guardianCapable: true, guardianEndpoint: `wss://h${i}`, guardianOf: [] } }));
   const held = [{ federation: 'bb'.repeat(32), status: 'OPEN', height: 300 }];
   const w = { tip: 300 }, g = { inSetup: true, running: false };
   const s = createFoundingSeat({ records: () => held, entriesAt: async (h) => (h >= 300 ? cEntries : []),
@@ -489,8 +490,8 @@ test('readiness: the guardian in setup, running or none, the newest count of fre
 test('guardingWhy: the nodes of an operator that name a federation held OPEN or not held at all; a CLOSED or overloaded one frees them (kanban #585)', () => {
   const a = key('w0'), b = key('w1');
   const fid = (x) => Uint8Array.from(Buffer.from(x.repeat(32), 'hex'));
-  const entries = [{ pubkey: a.pub, advert: { operatorId: 'opX', guardianOf: [{ federationId: fid('aa') }, { federationId: fid('cc') }] } },
-    { pubkey: b.pub, advert: { operatorId: 'opX', guardianOf: [{ federationId: fid('bb') }, { federationId: fid('dd') }] } }];
+  const entries = [{ pubkey: a.pub, operator: 'opX', advert: { operatorId: 'opX', guardianOf: [{ federationId: fid('aa') }, { federationId: fid('cc') }] } },
+    { pubkey: b.pub, operator: 'opX', advert: { operatorId: 'opX', guardianOf: [{ federationId: fid('bb') }, { federationId: fid('dd') }] } }];
   const held = [{ federation: 'aa'.repeat(32), status: 'CLOSED' }, { federation: 'bb'.repeat(32), status: 'OPEN', load: 0.3 }, { federation: 'dd'.repeat(32), status: 'OPEN', load: 4.3 }];
   assert.deepEqual(guardingWhy({ entries, held, op: 'opX' }), [{ node: toHex(a.pub), federation: 'cc'.repeat(32), status: 'not held' }, { node: toHex(b.pub), federation: 'bb'.repeat(32), status: 'OPEN' },
     { node: toHex(b.pub), federation: 'dd'.repeat(32), status: 'overloaded, no free slot' }], 'an overloaded federation holds back a node with no free slot (kanban #599)');
@@ -504,7 +505,7 @@ test('records that arrive within a block count on the next tick of that block: a
   const closed = Uint8Array.from(Buffer.from('89'.repeat(32), 'hex'));
   // eight of the twelve guarded a federation now CLOSED; the others guard none
   const cEntries = all.map((k, i) => ({ pubkey: k.pub, txid: taggedHash('TEST/ktx', Uint8Array.of(i)), vout: 0, bondSats: 1000000n,
-    advert: { operatorId: `kop${i}`, guardianCapable: true, guardianEndpoint: `wss://k${i}`, guardianOf: i < 8 ? [{ federationId: closed }] : [] } }));
+    operator: `kop${i}`, advert: { operatorId: `kop${i}`, guardianCapable: true, guardianEndpoint: `wss://k${i}`, guardianOf: i < 8 ? [{ federationId: closed }] : [] } }));
   const held = [];
   const s = createFoundingSeat({ records: () => held, entriesAt: async (h) => (h >= 300 ? cEntries : []),
     beaconAt: async () => null, tip: async () => 300, guardianInSetup: async () => true,
@@ -520,7 +521,7 @@ test('records that arrive within a block count on the next tick of that block: a
 test('members: every node that can be drawn, asked at its address - ready, founding off, an older release, no answer (kanban #585)', async () => {
   const all = Array.from({ length: 4 }, (_, i) => key(`m${i}`));
   const cEntries = all.map((k, i) => ({ pubkey: k.pub, txid: taggedHash('TEST/mtx', Uint8Array.of(i)), vout: 0, bondSats: 1000000n,
-    advert: { operatorId: `mop${i}`, guardianCapable: true, guardianEndpoint: `wss://m${i}/guardian`, endpoint: `wss://m${i}` } }));
+    operator: `mop${i}`, advert: { operatorId: `mop${i}`, guardianCapable: true, guardianEndpoint: `wss://m${i}/guardian`, endpoint: `wss://m${i}` } }));
   const answers = { 'https://m1': { ready: { guardian: 'setup' } }, 'https://m2': { off: true }, 'https://m3': null };
   const asked = [];
   const s = createFoundingSeat({ records: () => [], entriesAt: async (h) => (h >= 300 ? cEntries : []), beaconAt: async () => null, tip: async () => 300,
@@ -540,7 +541,7 @@ test('members: every node that can be drawn, asked at its address - ready, found
 test('a seat that first ticks long after the run of free operators began reads back only two steps, and draws the same height as a seat that saw the run (kanban #577: 15 min+ after a restart)', async () => {
   const all = Array.from({ length: 12 }, (_, i) => key(`l${i}`));
   const cEntries = all.map((k, i) => ({ pubkey: k.pub, txid: taggedHash('TEST/ltx', Uint8Array.of(i)), vout: 0, bondSats: 1000000n,
-    advert: { operatorId: `lop${i}`, guardianCapable: true, guardianEndpoint: `wss://l${i}`, guardianOf: [] } }));
+    operator: `lop${i}`, advert: { operatorId: `lop${i}`, guardianCapable: true, guardianEndpoint: `wss://l${i}`, guardianOf: [] } }));
   const held = [{ federation: 'bb'.repeat(32), status: 'OPEN', height: 100 }];
   const make = (w, reads) => createFoundingSeat({ records: () => held, entriesAt: async (h) => { reads.push(h); return h >= 150 ? cEntries : []; },
     beaconAt: async (h) => (h <= w.tip ? taggedHash('TEST/block', Uint8Array.of(h & 255)) : null), tip: async () => w.tip,
@@ -590,7 +591,7 @@ test('capacity pressure: a reader that fails starts no founding, it does not fal
 
 test('capacity pressure reaches the probe: a node named only under pressure starts its guardian again in a fresh setup', async () => {
   const many = Array.from({ length: 12 }, (_, i) => { const k = key(`p${i}`); return { pubkey: k.pub, txid: taggedHash('TEST/tx-p', Uint8Array.of(i)), vout: 0, bondSats: 1000000n,
-    advert: { operatorId: `pop${i}`, guardianCapable: true, guardianEndpoint: `wss://p${i}` } }; });
+    operator: `pop${i}`, advert: { operatorId: `pop${i}`, guardianCapable: true, guardianEndpoint: `wss://p${i}` } }; });
   const seed = taggedHash('TEST/block', Uint8Array.of(201));
   // a node left out of the plain draw, with the bond it needs for the pressure rule to name it
   const raised = (own) => many.map((e, i) => (i === own ? { ...e, bondSats: 2000000n } : e));
@@ -606,7 +607,7 @@ test('capacity pressure reaches the probe: a node named only under pressure star
 
 test('from the point the count holds to the version too: a cohort does not trigger on nodes it cannot draw (ruling #1023)', async () => {
   const many = Array.from({ length: 11 }, (_, i) => { const k = key(`v${i}`); return { pubkey: k.pub, txid: taggedHash('TEST/tx-v', Uint8Array.of(i)), vout: 0, bondSats: 1000000n,
-    advert: { operatorId: `vop${i}`, guardianCapable: true, guardianEndpoint: `wss://v${i}`, protocolVersions: i < 9 ? [24] : [23], guardianOf: [] } }; });
+    operator: `vop${i}`, advert: { operatorId: `vop${i}`, guardianCapable: true, guardianEndpoint: `wss://v${i}`, protocolVersions: i < 9 ? [24] : [23], guardianOf: [] } }; });
   const asOf = (candidateVersionAt) => { const w = { tip: 300 };
     return createFoundingSeat({ records: () => [{ federation: 'aa'.repeat(32), status: 'OPEN', height: 100 }], entriesAt: async () => many, beaconAt: async (h) => (h <= w.tip ? taggedHash('TEST/block', Uint8Array.of(h & 255)) : null),
       tip: async () => w.tip, guardianInSetup: async () => true, setup: { localParams: async () => 'code', addPeer: async () => {}, startDkg: async () => {}, invite: async () => null }, nominal: 4, bondMinGuardian: 500000n,
@@ -710,7 +711,7 @@ test('#1161 one peer, or one drawn node, saying the federation runs does not hol
 function freshWorld(tag) {
   const all = Array.from({ length: 12 }, (_, i) => key(`${tag}${i}`));
   const ents = all.map((k, i) => ({ pubkey: k.pub, txid: taggedHash(`TEST/${tag}tx`, Uint8Array.of(i)), vout: 0, bondSats: 1000000n,
-    advert: { operatorId: `${tag}op${i}`, guardianCapable: true, guardianEndpoint: `wss://${tag}${i}`, guardianOf: [] } }));
+    operator: `${tag}op${i}`, advert: { operatorId: `${tag}op${i}`, guardianCapable: true, guardianEndpoint: `wss://${tag}${i}`, guardianOf: [] } }));
   const held = [{ federation: 'bb'.repeat(32), status: 'OPEN', height: 300 }];
   const w = { tip: 300 };
   const make = (i, setup, extra = {}) => createFoundingSeat({ records: () => held, entriesAt: async (h) => (h >= 300 ? ents : []),

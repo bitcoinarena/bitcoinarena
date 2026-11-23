@@ -9,7 +9,7 @@ import { toHex } from '../src/hash.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const node = (n, op, { slot = false } = {}) => ({ pubkey: b32(n), txid: b32(0x40 + n), vout: 0, bondSats: 1000000n,
-  advert: { operatorId: op, guardianCapable: true, guardianEndpoint: `wss://g${n}`, ...(slot ? { foundingSlot: true } : {}) } });
+  operator: op, advert: { operatorId: op, guardianCapable: true, guardianEndpoint: `wss://g${n}`, ...(slot ? { foundingSlot: true } : {}) } });
 const SEED = b32(0x99);
 const fresh = Array.from({ length: 10 }, (_, i) => node(1 + i, `fresh${i}`));
 const vets = Array.from({ length: 6 }, (_, i) => node(0x20 + i, `vet${i}`, { slot: true }));

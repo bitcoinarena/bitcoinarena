@@ -28,6 +28,7 @@
 //             null before it - the count of capable and free operators holds to it too, or a cohort would trigger on nodes it cannot draw.
 //   VOID      from `redrawFrom`, a draw with no founding started by its height + founding_window is void and holds nothing back, and a founding
 //             whose federation runs is kept through its trigger's redraws: it is not drawn over while its record names no successor yet.
+import { operatorOf } from '../../arena-protocol/src/operator-binding.js';
 import { triggerKey, foundingTrigger, COHORT_NOMINAL } from '../../arena-protocol/src/guardian-founding.js';
 import { departureStands } from '../../arena-protocol/src/absence.js';
 import { statusFor } from '../../arena-protocol/src/federation-record.js';
@@ -35,7 +36,7 @@ import { createFounding } from './founding.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { readFileSync, writeFileSync, renameSync } from 'node:fs';
 
-const opOf = (e) => String((e && e.advert && e.advert.operatorId) || toHex(e.pubkey));
+const opOf = (e) => operatorOf(e);   // kanban #3385: the census-bound operator, else the node alone
 const lower = (x) => String(x || '').toLowerCase();
 /** A held record's seated guardians - not in its gone[] - in the record's order. */
 export function seatedOf(record) {
@@ -326,15 +327,15 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
         for (const g of (e && e.advert && e.advert.guardianOf) || []) named.add(toHex(g.federationId));
         const a = e && e.advert; if (!(a && a.guardianCapable === true && a.guardianEndpoint) || !speaks(e)) continue;
         if (guarding.has(toHex(e.pubkey))) continue;   // kanban #3031: a node held back by its own claim adds nothing to its operator (as in the draw)
-        const op = String(a.operatorId || toHex(e.pubkey)); ops.add(op); bonds.set(op, (bonds.get(op) || 0n) + BigInt(e.bondSats || 0));
+        const op = operatorOf(e); ops.add(op); bonds.set(op, (bonds.get(op) || 0n) + BigInt(e.bondSats || 0));
       }
       const freeOps = new Set([...bonds].filter(([op, sats]) => sats >= bondMinGuardian && !guarding.has(op)).map(([op]) => op));
       // and WHICH nodes those free operators run (kanban #585: the health page names the nodes the cohort counts, not only how many)
       const freeNodes = entries.filter((e) => e && e.advert && e.advert.guardianCapable === true && e.advert.guardianEndpoint && speaks(e)
-        && !guarding.has(toHex(e.pubkey)) && freeOps.has(String(e.advert.operatorId || toHex(e.pubkey)))).map((e) => toHex(e.pubkey));
+        && !guarding.has(toHex(e.pubkey)) && freeOps.has(operatorOf(e))).map((e) => toHex(e.pubkey));
       // THIS NODE: its operator, free or not, and if not, which of its operator's nodes guard what
       const own = entries.find((e) => e && toHex(e.pubkey) === toHex(ownKey));
-      const ownOp = own && own.advert ? String(own.advert.operatorId || toHex(own.pubkey)) : null;
+      const ownOp = own && own.advert ? operatorOf(own) : null;
       const self = ownOp === null ? { inCensus: false } : { inCensus: true, operator: ownOp, operatorNodes: entries.filter((e) => e && e.advert && opOf(e) === ownOp).length,
         free: freeOps.has(ownOp), bondSats: String(bonds.get(ownOp) || 0n), ...(freeOps.has(ownOp) ? {} : { guarding: guardingWhy({ entries, held, op: ownOp }) }) };
       return { height: h, operators: ops.size, free: freeOps.size, freeNodes, self, federations: named.size };

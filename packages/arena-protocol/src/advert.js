@@ -144,6 +144,12 @@ export function encodeAdvert(a) {
     if (compareGameIds(a.hostedGames[i - 1], a.hostedGames[i]) >= 0) throw new Error('hosted_games is not sorted or names a game twice');
   w.vec(a.hostedGames, (g, ww) => ww.bytes32(g));
   w.u64(a.timestamp);
+  // THE OPERATOR'S BINDING (kanban #3385, operator-binding.js): the operator key's signature over (node key, operatorId, network),
+  // 64 bytes after its marker, right after the timestamp; none is no bytes, so every advertisement before this keeps its bytes.
+  if (a.operatorSig !== undefined && a.operatorSig !== null) {
+    if (!(a.operatorSig instanceof Uint8Array) || a.operatorSig.length !== 64) throw new Error('an operator signature is 64 bytes');
+    w.u8(OPERATOR_SIG_MARKER); w.bytes(a.operatorSig, 64);
+  }
   // WHERE THE NODE RUNS (kanban #1093 part 4, "Guardians spread": "a new optional advert field, the machine or provider, self-declared"): the
   // hash of the name its owner gives (hostGroupOf), so no provider name is on the chain; first of the optional fields, 32 bytes after their
   // marker. None is no bytes, so every advertisement before this keeps its bytes. The founding draw seats at most f guardians of one group.
@@ -181,6 +187,8 @@ export function encodeAdvert(a) {
 }
 
 /** The byte before a node's declared scalars (§27A.2), before serving. */
+/** The byte before the operator key's binding signature (kanban #3385), right after the timestamp. */
+export const OPERATOR_SIG_MARKER = 0x5a;
 export const DECLARES_MARKER = 0x5d;
 /** The byte before a node's host_group (kanban #1093 part 4), first of the optional fields. */
 export const HOST_GROUP_MARKER = 0x5b;
@@ -246,6 +254,10 @@ export function decodeAdvert(bytes) {
   for (let i = 1; i < a.hostedGames.length; i++)
     if (compareGameIds(a.hostedGames[i - 1], a.hostedGames[i]) >= 0) throw new Error('hosted_games is not sorted or names a game twice');
   a.timestamp = r.u64();
+  // the operator's binding (65), first of all, only when written (kanban #3385); then as before
+  { const left00 = bytes.length - r.at;
+    const tails = [0, 1, 17, 18, 33, 34, 50, 51, 66, 67, 83, 84, 99, 100, 116, 117];
+    if (left00 >= 65 && bytes[r.at] === OPERATOR_SIG_MARKER && [...tails, ...tails.map((x) => x + 33)].includes(left00 - 65)) { r.u8(); a.operatorSig = r.bytes(64); } }
   // the host_group (33), first, only when written (kanban #1093 part 4); then as before
   const OPTIONAL_TAILS = [0, 1, 17, 18, 33, 34, 50, 51, 66, 67, 83, 84, 99, 100, 116, 117];
   const left0 = bytes.length - r.at;

@@ -1601,7 +1601,7 @@ and independent reproducibility by everyone.
 ```text
 NodeAdvertisement {
   node_pubkey
-  operator_id                  // SELF-DECLARED, not proof of identity; siblings for seating (§5A.13)
+  operator_id                  // the operator's x-only public key; counts only with operator_sig (below)
   supported_protocol_versions
   roles_supported              // game_verify | settlement | both | none - opt-in (below)
   endpoint, region, capacity_class
@@ -1622,6 +1622,17 @@ NodeAdvertisement {
   signature                    // by node_pubkey over all of the above
 }
 ```
+
+**Operator binding** (kanban #3385, 2026-11-23). `operator_id` is the
+operator's x-only public key (hex). An advertisement naming it carries
+`operator_sig`, a BIP-340 signature by that key over
+H("ARENA/v1/OperatorBinding", node_pubkey || operator_id || network name),
+written after the timestamp (marker `0x5c`, 64 bytes; absent is no bytes).
+Without a valid signature the node is its own operator (operator_id :=
+node_pubkey) and is never grouped with another node - in the founding draw
+(one ticket per operator), the guardian-holding rule and the gateway seats.
+No grace period on testnet: multi-node operators re-publish their adverts
+with the signature.
 
 The advertisement is **not** what makes a node eligible. The bond output is
 (§5A.2). The advertisement is the body that the bond output commits to, so

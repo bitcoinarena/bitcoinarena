@@ -40,6 +40,7 @@ import { decodeAdvert, splitSignedAdvert, advertId, hostsGame } from './advert.j
 import { BOND_TEMPLATE_V3, maturityStands, slashStartLeaf } from './bond-script.js';
 import { bondPresigStands } from './slash-presig.js';
 import { bondNamesStandingKey } from './census-key.js';
+import { boundOperatorOf } from './operator-binding.js';
 import { poolOfRole, GAME_VERIFY } from './fee.js';
 import { genesisFor } from './genesis.js';
 import { dropsAbsent, withoutAbsent, absenceWithinCap, ABSENT_WHY } from './presence.js';
@@ -1728,6 +1729,11 @@ export function deriveCensus(views, { contract, candidates, resolve, verifyAdver
     for (const e of eligible) if (!keptSet.has(e)) absentOut.push({ ...e, absent: true, why: ABSENT_WHY });
     eligible = kept;
   }
+
+  // EACH NODE'S BOUND OPERATOR (kanban #3385, operator-binding.js): its advert's operatorId only when that key signed the binding for
+  // this network, else the node's own key - what the founding draw and the gateway seats group by. Not in the leaf: the root is unchanged.
+  { const net = networkOf(contract.networkId) || '';
+    eligible = eligible.map((e) => ({ ...e, operator: boundOperatorOf(e.advert, net, verifyUpdate) || toHex(e.pubkey) })); }
 
   let census;
   try {

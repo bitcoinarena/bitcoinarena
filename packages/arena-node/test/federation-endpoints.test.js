@@ -31,7 +31,7 @@ const configOf = (fed) => { const who = fed === B ? inB : inS;
 const inviteOf = (fed) => { const who = fed === B ? inB : inS; return inviteForGuardians(fed, [{ url: guardianUrl(who[0], fed === S), peer: 0 }]); };
 // one advert per node: ONE guardian endpoint (/guardian), guardian_of naming both federations for s0..s2
 const census = { ok: true, entries: nodes.map((n, i) => ({ pubkey: n.pubkey, txid: new Uint8Array(32).fill(0xa0 + i), vout: 0, bondSats: 50000n,
-  advert: { operatorId: i < 4 ? '2of2' : 'node15', endpoint: n.endpoint, guardianEndpoint: guardianUrl(i, false),
+  operator: i < 4 ? '2of2' : 'node15', advert: { operatorId: i < 4 ? '2of2' : 'node15', endpoint: n.endpoint, guardianEndpoint: guardianUrl(i, false),
     guardianOf: [...(inB.includes(i) ? [{ federationId: B, guardianKey: peerKey(B, i) }] : []), ...(inS.includes(i) ? [{ federationId: S, guardianKey: peerKey(S, i) }] : [])] } })) };
 
 function dirsFor(root, i) {
