@@ -40058,12 +40058,14 @@ async function resendPaidRecords({ storage, fetch }) {
  * purchase id with another itemId was counted with the honest seats and its record kept, so the entry named an item never bought and
  * every seat refused it. A purchase of another game than the one asked is skipped; an id two variants both reach `need` for is not kept.
  */
+// kanban #2802 (audit r21 client-2): GET /items was read whole - one seat's 64 MiB answer was pulled and parsed on the page's only thread
+const OWNED_ITEMS_BYTES_MAX = 4 * 1024 * 1024;
 async function ownedItems({ seats, player, gameName = null, fetch }) {
   const answers = await Promise.all((seats || []).map(async (s) => {
     try {
       const r = await fetch(`${String(s).replace(/\/$/, '')}/items?player=${toHex(player)}${gameName ? `&game=${encodeURIComponent(gameName)}` : ''}`, { signal: AbortSignal.timeout(15000) });
       if (!r.ok) return null;
-      const items = (await r.json()).items;
+      const items = (await readJsonUpTo(r, OWNED_ITEMS_BYTES_MAX)).items;   // kanban #2802: one seat's answer read up to a bound
       return Array.isArray(items) ? items.slice(0, 1000) : [];
     } catch { return null; }
   }));
@@ -43290,6 +43292,9 @@ function referralNameStands(r, signature, { verify }) {
 
 
 
+// kanban #2802 (audit r21 client-2): one seat's GET /donations and /names answers are read up to a bound, not whole
+const DONATIONS_BYTES_MAX = 4 * 1024 * 1024, NAMES_BYTES_MAX = 1024 * 1024;
+
 /** Where a tab keeps the name its player chose. */
 const CUSTOM_NAME_KEY = 'arena.player.name';
 
@@ -43457,7 +43462,7 @@ async function namesOf({ roundId, nodes, fetcher = fetch, verify } = {}) {
     try {
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/names?round=${id}`);
       if (!r.ok) { refused.push(`${node}: ${r.status}`); continue; }
-      const body = await r.json();
+      const body = await readJsonUpTo(r, NAMES_BYTES_MAX);
       answered++;
       if (body && Array.isArray(body.names)) items.push(...body.names.slice(0, NAMES_PER_SEAT));   // kanban #1864: one seat's share, bounded
     } catch (e) { refused.push(`${node}: ${e.name === 'TimeoutError' ? 'no answer in time' : e.message}`); }
@@ -43602,7 +43607,7 @@ async function collectZaps({ storage, keep = storage, random, curve, clients, se
     try {
       const r = await fetcher(`${s}/donations?key=${pk}&since=0`, { cache: 'no-store', signal: AbortSignal.timeout(8000) });
       if (!r.ok) return [];
-      const list = (await r.json()).donations;
+      const list = (await readJsonUpTo(r, DONATIONS_BYTES_MAX)).donations;
       return (Array.isArray(list) ? list : []).filter((d) => d && /^[0-9a-f]{64}:\d+$/.test(String(d.outpoint))
         && /^[0-9a-f]{64}$/i.test(String(d.federationId)) && /^[1-9]\d{0,20}$/.test(String(d.amountMsat)));
     } catch { return []; /* another seat answers for it */ }
