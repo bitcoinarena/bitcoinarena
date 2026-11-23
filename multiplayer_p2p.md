@@ -3263,6 +3263,43 @@ and its result carries `front_mode = SIM` - the same fallback the client
 already shows for every feed - and nodes replay it the same way. The player
 never chooses the price; he can only replay it or not play.
 
+**Liquidations are world input too** *(kanban #2694, follow-up of #2655;
+Next Block version 9 on)*. A strike is a forced liquidation on the exchange.
+In version 8 the client named each strike's tick and size and nobody checked
+them, so a staked v8 run takes no liquidation at all (#2655). From version 9 a
+staked run plays exactly the liquidations its committee attests:
+
+```text
+LiquidationEvent { tick, size, attestation }
+```
+
+Each committee seat holds the exchange's BTCUSDT `forceOrder` stream itself.
+An event of trade time `T`, quantity `q` and average price `ap` is the strike
+at `tick` = the round tick of `T - start_time + 5 s` (one sample period later,
+so the attestation reaches the page before its tick) with `size` =
+`round(q x ap x 65536 / 10^6)` - millions of USD in Q16.16, the word the core
+already takes; events at one tick are one strike of their summed size. Both
+come from the exchange's own fields, so honest seats compute the same pair.
+`attestation` is BIP-340 signatures by the round's committee keys over
+`taggedHash("ARENA/v1/LiquidationEvent", round_id || u32 tick || i32 size)`;
+it stands with `receiptsNeeded(game_verify_slots)` distinct keys. The tick's
+leader is the round's seat `tick mod n`; a seat signs only a strike its own
+stream saw, one size a tick, written down before the signature leaves it, and
+a seat that saw the event and holds no attestation 4 s later leads it
+itself. The seats hand the standing attestation to each other and serve it at
+`GET /liquidation-strikes?round=&since=`.
+
+The client puts each attested strike into its next `InputBatch` beside the
+`[tick, size]` it plays, as attestation kind 4 `[tick, 4, size, [[key, sig],
+...]]` (at most 64 a batch, one a tick; a batch without one keeps its bytes).
+In a staked v9 run a non-zero liquidation without a standing attestation, a
+size other than the attested one, or a batch whose ticks pass an attested
+strike the seat holds and that it leaves out, makes the batch invalid. A free
+run takes a bare liquidation as before, and any attestation it carries must
+stand. The core is unchanged: it strikes at every liquidation of the
+transcript, and every replay reads them from the stored batches, whose bytes
+carry the attestations.
+
 **Protocol 5: the median of signed readings** *(RULED 2026-10-14
 ~21:50Z,: "Build A as protocol 5 ... each seat signs the price it
 read, and the sample is the median of five signed readings. Nobody proposes a

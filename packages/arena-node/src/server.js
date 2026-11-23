@@ -124,6 +124,7 @@ import { entryFeeMsat, feeBpsOf, entryFeeBpsOf } from '../../arena-protocol/src/
 import { cancelId, BATCH_MS } from '../../arena-protocol/src/order-book.js';
 import { OrderBook } from './order-batch.js';
 import { PriceFeed } from './price-feed.js';
+import { LiquidationFeed } from './liquidation-feed.js';   // kanban #2694
 import { matchOf } from './match.js';
 import { matchProofId, presenceId, PRESENCE_MS } from '../../arena-protocol/src/match.js';
 import { dashboardData, dashboardHtml } from './dashboard.js';
@@ -210,7 +211,7 @@ import { SIGNED_RESULT_BYTES, resultId, decodePlayerResult, splitSignedResult } 
 export const MAX_FRAME_BYTES = Math.max(
   MAX_SIGNED_INPUT_BATCH_BYTES, SIGNED_CHECKPOINT_BYTES, SIGNED_RECEIPT_BYTES);
 import { CLOSED, relayRowCost } from './store.js';
-import { Round, noteNextblockGames, refusedLockOwnId, lockClaimHolds, LOCKLESS_CAP, LOCKLESS_HOLD_MS, TRANSCRIPT_BATCH_MAX_BYTES } from './round.js';
+import { Round, noteNextblockGames, attestedLiquidationGameIds, refusedLockOwnId, lockClaimHolds, LOCKLESS_CAP, LOCKLESS_HOLD_MS, TRANSCRIPT_BATCH_MAX_BYTES } from './round.js';
 // kanban #2707: the largest signed batch frame the store could ever take - its type byte, the batch, its signature
 const SIGNED_BATCH_FRAME_MAX_BYTES = 1 + TRANSCRIPT_BATCH_MAX_BYTES + 64;
 import { Verifier, peerEntryVoid } from './verify.js';
@@ -3492,6 +3493,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     };
     schedulePrices();
   }
+  // THE COMMITTEE'S LIQUIDATIONS (kanban #2694): a staked run of a Next Block version that takes attested strikes (round.js
+  // attestedLiquidationGameIds) plays only the forced liquidations its committee signed. Every seat answers the sign/attest doors; a
+  // seat that runs the price feed (ARENA_PRICE_FEED=1) also holds the exchange's forceOrder stream (ARENA_LIQUIDATION_FEED=0 turns it off).
+  const liqRound = (c) => { try { return BigInt(c.stakeMsat || 0) > 0n && attestedLiquidationGameIds().includes(toHex(c.gameId)) && priceRound(c); } catch { return false; } };
+  const strikeFeed = new LiquidationFeed(round, { liqRound, now: () => round.now(),
+    peersFor: (rid) => { const picked = roster.committeeFor(rid, 'settlement'); return picked.ok ? peerEndpointsOf(picked.committee, round.pubkey) : (dkg.peers || []); } });
+  round.attestedLiquidations = (rid, fromTick) => strikeFeed.held(toHex(rid), fromTick).map(([t, z]) => [t, z]);
+  const closeLiquidationStream = priceFeed === true && process.env.ARENA_LIQUIDATION_FEED !== '0' ? strikeFeed.connect() : () => {};
   // THE FEED LETS GO OF ITS FINISHED ROUNDS (kanban #742): looked at once a minute, on every seat - a seat without the feed
   // still holds what the committee posts to it - and the sizes held logged at most every 10 minutes (price-feed.js tidy)
   const priceTidy = setInterval(() => { try { prices.tidy(); } catch (e) { console.error(`[prices] tidy: ${e.message}`); } }, 60000);
@@ -12311,6 +12320,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const row = round.get(Buffer.from(rh, 'hex'));
         return res.end(JSON.stringify({ ...prices.list(rh, Number(url.searchParams.get('since') || 0) || 0, url.searchParams.has('ks') ? String(url.searchParams.get('ks')).split(',').slice(0, 4).map(Number).filter((k) => Number.isInteger(k) && k >= 0) : null), feed: !!(row && feedFor(row.contract)) }));
       }
+      // THE COMMITTEE'S LIQUIDATIONS (kanban #2694): sign a strike this seat's stream saw, keep one that stands, list what it holds
+      if (req.method === 'GET' && url.pathname === '/liquidation-strikes') {
+        const rh = String(url.searchParams.get('round') || '').toLowerCase();
+        const since = String(url.searchParams.get('since') || '0');
+        if (!/^[0-9a-f]{64}$/.test(rh) || !/^[0-9]{1,10}$/.test(since)) return text(res, 400, 'GET /liquidation-strikes?round=<id>&since=<tick>');
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ liquidations: strikeFeed.held(rh, Number(since)) }));
+      }
+      if (req.method === 'POST' && (url.pathname === '/liquidation-sign' || url.pathname === '/liquidation-attested')) {
+        let body; try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'that body is not JSON'); }
+        const got = url.pathname === '/liquidation-sign' ? await strikeFeed.sign(body) : strikeFeed.hold(body);
+        if (!got.ok) return text(res, got.status || 409, got.why);
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify(got));
+      }
       // WHO WON A PRICE ROUND (§13 RoundResult): this seat's signed result, once the round has ended
       if (req.method === 'GET' && url.pathname === '/round-result') {
         const got = await prices.result(String(url.searchParams.get('round') || '').toLowerCase());
@@ -15088,6 +15112,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (marketsTimer) clearInterval(marketsTimer);
         if (orderBatchTimeout) { clearTimeout(orderBatchTimeout); orderBatchTimeout = null; }
         if (priceTimeout) { clearTimeout(priceTimeout); priceTimeout = null; }
+        try { closeLiquidationStream(); } catch { /* closed */ }
         clearInterval(priceTidy);
         clearInterval(lockSetTimer);
         clearTimeout(attestedBoot);
