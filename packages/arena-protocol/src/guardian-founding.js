@@ -12,6 +12,7 @@ import { taggedHash, bytesToBigInt, toHex } from './hash.js';
 import { TAG } from './constants.js';
 import { weightOf } from './sortition.js';
 import { tagAt } from './tag-switch.js';
+import { operatorOf } from './operator-binding.js';
 
 export const ALTERNATES = 3;
 
@@ -39,7 +40,7 @@ export function guardianTicket(seed, entry, height) {
 export function drawGuardians({ entries, seed, height, nominal, bondMinGuardian, guardingOpen = new Set(), seatedFirst = [] }) {
   if (!(seed instanceof Uint8Array) || seed.length !== 32) return { ok: false, why: 'a founding is drawn on the beacon after its trigger height' };
   if (typeof bondMinGuardian !== 'bigint' || bondMinGuardian <= 0n) return { ok: false, why: 'bond_min_guardian is a positive floor' };
-  const opOf = (e) => String((e.advert && e.advert.operatorId) || toHex(e.pubkey));
+  const opOf = operatorOf;   // kanban #3385: the census-bound operator key, else the node alone
   const f = Math.floor((nominal - 1) / 3);
   const offered = seatedFirst || [];
   const first = offered.length >= f + 1 ? offered.slice(0, nominal) : [];
@@ -49,12 +50,13 @@ export function drawGuardians({ entries, seed, height, nominal, bondMinGuardian,
   // "on its own" and, with a ground-low outpoint, still took that operator's ticket and summed bond. Each node's bonds are summed first
   // (its key and declared operator, as census nodeBonds groups them; its ticket on its lowest outpoint); of an operator's nodes the one
   // holding bond_min_guardian with the LARGEST own bond stands, the lowest outpoint only between equal bonds. A squat now costs a bond
-  // larger than the victim's own node; binding the operator id to a key (closing it) is the spec decision #3031 names.
+  // larger than the victim's own node. CLOSED by kanban #3385: the operator is the census-bound key (operator-binding.js operatorOf) -
+  // a node whose advert the operator key did not sign is its own operator and is grouped with nobody.
   const byNode = new Map();
   for (const e of entries || []) {
     const a = e && e.advert;
     if (!a || a.guardianCapable !== true || !a.guardianEndpoint) continue;
-    const op = String(a.operatorId || toHex(e.pubkey));
+    const op = operatorOf(e);
     if (guardingOpen.has(op) || guardingOpen.has(toHex(e.pubkey)) || firstOps.has(op) || firstNodes.has(toHex(e.pubkey))) continue;
     const k = toHex(e.pubkey) + '|' + op, had = byNode.get(k);
     if (!had) { byNode.set(k, { op, entry: e, bondSats: BigInt(e.bondSats) }); continue; }

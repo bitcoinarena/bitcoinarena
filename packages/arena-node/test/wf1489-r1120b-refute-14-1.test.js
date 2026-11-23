@@ -27,8 +27,11 @@ test('deployed defaults: a stranger at the census minimum borrowing op3 does not
   const d = drawGuardians({ entries: [...honest, squat], seed, height: 160000, nominal: 7, bondMinGuardian });
   assert.equal(d.ok, true, d.why);
   const seated = [...d.drawn, ...d.alternates].map((e) => toHex(e.pubkey));
-  assert.ok(!seated.includes(toHex(b32(ATTACKER))), 'the stranger\'s node is not seated on op3\'s ticket and summed bond');
-  assert.ok(seated.includes(toHex(b32(3))), 'op3\'s own node keeps its seat');
+  const honestDraw = drawGuardians({ entries: honest, seed, height: 160000, nominal: 7, bondMinGuardian });
+  assert.equal(d.eligible, honestDraw.eligible + 1, 'the stranger is a ticket of its own, not grouped with op3');
+  // naming op3 buys nothing: the draw is the same as with the stranger naming an id of its own
+  const plain = drawGuardians({ entries: [...honest, { ...squat, advert: { ...squat.advert, operatorId: 'stranger' } }], seed, height: 160000, nominal: 7, bondMinGuardian });
+  assert.deepEqual(seated, [...plain.drawn, ...plain.alternates].map((e) => toHex(e.pubkey)), 'the stranger\'s draw does not depend on naming op3');
 });
 
 test('variant: a stranger with an honest-sized bond borrowing op3 does not evict op3\'s node', () => {
@@ -42,6 +45,9 @@ test('variant: a stranger with an honest-sized bond borrowing op3 does not evict
   const d = drawGuardians({ entries: [...honest, squat], seed, height: 160000, nominal: 7, bondMinGuardian });
   assert.equal(d.ok, true, d.why);
   const seated = [...d.drawn, ...d.alternates].map((e) => toHex(e.pubkey));
-  assert.ok(!seated.includes(toHex(b32(ATTACKER))), 'the stranger is not seated as op3');
-  assert.ok(seated.includes(toHex(b32(3))), 'op3\'s own node keeps its seat');
+  const honestDraw = drawGuardians({ entries: honest, seed, height: 160000, nominal: 7, bondMinGuardian });
+  assert.equal(d.eligible, honestDraw.eligible + 1, 'the stranger is a ticket of its own, not grouped with op3');
+  // naming op3 buys nothing: the draw is the same as with the stranger naming an id of its own
+  const plain = drawGuardians({ entries: [...honest, { ...squat, advert: { ...squat.advert, operatorId: 'stranger' } }], seed, height: 160000, nominal: 7, bondMinGuardian });
+  assert.deepEqual(seated, [...plain.drawn, ...plain.alternates].map((e) => toHex(e.pubkey)), 'the stranger\'s draw does not depend on naming op3');
 });

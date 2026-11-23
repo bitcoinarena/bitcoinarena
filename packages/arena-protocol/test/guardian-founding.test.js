@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// kanban #3385: each entry carries `operator`, the operator its census bound it to (deriveCensus) - here as each advert names it.
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // GUARDIAN FOUNDING BY SORTITION (§23A.2): over the guardian-capable census, one ticket per operator, operators guarding an
 // OPEN federation left out, bond_min_guardian held; nominal drawn and three alternates in order; a no-show replaced by the next.
@@ -9,7 +10,7 @@ import { toHex } from '../src/hash.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const node = (n, op, { capable = true, bond = 1000000n, endpoint = `wss://g${n}` } = {}) =>
-  ({ pubkey: b32(n), txid: b32(0x40 + n), vout: 0, bondSats: bond, advert: { operatorId: op, guardianCapable: capable, guardianEndpoint: capable ? endpoint : '' } });
+  ({ pubkey: b32(n), txid: b32(0x40 + n), vout: 0, bondSats: bond, operator: op, advert: { operatorId: op, guardianCapable: capable, guardianEndpoint: capable ? endpoint : '' } });
 
 test('drawn over the eligible operators only, deterministic on the seed, nominal plus three alternates', () => {
   const entries = [...Array.from({ length: 12 }, (_, i) => node(i + 1, `op${i + 1}`)),

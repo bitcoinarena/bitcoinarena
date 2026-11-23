@@ -9,6 +9,7 @@
 // ROUTED VOLUME (gateway-volume.js): `incoming(from)` streams the federation's LNv2 incoming contracts after a stream index; each one is
 // credited to the gateway whose module key (its routing_info's module_public_key) funded it, in the epoch of the probe that first
 // saw it. The first probe only takes the index (history before the watch is not credited to any epoch). Outgoing is not counted.
+import { operatorOf } from '../../arena-protocol/src/operator-binding.js';
 import { checkGatewayClaim, pegInOutpointsOf } from '../../arena-protocol/src/gateway-claim.js';
 import { seatGateways, GATEWAY_EPOCH_BLOCKS, GATEWAY_SEATS, GATEWAY_MINIMUMS } from '../../arena-protocol/src/gateway-seats.js';
 import { pegInPressure } from '../../arena-protocol/src/capacity.js';
@@ -189,7 +190,7 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
       const rows = new Map([...(epochs.get(e) || new Map())].filter(([, r]) => r && r.claim && r.claim.federationId === fid));
       const candidates = [...rows].map(([node, r]) => {
         const x = all.find((y) => toHex(y.pubkey) === node);
-        return { node: Uint8Array.from(Buffer.from(node, 'hex')), operatorId: (x && x.advert && x.advert.operatorId) || node, seatedGuardian: seatedNow.has(node),
+        return { node: Uint8Array.from(Buffer.from(node, 'hex')), operatorId: x ? operatorOf(x) : node, /* kanban #3385: bound operator only */ seatedGuardian: seatedNow.has(node),
           registered: r.up > 0, volumeSats: r.modulePk ? ((volumes.get(e) || new Map()).get(r.modulePk) || 0n) / 1000n : 0n, capacitySats: BigInt(r.claim.capacitySats), inboundSats: BigInt(r.claim.inboundSats || 0), outboundSats: BigInt(r.claim.outboundSats || 0), outsideInboundSats: BigInt(r.claim.outsideInboundSats || 0), pegInSats: BigInt(r.claim.pegInSats),
           availabilityPct: r.probes ? (100 * r.up) / r.probes : 0, bondSats: x ? nodeBondOf(all, node).bondSats : 0n, gatewayUrl: r.claim.gatewayUrl };
       });

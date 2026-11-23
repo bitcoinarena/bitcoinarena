@@ -37,6 +37,7 @@ import {
   paysBondMarker, paysMarkerProgram,
 } from './chain.js';
 import { decodeAdvert, splitSignedAdvert, advertId, hostsGame } from './advert.js';
+import { boundOperatorOf } from './operator-binding.js';
 import { maturityStands } from './bond-script.js';
 import { poolOfRole, GAME_VERIFY } from './fee.js';
 import { genesisFor } from './genesis.js';
@@ -1541,6 +1542,11 @@ export function deriveCensus(views, { contract, candidates, resolve, verifyAdver
     eligible = f.kept;
     sumOut.push(...f.out);
   }
+
+  // EACH NODE'S BOUND OPERATOR (kanban #3385, operator-binding.js): its advert's operatorId only when that key signed the binding for
+  // this network, else the node's own key - what the founding draw and the gateway seats group by. Not in the leaf: the root is unchanged.
+  { const net = networkOf(contract.networkId) || '';
+    eligible = eligible.map((e) => ({ ...e, operator: boundOperatorOf(e.advert, net, verifyUpdate) || toHex(e.pubkey) })); }
 
   let census;
   try {

@@ -131,6 +131,12 @@ export function encodeAdvert(a) {
     if (compareGameIds(a.hostedGames[i - 1], a.hostedGames[i]) >= 0) throw new Error('hosted_games is not sorted or names a game twice');
   w.vec(a.hostedGames, (g, ww) => ww.bytes32(g));
   w.u64(a.timestamp);
+  // THE OPERATOR'S BINDING (kanban #3385, operator-binding.js): the operator key's signature over (node key, operatorId, network),
+  // 64 bytes after its marker, right after the timestamp; none is no bytes, so every advertisement before this keeps its bytes.
+  if (a.operatorSig !== undefined && a.operatorSig !== null) {
+    if (!(a.operatorSig instanceof Uint8Array) || a.operatorSig.length !== 64) throw new Error('an operator signature is 64 bytes');
+    w.u8(OPERATOR_SIG_MARKER); w.bytes(a.operatorSig, 64);
+  }
   // STEPPING OUT WITHOUT UNBONDING (§5A.3, RULED 2026-09-28): `serving = false`, published as an advertisement
   // update, takes the node out of every census from that update's block on - its bond untouched. Written only when false, one
   // marker byte last: "serving" is no bytes, so every advertisement before this keeps its bytes and the hash its bond committed to.
@@ -155,6 +161,8 @@ export function encodeAdvert(a) {
 }
 
 /** The byte before a node's declared scalars (§27A.2), before serving. */
+/** The byte before the operator key's binding signature (kanban #3385), right after the timestamp. */
+export const OPERATOR_SIG_MARKER = 0x5a;
 export const DECLARES_MARKER = 0x5d;
 /** The byte before the owner's emergency key (§23A.5a, protocol 17), after the declared scalars, before serving. */
 export const EMERGENCY_MARKER = 0x5e;
@@ -214,6 +222,8 @@ export function decodeAdvert(bytes) {
   for (let i = 1; i < a.hostedGames.length; i++)
     if (compareGameIds(a.hostedGames[i - 1], a.hostedGames[i]) >= 0) throw new Error('hosted_games is not sorted or names a game twice');
   a.timestamp = r.u64();
+  { const left0 = bytes.length - r.at;
+    if (left0 >= 65 && bytes[r.at] === OPERATOR_SIG_MARKER && [0, 1, 17, 18, 33, 34, 50, 51].includes(left0 - 65)) { r.u8(); a.operatorSig = r.bytes(64); } }
   // the declared scalars (17 bytes), the emergency key (33) and serving = false (1), each only when written, in that order
   const left = bytes.length - r.at;
   if ([17, 18, 50, 51].includes(left) && bytes[r.at] === DECLARES_MARKER) { r.u8(); a.declares = { bondMinSats: r.u64(), proposalDepositSats: r.u64() }; }
