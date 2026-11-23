@@ -53,13 +53,17 @@
   "name": "Amber",
   "version": "6.6.9",
   "kind": "Remote signer",
-  "date": "2026-11-17",
+  "date": "2026-11-20",
   "testedBy": null,
-  "how": "manual",
+  "how": "automatic",
   "url": "https://github.com/greenart7c3/Amber",
   "platform": "Android",
   "checks": {
-   "login": "ok"
+   "connect": "ok",
+   "get_public_key": "ok",
+   "sign_event 27235": "ok",
+   "sign_event 30078": "ok",
+   "nip44 to self": "ok"
   },
   "result": "works"
  },
