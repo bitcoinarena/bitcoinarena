@@ -1313,6 +1313,8 @@ const TAG = {
   contributionAgreement: 'ARENA/v1/ContributionAgreement',
   contributionLeave: 'ARENA/v1/ContributionLeave',
   contributionTermination: 'ARENA/v1/ContributionTermination',
+  // THE HALT A PROOF NAMES (kanban #3339): federation, session, halt height and abandoned guardians - the same on every seat
+  haltProof: 'ARENA/v1/HaltProof',
   entryContract: 'ARENA/v1/EntryContract',
   advert: 'ARENA/v1/Advert',
   censusLeaf: 'ARENA/v1/CensusLeaf',
@@ -34790,13 +34792,20 @@ class Client {
     // head with the inputs recorded for 60..89. So the served chain must carry every batch this client published, in
     // order (`published`, this tab), and no committee peer may hold a longer chain the player signed (after a reload,
     // when `published` is empty). Either way it is that seat's fault, and nothing is signed again on an old head.
-    this.#notBehindPublished(t);
-    await this.#notBehindPeers(t, entry, roundId, entryId);
+    // A HOME SEAT SHORT OF ONLY WHAT THE PEERS CARRIED IS NO FAULT (kanban #3343, audit play-a6-1-1, high): after #2515/#3215 a batch the
+    // home seat refused and the peers took is published here and not held there (homeHolds) - the designed state. A home seat that refused
+    // one batch and then dropped the socket had this resume read that as a rewind and end the honest run (the peer kept 120 of 180 ticks).
+    // A served chain that is a prefix of `published` and holds at least what that seat took is kept as it is: nothing rewinds, the chain
+    // goes on from `published`, and #homeCatchUp feeds the seat the rest. A fork, or less than the seat itself took, is still its fault.
+    const carried = this.#notBehindPublished(t);
+    if (!carried) await this.#notBehindPeers(t, entry, roundId, entryId);
 
     const before = this.nextTick;
     const last = t.batches[t.batches.length - 1];
-    this.batchHead = last ? batchId(last) : GENESIS;
-    this.nextTick = last ? batchTicks(last).at(-1) + 1 : entry.joinTick;
+    if (!carried) {
+      this.batchHead = last ? batchId(last) : GENESIS;
+      this.nextTick = last ? batchTicks(last).at(-1) + 1 : entry.joinTick;
+    }
 
     // THE NODE MAY ALREADY HOLD WHAT THIS CLIENT STILL HOLDS: a batch it took
     // whose answer never arrived. Those words are published, so they leave the
@@ -34906,16 +34915,20 @@ class Client {
     throw Object.assign(new Error(why), { nodeFault: true });
   }
 
-  /** The served chain carries every batch this client published, in order (kanban #2410); a shorter or forked one is the seat's fault. */
+  /** The served chain carries every batch this client published, in order (kanban #2410); a shorter or forked one is the seat's fault -
+   *  except one short of only the batches the peers carried without it (kanban #3343): answers true then, false when it carries them all. */
   #notBehindPublished(t) {
     for (let i = 0; i < this.published.length; i++) {
       const mine = splitSignedBatch(this.published[i].bytes).id;
       const served = t.batches[i];
       if (served && toHex(batchId(served)) === toHex(mine)) continue;
+      // short of only the batches the peers carried without it (kanban #3343): answered true, nothing rewinds
+      if (!served && i === t.batches.length && i >= this.homeHolds) return true;
       this.#servedBehind(t, `the node at ${this.base} serves ${t.batches.length} batches for this entry, `
         + (served ? `and its batch ${i} is not the one this client published there` : `shorter than the ${this.published.length} this client already published`)
         + ' - this client does not rewind and sign again on an older head, and that node is not trusted with this run');
     }
+    return false;
   }
 
   /**
@@ -43755,6 +43768,7 @@ function lateJoinTick(c, nowMs = Date.now(), leadMs = LATE_JOIN_SESSION_MS) {
 
 
 
+
 const MAX_PLAYERS_PER_ROUND = 64n;
 /** A test network (regtest, testnet4) shows the ceiling and refuses nothing - as ruling A of the load rule. */
 const isTestNetwork = (networkId) => ['regtest', 'testnet4'].includes(networkOf(networkId));
@@ -43812,8 +43826,15 @@ function ceilingWithIncome({ ceilingSats, incomeSats = null, maxPlayers = MAX_PL
 // `incomeSats` (kanban #1282): the income term's income_seat, which bounds the table's bracket (ceilingWithIncome); null: the table alone, as before
 function stakeWithinCeiling({ entries, stakeSats, maxPlayers = MAX_PLAYERS_PER_ROUND, incomeSats = null }) {
   const of = (role) => {
-    const es = (entries || []).filter((e) => (e.roles || []).includes(role));
-    return roleCeiling({ nodes: es.length, bondedSats: es.reduce((t, e) => t + BigInt(e.bondSats || 0n), 0n), stakeSats, maxPlayers });
+    // ONE KEY, ONE NODE (kanban #2923, feedback #228; as #2850 in meetsCensusMinimum): census rows are per bond output, so one operator
+    // with N outputs counted as N nodes toward the 10-node threshold and the bracket. Rows are merged by node key, bonds summed once.
+    const byKey = new Map();
+    (entries || []).filter((e) => (e.roles || []).includes(role)).forEach((e, i) => {
+      const pk = e.pubkey || (e.advert && e.advert.nodePubkey);
+      const k = pk ? (typeof pk === 'string' ? pk.toLowerCase() : toHex(pk)) : `row:${i}`;
+      byKey.set(k, (byKey.get(k) || 0n) + BigInt(e.bondSats || 0n));
+    });
+    return roleCeiling({ nodes: byKey.size, bondedSats: [...byKey.values()].reduce((t, b) => t + b, 0n), stakeSats, maxPlayers });
   };
   const g = of('game'), s = of('settlement');
   const low0 = g.ceilingSats <= s.ceilingSats ? g : s;
@@ -46072,7 +46093,14 @@ function bookBatch({ resting = [], incoming = [], cancels = [], nowMs, feeBps })
   const byId = new Map(live.map((o) => [o.id, o]));
   const fills = b.fills.filter((f) => f.payoutMsat > 0n);
   // WHAT IS LEFT STANDS: an order's refund is its remaining stake (its fee on that part not charged), into the next batch
-  const resting2 = b.fills.filter((f) => f.refundMsat > 0n).map((f) => ({ ...byId.get(f.id), stakeMsat: f.refundMsat }));
+  // A SELL RESTS WITH ITS UNSOLD SHARES, A LOCK-BACKED BUY WITH ONLY ITS UNSPENT BUDGET (kanban #2924, feedback #230/#231): a sell's
+  // refund is always 0, so its rest never stood, and a buy with its own net kept the whole net and spent it again next batch
+  const resting2 = b.fills.flatMap((f) => {
+    const o = byId.get(f.id);
+    if (f.sell) return f.restSharesMsat > 0n ? [{ ...o, sharesMsat: f.restSharesMsat }] : [];
+    if (f.refundMsat <= 0n) return [];
+    return [{ ...o, stakeMsat: f.refundMsat, ...(typeof o.net === 'bigint' ? { net: f.restNetMsat } : {}) }];
+  });
   return { price: b.price, matchedMsat: b.matchedMsat, fills, resting: resting2, returned };
 }
 

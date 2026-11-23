@@ -1961,13 +1961,20 @@ export class Client {
     // head with the inputs recorded for 60..89. So the served chain must carry every batch this client published, in
     // order (`published`, this tab), and no committee peer may hold a longer chain the player signed (after a reload,
     // when `published` is empty). Either way it is that seat's fault, and nothing is signed again on an old head.
-    this.#notBehindPublished(t);
-    await this.#notBehindPeers(t, entry, roundId, entryId);
+    // A HOME SEAT SHORT OF ONLY WHAT THE PEERS CARRIED IS NO FAULT (kanban #3343, audit play-a6-1-1, high): after #2515/#3215 a batch the
+    // home seat refused and the peers took is published here and not held there (homeHolds) - the designed state. A home seat that refused
+    // one batch and then dropped the socket had this resume read that as a rewind and end the honest run (the peer kept 120 of 180 ticks).
+    // A served chain that is a prefix of `published` and holds at least what that seat took is kept as it is: nothing rewinds, the chain
+    // goes on from `published`, and #homeCatchUp feeds the seat the rest. A fork, or less than the seat itself took, is still its fault.
+    const carried = this.#notBehindPublished(t);
+    if (!carried) await this.#notBehindPeers(t, entry, roundId, entryId);
 
     const before = this.nextTick;
     const last = t.batches[t.batches.length - 1];
-    this.batchHead = last ? batchId(last) : GENESIS;
-    this.nextTick = last ? batchTicks(last).at(-1) + 1 : entry.joinTick;
+    if (!carried) {
+      this.batchHead = last ? batchId(last) : GENESIS;
+      this.nextTick = last ? batchTicks(last).at(-1) + 1 : entry.joinTick;
+    }
 
     // THE NODE MAY ALREADY HOLD WHAT THIS CLIENT STILL HOLDS: a batch it took
     // whose answer never arrived. Those words are published, so they leave the
@@ -2077,16 +2084,20 @@ export class Client {
     throw Object.assign(new Error(why), { nodeFault: true });
   }
 
-  /** The served chain carries every batch this client published, in order (kanban #2410); a shorter or forked one is the seat's fault. */
+  /** The served chain carries every batch this client published, in order (kanban #2410); a shorter or forked one is the seat's fault -
+   *  except one short of only the batches the peers carried without it (kanban #3343): answers true then, false when it carries them all. */
   #notBehindPublished(t) {
     for (let i = 0; i < this.published.length; i++) {
       const mine = splitSignedBatch(this.published[i].bytes).id;
       const served = t.batches[i];
       if (served && toHex(batchId(served)) === toHex(mine)) continue;
+      // short of only the batches the peers carried without it (kanban #3343): answered true, nothing rewinds
+      if (!served && i === t.batches.length && i >= this.homeHolds) return true;
       this.#servedBehind(t, `the node at ${this.base} serves ${t.batches.length} batches for this entry, `
         + (served ? `and its batch ${i} is not the one this client published there` : `shorter than the ${this.published.length} this client already published`)
         + ' - this client does not rewind and sign again on an older head, and that node is not trusted with this run');
     }
+    return false;
   }
 
   /**
