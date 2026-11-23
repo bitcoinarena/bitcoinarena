@@ -237,6 +237,10 @@ const ownIdOfRow = (r) => (bareRefusedRow(r) ? refusedLockOwnId(new Uint8Array(r
 /** A transcript's batch list is a u16 (kanban #2805). */
 const MAX_TRANSCRIPT_BATCHES = 65535;
 
+/** A run's stored batch bytes (kanban #3291): an honest 10,800-tick run is about 200 KB; peers and a resuming page read a
+ *  transcript of at most 16 MiB (verify.js PEER_BODY_MAX_BYTES, client.js TRANSCRIPT_MAX_BYTES). */
+export const RUN_MAX_BATCH_BYTES = 8 * 1024 * 1024;
+
 export class Round {
   /** How long openHeld trusts its last count of the open rows when this store wrote none (kanban #786). */
   static OPEN_HELD_MS = 250;
@@ -1235,6 +1239,11 @@ export class Round {
       const held = this.db.prepare('SELECT COUNT(*) n FROM batches WHERE round_id = ? AND entry_id = ?').get(b.roundId, b.entryId);
       if (held && Number(held.n) >= MAX_TRANSCRIPT_BATCHES)
         throw new Error(`a run's transcript carries at most ${MAX_TRANSCRIPT_BATCHES} batches`);
+      // AND NO MORE BYTES THAN A PEER OR A RESUMING PAGE CAN READ (kanban #3291, audit play-a5-1-1, high): one signed batch could repeat one
+      // event thousands of times, 64 KiB a tick, and every copy was kept - 18 MB in 280 ticks, held the loop at every handOver.
+      const size = this.db.prepare('SELECT COALESCE(SUM(length(bytes)), 0) n FROM batches WHERE round_id = ? AND entry_id = ?').get(b.roundId, b.entryId);
+      if (Number(size.n) + bytes.length > RUN_MAX_BATCH_BYTES)
+        throw new Error(`a run's transcript carries at most ${RUN_MAX_BATCH_BYTES} bytes of batches`);
     }
 
 
@@ -1270,7 +1279,9 @@ export class Round {
     // liquidation, load, sample or tape at a tick (INSERT OR IGNORE); the batch bytes go unchanged into the canonical
     // transcript, whose flatten() and the core's eventsOf keep the LAST. Two different events at one tick - in one batch
     // or across two - made every seat replay one run and sign the hash of another, and an objection then held against
-    // every honest seat. A second event at a tick is refused unless it is the very same event (a harmless repeat).
+    // every honest seat. A second event at a tick is refused unless it is the very same event (a harmless repeat) in ANOTHER batch;
+    // one batch carries at most one of a kind at a tick, the same one twice included (kanban #3291: one zero-size liquidation 8000
+    // times in a batch, every copy kept in the stored bytes).
     if (!seen) {
       const kinds = [
         ['liquidation', b.liquidations || [], ([, size]) => String(size),
@@ -1289,8 +1300,9 @@ export class Round {
         const stored = this.db.prepare(sql);
         for (const ev of events) {
           const tick = ev[0], key = keyOf(ev);
-          if (mine.has(tick) && mine.get(tick) !== key)
-            throw new Error(`that batch carries two different ${name}s at tick ${tick}: one event per tick`);
+          if (mine.has(tick))
+            throw new Error(mine.get(tick) !== key ? `that batch carries two different ${name}s at tick ${tick}: one event per tick`
+              : `that batch carries the same ${name} twice at tick ${tick}: one event per tick`);
           mine.set(tick, key);
           const row = stored.get(b.roundId, b.entryId, tick);
           if (row && storedKey(row) !== key)
