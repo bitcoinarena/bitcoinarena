@@ -1166,7 +1166,10 @@ export class Round {
     // (`pricesRequired`, slice 3): then a bare sample or tape is the player choosing the price and is refused; a run with no
     // samples at all plays the seeded tape (front_mode = SIM) and stands.
     const requirePrices = !!(this.pricesRequired && this.pricesRequired(round.contract));
-    if ((b.attests && b.attests.length) || (requirePrices && ((b.samples && b.samples.length) || (b.tapes && b.tapes.length)))) {
+    // A HELD BATCH IS NOT PRICE-CHECKED AGAIN (kanban #3302, audit play-a5-2-1): its prices were checked when it was stored, and its id (the
+    // tagged hash of its whole encoding, attestations included) fixes its bytes - a stranger replaying a public signed batch to /play ran one
+    // schnorr verify per committee signature of every attestation on each copy (90.6 ms a 53.7 KB frame against 3.2 ms for junk)
+    if (!seen && ((b.attests && b.attests.length) || (requirePrices && ((b.samples && b.samples.length) || (b.tapes && b.tapes.length))))) {
       const c = decodeRoundContract(new Uint8Array(round.contract));
       // the ROUND's version picks the scheme: from protocol 5 the median of the seats' own signed readings
       const prices = checkBatchPrices({ batch: b, roundId: b.roundId, committee: c.nodes, threshold: (() => { try { return receiptsNeeded(c.gameVerifySlots); } catch { return c.nodes.length; } })(),
