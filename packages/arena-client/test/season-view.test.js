@@ -51,7 +51,7 @@ test('the rows and the header: the seat\'s order and names, the net in sats, the
     row(3, key(0x33), { name: '', netMsat: '1000' }),
   ]), { title: 'Tick Tock, Next Block' });
   assert.equal(v.ok, true);
-  assert.equal(v.header, 'Tick Tock, Next Block · last 7 days · 3 players ahead · from 13 of 13 nodes');
+  assert.equal(v.header, 'Tick Tock, Next Block · last 7 days · 3 players ahead · from 13 of the 13 nodes asked');
   assert.deepEqual(v.rows.map((r) => [r.rank, r.name, r.rounds, r.wins, r.net, r.sign, r.best]), [
     [1, 'satoshi', 12, 9, '+42 sat', 1, '1000.00000'],
     [2, 'player-2', 3, 0, '+1 sat', 1, '83.04450'],
@@ -63,7 +63,7 @@ test('the rows and the header: the seat\'s order and names, the net in sats, the
   assert.equal(v.empty, null);
   // a seat that merged fewer seats says so; the game's name when no title is given; one day and one player
   const w = seasonView(answer([row(1, key(0x11), { netMsat: '5000' })], { days: 1, seats: { asked: 12, answered: 4 } }));
-  assert.equal(w.header, 'nextblock · last day · 1 player ahead · from 5 of 13 nodes');
+  assert.equal(w.header, 'nextblock · last day · 1 player ahead · from 5 of the 13 nodes asked');
   // a seat's own board (no scope) is one node's word
   const own = seasonView(answer([row(1, key(0x11), { netMsat: '5000' })], { scope: undefined, seats: undefined, days: 30 }), { title: 'Rock Paper Scissors' });
   assert.equal(own.header, 'Rock Paper Scissors · last 30 days · 1 player ahead · from one node only');
@@ -82,7 +82,7 @@ test('only the players ahead are drawn: a net of 0 or below is left out, the vie
   assert.equal(v.behind, 3);
   assert.equal(v.mine, null, 'the viewer behind is not drawn, not even below the top');
   assert.equal(v.more, 0);
-  assert.equal(v.header, 'T · last 7 days · 2 players ahead · from 13 of 13 nodes');
+  assert.equal(v.header, 'T · last 7 days · 2 players ahead · from 13 of the 13 nodes asked');
   const none = seasonView(answer([row(1, key(0x11), { netMsat: '0' }), row(2, key(0x22), { netMsat: '-5000' })]), { title: 'Up or Down' });
   assert.deepEqual([none.rows, none.players, none.behind], [[], 0, 2]);
   assert.equal(none.empty, 'Nobody is ahead at Up or Down in the last 7 days.');
@@ -109,7 +109,7 @@ test('an empty board is said in words, not drawn as nothing', () => {
   assert.equal(v.ok, true);
   assert.deepEqual(v.rows, []);
   assert.equal(v.players, 0);
-  assert.equal(v.header, 'Up or Down · last 7 days · 0 players ahead · from 13 of 13 nodes');
+  assert.equal(v.header, 'Up or Down · last 7 days · 0 players ahead · from 13 of the 13 nodes asked');
   assert.equal(v.empty, 'Nobody has a counted round of Up or Down in the last 7 days.');
   assert.equal(v.foot, '0 rounds counted · a round counts once 3 nodes hold the same account of it');
 });
@@ -167,4 +167,10 @@ test('the bundle carries the season view under the names the page calls', () => 
     assert.ok(bundle[name] !== undefined, `the bundle has no ${name}`);
   const a = answer([row(1, key(0x11), { netMsat: '-2500' })]);
   assert.deepEqual(bundle.seasonView(a, { title: 'T' }), seasonView(a, { title: 'T' }));
+});
+
+test('#2970 the header names its denominator, and a window being asked has its own header (feedback #312)', async () => {
+  const { seasonAskingHeader } = await import('../src/season-view.js');
+  assert.equal(seasonAskingHeader({ title: 'Rock Paper Scissors', days: 30 }), 'Rock Paper Scissors \u00b7 last 30 days \u00b7 asking the nodes \u2026');
+  assert.equal(seasonAskingHeader({ game: 'nextblock', days: 1 }), 'nextblock \u00b7 last day \u00b7 asking the nodes \u2026');
 });

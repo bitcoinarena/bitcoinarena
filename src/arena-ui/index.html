@@ -8154,6 +8154,9 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         const d = Number(b.dataset.days);
         if (d === s.days) return;
         s.days = d; pressDays(); s.polled = false;
+        // ITS OWN HEADER WHILE IT LOADS (kanban #2970, feedback #312): the 7-day rows and header stood under the 30-day switch until the nodes answered
+        reactRows = []; drawReact(); window.ArenaText.say(foot, '');
+        window.ArenaText.say(head, ARENACLIENT.seasonAskingHeader ? ARENACLIENT.seasonAskingHeader({ title: s.game && s.game.title, game: s.game && s.game.name, days: d }) : '');
         state.className = 'state'; window.ArenaText.say(state, 'Asking the nodes \u2026');
         load();
       });
