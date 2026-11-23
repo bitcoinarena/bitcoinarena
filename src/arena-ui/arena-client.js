@@ -39430,12 +39430,15 @@ function nextRoundAfter(played, rows, nowMs = Date.now()) {
  * next round. `runOverMs` is kept for the caller's record; the card's own 8 s are Unity's (it can fold, and stays while
  * the next round is coming).
  */
-function nextRoundView({ runOverMs, nextStartMs, nowMs = Date.now(), exited = false } = {}) {
+// A PAID NEXT ROUND SAYS IT COSTS THE STAKE AGAIN (kanban #2940, feedback #234/#271): continuing stays the default (2026-09-28), but
+// players read "joining next round" as free and paid 4 rounds without knowing - the line names the stake each paid round takes
+const costsAgain = (stakeMsat) => { const s = big(stakeMsat); return s > 0n ? ` - it stakes ${(s / 1000n).toString()} sat again` : ''; };
+function nextRoundView({ runOverMs, nextStartMs, nowMs = Date.now(), exited = false, stakeMsat = 0 } = {}) {
   void runOverMs;
   if (exited || !Number.isFinite(nextStartMs)) return { show: 'lobby' };
   if (nowMs >= nextStartMs) return { show: 'start' };
   const seconds = Math.ceil((nextStartMs - nowMs) / 1000);
-  return { show: 'countdown', seconds, line: joiningNextRoundIn(seconds), exit: EXIT_GAME };
+  return { show: 'countdown', seconds, line: joiningNextRoundIn(seconds) + costsAgain(stakeMsat), exit: EXIT_GAME };
 }
 
 // ---- arena-client/src/donation-choice.js
@@ -43637,7 +43640,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          sendKeptEcash: sendKeptEcash, recoverEcashIntent: recoverEcashIntent, receiveKeptEcash: receiveKeptEcash, advanceEcashExchange: advanceEcashExchange, exchangeEcashInto: exchangeEcashInto, resumeEcashExchanges: resumeEcashExchanges,
          ECASH_PENDING_PREFIX: ECASH_PENDING_PREFIX, ECASH_EXCHANGE_PREFIX: ECASH_EXCHANGE_PREFIX, ECASH_TRANSFER_STATES: ECASH_TRANSFER_STATES,
          presentNotes: presentNotes, liquidationKeyFor: liquidationKeyFor, collectLiquidationPayouts: collectLiquidationPayouts, liquidationDoors: liquidationDoors, claimStep: claimStep, roundVerdict: roundVerdict, secureTranscript: secureTranscript,
-         nextRoundAfter: nextRoundAfter, nextRoundView: nextRoundView, joiningNextRoundIn: joiningNextRoundIn,
+         nextRoundAfter: nextRoundAfter, nextRoundView: nextRoundView, joiningNextRoundIn: joiningNextRoundIn, costsAgain,
          EXIT_GAME: EXIT_GAME, RESULT_CARD_MS: RESULT_CARD_MS,
          dailyLobbySearch: dailyLobbySearch,
          tabIdentity: tabIdentity, setPlayerName: setPlayerName, generatedName: generatedName, identityProofFor: identityProofFor, presenceProofFor: presenceProofFor, orderCancelId: orderCancelId, orderSellId: orderSellId, ORDER_PRICE_SCALE: ORDER_PRICE_SCALE,

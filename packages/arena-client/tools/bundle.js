@@ -288,7 +288,7 @@ out += '         ecashTransferStep: ecashTransferStep, readEcashTransfer: readEc
 out += '         sendKeptEcash: sendKeptEcash, recoverEcashIntent: recoverEcashIntent, receiveKeptEcash: receiveKeptEcash, advanceEcashExchange: advanceEcashExchange, exchangeEcashInto: exchangeEcashInto, resumeEcashExchanges: resumeEcashExchanges,\n';
 out += '         ECASH_PENDING_PREFIX: ECASH_PENDING_PREFIX, ECASH_EXCHANGE_PREFIX: ECASH_EXCHANGE_PREFIX, ECASH_TRANSFER_STATES: ECASH_TRANSFER_STATES,\n';
 out += '         presentNotes: presentNotes, liquidationKeyFor: liquidationKeyFor, collectLiquidationPayouts: collectLiquidationPayouts, liquidationDoors: liquidationDoors, claimStep: claimStep, roundVerdict: roundVerdict, secureTranscript: secureTranscript,\n';
-out += '         nextRoundAfter: nextRoundAfter, nextRoundView: nextRoundView, joiningNextRoundIn: joiningNextRoundIn,\n';
+out += '         nextRoundAfter: nextRoundAfter, nextRoundView: nextRoundView, joiningNextRoundIn: joiningNextRoundIn, costsAgain,\n';
 out += '         EXIT_GAME: EXIT_GAME, RESULT_CARD_MS: RESULT_CARD_MS,\n';
 // AND THE DAILY'S OWN LOBBY AT THE BARE ROOT, from daily.json beside the page.
 out += '         dailyLobbySearch: dailyLobbySearch,\n';
