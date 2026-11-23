@@ -26,7 +26,8 @@ function hurt(W) { const p = W.p; if (p.hurtT > 0 || p.pw.diamond > 0) return;
   if (p.pw.pill > 0) { p.pw.pill = 0; p.hurtT = 70; W.fx.push({ kind: "text", text: "orange pill used up", x: p.x + 8, y: p.y - 6, t: 60, color: COL.btc }); return; } if (p.shield) { p.shield = false; p.hurtT = 60; W.fx.push({ kind: "text", text: "wallet saved you", x: p.x + 8, y: p.y - 6, t: 60, color: COL.blue }); return; } respawn(W); }
 const camXHint = (W) => W.p.x - 300;
 // enemies get up to 50 % faster toward the goal; R.foe scales every enemy and hazard speed (kanban #3271)
-const ramp = (W) => (1 + .5 * Math.min(1, Math.max(0, W.p.x / (W.L.goal * T)))) * W.R.foe;
+// #3387: toward the place of the opr-3 flag (rampEnd) on every version, so opr-4's short run-out leaves the enemies as they were
+const ramp = (W) => (1 + .5 * Math.min(1, Math.max(0, W.p.x / ((W.L.rampEnd || W.L.goal) * T)))) * W.R.foe;
 const ageFx = (W) => { W.fx.forEach((e) => { e.t -= e.kind === "text" ? .4 : 1; }); W.fx = W.fx.filter((e) => e.t > 0); };
 
 export function stepWorld(W, inp) {
@@ -58,7 +59,7 @@ export function stepWorld(W, inp) {
     for (let tx = x0; tx <= x1; tx++) { const v = tileAt(W, tx, ty);
       if (isSolid(v) || (v === TILE.ONEWAY && prevBottom <= ty * T + 1)) { p.y = ty * T - PH; p.vy = 0; p.ground = true; if (v === TILE.RUG && !W.rugs.has(ty * L.w + tx)) W.rugs.set(ty * L.w + tx, 26); } }
     if (p.ground && !wasGround) W.fx.push({ kind: "dust", x: p.x + 8, y: p.y + PH, t: 12 });
-    if (p.ground) { const ty2 = Math.floor((p.y + PH + 1) / T), mid = Math.floor((p.x + PW / 2) / T), under = tileAt(W, mid, ty2), inChart = mid >= C0 && mid < L.goal - 18;
+    if (p.ground) { const ty2 = Math.floor((p.y + PH + 1) / T), mid = Math.floor((p.x + PW / 2) / T), under = tileAt(W, mid, ty2), inChart = mid >= C0 && mid < (L.chartEnd != null ? L.chartEnd : L.goal - 18);
       if (under === TILE.FILL || (under === TILE.GROUND && inChart)) { p.cause = "fell"; respawn(W); return; } }
   } else if (p.vy < 0) {
     const ty = Math.floor(p.y / T);

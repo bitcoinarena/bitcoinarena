@@ -25,8 +25,9 @@ function respawnAt(L, i, pre, { grace = true, steps = SAFE_STEPS } = {}) {
   return { lived: W.done ? steps : lived, W };
 }
 
-test("#3275 opr-3 is the game version; it keeps opr-2's speeds and score and adds the safe checkpoints", () => {
-  assert.equal(GAME_VERSION, "opr-3");
+test("#3275 opr-3 keeps opr-2's speeds and score and adds the safe checkpoints (the game version since #3387 is opr-4, opr-3's rules and a short run-out)", () => {
+  assert.equal(GAME_VERSION, "opr-4");
+  { const { runOut, ...r4 } = VERSIONS["opr-4"]; assert.equal(runOut, 2); assert.deepEqual(r4, VERSIONS["opr-3"]); }
   const { safeCp, ...rest } = VERSIONS["opr-3"];
   assert.equal(safeCp, true); assert.deepEqual(rest, VERSIONS["opr-2"]);
   assert.ok(RESPAWN_GRACE >= 60); assert.equal(SAFE_STEPS, 90);
@@ -103,7 +104,9 @@ test("#3275 opr-3 keeps the layout and the enemies: the same tiles, coins and it
 });
 
 test("#3275 old rounds unchanged: opr-1 and opr-2 levels hash as before on the 30 days, the opr-2 log scores as recorded", () => {
-  const h = (L) => createHash("sha256").update(JSON.stringify({ ...L, t: [...L.t], colMeta: [...L.colMeta] })).digest("hex");
+  // #3387: chartEnd and rampEnd are new names for goal - 18 on these versions; everything else hashes as recorded
+  const h = (L0) => { const { chartEnd, rampEnd, ...L } = L0; assert.equal(chartEnd, L.goal - 18); assert.equal(rampEnd, L.goal);
+    return createHash("sha256").update(JSON.stringify({ ...L, t: [...L.t], colMeta: [...L.colMeta] })).digest("hex"); };
   assert.equal(old.length, 30);
   old.forEach((o, i) => { assert.equal(o.day, days[i].day);
     for (const v of ["opr-1", "opr-2"]) assert.equal(h(buildLevel(days[i].candles, o.seed, v)), o[v], o.day + " " + v); });

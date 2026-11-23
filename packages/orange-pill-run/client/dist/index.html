@@ -282,8 +282,13 @@ const VERSIONS = {
   // kanban #3275, owner 2026-11-22: "Die Checkpoints so gestalten, dass man nicht direkt danach sterben kann".
   // safeCp: each checkpoint stands where a respawn with no input lives SAFE_STEPS steps without the grace (level.js)
   "opr-3": { run: 2.88, boost: 4.32, foe: 0.9, hopP: 88, hopUp: 44, timePerS: 20, safeCp: true },
+  // kanban #3387, owner 2026-11-23: "Man muss am Ende immer ein paar Sekunden warten, das ist ungut" - after the last candle opr-3 ran 18 more
+  // columns (a 3-step wall and the flag, 2.6 s); runOut = the columns from the chart's end to the flag (no wall), the rest as opr-3
+  "opr-4": { run: 2.88, boost: 4.32, foe: 0.9, hopP: 88, hopUp: 44, timePerS: 20, safeCp: true, runOut: 2 },
 };
-const GAME_VERSION = "opr-3";
+const GAME_VERSION = "opr-4";
+// the columns from the end of the chart to the flag: 18 up to opr-3 (with the 3-step wall at 10..12), opr-4 2
+const RUN_OUT = 18;
 // the rules of a version; throws a TypeError for one this code does not know
 function rulesOf(v) {
   const r = Object.prototype.hasOwnProperty.call(VERSIONS, v) ? VERSIONS[v] : null;
@@ -323,7 +328,7 @@ function fmtUsd(v) {
   return "$" + out;
 }
 
-return { ACC, C0, COL, CUT_V, DEATH_PENALTY, GAME_VERSION, GRAV, JUMP_V, MAXFALL, MAX_STEPS, PH, PW, PW_INFO, PW_ORDER, RESPAWN_GRACE, ROWS, SAFE_STEPS, STEP, T, TILE, TIME_LIMIT, VERSIONS, VH, fmtUsd, isSolid, rulesOf };
+return { ACC, C0, COL, CUT_V, DEATH_PENALTY, GAME_VERSION, GRAV, JUMP_V, MAXFALL, MAX_STEPS, PH, PW, PW_INFO, PW_ORDER, RESPAWN_GRACE, ROWS, RUN_OUT, SAFE_STEPS, STEP, T, TILE, TIME_LIMIT, VERSIONS, VH, fmtUsd, isSolid, rulesOf };
 })();
 __m["src/sim/trig.js"] = (() => {
 // Deterministic trigonometry for the simulation (kanban #3246). Math.sin / Math.hypot / Math.sqrt are
@@ -396,7 +401,8 @@ function hurt(W) { const p = W.p; if (p.hurtT > 0 || p.pw.diamond > 0) return;
   if (p.pw.pill > 0) { p.pw.pill = 0; p.hurtT = 70; W.fx.push({ kind: "text", text: "orange pill used up", x: p.x + 8, y: p.y - 6, t: 60, color: COL.btc }); return; } if (p.shield) { p.shield = false; p.hurtT = 60; W.fx.push({ kind: "text", text: "wallet saved you", x: p.x + 8, y: p.y - 6, t: 60, color: COL.blue }); return; } respawn(W); }
 const camXHint = (W) => W.p.x - 300;
 // enemies get up to 50 % faster toward the goal; R.foe scales every enemy and hazard speed (kanban #3271)
-const ramp = (W) => (1 + .5 * Math.min(1, Math.max(0, W.p.x / (W.L.goal * T)))) * W.R.foe;
+// #3387: toward the place of the opr-3 flag (rampEnd) on every version, so opr-4's short run-out leaves the enemies as they were
+const ramp = (W) => (1 + .5 * Math.min(1, Math.max(0, W.p.x / ((W.L.rampEnd || W.L.goal) * T)))) * W.R.foe;
 const ageFx = (W) => { W.fx.forEach((e) => { e.t -= e.kind === "text" ? .4 : 1; }); W.fx = W.fx.filter((e) => e.t > 0); };
 
 function stepWorld(W, inp) {
@@ -428,7 +434,7 @@ function stepWorld(W, inp) {
     for (let tx = x0; tx <= x1; tx++) { const v = tileAt(W, tx, ty);
       if (isSolid(v) || (v === TILE.ONEWAY && prevBottom <= ty * T + 1)) { p.y = ty * T - PH; p.vy = 0; p.ground = true; if (v === TILE.RUG && !W.rugs.has(ty * L.w + tx)) W.rugs.set(ty * L.w + tx, 26); } }
     if (p.ground && !wasGround) W.fx.push({ kind: "dust", x: p.x + 8, y: p.y + PH, t: 12 });
-    if (p.ground) { const ty2 = Math.floor((p.y + PH + 1) / T), mid = Math.floor((p.x + PW / 2) / T), under = tileAt(W, mid, ty2), inChart = mid >= C0 && mid < L.goal - 18;
+    if (p.ground) { const ty2 = Math.floor((p.y + PH + 1) / T), mid = Math.floor((p.x + PW / 2) / T), under = tileAt(W, mid, ty2), inChart = mid >= C0 && mid < (L.chartEnd != null ? L.chartEnd : L.goal - 18);
       if (under === TILE.FILL || (under === TILE.GROUND && inChart)) { p.cause = "fell"; respawn(W); return; } }
   } else if (p.vy < 0) {
     const ty = Math.floor(p.y / T);
@@ -513,7 +519,7 @@ __m["src/sim/level.js"] = (() => {
 // Pure: candles = [[t, o, h, l, c], ...] (48 x 30 min, t in unix seconds), seed = 32-bit integer, version = the
 // round's game version (L.version; the world and the score follow it; opr-1 and opr-2 share one layout; opr-3 moves
 // the checkpoints to safe spots, kanban #3275).
-const { T, ROWS, PW, PH, C0, TILE, GAME_VERSION, SAFE_STEPS, isSolid, rulesOf } = __m["src/sim/constants.js"];
+const { T, ROWS, PW, PH, C0, TILE, GAME_VERSION, SAFE_STEPS, RUN_OUT, isSolid, rulesOf } = __m["src/sim/constants.js"];
 const { newWorld, stepWorld } = __m["src/sim/world.js"];
 const { sinRad } = __m["src/sim/trig.js"];
 
@@ -548,7 +554,7 @@ function respawnPaths(L, cx, row) {
   if (!(L.colMeta[cx] >= 0 ? [TILE.CG, TILE.CR, TILE.PLAT].includes(v) : cx < C0 && v === TILE.GROUND) || at(cx, row - 1) !== TILE.EMPTY || isSolid(at(cx, row - 2))) return null;
   const paths = [];
   for (const items of [L.items, []]) {
-    const W = newWorld({ w: L.w, t: L.t, coins: [], enemies: [], clouds: [], items, checkpoints: [{ x: cx, row }], goal: L.goal, dayHigh: null, version: L.version, parTime: 0 });
+    const W = newWorld({ w: L.w, t: L.t, coins: [], enemies: [], clouds: [], items, checkpoints: [{ x: cx, row }], goal: L.goal, chartEnd: L.chartEnd, rampEnd: L.rampEnd, dayHigh: null, version: L.version, parTime: 0 });
     const p = W.p, path = []; p.x = cx * T; p.y = row * T - PH; p.hurtT = 0;
     for (let s = 0; s < SAFE_STEPS && !W.done; s++) {
       stepWorld(W, { jump: false });
@@ -564,7 +570,7 @@ const hits = (q, x0, y0, x1, y1) => q[2] + M > x0 && q[0] - M < x1 && q[3] + MY 
 // the same rules as world.js stepWorld for a bear and for bills, along the runner's boxes after each step
 function dynTouches(L, path, h) {
   const e = h.src, R = rulesOf(L.version), solid = (cx, y) => cx < 0 || cx >= L.w ? true : y < 0 || y >= ROWS ? false : isSolid(L.t[y * L.w + cx]);
-  const ramp = (px) => (1 + .5 * Math.min(1, Math.max(0, px / (L.goal * T)))) * R.foe;
+  const ramp = (px) => (1 + .5 * Math.min(1, Math.max(0, px / ((L.rampEnd || L.goal) * T)))) * R.foe;
   if (h.dyn === "bear") { let x = e.x0, charging = false; const ey = e.row * T - 22;
     for (const q of path) { const px = q[0];
       if (!charging && x - px < 210 + M && x > px - M) charging = true;
@@ -613,7 +619,7 @@ function buildLevel(candles, seed, version = GAME_VERSION) {
   // columns: a step candle is a 3-wide pillar; the rest of a segment is 3 columns of plateau per candle; a notch between segments
   let x = C0; segs.forEach((s, si) => { s.x0 = x; s.items.forEach((m, k) => { m.x0 = x; m.real = k === 0; m.seg = si; x += 3; }); s.x1 = x - 1; x += 1; });
   const endX = x;
-  const L = { w: endX + 24, t: new Uint8Array((endX + 24) * ROWS), meta, segs, colMeta: new Int16Array(endX + 24).fill(-1), coins: [], enemies: [], clouds: [], items: [], checkpoints: [{ x: 3, row: 12 }], goal: endX + 18, dayHigh: null, seed: seed | 0, version, from: cs[0][0], to: cs[n - 1][0] };
+  const L = { w: endX + 24, t: new Uint8Array((endX + 24) * ROWS), meta, segs, colMeta: new Int16Array(endX + 24).fill(-1), coins: [], enemies: [], clouds: [], items: [], checkpoints: [{ x: 3, row: 12 }], goal: endX + (R.runOut || RUN_OUT), chartEnd: endX, rampEnd: endX + RUN_OUT, dayHigh: null, seed: seed | 0, version, from: cs[0][0], to: cs[n - 1][0] };
   const set = (cx, y, v) => { if (cx >= 0 && cx < L.w && y >= 0 && y < ROWS) L.t[y * L.w + cx] = v; };
   const get = (cx, y) => L.t[y * L.w + cx];
   const coin = (cx, y) => L.coins.push({ x: cx * T + T / 2, y: y * T + T / 2, got: false });
@@ -661,7 +667,7 @@ function buildLevel(candles, seed, version = GAME_VERSION) {
   L.dayHigh = { x: (topC.x0 + 1) * T + 12, y: Math.max(1, topC.top - 3) * T + 12, got: false, price: topC.h, t: topC.t };
   if (!R.safeCp) for (let k = 6; k < n; k += 6) { const m = meta[k]; let cx = m.x0 + 1; while ((![7, 8, 10].includes(get(cx, m.top)) || get(cx, m.top - 1) === 11) && cx < m.x0 + 3) cx++; L.checkpoints.push({ x: cx, row: m.top }); }
   for (let cx = endX; cx < L.w; cx++) { set(cx, 12, 1); set(cx, 13, 1); }
-  for (let k = 0; k < 3; k++) for (let y = 11 - k; y <= 11; y++) set(endX + 10 + k, y, 2);
+  if (!R.runOut) for (let k = 0; k < 3; k++) for (let y = 11 - k; y <= 11; y++) set(endX + 10 + k, y, 2);   // opr-4 (#3387): no wall, the flag right after the chart
   // opr-3 (kanban #3275; owner: keep the enemies): the planned column (every 6th candle, as before) moves to the nearest
   // safe column (behind it first at equal distance), at least GAP columns after the previous checkpoint and before the
   // next planned one. With no safe column in that window: the column whose tiles are safe and whose blocking hazards
@@ -682,7 +688,7 @@ function buildLevel(candles, seed, version = GAME_VERSION) {
     const shifted = (src, paths) => { const cloud = L.clouds.includes(src), h0 = home.has(src) ? home.get(src) : src.x0;
       for (const k of !cloud && !src.kind ? SHIFTS.concat(SHIFTS.map((v) => -v)) : SHIFTS) { const x0 = h0 + k * T; if (x0 === src.x0) continue;
         const e = { ...src, x0, x: cloud ? src.x : x0 }; if (e.minX !== undefined) e.minX = src.minX + (x0 - src.x0);
-        if (cloud) { if (x0 > (L.goal - 18) * T) continue; }
+        if (cloud) { if (x0 > L.chartEnd * T) continue; }
         else { let ok = surfaceOf(L, Math.floor(x0 / T)) > 0; if (ok) e.row = surfaceOf(L, Math.floor(x0 / T));
           ok = ok && standOk(Math.floor(x0 / T), e.row) && standOk(Math.floor((x0 + 20) / T), e.row);
           if (!ok) continue; }
@@ -1572,12 +1578,46 @@ function createEntry({ api, bridge, now = () => Date.now(), sleep = (ms) => new 
     const r = attemptOf(await api.post("/attempt", round ? { round } : {}));
     return r;
   }
-  async function submit({ attempt, token, round, log: runLog, client }) {
-    return api.post("/submit", { attempt, token, round, log: runLog, client });
+  // A RUN IS SENT UNTIL THE SERVICE ANSWERS (kanban #3387: a real player's run of round 6 never reached the service and timed out): the run
+  // is kept in the browser (store, opr.unsent) before the first POST /submit, sent again while no answer comes (no connection, a 5xx, 429)
+  // until the attempt's deadline, and sent again after a reload (resendUnsent); the service's answer, yes or no, ends it
+  const UNSENT = "opr.unsent";
+  const unsent = () => { try { const v = JSON.parse((store && store.getItem(UNSENT)) || "[]"); return Array.isArray(v) ? v.filter((u) => u && u.attempt && u.token) : []; } catch { return []; } };
+  const keepUnsent = (list) => { try { if (store) store.setItem(UNSENT, JSON.stringify(list.slice(-3))); } catch { /* kept in memory only */ } };
+  const dropUnsent = (attempt) => { const l = unsent(); if (l.some((u) => u.attempt === attempt)) keepUnsent(l.filter((u) => u.attempt !== attempt)); };
+  const answered = (r) => !!r && (r.ok === true || (r.status >= 400 && r.status < 500 && r.status !== 408 && r.status !== 429));
+  async function sendKept(job, { waits = [1000, 2000, 4000, 8000], onRetry = () => {} } = {}) {
+    const until = job.deadlineMs || now() + 10 * 60000;
+    let r = null;
+    for (let i = 0; ; i++) {
+      r = await api.post("/submit", { attempt: job.attempt, token: job.token, round: job.round, log: job.log, client: job.client });
+      if (answered(r)) break;
+      const w = waits[Math.min(i, waits.length - 1)];
+      if (i >= 40 || now() + w >= until) break;
+      onRetry(i + 1, r && r.why);
+      await sleep(w);
+    }
+    if (answered(r) || now() >= until) dropUnsent(job.attempt);
+    return r;
+  }
+  async function submit({ attempt, token, round, log: runLog, client, deadlineMs = null, player = null }, opts = {}) {
+    const job = { attempt, token, round, log: runLog, client, deadlineMs, player };
+    keepUnsent([...unsent().filter((u) => u.attempt !== attempt), job]);
+    return sendKept(job, opts);
+  }
+  /** After a reload: the kept runs of this key still in time, sent again; [{ attempt, round, r }] */
+  async function resendUnsent(player) {
+    const out = [];
+    for (const u of unsent()) {
+      if (u.player && player && u.player !== player) continue;
+      if (u.deadlineMs && now() > u.deadlineMs) { dropUnsent(u.attempt); continue; }
+      out.push({ attempt: u.attempt, round: u.round, r: await sendKept(u, { waits: [2000, 4000] }) });
+    }
+    return out;
   }
   /** The entry of an attempt now: { entry: 'paid'|'waiting'|'not-paid'|null, check } */
   async function entryNow(attempt) { const c = await check(attempt); return { entry: c && c.ok ? entryOf(c) : null, check: c }; }
-  return { start, submit, payInBackground, waitStarted, entryNow };
+  return { start, submit, resendUnsent, payInBackground, waitStarted, entryNow };
 }
 
 return { entryOf, attemptOf, createEntry };
@@ -2406,7 +2446,9 @@ async function sendRun(res) {
   mine.shown = true;
   const t = telOut();
   const client = { ua: String(navigator.userAgent || "").slice(0, 160), w: innerWidth, h: innerHeight, touch: "ontouchstart" in window, v: GAME_VERSION, hiddenMs: t ? t.hiddenMs : 0, t };
-  const r = await entry.submit({ attempt: mine.attempt, token: mine.token, round: mine.round, log: lastLog, client });
+  const w = wallet();
+  const r = await entry.submit({ attempt: mine.attempt, token: mine.token, round: mine.round, log: lastLog, client, deadlineMs: mine.deadlineMs || null, player: (w && w.pubkey) || null },
+    { onRetry: (n) => { HOOKS.submitTries = n + 1; if (run === mine && !$("result").hidden) { const re = $("rEntry"); re.hidden = false; re.textContent = "No connection - sending your run again …"; } } });
   mine.sent = r;
   if (!r.ok) mine.submitWhy = r.why || "not taken";
   // the entry's state as the service says it now; a waiting entry is asked again until it is decided or the attempt's time is over
@@ -2663,7 +2705,11 @@ Object.assign(HOOKS, {
   showIntro, showResult: (r) => showResult({ res: r || lastResult, mode: "play", entry: "practice" }), showBoard, showRules,
 });
 fit(); idle(); paintSound(); showIntro();
-if (api) refresh().then(paintIntro).catch(() => {});
+if (api) refresh().then(paintIntro).catch(() => {}).then(() => {
+  // #3387: a run this tab finished but could not send (the page was closed or reloaded on the way) is sent now, while its attempt is in time
+  const w = wallet(); if (!w || !w.pubkey) return;
+  return entry.resendUnsent(w.pubkey).then((sent) => { HOOKS.resent = sent.map((x) => ({ attempt: x.attempt, ok: !!(x.r && x.r.ok) })); if (sent.length) return refresh().then(paintIntro); });
+}).catch(() => {});
 if (location.hash === "#rules") showRules(); else if (location.hash === "#board") showBoard();
 const q = new URLSearchParams(location.search);
 if (q.has("bot")) begin("bot", { bot: +q.get("bot") || 0, speed: +q.get("speed") || 1 });

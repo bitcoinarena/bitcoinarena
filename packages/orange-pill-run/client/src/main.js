@@ -317,7 +317,9 @@ async function sendRun(res) {
   mine.shown = true;
   const t = telOut();
   const client = { ua: String(navigator.userAgent || "").slice(0, 160), w: innerWidth, h: innerHeight, touch: "ontouchstart" in window, v: GAME_VERSION, hiddenMs: t ? t.hiddenMs : 0, t };
-  const r = await entry.submit({ attempt: mine.attempt, token: mine.token, round: mine.round, log: lastLog, client });
+  const w = wallet();
+  const r = await entry.submit({ attempt: mine.attempt, token: mine.token, round: mine.round, log: lastLog, client, deadlineMs: mine.deadlineMs || null, player: (w && w.pubkey) || null },
+    { onRetry: (n) => { HOOKS.submitTries = n + 1; if (run === mine && !$("result").hidden) { const re = $("rEntry"); re.hidden = false; re.textContent = "No connection - sending your run again …"; } } });
   mine.sent = r;
   if (!r.ok) mine.submitWhy = r.why || "not taken";
   // the entry's state as the service says it now; a waiting entry is asked again until it is decided or the attempt's time is over
@@ -574,7 +576,11 @@ Object.assign(HOOKS, {
   showIntro, showResult: (r) => showResult({ res: r || lastResult, mode: "play", entry: "practice" }), showBoard, showRules,
 });
 fit(); idle(); paintSound(); showIntro();
-if (api) refresh().then(paintIntro).catch(() => {});
+if (api) refresh().then(paintIntro).catch(() => {}).then(() => {
+  // #3387: a run this tab finished but could not send (the page was closed or reloaded on the way) is sent now, while its attempt is in time
+  const w = wallet(); if (!w || !w.pubkey) return;
+  return entry.resendUnsent(w.pubkey).then((sent) => { HOOKS.resent = sent.map((x) => ({ attempt: x.attempt, ok: !!(x.r && x.r.ok) })); if (sent.length) return refresh().then(paintIntro); });
+}).catch(() => {});
 if (location.hash === "#rules") showRules(); else if (location.hash === "#board") showBoard();
 const q = new URLSearchParams(location.search);
 if (q.has("bot")) begin("bot", { bot: +q.get("bot") || 0, speed: +q.get("speed") || 1 });

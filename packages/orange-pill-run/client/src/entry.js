@@ -89,10 +89,44 @@ export function createEntry({ api, bridge, now = () => Date.now(), sleep = (ms) 
     const r = attemptOf(await api.post("/attempt", round ? { round } : {}));
     return r;
   }
-  async function submit({ attempt, token, round, log: runLog, client }) {
-    return api.post("/submit", { attempt, token, round, log: runLog, client });
+  // A RUN IS SENT UNTIL THE SERVICE ANSWERS (kanban #3387: a real player's run of round 6 never reached the service and timed out): the run
+  // is kept in the browser (store, opr.unsent) before the first POST /submit, sent again while no answer comes (no connection, a 5xx, 429)
+  // until the attempt's deadline, and sent again after a reload (resendUnsent); the service's answer, yes or no, ends it
+  const UNSENT = "opr.unsent";
+  const unsent = () => { try { const v = JSON.parse((store && store.getItem(UNSENT)) || "[]"); return Array.isArray(v) ? v.filter((u) => u && u.attempt && u.token) : []; } catch { return []; } };
+  const keepUnsent = (list) => { try { if (store) store.setItem(UNSENT, JSON.stringify(list.slice(-3))); } catch { /* kept in memory only */ } };
+  const dropUnsent = (attempt) => { const l = unsent(); if (l.some((u) => u.attempt === attempt)) keepUnsent(l.filter((u) => u.attempt !== attempt)); };
+  const answered = (r) => !!r && (r.ok === true || (r.status >= 400 && r.status < 500 && r.status !== 408 && r.status !== 429));
+  async function sendKept(job, { waits = [1000, 2000, 4000, 8000], onRetry = () => {} } = {}) {
+    const until = job.deadlineMs || now() + 10 * 60000;
+    let r = null;
+    for (let i = 0; ; i++) {
+      r = await api.post("/submit", { attempt: job.attempt, token: job.token, round: job.round, log: job.log, client: job.client });
+      if (answered(r)) break;
+      const w = waits[Math.min(i, waits.length - 1)];
+      if (i >= 40 || now() + w >= until) break;
+      onRetry(i + 1, r && r.why);
+      await sleep(w);
+    }
+    if (answered(r) || now() >= until) dropUnsent(job.attempt);
+    return r;
+  }
+  async function submit({ attempt, token, round, log: runLog, client, deadlineMs = null, player = null }, opts = {}) {
+    const job = { attempt, token, round, log: runLog, client, deadlineMs, player };
+    keepUnsent([...unsent().filter((u) => u.attempt !== attempt), job]);
+    return sendKept(job, opts);
+  }
+  /** After a reload: the kept runs of this key still in time, sent again; [{ attempt, round, r }] */
+  async function resendUnsent(player) {
+    const out = [];
+    for (const u of unsent()) {
+      if (u.player && player && u.player !== player) continue;
+      if (u.deadlineMs && now() > u.deadlineMs) { dropUnsent(u.attempt); continue; }
+      out.push({ attempt: u.attempt, round: u.round, r: await sendKept(u, { waits: [2000, 4000] }) });
+    }
+    return out;
   }
   /** The entry of an attempt now: { entry: 'paid'|'waiting'|'not-paid'|null, check } */
   async function entryNow(attempt) { const c = await check(attempt); return { entry: c && c.ok ? entryOf(c) : null, check: c }; }
-  return { start, submit, payInBackground, waitStarted, entryNow };
+  return { start, submit, resendUnsent, payInBackground, waitStarted, entryNow };
 }

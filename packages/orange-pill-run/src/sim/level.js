@@ -5,7 +5,7 @@
 // Pure: candles = [[t, o, h, l, c], ...] (48 x 30 min, t in unix seconds), seed = 32-bit integer, version = the
 // round's game version (L.version; the world and the score follow it; opr-1 and opr-2 share one layout; opr-3 moves
 // the checkpoints to safe spots, kanban #3275).
-import { T, ROWS, PW, PH, C0, TILE, GAME_VERSION, SAFE_STEPS, isSolid, rulesOf } from "./constants.js";
+import { T, ROWS, PW, PH, C0, TILE, GAME_VERSION, SAFE_STEPS, RUN_OUT, isSolid, rulesOf } from "./constants.js";
 import { newWorld, stepWorld } from "./world.js";
 import { sinRad } from "./trig.js";
 
@@ -40,7 +40,7 @@ function respawnPaths(L, cx, row) {
   if (!(L.colMeta[cx] >= 0 ? [TILE.CG, TILE.CR, TILE.PLAT].includes(v) : cx < C0 && v === TILE.GROUND) || at(cx, row - 1) !== TILE.EMPTY || isSolid(at(cx, row - 2))) return null;
   const paths = [];
   for (const items of [L.items, []]) {
-    const W = newWorld({ w: L.w, t: L.t, coins: [], enemies: [], clouds: [], items, checkpoints: [{ x: cx, row }], goal: L.goal, dayHigh: null, version: L.version, parTime: 0 });
+    const W = newWorld({ w: L.w, t: L.t, coins: [], enemies: [], clouds: [], items, checkpoints: [{ x: cx, row }], goal: L.goal, chartEnd: L.chartEnd, rampEnd: L.rampEnd, dayHigh: null, version: L.version, parTime: 0 });
     const p = W.p, path = []; p.x = cx * T; p.y = row * T - PH; p.hurtT = 0;
     for (let s = 0; s < SAFE_STEPS && !W.done; s++) {
       stepWorld(W, { jump: false });
@@ -56,7 +56,7 @@ const hits = (q, x0, y0, x1, y1) => q[2] + M > x0 && q[0] - M < x1 && q[3] + MY 
 // the same rules as world.js stepWorld for a bear and for bills, along the runner's boxes after each step
 function dynTouches(L, path, h) {
   const e = h.src, R = rulesOf(L.version), solid = (cx, y) => cx < 0 || cx >= L.w ? true : y < 0 || y >= ROWS ? false : isSolid(L.t[y * L.w + cx]);
-  const ramp = (px) => (1 + .5 * Math.min(1, Math.max(0, px / (L.goal * T)))) * R.foe;
+  const ramp = (px) => (1 + .5 * Math.min(1, Math.max(0, px / ((L.rampEnd || L.goal) * T)))) * R.foe;
   if (h.dyn === "bear") { let x = e.x0, charging = false; const ey = e.row * T - 22;
     for (const q of path) { const px = q[0];
       if (!charging && x - px < 210 + M && x > px - M) charging = true;
@@ -105,7 +105,7 @@ export function buildLevel(candles, seed, version = GAME_VERSION) {
   // columns: a step candle is a 3-wide pillar; the rest of a segment is 3 columns of plateau per candle; a notch between segments
   let x = C0; segs.forEach((s, si) => { s.x0 = x; s.items.forEach((m, k) => { m.x0 = x; m.real = k === 0; m.seg = si; x += 3; }); s.x1 = x - 1; x += 1; });
   const endX = x;
-  const L = { w: endX + 24, t: new Uint8Array((endX + 24) * ROWS), meta, segs, colMeta: new Int16Array(endX + 24).fill(-1), coins: [], enemies: [], clouds: [], items: [], checkpoints: [{ x: 3, row: 12 }], goal: endX + 18, dayHigh: null, seed: seed | 0, version, from: cs[0][0], to: cs[n - 1][0] };
+  const L = { w: endX + 24, t: new Uint8Array((endX + 24) * ROWS), meta, segs, colMeta: new Int16Array(endX + 24).fill(-1), coins: [], enemies: [], clouds: [], items: [], checkpoints: [{ x: 3, row: 12 }], goal: endX + (R.runOut || RUN_OUT), chartEnd: endX, rampEnd: endX + RUN_OUT, dayHigh: null, seed: seed | 0, version, from: cs[0][0], to: cs[n - 1][0] };
   const set = (cx, y, v) => { if (cx >= 0 && cx < L.w && y >= 0 && y < ROWS) L.t[y * L.w + cx] = v; };
   const get = (cx, y) => L.t[y * L.w + cx];
   const coin = (cx, y) => L.coins.push({ x: cx * T + T / 2, y: y * T + T / 2, got: false });
@@ -153,7 +153,7 @@ export function buildLevel(candles, seed, version = GAME_VERSION) {
   L.dayHigh = { x: (topC.x0 + 1) * T + 12, y: Math.max(1, topC.top - 3) * T + 12, got: false, price: topC.h, t: topC.t };
   if (!R.safeCp) for (let k = 6; k < n; k += 6) { const m = meta[k]; let cx = m.x0 + 1; while ((![7, 8, 10].includes(get(cx, m.top)) || get(cx, m.top - 1) === 11) && cx < m.x0 + 3) cx++; L.checkpoints.push({ x: cx, row: m.top }); }
   for (let cx = endX; cx < L.w; cx++) { set(cx, 12, 1); set(cx, 13, 1); }
-  for (let k = 0; k < 3; k++) for (let y = 11 - k; y <= 11; y++) set(endX + 10 + k, y, 2);
+  if (!R.runOut) for (let k = 0; k < 3; k++) for (let y = 11 - k; y <= 11; y++) set(endX + 10 + k, y, 2);   // opr-4 (#3387): no wall, the flag right after the chart
   // opr-3 (kanban #3275; owner: keep the enemies): the planned column (every 6th candle, as before) moves to the nearest
   // safe column (behind it first at equal distance), at least GAP columns after the previous checkpoint and before the
   // next planned one. With no safe column in that window: the column whose tiles are safe and whose blocking hazards
@@ -174,7 +174,7 @@ export function buildLevel(candles, seed, version = GAME_VERSION) {
     const shifted = (src, paths) => { const cloud = L.clouds.includes(src), h0 = home.has(src) ? home.get(src) : src.x0;
       for (const k of !cloud && !src.kind ? SHIFTS.concat(SHIFTS.map((v) => -v)) : SHIFTS) { const x0 = h0 + k * T; if (x0 === src.x0) continue;
         const e = { ...src, x0, x: cloud ? src.x : x0 }; if (e.minX !== undefined) e.minX = src.minX + (x0 - src.x0);
-        if (cloud) { if (x0 > (L.goal - 18) * T) continue; }
+        if (cloud) { if (x0 > L.chartEnd * T) continue; }
         else { let ok = surfaceOf(L, Math.floor(x0 / T)) > 0; if (ok) e.row = surfaceOf(L, Math.floor(x0 / T));
           ok = ok && standOk(Math.floor(x0 / T), e.row) && standOk(Math.floor((x0 + 20) / T), e.row);
           if (!ok) continue; }

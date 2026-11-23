@@ -423,6 +423,10 @@ export function createOpr(o = {}) {
     if (!a || !a.token || tok.length !== a.token.length || !timingSafeEqual(Buffer.from(tok), Buffer.from(a.token))) return { ok: false, why: 'unknown token' };
     if (a.player !== player) return { ok: false, why: 'that token is not yours' };
     if (body.round != null && String(body.round) !== a.round) return { ok: false, why: 'that token is of another round' };
+    // THE SAME RUN SENT AGAIN (kanban #3387): a page whose submit answer was lost on the way (a phone's network) sends it again, also after a
+    // reload; the run already taken answers as it did, never "used already" - the same token and the same presses only
+    if ((a.state === 'scored' || a.state === 'awaiting') && a.log_hash && body.log && Array.isArray(body.log.presses) && sha(JSON.stringify(body.log.presses)) === a.log_hash)
+      return { ok: true, attempt: a.id, score: J(a.score, null), paid: a.state === 'scored', state: a.state === 'scored' ? 'scored' : 'pending-entry', again: true };
     if (a.state !== 'started' && a.state !== 'pending') return { ok: false, why: a.state === 'unpaid' ? 'entry not paid - this run does not count' : 'that token was used already' };
     const r = roundRow(a.round);
     const from = a.state;
