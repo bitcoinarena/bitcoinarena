@@ -895,6 +895,18 @@ export function openStore(path = ':memory:') {
       k           INTEGER NOT NULL,
       PRIMARY KEY (round_id, k)
     );
+    -- A SEAT'S DECLINE OF A BATCH IT SIGNED A SET OF (kanban #3384): equivocation, slashable - its signed set (batch_id, set_sig) and its
+    -- signed decline of k (decline_sig, over batchDeclineId), kept as they came. The decline never counts toward a void.
+    CREATE TABLE IF NOT EXISTS market_batch_equivocations (
+      round_id    BLOB NOT NULL,
+      k           INTEGER NOT NULL,
+      seat        TEXT NOT NULL,
+      decline_sig TEXT NOT NULL,
+      batch_id    TEXT NOT NULL,
+      set_sig     TEXT NOT NULL,
+      seen_ms     INTEGER NOT NULL,
+      PRIMARY KEY (round_id, k, seat)
+    );
     -- A BATCH SHOWN VOID (kanban #1150, order-batch.js BATCH.VOID): enough seats declined it that it can never be certified - for good.
     CREATE TABLE IF NOT EXISTS market_batch_voids (
       round_id    BLOB NOT NULL,

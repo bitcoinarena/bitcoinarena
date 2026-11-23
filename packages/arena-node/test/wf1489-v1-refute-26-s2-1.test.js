@@ -69,8 +69,10 @@ test('a seat answering a void ask with the certificate of another batch does not
     };
     const got = await L2.orderBook.lead(w.rid, k2);
     const d1 = (got.decided || []).find((d) => String(d.k) === String(k1));
-    assert.ok(d1, `batch ${k1} was not decided at all: ${got.why}`);
-    assert.equal(d1.state, 'VOID', `half-signed batch ${k1} was "${d1.state}" (${d1.why}) on another batch's certificate: never voided`);
-    assert.deepEqual(A.orderBook.pending(w.rid), [], `seat A still holds batch ${k1} pending and signs no later batch`);
+    // kanban #3384: another batch's certificate never decides k1 (the #1886 point) - and with the bad seat withholding its decline only
+    // four seats that signed nothing decline, below `needed` (5): k1 is not void either, it waits for the fifth decline
+    assert.ok(!d1 || d1.state !== 'DECIDED', `half-signed batch ${k1} was taken as decided on another batch's certificate`);
+    assert.ok(!d1 || d1.state !== 'VOID', `batch ${k1} voided by ${d1 && d1.declined} declines: a void needs ${w.needed}`);
+    assert.notEqual(A.orderBook.batchState(w.rid, k1), 'CERTIFIED');
   } finally { await w.close(); }
 });

@@ -104,7 +104,7 @@ test('positions backed by locks: placement, an agreed match, a failed one (void)
 
     mark('failed');
     // 3. A MATCH THAT FAILS AGREEMENT: the leader's set reaches only 4 seats (3 partitioned): no certificate, no seat counts it,
-    //    the order waits; the next leader finds it can no longer reach 5 (3 declined) - VOID - and the order fills in that batch
+    //    the order waits; the next leader has the 3 sign it late (#3384: it could never be void) - CERTIFIED, the order fills in it
     const D = await order(6, NO, 65);
     // THE BATCH AFTER NEXT, named once: its leader is known before its cutoff, and the 3 partitioned seats are never it
     const k2 = Math.floor(testNow() / B) + 1;
@@ -119,15 +119,16 @@ test('positions backed by locks: placement, an agreed match, a failed one (void)
     const counted2 = (await Promise.all(w.nodes.map(book))).map((b) => b.batches.length);
     const b3 = await batch();
     facts.failed = { heldBy: b2.heldBy, certified: b2.certified, booksAfter: counted2, dWhilePending: dWaits, dAtPartitioned: dElsewhere, decided: b3.decided.map((x) => x.state),
-      dIn3: b3.orderIds.includes(toHex(D.eid)), certified3: b3.certified, dLocksStored: await stored(D) };
+      dIn3: (b3.orderIds || []).includes(toHex(D.eid)), certified3: b3.certified, dLocksStored: await stored(D) };
     assert.equal(b2.heldBy, 4);
     assert.equal(b2.certified, false);
     assert.deepEqual(counted2, [1, 1, 1, 1, 1, 1, 1], 'a seat counted a batch that never reached 5');
     assert.match(dWaits, /^409 that order is in a batch not decided yet/);
     assert.match(dElsewhere, /^409 that order stands unfilled/);
-    assert.deepEqual(facts.failed.decided, ['VOID']);
-    assert.equal(facts.failed.dIn3, true, 'the void batch\'s order was not batched again');
-    assert.equal(b3.certified, true);
+    // kanban #3384: 4 of 7 signed - more than n - needed - so the batch can never be void (a void needs 5 seats that signed nothing);
+    // the next leader's void ask carries the set and its 4 signatures and the 3 partitioned seats sign it late (#2103): CERTIFIED
+    assert.deepEqual(facts.failed.decided, ['CERTIFIED']);
+    assert.equal(facts.failed.dIn3, false, 'the late-certified batch\'s order was batched again');
     assert.equal(facts.failed.dLocksStored, true);
 
     mark('dropped');

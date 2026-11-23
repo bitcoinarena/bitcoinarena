@@ -10,7 +10,7 @@ import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
 import { testAttestedGame } from './plugins/sign.js';
 import { TEST_DONATION_SET_KEYS_REGTEST } from '../../arena-protocol/src/test-donation-set-keys-regtest.js';
 import { donationSetId } from '../../arena-protocol/src/donation.js';
-import { YES, NO, bookBatchId } from '../../arena-protocol/src/order-book.js';
+import { YES, NO, bookBatchId, batchDeclineId } from '../../arena-protocol/src/order-book.js';
 import { UP_DOWN_OUTCOMES } from '../../arena-protocol/src/up-down.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 
@@ -25,9 +25,9 @@ const NETWORK = TEST_DONATION_SET_KEYS_REGTEST.recipients;
 const ROUND = { gameId: UPDOWN.registration.gameId, simCoreHash: b32(0), configHash: b32(0), donationSetId: donationSetId(NETWORK), entryCloseMs: 900000n };
 const player = (n) => ({ ...LOSER, name: `wf${n}`, key: b32(0x60 + n), worldSecret: b32(0) });
 
-// kanban #2026: the equivocation void (applyVoid `sets`) is no back door. A set whose ids hash under another k, or a split where a set
+// kanban #2026, superseded by #3384: sets never void k (only a certificate decides it). Was: the equivocation void (applyVoid `sets`) is no back door. A set whose ids hash under another k, or a split where a set
 // still has too few seats that can never sign it, is refused; the genuine split is taken.
-test('a void backed by signed sets is taken only when no set of k can reach the threshold', async () => {
+test('#3384: signed sets never void k; a set with its certificate makes k final', async () => {
   const w = await lockRound({ n: 7, stakeMsat: 10_000n, round: ROUND, endMs: testNow() + 1800000,
     serveOpts: { plugins: [NEXTBLOCK, UPDOWN.registration], donationSets: [TEST_DONATION_SET_KEYS_REGTEST], orderBatchTimer: false } });
   skipTo(Number(w.c.committeeTimeMs) + 100);
@@ -60,10 +60,17 @@ test('a void backed by signed sets is taken only when no set of k can reach the 
     const setA4 = { ...setA, sigs: [sig(bad, A), ...honest.slice(0, 4).map((d) => sig(d, A))] };
     r = judge.applyVoid(w.rid, { k: String(k1), declines: [], sets: [setA4, setB2] });
     assert.equal(r.ok, false, 'a split where A could still be certified voided k1');
-    assert.match(r.why, /could still sign it/);
-    // 3. the 3/3 split: void, at every seat it is handed to
+    // 3. the 3/3 split: NOT void any more (kanban #3384 rule 4: a competing set counts only with its own certificate; the split void
+    // was the path #3175/#3203 used to void a certified k with an invented set). k1 stays undecided; the leader's two signed sets are
+    // its own slashable equivocation.
     r = judge.applyVoid(w.rid, { k: String(k1), declines: [], sets: [setA, setB] });
-    assert.equal(r.ok, true, r.why);
-    assert.equal(judge.batchState(w.rid, k1), 'VOID');
+    assert.equal(r.ok, false, 'an uncertified second set voided k1');
+    assert.notEqual(judge.batchState(w.rid, k1), 'VOID');
+    // 4. a set named WITH its certificate (the threshold signed it): k1 is final, a void is refused
+    const setA5 = { ...setA, sigs: [sig(bad, A), ...honest.slice(0, 4).map((d) => sig(d, A))] };
+    const declineOf = (d) => ({ seat: toHex(d.orderBook.round.pubkey), signature: toHex(schnorr.sign(batchDeclineId({ roundId: w.rid, k: BigInt(k1) }), d.orderBook.round.identity.secret)) });
+    r = judge.applyVoid(w.rid, { k: String(k1), declines: honest.map(declineOf), sets: [setA5] });
+    assert.equal(r.ok, false);
+    assert.match(r.why, /certified set is final/);
   } finally { await w.close(); }
 });

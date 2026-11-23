@@ -8,8 +8,8 @@
 //   B. ANY ROUND, ANY k: the same ask for a round id no seat holds, and for batch 5 (its cutoff in 1970). Before the fix each wrote a
 //      decline row - the table grew without bound.
 //   C. A ROUND SEAT WITH THE LEADER'S SET asks before the next batch's cutoff (the set still on its way): refused, so it cannot race it.
-//   D. THE REAL VOID STILL WORKS: a leader's set signed by two seats only; the next leader's lead(), at the next cutoff, asks every seat
-//      (its own signed ask), four decline, the batch is VOID everywhere, and its order trades in that next batch.
+//   D. A HALF-SIGNED SET GOES ON (kanban #3384): a leader's set signed by three seats; the next leader's lead() asks every seat with the
+//      set and its signatures, the four sign it late, the batch is CERTIFIED everywhere (the honest void is void-rule-3384.test.js).
 // The facts are printed first (MEASURED), then checked - so the same file run on the old source prints what it did.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -121,11 +121,11 @@ test('kanban #1167: a seat declines a batch only on a round seat\'s signed ask, 
     assert.ok(facts.C.earlyAsk.every((x) => /^409 .*declines it only from the next cutoff/.test(x)), String(facts.C.earlyAsk));
     assert.match(String(facts.C.forged), /^400 those ids are not the set/);
     assert.deepEqual(facts.C.statesAfter.sort(), ['ABSENT', 'SIGNED']);
-    // D: void at the next cutoff, everywhere, and its orders trade in that batch
-    assert.deepEqual(facts.D.decided.map((d) => [Number(d.k), d.state]), [[kD, 'VOID']]);
-    assert.ok(facts.D.decided[0].declined >= w.nodes.length - w.needed + 1);
-    assert.deepEqual(facts.D.statesKD, ['VOID']);
-    assert.equal(facts.D.certified, true);
-    assert.equal(facts.D.tradedR, true, 'the void batch\'s order did not trade in the next batch');
+    // D (kanban #3384): three of seven signed kD - more than n - needed - so it can never be void (a void needs `needed` seats that
+    // signed nothing); the next leader's ask carries the set and its signatures, the four sign it late (#2103) and kD is CERTIFIED
+    // everywhere, its orders traded in kD itself (not batched again)
+    assert.deepEqual(facts.D.decided.map((d) => [Number(d.k), d.state]), [[kD, 'CERTIFIED']]);
+    assert.deepEqual(facts.D.statesKD, ['CERTIFIED']);
+    assert.equal(facts.D.tradedR, false, 'the certified batch\'s order was batched again');
   } finally { await w.close(); }
 });
