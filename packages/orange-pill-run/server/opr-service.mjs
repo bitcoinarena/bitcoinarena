@@ -273,7 +273,12 @@ export function createOpr(o = {}) {
   const usedBy = (round, player) => q(`SELECT COUNT(*) AS n FROM attempts WHERE round = ? AND player = ? AND state != 'expired'`).get(round, player).n;
   // PER ADDRESS (kanban #3283): keys are free, so the per-key 5 alone let one address open attempts (and store refused runs) without end. One
   // address opens at most ipAttemptsShare x the round's attempts (2 players' worth: 10 in a daily round); a caller with no address is not counted
-  const ipFull = (r, key) => !!key && q(`SELECT COUNT(*) AS n FROM attempts WHERE round = ? AND ip_key = ? AND state != 'expired'`).get(r.id, key).n >= cfg.ipAttemptsShare * r.max_attempts;
+  // A KEY'S FIRST ATTEMPT IS NOT TAKEN BY ATTEMPTS NOBODY PLAYED (kanban #3374, audit opr a6-3-1): every attempt of the address counted, so a stranger
+  // behind a shared public IPv4 (CGNAT, cafe Wi-Fi) opened 10 attempts from two free keys, played none, and every other player there was refused
+  // for the whole daily round. A key's first attempt of the round now counts only the address's PLAYED attempts (scored or refused at submit -
+  // what #3283 bounds: the stored runs); its further attempts count every attempt of the address, as before
+  const ipFull = (r, key, { first = false } = {}) => !!key && q(`SELECT COUNT(*) AS n FROM attempts WHERE round = ? AND ip_key = ? AND state ${first ? "IN ('scored', 'rejected')" : "!= 'expired'"}`)
+    .get(r.id, key).n >= cfg.ipAttemptsShare * r.max_attempts;
   const IP_FULL = 'this address opened all the attempts it may in this round';
   const startedCount = (round) => q('SELECT COUNT(*) AS n FROM attempts WHERE round = ? AND paid_ms IS NOT NULL').get(round).n;   // the pot: paid entries only
   const phaseOf = (r, t = now()) => (t >= r.end_ms || ['closed', 'listed'].includes(r.state) ? 'ended' : r.state !== 'ready' ? (r.state === 'posting' ? 'posting' : 'preparing')
@@ -310,7 +315,8 @@ export function createOpr(o = {}) {
     if (ph !== 'open') return { ok: false, why: `the round is not open (${ph})` };
     if (usedBy(r.id, player, t) >= r.max_attempts) return { ok: false, why: `all ${r.max_attempts} attempts of this round are used` };
     const ik = ipKey(ip);
-    if (ipFull(r, ik)) return { ok: false, why: IP_FULL };
+    const first = !q("SELECT 1 FROM attempts WHERE round = ? AND player = ? LIMIT 1").get(r.id, player);   // kanban #3374
+    if (ipFull(r, ik, { first })) return { ok: false, why: IP_FULL };
     // THE RUN OPENS AT ONCE (kanban #3265, the owner 2026-11-21: play at once with an empty new wallet): the level, a token and the entry invoice
     // together; the invoice lives exactly as long as the run's 10 minutes, so an entry paid after the deadline is impossible
     const deadline = Math.min(t + cfg.submitMs, r.end_ms);
@@ -330,7 +336,7 @@ export function createOpr(o = {}) {
     catch (e) { log(`entry invoice not made: ${e.message}`); return { ok: false, why: 'the entry invoice could not be made - try again in a minute' }; }
     // the count again after the wait: two starts at once never make a sixth
     if (usedBy(r.id, player, now()) >= r.max_attempts) return { ok: false, why: `all ${r.max_attempts} attempts of this round are used` };
-    if (ipFull(r, ik)) return { ok: false, why: IP_FULL };
+    if (ipFull(r, ik, { first })) return { ok: false, why: IP_FULL };
     const id = randomBytes(16).toString('hex');
     const token = randomBytes(32).toString('hex');
     q(`INSERT INTO attempts (id, round, player, ip, ip_key, invoice, paid_hash, invoice_expires_ms, created_ms, started_ms, token, deadline_ms, state)
