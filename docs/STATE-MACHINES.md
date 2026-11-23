@@ -139,7 +139,7 @@ States ABSENT, DECLINED, SIGNED, CERTIFIED, VOID (93-101); read by `#state` 159-
 | ABSENT | POST /batch `accept` 372 | SIGNED | `#check` 325 (leader, cutoff within +interval / -maxLag, orders received before cutoff and close, sells within holdings), `#signGuard` 361 (no batch held above k, none below undecided, no item in another batch) |
 | ABSENT | POST /batch-void-ask `voidAsk` 572 | DECLINED | `#askStands` 550 (round seat's signed ask over a set k's leader signed, k inside the book), now >= cutoff(k)+interval |
 | ABSENT/DECLINED/SIGNED | POST /batch-certificate `certify` 431 | CERTIFIED | >= needed distinct seat signatures, same batch_id as held |
-| ABSENT/DECLINED/SIGNED | POST /batch-void `applyVoid` 594 | VOID | n-needed+1 distinct seat declines |
+| ABSENT/DECLINED/SIGNED | POST /batch-void `applyVoid` 594 | VOID | needed distinct declines from seats that signed no set of k; refused once a set of k is certified; a signer's decline is kept as equivocation evidence (#3384) |
 | CERTIFIED, VOID | - | terminal | |
 
 Invariants: one set per (round,k); a seat signs upward only; an item is in one batch; VOID deletes the row and frees its items. Persisted: SQLite. Quorum intersection holds for every committee size receiptsNeeded knows (2/2, 5/7, 5/9, 2/3).

@@ -25,7 +25,7 @@ const NETWORK = TEST_DONATION_SET_KEYS_REGTEST.recipients;
 const ROUND = { gameId: UPDOWN.registration.gameId, simCoreHash: b32(0), configHash: b32(0), donationSetId: donationSetId(NETWORK), entryCloseMs: 900000n };
 const player = (n) => ({ ...LOSER, name: `wf${n}`, key: b32(0x60 + n), worldSecret: b32(0) });
 
-test('a leader that signs two sets for its batch and splits the seats between them does not freeze the book', async () => {
+test('#3384: a leader that signs two sets and splits the seats between them gets neither a certificate nor a void', async () => {
   const w = await lockRound({ n: 7, stakeMsat: 10_000n, round: ROUND, endMs: testNow() + 1800000,
     serveOpts: { plugins: [NEXTBLOCK, UPDOWN.registration], donationSets: [TEST_DONATION_SET_KEYS_REGTEST], orderBatchTimer: false } });
   skipTo(Number(w.c.committeeTimeMs) + 100);
@@ -59,8 +59,11 @@ test('a leader that signs two sets for its batch and splits the seats between th
     let k2 = k1 + 1; while (leaderOf(k2) === bad) k2++;
     await at(k2);
     const got = await leaderOf(k2).orderBook.lead(w.rid, k2);
-    assert.equal(got.ok, true, `one leader's two sets for batch ${k1} stopped batch ${k2}: ${got.why}`);
-    const d1 = (got.decided || []).find((d) => String(d.k) === String(k1));
-    assert.ok(d1 && d1.state !== 'PENDING', `batch ${k1} is still pending`);
+    // kanban #3384 (owner rule, 2026-11-23): a competing set counts only with its own certificate and a void needs `needed` seats that
+    // signed no set - so a 3/3 split is neither certified nor void: k1 waits (the leader's two signed sets are its slashable
+    // equivocation). What must hold: no honest seat holds k1 VOID or CERTIFIED while another holds the other.
+    const states = w.nodes.filter((d) => d !== bad).map((d) => d.orderBook.batchState(w.rid, k1));
+    assert.ok(!(states.includes('VOID') && states.includes('CERTIFIED')), `split on ${k1}: ${states}`);
+    assert.ok(!states.includes('VOID'), `an uncertified second set voided ${k1}: ${states} (${got.why})`);
   } finally { await w.close(); }
 });

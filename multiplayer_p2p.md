@@ -648,6 +648,17 @@ void are §0A.7b.6.
 - A batch that can no longer reach the threshold is **void** (enough seats
   declined it, each signing that it never will). Until then the book waits
   for it.
+- **Void rule** (kanban #3384, 2026-11-23). (1) A certified set of batch k is
+  final: a void of k is refused once any set of k carries a valid
+  certificate. (2) Before a certificate, a void needs signed declines from at
+  least the certificate threshold of distinct committee seats that signed **no**
+  set of k. (3) A seat that signed a set of k and declines k equivocates: its
+  decline is refused and kept as slashable evidence (the signed set and the
+  signed decline). (4) A competing second set counts only with its own valid
+  certificate; an uncertified or invented set never voids k. A set that n -
+  threshold + 1 seats signed can no longer be void and goes on by late
+  signatures. A leader that splits the seats between two sets stalls k (it is
+  slashable for the two signed sets).
 - Cancels and sells travel inside a batch. In a batch, new orders join first,
   then cancels take their orders' rest out, then expiries, then sells, then
   the clear.

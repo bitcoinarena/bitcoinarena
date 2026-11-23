@@ -998,6 +998,7 @@ export class OrderBook {
    * signature that seat's over that id. For EVERY set (the ones named and any other), the seats that cannot sign it - its decliners, and
    * the seats that signed a set of k other than it (never a seat that signed it) - must be at least n - needed + 1: no set of k can then
    * be certified (an honest seat signs one set per batch and never declines one it signed, #voidAsk). Declines alone are the same rule as before.
+   * SUPERSEDED by kanban #3384 (see THE VOID RULE below): sets no longer void k; they only show who signed (equivocation evidence) or certify it.
    */
   applyVoid(roundIdBytes, body) {
     const m = this.market(roundIdBytes);
@@ -1017,58 +1018,75 @@ export class OrderBook {
     if (body.declines != null && !Array.isArray(body.declines)) return refuse('a void is { k, declines }', 400);
     const declines = body.declines || [];
     if (declines.length > m.seats.length) return refuse(`that void carries ${declines.length} declines and the round has ${m.seats.length} seats`, 400);
-    const ok = new Set(), tried = new Set();
-    // K'S LEADER'S DECLINE IS NEVER COUNTED (kanban #3058, audit entry r4-2-1): measured, the leader signed a set, had it certified at 5 of 7
-    // seats, then signed a decline of k itself and with two ABSENT seats' declines voided k at three other honest seats: CERTIFIED x3 and
-    // VOID x3, for good, no book any 5 seats share. A leader always signed the set it handed out (#askStands needs its leaderSig), so its
-    // decline is a contradiction, not a seat that cannot sign; without it a void's decliners meet every certificate quorum in an honest seat.
+    // THE VOID RULE (kanban #3384, closes #3171 #3175 #3194 #3203; spec "Batch voids"): (1) a certified set of k is final - a void is
+    // refused once any set of k carries a valid certificate (held here, or named in the void); (2) before a certificate a void needs
+    // declines from at least the certificate threshold (needed) of distinct round seats that signed NO set of k: with needed > n/2 a void
+    // quorum and a certificate quorum share more seats than may be faulty, so they share an honest seat, which never both signs and
+    // declines; (3) a decline by a seat that signed a set of k is equivocation - it is refused and kept as slashable evidence (the signed
+    // set and the signed decline, market_batch_equivocations); (4) a competing set counts only with its own valid certificate - an
+    // uncertified or invented second set never voids k (it was #2026's 3/3 split path; #3175/#3203 voided a certified k with it).
+    // Measured before: one faulty non-leader that signed the certified set (#3194) or named an invented set (#3203) plus two ABSENT
+    // declines met the old n - needed + 1 = 3 and voided k at three honest seats while three held it CERTIFIED.
+    // k's leader signed every set it handed out (its leaderSig), so its decline counts only where the round's other seats cannot reach
+    // the threshold alone (2 of 2): there the void quorum is every seat.
     const leaderHex = toHex(this.leaderOf(m.contract, k)).toLowerCase();
+    const leaderCounts = m.contract.nodes.length - 1 < m.needed;
+    // BEFORE ANY VERIFY (kanban #2678 kept): fewer distinct seats named in the declines than `needed` is refused at once - sets alone
+    // never void k, so a void of made-up sets costs no signature check
+    { const named = new Set(declines.filter((d) => d && isHex(d.seat, 32) && isHex(d.signature, 64) && m.seats.includes(d.seat)
+        && (leaderCounts || String(d.seat).toLowerCase() !== leaderHex)).map((d) => d.seat));
+      if (named.size < m.needed) return refuse(`${named.size} seats declined batch ${k} and it is void only once ${m.needed} that signed no set of it have`, 403); }
+    const rid = Buffer.from(roundIdBytes), kn = Number(k);
+    // the declines first: a void whose valid declines are fewer than `needed` is refused before any set is verified (kanban #2678)
+    const verified = [], tried = new Set();
     for (const d of declines) {
-      if (!d || !isHex(d.seat, 32) || !isHex(d.signature, 64) || !m.seats.includes(d.seat) || ok.has(d.seat)) continue;
-      if (String(d.seat).toLowerCase() === leaderHex) continue;
+      if (!d || !isHex(d.seat, 32) || !isHex(d.signature, 64) || !m.seats.includes(d.seat) || verified.some((v) => v.seat === d.seat)) continue;
+      if (!leaderCounts && String(d.seat).toLowerCase() === leaderHex) continue;
       const pair = `${d.seat}:${d.signature}`;
       if (tried.has(pair)) continue;
       tried.add(pair);
       spend.left--;
-      if (verifySchnorr(fromHex(d.signature), msg, fromHex(d.seat))) ok.add(d.seat);
+      if (verifySchnorr(fromHex(d.signature), msg, fromHex(d.seat))) verified.push(d);
     }
-    const enough = m.contract.nodes.length - m.needed + 1;
-    // before any set's signature is verified: the decliners and every seat the sets name together must be able to reach `enough`
-    // K'S LEADER NEVER COUNTS AS A SEAT THAT CANNOT SIGN A SET (kanban #3141, refute of #3058): the leader left its own signature off the
-    // set it had certified at 4 honest seats, named a second set only it signed, and blockers() counted it as "signed another set": 3 of 7
-    // then met `enough` and the void was taken at three honest seats while three others held k CERTIFIED, the split #3058 closed for
-    // declines. The leader signed every set it handed out (each record carries its leaderSig), so neither its decline nor its signature
-    // on another set makes it a seat that cannot sign this one: it is left out of `named` and of every blockers() count.
-    const isLeader = (seat) => String(seat).toLowerCase() === leaderHex;
-    const named = new Set(ok);
-    for (const x of (Array.isArray(body.sets) ? body.sets : []).slice(0, m.seats.length + 1))
-      if (x && Array.isArray(x.sigs)) for (const s of x.sigs.slice(0, SIG_TRIES_PER_SEAT * m.seats.length)) if (s && m.seats.includes(s.seat) && !isLeader(s.seat)) named.add(s.seat);
-    if (named.size > ok.size && named.size < enough) return refuse(`${ok.size} seats declined batch ${k} and the sets name ${named.size - ok.size} more: it is void only once ${enough} cannot sign it`, 403);
-    // the seats that signed each set of k, from `sets` (anything that does not read or verify is ignored)
-    const signedBy = new Map();
+    if (verified.length < m.needed) return refuse(`${verified.length} seats declined batch ${k} and it is void only once ${m.needed} that signed no set of it have`, 403);
+    // every seat known here to have signed a set of k, with that signature: this seat's own row, and each set the void names
+    const signedSet = new Map();   // seat -> { batchId, signature }
+    const row = this.db.prepare('SELECT batch_id, record, own_sig, certificate FROM market_batches WHERE round_id = ? AND k = ?').get(rid, kn);
+    if (row) {
+      let rec = null, cert = null;
+      try { rec = JSON.parse(row.record); } catch {}
+      try { cert = row.certificate ? JSON.parse(row.certificate) : null; } catch {}
+      if (row.own_sig) signedSet.set(toHex(this.round.pubkey).toLowerCase(), { batchId: row.batch_id, signature: row.own_sig });
+      if (rec && isHex(String(rec.leader), 32) && isHex(String(rec.leaderSig), 64)) signedSet.set(String(rec.leader).toLowerCase(), { batchId: row.batch_id, signature: rec.leaderSig });
+      const cs = Array.isArray(cert) ? cert : (cert && Array.isArray(cert.sigs) ? cert.sigs : []);
+      for (const s of cs) if (s && isHex(s.seat, 32) && isHex(s.signature, 64)) signedSet.set(s.seat.toLowerCase(), { batchId: row.batch_id, signature: s.signature });
+    }
     for (const x of (Array.isArray(body.sets) ? body.sets : []).slice(0, m.seats.length + 1)) {
       if (!x || !isHex(x.batchId, 32) || !Array.isArray(x.ids) || x.ids.length > 100000 || !x.ids.every((i) => isHex(i, 32)) || !Array.isArray(x.sigs)) continue;
       let id;
       try { id = toHex(bookBatchId({ roundId: roundIdBytes, k, orderIds: x.ids })); } catch { continue; }
       if (id !== x.batchId) continue;
-      const seats = signedBy.get(id) || new Set();
-      for (const s of this.#counted(m, id, x.sigs, spend)) seats.add(s.seat);
-      if (seats.size) signedBy.set(id, seats);
+      const signers = this.#counted(m, id, x.sigs, spend);
+      // (1)/(4) a set of k with its own certificate decides k: never void
+      if (signers.length >= m.needed) return refuse(`batch ${k} is certified under ${id.slice(0, 16)}: a certified set is final, it cannot be void`);
+      for (const s of signers) if (!signedSet.has(s.seat)) signedSet.set(s.seat, { batchId: id, signature: s.signature });
     }
-    if (signedBy.size) {
-      // the seats that cannot sign set `id` (null: a set nobody here signed)
-      const blockers = (id) => {
-        const no = new Set(ok);
-        for (const [other, seats] of signedBy) if (other !== id) for (const s of seats) if (!isLeader(s)) no.add(s);
-        if (id !== null) for (const s of signedBy.get(id)) no.delete(s);
-        return no.size;
-      };
-      const worst = [...signedBy.keys()].map((id) => [id, blockers(id)]).sort((a, b) => a[1] - b[1])[0];
-      if (worst[1] < enough)
-        return refuse(`${worst[1]} seats can never sign set ${worst[0].slice(0, 16)} of batch ${k} (${ok.size} declined, the others signed another set of it) and it is void only once ${enough} cannot: ${m.needed} could still sign it`, 403);
-    // (kanban #2103: it said "<needed> could still sign it", which was false once the seats that had not answered could not sign any more)
-    } else if (ok.size < enough) return refuse(`${ok.size} seats declined batch ${k} and it is void only once ${enough} have: ${m.contract.nodes.length - ok.size} seats have not declined it`, 403);
-    const rid = Buffer.from(roundIdBytes), kn = Number(k);
+    const ok = new Set(), equivocated = [];
+    for (const d of verified) {
+      const signed = signedSet.get(d.seat.toLowerCase());
+      if (signed) equivocated.push({ seat: d.seat, decline: d.signature, ...signed });
+      else ok.add(d.seat);
+    }
+    if (equivocated.length) {
+      const now = Date.now();
+      const put = this.db.prepare('INSERT OR IGNORE INTO market_batch_equivocations (round_id, k, seat, decline_sig, batch_id, set_sig, seen_ms) VALUES (?, ?, ?, ?, ?, ?, ?)');
+      for (const e of equivocated) put.run(rid, kn, e.seat, e.decline, e.batchId, e.signature, now);
+    }
+    const enough = m.needed;
+    if (ok.size < enough) {
+      const eq = equivocated.length ? `; ${equivocated.length} decline(s) came from seats that signed a set of it (equivocation, kept as evidence)` : '';
+      return refuse(`${ok.size} seats that signed no set of batch ${k} declined it and it is void only once ${enough} have${eq}`, 403);
+    }
     // ABSENT, DECLINED or SIGNED -> VOID, for good
     const moved = this.#move(rid, kn, BATCH.VOID, {
       write: () => {
@@ -1121,8 +1139,9 @@ export class OrderBook {
       // with the record and the signatures counted so far (kanban #2103): a seat that never got the set signs it late (#lateSign) -
       // only when the seats that answered the proposals without a signature (`live`) are too few to void k; else k is voided as before
       const bare = this.voidAskFor(roundIdBytes, k, record);
-      const unsigned = live ? [...live].filter((s) => !counted.some((c) => c.seat === s)).length : 0;
-      const ask = bare && (unsigned < m.contract.nodes.length - m.needed + 1 ? { ...bare, record, sigs: counted } : bare);
+      // kanban #3384: a void needs `needed` decliners that signed nothing, so once n - needed + 1 seats signed the set it can never be
+      // void - the only way on is the late signatures (#lateSign), and the ask always carries the record and the signatures then
+      const ask = bare && (counted.length >= m.contract.nodes.length - m.needed + 1 ? { ...bare, record, sigs: counted } : bare);
       if (!ask) return { state: 'PENDING', why: `the set of batch ${k} does not read: no void ask for it` };
       const answers = await Promise.all(peers.map((b) => this.#post(b, `/batch-void-ask?round=${rid}&k=${k}`, ask)));
       const own = this.voidAsk(roundIdBytes, k, ask);
