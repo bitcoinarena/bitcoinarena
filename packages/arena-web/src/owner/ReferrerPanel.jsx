@@ -56,7 +56,7 @@ export class ReferrerPanel extends React.Component {
         <label>Or host Rock Paper Scissors on your site</label>
         <div className="ref-link"><code>{embed}</code>
           <button type="button" onClick={() => this.copy(embed, P.slug + ':e')}>{s.copied === P.slug + ':e' ? 'Copied ✓' : 'Copy'}</button></div>
-        <p className="sub">The game runs in your page, not in a frame. The player's wallet is kept in your site's browser storage. See it working: <a href={demo} target="_blank" rel="noopener noreferrer">the demo page</a>.</p>
+        <p className="sub">The game shows in your page, in a frame from the Arena: the player's wallet and its 24 words never touch your page or your site's storage. See it working: <a href={demo} target="_blank" rel="noopener noreferrer">the demo page</a>.</p>
         {s.wd[P.slug] ? (
           <div className="dh-withdraw">
             <label>A Lightning invoice (it names the amount) or a Lightning address</label>
