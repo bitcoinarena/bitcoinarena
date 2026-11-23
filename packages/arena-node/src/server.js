@@ -12418,13 +12418,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const q = `${ids.join(',')}|${w.days}`;
         let kept;
         if (scope === 'network') {
-          try { kept = await seasonNetworkNow(ids, w); } catch (e) { return text(res, 500, `that season could not be built: ${e.message}`); }
+          // NO FAN-OUT FOR A GAME NOBODY HERE KNOWS (kanban #3363, audit settle a6-2-1; the #2725 rule at this door): any 64-hex id missed the
+          // network cache, so a stranger's fresh id per request cost a whole-store season read and a GET /season-rounds to every seat. Only
+          // ids this seat hosts or holds a round of are asked about; with none left the answer is the empty season, no read and no peer ask
+          const stored = storedSeasonGames(), hostedIds = new Set([...hosted.values()].map((p) => toHex(p.gameId)));
+          const netIds = ids.filter((id) => stored.has(id) || hostedIds.has(id));
+          if (!netIds.length) {
+            const s = season([], { games: ids, fromMs: w.fromMs, toMs: w.toMs });
+            if (!s.ok) return text(res, 500, `that season could not be built: ${s.why}`);
+            res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=30', ...CORS });
+            return res.end(JSON.stringify({ ...seasonBody(s, ids, w), scope: 'network', agree: SEASON_NETWORK_AGREE, seats: { asked: 0, answered: 0 }, entered: [] }));
+          }
+          try { kept = await seasonNetworkNow(netIds, w); } catch (e) { return text(res, 500, `that season could not be built: ${e.message}`); }
           // WHO ENTERED A PAID ROUND, WHATEVER IT CAME TO (kanban #2875, the owner 2026-11-16): the season counts no VOID round and no refunded entry
           // (§18) - it is the signed leaderboard and badge account - so a player whose paid rounds were refused or void was "never played" for the
           // feedback bounty. Beside the account, unsigned and from this seat's own store: `entered`, the players with a locked entry in a paid
           // round of these games in the window (any outcome). The accounts are unchanged.
           try {
-            const body = JSON.parse(kept.json); body.entered = enteredOf(seasonReadLocal(ids, w));
+            const body = JSON.parse(kept.json); body.entered = enteredOf(seasonReadLocal(netIds, w));
             kept = { ...kept, json: JSON.stringify(body) };
           } catch { /* the account alone, as before */ }
         } else {
