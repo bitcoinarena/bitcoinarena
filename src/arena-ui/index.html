@@ -6634,6 +6634,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       const lockClient = async () => { const wasm = await window.ARENA_LOCK_WASM(); await wasm.default(); return wasm.LockClient; };
       window.ArenaWithdraw.open(panel, { knownSat,
         readExact: async () => {
+          // NO FEDERATION CHOSEN YET (kanban #2969, feedback #316): before a game or round is open the read failed as "All gateways failed to respond"
+          if (!fidHex) throw Object.assign(new Error('No federation is chosen yet. Open a game first - your balance is read in the federation it plays in.'), { plain: true });
           const can = await ARENACLIENT.playerWithdrawable({ round: ctx.round, invite: ctx.invite, seed: ctx.seed, LockClient: await lockClient(), storage: vault() });
           if (window.ARENA_WITHDRAW_SAID) { window.ARENA_WITHDRAW_SAID.exact = String(can); window.ARENA_WITHDRAW_SAID.exactAfterMs = Date.now() - window.ARENA_WITHDRAW_SAID.atMs; }
           return can;
@@ -6862,7 +6864,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     };
     // drawn by React (kanban #564, window.ArenaSettings): the field keeps what is typed, and shows the current name otherwise
     const drawName = () => window.ArenaSettings.name(document.getElementById('arena-set-name'), { current: currentName(),
-      onUpdate: (t) => { const said = window.ARENA_LOBBY_ACT && window.ARENA_LOBBY_ACT.setName ? window.ARENA_LOBBY_ACT.setName(t) : 'the lobby is not up yet'; setTimeout(paintSettings, 0); return said; } });
+      onUpdate: (t) => { const said = window.ARENA_LOBBY_ACT && window.ARENA_LOBBY_ACT.setName ? window.ARENA_LOBBY_ACT.setName(t) : 'Open a game first - your name is set in a game\'s lobby';   /* kanban #2959, feedback #298 */ setTimeout(paintSettings, 0); return said; } });
     // YOUR REFERRAL LINK (kanban #681, 2026-10-26: "A user may also use a referrer code and link to testnet.bitcoinarena.io. He gets 10%
     // of the node's income"): this wallet's own program, keyed by its identity key (ARENACLIENT.referralOf) - never a seed minted for it.
     // What it earned is what the zap collector last read on the seats (window.ARENA_REFERRAL_EARNED); Copy also names the program on the
