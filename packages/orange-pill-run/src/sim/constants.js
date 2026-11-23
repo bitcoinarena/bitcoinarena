@@ -14,8 +14,11 @@ export const VERSIONS = {
   // kanban #3387, owner 2026-11-23: "Man muss am Ende immer ein paar Sekunden warten, das ist ungut" - after the last candle opr-3 ran 18 more
   // columns (a 3-step wall and the flag, 2.6 s); runOut = the columns from the chart's end to the flag (no wall), the rest as opr-3
   "opr-4": { run: 2.88, boost: 4.32, foe: 0.9, hopP: 88, hopUp: 44, timePerS: 20, safeCp: true, runOut: 2 },
+  // kanban #3547, owner 2026-11-23 ~21:30Z: "Mach die nächste Runde 20 % schwerer" - opr-4 with 20 % more enemies and 20 % more
+  // gaps (level.js, R.more); the same speeds, score and safe checkpoints
+  "opr-5": { run: 2.88, boost: 4.32, foe: 0.9, hopP: 88, hopUp: 44, timePerS: 20, safeCp: true, runOut: 2, more: 0.2 },
 };
-export const GAME_VERSION = "opr-4";
+export const GAME_VERSION = "opr-5";
 // the columns from the end of the chart to the flag: 18 up to opr-3 (with the 3-step wall at 10..12), opr-4 2
 export const RUN_OUT = 18;
 // the rules of a version; throws a TypeError for one this code does not know

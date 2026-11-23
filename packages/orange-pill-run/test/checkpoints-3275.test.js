@@ -26,7 +26,7 @@ function respawnAt(L, i, pre, { grace = true, steps = SAFE_STEPS } = {}) {
 }
 
 test("#3275 opr-3 keeps opr-2's speeds and score and adds the safe checkpoints (the game version since #3387 is opr-4, opr-3's rules and a short run-out)", () => {
-  assert.equal(GAME_VERSION, "opr-4");
+  assert.ok(GAME_VERSION !== "opr-3");   // #3547: the game version is opr-5 now (harder-3547 pins it)
   { const { runOut, ...r4 } = VERSIONS["opr-4"]; assert.equal(runOut, 2); assert.deepEqual(r4, VERSIONS["opr-3"]); }
   const { safeCp, ...rest } = VERSIONS["opr-3"];
   assert.equal(safeCp, true); assert.deepEqual(rest, VERSIONS["opr-2"]);

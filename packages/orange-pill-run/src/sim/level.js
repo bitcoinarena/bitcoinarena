@@ -87,6 +87,13 @@ export function checkpointSafe(L, cx, row, hz = hazardList(L)) {
 // the surface row of a chart column (its plateau or candle top), -1 off the chart
 const surfaceOf = (L, cx) => (cx >= 0 && cx < L.w && L.colMeta[cx] >= 0 ? L.meta[L.colMeta[cx]].top : -1);
 
+// kanban #3547: the gaps of a built level - each rug pit (a run of columns with a rug tile: a dump or the rugs
+// challenge) and each spike - counted the same for every version
+export function gapCount(L) { let n = 0; const has = (cx, v) => { for (let y = 0; y < ROWS; y++) if (L.t[y * L.w + cx] === v) return true; return false; };
+  for (let cx = C0; cx < L.chartEnd; cx++) { if (has(cx, TILE.RUG) && !has(cx - 1, TILE.RUG)) n++;
+    for (let y = 0; y < ROWS; y++) if (L.t[y * L.w + cx] === TILE.SPIKE) n++; }
+  return n; }
+
 export function buildLevel(candles, seed, version = GAME_VERSION) {
   const R = rulesOf(version);
   if (!Array.isArray(candles) || candles.length < 8) throw new TypeError("buildLevel: candles must be an array of [t,o,h,l,c]");
@@ -143,6 +150,29 @@ export function buildLevel(candles, seed, version = GAME_VERSION) {
     else if (kind === "printer") { L.enemies.push({ kind: "printer", x: (b - 1) * T, row: r, x0: (b - 1) * T, dir: -1, span: 0, cd: 40 }); for (let cx = a + 1; cx <= b - 3; cx += 2) coin(cx, r - 3); }
     else if (kind === "stairs") { for (let k = 0; k < 3; k++) { const cx = a + 1 + k * 3, y = r - 2 - k * 2; if (cx + 1 > b || y < 1) break; set(cx, y, 3); set(cx + 1, y, 3); coin(cx, y - 1); coin(cx + 1, y - 1); } }
   });
+  // opr-5 (kanban #3547, owner 2026-11-23: "Mach die nächste Runde 20 % schwerer"): R.more more enemies and more gaps by the
+  // same rules - after the challenges, round(more x the enemies) walkers (the short-plateau rule: one foe on 5 columns)
+  // and round(more x the gaps: notches, rug pits, spikes) gaps, a rug pit (the rugs rule, 5 columns) and a spike (the
+  // short-plateau rule, row 6 and lower) by turns, each on a free flat window (plain plateau, nothing over it, no
+  // enemy, rug or spike within 2 columns), windows drawn from their own seeded stream so the rest of the level is
+  // opr-4's. The safe checkpoints below (opr-3's rules) then move or take out what reaches a respawn.
+  if (R.more) { let s2 = ((seed | 0) ^ 0x5bd1e995) || 1;
+    const rnd2 = () => { s2 = (s2 + 0x6D2B79F5) | 0; let t = Math.imul(s2 ^ (s2 >>> 15), 1 | s2); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+    const gaps = gapCount(L);
+    const foes = Math.round(R.more * L.enemies.length), holes = Math.ceil(R.more * gaps), enemyCol = (cx) => L.enemies.some((e) => Math.abs(Math.floor(e.x0 / T) - cx) <= 1 + Math.ceil((e.span || 0) / T));
+    const clear = (cx) => { const r = surfaceOf(L, cx); if (r < 0 || get(cx, r) !== TILE.PLAT) return false;
+      for (let y = Math.max(0, r - 3); y < r; y++) if (get(cx, y) !== TILE.EMPTY) return false; return true; };
+    const windowAt = (a, w) => { const r = surfaceOf(L, a); if (r < 0 || a - 1 < C0 || a + w + 1 > endX) return false;
+      for (let cx = a - 1; cx < a + w + 1; cx++) { if (surfaceOf(L, cx) !== r || !clear(cx) || enemyCol(cx)) return false; } return true; };
+    const pick = (w, ok) => { const c = []; for (let a = C0 + 3; a + w < endX; a++) if (windowAt(a, w) && ok(surfaceOf(L, a))) c.push(a); return c.length ? c[Math.floor(rnd2() * c.length)] : -1; };
+    L.more = { foes: 0, rugs: 0, spikes: 0 };
+    for (let k = 0; k < foes; k++) { const a = pick(3, () => true); if (a < 0) break; foe(a + 1, surfaceOf(L, a), 3 / 2 - .8); L.more.foes++; }
+    for (let k = 0; k < holes; k++) { let a = k % 2 === 0 ? pick(5, () => true) : -1, rug = a >= 0;
+      if (!rug) a = pick(3, (r) => r >= 6);
+      if (a < 0) { a = pick(5, () => true); rug = a >= 0; } if (a < 0) break;
+      const r = surfaceOf(L, a);
+      if (rug) { const mid = a + 2; for (let cx = mid - 2; cx <= mid + 2; cx++) { for (let y = r; y <= 13; y++) set(cx, y, 0); set(cx, r, 6); L.colMeta[cx] = -1; } coin(mid, r - 3); L.more.rugs++; }
+      else { set(a + 1, r - 1, 11); coin(a + 1, r - 3); L.more.spikes++; } } }
   // FUD storms over the worst real dumps, the lightning on the best pump, ₿ blocks over the next best pumps
   const real = meta.filter((m) => m.real), byMove = [...real].sort((p, q) => p.move - q.move || p.i - q.i);
   byMove.filter((m) => !m.green && m.i > 1 && m.top >= 7).slice(0, 5).forEach((m) => L.clouds.push({ x0: m.x0 * T - 6, y0: (m.top - 7) * T + 4, x: 0, y: 0 }));
