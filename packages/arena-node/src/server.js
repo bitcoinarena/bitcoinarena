@@ -6989,7 +6989,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             claimed.push({ entryId: new Uint8Array(cid), entry: ce }); // its bytes decoded: the signer checks its stake point (kanban #2069)
           } catch { /* one bad claim adds nothing */ }
         }
-        return { entryId: new Uint8Array(id), joinedMs: Number(body.joinedMs), entry: e, claimed };
+        return { entryId: new Uint8Array(id), joinedMs: Number(body.joinedMs), entry: e, claimed, staked: body.staked === true };   // kanban #3369
       } catch { return null; }
     }));
     return said.filter(Boolean);
@@ -13276,7 +13276,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const claimed = round.claimedNamingsOfLock(kind, { txid: fromHex(m[1].toLowerCase()), outIdx: BigInt(m[2]) }, new Uint8Array(player)).slice(0, 8)
           .map((c) => ({ entry: toHex(c.entryId), bytes: toHex(c.bytes), sig: toHex(c.sig) }));
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
-        return res.end(JSON.stringify({ entry: toHex(first.entryId), joinedMs: first.joinedMs, bytes: toHex(first.bytes), claimed }));
+        // `staked` (kanban #3369): whether this seat holds that entry staked - how crossed locks of one key meet on the lower entry
+        const staked = !!(round.stakeSeen && round.stakeSeen(first.entryId));
+        return res.end(JSON.stringify({ entry: toHex(first.entryId), joinedMs: first.joinedMs, bytes: toHex(first.bytes), claimed, staked }));
       }
       // THE PLAYER'S CLAIM ON AN ENTRY'S LOCKS (kanban #1897, #1938; protocol lock-claim.js): POST /lock-claim?entry=<id> with the 64-byte BIP-340
       // signature by the entry's stake point over lockClaimDigest(id), which the page sends with its entry. Checked before it is kept; once kept,

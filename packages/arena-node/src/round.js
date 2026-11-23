@@ -4009,14 +4009,19 @@ export class Round {
    * built on once it is seen here and a mark of its run holds a receipt (any committee member's - receipts travel to every seat, so the seats
    * read this alike, unlike this seat's own result): such an entry keeps the key, and the lower entry's lock is refused as before #2477.
    */
-  stakePlayedOn(entryIdBytes) {
+  // `peerStakedLower` (kanban #3369): a seat of the round holds the LOWER entry of this player key staked - see yieldEntryLocks
+  stakePlayedOn(entryIdBytes, { peerStakedLower = false } = {}) {
     const eid = Buffer.from(entryIdBytes);
     if (!this.db.prepare('SELECT 1 FROM stake_seen WHERE entry_id = ?').get(eid)) return false;
     // A ROUND WITH NO RECEIPTS EVER (kanban #3320, audit entry r3-1, gap in #3223): a head-to-head entry (its move committed) and a market pick play
     // no marks, so no receipt ever held for them and a stranger's lower entry under the player's public key unstaked him at every seat up to the
     // close. In such a round a stake seen here is built on: it keeps the key, the lower entry's lock is refused as before #2477.
     const r = this.db.prepare('SELECT round_id FROM entries WHERE entry_id = ?').get(eid);
-    if (r && this.#neverReceipted(r.round_id)) return true;
+    // CROSSED LOCKS OF ONE KEY STILL MEET (kanban #3369, audit entry a6-3-1, the #2477 split brought back by #3320): two entries of one key whose
+    // locks crossed (a reload mid-join, two devices) were staked one at one seat and the other at the other for good. When another seat of the
+    // round answers that it holds the lower entry staked (GET /lock-namer `staked`), the lower one is the key's at this seat too, as #2477 wants;
+    // a stranger's lower entry that no seat staked still takes nothing (#3320)
+    if (r && this.#neverReceipted(r.round_id) && !peerStakedLower) return true;
     return !!this.db.prepare('SELECT 1 FROM entries e JOIN checkpoints c ON c.round_id = e.round_id AND c.entry_id = e.entry_id '
       + 'JOIN receipts r ON r.checkpoint_id = c.checkpoint_id WHERE e.entry_id = ? LIMIT 1').get(eid);
   }
@@ -4032,14 +4037,14 @@ export class Round {
     catch { return false; }   // a store with no order book
   }
 
-  yieldEntryLocks(entryIdBytes, roundIdBytes) {
+  yieldEntryLocks(entryIdBytes, roundIdBytes, { peerStakedLower = false } = {}) {
     const eid = Buffer.from(entryIdBytes), rid = Buffer.from(roundIdBytes);
     const outs = [this.stakeLock(eid), this.feeLock(eid)].filter(Boolean).map((l) => String(l.outpoint));
     if (outs.some((o) => this.lockFate(o))) return false;
     if (this.db.prepare('SELECT 1 FROM lock_settlements WHERE round_id = ?').get(rid)) return false;
     if (this.db.prepare('SELECT 1 FROM forfeits WHERE entry_id = ?').get(eid)) return false;
     if (this.identity && this.hasResult(rid, eid, Buffer.from(this.pubkey))) return false;
-    if (this.stakePlayedOn(eid)) return false;
+    if (this.stakePlayedOn(eid, { peerStakedLower })) return false;
     if (this.orderInBatch(eid)) return false;   // kanban #3319
     const own = !this.db.isTransaction;
     if (own) this.db.exec('BEGIN');
