@@ -172,6 +172,47 @@ test('a relay that refuses is not asked again; one that never answers is given u
   } finally { book.stop(); off.stop(); await relay.close(); for (const c of refusing.clients) c.terminate(); await new Promise((r) => refusing.close(r)); }
 });
 
+test('kanban #3378: a "rate-limited:" or "error:" OK false is asked again after the backoff and published then; "blocked:" stays final', async () => {
+  let now = 1760400000000;
+  const { db, ids } = settledDb(1, now);
+  // each relay answers false with its prefix while `busy`, then OK true
+  const relays = [];
+  for (const why of ['rate-limited: the relay is checking too many signatures, try again shortly', 'error: could not save', 'blocked: not this kind']) {
+    const wss = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+    await new Promise((r) => wss.on('listening', r));
+    const f = { wss, why, busy: true, asked: 0, url: `ws://127.0.0.1:${wss.address().port}` };
+    wss.on('connection', (ws) => ws.on('message', (raw) => {
+      const m = JSON.parse(String(raw)); f.asked++;
+      ws.send(JSON.stringify(['OK', m[1].id, !f.busy && !why.startsWith('blocked:'), f.busy || why.startsWith('blocked:') ? why : '']));
+    }));
+    relays.push(f);
+  }
+  const [limited, erring, blocking] = relays;
+  const book = nostrResults({ db, secret: SECRET, relays: relays.map((f) => f.url), timeoutMs: 1000, now: () => now, log: () => {},
+    resultOf: (rid) => ({ ok: true, result: resultFor(rid) }) });
+  try {
+    await book.tick();
+    let row = book.row(ids[0]);
+    assert.equal(row.publishedMs, null, 'a try-again answer does not end publishing');
+    assert.equal(row.nextMs, now + 30000, 'asked again after the backoff');
+    assert.ok(!row.relays[limited.url] && !row.relays[erring.url], 'both still owed the result');
+    assert.match(row.relays[blocking.url], /^refused: blocked/);
+    assert.match(row.why, /asked to try again by .*rate-limited: .*error: could not save/);
+    for (const f of relays) f.busy = false;
+    now += 30000;
+    await book.tick();
+    row = book.row(ids[0]);
+    assert.ok(row.publishedMs, 'published once every relay gave its last word');
+    assert.equal(row.relays[limited.url], 'ok');
+    assert.equal(row.relays[erring.url], 'ok');
+    assert.match(row.relays[blocking.url], /^refused: blocked/);
+    assert.deepEqual([limited.asked, erring.asked, blocking.asked], [2, 2, 1], 'the blocking relay is not asked again');
+  } finally {
+    book.stop();
+    for (const f of relays) { for (const c of f.wss.clients) c.terminate(); await new Promise((r) => f.wss.close(r)); }
+  }
+});
+
 test('our relay keeps kind 30762 newest per node and d, checks it like any kind, and names it in NIP-11', async () => {
   assert.ok(RELAY_KINDS.includes(RESULT_KIND));
   const r = await startRelay({ port: 0 });

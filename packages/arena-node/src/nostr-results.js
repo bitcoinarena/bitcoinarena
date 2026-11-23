@@ -167,17 +167,29 @@ export async function sendToRelay(url, events, { connect = (u) => new WebSocket(
 /**
  * ONE PUBLISHING PASS over kept rows `{ event, relays, attempts }` (a result's, a badge's): each relay is sent what it has not
  * answered yet, all relays at once; an OK true (or "duplicate:") is done, an OK false is that relay's refusal, kept and not
- * asked again; no answer in time is asked again later. Each row's `relays` is filled in place, and each answers what to
+ * asked again; no answer in time is asked again later, and so is an OK false that says "try again" (TRANSIENT_REFUSAL:
+ * "rate-limited:", "error:"). Each row's `relays` is filled in place, and each answers what to
  * write back: `{ publishedMs, nextMs, why, attempts, done }` - published once every relay answered, else again after a backoff
  * that doubles from 30 s to an hour (`done` false: the caller says so, or gives up after its maxAttempts).
  */
+/**
+ * AN OK FALSE THAT IS NOT THE RELAY'S LAST WORD (kanban #3378): NIP-01 gives "rate-limited:" and "error:" as answers to try
+ * again on, and the game's own relay says "rate-limited: ... try again shortly" whenever its verify budget is empty - which a
+ * stranger can hold empty. Booked as a refusal, one burst at publish time kept a round's result (or a badge award) from that
+ * relay for good; so such an answer leaves the relay owed, asked again after the backoff up to maxAttempts. "blocked:",
+ * "invalid:" and the other prefixes stay final.
+ */
+export const TRANSIENT_REFUSAL = /^(rate-limited|error):/;
 export async function publishPass(rows, relays, { connect, timeoutMs = 10000, now = () => Date.now(), maxAttempts = 10 } = {}) {
+  const later = new Map();                       // row -> [`${url}: ${why}`] of this pass's try-again answers
   await Promise.all(relays.map(async (url) => {
     const owed = rows.filter((r) => !r.relays[url]);
     const answers = await sendToRelay(url, owed.map((r) => r.event), { connect, timeoutMs });
     for (const r of owed) {
       const a = answers.get(r.event.id);
-      if (a) r.relays[url] = a.ok || /^duplicate:/.test(a.why) ? 'ok' : `refused: ${a.why}`.slice(0, 200);
+      if (!a) continue;
+      if (!a.ok && TRANSIENT_REFUSAL.test(a.why)) { if (!later.has(r)) later.set(r, []); later.get(r).push(`${url}: ${a.why}`.slice(0, 200)); continue; }
+      r.relays[url] = a.ok || /^duplicate:/.test(a.why) ? 'ok' : `refused: ${a.why}`.slice(0, 200);
     }
   }));
   const after = now();
@@ -188,9 +200,11 @@ export async function publishPass(rows, relays, { connect, timeoutMs = 10000, no
       return { done: true, publishedMs: after, nextMs: 0, attempts, refused, why: refused.length ? `refused by ${refused.join(', ')}` : null };
     }
     const waitMs = Math.min(BACKOFF_MS * 2 ** (attempts - 1), BACKOFF_MAX_MS);
-    const silent = relays.filter((u) => !r.relays[u]);
+    const told = later.get(r) || [];
+    const silent = relays.filter((u) => !r.relays[u] && !told.some((t) => t.startsWith(`${u}: `)));
+    const parts = [...(silent.length ? [`no answer from ${silent.join(', ')}`] : []), ...(told.length ? [`asked to try again by ${told.join('; ')}`] : [])];
     return { done: false, publishedMs: null, nextMs: after + waitMs, attempts, waitMs,
-      why: `no answer from ${silent.join(', ')} (attempt ${attempts} of ${maxAttempts})` };
+      why: `${parts.join('; ')} (attempt ${attempts} of ${maxAttempts})` };
   });
 }
 
