@@ -427,7 +427,7 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
   }
   if (!got.ok) return { ...got, censusRefused };
   keptCensus.set(toHex(contract.censusRoot), evidence.entries);
-  keptChecked.set(toHex(contract.censusRoot), got.checkedCensus ? { ...got.checkedCensus, height: Number(contract.censusHeight) } : got.checkedCensus);
+  keptChecked.set(toHex(contract.censusRoot), got.checkedCensus ? { ...got.checkedCensus, height: Number(contract.censusHeight), bondMin: typeof contract.bondMinSats === 'bigint' ? contract.bondMinSats : null } : got.checkedCensus);
   // A 22 CENSUS LEAVES OUT A NODE ONLY WITH PROOF, AND THE CLIENT CHECKS IT TOO (§5A.3, kanban #727, the owner 2026-10-27): the claim held
   // for the root (GET /absent), each named seating drawn here from its round's contract and census evidence, every certificate checked
   // on that draw. A wrong proof refuses the round. No claim at any node: nothing named, nothing to check - an omission without a claim
@@ -699,9 +699,18 @@ export const checkedCensusFor = (contract) => { if (!contract || !(contract.cens
  * window show how many nodes the network currently has"): the census at the highest height among the rounds this page checked,
  * its distinct node keys counted. null before any census is checked.
  */
+// AT THE NETWORK'S FLOOR, NOT ONE ROUND'S BRACKET (kanban #3304, audit census-a5-2-1): a round's census holds only the nodes bonded at or above ITS
+// bond_min, and any round may name a stricter one (every seat takes it) - checked one block later it became "the network's bonded nodes", so
+// served rounds of the smaller-bond nodes were dropped from an item purchase's served list and the collect scan. The census of the lowest
+// bond_min checked is taken, the newest of those.
 export function newestCheckedCensus() {
   let best = null;
-  for (const c of keptChecked.values()) if (c && Array.isArray(c.entries) && (!best || (c.height || 0) > (best.height || 0))) best = c;
+  const lower = (a, b) => (a.bondMin !== null && a.bondMin !== undefined && b.bondMin !== null && b.bondMin !== undefined && a.bondMin !== b.bondMin ? a.bondMin < b.bondMin : null);
+  for (const c of keptChecked.values()) {
+    if (!c || !Array.isArray(c.entries)) continue;
+    const lo = best ? lower(c, best) : true;
+    if (!best || lo === true || (lo === null && (c.height || 0) > (best.height || 0))) best = c;
+  }
   if (!best) return null;
   const keys = new Set(best.entries.map((e) => toHex(e.pubkey)));
   return { height: best.height || null, nodes: keys.size, entries: best.entries };
