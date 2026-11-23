@@ -31,6 +31,9 @@ import { signEvent } from './nwc.js';
 import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
 import { encodeReferralName, referralNameId } from '../../arena-protocol/src/referral-name.js';
 import { putRoomy } from './page-lock.js';
+import { readJsonUpTo } from './item-buy.js';
+// kanban #2802 (audit r21 client-2): one seat's GET /donations and /names answers are read up to a bound, not whole
+export const DONATIONS_BYTES_MAX = 4 * 1024 * 1024, NAMES_BYTES_MAX = 1024 * 1024;
 
 /** Where a tab keeps the name its player chose. */
 export const CUSTOM_NAME_KEY = 'arena.player.name';
@@ -199,7 +202,7 @@ export async function namesOf({ roundId, nodes, fetcher = fetch, verify } = {}) 
     try {
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/names?round=${id}`);
       if (!r.ok) { refused.push(`${node}: ${r.status}`); continue; }
-      const body = await r.json();
+      const body = await readJsonUpTo(r, NAMES_BYTES_MAX);
       answered++;
       if (body && Array.isArray(body.names)) items.push(...body.names.slice(0, NAMES_PER_SEAT));   // kanban #1864: one seat's share, bounded
     } catch (e) { refused.push(`${node}: ${e.name === 'TimeoutError' ? 'no answer in time' : e.message}`); }
@@ -355,7 +358,7 @@ export async function collectZaps({ storage, keep = storage, random, curve, clie
     try {
       const r = await fetcher(`${s}/donations?key=${pk}&since=0`, { cache: 'no-store', signal: AbortSignal.timeout(8000) });
       if (!r.ok) return [];
-      const list = (await r.json()).donations;
+      const list = (await readJsonUpTo(r, DONATIONS_BYTES_MAX)).donations;
       return (Array.isArray(list) ? list : []).filter((d) => d && /^[0-9a-f]{64}:\d+$/.test(String(d.outpoint))
         && /^[0-9a-f]{64}$/i.test(String(d.federationId)) && /^[1-9]\d{0,20}$/.test(String(d.amountMsat)));
     } catch { return []; /* another seat answers for it */ }

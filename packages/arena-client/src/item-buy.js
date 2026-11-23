@@ -250,12 +250,14 @@ export async function resendPaidRecords({ storage, fetch }) {
  * purchase id with another itemId was counted with the honest seats and its record kept, so the entry named an item never bought and
  * every seat refused it. A purchase of another game than the one asked is skipped; an id two variants both reach `need` for is not kept.
  */
+// kanban #2802 (audit r21 client-2): GET /items was read whole - one seat's 64 MiB answer was pulled and parsed on the page's only thread
+export const OWNED_ITEMS_BYTES_MAX = 4 * 1024 * 1024;
 export async function ownedItems({ seats, player, gameName = null, fetch }) {
   const answers = await Promise.all((seats || []).map(async (s) => {
     try {
       const r = await fetch(`${String(s).replace(/\/$/, '')}/items?player=${toHex(player)}${gameName ? `&game=${encodeURIComponent(gameName)}` : ''}`, { signal: AbortSignal.timeout(15000) });
       if (!r.ok) return null;
-      const items = (await r.json()).items;
+      const items = (await readJsonUpTo(r, OWNED_ITEMS_BYTES_MAX)).items;   // kanban #2802: one seat's answer read up to a bound
       return Array.isArray(items) ? items.slice(0, 1000) : [];
     } catch { return null; }
   }));

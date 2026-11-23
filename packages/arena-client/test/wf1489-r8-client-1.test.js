@@ -62,7 +62,8 @@ test('wf1489-r8-1b: namesOf (GET /names) bounds the checks one seat can impose',
     if (u.pathname !== '/names') return new Response('no', { status: 404 });
     return new Response(JSON.stringify({ names }), { status: 200 });
   };
-  await namesOf({ roundId: ROUND_ID, nodes: ['http://evil'], fetcher, verify });
+  // kanban #2802: an answer over NAMES_BYTES_MAX is now refused unread (no signer node answered) - no verify at all
+  await namesOf({ roundId: ROUND_ID, nodes: ['http://evil'], fetcher, verify }).catch((e) => assert.match(e.message, /over \d+ bytes/));
   console.log(`  FACTS: one seat's GET /names of ${FLOOD} records cost ${verifyCalls} verify() calls`);
   assert.ok(verifyCalls <= 1000,
     `one seat's GET /names of ${FLOOD} forced ${verifyCalls} verify() calls (no cap)`);
