@@ -65,7 +65,7 @@ export function seasonPayout({ level, codeOnly = false, followUp = false, flags 
   if (lv === 'node') return { ok: true, level: 'node', baseSats: NODE_SATS, bonusPct: 0, sats: NODE_SATS };
   if (!Object.hasOwn(LEVEL_SATS, lv)) return { ok: false, why: 'a level is useful, low, medium, high, critical or node' };
   let base = followUp ? FOLLOW_UP_SATS : LEVEL_SATS[lv];
-  const human = HUMAN_FLAGS.some((k) => !!(flags && flags[k]));
+  const human = HUMAN_FLAGS.some((k) => !!(flags && flags[k])) || !!(flags && flags.realUser);   // owner 2026-11-23: a reporter the owner marked real (admin real-user) is human
   const full = !codeOnly && human;   // the owner 2026-11-16 ~14:10Z: "Ein bestaetigtes X-Konto reicht" - a verified X makes a human; a played round is no longer needed
   if (!full) base = Math.floor((base * BOT_PCT) / 100);   // a bot's share (kanban #2784: 25 %, the owner 2026-11-15 later: 15 %)
   const pct = human ? bonusPct(flags) : 0;   // the owner 2026-11-16: the social bonus is for humans only (a verified X); a bot gets its 15 % and no bonus
@@ -352,6 +352,8 @@ export function openBountySeason(path = ':memory:', { startMs = null, s2EndMs = 
     // link code is posted from the account (proof 'code'); a Nostr key counts typed when it is the report key itself (signed in with it)
     const owned = (l) => l.proof === 'code' || (l.platform === 'nostr' && String(l.userId || '').toLowerCase() === String(pubkey).toLowerCase());
     for (const l of links) if (owned(l) && l.member === true && l.checkedMs != null && nowMs - l.checkedMs <= CHECK_FRESH_MS) f[l.platform] = true;
+    // THE OWNER'S REAL-USER MARK MAKES A HUMAN (owner 2026-11-23: "Wenn der X hat, dann ist er ein echter User"): human share, no extra bonus
+    try { if (realUserOf(pubkey)) f.realUser = true; } catch (_) {}
     return f;
   }
 
