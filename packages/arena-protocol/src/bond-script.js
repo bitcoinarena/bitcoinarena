@@ -116,12 +116,12 @@ export const TESTNET4_LEGACY_V1_BONDS = Object.freeze([
   '565a7ba30d89ba5be935151782ea4a52c23ca653c861314af4fb41ab69f27806:0',
 ]);
 
-const hexOf = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+const legacyTxidHex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 /** A txid as given (internal-order bytes, or display hex) and its vout, in TESTNET4_LEGACY_V1_BONDS' form. */
 function legacyOutpoint(outpoint) {
   if (!outpoint || !Number.isInteger(outpoint.vout)) return null;
   const t = outpoint.txid;
-  const display = t instanceof Uint8Array && t.length === 32 ? hexOf(Uint8Array.from(t).reverse())
+  const display = t instanceof Uint8Array && t.length === 32 ? legacyTxidHex(Uint8Array.from(t).reverse())
     : typeof t === 'string' && /^[0-9a-f]{64}$/i.test(t) ? t.toLowerCase() : null;
   return display ? `${display}:${outpoint.vout}` : null;
 }
