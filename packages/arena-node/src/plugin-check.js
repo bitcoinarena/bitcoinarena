@@ -360,6 +360,7 @@ export const boundedAncestors = (ancestors) => { const w = packageWindow(ancesto
  * THE REPORT ON A PACKAGE: `verify(sig, msg, key)` is Ed25519. Answers { ok, gameId, name, version, devKey, parent, checks:
  * [{ check, ok, detail }], findings, why }. Every check is listed, passed or not, so the page shows the whole report.
  */
+export const MAX_PACKAGE_CORES = 32;   // kanban #2824
 export function checkPackage(pkg, { verify, want = null, parentOf = () => null } = {}) {
   const checks = [], findings = [];
   const add = (check, ok, detail = '') => { checks.push({ check, ok, detail }); return ok; };
@@ -431,6 +432,11 @@ export function checkPackage(pkg, { verify, want = null, parentOf = () => null }
     && ((typeof e.source === 'string') !== (Array.isArray(e.files) && typeof e.entry === 'string')));
   if (!add('its cores are files', coreEntries(pkg.cores == null ? [] : pkg.cores))) return out('its cores are not a list of files (hash and source, or entry and files, each)', who);
   if (!add('its clients are files', entries(pkg.clients == null ? [] : pkg.clients, 'body'))) return out('its clients are not a list of files (hash and body each)', who);
+  // A BOUNDED NUMBER OF CORES (kanban #2824, #1489 r23-hosting-1): the manifest's cores vec is a u16 and nothing counted it, so a signed version naming
+  // thousands of tiny cores held the seat's thread ~33 ms per core twice (registrationFromPackage's sandbox check, then hostedPlugins), at adoption
+  // and every start - 150 cores 5 s, a 16 MB package ~20 min. A package names at most MAX_PACKAGE_CORES (Next Block, the most, names 5)
+  if (!add('it names a bounded number of cores', manifest.cores.length <= MAX_PACKAGE_CORES, `${manifest.cores.length} of at most ${MAX_PACKAGE_CORES}`))
+    return out(`its manifest names ${manifest.cores.length} cores, more than the ${MAX_PACKAGE_CORES} a seat hosts for one game`, who);
   const named = new Set(manifest.cores.map((c) => toHex(c.hash)));
   if (!add('it carries every core its manifest names', (pkg.cores || []).length === named.size, `${(pkg.cores || []).length} of ${named.size}`))
     return out(`its manifest names ${named.size} core(s) and the package carries ${(pkg.cores || []).length}`, who);
