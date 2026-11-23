@@ -21,10 +21,16 @@ export default {
     const token = headers.get(PLAYED_HEADER);
     headers.delete(PLAYED_HEADER);
     let body = request.body;
-    if (request.method === 'POST' && /\/api\/send\/?$/.test(url.pathname)) {
+    // EVERY WRITE, NOT ONLY /api/send (kanban #2800, #1489 r21-faucet-1): Umami 3.4 also takes POST /api/batch, an array of events each handed to
+    // the send handler, and that path went on unchecked - 25 of 25 made-up played-round events in one request. Every POST body is now read: an
+    // event named played-* anywhere in it (a `name` at any depth) goes on only with the token
+    if (request.method === 'POST' && /^\/api\//.test(url.pathname)) {
       const text = await request.text();
-      let name = null; try { const j = JSON.parse(text); name = j && j.payload && typeof j.payload.name === 'string' ? j.payload.name : null; } catch { name = null; }
-      if (name !== null && PLAYED_EVENT.test(name) && !sameText(token, env.PLAYED_TOKEN)) return new Response(null, { status: 204 });
+      const played = (x, depth = 0) => { if (!x || typeof x !== 'object' || depth > 8) return false;
+        for (const [k, v] of Object.entries(x)) { if (k === 'name' && typeof v === 'string' && PLAYED_EVENT.test(v)) return true; if (played(v, depth + 1)) return true; }
+        return false; };
+      let named = false; try { named = played(JSON.parse(text)); } catch { named = false; }
+      if (named && !sameText(token, env.PLAYED_TOKEN)) return new Response(null, { status: 204 });
       body = text;
     }
     const to = new URL(url.pathname + url.search, env.ORIGIN);
