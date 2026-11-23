@@ -17,7 +17,7 @@ import { execFileSync } from 'node:child_process';
 const DIR = mkdtempSync(join(tmpdir(), 'wf1489-a44-refute-22-s2-1-'));
 const SRC = fileURLToPath(new URL('../src/', import.meta.url));
 // 2.0: core-depth.js and its vendored acorn are part of the sandbox too
-const FILES = ['core-sandbox.js', 'core-supervisor.js', 'core-host.js', 'core-driver.js', 'core-hash.js', 'core-depth.js', 'vendor/acorn.mjs'];
+const FILES = ['core-sandbox.js', 'core-supervisor.js', 'core-host.js', 'core-driver.js', 'core-hash.js', 'core-depth.js', 'core-intrinsics.js', 'vendor/acorn.mjs'];   // core-intrinsics: kanban #3358
 const install = (where) => {
   const d = join(DIR, where, 'src');
   mkdirSync(join(d, 'vendor'), { recursive: true });
