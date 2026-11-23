@@ -27,7 +27,7 @@
     },
     "arena-app-rock-paper-scissors": {
       "repo": "bitcoinarena/arena-app-rock-paper-scissors",
-      "commit": "145f2ba14b5f832dcfada7d22ec5f68e1a0da0b8",
+      "commit": "1a9b51ba9d4e522e47ba4ead286cb4d10c4e57c5",
       "copy": "packages/rock-paper-scissors",
       "paths": [
         "/*"
