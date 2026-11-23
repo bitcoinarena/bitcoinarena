@@ -32,3 +32,12 @@ test('a round is within its census\'s ceiling only when both roles support its s
   assert.equal(isTestNetwork(NETWORK_ID_REGTEST), true); assert.equal(isTestNetwork(NETWORK_ID_TESTNET4), true);
   assert.equal(isTestNetwork(new Uint8Array(32).fill(9)), false);
 });
+
+test('#2923 one key with many bond outputs is one node for the stake ceiling (feedback #228)', () => {
+  const key = new Uint8Array(32).fill(7);
+  const rows = Array.from({ length: 12 }, () => ({ roles: ['game', 'settlement'], bondSats: 10000000n, pubkey: key }));
+  const r = stakeWithinCeiling({ entries: rows, stakeSats: 10n });
+  assert.equal(r.ok, false); assert.match(r.why, /1 eligible nodes, under 10: play money only/);
+  const hex = Array.from({ length: 15 }, (_, i) => ({ roles: ['game', 'settlement'], bondSats: 1000000n, pubkey: (i % 5).toString(16).padStart(2, '0').repeat(32) }));
+  assert.match(stakeWithinCeiling({ entries: hex, stakeSats: 10n }).why, /5 eligible nodes/);
+});

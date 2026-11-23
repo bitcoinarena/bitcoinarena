@@ -16,6 +16,7 @@
 // a test network shows the ceiling and refuses nothing.
 
 import { networkOf } from './constants.js';
+import { toHex } from './hash.js';
 import { entryFeeMsat, NODE_FEE_BPS } from './fee.js';
 
 export const MAX_PLAYERS_PER_ROUND = 64n;
@@ -75,8 +76,15 @@ export function ceilingWithIncome({ ceilingSats, incomeSats = null, maxPlayers =
 // `incomeSats` (kanban #1282): the income term's income_seat, which bounds the table's bracket (ceilingWithIncome); null: the table alone, as before
 export function stakeWithinCeiling({ entries, stakeSats, maxPlayers = MAX_PLAYERS_PER_ROUND, incomeSats = null }) {
   const of = (role) => {
-    const es = (entries || []).filter((e) => (e.roles || []).includes(role));
-    return roleCeiling({ nodes: es.length, bondedSats: es.reduce((t, e) => t + BigInt(e.bondSats || 0n), 0n), stakeSats, maxPlayers });
+    // ONE KEY, ONE NODE (kanban #2923, feedback #228; as #2850 in meetsCensusMinimum): census rows are per bond output, so one operator
+    // with N outputs counted as N nodes toward the 10-node threshold and the bracket. Rows are merged by node key, bonds summed once.
+    const byKey = new Map();
+    (entries || []).filter((e) => (e.roles || []).includes(role)).forEach((e, i) => {
+      const pk = e.pubkey || (e.advert && e.advert.nodePubkey);
+      const k = pk ? (typeof pk === 'string' ? pk.toLowerCase() : toHex(pk)) : `row:${i}`;
+      byKey.set(k, (byKey.get(k) || 0n) + BigInt(e.bondSats || 0n));
+    });
+    return roleCeiling({ nodes: byKey.size, bondedSats: [...byKey.values()].reduce((t, b) => t + b, 0n), stakeSats, maxPlayers });
   };
   const g = of('game'), s = of('settlement');
   const low0 = g.ceilingSats <= s.ceilingSats ? g : s;
