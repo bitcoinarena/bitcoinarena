@@ -477,3 +477,19 @@ test('#1352 a reissue that landed late: presented again, the notes are claimed -
   }
   assert.equal(fresh.status, 409);
 });
+test('#2926 a claim row of an earlier halt is never planned in a later one (feedback #229)', async () => {
+  let liq = LIQ, tip = 1012; const saved = [];
+  const mk = (load) => createLiquidationClaims({ validate: async (_fid, e) => ({ ok: true, notes: NOTES[e], amountMsat: NOTES[e].reduce((a, n) => a + n.amountMsat, 0n) }),
+    liquidationOf: async () => liq, height: async () => tip, escrowMsatOf: async () => 10_000_000n, clocks: REGTEST_CLOCKS, load, save: (rows) => saved.push(rows) });
+  const c1 = mk(() => []);
+  assert.equal((await c1.offer({ federation: FED, ecash: 'e1', payoutPk: P1 })).ok, true);
+  // the federation recovers, then halts again at 5000: a later halt with its own clocks; the old book is restored at restart too
+  liq = { ...LIQ, haltHeight: 5000, liquidatesAt: 5010, claimWindowCloses: 5020, lateClaimsUntil: 5100, spentNonces: [] }; tip = 5012;
+  for (const c of [c1, mk(() => saved.at(-1)), mk(() => saved.at(-1).map(({ haltHeight, ...r }) => r))]) {
+    const p = await c.plan(FED);
+    assert.equal(p.ok, true, p.why);
+    assert.deepEqual([p.notes, p.payouts.length], [0, 0], 'halt #1\'s rows count in halt #2');
+  }
+  assert.equal((await c1.offer({ federation: FED, ecash: 'e2', payoutPk: P2 })).ok, true);
+  assert.deepEqual((await c1.plan(FED)).payouts, [{ payoutPk: P2, msat: '1024000' }]);
+});

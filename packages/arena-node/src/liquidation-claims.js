@@ -43,8 +43,13 @@ export function createLiquidationClaims({ validate, liquidationOf, height, escro
   for (const c of load() || []) {
     if (c && c.taking) { takingOf(c.federation).set(c.nonce, { payoutPk: c.payoutPk, height: c.height }); continue; }
     if (!claims.has(c.federation)) claims.set(c.federation, new Map());
-    claims.get(c.federation).set(c.nonce, { nonce: c.nonce, amountMsat: BigInt(c.amountMsat), height: c.height, payoutPk: c.payoutPk, ...(c.messageHash ? { messageHash: c.messageHash } : {}) });
+    claims.get(c.federation).set(c.nonce, { nonce: c.nonce, amountMsat: BigInt(c.amountMsat), height: c.height, payoutPk: c.payoutPk, ...(c.messageHash ? { messageHash: c.messageHash } : {}),
+      ...(Number.isInteger(c.haltHeight) ? { haltHeight: c.haltHeight } : {}) });
   }
+  // A ROW BELONGS TO THE HALT IT WAS PRESENTED IN (kanban #2926, feedback #229): rows were kept with no halt and every one fed the current
+  // liquidation's settleClaims, so a note claimed in halt #1 counted again in halt #2 unless that halt's spent set refused it. A row names
+  // its halt height; one kept before that (no haltHeight) belongs to the halt whose claim window its height lies in. Older rows stay for audit.
+  const ofHalt = (liq) => (c) => (Number.isInteger(c.haltHeight) ? c.haltHeight === liq.haltHeight : c.height >= liq.liquidatesAt && c.height <= liq.lateClaimsUntil);
   const persist = () => save([...claims.entries()].flatMap(([federation, m]) => [...m.values()].map((c) => ({ federation, ...c, amountMsat: String(c.amountMsat) })))
     .concat([...taking.entries()].flatMap(([federation, m]) => [...m.entries()].map(([nonce, t]) => ({ federation, nonce, taking: true, payoutPk: t.payoutPk, height: t.height })))));
 
@@ -96,7 +101,7 @@ export function createLiquidationClaims({ validate, liquidationOf, height, escro
       const nonce = String(n.nonce).toLowerCase();
       if (mine.has(nonce)) { refused.push({ nonce, why: 'that note was claimed before' }); continue; }
       if (spent.has(nonce)) { refused.push({ nonce, why: 'that note\'s nonce is in the published spent set' }); continue; }
-      mine.set(nonce, { nonce, amountMsat: BigInt(n.amountMsat), height: at, payoutPk });
+      mine.set(nonce, { nonce, amountMsat: BigInt(n.amountMsat), height: at, payoutPk, haltHeight: liq.haltHeight });
       if (taking.has(fid)) taking.get(fid).delete(nonce);
       accepted.push({ nonce, amountMsat: String(n.amountMsat) });
     }
@@ -136,7 +141,7 @@ export function createLiquidationClaims({ validate, liquidationOf, height, escro
       if (!issued.has(mh)) { refused.push({ nonce, why: 'that output is not in the issued set' }); continue; }
       if (spent.has(nonce)) { refused.push({ nonce, why: 'that note\'s nonce is in the published spent set' }); continue; }
       if (mine.has(nonce) || [...mine.values()].some((x) => x.messageHash === mh)) { refused.push({ nonce, why: 'that output was claimed before' }); continue; }
-      mine.set(nonce, { nonce, amountMsat: BigInt(c.amountMsat), height: at, payoutPk, messageHash: mh });
+      mine.set(nonce, { nonce, amountMsat: BigInt(c.amountMsat), height: at, payoutPk, messageHash: mh, haltHeight: liq.haltHeight });
       accepted.push({ nonce, amountMsat: String(c.amountMsat), pending: true });
     }
     if (accepted.length) persist();
@@ -150,7 +155,7 @@ export function createLiquidationClaims({ validate, liquidationOf, height, escro
     const liq = await liquidationOf(fid);
     if (!liq) return { ok: false, status: 404, why: 'that federation is not being liquidated' };
     if (liq.ok === false) return refusedLiq(liq);
-    const mine = [...(claims.get(fid) || new Map()).values()];
+    const mine = [...(claims.get(fid) || new Map()).values()].filter(ofHalt(liq));
     // what the escrow holds: on chain until it is pegged in, then what the safe federation credited for it (payOutLiquidation)
     const escrowMsat = given !== null ? BigInt(given) : BigInt(await escrowMsatOf(fid));
     const got = settleClaims({ escrowMsat, claims: mine, spentNonces: liq.spentNonces || null, haltHeight: liq.haltHeight, atHeight: await height(),
