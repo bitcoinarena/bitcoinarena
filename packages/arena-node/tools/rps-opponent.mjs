@@ -253,8 +253,21 @@ let busy = false;
 const contractOf = async (round) => {
   let k = seen.get(round);
   if (!k) {
-    // WHICHEVER SEAT ANSWERS FIRST (measured under a loaded test host: one seat took over 3 s, another 6 s, and an 8 s round was gone)
-    const bytes = await Promise.any(nodes.slice(0, 5).map(async (n) => { const r = await fetch(`${n}/round?id=${round}`, { signal: AbortSignal.timeout(6000) }); if (!r.ok) throw new Error(String(r.status)); return new Uint8Array(await r.arrayBuffer()); }));
+    // THE FIRST BYTES A MAJORITY OF THE ASKED SEATS ANSWER (kanban #3370, audit h2h a6-3-1, bypass of #3041): whichever seat answered first was
+    // kept, and a series round's id hashes only its series id and index - so one of the five seats answering first with its own stake and lock
+    // expiry under the same id set what the bot locked for every round (money no seat holds an entry for, parked to the expiry it chose). The
+    // contract is now the first byte-identical answer of more than half of the seats asked; still no wait for the slowest (measured under a
+    // loaded test host: one seat took over 3 s, another 6 s, and an 8 s round was gone)
+    const asked = nodes.slice(0, 5), need = Math.floor(asked.length / 2) + 1;
+    const bytes = await new Promise((done, fail) => {
+      const said = new Map(); let left = asked.length;
+      if (!left) { fail(new Error('no seat to ask')); return; }
+      for (const n of asked) {
+        (async () => { const r = await fetch(`${n}/round?id=${round}`, { signal: AbortSignal.timeout(6000) }); if (!r.ok) throw new Error(String(r.status)); return new Uint8Array(await r.arrayBuffer()); })()
+          .then((b) => { const h = Buffer.from(b).toString('hex'); const c = (said.get(h) || 0) + 1; said.set(h, c); if (c >= need) done(b); }, () => {})
+          .finally(() => { if (--left === 0) fail(new Error(`no ${need} of ${asked.length} seats answered one contract for round ${round}`)); });
+      }
+    });
     const c = decodeRoundContract(bytes);
     k = { c, rid: roundId(c), told: false, entered: false }; seen.set(round, k);
   }
