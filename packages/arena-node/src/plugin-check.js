@@ -489,5 +489,9 @@ export function checkUpdate(installed, next) {
   if (installed.devKey !== next.devKey) return { ok: false, why: `that version is signed by another developer (${next.devKey.slice(0, 16)}) than the installed one's (${installed.devKey.slice(0, 16)})` };
   if (next.parent !== installed.gameId) return { ok: false, why: `that version names ${next.parent.slice(0, 16)} as its parent, not the installed ${installed.gameId.slice(0, 16)}` };
   if (!(next.version > installed.version)) return { ok: false, why: `that is version ${next.version}, not newer than the installed ${installed.version}` };
+  // THE SAME GAME BY NAME (kanban #3306, audit hosting-a5-2-1): an unattended update renamed a hosted game 'tic' to 'victim' (another developer's),
+  // and every name-keyed lookup - the season board, a leaderboard payout scoped by game name - counted it as that game. A new name is not an update
+  if (typeof installed.name === 'string' && typeof next.name === 'string' && installed.name !== next.name)
+    return { ok: false, why: `that version names the game "${String(next.name).slice(0, 40)}", not the installed "${installed.name.slice(0, 40)}": a game keeps its name across versions` };
   return { ok: true };
 }
