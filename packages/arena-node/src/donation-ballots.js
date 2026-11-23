@@ -28,7 +28,18 @@ export function createDonationBallots({ db, knownSets, verifySecp256k1, log = ()
   db.exec(`CREATE TABLE IF NOT EXISTS donation_ballots (id TEXT PRIMARY KEY, kind TEXT NOT NULL, proposal TEXT NOT NULL, hex TEXT NOT NULL, at_ms INTEGER NOT NULL)`);
   let approvedSets = [];
   let tallies = new Map();   // proposal id -> tally
-  const rows = () => db.prepare('SELECT kind, proposal, hex FROM donation_ballots ORDER BY at_ms').all();
+  // A DECIDED PROPOSAL STAYS DECIDED (kanban #2797, audit r21 settle-1): an approval's height is its signer's own word, so a vote
+  // signed after the tally decided - its proposer's deny dated below the deciding accepts - counted as the signer's first vote and
+  // undid an approved set in force (or reopened a refused one). A tally the votes decided is noted (its state, validFrom and the
+  // last row it was read from). Later rows are read as before while the outcome stays the same (a late accept that changes nothing
+  // is served in the chain like any other); a later row that would change the outcome is kept (nothing is deleted) but the
+  // proposal is then read from the rows it was decided on.
+  db.exec(`CREATE TABLE IF NOT EXISTS donation_ballot_decided (proposal TEXT PRIMARY KEY, state TEXT NOT NULL, valid_from INTEGER, last_row INTEGER NOT NULL)`);
+  const decided = new Map(db.prepare('SELECT proposal, state, valid_from, last_row FROM donation_ballot_decided').all()
+    .map((r) => [r.proposal, { state: r.state, validFrom: r.valid_from == null ? null : Number(r.valid_from), lastRow: Number(r.last_row) }]));
+  const frozen = new Set();   // proposals read from the rows they were decided on
+  const rows = () => db.prepare('SELECT rowid AS rid, kind, proposal, hex FROM donation_ballots ORDER BY at_ms, rowid').all()
+    .filter((r) => r.kind !== 'approval' || !frozen.has(r.proposal) || Number(r.rid) <= decided.get(r.proposal).lastRow);
   const split = (hex) => { const b = fromHex(hex); if (b.length <= SIG_BYTES) throw new Error('no signature'); return { body: b.slice(0, -SIG_BYTES), signature: b.slice(-SIG_BYTES) }; };
   // kanban #1528, #1710, #1775: a recipient key of a set (an LNURL entry has none, so it never matches - and never throws)
   const keyIn = (set, keyHex) => !!(set && Array.isArray(set.recipients) && set.recipients.some((r) => r && r.recipientPk instanceof Uint8Array && toHex(r.recipientPk) === keyHex));
@@ -84,6 +95,28 @@ export function createDonationBallots({ db, knownSets, verifySecp256k1, log = ()
   };
   const heldSets = () => [...(knownSets() || []), ...approvedSets];
   async function retally() {
+    frozen.clear();
+    for (let pass = 0; pass < 8; pass++) {
+      const { sets, t } = await tallyAll();
+      // kanban #2797: an outcome the votes decided before stays; a tally they decide now is noted with the last row it read
+      let changed = false;
+      for (const [pid, r] of t) {
+        const d = decided.get(pid);
+        if (d) { if (!frozen.has(pid) && (r.state !== d.state || (r.validFrom ?? null) !== d.validFrom)) { frozen.add(pid); changed = true; } continue; }
+        if (!(r.state === 'approved' || (r.state === 'refused' && (r.counted || []).length))) continue;
+        const last = db.prepare('SELECT MAX(rowid) AS m FROM donation_ballots WHERE proposal = ?').get(pid);
+        const rec = { state: r.state, validFrom: r.validFrom ?? null, lastRow: Number(last && last.m) || 0 };
+        db.prepare('INSERT OR IGNORE INTO donation_ballot_decided (proposal, state, valid_from, last_row) VALUES (?, ?, ?, ?)').run(pid, rec.state, rec.validFrom, rec.lastRow);
+        decided.set(pid, rec);
+      }
+      if (changed) continue;
+      const before = new Set(approvedSets.map((s) => toHex(s.approvedBy)));
+      approvedSets = sets; tallies = t;
+      for (const s of sets) if (!before.has(toHex(s.approvedBy))) log(`[donation-ballot] approved: serial ${s.serial}, in force from height ${s.validFrom} (${s.recipients.map((r) => (r.label || toHex(r.recipientPk).slice(0, 8)) + ' ' + r.shareBps).join(', ')})`);
+      return;
+    }
+  }
+  async function tallyAll() {
     const known = (knownSets() || []).map((s) => ({ ...s }));
     // kanban #1710, #1775: only the rows signed by a recipient of a set held - the admin key's, or one these very rows approve
     // (a chain), so the read widens until the approved sets stop growing
@@ -110,9 +143,7 @@ export function createDonationBallots({ db, knownSets, verifySecp256k1, log = ()
       t.set(toHex(donationProposalId(b.proposal)), parent ? await tallyDonationProposal({ proposal: b.proposal, approvals: b.approvals, parent: parent.recipients, verifySecp256k1 })
         : { state: 'refused', why: 'its parent set is not one this seat holds', acceptBps: 0, denyBps: 0, counted: [] });
     }
-    const before = new Set(approvedSets.map((s) => toHex(s.approvedBy)));
-    approvedSets = sets; tallies = t;
-    for (const s of sets) if (!before.has(toHex(s.approvedBy))) log(`[donation-ballot] approved: serial ${s.serial}, in force from height ${s.validFrom} (${s.recipients.map((r) => (r.label || toHex(r.recipientPk).slice(0, 8)) + ' ' + r.shareBps).join(', ')})`);
+    return { sets, t };
   }
   // the checks and the write of one object (add is this, then the parked objects again)
   async function addOne(kind, hex) {
