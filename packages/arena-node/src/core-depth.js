@@ -33,10 +33,19 @@ const RESERVED = '__arena$';
 // can run its thread out of heap while V8 compiles it - inside CompileModule, where the worker's resourceLimits abort the whole
 // process. The shipped cores are about 440 kB and 280 functions; a core's files together may hold CORE_SOURCE_MAX bytes and
 // CORE_FUNCTIONS_MAX functions (both checked here, the functions counted while the file is parsed, so the parse stops at the bound).
+// WHAT IS COMPILED IS COUNTED, NOT ONLY WHAT THE CORE WROTE (kanban #3386, gap in #3067): every default value and every class field
+// initializer is wrapped below in an arrow of its own, which V8 compiles like any other function, and none of them was counted: a
+// 1.37 MB core of 350,000 `x=0` destructuring defaults and one real function became 40 MB of source and 350,000 functions, and its
+// compile aborted the whole process again (worker.terminate() during the compile does not stop that). Each wrapper now costs one
+// function. The parse stops at CORE_TOKENS_MAX tokens (shipped cores: ~52,600; a full parse of 2 MB of `x=0,` held the seat's thread
+// 1.2 s and 334 MB before the walk could refuse it), and the instrumented text may hold CORE_INSTRUMENTED_MAX bytes (shipped: ~470 kB),
+// checked before it is joined: what reaches the compile is bounded by its own size, not by what the wrappers add.
 export const CORE_SOURCE_MAX = 2 * 1024 * 1024;
 export const CORE_FUNCTIONS_MAX = 20000;
+export const CORE_TOKENS_MAX = 250000;
+export const CORE_INSTRUMENTED_MAX = 8 * 1024 * 1024;
 /** A fresh budget for one core's files (loadCore makes one per core). */
-export const coreBudget = () => ({ bytes: CORE_SOURCE_MAX, functions: CORE_FUNCTIONS_MAX });
+export const coreBudget = () => ({ bytes: CORE_SOURCE_MAX, functions: CORE_FUNCTIONS_MAX, tokens: CORE_TOKENS_MAX, out: CORE_INSTRUMENTED_MAX });
 
 const IMPORT = `import{e as ${RESERVED}e,x as ${RESERVED}x,c as ${RESERVED}c}from'${DEPTH_MODULE}';`;
 // kanban #2731 (#1489 r5-hosting-4): what leaves a core function by a throw asks the count too - an overflow raised in a builtin the
@@ -47,27 +56,31 @@ const ENTER = `${RESERVED}e();try{`, LEAVE = `}catch(${RESERVED}u){${RESERVED}c(
 /** The core file `text` with its depth counted; throws when it cannot be read or names what the count uses. */
 export function instrumentCore(text, rel = 'core', budget = coreBudget()) {
   const arrows = [];
-  const tooBig = () => new Error(`the core is too large: its files may hold ${CORE_SOURCE_MAX} bytes and ${CORE_FUNCTIONS_MAX} functions together`);
+  const tooBig = () => new Error(`the core is too large: its files may hold ${CORE_SOURCE_MAX} bytes, ${CORE_TOKENS_MAX} tokens and ${CORE_FUNCTIONS_MAX} functions `
+    + `together (a default value or a class field counts as a function), and ${CORE_INSTRUMENTED_MAX} bytes once instrumented`);
   budget.bytes -= text.length;
   if (budget.bytes < 0) throw tooBig();
-  // the parse stops once the arrows and `function`s it has seen (never more than the file's functions) pass what is left; the walk
-  // below then takes every function (methods, getters and setters too) off the budget
-  let seen = 0;
+  // the parse stops once the arrows and `function`s it has seen (never more than the file's functions) pass what is left, or its tokens
+  // do; the walk below then takes every function (methods, getters and setters too) and every wrapper it adds off the budget
+  let seen = 0, over = false;
   let ast;
   try {
     ast = Parser.parse(text, { ecmaVersion: 'latest', sourceType: 'module', allowHashBang: true,
       onToken: (t) => {
         if (t.type.label === '=>') arrows.push(t.end);
-        if ((t.type.label === '=>' || t.type.label === 'function') && ++seen > budget.functions) throw tooBig();
+        if (--budget.tokens < 0 || ((t.type.label === '=>' || t.type.label === 'function') && ++seen > budget.functions)) { over = true; throw tooBig(); }
       } });
   } catch (e) {
-    if (seen > budget.functions) throw tooBig();
+    if (over) throw tooBig();
     throw new Error(`the core's file ${rel} could not be read: ${String(e && e.message).slice(0, 200)}`);
   }
   // [position, order, text], applied from the end: at one position the lowest order ends up first - the import, then closes
   // (the deeper node's first), then opens (the outer node's first)
   const edits = [];
-  const add = (at, order, s) => edits.push([at, order, s]);
+  // kanban #3386: the instrumented text - the file and every insertion - is charged as it is planned, before any of it is joined
+  budget.out -= text.length;
+  if (budget.out < 0) throw tooBig();
+  const add = (at, order, s) => { budget.out -= s.length; if (budget.out < 0) throw tooBig(); edits.push([at, order, s]); };
   const OPEN = (depth) => depth, CLOSE = (depth) => -1e9 - depth;
   const arrowAt = (node) => {
     // the `=>` of this arrow: the last one before its body (one inside a parameter's default value comes before it)
@@ -95,14 +108,21 @@ export function instrumentCore(text, rel = 'core', budget = coreBudget()) {
         break;
       case 'PropertyDefinition':
         // a field's initializer runs as a function of its own (an implicit constructor recursing through `new` is counted here)
-        if (node.value) { add(node.value.start, OPEN(depth), `(()=>{${ENTER}return (`); add(node.value.end, CLOSE(depth), `);${LEAVE}})()`); }
+        // kanban #3386: that wrapper is a function V8 compiles, so it costs one
+        if (node.value) {
+          if (--budget.functions < 0) throw tooBig();
+          add(node.value.start, OPEN(depth), `(()=>{${ENTER}return (`); add(node.value.end, CLOSE(depth), `);${LEAVE}})()`);
+        }
         break;
       case 'AssignmentPattern':
         // A DEFAULT VALUE RUNS BEFORE THE BODY'S COUNT (kanban #2837, #1489 r24-hosting-1): function f(k, d = k > 0 ? 1 + f(k - 1) : 0) nested
         // through its parameter defaults uncounted, past DEPTH_MAX into V8's own overflow, whose depth moves with tier-up. Every default value
         // (a parameter's, a destructuring pattern's) is now counted as a function of its own, as a class field's initializer is - an arrow, so
-        // `this` and `arguments` read as before
-        if (node.right) { add(node.right.start, OPEN(depth), `(()=>{${ENTER}return (`); add(node.right.end, CLOSE(depth), `);${LEAVE}})()`); }
+        // `this` and `arguments` read as before. kanban #3386: that arrow is compiled like any other function, so it costs one
+        if (node.right) {
+          if (--budget.functions < 0) throw tooBig();
+          add(node.right.start, OPEN(depth), `(()=>{${ENTER}return (`); add(node.right.end, CLOSE(depth), `);${LEAVE}})()`);
+        }
         break;
       case 'CatchClause':
         // a caught error asks the count first: past a stack overflow (sticky) it is thrown on
