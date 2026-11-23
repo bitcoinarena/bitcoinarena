@@ -6,7 +6,7 @@
 // wallet in that federation, and withdraws to the dev's own LND. What decides is here, testable; the federation is the
 // page's own wasm lock client and the LND is lncli, both handed in (bin/arena-donor.mjs).
 import { createHash, generateKeyPairSync, createPrivateKey, sign as ecdsaSign } from 'node:crypto';
-import { openSync, writeSync, fsyncSync, closeSync, readFileSync, existsSync } from 'node:fs';
+import { openSync, writeSync, fsyncSync, closeSync, readFileSync, existsSync, writeFileSync, renameSync, appendFileSync } from 'node:fs';
 import { donationsReadMessage } from '../../arena-protocol/src/donations-read.js';
 
 const hex = (b) => Buffer.from(b).toString('hex');
@@ -224,6 +224,67 @@ export async function redeemAll({ client, donations, recipientPkHex, secretHex, 
  * THE WITHDRAW TO THE DEV'S OWN LND, once there is enough to be worth one Lightning fee: the largest invoice the wallet can
  * pay through a gateway (fees taken off by the stock client), made by the dev's LND and paid from the federation.
  */
+/**
+ * A FEDERATION WALLET KEPT IN A FILE (kanban #2948): the lock client's state survives a restart. The lock client's commit
+ * (lock-client store.rs commit_inner) calls put/remove once per key, synchronously, and every one of them rewrote the whole
+ * file. Measured 2026-11-23 on the Beelink, seat 2's dev-b (wallet-337ae01a..., 22.8 MB, 29,832 keys): one donation of
+ * 2,666 msat redeemed at 11:24Z - the wallet file rewritten in 25 consecutive seconds, 2,428 MB written (43-130 MB/s); 62.9 GB
+ * written in the process's 10.4 h.
+ *
+ * Now the file `path` is a snapshot, and what changes after it goes to `path`.log, one appended line per commit: the keys a
+ * commit changes are gathered while its put/remove calls run and appended once, in a microtask queued by the commit's first
+ * change - before anything the client does after the commit reaches the event loop (a request to a guardian), as the whole
+ * file was before. A put of the value already held, or a remove of a key not held, writes nothing. When the log has grown
+ * past the snapshot (at least LOG_COMPACT_MIN), the snapshot is written again (to a .tmp, renamed) and the log emptied; a
+ * crash between the two only replays changes the snapshot already holds. A torn last line (a crash inside an append) is
+ * skipped. `flush()` writes the snapshot now and empties the log - before the file is copied, renamed or replaced, and at open
+ * when a log was left: the file alone is then the whole wallet, as before. Same snapshot format as before.
+ */
+export const LOG_COMPACT_MIN = 4 * 1024 * 1024;
+export function walletFileStore(path, fs = { readFileSync, writeFileSync, renameSync, existsSync, appendFileSync }, queue = queueMicrotask) {
+  const log = `${path}.log`;
+  const first = fs.existsSync(path) ? String(fs.readFileSync(path, 'utf8')) : null;
+  const held = new Map(Object.entries(first === null ? {} : JSON.parse(first)));
+  let replayed = 0;
+  if (fs.existsSync(log)) {
+    for (const line of String(fs.readFileSync(log, 'utf8')).split('\n')) {
+      if (!line) continue;
+      let ops;
+      try { ops = JSON.parse(line); } catch { continue; }   // torn by a crash inside the append: that commit never counted
+      if (!Array.isArray(ops)) continue;
+      for (const [k, v] of ops) { if (v === null) held.delete(k); else held.set(k, v); }
+      replayed++;
+    }
+  }
+  let snapshotBytes = first === null ? 0 : first.length, logBytes = 0;
+  let pending = null;   // key -> value (null: removed), this commit's
+  const writeSnapshot = () => {
+    const text = JSON.stringify(Object.fromEntries(held), null, 1);
+    fs.writeFileSync(`${path}.tmp`, text);
+    fs.renameSync(`${path}.tmp`, path);
+    if (fs.existsSync(log)) fs.writeFileSync(log, '');
+    snapshotBytes = text.length; logBytes = 0;
+  };
+  const append = () => {
+    if (!pending) return;
+    const line = `${JSON.stringify([...pending])}\n`;
+    pending = null;
+    if (logBytes + line.length > Math.max(LOG_COMPACT_MIN, snapshotBytes)) { writeSnapshot(); return; }
+    fs.appendFileSync(log, line);
+    logBytes += line.length;
+  };
+  const changed = (k, v) => { if (!pending) { pending = new Map(); queue(append); } pending.set(k, v); };
+  // a log left by the last run is folded in at once; a wallet with no file gets none until its first commit (the donor's
+  // `imported` check asks whether the file exists)
+  if (replayed) writeSnapshot();
+  return {
+    entries: () => JSON.stringify([...held]),
+    put: (k, v) => { if (held.get(k) === v) return; held.set(k, v); changed(k, v); },
+    remove: (k) => { if (!held.has(k)) return; held.delete(k); changed(k, null); },
+    flush: () => { if (pending || logBytes > 0) { pending = null; writeSnapshot(); } },
+  };
+}
+
 /**
  * ONE WALLET CLIENT PER FEDERATION FOR THE PROCESS (2026-10-07 11:50): each pass joined the federation
  * again and no client was ever closed - after 29 h a donor held ~720 sockets and 680 MB and spent 54-57% CPU between its 300 s

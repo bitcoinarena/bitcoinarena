@@ -24,7 +24,7 @@ import { pathToFileURL } from 'node:url';
 import { gameDevKey, signManifest } from '../src/manifest-sign.js';
 import { manifestStands, encodeManifest } from '../../arena-protocol/src/manifest.js';
 import { verifyEd25519 } from '../../arena-node/src/ed25519.js';
-import { invitesFromSeats, recordMove, newKey, walletSecretFor, gatherDonations, settleRead, withdrawToLnd, routeWebSockets, readRecord, walletClients, claimUnclaimed,
+import { invitesFromSeats, recordMove, newKey, walletSecretFor, gatherDonations, settleRead, withdrawToLnd, routeWebSockets, readRecord, walletClients, claimUnclaimed, walletFileStore,
   payInvoice, lightningAddressInvoice, invoiceMsat } from '../src/donor.js';
 
 const [cmd, dir, ...rest] = process.argv.slice(2);
@@ -106,12 +106,21 @@ async function lockClient() {
   return LockClient;
 }
 
-/** A wallet store kept in a file: the lock client's state survives a restart, per federation. */
+/** A wallet store kept in a file: the lock client's state survives a restart, per federation. One write per commit, none
+ *  when nothing changed (kanban #2948, src/donor.js walletFileStore). One store per path, read once: a federation's client
+ *  is joined once (walletClients) and keeps the store it was given, so the store a later pass named was never used - and
+ *  each pass read the 22 MB file again for it. A store is flushed before its file is copied, and let go (`dropStore`) when
+ *  its file is renamed away or replaced. */
+const openStores = new Map();
 function fileStore(path) {
-  const held = new Map(Object.entries(readJson(path, {})));
-  const save = () => writeJson(path, Object.fromEntries(held));
-  return { entries: () => JSON.stringify([...held]), put: (k, v) => { held.set(k, v); save(); }, remove: (k) => { held.delete(k); save(); } };
+  if (!openStores.has(path)) openStores.set(path, walletFileStore(path));
+  return openStores.get(path);
 }
+const flushStore = (path) => { const s = openStores.get(path); if (s) s.flush(); };
+const dropStore = (path) => { flushStore(path); openStores.delete(path); };
+/** A wallet file renamed, with its change log (walletFileStore's `path`.log) if one was left: a log never replays into
+ *  another wallet that later takes the old name. */
+const renameWallet = (from, to) => { renameSync(from, to); if (existsSync(`${from}.log`)) renameSync(`${from}.log`, `${to}.log`); };
 
 const fedStates = {};                 // federation id hex -> { status, successor } from the seats' records (invites)
 async function invites() {
@@ -198,8 +207,8 @@ async function pass() {
       try {
         const r = await claimUnclaimed({ federation: fed, state, pendingOutputs: () => client.pendingOutputs(),
           balanceMsat: async () => { try { return await client.balanceMsat(); } catch { return 0; } },
-          backup: async (at) => { const p = join(dir, `wallet-${f16}.pre-recover-${at.replace(/[:.]/g, '-')}.json`); copyFileSync(walletPath, p); return p; },
-          recover: async () => { if (existsSync(recPath)) renameSync(recPath, `${recPath}.stale-${Date.now()}`); rec = await (await lockClient()).recover(invite, fed, secret, fileStore(recPath)); },
+          backup: async (at) => { const p = join(dir, `wallet-${f16}.pre-recover-${at.replace(/[:.]/g, '-')}.json`); flushStore(walletPath); copyFileSync(walletPath, p); return p; },
+          recover: async () => { dropStore(recPath); if (existsSync(recPath)) renameWallet(recPath, `${recPath}.stale-${Date.now()}`); rec = await (await lockClient()).recover(invite, fed, secret, fileStore(recPath)); },
           // the recovery finishes in the background: poll the recovered store, and every fourth try reopen it from its file
           reopen: async () => {
             if (++polls % 4 === 0) { try { await rec.close(); } catch { /* closed */ } rec = await (await lockClient()).join(invite, fed, secret, fileStore(recPath)); }
@@ -209,10 +218,11 @@ async function pass() {
           swap: async () => {
             const old = clientFor.forget(fed); if (old) { try { await (await old).close(); } catch { /* closed */ } }
             try { await rec.close(); } catch { /* closed */ }
-            renameSync(recPath, walletPath);
+            dropStore(recPath); dropStore(walletPath);
+            renameWallet(recPath, walletPath);
             client = await clientFor(invite, fed, secret, fileStore(walletPath));
           },
-          keepFailed: async (at) => { try { await rec.close(); } catch { /* closed */ } if (existsSync(recPath)) renameSync(recPath, join(dir, `wallet-${f16}.recovering-failed-${at.replace(/[:.]/g, '-')}.json`)); },
+          keepFailed: async (at) => { try { await rec.close(); } catch { /* closed */ } dropStore(recPath); if (existsSync(recPath)) renameWallet(recPath, join(dir, `wallet-${f16}.recovering-failed-${at.replace(/[:.]/g, '-')}.json`)); },
         });
         writeJson(statePath, state);
         if (r.step !== 'none') say({ step: `unclaimed: ${r.step}`, federation: f16, ...r });
