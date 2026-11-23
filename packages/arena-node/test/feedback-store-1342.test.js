@@ -141,7 +141,8 @@ test('#1342 networkPlayers reads each game\'s network board from the first seat 
   const fetcher = async (url) => { asked.push(url); if (url.startsWith('https://down')) throw new Error('down');
     const game = new URL(url).searchParams.get('game');
     return new Response(JSON.stringify({ rows: game === 'rock-paper-scissors' ? [{ player: A, rounds: 3 }, { player: C, rounds: 0 }] : [{ player: B.toUpperCase(), rounds: 1 }] }), { status: 200 }); };
-  const np = networkPlayers({ seats: ['https://down.example', 'https://seat.example/'], games: ['rock-paper-scissors', 'nextblock'], fetcher });
+  // kanban #2818: one seat's board alone decides nothing - two seats answer here (with one, the last list stays)
+  const np = networkPlayers({ seats: ['https://down.example', 'https://seat.example/', 'https://seat2.example'], games: ['rock-paper-scissors', 'nextblock'], fetcher });
   const n = await np.fresh();
   console.log('  FACTS #1342 players:', JSON.stringify({ n, A: np.played(A), B: np.played(B), C: np.played(C), asked: asked.length }));
   assert.equal(n, 2);
