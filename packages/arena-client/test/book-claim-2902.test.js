@@ -41,9 +41,10 @@ test('marketLines: a book order\'s line is what the book pays, not the pari-mutu
   const table = JSON.parse(JSON.stringify(pariMutuelTable({ entries, outcome: 0 }), (k, v) => (typeof v === 'bigint' ? String(v) : v)));
   const outcomes = new Map([[rid, { state: 'ATTESTED', outcome: 0, label: 'Up', final: true, table, check }]]);
   const pick = (entry, side, stake) => ({ roundIdHex: rid, entryIdHex: entry, market, pick: side, stakeMsat: stake, entryCloseMs: 0, order: { limitPrice: 50000 } });
-  // before (the page has not read the book): the pari-mutuel table's "won" - the measured wrong line
+  // before the page has read the book: not the pari-mutuel table's "won" (the measured wrong line) - unverified until the book is read
+  // (kanban #3549, feedback #395: the same table said "lost -99" for an order that matched nobody and came back whole)
   const [before] = marketLines({ picks: [pick(A, 0, 107072n)], outcomes });
-  assert.equal(before.state, 'won');
+  assert.equal(before.state, 'unverified');
   const lines = marketLines({ picks: [
     { ...pick(A, 0, 107072n), bookClaim: bookClaimOf({ books: [BOOK, BOOK], outcome: 0, entryIdHex: A, stakeMsat: '107072' }) },
     { ...pick(B, 1, 111113n), bookClaim: bookClaimOf({ books: [BOOK, BOOK], outcome: 0, entryIdHex: B, stakeMsat: '111113' }) }], outcomes });

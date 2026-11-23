@@ -586,6 +586,11 @@ export function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() })
     // AN ORDER THAT MATCHED NOBODY (measured 2026-10-17: two 14:00 orders held 0 shares and 0 cost in their round's
     // book on every seat, and the settlement table - filled positions only - had no row for them, so they stayed "waiting"): the page
     // read its position from the book after the close (`unfilled`); its stake comes back whole
+    // THE BOOK SAID IT MATCHED NOBODY (kanban #3549, feedback #395): two seats' empty positions after the verified outcome - market-page.js keeps
+    // that as a book claim of the whole stake, `unfilled`. The seats' table may still hold a row for the order (beside another unmatched one on the
+    // other side), and the claim's +0 read as "Up won · +0" in Past orders; the stake came back whole, so it is a refund, P&L 0, with or without a row
+    const bookUnfilled = !p.market.scalar && p.order && p.bookClaim && p.bookClaim.unfilled === true && BigInt(p.bookClaim.outMsat) === BigInt(p.stakeMsat);
+    if (bookUnfilled) { lines.push({ ...at('refunded', { backMsat: String(p.stakeMsat) }), text: `${head}: ${signed} · your order matched nobody: its ${sats(p.stakeMsat)} sats come back whole` }); continue; }
     if (!row && p.unfilled) { lines.push({ ...at('refunded', { backMsat: String(p.stakeMsat) }), text: `${head}: ${signed} · your order matched nobody: its ${sats(p.stakeMsat)} sats come back whole` }); continue; }
     if (!row) { lines.push({ ...at('unknown'), text: `${head}: ${signed} · your pick is not in the signer nodes' table` }); continue; }
     // WON OR LOST, AND HOW MUCH, IS THE VERIFIED OUTCOME'S, NOT A SEAT'S TABLE (kanban #1615; #2153, #2221, #2299, #2354): `check` is
@@ -618,6 +623,10 @@ export function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() })
     // NOBODY ON THE OTHER SIDE (measured live 2026-10-13: the first paid Up/Down window, one order alone, read "you won
     // 0 sats" while the seats claimed nothing - an order nobody took the other side of fills nothing, and its lock comes back whole)
     else if (!p.market.scalar && won && rebuilt.table.losingPoolMsat === 0n) lines.push({ ...at('refunded', { backMsat: String(mine.stakeMsat) }), text: `${head}: ${signed} · nobody took the other side: your ${sats(mine.stakeMsat)} sats come back whole when the lock expires` });
+    // AN ORDER IS WON OR LOST BY ITS BOOK, NEVER BY THE PARI-MUTUEL TABLE (kanban #3549, feedback #395): with the book not read (no seat answered
+    // it, or not yet) the table's row said "Down won · -99 sats · final" for an order that matched nobody and came back whole. Until the book is
+    // read the order's pay is unverified - not closed, not counted in the totals
+    else if (!p.market.scalar && p.order) lines.push({ ...at('unverified'), text: `${head}: ${signed} · what this order is paid is the book's, and its book is not read yet` });
     // A SCALAR SIDE IS PAID ITS SHARE, not all or nothing: what came back, and the gain or the loss
     else if (p.market.scalar) lines.push({ ...at('settled', { payoutMsat: String(pay), netMsat: String(net) }), text: `${head}: ${signed} · '${label}' gets ${sats(pay)} of your ${sats(net)} sats · ${pay >= net ? `+${sats(pay - net)}` : `-${sats(net - pay)}`}${o.final ? '' : ' (final after the objection window)'}` });
     else if (won) lines.push({ ...at('won', { gainMsat: String(pay - net), payoutMsat: String(pay) }), text: `${head}: ${signed} · you won ${sats(pay - net)} sats${o.final ? '' : ' (final after the objection window)'}` });
