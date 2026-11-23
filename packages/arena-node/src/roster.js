@@ -21,7 +21,7 @@ import { deriveCensus } from '../../arena-protocol/src/census.js';
 import { selectCommittee, drawCommittee, slotsForRole, drawAttestors } from '../../arena-protocol/src/sortition.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
-import { merkleBranchOf, blockHashOf } from '../../arena-protocol/src/chain.js';
+import { merkleBranchOf, blockHashOf, hash256 } from '../../arena-protocol/src/chain.js';
 import { networkOf, namesNoDraw, SEATED_GUARDIAN_VERSION } from '../../arena-protocol/src/constants.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { guardianPayoutKeyOf } from '../../arena-protocol/src/guardian-payout.js';
@@ -131,6 +131,27 @@ function whereInBlock(block) {
     WHERE_OF_BLOCK.set(block, w);
   }
   return w;
+}
+// A BLOCK'S MERKLE TREE IS BUILT ONCE (kanban #2801, audit r21 census-1): merkleBranchOf rehashed the whole block for every entry of every
+// GET /census and guardian-bonds answer - 40 entries in a 6,000-tx block held the event loop ~240 ms per request, from any stranger.
+// The levels of a block's tree are kept per txids array (whereInBlock keeps one per block), and each branch is read from them.
+const TREE_OF = new WeakMap();
+function cachedBranchOf(txids, position) {
+  if (!Array.isArray(txids) || !Number.isInteger(position) || position < 0 || position >= txids.length) return merkleBranchOf(txids, position);
+  let levels = TREE_OF.get(txids);
+  if (!levels) {
+    levels = [txids];
+    for (let level = txids; level.length > 1;) {
+      const next = [];
+      for (let i = 0; i < level.length; i += 2) { const pair = new Uint8Array(64); pair.set(level[i], 0); pair.set(level[i + 1] || level[i], 32); next.push(hash256(pair)); }
+      levels.push(next); level = next;
+    }
+    TREE_OF.set(txids, levels);
+  }
+  const branch = [];
+  let index = position;
+  for (let d = 0; d < levels.length - 1; d++) { const level = levels[d]; branch.push((level[index ^ 1] || level[index]).slice()); index >>= 1; }
+  return branch;
 }
 const whereOf = new WeakMap();                 // chain view -> txid hex -> { block, txids, position } | null, the answers asked for
 export function whereInView(view, hex) {
@@ -664,9 +685,9 @@ export class Roster {
       bonds.push({
         nodePubkey: toHex(e.pubkey), position: at.position,
         transaction: toHex(at.block.transactions[at.position]),
-        branch: merkleBranchOf(at.txids, at.position).map(toHex),
+        branch: cachedBranchOf(at.txids, at.position).map(toHex),
         ...(up ? { update: { transaction: toHex(up.block.transactions[up.position]), position: up.position,
-          branch: merkleBranchOf(up.txids, up.position).map(toHex) } } : {}),
+          branch: cachedBranchOf(up.txids, up.position).map(toHex) } } : {}),
       });
     }
     return { ok: true, federationId: fid, bonds };
@@ -686,7 +707,7 @@ export class Roster {
     const view = this.chainFor({ contract, roundIdBytes });
     const where = { get: (hex) => whereInView(view, hex) };
     const proof = (txid) => { const at = txid ? where.get(toHex(txid)) : null; return at ? { transaction: toHex(at.block.transactions[at.position]),
-      position: at.position, branch: merkleBranchOf(at.txids, at.position).map(toHex) } : null; };
+      position: at.position, branch: cachedBranchOf(at.txids, at.position).map(toHex) } : null; };
     const entries = [];
     for (const e of census.entries) {
       const bond = proof(e.txid);
