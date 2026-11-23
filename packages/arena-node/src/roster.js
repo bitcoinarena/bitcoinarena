@@ -634,6 +634,10 @@ export class Roster {
     const contract = this.#held(roundIdBytes);
     if (!(Number(contract.protocolVersion) >= SEATED_GUARDIAN_VERSION)) return out;
     for (const e of census.entries || []) {
+      // ONLY A BODY THE NODE SIGNED NAMES ITS PAYOUT KEY (kanban #3364, audit census-a6-2-1, high; as #3348 for the emergency key): a stranger's
+      // own bond to a guardian's key under another operator id, sorted after the guardian's, stood in the census with the stranger's payout key
+      // and took the guardian's GUARDIAN/GATEWAY/LIQUIDITY fee share
+      if (e.nodeSigned === false) continue;
       const pk = guardianPayoutKeyOf(e.advert && e.advert.payoutPubkey);
       if (pk) out.set(toHex(e.pubkey), pk);
     }
