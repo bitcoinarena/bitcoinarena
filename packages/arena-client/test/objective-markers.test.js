@@ -22,7 +22,9 @@ import { WebSocket } from 'ws';
 // 9352; ARENA_CDP_PORT still overrides. Measured against 9351 with the Daily
 // open: 1 pass, 18.2 s.
 const PORT = Number(process.env.ARENA_CDP_PORT || 9351);
-const PAGE = process.env.ARENA_PAGE || 'https://testnet.bitcoinarena.io/';
+// THE GAME IS NAMED IN THE LINK (#3071): the bare root opens on the app chooser and the wallet, and starts no core until a game
+// is picked, so the test waited 60 s for a core that was never asked for. ?game=nextblock opens the Daily's game as before.
+const PAGE = process.env.ARENA_PAGE || 'https://testnet.bitcoinarena.io/?game=nextblock';
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** The few CDP calls this needs, against a browser somebody else is running. */
@@ -59,7 +61,7 @@ async function page() {
 // is on screen. CH_OBJ 28, five words each; HOLDER_NONE is 2.
 const MARKERS = `(function () {
   var m = window.unityInstance && window.unityInstance.Module;
-  var b = m && m.blwp;
+  var b = m && (m.arenaCore || m.blwp);   // Module.blwp is Module.arenaCore since the Unity-facing rename (kanban #524)
   if (!b || !b.st || !b.core || typeof b.core.chartView !== 'function') return null;
   var out = new Int32Array(4096);
   b.core.chartView(b.st, 0, out);
@@ -94,13 +96,16 @@ const WATCH = `(function () {
 
 test('the page draws the core\'s three objective markers', { timeout: 110000 }, async () => {
   const p = await page();
-  assert.ok(p, `no page on CDP ${PORT}: start it with monitoring/arena_mac_playtest.sh start && ... tunnel`);
+  // ANY CHROME WITH A PAGE OPEN WILL DO (#3071): off the test host, a headless one answers too (17.9 s on a Linux laptop, software GL):
+  //   chromium --headless=new --remote-debugging-port=9351 --user-data-dir=$(mktemp -d) --enable-unsafe-swiftshader --use-angle=swiftshader https://testnet.bitcoinarena.io/
+  assert.ok(p, `no page on CDP ${PORT}: start it with monitoring/arena_mac_playtest.sh start && ... tunnel, or a headless Chrome `
+    + `(chromium --headless=new --remote-debugging-port=${PORT} --user-data-dir=$(mktemp -d) --enable-unsafe-swiftshader --use-angle=swiftshader ${PAGE})`);
   try {
     await p.send('Page.navigate', { url: PAGE });
     await wait(9000);
     let up = false;
     for (let i = 0; i < 30 && !up; i++) {
-      up = await p.evaluate('!!(window.unityInstance && window.unityInstance.Module && window.unityInstance.Module.blwp)') === true;
+      up = await p.evaluate('!!(window.unityInstance && window.unityInstance.Module && (window.unityInstance.Module.arenaCore || window.unityInstance.Module.blwp))') === true;
       if (!up) await wait(2000);
     }
     assert.ok(up, 'the page never brought its core up');
