@@ -33,6 +33,7 @@ export function xHandleOf(text) {
   return /^[A-Za-z0-9_]{1,15}$/.test(n) ? n : null;
 }
 export const X_CHECK_GAP_MS = 15000, X_CHECKS_PER_HOUR = 20, LN_CHECK_GAP_MS = 5000;
+const houseX = () => new Set(String(process.env.OPR_HOUSE_X || 'bitcoinarena_io').split(',').map((x) => x.trim().replace(/^@/, '').toLowerCase()).filter(Boolean));   // kanban #3392
 const botListFromEnv = () => { try { const f = process.env.FAUCET_BOT_X_HANDLES; return new Set(f ? readFileSync(f, 'utf8').split('\n').map((l) => l.trim().replace(/^@/, '').toLowerCase()).filter((l) => l && !l.startsWith('#')) : []); } catch { return new Set(); } };
 
 const DAY_MS = 86400000, MIN_MS = 60000;
@@ -635,6 +636,7 @@ export function createOpr(o = {}) {
     const l = { userId: g.user_id, username: g.username, linkedMs: g.linked_ms };
     const x = { userId: String(l.userId), username: l.username || null, proof: 'game' };   // shown at sign-off (#3279)
     if (isBotX(l.username)) return { placed: false, x, why: 'a known bot account' };
+    if (houseX().has(String(l.username || '').toLowerCase())) return { placed: false, x, why: 'the Bitcoin Arena account is not a player account' };   // kanban #3392
     if (r && !(Number(l.linkedMs) <= r.end_ms + cfg.verifyGraceMs)) return { placed: false, x, why: 'the X account was linked more than 1 hour after the round ended' };
     if (r) {
       const first = firstRunOf(r.id, pk);
@@ -655,6 +657,9 @@ export function createOpr(o = {}) {
   async function saveX(player, typed, { ip = null } = {}) {
     const name = xHandleOf(typed);
     if (!name) return { ok: false, code: 400, why: 'Not an X username' };
+    // OUR OWN ACCOUNTS ARE NO PLAYER'S X (kanban #3392, owner 2026-11-23: "@bitcoinarena_io ... das darf nicht sein, das ist ja unser Account"):
+    // the house handles (OPR_HOUSE_X, comma list; default bitcoinarena_io) are refused before any lookup
+    if (houseX().has(String(name).replace(/^@/, '').toLowerCase())) return { ok: false, code: 409, why: `@${String(name).replace(/^@/, '')} is the Bitcoin Arena account - use your own X account` };
     if (!xLookup) return { ok: false, code: 503, why: 'X cannot be checked here' };
     const t = now();
     const last = q('SELECT MAX(at_ms) AS m, COUNT(*) AS n FROM x_checks WHERE player = ? AND at_ms > ?').get(player, t - 60 * MIN_MS);
