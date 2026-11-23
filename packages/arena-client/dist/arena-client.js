@@ -5796,6 +5796,12 @@ function encodeAdvert(a) {
     if (compareGameIds(a.hostedGames[i - 1], a.hostedGames[i]) >= 0) throw new Error('hosted_games is not sorted or names a game twice');
   w.vec(a.hostedGames, (g, ww) => ww.bytes32(g));
   w.u64(a.timestamp);
+  // THE OPERATOR'S BINDING (kanban #3385, operator-binding.js): the operator key's signature over (node key, operatorId, network),
+  // 64 bytes after its marker, right after the timestamp; none is no bytes, so every advertisement before this keeps its bytes.
+  if (a.operatorSig !== undefined && a.operatorSig !== null) {
+    if (!(a.operatorSig instanceof Uint8Array) || a.operatorSig.length !== 64) throw new Error('an operator signature is 64 bytes');
+    w.u8(OPERATOR_SIG_MARKER); w.bytes(a.operatorSig, 64);
+  }
   // STEPPING OUT WITHOUT UNBONDING (§5A.3, RULED 2026-09-28): `serving = false`, published as an advertisement
   // update, takes the node out of every census from that update's block on - its bond untouched. Written only when false, one
   // marker byte last: "serving" is no bytes, so every advertisement before this keeps its bytes and the hash its bond committed to.
@@ -5820,6 +5826,8 @@ function encodeAdvert(a) {
 }
 
 /** The byte before a node's declared scalars (§27A.2), before serving. */
+/** The byte before the operator key's binding signature (kanban #3385), right after the timestamp. */
+const OPERATOR_SIG_MARKER = 0x5a;
 const DECLARES_MARKER = 0x5d;
 /** The byte before the owner's emergency key (§23A.5a, protocol 17), after the declared scalars, before serving. */
 const EMERGENCY_MARKER = 0x5e;
@@ -5879,6 +5887,8 @@ function decodeAdvert(bytes) {
   for (let i = 1; i < a.hostedGames.length; i++)
     if (compareGameIds(a.hostedGames[i - 1], a.hostedGames[i]) >= 0) throw new Error('hosted_games is not sorted or names a game twice');
   a.timestamp = r.u64();
+  { const left0 = bytes.length - r.at;
+    if (left0 >= 65 && bytes[r.at] === OPERATOR_SIG_MARKER && [0, 1, 17, 18, 33, 34, 50, 51].includes(left0 - 65)) { r.u8(); a.operatorSig = r.bytes(64); } }
   // the declared scalars (17 bytes), the emergency key (33) and serving = false (1), each only when written, in that order
   const left = bytes.length - r.at;
   if ([17, 18, 50, 51].includes(left) && bytes[r.at] === DECLARES_MARKER) { r.u8(); a.declares = { bondMinSats: r.u64(), proposalDepositSats: r.u64() }; }
@@ -7467,6 +7477,49 @@ function readProtocolVersionName(name) {
   const r = byVersion.get(v);
   if (r && (r.year !== year || r.x !== x)) return { ok: false, why: `${s}: build ${v} is ${r.year}.${r.x}.${v}` };
   return { ok: true, version: v, known: !!r };
+}
+
+// ---- arena-protocol/src/operator-binding.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// AN OPERATOR ID IS A KEY (kanban #3385, closes #3146; spec §5A.13 "Operator binding"). An advertisement's operatorId used to be a
+// self-declared string, so a stranger's node naming an honest operator's id was grouped with that operator's nodes and could take
+// its one ticket in the founding draw (#3031, #3146). Now: operatorId is the operator's x-only public key (64 hex), and an advert
+// naming one carries `operatorSig`, a BIP-340 signature by that key over operatorBindingId(node key, operatorId, network). Without a
+// valid signature the node is its own operator (operatorId := its node key) and is never grouped with another node.
+// This package carries no curve: the verify is handed in (census.js deriveCensus gets it as verifyUpdate).
+
+
+
+const OPERATOR_BINDING_TAG = 'ARENA/v1/OperatorBinding';
+const HEX64 = /^[0-9a-f]{64}$/;
+
+/** What the operator key signs: H(tag, node key || operator key || network name). */
+function operatorBindingId({ nodePubkey, operatorId, network }) {
+  const node = typeof nodePubkey === 'string' ? fromHex(nodePubkey) : nodePubkey;
+  if (!(node instanceof Uint8Array) || node.length !== 32) throw new Error('an operator binding names a 32-byte node key');
+  if (typeof operatorId !== 'string' || !HEX64.test(operatorId)) throw new Error('an operator id is an x-only public key, 64 hex');
+  const w = new Writer(); w.bytes32(node); w.bytes32(fromHex(operatorId)); w.str(String(network || ''));
+  return taggedHash(OPERATOR_BINDING_TAG, w.finish());
+}
+
+/** The operator an advertisement is bound to (hex): its operatorId when that key signed the binding, else the node's own key. */
+function boundOperatorOf(advert, network, verify) {
+  const node = advert && advert.nodePubkey instanceof Uint8Array ? toHex(advert.nodePubkey) : null;
+  if (!node) return null;
+  const op = advert.operatorId, sig = advert.operatorSig;
+  if (typeof verify !== 'function' || typeof op !== 'string' || !HEX64.test(op) || !(sig instanceof Uint8Array) || sig.length !== 64) return node;
+  if (op === node) return node;
+  let ok = false;
+  try { ok = verify(sig, operatorBindingId({ nodePubkey: advert.nodePubkey, operatorId: op, network }), fromHex(op)) === true; } catch { ok = false; }
+  return ok ? op : node;
+}
+
+/** A census entry's operator for grouping (founding draw, gateway seats): the census-bound `operator`, else the node key alone. */
+function operatorOf(e) {
+  if (e && typeof e.operator === 'string' && e.operator) return e.operator;
+  const k = e && (e.pubkey || (e.advert && e.advert.nodePubkey));
+  return k ? (k instanceof Uint8Array ? toHex(k) : String(k).toLowerCase()) : '';
 }
 
 // ---- arena-protocol/src/fee.js
@@ -9113,6 +9166,7 @@ function txidHexOf(tx) {
 
 
 
+
 /**
  * One census entry, encoded.
  *
@@ -10612,6 +10666,11 @@ function deriveCensus(views, { contract, candidates, resolve, verifyAdvert, bond
     eligible = f.kept;
     sumOut.push(...f.out);
   }
+
+  // EACH NODE'S BOUND OPERATOR (kanban #3385, operator-binding.js): its advert's operatorId only when that key signed the binding for
+  // this network, else the node's own key - what the founding draw and the gateway seats group by. Not in the leaf: the root is unchanged.
+  { const net = networkOf(contract.networkId) || '';
+    eligible = eligible.map((e) => ({ ...e, operator: boundOperatorOf(e.advert, net, verifyUpdate) || toHex(e.pubkey) })); }
 
   let census;
   try {
@@ -27730,7 +27789,9 @@ async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verif
       // tester's first tap ("the round's nodes could not be read") while six seats served the set. A 4xx is the seat's own word and still refuses.
       if (r.status >= 500) return { node: base, why: `${r.status}`, late: true };
       if (r.status !== 200) return { node: base, why: `${r.status} ${(await r.text()).trim().slice(0, 100)}` };
-      const bytes = new Uint8Array(await r.arrayBuffer());
+      // kanban #2816 (#1489 r22-client-1): read up to DONATION_FORM_MAX_BYTES, the stream cancelled past it - it was read whole, one seat's endless body
+      // filled the tab on every paid join
+      const bytes = await rotationBytesUpTo(r, DONATION_FORM_MAX_BYTES);
       let rotations = [];
       try {
         const rr = await donationWithinMs(fetcher(`${base}/donation-rotations?round=${rid}`), DONATION_ANSWER_MS);   // bounded too: a set read, then a hung rotations read, held a join 38 s+ (04:11Z)
@@ -27897,7 +27958,7 @@ async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verif
         (async () => {
           const r = await donationWithinMs(fetcher(`${base}/game-donation-set?round=${rid}`), DONATION_ANSWER_MS);
           if (r.status !== 200) throw new Error(`${r.status} ${(await r.text()).trim().slice(0, 100)}`);
-          const g = decodeDonationSet(new Uint8Array(await r.arrayBuffer()));
+          const g = decodeDonationSet(await rotationBytesUpTo(r, DONATION_FORM_MAX_BYTES));   // kanban #2816: bounded
           if (toHex(donationSetId(g)) !== wantGame) throw new Error(`serves ${toHex(donationSetId(g)).slice(0, 16)}, not the set the game's manifest names (${wantGame.slice(0, 16)})`);
           return g;
         })().then((g) => resolve(g), (e) => { tried.push(`${base}: ${e.message}`); if (--left === 0) resolve(null); });

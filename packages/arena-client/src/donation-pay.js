@@ -301,7 +301,9 @@ export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u)
       // tester's first tap ("the round's nodes could not be read") while six seats served the set. A 4xx is the seat's own word and still refuses.
       if (r.status >= 500) return { node: base, why: `${r.status}`, late: true };
       if (r.status !== 200) return { node: base, why: `${r.status} ${(await r.text()).trim().slice(0, 100)}` };
-      const bytes = new Uint8Array(await r.arrayBuffer());
+      // kanban #2816 (#1489 r22-client-1): read up to DONATION_FORM_MAX_BYTES, the stream cancelled past it - it was read whole, one seat's endless body
+      // filled the tab on every paid join
+      const bytes = await rotationBytesUpTo(r, DONATION_FORM_MAX_BYTES);
       let rotations = [];
       try {
         const rr = await donationWithinMs(fetcher(`${base}/donation-rotations?round=${rid}`), DONATION_ANSWER_MS);   // bounded too: a set read, then a hung rotations read, held a join 38 s+ (04:11Z)
@@ -468,7 +470,7 @@ export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u)
         (async () => {
           const r = await donationWithinMs(fetcher(`${base}/game-donation-set?round=${rid}`), DONATION_ANSWER_MS);
           if (r.status !== 200) throw new Error(`${r.status} ${(await r.text()).trim().slice(0, 100)}`);
-          const g = decodeDonationSet(new Uint8Array(await r.arrayBuffer()));
+          const g = decodeDonationSet(await rotationBytesUpTo(r, DONATION_FORM_MAX_BYTES));   // kanban #2816: bounded
           if (toHex(donationSetId(g)) !== wantGame) throw new Error(`serves ${toHex(donationSetId(g)).slice(0, 16)}, not the set the game's manifest names (${wantGame.slice(0, 16)})`);
           return g;
         })().then((g) => resolve(g), (e) => { tried.push(`${base}: ${e.message}`); if (--left === 0) resolve(null); });
