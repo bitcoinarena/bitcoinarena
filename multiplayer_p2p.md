@@ -7687,6 +7687,10 @@ carry no weight in any count.
   (432 blocks) before** its signal period ends.
 - **An active node** *(LOCKED 2026-10-16)* is a node that served a round in those 72 hours;
   nodes are counted one each, not by bond.
+- **Served means drawn** *(kanban #3147, 2026-11-23)*: GET /served hands each listed round with its contract
+  and census height, and a reader counts a round it did not sit on as served only if every key of its
+  committee is one the census at that height draws for it (game and settlement draws); a committee
+  its own members invented counts for nothing. A drawn 2-of-2 round still counts.
 - This filters and starts the discussion; nothing is paid on a signal.
 - **As built** *(2026-10-16: signals are "signed messages kept and passed on by the seats. Not on-chain
   signals"; the spec timings are the rule on testnet4 and mainnet)*:
