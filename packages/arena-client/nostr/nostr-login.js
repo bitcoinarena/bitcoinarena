@@ -157,7 +157,11 @@ export async function seedFor(signer, { pool = new SimplePool(), relays = NOSTR_
   let found = null;
   if (!fresh) {
     const asked = await askEach(pool, up, { kinds: [SEED_KIND], authors: [signer.pubkey], '#d': [SEED_D] }, maxWait);
-    found = asked.events.filter((e) => verifyEvent(e) && e.pubkey === signer.pubkey).sort((a, b) => b.created_at - a.created_at)[0];
+    // ONLY A SEED EVENT IS A SEED EVENT (kanban #3301, audit nostr-a5-1-1): a relay answering the ask with any newer event the player signed (the
+    // kind 0 profile this page publishes, a note, another app's 30078) had it taken as the newest seed - it did not decrypt, and every login failed
+    // while the game's relay held the real one. The relay's answer is checked against the filter it was asked: kind 30078 and d = bitcoin-arena/seed
+    const isSeed = (e) => e && e.kind === SEED_KIND && Array.isArray(e.tags) && e.tags.some((t) => Array.isArray(t) && t[0] === 'd' && t[1] === SEED_D);
+    found = asked.events.filter((e) => isSeed(e) && verifyEvent(e) && e.pubkey === signer.pubkey).sort((a, b) => b.created_at - a.created_at)[0];
     // kanban #1574: no seed event found is "a new account" only when EVERY relay reached finished its answer (EOSE) - one that
     // timed out or closed the query may hold the seed, and a new event would replace it (newest per author and d); and when
     // our relay is in the list it must be one of them (public relays prune NIP-78 app data, ours keeps it)
