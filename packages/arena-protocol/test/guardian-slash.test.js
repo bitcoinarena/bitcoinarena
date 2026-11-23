@@ -58,3 +58,14 @@ test('a liquidation remainder: 75 % evenly to the census less the slashed and th
   assert.equal(r.payees.reduce((a, p) => a + p.msat, 0n), 1_232_000n);
   assert.equal(liquidationRemainderPayees({ msat: 1000n, censusNodes: [5, 6].map(k), record, donation: [{ recipientPk: k(20), shareBps: 5000 }] }).ok, false);
 });
+
+test('#2936 a liquidation remainder pays the donation set\'s vested shares at the height, never the pre-vesting ones (feedback #259)', async () => {
+  const { liquidationRemainderPayees } = await import('../src/federation-slash.js');
+  const record = { guardians: [1, 2, 3, 4].map((n) => ({ nodePubkey: k(n) })) };
+  const donation = [{ recipientPk: k(20), shareBps: 7000, vesting: { targetBps: 3000, startHeight: 1000, days: 10 } }, { recipientPk: k(21), shareBps: 3000 }];
+  const args = { msat: 1_000_000n, censusNodes: [5, 6].map(k), record, donation };
+  assert.equal(liquidationRemainderPayees(args).ok, false, 'a vesting set without a height is refused, never paid raw');
+  const r = liquidationRemainderPayees({ ...args, height: 1000 + 10 * 144 });
+  assert.equal(r.ok, true, r.why);
+  assert.deepEqual(r.payees.filter((p) => p.part === 'donation').map((p) => p.msat), [75_000n, 175_000n], 'fully vested: 3000 / 7000 bps of the 250,000 donation part');
+});

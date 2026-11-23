@@ -24,6 +24,7 @@
 
 /** The smallest number of guardians whose loss halts a federation of `nominal` with threshold `2f + 1`. */
 import { splitNodesDevelopers } from './constants.js';
+import { vestedShares } from './donation.js';
 
 export const haltsAt = (f) => f + 1;
 
@@ -276,8 +277,14 @@ export function guardianSlashPayees({ amountSats, censusNodes, record }) {
  * The division's leftover goes to the first payee of each part in key order, so the payees sum to `msat`. Answers
  * { ok, payees: [{ key, msat, part: 'node' | 'donation' }] } or why not.
  */
-export function liquidationRemainderPayees({ msat, censusNodes, slashed = [], record, donation }) {
+export function liquidationRemainderPayees({ msat, censusNodes, slashed = [], record, donation, height = null }) {
   if (typeof msat !== 'bigint' || msat <= 0n) return { ok: false, why: 'a remainder is a positive number of msat' };
+  // THE VESTED SHARES (kanban #2936, feedback #259): every round path pays vestedShares(recipients, height); the remainder paid the set's
+  // pre-vesting shares. A vesting set is split at `height`, and without one it is refused rather than paid raw
+  if (Array.isArray(donation) && donation.some((r) => r && r.vesting)) {
+    if (!Number.isInteger(height)) return { ok: false, why: 'the donation set in force vests: its shares are read at a height' };
+    donation = vestedShares(donation, height);
+  }
   const out = new Set((slashed || []).map(hexKey));
   const nodes = guardianSlashPayees({ amountSats: msat, censusNodes: (censusNodes || []).filter((k) => !out.has(hexKey(k))), record });
   if (!nodes.ok) return nodes;

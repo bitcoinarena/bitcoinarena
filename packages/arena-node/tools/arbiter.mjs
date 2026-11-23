@@ -187,7 +187,7 @@ async function payLiquidations() {
         rotations: [], height: tip, verify: (sg, m, k) => { try { return ed25519.verify(sg, m, k); } catch { return false; } } });
       if (!forced.ok) throw new Error(`no donation set in force: ${forced.why}`);
       const got = liquidationRemainderPayees({ msat, censusNodes: census.entries.map((e) => e.pubkey), slashed: Object.values(state.handled).map((h) => h.node).filter(Boolean),
-        record, donation: forced.recipients });
+        record, donation: forced.recipients, height: tip });   // kanban #2936: the vested shares at the tip the census is read at
       if (!got.ok) throw new Error(got.why);
       // a payout is a lock to a refund key (the tool's `pay`, as 's): the 33-byte form of each x-only key
       return got.payees.map((x) => ({ ...x, key: `02${x.key}` }));
