@@ -2402,7 +2402,7 @@ export class Verifier {
       } catch { continue; }
       const tried = new Set();
       for (const rec of cutSignedReruns(body))
-        this.#keepPeerRerun(roundIdBytes, rec.slice(), found.entry.playerPubkey, signerNodes, entryIdBytes, tried);
+        this.#keepPeerRerun(roundIdBytes, rec.slice(), found.entry.playerPubkey, signerNodes, entryIdBytes, tried, contradictedRunId);
     }
   }
 
@@ -2679,7 +2679,7 @@ export class Verifier {
   }
 
   /** One re-run from a peer: about this round and player, from a joined signer node, and signed by it. */
-  #keepPeerRerun(roundIdBytes, record, playerPubkey, signerNodes, entryIdBytes, tried = null) {
+  #keepPeerRerun(roundIdBytes, record, playerPubkey, signerNodes, entryIdBytes, tried = null, contradictedRunId = null) {
     let x, signature;
     try {
       const split = splitSignedRerun(record);
@@ -2687,6 +2687,10 @@ export class Verifier {
       x = decodeRerunResult(split.body);
     } catch { return false; }
     if (hex(x.result.roundId) !== hex(roundIdBytes) || hex(x.result.playerPubkey) !== hex(playerPubkey)) return false;
+    // ONLY A RE-RUN OF THE RUN THIS ENTRY'S OBJECTION CONTRADICTS (kanban #3362, audit gossip a6-2-2): a re-run names no entry, so one committee
+    // seat answered GET /reruns for the player's entry E2 with the honest re-runs of the same player's E1 - kept first under E2, they held its
+    // slots and the honest E2 re-runs were ignored: 0 of 5 counted, VOID instead of the re-run's outcome
+    if (contradictedRunId && hex(x.contradictedRunId) !== hex(contradictedRunId)) return false;
     if (!signerNodes.some((s) => hex(s) === hex(x.result.nodePubkey))) return false;
     if (tried) { if (tried.has(hex(x.result.nodePubkey))) return false; tried.add(hex(x.result.nodePubkey)); }   // kanban #2729
     let ok = false;
