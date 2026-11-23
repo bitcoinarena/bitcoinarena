@@ -126,7 +126,9 @@ export function seasonView(answer, { title = null, viewer = [], limit = SEASON_R
     && seats.asked >= 0 && seats.answered >= 0
     ? { answered: Math.min(seats.answered, seats.asked) + 1, asked: seats.asked + 1 } : null;
   const last = days === 1 ? 'last day' : `last ${days} days`;
-  const from = nodes ? `from ${nodes.answered} of ${nodes.asked} nodes` : 'from one node only';
+  // OF THE NODES ASKED (kanban #2970, feedback #312): the total is the seats this seat asked on this read (its peers and census), not a fixed
+  // count of the network - it can differ between reads, so it says what it counts
+  const from = nodes ? `from ${nodes.answered} of the ${nodes.asked} nodes asked` : 'from one node only';
   const header = [name, last, `${seasonCount(rows.length, 'player')} ahead`, from].join(' \u00b7 ');
   const counted = Number.isSafeInteger(answer.rounds) && answer.rounds >= 0 ? answer.rounds : null;
   const leftOut = Number.isSafeInteger(answer.leftOut) && answer.leftOut > 0 ? answer.leftOut : 0;
@@ -138,6 +140,12 @@ export function seasonView(answer, { title = null, viewer = [], limit = SEASON_R
   const more = rows.length - Math.min(rows.length, cap) - (own && rows.indexOf(own) >= cap ? 1 : 0);
   return { ok: true, title: name, game, days, header, foot, players: rows.length, behind, nodes, rows: shown, mine: own, more,
     empty: rows.length ? null : behind ? `Nobody is ahead at ${name} in the ${last}.` : `Nobody has a counted round of ${name} in the ${last}.` };
+}
+
+/** A WINDOW BEING ASKED (kanban #2970, feedback #312): its own header while it loads, never the previous window's rows under it. */
+export function seasonAskingHeader({ title = null, game = null, days = 7 } = {}) {
+  const name = String(title || '').trim() || game || 'this game';
+  return [name, Number(days) === 1 ? 'last day' : `last ${Number(days)} days`, 'asking the nodes \u2026'].join(' \u00b7 ');
 }
 
 /** THE LAST BOARD THE SITE KEPT (kanban #941): shown at once, never instead of the nodes' own answer. { ok: false } when there is none yet. */
