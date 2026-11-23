@@ -2346,5 +2346,21 @@
  "3531": {
   "text": "Website: an embedded wallet can leave its seed readable by the host page",
   "kind": "bug"
+ },
+ "3548": {
+  "text": "Committees and bonds: a new bond can count in the census while recovery is already open",
+  "kind": "bug"
+ },
+ "3549": {
+  "text": "BTC Up/Down game: Past orders can show a refunded unmatched order as a loss",
+  "kind": "bug"
+ },
+ "3550": {
+  "text": "Other: Orange Pill Run rules give a no-hit bonus only to a finished run, and omit the death wait and higher jump",
+  "kind": "bug"
+ },
+ "3551": {
+  "text": "Node software: heavy load and a full swap left most seats silent, so joins failed",
+  "kind": "bug"
  }
 }
