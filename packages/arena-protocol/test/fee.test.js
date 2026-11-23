@@ -140,7 +140,8 @@ test('the pools sum to exactly the fee however ragged the numbers are', () => {
 
     assert.equal(t.pools[GAME_VERIFY] + t.pools[SETTLEMENT], t.fee,
       `the pools lost a millisatoshi at ${stake}`);
-    assert.equal(t.fee, FEE(t.gross), `the fee is not the rule's at ${stake}`);
+    // kanban #2825: the fee is the sum of the per-entry floors (what the fee locks hold)
+    assert.equal(t.fee, ragged.reduce((n, e) => n + entryFeeMsat(e.stakeMsat), 0n), `the fee is not the rule's at ${stake}`);
     assert.equal(paid(t) + t.unallocated, t.fee, `the table leaked at ${stake}`);
     for (const v of t.signerNodes.values()) assert.ok(v >= 0n);
   }
@@ -322,7 +323,7 @@ test('a malformed entry is answered, not thrown at the caller', () => {
  * defines the fee on the gross and says nothing about which rounding a
  * collector uses; picking one here would be inventing a rule.
  */
-test('per-entry floors can collect less than the table owes, never more', () => {
+test('the table owes what the per-entry floors collect, never more than the floor of the sum (kanban #2825)', () => {
   // each case's collected and owed from the rule: per-entry floors, and the floor of the sum
   const cases = [[2, 59n], [7, 33333n], [3, 19n], [61, 100000n]].map(([n, stake]) => [n, stake, entryFeeMsat(stake) * BigInt(n), FEE(stake * BigInt(n))]);
   assert.ok(cases.some(([, , collected, owed]) => collected < owed), 'no case where the floors collect less: this measures nothing');
@@ -334,7 +335,9 @@ test('per-entry floors can collect less than the table owes, never more', () => 
     const many = Array.from({ length: n }, (_, i) =>
       ({ pubkey: b32(0xc0 + i), outcome: 'DELIVERED', score: 500, stakeMsat: stake }));
     const t = nodeFeeTable({ contract, entries: many, pools, eligible: all });
-    assert.equal(t.fee, owedOnGross, `${n} x ${stake} owed`);
+    // kanban #2825 (#1489 r23-settle-1): the table owed the floor of the sum, and a round whose locks collected less never settled - it owes what
+    // the per-entry floors collect now, never more than the floor of the sum
+    assert.equal(t.fee, collected, `${n} x ${stake} owed`);
     assert.ok(collected <= owedOnGross, 'a collector must never gather more than the table owes');
   }
 });

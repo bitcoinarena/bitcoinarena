@@ -117,7 +117,11 @@ export function grossVolumeMsat(entries) {
 export const LIQUIDITY_WEIGHT_STEP = 10000n;
 export function nodeFeeTable({ contract, entries, pools, eligible, feeBps = NODE_FEE_BPS, weights = null }) {
   const gross = grossVolumeMsat(entries);
-  const fee = (gross * BigInt(feeBps)) / 10000n;
+  // THE FEE THE FEE LOCKS HOLD (kanban #2825, #1489 r23-settle-1): each entry's fee lock is its own stake's fee rounded down (entryFeeMsat, checked at
+  // the door), and the table rounded the total down once - an odd-sat market (25 bps, 1,001 sat, 3 entries) owed 7,507 msat where the locks held
+  // 7,506, and the round never settled. The fee is the sum of the per-entry floors: the same number wherever each entry's fee is whole (every
+  // round that settled before), and exactly what the locks hold when it is not
+  const fee = entries.filter((e) => !isRefund(e.outcome)).reduce((sum, e) => sum + (e.stakeMsat * BigInt(feeBps)) / 10000n, 0n);
   // THREE EQUAL THIRDS WHEN THE ROUND'S GUARDIANS ARE NAMED AND ONE IS ELIGIBLE: the first two floored, the guardian pool
   // what is left (two floors of the same ragged number can lose a millisatoshi between them). With no guardian named, below
   // protocol 22 the two-pool table exactly as before - 1% and the rest; from 22 the custody pool stands (below).
