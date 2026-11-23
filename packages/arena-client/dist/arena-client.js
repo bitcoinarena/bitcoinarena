@@ -18059,7 +18059,13 @@ const SERVED_ANSWER_BYTES_MAX = 32 * 1024 * 1024;
 // not taken - no vote, no FINAL - however many seat URLs name it (measured before: one stranger's server at three URLs named a real
 // round with a committee of one made-up key, outvoted two honest seats, and that key took the nodes' whole half of a 500-sat item).
 // null (the seats' own merges) reads as before.
-function mergeServedRounds(held, { own = true, bonded = null } = {}) {
+// `drawn` (kanban #3147, decided 2026-11-23: two bonded keys of one operator invented rounds naming only themselves as the committee, each
+// signed a FINAL, and both were listed as served - SERVED_SIGNERS_MIN counts signers, never whether a census drew them): a function
+// (roundId, contract bytes | null) -> Set of the node keys (hex) the census at the contract's height draws for that round, or null when the
+// reader cannot draw it. Given, a copy of a round the reader's own record does not hold counts only when it carries its contract and every
+// key of its committee is drawn - a self-invented committee is no vote and no FINAL. Honest 2-seat (2-of-2) rounds stay: they are drawn.
+// null (a reader that draws nothing) reads as before.
+function mergeServedRounds(held, { own = true, bonded = null, drawn = null } = {}) {
   const hx = (b) => toHex(b);
   const rounds = new Map(), conflicts = new Set();
   (held || []).forEach((seat, at) => {
@@ -18071,6 +18077,11 @@ function mergeServedRounds(held, { own = true, bonded = null } = {}) {
       if (seen.has(k)) continue;                              // kanban #2239: one answer names a round once
       seen.add(k);
       if (bonded && !r.committee.every((k) => bonded.has(hx(k)))) continue;   // kanban #1896: only bonded nodes are a committee
+      if (typeof drawn === 'function' && !(own && at === 0)) {   // kanban #3147: the committee is the census draw, or the copy does not count
+        let set = null;
+        try { set = drawn(r.roundId, r.contract instanceof Uint8Array ? r.contract : null); } catch { set = null; }
+        if (!(set instanceof Set) || !r.committee.every((k) => set.has(hx(k)))) continue;
+      }
       const committee = [...new Set(r.committee.map(hx))].sort().join();
       if (!rounds.has(k)) rounds.set(k, { roundId: r.roundId, copies: new Map(), finals: new Map(), sources: new Map(), own: false });
       const into = rounds.get(k);
