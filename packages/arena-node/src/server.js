@@ -298,7 +298,7 @@ import { hostedPlugins, pluginForRound, advertisedAppsCheck, payoutRuleOfRound }
 import { gameMarkets, gameMarketSweep, heldOutcomes, gameVoidOf, gameEvidenceOf, attestedTable, marketFinalityOf, marketStateOf, marketDeadlineOf, VALUE_HELD_OUTCOME, DEADLINE_VOID_GRACE_MS } from './game-market.js';
 import { isHeadToHead, marketOfRound, isGameMarket, isScalar, isDrawnAttest, GAME_MARKET_REFUND } from '../../arena-protocol/src/manifest.js';
 import { decodeValueAttestation, valueAttestationStands, valueAttestationBodyId, isValueAttestationBytes } from '../../arena-protocol/src/scalar.js';
-import { encodeManifest, decodeManifest, gameIdOf, manifestStands, MARKET_SOURCE_KIND, RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
+import { encodeManifest, decodeManifest, gameIdOf, manifestStands, manifestBodyId, MARKET_SOURCE_KIND, RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
 import { gameTypeOf, gameInfoStands } from '../../arena-protocol/src/game-info.js';
 import { genesisFor, committeesStand } from '../../arena-protocol/src/genesis.js';
 import { nonceGen as musigNonceGen, bondSigningContext as musigBondContext, bondPartialSign as musigBondPartial } from './musig2.js';
@@ -1921,7 +1921,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const NETWORK_APPS_LANES = 2, NETWORK_APPS_BYTES = 12 * 1048576;
   const readNetworkApps = async () => {
     const seats = networkSeats();
-    const byId = new Map();
+    const byId = new Map(), unsignedIds = new Set();
     const asked = [];
     let nextSeat = 0, budget = NETWORK_APPS_BYTES;
     const readOne = async (from) => {
@@ -1942,6 +1942,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let m; try { m = decodeManifest(fromHex(String(g.manifest))); } catch { continue; }
         const id = toHex(gameIdOf(m));
         if (id !== String(g.id).toLowerCase()) continue;              // a listing whose manifest is another game is not read
+        // ONLY A MANIFEST ITS DEVELOPER SIGNED (kanban #2810, #1489 r22-hosting-1; #1902 read devKey/parent/version from the unsigned bytes): a seat
+        // listed a copy of a hosted manifest with a zero signature and it was shown as that game's update under its title. Checked once per id.
+        if (!byId.has(id)) {
+          if (unsignedIds.has(id)) continue;
+          let signed = false; try { signed = verifyEd25519(m.signature, manifestBodyId(m), m.gameDevPubkey) === true; } catch { signed = false; }
+          if (!signed) { unsignedIds.add(id); continue; }
+        }
         const info = g.info ? gameInfoStands(g.info, { gameId: gameIdOf(m), manifest: m, verify: verifyEd25519 }) : null;
         // THE TITLE IS NOT THE LISTING SEAT'S (kanban #1716, #1780, as #1541 for hosted games): `title` is signed by nobody, so a
         // seat could list a genuine signed game under a title of its choosing; the row is titled below from what this seat trusts
