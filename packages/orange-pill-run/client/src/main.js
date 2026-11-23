@@ -490,7 +490,7 @@ async function watchReplay(path) {
     let j = await api.get(path);
     if (!j.ok && j.status === 403 && wallet() && wallet().pubkey) j = await api.getSigned(path);
     if (!j.ok) { $("bLine").textContent = j.why || "no replay"; return; }
-    useLevel(j.level); const bad = validateLog(j.log); if (bad) throw new Error(bad);
+    useLevel(j.level); const bad = validateLog(j.log, L.version || GAME_VERSION); if (bad) throw new Error(bad);   // kanban #3391: the log replays on its round's version, not the page's newest
     replayLog = j.log; replayFrom = "board"; begin("replay");
   } catch (e) { $("bLine").textContent = (e && e.message) || String(e); }
 }
@@ -569,7 +569,7 @@ Object.assign(HOOKS, {
   gameVersion: GAME_VERSION, get level() { return L; }, levelOf: () => levelOf, bridged: !!bridge,
   play: () => begin("play"), enter: () => play(),
   playBot: (opts = {}) => begin("bot", opts),
-  replay(log, opts = {}) { const bad = validateLog(log); if (bad) throw new TypeError(bad); replayLog = log; begin("replay", opts); },
+  replay(log, opts = {}) { const bad = validateLog(log, (L && L.version) || GAME_VERSION); if (bad) throw new TypeError(bad); replayLog = log; begin("replay", opts); },
   state: () => ({ running, paused, speed, mode, f: W ? W.f : 0, presses: presses.length + (down >= 0 ? 1 : 0), done: W ? W.done : false, run: run ? { attempt: run.attempt, entry: run.entry, status: run.status } : null }),
   view: () => view(W), audio: () => (audio ? { state: audio.state, mode: audio.mode, music: audio.musicOn, gain: audio.gain } : null),
   screen: () => (SHEETS.find((s) => !$(s).hidden) || null), held: () => heldWhileReplay, lastLog: () => lastLog, lastResult: () => lastResult, service: () => ({ ...S }),
