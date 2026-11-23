@@ -5723,7 +5723,7 @@ function readVarint(bytes, at) {
 
 // VIEWS, NOT COPIES (kanban #3236, a heap snapshot of a seat: 74,118 kept parses, 388 MB - every script, witness item and previous txid
 // its own copied buffer). A parse's byte fields are views of the raw transaction: nothing writes them or the raw bytes in place (a raw is
-// a block's own slice, splitBlock), and a kept parse is kept with its raw anyway (census.js parsedKept).
+// a view of its block's bytes, splitBlock - kanban #3238), and a kept parse is kept with its raw anyway (census.js parsedKept).
 function readSlice(bytes, at, what) {
   const { value, next } = readVarint(bytes, at);
   const end = need(bytes, next, value, what);
@@ -11971,6 +11971,19 @@ const KNOWN_GOOD_GAMES = Object.freeze({
   '1e13b8e3eaffe11884b1a80fa4b004d90c56f136f4c208311ac4ebf1dfda79ff': Object.freeze({
     name: 'rock-paper-scissors',
     //: manifest version 13, parent 6bd6c0d1 - version 12 in every term but its client: it asks the seats for a round's players only for the round on screen, at most every 4 s with a back-off on 404, and reads its own round's result at most every 3 s until settled (kanban #3290)
+    requiredProtocolVersion: 2,
+    // ONE COMMITTEE AND ONE KEY PER TABLE (2026-10-13 ~21:10Z, pick (c)): a table's rounds - one grid series -
+    // are drawn and seated once, by the table's first round, and every 8 s round after plays on that committee's claim key
+    seatsPerTable: true,
+    cores: Object.freeze({
+      'f86afd62734989cca3004021d00879af5d57008958908ca28973100625d7f031': Object.freeze(['0d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172']),
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+  }),
+  'c0404aabebd5fb270d51d8df4348adc75f2a85a1584fffa8d52c141d52f7e0d7': Object.freeze({
+    name: 'rock-paper-scissors',
+    //: manifest version 14, parent 1e13b8e3 - version 13 in every term but its client: in reveal and result a move the opponent did not show is never drawn (the idle open hand, not a rock fist; kanban #3234, feedback #342/#182)
     requiredProtocolVersion: 2,
     // ONE COMMITTEE AND ONE KEY PER TABLE (2026-10-13 ~21:10Z, pick (c)): a table's rounds - one grid series -
     // are drawn and seated once, by the table's first round, and every 8 s round after plays on that committee's claim key

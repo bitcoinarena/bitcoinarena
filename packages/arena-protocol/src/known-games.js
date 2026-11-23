@@ -561,6 +561,19 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
     sharedWorld: Object.freeze([]),
     gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
   }),
+  'c0404aabebd5fb270d51d8df4348adc75f2a85a1584fffa8d52c141d52f7e0d7': Object.freeze({
+    name: 'rock-paper-scissors',
+    //: manifest version 14, parent 1e13b8e3 - version 13 in every term but its client: in reveal and result a move the opponent did not show is never drawn (the idle open hand, not a rock fist; kanban #3234, feedback #342/#182)
+    requiredProtocolVersion: 2,
+    // ONE COMMITTEE AND ONE KEY PER TABLE (2026-10-13 ~21:10Z, pick (c)): a table's rounds - one grid series -
+    // are drawn and seated once, by the table's first round, and every 8 s round after plays on that committee's claim key
+    seatsPerTable: true,
+    cores: Object.freeze({
+      'f86afd62734989cca3004021d00879af5d57008958908ca28973100625d7f031': Object.freeze(['0d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172']),
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+  }),
   'e3e5752cf61d753fa790fe86d4c4cc830555d344dc69faa48beb7abd148f4493': Object.freeze({
     name: 'rock-paper-scissors',
     //: manifest version 6, parent 62a940ae - version 5 in every term but its client: a reveal phase, the result stands at 0:00 (kanban #951)
