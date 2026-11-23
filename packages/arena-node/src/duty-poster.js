@@ -20,7 +20,7 @@
  * and posts nothing: the day falls to the next node an hour later (duty.js dayPostDue). arena.conf duty_post: auto (the default: on while the
  * wallet holds confirmed coins), on, off.
  */
-import { OBJECTION_WINDOW_MS, OBJECTION_WINDOW_H2H_MS, OBJECTION_WINDOW_H2H_REGTEST_MS, SUPPORTED_PROTOCOL_VERSIONS } from '../../arena-protocol/src/constants.js';   // #1399, #1486
+import { OBJECTION_WINDOW_MS, OBJECTION_WINDOW_H2H_MS, OBJECTION_WINDOW_H2H_REGTEST_MS, SUPPORTED_PROTOCOL_VERSIONS, SCORE_SCALE } from '../../arena-protocol/src/constants.js';   // #1399, #1486
 import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';   // #1399
 import { join } from 'node:path';
 import { appendFileSync } from 'node:fs';
@@ -118,6 +118,9 @@ export const DUTY_TEMPLATE = Object.freeze({ protocolVersion: 3, configHash: new
 // was 20 s after the close; 301 + 2 x 150 is 10.015 s, just over the protocol's least head-to-head reveal window (manifest.js H2H_REVEAL_MIN_MS, which
 // round.js holds a round to: 300 + 2 x 150 would be 9,998 ms and refused). No core is asked
 // (round.js: a head-to-head round's run length is not checked against a core). ARENA_RPS_BLOCK_TICKS / ARENA_RPS_START_TICKS change it.
+// A NEXT BLOCK DAY'S MINIMUM SCORE WITH NO HELD DAY TO CARRY (kanban #3380): the spec's reference of 1 point (SCORE_SCALE, 1e-5 points - the 11-18
+// day's 100000); the built-in 0 is below every Next Block manifest's minimum, and every seat refused the 11-23 grid for it
+export const NEXTBLOCK_SHAPE = Object.freeze({ minScore: SCORE_SCALE });
 export const RPS_TICKS = Object.freeze({ blockTicks: Number(process.env.ARENA_RPS_BLOCK_TICKS) || 301, startDeadlineTicks: Number(process.env.ARENA_RPS_START_TICKS) || 150 });
 
 /**
@@ -164,7 +167,7 @@ export function dayTemplate({ held, family, networkId, game, ownRelay = null, re
     if (relays.length) c.publicationRelays = relays;
     return { contract: c, from: 'held' };
   }
-  return { contract: { ...DUTY_TEMPLATE, ...(game === 'rps' ? RPS_TICKS : {}), networkId, publicationRelays: relays.length ? relays : ownRelay ? [ownRelay] : [] }, from: 'built-in' };
+  return { contract: { ...DUTY_TEMPLATE, ...(game === 'rps' ? RPS_TICKS : {}), ...(game === 'nextblock' ? NEXTBLOCK_SHAPE : {}), networkId, publicationRelays: relays.length ? relays : ownRelay ? [ownRelay] : [] }, from: 'built-in' };
 }
 
 /**
