@@ -225,7 +225,9 @@ export function opponentWant(wants, round, nowMs = Date.now(), tap = null, who =
   // kanban #2901: the signed tap's key is kept (only a key whose signature over this round verified), so the bot can come at once for a key it
   // already saw play - a key is public; the bot still stakes for a known key only (rps-opponent.mjs KNOWN)
   const signed = tapSigned(round, tap), was = wants.get(round);
-  wants.set(round, { at: nowMs, tapped: signed || was?.tapped === true, tapKey: signed ? String(tap.key) : (was?.tapKey || null), by });
+  // THE FIRST VERIFIED TAP KEY OF A ROUND STAYS (kanban #3309, audit faucet a5-2-1): the newest one replaced it, so a stranger who read GET /opponent
+  // signed a tap of a real player's round with his own key, and the test opponent learnt his never-staked key as KNOWN once the player's lock verified
+  wants.set(round, { at: nowMs, tapped: signed || was?.tapped === true, tapKey: was?.tapKey || (signed ? String(tap.key) : null), by });
   return { ok: true };
 }
 // ONE NETWORK, NOT ONE ADDRESS (kanban #1718, #1781): an IPv6 caller is keyed by its /64, and any home line holds a /56 (256 /64s), so the cap of 2
