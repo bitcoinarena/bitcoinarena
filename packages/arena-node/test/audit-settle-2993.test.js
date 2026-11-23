@@ -45,7 +45,10 @@ const contractOf = (federationId) => ({
 const IN_FORCE = { ...FEES_TODAY, websitePct: 30 };
 const TARGET = { network: [{ recipientPk: pointKey(0x02, 0xa1), shareBps: 10000, label: 'dev' }], game: [{ recipientPk: pointKey(0x02, 0xa2), shareBps: 10000, label: 'game' }] };
 const RK = pointKey(0x02, 0xe5);
-const fields = (msat, i) => ({ paymentImage: { kind: 'hash', bytes: '' }, amountMsat: String(msat), claimPk: toHex(CLAIM_PK), refundPk: toHex(pointKey(0x02, 0x10 + i)), expiration: 1000 });
+// 2.0 (kanban #3244): a protocol-27 round at this census height locks to an Arena lock (arena-lock.js namedClaims): the lock names the round's
+// settlement seats and their threshold (5 of 7), not the FROST claim key
+const fields = (msat, i) => ({ paymentImage: { kind: 'hash', bytes: '' }, amountMsat: String(msat), claimPk: toHex(CLAIM_PK), refundPk: toHex(pointKey(0x02, 0x10 + i)), expiration: 1000,
+  arena: true, threshold: 5, claimKeys: NODES.map(toHex), roundId: toHex(RID), fallbackAfter: 2000 });
 const W = { entryId: b32(0x61), pubkey: b32(0x41), stakeMsat: STAKE, feeMsat: FEE, donationMsat: 0n, feePreimage: b32(0xb1), frontendPk: SITE, outcome: DELIVERED, score: 5 };
 const L = { entryId: b32(0x62), pubkey: b32(0x42), stakeMsat: STAKE, feeMsat: FEE, donationMsat: 0n, feePreimage: b32(0xb2), frontendPk: SITE, outcome: FAILED, score: 0 };
 const ENTRIES = [W, L];
