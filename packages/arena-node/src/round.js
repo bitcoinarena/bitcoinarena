@@ -99,7 +99,10 @@ const NEXTBLOCK_GAME_HEXES = new Set(Object.entries(KNOWN_GOOD_GAMES).filter(([,
 export const nextblockGameIds = () => [...NEXTBLOCK_GAME_HEXES].sort();
 export function noteNextblockGames(hosted) {
   for (const [id, g] of hosted || []) {
-    if (g && (g.name === 'nextblock' || (g.manifest && g.manifest.gameName === 'nextblock'))) NEXTBLOCK_GAME_HEXES.add(String(id).toLowerCase());
+    if (g && (g.name === 'nextblock' || (g.manifest && g.manifest.gameName === 'nextblock'))) {
+      NEXTBLOCK_GAME_HEXES.add(String(id).toLowerCase());
+      if (g.attestedLiquidations === true) LIQ_ATTESTED_GAME_HEXES.add(String(id).toLowerCase());   // kanban #2694
+    }
   }
 }
 // THE NEXT BLOCK VERSIONS WHOSE STAKED RUN TAKES COMMITTEE-ATTESTED LIQUIDATIONS (kanban #2694, follow-up of #2655 option 2): a

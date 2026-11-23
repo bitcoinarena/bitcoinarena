@@ -2,10 +2,10 @@
   "about": "What a node downloads of each app at its pinned commit (kanban #575): every file with its SHA-256. Written by tools/pin-apps.mjs from the apps' checkouts; never by hand.",
   "apps": {
     "arena-app-next-block": {
-      "commit": "8618a0a54d2577d765c6327f14cb85aa813ddc7c",
+      "commit": "360bb17294a15f786d47048ede4cc716a6477552",
       "files": {
         "README.md": "7fc7113426fb4d9d22e36b8000a3693e669f40de4e020c5fb1bf89014dafc482",
-        "app.json": "25437366fa6144c85df39e10b1417a0d1aa08fe9f64d51bbafe3a81345b04731",
+        "app.json": "0834f53a4967c3c46e5df40d37de7ca22225f92a1bf25b183855109bf183e2c5",
         "brand/README.md": "78902bad98a184aca191062c5476e867baa96dd735d9f6c93808ef91c4e7f293",
         "brand/apple-touch-icon.png": "7fc49db0d64f86ca70395934dc2882444792525ccd73902027cb7874604950a5",
         "brand/favicon.ico": "704eb7107d8f3150da6bb5d6a650651112223a611954e2430bfd43198b16946b",
@@ -278,6 +278,7 @@
         "plugin/known-v4.js": "6d774cbd488e72a27027cddaafc5d6ab8c06921f27f0d1e429596e995db01f7f",
         "plugin/known-v7.js": "3467731a13689cdd0a5fa76e0a8bf888022bc19ae1ab42b825d99e500e56975b",
         "plugin/known-v8.js": "18a1d17bb271ea8d921e26f81a2aca591d0b892b9286a849c6cf66f90c97a6b1",
+        "plugin/known-v9.js": "a95b9f10cc6e7591056070c9079d7de302a7f9b40f10bd47c4bafc0990ba5a00",
         "plugin/known.js": "b04bacea77a3c85d3c7d9296eca3d9f8815df64b006cf63ef9a158870216f691",
         "plugin/nextblock-manifest.js": "71244d6c0807ef9fcbcdadd6410e1f6d8a7791a90621483991289e226887fa9b",
         "plugin/nextblock-replay.html": "992da86d48821b14f28e1018f99a1b45f58960311b2817ceaa95bd898ca44eec",
@@ -288,6 +289,7 @@
         "plugin/nextblock-v6.js": "1e80910eb5adbbe504b32a14ac9c0edce7180777cbe4df84842ed463eb1403c8",
         "plugin/nextblock-v7.js": "4daf18b819e0f41bc453c1ceb07db4bffc7cc8666422c6ee6aac0c43acb8fe46",
         "plugin/nextblock-v8.js": "32c0de8a1e3c27ff0c5d41eccec4487aceb1db659a65e4d2b4234daaabbfed7f",
+        "plugin/nextblock-v9.js": "31f99b632fe7870a18a1e91e0e5389b6af7c1c07c90edd77951286c5981193cc",
         "plugin/nextblock.js": "c05e7c97510ae09e5709edd386602cf29aff5cf97f8f046204ecf66f21827c39",
         "plugin/truck-cores.js": "0cb4289826fc50f0f06051918052eabead546f1fa98805bf412b5a696a462c03",
         "src/adapter.js": "670200f2aec9e46ec0e1fd194fb0731821b85b3d49a5b23cfe6e922b53cb4ff0",
@@ -366,6 +368,7 @@
         "tools/sign-manifest-v6.mjs": "f72f62024cc9d7b282df613e0a32dd87d8f4a22062bd7a91de8ef1b7724b4a59",
         "tools/sign-manifest-v7.mjs": "e0c6f00498b2cd4ccccd4d4904ef0a5e775ecf62866d116b10e1464a91c3c330",
         "tools/sign-manifest-v8.mjs": "f8fe9c94fc6c6dbca490affb49db157de23e0a58deb71fa309220e4aa8a3d861",
+        "tools/sign-manifest-v9.mjs": "924ae27ce84fca138eff21f77a1749c0be58675ad54b709243d8029583658543",
         "tools/sign-manifest.mjs": "c18e097a025ac8c89fb9065d56be8779f931ea543955d3f9806e48604db05e55",
         "tools/skyline-panorama.py": "5d9a923917bf23c65dc9b72ada38598b9616ece3841edd90d5a85df5cbebff19",
         "view/NextBlockParts.jsx": "a6c71df43959be6af36ba3a45dcaddedeea299c77cbc334f73ae74e40cab303f",

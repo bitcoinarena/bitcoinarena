@@ -111,3 +111,21 @@ test('#2694 an attestation short of the threshold is not held; the first that st
   assert.deepEqual(s.held(toHex(net.rid)).map(([t, z]) => [t, z]), [[tick, size]]);
   assert.deepEqual(s.held(toHex(net.rid), tick + 1), [], 'from a tick on');
 });
+
+test('#2694 tidy lets go of a finished round\'s liquidation rows (past its end and objection window) and keeps a live one\'s', async () => {
+  let now = START + 60000;
+  const dbs = Array.from({ length: 7 }, () => new DatabaseSync(':memory:'));
+  const net = network({ now: () => now, dbs });
+  const T = START + 60000, tick = liquidationTick(START, T), size = liquidationSizeOf(12.5 * 81766.45);
+  for (const s of net.seats) await s.see(parseForceOrder(frame(T, '12.500', '81766.45')), { lead: false });
+  assert.equal((await net.seatOf(tick % net.n).see(parseForceOrder(frame(T, '12.500', '81766.45'))))[0].ok, true);
+  const s = net.seats[0], rh = toHex(net.rid);
+  const rows = () => [dbs[0].prepare('SELECT COUNT(*) AS n FROM liquidation_attested WHERE round = ?').get(rh).n, dbs[0].prepare('SELECT COUNT(*) AS n FROM liquidation_signed WHERE round = ?').get(rh).n];
+  assert.deepEqual(rows(), [1, 1]);
+  assert.equal(s.tidy(), 0, 'a live round keeps its rows');
+  assert.deepEqual(rows(), [1, 1]);
+  now = START + 400 * 24 * 3600 * 1000;            // long past its end and its objection window
+  assert.equal(s.tidy(), 1);
+  assert.deepEqual(rows(), [0, 0]);
+  assert.deepEqual(s.held(rh), []);
+});

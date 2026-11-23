@@ -183,6 +183,32 @@ export class LiquidationFeed {
     return m ? [...m].filter(([t]) => t >= since).sort((a, b) => a[0] - b[0]).slice(0, HELD_PAGE).map(([t, x]) => [t, x.size, x.sigs.map((y) => [y.key, y.signature])]) : [];
   }
 
+  /**
+   * LET GO OF FINISHED ROUNDS (kanban #2694, as price-feed.js tidy, #742): a round no longer held, or past its end and its objection window
+   * (first-mark.js roundEndMs + objectionWindowMs), has its signed and attested rows dropped - by then no run plays and no batch is taken.
+   * Its stored batches keep their attestations. Answers how many rounds were let go of.
+   */
+  tidy() {
+    const now = this.now();
+    let rounds = [];
+    if (this.db) { try { rounds = this.round.db.prepare('SELECT round FROM liquidation_signed UNION SELECT round FROM liquidation_attested LIMIT 4096').all().map((r) => r.round); } catch { rounds = []; } }
+    rounds = [...new Set([...rounds, ...this.attested.keys(), ...[...this.signed.keys()].map((k) => k.split(':')[0])])];
+    let gone = 0;
+    for (const rh of rounds) {
+      let finished = true;
+      try {
+        const row = this.round.get(fromHex(rh));
+        if (row) { const c = decodeRoundContract(new Uint8Array(row.contract)); finished = now > Number(roundEndMs(c)) + Number(c.objectionWindowMs || 0n); }
+      } catch { finished = true; }
+      if (!finished) continue;
+      if (this.db) { try { this.round.db.prepare('DELETE FROM liquidation_signed WHERE round = ?').run(rh); this.round.db.prepare('DELETE FROM liquidation_attested WHERE round = ?').run(rh); } catch { /* next time */ } }
+      this.attested.delete(rh);
+      for (const k of [...this.signed.keys()]) if (k.startsWith(`${rh}:`)) this.signed.delete(k);
+      gone++;
+    }
+    return gone;
+  }
+
   /** Lead one strike: this seat's signature, the others', held and handed out. */
   async lead(roundIdBytes, tick, size) {
     const rh = toHex(roundIdBytes);

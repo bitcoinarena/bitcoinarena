@@ -87,6 +87,8 @@ export function hostedPlugins(registrations = [], { verify = verifyEd25519, log 
       ...sharedWorldOf(stands.gameId).filter((h) => installed.has(h))])];   // kanban #3371
     out.set(id, Object.freeze({ name: p.name || p.manifest.gameName, gameId: stands.gameId, manifest: p.manifest, cores: p.cores,
       replayPage: p.replayPage || null, sharedWorld: Object.freeze(sharedWorld),
+      // kanban #2694: a Next Block version whose staked run plays the committee's attested liquidations only (v9 on)
+      attestedLiquidations: p.attestedLiquidations === true,
       // the name a player knows the game by and its square icon (an SVG file), when it gives them
       title: typeof p.title === 'string' && p.title ? p.title : (p.name || p.manifest.gameName), icon: p.icon || null,
       // the game's own check of the round fields only it reads (contracts.js contractWarnings appends it)

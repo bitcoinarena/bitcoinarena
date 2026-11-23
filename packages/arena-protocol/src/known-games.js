@@ -743,4 +743,16 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
     gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
     requiredProtocolVersion: 11,
   }),
+  '9db73c4e7bc71b2ed191997120a695a62095e4c48429fc7f673513e508bbd5f2': Object.freeze({
+    name: 'nextblock',
+    // NEXT BLOCK VERSION 9 (kanban #2694): version 8 in every term (core 7d197042) - a staked run plays the committee's attested liquidations only
+    cores: Object.freeze({
+      '7d1970426bc7146ef2cddcf2d4ad1aa1e53647a9dbef3bc1cfc319aae161fca7': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
+    }),
+    sharedWorld: Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d']),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    requiredProtocolVersion: 11,
+    // its staked run takes the committee's attested liquidations (attestation kind 4) and refuses a bare one (arena-node round.js)
+    attestedLiquidations: true,
+  }),
 });

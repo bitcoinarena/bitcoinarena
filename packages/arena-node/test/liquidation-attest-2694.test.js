@@ -85,3 +85,18 @@ test('#2694 v9 staked run: a batch that leaves out a strike this seat holds atte
   play(r, rid, eid, { liquidations: [[7, SIZE]], attests: [att(rid, 7, SIZE)] });
   assert.deepEqual(r.transcript(rid, eid).liquidations, [[7, SIZE]]);
 });
+
+test('#2694 a seat that hosts a registration marked attestedLiquidations takes its staked runs\' strikes attested; known-games marks v9', async () => {
+  const { hostedPlugins } = await import('../src/plugins.js');
+  const { NEXTBLOCK } = await import('../../nextblock/plugin/nextblock.js');
+  const { attestedLiquidationGameIds, noteNextblockGames } = await import('../src/round.js');
+  const { KNOWN_GOOD_GAMES } = await import('../../arena-protocol/src/known-games.js');
+  assert.equal(KNOWN_GOOD_GAMES['9db73c4e7bc71b2ed191997120a695a62095e4c48429fc7f673513e508bbd5f2'].attestedLiquidations, true, 'v9 is marked');
+  assert.ok(!KNOWN_GOOD_GAMES['b6f824f777b069a02c56569162440ca935f780b2aef21038c939e24be7d668a6'].attestedLiquidations, 'v8 is not');
+  assert.ok(attestedLiquidationGameIds().includes('9db73c4e7bc71b2ed191997120a695a62095e4c48429fc7f673513e508bbd5f2'));
+  const hosted = hostedPlugins([{ ...NEXTBLOCK, attestedLiquidations: true }]);
+  const [[id, entry]] = [...hosted];
+  assert.equal(entry.attestedLiquidations, true, 'the hosted entry keeps the registration\'s rule');
+  noteNextblockGames(hosted);
+  assert.ok(attestedLiquidationGameIds().includes(String(id).toLowerCase()));
+});
