@@ -17,7 +17,7 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { nodeBonds } from '../../arena-protocol/src/census.js';
 import { abandonmentProof } from '../../arena-protocol/src/absence.js';
 import { absenceHex, readAbsenceHex, departureHex, readDepartureHex, dueDeparture, emergencyHex, readEmergencyHex } from './absences.js';
-import { emergencyDepartureStands, emergencyDepartureEffect, emergencyDepartureId } from '../../arena-protocol/src/emergency.js';
+import { emergencyEntryOf, emergencyDepartureStands, emergencyDepartureEffect, emergencyDepartureId } from '../../arena-protocol/src/emergency.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { withConfigEndpoints } from './federation-endpoints.js';
 import { recordInviteSource, createInviteBuffer } from '../../arena-protocol/src/trusted-guardian-keys.js';
@@ -885,7 +885,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   const emergencyVerify = (sg, m, k) => { try { return schnorr.verify(sg, m, k); } catch { return false; } };
   function emergencyDeparted(b, g, d, proof) {
     if (!d || !Number.isInteger(abandonBlocks)) return null;
-    const entry = (b.census.entries || []).find((e) => e && e.pubkey && toHex(e.pubkey) === toHex(g.nodePubkey));
+    const entry = emergencyEntryOf(b.census.entries, g.nodePubkey);
     const st = emergencyDepartureStands(d, { advert: entry && entry.advert, tip: b.height, verify: emergencyVerify });
     if (!st.ok) return null;
     const eff = emergencyDepartureEffect(st, { guardian: true, lastSeenHeight: proof && proof.ok ? proof.sinceHeight : null, abandonBlocks });

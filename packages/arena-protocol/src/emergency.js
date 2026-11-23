@@ -85,6 +85,17 @@ export const signEmergencyDeparture = (d, sign) => ({ ...d, signature: sign(emer
  * height the seat has seen (not ahead of its tip). `advert` the node's census advertisement; `fresh`: on taking it, posted at most
  * EMERGENCY_FRESH_BLOCKS before the tip. Answers { ok, nodePubkey, postedAt } or why not.
  */
+/**
+ * THE CENSUS ENTRY WHOSE ADVERTISEMENT NAMES A NODE'S EMERGENCY KEY (kanban #3348, audit census-a6-1-1, high): the first entry under the node's
+ * key whose deciding body the node signed (census.js `nodeSigned`; an entry without the mark is taken as before). A stranger's own bond to a
+ * node's key under another operator id stands in the census with the stranger's unsigned body, sorted first by txid: its emergency key let one
+ * stranger-signed leave request take the node out of every seating and make a guardian DEPARTED.
+ */
+export function emergencyEntryOf(entries, nodePubkey) {
+  const node = toHex(nodePubkey);
+  return (entries || []).find((e) => e && e.nodeSigned !== false && e.pubkey && toHex(e.pubkey) === node) || null;
+}
+
 export function emergencyDepartureStands(d, { advert, tip, verify, fresh = false }) {
   try { encodeEmergencyDeparture(d); } catch (e) { return { ok: false, why: e.message }; }
   if (!advert) return { ok: false, why: 'that node is not in the census' };
