@@ -17,12 +17,22 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 // AND A MARK OF THEFT (kanban #1093 part 2, ruling #1106): "the federation is treated as HALTED from that height. Liquidation runs as in §23A.5 ...
 // The proof is the alarm plus the chain spend." `alarms` (reserve-alarms.js): a federation with a standing alarm is halted from the alarm's
 // height; a record's or the seats' halt, when one exists, counts first.
-export function createLiquidations({ records, clocks, verify, claimsUrl = null, halts = null, alarms = null }) {
+export function createLiquidations({ records, clocks, verify, claimsUrl = null, halts = null, alarms = null, load = () => [], save = () => {} }) {
   const alarmHalt = (fid) => { const a = alarms ? alarms.of(fid) : null; return a ? { height: a.height, alarm: a } : null; };
   const haltOf = (fid) => records.haltOf(fid) || (halts ? halts.haltOf(fid) : null) || alarmHalt(fid);
   const haltedFederations = () => [...new Set([...records.haltedFederations(), ...(halts ? halts.haltedFederations() : []),
     ...(alarms ? alarms.list().map((a) => a.federation) : [])])];
   const copies = new Map();                  // federation id hex -> Map(signer hex -> copy)
+  // THE COPIES ARE KEPT ACROSS A RESTART (kanban #2932, feedback #246), as halts.js keeps its observations: in memory only, a restarted seat
+  // knew no spent set until a still-answering guardian republished (every 10 min) - a halted federation's guardian may never again.
+  // A stored copy is checked again where it is read (newestSpentSet verifies every copy against the held record).
+  const persist = () => { try { save([...copies.values()].flatMap((m) => [...m.values()].map((c) => ({ spentSet: toHex(encodeSpentSet(c)), signature: toHex(c.signature) })))); } catch { /* kept in memory */ } };
+  { let stored = []; try { stored = load() || []; } catch { stored = []; }
+    for (const said of Array.isArray(stored) ? stored : []) {
+      try { const c = { ...decodeSpentSet(fromHex(String(said.spentSet || ''))), signature: fromHex(String(said.signature || '')) };
+        const fid = toHex(c.federationId); const m = copies.get(fid) || new Map(); copies.set(fid, m);
+        const had = m.get(toHex(c.signer)); if (!had || had.session < c.session) m.set(toHex(c.signer), c); } catch { /* a stored copy that no longer reads */ }
+    } }
 
   /** Takes one guardian's signed copy, `{ spentSet: hex, signature: hex }`; answers { ok, kept } or why not. */
   function offer(said) {
@@ -38,6 +48,7 @@ export function createLiquidations({ records, clocks, verify, claimsUrl = null, 
     const had = mine.get(toHex(c.signer));
     if (had && had.session >= c.session) return { ok: true, kept: false, why: `that guardian's copy of session ${had.session} is held already` };
     mine.set(toHex(c.signer), c);
+    persist();
     return { ok: true, kept: true, session: c.session };
   }
 

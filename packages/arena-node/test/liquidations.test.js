@@ -55,3 +55,15 @@ test('a mark of theft halts the federation for liquidation from the alarm\'s hei
   const both = createLiquidations({ records: recordsAt('HALTED', 880), clocks: TESTNET_CLOCKS, verify, alarms });
   assert.equal(both.list()[0].haltHeight, 880, 'a signed HALTED record\'s height counts first');
 });
+test('#2932 the spent-set copies outlive a restart, as the halt observations do (feedback #246)', () => {
+  let file = null;
+  const mk = () => createLiquidations({ records: recordsAt('HALTED', 880), clocks: TESTNET_CLOCKS, verify, load: () => (file ? JSON.parse(file) : []), save: (v) => { file = JSON.stringify(v); } });
+  const l = mk();
+  for (const g of guardians.slice(0, 3)) assert.equal(l.offer(said(g, 41, [1, 2, 3])).kept, true);
+  const again = mk();
+  const [x] = again.list();
+  assert.ok(x.spentSet, 'the restarted seat lost its copies');
+  assert.deepEqual([x.spentSet.session, x.spentSet.signers, x.spentSet.nonces], [41, 3, 3]);
+  file = '[{"spentSet":"zz"}]';
+  assert.equal(mk().list()[0].spentSet, null, 'a stored copy that does not read is dropped, not fatal');
+});
