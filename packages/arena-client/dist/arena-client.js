@@ -28860,13 +28860,20 @@ class Client {
   }
 
   /** Whether the round's settlement is combined, as this client's own node answers it (none for a free round). */
+  // NOT ON ONE SEAT'S WORD (kanban #3360, audit play-a6-2-1, high): the home seat answering an unsigned {"state":"ACCEPTED"} as the run
+  // finished ended the catch-up before its first re-offer - a peer one feed behind never got the final mark, and the honest DELIVERED run
+  // closed on the previous carried mark. Now more than half of the committee's seats this client reads (its node and its peers) must say so.
   async #combined() {
-    try {
-      const r = await fetch(`${this.base}/lock-settlement?round=${toHex(this.where.roundId)}`);
-      if (!r.ok) return false;
-      const s = await r.json();
-      return s && (s.state === 'SUBMITTING' || s.state === 'ACCEPTED');
-    } catch { return false; }
+    const bases = [this.base, ...(this.peers || [])];
+    const said = await Promise.all(bases.map(async (base) => {
+      try {
+        const r = await fetch(`${base}/lock-settlement?round=${toHex(this.where.roundId)}`, { signal: AbortSignal.timeout(4000) });
+        if (!r.ok) return false;
+        const s = await r.json();
+        return !!s && (s.state === 'SUBMITTING' || s.state === 'ACCEPTED');
+      } catch { return false; }
+    }));
+    return said.filter(Boolean).length * 2 > bases.length;
   }
 
   /** Every peer's feed settled - for tests and for measuring the lag. */
