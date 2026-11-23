@@ -70,7 +70,10 @@ function transactionSpan(raw, from) {
 export function splitBlock(raw) {
   if (!(raw instanceof Uint8Array) || raw.length < 81)
     throw new Error(`a block is more than ${raw && raw.length} bytes`);
-  const header = raw.slice(0, 80);
+  // VIEWS OF THE BLOCK'S ONE BUFFER, NOT COPIES (kanban #3238): a seat keeps every block of its census window (main.js blockCache), and a
+  // copy per transaction was one small malloc'd ArrayBuffer each - tens of thousands, long-lived, between the reads' short-lived buffers
+  // (glibc never gives the gaps back: ~0.9 GB of a seat's native memory). Nothing writes a block's bytes in place (tx.js keeps views too).
+  const header = raw.subarray(0, 80);
   const count = readVarint(raw, 80);
   if (count.value === 0) throw new Error('a block has at least a coinbase');
 
@@ -78,7 +81,7 @@ export function splitBlock(raw) {
   let at = count.next;
   for (let i = 0; i < count.value; i++) {
     const end = transactionSpan(raw, at);
-    transactions.push(raw.slice(at, end));
+    transactions.push(raw.subarray(at, end));
     at = end;
   }
   if (at !== raw.length)

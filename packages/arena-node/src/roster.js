@@ -153,15 +153,15 @@ export function whereInView(view, hex) {
 
 /** A chain view's transactions by txid, indexed once per view object (censusFor). */
 const TXIDS_OF_VIEW = new WeakMap();
-// A block's transactions by txid, read once per block object (kanban #3010): kept with the block, so every view that holds it shares one map
-const TXIDS_OF_BLOCK = new WeakMap();
+// A block's transactions by txid (kanban #3010), from the block's one txid index (whereInBlock) - not a second map of its own (kanban #3238:
+// TXIDS_OF_BLOCK held another hex string per txid of every kept block beside WHERE_OF_BLOCK's). A block with a transaction that does not
+// parse has no index; its transactions are read one by one, as before, and not kept.
 function txidsOfBlock(block) {
-  let m = TXIDS_OF_BLOCK.get(block);
-  if (!m) {
-    m = new Map();
-    for (const raw of block.transactions || []) { try { m.set(toHex(parseTransaction(raw).txid), raw); } catch { /* not one */ } }
-    TXIDS_OF_BLOCK.set(block, m);
-  }
+  const w = whereInBlock(block);
+  const txs = block.transactions || [];
+  if (w) return { get: (hex) => { const at = w.at.get(hex); return at === undefined ? undefined : txs[at]; }, *[Symbol.iterator]() { for (const [hex, at] of w.at) yield [hex, txs[at]]; } };
+  const m = new Map();
+  for (const raw of txs) { try { m.set(toHex(parseTransaction(raw).txid), raw); } catch { /* not one */ } }
   return m;
 }
 // A CENSUS THAT DID NOT MATCH ITS ROUND'S ROOT, kept with the view it was derived from (2026-10-25, measured on testnet4: the

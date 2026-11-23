@@ -62,7 +62,7 @@ export function readVarint(bytes, at) {
 
 // VIEWS, NOT COPIES (kanban #3236, a heap snapshot of a seat: 74,118 kept parses, 388 MB - every script, witness item and previous txid
 // its own copied buffer). A parse's byte fields are views of the raw transaction: nothing writes them or the raw bytes in place (a raw is
-// a block's own slice, splitBlock), and a kept parse is kept with its raw anyway (census.js parsedKept).
+// a view of its block's bytes, splitBlock - kanban #3238), and a kept parse is kept with its raw anyway (census.js parsedKept).
 function readSlice(bytes, at, what) {
   const { value, next } = readVarint(bytes, at);
   const end = need(bytes, next, value, what);
