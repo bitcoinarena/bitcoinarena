@@ -10,12 +10,13 @@
 // ZAP_MINTS_ALL from all of them together, on both doors. A caller on the host itself with no proxy header is the host's own tools.
 // The stranger therefore comes through the proxy: from one address, and from a fresh address each call.
 // Safe: strangers' calls mint at most ZAP_MINTS_ALL LND invoices per window (one address ZAP_MINTS_PER_ASKER), and no more than
-// ZAP_MINTING_MAX (16, the #1754 figure) at once on either door (kanban #2302).
+// ZAP_MINTING_MAX (16, the #1754 figure) at once on either door (kanban #2302). Since kanban #3379 a window keeps ZAP_MINTS_SPARE more
+// for networks that have minted little, so the bound for strangers together is ZAP_MINTS_ALL + ZAP_MINTS_SPARE.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { serveZapAddresses, signNostr, ZAP_PENDING_MAX, ZAP_MINTS_PER_ASKER, ZAP_MINTS_ALL } from '../src/zap-address.js';
+import { serveZapAddresses, signNostr, ZAP_PENDING_MAX, ZAP_MINTS_PER_ASKER, ZAP_MINTS_ALL, ZAP_MINTS_SPARE } from '../src/zap-address.js';
 import * as zapAddress from '../src/zap-address.js';
 import { testInvoice } from './bolt11-fixture.js';
 
@@ -33,7 +34,7 @@ const mintingServer = (onInvoice) => serveZapAddresses({ publicHost: 'zap.exampl
     return { request: testInvoice({ amountMsat, paymentHash, descriptionHash }), paymentHash: Buffer.from(paymentHash).toString('hex') }; },
   lookup: async () => ({ settled: false }), publish: async () => {}, watchMs: 3600000 });
 
-for (const [who, ipFor, cap] of [['one stranger address', () => '203.0.113.7', ZAP_MINTS_PER_ASKER], ['a fresh address each call', ipOf, ZAP_MINTS_ALL]]) {
+for (const [who, ipFor, cap] of [['one stranger address', () => '203.0.113.7', ZAP_MINTS_PER_ASKER], ['a fresh address each call', ipOf, ZAP_MINTS_ALL + ZAP_MINTS_SPARE]]) {
   test(`#2230 (1.9) a44-refute-56-2: fresh-key zap requests from ${who} cannot mint unbounded LND invoices`, async () => {
     let minted = 0;
     const z = await mintingServer(async () => { minted++; });
