@@ -3211,6 +3211,12 @@ window; nodes timestamp receipt and return a signed `CheckpointReceipt`.
 This proves the player committed to that state at approximately that real
 time.
 
+**The required window** *(kanban #2826, 2026-11-23)*: a node's clock for a run starts at the first
+mark it holds (that mark's tick, its arrival there). A later mark more than 600 ticks (two price
+sample periods) behind that clock is not receipted by that node; the receipt threshold decides
+whether the run stands. Batches are not refused on this rule, and a peer's catch-up of an old run
+is not either: only a node's own live receipt is bound to its clock.
+
 It does **not** prove that a human played, that no bot was used, or that no
 local forward simulation was performed. Arena makes no such claim.
 
