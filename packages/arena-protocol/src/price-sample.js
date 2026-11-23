@@ -222,6 +222,7 @@ export function checkBatchPrices({ batch, roundId, committee, threshold, verify,
   const at = (list, tick) => (list || []).filter((x) => x[0] === tick);
   const isTape = (kind) => kind === 1 || kind === 3;
   for (const [tick, kind, cents, sigs] of attests) {
+    if (kind === 4) continue;   // kanban #2694: an attested liquidation is checkBatchLiquidations' business
     if ((kind === 2 || kind === 3) !== !!median)
       return { ok: false, why: median ? `the ${isTape(kind) ? 'tape' : 'sample'} at tick ${tick} is a price one seat proposed: a round of protocol 5 plays the median of the committee's own signed readings`
         : `the ${isTape(kind) ? 'tape' : 'sample'} at tick ${tick} is a median of signed readings, a protocol 5 price: this round plays the committee's attested prices` };
@@ -256,4 +257,55 @@ export function checkBatchPrices({ batch, roundId, committee, threshold, verify,
     if (bare) return { ok: false, why: `a ${bare} without the committee's attestation: the player never chooses the price (§11)` };
   }
   return { ok: true, attested: attests.length };
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------
+// LIQUIDATIONS THE COMMITTEE ATTESTS (kanban #2694, follow-up of #2655 option 2). A Next Block strike is a forced liquidation on
+// the exchange; the player named its tick and size and nobody checked them, so a modified client cratered every tank near its
+// truck (#2655) - a staked run then took none at all. Now each committee seat reads the exchange's forceOrder stream itself and
+// signs what it saw:
+//   AN EVENT is (round, tick, size): tick the round tick of the exchange's own trade time, size its notional in millions of USD,
+//     Q16.16 - the liquidation word the core already takes. Both come from the exchange's fields, so honest seats sign one pair.
+//   liquidationEventId = taggedHash(LiquidationEvent, round_id || u32 tick || i32 size), BIP-340 by the seat's node key; an
+//     attestation stands with `threshold` distinct keys of the round's committee (priceAttestationStands, the same budget).
+//   THE BATCH carries it as attestation kind 4, [tick, 4, size, [[key, sig], ...]] (batch.js), beside the [tick, size] it plays.
+// ---------------------------------------------------------------------------------------------------------------------------
+
+export function encodeLiquidationEvent({ roundId, tick, size }) {
+  if (!isBytes32(roundId)) throw new Error('a liquidation event names its 32-byte round');
+  if (!Number.isInteger(tick) || tick < 0 || tick > 0xffffffff) throw new Error('a liquidation event names its tick');
+  if (!Number.isInteger(size) || size <= 0 || size > 0x7fffffff) throw new Error('a liquidation is a whole, positive size');
+  const w = new Writer();
+  w.bytes32(roundId); w.u32(tick); w.i32(size);
+  return w.finish();
+}
+export const liquidationEventId = (x) => taggedHash(TAG.liquidationEvent, encodeLiquidationEvent(x));
+
+/** An attested liquidation stands as an attested price sample does: `threshold` distinct keys of `committee` signed its id. */
+export const liquidationAttestationStands = (args) => priceAttestationStands(args);
+
+/**
+ * THE LIQUIDATIONS A BATCH PLAYED, CHECKED AGAINST THE COMMITTEE'S SIGNATURES (kanban #2694): every kind 4 attestation must stand
+ * for this round and the batch must play exactly that [tick, size]; with `require` (a staked run of a game that takes attested
+ * liquidations) a non-zero liquidation without a standing attestation at its tick is refused - the player never chooses a strike.
+ * A zero-size liquidation is no strike and needs none. Answers { ok, attested: n } or { ok: false, why }.
+ */
+export function checkBatchLiquidations({ batch, roundId, committee, threshold, verify, require = false }) {
+  const liq = batch.liquidations || [];
+  const attested = new Map();
+  for (const [tick, kind, size, sigs] of batch.attests || []) {
+    if (kind !== 4) continue;
+    let id; try { id = liquidationEventId({ roundId, tick, size }); } catch (e) { return { ok: false, why: `the liquidation at tick ${tick}: ${e.message}` }; }
+    const s = liquidationAttestationStands({ id, sigs: (sigs || []).map(([key, signature]) => ({ key, signature })), committee, threshold, verify });
+    if (!s.ok) return { ok: false, why: `the liquidation at tick ${tick} is not attested: ${s.why}` };
+    const played = liq.filter((x) => x[0] === tick);
+    if (played.length !== 1 || played[0][1] !== size)
+      return { ok: false, why: `the liquidation at tick ${tick} is not the attested size ${size}` };
+    attested.set(tick, size);
+  }
+  if (require) {
+    const bare = liq.find(([tick, size]) => Number(size) !== 0 && attested.get(tick) !== size);
+    if (bare) return { ok: false, why: `a liquidation at tick ${bare[0]} without the committee's attestation: the player never chooses a strike` };
+  }
+  return { ok: true, attested: attested.size };
 }

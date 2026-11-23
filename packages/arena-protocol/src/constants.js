@@ -666,6 +666,8 @@ export const TAG = {
   // seat alone; nobody signs anyone else's price
   priceReading: 'ARENA/v1/PriceReading',
   priceTapeReading: 'ARENA/v1/PriceTapeReading',
+  // kanban #2694: one forced liquidation the committee's seats saw on the exchange, (round, tick, size) - each seat signs it
+  liquidationEvent: 'ARENA/v1/LiquidationEvent',
   // THE BALLOT (§27A.7.2-3): a proposal's body the proposer signs, its id, and what a bond key signs to vote
   configProposalBody: 'ARENA/v1/ConfigProposalBody',
   configProposal: 'ARENA/v1/ConfigProposal',
