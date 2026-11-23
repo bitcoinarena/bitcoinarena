@@ -170,7 +170,8 @@ test('guardingOpenOf: operators whose adverts name a federation held OPEN, other
   // (the owner "A"): a federation no seat holds a record of counts as guarded - its guardians are not free for a cohort
   // kanban #3031: that claim holds back the claiming node (its key), not every node naming its self-declared operator id
   const decoyNode = toHex(sEntries.find((e) => e.advert.operatorId === 'decoy').pubkey);
-  assert.deepEqual([...guardingOpenOf({ entries: sEntries, held: [{ federation: toHex(F), status: 'DRAINING' }], except: null })], [decoyNode], 'no record of G: its guardian counts as guarding it');
+  // kanban #3156: and its census-bound operator (opOf - here the fixture's bound 'decoy'), whose other nodes guard through it (spec 23A.2)
+  assert.deepEqual([...guardingOpenOf({ entries: sEntries, held: [{ federation: toHex(F), status: 'DRAINING' }], except: null })], [decoyNode, 'decoy'], 'no record of G: its guardian counts as guarding it');
   // the nodes a set leaves out of the draw: by operator, or (kanban #3031, a claim on a federation no seat holds) by the node's own key
   const leftOut = (set) => sEntries.filter((e) => set.has(e.advert.operatorId) || set.has(toHex(e.pubkey))).map((e) => toHex(e.pubkey)).sort();
   assert.deepEqual(leftOut(guardingOpenOf({ entries: sEntries, held: [], except: toHex(G) })), leftOut(guardingOpenOf({ entries: sEntries, held: [{ federation: toHex(F), status: 'OPEN' }], except: toHex(G) })), 'unknown counts as OPEN');
