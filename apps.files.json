@@ -414,7 +414,7 @@
       "exec": []
     },
     "arena-app-up-or-down": {
-      "commit": "2390a6c500b5e66e3aff16ff03c1d3896c51f4b2",
+      "commit": "0db1867f68a715826eacf366d3f9c97cae9e6359",
       "files": {
         "app.json": "3482954b8dd93640ac044b3b4f82072b0785031f6da0c62ddf62c79437773ad1",
         "brand/updown-icon.svg": "3b6d03a10e6e3173ad19cbfe6c3850b8c78d7c37fdd0f06ad25e1c4299a8ec4b",
@@ -449,7 +449,7 @@
         "package.json": "2e0b61ff9c039512bcfa16ff69cbb2f72ade3612af8fd1bc853e3006e9e89951",
         "page/book-bot.js": "c5ad215e49559425cc4183fa3fc3a1510542277bb42190195f228ad1f09576d0",
         "page/market-page.css": "e711b857a639bfdb0b174847fcca8504072637a600c50b036af8b75a9e5f7d23",
-        "page/market-page.js": "cf7beb50ce9c20fb3d2096a8904786eaec5bbe9911a20426def2ef33af0a035a",
+        "page/market-page.js": "d930a23f48ca4bce3872753d12e66d3f0c077df3b0073f80aa3f19d818e15edb",
         "plugin/attestors.js": "b5dfb5f40eb6b315ef0f98dcab73fe603eebb329f4dd6c985513086a1a1f8837",
         "plugin/btc-updown-v10.js": "3c8652c5bc8941c231e266ebcca520fcf8ae137eccd365f9f576c4e186610783",
         "plugin/btc-updown-v11.js": "3e5ef1fc8c371499175d65a7d913771605b030bd5a815229f290440c5b7a36e3",
