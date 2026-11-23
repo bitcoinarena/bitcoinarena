@@ -75,7 +75,9 @@ export function createSeriesPull({ peers, held, take, parse, idOf, fetchFn = fet
           const notBegun = Number(s.startTimeMs) > now();
           if (!/^[0-9a-f]{64}$/.test(id) || have.has(id) || !(Number(s.ahead) > 0 || notBegun)) continue;
           if (!from.has(id)) from.set(id, []);
-          from.get(id).push(u);
+          // ONE PEER COUNTS ONCE FOR AN ID (kanban #2811, #1489 r22-gossip-1): a peer listing 40 made-up ids 4 times each counted as 4 peers per
+          // id - sorted ahead of a real series 2 honest peers list, past the #2424 solo share and strikes, and the pass spent its budget on them
+          if (!from.get(id).includes(u)) from.get(id).push(u);
         }
       }));
       out.missing = from.size;
