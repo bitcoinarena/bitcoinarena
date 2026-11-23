@@ -553,6 +553,7 @@ export class Client {
     this.samples = [];            // [tick, price], the live price samples not yet published
     this.tapes = [];              // [tick, p0 .. p63], the live tape not yet published
     this.attests = [];            // [tick, kind, cents, sigs], the committee's word on a sample (0) or the tape (1) (§11)
+    this.liquidations = [];       // [tick, size], the committee's attested strikes not yet published (kanban #2694, kind 4 in attests)
     this.nodes = [];              // the committee, off the round's own contract
     this.gameVerifySlots = 7;
     this.hold = [];               // ticks waiting to go out
@@ -1997,6 +1998,7 @@ export class Client {
       this.samples = this.samples.filter(([at]) => at >= this.nextTick);
       this.tapes = this.tapes.filter(([at]) => at >= this.nextTick);
       this.attests = this.attests.filter(([at]) => at >= this.nextTick);
+      this.liquidations = this.liquidations.filter(([at]) => at >= this.nextTick);
       this.batchesLandedUnheard++;
     }
     // AND THE PEERS ARE FED WHAT THIS NODE TOOK, including a batch whose answer
@@ -2308,6 +2310,7 @@ export class Client {
     this.samples = [];
     this.tapes = [];
     this.attests = [];
+    this.liquidations = [];
     this.dropped = 0;
     this.batchesSent = 0;
     this.marksSent = 0;
@@ -2517,6 +2520,19 @@ export class Client {
     return true;
   }
 
+  /**
+   * THE COMMITTEE'S STRIKE (kanban #2694): a forced liquidation the seats signed for `tick` - size in millions of USD, Q16.16, the word
+   * the core takes - with their signatures ([key, sig]). Applied at exactly that tick (the run is at it now) and published beside its
+   * attestation (kind 4), which every seat checks. Refused at any other tick, a size that is no strike, or once the run ended.
+   */
+  submitAttestedLiquidation({ tick, size, sigs }) {
+    if (this.ended || !this.where || tick !== this.offered || !Number.isInteger(size) || size <= 0 || size > 0x7fffffff || !Array.isArray(sigs)) return false;
+    if (this.liquidations.some(([at]) => at === tick)) return false;
+    this.liquidations.push([tick, size]);
+    this.attests.push([tick, 4, size, sigs]);
+    return true;
+  }
+
   /** THE COMMITTEE'S TAPE: the 64 signed prices before the start, in cents, with their signatures - at tick `tick`. */
   submitAttestedTape({ tick, prices, sigs, readings }) {
     if (this.ended || !this.where || tick !== this.offered || !prices || prices.length !== 64) return false;
@@ -2661,11 +2677,14 @@ export class Client {
     this.samples = this.samples.filter(([at]) => at >= through);
     const tapes = this.tapes.filter(([at]) => at < through).slice(0, 1);
     this.tapes = this.tapes.filter((t) => !tapes.includes(t));
-    // the committee's word on the samples and the tape this batch carries, and on nothing else (§11)
-    const attests = this.attests.filter(([at, kind]) => (kind === 0 || kind === 2 ? samples : tapes).some((x) => x[0] === at));
+    // the committee's strikes this batch covers (kanban #2694)
+    const liquidations = this.liquidations.filter(([at]) => at < through);
+    this.liquidations = this.liquidations.filter(([at]) => at >= through);
+    // the committee's word on the samples, the tape and the strikes this batch carries, and on nothing else (§11)
+    const attests = this.attests.filter(([at, kind]) => (kind === 4 ? liquidations : kind === 0 || kind === 2 ? samples : tapes).some((x) => x[0] === at));
     this.attests = this.attests.filter((a) => !attests.includes(a));
 
-    this.publishing = this.batch(words, { ...this.where, loads, samples, tapes, attests }).then((r) => {
+    this.publishing = this.batch(words, { ...this.where, loads, samples, tapes, attests, liquidations }).then((r) => {
       if (r.accepted) {
         this.batchesSent++;
         // PUBLISHING AGAIN IS NEWS TOO. A run that recovered must stop
@@ -2684,6 +2703,7 @@ export class Client {
         this.samples = samples.concat(this.samples);
         this.tapes = tapes.concat(this.tapes);
         this.attests = attests.concat(this.attests);
+        this.liquidations = liquidations.concat(this.liquidations);
         if (typeof r.answer === 'string' && r.answer.startsWith(CLOSED)) {
           // THE LINK WENT WITH THE BATCH IN FLIGHT. The node refused nothing,
           // so this is not a refusal and does not resync towards VOID -
@@ -2723,6 +2743,7 @@ export class Client {
       this.samples = samples.concat(this.samples);
       this.tapes = tapes.concat(this.tapes);
       this.attests = attests.concat(this.attests);
+      this.liquidations = liquidations.concat(this.liquidations);
       this.publishing = null;
       throw e;
     });

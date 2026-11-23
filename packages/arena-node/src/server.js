@@ -3735,7 +3735,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const closeLiquidationStream = priceFeed === true && process.env.ARENA_LIQUIDATION_FEED !== '0' ? strikeFeed.connect() : () => {};
   // THE FEED LETS GO OF ITS FINISHED ROUNDS (kanban #742): looked at once a minute, on every seat - a seat without the feed
   // still holds what the committee posts to it - and the sizes held logged at most every 10 minutes (price-feed.js tidy)
-  const priceTidy = setInterval(() => { try { prices.tidy(); } catch (e) { console.error(`[prices] tidy: ${e.message}`); } }, 60000);
+  const priceTidy = setInterval(() => { try { prices.tidy(); } catch (e) { console.error(`[prices] tidy: ${e.message}`); }
+    try { strikeFeed.tidy(); } catch (e) { console.error(`[liquidations] tidy: ${e.message}`); } }, 60000);   // kanban #2694
   if (priceTidy.unref) priceTidy.unref();
   // NOBODY IS CONFLICTED IN A ROUND (§5A.13, RULED 2026-10-14 ~20:01Z): a player declares no operator, so no
   // committee node is left out of signing, settling or the fee share by one, and no round is voided for it. An entry an older page
@@ -13982,7 +13983,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const since = String(url.searchParams.get('since') || '0');
         if (!/^[0-9a-f]{64}$/.test(rh) || !/^[0-9]{1,10}$/.test(since)) return text(res, 400, 'GET /liquidation-strikes?round=<id>&since=<tick>');
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
-        return res.end(JSON.stringify({ liquidations: strikeFeed.held(rh, Number(since)) }));
+        // `on`: the round's run takes attested strikes (a staked run of a version marked attestedLiquidations) - the page then plays these only
+        const row = round.get(Buffer.from(rh, 'hex'));
+        let on = false; try { on = !!(row && liqRound(decodeRoundContract(new Uint8Array(row.contract)))); } catch { on = false; }
+        return res.end(JSON.stringify({ liquidations: strikeFeed.held(rh, Number(since)), on }));
       }
       if (req.method === 'POST' && (url.pathname === '/liquidation-sign' || url.pathname === '/liquidation-attested')) {
         let body; try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'that body is not JSON'); }

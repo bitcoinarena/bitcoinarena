@@ -1518,6 +1518,8 @@ const TAG = {
   // seat alone; nobody signs anyone else's price
   priceReading: 'ARENA/v1/PriceReading',
   priceTapeReading: 'ARENA/v1/PriceTapeReading',
+  // kanban #2694: one forced liquidation the committee's seats saw on the exchange, (round, tick, size) - each seat signs it
+  liquidationEvent: 'ARENA/v1/LiquidationEvent',
   // THE BALLOT (§27A.7.2-3): a proposal's body the proposer signs, its id, and what a bond key signs to vote
   configProposalBody: 'ARENA/v1/ConfigProposalBody',
   configProposal: 'ARENA/v1/ConfigProposal',
@@ -3360,6 +3362,12 @@ const TAPE_PRICES = 64;
  */
 const MAX_ATTEST_SIGS = 9;
 const MAX_ATTESTED_SAMPLES = 256;
+/**
+ * kanban #2694: kind 4 is a LIQUIDATION the committee attests, `[tick, 4, size, [[key32, sig64], ...]]` - the kind 0 layout,
+ * size in the liquidation word's unit (millions of USD, Q16.16), each sig over price-sample.js liquidationEventId. One a tick,
+ * at most this many a batch; a batch without one keeps its bytes. A seat built before it cannot decode kind 4 and refuses it.
+ */
+const MAX_ATTESTED_LIQUIDATIONS = 64;
 /** How many words of input a tick carries. The core's `step` arity. */
 const INPUT_WORDS = 5;
 
@@ -3408,8 +3416,11 @@ function encodeInputBatch(b) {
   const attests = [...(b.attests || [])].sort((x, y) => x[1] - y[1] || x[0] - y[0]);
   const sampleTicks = attests.filter((a) => a[1] === 0 || a[1] === 2).map((a) => a[0]);
   if (new Set(sampleTicks).size !== sampleTicks.length || sampleTicks.length > MAX_ATTESTED_SAMPLES || attests.filter((a) => a[1] === 1 || a[1] === 3).length > 1
-    || attests.some((a) => a[1] !== 0 && a[1] !== 1 && a[1] !== 2 && a[1] !== 3))
+    || attests.some((a) => a[1] !== 0 && a[1] !== 1 && a[1] !== 2 && a[1] !== 3 && a[1] !== 4))
     throw new Error(`a batch carries one attested sample a tick (at most ${MAX_ATTESTED_SAMPLES}) and at most one attested tape`);
+  const liqTicks = attests.filter((a) => a[1] === 4).map((a) => a[0]);
+  if (new Set(liqTicks).size !== liqTicks.length || liqTicks.length > MAX_ATTESTED_LIQUIDATIONS)
+    throw new Error(`a batch carries one attested liquidation a tick (at most ${MAX_ATTESTED_LIQUIDATIONS})`);
   if (samples.length || tapes.length || rooms.length || attests.length) w.vec(samples, (l, ww) => { ww.u32(l[0]); ww.i32(l[1]); });
   if (tapes.length || rooms.length || attests.length) w.vec(tapes, (l, ww) => {
     if (l.length !== 1 + TAPE_PRICES) throw new Error(`a tape carries ${TAPE_PRICES} prices`);
@@ -3420,10 +3431,10 @@ function encodeInputBatch(b) {
     const [tick, kind, cents, sigs] = a;
     const tapeOf = (ps) => { if (!Array.isArray(ps) || ps.length !== TAPE_PRICES) throw new Error(`an attested tape carries ${TAPE_PRICES} prices`); return ps; };
     ww.u32(tick); ww.u8(kind);
-    if (kind === 0 || kind === 2) ww.i32(cents);
+    if (kind === 0 || kind === 2 || kind === 4) ww.i32(cents);
     else for (const c of tapeOf(cents)) ww.i32(c);
     if (!Array.isArray(sigs) || sigs.length > MAX_ATTEST_SIGS) throw new Error(`an attestation carries at most ${MAX_ATTEST_SIGS} signatures`);
-    if (kind < 2) ww.vec(sigs, (sg, w3) => { w3.bytes32(sg[0]); w3.bytes(sg[1], 64); });
+    if (kind < 2 || kind === 4) ww.vec(sigs, (sg, w3) => { w3.bytes32(sg[0]); w3.bytes(sg[1], 64); });
     // protocol 5: each reading its key, its own price(s) and its signature
     else ww.vec(sigs, (sg, w3) => { w3.bytes32(sg[0]); if (kind === 2) w3.i32(sg[1]); else for (const c of tapeOf(sg[1])) w3.i32(c); w3.bytes(sg[2], 64); });
   });
@@ -3458,8 +3469,8 @@ function decodeInputBatch(bytes) {
     b.attests = r.at < bytes.length ? r.vec((rr) => {
       const tick = rr.u32(); const kind = rr.u8();
       const tape = () => Array.from({ length: TAPE_PRICES }, () => rr.i32());
-      const cents = kind === 0 || kind === 2 ? rr.i32() : kind === 1 || kind === 3 ? tape() : (() => { throw new Error('kind'); })();
-      const sigs = kind < 2 ? rr.vec((r3) => [r3.bytes32(), r3.bytes(64)])
+      const cents = kind === 0 || kind === 2 || kind === 4 ? rr.i32() : kind === 1 || kind === 3 ? tape() : (() => { throw new Error('kind'); })();
+      const sigs = kind < 2 || kind === 4 ? rr.vec((r3) => [r3.bytes32(), r3.bytes(64)])
         : rr.vec((r3) => { const key = r3.bytes32(); const own = kind === 2 ? r3.i32() : Array.from({ length: TAPE_PRICES }, () => r3.i32()); return [key, own, r3.bytes(64)]; });
       if (sigs.length > MAX_ATTEST_SIGS) throw new Error('sigs');
       return [tick, kind, cents, sigs];
@@ -3520,7 +3531,9 @@ const MAX_INPUT_BATCH_BYTES =
   // the attested sample and tape (§11): tick, kind, price(s), and up to MAX_ATTEST_SIGS (key, signature) each - at their
   // largest the protocol-5 kinds 2 and 3, whose readings also carry each seat's own price(s): 100 bytes a sample
   // reading (key, cents, signature), 352 a tape reading (key, 64 prices, signature)
-  + 2 + MAX_ATTESTED_SAMPLES * (4 + 1 + 4 + 2 + MAX_ATTEST_SIGS * 100) + (4 + 1 + 4 * TAPE_PRICES + 2 + MAX_ATTEST_SIGS * (32 + 4 * TAPE_PRICES + 64));
+  + 2 + MAX_ATTESTED_SAMPLES * (4 + 1 + 4 + 2 + MAX_ATTEST_SIGS * 100) + (4 + 1 + 4 * TAPE_PRICES + 2 + MAX_ATTEST_SIGS * (32 + 4 * TAPE_PRICES + 64))
+  // kanban #2694: the attested liquidations (kind 4), tick, kind, size and up to MAX_ATTEST_SIGS (key, signature) each
+  + MAX_ATTESTED_LIQUIDATIONS * (4 + 1 + 4 + 2 + MAX_ATTEST_SIGS * 96);
 
 /** The absolute tick numbers a batch covers, in order. */
 const batchTicks = (b) =>
@@ -4243,6 +4256,7 @@ function checkBatchPrices({ batch, roundId, committee, threshold, verify, requir
   const at = (list, tick) => (list || []).filter((x) => x[0] === tick);
   const isTape = (kind) => kind === 1 || kind === 3;
   for (const [tick, kind, cents, sigs] of attests) {
+    if (kind === 4) continue;   // kanban #2694: an attested liquidation is checkBatchLiquidations' business
     if ((kind === 2 || kind === 3) !== !!median)
       return { ok: false, why: median ? `the ${isTape(kind) ? 'tape' : 'sample'} at tick ${tick} is a price one seat proposed: a round of protocol 5 plays the median of the committee's own signed readings`
         : `the ${isTape(kind) ? 'tape' : 'sample'} at tick ${tick} is a median of signed readings, a protocol 5 price: this round plays the committee's attested prices` };
@@ -4277,6 +4291,57 @@ function checkBatchPrices({ batch, roundId, committee, threshold, verify, requir
     if (bare) return { ok: false, why: `a ${bare} without the committee's attestation: the player never chooses the price (§11)` };
   }
   return { ok: true, attested: attests.length };
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------
+// LIQUIDATIONS THE COMMITTEE ATTESTS (kanban #2694, follow-up of #2655 option 2). A Next Block strike is a forced liquidation on
+// the exchange; the player named its tick and size and nobody checked them, so a modified client cratered every tank near its
+// truck (#2655) - a staked run then took none at all. Now each committee seat reads the exchange's forceOrder stream itself and
+// signs what it saw:
+//   AN EVENT is (round, tick, size): tick the round tick of the exchange's own trade time, size its notional in millions of USD,
+//     Q16.16 - the liquidation word the core already takes. Both come from the exchange's fields, so honest seats sign one pair.
+//   liquidationEventId = taggedHash(LiquidationEvent, round_id || u32 tick || i32 size), BIP-340 by the seat's node key; an
+//     attestation stands with `threshold` distinct keys of the round's committee (priceAttestationStands, the same budget).
+//   THE BATCH carries it as attestation kind 4, [tick, 4, size, [[key, sig], ...]] (batch.js), beside the [tick, size] it plays.
+// ---------------------------------------------------------------------------------------------------------------------------
+
+function encodeLiquidationEvent({ roundId, tick, size }) {
+  if (!isBytes32(roundId)) throw new Error('a liquidation event names its 32-byte round');
+  if (!Number.isInteger(tick) || tick < 0 || tick > 0xffffffff) throw new Error('a liquidation event names its tick');
+  if (!Number.isInteger(size) || size <= 0 || size > 0x7fffffff) throw new Error('a liquidation is a whole, positive size');
+  const w = new Writer();
+  w.bytes32(roundId); w.u32(tick); w.i32(size);
+  return w.finish();
+}
+const liquidationEventId = (x) => taggedHash(TAG.liquidationEvent, encodeLiquidationEvent(x));
+
+/** An attested liquidation stands as an attested price sample does: `threshold` distinct keys of `committee` signed its id. */
+const liquidationAttestationStands = (args) => priceAttestationStands(args);
+
+/**
+ * THE LIQUIDATIONS A BATCH PLAYED, CHECKED AGAINST THE COMMITTEE'S SIGNATURES (kanban #2694): every kind 4 attestation must stand
+ * for this round and the batch must play exactly that [tick, size]; with `require` (a staked run of a game that takes attested
+ * liquidations) a non-zero liquidation without a standing attestation at its tick is refused - the player never chooses a strike.
+ * A zero-size liquidation is no strike and needs none. Answers { ok, attested: n } or { ok: false, why }.
+ */
+function checkBatchLiquidations({ batch, roundId, committee, threshold, verify, require = false }) {
+  const liq = batch.liquidations || [];
+  const attested = new Map();
+  for (const [tick, kind, size, sigs] of batch.attests || []) {
+    if (kind !== 4) continue;
+    let id; try { id = liquidationEventId({ roundId, tick, size }); } catch (e) { return { ok: false, why: `the liquidation at tick ${tick}: ${e.message}` }; }
+    const s = liquidationAttestationStands({ id, sigs: (sigs || []).map(([key, signature]) => ({ key, signature })), committee, threshold, verify });
+    if (!s.ok) return { ok: false, why: `the liquidation at tick ${tick} is not attested: ${s.why}` };
+    const played = liq.filter((x) => x[0] === tick);
+    if (played.length !== 1 || played[0][1] !== size)
+      return { ok: false, why: `the liquidation at tick ${tick} is not the attested size ${size}` };
+    attested.set(tick, size);
+  }
+  if (require) {
+    const bare = liq.find(([tick, size]) => Number(size) !== 0 && attested.get(tick) !== size);
+    if (bare) return { ok: false, why: `a liquidation at tick ${bare[0]} without the committee's attestation: the player never chooses a strike` };
+  }
+  return { ok: true, attested: attested.size };
 }
 
 // ---- arena-protocol/src/receipt.js
@@ -5723,7 +5788,7 @@ function readVarint(bytes, at) {
 
 // VIEWS, NOT COPIES (kanban #3236, a heap snapshot of a seat: 74,118 kept parses, 388 MB - every script, witness item and previous txid
 // its own copied buffer). A parse's byte fields are views of the raw transaction: nothing writes them or the raw bytes in place (a raw is
-// a block's own slice, splitBlock), and a kept parse is kept with its raw anyway (census.js parsedKept).
+// a view of its block's bytes, splitBlock - kanban #3238), and a kept parse is kept with its raw anyway (census.js parsedKept).
 function readSlice(bytes, at, what) {
   const { value, next } = readVarint(bytes, at);
   const end = need(bytes, next, value, what);
@@ -12097,6 +12162,18 @@ const KNOWN_GOOD_GAMES = Object.freeze({
     sharedWorld: Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d']),
     gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
     requiredProtocolVersion: 11,
+  }),
+  '9db73c4e7bc71b2ed191997120a695a62095e4c48429fc7f673513e508bbd5f2': Object.freeze({
+    name: 'nextblock',
+    // NEXT BLOCK VERSION 9 (kanban #2694): version 8 in every term (core 7d197042) - a staked run plays the committee's attested liquidations only
+    cores: Object.freeze({
+      '7d1970426bc7146ef2cddcf2d4ad1aa1e53647a9dbef3bc1cfc319aae161fca7': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
+    }),
+    sharedWorld: Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d']),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    requiredProtocolVersion: 11,
+    // its staked run takes the committee's attested liquidations (attestation kind 4) and refuses a bare one (arena-node round.js)
+    attestedLiquidations: true,
   }),
 });
 
@@ -20119,6 +20196,7 @@ const feeBpsForRound = (round) => (round && Number.isInteger(round.feeBps) ? rou
   : roundPaysReserves(round) ? (round.feeSet ? roundSplitBps(round.feeSet).nodes : RESERVES_NODE_FEE_BPS) : knownEntryBps(round && round.gameId));
 
 
+// NO IMPORT ALIAS (kanban #3268): the bundle drops imports, and series.js declares its own private seriesIdOf(template, periodMs, count)
 
 
 
@@ -24357,10 +24435,26 @@ function tidyStorage(storage, { seeds = [], current = null, federations = [], he
 }
 
 /** WHERE THE PLAYER WALLET IS KEPT: the tab's storage, under the federation and the secret's hash, never the secret. */
+// ANOTHER TAB'S SPEND IS SEEN BEFORE THIS TAB SPENDS (kanban #3237, feedback #374/#375 "invalid input: 2-The note is already spent"): a lock
+// client reads the wallet from storage once, when it opens, and spends from its own copy in memory after. Two tabs of one phrase (or a tab left
+// open while another one played) each held the same notes: one spent them, the other's copy still listed them and handed them to the
+// federation again - refused as already spent, the buy or the stake gone with an error. Every write of a wallet now leaves a mark beside it
+// (arena.walletgen.<fed16>.<secret16>, this tab's id and a count); a client whose store last saw another mark is stale, and the player wallet
+// (openPlayerWallet's freshWallet) opens again from storage before it spends.
+const WALLET_GEN_PREFIX = 'arena.walletgen.';
+const TAB_MARK = (() => { try { const b = new Uint8Array(6); globalThis.crypto.getRandomValues(b); return toHex(b); } catch { return Math.random().toString(16).slice(2, 14); } })();
+let walletGenCount = 0;
 function walletStoreFor(storage, federationId, secret) {
   const prefix = `arena.walletdb.${toHex(federationId).slice(0, 16)}.${toHex(sha256(secret)).slice(0, 16)}.`;
+  const genKey = WALLET_GEN_PREFIX + prefix.slice('arena.walletdb.'.length, -1);
+  let seen = null;
+  const readGen = () => { try { return storage.getItem(genKey); } catch { return null; } };
+  // not marked (storage full): another tab does not see this write - the refusal path below (already spent: opened again, once more) covers it
+  const mark = () => { const t = `${TAB_MARK}.${++walletGenCount}`; try { storage.setItem(genKey, t); seen = t; } catch { /* see above */ } };
   return {
+    stale() { return readGen() !== seen; },
     entries() {
+      seen = readGen();
       const out = [];
       for (let i = 0; i < storage.length; i++) {
         const k = storage.key(i);
@@ -24368,10 +24462,57 @@ function walletStoreFor(storage, federationId, secret) {
       }
       return JSON.stringify(out);
     },
-    put(k, v) { putWalletValue(storage, prefix + packHex(k), v); dropRaw(storage, prefix, k); },   // kanban #1978: the raw row goes once the packed one is written
-    remove(k) { storage.removeItem(prefix + packHex(k)); storage.removeItem(prefix + k); },
+    put(k, v) { putWalletValue(storage, prefix + packHex(k), v); dropRaw(storage, prefix, k); mark(); },   // kanban #1978: the raw row goes once the packed one is written; #3237 the mark
+    remove(k) { storage.removeItem(prefix + packHex(k)); storage.removeItem(prefix + k); mark(); },
   };
 }
+
+// THE SPENDS A STALE WALLET NEVER MAKES (kanban #3237): each is made by the wallet as storage holds it now - opened again first when another tab
+// wrote it since. And refused as already spent (a write another tab could not mark, an older page's tab), the wallet is opened again from storage
+// and the spend made once more - only where the refusal comes with the call itself, so nothing was paid: a submission accepted behind
+// (lockSubmit, paySubmit -> lockAccepted) is never made twice here; its refusal opens the wallet again for the next press.
+const FRESH_SPENDS = new Set(['sendEcash', 'sendAllEcash', 'withdraw', 'lock', 'lockBoth', 'lockHash', 'lockWithDonations', 'lockSubmit', 'paySubmit',
+  'balanceMsat', 'withdrawableMsat']);
+// the acceptance of a submission is read by the client that made it (never one opened since); its refusal as already spent opens the wallet again
+const REFUSED_BEHIND = new Set(['lockAccepted']);
+const RETRY_SPENDS = new Set(['sendEcash', 'sendAllEcash', 'withdraw', 'lock', 'lockBoth', 'lockHash', 'lockWithDonations']);
+const isAlreadySpent = (e) => /already spent/i.test(String((e && e.message) || e));
+function freshWallet(client, store, reopen, onStep = () => {}) {
+  if (!client || typeof client !== 'object' || !store || typeof store.stale !== 'function') return client;
+  let inner = client, st = store, reopening = null, forced = false;
+  const again = (why) => {
+    if (!reopening) {
+      reopening = (async () => {
+        onStep(why);
+        const r = await reopen();
+        inner = r.client; st = r.store; forced = false;
+        return inner;
+      })().finally(() => { reopening = null; });
+    }
+    return reopening;
+  };
+  const current = () => (reopening ? reopening : (forced || st.stale()) ? again('another tab of this browser changed this wallet - opening it again from storage') : Promise.resolve(inner));
+  const wrapped = new Proxy(client, {
+    get(_t, p) {
+      if (p === FRESH_INNER) return inner;
+      const v = inner[p];
+      if (typeof v !== 'function') return v;
+      if (typeof p !== 'string' || !(FRESH_SPENDS.has(p) || REFUSED_BEHIND.has(p))) return v.bind(inner);
+      const made = inner;
+      return async (...a) => {
+        const c = REFUSED_BEHIND.has(p) ? made : await current();
+        try { return await c[p](...a); } catch (e) {
+          if (!isAlreadySpent(e)) throw e;
+          if (!RETRY_SPENDS.has(p)) { forced = true; throw e; }
+          const c2 = await again('the federation counts a note of this wallet spent - opening the wallet again from storage and spending once more');
+          return c2[p](...a);
+        }
+      };
+    },
+  });
+  return wrapped;
+}
+const FRESH_INNER = Symbol('freshWallet.inner');
 
 /**
  * A SEED BROUGHT FROM ANOTHER DEVICE RECOVERS ITS WALLET (2026-10-04: "patch Fedimint's recovery so it runs in
@@ -24493,16 +24634,23 @@ async function openPlayerWallet({ federationId, invite, seed, LockClient, storag
   let timer = null;
   // A CONFIG NO GUARDIAN OF THE INVITE GAVE (one guardian down): once more, with an invite naming every guardian this client has seen named
   // for the federation (guardian-invites.js)
-  const enter = (inv) => (recover ? LockClient.recover : LockClient.join).call(LockClient, inv, toHex(round.federationId), toHex(secret), store);
-  const joinOnce = () => enter(invite).catch((e) => {
+  const enter = (inv, st = store, how = recover ? LockClient.recover : LockClient.join) => how.call(LockClient, inv, toHex(round.federationId), toHex(secret), st);
+  const joinOnce = (st = store, how = undefined) => enter(invite, st, how).catch((e) => {
     const whole = /download client config/i.test(String((e && e.message) || e)) ? wholeInvite(invite) : null;
     if (!whole) throw e;
     onStep('one of the federation\'s guardians did not answer - reading its configuration from the others');
-    return enter(whole);
+    return enter(whole, st, how);
   });
+  // kanban #3237: opened again from what storage holds now (a join of the kept wallet, never a recovery)
+  const reopen = async () => {
+    const st = storage ? walletStoreFor(storage, round.federationId, secret) : unkeptLockStore();
+    const c = await joinOnce(st, LockClient.join);
+    noteClientFederation(c, toHex(round.federationId));   // the tweak feed already running goes on through the wallet to this client
+    return { client: c, store: st };
+  };
   noteInvite(invite);
   const joining = Promise.race([
-    joinOnce(),
+    joinOnce().then((c) => (storage ? freshWallet(c, store, reopen, onStep) : c)),
     new Promise((_, no) => { timer = setTimeout(() => no(new Error(`the federation did not open the player wallet in ${Math.round(joinWaitMs / 1000)} s - press PLAY again`)), joinWaitMs); }),
   ]).finally(() => clearTimeout(timer));
   joining.then((c) => noteClientFederation(c, toHex(round.federationId)), () => {});
@@ -33537,6 +33685,7 @@ class Client {
     this.samples = [];            // [tick, price], the live price samples not yet published
     this.tapes = [];              // [tick, p0 .. p63], the live tape not yet published
     this.attests = [];            // [tick, kind, cents, sigs], the committee's word on a sample (0) or the tape (1) (§11)
+    this.liquidations = [];       // [tick, size], the committee's attested strikes not yet published (kanban #2694, kind 4 in attests)
     this.nodes = [];              // the committee, off the round's own contract
     this.gameVerifySlots = 7;
     this.hold = [];               // ticks waiting to go out
@@ -34981,6 +35130,7 @@ class Client {
       this.samples = this.samples.filter(([at]) => at >= this.nextTick);
       this.tapes = this.tapes.filter(([at]) => at >= this.nextTick);
       this.attests = this.attests.filter(([at]) => at >= this.nextTick);
+      this.liquidations = this.liquidations.filter(([at]) => at >= this.nextTick);
       this.batchesLandedUnheard++;
     }
     // AND THE PEERS ARE FED WHAT THIS NODE TOOK, including a batch whose answer
@@ -35292,6 +35442,7 @@ class Client {
     this.samples = [];
     this.tapes = [];
     this.attests = [];
+    this.liquidations = [];
     this.dropped = 0;
     this.batchesSent = 0;
     this.marksSent = 0;
@@ -35501,6 +35652,19 @@ class Client {
     return true;
   }
 
+  /**
+   * THE COMMITTEE'S STRIKE (kanban #2694): a forced liquidation the seats signed for `tick` - size in millions of USD, Q16.16, the word
+   * the core takes - with their signatures ([key, sig]). Applied at exactly that tick (the run is at it now) and published beside its
+   * attestation (kind 4), which every seat checks. Refused at any other tick, a size that is no strike, or once the run ended.
+   */
+  submitAttestedLiquidation({ tick, size, sigs }) {
+    if (this.ended || !this.where || tick !== this.offered || !Number.isInteger(size) || size <= 0 || size > 0x7fffffff || !Array.isArray(sigs)) return false;
+    if (this.liquidations.some(([at]) => at === tick)) return false;
+    this.liquidations.push([tick, size]);
+    this.attests.push([tick, 4, size, sigs]);
+    return true;
+  }
+
   /** THE COMMITTEE'S TAPE: the 64 signed prices before the start, in cents, with their signatures - at tick `tick`. */
   submitAttestedTape({ tick, prices, sigs, readings }) {
     if (this.ended || !this.where || tick !== this.offered || !prices || prices.length !== 64) return false;
@@ -35645,11 +35809,14 @@ class Client {
     this.samples = this.samples.filter(([at]) => at >= through);
     const tapes = this.tapes.filter(([at]) => at < through).slice(0, 1);
     this.tapes = this.tapes.filter((t) => !tapes.includes(t));
-    // the committee's word on the samples and the tape this batch carries, and on nothing else (§11)
-    const attests = this.attests.filter(([at, kind]) => (kind === 0 || kind === 2 ? samples : tapes).some((x) => x[0] === at));
+    // the committee's strikes this batch covers (kanban #2694)
+    const liquidations = this.liquidations.filter(([at]) => at < through);
+    this.liquidations = this.liquidations.filter(([at]) => at >= through);
+    // the committee's word on the samples, the tape and the strikes this batch carries, and on nothing else (§11)
+    const attests = this.attests.filter(([at, kind]) => (kind === 4 ? liquidations : kind === 0 || kind === 2 ? samples : tapes).some((x) => x[0] === at));
     this.attests = this.attests.filter((a) => !attests.includes(a));
 
-    this.publishing = this.batch(words, { ...this.where, loads, samples, tapes, attests }).then((r) => {
+    this.publishing = this.batch(words, { ...this.where, loads, samples, tapes, attests, liquidations }).then((r) => {
       if (r.accepted) {
         this.batchesSent++;
         // PUBLISHING AGAIN IS NEWS TOO. A run that recovered must stop
@@ -35668,6 +35835,7 @@ class Client {
         this.samples = samples.concat(this.samples);
         this.tapes = tapes.concat(this.tapes);
         this.attests = attests.concat(this.attests);
+        this.liquidations = liquidations.concat(this.liquidations);
         if (typeof r.answer === 'string' && r.answer.startsWith(CLOSED)) {
           // THE LINK WENT WITH THE BATCH IN FLIGHT. The node refused nothing,
           // so this is not a refusal and does not resync towards VOID -
@@ -35707,6 +35875,7 @@ class Client {
       this.samples = samples.concat(this.samples);
       this.tapes = tapes.concat(this.tapes);
       this.attests = attests.concat(this.attests);
+      this.liquidations = liquidations.concat(this.liquidations);
       this.publishing = null;
       throw e;
     });
