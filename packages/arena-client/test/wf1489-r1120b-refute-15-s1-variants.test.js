@@ -10,7 +10,7 @@ const fake = (listed) => ({ gateways: async () => JSON.stringify(listed) });
 test('encodings of a gateway the federation does not list are all dropped', async () => {
   const lies = ['https://evil.example/', 'HTTPS://EVIL.EXAMPLE', ' https://evil.example ', 'https://gw-honest.example@evil.example/',
     'https://gw-honest.example.evil.example/', 'https://gw-honest.example/../', 'https://evil.example/#https://gw-honest.example/', 'https://gw-honest.example:444/'];
-  pl.useSeatedGateways(async () => lies);
+  pl.useSeatedGateways(async () => ({ answers: [lies, lies] }));   // kanban #3183: two seats' answers
   const c = fake([HONEST, OTHER]); pl.noteClientFederation(c, F);
   const got = await pl.seatedGatewaysOf(c);
   console.log('kept', JSON.stringify(got));
@@ -28,7 +28,7 @@ test('a lookup answering a non-array, a thrown error, or never answering yields 
 });
 
 test('honest: a seated gateway the federation lists is tried first, in the seat\'s order, even with other case/slash', async () => {
-  pl.useSeatedGateways(async () => ['https://GW-OTHER.example/', HONEST]);
+  pl.useSeatedGateways(async () => ({ answers: [['https://GW-OTHER.example/', HONEST], ['https://GW-OTHER.example/', HONEST]] }));   // kanban #3183
   const c = fake([HONEST, OTHER]); pl.noteClientFederation(c, F);
   const s = await pl.seatedGatewaysOf(c);
   assert.deepEqual(s, ['https://GW-OTHER.example/', HONEST]);
@@ -38,7 +38,7 @@ test('honest: a seated gateway the federation lists is tried first, in the seat\
 });
 
 test('deposit order: a lying seat cannot put its gateway in front of a deposit invoice', async () => {
-  pl.useSeatedGateways(async () => ['https://evil.example/', HONEST]);
+  pl.useSeatedGateways(async () => ({ answers: [['https://evil.example/', HONEST], ['https://evil.example/', HONEST]] }));   // kanban #3183
   const asked = [];
   const c = { gateways: async () => JSON.stringify([OTHER, HONEST]), receive: async (m, gw) => { asked.push(gw); return JSON.stringify({ invoice: 'lntb1', operation: 'op' }); } };
   pl.noteClientFederation(c, F);

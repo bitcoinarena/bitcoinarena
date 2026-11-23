@@ -24667,6 +24667,7 @@ function gatewayOrder(named = [], listed = []) {
 let seatedLookup = null;
 const federationOfClient = new WeakMap();
 /** The page's lookup of a federation's seated gateways (null: none). */
+const SEATED_AGREE = 2;   // kanban #3183: seat answers that must name a gateway seated
 function useSeatedGateways(lookup) { seatedLookup = typeof lookup === 'function' ? lookup : null; }
 /** Which federation a lock client is a wallet of (openPlayerWallet notes it). */
 function noteClientFederation(client, federationHex) { if (client && typeof client === 'object' && federationHex) federationOfClient.set(client, String(federationHex).toLowerCase()); }
@@ -24684,8 +24685,16 @@ function gatewayUrlsOfView(view) {
 async function seatedGatewaysOf(client) {
   const f = client && typeof client === 'object' ? federationOfClient.get(client) : null;
   if (!f || !seatedLookup) return [];
-  let l; try { l = await Promise.race([seatedLookup(f), new Promise((ok) => setTimeout(() => ok([]), 3000))]); } catch { return []; }
-  if (!Array.isArray(l)) return [];
+  let got; try { got = await Promise.race([seatedLookup(f), new Promise((ok) => setTimeout(() => ok([]), 3000))]); } catch { return []; }
+  // NOT ONE SEAT'S RANKING (kanban #3183, #1489 r1120b-refute-15-s2; gap in #3029): the federation's list (gateways()) is the union of every
+  // guardian's, so a guardian seat added a gateway of its own there and, answering first, named it seated - it led every deposit and the swap's
+  // receive leg. The lookup now hands each seat's answer ({ answers: [[url, ...], ...] }); a gateway is seated only when at least
+  // SEATED_AGREE answers name it, in the order the first of them gives. A bare list is one seat's word: nothing seated from it.
+  const answers = got && Array.isArray(got.answers) ? got.answers.filter(Array.isArray) : [];
+  const seen = new Map();
+  for (const a of answers) for (const u of new Set(a.filter(Boolean).map((x) => gwKey(x)))) seen.set(u, (seen.get(u) || 0) + 1);
+  const l = [];
+  for (const a of answers) for (const u of a.filter(Boolean).map(String)) if ((seen.get(gwKey(u)) || 0) >= SEATED_AGREE && !l.some((x) => gwKey(x) === gwKey(u))) l.push(u);
   // ONLY A GATEWAY THE FEDERATION ITSELF LISTS (kanban #3029, audit client r2-1, measured 2026-11-19: the page took the first seat's unsigned
   // GET /gateway-seats answer, so one non-guardian seat listed first put a gateway of its own first in every deposit and on both legs of a
   // swap - the pay leg's LNv2 contract funded to it, held up to its expiry). A seated gateway is registered at its federation, so the lock
