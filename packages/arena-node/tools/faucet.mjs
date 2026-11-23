@@ -573,13 +573,17 @@ async function grant(ask) {
   // refused the account its welcome forever. The row is pending with every payer that may be asked; only SUCCEEDED clears it (here or in the sweep),
   // and after a restart the sweep removes it once every payer answers NONE/FAILED
   GRANTING.add(row.hash);
-  try { return await grantPay(ask, inv, d, book, row); } finally { GRANTING.delete(row.hash); }
+  // BOOKED IN THE QUEUE, PAID OUTSIDE IT (kanban #3299, audit faucet-a5-1-1): payinvoice ran inside one(), so a stranger's hold invoice (a top-up
+  // of a fresh account) held the queue PAY_WAIT_MS each - three of them and an honest welcome, an e-cash welcome or an installer payout waited past
+  // the page's 45 s and was dropped. Now the decide and the pending row are made here, in the queue, and the payment runs after it: what the
+  // queue orders (the caps, the account's one welcome, the hash) is booked before the next ask is read; the payers are asked in parallel
+  try { book.players.push({ ...row, pending: true, payers: PAYERS.map((_, i) => i), payerIds: PAYERS.map(payerId) }); saveBook(book); }   // kanban #1926
+  catch (e) { GRANTING.delete(row.hash); throw e; }
+  return { pay: () => grantPay(ask, inv, d, row).finally(() => GRANTING.delete(row.hash)) };
 }
 // THIS GRANT'S OWN ROW (kanban #2473, #2505): never an e-cash row, and the account, kind and booking time the grant wrote - not every row of a hash
 const ownRow = (p, row) => !!p && !p.ecash && p.hash === row.hash && p.account === row.account && p.kind === row.kind && p.atMs === row.atMs;
-async function grantPay(ask, inv, d, book, row) {
-  book.players.push({ ...row, pending: true, payers: PAYERS.map((_, i) => i), payerIds: PAYERS.map(payerId) });   // kanban #1926
-  saveBook(book);
+async function grantPay(ask, inv, d, row) {   // the pending row is booked by grant(), in the queue (kanban #3299)
   const tried = [], askedPayers = [], askedIds = [], failedFor = [];
   // A PAYER IS NOT ASKED TO PAY ITS OWN NODE'S INVOICE (kanban #1381): payer a is gateway a's lnd - "self-payments not allowed" cost a call before payer b
   for (const payer of await payersFor(inv.destination)) {
@@ -1320,6 +1324,7 @@ createServer((req, res) => {
       one(async () => (req.socket.destroyed ? { ok: false, why: 'the page stopped waiting: ask again' } : null)
         || (ask.kind === 'welcome' && ask.ecash && grantEcash({ ...who, ecash: String(ask.ecash).toLowerCase() }))
         || (ask.invoice ? grant({ ...who, invoice: ask.invoice }) : { ok: false, noEcash: true, why: 'no e-cash is ready: ask with an invoice' }))
+        .then((r) => (r && typeof r.pay === 'function' ? r.pay() : r))   // kanban #3299: the payment after the queue
         .then((r) => send(200, r), (e) => { console.log(`${new Date().toISOString()} player failed: ${e.message}`); send(500, { ok: false, why: 'the faucet could not pay just now' }); });
     });
     return undefined;
