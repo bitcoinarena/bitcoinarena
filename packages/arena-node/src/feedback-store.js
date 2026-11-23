@@ -801,8 +801,15 @@ export function networkPlayers({ seats, games, days = 90, keepMs = 10 * 60 * 100
     // ONE SEAT'S NETWORK VIEW PER GAME, THE GAMES AT ONCE (kanban #1484, the owner 2026-11-11: "Is VERY slow, speed it up"): scope=network is the whole network's
     // season merged by the seat asked, so the first seat that answers is the list - reading all 14 one after another (20 s each at most) held the admin page,
     // and 42 at once overloaded the seats' own merge. Per game the seats are asked in turn until one answers
+    // NO ONE SEAT'S BOARD DECIDES (kanban #2818, #1489 r22-nostr-1): the rows are unsigned, and the first seat answering was the list - one seat named
+    // a never-played key a player (a Season 2 report paid in full, not 25 %) and dropped honest ones. Per game the seats are still asked in turn, now
+    // until PLAYED_READS of them answered; a key counts only when more than half of those answers list it (its rounds: the least they say). With
+    // fewer answers than min(2, seats) the game keeps its last list.
+    const PLAYED_READS = 3, needAnswers = Math.min(2, seats.length);
     await Promise.all(games.map(async (g) => {
+      const answers = [];
       for (const seat of seats) {
+        if (answers.length >= PLAYED_READS) break;
         try {
           const r = await fetcher(`${String(seat).replace(/\/$/, '')}/season?scope=network&game=${encodeURIComponent(g)}&days=${days}`, { signal: AbortSignal.timeout(20000), redirect: 'error' });   // kanban #1884: a configured seat is asked as given, never redirected
           if (!r.ok) continue;
@@ -811,11 +818,17 @@ export function networkPlayers({ seats, games, days = 90, keepMs = 10 * 60 * 100
           const read = new Map();
           for (const row of b.rows || []) if (Number(row.rounds) > 0 && /^[0-9a-f]{64}$/i.test(String(row.player || ''))) {
             const k = String(row.player).toLowerCase(); read.set(k, (read.get(k) || 0) + Number(row.rounds)); }
-          lastOf.set(g, read);
-          if (Array.isArray(b.entered)) enteredLast.set(`network|${g}`, new Set(b.entered.filter(keyOk).map((k) => String(k).toLowerCase())));
-          return;
+          answers.push(read);
+          if (answers.length === 1 && Array.isArray(b.entered)) enteredLast.set(`network|${g}`, new Set(b.entered.filter(keyOk).map((k) => String(k).toLowerCase())));
         } catch { /* that seat does not answer: the next one */ }
       }
+      if (answers.length < needAnswers) return;
+      const agreed = new Map();
+      for (const k of new Set(answers.flatMap((a) => [...a.keys()]))) {
+        const said = answers.filter((a) => a.has(k)).map((a) => a.get(k));
+        if (said.length * 2 > answers.length) agreed.set(k, Math.min(...said));
+      }
+      lastOf.set(g, agreed);
     }));
     await Promise.all(seats.flatMap((seat) => games.map(async (g) => {
       try {
