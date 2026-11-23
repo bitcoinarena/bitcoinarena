@@ -38282,6 +38282,12 @@ async function collectZaps({ storage, keep = storage, random, curve, clients, se
   const collecting = new Set(Array.isArray(marked) ? marked : []);
   const begun = new Set(collecting);   // marked by an earlier pass: this pass's own spent answer to its own first refund is not one
   const keepSeen = () => { try { if (keep) keep.setItem(ZAPS_COLLECTED_KEY, JSON.stringify([...seen].slice(-ZAPS_SEEN_KEPT))); } catch { /* not kept: asked again, then found spent */ } };
+  // A MARK NAMES THE VERSION REFUNDED (kanban #2803, audit r21 client-1): a mark was the bare outpoint, so one seat listed a made-up outpoint whose
+  // amount the refund could not even parse (the mark stayed), then the same outpoint with any amount: the refund found no contract, the mark said
+  // "begun here" and the made-up row was booked as collected (a Referral of any size). A mark is now outpoint#hash(federation, amount, image, item);
+  // only the same version's refund counts as begun. A bare outpoint (a mark from before) still counts for any version.
+  const markOf = (d, image) => `${d.outpoint}#${toHex(sha256(new TextEncoder().encode(JSON.stringify([String(d.federationId).toLowerCase(), String(d.amountMsat), image, d.item || null])))).slice(0, 32)}`;
+  const dropMarks = (outpoint) => { for (const k of [...collecting]) if (k === outpoint || k.startsWith(`${outpoint}#`)) collecting.delete(k); };
   const keepCollecting = () => { if (keep) putRoomy(keep, ZAPS_COLLECTING_KEY, JSON.stringify([...collecting].slice(-ZAPS_SEEN_KEPT))); };
   let cursors = {};
   try { cursors = JSON.parse((keep && keep.getItem(ZAPS_CURSOR_KEY)) || '{}') || {}; } catch { cursors = {}; }
@@ -38354,7 +38360,7 @@ async function collectZaps({ storage, keep = storage, random, curve, clients, se
       // While a version in another federation is waiting (no wallet open, or no budget left this pass), a spent answer elsewhere settles nothing.
       if (waits.some((w) => String(w.federationId).toLowerCase() !== String(d.federationId).toLowerCase())) {
         const r0 = await collectOne(d);
-        if (r0 === 'collected') { accepted.set(outpoint, d); seen.add(outpoint); keepSeen(); collecting.delete(outpoint); try { keepCollecting(); } catch { /* seen */ } settled = true; break; }
+        if (r0 === 'collected') { accepted.set(outpoint, d); seen.add(outpoint); keepSeen(); dropMarks(outpoint); try { keepCollecting(); } catch { /* seen */ } settled = true; break; }
         if (r0 === 'waiting') waits.push(d); else if (r0 && r0.why !== undefined) tried.push(r0);
         continue;
       }
@@ -38366,7 +38372,7 @@ async function collectZaps({ storage, keep = storage, random, curve, clients, se
       // filed: noted as seen at once (not only at the pass's end), then the mark leaves (kanban #2319)
       seen.add(outpoint);
       keepSeen();
-      collecting.delete(outpoint);
+      dropMarks(outpoint);
       try { keepCollecting(); } catch { /* the mark stays: the outpoint is already seen and never asked again */ }
       settled = true;
       break;
@@ -38380,20 +38386,22 @@ async function collectZaps({ storage, keep = storage, random, curve, clients, se
     if (asked >= ZAPS_REFUNDS_PER_PASS) return 'waiting';
     asked++;
     const m = /^([0-9a-f]{64}):(\d+)$/.exec(String(d.outpoint));
-    if (!m || !/^\d+$/.test(String(d.amountMsat))) return 'skip';
+    // kanban #2803: an amount past u64 is no contract's (the lock client cannot even parse it)
+    if (!m || !/^\d+$/.test(String(d.amountMsat)) || BigInt(d.amountMsat) > 0xffffffffffffffffn) return 'skip';
     const image = d.senderOnContract && /^[0-9a-f]{64}$/.test(String(d.playerKey || '')) ? d.playerKey : '00'.repeat(32);
+    const mark = markOf(d, image);
     const fields = JSON.stringify({ paymentImage: { kind: 'hash', bytes: image }, amountMsat: String(d.amountMsat), claimPk: pk, refundPk: pk, expiration: 0 });
     // kanban #2319: the intent is written ahead; a refund whose mark cannot be kept is not sent (its answer could be lost unbooked)
-    if (!collecting.has(d.outpoint)) {
-      collecting.add(d.outpoint);
-      try { keepCollecting(); } catch (e) { collecting.delete(d.outpoint); return { ...d, why: `not collected: this browser cannot note it (${String(e && e.message || e)})` }; }
+    if (!collecting.has(mark)) {
+      collecting.add(mark);
+      try { keepCollecting(); } catch (e) { collecting.delete(mark); return { ...d, why: `not collected: this browser cannot note it (${String(e && e.message || e)})` }; }
     }
     let said;
     try { said = JSON.parse(await client.refund(m[1], Number(m[2]), fields, toHex(secret))); } catch (e) { return { ...d, why: String(e && e.message || e) }; }
     const mine = { outpoint: d.outpoint, federationId: d.federationId, amountMsat: String(d.amountMsat), item: d.item || null, roundId: d.roundId || null };
     if (said.accepted === true) { collected.push(mine); return 'collected'; }
     if (said.stored_before === null || said.stored_before === undefined) {
-      if (begun.has(d.outpoint)) { collected.push(mine); return 'collected'; }   // a refund this browser began, accepted in a pass that did not end
+      if (begun.has(mark) || begun.has(d.outpoint)) { collected.push(mine); return 'collected'; }   // a refund this browser began, accepted in a pass that did not end
       spent.push(d); return 'spent';
     }
     return { ...d, why: said.error || 'the federation did not accept the collect' };
